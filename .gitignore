@@ -4,7 +4,9 @@ cmake-*
 build*
 !build.sh
 .idea
-.vscode
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .DS_Store
 verbose
 compile_commands.json
