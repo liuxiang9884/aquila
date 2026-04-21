@@ -1,0 +1,12 @@
+cmake-*
+.cache
+.git
+build*
+!build.sh
+.idea
+.vscode
+.DS_Store
+verbose
+compile_commands.json
+*.pyc
+venv
