@@ -11,9 +11,6 @@ include(cmake/third_party.cmake)
 include(cmake/packages.cmake)
 
 if (PROJECT_IS_TOP_LEVEL)
-    add_subdirectory(exchange/gate)
-    add_subdirectory(tools/gate)
-    add_subdirectory(benchmark)
+    add_subdirectory(tools)
     add_subdirectory(test)
 endif ()
-
