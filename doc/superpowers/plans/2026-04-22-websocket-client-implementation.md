@@ -4,7 +4,7 @@
 
 **Goal:** 在 `core/websocket` 下实现一个面向 Linux x86_64 的低延迟 C++20 WebSocket client 内核，满足单连接唯一 owner、严格串行发送、控制面隔离、热路径零临时分配和细粒度状态机的设计约束。
 
-**Architecture:** 实现拆成三层：`I/O owner + transport + websocket session core` 作为热路径；`codec/message view + bounded queues + memory pools` 作为数据面基础件；`state machine + control plane + observability` 作为冷路径控制层。交付顺序按“先可单测基础件，再 plain TCP/ws，再 session/control，再 TLS，再 benchmark/tooling”推进，每一阶段都要形成可运行、可回归的最小闭环。
+**Architecture:** 实现拆成三层：`I/O owner + transport + websocket session core` 作为热路径；`codec/message view + pending write chain + memory pools` 作为连接数据面基础件；`state machine + control plane + observability` 作为冷路径控制层。`core/websocket` 不内建业务 `inbound/outbound queue`，消息交付和跨线程发送由集成方决定。交付顺序按“先可单测基础件，再 plain TCP/ws，再 session/control，再 TLS，再 benchmark/tooling”推进，每一阶段都要形成可运行、可回归的最小闭环。
 
 **Tech Stack:** C++20, Linux `epoll/eventfd/timerfd`, non-blocking sockets, OpenSSL, CMake, ctest, yyjson（仅用于后续 JSON 最小解析适配，不进入热路径内核依赖）。
 
@@ -37,8 +37,10 @@
   - 基础类型：配置、错误码、消息类型、粗粒度和细粒度状态。
 - Create: `core/websocket/message_view.h`
   - 零拷贝消息视图和 frame/meta 视图。
-- Create: `core/websocket/bounded_spsc_queue.h`
-  - 有界 `SPSC` 队列，默认 `fail-fast`。
+- Create: `core/websocket/message_sink.h`
+  - owner-thread 消息交付契约，交给集成方决定是否入队、回调或轮询。
+- Create: `core/websocket/pending_write.h`
+  - 连接内部严格有界的挂起写链和部分写续写状态。
 - Create: `core/websocket/fixed_buffer_pool.h`
   - 固定大小 buffer 池。
 - Create: `core/websocket/state_machine.h`
@@ -67,7 +69,7 @@
 ### Tests
 
 - Create: `test/websocket/types_test.cpp`
-- Create: `test/websocket/queue_test.cpp`
+- Create: `test/websocket/pending_write_test.cpp`
 - Create: `test/websocket/state_machine_test.cpp`
 - Create: `test/websocket/io_loop_test.cpp`
 - Create: `test/websocket/handshake_test.cpp`
@@ -80,7 +82,7 @@
 
 - Create: `tools/websocket_probe.cpp`
   - 本地或远端 WebSocket 连接 probe，用于非性能 smoke test。
-- Create: `benchmark/websocket/queue_benchmark.cpp`
+- Create: `benchmark/websocket/pending_write_benchmark.cpp`
 - Create: `benchmark/websocket/frame_codec_benchmark.cpp`
 - Create: `benchmark/websocket/session_loop_benchmark.cpp`
 
@@ -94,6 +96,7 @@
 - Create: `test/websocket/CMakeLists.txt`
 - Create: `core/websocket/types.h`
 - Create: `core/websocket/message_view.h`
+- Create: `core/websocket/message_sink.h`
 - Create: `test/websocket/types_test.cpp`
 
 - [ ] **Step 1: Write the failing type smoke test**
@@ -101,12 +104,16 @@
 ```cpp
 #include "core/websocket/types.h"
 #include "core/websocket/message_view.h"
+#include "core/websocket/message_sink.h"
 
 int main() {
     using namespace aquila::websocket;
     static_assert(static_cast<int>(ConnectionPhase::Disconnected) == 0);
     MessageView view{};
-    return view.payload.data() == nullptr ? 0 : 1;
+    struct NoopSink final : MessageSink {
+        bool handle(const MessageView&) noexcept override { return true; }
+    } sink;
+    return view.payload.data() == nullptr && sink.handle(view) ? 0 : 1;
 }
 ```
 
@@ -131,6 +138,13 @@ endif ()
 // core/websocket/types.h
 namespace aquila::websocket {
 enum class ConnectionState { Disconnected, Connecting, Active, Closing };
+enum class ConnectionError {
+    None,
+    InvalidTransition,
+    SocketError,
+    HandshakeError,
+    HeartbeatTimeout
+};
 enum class ConnectionPhase {
     Disconnected,
     Resolving,
@@ -150,8 +164,7 @@ struct ConnectionConfig {
     std::string service;
     std::string target;
     bool enable_tls{false};
-    size_t inbound_queue_capacity{1024};
-    size_t outbound_queue_capacity{1024};
+    size_t pending_write_capacity{1024};
 };
 }  // namespace aquila::websocket
 ```
@@ -167,6 +180,17 @@ struct MessageView {
 }  // namespace aquila::websocket
 ```
 
+```cpp
+// core/websocket/message_sink.h
+namespace aquila::websocket {
+class MessageSink {
+  public:
+    virtual ~MessageSink() = default;
+    virtual bool handle(const MessageView& view) noexcept = 0;
+};
+}  // namespace aquila::websocket
+```
+
 - [ ] **Step 4: Run the dedicated smoke test**
 
 Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_types_test -V`
@@ -177,32 +201,35 @@ Expected: `websocket_types_test` PASS.
 ```bash
 git add CMakeLists.txt core/CMakeLists.txt core/websocket/CMakeLists.txt \
   test/CMakeLists.txt test/websocket/CMakeLists.txt \
-  core/websocket/types.h core/websocket/message_view.h \
-  test/websocket/types_test.cpp benchmark/CMakeLists.txt
+  core/websocket/types.h core/websocket/message_view.h core/websocket/message_sink.h \
+  test/websocket/types_test.cpp
 git commit -m "core: scaffold websocket module"
 ```
 
-## Task 2: Implement The Bounded Queue And Fixed Buffer Pool
+## Task 2: Implement The Pending Write Chain And Fixed Buffer Pool
 
 **Files:**
-- Create: `core/websocket/bounded_spsc_queue.h`
+- Create: `core/websocket/pending_write.h`
 - Create: `core/websocket/fixed_buffer_pool.h`
-- Create: `test/websocket/queue_test.cpp`
+- Create: `test/websocket/pending_write_test.cpp`
 
-- [ ] **Step 1: Write failing tests for queue full/empty and pool exhaustion**
+- [ ] **Step 1: Write failing tests for pending-write full/empty and pool exhaustion**
 
 ```cpp
 int main() {
     using namespace aquila::websocket;
-    BoundedSpscQueue<int> queue(2);
-    if (!queue.try_push(1)) return 1;
-    if (!queue.try_push(2)) return 1;
-    if (queue.try_push(3)) return 1;
+    PendingWriteChain<int> chain(2);
+    if (!chain.try_push(1)) return 1;
+    if (!chain.try_push(2)) return 1;
+    if (chain.try_push(3)) return 1;
 
-    int value = 0;
-    if (!queue.try_pop(value) || value != 1) return 1;
-    if (!queue.try_pop(value) || value != 2) return 1;
-    if (queue.try_pop(value)) return 1;
+    auto* first = chain.front();
+    if (first == nullptr || *first != 1) return 1;
+    chain.pop_front();
+    auto* second = chain.front();
+    if (second == nullptr || *second != 2) return 1;
+    chain.pop_front();
+    if (!chain.empty()) return 1;
 
     FixedBufferPool pool(64, 2);
     auto a = pool.try_acquire();
@@ -214,19 +241,20 @@ int main() {
 
 - [ ] **Step 2: Run the targeted test and verify build/test fails**
 
-Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_queue_test -V`
-Expected: compile failure because queue/pool headers do not exist.
+Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_pending_write_test -V`
+Expected: compile failure because pending-write/pool headers do not exist.
 
-- [ ] **Step 3: Implement fixed-capacity queue and buffer pool with fail-fast semantics**
+- [ ] **Step 3: Implement fixed-capacity pending-write chain and buffer pool with fail-fast semantics**
 
 ```cpp
 template <typename T>
-class BoundedSpscQueue {
+class PendingWriteChain {
   public:
-    explicit BoundedSpscQueue(size_t capacity);
+    explicit PendingWriteChain(size_t capacity);
     bool try_push(const T& value) noexcept;
-    bool try_pop(T& value) noexcept;
-    size_t size() const noexcept;
+    T* front() noexcept;
+    void pop_front() noexcept;
+    bool empty() const noexcept;
     size_t capacity() const noexcept;
 };
 ```
@@ -244,17 +272,17 @@ class FixedBufferPool {
 };
 ```
 
-- [ ] **Step 4: Run tests to verify queue and pool behavior**
+- [ ] **Step 4: Run tests to verify pending-write and pool behavior**
 
-Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_queue_test -V`
+Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_pending_write_test -V`
 Expected: PASS with no blocking behavior and no implicit resize.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/websocket/bounded_spsc_queue.h core/websocket/fixed_buffer_pool.h \
-  test/websocket/queue_test.cpp
-git commit -m "core: add websocket queue and buffer pool primitives"
+git add core/websocket/pending_write.h core/websocket/fixed_buffer_pool.h \
+  test/websocket/pending_write_test.cpp
+git commit -m "core: add websocket pending write chain and buffer pool"
 ```
 
 ## Task 3: Implement The Fine-Grained State Machine
@@ -362,18 +390,20 @@ git commit -m "core: add websocket owner io loop"
 - Create: `core/websocket/session.h`
 - Create: `test/websocket/session_test.cpp`
 
-- [ ] **Step 1: Write a failing test for strict single-write-chain behavior**
+- [ ] **Step 1: Write a failing test for strict single-write-chain behavior and sink delivery**
 
 ```cpp
 int main() {
     using namespace aquila::websocket;
     SessionHarness harness;
-    harness.enqueue_outbound("one");
-    harness.enqueue_outbound("two");
+    harness.try_send_owner("one");
+    harness.try_send_owner("two");
     harness.drive_writable_once();
     if (harness.completed_writes() != 1) return 1;
     harness.drive_writable_once();
-    return harness.completed_writes() == 2 ? 0 : 1;
+    if (harness.completed_writes() != 2) return 1;
+    harness.feed_text_frame("ok");
+    return harness.delivered_messages() == 1 ? 0 : 1;
 }
 ```
 
@@ -396,7 +426,8 @@ class Transport {
 
 class Session {
   public:
-    bool try_send(MessageView message) noexcept;
+    void set_message_sink(MessageSink* sink) noexcept;
+    bool try_send(std::span<const std::byte> payload, PayloadKind kind) noexcept;  // owner-thread only
     void on_readable();
     void on_writable();
 };
@@ -405,7 +436,7 @@ class Session {
 - [ ] **Step 4: Run the session test**
 
 Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_session_test -V`
-Expected: PASS with one active write chain and queue-full fail-fast semantics.
+Expected: PASS with one active write chain, bounded pending writes, and owner-thread sink delivery.
 
 - [ ] **Step 5: Commit**
 
@@ -516,6 +547,8 @@ class ControlPlane {
 class Client {
   public:
     bool start(const ConnectionConfig& config);
+    void set_message_sink(MessageSink* sink) noexcept;
+    bool try_send(std::span<const std::byte> payload, PayloadKind kind) noexcept;  // owner-thread only
     void close();
     ConnectionState state() const noexcept;
 };
@@ -593,7 +626,7 @@ git commit -m "core: add websocket tls transport and probe tool"
 **Files:**
 - Modify: `benchmark/CMakeLists.txt`
 - Create: `benchmark/websocket/CMakeLists.txt`
-- Create: `benchmark/websocket/queue_benchmark.cpp`
+- Create: `benchmark/websocket/pending_write_benchmark.cpp`
 - Create: `benchmark/websocket/frame_codec_benchmark.cpp`
 - Create: `benchmark/websocket/session_loop_benchmark.cpp`
 
@@ -601,7 +634,7 @@ git commit -m "core: add websocket tls transport and probe tool"
 
 ```cpp
 int main() {
-    // measure queue push/pop latency and print p50/p99/p99.9
+    // measure pending-write push/front/pop latency and print p50/p99/p99.9
 }
 ```
 
@@ -610,12 +643,12 @@ int main() {
 Run: `./build.sh release`
 Expected: benchmark target build fails initially because source files are not implemented.
 
-- [ ] **Step 3: Implement queue/frame/session-loop benchmarks and connect them to CMake**
+- [ ] **Step 3: Implement pending-write/frame/session-loop benchmarks and connect them to CMake**
 
 ```text
-queue_benchmark.cpp: measure SPSC push/pop latency under fixed capacity
+pending_write_benchmark.cpp: measure bounded pending-write push/front/pop latency under fixed capacity
 frame_codec_benchmark.cpp: measure encode/decode latency for text/binary frames
-session_loop_benchmark.cpp: measure single-owner loop wakeup and outbound drain latency
+session_loop_benchmark.cpp: measure single-owner loop wakeup, message delivery, and pending-write drain latency
 ```
 
 - [ ] **Step 4: Run final verification**
@@ -640,7 +673,7 @@ benchmark binaries are produced
 
 ```bash
 git add benchmark/CMakeLists.txt benchmark/websocket/CMakeLists.txt \
-  benchmark/websocket/queue_benchmark.cpp \
+  benchmark/websocket/pending_write_benchmark.cpp \
   benchmark/websocket/frame_codec_benchmark.cpp \
   benchmark/websocket/session_loop_benchmark.cpp
 git commit -m "benchmark: add websocket latency benchmarks"
@@ -650,11 +683,12 @@ git commit -m "benchmark: add websocket latency benchmarks"
 
 - 单连接唯一 owner：Task 4, Task 5
 - 收发零额外线程切换：Task 4, Task 5, Task 7
+- 用户自定义消息交付与提交流程：Task 1, Task 5, Task 7
 - 解析路径避免字符串分配：Task 1, Task 6
 - 发送严格串行且可预测：Task 5
 - 心跳/重连不污染主路径：Task 7
 - `ws/wss` transport-agnostic：Task 5, Task 8
-- 严格有界队列 + fail-fast：Task 2, Task 5
+- 严格有界 `pending write chain` + fail-fast：Task 2, Task 5
 - 细粒度状态机与可观测性：Task 3, Task 7
 - benchmark 与长稳验证入口：Task 8, Task 9
 

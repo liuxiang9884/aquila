@@ -31,12 +31,13 @@
 
 - 单连接始终只有唯一 `I/O owner`，不跨线程执行收发。
 - 最小可接受架构允许一个 `I/O thread` 管理多个连接，但关键连接可升级为单连接独占线程并绑核。
-- 收发路径不允许额外线程切换；业务线程不直接写 socket。
-- 所有出站消息必须先进入连接专属发送队列，由 `I/O owner` 严格串行刷出。
+- 收发热路径不允许额外线程切换；非 owner 执行流不直接写 socket。
+- 同一连接的实际写操作只能由 `I/O owner` 执行；core 内部仅维护严格有界的 `pending write chain` 处理部分写和串行推进。
 - 接收路径完成 frame 组装后，应尽可能交付结构化视图或零拷贝字段视图，而不是原始字符串复制。
+- `WebSocket core` 不内建业务层 `inbound/outbound queue`；消息如何在线程间移交由集成方决定。
 - 心跳、超时判定、退避重连等控制逻辑不应污染热路径，应由独立控制面负责决策。
 - 热路径禁止临时分配；buffer、发送节点和解析 scratch 必须预分配或池化。
-- 默认背压策略为严格有界队列加 `fail-fast`；丢弃或覆盖策略仅作为低优先级可选扩展。
+- `pending write chain` 必须严格有界并采用 `fail-fast`；业务层队列、丢弃或覆盖策略仅作为集成方的低优先级可选扩展。
 - 内部状态机必须细粒度，能够区分 `DNS`、`TCP`、`TLS`、`WS`、认证、活跃、退化和重连阶段。
 - 可观测性目标按细粒度设计，但生产常开仅限 `L0` 加关键 `L1`，避免观测反向污染延迟。
 
@@ -57,32 +58,36 @@
   负责握手、frame 编解码、`ping/pong`、关闭流程、连接状态推进。
 - `Codec shim`
   负责最小协议解析，把完整消息转换为结构化视图或零拷贝字段视图。
-- `Outbound queue`
-  连接专属发送队列，所有出站消息先入队，再由 `I/O owner` 严格串行刷出。
-- `Inbound dispatch queue`
-  从 `I/O owner` 向下游消费者投递解析结果的单生产者队列。
+- `Message delivery contract`
+  `I/O owner` 在完成最小解析后，通过 owner-thread callback、`MessageSink` 或轮询接口把消息视图交给集成方；是否入队由集成方决定。
+- `Pending write chain`
+  连接内部的有界挂起写链，用于串行发送、部分写续写和显式背压。
+- `Owner command channel`
+  控制面或集成方向 `I/O owner` 注入 `ping`、`close`、`reconnect` 等动作的最小命令通道，不等同于业务消息队列。
 - `Control plane`
   独立负责心跳策略、超时判定、退避重连、恢复决策，再把动作投递给 `I/O owner` 执行。
 
 ### 数据流形态
 
 ```text
-business/control threads
-        |
-        v
-  outbound queue -----> [I/O owner / WS core / transport] -----> network
-                             |
-                             v
-                    minimal parse / view build
-                             |
-                             v
-                     inbound dispatch queue
-                             |
-                             v
-                     downstream consumer
+user-owned submit path -----> [I/O owner / WS core / transport] -----> network
+                                     ^
+                                     |
+                           control-plane commands
+                                     |
+network ---------------------------->|
+                                     |
+                                     v
+                           minimal parse / view build
+                                     |
+                                     v
+                  owner-thread callback / sink / poll contract
+                                     |
+                                     v
+                         user-owned delivery path
 ```
 
-## 线程模型、CPU 绑定与队列边界
+## 线程模型、CPU 绑定与 owner 边界
 
 ### 线程模型
 
@@ -104,12 +109,12 @@ business/control threads
 - 控制面线程、消费者线程、后台统计线程应与 `I/O core` 隔离，避免竞争 cache 和调度片。
 - 如果部署在 `NUMA` 机器上，连接 owner、内存池和消费线程应尽量保持 `NUMA` 本地性。
 
-### 队列边界
+### owner 边界
 
-- 每个连接至少有一个专属 `Outbound queue`，只允许外部生产、owner 消费。
-- 每个连接或每类连接至少有一个 `Inbound dispatch queue`，由 owner 单生产、下游单消费或显式多消费适配。
-- 队列必须有界，容量在初始化阶段确定，不允许热路径隐式扩容。
-- 队列满时按 `fail-fast` 处理，不阻塞生产者线程。
+- `WebSocket core` 不强制规定 `inbound/outbound` 业务队列，也不绑定用户的线程移交模型。
+- 跨线程发送、消息交付和业务背压由集成方决定，可采用 callback、sink、poll、外部队列或共享内存等方式。
+- core 内部只保留连接级 `pending write chain` 和最小 owner 命令注入机制，不把业务消息流模型硬编码进连接内核。
+- 所有内部挂起结构都必须有界，容量在初始化阶段确定，不允许热路径隐式扩容。
 
 ## 接收路径与发送路径的低延迟约束
 
@@ -123,12 +128,12 @@ business/control threads
 - `Transport adapter` 只做必要的传输层处理；若启用 `TLS`，其额外开销必须被明确视为 transport 成本，而不是 `WS core` 成本。
 - `WebSocket session core` 负责 frame 组装、控制帧处理和关闭流程推进。
 - 对完整消息，`Codec shim` 只做最小解析，不承担业务逻辑。
-- 下游拿到的是结构化视图、字段偏移、`span` 或等价零拷贝视图，而不是新构造的大对象。
+- core 通过 owner-thread callback、`MessageSink` 或轮询接口交付结构化视图、字段偏移、`span` 或等价零拷贝视图；是否排队和如何跨线程移交由集成方决定。
 
 ### 接收路径禁止事项
 
 - 不允许在每条消息上构造新的 `std::string` 作为默认交付形态。
-- 不允许在 `I/O owner` 里直接执行业务回调。
+- 不允许在 `I/O owner` 里直接执行业务重逻辑；如果使用 owner-thread callback 或 sink，其实现必须保持非阻塞、轻量和可预测。
 - 不允许为了通用性在热路径上做多层虚函数分发和不必要的 `type erasure`。
 - 不允许在收包路径中做阻塞日志、格式化输出和同步等待。
 
@@ -144,22 +149,22 @@ business/control threads
 
 ### 发送路径约束
 
-- 所有发送请求必须进入连接专属 `Outbound queue`。
+- 所有实际写操作都必须通过 owner-thread `try_send` 或等价 owner-affine 提交接口推进；跨线程提交由集成方自行完成。
 - `I/O owner` 是唯一允许调用底层写接口的执行流。
 - 同一连接任一时刻最多只有一条活跃写链。
 - 写完成之前，不启动下一条写请求。
-- 发送编码过程应尽量在预分配 buffer 或对象池中完成，避免临时拼接和重复分配。
+- `pending write chain` 必须严格有界，发送编码过程应尽量在预分配 buffer 或对象池中完成，避免临时拼接和重复分配。
 
 ### 发送路径禁止事项
 
 - 不允许多个线程直接对同一连接并发写。
-- 不允许队列满时阻塞业务线程等待可写。
+- 不允许 `pending write chain` 满时阻塞提交方等待可写。
 - 不允许在发送热路径中做隐式重试、长时间自旋或后台同步。
 - 不允许在一个通用 `send()` API 背后隐藏复杂锁竞争和内部线程迁移。
 
 ### 失败语义
 
-- 队列满：立即失败并打点，不阻塞。
+- `pending write chain` 满：立即失败并打点，不阻塞。
 - 连接不在可发送状态：立即失败或投递到控制面决策，不静默吞掉。
 - 底层写失败：由 owner 更新连接状态，并通知控制面进入后续恢复流程。
 
@@ -201,7 +206,7 @@ business/control threads
 ### 心跳约束
 
 - 心跳定时器不应在每条业务消息路径上穿插检查。
-- 心跳实现应与正常发送队列协调，避免因心跳插队破坏发送顺序语义。
+- 心跳实现应与正常写链协调，避免因心跳插队破坏发送顺序语义。
 - 如果协议允许专用控制帧，应优先使用更轻量的控制路径；如果必须走应用层心跳，也应保持编码和发送开销最小。
 
 ### 退化状态
@@ -210,8 +215,8 @@ business/control threads
 - 进入 `Degraded` 的典型条件可以包括：
   - 心跳 `RTT` 持续升高
   - 连续心跳超时接近阈值
-  - 出站队列持续接近高水位
-  - 入站派发明显滞后
+  - `pending write chain` 持续接近高水位
+  - owner-thread 消息交付持续滞后或被显式拒绝
 - `Degraded` 状态的意义是让控制面可以先降级、限流或准备重连，而不是等到彻底断链才反应。
 
 ### 重连设计
@@ -262,10 +267,10 @@ business/control threads
 - socket 读 buffer
 - `TLS record buffer` 或等价传输层 buffer
 - `WebSocket frame` 组装 buffer
-- 出站消息节点
+- `pending write` 节点
 - 编码 scratch buffer
 - 解析 scratch 或 token buffer
-- `inbound` 和 `outbound` 队列存储区
+- owner 命令注入所需的最小挂起结构
 - 状态事件和观测事件的 ring buffer
 
 ### 接收 buffer 组织
@@ -332,7 +337,7 @@ business/control threads
 - 收发字节数
 - 收发消息数
 - 重连次数
-- 队列深度高水位
+- `pending write chain` 高水位
 - 当前连接数、活跃连接数、退化连接数
 
 要求：
@@ -345,8 +350,8 @@ business/control threads
 
 - `DNS`、`TCP`、`TLS`、`WS`、认证阶段耗时
 - 心跳 `RTT`
-- 入站派发延迟
-- 出站排队延迟
+- owner-thread 消息交付延迟
+- `pending write chain` 等待延迟
 - 关键状态转移事件
 - 退化状态进入或退出原因
 - 关键失败原因分类计数
@@ -434,7 +439,7 @@ business/control threads
 - 认证失败
 - 活跃态网络断开
 - 心跳超时
-- 出站队列持续高水位
+- `pending write chain` 持续高水位
 - 控制面触发重连退避
 
 验收要求：
@@ -478,14 +483,14 @@ business/control threads
 - 周期性心跳
 - 持续收发消息
 - 间歇性网络抖动或控制面触发重连
-- 队列高低水位变化
+- `pending write chain` 高低水位变化
 - 内存占用趋势
 - 连接对象、buffer、对象池是否存在泄漏或异常增长
 
 验收要求：
 
 - 长稳运行期间内存占用无持续爬升。
-- 队列深度在合理范围内波动。
+- `pending write chain` 水位在合理范围内波动。
 - 没有异常状态抖动或错误计数持续增长。
 - 长稳状态下尾延迟不出现无解释恶化。
 
@@ -517,7 +522,7 @@ business/control threads
 ## 低优先级可选扩展
 
 - 对语义允许的消息类型引入显式丢弃或覆盖策略
-- 针对不同连接类型的差异化队列容量和背压策略
+- 集成方按自身线程模型选择外部消息交付或提交流程
 - 针对不同 transport 的可插拔优化实现
 - 针对不同 codec 的专门解析 fast-path
 
