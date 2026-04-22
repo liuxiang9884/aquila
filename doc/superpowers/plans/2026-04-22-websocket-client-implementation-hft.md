@@ -96,6 +96,80 @@
 - Create: `benchmark/websocket/frame_codec_benchmark.cpp`
 - Create: `benchmark/websocket/session_owner_benchmark.cpp`
 
+## Receive Path Nodes And Build Order
+
+### Receive Path Nodes
+
+下面的节点编号沿用本轮设计讨论中的接收链路编号，只覆盖“从 socket 可读开始，到交付 consumer”为止的用户态路径。
+
+4. `socket fd readable`
+   - 标题：内核可读事件边界
+   - 所在位置：Linux socket + `epoll`
+   - 负责内容：定义 `EPOLLIN/EPOLLOUT/RDHUP/ERR/HUP` 语义、一次唤醒后读到 `EAGAIN` 的规则、`EOF` 与错误到状态机的映射。
+
+5. `epoll + I/O owner`
+   - 标题：owner reactor 入口
+   - 所在位置：`core/websocket/io_loop.h`
+   - 负责内容：等待 `epoll` 事件、唤醒唯一 owner、驱动 socket/timer/wakeup 事件分发。
+
+6. `Transport adapter`
+   - 标题：字节流读写层
+   - 所在位置：`core/websocket/transport.h`、`tcp_transport.h`、`tls_transport.h`
+   - 负责内容：`read_some/write_some/connect/close`，处理部分读写、`EAGAIN`、建连中间态；`wss` 场景在此处理 TLS 解密。
+
+7. `connection read buffer`
+   - 标题：每连接接收内存边界
+   - 所在位置：`fixed_buffer_pool.h`、session 内部接收 buffer
+   - 负责内容：承接 transport 读出的原始字节，支持 frame 组装、零拷贝视图与生命周期约束；热路径不允许隐式扩容。
+
+8. `WebSocket session core`
+   - 标题：WebSocket 协议推进层
+   - 所在位置：`core/websocket/session.h`、`handshake.h`、`frame_codec.h`
+   - 负责内容：client handshake、frame header/payload 组装、`ping/pong/close`、状态推进、串行发送写链。
+
+9. `Codec shim`
+   - 标题：最小消息解析层
+   - 所在位置：session 与 `MessageView` 之间的最小解析逻辑
+   - 负责内容：把完整 message 转成 `MessageView/span/field-view`，只做最小字段提取，不做完整业务解析。
+
+10. `Message delivery contract`
+    - 标题：交付 consumer 的边界
+    - 所在位置：`core/websocket/message_sink.h`
+    - 负责内容：通过 `MessageSink`、callback 或 poll contract 把消息交给集成方；外部是否排队、跨线程 handoff、背压策略由集成方决定。
+
+### Logical Path Order
+
+接收链路的逻辑顺序固定为：
+
+```text
+4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
+```
+
+含义：
+- 先由内核让 fd 变成 readable。
+- 然后 owner thread 被 `epoll` 唤醒。
+- owner 通过 transport 把字节读进接收 buffer。
+- session core 在 buffer 上推进 WebSocket 协议。
+- codec shim 把完整消息转成轻量视图。
+- delivery contract 再把视图交给 consumer。
+
+### Recommended Implementation Order
+
+推荐编码顺序不是简单照链路顺序写，而是先把“边界和内存模型”定稳，再写协议层：
+
+```text
+4 -> 7 -> 5 -> 6 -> 8 -> 9 -> 10
+```
+
+原因：
+- 先做 `4`：先定义和内核事件模型的契约，否则 `epoll`、部分读、关闭语义容易做错。
+- 再做 `7`：先定每连接 buffer 和生命周期模型，否则后面的零拷贝视图、frame 组装和 sink 交付都容易返工。
+- 再做 `5`：`I/O owner` 是用户态代码真正的入口，要先把 reactor 立住。
+- 再做 `6`：先跑通 plain TCP 字节流，再增加 TLS。
+- 再做 `8`：在 transport 与 buffer 边界清晰后实现 WebSocket 协议层。
+- 再做 `9`：协议层稳定后接最小解析。
+- 最后做 `10`：把消息交付 consumer 的 contract 收口，避免过早把业务队列模型硬编码进 core。
+
 ## Task 1: Scaffold The Module And Harden The Public Contracts
 
 **Files:**
