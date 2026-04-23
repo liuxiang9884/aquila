@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <utility>
 
 #include "core/websocket/active_spin_loop.h"
 #include "core/websocket/cold_path_loop.h"
@@ -57,6 +58,7 @@ class GateWsClient {
       return false;
     }
 
+    stop_requested_.store(false);
     if (!cold_path_loop_.RunUntilActive(tls_socket_, state_machine_, config_,
                                         handshake_storage_)) {
       NotifyError(state_machine_.last_error());

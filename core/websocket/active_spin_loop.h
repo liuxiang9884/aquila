@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <thread>
 
 #include "core/websocket/runtime_policy.h"
 
@@ -41,6 +42,8 @@ class ActiveSpinLoop {
 
       if (runtime_policy_.active_spin) {
         CpuRelax();
+      } else {
+        std::this_thread::yield();
       }
     }
   }

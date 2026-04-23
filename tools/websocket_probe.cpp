@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
   std::string port{"443"};
   std::string target{"/v4/ws/usdt"};
   int cpu{-1};
-  bool tls{true};
+  bool tls{false};
   app.add_option("--host", host, "remote host");
   app.add_option("--port", port, "remote port");
   app.add_option("--target", target, "websocket target");
