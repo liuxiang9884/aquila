@@ -35,7 +35,15 @@ class GateWsClient {
       effective_policy.affinity_mode = AffinityMode::kNone;
     }
 
-    if (!ApplyRuntimePolicy(effective_policy) || !tls_socket_.Init()) {
+    prepare_error_ = ConnectionError::kNone;
+    if (!ApplyRuntimePolicy(effective_policy)) {
+      prepare_error_ = ConnectionError::kSocketError;
+      return false;
+    }
+    if (!tls_socket_.Init()) {
+      prepare_error_ =
+          config_.enable_tls ? ConnectionError::kTlsFailure
+                             : ConnectionError::kSocketError;
       return false;
     }
     runtime_prepared_ = true;
@@ -55,6 +63,9 @@ class GateWsClient {
 
   bool Start() noexcept {
     if (!runtime_prepared_ && !PrepareRuntimeOnly()) {
+      state_machine_.Fail(prepare_error_, ConnectionPhase::kDisconnected);
+      NotifyError(state_machine_.last_error());
+      NotifyState(state_machine_.phase());
       return false;
     }
 
@@ -69,7 +80,20 @@ class GateWsClient {
     NotifyState(state_machine_.phase());
     RuntimeSession runtime_session{core_, stop_requested_};
     spin_loop_.Run(runtime_session);
-    return !core_.ShouldReconnect();
+    if (stop_requested_.load()) {
+      state_machine_.Enter(ConnectionPhase::kClosed);
+      NotifyState(state_machine_.phase());
+      return true;
+    }
+    if (core_.ShouldReconnect()) {
+      state_machine_.Fail(core_.LastError(), ConnectionPhase::kClosed);
+      NotifyError(state_machine_.last_error());
+      NotifyState(state_machine_.phase());
+      return false;
+    }
+    state_machine_.Enter(ConnectionPhase::kClosed);
+    NotifyState(state_machine_.phase());
+    return true;
   }
 
   CriticalSession<TlsSocket>& Core() noexcept { return core_; }
@@ -133,6 +157,7 @@ class GateWsClient {
   std::array<char, 4096> handshake_storage_{};
   std::atomic<bool> stop_requested_{false};
   bool runtime_prepared_{false};
+  ConnectionError prepare_error_{ConnectionError::kNone};
   void* state_context_{nullptr};
   StateHandler state_handler_{nullptr};
   void* error_context_{nullptr};

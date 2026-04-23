@@ -91,7 +91,7 @@ class CriticalSession {
     while (pending_count_ != 0) {
       PreparedWrite* write = pending_writes_[pending_head_];
       if (write == nullptr || write->write_offset > write->encoded_size) {
-        should_reconnect_ = true;
+        TriggerReconnect(ConnectionError::kSocketError);
         return;
       }
 
@@ -117,7 +117,8 @@ class CriticalSession {
       if (written < 0 && errno == EAGAIN) {
         return;
       }
-      should_reconnect_ = true;
+      TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
+                                    : ConnectionError::kSocketError);
       return;
     }
   }
@@ -144,7 +145,8 @@ class CriticalSession {
     if (received < 0 && errno == EAGAIN) {
       return;
     }
-    should_reconnect_ = true;
+    TriggerReconnect(received == 0 ? ConnectionError::kPeerClosed
+                                   : ConnectionError::kSocketError);
   }
 
   bool WantsWrite() const noexcept { return pending_count_ != 0; }
@@ -159,7 +161,7 @@ class CriticalSession {
     if (!awaiting_pong_) {
       if (last_ping_ns_ == 0 || now_ns - last_ping_ns_ >= interval_ns) {
         if (!EnqueueControlFrame(PayloadKind::kPing, {})) {
-          should_reconnect_ = true;
+          TriggerReconnect(ConnectionError::kSocketError);
           return;
         }
         awaiting_pong_ = true;
@@ -169,14 +171,20 @@ class CriticalSession {
     }
 
     if (now_ns - last_ping_ns_ >= timeout_ns) {
-      should_reconnect_ = true;
+      TriggerReconnect(ConnectionError::kHeartbeatTimeout);
       ++metrics_.heartbeat_timeouts;
     }
   }
 
   bool ShouldReconnect() const noexcept { return should_reconnect_; }
+  ConnectionError LastError() const noexcept { return last_error_; }
 
  private:
+  void TriggerReconnect(ConnectionError error) noexcept {
+    should_reconnect_ = true;
+    last_error_ = error;
+  }
+
   void CompleteFrontWrite() noexcept {
     PreparedWrite* write = pending_writes_[pending_head_];
     pending_writes_[pending_head_] = nullptr;
@@ -188,7 +196,7 @@ class CriticalSession {
 
   void HandleDecodeResult(const DecodeResult& decoded) noexcept {
     if (decoded.status == DecodeStatus::kProtocolError) {
-      should_reconnect_ = true;
+      TriggerReconnect(ConnectionError::kProtocolError);
       return;
     }
     if (decoded.status != DecodeStatus::kMessageReady) {
@@ -201,7 +209,7 @@ class CriticalSession {
         const DeliveryResult result = consumer_.Handle(decoded.view);
         if (result == DeliveryResult::kFatal ||
             result == DeliveryResult::kBackpressured) {
-          should_reconnect_ = true;
+          TriggerReconnect(ConnectionError::kSocketError);
           return;
         }
         ++metrics_.rx_messages;
@@ -211,11 +219,11 @@ class CriticalSession {
         awaiting_pong_ = false;
         return;
       case PayloadKind::kClose:
-        should_reconnect_ = true;
+        TriggerReconnect(ConnectionError::kPeerClosed);
         return;
       case PayloadKind::kPing:
         if (!EnqueueControlFrame(PayloadKind::kPong, decoded.view.payload)) {
-          should_reconnect_ = true;
+          TriggerReconnect(ConnectionError::kSocketError);
         }
         return;
     }
@@ -256,6 +264,7 @@ class CriticalSession {
   size_t pending_head_{0};
   size_t pending_count_{0};
   bool should_reconnect_{false};
+  ConnectionError last_error_{ConnectionError::kNone};
   bool awaiting_pong_{false};
   std::uint64_t last_ping_ns_{0};
 };

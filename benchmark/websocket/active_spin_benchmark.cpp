@@ -17,7 +17,7 @@ class FakeSession {
   void DriveRead() noexcept { ++iterations_; }
   void DriveWrite() noexcept {}
   void AdvanceHeartbeat(std::uint64_t) noexcept {}
-  bool ShouldReconnect() const noexcept { return iterations_ >= 1024; }
+  bool ShouldReconnect() const noexcept { return iterations_ >= 1; }
   std::uint64_t iterations() const noexcept { return iterations_; }
 
  private:
@@ -27,7 +27,7 @@ class FakeSession {
 }  // namespace
 
 int main() {
-  constexpr size_t kSamples = 2048;
+  constexpr size_t kSamples = 8192;
   RuntimePolicy policy{};
   policy.affinity_mode = AffinityMode::kNone;
   ActiveSpinLoop loop(policy);

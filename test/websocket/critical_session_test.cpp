@@ -45,6 +45,10 @@ class FakeTlsSocket final {
  public:
   ssize_t ReadSome(std::span<std::byte> buffer) noexcept {
     if (read_chunks_.empty()) {
+      if (eof_on_empty_) {
+        eof_on_empty_ = false;
+        return 0;
+      }
       errno = EAGAIN;
       return -1;
     }
@@ -74,6 +78,7 @@ class FakeTlsSocket final {
   size_t max_write_bytes_per_call_{0};
   bool eagain_after_partial_write_{true};
   bool pending_write_eagain_{false};
+  bool eof_on_empty_{false};
   std::vector<std::vector<std::byte>> read_chunks_{};
   std::vector<std::byte> written_{};
 };
@@ -165,7 +170,19 @@ int main() {
       config, backpressured_socket, arena, metrics);
   backpressured_session.SetConsumer(backpressured_consumer);
   backpressured_session.DriveRead();
-  if (!backpressured_session.ShouldReconnect()) {
+  if (!backpressured_session.ShouldReconnect() ||
+      backpressured_session.LastError() != ConnectionError::kSocketError) {
+    return 1;
+  }
+
+  FakeTlsSocket peer_closed_socket;
+  peer_closed_socket.eof_on_empty_ = true;
+  CriticalSession<FakeTlsSocket> peer_closed_session(
+      config, peer_closed_socket, arena, metrics);
+  peer_closed_session.SetConsumer(consumer);
+  peer_closed_session.DriveRead();
+  if (!peer_closed_session.ShouldReconnect() ||
+      peer_closed_session.LastError() != ConnectionError::kPeerClosed) {
     return 1;
   }
 
@@ -178,17 +195,11 @@ int main() {
   CriticalSession<FakeTlsSocket> heartbeat_session(
       heartbeat_config, heartbeat_socket, heartbeat_arena, heartbeat_metrics);
   heartbeat_session.SetConsumer(consumer);
-  auto* heartbeat_write = heartbeat_session.TryAcquirePreparedWrite();
-  if (heartbeat_write == nullptr) {
-    return 1;
-  }
-  heartbeat_write->encoded_size = 1;
-  heartbeat_write->storage[0] = std::byte{'x'};
-  if (heartbeat_session.CommitPreparedWrite(heartbeat_write) != SendStatus::kOk) {
-    return 1;
-  }
   heartbeat_session.AdvanceHeartbeat(2'000'000'000ULL);
-  if (!heartbeat_session.ShouldReconnect()) {
+  heartbeat_session.AdvanceHeartbeat(40'000'000'000ULL);
+  if (!heartbeat_session.ShouldReconnect() ||
+      heartbeat_session.LastError() != ConnectionError::kHeartbeatTimeout ||
+      heartbeat_metrics.heartbeat_timeouts != 1) {
     return 1;
   }
 

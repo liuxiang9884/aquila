@@ -2,6 +2,7 @@
 
 #include <CLI/CLI.hpp>
 
+#include <cinttypes>
 #include <cstdio>
 #include <cstddef>
 #include <string>
@@ -10,9 +11,15 @@ using namespace aquila::websocket;
 
 namespace {
 
+struct ProbeContext {
+  size_t bytes{0};
+  ConnectionPhase phase{ConnectionPhase::kDisconnected};
+  ConnectionError error{ConnectionError::kNone};
+};
+
 DeliveryResult CountPayload(void* context, const MessageView& view) noexcept {
-  auto* bytes = static_cast<size_t*>(context);
-  *bytes += view.payload.size();
+  auto* probe = static_cast<ProbeContext*>(context);
+  probe->bytes += view.payload.size();
   return DeliveryResult::kAccepted;
 }
 
@@ -72,6 +79,18 @@ void PrintError(void*, ConnectionError error) noexcept {
   std::fprintf(stderr, "error=%s\n", ToString(error));
 }
 
+void RecordState(void* context, ConnectionPhase phase) noexcept {
+  auto* probe = static_cast<ProbeContext*>(context);
+  probe->phase = phase;
+  PrintState(nullptr, phase);
+}
+
+void RecordError(void* context, ConnectionError error) noexcept {
+  auto* probe = static_cast<ProbeContext*>(context);
+  probe->error = error;
+  PrintError(nullptr, error);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -102,10 +121,19 @@ int main(int argc, char** argv) {
   config.runtime_policy.affinity_mode =
       cpu >= 0 ? AffinityMode::kBestEffort : AffinityMode::kNone;
 
-  size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &CountPayload};
+  ProbeContext probe{};
+  MessageConsumer consumer{&probe, &CountPayload};
   GateWsClient client(config, consumer);
-  client.SetStateHandler(nullptr, &PrintState);
-  client.SetErrorHandler(nullptr, &PrintError);
-  return client.Start() ? 0 : 1;
+  client.SetStateHandler(&probe, &RecordState);
+  client.SetErrorHandler(&probe, &RecordError);
+  const bool ok = client.Start();
+  const Metrics metrics = client.SnapshotMetrics();
+  std::fprintf(stderr,
+               "result=%s final_state=%s final_error=%s rx_bytes=%zu "
+               "tx_bytes=%" PRIu64 " rx_messages=%" PRIu64
+               " tx_messages=%" PRIu64 " heartbeat_timeouts=%" PRIu64 "\n",
+               ok ? "ok" : "failed", ToString(probe.phase), ToString(probe.error),
+               probe.bytes, metrics.tx_bytes, metrics.rx_messages,
+               metrics.tx_messages, metrics.heartbeat_timeouts);
+  return ok ? 0 : 1;
 }
