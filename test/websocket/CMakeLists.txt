@@ -75,3 +75,16 @@ add_test(
     NAME websocket_tls_socket_test
     COMMAND $<TARGET_FILE:websocket_tls_socket_test>
 )
+
+add_executable(websocket_critical_session_test
+    critical_session_test.cpp
+)
+
+target_link_libraries(websocket_critical_session_test
+    PRIVATE aquila_gate_ws_core
+)
+
+add_test(
+    NAME websocket_critical_session_test
+    COMMAND $<TARGET_FILE:websocket_critical_session_test>
+)
