@@ -5,6 +5,8 @@
 
 namespace aquila::websocket {
 
+// Thin connection state container only; it records phase/error but does not
+// validate transitions or drive reconnect/close policy.
 class StateMachine {
  public:
   ConnectionPhase phase() const noexcept { return phase_; }
@@ -13,6 +15,8 @@ class StateMachine {
 
   void Enter(ConnectionPhase phase) noexcept {
     phase_ = phase;
+    // A successful transition into active state explicitly clears the last
+    // sticky error; other phase transitions preserve prior failure context.
     if (phase_ == ConnectionPhase::kActive) {
       last_error_ = ConnectionError::kNone;
     }
