@@ -32,8 +32,31 @@ $HOME/vcpkg/vcpkg install \
   --triplet x64-linux
 ```
 
-After dependencies are installed, configure the project with:
+After dependencies are installed, build the debug tree with:
 
 ```bash
-cmake -S . -B build
+./build.sh debug
 ```
+
+## WebSocket Microbenchmarks
+
+Build the optimized tree before taking timing numbers:
+
+```bash
+./build.sh release
+```
+
+The minimal WebSocket HFT slice builds three targeted microbenchmark binaries:
+
+```bash
+cmake --build build/release --target \
+  prepared_write_benchmark \
+  frame_codec_benchmark \
+  active_spin_benchmark -j8
+```
+
+You can run them directly from `build/release/benchmark/websocket/`. Each binary
+prints `min/p50/p99/p99.9/max` plus runtime metadata such as CPU affinity,
+scheduling policy, TLS mode, and endpoint class. These are targeted local
+microbenchmarks for the single-connection GateIO `wss` path, not full
+exchange-to-strategy latency reports.

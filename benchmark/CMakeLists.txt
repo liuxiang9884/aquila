@@ -1,1 +1,1 @@
-# Placeholder for benchmark targets.
+add_subdirectory(websocket)
