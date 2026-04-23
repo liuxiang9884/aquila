@@ -74,6 +74,30 @@ inline bool ContainsTokenIgnoreCase(std::string_view header_value,
   return false;
 }
 
+inline bool HasSwitchingProtocolsStatus(std::string_view status_line) noexcept {
+  constexpr std::string_view kHttp11Prefix = "HTTP/1.1 ";
+  constexpr std::string_view kHttp10Prefix = "HTTP/1.0 ";
+
+  std::string_view status_code{};
+  if (status_line.rfind(kHttp11Prefix, 0) == 0) {
+    status_code = status_line.substr(kHttp11Prefix.size(), 3);
+    if (status_line.size() < kHttp11Prefix.size() + 4) {
+      return false;
+    }
+    return status_code == "101" &&
+           status_line[kHttp11Prefix.size() + 3] == ' ';
+  }
+  if (status_line.rfind(kHttp10Prefix, 0) == 0) {
+    status_code = status_line.substr(kHttp10Prefix.size(), 3);
+    if (status_line.size() < kHttp10Prefix.size() + 4) {
+      return false;
+    }
+    return status_code == "101" &&
+           status_line[kHttp10Prefix.size() + 3] == ' ';
+  }
+  return false;
+}
+
 inline bool ComputeAcceptKey(std::string_view client_key,
                              std::array<char, 64>& output,
                              std::string_view& accept_key) noexcept {
@@ -147,8 +171,7 @@ inline bool ValidateServerHandshake(std::string_view response,
     return false;
   }
   const std::string_view status_line = response.substr(0, status_end);
-  if ((status_line.rfind("HTTP/1.1 101", 0) != 0) &&
-      (status_line.rfind("HTTP/1.0 101", 0) != 0)) {
+  if (!detail::HasSwitchingProtocolsStatus(status_line)) {
     return false;
   }
 
