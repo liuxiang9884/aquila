@@ -36,3 +36,42 @@ add_test(
     NAME websocket_prepared_write_test
     COMMAND $<TARGET_FILE:websocket_prepared_write_test>
 )
+
+add_executable(websocket_handshake_test
+    handshake_test.cpp
+)
+
+target_link_libraries(websocket_handshake_test
+    PRIVATE aquila_gate_ws_core
+)
+
+add_test(
+    NAME websocket_handshake_test
+    COMMAND $<TARGET_FILE:websocket_handshake_test>
+)
+
+add_executable(websocket_frame_codec_test
+    frame_codec_test.cpp
+)
+
+target_link_libraries(websocket_frame_codec_test
+    PRIVATE aquila_gate_ws_core
+)
+
+add_test(
+    NAME websocket_frame_codec_test
+    COMMAND $<TARGET_FILE:websocket_frame_codec_test>
+)
+
+add_executable(websocket_tls_socket_test
+    tls_socket_test.cpp
+)
+
+target_link_libraries(websocket_tls_socket_test
+    PRIVATE aquila_gate_ws_core
+)
+
+add_test(
+    NAME websocket_tls_socket_test
+    COMMAND $<TARGET_FILE:websocket_tls_socket_test>
+)
