@@ -88,3 +88,16 @@ add_test(
     NAME websocket_critical_session_test
     COMMAND $<TARGET_FILE:websocket_critical_session_test>
 )
+
+add_executable(websocket_gate_loopback_integration_test
+    gate_loopback_integration_test.cpp
+)
+
+target_link_libraries(websocket_gate_loopback_integration_test
+    PRIVATE aquila_gate_ws_core
+)
+
+add_test(
+    NAME websocket_gate_loopback_integration_test
+    COMMAND $<TARGET_FILE:websocket_gate_loopback_integration_test>
+)

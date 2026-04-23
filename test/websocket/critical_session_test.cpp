@@ -169,5 +169,28 @@ int main() {
     return 1;
   }
 
+  ConnectionConfig heartbeat_config = config;
+  heartbeat_config.prepared_write_slots = 1;
+  PreparedWriteArena heartbeat_arena(heartbeat_config.prepared_write_slots,
+                                     heartbeat_config.prepared_write_bytes);
+  Metrics heartbeat_metrics{};
+  FakeTlsSocket heartbeat_socket;
+  CriticalSession<FakeTlsSocket> heartbeat_session(
+      heartbeat_config, heartbeat_socket, heartbeat_arena, heartbeat_metrics);
+  heartbeat_session.SetConsumer(consumer);
+  auto* heartbeat_write = heartbeat_session.TryAcquirePreparedWrite();
+  if (heartbeat_write == nullptr) {
+    return 1;
+  }
+  heartbeat_write->encoded_size = 1;
+  heartbeat_write->storage[0] = std::byte{'x'};
+  if (heartbeat_session.CommitPreparedWrite(heartbeat_write) != SendStatus::kOk) {
+    return 1;
+  }
+  heartbeat_session.AdvanceHeartbeat(2'000'000'000ULL);
+  if (!heartbeat_session.ShouldReconnect()) {
+    return 1;
+  }
+
   return 0;
 }
