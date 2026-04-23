@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #if defined(__linux__)
+#include <pthread.h>
 #include <sched.h>
 #include <sys/mman.h>
 #endif
@@ -39,6 +40,7 @@ inline void PrefaultThreadStack() noexcept {
 #if defined(__linux__)
   constexpr size_t kPrefaultBytes = 64 * 1024;
   constexpr size_t kPageBytes = 4096;
+  // Best-effort only: touch a fixed stack window, not the full thread stack.
   alignas(64) std::array<std::byte, kPrefaultBytes> buffer{};
   volatile std::byte* prefault_bytes = buffer.data();
   for (size_t offset = 0; offset < buffer.size(); offset += kPageBytes) {
@@ -53,28 +55,35 @@ inline bool ApplyRuntimePolicy(const RuntimePolicy& policy) noexcept {
   }
 
 #if defined(__linux__)
-  if (policy.affinity_mode != AffinityMode::kNone && policy.io_cpu_id >= 0) {
-    if (policy.io_cpu_id >= CPU_SETSIZE) {
-      return policy.affinity_mode != AffinityMode::kRequired;
-    }
-
-    cpu_set_t cpu_set;
-    CPU_ZERO(&cpu_set);
-    CPU_SET(policy.io_cpu_id, &cpu_set);
-    if (::sched_setaffinity(0, sizeof(cpu_set), &cpu_set) != 0 &&
-        policy.affinity_mode == AffinityMode::kRequired) {
-      return false;
-    }
+  if (policy.io_cpu_id >= CPU_SETSIZE &&
+      policy.affinity_mode == AffinityMode::kRequired) {
+    return false;
   }
 
   if (policy.lock_memory && ::mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
     return false;
   }
-#endif
 
   if (policy.prefault_stack) {
     PrefaultThreadStack();
   }
+
+  if (policy.affinity_mode != AffinityMode::kNone && policy.io_cpu_id >= 0 &&
+      policy.io_cpu_id < CPU_SETSIZE) {
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(policy.io_cpu_id, &cpu_set);
+    if (::pthread_setaffinity_np(::pthread_self(), sizeof(cpu_set), &cpu_set) !=
+            0 &&
+        policy.affinity_mode == AffinityMode::kRequired) {
+      return false;
+    }
+  }
+#else
+  if (policy.prefault_stack) {
+    PrefaultThreadStack();
+  }
+#endif
 
   return true;
 }
