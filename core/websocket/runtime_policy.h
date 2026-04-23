@@ -1,15 +1,17 @@
 #ifndef AQUILA_CORE_WEBSOCKET_RUNTIME_POLICY_H_
 #define AQUILA_CORE_WEBSOCKET_RUNTIME_POLICY_H_
 
+#include <cstdint>
+
 namespace aquila::websocket {
 
-enum class AffinityMode {
+enum class AffinityMode : std::uint8_t {
   kNone,
   kBestEffort,
   kRequired,
 };
 
-enum class SchedulingPolicy {
+enum class SchedulingPolicy : std::uint8_t {
   kOther,
   kFifo,
   kRoundRobin,
@@ -23,7 +25,7 @@ struct RuntimePolicy {
   bool lock_memory = true;
   bool prefault_stack = true;
   bool active_spin = true;
-  int spin_iterations_before_clock_check = 4096;
+  std::uint32_t spin_iterations_before_clock_check = 4096;
 };
 
 }  // namespace aquila::websocket

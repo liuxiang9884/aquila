@@ -3,12 +3,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "core/websocket/runtime_policy.h"
 
 namespace aquila::websocket {
 
-enum class ConnectionPhase {
+enum class ConnectionPhase : std::uint8_t {
   kDisconnected,
   kResolving,
   kTcpConnecting,
@@ -20,7 +21,7 @@ enum class ConnectionPhase {
   kClosed,
 };
 
-enum class ConnectionError {
+enum class ConnectionError : std::uint8_t {
   kNone,
   kResolveFailure,
   kSocketError,
@@ -32,7 +33,7 @@ enum class ConnectionError {
   kPeerClosed,
 };
 
-enum class PayloadKind {
+enum class PayloadKind : std::uint8_t {
   kText,
   kBinary,
   kPing,
@@ -40,13 +41,13 @@ enum class PayloadKind {
   kClose,
 };
 
-enum class DeliveryResult {
+enum class DeliveryResult : std::uint8_t {
   kAccepted,
   kBackpressured,
   kFatal,
 };
 
-enum class SendStatus {
+enum class SendStatus : std::uint8_t {
   kOk,
   kNoPreparedWriteSlot,
   kWriteUnavailable,
@@ -55,9 +56,9 @@ enum class SendStatus {
 };
 
 struct ConnectionConfig {
-  const char* host = "fx-ws.gateio.ws";
-  const char* service = "443";
-  const char* target = "/v4/ws/usdt";
+  std::string host = "fx-ws.gateio.ws";
+  std::string service = "443";
+  std::string target = "/v4/ws/usdt";
   bool enable_tls = true;
   size_t read_buffer_bytes = size_t{1} << 20;
   size_t frame_buffer_bytes = size_t{1} << 20;

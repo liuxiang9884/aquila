@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
+#include <type_traits>
 
 namespace ws = aquila::websocket;
 
@@ -26,6 +28,29 @@ constexpr bool kEnumValueExists = true;
 int main() {
   static_assert(kEnumValueExists<ws::ConnectionPhase::kActive>);
   static_assert(kEnumValueExists<ws::SchedulingPolicy::kFifo>);
+  static_assert(
+      std::is_same_v<std::underlying_type_t<ws::ConnectionPhase>, std::uint8_t>);
+  static_assert(
+      std::is_same_v<std::underlying_type_t<ws::ConnectionError>, std::uint8_t>);
+  static_assert(
+      std::is_same_v<std::underlying_type_t<ws::PayloadKind>, std::uint8_t>);
+  static_assert(
+      std::is_same_v<std::underlying_type_t<ws::DeliveryResult>, std::uint8_t>);
+  static_assert(
+      std::is_same_v<std::underlying_type_t<ws::SendStatus>, std::uint8_t>);
+  static_assert(
+      std::is_same_v<std::underlying_type_t<ws::AffinityMode>, std::uint8_t>);
+  static_assert(std::is_same_v<std::underlying_type_t<ws::SchedulingPolicy>,
+                               std::uint8_t>);
+  static_assert(std::is_same_v<decltype(ws::ConnectionConfig{}.host),
+                               std::string>);
+  static_assert(std::is_same_v<decltype(ws::ConnectionConfig{}.service),
+                               std::string>);
+  static_assert(std::is_same_v<decltype(ws::ConnectionConfig{}.target),
+                               std::string>);
+  static_assert(std::is_same_v<decltype(ws::RuntimePolicy{}
+                                            .spin_iterations_before_clock_check),
+                               std::uint32_t>);
 
   const ws::ConnectionConfig config;
   if (!config.enable_tls || !config.runtime_policy.lock_memory ||
