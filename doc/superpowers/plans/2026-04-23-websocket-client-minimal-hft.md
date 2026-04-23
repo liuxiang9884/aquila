@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a single critical-path `wss` client specialized for the GateIO USDT feed at `wss://fx-ws.gateio.ws/v4/ws/usdt`, optimizing for the lowest possible latency and jitter rather than generality, CPU efficiency, or memory efficiency.
+**Goal:** Build a single critical-path `wss` client specialized for the GateIO USDT feed at `wss://fx-ws.gateio.ws/v4/ws/usdt`, with a user-driven core that leaves `read/write/busy loop` scheduling to the caller and an optional wrapper that adds callback delivery and a default runtime policy.
 
-**Architecture:** The design is intentionally not a general-purpose WebSocket client. One critical connection owns one dedicated owner thread and one dedicated CPU core. Cold-path states such as resolve, connect, TLS handshake, WebSocket handshake, and reconnect backoff may use `epoll/eventfd/timerfd`, but the `Active` state runs inside a dedicated spin loop with pinned affinity, locked memory, connection-local preallocated buffers, prepared-write submission through an SPSC ring, and owner-local heartbeat/reconnect logic.
+**Architecture:** The design is intentionally not a general-purpose WebSocket client. `Layer 1` is a user-driven core: it owns handshake, TLS/WS protocol state, prepared-write storage, read/write advancement, and timeout/state transitions, but it does not create threads or decide how the caller schedules `DriveRead()` / `DriveWrite()` / busy looping. `Layer 2` is a thin wrapper around that core: it may create one dedicated owner thread, apply CPU affinity, run a default active spin loop, and expose callback-style message delivery. The wrapper must stay a thin policy layer and must not pollute the core API.
 
 **Tech Stack:** C++20, CMake, POSIX sockets, `epoll`, `eventfd`, `timerfd`, `pthread_setaffinity_np`, `sched_setscheduler`, `mlockall`, OpenSSL, `ctest`, local TLS loopback harnesses, GateIO public probe validation, targeted microbenchmarks.
 
@@ -14,7 +14,7 @@
 
 **Latency Rule:** When latency or jitter conflicts with CPU consumption, memory footprint, or implementation generality, choose the lower-jitter path unless it would break correctness or recoverability.
 
-**No-Generality Rule:** Do not introduce generic transport interfaces, generic multi-exchange client layers, generic callback hierarchies, or separate control-plane threads in this version. This plan is for one critical low-jitter `wss` client, not a reusable framework.
+**No-Generality Rule:** Do not introduce generic transport interfaces, generic multi-exchange client layers, or reusable callback frameworks. This plan is for one critical low-jitter GateIO `wss` client. A thin callback wrapper above the user-driven core is allowed, but it must remain Gate-specific and must not reverse-control the core design.
 
 ---
 
@@ -22,14 +22,15 @@
 
 - In scope:
   - one critical `wss` client connection
-  - one dedicated owner thread per critical connection
-  - owner-thread CPU affinity and optional real-time scheduling
+  - one user-driven core session with no internally created thread
+  - one optional callback wrapper with at most one dedicated owner thread
+  - wrapper-side CPU affinity and optional real-time scheduling
   - `mlockall` and stack prefault for jitter reduction
-  - `epoll` only for cold-path lifecycle states
-  - `Active` state pure spin loop
+  - user-controlled `read/write/busy loop` scheduling in `Layer 1`
+  - wrapper-provided default active spin loop in `Layer 2`
   - connection-local preallocated read, frame, and write memory
-  - prepared-write submission through SPSC ring
-  - owner-local heartbeat, timeout, degrade, and reconnect logic
+  - session-local heartbeat, timeout, degrade, and reconnect logic inside the core
+  - callback-based message delivery in the wrapper
   - GateIO public probe validation
   - loopback TLS echo harnesses
   - p50/p99/p99.9 latency benchmarks
@@ -40,7 +41,7 @@
   - separate control-plane thread
   - server-side WebSocket support
   - `io_uring` in v1
-  - business JSON DOM parsing in the owner thread
+  - business JSON DOM parsing in the hot path
 
 ## File Map
 
@@ -62,14 +63,13 @@
 - Create: `core/websocket/runtime_policy.h`
 - Create: `core/websocket/message_view.h`
 - Create: `core/websocket/prepared_write.h`
-- Create: `core/websocket/slot_ring.h`
 - Create: `core/websocket/state_machine.h`
 - Create: `core/websocket/handshake.h`
 - Create: `core/websocket/frame_codec.h`
 - Create: `core/websocket/tls_socket.h`
 - Create: `core/websocket/cold_path_loop.h`
-- Create: `core/websocket/active_spin_loop.h`
 - Create: `core/websocket/critical_session.h`
+- Create: `core/websocket/active_spin_loop.h`
 - Create: `core/websocket/gate_ws_client.h`
 - Create: `core/websocket/metrics.h`
 
@@ -77,7 +77,7 @@
 
 - Create: `test/websocket/types_test.cpp`
 - Create: `test/websocket/runtime_policy_test.cpp`
-- Create: `test/websocket/slot_ring_test.cpp`
+- Create: `test/websocket/prepared_write_test.cpp`
 - Create: `test/websocket/handshake_test.cpp`
 - Create: `test/websocket/frame_codec_test.cpp`
 - Create: `test/websocket/tls_socket_test.cpp`
@@ -274,7 +274,13 @@ enum class ConnectionError : uint8_t {
 
 enum class PayloadKind : uint8_t { kText, kBinary, kPing, kPong, kClose };
 enum class DeliveryResult : uint8_t { kAccepted, kBackpressured, kFatal };
-enum class SendStatus : uint8_t { kOk, kRingFull, kWriteUnavailable, kEncodeFailed, kPayloadTooLarge };
+enum class SendStatus : uint8_t {
+    kOk,
+    kNoPreparedWriteSlot,
+    kWriteUnavailable,
+    kEncodeFailed,
+    kPayloadTooLarge
+};
 
 struct ConnectionConfig {
     std::string host{"fx-ws.gateio.ws"};
@@ -285,7 +291,6 @@ struct ConnectionConfig {
     size_t frame_buffer_bytes{1U << 20};
     size_t prepared_write_slots{2048};
     size_t prepared_write_bytes{4096};
-    size_t submit_ring_capacity{4096};
     uint32_t heartbeat_interval_ms{5000};
     uint32_t heartbeat_timeout_ms{15000};
     RuntimePolicy runtime_policy{};
@@ -349,16 +354,15 @@ git add CMakeLists.txt cmake/third_party.cmake core/CMakeLists.txt core/websocke
 git commit -m "core: scaffold critical gate ws contracts"
 ```
 
-## Task 2: Implement Runtime Pinning And Connection-Local Write Primitives
+## Task 2: Implement Runtime Pinning And Connection-Local Write Slots
 
 **Files:**
 - Create: `core/websocket/prepared_write.h`
-- Create: `core/websocket/slot_ring.h`
 - Create: `test/websocket/runtime_policy_test.cpp`
-- Create: `test/websocket/slot_ring_test.cpp`
+- Create: `test/websocket/prepared_write_test.cpp`
 - Modify: `test/websocket/CMakeLists.txt`
 
-- [ ] **Step 1: Write failing tests for runtime policy and SPSC submission**
+- [ ] **Step 1: Write failing tests for runtime policy and prepared-write slots**
 
 ```cpp
 // test/websocket/runtime_policy_test.cpp
@@ -380,30 +384,29 @@ int main() {
 ```
 
 ```cpp
-// test/websocket/slot_ring_test.cpp
+// test/websocket/prepared_write_test.cpp
 #include "core/websocket/prepared_write.h"
-#include "core/websocket/slot_ring.h"
 
 using namespace aquila::websocket;
 
 int main() {
-    SlotRing<int> ring(2);
-    if (!ring.TryPush(7)) return 1;
-    if (!ring.TryPush(9)) return 1;
-    if (ring.TryPush(11)) return 1;
-    auto first = ring.TryPop();
-    auto second = ring.TryPop();
-    if (!first.has_value() || !second.has_value()) return 1;
-    return *first == 7 && *second == 9 ? 0 : 1;
+    PreparedWriteArena arena(2, 64);
+    auto* first = arena.TryAcquire();
+    auto* second = arena.TryAcquire();
+    auto* third = arena.TryAcquire();
+    if (first == nullptr || second == nullptr) return 1;
+    if (third != nullptr) return 1;
+    arena.Release(first);
+    return arena.TryAcquire() != nullptr ? 0 : 1;
 }
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `./build.sh debug && ctest --test-dir build/debug -R "websocket_(runtime_policy|slot_ring)_test" -V`
-Expected: FAIL because runtime helpers and ring primitives do not exist yet.
+Run: `./build.sh debug && ctest --test-dir build/debug -R "websocket_(runtime_policy|prepared_write)_test" -V`
+Expected: FAIL because runtime helpers and prepared-write primitives do not exist yet.
 
-- [ ] **Step 3: Add runtime policy execution and write submission storage**
+- [ ] **Step 3: Add runtime policy execution and write-slot storage**
 
 ```cpp
 // core/websocket/prepared_write.h
@@ -426,20 +429,6 @@ class PreparedWriteArena {
 ```
 
 ```cpp
-// core/websocket/slot_ring.h
-namespace aquila::websocket {
-template <typename T>
-class SlotRing {
-  public:
-    explicit SlotRing(size_t capacity);
-    bool TryPush(const T& value) noexcept;
-    std::optional<T> TryPop() noexcept;
-    size_t Size() const noexcept;
-};
-}  // namespace aquila::websocket
-```
-
-```cpp
 // core/websocket/runtime_policy.h
 namespace aquila::websocket {
 bool ApplyRuntimePolicy(const RuntimePolicy& policy) noexcept;
@@ -449,16 +438,16 @@ void PrefaultThreadStack() noexcept;
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `./build.sh debug && ctest --test-dir build/debug -R "websocket_(runtime_policy|slot_ring)_test" -V`
-Expected: PASS, with `AffinityMode::kNone` succeeding and SPSC ring preserving FIFO order.
+Run: `./build.sh debug && ctest --test-dir build/debug -R "websocket_(runtime_policy|prepared_write)_test" -V`
+Expected: PASS, with `AffinityMode::kNone` succeeding and prepared-write slots reusing preallocated storage.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/websocket/prepared_write.h core/websocket/slot_ring.h \
-  test/websocket/runtime_policy_test.cpp test/websocket/slot_ring_test.cpp \
+git add core/websocket/prepared_write.h \
+  test/websocket/runtime_policy_test.cpp test/websocket/prepared_write_test.cpp \
   test/websocket/CMakeLists.txt
-git commit -m "core: add runtime pinning helpers and write ring"
+git commit -m "core: add runtime pinning helpers and write slots"
 ```
 
 ## Task 3: Implement Handshake, Frame Codec, And Specialized TLS Socket
@@ -606,18 +595,17 @@ git add core/websocket/handshake.h core/websocket/frame_codec.h core/websocket/t
 git commit -m "core: add gate ws handshake codec and tls socket"
 ```
 
-## Task 4: Implement The Cold-Path Loop And Active Spin Session
+## Task 4: Implement The User-Driven Core Session
 
 **Files:**
 - Create: `core/websocket/metrics.h`
 - Create: `core/websocket/state_machine.h`
 - Create: `core/websocket/cold_path_loop.h`
-- Create: `core/websocket/active_spin_loop.h`
 - Create: `core/websocket/critical_session.h`
 - Create: `test/websocket/critical_session_test.cpp`
 - Modify: `test/websocket/CMakeLists.txt`
 
-- [ ] **Step 1: Write failing tests for prepared-write hot path and owner-local recovery**
+- [ ] **Step 1: Write failing tests for user-driven read/write advancement**
 
 ```cpp
 // test/websocket/critical_session_test.cpp
@@ -650,13 +638,12 @@ class FakeTlsSocket final {
 int main() {
     ConnectionConfig config{};
     PreparedWriteArena arena(4, 128);
-    SlotRing<PreparedWrite*> submit_ring(4);
     Metrics metrics{};
     size_t bytes = 0;
     MessageConsumer consumer{&bytes, &RecordMessage};
     FakeTlsSocket socket;
 
-    CriticalSession<FakeTlsSocket> session(config, socket, arena, submit_ring, metrics);
+    CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
     session.SetConsumer(consumer);
 
     auto* write = session.TryAcquirePreparedWrite();
@@ -664,9 +651,9 @@ int main() {
     std::copy_n(std::as_bytes(std::span{"tick", 4}).begin(), 4, write->storage.begin());
     write->encoded_size = 4;
     write->kind = PayloadKind::kText;
-    if (session.SubmitPrepared(write) != SendStatus::kOk) return 1;
+    if (session.CommitPreparedWrite(write) != SendStatus::kOk) return 1;
 
-    session.DrainWrites();
+    session.DriveWrite();
     return socket.written_.size() == 4 ? 0 : 1;
 }
 ```
@@ -674,9 +661,9 @@ int main() {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_critical_session_test -V`
-Expected: FAIL because the low-jitter owner session does not exist yet.
+Expected: FAIL because the user-driven core session does not exist yet.
 
-- [ ] **Step 3: Add the owner-local session, cold path, and spin loop**
+- [ ] **Step 3: Add the user-driven core session and cold-path driver**
 
 ```cpp
 // core/websocket/metrics.h
@@ -688,7 +675,7 @@ struct Metrics {
     uint64_t tx_messages{0};
     uint64_t reconnects{0};
     uint64_t spin_iterations{0};
-    uint64_t write_ring_high_watermark{0};
+    uint64_t prepared_write_high_watermark{0};
     uint64_t heartbeat_timeouts{0};
 };
 }  // namespace aquila::websocket
@@ -723,24 +710,6 @@ class ColdPathLoop {
 ```
 
 ```cpp
-// core/websocket/active_spin_loop.h
-namespace aquila::websocket {
-inline void CpuRelax() noexcept {
-#if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-#endif
-}
-
-class ActiveSpinLoop {
-  public:
-    explicit ActiveSpinLoop(const RuntimePolicy& runtime_policy) noexcept;
-    template <typename SessionT>
-    void Run(SessionT& session) noexcept;
-};
-}  // namespace aquila::websocket
-```
-
-```cpp
 // core/websocket/critical_session.h
 namespace aquila::websocket {
 template <typename TlsSocketT>
@@ -749,14 +718,16 @@ class CriticalSession {
     CriticalSession(const ConnectionConfig& config,
                     TlsSocketT& tls_socket,
                     PreparedWriteArena& prepared_write_arena,
-                    SlotRing<PreparedWrite*>& submit_ring,
                     Metrics& metrics) noexcept;
 
     void SetConsumer(MessageConsumer consumer) noexcept;
     PreparedWrite* TryAcquirePreparedWrite() noexcept;
-    SendStatus SubmitPrepared(PreparedWrite* write) noexcept;
-    void DrainWrites() noexcept;
-    void PollReads() noexcept;
+    SendStatus CommitPreparedWrite(PreparedWrite* write) noexcept;
+    void CancelPreparedWrite(PreparedWrite* write) noexcept;
+    void DriveWrite() noexcept;
+    void DriveRead() noexcept;
+    bool WantsWrite() const noexcept;
+    bool WantsRead() const noexcept;
     void AdvanceHeartbeat(uint64_t now_ns) noexcept;
     bool ShouldReconnect() const noexcept;
 };
@@ -772,22 +743,23 @@ Expected: PASS.
 
 ```bash
 git add core/websocket/metrics.h core/websocket/state_machine.h \
-  core/websocket/cold_path_loop.h core/websocket/active_spin_loop.h \
+  core/websocket/cold_path_loop.h \
   core/websocket/critical_session.h test/websocket/critical_session_test.cpp \
   test/websocket/CMakeLists.txt
-git commit -m "core: add cold path and active spin session"
+git commit -m "core: add user-driven gate ws core"
 ```
 
-## Task 5: Implement The Gate-Specific Client And Public Probe
+## Task 5: Implement The Callback Wrapper, Default Spin Runtime, And Public Probe
 
 **Files:**
+- Create: `core/websocket/active_spin_loop.h`
 - Create: `core/websocket/gate_ws_client.h`
 - Create: `test/websocket/gate_loopback_integration_test.cpp`
 - Create: `tools/websocket_probe.cpp`
 - Modify: `tools/CMakeLists.txt`
 - Modify: `test/websocket/CMakeLists.txt`
 
-- [ ] **Step 1: Write failing tests for the specialized client entry point**
+- [ ] **Step 1: Write failing tests for the callback wrapper entry point**
 
 ```cpp
 // test/websocket/gate_loopback_integration_test.cpp
@@ -815,20 +787,42 @@ int main() {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_gate_loopback_integration_test -V`
-Expected: FAIL because the specialized Gate client does not exist yet.
+Expected: FAIL because the callback wrapper does not exist yet.
 
-- [ ] **Step 3: Add the Gate-specific client and probe tool**
+- [ ] **Step 3: Add the callback wrapper, default spin runtime, and probe tool**
+
+```cpp
+// core/websocket/active_spin_loop.h
+namespace aquila::websocket {
+inline void CpuRelax() noexcept {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#endif
+}
+
+class ActiveSpinLoop {
+  public:
+    explicit ActiveSpinLoop(const RuntimePolicy& runtime_policy) noexcept;
+    template <typename SessionT>
+    void Run(SessionT& session) noexcept;
+};
+}  // namespace aquila::websocket
+```
 
 ```cpp
 // core/websocket/gate_ws_client.h
 namespace aquila::websocket {
+using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
+using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
+
 class GateWsClient {
   public:
     GateWsClient(ConnectionConfig config, MessageConsumer consumer) noexcept;
     bool PrepareRuntimeOnly() noexcept;
+    void SetStateHandler(void* context, StateHandler handler) noexcept;
+    void SetErrorHandler(void* context, ErrorHandler handler) noexcept;
     bool Start() noexcept;
-    PreparedWrite* TryAcquirePreparedWrite() noexcept;
-    SendStatus SubmitPrepared(PreparedWrite* write) noexcept;
+    CriticalSession<TlsSocket>& Core() noexcept;
     void Stop() noexcept;
     Metrics SnapshotMetrics() const noexcept;
 };
@@ -903,9 +897,10 @@ Expected: Complete `TLS -> WS` handshake against `wss://fx-ws.gateio.ws/v4/ws/us
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/websocket/gate_ws_client.h test/websocket/gate_loopback_integration_test.cpp \
+git add core/websocket/active_spin_loop.h core/websocket/gate_ws_client.h \
+  test/websocket/gate_loopback_integration_test.cpp \
   tools/websocket_probe.cpp tools/CMakeLists.txt test/websocket/CMakeLists.txt
-git commit -m "core: add specialized gate ws client and probe"
+git commit -m "core: add gate ws callback wrapper and probe"
 ```
 
 ## Task 6: Add Tail-Latency Benchmarks And Final Verification Gates
@@ -1032,8 +1027,8 @@ using namespace aquila::websocket;
 namespace {
 class FakeSession {
   public:
-    void PollReads() noexcept {}
-    void DrainWrites() noexcept {}
+    void DriveRead() noexcept {}
+    void DriveWrite() noexcept {}
     void AdvanceHeartbeat(uint64_t) noexcept {}
     bool ShouldReconnect() const noexcept { return true; }
 };
@@ -1077,7 +1072,8 @@ Expected: Record owner-loop iteration latency with the chosen runtime policy.
 README additions required by this plan:
 - This client is intentionally specialized for one critical GateIO `wss` connection.
 - Lowest latency and jitter are the primary goals.
-- The recommended deployment model is one owner thread bound to one dedicated CPU core.
+- `Layer 1` is a user-driven core and does not create threads or own the caller's busy loop.
+- `Layer 2` is an optional callback wrapper and the recommended default deployment model is one owner thread bound to one dedicated CPU core.
 - `mlockall`, stack prefault, and optional real-time scheduling are part of the jitter-reduction path.
 - Benchmark reports must explicitly list CPU affinity, scheduling policy, TLS enabled, and whether the run used local loopback or the public GateIO endpoint.
 ```
@@ -1096,11 +1092,12 @@ git commit -m "benchmark: add critical gate ws latency verification"
 ## Spec Coverage Check
 
 - Single critical connection only: covered by Scope Decisions and Task 5.
-- Dedicated owner core and low-jitter runtime policy: covered by Task 1 and Task 2.
+- User-driven core plus thin callback wrapper: covered by Architecture and Task 4 / Task 5.
+- Dedicated owner core and low-jitter runtime policy: covered by Task 1, Task 2, and Task 5.
 - No generic client or generic transport abstraction: covered by No-Generality Rule and the file map.
-- `epoll` only on cold path, spin loop on hot path: covered by Architecture and Task 4.
-- Connection-local preallocated memory and prepared-write submit ring: covered by Task 2 and Task 4.
-- Owner-local heartbeat and reconnect logic: covered by Task 4.
+- `epoll` only on cold path, wrapper-controlled spin loop on hot path: covered by Architecture and Task 4 / Task 5.
+- Connection-local preallocated memory and prepared-write slots: covered by Task 2 and Task 4.
+- Session-local heartbeat and reconnect logic: covered by Task 4.
 - GateIO live endpoint validation: covered by Task 5 and Task 6.
 - Tail-latency benchmark evidence: covered by Task 6.
 
@@ -1111,7 +1108,7 @@ git commit -m "benchmark: add critical gate ws latency verification"
 
 ## Execution Notes
 
-- Do not re-introduce generic transport or callback abstractions while implementing this plan.
+- Do not re-introduce generic transport abstraction or a reusable callback framework while implementing this plan.
 - Do not move heartbeat, timeout, or reconnect decisions to a separate thread.
 - Do not accept heap fallback on prepared-write slot exhaustion.
 - Do not claim jitter improvement without fresh p50/p99/p99.9 evidence.
