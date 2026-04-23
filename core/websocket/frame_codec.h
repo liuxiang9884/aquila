@@ -4,10 +4,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <optional>
 #include <span>
 #include <vector>
+
+#include <openssl/rand.h>
 
 #include "core/websocket/message_view.h"
 
@@ -68,22 +71,39 @@ class FrameCodec {
   }
 
   DecodeResult Feed(std::span<const std::byte> bytes) noexcept {
-    if (inbound_bytes_.size() + bytes.size() > max_payload_bytes_ + 14) {
+    if (protocol_error_pending_) {
+      if (!ready_frames_.empty()) {
+        return DrainReadyFrame();
+      }
       return {DecodeStatus::kProtocolError, {}};
     }
+
     if (!bytes.empty()) {
       inbound_bytes_.insert(inbound_bytes_.end(), bytes.begin(), bytes.end());
     }
+    if (!ready_frames_.empty()) {
+      return DrainReadyFrame();
+    }
 
-    const auto parsed = TryParseNextFrame();
+    auto parsed = TryParseNextFrame();
     if (parsed.status != DecodeStatus::kMessageReady) {
       return parsed;
     }
+    ReadyFrame current_frame = CaptureReadyFrame(parsed.view);
 
-    MessageView view = parsed.view;
-    view.payload = std::span<const std::byte>(decoded_payload_.data(),
-                                              decoded_payload_.size());
-    return {DecodeStatus::kMessageReady, view};
+    while (true) {
+      auto next = TryParseNextFrame();
+      if (next.status == DecodeStatus::kMessageReady) {
+        QueueReadyFrame(next.view);
+        continue;
+      }
+      if (next.status == DecodeStatus::kProtocolError) {
+        protocol_error_pending_ = true;
+      }
+      break;
+    }
+
+    return LoadReadyFrame(std::move(current_frame));
   }
 
  private:
@@ -93,8 +113,13 @@ class FrameCodec {
   static constexpr std::uint8_t kOpcodePing = 0x9;
   static constexpr std::uint8_t kOpcodePong = 0xA;
   static constexpr size_t kControlPayloadLimit = 125;
-  static constexpr std::array<std::byte, 4> kMaskKey{
-      std::byte{0x12}, std::byte{0x34}, std::byte{0x56}, std::byte{0x78}};
+
+  struct ReadyFrame {
+    PayloadKind kind{PayloadKind::kText};
+    std::uint64_t sequence{0};
+    bool fin{true};
+    std::vector<std::byte> payload{};
+  };
 
   EncodeResult EncodeDataFrame(std::uint8_t opcode,
                                std::span<const std::byte> payload,
@@ -114,7 +139,13 @@ class FrameCodec {
 
     const size_t extended_length_bytes =
         payload.size() <= 125 ? 0 : (payload.size() <= 0xFFFF ? 2 : 8);
-    const size_t frame_bytes = 2 + extended_length_bytes + kMaskKey.size() +
+    std::array<std::byte, 4> mask_key{};
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(mask_key.data()),
+                   static_cast<int>(mask_key.size())) != 1) {
+      return {};
+    }
+
+    const size_t frame_bytes = 2 + extended_length_bytes + mask_key.size() +
                                payload.size();
     if (output.size() < frame_bytes) {
       return {};
@@ -139,11 +170,11 @@ class FrameCodec {
       }
     }
 
-    for (const auto mask_byte : kMaskKey) {
+    for (const auto mask_byte : mask_key) {
       output[cursor++] = mask_byte;
     }
     for (size_t i = 0; i < payload.size(); ++i) {
-      output[cursor++] = payload[i] ^ kMaskKey[i & 0x3U];
+      output[cursor++] = payload[i] ^ mask_key[i & 0x3U];
     }
 
     return {true, std::span<const std::byte>(output.data(), frame_bytes)};
@@ -167,6 +198,9 @@ class FrameCodec {
     const std::uint8_t opcode = first & 0x0FU;
     const auto payload_kind = MapOpcode(opcode);
     if (!payload_kind.has_value()) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
+    if ((second & 0x80U) != 0) {
       return {DecodeStatus::kProtocolError, {}};
     }
 
@@ -208,27 +242,14 @@ class FrameCodec {
       return {DecodeStatus::kProtocolError, {}};
     }
 
-    const bool masked = (second & 0x80U) != 0;
-    const size_t mask_bytes = masked ? 4 : 0;
-    const size_t total_frame_bytes =
-        cursor + mask_bytes + static_cast<size_t>(payload_length);
+    const size_t total_frame_bytes = cursor + static_cast<size_t>(payload_length);
     if (inbound_bytes_.size() < total_frame_bytes) {
       return {};
     }
 
-    std::array<std::byte, 4> mask{};
-    if (masked) {
-      for (size_t i = 0; i < mask.size(); ++i) {
-        mask[i] = inbound_bytes_[cursor + i];
-      }
-      cursor += mask.size();
-    }
-
     decoded_payload_.resize(static_cast<size_t>(payload_length));
     for (size_t i = 0; i < decoded_payload_.size(); ++i) {
-      const auto wire_byte = inbound_bytes_[cursor + i];
-      decoded_payload_[i] =
-          masked ? (wire_byte ^ mask[i & 0x3U]) : wire_byte;
+      decoded_payload_[i] = inbound_bytes_[cursor + i];
     }
 
     inbound_bytes_.erase(inbound_bytes_.begin(),
@@ -240,6 +261,37 @@ class FrameCodec {
                                               decoded_payload_.size());
     view.sequence = next_sequence_++;
     view.fin = true;
+    return {DecodeStatus::kMessageReady, view};
+  }
+
+  void QueueReadyFrame(const MessageView& view) {
+    ready_frames_.push_back(CaptureReadyFrame(view));
+  }
+
+  DecodeResult DrainReadyFrame() noexcept {
+    ReadyFrame frame = std::move(ready_frames_.front());
+    ready_frames_.pop_front();
+    return LoadReadyFrame(std::move(frame));
+  }
+
+  ReadyFrame CaptureReadyFrame(const MessageView& view) {
+    ReadyFrame frame{};
+    frame.kind = view.kind;
+    frame.sequence = view.sequence;
+    frame.fin = view.fin;
+    frame.payload.assign(view.payload.begin(), view.payload.end());
+    return frame;
+  }
+
+  DecodeResult LoadReadyFrame(ReadyFrame frame) noexcept {
+    decoded_payload_ = std::move(frame.payload);
+
+    MessageView view{};
+    view.kind = frame.kind;
+    view.payload = std::span<const std::byte>(decoded_payload_.data(),
+                                              decoded_payload_.size());
+    view.sequence = frame.sequence;
+    view.fin = frame.fin;
     return {DecodeStatus::kMessageReady, view};
   }
 
@@ -269,6 +321,8 @@ class FrameCodec {
   std::uint64_t next_sequence_{0};
   std::vector<std::byte> inbound_bytes_{};
   std::vector<std::byte> decoded_payload_{};
+  std::deque<ReadyFrame> ready_frames_{};
+  bool protocol_error_pending_{false};
 };
 
 }  // namespace aquila::websocket
