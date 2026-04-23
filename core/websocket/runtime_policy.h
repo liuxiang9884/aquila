@@ -36,6 +36,28 @@ struct RuntimePolicy {
   std::uint32_t spin_iterations_before_clock_check = 4096;
 };
 
+#if defined(__linux__)
+namespace detail {
+
+struct RuntimePolicySyscallHooks {
+  int (*mlockall)(int) = &::mlockall;
+  int (*munlockall)() = &::munlockall;
+  int (*pthread_setaffinity_np)(pthread_t, size_t, const cpu_set_t*) =
+      &::pthread_setaffinity_np;
+};
+
+inline RuntimePolicySyscallHooks& RuntimePolicySyscallHooksForTest() noexcept {
+  static RuntimePolicySyscallHooks hooks;
+  return hooks;
+}
+
+inline void ResetRuntimePolicySyscallHooksForTest() noexcept {
+  RuntimePolicySyscallHooksForTest() = RuntimePolicySyscallHooks{};
+}
+
+}  // namespace detail
+#endif
+
 inline void PrefaultThreadStack() noexcept {
 #if defined(__linux__)
   constexpr size_t kPrefaultBytes = 64 * 1024;
@@ -60,12 +82,14 @@ inline bool ApplyRuntimePolicy(const RuntimePolicy& policy) noexcept {
     return false;
   }
 
-  if (policy.lock_memory && ::mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
-    return false;
-  }
-
-  if (policy.prefault_stack) {
-    PrefaultThreadStack();
+  bool memory_locked = false;
+  detail::RuntimePolicySyscallHooks& hooks =
+      detail::RuntimePolicySyscallHooksForTest();
+  if (policy.lock_memory) {
+    if (hooks.mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+      return false;
+    }
+    memory_locked = true;
   }
 
   if (policy.affinity_mode != AffinityMode::kNone && policy.io_cpu_id >= 0 &&
@@ -73,11 +97,18 @@ inline bool ApplyRuntimePolicy(const RuntimePolicy& policy) noexcept {
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
     CPU_SET(policy.io_cpu_id, &cpu_set);
-    if (::pthread_setaffinity_np(::pthread_self(), sizeof(cpu_set), &cpu_set) !=
-            0 &&
+    if (hooks.pthread_setaffinity_np(::pthread_self(), sizeof(cpu_set),
+                                     &cpu_set) != 0 &&
         policy.affinity_mode == AffinityMode::kRequired) {
+      if (memory_locked) {
+        hooks.munlockall();
+      }
       return false;
     }
+  }
+
+  if (policy.prefault_stack) {
+    PrefaultThreadStack();
   }
 #else
   if (policy.prefault_stack) {
