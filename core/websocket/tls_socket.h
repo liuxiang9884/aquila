@@ -17,6 +17,7 @@
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <openssl/x509_vfy.h>
 
 #include "core/websocket/types.h"
 
@@ -139,7 +140,8 @@ class TlsSocket {
     }
     ssl_ = ssl;
 
-    if (SSL_set_tlsext_host_name(ssl_, config.host.c_str()) != 1 ||
+    if (!ConfigurePeerVerification(ssl_, config.host) ||
+        SSL_set_tlsext_host_name(ssl_, config.host.c_str()) != 1 ||
         SSL_set_fd(ssl_, fd_) != 1) {
       Close();
       return false;
@@ -246,6 +248,20 @@ class TlsSocket {
   }
 
  private:
+  static bool ConfigurePeerVerification(SSL* ssl,
+                                        std::string_view host) noexcept {
+    if (ssl == nullptr || host.empty()) {
+      return false;
+    }
+
+    X509_VERIFY_PARAM* params = SSL_get0_param(ssl);
+    if (params == nullptr) {
+      return false;
+    }
+
+    return X509_VERIFY_PARAM_set1_host(params, host.data(), host.size()) == 1;
+  }
+
   static bool SetNonBlocking(int fd) noexcept {
     const int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) {
