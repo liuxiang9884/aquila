@@ -1,3 +1,5 @@
+add_subdirectory(websocket)
+
 add_test(
     NAME hello_world_smoke_test
     COMMAND $<TARGET_FILE:aquila_hello_world>

@@ -1,6 +1,7 @@
 # third party library installed by vcpkg
 # fmtlib
 find_package(fmt CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 # quill - 依赖线程库，所以在找到线程库后查找
 find_package(quill CONFIG REQUIRED)
 # tomlplusplus
@@ -24,6 +25,7 @@ find_package(FastFloat CONFIG REQUIRED)
 
 # absl
 find_package(absl CONFIG REQUIRED COMPONENTS btree flat_hash_map)
+find_package(OpenSSL REQUIRED)
 set(ABSL_LIBS
         absl::flat_hash_map
         absl::btree)
@@ -40,5 +42,7 @@ set(THIRD_PARTY_LIBS
         nameof::nameof 
         Drogon::Drogon
         FastFloat::fast_float
+        OpenSSL::SSL
+        OpenSSL::Crypto
         ${ABSL_LIBS}
 )

@@ -10,7 +10,10 @@ include(cmake/compile_options.cmake)
 include(cmake/third_party.cmake)
 include(cmake/packages.cmake)
 
+add_subdirectory(core)
+
 if (PROJECT_IS_TOP_LEVEL)
     add_subdirectory(tools)
     add_subdirectory(test)
+    add_subdirectory(benchmark)
 endif ()
