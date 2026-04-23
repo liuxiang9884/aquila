@@ -1,6 +1,8 @@
 #ifndef AQUILA_CORE_WEBSOCKET_RUNTIME_POLICY_H_
 #define AQUILA_CORE_WEBSOCKET_RUNTIME_POLICY_H_
 
+namespace aquila::websocket {
+
 enum class AffinityMode {
   kNone,
   kBestEffort,
@@ -23,5 +25,7 @@ struct RuntimePolicy {
   bool active_spin = true;
   int spin_iterations_before_clock_check = 4096;
 };
+
+}  // namespace aquila::websocket
 
 #endif  // AQUILA_CORE_WEBSOCKET_RUNTIME_POLICY_H_

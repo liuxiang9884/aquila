@@ -7,6 +7,8 @@
 
 #include "core/websocket/types.h"
 
+namespace aquila::websocket {
+
 struct MessageView {
   PayloadKind kind{PayloadKind::kBinary};
   std::span<const std::byte> payload{};
@@ -25,5 +27,7 @@ struct MessageConsumer {
     return handler == nullptr ? DeliveryResult::kFatal : handler(context, view);
   }
 };
+
+}  // namespace aquila::websocket
 
 #endif  // AQUILA_CORE_WEBSOCKET_MESSAGE_VIEW_H_

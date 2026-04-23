@@ -6,6 +6,8 @@
 
 #include "core/websocket/runtime_policy.h"
 
+namespace aquila::websocket {
+
 enum class ConnectionPhase {
   kDisconnected,
   kResolving,
@@ -65,5 +67,7 @@ struct ConnectionConfig {
   std::uint32_t heartbeat_timeout_ms = 15000;
   RuntimePolicy runtime_policy{};
 };
+
+}  // namespace aquila::websocket
 
 #endif  // AQUILA_CORE_WEBSOCKET_TYPES_H_
