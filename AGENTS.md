@@ -144,6 +144,13 @@
 4. 出现异常、回归或性能问题时，使用 `systematic-debugging`
 5. 准备收尾时，必须做 `verification-before-completion`
 
+## C++ 编码和依赖使用约定
+
+- 项目已通过 vcpkg 使用 `magic_enum`，需要把枚举值转换为字符串时，优先直接使用 `magic_enum::enum_name(value)`，不要再手写 enum-to-string 的 `switch` 或专门的 `ToString` 包装函数。
+- 项目已通过 vcpkg 使用 header-only 模式的 `fmtlib`，所有打印输出优先使用 `fmt::print`，所有字符串格式化优先使用 `fmt::format`、`fmt::format_to` 或 `fmt::format_to_n`。
+- 需要写入已有缓冲区、避免动态分配或控制截断行为时，优先使用 `fmt::format_to_n`；低延迟热路径中不要为了格式化引入不必要的临时 `std::string`。
+- 不新增 `printf`、`fprintf`、`snprintf`、`std::cout`、`std::format` 或 `std::to_string` 等新的格式化/打印路径，除非有明确兼容性或系统接口理由，并在代码中保持局部化。
+
 ## 项目级执行规则
 
 - 修改交易所协议、行情处理、订单状态机、风控、恢复逻辑或线程模型时，优先补充或更新测试。
