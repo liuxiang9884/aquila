@@ -70,7 +70,7 @@
 - Create: `core/websocket/cold_path_loop.h`
 - Create: `core/websocket/critical_session.h`
 - Create: `core/websocket/active_spin_loop.h`
-- Create: `core/websocket/gate_ws_client.h`
+- Create: `core/websocket/websocket_client.h`
 - Create: `core/websocket/metrics.h`
 
 ### Tests
@@ -82,7 +82,7 @@
 - Create: `test/websocket/frame_codec_test.cpp`
 - Create: `test/websocket/tls_socket_test.cpp`
 - Create: `test/websocket/critical_session_test.cpp`
-- Create: `test/websocket/gate_loopback_integration_test.cpp`
+- Create: `test/websocket/websocket_loopback_integration_test.cpp`
 
 ### Tools And Benchmarks
 
@@ -218,9 +218,9 @@ add_subdirectory(websocket)
 
 ```cmake
 # core/websocket/CMakeLists.txt
-add_library(aquila_gate_ws_core INTERFACE)
-target_include_directories(aquila_gate_ws_core INTERFACE ${PROJECT_SOURCE_DIR})
-target_link_libraries(aquila_gate_ws_core INTERFACE Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
+add_library(aquila_websocket_core INTERFACE)
+target_include_directories(aquila_websocket_core INTERFACE ${PROJECT_SOURCE_DIR})
+target_link_libraries(aquila_websocket_core INTERFACE Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
 ```
 
 ```cmake
@@ -239,7 +239,7 @@ set_tests_properties(hello_world_smoke_test PROPERTIES
 ```cmake
 # test/websocket/CMakeLists.txt
 add_executable(websocket_types_test types_test.cpp)
-target_link_libraries(websocket_types_test PRIVATE aquila_gate_ws_core)
+target_link_libraries(websocket_types_test PRIVATE aquila_websocket_core)
 add_test(NAME websocket_types_test COMMAND websocket_types_test)
 ```
 
@@ -351,7 +351,7 @@ Expected: PASS.
 git add CMakeLists.txt cmake/third_party.cmake core/CMakeLists.txt core/websocket/CMakeLists.txt \
   core/websocket/types.h core/websocket/runtime_policy.h core/websocket/message_view.h \
   test/CMakeLists.txt test/websocket/CMakeLists.txt test/websocket/types_test.cpp
-git commit -m "core: scaffold critical gate ws contracts"
+git commit -m "core: scaffold critical websocket contracts"
 ```
 
 ## Task 2: Implement Runtime Pinning And Connection-Local Write Slots
@@ -592,7 +592,7 @@ Expected: PASS.
 git add core/websocket/handshake.h core/websocket/frame_codec.h core/websocket/tls_socket.h \
   test/websocket/handshake_test.cpp test/websocket/frame_codec_test.cpp \
   test/websocket/tls_socket_test.cpp test/websocket/CMakeLists.txt
-git commit -m "core: add gate ws handshake codec and tls socket"
+git commit -m "core: add websocket handshake codec and tls socket"
 ```
 
 ## Task 4: Implement The User-Driven Core Session
@@ -746,15 +746,15 @@ git add core/websocket/metrics.h core/websocket/state_machine.h \
   core/websocket/cold_path_loop.h \
   core/websocket/critical_session.h test/websocket/critical_session_test.cpp \
   test/websocket/CMakeLists.txt
-git commit -m "core: add user-driven gate ws core"
+git commit -m "core: add user-driven websocket core"
 ```
 
 ## Task 5: Implement The Callback Wrapper, Default Spin Runtime, And Public Probe
 
 **Files:**
 - Create: `core/websocket/active_spin_loop.h`
-- Create: `core/websocket/gate_ws_client.h`
-- Create: `test/websocket/gate_loopback_integration_test.cpp`
+- Create: `core/websocket/websocket_client.h`
+- Create: `test/websocket/websocket_loopback_integration_test.cpp`
 - Create: `tools/websocket_probe.cpp`
 - Modify: `tools/CMakeLists.txt`
 - Modify: `test/websocket/CMakeLists.txt`
@@ -762,8 +762,8 @@ git commit -m "core: add user-driven gate ws core"
 - [ ] **Step 1: Write failing tests for the callback wrapper entry point**
 
 ```cpp
-// test/websocket/gate_loopback_integration_test.cpp
-#include "core/websocket/gate_ws_client.h"
+// test/websocket/websocket_loopback_integration_test.cpp
+#include "core/websocket/websocket_client.h"
 
 using namespace aquila::websocket;
 
@@ -779,14 +779,14 @@ int main() {
     config.service = "9443";
     config.target = "/v4/ws/usdt";
     MessageConsumer consumer{nullptr, &AcceptAll};
-    GateWsClient client(config, consumer);
+    WebSocketClient client(config, consumer);
     return client.PrepareRuntimeOnly() ? 0 : 1;
 }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_gate_loopback_integration_test -V`
+Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_loopback_integration_test -V`
 Expected: FAIL because the callback wrapper does not exist yet.
 
 - [ ] **Step 3: Add the callback wrapper, default spin runtime, and probe tool**
@@ -810,14 +810,14 @@ class ActiveSpinLoop {
 ```
 
 ```cpp
-// core/websocket/gate_ws_client.h
+// core/websocket/websocket_client.h
 namespace aquila::websocket {
 using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
 using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
 
-class GateWsClient {
+class WebSocketClient {
   public:
-    GateWsClient(ConnectionConfig config, MessageConsumer consumer) noexcept;
+    WebSocketClient(ConnectionConfig config, MessageConsumer consumer) noexcept;
     bool PrepareRuntimeOnly() noexcept;
     void SetStateHandler(void* context, StateHandler handler) noexcept;
     void SetErrorHandler(void* context, ErrorHandler handler) noexcept;
@@ -831,7 +831,7 @@ class GateWsClient {
 
 ```cpp
 // tools/websocket_probe.cpp
-#include "core/websocket/gate_ws_client.h"
+#include "core/websocket/websocket_client.h"
 
 #include <CLI/CLI.hpp>
 
@@ -846,7 +846,7 @@ DeliveryResult CountPayload(void* context, const MessageView& view) noexcept {
 }  // namespace
 
 int main(int argc, char** argv) {
-    CLI::App app{"critical gate websocket probe"};
+    CLI::App app{"critical websocket probe"};
     std::string host{"fx-ws.gateio.ws"};
     std::string port{"443"};
     std::string target{"/v4/ws/usdt"};
@@ -869,7 +869,7 @@ int main(int argc, char** argv) {
 
     size_t bytes = 0;
     MessageConsumer consumer{&bytes, &CountPayload};
-    GateWsClient client(config, consumer);
+    WebSocketClient client(config, consumer);
     return client.Start() ? 0 : 1;
 }
 ```
@@ -883,12 +883,12 @@ add_executable(aquila_hello_world
 add_executable(websocket_probe
     websocket_probe.cpp
 )
-target_link_libraries(websocket_probe PRIVATE aquila_gate_ws_core CLI11::CLI11)
+target_link_libraries(websocket_probe PRIVATE aquila_websocket_core CLI11::CLI11)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_gate_loopback_integration_test -V`
+Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_loopback_integration_test -V`
 Expected: PASS with the local TLS harness.
 
 Run: `build/debug/tools/websocket_probe --host fx-ws.gateio.ws --port 443 --target /v4/ws/usdt --tls --cpu 2`
@@ -897,10 +897,10 @@ Expected: Complete `TLS -> WS` handshake against `wss://fx-ws.gateio.ws/v4/ws/us
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/websocket/active_spin_loop.h core/websocket/gate_ws_client.h \
-  test/websocket/gate_loopback_integration_test.cpp \
+git add core/websocket/active_spin_loop.h core/websocket/websocket_client.h \
+  test/websocket/websocket_loopback_integration_test.cpp \
   tools/websocket_probe.cpp tools/CMakeLists.txt test/websocket/CMakeLists.txt
-git commit -m "core: add gate ws callback wrapper and probe"
+git commit -m "core: add websocket callback wrapper and probe"
 ```
 
 ## Task 6: Add Tail-Latency Benchmarks And Final Verification Gates
@@ -961,13 +961,13 @@ add_subdirectory(websocket)
 ```cmake
 # benchmark/websocket/CMakeLists.txt
 add_executable(prepared_write_benchmark prepared_write_benchmark.cpp)
-target_link_libraries(prepared_write_benchmark PRIVATE aquila_gate_ws_core)
+target_link_libraries(prepared_write_benchmark PRIVATE aquila_websocket_core)
 
 add_executable(frame_codec_benchmark frame_codec_benchmark.cpp)
-target_link_libraries(frame_codec_benchmark PRIVATE aquila_gate_ws_core)
+target_link_libraries(frame_codec_benchmark PRIVATE aquila_websocket_core)
 
 add_executable(active_spin_benchmark active_spin_benchmark.cpp)
-target_link_libraries(active_spin_benchmark PRIVATE aquila_gate_ws_core)
+target_link_libraries(active_spin_benchmark PRIVATE aquila_websocket_core)
 ```
 
 - [ ] **Step 2: Write the benchmark sources**
@@ -1086,7 +1086,7 @@ git add benchmark/CMakeLists.txt benchmark/websocket/CMakeLists.txt \
   benchmark/websocket/frame_codec_benchmark.cpp \
   benchmark/websocket/active_spin_benchmark.cpp \
   README.md cmake/third_party.cmake
-git commit -m "benchmark: add critical gate ws latency verification"
+git commit -m "benchmark: add critical websocket latency verification"
 ```
 
 ## Spec Coverage Check

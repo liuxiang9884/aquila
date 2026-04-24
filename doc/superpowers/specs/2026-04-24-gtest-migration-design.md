@@ -38,7 +38,7 @@ Keep one test source file mapped to one executable target:
 - `test/websocket/frame_codec_test.cpp`
 - `test/websocket/tls_socket_test.cpp`
 - `test/websocket/critical_session_test.cpp`
-- `test/websocket/gate_loopback_integration_test.cpp`
+- `test/websocket/websocket_loopback_integration_test.cpp`
 
 This keeps the current module boundaries and minimizes migration risk.
 

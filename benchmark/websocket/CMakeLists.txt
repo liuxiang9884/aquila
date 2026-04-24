@@ -15,7 +15,7 @@ foreach(target IN LISTS WEBSOCKET_BENCHMARK_TARGETS)
     )
     target_link_libraries(${target}
         PRIVATE
-            aquila_gate_ws_core
+            aquila_websocket_core
             benchmark::benchmark_main
     )
 endforeach()

@@ -1,4 +1,4 @@
-#include "core/websocket/gate_ws_client.h"
+#include "core/websocket/websocket_client.h"
 
 #include <gtest/gtest.h>
 
@@ -12,12 +12,12 @@ DeliveryResult AcceptAll(void*, const MessageView&) noexcept {
 
 }  // namespace
 
-TEST(WebsocketGateLoopbackIntegrationTest, PreparesRuntimeForLoopbackConfig) {
+TEST(WebSocketLoopbackIntegrationTest, PreparesRuntimeForLoopbackConfig) {
   ConnectionConfig config{};
   config.host = "127.0.0.1";
   config.service = "9443";
   config.target = "/v4/ws/usdt";
   MessageConsumer consumer{nullptr, &AcceptAll};
-  GateWsClient client(config, consumer);
+  WebSocketClient client(config, consumer);
   EXPECT_TRUE(client.PrepareRuntimeOnly());
 }

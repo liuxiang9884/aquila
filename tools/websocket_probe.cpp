@@ -1,4 +1,4 @@
-#include "core/websocket/gate_ws_client.h"
+#include "core/websocket/websocket_client.h"
 
 #include <CLI/CLI.hpp>
 
@@ -94,7 +94,7 @@ void RecordError(void* context, ConnectionError error) noexcept {
 }  // namespace
 
 int main(int argc, char** argv) {
-  CLI::App app{"critical gate websocket probe"};
+  CLI::App app{"critical websocket probe"};
   std::string host{"fx-ws.gateio.ws"};
   std::string port{"443"};
   std::string target{"/v4/ws/usdt"};
@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
 
   ProbeContext probe{};
   MessageConsumer consumer{&probe, &CountPayload};
-  GateWsClient client(config, consumer);
+  WebSocketClient client(config, consumer);
   client.SetStateHandler(&probe, &RecordState);
   client.SetErrorHandler(&probe, &RecordError);
   const bool ok = client.Start();

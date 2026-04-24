@@ -4,7 +4,7 @@ function(add_websocket_gtest target source_file)
     )
 
     target_link_libraries(${target}
-        PRIVATE aquila_gate_ws_core GTest::gtest_main
+        PRIVATE aquila_websocket_core GTest::gtest_main
     )
 endfunction()
 
@@ -15,5 +15,5 @@ add_websocket_gtest(websocket_handshake_test handshake_test.cpp)
 add_websocket_gtest(websocket_frame_codec_test frame_codec_test.cpp)
 add_websocket_gtest(websocket_tls_socket_test tls_socket_test.cpp)
 add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
-add_websocket_gtest(websocket_gate_loopback_integration_test
-                    gate_loopback_integration_test.cpp)
+add_websocket_gtest(websocket_loopback_integration_test
+                    websocket_loopback_integration_test.cpp)

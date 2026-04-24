@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_WEBSOCKET_GATE_WS_CLIENT_H_
-#define AQUILA_CORE_WEBSOCKET_GATE_WS_CLIENT_H_
+#ifndef AQUILA_CORE_WEBSOCKET_WEBSOCKET_CLIENT_H_
+#define AQUILA_CORE_WEBSOCKET_WEBSOCKET_CLIENT_H_
 
 #include <array>
 #include <atomic>
@@ -18,9 +18,9 @@ namespace aquila::websocket {
 using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
 using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
 
-class GateWsClient {
+class WebSocketClient {
  public:
-  GateWsClient(ConnectionConfig config, MessageConsumer consumer) noexcept
+  WebSocketClient(ConnectionConfig config, MessageConsumer consumer) noexcept
       : config_(std::move(config)),
         consumer_(consumer),
         prepared_write_arena_(config_.prepared_write_slots,
@@ -166,4 +166,4 @@ class GateWsClient {
 
 }  // namespace aquila::websocket
 
-#endif  // AQUILA_CORE_WEBSOCKET_GATE_WS_CLIENT_H_
+#endif  // AQUILA_CORE_WEBSOCKET_WEBSOCKET_CLIENT_H_

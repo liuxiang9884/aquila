@@ -1,10 +1,10 @@
-add_library(aquila_gate_ws_core INTERFACE)
+add_library(aquila_websocket_core INTERFACE)
 
-target_include_directories(aquila_gate_ws_core
+target_include_directories(aquila_websocket_core
     INTERFACE ${PROJECT_SOURCE_DIR}
 )
 
-target_link_libraries(aquila_gate_ws_core
+target_link_libraries(aquila_websocket_core
     INTERFACE
         Threads::Threads
         OpenSSL::SSL
