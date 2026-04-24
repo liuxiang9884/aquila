@@ -1,13 +1,16 @@
-add_library(aquila_websocket_core INTERFACE)
-
-target_include_directories(aquila_websocket_core
-    INTERFACE ${PROJECT_SOURCE_DIR}
-)
-
-target_link_libraries(aquila_websocket_core
-    INTERFACE
-        Threads::Threads
-        fmt::fmt-header-only
-        OpenSSL::SSL
-        OpenSSL::Crypto
+target_sources(aquila_core
+    PRIVATE
+        active_spin_loop.h
+        cold_path_loop.h
+        critical_session.h
+        frame_codec.h
+        handshake.h
+        message_view.h
+        metrics.h
+        prepared_write.h
+        runtime_policy.h
+        state_machine.h
+        tls_socket.h
+        types.h
+        websocket_client.h
 )

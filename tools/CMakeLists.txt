@@ -13,7 +13,7 @@ add_executable(websocket_probe
 
 target_link_libraries(websocket_probe
     PRIVATE
-        aquila_websocket_core
+        aquila_core
         CLI11::CLI11
         fmt::fmt-header-only
         magic_enum::magic_enum

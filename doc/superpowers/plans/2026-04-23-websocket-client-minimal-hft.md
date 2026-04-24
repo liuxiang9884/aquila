@@ -213,14 +213,24 @@ endif ()
 
 ```cmake
 # core/CMakeLists.txt
+add_library(aquila_core STATIC
+    aquila_core.cpp
+)
+
+target_include_directories(aquila_core PUBLIC ${PROJECT_SOURCE_DIR})
+target_link_libraries(aquila_core PUBLIC Threads::Threads fmt::fmt-header-only OpenSSL::SSL OpenSSL::Crypto)
+
 add_subdirectory(websocket)
 ```
 
 ```cmake
 # core/websocket/CMakeLists.txt
-add_library(aquila_websocket_core INTERFACE)
-target_include_directories(aquila_websocket_core INTERFACE ${PROJECT_SOURCE_DIR})
-target_link_libraries(aquila_websocket_core INTERFACE Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
+target_sources(aquila_core
+    PRIVATE
+        types.h
+        runtime_policy.h
+        frame_codec.h
+)
 ```
 
 ```cmake
@@ -239,7 +249,7 @@ set_tests_properties(hello_world_smoke_test PROPERTIES
 ```cmake
 # test/websocket/CMakeLists.txt
 add_executable(websocket_types_test types_test.cpp)
-target_link_libraries(websocket_types_test PRIVATE aquila_websocket_core)
+target_link_libraries(websocket_types_test PRIVATE aquila_core)
 add_test(NAME websocket_types_test COMMAND websocket_types_test)
 ```
 
@@ -883,7 +893,7 @@ add_executable(aquila_hello_world
 add_executable(websocket_probe
     websocket_probe.cpp
 )
-target_link_libraries(websocket_probe PRIVATE aquila_websocket_core CLI11::CLI11)
+target_link_libraries(websocket_probe PRIVATE aquila_core CLI11::CLI11)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -961,13 +971,13 @@ add_subdirectory(websocket)
 ```cmake
 # benchmark/websocket/CMakeLists.txt
 add_executable(prepared_write_benchmark prepared_write_benchmark.cpp)
-target_link_libraries(prepared_write_benchmark PRIVATE aquila_websocket_core)
+target_link_libraries(prepared_write_benchmark PRIVATE aquila_core)
 
 add_executable(frame_codec_benchmark frame_codec_benchmark.cpp)
-target_link_libraries(frame_codec_benchmark PRIVATE aquila_websocket_core)
+target_link_libraries(frame_codec_benchmark PRIVATE aquila_core)
 
 add_executable(active_spin_benchmark active_spin_benchmark.cpp)
-target_link_libraries(active_spin_benchmark PRIVATE aquila_websocket_core)
+target_link_libraries(active_spin_benchmark PRIVATE aquila_core)
 ```
 
 - [ ] **Step 2: Write the benchmark sources**

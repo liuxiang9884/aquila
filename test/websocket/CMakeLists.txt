@@ -4,7 +4,7 @@ function(add_websocket_gtest target source_file)
     )
 
     target_link_libraries(${target}
-        PRIVATE aquila_websocket_core GTest::gtest_main
+        PRIVATE aquila_core GTest::gtest_main
     )
 endfunction()
 
