@@ -10,6 +10,7 @@
 #include <fmt/compile.h>
 #include <fmt/format.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 
 namespace aquila::websocket {
 
@@ -133,6 +134,30 @@ inline bool ComputeAcceptKey(std::string_view client_key,
 }
 
 }  // namespace detail
+
+// Generate a per-connection 16-byte random Sec-WebSocket-Key as base64.
+// Output must hold at least 24 bytes; returns a view into `output` on success
+// or an empty view on RNG / encoding failure.
+inline std::string_view GenerateClientKey(std::span<char> output) noexcept {
+  constexpr size_t kRawKeyBytes = 16;
+  constexpr size_t kEncodedBytes = 24;
+  if (output.size() < kEncodedBytes) {
+    return {};
+  }
+
+  unsigned char raw[kRawKeyBytes];
+  if (RAND_bytes(raw, static_cast<int>(kRawKeyBytes)) != 1) {
+    return {};
+  }
+
+  const int encoded_size = EVP_EncodeBlock(
+      reinterpret_cast<unsigned char*>(output.data()), raw,
+      static_cast<int>(kRawKeyBytes));
+  if (encoded_size != static_cast<int>(kEncodedBytes)) {
+    return {};
+  }
+  return std::string_view(output.data(), kEncodedBytes);
+}
 
 inline HandshakeBuildResult BuildClientHandshake(std::string_view host,
                                                  std::string_view target,

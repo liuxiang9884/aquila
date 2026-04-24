@@ -1,6 +1,7 @@
 #ifndef AQUILA_CORE_WEBSOCKET_COLD_PATH_LOOP_H_
 #define AQUILA_CORE_WEBSOCKET_COLD_PATH_LOOP_H_
 
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <span>
@@ -68,7 +69,13 @@ class ColdPathLoop {
     }
 
     state_machine.Enter(ConnectionPhase::kWsHandshaking);
-    auto built = BuildClientHandshake(config.host, config.target, kClientKey,
+    const std::string_view client_key = GenerateClientKey(client_key_storage_);
+    if (client_key.empty()) {
+      state_machine.Fail(ConnectionError::kHandshakeFailure,
+                         ConnectionPhase::kWsHandshaking);
+      return false;
+    }
+    auto built = BuildClientHandshake(config.host, config.target, client_key,
                                       handshake_storage);
     if (!built.ok || !WriteAll(socket, built.bytes)) {
       state_machine.Fail(ConnectionError::kHandshakeFailure,
@@ -80,7 +87,7 @@ class ColdPathLoop {
     while (response_bytes < handshake_storage.size()) {
       std::string_view response(handshake_storage.data(), response_bytes);
       if (response.find("\r\n\r\n") != std::string_view::npos) {
-        if (!ValidateServerHandshake(response, kClientKey)) {
+        if (!ValidateServerHandshake(response, client_key)) {
           state_machine.Fail(ConnectionError::kHandshakeFailure,
                              ConnectionPhase::kWsHandshaking);
           return false;
@@ -112,9 +119,6 @@ class ColdPathLoop {
   }
 
  private:
-  static constexpr std::string_view kClientKey =
-      "dGhlIHNhbXBsZSBub25jZQ==";
-
   bool WaitForSocket(TlsSocket& socket) noexcept {
     const uint32_t events = (socket.WantsRead() ? EPOLLIN : 0U) |
                             (socket.WantsWrite() ? EPOLLOUT : 0U);
@@ -177,6 +181,7 @@ class ColdPathLoop {
   }
 
   int epoll_fd_{-1};
+  std::array<char, 32> client_key_storage_{};
 };
 
 }  // namespace aquila::websocket
