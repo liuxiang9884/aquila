@@ -13,7 +13,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <span>
 #include <string_view>
@@ -21,6 +20,8 @@
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <fmt/compile.h>
+#include <fmt/format.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -404,22 +405,21 @@ class LocalTlsWsServer {
     }
 
     std::array<char, 512> response_storage{};
-    const int response_size = std::snprintf(
+    const auto response = fmt::format_to_n(
         response_storage.data(), response_storage.size(),
-        "HTTP/1.1 101 Switching Protocols\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Accept: %.*s\r\n"
-        "\r\n",
-        static_cast<int>(accept_key.size()), accept_key.data());
-    if (response_size <= 0 ||
-        static_cast<size_t>(response_size) >= response_storage.size()) {
+        FMT_COMPILE("HTTP/1.1 101 Switching Protocols\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Accept: {}\r\n"
+                    "\r\n"),
+        accept_key);
+    if (response.size == 0 || response.size > response_storage.size()) {
       SSL_free(ssl);
       return false;
     }
 
-    ok = WriteAllSsl(
-        ssl, std::string_view(response_storage.data(), static_cast<size_t>(response_size)));
+    ok = WriteAllSsl(ssl, std::string_view(response_storage.data(),
+                                           response.size));
     SSL_shutdown(ssl);
     SSL_free(ssl);
     return ok;
@@ -444,7 +444,7 @@ void BenchmarkColdPathHandshake(benchmark::State& state) {
 
   ConnectionConfig config{};
   config.host = "localhost";
-  config.service = std::to_string(server.port());
+  config.service = fmt::format(FMT_COMPILE("{}"), server.port());
   config.target = "/cold-path";
   config.enable_tls = true;
   config.read_buffer_bytes = 4096;

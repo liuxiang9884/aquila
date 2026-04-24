@@ -1,9 +1,10 @@
 #include "core/websocket/websocket_client.h"
 
 #include <CLI/CLI.hpp>
+#include <fmt/compile.h>
+#include <fmt/core.h>
 #include <magic_enum/magic_enum.hpp>
 
-#include <cinttypes>
 #include <cstddef>
 #include <cstdio>
 #include <string>
@@ -27,14 +28,12 @@ DeliveryResult CountPayload(void* context, const MessageView& view) noexcept {
 
 void PrintState(void*, ConnectionPhase phase) noexcept {
   const std::string_view phase_name = magic_enum::enum_name(phase);
-  std::fprintf(stderr, "state=%.*s\n", static_cast<int>(phase_name.size()),
-               phase_name.data());
+  fmt::print(stderr, FMT_COMPILE("state={}\n"), phase_name);
 }
 
 void PrintError(void*, ConnectionError error) noexcept {
   const std::string_view error_name = magic_enum::enum_name(error);
-  std::fprintf(stderr, "error=%.*s\n", static_cast<int>(error_name.size()),
-               error_name.data());
+  fmt::print(stderr, FMT_COMPILE("error={}\n"), error_name);
 }
 
 void RecordState(void* context, ConnectionPhase phase) noexcept {
@@ -88,14 +87,12 @@ int main(int argc, char** argv) {
   const Metrics metrics = client.SnapshotMetrics();
   const std::string_view final_state = magic_enum::enum_name(probe.phase);
   const std::string_view final_error = magic_enum::enum_name(probe.error);
-  std::fprintf(stderr,
-               "result=%s final_state=%.*s final_error=%.*s rx_bytes=%zu "
-               "tx_bytes=%" PRIu64 " rx_messages=%" PRIu64
-               " tx_messages=%" PRIu64 " heartbeat_timeouts=%" PRIu64 "\n",
-               ok ? "ok" : "failed", static_cast<int>(final_state.size()),
-               final_state.data(), static_cast<int>(final_error.size()),
-               final_error.data(),
-               probe.bytes, metrics.tx_bytes, metrics.rx_messages,
-               metrics.tx_messages, metrics.heartbeat_timeouts);
+  fmt::print(stderr,
+             FMT_COMPILE("result={} final_state={} final_error={} rx_bytes={} "
+                         "tx_bytes={} rx_messages={} tx_messages={} "
+                         "heartbeat_timeouts={}\n"),
+             ok ? "ok" : "failed", final_state, final_error, probe.bytes,
+             metrics.tx_bytes, metrics.rx_messages, metrics.tx_messages,
+             metrics.heartbeat_timeouts);
   return ok ? 0 : 1;
 }

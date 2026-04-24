@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <sched.h>
 #include <string>
 #include <string_view>
@@ -9,6 +10,8 @@
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <fmt/compile.h>
+#include <fmt/format.h>
 
 namespace aquila::websocket::benchmarking {
 
@@ -28,7 +31,7 @@ inline std::string FormatAffinity() {
     if (!first) {
       description += ",";
     }
-    description += std::to_string(cpu);
+    fmt::format_to(std::back_inserter(description), FMT_COMPILE("{}"), cpu);
     first = false;
   }
   return description.empty() ? "none" : description;
@@ -99,15 +102,9 @@ inline std::string BuildBenchmarkLabel(bool tls_enabled,
                                        std::string_view endpoint,
                                        std::string_view affinity,
                                        std::string_view scheduling_policy) {
-  std::string label = "tls=";
-  label += tls_enabled ? "enabled" : "disabled";
-  label += " endpoint=";
-  label += endpoint;
-  label += " affinity=";
-  label += affinity;
-  label += " scheduling=";
-  label += scheduling_policy;
-  return label;
+  return fmt::format(FMT_COMPILE("tls={} endpoint={} affinity={} scheduling={}"),
+                     tls_enabled ? "enabled" : "disabled", endpoint, affinity,
+                     scheduling_policy);
 }
 
 }  // namespace aquila::websocket::benchmarking

@@ -4,10 +4,11 @@
 #include <array>
 #include <cctype>
 #include <cstddef>
-#include <cstdio>
 #include <span>
 #include <string_view>
 
+#include <fmt/compile.h>
+#include <fmt/format.h>
 #include <openssl/evp.h>
 
 namespace aquila::websocket {
@@ -141,23 +142,22 @@ inline HandshakeBuildResult BuildClientHandshake(std::string_view host,
     return {};
   }
 
-  const int written = std::snprintf(
+  const auto result = fmt::format_to_n(
       output.data(), output.size(),
-      "GET %.*s HTTP/1.1\r\n"
-      "Host: %.*s\r\n"
-      "Upgrade: websocket\r\n"
-      "Connection: Upgrade\r\n"
-      "Sec-WebSocket-Key: %.*s\r\n"
-      "Sec-WebSocket-Version: 13\r\n"
-      "\r\n",
-      static_cast<int>(target.size()), target.data(), static_cast<int>(host.size()),
-      host.data(), static_cast<int>(client_key.size()), client_key.data());
-  if (written <= 0 || static_cast<size_t>(written) >= output.size()) {
+      FMT_COMPILE("GET {} HTTP/1.1\r\n"
+                  "Host: {}\r\n"
+                  "Upgrade: websocket\r\n"
+                  "Connection: Upgrade\r\n"
+                  "Sec-WebSocket-Key: {}\r\n"
+                  "Sec-WebSocket-Version: 13\r\n"
+                  "\r\n"),
+      target, host, client_key);
+  if (result.size == 0 || result.size > output.size()) {
     return {};
   }
 
   return {true,
-          std::string_view(output.data(), static_cast<size_t>(written))};
+          std::string_view(output.data(), result.size)};
 }
 
 inline bool ValidateServerHandshake(std::string_view response,
