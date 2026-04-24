@@ -88,6 +88,18 @@ XO9B9uvibPfgqnC8aMYs2r/X
 constexpr size_t kSamples = 256;
 constexpr size_t kHandshakeBufferBytes = 4096;
 
+void DisableSessionResumption(SSL_CTX* ctx) noexcept {
+  if (ctx == nullptr) {
+    return;
+  }
+
+  SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+  SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+  SSL_CTX_set_num_tickets(ctx, 0);
+#endif
+}
+
 bool LoadCertificate(SSL_CTX* ctx, std::string_view pem) noexcept {
   BIO* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
   if (bio == nullptr) {
@@ -123,6 +135,8 @@ bool AddTrustedCertificate(TlsSocket& socket) noexcept {
     return false;
   }
 
+  DisableSessionResumption(socket.ctx_);
+
   BIO* bio =
       BIO_new_mem_buf(kLocalhostCert.data(), static_cast<int>(kLocalhostCert.size()));
   if (bio == nullptr) {
@@ -151,6 +165,7 @@ bool WriteAllSsl(SSL* ssl, std::string_view bytes) noexcept {
     }
     const int error = SSL_get_error(ssl, written);
     if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+      std::this_thread::yield();
       continue;
     }
     return false;
@@ -196,6 +211,7 @@ class LocalTlsWsServer {
       return false;
     }
     SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION);
+    DisableSessionResumption(ctx_);
 
     if (!LoadCertificate(ctx_, kLocalhostCert) ||
         !LoadPrivateKey(ctx_, kLocalhostKey) ||
@@ -238,19 +254,25 @@ class LocalTlsWsServer {
 
     stop_requested_.store(false);
     failed_.store(false);
+    completed_handshakes_.store(0);
+    active_client_fd_.store(-1);
     thread_ = std::thread([this]() { Run(); });
     return true;
   }
 
   void Stop() noexcept {
     stop_requested_.store(true);
-    if (thread_.joinable()) {
-      thread_.join();
+    const int active_client_fd = active_client_fd_.load();
+    if (active_client_fd >= 0) {
+      ::shutdown(active_client_fd, SHUT_RDWR);
     }
     if (listen_fd_ >= 0) {
       ::close(listen_fd_);
-      listen_fd_ = -1;
     }
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+    listen_fd_ = -1;
     if (ctx_ != nullptr) {
       SSL_CTX_free(ctx_);
       ctx_ = nullptr;
@@ -274,8 +296,11 @@ class LocalTlsWsServer {
           ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&client_address),
                    &client_address_len);
       if (client_fd < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+          std::this_thread::yield();
+          continue;
+        }
+        if (errno == EINTR) {
           continue;
         }
         if (!stop_requested_.load()) {
@@ -284,11 +309,22 @@ class LocalTlsWsServer {
         return;
       }
 
-      if (!HandleClient(client_fd)) {
+      active_client_fd_.store(client_fd);
+      if (!SetNonBlocking(client_fd)) {
+        active_client_fd_.store(-1);
         failed_.store(true);
         ::close(client_fd);
         return;
       }
+      if (!HandleClient(client_fd)) {
+        active_client_fd_.store(-1);
+        ::close(client_fd);
+        if (!stop_requested_.load()) {
+          failed_.store(true);
+        }
+        return;
+      }
+      active_client_fd_.store(-1);
       ::close(client_fd);
       completed_handshakes_.fetch_add(1);
     }
@@ -310,6 +346,10 @@ class LocalTlsWsServer {
         }
         const int error = SSL_get_error(ssl, result);
         if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+          if (stop_requested_.load()) {
+            break;
+          }
+          std::this_thread::yield();
           continue;
         }
         break;
@@ -336,6 +376,11 @@ class LocalTlsWsServer {
       }
       const int error = SSL_get_error(ssl, received);
       if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        if (stop_requested_.load()) {
+          SSL_free(ssl);
+          return false;
+        }
+        std::this_thread::yield();
         continue;
       }
       SSL_free(ssl);
@@ -384,6 +429,7 @@ class LocalTlsWsServer {
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> failed_{false};
   std::atomic<std::uint64_t> completed_handshakes_{0};
+  std::atomic<int> active_client_fd_{-1};
   std::thread thread_{};
 };
 
@@ -432,6 +478,7 @@ int main() {
     socket.Close();
   }
 
+  server.Stop();
   if (server.failed() || server.completed_handshakes() != kSamples) {
     return 1;
   }
