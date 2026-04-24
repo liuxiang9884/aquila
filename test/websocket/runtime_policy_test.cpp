@@ -1,5 +1,7 @@
 #include "core/websocket/runtime_policy.h"
 
+#include <gtest/gtest.h>
+
 #if defined(__linux__)
 #include <cstddef>
 #include <sched.h>
@@ -36,34 +38,26 @@ struct RuntimePolicyHookReset {
 }  // namespace
 #endif
 
-int main() {
+TEST(WebsocketRuntimePolicyTest, AppliesExpectedRuntimeConstraints) {
   RuntimePolicy policy{};
   policy.affinity_mode = AffinityMode::kNone;
   policy.lock_memory = false;
   policy.prefault_stack = false;
-  if (!ApplyRuntimePolicy(policy)) {
-    return 1;
-  }
+  EXPECT_TRUE(ApplyRuntimePolicy(policy));
 
   const RuntimePolicy default_policy{};
-  if (ApplyRuntimePolicy(default_policy)) {
-    return 1;
-  }
+  EXPECT_FALSE(ApplyRuntimePolicy(default_policy));
 
 #if defined(__linux__)
   RuntimePolicy required_invalid_cpu = policy;
   required_invalid_cpu.affinity_mode = AffinityMode::kRequired;
   required_invalid_cpu.io_cpu_id = CPU_SETSIZE;
-  if (ApplyRuntimePolicy(required_invalid_cpu)) {
-    return 1;
-  }
+  EXPECT_FALSE(ApplyRuntimePolicy(required_invalid_cpu));
 
   RuntimePolicy best_effort_invalid_cpu = policy;
   best_effort_invalid_cpu.affinity_mode = AffinityMode::kBestEffort;
   best_effort_invalid_cpu.io_cpu_id = CPU_SETSIZE;
-  if (!ApplyRuntimePolicy(best_effort_invalid_cpu)) {
-    return 1;
-  }
+  EXPECT_TRUE(ApplyRuntimePolicy(best_effort_invalid_cpu));
 
   RuntimePolicyHookReset hook_reset;
   detail::RuntimePolicySyscallHooks& hooks =
@@ -81,14 +75,9 @@ int main() {
   rollback_policy.io_cpu_id = 0;
   rollback_policy.lock_memory = true;
   rollback_policy.prefault_stack = false;
-  if (ApplyRuntimePolicy(rollback_policy)) {
-    return 1;
-  }
-  if (g_mlockall_calls != 1 || g_pthread_setaffinity_calls != 1 ||
-      g_munlockall_calls != 1) {
-    return 1;
-  }
+  EXPECT_FALSE(ApplyRuntimePolicy(rollback_policy));
+  EXPECT_EQ(g_mlockall_calls, 1);
+  EXPECT_EQ(g_pthread_setaffinity_calls, 1);
+  EXPECT_EQ(g_munlockall_calls, 1);
 #endif
-
-  return 0;
 }

@@ -1,10 +1,13 @@
 add_subdirectory(websocket)
 
-add_test(
-    NAME hello_world_smoke_test
-    COMMAND $<TARGET_FILE:aquila_hello_world>
+add_executable(hello_world_test
+    hello_world_test.cpp
 )
 
-set_tests_properties(hello_world_smoke_test PROPERTIES
-    PASS_REGULAR_EXPRESSION "hello world"
+target_compile_definitions(hello_world_test
+    PRIVATE HELLO_WORLD_TEST_TARGET="$<TARGET_FILE:aquila_hello_world>"
+)
+
+target_link_libraries(hello_world_test
+    PRIVATE GTest::gtest_main
 )

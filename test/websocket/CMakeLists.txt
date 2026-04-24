@@ -1,103 +1,19 @@
-add_executable(websocket_types_test
-    types_test.cpp
-)
+function(add_websocket_gtest target source_file)
+    add_executable(${target}
+        ${source_file}
+    )
 
-target_link_libraries(websocket_types_test
-    PRIVATE aquila_gate_ws_core
-)
+    target_link_libraries(${target}
+        PRIVATE aquila_gate_ws_core GTest::gtest_main
+    )
+endfunction()
 
-add_test(
-    NAME websocket_types_test
-    COMMAND $<TARGET_FILE:websocket_types_test>
-)
-
-add_executable(websocket_runtime_policy_test
-    runtime_policy_test.cpp
-)
-
-target_link_libraries(websocket_runtime_policy_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_runtime_policy_test
-    COMMAND $<TARGET_FILE:websocket_runtime_policy_test>
-)
-
-add_executable(websocket_prepared_write_test
-    prepared_write_test.cpp
-)
-
-target_link_libraries(websocket_prepared_write_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_prepared_write_test
-    COMMAND $<TARGET_FILE:websocket_prepared_write_test>
-)
-
-add_executable(websocket_handshake_test
-    handshake_test.cpp
-)
-
-target_link_libraries(websocket_handshake_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_handshake_test
-    COMMAND $<TARGET_FILE:websocket_handshake_test>
-)
-
-add_executable(websocket_frame_codec_test
-    frame_codec_test.cpp
-)
-
-target_link_libraries(websocket_frame_codec_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_frame_codec_test
-    COMMAND $<TARGET_FILE:websocket_frame_codec_test>
-)
-
-add_executable(websocket_tls_socket_test
-    tls_socket_test.cpp
-)
-
-target_link_libraries(websocket_tls_socket_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_tls_socket_test
-    COMMAND $<TARGET_FILE:websocket_tls_socket_test>
-)
-
-add_executable(websocket_critical_session_test
-    critical_session_test.cpp
-)
-
-target_link_libraries(websocket_critical_session_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_critical_session_test
-    COMMAND $<TARGET_FILE:websocket_critical_session_test>
-)
-
-add_executable(websocket_gate_loopback_integration_test
-    gate_loopback_integration_test.cpp
-)
-
-target_link_libraries(websocket_gate_loopback_integration_test
-    PRIVATE aquila_gate_ws_core
-)
-
-add_test(
-    NAME websocket_gate_loopback_integration_test
-    COMMAND $<TARGET_FILE:websocket_gate_loopback_integration_test>
-)
+add_websocket_gtest(websocket_types_test types_test.cpp)
+add_websocket_gtest(websocket_runtime_policy_test runtime_policy_test.cpp)
+add_websocket_gtest(websocket_prepared_write_test prepared_write_test.cpp)
+add_websocket_gtest(websocket_handshake_test handshake_test.cpp)
+add_websocket_gtest(websocket_frame_codec_test frame_codec_test.cpp)
+add_websocket_gtest(websocket_tls_socket_test tls_socket_test.cpp)
+add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
+add_websocket_gtest(websocket_gate_loopback_integration_test
+                    gate_loopback_integration_test.cpp)

@@ -1,6 +1,8 @@
 #include "core/websocket/critical_session.h"
 #include "core/websocket/cold_path_loop.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <span>
@@ -85,7 +87,8 @@ class FakeTlsSocket final {
 
 }  // namespace
 
-int main() {
+TEST(WebsocketCriticalSessionTest,
+     HandlesWritesReadsBackpressureAndHeartbeatFailures) {
   ConnectionConfig config{};
   config.prepared_write_slots = 4;
   config.prepared_write_bytes = 128;
@@ -103,38 +106,30 @@ int main() {
   session.SetConsumer(consumer);
 
   auto* write = session.TryAcquirePreparedWrite();
-  if (write == nullptr) {
-    return 1;
-  }
+  ASSERT_NE(write, nullptr);
   std::copy_n(std::as_bytes(std::span{"tick", 4}).begin(), 4,
               write->storage.begin());
   write->encoded_size = 4;
   write->kind = PayloadKind::kText;
-  if (session.CommitPreparedWrite(write) != SendStatus::kOk) {
-    return 1;
-  }
+  ASSERT_EQ(session.CommitPreparedWrite(write), SendStatus::kOk);
 
   session.DriveWrite();
-  if (socket.written_.size() != 2 || metrics.tx_messages != 0 ||
-      metrics.tx_bytes != 2 || !session.WantsWrite()) {
-    return 1;
-  }
+  EXPECT_EQ(socket.written_.size(), 2U);
+  EXPECT_EQ(metrics.tx_messages, 0U);
+  EXPECT_EQ(metrics.tx_bytes, 2U);
+  EXPECT_TRUE(session.WantsWrite());
 
   session.DriveWrite();
-  if (socket.written_.size() != 4 || metrics.tx_messages != 1 ||
-      metrics.tx_bytes != 4 || session.WantsWrite()) {
-    return 1;
-  }
+  EXPECT_EQ(socket.written_.size(), 4U);
+  EXPECT_EQ(metrics.tx_messages, 1U);
+  EXPECT_EQ(metrics.tx_bytes, 4U);
+  EXPECT_FALSE(session.WantsWrite());
 
   auto* cancelled = session.TryAcquirePreparedWrite();
-  if (cancelled == nullptr) {
-    return 1;
-  }
+  ASSERT_NE(cancelled, nullptr);
   session.CancelPreparedWrite(cancelled);
   auto* reacquired = session.TryAcquirePreparedWrite();
-  if (reacquired == nullptr) {
-    return 1;
-  }
+  ASSERT_NE(reacquired, nullptr);
   session.CancelPreparedWrite(reacquired);
 
   auto first_frame = BuildServerTextFrame("ab");
@@ -145,22 +140,17 @@ int main() {
   coalesced.insert(coalesced.end(), second_frame.begin(), second_frame.end());
   socket.read_chunks_.push_back(coalesced);
   session.DriveRead();
-  if (bytes != 4 || metrics.rx_messages != 2 ||
-      metrics.rx_bytes != coalesced.size()) {
-    return 1;
-  }
+  EXPECT_EQ(bytes, 4U);
+  EXPECT_EQ(metrics.rx_messages, 2U);
+  EXPECT_EQ(metrics.rx_bytes, coalesced.size());
 
   const size_t written_before_ping = socket.written_.size();
   socket.max_write_bytes_per_call_ = 0;
   socket.read_chunks_.push_back(BuildServerPingFrame("z"));
   session.DriveRead();
-  if (!session.WantsWrite()) {
-    return 1;
-  }
+  EXPECT_TRUE(session.WantsWrite());
   session.DriveWrite();
-  if (socket.written_.size() <= written_before_ping) {
-    return 1;
-  }
+  EXPECT_GT(socket.written_.size(), written_before_ping);
 
   size_t dropped_bytes = 0;
   MessageConsumer backpressured_consumer{&dropped_bytes, &BackpressureMessage};
@@ -170,10 +160,8 @@ int main() {
       config, backpressured_socket, arena, metrics);
   backpressured_session.SetConsumer(backpressured_consumer);
   backpressured_session.DriveRead();
-  if (!backpressured_session.ShouldReconnect() ||
-      backpressured_session.LastError() != ConnectionError::kSocketError) {
-    return 1;
-  }
+  EXPECT_TRUE(backpressured_session.ShouldReconnect());
+  EXPECT_EQ(backpressured_session.LastError(), ConnectionError::kSocketError);
 
   FakeTlsSocket peer_closed_socket;
   peer_closed_socket.eof_on_empty_ = true;
@@ -181,10 +169,8 @@ int main() {
       config, peer_closed_socket, arena, metrics);
   peer_closed_session.SetConsumer(consumer);
   peer_closed_session.DriveRead();
-  if (!peer_closed_session.ShouldReconnect() ||
-      peer_closed_session.LastError() != ConnectionError::kPeerClosed) {
-    return 1;
-  }
+  EXPECT_TRUE(peer_closed_session.ShouldReconnect());
+  EXPECT_EQ(peer_closed_session.LastError(), ConnectionError::kPeerClosed);
 
   ConnectionConfig heartbeat_config = config;
   heartbeat_config.prepared_write_slots = 1;
@@ -197,11 +183,7 @@ int main() {
   heartbeat_session.SetConsumer(consumer);
   heartbeat_session.AdvanceHeartbeat(2'000'000'000ULL);
   heartbeat_session.AdvanceHeartbeat(40'000'000'000ULL);
-  if (!heartbeat_session.ShouldReconnect() ||
-      heartbeat_session.LastError() != ConnectionError::kHeartbeatTimeout ||
-      heartbeat_metrics.heartbeat_timeouts != 1) {
-    return 1;
-  }
-
-  return 0;
+  EXPECT_TRUE(heartbeat_session.ShouldReconnect());
+  EXPECT_EQ(heartbeat_session.LastError(), ConnectionError::kHeartbeatTimeout);
+  EXPECT_EQ(heartbeat_metrics.heartbeat_timeouts, 1U);
 }

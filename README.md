@@ -22,6 +22,7 @@ $HOME/vcpkg/vcpkg install \
   quill \
   tomlplusplus \
   cli11 \
+  gtest \
   magic-enum \
   vincentlaucsb-csv-parser \
   yyjson \
@@ -37,6 +38,10 @@ After dependencies are installed, build the debug tree with:
 ```bash
 ./build.sh debug
 ```
+
+The test binaries under `test/` are built with GoogleTest. Run them directly
+from `build/debug/test/` and use `--gtest_filter=...` when you want to narrow a
+suite to a subset of cases.
 
 ## WebSocket Microbenchmarks
 

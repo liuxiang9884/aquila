@@ -22,6 +22,7 @@ find_package(Drogon CONFIG REQUIRED)
 
 # fast-float
 find_package(FastFloat CONFIG REQUIRED)
+find_package(GTest CONFIG REQUIRED)
 
 # absl
 find_package(absl CONFIG REQUIRED COMPONENTS btree flat_hash_map)
