@@ -45,3 +45,11 @@ add_executable(runtime_loopback_benchmark
 target_link_libraries(runtime_loopback_benchmark
     PRIVATE aquila_gate_ws_core
 )
+
+add_executable(cold_path_handshake_benchmark
+    cold_path_handshake_benchmark.cpp
+)
+
+target_link_libraries(cold_path_handshake_benchmark
+    PRIVATE aquila_gate_ws_core
+)
