@@ -21,3 +21,27 @@ add_executable(active_spin_benchmark
 target_link_libraries(active_spin_benchmark
     PRIVATE aquila_gate_ws_core
 )
+
+add_executable(session_write_path_benchmark
+    session_write_path_benchmark.cpp
+)
+
+target_link_libraries(session_write_path_benchmark
+    PRIVATE aquila_gate_ws_core
+)
+
+add_executable(session_read_path_benchmark
+    session_read_path_benchmark.cpp
+)
+
+target_link_libraries(session_read_path_benchmark
+    PRIVATE aquila_gate_ws_core
+)
+
+add_executable(runtime_loopback_benchmark
+    runtime_loopback_benchmark.cpp
+)
+
+target_link_libraries(runtime_loopback_benchmark
+    PRIVATE aquila_gate_ws_core
+)

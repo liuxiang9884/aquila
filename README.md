@@ -57,7 +57,10 @@ The minimal WebSocket HFT slice builds three targeted microbenchmark binaries:
 cmake --build build/release --target \
   prepared_write_benchmark \
   frame_codec_benchmark \
-  active_spin_benchmark -j8
+  active_spin_benchmark \
+  session_write_path_benchmark \
+  session_read_path_benchmark \
+  runtime_loopback_benchmark -j8
 ```
 
 You can run them directly from `build/release/benchmark/websocket/`. Each binary
@@ -71,8 +74,17 @@ client stack:
   RNG cost
 - `active_spin_benchmark`: one owner-loop iteration in the active spin runtime
 
-They are not end-to-end GateIO `wss` latency reports and should not be used to
-claim full socket/TLS/handshake path latency.
+The first real-I/O benchmark layer runs against a nonblocking local
+`socketpair()` harness:
+- `session_write_path_benchmark`: `CommitPreparedWrite()` through
+  `CriticalSession::DriveWrite()` into a live kernel socket buffer
+- `session_read_path_benchmark`: peer frame write through
+  `CriticalSession::DriveRead()` and consumer delivery
+- `runtime_loopback_benchmark`: `ActiveSpinLoop + CriticalSession` message
+  latency with one message in flight over the local socketpair harness
+
+These benchmarks are still not end-to-end GateIO `wss` latency reports and
+should not be used to claim full socket/TLS/handshake path latency.
 
 This WebSocket slice is intentionally specialized for one low-latency GateIO
 `wss` connection. `Layer 1` is a user-driven core for handshake, TLS/WS state,
