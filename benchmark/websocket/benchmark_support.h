@@ -70,16 +70,19 @@ inline std::uint64_t SelectQuantile(std::vector<std::uint64_t>& samples,
   return samples[index];
 }
 
-inline void PrintReport(std::string_view name, std::vector<std::uint64_t> samples_ns,
-                        bool tls_enabled, std::string_view endpoint,
-                        std::string_view detail_name,
-                        std::uint64_t detail_value) {
-  const std::string affinity = FormatAffinity();
+inline void PrintReportWithMetadata(std::string_view name,
+                                    std::vector<std::uint64_t> samples_ns,
+                                    std::string_view affinity,
+                                    std::string_view scheduling_policy,
+                                    bool tls_enabled,
+                                    std::string_view endpoint,
+                                    std::string_view detail_name,
+                                    std::uint64_t detail_value) {
   if (samples_ns.empty()) {
     std::printf(
         "name=%.*s samples=0 affinity=%s scheduling=%s tls=%s endpoint=%.*s\n",
-        static_cast<int>(name.size()), name.data(), affinity.c_str(),
-        FormatSchedulingPolicy(), tls_enabled ? "enabled" : "disabled",
+        static_cast<int>(name.size()), name.data(), affinity.data(),
+        scheduling_policy.data(), tls_enabled ? "enabled" : "disabled",
         static_cast<int>(endpoint.size()), endpoint.data());
     return;
   }
@@ -97,10 +100,20 @@ inline void PrintReport(std::string_view name, std::vector<std::uint64_t> sample
       " p99_ns=%" PRIu64 " p999_ns=%" PRIu64 " max_ns=%" PRIu64
       " affinity=%s scheduling=%s tls=%s endpoint=%.*s %.*s=%" PRIu64 "\n",
       static_cast<int>(name.size()), name.data(), samples_ns.size(), min_ns,
-      p50_ns, p99_ns, p999_ns, max_ns, affinity.c_str(),
-      FormatSchedulingPolicy(), tls_enabled ? "enabled" : "disabled",
+      p50_ns, p99_ns, p999_ns, max_ns, affinity.data(),
+      scheduling_policy.data(), tls_enabled ? "enabled" : "disabled",
       static_cast<int>(endpoint.size()), endpoint.data(),
       static_cast<int>(detail_name.size()), detail_name.data(), detail_value);
+}
+
+inline void PrintReport(std::string_view name, std::vector<std::uint64_t> samples_ns,
+                        bool tls_enabled, std::string_view endpoint,
+                        std::string_view detail_name,
+                        std::uint64_t detail_value) {
+  const std::string affinity = FormatAffinity();
+  PrintReportWithMetadata(name, std::move(samples_ns), affinity,
+                          FormatSchedulingPolicy(), tls_enabled, endpoint,
+                          detail_name, detail_value);
 }
 
 }  // namespace aquila::websocket::benchmarking

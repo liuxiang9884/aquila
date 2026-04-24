@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -30,6 +31,7 @@ constexpr size_t kSamples = 2048;
 struct RuntimeContext {
   std::atomic<size_t> delivered{0};
   std::atomic<std::uint64_t> send_ns{0};
+  std::atomic<bool> timing_anomaly{false};
   std::vector<std::uint64_t>* samples_ns{nullptr};
 };
 
@@ -43,6 +45,8 @@ struct VariantResult {
   std::uint64_t rx_messages{0};
   bool success{false};
   const char* failure_reason{nullptr};
+  std::string owner_affinity{};
+  std::string owner_scheduling{};
 };
 
 DeliveryResult RecordLoopback(void* context, const MessageView&) noexcept {
@@ -53,8 +57,11 @@ DeliveryResult RecordLoopback(void* context, const MessageView&) noexcept {
   }
   const std::uint64_t receive_ns = NowNs();
   const std::uint64_t send_ns = runtime->send_ns.load();
-  (*runtime->samples_ns)[index] =
-      receive_ns >= send_ns ? (receive_ns - send_ns) : 0;
+  if (receive_ns < send_ns) {
+    runtime->timing_anomaly.store(true);
+    return DeliveryResult::kFatal;
+  }
+  (*runtime->samples_ns)[index] = receive_ns - send_ns;
   return DeliveryResult::kAccepted;
 }
 
@@ -133,6 +140,7 @@ VariantResult RunVariant(const VariantSpec& variant) {
   session.SetConsumer(consumer);
 
   std::atomic<bool> stop_flag{false};
+  std::atomic<bool> owner_finished{false};
   std::atomic<int> apply_status{0};
   RuntimeSession runtime_session{session, stop_flag};
   ActiveSpinLoop loop(config.runtime_policy);
@@ -141,9 +149,13 @@ VariantResult RunVariant(const VariantSpec& variant) {
     apply_status.store(ApplyRuntimePolicy(config.runtime_policy) ? 1 : -1);
     if (apply_status.load() < 0) {
       stop_flag.store(true);
+      owner_finished.store(true);
       return;
     }
+    result.owner_affinity = FormatAffinity();
+    result.owner_scheduling = FormatSchedulingPolicy();
     loop.Run(runtime_session);
+    owner_finished.store(true);
   });
 
   while (apply_status.load() == 0) {
@@ -169,7 +181,14 @@ VariantResult RunVariant(const VariantSpec& variant) {
       return result;
     }
     while (runtime_context.delivered.load() <= sample_index) {
-      if (session.ShouldReconnect()) {
+      if (runtime_context.timing_anomaly.load()) {
+        stop_flag.store(true);
+        owner_thread.join();
+        result.failure_reason = "timing_anomaly";
+        result.samples_ns.clear();
+        return result;
+      }
+      if (owner_finished.load()) {
         stop_flag.store(true);
         owner_thread.join();
         result.failure_reason = "session_reconnect_requested";
@@ -195,16 +214,33 @@ VariantResult RunVariant(const VariantSpec& variant) {
 
 void PrintVariantFailure(const VariantSpec& variant,
                          const VariantResult& result) {
-  PrintReport(variant.name, {}, false, "local-socketpair", "messages", 0);
   std::printf(
       "name=%.*s status=skipped reason=%s affinity_mode=%u io_cpu_id=%d "
-      "lock_memory=%s prefault_stack=%s\n",
+      "lock_memory=%s prefault_stack=%s owner_affinity=%s "
+      "owner_scheduling=%s endpoint=local-socketpair\n",
       static_cast<int>(variant.name.size()), variant.name.data(),
       result.failure_reason == nullptr ? "unknown" : result.failure_reason,
       static_cast<unsigned>(variant.runtime_policy.affinity_mode),
       variant.runtime_policy.io_cpu_id,
       variant.runtime_policy.lock_memory ? "true" : "false",
-      variant.runtime_policy.prefault_stack ? "true" : "false");
+      variant.runtime_policy.prefault_stack ? "true" : "false",
+      result.owner_affinity.empty() ? "unknown" : result.owner_affinity.c_str(),
+      result.owner_scheduling.empty() ? "unknown" : result.owner_scheduling.c_str());
+}
+
+void PrintVariantSuccess(const VariantSpec& variant,
+                         const VariantResult& result) {
+  std::printf(
+      "name=%.*s status=ok affinity_mode=%u io_cpu_id=%d lock_memory=%s "
+      "prefault_stack=%s owner_affinity=%s owner_scheduling=%s\n",
+      static_cast<int>(variant.name.size()), variant.name.data(),
+      static_cast<unsigned>(variant.runtime_policy.affinity_mode),
+      variant.runtime_policy.io_cpu_id,
+      variant.runtime_policy.lock_memory ? "true" : "false",
+      variant.runtime_policy.prefault_stack ? "true" : "false",
+      result.owner_affinity.empty() ? "unknown" : result.owner_affinity.c_str(),
+      result.owner_scheduling.empty() ? "unknown"
+                                      : result.owner_scheduling.c_str());
 }
 
 }  // namespace
@@ -220,7 +256,7 @@ int main() {
   baseline_policy.prefault_stack = false;
 
   RuntimePolicy pinned_policy = baseline_policy;
-  pinned_policy.affinity_mode = AffinityMode::kBestEffort;
+  pinned_policy.affinity_mode = AffinityMode::kRequired;
   pinned_policy.io_cpu_id = has_cpu ? first_cpu : -1;
 
   RuntimePolicy pinned_prefault_policy = pinned_policy;
@@ -251,8 +287,19 @@ int main() {
       continue;
     }
 
-    PrintReport(variant.name, std::move(result.samples_ns), false,
-                "local-socketpair", "messages", result.rx_messages);
+    const std::string_view owner_affinity =
+        result.owner_affinity.empty()
+            ? std::string_view("unknown")
+            : std::string_view(result.owner_affinity);
+    const std::string_view owner_scheduling =
+        result.owner_scheduling.empty()
+            ? std::string_view("unknown")
+            : std::string_view(result.owner_scheduling);
+    PrintReportWithMetadata(
+        variant.name, std::move(result.samples_ns), owner_affinity,
+        owner_scheduling, false, "local-socketpair", "messages",
+        result.rx_messages);
+    PrintVariantSuccess(variant, result);
   }
 
   return 0;
