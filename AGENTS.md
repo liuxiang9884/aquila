@@ -5,6 +5,8 @@
 ## 默认约定
 
 - 默认使用中文回答，除非用户明确要求其他语言。
+- 文档（`doc/`、`README.md`、设计/审查/计划等 markdown）使用中文撰写；代码注释（`.h`、`.cpp` 中的注释和 docstring）使用英文撰写。提交信息（commit message）使用英文。
+- 提交 PR 时，PR 标题与正文以中文为主；命令行、报错原文、外部链接和代码片段保留英文 / 原文。
 - 优先遵循仓库现有的 `CMake + C++20` 结构、构建脚本和依赖管理方式，不做与当前任务无关的重构。
 - 这是一个面向 crypto 的高频交易系统仓库，默认同时关注正确性、确定性、低延迟、可恢复性和可观测性。
 - 对性能、时延、吞吐、并发安全和交易行为相关结论，必须基于实际测试、benchmark、profile 或运行证据，不凭主观判断宣称完成。
@@ -31,6 +33,19 @@
 - 尽量少用虚函数；如果可以，优先使用组合或 `CRTP` 替代，避免在关键路径中引入不必要的动态分发和间接跳转成本。
 - 当最低延迟与系统正确性、确定性、可恢复性发生冲突时，不允许为了追求更低延迟牺牲系统正确行为。
 - 任何关于低延迟或吞吐量收益的结论，都必须由 benchmark、profile、链路压测或实际运行证据支撑。
+
+## Skills 来源与安装（仅适用于 Claude Code）
+
+> 本节只对使用 **Claude Code** 的协作者生效。其他 agent / IDE（如 Codex、Cursor 等）请忽略本节，按各自工具的方式实现等价的方法论即可。
+
+下列推荐的 skills（`systematic-debugging`、`verification-before-completion`、`test-driven-development`、`writing-plans`、`brainstorming`、`requesting-code-review`、`subagent-driven-development`、`dispatching-parallel-agents`、`using-superpowers`、`using-git-worktrees`、`finishing-a-development-branch`）均来自 `obra/superpowers-marketplace`。新机器或新协作者首次接入本仓库时，请先在 Claude Code 中执行：
+
+```
+/plugin marketplace add obra/superpowers-marketplace
+/plugin install superpowers@superpowers-marketplace
+```
+
+安装一次即可在所有项目中使用，无需在仓库内重复配置。
 
 ## 推荐默认使用的 Skills
 
