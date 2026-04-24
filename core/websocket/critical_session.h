@@ -161,7 +161,9 @@ class CriticalSession {
     if (!awaiting_pong_) {
       if (last_ping_ns_ == 0 || now_ns - last_ping_ns_ >= interval_ns) {
         if (!EnqueueControlFrame(PayloadKind::kPing, {})) {
-          TriggerReconnect(ConnectionError::kSocketError);
+          // Skip this tick; do not mark awaiting_pong_ so the next call
+          // retries once a slot frees up.
+          ++metrics_.control_frame_enqueue_failures;
           return;
         }
         awaiting_pong_ = true;
@@ -207,9 +209,14 @@ class CriticalSession {
       case PayloadKind::kText:
       case PayloadKind::kBinary: {
         const DeliveryResult result = consumer_.Handle(decoded.view);
-        if (result == DeliveryResult::kFatal ||
-            result == DeliveryResult::kBackpressured) {
-          TriggerReconnect(ConnectionError::kSocketError);
+        if (result == DeliveryResult::kFatal) {
+          TriggerReconnect(ConnectionError::kConsumerFatal);
+          return;
+        }
+        if (result == DeliveryResult::kBackpressured) {
+          // Drop the frame but keep the connection alive; the control plane
+          // is expected to observe the counter and decide on degradation.
+          ++metrics_.consumer_backpressure_drops;
           return;
         }
         ++metrics_.rx_messages;
@@ -223,7 +230,9 @@ class CriticalSession {
         return;
       case PayloadKind::kPing:
         if (!EnqueueControlFrame(PayloadKind::kPong, decoded.view.payload)) {
-          TriggerReconnect(ConnectionError::kSocketError);
+          // Skip the auto-pong but keep the connection; heartbeat-timeout
+          // path still catches truly dead peers.
+          ++metrics_.control_frame_enqueue_failures;
         }
         return;
     }

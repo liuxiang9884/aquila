@@ -15,6 +15,10 @@ struct Metrics {
   // Peak number of prepared-write slots simultaneously in use by the owner.
   std::uint64_t prepared_write_high_watermark{0};
   std::uint64_t heartbeat_timeouts{0};
+  // Inbound frames dropped because the consumer returned kBackpressured.
+  std::uint64_t consumer_backpressure_drops{0};
+  // Control frames (auto-pong / heartbeat ping) skipped due to slot exhaustion.
+  std::uint64_t control_frame_enqueue_failures{0};
 };
 
 }  // namespace aquila::websocket

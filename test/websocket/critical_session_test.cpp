@@ -19,10 +19,6 @@ DeliveryResult RecordMessage(void* context, const MessageView& view) noexcept {
   return DeliveryResult::kAccepted;
 }
 
-DeliveryResult BackpressureMessage(void*, const MessageView&) noexcept {
-  return DeliveryResult::kBackpressured;
-}
-
 std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
   std::vector<std::byte> frame(2 + payload.size());
   frame[0] = std::byte{0x81};
@@ -152,17 +148,6 @@ TEST(WebsocketCriticalSessionTest,
   session.DriveWrite();
   EXPECT_GT(socket.written_.size(), written_before_ping);
 
-  size_t dropped_bytes = 0;
-  MessageConsumer backpressured_consumer{&dropped_bytes, &BackpressureMessage};
-  FakeTlsSocket backpressured_socket;
-  backpressured_socket.read_chunks_.push_back(BuildServerTextFrame("bp"));
-  CriticalSession<FakeTlsSocket> backpressured_session(
-      config, backpressured_socket, arena, metrics);
-  backpressured_session.SetConsumer(backpressured_consumer);
-  backpressured_session.DriveRead();
-  EXPECT_TRUE(backpressured_session.ShouldReconnect());
-  EXPECT_EQ(backpressured_session.LastError(), ConnectionError::kSocketError);
-
   FakeTlsSocket peer_closed_socket;
   peer_closed_socket.eof_on_empty_ = true;
   CriticalSession<FakeTlsSocket> peer_closed_session(
@@ -186,4 +171,134 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_TRUE(heartbeat_session.ShouldReconnect());
   EXPECT_EQ(heartbeat_session.LastError(), ConnectionError::kHeartbeatTimeout);
   EXPECT_EQ(heartbeat_metrics.heartbeat_timeouts, 1U);
+}
+
+namespace {
+
+struct BackpressureCounter {
+  size_t calls{0};
+};
+
+DeliveryResult CountAndBackpressure(void* context,
+                                    const MessageView&) noexcept {
+  ++static_cast<BackpressureCounter*>(context)->calls;
+  return DeliveryResult::kBackpressured;
+}
+
+DeliveryResult FatalDelivery(void*, const MessageView&) noexcept {
+  return DeliveryResult::kFatal;
+}
+
+ConnectionConfig BuildSmallConfig(size_t slots) {
+  ConnectionConfig config{};
+  config.prepared_write_slots = slots;
+  config.prepared_write_bytes = 128;
+  config.read_buffer_bytes = 256;
+  config.frame_buffer_bytes = 256;
+  return config;
+}
+
+}  // namespace
+
+TEST(WebsocketCriticalSessionTest,
+     BackpressuredConsumerDropsFramesWithoutReconnect) {
+  auto config = BuildSmallConfig(4);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  BackpressureCounter counter{};
+  MessageConsumer consumer{&counter, &CountAndBackpressure};
+  FakeTlsSocket socket;
+
+  auto first = BuildServerTextFrame("aa");
+  auto second = BuildServerTextFrame("bb");
+  std::vector<std::byte> coalesced;
+  coalesced.insert(coalesced.end(), first.begin(), first.end());
+  coalesced.insert(coalesced.end(), second.begin(), second.end());
+  socket.read_chunks_.push_back(coalesced);
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+  session.DriveRead();
+
+  EXPECT_FALSE(session.ShouldReconnect());
+  EXPECT_EQ(session.LastError(), ConnectionError::kNone);
+  EXPECT_EQ(counter.calls, 2U);
+  EXPECT_EQ(metrics.consumer_backpressure_drops, 2U);
+  EXPECT_EQ(metrics.rx_messages, 0U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     FatalConsumerTriggersReconnectWithConsumerFatal) {
+  auto config = BuildSmallConfig(4);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  MessageConsumer consumer{nullptr, &FatalDelivery};
+  FakeTlsSocket socket;
+  socket.read_chunks_.push_back(BuildServerTextFrame("x"));
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+  session.DriveRead();
+
+  EXPECT_TRUE(session.ShouldReconnect());
+  EXPECT_EQ(session.LastError(), ConnectionError::kConsumerFatal);
+  EXPECT_EQ(metrics.consumer_backpressure_drops, 0U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     AutoPongEnqueueFailureSkipsWithoutReconnect) {
+  auto config = BuildSmallConfig(1);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  socket.read_chunks_.push_back(BuildServerPingFrame("z"));
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+
+  // Exhaust the single slot with a business commit so auto-pong has no room.
+  auto* hold = session.TryAcquirePreparedWrite();
+  ASSERT_NE(hold, nullptr);
+  hold->encoded_size = 4;
+  hold->kind = PayloadKind::kText;
+  ASSERT_EQ(session.CommitPreparedWrite(hold), SendStatus::kOk);
+
+  session.DriveRead();
+
+  EXPECT_FALSE(session.ShouldReconnect());
+  EXPECT_EQ(session.LastError(), ConnectionError::kNone);
+  EXPECT_EQ(metrics.control_frame_enqueue_failures, 1U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     HeartbeatPingEnqueueFailureSkipsTickWithoutReconnect) {
+  auto config = BuildSmallConfig(1);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+
+  // Exhaust the single slot so the heartbeat ping cannot be queued.
+  auto* hold = session.TryAcquirePreparedWrite();
+  ASSERT_NE(hold, nullptr);
+  hold->encoded_size = 4;
+  hold->kind = PayloadKind::kText;
+  ASSERT_EQ(session.CommitPreparedWrite(hold), SendStatus::kOk);
+
+  session.AdvanceHeartbeat(6'000'000'000ULL);
+
+  EXPECT_FALSE(session.ShouldReconnect());
+  EXPECT_EQ(session.LastError(), ConnectionError::kNone);
+  EXPECT_EQ(metrics.control_frame_enqueue_failures, 1U);
+  EXPECT_EQ(metrics.heartbeat_timeouts, 0U);
 }

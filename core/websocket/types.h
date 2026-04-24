@@ -31,6 +31,7 @@ enum class ConnectionError : std::uint8_t {
   kProtocolError,
   kHeartbeatTimeout,
   kPeerClosed,
+  kConsumerFatal,
 };
 
 enum class PayloadKind : std::uint8_t {
