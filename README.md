@@ -60,7 +60,8 @@ cmake --build build/release --target \
   active_spin_benchmark \
   session_write_path_benchmark \
   session_read_path_benchmark \
-  runtime_loopback_benchmark -j8
+  runtime_loopback_benchmark \
+  affinity_policy_comparison_benchmark -j8
 ```
 
 You can run them directly from `build/release/benchmark/websocket/`. Each binary
@@ -82,6 +83,10 @@ The first real-I/O benchmark layer runs against a nonblocking local
   `CriticalSession::DriveRead()` and consumer delivery
 - `runtime_loopback_benchmark`: `ActiveSpinLoop + CriticalSession` message
   latency with one message in flight over the local socketpair harness
+- `affinity_policy_comparison_benchmark`: sequentially compares baseline,
+  pinned, prefaulted, and memory-locked runtime policies on the same local
+  socketpair loopback path, skipping variants that cannot apply in the current
+  environment
 
 These benchmarks are still not end-to-end GateIO `wss` latency reports and
 should not be used to claim full socket/TLS/handshake path latency.

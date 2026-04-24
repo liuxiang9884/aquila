@@ -46,6 +46,14 @@ target_link_libraries(runtime_loopback_benchmark
     PRIVATE aquila_gate_ws_core
 )
 
+add_executable(affinity_policy_comparison_benchmark
+    affinity_policy_comparison_benchmark.cpp
+)
+
+target_link_libraries(affinity_policy_comparison_benchmark
+    PRIVATE aquila_gate_ws_core
+)
+
 add_executable(cold_path_handshake_benchmark
     cold_path_handshake_benchmark.cpp
 )
