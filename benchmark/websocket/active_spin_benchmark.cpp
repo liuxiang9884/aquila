@@ -1,11 +1,12 @@
 #include "benchmark/websocket/benchmark_support.h"
+#include "benchmark/websocket/io_benchmark_support.h"
 #include "core/websocket/active_spin_loop.h"
 #include "core/websocket/runtime_policy.h"
 
-#include <chrono>
 #include <cstdint>
-#include <utility>
 #include <vector>
+
+#include <benchmark/benchmark.h>
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -24,33 +25,35 @@ class FakeSession {
   std::uint64_t iterations_{0};
 };
 
-}  // namespace
-
-int main() {
-  constexpr size_t kSamples = 8192;
+void BenchmarkActiveSpin(benchmark::State& state) {
   RuntimePolicy policy{};
   policy.affinity_mode = AffinityMode::kNone;
   ActiveSpinLoop loop(policy);
   std::vector<std::uint64_t> samples_ns;
-  samples_ns.reserve(kSamples);
+  samples_ns.reserve(8192);
   std::uint64_t total_iterations = 0;
 
-  for (size_t sample_index = 0; sample_index < kSamples; ++sample_index) {
+  for (auto _ : state) {
     FakeSession session;
-    const auto start = std::chrono::steady_clock::now();
+    const std::uint64_t start_ns = NowNs();
     loop.Run(session);
-    const auto stop = std::chrono::steady_clock::now();
-    if (stop <= start) {
-      return 1;
-    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
     total_iterations += session.iterations();
-    const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                stop - start)
-                                .count();
-    samples_ns.push_back(static_cast<std::uint64_t>(elapsed_ns));
+    samples_ns.push_back(elapsed_ns);
   }
 
-  PrintReport("active_spin", std::move(samples_ns), false,
-              "local-microbenchmark", "iterations", total_iterations);
-  return 0;
+  SetLatencyCounters(state, std::move(samples_ns), "iterations",
+                     total_iterations);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
 }
+
+BENCHMARK(BenchmarkActiveSpin)
+    ->Name("active_spin")
+    ->Iterations(8192)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+}  // namespace

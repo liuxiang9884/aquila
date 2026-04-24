@@ -9,13 +9,13 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cstdio>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <thread>
-#include <utility>
 #include <vector>
+
+#include <benchmark/benchmark.h>
 
 #if defined(__linux__)
 #include <sched.h>
@@ -40,18 +40,18 @@ struct VariantSpec {
   RuntimePolicy runtime_policy;
 };
 
-struct VariantResult {
-  std::vector<std::uint64_t> samples_ns;
-  std::uint64_t rx_messages{0};
-  bool success{false};
-  const char* failure_reason{nullptr};
+struct VariantContext {
+  std::atomic<bool> owner_finished{false};
+  std::atomic<int> apply_status{0};
+  RuntimeContext runtime_context{};
+  std::vector<std::uint64_t> samples_ns{};
   std::string owner_affinity{};
   std::string owner_scheduling{};
 };
 
 DeliveryResult RecordLoopback(void* context, const MessageView&) noexcept {
   auto* runtime = static_cast<RuntimeContext*>(context);
-  const size_t index = runtime->delivered.fetch_add(1);
+  const size_t index = runtime->delivered.load();
   if (runtime->samples_ns == nullptr || index >= runtime->samples_ns->size()) {
     return DeliveryResult::kFatal;
   }
@@ -62,6 +62,7 @@ DeliveryResult RecordLoopback(void* context, const MessageView&) noexcept {
     return DeliveryResult::kFatal;
   }
   (*runtime->samples_ns)[index] = receive_ns - send_ns;
+  runtime->delivered.store(index + 1);
   return DeliveryResult::kAccepted;
 }
 
@@ -118,189 +119,174 @@ bool FirstAvailableCpu(int* cpu_id) noexcept {
   return false;
 }
 
-VariantResult RunVariant(const VariantSpec& variant) {
-  VariantResult result;
-  result.samples_ns.assign(kSamples, 0);
+void RunAffinityVariant(benchmark::State& state, const VariantSpec& variant) {
+  if (variant.runtime_policy.affinity_mode != AffinityMode::kNone &&
+      variant.runtime_policy.io_cpu_id < 0) {
+    state.SkipWithError("no available CPU");
+    return;
+  }
 
+  VariantContext variant_context;
+  variant_context.samples_ns.assign(kSamples, 0);
+  variant_context.runtime_context.samples_ns = &variant_context.samples_ns;
   SocketPair pair;
   if (!CreateSocketPair(pair)) {
-    result.failure_reason = "socketpair_create_failed";
-    result.samples_ns.clear();
-    return result;
+    state.SkipWithError("socketpair create failed");
+    return;
   }
 
   const ConnectionConfig config = MakeConfig(variant.runtime_policy);
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);
   Metrics metrics{};
-  RuntimeContext runtime_context{};
-  runtime_context.samples_ns = &result.samples_ns;
-  MessageConsumer consumer{&runtime_context, &RecordLoopback};
+  MessageConsumer consumer{&variant_context.runtime_context, &RecordLoopback};
   CriticalSession<LocalFdSocket> session(config, pair.client, arena, metrics);
   session.SetConsumer(consumer);
 
   std::atomic<bool> stop_flag{false};
-  std::atomic<bool> owner_finished{false};
-  std::atomic<int> apply_status{0};
   RuntimeSession runtime_session{session, stop_flag};
   ActiveSpinLoop loop(config.runtime_policy);
 
   std::thread owner_thread([&]() {
-    apply_status.store(ApplyRuntimePolicy(config.runtime_policy) ? 1 : -1);
-    if (apply_status.load() < 0) {
+    variant_context.apply_status.store(
+        ApplyRuntimePolicy(config.runtime_policy) ? 1 : -1);
+    if (variant_context.apply_status.load() < 0) {
       stop_flag.store(true);
-      owner_finished.store(true);
+      variant_context.owner_finished.store(true);
       return;
     }
-    result.owner_affinity = FormatAffinity();
-    result.owner_scheduling = FormatSchedulingPolicy();
+    variant_context.owner_affinity = FormatAffinity();
+    variant_context.owner_scheduling = FormatSchedulingPolicy();
     loop.Run(runtime_session);
-    owner_finished.store(true);
+    variant_context.owner_finished.store(true);
   });
 
-  while (apply_status.load() == 0) {
+  while (variant_context.apply_status.load() == 0) {
     std::this_thread::yield();
   }
 
-  if (apply_status.load() < 0) {
+  if (variant_context.apply_status.load() < 0) {
     stop_flag.store(true);
     owner_thread.join();
-    result.failure_reason = "apply_runtime_policy_failed";
-    result.samples_ns.clear();
-    return result;
+    state.SkipWithError("apply runtime policy failed");
+    return;
   }
 
   const auto frame = BuildServerTextFrame("tick");
-  for (size_t sample_index = 0; sample_index < kSamples; ++sample_index) {
-    runtime_context.send_ns.store(NowNs());
+  size_t sample_index = 0;
+  for (auto _ : state) {
+    variant_context.runtime_context.send_ns.store(NowNs());
     if (!WriteAllFd(pair.peer_fd, frame)) {
       stop_flag.store(true);
       owner_thread.join();
-      result.failure_reason = "peer_write_failed";
-      result.samples_ns.clear();
-      return result;
+      state.SkipWithError("peer write failed");
+      return;
     }
-    while (runtime_context.delivered.load() <= sample_index) {
-      if (runtime_context.timing_anomaly.load()) {
+    while (variant_context.runtime_context.delivered.load() <= sample_index) {
+      if (variant_context.runtime_context.timing_anomaly.load()) {
         stop_flag.store(true);
         owner_thread.join();
-        result.failure_reason = "timing_anomaly";
-        result.samples_ns.clear();
-        return result;
+        state.SkipWithError("timing anomaly");
+        return;
       }
-      if (owner_finished.load()) {
+      if (variant_context.owner_finished.load()) {
         stop_flag.store(true);
         owner_thread.join();
-        result.failure_reason = "session_reconnect_requested";
-        result.samples_ns.clear();
-        return result;
+        state.SkipWithError("session requested reconnect");
+        return;
       }
       std::this_thread::yield();
     }
+    const std::uint64_t elapsed_ns = variant_context.samples_ns[sample_index];
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    ++sample_index;
   }
 
   stop_flag.store(true);
   owner_thread.join();
   if (session.ShouldReconnect()) {
-    result.failure_reason = "session_reconnect_requested";
-    result.samples_ns.clear();
-    return result;
+    state.SkipWithError("session requested reconnect");
+    return;
   }
 
-  result.rx_messages = metrics.rx_messages;
-  result.success = true;
-  return result;
+  const std::string_view owner_affinity =
+      variant_context.owner_affinity.empty()
+          ? std::string_view("unknown")
+          : std::string_view(variant_context.owner_affinity);
+  const std::string_view owner_scheduling =
+      variant_context.owner_scheduling.empty()
+          ? std::string_view("unknown")
+          : std::string_view(variant_context.owner_scheduling);
+  SetLatencyCounters(state, std::move(variant_context.samples_ns), "messages",
+                     metrics.rx_messages);
+  state.counters["affinity_mode"] =
+      static_cast<double>(variant.runtime_policy.affinity_mode);
+  state.counters["io_cpu_id"] =
+      static_cast<double>(variant.runtime_policy.io_cpu_id);
+  state.counters["lock_memory"] =
+      variant.runtime_policy.lock_memory ? 1.0 : 0.0;
+  state.counters["prefault_stack"] =
+      variant.runtime_policy.prefault_stack ? 1.0 : 0.0;
+  state.SetLabel(BuildBenchmarkLabel(false, "local-socketpair", owner_affinity,
+                                     owner_scheduling));
 }
 
-void PrintVariantFailure(const VariantSpec& variant,
-                         const VariantResult& result) {
-  std::printf(
-      "name=%.*s status=skipped reason=%s affinity_mode=%u io_cpu_id=%d "
-      "lock_memory=%s prefault_stack=%s owner_affinity=%s "
-      "owner_scheduling=%s endpoint=local-socketpair\n",
-      static_cast<int>(variant.name.size()), variant.name.data(),
-      result.failure_reason == nullptr ? "unknown" : result.failure_reason,
-      static_cast<unsigned>(variant.runtime_policy.affinity_mode),
-      variant.runtime_policy.io_cpu_id,
-      variant.runtime_policy.lock_memory ? "true" : "false",
-      variant.runtime_policy.prefault_stack ? "true" : "false",
-      result.owner_affinity.empty() ? "unknown" : result.owner_affinity.c_str(),
-      result.owner_scheduling.empty() ? "unknown" : result.owner_scheduling.c_str());
+VariantSpec MakeBaselineVariant() {
+  RuntimePolicy policy{};
+  policy.affinity_mode = AffinityMode::kNone;
+  policy.io_cpu_id = -1;
+  policy.lock_memory = false;
+  policy.prefault_stack = false;
+  return {"baseline", policy};
 }
 
-void PrintVariantSuccess(const VariantSpec& variant,
-                         const VariantResult& result) {
-  std::printf(
-      "name=%.*s status=ok affinity_mode=%u io_cpu_id=%d lock_memory=%s "
-      "prefault_stack=%s owner_affinity=%s owner_scheduling=%s\n",
-      static_cast<int>(variant.name.size()), variant.name.data(),
-      static_cast<unsigned>(variant.runtime_policy.affinity_mode),
-      variant.runtime_policy.io_cpu_id,
-      variant.runtime_policy.lock_memory ? "true" : "false",
-      variant.runtime_policy.prefault_stack ? "true" : "false",
-      result.owner_affinity.empty() ? "unknown" : result.owner_affinity.c_str(),
-      result.owner_scheduling.empty() ? "unknown"
-                                      : result.owner_scheduling.c_str());
-}
-
-}  // namespace
-
-int main() {
+VariantSpec MakePinnedVariant(std::string_view name, bool prefault_stack,
+                              bool lock_memory) {
   int first_cpu = -1;
   const bool has_cpu = FirstAvailableCpu(&first_cpu);
-
-  RuntimePolicy baseline_policy{};
-  baseline_policy.affinity_mode = AffinityMode::kNone;
-  baseline_policy.io_cpu_id = -1;
-  baseline_policy.lock_memory = false;
-  baseline_policy.prefault_stack = false;
-
-  RuntimePolicy pinned_policy = baseline_policy;
-  pinned_policy.affinity_mode = AffinityMode::kRequired;
-  pinned_policy.io_cpu_id = has_cpu ? first_cpu : -1;
-
-  RuntimePolicy pinned_prefault_policy = pinned_policy;
-  pinned_prefault_policy.prefault_stack = true;
-
-  RuntimePolicy pinned_locked_policy = pinned_prefault_policy;
-  pinned_locked_policy.lock_memory = true;
-
-  const std::vector<VariantSpec> variants = {
-      {"affinity_policy_comparison/baseline", baseline_policy},
-      {"affinity_policy_comparison/pinned", pinned_policy},
-      {"affinity_policy_comparison/pinned_prefault", pinned_prefault_policy},
-      {"affinity_policy_comparison/pinned_locked", pinned_locked_policy},
-  };
-
-  for (const VariantSpec& variant : variants) {
-    if (variant.runtime_policy.affinity_mode != AffinityMode::kNone &&
-        variant.runtime_policy.io_cpu_id < 0) {
-      VariantResult skipped;
-      skipped.failure_reason = "no_available_cpu";
-      PrintVariantFailure(variant, skipped);
-      continue;
-    }
-
-    VariantResult result = RunVariant(variant);
-    if (!result.success) {
-      PrintVariantFailure(variant, result);
-      continue;
-    }
-
-    const std::string_view owner_affinity =
-        result.owner_affinity.empty()
-            ? std::string_view("unknown")
-            : std::string_view(result.owner_affinity);
-    const std::string_view owner_scheduling =
-        result.owner_scheduling.empty()
-            ? std::string_view("unknown")
-            : std::string_view(result.owner_scheduling);
-    PrintReportWithMetadata(
-        variant.name, std::move(result.samples_ns), owner_affinity,
-        owner_scheduling, false, "local-socketpair", "messages",
-        result.rx_messages);
-    PrintVariantSuccess(variant, result);
-  }
-
-  return 0;
+  RuntimePolicy policy{};
+  policy.affinity_mode = AffinityMode::kRequired;
+  policy.io_cpu_id = has_cpu ? first_cpu : -1;
+  policy.lock_memory = lock_memory;
+  policy.prefault_stack = prefault_stack;
+  return {name, policy};
 }
+
+void BenchmarkAffinityBaseline(benchmark::State& state) {
+  RunAffinityVariant(state, MakeBaselineVariant());
+}
+
+void BenchmarkAffinityPinned(benchmark::State& state) {
+  RunAffinityVariant(state, MakePinnedVariant("pinned", false, false));
+}
+
+void BenchmarkAffinityPinnedPrefault(benchmark::State& state) {
+  RunAffinityVariant(state, MakePinnedVariant("pinned_prefault", true, false));
+}
+
+void BenchmarkAffinityPinnedLocked(benchmark::State& state) {
+  RunAffinityVariant(state, MakePinnedVariant("pinned_locked", true, true));
+}
+
+BENCHMARK(BenchmarkAffinityBaseline)
+    ->Name("affinity_policy_comparison/baseline")
+    ->Iterations(kSamples)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BenchmarkAffinityPinned)
+    ->Name("affinity_policy_comparison/pinned")
+    ->Iterations(kSamples)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BenchmarkAffinityPinnedPrefault)
+    ->Name("affinity_policy_comparison/pinned_prefault")
+    ->Iterations(kSamples)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BenchmarkAffinityPinnedLocked)
+    ->Name("affinity_policy_comparison/pinned_locked")
+    ->Iterations(kSamples)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+}  // namespace

@@ -5,16 +5,20 @@
 #include "core/websocket/prepared_write.h"
 #include "core/websocket/types.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <span>
-#include <utility>
 #include <vector>
+
+#include <benchmark/benchmark.h>
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
 
-int main() {
-  constexpr size_t kSamples = 4096;
+namespace {
+
+void BenchmarkSessionWritePath(benchmark::State& state) {
   ConnectionConfig config{};
   config.enable_tls = false;
   config.prepared_write_slots = 8;
@@ -26,7 +30,8 @@ int main() {
 
   SocketPair pair;
   if (!CreateSocketPair(pair)) {
-    return 1;
+    state.SkipWithError("socketpair create failed");
+    return;
   }
 
   PreparedWriteArena arena(config.prepared_write_slots,
@@ -35,37 +40,56 @@ int main() {
   CriticalSession<LocalFdSocket> session(config, pair.client, arena, metrics);
   const auto payload = BuildWritePayload();
   std::vector<std::uint64_t> samples_ns;
-  samples_ns.reserve(kSamples);
+  samples_ns.reserve(4096);
   std::array<std::byte, 64> peer_drain{};
 
-  for (size_t sample_index = 0; sample_index < kSamples; ++sample_index) {
+  for (auto _ : state) {
+    state.PauseTiming();
     PreparedWrite* write = session.TryAcquirePreparedWrite();
     if (write == nullptr) {
-      return 1;
+      state.SkipWithError("prepared write slot unavailable");
+      return;
     }
     std::copy(payload.begin(), payload.end(), write->storage.begin());
     write->encoded_size = static_cast<std::uint32_t>(payload.size());
     write->kind = PayloadKind::kBinary;
+    state.ResumeTiming();
 
     const std::uint64_t start_ns = NowNs();
     if (session.CommitPreparedWrite(write) != SendStatus::kOk) {
-      return 1;
+      state.SkipWithError("commit prepared write failed");
+      return;
     }
     while (session.WantsWrite()) {
       session.DriveWrite();
       if (session.ShouldReconnect()) {
-        return 1;
+        state.SkipWithError("session requested reconnect");
+        return;
       }
     }
-    const std::uint64_t stop_ns = NowNs();
-    samples_ns.push_back(stop_ns - start_ns);
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
 
+    state.PauseTiming();
     if (!ReadExactFd(pair.peer_fd, peer_drain)) {
-      return 1;
+      state.SkipWithError("peer drain failed");
+      return;
     }
+    state.ResumeTiming();
   }
 
-  PrintReport("session_write_path", std::move(samples_ns), false,
-              "local-socketpair", "tx_messages", metrics.tx_messages);
-  return 0;
+  SetLatencyCounters(state, std::move(samples_ns), "tx_messages",
+                     metrics.tx_messages);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-socketpair",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
 }
+
+BENCHMARK(BenchmarkSessionWritePath)
+    ->Name("session_write_path")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+}  // namespace

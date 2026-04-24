@@ -9,8 +9,9 @@
 #include <atomic>
 #include <cstdint>
 #include <thread>
-#include <utility>
 #include <vector>
+
+#include <benchmark/benchmark.h>
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -20,16 +21,24 @@ namespace {
 struct RuntimeContext {
   std::atomic<size_t> delivered{0};
   std::atomic<std::uint64_t> send_ns{0};
+  std::atomic<bool> timing_anomaly{false};
   std::vector<std::uint64_t>* samples_ns{nullptr};
 };
 
 DeliveryResult RecordLoopback(void* context, const MessageView&) noexcept {
   auto* runtime = static_cast<RuntimeContext*>(context);
-  const size_t index = runtime->delivered.fetch_add(1);
+  const size_t index = runtime->delivered.load();
   if (runtime->samples_ns == nullptr || index >= runtime->samples_ns->size()) {
     return DeliveryResult::kFatal;
   }
-  (*runtime->samples_ns)[index] = NowNs() - runtime->send_ns.load();
+  const std::uint64_t receive_ns = NowNs();
+  const std::uint64_t send_ns = runtime->send_ns.load();
+  if (receive_ns < send_ns) {
+    runtime->timing_anomaly.store(true);
+    return DeliveryResult::kFatal;
+  }
+  (*runtime->samples_ns)[index] = receive_ns - send_ns;
+  runtime->delivered.store(index + 1);
   return DeliveryResult::kAccepted;
 }
 
@@ -51,9 +60,7 @@ struct RuntimeSession {
   }
 };
 
-}  // namespace
-
-int main() {
+void BenchmarkRuntimeLoopback(benchmark::State& state) {
   constexpr size_t kSamples = 2048;
   ConnectionConfig config{};
   config.enable_tls = false;
@@ -69,7 +76,8 @@ int main() {
 
   SocketPair pair;
   if (!CreateSocketPair(pair)) {
-    return 1;
+    state.SkipWithError("socketpair create failed");
+    return;
   }
 
   PreparedWriteArena arena(config.prepared_write_slots,
@@ -83,35 +91,58 @@ int main() {
   session.SetConsumer(consumer);
 
   std::atomic<bool> stop_flag{false};
+  std::atomic<bool> owner_finished{false};
   RuntimeSession runtime_session{session, stop_flag};
   ActiveSpinLoop loop(config.runtime_policy);
-  std::thread owner_thread([&loop, &runtime_session]() { loop.Run(runtime_session); });
+  std::thread owner_thread([&]() {
+    loop.Run(runtime_session);
+    owner_finished.store(true);
+  });
 
   const auto frame = BuildServerTextFrame("tick");
-  for (size_t sample_index = 0; sample_index < kSamples; ++sample_index) {
+  size_t sample_index = 0;
+  for (auto _ : state) {
     runtime_context.send_ns.store(NowNs());
     if (!WriteAllFd(pair.peer_fd, frame)) {
       stop_flag.store(true);
       owner_thread.join();
-      return 1;
+      state.SkipWithError("peer write failed");
+      return;
     }
     while (runtime_context.delivered.load() <= sample_index) {
-      if (session.ShouldReconnect()) {
+      if (runtime_context.timing_anomaly.load()) {
         stop_flag.store(true);
         owner_thread.join();
-        return 1;
+        state.SkipWithError("timing anomaly");
+        return;
+      }
+      if (owner_finished.load()) {
+        stop_flag.store(true);
+        owner_thread.join();
+        state.SkipWithError("session requested reconnect");
+        return;
       }
       std::this_thread::yield();
     }
+    const std::uint64_t elapsed_ns = samples_ns[sample_index];
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    ++sample_index;
   }
 
   stop_flag.store(true);
   owner_thread.join();
-  if (session.ShouldReconnect()) {
-    return 1;
-  }
 
-  PrintReport("runtime_loopback", std::move(samples_ns), false,
-              "local-socketpair", "messages", metrics.rx_messages);
-  return 0;
+  SetLatencyCounters(state, std::move(samples_ns), "messages",
+                     metrics.rx_messages);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-socketpair",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
 }
+
+BENCHMARK(BenchmarkRuntimeLoopback)
+    ->Name("runtime_loopback")
+    ->Iterations(2048)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+}  // namespace

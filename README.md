@@ -29,6 +29,7 @@ $HOME/vcpkg/vcpkg install \
   nameof \
   drogon \
   fast-float \
+  benchmark \
   abseil \
   --triplet x64-linux
 ```
@@ -51,7 +52,8 @@ Build the optimized tree before taking timing numbers:
 ./build.sh release
 ```
 
-The minimal WebSocket HFT slice builds three targeted microbenchmark binaries:
+The minimal WebSocket HFT slice builds the targeted benchmark binaries with
+Google Benchmark:
 
 ```bash
 cmake --build build/release --target \
@@ -61,11 +63,13 @@ cmake --build build/release --target \
   session_write_path_benchmark \
   session_read_path_benchmark \
   runtime_loopback_benchmark \
-  affinity_policy_comparison_benchmark -j8
+  affinity_policy_comparison_benchmark \
+  cold_path_handshake_benchmark -j8
 ```
 
 You can run them directly from `build/release/benchmark/websocket/`. Each binary
-prints `min/p50/p99/p99.9/max` plus runtime metadata such as CPU affinity,
+prints Google Benchmark timing columns plus custom counters for
+`min_ns/p50_ns/p99_ns/p999_ns/max_ns` and runtime labels such as CPU affinity,
 scheduling policy, TLS mode, and endpoint class.
 
 These are component-level microbenchmarks for the single-connection GateIO
@@ -87,6 +91,9 @@ The first real-I/O benchmark layer runs against a nonblocking local
   pinned, prefaulted, and memory-locked runtime policies on the same local
   socketpair loopback path, skipping variants that cannot apply in the current
   environment
+- `cold_path_handshake_benchmark`: full local loopback
+  `TCP connect + TLS handshake + WebSocket handshake` cold-path timing with TLS
+  session resumption disabled
 
 These benchmarks are still not end-to-end GateIO `wss` latency reports and
 should not be used to claim full socket/TLS/handshake path latency.

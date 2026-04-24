@@ -20,6 +20,8 @@
 #include <thread>
 #include <vector>
 
+#include <benchmark/benchmark.h>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <openssl/pem.h>
@@ -433,12 +435,11 @@ class LocalTlsWsServer {
   std::thread thread_{};
 };
 
-}  // namespace
-
-int main() {
+void BenchmarkColdPathHandshake(benchmark::State& state) {
   LocalTlsWsServer server;
   if (!server.Start()) {
-    return 1;
+    state.SkipWithError("local TLS websocket server start failed");
+    return;
   }
 
   ConnectionConfig config{};
@@ -456,7 +457,8 @@ int main() {
 
   TlsSocket socket;
   if (!AddTrustedCertificate(socket)) {
-    return 1;
+    state.SkipWithError("failed to trust local benchmark certificate");
+    return;
   }
 
   ColdPathLoop loop;
@@ -464,27 +466,44 @@ int main() {
   samples_ns.reserve(kSamples);
   std::array<char, kHandshakeBufferBytes> handshake_storage{};
 
-  for (size_t sample_index = 0; sample_index < kSamples; ++sample_index) {
+  for (auto _ : state) {
     StateMachine state_machine;
     const std::uint64_t start_ns = NowNs();
     const bool ok =
         loop.RunUntilActive(socket, state_machine, config, handshake_storage);
-    const std::uint64_t stop_ns = NowNs();
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
     if (!ok || state_machine.phase() != ConnectionPhase::kActive ||
         state_machine.last_error() != ConnectionError::kNone) {
-      return 1;
+      state.SkipWithError("cold path failed before active state");
+      server.Stop();
+      return;
     }
-    samples_ns.push_back(stop_ns - start_ns);
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
     socket.Close();
   }
 
   server.Stop();
-  if (server.failed() || server.completed_handshakes() != kSamples) {
-    return 1;
+  if (server.failed()) {
+    state.SkipWithError("local TLS websocket server failed");
+    return;
+  }
+  if (server.completed_handshakes() != samples_ns.size()) {
+    state.SkipWithError("local TLS websocket server handshake count mismatch");
+    return;
   }
 
-  PrintReport("cold_path_handshake", std::move(samples_ns), true,
-              "local-tls-loopback", "handshakes",
-              server.completed_handshakes());
-  return 0;
+  SetLatencyCounters(state, std::move(samples_ns), "handshakes",
+                     server.completed_handshakes());
+  state.SetLabel(BuildBenchmarkLabel(true, "local-tls-loopback",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
 }
+
+BENCHMARK(BenchmarkColdPathHandshake)
+    ->Name("cold_path_handshake")
+    ->Iterations(kSamples)
+    ->UseManualTime()
+    ->Unit(benchmark::kMillisecond);
+
+}  // namespace
