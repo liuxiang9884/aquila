@@ -1,11 +1,13 @@
 #include "core/websocket/websocket_client.h"
 
 #include <CLI/CLI.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include <cinttypes>
-#include <cstdio>
 #include <cstddef>
+#include <cstdio>
 #include <string>
+#include <string_view>
 
 using namespace aquila::websocket;
 
@@ -23,60 +25,16 @@ DeliveryResult CountPayload(void* context, const MessageView& view) noexcept {
   return DeliveryResult::kAccepted;
 }
 
-const char* ToString(ConnectionPhase phase) noexcept {
-  switch (phase) {
-    case ConnectionPhase::kDisconnected:
-      return "disconnected";
-    case ConnectionPhase::kResolving:
-      return "resolving";
-    case ConnectionPhase::kTcpConnecting:
-      return "tcp_connecting";
-    case ConnectionPhase::kTlsHandshaking:
-      return "tls_handshaking";
-    case ConnectionPhase::kWsHandshaking:
-      return "ws_handshaking";
-    case ConnectionPhase::kActive:
-      return "active";
-    case ConnectionPhase::kReconnectBackoff:
-      return "reconnect_backoff";
-    case ConnectionPhase::kClosing:
-      return "closing";
-    case ConnectionPhase::kClosed:
-      return "closed";
-  }
-  return "unknown";
-}
-
-const char* ToString(ConnectionError error) noexcept {
-  switch (error) {
-    case ConnectionError::kNone:
-      return "none";
-    case ConnectionError::kResolveFailure:
-      return "resolve_failure";
-    case ConnectionError::kSocketError:
-      return "socket_error";
-    case ConnectionError::kConnectTimeout:
-      return "connect_timeout";
-    case ConnectionError::kTlsFailure:
-      return "tls_failure";
-    case ConnectionError::kHandshakeFailure:
-      return "handshake_failure";
-    case ConnectionError::kProtocolError:
-      return "protocol_error";
-    case ConnectionError::kHeartbeatTimeout:
-      return "heartbeat_timeout";
-    case ConnectionError::kPeerClosed:
-      return "peer_closed";
-  }
-  return "unknown";
-}
-
 void PrintState(void*, ConnectionPhase phase) noexcept {
-  std::fprintf(stderr, "state=%s\n", ToString(phase));
+  const std::string_view phase_name = magic_enum::enum_name(phase);
+  std::fprintf(stderr, "state=%.*s\n", static_cast<int>(phase_name.size()),
+               phase_name.data());
 }
 
 void PrintError(void*, ConnectionError error) noexcept {
-  std::fprintf(stderr, "error=%s\n", ToString(error));
+  const std::string_view error_name = magic_enum::enum_name(error);
+  std::fprintf(stderr, "error=%.*s\n", static_cast<int>(error_name.size()),
+               error_name.data());
 }
 
 void RecordState(void* context, ConnectionPhase phase) noexcept {
@@ -128,11 +86,15 @@ int main(int argc, char** argv) {
   client.SetErrorHandler(&probe, &RecordError);
   const bool ok = client.Start();
   const Metrics metrics = client.SnapshotMetrics();
+  const std::string_view final_state = magic_enum::enum_name(probe.phase);
+  const std::string_view final_error = magic_enum::enum_name(probe.error);
   std::fprintf(stderr,
-               "result=%s final_state=%s final_error=%s rx_bytes=%zu "
+               "result=%s final_state=%.*s final_error=%.*s rx_bytes=%zu "
                "tx_bytes=%" PRIu64 " rx_messages=%" PRIu64
                " tx_messages=%" PRIu64 " heartbeat_timeouts=%" PRIu64 "\n",
-               ok ? "ok" : "failed", ToString(probe.phase), ToString(probe.error),
+               ok ? "ok" : "failed", static_cast<int>(final_state.size()),
+               final_state.data(), static_cast<int>(final_error.size()),
+               final_error.data(),
                probe.bytes, metrics.tx_bytes, metrics.rx_messages,
                metrics.tx_messages, metrics.heartbeat_timeouts);
   return ok ? 0 : 1;

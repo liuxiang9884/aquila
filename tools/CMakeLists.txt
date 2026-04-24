@@ -7,5 +7,8 @@ add_executable(websocket_probe
 )
 
 target_link_libraries(websocket_probe
-    PRIVATE aquila_websocket_core CLI11::CLI11
+    PRIVATE
+        aquila_websocket_core
+        CLI11::CLI11
+        magic_enum::magic_enum
 )
