@@ -203,6 +203,18 @@
 
 2026-04-25 的 `third_party_frame_codec_comparison_benchmark` 显示，在只比较“内存中已有完整单帧、解析后回调”的极窄路径时，三方库的 `handleWSMsg()` pinned p50/p99/p99.9 为 `2/2/2ns`；当前 `aquila` 的 `aquila_direct_poll_decode` 为 `12/13/30ns`，`aquila_feed_decode` 为 `16/20/112ns`，`aquila_direct_poll_mirrored_boundary` 为 `21/22/230ns`。
 
+同日新增 coalesced 多帧 benchmark，模拟一次 read 中包含 16 个 `"tick"` text frame，并按每 frame 归一化计时。release pinned 结果：
+
+| benchmark | 场景 | p50/p99/p99.9 |
+| --- | --- | --- |
+| `third_party_handle_ws_msg` | 单帧，已有完整 frame | `2/2/2ns` |
+| `aquila_direct_poll_decode` | 单帧，预填 read ring 后只计 `Poll()` | `13/14/158ns` |
+| `third_party_coalesced_drain` | 16 帧 coalesced，循环调用 `handleWSMsg()` drain | `2/3/12ns` |
+| `aquila_coalesced_feed_drain` | 16 帧 coalesced，`Feed()` + drain | `14/22/24ns` |
+| `aquila_coalesced_direct_poll_drain` | 16 帧 coalesced，预填 read ring 后只计 `Poll()` drain | `14/23/25ns` |
+
+这组多帧数据说明：即使主动循环 drain 三方 parser，它的 parser-only 成本仍显著更低；`aquila` 的 coalesced direct/feed 两组接近，说明在 16 个小 frame 的场景中，主要成本不在把 coalesced bytes 复制进 mirrored ring，而在当前 `Poll()` 的 ready metadata ring 往返、release 分支和 `MessageView` 生命周期维护。
+
 这组数字不能直接说明三方库整体更适合作为生产内核，因为它没有覆盖 `aquila` 当前保留的生命周期、容量、降级和状态边界；但它指出了一个明确优化点：**单帧已完整到达的常见路径不需要先写入 ready metadata ring 再读出，可以直接返回 `MessageView`。**
 
 ### 应保留的机制
