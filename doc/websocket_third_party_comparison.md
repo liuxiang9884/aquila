@@ -220,14 +220,25 @@
 | benchmark | 场景 | p50/p99/p99.9 |
 | --- | --- | --- |
 | `third_party_handle_ws_msg` | 单帧，已有完整 frame | `2/2/2ns` |
-| `aquila_feed_decode` | 单帧，`Feed()` + `Poll()` | `9/10/94ns` |
-| `aquila_direct_poll_decode` | 单帧，预填 read ring 后只计 `Poll()` | `6/6/24ns` |
-| `aquila_direct_poll_mirrored_boundary` | 跨 mirrored boundary，预填后只计 `Poll()` | `7/8/12ns` |
-| `third_party_coalesced_drain` | 16 帧 coalesced，循环调用 `handleWSMsg()` drain | `2/3/11ns` |
-| `aquila_coalesced_feed_drain` | 16 帧 coalesced，`Feed()` + drain | `8/12/17ns` |
-| `aquila_coalesced_direct_poll_drain` | 16 帧 coalesced，预填 read ring 后只计 `Poll()` drain | `10/18/21ns` |
+| `aquila_feed_decode` | 单帧，`Feed()` + `Poll()` | `9/11/96ns` |
+| `aquila_direct_poll_decode` | 单帧，预填 read ring 后只计 `Poll()` | `6/6/8ns` |
+| `aquila_direct_poll_mirrored_boundary` | 跨 mirrored boundary，预填后只计 `Poll()` | `7/8/54ns` |
+| `third_party_coalesced_drain` | 16 帧 coalesced，循环调用 `handleWSMsg()` drain | `2/3/12ns` |
+| `aquila_coalesced_feed_drain` | 16 帧 coalesced，`Feed()` + drain | `8/11/19ns` |
+| `aquila_coalesced_direct_poll_drain` | 16 帧 coalesced，预填 read ring 后只计 `Poll()` drain | `9/16/20ns` |
 
 这组数字仍不能直接说明三方库整体更适合作为生产内核，因为它没有覆盖 `aquila` 当前保留的生命周期、容量、降级和状态边界。但 direct delivery 已经把单帧 direct poll p50 从 `13ns` 降到 `6ns`，coalesced feed/drain p50 从 `14ns` 降到 `8ns`，说明移除 ready metadata 往返是有效优化。
+
+随后新增 benchmark-only `LinearFrameCodec` prototype，用线性 `head/tail` receive buffer 替代 mirrored ring，但保留 `MessageView`、`DecodeStatus`、payload 上限、control frame 校验和 delivered payload release 语义。它不替换生产 `FrameCodec`，只用于隔离性能变量。release pinned 结果：
+
+| benchmark | 场景 | p50/p99/p99.9 |
+| --- | --- | --- |
+| `aquila_linear_feed_decode` | 单帧，线性 buffer `Feed()` + `Poll()` | `5/5/7ns` |
+| `aquila_linear_direct_poll_decode` | 单帧，线性 buffer 预填后只计 `Poll()` | `3/3/9ns` |
+| `aquila_linear_coalesced_feed_drain` | 16 帧 coalesced，线性 buffer `Feed()` + drain | `2/2/12ns` |
+| `aquila_linear_coalesced_direct_poll_drain` | 16 帧 coalesced，线性 buffer 预填后只计 `Poll()` drain | `5/5/14ns` |
+
+这组数据说明：在保留 `MessageView` 与基本 codec 状态边界后，线性 buffer 仍能接近三方 parser 的裸性能。当前 mirrored direct delivery 相比线性 prototype 的额外成本，主要来自 mirrored ring 的绝对 cursor、取模寻址和跨边界生命周期模型，而不是 `MessageView` 本身。
 
 ### 应保留的机制
 
@@ -276,6 +287,7 @@
 | 方案 | 主路径延迟 | 正确性 / 生产边界 | 结论 |
 | --- | --- | --- | --- |
 | 直接采用三方库 `handleWSMsg()` 风格 | 最低，benchmark 为 `2ns` 量级 | 缺少 `MessageView`、capacity/degraded、ready fallback、TLS/session 边界和完整恢复语义 | 只适合作为 parser 下限参考 |
+| benchmark-only linear prototype | 单帧 direct poll p50 约 `3ns`，coalesced feed p50 约 `2ns` | 保留部分 `MessageView` / status 边界，但没有生产 session 集成和完整容量观测 | 证明线性 receive buffer 有性能空间 |
 | 当前 `aquila` direct delivery 路径 | direct poll p50 约 `6ns`，coalesced feed p50 约 `8ns` | 生产边界完整，支持 repeated `Poll()` drain 和容量观测 | 当前采用方案 |
 | 普通 ring + 边界线性化 copy | 初始化简单 | 跨 ring 尾部时引入 copy 或双段 parser 分支 | 不符合 P2-A 低延迟目标 |
 | 双段 payload view | 避免 mirrored mmap | 把边界处理推给所有下游 parser | 不建议作为当前主线 |
@@ -289,6 +301,7 @@ direct delivery 已补充并执行：
 - `websocket_critical_session_test`：codec capacity exhaustion 仍可观测且不触发 reconnect。
 - debug / release：`ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。
 - release pinned：`third_party_frame_codec_comparison_benchmark`、`frame_codec_benchmark`、`session_read_path_benchmark` 已复跑并记录。
+- benchmark-only 线性 prototype：`third_party_frame_codec_comparison_benchmark` 已加入四个 `aquila_linear_*` case，并通过 debug smoke 与 release pinned 运行。
 
 ## 建议结论
 

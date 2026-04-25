@@ -341,4 +341,4 @@ direct one-frame delivery 已将默认 `Poll()` 路径调整为：
 5. 直接返回 `MessageView`，跳过 `QueueReadyFrame()` / `DrainReadyFrame()` 的 metadata 往返。
 6. coalesced 多帧由上层 repeated `Poll()` drain，每次交付一帧。
 
-该优化没有删除 `MessageView`、协议检查、capacity/degraded、mirrored cursor 和 payload 生命周期约束。ready ring 保留为 future batch / parse-ahead fallback，不再是默认 decode 主路径。release pinned 结果显示：`aquila_direct_poll_decode` p50/p99/p99.9 从 `13/14/158ns` 改善到 `6/6/24ns`，`aquila_coalesced_feed_drain` 从 `14/22/24ns` 改善到 `8/12/17ns`。详细对比记录在 `doc/websocket_third_party_comparison.md` 的“FrameCodec 对比和 direct delivery 优化记录”章节。
+该优化没有删除 `MessageView`、协议检查、capacity/degraded、mirrored cursor 和 payload 生命周期约束。ready ring 保留为 future batch / parse-ahead fallback，不再是默认 decode 主路径。release pinned 结果显示：`aquila_direct_poll_decode` p50/p99/p99.9 从 `13/14/158ns` 改善到 `6/6/8ns`，`aquila_coalesced_feed_drain` 从 `14/22/24ns` 改善到 `8/11/19ns`。详细对比记录在 `doc/websocket_third_party_comparison.md` 的“FrameCodec 对比和 direct delivery 优化记录”章节。
