@@ -6,6 +6,7 @@ function(add_websocket_gtest target source_file)
     target_link_libraries(${target}
         PRIVATE aquila_core GTest::gtest_main
     )
+    add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
 add_websocket_gtest(websocket_types_test types_test.cpp)

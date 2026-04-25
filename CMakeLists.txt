@@ -9,6 +9,8 @@ include(cmake/compile_options.cmake)
 include(cmake/third_party.cmake)
 include(cmake/packages.cmake)
 
+enable_testing()
+
 add_subdirectory(core)
 add_subdirectory(tools)
 add_subdirectory(test)
