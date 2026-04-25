@@ -117,6 +117,10 @@
   - 新增 `ConnectionError::kBackpressure` / `kConsumerFatal` 或走独立计数器
   - 讨论背压触发时的行为：丢消息？断开并重连？计入 degraded？
   - 考虑在 `Metrics` 里新增 `backpressure_events`
+- 处理方案：fix — `kBackpressured` 丢帧并计入 `consumer_backpressure_drops`，不重连；`kFatal` 走新的 `ConnectionError::kConsumerFatal` 触发重连；控制帧（自动 pong、心跳 ping）入队失败同样非致命，计入 `control_frame_enqueue_failures` 并 skip 本轮（心跳不更新 `awaiting_pong_`/`last_ping_ns_`，真正死链路仍由心跳超时路径捕获）。
+- 关联提交：`b269586`
+- 验证证据：`websocket_critical_session_test` 新增 4 个聚焦用例（`BackpressuredConsumerDropsFramesWithoutReconnect`、`FatalConsumerTriggersReconnectWithConsumerFatal`、`AutoPongEnqueueFailureSkipsWithoutReconnect`、`HeartbeatPingEnqueueFailureSkipsTickWithoutReconnect`）全部通过。
+- 确认日期：2026-04-24
 
 ### G4：心跳与业务发送共用 `pending_writes_`，无优先级协调
 
@@ -143,6 +147,10 @@
   - 分别定义 `dns_timeout_ms` / `tcp_connect_timeout_ms` / `tls_handshake_timeout_ms` / `ws_handshake_timeout_ms` 到 `ConnectionConfig`
   - `WaitForSocket` 换成带超时的 epoll_wait，或改用 `timerfd`
   - 超时映射到对应的 `ConnectionError`，落到 state_machine
+- 处理方案：fix（部分） — 新增单一 `ConnectionConfig::cold_path_total_timeout_ms`（默认 10s），`ColdPathLoop::RunUntilActive` 在入口记录 deadline，向下传到 `WaitForSocket`（带 remaining_ms 的 epoll_wait）、`WriteAll`、响应读循环；超时映射到 `ConnectionError::kConnectTimeout` 并保留当时的 phase（`kTlsHandshaking` / `kWsHandshaking`）。分 DNS / TCP / TLS / WS 四个独立 timer 推迟到后续 Phase；同步 `getaddrinfo` 受系统 resolver 控制不可中断，文档中留有 TODO。
+- 关联提交：`978249e`
+- 验证证据：新增 `websocket_cold_path_loop_test`（带本地 blackhole TCP server）在 `cold_path_total_timeout_ms = 200` 下约 210ms 内触发 `kConnectTimeout` + `kTlsHandshaking`；live probe 连接 `wss://fx-ws.gateio.ws/v4/ws/usdt` 仍能成功进入 active spin。
+- 确认日期：2026-04-24
 
 ### G6：握手 `Sec-WebSocket-Key` 硬编码
 
@@ -156,6 +164,10 @@
 - **讨论方向**
   - 冷路径启动时 `RAND_bytes(16)` + base64 生成；由 `handshake.h` 提供工具函数
   - 响应校验逻辑（`ValidateServerHandshake`）已支持动态 key，只需生成端同步更新
+- 处理方案：fix — 在 `handshake.h` 新增 `GenerateClientKey(std::span<char>)` helper（`RAND_bytes(16)` + `EVP_EncodeBlock`）；`ColdPathLoop` 持有 `std::array<char, 32>` 成员，每次 `RunUntilActive` 重新生成并同时传入 `BuildClientHandshake` / `ValidateServerHandshake`，删除原静态 `kClientKey` 常量。
+- 关联提交：`b126266`
+- 验证证据：新增 `websocket_handshake_test.GenerateClientKeyProducesUniqueBase64Keys`（两次调用输出 24 字节、不相等、base64 反解 16 字节）；live probe 连接 `wss://fx-ws.gateio.ws/v4/ws/usdt` 握手仍成功。
+- 确认日期：2026-04-24
 
 ### G7：`WebSocketClient` 没有任何重连 / 退避 / 恢复逻辑
 
@@ -246,6 +258,8 @@
 - 握手 nonce 硬编码
 - 时钟粒度绑在 spin `iteration_budget` 上
 - 构建图形态待核实
+
+**P0 阶段进展**（2026-04-24）：G6、G3、G5 已关闭，对应路线图 `doc/superpowers/plans/2026-04-24-websocket-client-review-roadmap.md` 的 Phase 0。同步发现并修复了测试注册链路的陈旧状态（顶层缺 `enable_testing()` + `add_websocket_gtest` 未调用 `add_test`，见 commit `18c8ac2`），这一点不属于 G1–G11 的范围，但对后续验收证据可信度是前提。
 
 ## 讨论顺序建议
 
