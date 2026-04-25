@@ -189,6 +189,8 @@
   - 退避算法：固定间隔？指数 + 抖动？
   - 失败原因分类处理（认证/配置错误 vs 网络抖动）
   - 是否区分 `kReconnectBackoff` 状态给外部观测
+- 处理方案：fix — 在 `ConnectionConfig` 增加整数化 `ReconnectPolicy`，新增 `FailureClass` 分类器和 `xorshift64` 退避 jitter；`WebSocketClient::Start()` 内部循环执行冷路径、active spin、失败分类、`kReconnectBackoff` 通知和可中断 backoff。`Stop()` 统一写 `eventfd`，`ColdPathLoop` 把该 fd 加入 `epoll_wait`，可中断 TLS 握手与 backoff sleep。`CriticalSession::Reset()` 释放 pending writes、复位 codec / heartbeat flags / last error，但不清 metrics。另补充 `SIGPIPE` 屏蔽，避免 TLS 握手期间 peer close 触发进程终止，使其回到普通 TLS/socket 错误路径。
+- 验证证据：新增 `websocket_reconnect_classifier_test`、`websocket_backoff_compute_test`、`websocket_client_reconnect_test`，并扩展 `websocket_critical_session_test.ResetClearsPendingAndFlags`；debug 与 release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 12/12 通过。live probe 连接 `wss://fx-ws.gateio.ws/v4/ws/usdt` 输出 `state=kActive` 后由 `timeout` 结束。release benchmark 与 `dev@d1e50a1` 对比：`session_read_path` p50/p99/p99.9 = 440/474/815ns vs 442/473/3929ns；`session_write_path` 复跑值 = 411/438/647ns vs 407/431/934ns；`active_spin` = 42/43/44ns vs 42/43/44ns；`frame_codec` = 379/529/573ns vs 379/542/938ns；`prepared_write` = 2/2/8ns vs 2/2/3ns。
 
 ### G8：心跳超时分辨率绑在 spin `iteration_budget` 上
 
