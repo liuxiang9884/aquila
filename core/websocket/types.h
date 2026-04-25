@@ -56,6 +56,18 @@ enum class SendStatus : std::uint8_t {
   kPayloadTooLarge,
 };
 
+struct ReconnectPolicy {
+  bool enabled = true;
+  std::uint32_t initial_backoff_ms = 100;
+  std::uint32_t max_backoff_ms = 30'000;
+  // Multiplier = 1 << shift_bits. 0 keeps the backoff constant.
+  std::uint8_t backoff_shift_bits = 1;
+  // Integer jitter in [-jitter_percent, +jitter_percent].
+  std::uint8_t jitter_percent = 25;
+  // 0 means retry until Stop() or a fatal-class error.
+  std::uint32_t max_attempts = 0;
+};
+
 struct ConnectionConfig {
   std::string host = "fx-ws.gateio.ws";
   std::string service = "443";
@@ -70,6 +82,7 @@ struct ConnectionConfig {
   // Total wall-clock budget for the cold path (DNS + TCP + TLS + WS handshake).
   // Synchronous getaddrinfo is not interruptible and is counted into this.
   std::uint32_t cold_path_total_timeout_ms = 10000;
+  ReconnectPolicy reconnect{};
   RuntimePolicy runtime_policy{};
 };
 

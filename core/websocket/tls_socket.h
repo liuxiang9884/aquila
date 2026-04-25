@@ -2,6 +2,7 @@
 #define AQUILA_CORE_WEBSOCKET_TLS_SOCKET_H_
 
 #include <cerrno>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -47,6 +48,7 @@ class TlsSocket {
   }
 
   bool Init() noexcept {
+    IgnoreSigpipeOnce();
     wants_read_ = false;
     wants_write_ = false;
 
@@ -268,6 +270,17 @@ class TlsSocket {
       return false;
     }
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+  }
+
+  static void IgnoreSigpipeOnce() noexcept {
+    // OpenSSL's socket BIO uses write(2), which can raise SIGPIPE when a peer
+    // closes during TLS handshake/write. Reconnect policy needs that as an
+    // ordinary socket error, not process termination.
+    static const bool ignored = [] {
+      std::signal(SIGPIPE, SIG_IGN);
+      return true;
+    }();
+    (void)ignored;
   }
 
   void ResetSsl() noexcept {

@@ -302,3 +302,53 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(metrics.control_frame_enqueue_failures, 1U);
   EXPECT_EQ(metrics.heartbeat_timeouts, 0U);
 }
+
+TEST(WebsocketCriticalSessionTest, ResetClearsPendingAndFlags) {
+  auto config = BuildSmallConfig(2);
+  config.heartbeat_interval_ms = 1;
+  config.heartbeat_timeout_ms = 5;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+
+  session.AdvanceHeartbeat(1'000'000ULL);
+  EXPECT_TRUE(session.WantsWrite());
+  socket.read_chunks_.push_back({std::byte{0x81}});
+  session.DriveRead();
+  session.AdvanceHeartbeat(20'000'000ULL);
+  ASSERT_TRUE(session.ShouldReconnect());
+  ASSERT_EQ(session.LastError(), ConnectionError::kHeartbeatTimeout);
+
+  session.Reset();
+
+  EXPECT_FALSE(session.ShouldReconnect());
+  EXPECT_EQ(session.LastError(), ConnectionError::kNone);
+  EXPECT_FALSE(session.WantsWrite());
+
+  std::vector<PreparedWrite*> acquired;
+  for (size_t i = 0; i < config.prepared_write_slots; ++i) {
+    auto* write = arena.TryAcquire();
+    ASSERT_NE(write, nullptr);
+    acquired.push_back(write);
+  }
+  EXPECT_EQ(arena.TryAcquire(), nullptr);
+  for (auto* write : acquired) {
+    arena.Release(write);
+  }
+
+  socket.read_chunks_.push_back(BuildServerTextFrame("ok"));
+  session.DriveRead();
+  EXPECT_EQ(bytes, 2U);
+  EXPECT_EQ(metrics.rx_messages, 1U);
+  EXPECT_FALSE(session.ShouldReconnect());
+
+  session.AdvanceHeartbeat(21'000'000ULL);
+  EXPECT_TRUE(session.WantsWrite());
+  EXPECT_EQ(session.LastError(), ConnectionError::kNone);
+}

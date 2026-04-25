@@ -153,6 +153,22 @@ class CriticalSession {
 
   bool WantsRead() const noexcept { return !should_reconnect_; }
 
+  void Reset() noexcept {
+    while (pending_count_ != 0) {
+      PreparedWrite* write = pending_writes_[pending_head_];
+      pending_writes_[pending_head_] = nullptr;
+      pending_head_ = (pending_head_ + 1) % pending_capacity_;
+      --pending_count_;
+      prepared_write_arena_.Release(write);
+    }
+    pending_head_ = 0;
+    codec_.Reset();
+    should_reconnect_ = false;
+    last_error_ = ConnectionError::kNone;
+    awaiting_pong_ = false;
+    last_ping_ns_ = 0;
+  }
+
   void AdvanceHeartbeat(std::uint64_t now_ns) noexcept {
     const std::uint64_t interval_ns =
         static_cast<std::uint64_t>(config_.heartbeat_interval_ms) * 1000U * 1000U;

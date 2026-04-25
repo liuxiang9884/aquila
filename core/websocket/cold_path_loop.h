@@ -33,9 +33,12 @@ class ColdPathLoop {
   ColdPathLoop(const ColdPathLoop&) = delete;
   ColdPathLoop& operator=(const ColdPathLoop&) = delete;
 
+  void SetInterruptFd(int fd) noexcept { interrupt_fd_ = fd; }
+
   bool Init() noexcept {
     if (epoll_fd_ >= 0) {
-      return true;
+      ::close(epoll_fd_);
+      epoll_fd_ = -1;
     }
     epoll_fd_ = epoll_create1(0);
     return epoll_fd_ >= 0;
@@ -72,6 +75,10 @@ class ColdPathLoop {
     state_machine.Enter(ConnectionPhase::kTlsHandshaking);
     while (!socket.FinishHandshake()) {
       const WaitOutcome outcome = WaitForSocket(socket, deadline);
+      if (outcome == WaitOutcome::kInterrupted) {
+        state_machine.Enter(ConnectionPhase::kClosing);
+        return false;
+      }
       if (outcome == WaitOutcome::kTimeout) {
         state_machine.Fail(ConnectionError::kConnectTimeout,
                            ConnectionPhase::kTlsHandshaking);
@@ -99,6 +106,10 @@ class ColdPathLoop {
       return false;
     }
     const WaitOutcome write_outcome = WriteAll(socket, built.bytes, deadline);
+    if (write_outcome == WaitOutcome::kInterrupted) {
+      state_machine.Enter(ConnectionPhase::kClosing);
+      return false;
+    }
     if (write_outcome == WaitOutcome::kTimeout) {
       state_machine.Fail(ConnectionError::kConnectTimeout,
                          ConnectionPhase::kWsHandshaking);
@@ -136,6 +147,10 @@ class ColdPathLoop {
       }
       if (errno == EAGAIN) {
         const WaitOutcome outcome = WaitForSocket(socket, deadline);
+        if (outcome == WaitOutcome::kInterrupted) {
+          state_machine.Enter(ConnectionPhase::kClosing);
+          return false;
+        }
         if (outcome == WaitOutcome::kTimeout) {
           state_machine.Fail(ConnectionError::kConnectTimeout,
                              ConnectionPhase::kWsHandshaking);
@@ -154,7 +169,12 @@ class ColdPathLoop {
   }
 
  private:
-  enum class WaitOutcome : std::uint8_t { kReady, kTimeout, kFailure };
+  enum class WaitOutcome : std::uint8_t {
+    kReady,
+    kTimeout,
+    kFailure,
+    kInterrupted
+  };
   using Deadline = std::chrono::steady_clock::time_point;
 
   static int RemainingMs(Deadline deadline) noexcept {
@@ -179,16 +199,15 @@ class ColdPathLoop {
     epoll_event event{};
     event.events = events;
     event.data.fd = socket.NativeFd();
-    if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, socket.NativeFd(), &event) != 0) {
-      if (errno != EEXIST) {
+    if (!ArmFd(socket.NativeFd(), event)) {
+      return WaitOutcome::kFailure;
+    }
+    if (interrupt_fd_ >= 0) {
+      epoll_event interrupt_event{};
+      interrupt_event.events = EPOLLIN;
+      interrupt_event.data.fd = interrupt_fd_;
+      if (!ArmFd(interrupt_fd_, interrupt_event)) {
         return WaitOutcome::kFailure;
-      }
-      if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, socket.NativeFd(), &event) != 0) {
-        if (errno != ENOENT ||
-            epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, socket.NativeFd(), &event) !=
-                0) {
-          return WaitOutcome::kFailure;
-        }
       }
     }
 
@@ -197,6 +216,10 @@ class ColdPathLoop {
       const int timeout_ms = RemainingMs(deadline);
       const int ready_count = epoll_wait(epoll_fd_, &ready, 1, timeout_ms);
       if (ready_count > 0) {
+        if (ready.data.fd == interrupt_fd_) {
+          DrainInterruptFd();
+          return WaitOutcome::kInterrupted;
+        }
         if ((ready.events & (EPOLLERR | EPOLLHUP)) != 0) {
           return WaitOutcome::kFailure;
         }
@@ -232,6 +255,9 @@ class ColdPathLoop {
         return WaitOutcome::kFailure;
       }
       const WaitOutcome outcome = WaitForSocket(socket, deadline);
+      if (outcome == WaitOutcome::kInterrupted) {
+        return outcome;
+      }
       if (outcome != WaitOutcome::kReady) {
         return outcome;
       }
@@ -239,7 +265,32 @@ class ColdPathLoop {
     return WaitOutcome::kReady;
   }
 
+  bool ArmFd(int fd, epoll_event event) noexcept {
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event) == 0) {
+      return true;
+    }
+    if (errno != EEXIST) {
+      return false;
+    }
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &event) == 0) {
+      return true;
+    }
+    return errno == ENOENT &&
+           epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event) == 0;
+  }
+
+  void DrainInterruptFd() noexcept {
+    if (interrupt_fd_ < 0) {
+      return;
+    }
+    std::uint64_t value = 0;
+    while (::read(interrupt_fd_, &value, sizeof(value)) ==
+           static_cast<ssize_t>(sizeof(value))) {
+    }
+  }
+
   int epoll_fd_{-1};
+  int interrupt_fd_{-1};
   std::array<char, 32> client_key_storage_{};
 };
 

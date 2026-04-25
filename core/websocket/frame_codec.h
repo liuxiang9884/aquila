@@ -36,6 +36,14 @@ class FrameCodec {
     decoded_payload_.reserve(max_payload_bytes_);
   }
 
+  void Reset() noexcept {
+    next_sequence_ = 0;
+    inbound_bytes_.clear();
+    decoded_payload_.clear();
+    ready_frames_.clear();
+    protocol_error_pending_ = false;
+  }
+
   EncodeResult EncodeText(std::span<const std::byte> payload,
                           std::span<std::byte> output) noexcept {
     return EncodeDataFrame(kOpcodeText, payload, output);

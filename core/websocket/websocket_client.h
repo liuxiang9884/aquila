@@ -3,12 +3,21 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <pthread.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include <utility>
 
 #include "core/websocket/active_spin_loop.h"
 #include "core/websocket/cold_path_loop.h"
 #include "core/websocket/critical_session.h"
 #include "core/websocket/metrics.h"
+#include "core/websocket/reconnect_classifier.h"
 #include "core/websocket/runtime_policy.h"
 #include "core/websocket/state_machine.h"
 #include "core/websocket/tls_socket.h"
@@ -26,7 +35,17 @@ class WebSocketClient {
         prepared_write_arena_(config_.prepared_write_slots,
                               config_.prepared_write_bytes),
         core_(config_, tls_socket_, prepared_write_arena_, metrics_),
-        spin_loop_(config_.runtime_policy) {}
+        spin_loop_(config_.runtime_policy),
+        backoff_rng_(SeedBackoffRng()) {
+    wakeup_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    cold_path_loop_.SetInterruptFd(wakeup_fd_);
+  }
+
+  ~WebSocketClient() noexcept {
+    if (wakeup_fd_ >= 0) {
+      ::close(wakeup_fd_);
+    }
+  }
 
   bool PrepareRuntimeOnly() noexcept {
     RuntimePolicy effective_policy = config_.runtime_policy;
@@ -36,6 +55,11 @@ class WebSocketClient {
     }
 
     prepare_error_ = ConnectionError::kNone;
+    if (!EnsureWakeupFd()) {
+      prepare_error_ = ConnectionError::kSocketError;
+      return false;
+    }
+    cold_path_loop_.SetInterruptFd(wakeup_fd_);
     if (!ApplyRuntimePolicy(effective_policy)) {
       prepare_error_ = ConnectionError::kSocketError;
       return false;
@@ -69,28 +93,57 @@ class WebSocketClient {
       return false;
     }
 
-    stop_requested_.store(false);
-    if (!cold_path_loop_.RunUntilActive(tls_socket_, state_machine_, config_,
-                                        handshake_storage_)) {
-      NotifyError(state_machine_.last_error());
-      NotifyState(state_machine_.phase());
-      return false;
-    }
+    stop_requested_.store(false, std::memory_order_release);
+    DrainWakeupFd();
 
-    NotifyState(state_machine_.phase());
-    RuntimeSession runtime_session{core_, stop_requested_};
-    spin_loop_.Run(runtime_session);
-    if (stop_requested_.load()) {
+    std::uint32_t transient_failures = 0;
+    bool reconnect_in_progress = false;
+    while (!stop_requested_.load(std::memory_order_acquire)) {
+      cold_path_loop_.SetInterruptFd(wakeup_fd_);
+      if (!cold_path_loop_.RunUntilActive(tls_socket_, state_machine_, config_,
+                                          handshake_storage_)) {
+        if (stop_requested_.load(std::memory_order_acquire) ||
+            state_machine_.phase() == ConnectionPhase::kClosing) {
+          NotifyState(ConnectionPhase::kClosing);
+          tls_socket_.Close();
+          return true;
+        }
+        if (!HandleReconnectFailure(state_machine_.last_error(),
+                                    transient_failures,
+                                    reconnect_in_progress)) {
+          return false;
+        }
+        continue;
+      }
+
+      if (reconnect_in_progress) {
+        ++metrics_.reconnects;
+        reconnect_in_progress = false;
+        transient_failures = 0;
+      }
+
+      NotifyState(state_machine_.phase());
+      RuntimeSession runtime_session{core_, stop_requested_};
+      spin_loop_.Run(runtime_session);
+      tls_socket_.Close();
+      if (stop_requested_.load(std::memory_order_acquire)) {
+        state_machine_.Enter(ConnectionPhase::kClosed);
+        NotifyState(state_machine_.phase());
+        return true;
+      }
+      if (core_.ShouldReconnect()) {
+        if (!HandleReconnectFailure(core_.LastError(), transient_failures,
+                                    reconnect_in_progress)) {
+          return false;
+        }
+        continue;
+      }
       state_machine_.Enter(ConnectionPhase::kClosed);
       NotifyState(state_machine_.phase());
       return true;
     }
-    if (core_.ShouldReconnect()) {
-      state_machine_.Fail(core_.LastError(), ConnectionPhase::kClosed);
-      NotifyError(state_machine_.last_error());
-      NotifyState(state_machine_.phase());
-      return false;
-    }
+
+    tls_socket_.Close();
     state_machine_.Enter(ConnectionPhase::kClosed);
     NotifyState(state_machine_.phase());
     return true;
@@ -99,8 +152,8 @@ class WebSocketClient {
   CriticalSession<TlsSocket>& Core() noexcept { return core_; }
 
   void Stop() noexcept {
-    stop_requested_.store(true);
-    tls_socket_.Close();
+    stop_requested_.store(true, std::memory_order_release);
+    Wakeup();
   }
 
   Metrics SnapshotMetrics() const noexcept { return metrics_; }
@@ -129,9 +182,135 @@ class WebSocketClient {
     }
 
     bool ShouldReconnect() const noexcept {
-      return stop_requested.load() || core.ShouldReconnect();
+      return stop_requested.load(std::memory_order_acquire) ||
+             core.ShouldReconnect();
     }
   };
+
+  static std::uint64_t SeedBackoffRng() noexcept {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    std::uint64_t seed = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    pthread_t self = pthread_self();
+    std::uint64_t thread_bits = 0;
+    static_assert(sizeof(thread_bits) >= sizeof(self));
+    std::memcpy(&thread_bits, &self, sizeof(self));
+    seed ^= thread_bits;
+    return seed == 0 ? 0x9e37'79b9'7f4a'7c15ULL : seed;
+  }
+
+  bool EnsureWakeupFd() noexcept {
+    if (wakeup_fd_ >= 0) {
+      return true;
+    }
+    wakeup_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    return wakeup_fd_ >= 0;
+  }
+
+  void Wakeup() noexcept {
+    if (wakeup_fd_ < 0) {
+      return;
+    }
+    const std::uint64_t one = 1;
+    const ssize_t written = ::write(wakeup_fd_, &one, sizeof(one));
+    (void)written;
+  }
+
+  void DrainWakeupFd() noexcept {
+    if (wakeup_fd_ < 0) {
+      return;
+    }
+    std::uint64_t value = 0;
+    while (::read(wakeup_fd_, &value, sizeof(value)) ==
+           static_cast<ssize_t>(sizeof(value))) {
+    }
+  }
+
+  bool SleepForBackoff(std::uint32_t backoff_ms) noexcept {
+    if (backoff_ms == 0) {
+      return !stop_requested_.load(std::memory_order_acquire);
+    }
+    if (wakeup_fd_ < 0) {
+      return false;
+    }
+
+    const int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (epoll_fd < 0) {
+      return false;
+    }
+
+    epoll_event event{};
+    event.events = EPOLLIN;
+    event.data.fd = wakeup_fd_;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, wakeup_fd_, &event) != 0) {
+      ::close(epoll_fd);
+      return false;
+    }
+
+    epoll_event ready{};
+    while (true) {
+      const int ready_count =
+          epoll_wait(epoll_fd, &ready, 1, static_cast<int>(backoff_ms));
+      if (ready_count > 0) {
+        DrainWakeupFd();
+        ::close(epoll_fd);
+        return false;
+      }
+      if (ready_count == 0) {
+        ::close(epoll_fd);
+        return !stop_requested_.load(std::memory_order_acquire);
+      }
+      if (errno == EINTR) {
+        continue;
+      }
+      ::close(epoll_fd);
+      return false;
+    }
+  }
+
+  bool HandleReconnectFailure(ConnectionError error,
+                              std::uint32_t& transient_failures,
+                              bool& reconnect_in_progress) noexcept {
+    tls_socket_.Close();
+    if (!config_.reconnect.enabled || Classify(error) == FailureClass::kFatal) {
+      state_machine_.Fail(error, ConnectionPhase::kClosed);
+      NotifyError(state_machine_.last_error());
+      NotifyState(state_machine_.phase());
+      return false;
+    }
+
+    ++transient_failures;
+    if (config_.reconnect.max_attempts != 0 &&
+        transient_failures >= config_.reconnect.max_attempts) {
+      state_machine_.Fail(error, ConnectionPhase::kClosed);
+      NotifyError(state_machine_.last_error());
+      NotifyState(state_machine_.phase());
+      return false;
+    }
+
+    state_machine_.Fail(error, ConnectionPhase::kReconnectBackoff);
+    NotifyError(state_machine_.last_error());
+    NotifyState(state_machine_.phase());
+    const std::uint32_t backoff_ms =
+        ComputeBackoffMs(transient_failures - 1, config_.reconnect,
+                         backoff_rng_);
+    if (!SleepForBackoff(backoff_ms)) {
+      if (stop_requested_.load(std::memory_order_acquire)) {
+        state_machine_.Enter(ConnectionPhase::kClosing);
+        NotifyState(state_machine_.phase());
+        return true;
+      }
+      state_machine_.Fail(ConnectionError::kSocketError,
+                          ConnectionPhase::kClosed);
+      NotifyError(state_machine_.last_error());
+      NotifyState(state_machine_.phase());
+      return false;
+    }
+
+    core_.Reset();
+    reconnect_in_progress = true;
+    return true;
+  }
 
   void NotifyState(ConnectionPhase phase) noexcept {
     if (state_handler_ != nullptr) {
@@ -154,8 +333,10 @@ class WebSocketClient {
   StateMachine state_machine_{};
   ColdPathLoop cold_path_loop_{};
   ActiveSpinLoop spin_loop_;
+  BackoffRng backoff_rng_;
   std::array<char, 4096> handshake_storage_{};
   std::atomic<bool> stop_requested_{false};
+  int wakeup_fd_{-1};
   bool runtime_prepared_{false};
   ConnectionError prepare_error_{ConnectionError::kNone};
   void* state_context_{nullptr};

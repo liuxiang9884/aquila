@@ -4,7 +4,7 @@ function(add_websocket_gtest target source_file)
     )
 
     target_link_libraries(${target}
-        PRIVATE aquila_core GTest::gtest_main
+        PRIVATE aquila_core GTest::gtest_main magic_enum::magic_enum
     )
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
@@ -16,7 +16,13 @@ add_websocket_gtest(websocket_handshake_test handshake_test.cpp)
 add_websocket_gtest(websocket_frame_codec_test frame_codec_test.cpp)
 add_websocket_gtest(websocket_tls_socket_test tls_socket_test.cpp)
 add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
+add_websocket_gtest(websocket_reconnect_classifier_test
+                    reconnect_classifier_test.cpp)
+add_websocket_gtest(websocket_backoff_compute_test backoff_compute_test.cpp)
 add_websocket_gtest(websocket_cold_path_loop_test cold_path_loop_test.cpp)
 set_tests_properties(websocket_cold_path_loop_test PROPERTIES TIMEOUT 5)
 add_websocket_gtest(websocket_loopback_integration_test
                     websocket_loopback_integration_test.cpp)
+add_websocket_gtest(websocket_client_reconnect_test
+                    websocket_client_reconnect_test.cpp)
+set_tests_properties(websocket_client_reconnect_test PROPERTIES TIMEOUT 30)
