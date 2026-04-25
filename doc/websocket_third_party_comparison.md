@@ -249,38 +249,37 @@
 - cursor 与交付生命周期：`consume_abs_ / parse_abs_ / write_abs_` 和 delivered-frame release 语义用于保证零拷贝 payload 在同步回调期间有效，并防止未交付 payload 被覆盖。
 - capacity / degraded 指标：`kCapacityExceeded`、`frame_codec_capacity_exhaustions` 和 degraded 窗口是生产链路的资源耗尽观测点，不能退化成静默丢弃或普通协议错误。
 - 协议校验：mask、payload 上限、control frame 长度、`fin` 等检查仍应留在 codec 边界内。
-- fixed ready metadata ring：保留为 future batch / parse-ahead fallback，不再是默认 decode 主路径。
+- fixed ready metadata ring：已从生产 `FrameCodec` 移到独立 `QueuedFrameCodec`，仅作为 parse-ahead / ready queue 实验路径和 benchmark 对照。
 
 ### 已采用的快路径
 
 `FrameCodec::Poll()` 当前采用 direct one-frame delivery：
 
 1. 先 release 上一条 delivered frame。
-2. 如果 ready ring 已有历史 queued frame，则先 drain。
-3. 如果 ready ring 为空，从 `parse_abs_` 直接解析一条完整 frame。
-4. header 通过现有协议检查，payload 长度不超过配置上限，且完整 frame 已在 ring 中可见。
-5. 直接用 `payload_abs` 和 `payload_size` 构造 `MessageView`，返回 `kMessageReady`，并按当前生命周期规则延后释放 receive ring 空间。
+2. 从 `parse_abs_` 直接解析一条完整 frame。
+3. header 通过共享 parser 的协议检查，payload 长度不超过配置上限，且完整 frame 已在 ring 中可见。
+4. 直接用 `payload_abs` 和 `payload_size` 构造 `MessageView`，返回 `kMessageReady`，并按当前生命周期规则延后释放 receive ring 空间。
 
 这条路径从默认 decode 主路径移除了：
 
 - `QueueReadyFrame()` 的 metadata 写入
 - `DrainReadyFrame()` 的 metadata 读取
 - ready ring 的 `head/count` 更新
+- `ConnectionConfig::ready_frame_slots` 生产配置项
 
-它没有移除 `MessageView`、协议检查、capacity/degraded、mirrored ring 和 payload 生命周期约束。`ready_frame_slots == 0` 现在表示没有 ready metadata fallback 容量，但单帧和 repeated `Poll()` 多帧 drain 仍可正常交付；capacity exhaustion 应来自 receive ring 初始化失败、写入超过可写空间等真实 bounded storage 问题。
+它没有移除 `MessageView`、协议检查、capacity/degraded、mirrored ring 和 payload 生命周期约束。单帧和 repeated `Poll()` 多帧 drain 仍由生产 `FrameCodec` 直接完成；capacity exhaustion 应来自 receive ring 初始化失败、写入超过可写空间等真实 bounded storage 问题。
 
-### 未采用的更激进快路径
+### 已采用的 header 快路径
 
-小 frame 特化还未实现。可选条件是：
+共享 parser 已对主路径 data frame 做 header 快路径。命中条件是：
 
 1. `FIN=1`
 2. `RSV=0`
-3. opcode 为 text/binary/ping/pong/close
+3. opcode 为 text/binary
 4. server frame unmasked
-5. `payload_len < 126`
-6. receive ring 中从 `parse_abs_` 开始至少包含 `2 + payload_len` 字节。
+5. payload length 使用 7-bit 或 16-bit 编码，即 `payload_len <= 65535`
 
-这部分应等待 direct delivery 稳定后再做，并单独 benchmark。
+`payload_len >= 65536`、control frame、masked inbound、fragmentation、RSV 或未知 opcode 仍走 generic parser。两条路径都运行在 mirrored receive ring 上，不切换到线性 buffer。
 
 ### 方案比较
 
@@ -288,7 +287,8 @@
 | --- | --- | --- | --- |
 | 直接采用三方库 `handleWSMsg()` 风格 | 最低，benchmark 为 `2ns` 量级 | 缺少 `MessageView`、capacity/degraded、ready fallback、TLS/session 边界和完整恢复语义 | 只适合作为 parser 下限参考 |
 | benchmark-only linear prototype | 单帧 direct poll p50 约 `3ns`，coalesced feed p50 约 `2ns` | 保留部分 `MessageView` / status 边界，但没有生产 session 集成和完整容量观测 | 证明线性 receive buffer 有性能空间 |
-| 当前 `aquila` direct delivery 路径 | direct poll p50 约 `6ns`，coalesced feed p50 约 `8ns` | 生产边界完整，支持 repeated `Poll()` drain 和容量观测 | 当前采用方案 |
+| 当前 `aquila` direct delivery 路径 | release pinned：contiguous decode p50 约 `4ns`，coalesced drain p50 约 `3ns` | 生产边界完整，支持 repeated `Poll()` drain 和容量观测 | 当前采用方案 |
+| `QueuedFrameCodec` parse-ahead 路径 | release pinned：contiguous decode p50 约 `14ns`，coalesced drain p50 约 `8ns` | 保留 ready metadata ring 语义，但不进入生产 hot path | 仅作为实验 / 对照路径 |
 | 普通 ring + 边界线性化 copy | 初始化简单 | 跨 ring 尾部时引入 copy 或双段 parser 分支 | 不符合 P2-A 低延迟目标 |
 | 双段 payload view | 避免 mirrored mmap | 把边界处理推给所有下游 parser | 不建议作为当前主线 |
 | small-frame specialized parser | 理论上更接近 parser 下限 | 增加一条额外协议分支，需单独证明收益 | 后续候选 |
@@ -297,7 +297,7 @@
 
 direct delivery 已补充并执行：
 
-- `websocket_frame_codec_test`：`ready_frame_slots == 0` 时 coalesced 两帧可通过 repeated `Poll()` 直接交付；receive ring 初始化失败返回 `kCapacityExceeded`。
+- `websocket_frame_codec_test`：生产 `FrameCodec` 的 coalesced 两帧 repeated `Poll()` direct delivery；`QueuedFrameCodec` 的 coalesced parse-ahead drain；ready queue 满返回 `kCapacityExceeded`；receive ring 初始化失败返回 `kCapacityExceeded`。
 - `websocket_critical_session_test`：codec capacity exhaustion 仍可观测且不触发 reconnect。
 - debug / release：`ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。
 - release pinned：`third_party_frame_codec_comparison_benchmark`、`frame_codec_benchmark`、`session_read_path_benchmark` 已复跑并记录。

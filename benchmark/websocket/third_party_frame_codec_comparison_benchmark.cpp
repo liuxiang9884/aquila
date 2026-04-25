@@ -621,7 +621,7 @@ void BenchmarkThirdPartyCoalescedDrain(benchmark::State& state) {
 }
 
 void BenchmarkAquilaFeedDecode(benchmark::State& state) {
-  ws::FrameCodec codec(1024, 4096, 1024);
+  ws::FrameCodec codec(1024, 4096);
   const auto frame = BuildServerTextFrame("tick");
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;
@@ -653,7 +653,7 @@ void BenchmarkAquilaFeedDecode(benchmark::State& state) {
 }
 
 void BenchmarkAquilaCoalescedFeedDrain(benchmark::State& state) {
-  ws::FrameCodec codec(1024, 4096, 1024);
+  ws::FrameCodec codec(1024, 4096);
   const auto coalesced =
       BuildCoalescedServerTextFrames("tick", kCoalescedFrameCount);
   std::uint64_t payload_bytes = 0;
@@ -708,7 +708,7 @@ void BenchmarkAquilaDirectPollDecode(benchmark::State& state) {
   std::vector<ws::FrameCodec> codecs;
   codecs.reserve(kBatchSize);
   for (size_t i = 0; i < kBatchSize; ++i) {
-    codecs.emplace_back(1024, 4096, 1024);
+    codecs.emplace_back(1024, 4096);
   }
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;
@@ -749,7 +749,7 @@ void BenchmarkAquilaCoalescedDirectPollDrain(benchmark::State& state) {
   std::vector<ws::FrameCodec> codecs;
   codecs.reserve(kBatchSize);
   for (size_t i = 0; i < kBatchSize; ++i) {
-    codecs.emplace_back(1024, 4096, 1024);
+    codecs.emplace_back(1024, 4096);
   }
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;
@@ -1160,8 +1160,7 @@ void BenchmarkAquilaCompactPressureFeedDecode(benchmark::State& state) {
   std::vector<ws::FrameCodec> codecs;
   codecs.reserve(kCompactBatchSize);
   for (size_t i = 0; i < kCompactBatchSize; ++i) {
-    codecs.emplace_back(kCompactMaxPayloadBytes, kCompactReceiveBufferBytes,
-                        1024);
+    codecs.emplace_back(kCompactMaxPayloadBytes, kCompactReceiveBufferBytes);
   }
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;
@@ -1337,7 +1336,7 @@ void BenchmarkDrogonCompactPressureFeedDecode(benchmark::State& state) {
 }
 
 void BenchmarkAquilaBurstFeedDrain(benchmark::State& state) {
-  ws::FrameCodec codec(1024, 4096, 1024);
+  ws::FrameCodec codec(1024, 4096);
   const auto burst = BuildCoalescedServerTextFrames("tick", kBurstFrameCount);
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;
@@ -1477,7 +1476,7 @@ void BenchmarkAquilaLargePayloadBoundaryFeedDecode(benchmark::State& state) {
   std::vector<ws::FrameCodec> codecs;
   codecs.reserve(kLargeBatchSize);
   for (size_t i = 0; i < kLargeBatchSize; ++i) {
-    codecs.emplace_back(kLargePayloadBytes, kLargeReceiveBufferBytes, 1024);
+    codecs.emplace_back(kLargePayloadBytes, kLargeReceiveBufferBytes);
   }
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;
@@ -1678,7 +1677,7 @@ void BenchmarkAquilaDirectPollMirroredBoundary(benchmark::State& state) {
   std::vector<ws::FrameCodec> codecs;
   codecs.reserve(kBatchSize);
   for (size_t i = 0; i < kBatchSize; ++i) {
-    codecs.emplace_back(128, 4096, 1024);
+    codecs.emplace_back(128, 4096);
   }
   std::uint64_t payload_bytes = 0;
   std::uint64_t opcode_accumulator = 0;

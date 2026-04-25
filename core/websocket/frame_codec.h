@@ -7,51 +7,33 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <memory>
 #include <span>
 
 #include <openssl/rand.h>
 
-#include "core/websocket/message_view.h"
+#include "core/websocket/frame_codec_types.h"
+#include "core/websocket/frame_parser.h"
 #include "core/websocket/mirrored_buffer.h"
 
 namespace aquila::websocket {
 
-struct EncodeResult {
-  bool ok{false};
-  std::span<const std::byte> bytes{};
-};
-
-enum class DecodeStatus : uint8_t {
-  kNeedMore,
-  kMessageReady,
-  kProtocolError,
-  kCapacityExceeded,
-};
-
-struct DecodeResult {
-  DecodeStatus status{DecodeStatus::kNeedMore};
-  MessageView view{};
-};
-
 class FrameCodec {
  public:
   explicit FrameCodec(size_t max_payload_bytes)
-      : FrameCodec(max_payload_bytes, max_payload_bytes + kMaxFrameHeaderBytes,
-                   kDefaultReadyFrameSlots) {}
+      : FrameCodec(max_payload_bytes,
+                   max_payload_bytes >
+                           std::numeric_limits<size_t>::max() -
+                               detail::kMaxFrameHeaderBytes
+                       ? max_payload_bytes
+                       : max_payload_bytes + detail::kMaxFrameHeaderBytes) {}
 
-  FrameCodec(size_t max_payload_bytes, size_t receive_buffer_bytes,
-             size_t ready_frame_slots)
-      : max_payload_bytes_(max_payload_bytes),
-        ready_frames_(ready_frame_slots == 0
-                          ? nullptr
-                          : std::make_unique<ReadyFrame[]>(ready_frame_slots)),
-        ready_capacity_(ready_frame_slots) {
+  FrameCodec(size_t max_payload_bytes, size_t receive_buffer_bytes)
+      : max_payload_bytes_(max_payload_bytes) {
     const size_t required_capacity =
         max_payload_bytes > std::numeric_limits<size_t>::max() -
-                                kMaxFrameHeaderBytes
+                                detail::kMaxFrameHeaderBytes
             ? max_payload_bytes
-            : max_payload_bytes + kMaxFrameHeaderBytes;
+            : max_payload_bytes + detail::kMaxFrameHeaderBytes;
     receive_ring_.Init(std::max(receive_buffer_bytes, required_capacity));
     receive_mask_ =
         receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
@@ -61,8 +43,6 @@ class FrameCodec {
     consume_abs_ = 0;
     parse_abs_ = 0;
     write_abs_ = 0;
-    ready_head_ = 0;
-    ready_count_ = 0;
     next_sequence_ = 0;
     protocol_error_pending_ = false;
     capacity_error_pending_ = false;
@@ -126,12 +106,12 @@ class FrameCodec {
 
   EncodeResult EncodeText(std::span<const std::byte> payload,
                           std::span<std::byte> output) noexcept {
-    return EncodeDataFrame(kOpcodeText, payload, output);
+    return EncodeDataFrame(detail::kOpcodeText, payload, output);
   }
 
   EncodeResult EncodeBinary(std::span<const std::byte> payload,
                             std::span<std::byte> output) noexcept {
-    return EncodeDataFrame(kOpcodeBinary, payload, output);
+    return EncodeDataFrame(detail::kOpcodeBinary, payload, output);
   }
 
   EncodeResult EncodeControl(PayloadKind kind,
@@ -140,44 +120,25 @@ class FrameCodec {
     std::uint8_t opcode = 0;
     switch (kind) {
       case PayloadKind::kPing:
-        opcode = kOpcodePing;
+        opcode = detail::kOpcodePing;
         break;
       case PayloadKind::kPong:
-        opcode = kOpcodePong;
+        opcode = detail::kOpcodePong;
         break;
       case PayloadKind::kClose:
-        opcode = kOpcodeClose;
+        opcode = detail::kOpcodeClose;
         break;
       default:
         return {};
     }
 
-    if (payload.size() > kControlPayloadLimit) {
+    if (payload.size() > detail::kControlPayloadLimit) {
       return {};
     }
     return EncodeFrame(opcode, payload, output);
   }
 
  private:
-  static constexpr std::uint8_t kOpcodeText = 0x1;
-  static constexpr std::uint8_t kOpcodeBinary = 0x2;
-  static constexpr std::uint8_t kOpcodeClose = 0x8;
-  static constexpr std::uint8_t kOpcodePing = 0x9;
-  static constexpr std::uint8_t kOpcodePong = 0xA;
-  static constexpr size_t kControlPayloadLimit = 125;
-  static constexpr size_t kMaxFrameHeaderBytes = 14;
-  static constexpr size_t kDefaultReadyFrameSlots = 1024;
-
-  struct ReadyFrame {
-    PayloadKind kind{PayloadKind::kText};
-    std::uint64_t sequence{0};
-    bool fin{true};
-    std::uint64_t frame_abs{0};
-    std::uint32_t frame_size{0};
-    std::uint64_t payload_abs{0};
-    std::uint32_t payload_size{0};
-  };
-
   EncodeResult EncodeDataFrame(std::uint8_t opcode,
                                std::span<const std::byte> payload,
                                std::span<std::byte> output) noexcept {
@@ -238,9 +199,6 @@ class FrameCodec {
   }
 
   DecodeResult PollWithoutRelease() noexcept {
-    if (!ready_empty()) {
-      return DrainReadyFrame();
-    }
     if (protocol_error_pending_) {
       protocol_error_pending_ = false;
       return {DecodeStatus::kProtocolError, {}};
@@ -264,95 +222,17 @@ class FrameCodec {
     }
 
     const auto* data = Ptr(parse_abs_);
-    const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
-    const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
-
-    if (first == (0x80U | kOpcodeText) ||
-        first == (0x80U | kOpcodeBinary)) {
-      const PayloadKind kind = first == (0x80U | kOpcodeText)
-                                   ? PayloadKind::kText
-                                   : PayloadKind::kBinary;
-      if (second < 126U) {
-        return BuildDirectMessage(kind, 2, second, available);
-      }
-      if (second == 126U) {
-        if (available < 4U) {
-          return {};
-        }
-        const std::uint64_t payload_length =
-            (static_cast<std::uint64_t>(
-                 std::to_integer<std::uint8_t>(data[2]))
-             << 8U) |
-            static_cast<std::uint64_t>(
-                std::to_integer<std::uint8_t>(data[3]));
-        if (payload_length < 126U) {
-          return {DecodeStatus::kProtocolError, {}};
-        }
-        return BuildDirectMessage(kind, 4, payload_length, available);
-      }
+    const auto parsed =
+        detail::ParseServerFrameHeader(data, available, max_payload_bytes_);
+    if (parsed.status == detail::FrameHeaderStatus::kNeedMore) {
+      return {};
     }
-
-    const bool fin = (first & 0x80U) != 0;
-    if (!fin || (first & 0x70U) != 0) {
+    if (parsed.status == detail::FrameHeaderStatus::kProtocolError) {
       return {DecodeStatus::kProtocolError, {}};
     }
 
-    const std::uint8_t opcode = first & 0x0FU;
-    PayloadKind payload_kind{};
-    if (!MapOpcode(opcode, &payload_kind)) {
-      return {DecodeStatus::kProtocolError, {}};
-    }
-    if ((second & 0x80U) != 0) {
-      return {DecodeStatus::kProtocolError, {}};
-    }
-
-    size_t cursor = 2;
-    std::uint64_t payload_length = second & 0x7FU;
-    if (payload_length == 126) {
-      if (available < cursor + 2) {
-        return {};
-      }
-      payload_length =
-          (static_cast<std::uint64_t>(
-               std::to_integer<std::uint8_t>(data[cursor]))
-           << 8) |
-          static_cast<std::uint64_t>(
-              std::to_integer<std::uint8_t>(data[cursor + 1]));
-      cursor += 2;
-      if (payload_length < 126U) {
-        return {DecodeStatus::kProtocolError, {}};
-      }
-    } else if (payload_length == 127) {
-      if (available < cursor + 8) {
-        return {};
-      }
-      payload_length = 0;
-      for (size_t i = 0; i < 8; ++i) {
-        payload_length =
-            (payload_length << 8) |
-            static_cast<std::uint64_t>(
-                std::to_integer<std::uint8_t>(data[cursor + i]));
-      }
-      cursor += 8;
-      if ((payload_length >> 63U) != 0) {
-        return {DecodeStatus::kProtocolError, {}};
-      }
-      if (payload_length <= 0xFFFFU) {
-        return {DecodeStatus::kProtocolError, {}};
-      }
-    }
-
-    if (payload_length > max_payload_bytes_ ||
-        payload_length >
-            static_cast<std::uint64_t>(
-                std::numeric_limits<std::uint32_t>::max())) {
-      return {DecodeStatus::kProtocolError, {}};
-    }
-    if (IsControl(payload_kind) && payload_length > kControlPayloadLimit) {
-      return {DecodeStatus::kProtocolError, {}};
-    }
-
-    return BuildDirectMessage(payload_kind, cursor, payload_length, available);
+    return BuildDirectMessage(parsed.header.kind, parsed.header.header_bytes,
+                              parsed.header.payload_length, available);
   }
 
   DecodeResult BuildDirectMessage(PayloadKind payload_kind, size_t cursor,
@@ -389,32 +269,6 @@ class FrameCodec {
     return {DecodeStatus::kMessageReady, view};
   }
 
-  void QueueReadyFrame(const ReadyFrame& frame) noexcept {
-    if (ready_capacity_ == 0 || ready_frames_ == nullptr) {
-      capacity_error_pending_ = true;
-      return;
-    }
-    const size_t slot = (ready_head_ + ready_count_) % ready_capacity_;
-    ready_frames_[slot] = frame;
-    ++ready_count_;
-  }
-
-  DecodeResult DrainReadyFrame() noexcept {
-    ReadyFrame frame = ready_frames_[ready_head_];
-    ready_head_ = ready_capacity_ == 0 ? 0 : (ready_head_ + 1) % ready_capacity_;
-    --ready_count_;
-    delivered_pending_ = true;
-    delivered_frame_end_abs_ = frame.frame_abs + frame.frame_size;
-
-    MessageView view{};
-    view.kind = frame.kind;
-    view.payload = std::span<const std::byte>(Ptr(frame.payload_abs),
-                                              frame.payload_size);
-    view.sequence = frame.sequence;
-    view.fin = frame.fin;
-    return {DecodeStatus::kMessageReady, view};
-  }
-
   void ReleaseDeliveredFrame() noexcept {
     if (!delivered_pending_) {
       return;
@@ -446,42 +300,9 @@ class FrameCodec {
     return receive_ring_.data() + (absolute & receive_mask_);
   }
 
-  bool ready_empty() const noexcept { return ready_count_ == 0; }
-
-  static bool IsControl(PayloadKind kind) noexcept {
-    return kind == PayloadKind::kPing || kind == PayloadKind::kPong ||
-           kind == PayloadKind::kClose;
-  }
-
-  static bool MapOpcode(std::uint8_t opcode, PayloadKind* kind) noexcept {
-    switch (opcode) {
-      case kOpcodeText:
-        *kind = PayloadKind::kText;
-        return true;
-      case kOpcodeBinary:
-        *kind = PayloadKind::kBinary;
-        return true;
-      case kOpcodeClose:
-        *kind = PayloadKind::kClose;
-        return true;
-      case kOpcodePing:
-        *kind = PayloadKind::kPing;
-        return true;
-      case kOpcodePong:
-        *kind = PayloadKind::kPong;
-        return true;
-      default:
-        return false;
-    }
-  }
-
   size_t max_payload_bytes_{0};
   MirroredBuffer receive_ring_{};
   size_t receive_mask_{0};
-  std::unique_ptr<ReadyFrame[]> ready_frames_{};
-  size_t ready_capacity_{0};
-  size_t ready_head_{0};
-  size_t ready_count_{0};
   std::uint64_t consume_abs_{0};
   std::uint64_t parse_abs_{0};
   std::uint64_t write_abs_{0};

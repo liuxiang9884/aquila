@@ -89,7 +89,6 @@ struct ConnectionConfig {
   size_t read_buffer_bytes = size_t{1} << 20;
   size_t frame_buffer_bytes = size_t{1} << 20;
   size_t max_frame_payload_bytes = size_t{1} << 20;
-  size_t ready_frame_slots = 0;
   size_t prepared_write_slots = 2048;
   size_t prepared_write_bytes = 4096;
   std::uint32_t heartbeat_interval_ms = 5000;

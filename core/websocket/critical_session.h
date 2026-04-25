@@ -27,8 +27,7 @@ class CriticalSession {
         tls_socket_(tls_socket),
         prepared_write_arena_(prepared_write_arena),
         metrics_(metrics),
-        codec_(config.max_frame_payload_bytes, config.frame_buffer_bytes,
-               config.ready_frame_slots),
+        codec_(config.max_frame_payload_bytes, config.frame_buffer_bytes),
         pending_writes_(config.prepared_write_slots == 0
                             ? nullptr
                             : std::make_unique<PreparedWrite*[]>(

@@ -1,4 +1,5 @@
 #include "core/websocket/frame_codec.h"
+#include "core/websocket/queued_frame_codec.h"
 
 #include <gtest/gtest.h>
 
@@ -135,7 +136,7 @@ TEST(WebsocketFrameCodecTest, EncodesMaskedFramesAndDecodesCoalescedReads) {
 }
 
 TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {
-  FrameCodec codec(128, 4096, 8);
+  FrameCodec codec(128, 4096);
   const auto filler = BuildServerTextFrame("x");
   const size_t target_offset = codec.ReceiveCapacity() - 5U;
   const size_t filler_count = target_offset / filler.size();
@@ -157,8 +158,8 @@ TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {
   EXPECT_TRUE(PayloadEquals(decoded.view.payload, "abcdef"));
 }
 
-TEST(WebsocketFrameCodecTest, DecodesDirectlyWhenReadyRingUnavailable) {
-  FrameCodec codec(128, 4096, 0);
+TEST(WebsocketFrameCodecTest, DecodesCoalescedFramesByRepeatedPoll) {
+  FrameCodec codec(128, 4096);
   const auto first_frame = BuildServerTextFrame("q");
   const auto second_frame = BuildServerTextFrame("r");
   std::vector<std::byte> coalesced;
@@ -177,7 +178,7 @@ TEST(WebsocketFrameCodecTest, DecodesDirectlyWhenReadyRingUnavailable) {
 }
 
 TEST(WebsocketFrameCodecTest, DecodesDirectBinaryAndExtendedTextDataFrames) {
-  FrameCodec codec(256, 4096, 0);
+  FrameCodec codec(256, 4096);
   const auto binary_frame = BuildServerBinaryFrame("bin");
   const std::string extended_payload(126, 'x');
   const auto extended_text_frame = BuildServerTextFrame(extended_payload);
@@ -199,8 +200,49 @@ TEST(WebsocketFrameCodecTest, DecodesDirectBinaryAndExtendedTextDataFrames) {
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
 }
 
+TEST(WebsocketFrameCodecTest, QueuedCodecDrainsCoalescedFrames) {
+  QueuedFrameCodec codec(128, 4096, 8);
+  const auto first_frame = BuildServerTextFrame("one");
+  const auto second_frame = BuildServerTextFrame("two");
+  const auto third_frame = BuildServerTextFrame("three");
+  std::vector<std::byte> coalesced;
+  coalesced.reserve(first_frame.size() + second_frame.size() +
+                    third_frame.size());
+  coalesced.insert(coalesced.end(), first_frame.begin(), first_frame.end());
+  coalesced.insert(coalesced.end(), second_frame.begin(), second_frame.end());
+  coalesced.insert(coalesced.end(), third_frame.begin(), third_frame.end());
+
+  const auto first = codec.Feed(coalesced);
+  ASSERT_EQ(first.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(first.view.payload, "one"));
+
+  const auto second = codec.Poll();
+  ASSERT_EQ(second.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(second.view.payload, "two"));
+
+  const auto third = codec.Poll();
+  ASSERT_EQ(third.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(third.view.payload, "three"));
+  EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
+}
+
+TEST(WebsocketFrameCodecTest, QueuedCodecReportsReadyQueueCapacity) {
+  QueuedFrameCodec codec(128, 4096, 1);
+  const auto first_frame = BuildServerTextFrame("a");
+  const auto second_frame = BuildServerTextFrame("b");
+  std::vector<std::byte> coalesced;
+  coalesced.reserve(first_frame.size() + second_frame.size());
+  coalesced.insert(coalesced.end(), first_frame.begin(), first_frame.end());
+  coalesced.insert(coalesced.end(), second_frame.begin(), second_frame.end());
+
+  const auto first = codec.Feed(coalesced);
+  ASSERT_EQ(first.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(first.view.payload, "a"));
+  EXPECT_EQ(codec.Poll().status, DecodeStatus::kCapacityExceeded);
+}
+
 TEST(WebsocketFrameCodecTest, RejectsNonMinimalExtendedPayloadLengths) {
-  FrameCodec short_extended_codec(128, 4096, 0);
+  FrameCodec short_extended_codec(128, 4096);
   std::vector<std::byte> short_extended{
       std::byte{0x81}, std::byte{126}, std::byte{0}, std::byte{5},
       std::byte{'h'},  std::byte{'e'}, std::byte{'l'}, std::byte{'l'},
@@ -208,7 +250,7 @@ TEST(WebsocketFrameCodecTest, RejectsNonMinimalExtendedPayloadLengths) {
   EXPECT_EQ(short_extended_codec.Feed(short_extended).status,
             DecodeStatus::kProtocolError);
 
-  FrameCodec long_extended_codec(256, 4096, 0);
+  FrameCodec long_extended_codec(256, 4096);
   std::vector<std::byte> long_extended(10 + 126, std::byte{'x'});
   long_extended[0] = std::byte{0x81};
   long_extended[1] = std::byte{127};
@@ -222,7 +264,7 @@ TEST(WebsocketFrameCodecTest, RejectsNonMinimalExtendedPayloadLengths) {
 
 TEST(WebsocketFrameCodecTest, ReportsCapacityExceededWhenReceiveRingInvalid) {
   FrameCodec codec(std::numeric_limits<size_t>::max(),
-                   std::numeric_limits<size_t>::max(), 8);
+                   std::numeric_limits<size_t>::max());
   EXPECT_TRUE(codec.WritableSpan().empty());
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kCapacityExceeded);
 }
