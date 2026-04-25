@@ -6,7 +6,7 @@
 
 ## 文档信息
 
-- 版本：`v0.1`
+- 版本：`v0.2`（补 HFT 合规要求：benchmark 回归、E2E 夹具、滑动窗口实现、xorshift、锁域约束、整数化）
 - 状态：`待讨论`
 - 创建日期：`2026-04-24`
 - 关联文档：
@@ -42,6 +42,9 @@
 - Backoff sleep **不允许 busy-spin**；必须让 CPU 真正休息，否则等于再次做"活着的僵尸"。
 - Degraded 判定使用现有 metrics 作为输入，**不新增热路径时间戳采集**（RTT-based 触发器留给 P2-B 做完 G8 后再接）。
 - 重连过程中的分配只能发生在冷路径；active spin 期间的 `CriticalSession` 状态复位应走 `Reset()` 而非重构对象，避免重新分配 `read_buffer_storage_` 等大块内存。
+- `std::mutex` 与 `std::condition_variable` 仅在 `WebSocketClient` 的 backoff sleep 期间持有，**热路径 spin loop 绝不触及它们**；`Stop()` 的 `notify_all` 也只发生在外部线程，不与 spin 循环产生锁竞争。
+- 任何"滑动窗口"类观测量（例如每秒背压丢帧数）必须用**定长环形快照**实现：每 N 个 spin 周期记录 `(now_ns, counter)`，评估时做差分。禁止"每事件 push/pop" 或"每次评估遍历队列"类设计。
+- RNG 用于 jitter 等冷路径目的时，**禁止 `std::mt19937`**（状态 ~2.5KB、构造重）；使用内联的 `xorshift64` 或 `splitmix64`（8 字节状态）。
 
 ---
 
@@ -70,7 +73,7 @@
 
 ### Scope Decision（Step 1 之前必须确认）
 
-**决策 1：配置结构**
+**决策 1：配置结构（HFT 风格：整数 + 位移，冷路径也避开浮点）**
 
 新增 `ReconnectPolicy` 子结构，挂在 `ConnectionConfig` 下：
 
@@ -79,13 +82,24 @@ struct ReconnectPolicy {
   bool enabled = true;
   std::uint32_t initial_backoff_ms = 100;
   std::uint32_t max_backoff_ms = 30'000;
-  double backoff_multiplier = 2.0;
-  // Jitter factor applied multiplicatively, uniform in [1 - jitter, 1 + jitter).
-  double jitter = 0.25;
+  // Multiplier = 1 << shift_bits (1=x2, 2=x4); 0 means constant backoff.
+  std::uint8_t backoff_shift_bits = 1;
+  // Jitter ∈ [-jitter_percent, +jitter_percent] applied as integer pct.
+  std::uint8_t jitter_percent = 25;
   // 0 = unlimited (until Stop() or fatal-class error).
   std::uint32_t max_attempts = 0;
 };
 ```
+
+Backoff 计算（纯整数）：
+```
+raw = min(initial_backoff_ms << (attempt * shift_bits), max_backoff_ms)
+rand_pct = xorshift64() % (2 * jitter_percent + 1) - jitter_percent
+final_ms = raw * (100 + rand_pct) / 100
+```
+
+RNG：`WebSocketClient` 持有一个 `std::uint64_t xorshift_state_`，构造时用
+`steady_clock::now().time_since_epoch().count() ^ pthread_self()` 播种。
 
 **决策 2：失败原因分类器**
 
@@ -152,7 +166,7 @@ void Reset() noexcept;  // 复位 pending_writes_、codec_、awaiting_pong_、la
 - `prepared_write_arena_` 由外部持有，Reset 时如果 pending_writes_ 里还挂着节点，必须先一个个 `Release` 回 arena。
 - `Metrics` 不在 Reset 中清零，`reconnects` 计数由 WebSocketClient 层在每次成功重连前 `++`。
 
-**决策 6：可中断 sleep**
+**决策 6：可中断 sleep（热路径零影响）**
 
 - **选项 A（推荐）**：在 `WebSocketClient` 新增 `std::condition_variable backoff_cv_` + `std::mutex backoff_mtx_`，`Stop()` 里 `notify_all` 唤醒。
 - **选项 B**：分片 sleep（例如每 100ms 检查一次 `stop_requested_`）。简单但 `Stop()` 最大延迟 100ms。
@@ -160,39 +174,54 @@ void Reset() noexcept;  // 复位 pending_writes_、codec_、awaiting_pong_、la
 
 P1 选 A。`Stop()` 响应时间从"直到 backoff 结束"缩短到 O(线程唤醒)，符合 v1.0 "不允许在读写热路径里直接触发复杂重连流程，也不允许同步阻塞"的精神。
 
+**锁域与热路径的硬约束**（HFT 合规关键点）：
+- `backoff_mtx_` / `backoff_cv_` 仅在 **backoff 期间**被 owner 线程持有。
+- `ActiveSpinLoop::Run` 及其内部 `DriveRead` / `DriveWrite` / `AdvanceHeartbeat` **绝不触及** 这两个变量，零可能的 cache ping-pong 或锁竞争。
+- `Stop()` 的 `notify_all` 需要取锁，但只在外部线程偶发调用，不影响稳态热路径。
+- 单元测试中需显式断言"spin 循环运行时 owner 线程未持有 backoff_mtx_"。
+
 **决策 7：状态机驱动**
 
 - 成功重连回到 `kActive` 时，`state_machine.Enter(kActive)` 会清 `last_error`（现有行为）。
 - 进入 backoff：`state_machine.Fail(<last_error>, kReconnectBackoff)` —— 在 state_machine.h 里 `Fail` 同时设 error 和 phase，刚好符合。
 - `metrics_.reconnects++` 放在每次**成功** 从 cold_path 返回之后（表示完成了一次重连闭环），而不是进入 backoff 时。
 
-**决策 8：测试策略**
+**决策 8：测试策略（P1 内必须有 E2E 证据，不能推到 P3）**
 
 1. **分类器表驱动**（`reconnect_classifier_test.cpp`）：对每个 `ConnectionError` 枚举值断言其 `FailureClass`。magic_enum 遍历 + expected table。
-2. **CriticalSession Reset**（`critical_session_test.cpp` 追加）：触发一次 backpressure→`Reset()`→再喂一条正常帧，验证状态干净。
-3. **WebSocketClient 重连端到端**（`websocket_client_reconnect_test.cpp`）：这个较复杂，需要一个可编程行为的 FakeSocket + FakeColdPath 或类似。**开放问题**：是否引入新的测试替身？
+2. **Backoff 算法**（`backoff_compute_test.cpp`）：
+   - `attempt=0..N` 下 `ComputeBackoffMs` 的基线值（不加 jitter）满足 `initial_backoff_ms << (attempt * shift_bits)` 上限 `max_backoff_ms`
+   - jitter 范围 `[raw*(100-j)/100, raw*(100+j)/100]`（用 fixed xorshift seed 让测试可复现）
+   - `backoff_shift_bits = 0` 时恒等于 `initial_backoff_ms`
+3. **CriticalSession Reset**（`critical_session_test.cpp` 追加）：触发一次 backpressure→`Reset()`→再喂一条正常帧，验证 pending_writes 为空、`awaiting_pong_ == false`、`last_error_ == kNone`、arena free count 回满。
+4. **`Stop()` 唤醒 backoff**（在下面 4 合并）：`Start()` 进入 backoff → 外部线程调用 `Stop()` → `Start()` 在 O(线程唤醒) 时间内返回。
+5. **端到端重连**（`websocket_client_reconnect_test.cpp` + 新增 `test/websocket/tls_blackhole_server.h`）：
+   - 夹具：本地 TLS 服务器，用 OpenSSL 自签证书 / 自签 CA；接受 TCP → 完成 TLS 握手 → 读取 HTTP → 返回 101 Switching Protocols → 立刻 close。
+   - 测试流程：`WebSocketClient::Start()` 连该夹具 → active → 被关 → 重连退避 → 再次连上 → 再次被关 → 观察到 `metrics.reconnects >= 2` 且状态回调序列包含 `kActive → kReconnectBackoff → kActive`。
+   - 第二个变体：夹具对前 N 次连接直接拒绝（例如 TLS 握手超时），观察 backoff 确实按指数增长；最后一次接受后进入 `kActive`。
+   - 配置 `max_attempts = 3` → 第 3 次仍失败 → `Start()` 返回 false 且 `phase = kClosed`。
 
-**开放问题**：对 Layer 2 的端到端测试最难的是 `TlsSocket` 不好替换。考虑：
-- 把 `WebSocketClient` 模板化 `template <typename TlsSocketT, typename ColdPathT>` —— 侵入性大。
-- 写一个本地 TLS echo server（openssl 自签证书启动一个 mini server）—— 代码多但测试真实度高。
-- 只对 Classify 和 Backoff 算法做单元测试，端到端等 P3 长稳压测覆盖。
+**为什么必须 P1 内做 E2E**：AGENTS.md "先跑证据，再宣称完成" 明确禁止"算法对 → 假设集成也对"。TLS 夹具代码一次性投入（~100 行 boilerplate），比 P3 压测便宜得多，且可复用给 P3。
 
-**默认提案**：P1 只测 Classify + Backoff 算法 + `CriticalSession::Reset`；端到端 reconnect 测试留给 P3（用 P3 的长稳 / 压测手段，避免把 WebSocketClient 模板化）。
+**不做的事**：
+- 不把 `WebSocketClient` 模板化（保持 `TlsSocket` 直接成员，避免侵入式重构）。
+- 不做跨机器 / 真实网络的 reconnect 压测（P3 负责）。
 
 ### 步骤
 
 - [ ] **Step 1**：写失败测试
   - `reconnect_classifier_test.cpp`：对全量 `ConnectionError` 枚举断言 `FailureClass`
+  - `backoff_compute_test.cpp`：基线值 + jitter 范围 + `shift_bits=0` 恒定
   - `critical_session_test.cpp` 追加 `ResetClearsPendingAndFlags`
-  - 新增 `backoff_compute_test.cpp`（如果 Backoff 是独立 free function）或在 classifier test 同文件内
+  - `test/websocket/tls_blackhole_server.h`（TLS 夹具）+ `websocket_client_reconnect_test.cpp`（E2E）
 - [ ] **Step 2**：跑测试，预期 FAIL
 - [ ] **Step 3**：实现
   - `types.h`：`ReconnectPolicy`、`ConnectionConfig::reconnect`
   - 新建（或放进 `websocket_client.h` 的 anonymous namespace）：`Classify` + `ComputeBackoffMs(attempt, policy, rng)`
   - `critical_session.h`：`Reset()`
   - `websocket_client.h`：重连循环、`backoff_cv_`、`Stop()` 唤醒
-- [ ] **Step 4**：跑测试 + live probe + 手动黑洞端口模拟（`cold_path_loop_test` 已验证，可以复用思路让 websocket_client 连黑洞，观察重连打点）
-- [ ] **Step 5**：提交（可能拆成 3 个原子提交：types+classify、critical_session.Reset、websocket_client.reconnect_loop）
+- [ ] **Step 4**：跑测试 + live probe + **benchmark 回归**（详见最终验证清单）
+- [ ] **Step 5**：提交（建议拆成多个原子提交：types+classify、backoff、critical_session.Reset、tls_blackhole 夹具、websocket_client.reconnect_loop；如果某一项净改动 > 150 行，单独立一个提交）
 
 ---
 
@@ -219,6 +248,22 @@ P1 阶段只使用 P0 已经有的观测量，不引入新的时间戳采集：
 | 背压丢帧 | 滑动窗口内 `consumer_backpressure_drops` 增量 ≥ 阈值 | 10 / 每秒 |
 | 心跳挂起 | `awaiting_pong_` 持续 > `awaiting_pong_timeout_degraded_ms` | 3000ms |
 
+**"滑动窗口"的强制实现方式**（HFT 合规，不允许其他写法）：
+
+```cpp
+struct BackpressureWindow {
+  static constexpr size_t kSlots = 16;  // 2^4, fixed
+  std::uint64_t counter_snapshot[kSlots]{};
+  std::uint64_t timestamp_ns[kSlots]{};
+  std::uint32_t write_index = 0;
+  // On each evaluation tick: snapshot (now_ns, metrics.consumer_backpressure_drops)
+  // into write_index, advance. To read "drops in last 1s", find the oldest slot
+  // with timestamp >= now_ns - 1e9 and compute counter delta.
+};
+```
+
+总内存 = 16 * 16 字节 = 256 字节，定长、零堆分配。禁止改为 `std::deque`、`std::vector`、每事件 push/pop、或任何变长结构。
+
 **不在 P1 范围**：
 - 心跳 RTT 分布（需要 G8 的时钟改造）
 - owner-thread 交付延迟（需要 P2-B 的观测点）
@@ -227,23 +272,30 @@ P1 阶段只使用 P0 已经有的观测量，不引入新的时间戳采集：
 
 所有触发因子**连续** `recover_ticks` 轮回落到阈值以下（默认 16 轮，约 2× hold_ticks，避免震荡）。
 
-**决策 4：阈值配置**
+**决策 4：阈值配置（整数化）**
 
 ```cpp
 struct DegradedThresholds {
-  double high_watermark_ratio = 0.8;
+  // High watermark expressed as percent to avoid double on the hot path.
+  std::uint8_t high_watermark_percent = 80;  // 0 disables this trigger
   std::uint32_t high_watermark_hold_ticks = 8;
   std::uint32_t recover_ticks = 16;
-  std::uint32_t backpressure_drops_per_second = 10;
-  std::uint32_t awaiting_pong_timeout_ms = 3000;
+  std::uint32_t backpressure_drops_per_second = 10;  // 0 disables
+  std::uint32_t awaiting_pong_timeout_ms = 3000;     // 0 disables
+  // Cadence at which the spin loop invokes the evaluator. Defaults to
+  // RuntimePolicy::spin_iterations_before_clock_check for convenience;
+  // override only if evidence shows coupling with the clock tick hurts.
+  std::uint32_t evaluation_interval_iterations = 0;
 };
 ```
 
-挂在 `ConnectionConfig::degraded`，默认启用。设 `high_watermark_ratio = 0.0` 或类似可以关闭。
+挂在 `ConnectionConfig::degraded`，默认启用。所有触发因子单独可关（阈值设 0）。
 
-**决策 5：判定落位**
+**决策 5：判定落位与节奏解耦**
 
-在 `WebSocketClient` 层的 spin loop 之前 / 之后的某个节奏点做判定。提案：`RuntimeSession` 里每 N 次 spin 调用一次 `EvaluateDegraded()`。N 可以复用 `spin_iterations_before_clock_check`（P0 已有）。
+- 判定落在 `WebSocketClient::RuntimeSession` 内部，每 `evaluation_interval_iterations` 次 spin 调一次 `evaluator_.Evaluate(...)`。
+- 默认复用 `RuntimePolicy::spin_iterations_before_clock_check` 的节奏，但**保留独立字段**（`evaluation_interval_iterations`）用以后续解耦。如果两种节奏后面证明需要差异化（例如 Degraded 评估应更稀疏），只改配置不改代码。
+- Evaluator 成本必须 < 100ns/次（纯计数器比较 + 滑动窗口差分）；Step 4 benchmark 需验证此假设。
 
 **决策 6：状态通知**
 
@@ -252,14 +304,16 @@ struct DegradedThresholds {
   - `degraded_enter_count` / `degraded_exit_count`：累计
   - `degraded_active`（0/1）：当前是否在 Degraded（方便外部快照）
 
-**决策 7：测试策略**
+**决策 7：测试策略（含 E2E，不推 P3）**
 
-`degraded_test.cpp`（或 `websocket_client_reconnect_test.cpp` 追加部分）：
-
-- 直接用一个 `DegradedEvaluator`（把判定逻辑提取成 free 结构体或类，单元可测）
-- 注入 metrics 快照 + prepared_write_high_watermark 等参数，断言：(a) 各触发因子单独达到阈值 → 进入；(b) 多触发因子同时达到 → 进入；(c) 全部回落 `recover_ticks` 轮后 → 退出；(d) 震荡场景（时好时坏）不会频繁切换
-
-**开放问题**：`DegradedEvaluator` 提出来后，WebSocketClient 持有它的实例。单元测试只测 Evaluator 类；端到端 Degraded 行为（触发→通知→metrics 更新）留到 P3 长稳压测。
+1. **`degraded_evaluator_test.cpp`**（纯单元）：
+   - (a) 三个触发因子各自单独达到阈值 → 进入
+   - (b) 多触发同时 → 只进入一次、`degraded_enter_count` += 1
+   - (c) 全部回落 `recover_ticks` 轮后 → 退出
+   - (d) 震荡（在触发 / 回落之间反复）下不会频繁切换（通过 hold/recover 计数器验证）
+   - (e) 滑动窗口快照：喂入 `(timestamp, counter)` 序列，验证窗口覆盖 1s 内的差分
+   - (f) 阈值设 0 → 对应触发器禁用
+2. **E2E**：复用 Task 1 的 `tls_blackhole_server.h` 夹具，配置为 "accept 后故意不回应心跳"（让 `awaiting_pong_` 超过阈值）→ 观察 WebSocketClient 状态从 `kActive → kDegraded`，`degraded_active == 1`；再让夹具继续拖 → 超过 `heartbeat_timeout_ms` → 断链 → 进入 `kReconnectBackoff`。
 
 ### 步骤
 
@@ -275,11 +329,14 @@ struct DegradedThresholds {
 
 ---
 
-## 三个（两个）Task 完成后的最终验证
+## 两个 Task 完成后的最终验证
 
 - [ ] `./build.sh debug && ctest --test-dir build/debug --output-on-failure -R "websocket_"` 全通过
 - [ ] live probe 对 Gate 仍能成功握手 + active spin
-- [ ] 手动黑洞重连场景：`websocket_probe --host 127.0.0.1 --port <blackhole>`（或 iptables 模拟），观察指数退避 + 可中断
+- [ ] TLS blackhole 夹具的端到端 reconnect 测试通过（Task 1 决策 8 和 Task 2 决策 7 的 E2E 用例）
+- [ ] **Benchmark 回归（AGENTS.md 硬约束）**：以 `main` 分支（P1 合入前）为基线，跑 `session_read_path_benchmark`、`session_write_path_benchmark`、`active_spin_benchmark`、`frame_codec_benchmark`、`prepared_write_benchmark`；对比 P1 分支结果，确认 p50 / p99 / p99.9 无可观测回归。若出现回归，停下来定位而不是宣告完成。
+  - 记录在 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 的 G7 / G9 验证证据块中，附具体数值
+  - benchmark 必须标注：CPU id、是否开 affinity、是否启用 `mlockall`、运行时长、样本数
 - [ ] 更新 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md`：G7 和 G9 补上"处理方案 / 关联提交 / 验证证据 / 确认日期"块
 - [ ] README 不强制更新；若引入了新的配置字段，可在 P3 一次性补文档
 
@@ -291,7 +348,7 @@ struct DegradedThresholds {
 
 ## Placeholder 扫描
 
-- Task 1 决策 2 的"TLS 是否细分"、决策 8 的"是否引入模板替身"为开放问题。
+- Task 1 决策 2 的"TLS 是否细分"为唯一开放问题（默认归 Transient）；决策 8 的"是否引入模板替身"已解决（不引入，走 TLS blackhole 夹具）。
 - Task 2 决策 2 的触发因子 **不含** RTT-based，已明确推到 P2-B。
 
 ## 执行注意
