@@ -15,7 +15,7 @@
 **Files:**
 - Modify: `test/websocket/frame_codec_test.cpp`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests for:
 
@@ -53,7 +53,7 @@ TEST(WebsocketFrameCodecTest, ReportsCapacityExceededWhenReceiveRingIsFull) {
 }
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `./build.sh debug && ./build/debug/test/websocket/websocket_frame_codec_test`
 
@@ -65,11 +65,11 @@ Expected: compile or test failure because `FrameCodec(size_t,size_t,size_t)`, `W
 - Create: `core/websocket/mirrored_buffer.h`
 - Modify: `core/websocket/frame_codec.h`
 
-- [ ] **Step 1: Implement minimal mirrored buffer**
+- [x] **Step 1: Implement minimal mirrored buffer**
 
 Create `MirroredBuffer` with `Init`, move support, destructor, `data`, and `capacity`. Use `syscall(SYS_memfd_create)`, `ftruncate`, one reserved `PROT_NONE` region, and two `MAP_SHARED | MAP_FIXED` mappings.
 
-- [ ] **Step 2: Replace decode storage**
+- [x] **Step 2: Replace decode storage**
 
 Replace `std::vector` / `std::deque` decode storage with:
 
@@ -81,7 +81,7 @@ std::uint64_t parse_abs_{0};
 std::uint64_t write_abs_{0};
 ```
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 Run: `./build.sh debug && ./build/debug/test/websocket/websocket_frame_codec_test`
 
@@ -99,21 +99,21 @@ Expected: all frame codec tests pass.
 - Modify: `test/websocket/degraded_evaluator_test.cpp`
 - Modify: `test/websocket/types_test.cpp`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests proving codec capacity increments `frame_codec_capacity_exhaustions` without reconnect, and `DegradedEvaluator` enters degraded when `frame_codec_capacity_exhaustions` increases inside the 1s window.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_(critical_session|degraded_evaluator|types)_test --output-on-failure`
 
 Expected: failure because metrics and degraded sample fields do not exist.
 
-- [ ] **Step 3: Implement GREEN**
+- [x] **Step 3: Implement GREEN**
 
 Wire new metrics/config fields through `ConnectionConfig`, `Metrics`, `DegradedSample`, `DegradedEvaluator`, `CriticalSession::DriveRead`, and `WebSocketClient::RuntimeSession`.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `./build.sh debug && ctest --test-dir build/debug -R websocket_(critical_session|degraded_evaluator|types)_test --output-on-failure`
 
@@ -125,11 +125,11 @@ Expected: all selected tests pass.
 - Modify: `benchmark/websocket/frame_codec_benchmark.cpp`
 - Modify: `doc/reviews/2026-04-24-websocket-client-gap-analysis.md`
 
-- [ ] **Step 1: Update benchmark cases**
+- [x] **Step 1: Update benchmark cases**
 
 Split `frame_codec_benchmark` into encode, decode contiguous, and decode mirrored-boundary benchmark cases.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run:
 
@@ -147,11 +147,11 @@ ctest --test-dir build/release -R websocket_ --output-on-failure
 
 Expected: tests pass; benchmark p50 / p99 / p99.9 are recorded.
 
-- [ ] **Step 3: Compare with pre-P2-A baseline**
+- [x] **Step 3: Compare with pre-P2-A baseline**
 
 Use a clean `dev` baseline before the implementation commit, run the same release benchmarks, and record both sets of numbers in the review document.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit code and benchmark documentation separately:
 
