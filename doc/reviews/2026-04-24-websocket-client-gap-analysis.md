@@ -221,6 +221,8 @@
 - **讨论方向**
   - 是否先加 `kDegraded` 状态 + 进入/退出条件（阈值可配置）
   - 是否对应新增 metrics：`degraded_enter_count` / `degraded_exit_count`
+- 处理方案：fix — 提交 `3d03878` 增加 `ConnectionPhase::kDegraded`、整数化 `DegradedThresholds` 和 header-only `DegradedEvaluator`。P1 触发因子限定为写队列高水位、1s 背压丢帧窗口、pong 挂起超时；背压窗口使用 16 slot 定长环形快照，无堆分配。`WebSocketClient::RuntimeSession` 按 `evaluation_interval_iterations`（默认复用 `spin_iterations_before_clock_check`）评估 degraded，进入 / 退出时通知 `kDegraded` / `kActive` 并更新 `degraded_enter_count`、`degraded_exit_count`、`degraded_active`；断链进入 backoff / stop / close 时清理 active 标志。
+- 验证证据：新增 `websocket_degraded_evaluator_test` 覆盖三个触发因子、组合触发只进入一次、recover 退出、震荡抑制、1s 定长窗口过期、阈值 0 禁用；新增 `websocket_client_degraded_test` 用 TLS blackhole 夹具验证 `kActive → kDegraded → kReconnectBackoff`，且 metrics 在 degraded 时 `degraded_active == 1`。debug 与 release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。live probe 连接 `wss://fx-ws.gateio.ws/v4/ws/usdt` 输出 `state=kActive` 后由 `timeout` 结束。新增 `degraded_evaluator_benchmark`（4096 samples / 4.194M evaluations）测得单次 Evaluate p50/p99/p99.9 = 18/27/29ns。release benchmark 与 `dev@d1e50a1` 多次对比存在调度尾部波动；最终代表值：`session_read_path` p50/p99/p99.9 = 441/491/1563ns vs 438/480/4674ns，`session_write_path` = 411/431/584ns vs 410/434/859ns，`active_spin` = 42/44/58ns vs 42/43/44ns，`frame_codec` = 376/533/579ns vs 375/536/587ns，`prepared_write` = 2/2/3ns vs 2/2/3ns；未见可归因于 G9 的持续热路径回归。
 
 ### G10：构造路径与热路径的分配责任混淆
 

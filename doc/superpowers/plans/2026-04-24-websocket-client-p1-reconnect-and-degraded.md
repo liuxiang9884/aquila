@@ -341,27 +341,27 @@ struct DegradedThresholds {
 
 ### 步骤
 
-- [ ] **Step 1**：写失败测试（`degraded_evaluator_test.cpp`）
-- [ ] **Step 2**：FAIL
-- [ ] **Step 3**：实现
+- [x] **Step 1**：写失败测试（`degraded_evaluator_test.cpp`）
+- [x] **Step 2**：FAIL
+- [x] **Step 3**：实现
   - `types.h`：`kDegraded`、`DegradedThresholds`
   - 新建 `core/websocket/degraded_evaluator.h`（header-only，纯函数 / 轻状态）
   - `metrics.h`：新增计数器
   - `websocket_client.h`：集成 evaluator，放到 spin 节奏点
-- [ ] **Step 4**：全量测试通过；手动场景：`prepared_write_slots = 4`，业务写 4 条但不 DriveWrite，心跳 tick 多轮，观察进入 Degraded
-- [ ] **Step 5**：提交（建议拆 2-3 个原子提交）
+- [x] **Step 4**：全量测试通过；手动场景：`prepared_write_slots = 4`，业务写 4 条但不 DriveWrite，心跳 tick 多轮，观察进入 Degraded
+- [x] **Step 5**：提交（建议拆 2-3 个原子提交）
 
 ---
 
 ## 两个 Task 完成后的最终验证
 
-- [ ] `./build.sh debug && ctest --test-dir build/debug --output-on-failure -R "websocket_"` 全通过
-- [ ] live probe 对 Gate 仍能成功握手 + active spin
-- [ ] TLS blackhole 夹具的端到端 reconnect 测试通过（Task 1 决策 8 和 Task 2 决策 7 的 E2E 用例）
-- [ ] **Benchmark 回归（AGENTS.md 硬约束）**：以 `main` 分支（P1 合入前）为基线，跑 `session_read_path_benchmark`、`session_write_path_benchmark`、`active_spin_benchmark`、`frame_codec_benchmark`、`prepared_write_benchmark`；对比 P1 分支结果，确认 p50 / p99 / p99.9 无可观测回归。若出现回归，停下来定位而不是宣告完成。
+- [x] `./build.sh debug && ctest --test-dir build/debug --output-on-failure -R "websocket_"` 全通过
+- [x] live probe 对 Gate 仍能成功握手 + active spin
+- [x] TLS blackhole 夹具的端到端 reconnect 测试通过（Task 1 决策 8 和 Task 2 决策 7 的 E2E 用例）
+- [x] **Benchmark 回归（AGENTS.md 硬约束）**：以 `main` 分支（P1 合入前）为基线，跑 `session_read_path_benchmark`、`session_write_path_benchmark`、`active_spin_benchmark`、`frame_codec_benchmark`、`prepared_write_benchmark`；对比 P1 分支结果，确认 p50 / p99 / p99.9 无可观测回归。若出现回归，停下来定位而不是宣告完成。
   - 记录在 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 的 G7 / G9 验证证据块中，附具体数值
   - benchmark 必须标注：CPU id、是否开 affinity、是否启用 `mlockall`、运行时长、样本数
-- [ ] 更新 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md`：G7 和 G9 补上"处理方案 / 关联提交 / 验证证据 / 确认日期"块
+- [x] 更新 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md`：G7 和 G9 补上"处理方案 / 关联提交 / 验证证据 / 确认日期"块
 - [ ] README 不强制更新；若引入了新的配置字段，可在 P3 一次性补文档
 
 ## 规范覆盖检查
