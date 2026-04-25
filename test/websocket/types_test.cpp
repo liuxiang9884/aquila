@@ -63,6 +63,8 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(config.target, "/v4/ws/usdt");
   EXPECT_EQ(config.read_buffer_bytes, (size_t{1} << 20));
   EXPECT_EQ(config.frame_buffer_bytes, (size_t{1} << 20));
+  EXPECT_EQ(config.max_frame_payload_bytes, (size_t{1} << 20));
+  EXPECT_EQ(config.ready_frame_slots, 1024U);
   EXPECT_EQ(config.prepared_write_slots, 2048U);
   EXPECT_EQ(config.prepared_write_bytes, 4096U);
   EXPECT_EQ(config.heartbeat_interval_ms, 5000U);
@@ -72,6 +74,7 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(config.degraded.recover_ticks, 16U);
   EXPECT_EQ(config.degraded.backpressure_drops_per_second, 10U);
   EXPECT_EQ(config.degraded.awaiting_pong_timeout_ms, 3000U);
+  EXPECT_EQ(config.degraded.frame_codec_capacity_events_per_second, 1U);
   EXPECT_EQ(config.degraded.evaluation_interval_iterations, 0U);
 
   const ws::RuntimePolicy runtime_policy = config.runtime_policy;

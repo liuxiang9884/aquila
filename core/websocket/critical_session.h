@@ -27,16 +27,12 @@ class CriticalSession {
         tls_socket_(tls_socket),
         prepared_write_arena_(prepared_write_arena),
         metrics_(metrics),
-        codec_(config.frame_buffer_bytes),
+        codec_(config.max_frame_payload_bytes, config.frame_buffer_bytes,
+               config.ready_frame_slots),
         pending_writes_(config.prepared_write_slots == 0
                             ? nullptr
                             : std::make_unique<PreparedWrite*[]>(
                                   config.prepared_write_slots)),
-        read_buffer_storage_(config.read_buffer_bytes == 0
-                                 ? nullptr
-                                 : std::make_unique<std::byte[]>(
-                                       config.read_buffer_bytes)),
-        read_buffer_(read_buffer_storage_.get(), config.read_buffer_bytes),
         pending_capacity_(config.prepared_write_slots) {}
 
   void SetConsumer(MessageConsumer consumer) noexcept { consumer_ = consumer; }
@@ -124,20 +120,21 @@ class CriticalSession {
   }
 
   void DriveRead() noexcept {
-    if (read_buffer_.empty()) {
+    auto read_buffer = codec_.WritableSpan();
+    if (read_buffer.empty()) {
+      ++metrics_.frame_codec_capacity_exhaustions;
       return;
     }
 
-    const ssize_t received = tls_socket_.ReadSome(read_buffer_);
+    const ssize_t received = tls_socket_.ReadSome(read_buffer);
     if (received > 0) {
+      codec_.CommitWritten(static_cast<size_t>(received));
       metrics_.rx_bytes += static_cast<std::uint64_t>(received);
-      auto decoded = codec_.Feed(
-          std::span<const std::byte>(read_buffer_.data(),
-                                     static_cast<size_t>(received)));
+      auto decoded = codec_.Poll();
       HandleDecodeResult(decoded);
       while (!should_reconnect_ &&
              decoded.status == DecodeStatus::kMessageReady) {
-        decoded = codec_.Feed({});
+        decoded = codec_.Poll();
         HandleDecodeResult(decoded);
       }
       return;
@@ -221,6 +218,10 @@ class CriticalSession {
   }
 
   void HandleDecodeResult(const DecodeResult& decoded) noexcept {
+    if (decoded.status == DecodeStatus::kCapacityExceeded) {
+      ++metrics_.frame_codec_capacity_exhaustions;
+      return;
+    }
     if (decoded.status == DecodeStatus::kProtocolError) {
       TriggerReconnect(ConnectionError::kProtocolError);
       return;
@@ -291,8 +292,6 @@ class CriticalSession {
   MessageConsumer consumer_{};
   FrameCodec codec_;
   std::unique_ptr<PreparedWrite*[]> pending_writes_{};
-  std::unique_ptr<std::byte[]> read_buffer_storage_{};
-  std::span<std::byte> read_buffer_{};
   size_t pending_capacity_{0};
   size_t pending_head_{0};
   size_t pending_count_{0};

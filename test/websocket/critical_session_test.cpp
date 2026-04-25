@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <span>
 #include <string_view>
@@ -50,10 +51,19 @@ class FakeTlsSocket final {
       errno = EAGAIN;
       return -1;
     }
-    const auto chunk = std::move(read_chunks_.front());
-    read_chunks_.erase(read_chunks_.begin());
-    std::copy(chunk.begin(), chunk.end(), buffer.begin());
-    return static_cast<ssize_t>(chunk.size());
+    if (buffer.empty()) {
+      errno = EAGAIN;
+      return -1;
+    }
+    auto& chunk = read_chunks_.front();
+    const size_t bytes = std::min(buffer.size(), chunk.size());
+    std::copy_n(chunk.begin(), bytes, buffer.begin());
+    if (bytes == chunk.size()) {
+      read_chunks_.erase(read_chunks_.begin());
+    } else {
+      chunk.erase(chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(bytes));
+    }
+    return static_cast<ssize_t>(bytes);
   }
 
   ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
@@ -301,6 +311,29 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(session.LastError(), ConnectionError::kNone);
   EXPECT_EQ(metrics.control_frame_enqueue_failures, 1U);
   EXPECT_EQ(metrics.heartbeat_timeouts, 0U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     FrameCodecCapacityExhaustionIsObservableWithoutReconnect) {
+  auto config = BuildSmallConfig(4);
+  config.ready_frame_slots = 0;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  socket.read_chunks_.push_back(BuildServerTextFrame("x"));
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+  session.DriveRead();
+
+  EXPECT_FALSE(session.ShouldReconnect());
+  EXPECT_EQ(session.LastError(), ConnectionError::kNone);
+  EXPECT_EQ(metrics.frame_codec_capacity_exhaustions, 1U);
+  EXPECT_EQ(metrics.rx_messages, 0U);
+  EXPECT_EQ(bytes, 0U);
 }
 
 TEST(WebsocketCriticalSessionTest, ResetClearsPendingAndFlags) {

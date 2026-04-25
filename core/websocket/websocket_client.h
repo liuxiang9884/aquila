@@ -222,6 +222,8 @@ class WebSocketClient {
           .prepared_write_slots =
               static_cast<std::uint64_t>(core.PendingWriteCapacity()),
           .consumer_backpressure_drops = metrics.consumer_backpressure_drops,
+          .frame_codec_capacity_exhaustions =
+              metrics.frame_codec_capacity_exhaustions,
           .awaiting_pong = core.AwaitingPong(),
           .last_ping_ns = core.LastPingNs(),
       });

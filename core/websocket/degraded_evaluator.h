@@ -14,6 +14,7 @@ struct DegradedSample {
   std::uint64_t pending_write_count{0};
   std::uint64_t prepared_write_slots{0};
   std::uint64_t consumer_backpressure_drops{0};
+  std::uint64_t frame_codec_capacity_exhaustions{0};
   bool awaiting_pong{false};
   std::uint64_t last_ping_ns{0};
 };
@@ -109,6 +110,7 @@ class DegradedEvaluator {
 
   void Reset() noexcept {
     backpressure_window_ = BackpressureWindow{};
+    frame_codec_capacity_window_ = BackpressureWindow{};
     high_watermark_ticks_ = 0;
     recover_ticks_ = 0;
     active_ = false;
@@ -121,6 +123,9 @@ class DegradedEvaluator {
       triggered = true;
     }
     if (BackpressureTriggered(sample)) {
+      triggered = true;
+    }
+    if (FrameCodecCapacityTriggered(sample)) {
       triggered = true;
     }
     if (AwaitingPongTriggered(sample)) {
@@ -153,6 +158,14 @@ class DegradedEvaluator {
            drops >= thresholds_.backpressure_drops_per_second;
   }
 
+  bool FrameCodecCapacityTriggered(const DegradedSample& sample) noexcept {
+    const std::uint64_t events =
+        frame_codec_capacity_window_.Snapshot(
+            sample.now_ns, sample.frame_codec_capacity_exhaustions);
+    return thresholds_.frame_codec_capacity_events_per_second != 0 &&
+           events >= thresholds_.frame_codec_capacity_events_per_second;
+  }
+
   bool AwaitingPongTriggered(const DegradedSample& sample) const noexcept {
     if (thresholds_.awaiting_pong_timeout_ms == 0 || !sample.awaiting_pong ||
         sample.last_ping_ns == 0 || sample.now_ns <= sample.last_ping_ns) {
@@ -176,6 +189,7 @@ class DegradedEvaluator {
 
   DegradedThresholds thresholds_{};
   BackpressureWindow backpressure_window_{};
+  BackpressureWindow frame_codec_capacity_window_{};
   std::uint32_t high_watermark_ticks_{0};
   std::uint32_t recover_ticks_{0};
   bool active_{false};

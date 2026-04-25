@@ -2,8 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -12,11 +15,19 @@ using namespace aquila::websocket;
 namespace {
 
 std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
-  std::vector<std::byte> frame(2 + payload.size());
+  const size_t header_bytes = payload.size() <= 125 ? 2 : 4;
+  std::vector<std::byte> frame(header_bytes + payload.size());
   frame[0] = std::byte{0x81};
-  frame[1] = std::byte{static_cast<unsigned char>(payload.size())};
+  if (payload.size() <= 125) {
+    frame[1] = std::byte{static_cast<unsigned char>(payload.size())};
+  } else {
+    frame[1] = std::byte{126};
+    frame[2] = std::byte{
+        static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
+    frame[3] = std::byte{static_cast<unsigned char>(payload.size() & 0xFFU)};
+  }
   for (size_t i = 0; i < payload.size(); ++i) {
-    frame[2 + i] = static_cast<std::byte>(payload[i]);
+    frame[header_bytes + i] = static_cast<std::byte>(payload[i]);
   }
   return frame;
 }
@@ -102,4 +113,33 @@ TEST(WebsocketFrameCodecTest, EncodesMaskedFramesAndDecodesCoalescedReads) {
 
   auto protocol_error = masked_inbound_codec.Feed(masked_frame.bytes);
   EXPECT_EQ(protocol_error.status, DecodeStatus::kProtocolError);
+}
+
+TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {
+  FrameCodec codec(128, 4096, 8);
+  const auto filler = BuildServerTextFrame("x");
+  const size_t target_offset = codec.ReceiveCapacity() - 5U;
+  const size_t filler_count = target_offset / filler.size();
+  for (size_t i = 0; i < filler_count; ++i) {
+    auto filled = codec.Feed(filler);
+    ASSERT_EQ(filled.status, DecodeStatus::kMessageReady);
+    EXPECT_TRUE(PayloadEquals(filled.view.payload, "x"));
+    EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
+  }
+
+  const auto wrapped = BuildServerTextFrame("abcdef");
+  auto writable = codec.WritableSpan();
+  ASSERT_GE(writable.size(), wrapped.size());
+  std::copy(wrapped.begin(), wrapped.end(), writable.begin());
+  codec.CommitWritten(wrapped.size());
+
+  const auto decoded = codec.Poll();
+  ASSERT_EQ(decoded.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(decoded.view.payload, "abcdef"));
+}
+
+TEST(WebsocketFrameCodecTest, ReportsCapacityExceededWhenReadyRingUnavailable) {
+  FrameCodec codec(128, 4096, 0);
+  const auto frame = BuildServerTextFrame("q");
+  EXPECT_EQ(codec.Feed(frame).status, DecodeStatus::kCapacityExceeded);
 }

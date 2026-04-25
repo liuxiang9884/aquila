@@ -25,6 +25,7 @@ DegradedThresholds BuildThresholds() noexcept {
   thresholds.recover_ticks = 3;
   thresholds.backpressure_drops_per_second = 10;
   thresholds.awaiting_pong_timeout_ms = 100;
+  thresholds.frame_codec_capacity_events_per_second = 1;
   return thresholds;
 }
 
@@ -83,6 +84,25 @@ TEST(WebsocketDegradedEvaluatorTest, EntersOnAwaitingPongTimeout) {
   sample.awaiting_pong = true;
   sample.last_ping_ns = kSecond;
 
+  const auto result = evaluator.Evaluate(sample);
+  EXPECT_TRUE(result.active);
+  EXPECT_TRUE(result.entered);
+}
+
+TEST(WebsocketDegradedEvaluatorTest, EntersOnFrameCodecCapacityWindow) {
+  auto thresholds = BuildThresholds();
+  thresholds.high_watermark_percent = 0;
+  thresholds.backpressure_drops_per_second = 0;
+  thresholds.awaiting_pong_timeout_ms = 0;
+  thresholds.frame_codec_capacity_events_per_second = 1;
+  DegradedEvaluator evaluator(thresholds);
+
+  auto sample = BuildSample(kSecond);
+  sample.frame_codec_capacity_exhaustions = 0;
+  EXPECT_FALSE(evaluator.Evaluate(sample).active);
+
+  sample.now_ns += 500 * kMs;
+  sample.frame_codec_capacity_exhaustions = 1;
   const auto result = evaluator.Evaluate(sample);
   EXPECT_TRUE(result.active);
   EXPECT_TRUE(result.entered);
@@ -209,6 +229,7 @@ TEST(WebsocketDegradedEvaluatorTest, ZeroThresholdsDisableTriggers) {
   thresholds.recover_ticks = 1;
   thresholds.backpressure_drops_per_second = 0;
   thresholds.awaiting_pong_timeout_ms = 0;
+  thresholds.frame_codec_capacity_events_per_second = 0;
   DegradedEvaluator evaluator(thresholds);
 
   auto sample = BuildSample(kSecond);
@@ -219,6 +240,7 @@ TEST(WebsocketDegradedEvaluatorTest, ZeroThresholdsDisableTriggers) {
   for (int i = 0; i < 20; ++i) {
     sample.now_ns += 100 * kMs;
     sample.consumer_backpressure_drops += 100;
+    sample.frame_codec_capacity_exhaustions += 100;
     const auto result = evaluator.Evaluate(sample);
     EXPECT_FALSE(result.active);
     EXPECT_FALSE(result.entered);
