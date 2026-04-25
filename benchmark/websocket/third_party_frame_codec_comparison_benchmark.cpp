@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <trantor/utils/MsgBuffer.h>
 
 namespace ws = aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -359,6 +360,150 @@ class LinearFrameCodec {
   size_t delivered_frame_end_{0};
 };
 
+struct DrogonDecodeResult {
+  ws::DecodeStatus status{ws::DecodeStatus::kNeedMore};
+  std::string message{};
+  ws::PayloadKind kind{ws::PayloadKind::kText};
+};
+
+class DrogonFrameCodec {
+ public:
+  explicit DrogonFrameCodec(size_t receive_buffer_bytes)
+      : buffer_(receive_buffer_bytes) {}
+
+  void Reset() {
+    buffer_.retrieveAll();
+    message_.clear();
+    type_ = ws::PayloadKind::kText;
+    got_all_ = false;
+  }
+
+  void Append(std::span<const std::byte> bytes) {
+    buffer_.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  }
+
+  DrogonDecodeResult Feed(std::span<const std::byte> bytes) {
+    Append(bytes);
+    return Poll();
+  }
+
+  DrogonDecodeResult Poll() {
+    if (!Parse()) {
+      return {ws::DecodeStatus::kProtocolError, {}, type_};
+    }
+    if (!got_all_) {
+      return {};
+    }
+    std::string message;
+    message.swap(message_);
+    return {ws::DecodeStatus::kMessageReady, std::move(message), type_};
+  }
+
+ private:
+  bool Parse() {
+    got_all_ = false;
+    while (buffer_.readableBytes() >= 2) {
+      const auto first = static_cast<unsigned char>(buffer_[0]);
+      const auto second = static_cast<unsigned char>(buffer_[1]);
+      const unsigned char opcode = first & 0x0FU;
+      bool is_control_frame = false;
+      switch (opcode) {
+        case 0:
+          break;
+        case 1:
+          type_ = ws::PayloadKind::kText;
+          break;
+        case 2:
+          type_ = ws::PayloadKind::kBinary;
+          break;
+        case 8:
+          type_ = ws::PayloadKind::kClose;
+          is_control_frame = true;
+          break;
+        case 9:
+          type_ = ws::PayloadKind::kPing;
+          is_control_frame = true;
+          break;
+        case 10:
+          type_ = ws::PayloadKind::kPong;
+          is_control_frame = true;
+          break;
+        default:
+          return false;
+      }
+
+      const bool is_fin = (first & 0x80U) == 0x80U;
+      if (!is_fin && is_control_frame) {
+        return false;
+      }
+
+      size_t length = second & 0x7FU;
+      const bool is_masked = (second & 0x80U) != 0;
+      size_t index_first_mask = 2;
+      if (length == 126) {
+        index_first_mask = 4;
+      } else if (length == 127) {
+        index_first_mask = 10;
+      }
+
+      if (index_first_mask > 2) {
+        if (buffer_.readableBytes() < index_first_mask) {
+          return true;
+        }
+        if (is_control_frame) {
+          return false;
+        }
+        if (index_first_mask == 4) {
+          length = static_cast<unsigned char>(buffer_[2]);
+          length = (length << 8U) + static_cast<unsigned char>(buffer_[3]);
+        } else {
+          length = 0;
+          for (size_t i = 2; i <= 9; ++i) {
+            if (length > (std::numeric_limits<size_t>::max() >> 8U)) {
+              return false;
+            }
+            length =
+                (length << 8U) + static_cast<unsigned char>(buffer_[i]);
+          }
+        }
+      }
+
+      if (is_masked) {
+        const size_t index_first_data_byte = index_first_mask + 4U;
+        if (buffer_.readableBytes() < index_first_data_byte + length) {
+          return true;
+        }
+        const char* masks = buffer_.peek() + index_first_mask;
+        const char* raw_data = buffer_.peek() + index_first_data_byte;
+        const size_t old_length = message_.length();
+        message_.resize(old_length + length);
+        for (size_t i = 0; i < length; ++i) {
+          message_[old_length + i] = raw_data[i] ^ masks[i & 0x3U];
+        }
+        buffer_.retrieve(index_first_data_byte + length);
+      } else {
+        if (buffer_.readableBytes() < index_first_mask + length) {
+          return true;
+        }
+        const char* raw_data = buffer_.peek() + index_first_mask;
+        message_.append(raw_data, length);
+        buffer_.retrieve(index_first_mask + length);
+      }
+
+      if (is_fin) {
+        got_all_ = true;
+        return true;
+      }
+    }
+    return true;
+  }
+
+  trantor::MsgBuffer buffer_;
+  std::string message_;
+  ws::PayloadKind type_{ws::PayloadKind::kText};
+  bool got_all_{false};
+};
+
 void SetCommonCounters(benchmark::State& state,
                        std::vector<std::uint64_t> samples_ns,
                        std::uint64_t payload_bytes,
@@ -386,6 +531,25 @@ void SetFramesPerReadCounters(benchmark::State& state,
                               std::uint64_t opcode_accumulator,
                               size_t frames_per_read) {
   SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["frames_per_read"] = static_cast<double>(frames_per_read);
+}
+
+void SetDrogonCounters(benchmark::State& state,
+                       std::vector<std::uint64_t> samples_ns,
+                       std::uint64_t payload_bytes,
+                       std::uint64_t opcode_accumulator) {
+  SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["payload_copy_bytes"] = static_cast<double>(payload_bytes);
+}
+
+void SetDrogonFramesPerReadCounters(benchmark::State& state,
+                                    std::vector<std::uint64_t> samples_ns,
+                                    std::uint64_t payload_bytes,
+                                    std::uint64_t opcode_accumulator,
+                                    size_t frames_per_read) {
+  SetDrogonCounters(state, std::move(samples_ns), payload_bytes,
                     opcode_accumulator);
   state.counters["frames_per_read"] = static_cast<double>(frames_per_read);
 }
@@ -808,6 +972,180 @@ void BenchmarkAquilaLinearCoalescedDirectPollDrain(benchmark::State& state) {
                        opcode_accumulator);
 }
 
+void PrepareDrogonDirectFrame(DrogonFrameCodec& codec,
+                              std::span<const std::byte> frame) {
+  codec.Reset();
+  codec.Append(frame);
+}
+
+void BenchmarkDrogonFeedDecode(benchmark::State& state) {
+  DrogonFrameCodec codec(4096);
+  const auto frame = BuildServerTextFrame("tick");
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      const auto decoded = codec.Feed(frame);
+      if (decoded.status != ws::DecodeStatus::kMessageReady) {
+        state.SkipWithError("drogon Feed decode failed");
+        return;
+      }
+      payload_bytes += decoded.message.size();
+      opcode_accumulator +=
+          decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+      benchmark::DoNotOptimize(decoded.message.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+}
+
+void BenchmarkDrogonDirectPollDecode(benchmark::State& state) {
+  const auto frame = BuildServerTextFrame("tick");
+  std::vector<DrogonFrameCodec> codecs;
+  codecs.reserve(kBatchSize);
+  for (size_t i = 0; i < kBatchSize; ++i) {
+    codecs.emplace_back(4096);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      PrepareDrogonDirectFrame(codec, frame);
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Poll();
+      if (decoded.status != ws::DecodeStatus::kMessageReady) {
+        state.SkipWithError("drogon direct Poll decode failed");
+        return;
+      }
+      payload_bytes += decoded.message.size();
+      opcode_accumulator +=
+          decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+      benchmark::DoNotOptimize(decoded.message.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+}
+
+void BenchmarkDrogonCoalescedFeedDrain(benchmark::State& state) {
+  DrogonFrameCodec codec(4096);
+  const auto coalesced =
+      BuildCoalescedServerTextFrames("tick", kCoalescedFrameCount);
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      auto decoded = codec.Feed(coalesced);
+      size_t decoded_frames = 0;
+      while (decoded.status == ws::DecodeStatus::kMessageReady) {
+        payload_bytes += decoded.message.size();
+        opcode_accumulator +=
+            decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+        benchmark::DoNotOptimize(decoded.message.data());
+        ++decoded_frames;
+        decoded = codec.Poll();
+      }
+      if (decoded.status != ws::DecodeStatus::kNeedMore) {
+        state.SkipWithError("drogon coalesced Feed drain failed");
+        return;
+      }
+      if (decoded_frames != kCoalescedFrameCount) {
+        state.SkipWithError("drogon coalesced Feed frame count mismatch");
+        return;
+      }
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kBatchSize * kCoalescedFrameCount);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonFramesPerReadCounters(state, std::move(samples_ns), payload_bytes,
+                                 opcode_accumulator, kCoalescedFrameCount);
+}
+
+void BenchmarkDrogonCoalescedDirectPollDrain(benchmark::State& state) {
+  const auto coalesced =
+      BuildCoalescedServerTextFrames("tick", kCoalescedFrameCount);
+  std::vector<DrogonFrameCodec> codecs;
+  codecs.reserve(kBatchSize);
+  for (size_t i = 0; i < kBatchSize; ++i) {
+    codecs.emplace_back(4096);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      PrepareDrogonDirectFrame(codec, coalesced);
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      size_t decoded_frames = 0;
+      while (true) {
+        const auto decoded = codec.Poll();
+        if (decoded.status == ws::DecodeStatus::kNeedMore) {
+          break;
+        }
+        if (decoded.status != ws::DecodeStatus::kMessageReady) {
+          state.SkipWithError("drogon coalesced direct Poll failed");
+          return;
+        }
+        payload_bytes += decoded.message.size();
+        opcode_accumulator +=
+            decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+        benchmark::DoNotOptimize(decoded.message.data());
+        ++decoded_frames;
+      }
+      if (decoded_frames != kCoalescedFrameCount) {
+        state.SkipWithError("drogon coalesced direct frame mismatch");
+        return;
+      }
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kBatchSize * kCoalescedFrameCount);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonFramesPerReadCounters(state, std::move(samples_ns), payload_bytes,
+                                 opcode_accumulator, kCoalescedFrameCount);
+}
+
 void BenchmarkAquilaCompactPressureFeedDecode(benchmark::State& state) {
   const auto split =
       BuildSplitFrameBytes(kCompactFillerPayloadBytes,
@@ -938,6 +1276,66 @@ void BenchmarkAquilaLinearCompactPressureFeedDecode(
   state.counters["compact_events"] = static_cast<double>(compact_events);
 }
 
+void BenchmarkDrogonCompactPressureFeedDecode(benchmark::State& state) {
+  const auto split =
+      BuildSplitFrameBytes(kCompactFillerPayloadBytes,
+                           kCompactPartialPayloadBytes,
+                           kCompactPartialPrefixBytes);
+  if (split.setup.size() > kCompactReceiveBufferBytes ||
+      split.suffix.size() <= kCompactReceiveBufferBytes - split.setup.size()) {
+    state.SkipWithError("drogon compact-pressure setup does not force compact");
+    return;
+  }
+
+  std::vector<DrogonFrameCodec> codecs;
+  codecs.reserve(kCompactBatchSize);
+  for (size_t i = 0; i < kCompactBatchSize; ++i) {
+    codecs.emplace_back(kCompactReceiveBufferBytes);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kCompactIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      codec.Reset();
+      const auto prepared = codec.Feed(split.setup);
+      if (prepared.status != ws::DecodeStatus::kMessageReady ||
+          prepared.message.size() != kCompactFillerPayloadBytes) {
+        state.SkipWithError("drogon compact-pressure setup failed");
+        return;
+      }
+      benchmark::DoNotOptimize(prepared.message.data());
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Feed(split.suffix);
+      if (decoded.status != ws::DecodeStatus::kMessageReady ||
+          decoded.message.size() != kCompactPartialPayloadBytes) {
+        state.SkipWithError("drogon compact-pressure decode failed");
+        return;
+      }
+      payload_bytes += decoded.message.size();
+      opcode_accumulator +=
+          decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+      benchmark::DoNotOptimize(decoded.message.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kCompactBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["setup_bytes"] = static_cast<double>(split.setup.size());
+  state.counters["suffix_bytes"] = static_cast<double>(split.suffix.size());
+}
+
 void BenchmarkAquilaBurstFeedDrain(benchmark::State& state) {
   ws::FrameCodec codec(1024, 4096, 1024);
   const auto burst = BuildCoalescedServerTextFrames("tick", kBurstFrameCount);
@@ -1020,6 +1418,48 @@ void BenchmarkAquilaLinearBurstFeedDrain(benchmark::State& state) {
 
   SetFramesPerReadCounters(state, std::move(samples_ns), payload_bytes,
                            opcode_accumulator, kBurstFrameCount);
+}
+
+void BenchmarkDrogonBurstFeedDrain(benchmark::State& state) {
+  DrogonFrameCodec codec(4096);
+  const auto burst = BuildCoalescedServerTextFrames("tick", kBurstFrameCount);
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      auto decoded = codec.Feed(burst);
+      size_t decoded_frames = 0;
+      while (decoded.status == ws::DecodeStatus::kMessageReady) {
+        payload_bytes += decoded.message.size();
+        opcode_accumulator +=
+            decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+        benchmark::DoNotOptimize(decoded.message.data());
+        ++decoded_frames;
+        decoded = codec.Poll();
+      }
+      if (decoded.status != ws::DecodeStatus::kNeedMore) {
+        state.SkipWithError("drogon burst Feed drain failed");
+        return;
+      }
+      if (decoded_frames != kBurstFrameCount) {
+        state.SkipWithError("drogon burst Feed frame count mismatch");
+        return;
+      }
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kBatchSize * kBurstFrameCount);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonFramesPerReadCounters(state, std::move(samples_ns), payload_bytes,
+                                 opcode_accumulator, kBurstFrameCount);
 }
 
 void BenchmarkAquilaLargePayloadBoundaryFeedDecode(benchmark::State& state) {
@@ -1156,6 +1596,70 @@ void BenchmarkAquilaLinearLargePayloadBoundaryFeedDecode(
   state.counters["compact_events"] = static_cast<double>(compact_events);
 }
 
+void BenchmarkDrogonLargePayloadBoundaryFeedDecode(
+    benchmark::State& state) {
+  const auto split =
+      BuildSplitFrameBytes(kLargeFillerPayloadBytes, kLargePayloadBytes,
+                           kLargePartialPrefixBytes);
+  if (split.setup.size() > kLargeReceiveBufferBytes ||
+      split.suffix.size() <= kLargeReceiveBufferBytes - split.setup.size() ||
+      split.suffix.size() > kLargeReceiveBufferBytes -
+                                kLargePartialPrefixBytes) {
+    state.SkipWithError(
+        "drogon large-payload setup does not force compact");
+    return;
+  }
+
+  std::vector<DrogonFrameCodec> codecs;
+  codecs.reserve(kLargeBatchSize);
+  for (size_t i = 0; i < kLargeBatchSize; ++i) {
+    codecs.emplace_back(kLargeReceiveBufferBytes);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLargeIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      codec.Reset();
+      const auto prepared = codec.Feed(split.setup);
+      if (prepared.status != ws::DecodeStatus::kMessageReady ||
+          prepared.message.size() != kLargeFillerPayloadBytes) {
+        state.SkipWithError("drogon large-payload setup failed");
+        return;
+      }
+      benchmark::DoNotOptimize(prepared.message.data());
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Feed(split.suffix);
+      if (decoded.status != ws::DecodeStatus::kMessageReady ||
+          decoded.message.size() != kLargePayloadBytes) {
+        state.SkipWithError("drogon large-payload decode failed");
+        return;
+      }
+      payload_bytes += decoded.message.size();
+      opcode_accumulator +=
+          decoded.kind == ws::PayloadKind::kText ? 1U : 0U;
+      benchmark::DoNotOptimize(decoded.message.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kLargeBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetDrogonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["partial_prefix_bytes"] =
+      static_cast<double>(kLargePartialPrefixBytes);
+  state.counters["setup_bytes"] = static_cast<double>(split.setup.size());
+  state.counters["suffix_bytes"] = static_cast<double>(split.suffix.size());
+}
+
 void AlignCodecNearMirroredBoundary(ws::FrameCodec& codec,
                                     std::span<const std::byte> filler) {
   codec.Reset();
@@ -1282,6 +1786,30 @@ BENCHMARK(BenchmarkAquilaLinearCoalescedDirectPollDrain)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
+BENCHMARK(BenchmarkDrogonFeedDecode)
+    ->Name("drogon_feed_decode")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonDirectPollDecode)
+    ->Name("drogon_direct_poll_decode")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonCoalescedFeedDrain)
+    ->Name("drogon_coalesced_feed_drain")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonCoalescedDirectPollDrain)
+    ->Name("drogon_coalesced_direct_poll_drain")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
 BENCHMARK(BenchmarkAquilaCompactPressureFeedDecode)
     ->Name("aquila_compact_pressure_feed_decode")
     ->Iterations(kCompactIterations)
@@ -1290,6 +1818,12 @@ BENCHMARK(BenchmarkAquilaCompactPressureFeedDecode)
 
 BENCHMARK(BenchmarkAquilaLinearCompactPressureFeedDecode)
     ->Name("aquila_linear_compact_pressure_feed_decode")
+    ->Iterations(kCompactIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonCompactPressureFeedDecode)
+    ->Name("drogon_compact_pressure_feed_decode")
     ->Iterations(kCompactIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
@@ -1306,6 +1840,12 @@ BENCHMARK(BenchmarkAquilaLinearBurstFeedDrain)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
+BENCHMARK(BenchmarkDrogonBurstFeedDrain)
+    ->Name("drogon_burst_feed_drain")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
 BENCHMARK(BenchmarkAquilaLargePayloadBoundaryFeedDecode)
     ->Name("aquila_large_payload_boundary_feed_decode")
     ->Iterations(kLargeIterations)
@@ -1314,6 +1854,12 @@ BENCHMARK(BenchmarkAquilaLargePayloadBoundaryFeedDecode)
 
 BENCHMARK(BenchmarkAquilaLinearLargePayloadBoundaryFeedDecode)
     ->Name("aquila_linear_large_payload_boundary_feed_decode")
+    ->Iterations(kLargeIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonLargePayloadBoundaryFeedDecode)
+    ->Name("drogon_large_payload_boundary_feed_decode")
     ->Iterations(kLargeIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

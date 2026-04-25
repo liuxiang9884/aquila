@@ -21,3 +21,8 @@ foreach(target IN LISTS WEBSOCKET_BENCHMARK_TARGETS)
             benchmark::benchmark_main
     )
 endforeach()
+
+target_link_libraries(third_party_frame_codec_comparison_benchmark
+    PRIVATE
+        Trantor::Trantor
+)
