@@ -42,7 +42,7 @@
 - Backoff sleep **不允许 busy-spin**；必须让 CPU 真正休息，否则等于再次做"活着的僵尸"。
 - Degraded 判定使用现有 metrics 作为输入，**不新增热路径时间戳采集**（RTT-based 触发器留给 P2-B 做完 G8 后再接）。
 - 重连过程中的分配只能发生在冷路径；active spin 期间的 `CriticalSession` 状态复位应走 `Reset()` 而非重构对象，避免重新分配 `read_buffer_storage_` 等大块内存。
-- `std::mutex` 与 `std::condition_variable` 仅在 `WebSocketClient` 的 backoff sleep 期间持有，**热路径 spin loop 绝不触及它们**；`Stop()` 的 `notify_all` 也只发生在外部线程，不与 spin 循环产生锁竞争。
+- `Stop()` 唤醒统一走 `eventfd + epoll_wait`（详见 Task 1 决策 6）。热路径 spin loop 不触及任何等待原语；`Stop()` 的 `eventfd_write` 是外部线程偶发 syscall，与热路径零内存共享。
 - 任何"滑动窗口"类观测量（例如每秒背压丢帧数）必须用**定长环形快照**实现：每 N 个 spin 周期记录 `(now_ns, counter)`，评估时做差分。禁止"每事件 push/pop" 或"每次评估遍历队列"类设计。
 - RNG 用于 jitter 等冷路径目的时，**禁止 `std::mt19937`**（状态 ~2.5KB、构造重）；使用内联的 `xorshift64` 或 `splitmix64`（8 字节状态）。
 
@@ -56,7 +56,7 @@
 - 修改：`core/websocket/state_machine.h`（如需要，补充辅助方法；保持薄）
 - 修改：`core/websocket/websocket_client.h`（重连循环、分类器、backoff 计算、`kReconnectBackoff` 状态通知、`Stop()` 唤醒机制）
 - 修改：`core/websocket/metrics.h`（确认 `reconnects` 在此阶段被驱动）
-- 修改：`core/websocket/cold_path_loop.h`（若需要在连接 Reset 后复用，可能需要一个 `ResetForReconnect()`；但优先让 `ColdPathLoop` 继续"一次性"，每次重连新建一个 epoll_fd 最简单 —— 在 Scope Decision 中确认）
+- 修改：`core/websocket/cold_path_loop.h`（每次重连 `Close/Init` 重建 epoll_fd；新增 `SetInterruptFd(int)` + 把该 fd 加入 epoll 集合，使握手阶段可被 Stop 中断）
 - 修改：`test/websocket/critical_session_test.cpp`（Reset 相关 unit test）
 - 创建：`test/websocket/reconnect_classifier_test.cpp`（失败分类表驱动测试）
 - 创建：`test/websocket/websocket_client_reconnect_test.cpp`（端到端：注入失败 → 观察 backoff / 分类器 / 最终 Stop 的协同）
@@ -166,19 +166,42 @@ void Reset() noexcept;  // 复位 pending_writes_、codec_、awaiting_pong_、la
 - `prepared_write_arena_` 由外部持有，Reset 时如果 pending_writes_ 里还挂着节点，必须先一个个 `Release` 回 arena。
 - `Metrics` 不在 Reset 中清零，`reconnects` 计数由 WebSocketClient 层在每次成功重连前 `++`。
 
-**决策 6：可中断 sleep（热路径零影响）**
+**决策 6：统一用 eventfd 中断，冷路径 + backoff 共用一个唤醒机制**
 
-- **选项 A（推荐）**：在 `WebSocketClient` 新增 `std::condition_variable backoff_cv_` + `std::mutex backoff_mtx_`，`Stop()` 里 `notify_all` 唤醒。
-- **选项 B**：分片 sleep（例如每 100ms 检查一次 `stop_requested_`）。简单但 `Stop()` 最大延迟 100ms。
-- **选项 C**：`eventfd` + epoll_wait。低延迟但引入额外 fd。
+选 **C（eventfd + epoll_wait）**，而不是 `std::mutex` + `std::condition_variable`。原因：
 
-P1 选 A。`Stop()` 响应时间从"直到 backoff 结束"缩短到 O(线程唤醒)，符合 v1.0 "不允许在读写热路径里直接触发复杂重连流程，也不允许同步阻塞"的精神。
+- 代码库冷路径已经用 epoll；mutex/cv 是第二种"等待 + 唤醒"机制，没必要。
+- eventfd 只是一个 `int` 成员，Stop 线程写它是 syscall，**不触及 `WebSocketClient` 任何内存字段** —— 零 false sharing 风险，无需维护 `alignas(64)` 布局约束。
+- 顺手修复一个现存问题：当前冷路径握手期间 `Stop()` 要等 `cold_path_total_timeout_ms`（10s）才能返回；接入 eventfd 后变成 ~μs 响应。
 
-**锁域与热路径的硬约束**（HFT 合规关键点）：
-- `backoff_mtx_` / `backoff_cv_` 仅在 **backoff 期间**被 owner 线程持有。
-- `ActiveSpinLoop::Run` 及其内部 `DriveRead` / `DriveWrite` / `AdvanceHeartbeat` **绝不触及** 这两个变量，零可能的 cache ping-pong 或锁竞争。
-- `Stop()` 的 `notify_all` 需要取锁，但只在外部线程偶发调用，不影响稳态热路径。
-- 单元测试中需显式断言"spin 循环运行时 owner 线程未持有 backoff_mtx_"。
+**实现要点**：
+
+```cpp
+// WebSocketClient
+int wakeup_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);  // ctor
+// Stop():
+stop_requested_.store(true, std::memory_order_release);
+const std::uint64_t one = 1;
+::write(wakeup_fd_, &one, sizeof(one));
+
+// ColdPathLoop
+void SetInterruptFd(int fd) noexcept;  // WebSocketClient 在 Start() 前调用一次
+// WaitForSocket 内部把 wakeup_fd 加入 epoll 集合；若它 ready 则返回 WaitOutcome::kInterrupted
+
+// Backoff sleep（在 WebSocketClient 内部）
+// 直接 epoll_wait(own_epoll_fd_, ..., remaining_backoff_ms)，集合里只有 wakeup_fd。
+// 若返回事件 → stop 触发；若返回 0 → 超时，backoff 结束。
+```
+
+**语义落位**：
+- Stop 中断不映射到任何 `ConnectionError`（Stop 不是错误）。
+- 冷路径被中断 → `state_machine.Enter(ConnectionPhase::kClosing)` → `RunUntilActive` 返回 `false`（"非错误"语义）。
+- `WebSocketClient::Start()` 看到 `stop_requested_ == true` + 当前 phase 为 `kClosing` → 正常走 Stop 分支返回 `true`。
+- **不新增 `ConnectionError::kStopped`**，保持 `ConnectionError` 枚举只含真正的错误。
+
+**一次性消耗 wakeup_fd 的计数**：
+- eventfd 的计数器会累加；每次从 epoll 检测到 wakeup_fd ready 时，读一次把计数清零，避免重复触发。
+- `Stop()` 可能被多次调用；幂等（计数再+1 无副作用）。
 
 **决策 7：状态机驱动**
 
