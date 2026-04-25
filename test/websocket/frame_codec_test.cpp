@@ -33,6 +33,24 @@ std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
   return frame;
 }
 
+std::vector<std::byte> BuildServerBinaryFrame(std::string_view payload) {
+  const size_t header_bytes = payload.size() <= 125 ? 2 : 4;
+  std::vector<std::byte> frame(header_bytes + payload.size());
+  frame[0] = std::byte{0x82};
+  if (payload.size() <= 125) {
+    frame[1] = std::byte{static_cast<unsigned char>(payload.size())};
+  } else {
+    frame[1] = std::byte{126};
+    frame[2] = std::byte{
+        static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
+    frame[3] = std::byte{static_cast<unsigned char>(payload.size() & 0xFFU)};
+  }
+  for (size_t i = 0; i < payload.size(); ++i) {
+    frame[header_bytes + i] = static_cast<std::byte>(payload[i]);
+  }
+  return frame;
+}
+
 bool PayloadEquals(std::span<const std::byte> payload,
                    std::string_view expected) {
   if (payload.size() != expected.size()) {
@@ -155,6 +173,29 @@ TEST(WebsocketFrameCodecTest, DecodesDirectlyWhenReadyRingUnavailable) {
   const auto next = codec.Poll();
   ASSERT_EQ(next.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(next.view.payload, "r"));
+  EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
+}
+
+TEST(WebsocketFrameCodecTest, DecodesDirectBinaryAndExtendedTextDataFrames) {
+  FrameCodec codec(256, 4096, 0);
+  const auto binary_frame = BuildServerBinaryFrame("bin");
+  const std::string extended_payload(126, 'x');
+  const auto extended_text_frame = BuildServerTextFrame(extended_payload);
+  std::vector<std::byte> coalesced;
+  coalesced.reserve(binary_frame.size() + extended_text_frame.size());
+  coalesced.insert(coalesced.end(), binary_frame.begin(), binary_frame.end());
+  coalesced.insert(coalesced.end(), extended_text_frame.begin(),
+                   extended_text_frame.end());
+
+  const auto binary = codec.Feed(coalesced);
+  ASSERT_EQ(binary.status, DecodeStatus::kMessageReady);
+  EXPECT_EQ(binary.view.kind, PayloadKind::kBinary);
+  EXPECT_TRUE(PayloadEquals(binary.view.payload, "bin"));
+
+  const auto text = codec.Poll();
+  ASSERT_EQ(text.status, DecodeStatus::kMessageReady);
+  EXPECT_EQ(text.view.kind, PayloadKind::kText);
+  EXPECT_TRUE(PayloadEquals(text.view.payload, extended_payload));
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
 }
 

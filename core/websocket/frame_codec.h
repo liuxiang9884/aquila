@@ -8,7 +8,6 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <span>
 
 #include <openssl/rand.h>
@@ -54,6 +53,8 @@ class FrameCodec {
             ? max_payload_bytes
             : max_payload_bytes + kMaxFrameHeaderBytes;
     receive_ring_.Init(std::max(receive_buffer_bytes, required_capacity));
+    receive_mask_ =
+        receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
   }
 
   void Reset() noexcept {
@@ -266,14 +267,36 @@ class FrameCodec {
     const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
     const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
 
+    if (first == (0x80U | kOpcodeText) ||
+        first == (0x80U | kOpcodeBinary)) {
+      const PayloadKind kind = first == (0x80U | kOpcodeText)
+                                   ? PayloadKind::kText
+                                   : PayloadKind::kBinary;
+      if (second < 126U) {
+        return BuildDirectMessage(kind, 2, second, available);
+      }
+      if (second == 126U) {
+        if (available < 4U) {
+          return {};
+        }
+        const std::uint64_t payload_length =
+            (static_cast<std::uint64_t>(
+                 std::to_integer<std::uint8_t>(data[2]))
+             << 8U) |
+            static_cast<std::uint64_t>(
+                std::to_integer<std::uint8_t>(data[3]));
+        return BuildDirectMessage(kind, 4, payload_length, available);
+      }
+    }
+
     const bool fin = (first & 0x80U) != 0;
     if (!fin || (first & 0x70U) != 0) {
       return {DecodeStatus::kProtocolError, {}};
     }
 
     const std::uint8_t opcode = first & 0x0FU;
-    const auto payload_kind = MapOpcode(opcode);
-    if (!payload_kind.has_value()) {
+    PayloadKind payload_kind{};
+    if (!MapOpcode(opcode, &payload_kind)) {
       return {DecodeStatus::kProtocolError, {}};
     }
     if ((second & 0x80U) != 0) {
@@ -316,7 +339,20 @@ class FrameCodec {
                 std::numeric_limits<std::uint32_t>::max())) {
       return {DecodeStatus::kProtocolError, {}};
     }
-    if (IsControl(*payload_kind) && payload_length > kControlPayloadLimit) {
+    if (IsControl(payload_kind) && payload_length > kControlPayloadLimit) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
+
+    return BuildDirectMessage(payload_kind, cursor, payload_length, available);
+  }
+
+  DecodeResult BuildDirectMessage(PayloadKind payload_kind, size_t cursor,
+                                  std::uint64_t payload_length,
+                                  std::uint64_t available) noexcept {
+    if (payload_length > max_payload_bytes_ ||
+        payload_length >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<std::uint32_t>::max())) {
       return {DecodeStatus::kProtocolError, {}};
     }
 
@@ -336,7 +372,7 @@ class FrameCodec {
     delivered_frame_end_abs_ = frame_end_abs;
 
     MessageView view{};
-    view.kind = *payload_kind;
+    view.kind = payload_kind;
     view.payload = std::span<const std::byte>(
         Ptr(payload_abs), static_cast<size_t>(payload_length));
     view.sequence = next_sequence_++;
@@ -394,11 +430,11 @@ class FrameCodec {
   }
 
   std::byte* Ptr(std::uint64_t absolute) noexcept {
-    return receive_ring_.data() + (absolute % receive_ring_.capacity());
+    return receive_ring_.data() + (absolute & receive_mask_);
   }
 
   const std::byte* Ptr(std::uint64_t absolute) const noexcept {
-    return receive_ring_.data() + (absolute % receive_ring_.capacity());
+    return receive_ring_.data() + (absolute & receive_mask_);
   }
 
   bool ready_empty() const noexcept { return ready_count_ == 0; }
@@ -408,25 +444,31 @@ class FrameCodec {
            kind == PayloadKind::kClose;
   }
 
-  static std::optional<PayloadKind> MapOpcode(std::uint8_t opcode) noexcept {
+  static bool MapOpcode(std::uint8_t opcode, PayloadKind* kind) noexcept {
     switch (opcode) {
       case kOpcodeText:
-        return PayloadKind::kText;
+        *kind = PayloadKind::kText;
+        return true;
       case kOpcodeBinary:
-        return PayloadKind::kBinary;
+        *kind = PayloadKind::kBinary;
+        return true;
       case kOpcodeClose:
-        return PayloadKind::kClose;
+        *kind = PayloadKind::kClose;
+        return true;
       case kOpcodePing:
-        return PayloadKind::kPing;
+        *kind = PayloadKind::kPing;
+        return true;
       case kOpcodePong:
-        return PayloadKind::kPong;
+        *kind = PayloadKind::kPong;
+        return true;
       default:
-        return std::nullopt;
+        return false;
     }
   }
 
   size_t max_payload_bytes_{0};
   MirroredBuffer receive_ring_{};
+  size_t receive_mask_{0};
   std::unique_ptr<ReadyFrame[]> ready_frames_{};
   size_t ready_capacity_{0};
   size_t ready_head_{0};
