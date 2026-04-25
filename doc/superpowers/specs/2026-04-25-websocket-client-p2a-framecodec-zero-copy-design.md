@@ -128,6 +128,8 @@ struct ReadyFrame {
 
 ready ring 不拥有 payload，也不分配 payload。交付时把 `payload_abs` 转成 mirrored ring 上的连续 `std::span`。
 
+后续 direct delivery 优化后，默认 `Poll()` 路径不再把每个完整 frame 先写入 ready ring，而是每次直接解析并交付一帧。ready ring 保留为 future batch / parse-ahead fallback；`ready_frame_slots == 0` 不再阻止单帧或 repeated `Poll()` 多帧交付。
+
 ### 决策 5：容量耗尽显式 fail-fast，并接入 Degraded
 
 P2-A 新增 codec 资源耗尽状态，不把它伪装成协议错误。
@@ -144,8 +146,8 @@ enum class DecodeStatus : uint8_t {
 容量耗尽包括：
 
 - receive ring 没有空间接收下一段入站数据。
-- ready frame ring 已满且无法继续保留已解析 frame。
 - mirrored buffer 初始化失败，codec 不可用。
+- future batch / parse-ahead fallback 启用时，ready frame ring 已满且无法继续保留已解析 frame。
 
 payload 长度超过 WebSocket / 配置上限不归为内部容量耗尽，仍属于协议或配置层错误，按 `kProtocolError` / reconnect 路径处理。
 
@@ -293,9 +295,9 @@ size_t ready_frame_slots = 1024;
 
 - 多个 coalesced server frame 在一次 `Feed` 后按 sequence 顺序 drain。
 - `WritableSpan` + `CommitWritten` 可以交付跨物理尾部的 frame，payload 内容连续正确。
-- ready frame ring 容量达到上限时不分配、不覆盖未交付 frame。
+- `ready_frame_slots == 0` 时 coalesced 多帧仍可通过 repeated `Poll()` direct delivery 交付。
 - payload 超过 `max_frame_payload_bytes` 返回 `kProtocolError`。
-- receive ring 容量不足返回 `kCapacityExceeded`。
+- receive ring 初始化失败或容量不足返回 `kCapacityExceeded`。
 - `Reset()` 清空 ring cursor、ready ring、pending error 和 sequence。
 - masked inbound server frame 仍返回 `kProtocolError`。
 - control frame payload 超过 125 bytes 仍返回 `kProtocolError`。
@@ -326,16 +328,17 @@ Benchmark 覆盖：
 
 P2-A 选择 mirrored ring，是因为它在性能模型上最干净：主路径没有堆分配、没有 payload copy、没有 linear buffer compact、没有双段 parser 分支。代价是 Linux 平台相关的初始化复杂度更高，且 buffer capacity 需要按 page 对齐。这个成本全部在冷路径承担，不污染 WebSocket 收包热路径。
 
-## 后续优化候选：单帧直交付快路径
+## 已实现优化：direct one-frame delivery
 
-P2-A 完成后的第三方对比 benchmark 显示，三方库在“完整单帧已经在内存中，只做 frame header 解析并回调”的极窄场景下能做到 `2ns` 量级；`aquila` 当前 direct poll decode 约为 `12ns` 量级。差距主要来自 `aquila` 保留的 ready metadata ring、`MessageView` 构造、payload 生命周期和容量/降级边界。
+P2-A 完成后的第三方对比 benchmark 显示，三方库在“完整单帧已经在内存中，只做 frame header 解析并回调”的极窄场景下能做到 `2ns` 量级；优化前 `aquila` direct poll decode 约为 `13ns` 量级。差距主要来自 `aquila` 保留的 ready metadata ring、`MessageView` 构造、payload 生命周期和容量/降级边界。
 
-这些边界仍应保留，但可以在 `FrameCodec::Poll()` 中增加一个单帧快路径：
+direct one-frame delivery 已将默认 `Poll()` 路径调整为：
 
-1. ready ring 为空，且没有上一条 delivered frame 等待 release。
-2. 从 `parse_abs_` 开始的数据刚好构成一条完整 frame。
-3. 继续执行现有协议检查、payload 上限检查和 mirrored ring span 构造。
-4. 直接返回 `MessageView`，跳过 `QueueReadyFrame()` / `DrainReadyFrame()` 的 metadata 往返。
-5. 如果同一次读取中包含多条 coalesced frame、ready ring 非空、或存在待 release payload，则继续走当前 ready ring fallback。
+1. release 上一次 delivered frame。
+2. 如果 ready ring 有历史 queued frame，先 drain。
+3. 从 `parse_abs_` 开始解析一条完整 frame。
+4. 继续执行现有协议检查、payload 上限检查和 mirrored ring span 构造。
+5. 直接返回 `MessageView`，跳过 `QueueReadyFrame()` / `DrainReadyFrame()` 的 metadata 往返。
+6. coalesced 多帧由上层 repeated `Poll()` drain，每次交付一帧。
 
-该优化目标不是删除 ready ring，而是把单帧主路径从“先排队再出队”收敛为“直接交付”。ready ring 仍负责多帧聚合、交付积压和复杂边界场景；capacity/degraded、协议校验、mirrored cursor 和 `MessageView` 生命周期约束不变。详细对比和验证要求记录在 `doc/websocket_third_party_comparison.md` 的“FrameCodec 对比后的优化建议”章节。
+该优化没有删除 `MessageView`、协议检查、capacity/degraded、mirrored cursor 和 payload 生命周期约束。ready ring 保留为 future batch / parse-ahead fallback，不再是默认 decode 主路径。release pinned 结果显示：`aquila_direct_poll_decode` p50/p99/p99.9 从 `13/14/158ns` 改善到 `6/6/24ns`，`aquila_coalesced_feed_drain` 从 `14/22/24ns` 改善到 `8/12/17ns`。详细对比记录在 `doc/websocket_third_party_comparison.md` 的“FrameCodec 对比和 direct delivery 优化记录”章节。

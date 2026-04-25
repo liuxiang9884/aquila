@@ -249,108 +249,99 @@ class FrameCodec {
       return {DecodeStatus::kCapacityExceeded, {}};
     }
 
-    const auto status = ParseAvailable();
-    if (!ready_empty()) {
-      return DrainReadyFrame();
-    }
-    if (status == DecodeStatus::kProtocolError ||
-        status == DecodeStatus::kCapacityExceeded) {
-      return {status, {}};
-    }
-    return {};
+    return ParseOneFrameDirect();
   }
 
-  DecodeStatus ParseAvailable() noexcept {
+  DecodeResult ParseOneFrameDirect() noexcept {
     if (!receive_ring_.valid()) {
-      return DecodeStatus::kCapacityExceeded;
+      return {DecodeStatus::kCapacityExceeded, {}};
     }
 
-    while (true) {
-      const std::uint64_t available = write_abs_ - parse_abs_;
-      if (available < 2) {
-        return DecodeStatus::kNeedMore;
-      }
+    const std::uint64_t available = write_abs_ - parse_abs_;
+    if (available < 2) {
+      return {};
+    }
 
-      const auto* data = Ptr(parse_abs_);
-      const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
-      const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
+    const auto* data = Ptr(parse_abs_);
+    const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
+    const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
 
-      const bool fin = (first & 0x80U) != 0;
-      if (!fin || (first & 0x70U) != 0) {
-        return DecodeStatus::kProtocolError;
-      }
+    const bool fin = (first & 0x80U) != 0;
+    if (!fin || (first & 0x70U) != 0) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
 
-      const std::uint8_t opcode = first & 0x0FU;
-      const auto payload_kind = MapOpcode(opcode);
-      if (!payload_kind.has_value()) {
-        return DecodeStatus::kProtocolError;
-      }
-      if ((second & 0x80U) != 0) {
-        return DecodeStatus::kProtocolError;
-      }
+    const std::uint8_t opcode = first & 0x0FU;
+    const auto payload_kind = MapOpcode(opcode);
+    if (!payload_kind.has_value()) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
+    if ((second & 0x80U) != 0) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
 
-      size_t cursor = 2;
-      std::uint64_t payload_length = second & 0x7FU;
-      if (payload_length == 126) {
-        if (available < cursor + 2) {
-          return DecodeStatus::kNeedMore;
-        }
+    size_t cursor = 2;
+    std::uint64_t payload_length = second & 0x7FU;
+    if (payload_length == 126) {
+      if (available < cursor + 2) {
+        return {};
+      }
+      payload_length =
+          (static_cast<std::uint64_t>(
+               std::to_integer<std::uint8_t>(data[cursor]))
+           << 8) |
+          static_cast<std::uint64_t>(
+              std::to_integer<std::uint8_t>(data[cursor + 1]));
+      cursor += 2;
+    } else if (payload_length == 127) {
+      if (available < cursor + 8) {
+        return {};
+      }
+      payload_length = 0;
+      for (size_t i = 0; i < 8; ++i) {
         payload_length =
-            (static_cast<std::uint64_t>(
-                 std::to_integer<std::uint8_t>(data[cursor]))
-             << 8) |
+            (payload_length << 8) |
             static_cast<std::uint64_t>(
-                std::to_integer<std::uint8_t>(data[cursor + 1]));
-        cursor += 2;
-      } else if (payload_length == 127) {
-        if (available < cursor + 8) {
-          return DecodeStatus::kNeedMore;
-        }
-        payload_length = 0;
-        for (size_t i = 0; i < 8; ++i) {
-          payload_length =
-              (payload_length << 8) |
-              static_cast<std::uint64_t>(
-                  std::to_integer<std::uint8_t>(data[cursor + i]));
-        }
-        cursor += 8;
-        if ((payload_length >> 63U) != 0) {
-          return DecodeStatus::kProtocolError;
-        }
+                std::to_integer<std::uint8_t>(data[cursor + i]));
       }
-
-      if (payload_length > max_payload_bytes_ ||
-          payload_length >
-              static_cast<std::uint64_t>(
-                  std::numeric_limits<std::uint32_t>::max())) {
-        return DecodeStatus::kProtocolError;
+      cursor += 8;
+      if ((payload_length >> 63U) != 0) {
+        return {DecodeStatus::kProtocolError, {}};
       }
-      if (IsControl(*payload_kind) && payload_length > kControlPayloadLimit) {
-        return DecodeStatus::kProtocolError;
-      }
-
-      const std::uint64_t total_frame_bytes = cursor + payload_length;
-      if (available < total_frame_bytes) {
-        return DecodeStatus::kNeedMore;
-      }
-      if (total_frame_bytes > receive_ring_.capacity()) {
-        return DecodeStatus::kCapacityExceeded;
-      }
-      if (ready_count_ == ready_capacity_) {
-        return DecodeStatus::kCapacityExceeded;
-      }
-
-      QueueReadyFrame(ReadyFrame{
-          .kind = *payload_kind,
-          .sequence = next_sequence_++,
-          .fin = true,
-          .frame_abs = parse_abs_,
-          .frame_size = static_cast<std::uint32_t>(total_frame_bytes),
-          .payload_abs = parse_abs_ + cursor,
-          .payload_size = static_cast<std::uint32_t>(payload_length),
-      });
-      parse_abs_ += total_frame_bytes;
     }
+
+    if (payload_length > max_payload_bytes_ ||
+        payload_length >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<std::uint32_t>::max())) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
+    if (IsControl(*payload_kind) && payload_length > kControlPayloadLimit) {
+      return {DecodeStatus::kProtocolError, {}};
+    }
+
+    const std::uint64_t total_frame_bytes = cursor + payload_length;
+    if (available < total_frame_bytes) {
+      return {};
+    }
+    if (total_frame_bytes > receive_ring_.capacity()) {
+      return {DecodeStatus::kCapacityExceeded, {}};
+    }
+
+    const std::uint64_t frame_abs = parse_abs_;
+    const std::uint64_t payload_abs = frame_abs + cursor;
+    const std::uint64_t frame_end_abs = frame_abs + total_frame_bytes;
+    parse_abs_ = frame_end_abs;
+    delivered_pending_ = true;
+    delivered_frame_end_abs_ = frame_end_abs;
+
+    MessageView view{};
+    view.kind = *payload_kind;
+    view.payload = std::span<const std::byte>(
+        Ptr(payload_abs), static_cast<size_t>(payload_length));
+    view.sequence = next_sequence_++;
+    view.fin = true;
+    return {DecodeStatus::kMessageReady, view};
   }
 
   void QueueReadyFrame(const ReadyFrame& frame) noexcept {

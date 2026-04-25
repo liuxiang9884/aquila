@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -316,14 +317,14 @@ TEST(WebsocketCriticalSessionTest,
 TEST(WebsocketCriticalSessionTest,
      FrameCodecCapacityExhaustionIsObservableWithoutReconnect) {
   auto config = BuildSmallConfig(4);
-  config.ready_frame_slots = 0;
+  config.max_frame_payload_bytes = std::numeric_limits<size_t>::max();
+  config.frame_buffer_bytes = std::numeric_limits<size_t>::max();
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
   MessageConsumer consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
-  socket.read_chunks_.push_back(BuildServerTextFrame("x"));
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
   session.SetConsumer(consumer);

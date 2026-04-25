@@ -199,11 +199,11 @@
 - 无 `TLS/wss`
 - 无控制面、无恢复编排、无指标体系
 
-## FrameCodec 对比后的优化建议
+## FrameCodec 对比和 direct delivery 优化记录
 
-2026-04-25 的 `third_party_frame_codec_comparison_benchmark` 显示，在只比较“内存中已有完整单帧、解析后回调”的极窄路径时，三方库的 `handleWSMsg()` pinned p50/p99/p99.9 为 `2/2/2ns`；当前 `aquila` 的 `aquila_direct_poll_decode` 为 `12/13/30ns`，`aquila_feed_decode` 为 `16/20/112ns`，`aquila_direct_poll_mirrored_boundary` 为 `21/22/230ns`。
+2026-04-25 的 `third_party_frame_codec_comparison_benchmark` 显示，在只比较“内存中已有完整单帧、解析后回调”的极窄路径时，三方库的 `handleWSMsg()` pinned p50/p99/p99.9 为 `2/2/2ns`；优化前 `aquila` 的 `aquila_direct_poll_decode` 为 `12/13/30ns`，`aquila_feed_decode` 为 `16/20/112ns`，`aquila_direct_poll_mirrored_boundary` 为 `21/22/230ns`。
 
-同日新增 coalesced 多帧 benchmark，模拟一次 read 中包含 16 个 `"tick"` text frame，并按每 frame 归一化计时。release pinned 结果：
+同日新增 coalesced 多帧 benchmark，模拟一次 read 中包含 16 个 `"tick"` text frame，并按每 frame 归一化计时。优化前 release pinned 结果：
 
 | benchmark | 场景 | p50/p99/p99.9 |
 | --- | --- | --- |
@@ -215,7 +215,19 @@
 
 这组多帧数据说明：即使主动循环 drain 三方 parser，它的 parser-only 成本仍显著更低；`aquila` 的 coalesced direct/feed 两组接近，说明在 16 个小 frame 的场景中，主要成本不在把 coalesced bytes 复制进 mirrored ring，而在当前 `Poll()` 的 ready metadata ring 往返、release 分支和 `MessageView` 生命周期维护。
 
-这组数字不能直接说明三方库整体更适合作为生产内核，因为它没有覆盖 `aquila` 当前保留的生命周期、容量、降级和状态边界；但它指出了一个明确优化点：**单帧已完整到达的常见路径不需要先写入 ready metadata ring 再读出，可以直接返回 `MessageView`。**
+随后实现 direct one-frame delivery：`Poll()` 在 ready ring 为空时直接从 `parse_abs_` 解析一帧并返回 `MessageView`，不再把主路径 frame 先写入 ready metadata ring 再读出。优化后 release pinned 结果：
+
+| benchmark | 场景 | p50/p99/p99.9 |
+| --- | --- | --- |
+| `third_party_handle_ws_msg` | 单帧，已有完整 frame | `2/2/2ns` |
+| `aquila_feed_decode` | 单帧，`Feed()` + `Poll()` | `9/10/94ns` |
+| `aquila_direct_poll_decode` | 单帧，预填 read ring 后只计 `Poll()` | `6/6/24ns` |
+| `aquila_direct_poll_mirrored_boundary` | 跨 mirrored boundary，预填后只计 `Poll()` | `7/8/12ns` |
+| `third_party_coalesced_drain` | 16 帧 coalesced，循环调用 `handleWSMsg()` drain | `2/3/11ns` |
+| `aquila_coalesced_feed_drain` | 16 帧 coalesced，`Feed()` + drain | `8/12/17ns` |
+| `aquila_coalesced_direct_poll_drain` | 16 帧 coalesced，预填 read ring 后只计 `Poll()` drain | `10/18/21ns` |
+
+这组数字仍不能直接说明三方库整体更适合作为生产内核，因为它没有覆盖 `aquila` 当前保留的生命周期、容量、降级和状态边界。但 direct delivery 已经把单帧 direct poll p50 从 `13ns` 降到 `6ns`，coalesced feed/drain p50 从 `14ns` 降到 `8ns`，说明移除 ready metadata 往返是有效优化。
 
 ### 应保留的机制
 
@@ -226,46 +238,57 @@
 - cursor 与交付生命周期：`consume_abs_ / parse_abs_ / write_abs_` 和 delivered-frame release 语义用于保证零拷贝 payload 在同步回调期间有效，并防止未交付 payload 被覆盖。
 - capacity / degraded 指标：`kCapacityExceeded`、`frame_codec_capacity_exhaustions` 和 degraded 窗口是生产链路的资源耗尽观测点，不能退化成静默丢弃或普通协议错误。
 - 协议校验：mask、payload 上限、control frame 长度、`fin` 等检查仍应留在 codec 边界内。
-- fixed ready metadata ring：它仍用于 coalesced 多帧、上一帧尚未 release、或需要批量 drain 的 fallback 场景。
+- fixed ready metadata ring：保留为 future batch / parse-ahead fallback，不再是默认 decode 主路径。
 
-### 推荐的快路径
+### 已采用的快路径
 
-在 `FrameCodec::Poll()` 中新增 **single-frame direct delivery fast path**，只覆盖最常见且最容易证明正确的情形：
+`FrameCodec::Poll()` 当前采用 direct one-frame delivery：
 
-1. ready ring 当前为空，且没有上一条 delivered frame 等待 release。
-2. receive ring 中从 `parse_abs_` 开始至少包含一个完整 frame header。
-3. header 通过现有协议检查，payload 长度不超过配置上限，且完整 frame 已在 ring 中可见。
-4. 当前可见数据只覆盖这一条完整 frame；如果同一次读取中 coalesced 了多条 frame，则走现有 ready ring fallback。
+1. 先 release 上一条 delivered frame。
+2. 如果 ready ring 已有历史 queued frame，则先 drain。
+3. 如果 ready ring 为空，从 `parse_abs_` 直接解析一条完整 frame。
+4. header 通过现有协议检查，payload 长度不超过配置上限，且完整 frame 已在 ring 中可见。
 5. 直接用 `payload_abs` 和 `payload_size` 构造 `MessageView`，返回 `kMessageReady`，并按当前生命周期规则延后释放 receive ring 空间。
 
-这条快路径可以从单帧主路径移除：
+这条路径从默认 decode 主路径移除了：
 
 - `QueueReadyFrame()` 的 metadata 写入
 - `DrainReadyFrame()` 的 metadata 读取
 - ready ring 的 `head/count` 更新
-- ready high-watermark 更新分支
 
-但它不移除 `MessageView`、协议检查、capacity/degraded、mirrored ring 和 payload 生命周期约束。
+它没有移除 `MessageView`、协议检查、capacity/degraded、mirrored ring 和 payload 生命周期约束。`ready_frame_slots == 0` 现在表示没有 ready metadata fallback 容量，但单帧和 repeated `Poll()` 多帧 drain 仍可正常交付；capacity exhaustion 应来自 receive ring 初始化失败、写入超过可写空间等真实 bounded storage 问题。
+
+### 未采用的更激进快路径
+
+小 frame 特化还未实现。可选条件是：
+
+1. `FIN=1`
+2. `RSV=0`
+3. opcode 为 text/binary/ping/pong/close
+4. server frame unmasked
+5. `payload_len < 126`
+6. receive ring 中从 `parse_abs_` 开始至少包含 `2 + payload_len` 字节。
+
+这部分应等待 direct delivery 稳定后再做，并单独 benchmark。
 
 ### 方案比较
 
 | 方案 | 主路径延迟 | 正确性 / 生产边界 | 结论 |
 | --- | --- | --- | --- |
 | 直接采用三方库 `handleWSMsg()` 风格 | 最低，benchmark 为 `2ns` 量级 | 缺少 `MessageView`、capacity/degraded、ready fallback、TLS/session 边界和完整恢复语义 | 只适合作为 parser 下限参考 |
-| 当前 `aquila` ready ring 路径 | 已经很低，direct poll 约 `12ns` 量级 | 生产边界完整，支持 coalesced frame 和容量观测 | 保守可靠，但单帧路径仍有可减掉的 metadata 往返 |
+| 当前 `aquila` direct delivery 路径 | direct poll p50 约 `6ns`，coalesced feed p50 约 `8ns` | 生产边界完整，支持 repeated `Poll()` drain 和容量观测 | 当前采用方案 |
 | 普通 ring + 边界线性化 copy | 初始化简单 | 跨 ring 尾部时引入 copy 或双段 parser 分支 | 不符合 P2-A 低延迟目标 |
 | 双段 payload view | 避免 mirrored mmap | 把边界处理推给所有下游 parser | 不建议作为当前主线 |
-| single-frame direct delivery + ready ring fallback | 接近 parser 下限，同时保留生产边界 | 只优化常见单帧路径，多帧和复杂场景沿用现有机制 | 当前最优后续方案 |
+| small-frame specialized parser | 理论上更接近 parser 下限 | 增加一条额外协议分支，需单独证明收益 | 后续候选 |
 
-### 验证要求
+### 验证记录
 
-实现该快路径时，应至少补充：
+direct delivery 已补充并执行：
 
-- 单帧完整到达时可以不占用 ready ring 的回归测试。
-- coalesced 多帧仍按 sequence 顺序交付并走 ready fallback 的测试。
-- `ready_frame_slots == 0` 或容量受限场景的行为说明，避免无意放宽已有 capacity 语义。
-- `frame_codec_benchmark` 与 `third_party_frame_codec_comparison_benchmark` 的 release pinned 对比，记录 p50/p99/p99.9。
-- `session_read_path_benchmark` 复跑，确认 session 读路径没有因快路径分支引入尾延迟回归。
+- `websocket_frame_codec_test`：`ready_frame_slots == 0` 时 coalesced 两帧可通过 repeated `Poll()` 直接交付；receive ring 初始化失败返回 `kCapacityExceeded`。
+- `websocket_critical_session_test`：codec capacity exhaustion 仍可观测且不触发 reconnect。
+- debug / release：`ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。
+- release pinned：`third_party_frame_codec_comparison_benchmark`、`frame_codec_benchmark`、`session_read_path_benchmark` 已复跑并记录。
 
 ## 建议结论
 

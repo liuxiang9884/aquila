@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -138,8 +139,28 @@ TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {
   EXPECT_TRUE(PayloadEquals(decoded.view.payload, "abcdef"));
 }
 
-TEST(WebsocketFrameCodecTest, ReportsCapacityExceededWhenReadyRingUnavailable) {
+TEST(WebsocketFrameCodecTest, DecodesDirectlyWhenReadyRingUnavailable) {
   FrameCodec codec(128, 4096, 0);
-  const auto frame = BuildServerTextFrame("q");
-  EXPECT_EQ(codec.Feed(frame).status, DecodeStatus::kCapacityExceeded);
+  const auto first_frame = BuildServerTextFrame("q");
+  const auto second_frame = BuildServerTextFrame("r");
+  std::vector<std::byte> coalesced;
+  coalesced.reserve(first_frame.size() + second_frame.size());
+  coalesced.insert(coalesced.end(), first_frame.begin(), first_frame.end());
+  coalesced.insert(coalesced.end(), second_frame.begin(), second_frame.end());
+
+  const auto decoded = codec.Feed(coalesced);
+  ASSERT_EQ(decoded.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(decoded.view.payload, "q"));
+
+  const auto next = codec.Poll();
+  ASSERT_EQ(next.status, DecodeStatus::kMessageReady);
+  EXPECT_TRUE(PayloadEquals(next.view.payload, "r"));
+  EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
+}
+
+TEST(WebsocketFrameCodecTest, ReportsCapacityExceededWhenReceiveRingInvalid) {
+  FrameCodec codec(std::numeric_limits<size_t>::max(),
+                   std::numeric_limits<size_t>::max(), 8);
+  EXPECT_TRUE(codec.WritableSpan().empty());
+  EXPECT_EQ(codec.Poll().status, DecodeStatus::kCapacityExceeded);
 }
