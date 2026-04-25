@@ -153,6 +153,14 @@ class CriticalSession {
 
   bool WantsRead() const noexcept { return !should_reconnect_; }
 
+  size_t PendingWriteCount() const noexcept { return pending_count_; }
+
+  size_t PendingWriteCapacity() const noexcept { return pending_capacity_; }
+
+  bool AwaitingPong() const noexcept { return awaiting_pong_; }
+
+  std::uint64_t LastPingNs() const noexcept { return last_ping_ns_; }
+
   void Reset() noexcept {
     while (pending_count_ != 0) {
       PreparedWrite* write = pending_writes_[pending_head_];

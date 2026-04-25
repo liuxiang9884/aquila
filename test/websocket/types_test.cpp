@@ -26,6 +26,7 @@ template <auto Value>
 constexpr bool kEnumValueExists = true;
 
 static_assert(kEnumValueExists<ws::ConnectionPhase::kActive>);
+static_assert(kEnumValueExists<ws::ConnectionPhase::kDegraded>);
 static_assert(kEnumValueExists<ws::SchedulingPolicy::kFifo>);
 static_assert(
     std::is_same_v<std::underlying_type_t<ws::ConnectionPhase>, std::uint8_t>);
@@ -66,6 +67,12 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(config.prepared_write_bytes, 4096U);
   EXPECT_EQ(config.heartbeat_interval_ms, 5000U);
   EXPECT_EQ(config.heartbeat_timeout_ms, 15000U);
+  EXPECT_EQ(config.degraded.high_watermark_percent, 80U);
+  EXPECT_EQ(config.degraded.high_watermark_hold_ticks, 8U);
+  EXPECT_EQ(config.degraded.recover_ticks, 16U);
+  EXPECT_EQ(config.degraded.backpressure_drops_per_second, 10U);
+  EXPECT_EQ(config.degraded.awaiting_pong_timeout_ms, 3000U);
+  EXPECT_EQ(config.degraded.evaluation_interval_iterations, 0U);
 
   const ws::RuntimePolicy runtime_policy = config.runtime_policy;
   EXPECT_EQ(runtime_policy.affinity_mode, ws::AffinityMode::kRequired);

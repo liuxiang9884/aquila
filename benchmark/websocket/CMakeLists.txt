@@ -1,6 +1,7 @@
 set(WEBSOCKET_BENCHMARK_TARGETS
     prepared_write_benchmark
     frame_codec_benchmark
+    degraded_evaluator_benchmark
     active_spin_benchmark
     session_write_path_benchmark
     session_read_path_benchmark

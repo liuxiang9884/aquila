@@ -16,6 +16,7 @@
 #include "core/websocket/active_spin_loop.h"
 #include "core/websocket/cold_path_loop.h"
 #include "core/websocket/critical_session.h"
+#include "core/websocket/degraded_evaluator.h"
 #include "core/websocket/metrics.h"
 #include "core/websocket/reconnect_classifier.h"
 #include "core/websocket/runtime_policy.h"
@@ -123,27 +124,39 @@ class WebSocketClient {
       }
 
       NotifyState(state_machine_.phase());
-      RuntimeSession runtime_session{core_, stop_requested_};
+      RuntimeSession runtime_session{
+          core_,
+          metrics_,
+          stop_requested_,
+          degraded_evaluator_,
+          DegradedEvaluationInterval(),
+          state_context_,
+          state_handler_,
+      };
       spin_loop_.Run(runtime_session);
       tls_socket_.Close();
       if (stop_requested_.load(std::memory_order_acquire)) {
+        MarkDegradedInactive();
         state_machine_.Enter(ConnectionPhase::kClosed);
         NotifyState(state_machine_.phase());
         return true;
       }
       if (core_.ShouldReconnect()) {
+        MarkDegradedInactive();
         if (!HandleReconnectFailure(core_.LastError(), transient_failures,
                                     reconnect_in_progress)) {
           return false;
         }
         continue;
       }
+      MarkDegradedInactive();
       state_machine_.Enter(ConnectionPhase::kClosed);
       NotifyState(state_machine_.phase());
       return true;
     }
 
     tls_socket_.Close();
+    MarkDegradedInactive();
     state_machine_.Enter(ConnectionPhase::kClosed);
     NotifyState(state_machine_.phase());
     return true;
@@ -161,7 +174,13 @@ class WebSocketClient {
  private:
   struct RuntimeSession {
     CriticalSession<TlsSocket>& core;
+    Metrics& metrics;
     std::atomic<bool>& stop_requested;
+    DegradedEvaluator& degraded_evaluator;
+    std::uint32_t evaluation_interval_iterations;
+    void* state_context;
+    StateHandler state_handler;
+    std::uint32_t iterations_since_evaluation{0};
 
     void DriveWrite() noexcept {
       if (!stop_requested.load()) {
@@ -172,6 +191,7 @@ class WebSocketClient {
     void DriveRead() noexcept {
       if (!stop_requested.load()) {
         core.DriveRead();
+        EvaluateDegradedIfDue();
       }
     }
 
@@ -184,6 +204,43 @@ class WebSocketClient {
     bool ShouldReconnect() const noexcept {
       return stop_requested.load(std::memory_order_acquire) ||
              core.ShouldReconnect();
+    }
+
+    void EvaluateDegradedIfDue() noexcept {
+      ++iterations_since_evaluation;
+      if (iterations_since_evaluation < evaluation_interval_iterations) {
+        return;
+      }
+      iterations_since_evaluation = 0;
+      const auto now = std::chrono::steady_clock::now().time_since_epoch();
+      const auto evaluation = degraded_evaluator.Evaluate(DegradedSample{
+          .now_ns = static_cast<std::uint64_t>(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(now)
+                  .count()),
+          .pending_write_count =
+              static_cast<std::uint64_t>(core.PendingWriteCount()),
+          .prepared_write_slots =
+              static_cast<std::uint64_t>(core.PendingWriteCapacity()),
+          .consumer_backpressure_drops = metrics.consumer_backpressure_drops,
+          .awaiting_pong = core.AwaitingPong(),
+          .last_ping_ns = core.LastPingNs(),
+      });
+      if (evaluation.entered) {
+        metrics.degraded_active = 1;
+        ++metrics.degraded_enter_count;
+        NotifyState(ConnectionPhase::kDegraded);
+      }
+      if (evaluation.exited) {
+        metrics.degraded_active = 0;
+        ++metrics.degraded_exit_count;
+        NotifyState(ConnectionPhase::kActive);
+      }
+    }
+
+    void NotifyState(ConnectionPhase phase) noexcept {
+      if (state_handler != nullptr) {
+        state_handler(state_context, phase);
+      }
     }
   };
 
@@ -308,6 +365,7 @@ class WebSocketClient {
     }
 
     core_.Reset();
+    degraded_evaluator_.Reset();
     reconnect_in_progress = true;
     return true;
   }
@@ -315,6 +373,24 @@ class WebSocketClient {
   void NotifyState(ConnectionPhase phase) noexcept {
     if (state_handler_ != nullptr) {
       state_handler_(state_context_, phase);
+    }
+  }
+
+  std::uint32_t DegradedEvaluationInterval() const noexcept {
+    if (config_.degraded.evaluation_interval_iterations != 0) {
+      return config_.degraded.evaluation_interval_iterations;
+    }
+    if (config_.runtime_policy.spin_iterations_before_clock_check != 0) {
+      return config_.runtime_policy.spin_iterations_before_clock_check;
+    }
+    return 1;
+  }
+
+  void MarkDegradedInactive() noexcept {
+    if (metrics_.degraded_active != 0) {
+      metrics_.degraded_active = 0;
+      ++metrics_.degraded_exit_count;
+      degraded_evaluator_.Reset();
     }
   }
 
@@ -334,6 +410,7 @@ class WebSocketClient {
   ColdPathLoop cold_path_loop_{};
   ActiveSpinLoop spin_loop_;
   BackoffRng backoff_rng_;
+  DegradedEvaluator degraded_evaluator_{config_.degraded};
   std::array<char, 4096> handshake_storage_{};
   std::atomic<bool> stop_requested_{false};
   int wakeup_fd_{-1};

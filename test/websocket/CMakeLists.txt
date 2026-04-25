@@ -19,6 +19,8 @@ add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
 add_websocket_gtest(websocket_reconnect_classifier_test
                     reconnect_classifier_test.cpp)
 add_websocket_gtest(websocket_backoff_compute_test backoff_compute_test.cpp)
+add_websocket_gtest(websocket_degraded_evaluator_test
+                    degraded_evaluator_test.cpp)
 add_websocket_gtest(websocket_cold_path_loop_test cold_path_loop_test.cpp)
 set_tests_properties(websocket_cold_path_loop_test PROPERTIES TIMEOUT 5)
 add_websocket_gtest(websocket_loopback_integration_test
@@ -26,3 +28,6 @@ add_websocket_gtest(websocket_loopback_integration_test
 add_websocket_gtest(websocket_client_reconnect_test
                     websocket_client_reconnect_test.cpp)
 set_tests_properties(websocket_client_reconnect_test PROPERTIES TIMEOUT 30)
+add_websocket_gtest(websocket_client_degraded_test
+                    websocket_client_degraded_test.cpp)
+set_tests_properties(websocket_client_degraded_test PROPERTIES TIMEOUT 10)

@@ -16,6 +16,7 @@ enum class ConnectionPhase : std::uint8_t {
   kTlsHandshaking,
   kWsHandshaking,
   kActive,
+  kDegraded,
   kReconnectBackoff,
   kClosing,
   kClosed,
@@ -68,6 +69,17 @@ struct ReconnectPolicy {
   std::uint32_t max_attempts = 0;
 };
 
+struct DegradedThresholds {
+  // High watermark expressed as percent to avoid floating point on the path.
+  std::uint8_t high_watermark_percent = 80;
+  std::uint32_t high_watermark_hold_ticks = 8;
+  std::uint32_t recover_ticks = 16;
+  std::uint32_t backpressure_drops_per_second = 10;
+  std::uint32_t awaiting_pong_timeout_ms = 3000;
+  // 0 reuses RuntimePolicy::spin_iterations_before_clock_check.
+  std::uint32_t evaluation_interval_iterations = 0;
+};
+
 struct ConnectionConfig {
   std::string host = "fx-ws.gateio.ws";
   std::string service = "443";
@@ -83,6 +95,7 @@ struct ConnectionConfig {
   // Synchronous getaddrinfo is not interruptible and is counted into this.
   std::uint32_t cold_path_total_timeout_ms = 10000;
   ReconnectPolicy reconnect{};
+  DegradedThresholds degraded{};
   RuntimePolicy runtime_policy{};
 };
 
