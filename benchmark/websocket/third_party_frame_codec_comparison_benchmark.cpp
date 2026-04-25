@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -20,9 +21,32 @@ using namespace aquila::websocket::benchmarking;
 namespace {
 
 constexpr size_t kBatchSize = 64;
+constexpr size_t kCompactBatchSize = 8;
+constexpr size_t kLargeBatchSize = 8;
 constexpr size_t kIterations = 4096;
+constexpr size_t kCompactIterations = 1024;
+constexpr size_t kLargeIterations = 1024;
 constexpr size_t kCoalescedFrameCount = 16;
+constexpr size_t kBurstFrameCount = 128;
 constexpr size_t kThirdPartyRecvBufferBytes = 4096;
+constexpr size_t kCompactReceiveBufferBytes = 64U * 1024U;
+constexpr size_t kCompactFillerFrameBytes = 44U * 1024U;
+constexpr size_t kCompactFillerPayloadBytes = kCompactFillerFrameBytes - 4U;
+constexpr size_t kCompactPartialPayloadBytes = 24U * 1024U;
+constexpr size_t kCompactPartialPrefixBytes = 16U * 1024U;
+constexpr size_t kCompactMaxPayloadBytes =
+    kCompactFillerPayloadBytes > kCompactPartialPayloadBytes
+        ? kCompactFillerPayloadBytes
+        : kCompactPartialPayloadBytes;
+constexpr size_t kLargeReceiveBufferBytes = 64U * 1024U;
+constexpr size_t kLargeFillerFrameBytes = 28U * 1024U;
+constexpr size_t kLargeFillerPayloadBytes = kLargeFillerFrameBytes - 4U;
+constexpr size_t kLargePayloadBytes = 48U * 1024U;
+constexpr size_t kLargePartialPrefixBytes = 32U * 1024U;
+
+std::string MakePayload(size_t size, char value) {
+  return std::string(size, value);
+}
 
 std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
   const size_t header_bytes = payload.size() <= 125 ? 2 : 4;
@@ -51,6 +75,29 @@ std::vector<std::byte> BuildCoalescedServerTextFrames(std::string_view payload,
     coalesced.insert(coalesced.end(), frame.begin(), frame.end());
   }
   return coalesced;
+}
+
+struct SplitFrameBytes {
+  std::vector<std::byte> setup;
+  std::vector<std::byte> suffix;
+};
+
+SplitFrameBytes BuildSplitFrameBytes(size_t filler_payload_bytes,
+                                     size_t target_payload_bytes,
+                                     size_t target_prefix_bytes) {
+  const auto filler =
+      BuildServerTextFrame(MakePayload(filler_payload_bytes, 'f'));
+  const auto target =
+      BuildServerTextFrame(MakePayload(target_payload_bytes, 'p'));
+
+  SplitFrameBytes bytes;
+  bytes.setup.reserve(filler.size() + target_prefix_bytes);
+  bytes.setup.insert(bytes.setup.end(), filler.begin(), filler.end());
+  bytes.setup.insert(bytes.setup.end(), target.begin(),
+                     target.begin() + target_prefix_bytes);
+  bytes.suffix.insert(bytes.suffix.end(), target.begin() + target_prefix_bytes,
+                      target.end());
+  return bytes;
 }
 
 struct ThirdPartyHandler;
@@ -92,11 +139,17 @@ class LinearFrameCodec {
     head_ = 0;
     tail_ = 0;
     next_sequence_ = 0;
+    compact_count_ = 0;
+    compacted_bytes_ = 0;
     protocol_error_pending_ = false;
     capacity_error_pending_ = false;
     delivered_pending_ = false;
     delivered_frame_end_ = 0;
   }
+
+  size_t compact_count() const { return compact_count_; }
+
+  size_t compacted_bytes() const { return compacted_bytes_; }
 
   std::span<std::byte> WritableSpan() {
     ReleaseDeliveredFrame();
@@ -257,6 +310,8 @@ class LinearFrameCodec {
       return;
     }
     const size_t remaining = tail_ - head_;
+    ++compact_count_;
+    compacted_bytes_ += remaining;
     if (remaining != 0) {
       std::memmove(storage_.data(), storage_.data() + head_, remaining);
     }
@@ -296,6 +351,8 @@ class LinearFrameCodec {
   size_t head_{0};
   size_t tail_{0};
   std::uint64_t next_sequence_{0};
+  size_t compact_count_{0};
+  size_t compacted_bytes_{0};
   bool protocol_error_pending_{false};
   bool capacity_error_pending_{false};
   bool delivered_pending_{false};
@@ -321,6 +378,16 @@ void SetCoalescedCounters(benchmark::State& state,
                     opcode_accumulator);
   state.counters["frames_per_read"] =
       static_cast<double>(kCoalescedFrameCount);
+}
+
+void SetFramesPerReadCounters(benchmark::State& state,
+                              std::vector<std::uint64_t> samples_ns,
+                              std::uint64_t payload_bytes,
+                              std::uint64_t opcode_accumulator,
+                              size_t frames_per_read) {
+  SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["frames_per_read"] = static_cast<double>(frames_per_read);
 }
 
 void BenchmarkThirdPartyHandleWSMsg(benchmark::State& state) {
@@ -741,6 +808,354 @@ void BenchmarkAquilaLinearCoalescedDirectPollDrain(benchmark::State& state) {
                        opcode_accumulator);
 }
 
+void BenchmarkAquilaCompactPressureFeedDecode(benchmark::State& state) {
+  const auto split =
+      BuildSplitFrameBytes(kCompactFillerPayloadBytes,
+                           kCompactPartialPayloadBytes,
+                           kCompactPartialPrefixBytes);
+  if (split.setup.size() > kCompactReceiveBufferBytes ||
+      split.suffix.size() <= kCompactReceiveBufferBytes - split.setup.size()) {
+    state.SkipWithError("compact-pressure setup does not force linear compact");
+    return;
+  }
+
+  std::vector<ws::FrameCodec> codecs;
+  codecs.reserve(kCompactBatchSize);
+  for (size_t i = 0; i < kCompactBatchSize; ++i) {
+    codecs.emplace_back(kCompactMaxPayloadBytes, kCompactReceiveBufferBytes,
+                        1024);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kCompactIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      codec.Reset();
+      const auto prepared = codec.Feed(split.setup);
+      if (prepared.status != ws::DecodeStatus::kMessageReady ||
+          prepared.view.payload.size() != kCompactFillerPayloadBytes) {
+        state.SkipWithError("aquila compact-pressure setup failed");
+        return;
+      }
+      benchmark::DoNotOptimize(prepared.view.payload.data());
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Feed(split.suffix);
+      if (decoded.status != ws::DecodeStatus::kMessageReady ||
+          decoded.view.payload.size() != kCompactPartialPayloadBytes) {
+        state.SkipWithError("aquila compact-pressure decode failed");
+        return;
+      }
+      payload_bytes += decoded.view.payload.size();
+      opcode_accumulator +=
+          decoded.view.kind == ws::PayloadKind::kText ? 1U : 0U;
+      benchmark::DoNotOptimize(decoded.view.payload.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kCompactBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["setup_bytes"] = static_cast<double>(split.setup.size());
+  state.counters["suffix_bytes"] = static_cast<double>(split.suffix.size());
+  state.counters["compacted_bytes"] = 0.0;
+  state.counters["compact_events"] = 0.0;
+}
+
+void BenchmarkAquilaLinearCompactPressureFeedDecode(
+    benchmark::State& state) {
+  const auto split =
+      BuildSplitFrameBytes(kCompactFillerPayloadBytes,
+                           kCompactPartialPayloadBytes,
+                           kCompactPartialPrefixBytes);
+  if (split.setup.size() > kCompactReceiveBufferBytes ||
+      split.suffix.size() <= kCompactReceiveBufferBytes - split.setup.size()) {
+    state.SkipWithError("linear compact-pressure setup does not force compact");
+    return;
+  }
+
+  std::vector<LinearFrameCodec> codecs;
+  codecs.reserve(kCompactBatchSize);
+  for (size_t i = 0; i < kCompactBatchSize; ++i) {
+    codecs.emplace_back(kCompactMaxPayloadBytes, kCompactReceiveBufferBytes);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::uint64_t compact_events = 0;
+  std::uint64_t compacted_bytes = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kCompactIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      codec.Reset();
+      const auto prepared = codec.Feed(split.setup);
+      if (prepared.status != ws::DecodeStatus::kMessageReady ||
+          prepared.view.payload.size() != kCompactFillerPayloadBytes) {
+        state.SkipWithError("aquila linear compact-pressure setup failed");
+        return;
+      }
+      benchmark::DoNotOptimize(prepared.view.payload.data());
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Feed(split.suffix);
+      if (decoded.status != ws::DecodeStatus::kMessageReady ||
+          decoded.view.payload.size() != kCompactPartialPayloadBytes) {
+        state.SkipWithError("aquila linear compact-pressure decode failed");
+        return;
+      }
+      payload_bytes += decoded.view.payload.size();
+      opcode_accumulator +=
+          decoded.view.kind == ws::PayloadKind::kText ? 1U : 0U;
+      compact_events += codec.compact_count();
+      compacted_bytes += codec.compacted_bytes();
+      benchmark::DoNotOptimize(decoded.view.payload.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kCompactBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["setup_bytes"] = static_cast<double>(split.setup.size());
+  state.counters["suffix_bytes"] = static_cast<double>(split.suffix.size());
+  state.counters["compacted_bytes"] = static_cast<double>(compacted_bytes);
+  state.counters["compact_events"] = static_cast<double>(compact_events);
+}
+
+void BenchmarkAquilaBurstFeedDrain(benchmark::State& state) {
+  ws::FrameCodec codec(1024, 4096, 1024);
+  const auto burst = BuildCoalescedServerTextFrames("tick", kBurstFrameCount);
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      auto decoded = codec.Feed(burst);
+      size_t decoded_frames = 0;
+      while (decoded.status == ws::DecodeStatus::kMessageReady) {
+        payload_bytes += decoded.view.payload.size();
+        opcode_accumulator +=
+            decoded.view.kind == ws::PayloadKind::kText ? 1U : 0U;
+        benchmark::DoNotOptimize(decoded.view.payload.data());
+        ++decoded_frames;
+        decoded = codec.Poll();
+      }
+      if (decoded.status != ws::DecodeStatus::kNeedMore) {
+        state.SkipWithError("aquila burst Feed drain failed");
+        return;
+      }
+      if (decoded_frames != kBurstFrameCount) {
+        state.SkipWithError("aquila burst Feed frame count mismatch");
+        return;
+      }
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kBatchSize * kBurstFrameCount);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetFramesPerReadCounters(state, std::move(samples_ns), payload_bytes,
+                           opcode_accumulator, kBurstFrameCount);
+}
+
+void BenchmarkAquilaLinearBurstFeedDrain(benchmark::State& state) {
+  LinearFrameCodec codec(1024, 4096);
+  const auto burst = BuildCoalescedServerTextFrames("tick", kBurstFrameCount);
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      auto decoded = codec.Feed(burst);
+      size_t decoded_frames = 0;
+      while (decoded.status == ws::DecodeStatus::kMessageReady) {
+        payload_bytes += decoded.view.payload.size();
+        opcode_accumulator +=
+            decoded.view.kind == ws::PayloadKind::kText ? 1U : 0U;
+        benchmark::DoNotOptimize(decoded.view.payload.data());
+        ++decoded_frames;
+        decoded = codec.Poll();
+      }
+      if (decoded.status != ws::DecodeStatus::kNeedMore) {
+        state.SkipWithError("aquila linear burst Feed drain failed");
+        return;
+      }
+      if (decoded_frames != kBurstFrameCount) {
+        state.SkipWithError("aquila linear burst Feed frame count mismatch");
+        return;
+      }
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) /
+        static_cast<double>(kBatchSize * kBurstFrameCount);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetFramesPerReadCounters(state, std::move(samples_ns), payload_bytes,
+                           opcode_accumulator, kBurstFrameCount);
+}
+
+void BenchmarkAquilaLargePayloadBoundaryFeedDecode(benchmark::State& state) {
+  const auto split =
+      BuildSplitFrameBytes(kLargeFillerPayloadBytes, kLargePayloadBytes,
+                           kLargePartialPrefixBytes);
+  if (split.setup.size() > kLargeReceiveBufferBytes ||
+      split.suffix.size() <= kLargeReceiveBufferBytes - split.setup.size() ||
+      split.suffix.size() > kLargeReceiveBufferBytes -
+                                kLargePartialPrefixBytes) {
+    state.SkipWithError("large-payload setup does not force linear compact");
+    return;
+  }
+
+  std::vector<ws::FrameCodec> codecs;
+  codecs.reserve(kLargeBatchSize);
+  for (size_t i = 0; i < kLargeBatchSize; ++i) {
+    codecs.emplace_back(kLargePayloadBytes, kLargeReceiveBufferBytes, 1024);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLargeIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      codec.Reset();
+      const auto prepared = codec.Feed(split.setup);
+      if (prepared.status != ws::DecodeStatus::kMessageReady ||
+          prepared.view.payload.size() != kLargeFillerPayloadBytes) {
+        state.SkipWithError("aquila large-payload setup failed");
+        return;
+      }
+      benchmark::DoNotOptimize(prepared.view.payload.data());
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Feed(split.suffix);
+      if (decoded.status != ws::DecodeStatus::kMessageReady ||
+          decoded.view.payload.size() != kLargePayloadBytes) {
+        state.SkipWithError("aquila large-payload decode failed");
+        return;
+      }
+      payload_bytes += decoded.view.payload.size();
+      opcode_accumulator +=
+          decoded.view.kind == ws::PayloadKind::kText ? 1U : 0U;
+      benchmark::DoNotOptimize(decoded.view.payload.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kLargeBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["partial_prefix_bytes"] =
+      static_cast<double>(kLargePartialPrefixBytes);
+  state.counters["setup_bytes"] = static_cast<double>(split.setup.size());
+  state.counters["suffix_bytes"] = static_cast<double>(split.suffix.size());
+  state.counters["compacted_bytes"] = 0.0;
+  state.counters["compact_events"] = 0.0;
+}
+
+void BenchmarkAquilaLinearLargePayloadBoundaryFeedDecode(
+    benchmark::State& state) {
+  const auto split =
+      BuildSplitFrameBytes(kLargeFillerPayloadBytes, kLargePayloadBytes,
+                           kLargePartialPrefixBytes);
+  if (split.setup.size() > kLargeReceiveBufferBytes ||
+      split.suffix.size() <= kLargeReceiveBufferBytes - split.setup.size() ||
+      split.suffix.size() > kLargeReceiveBufferBytes -
+                                kLargePartialPrefixBytes) {
+    state.SkipWithError(
+        "linear large-payload setup does not force compact");
+    return;
+  }
+
+  std::vector<LinearFrameCodec> codecs;
+  codecs.reserve(kLargeBatchSize);
+  for (size_t i = 0; i < kLargeBatchSize; ++i) {
+    codecs.emplace_back(kLargePayloadBytes, kLargeReceiveBufferBytes);
+  }
+  std::uint64_t payload_bytes = 0;
+  std::uint64_t opcode_accumulator = 0;
+  std::uint64_t compact_events = 0;
+  std::uint64_t compacted_bytes = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLargeIterations);
+
+  for (auto _ : state) {
+    for (auto& codec : codecs) {
+      codec.Reset();
+      const auto prepared = codec.Feed(split.setup);
+      if (prepared.status != ws::DecodeStatus::kMessageReady ||
+          prepared.view.payload.size() != kLargeFillerPayloadBytes) {
+        state.SkipWithError("aquila linear large-payload setup failed");
+        return;
+      }
+      benchmark::DoNotOptimize(prepared.view.payload.data());
+    }
+
+    const std::uint64_t start_ns = NowNs();
+    for (auto& codec : codecs) {
+      const auto decoded = codec.Feed(split.suffix);
+      if (decoded.status != ws::DecodeStatus::kMessageReady ||
+          decoded.view.payload.size() != kLargePayloadBytes) {
+        state.SkipWithError("aquila linear large-payload decode failed");
+        return;
+      }
+      payload_bytes += decoded.view.payload.size();
+      opcode_accumulator +=
+          decoded.view.kind == ws::PayloadKind::kText ? 1U : 0U;
+      compact_events += codec.compact_count();
+      compacted_bytes += codec.compacted_bytes();
+      benchmark::DoNotOptimize(decoded.view.payload.data());
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kLargeBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetCommonCounters(state, std::move(samples_ns), payload_bytes,
+                    opcode_accumulator);
+  state.counters["partial_prefix_bytes"] =
+      static_cast<double>(kLargePartialPrefixBytes);
+  state.counters["setup_bytes"] = static_cast<double>(split.setup.size());
+  state.counters["suffix_bytes"] = static_cast<double>(split.suffix.size());
+  state.counters["compacted_bytes"] = static_cast<double>(compacted_bytes);
+  state.counters["compact_events"] = static_cast<double>(compact_events);
+}
+
 void AlignCodecNearMirroredBoundary(ws::FrameCodec& codec,
                                     std::span<const std::byte> filler) {
   codec.Reset();
@@ -864,6 +1279,42 @@ BENCHMARK(BenchmarkAquilaLinearCoalescedFeedDrain)
 BENCHMARK(BenchmarkAquilaLinearCoalescedDirectPollDrain)
     ->Name("aquila_linear_coalesced_direct_poll_drain")
     ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkAquilaCompactPressureFeedDecode)
+    ->Name("aquila_compact_pressure_feed_decode")
+    ->Iterations(kCompactIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkAquilaLinearCompactPressureFeedDecode)
+    ->Name("aquila_linear_compact_pressure_feed_decode")
+    ->Iterations(kCompactIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkAquilaBurstFeedDrain)
+    ->Name("aquila_burst_feed_drain")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkAquilaLinearBurstFeedDrain)
+    ->Name("aquila_linear_burst_feed_drain")
+    ->Iterations(kIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkAquilaLargePayloadBoundaryFeedDecode)
+    ->Name("aquila_large_payload_boundary_feed_decode")
+    ->Iterations(kLargeIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkAquilaLinearLargePayloadBoundaryFeedDecode)
+    ->Name("aquila_linear_large_payload_boundary_feed_decode")
+    ->Iterations(kLargeIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
