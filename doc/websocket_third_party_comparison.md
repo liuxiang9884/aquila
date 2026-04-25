@@ -199,6 +199,62 @@
 - 无 `TLS/wss`
 - 无控制面、无恢复编排、无指标体系
 
+## FrameCodec 对比后的优化建议
+
+2026-04-25 的 `third_party_frame_codec_comparison_benchmark` 显示，在只比较“内存中已有完整单帧、解析后回调”的极窄路径时，三方库的 `handleWSMsg()` pinned p50/p99/p99.9 为 `2/2/2ns`；当前 `aquila` 的 `aquila_direct_poll_decode` 为 `12/13/30ns`，`aquila_feed_decode` 为 `16/20/112ns`，`aquila_direct_poll_mirrored_boundary` 为 `21/22/230ns`。
+
+这组数字不能直接说明三方库整体更适合作为生产内核，因为它没有覆盖 `aquila` 当前保留的生命周期、容量、降级和状态边界；但它指出了一个明确优化点：**单帧已完整到达的常见路径不需要先写入 ready metadata ring 再读出，可以直接返回 `MessageView`。**
+
+### 应保留的机制
+
+下列机制不应为了追逐 `2ns` 解析数字直接删除：
+
+- `MessageView`：它是 codec 与 consumer 之间的结构化边界，保留 `payload/span`、`kind`、`sequence` 和 `fin`，避免把裸 `opcode + pointer + len` 泄漏给下游。
+- mirrored receive ring：它保证跨物理尾部的 payload 仍能以单段 `std::span<const std::byte>` 交付，不把双段 payload 复杂度扩散到 parser。
+- cursor 与交付生命周期：`consume_abs_ / parse_abs_ / write_abs_` 和 delivered-frame release 语义用于保证零拷贝 payload 在同步回调期间有效，并防止未交付 payload 被覆盖。
+- capacity / degraded 指标：`kCapacityExceeded`、`frame_codec_capacity_exhaustions` 和 degraded 窗口是生产链路的资源耗尽观测点，不能退化成静默丢弃或普通协议错误。
+- 协议校验：mask、payload 上限、control frame 长度、`fin` 等检查仍应留在 codec 边界内。
+- fixed ready metadata ring：它仍用于 coalesced 多帧、上一帧尚未 release、或需要批量 drain 的 fallback 场景。
+
+### 推荐的快路径
+
+在 `FrameCodec::Poll()` 中新增 **single-frame direct delivery fast path**，只覆盖最常见且最容易证明正确的情形：
+
+1. ready ring 当前为空，且没有上一条 delivered frame 等待 release。
+2. receive ring 中从 `parse_abs_` 开始至少包含一个完整 frame header。
+3. header 通过现有协议检查，payload 长度不超过配置上限，且完整 frame 已在 ring 中可见。
+4. 当前可见数据只覆盖这一条完整 frame；如果同一次读取中 coalesced 了多条 frame，则走现有 ready ring fallback。
+5. 直接用 `payload_abs` 和 `payload_size` 构造 `MessageView`，返回 `kMessageReady`，并按当前生命周期规则延后释放 receive ring 空间。
+
+这条快路径可以从单帧主路径移除：
+
+- `QueueReadyFrame()` 的 metadata 写入
+- `DrainReadyFrame()` 的 metadata 读取
+- ready ring 的 `head/count` 更新
+- ready high-watermark 更新分支
+
+但它不移除 `MessageView`、协议检查、capacity/degraded、mirrored ring 和 payload 生命周期约束。
+
+### 方案比较
+
+| 方案 | 主路径延迟 | 正确性 / 生产边界 | 结论 |
+| --- | --- | --- | --- |
+| 直接采用三方库 `handleWSMsg()` 风格 | 最低，benchmark 为 `2ns` 量级 | 缺少 `MessageView`、capacity/degraded、ready fallback、TLS/session 边界和完整恢复语义 | 只适合作为 parser 下限参考 |
+| 当前 `aquila` ready ring 路径 | 已经很低，direct poll 约 `12ns` 量级 | 生产边界完整，支持 coalesced frame 和容量观测 | 保守可靠，但单帧路径仍有可减掉的 metadata 往返 |
+| 普通 ring + 边界线性化 copy | 初始化简单 | 跨 ring 尾部时引入 copy 或双段 parser 分支 | 不符合 P2-A 低延迟目标 |
+| 双段 payload view | 避免 mirrored mmap | 把边界处理推给所有下游 parser | 不建议作为当前主线 |
+| single-frame direct delivery + ready ring fallback | 接近 parser 下限，同时保留生产边界 | 只优化常见单帧路径，多帧和复杂场景沿用现有机制 | 当前最优后续方案 |
+
+### 验证要求
+
+实现该快路径时，应至少补充：
+
+- 单帧完整到达时可以不占用 ready ring 的回归测试。
+- coalesced 多帧仍按 sequence 顺序交付并走 ready fallback 的测试。
+- `ready_frame_slots == 0` 或容量受限场景的行为说明，避免无意放宽已有 capacity 语义。
+- `frame_codec_benchmark` 与 `third_party_frame_codec_comparison_benchmark` 的 release pinned 对比，记录 p50/p99/p99.9。
+- `session_read_path_benchmark` 复跑，确认 session 读路径没有因快路径分支引入尾延迟回归。
+
 ## 建议结论
 
 对 `aquila` 来说，`MengRao/websocket` 更适合作为“协议层和轻量实现参考”，而不是“直接集成的连接内核”。

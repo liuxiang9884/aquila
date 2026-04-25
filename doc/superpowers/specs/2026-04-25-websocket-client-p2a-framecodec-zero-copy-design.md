@@ -325,3 +325,17 @@ Benchmark 覆盖：
 ## 设计取舍总结
 
 P2-A 选择 mirrored ring，是因为它在性能模型上最干净：主路径没有堆分配、没有 payload copy、没有 linear buffer compact、没有双段 parser 分支。代价是 Linux 平台相关的初始化复杂度更高，且 buffer capacity 需要按 page 对齐。这个成本全部在冷路径承担，不污染 WebSocket 收包热路径。
+
+## 后续优化候选：单帧直交付快路径
+
+P2-A 完成后的第三方对比 benchmark 显示，三方库在“完整单帧已经在内存中，只做 frame header 解析并回调”的极窄场景下能做到 `2ns` 量级；`aquila` 当前 direct poll decode 约为 `12ns` 量级。差距主要来自 `aquila` 保留的 ready metadata ring、`MessageView` 构造、payload 生命周期和容量/降级边界。
+
+这些边界仍应保留，但可以在 `FrameCodec::Poll()` 中增加一个单帧快路径：
+
+1. ready ring 为空，且没有上一条 delivered frame 等待 release。
+2. 从 `parse_abs_` 开始的数据刚好构成一条完整 frame。
+3. 继续执行现有协议检查、payload 上限检查和 mirrored ring span 构造。
+4. 直接返回 `MessageView`，跳过 `QueueReadyFrame()` / `DrainReadyFrame()` 的 metadata 往返。
+5. 如果同一次读取中包含多条 coalesced frame、ready ring 非空、或存在待 release payload，则继续走当前 ready ring fallback。
+
+该优化目标不是删除 ready ring，而是把单帧主路径从“先排队再出队”收敛为“直接交付”。ready ring 仍负责多帧聚合、交付积压和复杂边界场景；capacity/degraded、协议校验、mirrored cursor 和 `MessageView` 生命周期约束不变。详细对比和验证要求记录在 `doc/websocket_third_party_comparison.md` 的“FrameCodec 对比后的优化建议”章节。
