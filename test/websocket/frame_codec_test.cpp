@@ -199,6 +199,27 @@ TEST(WebsocketFrameCodecTest, DecodesDirectBinaryAndExtendedTextDataFrames) {
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
 }
 
+TEST(WebsocketFrameCodecTest, RejectsNonMinimalExtendedPayloadLengths) {
+  FrameCodec short_extended_codec(128, 4096, 0);
+  std::vector<std::byte> short_extended{
+      std::byte{0x81}, std::byte{126}, std::byte{0}, std::byte{5},
+      std::byte{'h'},  std::byte{'e'}, std::byte{'l'}, std::byte{'l'},
+      std::byte{'o'}};
+  EXPECT_EQ(short_extended_codec.Feed(short_extended).status,
+            DecodeStatus::kProtocolError);
+
+  FrameCodec long_extended_codec(256, 4096, 0);
+  std::vector<std::byte> long_extended(10 + 126, std::byte{'x'});
+  long_extended[0] = std::byte{0x81};
+  long_extended[1] = std::byte{127};
+  for (size_t i = 2; i < 9; ++i) {
+    long_extended[i] = std::byte{0};
+  }
+  long_extended[9] = std::byte{126};
+  EXPECT_EQ(long_extended_codec.Feed(long_extended).status,
+            DecodeStatus::kProtocolError);
+}
+
 TEST(WebsocketFrameCodecTest, ReportsCapacityExceededWhenReceiveRingInvalid) {
   FrameCodec codec(std::numeric_limits<size_t>::max(),
                    std::numeric_limits<size_t>::max(), 8);

@@ -285,6 +285,9 @@ class FrameCodec {
              << 8U) |
             static_cast<std::uint64_t>(
                 std::to_integer<std::uint8_t>(data[3]));
+        if (payload_length < 126U) {
+          return {DecodeStatus::kProtocolError, {}};
+        }
         return BuildDirectMessage(kind, 4, payload_length, available);
       }
     }
@@ -316,6 +319,9 @@ class FrameCodec {
           static_cast<std::uint64_t>(
               std::to_integer<std::uint8_t>(data[cursor + 1]));
       cursor += 2;
+      if (payload_length < 126U) {
+        return {DecodeStatus::kProtocolError, {}};
+      }
     } else if (payload_length == 127) {
       if (available < cursor + 8) {
         return {};
@@ -329,6 +335,9 @@ class FrameCodec {
       }
       cursor += 8;
       if ((payload_length >> 63U) != 0) {
+        return {DecodeStatus::kProtocolError, {}};
+      }
+      if (payload_length <= 0xFFFFU) {
         return {DecodeStatus::kProtocolError, {}};
       }
     }
