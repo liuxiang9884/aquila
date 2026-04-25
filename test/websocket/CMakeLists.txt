@@ -16,5 +16,7 @@ add_websocket_gtest(websocket_handshake_test handshake_test.cpp)
 add_websocket_gtest(websocket_frame_codec_test frame_codec_test.cpp)
 add_websocket_gtest(websocket_tls_socket_test tls_socket_test.cpp)
 add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
+add_websocket_gtest(websocket_cold_path_loop_test cold_path_loop_test.cpp)
+set_tests_properties(websocket_cold_path_loop_test PROPERTIES TIMEOUT 5)
 add_websocket_gtest(websocket_loopback_integration_test
                     websocket_loopback_integration_test.cpp)

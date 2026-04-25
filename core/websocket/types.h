@@ -67,6 +67,9 @@ struct ConnectionConfig {
   size_t prepared_write_bytes = 4096;
   std::uint32_t heartbeat_interval_ms = 5000;
   std::uint32_t heartbeat_timeout_ms = 15000;
+  // Total wall-clock budget for the cold path (DNS + TCP + TLS + WS handshake).
+  // Synchronous getaddrinfo is not interruptible and is counted into this.
+  std::uint32_t cold_path_total_timeout_ms = 10000;
   RuntimePolicy runtime_policy{};
 };
 

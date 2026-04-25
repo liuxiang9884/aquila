@@ -1,9 +1,13 @@
 #ifndef AQUILA_CORE_WEBSOCKET_COLD_PATH_LOOP_H_
 #define AQUILA_CORE_WEBSOCKET_COLD_PATH_LOOP_H_
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <span>
 #include <string_view>
 
@@ -51,8 +55,14 @@ class ColdPathLoop {
       return false;
     }
 
+    const Deadline deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(config.cold_path_total_timeout_ms);
+
     state_machine.Enter(ConnectionPhase::kResolving);
     state_machine.Enter(ConnectionPhase::kTcpConnecting);
+    // TODO: move synchronous DNS off the cold path if it becomes a jitter
+    // source; currently it runs inside OpenAndConnect without interruption.
     if (!socket.OpenAndConnect(config)) {
       state_machine.Fail(ConnectionError::kSocketError,
                          ConnectionPhase::kTcpConnecting);
@@ -61,7 +71,13 @@ class ColdPathLoop {
 
     state_machine.Enter(ConnectionPhase::kTlsHandshaking);
     while (!socket.FinishHandshake()) {
-      if (!WaitForSocket(socket)) {
+      const WaitOutcome outcome = WaitForSocket(socket, deadline);
+      if (outcome == WaitOutcome::kTimeout) {
+        state_machine.Fail(ConnectionError::kConnectTimeout,
+                           ConnectionPhase::kTlsHandshaking);
+        return false;
+      }
+      if (outcome == WaitOutcome::kFailure) {
         state_machine.Fail(ConnectionError::kTlsFailure,
                            ConnectionPhase::kTlsHandshaking);
         return false;
@@ -77,7 +93,18 @@ class ColdPathLoop {
     }
     auto built = BuildClientHandshake(config.host, config.target, client_key,
                                       handshake_storage);
-    if (!built.ok || !WriteAll(socket, built.bytes)) {
+    if (!built.ok) {
+      state_machine.Fail(ConnectionError::kHandshakeFailure,
+                         ConnectionPhase::kWsHandshaking);
+      return false;
+    }
+    const WaitOutcome write_outcome = WriteAll(socket, built.bytes, deadline);
+    if (write_outcome == WaitOutcome::kTimeout) {
+      state_machine.Fail(ConnectionError::kConnectTimeout,
+                         ConnectionPhase::kWsHandshaking);
+      return false;
+    }
+    if (write_outcome != WaitOutcome::kReady) {
       state_machine.Fail(ConnectionError::kHandshakeFailure,
                          ConnectionPhase::kWsHandshaking);
       return false;
@@ -107,8 +134,16 @@ class ColdPathLoop {
       if (received == 0) {
         break;
       }
-      if (errno == EAGAIN && WaitForSocket(socket)) {
-        continue;
+      if (errno == EAGAIN) {
+        const WaitOutcome outcome = WaitForSocket(socket, deadline);
+        if (outcome == WaitOutcome::kTimeout) {
+          state_machine.Fail(ConnectionError::kConnectTimeout,
+                             ConnectionPhase::kWsHandshaking);
+          return false;
+        }
+        if (outcome == WaitOutcome::kReady) {
+          continue;
+        }
       }
       break;
     }
@@ -119,11 +154,26 @@ class ColdPathLoop {
   }
 
  private:
-  bool WaitForSocket(TlsSocket& socket) noexcept {
+  enum class WaitOutcome : std::uint8_t { kReady, kTimeout, kFailure };
+  using Deadline = std::chrono::steady_clock::time_point;
+
+  static int RemainingMs(Deadline deadline) noexcept {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      return 0;
+    }
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
+            .count();
+    return static_cast<int>(std::min<std::int64_t>(
+        remaining, std::numeric_limits<int>::max()));
+  }
+
+  WaitOutcome WaitForSocket(TlsSocket& socket, Deadline deadline) noexcept {
     const uint32_t events = (socket.WantsRead() ? EPOLLIN : 0U) |
                             (socket.WantsWrite() ? EPOLLOUT : 0U);
     if (socket.NativeFd() < 0 || events == 0U) {
-      return false;
+      return WaitOutcome::kFailure;
     }
 
     epoll_event event{};
@@ -131,31 +181,39 @@ class ColdPathLoop {
     event.data.fd = socket.NativeFd();
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, socket.NativeFd(), &event) != 0) {
       if (errno != EEXIST) {
-        return false;
+        return WaitOutcome::kFailure;
       }
       if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, socket.NativeFd(), &event) != 0) {
         if (errno != ENOENT ||
             epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, socket.NativeFd(), &event) !=
                 0) {
-          return false;
+          return WaitOutcome::kFailure;
         }
       }
     }
 
     epoll_event ready{};
     while (true) {
-      const int ready_count = epoll_wait(epoll_fd_, &ready, 1, -1);
+      const int timeout_ms = RemainingMs(deadline);
+      const int ready_count = epoll_wait(epoll_fd_, &ready, 1, timeout_ms);
       if (ready_count > 0) {
-        return (ready.events & (EPOLLERR | EPOLLHUP)) == 0;
+        if ((ready.events & (EPOLLERR | EPOLLHUP)) != 0) {
+          return WaitOutcome::kFailure;
+        }
+        return WaitOutcome::kReady;
       }
-      if (ready_count < 0 && errno == EINTR) {
+      if (ready_count == 0) {
+        return WaitOutcome::kTimeout;
+      }
+      if (errno == EINTR) {
         continue;
       }
-      return false;
+      return WaitOutcome::kFailure;
     }
   }
 
-  bool WriteAll(TlsSocket& socket, std::string_view bytes) noexcept {
+  WaitOutcome WriteAll(TlsSocket& socket, std::string_view bytes,
+                       Deadline deadline) noexcept {
     std::span<const char> chars(bytes.data(), bytes.size());
     const auto payload = std::as_bytes(chars);
     size_t offset = 0;
@@ -168,16 +226,17 @@ class ColdPathLoop {
         continue;
       }
       if (written == 0) {
-        return false;
+        return WaitOutcome::kFailure;
       }
       if (errno != EAGAIN) {
-        return false;
+        return WaitOutcome::kFailure;
       }
-      if (!WaitForSocket(socket)) {
-        return false;
+      const WaitOutcome outcome = WaitForSocket(socket, deadline);
+      if (outcome != WaitOutcome::kReady) {
+        return outcome;
       }
     }
-    return true;
+    return WaitOutcome::kReady;
   }
 
   int epoll_fd_{-1};
