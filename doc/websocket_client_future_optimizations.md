@@ -478,6 +478,207 @@ ClockSource::kMonotonic
 ClockSource::kMonotonicCoarse
 ```
 
+当前 benchmark 结果：
+
+```text
+active_spin:                  42 / 44 / 45 ns
+clock_source_steady:          52 / 54 / 56 ns
+clock_source_monotonic:       51 / 52 / 60 ns
+clock_source_monotonic_coarse:32 / 34 / 56 ns
+```
+
+现有 `active_spin` benchmark 只测一个 fake session 一轮退出，覆盖面很窄。它可以证明 loop skeleton 没有明显退化，但不能代表生产 read/write 混合压力下的节奏。
+
+#### 9.1 增加 active spin mixed benchmark
+
+建议新增：
+
+```text
+active_spin_idle_many_iterations
+active_spin_clock_check_hit
+active_spin_read_ready
+active_spin_write_ready
+active_spin_mixed_read_write
+active_spin_stop_requested
+active_spin_yield_mode
+```
+
+分别测：
+
+- `idle_many_iterations`：没有 read/write 工作时，loop、`pause` 和 clock cadence 的成本。
+- `clock_check_hit`：刚好触发 clock check 时的成本。
+- `read_ready`：每轮都有 read 工作时，active spin loop 对 read path 的额外调度成本。
+- `write_ready`：每轮都有 write 工作时，active spin loop 对 write path 的额外调度成本。
+- `mixed_read_write`：read 和 write 同时 ready，比较不同调度顺序。
+- `stop_requested`：外部 stop flag 触发退出时的 atomic 和退出成本。
+- `yield_mode`：`active_spin = false` 时的 yield 模式成本，用于非 HFT 或降级运行环境。
+
+验证目标：
+
+- 确认 loop 优化不是只优化 fake session 的一轮退出。
+- 建立 read/write 混合压力下的 P50 / P99 / P99.9 基线。
+
+#### 9.2 减少每轮 atomic stop 检查
+
+当前 `RuntimeSession` 的热循环中可能多次读取 `stop_requested`：
+
+```text
+DriveWrite()     -> stop_requested.load()
+DriveRead()      -> stop_requested.load()
+AdvanceClock()   -> stop_requested.load()
+ShouldReconnect()-> stop_requested.load(memory_order_acquire)
+```
+
+前三个 `load()` 未显式指定 memory order，默认是 `seq_cst`。在 active spin 热循环里，这可能是不必要的成本。
+
+候选方向：
+
+```text
+每轮 loop 只读取一次 stop flag
+或 DriveRead / DriveWrite / AdvanceClock 使用 memory_order_relaxed
+退出边界 ShouldReconnect 保留 memory_order_acquire
+```
+
+验证目标：
+
+- `active_spin_mixed_read_write` 和 `active_spin_stop_requested` 不退化。
+- stop 请求仍然能及时退出。
+- 不破坏 `Stop()` 的 release/acquire 可见性假设。
+
+风险：
+
+- atomic memory order 修改必须明确线程可见性语义，不能只为性能改弱同步。
+- 如果 stop 还承担其他状态发布语义，需要保留 acquire 边界。
+
+#### 9.3 把 active spin / yield 分支移出循环
+
+当前每轮都有：
+
+```cpp
+if (runtime_policy_.active_spin) {
+  CpuRelax();
+} else {
+  std::this_thread::yield();
+}
+```
+
+生产 HFT 路径通常固定 `active_spin = true`。可以考虑进入 loop 前选择：
+
+```text
+RunActive()
+RunYield()
+```
+
+或在模板 / helper 中把 idle action 固化，避免每轮判断。
+
+验证目标：
+
+- `active_spin_idle_many_iterations` 不退化。
+- `yield_mode` 仍然行为正确。
+
+风险：
+
+- 收益可能很小，只有在 benchmark 证明分支成本明显时才值得改。
+
+#### 9.4 读写调度顺序可配置或自适应
+
+当前顺序固定：
+
+```text
+DriveWrite()
+DriveRead()
+```
+
+这对尽快发送订单、pong 或 heartbeat 有利，但在行情主链路上，read latency 可能更希望：
+
+```text
+DriveRead()
+DriveWrite()
+```
+
+候选策略：
+
+```text
+kWriteFirst
+kReadFirst
+kControlWriteFirstThenRead
+kAdaptive
+```
+
+其中 `kControlWriteFirstThenRead` 可以保留 control frame 优先级，同时避免普通 business write 长时间推迟 read。
+
+验证目标：
+
+- 在 `active_spin_mixed_read_write` 中比较 read-first / write-first 对 read-to-consumer 和 write latency 的影响。
+- 在 control pending 场景确认 ping / pong 不被业务写和 read burst 饿死。
+
+风险：
+
+- 读写顺序是交易系统策略选择，不存在全局最优。
+- 写优先可能降低下单延迟，读优先可能降低行情延迟，需要按连接类型和交易所通道区分配置。
+
+#### 9.5 为 business write 增加预算，避免饿死 read
+
+`DriveRead()` 已有 `max_reads_per_drive`，但 `DriveWrite()` 当前会尽量 drain pending queue，直到 EAGAIN 或队列空。
+
+如果业务 write queue 很长且 socket 持续可写，可能出现：
+
+```text
+一轮 loop 写太久
+-> read 被推迟
+-> 行情处理 P99 / P99.9 变差
+```
+
+候选配置：
+
+```cpp
+std::uint32_t max_writes_per_drive;
+std::uint32_t max_write_bytes_per_drive;
+```
+
+原则：
+
+- control frame 不受普通 business write budget 限制。
+- partial business frame 仍然必须按 WebSocket frame boundary 完成，不能和 control frame 交错。
+- write budget 应按连接角色配置：行情连接偏 read，交易连接可能偏 write。
+
+验证目标：
+
+- mixed read/write benchmark 中 read tail latency 改善。
+- order burst benchmark 中 write latency 不出现不可接受退化。
+- control frame 仍然能在业务队列满时及时发送。
+
+风险：
+
+- write budget 太小会增加订单发送排队。
+- 如果 partial frame 很大，仍可能占用一轮较长时间；需要和 payload size limit 一起评估。
+
+#### 9.6 只在 idle iteration 执行 `CpuRelax()`
+
+当前每轮末尾都会执行 `CpuRelax()` 或 `yield()`，即使这一轮刚处理了 read/write 工作。
+
+可考虑让 session 返回是否做了实际工作：
+
+```text
+did_write = DriveWrite()
+did_read = DriveRead()
+if (!did_write && !did_read) {
+  CpuRelax()
+}
+```
+
+收益：
+
+- burst 期间少一次 `pause`。
+- idle 时仍保留 `pause`，降低 SMT 竞争和功耗。
+
+风险：
+
+- 需要修改 `DriveRead()` / `DriveWrite()` 返回值或增加 wrapper，接口影响比普通微优化大。
+- 如果工作判断不准确，可能造成 idle loop 过热或 burst path 退化。
+
+#### 9.7 clock source 和 TSC
+
 候选项：
 
 - 基于 benchmark 决定生产默认 clock source，不直接假设 `CLOCK_MONOTONIC_COARSE` 更优。
@@ -485,16 +686,20 @@ ClockSource::kMonotonicCoarse
 - 将 heartbeat、degraded、stats flush 等低频 clock check 进一步合并，减少重复取时。
 - 为 runtime loop 增加 clock drift / backward jump 观测。
 
+当前不建议直接把默认 clock source 改成 `CLOCK_MONOTONIC_COARSE`。它单次调用更快，但 active loop 默认 4096 次才取一次时，摊薄收益很小，而且 coarse 粒度不适合精细延迟判断。
+
 验证目标：
 
 - `active_spin_benchmark` 不退化。
 - clock source benchmark 在目标机器上稳定。
 - heartbeat 和 degraded 的语义不因 coarse clock 粒度变差。
+- read/write mixed benchmark 中 clock cadence 不引入尾延迟毛刺。
 
 风险：
 
 - TSC 优化复杂度高，跨核和虚拟化风险大。
 - coarse clock 成本低但粒度粗，不能默认用于需要精确延迟度量的路径。
+- 过早加入 `likely` / `unlikely` 或 TSC 可能增加复杂度，但没有生产收益证据。
 
 ### 10. 可观测性和回归基线
 
@@ -546,6 +751,18 @@ ClockSource::kMonotonicCoarse
 5. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
 6. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。
 
+建议按下面顺序推进 active spin loop：
+
+1. **mixed benchmark**：先补 idle、clock hit、read-ready、write-ready、mixed read/write、stop、yield 模式。
+2. **atomic stop 检查优化**：减少每轮重复 atomic load，明确 relaxed / acquire 边界。
+3. **active/yield 分支外提**：只有 benchmark 证明有收益时再拆 `RunActive()` / `RunYield()`。
+4. **读写顺序策略实验**：比较 write-first、read-first、control-first-then-read。
+5. **write budget 实验**：防止 business write burst 饿死 read。
+6. **idle-only pause 实验**：让 read/write 返回 did-work 后，只在 idle iteration `CpuRelax()`。
+7. **clock / TSC 后续实验**：最后再考虑 calibrated TSC 或更激进的 branch layout。
+
 当前最重要的结论是：后续 read path 优化不应继续只抠 `FrameCodec`，而应先把 TLS、bounded read pump、consumer 解析放进同一套 benchmark，找真实生产热路径的最大成本。
 
 write path 同理：后续不应只抠 `CriticalSession` pending queue，而应先把 TLS、client masking/RNG、真实订单序列化和签名纳入 benchmark，确认真实下单链路的最大成本。
+
+active spin loop 同理：后续不应只抠单轮 fake session 的 42ns，而应先用 read/write mixed benchmark 证明 atomic、调度顺序、write budget 和 idle pause 策略对 P99 / P99.9 的真实影响。
