@@ -222,6 +222,28 @@ class FrameCodec {
     }
 
     const auto* data = Ptr(parse_abs_);
+    const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
+    const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
+    if (first == (0x80U | detail::kOpcodeText) ||
+        first == (0x80U | detail::kOpcodeBinary)) {
+      const PayloadKind kind = first == (0x80U | detail::kOpcodeText)
+                                   ? PayloadKind::kText
+                                   : PayloadKind::kBinary;
+      if (second < 126U) {
+        return BuildDirectMessage(kind, 2, second, available);
+      }
+      if (second == 126U) {
+        if (available < 4U) {
+          return {};
+        }
+        const std::uint64_t payload_length = detail::ReadU16(data + 2);
+        if (payload_length < 126U) {
+          return {DecodeStatus::kProtocolError, {}};
+        }
+        return BuildDirectMessage(kind, 4, payload_length, available);
+      }
+    }
+
     const auto parsed = detail::ParseServerFrameHeader(data, available);
     if (parsed.status == detail::FrameHeaderStatus::kNeedMore) {
       return {};
