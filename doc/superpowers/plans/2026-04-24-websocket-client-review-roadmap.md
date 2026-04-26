@@ -2,8 +2,8 @@
 
 ## 文档信息
 
-- 版本：`v0.1`
-- 状态：`待讨论`
+- 版本：`v0.2`
+- 状态：`进行中`（P0 / P1 / P2-A 已完成，下一步 P2-B）
 - 创建日期：`2026-04-24`
 - 文档定位：对 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 中 G1–G11 共 11 条差距的整体分阶段处置计划。本文件是**索引 / 路线图**，不承载具体任务拆分；每个 Phase 对应一份独立的 plan 文档，按需展开。
 
@@ -13,6 +13,8 @@
 - `doc/reviews/2026-04-24-websocket-client-gap-analysis.md`
 - `doc/superpowers/plans/2026-04-23-websocket-client-minimal-hft.md`
 - `doc/superpowers/plans/2026-04-24-websocket-client-p0-production-safety.md`（Phase 0）
+- `doc/superpowers/plans/2026-04-24-websocket-client-p1-reconnect-and-degraded.md`（Phase 1）
+- `doc/websocket_frame_codec_receive_strategies.md`（Phase 2-A 总结）
 
 ## 目标
 
@@ -25,16 +27,16 @@
 | G6 | 握手 nonce 硬编码 | **P0** | `2026-04-24-websocket-client-p0-production-safety.md` |
 | G3 | 背压被当作致命错误 | **P0** | 同上 |
 | G5 | 冷路径无超时 | **P0** | 同上 |
-| G7 | 无重连 / 退避 / 失败分类 | **P1** | 待建 |
+| G7 | 无重连 / 退避 / 失败分类 | **P1** | `2026-04-24-websocket-client-p1-reconnect-and-degraded.md` |
 | G9 | 缺少 `Degraded` 状态 | **P1** | 同上 |
-| G1 | 热路径动态分配 + 多次 memcpy | **P2** | 待建（P2-A：FrameCodec 重写） |
-| G10 | 容量耗尽未显式 fail-fast | **P2** | 同上（与 G1 合并设计） |
-| G2 | `DriveRead` 单次 `ReadSome` | **P2** | 待建（P2-B：热路径节奏） |
-| G4 | 心跳与业务写无协调 | **P2** | 同上 |
-| G8 | 心跳粒度绑在 spin iteration | **P2** | 同上 |
+| G1 | 热路径动态分配 + 多次 memcpy | **P2-A** | `websocket_frame_codec_receive_strategies.md` / `2026-04-25-websocket-client-p2a-framecodec-zero-copy-design.md` |
+| G10 | 容量耗尽未显式 fail-fast | **P2-A** | 同上（与 G1 合并设计） |
+| G2 | `DriveRead` 单次 `ReadSome` | **P2-B** | 待建（热路径节奏） |
+| G4 | 心跳与业务写无协调 | **P2-B** | 同上 |
+| G8 | 心跳粒度绑在 spin iteration | **P2-B** | 同上 |
 | G11 | 构建图形态核对 | **P3** | 待建（或合并进 P2 收尾） |
 
-## Phase 0 — 生产可用性修复（已建）
+## Phase 0 — 生产可用性修复（已完成）
 
 **plan**：`2026-04-24-websocket-client-p0-production-safety.md`
 
@@ -53,69 +55,44 @@
 
 ---
 
-## Phase 1 — 重连与降级（待建）
+## Phase 1 — 重连与降级（已完成）
 
-**拟建 plan**：`doc/superpowers/plans/2026-04-24-websocket-client-p1-reconnect-and-degraded.md`
+**plan**：`doc/superpowers/plans/2026-04-24-websocket-client-p1-reconnect-and-degraded.md`
 
 **范围**：G7 + G9
 
-**核心决策（Phase 1 plan 中逐条确认）**：
+**已落地能力**：
 
-1. **重连策略落位**（G7）
-   - 重连循环放在 `WebSocketClient`（Layer 2），`CriticalSession`（Layer 1）保持用户驱动、纯状态容器。
-   - 退避算法：指数 + 抖动（底线 100ms、上限可配、`jitter ∈ [0.5, 1.5)`）。
-   - 按 `ConnectionError` 分两类：
-     - 网络抖动类（`kSocketError`、`kPeerClosed`、`kHeartbeatTimeout`、`kConnectTimeout`、`kTlsFailure`、`kProtocolError`）→ 指数退避重连
-     - 配置 / 认证 / 消费者致命类（`kHandshakeFailure`、`kResolveFailure`、P0 新增的 `kConsumerFatal`）→ 暂停重试，要求外部明确指令
-   - `ConnectionPhase::kReconnectBackoff` 真正落地，对外通过 `StateHandler` 通知。
-   - `Metrics.reconnects` 计数在此阶段首次有效。
-
-2. **Degraded 状态**（G9）
-   - 新增 `ConnectionPhase::kDegraded`，位于 `kActive` 与 `kReconnecting` 之间。
-   - 进入条件（阈值全部可配，默认值在 plan 中讨论）：
-     - `prepared_write_high_watermark` 持续超过某比例（例如 80% 连续 N 轮）
-     - 心跳 RTT 超过阈值（依赖 P2 的 RTT 观测，本阶段可先只记录 `awaiting_pong_` 持续时长）
-     - `consumer_backpressure_drops` 在滑动窗口内超阈值
-   - 退出条件：所有触发因子连续 M 轮回落。
-   - 新增 metrics：`degraded_enter_count`、`degraded_exit_count`。
-   - Degraded 不等于断链；只对外通知，让外部决策限流 / 降级 / 继续观察。
-
-**依赖**：P0 完成（G3 背压降级后才能在 Degraded 判定中引用新计数器；G5 超时后 `kConnectTimeout` 才真正落盘）。
-
-**产出证据**：
-- 重连按失败分类分流的测试（注入不同 `ConnectionError`，观察是否进入退避或暂停状态）
-- 退避抖动合理性测试（连续重连不会同步尖峰）
-- Degraded 进入 / 退出的单元测试（阈值触发 + 回落）
-- 长稳模拟：注入周期性断链，确认长稳运行下重连次数和状态机路径符合预期
+- G7：`ReconnectPolicy`、失败分类器、xorshift jitter、`kReconnectBackoff`、eventfd 可中断 Stop、`CriticalSession::Reset()`。
+- G9：`kDegraded`、`DegradedThresholds`、16-slot backpressure window、degraded metrics、状态切换通知。
+- 测试和 benchmark 证据已回填到 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 的 G7 / G9 条目。
 
 ---
 
-## Phase 2 — 热路径与心跳（待建，拆两个 plan）
+## Phase 2 — 热路径与心跳（进行中，拆两个 plan）
 
-### Phase 2-A：FrameCodec 零拷贝 + 容量 fail-fast
+### Phase 2-A：FrameCodec 零拷贝 + 容量 fail-fast（已完成）
 
-**拟建 plan**：`doc/superpowers/plans/2026-04-24-websocket-client-p2a-framecodec-zero-copy.md`
+**文档**：
+
+- `doc/websocket_frame_codec_receive_strategies.md`
+- `doc/superpowers/specs/2026-04-25-websocket-client-p2a-framecodec-zero-copy-design.md`
 
 **范围**：G1 + G10
 
 **为什么合并**：G1 要改的接收 buffer / ready queue 结构正是 G10 所说"容量耗尽是否显式 fail-fast"的触发点；分开改会两次推翻同一套接口，浪费测试。
 
-**核心决策**：
-- 接收 buffer 换成"环形字节 buffer + 定长 `ReadyFrame` ring"，`MessageView::payload` 直接指向环形 buffer 中的帧区间。
-- 客户端入站 frame **无需解掩码**（RFC 6455 服务器→客户端默认 unmasked），省一轮 XOR。
-- 长消息跨越环形 buffer 边界时的处理策略：拒收并进入 `Degraded`，或有限次允许单次拷贝（需讨论）。
-- ready queue 定长；满了 fail-fast 进入 `Degraded`。
-- `FrameCodec::Feed` 输入环形 buffer 的 `span` 而非重新入队。
+**已落地能力**：
 
-**依赖**：P1 的 `Degraded` 状态落地后，容量 fail-fast 才能映射到合理的状态转移。
+- 接收 buffer 改为 Linux mirrored receive ring，payload 通过 `MessageView::payload` 零拷贝借用 ring 内存。
+- `CriticalSession::DriveRead` 直接读入 `FrameCodec::WritableSpan()`，生产路径不再需要外部 read buffer + `Feed()` copy。
+- `FrameCodec` 默认路径收口为 direct one-frame delivery；`QueuedFrameCodec` 保留为 parse-ahead / ready queue 对照实现。
+- 容量耗尽返回 `kCapacityExceeded`，递增 `frame_codec_capacity_exhaustions` 并进入 degraded 观测，不再静默扩容。
+- 单元测试、session read path benchmark、第三方 codec 对比 benchmark 已记录在相关文档和 review G1 / G10 条目中。
 
-**产出证据**：
-- 单元测试：跨环形 buffer 边界的帧、多帧突发、超长帧拒收
-- 微基准：`frame_codec_benchmark` 的 p50 / p99 / p99.9 需比 P0 基线显著下降（具体阈值在 plan 中定）
+### Phase 2-B：热路径节奏（读循环 + 心跳 + 时钟）（下一步）
 
-### Phase 2-B：热路径节奏（读循环 + 心跳 + 时钟）
-
-**拟建 plan**：`doc/superpowers/plans/2026-04-24-websocket-client-p2b-hotpath-pacing.md`
+**拟建 plan**：`doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`
 
 **范围**：G2 + G4 + G8
 
@@ -179,8 +156,8 @@ P1 (G7 / G9)
 
 ## 下一步
 
-- [ ] 按 P0 plan 的 Scope Decision 闸门逐条过：Task 1 (G6) → Task 2 (G3) → Task 3 (G5)
-- [ ] P0 三个 Task 完成并验证后，立项 P1 plan 细稿（G7 策略与 G9 阈值）
-- [ ] P1 完成验收后，立项 P2-A
-- [ ] P2-A 完成后，立项 P2-B
-- [ ] 最后立项 P3，关闭 review 文档
+- [x] P0：关闭 G6 / G3 / G5
+- [x] P1：关闭 G7 / G9
+- [x] P2-A：关闭 G1 / G10
+- [ ] P2-B：立项并关闭 G2 / G4 / G8
+- [ ] P3：关闭 G11，补长稳运行证据和最终交付文档

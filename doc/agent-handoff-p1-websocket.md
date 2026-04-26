@@ -1,29 +1,39 @@
-# Agent 接手说明：继续 P1（WebSocket 重连 + Degraded）
+# Agent 接手说明：P1 归档与 P2-B 接手提示
 
 ## 这份文件是给谁的
 
-本仓库 `aquila` 当前正在执行 **Phase 1（WebSocket client 的重连与降级）** 计划。前一个协作 agent 已经：
+本文件原本用于接手 **Phase 1（WebSocket client 的重连与降级）**。截至当前 `dev` 分支，P1 已完成，P2-A FrameCodec decode 主体也已完成。
 
-- 完成 P0 三条差距的修复（随机 nonce / 背压非致命 / 冷路径超时），合并到 `dev`
-- 完成 P1 plan 的两次定稿和 8 + 7 = 15 条 Scope Decision 的逐条拍板
-- **尚未**写一行 P1 实现代码
+当前下一步不是继续 P1，而是进入 **P2-B：热路径节奏（G2 + G4 + G8）**。
 
-你是新接手这项工作的 agent。本文件告诉你：**先读什么、当前状态是什么、下一步具体要做什么、哪些红线不能碰**。
+当前已完成：
 
-按顺序执行即可。
+- P0：随机 nonce、背压非致命、冷路径总预算超时。
+- P1：重连 / 退避 / 失败分类、`kDegraded` 状态与 degraded evaluator。
+- P2-A：mirrored receive ring、FrameCodec 零拷贝、容量 fail-fast、decode direct fast path。
+
+当前建议入口：
+
+1. push 当前 `dev`。
+2. 从最新 `dev` 切出 P2-B 分支。
+3. 新建 `doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`。
+4. 先讨论并锁定 G2 / G4 / G8 的 Scope Decision，再按 TDD + benchmark 实现。
+
+> 注意：下面保留的 P1 细节是历史归档，用于追溯当时的 Scope Decision 和测试要求；不要再按其中“下一步具体操作”的 P1 Step 1 执行。
 
 ---
 
 ## 30 秒速览
 
 - **项目**：crypto HFT 系统，重点是面向 gate.io / binance 的低延迟 C++ WebSocket client
-- **当前分支**：`p1-reconnect-degraded`（从 `dev` 切出）
-- **当前位置**：P1 plan 全部决策已定，准备进入 **Task 1（G7 重连）Step 1：写失败测试**
+- **当前分支**：`dev`
+- **当前位置**：P0 / P1 / P2-A 已完成，准备切出 P2-B 分支
+- **下一步**：P2-B 热路径节奏（G2 `DriveRead`、G4 heartbeat 写协调、G8 clock cadence）
 - **风格**：TDD + 原子提交 + 中英混写（文档中文、代码注释英文、commit message 英文）
 
 ---
 
-## 必读顺序（按优先级分 3 级）
+## 历史 P1 必读顺序（归档）
 
 ### T1：动手前**必读**（按序）
 
@@ -60,7 +70,7 @@
    - 11 条差距的出处。G3 / G5 / G6 已经关闭并回填了处理方案块。G7 / G9 是本次要关闭的两条。
 
 8. **`doc/superpowers/plans/2026-04-24-websocket-client-review-roadmap.md`**
-   - 5 个 Phase 的总路线图。你只负责 P1；P2-A / P2-B / P3 不要提前动手。
+   - 5 个 Phase 的总路线图。旧版 P1 handoff 曾要求只负责 P1；当前应以 roadmap 的 P2-B 下一步为准。
 
 9. **`doc/superpowers/plans/2026-04-24-websocket-client-p0-production-safety.md`**
    - P0 plan。不用执行，但 P0 的 TDD 节奏和 Scope Decision 形式是 P1 的样板。
@@ -117,7 +127,7 @@ p1-reconnect-degraded (当前分支):
 
 ---
 
-## 下一步具体操作（从这里开始做事）
+## 历史 P1 下一步具体操作（归档，请勿执行）
 
 ### 第 0 步：确认环境
 
