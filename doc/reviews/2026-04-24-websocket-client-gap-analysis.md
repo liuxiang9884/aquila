@@ -102,6 +102,9 @@
   - 在 `DriveRead` 中加入"有界多轮 `ReadSome`"预算（例如每次最多 N 次或 M 字节）
   - 或保持当前语义，但记录 L1 观测点用于评估影响
   - 需要 benchmark 证据支撑取舍
+- 处理方案：fix — 提交 `209b444` 增加 `ConnectionConfig::max_reads_per_drive` 与 `ConnectionConfig::read_until_would_block`，默认 `max_reads_per_drive = 1`、`read_until_would_block = false`，保持 legacy 单次 read 行为。提交 `0c32d06` 在 `CriticalSession::DriveRead()` 中实现 bounded read pump：每次成功 `ReadSome()` 后继续 drain `FrameCodec::Poll()`，随后仅在 read 预算未耗尽且 socket 报告 buffered plaintext（或显式打开 until-EAGAIN 模式）时继续读；`TlsSocket` 暴露 `PendingReadableBytes()`，OpenSSL 下使用 `SSL_pending()`。
+- 验证证据：新增 `websocket_critical_session_test.BoundedReadPumpDrainsPendingChunks` 覆盖 buffered plaintext 场景下同一轮 `DriveRead()` drain 3 个 read chunk；新增 `BoundedReadPumpDoesNotProbeWithoutPending` 覆盖默认不额外打一发 EAGAIN。debug / release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。release pinned benchmark（`taskset -c 2`）显示默认单帧 `session_read_path` p50/p99/p99.9 = 393/454/2233ns；synthetic pending-chunk burst 中 `session_read_path_burst_single_read` = 79/109/1317ns，`session_read_path_burst_bounded_pump` = 79/103/1210ns。该 benchmark 证明新增路径可执行且不改变默认单帧配置；是否打开 `read_until_would_block` 仍需按真实交易所 TLS record burst 复测。
+- 确认日期：2026-04-26
 
 ### G3：背压语义与 v1.0 的 `fail-fast` 错位
 
@@ -137,6 +140,9 @@
   - 独立的 control-frame slot / fast-path（插队或并行）
   - 至少区分 metrics：ping 入队到实际 sendto 的耗时
   - 若选择"不插队"，需要记录心跳排队延迟，并在超时判定上把排队时间扣除，避免误判
+- 处理方案：fix — 提交 `d42a99f` 在 `CriticalSession` 内增加 dedicated control write slot，heartbeat ping / auto-pong 不再占用业务 `PreparedWriteArena` slot。发送顺序为：已部分发送的业务 frame 先完成，避免 frame 字节交错；没有 partial business 时 control frame 优先于尚未开始发送的业务 frame；control slot 忙时递增 `control_frame_enqueue_failures` 但不重连。新增 `heartbeat_ping_send_delay_ns` / `heartbeat_ping_send_delay_max_ns`，在 heartbeat ping 首次实际写出时记录排队到 send 的延迟。
+- 验证证据：`websocket_critical_session_test` 更新并新增 `AutoPongUsesControlSlotWhenQueueFull`、`HeartbeatPingUsesControlSlotWhenQueueFull`、`ControlWriteDoesNotInterruptPartialBusinessFrame`，覆盖业务 queue 满时 ping/pong 仍可发送，以及 partial business frame 不被 control bytes 打断。debug / release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。release pinned benchmark（`taskset -c 2`）显示 business-only `session_write_path` p50/p99/p99.9 = 415/433/1043ns；isolated control-slot/full-business-queue benchmark = 39/40/45ns（custom one-write-per-drive socket）。
+- 确认日期：2026-04-26
 
 ### G5：冷路径无分阶段超时
 
@@ -213,6 +219,9 @@
   - 是否改为 `clock_gettime(CLOCK_MONOTONIC_COARSE)` 或 `rdtsc` + 频率校准
   - 是否用 `timerfd_create` 在 spin loop 读 fd 代替轮询打点
   - 评估 clock 调用开销 benchmark
+- 处理方案：fix（部分） — 提交 `9e509fe` 增加 `ClockSource` 与独立 `runtime_clock.h`，支持 `kSteady`、`kMonotonic`、`kMonotonicCoarse` 三种 source；默认仍为 `kSteady`。`ActiveSpinLoop` 改为通过 `runtime_policy.clock_source` 取时，并支持 session 提供 `ClockCheckInterval()` / `AdvanceClock(now_ns, elapsed_iterations)`。`WebSocketClient::RuntimeSession` 复用 loop 已取得的 `now_ns` 做 heartbeat 与 degraded evaluation，不再在 `DriveRead()` 内单独调用 `steady_clock::now()`；`evaluation_interval_iterations` 继续保持 spin iteration 语义。P2-B 不引入 TSC，避免校准、跨核稳定性和虚拟化判断提前复杂化。
+- 验证证据：新增 `clock_source_benchmark`。debug / release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。release pinned benchmark（`taskset -c 2`）显示：`clock_source_steady` p50/p99/p99.9 = 52/54/56ns，`clock_source_monotonic` = 51/52/60ns，`clock_source_monotonic_coarse` = 32/34/56ns；默认 `active_spin` p50/p99/p99.9 = 42/44/45ns。`CLOCK_MONOTONIC_COARSE` 调用更低，但默认未切换，后续只有在确认其时间粒度满足 heartbeat/degraded 判定后才应启用。
+- 确认日期：2026-04-26
 
 ### G9：`ConnectionPhase` 缺少 `Degraded`
 
