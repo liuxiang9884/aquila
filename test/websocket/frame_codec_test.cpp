@@ -241,6 +241,19 @@ TEST(WebsocketFrameCodecTest, QueuedCodecReportsReadyQueueCapacity) {
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kCapacityExceeded);
 }
 
+TEST(WebsocketFrameCodecTest, QueuedCodecRejectsFastPathPayloadAboveMax) {
+  QueuedFrameCodec short_codec(4, 4096, 8);
+  const auto short_frame = BuildServerTextFrame("hello");
+  EXPECT_EQ(short_codec.Feed(short_frame).status,
+            DecodeStatus::kProtocolError);
+
+  QueuedFrameCodec extended_codec(125, 4096, 8);
+  const std::string extended_payload(126, 'x');
+  const auto extended_frame = BuildServerTextFrame(extended_payload);
+  EXPECT_EQ(extended_codec.Feed(extended_frame).status,
+            DecodeStatus::kProtocolError);
+}
+
 TEST(WebsocketFrameCodecTest, RejectsNonMinimalExtendedPayloadLengths) {
   FrameCodec short_extended_codec(128, 4096);
   std::vector<std::byte> short_extended{

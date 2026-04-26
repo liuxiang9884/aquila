@@ -34,6 +34,22 @@ struct FrameHeaderParseResult {
   ParsedFrameHeader header{};
 };
 
+struct BaseFrameHeader {
+  bool fin{false};
+  bool rsv_set{false};
+  bool masked{false};
+  std::uint8_t opcode{0};
+  std::uint8_t length_code{0};
+  PayloadKind kind{PayloadKind::kText};
+  bool known_opcode{false};
+};
+
+struct PayloadLengthParseResult {
+  FrameHeaderStatus status{FrameHeaderStatus::kNeedMore};
+  size_t header_bytes{0};
+  std::uint64_t payload_length{0};
+};
+
 inline bool IsControl(PayloadKind kind) noexcept {
   return kind == PayloadKind::kPing || kind == PayloadKind::kPong ||
          kind == PayloadKind::kClose;
@@ -76,6 +92,96 @@ inline FrameHeaderParseResult ProtocolErrorHeader() noexcept {
   return {FrameHeaderStatus::kProtocolError, {}};
 }
 
+inline PayloadLengthParseResult ReadyPayloadLength(
+    size_t header_bytes, std::uint64_t payload_length) noexcept {
+  return {FrameHeaderStatus::kReady, header_bytes, payload_length};
+}
+
+inline PayloadLengthParseResult NeedMorePayloadLength() noexcept { return {}; }
+
+inline PayloadLengthParseResult ProtocolErrorPayloadLength() noexcept {
+  return {FrameHeaderStatus::kProtocolError, 0, 0};
+}
+
+inline std::uint64_t ReadU16(const std::byte* data) noexcept {
+  return (static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(data[0]))
+          << 8U) |
+         static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(data[1]));
+}
+
+inline std::uint64_t ReadU64(const std::byte* data) noexcept {
+  std::uint64_t value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    value =
+        (value << 8U) |
+        static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(data[i]));
+  }
+  return value;
+}
+
+inline BaseFrameHeader ParseBaseHeader(std::uint8_t first,
+                                       std::uint8_t second) noexcept {
+  BaseFrameHeader header{};
+  header.fin = (first & 0x80U) != 0;
+  header.rsv_set = (first & 0x70U) != 0;
+  header.masked = (second & 0x80U) != 0;
+  header.opcode = first & 0x0FU;
+  header.length_code = second & 0x7FU;
+  header.known_opcode = MapOpcode(header.opcode, &header.kind);
+  return header;
+}
+
+inline bool ValidateServerBaseHeader(const BaseFrameHeader& header) noexcept {
+  return header.fin && !header.rsv_set && header.known_opcode &&
+         !header.masked;
+}
+
+inline PayloadLengthParseResult DecodePayloadLength(
+    const std::byte* data, std::uint64_t available,
+    std::uint8_t length_code) noexcept {
+  size_t header_bytes = 2;
+  std::uint64_t payload_length = length_code;
+  if (payload_length == 126) {
+    if (available < header_bytes + 2U) {
+      return NeedMorePayloadLength();
+    }
+    payload_length = ReadU16(data + header_bytes);
+    header_bytes += 2;
+    if (payload_length < 126U) {
+      return ProtocolErrorPayloadLength();
+    }
+  } else if (payload_length == 127) {
+    if (available < header_bytes + 8U) {
+      return NeedMorePayloadLength();
+    }
+    payload_length = ReadU64(data + header_bytes);
+    header_bytes += 8;
+    if ((payload_length >> 63U) != 0) {
+      return ProtocolErrorPayloadLength();
+    }
+    if (payload_length <= 0xFFFFU) {
+      return ProtocolErrorPayloadLength();
+    }
+  }
+
+  return ReadyPayloadLength(header_bytes, payload_length);
+}
+
+inline bool ValidatePayloadLength(PayloadKind kind,
+                                  std::uint64_t payload_length,
+                                  size_t max_payload_bytes) noexcept {
+  if (payload_length > max_payload_bytes ||
+      payload_length >
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::uint32_t>::max())) {
+    return false;
+  }
+  if (IsControl(kind) && payload_length > kControlPayloadLimit) {
+    return false;
+  }
+  return true;
+}
+
 inline FrameHeaderParseResult ParseServerFrameHeader(
     const std::byte* data, std::uint64_t available,
     size_t max_payload_bytes) noexcept {
@@ -92,85 +198,42 @@ inline FrameHeaderParseResult ParseServerFrameHeader(
                                  ? PayloadKind::kText
                                  : PayloadKind::kBinary;
     if (second < 126U) {
+      if (second > max_payload_bytes) {
+        return ProtocolErrorHeader();
+      }
       return ReadyHeader(kind, 2, second);
     }
     if (second == 126U) {
       if (available < 4U) {
         return NeedMoreHeader();
       }
-      const std::uint64_t payload_length =
-          (static_cast<std::uint64_t>(
-               std::to_integer<std::uint8_t>(data[2]))
-           << 8U) |
-          static_cast<std::uint64_t>(
-              std::to_integer<std::uint8_t>(data[3]));
-      if (payload_length < 126U) {
+      const std::uint64_t payload_length = ReadU16(data + 2);
+      if (payload_length < 126U || payload_length > max_payload_bytes) {
         return ProtocolErrorHeader();
       }
       return ReadyHeader(kind, 4, payload_length);
     }
   }
 
-  const bool fin = (first & 0x80U) != 0;
-  if (!fin || (first & 0x70U) != 0) {
+  const BaseFrameHeader base = ParseBaseHeader(first, second);
+  if (!ValidateServerBaseHeader(base)) {
     return ProtocolErrorHeader();
   }
 
-  PayloadKind payload_kind{};
-  if (!MapOpcode(first & 0x0FU, &payload_kind)) {
-    return ProtocolErrorHeader();
+  const auto length = DecodePayloadLength(data, available, base.length_code);
+  if (length.status == FrameHeaderStatus::kNeedMore) {
+    return NeedMoreHeader();
   }
-  if ((second & 0x80U) != 0) {
-    return ProtocolErrorHeader();
-  }
-
-  size_t cursor = 2;
-  std::uint64_t payload_length = second & 0x7FU;
-  if (payload_length == 126) {
-    if (available < cursor + 2) {
-      return NeedMoreHeader();
-    }
-    payload_length =
-        (static_cast<std::uint64_t>(
-             std::to_integer<std::uint8_t>(data[cursor]))
-         << 8U) |
-        static_cast<std::uint64_t>(
-            std::to_integer<std::uint8_t>(data[cursor + 1]));
-    cursor += 2;
-    if (payload_length < 126U) {
-      return ProtocolErrorHeader();
-    }
-  } else if (payload_length == 127) {
-    if (available < cursor + 8) {
-      return NeedMoreHeader();
-    }
-    payload_length = 0;
-    for (size_t i = 0; i < 8; ++i) {
-      payload_length =
-          (payload_length << 8U) |
-          static_cast<std::uint64_t>(
-              std::to_integer<std::uint8_t>(data[cursor + i]));
-    }
-    cursor += 8;
-    if ((payload_length >> 63U) != 0) {
-      return ProtocolErrorHeader();
-    }
-    if (payload_length <= 0xFFFFU) {
-      return ProtocolErrorHeader();
-    }
-  }
-
-  if (payload_length > max_payload_bytes ||
-      payload_length >
-          static_cast<std::uint64_t>(
-              std::numeric_limits<std::uint32_t>::max())) {
-    return ProtocolErrorHeader();
-  }
-  if (IsControl(payload_kind) && payload_length > kControlPayloadLimit) {
+  if (length.status == FrameHeaderStatus::kProtocolError) {
     return ProtocolErrorHeader();
   }
 
-  return ReadyHeader(payload_kind, cursor, payload_length);
+  if (!ValidatePayloadLength(base.kind, length.payload_length,
+                             max_payload_bytes)) {
+    return ProtocolErrorHeader();
+  }
+
+  return ReadyHeader(base.kind, length.header_bytes, length.payload_length);
 }
 
 }  // namespace aquila::websocket::detail
