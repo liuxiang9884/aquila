@@ -164,12 +164,19 @@ class QueuedFrameCodec {
       }
 
       const std::uint64_t available = write_abs_ - parse_abs_;
-      const auto parsed = detail::ParseServerFrameHeader(
-          Ptr(parse_abs_), available, max_payload_bytes_);
+      const auto parsed = detail::ParseServerFrameHeader(Ptr(parse_abs_),
+                                                         available);
       if (parsed.status == detail::FrameHeaderStatus::kNeedMore) {
         return;
       }
       if (parsed.status == detail::FrameHeaderStatus::kProtocolError) {
+        protocol_error_pending_ = true;
+        return;
+      }
+      if (parsed.header.payload_length > max_payload_bytes_ ||
+          parsed.header.payload_length >
+              static_cast<std::uint64_t>(
+                  std::numeric_limits<std::uint32_t>::max())) {
         protocol_error_pending_ = true;
         return;
       }

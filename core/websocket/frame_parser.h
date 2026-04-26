@@ -167,15 +167,8 @@ inline PayloadLengthParseResult DecodePayloadLength(
   return ReadyPayloadLength(header_bytes, payload_length);
 }
 
-inline bool ValidatePayloadLength(PayloadKind kind,
-                                  std::uint64_t payload_length,
-                                  size_t max_payload_bytes) noexcept {
-  if (payload_length > max_payload_bytes ||
-      payload_length >
-          static_cast<std::uint64_t>(
-              std::numeric_limits<std::uint32_t>::max())) {
-    return false;
-  }
+inline bool ValidateProtocolPayloadLength(
+    PayloadKind kind, std::uint64_t payload_length) noexcept {
   if (IsControl(kind) && payload_length > kControlPayloadLimit) {
     return false;
   }
@@ -183,8 +176,7 @@ inline bool ValidatePayloadLength(PayloadKind kind,
 }
 
 inline FrameHeaderParseResult ParseServerFrameHeader(
-    const std::byte* data, std::uint64_t available,
-    size_t max_payload_bytes) noexcept {
+    const std::byte* data, std::uint64_t available) noexcept {
   if (available < 2) {
     return NeedMoreHeader();
   }
@@ -198,9 +190,6 @@ inline FrameHeaderParseResult ParseServerFrameHeader(
                                  ? PayloadKind::kText
                                  : PayloadKind::kBinary;
     if (second < 126U) {
-      if (second > max_payload_bytes) {
-        return ProtocolErrorHeader();
-      }
       return ReadyHeader(kind, 2, second);
     }
     if (second == 126U) {
@@ -208,7 +197,7 @@ inline FrameHeaderParseResult ParseServerFrameHeader(
         return NeedMoreHeader();
       }
       const std::uint64_t payload_length = ReadU16(data + 2);
-      if (payload_length < 126U || payload_length > max_payload_bytes) {
+      if (payload_length < 126U) {
         return ProtocolErrorHeader();
       }
       return ReadyHeader(kind, 4, payload_length);
@@ -228,8 +217,7 @@ inline FrameHeaderParseResult ParseServerFrameHeader(
     return ProtocolErrorHeader();
   }
 
-  if (!ValidatePayloadLength(base.kind, length.payload_length,
-                             max_payload_bytes)) {
+  if (!ValidateProtocolPayloadLength(base.kind, length.payload_length)) {
     return ProtocolErrorHeader();
   }
 

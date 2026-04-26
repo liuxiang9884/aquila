@@ -222,8 +222,7 @@ class FrameCodec {
     }
 
     const auto* data = Ptr(parse_abs_);
-    const auto parsed =
-        detail::ParseServerFrameHeader(data, available, max_payload_bytes_);
+    const auto parsed = detail::ParseServerFrameHeader(data, available);
     if (parsed.status == detail::FrameHeaderStatus::kNeedMore) {
       return {};
     }

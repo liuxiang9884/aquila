@@ -92,9 +92,10 @@ DecodeResult Poll() {
   if (available < 2) return NeedMore();
 
   ptr = Ptr(parse_abs);
-  header = ParseServerFrameHeader(ptr, available, max_payload_bytes);
+  header = ParseServerFrameHeader(ptr, available);
   if (header.need_more) return NeedMore();
   if (header.protocol_error) return ProtocolError();
+  if (header.payload_length > max_payload_bytes) return ProtocolError();
 
   total = header.header_bytes + header.payload_length;
   if (available < total) return NeedMore();
@@ -233,9 +234,10 @@ DecodeResult Poll() {
   if (available < 2) return NeedMore();
 
   ptr = buffer.data() + head;
-  header = ParseServerFrameHeader(ptr, available, max_payload_bytes);
+  header = ParseServerFrameHeader(ptr, available);
   if (header.need_more) return NeedMore();
   if (header.protocol_error) return ProtocolError();
+  if (header.payload_length > max_payload_bytes) return ProtocolError();
 
   total = header.header_bytes + header.payload_length;
   if (available < total) return NeedMore();
