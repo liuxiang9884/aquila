@@ -46,6 +46,53 @@ socketpair read syscall
 
 它不覆盖真实网卡、TCP 远端收包、TLS 解密、`SSL_pending()` 行为、epoll wakeup 或真实行情解析。
 
+## 当前 write 路径
+
+生产 write 路径可以按层拆成：
+
+```text
+order / control event
+-> payload serialization
+-> FrameCodec::EncodeText() / EncodeBinary() / EncodeControl()
+-> PreparedWrite / dedicated control slot
+-> CriticalSession::DriveWrite()
+-> SSL_write()
+-> OpenSSL TLS record 加密
+-> kernel socket send buffer
+-> NIC
+```
+
+当前 P2-B write benchmark 结果：
+
+```text
+session_write_path:                                  415 / 433 / 1043 ns
+session_write_path_control_slot_full_business_queue:  39 /  40 /   45 ns
+```
+
+`session_write_path` 使用本地 socketpair，覆盖：
+
+```text
+CommitPreparedWrite()
+-> CriticalSession business write queue
+-> DriveWrite()
+-> LocalFdSocket::WriteSome()
+-> socketpair write syscall
+```
+
+它没有开启 TLS，不覆盖 `SSL_write()`、TLS encrypt、真实 TCP 发送队列、网卡和交易所远端 ACK 行为。
+
+`session_write_path_control_slot_full_business_queue` 使用 fake socket，覆盖：
+
+```text
+business queue full
+-> AdvanceHeartbeat()
+-> dedicated control slot encode ping
+-> DriveWrite()
+-> fake WriteSome()
+```
+
+该 benchmark 证明 dedicated control slot 的用户态路径很轻，并且业务队列满时 heartbeat ping 可以绕过业务 pending queue。但它不是真实 socket write benchmark，不能代表生产网络发送成本。
+
 ## 建议优先级
 
 ### 1. 增加 TLS read path benchmark
@@ -259,23 +306,167 @@ payload len < 126 或 126/16-bit length
 
 ### 8. 写路径和 control frame 后续优化
 
-P2-B 已增加 dedicated control write slot。后续候选项：
+P2-B 已增加 dedicated control write slot。当前 benchmark 表明 control slot 用户态路径成本很低，因此 write 侧后续优化不应优先改 control slot 结构，而应先补齐 TLS、client masking、真实订单 payload 和 syscall 成本的证据。
 
-- control slot 支持 close frame 和 heartbeat ping 的优先级区分。
-- 记录 control slot 排队时间分布，而不只记录最大值。
-- 评估 `sendmsg` / scatter-gather，避免 header 和 payload 已分离时的额外拼接。
+#### 8.1 增加 TLS write path benchmark
+
+这是 write 侧最高优先级。真实 `wss://` 发送路径必然经过 `SSL_write()` 和 TLS encrypt，当前 `session_write_path` 没覆盖这部分。
+
+建议新增 benchmark：
+
+```text
+session_write_path_tls_single_frame
+session_write_path_tls_burst_business_queue
+session_write_path_tls_control_slot_full_business_queue
+session_write_path_tls_partial_write
+```
+
+分别测：
+
+- `tls_single_frame`：一个业务 frame 从 prepared write 到 `SSL_write()` 完成。
+- `tls_burst_business_queue`：多个业务 frame 连续 pending，测 write queue drain 和 TLS send buffer 行为。
+- `tls_control_slot_full_business_queue`：业务 queue 满时，heartbeat ping / auto-pong 经过 dedicated control slot 的真实 TLS write 成本。
+- `tls_partial_write`：`SSL_write()` 或底层 socket 只写出部分 frame 时，测 partial write 状态恢复和后续 drain 成本。
+
+验证目标：
+
+- 判断 write path 主成本在 syscall、TLS encrypt、masking、queue 还是 payload serialization。
+- 确认 dedicated control slot 在 TLS 路径下仍然不被业务 queue 满阻塞。
+- 验证 partial business frame 不被 control frame 打断。
+
+风险：
+
+- loopback TLS benchmark 仍不等价于真实交易所链路。
+- TLS benchmark 需要固定 OpenSSL 版本、cipher、CPU affinity 和证书配置。
+
+#### 8.2 优先评估 client masking / random mask 生成成本
+
+WebSocket client 发出的 frame 必须 masked。当前 `FrameCodec::EncodeFrame()` 每帧调用 `RAND_bytes()` 生成 4-byte masking key。
+
+低频发送时这没有问题；高频下单、撤单或批量请求时，`RAND_bytes()` 可能成为 write 热路径成本和尾延迟来源。
+
+候选方案：
+
+```text
+初始化或冷路径批量生成 masking keys
+-> per-session mask key ring
+-> 热路径从 ring 取 4 bytes
+-> 低水位时在冷路径补充
+-> 耗尽时 fail-fast 或回退 RAND_bytes()
+```
+
+验证目标：
+
+- 用 benchmark / profile 证明 `RAND_bytes()` 在 write path 中占比明显。
+- 比较 per-frame `RAND_bytes()` 与 mask key pool 的 p50 / P99 / P99.9。
+- 验证 masking key 不固定、不复用到违反协议语义。
+
+风险：
+
+- WebSocket client masking key 不能固定为 0。
+- mask key pool 需要容量、低水位、耗尽策略和可观测指标。
+- 不允许为了性能破坏 RFC 6455 对 client masking 的基本要求。
+
+#### 8.3 增加真实订单 payload benchmark
+
+当前 write benchmark 使用固定测试 payload，不覆盖真实交易所下单、撤单、签名和序列化。
+
+建议新增：
+
+```text
+session_write_path_order_new
+session_write_path_order_cancel
+session_write_path_order_batch
+```
+
+测完整路径：
+
+```text
+order object
+-> JSON / protocol payload serialization
+-> timestamp / nonce / signature
+-> FrameCodec encode
+-> CommitPreparedWrite()
+-> DriveWrite()
+```
+
+验证目标：
+
+- 判断 write path 瓶颈是否其实在 JSON serialization、HMAC/signature、时间戳、nonce 或字段格式化。
+- 避免只优化 WebSocket frame write，却忽略真实下单路径主成本。
+
+风险：
+
+- 不同交易所签名和 payload 格式差异较大，benchmark 输入需要按交易所版本化。
+- 如果 benchmark 不包含签名和序列化，就不能代表真实交易链路。
+
+#### 8.4 评估 `sendmsg` / scatter-gather
+
+当前 prepared write 存储完整 encoded frame：
+
+```text
+[header + mask + masked payload]
+```
+
+因此业务写是单段 buffer，普通 `WriteSome()` 已经适合 syscall。只有当后续想减少 encode copy、把 header/mask 和 payload 分离时，才需要评估 `sendmsg` / `writev`。
+
+候选方向：
+
+```text
+iov[0] = websocket header + masking key
+iov[1] = masked payload buffer
+```
+
+但 WebSocket client payload 必须 masked，不能直接把原始 payload 作为第二段发送。因此 scatter-gather 是否有收益，取决于是否能减少现有 prepared write storage 的拷贝或构造成本。
+
+验证目标：
+
+- 证明 scatter-gather 减少了实际 copy 或降低了 P99 / P99.9。
+- 确认 syscall 参数复杂度没有抵消收益。
+
+风险：
+
+- 实现复杂度高于当前单段 prepared write。
+- masking 仍然需要对 payload 做 XOR，不能绕过。
+
+#### 8.5 保持 dedicated control slot 简洁
+
+当前 control slot benchmark 已经很轻：
+
+```text
+session_write_path_control_slot_full_business_queue: 39 / 40 / 45 ns
+```
+
+后续优先做可观测性，而不是复杂化发送状态机：
+
+- control frame enqueue delay 分布。
+- heartbeat ping send delay p50 / P99 / max。
+- control slot busy count。
+- auto-pong enqueue failure count。
+
+不建议为了更低 ping 延迟去打断 partial business frame。WebSocket frame 字节不能交错，打断 partial frame 会显著增加状态机复杂度和协议风险。
+
+#### 8.6 `CriticalSession` business write queue 微优化
+
+候选项：
+
 - 评估 business write queue 的 hot/cold metrics 分离。
+- 如果 `prepared_write_slots` 总是 power-of-two，评估 modulo 改 mask。
+- 评估 `pending_writes_` 是否需要固定容量版本，减少初始化期动态分配和指针间接。
+- 拆分 write error / reconnect cold path，保持成功写出路径更短。
 
 验证目标：
 
 - 业务 queue 满时 ping / pong 不被阻塞。
 - partial business frame 不被 control frame 打断。
 - control frame 延迟指标可用于 degraded 或告警。
+- `session_write_path` 和 TLS write benchmark p50 / P99 / P99.9 不退化。
 
 风险：
 
 - WebSocket frame 字节不能交错，任何优先级优化都必须保持 frame boundary。
-- scatter-gather 可能减少 copy，但增加 syscall 参数复杂度，收益要实测。
+- 当前 `session_write_path` 主要包含 socket write syscall，queue 微优化可能收益很小。
+- 过早拆分 hot/cold path 会增加代码分叉和维护成本。
 
 ### 9. clock / spin loop 后续优化
 
@@ -336,7 +527,7 @@ ClockSource::kMonotonicCoarse
 
 ## 推荐执行顺序
 
-建议按下面顺序推进：
+建议按下面顺序推进 read 侧：
 
 1. **TLS read path benchmark**：先把 `SSL_read()`、TLS decrypt 和 `SSL_pending()` 纳入基准。
 2. **真实 consumer benchmark**：加入交易所行情 payload 和最小行情解析，确认 codec 是否仍是瓶颈。
@@ -346,4 +537,15 @@ ClockSource::kMonotonicCoarse
 6. **FrameCodec 微优化**：保持小步修改，每次只改一个分支，并重跑 codec + session benchmark。
 7. **write/control 和 clock 后续优化**：在 read path 真实瓶颈确认后，再按 P99 风险继续推进。
 
+建议按下面顺序推进 write 侧：
+
+1. **TLS write path benchmark**：先把 `SSL_write()`、TLS encrypt、partial write 纳入基准。
+2. **真实订单 payload benchmark**：加入下单、撤单、签名、序列化，确认 WebSocket write 是否是瓶颈。
+3. **masking / RNG profile**：确认 `RAND_bytes()` 和 payload XOR 在 write path 的占比。
+4. **mask key pool 实验**：只有当 RNG 成本明显时，再实现 per-session mask key ring。
+5. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
+6. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。
+
 当前最重要的结论是：后续 read path 优化不应继续只抠 `FrameCodec`，而应先把 TLS、bounded read pump、consumer 解析放进同一套 benchmark，找真实生产热路径的最大成本。
+
+write path 同理：后续不应只抠 `CriticalSession` pending queue，而应先把 TLS、client masking/RNG、真实订单序列化和签名纳入 benchmark，确认真实下单链路的最大成本。
