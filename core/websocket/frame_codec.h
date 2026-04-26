@@ -222,26 +222,22 @@ class FrameCodec {
     }
 
     const auto* data = Ptr(parse_abs_);
-    const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
-    const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
-    if (first == (0x80U | detail::kOpcodeText) ||
-        first == (0x80U | detail::kOpcodeBinary)) {
-      const PayloadKind kind = first == (0x80U | detail::kOpcodeText)
-                                   ? PayloadKind::kText
-                                   : PayloadKind::kBinary;
-      if (second < 126U) {
-        return BuildDirectMessage(kind, 2, second, available);
+    PayloadKind fast_kind{};
+    size_t fast_header_bytes = 0;
+    std::uint64_t fast_payload_length = 0;
+    detail::FrameHeaderStatus fast_status =
+        detail::FrameHeaderStatus::kNeedMore;
+    if (detail::TryParseFastServerDataFrameHeader(
+            data, available, &fast_kind, &fast_header_bytes,
+            &fast_payload_length, &fast_status)) {
+      if (fast_status == detail::FrameHeaderStatus::kNeedMore) {
+        return {};
       }
-      if (second == 126U) {
-        if (available < 4U) {
-          return {};
-        }
-        const std::uint64_t payload_length = detail::ReadU16(data + 2);
-        if (payload_length < 126U) {
-          return {DecodeStatus::kProtocolError, {}};
-        }
-        return BuildDirectMessage(kind, 4, payload_length, available);
+      if (fast_status == detail::FrameHeaderStatus::kProtocolError) {
+        return {DecodeStatus::kProtocolError, {}};
       }
+      return BuildDirectMessage(fast_kind, fast_header_bytes,
+                                fast_payload_length, available);
     }
 
     const auto parsed = detail::ParseServerFrameHeader(data, available);

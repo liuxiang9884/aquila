@@ -108,6 +108,49 @@ inline std::uint64_t ReadU16(const std::byte* data) noexcept {
          static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(data[1]));
 }
 
+inline bool TryParseFastServerDataFrameHeader(
+    const std::byte* data, std::uint64_t available, PayloadKind* kind,
+    size_t* header_bytes, std::uint64_t* payload_length,
+    FrameHeaderStatus* status) noexcept {
+  if (available < 2) {
+    *status = FrameHeaderStatus::kNeedMore;
+    return true;
+  }
+
+  const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
+  const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
+  if (first != (0x80U | kOpcodeText) &&
+      first != (0x80U | kOpcodeBinary)) {
+    return false;
+  }
+
+  *kind = first == (0x80U | kOpcodeText) ? PayloadKind::kText
+                                         : PayloadKind::kBinary;
+  if (second < 126U) {
+    *header_bytes = 2;
+    *payload_length = second;
+    *status = FrameHeaderStatus::kReady;
+    return true;
+  }
+  if (second != 126U) {
+    return false;
+  }
+  if (available < 4U) {
+    *status = FrameHeaderStatus::kNeedMore;
+    return true;
+  }
+
+  const std::uint64_t decoded_length = ReadU16(data + 2);
+  if (decoded_length < 126U) {
+    *status = FrameHeaderStatus::kProtocolError;
+    return true;
+  }
+  *header_bytes = 4;
+  *payload_length = decoded_length;
+  *status = FrameHeaderStatus::kReady;
+  return true;
+}
+
 inline std::uint64_t ReadU64(const std::byte* data) noexcept {
   std::uint64_t value = 0;
   for (size_t i = 0; i < 8; ++i) {
@@ -176,33 +219,21 @@ inline bool ValidateProtocolPayloadLength(
 
 inline FrameHeaderParseResult ParseServerFrameHeader(
     const std::byte* data, std::uint64_t available) noexcept {
-  if (available < 2) {
-    return NeedMoreHeader();
+  PayloadKind kind{};
+  size_t header_bytes = 0;
+  std::uint64_t payload_length = 0;
+  FrameHeaderStatus status = FrameHeaderStatus::kNeedMore;
+  if (TryParseFastServerDataFrameHeader(data, available, &kind, &header_bytes,
+                                        &payload_length, &status)) {
+    if (status == FrameHeaderStatus::kReady) {
+      return ReadyHeader(kind, header_bytes, payload_length);
+    }
+    return status == FrameHeaderStatus::kNeedMore ? NeedMoreHeader()
+                                                  : ProtocolErrorHeader();
   }
 
   const std::uint8_t first = std::to_integer<std::uint8_t>(data[0]);
   const std::uint8_t second = std::to_integer<std::uint8_t>(data[1]);
-
-  if (first == (0x80U | kOpcodeText) ||
-      first == (0x80U | kOpcodeBinary)) {
-    const PayloadKind kind = first == (0x80U | kOpcodeText)
-                                 ? PayloadKind::kText
-                                 : PayloadKind::kBinary;
-    if (second < 126U) {
-      return ReadyHeader(kind, 2, second);
-    }
-    if (second == 126U) {
-      if (available < 4U) {
-        return NeedMoreHeader();
-      }
-      const std::uint64_t payload_length = ReadU16(data + 2);
-      if (payload_length < 126U) {
-        return ProtocolErrorHeader();
-      }
-      return ReadyHeader(kind, 4, payload_length);
-    }
-  }
-
   const BaseFrameHeader base = ParseBaseHeader(first, second);
   if (!ValidateServerBaseHeader(base)) {
     return ProtocolErrorHeader();
