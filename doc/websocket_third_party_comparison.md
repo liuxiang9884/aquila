@@ -2,10 +2,10 @@
 
 ## 文档信息
 
-- 状态：`draft`
+- 状态：`accepted`（FrameCodec decode 对比与结论已收口）
 - 记录位置：`doc/`
 - 对比对象：
-  - `aquila` 当前讨论中的低延迟高频 WebSocket 方案
+  - `aquila` 当前低延迟高频 WebSocket 方案
   - `third_party/websocket/websocket.h`
   - 上游来源：`git@github.com:MengRao/websocket.git`
 
@@ -271,7 +271,17 @@
 
 ### 已采用的 header 快路径
 
-共享 parser 已对主路径 data frame 做 header 快路径。命中条件是：
+当前 `FrameCodec` decode 主体采用 shared data-frame fast primitive：
+
+```cpp
+TryParseFastServerDataFrameHeader(
+    data, available,
+    &kind, &header_bytes, &payload_length, &status);
+```
+
+它不返回嵌套 result，也不构造临时 `FrameHeaderParseResult`；只通过 output 参数写出解析结果。`FrameCodec::ParseOneFrameDirect()` 先调用它，命中后直接进入 `BuildDirectMessage()`。`ParseServerFrameHeader()` 也复用同一个 primitive，然后再处理 generic path。因此 fast path 逻辑不再在 `FrameCodec` 和 parser 中重复维护。
+
+fast primitive 的命中条件是：
 
 1. `FIN=1`
 2. `RSV=0`
@@ -279,7 +289,20 @@
 4. server frame unmasked
 5. payload length 使用 7-bit 或 16-bit 编码，即 `payload_len <= 65535`
 
-`payload_len >= 65536`、control frame、masked inbound、fragmentation、RSV 或未知 opcode 仍走 generic parser。两条路径都运行在 mirrored receive ring 上，不切换到线性 buffer。
+`payload_len >= 65536`、control frame、masked inbound、fragmentation、RSV 或未知 opcode 仍走 generic parser。两条路径都运行在 mirrored receive ring 上，不切换到线性 buffer。`max_payload_bytes` 不放在 parser 中判断，而由 `FrameCodec` / `QueuedFrameCodec` 在各自消费路径中检查。
+
+2026-04-26 最终版 release pinned 结果：
+
+| benchmark | 场景 | p50/p99/p99.9 |
+| --- | --- | --- |
+| `frame_codec_decode_contiguous` | `Feed()` 单个完整 `"tick"` frame | `5/5/6ns` |
+| `frame_codec_decode_contiguous` 7 次 median | 同上，多轮重复 | `4/5/12ns` |
+| `queued_frame_codec_decode_contiguous` 7 次 median | `QueuedFrameCodec` 单帧 | `14/16/67ns` |
+| `frame_codec_decode_coalesced_drain` | 16 帧 coalesced，按每帧归一 | `3/3/12ns` |
+| `session_read_path` | socketpair read + session drive | `396/433/3902ns` |
+| `aquila_direct_poll_decode` | 预填 mirrored ring 后只计 `Poll()` | `5/5/7ns` |
+| `third_party_handle_ws_msg` | parser-only 单帧下限 | `2/2/2ns` |
+| `third_party_coalesced_drain` | parser-only 16 帧 drain | `3/3/12ns` |
 
 ### 方案比较
 
@@ -287,11 +310,11 @@
 | --- | --- | --- | --- |
 | 直接采用三方库 `handleWSMsg()` 风格 | 最低，benchmark 为 `2ns` 量级 | 缺少 `MessageView`、capacity/degraded、ready fallback、TLS/session 边界和完整恢复语义 | 只适合作为 parser 下限参考 |
 | benchmark-only linear prototype | 单帧 direct poll p50 约 `3ns`，coalesced feed p50 约 `2ns` | 保留部分 `MessageView` / status 边界，但没有生产 session 集成和完整容量观测 | 证明线性 receive buffer 有性能空间 |
-| 当前 `aquila` direct delivery 路径 | release pinned：contiguous decode p50 约 `4ns`，coalesced drain p50 约 `3ns` | 生产边界完整，支持 repeated `Poll()` drain 和容量观测 | 当前采用方案 |
+| 当前 `aquila` direct delivery + shared fast primitive 路径 | release pinned：contiguous decode p50 `4-5ns`，coalesced drain p50 约 `3ns`，direct poll p50 约 `5ns` | 生产边界完整，支持 repeated `Poll()` drain、mirrored boundary 和容量观测 | 当前采用方案 |
 | `QueuedFrameCodec` parse-ahead 路径 | release pinned：contiguous decode p50 约 `14ns`，coalesced drain p50 约 `8ns` | 保留 ready metadata ring 语义，但不进入生产 hot path | 仅作为实验 / 对照路径 |
 | 普通 ring + 边界线性化 copy | 初始化简单 | 跨 ring 尾部时引入 copy 或双段 parser 分支 | 不符合 P2-A 低延迟目标 |
 | 双段 payload view | 避免 mirrored mmap | 把边界处理推给所有下游 parser | 不建议作为当前主线 |
-| small-frame specialized parser | 理论上更接近 parser 下限 | 增加一条额外协议分支，需单独证明收益 | 后续候选 |
+| small-frame specialized parser | 已收敛为 shared data-frame fast primitive | 不再重复维护两份 fast path，benchmark 未显示 queued 退化 | 已采用 |
 
 ### 验证记录
 
@@ -302,6 +325,16 @@ direct delivery 已补充并执行：
 - debug / release：`ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 14/14 通过。
 - release pinned：`third_party_frame_codec_comparison_benchmark`、`frame_codec_benchmark`、`session_read_path_benchmark` 已复跑并记录。
 - benchmark-only 线性 prototype：`third_party_frame_codec_comparison_benchmark` 已加入四个 `aquila_linear_*` case，并通过 debug smoke 与 release pinned 运行。
+
+### Decode 主体收口结论
+
+`FrameCodec` decode 主体到 2026-04-26 收口，后续默认不再继续拆 parser 热路径：
+
+- 生产主路径保留 mirrored receive ring、direct one-frame delivery、`MessageView` 生命周期和 capacity/degraded 边界。
+- data-frame fast path 已通过 `TryParseFastServerDataFrameHeader()` 共享给 `FrameCodec` 和 generic parser，避免重复实现。
+- `QueuedFrameCodec` 作为 parse-ahead ready queue 对照路径保留，但不进入生产 hot path。
+- `Feed()` 仍保留给测试、benchmark、replay 或外部 buffer 适配；生产低延迟读路径应优先使用 `WritableSpan()` + socket/TLS read + `CommitWritten()` + `Poll()`，避免额外 memcpy。
+- 后续性能工作应优先转向 session read path、write path、exchange message parser 和 runtime integration；只有真实 profile 指向 frame decode 时再重新打开这部分。
 
 ## 建议结论
 

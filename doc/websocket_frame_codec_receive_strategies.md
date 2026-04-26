@@ -2,7 +2,7 @@
 
 ## 文档信息
 
-- 状态：`draft`
+- 状态：`accepted`（FrameCodec decode 主体已收口）
 - 记录位置：`doc/`
 - 适用范围：`WebSocket frame receive codec`、接收缓冲、payload 生命周期与低延迟路径设计
 - 背景：本文总结当前讨论过的三类完整消息接收/解析方法，并说明 `third_party/websocket` 这类 parser-only 实现为什么不能单独承担生产 receive codec。
@@ -130,6 +130,37 @@ Poll() 返回 MessageView
 ```
 
 这要求 consumer 同步消费，或者在跨线程/异步持有前主动复制。
+
+### FrameCodec decode 主体定稿
+
+当前生产 `FrameCodec` decode 主体采用 **mirrored receive ring + direct one-frame delivery + shared data-frame fast parser**。
+
+主路径职责划分如下：
+
+1. `WritableSpan()` / `CommitWritten()` 让 socket/TLS read 直接写入 codec owned mirrored ring。生产主路径不需要先读到外部 buffer 后再 `Feed()`。
+2. `Poll()` 每次直接从 `parse_abs_` 解析并交付一帧，不经过 ready metadata queue。
+3. `TryParseFastServerDataFrameHeader()` 是 text/binary data frame 的共享 fast primitive，`FrameCodec` 和 `ParseServerFrameHeader()` 都复用它。
+4. `ParseServerFrameHeader()` 继续负责 generic header 解析和 WebSocket 协议结构校验。
+5. `FrameCodec` / `QueuedFrameCodec` 各自负责 `max_payload_bytes` 这类 codec 配置上限，parser 不持有业务容量配置。
+
+当前 fast primitive 的命中条件：
+
+```text
+FIN=1
+RSV=0
+server inbound unmasked
+opcode=text 或 binary
+payload length 使用 7-bit 或 16-bit 编码，也就是 <= 65535
+```
+
+命中后，`FrameCodec::ParseOneFrameDirect()` 直接调用 `BuildDirectMessage()` 构造 `MessageView`。如果未命中，例如 control frame、fragmentation、RSV、masked inbound、unknown opcode 或 64-bit payload length，则回落到 `ParseServerFrameHeader()` 的 generic path。
+
+不再继续优化 decode 主体的原因：
+
+- 小帧 direct decode 已稳定在低 ns 级，继续追逐 `1ns` 级差异容易被 code layout 和测量噪声主导。
+- session read path 已进入约 `400ns` 级，真实链路更可能受 socket/TLS/session dispatch 影响。
+- compact pressure 和 large payload boundary 场景已经证明 mirrored ring 的尾延迟价值。
+- `QueuedFrameCodec` 保留为 parse-ahead / ready queue 对照路径，不污染生产 `FrameCodec` 主路径。
 
 ### 代表实现
 
@@ -501,10 +532,12 @@ socket/TLS read
 
 ## 当前 benchmark 观察
 
-当前 release pinned benchmark 显示：
+当前 release pinned benchmark（2026-04-26，`taskset -c 2`）显示：
 
-- 小帧 parser-only 下限：`third_party_handle_ws_msg` 最快。
-- 完整生产 codec 主路径：`aquila::websocket::FrameCodec` direct path 维持低 ns 级。
+- 小帧 parser-only 下限：`third_party_handle_ws_msg` 为 `2/2/2ns`。
+- 完整生产 codec 主路径：`frame_codec_decode_contiguous` 多轮 median 为 `4/5/12ns`，单次完整 benchmark 为 `5/5/6ns`。
+- 生产式 direct poll 对比：`aquila_direct_poll_decode` 为 `5/5/7ns`。
+- session read path：`396/433/3902ns`。
 - 线性 buffer 在小帧 coalesced/burst 场景 p50 很强。
 - compact pressure 和 large payload boundary 场景下，mirrored ring 明显优于 linear 和 Drogon style。
 - `QueuedFrameCodec` parse-ahead ready queue 明显慢于 direct `FrameCodec`，因此只保留为实验/对照路径。
@@ -517,3 +550,5 @@ socket/TLS read
 框架参考：Owning Message Accumulator Codec / Drogon style
 parser 下限参考：third_party/websocket handleWSMsg
 ```
+
+FrameCodec decode 主体到此冻结：除非真实链路 profile 明确指向 frame decode，否则后续优化应优先转向 session read path、write path、exchange message parser 和 runtime integration。
