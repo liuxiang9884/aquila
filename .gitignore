@@ -12,4 +12,4 @@ verbose
 compile_commands.json
 *.pyc
 venv
-third_party/websocket/
+third_party/
