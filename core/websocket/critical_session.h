@@ -2,7 +2,9 @@
 #define AQUILA_CORE_WEBSOCKET_CRITICAL_SESSION_H_
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -32,7 +34,9 @@ class CriticalSession {
                             ? nullptr
                             : std::make_unique<PreparedWrite*[]>(
                                   config.prepared_write_slots)),
-        pending_capacity_(config.prepared_write_slots) {}
+        pending_capacity_(config.prepared_write_slots) {
+    control_write_.storage = std::span<std::byte>(control_write_storage_);
+  }
 
   void SetConsumer(MessageConsumer consumer) noexcept { consumer_ = consumer; }
 
@@ -83,6 +87,24 @@ class CriticalSession {
   }
 
   void DriveWrite() noexcept {
+    if (HasPartialBusinessWrite()) {
+      DriveBusinessWrites(true);
+      if (should_reconnect_ || HasPartialBusinessWrite()) {
+        return;
+      }
+    }
+
+    if (control_write_pending_) {
+      DriveControlWrite();
+      if (should_reconnect_ || control_write_pending_) {
+        return;
+      }
+    }
+
+    DriveBusinessWrites(false);
+  }
+
+  void DriveBusinessWrites(bool stop_after_front) noexcept {
     while (pending_count_ != 0) {
       PreparedWrite* write = pending_writes_[pending_head_];
       if (write == nullptr || write->write_offset > write->encoded_size) {
@@ -106,6 +128,9 @@ class CriticalSession {
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
         if (write->write_offset == write->encoded_size) {
           CompleteFrontWrite();
+          if (stop_after_front) {
+            return;
+          }
         }
         continue;
       }
@@ -113,7 +138,7 @@ class CriticalSession {
         return;
       }
       TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
-                                    : ConnectionError::kSocketError);
+                                   : ConnectionError::kSocketError);
       return;
     }
   }
@@ -147,7 +172,9 @@ class CriticalSession {
     }
   }
 
-  bool WantsWrite() const noexcept { return pending_count_ != 0; }
+  bool WantsWrite() const noexcept {
+    return control_write_pending_ || pending_count_ != 0;
+  }
 
   bool WantsRead() const noexcept { return !should_reconnect_; }
 
@@ -168,6 +195,11 @@ class CriticalSession {
       prepared_write_arena_.Release(write);
     }
     pending_head_ = 0;
+    control_write_.encoded_size = 0;
+    control_write_.write_offset = 0;
+    control_write_.kind = PayloadKind::kBinary;
+    control_write_pending_ = false;
+    control_queued_ns_ = 0;
     codec_.Reset();
     should_reconnect_ = false;
     last_error_ = ConnectionError::kNone;
@@ -182,7 +214,7 @@ class CriticalSession {
         static_cast<std::uint64_t>(config_.heartbeat_timeout_ms) * 1000U * 1000U;
     if (!awaiting_pong_) {
       if (last_ping_ns_ == 0 || now_ns - last_ping_ns_ >= interval_ns) {
-        if (!EnqueueControlFrame(PayloadKind::kPing, {})) {
+        if (!EnqueueControlFrame(PayloadKind::kPing, {}, now_ns)) {
           // Skip this tick; do not mark awaiting_pong_ so the next call
           // retries once a slot frees up.
           ++metrics_.control_frame_enqueue_failures;
@@ -216,6 +248,77 @@ class CriticalSession {
     --pending_count_;
     ++metrics_.tx_messages;
     prepared_write_arena_.Release(write);
+  }
+
+  bool HasPartialBusinessWrite() const noexcept {
+    if (pending_count_ == 0) {
+      return false;
+    }
+    const PreparedWrite* write = pending_writes_[pending_head_];
+    return write != nullptr && write->write_offset != 0 &&
+           write->write_offset < write->encoded_size;
+  }
+
+  void DriveControlWrite() noexcept {
+    while (control_write_pending_) {
+      if (control_write_.write_offset > control_write_.encoded_size) {
+        TriggerReconnect(ConnectionError::kSocketError);
+        return;
+      }
+
+      const size_t remaining_bytes = static_cast<size_t>(
+          control_write_.encoded_size - control_write_.write_offset);
+      if (remaining_bytes == 0) {
+        CompleteControlWrite();
+        return;
+      }
+
+      const bool first_write = control_write_.write_offset == 0;
+      const std::span<const std::byte> payload(
+          control_write_.storage.data() + control_write_.write_offset,
+          remaining_bytes);
+      const ssize_t written = tls_socket_.WriteSome(payload);
+      if (written > 0) {
+        if (first_write && control_write_.kind == PayloadKind::kPing &&
+            control_queued_ns_ != 0) {
+          RecordHeartbeatPingSendDelay();
+        }
+        control_write_.write_offset += static_cast<std::uint32_t>(written);
+        metrics_.tx_bytes += static_cast<std::uint64_t>(written);
+        if (control_write_.write_offset == control_write_.encoded_size) {
+          CompleteControlWrite();
+        }
+        continue;
+      }
+      if (written < 0 && errno == EAGAIN) {
+        return;
+      }
+      TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
+                                    : ConnectionError::kSocketError);
+      return;
+    }
+  }
+
+  void CompleteControlWrite() noexcept {
+    control_write_.encoded_size = 0;
+    control_write_.write_offset = 0;
+    control_write_.kind = PayloadKind::kBinary;
+    control_write_pending_ = false;
+    control_queued_ns_ = 0;
+    ++metrics_.tx_messages;
+  }
+
+  void RecordHeartbeatPingSendDelay() noexcept {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const std::uint64_t now_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    if (now_ns < control_queued_ns_) {
+      return;
+    }
+    const std::uint64_t delay = now_ns - control_queued_ns_;
+    metrics_.heartbeat_ping_send_delay_ns = delay;
+    metrics_.heartbeat_ping_send_delay_max_ns =
+        std::max(metrics_.heartbeat_ping_send_delay_max_ns, delay);
   }
 
   void HandleDecodeResult(const DecodeResult& decoded) noexcept {
@@ -288,24 +391,24 @@ class CriticalSession {
   }
 
   bool EnqueueControlFrame(PayloadKind kind,
-                           std::span<const std::byte> payload) noexcept {
-    PreparedWrite* write = TryAcquirePreparedWrite();
-    if (write == nullptr) {
+                           std::span<const std::byte> payload,
+                           std::uint64_t queued_ns = 0) noexcept {
+    if (control_write_pending_) {
       return false;
     }
 
-    const auto encoded = codec_.EncodeControl(kind, payload, write->storage);
+    control_write_.storage = std::span<std::byte>(control_write_storage_);
+    const auto encoded =
+        codec_.EncodeControl(kind, payload, control_write_.storage);
     if (!encoded.ok) {
-      prepared_write_arena_.Release(write);
       return false;
     }
 
-    write->encoded_size = static_cast<std::uint32_t>(encoded.bytes.size());
-    write->kind = kind;
-    if (CommitPreparedWrite(write) != SendStatus::kOk) {
-      prepared_write_arena_.Release(write);
-      return false;
-    }
+    control_write_.encoded_size = static_cast<std::uint32_t>(encoded.bytes.size());
+    control_write_.write_offset = 0;
+    control_write_.kind = kind;
+    control_write_pending_ = true;
+    control_queued_ns_ = queued_ns;
     return true;
   }
 
@@ -315,6 +418,11 @@ class CriticalSession {
   Metrics& metrics_;
   MessageConsumer consumer_{};
   FrameCodec codec_;
+  static constexpr size_t kControlWriteStorageBytes = 131;
+  std::array<std::byte, kControlWriteStorageBytes> control_write_storage_{};
+  PreparedWrite control_write_{};
+  bool control_write_pending_{false};
+  std::uint64_t control_queued_ns_{0};
   std::unique_ptr<PreparedWrite*[]> pending_writes_{};
   size_t pending_capacity_{0};
   size_t pending_head_{0};

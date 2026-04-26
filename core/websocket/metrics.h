@@ -19,6 +19,8 @@ struct Metrics {
   std::uint64_t consumer_backpressure_drops{0};
   // Control frames (auto-pong / heartbeat ping) skipped due to slot exhaustion.
   std::uint64_t control_frame_enqueue_failures{0};
+  std::uint64_t heartbeat_ping_send_delay_ns{0};
+  std::uint64_t heartbeat_ping_send_delay_max_ns{0};
   // Bounded codec storage could not make progress without overwriting data.
   std::uint64_t frame_codec_capacity_exhaustions{0};
   std::uint64_t frame_codec_ready_high_watermark{0};

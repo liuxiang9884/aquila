@@ -314,8 +314,7 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(metrics.consumer_backpressure_drops, 0U);
 }
 
-TEST(WebsocketCriticalSessionTest,
-     AutoPongEnqueueFailureSkipsWithoutReconnect) {
+TEST(WebsocketCriticalSessionTest, AutoPongUsesControlSlotWhenQueueFull) {
   auto config = BuildSmallConfig(1);
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);
@@ -339,11 +338,14 @@ TEST(WebsocketCriticalSessionTest,
 
   EXPECT_FALSE(session.ShouldReconnect());
   EXPECT_EQ(session.LastError(), ConnectionError::kNone);
-  EXPECT_EQ(metrics.control_frame_enqueue_failures, 1U);
+  EXPECT_EQ(metrics.control_frame_enqueue_failures, 0U);
+
+  session.DriveWrite();
+  EXPECT_FALSE(socket.written_.empty());
 }
 
 TEST(WebsocketCriticalSessionTest,
-     HeartbeatPingEnqueueFailureSkipsTickWithoutReconnect) {
+     HeartbeatPingUsesControlSlotWhenQueueFull) {
   auto config = BuildSmallConfig(1);
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);
@@ -366,8 +368,59 @@ TEST(WebsocketCriticalSessionTest,
 
   EXPECT_FALSE(session.ShouldReconnect());
   EXPECT_EQ(session.LastError(), ConnectionError::kNone);
-  EXPECT_EQ(metrics.control_frame_enqueue_failures, 1U);
+  EXPECT_EQ(metrics.control_frame_enqueue_failures, 0U);
   EXPECT_EQ(metrics.heartbeat_timeouts, 0U);
+
+  session.DriveWrite();
+  EXPECT_FALSE(socket.written_.empty());
+}
+
+TEST(WebsocketCriticalSessionTest,
+     ControlWriteDoesNotInterruptPartialBusinessFrame) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  socket.max_write_bytes_per_call_ = 2;
+  socket.eagain_after_partial_write_ = false;
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+
+  auto* business = session.TryAcquirePreparedWrite();
+  ASSERT_NE(business, nullptr);
+  std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+              business->storage.begin());
+  business->encoded_size = 4;
+  business->kind = PayloadKind::kText;
+  ASSERT_EQ(session.CommitPreparedWrite(business), SendStatus::kOk);
+
+  session.DriveWrite();
+  ASSERT_EQ(socket.written_.size(), 4U);
+
+  auto* second_business = session.TryAcquirePreparedWrite();
+  ASSERT_NE(second_business, nullptr);
+  std::copy_n(std::as_bytes(std::span{"wxyz", 4}).begin(), 4,
+              second_business->storage.begin());
+  second_business->encoded_size = 4;
+  second_business->kind = PayloadKind::kText;
+  ASSERT_EQ(session.CommitPreparedWrite(second_business), SendStatus::kOk);
+  socket.max_write_bytes_per_call_ = 2;
+  socket.eagain_after_partial_write_ = true;
+  session.DriveWrite();
+  ASSERT_EQ(socket.written_.size(), 6U);
+
+  session.AdvanceHeartbeat(6'000'000'000ULL);
+  session.DriveWrite();
+
+  ASSERT_GE(socket.written_.size(), 8U);
+  EXPECT_EQ(static_cast<char>(socket.written_[4]), 'w');
+  EXPECT_EQ(static_cast<char>(socket.written_[5]), 'x');
+  EXPECT_EQ(static_cast<char>(socket.written_[6]), 'y');
+  EXPECT_EQ(static_cast<char>(socket.written_[7]), 'z');
 }
 
 TEST(WebsocketCriticalSessionTest,
