@@ -25,6 +25,12 @@ enum class SchedulingPolicy : std::uint8_t {
   kRoundRobin,
 };
 
+enum class ClockSource : std::uint8_t {
+  kSteady,
+  kMonotonic,
+  kMonotonicCoarse,
+};
+
 struct RuntimePolicy {
   AffinityMode affinity_mode = AffinityMode::kRequired;
   int io_cpu_id = -1;
@@ -34,6 +40,7 @@ struct RuntimePolicy {
   bool prefault_stack = true;
   bool active_spin = true;
   std::uint32_t spin_iterations_before_clock_check = 4096;
+  ClockSource clock_source = ClockSource::kSteady;
 };
 
 #if defined(__linux__)

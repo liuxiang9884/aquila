@@ -27,6 +27,9 @@ constexpr bool kEnumValueExists = true;
 
 static_assert(kEnumValueExists<ws::ConnectionPhase::kActive>);
 static_assert(kEnumValueExists<ws::ConnectionPhase::kDegraded>);
+static_assert(kEnumValueExists<ws::ClockSource::kSteady>);
+static_assert(kEnumValueExists<ws::ClockSource::kMonotonic>);
+static_assert(kEnumValueExists<ws::ClockSource::kMonotonicCoarse>);
 static_assert(kEnumValueExists<ws::SchedulingPolicy::kFifo>);
 static_assert(
     std::is_same_v<std::underlying_type_t<ws::ConnectionPhase>, std::uint8_t>);
@@ -64,6 +67,8 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(config.read_buffer_bytes, (size_t{1} << 20));
   EXPECT_EQ(config.frame_buffer_bytes, (size_t{1} << 20));
   EXPECT_EQ(config.max_frame_payload_bytes, (size_t{1} << 20));
+  EXPECT_EQ(config.max_reads_per_drive, 1U);
+  EXPECT_FALSE(config.read_until_would_block);
   EXPECT_EQ(config.prepared_write_slots, 2048U);
   EXPECT_EQ(config.prepared_write_bytes, 4096U);
   EXPECT_EQ(config.heartbeat_interval_ms, 5000U);
@@ -82,6 +87,7 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(runtime_policy.scheduling_policy, ws::SchedulingPolicy::kOther);
   EXPECT_EQ(runtime_policy.scheduling_priority, 0);
   EXPECT_TRUE(runtime_policy.prefault_stack);
+  EXPECT_EQ(runtime_policy.clock_source, ws::ClockSource::kSteady);
 
   std::byte bytes[] = {std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
   size_t total_bytes = 0;

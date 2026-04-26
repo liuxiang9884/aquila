@@ -99,6 +99,13 @@ struct ConnectionConfig {
   // Maximum accepted single-frame payload. Keep this close to the largest legal
   // exchange message; larger payloads are protocol errors, not capacity events.
   size_t max_frame_payload_bytes = size_t{1} << 20;
+  // Maximum ReadSome calls per DriveRead. 1 preserves the legacy single-read
+  // path; larger values only help when the read pump is allowed to continue.
+  std::uint32_t max_reads_per_drive = 1;
+  // When false, extra reads only happen when the socket reports buffered
+  // plaintext. When true, DriveRead may continue until EAGAIN or the read
+  // budget is exhausted.
+  bool read_until_would_block = false;
   size_t prepared_write_slots = 2048;
   size_t prepared_write_bytes = 4096;
   std::uint32_t heartbeat_interval_ms = 5000;
