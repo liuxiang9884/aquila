@@ -207,6 +207,14 @@ class TlsSocket {
     return -1;
   }
 
+  size_t PendingReadableBytes() const noexcept {
+    if (ssl_ == nullptr) {
+      return 0;
+    }
+    const int pending = SSL_pending(ssl_);
+    return pending > 0 ? static_cast<size_t>(pending) : 0;
+  }
+
   ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
     wants_read_ = false;
     wants_write_ = false;

@@ -67,6 +67,8 @@ class LocalFdSocket {
     return -1;
   }
 
+  size_t PendingReadableBytes() const noexcept { return 0; }
+
   ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
     const ssize_t result = ::write(fd_, buffer.data(), buffer.size());
     if (result >= 0) {

@@ -119,30 +119,32 @@ class CriticalSession {
   }
 
   void DriveRead() noexcept {
-    auto read_buffer = codec_.WritableSpan();
-    if (read_buffer.empty()) {
-      ++metrics_.frame_codec_capacity_exhaustions;
-      return;
-    }
-
-    const ssize_t received = tls_socket_.ReadSome(read_buffer);
-    if (received > 0) {
-      codec_.CommitWritten(static_cast<size_t>(received));
-      metrics_.rx_bytes += static_cast<std::uint64_t>(received);
-      auto decoded = codec_.Poll();
-      HandleDecodeResult(decoded);
-      while (!should_reconnect_ &&
-             decoded.status == DecodeStatus::kMessageReady) {
-        decoded = codec_.Poll();
-        HandleDecodeResult(decoded);
+    std::uint32_t reads_done = 0;
+    while (reads_done < MaxReadsPerDrive()) {
+      auto read_buffer = codec_.WritableSpan();
+      if (read_buffer.empty()) {
+        ++metrics_.frame_codec_capacity_exhaustions;
+        return;
       }
+
+      const ssize_t received = tls_socket_.ReadSome(read_buffer);
+      if (received > 0) {
+        ++reads_done;
+        codec_.CommitWritten(static_cast<size_t>(received));
+        metrics_.rx_bytes += static_cast<std::uint64_t>(received);
+        DrainDecodedMessages();
+        if (should_reconnect_ || !ShouldContinueReadPump(reads_done)) {
+          return;
+        }
+        continue;
+      }
+      if (received < 0 && errno == EAGAIN) {
+        return;
+      }
+      TriggerReconnect(received == 0 ? ConnectionError::kPeerClosed
+                                     : ConnectionError::kSocketError);
       return;
     }
-    if (received < 0 && errno == EAGAIN) {
-      return;
-    }
-    TriggerReconnect(received == 0 ? ConnectionError::kPeerClosed
-                                   : ConnectionError::kSocketError);
   }
 
   bool WantsWrite() const noexcept { return pending_count_ != 0; }
@@ -260,6 +262,29 @@ class CriticalSession {
         }
         return;
     }
+  }
+
+  void DrainDecodedMessages() noexcept {
+    auto decoded = codec_.Poll();
+    HandleDecodeResult(decoded);
+    while (!should_reconnect_ && decoded.status == DecodeStatus::kMessageReady) {
+      decoded = codec_.Poll();
+      HandleDecodeResult(decoded);
+    }
+  }
+
+  std::uint32_t MaxReadsPerDrive() const noexcept {
+    return config_.max_reads_per_drive == 0 ? 1 : config_.max_reads_per_drive;
+  }
+
+  bool ShouldContinueReadPump(std::uint32_t reads_done) const noexcept {
+    if (reads_done >= MaxReadsPerDrive()) {
+      return false;
+    }
+    if (config_.read_until_would_block) {
+      return true;
+    }
+    return tls_socket_.PendingReadableBytes() != 0;
   }
 
   bool EnqueueControlFrame(PayloadKind kind,

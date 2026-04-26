@@ -44,6 +44,7 @@ std::vector<std::byte> BuildServerPingFrame(std::string_view payload) {
 class FakeTlsSocket final {
  public:
   ssize_t ReadSome(std::span<std::byte> buffer) noexcept {
+    ++read_calls_;
     if (read_chunks_.empty()) {
       if (eof_on_empty_) {
         eof_on_empty_ = false;
@@ -67,6 +68,12 @@ class FakeTlsSocket final {
     return static_cast<ssize_t>(bytes);
   }
 
+  size_t PendingReadableBytes() const noexcept {
+    return pending_readable_ && !read_chunks_.empty()
+               ? read_chunks_.front().size()
+               : 0;
+  }
+
   ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
     if (pending_write_eagain_) {
       pending_write_eagain_ = false;
@@ -84,6 +91,8 @@ class FakeTlsSocket final {
     return static_cast<ssize_t>(chunk);
   }
 
+  size_t read_calls_{0};
+  bool pending_readable_{false};
   size_t max_write_bytes_per_call_{0};
   bool eagain_after_partial_write_{true};
   bool pending_write_eagain_{false};
@@ -237,6 +246,53 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(counter.calls, 2U);
   EXPECT_EQ(metrics.consumer_backpressure_drops, 2U);
   EXPECT_EQ(metrics.rx_messages, 0U);
+}
+
+TEST(WebsocketCriticalSessionTest, BoundedReadPumpDrainsPendingChunks) {
+  auto config = BuildSmallConfig(4);
+  config.max_reads_per_drive = 3;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  socket.pending_readable_ = true;
+  socket.read_chunks_.push_back(BuildServerTextFrame("a"));
+  socket.read_chunks_.push_back(BuildServerTextFrame("b"));
+  socket.read_chunks_.push_back(BuildServerTextFrame("c"));
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+  session.DriveRead();
+
+  EXPECT_EQ(bytes, 3U);
+  EXPECT_EQ(metrics.rx_messages, 3U);
+  EXPECT_EQ(metrics.rx_bytes, 9U);
+  EXPECT_EQ(socket.read_calls_, 3U);
+}
+
+TEST(WebsocketCriticalSessionTest, BoundedReadPumpDoesNotProbeWithoutPending) {
+  auto config = BuildSmallConfig(4);
+  config.max_reads_per_drive = 3;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  socket.pending_readable_ = false;
+  socket.read_chunks_.push_back(BuildServerTextFrame("a"));
+  socket.read_chunks_.push_back(BuildServerTextFrame("b"));
+
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+  session.DriveRead();
+
+  EXPECT_EQ(bytes, 1U);
+  EXPECT_EQ(metrics.rx_messages, 1U);
+  EXPECT_EQ(metrics.rx_bytes, 3U);
+  EXPECT_EQ(socket.read_calls_, 1U);
 }
 
 TEST(WebsocketCriticalSessionTest,
