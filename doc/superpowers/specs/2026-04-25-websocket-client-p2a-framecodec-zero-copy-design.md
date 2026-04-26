@@ -280,14 +280,27 @@ WritableSpan / Feed / Poll detects no bounded storage can safely hold progress
 
 ## 配置
 
-`ConnectionConfig` 增加两个字段：
+当前 `ConnectionConfig` 中与 receive codec 容量相关的字段：
 
 ```cpp
+size_t read_buffer_bytes = size_t{1} << 20;
+size_t frame_buffer_bytes = size_t{1} << 20;
 size_t max_frame_payload_bytes = size_t{1} << 20;
-size_t ready_frame_slots = 1024;
 ```
 
-保留现有 `frame_buffer_bytes`，语义收敛为 receive mirrored ring 的 requested capacity。`max_frame_payload_bytes` 是单帧 payload 上限。`FrameCodec` 构造时保证实际 mirrored capacity 至少能容纳 `max_frame_payload_bytes + 14` 字节。
+`read_buffer_bytes` 保留给 legacy / external-buffer adapter 路径；生产 `CriticalSession` 读路径直接写入 `FrameCodec::WritableSpan()` 返回的 mirrored receive ring，不依赖该字段。
+
+`frame_buffer_bytes` 是 receive mirrored ring 的 requested capacity。`FrameCodec` 构造时会保证实际 mirrored capacity 至少能容纳 `max_frame_payload_bytes + 14` 字节，随后 `MirroredBuffer` 再按 page / power-of-two 对齐。因此默认 `frame_buffer_bytes = 1 MiB` 且 `max_frame_payload_bytes = 1 MiB` 时，实际 ring 会因为 `1 MiB + 14` 的 required capacity 对齐到 `2 MiB`。
+
+`max_frame_payload_bytes` 是单帧 payload 上限。超过该上限返回 `kProtocolError`，保持断链 / 重连语义；它应该按交易所合法消息上限配置，而不是用来吸收异常大包。
+
+推荐起点：
+
+- 高频增量行情：`max_frame_payload_bytes = 64 KiB` 或 `128 KiB`，`frame_buffer_bytes = 256 KiB` 或 `512 KiB`。
+- 混合行情与偶发快照：`max_frame_payload_bytes = 256 KiB` 或 `512 KiB`，`frame_buffer_bytes = 512 KiB` 或 `1 MiB`。
+- 大快照 / replay / 未知上游：若希望实际 ring 保持 `1 MiB`，使用 `max_frame_payload_bytes = 1 MiB - 14`；若必须接收完整 `1 MiB` payload，显式接受 `2 MiB` ring。
+
+容量耗尽相关 degraded 阈值由 `DegradedThresholds::frame_codec_capacity_events_per_second` 控制，默认 `1`。生产中应保持严格：容量事件表示 bounded receive storage 无法安全推进，应触发观测和降级，而不是静默扩容。
 
 ## 测试策略
 

@@ -162,6 +162,41 @@ payload length 使用 7-bit 或 16-bit 编码，也就是 <= 65535
 - compact pressure 和 large payload boundary 场景已经证明 mirrored ring 的尾延迟价值。
 - `QueuedFrameCodec` 保留为 parse-ahead / ready queue 对照路径，不污染生产 `FrameCodec` 主路径。
 
+### FrameCodec 配置建议
+
+`FrameCodec` 相关容量参数不是越大越好。高频行情主路径更关注确定性和尾延迟，所以配置目标是：足够容纳交易所合法消息和短 burst，同时让异常大包、消费停滞或容量估计错误尽快暴露。
+
+相关字段：
+
+- `max_frame_payload_bytes`：单个 WebSocket frame payload 上限。超过该值返回 `kProtocolError`，保持断链 / 重连语义。它应该贴近交易所协议允许的最大合法消息，而不是按机器内存随意放大。
+- `frame_buffer_bytes`：mirrored receive ring 的 requested capacity。`FrameCodec` 构造时会先保证它至少能容纳 `max_frame_payload_bytes + 14` 字节，随后 `MirroredBuffer` 再按 page / power-of-two 对齐得到实际容量。
+- `read_buffer_bytes`：保留给 legacy 或外部 buffer adapter 路径。当前 `CriticalSession` 生产读路径是 `WritableSpan()` -> socket/TLS read -> `CommitWritten()` -> `Poll()`，不会先读入 `read_buffer_bytes` 再复制进 codec。
+- `degraded.frame_codec_capacity_events_per_second`：容量耗尽事件进入 degraded 的阈值。默认 `1` 是刻意严格的设置；生产中一次容量耗尽就说明 bounded receive storage 无法安全推进，应当作为降级信号观察，而不是静默扩容。
+
+一个容易踩到的细节是默认值：
+
+```cpp
+frame_buffer_bytes = 1 MiB;
+max_frame_payload_bytes = 1 MiB;
+```
+
+因为最大 WebSocket frame header 是 `14` 字节，实际 required capacity 是 `1 MiB + 14`，再经过 power-of-two 对齐后，默认 receive ring 实际会变成 `2 MiB`。如果希望实际 ring 严格保持 `1 MiB` 量级，可以把 `max_frame_payload_bytes` 设为 `1 MiB - 14`；如果必须接受完整 `1 MiB` payload，应显式接受 `2 MiB` ring 的内存和 cache footprint。
+
+推荐起点：
+
+| 场景 | `max_frame_payload_bytes` | `frame_buffer_bytes` | 容量事件阈值 | 说明 |
+| --- | --- | --- | --- | --- |
+| 高频增量行情 | `64 KiB` 或 `128 KiB` | `256 KiB` 或 `512 KiB` | `1` | 适合常规 order book / trade / ticker 增量消息，优先控制 footprint 和异常暴露速度。 |
+| 混合行情与偶发快照 | `256 KiB` 或 `512 KiB` | `512 KiB` 或 `1 MiB` | `1` | 适合同一连接上存在较大订阅响应、批量 diff 或偶发 snapshot 的场景。 |
+| 大快照 / replay / 未知上游 | `1 MiB - 14` 搭配 `1 MiB` ring，或 `1 MiB` payload 搭配 `2 MiB` ring | 按左侧选择 | 生产 `1`，离线 replay 可放宽 | 适合还没有完成协议画像或需要接收大消息的阶段；上线前应回收为更贴近真实上限的配置。 |
+
+调参顺序：
+
+1. 先用真实交易所频道样本确认最大合法 payload，而不是用 benchmark 小帧估计。
+2. 设定 `max_frame_payload_bytes` 为“协议合法最大值 + 明确余量”；超过后应视为协议或订阅异常。
+3. 设定 `frame_buffer_bytes` 至少覆盖 `max_frame_payload_bytes + 14`，再按 burst、partial frame 和 cache footprint 做权衡。
+4. 线上目标是 `frame_codec_capacity_exhaustions == 0`。一旦出现容量事件，先确认是否有合法大包、consumer 停滞或配置过小，再决定是否扩大容量。
+
 ### 代表实现
 
 - `aquila::websocket::FrameCodec`：当前生产主路径。

@@ -76,6 +76,9 @@ struct DegradedThresholds {
   std::uint32_t recover_ticks = 16;
   std::uint32_t backpressure_drops_per_second = 10;
   std::uint32_t awaiting_pong_timeout_ms = 3000;
+  // Capacity exhaustion events per second that move the session to degraded.
+  // Keep this strict in production: capacity exhaustion means bounded receive
+  // storage could not make progress, not a normal market-data burst.
   std::uint32_t frame_codec_capacity_events_per_second = 1;
   // 0 reuses RuntimePolicy::spin_iterations_before_clock_check.
   std::uint32_t evaluation_interval_iterations = 0;
@@ -86,8 +89,15 @@ struct ConnectionConfig {
   std::string service = "443";
   std::string target = "/v4/ws/usdt";
   bool enable_tls = true;
+  // Reserved for legacy/external-buffer read paths. CriticalSession's hot path
+  // reads directly into FrameCodec's mirrored receive ring instead.
   size_t read_buffer_bytes = size_t{1} << 20;
+  // Requested mirrored receive-ring capacity. FrameCodec raises this to at
+  // least max_frame_payload_bytes plus the maximum WebSocket frame header, and
+  // MirroredBuffer rounds the actual capacity to a page-aligned power of two.
   size_t frame_buffer_bytes = size_t{1} << 20;
+  // Maximum accepted single-frame payload. Keep this close to the largest legal
+  // exchange message; larger payloads are protocol errors, not capacity events.
   size_t max_frame_payload_bytes = size_t{1} << 20;
   size_t prepared_write_slots = 2048;
   size_t prepared_write_bytes = 4096;
