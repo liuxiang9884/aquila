@@ -15,7 +15,9 @@
 - 修改：`core/websocket/types.h`
   - 新增 read pump 配置。
 - 修改：`core/websocket/runtime_policy.h`
-  - 新增 `ClockSource`、`ClockSource clock_source` 和 `NowNs(ClockSource)` helper。
+  - 新增 `ClockSource` 和 `ClockSource clock_source`。
+- 新建：`core/websocket/runtime_clock.h`
+  - 新增 `NowNs(ClockSource)` helper，避免在轻量 policy/type 头里引入 `<chrono>`。
 - 修改：`core/websocket/tls_socket.h`
   - 新增 `PendingReadableBytes() const noexcept`。
 - 修改：`core/websocket/critical_session.h`
@@ -486,7 +488,7 @@ BENCHMARK_CAPTURE(BenchmarkClockSource, monotonic_coarse,
 
 - [ ] **Step 3：实现 clock helper**
 
-在 `core/websocket/runtime_policy.h` 增加 inline helper：
+新建 `core/websocket/runtime_clock.h`，增加 inline helper：
 
 ```cpp
 inline std::uint64_t NowNs(ClockSource source) noexcept {
@@ -600,8 +602,9 @@ ctest --test-dir build/debug -R websocket_ --output-on-failure
 - [ ] **Step 7：提交**
 
 ```bash
-git add core/websocket/runtime_policy.h core/websocket/active_spin_loop.h \
-        core/websocket/websocket_client.h benchmark/websocket/CMakeLists.txt \
+git add core/websocket/runtime_policy.h core/websocket/runtime_clock.h \
+        core/websocket/active_spin_loop.h core/websocket/websocket_client.h \
+        benchmark/websocket/CMakeLists.txt \
         benchmark/websocket/clock_source_benchmark.cpp
 git commit -m "core: add websocket runtime clock source"
 ```

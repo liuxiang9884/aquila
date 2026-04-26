@@ -191,7 +191,6 @@ class WebSocketClient {
     void DriveRead() noexcept {
       if (!stop_requested.load()) {
         core.DriveRead();
-        EvaluateDegradedIfDue();
       }
     }
 
@@ -201,22 +200,38 @@ class WebSocketClient {
       }
     }
 
+    std::uint32_t ClockCheckInterval(
+        std::uint32_t default_interval) const noexcept {
+      if (evaluation_interval_iterations == 0) {
+        return default_interval;
+      }
+      return default_interval < evaluation_interval_iterations
+                 ? default_interval
+                 : evaluation_interval_iterations;
+    }
+
+    void AdvanceClock(std::uint64_t now_ns,
+                      std::uint32_t elapsed_iterations) noexcept {
+      if (!stop_requested.load()) {
+        core.AdvanceHeartbeat(now_ns);
+        EvaluateDegradedIfDue(now_ns, elapsed_iterations);
+      }
+    }
+
     bool ShouldReconnect() const noexcept {
       return stop_requested.load(std::memory_order_acquire) ||
              core.ShouldReconnect();
     }
 
-    void EvaluateDegradedIfDue() noexcept {
-      ++iterations_since_evaluation;
+    void EvaluateDegradedIfDue(std::uint64_t now_ns,
+                               std::uint32_t elapsed_iterations) noexcept {
+      iterations_since_evaluation += elapsed_iterations;
       if (iterations_since_evaluation < evaluation_interval_iterations) {
         return;
       }
       iterations_since_evaluation = 0;
-      const auto now = std::chrono::steady_clock::now().time_since_epoch();
       const auto evaluation = degraded_evaluator.Evaluate(DegradedSample{
-          .now_ns = static_cast<std::uint64_t>(
-              std::chrono::duration_cast<std::chrono::nanoseconds>(now)
-                  .count()),
+          .now_ns = now_ns,
           .pending_write_count =
               static_cast<std::uint64_t>(core.PendingWriteCount()),
           .prepared_write_slots =
