@@ -154,7 +154,7 @@ Gate private endpoint inventory：
 |---|---|---|
 | 现货 WebSocket v4 | `wss://spotws-private.gateapi.io/ws/v4/` | `--host spotws-private.gateapi.io --port 443 --target /ws/v4/ --tls` |
 | 衍生品 WebSocket v4 | `wss://fxws-private.gateapi.io/v4/ws/usdt` | `--host fxws-private.gateapi.io --port 443 --target /v4/ws/usdt --tls` |
-| 衍生品 WebSocket v4 SBE | `ws://fxws-private.gateapi.io/v4/ws/usdt/sbe` | `--host fxws-private.gateapi.io --port 80 --target /v4/ws/usdt/sbe --no-tls` |
+| 衍生品 WebSocket v4 明文 | `ws://fxws-private.gateapi.io/v4/ws/usdt` | `--host fxws-private.gateapi.io --port 80 --target /v4/ws/usdt --no-tls` |
 | API v4 HTTP | `https://apiv4-private.gateapi.io` | 不适用于 `websocket_probe`；供后续 REST / 交易适配使用 |
 
 GateIO public WebSocket handshake smoke：
@@ -179,13 +179,13 @@ timeout 15s ./build/debug/tools/websocket_probe \
   --cpu 2
 ```
 
-Gate private SBE 明文 WebSocket handshake smoke 示例：
+Gate private 明文 WebSocket handshake smoke 示例：
 
 ```bash
 timeout 15s ./build/debug/tools/websocket_probe \
   --host fxws-private.gateapi.io \
   --port 80 \
-  --target /v4/ws/usdt/sbe \
+  --target /v4/ws/usdt \
   --no-tls \
   --cpu 2
 ```
@@ -219,7 +219,7 @@ probe 用于验证 cold path 能进入 active state，并输出 state transition
   --private-cpu 3
 ```
 
-如果 private 侧需要比较明文 `ws://` SBE endpoint，可分别指定 private port、target 和 TLS 开关：
+如果 private 侧需要比较明文 `ws://` endpoint，可分别指定 private port、target 和 TLS 开关：
 
 ```bash
 ./build/release/tools/websocket_latency_compare \
@@ -229,7 +229,7 @@ probe 用于验证 cold path 能进入 active state，并输出 state transition
   --public-tls \
   --private-host fxws-private.gateapi.io \
   --private-port 80 \
-  --private-target /v4/ws/usdt/sbe \
+  --private-target /v4/ws/usdt \
   --private-no-tls \
   --contract BTC_USDT \
   --duration-ms 30000
