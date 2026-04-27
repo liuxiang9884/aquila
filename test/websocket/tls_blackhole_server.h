@@ -36,6 +36,7 @@ enum class TlsServerAction {
   kBlackholeTcp,
   kHandshake101ThenClose,
   kHandshake101ThenStayOpen,
+  kHandshake101ThenDrain,
 };
 
 class TlsBlackholeServer {
@@ -87,6 +88,10 @@ class TlsBlackholeServer {
 
   size_t switched_count() const noexcept {
     return switched_count_.load(std::memory_order_acquire);
+  }
+
+  size_t drained_bytes() const noexcept {
+    return drained_bytes_.load(std::memory_order_acquire);
   }
 
   bool WaitForAccepted(size_t count,
@@ -273,6 +278,8 @@ class TlsBlackholeServer {
       while (!stop_.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
+    } else if (action == TlsServerAction::kHandshake101ThenDrain) {
+      DrainApplicationData(ssl);
     }
 
     SSL_shutdown(ssl);
@@ -316,6 +323,25 @@ class TlsBlackholeServer {
            static_cast<int>(response.size());
   }
 
+  void DrainApplicationData(SSL* ssl) noexcept {
+    std::array<std::byte, 4096> buffer{};
+    while (!stop_.load(std::memory_order_acquire)) {
+      const int received = SSL_read(ssl, buffer.data(),
+                                    static_cast<int>(buffer.size()));
+      if (received > 0) {
+        drained_bytes_.fetch_add(static_cast<size_t>(received),
+                                 std::memory_order_acq_rel);
+        continue;
+      }
+      const int error = SSL_get_error(ssl, received);
+      if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      return;
+    }
+  }
+
   static std::string_view FindHeader(std::string_view request,
                                      std::string_view header) noexcept {
     size_t line_begin = 0;
@@ -343,6 +369,7 @@ class TlsBlackholeServer {
   std::atomic<bool> stop_{false};
   std::atomic<size_t> accepted_count_{0};
   std::atomic<size_t> switched_count_{0};
+  std::atomic<size_t> drained_bytes_{0};
   mutable std::mutex mutex_{};
   std::condition_variable cv_{};
   int listen_fd_{-1};

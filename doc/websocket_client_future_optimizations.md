@@ -15,7 +15,7 @@
 
 1. **WebSocket core read path**：`FrameCodec` decode 主体暂时冻结。下一步优先补 TLS read、真实 consumer / 行情解析、read pump 参数实验。
 2. **Live feed 稳定性**：双 private WS 的毫秒级差异不能简单归因到 codec、TLS 或 CPU 绑定。下一步建议采用 warm-up feed selection 作为基线，先选 primary，再保留 secondary 作为 standby / health monitor。
-3. **Write path**：dedicated control slot 用户态路径已经很轻。下一步优先补 TLS write、真实订单 payload、client masking / RNG 成本证据。
+3. **Write path**：dedicated control slot 用户态路径已经很轻；`session_tls_write_path` 已补齐单帧 TLS write 基线。下一步优先拆 `SSL_write()`、client masking / RNG 和真实订单 payload 成本。
 4. **Runtime loop**：mixed read/write benchmark 已证明 unbounded business write 会线性推迟 read 交付；当前已用 `max_business_writes_per_drive = 1` 作为默认 pacing。下一步再看 atomic stop、读写顺序和 idle pause。
 
 当前不建议：
@@ -553,12 +553,37 @@ P2-B 已增加 dedicated control write slot。当前 benchmark 表明 control sl
 
 #### 8.1 增加 TLS write path benchmark
 
-这是 write 侧最高优先级。真实 `wss://` 发送路径必然经过 `SSL_write()` 和 TLS encrypt，当前 `session_write_path` 没覆盖这部分。
+状态：已完成 single-frame 基线。
 
-建议新增 benchmark：
+真实 `wss://` 发送路径必然经过 `SSL_write()` 和 TLS encrypt。此前
+`session_write_path` 只覆盖 plain local socket，不覆盖 TLS。当前新增：
 
 ```text
-session_write_path_tls_single_frame
+session_tls_write_path
+```
+
+benchmark 使用本地 TLS websocket drain server，client 完成 TLS + WebSocket handshake
+后，循环提交 64B prepared write，再经 `CriticalSession<TlsSocket>::DriveWrite()` 写出；
+server 侧持续 `SSL_read()` drain application data。
+
+release pinned 结果：
+
+| 场景 | p50 / p99 / p99.9 |
+| --- | --- |
+| `session_write_path` plain local socket | `416 / 443 / 696ns` |
+| `session_tls_write_path` local TLS drain | `895 / 1149 / 13247ns` |
+| `frame_codec_encode` | `367 / 522 / 801ns` |
+
+结论：
+
+- TLS write 单帧 p50 约为 plain write 的 2 倍以上。
+- `frame_codec_encode` 本身也不便宜，主要由 masking/RNG/XOR/header 写入组成，下一步需要拆分。
+- 当前 benchmark 仍是 local TLS loopback，不等价于真实交易所网络，但足以说明 write 侧不能只优化 `CriticalSession` pending queue。
+
+后续建议继续补：
+
+
+```text
 session_write_path_tls_burst_business_queue
 session_write_path_tls_control_slot_full_business_queue
 session_write_path_tls_partial_write
@@ -566,7 +591,6 @@ session_write_path_tls_partial_write
 
 分别测：
 
-- `tls_single_frame`：一个业务 frame 从 prepared write 到 `SSL_write()` 完成。
 - `tls_burst_business_queue`：多个业务 frame 连续 pending，测 write queue drain 和 TLS send buffer 行为。
 - `tls_control_slot_full_business_queue`：业务 queue 满时，heartbeat ping / auto-pong 经过 dedicated control slot 的真实 TLS write 成本。
 - `tls_partial_write`：`SSL_write()` 或底层 socket 只写出部分 frame 时，测 partial write 状态恢复和后续 drain 成本。
@@ -1019,9 +1043,9 @@ if (!did_write && !did_read) {
 
 ### 路线 C：Write path
 
-1. **TLS write path benchmark**：先把 `SSL_write()`、TLS encrypt、partial write 纳入基准。
-2. **真实订单 payload benchmark**：加入下单、撤单、签名、序列化，确认 WebSocket write 是否是瓶颈。
-3. **masking / RNG profile**：确认 `RAND_bytes()` 和 payload XOR 在 write path 的占比。
+1. **TLS write path benchmark**：已补 single-frame `session_tls_write_path`；后续继续补 burst、control 和 partial write。
+2. **masking / RNG profile**：确认 `RAND_bytes()` 和 payload XOR 在 write path 的占比。
+3. **真实订单 payload benchmark**：加入下单、撤单、签名、序列化，确认 WebSocket write 是否是瓶颈。
 4. **mask key pool 实验**：只有当 RNG 成本明显时，再实现 per-session mask key ring。
 5. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
 6. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。

@@ -5,6 +5,7 @@ set(WEBSOCKET_BENCHMARK_TARGETS
     degraded_evaluator_benchmark
     active_spin_benchmark
     session_write_path_benchmark
+    session_tls_write_path_benchmark
     session_read_path_benchmark
     session_mixed_path_benchmark
     clock_source_benchmark
