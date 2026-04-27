@@ -3,21 +3,17 @@
 ## 文档信息
 
 - 版本：`v0.3`
-- 状态：`P3 收尾中`（P0 / P1 / P2-A / P2-B 已完成，当前 P3）
+- 状态：`已完成`（P0 / P1 / P2-A / P2-B / P3 均已关闭）
 - 创建日期：`2026-04-24`
-- 文档定位：对 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 中 G1–G11 共 11 条差距的整体分阶段处置计划。本文件是**索引 / 路线图**，不承载具体任务拆分；每个 Phase 对应一份独立的 plan 文档，按需展开。
+- 文档定位：对 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 中 G1-G11 共 11 条差距的整体分阶段处置路线图。本文件是**归档索引 / 路线图**；各阶段执行 plan 已在完成后删除，闭环证据以 review 条目、设计规格和总结文档为准。
 
 ## 关联文档
 
 - `doc/websocket_client_design_v1.0.md`
 - `doc/reviews/2026-04-24-websocket-client-gap-analysis.md`
-- `doc/superpowers/plans/2026-04-23-websocket-client-minimal-hft.md`
-- `doc/superpowers/plans/2026-04-24-websocket-client-p0-production-safety.md`（Phase 0）
-- `doc/superpowers/plans/2026-04-24-websocket-client-p1-reconnect-and-degraded.md`（Phase 1）
 - `doc/websocket_frame_codec_receive_strategies.md`（Phase 2-A 总结）
-- `doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`（Phase 2-B）
+- `doc/superpowers/specs/2026-04-25-websocket-client-p2a-framecodec-zero-copy-design.md`（Phase 2-A 设计）
 - `doc/superpowers/specs/2026-04-26-websocket-client-p2b-hotpath-pacing-design.md`（Phase 2-B 设计）
-- `doc/superpowers/plans/2026-04-27-websocket-client-p3-cleanup-validation.md`（Phase 3）
 - `doc/websocket_client_future_optimizations.md`（P3 后优化 backlog）
 
 ## 目标
@@ -26,23 +22,21 @@
 
 ## Gap → Phase 分配
 
-| Gap | 主题 | 阶段 | 所属 plan |
+| Gap | 主题 | 阶段 | 闭环记录 |
 |---|---|---|---|
-| G6 | 握手 nonce 硬编码 | **P0** | `2026-04-24-websocket-client-p0-production-safety.md` |
+| G6 | 握手 nonce 硬编码 | **P0** | review G6 |
 | G3 | 背压被当作致命错误 | **P0** | 同上 |
 | G5 | 冷路径无超时 | **P0** | 同上 |
-| G7 | 无重连 / 退避 / 失败分类 | **P1** | `2026-04-24-websocket-client-p1-reconnect-and-degraded.md` |
+| G7 | 无重连 / 退避 / 失败分类 | **P1** | review G7 |
 | G9 | 缺少 `Degraded` 状态 | **P1** | 同上 |
 | G1 | 热路径动态分配 + 多次 memcpy | **P2-A** | `websocket_frame_codec_receive_strategies.md` / `2026-04-25-websocket-client-p2a-framecodec-zero-copy-design.md` |
 | G10 | 容量耗尽未显式 fail-fast | **P2-A** | 同上（与 G1 合并设计） |
-| G2 | `DriveRead` 单次 `ReadSome` | **P2-B** | `2026-04-26-websocket-client-p2b-hotpath-pacing.md` |
+| G2 | `DriveRead` 单次 `ReadSome` | **P2-B** | review G2 / P2-B 设计规格 |
 | G4 | 心跳与业务写无协调 | **P2-B** | 同上 |
 | G8 | 心跳粒度绑在 spin iteration | **P2-B** | 同上 |
-| G11 | 构建图形态核对 | **P3** | `2026-04-27-websocket-client-p3-cleanup-validation.md` |
+| G11 | 构建图形态核对 | **P3** | review G11 / 本文 P3 验证证据 |
 
 ## Phase 0 — 生产可用性修复（已完成）
-
-**plan**：`2026-04-24-websocket-client-p0-production-safety.md`
 
 **范围**：G6（随机 nonce）、G3（背压 ≠ 致命）、G5（冷路径总预算超时）。
 
@@ -60,8 +54,6 @@
 ---
 
 ## Phase 1 — 重连与降级（已完成）
-
-**plan**：`doc/superpowers/plans/2026-04-24-websocket-client-p1-reconnect-and-degraded.md`
 
 **范围**：G7 + G9
 
@@ -96,8 +88,6 @@
 
 ### Phase 2-B：热路径节奏（读循环 + 心跳 + 时钟）（已完成）
 
-**plan**：`doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`
-
 **范围**：G2 + G4 + G8
 
 **为什么合并**：三条都是 spin loop 中"读 / 写 / 时钟"节奏问题，分开改会互相干扰彼此的 benchmark 基线。
@@ -111,9 +101,7 @@
 
 ---
 
-## Phase 3 — 收尾（当前）
-
-**plan**：`doc/superpowers/plans/2026-04-27-websocket-client-p3-cleanup-validation.md`
+## Phase 3 — 收尾（已完成）
 
 **范围**：
 - G11 构建图核对（已基本核实 `aquila_core` 为 STATIC，与最初 plan 一致）
