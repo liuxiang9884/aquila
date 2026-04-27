@@ -122,9 +122,29 @@
 - 把 review 文档中 G1–G11 的"处理方案 / 关联提交 / 验证证据 / 确认日期"块逐条补齐（review 末尾已预留模板）
 
 **产出证据**：
-- 长稳运行（≥ 4h）内存与水位稳定性
-- p99.9 长时段分布
-- review 文档完成闭环
+
+- G11 构建图已核对并补齐 P2 新增 websocket headers 到 `core/websocket/CMakeLists.txt` 与 `core/aquila_core.cpp`。
+- `README.md` 已补当前构建、测试、benchmark、live probe 和长稳验证指引。
+- `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 已回填 G11 处理方案和验证证据。
+
+**P3 验证证据（2026-04-27）**：
+
+- `./build.sh debug`：通过。
+- `ctest --test-dir build/debug -R websocket_ --output-on-failure`：14/14 通过。
+- `./build.sh release`：通过。
+- `ctest --test-dir build/release -R websocket_ --output-on-failure`：14/14 通过。
+- release benchmark smoke（`taskset -c 2`）：
+  - `session_read_path`：p50/p99/p99.9 = 409/449/2566 ns。
+  - `session_read_path_burst_single_read`：79/109/1230 ns。
+  - `session_read_path_burst_bounded_pump`：78/100/1276 ns。
+  - `session_write_path`：419/446/1207 ns。
+  - `session_write_path_control_slot_full_business_queue`：39/41/46 ns。
+  - `active_spin`：42/43/44 ns。
+  - `clock_source_steady`：52/54/56 ns。
+  - `clock_source_monotonic`：51/54/123 ns。
+  - `clock_source_monotonic_coarse`：34/35/35 ns。
+  - `runtime_loopback`：3465160/3788280/3800920 ns。
+- live probe：本轮未执行外网 live smoke；4h live 长稳保留为合并 `main` 前按环境执行的 release gate。
 
 ---
 
@@ -159,4 +179,4 @@ P1 (G7 / G9)
 - [x] P1：关闭 G7 / G9
 - [x] P2-A：关闭 G1 / G10
 - [x] P2-B：关闭 G2 / G4 / G8
-- [ ] P3：关闭 G11，补验证证据和最终交付文档
+- [x] P3：关闭 G11，补本地验证证据和最终交付文档（4h live 长稳保留为合并 `main` 前 release gate）

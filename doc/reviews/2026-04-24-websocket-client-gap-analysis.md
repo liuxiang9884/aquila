@@ -263,7 +263,7 @@
   - 是否需要改成 INTERFACE（纯 header-only 时更合适）；切换成本、对下游链接的影响
   - 按 plan 要求最终是 STATIC，还是根据现状调整计划
 - 处理方案：fix — 当前构建图保持 `aquila_core` 为 STATIC library，`core/aquila_core.cpp` 作为 build anchor，`core/websocket/CMakeLists.txt` 通过 `target_sources(aquila_core PRIVATE ...)` 把 header-only websocket 实现纳入构建图可见范围。该形态与最初 plan 的 STATIC 目标一致，不需要改成 INTERFACE。本阶段补齐 P2 后新增的 websocket headers：`degraded_evaluator.h`、`frame_codec_types.h`、`frame_parser.h`、`mirrored_buffer.h`、`queued_frame_codec.h`、`reconnect_classifier.h`、`runtime_clock.h`。
-- 验证证据：`CMakeLists.txt` 顶层已 `enable_testing()` 并加入 `core` / `tools` / `test` / `benchmark`；`core/CMakeLists.txt` 定义 `add_library(aquila_core STATIC aquila_core.cpp)` 并公开链接 `Threads::Threads`、`fmt::fmt-header-only`、`OpenSSL::SSL`、`OpenSSL::Crypto`；`core/websocket/CMakeLists.txt` 已列入当前 websocket headers；`core/aquila_core.cpp` include websocket public headers 作为编译锚点。debug / release build 与 websocket ctest 在 P3 验证阶段执行。
+- 验证证据：`CMakeLists.txt` 顶层已 `enable_testing()` 并加入 `core` / `tools` / `test` / `benchmark`；`core/CMakeLists.txt` 定义 `add_library(aquila_core STATIC aquila_core.cpp)` 并公开链接 `Threads::Threads`、`fmt::fmt-header-only`、`OpenSSL::SSL`、`OpenSSL::Crypto`；`core/websocket/CMakeLists.txt` 已列入当前 websocket headers；`core/aquila_core.cpp` include websocket public headers 作为编译锚点。P3 验证中 `./build.sh debug`、`ctest --test-dir build/debug -R websocket_ --output-on-failure`（14/14）、`./build.sh release`、`ctest --test-dir build/release -R websocket_ --output-on-failure`（14/14）均通过。
 - 确认日期：2026-04-27
 
 ---
