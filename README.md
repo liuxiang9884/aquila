@@ -181,6 +181,42 @@ timeout 15s ./build/debug/tools/websocket_probe \
 
 probe 用于验证 cold path 能进入 active state，并输出 state transition、错误码和最终 metrics。它不是长稳健康监控工具。
 
+## Public / Private 延迟对比
+
+`websocket_latency_compare` 用于同时连接 Gate public / private 衍生品 WebSocket v4，订阅同一个 `futures.book_ticker` 合约，并按 `symbol:update_id` 匹配同一条行情在两条链路上的本机到达时间。
+
+示例：
+
+```bash
+./build/release/tools/websocket_latency_compare \
+  --public-host fx-ws.gateio.ws \
+  --public-target /v4/ws/usdt \
+  --private-host fxws-private.gateapi.io \
+  --private-target /v4/ws/usdt \
+  --channel futures.book_ticker \
+  --contract BTC_USDT \
+  --duration-ms 30000
+```
+
+可选绑核：
+
+```bash
+./build/release/tools/websocket_latency_compare \
+  --contract BTC_USDT \
+  --duration-ms 60000 \
+  --public-cpu 2 \
+  --private-cpu 3
+```
+
+输出中的 `private_lead_ns = public_arrival_ns - private_arrival_ns`：
+
+- 正数：private 比 public 更早到达。
+- 负数：public 比 private 更早到达。
+- `matched`：两条链路都收到且按 `symbol:update_id` 匹配成功的行情条数。
+- `pending_public` / `pending_private`：采样结束时只在其中一条链路出现、尚未匹配到对端的 update。
+
+这个工具比较的是同机同钟下的行情到达差，不是完整交易策略延迟，也不是交易所单向网络延迟。高可信结论应在独占 CPU、固定 affinity、稳定网络和足够长采样窗口下记录 p50 / p99 / p99.9。
+
 ## 长稳验证
 
 合并到 `main` 前，如环境允许，应执行长稳验证并记录最终 metrics：

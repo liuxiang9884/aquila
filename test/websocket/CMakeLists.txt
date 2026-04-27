@@ -31,3 +31,9 @@ set_tests_properties(websocket_client_reconnect_test PROPERTIES TIMEOUT 30)
 add_websocket_gtest(websocket_client_degraded_test
                     websocket_client_degraded_test.cpp)
 set_tests_properties(websocket_client_degraded_test PROPERTIES TIMEOUT 10)
+add_websocket_gtest(websocket_latency_compare_support_test
+                    latency_compare_support_test.cpp)
+target_link_libraries(websocket_latency_compare_support_test
+    PRIVATE
+        yyjson::yyjson
+)
