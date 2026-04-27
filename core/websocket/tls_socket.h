@@ -26,6 +26,8 @@ namespace aquila::websocket {
 
 class TlsSocket {
  public:
+  static constexpr bool kUsesTls = true;
+
   TlsSocket() = default;
 
   ~TlsSocket() noexcept {

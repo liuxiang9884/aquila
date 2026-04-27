@@ -99,10 +99,10 @@ Gate private 接入地址记录：
 |---|---|
 | 现货 WebSocket v4 | `wss://spotws-private.gateapi.io/ws/v4/` |
 | 衍生品 WebSocket v4 | `wss://fxws-private.gateapi.io/v4/ws/usdt` |
-| 衍生品 WebSocket v4 SBE | `wss://fxws-private.gateapi.io/v4/ws/usdt/sbe` |
+| 衍生品 WebSocket v4 SBE | `ws://fxws-private.gateapi.io/v4/ws/usdt/sbe` |
 | API v4 HTTP | `https://apiv4-private.gateapi.io` |
 
-其中三个 `wss://` 地址用于 WebSocket cold path / live probe；`https://apiv4-private.gateapi.io` 是 HTTP REST base endpoint，不进入 WebSocket probe。
+其中 `wss://` 地址使用 `TlsSocket`，`ws://` SBE 地址使用 `PlainSocket`；`https://apiv4-private.gateapi.io` 是 HTTP REST base endpoint，不进入 WebSocket probe。
 
 ## 开放问题
 

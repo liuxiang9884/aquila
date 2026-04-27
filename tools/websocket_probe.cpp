@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <utility>
 
 using namespace aquila::websocket;
 
@@ -50,6 +51,27 @@ void RecordError(void* context, ConnectionError error) noexcept {
 
 }  // namespace
 
+template <typename ClientT>
+int RunProbe(ConnectionConfig config) {
+  ProbeContext probe{};
+  MessageConsumer consumer{&probe, &CountPayload};
+  ClientT client(std::move(config), consumer);
+  client.SetStateHandler(&probe, &RecordState);
+  client.SetErrorHandler(&probe, &RecordError);
+  const bool ok = client.Start();
+  const Metrics metrics = client.SnapshotMetrics();
+  const std::string_view final_state = magic_enum::enum_name(probe.phase);
+  const std::string_view final_error = magic_enum::enum_name(probe.error);
+  fmt::print(stderr,
+             FMT_COMPILE("result={} final_state={} final_error={} rx_bytes={} "
+                         "tx_bytes={} rx_messages={} tx_messages={} "
+                         "heartbeat_timeouts={}\n"),
+             ok ? "ok" : "failed", final_state, final_error, probe.bytes,
+             metrics.tx_bytes, metrics.rx_messages, metrics.tx_messages,
+             metrics.heartbeat_timeouts);
+  return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
   CLI::App app{"critical websocket probe"};
   std::string host{"fx-ws.gateio.ws"};
@@ -78,21 +100,8 @@ int main(int argc, char** argv) {
   config.runtime_policy.affinity_mode =
       cpu >= 0 ? AffinityMode::kBestEffort : AffinityMode::kNone;
 
-  ProbeContext probe{};
-  MessageConsumer consumer{&probe, &CountPayload};
-  WebSocketClient client(config, consumer);
-  client.SetStateHandler(&probe, &RecordState);
-  client.SetErrorHandler(&probe, &RecordError);
-  const bool ok = client.Start();
-  const Metrics metrics = client.SnapshotMetrics();
-  const std::string_view final_state = magic_enum::enum_name(probe.phase);
-  const std::string_view final_error = magic_enum::enum_name(probe.error);
-  fmt::print(stderr,
-             FMT_COMPILE("result={} final_state={} final_error={} rx_bytes={} "
-                         "tx_bytes={} rx_messages={} tx_messages={} "
-                         "heartbeat_timeouts={}\n"),
-             ok ? "ok" : "failed", final_state, final_error, probe.bytes,
-             metrics.tx_bytes, metrics.rx_messages, metrics.tx_messages,
-             metrics.heartbeat_timeouts);
-  return ok ? 0 : 1;
+  if (tls) {
+    return RunProbe<WebSocketClient>(std::move(config));
+  }
+  return RunProbe<PlainWebSocketClient>(std::move(config));
 }

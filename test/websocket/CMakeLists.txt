@@ -37,3 +37,6 @@ target_link_libraries(websocket_latency_compare_support_test
     PRIVATE
         yyjson::yyjson
 )
+add_websocket_gtest(websocket_plain_client_test
+                    plain_websocket_client_test.cpp)
+set_tests_properties(websocket_plain_client_test PROPERTIES TIMEOUT 10)

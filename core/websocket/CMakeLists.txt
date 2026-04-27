@@ -11,6 +11,7 @@ target_sources(aquila_core
         message_view.h
         metrics.h
         mirrored_buffer.h
+        plain_socket.h
         prepared_write.h
         queued_frame_codec.h
         reconnect_classifier.h

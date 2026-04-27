@@ -44,7 +44,8 @@ class ColdPathLoop {
     return epoll_fd_ >= 0;
   }
 
-  bool RunUntilActive(TlsSocket& socket, StateMachine& state_machine,
+  template <typename TransportSocketT>
+  bool RunUntilActive(TransportSocketT& socket, StateMachine& state_machine,
                       const ConnectionConfig& config,
                       std::span<char> handshake_storage) noexcept {
     if (!Init()) {
@@ -72,22 +73,42 @@ class ColdPathLoop {
       return false;
     }
 
-    state_machine.Enter(ConnectionPhase::kTlsHandshaking);
-    while (!socket.FinishHandshake()) {
-      const WaitOutcome outcome = WaitForSocket(socket, deadline);
-      if (outcome == WaitOutcome::kInterrupted) {
-        state_machine.Enter(ConnectionPhase::kClosing);
-        return false;
+    if constexpr (TransportSocketT::kUsesTls) {
+      state_machine.Enter(ConnectionPhase::kTlsHandshaking);
+      while (!socket.FinishHandshake()) {
+        const WaitOutcome outcome = WaitForSocket(socket, deadline);
+        if (outcome == WaitOutcome::kInterrupted) {
+          state_machine.Enter(ConnectionPhase::kClosing);
+          return false;
+        }
+        if (outcome == WaitOutcome::kTimeout) {
+          state_machine.Fail(ConnectionError::kConnectTimeout,
+                             ConnectionPhase::kTlsHandshaking);
+          return false;
+        }
+        if (outcome == WaitOutcome::kFailure) {
+          state_machine.Fail(ConnectionError::kTlsFailure,
+                             ConnectionPhase::kTlsHandshaking);
+          return false;
+        }
       }
-      if (outcome == WaitOutcome::kTimeout) {
-        state_machine.Fail(ConnectionError::kConnectTimeout,
-                           ConnectionPhase::kTlsHandshaking);
-        return false;
-      }
-      if (outcome == WaitOutcome::kFailure) {
-        state_machine.Fail(ConnectionError::kTlsFailure,
-                           ConnectionPhase::kTlsHandshaking);
-        return false;
+    } else {
+      while (!socket.FinishHandshake()) {
+        const WaitOutcome outcome = WaitForSocket(socket, deadline);
+        if (outcome == WaitOutcome::kInterrupted) {
+          state_machine.Enter(ConnectionPhase::kClosing);
+          return false;
+        }
+        if (outcome == WaitOutcome::kTimeout) {
+          state_machine.Fail(ConnectionError::kConnectTimeout,
+                             ConnectionPhase::kTcpConnecting);
+          return false;
+        }
+        if (outcome == WaitOutcome::kFailure) {
+          state_machine.Fail(ConnectionError::kSocketError,
+                             ConnectionPhase::kTcpConnecting);
+          return false;
+        }
       }
     }
 
@@ -189,7 +210,9 @@ class ColdPathLoop {
         remaining, std::numeric_limits<int>::max()));
   }
 
-  WaitOutcome WaitForSocket(TlsSocket& socket, Deadline deadline) noexcept {
+  template <typename TransportSocketT>
+  WaitOutcome WaitForSocket(TransportSocketT& socket,
+                            Deadline deadline) noexcept {
     const uint32_t events = (socket.WantsRead() ? EPOLLIN : 0U) |
                             (socket.WantsWrite() ? EPOLLOUT : 0U);
     if (socket.NativeFd() < 0 || events == 0U) {
@@ -235,7 +258,8 @@ class ColdPathLoop {
     }
   }
 
-  WaitOutcome WriteAll(TlsSocket& socket, std::string_view bytes,
+  template <typename TransportSocketT>
+  WaitOutcome WriteAll(TransportSocketT& socket, std::string_view bytes,
                        Deadline deadline) noexcept {
     std::span<const char> chars(bytes.data(), bytes.size());
     const auto payload = std::as_bytes(chars);

@@ -18,6 +18,7 @@
 #include "core/websocket/critical_session.h"
 #include "core/websocket/degraded_evaluator.h"
 #include "core/websocket/metrics.h"
+#include "core/websocket/plain_socket.h"
 #include "core/websocket/reconnect_classifier.h"
 #include "core/websocket/runtime_policy.h"
 #include "core/websocket/state_machine.h"
@@ -28,21 +29,26 @@ namespace aquila::websocket {
 using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
 using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
 
-class WebSocketClient {
+template <typename TransportSocketT>
+class BasicWebSocketClient {
  public:
-  WebSocketClient(ConnectionConfig config, MessageConsumer consumer) noexcept
+  static constexpr bool TransportUsesTls = TransportSocketT::kUsesTls;
+
+  BasicWebSocketClient(ConnectionConfig config,
+                       MessageConsumer consumer) noexcept
       : config_(std::move(config)),
         consumer_(consumer),
         prepared_write_arena_(config_.prepared_write_slots,
                               config_.prepared_write_bytes),
-        core_(config_, tls_socket_, prepared_write_arena_, metrics_),
+        core_(config_, transport_socket_, prepared_write_arena_, metrics_),
         spin_loop_(config_.runtime_policy),
         backoff_rng_(SeedBackoffRng()) {
+    config_.enable_tls = TransportSocketT::kUsesTls;
     wakeup_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     cold_path_loop_.SetInterruptFd(wakeup_fd_);
   }
 
-  ~WebSocketClient() noexcept {
+  ~BasicWebSocketClient() noexcept {
     if (wakeup_fd_ >= 0) {
       ::close(wakeup_fd_);
     }
@@ -65,7 +71,7 @@ class WebSocketClient {
       prepare_error_ = ConnectionError::kSocketError;
       return false;
     }
-    if (!tls_socket_.Init()) {
+    if (!transport_socket_.Init()) {
       prepare_error_ =
           config_.enable_tls ? ConnectionError::kTlsFailure
                              : ConnectionError::kSocketError;
@@ -101,12 +107,12 @@ class WebSocketClient {
     bool reconnect_in_progress = false;
     while (!stop_requested_.load(std::memory_order_acquire)) {
       cold_path_loop_.SetInterruptFd(wakeup_fd_);
-      if (!cold_path_loop_.RunUntilActive(tls_socket_, state_machine_, config_,
-                                          handshake_storage_)) {
+      if (!cold_path_loop_.RunUntilActive(
+              transport_socket_, state_machine_, config_, handshake_storage_)) {
         if (stop_requested_.load(std::memory_order_acquire) ||
             state_machine_.phase() == ConnectionPhase::kClosing) {
           NotifyState(ConnectionPhase::kClosing);
-          tls_socket_.Close();
+          transport_socket_.Close();
           return true;
         }
         if (!HandleReconnectFailure(state_machine_.last_error(),
@@ -134,7 +140,7 @@ class WebSocketClient {
           state_handler_,
       };
       spin_loop_.Run(runtime_session);
-      tls_socket_.Close();
+      transport_socket_.Close();
       if (stop_requested_.load(std::memory_order_acquire)) {
         MarkDegradedInactive();
         state_machine_.Enter(ConnectionPhase::kClosed);
@@ -155,14 +161,14 @@ class WebSocketClient {
       return true;
     }
 
-    tls_socket_.Close();
+    transport_socket_.Close();
     MarkDegradedInactive();
     state_machine_.Enter(ConnectionPhase::kClosed);
     NotifyState(state_machine_.phase());
     return true;
   }
 
-  CriticalSession<TlsSocket>& Core() noexcept { return core_; }
+  CriticalSession<TransportSocketT>& Core() noexcept { return core_; }
 
   void Stop() noexcept {
     stop_requested_.store(true, std::memory_order_release);
@@ -173,7 +179,7 @@ class WebSocketClient {
 
  private:
   struct RuntimeSession {
-    CriticalSession<TlsSocket>& core;
+    CriticalSession<TransportSocketT>& core;
     Metrics& metrics;
     std::atomic<bool>& stop_requested;
     DegradedEvaluator& degraded_evaluator;
@@ -345,7 +351,7 @@ class WebSocketClient {
   bool HandleReconnectFailure(ConnectionError error,
                               std::uint32_t& transient_failures,
                               bool& reconnect_in_progress) noexcept {
-    tls_socket_.Close();
+    transport_socket_.Close();
     if (!config_.reconnect.enabled || Classify(error) == FailureClass::kFatal) {
       state_machine_.Fail(error, ConnectionPhase::kClosed);
       NotifyError(state_machine_.last_error());
@@ -420,9 +426,9 @@ class WebSocketClient {
   ConnectionConfig config_{};
   MessageConsumer consumer_{};
   Metrics metrics_{};
-  TlsSocket tls_socket_{};
+  TransportSocketT transport_socket_{};
   PreparedWriteArena prepared_write_arena_;
-  CriticalSession<TlsSocket> core_;
+  CriticalSession<TransportSocketT> core_;
   StateMachine state_machine_{};
   ColdPathLoop cold_path_loop_{};
   ActiveSpinLoop spin_loop_;
@@ -438,6 +444,9 @@ class WebSocketClient {
   void* error_context_{nullptr};
   ErrorHandler error_handler_{nullptr};
 };
+
+using WebSocketClient = BasicWebSocketClient<TlsSocket>;
+using PlainWebSocketClient = BasicWebSocketClient<PlainSocket>;
 
 }  // namespace aquila::websocket
 

@@ -13,10 +13,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -47,6 +49,7 @@ struct EndpointCounters {
   std::uint64_t ignored_messages{0};
 };
 
+template <typename ClientT>
 class EndpointRunner {
  public:
   EndpointRunner(EndpointConfig endpoint, EndpointSide side,
@@ -62,7 +65,7 @@ class EndpointRunner {
     config.host = endpoint_.host;
     config.service = endpoint_.port;
     config.target = endpoint_.target;
-    config.enable_tls = true;
+    config.enable_tls = ClientT::TransportUsesTls;
     config.max_reads_per_drive = 8;
     config.read_until_would_block = false;
     config.runtime_policy.io_cpu_id = endpoint_.cpu;
@@ -71,7 +74,7 @@ class EndpointRunner {
                            : ws::AffinityMode::kNone;
 
     ws::MessageConsumer consumer{this, &EndpointRunner::HandleMessage};
-    client_ = std::make_unique<ws::WebSocketClient>(std::move(config), consumer);
+    client_ = std::make_unique<ClientT>(std::move(config), consumer);
     client_->SetStateHandler(this, &EndpointRunner::HandleState);
     client_->SetErrorHandler(this, &EndpointRunner::HandleError);
     thread_ = std::thread([this]() {
@@ -213,7 +216,7 @@ class EndpointRunner {
   std::string subscription_;
   LatencyPairCollector& collector_;
   ws::FrameCodec encoder_;
-  std::unique_ptr<ws::WebSocketClient> client_;
+  std::unique_ptr<ClientT> client_;
   std::thread thread_;
   ws::Metrics metrics_{};
   std::atomic<bool> result_{false};
@@ -241,7 +244,8 @@ std::int64_t Percentile(const std::vector<std::int64_t>& sorted,
   return sorted[std::min(index, sorted.size() - 1)];
 }
 
-void PrintEndpointSummary(const EndpointRunner& runner) {
+template <typename ClientT>
+void PrintEndpointSummary(const EndpointRunner<ClientT>& runner) {
   const auto counters = runner.counters();
   const auto metrics = runner.metrics();
   fmt::print(FMT_COMPILE(
@@ -258,55 +262,33 @@ void PrintEndpointSummary(const EndpointRunner& runner) {
              metrics.tx_messages, metrics.tx_bytes);
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
-  CLI::App app{"compare Gate public/private WebSocket market-data latency"};
-  std::string public_host{"fx-ws.gateio.ws"};
-  std::string private_host{"fxws-private.gateapi.io"};
-  std::string port{"443"};
-  std::string public_target{"/v4/ws/usdt"};
-  std::string private_target{"/v4/ws/usdt"};
-  std::string channel{"futures.book_ticker"};
-  std::string contract{"BTC_USDT"};
-  int public_cpu{-1};
-  int private_cpu{-1};
-  std::uint32_t duration_ms{60'000};
-  size_t max_pending{65'536};
-
-  app.add_option("--public-host", public_host, "public WebSocket host");
-  app.add_option("--private-host", private_host, "private WebSocket host");
-  app.add_option("--port", port, "remote port");
-  app.add_option("--public-target", public_target, "public WebSocket target");
-  app.add_option("--private-target", private_target, "private WebSocket target");
-  app.add_option("--channel", channel, "Gate WebSocket channel");
-  app.add_option("--contract", contract, "Gate contract");
-  app.add_option("--public-cpu", public_cpu, "public connection owner CPU");
-  app.add_option("--private-cpu", private_cpu, "private connection owner CPU");
-  app.add_option("--duration-ms", duration_ms, "sample duration");
-  app.add_option("--max-pending", max_pending, "maximum unmatched update keys");
-  CLI11_PARSE(app, argc, argv);
-
-  const auto epoch_seconds =
-      static_cast<std::uint64_t>(std::time(nullptr));
+template <typename PublicClientT, typename PrivateClientT>
+int RunCompare(const std::string& public_host, const std::string& public_port,
+               const std::string& public_target, int public_cpu,
+               const std::string& private_host,
+               const std::string& private_port,
+               const std::string& private_target, int private_cpu,
+               const std::string& channel, const std::string& contract,
+               std::uint32_t duration_ms, size_t max_pending) {
+  const auto epoch_seconds = static_cast<std::uint64_t>(std::time(nullptr));
   const std::string subscription =
       BuildGateSubscribeRequest(channel, contract, epoch_seconds);
 
   LatencyPairCollector collector(max_pending);
-  EndpointRunner public_runner(
+  EndpointRunner<PublicClientT> public_runner(
       EndpointConfig{
           .label = "public",
           .host = public_host,
-          .port = port,
+          .port = public_port,
           .target = public_target,
           .cpu = public_cpu,
       },
       EndpointSide::kPublic, subscription, collector);
-  EndpointRunner private_runner(
+  EndpointRunner<PrivateClientT> private_runner(
       EndpointConfig{
           .label = "private",
           .host = private_host,
-          .port = port,
+          .port = private_port,
           .target = private_target,
           .cpu = private_cpu,
       },
@@ -357,4 +339,86 @@ int main(int argc, char** argv) {
     return 2;
   }
   return snapshot.matched.empty() ? 1 : 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  CLI::App app{"compare Gate public/private WebSocket market-data latency"};
+  std::string public_host{"fx-ws.gateio.ws"};
+  std::string private_host{"fxws-private.gateapi.io"};
+  std::string port{"443"};
+  std::string public_port{"443"};
+  std::string private_port{"443"};
+  std::string public_target{"/v4/ws/usdt"};
+  std::string private_target{"/v4/ws/usdt"};
+  std::string channel{"futures.book_ticker"};
+  std::string contract{"BTC_USDT"};
+  int public_cpu{-1};
+  int private_cpu{-1};
+  std::uint32_t duration_ms{60'000};
+  size_t max_pending{65'536};
+  bool public_tls{true};
+  bool public_no_tls{false};
+  bool private_tls{true};
+  bool private_no_tls{false};
+
+  app.add_option("--public-host", public_host, "public WebSocket host");
+  app.add_option("--private-host", private_host, "private WebSocket host");
+  auto* common_port = app.add_option("--port", port, "remote port");
+  auto* public_port_option =
+      app.add_option("--public-port", public_port, "public remote port");
+  auto* private_port_option =
+      app.add_option("--private-port", private_port, "private remote port");
+  app.add_option("--public-target", public_target, "public WebSocket target");
+  app.add_option("--private-target", private_target, "private WebSocket target");
+  app.add_option("--channel", channel, "Gate WebSocket channel");
+  app.add_option("--contract", contract, "Gate contract");
+  app.add_option("--public-cpu", public_cpu, "public connection owner CPU");
+  app.add_option("--private-cpu", private_cpu, "private connection owner CPU");
+  app.add_option("--duration-ms", duration_ms, "sample duration");
+  app.add_option("--max-pending", max_pending, "maximum unmatched update keys");
+  app.add_flag("--public-tls", public_tls, "enable TLS for public endpoint");
+  app.add_flag("--public-no-tls", public_no_tls,
+               "disable TLS for public endpoint");
+  app.add_flag("--private-tls", private_tls, "enable TLS for private endpoint");
+  app.add_flag("--private-no-tls", private_no_tls,
+               "disable TLS for private endpoint");
+  CLI11_PARSE(app, argc, argv);
+
+  if (common_port->count() != 0 && public_port_option->count() == 0) {
+    public_port = port;
+  }
+  if (common_port->count() != 0 && private_port_option->count() == 0) {
+    private_port = port;
+  }
+  if (public_no_tls) {
+    public_tls = false;
+  }
+  if (private_no_tls) {
+    private_tls = false;
+  }
+
+  if (public_tls && private_tls) {
+    return RunCompare<ws::WebSocketClient, ws::WebSocketClient>(
+        public_host, public_port, public_target, public_cpu, private_host,
+        private_port, private_target, private_cpu, channel, contract,
+        duration_ms, max_pending);
+  }
+  if (public_tls && !private_tls) {
+    return RunCompare<ws::WebSocketClient, ws::PlainWebSocketClient>(
+        public_host, public_port, public_target, public_cpu, private_host,
+        private_port, private_target, private_cpu, channel, contract,
+        duration_ms, max_pending);
+  }
+  if (!public_tls && private_tls) {
+    return RunCompare<ws::PlainWebSocketClient, ws::WebSocketClient>(
+        public_host, public_port, public_target, public_cpu, private_host,
+        private_port, private_target, private_cpu, channel, contract,
+        duration_ms, max_pending);
+  }
+  return RunCompare<ws::PlainWebSocketClient, ws::PlainWebSocketClient>(
+      public_host, public_port, public_target, public_cpu, private_host,
+      private_port, private_target, private_cpu, channel, contract, duration_ms,
+      max_pending);
 }
