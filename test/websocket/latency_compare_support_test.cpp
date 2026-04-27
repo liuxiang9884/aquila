@@ -73,4 +73,85 @@ TEST(WebSocketLatencyCompareSupportTest, BuildsGateSubscribeRequest) {
             R"("event":"subscribe","payload":["BTC_USDT"]})");
 }
 
+TEST(WebSocketLatencyCompareSupportTest, SelectsPrivateWhenMedianLeadIsPositive) {
+  const WarmupSelection selection = SelectWarmupPrimary(WarmupSelectionInput{
+      .public_healthy = true,
+      .private_healthy = true,
+      .matched = 100,
+      .private_faster = 70,
+      .public_faster = 30,
+      .ties = 0,
+      .pending_public = 2,
+      .pending_private = 1,
+      .private_lead_p50_ns = 500,
+      .private_lead_p99_ns = 2'000,
+  });
+
+  EXPECT_EQ(selection.selected, WarmupPrimary::kPrivate);
+  EXPECT_NE(selection.reason.find("health=ok"), std::string::npos);
+  EXPECT_NE(selection.reason.find("p50_private_lead_ns=500"),
+            std::string::npos);
+  EXPECT_NE(selection.reason.find("p99_private_lead_ns=2000"),
+            std::string::npos);
+  EXPECT_NE(selection.reason.find("gap=pending_public:2,pending_private:1"),
+            std::string::npos);
+}
+
+TEST(WebSocketLatencyCompareSupportTest, SelectsPublicWhenMedianLeadIsNegative) {
+  const WarmupSelection selection = SelectWarmupPrimary(WarmupSelectionInput{
+      .public_healthy = true,
+      .private_healthy = true,
+      .matched = 100,
+      .private_faster = 20,
+      .public_faster = 80,
+      .ties = 0,
+      .pending_public = 1,
+      .pending_private = 3,
+      .private_lead_p50_ns = -700,
+      .private_lead_p99_ns = 1'200,
+  });
+
+  EXPECT_EQ(selection.selected, WarmupPrimary::kPublic);
+  EXPECT_NE(selection.reason.find("p50_private_lead_ns=-700"),
+            std::string::npos);
+}
+
+TEST(WebSocketLatencyCompareSupportTest, HealthOverridesLatencyLead) {
+  const WarmupSelection selection = SelectWarmupPrimary(WarmupSelectionInput{
+      .public_healthy = true,
+      .private_healthy = false,
+      .matched = 100,
+      .private_faster = 90,
+      .public_faster = 10,
+      .ties = 0,
+      .pending_public = 0,
+      .pending_private = 0,
+      .private_lead_p50_ns = 10'000,
+      .private_lead_p99_ns = 20'000,
+  });
+
+  EXPECT_EQ(selection.selected, WarmupPrimary::kPublic);
+  EXPECT_NE(selection.reason.find("health=private_unhealthy"),
+            std::string::npos);
+}
+
+TEST(WebSocketLatencyCompareSupportTest, DoesNotSelectWithoutMatchedSamples) {
+  const WarmupSelection selection = SelectWarmupPrimary(WarmupSelectionInput{
+      .public_healthy = true,
+      .private_healthy = true,
+      .matched = 0,
+      .private_faster = 0,
+      .public_faster = 0,
+      .ties = 0,
+      .pending_public = 0,
+      .pending_private = 0,
+      .private_lead_p50_ns = 0,
+      .private_lead_p99_ns = 0,
+  });
+
+  EXPECT_EQ(selection.selected, WarmupPrimary::kNone);
+  EXPECT_NE(selection.reason.find("health=no_matched_samples"),
+            std::string::npos);
+}
+
 }  // namespace aquila::tools

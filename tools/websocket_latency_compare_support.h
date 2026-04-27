@@ -24,6 +24,30 @@ enum class EndpointSide : std::uint8_t {
   kPrivate,
 };
 
+enum class WarmupPrimary : std::uint8_t {
+  kNone,
+  kPublic,
+  kPrivate,
+};
+
+struct WarmupSelectionInput {
+  bool public_healthy{false};
+  bool private_healthy{false};
+  size_t matched{0};
+  size_t private_faster{0};
+  size_t public_faster{0};
+  size_t ties{0};
+  size_t pending_public{0};
+  size_t pending_private{0};
+  std::int64_t private_lead_p50_ns{0};
+  std::int64_t private_lead_p99_ns{0};
+};
+
+struct WarmupSelection {
+  WarmupPrimary selected{WarmupPrimary::kNone};
+  std::string reason;
+};
+
 struct GateBookTickerKey {
   std::string symbol;
   std::uint64_t update_id{0};
@@ -145,6 +169,72 @@ inline std::string BuildGateSubscribeRequest(std::string_view channel,
   return fmt::format(FMT_COMPILE(
                          R"({{"time":{},"channel":"{}","event":"subscribe","payload":["{}"]}})"),
                      epoch_seconds, channel, contract);
+}
+
+inline WarmupSelection SelectWarmupPrimary(
+    const WarmupSelectionInput& input) {
+  const auto reason = [&](std::string_view health) {
+    return fmt::format(
+        FMT_COMPILE("health={},gap=pending_public:{},pending_private:{},"
+                    "matched={},private_faster={},public_faster={},ties={},"
+                    "p50_private_lead_ns={},p99_private_lead_ns={}"),
+        health, input.pending_public, input.pending_private, input.matched,
+        input.private_faster, input.public_faster, input.ties,
+        input.private_lead_p50_ns, input.private_lead_p99_ns);
+  };
+
+  if (!input.public_healthy && !input.private_healthy) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kNone,
+        .reason = reason("both_unhealthy"),
+    };
+  }
+  if (input.public_healthy && !input.private_healthy) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kPublic,
+        .reason = reason("private_unhealthy"),
+    };
+  }
+  if (!input.public_healthy && input.private_healthy) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kPrivate,
+        .reason = reason("public_unhealthy"),
+    };
+  }
+  if (input.matched == 0) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kNone,
+        .reason = reason("no_matched_samples"),
+    };
+  }
+  if (input.private_lead_p50_ns > 0) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kPrivate,
+        .reason = reason("ok"),
+    };
+  }
+  if (input.private_lead_p50_ns < 0) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kPublic,
+        .reason = reason("ok"),
+    };
+  }
+  if (input.private_faster > input.public_faster) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kPrivate,
+        .reason = reason("ok"),
+    };
+  }
+  if (input.public_faster > input.private_faster) {
+    return WarmupSelection{
+        .selected = WarmupPrimary::kPublic,
+        .reason = reason("ok"),
+    };
+  }
+  return WarmupSelection{
+      .selected = WarmupPrimary::kNone,
+      .reason = reason("tie"),
+  };
 }
 
 class LatencyPairCollector {

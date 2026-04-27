@@ -30,7 +30,10 @@ namespace {
 using aquila::tools::BuildGateSubscribeRequest;
 using aquila::tools::EndpointSide;
 using aquila::tools::LatencyPairCollector;
+using aquila::tools::SelectWarmupPrimary;
 using aquila::tools::TryParseGateBookTicker;
+using aquila::tools::WarmupPrimary;
+using aquila::tools::WarmupSelectionInput;
 namespace ws = aquila::websocket;
 
 std::uint64_t NowNs() noexcept {
@@ -316,6 +319,18 @@ std::int64_t Percentile(const std::vector<std::int64_t>& sorted,
   return sorted[std::min(index, sorted.size() - 1)];
 }
 
+std::string_view WarmupPrimaryName(WarmupPrimary primary) noexcept {
+  switch (primary) {
+    case WarmupPrimary::kPublic:
+      return "public";
+    case WarmupPrimary::kPrivate:
+      return "private";
+    case WarmupPrimary::kNone:
+      return "none";
+  }
+  return "none";
+}
+
 template <typename ClientT>
 void PrintEndpointSummary(const EndpointRunner<ClientT>& runner) {
   const auto counters = runner.counters();
@@ -396,6 +411,8 @@ int RunCompare(const std::string& public_host, const std::string& public_port,
     }
   }
   std::sort(leads.begin(), leads.end());
+  const std::int64_t private_lead_p50 = Percentile(leads, 0.50L);
+  const std::int64_t private_lead_p99 = Percentile(leads, 0.99L);
 
   fmt::print(FMT_COMPILE(
                  "matched={} private_faster={} public_faster={} ties={} "
@@ -404,9 +421,27 @@ int RunCompare(const std::string& public_host, const std::string& public_port,
              snapshot.pending_public, snapshot.pending_private);
   fmt::print(FMT_COMPILE(
                  "private_lead_ns min={} p50={} p99={} p99.9={} max={}\n"),
-             leads.empty() ? 0 : leads.front(), Percentile(leads, 0.50L),
-             Percentile(leads, 0.99L), Percentile(leads, 0.999L),
+             leads.empty() ? 0 : leads.front(), private_lead_p50,
+             private_lead_p99, Percentile(leads, 0.999L),
              leads.empty() ? 0 : leads.back());
+
+  const auto selection = SelectWarmupPrimary(WarmupSelectionInput{
+      .public_healthy = public_runner.result() && public_runner.saw_active() &&
+                        public_runner.subscribe_status() == ws::SendStatus::kOk,
+      .private_healthy =
+          private_runner.result() && private_runner.saw_active() &&
+          private_runner.subscribe_status() == ws::SendStatus::kOk,
+      .matched = snapshot.matched.size(),
+      .private_faster = private_faster,
+      .public_faster = public_faster,
+      .ties = ties,
+      .pending_public = snapshot.pending_public,
+      .pending_private = snapshot.pending_private,
+      .private_lead_p50_ns = private_lead_p50,
+      .private_lead_p99_ns = private_lead_p99,
+  });
+  fmt::print(FMT_COMPILE("selected={} reason={}\n"),
+             WarmupPrimaryName(selection.selected), selection.reason);
 
   if (!public_runner.saw_active() || !private_runner.saw_active()) {
     return 2;

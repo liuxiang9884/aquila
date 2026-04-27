@@ -309,6 +309,78 @@ port、target 和订阅完全相同，也可能因为 local port 导致 RSS queu
 这类信息应与 live latency compare 结果一起记录，否则 `public vs private`、
 `ws vs wss` 或“双 private WS”测试很容易把网络路径差异误判为 codec / TLS 成本。
 
+#### 5.2 多 feed 方案选择
+
+围绕同一份交易所行情，目前有三种候选形态：
+
+**方案 A：单 private WS 主连接 + 进程内 fanout**
+
+```text
+private WS
+-> WebSocket owner thread
+-> frame decode / message parse
+-> canonical market data event
+-> SPSC / ring fanout
+-> strategy A / strategy B / strategy C
+```
+
+特点：
+
+- 外部只有一条 TCP/WebSocket flow，交易所 fanout、RSS queue、socket wakeup 时序最少。
+- 策略看到同一条 canonical stream，顺序一致，debug 和回放简单。
+- 内部 fanout 的延迟和 backpressure 可以由本进程控制并 benchmark。
+- 缺点是只能吃到单一路外部连接的到达时间，无法利用双连接中偶尔更快的另一条。
+
+该方案适合作为生产 baseline。多个策略消费同一行情时，不应默认让每个策略各自连一条 WS。
+
+**方案 B：双 private WS fastest-win arbiter**
+
+```text
+WSA ----\
+        -> FeedArbiter -> canonical market data stream -> fanout -> strategies
+WSB ----/
+```
+
+特点：
+
+- 理论首包延迟是 `min(WSA, WSB) + arbiter cost`，可以吃到两路里先到的合法 update。
+- 可以容忍一路偶发抖动、断线或交易所侧单 flow 卡顿。
+- 必须在策略之前做统一 `FeedArbiter`，不建议每个策略自己同时消费 WSA / WSB。
+- `FeedArbiter` 必须处理去重、sequence 顺序、gap、stale source、重连后重新加入和 source health。
+- 对 order book delta，不能因为 seq+1 比 seq 更早就先应用，必须保持 sequence 连续。
+
+该方案适合极致低延迟和高可用行情，但实现复杂度明显高于单连接。
+
+**方案 C：warm-up feed selection**
+
+```text
+启动 / 交易前 warmup：
+WSA + WSB 同时订阅同一行情
+-> 采样 30s / 60s / N 条 update
+-> 统计 matched、p50、p99、pending/gap、health
+-> selected=public/private
+
+交易中：
+selected primary -> strategy / canonical stream
+secondary        -> standby monitor
+```
+
+特点：
+
+- 比随机选一条单 WS 更稳，可以在交易前选出当前环境下更快、更健康的一路。
+- 比 fastest-win 简单，不需要每条 update 都做仲裁。
+- secondary 不建议关闭，应保持 warm standby，用于 health monitor 和快速 failover。
+- 切换必须有 hysteresis，不能因为单个 update 更快就频繁切换。
+- 对快照型行情如 `book_ticker` 实现较简单；对 order book delta 切换时必须确认 sequence 连续。
+
+推荐落地顺序：
+
+1. 先在 `websocket_latency_compare` 加 warmup selection 输出，只推荐 primary，不接交易。
+2. warmup 同时开 WSA / WSB，订阅相同 channel / contract，采样 30s 或 60s。
+3. 输出 `selected=public/private` 和 `reason=p50/p99/gap/health`。
+4. 后续再把该逻辑抽成 `FeedSelector`，交易中采用 primary publish、secondary monitor。
+5. 最后再评估是否升级到 fastest-win `FeedArbiter`。
+
 ### 6. `CriticalSession::DriveRead()` 微优化
 
 当前流程：
