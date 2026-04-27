@@ -3,11 +3,18 @@ target_sources(aquila_core
         active_spin_loop.h
         cold_path_loop.h
         critical_session.h
+        degraded_evaluator.h
         frame_codec.h
+        frame_codec_types.h
+        frame_parser.h
         handshake.h
         message_view.h
         metrics.h
+        mirrored_buffer.h
         prepared_write.h
+        queued_frame_codec.h
+        reconnect_classifier.h
+        runtime_clock.h
         runtime_policy.h
         state_machine.h
         tls_socket.h
