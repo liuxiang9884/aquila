@@ -423,6 +423,64 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(static_cast<char>(socket.written_[7]), 'z');
 }
 
+TEST(WebsocketCriticalSessionTest, BusinessWriteBudgetLimitsCompletedFrames) {
+  auto config = BuildSmallConfig(4);
+  config.max_business_writes_per_drive = 1;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+
+  for (size_t i = 0; i < 3; ++i) {
+    auto* write = session.TryAcquirePreparedWrite();
+    ASSERT_NE(write, nullptr);
+    std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+                write->storage.begin());
+    write->encoded_size = 4;
+    write->kind = PayloadKind::kText;
+    ASSERT_EQ(session.CommitPreparedWrite(write), SendStatus::kOk);
+  }
+
+  session.DriveWrite();
+
+  EXPECT_EQ(metrics.tx_messages, 1U);
+  EXPECT_EQ(session.PendingWriteCount(), 2U);
+  EXPECT_TRUE(session.WantsWrite());
+}
+
+TEST(WebsocketCriticalSessionTest, ZeroBusinessWriteBudgetDrainsQueue) {
+  auto config = BuildSmallConfig(4);
+  config.max_business_writes_per_drive = 0;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  size_t bytes = 0;
+  MessageConsumer consumer{&bytes, &RecordMessage};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  session.SetConsumer(consumer);
+
+  for (size_t i = 0; i < 3; ++i) {
+    auto* write = session.TryAcquirePreparedWrite();
+    ASSERT_NE(write, nullptr);
+    std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+                write->storage.begin());
+    write->encoded_size = 4;
+    write->kind = PayloadKind::kText;
+    ASSERT_EQ(session.CommitPreparedWrite(write), SendStatus::kOk);
+  }
+
+  session.DriveWrite();
+
+  EXPECT_EQ(metrics.tx_messages, 3U);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_FALSE(session.WantsWrite());
+}
+
 TEST(WebsocketCriticalSessionTest,
      FrameCodecCapacityExhaustionIsObservableWithoutReconnect) {
   auto config = BuildSmallConfig(4);

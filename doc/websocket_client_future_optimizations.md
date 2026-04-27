@@ -16,7 +16,7 @@
 1. **WebSocket core read path**：`FrameCodec` decode 主体暂时冻结。下一步优先补 TLS read、真实 consumer / 行情解析、read pump 参数实验。
 2. **Live feed 稳定性**：双 private WS 的毫秒级差异不能简单归因到 codec、TLS 或 CPU 绑定。下一步建议采用 warm-up feed selection 作为基线，先选 primary，再保留 secondary 作为 standby / health monitor。
 3. **Write path**：dedicated control slot 用户态路径已经很轻。下一步优先补 TLS write、真实订单 payload、client masking / RNG 成本证据。
-4. **Runtime loop**：active spin 的单轮 fake session benchmark 覆盖面太窄。下一步应补 mixed read/write benchmark，再决定 atomic、读写顺序、write budget 和 idle pause 优化。
+4. **Runtime loop**：mixed read/write benchmark 已证明 unbounded business write 会线性推迟 read 交付；当前已用 `max_business_writes_per_drive = 1` 作为默认 pacing。下一步再看 atomic stop、读写顺序和 idle pause。
 
 当前不建议：
 
@@ -862,39 +862,52 @@ kAdaptive
 
 #### 9.5 为 business write 增加预算，避免饿死 read
 
-`DriveRead()` 已有 `max_reads_per_drive`，但 `DriveWrite()` 当前会尽量 drain pending queue，直到 EAGAIN 或队列空。
+状态：已完成第一版。
 
-如果业务 write queue 很长且 socket 持续可写，可能出现：
+`DriveRead()` 已有 `max_reads_per_drive`。本轮新增
+`ConnectionConfig::max_business_writes_per_drive`，默认值为 `1`；设置为
+`0` 时保留 legacy drain-until-empty 行为。实现原则：
 
 ```text
-一轮 loop 写太久
--> read 被推迟
--> 行情处理 P99 / P99.9 变差
+partial business frame 优先补完
+-> control frame 独立处理
+-> 每轮最多完成 N 个完整 business frame
+-> 再回到 active loop，让 read 有机会执行
 ```
 
-候选配置：
+验证 benchmark：
 
-```cpp
-std::uint32_t max_writes_per_drive;
-std::uint32_t max_write_bytes_per_drive;
+```text
+session_mixed_write_before_read_writes_0
+session_mixed_write_before_read_writes_1_unbounded
+session_mixed_write_before_read_writes_8_unbounded
+session_mixed_write_before_read_writes_64_unbounded
+session_mixed_write_before_read_writes_8_budget_1
+session_mixed_write_before_read_writes_64_budget_1
 ```
 
-原则：
+release pinned 结果显示，在 fake socket mixed read/write 场景中：
 
-- control frame 不受普通 business write budget 限制。
-- partial business frame 仍然必须按 WebSocket frame boundary 完成，不能和 control frame 交错。
-- write budget 应按连接角色配置：行情连接偏 read，交易连接可能偏 write。
+| 场景 | p50 / p99 / p99.9 |
+| --- | --- |
+| `queued_writes=0` | `51 / 54 / 1739ns` |
+| `queued_writes=8, unbounded` | `110 / 130 / 1529ns` |
+| `queued_writes=64, unbounded` | `490 / 601 / 2037ns` |
+| `queued_writes=8, budget=1` | `55 / 58 / 1697ns` |
+| `queued_writes=64, budget=1` | `55 / 79 / 1424ns` |
 
-验证目标：
+结论：
 
-- mixed read/write benchmark 中 read tail latency 改善。
-- order burst benchmark 中 write latency 不出现不可接受退化。
-- control frame 仍然能在业务队列满时及时发送。
+- unbounded write 的 read 延迟随 business queue 长度线性增长。
+- `budget=1` 能把 64 个 queued write 下的 read p50 从约 `490ns` 降到约 `55ns`。
+- 单条 write path benchmark 仍保持同量级：`session_write_path` release pinned 为
+  `414 / 446 / 1774ns`。
 
-风险：
+后续风险和待验证项：
 
 - write budget 太小会增加订单发送排队。
 - 如果 partial frame 很大，仍可能占用一轮较长时间；需要和 payload size limit 一起评估。
+- TLS write、真实订单 payload、签名序列化和 exchange ack latency 还没有纳入该 benchmark，不能仅凭 fake socket 推导最终订单路径参数。
 
 #### 9.6 只在 idle iteration 执行 `CpuRelax()`
 
@@ -1009,11 +1022,11 @@ if (!did_write && !did_read) {
 
 ### 路线 D：Active spin loop
 
-1. **mixed benchmark**：先补 idle、clock hit、read-ready、write-ready、mixed read/write、stop、yield 模式。
+1. **mixed benchmark**：已补 `session_mixed_path_benchmark`，覆盖 write-before-read 下 business queue 对 read latency 的影响。
 2. **atomic stop 检查优化**：减少每轮重复 atomic load，明确 relaxed / acquire 边界。
 3. **active/yield 分支外提**：只有 benchmark 证明有收益时再拆 `RunActive()` / `RunYield()`。
 4. **读写顺序策略实验**：比较 write-first、read-first、control-first-then-read。
-5. **write budget 实验**：防止 business write burst 饿死 read。
+5. **write budget 实验**：已完成第一版，默认 `max_business_writes_per_drive = 1`，`0` 表示 legacy unbounded。
 6. **idle-only pause 实验**：让 read/write 返回 did-work 后，只在 idle iteration `CpuRelax()`。
 7. **clock / TSC 后续实验**：最后再考虑 calibrated TSC 或更激进的 branch layout。
 

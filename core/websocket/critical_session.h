@@ -88,7 +88,7 @@ class CriticalSession {
 
   void DriveWrite() noexcept {
     if (HasPartialBusinessWrite()) {
-      DriveBusinessWrites(true);
+      DriveBusinessWrites(1);
       if (should_reconnect_ || HasPartialBusinessWrite()) {
         return;
       }
@@ -101,10 +101,11 @@ class CriticalSession {
       }
     }
 
-    DriveBusinessWrites(false);
+    DriveBusinessWrites(MaxBusinessWritesPerDrive());
   }
 
-  void DriveBusinessWrites(bool stop_after_front) noexcept {
+  void DriveBusinessWrites(std::uint32_t max_completed_writes) noexcept {
+    std::uint32_t completed_writes = 0;
     while (pending_count_ != 0) {
       PreparedWrite* write = pending_writes_[pending_head_];
       if (write == nullptr || write->write_offset > write->encoded_size) {
@@ -128,7 +129,9 @@ class CriticalSession {
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
         if (write->write_offset == write->encoded_size) {
           CompleteFrontWrite();
-          if (stop_after_front) {
+          ++completed_writes;
+          if (max_completed_writes != 0 &&
+              completed_writes >= max_completed_writes) {
             return;
           }
         }
@@ -389,6 +392,10 @@ class CriticalSession {
 
   std::uint32_t MaxReadsPerDrive() const noexcept {
     return config_.max_reads_per_drive == 0 ? 1 : config_.max_reads_per_drive;
+  }
+
+  std::uint32_t MaxBusinessWritesPerDrive() const noexcept {
+    return config_.max_business_writes_per_drive;
   }
 
   bool ShouldContinueReadPump(std::uint32_t reads_done) const noexcept {

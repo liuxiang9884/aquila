@@ -71,6 +71,7 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_FALSE(config.read_until_would_block);
   EXPECT_EQ(config.prepared_write_slots, 2048U);
   EXPECT_EQ(config.prepared_write_bytes, 4096U);
+  EXPECT_EQ(config.max_business_writes_per_drive, 1U);
   EXPECT_EQ(config.heartbeat_interval_ms, 5000U);
   EXPECT_EQ(config.heartbeat_timeout_ms, 15000U);
   EXPECT_EQ(config.degraded.high_watermark_percent, 80U);

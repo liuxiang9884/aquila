@@ -108,6 +108,10 @@ struct ConnectionConfig {
   bool read_until_would_block = false;
   size_t prepared_write_slots = 2048;
   size_t prepared_write_bytes = 4096;
+  // Maximum complete business frames written per DriveWrite after partial
+  // writes and control frames are handled. 0 keeps the legacy drain-until-empty
+  // behavior; 1 favors read-path tail latency under order bursts.
+  std::uint32_t max_business_writes_per_drive = 1;
   std::uint32_t heartbeat_interval_ms = 5000;
   std::uint32_t heartbeat_timeout_ms = 15000;
   // Total wall-clock budget for the cold path (DNS + TCP + TLS + WS handshake).
