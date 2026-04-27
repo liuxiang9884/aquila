@@ -244,6 +244,71 @@ TLS burst 行情路径：
 - 强依赖机器和内核配置，本地 benchmark 不能直接代表生产。
 - busy polling 会增加 CPU 占用和功耗。
 
+#### 5.1 private `ws://` live probe 后的网络路径优化记录
+
+2026-04-27 对 `ws://fxws-private.gateapi.io:80/v4/ws/usdt` 做两条
+private plain WebSocket 同行情订阅对比时，出现了毫秒级到达差。后续检查说明，
+这类差异不能直接归因到 `FrameCodec` 或用户态 WebSocket decode。
+
+当时的证据：
+
+- 两条 TCP 连接都落到同一个 peer：`10.0.1.154:80`。
+- 本机源地址为 `10.0.1.103`，出接口为 `enp55s0`。
+- 两条连接 local port 不同，因此五元组不同，仍可能被 RSS 分到不同 RX queue。
+- 网卡驱动为 `ena`，`enp55s0` 有 8 个 combined queue。
+- `enp55s0-Tx-Rx-*` IRQ 当时分别绑定到
+  `CPU5 / CPU7 / CPU9 / CPU11 / CPU16 / CPU21 / CPU26 / CPU28`。
+- 测试中的两个 WebSocket owner thread 绑定到 `CPU2 / CPU3`。
+- `rx-* rps_cpus` 和 `tx-* xps_cpus` 都是 `0`，说明没有启用 RPS / XPS
+  把包软件重定向到 owner thread 所在 CPU。
+
+因此该环境下的实际路径更接近：
+
+```text
+NIC RX queue IRQ CPU
+-> kernel TCP receive / softirq
+-> wakeup owner thread on CPU2 / CPU3
+-> recv / frame decode / consumer timestamp
+```
+
+这会引入跨核 wakeup、cache migration 和调度时序差异。即使两条连接的 host、
+port、target 和订阅完全相同，也可能因为 local port 导致 RSS queue 不同，从而
+经过不同 IRQ CPU。
+
+建议的优化顺序：
+
+1. **先改测试绑核，不改系统配置**：不要默认绑 `CPU2 / CPU3`。优先把 owner
+   thread 绑到实际 RX IRQ CPU 上做对照，例如 `CPU11 / CPU26`、
+   `CPU7 / CPU28`、`CPU5 / CPU9`。
+2. **确认每条 flow 的 RX queue**：记录连接的 local port、remote peer、`ss -tinp`
+   TCP 统计，并在连接运行期间采样 `/proc/interrupts` 增量，推断该 flow 更可能
+   落在哪个 `enp55s0-Tx-Rx-*` queue。
+3. **让 owner thread 靠近 RX IRQ CPU**：如果能稳定识别目标 flow 的 RX queue，
+   优先把对应 WebSocket owner thread 绑到该 IRQ CPU，或至少绑到同 NUMA、
+   同 cache locality 更好的 CPU。
+4. **生产上优先单行情源连接 + 进程内 fanout**：多个策略消费同一行情时，优先用
+   一条 private WS 主连接做 decode，再通过本进程内 SPSC / ring fanout 分发给策略。
+   避免多个独立 TCP/WebSocket flow 引入不同交易所 fanout、RSS queue 和 wakeup
+   时序。
+5. **再考虑需要 root 的系统配置**：固定 IRQ affinity，确认或关闭 `irqbalance`
+   对关键 IRQ 的迁移；按机器情况评估 RPS / XPS、GRO / LRO、CPU governor、
+   C-state、scheduler policy 和 isolated CPU。
+6. **最后评估 busy polling**：`SO_BUSY_POLL` / `SO_PREFER_BUSY_POLL` 只适合专用
+   机器和明确收益场景，必须用 live probe 或 loopback benchmark 验证 P99 / P99.9
+   真的改善，不能只看平均值。
+
+推荐补一个网络诊断模式或独立工具，启动连接后自动打印：
+
+- local address / port 与 remote address / port。
+- owner thread CPU 和 affinity policy。
+- `SO_INCOMING_CPU`，如果当前内核支持。
+- 网卡接口、driver、queue 数、IRQ affinity。
+- 运行前后的 `/proc/interrupts` 增量。
+- RPS / XPS / GRO / LRO / busy poll 相关配置。
+
+这类信息应与 live latency compare 结果一起记录，否则 `public vs private`、
+`ws vs wss` 或“双 private WS”测试很容易把网络路径差异误判为 codec / TLS 成本。
+
 ### 6. `CriticalSession::DriveRead()` 微优化
 
 当前流程：
@@ -737,10 +802,11 @@ if (!did_write && !did_read) {
 1. **TLS read path benchmark**：先把 `SSL_read()`、TLS decrypt 和 `SSL_pending()` 纳入基准。
 2. **真实 consumer benchmark**：加入交易所行情 payload 和最小行情解析，确认 codec 是否仍是瓶颈。
 3. **read pump 参数实验**：基于 TLS benchmark 比较 `max_reads_per_drive`、`read_until_would_block` 的组合。
-4. **生产部署基线**：记录 CPU affinity、IRQ/RSS、NUMA、socket buffer、OpenSSL 和 kernel 配置。
-5. **CriticalSession read loop 微优化**：只有当 benchmark 证明 session 逻辑占比明显时再做。
-6. **FrameCodec 微优化**：保持小步修改，每次只改一个分支，并重跑 codec + session benchmark。
-7. **write/control 和 clock 后续优化**：在 read path 真实瓶颈确认后，再按 P99 风险继续推进。
+4. **网络路径基线**：记录 remote peer、local port、NIC、IRQ/RSS/RPS/XPS、owner CPU 和 `/proc/interrupts` 增量。
+5. **生产部署基线**：记录 CPU affinity、IRQ/RSS、NUMA、socket buffer、OpenSSL 和 kernel 配置。
+6. **CriticalSession read loop 微优化**：只有当 benchmark 证明 session 逻辑占比明显时再做。
+7. **FrameCodec 微优化**：保持小步修改，每次只改一个分支，并重跑 codec + session benchmark。
+8. **write/control 和 clock 后续优化**：在 read path 真实瓶颈确认后，再按 P99 风险继续推进。
 
 建议按下面顺序推进 write 侧：
 
