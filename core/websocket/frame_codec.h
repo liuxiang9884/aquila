@@ -21,9 +21,8 @@ class FrameCodec {
  public:
   explicit FrameCodec(size_t max_payload_bytes)
       : FrameCodec(max_payload_bytes,
-                   max_payload_bytes >
-                           std::numeric_limits<size_t>::max() -
-                               detail::kMaxFrameHeaderBytes
+                   max_payload_bytes > std::numeric_limits<size_t>::max() -
+                                           detail::kMaxFrameHeaderBytes
                        ? max_payload_bytes
                        : max_payload_bytes + detail::kMaxFrameHeaderBytes) {}
 
@@ -35,8 +34,7 @@ class FrameCodec {
             ? max_payload_bytes
             : max_payload_bytes + detail::kMaxFrameHeaderBytes;
     receive_ring_.Init(std::max(receive_buffer_bytes, required_capacity));
-    receive_mask_ =
-        receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
+    receive_mask_ = receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
   }
 
   void Reset() noexcept {
@@ -50,7 +48,9 @@ class FrameCodec {
     delivered_frame_end_abs_ = 0;
   }
 
-  size_t ReceiveCapacity() const noexcept { return receive_ring_.capacity(); }
+  size_t ReceiveCapacity() const noexcept {
+    return receive_ring_.capacity();
+  }
 
   std::span<std::byte> WritableSpan() noexcept {
     ReleaseDeliveredFrame();
@@ -163,8 +163,8 @@ class FrameCodec {
       return {};
     }
 
-    const size_t frame_bytes = 2 + extended_length_bytes + mask_key.size() +
-                               payload.size();
+    const size_t frame_bytes =
+        2 + extended_length_bytes + mask_key.size() + payload.size();
     if (output.size() < frame_bytes) {
       return {};
     }
@@ -172,14 +172,14 @@ class FrameCodec {
     size_t cursor = 0;
     output[cursor++] = std::byte{static_cast<unsigned char>(0x80U | opcode)};
     if (payload.size() <= 125) {
-      output[cursor++] = std::byte{static_cast<unsigned char>(0x80U |
-                                                           payload.size())};
+      output[cursor++] =
+          std::byte{static_cast<unsigned char>(0x80U | payload.size())};
     } else if (payload.size() <= 0xFFFF) {
       output[cursor++] = std::byte{0xFE};
-      output[cursor++] = std::byte{
-          static_cast<unsigned char>((payload.size() >> 8) & 0xFFU)};
-      output[cursor++] = std::byte{
-          static_cast<unsigned char>(payload.size() & 0xFFU)};
+      output[cursor++] =
+          std::byte{static_cast<unsigned char>((payload.size() >> 8) & 0xFFU)};
+      output[cursor++] =
+          std::byte{static_cast<unsigned char>(payload.size() & 0xFFU)};
     } else {
       output[cursor++] = std::byte{0xFF};
       for (int shift = 56; shift >= 0; shift -= 8) {
@@ -256,9 +256,8 @@ class FrameCodec {
                                   std::uint64_t payload_length,
                                   std::uint64_t available) noexcept {
     if (payload_length > max_payload_bytes_ ||
-        payload_length >
-            static_cast<std::uint64_t>(
-                std::numeric_limits<std::uint32_t>::max())) {
+        payload_length > static_cast<std::uint64_t>(
+                             std::numeric_limits<std::uint32_t>::max())) {
       return {DecodeStatus::kProtocolError, {}};
     }
 
