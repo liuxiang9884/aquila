@@ -2,8 +2,8 @@
 
 ## 文档信息
 
-- 版本：`v0.2`
-- 状态：`进行中`（P0 / P1 / P2-A 已完成，下一步 P2-B）
+- 版本：`v0.3`
+- 状态：`P3 收尾中`（P0 / P1 / P2-A / P2-B 已完成，当前 P3）
 - 创建日期：`2026-04-24`
 - 文档定位：对 `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` 中 G1–G11 共 11 条差距的整体分阶段处置计划。本文件是**索引 / 路线图**，不承载具体任务拆分；每个 Phase 对应一份独立的 plan 文档，按需展开。
 
@@ -15,6 +15,10 @@
 - `doc/superpowers/plans/2026-04-24-websocket-client-p0-production-safety.md`（Phase 0）
 - `doc/superpowers/plans/2026-04-24-websocket-client-p1-reconnect-and-degraded.md`（Phase 1）
 - `doc/websocket_frame_codec_receive_strategies.md`（Phase 2-A 总结）
+- `doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`（Phase 2-B）
+- `doc/superpowers/specs/2026-04-26-websocket-client-p2b-hotpath-pacing-design.md`（Phase 2-B 设计）
+- `doc/superpowers/plans/2026-04-27-websocket-client-p3-cleanup-validation.md`（Phase 3）
+- `doc/websocket_client_future_optimizations.md`（P3 后优化 backlog）
 
 ## 目标
 
@@ -31,10 +35,10 @@
 | G9 | 缺少 `Degraded` 状态 | **P1** | 同上 |
 | G1 | 热路径动态分配 + 多次 memcpy | **P2-A** | `websocket_frame_codec_receive_strategies.md` / `2026-04-25-websocket-client-p2a-framecodec-zero-copy-design.md` |
 | G10 | 容量耗尽未显式 fail-fast | **P2-A** | 同上（与 G1 合并设计） |
-| G2 | `DriveRead` 单次 `ReadSome` | **P2-B** | 待建（热路径节奏） |
+| G2 | `DriveRead` 单次 `ReadSome` | **P2-B** | `2026-04-26-websocket-client-p2b-hotpath-pacing.md` |
 | G4 | 心跳与业务写无协调 | **P2-B** | 同上 |
 | G8 | 心跳粒度绑在 spin iteration | **P2-B** | 同上 |
-| G11 | 构建图形态核对 | **P3** | 待建（或合并进 P2 收尾） |
+| G11 | 构建图形态核对 | **P3** | `2026-04-27-websocket-client-p3-cleanup-validation.md` |
 
 ## Phase 0 — 生产可用性修复（已完成）
 
@@ -69,7 +73,7 @@
 
 ---
 
-## Phase 2 — 热路径与心跳（进行中，拆两个 plan）
+## Phase 2 — 热路径与心跳（已完成，拆两个 plan）
 
 ### Phase 2-A：FrameCodec 零拷贝 + 容量 fail-fast（已完成）
 
@@ -90,31 +94,26 @@
 - 容量耗尽返回 `kCapacityExceeded`，递增 `frame_codec_capacity_exhaustions` 并进入 degraded 观测，不再静默扩容。
 - 单元测试、session read path benchmark、第三方 codec 对比 benchmark 已记录在相关文档和 review G1 / G10 条目中。
 
-### Phase 2-B：热路径节奏（读循环 + 心跳 + 时钟）（下一步）
+### Phase 2-B：热路径节奏（读循环 + 心跳 + 时钟）（已完成）
 
-**拟建 plan**：`doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`
+**plan**：`doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`
 
 **范围**：G2 + G4 + G8
 
 **为什么合并**：三条都是 spin loop 中"读 / 写 / 时钟"节奏问题，分开改会互相干扰彼此的 benchmark 基线。
 
-**核心决策**：
-- **G2**：`DriveRead` 引入有界多轮 `ReadSome`，预算按字节或次数（二选一，benchmark 支撑）。
-- **G4**：独立的 control-frame slot / 快路径，使心跳 ping 不被业务写排队拖延；`Metrics` 新增 ping 入队到 sendto 的耗时。
-- **G8**：时钟打点从 spin iteration 解耦，换成 `clock_gettime(CLOCK_MONOTONIC_COARSE)` 或带校准的 `rdtsc`，具体选型需 benchmark 对比。
+**已落地能力**：
 
-**依赖**：P2-A 完成（FrameCodec 新节奏下再测 `DriveRead` 预算才有意义）。
-
-**产出证据**：
-- 链路基准：`active_spin_benchmark` 在不同预算下的 p99.9 变化
-- 心跳 RTT 分布（业务写空载 vs 满载）
-- 时钟调用开销 micro-benchmark
+- G2：`ConnectionConfig::max_reads_per_drive` / `read_until_would_block`，`CriticalSession::DriveRead()` bounded read pump，`TlsSocket::PendingReadableBytes()` 基于 `SSL_pending()`。
+- G4：dedicated control write slot，业务 queue 满时 heartbeat ping / auto-pong 不再消耗业务 `PreparedWriteArena` slot；partial business frame 不被 control frame 打断。
+- G8：`ClockSource` 与 `runtime_clock.h`，`ActiveSpinLoop` 支持 runtime clock source，`RuntimeSession` 复用 loop clock 做 heartbeat 和 degraded evaluation。
+- 验证证据已回填到 review G2 / G4 / G8；P3 之后的性能优化候选项记录在 `doc/websocket_client_future_optimizations.md`。
 
 ---
 
-## Phase 3 — 收尾（待建）
+## Phase 3 — 收尾（当前）
 
-**拟建 plan**：`doc/superpowers/plans/2026-04-24-websocket-client-p3-cleanup.md`（或合并进 P2-B 的尾声）
+**plan**：`doc/superpowers/plans/2026-04-27-websocket-client-p3-cleanup-validation.md`
 
 **范围**：
 - G11 构建图核对（已基本核实 `aquila_core` 为 STATIC，与最初 plan 一致）
@@ -147,8 +146,8 @@ P1 (G7 / G9)
 ```
 
 横向上，同一 Phase 内部的任务如果彼此独立可以并行（例如 P1 的 G7 和 G9 大部分改动可以切分），但**不建议跨 Phase 并行**，因为：
-- P1 的 `kDegraded` / `kConsumerFatal` 行为会影响 P2 的 fail-fast 分流
-- P2-A 的接收 buffer 布局会决定 P2-B 的 `DriveRead` 预算语义
+- P1 的 `kDegraded` / `kConsumerFatal` 行为影响了 P2 的 fail-fast 分流
+- P2-A 的接收 buffer 布局决定了 P2-B 的 `DriveRead` 预算语义
 
 ## 一句话取舍
 
@@ -159,5 +158,5 @@ P1 (G7 / G9)
 - [x] P0：关闭 G6 / G3 / G5
 - [x] P1：关闭 G7 / G9
 - [x] P2-A：关闭 G1 / G10
-- [ ] P2-B：立项并关闭 G2 / G4 / G8
-- [ ] P3：关闭 G11，补长稳运行证据和最终交付文档
+- [x] P2-B：关闭 G2 / G4 / G8
+- [ ] P3：关闭 G11，补验证证据和最终交付文档

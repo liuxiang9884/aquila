@@ -1,25 +1,27 @@
-# Agent 接手说明：P1 归档与 P2-B 接手提示
+# Agent 接手说明：P1/P2 归档与 P3 接手提示
 
 ## 这份文件是给谁的
 
-本文件原本用于接手 **Phase 1（WebSocket client 的重连与降级）**。截至当前 `dev` 分支，P1 已完成，P2-A FrameCodec decode 主体也已完成。
+本文件原本用于接手 **Phase 1（WebSocket client 的重连与降级）**。截至当前 `dev` 分支，P0、P1、P2-A、P2-B 已完成。
 
-当前下一步不是继续 P1，而是进入 **P2-B：热路径节奏（G2 + G4 + G8）**。
+当前下一步不是继续 P1/P2，而是进入 **P3：收尾 / 验证 / 文档闭环**。
 
 当前已完成：
 
 - P0：随机 nonce、背压非致命、冷路径总预算超时。
 - P1：重连 / 退避 / 失败分类、`kDegraded` 状态与 degraded evaluator。
 - P2-A：mirrored receive ring、FrameCodec 零拷贝、容量 fail-fast、decode direct fast path。
+- P2-B：bounded read pump、dedicated control write slot、runtime clock source / cadence。
 
 当前建议入口：
 
-1. push 当前 `dev`。
-2. 从最新 `dev` 切出 P2-B 分支。
-3. 新建 `doc/superpowers/plans/2026-04-26-websocket-client-p2b-hotpath-pacing.md`。
-4. 先讨论并锁定 G2 / G4 / G8 的 Scope Decision，再按 TDD + benchmark 实现。
+1. 从最新 `dev` 切出 `p3-cleanup-validation`。
+2. 执行 `doc/superpowers/plans/2026-04-27-websocket-client-p3-cleanup-validation.md`。
+3. 关闭 G11 构建图核对。
+4. 更新 README、roadmap、review 文档。
+5. 跑 debug / release build、websocket ctest、关键 release benchmark，并记录验证证据。
 
-> 注意：下面保留的 P1 细节是历史归档，用于追溯当时的 Scope Decision 和测试要求；不要再按其中“下一步具体操作”的 P1 Step 1 执行。
+> 注意：下面保留的 P1 细节是历史归档，用于追溯当时的 Scope Decision 和测试要求；不要再按其中“历史 P1 下一步具体操作”的步骤执行。
 
 ---
 
@@ -27,8 +29,8 @@
 
 - **项目**：crypto HFT 系统，重点是面向 gate.io / binance 的低延迟 C++ WebSocket client
 - **当前分支**：`dev`
-- **当前位置**：P0 / P1 / P2-A 已完成，准备切出 P2-B 分支
-- **下一步**：P2-B 热路径节奏（G2 `DriveRead`、G4 heartbeat 写协调、G8 clock cadence）
+- **当前位置**：P0 / P1 / P2-A / P2-B 已完成，准备或正在执行 P3
+- **下一步**：P3 收尾（G11 构建图核对、最终验证证据、README / roadmap / review 文档闭环）
 - **风格**：TDD + 原子提交 + 中英混写（文档中文、代码注释英文、commit message 英文）
 
 ---
@@ -70,7 +72,7 @@
    - 11 条差距的出处。G3 / G5 / G6 已经关闭并回填了处理方案块。G7 / G9 是本次要关闭的两条。
 
 8. **`doc/superpowers/plans/2026-04-24-websocket-client-review-roadmap.md`**
-   - 5 个 Phase 的总路线图。旧版 P1 handoff 曾要求只负责 P1；当前应以 roadmap 的 P2-B 下一步为准。
+   - 5 个 Phase 的总路线图。旧版 P1 handoff 曾要求只负责 P1；当前应以 roadmap 的 P3 下一步为准。
 
 9. **`doc/superpowers/plans/2026-04-24-websocket-client-p0-production-safety.md`**
    - P0 plan。不用执行，但 P0 的 TDD 节奏和 Scope Decision 形式是 P1 的样板。
