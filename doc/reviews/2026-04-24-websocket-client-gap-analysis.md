@@ -3,12 +3,13 @@
 ## 文档信息
 
 - 版本：`v0.1`
-- 状态：`待讨论`
+- 状态：`已归档`
 - 创建日期：`2026-04-24`
 - 记录位置：`doc/reviews/`
 - 关联文档：
   - `doc/websocket_client_design_v1.0.md`
-  - `doc/superpowers/plans/2026-04-24-websocket-client-review-roadmap.md`
+  - `doc/websocket_frame_codec_receive_strategies.md`
+  - `doc/websocket_client_future_optimizations.md`
   - `doc/project_structure.md`
 
 ## 文档定位
@@ -281,7 +282,7 @@
 - 时钟粒度绑在 spin `iteration_budget` 上
 - 构建图形态待核实
 
-**P0 阶段进展**（2026-04-24）：G6、G3、G5 已关闭，对应路线图 `doc/superpowers/plans/2026-04-24-websocket-client-review-roadmap.md` 的 Phase 0。同步发现并修复了测试注册链路的陈旧状态（顶层缺 `enable_testing()` + `add_websocket_gtest` 未调用 `add_test`，见 commit `18c8ac2`），这一点不属于 G1-G11 的范围，但对后续验收证据可信度是前提。
+**P0 阶段进展**（2026-04-24）：G6、G3、G5 已关闭。同步发现并修复了测试注册链路的陈旧状态（顶层缺 `enable_testing()` + `add_websocket_gtest` 未调用 `add_test`，见 commit `18c8ac2`），这一点不属于 G1-G11 的范围，但对后续验收证据可信度是前提。
 
 ## 讨论顺序建议
 

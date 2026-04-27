@@ -2,7 +2,7 @@
 
 ## 这份文件是给谁的
 
-本文件原本用于接手 **Phase 1（WebSocket client 的重连与降级）**。截至 2026-04-27，P0、P1、P2-A、P2-B、P3 均已完成并合入 `main`；已完成的阶段执行 plan 文档已删除。
+本文件原本用于接手 **Phase 1（WebSocket client 的重连与降级）**。截至 2026-04-27，P0、P1、P2-A、P2-B、P3 均已完成并合入 `main`；已完成的阶段执行 plan / spec 文档已删除。
 
 本文仅作为历史归档入口，不再作为执行计划使用。
 
@@ -12,19 +12,18 @@
 - P1：重连 / 退避 / 失败分类、`kDegraded` 状态与 degraded evaluator。
 - P2-A：mirrored receive ring、FrameCodec 零拷贝、容量 fail-fast、decode direct fast path。
 - P2-B：bounded read pump、dedicated control write slot、runtime clock source / cadence。
-- P3：构建图核对、README / roadmap / review 文档闭环、debug / release 验证和 benchmark smoke。
+- P3：构建图核对、README / review 文档闭环、debug / release 验证和 benchmark smoke。
 
 当前建议入口：
 
-1. 阶段闭环总览：`doc/superpowers/plans/2026-04-24-websocket-client-review-roadmap.md`
-2. 差距处理证据：`doc/reviews/2026-04-24-websocket-client-gap-analysis.md`
+1. 差距处理证据：`doc/reviews/2026-04-24-websocket-client-gap-analysis.md`
+2. WebSocket 当前设计：`doc/websocket_client_design_v1.0.md`
 3. FrameCodec 接收策略总结：`doc/websocket_frame_codec_receive_strategies.md`
-4. P2-A 设计规格：`doc/superpowers/specs/2026-04-25-websocket-client-p2a-framecodec-zero-copy-design.md`
-5. P2-B 设计规格：`doc/superpowers/specs/2026-04-26-websocket-client-p2b-hotpath-pacing-design.md`
-6. 后续优化 backlog：`doc/websocket_client_future_optimizations.md`
-7. 构建、测试、benchmark、probe 指引：`README.md`
+4. 第三方 WebSocket 对比：`doc/websocket_third_party_comparison.md`
+5. 后续优化 backlog：`doc/websocket_client_future_optimizations.md`
+6. 构建、测试、benchmark、probe 指引：`README.md`
 
-> 注意：阶段执行 plan 已按完成状态删除；历史决策以 review 条目、roadmap 摘要、设计规格和 commit 历史为准。
+> 注意：阶段执行 plan / spec 已按完成状态删除；历史决策以 review 条目、长期设计文档和 commit 历史为准。
 
 ---
 
@@ -44,10 +43,9 @@
 
 如需追溯具体决策：
 
-- P0 / P1 / P2 / P3 的阶段归属和完成状态：看 roadmap。
 - G1-G11 的问题描述、处理方式、验证证据：看 review 文档。
 - FrameCodec decode / read ring / 第三方策略对比：看 FrameCodec 接收策略总结。
-- P2-A / P2-B 的设计约束：看对应 specs。
+- P2-A / P2-B 的设计约束：看 WebSocket 当前设计、FrameCodec 接收策略总结和 future optimizations。
 - 后续仍可做的优化：看 future optimizations。
 
 ---
