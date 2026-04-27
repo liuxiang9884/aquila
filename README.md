@@ -148,11 +148,31 @@ taskset -c 2 ./build/release/benchmark/websocket/runtime_loopback_benchmark
 
 ## Live Probe
 
+Gate private endpoint inventory：
+
+| 用途 | URL | `websocket_probe` 参数 |
+|---|---|---|
+| 现货 WebSocket v4 | `wss://spotws-private.gateapi.io/ws/v4/` | `--host spotws-private.gateapi.io --port 443 --target /ws/v4/ --tls` |
+| 衍生品 WebSocket v4 | `wss://fxws-private.gateapi.io/v4/ws/usdt` | `--host fxws-private.gateapi.io --port 443 --target /v4/ws/usdt --tls` |
+| 衍生品 WebSocket v4 SBE | `wss://fxws-private.gateapi.io/v4/ws/usdt/sbe` | `--host fxws-private.gateapi.io --port 443 --target /v4/ws/usdt/sbe --tls` |
+| API v4 HTTP | `https://apiv4-private.gateapi.io` | 不适用于 `websocket_probe`；供后续 REST / 交易适配使用 |
+
 GateIO public WebSocket handshake smoke：
 
 ```bash
 timeout 15s ./build/debug/tools/websocket_probe \
   --host fx-ws.gateio.ws \
+  --port 443 \
+  --target /v4/ws/usdt \
+  --tls \
+  --cpu 2
+```
+
+Gate private WebSocket handshake smoke 示例：
+
+```bash
+timeout 15s ./build/debug/tools/websocket_probe \
+  --host fxws-private.gateapi.io \
   --port 443 \
   --target /v4/ws/usdt \
   --tls \
@@ -167,7 +187,7 @@ probe 用于验证 cold path 能进入 active state，并输出 state transition
 
 ```bash
 timeout 4h ./build/release/tools/websocket_probe \
-  --host fx-ws.gateio.ws \
+  --host fxws-private.gateapi.io \
   --port 443 \
   --target /v4/ws/usdt \
   --tls \

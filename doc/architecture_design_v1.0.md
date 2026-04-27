@@ -91,6 +91,19 @@
 - 当前测试结果说明目标主机未对该地址暴露可用的明文 `ws://` 入口，至少默认 `80` 端口未提供该服务
 - 即使显式改端口后尝试明文 `ws`，交易所公网接口通常也会要求 `TLS`，因此设计上仍应默认按 `wss://` 接入
 
+#### 记录 5
+
+Gate private 接入地址记录：
+
+| 用途 | URL |
+|---|---|
+| 现货 WebSocket v4 | `wss://spotws-private.gateapi.io/ws/v4/` |
+| 衍生品 WebSocket v4 | `wss://fxws-private.gateapi.io/v4/ws/usdt` |
+| 衍生品 WebSocket v4 SBE | `wss://fxws-private.gateapi.io/v4/ws/usdt/sbe` |
+| API v4 HTTP | `https://apiv4-private.gateapi.io` |
+
+其中三个 `wss://` 地址用于 WebSocket cold path / live probe；`https://apiv4-private.gateapi.io` 是 HTTP REST base endpoint，不进入 WebSocket probe。
+
 ## 开放问题
 
 - 整体架构的首要目标是否偏向单机低延迟优先，还是先强调多交易所扩展性
