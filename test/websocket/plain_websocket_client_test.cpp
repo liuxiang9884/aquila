@@ -32,8 +32,12 @@ namespace {
 
 class PlainWebSocketServer {
  public:
-  explicit PlainWebSocketServer(std::string payload)
-      : payload_(std::move(payload)) {}
+  explicit PlainWebSocketServer(
+      std::string payload,
+      bool coalesce_first_frame_with_handshake = false)
+      : payload_(std::move(payload)),
+        coalesce_first_frame_with_handshake_(
+            coalesce_first_frame_with_handshake) {}
 
   ~PlainWebSocketServer() noexcept {
     stop_.store(true, std::memory_order_release);
@@ -148,25 +152,29 @@ class PlainWebSocketServer {
                     "Sec-WebSocket-Accept: {}\r\n"
                     "\r\n",
                     accept_key);
-    if (!SendAll(client_fd, std::as_bytes(std::span(response)))) {
-      return;
-    }
+    const auto frame = BuildTextFrame();
+    if (coalesce_first_frame_with_handshake_) {
+      std::vector<std::byte> combined;
+      combined.reserve(response.size() + frame.size());
+      const auto response_bytes = std::as_bytes(std::span(response));
+      combined.insert(combined.end(), response_bytes.begin(),
+                      response_bytes.end());
+      combined.insert(combined.end(), frame.begin(), frame.end());
+      if (!SendAll(client_fd, combined)) {
+        return;
+      }
+      sent_frame_count_.fetch_add(1, std::memory_order_acq_rel);
+    } else {
+      if (!SendAll(client_fd, std::as_bytes(std::span(response)))) {
+        return;
+      }
 
-    // Keep the first data frame out of the HTTP response read buffer. Preserving
-    // post-101 leftover bytes is a separate handshake behavior.
-    std::this_thread::sleep_for(20ms);
-
-    std::array<std::byte, 128> frame{};
-    size_t cursor = 0;
-    frame[cursor++] = std::byte{0x81};
-    frame[cursor++] = std::byte{static_cast<unsigned char>(payload_.size())};
-    for (const char value : payload_) {
-      frame[cursor++] = std::byte{static_cast<unsigned char>(value)};
+      std::this_thread::sleep_for(20ms);
+      if (!SendAll(client_fd, frame)) {
+        return;
+      }
+      sent_frame_count_.fetch_add(1, std::memory_order_acq_rel);
     }
-    if (!SendAll(client_fd, std::span<const std::byte>(frame.data(), cursor))) {
-      return;
-    }
-    sent_frame_count_.fetch_add(1, std::memory_order_acq_rel);
 
     while (!stop_.load(std::memory_order_acquire)) {
       std::this_thread::sleep_for(5ms);
@@ -208,7 +216,18 @@ class PlainWebSocketServer {
     return {};
   }
 
+  std::vector<std::byte> BuildTextFrame() const {
+    std::vector<std::byte> frame(2 + payload_.size());
+    frame[0] = std::byte{0x81};
+    frame[1] = std::byte{static_cast<unsigned char>(payload_.size())};
+    for (size_t i = 0; i < payload_.size(); ++i) {
+      frame[2 + i] = std::byte{static_cast<unsigned char>(payload_[i])};
+    }
+    return frame;
+  }
+
   std::string payload_;
+  bool coalesce_first_frame_with_handshake_{false};
   std::atomic<bool> stop_{false};
   std::atomic<int> active_client_fd_{-1};
   std::atomic<size_t> sent_frame_count_{0};
@@ -309,6 +328,40 @@ TEST(PlainWebSocketClientTest, ConnectsWithoutTlsAndReceivesMessage) {
 
   const bool entered_active = states.WaitFor(ConnectionPhase::kActive, 2s);
   const bool received_message = messages.WaitForMessage("plain-ok", 2s);
+  client.Stop();
+  io_thread.join();
+
+  EXPECT_TRUE(entered_active);
+  EXPECT_EQ(server.sent_frame_count(), 1U);
+  EXPECT_TRUE(received_message);
+  EXPECT_TRUE(result);
+  EXPECT_FALSE(states.Contains(ConnectionPhase::kTlsHandshaking));
+}
+
+TEST(PlainWebSocketClientTest, ReceivesFrameCoalescedWithHandshakeResponse) {
+  PlainWebSocketServer server("coalesced-ok", true);
+  ASSERT_TRUE(server.Start());
+
+  ConnectionConfig config{};
+  config.host = "127.0.0.1";
+  config.service = fmt::format("{}", server.port());
+  config.target = "/";
+  config.enable_tls = false;
+  config.heartbeat_interval_ms = 60'000;
+  config.heartbeat_timeout_ms = 60'000;
+  config.runtime_policy.active_spin = false;
+
+  MessageCapture messages;
+  StateCapture states;
+  MessageConsumer consumer{&messages, &CaptureMessage};
+  PlainWebSocketClient client(config, consumer);
+  client.SetStateHandler(&states, &CaptureState);
+
+  bool result = false;
+  std::thread io_thread([&] { result = client.Start(); });
+
+  const bool entered_active = states.WaitFor(ConnectionPhase::kActive, 2s);
+  const bool received_message = messages.WaitForMessage("coalesced-ok", 2s);
   client.Stop();
   io_thread.join();
 

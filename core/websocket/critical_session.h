@@ -172,6 +172,13 @@ class CriticalSession {
     }
   }
 
+  void FeedReadBytes(std::span<const std::byte> bytes) noexcept {
+    if (bytes.empty()) {
+      return;
+    }
+    DrainDecodedMessages(codec_.Feed(bytes));
+  }
+
   bool WantsWrite() const noexcept {
     return control_write_pending_ || pending_count_ != 0;
   }
@@ -369,7 +376,10 @@ class CriticalSession {
   }
 
   void DrainDecodedMessages() noexcept {
-    auto decoded = codec_.Poll();
+    DrainDecodedMessages(codec_.Poll());
+  }
+
+  void DrainDecodedMessages(DecodeResult decoded) noexcept {
     HandleDecodeResult(decoded);
     while (!should_reconnect_ && decoded.status == DecodeStatus::kMessageReady) {
       decoded = codec_.Poll();

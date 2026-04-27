@@ -35,6 +35,20 @@ class ColdPathLoop {
 
   void SetInterruptFd(int fd) noexcept { interrupt_fd_ = fd; }
 
+  std::span<const std::byte> HandshakeLeftover(
+      std::span<const char> handshake_storage) const noexcept {
+    if (handshake_leftover_size_ == 0) {
+      return {};
+    }
+    if (handshake_leftover_offset_ > handshake_storage.size() ||
+        handshake_leftover_size_ >
+            handshake_storage.size() - handshake_leftover_offset_) {
+      return {};
+    }
+    return std::as_bytes(handshake_storage.subspan(
+        handshake_leftover_offset_, handshake_leftover_size_));
+  }
+
   bool Init() noexcept {
     if (epoll_fd_ >= 0) {
       ::close(epoll_fd_);
@@ -48,6 +62,8 @@ class ColdPathLoop {
   bool RunUntilActive(TransportSocketT& socket, StateMachine& state_machine,
                       const ConnectionConfig& config,
                       std::span<char> handshake_storage) noexcept {
+    handshake_leftover_offset_ = 0;
+    handshake_leftover_size_ = 0;
     if (!Init()) {
       state_machine.Fail(ConnectionError::kSocketError,
                          ConnectionPhase::kTcpConnecting);
@@ -145,12 +161,15 @@ class ColdPathLoop {
     size_t response_bytes = 0;
     while (response_bytes < handshake_storage.size()) {
       std::string_view response(handshake_storage.data(), response_bytes);
-      if (response.find("\r\n\r\n") != std::string_view::npos) {
+      const size_t header_end = response.find("\r\n\r\n");
+      if (header_end != std::string_view::npos) {
         if (!ValidateServerHandshake(response, client_key)) {
           state_machine.Fail(ConnectionError::kHandshakeFailure,
                              ConnectionPhase::kWsHandshaking);
           return false;
         }
+        handshake_leftover_offset_ = header_end + 4U;
+        handshake_leftover_size_ = response_bytes - handshake_leftover_offset_;
         state_machine.Enter(ConnectionPhase::kActive);
         return true;
       }
@@ -315,6 +334,8 @@ class ColdPathLoop {
 
   int epoll_fd_{-1};
   int interrupt_fd_{-1};
+  size_t handshake_leftover_offset_{0};
+  size_t handshake_leftover_size_{0};
   std::array<char, 32> client_key_storage_{};
 };
 

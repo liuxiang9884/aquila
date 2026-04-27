@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <pthread.h>
+#include <span>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
@@ -130,6 +131,20 @@ class BasicWebSocketClient {
       }
 
       NotifyState(state_machine_.phase());
+      const auto handshake_leftover = cold_path_loop_.HandshakeLeftover(
+          std::span<const char>(handshake_storage_.data(),
+                                handshake_storage_.size()));
+      if (!handshake_leftover.empty()) {
+        core_.FeedReadBytes(handshake_leftover);
+        if (core_.ShouldReconnect()) {
+          MarkDegradedInactive();
+          if (!HandleReconnectFailure(core_.LastError(), transient_failures,
+                                      reconnect_in_progress)) {
+            return false;
+          }
+          continue;
+        }
+      }
       RuntimeSession runtime_session{
           core_,
           metrics_,
