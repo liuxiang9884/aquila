@@ -1,20 +1,22 @@
 # aquila
 
-## Build Prerequisites
+`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片是低延迟 WebSocket client：冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
 
-This project expects `vcpkg` to be installed under the current user's home directory:
+## 构建依赖
+
+项目默认使用本机用户目录下的 vcpkg：
 
 ```text
 $HOME/vcpkg
 ```
 
-`cmake/settings.cmake` resolves the toolchain from:
+`cmake/settings.cmake` 会从下面路径加载 toolchain：
 
 ```text
 $HOME/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
-To install the packages required by `cmake/third_party.cmake` on Linux:
+Linux 下安装当前依赖：
 
 ```bash
 $HOME/vcpkg/vcpkg install \
@@ -34,85 +36,122 @@ $HOME/vcpkg/vcpkg install \
   --triplet x64-linux
 ```
 
-After dependencies are installed, build the debug tree with:
+## 构建
+
+Debug 构建：
 
 ```bash
 ./build.sh debug
 ```
 
-The test binaries under `test/` are built with GoogleTest. Run them directly
-from `build/debug/test/` and use `--gtest_filter=...` when you want to narrow a
-suite to a subset of cases.
-
-## WebSocket Microbenchmarks
-
-Build the optimized tree before taking timing numbers:
+Release 构建：
 
 ```bash
 ./build.sh release
 ```
 
-The minimal WebSocket HFT slice builds the targeted benchmark binaries with
-Google Benchmark:
+默认并行度是 8，也可以指定：
+
+```bash
+./build.sh --jobs 16 release
+```
+
+## 测试
+
+运行 WebSocket 回归测试：
+
+```bash
+ctest --test-dir build/debug -R websocket_ --output-on-failure
+```
+
+Release 验证：
+
+```bash
+./build.sh release
+ctest --test-dir build/release -R websocket_ --output-on-failure
+```
+
+单个测试二进制也可以直接运行，例如：
+
+```bash
+./build/debug/test/websocket/websocket_frame_codec_test
+./build/debug/test/websocket/websocket_critical_session_test
+```
+
+## WebSocket Benchmarks
+
+先构建 release：
+
+```bash
+./build.sh release
+```
+
+当前 WebSocket benchmark target：
+
+```text
+prepared_write_benchmark
+frame_codec_benchmark
+third_party_frame_codec_comparison_benchmark
+degraded_evaluator_benchmark
+active_spin_benchmark
+session_write_path_benchmark
+session_read_path_benchmark
+clock_source_benchmark
+runtime_loopback_benchmark
+affinity_policy_comparison_benchmark
+cold_path_handshake_benchmark
+```
+
+也可以只构建 WebSocket benchmark：
 
 ```bash
 cmake --build build/release --target \
   prepared_write_benchmark \
   frame_codec_benchmark \
+  third_party_frame_codec_comparison_benchmark \
+  degraded_evaluator_benchmark \
   active_spin_benchmark \
   session_write_path_benchmark \
   session_read_path_benchmark \
+  clock_source_benchmark \
   runtime_loopback_benchmark \
   affinity_policy_comparison_benchmark \
-  cold_path_handshake_benchmark -j8
+  cold_path_handshake_benchmark \
+  -j8
 ```
 
-You can run them directly from `build/release/benchmark/websocket/`. Each binary
-prints Google Benchmark timing columns plus custom counters for
-`min_ns/p50_ns/p99_ns/p999_ns/max_ns` and runtime labels such as CPU affinity,
-scheduling policy, TLS mode, and endpoint class.
-
-These are component-level microbenchmarks for the single-connection GateIO
-client stack:
-- `prepared_write_benchmark`: prepared-write arena acquire/release latency
-- `frame_codec_benchmark`: client-side frame encoding latency, including mask-key
-  RNG cost
-- `active_spin_benchmark`: one owner-loop iteration in the active spin runtime
-
-The first real-I/O benchmark layer runs against a nonblocking local
-`socketpair()` harness:
-- `session_write_path_benchmark`: `CommitPreparedWrite()` through
-  `CriticalSession::DriveWrite()` into a live kernel socket buffer
-- `session_read_path_benchmark`: peer frame write through
-  `CriticalSession::DriveRead()` and consumer delivery
-- `runtime_loopback_benchmark`: `ActiveSpinLoop + CriticalSession` message
-  latency with one message in flight over the local socketpair harness
-- `affinity_policy_comparison_benchmark`: sequentially compares baseline,
-  pinned, prefaulted, and memory-locked runtime policies on the same local
-  socketpair loopback path, skipping variants that cannot apply in the current
-  environment
-- `cold_path_handshake_benchmark`: full local loopback
-  `TCP connect + TLS handshake + WebSocket handshake` cold-path timing with TLS
-  session resumption disabled
-
-These benchmarks are still not end-to-end GateIO `wss` latency reports and
-should not be used to claim full socket/TLS/handshake path latency.
-
-This WebSocket slice is intentionally specialized for one low-latency GateIO
-`wss` connection. `Layer 1` is a user-driven core for handshake, TLS/WS state,
-prepared writes, and `DriveRead()` / `DriveWrite()` advancement. `Layer 2` is a
-thin wrapper that can apply one owner thread, CPU affinity, and an active spin
-runtime without changing the core API.
-
-For low-jitter runs, pin the owner thread, keep the process resident with
-`mlockall`, prefault hot stacks/buffers before entering the steady-state loop,
-and only enable real-time scheduling if the host is already isolated for this
-path.
-
-For live GateIO handshake validation:
+P3 推荐 smoke benchmark：
 
 ```bash
-timeout 10s ./build/debug/tools/websocket_probe \
+taskset -c 2 ./build/release/benchmark/websocket/session_read_path_benchmark
+taskset -c 2 ./build/release/benchmark/websocket/session_write_path_benchmark
+taskset -c 2 ./build/release/benchmark/websocket/active_spin_benchmark
+taskset -c 2 ./build/release/benchmark/websocket/clock_source_benchmark
+taskset -c 2 ./build/release/benchmark/websocket/runtime_loopback_benchmark
+```
+
+各 benchmark 定位：
+
+- `prepared_write_benchmark`：prepared-write arena acquire / release 延迟。
+- `frame_codec_benchmark`：WebSocket frame encode/decode microbenchmark。
+- `third_party_frame_codec_comparison_benchmark`：Aquila / 线性 buffer / Drogon style frame codec 对比。
+- `degraded_evaluator_benchmark`：degraded evaluator 单次评估成本。
+- `active_spin_benchmark`：active spin loop skeleton 成本。
+- `session_write_path_benchmark`：`CommitPreparedWrite()` 到 `DriveWrite()` 写入本地 socket buffer 的路径。
+- `session_read_path_benchmark`：本地 socketpair 写入 frame 到 consumer 收到 `MessageView` 的路径。
+- `clock_source_benchmark`：`ClockSource` 三种取时方式成本。
+- `runtime_loopback_benchmark`：`ActiveSpinLoop + CriticalSession` 本地 socketpair loopback 延迟。
+- `affinity_policy_comparison_benchmark`：不同 affinity / prefault / memory-lock 策略对比。
+- `cold_path_handshake_benchmark`：本地 TCP + TLS + WebSocket handshake 冷路径耗时。
+
+这些 benchmark 是组件级或本地 loopback 基准，不是完整交易所 `wss` 链路延迟报告。对性能结论必须记录 CPU、调度策略、affinity、OpenSSL、kernel 和 benchmark 命令。
+
+## Live Probe
+
+GateIO public WebSocket handshake smoke：
+
+```bash
+timeout 15s ./build/debug/tools/websocket_probe \
   --host fx-ws.gateio.ws \
   --port 443 \
   --target /v4/ws/usdt \
@@ -120,6 +159,27 @@ timeout 10s ./build/debug/tools/websocket_probe \
   --cpu 2
 ```
 
-The probe is a cold-path to active-state validation tool. It reports connection
-state transitions, any surfaced error code, and a final metric summary, but it
-is still not a long-run health monitor.
+probe 用于验证 cold path 能进入 active state，并输出 state transition、错误码和最终 metrics。它不是长稳健康监控工具。
+
+## 长稳验证
+
+合并到 `main` 前，如环境允许，应执行长稳验证并记录最终 metrics：
+
+```bash
+timeout 4h ./build/release/tools/websocket_probe \
+  --host fx-ws.gateio.ws \
+  --port 443 \
+  --target /v4/ws/usdt \
+  --tls \
+  --cpu 2
+```
+
+如果验证环境不允许访问外网交易所，则运行本地 loopback integration test 和 release benchmark，并在 P3 验证记录中明确说明没有采集 live exchange 证据。
+
+## 低延迟运行注意事项
+
+- 使用独占或隔离 CPU 运行 owner thread。
+- 优先固定 CPU affinity，并记录 `taskset` / scheduler 状态。
+- 进入 steady state 前预热和 prefault hot path。
+- 只在专用低延迟主机上启用实时调度。
+- benchmark 结论默认看 p50 / p99 / p99.9，不只看均值。
