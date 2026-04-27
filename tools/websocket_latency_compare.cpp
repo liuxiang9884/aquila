@@ -14,9 +14,13 @@
 #include <cstdint>
 #include <ctime>
 #include <memory>
+#include <netdb.h>
+#include <pthread.h>
+#include <sched.h>
 #include <span>
 #include <string>
 #include <string_view>
+#include <sys/socket.h>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -49,15 +53,73 @@ struct EndpointCounters {
   std::uint64_t ignored_messages{0};
 };
 
+std::string FormatSockaddr(const sockaddr_storage& storage,
+                           socklen_t storage_len) {
+  char host[NI_MAXHOST]{};
+  char service[NI_MAXSERV]{};
+  const int rc =
+      ::getnameinfo(reinterpret_cast<const sockaddr*>(&storage), storage_len,
+                    host, sizeof(host), service, sizeof(service),
+                    NI_NUMERICHOST | NI_NUMERICSERV);
+  if (rc != 0) {
+    return "unavailable";
+  }
+  return fmt::format(FMT_COMPILE("{}:{}"), host, service);
+}
+
+int PrintSocketInfo(std::string_view label, int fd) {
+  if (fd < 0) {
+    fmt::print(stderr, FMT_COMPILE("{} socket fd=unavailable\n"), label);
+    return -1;
+  }
+
+  sockaddr_storage local{};
+  socklen_t local_len = sizeof(local);
+  sockaddr_storage peer{};
+  socklen_t peer_len = sizeof(peer);
+  const bool has_local =
+      ::getsockname(fd, reinterpret_cast<sockaddr*>(&local), &local_len) == 0;
+  const bool has_peer =
+      ::getpeername(fd, reinterpret_cast<sockaddr*>(&peer), &peer_len) == 0;
+
+  int incoming_cpu = -1;
+  socklen_t incoming_cpu_len = sizeof(incoming_cpu);
+  const bool has_incoming_cpu =
+      ::getsockopt(fd, SOL_SOCKET, SO_INCOMING_CPU, &incoming_cpu,
+                   &incoming_cpu_len) == 0;
+
+  fmt::print(stderr,
+             FMT_COMPILE(
+                 "{} socket fd={} local={} peer={} so_incoming_cpu={}\n"),
+             label, fd,
+             has_local ? FormatSockaddr(local, local_len) : "unavailable",
+             has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
+             has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
+                              : "unavailable");
+  return has_incoming_cpu ? incoming_cpu : -1;
+}
+
+bool PinCurrentThreadToCpu(int cpu) noexcept {
+  if (cpu < 0) {
+    return false;
+  }
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET(cpu, &set);
+  return pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0;
+}
+
 template <typename ClientT>
 class EndpointRunner {
  public:
   EndpointRunner(EndpointConfig endpoint, EndpointSide side,
-                 std::string subscription, LatencyPairCollector& collector)
+                 std::string subscription, LatencyPairCollector& collector,
+                 bool pin_to_incoming_cpu)
       : endpoint_(std::move(endpoint)),
         side_(side),
         subscription_(std::move(subscription)),
         collector_(collector),
+        pin_to_incoming_cpu_(pin_to_incoming_cpu),
         encoder_(4096, 4096) {}
 
   void Start() {
@@ -168,6 +230,15 @@ class EndpointRunner {
       return;
     }
     saw_active_.store(true, std::memory_order_release);
+    if (client_ != nullptr) {
+      const int incoming_cpu =
+          PrintSocketInfo(endpoint_.label, client_->Core().NativeFd());
+      if (pin_to_incoming_cpu_) {
+        const bool pinned = PinCurrentThreadToCpu(incoming_cpu);
+        fmt::print(stderr, FMT_COMPILE("{} pin_to_incoming_cpu={} cpu={}\n"),
+                   endpoint_.label, pinned ? "ok" : "failed", incoming_cpu);
+      }
+    }
     bool expected = false;
     if (subscribed_.compare_exchange_strong(expected, true,
                                             std::memory_order_acq_rel)) {
@@ -215,6 +286,7 @@ class EndpointRunner {
   EndpointSide side_;
   std::string subscription_;
   LatencyPairCollector& collector_;
+  bool pin_to_incoming_cpu_{false};
   ws::FrameCodec encoder_;
   std::unique_ptr<ClientT> client_;
   std::thread thread_;
@@ -269,7 +341,8 @@ int RunCompare(const std::string& public_host, const std::string& public_port,
                const std::string& private_port,
                const std::string& private_target, int private_cpu,
                const std::string& channel, const std::string& contract,
-               std::uint32_t duration_ms, size_t max_pending) {
+               std::uint32_t duration_ms, size_t max_pending,
+               bool pin_to_incoming_cpu) {
   const auto epoch_seconds = static_cast<std::uint64_t>(std::time(nullptr));
   const std::string subscription =
       BuildGateSubscribeRequest(channel, contract, epoch_seconds);
@@ -283,7 +356,7 @@ int RunCompare(const std::string& public_host, const std::string& public_port,
           .target = public_target,
           .cpu = public_cpu,
       },
-      EndpointSide::kPublic, subscription, collector);
+      EndpointSide::kPublic, subscription, collector, pin_to_incoming_cpu);
   EndpointRunner<PrivateClientT> private_runner(
       EndpointConfig{
           .label = "private",
@@ -292,7 +365,7 @@ int RunCompare(const std::string& public_host, const std::string& public_port,
           .target = private_target,
           .cpu = private_cpu,
       },
-      EndpointSide::kPrivate, subscription, collector);
+      EndpointSide::kPrivate, subscription, collector, pin_to_incoming_cpu);
 
   fmt::print(FMT_COMPILE("subscription={}\n"), subscription);
   public_runner.Start();
@@ -362,6 +435,7 @@ int main(int argc, char** argv) {
   bool public_no_tls{false};
   bool private_tls{true};
   bool private_no_tls{false};
+  bool pin_to_incoming_cpu{false};
 
   app.add_option("--public-host", public_host, "public WebSocket host");
   app.add_option("--private-host", private_host, "private WebSocket host");
@@ -384,6 +458,8 @@ int main(int argc, char** argv) {
   app.add_flag("--private-tls", private_tls, "enable TLS for private endpoint");
   app.add_flag("--private-no-tls", private_no_tls,
                "disable TLS for private endpoint");
+  app.add_flag("--pin-to-incoming-cpu", pin_to_incoming_cpu,
+               "pin each owner thread to SO_INCOMING_CPU after activation");
   CLI11_PARSE(app, argc, argv);
 
   if (common_port->count() != 0 && public_port_option->count() == 0) {
@@ -403,22 +479,22 @@ int main(int argc, char** argv) {
     return RunCompare<ws::WebSocketClient, ws::WebSocketClient>(
         public_host, public_port, public_target, public_cpu, private_host,
         private_port, private_target, private_cpu, channel, contract,
-        duration_ms, max_pending);
+        duration_ms, max_pending, pin_to_incoming_cpu);
   }
   if (public_tls && !private_tls) {
     return RunCompare<ws::WebSocketClient, ws::PlainWebSocketClient>(
         public_host, public_port, public_target, public_cpu, private_host,
         private_port, private_target, private_cpu, channel, contract,
-        duration_ms, max_pending);
+        duration_ms, max_pending, pin_to_incoming_cpu);
   }
   if (!public_tls && private_tls) {
     return RunCompare<ws::PlainWebSocketClient, ws::WebSocketClient>(
         public_host, public_port, public_target, public_cpu, private_host,
         private_port, private_target, private_cpu, channel, contract,
-        duration_ms, max_pending);
+        duration_ms, max_pending, pin_to_incoming_cpu);
   }
   return RunCompare<ws::PlainWebSocketClient, ws::PlainWebSocketClient>(
       public_host, public_port, public_target, public_cpu, private_host,
       private_port, private_target, private_cpu, channel, contract, duration_ms,
-      max_pending);
+      max_pending, pin_to_incoming_cpu);
 }

@@ -234,6 +234,7 @@ class CriticalSession {
 
   bool ShouldReconnect() const noexcept { return should_reconnect_; }
   ConnectionError LastError() const noexcept { return last_error_; }
+  int NativeFd() const noexcept { return tls_socket_.NativeFd(); }
 
  private:
   void TriggerReconnect(ConnectionError error) noexcept {
