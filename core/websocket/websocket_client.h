@@ -204,21 +204,15 @@ class BasicWebSocketClient {
     std::uint32_t iterations_since_evaluation{0};
 
     void DriveWrite() noexcept {
-      if (!stop_requested.load()) {
-        core.DriveWrite();
-      }
+      core.DriveWrite();
     }
 
     void DriveRead() noexcept {
-      if (!stop_requested.load()) {
-        core.DriveRead();
-      }
+      core.DriveRead();
     }
 
     void AdvanceHeartbeat(std::uint64_t now_ns) noexcept {
-      if (!stop_requested.load()) {
-        core.AdvanceHeartbeat(now_ns);
-      }
+      core.AdvanceHeartbeat(now_ns);
     }
 
     std::uint32_t ClockCheckInterval(
@@ -233,10 +227,8 @@ class BasicWebSocketClient {
 
     void AdvanceClock(std::uint64_t now_ns,
                       std::uint32_t elapsed_iterations) noexcept {
-      if (!stop_requested.load()) {
-        core.AdvanceHeartbeat(now_ns);
-        EvaluateDegradedIfDue(now_ns, elapsed_iterations);
-      }
+      core.AdvanceHeartbeat(now_ns);
+      EvaluateDegradedIfDue(now_ns, elapsed_iterations);
     }
 
     bool ShouldReconnect() const noexcept {

@@ -763,7 +763,9 @@ active_spin_yield_mode
 
 #### 9.2 减少每轮 atomic stop 检查
 
-当前 `RuntimeSession` 的热循环中可能多次读取 `stop_requested`：
+状态：已完成边界化。
+
+此前 `RuntimeSession` 的热循环中可能多次读取 `stop_requested`：
 
 ```text
 DriveWrite()     -> stop_requested.load()
@@ -774,24 +776,30 @@ ShouldReconnect()-> stop_requested.load(memory_order_acquire)
 
 前三个 `load()` 未显式指定 memory order，默认是 `seq_cst`。在 active spin 热循环里，这可能是不必要的成本。
 
-候选方向：
+本轮保留 `ShouldReconnect()` 的 `memory_order_acquire` 退出边界，移除
+`DriveWrite()`、`DriveRead()`、`AdvanceClock()` 内部重复 stop 检查。语义变化是：如果
+`Stop()` 恰好发生在一轮 loop 的边界检查之后，session 最多再执行一次非阻塞
+`DriveWrite()` / `DriveRead()` 后退出；这与现有 read/write 非阻塞设计一致。
+
+验证 benchmark：
 
 ```text
-每轮 loop 只读取一次 stop flag
-或 DriveRead / DriveWrite / AdvanceClock 使用 memory_order_relaxed
-退出边界 ShouldReconnect 保留 memory_order_acquire
+active_spin_stop_check_current
+active_spin_stop_check_boundary_only
 ```
 
-验证目标：
+release pinned 结果：
 
-- `active_spin_mixed_read_write` 和 `active_spin_stop_requested` 不退化。
-- stop 请求仍然能及时退出。
-- 不破坏 `Stop()` 的 release/acquire 可见性假设。
+| 场景 | per active iteration |
+| --- | --- |
+| current repeated stop checks | `1.76ns` |
+| boundary-only stop check | `0.855ns` |
 
-风险：
+结论：
 
-- atomic memory order 修改必须明确线程可见性语义，不能只为性能改弱同步。
-- 如果 stop 还承担其他状态发布语义，需要保留 acquire 边界。
+- 这是小优化，单看 active spin 整体 `43ns` loop 成本，收益不如 write budget 明显。
+- 代码结构更干净：stop 可见性集中在 loop 退出边界，read/write hot method 不再重复检查同一个 flag。
+- 后续仍需用真实 read/write mixed benchmark 确认不会影响 Stop 响应时间。
 
 #### 9.3 把 active spin / yield 分支移出循环
 
@@ -1023,7 +1031,7 @@ if (!did_write && !did_read) {
 ### 路线 D：Active spin loop
 
 1. **mixed benchmark**：已补 `session_mixed_path_benchmark`，覆盖 write-before-read 下 business queue 对 read latency 的影响。
-2. **atomic stop 检查优化**：减少每轮重复 atomic load，明确 relaxed / acquire 边界。
+2. **atomic stop 检查优化**：已完成边界化，`ShouldReconnect()` 保留 acquire，read/write hot method 不再重复 load。
 3. **active/yield 分支外提**：只有 benchmark 证明有收益时再拆 `RunActive()` / `RunYield()`。
 4. **读写顺序策略实验**：比较 write-first、read-first、control-first-then-read。
 5. **write budget 实验**：已完成第一版，默认 `max_business_writes_per_drive = 1`，`0` 表示 legacy unbounded。
