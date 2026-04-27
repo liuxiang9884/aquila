@@ -309,6 +309,29 @@ port、target 和订阅完全相同，也可能因为 local port 导致 RSS queu
 这类信息应与 live latency compare 结果一起记录，否则 `public vs private`、
 `ws vs wss` 或“双 private WS”测试很容易把网络路径差异误判为 codec / TLS 成本。
 
+本轮后续实验补充结论：
+
+- 两条 private plain WS 即使 host、port、target、订阅完全相同，也会因为 local
+  port 不同而得到不同五元组。
+- 连续短连接显示，同一个 `ws://fxws-private.gateapi.io:80/v4/ws/usdt` endpoint
+  会落到不同 `SO_INCOMING_CPU`，例如 `CPU11 / CPU16 / CPU26 / CPU9 / CPU5`。
+- 预先把 owner thread 绑到 `CPU2 / CPU3` 或随便选一对 RX IRQ CPU 都不可控，
+  因为建连后实际 RSS / incoming CPU 由该 TCP flow 决定。
+- 在 `websocket_latency_compare` 中增加 `--pin-to-incoming-cpu` 后，active 后
+  按 `SO_INCOMING_CPU` 重新绑核能够成功执行，但 live 结果没有稳定改善；
+  30s / 60s 样本仍出现毫秒级 p50 偏移。
+- 因此，跨核 wakeup 和 cache migration 是影响因素之一，但不是本轮双 private WS
+  毫秒级差异的主因。更可疑的是交易所侧 fanout、per-flow sender queue、LB /
+  gateway 内部路径，以及本机网络栈共同作用。
+
+当前工程结论：
+
+1. 不应把“绑到 RX IRQ CPU”当成解决双连接时延差异的充分条件。
+2. 不应让策略直接消费多条 WS 并自行选择，因为这会把去重、乱序、gap 和 source
+   health 复杂度推到每个策略里。
+3. 后续生产形态应先把外部连接差异收敛为一条 canonical market data stream，再
+   分发给策略。
+
 #### 5.2 多 feed 方案选择
 
 围绕同一份交易所行情，目前有三种候选形态：
@@ -380,6 +403,64 @@ secondary        -> standby monitor
 3. 输出 `selected=public/private` 和 `reason=p50/p99/gap/health`。
 4. 后续再把该逻辑抽成 `FeedSelector`，交易中采用 primary publish、secondary monitor。
 5. 最后再评估是否升级到 fastest-win `FeedArbiter`。
+
+本轮建议采用方案 C 作为下一阶段基线，而不是直接上方案 B。原因：
+
+- 双 private WS 的最快方会变，启动时随机选一路不够稳。
+- `SO_INCOMING_CPU` 诊断和 `--pin-to-incoming-cpu` 证明本机绑核不是唯一决定因素。
+- fastest-win 虽然理论上能拿到 `min(WSA, WSB)`，但需要在每条 update 上处理
+  去重、sequence、gap、source health 和重连恢复，复杂度高。
+- warm-up selection 可以先用较低复杂度避免选到明显慢路，并保留 secondary 作为
+  warm standby / health monitor。
+
+对多连接扩展的建议：
+
+```text
+WS1
+WS2
+WS3
+...
+WSN
+  -> warmup collector
+  -> rank feeds
+  -> selected primary
+  -> canonical stream
+  -> strategy fanout
+```
+
+多连接选最优是可行的，但不应假设连接越多越好。建议最多先测 `N=3` 和 `N=4`：
+
+- 从 `N=1` 到 `N=2` 的收益可能明显，因为可以避开一个慢 flow。
+- 从 `N=2` 到 `N=3 / N=4` 的收益需要 live 数据证明。
+- 超过 4 路后，连接数、订阅数、decode / parse 成本、RX queue 干扰、交易所连接
+  限额和风控风险都会上升，收益大概率递减。
+
+多连接 warmup 排名不应只看 p50。推荐同时记录：
+
+- `active` / `subscribe_ok`
+- matched count
+- first count 或相对 reference 的 lead / lag
+- p50 / p99 / p99.9
+- pending / gap / stale
+- disconnect / reconnect / error count
+- local port、remote peer、`SO_INCOMING_CPU`
+
+推荐选择规则：
+
+```text
+eligible:
+  active && subscribe_ok && stale == false && gap risk acceptable
+
+rank:
+  lower p50 / higher first count
+  then lower p99 / p99.9 lag
+  then lower pending / gap risk
+  then fewer reconnect / error events
+```
+
+交易中不建议频繁切换 primary。即使 warm standby 在短窗口内更快，也应要求连续多个
+窗口明显优于 primary，或者 primary 出现 stale / gap / disconnect 后才切换，避免
+feed flapping。
 
 ### 6. `CriticalSession::DriveRead()` 微优化
 
