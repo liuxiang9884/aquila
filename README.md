@@ -28,6 +28,7 @@ $HOME/vcpkg/vcpkg install \
   magic-enum \
   vincentlaucsb-csv-parser \
   yyjson \
+  simdjson \
   nameof \
   drogon \
   fast-float \

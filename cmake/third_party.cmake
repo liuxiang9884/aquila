@@ -15,6 +15,8 @@ find_package(magic_enum CONFIG REQUIRED)
 find_package(unofficial-vincentlaucsb-csv-parser CONFIG REQUIRED)
 # yyjson
 find_package(yyjson CONFIG REQUIRED)
+# simdjson
+find_package(simdjson CONFIG REQUIRED)
 # nameof
 find_package(nameof CONFIG REQUIRED)
 # drogon
@@ -41,6 +43,7 @@ set(THIRD_PARTY_LIBS
         fmt::fmt-header-only
         unofficial::vincentlaucsb-csv-parser::csv
         yyjson::yyjson
+        simdjson::simdjson
         nameof::nameof 
         Drogon::Drogon
         FastFloat::fast_float

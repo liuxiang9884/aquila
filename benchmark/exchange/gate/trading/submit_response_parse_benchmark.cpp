@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <simdjson.h>
 #include <yyjson.h>
 
 using namespace aquila::exchange::gate::trading;
@@ -231,6 +232,48 @@ void BenchmarkOrderPlaceAckEchoYyjsonInsituCopyPool(benchmark::State& state) {
                                      FormatSchedulingPolicy()));
 }
 
+void BenchmarkOrderPlaceAckEchoSimdjsonOnDemandCopy(benchmark::State& state) {
+  simdjson::ondemand::parser parser;
+  std::vector<char> scratch(kOrderPlaceAckEcho.size() +
+                            simdjson::SIMDJSON_PADDING);
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::uint64_t parsed_messages = 0;
+  std::uint64_t accumulator = 0;
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t i = 0; i < kBatchSize; ++i) {
+      std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
+                scratch.begin());
+      const auto parsed = ParseGateSubmitResponseSimdjson(
+          scratch, kOrderPlaceAckEcho.size(), parser);
+      if (parsed.parse_status != GateSubmitParseStatus::kOk ||
+          parsed.kind != GateSubmitResponseKind::kAck) {
+        state.SkipWithError("parse failed");
+        return;
+      }
+      accumulator ^= parsed.request_id_hash ^ parsed.req_id_hash;
+      ++parsed_messages;
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_message_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_message_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_message_ns));
+  }
+
+  benchmark::DoNotOptimize(accumulator);
+  state.counters["payload_bytes"] =
+      static_cast<double>(kOrderPlaceAckEcho.size());
+  state.counters["scratch_bytes"] = static_cast<double>(scratch.size());
+  SetLatencyCounters(state, std::move(samples_ns), "parsed_messages",
+                     parsed_messages);
+  state.SetLabel(BuildBenchmarkLabel(false, "gate-order-place-ack-echo",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
 }  // namespace
 
 BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonDefault)
@@ -254,6 +297,13 @@ BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonInsituCopy)
 BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonInsituCopyPool)
     ->Name(
         "gate_submit_response_parse_order_place_ack_echo_yyjson_insitu_copy_pool")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkOrderPlaceAckEchoSimdjsonOnDemandCopy)
+    ->Name(
+        "gate_submit_response_parse_order_place_ack_echo_simdjson_ondemand_copy")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

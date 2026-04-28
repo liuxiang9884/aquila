@@ -3,9 +3,11 @@
 
 #include <charconv>
 #include <cstdint>
+#include <utility>
 #include <span>
 #include <string_view>
 
+#include <simdjson.h>
 #include <yyjson.h>
 
 namespace aquila::exchange::gate::trading {
@@ -191,6 +193,174 @@ inline GateSubmitResponse ParseDocument(yyjson_doc* doc) noexcept {
   return response;
 }
 
+inline bool ReadSimdjsonString(simdjson::ondemand::value value,
+                               std::string_view* output) noexcept {
+  if (output == nullptr) {
+    return false;
+  }
+  simdjson::simdjson_result<std::string_view> result = value.get_string();
+  std::string_view text{};
+  if (std::move(result).get(text) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = text;
+  return true;
+}
+
+inline std::uint64_t HashSimdjsonString(
+    simdjson::ondemand::value value) noexcept {
+  std::string_view text{};
+  return ReadSimdjsonString(value, &text) && !text.empty()
+             ? HashGateSubmitString(text)
+             : 0;
+}
+
+inline bool ReadSimdjsonUint64(simdjson::ondemand::value value,
+                               std::uint64_t* output) noexcept {
+  if (output == nullptr) {
+    return false;
+  }
+  std::uint64_t unsigned_value = 0;
+  if (value.get_uint64().get(unsigned_value) == simdjson::SUCCESS) {
+    *output = unsigned_value;
+    return true;
+  }
+
+  std::int64_t signed_value = 0;
+  if (value.get_int64().get(signed_value) == simdjson::SUCCESS &&
+      signed_value >= 0) {
+    *output = static_cast<std::uint64_t>(signed_value);
+    return true;
+  }
+
+  std::string_view text{};
+  return ReadSimdjsonString(value, &text) && ParseUintString(text, output);
+}
+
+inline std::uint16_t ReadSimdjsonStatusCode(
+    simdjson::ondemand::value value) noexcept {
+  std::uint64_t parsed = 0;
+  if (!ReadSimdjsonUint64(value, &parsed) || parsed > 999) {
+    return 0;
+  }
+  return static_cast<std::uint16_t>(parsed);
+}
+
+inline bool ReadSimdjsonBool(simdjson::ondemand::value value,
+                             bool* output) noexcept {
+  if (output == nullptr) {
+    return false;
+  }
+  bool parsed = false;
+  if (value.get_bool().get(parsed) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = parsed;
+  return true;
+}
+
+inline bool FindField(simdjson::ondemand::object object,
+                      std::string_view key,
+                      simdjson::ondemand::value* output) noexcept {
+  if (output == nullptr) {
+    return false;
+  }
+  simdjson::ondemand::value value;
+  if (object.find_field_unordered(key).get(value) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = value;
+  return true;
+}
+
+inline bool FindObject(simdjson::ondemand::object object,
+                       std::string_view key,
+                       simdjson::ondemand::object* output) noexcept {
+  if (output == nullptr) {
+    return false;
+  }
+  simdjson::ondemand::value value;
+  if (!FindField(object, key, &value)) {
+    return false;
+  }
+  simdjson::ondemand::object nested;
+  if (value.get_object().get(nested) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = nested;
+  return true;
+}
+
+inline GateSubmitResponse ParseSimdjsonDocument(
+    simdjson::ondemand::document document) noexcept {
+  GateSubmitResponse response{};
+  simdjson::ondemand::object root;
+  if (document.get_object().get(root) != simdjson::SUCCESS) {
+    response.parse_status = GateSubmitParseStatus::kUnexpectedShape;
+    return response;
+  }
+
+  response.parse_status = GateSubmitParseStatus::kOk;
+  simdjson::ondemand::value value;
+  if (FindField(root, "request_id", &value)) {
+    response.request_id_hash = HashSimdjsonString(value);
+  }
+  if (FindField(root, "ack", &value)) {
+    bool ack = false;
+    response.has_ack = ReadSimdjsonBool(value, &ack);
+    response.ack = response.has_ack && ack;
+  }
+
+  simdjson::ondemand::object header;
+  if (FindObject(root, "header", &header)) {
+    if (FindField(header, "status", &value)) {
+      response.http_status = ReadSimdjsonStatusCode(value);
+    }
+    if (FindField(header, "channel", &value)) {
+      std::string_view channel{};
+      response.channel_is_order_place =
+          ReadSimdjsonString(value, &channel) &&
+          channel == std::string_view("futures.order_place");
+    }
+  }
+
+  simdjson::ondemand::object data;
+  if (!FindObject(root, "data", &data)) {
+    return response;
+  }
+
+  simdjson::ondemand::object errs;
+  if (FindObject(data, "errs", &errs)) {
+    response.kind = GateSubmitResponseKind::kError;
+    if (FindField(errs, "label", &value)) {
+      response.error_label_hash = HashSimdjsonString(value);
+    }
+    return response;
+  }
+
+  simdjson::ondemand::object result;
+  if (!FindObject(data, "result", &result)) {
+    return response;
+  }
+
+  if (response.ack) {
+    response.kind = GateSubmitResponseKind::kAck;
+    if (FindField(result, "req_id", &value)) {
+      response.req_id_hash = HashSimdjsonString(value);
+    }
+    return response;
+  }
+
+  response.kind = GateSubmitResponseKind::kResult;
+  if (FindField(result, "id", &value)) {
+    (void)ReadSimdjsonUint64(value, &response.exchange_order_id);
+  }
+  if (FindField(result, "text", &value)) {
+    response.text_hash = HashSimdjsonString(value);
+  }
+  return response;
+}
+
 }  // namespace detail
 
 inline GateSubmitResponse ParseGateSubmitResponse(
@@ -235,6 +405,28 @@ inline GateSubmitResponse ParseGateSubmitResponseInsitu(
   }
 
   return detail::ParseDocument(doc.get());
+}
+
+inline GateSubmitResponse ParseGateSubmitResponseSimdjson(
+    std::span<char> padded_payload,
+    size_t payload_size,
+    simdjson::ondemand::parser& parser) noexcept {
+  GateSubmitResponse response{};
+  if (payload_size == 0 || payload_size > padded_payload.size() ||
+      padded_payload.size() - payload_size < simdjson::SIMDJSON_PADDING) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  simdjson::padded_string_view view(padded_payload.data(), payload_size,
+                                    padded_payload.size());
+  simdjson::ondemand::document document;
+  if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  return detail::ParseSimdjsonDocument(std::move(document));
 }
 
 }  // namespace aquila::exchange::gate::trading

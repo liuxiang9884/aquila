@@ -7,4 +7,5 @@ target_include_directories(aquila_gate
 target_link_libraries(aquila_gate
     INTERFACE
         yyjson::yyjson
+        simdjson::simdjson
 )

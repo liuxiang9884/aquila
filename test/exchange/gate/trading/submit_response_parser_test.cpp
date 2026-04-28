@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include <gtest/gtest.h>
+#include <simdjson.h>
 
 namespace aquila::exchange::gate::trading {
 namespace {
@@ -103,6 +104,26 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoInsitu) {
 
   const auto parsed =
       ParseGateSubmitResponseInsitu(scratch, kOrderPlaceAckEcho.size());
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
+  EXPECT_TRUE(parsed.ack);
+  EXPECT_EQ(parsed.http_status, 200);
+  EXPECT_TRUE(parsed.channel_is_order_place);
+  EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
+  EXPECT_EQ(parsed.req_id_hash, HashGateSubmitString("request-id-1"));
+}
+
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoSimdjson) {
+  std::array<char, kOrderPlaceAckEcho.size() + simdjson::SIMDJSON_PADDING>
+      scratch{};
+  std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
+            scratch.begin());
+  simdjson::ondemand::parser parser;
+
+  const auto parsed =
+      ParseGateSubmitResponseSimdjson(scratch, kOrderPlaceAckEcho.size(),
+                                      parser);
 
   ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
   EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
