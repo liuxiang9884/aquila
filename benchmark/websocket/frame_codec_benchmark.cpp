@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstddef>
 #include <string_view>
 #include <span>
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <openssl/rand.h>
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -18,6 +20,41 @@ using namespace aquila::websocket::benchmarking;
 namespace {
 
 constexpr size_t kCoalescedFrameCount = 16;
+
+std::vector<std::byte> BuildClientPayload(size_t payload_size) {
+  std::vector<std::byte> payload(payload_size);
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = std::byte{static_cast<unsigned char>(i & 0xFFU)};
+  }
+  return payload;
+}
+
+void WriteSmallClientHeader(size_t payload_size,
+                            const std::array<std::byte, 4>& mask_key,
+                            std::span<std::byte> output) noexcept {
+  output[0] = std::byte{0x82};
+  output[1] = std::byte{static_cast<unsigned char>(0x80U | payload_size)};
+  output[2] = mask_key[0];
+  output[3] = mask_key[1];
+  output[4] = mask_key[2];
+  output[5] = mask_key[3];
+}
+
+void ApplyMaskScalar(std::span<const std::byte> payload,
+                     const std::array<std::byte, 4>& mask_key,
+                     std::span<std::byte> output) noexcept {
+  for (size_t i = 0; i < payload.size(); ++i) {
+    output[i] = payload[i] ^ mask_key[i & 0x3U];
+  }
+}
+
+std::uint64_t SumBytes(std::span<const std::byte> bytes) noexcept {
+  std::uint64_t sum = 0;
+  for (const auto byte : bytes) {
+    sum += std::to_integer<unsigned int>(byte);
+  }
+  return sum;
+}
 
 std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
   const size_t header_bytes = payload.size() <= 125 ? 2 : 4;
@@ -48,6 +85,160 @@ std::vector<std::byte> BuildCoalescedServerTextFrames(std::string_view payload,
   return coalesced;
 }
 
+void RunFrameCodecEncodePayload(benchmark::State& state,
+                                size_t payload_size) {
+  constexpr size_t kBatchSize = 64;
+  FrameCodec codec(1024);
+  const auto payload = BuildClientPayload(payload_size);
+  std::array<std::byte, 1024> storage{};
+  std::uint64_t bytes_encoded = 0;
+  std::uint64_t header_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      const auto encoded = codec.EncodeBinary(payload, storage);
+      if (!encoded.ok) {
+        state.SkipWithError("frame encode failed");
+        return;
+      }
+      benchmark::DoNotOptimize(storage);
+      bytes_encoded += encoded.bytes.size();
+      header_accumulator += SumBytes(std::span<const std::byte>(storage.data(),
+                                                                2));
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "bytes_encoded",
+                     bytes_encoded + header_accumulator);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkFrameCodecEncodeSmall32(benchmark::State& state) {
+  RunFrameCodecEncodePayload(state, 32);
+}
+
+void BenchmarkFrameCodecEncodeSmall64(benchmark::State& state) {
+  RunFrameCodecEncodePayload(state, 64);
+}
+
+void BenchmarkFrameCodecEncodeSmall128(benchmark::State& state) {
+  RunFrameCodecEncodePayload(state, 128);
+}
+
+void BenchmarkFrameCodecEncodeMedium512(benchmark::State& state) {
+  RunFrameCodecEncodePayload(state, 512);
+}
+
+void BenchmarkFrameCodecMaskRngOnly(benchmark::State& state) {
+  constexpr size_t kBatchSize = 64;
+  std::array<std::byte, 4> mask_key{};
+  std::uint64_t mask_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      if (RAND_bytes(reinterpret_cast<unsigned char*>(mask_key.data()),
+                     static_cast<int>(mask_key.size())) != 1) {
+        state.SkipWithError("RAND_bytes failed");
+        return;
+      }
+      benchmark::DoNotOptimize(mask_key);
+      mask_accumulator += SumBytes(mask_key);
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "mask_accumulator",
+                     mask_accumulator);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void RunFrameCodecMaskXorOnly(benchmark::State& state, size_t payload_size) {
+  constexpr size_t kBatchSize = 64;
+  const auto payload = BuildClientPayload(payload_size);
+  std::vector<std::byte> output(payload.size());
+  const std::array<std::byte, 4> mask_key{
+      std::byte{0x11}, std::byte{0x22}, std::byte{0x33}, std::byte{0x44}};
+  std::uint64_t output_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      ApplyMaskScalar(payload, mask_key, output);
+      benchmark::DoNotOptimize(output.data());
+      output_accumulator += SumBytes(std::span<const std::byte>(output.data(),
+                                                                1));
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "output_accumulator",
+                     output_accumulator);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkFrameCodecMaskXorOnly64(benchmark::State& state) {
+  RunFrameCodecMaskXorOnly(state, 64);
+}
+
+void BenchmarkFrameCodecMaskXorOnly128(benchmark::State& state) {
+  RunFrameCodecMaskXorOnly(state, 128);
+}
+
+void BenchmarkFrameCodecHeaderSmall64(benchmark::State& state) {
+  constexpr size_t kBatchSize = 64;
+  std::array<std::byte, 6> header{};
+  const std::array<std::byte, 4> mask_key{
+      std::byte{0x11}, std::byte{0x22}, std::byte{0x33}, std::byte{0x44}};
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      WriteSmallClientHeader(64, mask_key, header);
+      benchmark::DoNotOptimize(header.data());
+      benchmark::ClobberMemory();
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "", 0);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
 void BenchmarkFrameCodecEncode(benchmark::State& state) {
   constexpr size_t kBatchSize = 64;
   FrameCodec codec(1024);
@@ -68,8 +259,8 @@ void BenchmarkFrameCodecEncode(benchmark::State& state) {
       }
       benchmark::DoNotOptimize(storage);
       bytes_encoded += encoded.bytes.size();
-      header_accumulator += static_cast<std::uint8_t>(storage[0]) +
-                            static_cast<std::uint8_t>(storage[1]);
+      header_accumulator += SumBytes(std::span<const std::byte>(storage.data(),
+                                                                2));
     }
     const std::uint64_t elapsed_ns = NowNs() - start_ns;
     const auto per_operation_ns =
@@ -350,6 +541,54 @@ void BenchmarkQueuedFrameCodecDecodeMirroredBoundary(
 
 BENCHMARK(BenchmarkFrameCodecEncode)
     ->Name("frame_codec_encode")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecEncodeSmall32)
+    ->Name("frame_codec_encode_small_32")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecEncodeSmall64)
+    ->Name("frame_codec_encode_small_64")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecEncodeSmall128)
+    ->Name("frame_codec_encode_small_128")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecEncodeMedium512)
+    ->Name("frame_codec_encode_medium_512")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecMaskRngOnly)
+    ->Name("frame_codec_mask_rng_only")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecMaskXorOnly64)
+    ->Name("frame_codec_mask_xor_only_64")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecMaskXorOnly128)
+    ->Name("frame_codec_mask_xor_only_128")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecHeaderSmall64)
+    ->Name("frame_codec_header_small_64")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
