@@ -82,6 +82,14 @@ std::span<const std::byte> AsBytes(std::string_view text) {
   return std::as_bytes(std::span(text.data(), text.size()));
 }
 
+std::vector<std::byte> BuildBytePattern(size_t size) {
+  std::vector<std::byte> payload(size);
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = std::byte{static_cast<unsigned char>((i * 17U) & 0xFFU)};
+  }
+  return payload;
+}
+
 }  // namespace
 
 TEST(WebsocketFrameCodecTest, EncodesMaskedFramesAndDecodesCoalescedReads) {
@@ -149,6 +157,57 @@ TEST(WebsocketFrameCodecTest, ClientMaskKeyPoolRefillsAfterCapacity) {
 
   ASSERT_TRUE(pool.Next(&mask_key));
   EXPECT_EQ(pool.refill_count(), 2U);
+}
+
+TEST(WebsocketFrameCodecTest, EncodesClientPayloadsWithValidMask) {
+  FrameCodec codec(8192);
+  const std::array<size_t, 10> payload_sizes{0, 1, 2, 3, 4,
+                                             7, 8, 9, 256, 4096};
+
+  for (const size_t payload_size : payload_sizes) {
+    const auto payload = BuildBytePattern(payload_size);
+    std::vector<std::byte> storage(payload.size() + 14);
+    const auto encoded = codec.EncodeBinary(payload, storage);
+    ASSERT_TRUE(encoded.ok) << "payload_size=" << payload_size;
+    ASSERT_GE(encoded.bytes.size(), payload.size() + 6);
+    EXPECT_EQ(encoded.bytes[0], std::byte{0x82});
+    EXPECT_NE((std::to_integer<unsigned char>(encoded.bytes[1]) & 0x80U), 0U);
+
+    size_t cursor = 2;
+    size_t decoded_payload_size =
+        std::to_integer<unsigned char>(encoded.bytes[1]) & 0x7FU;
+    if (decoded_payload_size == 126) {
+      ASSERT_GE(encoded.bytes.size(), 8U);
+      decoded_payload_size =
+          (static_cast<size_t>(std::to_integer<unsigned char>(
+               encoded.bytes[cursor]))
+           << 8U) |
+          static_cast<size_t>(
+              std::to_integer<unsigned char>(encoded.bytes[cursor + 1]));
+      cursor += 2;
+    } else if (decoded_payload_size == 127) {
+      ASSERT_GE(encoded.bytes.size(), 14U);
+      decoded_payload_size = 0;
+      for (size_t i = 0; i < 8; ++i) {
+        decoded_payload_size =
+            (decoded_payload_size << 8U) |
+            static_cast<size_t>(
+                std::to_integer<unsigned char>(encoded.bytes[cursor + i]));
+      }
+      cursor += 8;
+    }
+    ASSERT_EQ(decoded_payload_size, payload.size());
+
+    const auto mask_key = encoded.bytes.subspan(cursor, 4);
+    cursor += 4;
+    ASSERT_EQ(encoded.bytes.size(), cursor + payload.size());
+
+    std::vector<std::byte> decoded(payload.size());
+    for (size_t i = 0; i < payload.size(); ++i) {
+      decoded[i] = encoded.bytes[cursor + i] ^ mask_key[i & 0x3U];
+    }
+    EXPECT_TRUE(BytesEqual(decoded, payload)) << "payload_size=" << payload_size;
+  }
 }
 
 TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {

@@ -52,6 +52,36 @@ class ClientMaskKeyPool {
   size_t refill_count_{0};
 };
 
+inline std::uint64_t BuildMaskPattern64(
+    const std::array<std::byte, 4>& mask_key) noexcept {
+  std::array<std::byte, sizeof(std::uint64_t)> pattern_bytes{};
+  for (size_t i = 0; i < pattern_bytes.size(); ++i) {
+    pattern_bytes[i] = mask_key[i & 0x3U];
+  }
+
+  std::uint64_t pattern = 0;
+  std::memcpy(&pattern, pattern_bytes.data(), sizeof(pattern));
+  return pattern;
+}
+
+inline void MaskPayload(std::span<const std::byte> payload,
+                        const std::array<std::byte, 4>& mask_key,
+                        std::span<std::byte> output) noexcept {
+  const std::uint64_t mask_pattern = BuildMaskPattern64(mask_key);
+  size_t i = 0;
+  for (; i + sizeof(std::uint64_t) <= payload.size();
+       i += sizeof(std::uint64_t)) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, payload.data() + i, sizeof(word));
+    word ^= mask_pattern;
+    std::memcpy(output.data() + i, &word, sizeof(word));
+  }
+
+  for (; i < payload.size(); ++i) {
+    output[i] = payload[i] ^ mask_key[i & 0x3U];
+  }
+}
+
 }  // namespace detail
 
 class FrameCodec {
@@ -228,9 +258,10 @@ class FrameCodec {
     for (const auto mask_byte : mask_key) {
       output[cursor++] = mask_byte;
     }
-    for (size_t i = 0; i < payload.size(); ++i) {
-      output[cursor++] = payload[i] ^ mask_key[i & 0x3U];
-    }
+    detail::MaskPayload(payload, mask_key,
+                        std::span<std::byte>(output.data() + cursor,
+                                             payload.size()));
+    cursor += payload.size();
 
     return {true, std::span<const std::byte>(output.data(), frame_bytes)};
   }
