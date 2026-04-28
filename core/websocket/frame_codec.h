@@ -17,6 +17,43 @@
 
 namespace aquila::websocket {
 
+namespace detail {
+
+inline constexpr size_t kClientMaskKeyPoolKeyCount = 4096;
+
+class ClientMaskKeyPool {
+ public:
+  bool Refill() noexcept {
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(keys_.data()),
+                   static_cast<int>(keys_.size() * sizeof(keys_[0]))) != 1) {
+      return false;
+    }
+    cursor_ = 0;
+    ++refill_count_;
+    return true;
+  }
+
+  bool Next(std::array<std::byte, 4>* mask_key) noexcept {
+    if (mask_key == nullptr) {
+      return false;
+    }
+    if (cursor_ == keys_.size() && !Refill()) {
+      return false;
+    }
+    *mask_key = keys_[cursor_++];
+    return true;
+  }
+
+  size_t refill_count() const noexcept { return refill_count_; }
+
+ private:
+  std::array<std::array<std::byte, 4>, kClientMaskKeyPoolKeyCount> keys_{};
+  size_t cursor_{kClientMaskKeyPoolKeyCount};
+  size_t refill_count_{0};
+};
+
+}  // namespace detail
+
 class FrameCodec {
  public:
   explicit FrameCodec(size_t max_payload_bytes)
@@ -35,6 +72,7 @@ class FrameCodec {
             : max_payload_bytes + detail::kMaxFrameHeaderBytes;
     receive_ring_.Init(std::max(receive_buffer_bytes, required_capacity));
     receive_mask_ = receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
+    (void)mask_key_pool_.Refill();
   }
 
   void Reset() noexcept {
@@ -158,8 +196,7 @@ class FrameCodec {
     const size_t extended_length_bytes =
         payload.size() <= 125 ? 0 : (payload.size() <= 0xFFFF ? 2 : 8);
     std::array<std::byte, 4> mask_key{};
-    if (RAND_bytes(reinterpret_cast<unsigned char*>(mask_key.data()),
-                   static_cast<int>(mask_key.size())) != 1) {
+    if (!mask_key_pool_.Next(&mask_key)) {
       return {};
     }
 
@@ -317,6 +354,7 @@ class FrameCodec {
   }
 
   size_t max_payload_bytes_{0};
+  detail::ClientMaskKeyPool mask_key_pool_{};
   MirroredBuffer receive_ring_{};
   size_t receive_mask_{0};
   std::uint64_t consume_abs_{0};

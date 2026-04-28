@@ -135,6 +135,22 @@ TEST(WebsocketFrameCodecTest, EncodesMaskedFramesAndDecodesCoalescedReads) {
   EXPECT_EQ(protocol_error.status, DecodeStatus::kProtocolError);
 }
 
+TEST(WebsocketFrameCodecTest, ClientMaskKeyPoolRefillsAfterCapacity) {
+  detail::ClientMaskKeyPool pool;
+  std::array<std::byte, 4> mask_key{};
+
+  ASSERT_TRUE(pool.Next(&mask_key));
+  EXPECT_EQ(pool.refill_count(), 1U);
+
+  for (size_t i = 1; i < detail::kClientMaskKeyPoolKeyCount; ++i) {
+    ASSERT_TRUE(pool.Next(&mask_key));
+  }
+  EXPECT_EQ(pool.refill_count(), 1U);
+
+  ASSERT_TRUE(pool.Next(&mask_key));
+  EXPECT_EQ(pool.refill_count(), 2U);
+}
+
 TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {
   FrameCodec codec(128, 4096);
   const auto filler = BuildServerTextFrame("x");

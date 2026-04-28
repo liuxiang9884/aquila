@@ -606,32 +606,52 @@ session_write_path_tls_partial_write
 - loopback TLS benchmark 仍不等价于真实交易所链路。
 - TLS benchmark 需要固定 OpenSSL 版本、cipher、CPU affinity 和证书配置。
 
-#### 8.2 优先评估 client masking / random mask 生成成本
+#### 8.2 client masking / random mask 生成成本
 
-WebSocket client 发出的 frame 必须 masked。当前 `FrameCodec::EncodeFrame()` 每帧调用 `RAND_bytes()` 生成 4-byte masking key。
+WebSocket client 发出的 frame 必须 masked。优化前 `FrameCodec::EncodeFrame()` 每帧调用 `RAND_bytes()` 生成 4-byte masking key。
 
 低频发送时这没有问题；高频下单、撤单或批量请求时，`RAND_bytes()` 可能成为 write 热路径成本和尾延迟来源。
 
-候选方案：
+2026-04-28 已完成 benchmark 拆分和生产优化。结论是：小 payload encode 的主成本来自逐帧 `RAND_bytes()`，不是 header 写入或 64B/128B payload XOR。
+
+优化前 release pinned 代表值：
+
+| 场景 | p50 / p99 / p99.9 |
+| --- | --- |
+| `frame_codec_encode_small_64` | `399 / 549 / 682ns` |
+| `frame_codec_mask_rng_only` | `374 / 535 / 575ns` |
+| `frame_codec_mask_xor_only_64` | `23 / 24 / 162ns` |
+| `session_write_path_with_encode_plain` | `865 / 920 / 2089ns` |
+| `session_tls_write_path_with_encode` | `1350 / 1714 / 16219ns` |
+
+生产方案：
 
 ```text
-初始化或冷路径批量生成 masking keys
--> per-session mask key ring
--> 热路径从 ring 取 4 bytes
--> 低水位时在冷路径补充
--> 耗尽时 fail-fast 或回退 RAND_bytes()
+FrameCodec 构造时预填充 per-codec mask key pool
+-> EncodeFrame() hot path 从 pool pop 4-byte mask key
+-> pool 耗尽时同步批量 refill
+-> 仍使用 OpenSSL RAND_bytes() 生成随机 mask key
+-> 不固定 mask key，不使用 0 mask
 ```
 
-验证目标：
+优化后 release pinned 代表值：
 
-- 用 benchmark / profile 证明 `RAND_bytes()` 在 write path 中占比明显。
-- 比较 per-frame `RAND_bytes()` 与 mask key pool 的 p50 / P99 / P99.9。
-- 验证 masking key 不固定、不复用到违反协议语义。
+| 场景 | p50 / p99 / p99.9 |
+| --- | --- |
+| `frame_codec_encode_small_64` | `25 / 70 / 188ns` |
+| `session_write_path_with_encode_plain` | `490 / 520 / 1099ns` |
+| `session_tls_write_path_with_encode` | `901 / 1185 / 12732ns` |
+
+验证：
+
+- `websocket_frame_codec_test` 新增覆盖 `ClientMaskKeyPool` 容量耗尽后的 refill。
+- debug / release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 16/16 通过。
+- release pinned benchmark 使用 `taskset -c 2` 运行 `frame_codec_benchmark`、`session_write_path_benchmark`、`session_tls_write_path_benchmark`。
 
 风险：
 
 - WebSocket client masking key 不能固定为 0。
-- mask key pool 需要容量、低水位、耗尽策略和可观测指标。
+- 当前 pool 耗尽时同步 refill；这会把逐帧 RNG 成本变成低频 refill 毛刺。后续如果真实下单流量接近 pool 容量，应评估低水位预取或冷路径 refill。
 - 不允许为了性能破坏 RFC 6455 对 client masking 的基本要求。
 
 #### 8.3 增加真实订单 payload benchmark
@@ -1044,11 +1064,10 @@ if (!did_write && !did_read) {
 ### 路线 C：Write path
 
 1. **TLS write path benchmark**：已补 single-frame `session_tls_write_path`；后续继续补 burst、control 和 partial write。
-2. **masking / RNG profile**：确认 `RAND_bytes()` 和 payload XOR 在 write path 的占比。
+2. **masking / RNG profile**：已确认 `RAND_bytes()` 是小 payload encode 主成本，并已采用 per-codec mask key pool。
 3. **真实订单 payload benchmark**：加入下单、撤单、签名、序列化，确认 WebSocket write 是否是瓶颈。
-4. **mask key pool 实验**：只有当 RNG 成本明显时，再实现 per-session mask key ring。
-5. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
-6. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。
+4. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
+5. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。
 
 核心判断：后续不应只抠 `CriticalSession` pending queue，而应先把 TLS、client masking/RNG、真实订单序列化和签名纳入 benchmark，确认真实下单链路的最大成本。
 
