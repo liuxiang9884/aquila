@@ -17,7 +17,10 @@
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <endian.h>
 #include <openssl/rand.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -50,6 +53,43 @@ class OneWritePerDriveSocket {
  private:
   bool write_available_{true};
   size_t bytes_written_{0};
+};
+
+class RawSocketPair {
+ public:
+  RawSocketPair() noexcept {
+    int fds[2] = {-1, -1};
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+      return;
+    }
+    if (!SetNonBlocking(fds[0]) || !SetNonBlocking(fds[1])) {
+      ::close(fds[0]);
+      ::close(fds[1]);
+      return;
+    }
+    client_fd_ = fds[0];
+    peer_fd_ = fds[1];
+  }
+
+  ~RawSocketPair() noexcept {
+    if (client_fd_ >= 0) {
+      ::close(client_fd_);
+    }
+    if (peer_fd_ >= 0) {
+      ::close(peer_fd_);
+    }
+  }
+
+  RawSocketPair(const RawSocketPair&) = delete;
+  RawSocketPair& operator=(const RawSocketPair&) = delete;
+
+  bool valid() const noexcept { return client_fd_ >= 0 && peer_fd_ >= 0; }
+  int client_fd() const noexcept { return client_fd_; }
+  int peer_fd() const noexcept { return peer_fd_; }
+
+ private:
+  int client_fd_{-1};
+  int peer_fd_{-1};
 };
 
 class DrogonStyleMaskCache {
@@ -129,6 +169,67 @@ bool EncodeDrogonStyleClientFrame(std::span<const std::byte> payload,
                           (i & 0x3U)]));
   }
   return true;
+}
+
+bool ThirdPartyStyleWriteAll(int fd, const std::uint8_t* data,
+                             std::uint32_t size, bool more) noexcept {
+  int flags = MSG_NOSIGNAL;
+  if (more) {
+    flags |= MSG_MORE;
+  }
+  do {
+    const ssize_t sent = ::send(fd, data, size, flags);
+    if (sent < 0) {
+      if (errno != EAGAIN && errno != EWOULDBLOCK) {
+        return false;
+      }
+      continue;
+    }
+    if (sent == 0) {
+      return false;
+    }
+    data += sent;
+    size -= static_cast<std::uint32_t>(sent);
+  } while (size != 0);
+  return true;
+}
+
+bool ThirdPartyStyleSendBinary(int fd,
+                               std::span<const std::byte> payload) noexcept {
+  std::uint8_t header[14]{};
+  std::uint32_t header_len = 2;
+  constexpr std::uint8_t kOpcodeBinary = 2;
+  constexpr bool kFin = true;
+  constexpr bool kSendMask = true;
+  const auto payload_len = static_cast<std::uint32_t>(payload.size());
+
+  header[0] = (kOpcodeBinary & 15U) | (static_cast<std::uint8_t>(kFin) << 7U);
+  header[1] = static_cast<std::uint8_t>(kSendMask) << 7U;
+  if (payload_len < 126) {
+    header[1] |= static_cast<std::uint8_t>(payload_len);
+  } else if (payload_len < 65536) {
+    header[1] |= 126;
+    const std::uint16_t be_len =
+        htobe16(static_cast<std::uint16_t>(payload_len));
+    std::memcpy(header + 2, &be_len, sizeof(be_len));
+    header_len += 2;
+  } else {
+    header[1] |= 127;
+    const std::uint64_t be_len = htobe64(payload_len);
+    std::memcpy(header + 2, &be_len, sizeof(be_len));
+    header_len += 8;
+  }
+
+  if constexpr (kSendMask) {
+    const std::uint32_t zero_mask = 0;
+    std::memcpy(header + header_len, &zero_mask, sizeof(zero_mask));
+    header_len += sizeof(zero_mask);
+  }
+
+  const auto* payload_data =
+      reinterpret_cast<const std::uint8_t*>(payload.data());
+  return ThirdPartyStyleWriteAll(fd, header, header_len, true) &&
+         ThirdPartyStyleWriteAll(fd, payload_data, payload_len, false);
 }
 
 void BenchmarkSessionWritePath(benchmark::State& state) {
@@ -343,6 +444,55 @@ void BenchmarkDrogonStyleWritePathPlain(benchmark::State& state) {
 
 BENCHMARK(BenchmarkDrogonStyleWritePathPlain)
     ->Name("drogon_style_write_path_plain")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkThirdPartyWebSocketStyleWritePathPlain(benchmark::State& state) {
+  RawSocketPair pair;
+  if (!pair.valid()) {
+    state.SkipWithError("socketpair create failed");
+    return;
+  }
+
+  const auto payload = BuildWritePayload();
+  const auto payload_bytes = std::span<const std::byte>(payload.data(),
+                                                       payload.size());
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::array<std::byte, 128> peer_drain{};
+  std::uint64_t frames_sent = 0;
+  constexpr size_t kWireBytes = 6 + 64;
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    if (!ThirdPartyStyleSendBinary(pair.client_fd(), payload_bytes)) {
+      state.SkipWithError("third-party-style write failed");
+      return;
+    }
+    ++frames_sent;
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+
+    state.PauseTiming();
+    if (!ReadExactFd(pair.peer_fd(),
+                     std::span<std::byte>(peer_drain.data(), kWireBytes))) {
+      state.SkipWithError("peer drain failed");
+      return;
+    }
+    state.ResumeTiming();
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "frames_sent", frames_sent);
+  state.SetLabel(BuildBenchmarkLabel(false,
+                                     "third-party-websocket-local-socketpair",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain)
+    ->Name("third_party_websocket_style_write_path_plain")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
