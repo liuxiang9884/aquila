@@ -250,6 +250,54 @@ bool ThirdPartyStyleSendBinary(int fd,
          ThirdPartyStyleWriteAll(fd, payload_data, payload_len, false);
 }
 
+bool ThirdPartyStyleSendBinaryCompliant(
+    int fd, std::span<const std::byte> payload,
+    std::span<std::uint8_t> masked_payload) noexcept {
+  if (masked_payload.size() < payload.size()) {
+    return false;
+  }
+
+  std::uint8_t header[14]{};
+  std::uint32_t header_len = 2;
+  constexpr std::uint8_t kOpcodeBinary = 2;
+  constexpr bool kFin = true;
+  constexpr bool kSendMask = true;
+  const auto payload_len = static_cast<std::uint32_t>(payload.size());
+
+  header[0] = (kOpcodeBinary & 15U) | (static_cast<std::uint8_t>(kFin) << 7U);
+  header[1] = static_cast<std::uint8_t>(kSendMask) << 7U;
+  if (payload_len < 126) {
+    header[1] |= static_cast<std::uint8_t>(payload_len);
+  } else if (payload_len < 65536) {
+    header[1] |= 126;
+    const std::uint16_t be_len =
+        htobe16(static_cast<std::uint16_t>(payload_len));
+    std::memcpy(header + 2, &be_len, sizeof(be_len));
+    header_len += 2;
+  } else {
+    header[1] |= 127;
+    const std::uint64_t be_len = htobe64(payload_len);
+    std::memcpy(header + 2, &be_len, sizeof(be_len));
+    header_len += 8;
+  }
+
+  std::array<std::uint8_t, 4> mask_key{};
+  if (RAND_bytes(mask_key.data(), static_cast<int>(mask_key.size())) != 1) {
+    return false;
+  }
+  std::memcpy(header + header_len, mask_key.data(), mask_key.size());
+  header_len += mask_key.size();
+
+  const auto* payload_data =
+      reinterpret_cast<const std::uint8_t*>(payload.data());
+  for (size_t i = 0; i < payload.size(); ++i) {
+    masked_payload[i] = payload_data[i] ^ mask_key[i & 0x3U];
+  }
+
+  return ThirdPartyStyleWriteAll(fd, header, header_len, true) &&
+         ThirdPartyStyleWriteAll(fd, masked_payload.data(), payload_len, false);
+}
+
 void BenchmarkSessionWritePath(benchmark::State& state) {
   ConnectionConfig config{};
   config.enable_tls = false;
@@ -619,6 +667,97 @@ BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain1024)
 
 BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain4096)
     ->Name("third_party_websocket_style_write_path_plain_4096")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void RunThirdPartyWebSocketCompliantStyleWritePathPlain(
+    benchmark::State& state, size_t payload_size) {
+  RawSocketPair pair;
+  if (!pair.valid()) {
+    state.SkipWithError("socketpair create failed");
+    return;
+  }
+
+  const auto payload = BuildWritePayload(payload_size);
+  const auto payload_bytes = std::span<const std::byte>(payload.data(),
+                                                       payload.size());
+  std::vector<std::uint8_t> masked_payload(payload.size());
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::vector<std::byte> peer_drain(ClientFrameWireBytes(payload_size));
+  std::uint64_t frames_sent = 0;
+  const size_t wire_bytes = ClientFrameWireBytes(payload_size);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    if (!ThirdPartyStyleSendBinaryCompliant(
+            pair.client_fd(), payload_bytes,
+            std::span<std::uint8_t>(masked_payload.data(),
+                                    masked_payload.size()))) {
+      state.SkipWithError("third-party-compliant-style write failed");
+      return;
+    }
+    ++frames_sent;
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+
+    state.PauseTiming();
+    if (!ReadExactFd(pair.peer_fd(),
+                     std::span<std::byte>(peer_drain.data(), wire_bytes))) {
+      state.SkipWithError("peer drain failed");
+      return;
+    }
+    state.ResumeTiming();
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "frames_sent", frames_sent);
+  state.SetLabel(BuildBenchmarkLabel(
+      false, "third-party-websocket-compliant-local-socketpair",
+      FormatAffinity(), FormatSchedulingPolicy()));
+}
+
+void BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketCompliantStyleWritePathPlain(state, 64);
+}
+
+BENCHMARK(BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain)
+    ->Name("third_party_websocket_compliant_style_write_path_plain")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain256(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketCompliantStyleWritePathPlain(state, 256);
+}
+
+void BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain1024(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketCompliantStyleWritePathPlain(state, 1024);
+}
+
+void BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain4096(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketCompliantStyleWritePathPlain(state, 4096);
+}
+
+BENCHMARK(BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain256)
+    ->Name("third_party_websocket_compliant_style_write_path_plain_256")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain1024)
+    ->Name("third_party_websocket_compliant_style_write_path_plain_1024")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkThirdPartyWebSocketCompliantStyleWritePathPlain4096)
+    ->Name("third_party_websocket_compliant_style_write_path_plain_4096")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
