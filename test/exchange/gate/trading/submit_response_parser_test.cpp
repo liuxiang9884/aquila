@@ -1,5 +1,7 @@
 #include "exchange/gate/trading/submit_response_parser.h"
 
+#include <algorithm>
+#include <array>
 #include <string_view>
 
 #include <gtest/gtest.h>
@@ -92,6 +94,23 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEcho) {
   EXPECT_EQ(parsed.exchange_order_id, 0U);
   EXPECT_EQ(parsed.text_hash, 0U);
   EXPECT_EQ(parsed.error_label_hash, 0U);
+}
+
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoInsitu) {
+  std::array<char, kOrderPlaceAckEcho.size() + YYJSON_PADDING_SIZE> scratch{};
+  std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
+            scratch.begin());
+
+  const auto parsed =
+      ParseGateSubmitResponseInsitu(scratch, kOrderPlaceAckEcho.size());
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
+  EXPECT_TRUE(parsed.ack);
+  EXPECT_EQ(parsed.http_status, 200);
+  EXPECT_TRUE(parsed.channel_is_order_place);
+  EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
+  EXPECT_EQ(parsed.req_id_hash, HashGateSubmitString("request-id-1"));
 }
 
 TEST(GateSubmitResponseParserTest, ParsesOrderPlaceApiResult) {
