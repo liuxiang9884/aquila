@@ -41,7 +41,6 @@ doc/websocket_read_write_benchmark_comparison.md
 | `README.md` | 了解构建和工具入口 | build、ctest、benchmark、probe、latency compare 的运行方式。 |
 | `doc/project_structure.md` | 理解目录边界 | `core`、`exchange`、`test`、`benchmark`、`doc` 的职责。 |
 | `doc/architecture_design_v1.0.md` | 理解长期系统架构 | 高频交易系统整体模块和边界。 |
-| `doc/agent-handoff-p1-websocket.md` | 了解 WebSocket 阶段归档 | P0/P1/P2/P3 已完成，旧 plan/spec 已删除。 |
 | `doc/websocket_client_design_v1.0.md` | 理解当前 WebSocket client 设计 | session、transport、control、metrics、runtime 边界。 |
 | `doc/websocket_frame_codec_receive_strategies.md` | 理解 FrameCodec decode 为什么这样设计 | mirrored ring、direct delivery、fast path、QueuedFrameCodec、decode 收口结论。 |
 | `doc/websocket_third_party_comparison.md` | 理解 MengRao/websocket 对比 | 为什么三方库不能直接作为生产内核。 |
