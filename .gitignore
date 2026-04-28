@@ -11,5 +11,6 @@ build*
 verbose
 compile_commands.json
 *.pyc
+__pycache__/
 venv
 third_party/
