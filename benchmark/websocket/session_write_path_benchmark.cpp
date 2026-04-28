@@ -92,6 +92,24 @@ class RawSocketPair {
   int peer_fd_{-1};
 };
 
+std::vector<std::byte> BuildWritePayload(size_t payload_size = 64) {
+  std::vector<std::byte> payload(payload_size);
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = std::byte{static_cast<unsigned char>(i & 0xFFU)};
+  }
+  return payload;
+}
+
+size_t ClientFrameWireBytes(size_t payload_size) noexcept {
+  const size_t extended_length_bytes =
+      payload_size <= 125 ? 0 : (payload_size <= 0xFFFF ? 2 : 8);
+  return 2 + extended_length_bytes + 4 + payload_size;
+}
+
+size_t PreparedWriteBytesForPayload(size_t payload_size) noexcept {
+  return std::max<size_t>(128, ClientFrameWireBytes(payload_size));
+}
+
 class DrogonStyleMaskCache {
  public:
   bool Next(std::uint32_t* mask) noexcept {
@@ -306,11 +324,12 @@ BENCHMARK(BenchmarkSessionWritePath)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
-void BenchmarkSessionWritePathWithEncode(benchmark::State& state) {
+void RunSessionWritePathWithEncode(benchmark::State& state,
+                                   size_t payload_size) {
   ConnectionConfig config{};
   config.enable_tls = false;
   config.prepared_write_slots = 8;
-  config.prepared_write_bytes = 128;
+  config.prepared_write_bytes = PreparedWriteBytesForPayload(payload_size);
   config.read_buffer_bytes = 4096;
   config.frame_buffer_bytes = 4096;
   config.heartbeat_interval_ms = std::numeric_limits<std::uint32_t>::max();
@@ -327,12 +346,12 @@ void BenchmarkSessionWritePathWithEncode(benchmark::State& state) {
   Metrics metrics{};
   CriticalSession<LocalFdSocket> session(config, pair.client, arena, metrics);
   FrameCodec encoder(config.max_frame_payload_bytes, config.frame_buffer_bytes);
-  const auto payload = BuildWritePayload();
+  const auto payload = BuildWritePayload(payload_size);
   const auto payload_bytes = std::span<const std::byte>(payload.data(),
                                                        payload.size());
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(4096);
-  std::array<std::byte, 128> peer_drain{};
+  std::vector<std::byte> peer_drain(ClientFrameWireBytes(payload_size));
 
   for (auto _ : state) {
     state.PauseTiming();
@@ -384,13 +403,48 @@ void BenchmarkSessionWritePathWithEncode(benchmark::State& state) {
                                      FormatSchedulingPolicy()));
 }
 
+void BenchmarkSessionWritePathWithEncode(benchmark::State& state) {
+  RunSessionWritePathWithEncode(state, 64);
+}
+
 BENCHMARK(BenchmarkSessionWritePathWithEncode)
     ->Name("session_write_path_with_encode_plain")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
-void BenchmarkDrogonStyleWritePathPlain(benchmark::State& state) {
+void BenchmarkSessionWritePathWithEncode256(benchmark::State& state) {
+  RunSessionWritePathWithEncode(state, 256);
+}
+
+void BenchmarkSessionWritePathWithEncode1024(benchmark::State& state) {
+  RunSessionWritePathWithEncode(state, 1024);
+}
+
+void BenchmarkSessionWritePathWithEncode4096(benchmark::State& state) {
+  RunSessionWritePathWithEncode(state, 4096);
+}
+
+BENCHMARK(BenchmarkSessionWritePathWithEncode256)
+    ->Name("session_write_path_with_encode_plain_256")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkSessionWritePathWithEncode1024)
+    ->Name("session_write_path_with_encode_plain_1024")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkSessionWritePathWithEncode4096)
+    ->Name("session_write_path_with_encode_plain_4096")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void RunDrogonStyleWritePathPlain(benchmark::State& state,
+                                  size_t payload_size) {
   SocketPair pair;
   if (!CreateSocketPair(pair)) {
     state.SkipWithError("socketpair create failed");
@@ -398,12 +452,12 @@ void BenchmarkDrogonStyleWritePathPlain(benchmark::State& state) {
   }
 
   DrogonStyleMaskCache mask_cache;
-  const auto payload = BuildWritePayload();
+  const auto payload = BuildWritePayload(payload_size);
   const auto payload_bytes = std::span<const std::byte>(payload.data(),
                                                        payload.size());
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(4096);
-  std::array<std::byte, 128> peer_drain{};
+  std::vector<std::byte> peer_drain(ClientFrameWireBytes(payload_size));
   std::uint64_t frames_sent = 0;
 
   for (auto _ : state) {
@@ -442,27 +496,62 @@ void BenchmarkDrogonStyleWritePathPlain(benchmark::State& state) {
                                      FormatSchedulingPolicy()));
 }
 
+void BenchmarkDrogonStyleWritePathPlain(benchmark::State& state) {
+  RunDrogonStyleWritePathPlain(state, 64);
+}
+
 BENCHMARK(BenchmarkDrogonStyleWritePathPlain)
     ->Name("drogon_style_write_path_plain")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
-void BenchmarkThirdPartyWebSocketStyleWritePathPlain(benchmark::State& state) {
+void BenchmarkDrogonStyleWritePathPlain256(benchmark::State& state) {
+  RunDrogonStyleWritePathPlain(state, 256);
+}
+
+void BenchmarkDrogonStyleWritePathPlain1024(benchmark::State& state) {
+  RunDrogonStyleWritePathPlain(state, 1024);
+}
+
+void BenchmarkDrogonStyleWritePathPlain4096(benchmark::State& state) {
+  RunDrogonStyleWritePathPlain(state, 4096);
+}
+
+BENCHMARK(BenchmarkDrogonStyleWritePathPlain256)
+    ->Name("drogon_style_write_path_plain_256")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonStyleWritePathPlain1024)
+    ->Name("drogon_style_write_path_plain_1024")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkDrogonStyleWritePathPlain4096)
+    ->Name("drogon_style_write_path_plain_4096")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void RunThirdPartyWebSocketStyleWritePathPlain(benchmark::State& state,
+                                               size_t payload_size) {
   RawSocketPair pair;
   if (!pair.valid()) {
     state.SkipWithError("socketpair create failed");
     return;
   }
 
-  const auto payload = BuildWritePayload();
+  const auto payload = BuildWritePayload(payload_size);
   const auto payload_bytes = std::span<const std::byte>(payload.data(),
                                                        payload.size());
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(4096);
-  std::array<std::byte, 128> peer_drain{};
+  std::vector<std::byte> peer_drain(ClientFrameWireBytes(payload_size));
   std::uint64_t frames_sent = 0;
-  constexpr size_t kWireBytes = 6 + 64;
+  const size_t wire_bytes = ClientFrameWireBytes(payload_size);
 
   for (auto _ : state) {
     const std::uint64_t start_ns = NowNs();
@@ -477,7 +566,7 @@ void BenchmarkThirdPartyWebSocketStyleWritePathPlain(benchmark::State& state) {
 
     state.PauseTiming();
     if (!ReadExactFd(pair.peer_fd(),
-                     std::span<std::byte>(peer_drain.data(), kWireBytes))) {
+                     std::span<std::byte>(peer_drain.data(), wire_bytes))) {
       state.SkipWithError("peer drain failed");
       return;
     }
@@ -491,8 +580,45 @@ void BenchmarkThirdPartyWebSocketStyleWritePathPlain(benchmark::State& state) {
                                      FormatSchedulingPolicy()));
 }
 
+void BenchmarkThirdPartyWebSocketStyleWritePathPlain(benchmark::State& state) {
+  RunThirdPartyWebSocketStyleWritePathPlain(state, 64);
+}
+
 BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain)
     ->Name("third_party_websocket_style_write_path_plain")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkThirdPartyWebSocketStyleWritePathPlain256(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketStyleWritePathPlain(state, 256);
+}
+
+void BenchmarkThirdPartyWebSocketStyleWritePathPlain1024(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketStyleWritePathPlain(state, 1024);
+}
+
+void BenchmarkThirdPartyWebSocketStyleWritePathPlain4096(
+    benchmark::State& state) {
+  RunThirdPartyWebSocketStyleWritePathPlain(state, 4096);
+}
+
+BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain256)
+    ->Name("third_party_websocket_style_write_path_plain_256")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain1024)
+    ->Name("third_party_websocket_style_write_path_plain_1024")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkThirdPartyWebSocketStyleWritePathPlain4096)
+    ->Name("third_party_websocket_style_write_path_plain_4096")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
