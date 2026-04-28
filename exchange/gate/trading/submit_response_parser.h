@@ -2,10 +2,11 @@
 #define AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
-#include <utility>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include <simdjson.h>
 #include <yyjson.h>
@@ -193,6 +194,31 @@ inline GateSubmitResponse ParseDocument(yyjson_doc* doc) noexcept {
   return response;
 }
 
+inline GateSubmitResponse ParseAckMinimalDocument(yyjson_doc* doc) noexcept {
+  GateSubmitResponse response{};
+  if (doc == nullptr) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  yyjson_val* root = yyjson_doc_get_root(doc);
+  if (!yyjson_is_obj(root)) {
+    response.parse_status = GateSubmitParseStatus::kUnexpectedShape;
+    return response;
+  }
+
+  response.parse_status = GateSubmitParseStatus::kOk;
+  response.request_id_hash = HashStringValue(yyjson_obj_get(root, "request_id"));
+
+  bool ack = false;
+  response.has_ack = ReadBool(yyjson_obj_get(root, "ack"), &ack);
+  response.ack = response.has_ack && ack;
+  if (response.ack) {
+    response.kind = GateSubmitResponseKind::kAck;
+  }
+  return response;
+}
+
 inline bool ReadSimdjsonString(simdjson::ondemand::value value,
                                std::string_view* output) noexcept {
   if (output == nullptr) {
@@ -361,6 +387,31 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   return response;
 }
 
+inline GateSubmitResponse ParseSimdjsonAckMinimalDocument(
+    simdjson::ondemand::document document) noexcept {
+  GateSubmitResponse response{};
+  simdjson::ondemand::object root;
+  if (document.get_object().get(root) != simdjson::SUCCESS) {
+    response.parse_status = GateSubmitParseStatus::kUnexpectedShape;
+    return response;
+  }
+
+  response.parse_status = GateSubmitParseStatus::kOk;
+  simdjson::ondemand::value value;
+  if (FindField(root, "request_id", &value)) {
+    response.request_id_hash = HashSimdjsonString(value);
+  }
+  if (FindField(root, "ack", &value)) {
+    bool ack = false;
+    response.has_ack = ReadSimdjsonBool(value, &ack);
+    response.ack = response.has_ack && ack;
+    if (response.ack) {
+      response.kind = GateSubmitResponseKind::kAck;
+    }
+  }
+  return response;
+}
+
 }  // namespace detail
 
 inline GateSubmitResponse ParseGateSubmitResponse(
@@ -382,6 +433,27 @@ inline GateSubmitResponse ParseGateSubmitResponse(
   }
 
   return detail::ParseDocument(doc.get());
+}
+
+inline GateSubmitResponse ParseGateSubmitAckMinimal(
+    std::string_view payload,
+    const yyjson_alc* allocator = nullptr) noexcept {
+  GateSubmitResponse response{};
+  if (payload.empty()) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  yyjson_read_err error{};
+  detail::JsonDoc doc(yyjson_read_opts(
+      const_cast<char*>(payload.data()), payload.size(), YYJSON_READ_NOFLAG,
+      allocator, &error));
+  if (doc.get() == nullptr) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  return detail::ParseAckMinimalDocument(doc.get());
 }
 
 inline GateSubmitResponse ParseGateSubmitResponseInsitu(
@@ -427,6 +499,28 @@ inline GateSubmitResponse ParseGateSubmitResponseSimdjson(
   }
 
   return detail::ParseSimdjsonDocument(std::move(document));
+}
+
+inline GateSubmitResponse ParseGateSubmitAckMinimalSimdjson(
+    std::span<char> padded_payload,
+    size_t payload_size,
+    simdjson::ondemand::parser& parser) noexcept {
+  GateSubmitResponse response{};
+  if (payload_size == 0 || payload_size > padded_payload.size() ||
+      padded_payload.size() - payload_size < simdjson::SIMDJSON_PADDING) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  simdjson::padded_string_view view(padded_payload.data(), payload_size,
+                                    padded_payload.size());
+  simdjson::ondemand::document document;
+  if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+    response.parse_status = GateSubmitParseStatus::kInvalidJson;
+    return response;
+  }
+
+  return detail::ParseSimdjsonAckMinimalDocument(std::move(document));
 }
 
 }  // namespace aquila::exchange::gate::trading

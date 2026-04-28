@@ -134,6 +134,38 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoSimdjson) {
   EXPECT_EQ(parsed.req_id_hash, HashGateSubmitString("request-id-1"));
 }
 
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoMinimal) {
+  const auto parsed = ParseGateSubmitAckMinimal(kOrderPlaceAckEcho);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
+  EXPECT_TRUE(parsed.ack);
+  EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
+  EXPECT_EQ(parsed.http_status, 0);
+  EXPECT_FALSE(parsed.channel_is_order_place);
+  EXPECT_EQ(parsed.req_id_hash, 0U);
+}
+
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoMinimalSimdjson) {
+  std::array<char, kOrderPlaceAckEcho.size() + simdjson::SIMDJSON_PADDING>
+      scratch{};
+  std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
+            scratch.begin());
+  simdjson::ondemand::parser parser;
+
+  const auto parsed =
+      ParseGateSubmitAckMinimalSimdjson(scratch, kOrderPlaceAckEcho.size(),
+                                        parser);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
+  EXPECT_TRUE(parsed.ack);
+  EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
+  EXPECT_EQ(parsed.http_status, 0);
+  EXPECT_FALSE(parsed.channel_is_order_place);
+  EXPECT_EQ(parsed.req_id_hash, 0U);
+}
+
 TEST(GateSubmitResponseParserTest, ParsesOrderPlaceApiResult) {
   const auto parsed = ParseGateSubmitResponse(kOrderPlaceResult);
 

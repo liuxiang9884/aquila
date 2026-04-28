@@ -180,6 +180,50 @@ void BenchmarkOrderPlaceAckEchoYyjsonDefaultPaddedView(
                                      FormatSchedulingPolicy()));
 }
 
+void BenchmarkOrderPlaceAckEchoYyjsonAckMinimalPaddedView(
+    benchmark::State& state) {
+  std::vector<char> scratch(kOrderPlaceAckEcho.size() +
+                            simdjson::SIMDJSON_PADDING);
+  std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
+            scratch.begin());
+  const std::string_view payload(scratch.data(), kOrderPlaceAckEcho.size());
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::uint64_t parsed_messages = 0;
+  std::uint64_t accumulator = 0;
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t i = 0; i < kBatchSize; ++i) {
+      const auto parsed = ParseGateSubmitAckMinimal(payload);
+      if (parsed.parse_status != GateSubmitParseStatus::kOk ||
+          parsed.kind != GateSubmitResponseKind::kAck) {
+        state.SkipWithError("parse failed");
+        return;
+      }
+      const auto ack_bit =
+          static_cast<std::uint64_t>(parsed.has_ack && parsed.ack);
+      accumulator ^= parsed.request_id_hash ^ ack_bit;
+      ++parsed_messages;
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_message_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_message_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_message_ns));
+  }
+
+  benchmark::DoNotOptimize(accumulator);
+  state.counters["payload_bytes"] =
+      static_cast<double>(kOrderPlaceAckEcho.size());
+  state.counters["scratch_bytes"] = static_cast<double>(scratch.size());
+  SetLatencyCounters(state, std::move(samples_ns), "parsed_messages",
+                     parsed_messages);
+  state.SetLabel(BuildBenchmarkLabel(false, "gate-order-place-ack-echo",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
 void BenchmarkOrderPlaceAckEchoYyjsonInsituCopy(benchmark::State& state) {
   std::vector<char> scratch(kOrderPlaceAckEcho.size() + YYJSON_PADDING_SIZE);
   std::vector<std::uint64_t> samples_ns;
@@ -359,6 +403,51 @@ void BenchmarkOrderPlaceAckEchoSimdjsonOnDemandPaddedView(
                                      FormatSchedulingPolicy()));
 }
 
+void BenchmarkOrderPlaceAckEchoSimdjsonAckMinimalPaddedView(
+    benchmark::State& state) {
+  simdjson::ondemand::parser parser;
+  std::vector<char> scratch(kOrderPlaceAckEcho.size() +
+                            simdjson::SIMDJSON_PADDING);
+  std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
+            scratch.begin());
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::uint64_t parsed_messages = 0;
+  std::uint64_t accumulator = 0;
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t i = 0; i < kBatchSize; ++i) {
+      const auto parsed = ParseGateSubmitAckMinimalSimdjson(
+          scratch, kOrderPlaceAckEcho.size(), parser);
+      if (parsed.parse_status != GateSubmitParseStatus::kOk ||
+          parsed.kind != GateSubmitResponseKind::kAck) {
+        state.SkipWithError("parse failed");
+        return;
+      }
+      const auto ack_bit =
+          static_cast<std::uint64_t>(parsed.has_ack && parsed.ack);
+      accumulator ^= parsed.request_id_hash ^ ack_bit;
+      ++parsed_messages;
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_message_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_message_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_message_ns));
+  }
+
+  benchmark::DoNotOptimize(accumulator);
+  state.counters["payload_bytes"] =
+      static_cast<double>(kOrderPlaceAckEcho.size());
+  state.counters["scratch_bytes"] = static_cast<double>(scratch.size());
+  SetLatencyCounters(state, std::move(samples_ns), "parsed_messages",
+                     parsed_messages);
+  state.SetLabel(BuildBenchmarkLabel(false, "gate-order-place-ack-echo",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
 }  // namespace
 
 BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonDefault)
@@ -376,6 +465,13 @@ BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonPool)
 BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonDefaultPaddedView)
     ->Name(
         "gate_submit_response_parse_order_place_ack_echo_yyjson_default_padded_view")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkOrderPlaceAckEchoYyjsonAckMinimalPaddedView)
+    ->Name(
+        "gate_submit_response_parse_order_place_ack_echo_yyjson_ack_minimal_padded_view")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
@@ -403,6 +499,13 @@ BENCHMARK(BenchmarkOrderPlaceAckEchoSimdjsonOnDemandCopy)
 BENCHMARK(BenchmarkOrderPlaceAckEchoSimdjsonOnDemandPaddedView)
     ->Name(
         "gate_submit_response_parse_order_place_ack_echo_simdjson_ondemand_padded_view")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkOrderPlaceAckEchoSimdjsonAckMinimalPaddedView)
+    ->Name(
+        "gate_submit_response_parse_order_place_ack_echo_simdjson_ack_minimal_padded_view")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
