@@ -12,6 +12,7 @@ include(cmake/packages.cmake)
 enable_testing()
 
 add_subdirectory(core)
+add_subdirectory(exchange)
 add_subdirectory(tools)
 add_subdirectory(test)
 add_subdirectory(benchmark)

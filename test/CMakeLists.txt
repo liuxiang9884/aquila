@@ -1,4 +1,5 @@
 add_subdirectory(websocket)
+add_subdirectory(exchange/gate/trading)
 
 add_executable(hello_world_test
     hello_world_test.cpp
