@@ -9,12 +9,15 @@
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 本文写入前最近相关提交：
+- 本文更新前最近相关提交：
+  - `99f0f92 websocket: expose readable payload tail bytes`
+  - `bc3a197 benchmark: add minimal Gate submit ack parsing`
+  - `8c6773a benchmark: add padded Gate submit parse cases`
+  - `5d02950 benchmark: compare Gate submit simdjson parsing`
+  - `51d7df0 benchmark: compare Gate submit insitu parsing`
+  - `d98cab8 benchmark: add Gate submit response parser`
   - `5f099c9 scripts: move Gate probes into subdirectory`
   - `ab3d2d9 scripts: add Gate dual websocket login probe`
-  - `fcb0cad docs: update websocket future optimization status`
-  - `5e523e1 websocket: allow immediate prepared write flush`
-  - `5c6d2f7 websocket: mask payloads in word chunks`
 - 新接手时先执行：
 
 ```bash
@@ -96,6 +99,124 @@ result=both_logged_in_same_account
 ```
 
 结论：Gate futures WebSocket 允许同一账号同时登录两个物理 WebSocket 连接。这支持 `GateOrderSubmitWsSession` + `GateOrderUpdateWsSession` 的双连接设计。
+
+## Submit WS JSON response 解析结论
+
+已新增 Gate submit response parser 与 benchmark：
+
+```text
+exchange/gate/trading/submit_response_parser.h
+test/exchange/gate/trading/submit_response_parser_test.cpp
+benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp
+```
+
+当前实现区分两类解析路径：
+
+| 路径 | 含义 | 提取字段 |
+| --- | --- | --- |
+| full business parse | 当前业务完整解析，不等于提取 JSON 全字段 | `request_id`、`ack`、`header.status`、`header.channel`、`data.errs.label`、`data.result.req_id/id/text` |
+| minimal ack parse | Submit WS ACK 快路径 | `request_id`、`ack` |
+
+`minimal ack parse` 的定位：
+
+1. 用于 `ack=true` 的轻量请求接收确认。
+2. 不读取 `header`、`data.result.req_id`、`data.errs`。
+3. 不能替代 result / error 的完整解析。
+4. 如果业务需要校验 status、channel、error label 或最终 order id，应走 full business parse 或后续设计分层解析。
+
+### yyjson 与 simdjson 取舍
+
+已接入：
+
+```text
+yyjson
+simdjson 4.6.2
+```
+
+结论：
+
+1. `yyjson` default parse 不要求调用方提供 padding，也不修改 payload；但它会构建 DOM，所以 minimal 只减少字段访问 / hash / 转换，不能跳过整包 JSON parse。
+2. `YYJSON_READ_INSITU` 需要 `YYJSON_PADDING_SIZE`，当前通常为 4 字节；它会修改 payload buffer，不适合直接用于共享的 WebSocket frame buffer。
+3. `simdjson::ondemand` 需要 `simdjson::SIMDJSON_PADDING`，当前通常为 64 字节；padding 只要求可读，不要求清零。
+4. `simdjson::ondemand` 的 `string_view` / document / value 依赖原始 buffer 生命周期，热路径应立即转成 hash、整数、bool 等自有值，不要跨 buffer 复用保存 view。
+5. 代码里不要写死 padding 数值，应使用 `YYJSON_PADDING_SIZE` 和 `simdjson::SIMDJSON_PADDING`。
+
+### Submit response parse benchmark
+
+运行命令：
+
+```bash
+taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_response_parse_benchmark --benchmark_filter='ack_minimal_padded_view|simdjson_ondemand_padded_view|yyjson_default_padded_view'
+```
+
+样本 payload 为 Gate `futures.order_place` 的 `ack=true` 订单回声，payload 约 839B；benchmark 使用 padded view，避免把每次 copy 成本混入解析差异。
+
+2026-04-28 当前结果：
+
+| case | p50 | p99 | p99.9 |
+| --- | ---: | ---: | ---: |
+| `yyjson_default_padded_view` | 391ns | 663ns | 766ns |
+| `yyjson_ack_minimal_padded_view` | 359ns | 605ns | 678ns |
+| `simdjson_ondemand_padded_view` | 254ns | 363ns | 583ns |
+| `simdjson_ack_minimal_padded_view` | 123ns | 129ns | 444ns |
+
+推荐：
+
+```text
+Submit WS ack=true 快路径优先使用 simdjson minimal ack parse。
+result / error / 低频异常路径可使用 full business parse。
+padding 或生命周期条件不满足时，fallback 到 padded scratch copy 或 yyjson default。
+```
+
+## FrameCodec readable tail padding 契约
+
+为支持 simdjson zero-copy padded view，`MessageView` 已新增：
+
+```cpp
+std::uint32_t readable_tail_bytes{0};
+```
+
+语义：
+
+1. `MessageView::payload` 仍然只表示真实 WebSocket payload，不包含 padding。
+2. `readable_tail_bytes` 表示 payload 末尾之后，在当前 `MessageView` 生命周期内可安全读取的额外字节数。
+3. 这些 tail bytes 不是 payload，内容可能是 ring buffer 中的任意历史或后续数据。
+4. 业务层只能用它判断 parser padding 是否满足，例如 `readable_tail_bytes >= simdjson::SIMDJSON_PADDING`。
+5. 不允许把 tail bytes 当业务数据读取，不允许写 tail bytes，也不允许把 parser 返回的 view 保存到 frame buffer 生命周期之外。
+
+`FrameCodec` 和 `QueuedFrameCodec` 都会填充该字段。当前 mirrored ring 使跨 ring boundary 的 payload 后仍有连续可读虚拟地址空间，因此可以把这个能力显式暴露给上层，而不是把 padding 混进 payload size。
+
+### FrameCodec benchmark 对比
+
+修改前后使用同一条命令：
+
+```bash
+taskset -c 2 ./build/release/benchmark/websocket/frame_codec_benchmark
+```
+
+关键 decode path 对比：
+
+| case | 修改前 p50 / p99 | 修改后 p50 / p99 |
+| --- | ---: | ---: |
+| direct contiguous | 5ns / 6ns | 5ns / 6ns |
+| queued contiguous | 15ns / 18ns | 15ns / 17ns |
+| direct coalesced drain | 3ns / 3ns | 3ns / 3ns |
+| queued coalesced drain | 9ns / 14ns | 9ns / 16ns |
+| direct mirrored boundary | 50ns / 56ns | 50ns / 56ns |
+| queued mirrored boundary | 71ns / 80ns | 72ns / 83ns |
+
+结论：暴露 `readable_tail_bytes` 对 FrameCodec decode 主路径没有可见 p50 回归；p99 的小幅波动在当前 benchmark 噪声范围内。
+
+验证命令：
+
+```bash
+cmake --build build/debug -j8
+cmake --build build/release -j8
+ctest --test-dir build/debug --output-on-failure
+ctest --test-dir build/release --output-on-failure
+```
+
+2026-04-28 验证结果：debug / release 均为 `17/17` tests passed。
 
 ## Sirius 旧实现结论
 
@@ -247,6 +368,10 @@ StrategyThread
 3. 策略线程必须保持行情最高优先级；feedback ring 只在合适预算下 poll。
 4. submit session 的 read budget 必须很小，只处理 login、ack/result/error、pong/close。
 5. update session 的回报解析结果必须变成固定结构事件，再写 SPSC，避免把 JSON/SBE buffer 生命周期暴露给策略。
+6. submit read path 里的 `ack=true` 快路径优先走 `simdjson_ack_minimal`，只提取 `request_id` 与 `ack`。
+7. `MessageView::payload` 不包含 padding；如果 `readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，submit parser 可以构造 zero-copy padded view。
+8. 如果 tail padding 不满足，必须 fallback 到 padded scratch copy 或 yyjson default，不允许越界读取或临时改写 frame buffer。
+9. `YYJSON_READ_INSITU` 会修改 buffer，默认不要直接用于共享的 FrameCodec payload。
 
 ## 待讨论 / 待验证
 
@@ -257,15 +382,22 @@ StrategyThread
 3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
 4. 明确 update stream 断线时是否允许继续 submit。
 5. 设计 REST reconcile：update WS 断线或 gap 后如何补齐未决订单状态。
-6. 为方案 A / B 写最小 benchmark：`strategy -> submit send`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
+6. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSubmitWsSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
+7. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
 
 ## 相关文件
 
 - `scripts/gate/test_gate_ws_dual_login.py`
 - `scripts/gate/test_gate_ws_connect.py`
+- `exchange/gate/trading/submit_response_parser.h`
+- `test/exchange/gate/trading/submit_response_parser_test.cpp`
+- `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp`
+- `core/websocket/message_view.h`
 - `core/websocket/websocket_client.h`
 - `core/websocket/critical_session.h`
 - `core/websocket/frame_codec.h`
+- `core/websocket/queued_frame_codec.h`
+- `test/websocket/frame_codec_test.cpp`
 - `core/websocket/types.h`
 - `doc/websocket_read_write_benchmark_comparison.md`
 - `doc/websocket_client_future_optimizations.md`
