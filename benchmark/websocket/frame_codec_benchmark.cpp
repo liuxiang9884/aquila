@@ -5,8 +5,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <span>
 #include <vector>
@@ -20,6 +20,41 @@ using namespace aquila::websocket::benchmarking;
 namespace {
 
 constexpr size_t kCoalescedFrameCount = 16;
+constexpr size_t kMaskPoolKeyCount = 4096;
+
+class BenchmarkMaskKeyPool {
+ public:
+  bool Refill() noexcept {
+    if (RAND_bytes(reinterpret_cast<unsigned char*>(keys_.data()),
+                   static_cast<int>(keys_.size() * sizeof(keys_[0]))) != 1) {
+      return false;
+    }
+    cursor_ = 0;
+    ++refills_;
+    return true;
+  }
+
+  bool NextWithRefill(std::array<std::byte, 4>* mask_key) noexcept {
+    if (cursor_ == keys_.size() && !Refill()) {
+      return false;
+    }
+    *mask_key = keys_[cursor_++];
+    return true;
+  }
+
+  std::array<std::byte, 4> NextCyclic() noexcept {
+    const auto key = keys_[cursor_];
+    cursor_ = (cursor_ + 1) & (keys_.size() - 1U);
+    return key;
+  }
+
+  size_t refill_count() const noexcept { return refills_; }
+
+ private:
+  std::array<std::array<std::byte, 4>, kMaskPoolKeyCount> keys_{};
+  size_t cursor_{kMaskPoolKeyCount};
+  size_t refills_{0};
+};
 
 std::vector<std::byte> BuildClientPayload(size_t payload_size) {
   std::vector<std::byte> payload(payload_size);
@@ -154,7 +189,7 @@ void BenchmarkFrameCodecMaskRngOnly(benchmark::State& state) {
         state.SkipWithError("RAND_bytes failed");
         return;
       }
-      benchmark::DoNotOptimize(mask_key);
+      benchmark::DoNotOptimize(mask_key.data());
       mask_accumulator += SumBytes(mask_key);
     }
     const std::uint64_t elapsed_ns = NowNs() - start_ns;
@@ -234,6 +269,137 @@ void BenchmarkFrameCodecHeaderSmall64(benchmark::State& state) {
   }
 
   SetLatencyCounters(state, std::move(samples_ns), "", 0);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkFrameCodecMaskPoolBatchRefillPerKey(benchmark::State& state) {
+  BenchmarkMaskKeyPool pool;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    if (!pool.Refill()) {
+      state.SkipWithError("mask pool refill failed");
+      return;
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_key_ns = static_cast<double>(elapsed_ns) /
+                            static_cast<double>(kMaskPoolKeyCount);
+    state.SetIterationTime(per_key_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_key_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "refills",
+                     static_cast<std::uint64_t>(pool.refill_count()));
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkFrameCodecMaskPoolPopOnly(benchmark::State& state) {
+  constexpr size_t kBatchSize = 64;
+  BenchmarkMaskKeyPool pool;
+  if (!pool.Refill()) {
+    state.SkipWithError("mask pool refill failed");
+    return;
+  }
+  std::uint64_t mask_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      const auto mask_key = pool.NextCyclic();
+      benchmark::DoNotOptimize(mask_key.data());
+      mask_accumulator += SumBytes(mask_key);
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "mask_accumulator",
+                     mask_accumulator);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkFrameCodecMaskPoolPopWithRefill(benchmark::State& state) {
+  constexpr size_t kBatchSize = 64;
+  BenchmarkMaskKeyPool pool;
+  std::array<std::byte, 4> mask_key{};
+  std::uint64_t mask_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      if (!pool.NextWithRefill(&mask_key)) {
+        state.SkipWithError("mask pool refill failed");
+        return;
+      }
+      benchmark::DoNotOptimize(mask_key.data());
+      mask_accumulator += SumBytes(mask_key);
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "refills",
+                     static_cast<std::uint64_t>(pool.refill_count()));
+  state.counters["mask_accumulator"] = static_cast<double>(mask_accumulator);
+  state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkFrameCodecEncodeSmall64MaskPool(benchmark::State& state) {
+  constexpr size_t kBatchSize = 64;
+  BenchmarkMaskKeyPool pool;
+  if (!pool.Refill()) {
+    state.SkipWithError("mask pool refill failed");
+    return;
+  }
+  const auto payload = BuildClientPayload(64);
+  std::array<std::byte, 70> storage{};
+  std::uint64_t bytes_encoded = 0;
+  std::uint64_t output_accumulator = 0;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = NowNs();
+    for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+      const auto mask_key = pool.NextCyclic();
+      WriteSmallClientHeader(payload.size(), mask_key, storage);
+      ApplyMaskScalar(payload, mask_key,
+                      std::span<std::byte>(storage.data() + 6,
+                                           payload.size()));
+      benchmark::DoNotOptimize(storage.data());
+      bytes_encoded += 6 + payload.size();
+      output_accumulator += SumBytes(std::span<const std::byte>(storage.data(),
+                                                                2));
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    const auto per_operation_ns =
+        static_cast<double>(elapsed_ns) / static_cast<double>(kBatchSize);
+    state.SetIterationTime(per_operation_ns / 1'000'000'000.0);
+    samples_ns.push_back(static_cast<std::uint64_t>(per_operation_ns));
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "bytes_encoded",
+                     bytes_encoded + output_accumulator);
   state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
                                      FormatAffinity(),
                                      FormatSchedulingPolicy()));
@@ -589,6 +755,30 @@ BENCHMARK(BenchmarkFrameCodecMaskXorOnly128)
 
 BENCHMARK(BenchmarkFrameCodecHeaderSmall64)
     ->Name("frame_codec_header_small_64")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecMaskPoolBatchRefillPerKey)
+    ->Name("frame_codec_mask_pool_batch_refill_per_key")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecMaskPoolPopOnly)
+    ->Name("frame_codec_mask_pool_pop_only")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecMaskPoolPopWithRefill)
+    ->Name("frame_codec_mask_pool_pop_with_refill")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkFrameCodecEncodeSmall64MaskPool)
+    ->Name("frame_codec_encode_small_64_mask_pool")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
