@@ -68,6 +68,36 @@ class MixedReadWriteSocket {
   size_t bytes_written_{0};
 };
 
+struct ReadCallbackWriteContext {
+  CriticalSession<MixedReadWriteSocket>* session{nullptr};
+  std::span<const std::byte> payload{};
+  WriteFlushMode flush_mode{WriteFlushMode::kQueued};
+  SendStatus status{SendStatus::kWriteUnavailable};
+  std::uint64_t writes_submitted{0};
+};
+
+DeliveryResult CommitWriteFromReadCallback(void* context,
+                                           const MessageView&) noexcept {
+  auto* state = static_cast<ReadCallbackWriteContext*>(context);
+  PreparedWrite* write = state->session->TryAcquirePreparedWrite();
+  if (write == nullptr) {
+    state->status = SendStatus::kNoPreparedWriteSlot;
+    return DeliveryResult::kAccepted;
+  }
+
+  std::copy(state->payload.begin(), state->payload.end(),
+            write->storage.begin());
+  write->encoded_size = static_cast<std::uint32_t>(state->payload.size());
+  write->kind = PayloadKind::kBinary;
+  state->status = state->session->CommitPreparedWrite(write, state->flush_mode);
+  if (state->status != SendStatus::kOk) {
+    state->session->CancelPreparedWrite(write);
+    return DeliveryResult::kAccepted;
+  }
+  ++state->writes_submitted;
+  return DeliveryResult::kAccepted;
+}
+
 bool FillBusinessQueue(CriticalSession<MixedReadWriteSocket>& session,
                        std::span<const std::byte> payload,
                        size_t slots) {
@@ -162,6 +192,111 @@ void BenchmarkSessionMixedWriteBeforeRead(benchmark::State& state,
                                      FormatAffinity(),
                                      FormatSchedulingPolicy()));
 }
+
+void BenchmarkSessionReadCallbackCommitWrite(benchmark::State& state,
+                                             WriteFlushMode flush_mode,
+                                             bool drive_write_after_read) {
+  ConnectionConfig config{};
+  config.enable_tls = false;
+  config.prepared_write_slots = 8;
+  config.prepared_write_bytes = 128;
+  config.frame_buffer_bytes = 4096;
+  config.max_business_writes_per_drive = 1;
+  config.heartbeat_interval_ms = std::numeric_limits<std::uint32_t>::max();
+  config.heartbeat_timeout_ms = std::numeric_limits<std::uint32_t>::max();
+
+  MixedReadWriteSocket socket;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  CriticalSession<MixedReadWriteSocket> session(config, socket, arena,
+                                                metrics);
+  const auto frame = BuildServerTextFrame("market-data");
+  const auto payload = BuildWritePayload();
+  ReadCallbackWriteContext context{
+      &session, std::span<const std::byte>(payload.data(), payload.size()),
+      flush_mode};
+  MessageConsumer consumer{&context, &CommitWriteFromReadCallback};
+  session.SetConsumer(consumer);
+
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::uint64_t measured_write_calls = 0;
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    DrainPendingWrites(session);
+    socket.ResetRead(frame);
+    context.status = SendStatus::kWriteUnavailable;
+    const std::uint64_t write_calls_before = socket.write_calls();
+    const std::uint64_t messages_before = metrics.rx_messages;
+    const std::uint64_t tx_before = metrics.tx_messages;
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = NowNs();
+    session.DriveRead();
+    if (drive_write_after_read) {
+      session.DriveWrite();
+    }
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+
+    if (session.ShouldReconnect()) {
+      state.SkipWithError("session requested reconnect");
+      return;
+    }
+    if (context.status != SendStatus::kOk) {
+      state.SkipWithError("callback write commit failed");
+      return;
+    }
+    if (metrics.rx_messages != messages_before + 1U ||
+        metrics.tx_messages != tx_before + 1U) {
+      state.SkipWithError("read callback write was not completed");
+      return;
+    }
+    if (session.PendingWriteCount() != 0) {
+      state.SkipWithError("pending write was not drained");
+      return;
+    }
+
+    measured_write_calls += socket.write_calls() - write_calls_before;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "rx_messages",
+                     metrics.rx_messages);
+  state.counters["tx_messages"] = static_cast<double>(metrics.tx_messages);
+  state.counters["measured_write_calls"] =
+      static_cast<double>(measured_write_calls);
+  state.counters["callback_writes"] =
+      static_cast<double>(context.writes_submitted);
+  state.SetLabel(BuildBenchmarkLabel(false, "read-callback-fake-socket",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+void BenchmarkSessionReadCallbackCommitQueuedThenWrite(
+    benchmark::State& state) {
+  BenchmarkSessionReadCallbackCommitWrite(state, WriteFlushMode::kQueued,
+                                          true);
+}
+
+void BenchmarkSessionReadCallbackCommitFlushOne(benchmark::State& state) {
+  BenchmarkSessionReadCallbackCommitWrite(state, WriteFlushMode::kTryFlushOne,
+                                          false);
+}
+
+BENCHMARK(BenchmarkSessionReadCallbackCommitQueuedThenWrite)
+    ->Name("session_read_callback_commit_queued_then_write")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BenchmarkSessionReadCallbackCommitFlushOne)
+    ->Name("session_read_callback_commit_flush_one")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
 
 BENCHMARK_CAPTURE(BenchmarkSessionMixedWriteBeforeRead, writes_0_unbounded, 0U,
                   0U)

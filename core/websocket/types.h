@@ -57,6 +57,13 @@ enum class SendStatus : std::uint8_t {
   kPayloadTooLarge,
 };
 
+enum class WriteFlushMode : std::uint8_t {
+  kQueued,
+  // After enqueue, try at most one business WriteSome without draining the
+  // queue. EAGAIN and partial writes remain pending for the normal write pump.
+  kTryFlushOne,
+};
+
 struct ReconnectPolicy {
   bool enabled = true;
   std::uint32_t initial_backoff_ms = 100;

@@ -44,7 +44,9 @@ class CriticalSession {
     return prepared_write_arena_.TryAcquire();
   }
 
-  SendStatus CommitPreparedWrite(PreparedWrite* write) noexcept {
+  SendStatus CommitPreparedWrite(
+      PreparedWrite* write,
+      WriteFlushMode flush_mode = WriteFlushMode::kQueued) noexcept {
     if (write == nullptr) {
       return SendStatus::kNoPreparedWriteSlot;
     }
@@ -60,6 +62,10 @@ class CriticalSession {
     metrics_.prepared_write_high_watermark =
         std::max(metrics_.prepared_write_high_watermark,
                  static_cast<std::uint64_t>(pending_count_));
+    if (flush_mode == WriteFlushMode::kTryFlushOne && !should_reconnect_ &&
+        (!control_write_pending_ || HasPartialBusinessWrite())) {
+      TryFlushOneBusinessWrite();
+    }
     return SendStatus::kOk;
   }
 
@@ -268,6 +274,42 @@ class CriticalSession {
     const PreparedWrite* write = pending_writes_[pending_head_];
     return write != nullptr && write->write_offset != 0 &&
            write->write_offset < write->encoded_size;
+  }
+
+  void TryFlushOneBusinessWrite() noexcept {
+    while (pending_count_ != 0) {
+      PreparedWrite* write = pending_writes_[pending_head_];
+      if (write == nullptr || write->write_offset > write->encoded_size) {
+        TriggerReconnect(ConnectionError::kSocketError);
+        return;
+      }
+
+      const size_t remaining_bytes =
+          static_cast<size_t>(write->encoded_size - write->write_offset);
+      if (remaining_bytes == 0) {
+        CompleteFrontWrite();
+        continue;
+      }
+
+      const std::span<const std::byte> payload(write->storage.data() +
+                                                   write->write_offset,
+                                               remaining_bytes);
+      const ssize_t written = tls_socket_.WriteSome(payload);
+      if (written > 0) {
+        write->write_offset += static_cast<std::uint32_t>(written);
+        metrics_.tx_bytes += static_cast<std::uint64_t>(written);
+        if (write->write_offset == write->encoded_size) {
+          CompleteFrontWrite();
+        }
+        return;
+      }
+      if (written < 0 && errno == EAGAIN) {
+        return;
+      }
+      TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
+                                    : ConnectionError::kSocketError);
+      return;
+    }
   }
 
   void DriveControlWrite() noexcept {

@@ -101,6 +101,33 @@ class FakeTlsSocket final {
   std::vector<std::byte> written_{};
 };
 
+struct CallbackWriteContext {
+  CriticalSession<FakeTlsSocket>* session{nullptr};
+  std::span<const std::byte> payload{};
+  WriteFlushMode flush_mode{WriteFlushMode::kQueued};
+  SendStatus status{SendStatus::kWriteUnavailable};
+};
+
+DeliveryResult CommitWriteFromCallback(void* context,
+                                       const MessageView&) noexcept {
+  auto* state = static_cast<CallbackWriteContext*>(context);
+  PreparedWrite* write = state->session->TryAcquirePreparedWrite();
+  if (write == nullptr) {
+    state->status = SendStatus::kNoPreparedWriteSlot;
+    return DeliveryResult::kAccepted;
+  }
+
+  std::copy(state->payload.begin(), state->payload.end(),
+            write->storage.begin());
+  write->encoded_size = static_cast<std::uint32_t>(state->payload.size());
+  write->kind = PayloadKind::kBinary;
+  state->status = state->session->CommitPreparedWrite(write, state->flush_mode);
+  if (state->status != SendStatus::kOk) {
+    state->session->CancelPreparedWrite(write);
+  }
+  return DeliveryResult::kAccepted;
+}
+
 }  // namespace
 
 TEST(WebsocketCriticalSessionTest,
@@ -246,6 +273,167 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(counter.calls, 2U);
   EXPECT_EQ(metrics.consumer_backpressure_drops, 2U);
   EXPECT_EQ(metrics.rx_messages, 0U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     CommitPreparedWriteTryFlushOneWritesImmediately) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  auto* write = session.TryAcquirePreparedWrite();
+  ASSERT_NE(write, nullptr);
+  std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+              write->storage.begin());
+  write->encoded_size = 4;
+  write->kind = PayloadKind::kBinary;
+
+  EXPECT_EQ(session.CommitPreparedWrite(write, WriteFlushMode::kTryFlushOne),
+            SendStatus::kOk);
+
+  ASSERT_EQ(socket.written_.size(), 4U);
+  EXPECT_EQ(static_cast<char>(socket.written_[0]), 'a');
+  EXPECT_EQ(static_cast<char>(socket.written_[3]), 'd');
+  EXPECT_EQ(metrics.tx_messages, 1U);
+  EXPECT_EQ(metrics.tx_bytes, 4U);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_FALSE(session.WantsWrite());
+}
+
+TEST(WebsocketCriticalSessionTest,
+     CommitPreparedWriteTryFlushOneKeepsPendingOnEagain) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  socket.pending_write_eagain_ = true;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  auto* write = session.TryAcquirePreparedWrite();
+  ASSERT_NE(write, nullptr);
+  std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+              write->storage.begin());
+  write->encoded_size = 4;
+  write->kind = PayloadKind::kBinary;
+
+  EXPECT_EQ(session.CommitPreparedWrite(write, WriteFlushMode::kTryFlushOne),
+            SendStatus::kOk);
+  EXPECT_TRUE(socket.written_.empty());
+  EXPECT_EQ(metrics.tx_messages, 0U);
+  EXPECT_EQ(session.PendingWriteCount(), 1U);
+  EXPECT_TRUE(session.WantsWrite());
+
+  session.DriveWrite();
+
+  ASSERT_EQ(socket.written_.size(), 4U);
+  EXPECT_EQ(metrics.tx_messages, 1U);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_FALSE(session.WantsWrite());
+}
+
+TEST(WebsocketCriticalSessionTest,
+     CommitPreparedWriteTryFlushOnePreservesQueuedOrder) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  auto* first = session.TryAcquirePreparedWrite();
+  ASSERT_NE(first, nullptr);
+  std::copy_n(std::as_bytes(std::span{"old1", 4}).begin(), 4,
+              first->storage.begin());
+  first->encoded_size = 4;
+  first->kind = PayloadKind::kBinary;
+  ASSERT_EQ(session.CommitPreparedWrite(first), SendStatus::kOk);
+
+  auto* second = session.TryAcquirePreparedWrite();
+  ASSERT_NE(second, nullptr);
+  std::copy_n(std::as_bytes(std::span{"new2", 4}).begin(), 4,
+              second->storage.begin());
+  second->encoded_size = 4;
+  second->kind = PayloadKind::kBinary;
+
+  EXPECT_EQ(session.CommitPreparedWrite(second, WriteFlushMode::kTryFlushOne),
+            SendStatus::kOk);
+
+  ASSERT_EQ(socket.written_.size(), 4U);
+  EXPECT_EQ(static_cast<char>(socket.written_[0]), 'o');
+  EXPECT_EQ(static_cast<char>(socket.written_[3]), '1');
+  EXPECT_EQ(session.PendingWriteCount(), 1U);
+
+  session.DriveWrite();
+
+  ASSERT_EQ(socket.written_.size(), 8U);
+  EXPECT_EQ(static_cast<char>(socket.written_[4]), 'n');
+  EXPECT_EQ(static_cast<char>(socket.written_[7]), '2');
+  EXPECT_EQ(metrics.tx_messages, 2U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     CommitPreparedWriteTryFlushOneDoesNotBypassPendingControlFrame) {
+  auto config = BuildSmallConfig(2);
+  config.heartbeat_interval_ms = 1;
+  config.heartbeat_timeout_ms = std::numeric_limits<std::uint32_t>::max();
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  session.AdvanceHeartbeat(2'000'000ULL);
+  ASSERT_TRUE(session.WantsWrite());
+
+  auto* business = session.TryAcquirePreparedWrite();
+  ASSERT_NE(business, nullptr);
+  std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+              business->storage.begin());
+  business->encoded_size = 4;
+  business->kind = PayloadKind::kBinary;
+  EXPECT_EQ(session.CommitPreparedWrite(business, WriteFlushMode::kTryFlushOne),
+            SendStatus::kOk);
+
+  EXPECT_TRUE(socket.written_.empty());
+  EXPECT_EQ(session.PendingWriteCount(), 1U);
+
+  session.DriveWrite();
+
+  ASSERT_GE(socket.written_.size(), 10U);
+  EXPECT_EQ(socket.written_[0], std::byte{0x89});
+  EXPECT_EQ(static_cast<char>(socket.written_[6]), 'a');
+  EXPECT_EQ(static_cast<char>(socket.written_[9]), 'd');
+  EXPECT_EQ(metrics.tx_messages, 2U);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+}
+
+TEST(WebsocketCriticalSessionTest, ReadCallbackCanFlushWriteImmediately) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  socket.read_chunks_.push_back(BuildServerTextFrame("md"));
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  const std::array<std::byte, 4> payload{
+      std::byte{'o'}, std::byte{'r'}, std::byte{'d'}, std::byte{'r'}};
+  CallbackWriteContext context{&session, payload, WriteFlushMode::kTryFlushOne};
+  session.SetConsumer(MessageConsumer{&context, &CommitWriteFromCallback});
+
+  session.DriveRead();
+
+  EXPECT_EQ(context.status, SendStatus::kOk);
+  ASSERT_EQ(socket.written_.size(), payload.size());
+  EXPECT_EQ(static_cast<char>(socket.written_[0]), 'o');
+  EXPECT_EQ(static_cast<char>(socket.written_[3]), 'r');
+  EXPECT_EQ(metrics.rx_messages, 1U);
+  EXPECT_EQ(metrics.tx_messages, 1U);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_FALSE(session.WantsWrite());
 }
 
 TEST(WebsocketCriticalSessionTest, BoundedReadPumpDrainsPendingChunks) {
