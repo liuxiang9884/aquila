@@ -8,12 +8,16 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <span>
+#include <string>
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <openssl/rand.h>
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -47,6 +51,85 @@ class OneWritePerDriveSocket {
   bool write_available_{true};
   size_t bytes_written_{0};
 };
+
+class DrogonStyleMaskCache {
+ public:
+  bool Next(std::uint32_t* mask) noexcept {
+    if (mask == nullptr) {
+      return false;
+    }
+    if (!using_mask_.exchange(true, std::memory_order_acq_rel)) {
+      if (masks_.empty() && !Refill()) {
+        using_mask_.store(false, std::memory_order_release);
+        return false;
+      }
+      *mask = masks_.back();
+      masks_.pop_back();
+      using_mask_.store(false, std::memory_order_release);
+      return true;
+    }
+    return RAND_bytes(reinterpret_cast<unsigned char*>(mask),
+                      static_cast<int>(sizeof(*mask))) == 1;
+  }
+
+ private:
+  bool Refill() {
+    masks_.resize(16);
+    return RAND_bytes(reinterpret_cast<unsigned char*>(masks_.data()),
+                      static_cast<int>(masks_.size() * sizeof(masks_[0]))) == 1;
+  }
+
+  std::vector<std::uint32_t> masks_{};
+  std::atomic<bool> using_mask_{false};
+};
+
+bool EncodeDrogonStyleClientFrame(std::span<const std::byte> payload,
+                                  DrogonStyleMaskCache& mask_cache,
+                                  std::string* output) {
+  if (output == nullptr) {
+    return false;
+  }
+
+  const std::uint64_t len = payload.size();
+  output->resize(static_cast<size_t>(len + 10U));
+  (*output)[0] = static_cast<char>(0x82);
+
+  int index_start_raw_data = -1;
+  if (len <= 125) {
+    (*output)[1] = static_cast<char>(len);
+    index_start_raw_data = 2;
+  } else if (len <= 65535) {
+    (*output)[1] = static_cast<char>(126);
+    (*output)[2] = static_cast<char>((len >> 8U) & 0xFFU);
+    (*output)[3] = static_cast<char>(len & 0xFFU);
+    index_start_raw_data = 4;
+  } else {
+    (*output)[1] = static_cast<char>(127);
+    for (int shift = 56, index = 2; shift >= 0; shift -= 8, ++index) {
+      (*output)[index] = static_cast<char>((len >> shift) & 0xFFU);
+    }
+    index_start_raw_data = 10;
+  }
+
+  std::uint32_t mask = 0;
+  if (!mask_cache.Next(&mask)) {
+    return false;
+  }
+
+  (*output)[1] = static_cast<char>((*output)[1] | 0x80);
+  output->resize(static_cast<size_t>(index_start_raw_data) + sizeof(mask) +
+                 payload.size());
+  std::memcpy(output->data() + index_start_raw_data, &mask, sizeof(mask));
+  for (size_t i = 0; i < payload.size(); ++i) {
+    (*output)[static_cast<size_t>(index_start_raw_data) + sizeof(mask) + i] =
+        static_cast<char>(
+            payload[i] ^
+            static_cast<std::byte>(
+                (*output)[static_cast<size_t>(index_start_raw_data) +
+                          (i & 0x3U)]));
+  }
+  return true;
+}
 
 void BenchmarkSessionWritePath(benchmark::State& state) {
   ConnectionConfig config{};
@@ -202,6 +285,64 @@ void BenchmarkSessionWritePathWithEncode(benchmark::State& state) {
 
 BENCHMARK(BenchmarkSessionWritePathWithEncode)
     ->Name("session_write_path_with_encode_plain")
+    ->Iterations(4096)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkDrogonStyleWritePathPlain(benchmark::State& state) {
+  SocketPair pair;
+  if (!CreateSocketPair(pair)) {
+    state.SkipWithError("socketpair create failed");
+    return;
+  }
+
+  DrogonStyleMaskCache mask_cache;
+  const auto payload = BuildWritePayload();
+  const auto payload_bytes = std::span<const std::byte>(payload.data(),
+                                                       payload.size());
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(4096);
+  std::array<std::byte, 128> peer_drain{};
+  std::uint64_t frames_sent = 0;
+
+  for (auto _ : state) {
+    size_t frame_bytes = 0;
+    const std::uint64_t start_ns = NowNs();
+    std::string frame;
+    if (!EncodeDrogonStyleClientFrame(payload_bytes, mask_cache, &frame)) {
+      state.SkipWithError("drogon-style frame encode failed");
+      return;
+    }
+    const auto frame_bytes_span =
+        std::as_bytes(std::span<const char>(frame.data(), frame.size()));
+    const ssize_t written = pair.client.WriteSome(frame_bytes_span);
+    if (written != static_cast<ssize_t>(frame_bytes_span.size())) {
+      state.SkipWithError("drogon-style write failed");
+      return;
+    }
+    frame_bytes = frame.size();
+    ++frames_sent;
+    const std::uint64_t elapsed_ns = NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+
+    state.PauseTiming();
+    if (!ReadExactFd(pair.peer_fd,
+                     std::span<std::byte>(peer_drain.data(), frame_bytes))) {
+      state.SkipWithError("peer drain failed");
+      return;
+    }
+    state.ResumeTiming();
+  }
+
+  SetLatencyCounters(state, std::move(samples_ns), "frames_sent", frames_sent);
+  state.SetLabel(BuildBenchmarkLabel(false, "drogon-style-local-socketpair",
+                                     FormatAffinity(),
+                                     FormatSchedulingPolicy()));
+}
+
+BENCHMARK(BenchmarkDrogonStyleWritePathPlain)
+    ->Name("drogon_style_write_path_plain")
     ->Iterations(4096)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
