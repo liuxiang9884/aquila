@@ -14,6 +14,9 @@ struct MessageView {
   std::span<const std::byte> payload{};
   std::uint64_t sequence{0};
   bool fin{true};
+  // Bytes after payload that are mapped and readable while this view is valid.
+  // They are not payload bytes and may contain arbitrary ring contents.
+  std::uint32_t readable_tail_bytes{0};
 };
 
 using MessageHandler = DeliveryResult (*)(void* context,

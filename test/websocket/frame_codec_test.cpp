@@ -16,6 +16,8 @@ using namespace aquila::websocket;
 
 namespace {
 
+constexpr size_t kJsonReadPaddingBytes = 64;
+
 std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
   const size_t header_bytes = payload.size() <= 125 ? 2 : 4;
   std::vector<std::byte> frame(header_bytes + payload.size());
@@ -231,6 +233,8 @@ TEST(WebsocketFrameCodecTest, DecodesPayloadAcrossMirroredBoundary) {
   const auto decoded = codec.Poll();
   ASSERT_EQ(decoded.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(decoded.view.payload, "abcdef"));
+  EXPECT_EQ(decoded.view.payload.size(), 6U);
+  EXPECT_GE(decoded.view.readable_tail_bytes, kJsonReadPaddingBytes);
 }
 
 TEST(WebsocketFrameCodecTest, DecodesCoalescedFramesByRepeatedPoll) {
@@ -245,10 +249,14 @@ TEST(WebsocketFrameCodecTest, DecodesCoalescedFramesByRepeatedPoll) {
   const auto decoded = codec.Feed(coalesced);
   ASSERT_EQ(decoded.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(decoded.view.payload, "q"));
+  EXPECT_EQ(decoded.view.payload.size(), 1U);
+  EXPECT_GE(decoded.view.readable_tail_bytes, kJsonReadPaddingBytes);
 
   const auto next = codec.Poll();
   ASSERT_EQ(next.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(next.view.payload, "r"));
+  EXPECT_EQ(next.view.payload.size(), 1U);
+  EXPECT_GE(next.view.readable_tail_bytes, kJsonReadPaddingBytes);
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
 }
 
@@ -290,14 +298,20 @@ TEST(WebsocketFrameCodecTest, QueuedCodecDrainsCoalescedFrames) {
   const auto first = codec.Feed(coalesced);
   ASSERT_EQ(first.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(first.view.payload, "one"));
+  EXPECT_EQ(first.view.payload.size(), 3U);
+  EXPECT_GE(first.view.readable_tail_bytes, kJsonReadPaddingBytes);
 
   const auto second = codec.Poll();
   ASSERT_EQ(second.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(second.view.payload, "two"));
+  EXPECT_EQ(second.view.payload.size(), 3U);
+  EXPECT_GE(second.view.readable_tail_bytes, kJsonReadPaddingBytes);
 
   const auto third = codec.Poll();
   ASSERT_EQ(third.status, DecodeStatus::kMessageReady);
   EXPECT_TRUE(PayloadEquals(third.view.payload, "three"));
+  EXPECT_EQ(third.view.payload.size(), 5U);
+  EXPECT_GE(third.view.readable_tail_bytes, kJsonReadPaddingBytes);
   EXPECT_EQ(codec.Poll().status, DecodeStatus::kNeedMore);
 }
 

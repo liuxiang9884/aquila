@@ -230,6 +230,8 @@ class QueuedFrameCodec {
     view.kind = frame.kind;
     view.payload =
         std::span<const std::byte>(Ptr(frame.payload_abs), frame.payload_size);
+    view.readable_tail_bytes =
+        ReadableTailBytesAfterPayload(frame.payload_abs, frame.payload_size);
     view.sequence = frame.sequence;
     view.fin = true;
     return {DecodeStatus::kMessageReady, view};
@@ -264,6 +266,23 @@ class QueuedFrameCodec {
 
   const std::byte* Ptr(std::uint64_t absolute) const noexcept {
     return receive_ring_.data() + (absolute & receive_mask_);
+  }
+
+  std::uint32_t ReadableTailBytesAfterPayload(
+      std::uint64_t payload_abs, size_t payload_size) const noexcept {
+    if (!receive_ring_.valid()) {
+      return 0;
+    }
+    const size_t payload_offset =
+        static_cast<size_t>(payload_abs & receive_mask_);
+    const size_t payload_end_offset = payload_offset + payload_size;
+    const size_t mapped_bytes = receive_ring_.capacity() * 2U;
+    const size_t tail_bytes =
+        payload_end_offset < mapped_bytes ? mapped_bytes - payload_end_offset
+                                          : 0;
+    return tail_bytes > std::numeric_limits<std::uint32_t>::max()
+               ? std::numeric_limits<std::uint32_t>::max()
+               : static_cast<std::uint32_t>(tail_bytes);
   }
 
   bool ReadyEmpty() const noexcept { return ready_count_ == 0; }
