@@ -2,7 +2,7 @@
 
 ## 文档信息
 
-- 日期：2026-04-26
+- 日期：2026-04-28
 - 范围：WebSocket client P2 之后的性能、尾延迟和生产可观测性优化
 - 前置状态：
   - P2-A：`FrameCodec` mirrored ring 零拷贝 decode 主体已完成。
@@ -11,11 +11,11 @@
 
 ## 当前结论摘要
 
-截至 2026-04-27，后续优化不应再围绕单点 microbenchmark 做孤立判断，而应分成四条路线推进：
+截至 2026-04-28，后续优化不应再围绕单点 microbenchmark 做孤立判断，而应分成四条路线推进：
 
 1. **WebSocket core read path**：`FrameCodec` decode 主体暂时冻结。下一步优先补 TLS read、真实 consumer / 行情解析、read pump 参数实验。
 2. **Live feed 稳定性**：双 private WS 的毫秒级差异不能简单归因到 codec、TLS 或 CPU 绑定。下一步建议采用 warm-up feed selection 作为基线，先选 primary，再保留 secondary 作为 standby / health monitor。
-3. **Write path**：dedicated control slot 用户态路径已经很轻；`session_tls_write_path` 已补齐单帧 TLS write 基线。下一步优先拆 `SSL_write()`、client masking / RNG 和真实订单 payload 成本。
+3. **Write path**：dedicated control slot 用户态路径已经很轻；`session_tls_write_path` 已补齐单帧 TLS write 基线；client mask key pool、8-byte chunk XOR 和 read callback immediate flush 已完成。下一步优先补真实订单 payload、签名 / 序列化、TLS burst / partial write，以及实际交易链路下 `kTryFlushOne` 的使用策略。
 4. **Runtime loop**：mixed read/write benchmark 已证明 unbounded business write 会线性推迟 read 交付；当前已用 `max_business_writes_per_drive = 1` 作为默认 pacing。下一步再看 atomic stop、读写顺序和 idle pause。
 
 当前不建议：
@@ -24,6 +24,7 @@
 - 直接把默认 clock source 改成 coarse / TSC。
 - 让策略直接消费多条 WS 并自行选择最快数据。
 - 未经 live 证据就增加大量 WebSocket 连接。
+- 继续把通用 `FrameCodec` write encode 当成主要瓶颈反复微调；当前更应转向真实订单构造和 TLS / socket 路径。
 
 ## 优化原则
 
@@ -77,6 +78,24 @@ order / control event
 -> kernel socket send buffer
 -> NIC
 ```
+
+当前 business write 有两种 commit 模式：
+
+```text
+默认 queued：
+  CommitPreparedWrite(write)
+  -> 放入 pending_writes_
+  -> 下一次 DriveWrite() 发送
+
+低延迟 try-flush-one：
+  CommitPreparedWrite(write, WriteFlushMode::kTryFlushOne)
+  -> 放入 pending_writes_
+  -> 立即尝试最多一次 business WriteSome()/SSL_write()
+```
+
+`kTryFlushOne` 用于 read callback / strategy callback 中的下单或撤单热路径。它不会
+busy loop，不会 drain 整个 queue，EAGAIN / partial write 仍保留 pending 给正常
+write pump，且不会绕过已有 pending business 或 pending control frame。
 
 当前 P2-B write benchmark 结果：
 
@@ -642,9 +661,39 @@ FrameCodec 构造时预填充 per-codec mask key pool
 | `session_write_path_with_encode_plain` | `490 / 520 / 1099ns` |
 | `session_tls_write_path_with_encode` | `901 / 1185 / 12732ns` |
 
+2026-04-28 后续又完成了 payload masking 的 8-byte chunk XOR 优化。实现保持
+WebSocket client masking 语义不变：主循环按 `uint64_t` 处理 8B，尾部不足 8B
+仍逐字节处理；8B load/store 使用 `std::memcpy` 表达，避免未对齐访问和 strict
+aliasing UB。当前 release 对象反汇编确认 hot loop 已生成普通 64-bit
+load / xor / store：
+
+```text
+mov 8B payload
+xor 8B mask pattern
+mov 8B output
+```
+
+优化后 `session_write_path_with_encode_plain` 的代表值：
+
+| Payload | 优化前 p50 / p99 / p99.9 | 8B XOR 后 p50 / p99 / p99.9 |
+| --- | --- | --- |
+| `64B` | `457 / 483 / 1577ns` | `426 / 446 / 3126ns` |
+| `256B` | `593 / 625 / 9865ns` | `472 / 495 / 1294ns` |
+| `1024B` | `1086 / 1139 / 2121ns` | `524 / 564 / 1669ns` |
+| `4096B` | `3089 / 3243 / 12253ns` | `709 / 771 / 1196ns` |
+
+当前结论：
+
+- 通用 `FrameCodec` write encode 不应继续作为近期主优化点。
+- 真实订单 / 撤单 payload 通常远小于 4KB，下一步应测 payload serialization、
+  timestamp / nonce / signature、`Encode*()`、commit 和 write 的完整链路。
+- 如果真实生产确实存在 1KB / 4KB 级 outbound payload，再评估 SIMD mask XOR。
+
 验证：
 
 - `websocket_frame_codec_test` 新增覆盖 `ClientMaskKeyPool` 容量耗尽后的 refill。
+- `websocket_frame_codec_test` 新增覆盖多个 payload size 反解 client mask 后 payload
+  完整一致。
 - debug / release 下 `ctest --test-dir build/<type> -R websocket_ --output-on-failure` 均为 16/16 通过。
 - release pinned benchmark 使用 `taskset -c 2` 运行 `frame_codec_benchmark`、`session_write_path_benchmark`、`session_tls_write_path_benchmark`。
 
@@ -653,6 +702,7 @@ FrameCodec 构造时预填充 per-codec mask key pool
 - WebSocket client masking key 不能固定为 0。
 - 当前 pool 耗尽时同步 refill；这会把逐帧 RNG 成本变成低频 refill 毛刺。后续如果真实下单流量接近 pool 容量，应评估低水位预取或冷路径 refill。
 - 不允许为了性能破坏 RFC 6455 对 client masking 的基本要求。
+- SIMD XOR 只有在真实 outbound payload 足够大且 benchmark 证明收益稳定时才考虑。
 
 #### 8.3 增加真实订单 payload benchmark
 
@@ -697,6 +747,11 @@ order object
 
 因此业务写是单段 buffer，普通 `WriteSome()` 已经适合 syscall。只有当后续想减少 encode copy、把 header/mask 和 payload 分离时，才需要评估 `sendmsg` / `writev`。
 
+当前最新结论：这不是近期优先方向。WebSocket client payload 必须 masked，不能直接
+把原始 payload 作为第二个 iovec 发送。既然必须生成 masked payload，当前把
+`[header][mask key][masked payload]` 写入同一个 prepared slot，然后一次
+`send()` / `SSL_write()`，状态最简单，也最适合 TLS。
+
 候选方向：
 
 ```text
@@ -704,7 +759,7 @@ iov[0] = websocket header + masking key
 iov[1] = masked payload buffer
 ```
 
-但 WebSocket client payload 必须 masked，不能直接把原始 payload 作为第二段发送。因此 scatter-gather 是否有收益，取决于是否能减少现有 prepared write storage 的拷贝或构造成本。
+scatter-gather 是否有收益，取决于是否能减少现有 prepared write storage 的拷贝或构造成本。仅为了省 6B / 8B / 14B header copy 而引入 iovec 状态、跨 iovec partial write 和 TLS / plain 分叉，不值得。
 
 验证目标：
 
@@ -754,6 +809,68 @@ session_write_path_control_slot_full_business_queue: 39 / 40 / 45 ns
 - WebSocket frame 字节不能交错，任何优先级优化都必须保持 frame boundary。
 - 当前 `session_write_path` 主要包含 socket write syscall，queue 微优化可能收益很小。
 - 过早拆分 hot/cold path 会增加代码分叉和维护成本。
+
+#### 8.7 read callback immediate prepared write flush
+
+状态：已完成第一版。
+
+此前 read callback / strategy callback 中生成 write 后，`CommitPreparedWrite()` 只把
+slot 放入 `pending_writes_`，真正发送要等下一轮 active loop 的 `DriveWrite()`：
+
+```text
+DriveWrite()
+DriveRead()
+  -> consumer callback
+     -> CommitPreparedWrite(write)
+
+下一轮：
+DriveWrite()
+  -> WriteSome()/SSL_write()
+```
+
+当前新增：
+
+```cpp
+CommitPreparedWrite(write, WriteFlushMode::kTryFlushOne)
+```
+
+语义：
+
+- commit 成功后立即尝试最多一次 business `WriteSome()` / `SSL_write()`。
+- 不 busy loop，不 drain 整个 queue。
+- EAGAIN 保留 pending，后续正常 write pump 继续。
+- partial write 更新 `write_offset`，后续正常 write pump 继续。
+- 不绕过已有 pending business。
+- 如果已有 pending control frame 且没有 partial business，不抢 control frame 优先级。
+
+验证测试：
+
+- `CommitPreparedWriteTryFlushOneWritesImmediately`
+- `CommitPreparedWriteTryFlushOneKeepsPendingOnEagain`
+- `CommitPreparedWriteTryFlushOnePreservesQueuedOrder`
+- `CommitPreparedWriteTryFlushOneDoesNotBypassPendingControlFrame`
+- `ReadCallbackCanFlushWriteImmediately`
+
+release pinned fake-socket benchmark：
+
+| 场景 | p50 / p99 / p99.9 |
+| --- | --- |
+| `session_read_callback_commit_queued_then_write` | `60 / 77 / 1725ns` |
+| `session_read_callback_commit_flush_one` | `57 / 80 / 1184ns` |
+
+结论：
+
+- fake-socket benchmark 中状态机成本没有明显增加。
+- 真实价值不是 p50 少几 ns，而是消除 read callback 之后等待下一轮 active loop 的结构边界。
+- 下单 / 撤单热路径可以使用 `kTryFlushOne`；订阅和普通低优先级写仍使用默认 queued。
+
+后续待做：
+
+- 在真实订单 payload benchmark 中同时测 queued 与 `kTryFlushOne`。
+- 在 TLS write burst / partial write benchmark 中确认 callback 内一次 `SSL_write()` 对
+  read path P99 / P99.9 的影响。
+- 增加生产观测：`kTryFlushOne` 成功立即写出、EAGAIN、partial write、reconnect
+  触发次数。
 
 ### 9. clock / spin loop 后续优化
 
@@ -1028,6 +1145,19 @@ if (!did_write && !did_read) {
 - 增加固定 benchmark filter 的脚本或 CTest label，避免手工漏跑。
 - 为 P99 / P99.9 设置回归阈值，但阈值需要先收集多次稳定样本。
 
+当前已完成一项 live probe 可观测性修正：
+
+```text
+websocket_probe 捕获 SIGTERM / SIGINT
+-> watcher 调用 client.Stop()
+-> Start() 正常返回
+-> 打印最终 result / stop_requested / rx_bytes / rx_messages / tx_messages
+```
+
+这解决了长时间 `/usr/bin/timeout` probe 到时被终止后缺少最终 metrics 的问题。后续
+4h / overnight live probe 应统一保留最终 `result=... stop_requested=... rx_messages=...`
+行，便于判断连接是否只是保持 active，还是确实持续收到行情。
+
 验证目标：
 
 - 每次优化能明确证明收益或无收益。
@@ -1065,11 +1195,13 @@ if (!did_write && !did_read) {
 
 1. **TLS write path benchmark**：已补 single-frame `session_tls_write_path`；后续继续补 burst、control 和 partial write。
 2. **masking / RNG profile**：已确认 `RAND_bytes()` 是小 payload encode 主成本，并已采用 per-codec mask key pool。
-3. **真实订单 payload benchmark**：加入下单、撤单、签名、序列化，确认 WebSocket write 是否是瓶颈。
-4. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
-5. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。
+3. **payload XOR 优化**：已完成 8-byte chunk XOR，通用 `FrameCodec` write encode 暂时不再作为近期主优化点。
+4. **read callback immediate flush**：已完成 `WriteFlushMode::kTryFlushOne`，后续在真实订单链路中验证使用策略。
+5. **真实订单 payload benchmark**：加入下单、撤单、签名、序列化，确认 WebSocket write 是否是瓶颈。
+6. **socket/TLS 配置实验**：如果 syscall/TLS 是主成本，优先调 socket/TLS 配置，而不是 queue 微优化。
+7. **business write queue 微优化**：最后再考虑 modulo、metrics、hot/cold path、固定容量等细节。
 
-核心判断：后续不应只抠 `CriticalSession` pending queue，而应先把 TLS、client masking/RNG、真实订单序列化和签名纳入 benchmark，确认真实下单链路的最大成本。
+核心判断：后续不应继续只抠 `FrameCodec` 或 `CriticalSession` pending queue，而应先把 TLS、真实订单序列化、签名和 `kTryFlushOne` 使用模式纳入 benchmark，确认真实下单链路的最大成本。
 
 ### 路线 D：Active spin loop
 
