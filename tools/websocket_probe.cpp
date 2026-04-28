@@ -6,6 +6,9 @@
 #include <fmt/core.h>
 #include <magic_enum/magic_enum.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <netdb.h>
@@ -13,11 +16,21 @@
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <thread>
 #include <utility>
 
 using namespace aquila::websocket;
 
 namespace {
+
+volatile std::sig_atomic_t g_stop_requested = 0;
+
+void RequestStop(int) noexcept { g_stop_requested = 1; }
+
+void InstallStopHandlers() noexcept {
+  std::signal(SIGINT, &RequestStop);
+  std::signal(SIGTERM, &RequestStop);
+}
 
 struct ProbeContext {
   size_t bytes{0};
@@ -158,21 +171,38 @@ void RecordRuntimeError(void* context, ConnectionError error) noexcept {
 
 template <typename ClientT>
 int RunProbe(ConnectionConfig config, std::string subscribe) {
+  g_stop_requested = 0;
   ProbeRuntime<ClientT> runtime(std::move(subscribe));
   MessageConsumer consumer{&runtime.probe, &CountPayload};
   ClientT client(std::move(config), consumer);
   runtime.client = &client;
   client.SetStateHandler(&runtime, &RecordStateAndMaybeSubscribe<ClientT>);
   client.SetErrorHandler(&runtime, &RecordRuntimeError<ClientT>);
+  std::atomic<bool> client_done{false};
+  std::thread stop_watcher([&client, &client_done]() noexcept {
+    while (!client_done.load(std::memory_order_acquire)) {
+      if (g_stop_requested != 0) {
+        client.Stop();
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  });
   const bool ok = client.Start();
+  client_done.store(true, std::memory_order_release);
+  if (stop_watcher.joinable()) {
+    stop_watcher.join();
+  }
   const Metrics metrics = client.SnapshotMetrics();
   const std::string_view final_state = magic_enum::enum_name(runtime.probe.phase);
   const std::string_view final_error = magic_enum::enum_name(runtime.probe.error);
   fmt::print(stderr,
-             FMT_COMPILE("result={} final_state={} final_error={} rx_bytes={} "
+             FMT_COMPILE("result={} stop_requested={} final_state={} "
+                         "final_error={} rx_bytes={} "
                          "tx_bytes={} rx_messages={} tx_messages={} "
                          "heartbeat_timeouts={} subscribe={}\n"),
-             ok ? "ok" : "failed", final_state, final_error,
+             ok ? "ok" : "failed", g_stop_requested != 0 ? "yes" : "no",
+             final_state, final_error,
              runtime.probe.bytes, metrics.tx_bytes, metrics.rx_messages,
              metrics.tx_messages, metrics.heartbeat_timeouts,
              magic_enum::enum_name(runtime.subscribe_status));
@@ -180,6 +210,8 @@ int RunProbe(ConnectionConfig config, std::string subscribe) {
 }
 
 int main(int argc, char** argv) {
+  InstallStopHandlers();
+
   CLI::App app{"critical websocket probe"};
   std::string host{"fx-ws.gateio.ws"};
   std::string port{"443"};
