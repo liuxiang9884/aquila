@@ -108,10 +108,12 @@ struct ProbeStats {
   std::uint64_t arrival_gap_max_ns{0};
   std::uint64_t first_arrival_ns{0};
   std::uint64_t last_arrival_ns{0};
+  aquila::BookTicker first_book_ticker{};
   aquila::BookTicker last_book_ticker{};
   std::array<char, 512> last_text{};
   size_t last_text_size{0};
   bool last_text_truncated{false};
+  bool has_first_book_ticker{false};
 };
 
 void RecordProcessingNs(ProbeStats* stats, std::uint64_t processing_ns) {
@@ -169,6 +171,10 @@ struct ProbeConsumer {
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     if (stats == nullptr) {
       return;
+    }
+    if (!stats->has_first_book_ticker) {
+      stats->first_book_ticker = book_ticker;
+      stats->has_first_book_ticker = true;
     }
     ++stats->decoded_book_tickers;
     stats->last_book_ticker = book_ticker;
@@ -428,7 +434,10 @@ void PrintSummary(const RunnerT& runner) {
   const ProbeStats& stats = runner.stats();
   const ws::Metrics metrics = runner.metrics();
   const ProbeConfig& config = runner.config();
+  const aquila::BookTicker& first = stats.first_book_ticker;
   const aquila::BookTicker& last = stats.last_book_ticker;
+  const std::int64_t book_ticker_id_delta =
+      stats.has_first_book_ticker ? last.id - first.id : 0;
 
   fmt::print(FMT_COMPILE(
                  "config host={} port={} target={} tls={} contract={} "
@@ -459,9 +468,11 @@ void PrintSummary(const RunnerT& runner) {
              stats.unknown_template_messages,
              stats.known_non_book_ticker_messages);
   fmt::print(FMT_COMPILE(
-                 "book_ticker payloads={} decoded={} failed_or_unmapped={}\n"),
+                 "book_ticker payloads={} decoded={} failed_or_unmapped={} "
+                 "first_id={} last_id={} id_delta={}\n"),
              stats.book_ticker_messages, stats.decoded_book_tickers,
-             stats.failed_book_tickers);
+             stats.failed_book_tickers, first.id, last.id,
+             book_ticker_id_delta);
   fmt::print(FMT_COMPILE(
                  "processing_ns samples={} avg={:.2f} max={}\n"),
              stats.processing_samples,
