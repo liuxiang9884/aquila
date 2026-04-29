@@ -5,6 +5,7 @@
 #include "core/market_data/types.h"
 #include "exchange/gate/sbe/generated/gate/messages/bbo.hpp"
 #include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include "exchange/gate/sbe/message_dispatcher.h"
 
 #include <cassert>
 #include <cstddef>
@@ -19,25 +20,14 @@ namespace detail {
 
 inline constexpr std::uint16_t kBookTickerBlockLength =
     ::sbepp::message_traits<::gate::schema::messages::bbo>::block_length();
-inline constexpr std::uint16_t kBookTickerTemplateId =
-    ::sbepp::message_traits<::gate::schema::messages::bbo>::id();
-inline constexpr std::uint16_t kBookTickerSchemaId =
-    ::sbepp::schema_traits<::gate::schema>::id();
-inline constexpr std::uint16_t kBookTickerSchemaVersion =
-    ::sbepp::schema_traits<::gate::schema>::version();
-inline constexpr size_t kSbeMessageHeaderBytes = 8;
 inline constexpr size_t kMinBookTickerPayloadBytes =
     kSbeMessageHeaderBytes + kBookTickerBlockLength + 2;
 
-inline std::uint16_t ReadUint16LittleEndian(std::string_view payload,
-                                            size_t offset) noexcept {
-  if (offset + sizeof(std::uint16_t) > payload.size()) {
-    return 0;
-  }
-  const auto* bytes =
-      reinterpret_cast<const unsigned char*>(payload.data() + offset);
-  return static_cast<std::uint16_t>(bytes[0]) |
-         static_cast<std::uint16_t>(bytes[1] << 8U);
+inline bool IsBookTickerHeader(const SbeMessageHeader& header) noexcept {
+  return header.block_length == kBookTickerBlockLength &&
+         header.template_id == kGateSbeBookTickerTemplateId &&
+         header.schema_id == kGateSbeSchemaId &&
+         header.version == kGateSbeSchemaVersion;
 }
 
 inline double DecimalExponentScale(std::int8_t exponent) noexcept {
@@ -89,23 +79,14 @@ inline double DecimalMantissaToDouble(std::int64_t mantissa,
 
 }  // namespace detail
 
-inline bool DecodeBookTicker(std::string_view payload,
-                             std::int64_t local_ns,
-                             std::int32_t symbol_id,
-                             BookTicker* out) noexcept {
+inline bool DecodeBookTickerWithHeader(std::string_view payload,
+                                       const SbeMessageHeader& header,
+                                       std::int64_t local_ns,
+                                       std::int32_t symbol_id,
+                                       BookTicker* out) noexcept {
   if (out == nullptr ||
-      payload.size() < detail::kMinBookTickerPayloadBytes) {
-    return false;
-  }
-
-  if (detail::ReadUint16LittleEndian(payload, 0) !=
-          detail::kBookTickerBlockLength ||
-      detail::ReadUint16LittleEndian(payload, 2) !=
-          detail::kBookTickerTemplateId ||
-      detail::ReadUint16LittleEndian(payload, 4) !=
-          detail::kBookTickerSchemaId ||
-      detail::ReadUint16LittleEndian(payload, 6) !=
-          detail::kBookTickerSchemaVersion) {
+      payload.size() < detail::kMinBookTickerPayloadBytes ||
+      !detail::IsBookTickerHeader(header)) {
     return false;
   }
 
@@ -135,6 +116,20 @@ inline bool DecodeBookTicker(std::string_view payload,
   out->ask_volume =
       static_cast<double>(view.askMantissaSize().value()) * volume_scale;
   return true;
+}
+
+inline bool DecodeBookTicker(std::string_view payload,
+                             std::int64_t local_ns,
+                             std::int32_t symbol_id,
+                             BookTicker* out) noexcept {
+  const SbeDispatchResult dispatch = DispatchSbeMessage(payload);
+  if (dispatch.status != SbeDispatchStatus::kReady ||
+      dispatch.message_type != GateSbeMessageType::kBookTicker) {
+    return false;
+  }
+
+  return DecodeBookTickerWithHeader(payload, dispatch.header, local_ns,
+                                    symbol_id, out);
 }
 
 }  // namespace aquila::gate
