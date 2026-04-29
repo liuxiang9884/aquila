@@ -40,9 +40,22 @@ inline std::uint16_t ReadUint16LittleEndian(std::string_view payload,
          static_cast<std::uint16_t>(bytes[1] << 8U);
 }
 
-inline double ApplyDecimalExponent(std::int64_t mantissa,
-                                   std::int8_t exponent) noexcept {
-  static constexpr double kPowersOfTen[] = {
+inline double DecimalMantissaToDouble(std::int64_t mantissa,
+                                      std::int8_t exponent) noexcept {
+  static constexpr double kNegativePowersOfTen[] = {
+      1.0,
+      0.1,
+      0.01,
+      0.001,
+      0.0001,
+      0.00001,
+      0.000001,
+      0.0000001,
+      0.00000001,
+      0.000000001,
+      0.0000000001,
+  };
+  static constexpr double kPositivePowersOfTen[] = {
       1.0,
       10.0,
       100.0,
@@ -56,16 +69,19 @@ inline double ApplyDecimalExponent(std::int64_t mantissa,
       10'000'000'000.0,
   };
   static constexpr size_t kPowersOfTenCount =
-      sizeof(kPowersOfTen) / sizeof(kPowersOfTen[0]);
+      sizeof(kNegativePowersOfTen) / sizeof(kNegativePowersOfTen[0]);
+  static_assert(kPowersOfTenCount ==
+                sizeof(kPositivePowersOfTen) / sizeof(kPositivePowersOfTen[0]));
 
   const double value = static_cast<double>(mantissa);
   const int exponent_value = exponent;
-  const int scale = exponent_value >= 0 ? exponent_value : -exponent_value;
-  assert(static_cast<size_t>(scale) < kPowersOfTenCount);
-  if (exponent_value >= 0) {
-    return value * kPowersOfTen[scale];
+  if (exponent_value <= 0) [[likely]] {
+    const int scale = -exponent_value;
+    assert(static_cast<size_t>(scale) < kPowersOfTenCount);
+    return value * kNegativePowersOfTen[scale];
   }
-  return value / kPowersOfTen[scale];
+  assert(static_cast<size_t>(exponent_value) < kPowersOfTenCount);
+  return value * kPositivePowersOfTen[exponent_value];
 }
 
 }  // namespace detail
@@ -102,14 +118,14 @@ inline bool DecodeBookTicker(std::string_view payload,
   out->exchange = Exchange::kGate;
   out->exchange_ns = view.t().value() * 1000;
   out->local_ns = local_ns;
-  out->bid_price = detail::ApplyDecimalExponent(view.bidMantissaPrice().value(),
-                                                view.pxExponent().value());
-  out->bid_volume = detail::ApplyDecimalExponent(view.bidMantissaSize().value(),
-                                                 view.szExponent().value());
-  out->ask_price = detail::ApplyDecimalExponent(view.askMantissaPrice().value(),
-                                                view.pxExponent().value());
-  out->ask_volume = detail::ApplyDecimalExponent(view.askMantissaSize().value(),
-                                                 view.szExponent().value());
+  out->bid_price = detail::DecimalMantissaToDouble(
+      view.bidMantissaPrice().value(), view.pxExponent().value());
+  out->bid_volume = detail::DecimalMantissaToDouble(
+      view.bidMantissaSize().value(), view.szExponent().value());
+  out->ask_price = detail::DecimalMantissaToDouble(
+      view.askMantissaPrice().value(), view.pxExponent().value());
+  out->ask_volume = detail::DecimalMantissaToDouble(
+      view.askMantissaSize().value(), view.szExponent().value());
   return true;
 }
 
