@@ -30,6 +30,14 @@ TEST(GateSbeBookTickerDecoderTest, ConvertsDecimalMantissaWithinFixedTable) {
                    0.0000000123);
 }
 
+TEST(GateSbeBookTickerDecoderTest, ConvertsDecimalExponentToScale) {
+  EXPECT_DOUBLE_EQ(aquila::gate::detail::DecimalExponentScale(0), 1.0);
+  EXPECT_DOUBLE_EQ(aquila::gate::detail::DecimalExponentScale(10),
+                   10'000'000'000.0);
+  EXPECT_DOUBLE_EQ(aquila::gate::detail::DecimalExponentScale(-10),
+                   0.0000000001);
+}
+
 TEST(GateSbeBookTickerDecoderTest, DecodesBookTickerFromBboPayload) {
   std::array<char, 128> buffer{};
   size_t offset = 0;

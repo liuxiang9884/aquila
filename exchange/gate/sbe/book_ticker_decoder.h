@@ -40,8 +40,7 @@ inline std::uint16_t ReadUint16LittleEndian(std::string_view payload,
          static_cast<std::uint16_t>(bytes[1] << 8U);
 }
 
-inline double DecimalMantissaToDouble(std::int64_t mantissa,
-                                      std::int8_t exponent) noexcept {
+inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   static constexpr double kNegativePowersOfTen[] = {
       1.0,
       0.1,
@@ -73,15 +72,19 @@ inline double DecimalMantissaToDouble(std::int64_t mantissa,
   static_assert(kPowersOfTenCount ==
                 sizeof(kPositivePowersOfTen) / sizeof(kPositivePowersOfTen[0]));
 
-  const double value = static_cast<double>(mantissa);
   const int exponent_value = exponent;
   if (exponent_value <= 0) [[likely]] {
     const int scale = -exponent_value;
     assert(static_cast<size_t>(scale) < kPowersOfTenCount);
-    return value * kNegativePowersOfTen[scale];
+    return kNegativePowersOfTen[scale];
   }
   assert(static_cast<size_t>(exponent_value) < kPowersOfTenCount);
-  return value * kPositivePowersOfTen[exponent_value];
+  return kPositivePowersOfTen[exponent_value];
+}
+
+inline double DecimalMantissaToDouble(std::int64_t mantissa,
+                                      std::int8_t exponent) noexcept {
+  return static_cast<double>(mantissa) * DecimalExponentScale(exponent);
 }
 
 }  // namespace detail
@@ -118,14 +121,19 @@ inline bool DecodeBookTicker(std::string_view payload,
   out->exchange = Exchange::kGate;
   out->exchange_ns = view.t().value() * 1000;
   out->local_ns = local_ns;
-  out->bid_price = detail::DecimalMantissaToDouble(
-      view.bidMantissaPrice().value(), view.pxExponent().value());
-  out->bid_volume = detail::DecimalMantissaToDouble(
-      view.bidMantissaSize().value(), view.szExponent().value());
-  out->ask_price = detail::DecimalMantissaToDouble(
-      view.askMantissaPrice().value(), view.pxExponent().value());
-  out->ask_volume = detail::DecimalMantissaToDouble(
-      view.askMantissaSize().value(), view.szExponent().value());
+
+  const double price_scale =
+      detail::DecimalExponentScale(view.pxExponent().value());
+  const double volume_scale =
+      detail::DecimalExponentScale(view.szExponent().value());
+  out->bid_price =
+      static_cast<double>(view.bidMantissaPrice().value()) * price_scale;
+  out->bid_volume =
+      static_cast<double>(view.bidMantissaSize().value()) * volume_scale;
+  out->ask_price =
+      static_cast<double>(view.askMantissaPrice().value()) * price_scale;
+  out->ask_volume =
+      static_cast<double>(view.askMantissaSize().value()) * volume_scale;
   return true;
 }
 
