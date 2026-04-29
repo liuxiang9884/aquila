@@ -8,6 +8,7 @@ target_include_directories(aquila_gate
 
 target_link_libraries(aquila_gate
     INTERFACE
+        fmt::fmt-header-only
         yyjson::yyjson
         simdjson::simdjson
 )

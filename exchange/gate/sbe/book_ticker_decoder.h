@@ -30,6 +30,24 @@ inline bool IsBookTickerHeader(const SbeMessageHeader& header) noexcept {
          header.version == kGateSbeSchemaVersion;
 }
 
+inline bool ReadVarString8(std::string_view payload,
+                           size_t* offset,
+                           std::string_view* out) noexcept {
+  if (offset == nullptr || out == nullptr || *offset >= payload.size()) {
+    return false;
+  }
+
+  const size_t length =
+      static_cast<unsigned char>(payload.data()[(*offset)++]);
+  if (payload.size() - *offset < length) {
+    return false;
+  }
+
+  *out = payload.substr(*offset, length);
+  *offset += length;
+  return true;
+}
+
 inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   static constexpr double kNegativePowersOfTen[] = {
       1.0,
@@ -78,6 +96,23 @@ inline double DecimalMantissaToDouble(std::int64_t mantissa,
 }
 
 }  // namespace detail
+
+inline std::string_view ExtractBookTickerSymbol(
+    std::string_view payload, const SbeMessageHeader& header) noexcept {
+  if (payload.size() < detail::kMinBookTickerPayloadBytes ||
+      !detail::IsBookTickerHeader(header)) {
+    return {};
+  }
+
+  size_t offset = kSbeMessageHeaderBytes + detail::kBookTickerBlockLength;
+  std::string_view channel;
+  std::string_view symbol;
+  if (!detail::ReadVarString8(payload, &offset, &channel) ||
+      !detail::ReadVarString8(payload, &offset, &symbol)) {
+    return {};
+  }
+  return symbol;
+}
 
 inline bool DecodeBookTickerWithHeader(std::string_view payload,
                                        const SbeMessageHeader& header,
