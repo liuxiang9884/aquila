@@ -9,15 +9,17 @@
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 本文更新前最近相关提交：
-  - `99f0f92 websocket: expose readable payload tail bytes`
+- 截至 2026-04-29，最近相关提交：
+  - `55d7e5e tools: add Gate futures book ticker probe`
+  - `11c7174 exchange: add Gate futures market data client`
+  - `690998b exchange: add Gate SBE message dispatcher`
+  - `cbe41b9 exchange: decode Gate SBE book ticker`
+  - `e6517fe core: add market data book ticker type`
   - `bc3a197 benchmark: add minimal Gate submit ack parsing`
   - `8c6773a benchmark: add padded Gate submit parse cases`
   - `5d02950 benchmark: compare Gate submit simdjson parsing`
   - `51d7df0 benchmark: compare Gate submit insitu parsing`
   - `d98cab8 benchmark: add Gate submit response parser`
-  - `5f099c9 scripts: move Gate probes into subdirectory`
-  - `ab3d2d9 scripts: add Gate dual websocket login probe`
 - 新接手时先执行：
 
 ```bash
@@ -43,6 +45,180 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 5. `futures.orders`、`futures.usertrades`、`futures.positions` 属于私有推送频道，不是 order API response。
 6. SBE endpoint 使用 JSON 做请求和首次响应，使用 SBE 做数据推送；同一条连接上可能混合 JSON text frame 和 SBE binary frame。
 7. SBE 文档明确覆盖 `futures.orders`、`futures.usertrades`、`futures.positions`；不要默认假设 `futures.balances` 已覆盖 SBE。
+
+## Gate SBE 行情当前落地状态
+
+当前已经先以 Gate futures `bbo` / `futures.book_ticker` 为样例完成行情接入骨架。这部分不是交易回报实现，但它验证了 SBE schema、生成代码、message dispatch、BBO decode、统一 `BookTicker` 数据结构和 WebSocket client 消费接口之间的边界。
+
+### Core 数据类型
+
+已新增统一交易所枚举和行情数据结构：
+
+```text
+core/common/types.h
+core/common/constants.h
+core/market_data/types.h
+```
+
+当前 `aquila::Exchange` 包含：
+
+```text
+kBinance, kOkx, kGate, kBybit, kBitget, kCoinbase
+```
+
+当前 `aquila::BookTicker` 字段顺序按缓存行和计算热度整理：
+
+```cpp
+std::int64_t id;
+std::int32_t symbol_id;
+Exchange exchange;
+std::int64_t exchange_ns;
+std::int64_t local_ns;
+double bid_price;
+double bid_volume;
+double ask_price;
+double ask_volume;
+```
+
+约束：
+
+1. `BookTicker` 是 standard-layout、trivially-copyable。
+2. 当前 size 为 `kCacheLineBytes`，字段 offset 已由 `test/core/market_data/types_test.cpp` 固化。
+3. `symbol_id` 是系统内部唯一标的 ID；`symbol` 字符串不放入热路径结构。
+4. `exchange_ns` 来自交易所事件时间；`local_ns` 是本机收到 / 解码时刻。
+
+### SBE 代码生成和 BBO wire 结构
+
+Gate SBE schema 放在：
+
+```text
+exchange/gate/sbe/schema/gate_fex_ws_latest.xml
+```
+
+已使用本地 `third_party/sbepp` 构建出的 `sbeppc` 生成 C++ header，生成代码放在：
+
+```text
+exchange/gate/sbe/generated/
+```
+
+BBO payload 在 wire 上的结构：
+
+```text
+8 bytes messageHeader
+59 bytes fixed block
+varString8 channel
+varString8 s
+```
+
+其中：
+
+1. `messageHeader` 包括 `blockLength`、`templateId`、`schemaId`、`version`，每个字段都是 little-endian `uint16`。
+2. `varString8` 是 1 字节长度前缀 + 对应长度字符串内容。
+3. BBO 数值字段使用 `mantissa + exponent`，当前在 decode 时转成 `double`，用于对接策略和因子计算。
+4. `sbepp` decode 本身是 view/wrapper 风格，不复制 payload；payload 生命周期必须覆盖 decode 使用过程。
+
+### SBE dispatch 和 BookTicker decode
+
+已新增：
+
+```text
+exchange/gate/sbe/message_header.h
+exchange/gate/sbe/message_dispatcher.h
+exchange/gate/sbe/book_ticker_decoder.h
+test/exchange/gate/sbe/message_dispatcher_test.cpp
+test/exchange/gate/sbe/book_ticker_decoder_test.cpp
+```
+
+当前 binary message 处理流程：
+
+```text
+MessageView binary payload
+  -> ParseSbeMessageHeader
+  -> schemaId / version check
+  -> templateId dispatch
+  -> ExtractBookTickerSymbol
+  -> symbol -> symbol_id
+  -> DecodeBookTickerWithHeader
+  -> aquila::BookTicker
+```
+
+`DecodeBookTicker` 只处理 Gate schema 下的 BBO template。`DispatchSbeMessage` 已为 Gate 当前 schema 中的 10 个 template 建立枚举映射，包括 `BookTicker`、`PublicTrade`、`Obu`、`OrderBook`、`OrderBookUpdate`、`UserTrade`、`Position`、`Candlestick`、`FuturesTicker`、`Orders`。
+
+十进制转换函数当前命名为 `DecimalMantissaToDouble`，使用预计算 scale 表；主路径负指数乘法分支带 `[[likely]]`，越界只在 debug assert 中检查。这里是基于 Gate futures 行情常见精度做的低延迟取舍，后续如果接入极端精度字段，需要先补测试再扩大表。
+
+### Gate futures market data client
+
+已新增：
+
+```text
+exchange/gate/market_data/client.h
+exchange/gate/market_data/subscription.h
+test/exchange/gate/market_data/futures_market_data_client_test.cpp
+```
+
+当前 client 命名为：
+
+```cpp
+aquila::gate::FuturesMarketDataClient<Consumer>
+```
+
+设计取舍：
+
+1. 使用纯模板组合，不引入 `MarketDataSink` 虚接口，也不在热路径使用 `std::function`。
+2. `Consumer` 只需要提供 `OnBookTicker(const aquila::BookTicker&) noexcept`。
+3. `SymbolBinding` 使用 `{symbol, symbol_id}`，当前是小集合线性查找；初始化后不变。
+4. WebSocket text frame 作为订阅 / 控制响应接受但不产出行情。
+5. unknown template、unknown symbol、非 binary frame 都不会中断 client，当前以接受并丢弃为主。
+6. BBO decode 成功后同步调用 consumer，避免额外队列和动态分配。
+
+订阅请求构造：
+
+```cpp
+BuildFuturesBookTickerSubscribeRequest(symbols, epoch_seconds)
+BuildFuturesBookTickerUnsubscribeRequest(symbols, epoch_seconds)
+```
+
+输出 JSON 形如：
+
+```json
+{"time":123,"channel":"futures.book_ticker","event":"subscribe","payload":["BTC_USDT"]}
+```
+
+### Gate futures book ticker probe
+
+已新增 live probe：
+
+```text
+tools/gate_futures_book_ticker_probe.cpp
+```
+
+默认参数：
+
+```text
+host=fx-ws.gateio.ws
+port=443
+target=/v4/ws/usdt/sbe?sbe_schema_id=1
+contract=BTC_USDT
+symbol_id=1
+duration_ms=1800000
+tls=true
+```
+
+probe 行为：
+
+1. 建立 Gate futures SBE WebSocket 连接。
+2. active 后发送 `futures.book_ticker` 订阅。
+3. text frame 记录最后一条控制消息。
+4. binary frame 先走 `DispatchSbeMessage`，BBO 再交给 `FuturesMarketDataClient` decode。
+5. 输出总消息数、text/binary 数、dispatch 状态、BBO payload 数、decode 成功数、处理耗时、到达间隔和最后一条 `BookTicker`。
+
+2026-04-29 已启动一次 BTC_USDT 约 30 分钟后台 live 测试；当前主 agent 尚未收到最终报告，因此不要把 live probe 结果写成已通过结论。可先用本地单次命令复测：
+
+```bash
+./build/debug/tools/gate_futures_book_ticker_probe --contract BTC_USDT --symbol-id 1 --duration-ms 10000
+```
+
+如需正式引用性能或稳定性结论，必须保留 probe 输出或 benchmark 结果。
 
 ## 当前建议命名
 
@@ -377,21 +553,38 @@ StrategyThread
 
 下一轮建议按这个顺序继续：
 
-1. 确认 Gate SBE schema 获取方式和 C++ decoder 生成 / 集成方式。
+1. 等待并审查 BTC_USDT live probe 约 30 分钟结果；如果失败，先按网络 / TLS / schema / subscribe / decode 分层定位。
 2. 明确 `GateOrderSubmitWsSession` 需要支持哪些 WebSocket API：place、batch place、cancel、cancel ids、cancel cp、amend、status/list。
 3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
-4. 明确 update stream 断线时是否允许继续 submit。
-5. 设计 REST reconcile：update WS 断线或 gap 后如何补齐未决订单状态。
-6. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSubmitWsSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
-7. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
+4. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`，并明确它们与 `OrderFeedback` 的字段映射。
+5. 明确 update stream 断线时是否允许继续 submit。
+6. 设计 REST reconcile：update WS 断线或 gap 后如何补齐未决订单状态。
+7. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSubmitWsSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
+8. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
 
 ## 相关文件
 
+- `core/common/types.h`
+- `core/common/constants.h`
+- `core/market_data/types.h`
+- `exchange/gate/sbe/schema/gate_fex_ws_latest.xml`
+- `exchange/gate/sbe/generated/`
+- `exchange/gate/sbe/message_header.h`
+- `exchange/gate/sbe/message_dispatcher.h`
+- `exchange/gate/sbe/book_ticker_decoder.h`
+- `exchange/gate/market_data/client.h`
+- `exchange/gate/market_data/subscription.h`
+- `tools/gate_futures_book_ticker_probe.cpp`
 - `scripts/gate/test_gate_ws_dual_login.py`
 - `scripts/gate/test_gate_ws_connect.py`
 - `exchange/gate/trading/submit_response_parser.h`
 - `test/exchange/gate/trading/submit_response_parser_test.cpp`
 - `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp`
+- `test/core/common/exchange_test.cpp`
+- `test/core/market_data/types_test.cpp`
+- `test/exchange/gate/sbe/message_dispatcher_test.cpp`
+- `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`
+- `test/exchange/gate/market_data/futures_market_data_client_test.cpp`
 - `core/websocket/message_view.h`
 - `core/websocket/websocket_client.h`
 - `core/websocket/critical_session.h`
