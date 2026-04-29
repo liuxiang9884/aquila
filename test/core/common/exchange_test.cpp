@@ -12,7 +12,7 @@
 namespace {
 
 TEST(CoreExchangeTest, DefinesSupportedExchangeSet) {
-  using aquila::core::Exchange;
+  using aquila::Exchange;
 
   constexpr std::array<Exchange, 6> kExchanges = {
       Exchange::kBinance, Exchange::kOkx,    Exchange::kGate,

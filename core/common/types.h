@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace aquila::core {
+namespace aquila {
 
 enum class Exchange : std::uint8_t {
   kBinance = 0,
@@ -14,6 +14,6 @@ enum class Exchange : std::uint8_t {
   kCoinbase = 5,
 };
 
-}  // namespace aquila::core
+}  // namespace aquila
 
 #endif  // AQUILA_CORE_COMMON_TYPES_H_
