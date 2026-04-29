@@ -161,6 +161,7 @@
 
 ## C++ 编码和依赖使用约定
 
+- 新写或修改的项目自有 C++ 代码，命名遵循官方 Google C++ Style Guide 的 `Naming` 章节；缩进、换行、include 排序等机械格式遵循仓库根目录 `.clang-format`。该约定只采用 Google 的命名规则，不扩大为整篇 Google C++ Style Guide；第三方代码和生成代码优先保持上游或生成器输出风格。
 - 项目已通过 vcpkg 使用 `magic_enum`，需要把枚举值转换为字符串时，优先直接使用 `magic_enum::enum_name(value)`，不要再手写 enum-to-string 的 `switch` 或专门的 `ToString` 包装函数。
 - 项目已通过 vcpkg 使用 header-only 模式的 `fmtlib`，所有打印输出优先使用 `fmt::print`，所有字符串格式化优先使用 `fmt::format`、`fmt::format_to` 或 `fmt::format_to_n`。
 - 需要写入已有缓冲区、避免动态分配或控制截断行为时，优先使用 `fmt::format_to_n`；低延迟热路径中不要为了格式化引入不必要的临时 `std::string`。
