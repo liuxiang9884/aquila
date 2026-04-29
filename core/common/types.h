@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_COMMON_EXCHANGE_H_
-#define AQUILA_CORE_COMMON_EXCHANGE_H_
+#ifndef AQUILA_CORE_COMMON_TYPES_H_
+#define AQUILA_CORE_COMMON_TYPES_H_
 
 #include <cstdint>
 
@@ -16,4 +16,4 @@ enum class Exchange : std::uint8_t {
 
 }  // namespace aquila::core
 
-#endif  // AQUILA_CORE_COMMON_EXCHANGE_H_
+#endif  // AQUILA_CORE_COMMON_TYPES_H_
