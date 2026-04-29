@@ -6,6 +6,7 @@
 #include "exchange/gate/sbe/generated/gate/messages/bbo.hpp"
 #include "exchange/gate/sbe/generated/gate/types/Event.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -53,40 +54,18 @@ inline double ApplyDecimalExponent(std::int64_t mantissa,
       100'000'000.0,
       1'000'000'000.0,
       10'000'000'000.0,
-      100'000'000'000.0,
-      1'000'000'000'000.0,
-      10'000'000'000'000.0,
-      100'000'000'000'000.0,
-      1'000'000'000'000'000.0,
-      10'000'000'000'000'000.0,
-      100'000'000'000'000'000.0,
-      1'000'000'000'000'000'000.0,
   };
   static constexpr size_t kPowersOfTenCount =
       sizeof(kPowersOfTen) / sizeof(kPowersOfTen[0]);
 
   const double value = static_cast<double>(mantissa);
   const int exponent_value = exponent;
+  const int scale = exponent_value >= 0 ? exponent_value : -exponent_value;
+  assert(static_cast<size_t>(scale) < kPowersOfTenCount);
   if (exponent_value >= 0) {
-    if (static_cast<size_t>(exponent_value) < kPowersOfTenCount) {
-      return value * kPowersOfTen[exponent_value];
-    }
-    double multiplier = kPowersOfTen[kPowersOfTenCount - 1];
-    for (int i = static_cast<int>(kPowersOfTenCount); i <= exponent_value; ++i) {
-      multiplier *= 10.0;
-    }
-    return value * multiplier;
+    return value * kPowersOfTen[scale];
   }
-
-  const int scale = -exponent_value;
-  if (static_cast<size_t>(scale) < kPowersOfTenCount) {
-    return value / kPowersOfTen[scale];
-  }
-  double divisor = kPowersOfTen[kPowersOfTenCount - 1];
-  for (int i = static_cast<int>(kPowersOfTenCount); i <= scale; ++i) {
-    divisor *= 10.0;
-  }
-  return value / divisor;
+  return value / kPowersOfTen[scale];
 }
 
 }  // namespace detail

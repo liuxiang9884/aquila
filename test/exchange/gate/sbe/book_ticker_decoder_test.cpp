@@ -21,6 +21,14 @@ void WriteLittleEndian(std::array<char, 128>& buffer,
 
 }  // namespace
 
+TEST(GateSbeBookTickerDecoderTest, AppliesDecimalExponentWithinFixedTable) {
+  EXPECT_DOUBLE_EQ(aquila::gate::detail::ApplyDecimalExponent(123, 0), 123.0);
+  EXPECT_DOUBLE_EQ(aquila::gate::detail::ApplyDecimalExponent(123, 10),
+                   1'230'000'000'000.0);
+  EXPECT_DOUBLE_EQ(aquila::gate::detail::ApplyDecimalExponent(123, -10),
+                   0.0000000123);
+}
+
 TEST(GateSbeBookTickerDecoderTest, DecodesBookTickerFromBboPayload) {
   std::array<char, 128> buffer{};
   size_t offset = 0;
