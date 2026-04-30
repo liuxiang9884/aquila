@@ -109,20 +109,11 @@ class FuturesMarketDataClient {
   }
 
   std::int32_t FindSymbolId(std::string_view symbol) const noexcept {
-    if (symbols_.size() == 1) [[likely]] {
-      const SymbolBinding& binding = symbols_[0];
-      return binding.symbol == symbol ? binding.symbol_id : -1;
-    }
-
     const auto found = symbol_ids_.find(symbol);
     return found == symbol_ids_.end() ? -1 : found->second;
   }
 
   void BuildSymbolLookup() {
-    if (symbols_.size() <= 1) {
-      return;
-    }
-
     symbol_ids_.reserve(symbols_.size());
     for (const SymbolBinding& binding : symbols_) {
       if (binding.symbol_id >= 0) {
