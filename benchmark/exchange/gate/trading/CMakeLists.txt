@@ -7,4 +7,5 @@ target_link_libraries(gate_submit_response_parse_benchmark
         aquila_gate
         benchmark::benchmark_main
         fmt::fmt-header-only
+        yyjson::yyjson
 )

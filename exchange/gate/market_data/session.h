@@ -18,7 +18,7 @@
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/subscription.h"
-#include <yyjson.h>
+#include <simdjson.h>
 
 namespace aquila::gate {
 
@@ -49,25 +49,6 @@ struct FuturesMarketDataSessionStats {
 
 namespace detail {
 
-class JsonDoc {
- public:
-  explicit JsonDoc(yyjson_doc* doc) noexcept : doc_(doc) {}
-  JsonDoc(const JsonDoc&) = delete;
-  JsonDoc& operator=(const JsonDoc&) = delete;
-  ~JsonDoc() {
-    if (doc_ != nullptr) {
-      yyjson_doc_free(doc_);
-    }
-  }
-
-  [[nodiscard]] yyjson_doc* get() const noexcept {
-    return doc_;
-  }
-
- private:
-  yyjson_doc* doc_{nullptr};
-};
-
 enum class TextEvent : std::uint8_t {
   kUnknown = 0,
   kSubscribe,
@@ -82,17 +63,6 @@ struct TextEnvelope {
   bool has_error{false};
 };
 
-inline std::string_view ReadStringView(yyjson_val* value) noexcept {
-  if (!yyjson_is_str(value)) {
-    return {};
-  }
-  const char* text = yyjson_get_str(value);
-  if (text == nullptr) {
-    return {};
-  }
-  return std::string_view(text, yyjson_get_len(value));
-}
-
 inline TextEvent ParseTextEvent(std::string_view event) noexcept {
   if (event == "subscribe") {
     return TextEvent::kSubscribe;
@@ -106,33 +76,98 @@ inline TextEvent ParseTextEvent(std::string_view event) noexcept {
   return TextEvent::kUnknown;
 }
 
-inline bool ParseTextEnvelope(std::string_view payload,
-                              TextEnvelope& output) noexcept {
-  JsonDoc doc(yyjson_read(payload.data(), payload.size(), 0));
-  if (doc.get() == nullptr) {
+inline bool ReadSimdjsonString(simdjson::ondemand::value value,
+                               std::string_view* output) noexcept {
+  simdjson::simdjson_result<std::string_view> result = value.get_string();
+  std::string_view text{};
+  if (std::move(result).get(text) != simdjson::SUCCESS) {
     return false;
   }
+  *output = text;
+  return true;
+}
 
-  yyjson_val* root = yyjson_doc_get_root(doc.get());
-  if (!yyjson_is_obj(root)) {
+inline bool FindField(simdjson::ondemand::object object, std::string_view key,
+                      simdjson::ondemand::value* output) noexcept {
+  simdjson::ondemand::value value;
+  if (object.find_field_unordered(key).get(value) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = value;
+  return true;
+}
+
+inline bool FindObject(simdjson::ondemand::object object, std::string_view key,
+                       simdjson::ondemand::object* output) noexcept {
+  simdjson::ondemand::value value;
+  if (!FindField(object, key, &value)) {
+    return false;
+  }
+  simdjson::ondemand::object nested;
+  if (value.get_object().get(nested) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = nested;
+  return true;
+}
+
+inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
+                                      TextEnvelope& output) noexcept {
+  simdjson::ondemand::object root;
+  if (document.get_object().get(root) != simdjson::SUCCESS) {
     return false;
   }
 
   TextEnvelope envelope{};
-  envelope.channel_is_book_ticker =
-      ReadStringView(yyjson_obj_get(root, "channel")) == "futures.book_ticker";
-  envelope.event =
-      ParseTextEvent(ReadStringView(yyjson_obj_get(root, "event")));
-  envelope.has_error = yyjson_obj_get(root, "error") != nullptr;
+  simdjson::ondemand::value value;
+  if (FindField(root, "channel", &value)) {
+    std::string_view channel{};
+    envelope.channel_is_book_ticker =
+        ReadSimdjsonString(value, &channel) && channel == "futures.book_ticker";
+  }
+  if (FindField(root, "event", &value)) {
+    std::string_view event{};
+    if (ReadSimdjsonString(value, &event)) {
+      envelope.event = ParseTextEvent(event);
+    }
+  }
+  envelope.has_error = FindField(root, "error", &value);
 
-  yyjson_val* result = yyjson_obj_get(root, "result");
-  if (yyjson_is_obj(result)) {
+  simdjson::ondemand::object result;
+  if (FindObject(root, "result", &result) &&
+      FindField(result, "status", &value)) {
+    std::string_view status{};
     envelope.result_success =
-        ReadStringView(yyjson_obj_get(result, "status")) == "success";
+        ReadSimdjsonString(value, &status) && status == "success";
   }
 
   output = envelope;
   return true;
+}
+
+inline bool ParseTextEnvelope(std::string_view payload,
+                              std::uint32_t readable_tail_bytes,
+                              TextEnvelope& output) noexcept {
+  if (payload.empty()) {
+    return false;
+  }
+
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document document;
+  if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
+    simdjson::padded_string_view view(payload.data(), payload.size(),
+                                      payload.size() + readable_tail_bytes);
+    if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+      return false;
+    }
+    return ParseTextEnvelopeDocument(std::move(document), output);
+  }
+
+  simdjson::padded_string padded(payload);
+  if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
+    return false;
+  }
+  return ParseTextEnvelopeDocument(std::move(document), output);
 }
 
 inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
@@ -319,7 +354,8 @@ class FuturesMarketDataSession {
         view.payload.size()};
 
     detail::TextEnvelope envelope{};
-    if (!detail::ParseTextEnvelope(payload, envelope)) {
+    if (!detail::ParseTextEnvelope(payload, view.readable_tail_bytes,
+                                   envelope)) {
       ++stats_.control_parse_errors;
       return websocket::DeliveryResult::kAccepted;
     }

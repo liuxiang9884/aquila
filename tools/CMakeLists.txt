@@ -33,5 +33,5 @@ target_link_libraries(websocket_latency_compare
         CLI11::CLI11
         fmt::fmt-header-only
         magic_enum::magic_enum
-        yyjson::yyjson
+        simdjson::simdjson
 )

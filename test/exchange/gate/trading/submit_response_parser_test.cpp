@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include <gtest/gtest.h>
+
 #include <simdjson.h>
 
 namespace aquila::exchange::gate::trading {
@@ -97,24 +98,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEcho) {
   EXPECT_EQ(parsed.error_label_hash, 0U);
 }
 
-TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoInsitu) {
-  std::array<char, kOrderPlaceAckEcho.size() + YYJSON_PADDING_SIZE> scratch{};
-  std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
-            scratch.begin());
-
-  const auto parsed =
-      ParseGateSubmitResponseInsitu(scratch, kOrderPlaceAckEcho.size());
-
-  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
-  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
-  EXPECT_TRUE(parsed.ack);
-  EXPECT_EQ(parsed.http_status, 200);
-  EXPECT_TRUE(parsed.channel_is_order_place);
-  EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
-  EXPECT_EQ(parsed.req_id_hash, HashGateSubmitString("request-id-1"));
-}
-
-TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoSimdjson) {
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoPaddedBuffer) {
   std::array<char, kOrderPlaceAckEcho.size() + simdjson::SIMDJSON_PADDING>
       scratch{};
   std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
@@ -122,8 +106,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoSimdjson) {
   simdjson::ondemand::parser parser;
 
   const auto parsed =
-      ParseGateSubmitResponseSimdjson(scratch, kOrderPlaceAckEcho.size(),
-                                      parser);
+      ParseGateSubmitResponse(scratch, kOrderPlaceAckEcho.size(), parser);
 
   ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
   EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
@@ -146,7 +129,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoMinimal) {
   EXPECT_EQ(parsed.req_id_hash, 0U);
 }
 
-TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoMinimalSimdjson) {
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoMinimalPaddedBuffer) {
   std::array<char, kOrderPlaceAckEcho.size() + simdjson::SIMDJSON_PADDING>
       scratch{};
   std::copy(kOrderPlaceAckEcho.begin(), kOrderPlaceAckEcho.end(),
@@ -154,8 +137,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEchoMinimalSimdjson) {
   simdjson::ondemand::parser parser;
 
   const auto parsed =
-      ParseGateSubmitAckMinimalSimdjson(scratch, kOrderPlaceAckEcho.size(),
-                                        parser);
+      ParseGateSubmitAckMinimal(scratch, kOrderPlaceAckEcho.size(), parser);
 
   ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
   EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);

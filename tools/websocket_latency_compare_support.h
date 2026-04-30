@@ -15,7 +15,8 @@
 
 #include <fmt/compile.h>
 #include <fmt/core.h>
-#include <yyjson.h>
+
+#include <simdjson.h>
 
 namespace aquila::tools {
 
@@ -73,23 +74,6 @@ struct LatencyCollectorSnapshot {
 
 namespace detail {
 
-class JsonDoc {
- public:
-  explicit JsonDoc(yyjson_doc* doc) noexcept : doc_(doc) {}
-  JsonDoc(const JsonDoc&) = delete;
-  JsonDoc& operator=(const JsonDoc&) = delete;
-  ~JsonDoc() {
-    if (doc_ != nullptr) {
-      yyjson_doc_free(doc_);
-    }
-  }
-
-  [[nodiscard]] yyjson_doc* get() const noexcept { return doc_; }
-
- private:
-  yyjson_doc* doc_{nullptr};
-};
-
 inline std::optional<std::uint64_t> ParseUintString(
     std::string_view value) noexcept {
   std::uint64_t parsed = 0;
@@ -102,26 +86,61 @@ inline std::optional<std::uint64_t> ParseUintString(
   return parsed;
 }
 
-inline std::optional<std::uint64_t> ReadUint(yyjson_val* value) noexcept {
-  if (yyjson_is_uint(value)) {
-    return yyjson_get_uint(value);
+inline bool ReadString(simdjson::ondemand::value value,
+                       std::string_view* output) noexcept {
+  simdjson::simdjson_result<std::string_view> result = value.get_string();
+  std::string_view text{};
+  if (std::move(result).get(text) != simdjson::SUCCESS) {
+    return false;
   }
-  if (yyjson_is_int(value)) {
-    const std::int64_t signed_value = yyjson_get_sint(value);
+  *output = text;
+  return true;
+}
+
+inline std::optional<std::uint64_t> ReadUint(
+    simdjson::ondemand::value value) noexcept {
+  std::uint64_t unsigned_value = 0;
+  if (value.get_uint64().get(unsigned_value) == simdjson::SUCCESS) {
+    return unsigned_value;
+  }
+
+  std::int64_t signed_value = 0;
+  if (value.get_int64().get(signed_value) == simdjson::SUCCESS) {
     if (signed_value < 0) {
       return std::nullopt;
     }
     return static_cast<std::uint64_t>(signed_value);
   }
-  if (yyjson_is_str(value)) {
-    const char* string_value = yyjson_get_str(value);
-    if (string_value == nullptr) {
-      return std::nullopt;
-    }
-    return ParseUintString(
-        std::string_view(string_value, yyjson_get_len(value)));
+
+  std::string_view text{};
+  if (ReadString(value, &text)) {
+    return ParseUintString(text);
   }
   return std::nullopt;
+}
+
+inline bool FindField(simdjson::ondemand::object object, std::string_view key,
+                      simdjson::ondemand::value* output) noexcept {
+  simdjson::ondemand::value value;
+  if (object.find_field_unordered(key).get(value) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = value;
+  return true;
+}
+
+inline bool FindObject(simdjson::ondemand::object object, std::string_view key,
+                       simdjson::ondemand::object* output) noexcept {
+  simdjson::ondemand::value value;
+  if (!FindField(object, key, &value)) {
+    return false;
+  }
+  simdjson::ondemand::object nested;
+  if (value.get_object().get(nested) != simdjson::SUCCESS) {
+    return false;
+  }
+  *output = nested;
+  return true;
 }
 
 }  // namespace detail
@@ -132,32 +151,42 @@ inline std::optional<GateBookTickerKey> TryParseGateBookTicker(
     return std::nullopt;
   }
 
-  detail::JsonDoc doc(yyjson_read_opts(
-      const_cast<char*>(payload.data()), payload.size(), 0, nullptr, nullptr));
-  if (doc.get() == nullptr) {
+  simdjson::padded_string padded(payload);
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document document;
+  if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
     return std::nullopt;
   }
 
-  yyjson_val* root = yyjson_doc_get_root(doc.get());
-  yyjson_val* result = yyjson_obj_get(root, "result");
-  if (!yyjson_is_obj(result)) {
+  simdjson::ondemand::object root;
+  if (document.get_object().get(root) != simdjson::SUCCESS) {
     return std::nullopt;
   }
 
-  yyjson_val* symbol_value = yyjson_obj_get(result, "s");
-  const char* symbol = yyjson_get_str(symbol_value);
-  if (symbol == nullptr || yyjson_get_len(symbol_value) == 0) {
+  simdjson::ondemand::object result;
+  if (!detail::FindObject(root, "result", &result)) {
     return std::nullopt;
   }
 
-  const auto update_id = detail::ReadUint(yyjson_obj_get(result, "u"));
-  const auto exchange_time_ms = detail::ReadUint(yyjson_obj_get(result, "t"));
+  simdjson::ondemand::value value;
+  std::string_view symbol;
+  if (!detail::FindField(result, "s", &value) ||
+      !detail::ReadString(value, &symbol) || symbol.empty()) {
+    return std::nullopt;
+  }
+
+  const auto update_id = detail::FindField(result, "u", &value)
+                             ? detail::ReadUint(value)
+                             : std::nullopt;
+  const auto exchange_time_ms = detail::FindField(result, "t", &value)
+                                    ? detail::ReadUint(value)
+                                    : std::nullopt;
   if (!update_id.has_value() || !exchange_time_ms.has_value()) {
     return std::nullopt;
   }
 
   return GateBookTickerKey{
-      .symbol = std::string(symbol, yyjson_get_len(symbol_value)),
+      .symbol = std::string(symbol),
       .update_id = *update_id,
       .exchange_time_ms = *exchange_time_ms,
   };
@@ -166,13 +195,13 @@ inline std::optional<GateBookTickerKey> TryParseGateBookTicker(
 inline std::string BuildGateSubscribeRequest(std::string_view channel,
                                              std::string_view contract,
                                              std::uint64_t epoch_seconds) {
-  return fmt::format(FMT_COMPILE(
-                         R"({{"time":{},"channel":"{}","event":"subscribe","payload":["{}"]}})"),
-                     epoch_seconds, channel, contract);
+  return fmt::format(
+      FMT_COMPILE(
+          R"({{"time":{},"channel":"{}","event":"subscribe","payload":["{}"]}})"),
+      epoch_seconds, channel, contract);
 }
 
-inline WarmupSelection SelectWarmupPrimary(
-    const WarmupSelectionInput& input) {
+inline WarmupSelection SelectWarmupPrimary(const WarmupSelectionInput& input) {
   const auto reason = [&](std::string_view health) {
     return fmt::format(
         FMT_COMPILE("health={},gap=pending_public:{},pending_private:{},"
@@ -270,9 +299,8 @@ class LatencyPairCollector {
           .key = pair.key,
           .public_arrival_ns = pair.public_arrival_ns,
           .private_arrival_ns = pair.private_arrival_ns,
-          .private_lead_ns =
-              static_cast<std::int64_t>(pair.public_arrival_ns) -
-              static_cast<std::int64_t>(pair.private_arrival_ns),
+          .private_lead_ns = static_cast<std::int64_t>(pair.public_arrival_ns) -
+                             static_cast<std::int64_t>(pair.private_arrival_ns),
       });
       pending_.erase(it);
     }

@@ -35,7 +35,7 @@ add_websocket_gtest(websocket_latency_compare_support_test
                     latency_compare_support_test.cpp)
 target_link_libraries(websocket_latency_compare_support_test
     PRIVATE
-        yyjson::yyjson
+        simdjson::simdjson
 )
 add_websocket_gtest(websocket_plain_client_test
                     plain_websocket_client_test.cpp)
