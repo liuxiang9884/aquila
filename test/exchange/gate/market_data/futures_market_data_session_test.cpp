@@ -47,6 +47,9 @@ struct RecordingConsumer {
 };
 
 using Session = aquila::gate::FuturesMarketDataSession<RecordingConsumer>;
+using DiagnosticSession = aquila::gate::FuturesMarketDataSession<
+    RecordingConsumer, aquila::websocket::TlsSocket,
+    aquila::gate::FuturesMarketDataDiagnostics>;
 
 struct StateCapture {
   int state_calls{0};
@@ -79,6 +82,16 @@ Session MakeSession(RecordingConsumer& consumer) {
   config.service = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   return Session(std::move(config), symbols, consumer);
+}
+
+DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
+  static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "ETH_USDT", .symbol_id = 12}};
+  aquila::websocket::ConnectionConfig config{};
+  config.host = "localhost";
+  config.service = "443";
+  config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
+  return DiagnosticSession(std::move(config), symbols, consumer);
 }
 
 Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
@@ -247,4 +260,19 @@ TEST(GateFuturesMarketDataSessionTest, DelegatesBinaryBookTickerToClient) {
   ASSERT_EQ(consumer.calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_EQ(consumer.last.id, 42);
+}
+
+TEST(GateFuturesMarketDataSessionTest,
+     ExposesMarketDataDiagnosticsWhenEnabled) {
+  RecordingConsumer consumer;
+  DiagnosticSession session = MakeDiagnosticSession(consumer);
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+
+  const auto result = session.Handle(BinaryView(payload));
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(session.market_data_client_diagnostics().stats().unknown_symbols,
+            1U);
 }

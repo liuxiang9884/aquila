@@ -32,9 +32,59 @@ struct FuturesMarketDataClientStats {
   std::uint64_t book_ticker_decode_failures{0};
 };
 
-template <typename Consumer>
+struct NoopFuturesMarketDataDiagnostics {
+  static constexpr bool kEnabled = false;
+};
+
+class FuturesMarketDataDiagnostics {
+ public:
+  static constexpr bool kEnabled = true;
+
+  void RecordDispatchDrop(SbeDispatchStatus status) noexcept {
+    switch (status) {
+      case SbeDispatchStatus::kNeedMore:
+        ++stats_.sbe_need_more;
+        return;
+      case SbeDispatchStatus::kUnsupportedSchema:
+        ++stats_.unsupported_sbe_schemas;
+        return;
+      case SbeDispatchStatus::kUnsupportedSchemaVersion:
+        ++stats_.unsupported_sbe_schema_versions;
+        return;
+      case SbeDispatchStatus::kUnsupportedTemplate:
+        ++stats_.unsupported_sbe_templates;
+        return;
+      case SbeDispatchStatus::kReady:
+        return;
+    }
+  }
+
+  void RecordUnsupportedSbeMessage() noexcept {
+    ++stats_.unsupported_sbe_messages;
+  }
+
+  void RecordUnknownSymbol() noexcept {
+    ++stats_.unknown_symbols;
+  }
+
+  void RecordBookTickerDecodeFailure() noexcept {
+    ++stats_.book_ticker_decode_failures;
+  }
+
+  [[nodiscard]] const FuturesMarketDataClientStats& stats() const noexcept {
+    return stats_;
+  }
+
+ private:
+  FuturesMarketDataClientStats stats_{};
+};
+
+template <typename Consumer,
+          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics>
 class FuturesMarketDataClient {
  public:
+  static constexpr bool DiagnosticsEnabled = DiagnosticsT::kEnabled;
+
   FuturesMarketDataClient(
       std::span<const SymbolBinding> symbols, Consumer& consumer,
       websocket::ClockSource clock_source = websocket::ClockSource::kSteady)
@@ -79,7 +129,9 @@ class FuturesMarketDataClient {
         reinterpret_cast<const char*>(payload.data()), payload.size()};
     const SbeDispatchResult dispatch = DispatchSbeMessage(payload_view);
     if (dispatch.status != SbeDispatchStatus::kReady) [[unlikely]] {
-      RecordDispatchDrop(dispatch.status);
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordDispatchDrop(dispatch.status);
+      }
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -87,13 +139,15 @@ class FuturesMarketDataClient {
       case GateSbeMessageType::kBookTicker:
         return OnBookTickerPayload(payload_view, dispatch.header, local_ns);
       default:
-        ++stats_.unsupported_sbe_messages;
+        if constexpr (DiagnosticsEnabled) {
+          diagnostics_.RecordUnsupportedSbeMessage();
+        }
         return websocket::DeliveryResult::kAccepted;
     }
   }
 
-  [[nodiscard]] const FuturesMarketDataClientStats& stats() const noexcept {
-    return stats_;
+  [[nodiscard]] const DiagnosticsT& diagnostics() const noexcept {
+    return diagnostics_;
   }
 
  private:
@@ -110,19 +164,25 @@ class FuturesMarketDataClient {
       std::int64_t local_ns) noexcept {
     const std::string_view symbol = ExtractBookTickerSymbol(payload);
     if (symbol.empty()) [[unlikely]] {
-      ++stats_.book_ticker_decode_failures;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordBookTickerDecodeFailure();
+      }
       return websocket::DeliveryResult::kAccepted;
     }
     const std::int32_t symbol_id = FindSymbolId(symbol);
     if (symbol_id < 0) [[unlikely]] {
-      ++stats_.unknown_symbols;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordUnknownSymbol();
+      }
       return websocket::DeliveryResult::kAccepted;
     }
 
     BookTicker book_ticker;
     if (!DecodeBookTickerWithHeader(payload, header, local_ns, symbol_id,
                                     &book_ticker)) [[unlikely]] {
-      ++stats_.book_ticker_decode_failures;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordBookTickerDecodeFailure();
+      }
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -144,30 +204,11 @@ class FuturesMarketDataClient {
     }
   }
 
-  void RecordDispatchDrop(SbeDispatchStatus status) noexcept {
-    switch (status) {
-      case SbeDispatchStatus::kNeedMore:
-        ++stats_.sbe_need_more;
-        return;
-      case SbeDispatchStatus::kUnsupportedSchema:
-        ++stats_.unsupported_sbe_schemas;
-        return;
-      case SbeDispatchStatus::kUnsupportedSchemaVersion:
-        ++stats_.unsupported_sbe_schema_versions;
-        return;
-      case SbeDispatchStatus::kUnsupportedTemplate:
-        ++stats_.unsupported_sbe_templates;
-        return;
-      case SbeDispatchStatus::kReady:
-        return;
-    }
-  }
-
   std::span<const SymbolBinding> symbols_;
   absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
   Consumer& consumer_;
-  FuturesMarketDataClientStats stats_{};
   websocket::ClockSource clock_source_;
+  [[no_unique_address]] DiagnosticsT diagnostics_{};
 };
 
 }  // namespace aquila::gate

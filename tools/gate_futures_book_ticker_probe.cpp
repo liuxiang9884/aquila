@@ -218,12 +218,13 @@ class ProbeRunner {
 
   [[nodiscard]] const gate::FuturesMarketDataClientStats& market_data_stats()
       const noexcept {
-    return session_.market_data_client_stats();
+    return session_.market_data_client_diagnostics().stats();
   }
 
  private:
   using Session =
-      gate::FuturesMarketDataSession<ProbeConsumer, TransportSocketT>;
+      gate::FuturesMarketDataSession<ProbeConsumer, TransportSocketT,
+                                     gate::FuturesMarketDataDiagnostics>;
 
   static ws::ConnectionConfig BuildConnectionConfig(const ProbeConfig& config) {
     ws::ConnectionConfig connection_config{};
@@ -325,22 +326,21 @@ void PrintSummary(const RunnerT& runner) {
       magic_enum::enum_name(runner.subscription_state()), metrics.rx_messages,
       metrics.rx_bytes, metrics.tx_messages, metrics.tx_bytes,
       metrics.reconnects, metrics.heartbeat_timeouts);
-  fmt::print(FMT_COMPILE(
-                 "session text={} binary={} non_final={} control={} "
-                 "parse_errors={} ignored_text={} subscribe_sent={} "
-                 "subscribe_retry_attempts={} subscribe_send_failures={} "
-                 "subscribe_acks={} unsubscribe_sent={} unsubscribe_acks={} "
-                 "control_errors={} json_market_data={} unsupported_json={}\n"),
-             session_stats.text_messages, session_stats.binary_messages,
-             session_stats.non_final_messages, session_stats.control_messages,
-             session_stats.control_parse_errors,
-             session_stats.ignored_text_messages, session_stats.subscribe_sent,
-             session_stats.subscribe_retry_attempts,
-             session_stats.subscribe_send_failures,
-             session_stats.subscribe_acks, session_stats.unsubscribe_sent,
-             session_stats.unsubscribe_acks, session_stats.control_errors,
-             session_stats.json_market_data_messages,
-             session_stats.unsupported_json_market_data_messages);
+  fmt::print(
+      FMT_COMPILE(
+          "session text={} binary={} non_final={} control={} "
+          "parse_errors={} ignored_text={} subscribe_sent={} "
+          "subscribe_retry_attempts={} subscribe_send_failures={} "
+          "subscribe_acks={} unsubscribe_sent={} unsubscribe_acks={} "
+          "control_errors={} json_market_data={} unsupported_json={}\n"),
+      session_stats.text_messages, session_stats.binary_messages,
+      session_stats.non_final_messages, session_stats.control_messages,
+      session_stats.control_parse_errors, session_stats.ignored_text_messages,
+      session_stats.subscribe_sent, session_stats.subscribe_retry_attempts,
+      session_stats.subscribe_send_failures, session_stats.subscribe_acks,
+      session_stats.unsubscribe_sent, session_stats.unsubscribe_acks,
+      session_stats.control_errors, session_stats.json_market_data_messages,
+      session_stats.unsupported_json_market_data_messages);
   fmt::print(FMT_COMPILE("market_data_drop need_more={} unsupported_schema={} "
                          "unsupported_version={} unsupported_template={} "
                          "unsupported_message={} unknown_symbol={} "

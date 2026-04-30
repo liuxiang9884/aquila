@@ -149,7 +149,8 @@ inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
 
 }  // namespace detail
 
-template <typename Consumer, typename TransportSocketT = websocket::TlsSocket>
+template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
+          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics>
 class FuturesMarketDataSession {
  public:
   using MessageHandler = websocket::MessageHandlerRef<FuturesMarketDataSession>;
@@ -299,9 +300,9 @@ class FuturesMarketDataSession {
     return stats_;
   }
 
-  [[nodiscard]] const FuturesMarketDataClientStats& market_data_client_stats()
+  [[nodiscard]] const DiagnosticsT& market_data_client_diagnostics()
       const noexcept {
-    return market_data_client_.stats();
+    return market_data_client_.diagnostics();
   }
 
   [[nodiscard]] websocket::Metrics SnapshotMetrics() const noexcept {
@@ -454,7 +455,7 @@ class FuturesMarketDataSession {
   std::span<const SymbolBinding> symbols_;
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
-  FuturesMarketDataClient<Consumer> market_data_client_;
+  FuturesMarketDataClient<Consumer, DiagnosticsT> market_data_client_;
   websocket::ClockSource clock_source_;
   websocket::FrameCodec encoder_{4096, 4096};
   MessageHandler message_handler_;

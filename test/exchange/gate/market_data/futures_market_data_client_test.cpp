@@ -48,6 +48,13 @@ struct RecordingConsumer {
   }
 };
 
+using DefaultClient = aquila::gate::FuturesMarketDataClient<RecordingConsumer>;
+using DiagnosticClient = aquila::gate::FuturesMarketDataClient<
+    RecordingConsumer, aquila::gate::FuturesMarketDataDiagnostics>;
+
+static_assert(!DefaultClient::DiagnosticsEnabled);
+static_assert(DiagnosticClient::DiagnosticsEnabled);
+
 }  // namespace
 
 TEST(GateFuturesMarketDataClientTest, BuildsBookTickerSubscribeRequest) {
@@ -76,7 +83,7 @@ TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
-  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  DefaultClient client(symbols, consumer);
 
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
@@ -100,7 +107,7 @@ TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
-  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  DefaultClient client(symbols, consumer);
 
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
@@ -119,7 +126,7 @@ TEST(GateFuturesMarketDataClientTest, HandlesWebSocketMessageDirectly) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
-  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  DefaultClient client(symbols, consumer);
 
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
@@ -191,7 +198,7 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
-  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  DiagnosticClient client(symbols, consumer);
 
   std::array<char, 192> buffer{};
   const std::string_view payload =
@@ -201,14 +208,14 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.stats().unsupported_sbe_templates, 1U);
+  EXPECT_EQ(client.diagnostics().stats().unsupported_sbe_templates, 1U);
 }
 
 TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
-  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  DiagnosticClient client(symbols, consumer);
 
   std::array<char, 192> buffer{};
   const std::string_view payload =
@@ -218,14 +225,14 @@ TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.stats().book_ticker_decode_failures, 1U);
+  EXPECT_EQ(client.diagnostics().stats().book_ticker_decode_failures, 1U);
 }
 
 TEST(GateFuturesMarketDataClientTest, IgnoresUnknownSymbol) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "ETH_USDT", .symbol_id = 12}};
   RecordingConsumer consumer;
-  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  DiagnosticClient client(symbols, consumer);
 
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
@@ -234,7 +241,7 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownSymbol) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.stats().unknown_symbols, 1U);
+  EXPECT_EQ(client.diagnostics().stats().unknown_symbols, 1U);
 }
 
 TEST(GateFuturesMarketDataClientTest, AcceptsTextControlMessages) {
