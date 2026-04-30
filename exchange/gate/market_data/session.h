@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include "core/websocket/frame_codec.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
@@ -434,34 +433,15 @@ class FuturesMarketDataSession {
 
   websocket::SendStatus SendText(std::string_view payload_text) noexcept {
     auto& core = client_.Core();
-    websocket::PreparedWrite* write = core.TryAcquirePreparedWrite();
-    if (write == nullptr) {
-      return websocket::SendStatus::kNoPreparedWriteSlot;
-    }
-
     const auto payload = std::as_bytes(
         std::span<const char>(payload_text.data(), payload_text.size()));
-    const auto encoded = encoder_.EncodeText(payload, write->storage);
-    if (!encoded.ok) {
-      core.CancelPreparedWrite(write);
-      return websocket::SendStatus::kEncodeFailed;
-    }
-
-    write->encoded_size = static_cast<std::uint32_t>(encoded.bytes.size());
-    write->write_offset = 0;
-    write->kind = websocket::PayloadKind::kText;
-    const websocket::SendStatus status = core.CommitPreparedWrite(write);
-    if (status != websocket::SendStatus::kOk) {
-      core.CancelPreparedWrite(write);
-    }
-    return status;
+    return core.SendText(payload);
   }
 
   std::span<const SymbolBinding> symbols_;
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
   FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
-  websocket::FrameCodec encoder_{4096, 4096};
   MessageHandler message_handler_;
   Client client_;
   FuturesMarketDataSessionStats stats_{};

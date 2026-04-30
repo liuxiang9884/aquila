@@ -51,6 +51,26 @@ std::vector<std::byte> BuildServerPingFrame(std::string_view payload) {
   return frame;
 }
 
+std::vector<std::byte> DecodeMaskedClientPayload(
+    std::span<const std::byte> frame) {
+  if (frame.size() < 6) {
+    return {};
+  }
+  const auto encoded_length = std::to_integer<unsigned char>(frame[1]);
+  const size_t payload_size = encoded_length & 0x7FU;
+  if ((encoded_length & 0x80U) == 0 || frame.size() != 6 + payload_size) {
+    return {};
+  }
+
+  const std::array<std::byte, 4> mask_key{frame[2], frame[3], frame[4],
+                                          frame[5]};
+  std::vector<std::byte> payload(payload_size);
+  for (size_t i = 0; i < payload_size; ++i) {
+    payload[i] = frame[6 + i] ^ mask_key[i & 0x3U];
+  }
+  return payload;
+}
+
 class FakeTlsSocket final {
  public:
   ssize_t ReadSome(std::span<std::byte> buffer) noexcept {
@@ -445,6 +465,46 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_EQ(static_cast<char>(socket.written_[9]), 'd');
   EXPECT_EQ(metrics.tx_messages, 2U);
   EXPECT_EQ(session.PendingWriteCount(), 0U);
+}
+
+TEST(WebsocketCriticalSessionTest, SendTextEncodesMaskedFrameThroughCoreCodec) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  const auto payload = std::as_bytes(std::span{"tick", 4});
+  EXPECT_EQ(session.SendText(payload), SendStatus::kOk);
+  EXPECT_EQ(session.PendingWriteCount(), 1U);
+
+  session.DriveWrite();
+
+  ASSERT_EQ(socket.written_.size(), 10U);
+  EXPECT_EQ(socket.written_[0], std::byte{0x81});
+  EXPECT_EQ(socket.written_[1], std::byte{0x84});
+  const auto decoded = DecodeMaskedClientPayload(std::span<const std::byte>(
+      socket.written_.data(), socket.written_.size()));
+  ASSERT_EQ(decoded.size(), payload.size());
+  EXPECT_TRUE(std::equal(decoded.begin(), decoded.end(), payload.begin()));
+  EXPECT_EQ(metrics.tx_messages, 1U);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+}
+
+TEST(WebsocketCriticalSessionTest, SendTextReleasesSlotAfterEncodeFailure) {
+  auto config = BuildSmallConfig(1);
+  config.prepared_write_bytes = 6;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  EXPECT_EQ(session.SendText(std::as_bytes(std::span{"x", 1})),
+            SendStatus::kEncodeFailed);
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_EQ(session.SendText(std::span<const std::byte>{}), SendStatus::kOk);
 }
 
 TEST(WebsocketCriticalSessionTest, ReadCallbackCanFlushWriteImmediately) {

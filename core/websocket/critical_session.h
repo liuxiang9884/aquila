@@ -54,6 +54,32 @@ class CriticalSession {
     return prepared_write_arena_.TryAcquire();
   }
 
+  // Text business writes are cold compared with the read path; keep this
+  // helper out-of-line so exchange handlers keep their inlining budget.
+  [[gnu::noinline]] SendStatus SendText(
+      std::span<const std::byte> payload,
+      WriteFlushMode flush_mode = WriteFlushMode::kQueued) noexcept {
+    PreparedWrite* write = TryAcquirePreparedWrite();
+    if (write == nullptr) {
+      return SendStatus::kNoPreparedWriteSlot;
+    }
+
+    const EncodeResult encoded = codec_.EncodeText(payload, write->storage);
+    if (!encoded.ok) {
+      prepared_write_arena_.Release(write);
+      return SendStatus::kEncodeFailed;
+    }
+
+    write->encoded_size = static_cast<std::uint32_t>(encoded.bytes.size());
+    write->write_offset = 0;
+    write->kind = PayloadKind::kText;
+    const SendStatus status = CommitPreparedWrite(write, flush_mode);
+    if (status != SendStatus::kOk) {
+      prepared_write_arena_.Release(write);
+    }
+    return status;
+  }
+
   SendStatus CommitPreparedWrite(
       PreparedWrite* write,
       WriteFlushMode flush_mode = WriteFlushMode::kQueued) noexcept {
