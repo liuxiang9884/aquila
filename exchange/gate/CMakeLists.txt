@@ -11,4 +11,5 @@ target_link_libraries(aquila_gate
         fmt::fmt-header-only
         yyjson::yyjson
         simdjson::simdjson
+        absl::flat_hash_map
 )

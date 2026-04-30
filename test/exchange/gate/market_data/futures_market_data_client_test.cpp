@@ -185,6 +185,42 @@ TEST(GateFuturesMarketDataClientTest, HandlesWebSocketMessageDirectly) {
   EXPECT_GT(consumer.last.local_ns, 0);
 }
 
+TEST(GateFuturesMarketDataClientTest, HandlesBinaryPayloadDirectly) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+
+  const auto result = client.OnBinaryPayload(
+      std::as_bytes(std::span(payload.data(), payload.size())), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(consumer.last.symbol_id, 11);
+  EXPECT_EQ(consumer.last.local_ns, 999'000);
+}
+
+TEST(GateFuturesMarketDataClientTest, MapsMultipleSymbolsBySymbolText) {
+  const std::array<aquila::gate::SymbolBinding, 3> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11},
+      aquila::gate::SymbolBinding{.symbol = "ETH_USDT", .symbol_id = 12},
+      aquila::gate::SymbolBinding{.symbol = "SOL_USDT", .symbol_id = 13}};
+  RecordingConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "SOL_USDT");
+
+  const auto result = client.OnMessage(BinaryView(payload), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(consumer.last.symbol_id, 13);
+}
+
 TEST(GateFuturesMarketDataClientTest, BindsAsTypedWebSocketHandler) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};

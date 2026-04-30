@@ -107,11 +107,7 @@ inline TextEvent ParseTextEvent(std::string_view event) noexcept {
 }
 
 inline bool ParseTextEnvelope(std::string_view payload,
-                              TextEnvelope* output) noexcept {
-  if (output == nullptr) {
-    return false;
-  }
-
+                              TextEnvelope& output) noexcept {
   JsonDoc doc(yyjson_read(payload.data(), payload.size(), 0));
   if (doc.get() == nullptr) {
     return false;
@@ -135,7 +131,7 @@ inline bool ParseTextEnvelope(std::string_view payload,
         ReadStringView(yyjson_obj_get(result, "status")) == "success";
   }
 
-  *output = envelope;
+  output = envelope;
   return true;
 }
 
@@ -202,22 +198,26 @@ class FuturesMarketDataSession {
 
   websocket::DeliveryResult Handle(
       const websocket::MessageView& view) noexcept {
+    if (view.kind == websocket::PayloadKind::kBinary) [[likely]] {
+      if (!view.fin) {
+        ++stats_.non_final_messages;
+        return websocket::DeliveryResult::kAccepted;
+      }
+      ++stats_.binary_messages;
+      const std::int64_t local_ns =
+          static_cast<std::int64_t>(websocket::NowNs(clock_source_));
+      return market_data_client_.OnBinaryPayload(view.payload, local_ns);
+    }
+
     if (!view.fin) {
       ++stats_.non_final_messages;
       return websocket::DeliveryResult::kAccepted;
     }
-    switch (view.kind) {
-      case websocket::PayloadKind::kText:
-        return HandleText(view);
-      case websocket::PayloadKind::kBinary: {
-        const std::int64_t local_ns =
-            static_cast<std::int64_t>(websocket::NowNs(clock_source_));
-        ++stats_.binary_messages;
-        return market_data_client_.OnMessage(view, local_ns);
-      }
-      default:
-        return websocket::DeliveryResult::kAccepted;
+
+    if (view.kind == websocket::PayloadKind::kText) {
+      return HandleText(view);
     }
+    return websocket::DeliveryResult::kAccepted;
   }
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
@@ -319,7 +319,7 @@ class FuturesMarketDataSession {
         view.payload.size()};
 
     detail::TextEnvelope envelope{};
-    if (!detail::ParseTextEnvelope(payload, &envelope)) {
+    if (!detail::ParseTextEnvelope(payload, envelope)) {
       ++stats_.control_parse_errors;
       return websocket::DeliveryResult::kAccepted;
     }
