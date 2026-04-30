@@ -1,13 +1,13 @@
 #ifndef AQUILA_EXCHANGE_GATE_SBE_MESSAGE_DISPATCHER_H_
 #define AQUILA_EXCHANGE_GATE_SBE_MESSAGE_DISPATCHER_H_
 
-#include "exchange/gate/sbe/generated/gate/schema/schema.hpp"
-#include "exchange/gate/sbe/message_header.h"
-
 #include <cstdint>
 #include <string_view>
 
 #include <sbepp/sbepp.hpp>
+
+#include "exchange/gate/sbe/generated/gate/gate.hpp"
+#include "exchange/gate/sbe/message_header.h"
 
 namespace aquila::gate {
 
@@ -16,16 +16,26 @@ inline constexpr std::uint16_t kGateSbeSchemaId =
 inline constexpr std::uint16_t kGateSbeSchemaVersion =
     ::sbepp::schema_traits<::gate::schema>::version();
 
-inline constexpr std::uint16_t kGateSbeBookTickerTemplateId = 1;
-inline constexpr std::uint16_t kGateSbePublicTradeTemplateId = 2;
-inline constexpr std::uint16_t kGateSbeObuTemplateId = 3;
-inline constexpr std::uint16_t kGateSbeOrderBookTemplateId = 4;
-inline constexpr std::uint16_t kGateSbeOrderBookUpdateTemplateId = 5;
-inline constexpr std::uint16_t kGateSbeUserTradeTemplateId = 6;
-inline constexpr std::uint16_t kGateSbePositionTemplateId = 7;
-inline constexpr std::uint16_t kGateSbeCandlestickTemplateId = 8;
-inline constexpr std::uint16_t kGateSbeFuturesTickerTemplateId = 9;
-inline constexpr std::uint16_t kGateSbeOrdersTemplateId = 10;
+inline constexpr std::uint16_t kGateSbeBookTickerTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::bbo>::id();
+inline constexpr std::uint16_t kGateSbePublicTradeTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::publicTrade>::id();
+inline constexpr std::uint16_t kGateSbeObuTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::obu>::id();
+inline constexpr std::uint16_t kGateSbeOrderBookTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::orderBook>::id();
+inline constexpr std::uint16_t kGateSbeOrderBookUpdateTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::orderBookUpdate>::id();
+inline constexpr std::uint16_t kGateSbeUserTradeTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::userTrade>::id();
+inline constexpr std::uint16_t kGateSbePositionTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::position>::id();
+inline constexpr std::uint16_t kGateSbeCandlestickTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::candlestick>::id();
+inline constexpr std::uint16_t kGateSbeFuturesTickerTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::futuresTicker>::id();
+inline constexpr std::uint16_t kGateSbeOrdersTemplateId =
+    ::sbepp::message_traits<::gate::schema::messages::orders>::id();
 
 enum class GateSbeMessageType : std::uint8_t {
   kUnknown = 0,

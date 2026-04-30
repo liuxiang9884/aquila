@@ -1,7 +1,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
@@ -13,64 +12,11 @@
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/subscription.h"
-#include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include "exchange/gate/sbe/test_support/book_ticker_payload_builder.h"
 
 namespace {
 
-template <typename T>
-void WriteLittleEndian(std::array<char, 192>& buffer, size_t offset,
-                       T value) noexcept {
-  std::memcpy(buffer.data() + offset, &value, sizeof(value));
-}
-
-void WriteVarString(std::array<char, 192>& buffer, size_t* offset,
-                    std::string_view value) noexcept {
-  buffer[(*offset)++] = static_cast<char>(value.size());
-  std::memcpy(buffer.data() + *offset, value.data(), value.size());
-  *offset += value.size();
-}
-
-std::string_view BuildBookTickerPayload(std::array<char, 192>* buffer,
-                                        std::string_view symbol,
-                                        std::uint16_t template_id = 1,
-                                        std::uint16_t block_length = 59) {
-  size_t offset = 0;
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, block_length);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, template_id);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aquila::gate::kGateSbeSchemaId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aquila::gate::kGateSbeSchemaVersion);
-  offset += sizeof(std::uint16_t);
-
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 1'770'000'000'001'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(
-      *buffer, offset, static_cast<std::int8_t>(gate::types::Event::Update));
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 1'770'000'000'000'900);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 42);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(*buffer, offset, -4);
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int8_t>(*buffer, offset, -3);
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 650'125'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 17'500);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 650'120'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 21'000);
-  offset += sizeof(std::int64_t);
-  WriteVarString(*buffer, &offset, "futures.book_ticker");
-  WriteVarString(*buffer, &offset, symbol);
-  return {buffer->data(), offset};
-}
+using aquila::gate::test_support::BuildBookTickerPayload;
 
 aquila::websocket::MessageView BinaryView(std::string_view payload) noexcept {
   return {
@@ -255,6 +201,7 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(client.stats().unsupported_sbe_templates, 1U);
 }
 
 TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
@@ -271,6 +218,7 @@ TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(client.stats().book_ticker_decode_failures, 1U);
 }
 
 TEST(GateFuturesMarketDataClientTest, IgnoresUnknownSymbol) {
@@ -286,6 +234,7 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownSymbol) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(client.stats().unknown_symbols, 1U);
 }
 
 TEST(GateFuturesMarketDataClientTest, AcceptsTextControlMessages) {

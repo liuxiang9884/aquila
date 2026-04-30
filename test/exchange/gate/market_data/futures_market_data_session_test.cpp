@@ -9,64 +9,12 @@
 
 #include "core/websocket/message_view.h"
 #include "exchange/gate/market_data/session.h"
-#include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include "exchange/gate/sbe/test_support/book_ticker_payload_builder.h"
 #include <simdjson.h>
 
 namespace {
 
-template <typename T>
-void WriteLittleEndian(std::array<char, 192>& buffer, size_t offset,
-                       T value) noexcept {
-  std::memcpy(buffer.data() + offset, &value, sizeof(value));
-}
-
-void WriteVarString(std::array<char, 192>& buffer, size_t* offset,
-                    std::string_view value) noexcept {
-  buffer[(*offset)++] = static_cast<char>(value.size());
-  std::memcpy(buffer.data() + *offset, value.data(), value.size());
-  *offset += value.size();
-}
-
-std::string_view BuildBookTickerPayload(std::array<char, 192>* buffer,
-                                        std::string_view symbol) {
-  size_t offset = 0;
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, 59);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aquila::gate::kGateSbeBookTickerTemplateId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aquila::gate::kGateSbeSchemaId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aquila::gate::kGateSbeSchemaVersion);
-  offset += sizeof(std::uint16_t);
-
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 1'770'000'000'001'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(
-      *buffer, offset, static_cast<std::int8_t>(gate::types::Event::Update));
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 1'770'000'000'000'900);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 42);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(*buffer, offset, -4);
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int8_t>(*buffer, offset, -3);
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 650'125'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 17'500);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 650'120'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 21'000);
-  offset += sizeof(std::int64_t);
-  WriteVarString(*buffer, &offset, "futures.book_ticker");
-  WriteVarString(*buffer, &offset, symbol);
-  return {buffer->data(), offset};
-}
+using aquila::gate::test_support::BuildBookTickerPayload;
 
 aquila::websocket::MessageView BinaryView(std::string_view payload) noexcept {
   return {
@@ -133,6 +81,17 @@ Session MakeSession(RecordingConsumer& consumer) {
   return Session(std::move(config), symbols, consumer);
 }
 
+Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
+  static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  aquila::websocket::ConnectionConfig config{};
+  config.host = "localhost";
+  config.service = "443";
+  config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
+  config.prepared_write_slots = 0;
+  return Session(std::move(config), symbols, consumer);
+}
+
 }  // namespace
 
 TEST(GateFuturesMarketDataSessionTest, MarksSubscribeAckSubscribed) {
@@ -187,6 +146,23 @@ TEST(GateFuturesMarketDataSessionTest, SendsSubscribeWhenActive) {
             std::string_view::npos);
   EXPECT_NE(session.last_subscribe_request().find("BTC_USDT"),
             std::string_view::npos);
+}
+
+TEST(GateFuturesMarketDataSessionTest, RetriesSubscribeAfterActiveFailure) {
+  RecordingConsumer consumer;
+  Session session = MakeSessionWithNoPreparedWriteSlots(consumer);
+
+  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
+  const auto retry_status = session.RetryPendingSubscribe();
+
+  EXPECT_EQ(session.subscribe_status(),
+            aquila::websocket::SendStatus::kNoPreparedWriteSlot);
+  EXPECT_EQ(retry_status, aquila::websocket::SendStatus::kNoPreparedWriteSlot);
+  EXPECT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kIdle);
+  EXPECT_EQ(session.stats().subscribe_sent, 0U);
+  EXPECT_EQ(session.stats().subscribe_retry_attempts, 1U);
+  EXPECT_EQ(session.stats().subscribe_send_failures, 2U);
 }
 
 TEST(GateFuturesMarketDataSessionTest, ForwardsStateAndErrorHandlers) {

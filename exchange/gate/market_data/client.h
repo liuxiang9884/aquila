@@ -22,6 +22,16 @@ struct SymbolBinding {
   std::int32_t symbol_id{-1};
 };
 
+struct FuturesMarketDataClientStats {
+  std::uint64_t sbe_need_more{0};
+  std::uint64_t unsupported_sbe_schemas{0};
+  std::uint64_t unsupported_sbe_schema_versions{0};
+  std::uint64_t unsupported_sbe_templates{0};
+  std::uint64_t unsupported_sbe_messages{0};
+  std::uint64_t unknown_symbols{0};
+  std::uint64_t book_ticker_decode_failures{0};
+};
+
 template <typename Consumer>
 class FuturesMarketDataClient {
  public:
@@ -68,7 +78,8 @@ class FuturesMarketDataClient {
     const std::string_view payload_view{
         reinterpret_cast<const char*>(payload.data()), payload.size()};
     const SbeDispatchResult dispatch = DispatchSbeMessage(payload_view);
-    if (dispatch.status != SbeDispatchStatus::kReady) {
+    if (dispatch.status != SbeDispatchStatus::kReady) [[unlikely]] {
+      RecordDispatchDrop(dispatch.status);
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -76,8 +87,13 @@ class FuturesMarketDataClient {
       case GateSbeMessageType::kBookTicker:
         return OnBookTickerPayload(payload_view, dispatch.header, local_ns);
       default:
+        ++stats_.unsupported_sbe_messages;
         return websocket::DeliveryResult::kAccepted;
     }
+  }
+
+  [[nodiscard]] const FuturesMarketDataClientStats& stats() const noexcept {
+    return stats_;
   }
 
  private:
@@ -93,14 +109,20 @@ class FuturesMarketDataClient {
       std::string_view payload, const SbeMessageHeader& header,
       std::int64_t local_ns) noexcept {
     const std::string_view symbol = ExtractBookTickerSymbol(payload);
+    if (symbol.empty()) [[unlikely]] {
+      ++stats_.book_ticker_decode_failures;
+      return websocket::DeliveryResult::kAccepted;
+    }
     const std::int32_t symbol_id = FindSymbolId(symbol);
-    if (symbol_id < 0) {
+    if (symbol_id < 0) [[unlikely]] {
+      ++stats_.unknown_symbols;
       return websocket::DeliveryResult::kAccepted;
     }
 
     BookTicker book_ticker;
     if (!DecodeBookTickerWithHeader(payload, header, local_ns, symbol_id,
-                                    &book_ticker)) {
+                                    &book_ticker)) [[unlikely]] {
+      ++stats_.book_ticker_decode_failures;
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -122,9 +144,29 @@ class FuturesMarketDataClient {
     }
   }
 
+  void RecordDispatchDrop(SbeDispatchStatus status) noexcept {
+    switch (status) {
+      case SbeDispatchStatus::kNeedMore:
+        ++stats_.sbe_need_more;
+        return;
+      case SbeDispatchStatus::kUnsupportedSchema:
+        ++stats_.unsupported_sbe_schemas;
+        return;
+      case SbeDispatchStatus::kUnsupportedSchemaVersion:
+        ++stats_.unsupported_sbe_schema_versions;
+        return;
+      case SbeDispatchStatus::kUnsupportedTemplate:
+        ++stats_.unsupported_sbe_templates;
+        return;
+      case SbeDispatchStatus::kReady:
+        return;
+    }
+  }
+
   std::span<const SymbolBinding> symbols_;
   absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
   Consumer& consumer_;
+  FuturesMarketDataClientStats stats_{};
   websocket::ClockSource clock_source_;
 };
 

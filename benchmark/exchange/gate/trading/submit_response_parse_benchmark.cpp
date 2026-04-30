@@ -15,7 +15,7 @@
 #include <simdjson.h>
 #include <yyjson.h>
 
-using namespace aquila::exchange::gate::trading;
+using namespace aquila::gate;
 using namespace aquila::websocket::benchmarking;
 
 namespace {

@@ -16,6 +16,7 @@
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
+#include "exchange/gate/common/simdjson_utils.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/subscription.h"
 #include <simdjson.h>
@@ -39,6 +40,8 @@ struct FuturesMarketDataSessionStats {
   std::uint64_t control_parse_errors{0};
   std::uint64_t ignored_text_messages{0};
   std::uint64_t subscribe_sent{0};
+  std::uint64_t subscribe_retry_attempts{0};
+  std::uint64_t subscribe_send_failures{0};
   std::uint64_t subscribe_acks{0};
   std::uint64_t unsubscribe_sent{0};
   std::uint64_t unsubscribe_acks{0};
@@ -76,41 +79,6 @@ inline TextEvent ParseTextEvent(std::string_view event) noexcept {
   return TextEvent::kUnknown;
 }
 
-inline bool ReadSimdjsonString(simdjson::ondemand::value value,
-                               std::string_view* output) noexcept {
-  simdjson::simdjson_result<std::string_view> result = value.get_string();
-  std::string_view text{};
-  if (std::move(result).get(text) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = text;
-  return true;
-}
-
-inline bool FindField(simdjson::ondemand::object object, std::string_view key,
-                      simdjson::ondemand::value* output) noexcept {
-  simdjson::ondemand::value value;
-  if (object.find_field_unordered(key).get(value) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = value;
-  return true;
-}
-
-inline bool FindObject(simdjson::ondemand::object object, std::string_view key,
-                       simdjson::ondemand::object* output) noexcept {
-  simdjson::ondemand::value value;
-  if (!FindField(object, key, &value)) {
-    return false;
-  }
-  simdjson::ondemand::object nested;
-  if (value.get_object().get(nested) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = nested;
-  return true;
-}
-
 inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
                                       TextEnvelope& output) noexcept {
   simdjson::ondemand::object root;
@@ -120,22 +88,22 @@ inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
 
   TextEnvelope envelope{};
   simdjson::ondemand::value value;
-  if (FindField(root, "channel", &value)) {
+  if (FindSimdjsonField(root, "channel", &value)) {
     std::string_view channel{};
     envelope.channel_is_book_ticker =
         ReadSimdjsonString(value, &channel) && channel == "futures.book_ticker";
   }
-  if (FindField(root, "event", &value)) {
+  if (FindSimdjsonField(root, "event", &value)) {
     std::string_view event{};
     if (ReadSimdjsonString(value, &event)) {
       envelope.event = ParseTextEvent(event);
     }
   }
-  envelope.has_error = FindField(root, "error", &value);
+  envelope.has_error = FindSimdjsonField(root, "error", &value);
 
   simdjson::ondemand::object result;
-  if (FindObject(root, "result", &result) &&
-      FindField(result, "status", &value)) {
+  if (FindSimdjsonObject(root, "result", &result) &&
+      FindSimdjsonField(result, "status", &value)) {
     std::string_view status{};
     envelope.result_success =
         ReadSimdjsonString(value, &status) && status == "success";
@@ -259,10 +227,7 @@ class FuturesMarketDataSession {
     phase_ = phase;
     if (phase == websocket::ConnectionPhase::kActive) {
       if (!subscription_sent_for_connection_) {
-        const websocket::SendStatus status = SendSubscribe();
-        subscribe_status_ = status;
-        subscription_sent_for_connection_ =
-            status == websocket::SendStatus::kOk;
+        (void)SendSubscribeAttempt();
       }
       if (state_handler_ != nullptr) {
         state_handler_(state_context_, phase);
@@ -299,6 +264,17 @@ class FuturesMarketDataSession {
     return status;
   }
 
+  websocket::SendStatus RetryPendingSubscribe() noexcept {
+    if (phase_ != websocket::ConnectionPhase::kActive ||
+        subscription_sent_for_connection_ ||
+        subscription_state_ == SubscriptionState::kRejected) {
+      return subscribe_status_;
+    }
+
+    ++stats_.subscribe_retry_attempts;
+    return SendSubscribeAttempt();
+  }
+
   [[nodiscard]] SubscriptionState subscription_state() const noexcept {
     return subscription_state_;
   }
@@ -321,6 +297,11 @@ class FuturesMarketDataSession {
 
   [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
     return stats_;
+  }
+
+  [[nodiscard]] const FuturesMarketDataClientStats& market_data_client_stats()
+      const noexcept {
+    return market_data_client_.stats();
   }
 
   [[nodiscard]] websocket::Metrics SnapshotMetrics() const noexcept {
@@ -418,6 +399,16 @@ class FuturesMarketDataSession {
     if (status == websocket::SendStatus::kOk) {
       ++stats_.subscribe_sent;
       subscription_state_ = SubscriptionState::kSubscribeSent;
+    }
+    return status;
+  }
+
+  websocket::SendStatus SendSubscribeAttempt() noexcept {
+    const websocket::SendStatus status = SendSubscribe();
+    subscribe_status_ = status;
+    subscription_sent_for_connection_ = status == websocket::SendStatus::kOk;
+    if (status != websocket::SendStatus::kOk) {
+      ++stats_.subscribe_send_failures;
     }
     return status;
   }

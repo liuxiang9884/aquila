@@ -14,7 +14,7 @@
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/session.h"
 #include "exchange/gate/sbe/book_ticker_decoder.h"
-#include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include "exchange/gate/sbe/test_support/book_ticker_payload_builder.h"
 #include <simdjson.h>
 
 namespace aq_gate = aquila::gate;
@@ -25,58 +25,7 @@ namespace {
 
 constexpr std::int64_t kLocalNs = 4'720'000'000'000'000;
 
-template <typename T>
-void WriteLittleEndian(std::array<char, 192>& buffer, size_t offset,
-                       T value) noexcept {
-  std::memcpy(buffer.data() + offset, &value, sizeof(value));
-}
-
-void WriteVarString(std::array<char, 192>& buffer, size_t* offset,
-                    std::string_view value) noexcept {
-  buffer[(*offset)++] = static_cast<char>(value.size());
-  std::memcpy(buffer.data() + *offset, value.data(), value.size());
-  *offset += value.size();
-}
-
-std::string_view BuildBookTickerPayload(std::array<char, 192>* buffer,
-                                        std::string_view symbol) {
-  size_t offset = 0;
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, 59);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aq_gate::kGateSbeBookTickerTemplateId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, aq_gate::kGateSbeSchemaId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset,
-                                   aq_gate::kGateSbeSchemaVersion);
-  offset += sizeof(std::uint16_t);
-
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 1'770'000'000'001'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(
-      *buffer, offset, static_cast<std::int8_t>(gate::types::Event::Update));
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 1'770'000'000'000'900);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 42);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(*buffer, offset, -4);
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int8_t>(*buffer, offset, -3);
-  offset += sizeof(std::int8_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 650'125'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 17'500);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 650'120'000);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int64_t>(*buffer, offset, 21'000);
-  offset += sizeof(std::int64_t);
-  WriteVarString(*buffer, &offset, "futures.book_ticker");
-  WriteVarString(*buffer, &offset, symbol);
-  return {buffer->data(), offset};
-}
+using aquila::gate::test_support::BuildBookTickerPayload;
 
 ws::MessageView BinaryView(std::string_view payload) noexcept {
   return {

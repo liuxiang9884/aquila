@@ -8,7 +8,7 @@
 
 #include <simdjson.h>
 
-namespace aquila::exchange::gate::trading {
+namespace aquila::gate {
 namespace {
 
 constexpr std::string_view kOrderPlaceAckEcho = R"json({
@@ -173,4 +173,4 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
 }
 
 }  // namespace
-}  // namespace aquila::exchange::gate::trading
+}  // namespace aquila::gate

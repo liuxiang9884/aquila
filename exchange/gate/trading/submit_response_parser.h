@@ -8,9 +8,10 @@
 #include <string_view>
 #include <utility>
 
+#include "exchange/gate/common/simdjson_utils.h"
 #include <simdjson.h>
 
-namespace aquila::exchange::gate::trading {
+namespace aquila::gate {
 
 enum class GateSubmitParseStatus : std::uint8_t {
   kOk,
@@ -75,20 +76,6 @@ inline GateSubmitResponse InvalidJsonSubmitResponse() noexcept {
   return response;
 }
 
-inline bool ReadSimdjsonString(simdjson::ondemand::value value,
-                               std::string_view* output) noexcept {
-  if (output == nullptr) {
-    return false;
-  }
-  simdjson::simdjson_result<std::string_view> result = value.get_string();
-  std::string_view text{};
-  if (std::move(result).get(text) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = text;
-  return true;
-}
-
 inline std::uint64_t HashSimdjsonString(
     simdjson::ondemand::value value) noexcept {
   std::string_view text{};
@@ -128,49 +115,6 @@ inline std::uint16_t ReadSimdjsonStatusCode(
   return static_cast<std::uint16_t>(parsed);
 }
 
-inline bool ReadSimdjsonBool(simdjson::ondemand::value value,
-                             bool* output) noexcept {
-  if (output == nullptr) {
-    return false;
-  }
-  bool parsed = false;
-  if (value.get_bool().get(parsed) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = parsed;
-  return true;
-}
-
-inline bool FindField(simdjson::ondemand::object object, std::string_view key,
-                      simdjson::ondemand::value* output) noexcept {
-  if (output == nullptr) {
-    return false;
-  }
-  simdjson::ondemand::value value;
-  if (object.find_field_unordered(key).get(value) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = value;
-  return true;
-}
-
-inline bool FindObject(simdjson::ondemand::object object, std::string_view key,
-                       simdjson::ondemand::object* output) noexcept {
-  if (output == nullptr) {
-    return false;
-  }
-  simdjson::ondemand::value value;
-  if (!FindField(object, key, &value)) {
-    return false;
-  }
-  simdjson::ondemand::object nested;
-  if (value.get_object().get(nested) != simdjson::SUCCESS) {
-    return false;
-  }
-  *output = nested;
-  return true;
-}
-
 inline GateSubmitResponse ParseSimdjsonDocument(
     simdjson::ondemand::document document) noexcept {
   GateSubmitResponse response{};
@@ -182,21 +126,21 @@ inline GateSubmitResponse ParseSimdjsonDocument(
 
   response.parse_status = GateSubmitParseStatus::kOk;
   simdjson::ondemand::value value;
-  if (FindField(root, "request_id", &value)) {
+  if (FindSimdjsonField(root, "request_id", &value)) {
     response.request_id_hash = HashSimdjsonString(value);
   }
-  if (FindField(root, "ack", &value)) {
+  if (FindSimdjsonField(root, "ack", &value)) {
     bool ack = false;
     response.has_ack = ReadSimdjsonBool(value, &ack);
     response.ack = response.has_ack && ack;
   }
 
   simdjson::ondemand::object header;
-  if (FindObject(root, "header", &header)) {
-    if (FindField(header, "status", &value)) {
+  if (FindSimdjsonObject(root, "header", &header)) {
+    if (FindSimdjsonField(header, "status", &value)) {
       response.http_status = ReadSimdjsonStatusCode(value);
     }
-    if (FindField(header, "channel", &value)) {
+    if (FindSimdjsonField(header, "channel", &value)) {
       std::string_view channel{};
       response.channel_is_order_place =
           ReadSimdjsonString(value, &channel) &&
@@ -205,37 +149,37 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   }
 
   simdjson::ondemand::object data;
-  if (!FindObject(root, "data", &data)) {
+  if (!FindSimdjsonObject(root, "data", &data)) {
     return response;
   }
 
   simdjson::ondemand::object errs;
-  if (FindObject(data, "errs", &errs)) {
+  if (FindSimdjsonObject(data, "errs", &errs)) {
     response.kind = GateSubmitResponseKind::kError;
-    if (FindField(errs, "label", &value)) {
+    if (FindSimdjsonField(errs, "label", &value)) {
       response.error_label_hash = HashSimdjsonString(value);
     }
     return response;
   }
 
   simdjson::ondemand::object result;
-  if (!FindObject(data, "result", &result)) {
+  if (!FindSimdjsonObject(data, "result", &result)) {
     return response;
   }
 
   if (response.ack) {
     response.kind = GateSubmitResponseKind::kAck;
-    if (FindField(result, "req_id", &value)) {
+    if (FindSimdjsonField(result, "req_id", &value)) {
       response.req_id_hash = HashSimdjsonString(value);
     }
     return response;
   }
 
   response.kind = GateSubmitResponseKind::kResult;
-  if (FindField(result, "id", &value)) {
+  if (FindSimdjsonField(result, "id", &value)) {
     (void)ReadSimdjsonUint64(value, &response.exchange_order_id);
   }
-  if (FindField(result, "text", &value)) {
+  if (FindSimdjsonField(result, "text", &value)) {
     response.text_hash = HashSimdjsonString(value);
   }
   return response;
@@ -252,10 +196,10 @@ inline GateSubmitResponse ParseSimdjsonAckMinimalDocument(
 
   response.parse_status = GateSubmitParseStatus::kOk;
   simdjson::ondemand::value value;
-  if (FindField(root, "request_id", &value)) {
+  if (FindSimdjsonField(root, "request_id", &value)) {
     response.request_id_hash = HashSimdjsonString(value);
   }
-  if (FindField(root, "ack", &value)) {
+  if (FindSimdjsonField(root, "ack", &value)) {
     bool ack = false;
     response.has_ack = ReadSimdjsonBool(value, &ack);
     response.ack = response.has_ack && ack;
@@ -348,6 +292,6 @@ inline GateSubmitResponse ParseGateSubmitAckMinimalSimdjson(
   return ParseGateSubmitAckMinimal(padded_payload, payload_size, parser);
 }
 
-}  // namespace aquila::exchange::gate::trading
+}  // namespace aquila::gate
 
 #endif  // AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
