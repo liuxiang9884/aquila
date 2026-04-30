@@ -32,9 +32,10 @@ void WriteVarString(std::array<char, 192>& buffer, size_t* offset,
 
 std::string_view BuildBookTickerPayload(std::array<char, 192>* buffer,
                                         std::string_view symbol,
-                                        std::uint16_t template_id = 1) {
+                                        std::uint16_t template_id = 1,
+                                        std::uint16_t block_length = 59) {
   size_t offset = 0;
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, 59);
+  WriteLittleEndian<std::uint16_t>(*buffer, offset, block_length);
   offset += sizeof(std::uint16_t);
   WriteLittleEndian<std::uint16_t>(*buffer, offset, template_id);
   offset += sizeof(std::uint16_t);
@@ -249,6 +250,22 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
   std::array<char, 192> buffer{};
   const std::string_view payload =
       BuildBookTickerPayload(&buffer, "BTC_USDT", 99);
+
+  const auto result = client.OnMessage(BinaryView(payload), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.calls, 0);
+}
+
+TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+
+  std::array<char, 192> buffer{};
+  const std::string_view payload =
+      BuildBookTickerPayload(&buffer, "BTC_USDT", 1, 58);
 
   const auto result = client.OnMessage(BinaryView(payload), 999'000);
 

@@ -87,9 +87,8 @@ inline double DecimalMantissaToDouble(std::int64_t mantissa,
 }  // namespace detail
 
 inline std::string_view ExtractBookTickerSymbol(
-    std::string_view payload, const SbeMessageHeader& header) noexcept {
-  if (payload.size() < detail::kMinBookTickerPayloadBytes ||
-      !detail::IsBookTickerHeader(header)) {
+    std::string_view payload) noexcept {
+  if (payload.size() < detail::kMinBookTickerPayloadBytes) {
     return {};
   }
 

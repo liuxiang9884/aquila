@@ -92,7 +92,7 @@ class FuturesMarketDataClient {
   websocket::DeliveryResult OnBookTickerPayload(
       std::string_view payload, const SbeMessageHeader& header,
       std::int64_t local_ns) noexcept {
-    const std::string_view symbol = ExtractBookTickerSymbol(payload, header);
+    const std::string_view symbol = ExtractBookTickerSymbol(payload);
     const std::int32_t symbol_id = FindSymbolId(symbol);
     if (symbol_id < 0) {
       return websocket::DeliveryResult::kAccepted;
