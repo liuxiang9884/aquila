@@ -47,6 +47,9 @@ inline bool ReadVarString8(std::string_view payload, size_t& offset,
 }
 
 inline double DecimalExponentScale(std::int8_t exponent) noexcept {
+  // Gate decimal fields are expected to stay within 10 decimal places. Keep
+  // this table fixed; callers that need wider precision must handle it before
+  // reaching this decoder.
   static constexpr double kNegativePowersOfTen[] = {
       1.0,      0.1,       0.01,       0.001,       0.0001,       0.00001,
       0.000001, 0.0000001, 0.00000001, 0.000000001, 0.0000000001,

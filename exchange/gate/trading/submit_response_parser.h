@@ -32,6 +32,8 @@ struct GateSubmitResponse {
   bool ack{false};
   bool channel_is_order_place{false};
   std::uint16_t http_status{0};
+  // TODO: Replace hash-only request/text correlation with RequestIdCodec and
+  // OrderTextCodec when the Gate order submit path is implemented.
   std::uint64_t request_id_hash{0};
   std::uint64_t req_id_hash{0};
   std::uint64_t exchange_order_id{0};
