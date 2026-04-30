@@ -195,7 +195,9 @@ class FuturesMarketDataClient {
     return found == symbol_ids_.end() ? -1 : found->second;
   }
 
-  void BuildSymbolLookup() {
+  // This runs during construction; keep it out-of-line so message handlers
+  // keep their hot-path inlining budget.
+  [[gnu::noinline]] void BuildSymbolLookup() {
     symbol_ids_.reserve(symbols_.size());
     for (const SymbolBinding& binding : symbols_) {
       if (binding.symbol_id >= 0) {
