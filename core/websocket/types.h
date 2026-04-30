@@ -91,6 +91,11 @@ struct DegradedThresholds {
   std::uint32_t evaluation_interval_iterations = 0;
 };
 
+struct DefaultWebSocketOptions {
+  static constexpr size_t kPreparedWriteSlots = 2048;
+  static constexpr size_t kPreparedWriteBytes = 4096;
+};
+
 struct ConnectionConfig {
   std::string host = "fx-ws.gateio.ws";
   std::string service = "443";
@@ -113,8 +118,8 @@ struct ConnectionConfig {
   // plaintext. When true, DriveRead may continue until EAGAIN or the read
   // budget is exhausted.
   bool read_until_would_block = false;
-  size_t prepared_write_slots = 2048;
-  size_t prepared_write_bytes = 4096;
+  size_t prepared_write_slots = DefaultWebSocketOptions::kPreparedWriteSlots;
+  size_t prepared_write_bytes = DefaultWebSocketOptions::kPreparedWriteBytes;
   // Maximum complete business frames written per DriveWrite after partial
   // writes and control frames are handled. 0 keeps the legacy drain-until-empty
   // behavior; 1 favors read-path tail latency under order bursts.
@@ -128,6 +133,14 @@ struct ConnectionConfig {
   DegradedThresholds degraded{};
   RuntimePolicy runtime_policy{};
 };
+
+template <typename OptionsT = DefaultWebSocketOptions>
+[[nodiscard]] inline ConnectionConfig MakeConnectionConfig() {
+  ConnectionConfig config{};
+  config.prepared_write_slots = OptionsT::kPreparedWriteSlots;
+  config.prepared_write_bytes = OptionsT::kPreparedWriteBytes;
+  return config;
+}
 
 }  // namespace aquila::websocket
 

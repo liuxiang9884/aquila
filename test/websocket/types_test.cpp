@@ -32,6 +32,11 @@ struct TypedMessageHandler {
   }
 };
 
+struct SmallPreparedWriteOptions {
+  static constexpr size_t kPreparedWriteSlots = 7;
+  static constexpr size_t kPreparedWriteBytes = 128;
+};
+
 template <auto Value>
 constexpr bool kEnumValueExists = true;
 
@@ -80,8 +85,10 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(config.max_frame_payload_bytes, (size_t{1} << 20));
   EXPECT_EQ(config.max_reads_per_drive, 1U);
   EXPECT_FALSE(config.read_until_would_block);
-  EXPECT_EQ(config.prepared_write_slots, 2048U);
-  EXPECT_EQ(config.prepared_write_bytes, 4096U);
+  EXPECT_EQ(config.prepared_write_slots,
+            ws::DefaultWebSocketOptions::kPreparedWriteSlots);
+  EXPECT_EQ(config.prepared_write_bytes,
+            ws::DefaultWebSocketOptions::kPreparedWriteBytes);
   EXPECT_EQ(config.max_business_writes_per_drive, 1U);
   EXPECT_EQ(config.heartbeat_interval_ms, 5000U);
   EXPECT_EQ(config.heartbeat_timeout_ms, 15000U);
@@ -124,6 +131,23 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(total_bytes, std::size(bytes));
   EXPECT_EQ(consumer.Handle(empty_view), ws::DeliveryResult::kBackpressured);
   EXPECT_EQ(total_bytes, std::size(bytes));
+}
+
+TEST(WebsocketTypesTest,
+     BuildsPreparedWriteDefaultsFromOptionsAndAllowsRuntimeOverride) {
+  ws::ConnectionConfig config =
+      ws::MakeConnectionConfig<SmallPreparedWriteOptions>();
+
+  EXPECT_EQ(config.prepared_write_slots,
+            SmallPreparedWriteOptions::kPreparedWriteSlots);
+  EXPECT_EQ(config.prepared_write_bytes,
+            SmallPreparedWriteOptions::kPreparedWriteBytes);
+
+  config.prepared_write_slots = 3;
+  config.prepared_write_bytes = 256;
+
+  EXPECT_EQ(config.prepared_write_slots, 3U);
+  EXPECT_EQ(config.prepared_write_bytes, 256U);
 }
 
 TEST(WebsocketTypesTest, MessageHandlerRefForwardsToTypedHandler) {
