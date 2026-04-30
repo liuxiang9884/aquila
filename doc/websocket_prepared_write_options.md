@@ -8,6 +8,7 @@
 
 ```cpp
 struct DefaultWebSocketOptions {
+  static constexpr ClockSource kClockSource = ClockSource::kSteady;
   static constexpr size_t kPreparedWriteSlots = 2048;
   static constexpr size_t kPreparedWriteBytes = 4096;
 };
@@ -44,14 +45,14 @@ ws::ConnectionConfig config{};
 
 ## 自定义默认值
 
-如果某条链路希望给 prepared write arena 一个固定默认值，可以定义自己的 options struct，并用 `MakeConnectionConfig<OptionsT>()` 创建配置：
+如果某条链路希望给 prepared write arena 一个固定默认值，可以定义自己的 options struct，并用 `MakeConnectionConfig<OptionsT>()` 创建配置。建议继承 `DefaultWebSocketOptions`，只覆盖当前链路需要调整的字段：
 
 ```cpp
 #include "core/websocket/types.h"
 
 namespace ws = aquila::websocket;
 
-struct TradingWebSocketOptions {
+struct TradingWebSocketOptions : ws::DefaultWebSocketOptions {
   static constexpr size_t kPreparedWriteSlots = 4096;
   static constexpr size_t kPreparedWriteBytes = 2048;
 };
@@ -63,12 +64,15 @@ config.service = "443";
 config.target = "/v4/ws/usdt";
 ```
 
-`OptionsT` 当前只要求提供：
+`OptionsT` 当前要求提供：
 
 ```cpp
+static constexpr aquila::websocket::ClockSource kClockSource;
 static constexpr size_t kPreparedWriteSlots;
 static constexpr size_t kPreparedWriteBytes;
 ```
+
+其中 `kClockSource` 也会写入 `config.runtime_policy.clock_source`。如果只想调整 prepared write 大小，继承 `DefaultWebSocketOptions` 即可沿用默认时钟。
 
 ## 运行时覆盖
 

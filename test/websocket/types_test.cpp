@@ -32,7 +32,9 @@ struct TypedMessageHandler {
   }
 };
 
-struct SmallPreparedWriteOptions {
+struct SmallPreparedWriteOptions : ws::DefaultWebSocketOptions {
+  static constexpr ws::ClockSource kClockSource =
+      ws::ClockSource::kMonotonicCoarse;
   static constexpr size_t kPreparedWriteSlots = 7;
   static constexpr size_t kPreparedWriteBytes = 128;
 };
@@ -142,6 +144,8 @@ TEST(WebsocketTypesTest,
             SmallPreparedWriteOptions::kPreparedWriteSlots);
   EXPECT_EQ(config.prepared_write_bytes,
             SmallPreparedWriteOptions::kPreparedWriteBytes);
+  EXPECT_EQ(config.runtime_policy.clock_source,
+            SmallPreparedWriteOptions::kClockSource);
 
   config.prepared_write_slots = 3;
   config.prepared_write_bytes = 256;

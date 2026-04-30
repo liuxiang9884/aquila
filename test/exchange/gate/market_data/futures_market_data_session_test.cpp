@@ -4,6 +4,7 @@
 #include <cstring>
 #include <span>
 #include <string_view>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 
@@ -46,10 +47,27 @@ struct RecordingConsumer {
   }
 };
 
+struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
+  static constexpr aquila::websocket::ClockSource kClockSource =
+      aquila::websocket::ClockSource::kMonotonicCoarse;
+};
+
 using Session = aquila::gate::FuturesMarketDataSession<RecordingConsumer>;
 using DiagnosticSession = aquila::gate::FuturesMarketDataSession<
     RecordingConsumer, aquila::websocket::TlsSocket,
     aquila::gate::FuturesMarketDataDiagnostics>;
+using CoarseClockSession = aquila::gate::FuturesMarketDataSession<
+    RecordingConsumer, aquila::websocket::TlsSocket,
+    aquila::gate::NoopFuturesMarketDataDiagnostics, CoarseClockOptions>;
+
+static_assert(Session::kClockSource ==
+              aquila::websocket::DefaultWebSocketOptions::kClockSource);
+static_assert(CoarseClockSession::kClockSource ==
+              aquila::websocket::ClockSource::kMonotonicCoarse);
+static_assert(!std::is_constructible_v<
+              Session, aquila::websocket::ConnectionConfig,
+              std::span<const aquila::gate::SymbolBinding>, RecordingConsumer&,
+              aquila::websocket::ClockSource>);
 
 struct StateCapture {
   int state_calls{0};

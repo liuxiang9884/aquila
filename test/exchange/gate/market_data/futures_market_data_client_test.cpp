@@ -48,12 +48,27 @@ struct RecordingConsumer {
   }
 };
 
+struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
+  static constexpr aquila::websocket::ClockSource kClockSource =
+      aquila::websocket::ClockSource::kMonotonicCoarse;
+};
+
 using DefaultClient = aquila::gate::FuturesMarketDataClient<RecordingConsumer>;
 using DiagnosticClient = aquila::gate::FuturesMarketDataClient<
     RecordingConsumer, aquila::gate::FuturesMarketDataDiagnostics>;
+using CoarseClockClient = aquila::gate::FuturesMarketDataClient<
+    RecordingConsumer, aquila::gate::NoopFuturesMarketDataDiagnostics,
+    CoarseClockOptions>;
 
 static_assert(!DefaultClient::DiagnosticsEnabled);
 static_assert(DiagnosticClient::DiagnosticsEnabled);
+static_assert(DefaultClient::kClockSource ==
+              aquila::websocket::DefaultWebSocketOptions::kClockSource);
+static_assert(CoarseClockClient::kClockSource ==
+              aquila::websocket::ClockSource::kMonotonicCoarse);
+static_assert(!std::is_constructible_v<
+              DefaultClient, std::span<const aquila::gate::SymbolBinding>,
+              RecordingConsumer&, aquila::websocket::ClockSource>);
 
 }  // namespace
 

@@ -150,35 +150,34 @@ inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
 }  // namespace detail
 
 template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
-          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics>
+          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
+          typename OptionsT = websocket::DefaultWebSocketOptions>
 class FuturesMarketDataSession {
  public:
   using MessageHandler = websocket::MessageHandlerRef<FuturesMarketDataSession>;
   using Client =
       websocket::BasicWebSocketClient<TransportSocketT, MessageHandler>;
+  static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
 
-  FuturesMarketDataSession(
-      websocket::ConnectionConfig config,
-      std::span<const SymbolBinding> symbols, Consumer& consumer,
-      websocket::ClockSource clock_source = websocket::ClockSource::kSteady)
+  FuturesMarketDataSession(websocket::ConnectionConfig config,
+                           std::span<const SymbolBinding> symbols,
+                           Consumer& consumer)
       : symbols_(symbols),
-        market_data_client_(symbols_, consumer, clock_source),
-        clock_source_(clock_source),
+        market_data_client_(symbols_, consumer),
         message_handler_(websocket::MakeMessageHandler(*this)),
-        client_(std::move(config), message_handler_) {
+        client_(ApplyOptions(std::move(config)), message_handler_) {
     detail::BuildSymbolViews(symbols_, &subscription_symbols_);
     client_.SetStateHandler(this, &HandleState);
     client_.SetErrorHandler(this, &HandleError);
   }
 
   template <size_t N>
-  FuturesMarketDataSession(
-      websocket::ConnectionConfig config,
-      const std::array<SymbolBinding, N>& symbols, Consumer& consumer,
-      websocket::ClockSource clock_source = websocket::ClockSource::kSteady)
+  FuturesMarketDataSession(websocket::ConnectionConfig config,
+                           const std::array<SymbolBinding, N>& symbols,
+                           Consumer& consumer)
       : FuturesMarketDataSession(std::move(config),
                                  std::span<const SymbolBinding>(symbols),
-                                 consumer, clock_source) {}
+                                 consumer) {}
 
   bool Start() noexcept {
     return client_.Start();
@@ -209,7 +208,7 @@ class FuturesMarketDataSession {
       }
       ++stats_.binary_messages;
       const std::int64_t local_ns =
-          static_cast<std::int64_t>(websocket::NowNs(clock_source_));
+          static_cast<std::int64_t>(websocket::NowNs(kClockSource));
       return market_data_client_.OnBinaryPayload(view.payload, local_ns);
     }
 
@@ -326,6 +325,12 @@ class FuturesMarketDataSession {
   static void HandleError(void* context,
                           websocket::ConnectionError error) noexcept {
     static_cast<FuturesMarketDataSession*>(context)->OnConnectionError(error);
+  }
+
+  static websocket::ConnectionConfig ApplyOptions(
+      websocket::ConnectionConfig config) {
+    config.runtime_policy.clock_source = kClockSource;
+    return config;
   }
 
   websocket::DeliveryResult HandleText(
@@ -455,8 +460,7 @@ class FuturesMarketDataSession {
   std::span<const SymbolBinding> symbols_;
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
-  FuturesMarketDataClient<Consumer, DiagnosticsT> market_data_client_;
-  websocket::ClockSource clock_source_;
+  FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
   websocket::FrameCodec encoder_{4096, 4096};
   MessageHandler message_handler_;
   Client client_;

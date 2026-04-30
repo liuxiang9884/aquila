@@ -92,6 +92,7 @@ struct DegradedThresholds {
 };
 
 struct DefaultWebSocketOptions {
+  static constexpr ClockSource kClockSource = ClockSource::kSteady;
   static constexpr size_t kPreparedWriteSlots = 2048;
   static constexpr size_t kPreparedWriteBytes = 4096;
 };
@@ -137,6 +138,7 @@ struct ConnectionConfig {
 template <typename OptionsT = DefaultWebSocketOptions>
 [[nodiscard]] inline ConnectionConfig MakeConnectionConfig() {
   ConnectionConfig config{};
+  config.runtime_policy.clock_source = OptionsT::kClockSource;
   config.prepared_write_slots = OptionsT::kPreparedWriteSlots;
   config.prepared_write_bytes = OptionsT::kPreparedWriteBytes;
   return config;

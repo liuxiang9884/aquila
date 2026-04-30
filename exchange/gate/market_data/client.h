@@ -80,24 +80,24 @@ class FuturesMarketDataDiagnostics {
 };
 
 template <typename Consumer,
-          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics>
+          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
+          typename OptionsT = websocket::DefaultWebSocketOptions>
 class FuturesMarketDataClient {
  public:
   static constexpr bool DiagnosticsEnabled = DiagnosticsT::kEnabled;
+  static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
 
-  FuturesMarketDataClient(
-      std::span<const SymbolBinding> symbols, Consumer& consumer,
-      websocket::ClockSource clock_source = websocket::ClockSource::kSteady)
-      : symbols_(symbols), consumer_(consumer), clock_source_(clock_source) {
+  FuturesMarketDataClient(std::span<const SymbolBinding> symbols,
+                          Consumer& consumer)
+      : symbols_(symbols), consumer_(consumer) {
     BuildSymbolLookup();
   }
 
   template <size_t N>
-  FuturesMarketDataClient(
-      const std::array<SymbolBinding, N>& symbols, Consumer& consumer,
-      websocket::ClockSource clock_source = websocket::ClockSource::kSteady)
+  FuturesMarketDataClient(const std::array<SymbolBinding, N>& symbols,
+                          Consumer& consumer)
       : FuturesMarketDataClient(std::span<const SymbolBinding>(symbols),
-                                consumer, clock_source) {}
+                                consumer) {}
 
   websocket::MessageCallback AsMessageCallback() noexcept {
     return {.context = this, .handler = &HandleWebSocketMessage};
@@ -110,8 +110,8 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnMessage(
       const websocket::MessageView& view) noexcept {
-    return OnMessage(
-        view, static_cast<std::int64_t>(websocket::NowNs(clock_source_)));
+    return OnMessage(view,
+                     static_cast<std::int64_t>(websocket::NowNs(kClockSource)));
   }
 
   websocket::DeliveryResult OnMessage(const websocket::MessageView& view,
@@ -207,7 +207,6 @@ class FuturesMarketDataClient {
   std::span<const SymbolBinding> symbols_;
   absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
   Consumer& consumer_;
-  websocket::ClockSource clock_source_;
   [[no_unique_address]] DiagnosticsT diagnostics_{};
 };
 
