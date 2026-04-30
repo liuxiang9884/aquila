@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情、`BookTicker`、market data client 和 live probe 已落地；下一阶段继续 Gate 交易 submit/update 链路设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；下一阶段继续 Gate 交易 submit/update 链路设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -79,7 +79,15 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/sbe/message_dispatcher.h` | Gate schema/version/template dispatch。 |
 | `exchange/gate/sbe/book_ticker_decoder.h` | Gate BBO payload -> `aquila::BookTicker` decode。 |
 | `exchange/gate/market_data/subscription.h` | `futures.book_ticker` subscribe/unsubscribe JSON 构造。 |
-| `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 WebSocket message 产出 `BookTicker`。 |
+| `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
+| `exchange/gate/market_data/session.h` | `FuturesMarketDataSession<Consumer, TransportSocketT>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
+
+### Gate 交易准备代码
+
+| 文件 | 职责 |
+| --- | --- |
+| `exchange/gate/trading/submit_response_parser.h` | Gate submit WS JSON response parser，生产路径使用 `simdjson::ondemand`。 |
+| `test/exchange/gate/trading/submit_response_parser_test.cpp` | submit response parser 回归测试。 |
 
 ### 工具
 
@@ -102,6 +110,9 @@ doc/websocket_read_write_benchmark_comparison.md
 | `benchmark/websocket/session_mixed_path_benchmark.cpp` | read/write 混合、write budget、callback flush。 |
 | `benchmark/websocket/session_tls_write_path_benchmark.cpp` | local TLS write path 基线。 |
 | `benchmark/websocket/active_spin_benchmark.cpp` | active spin loop / stop check / clock 相关基线。 |
+| `benchmark/websocket/message_handler_dispatch_benchmark.cpp` | `MessageCallback` 与 typed message handler dispatch 对照。 |
+| `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp` | Gate BBO decode、market data client/session binary path 和 text control parse benchmark。 |
+| `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp` | Gate submit response JSON parse benchmark；yyjson 只在这里作为 simdjson 对照。 |
 
 ## 当前重要结论
 
@@ -129,6 +140,23 @@ doc/websocket_read_write_benchmark_comparison.md
 
 下一步 write 优化重点不应是通用 frame encode，而是真实 Gate 订单 payload、签名、序列化、plain/TLS socket write 和交易所 ack。
 
+### WebSocket message handler
+
+当前同时保留两条 handler 路径：
+
+- `MessageCallback`：C 风格函数指针 + context，仍是默认兼容路径，工具和旧测试继续可用。
+- `MessageHandlerRef<T>`：typed handler ref，配合 `BasicWebSocketClient<TransportSocketT, MessageHandlerT>` 和 `CriticalSession<TlsSocketT, MessageHandlerT>`，让 Gate session 可直接作为 handler 接入。
+
+2026-04-30 release microbenchmark：
+
+| case | time |
+| --- | ---: |
+| `message_callback` | 2.11ns |
+| `typed_handler_ref` | 2.37ns |
+| `typed_handler_value` | 2.30ns |
+
+结论：当前 microbenchmark 没证明 typed handler 比函数指针更快；它的价值主要是减少 Gate session 适配层和保留编译期组合空间，不应被写成已验证的性能收益。
+
 ### Gate 交易架构
 
 当前推荐方向：
@@ -151,11 +179,12 @@ feedback SPSC -> StrategyThread
 当前已经以 Gate futures BBO 为样例打通：
 
 ```text
-WebSocket binary MessageView
-  -> SBE message header parse
-  -> schema/template dispatch
+FuturesMarketDataSession::Handle(binary MessageView)
+  -> capture local_ns
+  -> FuturesMarketDataClient::OnBinaryPayload
+  -> SBE message header parse / schema-template dispatch
   -> BBO symbol extract
-  -> symbol_id lookup
+  -> flat_hash_map symbol_id lookup
   -> BookTicker decode
   -> Consumer::OnBookTicker
 ```
@@ -163,9 +192,30 @@ WebSocket binary MessageView
 关键约束：
 
 - `FuturesMarketDataClient<Consumer>` 使用纯模板组合，热路径不引入虚函数或 `std::function`。
+- `FuturesMarketDataSession<Consumer, TransportSocketT>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
+- session 处理 subscribe/unsubscribe ack/error text frame；binary SBE final frame 进入 client 快路径。
+- text JSON 使用 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes` 满足 `simdjson::SIMDJSON_PADDING`，直接用 padded view，否则 fallback 到 `simdjson::padded_string`。
+- symbol -> symbol_id 使用 `absl::flat_hash_map`，初始化时按 symbol 数 `reserve()`，单 symbol 也走同一路径。
 - `BookTicker` 中不保存字符串 symbol，只保存内部 `symbol_id`。
 - BBO 的 `mantissa + exponent` 在 decode 阶段转成 `double`，便于策略和因子计算。
-- 当前已启动一次 BTC_USDT 约 30 分钟后台 live probe；在拿到最终输出前，不把它作为稳定性或性能结论引用。
+- `ExtractBookTickerSymbol()` 不再重复校验 SBE header；完整 header 校验保留在 `DecodeBookTickerWithHeader()`。
+- 如需引用 BTC_USDT live probe 稳定性或真实延迟结论，重新运行并保留原始输出。
+
+2026-04-30 Gate market data release benchmark：
+
+| case | time |
+| --- | ---: |
+| `decode_book_ticker_with_header` | 2.85ns |
+| `client_on_binary_payload/1` | 6.42ns |
+| `client_on_binary_payload/8` | 7.21ns |
+| `client_on_binary_payload/32` | 7.17ns |
+| `session_handle_binary/1` | 37.9ns |
+| `session_handle_binary/8` | 49.7ns |
+| `session_handle_binary/32` | 48.3ns |
+| `session_handle_subscribe_ack` | 135ns |
+| `session_handle_subscribe_ack_padded_view` | 115ns |
+
+`session_handle_binary` 包含 session 计数和 `NowNs()`，不等同于纯 decode 成本。
 
 ## 常用验证命令
 
@@ -204,9 +254,25 @@ Gate SBE / market data 测试：
 ./build/debug/test/exchange/gate/sbe/gate_sbe_message_dispatcher_test
 ./build/debug/test/exchange/gate/sbe/gate_sbe_book_ticker_decoder_test
 ./build/debug/test/exchange/gate/market_data/gate_futures_market_data_client_test
+./build/debug/test/exchange/gate/market_data/gate_futures_market_data_session_test
 ./build/release/test/exchange/gate/sbe/gate_sbe_message_dispatcher_test
 ./build/release/test/exchange/gate/sbe/gate_sbe_book_ticker_decoder_test
 ./build/release/test/exchange/gate/market_data/gate_futures_market_data_client_test
+./build/release/test/exchange/gate/market_data/gate_futures_market_data_session_test
+```
+
+Gate market data benchmark：
+
+```bash
+./build/release/benchmark/exchange/gate/market_data/gate_futures_market_data_benchmark --benchmark_filter='gate_market_data/(decode_book_ticker_with_header|client_on_binary_payload|client_on_message_binary|session_handle_binary|session_handle_subscribe_ack|session_handle_subscribe_ack_padded_view)'
+./build/release/benchmark/websocket/message_handler_dispatch_benchmark
+```
+
+Gate submit response parser 测试：
+
+```bash
+./build/debug/test/exchange/gate/trading/gate_submit_response_parser_test
+./build/release/test/exchange/gate/trading/gate_submit_response_parser_test
 ```
 
 Gate BBO live probe：
@@ -230,8 +296,8 @@ Gate BBO live probe：
 
 1. 读取 `doc/agent-handoff-gate-trade-architecture.md`。
 2. 确认是否采用 `GateOrderSubmitWsSession` + `GateOrderUpdateWsSession`。
-3. 审查 BTC_USDT live probe 输出；如果失败，先分层定位网络 / TLS / subscribe / SBE dispatch / BBO decode。
+3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
 4. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`。
-5. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
-6. 写最小 benchmark：submit send、ack parse、update decode、feedback SPSC。
+5. 写最小 benchmark：submit send、ack parse、update decode、feedback SPSC。
+6. 如需 live 证据，重跑 BTC_USDT probe 并把原始输出记录到 handoff。
 7. 再开始 C++ 实现。
