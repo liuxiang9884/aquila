@@ -10,6 +10,7 @@
 #include "core/websocket/message_view.h"
 #include "exchange/gate/market_data/session.h"
 #include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include <simdjson.h>
 
 namespace {
 
@@ -146,6 +147,29 @@ TEST(GateFuturesMarketDataSessionTest, MarksSubscribeAckSubscribed) {
             aquila::gate::SubscriptionState::kSubscribed);
   EXPECT_EQ(session.stats().text_messages, 1U);
   EXPECT_EQ(session.stats().control_messages, 1U);
+  EXPECT_EQ(session.stats().subscribe_acks, 1U);
+}
+
+TEST(GateFuturesMarketDataSessionTest, ParsesPaddedSubscribeAckWithoutCopy) {
+  static constexpr std::string_view kSubscribeAck =
+      R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})";
+  std::array<char, kSubscribeAck.size() + simdjson::SIMDJSON_PADDING> buffer{};
+  std::memcpy(buffer.data(), kSubscribeAck.data(), kSubscribeAck.size());
+  RecordingConsumer consumer;
+  Session session = MakeSession(consumer);
+  const aquila::websocket::MessageView view{
+      .kind = aquila::websocket::PayloadKind::kText,
+      .payload = std::as_bytes(std::span(buffer.data(), kSubscribeAck.size())),
+      .sequence = 9,
+      .fin = true,
+      .readable_tail_bytes = simdjson::SIMDJSON_PADDING,
+  };
+
+  const auto result = session.Handle(view);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kSubscribed);
   EXPECT_EQ(session.stats().subscribe_acks, 1U);
 }
 

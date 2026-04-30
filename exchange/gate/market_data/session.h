@@ -147,12 +147,12 @@ inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
 
 inline bool ParseTextEnvelope(std::string_view payload,
                               std::uint32_t readable_tail_bytes,
+                              simdjson::ondemand::parser& parser,
                               TextEnvelope& output) noexcept {
   if (payload.empty()) {
     return false;
   }
 
-  simdjson::ondemand::parser parser;
   simdjson::ondemand::document document;
   if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
     simdjson::padded_string_view view(payload.data(), payload.size(),
@@ -355,7 +355,7 @@ class FuturesMarketDataSession {
 
     detail::TextEnvelope envelope{};
     if (!detail::ParseTextEnvelope(payload, view.readable_tail_bytes,
-                                   envelope)) {
+                                   text_parser_, envelope)) {
       ++stats_.control_parse_errors;
       return websocket::DeliveryResult::kAccepted;
     }
@@ -469,6 +469,7 @@ class FuturesMarketDataSession {
   MessageHandler message_handler_;
   Client client_;
   FuturesMarketDataSessionStats stats_{};
+  simdjson::ondemand::parser text_parser_;
   SubscriptionState subscription_state_{SubscriptionState::kIdle};
   websocket::SendStatus subscribe_status_{
       websocket::SendStatus::kWriteUnavailable};

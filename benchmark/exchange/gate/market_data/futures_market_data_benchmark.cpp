@@ -15,6 +15,7 @@
 #include "exchange/gate/market_data/session.h"
 #include "exchange/gate/sbe/book_ticker_decoder.h"
 #include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include <simdjson.h>
 
 namespace aq_gate = aquila::gate;
 namespace ws = aquila::websocket;
@@ -87,13 +88,14 @@ ws::MessageView BinaryView(std::string_view payload) noexcept {
   };
 }
 
-ws::MessageView TextView(std::string_view payload) noexcept {
+ws::MessageView TextView(std::string_view payload,
+                         std::uint32_t readable_tail_bytes = 0) noexcept {
   return {
       .kind = ws::PayloadKind::kText,
       .payload = std::as_bytes(std::span(payload.data(), payload.size())),
       .sequence = 8,
       .fin = true,
-      .readable_tail_bytes = 0,
+      .readable_tail_bytes = readable_tail_bytes,
   };
 }
 
@@ -319,6 +321,37 @@ void BenchmarkSessionHandleSubscribeAck(benchmark::State& state) {
 
 BENCHMARK(BenchmarkSessionHandleSubscribeAck)
     ->Name("gate_market_data/session_handle_subscribe_ack")
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkSessionHandleSubscribeAckPaddedView(benchmark::State& state) {
+  static constexpr std::string_view kSubscribeAck =
+      R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})";
+  SymbolSet symbols = BuildSymbols(1);
+  CountingConsumer consumer;
+  aq_gate::FuturesMarketDataSession<CountingConsumer, ws::PlainSocket> session(
+      BuildConnectionConfig(),
+      std::span<const aq_gate::SymbolBinding>(symbols.bindings), consumer);
+  std::array<char, kSubscribeAck.size() + simdjson::SIMDJSON_PADDING> scratch{};
+  std::memcpy(scratch.data(), kSubscribeAck.data(), kSubscribeAck.size());
+  const ws::MessageView view =
+      TextView({scratch.data(), kSubscribeAck.size()},
+               static_cast<std::uint32_t>(simdjson::SIMDJSON_PADDING));
+
+  for (auto _ : state) {
+    ws::DeliveryResult result = session.Handle(view);
+    benchmark::DoNotOptimize(result);
+  }
+
+  std::uint64_t subscribe_acks = session.stats().subscribe_acks;
+  benchmark::DoNotOptimize(subscribe_acks);
+  state.SetItemsProcessed(
+      static_cast<std::int64_t>(session.stats().subscribe_acks));
+  state.counters["scratch_bytes"] = static_cast<double>(scratch.size());
+  SetCommonCounters(state, kSubscribeAck);
+}
+
+BENCHMARK(BenchmarkSessionHandleSubscribeAckPaddedView)
+    ->Name("gate_market_data/session_handle_subscribe_ack_padded_view")
     ->Unit(benchmark::kNanosecond);
 
 }  // namespace
