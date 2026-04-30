@@ -140,10 +140,10 @@ void BenchmarkSessionMixedWriteBeforeRead(benchmark::State& state,
                            config.prepared_write_bytes);
   Metrics metrics{};
   MixedContext context{};
-  MessageConsumer consumer{&context, &RecordMixedRead};
+  MessageCallback consumer{&context, &RecordMixedRead};
   CriticalSession<MixedReadWriteSocket> session(config, socket, arena,
                                                 metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   const auto frame = BuildServerTextFrame("market-data");
   const auto payload = BuildWritePayload();
@@ -216,8 +216,8 @@ void BenchmarkSessionReadCallbackCommitWrite(benchmark::State& state,
   ReadCallbackWriteContext context{
       &session, std::span<const std::byte>(payload.data(), payload.size()),
       flush_mode};
-  MessageConsumer consumer{&context, &CommitWriteFromReadCallback};
-  session.SetConsumer(consumer);
+  MessageCallback consumer{&context, &CommitWriteFromReadCallback};
+  session.SetMessageCallback(consumer);
 
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(4096);

@@ -86,9 +86,9 @@ void BenchmarkRuntimeLoopback(benchmark::State& state) {
   std::vector<std::uint64_t> samples_ns(kSamples, 0);
   RuntimeContext runtime_context{};
   runtime_context.samples_ns = &samples_ns;
-  MessageConsumer consumer{&runtime_context, &RecordLoopback};
+  MessageCallback consumer{&runtime_context, &RecordLoopback};
   CriticalSession<LocalFdSocket> session(config, pair.client, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   std::atomic<bool> stop_flag{false};
   std::atomic<bool> owner_finished{false};

@@ -141,12 +141,12 @@ TEST(WebsocketCriticalSessionTest,
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   socket.max_write_bytes_per_call_ = 2;
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   auto* write = session.TryAcquirePreparedWrite();
   ASSERT_NE(write, nullptr);
@@ -199,7 +199,7 @@ TEST(WebsocketCriticalSessionTest,
   peer_closed_socket.eof_on_empty_ = true;
   CriticalSession<FakeTlsSocket> peer_closed_session(
       config, peer_closed_socket, arena, metrics);
-  peer_closed_session.SetConsumer(consumer);
+  peer_closed_session.SetMessageCallback(consumer);
   peer_closed_session.DriveRead();
   EXPECT_TRUE(peer_closed_session.ShouldReconnect());
   EXPECT_EQ(peer_closed_session.LastError(), ConnectionError::kPeerClosed);
@@ -212,7 +212,7 @@ TEST(WebsocketCriticalSessionTest,
   FakeTlsSocket heartbeat_socket;
   CriticalSession<FakeTlsSocket> heartbeat_session(
       heartbeat_config, heartbeat_socket, heartbeat_arena, heartbeat_metrics);
-  heartbeat_session.SetConsumer(consumer);
+  heartbeat_session.SetMessageCallback(consumer);
   heartbeat_session.AdvanceHeartbeat(2'000'000'000ULL);
   heartbeat_session.AdvanceHeartbeat(40'000'000'000ULL);
   EXPECT_TRUE(heartbeat_session.ShouldReconnect());
@@ -254,7 +254,7 @@ TEST(WebsocketCriticalSessionTest,
                            config.prepared_write_bytes);
   Metrics metrics{};
   BackpressureCounter counter{};
-  MessageConsumer consumer{&counter, &CountAndBackpressure};
+  MessageCallback consumer{&counter, &CountAndBackpressure};
   FakeTlsSocket socket;
 
   auto first = BuildServerTextFrame("aa");
@@ -265,7 +265,7 @@ TEST(WebsocketCriticalSessionTest,
   socket.read_chunks_.push_back(coalesced);
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
   session.DriveRead();
 
   EXPECT_FALSE(session.ShouldReconnect());
@@ -422,7 +422,7 @@ TEST(WebsocketCriticalSessionTest, ReadCallbackCanFlushWriteImmediately) {
   const std::array<std::byte, 4> payload{
       std::byte{'o'}, std::byte{'r'}, std::byte{'d'}, std::byte{'r'}};
   CallbackWriteContext context{&session, payload, WriteFlushMode::kTryFlushOne};
-  session.SetConsumer(MessageConsumer{&context, &CommitWriteFromCallback});
+  session.SetMessageCallback(MessageCallback{&context, &CommitWriteFromCallback});
 
   session.DriveRead();
 
@@ -443,7 +443,7 @@ TEST(WebsocketCriticalSessionTest, BoundedReadPumpDrainsPendingChunks) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   socket.pending_readable_ = true;
   socket.read_chunks_.push_back(BuildServerTextFrame("a"));
@@ -451,7 +451,7 @@ TEST(WebsocketCriticalSessionTest, BoundedReadPumpDrainsPendingChunks) {
   socket.read_chunks_.push_back(BuildServerTextFrame("c"));
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
   session.DriveRead();
 
   EXPECT_EQ(bytes, 3U);
@@ -467,14 +467,14 @@ TEST(WebsocketCriticalSessionTest, BoundedReadPumpDoesNotProbeWithoutPending) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   socket.pending_readable_ = false;
   socket.read_chunks_.push_back(BuildServerTextFrame("a"));
   socket.read_chunks_.push_back(BuildServerTextFrame("b"));
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
   session.DriveRead();
 
   EXPECT_EQ(bytes, 1U);
@@ -489,12 +489,12 @@ TEST(WebsocketCriticalSessionTest,
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);
   Metrics metrics{};
-  MessageConsumer consumer{nullptr, &FatalDelivery};
+  MessageCallback consumer{nullptr, &FatalDelivery};
   FakeTlsSocket socket;
   socket.read_chunks_.push_back(BuildServerTextFrame("x"));
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
   session.DriveRead();
 
   EXPECT_TRUE(session.ShouldReconnect());
@@ -508,12 +508,12 @@ TEST(WebsocketCriticalSessionTest, AutoPongUsesControlSlotWhenQueueFull) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   socket.read_chunks_.push_back(BuildServerPingFrame("z"));
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   // Exhaust the single slot with a business commit so auto-pong has no room.
   auto* hold = session.TryAcquirePreparedWrite();
@@ -539,11 +539,11 @@ TEST(WebsocketCriticalSessionTest,
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   // Exhaust the single slot so the heartbeat ping cannot be queued.
   auto* hold = session.TryAcquirePreparedWrite();
@@ -570,13 +570,13 @@ TEST(WebsocketCriticalSessionTest,
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   socket.max_write_bytes_per_call_ = 2;
   socket.eagain_after_partial_write_ = false;
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   auto* business = session.TryAcquirePreparedWrite();
   ASSERT_NE(business, nullptr);
@@ -618,10 +618,10 @@ TEST(WebsocketCriticalSessionTest, BusinessWriteBudgetLimitsCompletedFrames) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   for (size_t i = 0; i < 3; ++i) {
     auto* write = session.TryAcquirePreparedWrite();
@@ -647,10 +647,10 @@ TEST(WebsocketCriticalSessionTest, ZeroBusinessWriteBudgetDrainsQueue) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   for (size_t i = 0; i < 3; ++i) {
     auto* write = session.TryAcquirePreparedWrite();
@@ -678,11 +678,11 @@ TEST(WebsocketCriticalSessionTest,
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
   session.DriveRead();
 
   EXPECT_FALSE(session.ShouldReconnect());
@@ -700,11 +700,11 @@ TEST(WebsocketCriticalSessionTest, ResetClearsPendingAndFlags) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   size_t bytes = 0;
-  MessageConsumer consumer{&bytes, &RecordMessage};
+  MessageCallback consumer{&bytes, &RecordMessage};
   FakeTlsSocket socket;
 
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   session.AdvanceHeartbeat(1'000'000ULL);
   EXPECT_TRUE(session.WantsWrite());

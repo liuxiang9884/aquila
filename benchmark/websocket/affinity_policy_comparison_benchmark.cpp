@@ -139,9 +139,9 @@ void RunAffinityVariant(benchmark::State& state, const VariantSpec& variant) {
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);
   Metrics metrics{};
-  MessageConsumer consumer{&variant_context.runtime_context, &RecordLoopback};
+  MessageCallback consumer{&variant_context.runtime_context, &RecordLoopback};
   CriticalSession<LocalFdSocket> session(config, pair.client, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   std::atomic<bool> stop_flag{false};
   RuntimeSession runtime_session{session, stop_flag};

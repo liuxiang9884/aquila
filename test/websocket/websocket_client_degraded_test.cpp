@@ -92,7 +92,7 @@ TEST(WebSocketClientDegradedTest,
   ASSERT_TRUE(server.Start());
 
   StateCapture states;
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   WebSocketClient client(BuildDegradedConfig(server.port()), consumer);
   client.SetStateHandler(&states, &RecordState);
 

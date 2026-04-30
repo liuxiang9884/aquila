@@ -22,7 +22,7 @@ struct MessageView {
 using MessageHandler = DeliveryResult (*)(void* context,
                                           const MessageView& view) noexcept;
 
-struct MessageConsumer {
+struct MessageCallback {
   void* context{nullptr};
   MessageHandler handler{nullptr};
 

@@ -173,7 +173,7 @@ template <typename ClientT>
 int RunProbe(ConnectionConfig config, std::string subscribe) {
   g_stop_requested = 0;
   ProbeRuntime<ClientT> runtime(std::move(subscribe));
-  MessageConsumer consumer{&runtime.probe, &CountPayload};
+  MessageCallback consumer{&runtime.probe, &CountPayload};
   ClientT client(std::move(config), consumer);
   runtime.client = &client;
   client.SetStateHandler(&runtime, &RecordStateAndMaybeSubscribe<ClientT>);

@@ -102,7 +102,7 @@ TEST(WebSocketClientReconnectTest, ReconnectsAfterActivePeerClose) {
   ASSERT_TRUE(server.Start());
 
   StateCapture states;
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   WebSocketClient client(BuildReconnectConfig(server.port()), consumer);
   client.SetStateHandler(&states, &RecordState);
 
@@ -136,7 +136,7 @@ TEST(WebSocketClientReconnectTest, RetriesTransientFailuresWithBackoff) {
   ASSERT_TRUE(server.Start());
 
   StateCapture states;
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   WebSocketClient client(BuildReconnectConfig(server.port()), consumer);
   client.SetStateHandler(&states, &RecordState);
 
@@ -170,7 +170,7 @@ TEST(WebSocketClientReconnectTest, StopsAfterMaxAttempts) {
   ASSERT_TRUE(server.Start());
 
   StateCapture states;
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   auto config = BuildReconnectConfig(server.port());
   config.reconnect.max_attempts = 3;
   config.reconnect.initial_backoff_ms = 1;
@@ -191,7 +191,7 @@ TEST(WebSocketClientReconnectTest, StopInterruptsReconnectBackoff) {
   ASSERT_TRUE(server.Start());
 
   StateCapture states;
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   auto config = BuildReconnectConfig(server.port());
   config.reconnect.initial_backoff_ms = 5'000;
   config.reconnect.max_backoff_ms = 5'000;
@@ -231,7 +231,7 @@ TEST(WebSocketClientReconnectTest, StopInterruptsColdPathTlsHandshake) {
   ASSERT_TRUE(server.Start());
 
   StateCapture states;
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   auto config = BuildReconnectConfig(server.port());
   config.cold_path_total_timeout_ms = 5'000;
   WebSocketClient client(config, consumer);

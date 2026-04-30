@@ -138,7 +138,7 @@ class EndpointRunner {
         endpoint_.cpu >= 0 ? ws::AffinityMode::kBestEffort
                            : ws::AffinityMode::kNone;
 
-    ws::MessageConsumer consumer{this, &EndpointRunner::HandleMessage};
+    ws::MessageCallback consumer{this, &EndpointRunner::HandleMessage};
     client_ = std::make_unique<ClientT>(std::move(config), consumer);
     client_->SetStateHandler(this, &EndpointRunner::HandleState);
     client_->SetErrorHandler(this, &EndpointRunner::HandleError);

@@ -36,9 +36,9 @@ class BasicWebSocketClient {
   static constexpr bool TransportUsesTls = TransportSocketT::kUsesTls;
 
   BasicWebSocketClient(ConnectionConfig config,
-                       MessageConsumer consumer) noexcept
+                       MessageCallback message_callback) noexcept
       : config_(std::move(config)),
-        consumer_(consumer),
+        message_callback_(message_callback),
         prepared_write_arena_(config_.prepared_write_slots,
                               config_.prepared_write_bytes),
         core_(config_, transport_socket_, prepared_write_arena_, metrics_),
@@ -79,7 +79,7 @@ class BasicWebSocketClient {
       return false;
     }
     runtime_prepared_ = true;
-    core_.SetConsumer(consumer_);
+    core_.SetMessageCallback(message_callback_);
     return true;
   }
 
@@ -431,7 +431,7 @@ class BasicWebSocketClient {
   }
 
   ConnectionConfig config_{};
-  MessageConsumer consumer_{};
+  MessageCallback message_callback_{};
   Metrics metrics_{};
   TransportSocketT transport_socket_{};
   PreparedWriteArena prepared_write_arena_;

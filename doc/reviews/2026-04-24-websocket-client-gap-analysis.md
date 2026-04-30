@@ -48,7 +48,7 @@
 |---|---|---|
 | `types.h` | 公共枚举 + `ConnectionConfig` | 基础类型 |
 | `runtime_policy.h` | `RuntimePolicy` + `ApplyRuntimePolicy` + `PrefaultThreadStack` | inline 实现 |
-| `message_view.h` | `MessageView` + C 风格 `MessageHandler`/`MessageConsumer` | 纯 POD |
+| `message_view.h` | `MessageView` + C 风格 `MessageHandler`/`MessageCallback` | 纯 POD |
 | `prepared_write.h` | `PreparedWriteArena`（连接本地写槽池） | 完整实现（LIFO free-list） |
 | `metrics.h` | `Metrics` 计数器聚合体 | 纯 POD |
 | `state_machine.h` | `StateMachine`（phase + last_error） | 极薄 |

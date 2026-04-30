@@ -38,7 +38,9 @@ class CriticalSession {
     control_write_.storage = std::span<std::byte>(control_write_storage_);
   }
 
-  void SetConsumer(MessageConsumer consumer) noexcept { consumer_ = consumer; }
+  void SetMessageCallback(MessageCallback message_callback) noexcept {
+    message_callback_ = message_callback;
+  }
 
   PreparedWrite* TryAcquirePreparedWrite() noexcept {
     return prepared_write_arena_.TryAcquire();
@@ -390,7 +392,7 @@ class CriticalSession {
     switch (decoded.view.kind) {
       case PayloadKind::kText:
       case PayloadKind::kBinary: {
-        const DeliveryResult result = consumer_.Handle(decoded.view);
+        const DeliveryResult result = message_callback_.Handle(decoded.view);
         if (result == DeliveryResult::kFatal) {
           TriggerReconnect(ConnectionError::kConsumerFatal);
           return;
@@ -476,7 +478,7 @@ class CriticalSession {
   TlsSocketT& tls_socket_;
   PreparedWriteArena& prepared_write_arena_;
   Metrics& metrics_;
-  MessageConsumer consumer_{};
+  MessageCallback message_callback_{};
   FrameCodec codec_;
   static constexpr size_t kControlWriteStorageBytes = 131;
   std::array<std::byte, kControlWriteStorageBytes> control_write_storage_{};

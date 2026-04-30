@@ -92,9 +92,9 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
 
   std::byte bytes[] = {std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
   size_t total_bytes = 0;
-  const ws::MessageConsumer consumer{.context = &total_bytes,
+  const ws::MessageCallback consumer{.context = &total_bytes,
                                      .handler = &HandleMessage};
-  const ws::MessageConsumer null_consumer{};
+  const ws::MessageCallback null_consumer{};
   const ws::MessageView view{
       .kind = ws::PayloadKind::kBinary,
       .payload = std::span<const std::byte>(bytes),

@@ -48,7 +48,7 @@ NIC / kernel TCP receive queue
 -> FrameCodec::WritableSpan()
 -> FrameCodec::CommitWritten()
 -> FrameCodec::Poll()
--> MessageConsumer::Handle()
+-> MessageCallback::Handle()
 -> strategy / market-data parser
 ```
 
@@ -58,7 +58,7 @@ NIC / kernel TCP receive queue
 socketpair read syscall
 -> CriticalSession::DriveRead()
 -> FrameCodec decode
--> MessageConsumer callback
+-> MessageCallback callback
 ```
 
 它不覆盖真实网卡、TCP 远端收包、TLS 解密、`SSL_pending()` 行为、epoll wakeup 或真实行情解析。

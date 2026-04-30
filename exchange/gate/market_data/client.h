@@ -39,7 +39,7 @@ class FuturesMarketDataClient {
       : FuturesMarketDataClient(std::span<const SymbolBinding>(symbols),
                                 consumer, clock_source) {}
 
-  websocket::MessageConsumer AsMessageConsumer() noexcept {
+  websocket::MessageCallback AsMessageCallback() noexcept {
     return {.context = this, .handler = &HandleWebSocketMessage};
   }
 

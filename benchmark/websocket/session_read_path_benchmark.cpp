@@ -82,9 +82,9 @@ void BenchmarkSessionReadPath(benchmark::State& state) {
                            config.prepared_write_bytes);
   Metrics metrics{};
   ReadContext read_context{};
-  MessageConsumer consumer{&read_context, &RecordRead};
+  MessageCallback consumer{&read_context, &RecordRead};
   CriticalSession<LocalFdSocket> session(config, pair.client, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   const auto frame = BuildServerTextFrame("market-data");
   std::vector<std::uint64_t> samples_ns;
@@ -143,9 +143,9 @@ void BenchmarkSessionReadBurst(benchmark::State& state,
                            config.prepared_write_bytes);
   Metrics metrics{};
   ReadContext read_context{};
-  MessageConsumer consumer{&read_context, &RecordRead};
+  MessageCallback consumer{&read_context, &RecordRead};
   CriticalSession<PendingChunkSocket> session(config, socket, arena, metrics);
-  session.SetConsumer(consumer);
+  session.SetMessageCallback(consumer);
 
   const auto first = BuildServerTextFrame("a");
   const auto second = BuildServerTextFrame("b");

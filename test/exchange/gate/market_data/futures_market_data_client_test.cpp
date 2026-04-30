@@ -148,7 +148,7 @@ TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 17.5);
 }
 
-TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageConsumer) {
+TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
@@ -156,10 +156,10 @@ TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageConsumer) {
 
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
-  const aquila::websocket::MessageConsumer message_consumer =
-      client.AsMessageConsumer();
+  const aquila::websocket::MessageCallback message_callback =
+      client.AsMessageCallback();
 
-  const auto result = message_consumer.Handle(BinaryView(payload));
+  const auto result = message_callback.Handle(BinaryView(payload));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   ASSERT_EQ(consumer.calls, 1);

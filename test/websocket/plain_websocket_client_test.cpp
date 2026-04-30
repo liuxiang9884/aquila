@@ -319,7 +319,7 @@ TEST(PlainWebSocketClientTest, ConnectsWithoutTlsAndReceivesMessage) {
 
   MessageCapture messages;
   StateCapture states;
-  MessageConsumer consumer{&messages, &CaptureMessage};
+  MessageCallback consumer{&messages, &CaptureMessage};
   PlainWebSocketClient client(config, consumer);
   client.SetStateHandler(&states, &CaptureState);
 
@@ -353,7 +353,7 @@ TEST(PlainWebSocketClientTest, ReceivesFrameCoalescedWithHandshakeResponse) {
 
   MessageCapture messages;
   StateCapture states;
-  MessageConsumer consumer{&messages, &CaptureMessage};
+  MessageCallback consumer{&messages, &CaptureMessage};
   PlainWebSocketClient client(config, consumer);
   client.SetStateHandler(&states, &CaptureState);
 

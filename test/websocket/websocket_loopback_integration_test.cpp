@@ -17,7 +17,7 @@ TEST(WebSocketLoopbackIntegrationTest, PreparesRuntimeForLoopbackConfig) {
   config.host = "127.0.0.1";
   config.service = "9443";
   config.target = "/v4/ws/usdt";
-  MessageConsumer consumer{nullptr, &AcceptAll};
+  MessageCallback consumer{nullptr, &AcceptAll};
   WebSocketClient client(config, consumer);
   EXPECT_TRUE(client.PrepareRuntimeOnly());
 }

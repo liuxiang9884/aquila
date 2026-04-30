@@ -220,9 +220,9 @@ class ProbeRunner {
         config_.cpu >= 0 ? ws::AffinityMode::kBestEffort
                          : ws::AffinityMode::kNone;
 
-    ws::MessageConsumer message_consumer{this, &ProbeRunner::HandleMessage};
+    ws::MessageCallback message_callback{this, &ProbeRunner::HandleMessage};
     client_ =
-        std::make_unique<ClientT>(std::move(connection_config), message_consumer);
+        std::make_unique<ClientT>(std::move(connection_config), message_callback);
     client_->SetStateHandler(this, &ProbeRunner::HandleState);
     client_->SetErrorHandler(this, &ProbeRunner::HandleError);
 
