@@ -1,14 +1,15 @@
-#include "core/websocket/message_view.h"
-#include "core/websocket/runtime_policy.h"
 #include "core/websocket/types.h"
-
-#include <gtest/gtest.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
 #include <type_traits>
+
+#include <gtest/gtest.h>
+
+#include "core/websocket/message_view.h"
+#include "core/websocket/runtime_policy.h"
 
 namespace ws = aquila::websocket;
 
@@ -21,6 +22,15 @@ ws::DeliveryResult HandleMessage(void* context,
   return view.payload.empty() ? ws::DeliveryResult::kBackpressured
                               : ws::DeliveryResult::kAccepted;
 }
+
+struct TypedMessageHandler {
+  size_t bytes{0};
+
+  ws::DeliveryResult Handle(const ws::MessageView& view) noexcept {
+    bytes += view.payload.size();
+    return ws::DeliveryResult::kAccepted;
+  }
+};
 
 template <auto Value>
 constexpr bool kEnumValueExists = true;
@@ -45,7 +55,8 @@ static_assert(
     std::is_same_v<std::underlying_type_t<ws::AffinityMode>, std::uint8_t>);
 static_assert(
     std::is_same_v<std::underlying_type_t<ws::SchedulingPolicy>, std::uint8_t>);
-static_assert(std::is_same_v<decltype(ws::ConnectionConfig{}.host), std::string>);
+static_assert(
+    std::is_same_v<decltype(ws::ConnectionConfig{}.host), std::string>);
 static_assert(
     std::is_same_v<decltype(ws::ConnectionConfig{}.service), std::string>);
 static_assert(
@@ -113,4 +124,19 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(total_bytes, std::size(bytes));
   EXPECT_EQ(consumer.Handle(empty_view), ws::DeliveryResult::kBackpressured);
   EXPECT_EQ(total_bytes, std::size(bytes));
+}
+
+TEST(WebsocketTypesTest, MessageHandlerRefForwardsToTypedHandler) {
+  std::byte bytes[] = {std::byte{0x01}, std::byte{0x02}};
+  TypedMessageHandler handler;
+  const auto handler_ref = ws::MakeMessageHandler(handler);
+  const ws::MessageView view{
+      .kind = ws::PayloadKind::kBinary,
+      .payload = std::span<const std::byte>(bytes),
+      .sequence = 44,
+      .fin = true,
+  };
+
+  EXPECT_EQ(handler_ref.Handle(view), ws::DeliveryResult::kAccepted);
+  EXPECT_EQ(handler.bytes, std::size(bytes));
 }

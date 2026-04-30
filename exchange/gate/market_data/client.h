@@ -1,17 +1,17 @@
 #ifndef AQUILA_EXCHANGE_GATE_MARKET_DATA_CLIENT_H_
 #define AQUILA_EXCHANGE_GATE_MARKET_DATA_CLIENT_H_
 
-#include "core/market_data/types.h"
-#include "core/websocket/message_view.h"
-#include "core/websocket/runtime_clock.h"
-#include "exchange/gate/sbe/book_ticker_decoder.h"
-#include "exchange/gate/sbe/message_dispatcher.h"
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
+
+#include "core/market_data/types.h"
+#include "core/websocket/message_view.h"
+#include "core/websocket/runtime_clock.h"
+#include "exchange/gate/sbe/book_ticker_decoder.h"
+#include "exchange/gate/sbe/message_dispatcher.h"
 
 namespace aquila::gate {
 
@@ -27,9 +27,7 @@ class FuturesMarketDataClient {
                           Consumer& consumer,
                           websocket::ClockSource clock_source =
                               websocket::ClockSource::kSteady) noexcept
-      : symbols_(symbols),
-        consumer_(consumer),
-        clock_source_(clock_source) {}
+      : symbols_(symbols), consumer_(consumer), clock_source_(clock_source) {}
 
   template <size_t N>
   FuturesMarketDataClient(const std::array<SymbolBinding, N>& symbols,
@@ -41,6 +39,11 @@ class FuturesMarketDataClient {
 
   websocket::MessageCallback AsMessageCallback() noexcept {
     return {.context = this, .handler = &HandleWebSocketMessage};
+  }
+
+  websocket::DeliveryResult Handle(
+      const websocket::MessageView& view) noexcept {
+    return OnMessage(view);
   }
 
   websocket::DeliveryResult OnMessage(
@@ -81,8 +84,7 @@ class FuturesMarketDataClient {
   }
 
   websocket::DeliveryResult OnBookTickerPayload(
-      std::string_view payload,
-      const SbeMessageHeader& header,
+      std::string_view payload, const SbeMessageHeader& header,
       std::int64_t local_ns) noexcept {
     const std::string_view symbol = ExtractBookTickerSymbol(payload, header);
     const std::int32_t symbol_id = FindSymbolId(symbol);

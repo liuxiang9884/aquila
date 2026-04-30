@@ -1,17 +1,18 @@
 #ifndef AQUILA_CORE_WEBSOCKET_WEBSOCKET_CLIENT_H_
 #define AQUILA_CORE_WEBSOCKET_WEBSOCKET_CLIENT_H_
 
+#include <pthread.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
+
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <pthread.h>
 #include <span>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <unistd.h>
 #include <utility>
 
 #include "core/websocket/active_spin_loop.h"
@@ -30,15 +31,15 @@ namespace aquila::websocket {
 using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
 using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
 
-template <typename TransportSocketT>
+template <typename TransportSocketT, typename MessageHandlerT = MessageCallback>
 class BasicWebSocketClient {
  public:
   static constexpr bool TransportUsesTls = TransportSocketT::kUsesTls;
 
   BasicWebSocketClient(ConnectionConfig config,
-                       MessageCallback message_callback) noexcept
+                       MessageHandlerT message_handler) noexcept
       : config_(std::move(config)),
-        message_callback_(message_callback),
+        message_handler_(message_handler),
         prepared_write_arena_(config_.prepared_write_slots,
                               config_.prepared_write_bytes),
         core_(config_, transport_socket_, prepared_write_arena_, metrics_),
@@ -73,13 +74,12 @@ class BasicWebSocketClient {
       return false;
     }
     if (!transport_socket_.Init()) {
-      prepare_error_ =
-          config_.enable_tls ? ConnectionError::kTlsFailure
-                             : ConnectionError::kSocketError;
+      prepare_error_ = config_.enable_tls ? ConnectionError::kTlsFailure
+                                          : ConnectionError::kSocketError;
       return false;
     }
     runtime_prepared_ = true;
-    core_.SetMessageCallback(message_callback_);
+    core_.SetMessageHandler(message_handler_);
     return true;
   }
 
@@ -108,8 +108,8 @@ class BasicWebSocketClient {
     bool reconnect_in_progress = false;
     while (!stop_requested_.load(std::memory_order_acquire)) {
       cold_path_loop_.SetInterruptFd(wakeup_fd_);
-      if (!cold_path_loop_.RunUntilActive(
-              transport_socket_, state_machine_, config_, handshake_storage_)) {
+      if (!cold_path_loop_.RunUntilActive(transport_socket_, state_machine_,
+                                          config_, handshake_storage_)) {
         if (stop_requested_.load(std::memory_order_acquire) ||
             state_machine_.phase() == ConnectionPhase::kClosing) {
           NotifyState(ConnectionPhase::kClosing);
@@ -131,9 +131,9 @@ class BasicWebSocketClient {
       }
 
       NotifyState(state_machine_.phase());
-      const auto handshake_leftover = cold_path_loop_.HandshakeLeftover(
-          std::span<const char>(handshake_storage_.data(),
-                                handshake_storage_.size()));
+      const auto handshake_leftover =
+          cold_path_loop_.HandshakeLeftover(std::span<const char>(
+              handshake_storage_.data(), handshake_storage_.size()));
       if (!handshake_leftover.empty()) {
         core_.FeedReadBytes(handshake_leftover);
         if (core_.ShouldReconnect()) {
@@ -183,18 +183,22 @@ class BasicWebSocketClient {
     return true;
   }
 
-  CriticalSession<TransportSocketT>& Core() noexcept { return core_; }
+  CriticalSession<TransportSocketT, MessageHandlerT>& Core() noexcept {
+    return core_;
+  }
 
   void Stop() noexcept {
     stop_requested_.store(true, std::memory_order_release);
     Wakeup();
   }
 
-  Metrics SnapshotMetrics() const noexcept { return metrics_; }
+  Metrics SnapshotMetrics() const noexcept {
+    return metrics_;
+  }
 
  private:
   struct RuntimeSession {
-    CriticalSession<TransportSocketT>& core;
+    CriticalSession<TransportSocketT, MessageHandlerT>& core;
     Metrics& metrics;
     std::atomic<bool>& stop_requested;
     DegradedEvaluator& degraded_evaluator;
@@ -378,9 +382,8 @@ class BasicWebSocketClient {
     state_machine_.Fail(error, ConnectionPhase::kReconnectBackoff);
     NotifyError(state_machine_.last_error());
     NotifyState(state_machine_.phase());
-    const std::uint32_t backoff_ms =
-        ComputeBackoffMs(transient_failures - 1, config_.reconnect,
-                         backoff_rng_);
+    const std::uint32_t backoff_ms = ComputeBackoffMs(
+        transient_failures - 1, config_.reconnect, backoff_rng_);
     if (!SleepForBackoff(backoff_ms)) {
       if (stop_requested_.load(std::memory_order_acquire)) {
         state_machine_.Enter(ConnectionPhase::kClosing);
@@ -431,11 +434,11 @@ class BasicWebSocketClient {
   }
 
   ConnectionConfig config_{};
-  MessageCallback message_callback_{};
+  MessageHandlerT message_handler_{};
   Metrics metrics_{};
   TransportSocketT transport_socket_{};
   PreparedWriteArena prepared_write_arena_;
-  CriticalSession<TransportSocketT> core_;
+  CriticalSession<TransportSocketT, MessageHandlerT> core_;
   StateMachine state_machine_{};
   ColdPathLoop cold_path_loop_{};
   ActiveSpinLoop spin_loop_;
@@ -452,8 +455,16 @@ class BasicWebSocketClient {
   ErrorHandler error_handler_{nullptr};
 };
 
-using WebSocketClient = BasicWebSocketClient<TlsSocket>;
-using PlainWebSocketClient = BasicWebSocketClient<PlainSocket>;
+template <typename MessageHandlerT>
+using WebSocketClientWithHandler =
+    BasicWebSocketClient<TlsSocket, MessageHandlerT>;
+
+template <typename MessageHandlerT>
+using PlainWebSocketClientWithHandler =
+    BasicWebSocketClient<PlainSocket, MessageHandlerT>;
+
+using WebSocketClient = WebSocketClientWithHandler<MessageCallback>;
+using PlainWebSocketClient = PlainWebSocketClientWithHandler<MessageCallback>;
 
 }  // namespace aquila::websocket
 

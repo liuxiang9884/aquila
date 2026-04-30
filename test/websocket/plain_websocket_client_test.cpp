@@ -1,10 +1,3 @@
-#include "core/websocket/websocket_client.h"
-
-#include <fmt/format.h>
-#include <gtest/gtest.h>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -23,7 +16,13 @@
 #include <thread>
 #include <vector>
 
+#include <arpa/inet.h>
+#include <fmt/format.h>
+#include <gtest/gtest.h>
+#include <netinet/in.h>
+
 #include "core/websocket/handshake.h"
+#include "core/websocket/websocket_client.h"
 
 using namespace aquila::websocket;
 using namespace std::chrono_literals;
@@ -33,8 +32,7 @@ namespace {
 class PlainWebSocketServer {
  public:
   explicit PlainWebSocketServer(
-      std::string payload,
-      bool coalesce_first_frame_with_handshake = false)
+      std::string payload, bool coalesce_first_frame_with_handshake = false)
       : payload_(std::move(payload)),
         coalesce_first_frame_with_handshake_(
             coalesce_first_frame_with_handshake) {}
@@ -76,8 +74,8 @@ class PlainWebSocketServer {
 
     sockaddr_in actual{};
     socklen_t len = sizeof(actual);
-    if (::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&actual),
-                      &len) != 0) {
+    if (::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&actual), &len) !=
+        0) {
       return false;
     }
     port_ = ntohs(actual.sin_port);
@@ -85,7 +83,9 @@ class PlainWebSocketServer {
     return true;
   }
 
-  int port() const noexcept { return port_; }
+  int port() const noexcept {
+    return port_;
+  }
 
   size_t sent_frame_count() const noexcept {
     return sent_frame_count_.load(std::memory_order_acquire);
@@ -117,10 +117,8 @@ class PlainWebSocketServer {
 
   void HandleClient(int client_fd) noexcept {
     timeval timeout{2, 0};
-    ::setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                 sizeof(timeout));
-    ::setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
-                 sizeof(timeout));
+    ::setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    ::setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     std::string request;
     char buffer[512];
@@ -145,13 +143,13 @@ class PlainWebSocketServer {
       return;
     }
 
-    const std::string response =
-        fmt::format("HTTP/1.1 101 Switching Protocols\r\n"
-                    "Upgrade: websocket\r\n"
-                    "Connection: Upgrade\r\n"
-                    "Sec-WebSocket-Accept: {}\r\n"
-                    "\r\n",
-                    accept_key);
+    const std::string response = fmt::format(
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: {}\r\n"
+        "\r\n",
+        accept_key);
     const auto frame = BuildTextFrame();
     if (coalesce_first_frame_with_handshake_) {
       std::vector<std::byte> combined;
@@ -184,8 +182,8 @@ class PlainWebSocketServer {
   static bool SendAll(int fd, std::span<const std::byte> bytes) noexcept {
     size_t offset = 0;
     while (offset < bytes.size()) {
-      const ssize_t written =
-          ::send(fd, bytes.data() + offset, bytes.size() - offset, MSG_NOSIGNAL);
+      const ssize_t written = ::send(fd, bytes.data() + offset,
+                                     bytes.size() - offset, MSG_NOSIGNAL);
       if (written <= 0) {
         return false;
       }
@@ -298,6 +296,21 @@ DeliveryResult CaptureMessage(void* context, const MessageView& view) noexcept {
   return DeliveryResult::kAccepted;
 }
 
+struct TypedMessageCaptureHandler {
+  MessageCapture* capture{nullptr};
+
+  DeliveryResult Handle(const MessageView& view) noexcept {
+    if (capture == nullptr) {
+      return DeliveryResult::kFatal;
+    }
+    const auto payload =
+        std::string_view(reinterpret_cast<const char*>(view.payload.data()),
+                         view.payload.size());
+    capture->Push(payload);
+    return DeliveryResult::kAccepted;
+  }
+};
+
 void CaptureState(void* context, ConnectionPhase phase) noexcept {
   static_cast<StateCapture*>(context)->Push(phase);
 }
@@ -328,6 +341,42 @@ TEST(PlainWebSocketClientTest, ConnectsWithoutTlsAndReceivesMessage) {
 
   const bool entered_active = states.WaitFor(ConnectionPhase::kActive, 2s);
   const bool received_message = messages.WaitForMessage("plain-ok", 2s);
+  client.Stop();
+  io_thread.join();
+
+  EXPECT_TRUE(entered_active);
+  EXPECT_EQ(server.sent_frame_count(), 1U);
+  EXPECT_TRUE(received_message);
+  EXPECT_TRUE(result);
+  EXPECT_FALSE(states.Contains(ConnectionPhase::kTlsHandshaking));
+}
+
+TEST(PlainWebSocketClientTest, SupportsTypedMessageHandler) {
+  PlainWebSocketServer server("typed-ok");
+  ASSERT_TRUE(server.Start());
+
+  ConnectionConfig config{};
+  config.host = "127.0.0.1";
+  config.service = fmt::format("{}", server.port());
+  config.target = "/";
+  config.enable_tls = false;
+  config.heartbeat_interval_ms = 60'000;
+  config.heartbeat_timeout_ms = 60'000;
+  config.runtime_policy.active_spin = false;
+
+  MessageCapture messages;
+  StateCapture states;
+  TypedMessageCaptureHandler handler{.capture = &messages};
+  auto handler_ref = MakeMessageHandler(handler);
+  PlainWebSocketClientWithHandler<decltype(handler_ref)> client(config,
+                                                                handler_ref);
+  client.SetStateHandler(&states, &CaptureState);
+
+  bool result = false;
+  std::thread io_thread([&] { result = client.Start(); });
+
+  const bool entered_active = states.WaitFor(ConnectionPhase::kActive, 2s);
+  const bool received_message = messages.WaitForMessage("typed-ok", 2s);
   client.Stop();
   io_thread.join();
 

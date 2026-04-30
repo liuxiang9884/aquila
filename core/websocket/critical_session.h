@@ -1,6 +1,8 @@
 #ifndef AQUILA_CORE_WEBSOCKET_CRITICAL_SESSION_H_
 #define AQUILA_CORE_WEBSOCKET_CRITICAL_SESSION_H_
 
+#include <sys/types.h>
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -9,7 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <sys/types.h>
+#include <type_traits>
 
 #include "core/websocket/frame_codec.h"
 #include "core/websocket/message_view.h"
@@ -19,7 +21,7 @@
 
 namespace aquila::websocket {
 
-template <typename TlsSocketT>
+template <typename TlsSocketT, typename MessageHandlerT = MessageCallback>
 class CriticalSession {
  public:
   CriticalSession(const ConnectionConfig& config, TlsSocketT& tls_socket,
@@ -38,8 +40,14 @@ class CriticalSession {
     control_write_.storage = std::span<std::byte>(control_write_storage_);
   }
 
-  void SetMessageCallback(MessageCallback message_callback) noexcept {
-    message_callback_ = message_callback;
+  void SetMessageHandler(MessageHandlerT message_handler) noexcept {
+    message_handler_ = message_handler;
+  }
+
+  void SetMessageCallback(MessageCallback message_callback) noexcept
+    requires std::is_same_v<MessageHandlerT, MessageCallback>
+  {
+    SetMessageHandler(message_callback);
   }
 
   PreparedWrite* TryAcquirePreparedWrite() noexcept {
@@ -59,7 +67,8 @@ class CriticalSession {
       return SendStatus::kWriteUnavailable;
     }
 
-    pending_writes_[(pending_head_ + pending_count_) % pending_capacity_] = write;
+    pending_writes_[(pending_head_ + pending_count_) % pending_capacity_] =
+        write;
     ++pending_count_;
     metrics_.prepared_write_high_watermark =
         std::max(metrics_.prepared_write_high_watermark,
@@ -85,8 +94,8 @@ class CriticalSession {
         const size_t to = (pending_head_ + shift) % pending_capacity_;
         pending_writes_[to] = pending_writes_[from];
       }
-      pending_writes_[(pending_head_ + pending_count_ - 1) % pending_capacity_] =
-          nullptr;
+      pending_writes_[(pending_head_ + pending_count_ - 1) %
+                      pending_capacity_] = nullptr;
       --pending_count_;
       prepared_write_arena_.Release(write);
       return;
@@ -128,9 +137,8 @@ class CriticalSession {
         continue;
       }
 
-      const std::span<const std::byte> payload(write->storage.data() +
-                                                   write->write_offset,
-                                               remaining_bytes);
+      const std::span<const std::byte> payload(
+          write->storage.data() + write->write_offset, remaining_bytes);
       const ssize_t written = tls_socket_.WriteSome(payload);
       if (written > 0) {
         write->write_offset += static_cast<std::uint32_t>(written);
@@ -149,7 +157,7 @@ class CriticalSession {
         return;
       }
       TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
-                                   : ConnectionError::kSocketError);
+                                    : ConnectionError::kSocketError);
       return;
     }
   }
@@ -194,15 +202,25 @@ class CriticalSession {
     return control_write_pending_ || pending_count_ != 0;
   }
 
-  bool WantsRead() const noexcept { return !should_reconnect_; }
+  bool WantsRead() const noexcept {
+    return !should_reconnect_;
+  }
 
-  size_t PendingWriteCount() const noexcept { return pending_count_; }
+  size_t PendingWriteCount() const noexcept {
+    return pending_count_;
+  }
 
-  size_t PendingWriteCapacity() const noexcept { return pending_capacity_; }
+  size_t PendingWriteCapacity() const noexcept {
+    return pending_capacity_;
+  }
 
-  bool AwaitingPong() const noexcept { return awaiting_pong_; }
+  bool AwaitingPong() const noexcept {
+    return awaiting_pong_;
+  }
 
-  std::uint64_t LastPingNs() const noexcept { return last_ping_ns_; }
+  std::uint64_t LastPingNs() const noexcept {
+    return last_ping_ns_;
+  }
 
   void Reset() noexcept {
     while (pending_count_ != 0) {
@@ -227,9 +245,11 @@ class CriticalSession {
 
   void AdvanceHeartbeat(std::uint64_t now_ns) noexcept {
     const std::uint64_t interval_ns =
-        static_cast<std::uint64_t>(config_.heartbeat_interval_ms) * 1000U * 1000U;
+        static_cast<std::uint64_t>(config_.heartbeat_interval_ms) * 1000U *
+        1000U;
     const std::uint64_t timeout_ns =
-        static_cast<std::uint64_t>(config_.heartbeat_timeout_ms) * 1000U * 1000U;
+        static_cast<std::uint64_t>(config_.heartbeat_timeout_ms) * 1000U *
+        1000U;
     if (!awaiting_pong_) {
       if (last_ping_ns_ == 0 || now_ns - last_ping_ns_ >= interval_ns) {
         if (!EnqueueControlFrame(PayloadKind::kPing, {}, now_ns)) {
@@ -250,9 +270,15 @@ class CriticalSession {
     }
   }
 
-  bool ShouldReconnect() const noexcept { return should_reconnect_; }
-  ConnectionError LastError() const noexcept { return last_error_; }
-  int NativeFd() const noexcept { return tls_socket_.NativeFd(); }
+  bool ShouldReconnect() const noexcept {
+    return should_reconnect_;
+  }
+  ConnectionError LastError() const noexcept {
+    return last_error_;
+  }
+  int NativeFd() const noexcept {
+    return tls_socket_.NativeFd();
+  }
 
  private:
   void TriggerReconnect(ConnectionError error) noexcept {
@@ -263,7 +289,8 @@ class CriticalSession {
   void CompleteFrontWrite() noexcept {
     PreparedWrite* write = pending_writes_[pending_head_];
     pending_writes_[pending_head_] = nullptr;
-    pending_head_ = pending_capacity_ == 0 ? 0 : (pending_head_ + 1) % pending_capacity_;
+    pending_head_ =
+        pending_capacity_ == 0 ? 0 : (pending_head_ + 1) % pending_capacity_;
     --pending_count_;
     ++metrics_.tx_messages;
     prepared_write_arena_.Release(write);
@@ -293,9 +320,8 @@ class CriticalSession {
         continue;
       }
 
-      const std::span<const std::byte> payload(write->storage.data() +
-                                                   write->write_offset,
-                                               remaining_bytes);
+      const std::span<const std::byte> payload(
+          write->storage.data() + write->write_offset, remaining_bytes);
       const ssize_t written = tls_socket_.WriteSome(payload);
       if (written > 0) {
         write->write_offset += static_cast<std::uint32_t>(written);
@@ -392,7 +418,7 @@ class CriticalSession {
     switch (decoded.view.kind) {
       case PayloadKind::kText:
       case PayloadKind::kBinary: {
-        const DeliveryResult result = message_callback_.Handle(decoded.view);
+        const DeliveryResult result = message_handler_.Handle(decoded.view);
         if (result == DeliveryResult::kFatal) {
           TriggerReconnect(ConnectionError::kConsumerFatal);
           return;
@@ -428,7 +454,8 @@ class CriticalSession {
 
   void DrainDecodedMessages(DecodeResult decoded) noexcept {
     HandleDecodeResult(decoded);
-    while (!should_reconnect_ && decoded.status == DecodeStatus::kMessageReady) {
+    while (!should_reconnect_ &&
+           decoded.status == DecodeStatus::kMessageReady) {
       decoded = codec_.Poll();
       HandleDecodeResult(decoded);
     }
@@ -452,8 +479,7 @@ class CriticalSession {
     return tls_socket_.PendingReadableBytes() != 0;
   }
 
-  bool EnqueueControlFrame(PayloadKind kind,
-                           std::span<const std::byte> payload,
+  bool EnqueueControlFrame(PayloadKind kind, std::span<const std::byte> payload,
                            std::uint64_t queued_ns = 0) noexcept {
     if (control_write_pending_) {
       return false;
@@ -466,7 +492,8 @@ class CriticalSession {
       return false;
     }
 
-    control_write_.encoded_size = static_cast<std::uint32_t>(encoded.bytes.size());
+    control_write_.encoded_size =
+        static_cast<std::uint32_t>(encoded.bytes.size());
     control_write_.write_offset = 0;
     control_write_.kind = kind;
     control_write_pending_ = true;
@@ -478,7 +505,7 @@ class CriticalSession {
   TlsSocketT& tls_socket_;
   PreparedWriteArena& prepared_write_arena_;
   Metrics& metrics_;
-  MessageCallback message_callback_{};
+  MessageHandlerT message_handler_{};
   FrameCodec codec_;
   static constexpr size_t kControlWriteStorageBytes = 131;
   std::array<std::byte, kControlWriteStorageBytes> control_write_storage_{};

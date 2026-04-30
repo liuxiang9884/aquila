@@ -31,6 +31,21 @@ struct MessageCallback {
   }
 };
 
+template <typename MessageHandlerT>
+struct MessageHandlerRef {
+  MessageHandlerT* handler{nullptr};
+
+  DeliveryResult Handle(const MessageView& view) const noexcept {
+    return handler == nullptr ? DeliveryResult::kFatal : handler->Handle(view);
+  }
+};
+
+template <typename MessageHandlerT>
+MessageHandlerRef<MessageHandlerT> MakeMessageHandler(
+    MessageHandlerT& handler) noexcept {
+  return {.handler = &handler};
+}
+
 }  // namespace aquila::websocket
 
 #endif  // AQUILA_CORE_WEBSOCKET_MESSAGE_VIEW_H_

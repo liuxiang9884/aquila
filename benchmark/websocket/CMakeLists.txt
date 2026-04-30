@@ -8,6 +8,7 @@ set(WEBSOCKET_BENCHMARK_TARGETS
     session_tls_write_path_benchmark
     session_read_path_benchmark
     session_mixed_path_benchmark
+    message_handler_dispatch_benchmark
     clock_source_benchmark
     runtime_loopback_benchmark
     affinity_policy_comparison_benchmark

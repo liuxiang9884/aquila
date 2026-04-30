@@ -1,8 +1,3 @@
-#include "exchange/gate/market_data/client.h"
-#include "exchange/gate/market_data/subscription.h"
-
-#include <gtest/gtest.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -10,21 +5,25 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
+
+#include <gtest/gtest.h>
 
 #include "core/websocket/message_view.h"
+#include "core/websocket/websocket_client.h"
+#include "exchange/gate/market_data/client.h"
+#include "exchange/gate/market_data/subscription.h"
 #include "exchange/gate/sbe/generated/gate/types/Event.hpp"
 
 namespace {
 
 template <typename T>
-void WriteLittleEndian(std::array<char, 192>& buffer,
-                       size_t offset,
+void WriteLittleEndian(std::array<char, 192>& buffer, size_t offset,
                        T value) noexcept {
   std::memcpy(buffer.data() + offset, &value, sizeof(value));
 }
 
-void WriteVarString(std::array<char, 192>& buffer,
-                    size_t* offset,
+void WriteVarString(std::array<char, 192>& buffer, size_t* offset,
                     std::string_view value) noexcept {
   buffer[(*offset)++] = static_cast<char>(value.size());
   std::memcpy(buffer.data() + *offset, value.data(), value.size());
@@ -110,8 +109,9 @@ TEST(GateFuturesMarketDataClientTest, BuildsBookTickerSubscribeRequest) {
   const std::string request =
       aquila::gate::BuildFuturesBookTickerSubscribeRequest(symbols, 123);
 
-  EXPECT_EQ(request,
-            R"({"time":123,"channel":"futures.book_ticker","event":"subscribe","payload":["BTC_USDT","ETH_USDT"]})");
+  EXPECT_EQ(
+      request,
+      R"({"time":123,"channel":"futures.book_ticker","event":"subscribe","payload":["BTC_USDT","ETH_USDT"]})");
 }
 
 TEST(GateFuturesMarketDataClientTest, BuildsBookTickerUnsubscribeRequest) {
@@ -120,8 +120,9 @@ TEST(GateFuturesMarketDataClientTest, BuildsBookTickerUnsubscribeRequest) {
   const std::string request =
       aquila::gate::BuildFuturesBookTickerUnsubscribeRequest(symbols, 123);
 
-  EXPECT_EQ(request,
-            R"({"time":123,"channel":"futures.book_ticker","event":"unsubscribe","payload":["BTC_USDT"]})");
+  EXPECT_EQ(
+      request,
+      R"({"time":123,"channel":"futures.book_ticker","event":"unsubscribe","payload":["BTC_USDT"]})");
 }
 
 TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
@@ -165,6 +166,42 @@ TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
   ASSERT_EQ(consumer.calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_GT(consumer.last.local_ns, 0);
+}
+
+TEST(GateFuturesMarketDataClientTest, HandlesWebSocketMessageDirectly) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+
+  const auto result = client.Handle(BinaryView(payload));
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(consumer.last.symbol_id, 11);
+  EXPECT_GT(consumer.last.local_ns, 0);
+}
+
+TEST(GateFuturesMarketDataClientTest, BindsAsTypedWebSocketHandler) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+  auto handler = aquila::websocket::MakeMessageHandler(client);
+
+  using Handler = decltype(handler);
+  using Client = aquila::websocket::PlainWebSocketClientWithHandler<Handler>;
+
+  static_assert(
+      std::is_constructible_v<Client, aquila::websocket::ConnectionConfig,
+                              Handler>);
+  EXPECT_FALSE(Client::TransportUsesTls);
+  EXPECT_EQ(handler.Handle(TextView("ignored")),
+            aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.calls, 0);
 }
 
 TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {

@@ -1,7 +1,4 @@
 #include "core/websocket/critical_session.h"
-#include "core/websocket/cold_path_loop.h"
-
-#include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
@@ -10,6 +7,10 @@
 #include <span>
 #include <string_view>
 #include <vector>
+
+#include <gtest/gtest.h>
+
+#include "core/websocket/cold_path_loop.h"
 
 using namespace aquila::websocket;
 
@@ -20,6 +21,15 @@ DeliveryResult RecordMessage(void* context, const MessageView& view) noexcept {
   *bytes += view.payload.size();
   return DeliveryResult::kAccepted;
 }
+
+struct TypedByteCounter {
+  size_t bytes{0};
+
+  DeliveryResult Handle(const MessageView& view) noexcept {
+    bytes += view.payload.size();
+    return DeliveryResult::kAccepted;
+  }
+};
 
 std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
   std::vector<std::byte> frame(2 + payload.size());
@@ -63,7 +73,8 @@ class FakeTlsSocket final {
     if (bytes == chunk.size()) {
       read_chunks_.erase(read_chunks_.begin());
     } else {
-      chunk.erase(chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(bytes));
+      chunk.erase(chunk.begin(),
+                  chunk.begin() + static_cast<std::ptrdiff_t>(bytes));
     }
     return static_cast<ssize_t>(bytes);
   }
@@ -81,9 +92,10 @@ class FakeTlsSocket final {
       return -1;
     }
 
-    const size_t chunk = max_write_bytes_per_call_ == 0
-                             ? buffer.size()
-                             : std::min(buffer.size(), max_write_bytes_per_call_);
+    const size_t chunk =
+        max_write_bytes_per_call_ == 0
+            ? buffer.size()
+            : std::min(buffer.size(), max_write_bytes_per_call_);
     written_.insert(written_.end(), buffer.begin(), buffer.begin() + chunk);
     if (chunk < buffer.size() && eagain_after_partial_write_) {
       pending_write_eagain_ = true;
@@ -197,8 +209,8 @@ TEST(WebsocketCriticalSessionTest,
 
   FakeTlsSocket peer_closed_socket;
   peer_closed_socket.eof_on_empty_ = true;
-  CriticalSession<FakeTlsSocket> peer_closed_session(
-      config, peer_closed_socket, arena, metrics);
+  CriticalSession<FakeTlsSocket> peer_closed_session(config, peer_closed_socket,
+                                                     arena, metrics);
   peer_closed_session.SetMessageCallback(consumer);
   peer_closed_session.DriveRead();
   EXPECT_TRUE(peer_closed_session.ShouldReconnect());
@@ -218,6 +230,30 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_TRUE(heartbeat_session.ShouldReconnect());
   EXPECT_EQ(heartbeat_session.LastError(), ConnectionError::kHeartbeatTimeout);
   EXPECT_EQ(heartbeat_metrics.heartbeat_timeouts, 1U);
+}
+
+TEST(WebsocketCriticalSessionTest, SupportsTypedMessageHandler) {
+  ConnectionConfig config{};
+  config.prepared_write_slots = 4;
+  config.prepared_write_bytes = 128;
+  config.read_buffer_bytes = 256;
+  config.frame_buffer_bytes = 256;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  TypedByteCounter counter;
+  auto handler = MakeMessageHandler(counter);
+  FakeTlsSocket socket;
+  socket.read_chunks_.push_back(BuildServerTextFrame("md"));
+
+  CriticalSession<FakeTlsSocket, decltype(handler)> session(config, socket,
+                                                            arena, metrics);
+  session.SetMessageHandler(handler);
+  session.DriveRead();
+
+  EXPECT_FALSE(session.ShouldReconnect());
+  EXPECT_EQ(counter.bytes, 2U);
+  EXPECT_EQ(metrics.rx_messages, 1U);
 }
 
 namespace {
@@ -419,10 +455,11 @@ TEST(WebsocketCriticalSessionTest, ReadCallbackCanFlushWriteImmediately) {
   FakeTlsSocket socket;
   socket.read_chunks_.push_back(BuildServerTextFrame("md"));
   CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
-  const std::array<std::byte, 4> payload{
-      std::byte{'o'}, std::byte{'r'}, std::byte{'d'}, std::byte{'r'}};
+  const std::array<std::byte, 4> payload{std::byte{'o'}, std::byte{'r'},
+                                         std::byte{'d'}, std::byte{'r'}};
   CallbackWriteContext context{&session, payload, WriteFlushMode::kTryFlushOne};
-  session.SetMessageCallback(MessageCallback{&context, &CommitWriteFromCallback});
+  session.SetMessageCallback(
+      MessageCallback{&context, &CommitWriteFromCallback});
 
   session.DriveRead();
 
@@ -532,8 +569,7 @@ TEST(WebsocketCriticalSessionTest, AutoPongUsesControlSlotWhenQueueFull) {
   EXPECT_FALSE(socket.written_.empty());
 }
 
-TEST(WebsocketCriticalSessionTest,
-     HeartbeatPingUsesControlSlotWhenQueueFull) {
+TEST(WebsocketCriticalSessionTest, HeartbeatPingUsesControlSlotWhenQueueFull) {
   auto config = BuildSmallConfig(1);
   PreparedWriteArena arena(config.prepared_write_slots,
                            config.prepared_write_bytes);

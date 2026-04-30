@@ -1,14 +1,4 @@
-#include "core/websocket/frame_codec.h"
-#include "core/websocket/runtime_clock.h"
-#include "core/websocket/websocket_client.h"
-#include "exchange/gate/market_data/client.h"
-#include "exchange/gate/market_data/subscription.h"
-#include "exchange/gate/sbe/message_dispatcher.h"
-
-#include <CLI/CLI.hpp>
-#include <fmt/compile.h>
-#include <fmt/core.h>
-#include <magic_enum/magic_enum.hpp>
+#include <sys/socket.h>
 
 #include <algorithm>
 #include <array>
@@ -17,16 +7,27 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
-#include <ctime>
 #include <cstring>
+#include <ctime>
 #include <memory>
-#include <netdb.h>
 #include <span>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <thread>
 #include <utility>
+
+#include <CLI/CLI.hpp>
+#include <fmt/compile.h>
+#include <fmt/core.h>
+#include <magic_enum/magic_enum.hpp>
+
+#include "core/websocket/frame_codec.h"
+#include "core/websocket/runtime_clock.h"
+#include "core/websocket/websocket_client.h"
+#include "exchange/gate/market_data/client.h"
+#include "exchange/gate/market_data/subscription.h"
+#include "exchange/gate/sbe/message_dispatcher.h"
+#include <netdb.h>
 
 namespace {
 
@@ -35,7 +36,9 @@ namespace ws = aquila::websocket;
 
 volatile std::sig_atomic_t g_stop_requested = 0;
 
-void RequestStop(int) noexcept { g_stop_requested = 1; }
+void RequestStop(int) noexcept {
+  g_stop_requested = 1;
+}
 
 void InstallStopHandlers() noexcept {
   std::signal(SIGINT, &RequestStop);
@@ -46,10 +49,9 @@ std::string FormatSockaddr(const sockaddr_storage& storage,
                            socklen_t storage_len) {
   char host[NI_MAXHOST]{};
   char service[NI_MAXSERV]{};
-  const int rc =
-      ::getnameinfo(reinterpret_cast<const sockaddr*>(&storage), storage_len,
-                    host, sizeof(host), service, sizeof(service),
-                    NI_NUMERICHOST | NI_NUMERICSERV);
+  const int rc = ::getnameinfo(
+      reinterpret_cast<const sockaddr*>(&storage), storage_len, host,
+      sizeof(host), service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);
   if (rc != 0) {
     return "unavailable";
   }
@@ -78,8 +80,7 @@ void PrintSocketInfo(int fd) {
                    &incoming_cpu_len) == 0;
 
   fmt::print(stderr,
-             FMT_COMPILE(
-                 "socket fd={} local={} peer={} so_incoming_cpu={}\n"),
+             FMT_COMPILE("socket fd={} local={} peer={} so_incoming_cpu={}\n"),
              fd, has_local ? FormatSockaddr(local, local_len) : "unavailable",
              has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
              has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
@@ -192,7 +193,7 @@ struct ProbeConfig {
   bool tls{true};
 };
 
-template <typename ClientT>
+template <typename TransportSocketT>
 class ProbeRunner {
  public:
   explicit ProbeRunner(ProbeConfig config)
@@ -212,7 +213,7 @@ class ProbeRunner {
     connection_config.host = config_.host;
     connection_config.service = config_.port;
     connection_config.target = config_.target;
-    connection_config.enable_tls = ClientT::TransportUsesTls;
+    connection_config.enable_tls = TransportSocketT::kUsesTls;
     connection_config.max_reads_per_drive = 8;
     connection_config.read_until_would_block = false;
     connection_config.runtime_policy.io_cpu_id = config_.cpu;
@@ -220,9 +221,9 @@ class ProbeRunner {
         config_.cpu >= 0 ? ws::AffinityMode::kBestEffort
                          : ws::AffinityMode::kNone;
 
-    ws::MessageCallback message_callback{this, &ProbeRunner::HandleMessage};
+    auto message_handler = ws::MakeMessageHandler(*this);
     client_ =
-        std::make_unique<ClientT>(std::move(connection_config), message_callback);
+        std::make_unique<Client>(std::move(connection_config), message_handler);
     client_->SetStateHandler(this, &ProbeRunner::HandleState);
     client_->SetErrorHandler(this, &ProbeRunner::HandleError);
 
@@ -272,18 +273,26 @@ class ProbeRunner {
         subscribe_status_.load(std::memory_order_acquire));
   }
 
-  [[nodiscard]] const ProbeStats& stats() const noexcept { return stats_; }
-  [[nodiscard]] ws::Metrics metrics() const noexcept { return metrics_; }
-  [[nodiscard]] const ProbeConfig& config() const noexcept { return config_; }
+  [[nodiscard]] const ProbeStats& stats() const noexcept {
+    return stats_;
+  }
+  [[nodiscard]] ws::Metrics metrics() const noexcept {
+    return metrics_;
+  }
+  [[nodiscard]] const ProbeConfig& config() const noexcept {
+    return config_;
+  }
   [[nodiscard]] std::string_view subscription() const noexcept {
     return subscription_;
   }
 
- private:
-  static ws::DeliveryResult HandleMessage(
-      void* context, const ws::MessageView& view) noexcept {
-    return static_cast<ProbeRunner*>(context)->OnMessage(view);
+  ws::DeliveryResult Handle(const ws::MessageView& view) noexcept {
+    return OnMessage(view);
   }
+
+ private:
+  using MessageHandler = ws::MessageHandlerRef<ProbeRunner<TransportSocketT>>;
+  using Client = ws::BasicWebSocketClient<TransportSocketT, MessageHandler>;
 
   static void HandleState(void* context, ws::ConnectionPhase phase) noexcept {
     static_cast<ProbeRunner*>(context)->OnState(phase);
@@ -338,8 +347,8 @@ class ProbeRunner {
 
     ++stats_.book_ticker_messages;
     const std::uint64_t decoded_before = stats_.decoded_book_tickers;
-    const ws::DeliveryResult result =
-        market_data_client_.OnMessage(view, static_cast<std::int64_t>(arrival_ns));
+    const ws::DeliveryResult result = market_data_client_.OnMessage(
+        view, static_cast<std::int64_t>(arrival_ns));
     if (stats_.decoded_book_tickers == decoded_before) {
       ++stats_.failed_book_tickers;
     }
@@ -407,7 +416,7 @@ class ProbeRunner {
   gate::FuturesMarketDataClient<ProbeConsumer> market_data_client_;
   std::string subscription_;
   ws::FrameCodec encoder_;
-  std::unique_ptr<ClientT> client_;
+  std::unique_ptr<Client> client_;
   std::thread thread_;
   ws::Metrics metrics_{};
   std::atomic<bool> done_{false};
@@ -439,67 +448,61 @@ void PrintSummary(const RunnerT& runner) {
   const std::int64_t book_ticker_id_delta =
       stats.has_first_book_ticker ? last.id - first.id : 0;
 
-  fmt::print(FMT_COMPILE(
-                 "config host={} port={} target={} tls={} contract={} "
-                 "symbol_id={} duration_ms={} subscription={}\n"),
+  fmt::print(FMT_COMPILE("config host={} port={} target={} tls={} contract={} "
+                         "symbol_id={} duration_ms={} subscription={}\n"),
              config.host, config.port, config.target, config.tls ? "yes" : "no",
              config.contract, config.symbol_id, config.duration_ms,
              runner.subscription());
-  fmt::print(FMT_COMPILE(
-                 "result={} active={} phase={} error={} subscribe={} "
-                 "rx_messages={} rx_bytes={} tx_messages={} tx_bytes={} "
-                 "reconnects={} heartbeat_timeouts={}\n"),
-             runner.result() ? "ok" : "failed",
-             runner.saw_active() ? "yes" : "no",
-             magic_enum::enum_name(runner.phase()),
-             magic_enum::enum_name(runner.error()),
-             magic_enum::enum_name(runner.subscribe_status()),
-             metrics.rx_messages, metrics.rx_bytes, metrics.tx_messages,
-             metrics.tx_bytes, metrics.reconnects, metrics.heartbeat_timeouts);
-  fmt::print(FMT_COMPILE(
-                 "messages total={} text={} binary={} non_final={} "
-                 "sbe_ready={} sbe_need_more={} unsupported_schema={} "
-                 "unsupported_schema_version={} unknown_template={} "
-                 "known_non_book_ticker={}\n"),
+  fmt::print(
+      FMT_COMPILE("result={} active={} phase={} error={} subscribe={} "
+                  "rx_messages={} rx_bytes={} tx_messages={} tx_bytes={} "
+                  "reconnects={} heartbeat_timeouts={}\n"),
+      runner.result() ? "ok" : "failed", runner.saw_active() ? "yes" : "no",
+      magic_enum::enum_name(runner.phase()),
+      magic_enum::enum_name(runner.error()),
+      magic_enum::enum_name(runner.subscribe_status()), metrics.rx_messages,
+      metrics.rx_bytes, metrics.tx_messages, metrics.tx_bytes,
+      metrics.reconnects, metrics.heartbeat_timeouts);
+  fmt::print(FMT_COMPILE("messages total={} text={} binary={} non_final={} "
+                         "sbe_ready={} sbe_need_more={} unsupported_schema={} "
+                         "unsupported_schema_version={} unknown_template={} "
+                         "known_non_book_ticker={}\n"),
              stats.messages, stats.text_messages, stats.binary_messages,
              stats.non_final_messages, stats.sbe_ready_messages,
              stats.sbe_need_more_messages, stats.unsupported_schema_messages,
              stats.unsupported_schema_version_messages,
              stats.unknown_template_messages,
              stats.known_non_book_ticker_messages);
-  fmt::print(FMT_COMPILE(
-                 "book_ticker payloads={} decoded={} failed_or_unmapped={} "
-                 "first_id={} last_id={} id_delta={}\n"),
-             stats.book_ticker_messages, stats.decoded_book_tickers,
-             stats.failed_book_tickers, first.id, last.id,
-             book_ticker_id_delta);
-  fmt::print(FMT_COMPILE(
-                 "processing_ns samples={} avg={:.2f} max={}\n"),
+  fmt::print(
+      FMT_COMPILE("book_ticker payloads={} decoded={} failed_or_unmapped={} "
+                  "first_id={} last_id={} id_delta={}\n"),
+      stats.book_ticker_messages, stats.decoded_book_tickers,
+      stats.failed_book_tickers, first.id, last.id, book_ticker_id_delta);
+  fmt::print(FMT_COMPILE("processing_ns samples={} avg={:.2f} max={}\n"),
              stats.processing_samples,
              AverageNs(stats.processing_total_ns, stats.processing_samples),
              stats.processing_max_ns);
-  fmt::print(FMT_COMPILE(
-                 "arrival_gap_ns samples={} avg={:.2f} max={}\n"),
+  fmt::print(FMT_COMPILE("arrival_gap_ns samples={} avg={:.2f} max={}\n"),
              stats.arrival_gap_samples,
              AverageNs(stats.arrival_gap_total_ns, stats.arrival_gap_samples),
              stats.arrival_gap_max_ns);
-  fmt::print(FMT_COMPILE(
-                 "last_book_ticker id={} symbol_id={} exchange={} "
-                 "exchange_ns={} local_ns={} bid_price={:.12g} "
-                 "bid_volume={:.12g} ask_price={:.12g} ask_volume={:.12g}\n"),
-             last.id, last.symbol_id, magic_enum::enum_name(last.exchange),
-             last.exchange_ns, last.local_ns, last.bid_price, last.bid_volume,
-             last.ask_price, last.ask_volume);
+  fmt::print(
+      FMT_COMPILE("last_book_ticker id={} symbol_id={} exchange={} "
+                  "exchange_ns={} local_ns={} bid_price={:.12g} "
+                  "bid_volume={:.12g} ask_price={:.12g} ask_volume={:.12g}\n"),
+      last.id, last.symbol_id, magic_enum::enum_name(last.exchange),
+      last.exchange_ns, last.local_ns, last.bid_price, last.bid_volume,
+      last.ask_price, last.ask_volume);
   if (stats.last_text_size != 0) {
     fmt::print(FMT_COMPILE("last_text={}{}\n"), stats.last_text.data(),
                stats.last_text_truncated ? "...(truncated)" : "");
   }
 }
 
-template <typename ClientT>
+template <typename TransportSocketT>
 int RunProbe(ProbeConfig config) {
   g_stop_requested = 0;
-  ProbeRunner<ClientT> runner(std::move(config));
+  ProbeRunner<TransportSocketT> runner(std::move(config));
   runner.Start();
 
   const auto deadline = std::chrono::steady_clock::now() +
@@ -540,7 +543,7 @@ int main(int argc, char** argv) {
   }
 
   if (config.tls) {
-    return RunProbe<ws::WebSocketClient>(std::move(config));
+    return RunProbe<ws::TlsSocket>(std::move(config));
   }
-  return RunProbe<ws::PlainWebSocketClient>(std::move(config));
+  return RunProbe<ws::PlainSocket>(std::move(config));
 }
