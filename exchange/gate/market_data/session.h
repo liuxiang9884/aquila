@@ -188,6 +188,18 @@ class FuturesMarketDataSession {
     client_.Stop();
   }
 
+  void SetStateHandler(void* context,
+                       websocket::StateHandler handler) noexcept {
+    state_context_ = context;
+    state_handler_ = handler;
+  }
+
+  void SetErrorHandler(void* context,
+                       websocket::ErrorHandler handler) noexcept {
+    error_context_ = context;
+    error_handler_ = handler;
+  }
+
   websocket::DeliveryResult Handle(
       const websocket::MessageView& view) noexcept {
     if (!view.fin) {
@@ -217,6 +229,9 @@ class FuturesMarketDataSession {
         subscription_sent_for_connection_ =
             status == websocket::SendStatus::kOk;
       }
+      if (state_handler_ != nullptr) {
+        state_handler_(state_context_, phase);
+      }
       return;
     }
 
@@ -229,6 +244,17 @@ class FuturesMarketDataSession {
           subscription_state_ == SubscriptionState::kSubscribed) {
         subscription_state_ = SubscriptionState::kIdle;
       }
+    }
+
+    if (state_handler_ != nullptr) {
+      state_handler_(state_context_, phase);
+    }
+  }
+
+  void OnConnectionError(websocket::ConnectionError error) noexcept {
+    last_error_ = error;
+    if (error_handler_ != nullptr) {
+      error_handler_(error_context_, error);
     }
   }
 
@@ -266,6 +292,14 @@ class FuturesMarketDataSession {
     return client_.SnapshotMetrics();
   }
 
+  [[nodiscard]] int NativeFd() noexcept {
+    return client_.Core().NativeFd();
+  }
+
+  [[nodiscard]] std::string_view last_subscribe_request() const noexcept {
+    return last_subscribe_request_;
+  }
+
  private:
   static void HandleState(void* context,
                           websocket::ConnectionPhase phase) noexcept {
@@ -274,8 +308,7 @@ class FuturesMarketDataSession {
 
   static void HandleError(void* context,
                           websocket::ConnectionError error) noexcept {
-    auto* session = static_cast<FuturesMarketDataSession*>(context);
-    session->last_error_ = error;
+    static_cast<FuturesMarketDataSession*>(context)->OnConnectionError(error);
   }
 
   websocket::DeliveryResult HandleText(
@@ -341,11 +374,11 @@ class FuturesMarketDataSession {
   }
 
   websocket::SendStatus SendSubscribe() noexcept {
-    const std::string request = BuildFuturesBookTickerSubscribeRequest(
+    last_subscribe_request_ = BuildFuturesBookTickerSubscribeRequest(
         std::span<const std::string_view>(subscription_symbols_.data(),
                                           subscription_symbols_.size()),
         static_cast<std::int64_t>(std::time(nullptr)));
-    const websocket::SendStatus status = SendText(request);
+    const websocket::SendStatus status = SendText(last_subscribe_request_);
     if (status == websocket::SendStatus::kOk) {
       ++stats_.subscribe_sent;
       subscription_state_ = SubscriptionState::kSubscribeSent;
@@ -393,6 +426,7 @@ class FuturesMarketDataSession {
 
   std::span<const SymbolBinding> symbols_;
   std::vector<std::string_view> subscription_symbols_;
+  std::string last_subscribe_request_;
   FuturesMarketDataClient<Consumer> market_data_client_;
   websocket::ClockSource clock_source_;
   websocket::FrameCodec encoder_{4096, 4096};
@@ -406,6 +440,10 @@ class FuturesMarketDataSession {
       websocket::SendStatus::kWriteUnavailable};
   websocket::ConnectionPhase phase_{websocket::ConnectionPhase::kDisconnected};
   websocket::ConnectionError last_error_{websocket::ConnectionError::kNone};
+  void* state_context_{nullptr};
+  websocket::StateHandler state_handler_{nullptr};
+  void* error_context_{nullptr};
+  websocket::ErrorHandler error_handler_{nullptr};
   bool subscription_sent_for_connection_{false};
 };
 

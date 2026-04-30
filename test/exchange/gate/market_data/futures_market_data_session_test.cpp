@@ -99,6 +99,29 @@ struct RecordingConsumer {
 
 using Session = aquila::gate::FuturesMarketDataSession<RecordingConsumer>;
 
+struct StateCapture {
+  int state_calls{0};
+  int error_calls{0};
+  aquila::websocket::ConnectionPhase last_phase{
+      aquila::websocket::ConnectionPhase::kDisconnected};
+  aquila::websocket::ConnectionError last_error{
+      aquila::websocket::ConnectionError::kNone};
+};
+
+void CaptureState(void* context,
+                  aquila::websocket::ConnectionPhase phase) noexcept {
+  auto* capture = static_cast<StateCapture*>(context);
+  ++capture->state_calls;
+  capture->last_phase = phase;
+}
+
+void CaptureError(void* context,
+                  aquila::websocket::ConnectionError error) noexcept {
+  auto* capture = static_cast<StateCapture*>(context);
+  ++capture->error_calls;
+  capture->last_error = error;
+}
+
 Session MakeSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
@@ -136,6 +159,29 @@ TEST(GateFuturesMarketDataSessionTest, SendsSubscribeWhenActive) {
             aquila::gate::SubscriptionState::kSubscribeSent);
   EXPECT_EQ(session.subscribe_status(), aquila::websocket::SendStatus::kOk);
   EXPECT_EQ(session.stats().subscribe_sent, 1U);
+  EXPECT_NE(session.last_subscribe_request().find("futures.book_ticker"),
+            std::string_view::npos);
+  EXPECT_NE(session.last_subscribe_request().find("BTC_USDT"),
+            std::string_view::npos);
+}
+
+TEST(GateFuturesMarketDataSessionTest, ForwardsStateAndErrorHandlers) {
+  RecordingConsumer consumer;
+  Session session = MakeSession(consumer);
+  StateCapture capture;
+  session.SetStateHandler(&capture, &CaptureState);
+  session.SetErrorHandler(&capture, &CaptureError);
+
+  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
+  session.OnConnectionError(aquila::websocket::ConnectionError::kSocketError);
+
+  EXPECT_EQ(capture.state_calls, 1);
+  EXPECT_EQ(capture.last_phase, aquila::websocket::ConnectionPhase::kActive);
+  EXPECT_EQ(capture.error_calls, 1);
+  EXPECT_EQ(capture.last_error,
+            aquila::websocket::ConnectionError::kSocketError);
+  EXPECT_EQ(session.last_error(),
+            aquila::websocket::ConnectionError::kSocketError);
 }
 
 TEST(GateFuturesMarketDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
