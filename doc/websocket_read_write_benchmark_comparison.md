@@ -219,6 +219,5 @@ p50 / p99 / p99.9
 - `core/websocket/types.h`
 - `benchmark/websocket/third_party_frame_codec_comparison_benchmark.cpp`
 - `benchmark/websocket/session_write_path_benchmark.cpp`
-- `doc/websocket_third_party_comparison.md`
 - `doc/websocket_frame_codec_receive_strategies.md`
 - `doc/websocket_client_future_optimizations.md`

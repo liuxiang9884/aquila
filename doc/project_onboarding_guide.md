@@ -39,14 +39,10 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- | --- |
 | `AGENTS.md` | 每次新会话最先读 | 中文/英文约定、低延迟原则、测试/benchmark/提交规则。 |
 | `README.md` | 了解构建和工具入口 | build、ctest、benchmark、probe、latency compare 的运行方式。 |
-| `doc/project_structure.md` | 理解目录边界 | `core`、`exchange`、`test`、`benchmark`、`doc` 的职责。 |
-| `doc/websocket_client_design_v1.0.md` | 理解当前 WebSocket client 设计 | session、transport、control、metrics、runtime 边界。 |
 | `doc/websocket_frame_codec_receive_strategies.md` | 理解 FrameCodec decode 为什么这样设计 | mirrored ring、direct delivery、fast path、QueuedFrameCodec、decode 收口结论。 |
-| `doc/websocket_third_party_comparison.md` | 理解 MengRao/websocket 对比 | 为什么三方库不能直接作为生产内核。 |
 | `doc/websocket_read_write_benchmark_comparison.md` | 快速看 read/write benchmark 对比 | `aquila`、Drogon-style、`third_party/websocket` read/write 差异和数值。 |
 | `doc/websocket_client_future_optimizations.md` | 继续 WebSocket 优化时读 | read/write/active spin/network 的未来优化 backlog。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
-| `doc/reviews/2026-04-24-websocket-client-gap-analysis.md` | 追溯 P0/P1/P2/P3 证据 | 每个阶段问题、修复、测试和 benchmark 证据。 |
 
 ## 代码入口
 
