@@ -318,16 +318,11 @@ void PrintSummary(const RunnerT& runner) {
              session_stats.text_messages, session_stats.binary_messages,
              session_stats.non_final_messages, session_stats.control_messages,
              session_stats.book_ticker_messages);
-  fmt::print(
-      FMT_COMPILE("market_data malformed_json={} missing_fields={} "
-                  "invalid_numbers={} unsupported_events={} "
-                  "symbol_too_long={} unknown_symbol={} "
-                  "book_ticker={}\n"),
-      market_data_stats.malformed_json_messages,
-      market_data_stats.missing_fields, market_data_stats.invalid_numbers,
-      market_data_stats.unsupported_events, market_data_stats.symbol_too_long,
-      market_data_stats.unknown_symbols,
-      market_data_stats.book_ticker_messages);
+  fmt::print(FMT_COMPILE("market_data malformed_json={} unknown_symbol={} "
+                         "book_ticker={}\n"),
+             market_data_stats.malformed_json_messages,
+             market_data_stats.unknown_symbols,
+             market_data_stats.book_ticker_messages);
   fmt::print(
       FMT_COMPILE("book_ticker payloads={} decoded={} failed_or_unmapped={} "
                   "first_id={} last_id={} id_delta={}\n"),

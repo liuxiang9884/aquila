@@ -166,17 +166,17 @@ TEST(BinanceFuturesMarketDataClientTest, RecordsUnknownSymbolWhenEnabled) {
   EXPECT_EQ(client.diagnostics().stats().unknown_symbols, 1U);
 }
 
-TEST(BinanceFuturesMarketDataClientTest, RecordsUnsupportedEventWhenEnabled) {
-  static constexpr std::string_view kAggTradeJson =
-      R"({"e":"aggTrade","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
+TEST(BinanceFuturesMarketDataClientTest, RecordsMalformedJsonWhenEnabled) {
+  static constexpr std::string_view kMalformedJson =
+      R"({"e":"bookTicker","u":400900217,"E":1568014460893,)";
   const std::array<aquila::binance::SymbolBinding, 1> symbols{
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   RecordingConsumer consumer;
   DiagnosticClient client(symbols, consumer);
 
-  const auto result = client.OnTextPayload(kAggTradeJson, 0, 999'000);
+  const auto result = client.OnTextPayload(kMalformedJson, 0, 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.diagnostics().stats().unsupported_events, 1U);
+  EXPECT_EQ(client.diagnostics().stats().malformed_json_messages, 1U);
 }

@@ -2,6 +2,7 @@
 #define AQUILA_EXCHANGE_BINANCE_MARKET_DATA_CLIENT_H_
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -19,10 +20,6 @@ namespace aquila::binance {
 
 struct FuturesMarketDataClientStats {
   std::uint64_t malformed_json_messages{0};
-  std::uint64_t missing_fields{0};
-  std::uint64_t invalid_numbers{0};
-  std::uint64_t unsupported_events{0};
-  std::uint64_t symbol_too_long{0};
   std::uint64_t unknown_symbols{0};
   std::uint64_t book_ticker_messages{0};
 };
@@ -36,25 +33,9 @@ class FuturesMarketDataDiagnostics {
   static constexpr bool kEnabled = true;
 
   void RecordParseDrop(BookTickerParseStatus status) noexcept {
-    switch (status) {
-      case BookTickerParseStatus::kMalformedJson:
-        ++stats_.malformed_json_messages;
-        return;
-      case BookTickerParseStatus::kMissingField:
-        ++stats_.missing_fields;
-        return;
-      case BookTickerParseStatus::kInvalidNumber:
-        ++stats_.invalid_numbers;
-        return;
-      case BookTickerParseStatus::kUnsupportedEvent:
-        ++stats_.unsupported_events;
-        return;
-      case BookTickerParseStatus::kSymbolTooLong:
-        ++stats_.symbol_too_long;
-        return;
-      case BookTickerParseStatus::kOk:
-        return;
-    }
+    assert(status == BookTickerParseStatus::kMalformedJson);
+    (void)status;
+    ++stats_.malformed_json_messages;
   }
 
   void RecordUnknownSymbol() noexcept {

@@ -2,6 +2,7 @@
 #define AQUILA_EXCHANGE_BINANCE_MARKET_DATA_BOOK_TICKER_PARSER_H_
 
 #include <array>
+#include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +12,6 @@
 
 #include <fast_float/fast_float.h>
 
-#include "exchange/common/simdjson_utils.h"
 #include <simdjson.h>
 
 namespace aquila::binance {
@@ -21,10 +21,6 @@ inline constexpr size_t kMaxBookTickerSymbolBytes = 32;
 enum class BookTickerParseStatus : std::uint8_t {
   kOk = 0,
   kMalformedJson,
-  kMissingField,
-  kUnsupportedEvent,
-  kInvalidNumber,
-  kSymbolTooLong,
 };
 
 struct BookTickerUpdate {
@@ -40,7 +36,6 @@ struct BookTickerUpdate {
     }
     update_id = other.update_id;
     event_time_ms = other.event_time_ms;
-    transaction_time_ms = other.transaction_time_ms;
     bid_price = other.bid_price;
     bid_volume = other.bid_volume;
     ask_price = other.ask_price;
@@ -60,7 +55,6 @@ struct BookTickerUpdate {
 
   std::int64_t update_id{0};
   std::int64_t event_time_ms{0};
-  std::int64_t transaction_time_ms{0};
   double bid_price{0.0};
   double bid_volume{0.0};
   double ask_price{0.0};
@@ -71,119 +65,71 @@ struct BookTickerUpdate {
 
 namespace detail {
 
-inline bool ParseDoubleString(std::string_view text, double* output) noexcept {
-  if (output == nullptr || text.empty()) {
-    return false;
-  }
+inline simdjson::ondemand::value TrustedField(
+    simdjson::ondemand::object& object, std::string_view key) noexcept {
+  simdjson::simdjson_result<simdjson::ondemand::value> result =
+      object.find_field_unordered(key);
+  assert(result.error() == simdjson::SUCCESS);
+  return result.value_unsafe();
+}
+
+inline std::string_view TrustedString(
+    simdjson::ondemand::value value) noexcept {
+  simdjson::simdjson_result<std::string_view> result = value.get_string();
+  assert(result.error() == simdjson::SUCCESS);
+  return result.value_unsafe();
+}
+
+inline std::int64_t TrustedInt64(simdjson::ondemand::value value) noexcept {
+  simdjson::simdjson_result<std::int64_t> result = value.get_int64();
+  assert(result.error() == simdjson::SUCCESS);
+  return result.value_unsafe();
+}
+
+inline double ParseTrustedDoubleString(std::string_view text) noexcept {
+  assert(!text.empty());
   double parsed = 0.0;
   const char* const begin = text.data();
   const char* const end = begin + text.size();
   const fast_float::from_chars_result result =
       fast_float::from_chars(begin, end, parsed);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    return false;
-  }
-  *output = parsed;
-  return true;
+  assert(result.ec == std::errc{} && result.ptr == end);
+  return parsed;
 }
 
-inline bool CopySymbol(std::string_view symbol,
-                       BookTickerUpdate* output) noexcept {
-  if (output == nullptr || symbol.size() > output->symbol_storage.size()) {
-    return false;
-  }
-  std::memcpy(output->symbol_storage.data(), symbol.data(), symbol.size());
-  output->symbol =
-      std::string_view(output->symbol_storage.data(), symbol.size());
-  return true;
+inline void CopyTrustedSymbol(std::string_view symbol,
+                              BookTickerUpdate& output) noexcept {
+  assert(symbol.size() <= output.symbol_storage.size());
+  std::memcpy(output.symbol_storage.data(), symbol.data(), symbol.size());
+  output.symbol = std::string_view(output.symbol_storage.data(), symbol.size());
 }
 
 inline BookTickerParseStatus ParseBookTickerObject(
-    simdjson::ondemand::object root, BookTickerUpdate* output) noexcept {
-  if (output == nullptr) {
-    return BookTickerParseStatus::kMissingField;
-  }
+    simdjson::ondemand::object root, BookTickerUpdate& output) noexcept {
+  const std::int64_t update_id = TrustedInt64(TrustedField(root, "u"));
+  const std::int64_t event_time_ms = TrustedInt64(TrustedField(root, "E"));
+  const std::string_view symbol = TrustedString(TrustedField(root, "s"));
+  const double bid_price =
+      ParseTrustedDoubleString(TrustedString(TrustedField(root, "b")));
+  const double bid_volume =
+      ParseTrustedDoubleString(TrustedString(TrustedField(root, "B")));
+  const double ask_price =
+      ParseTrustedDoubleString(TrustedString(TrustedField(root, "a")));
+  const double ask_volume =
+      ParseTrustedDoubleString(TrustedString(TrustedField(root, "A")));
 
-  namespace json = aquila::exchange::detail;
-  simdjson::ondemand::value value;
-
-  std::string_view event;
-  if (!json::FindSimdjsonField(root, "e", &value) ||
-      !json::ReadSimdjsonString(value, &event)) {
-    return BookTickerParseStatus::kMissingField;
-  }
-  if (event != "bookTicker") {
-    return BookTickerParseStatus::kUnsupportedEvent;
-  }
-
-  std::int64_t update_id = 0;
-  if (!json::FindSimdjsonField(root, "u", &value) ||
-      !json::ReadSimdjsonInt64(value, &update_id)) {
-    return BookTickerParseStatus::kMissingField;
-  }
-
-  std::int64_t event_time_ms = 0;
-  if (!json::FindSimdjsonField(root, "E", &value) ||
-      !json::ReadSimdjsonInt64(value, &event_time_ms)) {
-    return BookTickerParseStatus::kMissingField;
-  }
-
-  std::int64_t transaction_time_ms = 0;
-  if (!json::FindSimdjsonField(root, "T", &value) ||
-      !json::ReadSimdjsonInt64(value, &transaction_time_ms)) {
-    return BookTickerParseStatus::kMissingField;
-  }
-
-  std::string_view symbol;
-  if (!json::FindSimdjsonField(root, "s", &value) ||
-      !json::ReadSimdjsonString(value, &symbol)) {
-    return BookTickerParseStatus::kMissingField;
-  }
-
-  double bid_price = 0.0;
-  std::string_view number;
-  if (!json::FindSimdjsonField(root, "b", &value) ||
-      !json::ReadSimdjsonString(value, &number) ||
-      !ParseDoubleString(number, &bid_price)) {
-    return BookTickerParseStatus::kInvalidNumber;
-  }
-
-  double bid_volume = 0.0;
-  if (!json::FindSimdjsonField(root, "B", &value) ||
-      !json::ReadSimdjsonString(value, &number) ||
-      !ParseDoubleString(number, &bid_volume)) {
-    return BookTickerParseStatus::kInvalidNumber;
-  }
-
-  double ask_price = 0.0;
-  if (!json::FindSimdjsonField(root, "a", &value) ||
-      !json::ReadSimdjsonString(value, &number) ||
-      !ParseDoubleString(number, &ask_price)) {
-    return BookTickerParseStatus::kInvalidNumber;
-  }
-
-  double ask_volume = 0.0;
-  if (!json::FindSimdjsonField(root, "A", &value) ||
-      !json::ReadSimdjsonString(value, &number) ||
-      !ParseDoubleString(number, &ask_volume)) {
-    return BookTickerParseStatus::kInvalidNumber;
-  }
-
-  output->update_id = update_id;
-  output->event_time_ms = event_time_ms;
-  output->transaction_time_ms = transaction_time_ms;
-  output->bid_price = bid_price;
-  output->bid_volume = bid_volume;
-  output->ask_price = ask_price;
-  output->ask_volume = ask_volume;
-  if (!CopySymbol(symbol, output)) {
-    return BookTickerParseStatus::kSymbolTooLong;
-  }
+  output.update_id = update_id;
+  output.event_time_ms = event_time_ms;
+  output.bid_price = bid_price;
+  output.bid_volume = bid_volume;
+  output.ask_price = ask_price;
+  output.ask_volume = ask_volume;
+  CopyTrustedSymbol(symbol, output);
   return BookTickerParseStatus::kOk;
 }
 
 inline BookTickerParseStatus ParseBookTickerDocument(
-    simdjson::ondemand::document document, BookTickerUpdate* output) noexcept {
+    simdjson::ondemand::document document, BookTickerUpdate& output) noexcept {
   simdjson::ondemand::object root;
   if (document.get_object().get(root) != simdjson::SUCCESS) {
     return BookTickerParseStatus::kMalformedJson;
@@ -207,14 +153,14 @@ inline BookTickerParseStatus ParseBookTicker(
     if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
       return BookTickerParseStatus::kMalformedJson;
     }
-    return detail::ParseBookTickerDocument(std::move(document), &output);
+    return detail::ParseBookTickerDocument(std::move(document), output);
   }
 
   simdjson::padded_string padded(payload);
   if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
     return BookTickerParseStatus::kMalformedJson;
   }
-  return detail::ParseBookTickerDocument(std::move(document), &output);
+  return detail::ParseBookTickerDocument(std::move(document), output);
 }
 
 }  // namespace aquila::binance

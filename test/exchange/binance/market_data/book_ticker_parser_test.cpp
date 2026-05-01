@@ -25,7 +25,6 @@ TEST(BinanceBookTickerParserTest, ParsesOfficialBookTickerJson) {
   EXPECT_EQ(update.symbol.data(), update.symbol_storage.data());
   EXPECT_EQ(update.update_id, 400900217);
   EXPECT_EQ(update.event_time_ms, 1568014460893);
-  EXPECT_EQ(update.transaction_time_ms, 1568014460891);
   EXPECT_DOUBLE_EQ(update.bid_price, 25.3519);
   EXPECT_DOUBLE_EQ(update.bid_volume, 31.21);
   EXPECT_DOUBLE_EQ(update.ask_price, 25.3652);
@@ -62,7 +61,7 @@ TEST(BinanceBookTickerParserTest, CopyKeepsSymbolViewInsideCopyStorage) {
   EXPECT_EQ(copied.symbol.data(), copied.symbol_storage.data());
 }
 
-TEST(BinanceBookTickerParserTest, RejectsUnsupportedEvent) {
+TEST(BinanceBookTickerParserTest, IgnoresEventFieldOnRawBookTickerStream) {
   static constexpr std::string_view kAggTradeJson =
       R"({"e":"aggTrade","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
   simdjson::ondemand::parser parser;
@@ -71,19 +70,21 @@ TEST(BinanceBookTickerParserTest, RejectsUnsupportedEvent) {
   const auto status =
       aquila::binance::ParseBookTicker(kAggTradeJson, 0, parser, update);
 
-  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kUnsupportedEvent);
+  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kOk);
+  EXPECT_EQ(update.symbol, "BTCUSDT");
+  EXPECT_EQ(update.update_id, 400900217);
 }
 
-TEST(BinanceBookTickerParserTest, RejectsInvalidNumberString) {
+TEST(BinanceBookTickerParserTest, RejectsMalformedJson) {
   static constexpr std::string_view kInvalidJson =
-      R"({"e":"bookTicker","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"bad","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
+      R"({"e":"bookTicker","u":400900217,"E":1568014460893,)";
   simdjson::ondemand::parser parser;
   aquila::binance::BookTickerUpdate update{};
 
   const auto status =
       aquila::binance::ParseBookTicker(kInvalidJson, 0, parser, update);
 
-  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kInvalidNumber);
+  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kMalformedJson);
 }
 
 }  // namespace

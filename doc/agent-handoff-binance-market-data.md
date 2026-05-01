@@ -66,13 +66,14 @@ FuturesMarketDataSession::Handle(text MessageView)
 
 1. Binance bookTicker 是 JSON text，不能复用 Gate 的 SBE binary 解码路径。
 2. 生产 JSON parser 固定为 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，使用 zero-copy padded view，否则 fallback 到 `simdjson::padded_string`。
-3. `b/B/a/A` 是 JSON 字符串，使用 `fast_float::from_chars` 转 double，不使用 `std::stod`。
-4. client/session 都是模板组合；热路径不引入虚函数或 `std::function`。
-5. session diagnostics 默认 no-op；benchmark / probe / test 显式启用。
+3. raw stream target 已经限定 `<symbol>@bookTicker`，生产 parser 热路径只读取 `u/E/s/b/B/a/A`，不再解析 `e/T`；字段存在、类型和数字格式作为 Binance 协议约束处理，debug 下用 assert 捕获协议漂移。
+4. `b/B/a/A` 是 JSON 字符串，使用 `fast_float::from_chars` 转 double，不使用 `std::stod`。
+5. client/session 都是模板组合；热路径不引入虚函数或 `std::function`。
+6. session diagnostics 默认 no-op；benchmark / probe / test 显式启用。
 
-## yyjson 对照分支
+## yyjson 对照
 
-`feature/binance-bookticker-yyjson` 当前已经收敛为 **benchmark-only yyjson 对照分支**：
+当前 main 中 yyjson 只作为 **benchmark-only parser 对照**：
 
 - 生产 Binance 行情代码保持 main 的最小 simdjson 实现，不暴露 yyjson parser policy。
 - yyjson bookTicker helper 只放在 `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` 的匿名 namespace 中。
@@ -105,29 +106,29 @@ benchmark：
 taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 ```
 
-2026-05-01 `feature/binance-bookticker-yyjson` 收敛后当前 mean 结果：
+2026-05-01 P0 trusted-field parser 当前 mean 结果：
 
 | case | time |
 | --- | ---: |
-| `parse_book_ticker` | 262ns |
-| `parse_book_ticker_padded_view` | 200ns |
-| `parse_book_ticker_yyjson_pool` | 204ns |
-| `parse_book_ticker_yyjson_insitu_copy` | 201ns |
-| `parse_book_ticker_yyjson_insitu_view` | 202ns |
-| `client_on_text_payload/1` | 246ns |
-| `client_on_text_payload/8` | 258ns |
-| `client_on_text_payload/32` | 259ns |
-| `session_handle_text/1` | 276ns |
-| `session_handle_text/8` | 288ns |
-| `session_handle_text/32` | 287ns |
-| `session_handle_text_padded_view` | 255ns |
+| `parse_book_ticker` | 202ns |
+| `parse_book_ticker_padded_view` | 152ns |
+| `parse_book_ticker_yyjson_pool` | 177ns |
+| `parse_book_ticker_yyjson_insitu_copy` | 174ns |
+| `parse_book_ticker_yyjson_insitu_view` | 173ns |
+| `client_on_text_payload/1` | 201ns |
+| `client_on_text_payload/8` | 213ns |
+| `client_on_text_payload/32` | 215ns |
+| `session_handle_text/1` | 225ns |
+| `session_handle_text/8` | 238ns |
+| `session_handle_text/32` | 237ns |
+| `session_handle_text_padded_view` | 210ns |
 
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。
 
 当前对比结论只限这组 bookTicker payload：
 
 - simdjson fallback copy 明显慢于 padded-view；生产路径仍应优先保证 receive buffer 能稳定提供 `simdjson::SIMDJSON_PADDING`。
-- yyjson pool / insitu-copy / insitu-view 在 parser 层与 simdjson padded-view 很接近，本轮没有证明 yyjson 足以替换 production simdjson。
+- trusted-field parser 后，simdjson padded-view 是当前 parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 

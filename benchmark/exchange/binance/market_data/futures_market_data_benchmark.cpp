@@ -89,7 +89,7 @@ aq_binance::BookTickerParseStatus ParseYyjsonBookTickerDocument(
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
   if (output == nullptr) {
-    return aq_binance::BookTickerParseStatus::kMissingField;
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
 
   yyjson_val* root = yyjson_doc_get_root(doc);
@@ -97,69 +97,51 @@ aq_binance::BookTickerParseStatus ParseYyjsonBookTickerDocument(
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
 
-  std::string_view event;
-  if (!ReadYyjsonString(yyjson_obj_get(root, "e"), &event)) {
-    return aq_binance::BookTickerParseStatus::kMissingField;
-  }
-  if (event != "bookTicker") {
-    return aq_binance::BookTickerParseStatus::kUnsupportedEvent;
-  }
-
   std::int64_t update_id = 0;
   if (!ReadYyjsonInt64(yyjson_obj_get(root, "u"), &update_id)) {
-    return aq_binance::BookTickerParseStatus::kMissingField;
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
 
   std::int64_t event_time_ms = 0;
   if (!ReadYyjsonInt64(yyjson_obj_get(root, "E"), &event_time_ms)) {
-    return aq_binance::BookTickerParseStatus::kMissingField;
-  }
-
-  std::int64_t transaction_time_ms = 0;
-  if (!ReadYyjsonInt64(yyjson_obj_get(root, "T"), &transaction_time_ms)) {
-    return aq_binance::BookTickerParseStatus::kMissingField;
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
 
   std::string_view symbol;
   if (!ReadYyjsonString(yyjson_obj_get(root, "s"), &symbol)) {
-    return aq_binance::BookTickerParseStatus::kMissingField;
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
 
-  double bid_price = 0.0;
   std::string_view number;
-  if (!ReadYyjsonString(yyjson_obj_get(root, "b"), &number) ||
-      !aq_binance::detail::ParseDoubleString(number, &bid_price)) {
-    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "b"), &number)) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
+  const double bid_price = aq_binance::detail::ParseTrustedDoubleString(number);
 
-  double bid_volume = 0.0;
-  if (!ReadYyjsonString(yyjson_obj_get(root, "B"), &number) ||
-      !aq_binance::detail::ParseDoubleString(number, &bid_volume)) {
-    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "B"), &number)) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
+  const double bid_volume =
+      aq_binance::detail::ParseTrustedDoubleString(number);
 
-  double ask_price = 0.0;
-  if (!ReadYyjsonString(yyjson_obj_get(root, "a"), &number) ||
-      !aq_binance::detail::ParseDoubleString(number, &ask_price)) {
-    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "a"), &number)) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
+  const double ask_price = aq_binance::detail::ParseTrustedDoubleString(number);
 
-  double ask_volume = 0.0;
-  if (!ReadYyjsonString(yyjson_obj_get(root, "A"), &number) ||
-      !aq_binance::detail::ParseDoubleString(number, &ask_volume)) {
-    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "A"), &number)) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
+  const double ask_volume =
+      aq_binance::detail::ParseTrustedDoubleString(number);
 
   output->update_id = update_id;
   output->event_time_ms = event_time_ms;
-  output->transaction_time_ms = transaction_time_ms;
   output->bid_price = bid_price;
   output->bid_volume = bid_volume;
   output->ask_price = ask_price;
   output->ask_volume = ask_volume;
-  if (!aq_binance::detail::CopySymbol(symbol, output)) {
-    return aq_binance::BookTickerParseStatus::kSymbolTooLong;
-  }
+  aq_binance::detail::CopyTrustedSymbol(symbol, *output);
   return aq_binance::BookTickerParseStatus::kOk;
 }
 
