@@ -7,6 +7,8 @@
 namespace aquila::binance {
 
 struct SymbolBinding {
+  // The symbol text storage must outlive clients and sessions built from this
+  // binding; market data lookup keeps string_view keys on purpose.
   std::string_view symbol{};
   std::int32_t symbol_id{-1};
 };

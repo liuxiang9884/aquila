@@ -303,6 +303,16 @@ ws::MessageView TextView(std::string_view payload,
   };
 }
 
+ws::MessageView BinaryView(std::string_view payload) noexcept {
+  return {
+      .kind = ws::PayloadKind::kBinary,
+      .payload = std::as_bytes(std::span(payload.data(), payload.size())),
+      .sequence = 9,
+      .fin = true,
+      .readable_tail_bytes = 0,
+  };
+}
+
 struct CountingConsumer {
   std::uint64_t calls{0};
   std::uint64_t id_xor{0};
@@ -577,6 +587,30 @@ BENCHMARK(BenchmarkClientOnTextPayload)
     ->Arg(1)
     ->Arg(8)
     ->Arg(32)
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkClientHandleBinary(benchmark::State& state) {
+  SymbolSet symbols = BuildSymbols(1);
+  CountingConsumer consumer;
+  aq_binance::FuturesMarketDataClient client(
+      std::span<const aq_binance::SymbolBinding>(symbols.bindings), consumer);
+  const ws::MessageView view = BinaryView(kBookTickerJson);
+  std::uint64_t accepted = 0;
+
+  for (auto _ : state) {
+    ws::DeliveryResult result = client.Handle(view);
+    benchmark::DoNotOptimize(result);
+    accepted +=
+        static_cast<std::uint64_t>(result == ws::DeliveryResult::kAccepted);
+  }
+
+  benchmark::DoNotOptimize(consumer);
+  state.SetItemsProcessed(static_cast<std::int64_t>(accepted));
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkClientHandleBinary)
+    ->Name("binance_market_data/client_handle_binary")
     ->Unit(benchmark::kNanosecond);
 
 void BenchmarkSessionHandleText(benchmark::State& state) {

@@ -72,6 +72,7 @@ FuturesMarketDataSession::Handle(text MessageView)
 6. session diagnostics 默认 no-op；benchmark / probe / test 显式启用。
 7. 启用 market data diagnostics 时会记录 `simdjson_padding_fallback_messages`，用于 live probe 判断生产 receive buffer 是否稳定提供 `simdjson::SIMDJSON_PADDING`，默认 production no-op 路径不写 counter。
 8. 无效 stream 数量会生成空 target；`FuturesMarketDataSession::Start()` 对空 target 直接返回 `false`，避免在 cold path 尝试错误连接。
+9. `SymbolBinding::symbol` 的底层字符串存储必须覆盖 client/session 生命周期；生产 symbol lookup 故意保留 `std::string_view` key，不在初始化阶段复制 symbol 文本。
 
 ## yyjson 对照
 
@@ -105,27 +106,28 @@ FuturesMarketDataSession::Handle(text MessageView)
 benchmark：
 
 ```bash
-taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
+taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|client_handle_binary|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 ```
 
 2026-05-01 P1 parser 当前 mean 结果：
 
 | case | time |
 | --- | ---: |
-| `parse_book_ticker` | 177ns |
+| `parse_book_ticker` | 175ns |
 | `parse_book_ticker_padded_view` | 152ns |
 | `parse_book_ticker_ordered` | 173ns |
 | `parse_book_ticker_ordered_padded_view` | 149ns |
-| `parse_book_ticker_yyjson_pool` | 180ns |
+| `parse_book_ticker_yyjson_pool` | 178ns |
 | `parse_book_ticker_yyjson_insitu_copy` | 173ns |
 | `parse_book_ticker_yyjson_insitu_view` | 172ns |
 | `client_on_text_payload/1` | 180ns |
-| `client_on_text_payload/8` | 192ns |
-| `client_on_text_payload/32` | 193ns |
+| `client_on_text_payload/8` | 194ns |
+| `client_on_text_payload/32` | 194ns |
+| `client_handle_binary` | 0.548ns |
 | `session_handle_text/1` | 212ns |
-| `session_handle_text/8` | 224ns |
-| `session_handle_text/32` | 224ns |
-| `session_handle_text_padded_view` | 197ns |
+| `session_handle_text/8` | 225ns |
+| `session_handle_text/32` | 227ns |
+| `session_handle_text_padded_view` | 196ns |
 
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。
 

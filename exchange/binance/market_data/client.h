@@ -90,6 +90,9 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnMessage(
       const websocket::MessageView& view) noexcept {
+    if (view.kind != websocket::PayloadKind::kText || !view.fin) {
+      return websocket::DeliveryResult::kAccepted;
+    }
     return OnMessage(view,
                      static_cast<std::int64_t>(websocket::NowNs(kClockSource)));
   }
