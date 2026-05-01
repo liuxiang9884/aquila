@@ -9,7 +9,6 @@ target_link_libraries(aquila_binance
     INTERFACE
         fmt::fmt-header-only
         simdjson::simdjson
-        yyjson::yyjson
         FastFloat::fast_float
         absl::flat_hash_map
 )

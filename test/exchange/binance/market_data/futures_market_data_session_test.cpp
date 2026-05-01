@@ -8,7 +8,6 @@
 #include <gtest/gtest.h>
 
 #include "core/websocket/message_view.h"
-#include "exchange/binance/market_data/book_ticker_yyjson_parser.h"
 #include "exchange/binance/market_data/session.h"
 
 namespace {
@@ -63,12 +62,6 @@ using DiagnosticSession = aquila::binance::FuturesMarketDataSession<
     aquila::binance::FuturesMarketDataDiagnostics,
     aquila::websocket::DefaultWebSocketOptions,
     aquila::binance::FuturesMarketDataSessionDiagnostics>;
-using YyjsonSession = aquila::binance::FuturesMarketDataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::binance::NoopFuturesMarketDataDiagnostics,
-    aquila::websocket::DefaultWebSocketOptions,
-    aquila::binance::FuturesMarketDataSessionDiagnostics,
-    aquila::binance::YyjsonBookTickerParser>;
 using CoarseClockSession = aquila::binance::FuturesMarketDataSession<
     RecordingConsumer, aquila::websocket::TlsSocket,
     aquila::binance::NoopFuturesMarketDataDiagnostics, CoarseClockOptions>;
@@ -111,15 +104,6 @@ DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
   return DiagnosticSession(std::move(config), symbols, consumer);
 }
 
-YyjsonSession MakeYyjsonSession(RecordingConsumer& consumer) {
-  static constexpr std::array<aquila::binance::SymbolBinding, 1> symbols{
-      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
-  aquila::websocket::ConnectionConfig config{};
-  config.host = "fstream.binance.com";
-  config.service = "443";
-  return YyjsonSession(std::move(config), symbols, consumer);
-}
-
 }  // namespace
 
 TEST(BinanceFuturesMarketDataSessionTest, BuildsRawStreamTargetFromSymbols) {
@@ -132,21 +116,6 @@ TEST(BinanceFuturesMarketDataSessionTest, BuildsRawStreamTargetFromSymbols) {
 TEST(BinanceFuturesMarketDataSessionTest, DelegatesTextBookTickerToClient) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
-
-  const auto result = session.Handle(TextView(kBookTickerJson));
-
-  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(session.stats().text_messages, 1U);
-  EXPECT_EQ(session.stats().book_ticker_messages, 1U);
-  ASSERT_EQ(consumer.calls, 1);
-  EXPECT_EQ(consumer.last.symbol_id, 11);
-  EXPECT_EQ(consumer.last.id, 400900217);
-}
-
-TEST(BinanceFuturesMarketDataSessionTest,
-     DelegatesTextBookTickerToYyjsonClient) {
-  RecordingConsumer consumer;
-  YyjsonSession session = MakeYyjsonSession(consumer);
 
   const auto result = session.Handle(TextView(kBookTickerJson));
 

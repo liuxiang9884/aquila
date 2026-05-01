@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -12,10 +13,10 @@
 #include "benchmark/websocket/benchmark_support.h"
 #include "core/websocket/message_view.h"
 #include "exchange/binance/market_data/book_ticker_parser.h"
-#include "exchange/binance/market_data/book_ticker_yyjson_parser.h"
 #include "exchange/binance/market_data/client.h"
 #include "exchange/binance/market_data/session.h"
 #include <simdjson.h>
+#include <yyjson.h>
 
 namespace aq_binance = aquila::binance;
 namespace ws = aquila::websocket;
@@ -24,11 +25,218 @@ namespace ws_bench = aquila::websocket::benchmarking;
 namespace {
 
 constexpr std::int64_t kLocalNs = 4'720'000'000'000'000;
+constexpr size_t kYyjsonBookTickerReadPoolBytes = 4096;
 constexpr size_t kYyjsonInsituViewIterations = 100'000;
 constexpr std::string_view kBookTickerJson =
     R"({"e":"bookTicker","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
 constexpr size_t kYyjsonMutablePayloadStride =
     kBookTickerJson.size() + YYJSON_PADDING_SIZE;
+
+class YyjsonDoc {
+ public:
+  explicit YyjsonDoc(yyjson_doc* doc) noexcept : doc_(doc) {}
+  YyjsonDoc(const YyjsonDoc&) = delete;
+  YyjsonDoc& operator=(const YyjsonDoc&) = delete;
+  ~YyjsonDoc() {
+    if (doc_ != nullptr) {
+      yyjson_doc_free(doc_);
+    }
+  }
+
+  [[nodiscard]] yyjson_doc* get() const noexcept {
+    return doc_;
+  }
+
+ private:
+  yyjson_doc* doc_{nullptr};
+};
+
+bool ReadYyjsonString(yyjson_val* value, std::string_view* output) noexcept {
+  if (output == nullptr || !yyjson_is_str(value)) {
+    return false;
+  }
+  const char* const text = yyjson_get_str(value);
+  if (text == nullptr) {
+    return false;
+  }
+  *output = std::string_view(text, yyjson_get_len(value));
+  return true;
+}
+
+bool ReadYyjsonInt64(yyjson_val* value, std::int64_t* output) noexcept {
+  if (output == nullptr) {
+    return false;
+  }
+  if (yyjson_is_uint(value)) {
+    const std::uint64_t parsed = yyjson_get_uint(value);
+    if (parsed >
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      return false;
+    }
+    *output = static_cast<std::int64_t>(parsed);
+    return true;
+  }
+  if (yyjson_is_sint(value)) {
+    *output = yyjson_get_sint(value);
+    return true;
+  }
+  return false;
+}
+
+aq_binance::BookTickerParseStatus ParseYyjsonBookTickerDocument(
+    yyjson_doc* doc, aq_binance::BookTickerUpdate* output) noexcept {
+  if (doc == nullptr) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
+  }
+  if (output == nullptr) {
+    return aq_binance::BookTickerParseStatus::kMissingField;
+  }
+
+  yyjson_val* root = yyjson_doc_get_root(doc);
+  if (!yyjson_is_obj(root)) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
+  }
+
+  std::string_view event;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "e"), &event)) {
+    return aq_binance::BookTickerParseStatus::kMissingField;
+  }
+  if (event != "bookTicker") {
+    return aq_binance::BookTickerParseStatus::kUnsupportedEvent;
+  }
+
+  std::int64_t update_id = 0;
+  if (!ReadYyjsonInt64(yyjson_obj_get(root, "u"), &update_id)) {
+    return aq_binance::BookTickerParseStatus::kMissingField;
+  }
+
+  std::int64_t event_time_ms = 0;
+  if (!ReadYyjsonInt64(yyjson_obj_get(root, "E"), &event_time_ms)) {
+    return aq_binance::BookTickerParseStatus::kMissingField;
+  }
+
+  std::int64_t transaction_time_ms = 0;
+  if (!ReadYyjsonInt64(yyjson_obj_get(root, "T"), &transaction_time_ms)) {
+    return aq_binance::BookTickerParseStatus::kMissingField;
+  }
+
+  std::string_view symbol;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "s"), &symbol)) {
+    return aq_binance::BookTickerParseStatus::kMissingField;
+  }
+
+  double bid_price = 0.0;
+  std::string_view number;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "b"), &number) ||
+      !aq_binance::detail::ParseDoubleString(number, &bid_price)) {
+    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  }
+
+  double bid_volume = 0.0;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "B"), &number) ||
+      !aq_binance::detail::ParseDoubleString(number, &bid_volume)) {
+    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  }
+
+  double ask_price = 0.0;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "a"), &number) ||
+      !aq_binance::detail::ParseDoubleString(number, &ask_price)) {
+    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  }
+
+  double ask_volume = 0.0;
+  if (!ReadYyjsonString(yyjson_obj_get(root, "A"), &number) ||
+      !aq_binance::detail::ParseDoubleString(number, &ask_volume)) {
+    return aq_binance::BookTickerParseStatus::kInvalidNumber;
+  }
+
+  output->update_id = update_id;
+  output->event_time_ms = event_time_ms;
+  output->transaction_time_ms = transaction_time_ms;
+  output->bid_price = bid_price;
+  output->bid_volume = bid_volume;
+  output->ask_price = ask_price;
+  output->ask_volume = ask_volume;
+  if (!aq_binance::detail::CopySymbol(symbol, output)) {
+    return aq_binance::BookTickerParseStatus::kSymbolTooLong;
+  }
+  return aq_binance::BookTickerParseStatus::kOk;
+}
+
+template <size_t ReadPoolBytes = kYyjsonBookTickerReadPoolBytes>
+class BasicYyjsonBookTickerParser {
+ public:
+  aq_binance::BookTickerParseStatus Parse(
+      std::string_view payload, std::uint32_t readable_tail_bytes,
+      aq_binance::BookTickerUpdate& output) noexcept {
+    (void)readable_tail_bytes;
+    if (payload.empty()) {
+      return aq_binance::BookTickerParseStatus::kMalformedJson;
+    }
+
+    return ParseWithFlags(const_cast<char*>(payload.data()), payload.size(),
+                          YYJSON_READ_NOFLAG, output);
+  }
+
+  aq_binance::BookTickerParseStatus ParseInsitu(
+      std::span<char> padded_payload, size_t payload_size,
+      aq_binance::BookTickerUpdate& output) noexcept {
+    if (payload_size == 0 || payload_size > padded_payload.size() ||
+        padded_payload.size() - payload_size < YYJSON_PADDING_SIZE) {
+      return aq_binance::BookTickerParseStatus::kMalformedJson;
+    }
+
+    return ParseWithFlags(padded_payload.data(), payload_size,
+                          YYJSON_READ_INSITU, output);
+  }
+
+ private:
+  aq_binance::BookTickerParseStatus ParseWithFlags(
+      char* payload, size_t payload_size, yyjson_read_flag flags,
+      aq_binance::BookTickerUpdate& output) noexcept {
+    yyjson_alc allocator{};
+    if (!yyjson_alc_pool_init(&allocator, read_pool_.data(),
+                              read_pool_.size())) {
+      return aq_binance::BookTickerParseStatus::kMalformedJson;
+    }
+
+    yyjson_read_err error{};
+    YyjsonDoc doc(
+        yyjson_read_opts(payload, payload_size, flags, &allocator, &error));
+    if (doc.get() == nullptr) {
+      return aq_binance::BookTickerParseStatus::kMalformedJson;
+    }
+    return ParseYyjsonBookTickerDocument(doc.get(), &output);
+  }
+
+  alignas(std::max_align_t) std::array<char, ReadPoolBytes> read_pool_{};
+};
+
+using YyjsonBookTickerParser = BasicYyjsonBookTickerParser<>;
+
+template <size_t ReadPoolBytes = kYyjsonBookTickerReadPoolBytes>
+class BasicYyjsonInsituBookTickerParser {
+ public:
+  aq_binance::BookTickerParseStatus Parse(
+      std::string_view payload, std::uint32_t readable_tail_bytes,
+      aq_binance::BookTickerUpdate& output) noexcept {
+    if (payload.empty()) {
+      return aq_binance::BookTickerParseStatus::kMalformedJson;
+    }
+    if (readable_tail_bytes >= YYJSON_PADDING_SIZE) {
+      return parser_.ParseInsitu(
+          std::span<char>(const_cast<char*>(payload.data()),
+                          payload.size() + readable_tail_bytes),
+          payload.size(), output);
+    }
+    return parser_.Parse(payload, readable_tail_bytes, output);
+  }
+
+ private:
+  BasicYyjsonBookTickerParser<ReadPoolBytes> parser_;
+};
+
+using YyjsonInsituBookTickerParser = BasicYyjsonInsituBookTickerParser<>;
 
 ws::MessageView TextView(std::string_view payload,
                          std::uint32_t readable_tail_bytes = 0) noexcept {
@@ -155,7 +363,7 @@ BENCHMARK(BenchmarkParseBookTickerPaddedView)
     ->Unit(benchmark::kNanosecond);
 
 void BenchmarkParseBookTickerYyjsonPool(benchmark::State& state) {
-  aq_binance::YyjsonBookTickerParser parser;
+  YyjsonBookTickerParser parser;
   aq_binance::BookTickerUpdate update{};
   std::uint64_t parsed = 0;
 
@@ -170,7 +378,7 @@ void BenchmarkParseBookTickerYyjsonPool(benchmark::State& state) {
 
   state.SetItemsProcessed(static_cast<std::int64_t>(parsed));
   state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+      static_cast<double>(kYyjsonBookTickerReadPoolBytes);
   SetCommonCounters(state, kBookTickerJson);
 }
 
@@ -180,7 +388,7 @@ BENCHMARK(BenchmarkParseBookTickerYyjsonPool)
 
 void BenchmarkParseBookTickerYyjsonInsituCopy(benchmark::State& state) {
   std::array<char, kBookTickerJson.size() + YYJSON_PADDING_SIZE> scratch{};
-  aq_binance::YyjsonBookTickerParser parser;
+  YyjsonBookTickerParser parser;
   aq_binance::BookTickerUpdate update{};
   std::uint64_t parsed = 0;
 
@@ -200,7 +408,7 @@ void BenchmarkParseBookTickerYyjsonInsituCopy(benchmark::State& state) {
   state.counters["yyjson_padding_bytes"] =
       static_cast<double>(YYJSON_PADDING_SIZE);
   state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+      static_cast<double>(kYyjsonBookTickerReadPoolBytes);
   SetCommonCounters(state, kBookTickerJson);
 }
 
@@ -211,7 +419,7 @@ BENCHMARK(BenchmarkParseBookTickerYyjsonInsituCopy)
 void BenchmarkParseBookTickerYyjsonInsituView(benchmark::State& state) {
   std::vector<char> payloads =
       BuildMutableBookTickerPayloads(kYyjsonInsituViewIterations);
-  aq_binance::YyjsonInsituBookTickerParser parser;
+  YyjsonInsituBookTickerParser parser;
   aq_binance::BookTickerUpdate update{};
   std::uint64_t parsed = 0;
   size_t index = 0;
@@ -233,7 +441,7 @@ void BenchmarkParseBookTickerYyjsonInsituView(benchmark::State& state) {
   state.counters["yyjson_padding_bytes"] =
       static_cast<double>(YYJSON_PADDING_SIZE);
   state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+      static_cast<double>(kYyjsonBookTickerReadPoolBytes);
   SetCommonCounters(state, kBookTickerJson);
 }
 
@@ -268,78 +476,6 @@ BENCHMARK(BenchmarkClientOnTextPayload)
     ->Arg(32)
     ->Unit(benchmark::kNanosecond);
 
-void BenchmarkClientOnTextPayloadYyjsonPool(benchmark::State& state) {
-  const size_t symbol_count = static_cast<size_t>(state.range(0));
-  SymbolSet symbols = BuildSymbols(symbol_count);
-  CountingConsumer consumer;
-  aq_binance::FuturesMarketDataClient<
-      CountingConsumer, aq_binance::NoopFuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions, aq_binance::YyjsonBookTickerParser>
-      client(std::span<const aq_binance::SymbolBinding>(symbols.bindings),
-             consumer);
-
-  for (auto _ : state) {
-    ws::DeliveryResult result =
-        client.OnTextPayload(kBookTickerJson, 0, kLocalNs);
-    benchmark::DoNotOptimize(result);
-  }
-
-  benchmark::DoNotOptimize(consumer);
-  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
-  state.counters["symbols"] = static_cast<double>(symbol_count);
-  state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
-  SetCommonCounters(state, kBookTickerJson);
-}
-
-BENCHMARK(BenchmarkClientOnTextPayloadYyjsonPool)
-    ->Name("binance_market_data/client_on_text_payload_yyjson_pool")
-    ->Arg(1)
-    ->Arg(8)
-    ->Arg(32)
-    ->Unit(benchmark::kNanosecond);
-
-void BenchmarkClientOnTextPayloadYyjsonInsituView(benchmark::State& state) {
-  const size_t symbol_count = static_cast<size_t>(state.range(0));
-  SymbolSet symbols = BuildSymbols(symbol_count);
-  std::vector<char> payloads =
-      BuildMutableBookTickerPayloads(kYyjsonInsituViewIterations);
-  CountingConsumer consumer;
-  aq_binance::FuturesMarketDataClient<
-      CountingConsumer, aq_binance::NoopFuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions, aq_binance::YyjsonInsituBookTickerParser>
-      client(std::span<const aq_binance::SymbolBinding>(symbols.bindings),
-             consumer);
-  size_t index = 0;
-
-  for (auto _ : state) {
-    const std::string_view payload = MutableBookTickerPayload(payloads, index);
-    ws::DeliveryResult result =
-        client.OnTextPayload(payload, YYJSON_PADDING_SIZE, kLocalNs);
-    benchmark::DoNotOptimize(result);
-    ++index;
-  }
-
-  benchmark::DoNotOptimize(consumer);
-  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
-  state.counters["symbols"] = static_cast<double>(symbol_count);
-  state.counters["scratch_bytes"] =
-      static_cast<double>(kYyjsonMutablePayloadStride);
-  state.counters["yyjson_padding_bytes"] =
-      static_cast<double>(YYJSON_PADDING_SIZE);
-  state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
-  SetCommonCounters(state, kBookTickerJson);
-}
-
-BENCHMARK(BenchmarkClientOnTextPayloadYyjsonInsituView)
-    ->Name("binance_market_data/client_on_text_payload_yyjson_insitu_view")
-    ->Arg(1)
-    ->Arg(8)
-    ->Arg(32)
-    ->Iterations(kYyjsonInsituViewIterations)
-    ->Unit(benchmark::kNanosecond);
-
 void BenchmarkSessionHandleText(benchmark::State& state) {
   const size_t symbol_count = static_cast<size_t>(state.range(0));
   SymbolSet symbols = BuildSymbols(symbol_count);
@@ -366,84 +502,6 @@ BENCHMARK(BenchmarkSessionHandleText)
     ->Arg(1)
     ->Arg(8)
     ->Arg(32)
-    ->Unit(benchmark::kNanosecond);
-
-void BenchmarkSessionHandleTextYyjsonPool(benchmark::State& state) {
-  const size_t symbol_count = static_cast<size_t>(state.range(0));
-  SymbolSet symbols = BuildSymbols(symbol_count);
-  CountingConsumer consumer;
-  aq_binance::FuturesMarketDataSession<
-      CountingConsumer, ws::PlainSocket,
-      aq_binance::NoopFuturesMarketDataDiagnostics, ws::DefaultWebSocketOptions,
-      aq_binance::NoopFuturesMarketDataSessionDiagnostics,
-      aq_binance::YyjsonBookTickerParser>
-      session(BuildConnectionConfig(),
-              std::span<const aq_binance::SymbolBinding>(symbols.bindings),
-              consumer);
-  const ws::MessageView view = TextView(kBookTickerJson);
-
-  for (auto _ : state) {
-    ws::DeliveryResult result = session.Handle(view);
-    benchmark::DoNotOptimize(result);
-  }
-
-  benchmark::DoNotOptimize(consumer);
-  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
-  state.counters["symbols"] = static_cast<double>(symbol_count);
-  state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
-  SetCommonCounters(state, kBookTickerJson);
-}
-
-BENCHMARK(BenchmarkSessionHandleTextYyjsonPool)
-    ->Name("binance_market_data/session_handle_text_yyjson_pool")
-    ->Arg(1)
-    ->Arg(8)
-    ->Arg(32)
-    ->Unit(benchmark::kNanosecond);
-
-void BenchmarkSessionHandleTextYyjsonInsituView(benchmark::State& state) {
-  const size_t symbol_count = static_cast<size_t>(state.range(0));
-  SymbolSet symbols = BuildSymbols(symbol_count);
-  std::vector<char> payloads =
-      BuildMutableBookTickerPayloads(kYyjsonInsituViewIterations);
-  CountingConsumer consumer;
-  aq_binance::FuturesMarketDataSession<
-      CountingConsumer, ws::PlainSocket,
-      aq_binance::NoopFuturesMarketDataDiagnostics, ws::DefaultWebSocketOptions,
-      aq_binance::NoopFuturesMarketDataSessionDiagnostics,
-      aq_binance::YyjsonInsituBookTickerParser>
-      session(BuildConnectionConfig(),
-              std::span<const aq_binance::SymbolBinding>(symbols.bindings),
-              consumer);
-  size_t index = 0;
-
-  for (auto _ : state) {
-    const std::string_view payload = MutableBookTickerPayload(payloads, index);
-    const ws::MessageView view = TextView(payload, YYJSON_PADDING_SIZE);
-    ws::DeliveryResult result = session.Handle(view);
-    benchmark::DoNotOptimize(result);
-    ++index;
-  }
-
-  benchmark::DoNotOptimize(consumer);
-  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
-  state.counters["symbols"] = static_cast<double>(symbol_count);
-  state.counters["scratch_bytes"] =
-      static_cast<double>(kYyjsonMutablePayloadStride);
-  state.counters["yyjson_padding_bytes"] =
-      static_cast<double>(YYJSON_PADDING_SIZE);
-  state.counters["yyjson_pool_bytes"] =
-      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
-  SetCommonCounters(state, kBookTickerJson);
-}
-
-BENCHMARK(BenchmarkSessionHandleTextYyjsonInsituView)
-    ->Name("binance_market_data/session_handle_text_yyjson_insitu_view")
-    ->Arg(1)
-    ->Arg(8)
-    ->Arg(32)
-    ->Iterations(kYyjsonInsituViewIterations)
     ->Unit(benchmark::kNanosecond);
 
 void BenchmarkSessionHandleTextPaddedView(benchmark::State& state) {

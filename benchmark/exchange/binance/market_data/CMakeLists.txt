@@ -7,4 +7,5 @@ target_link_libraries(binance_futures_market_data_benchmark
         aquila_core
         aquila_binance
         benchmark::benchmark_main
+        yyjson::yyjson
 )
