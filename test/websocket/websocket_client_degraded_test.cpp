@@ -1,15 +1,15 @@
-#include "core/websocket/websocket_client.h"
-#include "test/websocket/tls_blackhole_server.h"
-
-#include <fmt/format.h>
-#include <gtest/gtest.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <vector>
+
+#include <fmt/format.h>
+#include <gtest/gtest.h>
+
+#include "core/websocket/websocket_client.h"
+#include "test/websocket/tls_blackhole_server.h"
 
 using namespace aquila::websocket;
 using namespace std::chrono_literals;
@@ -39,8 +39,8 @@ struct StateCapture {
     });
   }
 
-  bool ContainsSubsequence(std::initializer_list<ConnectionPhase> expected)
-      const {
+  bool ContainsSubsequence(
+      std::initializer_list<ConnectionPhase> expected) const {
     std::lock_guard lock(mutex);
     auto cursor = expected.begin();
     for (const auto phase : phases) {
@@ -104,17 +104,23 @@ TEST(WebSocketClientDegradedTest,
   });
 
   ASSERT_TRUE(states.WaitFor(ConnectionPhase::kDegraded, 2s));
+  EXPECT_EQ(client.phase(), ConnectionPhase::kDegraded);
+  EXPECT_EQ(client.last_error(), ConnectionError::kNone);
   auto degraded_metrics = client.SnapshotMetrics();
   EXPECT_EQ(degraded_metrics.degraded_active, 1U);
   EXPECT_EQ(degraded_metrics.degraded_enter_count, 1U);
   EXPECT_EQ(degraded_metrics.degraded_exit_count, 0U);
 
   ASSERT_TRUE(states.WaitFor(ConnectionPhase::kReconnectBackoff, 2s));
+  EXPECT_EQ(client.phase(), ConnectionPhase::kReconnectBackoff);
+  EXPECT_EQ(client.last_error(), ConnectionError::kHeartbeatTimeout);
   client.Stop();
   io_thread.join();
 
   EXPECT_TRUE(result);
   EXPECT_TRUE(done.load(std::memory_order_acquire));
+  EXPECT_EQ(client.phase(), ConnectionPhase::kClosed);
+  EXPECT_EQ(client.last_error(), ConnectionError::kHeartbeatTimeout);
   EXPECT_TRUE(states.ContainsSubsequence({
       ConnectionPhase::kActive,
       ConnectionPhase::kDegraded,

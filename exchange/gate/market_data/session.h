@@ -166,8 +166,7 @@ class FuturesMarketDataSession {
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(ApplyOptions(std::move(config)), message_handler_) {
     detail::BuildSymbolViews(symbols_, &subscription_symbols_);
-    client_.SetStateHandler(this, &HandleState);
-    client_.SetErrorHandler(this, &HandleError);
+    client_.SetStateHook(this, &HandleState);
   }
 
   template <size_t N>
@@ -188,14 +187,12 @@ class FuturesMarketDataSession {
 
   void SetStateHandler(void* context,
                        websocket::StateHandler handler) noexcept {
-    state_context_ = context;
-    state_handler_ = handler;
+    client_.SetStateHandler(context, handler);
   }
 
   void SetErrorHandler(void* context,
                        websocket::ErrorHandler handler) noexcept {
-    error_context_ = context;
-    error_handler_ = handler;
+    client_.SetErrorHandler(context, handler);
   }
 
   websocket::DeliveryResult Handle(
@@ -223,13 +220,10 @@ class FuturesMarketDataSession {
   }
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
-    phase_ = phase;
     if (phase == websocket::ConnectionPhase::kActive) {
+      subscription_connection_active_ = true;
       if (!subscription_sent_for_connection_) {
         (void)SendSubscribeAttempt();
-      }
-      if (state_handler_ != nullptr) {
-        state_handler_(state_context_, phase);
       }
       return;
     }
@@ -238,22 +232,12 @@ class FuturesMarketDataSession {
         phase == websocket::ConnectionPhase::kReconnectBackoff ||
         phase == websocket::ConnectionPhase::kClosing ||
         phase == websocket::ConnectionPhase::kClosed) {
+      subscription_connection_active_ = false;
       subscription_sent_for_connection_ = false;
       if (subscription_state_ == SubscriptionState::kSubscribeSent ||
           subscription_state_ == SubscriptionState::kSubscribed) {
         subscription_state_ = SubscriptionState::kIdle;
       }
-    }
-
-    if (state_handler_ != nullptr) {
-      state_handler_(state_context_, phase);
-    }
-  }
-
-  void OnConnectionError(websocket::ConnectionError error) noexcept {
-    last_error_ = error;
-    if (error_handler_ != nullptr) {
-      error_handler_(error_context_, error);
     }
   }
 
@@ -264,8 +248,7 @@ class FuturesMarketDataSession {
   }
 
   websocket::SendStatus RetryPendingSubscribe() noexcept {
-    if (phase_ != websocket::ConnectionPhase::kActive ||
-        subscription_sent_for_connection_ ||
+    if (!subscription_connection_active_ || subscription_sent_for_connection_ ||
         subscription_state_ == SubscriptionState::kRejected) {
       return subscribe_status_;
     }
@@ -287,11 +270,11 @@ class FuturesMarketDataSession {
   }
 
   [[nodiscard]] websocket::ConnectionPhase phase() const noexcept {
-    return phase_;
+    return client_.phase();
   }
 
   [[nodiscard]] websocket::ConnectionError last_error() const noexcept {
-    return last_error_;
+    return client_.last_error();
   }
 
   [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
@@ -319,11 +302,6 @@ class FuturesMarketDataSession {
   static void HandleState(void* context,
                           websocket::ConnectionPhase phase) noexcept {
     static_cast<FuturesMarketDataSession*>(context)->OnConnectionPhase(phase);
-  }
-
-  static void HandleError(void* context,
-                          websocket::ConnectionError error) noexcept {
-    static_cast<FuturesMarketDataSession*>(context)->OnConnectionError(error);
   }
 
   static websocket::ConnectionConfig ApplyOptions(
@@ -451,13 +429,8 @@ class FuturesMarketDataSession {
       websocket::SendStatus::kWriteUnavailable};
   websocket::SendStatus unsubscribe_status_{
       websocket::SendStatus::kWriteUnavailable};
-  websocket::ConnectionPhase phase_{websocket::ConnectionPhase::kDisconnected};
-  websocket::ConnectionError last_error_{websocket::ConnectionError::kNone};
-  void* state_context_{nullptr};
-  websocket::StateHandler state_handler_{nullptr};
-  void* error_context_{nullptr};
-  websocket::ErrorHandler error_handler_{nullptr};
   bool subscription_sent_for_connection_{false};
+  bool subscription_connection_active_{false};
 };
 
 }  // namespace aquila::gate

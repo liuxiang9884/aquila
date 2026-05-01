@@ -288,6 +288,65 @@ struct StateCapture {
   std::vector<ConnectionPhase> phases;
 };
 
+struct OrderedStateCapture {
+  void PushHook(ConnectionPhase phase) {
+    std::lock_guard lock(mutex);
+    if (phase == ConnectionPhase::kActive) {
+      hook_active_order = ++next_order;
+    }
+    ++hook_calls;
+    cv.notify_all();
+  }
+
+  void PushExternal(ConnectionPhase phase) {
+    std::lock_guard lock(mutex);
+    if (phase == ConnectionPhase::kActive) {
+      external_active_order = ++next_order;
+    }
+    ++external_calls;
+    phases.push_back(phase);
+    cv.notify_all();
+  }
+
+  bool WaitForExternal(ConnectionPhase phase,
+                       std::chrono::milliseconds timeout) {
+    std::unique_lock lock(mutex);
+    return cv.wait_for(lock, timeout, [&] {
+      for (const auto candidate : phases) {
+        if (candidate == phase) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  bool HookRanBeforeExternalActive() const {
+    std::lock_guard lock(mutex);
+    return hook_active_order > 0 && external_active_order > 0 &&
+           hook_active_order < external_active_order;
+  }
+
+  int HookCalls() const {
+    std::lock_guard lock(mutex);
+    return hook_calls;
+  }
+
+  int ExternalCalls() const {
+    std::lock_guard lock(mutex);
+    return external_calls;
+  }
+
+  mutable std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<ConnectionPhase> phases;
+  int next_order{0};
+  int hook_active_order{0};
+  int external_active_order{0};
+  int hook_calls{0};
+  int external_calls{0};
+};
+
 DeliveryResult CaptureMessage(void* context, const MessageView& view) noexcept {
   auto* capture = static_cast<MessageCapture*>(context);
   const auto payload = std::string_view(
@@ -313,6 +372,14 @@ struct TypedMessageCaptureHandler {
 
 void CaptureState(void* context, ConnectionPhase phase) noexcept {
   static_cast<StateCapture*>(context)->Push(phase);
+}
+
+void CaptureHookState(void* context, ConnectionPhase phase) noexcept {
+  static_cast<OrderedStateCapture*>(context)->PushHook(phase);
+}
+
+void CaptureExternalState(void* context, ConnectionPhase phase) noexcept {
+  static_cast<OrderedStateCapture*>(context)->PushExternal(phase);
 }
 
 }  // namespace
@@ -349,6 +416,46 @@ TEST(PlainWebSocketClientTest, ConnectsWithoutTlsAndReceivesMessage) {
   EXPECT_TRUE(received_message);
   EXPECT_TRUE(result);
   EXPECT_FALSE(states.Contains(ConnectionPhase::kTlsHandshaking));
+}
+
+TEST(PlainWebSocketClientTest,
+     StateHookRunsBeforeExternalHandlerAndClientTracksPhase) {
+  PlainWebSocketServer server("hook-ok");
+  ASSERT_TRUE(server.Start());
+
+  ConnectionConfig config{};
+  config.host = "127.0.0.1";
+  config.service = fmt::format("{}", server.port());
+  config.target = "/";
+  config.enable_tls = false;
+  config.heartbeat_interval_ms = 60'000;
+  config.heartbeat_timeout_ms = 60'000;
+  config.runtime_policy.active_spin = false;
+
+  MessageCapture messages;
+  OrderedStateCapture states;
+  MessageCallback consumer{&messages, &CaptureMessage};
+  PlainWebSocketClient client(config, consumer);
+  client.SetStateHook(&states, &CaptureHookState);
+  client.SetStateHandler(&states, &CaptureExternalState);
+
+  bool result = false;
+  std::thread io_thread([&] { result = client.Start(); });
+
+  const bool entered_active =
+      states.WaitForExternal(ConnectionPhase::kActive, 2s);
+  const bool received_message = messages.WaitForMessage("hook-ok", 2s);
+  client.Stop();
+  io_thread.join();
+
+  EXPECT_TRUE(entered_active);
+  EXPECT_TRUE(received_message);
+  EXPECT_TRUE(result);
+  EXPECT_EQ(client.phase(), ConnectionPhase::kClosed);
+  EXPECT_EQ(client.last_error(), ConnectionError::kNone);
+  EXPECT_GE(states.HookCalls(), 1);
+  EXPECT_GE(states.ExternalCalls(), 1);
+  EXPECT_TRUE(states.HookRanBeforeExternalActive());
 }
 
 TEST(PlainWebSocketClientTest, SupportsTypedMessageHandler) {

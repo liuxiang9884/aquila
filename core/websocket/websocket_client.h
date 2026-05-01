@@ -88,9 +88,26 @@ class BasicWebSocketClient {
     state_handler_ = handler;
   }
 
+  // Wrapper sessions use this hook for protocol work that must run before
+  // external state handlers.
+  void SetStateHook(void* context, StateHandler handler) noexcept {
+    state_hook_context_ = context;
+    state_hook_handler_ = handler;
+  }
+
   void SetErrorHandler(void* context, ErrorHandler handler) noexcept {
     error_context_ = context;
     error_handler_ = handler;
+  }
+
+  [[nodiscard]] ConnectionPhase phase() const noexcept {
+    return static_cast<ConnectionPhase>(
+        observable_phase_.load(std::memory_order_acquire));
+  }
+
+  [[nodiscard]] ConnectionError last_error() const noexcept {
+    return static_cast<ConnectionError>(
+        observable_error_.load(std::memory_order_acquire));
   }
 
   bool Start() noexcept {
@@ -151,8 +168,7 @@ class BasicWebSocketClient {
           stop_requested_,
           degraded_evaluator_,
           DegradedEvaluationInterval(),
-          state_context_,
-          state_handler_,
+          this,
       };
       spin_loop_.Run(runtime_session);
       transport_socket_.Close();
@@ -203,8 +219,7 @@ class BasicWebSocketClient {
     std::atomic<bool>& stop_requested;
     DegradedEvaluator& degraded_evaluator;
     std::uint32_t evaluation_interval_iterations;
-    void* state_context;
-    StateHandler state_handler;
+    BasicWebSocketClient* client;
     std::uint32_t iterations_since_evaluation{0};
 
     void DriveWrite() noexcept {
@@ -272,9 +287,7 @@ class BasicWebSocketClient {
     }
 
     void NotifyState(ConnectionPhase phase) noexcept {
-      if (state_handler != nullptr) {
-        state_handler(state_context, phase);
-      }
+      client->NotifyState(phase);
     }
   };
 
@@ -404,6 +417,15 @@ class BasicWebSocketClient {
   }
 
   void NotifyState(ConnectionPhase phase) noexcept {
+    observable_phase_.store(static_cast<std::uint8_t>(phase),
+                            std::memory_order_release);
+    if (phase == ConnectionPhase::kActive) {
+      observable_error_.store(static_cast<std::uint8_t>(ConnectionError::kNone),
+                              std::memory_order_release);
+    }
+    if (state_hook_handler_ != nullptr) {
+      state_hook_handler_(state_hook_context_, phase);
+    }
     if (state_handler_ != nullptr) {
       state_handler_(state_context_, phase);
     }
@@ -428,6 +450,8 @@ class BasicWebSocketClient {
   }
 
   void NotifyError(ConnectionError error) noexcept {
+    observable_error_.store(static_cast<std::uint8_t>(error),
+                            std::memory_order_release);
     if (error_handler_ != nullptr) {
       error_handler_(error_context_, error);
     }
@@ -449,6 +473,12 @@ class BasicWebSocketClient {
   int wakeup_fd_{-1};
   bool runtime_prepared_{false};
   ConnectionError prepare_error_{ConnectionError::kNone};
+  std::atomic<std::uint8_t> observable_phase_{
+      static_cast<std::uint8_t>(ConnectionPhase::kDisconnected)};
+  std::atomic<std::uint8_t> observable_error_{
+      static_cast<std::uint8_t>(ConnectionError::kNone)};
+  void* state_hook_context_{nullptr};
+  StateHandler state_hook_handler_{nullptr};
   void* state_context_{nullptr};
   StateHandler state_handler_{nullptr};
   void* error_context_{nullptr};

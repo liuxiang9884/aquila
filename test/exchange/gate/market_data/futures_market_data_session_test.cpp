@@ -196,23 +196,25 @@ TEST(GateFuturesMarketDataSessionTest, RetriesSubscribeAfterActiveFailure) {
   EXPECT_EQ(session.stats().subscribe_send_failures, 2U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, ForwardsStateAndErrorHandlers) {
+TEST(GateFuturesMarketDataSessionTest,
+     ManualConnectionPhaseOnlyDrivesGateSubscriptionState) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
   StateCapture capture;
   session.SetStateHandler(&capture, &CaptureState);
   session.SetErrorHandler(&capture, &CaptureError);
 
-  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
-  session.OnConnectionError(aquila::websocket::ConnectionError::kSocketError);
+  EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
+  EXPECT_EQ(session.last_error(), aquila::websocket::ConnectionError::kNone);
 
-  EXPECT_EQ(capture.state_calls, 1);
-  EXPECT_EQ(capture.last_phase, aquila::websocket::ConnectionPhase::kActive);
-  EXPECT_EQ(capture.error_calls, 1);
-  EXPECT_EQ(capture.last_error,
-            aquila::websocket::ConnectionError::kSocketError);
-  EXPECT_EQ(session.last_error(),
-            aquila::websocket::ConnectionError::kSocketError);
+  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
+
+  EXPECT_EQ(capture.state_calls, 0);
+  EXPECT_EQ(capture.error_calls, 0);
+  EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
+  EXPECT_EQ(session.last_error(), aquila::websocket::ConnectionError::kNone);
+  EXPECT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kSubscribeSent);
 }
 
 TEST(GateFuturesMarketDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
