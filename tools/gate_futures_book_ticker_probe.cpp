@@ -222,9 +222,9 @@ class ProbeRunner {
   }
 
  private:
-  using Session =
-      gate::FuturesMarketDataSession<ProbeConsumer, TransportSocketT,
-                                     gate::FuturesMarketDataDiagnostics>;
+  using Session = gate::FuturesMarketDataSession<
+      ProbeConsumer, TransportSocketT, gate::FuturesMarketDataDiagnostics,
+      ws::DefaultWebSocketOptions, gate::FuturesMarketDataSessionDiagnostics>;
 
   static ws::ConnectionConfig BuildConnectionConfig(const ProbeConfig& config) {
     ws::ConnectionConfig connection_config{};

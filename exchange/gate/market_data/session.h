@@ -15,21 +15,13 @@
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
-#include "exchange/gate/common/simdjson_utils.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/subscription.h"
+#include "exchange/gate/market_data/subscription_controller.h"
+#include "exchange/gate/market_data/text_envelope_parser.h"
 #include <simdjson.h>
 
 namespace aquila::gate {
-
-enum class SubscriptionState : std::uint8_t {
-  kIdle = 0,
-  kSubscribeSent,
-  kSubscribed,
-  kUnsubscribeSent,
-  kUnsubscribed,
-  kRejected,
-};
 
 struct FuturesMarketDataSessionStats {
   std::uint64_t text_messages{0};
@@ -49,93 +41,90 @@ struct FuturesMarketDataSessionStats {
   std::uint64_t unsupported_json_market_data_messages{0};
 };
 
+struct NoopFuturesMarketDataSessionDiagnostics {
+  static constexpr bool kEnabled = false;
+
+  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+    return kStats;
+  }
+
+ private:
+  inline static constexpr FuturesMarketDataSessionStats kStats{};
+};
+
+class FuturesMarketDataSessionDiagnostics {
+ public:
+  static constexpr bool kEnabled = true;
+
+  void RecordTextMessage() noexcept {
+    ++stats_.text_messages;
+  }
+
+  void RecordBinaryMessage() noexcept {
+    ++stats_.binary_messages;
+  }
+
+  void RecordNonFinalMessage() noexcept {
+    ++stats_.non_final_messages;
+  }
+
+  void RecordControlMessage() noexcept {
+    ++stats_.control_messages;
+  }
+
+  void RecordControlParseError() noexcept {
+    ++stats_.control_parse_errors;
+  }
+
+  void RecordIgnoredTextMessage() noexcept {
+    ++stats_.ignored_text_messages;
+  }
+
+  void RecordSubscribeSent() noexcept {
+    ++stats_.subscribe_sent;
+  }
+
+  void RecordSubscribeRetryAttempt() noexcept {
+    ++stats_.subscribe_retry_attempts;
+  }
+
+  void RecordSubscribeSendFailure() noexcept {
+    ++stats_.subscribe_send_failures;
+  }
+
+  void RecordSubscribeAck() noexcept {
+    ++stats_.subscribe_acks;
+  }
+
+  void RecordUnsubscribeSent() noexcept {
+    ++stats_.unsubscribe_sent;
+  }
+
+  void RecordUnsubscribeAck() noexcept {
+    ++stats_.unsubscribe_acks;
+  }
+
+  void RecordControlError() noexcept {
+    ++stats_.control_errors;
+  }
+
+  void RecordJsonMarketDataMessage() noexcept {
+    ++stats_.json_market_data_messages;
+  }
+
+  void RecordUnsupportedJsonMarketDataMessage() noexcept {
+    ++stats_.unsupported_json_market_data_messages;
+  }
+
+  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+    return stats_;
+  }
+
+ private:
+  FuturesMarketDataSessionStats stats_{};
+};
+
 namespace detail {
-
-enum class TextEvent : std::uint8_t {
-  kUnknown = 0,
-  kSubscribe,
-  kUnsubscribe,
-  kUpdate,
-};
-
-struct TextEnvelope {
-  TextEvent event{TextEvent::kUnknown};
-  bool channel_is_book_ticker{false};
-  bool result_success{false};
-  bool has_error{false};
-};
-
-inline TextEvent ParseTextEvent(std::string_view event) noexcept {
-  if (event == "subscribe") {
-    return TextEvent::kSubscribe;
-  }
-  if (event == "unsubscribe") {
-    return TextEvent::kUnsubscribe;
-  }
-  if (event == "update") {
-    return TextEvent::kUpdate;
-  }
-  return TextEvent::kUnknown;
-}
-
-inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
-                                      TextEnvelope& output) noexcept {
-  simdjson::ondemand::object root;
-  if (document.get_object().get(root) != simdjson::SUCCESS) {
-    return false;
-  }
-
-  TextEnvelope envelope{};
-  simdjson::ondemand::value value;
-  if (FindSimdjsonField(root, "channel", &value)) {
-    std::string_view channel{};
-    envelope.channel_is_book_ticker =
-        ReadSimdjsonString(value, &channel) && channel == "futures.book_ticker";
-  }
-  if (FindSimdjsonField(root, "event", &value)) {
-    std::string_view event{};
-    if (ReadSimdjsonString(value, &event)) {
-      envelope.event = ParseTextEvent(event);
-    }
-  }
-  envelope.has_error = FindSimdjsonField(root, "error", &value);
-
-  simdjson::ondemand::object result;
-  if (FindSimdjsonObject(root, "result", &result) &&
-      FindSimdjsonField(result, "status", &value)) {
-    std::string_view status{};
-    envelope.result_success =
-        ReadSimdjsonString(value, &status) && status == "success";
-  }
-
-  output = envelope;
-  return true;
-}
-
-inline bool ParseTextEnvelope(std::string_view payload,
-                              std::uint32_t readable_tail_bytes,
-                              simdjson::ondemand::parser& parser,
-                              TextEnvelope& output) noexcept {
-  if (payload.empty()) {
-    return false;
-  }
-
-  simdjson::ondemand::document document;
-  if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
-    simdjson::padded_string_view view(payload.data(), payload.size(),
-                                      payload.size() + readable_tail_bytes);
-    if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
-      return false;
-    }
-    return ParseTextEnvelopeDocument(std::move(document), output);
-  }
-
-  simdjson::padded_string padded(payload);
-  if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
-    return false;
-  }
-  return ParseTextEnvelopeDocument(std::move(document), output);
-}
 
 inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
                              std::vector<std::string_view>* output) {
@@ -150,13 +139,17 @@ inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
 
 template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
           typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
-          typename OptionsT = websocket::DefaultWebSocketOptions>
+          typename OptionsT = websocket::DefaultWebSocketOptions,
+          typename SessionDiagnosticsT =
+              NoopFuturesMarketDataSessionDiagnostics>
 class FuturesMarketDataSession {
  public:
   using MessageHandler = websocket::MessageHandlerRef<FuturesMarketDataSession>;
   using Client =
       websocket::BasicWebSocketClient<TransportSocketT, MessageHandler>;
   static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
+  static constexpr bool SessionDiagnosticsEnabled =
+      SessionDiagnosticsT::kEnabled;
 
   FuturesMarketDataSession(websocket::ConnectionConfig config,
                            std::span<const SymbolBinding> symbols,
@@ -199,17 +192,23 @@ class FuturesMarketDataSession {
       const websocket::MessageView& view) noexcept {
     if (view.kind == websocket::PayloadKind::kBinary) [[likely]] {
       if (!view.fin) {
-        ++stats_.non_final_messages;
+        if constexpr (SessionDiagnosticsEnabled) {
+          session_diagnostics_.RecordNonFinalMessage();
+        }
         return websocket::DeliveryResult::kAccepted;
       }
-      ++stats_.binary_messages;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordBinaryMessage();
+      }
       const std::int64_t local_ns =
           static_cast<std::int64_t>(websocket::NowNs(kClockSource));
       return market_data_client_.OnBinaryPayload(view.payload, local_ns);
     }
 
     if (!view.fin) {
-      ++stats_.non_final_messages;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordNonFinalMessage();
+      }
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -220,53 +219,36 @@ class FuturesMarketDataSession {
   }
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
-    if (phase == websocket::ConnectionPhase::kActive) {
-      subscription_connection_active_ = true;
-      if (!subscription_sent_for_connection_) {
-        (void)SendSubscribeAttempt();
-      }
-      return;
-    }
-
-    if (phase == websocket::ConnectionPhase::kDisconnected ||
-        phase == websocket::ConnectionPhase::kReconnectBackoff ||
-        phase == websocket::ConnectionPhase::kClosing ||
-        phase == websocket::ConnectionPhase::kClosed) {
-      subscription_connection_active_ = false;
-      subscription_sent_for_connection_ = false;
-      if (subscription_state_ == SubscriptionState::kSubscribeSent ||
-          subscription_state_ == SubscriptionState::kSubscribed) {
-        subscription_state_ = SubscriptionState::kIdle;
-      }
+    if (subscription_controller_.OnConnectionPhase(phase)) {
+      (void)SendSubscribeAttempt();
     }
   }
 
   websocket::SendStatus RequestUnsubscribe() noexcept {
-    const websocket::SendStatus status = SendUnsubscribe();
-    unsubscribe_status_ = status;
-    return status;
+    return SendUnsubscribe();
   }
 
   websocket::SendStatus RetryPendingSubscribe() noexcept {
-    if (!subscription_connection_active_ || subscription_sent_for_connection_ ||
-        subscription_state_ == SubscriptionState::kRejected) {
-      return subscribe_status_;
+    if (!subscription_controller_.CanRetrySubscribe()) {
+      return subscription_controller_.subscribe_status();
     }
 
-    ++stats_.subscribe_retry_attempts;
+    if constexpr (SessionDiagnosticsEnabled) {
+      session_diagnostics_.RecordSubscribeRetryAttempt();
+    }
     return SendSubscribeAttempt();
   }
 
   [[nodiscard]] SubscriptionState subscription_state() const noexcept {
-    return subscription_state_;
+    return subscription_controller_.subscription_state();
   }
 
   [[nodiscard]] websocket::SendStatus subscribe_status() const noexcept {
-    return subscribe_status_;
+    return subscription_controller_.subscribe_status();
   }
 
   [[nodiscard]] websocket::SendStatus unsubscribe_status() const noexcept {
-    return unsubscribe_status_;
+    return subscription_controller_.unsubscribe_status();
   }
 
   [[nodiscard]] websocket::ConnectionPhase phase() const noexcept {
@@ -278,7 +260,7 @@ class FuturesMarketDataSession {
   }
 
   [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
-    return stats_;
+    return session_diagnostics_.stats();
   }
 
   [[nodiscard]] const DiagnosticsT& market_data_client_diagnostics()
@@ -312,7 +294,9 @@ class FuturesMarketDataSession {
 
   websocket::DeliveryResult HandleText(
       const websocket::MessageView& view) noexcept {
-    ++stats_.text_messages;
+    if constexpr (SessionDiagnosticsEnabled) {
+      session_diagnostics_.RecordTextMessage();
+    }
     const std::string_view payload{
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
@@ -320,7 +304,9 @@ class FuturesMarketDataSession {
     detail::TextEnvelope envelope{};
     if (!detail::ParseTextEnvelope(payload, view.readable_tail_bytes,
                                    text_parser_, envelope)) {
-      ++stats_.control_parse_errors;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordControlParseError();
+      }
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -332,45 +318,65 @@ class FuturesMarketDataSession {
         HandleUnsubscribeResponse(envelope);
         return websocket::DeliveryResult::kAccepted;
       case detail::TextEvent::kUpdate:
-        ++stats_.json_market_data_messages;
-        ++stats_.unsupported_json_market_data_messages;
+        if constexpr (SessionDiagnosticsEnabled) {
+          session_diagnostics_.RecordJsonMarketDataMessage();
+          session_diagnostics_.RecordUnsupportedJsonMarketDataMessage();
+        }
         return websocket::DeliveryResult::kAccepted;
       case detail::TextEvent::kUnknown:
-        ++stats_.ignored_text_messages;
+        if constexpr (SessionDiagnosticsEnabled) {
+          session_diagnostics_.RecordIgnoredTextMessage();
+        }
         return websocket::DeliveryResult::kAccepted;
     }
     return websocket::DeliveryResult::kAccepted;
   }
 
   void HandleSubscribeResponse(const detail::TextEnvelope& envelope) noexcept {
-    ++stats_.control_messages;
+    if constexpr (SessionDiagnosticsEnabled) {
+      session_diagnostics_.RecordControlMessage();
+    }
     if (!envelope.channel_is_book_ticker) {
-      ++stats_.ignored_text_messages;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordIgnoredTextMessage();
+      }
       return;
     }
     if (envelope.has_error || !envelope.result_success) {
-      ++stats_.control_errors;
-      subscription_state_ = SubscriptionState::kRejected;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordControlError();
+      }
+      subscription_controller_.MarkSubscribeRejected();
       return;
     }
-    ++stats_.subscribe_acks;
-    subscription_state_ = SubscriptionState::kSubscribed;
+    if constexpr (SessionDiagnosticsEnabled) {
+      session_diagnostics_.RecordSubscribeAck();
+    }
+    subscription_controller_.MarkSubscribeAccepted();
   }
 
   void HandleUnsubscribeResponse(
       const detail::TextEnvelope& envelope) noexcept {
-    ++stats_.control_messages;
+    if constexpr (SessionDiagnosticsEnabled) {
+      session_diagnostics_.RecordControlMessage();
+    }
     if (!envelope.channel_is_book_ticker) {
-      ++stats_.ignored_text_messages;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordIgnoredTextMessage();
+      }
       return;
     }
     if (envelope.has_error || !envelope.result_success) {
-      ++stats_.control_errors;
-      subscription_state_ = SubscriptionState::kRejected;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordControlError();
+      }
+      subscription_controller_.MarkUnsubscribeRejected();
       return;
     }
-    ++stats_.unsubscribe_acks;
-    subscription_state_ = SubscriptionState::kUnsubscribed;
+    if constexpr (SessionDiagnosticsEnabled) {
+      session_diagnostics_.RecordUnsubscribeAck();
+    }
+    subscription_controller_.MarkUnsubscribeAccepted();
   }
 
   websocket::SendStatus SendSubscribe() noexcept {
@@ -380,18 +386,20 @@ class FuturesMarketDataSession {
         static_cast<std::int64_t>(std::time(nullptr)));
     const websocket::SendStatus status = SendText(last_subscribe_request_);
     if (status == websocket::SendStatus::kOk) {
-      ++stats_.subscribe_sent;
-      subscription_state_ = SubscriptionState::kSubscribeSent;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordSubscribeSent();
+      }
     }
     return status;
   }
 
   websocket::SendStatus SendSubscribeAttempt() noexcept {
     const websocket::SendStatus status = SendSubscribe();
-    subscribe_status_ = status;
-    subscription_sent_for_connection_ = status == websocket::SendStatus::kOk;
+    subscription_controller_.RecordSubscribeAttempt(status);
     if (status != websocket::SendStatus::kOk) {
-      ++stats_.subscribe_send_failures;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordSubscribeSendFailure();
+      }
     }
     return status;
   }
@@ -402,9 +410,11 @@ class FuturesMarketDataSession {
                                           subscription_symbols_.size()),
         static_cast<std::int64_t>(std::time(nullptr)));
     const websocket::SendStatus status = SendText(request);
+    subscription_controller_.RecordUnsubscribeAttempt(status);
     if (status == websocket::SendStatus::kOk) {
-      ++stats_.unsubscribe_sent;
-      subscription_state_ = SubscriptionState::kUnsubscribeSent;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordUnsubscribeSent();
+      }
     }
     return status;
   }
@@ -422,15 +432,9 @@ class FuturesMarketDataSession {
   FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
   MessageHandler message_handler_;
   Client client_;
-  FuturesMarketDataSessionStats stats_{};
+  [[no_unique_address]] SessionDiagnosticsT session_diagnostics_{};
   simdjson::ondemand::parser text_parser_;
-  SubscriptionState subscription_state_{SubscriptionState::kIdle};
-  websocket::SendStatus subscribe_status_{
-      websocket::SendStatus::kWriteUnavailable};
-  websocket::SendStatus unsubscribe_status_{
-      websocket::SendStatus::kWriteUnavailable};
-  bool subscription_sent_for_connection_{false};
-  bool subscription_connection_active_{false};
+  BookTickerSubscriptionController subscription_controller_;
 };
 
 }  // namespace aquila::gate

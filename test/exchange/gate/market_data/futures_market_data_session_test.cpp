@@ -52,14 +52,24 @@ struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
-using Session = aquila::gate::FuturesMarketDataSession<RecordingConsumer>;
+using DefaultNoStatsSession =
+    aquila::gate::FuturesMarketDataSession<RecordingConsumer>;
+using Session = aquila::gate::FuturesMarketDataSession<
+    RecordingConsumer, aquila::websocket::TlsSocket,
+    aquila::gate::NoopFuturesMarketDataDiagnostics,
+    aquila::websocket::DefaultWebSocketOptions,
+    aquila::gate::FuturesMarketDataSessionDiagnostics>;
 using DiagnosticSession = aquila::gate::FuturesMarketDataSession<
     RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::gate::FuturesMarketDataDiagnostics>;
+    aquila::gate::FuturesMarketDataDiagnostics,
+    aquila::websocket::DefaultWebSocketOptions,
+    aquila::gate::FuturesMarketDataSessionDiagnostics>;
 using CoarseClockSession = aquila::gate::FuturesMarketDataSession<
     RecordingConsumer, aquila::websocket::TlsSocket,
     aquila::gate::NoopFuturesMarketDataDiagnostics, CoarseClockOptions>;
 
+static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
+static_assert(Session::SessionDiagnosticsEnabled);
 static_assert(Session::kClockSource ==
               aquila::websocket::DefaultWebSocketOptions::kClockSource);
 static_assert(CoarseClockSession::kClockSource ==
@@ -121,6 +131,16 @@ Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   config.prepared_write_slots = 0;
   return Session(std::move(config), symbols, consumer);
+}
+
+DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
+  static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  aquila::websocket::ConnectionConfig config{};
+  config.host = "localhost";
+  config.service = "443";
+  config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
+  return DefaultNoStatsSession(std::move(config), symbols, consumer);
 }
 
 }  // namespace
@@ -295,4 +315,17 @@ TEST(GateFuturesMarketDataSessionTest,
   EXPECT_EQ(consumer.calls, 0);
   EXPECT_EQ(session.market_data_client_diagnostics().stats().unknown_symbols,
             1U);
+}
+
+TEST(GateFuturesMarketDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
+  RecordingConsumer consumer;
+  DefaultNoStatsSession session = MakeDefaultNoStatsSession(consumer);
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+
+  const auto result = session.Handle(BinaryView(payload));
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(session.stats().binary_messages, 0U);
 }

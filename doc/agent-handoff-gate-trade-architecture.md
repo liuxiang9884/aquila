@@ -208,7 +208,8 @@ benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp
 当前 session 命名为：
 
 ```cpp
-aquila::gate::FuturesMarketDataSession<Consumer, TransportSocketT>
+aquila::gate::FuturesMarketDataSession<
+    Consumer, TransportSocketT, DiagnosticsT, OptionsT, SessionDiagnosticsT>
 ```
 
 功能边界：
@@ -220,52 +221,58 @@ aquila::gate::FuturesMarketDataSession<Consumer, TransportSocketT>
 5. text control parser 使用复用的 `simdjson::ondemand::parser text_parser_`。
 6. 如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，text parser 直接使用 zero-copy padded view；否则 fallback 到 `simdjson::padded_string` scratch copy。
 7. session 转发 state/error handler，暴露 `FuturesMarketDataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
-8. `FuturesMarketDataSessionStats` 是低频诊断计数，不属于行情热路径输出结构。
+8. `FuturesMarketDataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `SessionDiagnosticsT = NoopFuturesMarketDataSessionDiagnostics`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `FuturesMarketDataSessionDiagnostics`。
+9. text control envelope parser 已拆到 `text_envelope_parser.h`，订阅状态机已拆到 `subscription_controller.h`，session 只保留收包分流、订阅请求发送和 client 组合。
 
 注意：
 
 1. `local_ns` 在 session 收到 binary frame 后立即采集，再传入 client，避免在更深层反复取时钟，也方便未来由外层 runtime 统一传入本地时间。
 2. `DecodeBookTickerWithHeader()` 仍做完整 header 校验；删除的只是 symbol 提取阶段的重复 header 校验。
 
+后续 TODO（暂不实现）：
+
+1. Symbol lookup ownership：考虑引入稳定的 `GateSymbolLookup` / `SymbolTableView`，显式表达 `std::string_view` 的生命周期和 ownership 边界，避免未来多链路共享 symbol 表时重复构造或生命周期误用。
+2. Trading submit types/session split：后续下单链路再把 submit response 类型、parser 和 order submit session 拆开，保持 ack 热路径最小化，同时避免 market-data 与 trading 结构混在同一层。
+
 ### Gate futures market data benchmark
 
 当前 benchmark 命令：
 
 ```bash
-./build/release/benchmark/exchange/gate/market_data/gate_futures_market_data_benchmark --benchmark_filter='gate_market_data/(decode_book_ticker_with_header|client_on_binary_payload|client_on_message_binary|session_handle_binary|session_handle_subscribe_ack|session_handle_subscribe_ack_padded_view)'
+taskset -c 2 ./build/release/benchmark/exchange/gate/market_data/gate_futures_market_data_benchmark --benchmark_filter='gate_market_data/(decode_book_ticker_with_header|client_on_binary_payload|client_on_message_binary|session_handle_binary|session_handle_subscribe_ack|session_handle_subscribe_ack_padded_view)' --benchmark_repetitions=10
 ```
 
-2026-04-30 当前结果：
+2026-05-01 当前 mean 结果：
 
 | case | time |
 | --- | ---: |
-| `decode_book_ticker_with_header` | 2.85ns |
-| `client_on_binary_payload/1` | 6.42ns |
-| `client_on_binary_payload/8` | 7.21ns |
-| `client_on_binary_payload/32` | 7.17ns |
-| `client_on_message_binary/1` | 8.00ns |
-| `client_on_message_binary/8` | 10.7ns |
-| `client_on_message_binary/32` | 10.7ns |
-| `session_handle_binary/1` | 37.9ns |
-| `session_handle_binary/8` | 49.7ns |
-| `session_handle_binary/32` | 48.3ns |
-| `session_handle_subscribe_ack` | 135ns |
-| `session_handle_subscribe_ack_padded_view` | 115ns |
+| `decode_book_ticker_with_header` | 2.87ns |
+| `client_on_binary_payload/1` | 5.51ns |
+| `client_on_binary_payload/8` | 7.45ns |
+| `client_on_binary_payload/32` | 7.31ns |
+| `client_on_message_binary/1` | 6.92ns |
+| `client_on_message_binary/8` | 10.0ns |
+| `client_on_message_binary/32` | 9.92ns |
+| `session_handle_binary/1` | 36.4ns |
+| `session_handle_binary/8` | 49.3ns |
+| `session_handle_binary/32` | 48.9ns |
+| `session_handle_subscribe_ack` | 141ns |
+| `session_handle_subscribe_ack_padded_view` | 122ns |
 
 解释：
 
 1. `client_on_binary_payload` 是已知 binary payload 的 client 快路径。
 2. `client_on_message_binary` 包含 `MessageView` kind / fin 分流和时钟外传。
-3. `session_handle_binary` 包含 session 统计和 `NowNs()`，因此数值受时钟成本影响。
+3. `session_handle_binary` 默认关闭 session 统计，主要包含 session 分流、`NowNs()` 和 client binary 处理，因此数值仍受时钟成本影响。
 4. padded text view 比 scratch copy text parse 更快，但 subscribe/unsubscribe ack 属于低频控制路径。
 
-2026-04-30 当前验证：
+2026-05-01 当前验证：
 
 ```text
 cmake --build build/debug -j8
 cmake --build build/release -j8
-ctest --test-dir build/debug --output-on-failure   # 23/23 passed
-ctest --test-dir build/release --output-on-failure # 23/23 passed
+ctest --test-dir build/debug -R 'websocket_|gate_' --output-on-failure   # 23/23 passed
+ctest --test-dir build/release -R 'websocket_|gate_' --output-on-failure # 23/23 passed
 ```
 
 ### WebSocket typed message handler

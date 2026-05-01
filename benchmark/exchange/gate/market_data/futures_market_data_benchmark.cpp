@@ -58,6 +58,11 @@ struct CountingConsumer {
   }
 };
 
+using InstrumentedPlainSession = aq_gate::FuturesMarketDataSession<
+    CountingConsumer, ws::PlainSocket,
+    aq_gate::NoopFuturesMarketDataDiagnostics, ws::DefaultWebSocketOptions,
+    aq_gate::FuturesMarketDataSessionDiagnostics>;
+
 struct SymbolSet {
   std::vector<std::string> storage;
   std::vector<aq_gate::SymbolBinding> bindings;
@@ -232,8 +237,6 @@ void BenchmarkSessionHandleBinary(benchmark::State& state) {
   }
 
   benchmark::DoNotOptimize(consumer);
-  std::uint64_t binary_messages = session.stats().binary_messages;
-  benchmark::DoNotOptimize(binary_messages);
   state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
   state.counters["symbols"] = static_cast<double>(symbol_count);
   SetCommonCounters(state, payload);
@@ -251,7 +254,7 @@ void BenchmarkSessionHandleSubscribeAck(benchmark::State& state) {
       R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})";
   SymbolSet symbols = BuildSymbols(1);
   CountingConsumer consumer;
-  aq_gate::FuturesMarketDataSession<CountingConsumer, ws::PlainSocket> session(
+  InstrumentedPlainSession session(
       BuildConnectionConfig(),
       std::span<const aq_gate::SymbolBinding>(symbols.bindings), consumer);
   const ws::MessageView view = TextView(kSubscribeAck);
@@ -277,7 +280,7 @@ void BenchmarkSessionHandleSubscribeAckPaddedView(benchmark::State& state) {
       R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})";
   SymbolSet symbols = BuildSymbols(1);
   CountingConsumer consumer;
-  aq_gate::FuturesMarketDataSession<CountingConsumer, ws::PlainSocket> session(
+  InstrumentedPlainSession session(
       BuildConnectionConfig(),
       std::span<const aq_gate::SymbolBinding>(symbols.bindings), consumer);
   std::array<char, kSubscribeAck.size() + simdjson::SIMDJSON_PADDING> scratch{};
