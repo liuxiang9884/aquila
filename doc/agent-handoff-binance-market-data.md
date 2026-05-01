@@ -88,9 +88,10 @@ using YyjsonClient = aquila::binance::FuturesMarketDataClient<
 1. `YyjsonBookTickerParser` 使用 parser 对象内的固定 4 KiB read pool，避免每条消息走默认堆分配。
 2. yyjson default parse 不依赖 `MessageView::readable_tail_bytes`；这个参数保留在 parser policy 接口中，用于与 simdjson parser 统一接入 client/session。
 3. `ParseInsitu()` 用 `YYJSON_READ_INSITU` 对照 yyjson padding 模式，当前 `YYJSON_PADDING_SIZE = 4`；它要求 mutable buffer，并会修改输入 payload。
-4. 当前 `MessageView` 对业务层暴露的是 const payload，因此生产 client/session 默认不直接对 FrameCodec receive ring 做 yyjson insitu parse。benchmark 中的 `yyjson_insitu_copy` 包含一次拷贝到 mutable padded scratch。
-5. yyjson 版本仍然只产出 `BookTickerUpdate`，后续 symbol lookup、`BookTicker` 构造和 consumer 分发与 simdjson 路径相同。
-6. 当前 yyjson 只作为分支实验和 benchmark 对照；是否替换默认 parser 需要结合 live probe、真实 symbol 集合和更完整尾延迟数据再决定。
+4. `YyjsonInsituBookTickerParser` 使用 `const_cast` 在 `readable_tail_bytes >= YYJSON_PADDING_SIZE` 时直接对 FrameCodec-backed mutable receive ring 原地解析；调用方必须接受 payload 被修改。
+5. `yyjson_insitu_copy` 是保守对照，计入拷贝到 mutable padded scratch；`yyjson_insitu_view` 是 no-copy 原地解析对照，benchmark 用预填好的独立 mutable payload，避免重复解析已经被 yyjson 修改过的 buffer。
+6. yyjson 版本仍然只产出 `BookTickerUpdate`，后续 symbol lookup、`BookTicker` 构造和 consumer 分发与 simdjson 路径相同。
+7. 当前 yyjson 只作为分支实验和 benchmark 对照；是否替换默认 parser 需要结合 live probe、真实 symbol 集合和更完整尾延迟数据再决定。
 
 ## 验证入口
 
@@ -106,39 +107,46 @@ using YyjsonClient = aquila::binance::FuturesMarketDataClient<
 benchmark：
 
 ```bash
-taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_yyjson_pool|_yyjson_insitu_copy)?|client_on_text_payload(_yyjson_pool)?|session_handle_text(_padded_view|_yyjson_pool)?)(/.*)?$' --benchmark_repetitions=10
+taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload(_yyjson_pool|_yyjson_insitu_view)?|session_handle_text(_padded_view|_yyjson_pool|_yyjson_insitu_view)?)(/.*)?$' --benchmark_repetitions=10
 ```
 
 2026-05-01 `feature/binance-bookticker-yyjson` 当前 mean 结果：
 
 | case | time |
 | --- | ---: |
-| `parse_book_ticker` | 228ns |
-| `parse_book_ticker_padded_view` | 199ns |
-| `parse_book_ticker_yyjson_pool` | 207ns |
-| `parse_book_ticker_yyjson_insitu_copy` | 210ns |
-| `client_on_text_payload/1` | 234ns |
-| `client_on_text_payload/8` | 243ns |
-| `client_on_text_payload/32` | 243ns |
-| `client_on_text_payload_yyjson_pool/1` | 228ns |
-| `client_on_text_payload_yyjson_pool/8` | 236ns |
-| `client_on_text_payload_yyjson_pool/32` | 234ns |
-| `session_handle_text/1` | 278ns |
-| `session_handle_text/8` | 293ns |
-| `session_handle_text/32` | 289ns |
-| `session_handle_text_yyjson_pool/1` | 266ns |
-| `session_handle_text_yyjson_pool/8` | 279ns |
-| `session_handle_text_yyjson_pool/32` | 277ns |
-| `session_handle_text_padded_view` | 255ns |
+| `parse_book_ticker` | 230ns |
+| `parse_book_ticker_padded_view` | 200ns |
+| `parse_book_ticker_yyjson_pool` | 219ns |
+| `parse_book_ticker_yyjson_insitu_copy` | 203ns |
+| `parse_book_ticker_yyjson_insitu_view` | 204ns |
+| `client_on_text_payload/1` | 235ns |
+| `client_on_text_payload/8` | 247ns |
+| `client_on_text_payload/32` | 248ns |
+| `client_on_text_payload_yyjson_pool/1` | 227ns |
+| `client_on_text_payload_yyjson_pool/8` | 229ns |
+| `client_on_text_payload_yyjson_pool/32` | 228ns |
+| `client_on_text_payload_yyjson_insitu_view/1` | 228ns |
+| `client_on_text_payload_yyjson_insitu_view/8` | 233ns |
+| `client_on_text_payload_yyjson_insitu_view/32` | 236ns |
+| `session_handle_text/1` | 272ns |
+| `session_handle_text/8` | 283ns |
+| `session_handle_text/32` | 285ns |
+| `session_handle_text_yyjson_pool/1` | 269ns |
+| `session_handle_text_yyjson_pool/8` | 280ns |
+| `session_handle_text_yyjson_pool/32` | 282ns |
+| `session_handle_text_yyjson_insitu_view/1` | 268ns |
+| `session_handle_text_yyjson_insitu_view/8` | 279ns |
+| `session_handle_text_yyjson_insitu_view/32` | 280ns |
+| `session_handle_text_padded_view` | 259ns |
 
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。
 
 当前对比结论只限这组 bookTicker payload：
 
-- yyjson pool 比 simdjson fallback 无 padding 路径略快。
+- yyjson insitu-view 在 parser 层接近 simdjson padded-view，但没有超过 simdjson padded-view。
+- yyjson pool / insitu-view 在 client/session 层非常接近，本轮没有证明 insitu-view 明显优于 yyjson pool。
 - simdjson padded-view 仍是最快的 session text path。
-- yyjson insitu-copy 需要 `YYJSON_PADDING_SIZE`，但因为当前生产 `MessageView` 是 const payload，benchmark 必须计入拷贝到 mutable scratch；这条路径没有超过 yyjson pool。
-- 如果真实 WebSocket frame buffer 能稳定提供 `simdjson::SIMDJSON_PADDING`，默认 simdjson 路径仍更有优势；如果大量落到 fallback copy，yyjson pool 值得继续压测。
+- 如果真实 WebSocket frame buffer 能稳定提供 `simdjson::SIMDJSON_PADDING`，默认 simdjson 路径仍更有优势；如果大量落到 fallback copy，yyjson pool 或 insitu-view 值得继续压测。
 
 live probe：
 

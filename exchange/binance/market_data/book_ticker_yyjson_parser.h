@@ -202,6 +202,33 @@ class BasicYyjsonBookTickerParser {
 
 using YyjsonBookTickerParser = BasicYyjsonBookTickerParser<>;
 
+template <size_t ReadPoolBytes = kYyjsonBookTickerReadPoolBytes>
+class BasicYyjsonInsituBookTickerParser {
+ public:
+  BookTickerParseStatus Parse(std::string_view payload,
+                              std::uint32_t readable_tail_bytes,
+                              BookTickerUpdate& output) noexcept {
+    if (payload.empty()) {
+      return BookTickerParseStatus::kMalformedJson;
+    }
+    if (readable_tail_bytes >= YYJSON_PADDING_SIZE) {
+      // This parser policy is only safe for mutable receive buffers. It is
+      // intended for FrameCodec-backed views whose underlying ring storage is
+      // writable even though MessageView exposes a const payload span.
+      return parser_.ParseInsitu(
+          std::span<char>(const_cast<char*>(payload.data()),
+                          payload.size() + readable_tail_bytes),
+          payload.size(), output);
+    }
+    return parser_.Parse(payload, readable_tail_bytes, output);
+  }
+
+ private:
+  BasicYyjsonBookTickerParser<ReadPoolBytes> parser_;
+};
+
+using YyjsonInsituBookTickerParser = BasicYyjsonInsituBookTickerParser<>;
+
 }  // namespace aquila::binance
 
 #endif  // AQUILA_EXCHANGE_BINANCE_MARKET_DATA_BOOK_TICKER_YYJSON_PARSER_H_

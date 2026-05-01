@@ -81,4 +81,20 @@ TEST(BinanceBookTickerYyjsonParserTest, RejectsInsituWithoutYyjsonPadding) {
   EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kMalformedJson);
 }
 
+TEST(BinanceBookTickerYyjsonParserTest, InsituParserParsesConstViewInPlace) {
+  std::array<char, kBookTickerJson.size() + YYJSON_PADDING_SIZE> buffer{};
+  std::memcpy(buffer.data(), kBookTickerJson.data(), kBookTickerJson.size());
+  aquila::binance::YyjsonInsituBookTickerParser parser;
+  aquila::binance::BookTickerUpdate update{};
+
+  const auto status =
+      parser.Parse(std::string_view(buffer.data(), kBookTickerJson.size()),
+                   YYJSON_PADDING_SIZE, update);
+
+  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kOk);
+  EXPECT_EQ(update.symbol, "BTCUSDT");
+  EXPECT_EQ(update.update_id, 400900217);
+  EXPECT_DOUBLE_EQ(update.ask_volume, 40.66);
+}
+
 }  // namespace
