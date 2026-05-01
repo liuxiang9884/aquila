@@ -102,6 +102,9 @@ class FuturesMarketDataSession {
                                  consumer) {}
 
   bool Start() noexcept {
+    if (stream_target_.empty()) [[unlikely]] {
+      return false;
+    }
     return client_.Start();
   }
 
@@ -192,17 +195,21 @@ class FuturesMarketDataSession {
     const std::string_view payload{
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
-    bool decoded_book_ticker = false;
     const std::int64_t local_ns =
         static_cast<std::int64_t>(websocket::NowNs(kClockSource));
-    const websocket::DeliveryResult result = market_data_client_.OnTextPayload(
-        payload, view.readable_tail_bytes, local_ns, &decoded_book_ticker);
     if constexpr (SessionDiagnosticsEnabled) {
+      bool decoded_book_ticker = false;
+      const websocket::DeliveryResult result =
+          market_data_client_.OnTextPayload(payload, view.readable_tail_bytes,
+                                            local_ns, &decoded_book_ticker);
       if (decoded_book_ticker) {
         session_diagnostics_.RecordBookTickerMessage();
       }
+      return result;
+    } else {
+      return market_data_client_.OnTextPayload(
+          payload, view.readable_tail_bytes, local_ns);
     }
-    return result;
   }
 
   std::span<const SymbolBinding> symbols_;

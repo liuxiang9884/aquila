@@ -4,6 +4,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include <gtest/gtest.h>
 
@@ -174,4 +175,18 @@ TEST(BinanceFuturesMarketDataSessionTest,
   EXPECT_EQ(consumer.calls, 0);
   EXPECT_EQ(session.market_data_client_diagnostics().stats().unknown_symbols,
             1U);
+}
+
+TEST(BinanceFuturesMarketDataSessionTest, RejectsEmptyStreamTargetOnStart) {
+  static constexpr std::array<aquila::binance::SymbolBinding, 0> symbols{};
+  RecordingConsumer consumer;
+  aquila::websocket::ConnectionConfig config{};
+  config.host = "localhost";
+  config.service = "1";
+  Session session(std::move(config), symbols, consumer);
+
+  EXPECT_EQ(session.stream_target(), "");
+  EXPECT_FALSE(session.Start());
+  EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
+  EXPECT_EQ(session.last_error(), aquila::websocket::ConnectionError::kNone);
 }

@@ -22,6 +22,7 @@ struct FuturesMarketDataClientStats {
   std::uint64_t malformed_json_messages{0};
   std::uint64_t unknown_symbols{0};
   std::uint64_t book_ticker_messages{0};
+  std::uint64_t simdjson_padding_fallback_messages{0};
 };
 
 struct NoopFuturesMarketDataDiagnostics {
@@ -44,6 +45,10 @@ class FuturesMarketDataDiagnostics {
 
   void RecordBookTickerMessage() noexcept {
     ++stats_.book_ticker_messages;
+  }
+
+  void RecordSimdjsonPaddingFallback() noexcept {
+    ++stats_.simdjson_padding_fallback_messages;
   }
 
   [[nodiscard]] const FuturesMarketDataClientStats& stats() const noexcept {
@@ -105,6 +110,13 @@ class FuturesMarketDataClient {
       std::int64_t local_ns, bool* decoded_book_ticker = nullptr) noexcept {
     if (decoded_book_ticker != nullptr) {
       *decoded_book_ticker = false;
+    }
+
+    if constexpr (DiagnosticsEnabled) {
+      if (!payload.empty() &&
+          readable_tail_bytes < simdjson::SIMDJSON_PADDING) {
+        diagnostics_.RecordSimdjsonPaddingFallback();
+      }
     }
 
     BookTickerUpdate update;

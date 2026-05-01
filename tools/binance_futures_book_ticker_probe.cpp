@@ -319,10 +319,11 @@ void PrintSummary(const RunnerT& runner) {
              session_stats.non_final_messages, session_stats.control_messages,
              session_stats.book_ticker_messages);
   fmt::print(FMT_COMPILE("market_data malformed_json={} unknown_symbol={} "
-                         "book_ticker={}\n"),
+                         "book_ticker={} simdjson_padding_fallback={}\n"),
              market_data_stats.malformed_json_messages,
              market_data_stats.unknown_symbols,
-             market_data_stats.book_ticker_messages);
+             market_data_stats.book_ticker_messages,
+             market_data_stats.simdjson_padding_fallback_messages);
   fmt::print(
       FMT_COMPILE("book_ticker payloads={} decoded={} failed_or_unmapped={} "
                   "first_id={} last_id={} id_delta={}\n"),

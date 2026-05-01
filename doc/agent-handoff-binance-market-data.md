@@ -70,6 +70,8 @@ FuturesMarketDataSession::Handle(text MessageView)
 4. `b/B/a/A` 是 JSON 字符串，使用 `fast_float::from_chars` 转 double，不使用 `std::stod`。
 5. client/session 都是模板组合；热路径不引入虚函数或 `std::function`。
 6. session diagnostics 默认 no-op；benchmark / probe / test 显式启用。
+7. 启用 market data diagnostics 时会记录 `simdjson_padding_fallback_messages`，用于 live probe 判断生产 receive buffer 是否稳定提供 `simdjson::SIMDJSON_PADDING`，默认 production no-op 路径不写 counter。
+8. 无效 stream 数量会生成空 target；`FuturesMarketDataSession::Start()` 对空 target 直接返回 `false`，避免在 cold path 尝试错误连接。
 
 ## yyjson 对照
 
@@ -110,19 +112,19 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 
 | case | time |
 | --- | ---: |
-| `parse_book_ticker` | 178ns |
-| `parse_book_ticker_padded_view` | 153ns |
-| `parse_book_ticker_ordered` | 175ns |
-| `parse_book_ticker_ordered_padded_view` | 150ns |
-| `parse_book_ticker_yyjson_pool` | 187ns |
-| `parse_book_ticker_yyjson_insitu_copy` | 185ns |
-| `parse_book_ticker_yyjson_insitu_view` | 185ns |
-| `client_on_text_payload/1` | 181ns |
-| `client_on_text_payload/8` | 193ns |
-| `client_on_text_payload/32` | 194ns |
-| `session_handle_text/1` | 213ns |
-| `session_handle_text/8` | 225ns |
-| `session_handle_text/32` | 225ns |
+| `parse_book_ticker` | 177ns |
+| `parse_book_ticker_padded_view` | 152ns |
+| `parse_book_ticker_ordered` | 173ns |
+| `parse_book_ticker_ordered_padded_view` | 149ns |
+| `parse_book_ticker_yyjson_pool` | 180ns |
+| `parse_book_ticker_yyjson_insitu_copy` | 173ns |
+| `parse_book_ticker_yyjson_insitu_view` | 172ns |
+| `client_on_text_payload/1` | 180ns |
+| `client_on_text_payload/8` | 192ns |
+| `client_on_text_payload/32` | 193ns |
+| `session_handle_text/1` | 212ns |
+| `session_handle_text/8` | 224ns |
+| `session_handle_text/32` | 224ns |
 | `session_handle_text_padded_view` | 197ns |
 
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。

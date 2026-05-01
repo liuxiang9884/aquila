@@ -2,7 +2,6 @@
 #define AQUILA_EXCHANGE_BINANCE_MARKET_DATA_STREAM_H_
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <span>
 #include <string>
@@ -33,10 +32,19 @@ inline void AppendLowercase(std::string_view text, std::string* output) {
   }
 }
 
+[[nodiscard]] inline std::string_view SymbolText(
+    const SymbolBinding& symbol) noexcept {
+  return symbol.symbol;
+}
+
+[[nodiscard]] inline std::string_view SymbolText(
+    std::string_view symbol) noexcept {
+  return symbol;
+}
+
 template <typename SymbolT>
 inline std::string BuildFuturesBookTickerStreamTargetImpl(
     std::span<const SymbolT> symbols) {
-  assert(IsValidFuturesBookTickerStreamCount(symbols.size()));
   if (!IsValidFuturesBookTickerStreamCount(symbols.size())) {
     return {};
   }
@@ -48,7 +56,7 @@ inline std::string BuildFuturesBookTickerStreamTargetImpl(
     if (i != 0) {
       target.push_back('/');
     }
-    AppendLowercase(symbols[i].symbol, &target);
+    AppendLowercase(SymbolText(symbols[i]), &target);
     target.append("@bookTicker");
   }
   return target;
@@ -70,22 +78,7 @@ template <size_t N>
 
 [[nodiscard]] inline std::string BuildFuturesBookTickerStreamTarget(
     std::span<const std::string_view> symbols) {
-  assert(IsValidFuturesBookTickerStreamCount(symbols.size()));
-  if (!IsValidFuturesBookTickerStreamCount(symbols.size())) {
-    return {};
-  }
-
-  std::string target;
-  target.reserve(11 + symbols.size() * 24);
-  target.append("/public/ws/");
-  for (size_t i = 0; i < symbols.size(); ++i) {
-    if (i != 0) {
-      target.push_back('/');
-    }
-    detail::AppendLowercase(symbols[i], &target);
-    target.append("@bookTicker");
-  }
-  return target;
+  return detail::BuildFuturesBookTickerStreamTargetImpl(symbols);
 }
 
 template <size_t N>

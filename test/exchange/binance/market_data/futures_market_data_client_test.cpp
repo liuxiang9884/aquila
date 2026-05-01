@@ -1,5 +1,6 @@
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,6 +12,7 @@
 #include "core/websocket/message_view.h"
 #include "exchange/binance/market_data/client.h"
 #include "exchange/binance/market_data/stream.h"
+#include <simdjson.h>
 
 namespace {
 
@@ -88,6 +90,20 @@ TEST(BinanceFuturesMarketDataClientTest, ExposesStreamCountLimitPredicate) {
   EXPECT_FALSE(aquila::binance::IsValidFuturesBookTickerStreamCount(0));
   EXPECT_FALSE(aquila::binance::IsValidFuturesBookTickerStreamCount(
       aquila::binance::kMaxFuturesBookTickerStreamsPerConnection + 1));
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     ReturnsEmptyTargetForInvalidStreamCount) {
+  const std::array<std::string_view, 0> empty_symbols{};
+  std::vector<std::string_view> too_many_symbols(
+      aquila::binance::kMaxFuturesBookTickerStreamsPerConnection + 1,
+      "BTCUSDT");
+
+  EXPECT_EQ(aquila::binance::BuildFuturesBookTickerStreamTarget(empty_symbols),
+            "");
+  EXPECT_EQ(aquila::binance::BuildFuturesBookTickerStreamTarget(
+                std::span<const std::string_view>(too_many_symbols)),
+            "");
 }
 
 TEST(BinanceFuturesMarketDataClientTest, EmitsBookTickerFromTextPayload) {
@@ -179,4 +195,38 @@ TEST(BinanceFuturesMarketDataClientTest, RecordsMalformedJsonWhenEnabled) {
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(consumer.calls, 0);
   EXPECT_EQ(client.diagnostics().stats().malformed_json_messages, 1U);
+}
+
+TEST(BinanceFuturesMarketDataClientTest, RecordsPaddingFallbackWhenEnabled) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DiagnosticClient client(symbols, consumer);
+
+  const auto result = client.OnTextPayload(kBookTickerJson, 0, 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(client.diagnostics().stats().simdjson_padding_fallback_messages,
+            1U);
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     DoesNotRecordPaddingFallbackForPaddedView) {
+  std::array<char, kBookTickerJson.size() + simdjson::SIMDJSON_PADDING>
+      buffer{};
+  std::memcpy(buffer.data(), kBookTickerJson.data(), kBookTickerJson.size());
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DiagnosticClient client(symbols, consumer);
+
+  const auto result = client.OnTextPayload(
+      std::string_view(buffer.data(), kBookTickerJson.size()),
+      static_cast<std::uint32_t>(simdjson::SIMDJSON_PADDING), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(client.diagnostics().stats().simdjson_padding_fallback_messages,
+            0U);
 }
