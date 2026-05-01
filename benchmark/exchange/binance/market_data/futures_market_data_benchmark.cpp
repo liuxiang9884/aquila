@@ -1,4 +1,5 @@
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -220,6 +221,77 @@ class BasicYyjsonInsituBookTickerParser {
 
 using YyjsonInsituBookTickerParser = BasicYyjsonInsituBookTickerParser<>;
 
+simdjson::ondemand::value OrderedTrustedField(
+    simdjson::ondemand::object& object, std::string_view key) noexcept {
+  simdjson::simdjson_result<simdjson::ondemand::value> result =
+      object.find_field(key);
+  assert(result.error() == simdjson::SUCCESS);
+  return result.value_unsafe();
+}
+
+aq_binance::BookTickerParseStatus ParseOrderedBookTickerObject(
+    simdjson::ondemand::object root,
+    aq_binance::BookTickerUpdate& output) noexcept {
+  const std::int64_t update_id =
+      aq_binance::detail::TrustedInt64(OrderedTrustedField(root, "u"));
+  const std::int64_t event_time_ms =
+      aq_binance::detail::TrustedInt64(OrderedTrustedField(root, "E"));
+  const std::string_view symbol =
+      aq_binance::detail::TrustedString(OrderedTrustedField(root, "s"));
+  const double bid_price = aq_binance::detail::ParseTrustedDoubleString(
+      aq_binance::detail::TrustedString(OrderedTrustedField(root, "b")));
+  const double bid_volume = aq_binance::detail::ParseTrustedDoubleString(
+      aq_binance::detail::TrustedString(OrderedTrustedField(root, "B")));
+  const double ask_price = aq_binance::detail::ParseTrustedDoubleString(
+      aq_binance::detail::TrustedString(OrderedTrustedField(root, "a")));
+  const double ask_volume = aq_binance::detail::ParseTrustedDoubleString(
+      aq_binance::detail::TrustedString(OrderedTrustedField(root, "A")));
+
+  output.update_id = update_id;
+  output.event_time_ms = event_time_ms;
+  output.bid_price = bid_price;
+  output.bid_volume = bid_volume;
+  output.ask_price = ask_price;
+  output.ask_volume = ask_volume;
+  aq_binance::detail::CopyTrustedSymbol(symbol, output);
+  return aq_binance::BookTickerParseStatus::kOk;
+}
+
+aq_binance::BookTickerParseStatus ParseOrderedBookTickerDocument(
+    simdjson::ondemand::document document,
+    aq_binance::BookTickerUpdate& output) noexcept {
+  simdjson::ondemand::object root;
+  if (document.get_object().get(root) != simdjson::SUCCESS) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
+  }
+  return ParseOrderedBookTickerObject(root, output);
+}
+
+aq_binance::BookTickerParseStatus ParseOrderedBookTicker(
+    std::string_view payload, std::uint32_t readable_tail_bytes,
+    simdjson::ondemand::parser& parser,
+    aq_binance::BookTickerUpdate& output) noexcept {
+  if (payload.empty()) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
+  }
+
+  simdjson::ondemand::document document;
+  if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
+    simdjson::padded_string_view view(payload.data(), payload.size(),
+                                      payload.size() + readable_tail_bytes);
+    if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+      return aq_binance::BookTickerParseStatus::kMalformedJson;
+    }
+    return ParseOrderedBookTickerDocument(std::move(document), output);
+  }
+
+  simdjson::padded_string padded(payload);
+  if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
+    return aq_binance::BookTickerParseStatus::kMalformedJson;
+  }
+  return ParseOrderedBookTickerDocument(std::move(document), output);
+}
+
 ws::MessageView TextView(std::string_view payload,
                          std::uint32_t readable_tail_bytes = 0) noexcept {
   return {
@@ -297,7 +369,7 @@ std::string_view MutableBookTickerPayload(std::vector<char>& payloads,
 
 void BenchmarkParseBookTicker(benchmark::State& state) {
   simdjson::ondemand::parser parser;
-  aq_binance::BookTickerUpdate update{};
+  aq_binance::BookTickerUpdate update;
   std::uint64_t parsed = 0;
 
   for (auto _ : state) {
@@ -322,7 +394,7 @@ void BenchmarkParseBookTickerPaddedView(benchmark::State& state) {
       scratch{};
   std::memcpy(scratch.data(), kBookTickerJson.data(), kBookTickerJson.size());
   simdjson::ondemand::parser parser;
-  aq_binance::BookTickerUpdate update{};
+  aq_binance::BookTickerUpdate update;
   std::uint64_t parsed = 0;
 
   for (auto _ : state) {
@@ -344,9 +416,58 @@ BENCHMARK(BenchmarkParseBookTickerPaddedView)
     ->Name("binance_market_data/parse_book_ticker_padded_view")
     ->Unit(benchmark::kNanosecond);
 
+void BenchmarkParseBookTickerOrdered(benchmark::State& state) {
+  simdjson::ondemand::parser parser;
+  aq_binance::BookTickerUpdate update;
+  std::uint64_t parsed = 0;
+
+  for (auto _ : state) {
+    aq_binance::BookTickerParseStatus status =
+        ParseOrderedBookTicker(kBookTickerJson, 0, parser, update);
+    benchmark::DoNotOptimize(status);
+    benchmark::DoNotOptimize(update);
+    parsed += static_cast<std::uint64_t>(
+        status == aq_binance::BookTickerParseStatus::kOk);
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(parsed));
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkParseBookTickerOrdered)
+    ->Name("binance_market_data/parse_book_ticker_ordered")
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkParseBookTickerOrderedPaddedView(benchmark::State& state) {
+  std::array<char, kBookTickerJson.size() + simdjson::SIMDJSON_PADDING>
+      scratch{};
+  std::memcpy(scratch.data(), kBookTickerJson.data(), kBookTickerJson.size());
+  simdjson::ondemand::parser parser;
+  aq_binance::BookTickerUpdate update;
+  std::uint64_t parsed = 0;
+
+  for (auto _ : state) {
+    aq_binance::BookTickerParseStatus status = ParseOrderedBookTicker(
+        std::string_view(scratch.data(), kBookTickerJson.size()),
+        static_cast<std::uint32_t>(simdjson::SIMDJSON_PADDING), parser, update);
+    benchmark::DoNotOptimize(status);
+    benchmark::DoNotOptimize(update);
+    parsed += static_cast<std::uint64_t>(
+        status == aq_binance::BookTickerParseStatus::kOk);
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(parsed));
+  state.counters["scratch_bytes"] = static_cast<double>(scratch.size());
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkParseBookTickerOrderedPaddedView)
+    ->Name("binance_market_data/parse_book_ticker_ordered_padded_view")
+    ->Unit(benchmark::kNanosecond);
+
 void BenchmarkParseBookTickerYyjsonPool(benchmark::State& state) {
   YyjsonBookTickerParser parser;
-  aq_binance::BookTickerUpdate update{};
+  aq_binance::BookTickerUpdate update;
   std::uint64_t parsed = 0;
 
   for (auto _ : state) {
@@ -371,7 +492,7 @@ BENCHMARK(BenchmarkParseBookTickerYyjsonPool)
 void BenchmarkParseBookTickerYyjsonInsituCopy(benchmark::State& state) {
   std::array<char, kBookTickerJson.size() + YYJSON_PADDING_SIZE> scratch{};
   YyjsonBookTickerParser parser;
-  aq_binance::BookTickerUpdate update{};
+  aq_binance::BookTickerUpdate update;
   std::uint64_t parsed = 0;
 
   for (auto _ : state) {
@@ -402,7 +523,7 @@ void BenchmarkParseBookTickerYyjsonInsituView(benchmark::State& state) {
   std::vector<char> payloads =
       BuildMutableBookTickerPayloads(kYyjsonInsituViewIterations);
   YyjsonInsituBookTickerParser parser;
-  aq_binance::BookTickerUpdate update{};
+  aq_binance::BookTickerUpdate update;
   std::uint64_t parsed = 0;
   size_t index = 0;
 

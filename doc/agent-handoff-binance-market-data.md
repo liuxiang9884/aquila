@@ -103,32 +103,35 @@ FuturesMarketDataSession::Handle(text MessageView)
 benchmark：
 
 ```bash
-taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
+taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 ```
 
-2026-05-01 P0 trusted-field parser 当前 mean 结果：
+2026-05-01 P1 parser 当前 mean 结果：
 
 | case | time |
 | --- | ---: |
-| `parse_book_ticker` | 202ns |
-| `parse_book_ticker_padded_view` | 152ns |
-| `parse_book_ticker_yyjson_pool` | 177ns |
-| `parse_book_ticker_yyjson_insitu_copy` | 174ns |
-| `parse_book_ticker_yyjson_insitu_view` | 173ns |
-| `client_on_text_payload/1` | 201ns |
-| `client_on_text_payload/8` | 213ns |
-| `client_on_text_payload/32` | 215ns |
-| `session_handle_text/1` | 225ns |
-| `session_handle_text/8` | 238ns |
-| `session_handle_text/32` | 237ns |
-| `session_handle_text_padded_view` | 210ns |
+| `parse_book_ticker` | 178ns |
+| `parse_book_ticker_padded_view` | 153ns |
+| `parse_book_ticker_ordered` | 175ns |
+| `parse_book_ticker_ordered_padded_view` | 150ns |
+| `parse_book_ticker_yyjson_pool` | 187ns |
+| `parse_book_ticker_yyjson_insitu_copy` | 185ns |
+| `parse_book_ticker_yyjson_insitu_view` | 185ns |
+| `client_on_text_payload/1` | 181ns |
+| `client_on_text_payload/8` | 193ns |
+| `client_on_text_payload/32` | 194ns |
+| `session_handle_text/1` | 213ns |
+| `session_handle_text/8` | 225ns |
+| `session_handle_text/32` | 225ns |
+| `session_handle_text_padded_view` | 197ns |
 
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。
 
 当前对比结论只限这组 bookTicker payload：
 
 - simdjson fallback copy 明显慢于 padded-view；生产路径仍应优先保证 receive buffer 能稳定提供 `simdjson::SIMDJSON_PADDING`。
-- trusted-field parser 后，simdjson padded-view 是当前 parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
+- benchmark-only ordered `find_field()` 对照略快于 production unordered parser，但差距很小；是否把字段顺序作为 production 协议约束需要单独决策。
+- trusted-field parser 后，simdjson padded-view 是当前 production parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 

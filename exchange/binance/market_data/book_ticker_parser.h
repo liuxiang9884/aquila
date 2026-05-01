@@ -24,6 +24,8 @@ enum class BookTickerParseStatus : std::uint8_t {
 };
 
 struct BookTickerUpdate {
+  // Successful parses fully assign every field; do not read after parse
+  // failure.
   BookTickerUpdate() = default;
 
   BookTickerUpdate(const BookTickerUpdate& other) noexcept {
@@ -53,14 +55,14 @@ struct BookTickerUpdate {
     return *this = other;
   }
 
-  std::int64_t update_id{0};
-  std::int64_t event_time_ms{0};
-  double bid_price{0.0};
-  double bid_volume{0.0};
-  double ask_price{0.0};
-  double ask_volume{0.0};
-  std::array<char, kMaxBookTickerSymbolBytes> symbol_storage{};
-  std::string_view symbol{};
+  std::int64_t update_id;
+  std::int64_t event_time_ms;
+  double bid_price;
+  double bid_volume;
+  double ask_price;
+  double ask_volume;
+  std::array<char, kMaxBookTickerSymbolBytes> symbol_storage;
+  std::string_view symbol;
 };
 
 namespace detail {

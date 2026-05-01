@@ -107,7 +107,7 @@ class FuturesMarketDataClient {
       *decoded_book_ticker = false;
     }
 
-    BookTickerUpdate update{};
+    BookTickerUpdate update;
     const BookTickerParseStatus status =
         ParseBookTicker(payload, readable_tail_bytes, parser_, update);
     if (status != BookTickerParseStatus::kOk) [[unlikely]] {
