@@ -1,5 +1,8 @@
 #include "exchange/binance/market_data/book_ticker_yyjson_parser.h"
 
+#include <array>
+#include <cstring>
+#include <span>
 #include <string_view>
 
 #include <gtest/gtest.h>
@@ -47,6 +50,35 @@ TEST(BinanceBookTickerYyjsonParserTest, RejectsInvalidNumberString) {
   const auto status = parser.Parse(kInvalidJson, 0, update);
 
   EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kInvalidNumber);
+}
+
+TEST(BinanceBookTickerYyjsonParserTest, ParsesInsituPaddedMutablePayload) {
+  std::array<char, kBookTickerJson.size() + YYJSON_PADDING_SIZE> buffer{};
+  std::memcpy(buffer.data(), kBookTickerJson.data(), kBookTickerJson.size());
+  aquila::binance::YyjsonBookTickerParser parser;
+  aquila::binance::BookTickerUpdate update{};
+
+  const auto status =
+      parser.ParseInsitu(std::span<char>(buffer.data(), buffer.size()),
+                         kBookTickerJson.size(), update);
+
+  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kOk);
+  EXPECT_EQ(update.symbol, "BTCUSDT");
+  EXPECT_EQ(update.update_id, 400900217);
+  EXPECT_DOUBLE_EQ(update.bid_price, 25.3519);
+}
+
+TEST(BinanceBookTickerYyjsonParserTest, RejectsInsituWithoutYyjsonPadding) {
+  std::array<char, kBookTickerJson.size() + YYJSON_PADDING_SIZE - 1U> buffer{};
+  std::memcpy(buffer.data(), kBookTickerJson.data(), kBookTickerJson.size());
+  aquila::binance::YyjsonBookTickerParser parser;
+  aquila::binance::BookTickerUpdate update{};
+
+  const auto status =
+      parser.ParseInsitu(std::span<char>(buffer.data(), buffer.size()),
+                         kBookTickerJson.size(), update);
+
+  EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kMalformedJson);
 }
 
 }  // namespace

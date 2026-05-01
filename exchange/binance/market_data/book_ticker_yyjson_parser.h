@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string_view>
 
 #include "exchange/binance/market_data/book_ticker_update.h"
@@ -161,6 +162,26 @@ class BasicYyjsonBookTickerParser {
       return BookTickerParseStatus::kMalformedJson;
     }
 
+    return ParseWithFlags(const_cast<char*>(payload.data()), payload.size(),
+                          YYJSON_READ_NOFLAG, output);
+  }
+
+  BookTickerParseStatus ParseInsitu(std::span<char> padded_payload,
+                                    size_t payload_size,
+                                    BookTickerUpdate& output) noexcept {
+    if (payload_size == 0 || payload_size > padded_payload.size() ||
+        padded_payload.size() - payload_size < YYJSON_PADDING_SIZE) {
+      return BookTickerParseStatus::kMalformedJson;
+    }
+
+    return ParseWithFlags(padded_payload.data(), payload_size,
+                          YYJSON_READ_INSITU, output);
+  }
+
+ private:
+  BookTickerParseStatus ParseWithFlags(char* payload, size_t payload_size,
+                                       yyjson_read_flag flags,
+                                       BookTickerUpdate& output) noexcept {
     yyjson_alc allocator{};
     if (!yyjson_alc_pool_init(&allocator, read_pool_.data(),
                               read_pool_.size())) {
@@ -168,16 +189,14 @@ class BasicYyjsonBookTickerParser {
     }
 
     yyjson_read_err error{};
-    detail::YyjsonDoc doc(yyjson_read_opts(const_cast<char*>(payload.data()),
-                                           payload.size(), YYJSON_READ_NOFLAG,
-                                           &allocator, &error));
+    detail::YyjsonDoc doc(
+        yyjson_read_opts(payload, payload_size, flags, &allocator, &error));
     if (doc.get() == nullptr) {
       return BookTickerParseStatus::kMalformedJson;
     }
     return detail::ParseYyjsonBookTickerDocument(doc.get(), &output);
   }
 
- private:
   alignas(std::max_align_t) std::array<char, ReadPoolBytes> read_pool_{};
 };
 

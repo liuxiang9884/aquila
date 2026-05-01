@@ -160,6 +160,36 @@ BENCHMARK(BenchmarkParseBookTickerYyjsonPool)
     ->Name("binance_market_data/parse_book_ticker_yyjson_pool")
     ->Unit(benchmark::kNanosecond);
 
+void BenchmarkParseBookTickerYyjsonInsituCopy(benchmark::State& state) {
+  std::array<char, kBookTickerJson.size() + YYJSON_PADDING_SIZE> scratch{};
+  aq_binance::YyjsonBookTickerParser parser;
+  aq_binance::BookTickerUpdate update{};
+  std::uint64_t parsed = 0;
+
+  for (auto _ : state) {
+    std::memcpy(scratch.data(), kBookTickerJson.data(), kBookTickerJson.size());
+    aq_binance::BookTickerParseStatus status =
+        parser.ParseInsitu(std::span<char>(scratch.data(), scratch.size()),
+                           kBookTickerJson.size(), update);
+    benchmark::DoNotOptimize(status);
+    benchmark::DoNotOptimize(update);
+    parsed += static_cast<std::uint64_t>(
+        status == aq_binance::BookTickerParseStatus::kOk);
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(parsed));
+  state.counters["scratch_bytes"] = static_cast<double>(scratch.size());
+  state.counters["yyjson_padding_bytes"] =
+      static_cast<double>(YYJSON_PADDING_SIZE);
+  state.counters["yyjson_pool_bytes"] =
+      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkParseBookTickerYyjsonInsituCopy)
+    ->Name("binance_market_data/parse_book_ticker_yyjson_insitu_copy")
+    ->Unit(benchmark::kNanosecond);
+
 void BenchmarkClientOnTextPayload(benchmark::State& state) {
   const size_t symbol_count = static_cast<size_t>(state.range(0));
   SymbolSet symbols = BuildSymbols(symbol_count);
