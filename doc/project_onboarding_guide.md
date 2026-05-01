@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；下一阶段继续 Gate 交易 submit/update 链路设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；下一阶段继续 Gate 交易 submit/update 链路设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -44,6 +44,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `doc/websocket_client_future_optimizations.md` | 继续 WebSocket 优化时读 | read/write/active spin/network 的未来优化 backlog。 |
 | `doc/websocket_prepared_write_options.md` | 调整 WebSocket 写路径预分配容量时读 | `DefaultWebSocketOptions`、`MakeConnectionConfig<OptionsT>()`、prepared write slots/bytes 的含义和使用边界。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
+| `doc/agent-handoff-binance-market-data.md` | 继续 Binance USD-M futures bookTicker 行情时读 | raw stream URL、JSON parser、client/session、benchmark 和 probe 入口。 |
 
 ## 代码入口
 
@@ -79,6 +80,15 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
 | `exchange/gate/market_data/session.h` | `FuturesMarketDataSession<Consumer, TransportSocketT>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
 
+### Binance USD-M futures 行情
+
+| 文件 | 职责 |
+| --- | --- |
+| `exchange/binance/market_data/stream.h` | 构造 `/public/ws/<symbol>@bookTicker` raw stream target，并限制单连接 stream 数上限。 |
+| `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，使用 `simdjson::ondemand` 和 `fast_float`。 |
+| `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
+| `exchange/binance/market_data/session.h` | raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
+
 ### Gate 交易准备代码
 
 | 文件 | 职责 |
@@ -93,6 +103,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `tools/websocket_probe.cpp` | 单连接 live probe，支持 graceful stop 后输出最终 metrics。 |
 | `tools/websocket_latency_compare.cpp` | public/private 或多连接 latency compare / warmup selection。 |
 | `tools/gate_futures_book_ticker_probe.cpp` | Gate futures SBE `futures.book_ticker` live probe，默认 BTC_USDT。 |
+| `tools/binance_futures_book_ticker_probe.cpp` | Binance USD-M futures JSON `bookTicker` live probe，默认 BTCUSDT。 |
 | `scripts/gate/test_gate_ws_connect.py` | Gate WS 连接 / login smoke。 |
 | `scripts/gate/test_gate_ws_dual_login.py` | 同账号双 WebSocket login 验证。 |
 
@@ -109,6 +120,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `benchmark/websocket/active_spin_benchmark.cpp` | active spin loop / stop check / clock 相关基线。 |
 | `benchmark/websocket/message_handler_dispatch_benchmark.cpp` | `MessageCallback` 与 typed message handler dispatch 对照。 |
 | `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp` | Gate BBO decode、market data client/session binary path 和 text control parse benchmark。 |
+| `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` | Binance JSON bookTicker parser、market data client/session text path benchmark。 |
 | `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp` | Gate submit response JSON parse benchmark；yyjson 只在这里作为 simdjson 对照。 |
 
 ## 当前重要结论
@@ -276,6 +288,21 @@ Gate BBO live probe：
 
 ```bash
 ./build/debug/tools/gate_futures_book_ticker_probe --contract BTC_USDT --symbol-id 1 --duration-ms 10000
+```
+
+Binance USD-M futures bookTicker 测试和 benchmark：
+
+```bash
+./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
+./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
+./build/debug/test/exchange/binance/market_data/binance_futures_market_data_session_test
+./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker|parse_book_ticker_padded_view|client_on_text_payload|session_handle_text|session_handle_text_padded_view)'
+```
+
+Binance USD-M futures bookTicker live probe：
+
+```bash
+./build/debug/tools/binance_futures_book_ticker_probe --contract BTCUSDT --symbol-id 1 --duration-ms 10000
 ```
 
 ## 接手注意事项

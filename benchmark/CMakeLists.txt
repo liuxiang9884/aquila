@@ -1,3 +1,4 @@
 add_subdirectory(websocket)
 add_subdirectory(exchange/gate/market_data)
 add_subdirectory(exchange/gate/trading)
+add_subdirectory(exchange/binance/market_data)

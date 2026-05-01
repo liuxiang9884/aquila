@@ -103,6 +103,13 @@ affinity_policy_comparison_benchmark
 cold_path_handshake_benchmark
 ```
 
+当前交易所行情 benchmark target：
+
+```text
+gate_futures_market_data_benchmark
+binance_futures_market_data_benchmark
+```
+
 也可以只构建 WebSocket benchmark：
 
 ```bash
@@ -192,6 +199,18 @@ timeout 15s ./build/debug/tools/websocket_probe \
 ```
 
 probe 用于验证 cold path 能进入 active state，并输出 state transition、错误码和最终 metrics。它不是长稳健康监控工具。
+
+Binance USD-M futures bookTicker live probe：
+
+```bash
+timeout 15s ./build/debug/tools/binance_futures_book_ticker_probe \
+  --contract BTCUSDT \
+  --symbol-id 1 \
+  --duration-ms 10000 \
+  --cpu 2
+```
+
+Binance probe 使用 raw stream URL，例如 `/public/ws/btcusdt@bookTicker`；第一版不发送 runtime `SUBSCRIBE`。
 
 ## Public / Private 延迟对比
 
