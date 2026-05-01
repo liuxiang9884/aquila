@@ -85,7 +85,9 @@ doc/websocket_read_write_benchmark_comparison.md
 | 文件 | 职责 |
 | --- | --- |
 | `exchange/binance/market_data/stream.h` | 构造 `/public/ws/<symbol>@bookTicker` raw stream target，并限制单连接 stream 数上限。 |
-| `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，使用 `simdjson::ondemand` 和 `fast_float`。 |
+| `exchange/binance/market_data/book_ticker_update.h` | Binance bookTicker parser 共享的中间结构、状态码和数字/symbol helper。 |
+| `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，默认使用 `simdjson::ondemand` 和 `fast_float`。 |
+| `exchange/binance/market_data/book_ticker_yyjson_parser.h` | `feature/binance-bookticker-yyjson` 分支的 yyjson bookTicker parser policy，对照 simdjson。 |
 | `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
 | `exchange/binance/market_data/session.h` | raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
 
@@ -120,7 +122,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `benchmark/websocket/active_spin_benchmark.cpp` | active spin loop / stop check / clock 相关基线。 |
 | `benchmark/websocket/message_handler_dispatch_benchmark.cpp` | `MessageCallback` 与 typed message handler dispatch 对照。 |
 | `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp` | Gate BBO decode、market data client/session binary path 和 text control parse benchmark。 |
-| `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` | Binance JSON bookTicker parser、market data client/session text path benchmark。 |
+| `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` | Binance JSON bookTicker parser、market data client/session text path benchmark；yyjson 分支中同时注册 simdjson/yyjson 对照 case。 |
 | `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp` | Gate submit response JSON parse benchmark；yyjson 只在这里作为 simdjson 对照。 |
 
 ## 当前重要结论

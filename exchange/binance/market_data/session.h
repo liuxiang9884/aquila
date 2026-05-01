@@ -73,7 +73,8 @@ template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
           typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
           typename OptionsT = websocket::DefaultWebSocketOptions,
           typename SessionDiagnosticsT =
-              NoopFuturesMarketDataSessionDiagnostics>
+              NoopFuturesMarketDataSessionDiagnostics,
+          typename BookTickerParserT = SimdjsonBookTickerParser>
 class FuturesMarketDataSession {
  public:
   using MessageHandler = websocket::MessageHandlerRef<FuturesMarketDataSession>;
@@ -207,7 +208,8 @@ class FuturesMarketDataSession {
 
   std::span<const SymbolBinding> symbols_;
   std::string stream_target_;
-  FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
+  FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT, BookTickerParserT>
+      market_data_client_;
   MessageHandler message_handler_;
   Client client_;
   [[no_unique_address]] SessionDiagnosticsT session_diagnostics_{};

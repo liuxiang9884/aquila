@@ -12,6 +12,7 @@
 #include "benchmark/websocket/benchmark_support.h"
 #include "core/websocket/message_view.h"
 #include "exchange/binance/market_data/book_ticker_parser.h"
+#include "exchange/binance/market_data/book_ticker_yyjson_parser.h"
 #include "exchange/binance/market_data/client.h"
 #include "exchange/binance/market_data/session.h"
 #include <simdjson.h>
@@ -135,6 +136,30 @@ BENCHMARK(BenchmarkParseBookTickerPaddedView)
     ->Name("binance_market_data/parse_book_ticker_padded_view")
     ->Unit(benchmark::kNanosecond);
 
+void BenchmarkParseBookTickerYyjsonPool(benchmark::State& state) {
+  aq_binance::YyjsonBookTickerParser parser;
+  aq_binance::BookTickerUpdate update{};
+  std::uint64_t parsed = 0;
+
+  for (auto _ : state) {
+    aq_binance::BookTickerParseStatus status =
+        parser.Parse(kBookTickerJson, 0, update);
+    benchmark::DoNotOptimize(status);
+    benchmark::DoNotOptimize(update);
+    parsed += static_cast<std::uint64_t>(
+        status == aq_binance::BookTickerParseStatus::kOk);
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(parsed));
+  state.counters["yyjson_pool_bytes"] =
+      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkParseBookTickerYyjsonPool)
+    ->Name("binance_market_data/parse_book_ticker_yyjson_pool")
+    ->Unit(benchmark::kNanosecond);
+
 void BenchmarkClientOnTextPayload(benchmark::State& state) {
   const size_t symbol_count = static_cast<size_t>(state.range(0));
   SymbolSet symbols = BuildSymbols(symbol_count);
@@ -156,6 +181,37 @@ void BenchmarkClientOnTextPayload(benchmark::State& state) {
 
 BENCHMARK(BenchmarkClientOnTextPayload)
     ->Name("binance_market_data/client_on_text_payload")
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(32)
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkClientOnTextPayloadYyjsonPool(benchmark::State& state) {
+  const size_t symbol_count = static_cast<size_t>(state.range(0));
+  SymbolSet symbols = BuildSymbols(symbol_count);
+  CountingConsumer consumer;
+  aq_binance::FuturesMarketDataClient<
+      CountingConsumer, aq_binance::NoopFuturesMarketDataDiagnostics,
+      ws::DefaultWebSocketOptions, aq_binance::YyjsonBookTickerParser>
+      client(std::span<const aq_binance::SymbolBinding>(symbols.bindings),
+             consumer);
+
+  for (auto _ : state) {
+    ws::DeliveryResult result =
+        client.OnTextPayload(kBookTickerJson, 0, kLocalNs);
+    benchmark::DoNotOptimize(result);
+  }
+
+  benchmark::DoNotOptimize(consumer);
+  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
+  state.counters["symbols"] = static_cast<double>(symbol_count);
+  state.counters["yyjson_pool_bytes"] =
+      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkClientOnTextPayloadYyjsonPool)
+    ->Name("binance_market_data/client_on_text_payload_yyjson_pool")
     ->Arg(1)
     ->Arg(8)
     ->Arg(32)
@@ -184,6 +240,40 @@ void BenchmarkSessionHandleText(benchmark::State& state) {
 
 BENCHMARK(BenchmarkSessionHandleText)
     ->Name("binance_market_data/session_handle_text")
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(32)
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkSessionHandleTextYyjsonPool(benchmark::State& state) {
+  const size_t symbol_count = static_cast<size_t>(state.range(0));
+  SymbolSet symbols = BuildSymbols(symbol_count);
+  CountingConsumer consumer;
+  aq_binance::FuturesMarketDataSession<
+      CountingConsumer, ws::PlainSocket,
+      aq_binance::NoopFuturesMarketDataDiagnostics, ws::DefaultWebSocketOptions,
+      aq_binance::NoopFuturesMarketDataSessionDiagnostics,
+      aq_binance::YyjsonBookTickerParser>
+      session(BuildConnectionConfig(),
+              std::span<const aq_binance::SymbolBinding>(symbols.bindings),
+              consumer);
+  const ws::MessageView view = TextView(kBookTickerJson);
+
+  for (auto _ : state) {
+    ws::DeliveryResult result = session.Handle(view);
+    benchmark::DoNotOptimize(result);
+  }
+
+  benchmark::DoNotOptimize(consumer);
+  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
+  state.counters["symbols"] = static_cast<double>(symbol_count);
+  state.counters["yyjson_pool_bytes"] =
+      static_cast<double>(aq_binance::kYyjsonBookTickerReadPoolBytes);
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkSessionHandleTextYyjsonPool)
+    ->Name("binance_market_data/session_handle_text_yyjson_pool")
     ->Arg(1)
     ->Arg(8)
     ->Arg(32)

@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "core/websocket/message_view.h"
+#include "exchange/binance/market_data/book_ticker_yyjson_parser.h"
 #include "exchange/binance/market_data/client.h"
 #include "exchange/binance/market_data/stream.h"
 
@@ -59,6 +60,10 @@ using DiagnosticClient = aquila::binance::FuturesMarketDataClient<
 using CoarseClockClient = aquila::binance::FuturesMarketDataClient<
     RecordingConsumer, aquila::binance::NoopFuturesMarketDataDiagnostics,
     CoarseClockOptions>;
+using YyjsonClient = aquila::binance::FuturesMarketDataClient<
+    RecordingConsumer, aquila::binance::NoopFuturesMarketDataDiagnostics,
+    aquila::websocket::DefaultWebSocketOptions,
+    aquila::binance::YyjsonBookTickerParser>;
 
 static_assert(!DefaultClient::DiagnosticsEnabled);
 static_assert(DiagnosticClient::DiagnosticsEnabled);
@@ -95,6 +100,28 @@ TEST(BinanceFuturesMarketDataClientTest, EmitsBookTickerFromTextPayload) {
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   RecordingConsumer consumer;
   DefaultClient client(symbols, consumer);
+
+  const auto result = client.OnMessage(TextView(kBookTickerJson), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(consumer.last.symbol_id, 11);
+  EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(consumer.last.id, 400900217);
+  EXPECT_EQ(consumer.last.exchange_ns, 1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last.bid_price, 25.3519);
+  EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 31.21);
+  EXPECT_DOUBLE_EQ(consumer.last.ask_price, 25.3652);
+  EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 40.66);
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     EmitsBookTickerFromTextPayloadWithYyjsonParser) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  YyjsonClient client(symbols, consumer);
 
   const auto result = client.OnMessage(TextView(kBookTickerJson), 999'000);
 

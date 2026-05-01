@@ -75,7 +75,8 @@ class FuturesMarketDataDiagnostics {
 
 template <typename Consumer,
           typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
-          typename OptionsT = websocket::DefaultWebSocketOptions>
+          typename OptionsT = websocket::DefaultWebSocketOptions,
+          typename BookTickerParserT = SimdjsonBookTickerParser>
 class FuturesMarketDataClient {
  public:
   static constexpr bool DiagnosticsEnabled = DiagnosticsT::kEnabled;
@@ -128,7 +129,7 @@ class FuturesMarketDataClient {
 
     BookTickerUpdate update{};
     const BookTickerParseStatus status =
-        ParseBookTicker(payload, readable_tail_bytes, parser_, update);
+        book_ticker_parser_.Parse(payload, readable_tail_bytes, update);
     if (status != BookTickerParseStatus::kOk) [[unlikely]] {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordParseDrop(status);
@@ -196,7 +197,7 @@ class FuturesMarketDataClient {
   std::span<const SymbolBinding> symbols_;
   absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
   Consumer& consumer_;
-  simdjson::ondemand::parser parser_;
+  BookTickerParserT book_ticker_parser_;
   [[no_unique_address]] DiagnosticsT diagnostics_{};
 };
 
