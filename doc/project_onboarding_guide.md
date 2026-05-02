@@ -12,12 +12,24 @@
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
 
+## 最近已完成
+
+截至 2026-05-02，`main` 已完成并准备同步到 `origin/main` 的主要内容：
+
+1. Gate / Binance market data 热路径防御性分支收口。
+2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
+3. `QueuedFrameCodec` 与 Gate BBO payload builder 已迁移到 `evaluation/`。
+4. 新增 header-only `aquila_evaluation` target，只允许 test / benchmark 使用。
+5. Gate / Binance 期货合约元数据脚本已按统一一类下单前字段输出 `pandas.DataFrame`。
+6. `doc/futures_contract_metadata_fields.md` 已记录字段含义、交易所映射和当前空值语义。
+7. `README.md`、本 onboarding、Gate / Binance handoff 和 evaluation 文档已按当前实现边界对齐。
+
 ## 新对话第一步
 
 先运行：
 
 ```bash
-git -C /home/liuxiang/dev/aquila status --short
+git -C /home/liuxiang/dev/aquila status --short --branch
 git -C /home/liuxiang/dev/aquila log --oneline -8
 ```
 
@@ -258,6 +270,23 @@ FuturesMarketDataSession::Handle(binary MessageView)
 | `session_handle_text_padded_view` | 195ns |
 
 `session_handle_text_padded_view` 是当前 Binance bookTicker 已实现路径的主要 microbenchmark；公网链路延迟需要重新跑 live probe。
+
+### 期货合约元数据
+
+当前已有 Gate / Binance 两个启动期 REST 查询脚本：
+
+```text
+scripts/gate/query_futures_contracts.py
+scripts/binance/query_um_futures_contracts.py
+```
+
+统一字段只覆盖一类下单前必需元数据，包括 `price_tick`、`quantity_step`、数量上下限、`min_notional`、`contract_multiplier` 和价格偏离限制。字段说明、Gate / Binance 映射和数量单位差异见 `doc/futures_contract_metadata_fields.md`。
+
+关键边界：
+
+- Gate 数量默认是合约张数，Binance USD-M futures 数量是 base asset 数量。
+- Gate `enable_decimal=true` 时当前不推导 `quantity_step` / `quantity_decimal_places`，避免把未确认规则带入下单路径。
+- 这组 metadata 应在启动期构建并缓存，供 strategy、risk check 和 exchange adapter 使用；不要在行情或下单热路径里查询 REST。
 
 ## 常用验证命令
 
