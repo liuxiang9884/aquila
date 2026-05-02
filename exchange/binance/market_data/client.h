@@ -20,7 +20,6 @@ namespace aquila::binance {
 
 struct FuturesMarketDataClientStats {
   std::uint64_t malformed_json_messages{0};
-  std::uint64_t unknown_symbols{0};
   std::uint64_t book_ticker_messages{0};
   std::uint64_t simdjson_padding_fallback_messages{0};
 };
@@ -37,10 +36,6 @@ class FuturesMarketDataDiagnostics {
     assert(status == BookTickerParseStatus::kMalformedJson);
     (void)status;
     ++stats_.malformed_json_messages;
-  }
-
-  void RecordUnknownSymbol() noexcept {
-    ++stats_.unknown_symbols;
   }
 
   void RecordBookTickerMessage() noexcept {
@@ -90,7 +85,7 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnMessage(
       const websocket::MessageView& view) noexcept {
-    if (view.kind != websocket::PayloadKind::kText || !view.fin) {
+    if (view.kind != websocket::PayloadKind::kText) {
       return websocket::DeliveryResult::kAccepted;
     }
     return OnMessage(view,
@@ -99,7 +94,7 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnMessage(const websocket::MessageView& view,
                                       std::int64_t local_ns) noexcept {
-    if (view.kind != websocket::PayloadKind::kText || !view.fin) {
+    if (view.kind != websocket::PayloadKind::kText) {
       return websocket::DeliveryResult::kAccepted;
     }
     const std::string_view payload{
@@ -133,12 +128,6 @@ class FuturesMarketDataClient {
     }
 
     const std::int32_t symbol_id = FindSymbolId(update.symbol);
-    if (symbol_id < 0) [[unlikely]] {
-      if constexpr (DiagnosticsEnabled) {
-        diagnostics_.RecordUnknownSymbol();
-      }
-      return websocket::DeliveryResult::kAccepted;
-    }
 
     const BookTicker book_ticker{
         .id = update.update_id,
@@ -168,24 +157,22 @@ class FuturesMarketDataClient {
  private:
   static websocket::DeliveryResult HandleWebSocketMessage(
       void* context, const websocket::MessageView& view) noexcept {
-    if (context == nullptr) {
-      return websocket::DeliveryResult::kFatal;
-    }
+    assert(context != nullptr);
     return static_cast<FuturesMarketDataClient*>(context)->OnMessage(view);
   }
 
   std::int32_t FindSymbolId(std::string_view symbol) const noexcept {
     const auto found = symbol_ids_.find(symbol);
-    return found == symbol_ids_.end() ? -1 : found->second;
+    assert(found != symbol_ids_.end());
+    return found->second;
   }
 
   // Construction-only work; keep it out of the JSON text hot path.
   [[gnu::noinline]] void BuildSymbolLookup() {
     symbol_ids_.reserve(symbols_.size());
     for (const SymbolBinding& binding : symbols_) {
-      if (binding.symbol_id >= 0) {
-        symbol_ids_.emplace(binding.symbol, binding.symbol_id);
-      }
+      assert(binding.symbol_id >= 0);
+      symbol_ids_.emplace(binding.symbol, binding.symbol_id);
     }
   }
 

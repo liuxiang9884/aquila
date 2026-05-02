@@ -87,6 +87,28 @@ inline double DecimalMantissaToDouble(std::int64_t mantissa,
   return static_cast<double>(mantissa) * DecimalExponentScale(exponent);
 }
 
+template <typename BboView>
+inline void AssignBookTickerFromView(const BboView& view, std::int64_t local_ns,
+                                     std::int32_t symbol_id,
+                                     BookTicker& out) noexcept {
+  out.id = view.u().value();
+  out.symbol_id = symbol_id;
+  out.exchange = Exchange::kGate;
+  out.exchange_ns = view.t().value() * 1000;
+  out.local_ns = local_ns;
+
+  const double price_scale = DecimalExponentScale(view.pxExponent().value());
+  const double volume_scale = DecimalExponentScale(view.szExponent().value());
+  out.bid_price =
+      static_cast<double>(view.bidMantissaPrice().value()) * price_scale;
+  out.bid_volume =
+      static_cast<double>(view.bidMantissaSize().value()) * volume_scale;
+  out.ask_price =
+      static_cast<double>(view.askMantissaPrice().value()) * price_scale;
+  out.ask_volume =
+      static_cast<double>(view.askMantissaSize().value()) * volume_scale;
+}
+
 }  // namespace detail
 
 inline std::string_view ExtractBookTickerSymbol(
@@ -105,6 +127,36 @@ inline std::string_view ExtractBookTickerSymbol(
   return symbol;
 }
 
+inline std::string_view ExtractTrustedBookTickerSymbol(
+    std::string_view payload, const SbeMessageHeader& header) noexcept {
+  assert(detail::IsBookTickerHeader(header));
+  assert(payload.size() >= detail::kMinBookTickerPayloadBytes);
+
+  size_t offset = kSbeMessageHeaderBytes + detail::kBookTickerBlockLength;
+  std::string_view channel;
+  std::string_view symbol;
+  [[maybe_unused]] bool ok = detail::ReadVarString8(payload, offset, channel);
+  assert(ok);
+  ok = detail::ReadVarString8(payload, offset, symbol);
+  assert(ok);
+  return symbol;
+}
+
+inline void DecodeTrustedBookTickerWithHeader(std::string_view payload,
+                                              const SbeMessageHeader& header,
+                                              std::int64_t local_ns,
+                                              std::int32_t symbol_id,
+                                              BookTicker& out) noexcept {
+  assert(payload.size() >= detail::kMinBookTickerPayloadBytes);
+  assert(detail::IsBookTickerHeader(header));
+
+  const auto view = ::sbepp::make_const_view<::gate::messages::bbo>(
+      payload.data(), payload.size());
+  assert(view.e() == ::gate::types::Event::Update);
+
+  detail::AssignBookTickerFromView(view, local_ns, symbol_id, out);
+}
+
 inline bool DecodeBookTickerWithHeader(std::string_view payload,
                                        const SbeMessageHeader& header,
                                        std::int64_t local_ns,
@@ -121,24 +173,7 @@ inline bool DecodeBookTickerWithHeader(std::string_view payload,
     return false;
   }
 
-  out->id = view.u().value();
-  out->symbol_id = symbol_id;
-  out->exchange = Exchange::kGate;
-  out->exchange_ns = view.t().value() * 1000;
-  out->local_ns = local_ns;
-
-  const double price_scale =
-      detail::DecimalExponentScale(view.pxExponent().value());
-  const double volume_scale =
-      detail::DecimalExponentScale(view.szExponent().value());
-  out->bid_price =
-      static_cast<double>(view.bidMantissaPrice().value()) * price_scale;
-  out->bid_volume =
-      static_cast<double>(view.bidMantissaSize().value()) * volume_scale;
-  out->ask_price =
-      static_cast<double>(view.askMantissaPrice().value()) * price_scale;
-  out->ask_volume =
-      static_cast<double>(view.askMantissaSize().value()) * volume_scale;
+  detail::AssignBookTickerFromView(view, local_ns, symbol_id, *out);
   return true;
 }
 

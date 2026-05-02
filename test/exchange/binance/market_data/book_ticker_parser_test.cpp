@@ -44,21 +44,24 @@ TEST(BinanceBookTickerParserTest, ParsesPaddedViewWithoutCopy) {
 
   EXPECT_EQ(status, aquila::binance::BookTickerParseStatus::kOk);
   EXPECT_EQ(update.symbol, "BTCUSDT");
+  EXPECT_EQ(update.symbol.data(), update.symbol_storage.data());
   EXPECT_EQ(update.update_id, 400900217);
 }
 
-TEST(BinanceBookTickerParserTest, CopyKeepsSymbolViewInsideCopyStorage) {
+TEST(BinanceBookTickerParserTest, PaddedViewKeepsSymbolInsideUpdateStorage) {
+  std::array<char, kBookTickerJson.size() + simdjson::SIMDJSON_PADDING>
+      buffer{};
+  std::memcpy(buffer.data(), kBookTickerJson.data(), kBookTickerJson.size());
   simdjson::ondemand::parser parser;
   aquila::binance::BookTickerUpdate update{};
 
-  ASSERT_EQ(
-      aquila::binance::ParseBookTicker(kBookTickerJson, 0, parser, update),
-      aquila::binance::BookTickerParseStatus::kOk);
+  ASSERT_EQ(aquila::binance::ParseBookTicker(
+                std::string_view(buffer.data(), kBookTickerJson.size()),
+                simdjson::SIMDJSON_PADDING, parser, update),
+            aquila::binance::BookTickerParseStatus::kOk);
 
-  const aquila::binance::BookTickerUpdate copied = update;
-
-  EXPECT_EQ(copied.symbol, "BTCUSDT");
-  EXPECT_EQ(copied.symbol.data(), copied.symbol_storage.data());
+  EXPECT_EQ(update.symbol, "BTCUSDT");
+  EXPECT_EQ(update.symbol.data(), update.symbol_storage.data());
 }
 
 TEST(BinanceBookTickerParserTest, IgnoresEventFieldOnRawBookTickerStream) {

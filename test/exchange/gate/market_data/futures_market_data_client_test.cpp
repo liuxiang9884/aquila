@@ -226,7 +226,9 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
   EXPECT_EQ(client.diagnostics().stats().unsupported_sbe_templates, 1U);
 }
 
-TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
+TEST(GateFuturesMarketDataClientTest,
+     AssertsInvalidBookTickerBlockLengthInDebug) {
+#ifndef NDEBUG
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   RecordingConsumer consumer;
@@ -236,14 +238,14 @@ TEST(GateFuturesMarketDataClientTest, IgnoresInvalidBookTickerBlockLength) {
   const std::string_view payload =
       BuildBookTickerPayload(&buffer, "BTC_USDT", 1, 58);
 
-  const auto result = client.OnMessage(BinaryView(payload), 999'000);
-
-  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.diagnostics().stats().book_ticker_decode_failures, 1U);
+  EXPECT_DEATH((void)client.OnMessage(BinaryView(payload), 999'000), "");
+#else
+  GTEST_SKIP() << "Invalid book ticker SBE header is a debug assert contract.";
+#endif
 }
 
-TEST(GateFuturesMarketDataClientTest, IgnoresUnknownSymbol) {
+TEST(GateFuturesMarketDataClientTest, AssertsUnknownSymbolInDebug) {
+#ifndef NDEBUG
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.symbol = "ETH_USDT", .symbol_id = 12}};
   RecordingConsumer consumer;
@@ -252,11 +254,10 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownSymbol) {
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
 
-  const auto result = client.OnMessage(BinaryView(payload), 999'000);
-
-  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.diagnostics().stats().unknown_symbols, 1U);
+  EXPECT_DEATH((void)client.OnMessage(BinaryView(payload), 999'000), "");
+#else
+  GTEST_SKIP() << "Unknown symbol is a debug assert contract.";
+#endif
 }
 
 TEST(GateFuturesMarketDataClientTest, AcceptsTextControlMessages) {

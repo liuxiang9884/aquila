@@ -169,17 +169,17 @@ TEST(BinanceFuturesMarketDataClientTest, IgnoresBinaryPayload) {
   EXPECT_EQ(consumer.calls, 0);
 }
 
-TEST(BinanceFuturesMarketDataClientTest, RecordsUnknownSymbolWhenEnabled) {
+TEST(BinanceFuturesMarketDataClientTest, AssertsUnknownSymbolInDebug) {
+#ifndef NDEBUG
   const std::array<aquila::binance::SymbolBinding, 1> symbols{
       aquila::binance::SymbolBinding{.symbol = "ETHUSDT", .symbol_id = 12}};
   RecordingConsumer consumer;
   DiagnosticClient client(symbols, consumer);
 
-  const auto result = client.OnTextPayload(kBookTickerJson, 0, 999'000);
-
-  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(client.diagnostics().stats().unknown_symbols, 1U);
+  EXPECT_DEATH((void)client.OnTextPayload(kBookTickerJson, 0, 999'000), "");
+#else
+  GTEST_SKIP() << "Unknown symbol is a debug assert contract.";
+#endif
 }
 
 TEST(BinanceFuturesMarketDataClientTest, RecordsMalformedJsonWhenEnabled) {

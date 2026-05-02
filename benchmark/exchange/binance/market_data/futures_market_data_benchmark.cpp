@@ -142,7 +142,7 @@ aq_binance::BookTickerParseStatus ParseYyjsonBookTickerDocument(
   output->bid_volume = bid_volume;
   output->ask_price = ask_price;
   output->ask_volume = ask_volume;
-  aq_binance::detail::CopyTrustedSymbol(symbol, *output);
+  aq_binance::detail::CopySymbolToStorage(symbol, *output);
   return aq_binance::BookTickerParseStatus::kOk;
 }
 
@@ -253,7 +253,7 @@ aq_binance::BookTickerParseStatus ParseOrderedBookTickerObject(
   output.bid_volume = bid_volume;
   output.ask_price = ask_price;
   output.ask_volume = ask_volume;
-  aq_binance::detail::CopyTrustedSymbol(symbol, output);
+  aq_binance::detail::CopySymbolToStorage(symbol, output);
   return aq_binance::BookTickerParseStatus::kOk;
 }
 

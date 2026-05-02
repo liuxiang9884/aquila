@@ -22,8 +22,6 @@ enum class BookTickerParseStatus : std::uint8_t {
 };
 
 struct BookTickerUpdate {
-  // Successful parses fully assign every field; do not read after parse
-  // failure.
   BookTickerUpdate() = default;
 
   BookTickerUpdate(const BookTickerUpdate& other) noexcept {
@@ -90,8 +88,8 @@ inline double ParseTrustedDoubleString(std::string_view text) noexcept {
   return ToDouble(text);
 }
 
-inline void CopyTrustedSymbol(std::string_view symbol,
-                              BookTickerUpdate& output) noexcept {
+inline void CopySymbolToStorage(std::string_view symbol,
+                                BookTickerUpdate& output) noexcept {
   assert(symbol.size() <= output.symbol_storage.size());
   std::memcpy(output.symbol_storage.data(), symbol.data(), symbol.size());
   output.symbol = std::string_view(output.symbol_storage.data(), symbol.size());
@@ -117,7 +115,7 @@ inline BookTickerParseStatus ParseBookTickerObject(
   output.bid_volume = bid_volume;
   output.ask_price = ask_price;
   output.ask_volume = ask_volume;
-  CopyTrustedSymbol(symbol, output);
+  CopySymbolToStorage(symbol, output);
   return BookTickerParseStatus::kOk;
 }
 

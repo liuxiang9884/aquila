@@ -98,7 +98,7 @@ DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
 
 DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::binance::SymbolBinding, 1> symbols{
-      aquila::binance::SymbolBinding{.symbol = "ETHUSDT", .symbol_id = 12}};
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
   config.service = "443";
@@ -139,19 +139,6 @@ TEST(BinanceFuturesMarketDataSessionTest, IgnoresBinaryPayload) {
   EXPECT_EQ(consumer.calls, 0);
 }
 
-TEST(BinanceFuturesMarketDataSessionTest, CountsNonFinalFrames) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
-  aquila::websocket::MessageView view = TextView(kBookTickerJson);
-  view.fin = false;
-
-  const auto result = session.Handle(view);
-
-  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(session.stats().non_final_messages, 1U);
-  EXPECT_EQ(consumer.calls, 0);
-}
-
 TEST(BinanceFuturesMarketDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
   RecordingConsumer consumer;
   DefaultNoStatsSession session = MakeDefaultNoStatsSession(consumer);
@@ -172,9 +159,10 @@ TEST(BinanceFuturesMarketDataSessionTest,
   const auto result = session.Handle(TextView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(session.market_data_client_diagnostics().stats().unknown_symbols,
-            1U);
+  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(
+      session.market_data_client_diagnostics().stats().book_ticker_messages,
+      1U);
 }
 
 TEST(BinanceFuturesMarketDataSessionTest, RejectsEmptyStreamTargetOnStart) {

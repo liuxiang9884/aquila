@@ -1,6 +1,7 @@
 #ifndef AQUILA_EXCHANGE_GATE_SBE_MESSAGE_HEADER_H_
 #define AQUILA_EXCHANGE_GATE_SBE_MESSAGE_HEADER_H_
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -18,8 +19,8 @@ struct SbeMessageHeader {
 
 namespace detail {
 
-inline std::uint16_t ReadUint16LittleEndianUnchecked(
-    std::string_view payload, size_t offset) noexcept {
+inline std::uint16_t ReadUint16LittleEndianUnchecked(std::string_view payload,
+                                                     size_t offset) noexcept {
   const auto* bytes =
       reinterpret_cast<const unsigned char*>(payload.data() + offset);
   return static_cast<std::uint16_t>(bytes[0]) |
@@ -30,7 +31,8 @@ inline std::uint16_t ReadUint16LittleEndianUnchecked(
 
 inline bool ParseSbeMessageHeader(std::string_view payload,
                                   SbeMessageHeader* out) noexcept {
-  if (out == nullptr || payload.size() < kSbeMessageHeaderBytes) {
+  assert(out != nullptr);
+  if (payload.size() < kSbeMessageHeaderBytes) {
     return false;
   }
 

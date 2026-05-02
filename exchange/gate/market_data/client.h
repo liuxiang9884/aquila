@@ -2,6 +2,7 @@
 #define AQUILA_EXCHANGE_GATE_MARKET_DATA_CLIENT_H_
 
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -28,8 +29,6 @@ struct FuturesMarketDataClientStats {
   std::uint64_t unsupported_sbe_schema_versions{0};
   std::uint64_t unsupported_sbe_templates{0};
   std::uint64_t unsupported_sbe_messages{0};
-  std::uint64_t unknown_symbols{0};
-  std::uint64_t book_ticker_decode_failures{0};
 };
 
 struct NoopFuturesMarketDataDiagnostics {
@@ -61,14 +60,6 @@ class FuturesMarketDataDiagnostics {
 
   void RecordUnsupportedSbeMessage() noexcept {
     ++stats_.unsupported_sbe_messages;
-  }
-
-  void RecordUnknownSymbol() noexcept {
-    ++stats_.unknown_symbols;
-  }
-
-  void RecordBookTickerDecodeFailure() noexcept {
-    ++stats_.book_ticker_decode_failures;
   }
 
   [[nodiscard]] const FuturesMarketDataClientStats& stats() const noexcept {
@@ -116,7 +107,7 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnMessage(const websocket::MessageView& view,
                                       std::int64_t local_ns) noexcept {
-    if (view.kind != websocket::PayloadKind::kBinary || !view.fin) {
+    if (view.kind != websocket::PayloadKind::kBinary) {
       return websocket::DeliveryResult::kAccepted;
     }
 
@@ -153,38 +144,20 @@ class FuturesMarketDataClient {
  private:
   static websocket::DeliveryResult HandleWebSocketMessage(
       void* context, const websocket::MessageView& view) noexcept {
-    if (context == nullptr) {
-      return websocket::DeliveryResult::kFatal;
-    }
+    assert(context != nullptr);
     return static_cast<FuturesMarketDataClient*>(context)->OnMessage(view);
   }
 
   websocket::DeliveryResult OnBookTickerPayload(
       std::string_view payload, const SbeMessageHeader& header,
       std::int64_t local_ns) noexcept {
-    const std::string_view symbol = ExtractBookTickerSymbol(payload);
-    if (symbol.empty()) [[unlikely]] {
-      if constexpr (DiagnosticsEnabled) {
-        diagnostics_.RecordBookTickerDecodeFailure();
-      }
-      return websocket::DeliveryResult::kAccepted;
-    }
+    const std::string_view symbol =
+        ExtractTrustedBookTickerSymbol(payload, header);
     const std::int32_t symbol_id = FindSymbolId(symbol);
-    if (symbol_id < 0) [[unlikely]] {
-      if constexpr (DiagnosticsEnabled) {
-        diagnostics_.RecordUnknownSymbol();
-      }
-      return websocket::DeliveryResult::kAccepted;
-    }
 
     BookTicker book_ticker;
-    if (!DecodeBookTickerWithHeader(payload, header, local_ns, symbol_id,
-                                    &book_ticker)) [[unlikely]] {
-      if constexpr (DiagnosticsEnabled) {
-        diagnostics_.RecordBookTickerDecodeFailure();
-      }
-      return websocket::DeliveryResult::kAccepted;
-    }
+    DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
+                                      book_ticker);
 
     consumer_.OnBookTicker(book_ticker);
     return websocket::DeliveryResult::kAccepted;
@@ -192,7 +165,8 @@ class FuturesMarketDataClient {
 
   std::int32_t FindSymbolId(std::string_view symbol) const noexcept {
     const auto found = symbol_ids_.find(symbol);
-    return found == symbol_ids_.end() ? -1 : found->second;
+    assert(found != symbol_ids_.end());
+    return found->second;
   }
 
   // This runs during construction; keep it out-of-line so message handlers
@@ -200,9 +174,8 @@ class FuturesMarketDataClient {
   [[gnu::noinline]] void BuildSymbolLookup() {
     symbol_ids_.reserve(symbols_.size());
     for (const SymbolBinding& binding : symbols_) {
-      if (binding.symbol_id >= 0) {
-        symbol_ids_.emplace(binding.symbol, binding.symbol_id);
-      }
+      assert(binding.symbol_id >= 0);
+      symbol_ids_.emplace(binding.symbol, binding.symbol_id);
     }
   }
 

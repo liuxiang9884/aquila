@@ -26,7 +26,6 @@ namespace aquila::gate {
 struct FuturesMarketDataSessionStats {
   std::uint64_t text_messages{0};
   std::uint64_t binary_messages{0};
-  std::uint64_t non_final_messages{0};
   std::uint64_t control_messages{0};
   std::uint64_t control_parse_errors{0};
   std::uint64_t ignored_text_messages{0};
@@ -62,10 +61,6 @@ class FuturesMarketDataSessionDiagnostics {
 
   void RecordBinaryMessage() noexcept {
     ++stats_.binary_messages;
-  }
-
-  void RecordNonFinalMessage() noexcept {
-    ++stats_.non_final_messages;
   }
 
   void RecordControlMessage() noexcept {
@@ -191,25 +186,12 @@ class FuturesMarketDataSession {
   websocket::DeliveryResult Handle(
       const websocket::MessageView& view) noexcept {
     if (view.kind == websocket::PayloadKind::kBinary) [[likely]] {
-      if (!view.fin) {
-        if constexpr (SessionDiagnosticsEnabled) {
-          session_diagnostics_.RecordNonFinalMessage();
-        }
-        return websocket::DeliveryResult::kAccepted;
-      }
       if constexpr (SessionDiagnosticsEnabled) {
         session_diagnostics_.RecordBinaryMessage();
       }
       const std::int64_t local_ns =
           static_cast<std::int64_t>(websocket::NowNs(kClockSource));
       return market_data_client_.OnBinaryPayload(view.payload, local_ns);
-    }
-
-    if (!view.fin) {
-      if constexpr (SessionDiagnosticsEnabled) {
-        session_diagnostics_.RecordNonFinalMessage();
-      }
-      return websocket::DeliveryResult::kAccepted;
     }
 
     if (view.kind == websocket::PayloadKind::kText) {

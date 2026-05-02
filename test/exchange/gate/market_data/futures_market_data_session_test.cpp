@@ -114,7 +114,7 @@ Session MakeSession(RecordingConsumer& consumer) {
 
 DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.symbol = "ETH_USDT", .symbol_id = 12}};
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -312,9 +312,11 @@ TEST(GateFuturesMarketDataSessionTest,
   const auto result = session.Handle(BinaryView(payload));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
-  EXPECT_EQ(session.market_data_client_diagnostics().stats().unknown_symbols,
-            1U);
+  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(session.market_data_client_diagnostics()
+                .stats()
+                .unsupported_sbe_templates,
+            0U);
 }
 
 TEST(GateFuturesMarketDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
