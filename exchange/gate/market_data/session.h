@@ -149,11 +149,10 @@ class FuturesMarketDataSession {
   FuturesMarketDataSession(websocket::ConnectionConfig config,
                            std::span<const SymbolBinding> symbols,
                            Consumer& consumer)
-      : symbols_(symbols),
-        market_data_client_(symbols_, consumer),
+      : market_data_client_(symbols, consumer),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(ApplyOptions(std::move(config)), message_handler_) {
-    detail::BuildSymbolViews(symbols_, &subscription_symbols_);
+    detail::BuildSymbolViews(symbols, &subscription_symbols_);
     client_.SetStateHook(this, &HandleState);
   }
 
@@ -408,7 +407,6 @@ class FuturesMarketDataSession {
     return core.SendText(payload);
   }
 
-  std::span<const SymbolBinding> symbols_;
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
   FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;

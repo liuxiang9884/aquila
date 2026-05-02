@@ -64,8 +64,8 @@ class FuturesMarketDataClient {
 
   FuturesMarketDataClient(std::span<const SymbolBinding> symbols,
                           Consumer& consumer)
-      : symbols_(symbols), consumer_(consumer) {
-    BuildSymbolLookup();
+      : consumer_(consumer) {
+    BuildSymbolLookup(symbols);
   }
 
   template <size_t N>
@@ -168,15 +168,15 @@ class FuturesMarketDataClient {
   }
 
   // Construction-only work; keep it out of the JSON text hot path.
-  [[gnu::noinline]] void BuildSymbolLookup() {
-    symbol_ids_.reserve(symbols_.size());
-    for (const SymbolBinding& binding : symbols_) {
+  [[gnu::noinline]] void BuildSymbolLookup(
+      std::span<const SymbolBinding> symbols) {
+    symbol_ids_.reserve(symbols.size());
+    for (const SymbolBinding& binding : symbols) {
       assert(binding.symbol_id >= 0);
       symbol_ids_.emplace(binding.symbol, binding.symbol_id);
     }
   }
 
-  std::span<const SymbolBinding> symbols_;
   absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
   Consumer& consumer_;
   simdjson::ondemand::parser parser_;

@@ -244,6 +244,25 @@ TEST(GateFuturesMarketDataClientTest,
 #endif
 }
 
+TEST(GateFuturesMarketDataClientTest,
+     AssertsNonUpdateBookTickerEventInDebug) {
+#ifndef NDEBUG
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DiagnosticClient client(symbols, consumer);
+
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+  buffer[aquila::gate::kSbeMessageHeaderBytes + sizeof(std::int64_t)] =
+      static_cast<char>(::gate::types::Event::Subscribe);
+
+  EXPECT_DEATH((void)client.OnMessage(BinaryView(payload), 999'000), "");
+#else
+  GTEST_SKIP() << "Gate BBO non-update events are a debug assert contract.";
+#endif
+}
+
 TEST(GateFuturesMarketDataClientTest, AssertsUnknownSymbolInDebug) {
 #ifndef NDEBUG
   const std::array<aquila::gate::SymbolBinding, 1> symbols{

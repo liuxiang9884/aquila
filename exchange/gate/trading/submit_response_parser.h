@@ -1,6 +1,7 @@
 #ifndef AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 #define AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -70,16 +71,14 @@ inline std::uint64_t HashSimdjsonString(
 
 inline bool ReadSimdjsonUint64(simdjson::ondemand::value value,
                                std::uint64_t* output) noexcept {
-  if (output == nullptr) {
-    return false;
-  }
-  std::uint64_t unsigned_value = 0;
+  assert(output != nullptr);
+  std::uint64_t unsigned_value;
   if (value.get_uint64().get(unsigned_value) == simdjson::SUCCESS) {
     *output = unsigned_value;
     return true;
   }
 
-  std::int64_t signed_value = 0;
+  std::int64_t signed_value;
   if (value.get_int64().get(signed_value) == simdjson::SUCCESS &&
       signed_value >= 0) {
     *output = static_cast<std::uint64_t>(signed_value);

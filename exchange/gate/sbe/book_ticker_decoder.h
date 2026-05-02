@@ -152,6 +152,8 @@ inline void DecodeTrustedBookTickerWithHeader(std::string_view payload,
 
   const auto view = ::sbepp::make_const_view<::gate::messages::bbo>(
       payload.data(), payload.size());
+  // Gate BBO binary market data frames are update events. Other SBE templates
+  // must define their own event contract instead of reusing this assumption.
   assert(view.e() == ::gate::types::Event::Update);
 
   detail::AssignBookTickerFromView(view, local_ns, symbol_id, out);

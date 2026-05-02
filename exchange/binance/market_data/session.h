@@ -81,9 +81,8 @@ class FuturesMarketDataSession {
   FuturesMarketDataSession(websocket::ConnectionConfig config,
                            std::span<const SymbolBinding> symbols,
                            Consumer& consumer)
-      : symbols_(symbols),
-        stream_target_(BuildFuturesBookTickerStreamTarget(symbols_)),
-        market_data_client_(symbols_, consumer),
+      : stream_target_(BuildFuturesBookTickerStreamTarget(symbols)),
+        market_data_client_(symbols, consumer),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(ApplyOptions(std::move(config), stream_target_),
                 message_handler_) {}
@@ -200,7 +199,6 @@ class FuturesMarketDataSession {
     }
   }
 
-  std::span<const SymbolBinding> symbols_;
   std::string stream_target_;
   FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
   MessageHandler message_handler_;

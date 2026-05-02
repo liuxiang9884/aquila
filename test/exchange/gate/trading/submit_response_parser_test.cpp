@@ -172,5 +172,24 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
   EXPECT_EQ(parsed.text_hash, 0U);
 }
 
+TEST(GateSubmitResponseParserTest, AssertsNullUint64OutputInDebug) {
+#ifndef NDEBUG
+  static constexpr std::string_view kPayload = R"({"value":123})";
+  simdjson::padded_string payload(kPayload);
+  simdjson::ondemand::parser parser;
+  simdjson::ondemand::document document;
+  ASSERT_EQ(parser.iterate(payload).get(document), simdjson::SUCCESS);
+
+  simdjson::ondemand::object root;
+  ASSERT_EQ(document.get_object().get(root), simdjson::SUCCESS);
+  simdjson::ondemand::value value;
+  ASSERT_TRUE(detail::FindSimdjsonField(root, "value", &value));
+
+  EXPECT_DEATH((void)detail::ReadSimdjsonUint64(value, nullptr), "");
+#else
+  GTEST_SKIP() << "Null uint64 output is a debug assert contract.";
+#endif
+}
+
 }  // namespace
 }  // namespace aquila::gate
