@@ -1,6 +1,6 @@
 # aquila
 
-`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片是低延迟 WebSocket client：冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
+`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片包括低延迟 WebSocket client、Gate futures SBE BBO 行情、Binance USD-M futures JSON bookTicker 行情、交易所 benchmark / live probe，以及 Gate / Binance 期货合约元数据查询脚本。WebSocket 冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
 
 ## 构建依赖
 
@@ -96,18 +96,22 @@ third_party_frame_codec_comparison_benchmark
 degraded_evaluator_benchmark
 active_spin_benchmark
 session_write_path_benchmark
+session_tls_write_path_benchmark
 session_read_path_benchmark
+session_mixed_path_benchmark
+message_handler_dispatch_benchmark
 clock_source_benchmark
 runtime_loopback_benchmark
 affinity_policy_comparison_benchmark
 cold_path_handshake_benchmark
 ```
 
-当前交易所行情 benchmark target：
+当前交易所 benchmark target：
 
 ```text
 gate_futures_market_data_benchmark
 binance_futures_market_data_benchmark
+gate_submit_response_parse_benchmark
 ```
 
 也可以只构建 WebSocket benchmark：
@@ -120,7 +124,10 @@ cmake --build build/release --target \
   degraded_evaluator_benchmark \
   active_spin_benchmark \
   session_write_path_benchmark \
+  session_tls_write_path_benchmark \
   session_read_path_benchmark \
+  session_mixed_path_benchmark \
+  message_handler_dispatch_benchmark \
   clock_source_benchmark \
   runtime_loopback_benchmark \
   affinity_policy_comparison_benchmark \
@@ -146,7 +153,10 @@ taskset -c 2 ./build/release/benchmark/websocket/runtime_loopback_benchmark
 - `degraded_evaluator_benchmark`：degraded evaluator 单次评估成本。
 - `active_spin_benchmark`：active spin loop skeleton 成本。
 - `session_write_path_benchmark`：`CommitPreparedWrite()` 到 `DriveWrite()` 写入本地 socket buffer 的路径。
+- `session_tls_write_path_benchmark`：本地 TLS write path 基线。
 - `session_read_path_benchmark`：本地 socketpair 写入 frame 到 consumer 收到 `MessageView` 的路径。
+- `session_mixed_path_benchmark`：read/write 混合、write budget 和 callback flush 对 read latency 的影响。
+- `message_handler_dispatch_benchmark`：`MessageCallback` 与 typed message handler dispatch 对照。
 - `clock_source_benchmark`：`ClockSource` 三种取时方式成本。
 - `runtime_loopback_benchmark`：`ActiveSpinLoop + CriticalSession` 本地 socketpair loopback 延迟。
 - `affinity_policy_comparison_benchmark`：不同 affinity / prefault / memory-lock 策略对比。
@@ -211,6 +221,24 @@ timeout 15s ./build/debug/tools/binance_futures_book_ticker_probe \
 ```
 
 Binance probe 使用 raw stream URL，例如 `/public/ws/btcusdt@bookTicker`；第一版不发送 runtime `SUBSCRIBE`。
+
+## Futures Contract Metadata
+
+Gate / Binance 合约基础信息脚本输出同一组一类下单前必需字段，字段语义和交易所差异见 `doc/futures_contract_metadata_fields.md`。
+
+Gate USDT futures：
+
+```bash
+scripts/gate/query_futures_contracts.py BTC_USDT ETH_USDT --format csv
+```
+
+Binance USD-M futures：
+
+```bash
+scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
+```
+
+两个脚本也支持 `--file`，文件内每行一个 symbol；输出可直接转换为 `pandas.DataFrame`。
 
 ## Public / Private 延迟对比
 

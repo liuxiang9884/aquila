@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；行情热路径已按协议不变量收口，下一阶段继续 Gate 交易 submit/update 链路设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -28,11 +28,12 @@ AGENTS.md
 README.md
 doc/project_onboarding_guide.md
 doc/evaluation_support.md
+doc/futures_contract_metadata_fields.md
 doc/agent-handoff-gate-trade-architecture.md
 doc/websocket_read_write_benchmark_comparison.md
 ```
 
-如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
+如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
 
 ## 文档索引
 
@@ -343,6 +344,25 @@ Binance USD-M futures bookTicker live probe：
 ./build/debug/tools/binance_futures_book_ticker_probe --contract BTCUSDT --symbol-id 1 --duration-ms 10000
 ```
 
+Gate / Binance 期货合约元数据脚本：
+
+```bash
+scripts/gate/query_futures_contracts_test.py
+scripts/binance/query_um_futures_contracts_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python -m py_compile \
+  scripts/gate/query_futures_contracts.py \
+  scripts/gate/query_futures_contracts_test.py \
+  scripts/binance/query_um_futures_contracts.py \
+  scripts/binance/query_um_futures_contracts_test.py
+```
+
+REST 查询 smoke 需要外网：
+
+```bash
+scripts/gate/query_futures_contracts.py BTC_USDT ETH_USDT --format csv
+scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
+```
+
 ## 接手注意事项
 
 - 不要 push，除非用户明确要求。
@@ -357,9 +377,10 @@ Binance USD-M futures bookTicker live probe：
 如果新对话从 Gate 交易继续，建议顺序：
 
 1. 读取 `doc/agent-handoff-gate-trade-architecture.md`。
-2. 确认是否采用 `GateOrderSubmitWsSession` + `GateOrderUpdateWsSession`。
-3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
-4. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`。
-5. 写最小 benchmark：submit send、ack parse、update decode、feedback SPSC。
-6. 如需 live 证据，重跑 BTC_USDT probe 并把原始输出记录到 handoff。
-7. 再开始 C++ 实现。
+2. 确认统一 symbol metadata 如何在 strategy、risk check 和 exchange adapter 中缓存并进入下单前校验。
+3. 确认是否采用 `GateOrderSubmitWsSession` + `GateOrderUpdateWsSession`。
+4. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
+5. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`。
+6. 写最小 benchmark：submit send、ack parse、update decode、feedback SPSC。
+7. 如需 live 证据，重跑 BTC_USDT probe 并把原始输出记录到 handoff。
+8. 再开始 C++ 实现。

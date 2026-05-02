@@ -2,7 +2,7 @@
 
 ## 当前范围
 
-本轮只实现 Binance USDⓈ-M futures public `bookTicker` 行情，不覆盖 spot、COIN-M futures、私有频道或运行时动态订阅。
+本 handoff 主要覆盖 Binance USD-M futures public `bookTicker` 行情；当前额外提供 USD-M futures 合约元数据查询脚本，用于启动期 symbol 配置和下单前字段准备。行情实现不覆盖 spot、COIN-M futures、私有频道或运行时动态订阅。
 
 官方文档结论：
 
@@ -28,6 +28,9 @@ exchange/binance/market_data/client.h
 exchange/binance/market_data/session.h
 tools/binance_futures_book_ticker_probe.cpp
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
+scripts/binance/query_um_futures_contracts.py
+scripts/binance/query_um_futures_contracts_test.py
+doc/futures_contract_metadata_fields.md
 ```
 
 共享 JSON helper 已放到：
@@ -37,6 +40,21 @@ exchange/common/simdjson_utils.h
 ```
 
 Gate 旧 include `exchange/gate/common/simdjson_utils.h` 现在只是转发到共享 helper，以保持已有 Gate 代码不大面积改名。
+
+## Binance 合约元数据脚本
+
+`scripts/binance/query_um_futures_contracts.py` 查询 USD-M futures `GET /fapi/v1/exchangeInfo`，按输入 symbol 顺序生成 `pandas.DataFrame`；CLI 支持一个或多个 symbol，也支持 `--file`，文件内每行一个 symbol。脚本把 `settle_asset` 映射为 `marginAsset`；当前使用约定是调用方只传 USDT settled symbols。
+
+当前输出字段与 Gate 脚本保持一致，字段语义见 `doc/futures_contract_metadata_fields.md`。Binance 侧主要映射如下：
+
+1. `price_tick` 来自 `PRICE_FILTER.tickSize`。
+2. `quantity_step`、`quantity_min`、`quantity_max` 来自 `LOT_SIZE`。
+3. `market_quantity_max` 来自 `MARKET_LOT_SIZE.maxQty`。
+4. `min_notional` 来自 `MIN_NOTIONAL.notional` 或 `NOTIONAL.minNotional`。
+5. `price_limit_up` / `price_limit_down` 来自 `PERCENT_PRICE` 的 `multiplierUp` / `multiplierDown`，表示相对偏离比例。
+6. `contract_multiplier` 固定为 `1.0`，因为 Binance USD-M futures quantity 以 base asset 数量表达。
+
+这组字段只覆盖一类下单前必需元数据，不包含手续费、最大杠杆、风险限额档位、保证金模式、账户权限或交易所运行时限流。
 
 ## 数据流
 
@@ -104,6 +122,7 @@ FuturesMarketDataSession::Handle(text MessageView)
 ./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_session_test
+scripts/binance/query_um_futures_contracts_test.py
 ```
 
 benchmark：

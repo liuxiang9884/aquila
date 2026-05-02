@@ -9,15 +9,15 @@
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 截至 2026-05-02，最近相关功能提交：
-  - `f2ade4e exchange: trim market data construction state`
-  - `9b4c49f exchange: trust market data hot paths`
-  - `e74e306 core: move numeric helpers to utils`
-  - `d877e15 core: add fast numeric parsing helpers`
-  - `c961f02 exchange: skip Binance clock for ignored messages`
-  - `a2fe11c exchange: track Binance padding fallback`
-  - `7bda3b7 exchange: avoid Binance book ticker update zero init`
-  - `1c2229e exchange: trust Binance book ticker fields`
+- 截至 2026-05-02，最近相关功能提交包括以下内容；新接手时以 `git log --oneline -8` 为准：
+  - `aff3408 docs: document futures contract metadata fields`
+  - `ca1a9cc scripts: unify futures contract metadata fields`
+  - `a3c444a scripts: add Binance futures contract query`
+  - `e502bd1 scripts: add Gate futures contract query`
+  - `7c0fb70 docs: add evaluation support rules`
+  - `9548bd2 build: add evaluation support target`
+  - `33fab19 docs: document benchmark helper locations`
+  - `63ac1d9 core: move comparison helpers to tests`
 - 新接手时先执行：
 
 ```bash
@@ -239,6 +239,28 @@ aquila::gate::FuturesMarketDataSession<
 
 1. Symbol lookup ownership：考虑引入稳定的 `GateSymbolLookup` / `SymbolTableView`，显式表达 `std::string_view` 的生命周期和 ownership 边界，避免未来多链路共享 symbol 表时重复构造或生命周期误用。
 2. Trading submit types/session split：后续下单链路再把 submit response 类型、parser 和 order submit session 拆开，保持 ack 热路径最小化，同时避免 market-data 与 trading 结构混在同一层。
+
+### 合约元数据和 symbol 配置
+
+已新增 Gate / Binance 期货合约基础信息脚本：
+
+```text
+scripts/gate/query_futures_contracts.py
+scripts/binance/query_um_futures_contracts.py
+doc/futures_contract_metadata_fields.md
+```
+
+这两个脚本按 symbol 顺序查询 REST 基础信息并生成统一 `pandas.DataFrame` 字段。当前只覆盖一类下单前必需元数据：价格 tick、价格小数位、数量步进、数量上下限、市价数量上限、最小名义价值、合约乘数、价格偏离限制和市价偏离限制。
+
+对 Gate 交易链路最重要的差异：
+
+1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `contract_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`contract_multiplier=1.0`。
+2. Gate `price_tick` 来自 `order_price_round`；Binance `price_tick` 来自 `PRICE_FILTER.tickSize`。
+3. Gate 未提供 `min_notional`，当前输出空值；Binance 从 `MIN_NOTIONAL` / `NOTIONAL` filter 映射。
+4. Gate 在 `enable_decimal=false` 时 `quantity_step=1.0`、`quantity_decimal_places=0`；如果 `enable_decimal=true`，当前脚本暂不推导 decimal contract size，`quantity_step` 和 `quantity_decimal_places` 输出空值，避免把未验证规则带入下单热路径。
+5. Gate 的 `order_price_deviate` 是相对标记价的订单价格偏离比例；Binance 的 `PERCENT_PRICE` 是 bidirectional multiplier，脚本统一为相对偏离比例。
+
+这组 metadata 应在启动期构建并缓存，供 strategy、risk check 和 exchange adapter 共享；不要在行情或下单热路径里反复查询 REST 或重复解析交易所 JSON。
 
 ### Gate futures market data benchmark
 
@@ -691,14 +713,15 @@ StrategyThread
 
 下一轮建议按这个顺序继续：
 
-1. 明确 `GateOrderSubmitWsSession` 需要支持哪些 WebSocket API：place、batch place、cancel、cancel ids、cancel cp、amend、status/list。
-2. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
-3. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`，并明确它们与 `OrderFeedback` 的字段映射。
-4. 明确 update stream 断线时是否允许继续 submit。
-5. 设计 REST reconcile：update WS 断线或 gap 后如何补齐未决订单状态。
-6. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSubmitWsSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
-7. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
-8. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
+1. 明确统一 symbol metadata 如何进入 strategy、risk check 和 exchange adapter，并确认 Gate decimal-size 合约的数量步进规则后再用于下单热路径。
+2. 明确 `GateOrderSubmitWsSession` 需要支持哪些 WebSocket API：place、batch place、cancel、cancel ids、cancel cp、amend、status/list。
+3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
+4. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`，并明确它们与 `OrderFeedback` 的字段映射。
+5. 明确 update stream 断线时是否允许继续 submit。
+6. 设计 REST reconcile：update WS 断线或 gap 后如何补齐未决订单状态。
+7. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSubmitWsSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
+8. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
+9. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
 
 ## 相关文件
 
@@ -716,6 +739,10 @@ StrategyThread
 - `tools/gate_futures_book_ticker_probe.cpp`
 - `scripts/gate/test_gate_ws_dual_login.py`
 - `scripts/gate/test_gate_ws_connect.py`
+- `scripts/gate/query_futures_contracts.py`
+- `scripts/gate/query_futures_contracts_test.py`
+- `scripts/binance/query_um_futures_contracts.py`
+- `scripts/binance/query_um_futures_contracts_test.py`
 - `exchange/gate/trading/submit_response_parser.h`
 - `test/exchange/gate/trading/submit_response_parser_test.cpp`
 - `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp`
@@ -735,4 +762,5 @@ StrategyThread
 - `core/websocket/types.h`
 - `doc/websocket_read_write_benchmark_comparison.md`
 - `doc/websocket_client_future_optimizations.md`
+- `doc/futures_contract_metadata_fields.md`
 - `third_party/sirius/exchange/gate`
