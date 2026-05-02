@@ -20,45 +20,26 @@ DEFAULT_BASE_URL = "https://fapi.binance.com"
 USER_AGENT = "aquila-binance-um-futures-contract-query/1.0"
 
 DATAFRAME_COLUMNS = [
+    "exchange",
     "symbol_id",
-    "symbol",
-    "pair",
-    "status",
-    "contract_type",
+    "exchange_symbol",
     "base_asset",
     "quote_asset",
-    "margin_asset",
+    "settle_asset",
+    "status",
+    "contract_type",
     "price_tick",
     "price_decimal_places",
-    "price_min",
-    "price_max",
     "quantity_step",
     "quantity_decimal_places",
     "quantity_min",
     "quantity_max",
-    "market_quantity_step",
-    "market_quantity_decimal_places",
-    "market_quantity_min",
     "market_quantity_max",
     "min_notional",
-    "percent_price_multiplier_up",
-    "percent_price_multiplier_down",
-    "percent_price_multiplier_decimal",
-    "max_num_orders",
-    "max_num_algo_orders",
-    "trigger_protect",
-    "liquidation_fee",
-    "market_take_bound",
-    "price_precision",
-    "quantity_precision",
-    "base_asset_precision",
-    "quote_precision",
-    "underlying_type",
-    "underlying_subtypes",
-    "order_types",
-    "time_in_force",
-    "onboard_date",
-    "delivery_date",
+    "contract_multiplier",
+    "price_limit_up",
+    "price_limit_down",
+    "market_price_bound",
 ]
 
 
@@ -135,57 +116,49 @@ def min_notional_value(filters: dict[str, dict[str, Any]]) -> float | None:
     return to_float(filter_value.get("notional", filter_value.get("minNotional")))
 
 
+def price_limit_up(percent_price: dict[str, Any]) -> float | None:
+    multiplier_up = to_float(percent_price.get("multiplierUp"))
+    if multiplier_up is None:
+        return None
+    return round(multiplier_up - 1.0, 12)
+
+
+def price_limit_down(percent_price: dict[str, Any]) -> float | None:
+    multiplier_down = to_float(percent_price.get("multiplierDown"))
+    if multiplier_down is None:
+        return None
+    return round(1.0 - multiplier_down, 12)
+
+
 def symbol_to_row(symbol_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     filters = filter_map(payload)
     price_filter = filters.get("PRICE_FILTER") or {}
     lot_size = filters.get("LOT_SIZE") or {}
     market_lot_size = filters.get("MARKET_LOT_SIZE") or {}
     percent_price = filters.get("PERCENT_PRICE") or filters.get("PERCENT_PRICE_BY_SIDE") or {}
-    max_orders = filters.get("MAX_NUM_ORDERS") or {}
-    max_algo_orders = filters.get("MAX_NUM_ALGO_ORDERS") or {}
     price_tick = price_filter.get("tickSize")
     quantity_step = lot_size.get("stepSize")
-    market_quantity_step = market_lot_size.get("stepSize")
     return {
+        "exchange": "binance",
         "symbol_id": symbol_id,
-        "symbol": payload.get("symbol", ""),
-        "pair": payload.get("pair", ""),
-        "status": payload.get("status", ""),
-        "contract_type": payload.get("contractType", ""),
+        "exchange_symbol": payload.get("symbol", ""),
         "base_asset": payload.get("baseAsset", ""),
         "quote_asset": payload.get("quoteAsset", ""),
-        "margin_asset": payload.get("marginAsset", ""),
+        "settle_asset": payload.get("marginAsset", ""),
+        "status": str(payload.get("status", "")).upper(),
+        "contract_type": payload.get("contractType", ""),
         "price_tick": to_float(price_tick),
         "price_decimal_places": decimal_places(price_tick),
-        "price_min": filter_float(price_filter, "minPrice"),
-        "price_max": filter_float(price_filter, "maxPrice"),
         "quantity_step": to_float(quantity_step),
         "quantity_decimal_places": decimal_places(quantity_step),
         "quantity_min": filter_float(lot_size, "minQty"),
         "quantity_max": filter_float(lot_size, "maxQty"),
-        "market_quantity_step": to_float(market_quantity_step),
-        "market_quantity_decimal_places": decimal_places(market_quantity_step),
-        "market_quantity_min": filter_float(market_lot_size, "minQty"),
         "market_quantity_max": filter_float(market_lot_size, "maxQty"),
         "min_notional": min_notional_value(filters),
-        "percent_price_multiplier_up": filter_float(percent_price, "multiplierUp"),
-        "percent_price_multiplier_down": filter_float(percent_price, "multiplierDown"),
-        "percent_price_multiplier_decimal": to_int(percent_price.get("multiplierDecimal")),
-        "max_num_orders": to_int(max_orders.get("limit")),
-        "max_num_algo_orders": to_int(max_algo_orders.get("limit")),
-        "trigger_protect": to_float(payload.get("triggerProtect")),
-        "liquidation_fee": to_float(payload.get("liquidationFee")),
-        "market_take_bound": to_float(payload.get("marketTakeBound")),
-        "price_precision": to_int(payload.get("pricePrecision")),
-        "quantity_precision": to_int(payload.get("quantityPrecision")),
-        "base_asset_precision": to_int(payload.get("baseAssetPrecision")),
-        "quote_precision": to_int(payload.get("quotePrecision")),
-        "underlying_type": payload.get("underlyingType", ""),
-        "underlying_subtypes": ",".join(payload.get("underlyingSubType") or []),
-        "order_types": ",".join(payload.get("orderTypes") or []),
-        "time_in_force": ",".join(payload.get("timeInForce") or []),
-        "onboard_date": to_int(payload.get("onboardDate")),
-        "delivery_date": to_int(payload.get("deliveryDate")),
+        "contract_multiplier": 1.0,
+        "price_limit_up": price_limit_up(percent_price),
+        "price_limit_down": price_limit_down(percent_price),
+        "market_price_bound": to_float(payload.get("marketTakeBound")),
     }
 
 

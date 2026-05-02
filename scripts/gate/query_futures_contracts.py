@@ -18,36 +18,30 @@ except ImportError as exc:  # pragma: no cover - utility script
 
 DEFAULT_BASE_URL = "https://api.gateio.ws/api/v4"
 SETTLE = "usdt"
+SETTLE_ASSET = "USDT"
 USER_AGENT = "aquila-gate-futures-contract-query/1.0"
 
 DATAFRAME_COLUMNS = [
+    "exchange",
     "symbol_id",
-    "symbol",
-    "settle",
+    "exchange_symbol",
+    "base_asset",
+    "quote_asset",
+    "settle_asset",
     "status",
     "contract_type",
     "price_tick",
     "price_decimal_places",
-    "mark_price_tick",
-    "mark_price_decimal_places",
+    "quantity_step",
+    "quantity_decimal_places",
+    "quantity_min",
+    "quantity_max",
+    "market_quantity_max",
+    "min_notional",
     "contract_multiplier",
-    "order_size_min",
-    "order_size_max",
-    "enable_decimal",
-    "market_order_size_max",
-    "market_order_slip_ratio",
-    "order_price_deviate",
-    "orders_limit",
-    "maker_fee_rate",
-    "taker_fee_rate",
-    "leverage_min",
-    "leverage_max",
-    "risk_limit_base",
-    "risk_limit_step",
-    "risk_limit_max",
-    "maintenance_rate",
-    "in_delisting",
-    "config_change_time",
+    "price_limit_up",
+    "price_limit_down",
+    "market_price_bound",
 ]
 
 
@@ -106,37 +100,51 @@ def to_int(value: Any) -> int | None:
     return int(value)
 
 
+def split_gate_symbol(symbol: str) -> tuple[str, str]:
+    parts = symbol.split("_", 1)
+    if len(parts) != 2:
+        return symbol, ""
+    return parts[0], parts[1]
+
+
+def gate_quantity_step(payload: dict[str, Any]) -> float | None:
+    if bool(payload.get("enable_decimal", False)):
+        return None
+    return 1.0
+
+
+def gate_quantity_decimal_places(payload: dict[str, Any]) -> int | None:
+    if bool(payload.get("enable_decimal", False)):
+        return None
+    return 0
+
+
 def contract_to_row(symbol_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    symbol = payload.get("name", "")
+    base_asset, quote_asset = split_gate_symbol(symbol)
     price_tick = payload.get("order_price_round")
-    mark_price_tick = payload.get("mark_price_round")
+    price_deviate = to_float(payload.get("order_price_deviate"))
     return {
+        "exchange": "gate",
         "symbol_id": symbol_id,
-        "symbol": payload.get("name", ""),
-        "settle": SETTLE,
-        "status": payload.get("status", ""),
+        "exchange_symbol": symbol,
+        "base_asset": base_asset,
+        "quote_asset": quote_asset,
+        "settle_asset": SETTLE_ASSET,
+        "status": str(payload.get("status", "")).upper(),
         "contract_type": payload.get("type", ""),
         "price_tick": to_float(price_tick),
         "price_decimal_places": decimal_places(price_tick),
-        "mark_price_tick": to_float(mark_price_tick),
-        "mark_price_decimal_places": decimal_places(mark_price_tick),
+        "quantity_step": gate_quantity_step(payload),
+        "quantity_decimal_places": gate_quantity_decimal_places(payload),
+        "quantity_min": to_float(payload.get("order_size_min")),
+        "quantity_max": to_float(payload.get("order_size_max")),
+        "market_quantity_max": to_float(payload.get("market_order_size_max")),
+        "min_notional": None,
         "contract_multiplier": to_float(payload.get("quanto_multiplier")),
-        "order_size_min": to_int(payload.get("order_size_min")),
-        "order_size_max": to_int(payload.get("order_size_max")),
-        "enable_decimal": bool(payload.get("enable_decimal", False)),
-        "market_order_size_max": to_float(payload.get("market_order_size_max")),
-        "market_order_slip_ratio": to_float(payload.get("market_order_slip_ratio")),
-        "order_price_deviate": to_float(payload.get("order_price_deviate")),
-        "orders_limit": to_int(payload.get("orders_limit")),
-        "maker_fee_rate": to_float(payload.get("maker_fee_rate")),
-        "taker_fee_rate": to_float(payload.get("taker_fee_rate")),
-        "leverage_min": to_float(payload.get("leverage_min")),
-        "leverage_max": to_float(payload.get("leverage_max")),
-        "risk_limit_base": to_float(payload.get("risk_limit_base")),
-        "risk_limit_step": to_float(payload.get("risk_limit_step")),
-        "risk_limit_max": to_float(payload.get("risk_limit_max")),
-        "maintenance_rate": to_float(payload.get("maintenance_rate")),
-        "in_delisting": bool(payload.get("in_delisting", False)),
-        "config_change_time": to_int(payload.get("config_change_time")),
+        "price_limit_up": price_deviate,
+        "price_limit_down": price_deviate,
+        "market_price_bound": to_float(payload.get("market_order_slip_ratio")),
     }
 
 
