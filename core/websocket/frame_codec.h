@@ -44,7 +44,9 @@ class ClientMaskKeyPool {
     return true;
   }
 
-  size_t refill_count() const noexcept { return refill_count_; }
+  size_t refill_count() const noexcept {
+    return refill_count_;
+  }
 
  private:
   std::array<std::array<std::byte, 4>, kClientMaskKeyPoolKeyCount> keys_{};
@@ -84,6 +86,8 @@ inline void MaskPayload(std::span<const std::byte> payload,
 
 }  // namespace detail
 
+// The parse-ahead ready-queue comparison codec lives in
+// benchmark/websocket/queued_frame_codec.h as QueuedFrameCodec.
 class FrameCodec {
  public:
   explicit FrameCodec(size_t max_payload_bytes)
@@ -258,9 +262,9 @@ class FrameCodec {
     for (const auto mask_byte : mask_key) {
       output[cursor++] = mask_byte;
     }
-    detail::MaskPayload(payload, mask_key,
-                        std::span<std::byte>(output.data() + cursor,
-                                             payload.size()));
+    detail::MaskPayload(
+        payload, mask_key,
+        std::span<std::byte>(output.data() + cursor, payload.size()));
     cursor += payload.size();
 
     return {true, std::span<const std::byte>(output.data(), frame_bytes)};
@@ -395,9 +399,9 @@ class FrameCodec {
         static_cast<size_t>(payload_abs & receive_mask_);
     const size_t payload_end_offset = payload_offset + payload_size;
     const size_t mapped_bytes = receive_ring_.capacity() * 2U;
-    const size_t tail_bytes =
-        payload_end_offset < mapped_bytes ? mapped_bytes - payload_end_offset
-                                          : 0;
+    const size_t tail_bytes = payload_end_offset < mapped_bytes
+                                  ? mapped_bytes - payload_end_offset
+                                  : 0;
     return tail_bytes > std::numeric_limits<std::uint32_t>::max()
                ? std::numeric_limits<std::uint32_t>::max()
                : static_cast<std::uint32_t>(tail_bytes);

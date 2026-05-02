@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_WEBSOCKET_QUEUED_FRAME_CODEC_H_
-#define AQUILA_CORE_WEBSOCKET_QUEUED_FRAME_CODEC_H_
+#ifndef AQUILA_BENCHMARK_WEBSOCKET_QUEUED_FRAME_CODEC_H_
+#define AQUILA_BENCHMARK_WEBSOCKET_QUEUED_FRAME_CODEC_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -18,14 +18,13 @@ namespace aquila::websocket {
 class QueuedFrameCodec {
  public:
   explicit QueuedFrameCodec(size_t max_payload_bytes)
-      : QueuedFrameCodec(max_payload_bytes,
-                         max_payload_bytes >
-                                 std::numeric_limits<size_t>::max() -
-                                     detail::kMaxFrameHeaderBytes
-                             ? max_payload_bytes
-                             : max_payload_bytes +
-                                   detail::kMaxFrameHeaderBytes,
-                         kDefaultReadyFrameSlots) {}
+      : QueuedFrameCodec(
+            max_payload_bytes,
+            max_payload_bytes > std::numeric_limits<size_t>::max() -
+                                    detail::kMaxFrameHeaderBytes
+                ? max_payload_bytes
+                : max_payload_bytes + detail::kMaxFrameHeaderBytes,
+            kDefaultReadyFrameSlots) {}
 
   QueuedFrameCodec(size_t max_payload_bytes, size_t receive_buffer_bytes,
                    size_t ready_frame_slots = kDefaultReadyFrameSlots)
@@ -40,8 +39,7 @@ class QueuedFrameCodec {
             ? max_payload_bytes
             : max_payload_bytes + detail::kMaxFrameHeaderBytes;
     receive_ring_.Init(std::max(receive_buffer_bytes, required_capacity));
-    receive_mask_ =
-        receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
+    receive_mask_ = receive_ring_.valid() ? receive_ring_.capacity() - 1U : 0U;
   }
 
   void Reset() noexcept {
@@ -57,7 +55,9 @@ class QueuedFrameCodec {
     delivered_frame_end_abs_ = 0;
   }
 
-  size_t ReceiveCapacity() const noexcept { return receive_ring_.capacity(); }
+  size_t ReceiveCapacity() const noexcept {
+    return receive_ring_.capacity();
+  }
 
   std::span<std::byte> WritableSpan() noexcept {
     ReleaseDeliveredFrame();
@@ -164,8 +164,8 @@ class QueuedFrameCodec {
       }
 
       const std::uint64_t available = write_abs_ - parse_abs_;
-      const auto parsed = detail::ParseServerFrameHeader(Ptr(parse_abs_),
-                                                         available);
+      const auto parsed =
+          detail::ParseServerFrameHeader(Ptr(parse_abs_), available);
       if (parsed.status == detail::FrameHeaderStatus::kNeedMore) {
         return;
       }
@@ -192,8 +192,7 @@ class QueuedFrameCodec {
       }
 
       const std::uint64_t frame_abs = parse_abs_;
-      const std::uint64_t payload_abs =
-          frame_abs + parsed.header.header_bytes;
+      const std::uint64_t payload_abs = frame_abs + parsed.header.header_bytes;
       QueueReadyFrame(ReadyFrame{
           .kind = parsed.header.kind,
           .sequence = next_sequence_++,
@@ -277,15 +276,17 @@ class QueuedFrameCodec {
         static_cast<size_t>(payload_abs & receive_mask_);
     const size_t payload_end_offset = payload_offset + payload_size;
     const size_t mapped_bytes = receive_ring_.capacity() * 2U;
-    const size_t tail_bytes =
-        payload_end_offset < mapped_bytes ? mapped_bytes - payload_end_offset
-                                          : 0;
+    const size_t tail_bytes = payload_end_offset < mapped_bytes
+                                  ? mapped_bytes - payload_end_offset
+                                  : 0;
     return tail_bytes > std::numeric_limits<std::uint32_t>::max()
                ? std::numeric_limits<std::uint32_t>::max()
                : static_cast<std::uint32_t>(tail_bytes);
   }
 
-  bool ReadyEmpty() const noexcept { return ready_count_ == 0; }
+  bool ReadyEmpty() const noexcept {
+    return ready_count_ == 0;
+  }
 
   bool ReadyFull() const noexcept {
     return ready_capacity_ == 0 || ready_frames_ == nullptr ||
@@ -311,4 +312,4 @@ class QueuedFrameCodec {
 
 }  // namespace aquila::websocket
 
-#endif  // AQUILA_CORE_WEBSOCKET_QUEUED_FRAME_CODEC_H_
+#endif  // AQUILA_BENCHMARK_WEBSOCKET_QUEUED_FRAME_CODEC_H_

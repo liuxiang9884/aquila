@@ -13,7 +13,6 @@ target_sources(aquila_core
         mirrored_buffer.h
         plain_socket.h
         prepared_write.h
-        queued_frame_codec.h
         reconnect_classifier.h
         runtime_clock.h
         runtime_policy.h

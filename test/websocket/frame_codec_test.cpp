@@ -1,7 +1,4 @@
 #include "core/websocket/frame_codec.h"
-#include "core/websocket/queued_frame_codec.h"
-
-#include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
@@ -11,6 +8,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <gtest/gtest.h>
+
+#include "benchmark/websocket/queued_frame_codec.h"
 
 using namespace aquila::websocket;
 
@@ -26,8 +27,8 @@ std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
     frame[1] = std::byte{static_cast<unsigned char>(payload.size())};
   } else {
     frame[1] = std::byte{126};
-    frame[2] = std::byte{
-        static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
+    frame[2] =
+        std::byte{static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
     frame[3] = std::byte{static_cast<unsigned char>(payload.size() & 0xFFU)};
   }
   for (size_t i = 0; i < payload.size(); ++i) {
@@ -44,8 +45,8 @@ std::vector<std::byte> BuildServerBinaryFrame(std::string_view payload) {
     frame[1] = std::byte{static_cast<unsigned char>(payload.size())};
   } else {
     frame[1] = std::byte{126};
-    frame[2] = std::byte{
-        static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
+    frame[2] =
+        std::byte{static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
     frame[3] = std::byte{static_cast<unsigned char>(payload.size() & 0xFFU)};
   }
   for (size_t i = 0; i < payload.size(); ++i) {
@@ -163,8 +164,7 @@ TEST(WebsocketFrameCodecTest, ClientMaskKeyPoolRefillsAfterCapacity) {
 
 TEST(WebsocketFrameCodecTest, EncodesClientPayloadsWithValidMask) {
   FrameCodec codec(8192);
-  const std::array<size_t, 10> payload_sizes{0, 1, 2, 3, 4,
-                                             7, 8, 9, 256, 4096};
+  const std::array<size_t, 10> payload_sizes{0, 1, 2, 3, 4, 7, 8, 9, 256, 4096};
 
   for (const size_t payload_size : payload_sizes) {
     const auto payload = BuildBytePattern(payload_size);
@@ -181,8 +181,8 @@ TEST(WebsocketFrameCodecTest, EncodesClientPayloadsWithValidMask) {
     if (decoded_payload_size == 126) {
       ASSERT_GE(encoded.bytes.size(), 8U);
       decoded_payload_size =
-          (static_cast<size_t>(std::to_integer<unsigned char>(
-               encoded.bytes[cursor]))
+          (static_cast<size_t>(
+               std::to_integer<unsigned char>(encoded.bytes[cursor]))
            << 8U) |
           static_cast<size_t>(
               std::to_integer<unsigned char>(encoded.bytes[cursor + 1]));
@@ -208,7 +208,8 @@ TEST(WebsocketFrameCodecTest, EncodesClientPayloadsWithValidMask) {
     for (size_t i = 0; i < payload.size(); ++i) {
       decoded[i] = encoded.bytes[cursor + i] ^ mask_key[i & 0x3U];
     }
-    EXPECT_TRUE(BytesEqual(decoded, payload)) << "payload_size=" << payload_size;
+    EXPECT_TRUE(BytesEqual(decoded, payload))
+        << "payload_size=" << payload_size;
   }
 }
 
@@ -333,8 +334,7 @@ TEST(WebsocketFrameCodecTest, QueuedCodecReportsReadyQueueCapacity) {
 TEST(WebsocketFrameCodecTest, QueuedCodecRejectsFastPathPayloadAboveMax) {
   QueuedFrameCodec short_codec(4, 4096, 8);
   const auto short_frame = BuildServerTextFrame("hello");
-  EXPECT_EQ(short_codec.Feed(short_frame).status,
-            DecodeStatus::kProtocolError);
+  EXPECT_EQ(short_codec.Feed(short_frame).status, DecodeStatus::kProtocolError);
 
   QueuedFrameCodec extended_codec(125, 4096, 8);
   const std::string extended_payload(126, 'x');
@@ -346,9 +346,9 @@ TEST(WebsocketFrameCodecTest, QueuedCodecRejectsFastPathPayloadAboveMax) {
 TEST(WebsocketFrameCodecTest, RejectsNonMinimalExtendedPayloadLengths) {
   FrameCodec short_extended_codec(128, 4096);
   std::vector<std::byte> short_extended{
-      std::byte{0x81}, std::byte{126}, std::byte{0}, std::byte{5},
-      std::byte{'h'},  std::byte{'e'}, std::byte{'l'}, std::byte{'l'},
-      std::byte{'o'}};
+      std::byte{0x81}, std::byte{126}, std::byte{0},
+      std::byte{5},    std::byte{'h'}, std::byte{'e'},
+      std::byte{'l'},  std::byte{'l'}, std::byte{'o'}};
   EXPECT_EQ(short_extended_codec.Feed(short_extended).status,
             DecodeStatus::kProtocolError);
 

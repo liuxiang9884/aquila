@@ -1,18 +1,18 @@
-#include "benchmark/websocket/benchmark_support.h"
-#include "benchmark/websocket/io_benchmark_support.h"
-#include "core/websocket/frame_codec.h"
-#include "core/websocket/queued_frame_codec.h"
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <string_view>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include <benchmark/benchmark.h>
 #include <openssl/rand.h>
+
+#include "benchmark/websocket/benchmark_support.h"
+#include "benchmark/websocket/io_benchmark_support.h"
+#include "benchmark/websocket/queued_frame_codec.h"
+#include "core/websocket/frame_codec.h"
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
@@ -48,7 +48,9 @@ class BenchmarkMaskKeyPool {
     return key;
   }
 
-  size_t refill_count() const noexcept { return refills_; }
+  size_t refill_count() const noexcept {
+    return refills_;
+  }
 
  private:
   std::array<std::array<std::byte, 4>, kMaskPoolKeyCount> keys_{};
@@ -99,8 +101,8 @@ std::vector<std::byte> BuildServerTextFrame(std::string_view payload) {
     frame[1] = std::byte{static_cast<unsigned char>(payload.size())};
   } else {
     frame[1] = std::byte{126};
-    frame[2] = std::byte{
-        static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
+    frame[2] =
+        std::byte{static_cast<unsigned char>((payload.size() >> 8U) & 0xFFU)};
     frame[3] = std::byte{static_cast<unsigned char>(payload.size() & 0xFFU)};
   }
   for (size_t i = 0; i < payload.size(); ++i) {
@@ -120,8 +122,7 @@ std::vector<std::byte> BuildCoalescedServerTextFrames(std::string_view payload,
   return coalesced;
 }
 
-void RunFrameCodecEncodePayload(benchmark::State& state,
-                                size_t payload_size) {
+void RunFrameCodecEncodePayload(benchmark::State& state, size_t payload_size) {
   constexpr size_t kBatchSize = 64;
   FrameCodec codec(1024);
   const auto payload = BuildClientPayload(payload_size);
@@ -141,8 +142,8 @@ void RunFrameCodecEncodePayload(benchmark::State& state,
       }
       benchmark::DoNotOptimize(storage);
       bytes_encoded += encoded.bytes.size();
-      header_accumulator += SumBytes(std::span<const std::byte>(storage.data(),
-                                                                2));
+      header_accumulator +=
+          SumBytes(std::span<const std::byte>(storage.data(), 2));
     }
     const std::uint64_t elapsed_ns = NowNs() - start_ns;
     const auto per_operation_ns =
@@ -210,8 +211,8 @@ void RunFrameCodecMaskXorOnly(benchmark::State& state, size_t payload_size) {
   constexpr size_t kBatchSize = 64;
   const auto payload = BuildClientPayload(payload_size);
   std::vector<std::byte> output(payload.size());
-  const std::array<std::byte, 4> mask_key{
-      std::byte{0x11}, std::byte{0x22}, std::byte{0x33}, std::byte{0x44}};
+  const std::array<std::byte, 4> mask_key{std::byte{0x11}, std::byte{0x22},
+                                          std::byte{0x33}, std::byte{0x44}};
   std::uint64_t output_accumulator = 0;
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(4096);
@@ -221,8 +222,8 @@ void RunFrameCodecMaskXorOnly(benchmark::State& state, size_t payload_size) {
     for (size_t batch_index = 0; batch_index < kBatchSize; ++batch_index) {
       ApplyMaskScalar(payload, mask_key, output);
       benchmark::DoNotOptimize(output.data());
-      output_accumulator += SumBytes(std::span<const std::byte>(output.data(),
-                                                                1));
+      output_accumulator +=
+          SumBytes(std::span<const std::byte>(output.data(), 1));
     }
     const std::uint64_t elapsed_ns = NowNs() - start_ns;
     const auto per_operation_ns =
@@ -249,8 +250,8 @@ void BenchmarkFrameCodecMaskXorOnly128(benchmark::State& state) {
 void BenchmarkFrameCodecHeaderSmall64(benchmark::State& state) {
   constexpr size_t kBatchSize = 64;
   std::array<std::byte, 6> header{};
-  const std::array<std::byte, 4> mask_key{
-      std::byte{0x11}, std::byte{0x22}, std::byte{0x33}, std::byte{0x44}};
+  const std::array<std::byte, 4> mask_key{std::byte{0x11}, std::byte{0x22},
+                                          std::byte{0x33}, std::byte{0x44}};
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(4096);
 
@@ -384,12 +385,11 @@ void BenchmarkFrameCodecEncodeSmall64MaskPool(benchmark::State& state) {
       const auto mask_key = pool.NextCyclic();
       WriteSmallClientHeader(payload.size(), mask_key, storage);
       ApplyMaskScalar(payload, mask_key,
-                      std::span<std::byte>(storage.data() + 6,
-                                           payload.size()));
+                      std::span<std::byte>(storage.data() + 6, payload.size()));
       benchmark::DoNotOptimize(storage.data());
       bytes_encoded += 6 + payload.size();
-      output_accumulator += SumBytes(std::span<const std::byte>(storage.data(),
-                                                                2));
+      output_accumulator +=
+          SumBytes(std::span<const std::byte>(storage.data(), 2));
     }
     const std::uint64_t elapsed_ns = NowNs() - start_ns;
     const auto per_operation_ns =
@@ -425,8 +425,8 @@ void BenchmarkFrameCodecEncode(benchmark::State& state) {
       }
       benchmark::DoNotOptimize(storage);
       bytes_encoded += encoded.bytes.size();
-      header_accumulator += SumBytes(std::span<const std::byte>(storage.data(),
-                                                                2));
+      header_accumulator +=
+          SumBytes(std::span<const std::byte>(storage.data(), 2));
     }
     const std::uint64_t elapsed_ns = NowNs() - start_ns;
     const auto per_operation_ns =
@@ -544,8 +544,7 @@ void BenchmarkFrameCodecDecodeCoalescedDrain(benchmark::State& state) {
 
   SetLatencyCounters(state, std::move(samples_ns), "payload_bytes",
                      payload_bytes);
-  state.counters["frames_per_read"] =
-      static_cast<double>(kCoalescedFrameCount);
+  state.counters["frames_per_read"] = static_cast<double>(kCoalescedFrameCount);
   state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
                                      FormatAffinity(),
                                      FormatSchedulingPolicy()));
@@ -587,8 +586,7 @@ void BenchmarkQueuedFrameCodecDecodeCoalescedDrain(benchmark::State& state) {
 
   SetLatencyCounters(state, std::move(samples_ns), "payload_bytes",
                      payload_bytes);
-  state.counters["frames_per_read"] =
-      static_cast<double>(kCoalescedFrameCount);
+  state.counters["frames_per_read"] = static_cast<double>(kCoalescedFrameCount);
   state.SetLabel(BuildBenchmarkLabel(false, "local-microbenchmark",
                                      FormatAffinity(),
                                      FormatSchedulingPolicy()));
@@ -661,8 +659,7 @@ void BenchmarkFrameCodecDecodeMirroredBoundary(benchmark::State& state) {
                                      FormatSchedulingPolicy()));
 }
 
-void BenchmarkQueuedFrameCodecDecodeMirroredBoundary(
-    benchmark::State& state) {
+void BenchmarkQueuedFrameCodecDecodeMirroredBoundary(benchmark::State& state) {
   constexpr size_t kBatchSize = 64;
   QueuedFrameCodec codec(128, 4096, 1024);
   const auto filler = BuildServerTextFrame("x");

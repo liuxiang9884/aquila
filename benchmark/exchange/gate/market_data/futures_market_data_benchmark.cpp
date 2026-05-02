@@ -14,7 +14,7 @@
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/session.h"
 #include "exchange/gate/sbe/book_ticker_decoder.h"
-#include "exchange/gate/sbe/test_support/book_ticker_payload_builder.h"
+#include "test/exchange/gate/sbe/book_ticker_payload_builder.h"
 #include <simdjson.h>
 
 namespace aq_gate = aquila::gate;

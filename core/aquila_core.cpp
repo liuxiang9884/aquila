@@ -11,7 +11,6 @@
 #include "core/websocket/mirrored_buffer.h"
 #include "core/websocket/plain_socket.h"
 #include "core/websocket/prepared_write.h"
-#include "core/websocket/queued_frame_codec.h"
 #include "core/websocket/reconnect_classifier.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/runtime_policy.h"
