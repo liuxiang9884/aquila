@@ -132,7 +132,7 @@ doc/websocket_read_write_benchmark_comparison.md
 
 - 默认生产路径使用 mirrored receive ring。
 - 单帧和 repeated `Poll()` 多帧 drain 走 direct delivery。
-- ready metadata ring 已移到 `QueuedFrameCodec` 对照路径。
+- ready metadata ring 已移到 `benchmark/websocket/queued_frame_codec.h` 中的 `QueuedFrameCodec` 对照路径。
 - data frame fast path 覆盖 `FIN=1`、`RSV=0`、text/binary、server unmasked、payload length `<= 65535`。
 - control frame、fragmentation、masked inbound、payload `>= 65536`、RSV / unknown opcode 走 generic path。
 
@@ -212,7 +212,7 @@ FuturesMarketDataSession::Handle(binary MessageView)
 - BBO 的 `mantissa + exponent` 在 decode 阶段转成 `double`，便于策略和因子计算。
 - Gate BBO binary market data 的 `event` 合约是 `Update`；其他 SBE template 不能复用这个假设。
 - Gate decimal scale 当前最多支持 10 位小数；超出范围只在 debug assert，用户如需更宽精度应在进入 decoder 前自行判断。
-- `ExtractTrustedBookTickerSymbol()` / `DecodeTrustedBookTickerWithHeader()` 是 client 热路径；保守的 `ExtractBookTickerSymbol()` / `DecodeBookTickerWithHeader()` 仍供测试和低频调用使用。
+- `ExtractTrustedBookTickerSymbol()` / `DecodeTrustedBookTickerWithHeader()` 是 client 热路径；保守的 `ExtractBookTickerSymbolForTest()` / `DecodeBookTickerForTest()` 已移到 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`，`DecodeBookTickerWithHeaderBenchmark()` 已移到 `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`。
 - 如需引用 BTC_USDT live probe 稳定性或真实延迟结论，重新运行并保留原始输出。
 
 2026-05-02 Gate market data release selected benchmark：

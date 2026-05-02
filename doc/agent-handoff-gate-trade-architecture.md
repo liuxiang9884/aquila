@@ -152,15 +152,15 @@ FuturesMarketDataSession::Handle(binary MessageView)
   -> Consumer::OnBookTicker
 ```
 
-`DecodeBookTicker` 只处理 Gate schema 下的 BBO template。`DispatchSbeMessage` 已为 Gate 当前 schema 中的 10 个 template 建立枚举映射，包括 `BookTicker`、`PublicTrade`、`Obu`、`OrderBook`、`OrderBookUpdate`、`UserTrade`、`Position`、`Candlestick`、`FuturesTicker`、`Orders`。
+生产路径只保留 trusted BBO helper：`ExtractTrustedBookTickerSymbol()` 和 `DecodeTrustedBookTickerWithHeader()`。保守的 `ExtractBookTickerSymbolForTest()` / `DecodeBookTickerForTest()` 已移到 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`；benchmark 对照的 `DecodeBookTickerWithHeaderBenchmark()` 已移到 `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`。`DispatchSbeMessage` 已为 Gate 当前 schema 中的 10 个 template 建立枚举映射，包括 `BookTicker`、`PublicTrade`、`Obu`、`OrderBook`、`OrderBookUpdate`、`UserTrade`、`Position`、`Candlestick`、`FuturesTicker`、`Orders`。
 
-十进制转换函数当前命名为 `DecimalMantissaToDouble`，使用预计算 scale 表；主路径负指数乘法分支带 `[[likely]]`，越界只在 debug assert 中检查。这里是基于 Gate futures 行情常见精度做的低延迟取舍，后续如果接入极端精度字段，需要先补测试再扩大表。
+十进制转换生产函数是 `DecimalExponentScale()`，使用预计算 scale 表；主路径负指数分支带 `[[likely]]`，越界只在 debug assert 中检查。`DecimalMantissaToDoubleForTest()` 只留在 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp` 中验证转换结果。这里是基于 Gate futures 行情常见精度做的低延迟取舍，后续如果接入极端精度字段，需要先补测试再扩大表。
 
 BBO 额外约束：
 
 1. Gate BBO binary market data frame 的 `event` 视为 `Update`，trusted decode 只用 debug assert 固化该合约；其他 SBE template 不能复用这个事件假设。
 2. Decimal scale 表固定支持 0 到 10 位小数；如果用户需要更宽精度，由调用方在进入 decoder 前判断。
-3. `ExtractBookTickerSymbol()` / `DecodeBookTickerWithHeader()` 仍保留为保守 helper；client 热路径走 trusted 版本。
+3. 保守 BBO decode / symbol extract 只保留在 test 或 benchmark 对照文件中；client 热路径只走 trusted 版本。
 
 ### Gate futures market data client
 
@@ -233,7 +233,7 @@ aquila::gate::FuturesMarketDataSession<
 注意：
 
 1. `local_ns` 在 session 收到 binary frame 后立即采集，再传入 client，避免在更深层反复取时钟，也方便未来由外层 runtime 统一传入本地时间。
-2. `DecodeBookTickerWithHeader()` 仍做完整 header / event 校验；client 热路径删除的是重复防御分支。
+2. `DecodeBookTickerWithHeaderBenchmark()` 在 benchmark 中保留完整 header / event 校验；client 热路径删除的是重复防御分支。
 
 后续 TODO（暂不实现）：
 
@@ -498,7 +498,7 @@ std::uint32_t readable_tail_bytes{0};
 4. 业务层只能用它判断 parser padding 是否满足，例如 `readable_tail_bytes >= simdjson::SIMDJSON_PADDING`。
 5. 不允许把 tail bytes 当业务数据读取，不允许写 tail bytes，也不允许把 parser 返回的 view 保存到 frame buffer 生命周期之外。
 
-`FrameCodec` 和 `QueuedFrameCodec` 都会填充该字段。当前 mirrored ring 使跨 ring boundary 的 payload 后仍有连续可读虚拟地址空间，因此可以把这个能力显式暴露给上层，而不是把 padding 混进 payload size。
+生产 `FrameCodec` 和 benchmark 对照 `QueuedFrameCodec` 都会填充该字段。当前 mirrored ring 使跨 ring boundary 的 payload 后仍有连续可读虚拟地址空间，因此可以把这个能力显式暴露给上层，而不是把 padding 混进 payload size。
 
 ### FrameCodec benchmark 对比
 
@@ -730,7 +730,7 @@ StrategyThread
 - `core/websocket/websocket_client.h`
 - `core/websocket/critical_session.h`
 - `core/websocket/frame_codec.h`
-- `core/websocket/queued_frame_codec.h`
+- `benchmark/websocket/queued_frame_codec.h`
 - `test/websocket/frame_codec_test.cpp`
 - `core/websocket/types.h`
 - `doc/websocket_read_write_benchmark_comparison.md`
