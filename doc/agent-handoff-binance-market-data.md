@@ -73,6 +73,9 @@ FuturesMarketDataSession::Handle(text MessageView)
 7. 启用 market data diagnostics 时会记录 `simdjson_padding_fallback_messages`，用于 live probe 判断生产 receive buffer 是否稳定提供 `simdjson::SIMDJSON_PADDING`，默认 production no-op 路径不写 counter。
 8. 无效 stream 数量会生成空 target；`FuturesMarketDataSession::Start()` 对空 target 直接返回 `false`，避免在 cold path 尝试错误连接。
 9. `SymbolBinding::symbol` 的底层字符串存储必须覆盖 client/session 生命周期；生产 symbol lookup 故意保留 `std::string_view` key，不在初始化阶段复制 symbol 文本。
+10. symbol config 是启动期不变量；payload 中出现未配置 symbol 时 debug assert，release 主路径不记录 unknown-symbol counter。
+11. client/session 构造期使用 symbol span 构建 lookup / raw stream target，构造后不保存无用 `symbols_` span。
+12. `BookTickerUpdate::symbol` 固定 copy 到对象内 `symbol_storage`；不要假设 simdjson `get_string()` 返回的 `string_view` 一定指向原 payload 或在 padded fallback 后仍有效。
 
 ## yyjson 对照
 
@@ -109,32 +112,23 @@ benchmark：
 taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|client_handle_binary|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 ```
 
-2026-05-01 P1 parser 当前 mean 结果：
+2026-05-02 当前 selected mean 结果：
 
 | case | time |
 | --- | ---: |
-| `parse_book_ticker` | 175ns |
-| `parse_book_ticker_padded_view` | 152ns |
-| `parse_book_ticker_ordered` | 173ns |
-| `parse_book_ticker_ordered_padded_view` | 149ns |
-| `parse_book_ticker_yyjson_pool` | 178ns |
-| `parse_book_ticker_yyjson_insitu_copy` | 173ns |
-| `parse_book_ticker_yyjson_insitu_view` | 172ns |
-| `client_on_text_payload/1` | 180ns |
-| `client_on_text_payload/8` | 194ns |
-| `client_on_text_payload/32` | 194ns |
-| `client_handle_binary` | 0.548ns |
-| `session_handle_text/1` | 212ns |
-| `session_handle_text/8` | 225ns |
-| `session_handle_text/32` | 227ns |
-| `session_handle_text_padded_view` | 196ns |
+| `parse_book_ticker` | 190ns |
+| `parse_book_ticker_padded_view` | 158ns |
+| `parse_book_ticker_ordered` | 178ns |
+| `parse_book_ticker_ordered_padded_view` | 156ns |
+| `client_on_text_payload/1` | 183ns |
+| `session_handle_text_padded_view` | 195ns |
 
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。
 
 当前对比结论只限这组 bookTicker payload：
 
 - simdjson fallback copy 明显慢于 padded-view；生产路径仍应优先保证 receive buffer 能稳定提供 `simdjson::SIMDJSON_PADDING`。
-- benchmark-only ordered `find_field()` 对照略快于 production unordered parser，但差距很小；是否把字段顺序作为 production 协议约束需要单独决策。
+- benchmark-only ordered `find_field()` 对照略快于 production unordered parser，但 padded-view 主路径差距很小；当前决定不切 production。
 - trusted-field parser 后，simdjson padded-view 是当前 production parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。

@@ -9,17 +9,15 @@
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 截至 2026-04-30，最近相关提交：
-  - `0a3db57 exchange: avoid duplicate Gate book ticker header check`
-  - `78a1b5f exchange: reuse Gate market data text parser`
-  - `56c12fc exchange: use simdjson for JSON parsers`
-  - `8ae775e exchange: use flat hash map for all Gate symbol lookups`
-  - `50c575e exchange: benchmark and optimize Gate market data path`
-  - `bceea0b exchange: route Gate probe through market data session`
-  - `b17dd37 exchange: add Gate futures market data session`
-  - `a61f213 websocket: add typed message handler path`
-  - `70be8b8 websocket: rename message consumer callback`
-  - `77987b0 tools: report Gate book ticker id delta`
+- 截至 2026-05-02，最近相关功能提交：
+  - `f2ade4e exchange: trim market data construction state`
+  - `9b4c49f exchange: trust market data hot paths`
+  - `e74e306 core: move numeric helpers to utils`
+  - `d877e15 core: add fast numeric parsing helpers`
+  - `c961f02 exchange: skip Binance clock for ignored messages`
+  - `a2fe11c exchange: track Binance padding fallback`
+  - `7bda3b7 exchange: avoid Binance book ticker update zero init`
+  - `1c2229e exchange: trust Binance book ticker fields`
 - 新接手时先执行：
 
 ```bash
@@ -50,13 +48,14 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 
 当前已经先以 Gate futures `bbo` / `futures.book_ticker` 为样例完成行情接入骨架。这部分不是交易回报实现，但它验证了 SBE schema、生成代码、message dispatch、BBO decode、统一 `BookTicker` 数据结构、market data client、market data session 和 WebSocket typed handler 之间的边界。
 
-2026-04-30 当前收口：
+2026-05-02 当前收口：
 
 1. `FuturesMarketDataSession` 已落地，负责连接生命周期、订阅控制 text frame、SBE binary frame 分流和统计。
 2. WebSocket 内核新增模板化 typed message handler path；`MessageCallback` 保留给工具和旧测试。
 3. Gate 行情热路径使用 `absl::flat_hash_map` 做 symbol -> symbol_id 查询，初始化时 `reserve()`，单 symbol 也走同一路径。
 4. production / 系统内部 JSON parser 统一为 `simdjson::ondemand`；`yyjson` 只保留在 submit response benchmark 中做对照。
-5. `ExtractBookTickerSymbol()` 不再重复校验 SBE header；完整 header 合法性仍由 `DecodeBookTickerWithHeader()` 负责。
+5. Gate BBO 行情 client 热路径使用 trusted symbol extract / trusted decode；schema/template、payload shape、symbol config 和 BBO `event=Update` 作为协议不变量，debug 下 assert，release 主路径不再保留 unknown-symbol / decode-failure 诊断分支。
+6. client/session 构造期使用 symbol span 构建 lookup / subscription views，构造后不保存无用 `symbols_` span。
 
 ### Core 数据类型
 
@@ -146,9 +145,9 @@ FuturesMarketDataSession::Handle(binary MessageView)
   -> DispatchSbeMessage
   -> schemaId / version check
   -> templateId dispatch
-  -> ExtractBookTickerSymbol(payload)
+  -> ExtractTrustedBookTickerSymbol(payload, header)
   -> flat_hash_map symbol -> symbol_id
-  -> DecodeBookTickerWithHeader(payload, header)
+  -> DecodeTrustedBookTickerWithHeader(payload, header)
   -> aquila::BookTicker
   -> Consumer::OnBookTicker
 ```
@@ -156,6 +155,12 @@ FuturesMarketDataSession::Handle(binary MessageView)
 `DecodeBookTicker` 只处理 Gate schema 下的 BBO template。`DispatchSbeMessage` 已为 Gate 当前 schema 中的 10 个 template 建立枚举映射，包括 `BookTicker`、`PublicTrade`、`Obu`、`OrderBook`、`OrderBookUpdate`、`UserTrade`、`Position`、`Candlestick`、`FuturesTicker`、`Orders`。
 
 十进制转换函数当前命名为 `DecimalMantissaToDouble`，使用预计算 scale 表；主路径负指数乘法分支带 `[[likely]]`，越界只在 debug assert 中检查。这里是基于 Gate futures 行情常见精度做的低延迟取舍，后续如果接入极端精度字段，需要先补测试再扩大表。
+
+BBO 额外约束：
+
+1. Gate BBO binary market data frame 的 `event` 视为 `Update`，trusted decode 只用 debug assert 固化该合约；其他 SBE template 不能复用这个事件假设。
+2. Decimal scale 表固定支持 0 到 10 位小数；如果用户需要更宽精度，由调用方在进入 decoder 前判断。
+3. `ExtractBookTickerSymbol()` / `DecodeBookTickerWithHeader()` 仍保留为保守 helper；client 热路径走 trusted 版本。
 
 ### Gate futures market data client
 
@@ -179,7 +184,7 @@ aquila::gate::FuturesMarketDataClient<Consumer>
 2. `Consumer` 只需要提供 `OnBookTicker(const aquila::BookTicker&) noexcept`。
 3. `SymbolBinding` 使用 `{symbol, symbol_id}`；初始化后构建 `absl::flat_hash_map<std::string_view, std::int32_t>`，并按 symbol 数预留容量，避免热路径 rehash。
 4. WebSocket text frame 在 session 层处理；client 热路径只处理 binary SBE payload。
-5. unknown template、unknown symbol、非 binary frame 都不会中断 client，当前以接受并丢弃为主。
+5. unknown template 和非 binary frame 不会中断 client，当前以接受并丢弃为主；unknown symbol 是启动 symbol config 错误，debug assert，release 热路径不记录 unknown-symbol counter。
 6. BBO decode 成功后同步调用 consumer，避免额外队列和动态分配。
 
 订阅请求构造：
@@ -216,18 +221,19 @@ aquila::gate::FuturesMarketDataSession<
 
 1. session 不在内部创建线程；调用方决定在哪个线程调用 `Start()` / `Stop()`。
 2. active 后自动发送 `futures.book_ticker` subscribe；支持显式 `RequestUnsubscribe()`。
-3. binary final frame 走 BBO/SBE 快路径，非 final frame 计数后接受。
-4. text final frame 只处理 subscribe/unsubscribe ack/error，以及 JSON market data update 计数；当前不把 JSON market data 转成 `BookTicker`。
-5. text control parser 使用复用的 `simdjson::ondemand::parser text_parser_`。
-6. 如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，text parser 直接使用 zero-copy padded view；否则 fallback 到 `simdjson::padded_string` scratch copy。
-7. session 转发 state/error handler，暴露 `FuturesMarketDataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
-8. `FuturesMarketDataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `SessionDiagnosticsT = NoopFuturesMarketDataSessionDiagnostics`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `FuturesMarketDataSessionDiagnostics`。
-9. text control envelope parser 已拆到 `text_envelope_parser.h`，订阅状态机已拆到 `subscription_controller.h`，session 只保留收包分流、订阅请求发送和 client 组合。
+3. core WebSocket 层负责 frame/message 完整性；exchange session 不再处理外部 non-final `MessageView`。
+4. binary frame 走 BBO/SBE 快路径。
+5. text frame 只处理 subscribe/unsubscribe ack/error，以及 JSON market data update 计数；当前不把 JSON market data 转成 `BookTicker`。
+6. text control parser 使用复用的 `simdjson::ondemand::parser text_parser_`。
+7. 如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，text parser 直接使用 zero-copy padded view；否则 fallback 到 `simdjson::padded_string` scratch copy。
+8. session 转发 state/error handler，暴露 `FuturesMarketDataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
+9. `FuturesMarketDataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `SessionDiagnosticsT = NoopFuturesMarketDataSessionDiagnostics`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `FuturesMarketDataSessionDiagnostics`。
+10. text control envelope parser 已拆到 `text_envelope_parser.h`，订阅状态机已拆到 `subscription_controller.h`，session 只保留收包分流、订阅请求发送和 client 组合。
 
 注意：
 
 1. `local_ns` 在 session 收到 binary frame 后立即采集，再传入 client，避免在更深层反复取时钟，也方便未来由外层 runtime 统一传入本地时间。
-2. `DecodeBookTickerWithHeader()` 仍做完整 header 校验；删除的只是 symbol 提取阶段的重复 header 校验。
+2. `DecodeBookTickerWithHeader()` 仍做完整 header / event 校验；client 热路径删除的是重复防御分支。
 
 后续 TODO（暂不实现）：
 
@@ -242,37 +248,28 @@ aquila::gate::FuturesMarketDataSession<
 taskset -c 2 ./build/release/benchmark/exchange/gate/market_data/gate_futures_market_data_benchmark --benchmark_filter='gate_market_data/(decode_book_ticker_with_header|client_on_binary_payload|client_on_message_binary|session_handle_binary|session_handle_subscribe_ack|session_handle_subscribe_ack_padded_view)' --benchmark_repetitions=10
 ```
 
-2026-05-01 当前 mean 结果：
+2026-05-02 当前 selected mean 结果：
 
 | case | time |
 | --- | ---: |
-| `decode_book_ticker_with_header` | 2.87ns |
-| `client_on_binary_payload/1` | 5.51ns |
-| `client_on_binary_payload/8` | 7.45ns |
-| `client_on_binary_payload/32` | 7.31ns |
-| `client_on_message_binary/1` | 6.92ns |
-| `client_on_message_binary/8` | 10.0ns |
-| `client_on_message_binary/32` | 9.92ns |
-| `session_handle_binary/1` | 36.4ns |
-| `session_handle_binary/8` | 49.3ns |
-| `session_handle_binary/32` | 48.9ns |
-| `session_handle_subscribe_ack` | 141ns |
-| `session_handle_subscribe_ack_padded_view` | 122ns |
+| `decode_book_ticker_with_header` | 2.85ns |
+| `client_on_binary_payload/1` | 2.39ns |
+| `session_handle_binary/1` | 32.1ns |
 
 解释：
 
 1. `client_on_binary_payload` 是已知 binary payload 的 client 快路径。
-2. `client_on_message_binary` 包含 `MessageView` kind / fin 分流和时钟外传。
+2. `client_on_message_binary` 包含 `MessageView` kind 分流和时钟外传。
 3. `session_handle_binary` 默认关闭 session 统计，主要包含 session 分流、`NowNs()` 和 client binary 处理，因此数值仍受时钟成本影响。
 4. padded text view 比 scratch copy text parse 更快，但 subscribe/unsubscribe ack 属于低频控制路径。
 
-2026-05-01 当前验证：
+2026-05-02 当前验证：
 
 ```text
-cmake --build build/debug -j8
-cmake --build build/release -j8
-ctest --test-dir build/debug -R 'websocket_|gate_' --output-on-failure   # 23/23 passed
-ctest --test-dir build/release -R 'websocket_|gate_' --output-on-failure # 23/23 passed
+cmake --build build/debug --target binance_book_ticker_parser_test binance_futures_market_data_client_test binance_futures_market_data_session_test gate_futures_market_data_client_test gate_futures_market_data_session_test gate_sbe_book_ticker_decoder_test gate_sbe_message_dispatcher_test gate_submit_response_parser_test -j 32
+ctest --test-dir build/debug -R "(binance_book_ticker_parser_test|binance_futures_market_data_client_test|binance_futures_market_data_session_test|gate_futures_market_data_client_test|gate_futures_market_data_session_test|gate_sbe_book_ticker_decoder_test|gate_sbe_message_dispatcher_test|gate_submit_response_parser_test)" --output-on-failure # 8/8 passed
+cmake --build build/release --target binance_book_ticker_parser_test binance_futures_market_data_client_test binance_futures_market_data_session_test gate_futures_market_data_client_test gate_futures_market_data_session_test gate_sbe_book_ticker_decoder_test gate_sbe_message_dispatcher_test gate_submit_response_parser_test -j 32
+ctest --test-dir build/release -R "(binance_book_ticker_parser_test|binance_futures_market_data_client_test|binance_futures_market_data_session_test|gate_futures_market_data_client_test|gate_futures_market_data_session_test|gate_sbe_book_ticker_decoder_test|gate_sbe_message_dispatcher_test|gate_submit_response_parser_test)" --output-on-failure # 8/8 passed
 ```
 
 ### WebSocket typed message handler
@@ -427,6 +424,12 @@ benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp
 3. 不能替代 result / error 的完整解析。
 4. 如果业务需要校验 status、channel、error label 或最终 order id，应走 full business parse 或后续设计分层解析。
 
+当前实现约束：
+
+1. 数字字符串转换统一走 `core/utils/numeric.h` 中基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToUint64` 等 helper。
+2. `ReadSimdjsonUint64()` 的输出指针是内部调用合约，debug 下 assert，不在 release 热路径做空指针防御。
+3. `RequestIdCodec` / `OrderTextCodec` 尚未落地，当前 submit parser 仍只保留 hash 字段；等下单 session 设计时再替换。
+
 ### yyjson 与 simdjson 取舍
 
 当前依赖状态：
@@ -454,7 +457,7 @@ taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_respons
 
 样本 payload 为 Gate `futures.order_place` 的 `ack=true` 订单回声，payload 约 839B；benchmark 使用 padded view，避免把每次 copy 成本混入解析差异。
 
-2026-04-28 当前结果：
+2026-04-28 parser 对照结果：
 
 | case | p50 | p99 | p99.9 |
 | --- | ---: | ---: | ---: |
@@ -462,6 +465,12 @@ taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_respons
 | `yyjson_ack_minimal_padded_view` | 359ns | 605ns | 678ns |
 | `simdjson_ondemand_padded_view` | 254ns | 363ns | 583ns |
 | `simdjson_ack_minimal_padded_view` | 123ns | 129ns | 444ns |
+
+2026-05-02 selected mean：
+
+| case | mean |
+| --- | ---: |
+| `simdjson_ack_minimal_padded_view` | 115ns |
 
 推荐：
 

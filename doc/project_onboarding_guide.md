@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；下一阶段继续 Gate 交易 submit/update 链路设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；行情热路径已按协议不变量收口，下一阶段继续 Gate 交易 submit/update 链路设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -54,6 +54,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- |
 | `core/common/types.h` | 项目通用枚举，当前包含 `aquila::Exchange`。 |
 | `core/common/constants.h` | 项目通用常量，当前包含缓存行大小等基础常量。 |
+| `core/utils/numeric.h` | 基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToDouble` / `ToUint64` 等热路径数字转换 helper，失败只在 debug assert。 |
 | `core/market_data/types.h` | 统一行情数据结构，当前包含 `aquila::BookTicker`。 |
 
 ### WebSocket 内核
@@ -120,7 +121,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `benchmark/websocket/active_spin_benchmark.cpp` | active spin loop / stop check / clock 相关基线。 |
 | `benchmark/websocket/message_handler_dispatch_benchmark.cpp` | `MessageCallback` 与 typed message handler dispatch 对照。 |
 | `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp` | Gate BBO decode、market data client/session binary path 和 text control parse benchmark。 |
-| `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` | Binance JSON bookTicker parser、market data client/session text path benchmark；`feature/binance-bookticker-yyjson` 只在此文件内保留 yyjson parser 层对照。 |
+| `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` | Binance JSON bookTicker parser、market data client/session text path benchmark；yyjson 和 ordered parser 只在此文件内做 benchmark 对照。 |
 | `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp` | Gate submit response JSON parse benchmark；yyjson 只在这里作为 simdjson 对照。 |
 
 ## 当前重要结论
@@ -202,29 +203,46 @@ FuturesMarketDataSession::Handle(binary MessageView)
 
 - `FuturesMarketDataClient<Consumer>` 使用纯模板组合，热路径不引入虚函数或 `std::function`。
 - `FuturesMarketDataSession<Consumer, TransportSocketT>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
-- session 处理 subscribe/unsubscribe ack/error text frame；binary SBE final frame 进入 client 快路径。
+- core WebSocket 层负责 frame/message 完整性；exchange session 不再为外部 non-final `MessageView` 做兼容统计。
+- session 处理 subscribe/unsubscribe ack/error text frame；binary SBE frame 进入 client 快路径。
 - text JSON 使用 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes` 满足 `simdjson::SIMDJSON_PADDING`，直接用 padded view，否则 fallback 到 `simdjson::padded_string`。
 - symbol -> symbol_id 使用 `absl::flat_hash_map`，初始化时按 symbol 数 `reserve()`，单 symbol 也走同一路径。
+- symbol config 是启动期不变量；行情 payload 中出现未配置 symbol 时 debug assert，release 主路径不保留 unknown-symbol 诊断分支。
 - `BookTicker` 中不保存字符串 symbol，只保存内部 `symbol_id`。
 - BBO 的 `mantissa + exponent` 在 decode 阶段转成 `double`，便于策略和因子计算。
-- `ExtractBookTickerSymbol()` 不再重复校验 SBE header；完整 header 校验保留在 `DecodeBookTickerWithHeader()`。
+- Gate BBO binary market data 的 `event` 合约是 `Update`；其他 SBE template 不能复用这个假设。
+- Gate decimal scale 当前最多支持 10 位小数；超出范围只在 debug assert，用户如需更宽精度应在进入 decoder 前自行判断。
+- `ExtractTrustedBookTickerSymbol()` / `DecodeTrustedBookTickerWithHeader()` 是 client 热路径；保守的 `ExtractBookTickerSymbol()` / `DecodeBookTickerWithHeader()` 仍供测试和低频调用使用。
 - 如需引用 BTC_USDT live probe 稳定性或真实延迟结论，重新运行并保留原始输出。
 
-2026-04-30 Gate market data release benchmark：
+2026-05-02 Gate market data release selected benchmark：
 
 | case | time |
 | --- | ---: |
 | `decode_book_ticker_with_header` | 2.85ns |
-| `client_on_binary_payload/1` | 6.42ns |
-| `client_on_binary_payload/8` | 7.21ns |
-| `client_on_binary_payload/32` | 7.17ns |
-| `session_handle_binary/1` | 37.9ns |
-| `session_handle_binary/8` | 49.7ns |
-| `session_handle_binary/32` | 48.3ns |
-| `session_handle_subscribe_ack` | 135ns |
-| `session_handle_subscribe_ack_padded_view` | 115ns |
+| `client_on_binary_payload/1` | 2.39ns |
+| `session_handle_binary/1` | 32.1ns |
 
-`session_handle_binary` 包含 session 计数和 `NowNs()`，不等同于纯 decode 成本。
+`session_handle_binary` 包含 session 分流和 `NowNs()`，不等同于纯 decode 成本；多 symbol 和 text-control 详细对照见 Gate handoff 文档。
+
+### Binance USD-M futures 行情当前状态
+
+- 生产路径使用 raw stream URL，例如 `/public/ws/btcusdt@bookTicker`，active 后不发送 runtime `SUBSCRIBE`。
+- 生产 parser 使用 `simdjson::ondemand` + unordered trusted field lookup；ordered parser 只保留在 benchmark 中，对当前 payload 收益太小，暂不切生产。
+- yyjson 只保留在 benchmark 中做 parser 对照；`aquila_binance` 生产库不链接 yyjson。
+- Binance `BookTickerUpdate::symbol` 固定 copy 到对象内 `symbol_storage`；不要假设 simdjson `get_string()` 返回的 `string_view` 一定指向原 payload。
+- symbol config 是启动期不变量；unknown symbol 使用 debug assert，不在 release 主路径记录 unknown-symbol 计数。
+- client/session 构造期使用 symbol span 构建 stream target 和 lookup，构造后不再保存无用 `symbols_` span。
+
+2026-05-02 Binance release selected benchmark：
+
+| case | time |
+| --- | ---: |
+| `parse_book_ticker_padded_view` | 158ns |
+| `client_on_text_payload/1` | 183ns |
+| `session_handle_text_padded_view` | 195ns |
+
+`session_handle_text_padded_view` 是当前 Binance bookTicker 已实现路径的主要 microbenchmark；公网链路延迟需要重新跑 live probe。
 
 ## 常用验证命令
 
@@ -282,6 +300,12 @@ Gate submit response parser 测试：
 ```bash
 ./build/debug/test/exchange/gate/trading/gate_submit_response_parser_test
 ./build/release/test/exchange/gate/trading/gate_submit_response_parser_test
+```
+
+Gate submit response parser benchmark：
+
+```bash
+taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_response_parse_benchmark --benchmark_filter='gate_submit_response_parse_order_place_ack_echo_simdjson_ack_minimal_padded_view/' --benchmark_repetitions=5 --benchmark_report_aggregates_only=true
 ```
 
 Gate BBO live probe：
