@@ -267,17 +267,8 @@ inline GateSubmitResponse ParseGateSubmitAckMinimal(
   return detail::ParseSimdjsonAckMinimalDocument(std::move(document));
 }
 
-inline GateSubmitResponse ParseGateSubmitResponseSimdjson(
-    std::span<char> padded_payload, size_t payload_size,
-    simdjson::ondemand::parser& parser) noexcept {
-  return ParseGateSubmitResponse(padded_payload, payload_size, parser);
-}
-
-inline GateSubmitResponse ParseGateSubmitAckMinimalSimdjson(
-    std::span<char> padded_payload, size_t payload_size,
-    simdjson::ondemand::parser& parser) noexcept {
-  return ParseGateSubmitAckMinimal(padded_payload, payload_size, parser);
-}
+// Benchmark-only simdjson wrapper names live in
+// benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp.
 
 }  // namespace aquila::gate
 

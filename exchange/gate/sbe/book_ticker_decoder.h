@@ -82,11 +82,6 @@ inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   return kPositivePowersOfTen[exponent_value];
 }
 
-inline double DecimalMantissaToDouble(std::int64_t mantissa,
-                                      std::int8_t exponent) noexcept {
-  return static_cast<double>(mantissa) * DecimalExponentScale(exponent);
-}
-
 template <typename BboView>
 inline void AssignBookTickerFromView(const BboView& view, std::int64_t local_ns,
                                      std::int32_t symbol_id,
@@ -111,22 +106,12 @@ inline void AssignBookTickerFromView(const BboView& view, std::int64_t local_ns,
 
 }  // namespace detail
 
-inline std::string_view ExtractBookTickerSymbol(
-    std::string_view payload) noexcept {
-  if (payload.size() < detail::kMinBookTickerPayloadBytes) {
-    return {};
-  }
-
-  size_t offset = kSbeMessageHeaderBytes + detail::kBookTickerBlockLength;
-  std::string_view channel;
-  std::string_view symbol;
-  if (!detail::ReadVarString8(payload, offset, channel) ||
-      !detail::ReadVarString8(payload, offset, symbol)) {
-    return {};
-  }
-  return symbol;
-}
-
+// Conservative comparison helpers are kept out of this production header:
+// DecimalMantissaToDoubleForTest, ExtractBookTickerSymbolForTest, and
+// DecodeBookTickerForTest live in
+// test/exchange/gate/sbe/book_ticker_decoder_test.cpp;
+// DecodeBookTickerWithHeaderBenchmark lives in
+// benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp.
 inline std::string_view ExtractTrustedBookTickerSymbol(
     std::string_view payload, const SbeMessageHeader& header) noexcept {
   assert(detail::IsBookTickerHeader(header));
@@ -157,38 +142,6 @@ inline void DecodeTrustedBookTickerWithHeader(std::string_view payload,
   assert(view.e() == ::gate::types::Event::Update);
 
   detail::AssignBookTickerFromView(view, local_ns, symbol_id, out);
-}
-
-inline bool DecodeBookTickerWithHeader(std::string_view payload,
-                                       const SbeMessageHeader& header,
-                                       std::int64_t local_ns,
-                                       std::int32_t symbol_id,
-                                       BookTicker* out) noexcept {
-  if (out == nullptr || payload.size() < detail::kMinBookTickerPayloadBytes ||
-      !detail::IsBookTickerHeader(header)) {
-    return false;
-  }
-
-  const auto view = ::sbepp::make_const_view<::gate::messages::bbo>(
-      payload.data(), payload.size());
-  if (view.e() != ::gate::types::Event::Update) {
-    return false;
-  }
-
-  detail::AssignBookTickerFromView(view, local_ns, symbol_id, *out);
-  return true;
-}
-
-inline bool DecodeBookTicker(std::string_view payload, std::int64_t local_ns,
-                             std::int32_t symbol_id, BookTicker* out) noexcept {
-  const SbeDispatchResult dispatch = DispatchSbeMessage(payload);
-  if (dispatch.status != SbeDispatchStatus::kReady ||
-      dispatch.message_type != GateSbeMessageType::kBookTicker) {
-    return false;
-  }
-
-  return DecodeBookTickerWithHeader(payload, dispatch.header, local_ns,
-                                    symbol_id, out);
 }
 
 }  // namespace aquila::gate

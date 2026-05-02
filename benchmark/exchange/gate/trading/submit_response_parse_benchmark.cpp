@@ -22,6 +22,18 @@ namespace {
 
 constexpr size_t kBatchSize = 32;
 
+GateSubmitResponse ParseGateSubmitResponseSimdjson(
+    std::span<char> padded_payload, size_t payload_size,
+    simdjson::ondemand::parser& parser) noexcept {
+  return ParseGateSubmitResponse(padded_payload, payload_size, parser);
+}
+
+GateSubmitResponse ParseGateSubmitAckMinimalSimdjson(
+    std::span<char> padded_payload, size_t payload_size,
+    simdjson::ondemand::parser& parser) noexcept {
+  return ParseGateSubmitAckMinimal(padded_payload, payload_size, parser);
+}
+
 constexpr std::string_view kOrderPlaceAckEcho = R"json({
   "request_id": "request-id-1",
   "ack": true,

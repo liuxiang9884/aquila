@@ -103,6 +103,26 @@ void SetCommonCounters(benchmark::State& state, std::string_view payload) {
       ws_bench::FormatSchedulingPolicy()));
 }
 
+bool DecodeBookTickerWithHeaderBenchmark(
+    std::string_view payload, const aq_gate::SbeMessageHeader& header,
+    std::int64_t local_ns, std::int32_t symbol_id,
+    aquila::BookTicker* out) noexcept {
+  if (out == nullptr ||
+      payload.size() < aq_gate::detail::kMinBookTickerPayloadBytes ||
+      !aq_gate::detail::IsBookTickerHeader(header)) {
+    return false;
+  }
+
+  const auto view = ::sbepp::make_const_view<::gate::messages::bbo>(
+      payload.data(), payload.size());
+  if (view.e() != ::gate::types::Event::Update) {
+    return false;
+  }
+
+  aq_gate::detail::AssignBookTickerFromView(view, local_ns, symbol_id, *out);
+  return true;
+}
+
 void BenchmarkDecodeBookTickerWithHeader(benchmark::State& state) {
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
@@ -117,7 +137,7 @@ void BenchmarkDecodeBookTickerWithHeader(benchmark::State& state) {
   aquila::BookTicker book_ticker;
   std::uint64_t decoded = 0;
   for (auto _ : state) {
-    bool ok = aq_gate::DecodeBookTickerWithHeader(payload, dispatch.header,
+    bool ok = DecodeBookTickerWithHeaderBenchmark(payload, dispatch.header,
                                                   kLocalNs, 11, &book_ticker);
     benchmark::DoNotOptimize(ok);
     benchmark::DoNotOptimize(book_ticker);

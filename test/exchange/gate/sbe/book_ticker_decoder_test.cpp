@@ -1,6 +1,7 @@
 #include "exchange/gate/sbe/book_ticker_decoder.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string_view>
@@ -25,15 +26,71 @@ void WriteVarString(std::array<char, 128>& buffer, size_t* offset,
   *offset += value.size();
 }
 
+double DecimalMantissaToDoubleForTest(std::int64_t mantissa,
+                                      std::int8_t exponent) noexcept {
+  return static_cast<double>(mantissa) *
+         aquila::gate::detail::DecimalExponentScale(exponent);
+}
+
+std::string_view ExtractBookTickerSymbolForTest(
+    std::string_view payload) noexcept {
+  if (payload.size() < aquila::gate::detail::kMinBookTickerPayloadBytes) {
+    return {};
+  }
+
+  size_t offset = aquila::gate::kSbeMessageHeaderBytes +
+                  aquila::gate::detail::kBookTickerBlockLength;
+  std::string_view channel;
+  std::string_view symbol;
+  if (!aquila::gate::detail::ReadVarString8(payload, offset, channel) ||
+      !aquila::gate::detail::ReadVarString8(payload, offset, symbol)) {
+    return {};
+  }
+  return symbol;
+}
+
+bool DecodeBookTickerWithHeaderForTest(
+    std::string_view payload, const aquila::gate::SbeMessageHeader& header,
+    std::int64_t local_ns, std::int32_t symbol_id,
+    aquila::BookTicker* out) noexcept {
+  if (out == nullptr ||
+      payload.size() < aquila::gate::detail::kMinBookTickerPayloadBytes ||
+      !aquila::gate::detail::IsBookTickerHeader(header)) {
+    return false;
+  }
+
+  const auto view = ::sbepp::make_const_view<::gate::messages::bbo>(
+      payload.data(), payload.size());
+  if (view.e() != ::gate::types::Event::Update) {
+    return false;
+  }
+
+  aquila::gate::detail::AssignBookTickerFromView(view, local_ns, symbol_id,
+                                                 *out);
+  return true;
+}
+
+bool DecodeBookTickerForTest(std::string_view payload, std::int64_t local_ns,
+                             std::int32_t symbol_id,
+                             aquila::BookTicker* out) noexcept {
+  const aquila::gate::SbeDispatchResult dispatch =
+      aquila::gate::DispatchSbeMessage(payload);
+  if (dispatch.status != aquila::gate::SbeDispatchStatus::kReady ||
+      dispatch.message_type != aquila::gate::GateSbeMessageType::kBookTicker) {
+    return false;
+  }
+
+  return DecodeBookTickerWithHeaderForTest(payload, dispatch.header, local_ns,
+                                           symbol_id, out);
+}
+
 }  // namespace
 
 TEST(GateSbeBookTickerDecoderTest, ConvertsDecimalMantissaWithinFixedTable) {
-  EXPECT_DOUBLE_EQ(aquila::gate::detail::DecimalMantissaToDouble(123, 0),
-                   123.0);
-  EXPECT_DOUBLE_EQ(aquila::gate::detail::DecimalMantissaToDouble(123, 10),
+  EXPECT_DOUBLE_EQ(DecimalMantissaToDoubleForTest(123, 0), 123.0);
+  EXPECT_DOUBLE_EQ(DecimalMantissaToDoubleForTest(123, 10),
                    1'230'000'000'000.0);
-  EXPECT_DOUBLE_EQ(aquila::gate::detail::DecimalMantissaToDouble(123, -10),
-                   0.0000000123);
+  EXPECT_DOUBLE_EQ(DecimalMantissaToDoubleForTest(123, -10), 0.0000000123);
 }
 
 TEST(GateSbeBookTickerDecoderTest, ConvertsDecimalExponentToScale) {
@@ -81,9 +138,9 @@ TEST(GateSbeBookTickerDecoderTest, DecodesBookTickerFromBboPayload) {
   buffer[offset++] = 0;
 
   aquila::BookTicker book_ticker{};
-  const bool decoded = aquila::gate::DecodeBookTicker(
-      std::string_view{buffer.data(), offset}, 1'770'000'000'001'200'000, 123,
-      &book_ticker);
+  const bool decoded =
+      DecodeBookTickerForTest(std::string_view{buffer.data(), offset},
+                              1'770'000'000'001'200'000, 123, &book_ticker);
 
   ASSERT_TRUE(decoded);
   EXPECT_EQ(book_ticker.id, 42);
@@ -133,7 +190,7 @@ TEST(GateSbeBookTickerDecoderTest, ExtractsBookTickerSymbolFromBboPayload) {
   WriteVarString(buffer, &offset, "futures.book_ticker");
   WriteVarString(buffer, &offset, "BTC_USDT");
 
-  EXPECT_EQ(aquila::gate::ExtractBookTickerSymbol(
-                std::string_view{buffer.data(), offset}),
-            "BTC_USDT");
+  EXPECT_EQ(
+      ExtractBookTickerSymbolForTest(std::string_view{buffer.data(), offset}),
+      "BTC_USDT");
 }
