@@ -167,6 +167,23 @@
 - 需要写入已有缓冲区、避免动态分配或控制截断行为时，优先使用 `fmt::format_to_n`；低延迟热路径中不要为了格式化引入不必要的临时 `std::string`。
 - 不新增 `printf`、`fprintf`、`snprintf`、`std::cout`、`std::format` 或 `std::to_string` 等新的格式化/打印路径，除非有明确兼容性或系统接口理由，并在代码中保持局部化。
 
+## Evaluation 辅助代码约定
+
+- `evaluation/` 只存放服务对比、benchmark 和测试验证的共享辅助代码；它不是生产路径的一部分。
+- `evaluation/` 通过 header-only target `aquila_evaluation` 暴露，只允许 `test/` 和 `benchmark/` target 链接。
+- `core/`、`exchange/`、`tools/` 不允许 include `evaluation/`，也不允许链接 `aquila_evaluation`。
+- 只被单个 test 或 benchmark 使用的 helper，优先放在该 `.cpp` 的匿名 namespace；只被 test 使用且不会被 benchmark 复用的 helper 放在对应 `test/` 目录；只被 benchmark 使用且不会被 test 复用的 helper 放在对应 `benchmark/` 目录。
+- 同时被 test 和 benchmark 使用，或作为生产实现稳定对照的 helper，放在 `evaluation/`，并使用对应的 `aquila::<domain>::evaluation` namespace。
+- 如果生产文件需要说明某个对照实现、fixture 或 benchmark-only helper，只写英文注释指向 `evaluation/`、`test/` 或 `benchmark/` 的具体文件，不把实现留在生产 header 中。
+- 修改 `evaluation/` 相关边界时，提交前至少运行：
+
+```bash
+rg '#include "evaluation/' core exchange tools
+rg 'aquila_evaluation' core exchange tools
+```
+
+上述命令期望无命中。
+
 ## 项目级执行规则
 
 - 修改交易所协议、行情处理、订单状态机、风控、恢复逻辑或线程模型时，优先补充或更新测试。

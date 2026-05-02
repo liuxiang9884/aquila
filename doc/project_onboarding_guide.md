@@ -27,6 +27,7 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 AGENTS.md
 README.md
 doc/project_onboarding_guide.md
+doc/evaluation_support.md
 doc/agent-handoff-gate-trade-architecture.md
 doc/websocket_read_write_benchmark_comparison.md
 ```
@@ -97,6 +98,15 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- |
 | `exchange/gate/trading/submit_response_parser.h` | Gate submit WS JSON response parser，生产路径使用 `simdjson::ondemand`。 |
 | `test/exchange/gate/trading/submit_response_parser_test.cpp` | submit response parser 回归测试。 |
+
+### Evaluation 辅助代码
+
+| 文件 | 职责 |
+| --- | --- |
+| `evaluation/CMakeLists.txt` | 定义 header-only `aquila_evaluation` target，只供 test / benchmark 使用。 |
+| `evaluation/websocket/queued_frame_codec.h` | `FrameCodec` 的 ready queue / parse-ahead 对照实现。 |
+| `evaluation/exchange/gate/sbe/book_ticker_payload_builder.h` | Gate BBO test / benchmark 共享 payload fixture。 |
+| `doc/evaluation_support.md` | `evaluation/` 放置规则、CMake 依赖边界和提交前检查命令。 |
 
 ### 工具
 
