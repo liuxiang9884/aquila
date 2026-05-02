@@ -10,5 +10,6 @@ target_link_libraries(aquila_gate
     INTERFACE
         fmt::fmt-header-only
         simdjson::simdjson
+        FastFloat::fast_float
         absl::flat_hash_map
 )

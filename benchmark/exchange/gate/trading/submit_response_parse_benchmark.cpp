@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -11,6 +10,7 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
+#include "core/common/numeric.h"
 #include "exchange/gate/trading/submit_response_parser.h"
 #include <simdjson.h>
 #include <yyjson.h>
@@ -95,17 +95,7 @@ bool ReadYyjsonBool(yyjson_val* value, bool* output) noexcept {
 
 bool ParseYyjsonUintString(std::string_view value,
                            std::uint64_t* output) noexcept {
-  if (value.empty()) {
-    return false;
-  }
-  std::uint64_t parsed = 0;
-  const char* begin = value.data();
-  const char* end = begin + value.size();
-  const auto result = std::from_chars(begin, end, parsed);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    return false;
-  }
-  *output = parsed;
+  *output = aquila::ToUint64(value);
   return true;
 }
 

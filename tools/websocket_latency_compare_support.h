@@ -2,7 +2,6 @@
 #define AQUILA_TOOLS_WEBSOCKET_LATENCY_COMPARE_SUPPORT_H_
 
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -16,6 +15,7 @@
 #include <fmt/compile.h>
 #include <fmt/core.h>
 
+#include "core/common/numeric.h"
 #include <simdjson.h>
 
 namespace aquila::tools {
@@ -76,14 +76,7 @@ namespace detail {
 
 inline std::optional<std::uint64_t> ParseUintString(
     std::string_view value) noexcept {
-  std::uint64_t parsed = 0;
-  const char* begin = value.data();
-  const char* end = begin + value.size();
-  const auto result = std::from_chars(begin, end, parsed);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    return std::nullopt;
-  }
-  return parsed;
+  return aquila::ToUint64(value);
 }
 
 inline bool ReadString(simdjson::ondemand::value value,

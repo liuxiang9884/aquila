@@ -10,6 +10,7 @@ target_link_libraries(aquila_core
     PUBLIC
         Threads::Threads
         fmt::fmt-header-only
+        FastFloat::fast_float
         OpenSSL::SSL
         OpenSSL::Crypto
 )

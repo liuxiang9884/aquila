@@ -3,15 +3,13 @@
 
 #include <array>
 #include <cassert>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string_view>
 #include <utility>
 
-#include <fast_float/fast_float.h>
-
+#include "core/common/numeric.h"
 #include <simdjson.h>
 
 namespace aquila::binance {
@@ -89,14 +87,7 @@ inline std::int64_t TrustedInt64(simdjson::ondemand::value value) noexcept {
 }
 
 inline double ParseTrustedDoubleString(std::string_view text) noexcept {
-  assert(!text.empty());
-  double parsed = 0.0;
-  const char* const begin = text.data();
-  const char* const end = begin + text.size();
-  const fast_float::from_chars_result result =
-      fast_float::from_chars(begin, end, parsed);
-  assert(result.ec == std::errc{} && result.ptr == end);
-  return parsed;
+  return ToDouble(text);
 }
 
 inline void CopyTrustedSymbol(std::string_view symbol,

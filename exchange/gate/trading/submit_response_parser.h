@@ -1,13 +1,14 @@
 #ifndef AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 #define AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 
-#include <charconv>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
 #include <utility>
 
+#include "core/common/numeric.h"
 #include "exchange/gate/common/simdjson_utils.h"
 #include <simdjson.h>
 
@@ -56,17 +57,8 @@ namespace detail {
 
 inline bool ParseUintString(std::string_view value,
                             std::uint64_t* output) noexcept {
-  if (output == nullptr || value.empty()) {
-    return false;
-  }
-  std::uint64_t parsed = 0;
-  const char* begin = value.data();
-  const char* end = begin + value.size();
-  const auto result = std::from_chars(begin, end, parsed);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    return false;
-  }
-  *output = parsed;
+  assert(output != nullptr);
+  *output = ToUint64(value);
   return true;
 }
 
