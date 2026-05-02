@@ -1,4 +1,4 @@
-#include "core/common/numeric.h"
+#include "core/utils/numeric.h"
 
 #include <cstdint>
 #include <limits>

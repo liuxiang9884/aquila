@@ -1,14 +1,13 @@
 #ifndef AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 #define AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
 #include <utility>
 
-#include "core/common/numeric.h"
+#include "core/utils/numeric.h"
 #include "exchange/gate/common/simdjson_utils.h"
 #include <simdjson.h>
 
@@ -55,13 +54,6 @@ inline constexpr std::uint64_t HashGateSubmitString(
 
 namespace detail {
 
-inline bool ParseUintString(std::string_view value,
-                            std::uint64_t* output) noexcept {
-  assert(output != nullptr);
-  *output = ToUint64(value);
-  return true;
-}
-
 inline GateSubmitResponse InvalidJsonSubmitResponse() noexcept {
   GateSubmitResponse response{};
   response.parse_status = GateSubmitParseStatus::kInvalidJson;
@@ -95,7 +87,11 @@ inline bool ReadSimdjsonUint64(simdjson::ondemand::value value,
   }
 
   std::string_view text{};
-  return ReadSimdjsonString(value, &text) && ParseUintString(text, output);
+  if (ReadSimdjsonString(value, &text)) {
+    *output = ToUint64(text);
+    return true;
+  }
+  return false;
 }
 
 inline std::uint16_t ReadSimdjsonStatusCode(

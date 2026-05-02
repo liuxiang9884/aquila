@@ -9,7 +9,7 @@
 #include <string_view>
 #include <utility>
 
-#include "core/common/numeric.h"
+#include "core/utils/numeric.h"
 #include <simdjson.h>
 
 namespace aquila::binance {

@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_COMMON_NUMERIC_H_
-#define AQUILA_CORE_COMMON_NUMERIC_H_
+#ifndef AQUILA_CORE_UTILS_NUMERIC_H_
+#define AQUILA_CORE_UTILS_NUMERIC_H_
 
 #include <cassert>
 #include <cstdint>
@@ -85,4 +85,4 @@ template <typename T>
 
 }  // namespace aquila
 
-#endif  // AQUILA_CORE_COMMON_NUMERIC_H_
+#endif  // AQUILA_CORE_UTILS_NUMERIC_H_

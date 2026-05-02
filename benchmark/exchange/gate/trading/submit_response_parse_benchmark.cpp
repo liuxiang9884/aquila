@@ -10,7 +10,7 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
-#include "core/common/numeric.h"
+#include "core/utils/numeric.h"
 #include "exchange/gate/trading/submit_response_parser.h"
 #include <simdjson.h>
 #include <yyjson.h>
@@ -93,12 +93,6 @@ bool ReadYyjsonBool(yyjson_val* value, bool* output) noexcept {
   return true;
 }
 
-bool ParseYyjsonUintString(std::string_view value,
-                           std::uint64_t* output) noexcept {
-  *output = aquila::ToUint64(value);
-  return true;
-}
-
 bool ReadYyjsonUint64(yyjson_val* value, std::uint64_t* output) noexcept {
   if (yyjson_is_uint(value)) {
     *output = yyjson_get_uint(value);
@@ -112,7 +106,8 @@ bool ReadYyjsonUint64(yyjson_val* value, std::uint64_t* output) noexcept {
     *output = static_cast<std::uint64_t>(signed_value);
     return true;
   }
-  return ParseYyjsonUintString(ReadYyjsonStringView(value), output);
+  *output = aquila::ToUint64(ReadYyjsonStringView(value));
+  return true;
 }
 
 std::uint16_t ReadYyjsonStatusCode(yyjson_val* value) noexcept {

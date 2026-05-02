@@ -15,7 +15,7 @@
 #include <fmt/compile.h>
 #include <fmt/core.h>
 
-#include "core/common/numeric.h"
+#include "core/utils/numeric.h"
 #include <simdjson.h>
 
 namespace aquila::tools {
@@ -74,11 +74,6 @@ struct LatencyCollectorSnapshot {
 
 namespace detail {
 
-inline std::optional<std::uint64_t> ParseUintString(
-    std::string_view value) noexcept {
-  return aquila::ToUint64(value);
-}
-
 inline bool ReadString(simdjson::ondemand::value value,
                        std::string_view* output) noexcept {
   simdjson::simdjson_result<std::string_view> result = value.get_string();
@@ -107,7 +102,7 @@ inline std::optional<std::uint64_t> ReadUint(
 
   std::string_view text{};
   if (ReadString(value, &text)) {
-    return ParseUintString(text);
+    return aquila::ToUint64(text);
   }
   return std::nullopt;
 }

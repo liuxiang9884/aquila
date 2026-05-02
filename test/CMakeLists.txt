@@ -1,5 +1,6 @@
 add_subdirectory(core/common)
 add_subdirectory(core/market_data)
+add_subdirectory(core/utils)
 add_subdirectory(websocket)
 add_subdirectory(exchange/gate/trading)
 add_subdirectory(exchange/gate/sbe)
