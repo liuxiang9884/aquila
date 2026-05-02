@@ -14,6 +14,10 @@ add_websocket_gtest(websocket_runtime_policy_test runtime_policy_test.cpp)
 add_websocket_gtest(websocket_prepared_write_test prepared_write_test.cpp)
 add_websocket_gtest(websocket_handshake_test handshake_test.cpp)
 add_websocket_gtest(websocket_frame_codec_test frame_codec_test.cpp)
+target_link_libraries(websocket_frame_codec_test
+    PRIVATE
+        aquila_evaluation
+)
 add_websocket_gtest(websocket_tls_socket_test tls_socket_test.cpp)
 add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
 add_websocket_gtest(websocket_reconnect_classifier_test

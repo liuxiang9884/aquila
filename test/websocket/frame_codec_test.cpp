@@ -11,9 +11,10 @@
 
 #include <gtest/gtest.h>
 
-#include "benchmark/websocket/queued_frame_codec.h"
+#include "evaluation/websocket/queued_frame_codec.h"
 
 using namespace aquila::websocket;
+using aquila::websocket::evaluation::QueuedFrameCodec;
 
 namespace {
 

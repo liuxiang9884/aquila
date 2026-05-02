@@ -11,11 +11,12 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
-#include "benchmark/websocket/queued_frame_codec.h"
 #include "core/websocket/frame_codec.h"
+#include "evaluation/websocket/queued_frame_codec.h"
 
 using namespace aquila::websocket;
 using namespace aquila::websocket::benchmarking;
+using aquila::websocket::evaluation::QueuedFrameCodec;
 
 namespace {
 

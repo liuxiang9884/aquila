@@ -498,7 +498,7 @@ std::uint32_t readable_tail_bytes{0};
 4. 业务层只能用它判断 parser padding 是否满足，例如 `readable_tail_bytes >= simdjson::SIMDJSON_PADDING`。
 5. 不允许把 tail bytes 当业务数据读取，不允许写 tail bytes，也不允许把 parser 返回的 view 保存到 frame buffer 生命周期之外。
 
-生产 `FrameCodec` 和 benchmark 对照 `QueuedFrameCodec` 都会填充该字段。当前 mirrored ring 使跨 ring boundary 的 payload 后仍有连续可读虚拟地址空间，因此可以把这个能力显式暴露给上层，而不是把 padding 混进 payload size。
+生产 `FrameCodec` 和 evaluation 对照 `QueuedFrameCodec` 都会填充该字段。当前 mirrored ring 使跨 ring boundary 的 payload 后仍有连续可读虚拟地址空间，因此可以把这个能力显式暴露给上层，而不是把 padding 混进 payload size。
 
 ### FrameCodec benchmark 对比
 
@@ -730,7 +730,7 @@ StrategyThread
 - `core/websocket/websocket_client.h`
 - `core/websocket/critical_session.h`
 - `core/websocket/frame_codec.h`
-- `benchmark/websocket/queued_frame_codec.h`
+- `evaluation/websocket/queued_frame_codec.h`
 - `test/websocket/frame_codec_test.cpp`
 - `core/websocket/types.h`
 - `doc/websocket_read_write_benchmark_comparison.md`

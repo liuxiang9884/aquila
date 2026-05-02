@@ -39,7 +39,7 @@ socket / TLS read
 - 默认 `FrameCodec` 使用 direct one-frame delivery，不再经过 ready metadata ring。
 - `MessageView` 保留 payload 生命周期、kind、sequence、fin 等结构化边界。
 - capacity exhaustion 有明确返回值和 degraded 指标，不静默覆盖。
-- `QueuedFrameCodec` 保留在 `benchmark/websocket/queued_frame_codec.h`，用于 ready queue / parse-ahead 对照，但不在默认热路径。
+- `QueuedFrameCodec` 保留在 `evaluation/websocket/queued_frame_codec.h`，用于 ready queue / parse-ahead 对照，但不在默认热路径。
 
 代价：
 

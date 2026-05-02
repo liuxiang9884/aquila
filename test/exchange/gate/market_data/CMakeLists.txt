@@ -4,6 +4,7 @@ add_executable(gate_futures_market_data_client_test
 
 target_link_libraries(gate_futures_market_data_client_test
     PRIVATE
+        aquila_evaluation
         aquila_gate
         GTest::gtest_main
 )
@@ -18,6 +19,7 @@ add_executable(gate_futures_market_data_session_test
 target_link_libraries(gate_futures_market_data_session_test
     PRIVATE
         aquila_core
+        aquila_evaluation
         aquila_gate
         GTest::gtest_main
 )

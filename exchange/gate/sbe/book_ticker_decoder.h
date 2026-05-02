@@ -111,7 +111,7 @@ inline void AssignBookTickerFromView(const BboView& view, std::int64_t local_ns,
 // DecodeBookTickerForTest live in
 // test/exchange/gate/sbe/book_ticker_decoder_test.cpp;
 // BuildBookTickerPayload lives in
-// test/exchange/gate/sbe/book_ticker_payload_builder.h;
+// evaluation/exchange/gate/sbe/book_ticker_payload_builder.h;
 // DecodeBookTickerWithHeaderBenchmark lives in
 // benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp.
 inline std::string_view ExtractTrustedBookTickerSymbol(

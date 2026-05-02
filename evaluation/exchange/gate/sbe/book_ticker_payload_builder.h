@@ -1,5 +1,5 @@
-#ifndef AQUILA_TEST_EXCHANGE_GATE_SBE_BOOK_TICKER_PAYLOAD_BUILDER_H_
-#define AQUILA_TEST_EXCHANGE_GATE_SBE_BOOK_TICKER_PAYLOAD_BUILDER_H_
+#ifndef AQUILA_EVALUATION_EXCHANGE_GATE_SBE_BOOK_TICKER_PAYLOAD_BUILDER_H_
+#define AQUILA_EVALUATION_EXCHANGE_GATE_SBE_BOOK_TICKER_PAYLOAD_BUILDER_H_
 
 #include <array>
 #include <cassert>
@@ -14,7 +14,7 @@
 #include "exchange/gate/sbe/generated/gate/types/Event.hpp"
 #include "exchange/gate/sbe/message_dispatcher.h"
 
-namespace aquila::gate::test_support {
+namespace aquila::gate::evaluation {
 
 inline constexpr std::uint16_t kBookTickerBlockLength =
     ::sbepp::message_traits<::gate::schema::messages::bbo>::block_length();
@@ -80,6 +80,6 @@ std::string_view BuildBookTickerPayload(
   return {buffer->data(), offset};
 }
 
-}  // namespace aquila::gate::test_support
+}  // namespace aquila::gate::evaluation
 
-#endif  // AQUILA_TEST_EXCHANGE_GATE_SBE_BOOK_TICKER_PAYLOAD_BUILDER_H_
+#endif  // AQUILA_EVALUATION_EXCHANGE_GATE_SBE_BOOK_TICKER_PAYLOAD_BUILDER_H_

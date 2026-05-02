@@ -11,10 +11,10 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "core/websocket/message_view.h"
+#include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/session.h"
 #include "exchange/gate/sbe/book_ticker_decoder.h"
-#include "test/exchange/gate/sbe/book_ticker_payload_builder.h"
 #include <simdjson.h>
 
 namespace aq_gate = aquila::gate;
@@ -25,7 +25,7 @@ namespace {
 
 constexpr std::int64_t kLocalNs = 4'720'000'000'000'000;
 
-using aquila::gate::test_support::BuildBookTickerPayload;
+using aquila::gate::evaluation::BuildBookTickerPayload;
 
 ws::MessageView BinaryView(std::string_view payload) noexcept {
   return {

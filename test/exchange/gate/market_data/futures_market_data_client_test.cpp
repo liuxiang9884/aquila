@@ -10,13 +10,13 @@
 
 #include "core/websocket/message_view.h"
 #include "core/websocket/websocket_client.h"
+#include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/subscription.h"
-#include "test/exchange/gate/sbe/book_ticker_payload_builder.h"
 
 namespace {
 
-using aquila::gate::test_support::BuildBookTickerPayload;
+using aquila::gate::evaluation::BuildBookTickerPayload;
 
 aquila::websocket::MessageView BinaryView(std::string_view payload) noexcept {
   return {

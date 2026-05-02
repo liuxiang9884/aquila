@@ -26,6 +26,11 @@ foreach(target IN LISTS WEBSOCKET_BENCHMARK_TARGETS)
     )
 endforeach()
 
+target_link_libraries(frame_codec_benchmark
+    PRIVATE
+        aquila_evaluation
+)
+
 target_link_libraries(third_party_frame_codec_comparison_benchmark
     PRIVATE
         Trantor::Trantor

@@ -1,5 +1,5 @@
-#ifndef AQUILA_BENCHMARK_WEBSOCKET_QUEUED_FRAME_CODEC_H_
-#define AQUILA_BENCHMARK_WEBSOCKET_QUEUED_FRAME_CODEC_H_
+#ifndef AQUILA_EVALUATION_WEBSOCKET_QUEUED_FRAME_CODEC_H_
+#define AQUILA_EVALUATION_WEBSOCKET_QUEUED_FRAME_CODEC_H_
 
 #include <algorithm>
 #include <cstddef>
@@ -13,7 +13,7 @@
 #include "core/websocket/frame_parser.h"
 #include "core/websocket/mirrored_buffer.h"
 
-namespace aquila::websocket {
+namespace aquila::websocket::evaluation {
 
 class QueuedFrameCodec {
  public:
@@ -310,6 +310,6 @@ class QueuedFrameCodec {
   std::uint64_t delivered_frame_end_abs_{0};
 };
 
-}  // namespace aquila::websocket
+}  // namespace aquila::websocket::evaluation
 
-#endif  // AQUILA_BENCHMARK_WEBSOCKET_QUEUED_FRAME_CODEC_H_
+#endif  // AQUILA_EVALUATION_WEBSOCKET_QUEUED_FRAME_CODEC_H_

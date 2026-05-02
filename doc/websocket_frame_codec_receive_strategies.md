@@ -160,7 +160,7 @@ payload length 使用 7-bit 或 16-bit 编码，也就是 <= 65535
 - 小帧 direct decode 已稳定在低 ns 级，继续追逐 `1ns` 级差异容易被 code layout 和测量噪声主导。
 - session read path 已进入约 `400ns` 级，真实链路更可能受 socket/TLS/session dispatch 影响。
 - compact pressure 和 large payload boundary 场景已经证明 mirrored ring 的尾延迟价值。
-- `QueuedFrameCodec` 保留在 `benchmark/websocket/queued_frame_codec.h`，作为 parse-ahead / ready queue 对照路径，不污染生产 `FrameCodec` 主路径。
+- `QueuedFrameCodec` 保留在 `evaluation/websocket/queued_frame_codec.h`，作为 parse-ahead / ready queue 对照路径，不污染生产 `FrameCodec` 主路径。
 
 ### FrameCodec 配置建议
 
@@ -200,7 +200,7 @@ max_frame_payload_bytes = 1 MiB;
 ### 代表实现
 
 - `aquila::websocket::FrameCodec`：当前生产主路径。
-- `aquila::websocket::QueuedFrameCodec`：同样使用 mirrored ring，但额外做 parse-ahead ready queue，仅作为实验/对照，代码位于 `benchmark/websocket/queued_frame_codec.h`。
+- `aquila::websocket::evaluation::QueuedFrameCodec`：同样使用 mirrored ring，但额外做 parse-ahead ready queue，仅作为实验/对照，代码位于 `evaluation/websocket/queued_frame_codec.h`。
 - 通用 WebSocket 库中很少直接采用这种模型；它更多见于自研低延迟网络栈、共享内存队列或需要消除环尾拷贝的专用 buffer。对本仓库来说，明确代表就是 `aquila` 的 mirrored receive ring。
 
 ### 优点

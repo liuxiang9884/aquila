@@ -87,7 +87,8 @@ inline void MaskPayload(std::span<const std::byte> payload,
 }  // namespace detail
 
 // The parse-ahead ready-queue comparison codec lives in
-// benchmark/websocket/queued_frame_codec.h as QueuedFrameCodec.
+// evaluation/websocket/queued_frame_codec.h as
+// aquila::websocket::evaluation::QueuedFrameCodec.
 class FrameCodec {
  public:
   explicit FrameCodec(size_t max_payload_bytes)
