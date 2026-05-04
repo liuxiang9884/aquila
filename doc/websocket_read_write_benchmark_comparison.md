@@ -161,9 +161,10 @@ DriveRead()
 对应配置：
 
 ```toml
-[websocket.profiles.<name>.read_path]
-max_reads_per_drive = 8
-read_until_would_block = false
+websocket.read_path = {
+  max_reads_per_drive = 8,
+  read_until_would_block = false,
+}
 ```
 
 `max_reads_per_drive` 控制一次 `DriveRead()` 最多调用几次 `ReadSome()`。`read_until_would_block`
