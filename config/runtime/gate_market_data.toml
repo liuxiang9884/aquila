@@ -14,4 +14,4 @@ settle = "usdt"
 wire_format = "sbe"
 sbe_schema_id = 1
 feed = "book_ticker"
-symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]

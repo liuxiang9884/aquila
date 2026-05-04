@@ -14,7 +14,7 @@ settle = "usdt"
 wire_format = "sbe"
 sbe_schema_id = 1
 feed = "book_ticker"
-symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 
 [[data_sessions]]
 name = "binance_future_market_data"
@@ -26,4 +26,4 @@ websocket.endpoint = { host = "fstream.binance.com" }
 websocket.execution_policy = { bind_cpu_id = 3 }
 market = "um_futures"
 feed = "book_ticker"
-symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
