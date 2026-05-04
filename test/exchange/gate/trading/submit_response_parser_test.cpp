@@ -172,6 +172,30 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
   EXPECT_EQ(parsed.text_hash, 0U);
 }
 
+TEST(GateSubmitResponseParserTest, EmptyStringStatusParsesAsMissingStatus) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "request-id-empty-status",
+    "ack": false,
+    "header": {
+      "status": "",
+      "channel": "futures.order_place"
+    },
+    "data": {
+      "result": {
+        "id": 74046511,
+        "text": "t-my-custom-id"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponse(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kResult);
+  EXPECT_EQ(parsed.http_status, 0);
+  EXPECT_EQ(parsed.exchange_order_id, 74046511U);
+}
+
 TEST(GateSubmitResponseParserTest, AssertsNullUint64OutputInDebug) {
 #ifndef NDEBUG
   static constexpr std::string_view kPayload = R"({"value":123})";

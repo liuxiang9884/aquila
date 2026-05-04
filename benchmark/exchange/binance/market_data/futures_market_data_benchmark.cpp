@@ -82,6 +82,11 @@ bool ReadYyjsonInt64(yyjson_val* value, std::int64_t* output) noexcept {
     *output = yyjson_get_sint(value);
     return true;
   }
+  std::string_view text;
+  if (ReadYyjsonString(value, &text) && !text.empty()) {
+    *output = aquila::ToInt64(text);
+    return true;
+  }
   return false;
 }
 

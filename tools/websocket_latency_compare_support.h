@@ -101,7 +101,7 @@ inline std::optional<std::uint64_t> ReadUint(
   }
 
   std::string_view text{};
-  if (ReadString(value, &text)) {
+  if (ReadString(value, &text) && !text.empty()) {
     return aquila::ToUint64(text);
   }
   return std::nullopt;

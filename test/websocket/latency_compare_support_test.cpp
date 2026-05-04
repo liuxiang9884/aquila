@@ -1,9 +1,9 @@
-#include "tools/websocket_latency_compare_support.h"
+#include <cstdint>
+#include <string>
 
 #include <gtest/gtest.h>
 
-#include <cstdint>
-#include <string>
+#include "tools/websocket_latency_compare_support.h"
 
 namespace aquila::tools {
 
@@ -43,6 +43,14 @@ TEST(WebSocketLatencyCompareSupportTest, IgnoresSubscribeAck) {
   EXPECT_FALSE(TryParseGateBookTicker(payload).has_value());
 }
 
+TEST(WebSocketLatencyCompareSupportTest, RejectsEmptyStringUpdateId) {
+  const std::string payload =
+      R"({"channel":"futures.book_ticker","event":"update",)"
+      R"("result":{"t":"1615366379123","u":"","s":"BTC_USDT"}})";
+
+  EXPECT_FALSE(TryParseGateBookTicker(payload).has_value());
+}
+
 TEST(WebSocketLatencyCompareSupportTest, MatchesPublicAndPrivateArrivals) {
   LatencyPairCollector collector(16);
   GateBookTickerKey key{
@@ -68,12 +76,12 @@ TEST(WebSocketLatencyCompareSupportTest, BuildsGateSubscribeRequest) {
   const std::string request =
       BuildGateSubscribeRequest("futures.book_ticker", "BTC_USDT", 1234567890);
 
-  EXPECT_EQ(request,
-            R"({"time":1234567890,"channel":"futures.book_ticker",)"
-            R"("event":"subscribe","payload":["BTC_USDT"]})");
+  EXPECT_EQ(request, R"({"time":1234567890,"channel":"futures.book_ticker",)"
+                     R"("event":"subscribe","payload":["BTC_USDT"]})");
 }
 
-TEST(WebSocketLatencyCompareSupportTest, SelectsPrivateWhenMedianLeadIsPositive) {
+TEST(WebSocketLatencyCompareSupportTest,
+     SelectsPrivateWhenMedianLeadIsPositive) {
   const WarmupSelection selection = SelectWarmupPrimary(WarmupSelectionInput{
       .public_healthy = true,
       .private_healthy = true,
@@ -97,7 +105,8 @@ TEST(WebSocketLatencyCompareSupportTest, SelectsPrivateWhenMedianLeadIsPositive)
             std::string::npos);
 }
 
-TEST(WebSocketLatencyCompareSupportTest, SelectsPublicWhenMedianLeadIsNegative) {
+TEST(WebSocketLatencyCompareSupportTest,
+     SelectsPublicWhenMedianLeadIsNegative) {
   const WarmupSelection selection = SelectWarmupPrimary(WarmupSelectionInput{
       .public_healthy = true,
       .private_healthy = true,

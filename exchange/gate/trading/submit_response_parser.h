@@ -86,7 +86,7 @@ inline bool ReadSimdjsonUint64(simdjson::ondemand::value value,
   }
 
   std::string_view text{};
-  if (ReadSimdjsonString(value, &text)) {
+  if (ReadSimdjsonString(value, &text) && !text.empty()) {
     *output = ToUint64(text);
     return true;
   }

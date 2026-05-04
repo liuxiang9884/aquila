@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -106,6 +107,7 @@ bool ReadYyjsonBool(yyjson_val* value, bool* output) noexcept {
 }
 
 bool ReadYyjsonUint64(yyjson_val* value, std::uint64_t* output) noexcept {
+  assert(output != nullptr);
   if (yyjson_is_uint(value)) {
     *output = yyjson_get_uint(value);
     return true;
@@ -118,7 +120,11 @@ bool ReadYyjsonUint64(yyjson_val* value, std::uint64_t* output) noexcept {
     *output = static_cast<std::uint64_t>(signed_value);
     return true;
   }
-  *output = aquila::ToUint64(ReadYyjsonStringView(value));
+  const std::string_view text = ReadYyjsonStringView(value);
+  if (text.empty()) {
+    return false;
+  }
+  *output = aquila::ToUint64(text);
   return true;
 }
 
