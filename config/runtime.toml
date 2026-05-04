@@ -1,4 +1,4 @@
-[instrument_db]
+[instrument_catalog]
 file = "config/instruments/usdt_futures.csv"
 schema = "aquila.instrument.v1"
 

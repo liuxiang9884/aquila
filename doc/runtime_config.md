@@ -2,7 +2,7 @@
 
 ## 范围
 
-`config/runtime.toml` 描述系统启动拓扑：instrument 数据源、行情 session、每个 session 的
+`config/runtime.toml` 描述系统启动拓扑：instrument catalog、行情 session、每个 session 的
 WebSocket 连接和运行策略。策略参数暂不放在这里；risk control、order management 和 order
 execution 归属于 `Strategy` 模块。
 
@@ -16,7 +16,7 @@ execution 归属于 `Strategy` 模块。
 ## 示例
 
 ```toml
-[instrument_db]
+[instrument_catalog]
 file = "config/instruments/usdt_futures.csv"
 schema = "aquila.instrument.v1"
 
@@ -35,14 +35,14 @@ feed = "book_ticker"
 symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 ```
 
-## Instrument DB
+## Instrument Catalog
 
 | 字段 | 默认值 | 含义 |
 | --- | --- | --- |
 | `file` | 无，必须显式配置 | instrument CSV 路径。 |
 | `schema` | 无，必须显式配置 | Aquila 自定义 CSV 字段版本；当前固定 `aquila.instrument.v1`。 |
 
-`instrument_db` 第一版是 CSV 数据源，不表示引入真实数据库。启动期应读取 CSV 并构建
+`instrument_catalog` 第一版是 CSV 数据源，不表示引入真实数据库。启动期应读取 CSV 并构建
 `InstrumentRegistry`，供 session builder 把配置中的 `symbols` 展开为 `symbol_id` 和
 各交易所 `exchange_symbol`。
 
