@@ -1,6 +1,7 @@
 #include "config/websocket_config.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string_view>
 
 #include <gtest/gtest.h>
@@ -148,6 +149,48 @@ max_attempts = 7
   EXPECT_FALSE(connection.runtime_policy.prefault_stack);
   EXPECT_FALSE(connection.runtime_policy.active_spin);
   EXPECT_EQ(connection.runtime_policy.spin_iterations_before_clock_check, 128u);
+}
+
+TEST(WebSocketConfigTest, ParsesCheckedInGateMarketDataConfig) {
+  const auto parsed =
+      toml::parse_file((std::filesystem::path{AQUILA_SOURCE_DIR} /
+                        "config/gate_future_market_data.toml")
+                           .string());
+
+  const auto result =
+      aquila::config::ParseWebSocketConfig(parsed["data_session"]["websocket"]);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  EXPECT_EQ(result.config.endpoint.host, "fx-ws.gateio.ws");
+  EXPECT_FALSE(result.config.endpoint.enable_tls);
+  EXPECT_EQ(result.config.execution_policy.bind_cpu_id, 2);
+
+  const auto connection_result = aquila::config::ToConnectionConfig(
+      result.config, "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  ASSERT_TRUE(connection_result.ok) << connection_result.error;
+  EXPECT_EQ(connection_result.config.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  EXPECT_FALSE(connection_result.config.enable_tls);
+}
+
+TEST(WebSocketConfigTest, ParsesCheckedInBinanceMarketDataConfig) {
+  const auto parsed =
+      toml::parse_file((std::filesystem::path{AQUILA_SOURCE_DIR} /
+                        "config/binance_future_market_data.toml")
+                           .string());
+
+  const auto result =
+      aquila::config::ParseWebSocketConfig(parsed["data_session"]["websocket"]);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  EXPECT_EQ(result.config.endpoint.host, "fstream.binance.com");
+  EXPECT_TRUE(result.config.endpoint.enable_tls);
+  EXPECT_EQ(result.config.execution_policy.bind_cpu_id, 3);
+
+  const auto connection_result = aquila::config::ToConnectionConfig(
+      result.config, "/public/ws/btcusdt@bookTicker");
+  ASSERT_TRUE(connection_result.ok) << connection_result.error;
+  EXPECT_EQ(connection_result.config.target, "/public/ws/btcusdt@bookTicker");
+  EXPECT_TRUE(connection_result.config.enable_tls);
 }
 
 TEST(WebSocketConfigTest, RejectsMissingEndpointHost) {
