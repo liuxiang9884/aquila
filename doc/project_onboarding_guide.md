@@ -57,7 +57,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `doc/websocket_read_write_benchmark_comparison.md` | 快速看 read/write benchmark 对比 | `aquila`、Drogon-style、`third_party/websocket` read/write 差异和数值。 |
 | `doc/websocket_client_future_optimizations.md` | 继续 WebSocket 优化时读 | read/write/active spin/network 的未来优化 backlog。 |
 | `doc/websocket_prepared_write_options.md` | 调整 WebSocket 写路径预分配容量时读 | `DefaultWebSocketOptions`、`MakeConnectionConfig<OptionsT>()`、prepared write slots/bytes 的含义和使用边界。 |
-| `doc/data_session_config.md` | 修改 `config/data_sessions/*.toml` 或新增 data session 配置时读 | 每进程一份 data session config、`instrument_catalog`、`data_session.subscribe_symbols`、symbol pool 生成、WebSocket endpoint / execution_policy / read_path / heartbeat / reconnect 字段和默认值。 |
+| `doc/data_session_config.md` | 修改 `config/data_sessions/*.toml` 或新增 data session 配置时读 | 每进程一份 data session config、`instrument_catalog`、`data_session.subscribe_symbols`、symbol pool 生成、WebSocket endpoint / execution_policy / read_path / heartbeat / reconnect 字段和默认值，以及 TOML / CSV / log 依赖边界。 |
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
@@ -84,7 +84,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `core/websocket/websocket_client.h` | plain/TLS client 生命周期、reconnect/backoff、runtime loop 集成。 |
 | `core/websocket/active_spin_loop.h` | active spin loop 调度。 |
 | `core/websocket/prepared_write.h` | 预分配 write slot / arena。 |
-| `config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换。 |
+| `config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；TOML 解析使用 `toml++`，诊断日志走 Nova 封装。 |
 
 ### Gate SBE 行情
 

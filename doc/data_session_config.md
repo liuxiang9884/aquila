@@ -14,6 +14,18 @@ order management 和 order execution 归属于 `Strategy` 模块。
 4. loader 对缺省字段填统一默认值，再生成完整 `websocket::ConnectionConfig`。
 5. WebSocket `target` 不写在配置里，由具体 session builder 按交易所协议生成。
 
+## 实现依赖边界
+
+配置相关代码属于冷路径，只在进程启动、重连前配置构建或测试中使用，不进入行情和下单热路径。
+当前依赖选择如下：
+
+| 用途 | 依赖 | 当前边界 |
+| --- | --- | --- |
+| TOML 解析 | `toml++` / `PkgConfig::tomlplusplus` | C++ 配置 loader 使用；当前入口是 `config/websocket_config.h` / `config/websocket_config.cpp`。 |
+| 日志输出 | `nova/utils/log.h` | 项目代码通过 Nova 封装输出，例如解析失败时使用 `NOVA_ERROR`；不在业务代码中直接依赖底层 log 库。 |
+| instrument CSV | `vincentlaucsb-csv-parser` | C++ instrument catalog loader 预期使用该 vcpkg 依赖；当前 `config/instruments/*.csv` 已作为数据源，生产 loader 尚未实现。 |
+| 合约查询脚本输出 | `pandas.DataFrame` | `scripts/gate/query_futures_contracts.py` 和 `scripts/binance/query_um_futures_contracts.py` 使用 Python pandas 生成统一字段表和 CSV。 |
+
 ## 进程拆分
 
 生产推荐把 Gate 行情、Binance 行情、策略 / 交易拆成独立进程：
