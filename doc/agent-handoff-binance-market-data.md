@@ -148,7 +148,7 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 
 - simdjson fallback copy 明显慢于 padded-view；生产路径仍应优先保证 receive buffer 能稳定提供 `simdjson::SIMDJSON_PADDING`。
 - benchmark-only ordered `find_field()` 对照略快于 production unordered parser，但 padded-view 主路径差距很小；当前决定不切 production。
-- trusted-field parser 后，simdjson padded-view 是当前 production parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
+- 字段直取 parser 后，simdjson padded-view 是当前 production parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 

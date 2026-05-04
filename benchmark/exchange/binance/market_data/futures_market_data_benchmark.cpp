@@ -117,24 +117,22 @@ aq_binance::BookTickerParseStatus ParseYyjsonBookTickerDocument(
   if (!ReadYyjsonString(yyjson_obj_get(root, "b"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double bid_price = aq_binance::detail::ParseTrustedDoubleString(number);
+  const double bid_price = aq_binance::detail::ParseDoubleString(number);
 
   if (!ReadYyjsonString(yyjson_obj_get(root, "B"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double bid_volume =
-      aq_binance::detail::ParseTrustedDoubleString(number);
+  const double bid_volume = aq_binance::detail::ParseDoubleString(number);
 
   if (!ReadYyjsonString(yyjson_obj_get(root, "a"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double ask_price = aq_binance::detail::ParseTrustedDoubleString(number);
+  const double ask_price = aq_binance::detail::ParseDoubleString(number);
 
   if (!ReadYyjsonString(yyjson_obj_get(root, "A"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double ask_volume =
-      aq_binance::detail::ParseTrustedDoubleString(number);
+  const double ask_volume = aq_binance::detail::ParseDoubleString(number);
 
   output->update_id = update_id;
   output->event_time_ms = event_time_ms;
@@ -221,8 +219,8 @@ class BasicYyjsonInsituBookTickerParser {
 
 using YyjsonInsituBookTickerParser = BasicYyjsonInsituBookTickerParser<>;
 
-simdjson::ondemand::value OrderedTrustedField(
-    simdjson::ondemand::object& object, std::string_view key) noexcept {
+simdjson::ondemand::value OrderedField(simdjson::ondemand::object& object,
+                                       std::string_view key) noexcept {
   simdjson::simdjson_result<simdjson::ondemand::value> result =
       object.find_field(key);
   assert(result.error() == simdjson::SUCCESS);
@@ -233,19 +231,19 @@ aq_binance::BookTickerParseStatus ParseOrderedBookTickerObject(
     simdjson::ondemand::object root,
     aq_binance::BookTickerUpdate& output) noexcept {
   const std::int64_t update_id =
-      aq_binance::detail::TrustedInt64(OrderedTrustedField(root, "u"));
+      aq_binance::detail::Int64Value(OrderedField(root, "u"));
   const std::int64_t event_time_ms =
-      aq_binance::detail::TrustedInt64(OrderedTrustedField(root, "E"));
+      aq_binance::detail::Int64Value(OrderedField(root, "E"));
   const std::string_view symbol =
-      aq_binance::detail::TrustedString(OrderedTrustedField(root, "s"));
-  const double bid_price = aq_binance::detail::ParseTrustedDoubleString(
-      aq_binance::detail::TrustedString(OrderedTrustedField(root, "b")));
-  const double bid_volume = aq_binance::detail::ParseTrustedDoubleString(
-      aq_binance::detail::TrustedString(OrderedTrustedField(root, "B")));
-  const double ask_price = aq_binance::detail::ParseTrustedDoubleString(
-      aq_binance::detail::TrustedString(OrderedTrustedField(root, "a")));
-  const double ask_volume = aq_binance::detail::ParseTrustedDoubleString(
-      aq_binance::detail::TrustedString(OrderedTrustedField(root, "A")));
+      aq_binance::detail::StringValue(OrderedField(root, "s"));
+  const double bid_price = aq_binance::detail::ParseDoubleString(
+      aq_binance::detail::StringValue(OrderedField(root, "b")));
+  const double bid_volume = aq_binance::detail::ParseDoubleString(
+      aq_binance::detail::StringValue(OrderedField(root, "B")));
+  const double ask_price = aq_binance::detail::ParseDoubleString(
+      aq_binance::detail::StringValue(OrderedField(root, "a")));
+  const double ask_volume = aq_binance::detail::ParseDoubleString(
+      aq_binance::detail::StringValue(OrderedField(root, "A")));
 
   output.update_id = update_id;
   output.event_time_ms = event_time_ms;

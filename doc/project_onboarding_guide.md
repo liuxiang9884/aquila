@@ -255,7 +255,7 @@ FuturesMarketDataSession::Handle(binary MessageView)
 ### Binance USD-M futures 行情当前状态
 
 - 生产路径使用 raw stream URL，例如 `/public/ws/btcusdt@bookTicker`，active 后不发送 runtime `SUBSCRIBE`。
-- 生产 parser 使用 `simdjson::ondemand` + unordered trusted field lookup；ordered parser 只保留在 benchmark 中，对当前 payload 收益太小，暂不切生产。
+- 生产 parser 使用 `simdjson::ondemand` + unordered field lookup；ordered parser 只保留在 benchmark 中，对当前 payload 收益太小，暂不切生产。
 - yyjson 只保留在 benchmark 中做 parser 对照；`aquila_binance` 生产库不链接 yyjson。
 - Binance `BookTickerUpdate::symbol` 固定 copy 到对象内 `symbol_storage`；不要假设 simdjson `get_string()` 返回的 `string_view` 一定指向原 payload。
 - symbol config 是启动期不变量；unknown symbol 使用 debug assert，不在 release 主路径记录 unknown-symbol 计数。

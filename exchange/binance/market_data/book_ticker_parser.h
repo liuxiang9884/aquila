@@ -63,28 +63,27 @@ struct BookTickerUpdate {
 
 namespace detail {
 
-inline simdjson::ondemand::value TrustedField(
-    simdjson::ondemand::object& object, std::string_view key) noexcept {
+inline simdjson::ondemand::value Field(simdjson::ondemand::object& object,
+                                       std::string_view key) noexcept {
   simdjson::simdjson_result<simdjson::ondemand::value> result =
       object.find_field_unordered(key);
   assert(result.error() == simdjson::SUCCESS);
   return result.value_unsafe();
 }
 
-inline std::string_view TrustedString(
-    simdjson::ondemand::value value) noexcept {
+inline std::string_view StringValue(simdjson::ondemand::value value) noexcept {
   simdjson::simdjson_result<std::string_view> result = value.get_string();
   assert(result.error() == simdjson::SUCCESS);
   return result.value_unsafe();
 }
 
-inline std::int64_t TrustedInt64(simdjson::ondemand::value value) noexcept {
+inline std::int64_t Int64Value(simdjson::ondemand::value value) noexcept {
   simdjson::simdjson_result<std::int64_t> result = value.get_int64();
   assert(result.error() == simdjson::SUCCESS);
   return result.value_unsafe();
 }
 
-inline double ParseTrustedDoubleString(std::string_view text) noexcept {
+inline double ParseDoubleString(std::string_view text) noexcept {
   return ToDouble(text);
 }
 
@@ -97,17 +96,13 @@ inline void CopySymbolToStorage(std::string_view symbol,
 
 inline BookTickerParseStatus ParseBookTickerObject(
     simdjson::ondemand::object root, BookTickerUpdate& output) noexcept {
-  const std::int64_t update_id = TrustedInt64(TrustedField(root, "u"));
-  const std::int64_t event_time_ms = TrustedInt64(TrustedField(root, "E"));
-  const std::string_view symbol = TrustedString(TrustedField(root, "s"));
-  const double bid_price =
-      ParseTrustedDoubleString(TrustedString(TrustedField(root, "b")));
-  const double bid_volume =
-      ParseTrustedDoubleString(TrustedString(TrustedField(root, "B")));
-  const double ask_price =
-      ParseTrustedDoubleString(TrustedString(TrustedField(root, "a")));
-  const double ask_volume =
-      ParseTrustedDoubleString(TrustedString(TrustedField(root, "A")));
+  const std::int64_t update_id = Int64Value(Field(root, "u"));
+  const std::int64_t event_time_ms = Int64Value(Field(root, "E"));
+  const std::string_view symbol = StringValue(Field(root, "s"));
+  const double bid_price = ParseDoubleString(StringValue(Field(root, "b")));
+  const double bid_volume = ParseDoubleString(StringValue(Field(root, "B")));
+  const double ask_price = ParseDoubleString(StringValue(Field(root, "a")));
+  const double ask_volume = ParseDoubleString(StringValue(Field(root, "A")));
 
   output.update_id = update_id;
   output.event_time_ms = event_time_ms;
