@@ -2,9 +2,9 @@
 
 ## 范围
 
-`config/runtime.toml` 描述系统启动拓扑：instrument catalog、行情 session、每个 session 的
-WebSocket 连接和运行策略。策略参数暂不放在这里；risk control、order management 和 order
-execution 归属于 `Strategy` 模块。
+runtime TOML 描述单个进程的启动拓扑：instrument catalog、该进程内的 session、每个
+session 的 WebSocket 连接和运行策略。生产配置按进程拆分，策略参数暂不放在这里；risk
+control、order management 和 order execution 归属于 `Strategy` 模块。
 
 第一版配置遵循：
 
@@ -13,7 +13,43 @@ execution 归属于 `Strategy` 模块。
 3. loader 对缺省字段填统一默认值，再生成完整 `websocket::ConnectionConfig`。
 4. WebSocket `target` 不写在配置里，由具体 session builder 按交易所协议生成。
 
-## 示例
+## 进程拆分
+
+生产推荐把 Gate 行情、Binance 行情、策略 / 交易拆成独立进程：
+
+```text
+gate-md-process
+  GateMarketDataThread
+    GateFutureMarketDataSession
+
+binance-md-process
+  BinanceMarketDataThread
+    BinanceFutureMarketDataSession
+
+strategy-trade-process
+  StrategyThread
+    Strategy
+    GateOrderSession
+    BinanceOrderSession
+
+  GateOrderFeedbackThread
+    GateOrderFeedbackSession
+
+  BinanceOrderFeedbackThread
+    BinanceOrderFeedbackSession
+```
+
+因此生产 runtime 配置也按进程拆分。当前已给出：
+
+```text
+config/runtime/gate_market_data.toml
+config/runtime/binance_market_data.toml
+```
+
+`config/runtime.toml` 可以保留为开发期合并示例，但不作为生产推荐拓扑。多个
+runtime 文件可以指向同一个 `instrument_catalog` CSV；CSV 是共享合约元数据来源，不是进程私有状态。
+
+## Gate 行情进程示例
 
 ```toml
 [instrument_catalog]
@@ -31,6 +67,26 @@ websocket.execution_policy = { bind_cpu_id = 2 }
 settle = "usdt"
 wire_format = "sbe"
 sbe_schema_id = 1
+feed = "book_ticker"
+symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+```
+
+## Binance 行情进程示例
+
+```toml
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[[data_sessions]]
+name = "binance_future_market_data"
+type = "BinanceFutureMarketDataSession"
+exchange = "binance"
+thread = "BinanceMarketDataThread"
+enabled = true
+websocket.endpoint = { host = "fstream.binance.com" }
+websocket.execution_policy = { bind_cpu_id = 3 }
+market = "um_futures"
 feed = "book_ticker"
 symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 ```
@@ -172,6 +228,7 @@ websocket.reconnect = { max_backoff_ms = 30000 }
 2. 再用 `websocket.endpoint`、`websocket.execution_policy`、`websocket.read_path`、
    `websocket.heartbeat`、`websocket.reconnect` 覆盖默认值。
 3. 最后由具体 session builder 生成 `target` 和 exchange-specific `SymbolBinding`。
+4. 生产启动时每个进程只加载自己的 runtime TOML，不把其他进程的 session 放入同一份配置。
 
 最终构造输入仍是：
 

@@ -780,6 +780,53 @@ BinanceOrderFeedbackSession
 2. `GateOrderFeedbackSession` / `BinanceOrderFeedbackSession` 独立线程运行，避免私有回报 burst 污染策略主循环。
 3. `risk control`、`order management` 和 `order execution` 属于 `Strategy` 模块，不下沉到 exchange session。
 
+## 当前推荐进程划分
+
+生产推荐把两个行情源和策略 / 交易拆成三个进程：
+
+```text
+gate-md-process
+  GateMarketDataThread
+    GateFutureMarketDataSession
+    Gate public market data WebSocket
+
+binance-md-process
+  BinanceMarketDataThread
+    BinanceFutureMarketDataSession
+    Binance public market data WebSocket
+
+strategy-trade-process
+  StrategyThread
+    Strategy
+    GateOrderSession
+    BinanceOrderSession
+    risk control
+    order management
+    order execution
+
+  GateOrderFeedbackThread
+    GateOrderFeedbackSession
+    Gate private feedback WebSocket
+
+  BinanceOrderFeedbackThread
+    BinanceOrderFeedbackSession
+    Binance private feedback WebSocket
+```
+
+取舍：
+
+1. Gate / Binance 行情拆进程，隔离 WebSocket 重连、decode 异常、private link 或公网链路抖动。
+2. Strategy 与 `GateOrderSession` / `BinanceOrderSession` 同进程同线程，避免下单热路径引入 IPC 或跨线程队列。
+3. `GateOrderFeedbackSession` / `BinanceOrderFeedbackSession` 与策略同进程但独立线程，回报通过固定结构事件写入 SPSC，再由 `StrategyThread` 按预算消费。
+4. 开发期可以用单进程合并配置简化调试；生产配置按进程拆分，Gate 行情进程和 Binance 行情进程分别加载自己的 runtime TOML。
+
+当前行情进程配置示例：
+
+```text
+config/runtime/gate_market_data.toml
+config/runtime/binance_market_data.toml
+```
+
 ## 待讨论 / 待验证
 
 下一轮建议按这个顺序继续：

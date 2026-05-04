@@ -57,7 +57,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `doc/websocket_read_write_benchmark_comparison.md` | 快速看 read/write benchmark 对比 | `aquila`、Drogon-style、`third_party/websocket` read/write 差异和数值。 |
 | `doc/websocket_client_future_optimizations.md` | 继续 WebSocket 优化时读 | read/write/active spin/network 的未来优化 backlog。 |
 | `doc/websocket_prepared_write_options.md` | 调整 WebSocket 写路径预分配容量时读 | `DefaultWebSocketOptions`、`MakeConnectionConfig<OptionsT>()`、prepared write slots/bytes 的含义和使用边界。 |
-| `doc/runtime_config.md` | 修改 `config/runtime.toml` 或新增 session 配置时读 | `instrument_catalog`、`data_sessions`、WebSocket endpoint / execution_policy / read_path / heartbeat / reconnect 字段和默认值。 |
+| `doc/runtime_config.md` | 修改 `config/runtime*.toml`、`config/runtime/` 或新增 session 配置时读 | 生产按进程拆分 runtime、`instrument_catalog`、`data_sessions`、WebSocket endpoint / execution_policy / read_path / heartbeat / reconnect 字段和默认值。 |
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
