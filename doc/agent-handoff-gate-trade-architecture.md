@@ -823,8 +823,8 @@ strategy-trade-process
 当前行情进程配置示例：
 
 ```text
-config/gate_future_market_data.toml
-config/binance_future_market_data.toml
+config/data_sessions/gate_future_market_data.toml
+config/data_sessions/binance_future_market_data.toml
 ```
 
 ## 待讨论 / 待验证

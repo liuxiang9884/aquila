@@ -43,8 +43,8 @@ strategy-trade-process
 因此生产 data session 配置也按进程拆分。当前已给出：
 
 ```text
-config/gate_future_market_data.toml
-config/binance_future_market_data.toml
+config/data_sessions/gate_future_market_data.toml
+config/data_sessions/binance_future_market_data.toml
 ```
 
 多个 data session config 可以指向同一个 `instrument_catalog` CSV；CSV 是共享合约元数据来源，
