@@ -83,6 +83,104 @@ recvbuf_
 
 它的 read microbenchmark 很快，但这是“协议 parser 下限”，不是完整生产连接内核。
 
+## 实际 Read Pump 机制对照
+
+上面的 `drogon-style` / `third_party/websocket` benchmark 主要比较 codec / buffer
+成本，不等于完整 event loop 行为。配置 `read_path` 时，需要区分真实实现里的 socket
+read pump 机制。
+
+### `third_party/websocket.h`
+
+`third_party/websocket/websocket.h` 是显式 `poll()` 模型。client `poll()` 每次调用：
+
+```text
+poll()
+  -> conn.read()
+  -> ::read() 一次
+  -> handleWSMsg() 解析当前 recvbuf 中已有 frame
+```
+
+也就是说，它没有内部 `max_reads_per_drive`。如果 socket 中已有多批数据但一次
+`::read()` 没取完，后续数据需要等外层再次调用 `poll()`。因此它的尾延迟不仅取决于
+parser 成本，也取决于外层 `poll()` 频率和单次 `::read()` 能取到多少数据。
+
+优点是路径很薄，单连接、plain TCP、紧循环 polling 时开销下限很低。缺点是没有 TLS、
+运行策略、read budget、degraded、重连和指标边界，不适合作为生产行情连接内核。
+
+### Drogon / Trantor plain path
+
+Drogon 底层 plain TCP 路径由 trantor `Channel` readable event 触发：
+
+```text
+epoll readable
+  -> TcpConnectionImpl::readCallback()
+  -> MsgBuffer::readFd()
+  -> ::readv() 一次
+  -> 上层 parser / callback 消费 MsgBuffer
+```
+
+`MsgBuffer::readFd()` 使用两段 iovec：一段写入内部 buffer，一段写入栈上的临时
+`extBuffer`。这对通用网络库很方便，可以减少一次 buffer 扩容前的额外 syscall，但业务层
+无法配置“本轮最多读几次”。如果还有数据留在 socket 中，通常要等下一次 readable event
+或 event loop 再次调度。
+
+### Drogon / Trantor TLS path
+
+Drogon TLS 路径分两层：
+
+```text
+epoll readable
+  -> readv() 读 encrypted bytes 到 MsgBuffer
+  -> BIO_write() 写入 OpenSSL rbio
+  -> processApplicationData()
+  -> while (true) SSL_read(...)
+  -> message callback
+```
+
+因此它在 TLS application data 层会循环 `SSL_read()`，直到 OpenSSL 读不出更多应用层
+数据或遇到错误。这有利于吞吐和通用服务场景，因为一次 lower read 后会尽量 drain 已解密
+数据；但业务层没有预算参数，burst 下可能在同一个 event loop callback 中停留更久。
+
+Sirius Gate websocket 基于 Drogon `WebSocketClient`，Sirius 自己看到的是 Drogon 已经
+组装后的 `std::string&& message` callback，因此也没有 read budget 控制。
+
+### `aquila` bounded read pump
+
+`aquila` 当前运行期 read path 是显式预算模型：
+
+```text
+DriveRead()
+  -> TransportSocketT::ReadSome()
+       TLS:   SSL_read()
+       plain: recv()
+  -> FrameCodec::CommitWritten()
+  -> DrainDecodedMessages()
+  -> 根据 read_path 决定是否继续读
+```
+
+对应配置：
+
+```toml
+[websocket.profiles.<name>.read_path]
+max_reads_per_drive = 8
+read_until_would_block = false
+```
+
+`max_reads_per_drive` 控制一次 `DriveRead()` 最多调用几次 `ReadSome()`。`read_until_would_block`
+控制在预算内是否更积极地读到 `EAGAIN` / would-block。
+
+这个设计的目的不是保证某个固定参数最快，而是把 third-party 实现中隐含或不可调的策略变成
+可测、可配置的 runtime 参数：
+
+- 值太小，burst 时可能 drain 不干净，后续消息留到下一轮。
+- 值太大，单次 read drive 可能占用线程更久，增加同线程任务的尾延迟。
+- `read_until_would_block = true` 可能提升 drain 能力，也可能额外打一发返回 `EAGAIN`
+  的 read。
+
+因此 production 推荐值必须用同一机器、同一 payload、同一 TLS 条件下的 benchmark 或
+live probe 证明。当前示例中的 `max_reads_per_drive = 8`、`read_until_would_block = false`
+只是沿用现有 Gate / Binance probe 的保守设置，不应写成性能最优结论。
+
 ## Read Benchmark
 
 命令：
