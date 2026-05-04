@@ -8,7 +8,7 @@ type = "GateFutureMarketDataSession"
 exchange = "gate"
 thread = "GateMarketDataThread"
 enabled = true
-websocket.endpoint = { host = "fx-ws.gateio.ws" }
+websocket.endpoint = { host = "fx-ws.gateio.ws", enable_tls = false }
 websocket.execution_policy = { bind_cpu_id = 2 }
 settle = "usdt"
 wire_format = "sbe"

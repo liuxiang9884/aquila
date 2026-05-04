@@ -26,7 +26,7 @@ type = "GateFutureMarketDataSession"
 exchange = "gate"
 thread = "GateMarketDataThread"
 enabled = true
-websocket.endpoint = { host = "fx-ws.gateio.ws" }
+websocket.endpoint = { host = "fx-ws.gateio.ws", enable_tls = false }
 websocket.execution_policy = { bind_cpu_id = 2 }
 settle = "usdt"
 wire_format = "sbe"
@@ -87,6 +87,9 @@ websocket.endpoint = { host = "fx-ws.gateio.ws" }
 | `service` | `"443"` | `ConnectionConfig.service` | 端口或服务名。 |
 | `enable_tls` | `true` | `ConnectionConfig.enable_tls` | 是否使用 TLS。 |
 | `connect_timeout_ms` | `10000` | `ConnectionConfig.cold_path_total_timeout_ms` | DNS + TCP + TLS + WebSocket handshake 总超时。 |
+
+Gate private link 部署可显式设置 `enable_tls = false`。公网 `wss://` 连接应保留默认
+`enable_tls = true`，或显式写成 `true`。
 
 `target` 不属于 endpoint 默认字段，由 session builder 生成。例如 Gate SBE 行情由
 `settle`、`wire_format` 和 `sbe_schema_id` 生成；Binance book ticker 由 `symbols`
