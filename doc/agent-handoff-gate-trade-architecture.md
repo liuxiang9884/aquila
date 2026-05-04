@@ -254,7 +254,7 @@ doc/futures_contract_metadata_fields.md
 
 对 Gate 交易链路最重要的差异：
 
-1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `contract_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`contract_multiplier=1.0`。
+1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `notional_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`notional_multiplier=1.0`。
 2. Gate `price_tick` 来自 `order_price_round`；Binance `price_tick` 来自 `PRICE_FILTER.tickSize`。
 3. Gate 未提供 `min_notional`，当前输出空值；Binance 从 `MIN_NOTIONAL` / `NOTIONAL` filter 映射。
 4. Gate 在 `enable_decimal=false` 时 `quantity_step=1.0`、`quantity_decimal_places=0`；如果 `enable_decimal=true`，当前脚本暂不推导 decimal contract size，`quantity_step` 和 `quantity_decimal_places` 输出空值，避免把未验证规则带入下单热路径。

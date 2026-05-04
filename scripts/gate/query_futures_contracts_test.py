@@ -18,11 +18,11 @@ EXPECTED_COLUMNS = [
     "price_decimal_places",
     "quantity_step",
     "quantity_decimal_places",
-    "quantity_min",
-    "quantity_max",
-    "market_quantity_max",
+    "min_quantity",
+    "max_quantity",
+    "max_market_quantity",
     "min_notional",
-    "contract_multiplier",
+    "notional_multiplier",
     "price_limit_up",
     "price_limit_down",
     "market_price_bound",
@@ -79,11 +79,11 @@ class QueryFuturesContractsTest(unittest.TestCase):
         self.assertEqual(list(frame["price_decimal_places"]), [1])
         self.assertEqual(list(frame["quantity_step"]), [1.0])
         self.assertEqual(list(frame["quantity_decimal_places"]), [0])
-        self.assertEqual(list(frame["quantity_min"]), [1])
-        self.assertEqual(list(frame["quantity_max"]), [1000000])
-        self.assertEqual(list(frame["market_quantity_max"]), [200000.0])
+        self.assertEqual(list(frame["min_quantity"]), [1])
+        self.assertEqual(list(frame["max_quantity"]), [1000000])
+        self.assertEqual(list(frame["max_market_quantity"]), [200000.0])
         self.assertEqual(list(frame["min_notional"]), [None])
-        self.assertEqual(list(frame["contract_multiplier"]), [0.0001])
+        self.assertEqual(list(frame["notional_multiplier"]), [0.0001])
         self.assertEqual(list(frame["price_limit_up"]), [0.5])
         self.assertEqual(list(frame["price_limit_down"]), [0.5])
         self.assertEqual(list(frame["market_price_bound"]), [0.025])

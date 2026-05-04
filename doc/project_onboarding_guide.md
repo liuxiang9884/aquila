@@ -280,7 +280,7 @@ scripts/gate/query_futures_contracts.py
 scripts/binance/query_um_futures_contracts.py
 ```
 
-统一字段只覆盖一类下单前必需元数据，包括 `price_tick`、`quantity_step`、数量上下限、`min_notional`、`contract_multiplier` 和价格偏离限制。字段说明、Gate / Binance 映射和数量单位差异见 `doc/futures_contract_metadata_fields.md`。
+统一字段只覆盖一类下单前必需元数据，包括 `price_tick`、`quantity_step`、`min_quantity` / `max_quantity`、`min_notional`、`notional_multiplier` 和价格偏离限制。字段说明、Gate / Binance 映射和数量单位差异见 `doc/futures_contract_metadata_fields.md`。
 
 关键边界：
 

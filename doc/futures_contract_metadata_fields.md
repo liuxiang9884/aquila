@@ -48,11 +48,11 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 | `price_decimal_places` | 价格格式化小数位，由 `price_tick` 推导。 | 由 `order_price_round` 推导。 | 由 `tickSize` 推导。 |
 | `quantity_step` | 下单数量步长。 | `enable_decimal=false` 时为 `1.0`；`enable_decimal=true` 时暂为空。 | `LOT_SIZE.stepSize`。 |
 | `quantity_decimal_places` | 数量格式化小数位。 | `enable_decimal=false` 时为 `0`；`enable_decimal=true` 时暂为空。 | 由 `LOT_SIZE.stepSize` 推导。 |
-| `quantity_min` | 最小下单数量。 | `order_size_min`。 | `LOT_SIZE.minQty`。 |
-| `quantity_max` | 最大限价单数量。 | `order_size_max`。 | `LOT_SIZE.maxQty`。 |
-| `market_quantity_max` | 最大市价单数量。 | `market_order_size_max`。 | `MARKET_LOT_SIZE.maxQty`。 |
+| `min_quantity` | 最小下单数量。 | `order_size_min`。 | `LOT_SIZE.minQty`。 |
+| `max_quantity` | 最大限价单数量。 | `order_size_max`。 | `LOT_SIZE.maxQty`。 |
+| `max_market_quantity` | 最大市价单数量。 | `market_order_size_max`。 | `MARKET_LOT_SIZE.maxQty`。 |
 | `min_notional` | 最小名义金额。 | 当前为空，Gate contract endpoint 没有直接同义字段。 | `MIN_NOTIONAL.notional` 或 `NOTIONAL.minNotional`。 |
-| `contract_multiplier` | 合约乘数，用于把数量转换成名义金额。 | `quanto_multiplier`。 | 固定 `1.0`。 |
+| `notional_multiplier` | 名义金额乘数，用于把交易所原生下单数量转换成名义金额；现货或 base-asset 数量合约通常为 `1.0`。 | `quanto_multiplier`。 | 固定 `1.0`。 |
 | `price_limit_up` | 委托价允许向上偏离比例。 | `order_price_deviate`。 | `PERCENT_PRICE.multiplierUp - 1`。 |
 | `price_limit_down` | 委托价允许向下偏离比例。 | `order_price_deviate`。 | `1 - PERCENT_PRICE.multiplierDown`。 |
 | `market_price_bound` | 市价单可接受的价格偏离边界。 | `market_order_slip_ratio`。 | `marketTakeBound`。 |
@@ -61,13 +61,14 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 
 ### 数量单位不同
 
-Gate 的 `quantity_*` 表示合约张数；Binance USD-M 的 `quantity_*` 表示 base asset 数量。
+Gate 的 quantity 相关字段表示合约张数；Binance USD-M 的 quantity 相关字段表示 base asset 数量。
 
 因此统一字段可以服务基础校验，但策略层不应直接假设两个交易所的 quantity 单位相同。需要按交易所 adapter 做转换：
 
 ```text
-Gate notional ~= price * quantity * contract_multiplier
+Gate notional ~= price * quantity * notional_multiplier
 Binance notional ~= price * quantity * 1.0
+Spot notional ~= price * quantity * 1.0
 ```
 
 ### Gate decimal size 暂不猜测
