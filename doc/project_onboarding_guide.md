@@ -199,8 +199,8 @@ doc/websocket_read_write_benchmark_comparison.md
 当前推荐方向：
 
 ```text
-StrategyThread + GateOrderSubmitWsSession
-GateOrderUpdateThread + GateOrderUpdateWsSession
+StrategyThread + GateOrderSession
+GateOrderFeedbackThread + GateOrderFeedbackSession
 feedback SPSC -> StrategyThread
 ```
 
@@ -210,6 +210,29 @@ feedback SPSC -> StrategyThread
 - 行情 burst 时策略线程仍以行情为最高优先级。
 - `futures.orders` / `futures.usertrades` / SBE decode 不污染下单路径。
 - Gate 已通过脚本验证允许同一账号两个 WS 同时 login。
+
+扩展到 Gate + Binance 行情后的系统线程命名：
+
+```text
+GateMarketDataThread
+  - GateFutureMarketDataSession
+
+BinanceMarketDataThread
+  - BinanceFutureMarketDataSession
+
+StrategyThread
+  - Strategy
+  - GateOrderSession
+  - BinanceOrderSession
+
+GateOrderFeedbackThread
+  - GateOrderFeedbackSession
+
+BinanceOrderFeedbackThread
+  - BinanceOrderFeedbackSession
+```
+
+其中 `risk control`、`order management` 和 `order execution` 归属于 `Strategy` 模块；`OrderSession` 是上行交易指令和轻量 API response 通道，`OrderFeedbackSession` 是下行私有回报通道。
 
 ### Gate SBE 行情当前状态
 
@@ -407,9 +430,9 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 
 1. 读取 `doc/agent-handoff-gate-trade-architecture.md`。
 2. 确认统一 symbol metadata 如何在 strategy、risk check 和 exchange adapter 中缓存并进入下单前校验。
-3. 确认是否采用 `GateOrderSubmitWsSession` + `GateOrderUpdateWsSession`。
+3. 确认是否采用 `GateOrderSession` + `GateOrderFeedbackSession`。
 4. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
 5. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`。
-6. 写最小 benchmark：submit send、ack parse、update decode、feedback SPSC。
+6. 写最小 benchmark：submit send、ack parse、feedback decode、feedback SPSC。
 7. 如需 live 证据，重跑 BTC_USDT probe 并把原始输出记录到 handoff。
 8. 再开始 C++ 实现。

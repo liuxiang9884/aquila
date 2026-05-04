@@ -238,7 +238,7 @@ aquila::gate::FuturesMarketDataSession<
 后续 TODO（暂不实现）：
 
 1. Symbol lookup ownership：考虑引入稳定的 `GateSymbolLookup` / `SymbolTableView`，显式表达 `std::string_view` 的生命周期和 ownership 边界，避免未来多链路共享 symbol 表时重复构造或生命周期误用。
-2. Trading submit types/session split：后续下单链路再把 submit response 类型、parser 和 order submit session 拆开，保持 ack 热路径最小化，同时避免 market-data 与 trading 结构混在同一层。
+2. Trading submit types/session split：后续下单链路再把 submit response 类型、parser 和 order session 拆开，保持 ack 热路径最小化，同时避免 market-data 与 trading 结构混在同一层。
 
 ### 合约元数据和 symbol 配置
 
@@ -371,23 +371,34 @@ probe 行为：
 不要继续使用过于抽象的 `OrderEntry` / `PrivateReport`。建议命名为：
 
 ```text
-GateOrderSubmitWsSession
-GateOrderUpdateWsSession
+GateOrderSession
+GateOrderFeedbackSession
+
+BinanceOrderSession
+BinanceOrderFeedbackSession
 ```
 
-业务模块命名：
+完整系统中，行情 session 的架构命名为：
 
 ```text
-GateOrderSubmitter
-GateOrderUpdateReceiver
+GateFutureMarketDataSession
+BinanceFutureMarketDataSession
 ```
 
 含义：
 
-| 名称 | 主要职责 | 下行消息格式 |
+| 名称 | 主要职责 | 消息格式 |
 | --- | --- | --- |
-| `GateOrderSubmitWsSession` | 登录、下单、撤单、改单、订单查询；读取轻量 API response / ack / error | JSON |
-| `GateOrderUpdateWsSession` | 登录或订阅鉴权，订阅订单 / 成交 / 持仓更新；读取持续回报流 | JSON 控制消息 + SBE binary push |
+| `GateOrderSession` | 登录、下单、撤单、改单、订单查询；读取轻量 API response / ack / error | JSON |
+| `GateOrderFeedbackSession` | 登录或订阅鉴权，订阅订单 / 成交 / 持仓更新；读取持续回报流 | JSON 控制消息 + SBE binary push |
+| `BinanceOrderSession` | Binance 下单、撤单、改单、订单查询；具体协议形态后续确认 | 后续确认 |
+| `BinanceOrderFeedbackSession` | Binance 订单、成交、账户 / 持仓私有更新；转成固定 feedback event | 后续确认 |
+
+说明：
+
+1. `OrderSession` 是上行交易指令通道，同时读取同一 API WebSocket 上的轻量响应，不只表示 place order。
+2. `OrderFeedbackSession` 是下行交易回报通道，服务于策略内的 order management、risk state 和 execution feedback。
+3. `GateFutureMarketDataSession` / `BinanceFutureMarketDataSession` 是系统架构命名；当前 C++ 落地类仍可保持命名空间内的 `FuturesMarketDataSession` 模板实现，是否重命名代码另行讨论。
 
 ## 双 WebSocket 登录测试
 
@@ -420,7 +431,7 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/test_gate_ws_dual_login.py --timeout 8
 result=both_logged_in_same_account
 ```
 
-结论：Gate futures WebSocket 允许同一账号同时登录两个物理 WebSocket 连接。这支持 `GateOrderSubmitWsSession` + `GateOrderUpdateWsSession` 的双连接设计。
+结论：Gate futures WebSocket 允许同一账号同时登录两个物理 WebSocket 连接。这支持 `GateOrderSession` + `GateOrderFeedbackSession` 的双连接设计。
 
 ## Submit WS JSON response 解析结论
 
@@ -599,14 +610,14 @@ futures.orders 私有订单回报
 
 ## 三种交易线程模型
 
-### 方案 A：Strategy + Submit 同线程，Update 独立线程
+### 方案 A：Strategy + Order 同线程，Order Feedback 独立线程
 
 ```text
 MarketDataThread
   -> market ring / latest cache
         |
         v
-StrategyThread + GateOrderSubmitWsSession
+StrategyThread + GateOrderSession
   - poll 行情
   - 策略计算
   - 直接下单 / 撤单 / 改单
@@ -615,7 +626,7 @@ StrategyThread + GateOrderSubmitWsSession
         |
 feedback SPSC
         |
-GateOrderUpdateThread + GateOrderUpdateWsSession
+GateOrderFeedbackThread + GateOrderFeedbackSession
   - subscribe futures.orders / futures.usertrades / futures.positions
   - decode JSON control + SBE push
   - 写入 feedback SPSC
@@ -625,7 +636,7 @@ GateOrderUpdateThread + GateOrderUpdateWsSession
 
 - 下单路径最短：`行情 -> 策略 -> encode -> send`。
 - 不经过 `strategy -> order ring -> trading thread` 这一跳。
-- update SBE decode / orders / usertrades burst 不进入策略线程。
+- feedback SBE decode / orders / usertrades burst 不进入策略线程。
 - 最符合“行情 burst 时行情最高优先级”。
 
 缺点：
@@ -635,7 +646,7 @@ GateOrderUpdateThread + GateOrderUpdateWsSession
 
 当前低延迟优先推荐：**方案 A**。
 
-### 方案 B：Strategy 独立线程，Submit + Update 合并为 TradingSession 线程
+### 方案 B：Strategy 独立线程，Order + Order Feedback 合并为 TradingSession 线程
 
 ```text
 StrategyThread
@@ -643,8 +654,8 @@ StrategyThread
         |
         v
 TradingSessionThread
-  - GateOrderSubmitWsSession
-  - GateOrderUpdateWsSession
+  - GateOrderSession
+  - GateOrderFeedbackSession
   - order state / dedup / report correlation
         |
         v
@@ -660,18 +671,18 @@ feedback SPSC -> StrategyThread
 缺点：
 
 - 下单多一跳 SPSC 和一次 trading thread poll。
-- 如果 submit/update 在同一 loop 里处理，update burst 仍可能推迟 order send。
+- 如果 order/feedback 在同一 loop 里处理，feedback burst 仍可能推迟 order send。
 
 适合作为正确性优先的工程基线，但不是最低下单延迟。
 
-### 方案 C：Strategy + Submit + Update 全部同线程
+### 方案 C：Strategy + Order + Order Feedback 全部同线程
 
 ```text
 StrategyThread
   - market data
   - strategy
   - order submit
-  - order update read / parse
+  - order feedback read / parse
 ```
 
 优点：
@@ -681,7 +692,7 @@ StrategyThread
 
 缺点：
 
-- update SBE decode / 私有回报 burst 会污染策略线程。
+- feedback SBE decode / 私有回报 burst 会污染策略线程。
 - trade read syscall、JSON/SBE parse 都在策略 loop 里。
 - 很难同时保证行情最高优先级和交易回报及时处理。
 
@@ -692,35 +703,95 @@ StrategyThread
 如果按性能第一选择：
 
 ```text
-方案 A：Strategy + GateOrderSubmitWsSession 同线程，
-       GateOrderUpdateWsSession 独立线程，
+方案 A：Strategy + GateOrderSession 同线程，
+       GateOrderFeedbackSession 独立线程，
        feedback 通过 SPSC 回到 strategy。
 ```
 
 关键约束：
 
-1. `GateOrderSubmitWsSession` 只处理 JSON order API response，不订阅 `futures.orders` / `futures.usertrades`。
-2. `GateOrderUpdateWsSession` 可连 `/sbe` endpoint，处理 JSON control + SBE push。
+1. `GateOrderSession` 只处理 JSON order API response，不订阅 `futures.orders` / `futures.usertrades`。
+2. `GateOrderFeedbackSession` 可连 `/sbe` endpoint，处理 JSON control + SBE push。
 3. 策略线程必须保持行情最高优先级；feedback ring 只在合适预算下 poll。
-4. submit session 的 read budget 必须很小，只处理 login、ack/result/error、pong/close。
-5. update session 的回报解析结果必须变成固定结构事件，再写 SPSC，避免把 JSON/SBE buffer 生命周期暴露给策略。
-6. submit read path 里的 `ack=true` 快路径优先走 `simdjson_ack_minimal`，只提取 `request_id` 与 `ack`。
+4. order session 的 read budget 必须很小，只处理 login、ack/result/error、pong/close。
+5. feedback session 的回报解析结果必须变成固定结构事件，再写 SPSC，避免把 JSON/SBE buffer 生命周期暴露给策略。
+6. order session read path 里的 `ack=true` 快路径优先走 `simdjson_ack_minimal`，只提取 `request_id` 与 `ack`。
 7. `MessageView::payload` 不包含 padding；如果 `readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，submit parser 可以构造 zero-copy padded view。
 8. 如果 tail padding 不满足，必须 fallback 到 simdjson padded scratch copy，不允许越界读取或临时改写 frame buffer。
 9. `YYJSON_READ_INSITU` 会修改 buffer，默认不要直接用于共享的 FrameCodec payload。
+
+## Gate + Binance 完整线程划分
+
+结合 Gate / Binance 行情 session 和方案 A，完整系统线程建议如下：
+
+```text
+GateMarketDataThread
+  - GateFutureMarketDataSession
+  - Gate public market data WebSocket
+
+BinanceMarketDataThread
+  - BinanceFutureMarketDataSession
+  - Binance public market data WebSocket
+
+StrategyThread
+  - Strategy
+  - GateOrderSession
+  - BinanceOrderSession
+  - risk control
+  - order management
+  - order execution
+
+GateOrderFeedbackThread
+  - GateOrderFeedbackSession
+  - Gate private feedback WebSocket
+
+BinanceOrderFeedbackThread
+  - BinanceOrderFeedbackSession
+  - Binance private feedback WebSocket
+```
+
+跨线程数据流：
+
+```text
+GateFutureMarketDataSession     \
+                                  -> StrategyThread
+BinanceFutureMarketDataSession  /
+
+StrategyThread
+  - Strategy
+  - GateOrderSession
+  - BinanceOrderSession
+  -> order submit / cancel / amend
+
+GateOrderFeedbackSession
+  -> GateOrderFeedbackThread
+  -> feedback SPSC
+  -> StrategyThread
+
+BinanceOrderFeedbackSession
+  -> BinanceOrderFeedbackThread
+  -> feedback SPSC
+  -> StrategyThread
+```
+
+说明：
+
+1. `GateOrderSession` / `BinanceOrderSession` 有独立物理 WebSocket，但默认不拥有独立线程，而是贴在 `StrategyThread` 上运行。
+2. `GateOrderFeedbackSession` / `BinanceOrderFeedbackSession` 独立线程运行，避免私有回报 burst 污染策略主循环。
+3. `risk control`、`order management` 和 `order execution` 属于 `Strategy` 模块，不下沉到 exchange session。
 
 ## 待讨论 / 待验证
 
 下一轮建议按这个顺序继续：
 
 1. 明确统一 symbol metadata 如何进入 strategy、risk check 和 exchange adapter，并确认 Gate decimal-size 合约的数量步进规则后再用于下单热路径。
-2. 明确 `GateOrderSubmitWsSession` 需要支持哪些 WebSocket API：place、batch place、cancel、cancel ids、cancel cp、amend、status/list。
+2. 明确 `GateOrderSession` 需要支持哪些 WebSocket API：place、batch place、cancel、cancel ids、cancel cp、amend、status/list。
 3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
 4. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`，并明确它们与 `OrderFeedback` 的字段映射。
-5. 明确 update stream 断线时是否允许继续 submit。
-6. 设计 REST reconcile：update WS 断线或 gap 后如何补齐未决订单状态。
-7. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSubmitWsSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
-8. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`update decode -> feedback SPSC`、`feedback poll -> order state update`。
+5. 明确 feedback stream 断线时是否允许继续 submit。
+6. 设计 REST reconcile：feedback WS 断线或 gap 后如何补齐未决订单状态。
+7. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
+8. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`feedback decode -> feedback SPSC`、`feedback poll -> order state update`。
 9. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
 
 ## 相关文件
