@@ -1,0 +1,18 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_future_market_data"
+subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2

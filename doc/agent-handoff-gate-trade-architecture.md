@@ -818,13 +818,13 @@ strategy-trade-process
 1. Gate / Binance 行情拆进程，隔离 WebSocket 重连、decode 异常、private link 或公网链路抖动。
 2. Strategy 与 `GateOrderSession` / `BinanceOrderSession` 同进程同线程，避免下单热路径引入 IPC 或跨线程队列。
 3. `GateOrderFeedbackSession` / `BinanceOrderFeedbackSession` 与策略同进程但独立线程，回报通过固定结构事件写入 SPSC，再由 `StrategyThread` 按预算消费。
-4. 开发期可以用单进程合并配置简化调试；生产配置按进程拆分，Gate 行情进程和 Binance 行情进程分别加载自己的 runtime TOML。
+4. 开发期可以用单进程工具组合多份 config 简化调试；生产配置按进程拆分，Gate 行情进程和 Binance 行情进程分别加载自己的 data session TOML。
 
 当前行情进程配置示例：
 
 ```text
-config/runtime/gate_market_data.toml
-config/runtime/binance_market_data.toml
+config/gate_future_market_data.toml
+config/binance_future_market_data.toml
 ```
 
 ## 待讨论 / 待验证

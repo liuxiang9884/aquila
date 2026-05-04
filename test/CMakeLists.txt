@@ -1,4 +1,5 @@
 add_subdirectory(core/common)
+add_subdirectory(config)
 add_subdirectory(core/market_data)
 add_subdirectory(core/utils)
 add_subdirectory(websocket)
