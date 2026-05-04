@@ -12,6 +12,7 @@
 #include <benchmark/benchmark.h>
 
 #include "benchmark/websocket/benchmark_support.h"
+#include "core/utils/numeric.h"
 #include "core/websocket/message_view.h"
 #include "exchange/binance/market_data/book_ticker_parser.h"
 #include "exchange/binance/market_data/client.h"
@@ -117,22 +118,22 @@ aq_binance::BookTickerParseStatus ParseYyjsonBookTickerDocument(
   if (!ReadYyjsonString(yyjson_obj_get(root, "b"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double bid_price = aq_binance::detail::ParseDoubleString(number);
+  const double bid_price = aquila::ToDouble(number);
 
   if (!ReadYyjsonString(yyjson_obj_get(root, "B"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double bid_volume = aq_binance::detail::ParseDoubleString(number);
+  const double bid_volume = aquila::ToDouble(number);
 
   if (!ReadYyjsonString(yyjson_obj_get(root, "a"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double ask_price = aq_binance::detail::ParseDoubleString(number);
+  const double ask_price = aquila::ToDouble(number);
 
   if (!ReadYyjsonString(yyjson_obj_get(root, "A"), &number)) {
     return aq_binance::BookTickerParseStatus::kMalformedJson;
   }
-  const double ask_volume = aq_binance::detail::ParseDoubleString(number);
+  const double ask_volume = aquila::ToDouble(number);
 
   output->update_id = update_id;
   output->event_time_ms = event_time_ms;
@@ -236,13 +237,13 @@ aq_binance::BookTickerParseStatus ParseOrderedBookTickerObject(
       aq_binance::detail::Int64Value(OrderedField(root, "E"));
   const std::string_view symbol =
       aq_binance::detail::StringValue(OrderedField(root, "s"));
-  const double bid_price = aq_binance::detail::ParseDoubleString(
+  const double bid_price = aquila::ToDouble(
       aq_binance::detail::StringValue(OrderedField(root, "b")));
-  const double bid_volume = aq_binance::detail::ParseDoubleString(
+  const double bid_volume = aquila::ToDouble(
       aq_binance::detail::StringValue(OrderedField(root, "B")));
-  const double ask_price = aq_binance::detail::ParseDoubleString(
+  const double ask_price = aquila::ToDouble(
       aq_binance::detail::StringValue(OrderedField(root, "a")));
-  const double ask_volume = aq_binance::detail::ParseDoubleString(
+  const double ask_volume = aquila::ToDouble(
       aq_binance::detail::StringValue(OrderedField(root, "A")));
 
   output.update_id = update_id;

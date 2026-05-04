@@ -26,6 +26,8 @@ template <typename T>
 
 template <typename T>
 [[nodiscard]] inline T ToNumeric(std::string_view text) noexcept {
+  assert(text.data() != nullptr);
+  assert(!text.empty());
   return ToNumeric<T>(text.data(), text.data() + text.size());
 }
 

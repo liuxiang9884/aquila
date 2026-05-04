@@ -29,4 +29,12 @@ TEST(CoreNumericTest, ParsesFloatingPointAliases) {
   EXPECT_DOUBLE_EQ(aquila::ToDouble("25.35190000"), 25.3519);
 }
 
+TEST(CoreNumericTest, StringViewInputRequiresTextInDebug) {
+#ifndef NDEBUG
+  EXPECT_DEATH((void)aquila::ToDouble(std::string_view{}), "");
+#else
+  GTEST_SKIP() << "Empty string_view input is a debug assert contract.";
+#endif
+}
+
 }  // namespace

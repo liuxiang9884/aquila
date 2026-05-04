@@ -83,10 +83,6 @@ inline std::int64_t Int64Value(simdjson::ondemand::value value) noexcept {
   return result.value_unsafe();
 }
 
-inline double ParseDoubleString(std::string_view text) noexcept {
-  return ToDouble(text);
-}
-
 inline void CopySymbolToStorage(std::string_view symbol,
                                 BookTickerUpdate& output) noexcept {
   assert(symbol.size() <= output.symbol_storage.size());
@@ -99,10 +95,10 @@ inline BookTickerParseStatus ParseBookTickerObject(
   const std::int64_t update_id = Int64Value(Field(root, "u"));
   const std::int64_t event_time_ms = Int64Value(Field(root, "E"));
   const std::string_view symbol = StringValue(Field(root, "s"));
-  const double bid_price = ParseDoubleString(StringValue(Field(root, "b")));
-  const double bid_volume = ParseDoubleString(StringValue(Field(root, "B")));
-  const double ask_price = ParseDoubleString(StringValue(Field(root, "a")));
-  const double ask_volume = ParseDoubleString(StringValue(Field(root, "A")));
+  const double bid_price = ToDouble(StringValue(Field(root, "b")));
+  const double bid_volume = ToDouble(StringValue(Field(root, "B")));
+  const double ask_price = ToDouble(StringValue(Field(root, "a")));
+  const double ask_volume = ToDouble(StringValue(Field(root, "A")));
 
   output.update_id = update_id;
   output.event_time_ms = event_time_ms;
