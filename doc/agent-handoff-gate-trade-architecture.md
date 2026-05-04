@@ -725,13 +725,13 @@ StrategyThread
 结合 Gate / Binance 行情 session 和方案 A，完整系统线程建议如下：
 
 ```text
-GateMarketDataThread
+GateFutureMarketDataThread
   - GateFutureMarketDataSession
-  - Gate public market data WebSocket
+  - Gate futures public market data WebSocket
 
-BinanceMarketDataThread
+BinanceFutureMarketDataThread
   - BinanceFutureMarketDataSession
-  - Binance public market data WebSocket
+  - Binance futures public market data WebSocket
 
 StrategyThread
   - Strategy
@@ -786,14 +786,14 @@ BinanceOrderFeedbackSession
 
 ```text
 gate-md-process
-  GateMarketDataThread
+  GateFutureMarketDataThread
     GateFutureMarketDataSession
-    Gate public market data WebSocket
+    Gate futures public market data WebSocket
 
 binance-md-process
-  BinanceMarketDataThread
+  BinanceFutureMarketDataThread
     BinanceFutureMarketDataSession
-    Binance public market data WebSocket
+    Binance futures public market data WebSocket
 
 strategy-trade-process
   StrategyThread

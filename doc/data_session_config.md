@@ -32,11 +32,11 @@ order management 和 order execution 归属于 `Strategy` 模块。
 
 ```text
 gate-md-process
-  GateMarketDataThread
+  GateFutureMarketDataThread
     GateFutureMarketDataSession
 
 binance-md-process
-  BinanceMarketDataThread
+  BinanceFutureMarketDataThread
     BinanceFutureMarketDataSession
 
 strategy-trade-process

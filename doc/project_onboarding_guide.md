@@ -216,10 +216,10 @@ feedback SPSC -> StrategyThread
 扩展到 Gate + Binance 行情后的系统线程命名：
 
 ```text
-GateMarketDataThread
+GateFutureMarketDataThread
   - GateFutureMarketDataSession
 
-BinanceMarketDataThread
+BinanceFutureMarketDataThread
   - BinanceFutureMarketDataSession
 
 StrategyThread
