@@ -1,0 +1,71 @@
+[instrument_db]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[websocket.profiles.gate_public_market_data]
+host = "fx-ws.gateio.ws"
+service = "443"
+enable_tls = true
+io_cpu_id = 2
+affinity_mode = "best_effort"
+lock_memory = true
+prefault_stack = true
+active_spin = true
+spin_iterations_before_clock_check = 4096
+max_reads_per_drive = 8
+read_until_would_block = false
+heartbeat_interval_ms = 5000
+heartbeat_timeout_ms = 15000
+cold_path_total_timeout_ms = 10000
+reconnect_enabled = true
+reconnect_initial_backoff_ms = 100
+reconnect_max_backoff_ms = 30000
+reconnect_backoff_shift_bits = 1
+reconnect_jitter_percent = 25
+reconnect_max_attempts = 0
+
+[websocket.profiles.binance_public_market_data]
+host = "fstream.binance.com"
+service = "443"
+enable_tls = true
+io_cpu_id = 3
+affinity_mode = "best_effort"
+lock_memory = true
+prefault_stack = true
+active_spin = true
+spin_iterations_before_clock_check = 4096
+max_reads_per_drive = 8
+read_until_would_block = false
+heartbeat_interval_ms = 5000
+heartbeat_timeout_ms = 15000
+cold_path_total_timeout_ms = 10000
+reconnect_enabled = true
+reconnect_initial_backoff_ms = 100
+reconnect_max_backoff_ms = 30000
+reconnect_backoff_shift_bits = 1
+reconnect_jitter_percent = 25
+reconnect_max_attempts = 0
+
+[[data_sessions]]
+name = "gate_future_market_data"
+type = "GateFutureMarketDataSession"
+exchange = "gate"
+thread = "GateMarketDataThread"
+websocket = "gate_public_market_data"
+enabled = true
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+
+[[data_sessions]]
+name = "binance_future_market_data"
+type = "BinanceFutureMarketDataSession"
+exchange = "binance"
+thread = "BinanceMarketDataThread"
+websocket = "binance_public_market_data"
+enabled = true
+market = "um_futures"
+feed = "book_ticker"
+symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
