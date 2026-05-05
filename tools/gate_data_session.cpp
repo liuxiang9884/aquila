@@ -49,8 +49,8 @@ void PrintSession(const SessionT& session) {
 }
 
 template <typename WebSocketPolicy>
-int CreateAndMaybeRun(aq_gate::DataSessionConfig data_session_config,
-                      bool connect) {
+int RunDataSession(aq_gate::DataSessionConfig data_session_config,
+                   bool connect) {
   using Session = aq_gate::DataSession<CountingConsumer, WebSocketPolicy,
                                        aq_gate::DataSessionDiagnosticsPolicy>;
 
@@ -107,9 +107,9 @@ int main(int argc, char** argv) {
   }
 
   if (config_result.value.connection.enable_tls) {
-    return CreateAndMaybeRun<aq_gate::DefaultTlsWebSocketPolicy>(
+    return RunDataSession<aq_gate::DefaultTlsWebSocketPolicy>(
         std::move(config_result.value), connect);
   }
-  return CreateAndMaybeRun<aq_gate::DefaultPlainWebSocketPolicy>(
+  return RunDataSession<aq_gate::DefaultPlainWebSocketPolicy>(
       std::move(config_result.value), connect);
 }
