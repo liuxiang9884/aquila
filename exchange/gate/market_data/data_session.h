@@ -3,10 +3,12 @@
 
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -18,6 +20,7 @@
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/client.h"
+#include "exchange/gate/market_data/data_session_config.h"
 #include "exchange/gate/market_data/subscription.h"
 #include "exchange/gate/market_data/subscription_controller.h"
 #include "exchange/gate/market_data/text_envelope_parser.h"
@@ -123,6 +126,19 @@ class DataSessionDiagnostics {
 
 namespace detail {
 
+inline std::string BuildDataSessionTarget(const DataSessionConfig& config) {
+  std::string target{"/v4/ws/"};
+  target.append(config.settle);
+  target.append("/sbe?sbe_schema_id=");
+  std::array<char, 16> schema_id_buffer{};
+  const auto [end, error] = std::to_chars(
+      schema_id_buffer.data(),
+      schema_id_buffer.data() + schema_id_buffer.size(), config.sbe_schema_id);
+  (void)error;
+  target.append(schema_id_buffer.data(), end);
+  return target;
+}
+
 inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
                              std::vector<std::string_view>* output) {
   output->clear();
@@ -130,6 +146,20 @@ inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
   for (const SymbolBinding& symbol : symbols) {
     output->push_back(symbol.exchange_symbol);
   }
+}
+
+inline std::vector<SymbolBinding> BuildOwnedSymbolBindings(
+    const std::vector<std::string>& exchange_symbols,
+    std::span<const std::int32_t> symbol_ids) {
+  std::vector<SymbolBinding> symbols;
+  symbols.reserve(exchange_symbols.size());
+  for (std::size_t i = 0; i < exchange_symbols.size(); ++i) {
+    symbols.push_back(SymbolBinding{
+        .exchange_symbol = exchange_symbols[i],
+        .symbol_id = symbol_ids[i],
+    });
+  }
+  return symbols;
 }
 
 }  // namespace detail
@@ -149,10 +179,18 @@ class DataSession {
 
   DataSession(websocket::ConnectionConfig config,
               std::span<const SymbolBinding> symbols, Consumer& consumer)
-      : market_data_client_(symbols, consumer),
+      : connection_(ApplyOptions(std::move(config))),
+        symbol_bindings_(symbols.begin(), symbols.end()),
+        market_data_client_(
+            std::span<const SymbolBinding>(symbol_bindings_.data(),
+                                           symbol_bindings_.size()),
+            consumer),
         message_handler_(websocket::MakeMessageHandler(*this)),
-        client_(ApplyOptions(std::move(config)), message_handler_) {
-    detail::BuildSymbolViews(symbols, &subscription_symbols_);
+        client_(connection_, message_handler_) {
+    detail::BuildSymbolViews(
+        std::span<const SymbolBinding>(symbol_bindings_.data(),
+                                       symbol_bindings_.size()),
+        &subscription_symbols_);
     client_.SetStateHook(this, &HandleState);
   }
 
@@ -161,6 +199,27 @@ class DataSession {
               const std::array<SymbolBinding, N>& symbols, Consumer& consumer)
       : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
                     consumer) {}
+
+  DataSession(std::string name, websocket::ConnectionConfig config,
+              std::vector<std::string> exchange_symbols,
+              std::vector<std::int32_t> symbol_ids, Consumer& consumer)
+      : name_(std::move(name)),
+        connection_(ApplyOptions(std::move(config))),
+        exchange_symbols_(std::move(exchange_symbols)),
+        symbol_bindings_(
+            detail::BuildOwnedSymbolBindings(exchange_symbols_, symbol_ids)),
+        market_data_client_(
+            std::span<const SymbolBinding>(symbol_bindings_.data(),
+                                           symbol_bindings_.size()),
+            consumer),
+        message_handler_(websocket::MakeMessageHandler(*this)),
+        client_(connection_, message_handler_) {
+    detail::BuildSymbolViews(
+        std::span<const SymbolBinding>(symbol_bindings_.data(),
+                                       symbol_bindings_.size()),
+        &subscription_symbols_);
+    client_.SetStateHook(this, &HandleState);
+  }
 
   bool Start() noexcept {
     return client_.Start();
@@ -234,6 +293,18 @@ class DataSession {
 
   [[nodiscard]] websocket::ConnectionError last_error() const noexcept {
     return client_.last_error();
+  }
+
+  [[nodiscard]] std::string_view name() const noexcept {
+    return name_;
+  }
+
+  [[nodiscard]] const websocket::ConnectionConfig& connection() const noexcept {
+    return connection_;
+  }
+
+  [[nodiscard]] std::span<const SymbolBinding> symbols() const noexcept {
+    return {symbol_bindings_.data(), symbol_bindings_.size()};
   }
 
   [[nodiscard]] bool ever_active() const noexcept {
@@ -446,6 +517,10 @@ class DataSession {
     return core.SendText(payload);
   }
 
+  std::string name_;
+  websocket::ConnectionConfig connection_;
+  std::vector<std::string> exchange_symbols_;
+  std::vector<SymbolBinding> symbol_bindings_;
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
   std::atomic<bool> ever_active_{false};
@@ -457,6 +532,67 @@ class DataSession {
   BookTickerSubscriptionController subscription_controller_;
   inline static std::atomic<DataSession*> active_stop_session_{nullptr};
 };
+
+template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
+          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
+          typename OptionsT = websocket::DefaultWebSocketOptions,
+          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+struct DataSessionCreateResult {
+  using Session = DataSession<Consumer, TransportSocketT, DiagnosticsT,
+                              OptionsT, SessionDiagnosticsT>;
+
+  std::unique_ptr<Session> session;
+  std::string error;
+  bool ok{false};
+};
+
+template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
+          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
+          typename OptionsT = websocket::DefaultWebSocketOptions,
+          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+[[nodiscard]] DataSessionCreateResult<Consumer, TransportSocketT, DiagnosticsT,
+                                      OptionsT, SessionDiagnosticsT>
+CreateDataSession(const DataSessionConfig& session_config,
+                  const config::InstrumentCatalog& catalog,
+                  Consumer& consumer) {
+  using Result =
+      DataSessionCreateResult<Consumer, TransportSocketT, DiagnosticsT,
+                              OptionsT, SessionDiagnosticsT>;
+  Result result;
+  if (session_config.feed != "book_ticker" ||
+      session_config.wire_format != "sbe") {
+    result.error = "Gate data session supports only SBE book_ticker";
+    return result;
+  }
+
+  config::ConnectionConfigResult connection_result = config::ToConnectionConfig(
+      session_config.websocket, detail::BuildDataSessionTarget(session_config));
+  if (!connection_result.ok) {
+    result.error = std::move(connection_result.error);
+    return result;
+  }
+
+  std::vector<std::string> exchange_symbols;
+  exchange_symbols.reserve(session_config.subscribe_symbols.size());
+  std::vector<std::int32_t> symbol_ids;
+  symbol_ids.reserve(session_config.subscribe_symbols.size());
+  for (const std::string& symbol : session_config.subscribe_symbols) {
+    const config::InstrumentInfo* info = catalog.Find(Exchange::kGate, symbol);
+    if (info == nullptr) {
+      result.error = "Gate instrument not found: ";
+      result.error.append(symbol);
+      return result;
+    }
+    exchange_symbols.push_back(info->exchange_symbol);
+    symbol_ids.push_back(info->symbol_id);
+  }
+
+  result.session = std::make_unique<typename Result::Session>(
+      session_config.name, std::move(connection_result.config),
+      std::move(exchange_symbols), std::move(symbol_ids), consumer);
+  result.ok = true;
+  return result;
+}
 
 }  // namespace aquila::gate
 

@@ -1,8 +1,6 @@
 #include <cstdint>
 #include <filesystem>
-#include <span>
 #include <string>
-#include <utility>
 
 #include <CLI/CLI.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -37,49 +35,47 @@ struct CountingConsumer {
   }
 };
 
-void PrintSettings(const aq_gate::DataSessionSettings& settings) {
-  NOVA_INFO("name={}", settings.name);
+template <typename SessionT>
+void PrintSession(const SessionT& session) {
+  const ws::ConnectionConfig& connection = session.connection();
+  NOVA_INFO("name={}", session.name());
   NOVA_INFO("websocket host={} service={} target={} tls={} bind_cpu_id={}",
-            settings.connection.host, settings.connection.service,
-            settings.connection.target,
-            settings.connection.enable_tls ? "true" : "false",
-            settings.connection.runtime_policy.io_cpu_id);
-  for (const aq_gate::SymbolBinding& symbol : settings.symbols) {
+            connection.host, connection.service, connection.target,
+            connection.enable_tls ? "true" : "false",
+            connection.runtime_policy.io_cpu_id);
+  for (const aq_gate::SymbolBinding& symbol : session.symbols()) {
     NOVA_INFO("symbol symbol_id={} exchange_symbol={}", symbol.symbol_id,
               symbol.exchange_symbol);
   }
 }
 
-[[nodiscard]] aq_gate::DataSessionSettingsResult LoadSettings(
-    const std::filesystem::path& config_path) {
-  const aq_gate::DataSessionConfigResult config_result =
-      aq_gate::LoadDataSessionConfigFile(config_path);
-  if (!config_result.ok) {
-    return {.error = config_result.error};
-  }
-
-  const config::InstrumentCatalogLoadResult catalog_result =
-      config::LoadInstrumentCatalogFromCsv(
-          config_result.config.instrument_catalog.file);
-  if (!catalog_result.ok) {
-    return {.error = catalog_result.error};
-  }
-
-  return aq_gate::BuildDataSessionSettings(config_result.config,
-                                           catalog_result.catalog);
-}
-
 template <typename TransportSocketT>
-int ConnectAndRun(const aq_gate::DataSessionSettings& settings) {
+int CreateAndMaybeRun(const aq_gate::DataSessionConfig& data_session_config,
+                      const config::InstrumentCatalog& catalog, bool connect) {
   using Session = aq_gate::DataSession<
       CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
       ws::DefaultWebSocketOptions, aq_gate::DataSessionDiagnostics>;
 
   CountingConsumer consumer;
-  Session session(settings.connection,
-                  std::span<const aq_gate::SymbolBinding>(
-                      settings.symbols.data(), settings.symbols.size()),
-                  consumer);
+  aq_gate::DataSessionCreateResult<
+      CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
+      ws::DefaultWebSocketOptions, aq_gate::DataSessionDiagnostics>
+      session_result =
+          aq_gate::CreateDataSession<CountingConsumer, TransportSocketT,
+                                     aq_gate::FuturesMarketDataDiagnostics,
+                                     ws::DefaultWebSocketOptions,
+                                     aq_gate::DataSessionDiagnostics>(
+              data_session_config, catalog, consumer);
+  if (!session_result.ok) {
+    NOVA_ERROR("config_error={}", session_result.error);
+    return 1;
+  }
+
+  Session& session = *session_result.session;
+  PrintSession(session);
+  if (!connect) {
+    return 0;
+  }
 
   const bool started_ok = session.Run();
   const ws::Metrics metrics = session.SnapshotMetrics();
@@ -119,20 +115,25 @@ int main(int argc, char** argv) {
 
   LoggingGuard logging_guard;
 
-  aq_gate::DataSessionSettingsResult settings_result =
-      LoadSettings(config_path);
-  if (!settings_result.ok) {
-    NOVA_ERROR("config_error={}", settings_result.error);
+  const aq_gate::DataSessionConfigResult config_result =
+      aq_gate::LoadDataSessionConfigFile(config_path);
+  if (!config_result.ok) {
+    NOVA_ERROR("config_error={}", config_result.error);
     return 1;
   }
 
-  PrintSettings(settings_result.settings);
-  if (!connect) {
-    return 0;
+  const config::InstrumentCatalogLoadResult catalog_result =
+      config::LoadInstrumentCatalogFromCsv(
+          config_result.config.instrument_catalog.file);
+  if (!catalog_result.ok) {
+    NOVA_ERROR("config_error={}", catalog_result.error);
+    return 1;
   }
 
-  if (settings_result.settings.connection.enable_tls) {
-    return ConnectAndRun<ws::TlsSocket>(settings_result.settings);
+  if (config_result.config.data_session.websocket.endpoint.enable_tls) {
+    return CreateAndMaybeRun<ws::TlsSocket>(config_result.config.data_session,
+                                            catalog_result.catalog, connect);
   }
-  return ConnectAndRun<ws::PlainSocket>(settings_result.settings);
+  return CreateAndMaybeRun<ws::PlainSocket>(config_result.config.data_session,
+                                            catalog_result.catalog, connect);
 }
