@@ -1,3 +1,5 @@
+#include "exchange/gate/market_data/data_session.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -7,7 +9,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "core/websocket/websocket_client.h"
-#include "exchange/gate/market_data/data_session.h"
 #include "exchange/gate/market_data/data_session_config.h"
 #include "nova/utils/log.h"
 
@@ -29,8 +30,19 @@ struct LoggingGuard {
 struct CountingConsumer {
   std::uint64_t book_tickers{0};
 
-  void OnBookTicker(const aquila::BookTicker&) noexcept {
+  void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     ++book_tickers;
+    if (book_tickers % 1000 != 0) {
+      return;
+    }
+    NOVA_INFO(
+        "book_ticker count={} id={} symbol_id={} exchange={} exchange_ns={} "
+        "local_ns={} bid_price={:.12g} bid_volume={:.12g} "
+        "ask_price={:.12g} ask_volume={:.12g}",
+        book_tickers, book_ticker.id, book_ticker.symbol_id,
+        magic_enum::enum_name(book_ticker.exchange), book_ticker.exchange_ns,
+        book_ticker.local_ns, book_ticker.bid_price, book_ticker.bid_volume,
+        book_ticker.ask_price, book_ticker.ask_volume);
   }
 };
 
