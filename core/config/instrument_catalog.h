@@ -16,6 +16,11 @@
 
 namespace aquila::config {
 
+struct InstrumentCatalogConfig {
+  std::string file;
+  std::string schema;
+};
+
 struct InstrumentInfo {
   std::int32_t symbol_id{-1};
   Exchange exchange{Exchange::kGate};

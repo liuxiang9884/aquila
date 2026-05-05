@@ -13,7 +13,6 @@
 #include <fmt/core.h>
 #include <magic_enum/magic_enum.hpp>
 
-#include "core/config/data_session_config.h"
 #include "core/config/instrument_catalog.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/data_session_config.h"
@@ -86,8 +85,8 @@ void PrintSettings(
 
 [[nodiscard]] aq_gate::GateFutureMarketDataSessionSettingsResult LoadSettings(
     const std::filesystem::path& config_path) {
-  const config::DataSessionConfigResult config_result =
-      config::LoadDataSessionConfigFile(config_path);
+  const aq_gate::GateFutureMarketDataConfigResult config_result =
+      aq_gate::LoadGateFutureMarketDataConfigFile(config_path);
   if (!config_result.ok) {
     return {.error = config_result.error};
   }

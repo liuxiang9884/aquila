@@ -3,20 +3,42 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
+#include <toml++/toml.hpp>
 
 #include "core/common/types.h"
-#include "core/config/data_session_config.h"
 #include "core/config/instrument_catalog.h"
 #include "core/config/websocket_config.h"
 #include "core/websocket/types.h"
 #include "exchange/gate/market_data/client.h"
 
 namespace aquila::gate {
+
+struct GateFutureMarketDataSessionConfig {
+  std::string name;
+  std::vector<std::string> subscribe_symbols;
+  std::string settle{"usdt"};
+  std::string wire_format{"sbe"};
+  std::uint32_t sbe_schema_id{1};
+  std::string feed{"book_ticker"};
+  config::WebSocketConfig websocket;
+};
+
+struct GateFutureMarketDataConfigFile {
+  config::InstrumentCatalogConfig instrument_catalog;
+  GateFutureMarketDataSessionConfig data_session;
+};
+
+struct GateFutureMarketDataConfigResult {
+  GateFutureMarketDataConfigFile config;
+  std::string error;
+  bool ok{false};
+};
 
 struct GateFutureMarketDataSessionSettings {
   std::string name;
@@ -31,18 +53,25 @@ struct GateFutureMarketDataSessionSettingsResult {
   bool ok{false};
 };
 
+[[nodiscard]] GateFutureMarketDataConfigResult
+ParseGateFutureMarketDataConfig(const toml::table& node);
+
+[[nodiscard]] GateFutureMarketDataConfigResult
+LoadGateFutureMarketDataConfigFile(const std::filesystem::path& path);
+
 [[nodiscard]] inline std::string BuildGateFutureMarketDataTarget(
-    const config::DataSessionConfig& config) {
+    const GateFutureMarketDataSessionConfig& config) {
   return fmt::format("/v4/ws/{}/sbe?sbe_schema_id={}", config.settle,
                      config.sbe_schema_id);
 }
 
 [[nodiscard]] inline GateFutureMarketDataSessionSettingsResult
 BuildGateFutureMarketDataSessionSettings(
-    const config::DataSessionConfigFile& config_file,
+    const GateFutureMarketDataConfigFile& config_file,
     const config::InstrumentCatalog& catalog) {
   GateFutureMarketDataSessionSettingsResult result;
-  const config::DataSessionConfig& data_session = config_file.data_session;
+  const GateFutureMarketDataSessionConfig& data_session =
+      config_file.data_session;
   if (data_session.feed != "book_ticker" || data_session.wire_format != "sbe") {
     result.error = "Gate future market data supports only SBE book_ticker";
     return result;

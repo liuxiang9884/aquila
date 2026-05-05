@@ -1,5 +1,3 @@
-#include "core/config/data_session_config.h"
-
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -88,7 +86,7 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
 }
 
 TEST(DataSessionConfigTest, BuildsGateFutureMarketDataSessionSettings) {
-  const auto config_result = aquila::config::LoadDataSessionConfigFile(
+  const auto config_result = aquila::gate::LoadGateFutureMarketDataConfigFile(
       SourcePath("config/data_sessions/gate_future_market_data.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
@@ -125,7 +123,7 @@ TEST(DataSessionConfigTest, BuildsGateFutureMarketDataSessionSettings) {
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
-  const auto config_result = aquila::config::LoadDataSessionConfigFile(
+  const auto config_result = aquila::gate::LoadGateFutureMarketDataConfigFile(
       SourcePath("config/data_sessions/gate_future_market_data.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 

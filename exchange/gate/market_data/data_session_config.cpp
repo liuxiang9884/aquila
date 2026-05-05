@@ -1,4 +1,4 @@
-#include "core/config/data_session_config.h"
+#include "exchange/gate/market_data/data_session_config.h"
 
 #include <cstdint>
 #include <exception>
@@ -9,7 +9,7 @@
 
 #include "nova/utils/log.h"
 
-namespace aquila::config {
+namespace aquila::gate {
 namespace {
 
 void MaybeLogError(std::string_view message) {
@@ -18,25 +18,27 @@ void MaybeLogError(std::string_view message) {
   }
 }
 
-[[nodiscard]] DataSessionConfigResult Failure(std::string error) {
+[[nodiscard]] GateFutureMarketDataConfigResult Failure(std::string error) {
   MaybeLogError(error);
-  DataSessionConfigResult result;
+  GateFutureMarketDataConfigResult result;
   result.error = std::move(error);
   return result;
 }
 
-[[nodiscard]] DataSessionConfigResult Success(DataSessionConfigFile config) {
-  DataSessionConfigResult result;
+[[nodiscard]] GateFutureMarketDataConfigResult Success(
+    GateFutureMarketDataConfigFile config) {
+  GateFutureMarketDataConfigResult result;
   result.config = std::move(config);
   result.ok = true;
   return result;
 }
 
-class DataSessionConfigParser {
+class GateFutureMarketDataConfigParser {
  public:
-  explicit DataSessionConfigParser(const toml::table& node) : node_(node) {}
+  explicit GateFutureMarketDataConfigParser(const toml::table& node)
+      : node_(node) {}
 
-  [[nodiscard]] DataSessionConfigResult Parse() {
+  [[nodiscard]] GateFutureMarketDataConfigResult Parse() {
     ParseInstrumentCatalog();
     if (!ok_) {
       return Failure(std::move(error_));
@@ -47,8 +49,8 @@ class DataSessionConfigParser {
       return Failure(std::move(error_));
     }
 
-    const WebSocketConfigResult websocket_result =
-        ParseWebSocketConfig(node_["data_session"]["websocket"]);
+    const config::WebSocketConfigResult websocket_result =
+        config::ParseWebSocketConfig(node_["data_session"]["websocket"]);
     if (!websocket_result.ok) {
       return Failure(websocket_result.error);
     }
@@ -144,26 +146,27 @@ class DataSessionConfigParser {
   }
 
   const toml::table& node_;
-  DataSessionConfigFile config_;
+  GateFutureMarketDataConfigFile config_;
   std::string error_;
   bool ok_{true};
 };
 
 }  // namespace
 
-DataSessionConfigResult ParseDataSessionConfig(const toml::table& node) {
-  return DataSessionConfigParser{node}.Parse();
+GateFutureMarketDataConfigResult ParseGateFutureMarketDataConfig(
+    const toml::table& node) {
+  return GateFutureMarketDataConfigParser{node}.Parse();
 }
 
-DataSessionConfigResult LoadDataSessionConfigFile(
+GateFutureMarketDataConfigResult LoadGateFutureMarketDataConfigFile(
     const std::filesystem::path& path) {
   try {
     const toml::parse_result parsed = toml::parse_file(path.string());
-    return ParseDataSessionConfig(parsed);
+    return ParseGateFutureMarketDataConfig(parsed);
   } catch (const std::exception& exc) {
-    return Failure(std::string{"failed to load data session config: "} +
+    return Failure(std::string{"failed to load Gate market data config: "} +
                    exc.what());
   }
 }
 
-}  // namespace aquila::config
+}  // namespace aquila::gate

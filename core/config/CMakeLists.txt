@@ -1,6 +1,4 @@
 add_library(aquila_config STATIC
-    data_session_config.cpp
-    data_session_config.h
     instrument_catalog.cpp
     instrument_catalog.h
     websocket_config.cpp
