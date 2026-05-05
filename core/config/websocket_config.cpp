@@ -1,6 +1,6 @@
 #include "core/config/websocket_config.h"
 
-#include <limits>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -46,127 +46,6 @@ void MaybeLogConfigError(std::string_view message) {
   return result;
 }
 
-[[nodiscard]] std::string FieldName(std::string_view section,
-                                    std::string_view key) {
-  std::string name;
-  name.reserve(section.size() + key.size() + 1);
-  name.append(section);
-  name.push_back('.');
-  name.append(key);
-  return name;
-}
-
-[[nodiscard]] bool RequireTable(toml::node_view<const toml::node> node,
-                                std::string_view name, std::string* error) {
-  if (!node || node.as_table() == nullptr) {
-    *error = std::string{name} + " table is required";
-    return false;
-  }
-  return true;
-}
-
-[[nodiscard]] bool ReadRequiredString(toml::node_view<const toml::node> node,
-                                      std::string_view section,
-                                      std::string_view key, std::string* output,
-                                      std::string* error) {
-  const toml::node_view<const toml::node> value_node = node[key];
-  const std::string name = FieldName(section, key);
-  if (!value_node) {
-    *error = name + " is required";
-    return false;
-  }
-  const std::optional<std::string> value = value_node.value<std::string>();
-  if (!value || value->empty()) {
-    *error = name + " must be a non-empty string";
-    return false;
-  }
-  *output = *value;
-  return true;
-}
-
-[[nodiscard]] bool ReadOptionalString(toml::node_view<const toml::node> node,
-                                      std::string_view section,
-                                      std::string_view key, std::string* output,
-                                      std::string* error) {
-  const toml::node_view<const toml::node> value_node = node[key];
-  if (!value_node) {
-    return true;
-  }
-  const std::string name = FieldName(section, key);
-  const std::optional<std::string> value = value_node.value<std::string>();
-  if (!value || value->empty()) {
-    *error = name + " must be a non-empty string";
-    return false;
-  }
-  *output = *value;
-  return true;
-}
-
-[[nodiscard]] bool ReadOptionalBool(toml::node_view<const toml::node> node,
-                                    std::string_view section,
-                                    std::string_view key, bool* output,
-                                    std::string* error) {
-  const toml::node_view<const toml::node> value_node = node[key];
-  if (!value_node) {
-    return true;
-  }
-  const std::string name = FieldName(section, key);
-  const std::optional<bool> value = value_node.value<bool>();
-  if (!value) {
-    *error = name + " must be a bool";
-    return false;
-  }
-  *output = *value;
-  return true;
-}
-
-[[nodiscard]] bool ReadOptionalUInt32(
-    toml::node_view<const toml::node> node, std::string_view section,
-    std::string_view key, std::uint32_t min_value, std::uint32_t max_value,
-    std::uint32_t* output, std::string* error) {
-  const toml::node_view<const toml::node> value_node = node[key];
-  if (!value_node) {
-    return true;
-  }
-  const std::string name = FieldName(section, key);
-  const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
-  if (!value) {
-    *error = name + " must be an integer";
-    return false;
-  }
-  if (*value < static_cast<std::int64_t>(min_value) ||
-      *value > static_cast<std::int64_t>(max_value)) {
-    *error = name + " is out of range";
-    return false;
-  }
-  *output = static_cast<std::uint32_t>(*value);
-  return true;
-}
-
-[[nodiscard]] bool ReadRequiredInt(toml::node_view<const toml::node> node,
-                                   std::string_view section,
-                                   std::string_view key, int min_value,
-                                   int max_value, int* output,
-                                   std::string* error) {
-  const toml::node_view<const toml::node> value_node = node[key];
-  const std::string name = FieldName(section, key);
-  if (!value_node) {
-    *error = name + " is required";
-    return false;
-  }
-  const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
-  if (!value) {
-    *error = name + " must be an integer";
-    return false;
-  }
-  if (*value < min_value || *value > max_value) {
-    *error = name + " is out of range";
-    return false;
-  }
-  *output = static_cast<int>(*value);
-  return true;
-}
-
 [[nodiscard]] std::optional<websocket::AffinityMode> ParseAffinityMode(
     std::string_view text) {
   if (text == "none") {
@@ -181,269 +60,168 @@ void MaybeLogConfigError(std::string_view message) {
   return std::nullopt;
 }
 
-[[nodiscard]] bool ReadOptionalAffinityMode(
-    toml::node_view<const toml::node> node, std::string_view section,
-    std::string_view key, websocket::AffinityMode* output, std::string* error) {
-  const toml::node_view<const toml::node> value_node = node[key];
-  if (!value_node) {
-    return true;
-  }
-  const std::string name = FieldName(section, key);
-  const std::optional<std::string> value = value_node.value<std::string>();
-  if (!value) {
-    *error = name + " must be a string";
-    return false;
-  }
-  const std::optional<websocket::AffinityMode> mode = ParseAffinityMode(*value);
-  if (!mode) {
-    *error = name + " must be one of none, best_effort, required";
-    return false;
-  }
-  *output = *mode;
-  return true;
-}
+class WebSocketConfigParser {
+ public:
+  explicit WebSocketConfigParser(toml::node_view<const toml::node> node)
+      : node_(node) {}
 
-[[nodiscard]] bool ParseEndpoint(toml::node_view<const toml::node> node,
-                                 WebSocketEndpointConfig* config,
-                                 std::string* error) {
-  constexpr std::string_view kSection = "endpoint";
-  if (!ReadRequiredString(node, kSection, "host", &config->host, error)) {
-    return false;
-  }
-  if (!ReadOptionalString(node, kSection, "service", &config->service, error)) {
-    return false;
-  }
-  if (!ReadOptionalBool(node, kSection, "enable_tls", &config->enable_tls,
-                        error)) {
-    return false;
-  }
-  return ReadOptionalUInt32(node, kSection, "connect_timeout_ms", 1,
-                            std::numeric_limits<std::uint32_t>::max(),
-                            &config->connect_timeout_ms, error);
-}
+  [[nodiscard]] WebSocketConfigResult Parse() {
+    ParseEndpoint();
+    if (!ok_) {
+      return ConfigFailure(std::move(error_));
+    }
 
-[[nodiscard]] bool ParseExecutionPolicy(toml::node_view<const toml::node> node,
-                                        WebSocketExecutionPolicyConfig* config,
-                                        std::string* error) {
-  constexpr std::string_view kSection = "execution_policy";
-  if (!ReadRequiredInt(node, kSection, "bind_cpu_id", 0,
-                       std::numeric_limits<int>::max(), &config->bind_cpu_id,
-                       error)) {
-    return false;
-  }
-  if (!ReadOptionalAffinityMode(node, kSection, "affinity_mode",
-                                &config->affinity_mode, error)) {
-    return false;
-  }
-  if (!ReadOptionalBool(node, kSection, "lock_memory", &config->lock_memory,
-                        error)) {
-    return false;
-  }
-  if (!ReadOptionalBool(node, kSection, "prefault_stack",
-                        &config->prefault_stack, error)) {
-    return false;
-  }
-  if (!ReadOptionalBool(node, kSection, "active_spin", &config->active_spin,
-                        error)) {
-    return false;
-  }
-  return ReadOptionalUInt32(node, kSection,
-                            "spin_iterations_before_clock_check", 1,
-                            std::numeric_limits<std::uint32_t>::max(),
-                            &config->spin_iterations_before_clock_check, error);
-}
+    ParseExecutionPolicy();
+    if (!ok_) {
+      return ConfigFailure(std::move(error_));
+    }
 
-[[nodiscard]] bool ParseReadPath(toml::node_view<const toml::node> node,
-                                 WebSocketReadPathConfig* config,
-                                 std::string* error) {
-  constexpr std::string_view kSection = "read_path";
-  if (!ReadOptionalUInt32(node, kSection, "max_reads_per_drive", 1,
-                          std::numeric_limits<std::uint32_t>::max(),
-                          &config->max_reads_per_drive, error)) {
-    return false;
+    ParseReadPath();
+    ParseHeartbeat();
+    ParseReconnect();
+    return ConfigSuccess(std::move(config_));
   }
-  return ReadOptionalBool(node, kSection, "read_until_would_block",
-                          &config->read_until_would_block, error);
-}
 
-[[nodiscard]] bool ParseHeartbeat(toml::node_view<const toml::node> node,
-                                  WebSocketHeartbeatConfig* config,
-                                  std::string* error) {
-  constexpr std::string_view kSection = "heartbeat";
-  if (!ReadOptionalUInt32(node, kSection, "interval_ms", 1,
-                          std::numeric_limits<std::uint32_t>::max(),
-                          &config->interval_ms, error)) {
-    return false;
+ private:
+  [[nodiscard]] std::string StringOr(
+      toml::node_view<const toml::node> value_node,
+      const std::string& fallback) const {
+    const std::optional<std::string> value = value_node.value<std::string>();
+    return value.value_or(fallback);
   }
-  if (!ReadOptionalUInt32(node, kSection, "timeout_ms", 1,
-                          std::numeric_limits<std::uint32_t>::max(),
-                          &config->timeout_ms, error)) {
-    return false;
-  }
-  if (config->timeout_ms <= config->interval_ms) {
-    *error = "heartbeat.timeout_ms must be greater than heartbeat.interval_ms";
-    return false;
-  }
-  return true;
-}
 
-[[nodiscard]] bool ParseReconnect(toml::node_view<const toml::node> node,
-                                  WebSocketReconnectConfig* config,
-                                  std::string* error) {
-  constexpr std::string_view kSection = "reconnect";
-  if (!ReadOptionalBool(node, kSection, "enabled", &config->enabled, error)) {
-    return false;
+  [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
+                            bool fallback) const {
+    const std::optional<bool> value = value_node.value<bool>();
+    return value.value_or(fallback);
   }
-  if (!ReadOptionalUInt32(node, kSection, "initial_backoff_ms", 1,
-                          std::numeric_limits<std::uint32_t>::max(),
-                          &config->initial_backoff_ms, error)) {
-    return false;
-  }
-  if (!ReadOptionalUInt32(node, kSection, "max_backoff_ms", 1,
-                          std::numeric_limits<std::uint32_t>::max(),
-                          &config->max_backoff_ms, error)) {
-    return false;
-  }
-  if (!ReadOptionalUInt32(node, kSection, "backoff_shift_bits", 0, 31,
-                          &config->backoff_shift_bits, error)) {
-    return false;
-  }
-  if (!ReadOptionalUInt32(node, kSection, "jitter_percent", 0, 100,
-                          &config->jitter_percent, error)) {
-    return false;
-  }
-  if (!ReadOptionalUInt32(node, kSection, "max_attempts", 0,
-                          std::numeric_limits<std::uint32_t>::max(),
-                          &config->max_attempts, error)) {
-    return false;
-  }
-  if (config->max_backoff_ms < config->initial_backoff_ms) {
-    *error = "reconnect.max_backoff_ms must be >= reconnect.initial_backoff_ms";
-    return false;
-  }
-  return true;
-}
 
-[[nodiscard]] bool ValidateWebSocketConfig(const WebSocketConfig& config,
-                                           std::string* error) {
-  if (config.endpoint.host.empty()) {
-    *error = "endpoint.host is required";
-    return false;
+  [[nodiscard]] std::uint32_t UInt32Or(
+      toml::node_view<const toml::node> value_node,
+      std::uint32_t fallback) const {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    return static_cast<std::uint32_t>(*value);
   }
-  if (config.endpoint.service.empty()) {
-    *error = "endpoint.service must be a non-empty string";
-    return false;
+
+  void ParseEndpoint() {
+    const toml::node_view<const toml::node> endpoint = node_["endpoint"];
+    const std::optional<std::string> host =
+        endpoint["host"].value<std::string>();
+    if (!host || host->empty()) {
+      Fail("endpoint.host", " is required");
+      return;
+    }
+    config_.endpoint.host = *host;
+
+    config_.endpoint.service =
+        StringOr(endpoint["service"], config_.endpoint.service);
+    config_.endpoint.enable_tls =
+        BoolOr(endpoint["enable_tls"], config_.endpoint.enable_tls);
+    config_.endpoint.connect_timeout_ms = UInt32Or(
+        endpoint["connect_timeout_ms"], config_.endpoint.connect_timeout_ms);
   }
-  if (config.endpoint.connect_timeout_ms == 0) {
-    *error = "endpoint.connect_timeout_ms must be positive";
-    return false;
+
+  void ParseExecutionPolicy() {
+    const toml::node_view<const toml::node> execution_policy =
+        node_["execution_policy"];
+    const std::optional<std::int64_t> bind_cpu_id =
+        execution_policy["bind_cpu_id"].value<std::int64_t>();
+    if (!bind_cpu_id) {
+      Fail("execution_policy.bind_cpu_id", " is required");
+      return;
+    }
+    config_.execution_policy.bind_cpu_id = static_cast<int>(*bind_cpu_id);
+
+    const std::optional<std::string> affinity_mode =
+        execution_policy["affinity_mode"].value<std::string>();
+    if (affinity_mode) {
+      const std::optional<websocket::AffinityMode> parsed =
+          ParseAffinityMode(*affinity_mode);
+      if (!parsed) {
+        Fail("execution_policy.affinity_mode",
+             " must be one of none, best_effort, required");
+        return;
+      }
+      config_.execution_policy.affinity_mode = *parsed;
+    }
+
+    config_.execution_policy.lock_memory =
+        BoolOr(execution_policy["lock_memory"],
+               config_.execution_policy.lock_memory);
+    config_.execution_policy.prefault_stack =
+        BoolOr(execution_policy["prefault_stack"],
+               config_.execution_policy.prefault_stack);
+    config_.execution_policy.active_spin =
+        BoolOr(execution_policy["active_spin"],
+               config_.execution_policy.active_spin);
+    config_.execution_policy.spin_iterations_before_clock_check =
+        UInt32Or(execution_policy["spin_iterations_before_clock_check"],
+                 config_.execution_policy.spin_iterations_before_clock_check);
   }
-  if (config.execution_policy.bind_cpu_id < 0) {
-    *error = "execution_policy.bind_cpu_id is required";
-    return false;
+
+  void ParseReadPath() {
+    const toml::node_view<const toml::node> read_path = node_["read_path"];
+    config_.read_path.max_reads_per_drive =
+        UInt32Or(read_path["max_reads_per_drive"],
+                 config_.read_path.max_reads_per_drive);
+    config_.read_path.read_until_would_block =
+        BoolOr(read_path["read_until_would_block"],
+               config_.read_path.read_until_would_block);
   }
-  if (config.execution_policy.spin_iterations_before_clock_check == 0) {
-    *error =
-        "execution_policy.spin_iterations_before_clock_check must be positive";
-    return false;
+
+  void ParseHeartbeat() {
+    const toml::node_view<const toml::node> heartbeat = node_["heartbeat"];
+    config_.heartbeat.interval_ms =
+        UInt32Or(heartbeat["interval_ms"], config_.heartbeat.interval_ms);
+    config_.heartbeat.timeout_ms =
+        UInt32Or(heartbeat["timeout_ms"], config_.heartbeat.timeout_ms);
   }
-  if (config.read_path.max_reads_per_drive == 0) {
-    *error = "read_path.max_reads_per_drive must be positive";
-    return false;
+
+  void ParseReconnect() {
+    const toml::node_view<const toml::node> reconnect = node_["reconnect"];
+    config_.reconnect.enabled =
+        BoolOr(reconnect["enabled"], config_.reconnect.enabled);
+    config_.reconnect.initial_backoff_ms =
+        UInt32Or(reconnect["initial_backoff_ms"],
+                 config_.reconnect.initial_backoff_ms);
+    config_.reconnect.max_backoff_ms =
+        UInt32Or(reconnect["max_backoff_ms"],
+                 config_.reconnect.max_backoff_ms);
+    config_.reconnect.backoff_shift_bits =
+        UInt32Or(reconnect["backoff_shift_bits"],
+                 config_.reconnect.backoff_shift_bits);
+    config_.reconnect.jitter_percent =
+        UInt32Or(reconnect["jitter_percent"], config_.reconnect.jitter_percent);
+    config_.reconnect.max_attempts =
+        UInt32Or(reconnect["max_attempts"], config_.reconnect.max_attempts);
   }
-  if (config.heartbeat.interval_ms == 0 || config.heartbeat.timeout_ms == 0 ||
-      config.heartbeat.timeout_ms <= config.heartbeat.interval_ms) {
-    *error = "heartbeat.timeout_ms must be greater than heartbeat.interval_ms";
-    return false;
+
+  void Fail(std::string_view name, std::string_view message) {
+    ok_ = false;
+    error_.assign(name);
+    error_.append(message);
   }
-  if (config.reconnect.initial_backoff_ms == 0 ||
-      config.reconnect.max_backoff_ms == 0 ||
-      config.reconnect.max_backoff_ms < config.reconnect.initial_backoff_ms) {
-    *error = "invalid reconnect backoff window";
-    return false;
-  }
-  if (config.reconnect.backoff_shift_bits > 31) {
-    *error = "reconnect.backoff_shift_bits is out of range";
-    return false;
-  }
-  if (config.reconnect.jitter_percent > 100) {
-    *error = "reconnect.jitter_percent is out of range";
-    return false;
-  }
-  return true;
-}
+
+  toml::node_view<const toml::node> node_;
+  WebSocketConfig config_;
+  std::string error_;
+  bool ok_{true};
+};
 
 }  // namespace
 
 WebSocketConfigResult ParseWebSocketConfig(
     toml::node_view<const toml::node> node) {
-  std::string error;
-  if (!RequireTable(node, "data_session.websocket", &error)) {
-    return ConfigFailure(std::move(error));
-  }
-
-  const toml::node_view<const toml::node> endpoint_node = node["endpoint"];
-  if (!RequireTable(endpoint_node, "data_session.websocket.endpoint", &error)) {
-    return ConfigFailure(std::move(error));
-  }
-
-  const toml::node_view<const toml::node> execution_policy_node =
-      node["execution_policy"];
-  if (!RequireTable(execution_policy_node,
-                    "data_session.websocket.execution_policy", &error)) {
-    return ConfigFailure(std::move(error));
-  }
-
-  WebSocketConfig config;
-  if (!ParseEndpoint(endpoint_node, &config.endpoint, &error)) {
-    return ConfigFailure(std::move(error));
-  }
-  if (!ParseExecutionPolicy(execution_policy_node, &config.execution_policy,
-                            &error)) {
-    return ConfigFailure(std::move(error));
-  }
-
-  const toml::node_view<const toml::node> read_path_node = node["read_path"];
-  if (read_path_node) {
-    if (!RequireTable(read_path_node, "data_session.websocket.read_path",
-                      &error) ||
-        !ParseReadPath(read_path_node, &config.read_path, &error)) {
-      return ConfigFailure(std::move(error));
-    }
-  }
-
-  const toml::node_view<const toml::node> heartbeat_node = node["heartbeat"];
-  if (heartbeat_node) {
-    if (!RequireTable(heartbeat_node, "data_session.websocket.heartbeat",
-                      &error) ||
-        !ParseHeartbeat(heartbeat_node, &config.heartbeat, &error)) {
-      return ConfigFailure(std::move(error));
-    }
-  }
-
-  const toml::node_view<const toml::node> reconnect_node = node["reconnect"];
-  if (reconnect_node) {
-    if (!RequireTable(reconnect_node, "data_session.websocket.reconnect",
-                      &error) ||
-        !ParseReconnect(reconnect_node, &config.reconnect, &error)) {
-      return ConfigFailure(std::move(error));
-    }
-  }
-
-  if (!ValidateWebSocketConfig(config, &error)) {
-    return ConfigFailure(std::move(error));
-  }
-  return ConfigSuccess(std::move(config));
+  return WebSocketConfigParser{node}.Parse();
 }
 
 ConnectionConfigResult ToConnectionConfig(const WebSocketConfig& config,
                                           std::string target) {
-  std::string error;
   if (target.empty()) {
     return ConnectionFailure("websocket target must be a non-empty string");
-  }
-  if (!ValidateWebSocketConfig(config, &error)) {
-    return ConnectionFailure(std::move(error));
   }
 
   websocket::ConnectionConfig connection;

@@ -170,6 +170,10 @@ Binance futures 行情字段：
 冷路径把配置层结构转换为 `websocket::ConnectionConfig`。解析失败时返回错误字符串；如果
 nova log 已初始化，会通过 `NOVA_ERROR` 输出诊断。
 
+parser 只做启动配置需要的最低限度解析约束：`endpoint.host` 和
+`execution_policy.bind_cpu_id` 必须显式配置，`affinity_mode` 必须能映射到已知枚举值。
+其他可选字段缺省时使用默认值，不在 parser 中重复做运行期防御性校验。
+
 配置位置：
 
 ```toml

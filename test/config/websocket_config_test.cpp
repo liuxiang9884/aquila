@@ -231,7 +231,7 @@ affinity_mode = "strict"
   EXPECT_NE(result.error.find("affinity_mode"), std::string::npos);
 }
 
-TEST(WebSocketConfigTest, RejectsInvalidHeartbeatWindow) {
+TEST(WebSocketConfigTest, ParsesHeartbeatWindowWithoutExtraValidation) {
   const auto result = ParseWebSocketToml(R"toml(
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
@@ -244,8 +244,9 @@ interval_ms = 5000
 timeout_ms = 5000
 )toml");
 
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("heartbeat"), std::string::npos);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.config.heartbeat.interval_ms, 5000u);
+  EXPECT_EQ(result.config.heartbeat.timeout_ms, 5000u);
 }
 
 }  // namespace
