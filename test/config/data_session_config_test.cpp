@@ -103,16 +103,13 @@ TEST(DataSessionConfigTest, CreatesDataSessionFromConfigAndCatalog) {
   } consumer;
 
   using Session =
-      aquila::gate::DataSession<Consumer, aquila::websocket::PlainSocket,
-                                aquila::gate::NoopFuturesMarketDataDiagnostics,
-                                aquila::websocket::DefaultWebSocketOptions,
-                                aquila::gate::DataSessionDiagnostics>;
+      aquila::gate::DataSession<Consumer,
+                                aquila::gate::DefaultPlainWebSocketPolicy,
+                                aquila::gate::SessionOnlyDiagnosticsPolicy>;
   const auto session_result = aquila::gate::CreateDataSession<
-      Consumer, aquila::websocket::PlainSocket,
-      aquila::gate::NoopFuturesMarketDataDiagnostics,
-      aquila::websocket::DefaultWebSocketOptions,
-      aquila::gate::DataSessionDiagnostics>(config_result.config.data_session,
-                                            catalog_result.catalog, consumer);
+      Consumer, aquila::gate::DefaultPlainWebSocketPolicy,
+      aquila::gate::SessionOnlyDiagnosticsPolicy>(
+      config_result.config.data_session, catalog_result.catalog, consumer);
 
   ASSERT_TRUE(session_result.ok) << session_result.error;
   static_assert(std::is_same_v<decltype(*session_result.session), Session&>);
@@ -157,9 +154,9 @@ TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   struct Consumer {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
   } consumer;
-  const auto session_result =
-      aquila::gate::CreateDataSession<Consumer, aquila::websocket::PlainSocket>(
-          config.data_session, catalog_result.catalog, consumer);
+  const auto session_result = aquila::gate::CreateDataSession<
+      Consumer, aquila::gate::DefaultPlainWebSocketPolicy>(
+      config.data_session, catalog_result.catalog, consumer);
   ASSERT_FALSE(session_result.ok);
   EXPECT_NE(session_result.error.find("MISSING_USDT"), std::string::npos);
 }

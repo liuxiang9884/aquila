@@ -124,6 +124,29 @@ class DataSessionDiagnostics {
   DataSessionStats stats_{};
 };
 
+struct DefaultTlsWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = websocket::TlsSocket;
+};
+
+struct DefaultPlainWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = websocket::PlainSocket;
+};
+
+struct NoopDataSessionDiagnosticsPolicy {
+  using MarketDataDiagnostics = NoopFuturesMarketDataDiagnostics;
+  using SessionDiagnostics = NoopDataSessionDiagnostics;
+};
+
+struct SessionOnlyDiagnosticsPolicy {
+  using MarketDataDiagnostics = NoopFuturesMarketDataDiagnostics;
+  using SessionDiagnostics = DataSessionDiagnostics;
+};
+
+struct DataSessionDiagnosticsPolicy {
+  using MarketDataDiagnostics = FuturesMarketDataDiagnostics;
+  using SessionDiagnostics = DataSessionDiagnostics;
+};
+
 namespace detail {
 
 inline std::string BuildDataSessionTarget(const DataSessionConfig& config) {
@@ -164,18 +187,23 @@ inline std::vector<SymbolBinding> BuildOwnedSymbolBindings(
 
 }  // namespace detail
 
-template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
-          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
-          typename OptionsT = websocket::DefaultWebSocketOptions,
-          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+template <typename Consumer,
+          typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
+          typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
 class DataSession {
  public:
+  using TransportSocket = typename WebSocketPolicy::TransportSocket;
+  using MarketDataDiagnostics =
+      typename DiagnosticsPolicy::MarketDataDiagnostics;
+  using SessionDiagnostics = typename DiagnosticsPolicy::SessionDiagnostics;
   using MessageHandler = websocket::MessageHandlerRef<DataSession>;
   using Client =
-      websocket::BasicWebSocketClient<TransportSocketT, MessageHandler>;
-  static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
+      websocket::BasicWebSocketClient<TransportSocket, MessageHandler>;
+  static constexpr bool TransportUsesTls = TransportSocket::kUsesTls;
+  static constexpr websocket::ClockSource kClockSource =
+      WebSocketPolicy::kClockSource;
   static constexpr bool SessionDiagnosticsEnabled =
-      SessionDiagnosticsT::kEnabled;
+      SessionDiagnostics::kEnabled;
 
   DataSession(websocket::ConnectionConfig config,
               std::span<const SymbolBinding> symbols, Consumer& consumer)
@@ -315,7 +343,7 @@ class DataSession {
     return session_diagnostics_.stats();
   }
 
-  [[nodiscard]] const DiagnosticsT& market_data_client_diagnostics()
+  [[nodiscard]] const MarketDataDiagnostics& market_data_client_diagnostics()
       const noexcept {
     return market_data_client_.diagnostics();
   }
@@ -524,40 +552,37 @@ class DataSession {
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
   std::atomic<bool> ever_active_{false};
-  FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
+  FuturesMarketDataClient<Consumer, MarketDataDiagnostics, WebSocketPolicy>
+      market_data_client_;
   MessageHandler message_handler_;
   Client client_;
-  [[no_unique_address]] SessionDiagnosticsT session_diagnostics_{};
+  [[no_unique_address]] SessionDiagnostics session_diagnostics_{};
   simdjson::ondemand::parser text_parser_;
   BookTickerSubscriptionController subscription_controller_;
   inline static std::atomic<DataSession*> active_stop_session_{nullptr};
 };
 
-template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
-          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
-          typename OptionsT = websocket::DefaultWebSocketOptions,
-          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+template <typename Consumer,
+          typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
+          typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
 struct DataSessionCreateResult {
-  using Session = DataSession<Consumer, TransportSocketT, DiagnosticsT,
-                              OptionsT, SessionDiagnosticsT>;
+  using Session = DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>;
 
   std::unique_ptr<Session> session;
   std::string error;
   bool ok{false};
 };
 
-template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
-          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
-          typename OptionsT = websocket::DefaultWebSocketOptions,
-          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
-[[nodiscard]] DataSessionCreateResult<Consumer, TransportSocketT, DiagnosticsT,
-                                      OptionsT, SessionDiagnosticsT>
+template <typename Consumer,
+          typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
+          typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
+[[nodiscard]] DataSessionCreateResult<Consumer, WebSocketPolicy,
+                                      DiagnosticsPolicy>
 CreateDataSession(const DataSessionConfig& session_config,
                   const config::InstrumentCatalog& catalog,
                   Consumer& consumer) {
   using Result =
-      DataSessionCreateResult<Consumer, TransportSocketT, DiagnosticsT,
-                              OptionsT, SessionDiagnosticsT>;
+      DataSessionCreateResult<Consumer, WebSocketPolicy, DiagnosticsPolicy>;
   Result result;
   if (session_config.feed != "book_ticker" ||
       session_config.wire_format != "sbe") {

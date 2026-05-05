@@ -214,7 +214,7 @@ benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp
 
 ```cpp
 aquila::gate::DataSession<
-    Consumer, TransportSocketT, DiagnosticsT, OptionsT, SessionDiagnosticsT>
+    Consumer, WebSocketPolicy, DiagnosticsPolicy>
 ```
 
 功能边界：
@@ -227,7 +227,7 @@ aquila::gate::DataSession<
 6. text control parser 使用复用的 `simdjson::ondemand::parser text_parser_`。
 7. 如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，text parser 直接使用 zero-copy padded view；否则 fallback 到 `simdjson::padded_string` scratch copy。
 8. session 转发 state/error handler，暴露 `DataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
-9. `DataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `SessionDiagnosticsT = NoopDataSessionDiagnostics`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `DataSessionDiagnostics`。
+9. `DataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `SessionOnlyDiagnosticsPolicy` 或 `DataSessionDiagnosticsPolicy`。
 10. text control envelope parser 已拆到 `text_envelope_parser.h`，订阅状态机已拆到 `subscription_controller.h`，session 只保留收包分流、订阅请求发送和 client 组合。
 
 注意：

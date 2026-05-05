@@ -104,7 +104,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/sbe/book_ticker_decoder.h` | Gate BBO payload -> `aquila::BookTicker` decode。 |
 | `exchange/gate/market_data/subscription.h` | `futures.book_ticker` subscribe/unsubscribe JSON 构造。 |
 | `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
-| `exchange/gate/market_data/data_session.h` | `DataSession<Consumer, TransportSocketT>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
+| `exchange/gate/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
 | `tools/gate_data_session.cpp` | Gate data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Binance USD-M futures 行情
@@ -262,7 +262,7 @@ DataSession::Handle(binary MessageView)
 关键约束：
 
 - `FuturesMarketDataClient<Consumer>` 使用纯模板组合，热路径不引入虚函数或 `std::function`。
-- `DataSession<Consumer, TransportSocketT>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
+- `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
 - core WebSocket 层负责 frame/message 完整性；exchange session 不再为外部 non-final `MessageView` 做兼容统计。
 - session 处理 subscribe/unsubscribe ack/error text frame；binary SBE frame 进入 client 快路径。
 - text JSON 使用 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes` 满足 `simdjson::SIMDJSON_PADDING`，直接用 padded view，否则 fallback 到 `simdjson::padded_string`。

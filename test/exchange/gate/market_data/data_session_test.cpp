@@ -49,26 +49,22 @@ struct RecordingConsumer {
   }
 };
 
-struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
+struct CoarseClockWebSocketPolicy : aquila::gate::DefaultTlsWebSocketPolicy {
   static constexpr aquila::websocket::ClockSource kClockSource =
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
 using DefaultNoStatsSession = aquila::gate::DataSession<RecordingConsumer>;
 using Session =
-    aquila::gate::DataSession<RecordingConsumer, aquila::websocket::TlsSocket,
-                              aquila::gate::NoopFuturesMarketDataDiagnostics,
-                              aquila::websocket::DefaultWebSocketOptions,
-                              aquila::gate::DataSessionDiagnostics>;
+    aquila::gate::DataSession<RecordingConsumer,
+                              aquila::gate::DefaultTlsWebSocketPolicy,
+                              aquila::gate::SessionOnlyDiagnosticsPolicy>;
 using DiagnosticSession =
-    aquila::gate::DataSession<RecordingConsumer, aquila::websocket::TlsSocket,
-                              aquila::gate::FuturesMarketDataDiagnostics,
-                              aquila::websocket::DefaultWebSocketOptions,
-                              aquila::gate::DataSessionDiagnostics>;
+    aquila::gate::DataSession<RecordingConsumer,
+                              aquila::gate::DefaultTlsWebSocketPolicy,
+                              aquila::gate::DataSessionDiagnosticsPolicy>;
 using CoarseClockSession =
-    aquila::gate::DataSession<RecordingConsumer, aquila::websocket::TlsSocket,
-                              aquila::gate::NoopFuturesMarketDataDiagnostics,
-                              CoarseClockOptions>;
+    aquila::gate::DataSession<RecordingConsumer, CoarseClockWebSocketPolicy>;
 
 static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
 static_assert(Session::SessionDiagnosticsEnabled);

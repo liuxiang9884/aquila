@@ -49,22 +49,18 @@ void PrintSession(const SessionT& session) {
   }
 }
 
-template <typename TransportSocketT>
+template <typename WebSocketPolicy>
 int CreateAndMaybeRun(const aq_gate::DataSessionConfig& data_session_config,
                       const config::InstrumentCatalog& catalog, bool connect) {
-  using Session = aq_gate::DataSession<
-      CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions, aq_gate::DataSessionDiagnostics>;
+  using Session = aq_gate::DataSession<CountingConsumer, WebSocketPolicy,
+                                       aq_gate::DataSessionDiagnosticsPolicy>;
 
   CountingConsumer consumer;
-  aq_gate::DataSessionCreateResult<
-      CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions, aq_gate::DataSessionDiagnostics>
+  aq_gate::DataSessionCreateResult<CountingConsumer, WebSocketPolicy,
+                                   aq_gate::DataSessionDiagnosticsPolicy>
       session_result =
-          aq_gate::CreateDataSession<CountingConsumer, TransportSocketT,
-                                     aq_gate::FuturesMarketDataDiagnostics,
-                                     ws::DefaultWebSocketOptions,
-                                     aq_gate::DataSessionDiagnostics>(
+          aq_gate::CreateDataSession<CountingConsumer, WebSocketPolicy,
+                                     aq_gate::DataSessionDiagnosticsPolicy>(
               data_session_config, catalog, consumer);
   if (!session_result.ok) {
     NOVA_ERROR("config_error={}", session_result.error);
@@ -131,9 +127,9 @@ int main(int argc, char** argv) {
   }
 
   if (config_result.config.data_session.websocket.endpoint.enable_tls) {
-    return CreateAndMaybeRun<ws::TlsSocket>(config_result.config.data_session,
-                                            catalog_result.catalog, connect);
+    return CreateAndMaybeRun<aq_gate::DefaultTlsWebSocketPolicy>(
+        config_result.config.data_session, catalog_result.catalog, connect);
   }
-  return CreateAndMaybeRun<ws::PlainSocket>(config_result.config.data_session,
-                                            catalog_result.catalog, connect);
+  return CreateAndMaybeRun<aq_gate::DefaultPlainWebSocketPolicy>(
+      config_result.config.data_session, catalog_result.catalog, connect);
 }

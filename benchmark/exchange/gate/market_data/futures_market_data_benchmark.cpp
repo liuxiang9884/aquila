@@ -13,7 +13,7 @@
 #include "core/websocket/message_view.h"
 #include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
 #include "exchange/gate/market_data/client.h"
-#include "exchange/gate/market_data/session.h"
+#include "exchange/gate/market_data/data_session.h"
 #include "exchange/gate/sbe/book_ticker_decoder.h"
 #include <simdjson.h>
 
@@ -58,10 +58,9 @@ struct CountingConsumer {
   }
 };
 
-using InstrumentedPlainSession = aq_gate::FuturesMarketDataSession<
-    CountingConsumer, ws::PlainSocket,
-    aq_gate::NoopFuturesMarketDataDiagnostics, ws::DefaultWebSocketOptions,
-    aq_gate::FuturesMarketDataSessionDiagnostics>;
+using InstrumentedPlainSession =
+    aq_gate::DataSession<CountingConsumer, aq_gate::DefaultPlainWebSocketPolicy,
+                         aq_gate::SessionOnlyDiagnosticsPolicy>;
 
 struct SymbolSet {
   std::vector<std::string> storage;
@@ -93,6 +92,7 @@ ws::ConnectionConfig BuildConnectionConfig() {
   config.host = "localhost";
   config.service = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
+  config.enable_tls = false;
   return config;
 }
 
@@ -243,9 +243,10 @@ void BenchmarkSessionHandleBinary(benchmark::State& state) {
   const size_t symbol_count = static_cast<size_t>(state.range(0));
   SymbolSet symbols = BuildSymbols(symbol_count);
   CountingConsumer consumer;
-  aq_gate::FuturesMarketDataSession<CountingConsumer, ws::PlainSocket> session(
-      BuildConnectionConfig(),
-      std::span<const aq_gate::SymbolBinding>(symbols.bindings), consumer);
+  aq_gate::DataSession<CountingConsumer, aq_gate::DefaultPlainWebSocketPolicy>
+      session(BuildConnectionConfig(),
+              std::span<const aq_gate::SymbolBinding>(symbols.bindings),
+              consumer);
   std::array<char, 192> buffer{};
   const std::string_view payload =
       BuildBookTickerPayload(&buffer, symbols.target_symbol);
