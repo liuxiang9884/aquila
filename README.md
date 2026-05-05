@@ -1,6 +1,6 @@
 # aquila
 
-`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片包括低延迟 WebSocket client、Gate futures SBE BBO 行情、Binance USD-M futures JSON bookTicker 行情、交易所 benchmark / live probe，以及 Gate / Binance 期货合约元数据查询脚本。WebSocket 冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
+`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片包括低延迟 WebSocket client、Gate futures SBE BBO 行情、Binance USD-M futures JSON bookTicker 行情、data session config / tools、交易所 benchmark / live probe，以及 Gate / Binance 期货合约元数据查询脚本。WebSocket 冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
 
 ## 构建依赖
 
@@ -209,6 +209,17 @@ timeout 15s ./build/debug/tools/websocket_probe \
 ```
 
 probe 用于验证 cold path 能进入 active state，并输出 state transition、错误码和最终 metrics。它不是长稳健康监控工具。
+
+Data session config dry-run：
+
+```bash
+./build/debug/tools/gate_data_session
+./build/debug/tools/binance_data_session
+```
+
+仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
+`enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置
+`enable_tls = false`。
 
 Binance USD-M futures bookTicker live probe：
 

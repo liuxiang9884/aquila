@@ -7,14 +7,14 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、market data session、benchmark 和 live probe 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、benchmark、live probe 和每进程 data session config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
 
 ## 最近已完成
 
-截至 2026-05-02，`main` 已完成并准备同步到 `origin/main` 的主要内容：
+截至 2026-05-05，`main` 已完成的主要内容：
 
 1. Gate / Binance market data 热路径防御性分支收口。
 2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
@@ -22,7 +22,9 @@
 4. 新增 header-only `aquila_evaluation` target，只允许 test / benchmark 使用。
 5. Gate / Binance 期货合约元数据脚本已按统一一类下单前字段输出 `pandas.DataFrame`。
 6. `doc/futures_contract_metadata_fields.md` 已记录字段含义、交易所映射和当前空值语义。
-7. `README.md`、本 onboarding、Gate / Binance handoff 和 evaluation 文档已按当前实现边界对齐。
+7. Gate / Binance data session TOML parser 和启动 tools 已落地，tools source 已按 `tools/gate/`、`tools/binance/`、`tools/websocket/` 归类。
+8. 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此 `enable_tls = true`；private link / plain WS 部署需要替换 private endpoint 并设置 `enable_tls = false`。
+9. `README.md`、本 onboarding、Gate / Binance handoff、data session config 和 evaluation 文档已按当前实现边界对齐。
 
 ## 新对话第一步
 
@@ -265,7 +267,7 @@ DataSession::Handle(binary MessageView)
 关键约束：
 
 - `FuturesMarketDataClient<Consumer>` 使用纯模板组合，热路径不引入虚函数或 `std::function`。
-- `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
+- `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()` / `Run()`，其中 `Run()` 在 session 内部安装 SIGINT / SIGTERM stop handler。
 - core WebSocket 层负责 frame/message 完整性；exchange session 不再为外部 non-final `MessageView` 做兼容统计。
 - session 处理 subscribe/unsubscribe ack/error text frame；binary SBE frame 进入 client 快路径。
 - text JSON 使用 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes` 满足 `simdjson::SIMDJSON_PADDING`，直接用 padded view，否则 fallback 到 `simdjson::padded_string`。
@@ -388,9 +390,10 @@ Gate submit response parser benchmark：
 taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_response_parse_benchmark --benchmark_filter='gate_submit_response_parse_order_place_ack_echo_simdjson_ack_minimal_padded_view/' --benchmark_repetitions=5 --benchmark_report_aggregates_only=true
 ```
 
-Gate BBO live probe：
+Gate data session dry-run / BBO live probe：
 
 ```bash
+./build/debug/tools/gate_data_session
 ./build/debug/tools/gate_futures_book_ticker_probe --contract BTC_USDT --symbol-id 1 --duration-ms 10000
 ```
 

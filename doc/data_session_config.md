@@ -13,6 +13,7 @@ order management 和 order execution 归属于 `Strategy` 模块。
 3. TOML 只写连接之间必须不同或最常改的字段。
 4. loader 对缺省字段填统一默认值，并在启动冷路径生成 `DataSession` 可直接消费的运行期 config。
 5. WebSocket `target` 不写在配置里，由具体交易所的 data session config parser 按协议生成。
+6. tools 根据 `enable_tls` 选择 TLS 或 plain WebSocket policy，生产路径不在同一个 binary 中硬编码协议。
 
 ## 实现依赖边界
 
@@ -85,6 +86,11 @@ enable_tls = true
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2
 ```
+
+仓库内示例配置指向 Gate 公网行情 endpoint，语义是
+`wss://fx-ws.gateio.ws:443/v4/ws/usdt/sbe?sbe_schema_id=1`。如果生产部署使用
+Gate private link / plain WS，需要同时替换为 private host / service，并显式设置
+`enable_tls = false`；不要把公网 `fx-ws.gateio.ws:443` 和 `enable_tls = false` 组合使用。
 
 ## Binance 行情进程示例
 
@@ -185,6 +191,13 @@ WebSocket config 和 instrument catalog 这类交易所无关配置。
 ./build/debug/tools/gate_data_session --connect
 ```
 
+当前 `gate_data_session` tool 会：
+
+1. 调用 `LoadDataSessionConfigFile()` 读取 TOML 和 CSV。
+2. 在启动冷路径生成 `DataSessionConfig`，包括 `ConnectionConfig`、target、exchange symbol 列表和 symbol id 列表。
+3. 根据 `connection.enable_tls` 选择 `DefaultTlsWebSocketPolicy` 或 `DefaultPlainWebSocketPolicy`。
+4. `--connect` 模式调用 `DataSession::Run()`；`Run()` 在 session 内部安装 SIGINT / SIGTERM stop handler，使 active spin loop 通过 `Stop()` 退出。
+
 Binance futures 行情字段：
 
 | 字段 | 默认值 | 含义 |
@@ -218,6 +231,11 @@ Binance config parser 读取 `instrument_catalog` 和 `subscribe_symbols` 后按
 ./build/debug/tools/binance_data_session --connect
 ```
 
+当前 `binance_data_session` tool 与 Gate tool 保持相同的冷路径流程：先解析 TOML 和 CSV，
+生成 `DataSessionConfig`，再按 `connection.enable_tls` 选择 WebSocket policy。Binance raw
+stream target 在 parser / session 构造阶段由 exchange symbol 列表生成，active 后不发送 runtime
+subscribe。
+
 ## WebSocket Endpoint
 
 当前 C++ 实现入口是 `core/config/websocket_config.h` / `core/config/websocket_config.cpp`。
@@ -244,8 +262,17 @@ enable_tls = true
 | `enable_tls` | `true` | `ConnectionConfig.enable_tls` | 是否使用 TLS。 |
 | `connect_timeout_ms` | `10000` | `ConnectionConfig.cold_path_total_timeout_ms` | DNS + TCP + TLS + WebSocket handshake 总超时。 |
 
-Gate private link 部署可显式设置 `enable_tls = false`。公网 `wss://` 连接应保留默认
-`enable_tls = true`，或显式写成 `true`。
+`enable_tls` 表示当前 WebSocket 物理连接是否走 TLS；tool 会用它选择编译期
+`DefaultTlsWebSocketPolicy` 或 `DefaultPlainWebSocketPolicy`。典型组合如下：
+
+| 场景 | host / service | `enable_tls` | 协议语义 |
+| --- | --- | --- | --- |
+| Gate 公网行情 | `fx-ws.gateio.ws` / `443` | `true` | `wss://fx-ws.gateio.ws:443/...` |
+| Gate private link plain WS | private host / plain WS port | `false` | `ws://<private-host>:<port>/...` |
+| Binance 公网行情 | `fstream.binance.com` / `443` | `true` | `wss://fstream.binance.com:443/...` |
+
+因此 Gate public config 应保留默认 `enable_tls = true`，或显式写成 `true`。Gate private link
+部署可以显式设置 `enable_tls = false`，但必须同时使用对应 private endpoint。
 
 `target` 不属于 endpoint 默认字段，由 data session config parser 在冷路径生成。例如 Gate SBE 行情由
 `settle`、`wire_format` 和 `sbe_schema_id` 生成；Binance book ticker 由 `subscribe_symbols`
@@ -335,6 +362,7 @@ max_backoff_ms = 30000
    `data_session.websocket.reconnect` 覆盖默认值。
 3. 最后由具体交易所的 data session config parser 生成 `target`、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表。
 4. 生产启动时每个进程只加载自己的 data session TOML，不把其他进程的 session 放入同一份配置。
+5. 启动 tool 按最终 `ConnectionConfig.enable_tls` 选择 TLS / plain WebSocket policy；session 本身只消费已经生成好的 config。
 
 生产 tool 的构造输入是：
 

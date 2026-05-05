@@ -48,7 +48,7 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 
 当前已经先以 Gate futures `bbo` / `futures.book_ticker` 为样例完成行情接入骨架。这部分不是交易回报实现，但它验证了 SBE schema、生成代码、message dispatch、BBO decode、统一 `BookTicker` 数据结构、market data client、market data session 和 WebSocket typed handler 之间的边界。
 
-2026-05-02 当前收口：
+2026-05-05 当前收口：
 
 1. `DataSession` 已落地，负责连接生命周期、订阅控制 text frame、SBE binary frame 分流和统计。
 2. WebSocket 内核新增模板化 typed message handler path；`MessageCallback` 保留给工具和旧测试。
@@ -56,6 +56,7 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 4. production / 系统内部 JSON parser 统一为 `simdjson::ondemand`；`yyjson` 只保留在 submit response benchmark 中做对照。
 5. Gate BBO 行情 client 热路径使用 trusted symbol extract / trusted decode；schema/template、payload shape、symbol config 和 BBO `event=Update` 作为协议不变量，debug 下 assert，release 主路径不再保留 unknown-symbol / decode-failure 诊断分支。
 6. client/session 构造期使用 symbol span 构建 lookup / subscription views，构造后不保存无用 `symbols_` span。
+7. Gate data session TOML parser 已在启动冷路径加载 `instrument_catalog` 和 `subscribe_symbols`，生成 `DataSessionConfig`、WebSocket target、exchange symbol 列表和 symbol id 列表；tool 根据 `enable_tls` 选择 TLS 或 plain WebSocket policy。
 
 ### Core 数据类型
 
@@ -219,14 +220,14 @@ aquila::gate::DataSession<
 
 功能边界：
 
-1. session 不在内部创建线程；调用方决定在哪个线程调用 `Start()` / `Stop()`。
+1. session 不在内部创建线程；调用方决定在哪个线程调用 `Start()` / `Run()` / `Stop()`，其中 `Run()` 在 session 内部安装 SIGINT / SIGTERM stop handler。
 2. active 后自动发送 `futures.book_ticker` subscribe；支持显式 `RequestUnsubscribe()`。
 3. core WebSocket 层负责 frame/message 完整性；exchange session 不再处理外部 non-final `MessageView`。
 4. binary frame 走 BBO/SBE 快路径。
 5. text frame 只处理 subscribe/unsubscribe ack/error，以及 JSON market data update 计数；当前不把 JSON market data 转成 `BookTicker`。
 6. text control parser 使用复用的 `simdjson::ondemand::parser text_parser_`。
 7. 如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，text parser 直接使用 zero-copy padded view；否则 fallback 到 `simdjson::padded_string` scratch copy。
-8. session 转发 state/error handler，暴露 `DataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
+8. session 内部通过 WebSocket state hook 处理 active 后订阅和 `ever_active` 状态；外部不再设置 state/error handler。
 9. `DataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `SessionOnlyDiagnosticsPolicy` 或 `DataSessionDiagnosticsPolicy`。
 10. text control envelope parser 已拆到 `text_envelope_parser.h`，订阅状态机已拆到 `subscription_controller.h`，session 只保留收包分流、订阅请求发送和 client 组合。
 
@@ -349,6 +350,9 @@ symbol_id=1
 duration_ms=1800000
 tls=true
 ```
+
+上述默认参数是 Gate 公网 `wss://` 路径。若使用 Gate private link / plain WS，应使用 private
+host / service，并显式关闭 TLS；不要把公网 `fx-ws.gateio.ws:443` 与 plain WS 混用。
 
 probe 行为：
 
@@ -826,6 +830,10 @@ strategy-trade-process
 config/data_sessions/gate_data_session.toml
 config/data_sessions/binance_data_session.toml
 ```
+
+当前仓库内 `config/data_sessions/gate_data_session.toml` 指向 Gate 公网行情 endpoint，因此
+`enable_tls = true`。private link 部署应使用独立配置或部署覆盖，至少同时替换 host / service
+和 `enable_tls`。
 
 ## 待讨论 / 待验证
 

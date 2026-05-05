@@ -56,6 +56,13 @@ aquila::binance::DataSession<
 test / text-control benchmark 可显式启用 `SessionOnlyDiagnosticsPolicy` 或
 `DataSessionDiagnosticsPolicy`。
 
+当前 `config/data_sessions/binance_data_session.toml` 是单进程单 session 配置。Binance
+data session config parser 在启动冷路径加载 `instrument_catalog` 和 `subscribe_symbols`，
+按 `Exchange::kBinance` 生成 `DataSessionConfig`、raw stream target 所需的 exchange symbol
+列表和 symbol id 列表。`binance_data_session` tool 根据 `connection.enable_tls` 选择 TLS 或
+plain WebSocket policy；`--connect` 模式调用 `DataSession::Run()`，由 session 内部安装
+SIGINT / SIGTERM stop handler。
+
 ## Binance 合约元数据脚本
 
 `scripts/binance/query_um_futures_contracts.py` 查询 USD-M futures `GET /fapi/v1/exchangeInfo`，按输入 symbol 顺序生成 `pandas.DataFrame`；CLI 支持一个或多个 symbol，也支持 `--file`，文件内每行一个 symbol。脚本把 `settle_asset` 映射为 `marginAsset`；当前使用约定是调用方只传 USDT settled symbols。
@@ -168,10 +175,11 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 
-data session dry-run / live probe：
+data session dry-run / connect / live probe：
 
 ```bash
 ./build/release/tools/binance_data_session
+./build/release/tools/binance_data_session --connect
 ./build/release/tools/binance_futures_book_ticker_probe --contract BTCUSDT --symbol-id 1 --duration-ms 10000 --cpu 2
 ```
 
