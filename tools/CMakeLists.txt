@@ -1,5 +1,5 @@
 add_executable(websocket_probe
-    websocket_probe.cpp
+    websocket/probe.cpp
 )
 
 target_link_libraries(websocket_probe
@@ -11,7 +11,7 @@ target_link_libraries(websocket_probe
 )
 
 add_executable(gate_futures_book_ticker_probe
-    gate_futures_book_ticker_probe.cpp
+    gate/futures_book_ticker_probe.cpp
 )
 
 target_link_libraries(gate_futures_book_ticker_probe
@@ -24,7 +24,7 @@ target_link_libraries(gate_futures_book_ticker_probe
 )
 
 add_executable(gate_data_session
-    gate_data_session.cpp
+    gate/data_session.cpp
 )
 
 target_link_libraries(gate_data_session
@@ -38,7 +38,7 @@ target_link_libraries(gate_data_session
 )
 
 add_executable(binance_data_session
-    binance_data_session.cpp
+    binance/data_session.cpp
 )
 
 target_link_libraries(binance_data_session
@@ -52,7 +52,7 @@ target_link_libraries(binance_data_session
 )
 
 add_executable(binance_futures_book_ticker_probe
-    binance_futures_book_ticker_probe.cpp
+    binance/futures_book_ticker_probe.cpp
 )
 
 target_link_libraries(binance_futures_book_ticker_probe
@@ -65,7 +65,7 @@ target_link_libraries(binance_futures_book_ticker_probe
 )
 
 add_executable(websocket_latency_compare
-    websocket_latency_compare.cpp
+    websocket/latency_compare.cpp
 )
 
 target_link_libraries(websocket_latency_compare

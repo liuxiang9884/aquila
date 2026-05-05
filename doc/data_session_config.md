@@ -166,7 +166,7 @@ core/config/instrument_catalog.h
 core/config/websocket_config.h
 exchange/gate/market_data/data_session_config.cpp
 exchange/gate/market_data/data_session_config.h
-tools/gate_data_session.cpp
+tools/gate/data_session.cpp
 ```
 
 Data session TOML parser 放在对应交易所的 `exchange/*/market_data/`，因为 Gate 和 Binance 的
@@ -199,7 +199,7 @@ core/config/instrument_catalog.h
 core/config/websocket_config.h
 exchange/binance/market_data/data_session_config.cpp
 exchange/binance/market_data/data_session_config.h
-tools/binance_data_session.cpp
+tools/binance/data_session.cpp
 ```
 
 Binance config parser 读取 `instrument_catalog` 和 `subscribe_symbols` 后按 `Exchange::kBinance`

@@ -28,8 +28,8 @@ exchange/binance/market_data/client.h
 exchange/binance/market_data/data_session.h
 exchange/binance/market_data/data_session_config.h
 exchange/binance/market_data/data_session_config.cpp
-tools/binance_data_session.cpp
-tools/binance_futures_book_ticker_probe.cpp
+tools/binance/data_session.cpp
+tools/binance/futures_book_ticker_probe.cpp
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
 scripts/binance/query_um_futures_contracts.py
 scripts/binance/query_um_futures_contracts_test.py

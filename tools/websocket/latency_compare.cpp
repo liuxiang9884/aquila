@@ -1,11 +1,5 @@
-#include "core/websocket/frame_codec.h"
-#include "core/websocket/websocket_client.h"
-#include "tools/websocket_latency_compare_support.h"
-
-#include <CLI/CLI.hpp>
-#include <fmt/compile.h>
-#include <fmt/core.h>
-#include <magic_enum/magic_enum.hpp>
+#include <pthread.h>
+#include <sys/socket.h>
 
 #include <algorithm>
 #include <atomic>
@@ -14,16 +8,23 @@
 #include <cstdint>
 #include <ctime>
 #include <memory>
-#include <netdb.h>
-#include <pthread.h>
-#include <sched.h>
 #include <span>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include <CLI/CLI.hpp>
+#include <fmt/compile.h>
+#include <fmt/core.h>
+#include <magic_enum/magic_enum.hpp>
+
+#include "core/websocket/frame_codec.h"
+#include "core/websocket/websocket_client.h"
+#include "tools/websocket/latency_compare_support.h"
+#include <netdb.h>
+#include <sched.h>
 
 namespace {
 
@@ -60,10 +61,9 @@ std::string FormatSockaddr(const sockaddr_storage& storage,
                            socklen_t storage_len) {
   char host[NI_MAXHOST]{};
   char service[NI_MAXSERV]{};
-  const int rc =
-      ::getnameinfo(reinterpret_cast<const sockaddr*>(&storage), storage_len,
-                    host, sizeof(host), service, sizeof(service),
-                    NI_NUMERICHOST | NI_NUMERICSERV);
+  const int rc = ::getnameinfo(
+      reinterpret_cast<const sockaddr*>(&storage), storage_len, host,
+      sizeof(host), service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);
   if (rc != 0) {
     return "unavailable";
   }
@@ -91,14 +91,13 @@ int PrintSocketInfo(std::string_view label, int fd) {
       ::getsockopt(fd, SOL_SOCKET, SO_INCOMING_CPU, &incoming_cpu,
                    &incoming_cpu_len) == 0;
 
-  fmt::print(stderr,
-             FMT_COMPILE(
-                 "{} socket fd={} local={} peer={} so_incoming_cpu={}\n"),
-             label, fd,
-             has_local ? FormatSockaddr(local, local_len) : "unavailable",
-             has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
-             has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
-                              : "unavailable");
+  fmt::print(
+      stderr,
+      FMT_COMPILE("{} socket fd={} local={} peer={} so_incoming_cpu={}\n"),
+      label, fd, has_local ? FormatSockaddr(local, local_len) : "unavailable",
+      has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
+      has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
+                       : "unavailable");
   return has_incoming_cpu ? incoming_cpu : -1;
 }
 
@@ -134,9 +133,9 @@ class EndpointRunner {
     config.max_reads_per_drive = 8;
     config.read_until_would_block = false;
     config.runtime_policy.io_cpu_id = endpoint_.cpu;
-    config.runtime_policy.affinity_mode =
-        endpoint_.cpu >= 0 ? ws::AffinityMode::kBestEffort
-                           : ws::AffinityMode::kNone;
+    config.runtime_policy.affinity_mode = endpoint_.cpu >= 0
+                                              ? ws::AffinityMode::kBestEffort
+                                              : ws::AffinityMode::kNone;
 
     ws::MessageCallback consumer{this, &EndpointRunner::HandleMessage};
     client_ = std::make_unique<ClientT>(std::move(config), consumer);
@@ -191,12 +190,16 @@ class EndpointRunner {
     };
   }
 
-  [[nodiscard]] ws::Metrics metrics() const noexcept { return metrics_; }
-  [[nodiscard]] std::string_view label() const noexcept { return endpoint_.label; }
+  [[nodiscard]] ws::Metrics metrics() const noexcept {
+    return metrics_;
+  }
+  [[nodiscard]] std::string_view label() const noexcept {
+    return endpoint_.label;
+  }
 
  private:
-  static ws::DeliveryResult HandleMessage(void* context,
-                                          const ws::MessageView& view) noexcept {
+  static ws::DeliveryResult HandleMessage(
+      void* context, const ws::MessageView& view) noexcept {
     return static_cast<EndpointRunner*>(context)->OnMessage(view);
   }
 
@@ -211,8 +214,9 @@ class EndpointRunner {
   ws::DeliveryResult OnMessage(const ws::MessageView& view) noexcept {
     messages_.fetch_add(1, std::memory_order_relaxed);
     const std::uint64_t arrival_ns = NowNs();
-    const auto payload = std::string_view(
-        reinterpret_cast<const char*>(view.payload.data()), view.payload.size());
+    const auto payload =
+        std::string_view(reinterpret_cast<const char*>(view.payload.data()),
+                         view.payload.size());
     const auto parsed = TryParseGateBookTicker(payload);
     if (!parsed.has_value()) {
       ignored_messages_.fetch_add(1, std::memory_order_relaxed);
@@ -335,25 +339,22 @@ template <typename ClientT>
 void PrintEndpointSummary(const EndpointRunner<ClientT>& runner) {
   const auto counters = runner.counters();
   const auto metrics = runner.metrics();
-  fmt::print(FMT_COMPILE(
-                 "{} result={} active={} phase={} error={} subscribe={} "
-                 "messages={} parsed_updates={} ignored={} rx_messages={} "
-                 "rx_bytes={} tx_messages={} tx_bytes={}\n"),
-             runner.label(), runner.result() ? "ok" : "failed",
-             runner.saw_active() ? "yes" : "no",
-             magic_enum::enum_name(runner.phase()),
-             magic_enum::enum_name(runner.error()),
-             magic_enum::enum_name(runner.subscribe_status()),
-             counters.messages, counters.matched_updates,
-             counters.ignored_messages, metrics.rx_messages, metrics.rx_bytes,
-             metrics.tx_messages, metrics.tx_bytes);
+  fmt::print(
+      FMT_COMPILE("{} result={} active={} phase={} error={} subscribe={} "
+                  "messages={} parsed_updates={} ignored={} rx_messages={} "
+                  "rx_bytes={} tx_messages={} tx_bytes={}\n"),
+      runner.label(), runner.result() ? "ok" : "failed",
+      runner.saw_active() ? "yes" : "no", magic_enum::enum_name(runner.phase()),
+      magic_enum::enum_name(runner.error()),
+      magic_enum::enum_name(runner.subscribe_status()), counters.messages,
+      counters.matched_updates, counters.ignored_messages, metrics.rx_messages,
+      metrics.rx_bytes, metrics.tx_messages, metrics.tx_bytes);
 }
 
 template <typename PublicClientT, typename PrivateClientT>
 int RunCompare(const std::string& public_host, const std::string& public_port,
                const std::string& public_target, int public_cpu,
-               const std::string& private_host,
-               const std::string& private_port,
+               const std::string& private_host, const std::string& private_port,
                const std::string& private_target, int private_cpu,
                const std::string& channel, const std::string& contract,
                std::uint32_t duration_ms, size_t max_pending,
@@ -414,16 +415,15 @@ int RunCompare(const std::string& public_host, const std::string& public_port,
   const std::int64_t private_lead_p50 = Percentile(leads, 0.50L);
   const std::int64_t private_lead_p99 = Percentile(leads, 0.99L);
 
-  fmt::print(FMT_COMPILE(
-                 "matched={} private_faster={} public_faster={} ties={} "
-                 "pending_public={} pending_private={}\n"),
-             snapshot.matched.size(), private_faster, public_faster, ties,
-             snapshot.pending_public, snapshot.pending_private);
-  fmt::print(FMT_COMPILE(
-                 "private_lead_ns min={} p50={} p99={} p99.9={} max={}\n"),
-             leads.empty() ? 0 : leads.front(), private_lead_p50,
-             private_lead_p99, Percentile(leads, 0.999L),
-             leads.empty() ? 0 : leads.back());
+  fmt::print(
+      FMT_COMPILE("matched={} private_faster={} public_faster={} ties={} "
+                  "pending_public={} pending_private={}\n"),
+      snapshot.matched.size(), private_faster, public_faster, ties,
+      snapshot.pending_public, snapshot.pending_private);
+  fmt::print(
+      FMT_COMPILE("private_lead_ns min={} p50={} p99={} p99.9={} max={}\n"),
+      leads.empty() ? 0 : leads.front(), private_lead_p50, private_lead_p99,
+      Percentile(leads, 0.999L), leads.empty() ? 0 : leads.back());
 
   const auto selection = SelectWarmupPrimary(WarmupSelectionInput{
       .public_healthy = public_runner.result() && public_runner.saw_active() &&
@@ -480,7 +480,8 @@ int main(int argc, char** argv) {
   auto* private_port_option =
       app.add_option("--private-port", private_port, "private remote port");
   app.add_option("--public-target", public_target, "public WebSocket target");
-  app.add_option("--private-target", private_target, "private WebSocket target");
+  app.add_option("--private-target", private_target,
+                 "private WebSocket target");
   app.add_option("--channel", channel, "Gate WebSocket channel");
   app.add_option("--contract", contract, "Gate contract");
   app.add_option("--public-cpu", public_cpu, "public connection owner CPU");

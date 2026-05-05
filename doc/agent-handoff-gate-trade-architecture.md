@@ -335,7 +335,7 @@ MessageHandlerRef<MessageHandlerT> MakeMessageHandler(MessageHandlerT& handler) 
 已新增 live probe：
 
 ```text
-tools/gate_futures_book_ticker_probe.cpp
+tools/gate/futures_book_ticker_probe.cpp
 ```
 
 默认参数：
@@ -854,7 +854,7 @@ config/data_sessions/binance_data_session.toml
 - `exchange/gate/market_data/client.h`
 - `exchange/gate/market_data/data_session.h`
 - `exchange/gate/market_data/subscription.h`
-- `tools/gate_futures_book_ticker_probe.cpp`
+- `tools/gate/futures_book_ticker_probe.cpp`
 - `scripts/gate/test_gate_ws_dual_login.py`
 - `scripts/gate/test_gate_ws_connect.py`
 - `scripts/gate/query_futures_contracts.py`

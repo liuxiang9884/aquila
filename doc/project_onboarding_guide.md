@@ -107,7 +107,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/market_data/subscription.h` | `futures.book_ticker` subscribe/unsubscribe JSON 构造。 |
 | `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
 | `exchange/gate/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
-| `tools/gate_data_session.cpp` | Gate data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
+| `tools/gate/data_session.cpp` | Gate data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Binance USD-M futures 行情
 
@@ -117,7 +117,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，生产路径使用 `simdjson::ondemand` 和 `fast_float`。 |
 | `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
 | `exchange/binance/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
-| `tools/binance_data_session.cpp` | Binance data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
+| `tools/binance/data_session.cpp` | Binance data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Gate 交易准备代码
 
@@ -139,10 +139,10 @@ doc/websocket_read_write_benchmark_comparison.md
 
 | 文件 | 用途 |
 | --- | --- |
-| `tools/websocket_probe.cpp` | 单连接 live probe，支持 graceful stop 后输出最终 metrics。 |
-| `tools/websocket_latency_compare.cpp` | public/private 或多连接 latency compare / warmup selection。 |
-| `tools/gate_futures_book_ticker_probe.cpp` | Gate futures SBE `futures.book_ticker` live probe，默认 BTC_USDT。 |
-| `tools/binance_futures_book_ticker_probe.cpp` | Binance USD-M futures JSON `bookTicker` live probe，默认 BTCUSDT。 |
+| `tools/websocket/probe.cpp` | 单连接 live probe，支持 graceful stop 后输出最终 metrics。 |
+| `tools/websocket/latency_compare.cpp` | public/private 或多连接 latency compare / warmup selection。 |
+| `tools/gate/futures_book_ticker_probe.cpp` | Gate futures SBE `futures.book_ticker` live probe，默认 BTC_USDT。 |
+| `tools/binance/futures_book_ticker_probe.cpp` | Binance USD-M futures JSON `bookTicker` live probe，默认 BTCUSDT。 |
 | `scripts/gate/test_gate_ws_connect.py` | Gate WS 连接 / login smoke。 |
 | `scripts/gate/test_gate_ws_dual_login.py` | 同账号双 WebSocket login 验证。 |
 | `scripts/gate/query_futures_contracts.py` | 查询 Gate USDT futures 合约基础信息，输出统一字段 DataFrame / CSV。 |

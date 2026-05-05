@@ -1,9 +1,9 @@
+#include "tools/websocket/latency_compare_support.h"
+
 #include <cstdint>
 #include <string>
 
 #include <gtest/gtest.h>
-
-#include "tools/websocket_latency_compare_support.h"
 
 namespace aquila::tools {
 
