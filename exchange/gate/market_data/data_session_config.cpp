@@ -18,27 +18,25 @@ void MaybeLogError(std::string_view message) {
   }
 }
 
-[[nodiscard]] FuturesMarketDataConfigResult Failure(std::string error) {
+[[nodiscard]] DataSessionConfigResult Failure(std::string error) {
   MaybeLogError(error);
-  FuturesMarketDataConfigResult result;
+  DataSessionConfigResult result;
   result.error = std::move(error);
   return result;
 }
 
-[[nodiscard]] FuturesMarketDataConfigResult Success(
-    FuturesMarketDataConfigFile config) {
-  FuturesMarketDataConfigResult result;
+[[nodiscard]] DataSessionConfigResult Success(DataSessionConfigFile config) {
+  DataSessionConfigResult result;
   result.config = std::move(config);
   result.ok = true;
   return result;
 }
 
-class FuturesMarketDataConfigParser {
+class DataSessionConfigParser {
  public:
-  explicit FuturesMarketDataConfigParser(const toml::table& node)
-      : node_(node) {}
+  explicit DataSessionConfigParser(const toml::table& node) : node_(node) {}
 
-  [[nodiscard]] FuturesMarketDataConfigResult Parse() {
+  [[nodiscard]] DataSessionConfigResult Parse() {
     ParseInstrumentCatalog();
     if (!ok_) {
       return Failure(std::move(error_));
@@ -146,23 +144,22 @@ class FuturesMarketDataConfigParser {
   }
 
   const toml::table& node_;
-  FuturesMarketDataConfigFile config_;
+  DataSessionConfigFile config_;
   std::string error_;
   bool ok_{true};
 };
 
 }  // namespace
 
-FuturesMarketDataConfigResult ParseFuturesMarketDataConfig(
-    const toml::table& node) {
-  return FuturesMarketDataConfigParser{node}.Parse();
+DataSessionConfigResult ParseDataSessionConfig(const toml::table& node) {
+  return DataSessionConfigParser{node}.Parse();
 }
 
-FuturesMarketDataConfigResult LoadFuturesMarketDataConfigFile(
+DataSessionConfigResult LoadDataSessionConfigFile(
     const std::filesystem::path& path) {
   try {
     const toml::parse_result parsed = toml::parse_file(path.string());
-    return ParseFuturesMarketDataConfig(parsed);
+    return ParseDataSessionConfig(parsed);
   } catch (const std::exception& exc) {
     return Failure(std::string{"failed to load Gate market data config: "} +
                    exc.what());

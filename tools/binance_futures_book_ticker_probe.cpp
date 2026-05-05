@@ -20,7 +20,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "core/websocket/websocket_client.h"
-#include "exchange/binance/market_data/session.h"
+#include "exchange/binance/market_data/data_session.h"
 #include <netdb.h>
 
 namespace {
@@ -202,7 +202,7 @@ class ProbeRunner {
     return session_.stream_target();
   }
 
-  [[nodiscard]] const binance::FuturesMarketDataSessionStats& session_stats()
+  [[nodiscard]] const binance::DataSessionStats& session_stats()
       const noexcept {
     return session_.stats();
   }
@@ -213,10 +213,9 @@ class ProbeRunner {
   }
 
  private:
-  using Session = binance::FuturesMarketDataSession<
+  using Session = binance::DataSession<
       ProbeConsumer, TransportSocketT, binance::FuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions,
-      binance::FuturesMarketDataSessionDiagnostics>;
+      ws::DefaultWebSocketOptions, binance::DataSessionDiagnostics>;
 
   static ws::ConnectionConfig BuildConnectionConfig(const ProbeConfig& config) {
     ws::ConnectionConfig connection_config{};
@@ -284,8 +283,7 @@ double AverageNs(std::uint64_t total, std::uint64_t samples) noexcept {
 template <typename RunnerT>
 void PrintSummary(const RunnerT& runner) {
   const ProbeStats& stats = runner.stats();
-  const binance::FuturesMarketDataSessionStats& session_stats =
-      runner.session_stats();
+  const binance::DataSessionStats& session_stats = runner.session_stats();
   const binance::FuturesMarketDataClientStats& market_data_stats =
       runner.market_data_stats();
   const ws::Metrics metrics = runner.metrics();
@@ -313,15 +311,14 @@ void PrintSummary(const RunnerT& runner) {
              magic_enum::enum_name(runner.error()), metrics.rx_messages,
              metrics.rx_bytes, metrics.tx_messages, metrics.tx_bytes,
              metrics.reconnects, metrics.heartbeat_timeouts);
-  fmt::print(FMT_COMPILE("session text={} binary={} non_final={} control={} "
+  fmt::print(FMT_COMPILE("session text={} binary={} control={} "
                          "book_ticker={}\n"),
              session_stats.text_messages, session_stats.binary_messages,
-             session_stats.non_final_messages, session_stats.control_messages,
+             session_stats.control_messages,
              session_stats.book_ticker_messages);
-  fmt::print(FMT_COMPILE("market_data malformed_json={} unknown_symbol={} "
+  fmt::print(FMT_COMPILE("market_data malformed_json={} "
                          "book_ticker={} simdjson_padding_fallback={}\n"),
              market_data_stats.malformed_json_messages,
-             market_data_stats.unknown_symbols,
              market_data_stats.book_ticker_messages,
              market_data_stats.simdjson_padding_fallback_messages);
   fmt::print(

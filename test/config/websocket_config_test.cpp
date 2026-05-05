@@ -154,7 +154,7 @@ max_attempts = 7
 TEST(WebSocketConfigTest, ParsesCheckedInGateMarketDataConfig) {
   const auto parsed =
       toml::parse_file((std::filesystem::path{AQUILA_SOURCE_DIR} /
-                        "config/data_sessions/gate_future_market_data.toml")
+                        "config/data_sessions/gate_data_session.toml")
                            .string());
 
   const auto result =
@@ -175,7 +175,7 @@ TEST(WebSocketConfigTest, ParsesCheckedInGateMarketDataConfig) {
 TEST(WebSocketConfigTest, ParsesCheckedInBinanceMarketDataConfig) {
   const auto parsed =
       toml::parse_file((std::filesystem::path{AQUILA_SOURCE_DIR} /
-                        "config/data_sessions/binance_future_market_data.toml")
+                        "config/data_sessions/binance_data_session.toml")
                            .string());
 
   const auto result =

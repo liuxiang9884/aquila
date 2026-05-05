@@ -32,12 +32,12 @@ order management 和 order execution 归属于 `Strategy` 模块。
 
 ```text
 gate-md-process
-  GateFutureMarketDataThread
-    GateFutureMarketDataSession
+  GateDataSessionThread
+    GateDataSession
 
 binance-md-process
-  BinanceFutureMarketDataThread
-    BinanceFutureMarketDataSession
+  BinanceDataSessionThread
+    BinanceDataSession
 
 strategy-trade-process
   StrategyThread
@@ -55,8 +55,8 @@ strategy-trade-process
 因此生产 data session 配置也按进程拆分。当前已给出：
 
 ```text
-config/data_sessions/gate_future_market_data.toml
-config/data_sessions/binance_future_market_data.toml
+config/data_sessions/gate_data_session.toml
+config/data_sessions/binance_data_session.toml
 ```
 
 多个 data session config 可以指向同一个 `instrument_catalog` CSV；CSV 是共享合约元数据来源，
@@ -71,7 +71,7 @@ file = "config/instruments/usdt_futures.csv"
 schema = "aquila.instrument.v1"
 
 [data_session]
-name = "gate_future_market_data"
+name = "gate_data_session"
 subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 settle = "usdt"
 wire_format = "sbe"
@@ -94,7 +94,7 @@ file = "config/instruments/usdt_futures.csv"
 schema = "aquila.instrument.v1"
 
 [data_session]
-name = "binance_future_market_data"
+name = "binance_data_session"
 subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 market = "um_futures"
 feed = "book_ticker"
@@ -126,7 +126,7 @@ data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_s
 | `subscribe_symbols` | 无，必须显式配置 | 该 data session 要订阅的人类可读内部 symbol，例如 `BTC_USDT`；不直接写交易所 symbol。 |
 
 `type`、`exchange`、`thread` 不放在配置里：具体 binary 已经决定 session 类型、交易所和线程角色。
-例如 `gate_future_market_data` binary 只会启动 `GateFutureMarketDataSession`。
+例如 `gate_data_session` binary 只会启动 `GateDataSession`。
 
 ## Symbol Pool 生成
 
@@ -165,7 +165,7 @@ core/config/instrument_catalog.h
 core/config/websocket_config.h
 exchange/gate/market_data/data_session_config.cpp
 exchange/gate/market_data/data_session_config.h
-tools/gate_future_market_data_session.cpp
+tools/gate_data_session.cpp
 ```
 
 Gate data session TOML parser 放在 `exchange/gate/market_data/`，因为 Gate 和 Binance 的
@@ -175,13 +175,13 @@ WebSocket config 和 instrument catalog 这类交易所无关配置。
 默认运行下面命令只做 dry-run，验证 TOML、CSV、target 和 symbol 映射生成结果，不连接网络：
 
 ```bash
-./build/debug/tools/gate_future_market_data_session
+./build/debug/tools/gate_data_session
 ```
 
 需要实际连接时显式加 `--connect`，进程会一直运行到收到 SIGINT 或 SIGTERM：
 
 ```bash
-./build/debug/tools/gate_future_market_data_session --connect
+./build/debug/tools/gate_data_session --connect
 ```
 
 Binance futures 行情字段：

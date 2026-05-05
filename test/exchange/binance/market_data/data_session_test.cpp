@@ -1,3 +1,5 @@
+#include "exchange/binance/market_data/data_session.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +11,6 @@
 #include <gtest/gtest.h>
 
 #include "core/websocket/message_view.h"
-#include "exchange/binance/market_data/session.h"
 
 namespace {
 
@@ -51,19 +52,19 @@ struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
-using DefaultNoStatsSession =
-    aquila::binance::FuturesMarketDataSession<RecordingConsumer>;
-using Session = aquila::binance::FuturesMarketDataSession<
+using DefaultNoStatsSession = aquila::binance::DataSession<RecordingConsumer>;
+using Session = aquila::binance::DataSession<
     RecordingConsumer, aquila::websocket::TlsSocket,
     aquila::binance::NoopFuturesMarketDataDiagnostics,
     aquila::websocket::DefaultWebSocketOptions,
-    aquila::binance::FuturesMarketDataSessionDiagnostics>;
-using DiagnosticSession = aquila::binance::FuturesMarketDataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::binance::FuturesMarketDataDiagnostics,
-    aquila::websocket::DefaultWebSocketOptions,
-    aquila::binance::FuturesMarketDataSessionDiagnostics>;
-using CoarseClockSession = aquila::binance::FuturesMarketDataSession<
+    aquila::binance::DataSessionDiagnostics>;
+using DiagnosticSession =
+    aquila::binance::DataSession<RecordingConsumer,
+                                 aquila::websocket::TlsSocket,
+                                 aquila::binance::FuturesMarketDataDiagnostics,
+                                 aquila::websocket::DefaultWebSocketOptions,
+                                 aquila::binance::DataSessionDiagnostics>;
+using CoarseClockSession = aquila::binance::DataSession<
     RecordingConsumer, aquila::websocket::TlsSocket,
     aquila::binance::NoopFuturesMarketDataDiagnostics, CoarseClockOptions>;
 
@@ -107,14 +108,14 @@ DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
 
 }  // namespace
 
-TEST(BinanceFuturesMarketDataSessionTest, BuildsRawStreamTargetFromSymbols) {
+TEST(BinanceDataSessionTest, BuildsRawStreamTargetFromSymbols) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
   EXPECT_EQ(session.stream_target(), "/public/ws/btcusdt@bookTicker");
 }
 
-TEST(BinanceFuturesMarketDataSessionTest, DelegatesTextBookTickerToClient) {
+TEST(BinanceDataSessionTest, DelegatesTextBookTickerToClient) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -128,7 +129,7 @@ TEST(BinanceFuturesMarketDataSessionTest, DelegatesTextBookTickerToClient) {
   EXPECT_EQ(consumer.last.id, 400900217);
 }
 
-TEST(BinanceFuturesMarketDataSessionTest, IgnoresBinaryPayload) {
+TEST(BinanceDataSessionTest, IgnoresBinaryPayload) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -139,7 +140,7 @@ TEST(BinanceFuturesMarketDataSessionTest, IgnoresBinaryPayload) {
   EXPECT_EQ(consumer.calls, 0);
 }
 
-TEST(BinanceFuturesMarketDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
+TEST(BinanceDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
   RecordingConsumer consumer;
   DefaultNoStatsSession session = MakeDefaultNoStatsSession(consumer);
 
@@ -151,8 +152,7 @@ TEST(BinanceFuturesMarketDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
   EXPECT_EQ(session.stats().book_ticker_messages, 0U);
 }
 
-TEST(BinanceFuturesMarketDataSessionTest,
-     ExposesMarketDataDiagnosticsWhenEnabled) {
+TEST(BinanceDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {
   RecordingConsumer consumer;
   DiagnosticSession session = MakeDiagnosticSession(consumer);
 
@@ -165,7 +165,7 @@ TEST(BinanceFuturesMarketDataSessionTest,
       1U);
 }
 
-TEST(BinanceFuturesMarketDataSessionTest, RejectsEmptyStreamTargetOnStart) {
+TEST(BinanceDataSessionTest, RejectsEmptyStreamTargetOnStart) {
   static constexpr std::array<aquila::binance::SymbolBinding, 0> symbols{};
   RecordingConsumer consumer;
   aquila::websocket::ConnectionConfig config{};

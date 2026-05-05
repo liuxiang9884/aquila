@@ -3,7 +3,7 @@ file = "config/instruments/usdt_futures.csv"
 schema = "aquila.instrument.v1"
 
 [data_session]
-name = "binance_future_market_data"
+name = "binance_data_session"
 subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 market = "um_futures"
 feed = "book_ticker"

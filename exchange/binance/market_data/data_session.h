@@ -1,5 +1,5 @@
-#ifndef AQUILA_EXCHANGE_BINANCE_MARKET_DATA_SESSION_H_
-#define AQUILA_EXCHANGE_BINANCE_MARKET_DATA_SESSION_H_
+#ifndef AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_H_
+#define AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_H_
 
 #include <array>
 #include <cstddef>
@@ -18,25 +18,25 @@
 
 namespace aquila::binance {
 
-struct FuturesMarketDataSessionStats {
+struct DataSessionStats {
   std::uint64_t text_messages{0};
   std::uint64_t binary_messages{0};
   std::uint64_t control_messages{0};
   std::uint64_t book_ticker_messages{0};
 };
 
-struct NoopFuturesMarketDataSessionDiagnostics {
+struct NoopDataSessionDiagnostics {
   static constexpr bool kEnabled = false;
 
-  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+  [[nodiscard]] const DataSessionStats& stats() const noexcept {
     return kStats;
   }
 
  private:
-  inline static constexpr FuturesMarketDataSessionStats kStats{};
+  inline static constexpr DataSessionStats kStats{};
 };
 
-class FuturesMarketDataSessionDiagnostics {
+class DataSessionDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
@@ -56,31 +56,29 @@ class FuturesMarketDataSessionDiagnostics {
     ++stats_.book_ticker_messages;
   }
 
-  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+  [[nodiscard]] const DataSessionStats& stats() const noexcept {
     return stats_;
   }
 
  private:
-  FuturesMarketDataSessionStats stats_{};
+  DataSessionStats stats_{};
 };
 
 template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
           typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
           typename OptionsT = websocket::DefaultWebSocketOptions,
-          typename SessionDiagnosticsT =
-              NoopFuturesMarketDataSessionDiagnostics>
-class FuturesMarketDataSession {
+          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+class DataSession {
  public:
-  using MessageHandler = websocket::MessageHandlerRef<FuturesMarketDataSession>;
+  using MessageHandler = websocket::MessageHandlerRef<DataSession>;
   using Client =
       websocket::BasicWebSocketClient<TransportSocketT, MessageHandler>;
   static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
   static constexpr bool SessionDiagnosticsEnabled =
       SessionDiagnosticsT::kEnabled;
 
-  FuturesMarketDataSession(websocket::ConnectionConfig config,
-                           std::span<const SymbolBinding> symbols,
-                           Consumer& consumer)
+  DataSession(websocket::ConnectionConfig config,
+              std::span<const SymbolBinding> symbols, Consumer& consumer)
       : stream_target_(BuildFuturesBookTickerStreamTarget(symbols)),
         market_data_client_(symbols, consumer),
         message_handler_(websocket::MakeMessageHandler(*this)),
@@ -88,12 +86,10 @@ class FuturesMarketDataSession {
                 message_handler_) {}
 
   template <size_t N>
-  FuturesMarketDataSession(websocket::ConnectionConfig config,
-                           const std::array<SymbolBinding, N>& symbols,
-                           Consumer& consumer)
-      : FuturesMarketDataSession(std::move(config),
-                                 std::span<const SymbolBinding>(symbols),
-                                 consumer) {}
+  DataSession(websocket::ConnectionConfig config,
+              const std::array<SymbolBinding, N>& symbols, Consumer& consumer)
+      : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
+                    consumer) {}
 
   bool Start() noexcept {
     if (stream_target_.empty()) [[unlikely]] {
@@ -145,7 +141,7 @@ class FuturesMarketDataSession {
     return client_.last_error();
   }
 
-  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+  [[nodiscard]] const DataSessionStats& stats() const noexcept {
     return session_diagnostics_.stats();
   }
 
@@ -208,4 +204,4 @@ class FuturesMarketDataSession {
 
 }  // namespace aquila::binance
 
-#endif  // AQUILA_EXCHANGE_BINANCE_MARKET_DATA_SESSION_H_
+#endif  // AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_H_

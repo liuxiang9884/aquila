@@ -19,7 +19,7 @@
 
 namespace aquila::gate {
 
-struct FuturesMarketDataSessionConfig {
+struct DataSessionConfig {
   std::string name;
   std::vector<std::string> subscribe_symbols;
   std::string settle{"usdt"};
@@ -29,54 +29,53 @@ struct FuturesMarketDataSessionConfig {
   config::WebSocketConfig websocket;
 };
 
-struct FuturesMarketDataConfigFile {
+struct DataSessionConfigFile {
   config::InstrumentCatalogConfig instrument_catalog;
-  FuturesMarketDataSessionConfig data_session;
+  DataSessionConfig data_session;
 };
 
-struct FuturesMarketDataConfigResult {
-  FuturesMarketDataConfigFile config;
+struct DataSessionConfigResult {
+  DataSessionConfigFile config;
   std::string error;
   bool ok{false};
 };
 
-struct FuturesMarketDataSessionSettings {
+struct DataSessionSettings {
   std::string name;
   websocket::ConnectionConfig connection;
   std::vector<std::string> exchange_symbols;
   std::vector<SymbolBinding> symbols;
 };
 
-struct FuturesMarketDataSessionSettingsResult {
-  FuturesMarketDataSessionSettings settings;
+struct DataSessionSettingsResult {
+  DataSessionSettings settings;
   std::string error;
   bool ok{false};
 };
 
-[[nodiscard]] FuturesMarketDataConfigResult ParseFuturesMarketDataConfig(
+[[nodiscard]] DataSessionConfigResult ParseDataSessionConfig(
     const toml::table& node);
 
-[[nodiscard]] FuturesMarketDataConfigResult LoadFuturesMarketDataConfigFile(
+[[nodiscard]] DataSessionConfigResult LoadDataSessionConfigFile(
     const std::filesystem::path& path);
 
-[[nodiscard]] inline std::string BuildFuturesMarketDataTarget(
-    const FuturesMarketDataSessionConfig& config) {
+[[nodiscard]] inline std::string BuildDataSessionTarget(
+    const DataSessionConfig& config) {
   return fmt::format("/v4/ws/{}/sbe?sbe_schema_id={}", config.settle,
                      config.sbe_schema_id);
 }
 
-[[nodiscard]] inline FuturesMarketDataSessionSettingsResult
-BuildFuturesMarketDataSessionSettings(
-    const FuturesMarketDataConfigFile& config_file,
+[[nodiscard]] inline DataSessionSettingsResult BuildDataSessionSettings(
+    const DataSessionConfigFile& config_file,
     const config::InstrumentCatalog& catalog) {
-  FuturesMarketDataSessionSettingsResult result;
-  const FuturesMarketDataSessionConfig& data_session = config_file.data_session;
+  DataSessionSettingsResult result;
+  const DataSessionConfig& data_session = config_file.data_session;
   if (data_session.feed != "book_ticker" || data_session.wire_format != "sbe") {
-    result.error = "Gate future market data supports only SBE book_ticker";
+    result.error = "Gate data session supports only SBE book_ticker";
     return result;
   }
 
-  const std::string target = BuildFuturesMarketDataTarget(data_session);
+  const std::string target = BuildDataSessionTarget(data_session);
   config::ConnectionConfigResult connection_result =
       config::ToConnectionConfig(data_session.websocket, target);
   if (!connection_result.ok) {

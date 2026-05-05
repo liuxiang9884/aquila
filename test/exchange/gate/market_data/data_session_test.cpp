@@ -1,3 +1,5 @@
+#include "exchange/gate/market_data/data_session.h"
+
 #include <array>
 #include <concepts>
 #include <cstddef>
@@ -11,7 +13,6 @@
 
 #include "core/websocket/message_view.h"
 #include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
-#include "exchange/gate/market_data/session.h"
 #include <simdjson.h>
 
 namespace {
@@ -53,21 +54,21 @@ struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
-using DefaultNoStatsSession =
-    aquila::gate::FuturesMarketDataSession<RecordingConsumer>;
-using Session = aquila::gate::FuturesMarketDataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::gate::NoopFuturesMarketDataDiagnostics,
-    aquila::websocket::DefaultWebSocketOptions,
-    aquila::gate::FuturesMarketDataSessionDiagnostics>;
-using DiagnosticSession = aquila::gate::FuturesMarketDataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::gate::FuturesMarketDataDiagnostics,
-    aquila::websocket::DefaultWebSocketOptions,
-    aquila::gate::FuturesMarketDataSessionDiagnostics>;
-using CoarseClockSession = aquila::gate::FuturesMarketDataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::gate::NoopFuturesMarketDataDiagnostics, CoarseClockOptions>;
+using DefaultNoStatsSession = aquila::gate::DataSession<RecordingConsumer>;
+using Session =
+    aquila::gate::DataSession<RecordingConsumer, aquila::websocket::TlsSocket,
+                              aquila::gate::NoopFuturesMarketDataDiagnostics,
+                              aquila::websocket::DefaultWebSocketOptions,
+                              aquila::gate::DataSessionDiagnostics>;
+using DiagnosticSession =
+    aquila::gate::DataSession<RecordingConsumer, aquila::websocket::TlsSocket,
+                              aquila::gate::FuturesMarketDataDiagnostics,
+                              aquila::websocket::DefaultWebSocketOptions,
+                              aquila::gate::DataSessionDiagnostics>;
+using CoarseClockSession =
+    aquila::gate::DataSession<RecordingConsumer, aquila::websocket::TlsSocket,
+                              aquila::gate::NoopFuturesMarketDataDiagnostics,
+                              CoarseClockOptions>;
 
 static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
 static_assert(Session::SessionDiagnosticsEnabled);
@@ -143,7 +144,7 @@ DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
 
 }  // namespace
 
-TEST(GateFuturesMarketDataSessionTest, MarksSubscribeAckSubscribed) {
+TEST(GateDataSessionTest, MarksSubscribeAckSubscribed) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -158,7 +159,7 @@ TEST(GateFuturesMarketDataSessionTest, MarksSubscribeAckSubscribed) {
   EXPECT_EQ(session.stats().subscribe_acks, 1U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, ParsesPaddedSubscribeAckWithoutCopy) {
+TEST(GateDataSessionTest, ParsesPaddedSubscribeAckWithoutCopy) {
   static constexpr std::string_view kSubscribeAck =
       R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})";
   std::array<char, kSubscribeAck.size() + simdjson::SIMDJSON_PADDING> buffer{};
@@ -181,7 +182,7 @@ TEST(GateFuturesMarketDataSessionTest, ParsesPaddedSubscribeAckWithoutCopy) {
   EXPECT_EQ(session.stats().subscribe_acks, 1U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, SendsSubscribeWhenActive) {
+TEST(GateDataSessionTest, SendsSubscribeWhenActive) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -197,7 +198,7 @@ TEST(GateFuturesMarketDataSessionTest, SendsSubscribeWhenActive) {
             std::string_view::npos);
 }
 
-TEST(GateFuturesMarketDataSessionTest, RetriesSubscribeAfterActiveFailure) {
+TEST(GateDataSessionTest, RetriesSubscribeAfterActiveFailure) {
   RecordingConsumer consumer;
   Session session = MakeSessionWithNoPreparedWriteSlots(consumer);
 
@@ -214,7 +215,7 @@ TEST(GateFuturesMarketDataSessionTest, RetriesSubscribeAfterActiveFailure) {
   EXPECT_EQ(session.stats().subscribe_send_failures, 2U);
 }
 
-TEST(GateFuturesMarketDataSessionTest,
+TEST(GateDataSessionTest,
      ManualConnectionPhaseOnlyDrivesGateSubscriptionState) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
@@ -232,7 +233,7 @@ TEST(GateFuturesMarketDataSessionTest,
             aquila::gate::SubscriptionState::kSubscribeSent);
 }
 
-TEST(GateFuturesMarketDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
+TEST(GateDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -245,7 +246,7 @@ TEST(GateFuturesMarketDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
   EXPECT_EQ(session.stats().unsubscribe_acks, 1U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, RecordsControlErrorAsRejected) {
+TEST(GateDataSessionTest, RecordsControlErrorAsRejected) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -258,7 +259,7 @@ TEST(GateFuturesMarketDataSessionTest, RecordsControlErrorAsRejected) {
   EXPECT_EQ(session.stats().control_errors, 1U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, MalformedTextIsAcceptedAndCounted) {
+TEST(GateDataSessionTest, MalformedTextIsAcceptedAndCounted) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -269,7 +270,7 @@ TEST(GateFuturesMarketDataSessionTest, MalformedTextIsAcceptedAndCounted) {
   EXPECT_EQ(session.stats().control_parse_errors, 1U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, JsonUpdateRoutesToUnsupportedCounter) {
+TEST(GateDataSessionTest, JsonUpdateRoutesToUnsupportedCounter) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
 
@@ -282,7 +283,7 @@ TEST(GateFuturesMarketDataSessionTest, JsonUpdateRoutesToUnsupportedCounter) {
   EXPECT_EQ(consumer.calls, 0);
 }
 
-TEST(GateFuturesMarketDataSessionTest, DelegatesBinaryBookTickerToClient) {
+TEST(GateDataSessionTest, DelegatesBinaryBookTickerToClient) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
   std::array<char, 192> buffer{};
@@ -297,8 +298,7 @@ TEST(GateFuturesMarketDataSessionTest, DelegatesBinaryBookTickerToClient) {
   EXPECT_EQ(consumer.last.id, 42);
 }
 
-TEST(GateFuturesMarketDataSessionTest,
-     ExposesMarketDataDiagnosticsWhenEnabled) {
+TEST(GateDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {
   RecordingConsumer consumer;
   DiagnosticSession session = MakeDiagnosticSession(consumer);
   std::array<char, 192> buffer{};
@@ -314,7 +314,7 @@ TEST(GateFuturesMarketDataSessionTest,
             0U);
 }
 
-TEST(GateFuturesMarketDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
+TEST(GateDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
   RecordingConsumer consumer;
   DefaultNoStatsSession session = MakeDefaultNoStatsSession(consumer);
   std::array<char, 192> buffer{};

@@ -23,11 +23,11 @@ target_link_libraries(gate_futures_book_ticker_probe
         magic_enum::magic_enum
 )
 
-add_executable(gate_future_market_data_session
-    gate_future_market_data_session.cpp
+add_executable(gate_data_session
+    gate_data_session.cpp
 )
 
-target_link_libraries(gate_future_market_data_session
+target_link_libraries(gate_data_session
     PRIVATE
         aquila_config
         aquila_gate

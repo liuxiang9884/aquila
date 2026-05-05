@@ -80,7 +80,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- |
 | `core/config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；由 `aquila_config` target 暴露，TOML 解析使用 `toml++`，诊断日志走 Nova 封装，parser 只保留必填项和枚举映射约束。 |
 | `core/config/instrument_catalog.h` | 启动期 instrument CSV catalog，加载 `aquila.instrument.v1` 的完整字段；当前 data session 只消费 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`，lookup 使用 `absl::flat_hash_map`。 |
-| `exchange/gate/market_data/data_session_config.h` | Gate futures data session TOML parser 和 settings builder，把 Gate 专属 data session config 与 instrument catalog 转成 Gate target、`ConnectionConfig` 和 `gate::SymbolBinding`。 |
+| `exchange/gate/market_data/data_session_config.h` | Gate data session TOML parser 和 settings builder，把 Gate 专属 data session config 与 instrument catalog 转成 Gate target、`ConnectionConfig` 和 `gate::SymbolBinding`。 |
 
 ### WebSocket 内核
 
@@ -104,8 +104,8 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/sbe/book_ticker_decoder.h` | Gate BBO payload -> `aquila::BookTicker` decode。 |
 | `exchange/gate/market_data/subscription.h` | `futures.book_ticker` subscribe/unsubscribe JSON 构造。 |
 | `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
-| `exchange/gate/market_data/session.h` | `FuturesMarketDataSession<Consumer, TransportSocketT>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
-| `tools/gate_future_market_data_session.cpp` | Gate futures data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
+| `exchange/gate/market_data/data_session.h` | `DataSession<Consumer, TransportSocketT>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
+| `tools/gate_data_session.cpp` | Gate data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Binance USD-M futures 行情
 
@@ -114,7 +114,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/binance/market_data/stream.h` | 构造 `/public/ws/<symbol>@bookTicker` raw stream target，并限制单连接 stream 数上限。 |
 | `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，生产路径使用 `simdjson::ondemand` 和 `fast_float`。 |
 | `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
-| `exchange/binance/market_data/session.h` | raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
+| `exchange/binance/market_data/data_session.h` | raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
 
 ### Gate 交易准备代码
 
@@ -224,11 +224,11 @@ feedback SPSC -> StrategyThread
 扩展到 Gate + Binance 行情后的系统线程命名：
 
 ```text
-GateFutureMarketDataThread
-  - GateFutureMarketDataSession
+GateDataSessionThread
+  - GateDataSession
 
-BinanceFutureMarketDataThread
-  - BinanceFutureMarketDataSession
+BinanceDataSessionThread
+  - BinanceDataSession
 
 StrategyThread
   - Strategy
@@ -249,7 +249,7 @@ BinanceOrderFeedbackThread
 当前已经以 Gate futures BBO 为样例打通：
 
 ```text
-FuturesMarketDataSession::Handle(binary MessageView)
+DataSession::Handle(binary MessageView)
   -> capture local_ns
   -> FuturesMarketDataClient::OnBinaryPayload
   -> SBE message header parse / schema-template dispatch
@@ -262,7 +262,7 @@ FuturesMarketDataSession::Handle(binary MessageView)
 关键约束：
 
 - `FuturesMarketDataClient<Consumer>` 使用纯模板组合，热路径不引入虚函数或 `std::function`。
-- `FuturesMarketDataSession<Consumer, TransportSocketT>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
+- `DataSession<Consumer, TransportSocketT>` 不在内部创建线程；调用方决定在哪个线程运行 `Start()`。
 - core WebSocket 层负责 frame/message 完整性；exchange session 不再为外部 non-final `MessageView` 做兼容统计。
 - session 处理 subscribe/unsubscribe ack/error text frame；binary SBE frame 进入 client 快路径。
 - text JSON 使用 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes` 满足 `simdjson::SIMDJSON_PADDING`，直接用 padded view，否则 fallback 到 `simdjson::padded_string`。
@@ -358,11 +358,11 @@ Gate SBE / market data 测试：
 ./build/debug/test/exchange/gate/sbe/gate_sbe_message_dispatcher_test
 ./build/debug/test/exchange/gate/sbe/gate_sbe_book_ticker_decoder_test
 ./build/debug/test/exchange/gate/market_data/gate_futures_market_data_client_test
-./build/debug/test/exchange/gate/market_data/gate_futures_market_data_session_test
+./build/debug/test/exchange/gate/market_data/gate_data_session_test
 ./build/release/test/exchange/gate/sbe/gate_sbe_message_dispatcher_test
 ./build/release/test/exchange/gate/sbe/gate_sbe_book_ticker_decoder_test
 ./build/release/test/exchange/gate/market_data/gate_futures_market_data_client_test
-./build/release/test/exchange/gate/market_data/gate_futures_market_data_session_test
+./build/release/test/exchange/gate/market_data/gate_data_session_test
 ```
 
 Gate market data benchmark：
@@ -396,7 +396,7 @@ Binance USD-M futures bookTicker 测试和 benchmark：
 ```bash
 ./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
-./build/debug/test/exchange/binance/market_data/binance_futures_market_data_session_test
+./build/debug/test/exchange/binance/market_data/binance_data_session_test
 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker|parse_book_ticker_padded_view|client_on_text_payload|session_handle_text|session_handle_text_padded_view)'
 ```
 

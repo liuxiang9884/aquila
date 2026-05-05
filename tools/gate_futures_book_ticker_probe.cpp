@@ -21,7 +21,7 @@
 
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/websocket_client.h"
-#include "exchange/gate/market_data/session.h"
+#include "exchange/gate/market_data/data_session.h"
 
 namespace {
 
@@ -161,8 +161,7 @@ class ProbeRunner {
     return session_.last_subscribe_request();
   }
 
-  [[nodiscard]] const gate::FuturesMarketDataSessionStats& session_stats()
-      const noexcept {
+  [[nodiscard]] const gate::DataSessionStats& session_stats() const noexcept {
     return session_.stats();
   }
 
@@ -172,9 +171,9 @@ class ProbeRunner {
   }
 
  private:
-  using Session = gate::FuturesMarketDataSession<
+  using Session = gate::DataSession<
       ProbeConsumer, TransportSocketT, gate::FuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions, gate::FuturesMarketDataSessionDiagnostics>;
+      ws::DefaultWebSocketOptions, gate::DataSessionDiagnostics>;
 
   static ws::ConnectionConfig BuildConnectionConfig(const ProbeConfig& config) {
     ws::ConnectionConfig connection_config{};
@@ -212,8 +211,7 @@ double AverageNs(std::uint64_t total, std::uint64_t samples) noexcept {
 template <typename RunnerT>
 void PrintSummary(const RunnerT& runner) {
   const ProbeStats& stats = runner.stats();
-  const gate::FuturesMarketDataSessionStats& session_stats =
-      runner.session_stats();
+  const gate::DataSessionStats& session_stats = runner.session_stats();
   const gate::FuturesMarketDataClientStats& market_data_stats =
       runner.market_data_stats();
   const ws::Metrics metrics = runner.metrics();

@@ -50,7 +50,7 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 
 2026-05-02 当前收口：
 
-1. `FuturesMarketDataSession` 已落地，负责连接生命周期、订阅控制 text frame、SBE binary frame 分流和统计。
+1. `DataSession` 已落地，负责连接生命周期、订阅控制 text frame、SBE binary frame 分流和统计。
 2. WebSocket 内核新增模板化 typed message handler path；`MessageCallback` 保留给工具和旧测试。
 3. Gate 行情热路径使用 `absl::flat_hash_map` 做 symbol -> symbol_id 查询，初始化时 `reserve()`，单 symbol 也走同一路径。
 4. production / 系统内部 JSON parser 统一为 `simdjson::ondemand`；`yyjson` 只保留在 submit response benchmark 中做对照。
@@ -139,7 +139,7 @@ test/exchange/gate/sbe/book_ticker_decoder_test.cpp
 当前 binary message 处理流程：
 
 ```text
-FuturesMarketDataSession::Handle(binary MessageView)
+DataSession::Handle(binary MessageView)
   -> capture local_ns
   -> FuturesMarketDataClient::OnBinaryPayload
   -> DispatchSbeMessage
@@ -205,15 +205,15 @@ BuildFuturesBookTickerUnsubscribeRequest(symbols, epoch_seconds)
 已新增：
 
 ```text
-exchange/gate/market_data/session.h
-test/exchange/gate/market_data/futures_market_data_session_test.cpp
+exchange/gate/market_data/data_session.h
+test/exchange/gate/market_data/data_session_test.cpp
 benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp
 ```
 
 当前 session 命名为：
 
 ```cpp
-aquila::gate::FuturesMarketDataSession<
+aquila::gate::DataSession<
     Consumer, TransportSocketT, DiagnosticsT, OptionsT, SessionDiagnosticsT>
 ```
 
@@ -226,8 +226,8 @@ aquila::gate::FuturesMarketDataSession<
 5. text frame 只处理 subscribe/unsubscribe ack/error，以及 JSON market data update 计数；当前不把 JSON market data 转成 `BookTicker`。
 6. text control parser 使用复用的 `simdjson::ondemand::parser text_parser_`。
 7. 如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，text parser 直接使用 zero-copy padded view；否则 fallback 到 `simdjson::padded_string` scratch copy。
-8. session 转发 state/error handler，暴露 `FuturesMarketDataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
-9. `FuturesMarketDataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `SessionDiagnosticsT = NoopFuturesMarketDataSessionDiagnostics`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `FuturesMarketDataSessionDiagnostics`。
+8. session 转发 state/error handler，暴露 `DataSessionStats`、最后一次 subscribe request 和 WebSocket metrics。
+9. `DataSessionStats` 是低频诊断计数，不属于行情热路径输出结构；默认 `SessionDiagnosticsT = NoopDataSessionDiagnostics`，不会在 binary 热路径做计数，probe / test / text-control benchmark 需要显式启用 `DataSessionDiagnostics`。
 10. text control envelope parser 已拆到 `text_envelope_parser.h`，订阅状态机已拆到 `subscription_controller.h`，session 只保留收包分流、订阅请求发送和 client 组合。
 
 注意：
@@ -288,10 +288,10 @@ taskset -c 2 ./build/release/benchmark/exchange/gate/market_data/gate_futures_ma
 2026-05-02 当前验证：
 
 ```text
-cmake --build build/debug --target binance_book_ticker_parser_test binance_futures_market_data_client_test binance_futures_market_data_session_test gate_futures_market_data_client_test gate_futures_market_data_session_test gate_sbe_book_ticker_decoder_test gate_sbe_message_dispatcher_test gate_submit_response_parser_test -j 32
-ctest --test-dir build/debug -R "(binance_book_ticker_parser_test|binance_futures_market_data_client_test|binance_futures_market_data_session_test|gate_futures_market_data_client_test|gate_futures_market_data_session_test|gate_sbe_book_ticker_decoder_test|gate_sbe_message_dispatcher_test|gate_submit_response_parser_test)" --output-on-failure # 8/8 passed
-cmake --build build/release --target binance_book_ticker_parser_test binance_futures_market_data_client_test binance_futures_market_data_session_test gate_futures_market_data_client_test gate_futures_market_data_session_test gate_sbe_book_ticker_decoder_test gate_sbe_message_dispatcher_test gate_submit_response_parser_test -j 32
-ctest --test-dir build/release -R "(binance_book_ticker_parser_test|binance_futures_market_data_client_test|binance_futures_market_data_session_test|gate_futures_market_data_client_test|gate_futures_market_data_session_test|gate_sbe_book_ticker_decoder_test|gate_sbe_message_dispatcher_test|gate_submit_response_parser_test)" --output-on-failure # 8/8 passed
+cmake --build build/debug --target binance_book_ticker_parser_test binance_futures_market_data_client_test binance_data_session_test gate_futures_market_data_client_test gate_data_session_test gate_sbe_book_ticker_decoder_test gate_sbe_message_dispatcher_test gate_submit_response_parser_test -j 32
+ctest --test-dir build/debug -R "(binance_book_ticker_parser_test|binance_futures_market_data_client_test|binance_data_session_test|gate_futures_market_data_client_test|gate_data_session_test|gate_sbe_book_ticker_decoder_test|gate_sbe_message_dispatcher_test|gate_submit_response_parser_test)" --output-on-failure # 8/8 passed
+cmake --build build/release --target binance_book_ticker_parser_test binance_futures_market_data_client_test binance_data_session_test gate_futures_market_data_client_test gate_data_session_test gate_sbe_book_ticker_decoder_test gate_sbe_message_dispatcher_test gate_submit_response_parser_test -j 32
+ctest --test-dir build/release -R "(binance_book_ticker_parser_test|binance_futures_market_data_client_test|binance_data_session_test|gate_futures_market_data_client_test|gate_data_session_test|gate_sbe_book_ticker_decoder_test|gate_sbe_message_dispatcher_test|gate_submit_response_parser_test)" --output-on-failure # 8/8 passed
 ```
 
 ### WebSocket typed message handler
@@ -353,7 +353,7 @@ tls=true
 probe 行为：
 
 1. 建立 Gate futures SBE WebSocket 连接。
-2. 通过 `FuturesMarketDataSession` 在 active 后自动订阅 `futures.book_ticker`。
+2. 通过 `DataSession` 在 active 后自动订阅 `futures.book_ticker`。
 3. text frame 由 session 统计 subscribe/unsubscribe ack/error。
 4. binary frame 由 session/client 解码为 `BookTicker` 后同步进入 probe consumer。
 5. 输出总消息数、text/binary 数、session 统计、BBO decode 成功数、处理耗时、到达间隔、第一条和最后一条 `BookTicker`，以及 `id_delta`。
@@ -381,8 +381,8 @@ BinanceOrderFeedbackSession
 完整系统中，行情 session 的架构命名为：
 
 ```text
-GateFutureMarketDataSession
-BinanceFutureMarketDataSession
+GateDataSession
+BinanceDataSession
 ```
 
 含义：
@@ -398,7 +398,7 @@ BinanceFutureMarketDataSession
 
 1. `OrderSession` 是上行交易指令通道，同时读取同一 API WebSocket 上的轻量响应，不只表示 place order。
 2. `OrderFeedbackSession` 是下行交易回报通道，服务于策略内的 order management、risk state 和 execution feedback。
-3. `GateFutureMarketDataSession` / `BinanceFutureMarketDataSession` 是系统架构命名；当前 C++ 落地类仍可保持命名空间内的 `FuturesMarketDataSession` 模板实现，是否重命名代码另行讨论。
+3. `GateDataSession` / `BinanceDataSession` 是系统架构命名；当前 C++ 落地类已统一为命名空间内的 `DataSession` 模板实现。
 
 ## 双 WebSocket 登录测试
 
@@ -725,12 +725,12 @@ StrategyThread
 结合 Gate / Binance 行情 session 和方案 A，完整系统线程建议如下：
 
 ```text
-GateFutureMarketDataThread
-  - GateFutureMarketDataSession
+GateDataSessionThread
+  - GateDataSession
   - Gate futures public market data WebSocket
 
-BinanceFutureMarketDataThread
-  - BinanceFutureMarketDataSession
+BinanceDataSessionThread
+  - BinanceDataSession
   - Binance futures public market data WebSocket
 
 StrategyThread
@@ -753,9 +753,9 @@ BinanceOrderFeedbackThread
 跨线程数据流：
 
 ```text
-GateFutureMarketDataSession     \
+GateDataSession     \
                                   -> StrategyThread
-BinanceFutureMarketDataSession  /
+BinanceDataSession  /
 
 StrategyThread
   - Strategy
@@ -786,13 +786,13 @@ BinanceOrderFeedbackSession
 
 ```text
 gate-md-process
-  GateFutureMarketDataThread
-    GateFutureMarketDataSession
+  GateDataSessionThread
+    GateDataSession
     Gate futures public market data WebSocket
 
 binance-md-process
-  BinanceFutureMarketDataThread
-    BinanceFutureMarketDataSession
+  BinanceDataSessionThread
+    BinanceDataSession
     Binance futures public market data WebSocket
 
 strategy-trade-process
@@ -823,8 +823,8 @@ strategy-trade-process
 当前行情进程配置示例：
 
 ```text
-config/data_sessions/gate_future_market_data.toml
-config/data_sessions/binance_future_market_data.toml
+config/data_sessions/gate_data_session.toml
+config/data_sessions/binance_data_session.toml
 ```
 
 ## 待讨论 / 待验证
@@ -852,7 +852,7 @@ config/data_sessions/binance_future_market_data.toml
 - `exchange/gate/sbe/message_dispatcher.h`
 - `exchange/gate/sbe/book_ticker_decoder.h`
 - `exchange/gate/market_data/client.h`
-- `exchange/gate/market_data/session.h`
+- `exchange/gate/market_data/data_session.h`
 - `exchange/gate/market_data/subscription.h`
 - `tools/gate_futures_book_ticker_probe.cpp`
 - `scripts/gate/test_gate_ws_dual_login.py`
@@ -869,7 +869,7 @@ config/data_sessions/binance_future_market_data.toml
 - `test/exchange/gate/sbe/message_dispatcher_test.cpp`
 - `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`
 - `test/exchange/gate/market_data/futures_market_data_client_test.cpp`
-- `test/exchange/gate/market_data/futures_market_data_session_test.cpp`
+- `test/exchange/gate/market_data/data_session_test.cpp`
 - `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`
 - `core/websocket/message_view.h`
 - `core/websocket/websocket_client.h`

@@ -3,7 +3,7 @@ file = "config/instruments/usdt_futures.csv"
 schema = "aquila.instrument.v1"
 
 [data_session]
-name = "gate_future_market_data"
+name = "gate_data_session"
 subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 settle = "usdt"
 wire_format = "sbe"

@@ -9,8 +9,8 @@
 
 #include "core/config/instrument_catalog.h"
 #include "core/websocket/websocket_client.h"
+#include "exchange/gate/market_data/data_session.h"
 #include "exchange/gate/market_data/data_session_config.h"
-#include "exchange/gate/market_data/session.h"
 #include "nova/utils/log.h"
 
 namespace {
@@ -37,7 +37,7 @@ struct CountingConsumer {
   }
 };
 
-void PrintSettings(const aq_gate::FuturesMarketDataSessionSettings& settings) {
+void PrintSettings(const aq_gate::DataSessionSettings& settings) {
   NOVA_INFO("name={}", settings.name);
   NOVA_INFO("websocket host={} service={} target={} tls={} bind_cpu_id={}",
             settings.connection.host, settings.connection.service,
@@ -50,10 +50,10 @@ void PrintSettings(const aq_gate::FuturesMarketDataSessionSettings& settings) {
   }
 }
 
-[[nodiscard]] aq_gate::FuturesMarketDataSessionSettingsResult LoadSettings(
+[[nodiscard]] aq_gate::DataSessionSettingsResult LoadSettings(
     const std::filesystem::path& config_path) {
-  const aq_gate::FuturesMarketDataConfigResult config_result =
-      aq_gate::LoadFuturesMarketDataConfigFile(config_path);
+  const aq_gate::DataSessionConfigResult config_result =
+      aq_gate::LoadDataSessionConfigFile(config_path);
   if (!config_result.ok) {
     return {.error = config_result.error};
   }
@@ -65,16 +65,15 @@ void PrintSettings(const aq_gate::FuturesMarketDataSessionSettings& settings) {
     return {.error = catalog_result.error};
   }
 
-  return aq_gate::BuildFuturesMarketDataSessionSettings(config_result.config,
-                                                        catalog_result.catalog);
+  return aq_gate::BuildDataSessionSettings(config_result.config,
+                                           catalog_result.catalog);
 }
 
 template <typename TransportSocketT>
-int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings) {
-  using Session = aq_gate::FuturesMarketDataSession<
+int ConnectAndRun(const aq_gate::DataSessionSettings& settings) {
+  using Session = aq_gate::DataSession<
       CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions,
-      aq_gate::FuturesMarketDataSessionDiagnostics>;
+      ws::DefaultWebSocketOptions, aq_gate::DataSessionDiagnostics>;
 
   CountingConsumer consumer;
   Session session(settings.connection,
@@ -110,17 +109,17 @@ int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings) {
 
 int main(int argc, char** argv) {
   std::filesystem::path config_path{
-      "config/data_sessions/gate_future_market_data.toml"};
+      "config/data_sessions/gate_data_session.toml"};
   bool connect{false};
 
-  CLI::App app{"Gate futures market data session"};
+  CLI::App app{"Gate data session"};
   app.add_option("--config", config_path, "data session TOML path");
   app.add_flag("--connect", connect, "connect to the configured websocket");
   CLI11_PARSE(app, argc, argv);
 
   LoggingGuard logging_guard;
 
-  aq_gate::FuturesMarketDataSessionSettingsResult settings_result =
+  aq_gate::DataSessionSettingsResult settings_result =
       LoadSettings(config_path);
   if (!settings_result.ok) {
     NOVA_ERROR("config_error={}", settings_result.error);

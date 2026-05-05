@@ -1,5 +1,5 @@
-#ifndef AQUILA_EXCHANGE_GATE_MARKET_DATA_SESSION_H_
-#define AQUILA_EXCHANGE_GATE_MARKET_DATA_SESSION_H_
+#ifndef AQUILA_EXCHANGE_GATE_MARKET_DATA_DATA_SESSION_H_
+#define AQUILA_EXCHANGE_GATE_MARKET_DATA_DATA_SESSION_H_
 
 #include <array>
 #include <atomic>
@@ -25,7 +25,7 @@
 
 namespace aquila::gate {
 
-struct FuturesMarketDataSessionStats {
+struct DataSessionStats {
   std::uint64_t text_messages{0};
   std::uint64_t binary_messages{0};
   std::uint64_t control_messages{0};
@@ -42,18 +42,18 @@ struct FuturesMarketDataSessionStats {
   std::uint64_t unsupported_json_market_data_messages{0};
 };
 
-struct NoopFuturesMarketDataSessionDiagnostics {
+struct NoopDataSessionDiagnostics {
   static constexpr bool kEnabled = false;
 
-  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+  [[nodiscard]] const DataSessionStats& stats() const noexcept {
     return kStats;
   }
 
  private:
-  inline static constexpr FuturesMarketDataSessionStats kStats{};
+  inline static constexpr DataSessionStats kStats{};
 };
 
-class FuturesMarketDataSessionDiagnostics {
+class DataSessionDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
@@ -113,12 +113,12 @@ class FuturesMarketDataSessionDiagnostics {
     ++stats_.unsupported_json_market_data_messages;
   }
 
-  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+  [[nodiscard]] const DataSessionStats& stats() const noexcept {
     return stats_;
   }
 
  private:
-  FuturesMarketDataSessionStats stats_{};
+  DataSessionStats stats_{};
 };
 
 namespace detail {
@@ -137,20 +137,18 @@ inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
 template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
           typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
           typename OptionsT = websocket::DefaultWebSocketOptions,
-          typename SessionDiagnosticsT =
-              NoopFuturesMarketDataSessionDiagnostics>
-class FuturesMarketDataSession {
+          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+class DataSession {
  public:
-  using MessageHandler = websocket::MessageHandlerRef<FuturesMarketDataSession>;
+  using MessageHandler = websocket::MessageHandlerRef<DataSession>;
   using Client =
       websocket::BasicWebSocketClient<TransportSocketT, MessageHandler>;
   static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
   static constexpr bool SessionDiagnosticsEnabled =
       SessionDiagnosticsT::kEnabled;
 
-  FuturesMarketDataSession(websocket::ConnectionConfig config,
-                           std::span<const SymbolBinding> symbols,
-                           Consumer& consumer)
+  DataSession(websocket::ConnectionConfig config,
+              std::span<const SymbolBinding> symbols, Consumer& consumer)
       : market_data_client_(symbols, consumer),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(ApplyOptions(std::move(config)), message_handler_) {
@@ -159,12 +157,10 @@ class FuturesMarketDataSession {
   }
 
   template <size_t N>
-  FuturesMarketDataSession(websocket::ConnectionConfig config,
-                           const std::array<SymbolBinding, N>& symbols,
-                           Consumer& consumer)
-      : FuturesMarketDataSession(std::move(config),
-                                 std::span<const SymbolBinding>(symbols),
-                                 consumer) {}
+  DataSession(websocket::ConnectionConfig config,
+              const std::array<SymbolBinding, N>& symbols, Consumer& consumer)
+      : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
+                    consumer) {}
 
   bool Start() noexcept {
     return client_.Start();
@@ -244,7 +240,7 @@ class FuturesMarketDataSession {
     return ever_active_.load(std::memory_order_acquire);
   }
 
-  [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
+  [[nodiscard]] const DataSessionStats& stats() const noexcept {
     return session_diagnostics_.stats();
   }
 
@@ -268,7 +264,7 @@ class FuturesMarketDataSession {
  private:
   class ScopedStopHandlers {
    public:
-    explicit ScopedStopHandlers(FuturesMarketDataSession* session) noexcept
+    explicit ScopedStopHandlers(DataSession* session) noexcept
         : session_(session) {
       active_stop_session_.store(session_, std::memory_order_release);
       previous_int_handler_ = std::signal(SIGINT, &HandleStopSignal);
@@ -281,7 +277,7 @@ class FuturesMarketDataSession {
     ~ScopedStopHandlers() {
       std::signal(SIGINT, previous_int_handler_);
       std::signal(SIGTERM, previous_term_handler_);
-      FuturesMarketDataSession* expected = session_;
+      DataSession* expected = session_;
       (void)active_stop_session_.compare_exchange_strong(
           expected, nullptr, std::memory_order_acq_rel,
           std::memory_order_acquire);
@@ -290,7 +286,7 @@ class FuturesMarketDataSession {
    private:
     using SignalHandler = void (*)(int);
 
-    FuturesMarketDataSession* session_{nullptr};
+    DataSession* session_{nullptr};
     SignalHandler previous_int_handler_{SIG_DFL};
     SignalHandler previous_term_handler_{SIG_DFL};
   };
@@ -299,8 +295,7 @@ class FuturesMarketDataSession {
     if (signal != SIGINT && signal != SIGTERM) {
       return;
     }
-    FuturesMarketDataSession* session =
-        active_stop_session_.load(std::memory_order_acquire);
+    DataSession* session = active_stop_session_.load(std::memory_order_acquire);
     if (session != nullptr) {
       session->Stop();
     }
@@ -308,7 +303,7 @@ class FuturesMarketDataSession {
 
   static void HandleState(void* context,
                           websocket::ConnectionPhase phase) noexcept {
-    static_cast<FuturesMarketDataSession*>(context)->OnConnectionPhase(phase);
+    static_cast<DataSession*>(context)->OnConnectionPhase(phase);
   }
 
   static websocket::ConnectionConfig ApplyOptions(
@@ -460,10 +455,9 @@ class FuturesMarketDataSession {
   [[no_unique_address]] SessionDiagnosticsT session_diagnostics_{};
   simdjson::ondemand::parser text_parser_;
   BookTickerSubscriptionController subscription_controller_;
-  inline static std::atomic<FuturesMarketDataSession*> active_stop_session_{
-      nullptr};
+  inline static std::atomic<DataSession*> active_stop_session_{nullptr};
 };
 
 }  // namespace aquila::gate
 
-#endif  // AQUILA_EXCHANGE_GATE_MARKET_DATA_SESSION_H_
+#endif  // AQUILA_EXCHANGE_GATE_MARKET_DATA_DATA_SESSION_H_
