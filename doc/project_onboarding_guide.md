@@ -114,7 +114,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/binance/market_data/stream.h` | 构造 `/public/ws/<symbol>@bookTicker` raw stream target，并限制单连接 stream 数上限。 |
 | `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，生产路径使用 `simdjson::ondemand` 和 `fast_float`。 |
 | `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
-| `exchange/binance/market_data/data_session.h` | raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
+| `exchange/binance/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
 
 ### Gate 交易准备代码
 

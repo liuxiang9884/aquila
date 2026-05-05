@@ -41,6 +41,18 @@ exchange/common/simdjson_utils.h
 
 Gate 旧 include `exchange/gate/common/simdjson_utils.h` 现在只是转发到共享 helper，以保持已有 Gate 代码不大面积改名。
 
+当前 Binance data session 模板签名为：
+
+```cpp
+aquila::binance::DataSession<
+    Consumer, WebSocketPolicy, DiagnosticsPolicy>
+```
+
+其中 `WebSocketPolicy` 统一选择 TLS / plain socket 和编译期 WebSocket 选项；`DiagnosticsPolicy`
+统一选择 market data client 诊断和 session 诊断。默认 policy 均为生产无统计路径，probe /
+test / text-control benchmark 可显式启用 `SessionOnlyDiagnosticsPolicy` 或
+`DataSessionDiagnosticsPolicy`。
+
 ## Binance 合约元数据脚本
 
 `scripts/binance/query_um_futures_contracts.py` 查询 USD-M futures `GET /fapi/v1/exchangeInfo`，按输入 symbol 顺序生成 `pandas.DataFrame`；CLI 支持一个或多个 symbol，也支持 `--file`，文件内每行一个 symbol。脚本把 `settle_asset` 映射为 `marginAsset`；当前使用约定是调用方只传 USDT settled symbols。

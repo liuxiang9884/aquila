@@ -64,18 +64,46 @@ class DataSessionDiagnostics {
   DataSessionStats stats_{};
 };
 
-template <typename Consumer, typename TransportSocketT = websocket::TlsSocket,
-          typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
-          typename OptionsT = websocket::DefaultWebSocketOptions,
-          typename SessionDiagnosticsT = NoopDataSessionDiagnostics>
+struct DefaultTlsWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = websocket::TlsSocket;
+};
+
+struct DefaultPlainWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = websocket::PlainSocket;
+};
+
+struct NoopDataSessionDiagnosticsPolicy {
+  using MarketDataDiagnostics = NoopFuturesMarketDataDiagnostics;
+  using SessionDiagnostics = NoopDataSessionDiagnostics;
+};
+
+struct SessionOnlyDiagnosticsPolicy {
+  using MarketDataDiagnostics = NoopFuturesMarketDataDiagnostics;
+  using SessionDiagnostics = DataSessionDiagnostics;
+};
+
+struct DataSessionDiagnosticsPolicy {
+  using MarketDataDiagnostics = FuturesMarketDataDiagnostics;
+  using SessionDiagnostics = DataSessionDiagnostics;
+};
+
+template <typename Consumer,
+          typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
+          typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
 class DataSession {
  public:
+  using TransportSocket = typename WebSocketPolicy::TransportSocket;
+  using MarketDataDiagnostics =
+      typename DiagnosticsPolicy::MarketDataDiagnostics;
+  using SessionDiagnostics = typename DiagnosticsPolicy::SessionDiagnostics;
   using MessageHandler = websocket::MessageHandlerRef<DataSession>;
   using Client =
-      websocket::BasicWebSocketClient<TransportSocketT, MessageHandler>;
-  static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
+      websocket::BasicWebSocketClient<TransportSocket, MessageHandler>;
+  static constexpr bool TransportUsesTls = TransportSocket::kUsesTls;
+  static constexpr websocket::ClockSource kClockSource =
+      WebSocketPolicy::kClockSource;
   static constexpr bool SessionDiagnosticsEnabled =
-      SessionDiagnosticsT::kEnabled;
+      SessionDiagnostics::kEnabled;
 
   DataSession(websocket::ConnectionConfig config,
               std::span<const SymbolBinding> symbols, Consumer& consumer)
@@ -145,7 +173,7 @@ class DataSession {
     return session_diagnostics_.stats();
   }
 
-  [[nodiscard]] const DiagnosticsT& market_data_client_diagnostics()
+  [[nodiscard]] const MarketDataDiagnostics& market_data_client_diagnostics()
       const noexcept {
     return market_data_client_.diagnostics();
   }
@@ -196,10 +224,11 @@ class DataSession {
   }
 
   std::string stream_target_;
-  FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
+  FuturesMarketDataClient<Consumer, MarketDataDiagnostics, WebSocketPolicy>
+      market_data_client_;
   MessageHandler message_handler_;
   Client client_;
-  [[no_unique_address]] SessionDiagnosticsT session_diagnostics_{};
+  [[no_unique_address]] SessionDiagnostics session_diagnostics_{};
 };
 
 }  // namespace aquila::binance

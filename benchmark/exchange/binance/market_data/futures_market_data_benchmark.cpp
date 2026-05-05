@@ -16,7 +16,7 @@
 #include "core/websocket/message_view.h"
 #include "exchange/binance/market_data/book_ticker_parser.h"
 #include "exchange/binance/market_data/client.h"
-#include "exchange/binance/market_data/session.h"
+#include "exchange/binance/market_data/data_session.h"
 #include <simdjson.h>
 #include <yyjson.h>
 
@@ -356,6 +356,7 @@ ws::ConnectionConfig BuildConnectionConfig() {
   ws::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
+  config.enable_tls = false;
   return config;
 }
 
@@ -621,7 +622,8 @@ void BenchmarkSessionHandleText(benchmark::State& state) {
   const size_t symbol_count = static_cast<size_t>(state.range(0));
   SymbolSet symbols = BuildSymbols(symbol_count);
   CountingConsumer consumer;
-  aq_binance::FuturesMarketDataSession<CountingConsumer, ws::PlainSocket>
+  aq_binance::DataSession<CountingConsumer,
+                          aq_binance::DefaultPlainWebSocketPolicy>
       session(BuildConnectionConfig(),
               std::span<const aq_binance::SymbolBinding>(symbols.bindings),
               consumer);
@@ -651,7 +653,8 @@ void BenchmarkSessionHandleTextPaddedView(benchmark::State& state) {
   std::memcpy(scratch.data(), kBookTickerJson.data(), kBookTickerJson.size());
   SymbolSet symbols = BuildSymbols(1);
   CountingConsumer consumer;
-  aq_binance::FuturesMarketDataSession<CountingConsumer, ws::PlainSocket>
+  aq_binance::DataSession<CountingConsumer,
+                          aq_binance::DefaultPlainWebSocketPolicy>
       session(BuildConnectionConfig(),
               std::span<const aq_binance::SymbolBinding>(symbols.bindings),
               consumer);

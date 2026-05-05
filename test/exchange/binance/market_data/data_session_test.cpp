@@ -47,26 +47,22 @@ struct RecordingConsumer {
   }
 };
 
-struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
+struct CoarseClockWebSocketPolicy : aquila::binance::DefaultTlsWebSocketPolicy {
   static constexpr aquila::websocket::ClockSource kClockSource =
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
 using DefaultNoStatsSession = aquila::binance::DataSession<RecordingConsumer>;
-using Session = aquila::binance::DataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::binance::NoopFuturesMarketDataDiagnostics,
-    aquila::websocket::DefaultWebSocketOptions,
-    aquila::binance::DataSessionDiagnostics>;
+using Session =
+    aquila::binance::DataSession<RecordingConsumer,
+                                 aquila::binance::DefaultTlsWebSocketPolicy,
+                                 aquila::binance::SessionOnlyDiagnosticsPolicy>;
 using DiagnosticSession =
     aquila::binance::DataSession<RecordingConsumer,
-                                 aquila::websocket::TlsSocket,
-                                 aquila::binance::FuturesMarketDataDiagnostics,
-                                 aquila::websocket::DefaultWebSocketOptions,
-                                 aquila::binance::DataSessionDiagnostics>;
-using CoarseClockSession = aquila::binance::DataSession<
-    RecordingConsumer, aquila::websocket::TlsSocket,
-    aquila::binance::NoopFuturesMarketDataDiagnostics, CoarseClockOptions>;
+                                 aquila::binance::DefaultTlsWebSocketPolicy,
+                                 aquila::binance::DataSessionDiagnosticsPolicy>;
+using CoarseClockSession =
+    aquila::binance::DataSession<RecordingConsumer, CoarseClockWebSocketPolicy>;
 
 static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
 static_assert(Session::SessionDiagnosticsEnabled);

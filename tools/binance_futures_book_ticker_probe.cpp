@@ -133,7 +133,7 @@ struct ProbeConfig {
   bool tls{true};
 };
 
-template <typename TransportSocketT>
+template <typename WebSocketPolicy>
 class ProbeRunner {
  public:
   explicit ProbeRunner(ProbeConfig config)
@@ -213,15 +213,15 @@ class ProbeRunner {
   }
 
  private:
-  using Session = binance::DataSession<
-      ProbeConsumer, TransportSocketT, binance::FuturesMarketDataDiagnostics,
-      ws::DefaultWebSocketOptions, binance::DataSessionDiagnostics>;
+  using TransportSocket = typename WebSocketPolicy::TransportSocket;
+  using Session = binance::DataSession<ProbeConsumer, WebSocketPolicy,
+                                       binance::DataSessionDiagnosticsPolicy>;
 
   static ws::ConnectionConfig BuildConnectionConfig(const ProbeConfig& config) {
     ws::ConnectionConfig connection_config{};
     connection_config.host = config.host;
     connection_config.service = config.port;
-    connection_config.enable_tls = TransportSocketT::kUsesTls;
+    connection_config.enable_tls = TransportSocket::kUsesTls;
     connection_config.max_reads_per_drive = 8;
     connection_config.read_until_would_block = false;
     connection_config.runtime_policy.io_cpu_id = config.cpu;
@@ -339,10 +339,10 @@ void PrintSummary(const RunnerT& runner) {
       last.ask_price, last.ask_volume);
 }
 
-template <typename TransportSocketT>
+template <typename WebSocketPolicy>
 int RunProbe(ProbeConfig config) {
   g_stop_requested = 0;
-  ProbeRunner<TransportSocketT> runner(std::move(config));
+  ProbeRunner<WebSocketPolicy> runner(std::move(config));
   runner.Start();
 
   const auto deadline = std::chrono::steady_clock::now() +
@@ -382,7 +382,9 @@ int main(int argc, char** argv) {
   }
 
   if (config.tls) {
-    return RunProbe<ws::TlsSocket>(std::move(config));
+    return RunProbe<aquila::binance::DefaultTlsWebSocketPolicy>(
+        std::move(config));
   }
-  return RunProbe<ws::PlainSocket>(std::move(config));
+  return RunProbe<aquila::binance::DefaultPlainWebSocketPolicy>(
+      std::move(config));
 }
