@@ -1,3 +1,5 @@
+#include "exchange/gate/market_data/data_session_config.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -7,7 +9,6 @@
 
 #include "core/common/types.h"
 #include "core/config/instrument_catalog.h"
-#include "exchange/gate/market_data/data_session_config.h"
 
 namespace {
 
@@ -85,8 +86,8 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   ExpectOptionalDoubleEq(binance_btc->market_price_bound, 0.05);
 }
 
-TEST(DataSessionConfigTest, BuildsGateFutureMarketDataSessionSettings) {
-  const auto config_result = aquila::gate::LoadGateFutureMarketDataConfigFile(
+TEST(DataSessionConfigTest, BuildsFuturesMarketDataSessionSettings) {
+  const auto config_result = aquila::gate::LoadFuturesMarketDataConfigFile(
       SourcePath("config/data_sessions/gate_future_market_data.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
@@ -95,11 +96,11 @@ TEST(DataSessionConfigTest, BuildsGateFutureMarketDataSessionSettings) {
   ASSERT_TRUE(catalog_result.ok) << catalog_result.error;
 
   const auto settings_result =
-      aquila::gate::BuildGateFutureMarketDataSessionSettings(
+      aquila::gate::BuildFuturesMarketDataSessionSettings(
           config_result.config, catalog_result.catalog);
   ASSERT_TRUE(settings_result.ok) << settings_result.error;
 
-  const aquila::gate::GateFutureMarketDataSessionSettings& settings =
+  const aquila::gate::FuturesMarketDataSessionSettings& settings =
       settings_result.settings;
   EXPECT_EQ(settings.name, "gate_future_market_data");
   EXPECT_EQ(settings.connection.host, "fx-ws.gateio.ws");
@@ -123,7 +124,7 @@ TEST(DataSessionConfigTest, BuildsGateFutureMarketDataSessionSettings) {
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
-  const auto config_result = aquila::gate::LoadGateFutureMarketDataConfigFile(
+  const auto config_result = aquila::gate::LoadFuturesMarketDataConfigFile(
       SourcePath("config/data_sessions/gate_future_market_data.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
@@ -135,7 +136,7 @@ TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   ASSERT_TRUE(catalog_result.ok) << catalog_result.error;
 
   const auto settings_result =
-      aquila::gate::BuildGateFutureMarketDataSessionSettings(
+      aquila::gate::BuildFuturesMarketDataSessionSettings(
           config, catalog_result.catalog);
   ASSERT_FALSE(settings_result.ok);
   EXPECT_NE(settings_result.error.find("MISSING_USDT"), std::string::npos);

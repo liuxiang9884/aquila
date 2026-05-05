@@ -78,33 +78,21 @@ static_assert(!std::is_constructible_v<
               Session, aquila::websocket::ConnectionConfig,
               std::span<const aquila::gate::SymbolBinding>, RecordingConsumer&,
               aquila::websocket::ClockSource>);
+template <typename SessionT>
+concept HasStateHandler =
+    requires(SessionT& session) { session.SetStateHandler(nullptr, nullptr); };
 
-struct StateCapture {
-  int state_calls{0};
-  int error_calls{0};
-  aquila::websocket::ConnectionPhase last_phase{
-      aquila::websocket::ConnectionPhase::kDisconnected};
-  aquila::websocket::ConnectionError last_error{
-      aquila::websocket::ConnectionError::kNone};
-};
+template <typename SessionT>
+concept HasErrorHandler =
+    requires(SessionT& session) { session.SetErrorHandler(nullptr, nullptr); };
 
-void CaptureState(void* context,
-                  aquila::websocket::ConnectionPhase phase) noexcept {
-  auto* capture = static_cast<StateCapture*>(context);
-  ++capture->state_calls;
-  capture->last_phase = phase;
-}
-
-void CaptureError(void* context,
-                  aquila::websocket::ConnectionError error) noexcept {
-  auto* capture = static_cast<StateCapture*>(context);
-  ++capture->error_calls;
-  capture->last_error = error;
-}
+static_assert(!HasStateHandler<Session>);
+static_assert(!HasErrorHandler<Session>);
 
 Session MakeSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -114,7 +102,8 @@ Session MakeSession(RecordingConsumer& consumer) {
 
 DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -124,7 +113,8 @@ DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
 
 Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -135,7 +125,8 @@ Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
 
 DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -220,17 +211,14 @@ TEST(GateFuturesMarketDataSessionTest,
      ManualConnectionPhaseOnlyDrivesGateSubscriptionState) {
   RecordingConsumer consumer;
   Session session = MakeSession(consumer);
-  StateCapture capture;
-  session.SetStateHandler(&capture, &CaptureState);
-  session.SetErrorHandler(&capture, &CaptureError);
 
+  EXPECT_FALSE(session.ever_active());
   EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
   EXPECT_EQ(session.last_error(), aquila::websocket::ConnectionError::kNone);
 
   session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
 
-  EXPECT_EQ(capture.state_calls, 0);
-  EXPECT_EQ(capture.error_calls, 0);
+  EXPECT_TRUE(session.ever_active());
   EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
   EXPECT_EQ(session.last_error(), aquila::websocket::ConnectionError::kNone);
   EXPECT_EQ(session.subscription_state(),

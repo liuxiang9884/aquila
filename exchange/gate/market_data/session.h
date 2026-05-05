@@ -2,6 +2,7 @@
 #define AQUILA_EXCHANGE_GATE_MARKET_DATA_SESSION_H_
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
@@ -172,16 +173,6 @@ class FuturesMarketDataSession {
     client_.Stop();
   }
 
-  void SetStateHandler(void* context,
-                       websocket::StateHandler handler) noexcept {
-    client_.SetStateHandler(context, handler);
-  }
-
-  void SetErrorHandler(void* context,
-                       websocket::ErrorHandler handler) noexcept {
-    client_.SetErrorHandler(context, handler);
-  }
-
   websocket::DeliveryResult Handle(
       const websocket::MessageView& view) noexcept {
     if (view.kind == websocket::PayloadKind::kBinary) [[likely]] {
@@ -200,6 +191,9 @@ class FuturesMarketDataSession {
   }
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
+    if (phase == websocket::ConnectionPhase::kActive) {
+      ever_active_.store(true, std::memory_order_release);
+    }
     if (subscription_controller_.OnConnectionPhase(phase)) {
       (void)SendSubscribeAttempt();
     }
@@ -238,6 +232,10 @@ class FuturesMarketDataSession {
 
   [[nodiscard]] websocket::ConnectionError last_error() const noexcept {
     return client_.last_error();
+  }
+
+  [[nodiscard]] bool ever_active() const noexcept {
+    return ever_active_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]] const FuturesMarketDataSessionStats& stats() const noexcept {
@@ -409,6 +407,7 @@ class FuturesMarketDataSession {
 
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
+  std::atomic<bool> ever_active_{false};
   FuturesMarketDataClient<Consumer, DiagnosticsT, OptionsT> market_data_client_;
   MessageHandler message_handler_;
   Client client_;

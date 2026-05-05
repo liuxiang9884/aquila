@@ -19,7 +19,7 @@
 
 namespace aquila::gate {
 
-struct GateFutureMarketDataSessionConfig {
+struct FuturesMarketDataSessionConfig {
   std::string name;
   std::vector<std::string> subscribe_symbols;
   std::string settle{"usdt"};
@@ -29,55 +29,54 @@ struct GateFutureMarketDataSessionConfig {
   config::WebSocketConfig websocket;
 };
 
-struct GateFutureMarketDataConfigFile {
+struct FuturesMarketDataConfigFile {
   config::InstrumentCatalogConfig instrument_catalog;
-  GateFutureMarketDataSessionConfig data_session;
+  FuturesMarketDataSessionConfig data_session;
 };
 
-struct GateFutureMarketDataConfigResult {
-  GateFutureMarketDataConfigFile config;
+struct FuturesMarketDataConfigResult {
+  FuturesMarketDataConfigFile config;
   std::string error;
   bool ok{false};
 };
 
-struct GateFutureMarketDataSessionSettings {
+struct FuturesMarketDataSessionSettings {
   std::string name;
   websocket::ConnectionConfig connection;
   std::vector<std::string> exchange_symbols;
   std::vector<SymbolBinding> symbols;
 };
 
-struct GateFutureMarketDataSessionSettingsResult {
-  GateFutureMarketDataSessionSettings settings;
+struct FuturesMarketDataSessionSettingsResult {
+  FuturesMarketDataSessionSettings settings;
   std::string error;
   bool ok{false};
 };
 
-[[nodiscard]] GateFutureMarketDataConfigResult
-ParseGateFutureMarketDataConfig(const toml::table& node);
+[[nodiscard]] FuturesMarketDataConfigResult ParseFuturesMarketDataConfig(
+    const toml::table& node);
 
-[[nodiscard]] GateFutureMarketDataConfigResult
-LoadGateFutureMarketDataConfigFile(const std::filesystem::path& path);
+[[nodiscard]] FuturesMarketDataConfigResult LoadFuturesMarketDataConfigFile(
+    const std::filesystem::path& path);
 
-[[nodiscard]] inline std::string BuildGateFutureMarketDataTarget(
-    const GateFutureMarketDataSessionConfig& config) {
+[[nodiscard]] inline std::string BuildFuturesMarketDataTarget(
+    const FuturesMarketDataSessionConfig& config) {
   return fmt::format("/v4/ws/{}/sbe?sbe_schema_id={}", config.settle,
                      config.sbe_schema_id);
 }
 
-[[nodiscard]] inline GateFutureMarketDataSessionSettingsResult
-BuildGateFutureMarketDataSessionSettings(
-    const GateFutureMarketDataConfigFile& config_file,
+[[nodiscard]] inline FuturesMarketDataSessionSettingsResult
+BuildFuturesMarketDataSessionSettings(
+    const FuturesMarketDataConfigFile& config_file,
     const config::InstrumentCatalog& catalog) {
-  GateFutureMarketDataSessionSettingsResult result;
-  const GateFutureMarketDataSessionConfig& data_session =
-      config_file.data_session;
+  FuturesMarketDataSessionSettingsResult result;
+  const FuturesMarketDataSessionConfig& data_session = config_file.data_session;
   if (data_session.feed != "book_ticker" || data_session.wire_format != "sbe") {
     result.error = "Gate future market data supports only SBE book_ticker";
     return result;
   }
 
-  const std::string target = BuildGateFutureMarketDataTarget(data_session);
+  const std::string target = BuildFuturesMarketDataTarget(data_session);
   config::ConnectionConfigResult connection_result =
       config::ToConnectionConfig(data_session.websocket, target);
   if (!connection_result.ok) {

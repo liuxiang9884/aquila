@@ -1,5 +1,3 @@
-#include <sys/socket.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -24,7 +22,6 @@
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/session.h"
-#include <netdb.h>
 
 namespace {
 
@@ -40,48 +37,6 @@ void RequestStop(int) noexcept {
 void InstallStopHandlers() noexcept {
   std::signal(SIGINT, &RequestStop);
   std::signal(SIGTERM, &RequestStop);
-}
-
-std::string FormatSockaddr(const sockaddr_storage& storage,
-                           socklen_t storage_len) {
-  char host[NI_MAXHOST]{};
-  char service[NI_MAXSERV]{};
-  const int rc = ::getnameinfo(
-      reinterpret_cast<const sockaddr*>(&storage), storage_len, host,
-      sizeof(host), service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);
-  if (rc != 0) {
-    return "unavailable";
-  }
-  return fmt::format(FMT_COMPILE("{}:{}"), host, service);
-}
-
-void PrintSocketInfo(int fd) {
-  if (fd < 0) {
-    fmt::print(stderr, FMT_COMPILE("socket fd=unavailable\n"));
-    return;
-  }
-
-  sockaddr_storage local{};
-  socklen_t local_len = sizeof(local);
-  sockaddr_storage peer{};
-  socklen_t peer_len = sizeof(peer);
-  const bool has_local =
-      ::getsockname(fd, reinterpret_cast<sockaddr*>(&local), &local_len) == 0;
-  const bool has_peer =
-      ::getpeername(fd, reinterpret_cast<sockaddr*>(&peer), &peer_len) == 0;
-
-  int incoming_cpu = -1;
-  socklen_t incoming_cpu_len = sizeof(incoming_cpu);
-  const bool has_incoming_cpu =
-      ::getsockopt(fd, SOL_SOCKET, SO_INCOMING_CPU, &incoming_cpu,
-                   &incoming_cpu_len) == 0;
-
-  fmt::print(stderr,
-             FMT_COMPILE("socket fd={} local={} peer={} so_incoming_cpu={}\n"),
-             fd, has_local ? FormatSockaddr(local, local_len) : "unavailable",
-             has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
-             has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
-                              : "unavailable");
 }
 
 struct ProbeStats {
@@ -142,15 +97,12 @@ class ProbeRunner {
  public:
   explicit ProbeRunner(ProbeConfig config)
       : config_(std::move(config)),
-        symbols_{gate::SymbolBinding{.symbol = config_.contract,
+        symbols_{gate::SymbolBinding{.exchange_symbol = config_.contract,
                                      .symbol_id = config_.symbol_id}},
         consumer_{.stats = &stats_},
         session_(BuildConnectionConfig(config_), symbols_, consumer_) {}
 
   void Start() {
-    session_.SetStateHandler(this, &ProbeRunner::HandleState);
-    session_.SetErrorHandler(this, &ProbeRunner::HandleError);
-
     thread_ = std::thread([this]() {
       result_.store(session_.Start(), std::memory_order_release);
       metrics_ = session_.SnapshotMetrics();
@@ -177,17 +129,15 @@ class ProbeRunner {
   }
 
   [[nodiscard]] bool saw_active() const noexcept {
-    return saw_active_.load(std::memory_order_acquire);
+    return session_.ever_active();
   }
 
   [[nodiscard]] ws::ConnectionPhase phase() const noexcept {
-    return static_cast<ws::ConnectionPhase>(
-        phase_.load(std::memory_order_acquire));
+    return session_.phase();
   }
 
   [[nodiscard]] ws::ConnectionError error() const noexcept {
-    return static_cast<ws::ConnectionError>(
-        error_.load(std::memory_order_acquire));
+    return session_.last_error();
   }
 
   [[nodiscard]] ws::SendStatus subscribe_status() const noexcept {
@@ -241,33 +191,6 @@ class ProbeRunner {
     return connection_config;
   }
 
-  static void HandleState(void* context, ws::ConnectionPhase phase) noexcept {
-    static_cast<ProbeRunner*>(context)->OnState(phase);
-  }
-
-  static void HandleError(void* context, ws::ConnectionError error) noexcept {
-    static_cast<ProbeRunner*>(context)->OnError(error);
-  }
-
-  void OnState(ws::ConnectionPhase phase) noexcept {
-    phase_.store(static_cast<std::uint8_t>(phase), std::memory_order_release);
-    fmt::print(stderr, FMT_COMPILE("state={}\n"), magic_enum::enum_name(phase));
-    if (phase != ws::ConnectionPhase::kActive) {
-      return;
-    }
-
-    saw_active_.store(true, std::memory_order_release);
-    PrintSocketInfo(session_.NativeFd());
-    fmt::print(stderr, FMT_COMPILE("subscribe={} subscription_state={}\n"),
-               magic_enum::enum_name(session_.subscribe_status()),
-               magic_enum::enum_name(session_.subscription_state()));
-  }
-
-  void OnError(ws::ConnectionError error) noexcept {
-    error_.store(static_cast<std::uint8_t>(error), std::memory_order_release);
-    fmt::print(stderr, FMT_COMPILE("error={}\n"), magic_enum::enum_name(error));
-  }
-
   ProbeConfig config_;
   std::array<gate::SymbolBinding, 1> symbols_;
   ProbeStats stats_{};
@@ -277,11 +200,6 @@ class ProbeRunner {
   ws::Metrics metrics_{};
   std::atomic<bool> done_{false};
   std::atomic<bool> result_{false};
-  std::atomic<bool> saw_active_{false};
-  std::atomic<std::uint8_t> phase_{
-      static_cast<std::uint8_t>(ws::ConnectionPhase::kDisconnected)};
-  std::atomic<std::uint8_t> error_{
-      static_cast<std::uint8_t>(ws::ConnectionError::kNone)};
 };
 
 double AverageNs(std::uint64_t total, std::uint64_t samples) noexcept {
@@ -326,32 +244,29 @@ void PrintSummary(const RunnerT& runner) {
       magic_enum::enum_name(runner.subscription_state()), metrics.rx_messages,
       metrics.rx_bytes, metrics.tx_messages, metrics.tx_bytes,
       metrics.reconnects, metrics.heartbeat_timeouts);
-  fmt::print(
-      FMT_COMPILE(
-          "session text={} binary={} non_final={} control={} "
-          "parse_errors={} ignored_text={} subscribe_sent={} "
-          "subscribe_retry_attempts={} subscribe_send_failures={} "
-          "subscribe_acks={} unsubscribe_sent={} unsubscribe_acks={} "
-          "control_errors={} json_market_data={} unsupported_json={}\n"),
-      session_stats.text_messages, session_stats.binary_messages,
-      session_stats.non_final_messages, session_stats.control_messages,
-      session_stats.control_parse_errors, session_stats.ignored_text_messages,
-      session_stats.subscribe_sent, session_stats.subscribe_retry_attempts,
-      session_stats.subscribe_send_failures, session_stats.subscribe_acks,
-      session_stats.unsubscribe_sent, session_stats.unsubscribe_acks,
-      session_stats.control_errors, session_stats.json_market_data_messages,
-      session_stats.unsupported_json_market_data_messages);
+  fmt::print(FMT_COMPILE(
+                 "session text={} binary={} control={} parse_errors={} "
+                 "ignored_text={} subscribe_sent={} "
+                 "subscribe_retry_attempts={} subscribe_send_failures={} "
+                 "subscribe_acks={} unsubscribe_sent={} unsubscribe_acks={} "
+                 "control_errors={} json_market_data={} unsupported_json={}\n"),
+             session_stats.text_messages, session_stats.binary_messages,
+             session_stats.control_messages, session_stats.control_parse_errors,
+             session_stats.ignored_text_messages, session_stats.subscribe_sent,
+             session_stats.subscribe_retry_attempts,
+             session_stats.subscribe_send_failures,
+             session_stats.subscribe_acks, session_stats.unsubscribe_sent,
+             session_stats.unsubscribe_acks, session_stats.control_errors,
+             session_stats.json_market_data_messages,
+             session_stats.unsupported_json_market_data_messages);
   fmt::print(FMT_COMPILE("market_data_drop need_more={} unsupported_schema={} "
                          "unsupported_version={} unsupported_template={} "
-                         "unsupported_message={} unknown_symbol={} "
-                         "book_ticker_decode_failures={}\n"),
+                         "unsupported_message={}\n"),
              market_data_stats.sbe_need_more,
              market_data_stats.unsupported_sbe_schemas,
              market_data_stats.unsupported_sbe_schema_versions,
              market_data_stats.unsupported_sbe_templates,
-             market_data_stats.unsupported_sbe_messages,
-             market_data_stats.unknown_symbols,
-             market_data_stats.book_ticker_decode_failures);
+             market_data_stats.unsupported_sbe_messages);
   fmt::print(
       FMT_COMPILE("book_ticker payloads={} decoded={} failed_or_unmapped={} "
                   "first_id={} last_id={} id_delta={}\n"),

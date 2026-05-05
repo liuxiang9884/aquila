@@ -18,27 +18,27 @@ void MaybeLogError(std::string_view message) {
   }
 }
 
-[[nodiscard]] GateFutureMarketDataConfigResult Failure(std::string error) {
+[[nodiscard]] FuturesMarketDataConfigResult Failure(std::string error) {
   MaybeLogError(error);
-  GateFutureMarketDataConfigResult result;
+  FuturesMarketDataConfigResult result;
   result.error = std::move(error);
   return result;
 }
 
-[[nodiscard]] GateFutureMarketDataConfigResult Success(
-    GateFutureMarketDataConfigFile config) {
-  GateFutureMarketDataConfigResult result;
+[[nodiscard]] FuturesMarketDataConfigResult Success(
+    FuturesMarketDataConfigFile config) {
+  FuturesMarketDataConfigResult result;
   result.config = std::move(config);
   result.ok = true;
   return result;
 }
 
-class GateFutureMarketDataConfigParser {
+class FuturesMarketDataConfigParser {
  public:
-  explicit GateFutureMarketDataConfigParser(const toml::table& node)
+  explicit FuturesMarketDataConfigParser(const toml::table& node)
       : node_(node) {}
 
-  [[nodiscard]] GateFutureMarketDataConfigResult Parse() {
+  [[nodiscard]] FuturesMarketDataConfigResult Parse() {
     ParseInstrumentCatalog();
     if (!ok_) {
       return Failure(std::move(error_));
@@ -146,23 +146,23 @@ class GateFutureMarketDataConfigParser {
   }
 
   const toml::table& node_;
-  GateFutureMarketDataConfigFile config_;
+  FuturesMarketDataConfigFile config_;
   std::string error_;
   bool ok_{true};
 };
 
 }  // namespace
 
-GateFutureMarketDataConfigResult ParseGateFutureMarketDataConfig(
+FuturesMarketDataConfigResult ParseFuturesMarketDataConfig(
     const toml::table& node) {
-  return GateFutureMarketDataConfigParser{node}.Parse();
+  return FuturesMarketDataConfigParser{node}.Parse();
 }
 
-GateFutureMarketDataConfigResult LoadGateFutureMarketDataConfigFile(
+FuturesMarketDataConfigResult LoadFuturesMarketDataConfigFile(
     const std::filesystem::path& path) {
   try {
     const toml::parse_result parsed = toml::parse_file(path.string());
-    return ParseGateFutureMarketDataConfig(parsed);
+    return ParseFuturesMarketDataConfig(parsed);
   } catch (const std::exception& exc) {
     return Failure(std::string{"failed to load Gate market data config: "} +
                    exc.what());

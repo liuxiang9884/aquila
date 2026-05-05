@@ -45,40 +45,14 @@ struct LoggingGuard {
 };
 
 struct CountingConsumer {
-  std::atomic<std::uint64_t> book_tickers{0};
+  std::uint64_t book_tickers{0};
 
   void OnBookTicker(const aquila::BookTicker&) noexcept {
-    book_tickers.fetch_add(1, std::memory_order_relaxed);
+    ++book_tickers;
   }
 };
 
-struct SessionState {
-  std::atomic<bool> active{false};
-  std::atomic<std::uint8_t> phase{
-      static_cast<std::uint8_t>(ws::ConnectionPhase::kDisconnected)};
-  std::atomic<std::uint8_t> error{
-      static_cast<std::uint8_t>(ws::ConnectionError::kNone)};
-};
-
-void HandleState(void* context, ws::ConnectionPhase phase) noexcept {
-  auto* state = static_cast<SessionState*>(context);
-  state->phase.store(static_cast<std::uint8_t>(phase),
-                     std::memory_order_release);
-  if (phase == ws::ConnectionPhase::kActive) {
-    state->active.store(true, std::memory_order_release);
-  }
-  NOVA_DEBUG("state={}", magic_enum::enum_name(phase));
-}
-
-void HandleError(void* context, ws::ConnectionError error) noexcept {
-  auto* state = static_cast<SessionState*>(context);
-  state->error.store(static_cast<std::uint8_t>(error),
-                     std::memory_order_release);
-  NOVA_ERROR("error={}", magic_enum::enum_name(error));
-}
-
-void PrintSettings(
-    const aq_gate::GateFutureMarketDataSessionSettings& settings) {
+void PrintSettings(const aq_gate::FuturesMarketDataSessionSettings& settings) {
   NOVA_INFO("name={}", settings.name);
   NOVA_INFO("websocket host={} service={} target={} tls={} bind_cpu_id={}",
             settings.connection.host, settings.connection.service,
@@ -91,10 +65,10 @@ void PrintSettings(
   }
 }
 
-[[nodiscard]] aq_gate::GateFutureMarketDataSessionSettingsResult LoadSettings(
+[[nodiscard]] aq_gate::FuturesMarketDataSessionSettingsResult LoadSettings(
     const std::filesystem::path& config_path) {
-  const aq_gate::GateFutureMarketDataConfigResult config_result =
-      aq_gate::LoadGateFutureMarketDataConfigFile(config_path);
+  const aq_gate::FuturesMarketDataConfigResult config_result =
+      aq_gate::LoadFuturesMarketDataConfigFile(config_path);
   if (!config_result.ok) {
     return {.error = config_result.error};
   }
@@ -106,12 +80,12 @@ void PrintSettings(
     return {.error = catalog_result.error};
   }
 
-  return aq_gate::BuildGateFutureMarketDataSessionSettings(
-      config_result.config, catalog_result.catalog);
+  return aq_gate::BuildFuturesMarketDataSessionSettings(config_result.config,
+                                                        catalog_result.catalog);
 }
 
 template <typename TransportSocketT>
-int ConnectAndRun(const aq_gate::GateFutureMarketDataSessionSettings& settings,
+int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings,
                   std::uint32_t duration_ms) {
   using Session = aq_gate::FuturesMarketDataSession<
       CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
@@ -119,13 +93,10 @@ int ConnectAndRun(const aq_gate::GateFutureMarketDataSessionSettings& settings,
       aq_gate::FuturesMarketDataSessionDiagnostics>;
 
   CountingConsumer consumer;
-  SessionState state;
   Session session(settings.connection,
                   std::span<const aq_gate::SymbolBinding>(
                       settings.symbols.data(), settings.symbols.size()),
                   consumer);
-  session.SetStateHandler(&state, &HandleState);
-  session.SetErrorHandler(&state, &HandleError);
 
   std::atomic<bool> done{false};
   std::atomic<bool> started{false};
@@ -147,27 +118,26 @@ int ConnectAndRun(const aq_gate::GateFutureMarketDataSessionSettings& settings,
   }
 
   const ws::Metrics metrics = session.SnapshotMetrics();
-  const auto phase = static_cast<ws::ConnectionPhase>(
-      state.phase.load(std::memory_order_acquire));
-  const auto error = static_cast<ws::ConnectionError>(
-      state.error.load(std::memory_order_acquire));
+  const ws::ConnectionPhase phase = session.phase();
+  const ws::ConnectionError error = session.last_error();
   const bool started_ok = started.load(std::memory_order_acquire);
-  const bool active = state.active.load(std::memory_order_acquire);
-  const std::uint64_t book_tickers =
-      consumer.book_tickers.load(std::memory_order_relaxed);
+  const bool active = session.ever_active();
+  const std::uint64_t book_tickers = consumer.book_tickers;
   if (started_ok && active) {
-    NOVA_INFO("result=ok active=true phase={} error={} book_tickers={} "
-              "rx_messages={} tx_messages={}",
-              magic_enum::enum_name(phase), magic_enum::enum_name(error),
-              book_tickers, metrics.rx_messages, metrics.tx_messages);
+    NOVA_INFO(
+        "result=ok active=true phase={} error={} book_tickers={} "
+        "rx_messages={} tx_messages={}",
+        magic_enum::enum_name(phase), magic_enum::enum_name(error),
+        book_tickers, metrics.rx_messages, metrics.tx_messages);
     return 0;
   }
 
-  NOVA_WARNING("result=failed active={} phase={} error={} book_tickers={} "
-               "rx_messages={} tx_messages={}",
-               active ? "true" : "false", magic_enum::enum_name(phase),
-               magic_enum::enum_name(error), book_tickers, metrics.rx_messages,
-               metrics.tx_messages);
+  NOVA_WARNING(
+      "result=failed active={} phase={} error={} book_tickers={} "
+      "rx_messages={} tx_messages={}",
+      active ? "true" : "false", magic_enum::enum_name(phase),
+      magic_enum::enum_name(error), book_tickers, metrics.rx_messages,
+      metrics.tx_messages);
   return 1;
 }
 
@@ -189,7 +159,7 @@ int main(int argc, char** argv) {
 
   LoggingGuard logging_guard;
 
-  aq_gate::GateFutureMarketDataSessionSettingsResult settings_result =
+  aq_gate::FuturesMarketDataSessionSettingsResult settings_result =
       LoadSettings(config_path);
   if (!settings_result.ok) {
     NOVA_ERROR("config_error={}", settings_result.error);
