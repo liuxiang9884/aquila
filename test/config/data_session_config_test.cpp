@@ -4,8 +4,8 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
-#include <type_traits>
 
 #include <gtest/gtest.h>
 
@@ -89,14 +89,27 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   ExpectOptionalDoubleEq(binance_btc->market_price_bound, 0.05);
 }
 
-TEST(DataSessionConfigTest, CreatesDataSessionFromConfigAndCatalog) {
+TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   const auto config_result = aquila::gate::LoadDataSessionConfigFile(
       SourcePath("config/data_sessions/gate_data_session.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
-  const auto catalog_result = aquila::config::LoadInstrumentCatalogFromCsv(
-      SourcePath(config_result.value.instrument_catalog.file));
-  ASSERT_TRUE(catalog_result.ok) << catalog_result.error;
+  const aquila::gate::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "gate_data_session");
+  EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
+  EXPECT_EQ(config.connection.service, "443");
+  EXPECT_FALSE(config.connection.enable_tls);
+  EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 2);
+
+  ASSERT_EQ(config.exchange_symbols.size(), 3u);
+  EXPECT_EQ(config.exchange_symbols[0], "BTC_USDT");
+  EXPECT_EQ(config.exchange_symbols[1], "ETH_USDT");
+  EXPECT_EQ(config.exchange_symbols[2], "SOL_USDT");
+  ASSERT_EQ(config.symbol_ids.size(), 3u);
+  EXPECT_EQ(config.symbol_ids[0], 0);
+  EXPECT_EQ(config.symbol_ids[1], 1);
+  EXPECT_EQ(config.symbol_ids[2], 2);
 
   struct Consumer {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
@@ -106,23 +119,16 @@ TEST(DataSessionConfigTest, CreatesDataSessionFromConfigAndCatalog) {
       aquila::gate::DataSession<Consumer,
                                 aquila::gate::DefaultPlainWebSocketPolicy,
                                 aquila::gate::SessionOnlyDiagnosticsPolicy>;
-  const auto session_result = aquila::gate::CreateDataSession<
-      Consumer, aquila::gate::DefaultPlainWebSocketPolicy,
-      aquila::gate::SessionOnlyDiagnosticsPolicy>(
-      config_result.value.data_session, catalog_result.value, consumer);
-
-  ASSERT_TRUE(session_result.ok) << session_result.error;
-  static_assert(std::is_same_v<decltype(*session_result.session), Session&>);
-  EXPECT_EQ(session_result.session->name(), "gate_data_session");
-  EXPECT_EQ(session_result.session->connection().host, "fx-ws.gateio.ws");
-  EXPECT_EQ(session_result.session->connection().service, "443");
-  EXPECT_FALSE(session_result.session->connection().enable_tls);
-  EXPECT_EQ(session_result.session->connection().target,
-            "/v4/ws/usdt/sbe?sbe_schema_id=1");
-  EXPECT_EQ(session_result.session->connection().runtime_policy.io_cpu_id, 2);
+  Session session(config, consumer);
+  EXPECT_EQ(session.name(), "gate_data_session");
+  EXPECT_EQ(session.connection().host, "fx-ws.gateio.ws");
+  EXPECT_EQ(session.connection().service, "443");
+  EXPECT_FALSE(session.connection().enable_tls);
+  EXPECT_EQ(session.connection().target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  EXPECT_EQ(session.connection().runtime_policy.io_cpu_id, 2);
 
   const std::span<const aquila::gate::SymbolBinding> symbols =
-      session_result.session->symbols();
+      session.symbols();
   ASSERT_EQ(symbols.size(), 3u);
   EXPECT_EQ(symbols[0].exchange_symbol, "BTC_USDT");
   EXPECT_EQ(symbols[0].symbol_id, 0);
@@ -131,34 +137,38 @@ TEST(DataSessionConfigTest, CreatesDataSessionFromConfigAndCatalog) {
   EXPECT_EQ(symbols[2].exchange_symbol, "SOL_USDT");
   EXPECT_EQ(symbols[2].symbol_id, 2);
 
-  EXPECT_EQ(session_result.session->phase(),
-            aquila::websocket::ConnectionPhase::kDisconnected);
-  session_result.session->OnConnectionPhase(
-      aquila::websocket::ConnectionPhase::kActive);
-  EXPECT_NE(session_result.session->last_subscribe_request().find("BTC_USDT"),
+  EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
+  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
+  EXPECT_NE(session.last_subscribe_request().find("BTC_USDT"),
             std::string_view::npos);
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
-  const auto config_result = aquila::gate::LoadDataSessionConfigFile(
-      SourcePath("config/data_sessions/gate_data_session.toml"));
-  ASSERT_TRUE(config_result.ok) << config_result.error;
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
 
-  auto config = config_result.value;
-  config.data_session.subscribe_symbols = {"MISSING_USDT"};
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["MISSING_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
 
-  const auto catalog_result = aquila::config::LoadInstrumentCatalogFromCsv(
-      SourcePath(config.instrument_catalog.file));
-  ASSERT_TRUE(catalog_result.ok) << catalog_result.error;
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
 
-  struct Consumer {
-    void OnBookTicker(const aquila::BookTicker&) noexcept {}
-  } consumer;
-  const auto session_result = aquila::gate::CreateDataSession<
-      Consumer, aquila::gate::DefaultPlainWebSocketPolicy>(
-      config.data_session, catalog_result.value, consumer);
-  ASSERT_FALSE(session_result.ok);
-  EXPECT_NE(session_result.error.find("MISSING_USDT"), std::string::npos);
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml";
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("MISSING_USDT"), std::string::npos);
 }
 
 }  // namespace

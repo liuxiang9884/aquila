@@ -9,27 +9,18 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/result.h"
-#include "core/config/instrument_catalog.h"
-#include "core/config/websocket_config.h"
+#include "core/websocket/types.h"
 
 namespace aquila::gate {
 
 struct DataSessionConfig {
   std::string name;
-  std::vector<std::string> subscribe_symbols;
-  std::string settle{"usdt"};
-  std::string wire_format{"sbe"};
-  std::uint32_t sbe_schema_id{1};
-  std::string feed{"book_ticker"};
-  config::WebSocketConfig websocket;
+  websocket::ConnectionConfig connection;
+  std::vector<std::string> exchange_symbols;
+  std::vector<std::int32_t> symbol_ids;
 };
 
-struct DataSessionConfigFile {
-  config::InstrumentCatalogConfig instrument_catalog;
-  DataSessionConfig data_session;
-};
-
-using DataSessionConfigResult = Result<DataSessionConfigFile>;
+using DataSessionConfigResult = Result<DataSessionConfig>;
 
 [[nodiscard]] DataSessionConfigResult ParseDataSessionConfig(
     const toml::table& node);

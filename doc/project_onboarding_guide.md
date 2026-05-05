@@ -81,7 +81,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- |
 | `core/config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；由 `aquila_config` target 暴露，TOML 解析使用 `toml++`，诊断日志走 Nova 封装，parser 只保留必填项和枚举映射约束。 |
 | `core/config/instrument_catalog.h` | 启动期 instrument CSV catalog，加载 `aquila.instrument.v1` 的完整字段；当前 data session 只消费 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`，lookup 使用 `absl::flat_hash_map`。 |
-| `exchange/gate/market_data/data_session_config.h` | Gate data session TOML parser，只把文件内容加载成 Gate 专属 data session config；target、`ConnectionConfig` 和 `gate::SymbolBinding` 由 `DataSession` 创建入口生成。 |
+| `exchange/gate/market_data/data_session_config.h` | Gate data session TOML parser / loader，加载 instrument catalog，并生成 `DataSession` 可直接消费的 Gate 专属 `DataSessionConfig`；target、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表均在启动冷路径完成。 |
 
 ### WebSocket 内核
 

@@ -11,8 +11,8 @@ order management 和 order execution 归属于 `Strategy` 模块。
 1. 每个行情进程只加载一份 config，配置中只有一个 `[data_session]`，不使用数组。
 2. 每个 session 自己持有 WebSocket 配置，不引入 `websocket.profiles` 复用层。
 3. TOML 只写连接之间必须不同或最常改的字段。
-4. loader 对缺省字段填统一默认值，但只产出文件配置结构。
-5. WebSocket `target` 不写在配置里，由具体 `DataSession` 创建入口按交易所协议生成。
+4. loader 对缺省字段填统一默认值，并在启动冷路径生成 `DataSession` 可直接消费的运行期 config。
+5. WebSocket `target` 不写在配置里，由具体交易所的 data session config parser 按协议生成。
 
 ## 实现依赖边界
 
@@ -110,13 +110,14 @@ bind_cpu_id = 3
 
 | 字段 | 默认值 | 含义 |
 | --- | --- | --- |
-| `file` | 无，必须显式配置 | instrument CSV 路径。 |
+| `file` | 无，必须显式配置 | instrument CSV 路径。仓库示例使用 repo-root relative path，例如 `config/instruments/usdt_futures.csv`。 |
 | `schema` | 无，必须显式配置 | Aquila 自定义 CSV 字段版本；当前固定 `aquila.instrument.v1`。 |
 
 `instrument_catalog` 第一版是 CSV 数据源，不表示引入真实数据库。启动期读取 CSV 并构建
 `InstrumentCatalog`。`InstrumentInfo` 会加载 CSV 的完整字段；当前 data session 只读取
 `symbol_id`、`exchange`、`symbol` 和 `exchange_symbol` 四列；price tick、quantity step 等交易约束字段留给后续交易端 / 下单校验使用。
 data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_symbols` 共同生成。
+`LoadDataSessionConfigFile()` 从文件加载仓库内示例配置时，会把 TOML 中的相对 CSV 路径解析到对应仓库路径；生产部署也可以直接写绝对路径。
 
 ## Data Session
 
@@ -130,9 +131,9 @@ data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_s
 
 ## Symbol Pool 生成
 
-`subscribe_symbols` 只表示订阅意图，不直接进入行情热路径。启动期 `DataSession` 创建入口应按
+`subscribe_symbols` 只表示订阅意图，不直接进入行情热路径。启动期 data session config parser 按
 具体 binary 对应的 `exchange` 和 `subscribe_symbols` 从 `InstrumentCatalog` 中查找对应记录，
-生成该 data session 专属的 symbol pool。
+生成该 data session 专属的 symbol pool，并写入最终 `DataSessionConfig`。
 
 生成结果至少包括：
 
@@ -155,7 +156,7 @@ Gate futures 行情字段：
 | --- | --- | --- |
 | `settle` | `usdt` | Gate futures settle currency。 |
 | `wire_format` | `sbe` | wire 格式；当前 Gate 行情主路径使用 SBE。 |
-| `sbe_schema_id` | `1` | Gate SBE schema id；`DataSession` 创建入口生成 `/v4/ws/usdt/sbe?sbe_schema_id=1`。 |
+| `sbe_schema_id` | `1` | Gate SBE schema id；Gate config parser 生成 `/v4/ws/usdt/sbe?sbe_schema_id=1`。 |
 | `feed` | `book_ticker` | 当前订阅的行情类型。 |
 
 Gate 当前实现入口：
@@ -220,7 +221,7 @@ enable_tls = false
 Gate private link 部署可显式设置 `enable_tls = false`。公网 `wss://` 连接应保留默认
 `enable_tls = true`，或显式写成 `true`。
 
-`target` 不属于 endpoint 默认字段，由 `DataSession` 创建入口生成。例如 Gate SBE 行情由
+`target` 不属于 endpoint 默认字段，由 data session config parser 在冷路径生成。例如 Gate SBE 行情由
 `settle`、`wire_format` 和 `sbe_schema_id` 生成；Binance book ticker 由 `subscribe_symbols`
 展开后生成 raw stream target。
 
@@ -306,13 +307,12 @@ max_backoff_ms = 30000
 2. 再用 `data_session.websocket.endpoint`、`data_session.websocket.execution_policy`、
    `data_session.websocket.read_path`、`data_session.websocket.heartbeat`、
    `data_session.websocket.reconnect` 覆盖默认值。
-3. 最后由具体 `DataSession` 创建入口生成 `target` 和 exchange-specific `SymbolBinding`。
+3. 最后由具体交易所的 data session config parser 生成 `target`、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表。
 4. 生产启动时每个进程只加载自己的 data session TOML，不把其他进程的 session 放入同一份配置。
 
 生产 tool 的构造输入是：
 
 ```text
 DataSessionConfig
-InstrumentCatalog
 Consumer&
 ```

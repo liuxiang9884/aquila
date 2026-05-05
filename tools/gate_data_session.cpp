@@ -1,11 +1,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 
 #include <CLI/CLI.hpp>
 #include <magic_enum/magic_enum.hpp>
 
-#include "core/config/instrument_catalog.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/data_session.h"
 #include "exchange/gate/market_data/data_session_config.h"
@@ -13,7 +13,6 @@
 
 namespace {
 
-namespace config = aquila::config;
 namespace aq_gate = aquila::gate;
 namespace ws = aquila::websocket;
 
@@ -50,24 +49,13 @@ void PrintSession(const SessionT& session) {
 }
 
 template <typename WebSocketPolicy>
-int CreateAndMaybeRun(const aq_gate::DataSessionConfig& data_session_config,
-                      const config::InstrumentCatalog& catalog, bool connect) {
+int CreateAndMaybeRun(aq_gate::DataSessionConfig data_session_config,
+                      bool connect) {
   using Session = aq_gate::DataSession<CountingConsumer, WebSocketPolicy,
                                        aq_gate::DataSessionDiagnosticsPolicy>;
 
   CountingConsumer consumer;
-  aq_gate::DataSessionCreateResult<CountingConsumer, WebSocketPolicy,
-                                   aq_gate::DataSessionDiagnosticsPolicy>
-      session_result =
-          aq_gate::CreateDataSession<CountingConsumer, WebSocketPolicy,
-                                     aq_gate::DataSessionDiagnosticsPolicy>(
-              data_session_config, catalog, consumer);
-  if (!session_result.ok) {
-    NOVA_ERROR("config_error={}", session_result.error);
-    return 1;
-  }
-
-  Session& session = *session_result.session;
+  Session session(std::move(data_session_config), consumer);
   PrintSession(session);
   if (!connect) {
     return 0;
@@ -111,25 +99,17 @@ int main(int argc, char** argv) {
 
   LoggingGuard logging_guard;
 
-  const aq_gate::DataSessionConfigResult config_result =
+  aq_gate::DataSessionConfigResult config_result =
       aq_gate::LoadDataSessionConfigFile(config_path);
   if (!config_result.ok) {
     NOVA_ERROR("config_error={}", config_result.error);
     return 1;
   }
 
-  const config::InstrumentCatalogLoadResult catalog_result =
-      config::LoadInstrumentCatalogFromCsv(
-          config_result.value.instrument_catalog.file);
-  if (!catalog_result.ok) {
-    NOVA_ERROR("config_error={}", catalog_result.error);
-    return 1;
-  }
-
-  if (config_result.value.data_session.websocket.endpoint.enable_tls) {
+  if (config_result.value.connection.enable_tls) {
     return CreateAndMaybeRun<aq_gate::DefaultTlsWebSocketPolicy>(
-        config_result.value.data_session, catalog_result.value, connect);
+        std::move(config_result.value), connect);
   }
   return CreateAndMaybeRun<aq_gate::DefaultPlainWebSocketPolicy>(
-      config_result.value.data_session, catalog_result.value, connect);
+      std::move(config_result.value), connect);
 }

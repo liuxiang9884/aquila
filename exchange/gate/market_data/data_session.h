@@ -3,12 +3,10 @@
 
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
-#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -149,19 +147,6 @@ struct DataSessionDiagnosticsPolicy {
 
 namespace detail {
 
-inline std::string BuildDataSessionTarget(const DataSessionConfig& config) {
-  std::string target{"/v4/ws/"};
-  target.append(config.settle);
-  target.append("/sbe?sbe_schema_id=");
-  std::array<char, 16> schema_id_buffer{};
-  const auto [end, error] = std::to_chars(
-      schema_id_buffer.data(),
-      schema_id_buffer.data() + schema_id_buffer.size(), config.sbe_schema_id);
-  (void)error;
-  target.append(schema_id_buffer.data(), end);
-  return target;
-}
-
 inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
                              std::vector<std::string_view>* output) {
   output->clear();
@@ -227,6 +212,11 @@ class DataSession {
               const std::array<SymbolBinding, N>& symbols, Consumer& consumer)
       : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
                     consumer) {}
+
+  DataSession(DataSessionConfig config, Consumer& consumer)
+      : DataSession(std::move(config.name), std::move(config.connection),
+                    std::move(config.exchange_symbols),
+                    std::move(config.symbol_ids), consumer) {}
 
   DataSession(std::string name, websocket::ConnectionConfig config,
               std::vector<std::string> exchange_symbols,
@@ -561,63 +551,6 @@ class DataSession {
   BookTickerSubscriptionController subscription_controller_;
   inline static std::atomic<DataSession*> active_stop_session_{nullptr};
 };
-
-template <typename Consumer,
-          typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
-          typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
-struct DataSessionCreateResult {
-  using Session = DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>;
-
-  std::unique_ptr<Session> session;
-  std::string error;
-  bool ok{false};
-};
-
-template <typename Consumer,
-          typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
-          typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
-[[nodiscard]] DataSessionCreateResult<Consumer, WebSocketPolicy,
-                                      DiagnosticsPolicy>
-CreateDataSession(const DataSessionConfig& session_config,
-                  const config::InstrumentCatalog& catalog,
-                  Consumer& consumer) {
-  using Result =
-      DataSessionCreateResult<Consumer, WebSocketPolicy, DiagnosticsPolicy>;
-  Result result;
-  if (session_config.feed != "book_ticker" ||
-      session_config.wire_format != "sbe") {
-    result.error = "Gate data session supports only SBE book_ticker";
-    return result;
-  }
-
-  config::ConnectionConfigResult connection_result = config::ToConnectionConfig(
-      session_config.websocket, detail::BuildDataSessionTarget(session_config));
-  if (!connection_result.ok) {
-    result.error = std::move(connection_result.error);
-    return result;
-  }
-
-  std::vector<std::string> exchange_symbols;
-  exchange_symbols.reserve(session_config.subscribe_symbols.size());
-  std::vector<std::int32_t> symbol_ids;
-  symbol_ids.reserve(session_config.subscribe_symbols.size());
-  for (const std::string& symbol : session_config.subscribe_symbols) {
-    const config::InstrumentInfo* info = catalog.Find(Exchange::kGate, symbol);
-    if (info == nullptr) {
-      result.error = "Gate instrument not found: ";
-      result.error.append(symbol);
-      return result;
-    }
-    exchange_symbols.push_back(info->exchange_symbol);
-    symbol_ids.push_back(info->symbol_id);
-  }
-
-  result.session = std::make_unique<typename Result::Session>(
-      session_config.name, std::move(connection_result.value),
-      std::move(exchange_symbols), std::move(symbol_ids), consumer);
-  result.ok = true;
-  return result;
-}
 
 }  // namespace aquila::gate
 
