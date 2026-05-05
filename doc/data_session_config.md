@@ -21,7 +21,7 @@ order management 和 order execution 归属于 `Strategy` 模块。
 
 | 用途 | 依赖 | 当前边界 |
 | --- | --- | --- |
-| TOML 解析 | `toml++` / `PkgConfig::tomlplusplus` | C++ 配置 loader 使用；当前入口是 `config/websocket_config.h` / `config/websocket_config.cpp`。 |
+| TOML 解析 | `toml++` / `PkgConfig::tomlplusplus` | C++ 配置 loader 使用；当前入口是 `core/config/websocket_config.h` / `core/config/websocket_config.cpp`。 |
 | 日志输出 | `nova/utils/log.h` | 项目代码通过 Nova 封装输出，例如解析失败时使用 `NOVA_ERROR`；不在业务代码中直接依赖底层 log 库。 |
 | instrument CSV | `vincentlaucsb-csv-parser` | C++ instrument catalog loader 预期使用该 vcpkg 依赖；当前 `config/instruments/*.csv` 已作为数据源，生产 loader 尚未实现。 |
 | 合约查询脚本输出 | `pandas.DataFrame` | `scripts/gate/query_futures_contracts.py` 和 `scripts/binance/query_um_futures_contracts.py` 使用 Python pandas 生成统一字段表和 CSV。 |
@@ -165,7 +165,7 @@ Binance futures 行情字段：
 
 ## WebSocket Endpoint
 
-当前 C++ 实现入口是 `config/websocket_config.h` / `config/websocket_config.cpp`。
+当前 C++ 实现入口是 `core/config/websocket_config.h` / `core/config/websocket_config.cpp`。
 `ParseWebSocketConfig()` 解析 `[data_session.websocket]` 节点，`ToConnectionConfig()` 在
 冷路径把配置层结构转换为 `websocket::ConnectionConfig`。解析失败时返回错误字符串；如果
 nova log 已初始化，会通过 `NOVA_ERROR` 输出诊断。

@@ -15,4 +15,5 @@ target_link_libraries(aquila_core
         OpenSSL::Crypto
 )
 
+add_subdirectory(config)
 add_subdirectory(websocket)

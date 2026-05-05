@@ -1,14 +1,11 @@
 add_executable(websocket_config_test
-    ${PROJECT_SOURCE_DIR}/config/websocket_config.cpp
     websocket_config_test.cpp
 )
 
 target_link_libraries(websocket_config_test
     PRIVATE
-        aquila_core
+        aquila_config
         GTest::gtest_main
-        PkgConfig::tomlplusplus
-        nova
 )
 
 target_compile_definitions(websocket_config_test

@@ -74,6 +74,12 @@ doc/websocket_read_write_benchmark_comparison.md
 | `core/utils/numeric.h` | 基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToDouble` / `ToUint64` 等热路径数字转换 helper，失败只在 debug assert。 |
 | `core/market_data/types.h` | 统一行情数据结构，当前包含 `aquila::BookTicker`。 |
 
+### 配置实现
+
+| 文件 | 职责 |
+| --- | --- |
+| `core/config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；由 `aquila_config` target 暴露，TOML 解析使用 `toml++`，诊断日志走 Nova 封装。 |
+
 ### WebSocket 内核
 
 | 文件 | 职责 |
@@ -84,7 +90,6 @@ doc/websocket_read_write_benchmark_comparison.md
 | `core/websocket/websocket_client.h` | plain/TLS client 生命周期、reconnect/backoff、runtime loop 集成。 |
 | `core/websocket/active_spin_loop.h` | active spin loop 调度。 |
 | `core/websocket/prepared_write.h` | 预分配 write slot / arena。 |
-| `config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；TOML 解析使用 `toml++`，诊断日志走 Nova 封装。 |
 
 ### Gate SBE 行情
 

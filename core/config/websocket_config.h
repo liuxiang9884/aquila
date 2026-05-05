@@ -1,5 +1,5 @@
-#ifndef AQUILA_CONFIG_WEBSOCKET_CONFIG_H_
-#define AQUILA_CONFIG_WEBSOCKET_CONFIG_H_
+#ifndef AQUILA_CORE_CONFIG_WEBSOCKET_CONFIG_H_
+#define AQUILA_CORE_CONFIG_WEBSOCKET_CONFIG_H_
 
 #include <cstdint>
 #include <string>
@@ -73,4 +73,4 @@ struct ConnectionConfigResult {
 
 }  // namespace aquila::config
 
-#endif  // AQUILA_CONFIG_WEBSOCKET_CONFIG_H_
+#endif  // AQUILA_CORE_CONFIG_WEBSOCKET_CONFIG_H_
