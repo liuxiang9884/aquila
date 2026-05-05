@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -20,6 +21,24 @@ struct InstrumentInfo {
   Exchange exchange{Exchange::kGate};
   std::string symbol;
   std::string exchange_symbol;
+  std::string base_asset;
+  std::string quote_asset;
+  std::string settle_asset;
+  std::string product_type;
+  std::string status;
+  std::string contract_type;
+  double price_tick{0.0};
+  std::int32_t price_decimal_places{0};
+  std::optional<double> quantity_step;
+  std::optional<std::int32_t> quantity_decimal_places;
+  double min_quantity{0.0};
+  double max_quantity{0.0};
+  std::optional<double> max_market_quantity;
+  std::optional<double> min_notional;
+  double notional_multiplier{0.0};
+  std::optional<double> price_limit_up;
+  std::optional<double> price_limit_down;
+  std::optional<double> market_price_bound;
 };
 
 namespace detail {
