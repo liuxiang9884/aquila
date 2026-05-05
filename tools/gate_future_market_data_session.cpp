@@ -9,14 +9,13 @@
 #include <utility>
 
 #include <CLI/CLI.hpp>
-#include <fmt/compile.h>
-#include <fmt/core.h>
 #include <magic_enum/magic_enum.hpp>
 
 #include "core/config/instrument_catalog.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/data_session_config.h"
 #include "exchange/gate/market_data/session.h"
+#include "nova/utils/log.h"
 
 namespace {
 
@@ -34,6 +33,16 @@ void InstallStopHandlers() noexcept {
   std::signal(SIGINT, &RequestStop);
   std::signal(SIGTERM, &RequestStop);
 }
+
+struct LoggingGuard {
+  LoggingGuard() {
+    nova::InitializeLogging();
+  }
+
+  ~LoggingGuard() {
+    nova::StopLogging();
+  }
+};
 
 struct CountingConsumer {
   std::atomic<std::uint64_t> book_tickers{0};
@@ -58,28 +67,27 @@ void HandleState(void* context, ws::ConnectionPhase phase) noexcept {
   if (phase == ws::ConnectionPhase::kActive) {
     state->active.store(true, std::memory_order_release);
   }
-  fmt::print(stderr, FMT_COMPILE("state={}\n"), magic_enum::enum_name(phase));
+  NOVA_DEBUG("state={}", magic_enum::enum_name(phase));
 }
 
 void HandleError(void* context, ws::ConnectionError error) noexcept {
   auto* state = static_cast<SessionState*>(context);
   state->error.store(static_cast<std::uint8_t>(error),
                      std::memory_order_release);
-  fmt::print(stderr, FMT_COMPILE("error={}\n"), magic_enum::enum_name(error));
+  NOVA_ERROR("error={}", magic_enum::enum_name(error));
 }
 
 void PrintSettings(
     const aq_gate::GateFutureMarketDataSessionSettings& settings) {
-  fmt::print(FMT_COMPILE("name={}\n"), settings.name);
-  fmt::print(FMT_COMPILE("websocket host={} service={} target={} tls={} "
-                         "bind_cpu_id={}\n"),
-             settings.connection.host, settings.connection.service,
-             settings.connection.target,
-             settings.connection.enable_tls ? "true" : "false",
-             settings.connection.runtime_policy.io_cpu_id);
+  NOVA_INFO("name={}", settings.name);
+  NOVA_INFO("websocket host={} service={} target={} tls={} bind_cpu_id={}",
+            settings.connection.host, settings.connection.service,
+            settings.connection.target,
+            settings.connection.enable_tls ? "true" : "false",
+            settings.connection.runtime_policy.io_cpu_id);
   for (const aq_gate::SymbolBinding& symbol : settings.symbols) {
-    fmt::print(FMT_COMPILE("symbol symbol_id={} exchange_symbol={}\n"),
-               symbol.symbol_id, symbol.exchange_symbol);
+    NOVA_INFO("symbol symbol_id={} exchange_symbol={}", symbol.symbol_id,
+              symbol.exchange_symbol);
   }
 }
 
@@ -143,17 +151,24 @@ int ConnectAndRun(const aq_gate::GateFutureMarketDataSessionSettings& settings,
       state.phase.load(std::memory_order_acquire));
   const auto error = static_cast<ws::ConnectionError>(
       state.error.load(std::memory_order_acquire));
-  fmt::print(FMT_COMPILE("result={} active={} phase={} error={} "
-                         "book_tickers={} rx_messages={} tx_messages={}\n"),
-             started.load(std::memory_order_acquire) ? "ok" : "failed",
-             state.active.load(std::memory_order_acquire) ? "true" : "false",
-             magic_enum::enum_name(phase), magic_enum::enum_name(error),
-             consumer.book_tickers.load(std::memory_order_relaxed),
-             metrics.rx_messages, metrics.tx_messages);
-  return started.load(std::memory_order_acquire) &&
-                 state.active.load(std::memory_order_acquire)
-             ? 0
-             : 1;
+  const bool started_ok = started.load(std::memory_order_acquire);
+  const bool active = state.active.load(std::memory_order_acquire);
+  const std::uint64_t book_tickers =
+      consumer.book_tickers.load(std::memory_order_relaxed);
+  if (started_ok && active) {
+    NOVA_INFO("result=ok active=true phase={} error={} book_tickers={} "
+              "rx_messages={} tx_messages={}",
+              magic_enum::enum_name(phase), magic_enum::enum_name(error),
+              book_tickers, metrics.rx_messages, metrics.tx_messages);
+    return 0;
+  }
+
+  NOVA_WARNING("result=failed active={} phase={} error={} book_tickers={} "
+               "rx_messages={} tx_messages={}",
+               active ? "true" : "false", magic_enum::enum_name(phase),
+               magic_enum::enum_name(error), book_tickers, metrics.rx_messages,
+               metrics.tx_messages);
+  return 1;
 }
 
 }  // namespace
@@ -172,10 +187,12 @@ int main(int argc, char** argv) {
   app.add_flag("--connect", connect, "connect to the configured websocket");
   CLI11_PARSE(app, argc, argv);
 
+  LoggingGuard logging_guard;
+
   aq_gate::GateFutureMarketDataSessionSettingsResult settings_result =
       LoadSettings(config_path);
   if (!settings_result.ok) {
-    fmt::print(stderr, FMT_COMPILE("config_error={}\n"), settings_result.error);
+    NOVA_ERROR("config_error={}", settings_result.error);
     return 1;
   }
 

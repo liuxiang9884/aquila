@@ -34,6 +34,7 @@ target_link_libraries(gate_future_market_data_session
         CLI11::CLI11
         fmt::fmt-header-only
         magic_enum::magic_enum
+        nova
 )
 
 add_executable(binance_futures_book_ticker_probe
