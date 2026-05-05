@@ -162,14 +162,14 @@ TEST(WebSocketConfigTest, ParsesCheckedInGateMarketDataConfig) {
   ASSERT_TRUE(result.ok) << result.error;
 
   EXPECT_EQ(result.value.endpoint.host, "fx-ws.gateio.ws");
-  EXPECT_FALSE(result.value.endpoint.enable_tls);
+  EXPECT_TRUE(result.value.endpoint.enable_tls);
   EXPECT_EQ(result.value.execution_policy.bind_cpu_id, 2);
 
   const auto connection_result = aquila::config::ToConnectionConfig(
       result.value, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   ASSERT_TRUE(connection_result.ok) << connection_result.error;
   EXPECT_EQ(connection_result.value.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
-  EXPECT_FALSE(connection_result.value.enable_tls);
+  EXPECT_TRUE(connection_result.value.enable_tls);
 }
 
 TEST(WebSocketConfigTest, ParsesCheckedInBinanceMarketDataConfig) {

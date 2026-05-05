@@ -12,7 +12,7 @@ feed = "book_ticker"
 
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
-enable_tls = false
+enable_tls = true
 
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2

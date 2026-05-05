@@ -100,7 +100,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.name, "gate_data_session");
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.connection.service, "443");
-  EXPECT_FALSE(config.connection.enable_tls);
+  EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 2);
 
@@ -125,7 +125,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(session.name(), "gate_data_session");
   EXPECT_EQ(session.connection().host, "fx-ws.gateio.ws");
   EXPECT_EQ(session.connection().service, "443");
-  EXPECT_FALSE(session.connection().enable_tls);
+  EXPECT_TRUE(session.connection().enable_tls);
   EXPECT_EQ(session.connection().target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(session.connection().runtime_policy.io_cpu_id, 2);
 

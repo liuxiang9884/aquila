@@ -80,7 +80,7 @@ feed = "book_ticker"
 
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
-enable_tls = false
+enable_tls = true
 
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2
@@ -234,7 +234,7 @@ parser 只做启动配置需要的最低限度解析约束：`endpoint.host` 和
 ```toml
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
-enable_tls = false
+enable_tls = true
 ```
 
 | 字段 | 默认值 | 映射 | 含义 |
