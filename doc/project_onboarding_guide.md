@@ -79,6 +79,9 @@ doc/websocket_read_write_benchmark_comparison.md
 | 文件 | 职责 |
 | --- | --- |
 | `core/config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；由 `aquila_config` target 暴露，TOML 解析使用 `toml++`，诊断日志走 Nova 封装，parser 只保留必填项和枚举映射约束。 |
+| `core/config/data_session_config.h` | 单 data session TOML 文件解析，读取 `instrument_catalog`、`data_session` 和嵌套 WebSocket 配置。 |
+| `core/config/instrument_catalog.h` | 启动期 instrument CSV catalog，只加载 data session 需要的 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`，lookup 使用 `absl::flat_hash_map`。 |
+| `exchange/gate/market_data/data_session_config.h` | Gate futures data session settings builder，把通用 data session config 和 instrument catalog 转成 Gate target、`ConnectionConfig` 和 `gate::SymbolBinding`。 |
 
 ### WebSocket 内核
 
@@ -103,6 +106,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/market_data/subscription.h` | `futures.book_ticker` subscribe/unsubscribe JSON 构造。 |
 | `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
 | `exchange/gate/market_data/session.h` | `FuturesMarketDataSession<Consumer, TransportSocketT>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
+| `tools/gate_future_market_data_session.cpp` | Gate futures data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Binance USD-M futures 行情
 

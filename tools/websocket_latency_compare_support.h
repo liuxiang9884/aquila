@@ -9,9 +9,9 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
+#include <absl/container/flat_hash_map.h>
 #include <fmt/compile.h>
 #include <fmt/core.h>
 
@@ -328,7 +328,7 @@ class LatencyPairCollector {
 
   size_t max_pending_{0};
   mutable std::mutex mutex_;
-  std::unordered_map<std::string, PendingPair> pending_;
+  absl::flat_hash_map<std::string, PendingPair> pending_;
   std::deque<std::string> pending_order_;
   std::vector<MatchedLatency> matched_;
 };

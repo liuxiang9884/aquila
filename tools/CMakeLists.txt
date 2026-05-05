@@ -23,6 +23,19 @@ target_link_libraries(gate_futures_book_ticker_probe
         magic_enum::magic_enum
 )
 
+add_executable(gate_future_market_data_session
+    gate_future_market_data_session.cpp
+)
+
+target_link_libraries(gate_future_market_data_session
+    PRIVATE
+        aquila_config
+        aquila_gate
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+)
+
 add_executable(binance_futures_book_ticker_probe
     binance_futures_book_ticker_probe.cpp
 )
@@ -43,6 +56,7 @@ add_executable(websocket_latency_compare
 target_link_libraries(websocket_latency_compare
     PRIVATE
         aquila_core
+        absl::flat_hash_map
         CLI11::CLI11
         fmt::fmt-header-only
         magic_enum::magic_enum

@@ -23,7 +23,7 @@ order management 和 order execution 归属于 `Strategy` 模块。
 | --- | --- | --- |
 | TOML 解析 | `toml++` / `PkgConfig::tomlplusplus` | C++ 配置 loader 使用；当前入口是 `core/config/websocket_config.h` / `core/config/websocket_config.cpp`。 |
 | 日志输出 | `nova/utils/log.h` | 项目代码通过 Nova 封装输出，例如解析失败时使用 `NOVA_ERROR`；不在业务代码中直接依赖底层 log 库。 |
-| instrument CSV | `vincentlaucsb-csv-parser` | C++ instrument catalog loader 预期使用该 vcpkg 依赖；当前 `config/instruments/*.csv` 已作为数据源，生产 loader 尚未实现。 |
+| instrument CSV | `vincentlaucsb-csv-parser` | C++ instrument catalog loader 使用该 vcpkg 依赖；当前只加载 data session 需要的 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`。 |
 | 合约查询脚本输出 | `pandas.DataFrame` | `scripts/gate/query_futures_contracts.py` 和 `scripts/binance/query_um_futures_contracts.py` 使用 Python pandas 生成统一字段表和 CSV。 |
 
 ## 进程拆分
@@ -113,9 +113,10 @@ bind_cpu_id = 3
 | `file` | 无，必须显式配置 | instrument CSV 路径。 |
 | `schema` | 无，必须显式配置 | Aquila 自定义 CSV 字段版本；当前固定 `aquila.instrument.v1`。 |
 
-`instrument_catalog` 第一版是 CSV 数据源，不表示引入真实数据库。启动期应读取 CSV 并构建
-`InstrumentRegistry`。data session 的运行期 symbol pool 由 `instrument_catalog` 和
-`subscribe_symbols` 共同生成。
+`instrument_catalog` 第一版是 CSV 数据源，不表示引入真实数据库。启动期读取 CSV 并构建
+`InstrumentCatalog`。当前 data session 只读取 `symbol_id`、`exchange`、`symbol` 和
+`exchange_symbol` 四列；price tick、quantity step 等交易约束字段留给后续交易端 / 下单校验使用。
+data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_symbols` 共同生成。
 
 ## Data Session
 
@@ -144,7 +145,7 @@ bind_cpu_id = 3
 约束：
 
 1. `subscribe_symbols` 中的每个 symbol 必须能按 `(exchange, symbol)` 在 catalog 中找到唯一记录。
-2. symbol pool 在启动期生成并固定；行情热路径只使用已生成的 `SymbolBinding` / lookup，不查询 CSV，也不解析配置。
+2. symbol pool 在启动期生成并固定；行情热路径只使用已生成的 `gate::SymbolBinding` / lookup，不查询 CSV，也不解析配置。
 3. `symbol_id` 和字符串存储的生命周期必须覆盖 data session 生命周期；`std::string_view` 只能指向稳定存储。
 
 Gate futures 行情字段：
@@ -155,6 +156,27 @@ Gate futures 行情字段：
 | `wire_format` | `sbe` | wire 格式；当前 Gate 行情主路径使用 SBE。 |
 | `sbe_schema_id` | `1` | Gate SBE schema id；builder 生成 `/v4/ws/usdt/sbe?sbe_schema_id=1`。 |
 | `feed` | `book_ticker` | 当前订阅的行情类型。 |
+
+Gate 当前实现入口：
+
+```text
+core/config/data_session_config.h
+core/config/instrument_catalog.h
+exchange/gate/market_data/data_session_config.h
+tools/gate_future_market_data_session.cpp
+```
+
+默认运行下面命令只做 dry-run，验证 TOML、CSV、target 和 symbol 映射生成结果，不连接网络：
+
+```bash
+./build/debug/tools/gate_future_market_data_session
+```
+
+需要实际连接时显式加 `--connect`：
+
+```bash
+./build/debug/tools/gate_future_market_data_session --connect --duration-ms 10000
+```
 
 Binance futures 行情字段：
 
