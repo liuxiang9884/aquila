@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
@@ -169,6 +170,11 @@ class FuturesMarketDataSession {
     return client_.Start();
   }
 
+  bool Run() noexcept {
+    ScopedStopHandlers stop_handlers(this);
+    return Start();
+  }
+
   void Stop() noexcept {
     client_.Stop();
   }
@@ -260,6 +266,46 @@ class FuturesMarketDataSession {
   }
 
  private:
+  class ScopedStopHandlers {
+   public:
+    explicit ScopedStopHandlers(FuturesMarketDataSession* session) noexcept
+        : session_(session) {
+      active_stop_session_.store(session_, std::memory_order_release);
+      previous_int_handler_ = std::signal(SIGINT, &HandleStopSignal);
+      previous_term_handler_ = std::signal(SIGTERM, &HandleStopSignal);
+    }
+
+    ScopedStopHandlers(const ScopedStopHandlers&) = delete;
+    ScopedStopHandlers& operator=(const ScopedStopHandlers&) = delete;
+
+    ~ScopedStopHandlers() {
+      std::signal(SIGINT, previous_int_handler_);
+      std::signal(SIGTERM, previous_term_handler_);
+      FuturesMarketDataSession* expected = session_;
+      (void)active_stop_session_.compare_exchange_strong(
+          expected, nullptr, std::memory_order_acq_rel,
+          std::memory_order_acquire);
+    }
+
+   private:
+    using SignalHandler = void (*)(int);
+
+    FuturesMarketDataSession* session_{nullptr};
+    SignalHandler previous_int_handler_{SIG_DFL};
+    SignalHandler previous_term_handler_{SIG_DFL};
+  };
+
+  static void HandleStopSignal(int signal) noexcept {
+    if (signal != SIGINT && signal != SIGTERM) {
+      return;
+    }
+    FuturesMarketDataSession* session =
+        active_stop_session_.load(std::memory_order_acquire);
+    if (session != nullptr) {
+      session->Stop();
+    }
+  }
+
   static void HandleState(void* context,
                           websocket::ConnectionPhase phase) noexcept {
     static_cast<FuturesMarketDataSession*>(context)->OnConnectionPhase(phase);
@@ -414,6 +460,8 @@ class FuturesMarketDataSession {
   [[no_unique_address]] SessionDiagnosticsT session_diagnostics_{};
   simdjson::ondemand::parser text_parser_;
   BookTickerSubscriptionController subscription_controller_;
+  inline static std::atomic<FuturesMarketDataSession*> active_stop_session_{
+      nullptr};
 };
 
 }  // namespace aquila::gate

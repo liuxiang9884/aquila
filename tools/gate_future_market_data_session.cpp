@@ -1,11 +1,7 @@
-#include <atomic>
-#include <chrono>
-#include <csignal>
 #include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
-#include <thread>
 #include <utility>
 
 #include <CLI/CLI.hpp>
@@ -22,17 +18,6 @@ namespace {
 namespace config = aquila::config;
 namespace aq_gate = aquila::gate;
 namespace ws = aquila::websocket;
-
-volatile std::sig_atomic_t g_stop_requested = 0;
-
-void RequestStop(int) noexcept {
-  g_stop_requested = 1;
-}
-
-void InstallStopHandlers() noexcept {
-  std::signal(SIGINT, &RequestStop);
-  std::signal(SIGTERM, &RequestStop);
-}
 
 struct LoggingGuard {
   LoggingGuard() {
@@ -85,8 +70,7 @@ void PrintSettings(const aq_gate::FuturesMarketDataSessionSettings& settings) {
 }
 
 template <typename TransportSocketT>
-int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings,
-                  std::uint32_t duration_ms) {
+int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings) {
   using Session = aq_gate::FuturesMarketDataSession<
       CountingConsumer, TransportSocketT, aq_gate::FuturesMarketDataDiagnostics,
       ws::DefaultWebSocketOptions,
@@ -98,29 +82,10 @@ int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings,
                       settings.symbols.data(), settings.symbols.size()),
                   consumer);
 
-  std::atomic<bool> done{false};
-  std::atomic<bool> started{false};
-  std::thread worker([&]() {
-    started.store(session.Start(), std::memory_order_release);
-    done.store(true, std::memory_order_release);
-  });
-
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms);
-  while (std::chrono::steady_clock::now() < deadline && !done.load() &&
-         g_stop_requested == 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  }
-
-  session.Stop();
-  if (worker.joinable()) {
-    worker.join();
-  }
-
+  const bool started_ok = session.Run();
   const ws::Metrics metrics = session.SnapshotMetrics();
   const ws::ConnectionPhase phase = session.phase();
   const ws::ConnectionError error = session.last_error();
-  const bool started_ok = started.load(std::memory_order_acquire);
   const bool active = session.ever_active();
   const std::uint64_t book_tickers = consumer.book_tickers;
   if (started_ok && active) {
@@ -144,16 +109,12 @@ int ConnectAndRun(const aq_gate::FuturesMarketDataSessionSettings& settings,
 }  // namespace
 
 int main(int argc, char** argv) {
-  InstallStopHandlers();
-
   std::filesystem::path config_path{
       "config/data_sessions/gate_future_market_data.toml"};
-  std::uint32_t duration_ms{10'000};
   bool connect{false};
 
   CLI::App app{"Gate futures market data session"};
   app.add_option("--config", config_path, "data session TOML path");
-  app.add_option("--duration-ms", duration_ms, "connect duration");
   app.add_flag("--connect", connect, "connect to the configured websocket");
   CLI11_PARSE(app, argc, argv);
 
@@ -172,7 +133,7 @@ int main(int argc, char** argv) {
   }
 
   if (settings_result.settings.connection.enable_tls) {
-    return ConnectAndRun<ws::TlsSocket>(settings_result.settings, duration_ms);
+    return ConnectAndRun<ws::TlsSocket>(settings_result.settings);
   }
-  return ConnectAndRun<ws::PlainSocket>(settings_result.settings, duration_ms);
+  return ConnectAndRun<ws::PlainSocket>(settings_result.settings);
 }

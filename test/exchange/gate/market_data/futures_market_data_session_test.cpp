@@ -1,4 +1,5 @@
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -86,8 +87,14 @@ template <typename SessionT>
 concept HasErrorHandler =
     requires(SessionT& session) { session.SetErrorHandler(nullptr, nullptr); };
 
+template <typename SessionT>
+concept HasRun = requires(SessionT& session) {
+  { session.Run() } -> std::same_as<bool>;
+};
+
 static_assert(!HasStateHandler<Session>);
 static_assert(!HasErrorHandler<Session>);
+static_assert(HasRun<Session>);
 
 Session MakeSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{

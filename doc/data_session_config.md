@@ -178,10 +178,10 @@ WebSocket config 和 instrument catalog 这类交易所无关配置。
 ./build/debug/tools/gate_future_market_data_session
 ```
 
-需要实际连接时显式加 `--connect`：
+需要实际连接时显式加 `--connect`，进程会一直运行到收到 SIGINT 或 SIGTERM：
 
 ```bash
-./build/debug/tools/gate_future_market_data_session --connect --duration-ms 10000
+./build/debug/tools/gate_future_market_data_session --connect
 ```
 
 Binance futures 行情字段：
