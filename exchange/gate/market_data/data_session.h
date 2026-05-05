@@ -613,7 +613,7 @@ CreateDataSession(const DataSessionConfig& session_config,
   }
 
   result.session = std::make_unique<typename Result::Session>(
-      session_config.name, std::move(connection_result.config),
+      session_config.name, std::move(connection_result.value),
       std::move(exchange_symbols), std::move(symbol_ids), consumer);
   result.ok = true;
   return result;

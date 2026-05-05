@@ -6,6 +6,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "core/common/result.h"
 #include "core/websocket/types.h"
 
 namespace aquila::config {
@@ -53,17 +54,8 @@ struct WebSocketConfig {
   WebSocketReconnectConfig reconnect;
 };
 
-struct WebSocketConfigResult {
-  WebSocketConfig config{};
-  std::string error;
-  bool ok{false};
-};
-
-struct ConnectionConfigResult {
-  websocket::ConnectionConfig config{};
-  std::string error;
-  bool ok{false};
-};
+using WebSocketConfigResult = Result<WebSocketConfig>;
+using ConnectionConfigResult = Result<websocket::ConnectionConfig>;
 
 [[nodiscard]] WebSocketConfigResult ParseWebSocketConfig(
     toml::node_view<const toml::node> node);

@@ -8,6 +8,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "core/common/result.h"
 #include "core/config/instrument_catalog.h"
 #include "core/config/websocket_config.h"
 
@@ -28,11 +29,7 @@ struct DataSessionConfigFile {
   DataSessionConfig data_session;
 };
 
-struct DataSessionConfigResult {
-  DataSessionConfigFile config;
-  std::string error;
-  bool ok{false};
-};
+using DataSessionConfigResult = Result<DataSessionConfigFile>;
 
 [[nodiscard]] DataSessionConfigResult ParseDataSessionConfig(
     const toml::table& node);

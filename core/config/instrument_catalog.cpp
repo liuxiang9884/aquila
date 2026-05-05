@@ -34,7 +34,7 @@ void MaybeLogError(std::string_view message) {
 
 [[nodiscard]] InstrumentCatalogLoadResult Success(InstrumentCatalog catalog) {
   InstrumentCatalogLoadResult result;
-  result.catalog = std::move(catalog);
+  result.value = std::move(catalog);
   result.ok = true;
   return result;
 }
@@ -55,8 +55,7 @@ void MaybeLogError(std::string_view message) {
   return std::string{row[std::string{name}].get<std::string_view>()};
 }
 
-[[nodiscard]] std::int32_t ReadInt32(csv::CSVRow& row,
-                                     std::string_view name) {
+[[nodiscard]] std::int32_t ReadInt32(csv::CSVRow& row, std::string_view name) {
   return ToInt32(row[std::string{name}].get<std::string_view>());
 }
 

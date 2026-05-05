@@ -69,6 +69,7 @@ doc/websocket_read_write_benchmark_comparison.md
 
 | 文件 | 职责 |
 | --- | --- |
+| `core/common/result.h` | 通用 `Result<T>`，用于启动期 parser / loader 这类显式返回成功值或错误字符串的场景。 |
 | `core/common/types.h` | 项目通用枚举，当前包含 `aquila::Exchange`。 |
 | `core/common/constants.h` | 项目通用常量，当前包含缓存行大小等基础常量。 |
 | `core/utils/numeric.h` | 基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToDouble` / `ToUint64` 等热路径数字转换 helper，失败只在 debug assert。 |

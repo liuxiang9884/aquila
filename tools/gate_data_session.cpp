@@ -120,16 +120,16 @@ int main(int argc, char** argv) {
 
   const config::InstrumentCatalogLoadResult catalog_result =
       config::LoadInstrumentCatalogFromCsv(
-          config_result.config.instrument_catalog.file);
+          config_result.value.instrument_catalog.file);
   if (!catalog_result.ok) {
     NOVA_ERROR("config_error={}", catalog_result.error);
     return 1;
   }
 
-  if (config_result.config.data_session.websocket.endpoint.enable_tls) {
+  if (config_result.value.data_session.websocket.endpoint.enable_tls) {
     return CreateAndMaybeRun<aq_gate::DefaultTlsWebSocketPolicy>(
-        config_result.config.data_session, catalog_result.catalog, connect);
+        config_result.value.data_session, catalog_result.value, connect);
   }
   return CreateAndMaybeRun<aq_gate::DefaultPlainWebSocketPolicy>(
-      config_result.config.data_session, catalog_result.catalog, connect);
+      config_result.value.data_session, catalog_result.value, connect);
 }

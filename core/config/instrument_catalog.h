@@ -12,6 +12,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "core/common/result.h"
 #include "core/common/types.h"
 
 namespace aquila::config {
@@ -83,11 +84,7 @@ class InstrumentCatalog {
   absl::flat_hash_map<detail::InstrumentLookupKey, std::size_t> lookup_;
 };
 
-struct InstrumentCatalogLoadResult {
-  InstrumentCatalog catalog;
-  std::string error;
-  bool ok{false};
-};
+using InstrumentCatalogLoadResult = Result<InstrumentCatalog>;
 
 [[nodiscard]] InstrumentCatalogLoadResult LoadInstrumentCatalogFromCsv(
     const std::filesystem::path& path);

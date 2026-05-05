@@ -27,7 +27,7 @@ void MaybeLogError(std::string_view message) {
 
 [[nodiscard]] DataSessionConfigResult Success(DataSessionConfigFile config) {
   DataSessionConfigResult result;
-  result.config = std::move(config);
+  result.value = std::move(config);
   result.ok = true;
   return result;
 }
@@ -52,7 +52,7 @@ class DataSessionConfigParser {
     if (!websocket_result.ok) {
       return Failure(websocket_result.error);
     }
-    config_.data_session.websocket = std::move(websocket_result.config);
+    config_.data_session.websocket = std::move(websocket_result.value);
     return Success(std::move(config_));
   }
 

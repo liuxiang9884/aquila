@@ -36,7 +36,7 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
       SourcePath("config/instruments/usdt_futures.csv"));
 
   ASSERT_TRUE(result.ok) << result.error;
-  const aquila::config::InstrumentCatalog& catalog = result.catalog;
+  const aquila::config::InstrumentCatalog& catalog = result.value;
 
   const aquila::config::InstrumentInfo* gate_btc =
       catalog.Find(aquila::Exchange::kGate, "BTC_USDT");
@@ -95,7 +95,7 @@ TEST(DataSessionConfigTest, CreatesDataSessionFromConfigAndCatalog) {
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
   const auto catalog_result = aquila::config::LoadInstrumentCatalogFromCsv(
-      SourcePath(config_result.config.instrument_catalog.file));
+      SourcePath(config_result.value.instrument_catalog.file));
   ASSERT_TRUE(catalog_result.ok) << catalog_result.error;
 
   struct Consumer {
@@ -109,7 +109,7 @@ TEST(DataSessionConfigTest, CreatesDataSessionFromConfigAndCatalog) {
   const auto session_result = aquila::gate::CreateDataSession<
       Consumer, aquila::gate::DefaultPlainWebSocketPolicy,
       aquila::gate::SessionOnlyDiagnosticsPolicy>(
-      config_result.config.data_session, catalog_result.catalog, consumer);
+      config_result.value.data_session, catalog_result.value, consumer);
 
   ASSERT_TRUE(session_result.ok) << session_result.error;
   static_assert(std::is_same_v<decltype(*session_result.session), Session&>);
@@ -144,7 +144,7 @@ TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
       SourcePath("config/data_sessions/gate_data_session.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
-  auto config = config_result.config;
+  auto config = config_result.value;
   config.data_session.subscribe_symbols = {"MISSING_USDT"};
 
   const auto catalog_result = aquila::config::LoadInstrumentCatalogFromCsv(
@@ -156,7 +156,7 @@ TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   } consumer;
   const auto session_result = aquila::gate::CreateDataSession<
       Consumer, aquila::gate::DefaultPlainWebSocketPolicy>(
-      config.data_session, catalog_result.catalog, consumer);
+      config.data_session, catalog_result.value, consumer);
   ASSERT_FALSE(session_result.ok);
   EXPECT_NE(session_result.error.find("MISSING_USDT"), std::string::npos);
 }

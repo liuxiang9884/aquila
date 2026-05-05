@@ -26,7 +26,7 @@ void MaybeLogConfigError(std::string_view message) {
 
 [[nodiscard]] WebSocketConfigResult ConfigSuccess(WebSocketConfig config) {
   WebSocketConfigResult result;
-  result.config = std::move(config);
+  result.value = std::move(config);
   result.ok = true;
   return result;
 }
@@ -41,7 +41,7 @@ void MaybeLogConfigError(std::string_view message) {
 [[nodiscard]] ConnectionConfigResult ConnectionSuccess(
     websocket::ConnectionConfig config) {
   ConnectionConfigResult result;
-  result.config = std::move(config);
+  result.value = std::move(config);
   result.ok = true;
   return result;
 }
@@ -148,15 +148,13 @@ class WebSocketConfigParser {
       config_.execution_policy.affinity_mode = *parsed;
     }
 
-    config_.execution_policy.lock_memory =
-        BoolOr(execution_policy["lock_memory"],
-               config_.execution_policy.lock_memory);
+    config_.execution_policy.lock_memory = BoolOr(
+        execution_policy["lock_memory"], config_.execution_policy.lock_memory);
     config_.execution_policy.prefault_stack =
         BoolOr(execution_policy["prefault_stack"],
                config_.execution_policy.prefault_stack);
-    config_.execution_policy.active_spin =
-        BoolOr(execution_policy["active_spin"],
-               config_.execution_policy.active_spin);
+    config_.execution_policy.active_spin = BoolOr(
+        execution_policy["active_spin"], config_.execution_policy.active_spin);
     config_.execution_policy.spin_iterations_before_clock_check =
         UInt32Or(execution_policy["spin_iterations_before_clock_check"],
                  config_.execution_policy.spin_iterations_before_clock_check);
@@ -184,15 +182,12 @@ class WebSocketConfigParser {
     const toml::node_view<const toml::node> reconnect = node_["reconnect"];
     config_.reconnect.enabled =
         BoolOr(reconnect["enabled"], config_.reconnect.enabled);
-    config_.reconnect.initial_backoff_ms =
-        UInt32Or(reconnect["initial_backoff_ms"],
-                 config_.reconnect.initial_backoff_ms);
+    config_.reconnect.initial_backoff_ms = UInt32Or(
+        reconnect["initial_backoff_ms"], config_.reconnect.initial_backoff_ms);
     config_.reconnect.max_backoff_ms =
-        UInt32Or(reconnect["max_backoff_ms"],
-                 config_.reconnect.max_backoff_ms);
-    config_.reconnect.backoff_shift_bits =
-        UInt32Or(reconnect["backoff_shift_bits"],
-                 config_.reconnect.backoff_shift_bits);
+        UInt32Or(reconnect["max_backoff_ms"], config_.reconnect.max_backoff_ms);
+    config_.reconnect.backoff_shift_bits = UInt32Or(
+        reconnect["backoff_shift_bits"], config_.reconnect.backoff_shift_bits);
     config_.reconnect.jitter_percent =
         UInt32Or(reconnect["jitter_percent"], config_.reconnect.jitter_percent);
     config_.reconnect.max_attempts =
