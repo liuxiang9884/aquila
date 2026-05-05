@@ -146,7 +146,8 @@ data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_s
 
 1. `subscribe_symbols` 中的每个 symbol 必须能按 `(exchange, symbol)` 在 catalog 中找到唯一记录。
 2. symbol pool 在启动期生成并固定；行情热路径只使用已生成的 `gate::SymbolBinding` / lookup，不查询 CSV，也不解析配置。
-3. `symbol_id` 和字符串存储的生命周期必须覆盖 data session 生命周期；`std::string_view` 只能指向稳定存储。
+3. 每个 data session 只连接一个交易所，运行期 symbol lookup 放在 session / client 内部，当前 Gate 用 `exchange_symbol -> symbol_id` 的 `absl::flat_hash_map`。
+4. `symbol_id` 和字符串存储的生命周期必须覆盖 data session 生命周期；`std::string_view` 只能指向稳定存储。
 
 Gate futures 行情字段：
 

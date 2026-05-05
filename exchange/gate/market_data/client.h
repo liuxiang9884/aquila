@@ -19,7 +19,7 @@
 namespace aquila::gate {
 
 struct SymbolBinding {
-  std::string_view symbol{};
+  std::string_view exchange_symbol{};
   std::int32_t symbol_id{-1};
 };
 
@@ -151,9 +151,9 @@ class FuturesMarketDataClient {
   websocket::DeliveryResult OnBookTickerPayload(
       std::string_view payload, const SbeMessageHeader& header,
       std::int64_t local_ns) noexcept {
-    const std::string_view symbol =
+    const std::string_view exchange_symbol =
         ExtractTrustedBookTickerSymbol(payload, header);
-    const std::int32_t symbol_id = FindSymbolId(symbol);
+    const std::int32_t symbol_id = FindSymbolId(exchange_symbol);
 
     BookTicker book_ticker;
     DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
@@ -163,9 +163,9 @@ class FuturesMarketDataClient {
     return websocket::DeliveryResult::kAccepted;
   }
 
-  std::int32_t FindSymbolId(std::string_view symbol) const noexcept {
-    const auto found = symbol_ids_.find(symbol);
-    assert(found != symbol_ids_.end());
+  std::int32_t FindSymbolId(std::string_view exchange_symbol) const noexcept {
+    const auto found = symbol_ids_by_exchange_symbol_.find(exchange_symbol);
+    assert(found != symbol_ids_by_exchange_symbol_.end());
     return found->second;
   }
 
@@ -173,14 +173,16 @@ class FuturesMarketDataClient {
   // keep their hot-path inlining budget.
   [[gnu::noinline]] void BuildSymbolLookup(
       std::span<const SymbolBinding> symbols) {
-    symbol_ids_.reserve(symbols.size());
+    symbol_ids_by_exchange_symbol_.reserve(symbols.size());
     for (const SymbolBinding& binding : symbols) {
       assert(binding.symbol_id >= 0);
-      symbol_ids_.emplace(binding.symbol, binding.symbol_id);
+      symbol_ids_by_exchange_symbol_.emplace(binding.exchange_symbol,
+                                             binding.symbol_id);
     }
   }
 
-  absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
+  absl::flat_hash_map<std::string_view, std::int32_t>
+      symbol_ids_by_exchange_symbol_;
   Consumer& consumer_;
   [[no_unique_address]] DiagnosticsT diagnostics_{};
 };

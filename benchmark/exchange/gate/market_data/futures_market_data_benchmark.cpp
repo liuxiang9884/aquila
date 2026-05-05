@@ -81,10 +81,10 @@ SymbolSet BuildSymbols(size_t symbol_count) {
     }
   }
   for (size_t i = 0; i < symbol_count; ++i) {
-    set.bindings.push_back({.symbol = set.storage[i],
+    set.bindings.push_back({.exchange_symbol = set.storage[i],
                             .symbol_id = static_cast<std::int32_t>(1000 + i)});
   }
-  set.target_symbol = set.bindings.back().symbol;
+  set.target_symbol = set.bindings.back().exchange_symbol;
   return set;
 }
 

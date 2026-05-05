@@ -105,7 +105,7 @@ BuildGateFutureMarketDataSessionSettings(
   result.settings.symbols.reserve(result.settings.exchange_symbols.size());
   for (std::size_t i = 0; i < result.settings.exchange_symbols.size(); ++i) {
     result.settings.symbols.push_back(SymbolBinding{
-        .symbol = result.settings.exchange_symbols[i],
+        .exchange_symbol = result.settings.exchange_symbols[i],
         .symbol_id = symbol_ids[i],
     });
   }

@@ -104,7 +104,7 @@ void CaptureError(void* context,
 
 Session MakeSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -114,7 +114,7 @@ Session MakeSession(RecordingConsumer& consumer) {
 
 DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -124,7 +124,7 @@ DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
 
 Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";
@@ -135,7 +135,7 @@ Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
 
 DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "443";

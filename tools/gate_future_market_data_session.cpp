@@ -79,7 +79,7 @@ void PrintSettings(
              settings.connection.runtime_policy.io_cpu_id);
   for (const aq_gate::SymbolBinding& symbol : settings.symbols) {
     fmt::print(FMT_COMPILE("symbol symbol_id={} exchange_symbol={}\n"),
-               symbol.symbol_id, symbol.symbol);
+               symbol.symbol_id, symbol.exchange_symbol);
   }
 }
 

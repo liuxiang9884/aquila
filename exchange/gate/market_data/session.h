@@ -126,7 +126,7 @@ inline void BuildSymbolViews(std::span<const SymbolBinding> symbols,
   output->clear();
   output->reserve(symbols.size());
   for (const SymbolBinding& symbol : symbols) {
-    output->push_back(symbol.symbol);
+    output->push_back(symbol.exchange_symbol);
   }
 }
 

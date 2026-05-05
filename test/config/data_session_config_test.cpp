@@ -114,11 +114,11 @@ TEST(DataSessionConfigTest, BuildsGateFutureMarketDataSessionSettings) {
   EXPECT_EQ(settings.exchange_symbols[2], "SOL_USDT");
 
   ASSERT_EQ(settings.symbols.size(), 3u);
-  EXPECT_EQ(settings.symbols[0].symbol, "BTC_USDT");
+  EXPECT_EQ(settings.symbols[0].exchange_symbol, "BTC_USDT");
   EXPECT_EQ(settings.symbols[0].symbol_id, 0);
-  EXPECT_EQ(settings.symbols[1].symbol, "ETH_USDT");
+  EXPECT_EQ(settings.symbols[1].exchange_symbol, "ETH_USDT");
   EXPECT_EQ(settings.symbols[1].symbol_id, 1);
-  EXPECT_EQ(settings.symbols[2].symbol, "SOL_USDT");
+  EXPECT_EQ(settings.symbols[2].exchange_symbol, "SOL_USDT");
   EXPECT_EQ(settings.symbols[2].symbol_id, 2);
 }
 
