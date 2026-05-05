@@ -22,6 +22,7 @@ add_executable(data_session_config_test
 target_link_libraries(data_session_config_test
     PRIVATE
         aquila_config
+        aquila_binance
         aquila_gate
         GTest::gtest_main
 )

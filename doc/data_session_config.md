@@ -169,7 +169,7 @@ exchange/gate/market_data/data_session_config.h
 tools/gate_data_session.cpp
 ```
 
-Gate data session TOML parser 放在 `exchange/gate/market_data/`，因为 Gate 和 Binance 的
+Data session TOML parser 放在对应交易所的 `exchange/*/market_data/`，因为 Gate 和 Binance 的
 data session 字段不完全相同，不把交易所特有字段放入 `core/config`。`core/config` 当前只保留
 WebSocket config 和 instrument catalog 这类交易所无关配置。
 
@@ -191,6 +191,32 @@ Binance futures 行情字段：
 | --- | --- | --- |
 | `market` | `um_futures` | Binance USD-M futures。 |
 | `feed` | `book_ticker` | 当前订阅的行情类型。 |
+
+Binance 当前实现入口：
+
+```text
+core/config/instrument_catalog.h
+core/config/websocket_config.h
+exchange/binance/market_data/data_session_config.cpp
+exchange/binance/market_data/data_session_config.h
+tools/binance_data_session.cpp
+```
+
+Binance config parser 读取 `instrument_catalog` 和 `subscribe_symbols` 后按 `Exchange::kBinance`
+生成 exchange symbol 列表，例如内部 `BTC_USDT` 对应 Binance `BTCUSDT`，并在冷路径生成
+`/public/ws/btcusdt@bookTicker/...` raw stream target。
+
+默认运行下面命令只做 dry-run，验证 TOML、CSV、target 和 symbol 映射生成结果，不连接网络：
+
+```bash
+./build/debug/tools/binance_data_session
+```
+
+需要实际连接时显式加 `--connect`，进程会一直运行到收到 SIGINT 或 SIGTERM：
+
+```bash
+./build/debug/tools/binance_data_session --connect
+```
 
 ## WebSocket Endpoint
 

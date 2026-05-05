@@ -1,6 +1,7 @@
 #include "exchange/binance/market_data/data_session.h"
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -74,6 +75,22 @@ static_assert(!std::is_constructible_v<
               Session, aquila::websocket::ConnectionConfig,
               std::span<const aquila::binance::SymbolBinding>,
               RecordingConsumer&, aquila::websocket::ClockSource>);
+template <typename SessionT>
+concept HasStateHandler =
+    requires(SessionT& session) { session.SetStateHandler(nullptr, nullptr); };
+
+template <typename SessionT>
+concept HasErrorHandler =
+    requires(SessionT& session) { session.SetErrorHandler(nullptr, nullptr); };
+
+template <typename SessionT>
+concept HasRun = requires(SessionT& session) {
+  { session.Run() } -> std::same_as<bool>;
+};
+
+static_assert(!HasStateHandler<Session>);
+static_assert(!HasErrorHandler<Session>);
+static_assert(HasRun<Session>);
 
 Session MakeSession(RecordingConsumer& consumer) {
   static constexpr std::array<aquila::binance::SymbolBinding, 1> symbols{

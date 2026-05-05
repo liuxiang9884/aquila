@@ -1,0 +1,33 @@
+#ifndef AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_CONFIG_H_
+#define AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_CONFIG_H_
+
+#include <cstdint>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+#include <toml++/toml.hpp>
+
+#include "core/common/result.h"
+#include "core/websocket/types.h"
+
+namespace aquila::binance {
+
+struct DataSessionConfig {
+  std::string name;
+  websocket::ConnectionConfig connection;
+  std::vector<std::string> exchange_symbols;
+  std::vector<std::int32_t> symbol_ids;
+};
+
+using DataSessionConfigResult = Result<DataSessionConfig>;
+
+[[nodiscard]] DataSessionConfigResult ParseDataSessionConfig(
+    const toml::table& node);
+
+[[nodiscard]] DataSessionConfigResult LoadDataSessionConfigFile(
+    const std::filesystem::path& path);
+
+}  // namespace aquila::binance
+
+#endif  // AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_CONFIG_H_

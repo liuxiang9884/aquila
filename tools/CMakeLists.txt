@@ -37,6 +37,20 @@ target_link_libraries(gate_data_session
         nova
 )
 
+add_executable(binance_data_session
+    binance_data_session.cpp
+)
+
+target_link_libraries(binance_data_session
+    PRIVATE
+        aquila_config
+        aquila_binance
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+)
+
 add_executable(binance_futures_book_ticker_probe
     binance_futures_book_ticker_probe.cpp
 )

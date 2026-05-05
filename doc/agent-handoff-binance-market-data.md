@@ -26,6 +26,9 @@ exchange/binance/market_data/stream.h
 exchange/binance/market_data/book_ticker_parser.h
 exchange/binance/market_data/client.h
 exchange/binance/market_data/data_session.h
+exchange/binance/market_data/data_session_config.h
+exchange/binance/market_data/data_session_config.cpp
+tools/binance_data_session.cpp
 tools/binance_futures_book_ticker_probe.cpp
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
 scripts/binance/query_um_futures_contracts.py
@@ -134,6 +137,7 @@ DataSession::Handle(text MessageView)
 ./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
 ./build/debug/test/exchange/binance/market_data/binance_data_session_test
+./build/debug/test/config/data_session_config_test
 scripts/binance/query_um_futures_contracts_test.py
 ```
 
@@ -164,9 +168,10 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 
-live probe：
+data session dry-run / live probe：
 
 ```bash
+./build/release/tools/binance_data_session
 ./build/release/tools/binance_futures_book_ticker_probe --contract BTCUSDT --symbol-id 1 --duration-ms 10000 --cpu 2
 ```
 

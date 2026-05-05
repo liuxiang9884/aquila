@@ -82,6 +82,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `core/config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；由 `aquila_config` target 暴露，TOML 解析使用 `toml++`，诊断日志走 Nova 封装，parser 只保留必填项和枚举映射约束。 |
 | `core/config/instrument_catalog.h` | 启动期 instrument CSV catalog，加载 `aquila.instrument.v1` 的完整字段；当前 data session 只消费 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`，lookup 使用 `absl::flat_hash_map`。 |
 | `exchange/gate/market_data/data_session_config.h` | Gate data session TOML parser / loader，加载 instrument catalog，并生成 `DataSession` 可直接消费的 Gate 专属 `DataSessionConfig`；target、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表均在启动冷路径完成。 |
+| `exchange/binance/market_data/data_session_config.h` | Binance data session TOML parser / loader，加载 instrument catalog，并生成 `DataSession` 可直接消费的 Binance 专属 `DataSessionConfig`；raw stream target、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表均在启动冷路径完成。 |
 
 ### WebSocket 内核
 
@@ -116,6 +117,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，生产路径使用 `simdjson::ondemand` 和 `fast_float`。 |
 | `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
 | `exchange/binance/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
+| `tools/binance_data_session.cpp` | Binance data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Gate 交易准备代码
 
@@ -395,15 +397,17 @@ Gate BBO live probe：
 Binance USD-M futures bookTicker 测试和 benchmark：
 
 ```bash
+./build/debug/test/config/data_session_config_test
 ./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
 ./build/debug/test/exchange/binance/market_data/binance_data_session_test
 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker|parse_book_ticker_padded_view|client_on_text_payload|session_handle_text|session_handle_text_padded_view)'
 ```
 
-Binance USD-M futures bookTicker live probe：
+Binance USD-M futures data session dry-run / bookTicker live probe：
 
 ```bash
+./build/debug/tools/binance_data_session
 ./build/debug/tools/binance_futures_book_ticker_probe --contract BTCUSDT --symbol-id 1 --duration-ms 10000
 ```
 

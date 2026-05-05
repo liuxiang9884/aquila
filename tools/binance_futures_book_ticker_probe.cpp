@@ -1,5 +1,3 @@
-#include <sys/socket.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,7 +19,6 @@
 
 #include "core/websocket/websocket_client.h"
 #include "exchange/binance/market_data/data_session.h"
-#include <netdb.h>
 
 namespace {
 
@@ -37,48 +34,6 @@ void RequestStop(int) noexcept {
 void InstallStopHandlers() noexcept {
   std::signal(SIGINT, &RequestStop);
   std::signal(SIGTERM, &RequestStop);
-}
-
-std::string FormatSockaddr(const sockaddr_storage& storage,
-                           socklen_t storage_len) {
-  char host[NI_MAXHOST]{};
-  char service[NI_MAXSERV]{};
-  const int rc = ::getnameinfo(
-      reinterpret_cast<const sockaddr*>(&storage), storage_len, host,
-      sizeof(host), service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);
-  if (rc != 0) {
-    return "unavailable";
-  }
-  return fmt::format(FMT_COMPILE("{}:{}"), host, service);
-}
-
-void PrintSocketInfo(int fd) {
-  if (fd < 0) {
-    fmt::print(stderr, FMT_COMPILE("socket fd=unavailable\n"));
-    return;
-  }
-
-  sockaddr_storage local{};
-  socklen_t local_len = sizeof(local);
-  sockaddr_storage peer{};
-  socklen_t peer_len = sizeof(peer);
-  const bool has_local =
-      ::getsockname(fd, reinterpret_cast<sockaddr*>(&local), &local_len) == 0;
-  const bool has_peer =
-      ::getpeername(fd, reinterpret_cast<sockaddr*>(&peer), &peer_len) == 0;
-
-  int incoming_cpu = -1;
-  socklen_t incoming_cpu_len = sizeof(incoming_cpu);
-  const bool has_incoming_cpu =
-      ::getsockopt(fd, SOL_SOCKET, SO_INCOMING_CPU, &incoming_cpu,
-                   &incoming_cpu_len) == 0;
-
-  fmt::print(stderr,
-             FMT_COMPILE("socket fd={} local={} peer={} so_incoming_cpu={}\n"),
-             fd, has_local ? FormatSockaddr(local, local_len) : "unavailable",
-             has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
-             has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
-                              : "unavailable");
 }
 
 struct ProbeStats {
@@ -144,9 +99,6 @@ class ProbeRunner {
         session_(BuildConnectionConfig(config_), symbols_, consumer_) {}
 
   void Start() {
-    session_.SetStateHandler(this, &ProbeRunner::HandleState);
-    session_.SetErrorHandler(this, &ProbeRunner::HandleError);
-
     thread_ = std::thread([this]() {
       result_.store(session_.Start(), std::memory_order_release);
       metrics_ = session_.SnapshotMetrics();
@@ -173,17 +125,15 @@ class ProbeRunner {
   }
 
   [[nodiscard]] bool saw_active() const noexcept {
-    return saw_active_.load(std::memory_order_acquire);
+    return session_.ever_active();
   }
 
   [[nodiscard]] ws::ConnectionPhase phase() const noexcept {
-    return static_cast<ws::ConnectionPhase>(
-        phase_.load(std::memory_order_acquire));
+    return session_.phase();
   }
 
   [[nodiscard]] ws::ConnectionError error() const noexcept {
-    return static_cast<ws::ConnectionError>(
-        error_.load(std::memory_order_acquire));
+    return session_.last_error();
   }
 
   [[nodiscard]] const ProbeStats& stats() const noexcept {
@@ -231,32 +181,6 @@ class ProbeRunner {
     return connection_config;
   }
 
-  static void HandleState(void* context, ws::ConnectionPhase phase) noexcept {
-    static_cast<ProbeRunner*>(context)->OnState(phase);
-  }
-
-  static void HandleError(void* context, ws::ConnectionError error) noexcept {
-    static_cast<ProbeRunner*>(context)->OnError(error);
-  }
-
-  void OnState(ws::ConnectionPhase phase) noexcept {
-    phase_.store(static_cast<std::uint8_t>(phase), std::memory_order_release);
-    fmt::print(stderr, FMT_COMPILE("state={}\n"), magic_enum::enum_name(phase));
-    if (phase != ws::ConnectionPhase::kActive) {
-      return;
-    }
-
-    saw_active_.store(true, std::memory_order_release);
-    PrintSocketInfo(session_.NativeFd());
-    fmt::print(stderr, FMT_COMPILE("stream_target={}\n"),
-               session_.stream_target());
-  }
-
-  void OnError(ws::ConnectionError error) noexcept {
-    error_.store(static_cast<std::uint8_t>(error), std::memory_order_release);
-    fmt::print(stderr, FMT_COMPILE("error={}\n"), magic_enum::enum_name(error));
-  }
-
   ProbeConfig config_;
   std::array<binance::SymbolBinding, 1> symbols_;
   ProbeStats stats_{};
@@ -266,11 +190,6 @@ class ProbeRunner {
   ws::Metrics metrics_{};
   std::atomic<bool> done_{false};
   std::atomic<bool> result_{false};
-  std::atomic<bool> saw_active_{false};
-  std::atomic<std::uint8_t> phase_{
-      static_cast<std::uint8_t>(ws::ConnectionPhase::kDisconnected)};
-  std::atomic<std::uint8_t> error_{
-      static_cast<std::uint8_t>(ws::ConnectionError::kNone)};
 };
 
 double AverageNs(std::uint64_t total, std::uint64_t samples) noexcept {
