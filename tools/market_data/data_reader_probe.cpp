@@ -1,3 +1,4 @@
+#include <atomic>
 #include <csignal>
 #include <cstdint>
 #include <exception>
@@ -14,11 +15,12 @@
 
 namespace {
 
-volatile std::sig_atomic_t g_stop_requested = 0;
+std::atomic<bool> g_stop_requested{false};
+static_assert(std::atomic<bool>::is_always_lock_free);
 
 void HandleSignal(int signal) {
   (void)signal;
-  g_stop_requested = 1;
+  g_stop_requested.store(true, std::memory_order_relaxed);
 }
 
 struct CountingHandler {
@@ -62,7 +64,8 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, HandleSignal);
 
     std::uint64_t polls{0};
-    while (g_stop_requested == 0 && (max_polls == 0 || polls < max_polls)) {
+    while (!g_stop_requested.load(std::memory_order_relaxed) &&
+           (max_polls == 0 || polls < max_polls)) {
       const std::uint64_t handled = reader.Poll(handler);
       ++polls;
       if (handled == 0) {

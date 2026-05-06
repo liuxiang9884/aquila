@@ -28,10 +28,11 @@ namespace {
 namespace gate = aquila::gate;
 namespace ws = aquila::websocket;
 
-volatile std::sig_atomic_t g_stop_requested = 0;
+std::atomic<bool> g_stop_requested{false};
+static_assert(std::atomic<bool>::is_always_lock_free);
 
 void RequestStop(int) noexcept {
-  g_stop_requested = 1;
+  g_stop_requested.store(true, std::memory_order_relaxed);
 }
 
 void InstallStopHandlers() noexcept {
@@ -285,14 +286,14 @@ void PrintSummary(const RunnerT& runner) {
 
 template <typename WebSocketPolicy>
 int RunProbe(ProbeConfig config) {
-  g_stop_requested = 0;
+  g_stop_requested.store(false, std::memory_order_relaxed);
   ProbeRunner<WebSocketPolicy> runner(std::move(config));
   runner.Start();
 
   const auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(runner.config().duration_ms);
   while (std::chrono::steady_clock::now() < deadline && !runner.done()) {
-    if (g_stop_requested != 0) {
+    if (g_stop_requested.load(std::memory_order_relaxed)) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
