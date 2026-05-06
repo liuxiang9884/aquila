@@ -25,6 +25,7 @@ target_link_libraries(data_session_config_test
         aquila_binance
         aquila_gate
         GTest::gtest_main
+        nova
 )
 
 target_compile_definitions(data_session_config_test

@@ -7,6 +7,7 @@
 
 #include <CLI/CLI.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <toml++/toml.hpp>
 
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/data_session_config.h"
@@ -18,8 +19,11 @@ namespace aq_gate = aquila::gate;
 namespace ws = aquila::websocket;
 
 struct LoggingGuard {
-  LoggingGuard() {
-    nova::InitializeLogging();
+  explicit LoggingGuard(const std::filesystem::path& config_path) {
+    const toml::table toml = toml::parse_file(config_path.string());
+    nova::LogConfig log_config;
+    log_config.FromToml(toml["log"]);
+    nova::InitializeLogging(log_config);
   }
 
   ~LoggingGuard() {
@@ -109,7 +113,7 @@ int main(int argc, char** argv) {
   app.add_flag("--connect", connect, "connect to the configured websocket");
   CLI11_PARSE(app, argc, argv);
 
-  LoggingGuard logging_guard;
+  LoggingGuard logging_guard{config_path};
 
   aq_gate::DataSessionConfigResult config_result =
       aq_gate::LoadDataSessionConfigFile(config_path);

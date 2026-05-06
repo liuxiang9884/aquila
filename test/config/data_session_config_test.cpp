@@ -8,12 +8,14 @@
 #include <string_view>
 
 #include <gtest/gtest.h>
+#include <toml++/toml.hpp>
 
 #include "core/common/types.h"
 #include "core/config/instrument_catalog.h"
 #include "exchange/binance/market_data/data_session.h"
 #include "exchange/binance/market_data/data_session_config.h"
 #include "exchange/gate/market_data/data_session.h"
+#include "nova/utils/log.h"
 
 namespace {
 
@@ -143,6 +145,25 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
   EXPECT_NE(session.last_subscribe_request().find("BTC_USDT"),
             std::string_view::npos);
+}
+
+TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
+  const toml::table toml =
+      toml::parse_file(SourcePath("config/data_sessions/gate_data_session.toml")
+                           .string());
+
+  nova::LogConfig log_config;
+  log_config.FromToml(toml["log"]);
+
+  EXPECT_EQ(log_config.log_level(), nova::LogLevel::kLogInfo);
+  EXPECT_EQ(log_config.file_sink_name(), "/tmp/taifex_future.log");
+  EXPECT_EQ(log_config.console_sink_name(), "taifex_data");
+  EXPECT_EQ(log_config.backend_thread_name(), "multicast_connector_log");
+  EXPECT_EQ(log_config.backend_cpu_affinity(), 5);
+  EXPECT_EQ(log_config.format_pattern(),
+            "%(log_level_short_code)%(time) %(process_id):%(thread_id) "
+            "%(file_name):%(caller_function):%(line_number)] %(message)");
+  EXPECT_EQ(log_config.timestamp_pattern(), "%Y-%m-%d %H:%M:%S.%Qns");
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {

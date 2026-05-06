@@ -64,6 +64,29 @@ config/data_sessions/binance_data_session.toml
 不是进程私有状态。开发期如果需要合并启动多个 session，应由临时工具组合多个 config，而不是把
 多个 session 写进同一个生产配置文件。
 
+## Log
+
+Gate data session config 当前支持顶层 `[log]` section。`tools/gate/data_session.cpp` 启动时先按
+Sirius `third_party/sirius/tools/gate/data_center.cpp` 的模式解析 TOML，调用
+`nova::LogConfig::FromToml(toml["log"])`，再用 `nova::InitializeLogging(log_config)` 初始化日志。
+因此后续 instrument catalog / data session parser 的诊断和 dry-run 输出都会使用该配置。
+
+示例：
+
+```toml
+[log]
+log_level = "info"
+file_sink_name = "/tmp/taifex_future.log"
+console_sink_name = "taifex_data"
+backend_thread_name = "multicast_connector_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+```
+
+字段语义由 `nova/utils/log.h` 中的 `nova::LogConfig` 定义。当前 Gate tool 会消费这些字段；
+Binance data session tool 仍使用默认 logging，后续如需统一可按同样模式接入。
+
 ## Gate 行情进程示例
 
 ```toml
