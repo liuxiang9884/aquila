@@ -379,42 +379,6 @@ expected_capacity = 65536
       std::string::npos);
 }
 
-TEST(DataSessionConfigTest, RejectsLegacyBookTickerShmSection) {
-  const std::string toml_text = std::string{R"toml(
-[instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
-                                R"toml("
-schema = "aquila.instrument.v1"
-
-[data_session]
-name = "gate_data_session"
-subscribe_symbols = ["BTC_USDT"]
-settle = "usdt"
-wire_format = "sbe"
-sbe_schema_id = 1
-feed = "book_ticker"
-
-[data_session.websocket.endpoint]
-host = "fx-ws.gateio.ws"
-enable_tls = false
-
-[data_session.websocket.execution_policy]
-bind_cpu_id = 2
-
-[book_ticker_shm]
-enabled = true
-shm_name = "aquila_gate_market_data"
-channel_name = "book_ticker_channel"
-)toml";
-
-  const toml::parse_result parsed = toml::parse(toml_text);
-  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("book_ticker_shm is no longer supported; use "
-                              "data_shm_sink"),
-            std::string::npos);
-}
-
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]

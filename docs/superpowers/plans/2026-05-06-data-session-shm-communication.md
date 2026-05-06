@@ -368,7 +368,6 @@ enabled=true requires non-empty shm_name and channel_name
 capacity key is rejected because capacity is fixed in code
 expected_capacity key is rejected because capacity is fixed in code
 remove_existing=true requires create=true
-legacy [book_ticker_shm] key is rejected; use [data_shm_sink]
 ```
 
 - [ ] **Step 3: Add parser tests**

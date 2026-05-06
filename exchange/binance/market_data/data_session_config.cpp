@@ -141,11 +141,6 @@ class DataSessionConfigParser {
   }
 
   void ParseDataShmSink() {
-    if (node_["book_ticker_shm"]) {
-      Fail("book_ticker_shm", " is no longer supported; use data_shm_sink");
-      return;
-    }
-
     const toml::node_view<const toml::node> shm = node_["data_shm_sink"];
     if (!shm) {
       return;
