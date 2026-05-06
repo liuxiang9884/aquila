@@ -63,6 +63,11 @@ data session config parser 在启动冷路径加载 `instrument_catalog` 和 `su
 plain WebSocket policy；`--connect` 模式调用 `DataSession::Run()`，由 session 内部安装
 SIGINT / SIGTERM stop handler。
 
+`binance_data_session` tool 启动时只 parse 一次 TOML，同一个 parsed table 同时用于
+`nova::LogConfig::FromToml(toml["log"])` 和 data session config 生成。仓库示例 log 文件默认写到
+`/home/liuxiang/log/`，并用 `binance_data_session` 名称区分 file sink、console sink 和 backend
+log thread；Nova file sink 会在实际文件名上追加启动时间。
+
 ## Binance 合约元数据脚本
 
 `scripts/binance/query_um_futures_contracts.py` 查询 USD-M futures `GET /fapi/v1/exchangeInfo`，按输入 symbol 顺序生成 `pandas.DataFrame`；CLI 支持一个或多个 symbol，也支持 `--file`，文件内每行一个 symbol。脚本把 `settle_asset` 映射为 `marginAsset`；当前使用约定是调用方只传 USDT settled symbols。

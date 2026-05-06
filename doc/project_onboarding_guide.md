@@ -7,14 +7,14 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、benchmark、live probe 和每进程 data session config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、benchmark、live probe 和每进程 data session config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
 
 ## 最近已完成
 
-截至 2026-05-05，`main` 已完成的主要内容：
+截至 2026-05-06，`main` 已完成的主要内容：
 
 1. Gate / Binance market data 热路径防御性分支收口。
 2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
@@ -25,6 +25,9 @@
 7. Gate / Binance data session TOML parser 和启动 tools 已落地，tools source 已按 `tools/gate/`、`tools/binance/`、`tools/websocket/` 归类。
 8. 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此 `enable_tls = true`；private link / plain WS 部署需要替换 private endpoint 并设置 `enable_tls = false`。
 9. `README.md`、本 onboarding、Gate / Binance handoff、data session config 和 evaluation 文档已按当前实现边界对齐。
+10. Gate / Binance data session tools 启动时只 parse 一次 TOML：同一个 parsed table 用于 Nova log 初始化和 data session config 生成。
+11. `config/data_sessions/*.toml` 的 log 文件默认写到 `/home/liuxiang/log/`，并用 data session 名称区分 file sink、console sink 和 backend log thread；Nova file sink 会追加启动时间生成实际日志文件名。
+12. `AGENTS.md` 和本 onboarding 已加入“结束对话”收尾流程和新对话 onboarding 固定入口。
 
 ## 新对话第一步
 
@@ -48,6 +51,28 @@ doc/websocket_read_write_benchmark_comparison.md
 ```
 
 如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
+
+## 给下一个对话的 onboarding 提示
+
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
+然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；如果继续 Gate 交易架构，
+再读 `doc/agent-handoff-gate-trade-architecture.md`，如果继续 Binance 行情，再读
+`doc/agent-handoff-binance-market-data.md`，如果继续 data session / config，再读
+`doc/data_session_config.md`。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
+
+## 结束对话固定流程
+
+用户输入“结束对话”时，当前对话需要先完成收尾，而不是继续开启新功能：
+
+1. 运行 `git status --short --branch` 和 `git log --oneline -8`。
+2. 对照当前实现、配置和最近提交，整理相关文档，并更新本 onboarding 的当前状态、入口、验证命令和下一步建议。
+3. 如果本轮触碰 evaluation、data session config、WebSocket、Gate/Binance handoff 或 README，同步对应文档。
+4. 更新上一节“给下一个对话的 onboarding 提示”，确保下一轮可以直接接手。
+5. 至少运行 `git diff --check`；如触碰 evaluation 边界，再运行 `rg '#include "evaluation/' core exchange tools` 和 `rg 'aquila_evaluation' core exchange tools`。
+6. 自动提交文档整理，commit message 使用英文；除非用户明确要求，不 push。
+7. 最终回复给出提交哈希、验证结果，并贴出上一节 onboarding 提示段落。
 
 ## 文档索引
 
@@ -108,7 +133,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/gate/market_data/subscription.h` | `futures.book_ticker` subscribe/unsubscribe JSON 构造。 |
 | `exchange/gate/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 SBE binary payload 产出 `BookTicker`。 |
 | `exchange/gate/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>`，负责 WS 生命周期、subscribe/unsubscribe text 控制消息和 binary SBE 分流。 |
-| `tools/gate/data_session.cpp` | Gate data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
+| `tools/gate/data_session.cpp` | Gate data session 启动工具；parse 一次 TOML 后初始化 Nova log 并生成 `DataSessionConfig`；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Binance USD-M futures 行情
 
@@ -118,7 +143,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `exchange/binance/market_data/book_ticker_parser.h` | Binance JSON bookTicker -> 中间 `BookTickerUpdate`，生产路径使用 `simdjson::ondemand` 和 `fast_float`。 |
 | `exchange/binance/market_data/client.h` | 模板化 `FuturesMarketDataClient<Consumer>`，从 JSON text payload 产出 `BookTicker`。 |
 | `exchange/binance/market_data/data_session.h` | `DataSession<Consumer, WebSocketPolicy, DiagnosticsPolicy>` raw stream target session，负责 WS 生命周期和 text JSON 分流；active 后不发送 runtime subscribe。 |
-| `tools/binance/data_session.cpp` | Binance data session 启动工具；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
+| `tools/binance/data_session.cpp` | Binance data session 启动工具；parse 一次 TOML 后初始化 Nova log 并生成 `DataSessionConfig`；默认 dry-run 打印配置生成结果，`--connect` 才实际连接。 |
 
 ### Gate 交易准备代码
 
@@ -440,6 +465,7 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 - 性能结论必须写明 benchmark / live probe / profile 证据。
 - `third_party/` 中的 Drogon、Sirius、MengRao websocket 是参考代码，通常不提交改动。
 - 如果继续 Gate 交易实现，先补设计 / benchmark 边界，不要直接把 Sirius 的 Drogon 架构搬进主线。
+- 如果用户输入“结束对话”，按本文档的固定流程先整理文档和 onboarding，再提交并给出下一轮 onboarding 提示。
 
 ## 下一步建议
 

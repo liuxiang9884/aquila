@@ -2,6 +2,12 @@
 
 `aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片包括低延迟 WebSocket client、Gate futures SBE BBO 行情、Binance USD-M futures JSON bookTicker 行情、data session config / tools、交易所 benchmark / live probe，以及 Gate / Binance 期货合约元数据查询脚本。WebSocket 冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
 
+## Onboarding
+
+新对话或新接手开发前，先读 `AGENTS.md` 和 `doc/project_onboarding_guide.md`。其中
+`doc/project_onboarding_guide.md` 是当前状态、文档索引、代码入口、验证命令和下一步建议的集中入口。
+当用户输入“结束对话”时，按 `AGENTS.md` 和 onboarding 中的收尾流程整理文档、更新交接提示、验证并提交。
+
 ## 构建依赖
 
 项目默认使用本机用户目录下的 vcpkg：

@@ -11,6 +11,45 @@
 - 这是一个面向 crypto 的高频交易系统仓库，默认同时关注正确性、确定性、低延迟、可恢复性和可观测性。
 - 对性能、时延、吞吐、并发安全和交易行为相关结论，必须基于实际测试、benchmark、profile 或运行证据，不凭主观判断宣称完成。
 
+## 对话生命周期和 onboarding
+
+### 新对话启动
+
+每个新对话进入本仓库后，先执行：
+
+```bash
+git status --short --branch
+git log --oneline -8
+```
+
+然后按顺序读取：
+
+```text
+AGENTS.md
+README.md
+doc/project_onboarding_guide.md
+doc/evaluation_support.md
+```
+
+如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`；如果继续 Binance 行情，再读
+`doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读
+`doc/data_session_config.md`。读取后以 `doc/project_onboarding_guide.md` 的“最近已完成”“代码入口”
+和“下一步建议”为当前事实源，再结合 `git status` / `git log` 判断是否存在未提交或未 push 的工作。
+
+### 结束对话触发词
+
+当用户输入“结束对话”，或明确要求结束当前对话并交接时，默认自动执行下面的收尾流程：
+
+1. 运行 `git status --short --branch` 和 `git log --oneline -8`，确认当前分支、未提交改动和最近提交。
+2. 对照当前实现、配置和最近提交，整理相关文档；重点更新 `doc/project_onboarding_guide.md` 的当前状态、代码入口、验证命令和下一步建议。
+3. 如果本轮改动影响 evaluation 边界、data session config、WebSocket 行为或 Gate / Binance handoff，同步更新对应文档。
+4. 在 onboarding 中保留或更新一段“给下一个对话的 onboarding 提示”，让下一轮对话可以直接按该段话接手。
+5. 跑本次文档整理所需的最小验证，至少包括 `git diff --check`；如果触碰 evaluation 边界，再运行 evaluation 边界检查。
+6. 按项目规则自动提交本次文档整理，commit message 使用英文；除非用户明确要求，不 push。
+7. 最终回复中给出提交哈希、验证结果，并直接贴出给下一个对话使用的 onboarding 提示段落。
+
+“结束对话”流程只做收尾、同步和交接，不主动开启新的功能实现。
+
 ## 项目背景
 
 `aquila` 用于实现 crypto 高频交易系统。当前仓库以 `CMake` 为主构建入口，核心工作通常会围绕以下方向展开：

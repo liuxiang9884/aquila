@@ -9,19 +9,12 @@
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 截至 2026-05-02，最近相关功能提交包括以下内容；新接手时以 `git log --oneline -8` 为准：
-  - `aff3408 docs: document futures contract metadata fields`
-  - `ca1a9cc scripts: unify futures contract metadata fields`
-  - `a3c444a scripts: add Binance futures contract query`
-  - `e502bd1 scripts: add Gate futures contract query`
-  - `7c0fb70 docs: add evaluation support rules`
-  - `9548bd2 build: add evaluation support target`
-  - `33fab19 docs: document benchmark helper locations`
-  - `63ac1d9 core: move comparison helpers to tests`
+- 截至 2026-05-06，Gate / Binance data session config、log config、instrument catalog、行情 session tools
+  和 onboarding 流程已完成多轮收口；新接手时以 `git log --oneline -8` 为准。
 - 新接手时先执行：
 
 ```bash
-git -C /home/liuxiang/dev/aquila status --short
+git -C /home/liuxiang/dev/aquila status --short --branch
 git -C /home/liuxiang/dev/aquila log --oneline -8
 ```
 
@@ -48,7 +41,7 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 
 当前已经先以 Gate futures `bbo` / `futures.book_ticker` 为样例完成行情接入骨架。这部分不是交易回报实现，但它验证了 SBE schema、生成代码、message dispatch、BBO decode、统一 `BookTicker` 数据结构、market data client、market data session 和 WebSocket typed handler 之间的边界。
 
-2026-05-05 当前收口：
+2026-05-06 当前收口：
 
 1. `DataSession` 已落地，负责连接生命周期、订阅控制 text frame、SBE binary frame 分流和统计。
 2. WebSocket 内核新增模板化 typed message handler path；`MessageCallback` 保留给工具和旧测试。
@@ -57,6 +50,7 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 5. Gate BBO 行情 client 热路径使用 trusted symbol extract / trusted decode；schema/template、payload shape、symbol config 和 BBO `event=Update` 作为协议不变量，debug 下 assert，release 主路径不再保留 unknown-symbol / decode-failure 诊断分支。
 6. client/session 构造期使用 symbol span 构建 lookup / subscription views，构造后不保存无用 `symbols_` span。
 7. Gate data session TOML parser 已在启动冷路径加载 `instrument_catalog` 和 `subscribe_symbols`，生成 `DataSessionConfig`、WebSocket target、exchange symbol 列表和 symbol id 列表；tool 根据 `enable_tls` 选择 TLS 或 plain WebSocket policy。
+8. Gate / Binance data session tools 启动时只 parse 一次 TOML，同一个 parsed table 同时用于 Nova log 初始化和 data session config 生成；示例 log 文件默认写到 `/home/liuxiang/log/`，并按 data session 名称区分 sink / backend thread。
 
 ### Core 数据类型
 
