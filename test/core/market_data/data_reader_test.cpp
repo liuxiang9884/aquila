@@ -169,4 +169,47 @@ TEST(DataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
   EXPECT_TRUE(handler.book_tickers.empty());
 }
 
+TEST(DataReaderTest, DiagnosticsTrackBookTickersSkippedAndEmptyPolls) {
+  using Reader = md::DataReader<md::DataReaderDiagnostics>;
+
+  const md::BookTickerShmConfig config = MakeCreateConfig("diag_latest");
+  ShmCleanup cleanup(config.shm_name);
+  md::DataShmPublisher publisher(config);
+
+  cfg::DataReaderConfig reader_config;
+  reader_config.name = "test_data_reader";
+  reader_config.max_events_per_source = 64;
+  reader_config.sources.push_back(
+      MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
+                       config.shm_name, cfg::DataReaderReadMode::kLatest));
+
+  Reader reader(std::move(reader_config));
+  publisher.OnBookTicker(MakeBookTicker(1, aquila::Exchange::kGate));
+  publisher.OnBookTicker(MakeBookTicker(2, aquila::Exchange::kGate));
+  publisher.OnBookTicker(MakeBookTicker(3, aquila::Exchange::kGate));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  EXPECT_EQ(reader.Poll(handler), 0U);
+
+  const md::DataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.poll_calls, 2U);
+  EXPECT_EQ(stats.empty_polls, 1U);
+  EXPECT_EQ(stats.book_tickers, 1U);
+  ASSERT_EQ(stats.sources.size(), 1U);
+  EXPECT_EQ(stats.sources[0].book_tickers, 1U);
+  EXPECT_EQ(stats.sources[0].skipped, 2U);
+  EXPECT_EQ(stats.sources[0].last_book_ticker_id, 3);
+}
+
+TEST(DataReaderTest, DefaultDiagnosticsCompileAndPoll) {
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_source = 64;
+
+  md::DataReader reader(std::move(config));
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 0U);
+}
+
 }  // namespace
