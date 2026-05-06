@@ -30,7 +30,7 @@ struct LoggingGuard {
   }
 };
 
-struct CountingConsumer {
+struct CountingDataSink {
   std::uint64_t book_tickers{0};
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
@@ -66,11 +66,11 @@ void PrintSession(const SessionT& session) {
 template <typename WebSocketPolicy>
 int RunDataSession(aq_gate::DataSessionConfig data_session_config,
                    bool connect) {
-  using Session = aq_gate::DataSession<CountingConsumer, WebSocketPolicy,
+  using Session = aq_gate::DataSession<CountingDataSink, WebSocketPolicy,
                                        aq_gate::DataSessionDiagnosticsPolicy>;
 
-  CountingConsumer consumer;
-  Session session(std::move(data_session_config), consumer);
+  CountingDataSink data_sink;
+  Session session(std::move(data_session_config), data_sink);
   PrintSession(session);
   if (!connect) {
     return 0;
@@ -81,7 +81,7 @@ int RunDataSession(aq_gate::DataSessionConfig data_session_config,
   const ws::ConnectionPhase phase = session.phase();
   const ws::ConnectionError error = session.last_error();
   const bool active = session.ever_active();
-  const std::uint64_t book_tickers = consumer.book_tickers;
+  const std::uint64_t book_tickers = data_sink.book_tickers;
   if (started_ok && active) {
     NOVA_INFO(
         "result=ok active=true phase={} error={} book_tickers={} "

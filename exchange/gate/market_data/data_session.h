@@ -172,7 +172,7 @@ inline std::vector<SymbolBinding> BuildOwnedSymbolBindings(
 
 }  // namespace detail
 
-template <typename Consumer,
+template <typename DataSink,
           typename WebSocketPolicy = DefaultTlsWebSocketPolicy,
           typename DiagnosticsPolicy = NoopDataSessionDiagnosticsPolicy>
 class DataSession {
@@ -191,13 +191,13 @@ class DataSession {
       SessionDiagnostics::kEnabled;
 
   DataSession(websocket::ConnectionConfig config,
-              std::span<const SymbolBinding> symbols, Consumer& consumer)
+              std::span<const SymbolBinding> symbols, DataSink& data_sink)
       : connection_(ApplyOptions(std::move(config))),
         symbol_bindings_(symbols.begin(), symbols.end()),
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
-            consumer),
+            data_sink),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_) {
     detail::BuildSymbolViews(
@@ -209,18 +209,18 @@ class DataSession {
 
   template <size_t N>
   DataSession(websocket::ConnectionConfig config,
-              const std::array<SymbolBinding, N>& symbols, Consumer& consumer)
+              const std::array<SymbolBinding, N>& symbols, DataSink& data_sink)
       : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
-                    consumer) {}
+                    data_sink) {}
 
-  DataSession(DataSessionConfig config, Consumer& consumer)
+  DataSession(DataSessionConfig config, DataSink& data_sink)
       : DataSession(std::move(config.name), std::move(config.connection),
                     std::move(config.exchange_symbols),
-                    std::move(config.symbol_ids), consumer) {}
+                    std::move(config.symbol_ids), data_sink) {}
 
   DataSession(std::string name, websocket::ConnectionConfig config,
               std::vector<std::string> exchange_symbols,
-              std::vector<std::int32_t> symbol_ids, Consumer& consumer)
+              std::vector<std::int32_t> symbol_ids, DataSink& data_sink)
       : name_(std::move(name)),
         connection_(ApplyOptions(std::move(config))),
         exchange_symbols_(std::move(exchange_symbols)),
@@ -229,7 +229,7 @@ class DataSession {
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
-            consumer),
+            data_sink),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_) {
     detail::BuildSymbolViews(
@@ -542,7 +542,7 @@ class DataSession {
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
   std::atomic<bool> ever_active_{false};
-  FuturesMarketDataClient<Consumer, MarketDataDiagnostics, WebSocketPolicy>
+  FuturesMarketDataClient<DataSink, MarketDataDiagnostics, WebSocketPolicy>
       market_data_client_;
   MessageHandler message_handler_;
   Client client_;

@@ -70,7 +70,7 @@ class FuturesMarketDataDiagnostics {
   FuturesMarketDataClientStats stats_{};
 };
 
-template <typename Consumer,
+template <typename DataSink,
           typename DiagnosticsT = NoopFuturesMarketDataDiagnostics,
           typename OptionsT = websocket::DefaultWebSocketOptions>
 class FuturesMarketDataClient {
@@ -79,16 +79,16 @@ class FuturesMarketDataClient {
   static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
 
   FuturesMarketDataClient(std::span<const SymbolBinding> symbols,
-                          Consumer& consumer)
-      : consumer_(consumer) {
+                          DataSink& data_sink)
+      : data_sink_(data_sink) {
     BuildSymbolLookup(symbols);
   }
 
   template <size_t N>
   FuturesMarketDataClient(const std::array<SymbolBinding, N>& symbols,
-                          Consumer& consumer)
+                          DataSink& data_sink)
       : FuturesMarketDataClient(std::span<const SymbolBinding>(symbols),
-                                consumer) {}
+                                data_sink) {}
 
   websocket::MessageCallback AsMessageCallback() noexcept {
     return {.context = this, .handler = &HandleWebSocketMessage};
@@ -159,7 +159,7 @@ class FuturesMarketDataClient {
     DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
                                       book_ticker);
 
-    consumer_.OnBookTicker(book_ticker);
+    data_sink_.OnBookTicker(book_ticker);
     return websocket::DeliveryResult::kAccepted;
   }
 
@@ -183,7 +183,7 @@ class FuturesMarketDataClient {
 
   absl::flat_hash_map<std::string_view, std::int32_t>
       symbol_ids_by_exchange_symbol_;
-  Consumer& consumer_;
+  DataSink& data_sink_;
   [[no_unique_address]] DiagnosticsT diagnostics_{};
 };
 

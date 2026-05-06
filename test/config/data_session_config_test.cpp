@@ -115,15 +115,15 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.symbol_ids[1], 1);
   EXPECT_EQ(config.symbol_ids[2], 2);
 
-  struct Consumer {
+  struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
-  } consumer;
+  } data_sink;
 
   using Session =
-      aquila::gate::DataSession<Consumer,
+      aquila::gate::DataSession<DataSink,
                                 aquila::gate::DefaultPlainWebSocketPolicy,
                                 aquila::gate::SessionOnlyDiagnosticsPolicy>;
-  Session session(config, consumer);
+  Session session(config, data_sink);
   EXPECT_EQ(session.name(), "gate_data_session");
   EXPECT_EQ(session.connection().host, "fx-ws.gateio.ws");
   EXPECT_EQ(session.connection().service, "443");
@@ -273,14 +273,14 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   EXPECT_EQ(config.symbol_ids[1], 1);
   EXPECT_EQ(config.symbol_ids[2], 2);
 
-  struct Consumer {
+  struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
-  } consumer;
+  } data_sink;
 
   using Session = aquila::binance::DataSession<
-      Consumer, aquila::binance::DefaultTlsWebSocketPolicy,
+      DataSink, aquila::binance::DefaultTlsWebSocketPolicy,
       aquila::binance::SessionOnlyDiagnosticsPolicy>;
-  Session session(config, consumer);
+  Session session(config, data_sink);
   EXPECT_EQ(session.name(), "binance_data_session");
   EXPECT_EQ(session.connection().host, "fstream.binance.com");
   EXPECT_EQ(session.connection().service, "443");

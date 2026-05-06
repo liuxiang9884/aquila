@@ -39,7 +39,7 @@ aquila::websocket::MessageView TextView(std::string_view payload) noexcept {
   };
 }
 
-struct RecordingConsumer {
+struct RecordingDataSink {
   int calls{0};
   aquila::BookTicker last{};
 
@@ -54,17 +54,17 @@ struct CoarseClockWebSocketPolicy : aquila::gate::DefaultTlsWebSocketPolicy {
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
-using DefaultNoStatsSession = aquila::gate::DataSession<RecordingConsumer>;
+using DefaultNoStatsSession = aquila::gate::DataSession<RecordingDataSink>;
 using Session =
-    aquila::gate::DataSession<RecordingConsumer,
+    aquila::gate::DataSession<RecordingDataSink,
                               aquila::gate::DefaultTlsWebSocketPolicy,
                               aquila::gate::SessionOnlyDiagnosticsPolicy>;
 using DiagnosticSession =
-    aquila::gate::DataSession<RecordingConsumer,
+    aquila::gate::DataSession<RecordingDataSink,
                               aquila::gate::DefaultTlsWebSocketPolicy,
                               aquila::gate::DataSessionDiagnosticsPolicy>;
 using CoarseClockSession =
-    aquila::gate::DataSession<RecordingConsumer, CoarseClockWebSocketPolicy>;
+    aquila::gate::DataSession<RecordingDataSink, CoarseClockWebSocketPolicy>;
 
 static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
 static_assert(Session::SessionDiagnosticsEnabled);
@@ -74,7 +74,7 @@ static_assert(CoarseClockSession::kClockSource ==
               aquila::websocket::ClockSource::kMonotonicCoarse);
 static_assert(!std::is_constructible_v<
               Session, aquila::websocket::ConnectionConfig,
-              std::span<const aquila::gate::SymbolBinding>, RecordingConsumer&,
+              std::span<const aquila::gate::SymbolBinding>, RecordingDataSink&,
               aquila::websocket::ClockSource>);
 template <typename SessionT>
 concept HasStateHandler =
@@ -93,7 +93,7 @@ static_assert(!HasStateHandler<Session>);
 static_assert(!HasErrorHandler<Session>);
 static_assert(HasRun<Session>);
 
-Session MakeSession(RecordingConsumer& consumer) {
+Session MakeSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
                                   .symbol_id = 11}};
@@ -101,10 +101,10 @@ Session MakeSession(RecordingConsumer& consumer) {
   config.host = "localhost";
   config.service = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
-  return Session(std::move(config), symbols, consumer);
+  return Session(std::move(config), symbols, data_sink);
 }
 
-DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
+DiagnosticSession MakeDiagnosticSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
                                   .symbol_id = 11}};
@@ -112,10 +112,10 @@ DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
   config.host = "localhost";
   config.service = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
-  return DiagnosticSession(std::move(config), symbols, consumer);
+  return DiagnosticSession(std::move(config), symbols, data_sink);
 }
 
-Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
+Session MakeSessionWithNoPreparedWriteSlots(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
                                   .symbol_id = 11}};
@@ -124,10 +124,10 @@ Session MakeSessionWithNoPreparedWriteSlots(RecordingConsumer& consumer) {
   config.service = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   config.prepared_write_slots = 0;
-  return Session(std::move(config), symbols, consumer);
+  return Session(std::move(config), symbols, data_sink);
 }
 
-DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
+DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
                                   .symbol_id = 11}};
@@ -135,14 +135,14 @@ DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
   config.host = "localhost";
   config.service = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
-  return DefaultNoStatsSession(std::move(config), symbols, consumer);
+  return DefaultNoStatsSession(std::move(config), symbols, data_sink);
 }
 
 }  // namespace
 
 TEST(GateDataSessionTest, MarksSubscribeAckSubscribed) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(TextView(
       R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})"));
@@ -160,8 +160,8 @@ TEST(GateDataSessionTest, ParsesPaddedSubscribeAckWithoutCopy) {
       R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})";
   std::array<char, kSubscribeAck.size() + simdjson::SIMDJSON_PADDING> buffer{};
   std::memcpy(buffer.data(), kSubscribeAck.data(), kSubscribeAck.size());
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
   const aquila::websocket::MessageView view{
       .kind = aquila::websocket::PayloadKind::kText,
       .payload = std::as_bytes(std::span(buffer.data(), kSubscribeAck.size())),
@@ -179,8 +179,8 @@ TEST(GateDataSessionTest, ParsesPaddedSubscribeAckWithoutCopy) {
 }
 
 TEST(GateDataSessionTest, SendsSubscribeWhenActive) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
 
@@ -195,8 +195,8 @@ TEST(GateDataSessionTest, SendsSubscribeWhenActive) {
 }
 
 TEST(GateDataSessionTest, RetriesSubscribeAfterActiveFailure) {
-  RecordingConsumer consumer;
-  Session session = MakeSessionWithNoPreparedWriteSlots(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSessionWithNoPreparedWriteSlots(data_sink);
 
   session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
   const auto retry_status = session.RetryPendingSubscribe();
@@ -213,8 +213,8 @@ TEST(GateDataSessionTest, RetriesSubscribeAfterActiveFailure) {
 
 TEST(GateDataSessionTest,
      ManualConnectionPhaseOnlyDrivesGateSubscriptionState) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   EXPECT_FALSE(session.ever_active());
   EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
@@ -230,8 +230,8 @@ TEST(GateDataSessionTest,
 }
 
 TEST(GateDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(TextView(
       R"({"time":1,"channel":"futures.book_ticker","event":"unsubscribe","result":{"status":"success"}})"));
@@ -243,8 +243,8 @@ TEST(GateDataSessionTest, MarksUnsubscribeAckUnsubscribed) {
 }
 
 TEST(GateDataSessionTest, RecordsControlErrorAsRejected) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(TextView(
       R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","error":{"label":"INVALID_PARAM","message":"bad"}})"));
@@ -256,8 +256,8 @@ TEST(GateDataSessionTest, RecordsControlErrorAsRejected) {
 }
 
 TEST(GateDataSessionTest, MalformedTextIsAcceptedAndCounted) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(TextView("{"));
 
@@ -267,8 +267,8 @@ TEST(GateDataSessionTest, MalformedTextIsAcceptedAndCounted) {
 }
 
 TEST(GateDataSessionTest, JsonUpdateRoutesToUnsupportedCounter) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(TextView(
       R"({"time":1,"channel":"futures.some_json_only_channel","event":"update","result":{"x":1}})"));
@@ -276,12 +276,12 @@ TEST(GateDataSessionTest, JsonUpdateRoutesToUnsupportedCounter) {
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(session.stats().json_market_data_messages, 1U);
   EXPECT_EQ(session.stats().unsupported_json_market_data_messages, 1U);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(data_sink.calls, 0);
 }
 
 TEST(GateDataSessionTest, DelegatesBinaryBookTickerToClient) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
 
@@ -289,21 +289,21 @@ TEST(GateDataSessionTest, DelegatesBinaryBookTickerToClient) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(session.stats().binary_messages, 1U);
-  ASSERT_EQ(consumer.calls, 1);
-  EXPECT_EQ(consumer.last.symbol_id, 11);
-  EXPECT_EQ(consumer.last.id, 42);
+  ASSERT_EQ(data_sink.calls, 1);
+  EXPECT_EQ(data_sink.last.symbol_id, 11);
+  EXPECT_EQ(data_sink.last.id, 42);
 }
 
 TEST(GateDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {
-  RecordingConsumer consumer;
-  DiagnosticSession session = MakeDiagnosticSession(consumer);
+  RecordingDataSink data_sink;
+  DiagnosticSession session = MakeDiagnosticSession(data_sink);
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
 
   const auto result = session.Handle(BinaryView(payload));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(data_sink.calls, 1);
   EXPECT_EQ(session.market_data_client_diagnostics()
                 .stats()
                 .unsupported_sbe_templates,
@@ -311,14 +311,14 @@ TEST(GateDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {
 }
 
 TEST(GateDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
-  RecordingConsumer consumer;
-  DefaultNoStatsSession session = MakeDefaultNoStatsSession(consumer);
+  RecordingDataSink data_sink;
+  DefaultNoStatsSession session = MakeDefaultNoStatsSession(data_sink);
   std::array<char, 192> buffer{};
   const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
 
   const auto result = session.Handle(BinaryView(payload));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(data_sink.calls, 1);
   EXPECT_EQ(session.stats().binary_messages, 0U);
 }

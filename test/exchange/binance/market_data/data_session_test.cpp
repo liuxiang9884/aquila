@@ -38,7 +38,7 @@ aquila::websocket::MessageView BinaryView(std::string_view payload) noexcept {
   };
 }
 
-struct RecordingConsumer {
+struct RecordingDataSink {
   int calls{0};
   aquila::BookTicker last{};
 
@@ -53,17 +53,17 @@ struct CoarseClockWebSocketPolicy : aquila::binance::DefaultTlsWebSocketPolicy {
       aquila::websocket::ClockSource::kMonotonicCoarse;
 };
 
-using DefaultNoStatsSession = aquila::binance::DataSession<RecordingConsumer>;
+using DefaultNoStatsSession = aquila::binance::DataSession<RecordingDataSink>;
 using Session =
-    aquila::binance::DataSession<RecordingConsumer,
+    aquila::binance::DataSession<RecordingDataSink,
                                  aquila::binance::DefaultTlsWebSocketPolicy,
                                  aquila::binance::SessionOnlyDiagnosticsPolicy>;
 using DiagnosticSession =
-    aquila::binance::DataSession<RecordingConsumer,
+    aquila::binance::DataSession<RecordingDataSink,
                                  aquila::binance::DefaultTlsWebSocketPolicy,
                                  aquila::binance::DataSessionDiagnosticsPolicy>;
 using CoarseClockSession =
-    aquila::binance::DataSession<RecordingConsumer, CoarseClockWebSocketPolicy>;
+    aquila::binance::DataSession<RecordingDataSink, CoarseClockWebSocketPolicy>;
 
 static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
 static_assert(Session::SessionDiagnosticsEnabled);
@@ -74,7 +74,7 @@ static_assert(CoarseClockSession::kClockSource ==
 static_assert(!std::is_constructible_v<
               Session, aquila::websocket::ConnectionConfig,
               std::span<const aquila::binance::SymbolBinding>,
-              RecordingConsumer&, aquila::websocket::ClockSource>);
+              RecordingDataSink&, aquila::websocket::ClockSource>);
 template <typename SessionT>
 concept HasStateHandler =
     requires(SessionT& session) { session.SetStateHandler(nullptr, nullptr); };
@@ -92,87 +92,87 @@ static_assert(!HasStateHandler<Session>);
 static_assert(!HasErrorHandler<Session>);
 static_assert(HasRun<Session>);
 
-Session MakeSession(RecordingConsumer& consumer) {
+Session MakeSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::binance::SymbolBinding, 1> symbols{
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
   config.service = "443";
-  return Session(std::move(config), symbols, consumer);
+  return Session(std::move(config), symbols, data_sink);
 }
 
-DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingConsumer& consumer) {
+DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::binance::SymbolBinding, 1> symbols{
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
   config.service = "443";
-  return DefaultNoStatsSession(std::move(config), symbols, consumer);
+  return DefaultNoStatsSession(std::move(config), symbols, data_sink);
 }
 
-DiagnosticSession MakeDiagnosticSession(RecordingConsumer& consumer) {
+DiagnosticSession MakeDiagnosticSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::binance::SymbolBinding, 1> symbols{
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
   config.service = "443";
-  return DiagnosticSession(std::move(config), symbols, consumer);
+  return DiagnosticSession(std::move(config), symbols, data_sink);
 }
 
 }  // namespace
 
 TEST(BinanceDataSessionTest, BuildsRawStreamTargetFromSymbols) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   EXPECT_EQ(session.stream_target(), "/public/ws/btcusdt@bookTicker");
 }
 
 TEST(BinanceDataSessionTest, DelegatesTextBookTickerToClient) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(TextView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(session.stats().text_messages, 1U);
   EXPECT_EQ(session.stats().book_ticker_messages, 1U);
-  ASSERT_EQ(consumer.calls, 1);
-  EXPECT_EQ(consumer.last.symbol_id, 11);
-  EXPECT_EQ(consumer.last.id, 400900217);
+  ASSERT_EQ(data_sink.calls, 1);
+  EXPECT_EQ(data_sink.last.symbol_id, 11);
+  EXPECT_EQ(data_sink.last.id, 400900217);
 }
 
 TEST(BinanceDataSessionTest, IgnoresBinaryPayload) {
-  RecordingConsumer consumer;
-  Session session = MakeSession(consumer);
+  RecordingDataSink data_sink;
+  Session session = MakeSession(data_sink);
 
   const auto result = session.Handle(BinaryView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(session.stats().binary_messages, 1U);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(data_sink.calls, 0);
 }
 
 TEST(BinanceDataSessionTest, DefaultSessionDiagnosticsDoNotCount) {
-  RecordingConsumer consumer;
-  DefaultNoStatsSession session = MakeDefaultNoStatsSession(consumer);
+  RecordingDataSink data_sink;
+  DefaultNoStatsSession session = MakeDefaultNoStatsSession(data_sink);
 
   const auto result = session.Handle(TextView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(data_sink.calls, 1);
   EXPECT_EQ(session.stats().text_messages, 0U);
   EXPECT_EQ(session.stats().book_ticker_messages, 0U);
 }
 
 TEST(BinanceDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {
-  RecordingConsumer consumer;
-  DiagnosticSession session = MakeDiagnosticSession(consumer);
+  RecordingDataSink data_sink;
+  DiagnosticSession session = MakeDiagnosticSession(data_sink);
 
   const auto result = session.Handle(TextView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 1);
+  EXPECT_EQ(data_sink.calls, 1);
   EXPECT_EQ(
       session.market_data_client_diagnostics().stats().book_ticker_messages,
       1U);
@@ -180,11 +180,11 @@ TEST(BinanceDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {
 
 TEST(BinanceDataSessionTest, RejectsEmptyStreamTargetOnStart) {
   static constexpr std::array<aquila::binance::SymbolBinding, 0> symbols{};
-  RecordingConsumer consumer;
+  RecordingDataSink data_sink;
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "1";
-  Session session(std::move(config), symbols, consumer);
+  Session session(std::move(config), symbols, data_sink);
 
   EXPECT_EQ(session.stream_target(), "");
   EXPECT_FALSE(session.Start());
