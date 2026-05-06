@@ -118,16 +118,16 @@ class BasicWebSocketClient {
       return false;
     }
 
-    stop_requested_.store(false, std::memory_order_release);
+    stop_requested_.store(false, std::memory_order_relaxed);
     DrainWakeupFd();
 
     std::uint32_t transient_failures = 0;
     bool reconnect_in_progress = false;
-    while (!stop_requested_.load(std::memory_order_acquire)) {
+    while (!stop_requested_.load(std::memory_order_relaxed)) {
       cold_path_loop_.SetInterruptFd(wakeup_fd_);
       if (!cold_path_loop_.RunUntilActive(transport_socket_, state_machine_,
                                           config_, handshake_storage_)) {
-        if (stop_requested_.load(std::memory_order_acquire) ||
+        if (stop_requested_.load(std::memory_order_relaxed) ||
             state_machine_.phase() == ConnectionPhase::kClosing) {
           NotifyState(ConnectionPhase::kClosing);
           transport_socket_.Close();
@@ -172,7 +172,7 @@ class BasicWebSocketClient {
       };
       spin_loop_.Run(runtime_session);
       transport_socket_.Close();
-      if (stop_requested_.load(std::memory_order_acquire)) {
+      if (stop_requested_.load(std::memory_order_relaxed)) {
         MarkDegradedInactive();
         state_machine_.Enter(ConnectionPhase::kClosed);
         NotifyState(state_machine_.phase());
@@ -204,7 +204,7 @@ class BasicWebSocketClient {
   }
 
   void Stop() noexcept {
-    stop_requested_.store(true, std::memory_order_release);
+    stop_requested_.store(true, std::memory_order_relaxed);
     Wakeup();
   }
 
@@ -251,7 +251,7 @@ class BasicWebSocketClient {
     }
 
     bool ShouldReconnect() const noexcept {
-      return stop_requested.load(std::memory_order_acquire) ||
+      return stop_requested.load(std::memory_order_relaxed) ||
              core.ShouldReconnect();
     }
 
@@ -332,7 +332,7 @@ class BasicWebSocketClient {
 
   bool SleepForBackoff(std::uint32_t backoff_ms) noexcept {
     if (backoff_ms == 0) {
-      return !stop_requested_.load(std::memory_order_acquire);
+      return !stop_requested_.load(std::memory_order_relaxed);
     }
     if (wakeup_fd_ < 0) {
       return false;
@@ -362,7 +362,7 @@ class BasicWebSocketClient {
       }
       if (ready_count == 0) {
         ::close(epoll_fd);
-        return !stop_requested_.load(std::memory_order_acquire);
+        return !stop_requested_.load(std::memory_order_relaxed);
       }
       if (errno == EINTR) {
         continue;
@@ -398,7 +398,7 @@ class BasicWebSocketClient {
     const std::uint32_t backoff_ms = ComputeBackoffMs(
         transient_failures - 1, config_.reconnect, backoff_rng_);
     if (!SleepForBackoff(backoff_ms)) {
-      if (stop_requested_.load(std::memory_order_acquire)) {
+      if (stop_requested_.load(std::memory_order_relaxed)) {
         state_machine_.Enter(ConnectionPhase::kClosing);
         NotifyState(state_machine_.phase());
         return true;
