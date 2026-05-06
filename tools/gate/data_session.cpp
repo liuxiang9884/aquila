@@ -19,8 +19,7 @@ namespace aq_gate = aquila::gate;
 namespace ws = aquila::websocket;
 
 struct LoggingGuard {
-  explicit LoggingGuard(const std::filesystem::path& config_path) {
-    const toml::table toml = toml::parse_file(config_path.string());
+  explicit LoggingGuard(const toml::table& toml) {
     nova::LogConfig log_config;
     log_config.FromToml(toml["log"]);
     nova::InitializeLogging(log_config);
@@ -113,10 +112,11 @@ int main(int argc, char** argv) {
   app.add_flag("--connect", connect, "connect to the configured websocket");
   CLI11_PARSE(app, argc, argv);
 
-  LoggingGuard logging_guard{config_path};
+  const toml::parse_result toml = toml::parse_file(config_path.string());
+  LoggingGuard logging_guard{toml};
 
   aq_gate::DataSessionConfigResult config_result =
-      aq_gate::LoadDataSessionConfigFile(config_path);
+      aq_gate::ParseDataSessionConfig(toml, config_path);
   if (!config_result.ok) {
     NOVA_ERROR("config_error={}", config_result.error);
     return 1;

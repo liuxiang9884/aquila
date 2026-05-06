@@ -166,6 +166,23 @@ TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
   EXPECT_EQ(log_config.timestamp_pattern(), "%Y-%m-%d %H:%M:%S.%Qns");
 }
 
+TEST(DataSessionConfigTest, ParsesGateDataSessionFromAlreadyParsedToml) {
+  const std::filesystem::path config_path =
+      SourcePath("config/data_sessions/gate_data_session.toml");
+  const toml::table toml = toml::parse_file(config_path.string());
+
+  const auto config_result =
+      aquila::gate::ParseDataSessionConfig(toml, config_path);
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  EXPECT_EQ(config_result.value.name, "gate_data_session");
+  EXPECT_EQ(config_result.value.connection.target,
+            "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
+  EXPECT_EQ(config_result.value.exchange_symbols[0], "BTC_USDT");
+  EXPECT_EQ(config_result.value.symbol_ids[0], 0);
+}
+
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
