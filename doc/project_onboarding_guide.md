@@ -29,6 +29,9 @@
 11. `config/data_sessions/*.toml` 的 log 文件默认写到 `/home/liuxiang/log/`，并用 data session 名称区分 file sink、console sink 和 backend log thread；Nova file sink 会追加启动时间生成实际日志文件名。
 12. `AGENTS.md` 和本 onboarding 已加入“结束对话”收尾流程和新对话 onboarding 固定入口。
 13. Strategy `DataReader` 已落地，按 `config/data_readers/strategy_data_reader.toml` attach Gate / Binance SHM book ticker source，支持 `latest` / `drain` 两种读取模式和编译期 diagnostics policy。
+14. `tools/market_data/data_reader_probe.cpp` 已加入 `OnBookTicker()` 低频采样日志、`--log-every` 和 per-source final summary。
+15. 2026-05-06 使用 Gate / Binance data session 实盘写 SHM，`data_reader_probe` 以 `drain` 模式运行 1800s：reader 共读 `4,635,362` 条，Gate `495,255` 条，Binance `4,140,107` 条，两个 source 的 `skipped=0`、`overruns=0`。
+16. WebSocket client 的 `stop_requested_` 只作为停止位使用，已改为 `memory_order_relaxed`；probe/tool 的 signal stop flag 已统一为 `std::atomic<bool> signal_stop_requested`，不再使用 `volatile std::sig_atomic_t`。
 
 ## 新对话第一步
 
@@ -49,6 +52,7 @@ doc/evaluation_support.md
 doc/futures_contract_metadata_fields.md
 doc/agent-handoff-gate-trade-architecture.md
 doc/websocket_read_write_benchmark_comparison.md
+doc/data_reader_config.md
 ```
 
 如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
@@ -130,7 +134,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- |
 | `core/market_data/data_reader.h` | Strategy 侧 `DataReader`，从 Gate / Binance SHM book ticker source poll 行情；支持 `latest` 和 `drain` 两种 read mode，diagnostics 由编译期 policy 决定。 |
 | `core/market_data/data_shm.h` | BookTicker SHM channel、`DataShmPublisher`、`BookTickerShmReader`；reader 支持 `TryReadOne()` 和 `TryReadLatest()`。 |
-| `tools/market_data/data_reader_probe.cpp` | 独立 data reader probe，按 `config/data_readers/strategy_data_reader.toml` attach 多个 SHM source 并输出低频统计。 |
+| `tools/market_data/data_reader_probe.cpp` | 独立 data reader probe，按 `config/data_readers/strategy_data_reader.toml` attach 多个 SHM source；支持 `--log-every` 低频 book ticker 采样日志和 per-source final summary。 |
 
 ### Gate SBE 行情
 
@@ -244,6 +248,15 @@ doc/websocket_read_write_benchmark_comparison.md
 
 结论：当前 microbenchmark 没证明 typed handler 比函数指针更快；它的价值主要是减少 Gate session 适配层和保留编译期组合空间，不应被写成已验证的性能收益。
 
+### WebSocket stop flag
+
+`BasicWebSocketClient::stop_requested_` 只作为停止位使用，不发布其他对象状态；当前使用
+`memory_order_relaxed`。`Stop()` 里的 `Wakeup()` 仍然保留，它负责通过 `eventfd` 打断 cold path handshake
+和 reconnect backoff 等阻塞等待，不承担内存同步语义。
+
+各 probe / tool 中由 SIGINT / SIGTERM 修改的停止位统一命名为 `signal_stop_requested`，类型为
+`std::atomic<bool>`，读写使用 `memory_order_relaxed`；不再使用 `volatile std::sig_atomic_t`。
+
 ### Gate 交易架构
 
 当前推荐方向：
@@ -347,6 +360,34 @@ DataSession::Handle(binary MessageView)
 | `parse_book_ticker_into_shm_slot` | 184ns |
 
 `session_handle_text_padded_view` 是当前 Binance bookTicker 已实现路径的主要 microbenchmark；公网链路延迟需要重新跑 live probe。
+
+### Strategy DataReader / SHM reader
+
+Strategy `DataReader` 当前从 Gate / Binance data session 创建的 SHM book ticker channel 读取行情。正式配置位于
+`config/data_readers/strategy_data_reader.toml`，默认 `read_mode = "latest"`；验证完整事件流时可临时改成
+`drain`，不要直接把仓库默认配置改成 drain。
+
+2026-05-06 live drain 验证：
+
+```text
+Gate data session + Binance data session -> SHM
+data_reader_probe --config /tmp/aquila_strategy_data_reader_drain.toml --log-every 10000
+duration: 1800s
+log: /home/liuxiang/log/strategy_data_reader_drain_live_20260506_133639.log
+```
+
+reader final summary：
+
+```text
+handler_book_tickers=4635362 diagnostics_book_tickers=4635362
+gate_book_ticker    book_tickers=495255  skipped=0 overruns=0 last_book_ticker_id=111902051288
+binance_book_ticker book_tickers=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
+```
+
+结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动
+skip，因此 reader 统计中 `skipped=0`。data session producer 的 `published_count()` 从已有 SHM header
+读取初始值，`remove_existing=false` 时不一定等于本次运行窗口内的生产条数；判断本次 reader 读取结果时以
+`DataReaderDiagnostics` 的 per-source summary 为准。
 
 ### 期货合约元数据
 
@@ -459,7 +500,16 @@ Data reader 配置 / runtime 测试：
 ./build/debug/test/config/data_reader_config_test
 ./build/debug/test/core/market_data/core_market_data_reader_test
 ./build/debug/test/core/market_data/core_market_data_shm_test
-./build/debug/tools/data_reader_probe --config config/data_readers/strategy_data_reader.toml --max-polls 1
+./build/debug/tools/data_reader_probe --config config/data_readers/strategy_data_reader.toml --max-polls 1 --log-every 1
+```
+
+Data reader live drain 验证需要先启动 Gate / Binance data session 写 SHM，再用临时 drain 配置运行 probe；
+不要把仓库默认 `strategy_data_reader.toml` 改成 drain：
+
+```bash
+/usr/bin/timeout --kill-after=10s 1860s ./build/debug/tools/gate_data_session --connect
+/usr/bin/timeout --kill-after=10s 1860s ./build/debug/tools/binance_data_session --connect
+/usr/bin/timeout --kill-after=10s 1800s ./build/debug/tools/data_reader_probe --config /tmp/aquila_strategy_data_reader_drain.toml --log-every 10000
 ```
 
 Gate / Binance 期货合约元数据脚本：

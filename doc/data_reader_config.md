@@ -123,3 +123,56 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 - per-source `last_book_ticker_id`
 
 统计不使用 atomic；第一版假设 `DataReader` 被单个 strategy 线程拥有。
+
+## Probe
+
+`tools/market_data/data_reader_probe.cpp` 是 strategy reader 的独立验证入口。默认读取仓库配置：
+
+```bash
+./build/debug/tools/data_reader_probe --config config/data_readers/strategy_data_reader.toml --max-polls 1 --log-every 1
+```
+
+参数：
+
+- `--config`：data reader TOML 路径。
+- `--max-polls`：最多调用多少次 `Poll()`；`0` 表示直到 SIGINT / SIGTERM。
+- `--log-every`：打印首条 book ticker，然后每 N 条打印一次采样；`0` 表示关闭采样日志。
+
+probe 使用 `DataReader<DataReaderDiagnostics>`，退出时会打印整体统计和每个 source 的：
+
+- `book_tickers`
+- `skipped`
+- `overruns`
+- `last_book_ticker_id`
+
+## Live Drain Evidence
+
+2026-05-06 使用 Gate / Binance data session 实盘写 SHM，并用临时 drain 配置运行 reader 1800s。
+正式仓库配置仍保持 `read_mode = "latest"`；临时配置只用于验证完整事件流。
+
+运行方式：
+
+```bash
+/usr/bin/timeout --kill-after=10s 1860s ./build/debug/tools/gate_data_session --connect
+/usr/bin/timeout --kill-after=10s 1860s ./build/debug/tools/binance_data_session --connect
+/usr/bin/timeout --kill-after=10s 1800s ./build/debug/tools/data_reader_probe --config /tmp/aquila_strategy_data_reader_drain.toml --log-every 10000
+```
+
+reader log：
+
+```text
+/home/liuxiang/log/strategy_data_reader_drain_live_20260506_133639.log
+```
+
+reader final summary：
+
+```text
+result=ok polls=5236281282 handler_book_tickers=4635362 diagnostics_book_tickers=4635362 empty_polls=5231647606
+source index=0 name=gate_book_ticker exchange=kGate book_tickers=495255 skipped=0 overruns=0 last_book_ticker_id=111902051288
+source index=1 name=binance_book_ticker exchange=kBinance book_tickers=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
+```
+
+结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动
+skip，因此 `skipped=0`。producer 侧 `DataShmPublisher::published_count()` 会从 SHM header 读取初始值；
+当 data session 配置 `remove_existing=false` 时，producer 的最终 `book_tickers` 不一定等于本次窗口内生产条数。
+评估本次 reader 读取情况时以 reader per-source summary 为准。
