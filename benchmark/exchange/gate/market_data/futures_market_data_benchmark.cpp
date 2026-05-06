@@ -203,8 +203,8 @@ void BenchmarkDecodeBookTickerThenShmPush(benchmark::State& state) {
   std::uint64_t published = 0;
   for (auto _ : state) {
     aquila::BookTicker book_ticker{};
-    aq_gate::DecodeTrustedBookTickerWithHeader(payload, dispatch.header,
-                                               kLocalNs, 11, book_ticker);
+    aq_gate::DecodeBookTickerWithHeader(payload, dispatch.header, kLocalNs, 11,
+                                        book_ticker);
     publisher.OnBookTicker(book_ticker);
     ++published;
   }
@@ -237,8 +237,8 @@ void BenchmarkDecodeBookTickerIntoShmSlot(benchmark::State& state) {
   std::uint64_t published = 0;
   for (auto _ : state) {
     publisher.EmplaceBookTickerWith([&](aquila::BookTicker& out) noexcept {
-      aq_gate::DecodeTrustedBookTickerWithHeader(payload, dispatch.header,
-                                                 kLocalNs, 11, out);
+      aq_gate::DecodeBookTickerWithHeader(payload, dispatch.header, kLocalNs,
+                                          11, out);
     });
     ++published;
   }

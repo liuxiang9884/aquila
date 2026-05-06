@@ -168,13 +168,12 @@ class FuturesMarketDataClient {
                     data_sink.EmplaceBookTickerWith(writer);
                   }) {
       data_sink_.EmplaceBookTickerWith([&](BookTicker& out) noexcept {
-        DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
-                                          out);
+        DecodeBookTickerWithHeader(payload, header, local_ns, symbol_id, out);
       });
     } else {
       BookTicker book_ticker;
-      DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
-                                        book_ticker);
+      DecodeBookTickerWithHeader(payload, header, local_ns, symbol_id,
+                                 book_ticker);
       data_sink_.OnBookTicker(book_ticker);
     }
     return websocket::DeliveryResult::kAccepted;

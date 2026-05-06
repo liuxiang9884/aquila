@@ -142,12 +142,12 @@ DataSession::Handle(binary MessageView)
   -> templateId dispatch
   -> ExtractTrustedBookTickerSymbol(payload, header)
   -> flat_hash_map symbol -> symbol_id
-  -> DecodeTrustedBookTickerWithHeader(payload, header)
+  -> DecodeBookTickerWithHeader(payload, header)
   -> aquila::BookTicker
   -> Consumer::OnBookTicker
 ```
 
-生产路径只保留 trusted BBO helper：`ExtractTrustedBookTickerSymbol()` 和 `DecodeTrustedBookTickerWithHeader()`。保守的 `ExtractBookTickerSymbolForTest()` / `DecodeBookTickerForTest()` 已移到 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`；benchmark 对照的 `DecodeBookTickerWithHeaderBenchmark()` 已移到 `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`。`DispatchSbeMessage` 已为 Gate 当前 schema 中的 10 个 template 建立枚举映射，包括 `BookTicker`、`PublicTrade`、`Obu`、`OrderBook`、`OrderBookUpdate`、`UserTrade`、`Position`、`Candlestick`、`FuturesTicker`、`Orders`。
+生产路径只保留热路径 BBO helper：`ExtractTrustedBookTickerSymbol()` 和 `DecodeBookTickerWithHeader()`。保守的 `ExtractBookTickerSymbolForTest()` / `DecodeBookTickerForTest()` 已移到 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`；benchmark 对照的 `DecodeBookTickerWithHeaderBenchmark()` 已移到 `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`。`DispatchSbeMessage` 已为 Gate 当前 schema 中的 10 个 template 建立枚举映射，包括 `BookTicker`、`PublicTrade`、`Obu`、`OrderBook`、`OrderBookUpdate`、`UserTrade`、`Position`、`Candlestick`、`FuturesTicker`、`Orders`。
 
 十进制转换生产函数是 `DecimalExponentScale()`，使用预计算 scale 表；主路径负指数分支带 `[[likely]]`，越界只在 debug assert 中检查。`DecimalMantissaToDoubleForTest()` 只留在 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp` 中验证转换结果。这里是基于 Gate futures 行情常见精度做的低延迟取舍，后续如果接入极端精度字段，需要先补测试再扩大表。
 

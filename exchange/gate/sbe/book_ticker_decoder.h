@@ -129,11 +129,13 @@ inline std::string_view ExtractTrustedBookTickerSymbol(
   return symbol;
 }
 
-inline void DecodeTrustedBookTickerWithHeader(std::string_view payload,
-                                              const SbeMessageHeader& header,
-                                              std::int64_t local_ns,
-                                              std::int32_t symbol_id,
-                                              BookTicker& out) noexcept {
+// Caller must pass a payload/header pair already accepted by
+// DispatchSbeMessage.
+inline void DecodeBookTickerWithHeader(std::string_view payload,
+                                       const SbeMessageHeader& header,
+                                       std::int64_t local_ns,
+                                       std::int32_t symbol_id,
+                                       BookTicker& out) noexcept {
   assert(payload.size() >= detail::kMinBookTickerPayloadBytes);
   assert(detail::IsBookTickerHeader(header));
 

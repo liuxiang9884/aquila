@@ -146,7 +146,7 @@ DataSession
   -> FuturesMarketDataClient
   -> DataShmPublisher::EmplaceBookTickerWith(writer)
   -> BookTickerQueue::EmplaceWith(writer)
-  -> DecodeTrustedBookTickerWithHeader(..., BookTicker& slot)
+  -> DecodeBookTickerWithHeader(..., BookTicker& slot)
   -> Current() release-store publish
 ```
 

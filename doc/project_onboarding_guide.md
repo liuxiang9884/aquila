@@ -301,7 +301,7 @@ DataSession::Handle(binary MessageView)
 - BBO 的 `mantissa + exponent` 在 decode 阶段转成 `double`，便于策略和因子计算。
 - Gate BBO binary market data 的 `event` 合约是 `Update`；其他 SBE template 不能复用这个假设。
 - Gate decimal scale 当前最多支持 10 位小数；超出范围只在 debug assert，用户如需更宽精度应在进入 decoder 前自行判断。
-- `ExtractTrustedBookTickerSymbol()` / `DecodeTrustedBookTickerWithHeader()` 是 client 热路径；保守的 `ExtractBookTickerSymbolForTest()` / `DecodeBookTickerForTest()` 已移到 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`，共享 payload fixture 位于 `evaluation/exchange/gate/sbe/book_ticker_payload_builder.h`，`DecodeBookTickerWithHeaderBenchmark()` 已移到 `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`。
+- `ExtractTrustedBookTickerSymbol()` / `DecodeBookTickerWithHeader()` 是 client 热路径；保守的 `ExtractBookTickerSymbolForTest()` / `DecodeBookTickerForTest()` 已移到 `test/exchange/gate/sbe/book_ticker_decoder_test.cpp`，共享 payload fixture 位于 `evaluation/exchange/gate/sbe/book_ticker_payload_builder.h`，`DecodeBookTickerWithHeaderBenchmark()` 已移到 `benchmark/exchange/gate/market_data/futures_market_data_benchmark.cpp`。
 - 如需引用 BTC_USDT live probe 稳定性或真实延迟结论，重新运行并保留原始输出。
 
 2026-05-02 Gate market data release selected benchmark：
