@@ -9,6 +9,7 @@
 #include <magic_enum/magic_enum.hpp>
 #include <toml++/toml.hpp>
 
+#include "core/market_data/data_shm.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/binance/market_data/data_session_config.h"
 #include "nova/utils/log.h"
@@ -16,6 +17,7 @@
 namespace {
 
 namespace aq_binance = aquila::binance;
+namespace aq_md = aquila::market_data;
 namespace ws = aquila::websocket;
 
 struct LoggingGuard {
@@ -49,6 +51,15 @@ struct CountingDataSink {
   }
 };
 
+template <typename DataSink>
+std::uint64_t PublishedBookTickers(const DataSink& data_sink) {
+  if constexpr (requires { data_sink.published_count(); }) {
+    return data_sink.published_count();
+  } else {
+    return data_sink.book_tickers;
+  }
+}
+
 template <typename SessionT>
 void PrintSession(const SessionT& session) {
   const ws::ConnectionConfig& connection = session.connection();
@@ -63,14 +74,13 @@ void PrintSession(const SessionT& session) {
   }
 }
 
-template <typename WebSocketPolicy>
-int RunDataSession(aq_binance::DataSessionConfig data_session_config,
-                   bool connect) {
+template <typename WebSocketPolicy, typename DataSink>
+int RunDataSessionWithSink(aq_binance::DataSessionConfig data_session_config,
+                           DataSink& data_sink, bool connect) {
   using Session =
-      aq_binance::DataSession<CountingDataSink, WebSocketPolicy,
+      aq_binance::DataSession<DataSink, WebSocketPolicy,
                               aq_binance::DataSessionDiagnosticsPolicy>;
 
-  CountingDataSink data_sink;
   Session session(std::move(data_session_config), data_sink);
   PrintSession(session);
   if (!connect) {
@@ -82,7 +92,7 @@ int RunDataSession(aq_binance::DataSessionConfig data_session_config,
   const ws::ConnectionPhase phase = session.phase();
   const ws::ConnectionError error = session.last_error();
   const bool active = session.ever_active();
-  const std::uint64_t book_tickers = data_sink.book_tickers;
+  const std::uint64_t book_tickers = PublishedBookTickers(data_sink);
   if (started_ok && active) {
     NOVA_INFO(
         "result=ok active=true phase={} error={} book_tickers={} "
@@ -99,6 +109,20 @@ int RunDataSession(aq_binance::DataSessionConfig data_session_config,
       magic_enum::enum_name(error), book_tickers, metrics.rx_messages,
       metrics.tx_messages);
   return 1;
+}
+
+template <typename WebSocketPolicy>
+int RunDataSession(aq_binance::DataSessionConfig data_session_config,
+                   bool connect) {
+  if (data_session_config.book_ticker_shm.enabled) {
+    aq_md::DataShmPublisher data_sink{data_session_config.book_ticker_shm};
+    return RunDataSessionWithSink<WebSocketPolicy>(
+        std::move(data_session_config), data_sink, connect);
+  }
+
+  CountingDataSink data_sink;
+  return RunDataSessionWithSink<WebSocketPolicy>(std::move(data_session_config),
+                                                 data_sink, connect);
 }
 
 }  // namespace
