@@ -35,6 +35,14 @@ struct NoopFuturesMarketDataDiagnostics {
   static constexpr bool kEnabled = false;
 };
 
+namespace detail {
+
+struct NoopBookTickerSlotWriter {
+  void operator()(BookTicker&) const noexcept {}
+};
+
+}  // namespace detail
+
 class FuturesMarketDataDiagnostics {
  public:
   static constexpr bool kEnabled = true;
@@ -155,11 +163,20 @@ class FuturesMarketDataClient {
         ExtractTrustedBookTickerSymbol(payload, header);
     const std::int32_t symbol_id = FindSymbolId(exchange_symbol);
 
-    BookTicker book_ticker;
-    DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
-                                      book_ticker);
-
-    data_sink_.OnBookTicker(book_ticker);
+    if constexpr (requires(DataSink& data_sink,
+                           detail::NoopBookTickerSlotWriter writer) {
+                    data_sink.EmplaceBookTickerWith(writer);
+                  }) {
+      data_sink_.EmplaceBookTickerWith([&](BookTicker& out) noexcept {
+        DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
+                                          out);
+      });
+    } else {
+      BookTicker book_ticker;
+      DecodeTrustedBookTickerWithHeader(payload, header, local_ns, symbol_id,
+                                        book_ticker);
+      data_sink_.OnBookTicker(book_ticker);
+    }
     return websocket::DeliveryResult::kAccepted;
   }
 

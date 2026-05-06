@@ -48,6 +48,19 @@ struct RecordingConsumer {
   }
 };
 
+struct EmplaceOnlyConsumer {
+  int emplace_calls{0};
+  aquila::BookTicker last{};
+
+  void OnBookTicker(const aquila::BookTicker&) noexcept = delete;
+
+  template <typename Writer>
+  void EmplaceBookTickerWith(Writer&& writer) noexcept {
+    ++emplace_calls;
+    writer(last);
+  }
+};
+
 struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
   static constexpr aquila::websocket::ClockSource kClockSource =
       aquila::websocket::ClockSource::kMonotonicCoarse;
@@ -96,7 +109,8 @@ TEST(GateFuturesMarketDataClientTest, BuildsBookTickerUnsubscribeRequest) {
 
 TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   DefaultClient client(symbols, consumer);
 
@@ -118,9 +132,36 @@ TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 17.5);
 }
 
+TEST(GateFuturesMarketDataClientTest,
+     EmplacesBookTickerWhenConsumerSupportsSlotWriter) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
+  EmplaceOnlyConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+
+  const auto result = client.OnMessage(BinaryView(payload), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.emplace_calls, 1);
+  EXPECT_EQ(consumer.last.symbol_id, 11);
+  EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(consumer.last.id, 42);
+  EXPECT_EQ(consumer.last.exchange_ns, 1'770'000'000'000'900'000);
+  EXPECT_EQ(consumer.last.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last.bid_price, 65'012.0);
+  EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 21.0);
+  EXPECT_DOUBLE_EQ(consumer.last.ask_price, 65'012.5);
+  EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 17.5);
+}
+
 TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   DefaultClient client(symbols, consumer);
 
@@ -139,7 +180,8 @@ TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
 
 TEST(GateFuturesMarketDataClientTest, HandlesWebSocketMessageDirectly) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   DefaultClient client(symbols, consumer);
 
@@ -156,7 +198,8 @@ TEST(GateFuturesMarketDataClientTest, HandlesWebSocketMessageDirectly) {
 
 TEST(GateFuturesMarketDataClientTest, HandlesBinaryPayloadDirectly) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   aquila::gate::FuturesMarketDataClient client(symbols, consumer);
 
@@ -174,9 +217,12 @@ TEST(GateFuturesMarketDataClientTest, HandlesBinaryPayloadDirectly) {
 
 TEST(GateFuturesMarketDataClientTest, MapsMultipleSymbolsByExchangeSymbol) {
   const std::array<aquila::gate::SymbolBinding, 3> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11},
-      aquila::gate::SymbolBinding{.exchange_symbol = "ETH_USDT", .symbol_id = 12},
-      aquila::gate::SymbolBinding{.exchange_symbol = "SOL_USDT", .symbol_id = 13}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11},
+      aquila::gate::SymbolBinding{.exchange_symbol = "ETH_USDT",
+                                  .symbol_id = 12},
+      aquila::gate::SymbolBinding{.exchange_symbol = "SOL_USDT",
+                                  .symbol_id = 13}};
   RecordingConsumer consumer;
   aquila::gate::FuturesMarketDataClient client(symbols, consumer);
 
@@ -192,7 +238,8 @@ TEST(GateFuturesMarketDataClientTest, MapsMultipleSymbolsByExchangeSymbol) {
 
 TEST(GateFuturesMarketDataClientTest, BindsAsTypedWebSocketHandler) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   aquila::gate::FuturesMarketDataClient client(symbols, consumer);
   auto handler = aquila::websocket::MakeMessageHandler(client);
@@ -211,7 +258,8 @@ TEST(GateFuturesMarketDataClientTest, BindsAsTypedWebSocketHandler) {
 
 TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   DiagnosticClient client(symbols, consumer);
 
@@ -230,7 +278,8 @@ TEST(GateFuturesMarketDataClientTest,
      AssertsInvalidBookTickerBlockLengthInDebug) {
 #ifndef NDEBUG
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   DiagnosticClient client(symbols, consumer);
 
@@ -247,7 +296,8 @@ TEST(GateFuturesMarketDataClientTest,
 TEST(GateFuturesMarketDataClientTest, AssertsNonUpdateBookTickerEventInDebug) {
 #ifndef NDEBUG
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   DiagnosticClient client(symbols, consumer);
 
@@ -265,7 +315,8 @@ TEST(GateFuturesMarketDataClientTest, AssertsNonUpdateBookTickerEventInDebug) {
 TEST(GateFuturesMarketDataClientTest, AssertsUnknownSymbolInDebug) {
 #ifndef NDEBUG
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "ETH_USDT", .symbol_id = 12}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "ETH_USDT",
+                                  .symbol_id = 12}};
   RecordingConsumer consumer;
   DiagnosticClient client(symbols, consumer);
 
@@ -280,7 +331,8 @@ TEST(GateFuturesMarketDataClientTest, AssertsUnknownSymbolInDebug) {
 
 TEST(GateFuturesMarketDataClientTest, AcceptsTextControlMessages) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
-      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT", .symbol_id = 11}};
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
   RecordingConsumer consumer;
   aquila::gate::FuturesMarketDataClient client(symbols, consumer);
 

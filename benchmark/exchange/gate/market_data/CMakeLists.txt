@@ -8,4 +8,6 @@ target_link_libraries(gate_futures_market_data_benchmark
         aquila_evaluation
         aquila_gate
         benchmark::benchmark_main
+        fmt::fmt-header-only
+        nova
 )

@@ -50,18 +50,22 @@ md::BookTickerShmConfig MakeAttachConfig(
   return config;
 }
 
+void AssignBookTicker(std::int64_t id, aquila::BookTicker& out) noexcept {
+  out.id = id;
+  out.symbol_id = 42;
+  out.exchange = aquila::Exchange::kGate;
+  out.exchange_ns = 1'770'000'000'000'000'000 + id;
+  out.local_ns = 1'770'000'000'000'100'000 + id;
+  out.bid_price = 65'000.0 + static_cast<double>(id);
+  out.bid_volume = 10.0 + static_cast<double>(id);
+  out.ask_price = 65'001.0 + static_cast<double>(id);
+  out.ask_volume = 11.0 + static_cast<double>(id);
+}
+
 aquila::BookTicker MakeBookTicker(std::int64_t id) {
-  return aquila::BookTicker{
-      .id = id,
-      .symbol_id = 42,
-      .exchange = aquila::Exchange::kGate,
-      .exchange_ns = 1'770'000'000'000'000'000 + id,
-      .local_ns = 1'770'000'000'000'100'000 + id,
-      .bid_price = 65'000.0 + static_cast<double>(id),
-      .bid_volume = 10.0 + static_cast<double>(id),
-      .ask_price = 65'001.0 + static_cast<double>(id),
-      .ask_volume = 11.0 + static_cast<double>(id),
-  };
+  aquila::BookTicker book_ticker{};
+  AssignBookTicker(id, book_ticker);
+  return book_ticker;
 }
 
 #if defined(__GNUC__)
@@ -81,11 +85,29 @@ void BM_DataShmPublisherOnBookTicker(benchmark::State& state) {
   const md::BookTickerShmConfig config = MakeCreateConfig("publisher");
   ShmCleanup cleanup(config.shm_name);
   md::DataShmPublisher publisher(config);
-  aquila::BookTicker book_ticker = MakeBookTicker(1);
+  std::int64_t id = 1;
 
   for (auto _ : state) {
-    benchmark::DoNotOptimize(book_ticker);
+    aquila::BookTicker book_ticker{};
+    AssignBookTicker(id, book_ticker);
     publisher.OnBookTicker(book_ticker);
+    ++id;
+  }
+  state.counters["published"] =
+      static_cast<double>(publisher.published_count());
+}
+
+void BM_DataShmPublisherEmplaceBookTickerWith(benchmark::State& state) {
+  const md::BookTickerShmConfig config = MakeCreateConfig("publisher_emplace");
+  ShmCleanup cleanup(config.shm_name);
+  md::DataShmPublisher publisher(config);
+  std::int64_t id = 1;
+
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(id);
+    publisher.EmplaceBookTickerWith(
+        [&id](aquila::BookTicker& out) noexcept { AssignBookTicker(id, out); });
+    ++id;
   }
   state.counters["published"] =
       static_cast<double>(publisher.published_count());
@@ -112,7 +134,12 @@ void BM_BookTickerShmReaderTryReadOne(benchmark::State& state) {
   }
 }
 
-BENCHMARK(BM_DataShmPublisherOnBookTicker);
+BENCHMARK(BM_DataShmPublisherOnBookTicker)
+    ->Name("data_shm/publisher_temp_book_ticker_push")
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_DataShmPublisherEmplaceBookTickerWith)
+    ->Name("data_shm/publisher_emplace_book_ticker_with")
+    ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_BookTickerShmReaderTryReadOne);
 
 }  // namespace

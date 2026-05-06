@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include "core/market_data/data_shm_config.h"
 #include "core/market_data/types.h"
@@ -166,6 +167,17 @@ class DataShmPublisher {
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     BookTickerShmChannel& channel = manager_.channel();
     channel.queue.Push(book_ticker);
+    ++published_count_;
+    channel.header.published_count.store(published_count_,
+                                         std::memory_order_relaxed);
+  }
+
+  template <typename Writer>
+  void EmplaceBookTickerWith(Writer&& writer) noexcept(
+      noexcept(std::declval<BookTickerQueue&>().EmplaceWith(
+          std::forward<Writer>(writer)))) {
+    BookTickerShmChannel& channel = manager_.channel();
+    channel.queue.EmplaceWith(std::forward<Writer>(writer));
     ++published_count_;
     channel.header.published_count.store(published_count_,
                                          std::memory_order_relaxed);

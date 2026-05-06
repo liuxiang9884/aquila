@@ -1,3 +1,6 @@
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -5,11 +8,14 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <fmt/format.h>
 
 #include "benchmark/websocket/benchmark_support.h"
+#include "core/market_data/data_shm.h"
 #include "core/websocket/message_view.h"
 #include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
 #include "exchange/gate/market_data/client.h"
@@ -18,6 +24,7 @@
 #include <simdjson.h>
 
 namespace aq_gate = aquila::gate;
+namespace aq_md = aquila::market_data;
 namespace ws = aquila::websocket;
 namespace ws_bench = aquila::websocket::benchmarking;
 
@@ -26,6 +33,32 @@ namespace {
 constexpr std::int64_t kLocalNs = 4'720'000'000'000'000;
 
 using aquila::gate::evaluation::BuildBookTickerPayload;
+
+struct ShmCleanup {
+  explicit ShmCleanup(std::string shm_name_in)
+      : shm_name(std::move(shm_name_in)) {}
+
+  ~ShmCleanup() {
+    ::shm_unlink(shm_name.c_str());
+  }
+
+  std::string shm_name;
+};
+
+std::string UniqueShmName(std::string_view suffix) {
+  return fmt::format("/aquila_gate_market_data_bench_{}_{}", ::getpid(),
+                     suffix);
+}
+
+aq_md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
+  return aq_md::BookTickerShmConfig{
+      .enabled = true,
+      .shm_name = UniqueShmName(suffix),
+      .channel_name = "book_ticker_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+}
 
 ws::MessageView BinaryView(std::string_view payload) noexcept {
   return {
@@ -150,6 +183,74 @@ void BenchmarkDecodeBookTickerWithHeader(benchmark::State& state) {
 
 BENCHMARK(BenchmarkDecodeBookTickerWithHeader)
     ->Name("gate_market_data/decode_book_ticker_with_header")
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkDecodeBookTickerThenShmPush(benchmark::State& state) {
+  const aq_md::BookTickerShmConfig config =
+      MakeCreateConfig("decode_then_push");
+  ShmCleanup cleanup(config.shm_name);
+  aq_md::DataShmPublisher publisher(config);
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+  const aq_gate::SbeDispatchResult dispatch =
+      aq_gate::DispatchSbeMessage(payload);
+  if (dispatch.status != aq_gate::SbeDispatchStatus::kReady ||
+      dispatch.message_type != aq_gate::GateSbeMessageType::kBookTicker) {
+    state.SkipWithError("dispatch failed");
+    return;
+  }
+
+  std::uint64_t published = 0;
+  for (auto _ : state) {
+    aquila::BookTicker book_ticker{};
+    aq_gate::DecodeTrustedBookTickerWithHeader(payload, dispatch.header,
+                                               kLocalNs, 11, book_ticker);
+    publisher.OnBookTicker(book_ticker);
+    ++published;
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(published));
+  state.counters["published"] =
+      static_cast<double>(publisher.published_count());
+  SetCommonCounters(state, payload);
+}
+
+BENCHMARK(BenchmarkDecodeBookTickerThenShmPush)
+    ->Name("gate_market_data/decode_book_ticker_then_shm_push")
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkDecodeBookTickerIntoShmSlot(benchmark::State& state) {
+  const aq_md::BookTickerShmConfig config =
+      MakeCreateConfig("decode_into_slot");
+  ShmCleanup cleanup(config.shm_name);
+  aq_md::DataShmPublisher publisher(config);
+  std::array<char, 192> buffer{};
+  const std::string_view payload = BuildBookTickerPayload(&buffer, "BTC_USDT");
+  const aq_gate::SbeDispatchResult dispatch =
+      aq_gate::DispatchSbeMessage(payload);
+  if (dispatch.status != aq_gate::SbeDispatchStatus::kReady ||
+      dispatch.message_type != aq_gate::GateSbeMessageType::kBookTicker) {
+    state.SkipWithError("dispatch failed");
+    return;
+  }
+
+  std::uint64_t published = 0;
+  for (auto _ : state) {
+    publisher.EmplaceBookTickerWith([&](aquila::BookTicker& out) noexcept {
+      aq_gate::DecodeTrustedBookTickerWithHeader(payload, dispatch.header,
+                                                 kLocalNs, 11, out);
+    });
+    ++published;
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(published));
+  state.counters["published"] =
+      static_cast<double>(publisher.published_count());
+  SetCommonCounters(state, payload);
+}
+
+BENCHMARK(BenchmarkDecodeBookTickerIntoShmSlot)
+    ->Name("gate_market_data/decode_book_ticker_into_shm_slot")
     ->Unit(benchmark::kNanosecond);
 
 void BenchmarkClientOnMessageBinary(benchmark::State& state) {

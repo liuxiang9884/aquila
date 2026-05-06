@@ -95,6 +95,25 @@ TEST(DataShmTest, PublisherWritesAndReaderReadsBookTicker) {
   EXPECT_EQ(publisher.published_count(), 1U);
 }
 
+TEST(DataShmTest, PublisherEmplaceWithWritesAndReaderReadsBookTicker) {
+  const md::BookTickerShmConfig config = MakeCreateConfig("emplace_read");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::BookTickerShmReader reader(MakeAttachConfig(config));
+  reader.SeekLatest();
+
+  const aquila::BookTicker expected = MakeBookTicker(8);
+  publisher.EmplaceBookTickerWith(
+      [&expected](aquila::BookTicker& out) noexcept { out = expected; });
+
+  aquila::BookTicker actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  ExpectBookTickerEq(actual, expected);
+  EXPECT_FALSE(reader.TryReadOne(&actual));
+  EXPECT_EQ(publisher.published_count(), 1U);
+}
+
 TEST(DataShmTest, ReaderStartsAtLatestWhenRequested) {
   const md::BookTickerShmConfig config = MakeCreateConfig("seek_latest");
   ShmCleanup cleanup(config.shm_name);
