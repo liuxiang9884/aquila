@@ -204,6 +204,7 @@ class DataShmPublisher {
   explicit DataShmPublisher(const BookTickerShmConfig& config);
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
+  void UpdateHeartbeatNs(std::uint64_t heartbeat_ns) noexcept;
   [[nodiscard]] std::uint64_t published_count() const noexcept;
 
  private:
@@ -279,6 +280,11 @@ bool BookTickerShmReader::TryReadOne(aquila::BookTicker* out) noexcept {
   return true;
 }
 ```
+
+`DataShmPublisher::OnBookTicker()` must update only the queue and `published_count`.
+It must not read a clock or update `heartbeat_ns`. `UpdateHeartbeatNs()` is the
+only method that stores `header.heartbeat_ns`, and callers must invoke it from a
+cold path or a low-frequency timer.
 
 - [ ] **Step 5: Add focused unit tests**
 
@@ -434,6 +440,10 @@ return RunDataSessionWithSink<WebSocketPolicy>(
     std::move(config_result.value), data_sink, connect);
 ```
 
+Do not call `UpdateHeartbeatNs()` from `OnBookTicker()` or from any decoded
+message callback. If the tool updates heartbeat in this task, update it once
+before `session.Run()` or from an external low-frequency timer path only.
+
 - [ ] **Step 3: Build data session tools**
 
 Run:
@@ -512,6 +522,7 @@ git commit -m "feat: add book ticker shm reader tool"
 - [ ] **Step 1: Add publisher benchmark**
 
 Benchmark `DataShmPublisher::OnBookTicker()` with a fixed `BookTicker` and a unique SHM name per benchmark process.
+This benchmark must measure the hot path without heartbeat timestamp updates.
 
 - [ ] **Step 2: Add reader benchmark**
 
