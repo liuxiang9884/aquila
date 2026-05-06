@@ -86,6 +86,7 @@ target_link_libraries(data_reader_probe
         aquila_config
         aquila_core
         CLI11::CLI11
+        magic_enum::magic_enum
         nova
 )
 
