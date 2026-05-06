@@ -430,6 +430,11 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   EXPECT_EQ(config.symbol_ids[0], 0);
   EXPECT_EQ(config.symbol_ids[1], 1);
   EXPECT_EQ(config.symbol_ids[2], 2);
+  EXPECT_TRUE(config.book_ticker_shm.enabled);
+  EXPECT_EQ(config.book_ticker_shm.shm_name, "aquila_binance_market_data");
+  EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
+  EXPECT_TRUE(config.book_ticker_shm.create);
+  EXPECT_FALSE(config.book_ticker_shm.remove_existing);
 
   struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}

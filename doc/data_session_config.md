@@ -112,6 +112,13 @@ enable_tls = true
 
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = false
 ```
 
 仓库内示例配置指向 Gate 公网行情 endpoint，语义是
@@ -137,7 +144,18 @@ host = "fstream.binance.com"
 
 [data_session.websocket.execution_policy]
 bind_cpu_id = 3
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_binance_market_data"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = false
 ```
+
+`[data_shm_sink]` 是可选顶层 section。`enabled = true` 时 data session tool 选择
+`DataShmPublisher` 作为唯一 data sink；未配置或 `enabled = false` 时选择默认计数 sink。
+第一版容量固定在代码常量中，TOML 不支持 `capacity` 或 `expected_capacity`。
 
 ## Instrument Catalog
 
