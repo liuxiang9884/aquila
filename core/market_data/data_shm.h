@@ -83,9 +83,6 @@ namespace detail {
 
 [[nodiscard]] inline std::string PrepareShmName(
     const BookTickerShmConfig& config) {
-  if (config.expected_capacity != kBookTickerShmCapacity) {
-    throw std::invalid_argument("book_ticker_shm.expected_capacity mismatch");
-  }
   if (config.shm_name.empty()) {
     throw std::invalid_argument("book_ticker_shm.shm_name is required");
   }

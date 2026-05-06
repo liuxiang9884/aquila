@@ -46,8 +46,9 @@ using BookTickerQueue =
                                         kBookTickerShmCapacity>;
 ```
 
-这里的 capacity 是编译期常量，不由 TOML 在运行时决定。配置可以保留
-`expected_capacity = 65536` 用于启动校验，但不能把它解释成动态容量参数。
+这里的 capacity 是编译期常量，不由 TOML 在运行时决定。配置不暴露 `capacity` 或
+`expected_capacity`；创建端把编译期容量写入 header，attach 端用二进制中的编译期常量校验
+header。
 
 共享内存对象可以按下面结构组织：
 
@@ -392,10 +393,10 @@ shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
 create = true
 remove_existing = false
-expected_capacity = 65536
 ```
 
-`capacity` 字段不支持；如果配置中出现 `capacity`，解析会失败并提示使用 `expected_capacity`。
+`capacity` 和 `expected_capacity` 字段都不支持；如果配置中出现这些字段，解析会失败。容量只由
+代码常量 `kBookTickerShmCapacity` 决定，并通过 SHM header 校验。
 
 ## 验证记录
 

@@ -120,8 +120,6 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(config.book_ticker_shm.create);
   EXPECT_FALSE(config.book_ticker_shm.remove_existing);
-  EXPECT_EQ(config.book_ticker_shm.expected_capacity,
-            aquila::market_data::kBookTickerShmCapacity);
 
   struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
@@ -219,7 +217,6 @@ shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
 create = true
 remove_existing = false
-expected_capacity = 65536
 )toml";
 
   const toml::parse_result parsed = toml::parse(toml_text);
@@ -233,7 +230,6 @@ expected_capacity = 65536
   EXPECT_EQ(shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(shm.create);
   EXPECT_FALSE(shm.remove_existing);
-  EXPECT_EQ(shm.expected_capacity, aquila::market_data::kBookTickerShmCapacity);
 }
 
 TEST(DataSessionConfigTest, LoadsBinanceLogConfigFromToml) {
@@ -298,7 +294,6 @@ shm_name = "aquila_binance_market_data"
 channel_name = "book_ticker_channel"
 create = true
 remove_existing = true
-expected_capacity = 65536
 )toml";
 
   const toml::parse_result parsed = toml::parse(toml_text);
@@ -312,7 +307,6 @@ expected_capacity = 65536
   EXPECT_EQ(shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(shm.create);
   EXPECT_TRUE(shm.remove_existing);
-  EXPECT_EQ(shm.expected_capacity, aquila::market_data::kBookTickerShmCapacity);
 }
 
 TEST(DataSessionConfigTest, RejectsRuntimeBookTickerShmCapacity) {
@@ -351,7 +345,7 @@ capacity = 65536
             std::string::npos);
 }
 
-TEST(DataSessionConfigTest, RejectsBookTickerShmExpectedCapacityMismatch) {
+TEST(DataSessionConfigTest, RejectsBookTickerShmExpectedCapacityKey) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
@@ -374,14 +368,15 @@ bind_cpu_id = 3
 enabled = true
 shm_name = "aquila_binance_market_data"
 channel_name = "book_ticker_channel"
-expected_capacity = 32768
+expected_capacity = 65536
 )toml";
 
   const toml::parse_result parsed = toml::parse(toml_text);
   const auto result = aquila::binance::ParseDataSessionConfig(parsed);
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("book_ticker_shm.expected_capacity mismatch"),
-            std::string::npos);
+  EXPECT_NE(
+      result.error.find("book_ticker_shm.expected_capacity is not supported"),
+      std::string::npos);
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {

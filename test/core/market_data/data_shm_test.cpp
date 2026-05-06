@@ -39,7 +39,6 @@ md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
       .channel_name = "book_ticker_channel",
       .create = true,
       .remove_existing = true,
-      .expected_capacity = md::kBookTickerShmCapacity,
   };
 }
 
@@ -150,12 +149,16 @@ TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity) {
   EXPECT_EQ(reader.overrun_count(), 1U);
 }
 
-TEST(DataShmTest, RejectsExpectedCapacityMismatch) {
-  md::BookTickerShmConfig config = MakeCreateConfig("capacity_mismatch");
+TEST(DataShmTest, RejectsHeaderCapacityMismatchOnAttach) {
+  const md::BookTickerShmConfig config = MakeCreateConfig("capacity_mismatch");
   ShmCleanup cleanup(config.shm_name);
-  config.expected_capacity = md::kBookTickerShmCapacity / 2;
 
-  EXPECT_THROW(md::DataShmPublisher publisher(config), std::invalid_argument);
+  md::BookTickerShmManager manager(config);
+  manager.channel().header.capacity = 32768;
+
+  EXPECT_THROW(
+      md::BookTickerShmManager attach_manager(MakeAttachConfig(config)),
+      std::runtime_error);
 }
 
 TEST(DataShmTest, PublisherUpdatesHeartbeatOutsideHotPath) {

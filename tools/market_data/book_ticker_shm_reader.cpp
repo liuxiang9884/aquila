@@ -66,7 +66,6 @@ int main(int argc, char** argv) {
         .channel_name = channel_name,
         .create = false,
         .remove_existing = false,
-        .expected_capacity = md::kBookTickerShmCapacity,
     };
     md::BookTickerShmReader reader(config);
     if (from_earliest) {

@@ -120,20 +120,6 @@ class DataSessionConfigParser {
     return static_cast<std::uint32_t>(*value);
   }
 
-  [[nodiscard]] std::uint64_t UInt64Or(
-      toml::node_view<const toml::node> value_node, std::uint64_t fallback,
-      std::string_view name) {
-    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
-    if (!value) {
-      return fallback;
-    }
-    if (*value < 0) {
-      Fail(name, " must be non-negative");
-      return fallback;
-    }
-    return static_cast<std::uint64_t>(*value);
-  }
-
   [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
                             bool fallback) const {
     const std::optional<bool> value = value_node.value<bool>();
@@ -191,7 +177,12 @@ class DataSessionConfigParser {
     }
     if (shm["capacity"]) {
       Fail("book_ticker_shm.capacity",
-           " is not supported; use expected_capacity");
+           " is not supported; capacity is fixed in code");
+      return;
+    }
+    if (shm["expected_capacity"]) {
+      Fail("book_ticker_shm.expected_capacity",
+           " is not supported; capacity is fixed in code");
       return;
     }
 
@@ -205,18 +196,7 @@ class DataSessionConfigParser {
         BoolOr(shm["create"], config_.book_ticker_shm.create);
     config_.book_ticker_shm.remove_existing =
         BoolOr(shm["remove_existing"], config_.book_ticker_shm.remove_existing);
-    config_.book_ticker_shm.expected_capacity = UInt64Or(
-        shm["expected_capacity"], config_.book_ticker_shm.expected_capacity,
-        "book_ticker_shm.expected_capacity");
-    if (!ok_) {
-      return;
-    }
 
-    if (config_.book_ticker_shm.expected_capacity !=
-        ::aquila::market_data::kBookTickerShmCapacity) {
-      Fail("book_ticker_shm.expected_capacity", " mismatch");
-      return;
-    }
     if (!config_.book_ticker_shm.create &&
         config_.book_ticker_shm.remove_existing) {
       Fail("book_ticker_shm.remove_existing", " requires create=true");

@@ -134,7 +134,6 @@ struct BookTickerShmConfig {
   std::string channel_name;
   bool create{true};
   bool remove_existing{false};
-  std::uint64_t expected_capacity{kBookTickerShmCapacity};
 };
 
 }  // namespace aquila::market_data
@@ -232,9 +231,6 @@ class BookTickerShmReader {
 Manager construction rules:
 
 ```cpp
-if (config.expected_capacity != kBookTickerShmCapacity) {
-  throw std::invalid_argument("book_ticker_shm.expected_capacity mismatch");
-}
 if (config.shm_name.empty()) {
   throw std::invalid_argument("book_ticker_shm.shm_name is required");
 }
@@ -295,7 +291,7 @@ TEST(DataShmTest, PublisherWritesAndReaderReadsBookTicker)
 TEST(DataShmTest, ReaderStartsAtLatestWhenRequested)
 TEST(DataShmTest, ReaderCanSeekEarliestVisible)
 TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity)
-TEST(DataShmTest, RejectsExpectedCapacityMismatch)
+TEST(DataShmTest, RejectsHeaderCapacityMismatchOnAttach)
 ```
 
 Each test must use a unique SHM name:
@@ -360,7 +356,6 @@ shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
 create = true
 remove_existing = false
-expected_capacity = 65536
 ```
 
 Rules:
@@ -368,8 +363,8 @@ Rules:
 ```text
 missing [book_ticker_shm] -> enabled=false
 enabled=true requires non-empty shm_name and channel_name
-capacity key is rejected with "book_ticker_shm.capacity is not supported; use expected_capacity"
-expected_capacity must equal 65536
+capacity key is rejected because capacity is fixed in code
+expected_capacity key is rejected because capacity is fixed in code
 remove_existing=true requires create=true
 ```
 
@@ -381,7 +376,7 @@ Add tests named:
 TEST(DataSessionConfigTest, ParsesGateBookTickerShmConfig)
 TEST(DataSessionConfigTest, ParsesBinanceBookTickerShmConfig)
 TEST(DataSessionConfigTest, RejectsRuntimeBookTickerShmCapacity)
-TEST(DataSessionConfigTest, RejectsBookTickerShmExpectedCapacityMismatch)
+TEST(DataSessionConfigTest, RejectsBookTickerShmExpectedCapacityKey)
 ```
 
 - [ ] **Step 4: Run config tests**

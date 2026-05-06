@@ -32,4 +32,3 @@ shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
 create = true
 remove_existing = false
-expected_capacity = 65536

@@ -39,7 +39,6 @@ md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
       .channel_name = "book_ticker_channel",
       .create = true,
       .remove_existing = true,
-      .expected_capacity = md::kBookTickerShmCapacity,
   };
 }
 

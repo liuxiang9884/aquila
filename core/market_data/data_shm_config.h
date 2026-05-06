@@ -14,7 +14,6 @@ struct BookTickerShmConfig {
   std::string channel_name;
   bool create{true};
   bool remove_existing{false};
-  std::uint64_t expected_capacity{kBookTickerShmCapacity};
 };
 
 }  // namespace aquila::market_data
