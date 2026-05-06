@@ -49,6 +49,19 @@ struct RecordingConsumer {
   }
 };
 
+struct EmplaceOnlyConsumer {
+  int emplace_calls{0};
+  aquila::BookTicker last{};
+
+  void OnBookTicker(const aquila::BookTicker&) noexcept = delete;
+
+  template <typename Writer>
+  void EmplaceBookTickerWith(Writer&& writer) noexcept {
+    ++emplace_calls;
+    writer(last);
+  }
+};
+
 struct CoarseClockOptions : aquila::websocket::DefaultWebSocketOptions {
   static constexpr aquila::websocket::ClockSource kClockSource =
       aquila::websocket::ClockSource::kMonotonicCoarse;
@@ -116,6 +129,28 @@ TEST(BinanceFuturesMarketDataClientTest, EmitsBookTickerFromTextPayload) {
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
   ASSERT_EQ(consumer.calls, 1);
+  EXPECT_EQ(consumer.last.symbol_id, 11);
+  EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(consumer.last.id, 400900217);
+  EXPECT_EQ(consumer.last.exchange_ns, 1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last.bid_price, 25.3519);
+  EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 31.21);
+  EXPECT_DOUBLE_EQ(consumer.last.ask_price, 25.3652);
+  EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 40.66);
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     EmplacesBookTickerWhenConsumerSupportsSlotWriter) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  EmplaceOnlyConsumer consumer;
+  aquila::binance::FuturesMarketDataClient client(symbols, consumer);
+
+  const auto result = client.OnMessage(TextView(kBookTickerJson), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.emplace_calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(consumer.last.id, 400900217);

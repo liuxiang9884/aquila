@@ -1,3 +1,6 @@
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -7,11 +10,14 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <fmt/format.h>
 
 #include "benchmark/websocket/benchmark_support.h"
+#include "core/market_data/data_shm.h"
 #include "core/utils/numeric.h"
 #include "core/websocket/message_view.h"
 #include "exchange/binance/market_data/book_ticker_parser.h"
@@ -21,6 +27,7 @@
 #include <yyjson.h>
 
 namespace aq_binance = aquila::binance;
+namespace aq_md = aquila::market_data;
 namespace ws = aquila::websocket;
 namespace ws_bench = aquila::websocket::benchmarking;
 
@@ -33,6 +40,32 @@ constexpr std::string_view kBookTickerJson =
     R"({"e":"bookTicker","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
 constexpr size_t kYyjsonMutablePayloadStride =
     kBookTickerJson.size() + YYJSON_PADDING_SIZE;
+
+struct ShmCleanup {
+  explicit ShmCleanup(std::string shm_name_in)
+      : shm_name(std::move(shm_name_in)) {}
+
+  ~ShmCleanup() {
+    ::shm_unlink(shm_name.c_str());
+  }
+
+  std::string shm_name;
+};
+
+std::string UniqueShmName(std::string_view suffix) {
+  return fmt::format("/aquila_binance_market_data_bench_{}_{}", ::getpid(),
+                     suffix);
+}
+
+aq_md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
+  return aq_md::BookTickerShmConfig{
+      .enabled = true,
+      .shm_name = UniqueShmName(suffix),
+      .channel_name = "book_ticker_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+}
 
 class YyjsonDoc {
  public:
@@ -366,6 +399,76 @@ void SetCommonCounters(benchmark::State& state, std::string_view payload) {
       false, "binance-futures-book-ticker", ws_bench::FormatAffinity(),
       ws_bench::FormatSchedulingPolicy()));
 }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+void BenchmarkParseBookTickerThenShmPush(benchmark::State& state) {
+  const aq_md::BookTickerShmConfig config = MakeCreateConfig("parse_then_push");
+  ShmCleanup cleanup(config.shm_name);
+  aq_md::DataShmPublisher publisher(config);
+  simdjson::ondemand::parser parser;
+  aq_binance::BookTickerUpdate update;
+  std::uint64_t published = 0;
+
+  for (auto _ : state) {
+    const aq_binance::BookTickerParseStatus status =
+        aq_binance::ParseBookTicker(kBookTickerJson, 0, parser, update);
+    if (status != aq_binance::BookTickerParseStatus::kOk) [[unlikely]] {
+      state.SkipWithError("parse failed");
+      return;
+    }
+    aquila::BookTicker book_ticker;
+    aq_binance::detail::AssignBookTickerFromUpdate(update, 11, kLocalNs,
+                                                   book_ticker);
+    publisher.OnBookTicker(book_ticker);
+    ++published;
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(published));
+  state.counters["published"] =
+      static_cast<double>(publisher.published_count());
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkParseBookTickerThenShmPush)
+    ->Name("binance_market_data/parse_book_ticker_then_shm_push")
+    ->Unit(benchmark::kNanosecond);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
+void BenchmarkParseBookTickerIntoShmSlot(benchmark::State& state) {
+  const aq_md::BookTickerShmConfig config = MakeCreateConfig("parse_into_slot");
+  ShmCleanup cleanup(config.shm_name);
+  aq_md::DataShmPublisher publisher(config);
+  simdjson::ondemand::parser parser;
+  aq_binance::BookTickerUpdate update;
+  std::uint64_t published = 0;
+
+  for (auto _ : state) {
+    const aq_binance::BookTickerParseStatus status =
+        aq_binance::ParseBookTicker(kBookTickerJson, 0, parser, update);
+    if (status != aq_binance::BookTickerParseStatus::kOk) [[unlikely]] {
+      state.SkipWithError("parse failed");
+      return;
+    }
+    publisher.EmplaceBookTickerWith([&](aquila::BookTicker& out) noexcept {
+      aq_binance::detail::AssignBookTickerFromUpdate(update, 11, kLocalNs, out);
+    });
+    ++published;
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(published));
+  state.counters["published"] =
+      static_cast<double>(publisher.published_count());
+  SetCommonCounters(state, kBookTickerJson);
+}
+
+BENCHMARK(BenchmarkParseBookTickerIntoShmSlot)
+    ->Name("binance_market_data/parse_book_ticker_into_shm_slot")
+    ->Unit(benchmark::kNanosecond);
 
 std::vector<char> BuildMutableBookTickerPayloads(size_t payload_count) {
   std::vector<char> payloads(payload_count * kYyjsonMutablePayloadStride);

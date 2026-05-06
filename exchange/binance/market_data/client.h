@@ -28,6 +28,29 @@ struct NoopFuturesMarketDataDiagnostics {
   static constexpr bool kEnabled = false;
 };
 
+namespace detail {
+
+struct NoopBookTickerSlotWriter {
+  void operator()(BookTicker&) const noexcept {}
+};
+
+inline void AssignBookTickerFromUpdate(const BookTickerUpdate& update,
+                                       std::int32_t symbol_id,
+                                       std::int64_t local_ns,
+                                       BookTicker& out) noexcept {
+  out.id = update.update_id;
+  out.symbol_id = symbol_id;
+  out.exchange = Exchange::kBinance;
+  out.exchange_ns = update.event_time_ms * 1'000'000LL;
+  out.local_ns = local_ns;
+  out.bid_price = update.bid_price;
+  out.bid_volume = update.bid_volume;
+  out.ask_price = update.ask_price;
+  out.ask_volume = update.ask_volume;
+}
+
+}  // namespace detail
+
 class FuturesMarketDataDiagnostics {
  public:
   static constexpr bool kEnabled = true;
@@ -129,18 +152,19 @@ class FuturesMarketDataClient {
 
     const std::int32_t symbol_id = FindSymbolId(update.symbol);
 
-    const BookTicker book_ticker{
-        .id = update.update_id,
-        .symbol_id = symbol_id,
-        .exchange = Exchange::kBinance,
-        .exchange_ns = update.event_time_ms * 1'000'000LL,
-        .local_ns = local_ns,
-        .bid_price = update.bid_price,
-        .bid_volume = update.bid_volume,
-        .ask_price = update.ask_price,
-        .ask_volume = update.ask_volume,
-    };
-    data_sink_.OnBookTicker(book_ticker);
+    if constexpr (requires(DataSink& data_sink,
+                           detail::NoopBookTickerSlotWriter writer) {
+                    data_sink.EmplaceBookTickerWith(writer);
+                  }) {
+      data_sink_.EmplaceBookTickerWith([&](BookTicker& out) noexcept {
+        detail::AssignBookTickerFromUpdate(update, symbol_id, local_ns, out);
+      });
+    } else {
+      BookTicker book_ticker;
+      detail::AssignBookTickerFromUpdate(update, symbol_id, local_ns,
+                                         book_ticker);
+      data_sink_.OnBookTicker(book_ticker);
+    }
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordBookTickerMessage();
     }

@@ -320,6 +320,8 @@ DataSession::Handle(binary MessageView)
 - 生产 parser 使用 `simdjson::ondemand` + unordered field lookup；ordered parser 只保留在 benchmark 中，对当前 payload 收益太小，暂不切生产。
 - yyjson 只保留在 benchmark 中做 parser 对照；`aquila_binance` 生产库不链接 yyjson。
 - Binance `BookTickerUpdate::symbol` 固定 copy 到对象内 `symbol_storage`；不要假设 simdjson `get_string()` 返回的 `string_view` 一定指向原 payload。
+- Binance client 已支持 `EmplaceBookTickerWith()` slot-writer sink；启用 `DataShmPublisher` 时会把
+  `BookTickerUpdate` 字段直接映射到 shm `BookTicker` slot，普通 sink 仍走 `OnBookTicker()`。
 - symbol config 是启动期不变量；unknown symbol 使用 debug assert，不在 release 主路径记录 unknown-symbol 计数。
 - client/session 构造期使用 symbol span 构建 stream target 和 lookup，构造后不再保存无用 `symbols_` span。
 
@@ -330,6 +332,8 @@ DataSession::Handle(binary MessageView)
 | `parse_book_ticker_padded_view` | 158ns |
 | `client_on_text_payload/1` | 183ns |
 | `session_handle_text_padded_view` | 195ns |
+| `parse_book_ticker_then_shm_push` | 184ns |
+| `parse_book_ticker_into_shm_slot` | 184ns |
 
 `session_handle_text_padded_view` 是当前 Binance bookTicker 已实现路径的主要 microbenchmark；公网链路延迟需要重新跑 live probe。
 
@@ -428,7 +432,7 @@ Binance USD-M futures bookTicker 测试和 benchmark：
 ./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
 ./build/debug/test/exchange/binance/market_data/binance_data_session_test
-./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker|parse_book_ticker_padded_view|client_on_text_payload|session_handle_text|session_handle_text_padded_view)'
+./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker|parse_book_ticker_padded_view|parse_book_ticker_then_shm_push|parse_book_ticker_into_shm_slot|client_on_text_payload|session_handle_text|session_handle_text_padded_view)'
 ```
 
 Binance USD-M futures data session dry-run / bookTicker live probe：

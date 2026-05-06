@@ -92,8 +92,8 @@ DataSession::Handle(text MessageView)
   -> simdjson parse JSON
   -> fast_float parse string prices / quantities
   -> flat_hash_map symbol -> symbol_id
-  -> aquila::BookTicker(exchange=kBinance)
-  -> Consumer::OnBookTicker
+  -> BookTickerUpdate
+  -> DataSink::EmplaceBookTickerWith(writer) 或 DataSink::OnBookTicker
 ```
 
 字段映射：
@@ -121,6 +121,8 @@ DataSession::Handle(text MessageView)
 10. symbol config 是启动期不变量；payload 中出现未配置 symbol 时 debug assert，release 主路径不记录 unknown-symbol counter。
 11. client/session 构造期使用 symbol span 构建 lookup / raw stream target，构造后不保存无用 `symbols_` span。
 12. `BookTickerUpdate::symbol` 固定 copy 到对象内 `symbol_storage`；不要假设 simdjson `get_string()` 返回的 `string_view` 一定指向原 payload 或在 padded fallback 后仍有效。
+13. 如果 `DataSink` 支持 `EmplaceBookTickerWith()`，client 会把 `BookTickerUpdate` 字段直接映射到
+    sink-owned `BookTicker` slot；普通 sink 仍走 `OnBookTicker(const BookTicker&)` 兼容路径。
 
 ## yyjson 对照
 
@@ -156,7 +158,7 @@ scripts/binance/query_um_futures_contracts_test.py
 benchmark：
 
 ```bash
-taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view)?|client_on_text_payload|client_handle_binary|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
+taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view|_then_shm_push|_into_shm_slot)?|client_on_text_payload|client_handle_binary|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 ```
 
 2026-05-02 当前 selected mean 结果：
@@ -170,6 +172,13 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 | `client_on_text_payload/1` | 183ns |
 | `session_handle_text_padded_view` | 195ns |
 
+2026-05-06 SHM publish 对照：
+
+| case | time |
+| --- | ---: |
+| `parse_book_ticker_then_shm_push` | 184ns |
+| `parse_book_ticker_into_shm_slot` | 184ns |
+
 这组 benchmark 是本机 parser/client/session microbenchmark，不是 Binance 公网链路延迟。
 
 当前对比结论只限这组 bookTicker payload：
@@ -178,6 +187,8 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 - benchmark-only ordered `find_field()` 对照略快于 production unordered parser，但 padded-view 主路径差距很小；当前决定不切 production。
 - 字段直取 parser 后，simdjson padded-view 是当前 production parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
+- SHM slot-writer 路径去掉了 `BookTicker` 临时对象到 shm slot 的 64B copy，但 Binance JSON parser 成本占主导，
+  本机 parse+publish microbenchmark 中总耗时与 temp+push 路径基本持平。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 
 data session dry-run / connect / live probe：
