@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、benchmark、live probe 和每进程 data session config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 strategy 接入、symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -28,6 +28,7 @@
 10. Gate / Binance data session tools 启动时只 parse 一次 TOML：同一个 parsed table 用于 Nova log 初始化和 data session config 生成。
 11. `config/data_sessions/*.toml` 的 log 文件默认写到 `/home/liuxiang/log/`，并用 data session 名称区分 file sink、console sink 和 backend log thread；Nova file sink 会追加启动时间生成实际日志文件名。
 12. `AGENTS.md` 和本 onboarding 已加入“结束对话”收尾流程和新对话 onboarding 固定入口。
+13. Strategy `DataReader` 已落地，按 `config/data_readers/strategy_data_reader.toml` attach Gate / Binance SHM book ticker source，支持 `latest` / `drain` 两种读取模式和编译期 diagnostics policy。
 
 ## 新对话第一步
 
@@ -59,7 +60,7 @@ doc/websocket_read_write_benchmark_comparison.md
 以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；如果继续 Gate 交易架构，
 再读 `doc/agent-handoff-gate-trade-architecture.md`，如果继续 Binance 行情，再读
 `doc/agent-handoff-binance-market-data.md`，如果继续 data session / config，再读
-`doc/data_session_config.md`。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+`doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -84,6 +85,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | `doc/websocket_read_write_benchmark_comparison.md` | 快速看 read/write benchmark 对比 | `aquila`、Drogon-style、`third_party/websocket` read/write 差异和数值。 |
 | `doc/websocket_client_future_optimizations.md` | 继续 WebSocket 优化或调整写路径容量时读 | read/write/active spin/network 的未来优化 backlog，`DefaultWebSocketOptions`、`MakeConnectionConfig<OptionsT>()`、prepared write slots/bytes 的含义和使用边界。 |
 | `doc/data_session_config.md` | 修改 `config/data_sessions/*.toml` 或新增 data session 配置时读 | 每进程一份 data session config、`instrument_catalog`、`data_session.subscribe_symbols`、symbol pool 生成、WebSocket endpoint / execution_policy / read_path / heartbeat / reconnect 字段和默认值，以及 TOML / CSV / log 依赖边界。 |
+| `doc/data_reader_config.md` | 修改 `config/data_readers/*.toml` 或 strategy reader 行情入口时读 | Strategy `DataReader` 的多 SHM source 配置、`latest` / `drain` read mode、`Poll(handler)` 语义和 diagnostics policy。 |
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
@@ -107,6 +109,7 @@ doc/websocket_read_write_benchmark_comparison.md
 | --- | --- |
 | `core/config/websocket_config.h` | 冷路径 WebSocket TOML 配置结构、默认值和到 `websocket::ConnectionConfig` 的转换；由 `aquila_config` target 暴露，TOML 解析使用 `toml++`，诊断日志走 Nova 封装，parser 只保留必填项和枚举映射约束。 |
 | `core/config/instrument_catalog.h` | 启动期 instrument CSV catalog，加载 `aquila.instrument.v1` 的完整字段；当前 data session 只消费 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`，lookup 使用 `absl::flat_hash_map`。 |
+| `core/config/data_reader_config.h` | Strategy data reader TOML parser / loader，加载 instrument catalog，并生成 `DataReader` 可直接消费的多 source config。 |
 | `exchange/gate/market_data/data_session_config.h` | Gate data session TOML parser / loader，加载 instrument catalog，并生成 `DataSession` 可直接消费的 Gate 专属 `DataSessionConfig`；target、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表均在启动冷路径完成。 |
 | `exchange/binance/market_data/data_session_config.h` | Binance data session TOML parser / loader，加载 instrument catalog，并生成 `DataSession` 可直接消费的 Binance 专属 `DataSessionConfig`；raw stream target、`ConnectionConfig`、exchange symbol 列表和 symbol id 列表均在启动冷路径完成。 |
 
@@ -120,6 +123,14 @@ doc/websocket_read_write_benchmark_comparison.md
 | `core/websocket/websocket_client.h` | plain/TLS client 生命周期、reconnect/backoff、runtime loop 集成。 |
 | `core/websocket/active_spin_loop.h` | active spin loop 调度。 |
 | `core/websocket/prepared_write.h` | 预分配 write slot / arena。 |
+
+### Strategy Data Reader
+
+| 文件 | 职责 |
+| --- | --- |
+| `core/market_data/data_reader.h` | Strategy 侧 `DataReader`，从 Gate / Binance SHM book ticker source poll 行情；支持 `latest` 和 `drain` 两种 read mode，diagnostics 由编译期 policy 决定。 |
+| `core/market_data/data_shm.h` | BookTicker SHM channel、`DataShmPublisher`、`BookTickerShmReader`；reader 支持 `TryReadOne()` 和 `TryReadLatest()`。 |
+| `tools/market_data/data_reader_probe.cpp` | 独立 data reader probe，按 `config/data_readers/strategy_data_reader.toml` attach 多个 SHM source 并输出低频统计。 |
 
 ### Gate SBE 行情
 
@@ -440,6 +451,15 @@ Binance USD-M futures data session dry-run / bookTicker live probe：
 ```bash
 ./build/debug/tools/binance_data_session
 ./build/debug/tools/binance_futures_book_ticker_probe --contract BTCUSDT --symbol-id 1 --duration-ms 10000
+```
+
+Data reader 配置 / runtime 测试：
+
+```bash
+./build/debug/test/config/data_reader_config_test
+./build/debug/test/core/market_data/core_market_data_reader_test
+./build/debug/test/core/market_data/core_market_data_shm_test
+./build/debug/tools/data_reader_probe --config config/data_readers/strategy_data_reader.toml --max-polls 1
 ```
 
 Gate / Binance 期货合约元数据脚本：

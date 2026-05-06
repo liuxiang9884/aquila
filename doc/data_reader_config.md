@@ -1,0 +1,125 @@
+# Data Reader 配置说明
+
+## 范围
+
+`data_reader` 描述 strategy 侧行情输入。第一版只支持从 SHM 读取 `book_ticker`：
+
+- `type = "shm"`
+- `feed = "book_ticker"`
+
+`DataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)`。reader attach data session
+创建的 SHM channel，不负责 create / remove SHM。
+
+## 示例
+
+仓库内示例：
+
+```text
+config/data_readers/strategy_data_reader.toml
+```
+
+该配置同时读取 Gate 和 Binance 的 book ticker：
+
+```toml
+[data_reader]
+name = "strategy_data_reader"
+max_events_per_source = 64
+
+[data_reader.execution_policy]
+bind_cpu_id = 4
+idle_policy = "spin"
+
+[[data_reader.sources]]
+name = "gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "latest"
+required = true
+
+[[data_reader.sources]]
+name = "binance_book_ticker"
+type = "shm"
+exchange = "binance"
+feed = "book_ticker"
+shm_name = "aquila_binance_market_data"
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "latest"
+required = true
+```
+
+## 字段
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `instrument_catalog.file` | 无，必须显式配置 | instrument CSV 路径。相对路径会在加载配置文件时解析到仓库路径。 |
+| `instrument_catalog.schema` | 无，必须显式配置 | CSV schema，当前固定 `aquila.instrument.v1`。 |
+| `data_reader.name` | 无，必须显式配置 | reader 实例名。 |
+| `data_reader.max_events_per_source` | `64` | `drain` 模式下每个 source 单次 `Poll()` 最多产出的事件数；`latest` 模式忽略该值。 |
+| `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
+| `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `DataReader` 不自己执行 idle。 |
+| `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
+| `data_reader.sources.type` | `shm` | source 实现类型，第一版只支持 `shm`。 |
+| `data_reader.sources.exchange` | 无，必须显式配置 | `gate` 或 `binance`。 |
+| `data_reader.sources.feed` | `book_ticker` | 行情类型，第一版只支持 `book_ticker`。 |
+| `data_reader.sources.shm_name` | 无，必须显式配置 | SHM segment 名称。 |
+| `data_reader.sources.channel_name` | 无，必须显式配置 | SHM channel 名称。 |
+| `data_reader.sources.start_position` | `latest` | attach 后从 `latest` 或 `earliest_visible` 开始读。 |
+| `data_reader.sources.read_mode` | `latest` | 读取语义，支持 `latest` 和 `drain`。 |
+| `data_reader.sources.required` | `true` | 预留字段；第一版 source attach 失败会直接启动失败。 |
+
+## read_mode
+
+`latest`：
+
+- 每个 source 每次 `Poll()` 最多产出一条。
+- 如果 source 已经积累多条未读数据，只返回当前可见的最后一条。
+- 中间未读数据计入 diagnostics 的 `skipped`，这是主动合并，不等同于 ring overrun。
+- 适合 book ticker / BBO 这类策略只关心最新状态的行情。
+
+`drain`：
+
+- 每个 source 每次 `Poll()` 最多产出 `max_events_per_source` 条。
+- 不主动跳到最后一条；除非 reader 已经落后超过 SHM ring capacity，底层 reader 会记录 overrun 并拉回可见窗口。
+- 适合需要完整事件流的验证、probe、benchmark，以及未来不能丢中间事件的 feed。
+
+## Poll 语义
+
+`DataReader::Poll(handler)` 会扫一遍 sources，并按每个 source 的 `read_mode` 直接分发：
+
+```text
+latest source -> TryReadLatest()
+drain source  -> TryReadOne() 最多 max_events_per_source 次
+```
+
+`DataReader` 保存 `next_source_index_`，每次 `Poll()` 后把起始 source 向后移动一位，避免固定 source
+长期先被处理。`Poll()` 返回本次交给 handler 的 book ticker 数量。
+
+handler 需要提供：
+
+```cpp
+void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
+```
+
+## Diagnostics
+
+`DataReader` 的统计通过编译期 diagnostics policy 开关：
+
+- 生产默认 `DataReader<>` 使用 `NoopDataReaderDiagnostics`。
+- probe / test 可以使用 `DataReader<DataReaderDiagnostics>`。
+
+当前统计包括：
+
+- `poll_calls`
+- `empty_polls`
+- `book_tickers`
+- per-source `book_tickers`
+- per-source `skipped`
+- per-source `overruns`
+- per-source `last_book_ticker_id`
+
+统计不使用 atomic；第一版假设 `DataReader` 被单个 strategy 线程拥有。
