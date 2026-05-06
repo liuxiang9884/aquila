@@ -115,6 +115,13 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.symbol_ids[0], 0);
   EXPECT_EQ(config.symbol_ids[1], 1);
   EXPECT_EQ(config.symbol_ids[2], 2);
+  EXPECT_TRUE(config.book_ticker_shm.enabled);
+  EXPECT_EQ(config.book_ticker_shm.shm_name, "aquila_gate_market_data");
+  EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
+  EXPECT_TRUE(config.book_ticker_shm.create);
+  EXPECT_FALSE(config.book_ticker_shm.remove_existing);
+  EXPECT_EQ(config.book_ticker_shm.expected_capacity,
+            aquila::market_data::kBookTickerShmCapacity);
 
   struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
