@@ -34,3 +34,21 @@ target_compile_definitions(data_session_config_test
 
 add_test(NAME data_session_config_test
          COMMAND data_session_config_test)
+
+add_executable(data_reader_config_test
+    data_reader_config_test.cpp
+)
+
+target_link_libraries(data_reader_config_test
+    PRIVATE
+        aquila_config
+        GTest::gtest_main
+        nova
+)
+
+target_compile_definitions(data_reader_config_test
+    PRIVATE AQUILA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME data_reader_config_test
+         COMMAND data_reader_config_test)
