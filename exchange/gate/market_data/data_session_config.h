@@ -9,6 +9,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/result.h"
+#include "core/market_data/data_shm_config.h"
 #include "core/websocket/types.h"
 
 namespace aquila::gate {
@@ -18,6 +19,7 @@ struct DataSessionConfig {
   websocket::ConnectionConfig connection;
   std::vector<std::string> exchange_symbols;
   std::vector<std::int32_t> symbol_ids;
+  ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
 };
 
 using DataSessionConfigResult = Result<DataSessionConfig>;

@@ -13,6 +13,7 @@
 #include "core/common/types.h"
 #include "core/config/instrument_catalog.h"
 #include "core/config/websocket_config.h"
+#include "core/market_data/data_shm_config.h"
 #include "exchange/binance/market_data/stream.h"
 #include "nova/utils/log.h"
 
@@ -30,6 +31,7 @@ struct RawDataSessionConfig {
 struct RawConfigFile {
   config::InstrumentCatalogConfig instrument_catalog;
   RawDataSessionConfig data_session;
+  ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
 };
 
 void MaybeLogError(std::string_view message) {
@@ -70,6 +72,11 @@ class DataSessionConfigParser {
       return Failure(std::move(error_));
     }
 
+    ParseBookTickerShm();
+    if (!ok_) {
+      return Failure(std::move(error_));
+    }
+
     config::WebSocketConfigResult websocket_result =
         config::ParseWebSocketConfig(node_["data_session"]["websocket"]);
     if (!websocket_result.ok) {
@@ -84,6 +91,26 @@ class DataSessionConfigParser {
       toml::node_view<const toml::node> value_node,
       const std::string& fallback) const {
     const std::optional<std::string> value = value_node.value<std::string>();
+    return value.value_or(fallback);
+  }
+
+  [[nodiscard]] std::uint64_t UInt64Or(
+      toml::node_view<const toml::node> value_node, std::uint64_t fallback,
+      std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    if (*value < 0) {
+      Fail(name, " must be non-negative");
+      return fallback;
+    }
+    return static_cast<std::uint64_t>(*value);
+  }
+
+  [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
+                            bool fallback) const {
+    const std::optional<bool> value = value_node.value<bool>();
     return value.value_or(fallback);
   }
 
@@ -127,6 +154,56 @@ class DataSessionConfigParser {
         StringOr(data_session["feed"], config_.data_session.feed);
   }
 
+  void ParseBookTickerShm() {
+    const toml::node_view<const toml::node> shm = node_["book_ticker_shm"];
+    if (!shm) {
+      return;
+    }
+    if (shm["capacity"]) {
+      Fail("book_ticker_shm.capacity",
+           " is not supported; use expected_capacity");
+      return;
+    }
+
+    config_.book_ticker_shm.enabled =
+        BoolOr(shm["enabled"], config_.book_ticker_shm.enabled);
+    config_.book_ticker_shm.shm_name =
+        StringOr(shm["shm_name"], config_.book_ticker_shm.shm_name);
+    config_.book_ticker_shm.channel_name =
+        StringOr(shm["channel_name"], config_.book_ticker_shm.channel_name);
+    config_.book_ticker_shm.create =
+        BoolOr(shm["create"], config_.book_ticker_shm.create);
+    config_.book_ticker_shm.remove_existing =
+        BoolOr(shm["remove_existing"], config_.book_ticker_shm.remove_existing);
+    config_.book_ticker_shm.expected_capacity = UInt64Or(
+        shm["expected_capacity"], config_.book_ticker_shm.expected_capacity,
+        "book_ticker_shm.expected_capacity");
+    if (!ok_) {
+      return;
+    }
+
+    if (config_.book_ticker_shm.expected_capacity !=
+        ::aquila::market_data::kBookTickerShmCapacity) {
+      Fail("book_ticker_shm.expected_capacity", " mismatch");
+      return;
+    }
+    if (!config_.book_ticker_shm.create &&
+        config_.book_ticker_shm.remove_existing) {
+      Fail("book_ticker_shm.remove_existing", " requires create=true");
+      return;
+    }
+    if (!config_.book_ticker_shm.enabled) {
+      return;
+    }
+    if (config_.book_ticker_shm.shm_name.empty()) {
+      Fail("book_ticker_shm.shm_name", " is required");
+      return;
+    }
+    if (config_.book_ticker_shm.channel_name.empty()) {
+      Fail("book_ticker_shm.channel_name", " is required");
+    }
+  }
+
   void ParseSubscribeSymbols(toml::node_view<const toml::node> value_node) {
     const toml::array* symbols = value_node.as_array();
     if (symbols == nullptr || symbols->empty()) {
@@ -161,6 +238,7 @@ class DataSessionConfigParser {
 
     DataSessionConfig data_session_config;
     data_session_config.name = std::move(config_.data_session.name);
+    data_session_config.book_ticker_shm = std::move(config_.book_ticker_shm);
     data_session_config.exchange_symbols.reserve(
         config_.data_session.subscribe_symbols.size());
     data_session_config.symbol_ids.reserve(

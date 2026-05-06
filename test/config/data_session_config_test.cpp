@@ -12,6 +12,7 @@
 
 #include "core/common/types.h"
 #include "core/config/instrument_catalog.h"
+#include "core/market_data/data_shm_config.h"
 #include "exchange/binance/market_data/data_session.h"
 #include "exchange/binance/market_data/data_session_config.h"
 #include "exchange/gate/market_data/data_session.h"
@@ -148,9 +149,8 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
 }
 
 TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
-  const toml::table toml =
-      toml::parse_file(SourcePath("config/data_sessions/gate_data_session.toml")
-                           .string());
+  const toml::table toml = toml::parse_file(
+      SourcePath("config/data_sessions/gate_data_session.toml").string());
 
   nova::LogConfig log_config;
   log_config.FromToml(toml["log"]);
@@ -182,6 +182,51 @@ TEST(DataSessionConfigTest, ParsesGateDataSessionFromAlreadyParsedToml) {
   ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
   EXPECT_EQ(config_result.value.exchange_symbols[0], "BTC_USDT");
   EXPECT_EQ(config_result.value.symbol_ids[0], 0);
+}
+
+TEST(DataSessionConfigTest, ParsesGateBookTickerShmConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[book_ticker_shm]
+enabled = true
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = false
+expected_capacity = 65536
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  const aquila::market_data::BookTickerShmConfig& shm =
+      result.value.book_ticker_shm;
+  EXPECT_TRUE(shm.enabled);
+  EXPECT_EQ(shm.shm_name, "aquila_gate_market_data");
+  EXPECT_EQ(shm.channel_name, "book_ticker_channel");
+  EXPECT_TRUE(shm.create);
+  EXPECT_FALSE(shm.remove_existing);
+  EXPECT_EQ(shm.expected_capacity, aquila::market_data::kBookTickerShmCapacity);
 }
 
 TEST(DataSessionConfigTest, LoadsBinanceLogConfigFromToml) {
@@ -219,6 +264,117 @@ TEST(DataSessionConfigTest, ParsesBinanceDataSessionFromAlreadyParsedToml) {
   ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
   EXPECT_EQ(config_result.value.exchange_symbols[0], "BTCUSDT");
   EXPECT_EQ(config_result.value.symbol_ids[0], 0);
+}
+
+TEST(DataSessionConfigTest, ParsesBinanceBookTickerShmConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[book_ticker_shm]
+enabled = true
+shm_name = "aquila_binance_market_data"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = true
+expected_capacity = 65536
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  const aquila::market_data::BookTickerShmConfig& shm =
+      result.value.book_ticker_shm;
+  EXPECT_TRUE(shm.enabled);
+  EXPECT_EQ(shm.shm_name, "aquila_binance_market_data");
+  EXPECT_EQ(shm.channel_name, "book_ticker_channel");
+  EXPECT_TRUE(shm.create);
+  EXPECT_TRUE(shm.remove_existing);
+  EXPECT_EQ(shm.expected_capacity, aquila::market_data::kBookTickerShmCapacity);
+}
+
+TEST(DataSessionConfigTest, RejectsRuntimeBookTickerShmCapacity) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[book_ticker_shm]
+enabled = true
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+capacity = 65536
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("book_ticker_shm.capacity is not supported"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsBookTickerShmExpectedCapacityMismatch) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[book_ticker_shm]
+enabled = true
+shm_name = "aquila_binance_market_data"
+channel_name = "book_ticker_channel"
+expected_capacity = 32768
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("book_ticker_shm.expected_capacity mismatch"),
+            std::string::npos);
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
