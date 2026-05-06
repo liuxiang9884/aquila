@@ -16,11 +16,11 @@ namespace {
 
 namespace md = aquila::market_data;
 
-std::atomic<bool> g_stop_requested{false};
+std::atomic<bool> signal_stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
 
 void HandleSignal(int /*signal*/) {
-  g_stop_requested.store(true, std::memory_order_relaxed);
+  signal_stop_requested.store(true, std::memory_order_relaxed);
 }
 
 void PrintBookTicker(const aquila::BookTicker& book_ticker,
@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, HandleSignal);
 
     std::uint64_t printed{0};
-    while (!g_stop_requested.load(std::memory_order_relaxed)) {
+    while (!signal_stop_requested.load(std::memory_order_relaxed)) {
       aquila::BookTicker book_ticker{};
       if (!reader.TryReadOne(&book_ticker)) {
         std::this_thread::yield();

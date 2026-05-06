@@ -23,11 +23,11 @@ using namespace aquila::websocket;
 
 namespace {
 
-std::atomic<bool> g_stop_requested{false};
+std::atomic<bool> signal_stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
 
 void RequestStop(int) noexcept {
-  g_stop_requested.store(true, std::memory_order_relaxed);
+  signal_stop_requested.store(true, std::memory_order_relaxed);
 }
 
 void InstallStopHandlers() noexcept {
@@ -174,7 +174,7 @@ void RecordRuntimeError(void* context, ConnectionError error) noexcept {
 
 template <typename ClientT>
 int RunProbe(ConnectionConfig config, std::string subscribe) {
-  g_stop_requested.store(false, std::memory_order_relaxed);
+  signal_stop_requested.store(false, std::memory_order_relaxed);
   ProbeRuntime<ClientT> runtime(std::move(subscribe));
   MessageCallback consumer{&runtime.probe, &CountPayload};
   ClientT client(std::move(config), consumer);
@@ -184,7 +184,7 @@ int RunProbe(ConnectionConfig config, std::string subscribe) {
   std::atomic<bool> client_done{false};
   std::thread stop_watcher([&client, &client_done]() noexcept {
     while (!client_done.load(std::memory_order_acquire)) {
-      if (g_stop_requested.load(std::memory_order_relaxed)) {
+      if (signal_stop_requested.load(std::memory_order_relaxed)) {
         client.Stop();
         return;
       }
@@ -205,7 +205,7 @@ int RunProbe(ConnectionConfig config, std::string subscribe) {
                          "tx_bytes={} rx_messages={} tx_messages={} "
                          "heartbeat_timeouts={} subscribe={}\n"),
              ok ? "ok" : "failed",
-             g_stop_requested.load(std::memory_order_relaxed) ? "yes" : "no",
+             signal_stop_requested.load(std::memory_order_relaxed) ? "yes" : "no",
              final_state, final_error,
              runtime.probe.bytes, metrics.tx_bytes, metrics.rx_messages,
              metrics.tx_messages, metrics.heartbeat_timeouts,

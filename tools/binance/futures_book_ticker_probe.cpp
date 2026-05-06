@@ -25,11 +25,11 @@ namespace {
 namespace binance = aquila::binance;
 namespace ws = aquila::websocket;
 
-std::atomic<bool> g_stop_requested{false};
+std::atomic<bool> signal_stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
 
 void RequestStop(int) noexcept {
-  g_stop_requested.store(true, std::memory_order_relaxed);
+  signal_stop_requested.store(true, std::memory_order_relaxed);
 }
 
 void InstallStopHandlers() noexcept {
@@ -261,14 +261,14 @@ void PrintSummary(const RunnerT& runner) {
 
 template <typename WebSocketPolicy>
 int RunProbe(ProbeConfig config) {
-  g_stop_requested.store(false, std::memory_order_relaxed);
+  signal_stop_requested.store(false, std::memory_order_relaxed);
   ProbeRunner<WebSocketPolicy> runner(std::move(config));
   runner.Start();
 
   const auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(runner.config().duration_ms);
   while (std::chrono::steady_clock::now() < deadline && !runner.done()) {
-    if (g_stop_requested.load(std::memory_order_relaxed)) {
+    if (signal_stop_requested.load(std::memory_order_relaxed)) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
