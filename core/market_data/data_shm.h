@@ -74,10 +74,10 @@ namespace detail {
 [[nodiscard]] inline std::string ValidateChannelName(
     std::string_view channel_name) {
   if (channel_name.empty()) {
-    throw std::invalid_argument("book_ticker_shm.channel_name is required");
+    throw std::invalid_argument("data_shm_sink.channel_name is required");
   }
   if (channel_name.size() >= nova::kShmNameSize) {
-    throw std::invalid_argument("book_ticker_shm.channel_name is too long");
+    throw std::invalid_argument("data_shm_sink.channel_name is too long");
   }
   return std::string(channel_name);
 }
@@ -85,11 +85,11 @@ namespace detail {
 [[nodiscard]] inline std::string PrepareShmName(
     const BookTickerShmConfig& config) {
   if (config.shm_name.empty()) {
-    throw std::invalid_argument("book_ticker_shm.shm_name is required");
+    throw std::invalid_argument("data_shm_sink.shm_name is required");
   }
   if (!config.create && config.remove_existing) {
     throw std::invalid_argument(
-        "book_ticker_shm.remove_existing requires create=true");
+        "data_shm_sink.remove_existing requires create=true");
   }
 
   std::string shm_name = NormalizeShmName(config.shm_name);
@@ -101,16 +101,16 @@ namespace detail {
 
 inline void ValidateChannelHeader(const BookTickerShmChannel& channel) {
   if (channel.header.magic != kBookTickerShmMagic) {
-    throw std::runtime_error("book_ticker_shm.magic mismatch");
+    throw std::runtime_error("data_shm_sink.magic mismatch");
   }
   if (channel.header.version != kBookTickerShmVersion) {
-    throw std::runtime_error("book_ticker_shm.version mismatch");
+    throw std::runtime_error("data_shm_sink.version mismatch");
   }
   if (channel.header.abi_size != sizeof(aquila::BookTicker)) {
-    throw std::runtime_error("book_ticker_shm.abi_size mismatch");
+    throw std::runtime_error("data_shm_sink.abi_size mismatch");
   }
   if (channel.header.capacity != kBookTickerShmCapacity) {
-    throw std::runtime_error("book_ticker_shm.capacity mismatch");
+    throw std::runtime_error("data_shm_sink.capacity mismatch");
   }
 }
 
@@ -132,7 +132,7 @@ class BookTickerShmManager {
     } else {
       channel_ = allocator_.Find<BookTickerShmChannel>(channel_name_);
       if (channel_ == nullptr) {
-        throw std::runtime_error("book_ticker_shm.channel_name not found");
+        throw std::runtime_error("data_shm_sink.channel_name not found");
       }
     }
     detail::ValidateChannelHeader(*channel_);

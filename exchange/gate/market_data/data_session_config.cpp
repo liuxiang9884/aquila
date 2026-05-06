@@ -88,7 +88,7 @@ class DataSessionConfigParser {
       return Failure(std::move(error_));
     }
 
-    ParseBookTickerShm();
+    ParseDataShmSink();
     if (!ok_) {
       return Failure(std::move(error_));
     }
@@ -170,18 +170,23 @@ class DataSessionConfigParser {
         StringOr(data_session["feed"], config_.data_session.feed);
   }
 
-  void ParseBookTickerShm() {
-    const toml::node_view<const toml::node> shm = node_["book_ticker_shm"];
+  void ParseDataShmSink() {
+    if (node_["book_ticker_shm"]) {
+      Fail("book_ticker_shm", " is no longer supported; use data_shm_sink");
+      return;
+    }
+
+    const toml::node_view<const toml::node> shm = node_["data_shm_sink"];
     if (!shm) {
       return;
     }
     if (shm["capacity"]) {
-      Fail("book_ticker_shm.capacity",
+      Fail("data_shm_sink.capacity",
            " is not supported; capacity is fixed in code");
       return;
     }
     if (shm["expected_capacity"]) {
-      Fail("book_ticker_shm.expected_capacity",
+      Fail("data_shm_sink.expected_capacity",
            " is not supported; capacity is fixed in code");
       return;
     }
@@ -199,18 +204,18 @@ class DataSessionConfigParser {
 
     if (!config_.book_ticker_shm.create &&
         config_.book_ticker_shm.remove_existing) {
-      Fail("book_ticker_shm.remove_existing", " requires create=true");
+      Fail("data_shm_sink.remove_existing", " requires create=true");
       return;
     }
     if (!config_.book_ticker_shm.enabled) {
       return;
     }
     if (config_.book_ticker_shm.shm_name.empty()) {
-      Fail("book_ticker_shm.shm_name", " is required");
+      Fail("data_shm_sink.shm_name", " is required");
       return;
     }
     if (config_.book_ticker_shm.channel_name.empty()) {
-      Fail("book_ticker_shm.channel_name", " is required");
+      Fail("data_shm_sink.channel_name", " is required");
     }
   }
 

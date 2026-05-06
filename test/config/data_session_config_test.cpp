@@ -189,7 +189,7 @@ TEST(DataSessionConfigTest, ParsesGateDataSessionFromAlreadyParsedToml) {
   EXPECT_EQ(config_result.value.symbol_ids[0], 0);
 }
 
-TEST(DataSessionConfigTest, ParsesGateBookTickerShmConfig) {
+TEST(DataSessionConfigTest, ParsesGateDataShmSinkConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
@@ -211,7 +211,7 @@ enable_tls = false
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2
 
-[book_ticker_shm]
+[data_shm_sink]
 enabled = true
 shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
@@ -269,7 +269,7 @@ TEST(DataSessionConfigTest, ParsesBinanceDataSessionFromAlreadyParsedToml) {
   EXPECT_EQ(config_result.value.symbol_ids[0], 0);
 }
 
-TEST(DataSessionConfigTest, ParsesBinanceBookTickerShmConfig) {
+TEST(DataSessionConfigTest, ParsesBinanceDataShmSinkConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
@@ -288,7 +288,7 @@ host = "fstream.binance.com"
 [data_session.websocket.execution_policy]
 bind_cpu_id = 3
 
-[book_ticker_shm]
+[data_shm_sink]
 enabled = true
 shm_name = "aquila_binance_market_data"
 channel_name = "book_ticker_channel"
@@ -331,7 +331,7 @@ enable_tls = false
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2
 
-[book_ticker_shm]
+[data_shm_sink]
 enabled = true
 shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
@@ -341,11 +341,11 @@ capacity = 65536
   const toml::parse_result parsed = toml::parse(toml_text);
   const auto result = aquila::gate::ParseDataSessionConfig(parsed);
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("book_ticker_shm.capacity is not supported"),
+  EXPECT_NE(result.error.find("data_shm_sink.capacity is not supported"),
             std::string::npos);
 }
 
-TEST(DataSessionConfigTest, RejectsBookTickerShmExpectedCapacityKey) {
+TEST(DataSessionConfigTest, RejectsDataShmSinkExpectedCapacityKey) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
@@ -364,7 +364,7 @@ host = "fstream.binance.com"
 [data_session.websocket.execution_policy]
 bind_cpu_id = 3
 
-[book_ticker_shm]
+[data_shm_sink]
 enabled = true
 shm_name = "aquila_binance_market_data"
 channel_name = "book_ticker_channel"
@@ -375,8 +375,44 @@ expected_capacity = 65536
   const auto result = aquila::binance::ParseDataSessionConfig(parsed);
   ASSERT_FALSE(result.ok);
   EXPECT_NE(
-      result.error.find("book_ticker_shm.expected_capacity is not supported"),
+      result.error.find("data_shm_sink.expected_capacity is not supported"),
       std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsLegacyBookTickerShmSection) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[book_ticker_shm]
+enabled = true
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("book_ticker_shm is no longer supported; use "
+                              "data_shm_sink"),
+            std::string::npos);
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {

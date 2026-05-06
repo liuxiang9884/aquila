@@ -26,7 +26,7 @@ enable_tls = true
 [data_session.websocket.execution_policy]
 bind_cpu_id = 2
 
-[book_ticker_shm]
+[data_shm_sink]
 enabled = true
 shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"

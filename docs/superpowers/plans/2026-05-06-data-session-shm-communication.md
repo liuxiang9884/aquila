@@ -18,8 +18,8 @@
 - Modify `exchange/binance/market_data/client.h`: rename `Consumer` template parameter to `DataSink`.
 - Modify `exchange/gate/market_data/data_session.h`: rename `Consumer` template parameter to `DataSink`.
 - Modify `exchange/binance/market_data/data_session.h`: rename `Consumer` template parameter to `DataSink`.
-- Modify `exchange/gate/market_data/data_session_config.h/.cpp`: parse optional top-level `[book_ticker_shm]`.
-- Modify `exchange/binance/market_data/data_session_config.h/.cpp`: parse optional top-level `[book_ticker_shm]`.
+- Modify `exchange/gate/market_data/data_session_config.h/.cpp`: parse optional `[data_shm_sink]`.
+- Modify `exchange/binance/market_data/data_session_config.h/.cpp`: parse optional `[data_shm_sink]`.
 - Modify `tools/gate/data_session.cpp`: choose `CountingDataSink` or `DataShmPublisher` from config.
 - Modify `tools/binance/data_session.cpp`: choose `CountingDataSink` or `DataShmPublisher` from config.
 - Create `tools/market_data/book_ticker_shm_reader.cpp`: standalone reader/probe process.
@@ -232,14 +232,14 @@ Manager construction rules:
 
 ```cpp
 if (config.shm_name.empty()) {
-  throw std::invalid_argument("book_ticker_shm.shm_name is required");
+  throw std::invalid_argument("data_shm_sink.shm_name is required");
 }
 if (config.channel_name.empty()) {
-  throw std::invalid_argument("book_ticker_shm.channel_name is required");
+  throw std::invalid_argument("data_shm_sink.channel_name is required");
 }
 if (!config.create && config.remove_existing) {
   throw std::invalid_argument(
-      "book_ticker_shm.remove_existing requires create=true");
+      "data_shm_sink.remove_existing requires create=true");
 }
 ```
 
@@ -249,7 +249,7 @@ Creation and attach behavior:
 create=true and remove_existing=true -> remove the old SHM segment first, then construct channel_name
 create=true and remove_existing=false -> construct channel_name or attach the existing constructed object
 create=false -> open existing SHM and Find<BookTickerShmChannel>(channel_name)
-Find returns nullptr -> throw std::runtime_error("book_ticker_shm.channel_name not found")
+Find returns nullptr -> throw std::runtime_error("data_shm_sink.channel_name not found")
 after obtaining channel -> validate magic, version, abi_size, and capacity
 ```
 
@@ -345,12 +345,12 @@ Include:
 #include "core/market_data/data_shm_config.h"
 ```
 
-- [ ] **Step 2: Parse top-level `[book_ticker_shm]`**
+- [ ] **Step 2: Parse `[data_shm_sink]`**
 
 Parse this block in both config parsers:
 
 ```toml
-[book_ticker_shm]
+[data_shm_sink]
 enabled = true
 shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
@@ -361,11 +361,14 @@ remove_existing = false
 Rules:
 
 ```text
-missing [book_ticker_shm] -> enabled=false
+missing [data_shm_sink] -> enabled=false
+enabled=true -> create DataShmPublisher as the only data session sink
+enabled=false -> create CountingDataSink as the only data session sink
 enabled=true requires non-empty shm_name and channel_name
 capacity key is rejected because capacity is fixed in code
 expected_capacity key is rejected because capacity is fixed in code
 remove_existing=true requires create=true
+legacy [book_ticker_shm] key is rejected; use [data_shm_sink]
 ```
 
 - [ ] **Step 3: Add parser tests**
