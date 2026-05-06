@@ -156,9 +156,10 @@ TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
   log_config.FromToml(toml["log"]);
 
   EXPECT_EQ(log_config.log_level(), nova::LogLevel::kLogInfo);
-  EXPECT_EQ(log_config.file_sink_name(), "/tmp/taifex_future.log");
-  EXPECT_EQ(log_config.console_sink_name(), "taifex_data");
-  EXPECT_EQ(log_config.backend_thread_name(), "multicast_connector_log");
+  EXPECT_EQ(log_config.file_sink_name(),
+            "/home/liuxiang/log/gate_data_session.log");
+  EXPECT_EQ(log_config.console_sink_name(), "gate_data_session_console");
+  EXPECT_EQ(log_config.backend_thread_name(), "gate_data_session_log");
   EXPECT_EQ(log_config.backend_cpu_affinity(), 5);
   EXPECT_EQ(log_config.format_pattern(),
             "%(log_level_short_code)%(time) %(process_id):%(thread_id) "
@@ -191,9 +192,10 @@ TEST(DataSessionConfigTest, LoadsBinanceLogConfigFromToml) {
   log_config.FromToml(toml["log"]);
 
   EXPECT_EQ(log_config.log_level(), nova::LogLevel::kLogInfo);
-  EXPECT_EQ(log_config.file_sink_name(), "/tmp/taifex_future.log");
-  EXPECT_EQ(log_config.console_sink_name(), "taifex_data");
-  EXPECT_EQ(log_config.backend_thread_name(), "multicast_connector_log");
+  EXPECT_EQ(log_config.file_sink_name(),
+            "/home/liuxiang/log/binance_data_session.log");
+  EXPECT_EQ(log_config.console_sink_name(), "binance_data_session_console");
+  EXPECT_EQ(log_config.backend_thread_name(), "binance_data_session_log");
   EXPECT_EQ(log_config.backend_cpu_affinity(), 5);
   EXPECT_EQ(log_config.format_pattern(),
             "%(log_level_short_code)%(time) %(process_id):%(thread_id) "

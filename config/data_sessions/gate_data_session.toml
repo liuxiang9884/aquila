@@ -4,9 +4,9 @@ schema = "aquila.instrument.v1"
 
 [log]
 log_level = "info"
-file_sink_name = "/tmp/taifex_future.log"
-console_sink_name = "taifex_data"
-backend_thread_name = "multicast_connector_log"
+file_sink_name = "/home/liuxiang/log/gate_data_session.log"
+console_sink_name = "gate_data_session_console"
+backend_thread_name = "gate_data_session_log"
 backend_cpu_affinity = 5
 format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
