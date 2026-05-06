@@ -168,6 +168,48 @@ TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity) {
   EXPECT_EQ(reader.overrun_count(), 1U);
 }
 
+TEST(DataShmTest, ReaderTryReadLatestReturnsLastVisibleBookTicker) {
+  const md::BookTickerShmConfig config = MakeCreateConfig("read_latest");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::BookTickerShmReader reader(MakeAttachConfig(config));
+  reader.SeekLatest();
+
+  publisher.OnBookTicker(MakeBookTicker(10));
+  publisher.OnBookTicker(MakeBookTicker(11));
+  publisher.OnBookTicker(MakeBookTicker(12));
+
+  aquila::BookTicker actual{};
+  std::uint64_t skipped{0};
+  ASSERT_TRUE(reader.TryReadLatest(&actual, &skipped));
+  EXPECT_EQ(actual.id, 12);
+  EXPECT_EQ(skipped, 2U);
+  EXPECT_FALSE(reader.TryReadLatest(&actual, &skipped));
+}
+
+TEST(DataShmTest, ReaderTryReadLatestCountsOverrunAndSkipsToLast) {
+  const md::BookTickerShmConfig config =
+      MakeCreateConfig("read_latest_overrun");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::BookTickerShmReader reader(MakeAttachConfig(config));
+  reader.SeekLatest();
+
+  for (std::uint64_t i = 0; i < md::kBookTickerShmCapacity + 3; ++i) {
+    publisher.OnBookTicker(MakeBookTicker(static_cast<std::int64_t>(i)));
+  }
+
+  aquila::BookTicker actual{};
+  std::uint64_t skipped{0};
+  ASSERT_TRUE(reader.TryReadLatest(&actual, &skipped));
+  EXPECT_EQ(actual.id,
+            static_cast<std::int64_t>(md::kBookTickerShmCapacity + 2));
+  EXPECT_EQ(reader.overrun_count(), 1U);
+  EXPECT_EQ(skipped, md::kBookTickerShmCapacity - 1);
+}
+
 TEST(DataShmTest, RejectsHeaderCapacityMismatchOnAttach) {
   const md::BookTickerShmConfig config = MakeCreateConfig("capacity_mismatch");
   ShmCleanup cleanup(config.shm_name);

@@ -232,6 +232,34 @@ class BookTickerShmReader {
     return true;
   }
 
+  [[nodiscard]] bool TryReadLatest(aquila::BookTicker* out,
+                                   std::uint64_t* skipped_count) noexcept {
+    const auto current = manager_.channel().queue.Current();
+    if (read_pos_ == current) {
+      if (skipped_count != nullptr) {
+        *skipped_count = 0;
+      }
+      return false;
+    }
+
+    const auto capacity = manager_.channel().queue.capacity();
+    const auto unread_count = current - read_pos_;
+    if (unread_count > capacity) {
+      read_pos_ = current - capacity;
+      ++overrun_count_;
+    }
+
+    const auto visible_unread_count = current - read_pos_;
+    const auto latest_pos = current - 1;
+    *out = manager_.channel().queue.Value(latest_pos);
+    read_pos_ = current;
+
+    if (skipped_count != nullptr) {
+      *skipped_count = visible_unread_count > 0 ? visible_unread_count - 1 : 0;
+    }
+    return true;
+  }
+
   [[nodiscard]] std::uint64_t read_pos() const noexcept {
     return read_pos_;
   }
