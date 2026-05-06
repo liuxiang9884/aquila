@@ -13,6 +13,7 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
 [data_reader]
 name = "strategy_data_reader"
+max_events_per_source = 64
 
 [data_reader.execution_policy]
 bind_cpu_id = 4
@@ -26,6 +27,7 @@ feed = "book_ticker"
 shm_name = "aquila_gate_market_data"
 channel_name = "book_ticker_channel"
 start_position = "latest"
+read_mode = "latest"
 required = true
 
 [[data_reader.sources]]
@@ -36,4 +38,5 @@ feed = "book_ticker"
 shm_name = "aquila_binance_market_data"
 channel_name = "book_ticker_channel"
 start_position = "latest"
+read_mode = "latest"
 required = true
