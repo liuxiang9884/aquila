@@ -66,7 +66,7 @@ config/data_sessions/binance_data_session.toml
 
 ## Log
 
-Gate data session config 当前支持顶层 `[log]` section。`tools/gate/data_session.cpp` 启动时先按
+Gate / Binance data session config 当前支持顶层 `[log]` section。data session tool 启动时先按
 Sirius `third_party/sirius/tools/gate/data_center.cpp` 的模式解析 TOML，调用
 `nova::LogConfig::FromToml(toml["log"])`，再用 `nova::InitializeLogging(log_config)` 初始化日志。
 因此后续 instrument catalog / data session parser 的诊断和 dry-run 输出都会使用该配置。
@@ -84,8 +84,9 @@ format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(fi
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 ```
 
-字段语义由 `nova/utils/log.h` 中的 `nova::LogConfig` 定义。当前 Gate tool 会消费这些字段；
-Binance data session tool 仍使用默认 logging，后续如需统一可按同样模式接入。
+字段语义由 `nova/utils/log.h` 中的 `nova::LogConfig` 定义。当前 Gate 和 Binance data
+session tools 都会消费这些字段；各 tool 只 parse 一次 TOML，并把同一个 parsed table 同时用于
+log 初始化和 data session config 生成。
 
 ## Gate 行情进程示例
 

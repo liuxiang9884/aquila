@@ -7,6 +7,7 @@
 
 #include <CLI/CLI.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <toml++/toml.hpp>
 
 #include "core/websocket/websocket_client.h"
 #include "exchange/binance/market_data/data_session_config.h"
@@ -18,8 +19,10 @@ namespace aq_binance = aquila::binance;
 namespace ws = aquila::websocket;
 
 struct LoggingGuard {
-  LoggingGuard() {
-    nova::InitializeLogging();
+  explicit LoggingGuard(const toml::table& toml) {
+    nova::LogConfig log_config;
+    log_config.FromToml(toml["log"]);
+    nova::InitializeLogging(log_config);
   }
 
   ~LoggingGuard() {
@@ -110,10 +113,11 @@ int main(int argc, char** argv) {
   app.add_flag("--connect", connect, "connect to the configured websocket");
   CLI11_PARSE(app, argc, argv);
 
-  LoggingGuard logging_guard;
+  const toml::parse_result toml = toml::parse_file(config_path.string());
+  LoggingGuard logging_guard{toml};
 
   aq_binance::DataSessionConfigResult config_result =
-      aq_binance::LoadDataSessionConfigFile(config_path);
+      aq_binance::ParseDataSessionConfig(toml, config_path);
   if (!config_result.ok) {
     NOVA_ERROR("config_error={}", config_result.error);
     return 1;

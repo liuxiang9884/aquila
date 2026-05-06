@@ -183,6 +183,42 @@ TEST(DataSessionConfigTest, ParsesGateDataSessionFromAlreadyParsedToml) {
   EXPECT_EQ(config_result.value.symbol_ids[0], 0);
 }
 
+TEST(DataSessionConfigTest, LoadsBinanceLogConfigFromToml) {
+  const toml::table toml = toml::parse_file(
+      SourcePath("config/data_sessions/binance_data_session.toml").string());
+
+  nova::LogConfig log_config;
+  log_config.FromToml(toml["log"]);
+
+  EXPECT_EQ(log_config.log_level(), nova::LogLevel::kLogInfo);
+  EXPECT_EQ(log_config.file_sink_name(), "/tmp/taifex_future.log");
+  EXPECT_EQ(log_config.console_sink_name(), "taifex_data");
+  EXPECT_EQ(log_config.backend_thread_name(), "multicast_connector_log");
+  EXPECT_EQ(log_config.backend_cpu_affinity(), 5);
+  EXPECT_EQ(log_config.format_pattern(),
+            "%(log_level_short_code)%(time) %(process_id):%(thread_id) "
+            "%(file_name):%(caller_function):%(line_number)] %(message)");
+  EXPECT_EQ(log_config.timestamp_pattern(), "%Y-%m-%d %H:%M:%S.%Qns");
+}
+
+TEST(DataSessionConfigTest, ParsesBinanceDataSessionFromAlreadyParsedToml) {
+  const std::filesystem::path config_path =
+      SourcePath("config/data_sessions/binance_data_session.toml");
+  const toml::table toml = toml::parse_file(config_path.string());
+
+  const auto config_result =
+      aquila::binance::ParseDataSessionConfig(toml, config_path);
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  EXPECT_EQ(config_result.value.name, "binance_data_session");
+  EXPECT_EQ(config_result.value.connection.target,
+            "/public/ws/btcusdt@bookTicker/ethusdt@bookTicker/"
+            "solusdt@bookTicker");
+  ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
+  EXPECT_EQ(config_result.value.exchange_symbols[0], "BTCUSDT");
+  EXPECT_EQ(config_result.value.symbol_ids[0], 0);
+}
+
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]

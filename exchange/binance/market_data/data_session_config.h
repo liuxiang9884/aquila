@@ -25,6 +25,9 @@ using DataSessionConfigResult = Result<DataSessionConfig>;
 [[nodiscard]] DataSessionConfigResult ParseDataSessionConfig(
     const toml::table& node);
 
+[[nodiscard]] DataSessionConfigResult ParseDataSessionConfig(
+    const toml::table& node, const std::filesystem::path& config_file_path);
+
 [[nodiscard]] DataSessionConfigResult LoadDataSessionConfigFile(
     const std::filesystem::path& path);
 

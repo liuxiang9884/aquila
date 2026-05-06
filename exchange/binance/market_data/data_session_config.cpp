@@ -236,11 +236,16 @@ DataSessionConfigResult ParseDataSessionConfig(const toml::table& node) {
   return DataSessionConfigParser{node}.Parse();
 }
 
+DataSessionConfigResult ParseDataSessionConfig(
+    const toml::table& node, const std::filesystem::path& config_file_path) {
+  return DataSessionConfigParser{node, config_file_path}.Parse();
+}
+
 DataSessionConfigResult LoadDataSessionConfigFile(
     const std::filesystem::path& path) {
   try {
     const toml::parse_result parsed = toml::parse_file(path.string());
-    return DataSessionConfigParser{parsed, path}.Parse();
+    return ParseDataSessionConfig(parsed, path);
   } catch (const std::exception& exc) {
     return Failure(std::string{"failed to load Binance market data config: "} +
                    exc.what());
