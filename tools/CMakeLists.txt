@@ -77,6 +77,18 @@ target_link_libraries(book_ticker_shm_reader
         nova
 )
 
+add_executable(data_reader_probe
+    market_data/data_reader_probe.cpp
+)
+
+target_link_libraries(data_reader_probe
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        nova
+)
+
 add_executable(websocket_latency_compare
     websocket/latency_compare.cpp
 )
