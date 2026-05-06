@@ -64,6 +64,19 @@ target_link_libraries(binance_futures_book_ticker_probe
         magic_enum::magic_enum
 )
 
+add_executable(book_ticker_shm_reader
+    market_data/book_ticker_shm_reader.cpp
+)
+
+target_link_libraries(book_ticker_shm_reader
+    PRIVATE
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+)
+
 add_executable(websocket_latency_compare
     websocket/latency_compare.cpp
 )
