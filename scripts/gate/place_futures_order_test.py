@@ -43,6 +43,40 @@ class PlaceFuturesOrderTest(unittest.TestCase):
         self.assertEqual(payload["size"], -3)
         self.assertTrue(payload["reduce_only"])
 
+    def test_build_order_payload_allows_max_configured_size(self):
+        payload = orders.build_order_payload(
+            contract="BTC_USDT",
+            side="buy",
+            size=orders.MAX_ORDER_SIZE,
+            price="1",
+            tif="gtc",
+            text="t-aquila-rest-test",
+        )
+
+        self.assertEqual(payload["size"], 5)
+
+    def test_build_order_payload_rejects_size_above_max_risk_limit(self):
+        with self.assertRaisesRegex(ValueError, "size must be <= 5"):
+            orders.build_order_payload(
+                contract="BTC_USDT",
+                side="buy",
+                size=6,
+                price="1",
+                tif="gtc",
+                text="t-aquila-rest-test",
+            )
+
+    def test_build_order_payload_rejects_sell_size_above_max_risk_limit(self):
+        with self.assertRaisesRegex(ValueError, "size must be <= 5"):
+            orders.build_order_payload(
+                contract="BTC_USDT",
+                side="sell",
+                size=6,
+                price="1000000",
+                tif="gtc",
+                text="t-aquila-rest-test",
+            )
+
     def test_build_order_payload_rejects_market_price_without_ioc(self):
         with self.assertRaisesRegex(ValueError, "price=0 requires tif=ioc"):
             orders.build_order_payload(

@@ -285,7 +285,8 @@ GET /futures/{settle}/fee
 
 Gate REST futures 下单测试脚本使用 `POST /futures/{settle}/orders` 创建常规 futures order，默认只
 dry-run 打印请求体；必须显式加 `--execute` 才会真实提交。真实提交后默认会立刻调用
-`DELETE /futures/{settle}/orders/{order_id}` 撤单；只有加 `--keep-open` 才会保留挂单。
+`DELETE /futures/{settle}/orders/{order_id}` 撤单；只有加 `--keep-open` 才会保留挂单。脚本内置单次
+最大下单手数风控，当前 `MAX_ORDER_SIZE = 5`，超过会在发请求前拒绝。
 
 ```bash
 scripts/gate/place_futures_order.py \

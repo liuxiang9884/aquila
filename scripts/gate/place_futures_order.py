@@ -25,6 +25,7 @@ from query_gate_account import (
 USER_AGENT = "aquila-gate-futures-order-test/1.0"
 DEFAULT_CONTRACT = "BTC_USDT"
 DEFAULT_TEXT_PREFIX = "t-aquila-rest"
+MAX_ORDER_SIZE = 5
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,8 @@ def validate_order_text(text: str) -> str:
 def signed_order_size(side: str, size: int) -> int:
     if size <= 0:
         raise ValueError("size must be positive")
+    if size > MAX_ORDER_SIZE:
+        raise ValueError(f"size must be <= {MAX_ORDER_SIZE}")
     return size if normalize_side(side) == "buy" else -size
 
 
@@ -247,7 +250,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--settle", default="usdt", help="Futures settlement currency, e.g. usdt.")
     parser.add_argument("--contract", default=DEFAULT_CONTRACT, help="Gate futures contract.")
     parser.add_argument("--side", choices=("buy", "sell"), default="buy", help="Order side.")
-    parser.add_argument("--size", type=int, default=1, help="Positive contract size.")
+    parser.add_argument(
+        "--size",
+        type=int,
+        default=1,
+        help=f"Positive contract size. Hard risk limit: <= {MAX_ORDER_SIZE}.",
+    )
     parser.add_argument("--price", default="1", help="Limit price. price=0 requires --tif ioc.")
     parser.add_argument(
         "--tif",
