@@ -68,13 +68,13 @@ enum class TimeInForce : std::uint8_t { kGoodTillCancel, kImmediateOrCancel };
 
 enum class OrderStatus : std::uint8_t {
   kCreated,
-  kSubmitted,
-  kAcked,
+  kSent,
   kAccepted,
+  kPartialFilled,
+  kFilled,
+  kCancelSent,
+  kCancelled,
   kRejected,
-  kCancelSubmitted,
-  kCancelAccepted,
-  kCancelRejected,
 };
 
 struct OrderDraft {
@@ -289,8 +289,8 @@ Create `strategy/strategy.h`:
 - Constructor stores `GatewayT& gateway` and `OrderStore<typename GatewayT::Order> orders`。
 - `CreateLimitOrder(OrderDraft draft)` validates `draft.symbol` non-empty, `draft.price_text` non-empty and `draft.quantity > 0` before allocation。
 - Valid draft allocates an order, copies exchange-neutral fields, calls `gateway.PrepareOrder()` once and leaves status at `kCreated`。
-- `SubmitOrder(local_order_id)` only accepts `kCreated`; gateway send ok changes status to `kSubmitted`。
-- `CancelOrder(local_order_id)` only accepts `kSubmitted`、`kAcked` 或 `kAccepted`; gateway send ok changes status to `kCancelSubmitted`。
+- `SubmitOrder(local_order_id)` only accepts `kCreated`; gateway send ok changes status to `kSent`。
+- `CancelOrder(local_order_id)` only accepts `kSent`、`kAccepted` 或 `kPartialFilled`; gateway send ok changes status to `kCancelSent`。
 - `OnOrderResponse(event)` updates status and binds non-zero exchange order id on accepted / cancel accepted responses。
 - `FindOrder()`、`FindOrderByExchangeOrderId()` 和 `order_count()` delegate to `OrderStore`。
 

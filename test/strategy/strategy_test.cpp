@@ -53,7 +53,7 @@ OrderCreateRequest MakeLimitRequest() noexcept {
                             .reduce_only = false};
 }
 
-TEST(StrategyTest, PlacesLimitOrderAndStoresSubmittedOrder) {
+TEST(StrategyTest, PlacesLimitOrderAndStoresSentOrder) {
   FakeGateway gateway;
   Strategy<FakeGateway> strategy(gateway, 8);
 
@@ -65,11 +65,28 @@ TEST(StrategyTest, PlacesLimitOrderAndStoresSubmittedOrder) {
   EXPECT_EQ(gateway.last_place_local_order_id, placed.local_order_id);
   const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->status, OrderStatus::kSubmitted);
+  EXPECT_EQ(order->status, OrderStatus::kSent);
   EXPECT_EQ(order->exchange, Exchange::kGate);
   EXPECT_EQ(order->symbol_id, 7);
   EXPECT_EQ(order->symbol, "BTC_USDT");
   EXPECT_EQ(order->quantity, 1);
+}
+
+TEST(StrategyTest, AckResponseKeepsSentOrderWaitingForExchangeId) {
+  FakeGateway gateway;
+  Strategy<FakeGateway> strategy(gateway, 8);
+  const OrderPlaceResult placed = strategy.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  strategy.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+  });
+
+  const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kSent);
+  EXPECT_EQ(order->exchange_order_id, 0U);
 }
 
 TEST(StrategyTest, RejectsInvalidLimitOrderBeforeAllocatingOrder) {
@@ -159,7 +176,7 @@ TEST(StrategyTest, DuplicateExchangeOrderIdDoesNotAcceptSecondOrder) {
 
   const StrategyOrder* second_order = strategy.FindOrder(second.local_order_id);
   ASSERT_NE(second_order, nullptr);
-  EXPECT_EQ(second_order->status, OrderStatus::kSubmitted);
+  EXPECT_EQ(second_order->status, OrderStatus::kSent);
   EXPECT_EQ(second_order->exchange_order_id, 0U);
   EXPECT_EQ(second_order->error_label_hash, 91U);
   const StrategyOrder* by_exchange =
@@ -191,10 +208,10 @@ TEST(StrategyTest, CancelsAcceptedOrderAndAppliesCancelResponse) {
   EXPECT_EQ(gateway.last_cancel_local_order_id, placed.local_order_id);
   const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->status, OrderStatus::kCancelAccepted);
+  EXPECT_EQ(order->status, OrderStatus::kCancelled);
 }
 
-TEST(StrategyTest, SessionCancelRejectedDoesNotEnterCancelSubmitted) {
+TEST(StrategyTest, SessionCancelRejectedDoesNotEnterCancelSent) {
   FakeGateway gateway;
   gateway.cancel_status = FakeGateway::SendStatus::kRejected;
   Strategy<FakeGateway> strategy(gateway, 8);
@@ -215,6 +232,31 @@ TEST(StrategyTest, SessionCancelRejectedDoesNotEnterCancelSubmitted) {
   EXPECT_EQ(order->status, OrderStatus::kAccepted);
 }
 
+TEST(StrategyTest, CancelRejectedResponseMarksOrderRejected) {
+  FakeGateway gateway;
+  Strategy<FakeGateway> strategy(gateway, 8);
+  const OrderPlaceResult placed = strategy.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  strategy.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+  });
+  ASSERT_EQ(strategy.CancelOrder(placed.local_order_id).status,
+            OrderCancelStatus::kOk);
+
+  strategy.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kCancelRejected,
+      .local_order_id = placed.local_order_id,
+      .error_label_hash = 91U,
+  });
+
+  const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kRejected);
+  EXPECT_EQ(order->error_label_hash, 91U);
+}
+
 TEST(StrategyTest, DuplicateCancelIsRejectedByInvalidStatus) {
   FakeGateway gateway;
   Strategy<FakeGateway> strategy(gateway, 8);
@@ -229,10 +271,10 @@ TEST(StrategyTest, DuplicateCancelIsRejectedByInvalidStatus) {
   EXPECT_EQ(gateway.cancel_calls, 1);
   const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->status, OrderStatus::kCancelSubmitted);
+  EXPECT_EQ(order->status, OrderStatus::kCancelSent);
 }
 
-TEST(StrategyTest, DelayedAckAfterCancelSubmittedDoesNotOverwriteStatus) {
+TEST(StrategyTest, DelayedAckAfterCancelSentDoesNotOverwriteStatus) {
   FakeGateway gateway;
   Strategy<FakeGateway> strategy(gateway, 8);
   const OrderPlaceResult placed = strategy.PlaceLimitOrder(MakeLimitRequest());
@@ -247,10 +289,10 @@ TEST(StrategyTest, DelayedAckAfterCancelSubmittedDoesNotOverwriteStatus) {
 
   const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->status, OrderStatus::kCancelSubmitted);
+  EXPECT_EQ(order->status, OrderStatus::kCancelSent);
 }
 
-TEST(StrategyTest, DelayedAcceptedAfterCancelSubmittedBindsExchangeIdOnly) {
+TEST(StrategyTest, DelayedAcceptedAfterCancelSentBindsExchangeIdOnly) {
   FakeGateway gateway;
   Strategy<FakeGateway> strategy(gateway, 8);
   const OrderPlaceResult placed = strategy.PlaceLimitOrder(MakeLimitRequest());
@@ -266,7 +308,7 @@ TEST(StrategyTest, DelayedAcceptedAfterCancelSubmittedBindsExchangeIdOnly) {
 
   const StrategyOrder* order = strategy.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->status, OrderStatus::kCancelSubmitted);
+  EXPECT_EQ(order->status, OrderStatus::kCancelSent);
   EXPECT_EQ(order->exchange_order_id, 36028827892199865U);
   const StrategyOrder* by_exchange =
       strategy.FindOrderByExchangeOrderId(36028827892199865U);

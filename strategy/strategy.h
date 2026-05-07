@@ -38,7 +38,7 @@ class Strategy {
               .local_order_id = order->local_order_id};
     }
 
-    order->status = OrderStatus::kSubmitted;
+    order->status = OrderStatus::kSent;
     return {.status = OrderPlaceStatus::kOk,
             .local_order_id = order->local_order_id};
   }
@@ -60,7 +60,7 @@ class Strategy {
               .local_order_id = local_order_id};
     }
 
-    order->status = OrderStatus::kCancelSubmitted;
+    order->status = OrderStatus::kCancelSent;
     return {.status = OrderCancelStatus::kOk, .local_order_id = local_order_id};
   }
 
@@ -72,7 +72,6 @@ class Strategy {
 
     switch (event.kind) {
       case OrderResponseKind::kAck:
-        OnAck(*order);
         break;
       case OrderResponseKind::kAccepted:
         OnAccepted(*order, event);
@@ -139,19 +138,12 @@ class Strategy {
   }
 
   static bool CanSubmitCancel(OrderStatus status) noexcept {
-    return status == OrderStatus::kSubmitted || status == OrderStatus::kAcked ||
-           status == OrderStatus::kAccepted;
-  }
-
-  void OnAck(Order& order) noexcept {
-    if (order.status == OrderStatus::kSubmitted) {
-      order.status = OrderStatus::kAcked;
-    }
+    return status == OrderStatus::kSent || status == OrderStatus::kAccepted ||
+           status == OrderStatus::kPartialFilled;
   }
 
   void OnAccepted(Order& order, const OrderResponseEvent& event) noexcept {
-    if (order.status == OrderStatus::kSubmitted ||
-        order.status == OrderStatus::kAcked) {
+    if (order.status == OrderStatus::kSent) {
       if (!BindExchangeOrderId(order, event)) {
         return;
       }
@@ -159,14 +151,13 @@ class Strategy {
       return;
     }
 
-    if (order.status == OrderStatus::kCancelSubmitted) {
+    if (order.status == OrderStatus::kCancelSent) {
       BindExchangeOrderIdIfUnbound(order, event);
     }
   }
 
   void OnRejected(Order& order, const OrderResponseEvent& event) noexcept {
-    if (order.status == OrderStatus::kSubmitted ||
-        order.status == OrderStatus::kAcked) {
+    if (order.status == OrderStatus::kSent) {
       order.status = OrderStatus::kRejected;
       order.error_label_hash = event.error_label_hash;
     }
@@ -174,19 +165,19 @@ class Strategy {
 
   void OnCancelAccepted(Order& order,
                         const OrderResponseEvent& event) noexcept {
-    if (order.status != OrderStatus::kCancelSubmitted) {
+    if (order.status != OrderStatus::kCancelSent) {
       return;
     }
     if (!BindExchangeOrderId(order, event)) {
       return;
     }
-    order.status = OrderStatus::kCancelAccepted;
+    order.status = OrderStatus::kCancelled;
   }
 
   void OnCancelRejected(Order& order,
                         const OrderResponseEvent& event) noexcept {
-    if (order.status == OrderStatus::kCancelSubmitted) {
-      order.status = OrderStatus::kCancelRejected;
+    if (order.status == OrderStatus::kCancelSent) {
+      order.status = OrderStatus::kRejected;
       order.error_label_hash = event.error_label_hash;
     }
   }

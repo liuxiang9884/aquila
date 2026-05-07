@@ -25,7 +25,7 @@
 - [x] **Step 1: Write failing Strategy tests**
 
 Update tests to expect:
-- `Strategy::PlaceLimitOrder(request)` creates an order, stores it in `OrderPool`, calls `order_session.PlaceOrder(order)` immediately, and marks status `kSubmitted` on send success.
+- `Strategy::PlaceLimitOrder(request)` creates an order, stores it in `OrderPool`, calls `order_session.PlaceOrder(order)` immediately, and marks status `kSent` on local send success.
 - invalid request is rejected before allocation and before session send.
 - session send failure stores the attempted order as `kRejected`.
 - no test calls `PrepareOrder()` or `SubmitOrder()`.

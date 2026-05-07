@@ -10,13 +10,13 @@ namespace aquila::strategy {
 
 enum class OrderStatus : std::uint8_t {
   kCreated,
-  kSubmitted,
-  kAcked,
+  kSent,
   kAccepted,
+  kPartialFilled,
+  kFilled,
+  kCancelSent,
+  kCancelled,
   kRejected,
-  kCancelSubmitted,
-  kCancelAccepted,
-  kCancelRejected,
 };
 
 enum class OrderPlaceStatus : std::uint8_t {
