@@ -397,7 +397,7 @@ Expected: benchmark executable runs all three benchmark cases without failures. 
 - Modify: `doc/project_onboarding_guide.md`
 - Modify: `doc/agent-handoff-gate-trade-architecture.md`
 
-- [ ] **Step 1: 更新 onboarding**
+- [x] **Step 1: 更新 onboarding**
 
 Update `doc/project_onboarding_guide.md`:
 
@@ -407,7 +407,7 @@ Update `doc/project_onboarding_guide.md`:
 - “验证命令”增加 strategy gtest 和 benchmark smoke 命令。
 - “下一步建议”增加私有 feedback session、REST reconcile、symbol metadata/risk check 接入和端到端 live smoke 的顺序。
 
-- [ ] **Step 2: 更新 Gate handoff**
+- [x] **Step 2: 更新 Gate handoff**
 
 Update `doc/agent-handoff-gate-trade-architecture.md`:
 
@@ -415,7 +415,7 @@ Update `doc/agent-handoff-gate-trade-architecture.md`:
 - 明确未覆盖项：private feedback、REST reconcile、batch/amend、真实成交回报状态合并。
 - 增加 Strategy tests / benchmark 验证命令。
 
-- [ ] **Step 3: 文档检查**
+- [x] **Step 3: 文档检查**
 
 Run:
 
