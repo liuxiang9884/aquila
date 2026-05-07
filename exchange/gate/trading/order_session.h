@@ -439,7 +439,8 @@ class OrderSession {
       return;
     }
     if (parsed.http_status == 200 &&
-        parsed.kind == GateSubmitResponseKind::kResult) {
+        parsed.kind == GateSubmitResponseKind::kResult &&
+        parsed.has_login_uid) {
       login_ready_ = true;
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordLoginAccepted();

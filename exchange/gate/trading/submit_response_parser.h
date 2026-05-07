@@ -50,6 +50,8 @@ struct GateSubmitResponse {
   bool has_req_id{false};
   DecodedRequestId req_id{};
   std::uint64_t exchange_order_id{0};
+  bool has_login_uid{false};
+  std::uint64_t login_uid{0};
   std::uint64_t text_hash{0};
   bool has_local_order_id{false};
   std::int64_t local_order_id{0};
@@ -215,9 +217,12 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (!FindSimdjsonObject(root, "data", &data)) {
     return response;
   }
+  if (!response.has_ack) {
+    return response;
+  }
 
   simdjson::ondemand::object errs;
-  if (FindSimdjsonObject(data, "errs", &errs)) {
+  if (!response.ack && FindSimdjsonObject(data, "errs", &errs)) {
     response.kind = GateSubmitResponseKind::kError;
     if (FindSimdjsonField(errs, "label", &value)) {
       response.error_label_hash = HashSimdjsonString(value);
@@ -241,6 +246,11 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   }
 
   response.kind = GateSubmitResponseKind::kResult;
+  if (FindSimdjsonField(result, "uid", &value)) {
+    response.has_login_uid =
+        ReadSimdjsonUint64(value, &response.login_uid) &&
+        response.login_uid > 0;
+  }
   if (FindSimdjsonField(result, "id", &value)) {
     (void)ReadSimdjsonUint64(value, &response.exchange_order_id);
   }

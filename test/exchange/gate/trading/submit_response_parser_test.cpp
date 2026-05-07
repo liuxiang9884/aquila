@@ -283,6 +283,81 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
   EXPECT_EQ(parsed.text_hash, 0U);
 }
 
+TEST(GateSubmitResponseParserTest, MissingAckKeepsResponseKindUnknown) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "144115188075855881",
+    "header": {
+      "status": "200",
+      "channel": "futures.order_place"
+    },
+    "data": {
+      "result": {
+        "id": "36028827892199865",
+        "text": "t-12345"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponse(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_FALSE(parsed.has_ack);
+  EXPECT_FALSE(parsed.ack);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kUnknown);
+  EXPECT_TRUE(parsed.request_id.ok);
+  EXPECT_EQ(parsed.exchange_order_id, 0U);
+  EXPECT_FALSE(parsed.has_local_order_id);
+}
+
+TEST(GateSubmitResponseParserTest, NonBoolAckKeepsResponseKindUnknown) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "144115188075855881",
+    "ack": "false",
+    "header": {
+      "status": "200",
+      "channel": "futures.order_place"
+    },
+    "data": {
+      "result": {
+        "id": "36028827892199865",
+        "text": "t-12345"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponse(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_FALSE(parsed.has_ack);
+  EXPECT_FALSE(parsed.ack);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kUnknown);
+  EXPECT_EQ(parsed.exchange_order_id, 0U);
+  EXPECT_FALSE(parsed.has_local_order_id);
+}
+
+TEST(GateSubmitResponseParserTest, DecodesLoginUid) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "72057594037927937",
+    "ack": false,
+    "header": {
+      "status": "200",
+      "channel": "futures.login"
+    },
+    "data": {
+      "result": {
+        "uid": "14446887"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponse(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kResult);
+  EXPECT_TRUE(parsed.has_login_uid);
+  EXPECT_EQ(parsed.login_uid, 14446887U);
+}
+
 TEST(GateSubmitResponseParserTest, EmptyStringStatusParsesAsMissingStatus) {
   static constexpr std::string_view kPayload = R"json({
     "request_id": "request-id-empty-status",

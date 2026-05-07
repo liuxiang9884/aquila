@@ -383,6 +383,33 @@ TEST(OrderSessionTest, LoginResponseWithUnknownKindDoesNotSetReady) {
   EXPECT_EQ(session.stats().ignored_messages, 2U);
 }
 
+TEST(OrderSessionTest, LoginResultWithoutUidDoesNotSetReady) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+  session.Handle(TextView(
+      R"({"request_id":"72057594037927937","ack":false,"header":{"status":"200","channel":"futures.login","event":"api"},"data":{"result":{}}})"));
+
+  EXPECT_FALSE(session.login_ready());
+  EXPECT_EQ(session.stats().login_accepted, 0U);
+  EXPECT_EQ(session.stats().login_rejected, 1U);
+}
+
+TEST(OrderSessionTest, LoginResponseMissingAckDoesNotSetReady) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+  session.Handle(TextView(
+      R"({"request_id":"72057594037927937","header":{"status":"200","channel":"futures.login","event":"api"},"data":{"result":{"uid":"1"}}})"));
+
+  EXPECT_FALSE(session.login_ready());
+  EXPECT_EQ(session.stats().login_accepted, 0U);
+  EXPECT_EQ(session.stats().login_rejected, 0U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
 TEST(OrderSessionTest, AckWithMismatchedReqIdKeepsInflightAndSkipsHandler) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
@@ -393,6 +420,38 @@ TEST(OrderSessionTest, AckWithMismatchedReqIdKeepsInflightAndSkipsHandler) {
 
   session.Handle(TextView(
       R"({"request_id":"144115188075855874","ack":true,"header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"req_id":"144115188075855875"}}})"));
+
+  EXPECT_TRUE(handler.responses.empty());
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
+TEST(OrderSessionTest, MissingAckResultKeepsInflightAndSkipsHandler) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855874","header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})"));
+
+  EXPECT_TRUE(handler.responses.empty());
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
+TEST(OrderSessionTest, NonBoolAckResultKeepsInflightAndSkipsHandler) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855874","ack":"false","header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})"));
 
   EXPECT_TRUE(handler.responses.empty());
   EXPECT_EQ(session.inflight_count(), 1U);
@@ -429,6 +488,25 @@ TEST(OrderSessionTest, UnknownResponseKindSkipsHandlerAndKeepsInflight) {
   EXPECT_TRUE(handler.responses.empty());
   EXPECT_EQ(session.inflight_count(), 1U);
   EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
+TEST(OrderSessionTest, PlaceErrorMapsRejectedAndErasesCorrelation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855874","ack":false,"header":{"status":"400","channel":"futures.order_place","event":"api"},"data":{"errs":{"label":"TOO_MANY_REQUESTS","message":"rate limit"}}})"));
+
+  ASSERT_EQ(handler.responses.size(), 1U);
+  EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kRejected);
+  EXPECT_EQ(handler.responses[0].local_order_id, 123);
+  EXPECT_EQ(handler.responses[0].error_label_hash,
+            HashGateSubmitString("TOO_MANY_REQUESTS"));
+  EXPECT_EQ(session.inflight_count(), 0U);
 }
 
 TEST(OrderSessionTest, PlaceResultMissingExchangeIdErasesWithoutHandler) {
