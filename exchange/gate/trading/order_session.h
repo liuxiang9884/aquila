@@ -161,6 +161,9 @@ class OrderSession {
     if (!login_ready_) {
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
+    if (request.wire.local_order_id <= 0) {
+      return EarlyLocalReject(OrderSendStatus::kInvalidLocalOrderId, true);
+    }
     if (request_id_to_local_order_id_.size() >= kDefaultOrderInflightCapacity) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
@@ -199,6 +202,9 @@ class OrderSession {
     }
     if (!login_ready_) {
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
+    }
+    if (request.local_order_id <= 0) {
+      return EarlyLocalReject(OrderSendStatus::kInvalidLocalOrderId, true);
     }
     if (request_id_to_local_order_id_.size() >= kDefaultOrderInflightCapacity) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
@@ -288,7 +294,7 @@ class OrderSession {
       case OrderEncodeStatus::kBufferTooSmall:
         return OrderSendStatus::kEncodeBufferTooSmall;
       case OrderEncodeStatus::kInvalidOrderText:
-        return OrderSendStatus::kInvalidOrderText;
+        return OrderSendStatus::kInvalidLocalOrderId;
       case OrderEncodeStatus::kSignatureFailed:
         return OrderSendStatus::kSignatureFailed;
     }

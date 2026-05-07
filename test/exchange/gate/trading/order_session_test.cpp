@@ -128,6 +128,20 @@ TEST(OrderSessionTest, RejectsPlaceBeforeLoginReady) {
   EXPECT_TRUE(handler.responses.empty());
 }
 
+TEST(OrderSessionTest, InvalidPlaceLocalOrderIdIsRejectedBeforeSend) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(0));
+
+  EXPECT_EQ(sent.status, OrderSendStatus::kInvalidLocalOrderId);
+  EXPECT_EQ(sent.request_sequence, 0U);
+  EXPECT_EQ(sent.encoded_request_id, 0U);
+  EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.stats().local_send_failures, 1U);
+}
+
 TEST(OrderSessionTest, SendsLoginOnActiveAndMarksReadyOnSuccess) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
@@ -591,15 +605,17 @@ TEST(OrderSessionTest, NoPreparedWriteSlotsMapsToLocalSendFailure) {
   EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
 
-TEST(OrderSessionTest, InvalidCancelFallbackReturnsInvalidOrderText) {
+TEST(OrderSessionTest, InvalidCancelLocalOrderIdIsRejectedBeforeSend) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(
-      CancelOrderRequest{.local_order_id = 0, .exchange_order_id = 0});
+  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
+      .local_order_id = 0, .exchange_order_id = 36028827892199865U});
 
-  EXPECT_EQ(sent.status, OrderSendStatus::kInvalidOrderText);
+  EXPECT_EQ(sent.status, OrderSendStatus::kInvalidLocalOrderId);
+  EXPECT_EQ(sent.request_sequence, 0U);
+  EXPECT_EQ(sent.encoded_request_id, 0U);
   EXPECT_EQ(session.inflight_count(), 0U);
   EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
