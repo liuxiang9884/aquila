@@ -36,3 +36,16 @@ target_link_libraries(gate_order_request_encoder_test
 
 add_test(NAME gate_order_request_encoder_test
          COMMAND gate_order_request_encoder_test)
+
+add_executable(gate_order_session_test
+    order_session_test.cpp
+)
+
+target_link_libraries(gate_order_session_test
+    PRIVATE
+        aquila_gate
+        GTest::gtest_main
+)
+
+add_test(NAME gate_order_session_test
+         COMMAND gate_order_session_test)
