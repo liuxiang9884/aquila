@@ -271,7 +271,7 @@ Expected: all `OrderStoreTest` tests pass.
 - Create: `strategy/strategy.h`
 - Keep or modify: `test/strategy/strategy_test.cpp`
 
-- [ ] **Step 1: 确认 RED**
+- [x] **Step 1: 确认 RED**
 
 Run:
 
@@ -281,7 +281,7 @@ cmake --build build/debug --target strategy_test -j8
 
 Expected: compile fails because `strategy/strategy.h` does not exist or required methods are missing.
 
-- [ ] **Step 2: 实现 `Strategy<GatewayT>`**
+- [x] **Step 2: 实现 `Strategy<GatewayT>`**
 
 Create `strategy/strategy.h`:
 
@@ -294,7 +294,7 @@ Create `strategy/strategy.h`:
 - `OnOrderResponse(event)` updates status and binds non-zero exchange order id on accepted / cancel accepted responses。
 - `FindOrder()`、`FindOrderByExchangeOrderId()` 和 `order_count()` delegate to `OrderStore`。
 
-- [ ] **Step 3: 运行 Task 2 验证**
+- [x] **Step 3: 运行 Task 2 验证**
 
 Run:
 

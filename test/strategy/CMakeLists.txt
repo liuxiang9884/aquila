@@ -12,3 +12,4 @@ function(add_strategy_gtest target source_file)
 endfunction()
 
 add_strategy_gtest(strategy_order_store_test order_store_test.cpp)
+add_strategy_gtest(strategy_test strategy_test.cpp)
