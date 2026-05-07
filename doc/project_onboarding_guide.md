@@ -327,8 +327,9 @@ OrderSession 第一版关键结论：
 
 - Strategy 负责风控、symbol metadata 校验、订单对象、订单状态机、订单执行逻辑和 Gate wire fields 缓存。
 - `OrderSession` 接收 wire-ready 的薄 request，不接收 Sirius 的重 `OrderStruct`，也不维护 pending order table。
+- `OrderSession` 发送前要求 `local_order_id > 0`；本地 id 非法时返回 `kInvalidLocalOrderId`，不消耗 request sequence。
 - place `ack=true` 只表示 Gate 收到请求，不建立交易所 order id 映射，也不清理 correlation。
-- place final result 才建立本地订单和交易所订单的匹配信息，并清理 correlation。
+- ack/result 成功形态必须是 HTTP 200；place final result 才建立本地订单和交易所订单的匹配信息，并清理 correlation。
 - cancel response 使用 encoded request id 做主 correlation；如果 result 携带 `text`，必须匹配本地 id；仅 exchange-id 的进一步原始 cancel id 校验属于后续增强设计。
 - 断线时清空 correlation，不构造假的 rejected/cancelled response；Strategy 后续通过 state/reconcile 处理未知状态。
 

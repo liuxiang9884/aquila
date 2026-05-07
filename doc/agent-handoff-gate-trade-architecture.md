@@ -453,11 +453,12 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 2. login request 使用 Gate WS API 要求的 HMAC-SHA512 lowercase hex signature，签名字符串为 `api\n{channel}\n{request_param}\n{timestamp}`。
 3. place/cancel request encoder 使用固定栈缓冲区和 `fmt::format_to_n`，编码失败返回本地失败，不发送截断 JSON。
 4. submit response parser 已保留原 hash 字段，并新增 decoded root `request_id`、decoded ack `req_id`、channel、local order id 和 exchange order id。
-5. `OrderSession` active 后发送 login，login result 必须匹配 request sequence、`futures.login` channel、HTTP 200 和 result kind 才置为 ready。
-6. place/cancel `ack=true` 只做接收确认和同步回调，不清理 correlation；final result/error 清理 correlation。
-7. place final result 必须有 exchange order id 和匹配的 `text` local id；cancel final result 至少需要 exchange order id 或匹配的 `text` local id。
-8. cancel response 当前以 Gate top-level encoded request id 做主 correlation；若未来需要校验原始 cancel exchange id，需要把 correlation value 从 local id 扩展成 pending request metadata。
-9. 断线、关闭或 reconnect backoff 会清空 login ready、login sequence 和 inflight correlation，不合成订单状态回报。
+5. `OrderSession` active 后发送 login，login result 必须匹配 request sequence、`futures.login` channel、HTTP 200、result kind 和非零 `uid` 才置为 ready。
+6. place/cancel 发送前要求本地 `local_order_id > 0`；本地 id 非法时返回 `kInvalidLocalOrderId`，不消耗 request sequence，也不写 WebSocket。
+7. place/cancel `ack=true` 只做接收确认和同步回调，不清理 correlation；ack/result 成功形态必须是 HTTP 200，非 200 的 result 视为 malformed 并保留 inflight。
+8. place final result 必须有 exchange order id 和匹配的 `text` local id；cancel final result 至少需要 exchange order id 或匹配的 `text` local id。
+9. cancel response 当前以 Gate top-level encoded request id 做主 correlation；若未来需要校验原始 cancel exchange id，需要把 correlation value 从 local id 扩展成 pending request metadata。
+10. 断线、关闭或 reconnect backoff 会清空 login ready、login sequence 和 inflight correlation，不合成订单状态回报。
 
 当前验证入口：
 
