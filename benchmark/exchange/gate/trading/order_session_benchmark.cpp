@@ -129,7 +129,8 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
 struct BenchOrder {
   std::int64_t local_order_id{0};
   std::string_view symbol{};
-  std::int64_t signed_quantity{0};
+  OrderSide side{OrderSide::kBuy};
+  std::int64_t quantity{0};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::uint64_t exchange_order_id{0};
@@ -139,7 +140,8 @@ struct BenchOrder {
 BenchOrder MakePlaceOrder() noexcept {
   return BenchOrder{.local_order_id = kLocalOrderId,
                     .symbol = "BTC_USDT",
-                    .signed_quantity = 1,
+                    .side = OrderSide::kBuy,
+                    .quantity = 1,
                     .price_text = "81000",
                     .time_in_force = TimeInForce::kGoodTillCancel,
                     .exchange_order_id = 0,

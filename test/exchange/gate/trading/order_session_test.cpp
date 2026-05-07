@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/common/types.h"
 #include "core/websocket/message_view.h"
 #include "exchange/gate/trading/submit_response_parser.h"
 
@@ -93,7 +94,8 @@ class TestOrderSession
 struct TestOrder {
   std::int64_t local_order_id{0};
   std::string_view symbol{};
-  std::int64_t signed_quantity{0};
+  OrderSide side{OrderSide::kBuy};
+  std::int64_t quantity{0};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::uint64_t exchange_order_id{0};
@@ -103,7 +105,8 @@ struct TestOrder {
 TestOrder MakePlaceOrder(std::int64_t local_order_id) noexcept {
   return TestOrder{.local_order_id = local_order_id,
                    .symbol = "BTC_USDT",
-                   .signed_quantity = 1,
+                   .side = OrderSide::kBuy,
+                   .quantity = 1,
                    .price_text = "81000",
                    .time_in_force = TimeInForce::kGoodTillCancel,
                    .exchange_order_id = 0,
@@ -135,6 +138,17 @@ void ActivateAndLogin(TestOrderSession<Handler>& session) {
   ASSERT_EQ(session.Handle(TextView(LoginSuccessResponse())),
             websocket::DeliveryResult::kAccepted);
   ASSERT_TRUE(session.login_ready());
+}
+
+TEST(OrderSessionTest, SignedSizeUsesSideAndPositiveQuantity) {
+  TestOrder buy = MakePlaceOrder(123);
+  buy.side = OrderSide::kBuy;
+  buy.quantity = 2;
+  TestOrder sell = buy;
+  sell.side = OrderSide::kSell;
+
+  EXPECT_EQ(SignedOrderSizeForGate(buy), 2);
+  EXPECT_EQ(SignedOrderSizeForGate(sell), -2);
 }
 
 TEST(OrderSessionTest, RejectsPlaceBeforeLoginReady) {

@@ -47,7 +47,7 @@ struct OrderCreateRequest {
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::int64_t signed_quantity{0};
+  std::int64_t quantity{0};
   std::string_view price_text{};
   bool reduce_only{false};
 };
@@ -60,7 +60,7 @@ struct StrategyOrder {
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::int64_t signed_quantity{0};
+  std::int64_t quantity{0};
   std::string_view price_text{};
   std::uint64_t exchange_order_id{0};
   bool reduce_only{false};

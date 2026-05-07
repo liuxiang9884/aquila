@@ -50,7 +50,7 @@ struct FakeOrderSession {
                             .symbol = kContract,
                             .side = OrderSide::kBuy,
                             .time_in_force = TimeInForce::kGoodTillCancel,
-                            .signed_quantity = 1,
+                            .quantity = 1,
                             .price_text = kPriceText,
                             .reduce_only = false};
 }

@@ -27,6 +27,12 @@ struct LoginCredentials {
   std::string api_secret;
 };
 
+template <typename OrderT>
+[[nodiscard]] std::int64_t SignedOrderSizeForGate(
+    const OrderT& order) noexcept {
+  return order.side == OrderSide::kBuy ? order.quantity : -order.quantity;
+}
+
 class NoopOrderSessionDiagnostics {
  public:
   static constexpr bool kEnabled = false;
@@ -178,7 +184,7 @@ class OrderSession {
                                .encoded_request_id = encoded_request_id,
                                .local_order_id = order.local_order_id,
                                .contract = order.symbol,
-                               .signed_size = order.signed_quantity,
+                               .signed_size = SignedOrderSizeForGate(order),
                                .price_text = order.price_text,
                                .time_in_force = order.time_in_force,
                                .reduce_only = order.reduce_only},

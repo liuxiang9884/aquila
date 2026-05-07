@@ -22,7 +22,7 @@ class Strategy {
 
   OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
     if (request.symbol.empty() || request.price_text.empty() ||
-        request.signed_quantity == 0) {
+        request.quantity <= 0) {
       return {.status = OrderPlaceStatus::kInvalidOrder, .local_order_id = 0};
     }
 
@@ -124,7 +124,7 @@ class Strategy {
     order->side = request.side;
     order->type = OrderType::kLimit;
     order->time_in_force = request.time_in_force;
-    order->signed_quantity = request.signed_quantity;
+    order->quantity = request.quantity;
     order->price_text = request.price_text;
     order->exchange_order_id = 0;
     order->reduce_only = request.reduce_only;

@@ -96,7 +96,7 @@ Expected: compile fails because current `OrderSession::PlaceOrder()` still expec
 Implementation requirements:
 - Remove `OrderWireFields` and `PlaceOrderRequest`.
 - `PlaceOrderEncodeFields` owns the fields needed for Gate JSON serialization and computes `text = t-<local_order_id>` and `tif` in `EncodePlaceOrderRequest()`.
-- `OrderSession::PlaceOrder(const OrderT& order)` is templated and reads `order.local_order_id`、`order.symbol`、`order.signed_quantity`、`order.price_text`、`order.time_in_force`、`order.reduce_only`.
+- `OrderSession::PlaceOrder(const OrderT& order)` is templated and reads `order.local_order_id`、`order.symbol`、`order.side`、`order.quantity`、`order.price_text`、`order.time_in_force`、`order.reduce_only`；Gate signed size is derived inside OrderSession from `side + quantity`.
 - `OrderSession::CancelOrder(const OrderT& order)` reads `order.local_order_id` and `order.exchange_order_id`.
 - Keep session-owned checks only: active, logged-in, request map capacity, send/encode failure. Do not add extra order semantic validation.
 

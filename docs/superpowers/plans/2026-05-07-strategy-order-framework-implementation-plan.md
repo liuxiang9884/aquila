@@ -84,7 +84,7 @@ struct OrderDraft {
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::int64_t signed_quantity{0};
+  std::int64_t quantity{0};
   std::string_view price_text{};
   bool reduce_only{false};
 };
@@ -96,7 +96,7 @@ struct StrategyOrder {
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::int64_t signed_quantity{0};
+  std::int64_t quantity{0};
   std::uint64_t exchange_order_id{0};
   bool reduce_only{false};
   OrderStatus status{OrderStatus::kCreated};
@@ -287,7 +287,7 @@ Create `strategy/strategy.h`:
 
 - Template parameter `GatewayT` must expose `using Order`, `PrepareOrder(Order&, const OrderDraft&)`, `PlaceOrder(Order&)` and `CancelOrder(Order&)`。
 - Constructor stores `GatewayT& gateway` and `OrderStore<typename GatewayT::Order> orders`。
-- `CreateLimitOrder(OrderDraft draft)` validates `draft.symbol` non-empty, `draft.price_text` non-empty and `draft.signed_quantity != 0` before allocation。
+- `CreateLimitOrder(OrderDraft draft)` validates `draft.symbol` non-empty, `draft.price_text` non-empty and `draft.quantity > 0` before allocation。
 - Valid draft allocates an order, copies exchange-neutral fields, calls `gateway.PrepareOrder()` once and leaves status at `kCreated`。
 - `SubmitOrder(local_order_id)` only accepts `kCreated`; gateway send ok changes status to `kSubmitted`。
 - `CancelOrder(local_order_id)` only accepts `kSubmitted`、`kAcked` 或 `kAccepted`; gateway send ok changes status to `kCancelSubmitted`。

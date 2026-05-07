@@ -48,7 +48,7 @@ OrderCreateRequest MakeLimitRequest() noexcept {
                             .symbol = "BTC_USDT",
                             .side = OrderSide::kBuy,
                             .time_in_force = TimeInForce::kGoodTillCancel,
-                            .signed_quantity = 1,
+                            .quantity = 1,
                             .price_text = "81000",
                             .reduce_only = false};
 }
@@ -69,7 +69,7 @@ TEST(StrategyTest, PlacesLimitOrderAndStoresSubmittedOrder) {
   EXPECT_EQ(order->exchange, Exchange::kGate);
   EXPECT_EQ(order->symbol_id, 7);
   EXPECT_EQ(order->symbol, "BTC_USDT");
-  EXPECT_EQ(order->signed_quantity, 1);
+  EXPECT_EQ(order->quantity, 1);
 }
 
 TEST(StrategyTest, RejectsInvalidLimitOrderBeforeAllocatingOrder) {
@@ -77,6 +77,20 @@ TEST(StrategyTest, RejectsInvalidLimitOrderBeforeAllocatingOrder) {
   Strategy<FakeGateway> strategy(gateway, 8);
   OrderCreateRequest request = MakeLimitRequest();
   request.price_text = "";
+
+  const OrderPlaceResult placed = strategy.PlaceLimitOrder(request);
+
+  EXPECT_EQ(placed.status, OrderPlaceStatus::kInvalidOrder);
+  EXPECT_EQ(placed.local_order_id, 0);
+  EXPECT_EQ(strategy.order_count(), 0U);
+  EXPECT_EQ(gateway.place_calls, 0);
+}
+
+TEST(StrategyTest, RejectsNonPositiveQuantityBeforeAllocatingOrder) {
+  FakeGateway gateway;
+  Strategy<FakeGateway> strategy(gateway, 8);
+  OrderCreateRequest request = MakeLimitRequest();
+  request.quantity = 0;
 
   const OrderPlaceResult placed = strategy.PlaceLimitOrder(request);
 
