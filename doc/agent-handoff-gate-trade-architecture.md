@@ -501,7 +501,7 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 strategy/order_types.h
 strategy/order_store.h
 strategy/strategy.h
-strategy/gate_order_gateway.h
+exchange/gate/trading/gate_order_gateway.h
 test/strategy/order_store_test.cpp
 test/strategy/strategy_test.cpp
 test/strategy/gate_order_gateway_test.cpp

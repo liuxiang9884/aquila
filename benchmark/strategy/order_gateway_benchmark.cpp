@@ -5,7 +5,7 @@
 
 #include "core/common/types.h"
 #include "exchange/gate/trading/order_types.h"
-#include "strategy/gate_order_gateway.h"
+#include "exchange/gate/trading/gate_order_gateway.h"
 #include "strategy/order_types.h"
 
 namespace aquila::strategy {

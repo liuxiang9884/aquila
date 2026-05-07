@@ -1,5 +1,5 @@
-#ifndef AQUILA_STRATEGY_GATE_ORDER_GATEWAY_H_
-#define AQUILA_STRATEGY_GATE_ORDER_GATEWAY_H_
+#ifndef AQUILA_EXCHANGE_GATE_TRADING_GATE_ORDER_GATEWAY_H_
+#define AQUILA_EXCHANGE_GATE_TRADING_GATE_ORDER_GATEWAY_H_
 
 #include <algorithm>
 #include <array>
@@ -174,4 +174,4 @@ class GateOrderGateway {
 
 }  // namespace aquila::strategy
 
-#endif  // AQUILA_STRATEGY_GATE_ORDER_GATEWAY_H_
+#endif  // AQUILA_EXCHANGE_GATE_TRADING_GATE_ORDER_GATEWAY_H_

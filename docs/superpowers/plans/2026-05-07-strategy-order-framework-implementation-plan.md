@@ -42,7 +42,7 @@ cmake --build build/debug --target strategy_order_store_test strategy_test strat
 - Create `strategy/order_types.h`: Strategy 订单侧基础枚举、薄 `OrderDraft`、`StrategyOrder`、send/create/submit/cancel/result event 类型。
 - Create `strategy/order_store.h`: 固定容量订单存储，维护 `local_order_id -> order` 和 `exchange_order_id -> local_order_id` 两个索引。
 - Create `strategy/strategy.h`: 模板化 `Strategy<GatewayT>`，提供 create/submit/cancel/response apply 的交易所无关执行流程。
-- Create `strategy/gate_order_gateway.h`: `GateStrategyOrder`、Gate wire fields 缓存、Gate TIF/文本编码、Gate `OrderResponse` 到 Strategy event 映射。
+- Create `exchange/gate/trading/gate_order_gateway.h`: `GateStrategyOrder`、Gate wire fields 缓存、Gate TIF/文本编码、Gate `OrderResponse` 到 Strategy event 映射。
 - Modify `CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
 - Modify `test/CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
 - Create or keep `test/strategy/CMakeLists.txt`: 增加 Strategy 三个 gtest target。
@@ -106,7 +106,7 @@ struct StrategyOrder {
 }  // namespace aquila::strategy
 ```
 
-`strategy/gate_order_gateway.h` 第一版让 Strategy 订单对象缓存 Gate wire fields：
+`exchange/gate/trading/gate_order_gateway.h` 第一版让 Strategy 订单对象缓存 Gate wire fields：
 
 ```cpp
 struct GateOrderCache {
@@ -308,7 +308,7 @@ Expected: all `StrategyTest` tests pass.
 ### Task 3: Gate Order Gateway Adapter
 
 **Files:**
-- Create: `strategy/gate_order_gateway.h`
+- Create: `exchange/gate/trading/gate_order_gateway.h`
 - Keep or modify: `test/strategy/gate_order_gateway_test.cpp`
 
 - [x] **Step 1: 确认 RED**
@@ -319,11 +319,11 @@ Run:
 cmake --build build/debug --target strategy_gate_order_gateway_test -j8
 ```
 
-Expected: compile fails because `strategy/gate_order_gateway.h` does not exist or required adapter methods are missing.
+Expected: compile fails because `exchange/gate/trading/gate_order_gateway.h` does not exist or required adapter methods are missing.
 
 - [x] **Step 2: 实现 Gate adapter**
 
-Create `strategy/gate_order_gateway.h`:
+Create `exchange/gate/trading/gate_order_gateway.h`:
 
 - `GateOrderCache` owns fixed buffers and `gate::OrderWireFields wire`。
 - `GateStrategyOrder : StrategyOrder` owns one `GateOrderCache gate`。
@@ -403,7 +403,7 @@ Update `doc/project_onboarding_guide.md`:
 
 - “最近已完成”增加 Strategy 第一版订单框架、Gate adapter、tests 和 benchmark。
 - “文档索引”增加 this plan。
-- “代码入口”新增 `Strategy 订单框架` 小节，列出 `strategy/order_types.h`、`order_store.h`、`strategy.h`、`gate_order_gateway.h`、Strategy tests 和 benchmark。
+- “代码入口”新增 `Strategy 订单框架` 小节，列出 `strategy/order_types.h`、`order_store.h`、`strategy.h`、`exchange/gate/trading/gate_order_gateway.h`、Strategy tests 和 benchmark。
 - “验证命令”增加 strategy gtest 和 benchmark smoke 命令。
 - “下一步建议”增加私有 feedback session、REST reconcile、symbol metadata/risk check 接入和端到端 live smoke 的顺序。
 

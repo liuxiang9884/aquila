@@ -38,7 +38,7 @@
 20. Gate `OrderSession` 当前边界保持不变：Strategy 做风控、订单对象、订单状态机和 Gate wire fields 缓存；`OrderSession` 做 WS login、place/cancel 编码发送、`request_sequence -> local_order_id` correlation 和轻量同步 `OrderResponse` 回调。
 21. `config/order_sessions/gate_order_session.toml` 和 Gate `OrderSessionConfig` parser 已落地，按 data session 风格复用通用 WebSocket config parser；TOML 只写 `[order_session]`、credentials env 名和 `[order_session.websocket.*]`，WS target 由 `settle` 生成 `/v4/ws/<settle>`。
 22. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
-23. Strategy 第一版订单框架已落地：`strategy/order_types.h`、`strategy/order_store.h`、`strategy/strategy.h` 和 `strategy/gate_order_gateway.h` 覆盖订单对象、固定容量 store、状态推进和 Gate adapter；`test/strategy/*` 和 `benchmark/strategy/order_gateway_benchmark.cpp` 已提供回归测试和 fake session adapter benchmark。
+23. Strategy 第一版订单框架已落地：`strategy/order_types.h`、`strategy/order_store.h`、`strategy/strategy.h` 和 `exchange/gate/trading/gate_order_gateway.h` 覆盖订单对象、固定容量 store、状态推进和 Gate adapter；`test/strategy/*` 和 `benchmark/strategy/order_gateway_benchmark.cpp` 已提供回归测试和 fake session adapter benchmark。
 24. `scripts/gate/run_futures_order_smoke.py` 和 `scripts/gate/run_futures_order_smoke_test.py` 已落地；2026-05-07 使用 Gate REST 对 `BTC_USDT`、1 手、5 轮真实 smoke，结果 `5/5 filled_and_closed`，最终 `position size=0`、`pending_orders=0`、`open orders=[]`。这只是 REST smoke，不是 C++ WS `OrderSession` live smoke。
 25. Strategy / Gate 第一版边界已明确：Strategy 负责订单对象、状态和执行流程；Gate adapter 缓存 wire fields；Gate `OrderSession` 仍只做 WS login、place/cancel、correlation 和轻量 response。Strategy benchmark 是 fake session adapter baseline，不包含真实 `OrderSession` 编码、WebSocket 或 socket 成本。
 
@@ -160,7 +160,7 @@ doc/data_reader_config.md
 | `strategy/order_types.h` | Strategy 订单侧基础枚举、薄 `OrderDraft`、`StrategyOrder`、send/create/submit/cancel/result event 类型。 |
 | `strategy/order_store.h` | 固定容量订单存储，维护 `local_order_id -> order` 和 `exchange_order_id -> local_order_id` 索引。 |
 | `strategy/strategy.h` | 模板化 `Strategy<GatewayT>`，提供 create/submit/cancel/response apply 的交易所无关订单执行流程。 |
-| `strategy/gate_order_gateway.h` | Gate adapter，缓存 contract/price/TIF/text wire fields，并把 `gate::OrderResponse` 映射为 Strategy event。 |
+| `exchange/gate/trading/gate_order_gateway.h` | Gate adapter，缓存 contract/price/TIF/text wire fields，并把 `gate::OrderResponse` 映射为 Strategy event。 |
 | `test/strategy/order_store_test.cpp` | Strategy order store 本地订单 ID、容量限制和 exchange order id 绑定测试。 |
 | `test/strategy/strategy_test.cpp` | Strategy create/submit/cancel/response 状态推进测试。 |
 | `test/strategy/gate_order_gateway_test.cpp` | Gate wire fields 缓存、place/cancel request 传递和 response mapping 测试。 |

@@ -1,4 +1,4 @@
-#include "strategy/gate_order_gateway.h"
+#include "exchange/gate/trading/gate_order_gateway.h"
 
 #include <array>
 #include <cstdint>
