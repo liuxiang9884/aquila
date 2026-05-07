@@ -459,7 +459,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 8. place final result 必须有 exchange order id 和匹配的 `text` local id；cancel final result 至少需要 exchange order id 或匹配的 `text` local id。
 9. cancel response 当前以 Gate top-level encoded request id 做主 correlation；若未来需要校验原始 cancel exchange id，需要把 correlation value 从 local id 扩展成 pending request metadata。
 10. 断线、关闭或 reconnect backoff 会清空 login ready、login sequence 和 inflight correlation，不合成订单状态回报。
-11. `gate_order_session_benchmark` 已覆盖 place/cancel request encode、place result parser，以及 `OrderSession::Handle()` 的 place ack / final result dispatch 路径。
+11. `gate_order_session_benchmark` 已覆盖 place/cancel request encode、place result parser，以及 `OrderSession::Handle()` 的 place ack / final result dispatch 路径；final result dispatch 采用批量预置 inflight 口径，避免把 session setup 计入单条 `Handle()` 成本。
 
 当前验证入口：
 

@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include <benchmark/benchmark.h>
+#include <fmt/format.h>
 
 #include "core/websocket/message_view.h"
 #include "exchange/gate/trading/order_request_encoder.h"
@@ -21,6 +22,9 @@ constexpr std::int64_t kLocalOrderId = 12345;
 constexpr std::uint64_t kPlaceRequestId = 144115188075855881ULL;
 constexpr std::uint64_t kCancelRequestId = 216172782113783818ULL;
 constexpr std::uint64_t kExchangeOrderId = 36028827892199865ULL;
+constexpr std::size_t kDispatchBatchSize = 512;
+constexpr std::size_t kBenchmarkPayloadBufferSize =
+    512 + simdjson::SIMDJSON_PADDING;
 
 constexpr std::string_view kLoginSuccess = R"json({
   "request_id": "72057594037927937",
@@ -75,27 +79,6 @@ constexpr std::string_view kPlaceResult = R"json({
   }
 })json";
 
-constexpr std::string_view kPlaceResultForSession = R"json({
-  "request_id": "144115188075855874",
-  "ack": false,
-  "header": {
-    "response_time": "1681195484360",
-    "status": "200",
-    "channel": "futures.order_place",
-    "event": "api"
-  },
-  "data": {
-    "result": {
-      "id": "36028827892199865",
-      "status": "open",
-      "contract": "BTC_USDT",
-      "size": "1",
-      "price": "81000",
-      "text": "t-12345"
-    }
-  }
-})json";
-
 struct CountingHandler {
   std::uint64_t responses{0};
   OrderResponseKind last_kind{OrderResponseKind::kAck};
@@ -110,6 +93,11 @@ struct CountingHandler {
   }
 };
 
+struct PaddedTextPayload {
+  std::array<char, kBenchmarkPayloadBufferSize> data{};
+  std::size_t size{0};
+};
+
 websocket::MessageView TextView(std::string_view payload,
                                 std::uint32_t readable_tail_bytes) noexcept {
   return {
@@ -121,13 +109,20 @@ websocket::MessageView TextView(std::string_view payload,
   };
 }
 
-websocket::ConnectionConfig MakeOrderSessionConfig() {
+websocket::MessageView TextView(const PaddedTextPayload& payload) noexcept {
+  return TextView(std::string_view(payload.data.data(), payload.size),
+                  simdjson::SIMDJSON_PADDING);
+}
+
+websocket::ConnectionConfig MakeOrderSessionConfig(
+    std::size_t prepared_write_slots = 8,
+    std::size_t prepared_write_bytes = 4096) {
   websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.service = "80";
   config.target = "/v4/ws/usdt";
-  config.prepared_write_slots = 8;
-  config.prepared_write_bytes = 4096;
+  config.prepared_write_slots = prepared_write_slots;
+  config.prepared_write_bytes = prepared_write_bytes;
   return config;
 }
 
@@ -144,16 +139,36 @@ PlaceOrderRequest MakePlaceOrderRequest() noexcept {
 }
 
 template <typename Session>
-bool ActivateLoginAndPlace(Session& session,
-                           std::string_view login_payload) noexcept {
+bool ActivateLoginAndPlace(Session& session, std::string_view login_payload,
+                           std::size_t place_order_count = 1) noexcept {
   session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
   if (session.Handle(TextView(login_payload, simdjson::SIMDJSON_PADDING)) !=
           websocket::DeliveryResult::kAccepted ||
       !session.login_ready()) {
     return false;
   }
-  return session.PlaceOrder(MakePlaceOrderRequest()).status ==
-         OrderSendStatus::kOk;
+  for (std::size_t i = 0; i < place_order_count; ++i) {
+    if (session.PlaceOrder(MakePlaceOrderRequest()).status !=
+        OrderSendStatus::kOk) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool FormatPlaceResultPayload(std::uint64_t sequence,
+                              PaddedTextPayload& payload) noexcept {
+  const std::uint64_t encoded_request_id =
+      RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
+  const auto result = fmt::format_to_n(
+      payload.data.data(), payload.data.size() - simdjson::SIMDJSON_PADDING,
+      R"json({{"request_id":"{}","ack":false,"header":{{"response_time":"1681195484360","status":"200","channel":"futures.order_place","event":"api"}},"data":{{"result":{{"id":"{}","status":"open","contract":"BTC_USDT","size":"1","price":"81000","text":"t-{}"}}}}}})json",
+      encoded_request_id, kExchangeOrderId, kLocalOrderId);
+  if (result.size > payload.data.size() - simdjson::SIMDJSON_PADDING) {
+    return false;
+  }
+  payload.size = result.size;
+  return true;
 }
 
 void BM_EncodePlaceOrder(benchmark::State& state) {
@@ -285,46 +300,58 @@ void BM_OrderSessionHandlePlaceResult(benchmark::State& state) {
   std::array<char, kLoginSuccess.size() + simdjson::SIMDJSON_PADDING>
       login_payload{};
   std::copy(kLoginSuccess.begin(), kLoginSuccess.end(), login_payload.begin());
-  std::array<char, kPlaceResultForSession.size() + simdjson::SIMDJSON_PADDING>
-      result_payload{};
-  std::copy(kPlaceResultForSession.begin(), kPlaceResultForSession.end(),
-            result_payload.begin());
-  const auto result_view = TextView(
-      std::string_view(result_payload.data(), kPlaceResultForSession.size()),
-      simdjson::SIMDJSON_PADDING);
+  std::array<PaddedTextPayload, kDispatchBatchSize> result_payloads{};
+  for (std::size_t i = 0; i < result_payloads.size(); ++i) {
+    if (!FormatPlaceResultPayload(i + 2, result_payloads[i])) {
+      state.SkipWithError("place result payload format failed");
+      return;
+    }
+  }
 
   CountingHandler handler;
   using BenchOrderSession =
       OrderSession<CountingHandler, OrderSessionDefaultPlainWebSocketPolicy>;
   std::optional<BenchOrderSession> session;
+  std::size_t payload_index = kDispatchBatchSize;
   for (auto _ : state) {
-    state.PauseTiming();
-    session.emplace(MakeOrderSessionConfig(),
-                    LoginCredentials{.api_key = "key", .api_secret = "secret"},
-                    handler);
-    if (!ActivateLoginAndPlace(
-            *session,
-            std::string_view(login_payload.data(), kLoginSuccess.size()))) {
-      state.SkipWithError("order session setup failed");
-      return;
+    if (payload_index == kDispatchBatchSize) {
+      state.PauseTiming();
+      session.emplace(
+          MakeOrderSessionConfig(kDispatchBatchSize + 1, 1U << 20),
+          LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler);
+      if (!ActivateLoginAndPlace(
+              *session,
+              std::string_view(login_payload.data(), kLoginSuccess.size()),
+              kDispatchBatchSize)) {
+        state.SkipWithError("order session setup failed");
+        return;
+      }
+      payload_index = 0;
+      state.ResumeTiming();
     }
-    state.ResumeTiming();
 
-    const websocket::DeliveryResult result = session->Handle(result_view);
-    if (result != websocket::DeliveryResult::kAccepted ||
-        session->inflight_count() != 0) {
+    const websocket::DeliveryResult result =
+        session->Handle(TextView(result_payloads[payload_index]));
+    if (result != websocket::DeliveryResult::kAccepted) {
       state.SkipWithError("result dispatch failed");
       return;
     }
+    ++payload_index;
     benchmark::DoNotOptimize(handler.responses);
     benchmark::DoNotOptimize(handler.last_exchange_order_id);
-    state.PauseTiming();
-    session.reset();
-    state.ResumeTiming();
+    if (payload_index == kDispatchBatchSize) {
+      state.PauseTiming();
+      if (session->inflight_count() != 0) {
+        state.SkipWithError("result dispatch did not drain inflight orders");
+        return;
+      }
+      session.reset();
+      state.ResumeTiming();
+    }
   }
 
   state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) *
-                          static_cast<int64_t>(kPlaceResultForSession.size()));
+                          static_cast<int64_t>(result_payloads[0].size));
 }
 
 BENCHMARK(BM_EncodePlaceOrder);
