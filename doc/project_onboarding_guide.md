@@ -14,7 +14,7 @@
 
 ## 最近已完成
 
-截至 2026-05-06，`main` 已完成的主要内容：
+截至 2026-05-07，`main` 已完成的主要内容：
 
 1. Gate / Binance market data 热路径防御性分支收口。
 2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
@@ -32,6 +32,7 @@
 14. `tools/market_data/data_reader_probe.cpp` 已加入 `OnBookTicker()` 低频采样日志、`--log-every` 和 per-source final summary。
 15. 2026-05-06 使用 Gate / Binance data session 实盘写 SHM，`data_reader_probe` 以 `drain` 模式运行 1800s：reader 共读 `4,635,362` 条，Gate `495,255` 条，Binance `4,140,107` 条，两个 source 的 `skipped=0`、`overruns=0`。
 16. WebSocket client 的 `stop_requested_` 只作为停止位使用，已改为 `memory_order_relaxed`；probe/tool 的 signal stop flag 已统一为 `std::atomic<bool> signal_stop_requested`，不再使用 `volatile std::sig_atomic_t`。
+17. `scripts/gate/query_gate_account.py` 已落地，按 Gate APIv4 read-only GET 查询当前 API key 可访问的账户总额、USDT futures 账户、个人费率和 futures fee。
 
 ## 新对话第一步
 
@@ -186,6 +187,7 @@ doc/data_reader_config.md
 | `tools/binance/futures_book_ticker_probe.cpp` | Binance USD-M futures JSON `bookTicker` live probe，默认 BTCUSDT。 |
 | `scripts/gate/test_gate_ws_connect.py` | Gate WS 连接 / login smoke。 |
 | `scripts/gate/test_gate_ws_dual_login.py` | 同账号双 WebSocket login 验证。 |
+| `scripts/gate/query_gate_account.py` | Gate APIv4 read-only account / fee 查询脚本，默认读取 `TEST_KEY` / `TEST_SECRET` 环境变量。 |
 | `scripts/gate/query_futures_contracts.py` | 查询 Gate USDT futures 合约基础信息，输出统一字段 DataFrame / CSV。 |
 | `scripts/binance/query_um_futures_contracts.py` | 查询 Binance USD-M futures 合约基础信息，输出统一字段 DataFrame / CSV。 |
 
@@ -512,12 +514,15 @@ Data reader live drain 验证需要先启动 Gate / Binance data session 写 SHM
 /usr/bin/timeout --kill-after=10s 1800s ./build/debug/tools/data_reader_probe --config /tmp/aquila_strategy_data_reader_drain.toml --log-every 10000
 ```
 
-Gate / Binance 期货合约元数据脚本：
+Gate account / 期货合约元数据脚本：
 
 ```bash
+scripts/gate/query_gate_account_test.py
 scripts/gate/query_futures_contracts_test.py
 scripts/binance/query_um_futures_contracts_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python -m py_compile \
+  scripts/gate/query_gate_account.py \
+  scripts/gate/query_gate_account_test.py \
   scripts/gate/query_futures_contracts.py \
   scripts/gate/query_futures_contracts_test.py \
   scripts/binance/query_um_futures_contracts.py \
@@ -527,6 +532,7 @@ scripts/binance/query_um_futures_contracts_test.py
 REST 查询 smoke 需要外网：
 
 ```bash
+TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py --settle usdt --currency USDT --contract BTC_USDT --allow-partial
 scripts/gate/query_futures_contracts.py BTC_USDT ETH_USDT --format csv
 scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 ```
