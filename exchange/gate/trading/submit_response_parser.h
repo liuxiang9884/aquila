@@ -2,14 +2,16 @@
 #define AQUILA_EXCHANGE_GATE_TRADING_SUBMIT_RESPONSE_PARSER_H_
 
 #include <cassert>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
-#include "core/utils/numeric.h"
 #include "exchange/gate/common/simdjson_utils.h"
+#include "exchange/gate/trading/order_codecs.h"
 #include <simdjson.h>
 
 namespace aquila::gate {
@@ -27,19 +29,30 @@ enum class GateSubmitResponseKind : std::uint8_t {
   kError,
 };
 
+enum GateSubmitChannel : std::uint8_t {
+  kUnknown,
+  kFuturesLogin,
+  kFuturesOrderPlace,
+  kFuturesOrderCancel,
+};
+
 struct GateSubmitResponse {
   GateSubmitParseStatus parse_status{GateSubmitParseStatus::kUnexpectedShape};
   GateSubmitResponseKind kind{GateSubmitResponseKind::kUnknown};
   bool has_ack{false};
   bool ack{false};
+  GateSubmitChannel channel{kUnknown};
   bool channel_is_order_place{false};
   std::uint16_t http_status{0};
-  // TODO: Replace hash-only request/text correlation with RequestIdCodec and
-  // OrderTextCodec when the Gate order submit path is implemented.
   std::uint64_t request_id_hash{0};
+  DecodedRequestId request_id{};
   std::uint64_t req_id_hash{0};
+  bool has_req_id{false};
+  DecodedRequestId req_id{};
   std::uint64_t exchange_order_id{0};
   std::uint64_t text_hash{0};
+  bool has_local_order_id{false};
+  std::int64_t local_order_id{0};
   std::uint64_t error_label_hash{0};
 };
 
@@ -69,6 +82,23 @@ inline std::uint64_t HashSimdjsonString(
              : 0;
 }
 
+inline bool ParseUint64Text(std::string_view text,
+                            std::uint64_t* output) noexcept {
+  assert(output != nullptr);
+  if (text.empty()) {
+    return false;
+  }
+  std::uint64_t parsed = 0;
+  const char* const first = text.data();
+  const char* const last = text.data() + text.size();
+  const auto result = std::from_chars(first, last, parsed);
+  if (result.ec != std::errc{} || result.ptr != last) {
+    return false;
+  }
+  *output = parsed;
+  return true;
+}
+
 inline bool ReadSimdjsonUint64(simdjson::ondemand::value value,
                                std::uint64_t* output) noexcept {
   assert(output != nullptr);
@@ -87,10 +117,53 @@ inline bool ReadSimdjsonUint64(simdjson::ondemand::value value,
 
   std::string_view text{};
   if (ReadSimdjsonString(value, &text) && !text.empty()) {
-    *output = ToUint64(text);
-    return true;
+    return ParseUint64Text(text, output);
   }
   return false;
+}
+
+inline GateSubmitChannel ParseGateSubmitChannel(
+    std::string_view channel) noexcept {
+  if (channel == std::string_view("futures.login")) {
+    return kFuturesLogin;
+  }
+  if (channel == std::string_view("futures.order_place")) {
+    return kFuturesOrderPlace;
+  }
+  if (channel == std::string_view("futures.order_cancel")) {
+    return kFuturesOrderCancel;
+  }
+  return kUnknown;
+}
+
+inline DecodedRequestId DecodeSimdjsonRequestId(
+    simdjson::ondemand::value value) noexcept {
+  std::uint64_t encoded = 0;
+  if (!ReadSimdjsonUint64(value, &encoded)) {
+    return {};
+  }
+  return RequestIdCodec::Decode(encoded);
+}
+
+inline void ReadSimdjsonRequestIdCorrelation(
+    simdjson::ondemand::value value, std::uint64_t* hash,
+    DecodedRequestId* decoded) noexcept {
+  assert(hash != nullptr);
+  assert(decoded != nullptr);
+
+  std::string_view text{};
+  if (ReadSimdjsonString(value, &text)) {
+    if (!text.empty()) {
+      *hash = HashGateSubmitString(text);
+      std::uint64_t encoded = 0;
+      if (ParseUint64Text(text, &encoded)) {
+        *decoded = RequestIdCodec::Decode(encoded);
+      }
+    }
+    return;
+  }
+
+  *decoded = DecodeSimdjsonRequestId(value);
 }
 
 inline std::uint16_t ReadSimdjsonStatusCode(
@@ -114,7 +187,8 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   response.parse_status = GateSubmitParseStatus::kOk;
   simdjson::ondemand::value value;
   if (FindSimdjsonField(root, "request_id", &value)) {
-    response.request_id_hash = HashSimdjsonString(value);
+    ReadSimdjsonRequestIdCorrelation(value, &response.request_id_hash,
+                                     &response.request_id);
   }
   if (FindSimdjsonField(root, "ack", &value)) {
     bool ack = false;
@@ -129,9 +203,11 @@ inline GateSubmitResponse ParseSimdjsonDocument(
     }
     if (FindSimdjsonField(header, "channel", &value)) {
       std::string_view channel{};
-      response.channel_is_order_place =
-          ReadSimdjsonString(value, &channel) &&
-          channel == std::string_view("futures.order_place");
+      if (ReadSimdjsonString(value, &channel)) {
+        response.channel = ParseGateSubmitChannel(channel);
+        response.channel_is_order_place =
+            response.channel == kFuturesOrderPlace;
+      }
     }
   }
 
@@ -157,7 +233,9 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (response.ack) {
     response.kind = GateSubmitResponseKind::kAck;
     if (FindSimdjsonField(result, "req_id", &value)) {
-      response.req_id_hash = HashSimdjsonString(value);
+      ReadSimdjsonRequestIdCorrelation(value, &response.req_id_hash,
+                                       &response.req_id);
+      response.has_req_id = response.req_id.ok;
     }
     return response;
   }
@@ -167,7 +245,13 @@ inline GateSubmitResponse ParseSimdjsonDocument(
     (void)ReadSimdjsonUint64(value, &response.exchange_order_id);
   }
   if (FindSimdjsonField(result, "text", &value)) {
-    response.text_hash = HashSimdjsonString(value);
+    std::string_view text{};
+    if (ReadSimdjsonString(value, &text) && !text.empty()) {
+      response.text_hash = HashGateSubmitString(text);
+      const ParsedOrderText parsed_text = OrderTextCodec::Parse(text);
+      response.has_local_order_id = parsed_text.ok;
+      response.local_order_id = parsed_text.local_order_id;
+    }
   }
   return response;
 }
@@ -184,7 +268,8 @@ inline GateSubmitResponse ParseSimdjsonAckMinimalDocument(
   response.parse_status = GateSubmitParseStatus::kOk;
   simdjson::ondemand::value value;
   if (FindSimdjsonField(root, "request_id", &value)) {
-    response.request_id_hash = HashSimdjsonString(value);
+    ReadSimdjsonRequestIdCorrelation(value, &response.request_id_hash,
+                                     &response.request_id);
   }
   if (FindSimdjsonField(root, "ack", &value)) {
     bool ack = false;
@@ -211,6 +296,32 @@ inline GateSubmitResponse ParseGateSubmitResponse(
                                     padded_payload.size());
   simdjson::ondemand::document document;
   if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+    return detail::InvalidJsonSubmitResponse();
+  }
+
+  return detail::ParseSimdjsonDocument(std::move(document));
+}
+
+inline GateSubmitResponse ParseGateSubmitResponse(
+    std::string_view payload, size_t readable_tail_bytes,
+    simdjson::ondemand::parser& parser) noexcept {
+  if (payload.empty()) {
+    return detail::InvalidJsonSubmitResponse();
+  }
+
+  if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
+    simdjson::padded_string_view view(
+        payload.data(), payload.size(), payload.size() + readable_tail_bytes);
+    simdjson::ondemand::document document;
+    if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+      return detail::InvalidJsonSubmitResponse();
+    }
+    return detail::ParseSimdjsonDocument(std::move(document));
+  }
+
+  simdjson::padded_string padded(payload);
+  simdjson::ondemand::document document;
+  if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
     return detail::InvalidJsonSubmitResponse();
   }
 
