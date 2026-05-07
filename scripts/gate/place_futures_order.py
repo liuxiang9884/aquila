@@ -227,14 +227,19 @@ def place_order(
     return result
 
 
+def cancel_order(requester: Requester, settle: str, order_id: str | int) -> dict[str, Any]:
+    cancel_request = build_cancel_order_request(settle, order_id)
+    return {
+        "cancel_request": cancel_request.to_public_dict(),
+        "cancel_response": requester(cancel_request),
+    }
+
+
 def default_order_text() -> str:
     return f"{DEFAULT_TEXT_PREFIX}-{int(time.time())}"
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Create a Gate USDT futures test order through APIv4 REST."
-    )
+def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--api-key",
         default=DEFAULT_API_KEY_ENV,
@@ -248,6 +253,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Gate API v4 base URL.")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="HTTP timeout seconds.")
     parser.add_argument("--settle", default="usdt", help="Futures settlement currency, e.g. usdt.")
+    parser.add_argument(
+        "--pretty",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Pretty-print JSON output.",
+    )
+
+
+def add_place_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--contract", default=DEFAULT_CONTRACT, help="Gate futures contract.")
     parser.add_argument("--side", choices=("buy", "sell"), default="buy", help="Order side.")
     parser.add_argument(
@@ -276,17 +290,36 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Do not cancel the order after a successful submit.",
     )
-    parser.add_argument(
-        "--pretty",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Pretty-print JSON output.",
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Create or cancel a Gate USDT futures order through APIv4 REST."
     )
+    subparsers = parser.add_subparsers(dest="command")
+
+    place_parser = subparsers.add_parser("place", help="Create a futures order.")
+    add_common_args(place_parser)
+    add_place_args(place_parser)
+
+    cancel_parser = subparsers.add_parser("cancel", help="Cancel a single futures order.")
+    add_common_args(cancel_parser)
+    cancel_parser.add_argument("order_id", help="Gate order id or client text id to cancel.")
+
+    add_common_args(parser)
+    add_place_args(parser)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    command = args.command or "place"
+    if command == "cancel":
+        return run_cancel(args)
+    return run_place(args)
+
+
+def run_place(args: argparse.Namespace) -> int:
     text = args.text if args.text is not None else default_order_text()
     try:
         payload = build_order_payload(
@@ -337,6 +370,37 @@ def main(argv: list[str] | None = None) -> int:
             payload=payload,
             execute=True,
             keep_open=args.keep_open,
+        )
+    except Exception as exc:  # pragma: no cover - utility script
+        print(f"[FAIL] {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    indent = 2 if args.pretty else None
+    print(json.dumps(result, ensure_ascii=False, indent=indent, sort_keys=True))
+    return 0
+
+
+def run_cancel(args: argparse.Namespace) -> int:
+    api_key = get_env_value(args.api_key)
+    if api_key is None:
+        print(f"[FAIL] missing env var {args.api_key}", file=sys.stderr)
+        return 2
+    api_secret = get_env_value(args.api_secret)
+    if api_secret is None:
+        print(f"[FAIL] missing env var {args.api_secret}", file=sys.stderr)
+        return 2
+
+    client = SignedGateTradingClient(
+        api_key=api_key,
+        api_secret=api_secret,
+        base_url=args.base_url,
+        timeout=args.timeout,
+    )
+    try:
+        result = cancel_order(
+            requester=client.request_json,
+            settle=args.settle,
+            order_id=args.order_id,
         )
     except Exception as exc:  # pragma: no cover - utility script
         print(f"[FAIL] {type(exc).__name__}: {exc}", file=sys.stderr)

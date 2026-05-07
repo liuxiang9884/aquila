@@ -199,6 +199,39 @@ class PlaceFuturesOrderTest(unittest.TestCase):
         self.assertEqual([call.method for call in calls], ["POST"])
         self.assertNotIn("cancel_response", result)
 
+    def test_cancel_order_deletes_by_order_id(self):
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            return {"id": 12345, "status": "finished", "finish_as": "cancelled"}
+
+        result = orders.cancel_order(
+            requester=fake_request,
+            settle="usdt",
+            order_id="12345",
+        )
+
+        self.assertEqual([call.method for call in calls], ["DELETE"])
+        self.assertEqual(calls[0].endpoint_path, "/futures/usdt/orders/12345")
+        self.assertEqual(result["cancel_request"]["method"], "DELETE")
+        self.assertEqual(result["cancel_response"]["finish_as"], "cancelled")
+
+    def test_cancel_order_escapes_text_order_id(self):
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            return {"text": "t-aquila/rest-test", "status": "finished"}
+
+        orders.cancel_order(
+            requester=fake_request,
+            settle="usdt",
+            order_id="t-aquila/rest-test",
+        )
+
+        self.assertEqual(calls[0].endpoint_path, "/futures/usdt/orders/t-aquila%2Frest-test")
+
     def test_json_result_is_serializable(self):
         result = orders.place_order(
             requester=lambda api_request: {"id": 12345},
