@@ -10,6 +10,16 @@
 
 ---
 
+## 执行状态
+
+截至 2026-05-07，Task 1 到 Task 6 已完成并按阶段提交。当前实现入口包括 `exchange/gate/trading/order_types.h`、
+`order_codecs.h`、`order_signature.h/.cpp`、`order_request_encoder.h`、`submit_response_parser.h`、
+`order_session.h`、对应 `test/exchange/gate/trading/*` 测试和
+`benchmark/exchange/gate/trading/order_session_benchmark.cpp`。
+
+最新事实源以当前代码、`doc/project_onboarding_guide.md` 和
+`doc/agent-handoff-gate-trade-architecture.md` 为准；本计划保留为任务拆分、设计约束和验证命令追溯。
+
 ## 事实源
 
 - Design spec: `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
