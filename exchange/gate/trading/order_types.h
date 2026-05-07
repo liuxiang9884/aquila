@@ -1,0 +1,95 @@
+#ifndef AQUILA_EXCHANGE_GATE_TRADING_ORDER_TYPES_H_
+#define AQUILA_EXCHANGE_GATE_TRADING_ORDER_TYPES_H_
+
+#include <cstdint>
+#include <string_view>
+
+namespace aquila::gate {
+
+enum class OrderRequestType : std::uint8_t {
+  kUnknown = 0,
+  kLogin = 1,
+  kPlaceOrder = 2,
+  kCancelOrder = 3,
+};
+
+struct DecodedRequestId {
+  bool ok{false};
+  OrderRequestType type{OrderRequestType::kUnknown};
+  std::uint64_t sequence{0};
+};
+
+struct ParsedOrderText {
+  bool ok{false};
+  std::int64_t local_order_id{0};
+};
+
+struct OrderWireFields {
+  std::int64_t local_order_id{0};
+  std::string_view contract{};
+  std::int64_t signed_size{0};
+  std::string_view price_text{};
+  std::string_view tif{};
+  std::string_view text{};
+  bool reduce_only{false};
+};
+
+struct PlaceOrderRequest {
+  OrderWireFields wire{};
+};
+
+struct CancelOrderRequest {
+  std::int64_t local_order_id{0};
+  std::uint64_t exchange_order_id{0};
+};
+
+enum class OrderSendStatus : std::uint8_t {
+  kOk,
+  kNotLoggedIn,
+  kNotActive,
+  kInflightFull,
+  kEncodeBufferTooSmall,
+  kNoPreparedWriteSlot,
+  kWriteUnavailable,
+};
+
+struct OrderSendResult {
+  OrderSendStatus status{OrderSendStatus::kNotActive};
+  std::uint64_t request_sequence{0};
+  std::uint64_t encoded_request_id{0};
+};
+
+enum class OrderResponseKind : std::uint8_t {
+  kAck,
+  kAccepted,
+  kRejected,
+  kCancelAccepted,
+  kCancelRejected,
+};
+
+struct OrderResponse {
+  OrderResponseKind kind{OrderResponseKind::kAck};
+  std::int64_t local_order_id{0};
+  std::uint64_t exchange_order_id{0};
+  std::uint64_t request_sequence{0};
+  std::uint16_t http_status{0};
+  std::uint64_t error_label_hash{0};
+};
+
+struct OrderSessionStats {
+  std::uint64_t text_messages{0};
+  std::uint64_t parse_errors{0};
+  std::uint64_t ignored_messages{0};
+  std::uint64_t login_sent{0};
+  std::uint64_t login_accepted{0};
+  std::uint64_t login_rejected{0};
+  std::uint64_t place_sent{0};
+  std::uint64_t cancel_sent{0};
+  std::uint64_t responses{0};
+  std::uint64_t unknown_request_ids{0};
+  std::uint64_t local_send_failures{0};
+};
+
+}  // namespace aquila::gate
+
+#endif  // AQUILA_EXCHANGE_GATE_TRADING_ORDER_TYPES_H_
