@@ -311,7 +311,7 @@ Expected: all `StrategyTest` tests pass.
 - Create: `strategy/gate_order_gateway.h`
 - Keep or modify: `test/strategy/gate_order_gateway_test.cpp`
 
-- [ ] **Step 1: 确认 RED**
+- [x] **Step 1: 确认 RED**
 
 Run:
 
@@ -321,7 +321,7 @@ cmake --build build/debug --target strategy_gate_order_gateway_test -j8
 
 Expected: compile fails because `strategy/gate_order_gateway.h` does not exist or required adapter methods are missing.
 
-- [ ] **Step 2: 实现 Gate adapter**
+- [x] **Step 2: 实现 Gate adapter**
 
 Create `strategy/gate_order_gateway.h`:
 
@@ -335,7 +335,7 @@ Create `strategy/gate_order_gateway.h`:
 - `CancelOrder()` calls `session.CancelOrder(gate::CancelOrderRequest{.local_order_id = order.local_order_id, .exchange_order_id = order.exchange_order_id})`。
 - `ToStrategyOrderResponse(const gate::OrderResponse&)` maps Gate response kinds one-to-one and preserves `local_order_id`、`exchange_order_id`、`error_label_hash`。
 
-- [ ] **Step 3: 运行 Task 3 验证**
+- [x] **Step 3: 运行 Task 3 验证**
 
 Run:
 
