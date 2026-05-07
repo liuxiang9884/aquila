@@ -591,5 +591,18 @@ TEST(OrderSessionTest, NoPreparedWriteSlotsMapsToLocalSendFailure) {
   EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
 
+TEST(OrderSessionTest, InvalidCancelFallbackReturnsInvalidOrderText) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.CancelOrder(
+      CancelOrderRequest{.local_order_id = 0, .exchange_order_id = 0});
+
+  EXPECT_EQ(sent.status, OrderSendStatus::kInvalidOrderText);
+  EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.stats().local_send_failures, 1U);
+}
+
 }  // namespace
 }  // namespace aquila::gate

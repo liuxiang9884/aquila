@@ -175,7 +175,7 @@ class OrderSession {
                                .wire = request.wire},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
-      return SendFailure(OrderSendStatus::kEncodeBufferTooSmall, sequence,
+      return SendFailure(MapEncodeStatus(encoded.status), sequence,
                          encoded_request_id);
     }
 
@@ -215,7 +215,7 @@ class OrderSession {
                                 .exchange_order_id = request.exchange_order_id},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
-      return SendFailure(OrderSendStatus::kEncodeBufferTooSmall, sequence,
+      return SendFailure(MapEncodeStatus(encoded.status), sequence,
                          encoded_request_id);
     }
 
@@ -280,6 +280,21 @@ class OrderSession {
     return OrderSendStatus::kWriteUnavailable;
   }
 
+  [[nodiscard]] OrderSendStatus MapEncodeStatus(
+      OrderEncodeStatus status) noexcept {
+    switch (status) {
+      case OrderEncodeStatus::kOk:
+        return OrderSendStatus::kOk;
+      case OrderEncodeStatus::kBufferTooSmall:
+        return OrderSendStatus::kEncodeBufferTooSmall;
+      case OrderEncodeStatus::kInvalidOrderText:
+        return OrderSendStatus::kInvalidOrderText;
+      case OrderEncodeStatus::kSignatureFailed:
+        return OrderSendStatus::kSignatureFailed;
+    }
+    return OrderSendStatus::kEncodeBufferTooSmall;
+  }
+
   [[nodiscard]] websocket::SendStatus SendText(
       std::string_view payload_text) noexcept {
     auto& core = client_.Core();
@@ -300,7 +315,7 @@ class OrderSession {
                            .encoded_request_id = encoded_request_id},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
-      return {.status = OrderSendStatus::kEncodeBufferTooSmall,
+      return {.status = MapEncodeStatus(encoded.status),
               .request_sequence = sequence,
               .encoded_request_id = encoded_request_id};
     }
