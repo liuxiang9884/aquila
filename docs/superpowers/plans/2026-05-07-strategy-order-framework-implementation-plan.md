@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 实现第一版交易所无关 Strategy 订单框架，并通过 Gate adapter 把 Strategy 订单对象、Gate wire fields 缓存和 `aquila::gate::OrderSession` 的 place/cancel 接口连起来。
+**Goal:** 实现第一版交易所无关 Strategy 订单框架，并把 Strategy 订单对象直接交给 `aquila::gate::OrderSession` 的 place/cancel 接口。
 
 **Architecture:** 本计划记录原第一版边界，已被 `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` 调整。当前实现是 Strategy 负责风控、订单对象、订单状态和交易所无关执行流程，直接把订单 struct 交给 Gate `OrderSession`；Gate `OrderSession` 在发送路径完成 JSON 序列化，不再使用 Gate adapter 缓存 wire fields。
 
@@ -20,40 +20,33 @@
 
 ## 当前起点
 
-当前工作区已有未提交的 Strategy 测试草稿：
+历史起点曾包含 Strategy 测试草稿；当前实现已被后续 struct-flow plan 调整：
 
-- `test/strategy/order_store_test.cpp`
+- `test/core/common/order_pool_test.cpp`
 - `test/strategy/strategy_test.cpp`
-- `test/strategy/gate_order_gateway_test.cpp`
 - `test/strategy/CMakeLists.txt`
 - `test/CMakeLists.txt`
 
-这些测试已经形成第一版 API 形状。主会话已运行：
+早期 RED 命令曾使用 `strategy_order_store_test` / `strategy_gate_order_gateway_test`；当前验证入口见本文末尾 final verification。
 
-```bash
-cmake --build build/debug --target strategy_order_store_test strategy_test strategy_gate_order_gateway_test -j8
-```
-
-当前 RED 结果是编译失败，原因是 `strategy/order_store.h` 不存在。后续任务可以保留这些测试，也可以在不降低覆盖面的前提下微调命名和断言。
+当前实现不再保留 `strategy/order_store.h`、`strategy/order_pool.h`、`exchange/gate/trading/gate_order_gateway.h` 或 Strategy 侧 Gate wire cache。
 
 ## 文件结构
 
-- Create `strategy/CMakeLists.txt`: 定义 header-only `aquila_strategy` 和 `aquila_strategy_gate` target。
-- Create `strategy/order_types.h`: Strategy 订单侧基础枚举、薄 `OrderDraft`、`StrategyOrder`、send/create/submit/cancel/result event 类型。
-- Create `strategy/order_store.h`: 固定容量订单存储，维护 `local_order_id -> order` 和 `exchange_order_id -> local_order_id` 两个索引。
+- Create `strategy/CMakeLists.txt`: 定义 header-only `aquila_strategy` target。
+- Create `strategy/order_types.h`: Strategy 订单侧基础枚举、薄 `OrderCreateRequest`、`StrategyOrder`、send/create/cancel/result event 类型。
+- Create `core/common/order_pool.h`: 通用固定容量订单池，维护 `local_order_id -> slot` 索引；不维护 exchange order id 索引。
 - Create `strategy/strategy.h`: 模板化 `Strategy<GatewayT>`，提供 create/submit/cancel/response apply 的交易所无关执行流程。
-- Create `exchange/gate/trading/gate_order_gateway.h`: `GateStrategyOrder`、Gate wire fields 缓存、Gate TIF/文本编码、Gate `OrderResponse` 到 Strategy event 映射。
 - Modify `CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
 - Modify `test/CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
-- Create or keep `test/strategy/CMakeLists.txt`: 增加 Strategy 三个 gtest target。
-- Create or keep `test/strategy/order_store_test.cpp`: 验证本地订单 ID 分配、容量限制和 exchange order id 绑定。
+- Create or keep `test/strategy/CMakeLists.txt`: 增加 Strategy gtest target。
+- Create or keep `test/core/common/order_pool_test.cpp`: 验证本地订单 ID 分配、容量限制、slot 复用、指针稳定和 zero capacity。
 - Create or keep `test/strategy/strategy_test.cpp`: 验证 create/submit/cancel/response 状态推进。
-- Create or keep `test/strategy/gate_order_gateway_test.cpp`: 验证 Gate wire fields 缓存、place/cancel request 传递和 response mapping。
-- Create `benchmark/strategy/order_gateway_benchmark.cpp`: 最小 benchmark，测 Strategy cached Gate wire fields 的 submit/cancel adapter 调用成本。
+- Create `benchmark/strategy/order_gateway_benchmark.cpp`: 最小 benchmark，测 Strategy direct-send fake order session 调用成本。
 - Modify `benchmark/CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
 - Create `benchmark/strategy/CMakeLists.txt`: 增加 `strategy_order_gateway_benchmark`。
 - Modify `doc/project_onboarding_guide.md`: 更新最近已完成、代码入口、验证命令和下一步建议。
-- Modify `doc/agent-handoff-gate-trade-architecture.md`: 记录 Strategy / Gate adapter 第一版边界和未覆盖项。
+- Modify `doc/agent-handoff-gate-trade-architecture.md`: 记录 Strategy / Gate `OrderSession` 直接 struct flow 第一版边界和未覆盖项。
 
 ## 第一版 API 约束
 
@@ -77,12 +70,11 @@ enum class OrderStatus : std::uint8_t {
   kRejected,
 };
 
-struct OrderDraft {
+struct OrderCreateRequest {
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
-  OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::int64_t quantity{0};
   std::string_view price_text{};
@@ -97,7 +89,7 @@ struct StrategyOrder {
   OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::int64_t quantity{0};
-  std::uint64_t exchange_order_id{0};
+  std::string_view price_text{};
   bool reduce_only{false};
   OrderStatus status{OrderStatus::kCreated};
   std::uint64_t error_label_hash{0};
@@ -106,27 +98,11 @@ struct StrategyOrder {
 }  // namespace aquila::strategy
 ```
 
-`exchange/gate/trading/gate_order_gateway.h` 第一版让 Strategy 订单对象缓存 Gate wire fields：
+当前约束：
 
-```cpp
-struct GateOrderCache {
-  std::array<char, 64> contract_buffer{};
-  std::array<char, 32> price_buffer{};
-  std::array<char, 8> tif_buffer{};
-  std::array<char, 32> text_buffer{};
-  gate::OrderWireFields wire{};
-};
-
-struct GateStrategyOrder : StrategyOrder {
-  GateOrderCache gate{};
-};
-```
-
-缓存约束：
-
-- `OrderDraft::symbol` 和 `price_text` 在 `PrepareOrder()` 阶段拷贝进固定数组，避免 submit 热路径依赖外部 `string_view` 生命周期。
-- `gate::OrderWireFields` 中的 `string_view` 必须指向 `GateStrategyOrder::gate` 内部 buffer。
-- `OrderSession` 仍只接收 wire-ready request，不理解 side、order type、symbol metadata 或风险逻辑。
+- `OrderCreateRequest::symbol` 和 `price_text` 生命周期由 Strategy / symbol metadata 设计保证；当前第一版不在 Strategy 中缓存 Gate wire fields。
+- Gate `OrderSession` 接收订单 struct，并在发送路径读取 `symbol`、`side`、`quantity`、`price_text`、`time_in_force`、`reduce_only` 完成编码。
+- Strategy 不维护 exchange order id 索引；Gate `OrderSession` 在内部缓存 local/exchange order id 供 cancel 编码使用。
 
 ---
 
@@ -135,9 +111,9 @@ struct GateStrategyOrder : StrategyOrder {
 **Files:**
 - Create: `strategy/CMakeLists.txt`
 - Create: `strategy/order_types.h`
-- Create: `strategy/order_store.h`
+- Create: `core/common/order_pool.h`
 - Modify: `CMakeLists.txt`
-- Keep or modify: `test/strategy/order_store_test.cpp`
+- Keep or modify: `test/core/common/order_pool_test.cpp`
 - Keep or modify: `test/strategy/CMakeLists.txt`
 - Keep or modify: `test/CMakeLists.txt`
 
@@ -147,10 +123,10 @@ Run:
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/debug --target strategy_order_store_test -j8
+cmake --build build/debug --target core_order_pool_test -j8
 ```
 
-Expected: compile fails because `strategy/order_store.h` or `aquila_strategy_gate` does not exist.
+Expected: compile fails before `core/common/order_pool.h` exists.
 
 - [x] **Step 2: 实现 CMake target**
 
@@ -244,14 +220,14 @@ struct OrderResponseEvent {
 
 - [x] **Step 4: 实现固定容量订单存储**
 
-Create `strategy/order_store.h`:
+Create `core/common/order_pool.h`:
 
-- `OrderStore<OrderT>(std::size_t capacity)` 在构造期 `reserve()` vector 和两个 `absl::flat_hash_map`。
-- `Create()` 分配递增 `local_order_id`，容量满时返回 `nullptr`。
+- `OrderPool<OrderT>(std::size_t max_live_orders)` 在构造期固定 resize `max_live_orders * 2` 个 slot，并 reserve `max_live_orders * 4` 的 `absl::flat_hash_map`。
+- `Create()` 从 free list 取 slot，默认重置 order，分配递增 `local_order_id`，容量满或 free list 为空时返回 `nullptr`。
 - `Find(local_order_id)` 返回订单指针，找不到返回 `nullptr`。
-- `BindExchangeOrderId(local_order_id, exchange_order_id)` 设置订单上的 `exchange_order_id` 并写入 exchange id 索引；`local_order_id <= 0`、`exchange_order_id == 0` 或本地订单不存在时返回 `false`。
-- `FindByExchangeOrderId(exchange_order_id)` 先查 exchange 索引，再查本地索引。
-- `size()` 和 `capacity()` 返回当前数量和固定容量。
+- `Erase(local_order_id)` 删除 local id 索引、重置 order，并把 slot 放回 free list。
+- `size()`、`capacity()` 和 `slot_capacity()` 返回当前 live 数、最大 live 容量和内部 slot 数。
+- 不实现 `BindExchangeOrderId()` / `FindByExchangeOrderId()`；Strategy 不维护 exchange order id 索引。
 
 - [x] **Step 5: 运行 Task 1 验证**
 
@@ -259,11 +235,11 @@ Run:
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/debug --target strategy_order_store_test -j8
-./build/debug/test/strategy/strategy_order_store_test
+cmake --build build/debug --target core_order_pool_test -j8
+./build/debug/test/core/common/core_order_pool_test
 ```
 
-Expected: all `OrderStoreTest` tests pass.
+Expected: all `OrderPoolTest` tests pass.
 
 ### Task 2: Exchange-Neutral Strategy State Machine
 
@@ -285,14 +261,13 @@ Expected: compile fails because `strategy/strategy.h` does not exist or required
 
 Create `strategy/strategy.h`:
 
-- Template parameter `GatewayT` must expose `using Order`, `PrepareOrder(Order&, const OrderDraft&)`, `PlaceOrder(Order&)` and `CancelOrder(Order&)`。
-- Constructor stores `GatewayT& gateway` and `OrderStore<typename GatewayT::Order> orders`。
-- `CreateLimitOrder(OrderDraft draft)` validates `draft.symbol` non-empty, `draft.price_text` non-empty and `draft.quantity > 0` before allocation。
-- Valid draft allocates an order, copies exchange-neutral fields, calls `gateway.PrepareOrder()` once and leaves status at `kCreated`。
-- `SubmitOrder(local_order_id)` only accepts `kCreated`; gateway send ok changes status to `kSent`。
+- Template parameter `GatewayT` must expose `PlaceOrder(Order&)` and `CancelOrder(Order&)`。
+- Constructor stores `GatewayT& gateway` and `OrderPool<Order> orders`。
+- `PlaceLimitOrder(OrderCreateRequest request)` validates `request.symbol` non-empty, `request.price_text` non-empty and `request.quantity > 0` before allocation。
+- Valid request allocates an order, copies exchange-neutral fields, calls `gateway.PlaceOrder()` once and changes status to `kSent` on local send ok。
 - `CancelOrder(local_order_id)` only accepts `kSent`、`kAccepted` 或 `kPartialFilled`; gateway send ok changes status to `kCancelSent`。
-- `OnOrderResponse(event)` updates status and binds non-zero exchange order id on accepted / cancel accepted responses。
-- `FindOrder()`、`FindOrderByExchangeOrderId()` 和 `order_count()` delegate to `OrderStore`。
+- `OnOrderResponse(event)` updates status from accepted / cancel accepted responses without building an exchange order id index。
+- `FindOrder()` 和 `order_count()` delegate to `OrderPool`。
 
 - [x] **Step 3: 运行 Task 2 验证**
 
@@ -305,46 +280,40 @@ cmake --build build/debug --target strategy_test -j8
 
 Expected: all `StrategyTest` tests pass.
 
-### Task 3: Gate Order Gateway Adapter
+### Task 3: Gate Direct Struct Flow
 
 **Files:**
-- Create: `exchange/gate/trading/gate_order_gateway.h`
-- Keep or modify: `test/strategy/gate_order_gateway_test.cpp`
+- Modify: `exchange/gate/trading/order_session.h`
+- Modify: `test/exchange/gate/trading/order_session_test.cpp`
 
 - [x] **Step 1: 确认 RED**
 
 Run:
 
 ```bash
-cmake --build build/debug --target strategy_gate_order_gateway_test -j8
+cmake --build build/debug --target strategy_test gate_order_session_test -j8
 ```
 
-Expected: compile fails because `exchange/gate/trading/gate_order_gateway.h` does not exist or required adapter methods are missing.
+Expected: compile fails while `Strategy` / `OrderSession` still expect old prepared request / cached wire fields.
 
-- [x] **Step 2: 实现 Gate adapter**
+- [x] **Step 2: 实现 Gate direct struct send**
 
-Create `exchange/gate/trading/gate_order_gateway.h`:
-
-- `GateOrderCache` owns fixed buffers and `gate::OrderWireFields wire`。
-- `GateStrategyOrder : StrategyOrder` owns one `GateOrderCache gate`。
-- `GateOrderGateway<OrderSessionT>` stores `OrderSessionT& session` and exposes `using Order = GateStrategyOrder`。
-- `PrepareOrder()` copies generic fields into `GateStrategyOrder` and copies `symbol`、`price_text`、TIF token、`OrderTextCodec::Format(local_order_id)` output into owned buffers。
-- TIF mapping: `TimeInForce::kGoodTillCancel -> "gtc"`，`TimeInForce::kImmediateOrCancel -> "ioc"`。
-- Buffer overflow returns `false` and does not call `OrderSession`。
-- `PlaceOrder()` calls `session.PlaceOrder(gate::PlaceOrderRequest{.wire = order.gate.wire})`。
-- `CancelOrder()` calls `session.CancelOrder(gate::CancelOrderRequest{.local_order_id = order.local_order_id, .exchange_order_id = order.exchange_order_id})`。
-- `ToStrategyOrderResponse(const gate::OrderResponse&)` maps Gate response kinds one-to-one and preserves `local_order_id`、`exchange_order_id`、`error_label_hash`。
+- `OrderSession::PlaceOrder(const OrderT&)` 读取订单 struct 并现场编码 Gate place JSON。
+- `OrderSession::CancelOrder(const OrderT&)` 优先使用内部 capped `local_order_id -> exchange_order_id` cache；没有缓存时 fallback 到 `text="t-<local_order_id>"`。
+- place final result 在 `OrderSession` 内缓存 exchange order id，cancel accepted / disconnect / 显式 forget 时清理。
+- `OrderResponse` 仍透传 `exchange_order_id`，但 Strategy 不建立 exchange id 索引。
 
 - [x] **Step 3: 运行 Task 3 验证**
 
 Run:
 
 ```bash
-cmake --build build/debug --target strategy_gate_order_gateway_test -j8
-./build/debug/test/strategy/strategy_gate_order_gateway_test
+cmake --build build/debug --target strategy_test gate_order_session_test -j8
+./build/debug/test/strategy/strategy_test
+./build/debug/test/exchange/gate/trading/gate_order_session_test
 ```
 
-Expected: all `GateOrderGatewayTest` tests pass.
+Expected: Strategy 和 Gate `OrderSession` tests pass.
 
 ### Task 4: Strategy To Gate OrderSession Path Benchmark
 
@@ -355,13 +324,12 @@ Expected: all `GateOrderGatewayTest` tests pass.
 
 - [x] **Step 1: 写 benchmark**
 
-Create `benchmark/strategy/order_gateway_benchmark.cpp` with a fake Gate order session that only records `PlaceOrderRequest` / `CancelOrderRequest` and returns `gate::OrderSendStatus::kOk`。
+Create `benchmark/strategy/order_gateway_benchmark.cpp` with a fake order session that records the order struct and returns local OK。
 
 Benchmark cases:
 
-- `BM_GateStrategyPrepareLimitOrder`: constructs `GateStrategyOrder` and calls `GateOrderGateway::PrepareOrder()`。
-- `BM_GateStrategyPlaceCachedOrder`: prepares once outside the loop and calls `GateOrderGateway::PlaceOrder()` in the loop。
-- `BM_GateStrategyCancelCachedOrder`: prepares once outside the loop, sets `exchange_order_id`, and calls `GateOrderGateway::CancelOrder()` in the loop。
+- `BM_StrategyPlaceLimitOrder`: creates and sends limit orders through the fake session。
+- `BM_StrategyCancelAcceptedOrder`: creates an accepted order and measures Strategy cancel submission through the fake session。
 
 - [x] **Step 2: 接入 benchmark target**
 
@@ -374,7 +342,7 @@ add_executable(strategy_order_gateway_benchmark
 
 target_link_libraries(strategy_order_gateway_benchmark
     PRIVATE
-        aquila_strategy_gate
+        aquila_strategy
         benchmark::benchmark_main
 )
 ```
@@ -386,7 +354,7 @@ Run:
 ```bash
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --target strategy_order_gateway_benchmark -j8
-./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_GateStrategyPrepareLimitOrder|BM_GateStrategyPlaceCachedOrder|BM_GateStrategyCancelCachedOrder' --benchmark_min_time=0.01s
+./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 ```
 
 Expected: benchmark executable runs all three benchmark cases without failures. Do not claim latency improvement from these numbers; they are first-version baseline evidence only.
@@ -401,9 +369,9 @@ Expected: benchmark executable runs all three benchmark cases without failures. 
 
 Update `doc/project_onboarding_guide.md`:
 
-- “最近已完成”增加 Strategy 第一版订单框架、Gate adapter、tests 和 benchmark。
+- “最近已完成”增加 Strategy 第一版订单框架、Gate direct struct flow、tests 和 benchmark。
 - “文档索引”增加 this plan。
-- “代码入口”新增 `Strategy 订单框架` 小节，列出 `strategy/order_types.h`、`order_store.h`、`strategy.h`、`exchange/gate/trading/gate_order_gateway.h`、Strategy tests 和 benchmark。
+- “代码入口”新增 `Strategy 订单框架` 小节，列出 `core/common/order_pool.h`、`strategy/order_types.h`、`strategy/strategy.h`、Strategy tests 和 benchmark。
 - “验证命令”增加 strategy gtest 和 benchmark smoke 命令。
 - “下一步建议”增加私有 feedback session、REST reconcile、symbol metadata/risk check 接入和端到端 live smoke 的顺序。
 
@@ -431,12 +399,13 @@ Expected: no whitespace errors.
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/debug --target strategy_order_store_test strategy_test strategy_gate_order_gateway_test -j8
+cmake --build build/debug --target core_order_pool_test strategy_test -j8
 ctest --test-dir build/debug -R 'strategy|gate_(order|submit)' --output-on-failure
 
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release --target strategy_order_gateway_benchmark -j8
-./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_GateStrategyPrepareLimitOrder|BM_GateStrategyPlaceCachedOrder|BM_GateStrategyCancelCachedOrder' --benchmark_min_time=0.01s
+cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark -j8
+./build/release/benchmark/core/common/core_order_pool_benchmark --benchmark_min_time=0.01s
+./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 
 git diff --check
 ```

@@ -13,6 +13,7 @@ target_link_libraries(aquila_core
         FastFloat::fast_float
         OpenSSL::SSL
         OpenSSL::Crypto
+        absl::flat_hash_map
 )
 
 add_subdirectory(config)

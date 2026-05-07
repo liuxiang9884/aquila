@@ -127,6 +127,7 @@ class OrderSession {
                                   ? kDefaultOrderRequestMapCapacity
                                   : request_map_capacity) {
     request_id_to_local_order_id_.reserve(request_map_capacity_);
+    local_order_id_to_exchange_order_id_.reserve(request_map_capacity_);
     client_.SetStateHook(this, &HandleState);
   }
 
@@ -160,6 +161,7 @@ class OrderSession {
       login_ready_ = false;
       login_request_sequence_ = 0;
       request_id_to_local_order_id_.clear();
+      local_order_id_to_exchange_order_id_.clear();
     }
   }
 
@@ -224,10 +226,11 @@ class OrderSession {
         RequestIdCodec::Encode(OrderRequestType::kCancelOrder, sequence);
     std::array<char, kCancelOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-        CancelOrderEncodeFields{.timestamp = NowSeconds(),
-                                .encoded_request_id = encoded_request_id,
-                                .local_order_id = order.local_order_id,
-                                .exchange_order_id = order.exchange_order_id},
+        CancelOrderEncodeFields{
+            .timestamp = NowSeconds(),
+            .encoded_request_id = encoded_request_id,
+            .local_order_id = order.local_order_id,
+            .exchange_order_id = ExchangeOrderIdForCancel(order)},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
@@ -257,6 +260,20 @@ class OrderSession {
 
   [[nodiscard]] std::size_t request_map_capacity() const noexcept {
     return request_map_capacity_;
+  }
+
+  [[nodiscard]] std::uint64_t exchange_order_id_for_local_order(
+      std::int64_t local_order_id) const noexcept {
+    const auto it = local_order_id_to_exchange_order_id_.find(local_order_id);
+    if (it == local_order_id_to_exchange_order_id_.end()) {
+      return 0;
+    }
+    return it->second;
+  }
+
+  [[nodiscard]] bool forget_exchange_order_id_for_local_order(
+      std::int64_t local_order_id) noexcept {
+    return local_order_id_to_exchange_order_id_.erase(local_order_id) != 0;
   }
 
   [[nodiscard]] const OrderSessionStats& stats() const noexcept {
@@ -320,6 +337,34 @@ class OrderSession {
     const auto payload = std::as_bytes(
         std::span<const char>(payload_text.data(), payload_text.size()));
     return core.SendText(payload, websocket::WriteFlushMode::kTryFlushOne);
+  }
+
+  template <typename OrderT>
+  [[nodiscard]] std::uint64_t ExchangeOrderIdForCancel(
+      const OrderT& order) const noexcept {
+    const std::uint64_t exchange_order_id =
+        exchange_order_id_for_local_order(order.local_order_id);
+    if (exchange_order_id != 0) {
+      return exchange_order_id;
+    }
+    if constexpr (requires { order.exchange_order_id; }) {
+      return order.exchange_order_id;
+    }
+    return 0;
+  }
+
+  void CacheExchangeOrderId(std::int64_t local_order_id,
+                            std::uint64_t exchange_order_id) noexcept {
+    auto it = local_order_id_to_exchange_order_id_.find(local_order_id);
+    if (it != local_order_id_to_exchange_order_id_.end()) {
+      it->second = exchange_order_id;
+      return;
+    }
+    if (local_order_id_to_exchange_order_id_.size() >= request_map_capacity_) {
+      return;
+    }
+    local_order_id_to_exchange_order_id_.emplace(local_order_id,
+                                                 exchange_order_id);
   }
 
   [[nodiscard]] OrderSendResult SendLogin() noexcept {
@@ -445,6 +490,12 @@ class OrderSession {
     }
 
     request_id_to_local_order_id_.erase(it);
+    if (!is_error && !is_cancel && parsed.exchange_order_id != 0) {
+      CacheExchangeOrderId(local_order_id, parsed.exchange_order_id);
+    }
+    if (!is_error && is_cancel) {
+      local_order_id_to_exchange_order_id_.erase(local_order_id);
+    }
     const OrderResponseKind kind =
         is_cancel ? (is_error ? OrderResponseKind::kCancelRejected
                               : OrderResponseKind::kCancelAccepted)
@@ -552,6 +603,8 @@ class OrderSession {
   simdjson::ondemand::parser text_parser_;
   absl::flat_hash_map<std::uint64_t, std::int64_t>
       request_id_to_local_order_id_;
+  absl::flat_hash_map<std::int64_t, std::uint64_t>
+      local_order_id_to_exchange_order_id_;
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   std::uint64_t request_sequence_{1};
   std::uint64_t login_request_sequence_{0};

@@ -102,6 +102,16 @@ struct TestOrder {
   bool reduce_only{false};
 };
 
+struct TestOrderWithoutExchangeOrderId {
+  std::int64_t local_order_id{0};
+  std::string_view symbol{};
+  OrderSide side{OrderSide::kBuy};
+  std::int64_t quantity{0};
+  std::string_view price_text{};
+  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
+  bool reduce_only{false};
+};
+
 TestOrder MakePlaceOrder(std::int64_t local_order_id) noexcept {
   return TestOrder{.local_order_id = local_order_id,
                    .symbol = "BTC_USDT",
@@ -243,6 +253,43 @@ TEST(OrderSessionTest, PlaceResultMapsExchangeOrderIdAndErasesCorrelation) {
   EXPECT_EQ(handler.responses[0].local_order_id, 123);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 36028827892199865U);
   EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.exchange_order_id_for_local_order(123), 36028827892199865U);
+}
+
+TEST(OrderSessionTest, ExchangeOrderIdCacheStaysWithinRequestMapCapacity) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler, 1);
+  ActivateAndLogin(session);
+
+  OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  session.Handle(TextView(PlaceResultResponse()));
+  EXPECT_EQ(session.exchange_order_id_for_local_order(123), 36028827892199865U);
+
+  sent = session.PlaceOrder(MakePlaceOrder(124));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855875","ack":false,"header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199866","text":"t-124"}}})"));
+
+  ASSERT_EQ(handler.responses.size(), 2U);
+  EXPECT_EQ(handler.responses[1].kind, OrderResponseKind::kAccepted);
+  EXPECT_EQ(handler.responses[1].local_order_id, 124);
+  EXPECT_EQ(handler.responses[1].exchange_order_id, 36028827892199866U);
+  EXPECT_EQ(session.exchange_order_id_for_local_order(124), 0U);
+}
+
+TEST(OrderSessionTest, ExplicitForgetClearsCachedExchangeOrderId) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  session.Handle(TextView(PlaceResultResponse()));
+
+  EXPECT_TRUE(session.forget_exchange_order_id_for_local_order(123));
+  EXPECT_EQ(session.exchange_order_id_for_local_order(123), 0U);
+  EXPECT_FALSE(session.forget_exchange_order_id_for_local_order(123));
 }
 
 TEST(OrderSessionTest, CancelUsesExchangeOrderIdPath) {
@@ -252,6 +299,18 @@ TEST(OrderSessionTest, CancelUsesExchangeOrderIdPath) {
 
   const OrderSendResult sent =
       session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
+
+  EXPECT_EQ(sent.status, OrderSendStatus::kOk);
+  EXPECT_EQ(session.inflight_count(), 1U);
+}
+
+TEST(OrderSessionTest, CancelAcceptsOrderWithoutExchangeOrderIdField) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.CancelOrder(
+      TestOrderWithoutExchangeOrderId{.local_order_id = 123});
 
   EXPECT_EQ(sent.status, OrderSendStatus::kOk);
   EXPECT_EQ(session.inflight_count(), 1U);
@@ -273,6 +332,7 @@ TEST(OrderSessionTest, CancelResultErasesCorrelation) {
   EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kCancelAccepted);
   EXPECT_EQ(handler.responses[0].local_order_id, 123);
   EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.exchange_order_id_for_local_order(123), 0U);
 }
 
 TEST(OrderSessionTest, CancelResultWithExchangeIdOnlyIsAccepted) {

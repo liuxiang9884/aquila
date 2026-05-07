@@ -91,7 +91,7 @@ Sirius 中值得保留的做法：
 - cancel 优先使用交易所 order id，不存在时使用 `text`；
 - `request_sequence -> local_order_id` 是轻量关联表，不是订单 pending table；
 - place ack 只表示 Gate 接收请求，不建立交易所 order id 映射；
-- place final result 才建立 `local_order_id -> exchange_order_id` 映射。
+- place final result 才在 `OrderSession` 内建立 `local_order_id -> exchange_order_id` 缓存，供后续 cancel 编码优先使用。
 
 不保留的做法：
 
@@ -102,54 +102,29 @@ Sirius 中值得保留的做法：
 
 ## 输入结构
 
-`OrderSession` 接收偏 wire-ready 的薄输入。Strategy 在创建或更新本地订单时缓存 Gate wire fields，避免 `OrderSession` 在 submit 热路径中理解 side、order type、metadata 和 decimal places。
+当前实现已改为 `OrderSession` 直接接收 Strategy 创建好的订单 struct，并在发送路径完成 Gate JSON 编码。Strategy 不缓存 Gate wire fields，不维护 exchange order id 索引；risk、symbol metadata 和订单状态仍属于 Strategy。
 
 ```cpp
-struct OrderWireFields {
+struct PlaceOrderStructFields {
   std::int64_t local_order_id;
-  std::string_view contract;
-  std::int64_t signed_size;
+  std::string_view symbol;
+  OrderSide side;
+  std::int64_t quantity;
   std::string_view price_text;
-  std::string_view tif;
-  std::string_view text;
+  TimeInForce time_in_force;
   bool reduce_only;
-};
-
-struct PlaceOrderRequest {
-  OrderWireFields wire;
-};
-
-struct CancelOrderRequest {
-  std::int64_t local_order_id;
-  std::uint64_t exchange_order_id;
 };
 ```
 
 约束：
 
-- `signed_size > 0` 表示买入，`signed_size < 0` 表示卖出；
-- market order 使用 `price_text="0"` 且 `tif="ioc"`；
+- Gate signed size 由 `OrderSession` 根据 `side + quantity` 现场派生；
+- market order 使用 `price_text="0"` 且 `time_in_force=ImmediateOrCancel`；
 - limit order 使用 Strategy 预格式化后的 `price_text`；
 - `text` 第一版使用 `t-<local_order_id>`；
-- `CancelOrderRequest::exchange_order_id != 0` 时优先按交易所 order id 撤单；
-- `exchange_order_id == 0` 时按 `text="t-<local_order_id>"` 撤单。
-
-Strategy 侧本地订单对象可以缓存固定数组，示例：
-
-```cpp
-struct StrategyOrder {
-  std::int64_t local_order_id;
-  std::uint64_t exchange_order_id;
-  std::array<char, 24> gate_contract;
-  std::array<char, 32> gate_price_text;
-  std::array<char, 8> gate_tif;
-  std::array<char, 32> gate_text;
-  std::int64_t gate_signed_size;
-  bool gate_reduce_only;
-};
-```
-
-上面结构只是 Strategy 订单对象的缓存思路，不是 `OrderSession` 要包含或依赖的完整订单结构。
+- place final result 成功后，`OrderSession` 内部缓存 `local_order_id -> exchange_order_id`，缓存最多保留 `request_map_capacity` 条；
+- cancel 优先使用 `OrderSession` 内部缓存的 exchange order id；没有缓存时按 `text="t-<local_order_id>"` 撤单；
+- `forget_exchange_order_id_for_local_order()` 是后续成交终态 / reconcile 清理缓存的显式入口。
 
 ## RequestIdCodec
 
@@ -223,7 +198,7 @@ struct OrderSendResult {
 
 ## OrderResponse
 
-`OrderResponse` 是 Gate 轻量 API response 到 Strategy 的同步回调对象，核心作用是建立本地订单和交易所订单映射。
+`OrderResponse` 是 Gate 轻量 API response 到 Strategy 的同步回调对象。`exchange_order_id` 会继续透传给 Strategy 事件，但当前 Strategy 不维护 exchange order id 索引；OrderSession 内部缓存负责 cancel 编码所需的本地/交易所 id 对应。
 
 ```cpp
 enum class OrderResponseKind : std::uint8_t {
@@ -333,10 +308,10 @@ parser 保留 full profile 以兼容测试、benchmark 和诊断中使用的 req
 - session 未登录时拒绝 place/cancel；
 - session 写路径不可用时不插入关联表；
 - place ack 不清理关联表；
-- place result 建立 `local_order_id -> exchange_order_id` 映射并清理关联表；
+- place result 在 `OrderSession` 内缓存 `local_order_id -> exchange_order_id` 并清理关联表；
 - place error 清理关联表并输出 rejected；
 - cancel fallback 使用 `t-<local_order_id>`；
-- cancel 优先使用 `exchange_order_id`；
+- cancel 优先使用 `OrderSession` 内部缓存的 exchange order id；
 - disconnect 清空关联表。
 
 ## Benchmark 边界

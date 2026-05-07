@@ -1,0 +1,108 @@
+#include "core/common/order_pool.h"
+
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+
+#include <gtest/gtest.h>
+
+namespace aquila {
+namespace {
+
+struct TestOrder {
+  std::int64_t local_order_id{0};
+  std::int64_t payload{0};
+};
+
+TEST(OrderPoolTest, CreatesMonotonicLocalIdsAndReportsCapacity) {
+  OrderPool<TestOrder> pool(2);
+
+  EXPECT_EQ(pool.capacity(), 2U);
+  EXPECT_EQ(pool.slot_capacity(), 4U);
+  EXPECT_EQ(pool.size(), 0U);
+
+  TestOrder* first = pool.Create();
+  ASSERT_NE(first, nullptr);
+  EXPECT_EQ(first->local_order_id, 1);
+
+  TestOrder* second = pool.Create();
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(second->local_order_id, 2);
+
+  EXPECT_EQ(pool.Create(), nullptr);
+  EXPECT_EQ(pool.size(), 2U);
+}
+
+TEST(OrderPoolTest, FindsOnlyLiveOrdersByLocalId) {
+  OrderPool<TestOrder> pool(2);
+  TestOrder* order = pool.Create();
+  ASSERT_NE(order, nullptr);
+  order->payload = 7;
+  const std::int64_t local_order_id = order->local_order_id;
+
+  EXPECT_EQ(pool.Find(local_order_id), order);
+  EXPECT_EQ(pool.Find(local_order_id)->payload, 7);
+  EXPECT_EQ(pool.Find(0), nullptr);
+  EXPECT_EQ(pool.Find(99), nullptr);
+
+  EXPECT_TRUE(pool.Erase(local_order_id));
+  EXPECT_EQ(pool.Find(local_order_id), nullptr);
+  EXPECT_FALSE(pool.Erase(local_order_id));
+}
+
+TEST(OrderPoolTest, EraseReleasesSlotAndCreateReusesAddressWithNewId) {
+  OrderPool<TestOrder> pool(1);
+  TestOrder* first = pool.Create();
+  ASSERT_NE(first, nullptr);
+  first->payload = 91;
+  const std::int64_t first_id = first->local_order_id;
+
+  EXPECT_TRUE(pool.Erase(first_id));
+
+  TestOrder* second = pool.Create();
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(second, first);
+  EXPECT_EQ(second->local_order_id, 2);
+  EXPECT_EQ(second->payload, 0);
+}
+
+TEST(OrderPoolTest, LiveOrderPointerStaysStableAcrossOtherRecycles) {
+  OrderPool<TestOrder> pool(4);
+  TestOrder* stable = pool.Create();
+  ASSERT_NE(stable, nullptr);
+  stable->payload = 123;
+  const std::int64_t stable_id = stable->local_order_id;
+
+  for (int i = 0; i < 16; ++i) {
+    TestOrder* transient = pool.Create();
+    ASSERT_NE(transient, nullptr);
+    const std::int64_t transient_id = transient->local_order_id;
+    transient->payload = i;
+    EXPECT_TRUE(pool.Erase(transient_id));
+    EXPECT_EQ(pool.Find(stable_id), stable);
+    EXPECT_EQ(stable->payload, 123);
+  }
+}
+
+TEST(OrderPoolTest, ZeroCapacityNeverAllocates) {
+  OrderPool<TestOrder> pool(0);
+
+  EXPECT_EQ(pool.capacity(), 0U);
+  EXPECT_EQ(pool.slot_capacity(), 0U);
+  EXPECT_EQ(pool.size(), 0U);
+  EXPECT_EQ(pool.Create(), nullptr);
+  EXPECT_EQ(pool.Find(1), nullptr);
+  EXPECT_FALSE(pool.Erase(1));
+}
+
+TEST(OrderPoolTest, RejectsCapacityTooLargeForUint32SlotIndex) {
+  constexpr std::size_t kTooLargeCapacity =
+      static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) / 2 +
+      1;
+
+  EXPECT_THROW(OrderPool<TestOrder> pool(kTooLargeCapacity),
+               std::invalid_argument);
+}
+
+}  // namespace
+}  // namespace aquila

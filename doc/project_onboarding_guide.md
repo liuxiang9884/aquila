@@ -38,7 +38,7 @@
 20. Gate `OrderSession` 当前边界已调整：Strategy 做风控、建单、订单池和状态机；`OrderSession` 直接接收订单 struct，在发送路径完成 Gate place/cancel JSON 序列化、`request_sequence -> local_order_id` correlation 和轻量同步 `OrderResponse` 回调。
 21. `config/order_sessions/gate_order_session.toml` 和 Gate `OrderSessionConfig` parser 已落地，按 data session 风格复用通用 WebSocket config parser；TOML 只写 `[order_session]`、credentials env 名和 `[order_session.websocket.*]`，WS target 由 `settle` 生成 `/v4/ws/<settle>`。
 22. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
-23. Strategy 第一版订单框架已按 Sirius 风格重构：`strategy/order_types.h`、`strategy/order_pool.h` 和 `strategy/strategy.h` 覆盖订单创建、简单固定容量 pool、状态推进和直接 session 发送；Strategy 不再缓存 Gate wire fields，不再暴露 `PrepareOrder()` / `SubmitOrder()` 两阶段接口。
+23. Strategy 第一版订单框架已按 Sirius 风格重构：`core/common/order_pool.h`、`strategy/order_types.h` 和 `strategy/strategy.h` 覆盖通用固定容量订单池、订单创建、状态推进和直接 session 发送；Strategy 不维护 exchange order id 索引，不再缓存 Gate wire fields，也不再暴露 `PrepareOrder()` / `SubmitOrder()` 两阶段接口。
 24. `scripts/gate/run_futures_order_smoke.py` 和 `scripts/gate/run_futures_order_smoke_test.py` 已落地；2026-05-07 使用 Gate REST 对 `BTC_USDT`、1 手、5 轮真实 smoke，结果 `5/5 filled_and_closed`，最终 `position size=0`、`pending_orders=0`、`open orders=[]`。这只是 REST smoke，不是 C++ WS `OrderSession` live smoke。
 25. Strategy / Gate 第一版边界已明确：Strategy 负责订单对象、风控位置、状态和执行流程；Gate `OrderSession` 负责从订单 struct 现场编码 place/cancel 请求、correlation 和轻量 response。Strategy benchmark 是 fake session direct-send baseline，不包含真实 WebSocket 或 socket 成本。
 
@@ -108,10 +108,10 @@ doc/data_reader_config.md
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
-| `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、wire-ready 输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
+| `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
 | `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md` | 审查 Gate `OrderSession` 第一版实现或追溯任务拆分时读 | TDD 实现任务：types/codecs、login signature/request encoder、submit parser correlation、session、benchmark、handoff/onboarding 更新。当前 Task 1-6 已完成。 |
-| `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` | 追溯 Strategy 订单框架第一版历史边界时读 | 原第一版 Strategy 订单对象/store/state machine、Gate wire fields 缓存、fake session adapter benchmark、REST smoke 和文档同步任务拆分；当前实现已被 struct-flow plan 调整。 |
-| `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` | 继续 Strategy / Gate OrderSession 直接 struct 发单边界时读 | Strategy 直接建单入 `OrderPool` 并发送订单 struct；Gate `OrderSession` 在发送路径完成 place/cancel JSON 序列化；移除 Strategy 侧 Gate wire cache、`PrepareOrder()` 和 `SubmitOrder()`。 |
+| `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` | 追溯 Strategy 订单框架第一版历史边界时读 | Strategy 订单对象、core `OrderPool`、state machine、direct-send fake session benchmark、REST smoke 和文档同步任务拆分；当前实现已被 struct-flow plan 调整。 |
+| `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` | 继续 Strategy / Gate OrderSession 直接 struct 发单边界时读 | Strategy 直接建单入 `core/common` 的 `OrderPool` 并发送订单 struct；Gate `OrderSession` 在发送路径完成 place/cancel JSON 序列化；移除 Strategy 侧 Gate wire cache、exchange id 索引、`PrepareOrder()` 和 `SubmitOrder()`。 |
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance USD-M futures bookTicker 行情时读 | raw stream URL、JSON parser、client/session、benchmark 和 probe 入口。 |
 
 ## 代码入口
@@ -123,6 +123,7 @@ doc/data_reader_config.md
 | `core/common/result.h` | 通用 `Result<T>`，用于启动期 parser / loader 这类显式返回成功值或错误字符串的场景。 |
 | `core/common/types.h` | 项目通用枚举，当前包含 `aquila::Exchange`。 |
 | `core/common/constants.h` | 项目通用常量，当前包含缓存行大小等基础常量。 |
+| `core/common/order_pool.h` | 通用固定容量订单池；slot vector 固定为 max live 的 2 倍，local id 查找走 `absl::flat_hash_map`，不维护 exchange order id 索引；构造期拒绝超过 `uint32_t` slot index 范围的容量。 |
 | `core/utils/numeric.h` | 基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToDouble` / `ToUint64` 等热路径数字转换 helper，失败只在 debug assert。 |
 | `core/market_data/types.h` | 统一行情数据结构，当前包含 `aquila::BookTicker`。 |
 
@@ -160,9 +161,8 @@ doc/data_reader_config.md
 | 文件 | 职责 |
 | --- | --- |
 | `strategy/order_types.h` | Strategy 订单创建请求、`StrategyOrder`、place/cancel/result event 类型；订单对象保存 symbol、price_text、数量、TIF 和状态，不保存 Gate wire cache。 |
-| `strategy/order_pool.h` | 简单固定容量订单池，使用单调 `local_order_id` 和 vector index 查找；exchange order id v1 线性查找。 |
 | `strategy/strategy.h` | 模板化 `Strategy<OrderSessionT>`，提供 `PlaceLimitOrder()`、`CancelOrder()` 和 response apply；发单时直接把订单 struct 交给 session。 |
-| `test/strategy/order_pool_test.cpp` | Strategy order pool 本地订单 ID、容量限制和 exchange order id 绑定测试。 |
+| `test/core/common/order_pool_test.cpp` | 通用 `OrderPool` 本地订单 ID、容量限制、slot 复用、指针稳定和 zero capacity 测试。 |
 | `test/strategy/strategy_test.cpp` | Strategy place/cancel/response 状态推进测试。 |
 | `benchmark/strategy/order_gateway_benchmark.cpp` | Strategy direct-send fake session baseline；不包含真实 WebSocket 或 socket。 |
 
@@ -250,7 +250,8 @@ doc/data_reader_config.md
 | `benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp` | Binance JSON bookTicker parser、market data client/session text path benchmark；yyjson 和 ordered parser 只在此文件内做 benchmark 对照。 |
 | `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp` | Gate submit response JSON parse benchmark；yyjson 只在这里作为 simdjson 对照。 |
 | `benchmark/exchange/gate/trading/order_session_benchmark.cpp` | Gate order place/cancel request encode 和 place result parse microbenchmark。 |
-| `benchmark/strategy/order_gateway_benchmark.cpp` | Strategy cached Gate wire fields submit/cancel adapter fake session baseline，不包含真实 `OrderSession` 编码、WebSocket 或 socket。 |
+| `benchmark/core/common/order_pool_benchmark.cpp` | 通用 `OrderPool` create-until-capacity、live find 和 create/find/erase recycle microbenchmark。 |
+| `benchmark/strategy/order_gateway_benchmark.cpp` | Strategy direct-send fake session baseline，不包含真实 `OrderSession` 编码、WebSocket 或 socket。 |
 
 ## 当前重要结论
 
@@ -351,17 +352,17 @@ BinanceOrderFeedbackThread
 
 OrderSession 第一版关键结论：
 
-- Strategy 负责风控、symbol metadata 校验、订单对象、订单状态机、订单执行逻辑和 Gate wire fields 缓存。
+- Strategy 负责风控、symbol metadata 校验、订单对象、订单状态机和订单执行逻辑，不缓存 Gate wire fields。
 - `OrderSession` 接收订单 struct，不接收 Strategy 侧缓存的 wire-ready request，也不维护 pending order table。
 - `OrderSession` 不做额外订单语义防御性检查；本地 id fallback text 编码失败时返回 `kInvalidLocalOrderId`，该路径会消耗 request sequence 但不进入 correlation map。
 - place `ack=true` 只表示 Gate 收到请求，不建立交易所 order id 映射，也不清理 correlation。
-- ack/result 成功形态必须是 HTTP 200；place final result 才建立本地订单和交易所订单的匹配信息，并清理 correlation。
-- cancel response 使用 encoded request id 做主 correlation；如果 result 携带 `text`，必须匹配本地 id；仅 exchange-id 的进一步原始 cancel id 校验属于后续增强设计。
+- ack/result 成功形态必须是 HTTP 200；place final result 才在 `OrderSession` 内建立本地订单和交易所订单的匹配信息，并清理 correlation。
+- cancel 优先使用 `OrderSession` 内部缓存的 exchange order id 编码；没有缓存时 fallback 到本地 `text="t-<local_order_id>"`。该缓存最多保留 `request_map_capacity` 条，可通过 `forget_exchange_order_id_for_local_order()` 显式清理。cancel response 使用 encoded request id 做主 correlation；如果 result 携带 `text`，必须匹配本地 id；仅 exchange-id 的进一步原始 cancel id 校验属于后续增强设计。
 - 断线时清空 correlation，不构造假的 rejected/cancelled response；Strategy 后续通过 state/reconcile 处理未知状态。
 
 ### Strategy 第一版订单框架
 
-Strategy 第一版订单框架已经把交易所无关订单对象、简单固定容量 pool、状态推进和 Gate `OrderSession` 直接发送接到一起：
+Strategy 第一版订单框架已经把交易所无关订单对象、`core/common/order_pool.h` 通用固定容量 pool、状态推进和 Gate `OrderSession` 直接发送接到一起：
 
 - Strategy 负责订单对象生命周期、订单状态、place/cancel 执行流程和后续风控 / symbol metadata 接入位置。
 - Strategy 不缓存 Gate wire fields，也不暴露 `PrepareOrder()` / `SubmitOrder()`；`PlaceLimitOrder()` 创建订单后立即调用 session。
@@ -550,10 +551,10 @@ ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --o
 Strategy order framework tests：
 
 ```bash
-cmake --build build/debug --target strategy_order_pool_test strategy_test -j8
-./build/debug/test/strategy/strategy_order_pool_test
+cmake --build build/debug --target core_order_pool_test strategy_test -j8
+./build/debug/test/core/common/core_order_pool_test
 ./build/debug/test/strategy/strategy_test
-ctest --test-dir build/debug -R 'strategy' --output-on-failure
+ctest --test-dir build/debug -R 'core_order_pool|strategy' --output-on-failure
 ```
 
 Gate submit/order benchmark：
@@ -566,11 +567,12 @@ taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_respons
 Strategy order gateway benchmark：
 
 ```bash
-cmake --build build/release --target strategy_order_gateway_benchmark -j8
-./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_GateStrategyPrepareLimitOrder|BM_GateStrategyPlaceCachedOrder|BM_GateStrategyCancelCachedOrder' --benchmark_min_time=0.01s
+cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark -j8
+./build/release/benchmark/core/common/core_order_pool_benchmark --benchmark_min_time=0.01s
+./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 ```
 
-这组 benchmark 是 fake Gate order session adapter baseline，不包含真实 `OrderSession` 编码、WebSocket 或 socket。
+这组 benchmark 是 core order pool 和 fake Strategy order session baseline，不包含真实 `OrderSession` 编码、WebSocket 或 socket。
 
 Gate data session dry-run / BBO live probe：
 

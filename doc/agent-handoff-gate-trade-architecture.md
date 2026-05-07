@@ -421,12 +421,12 @@ docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md
 已确认边界：
 
 1. Strategy 做风控、symbol metadata 校验、订单对象、订单状态机和订单执行逻辑。
-2. Strategy 订单对象可以缓存 Gate wire fields；`OrderSession` 接收薄的 wire-ready request，不接收 Sirius 的重 `OrderStruct`。
+2. Strategy 订单对象不缓存 Gate wire fields；`OrderSession` 直接接收订单 struct，并在发送路径完成 Gate JSON 编码。
 3. `OrderSession` 第一版只做 `futures.login`、`futures.order_place`、`futures.order_cancel`、轻量 response parse 和同步 `OrderResponse` 回调。
 4. `request_sequence -> local_order_id` 是轻量 correlation map，不是 pending order table。
 5. place `ack=true` 只表示 Gate 收到请求，不建立交易所 order id 映射，也不清理 correlation。
-6. place final result 才建立 `local_order_id -> exchange_order_id` 映射，并清理 correlation。
-7. cancel 优先用 `exchange_order_id`；没有交易所 id 时 fallback 到 `text="t-<local_order_id>"`。
+6. place final result 输出 `exchange_order_id`、清理 correlation，并在 `OrderSession` 内缓存 `local_order_id -> exchange_order_id`，供后续 cancel 编码使用；Strategy 当前不维护 exchange order id 索引。
+7. cancel 优先用 `OrderSession` 内部缓存的 exchange order id；没有交易所 id 时 fallback 到 `text="t-<local_order_id>"`。该缓存最多保留 `request_map_capacity` 条，cancel accepted、断线或显式 `forget_exchange_order_id_for_local_order()` 会清理。
 8. `OrderSession` 断线时清空 correlation，不构造假的 rejected/cancelled response；Strategy 后续通过 state/reconcile 处理未知状态。
 9. 第一版固定缓冲区：login 1024B、place 1024B、cancel 512B；编码截断返回本地失败，不发送半截 JSON。
 10. 第一版不做 batch place、amend、cancel all、order status/list、price order、私有回报流和 REST reconcile。
@@ -489,7 +489,7 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 
 已确认边界：
 
-1. Strategy 负责订单对象、简单固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程。
+1. Strategy 负责订单对象、使用 `core/common/order_pool.h` 通用固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程；Strategy 不维护 exchange order id 索引。
 2. Strategy 不缓存 Gate wire fields，不再暴露 `PrepareOrder()` / `SubmitOrder()`；`PlaceLimitOrder()` 创建订单后直接把订单 struct 交给 session。
 3. Gate `OrderSession` 边界保持轻量：只做 WS login、place/cancel JSON 编码发送、`request_sequence -> local_order_id` correlation 和同步 `OrderResponse` 回调。
 4. `OrderSession` 不理解 Strategy order status、symbol metadata、risk check、pending order table 或 Sirius 的重 `OrderStruct`。
@@ -499,10 +499,11 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 
 ```text
 strategy/order_types.h
-strategy/order_pool.h
+core/common/order_pool.h
 strategy/strategy.h
-test/strategy/order_pool_test.cpp
+test/core/common/order_pool_test.cpp
 test/strategy/strategy_test.cpp
+benchmark/core/common/order_pool_benchmark.cpp
 benchmark/strategy/order_gateway_benchmark.cpp
 scripts/gate/run_futures_order_smoke.py
 scripts/gate/run_futures_order_smoke_test.py
@@ -519,11 +520,12 @@ scripts/gate/run_futures_order_smoke_test.py
 Strategy 当前验证入口：
 
 ```bash
-cmake --build build/debug --target strategy_order_pool_test strategy_test -j8
-./build/debug/test/strategy/strategy_order_pool_test
+cmake --build build/debug --target core_order_pool_test strategy_test -j8
+./build/debug/test/core/common/core_order_pool_test
 ./build/debug/test/strategy/strategy_test
-ctest --test-dir build/debug -R 'strategy' --output-on-failure
-cmake --build build/release --target strategy_order_gateway_benchmark -j8
+ctest --test-dir build/debug -R 'core_order_pool|strategy' --output-on-failure
+cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark -j8
+./build/release/benchmark/core/common/core_order_pool_benchmark --benchmark_min_time=0.01s
 ./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 ```
 

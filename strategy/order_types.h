@@ -62,7 +62,6 @@ struct StrategyOrder {
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::int64_t quantity{0};
   std::string_view price_text{};
-  std::uint64_t exchange_order_id{0};
   bool reduce_only{false};
   OrderStatus status{OrderStatus::kCreated};
   std::uint64_t error_label_hash{0};

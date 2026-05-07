@@ -10,16 +10,18 @@
 
 ---
 
-### Task 1: Strategy API And OrderPool
+### Task 1: Strategy API And Core OrderPool
 
 **Files:**
 - Modify: `core/common/types.h`
-- Create: `strategy/order_pool.h`
+- Create: `core/common/order_pool.h`
+- Delete: `strategy/order_pool.h`
 - Delete: `strategy/order_store.h`
 - Modify: `strategy/order_types.h`
 - Modify: `strategy/strategy.h`
-- Move/modify: `test/strategy/order_store_test.cpp` -> `test/strategy/order_pool_test.cpp`
+- Move/modify: `test/strategy/order_store_test.cpp` -> `test/core/common/order_pool_test.cpp`
 - Modify: `test/strategy/strategy_test.cpp`
+- Modify: `test/core/common/CMakeLists.txt`
 - Modify: `test/strategy/CMakeLists.txt`
 
 - [x] **Step 1: Write failing Strategy tests**
@@ -35,10 +37,10 @@ Update tests to expect:
 Run:
 
 ```bash
-cmake --build build/debug --target strategy_test strategy_order_pool_test -j8
+cmake --build build/debug --target strategy_test core_order_pool_test -j8
 ```
 
-Expected: compile fails because current `Strategy` still expects `PrepareOrder()` and `SubmitOrder()`, and `strategy/order_pool.h` does not exist.
+Expected: compile fails because current `Strategy` still expects `PrepareOrder()` and `SubmitOrder()`, and `core/common/order_pool.h` does not exist.
 
 - [x] **Step 3: Implement Strategy/OrderPool**
 
@@ -46,7 +48,7 @@ Implementation requirements:
 - Move generic order enums (`OrderSide`、`OrderType`、`TimeInForce`) to `core/common/types.h` so Gate code can use them without depending on `strategy`.
 - Replace `OrderDraft` with `OrderCreateRequest`.
 - Add `symbol` and `price_text` fields to `StrategyOrder`; do not add Gate wire buffer/cache fields.
-- Replace `OrderStore` with simple `OrderPool` backed by a reserved vector. Local lookup uses monotonic `local_order_id` as vector index; exchange id lookup can be a linear scan in v1.
+- Replace `OrderStore` with `core/common/order_pool.h`。`OrderPool` 使用固定 resize 的 slot vector、free list 和 `local_order_id -> slot` hash index；不维护 exchange order id 索引。
 - `Strategy::PlaceLimitOrder()` privately creates the order, sends it directly through `order_session_.PlaceOrder(*order)`, and returns the local id.
 - `Strategy::CancelOrder()` sends the stored order directly through `order_session_.CancelOrder(*order)`.
 
@@ -55,9 +57,9 @@ Implementation requirements:
 Run:
 
 ```bash
-cmake --build build/debug --target strategy_test strategy_order_pool_test -j8
+cmake --build build/debug --target strategy_test core_order_pool_test -j8
 ./build/debug/test/strategy/strategy_test
-./build/debug/test/strategy/strategy_order_pool_test
+./build/debug/test/core/common/core_order_pool_test
 ```
 
 Expected: all Strategy tests pass.
@@ -97,7 +99,7 @@ Implementation requirements:
 - Remove `OrderWireFields` and `PlaceOrderRequest`.
 - `PlaceOrderEncodeFields` owns the fields needed for Gate JSON serialization and computes `text = t-<local_order_id>` and `tif` in `EncodePlaceOrderRequest()`.
 - `OrderSession::PlaceOrder(const OrderT& order)` is templated and reads `order.local_order_id`、`order.symbol`、`order.side`、`order.quantity`、`order.price_text`、`order.time_in_force`、`order.reduce_only`；Gate signed size is derived inside OrderSession from `side + quantity`.
-- `OrderSession::CancelOrder(const OrderT& order)` reads `order.local_order_id` and `order.exchange_order_id`.
+- `OrderSession::CancelOrder(const OrderT& order)` reads `order.local_order_id` and uses its own capped `local_order_id -> exchange_order_id` cache when available; otherwise it falls back to `text="t-<local_order_id>"`. Terminal fill/reconcile paths can call `forget_exchange_order_id_for_local_order()` when they are added.
 - Keep session-owned checks only: active, logged-in, request map capacity, send/encode failure. Do not add extra order semantic validation.
 
 - [x] **Step 4: Verify GREEN**
@@ -138,13 +140,14 @@ Run:
 
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build/debug --target strategy_order_pool_test strategy_test gate_order_request_encoder_test gate_order_session_test -j8
-./build/debug/test/strategy/strategy_order_pool_test
+cmake --build build/debug --target core_order_pool_test strategy_test gate_order_request_encoder_test gate_order_session_test -j8
+./build/debug/test/core/common/core_order_pool_test
 ./build/debug/test/strategy/strategy_test
 ./build/debug/test/exchange/gate/trading/gate_order_request_encoder_test
 ./build/debug/test/exchange/gate/trading/gate_order_session_test
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release --target strategy_order_gateway_benchmark gate_order_session_benchmark -j8
+cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark gate_order_session_benchmark -j8
+./build/release/benchmark/core/common/core_order_pool_benchmark --benchmark_min_time=0.01s
 ./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 ./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder' --benchmark_min_time=0.01s
 git diff --check

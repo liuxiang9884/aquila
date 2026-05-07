@@ -11,5 +11,4 @@ function(add_strategy_gtest target source_file)
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
 
-add_strategy_gtest(strategy_order_pool_test order_pool_test.cpp)
 add_strategy_gtest(strategy_test strategy_test.cpp)

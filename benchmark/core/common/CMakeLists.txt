@@ -1,0 +1,9 @@
+add_executable(core_order_pool_benchmark
+    order_pool_benchmark.cpp
+)
+
+target_link_libraries(core_order_pool_benchmark
+    PRIVATE
+        aquila_core
+        benchmark::benchmark_main
+)

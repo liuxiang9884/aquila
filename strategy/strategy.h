@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "strategy/order_pool.h"
+#include "core/common/order_pool.h"
 #include "strategy/order_types.h"
 
 namespace aquila::strategy {
@@ -98,15 +98,6 @@ class Strategy {
     return orders_.Find(local_order_id);
   }
 
-  Order* FindOrderByExchangeOrderId(std::uint64_t exchange_order_id) noexcept {
-    return orders_.FindByExchangeOrderId(exchange_order_id);
-  }
-
-  const Order* FindOrderByExchangeOrderId(
-      std::uint64_t exchange_order_id) const noexcept {
-    return orders_.FindByExchangeOrderId(exchange_order_id);
-  }
-
   std::size_t order_count() const noexcept {
     return orders_.size();
   }
@@ -125,7 +116,6 @@ class Strategy {
     order->time_in_force = request.time_in_force;
     order->quantity = request.quantity;
     order->price_text = request.price_text;
-    order->exchange_order_id = 0;
     order->reduce_only = request.reduce_only;
     order->status = OrderStatus::kCreated;
     order->error_label_hash = 0;
@@ -142,17 +132,10 @@ class Strategy {
            status == OrderStatus::kPartialFilled;
   }
 
-  void OnAccepted(Order& order, const OrderResponseEvent& event) noexcept {
+  void OnAccepted(Order& order, const OrderResponseEvent&) noexcept {
     if (order.status == OrderStatus::kSent) {
-      if (!BindExchangeOrderId(order, event)) {
-        return;
-      }
       order.status = OrderStatus::kAccepted;
       return;
-    }
-
-    if (order.status == OrderStatus::kCancelSent) {
-      BindExchangeOrderIdIfUnbound(order, event);
     }
   }
 
@@ -163,12 +146,8 @@ class Strategy {
     }
   }
 
-  void OnCancelAccepted(Order& order,
-                        const OrderResponseEvent& event) noexcept {
+  void OnCancelAccepted(Order& order, const OrderResponseEvent&) noexcept {
     if (order.status != OrderStatus::kCancelSent) {
-      return;
-    }
-    if (!BindExchangeOrderId(order, event)) {
       return;
     }
     order.status = OrderStatus::kCancelled;
@@ -178,37 +157,6 @@ class Strategy {
                         const OrderResponseEvent& event) noexcept {
     if (order.status == OrderStatus::kCancelSent) {
       order.status = OrderStatus::kRejected;
-      order.error_label_hash = event.error_label_hash;
-    }
-  }
-
-  bool BindExchangeOrderId(Order& order,
-                           const OrderResponseEvent& event) noexcept {
-    if (event.exchange_order_id == 0) {
-      return true;
-    }
-    if (!orders_.BindExchangeOrderId(event.local_order_id,
-                                     event.exchange_order_id)) {
-      SaveErrorLabelHashIfPresent(order, event);
-      return false;
-    }
-    return true;
-  }
-
-  void BindExchangeOrderIdIfUnbound(Order& order,
-                                    const OrderResponseEvent& event) noexcept {
-    if (order.exchange_order_id != 0 || event.exchange_order_id == 0) {
-      return;
-    }
-    if (!orders_.BindExchangeOrderId(event.local_order_id,
-                                     event.exchange_order_id)) {
-      SaveErrorLabelHashIfPresent(order, event);
-    }
-  }
-
-  static void SaveErrorLabelHashIfPresent(
-      Order& order, const OrderResponseEvent& event) noexcept {
-    if (event.error_label_hash != 0) {
       order.error_label_hash = event.error_label_hash;
     }
   }
