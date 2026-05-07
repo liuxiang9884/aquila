@@ -90,6 +90,90 @@ class QueryGateAccountTest(unittest.TestCase):
         self.assertIn("wallet_total_balance", result["results"])
         self.assertEqual(result["errors"], {"futures_account": "RuntimeError: HTTP 401: invalid key"})
 
+    def test_order_query_plan_lists_open_orders_by_contract(self):
+        plan = account.build_order_query_plan(
+            settle="usdt",
+            contract="btc_usdt",
+            status="open",
+            order_id=None,
+            limit=20,
+            last_id=None,
+        )
+
+        self.assertEqual(
+            [(request.label, request.endpoint_path, request.query_string) for request in plan],
+            [
+                (
+                    "futures_orders",
+                    "/futures/usdt/orders",
+                    "contract=BTC_USDT&status=open&limit=20",
+                )
+            ],
+        )
+
+    def test_order_query_plan_gets_single_order_by_id_or_text(self):
+        plan = account.build_order_query_plan(
+            settle="usdt",
+            contract="BTC_USDT",
+            status="open",
+            order_id="t-aquila/rest-test",
+            limit=None,
+            last_id=None,
+        )
+
+        self.assertEqual(
+            [(request.label, request.endpoint_path, request.query_string) for request in plan],
+            [("futures_order", "/futures/usdt/orders/t-aquila%2Frest-test", "")],
+        )
+
+    def test_order_query_plan_rejects_invalid_status(self):
+        with self.assertRaisesRegex(ValueError, "status must be open or finished"):
+            account.build_order_query_plan(
+                settle="usdt",
+                contract="BTC_USDT",
+                status="all",
+                order_id=None,
+                limit=None,
+                last_id=None,
+            )
+
+    def test_position_query_plan_supports_all_positions(self):
+        plan = account.build_position_query_plan(settle="usdt", contract=None)
+
+        self.assertEqual(
+            [(request.label, request.endpoint_path, request.query_string) for request in plan],
+            [("futures_positions", "/futures/usdt/positions", "")],
+        )
+
+    def test_position_query_plan_supports_single_contract(self):
+        plan = account.build_position_query_plan(settle="usdt", contract="btc_usdt")
+
+        self.assertEqual(
+            [(request.label, request.endpoint_path, request.query_string) for request in plan],
+            [("futures_position_BTC_USDT", "/futures/usdt/positions/BTC_USDT", "")],
+        )
+
+    def test_query_requests_aggregates_partial_errors(self):
+        requests = [
+            account.ApiRequest(label="ok", endpoint_path="/ok"),
+            account.ApiRequest(label="fail", endpoint_path="/fail"),
+        ]
+
+        def fake_request(api_request):
+            if api_request.label == "fail":
+                raise RuntimeError("HTTP 404")
+            return {"label": api_request.label}
+
+        result = account.query_requests(
+            requester=fake_request,
+            requests=requests,
+            allow_partial=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["results"], {"ok": {"label": "ok"}})
+        self.assertEqual(result["errors"], {"fail": "RuntimeError: HTTP 404"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,13 @@ def normalize_settle_query(settle: str) -> str:
     return settle.strip().upper()
 
 
+def normalize_contract(contract: str) -> str:
+    value = contract.strip().upper()
+    if not value:
+        raise ValueError("contract must not be empty")
+    return value
+
+
 def build_query_string(params: Iterable[tuple[str, str | None]]) -> str:
     filtered = [(key, value) for key, value in params if value is not None and value != ""]
     return urllib.parse.urlencode(filtered)
@@ -123,6 +130,60 @@ def build_query_plan(
     return requests
 
 
+def build_order_query_plan(
+    settle: str,
+    contract: str,
+    status: str,
+    order_id: str | None,
+    limit: int | None,
+    last_id: str | None,
+) -> list[ApiRequest]:
+    settle_path = normalize_settle_path(settle)
+    if order_id:
+        encoded_order_id = urllib.parse.quote(order_id.strip(), safe="")
+        return [
+            ApiRequest(
+                label="futures_order",
+                endpoint_path=f"/futures/{settle_path}/orders/{encoded_order_id}",
+            )
+        ]
+
+    normalized_status = status.strip().lower()
+    if normalized_status not in {"open", "finished"}:
+        raise ValueError("status must be open or finished")
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be positive")
+    return [
+        ApiRequest(
+            label="futures_orders",
+            endpoint_path=f"/futures/{settle_path}/orders",
+            query_string=build_query_string(
+                [
+                    ("contract", normalize_contract(contract)),
+                    ("status", normalized_status),
+                    ("limit", str(limit) if limit is not None else None),
+                    ("last_id", last_id),
+                ]
+            ),
+        )
+    ]
+
+
+def build_position_query_plan(settle: str, contract: str | None) -> list[ApiRequest]:
+    settle_path = normalize_settle_path(settle)
+    if contract is None or contract.strip() == "":
+        return [ApiRequest(label="futures_positions", endpoint_path=f"/futures/{settle_path}/positions")]
+
+    normalized_contract = normalize_contract(contract)
+    encoded_contract = urllib.parse.quote(normalized_contract, safe="")
+    return [
+        ApiRequest(
+            label=f"futures_position_{normalized_contract}",
+            endpoint_path=f"/futures/{settle_path}/positions/{encoded_contract}",
+        )
+    ]
+
+
 class SignedGateRestClient:
     def __init__(
         self,
@@ -170,22 +231,14 @@ class SignedGateRestClient:
             raise RuntimeError(f"invalid JSON response: {exc}") from exc
 
 
-def query_account_info(
+def query_requests(
     requester: Requester,
-    settle: str,
-    currency: str | None,
-    currency_pair: str | None,
-    futures_contracts: Iterable[str],
+    requests: Iterable[ApiRequest],
     allow_partial: bool = False,
 ) -> dict[str, Any]:
     results: dict[str, Any] = {}
     errors: dict[str, str] = {}
-    for api_request in build_query_plan(
-        settle=settle,
-        currency=currency,
-        currency_pair=currency_pair,
-        futures_contracts=futures_contracts,
-    ):
+    for api_request in requests:
         try:
             results[api_request.label] = requester(api_request)
         except Exception as exc:
@@ -195,15 +248,69 @@ def query_account_info(
     return {"ok": not errors, "results": results, "errors": errors}
 
 
+def query_account_info(
+    requester: Requester,
+    settle: str,
+    currency: str | None,
+    currency_pair: str | None,
+    futures_contracts: Iterable[str],
+    allow_partial: bool = False,
+) -> dict[str, Any]:
+    return query_requests(
+        requester=requester,
+        requests=build_query_plan(
+            settle=settle,
+            currency=currency,
+            currency_pair=currency_pair,
+            futures_contracts=futures_contracts,
+        ),
+        allow_partial=allow_partial,
+    )
+
+
+def query_order_info(
+    requester: Requester,
+    settle: str,
+    contract: str,
+    status: str,
+    order_id: str | None,
+    limit: int | None,
+    last_id: str | None,
+    allow_partial: bool = False,
+) -> dict[str, Any]:
+    return query_requests(
+        requester=requester,
+        requests=build_order_query_plan(
+            settle=settle,
+            contract=contract,
+            status=status,
+            order_id=order_id,
+            limit=limit,
+            last_id=last_id,
+        ),
+        allow_partial=allow_partial,
+    )
+
+
+def query_position_info(
+    requester: Requester,
+    settle: str,
+    contract: str | None,
+    allow_partial: bool = False,
+) -> dict[str, Any]:
+    return query_requests(
+        requester=requester,
+        requests=build_position_query_plan(settle=settle, contract=contract),
+        allow_partial=allow_partial,
+    )
+
+
 def get_env_value(name: str) -> str | None:
     value = os.getenv(name)
     return value if value else None
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Query Gate read-only account balances and fee rates with APIv4 credentials."
-    )
+def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--api-key",
         default=DEFAULT_API_KEY_ENV,
@@ -217,6 +324,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Gate API v4 base URL.")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="HTTP timeout seconds.")
     parser.add_argument("--settle", default="usdt", help="Futures settlement currency, e.g. usdt.")
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Keep successful endpoint results and report per-endpoint errors.",
+    )
+    parser.add_argument(
+        "--pretty",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Pretty-print JSON output.",
+    )
+
+
+def add_account_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--currency",
         default="USDT",
@@ -235,22 +356,58 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Can be repeated; omitted means query the endpoint without contract."
         ),
     )
+
+
+def add_orders_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--allow-partial",
-        action="store_true",
-        help="Keep successful endpoint results and report per-endpoint errors.",
+        "--contract",
+        default="BTC_USDT",
+        help="Gate futures contract used when listing orders.",
     )
     parser.add_argument(
-        "--pretty",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Pretty-print JSON output.",
+        "--status",
+        choices=("open", "finished"),
+        default="open",
+        help="Order list status. Ignored when --order-id is set.",
     )
+    parser.add_argument("--order-id", help="Optional Gate order id or client text id for single order.")
+    parser.add_argument("--limit", type=int, help="Optional order list limit.")
+    parser.add_argument("--last-id", help="Optional pagination last_id for order list.")
+
+
+def add_positions_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--contract",
+        help="Optional Gate futures contract. Omitted means list all positions.",
+    )
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Query Gate read-only account, order, and position information with APIv4 credentials."
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    account_parser = subparsers.add_parser("account", help="Query balances, account, and fee rates.")
+    add_common_args(account_parser)
+    add_account_args(account_parser)
+
+    orders_parser = subparsers.add_parser("orders", help="Query futures orders.")
+    add_common_args(orders_parser)
+    add_orders_args(orders_parser)
+
+    positions_parser = subparsers.add_parser("positions", help="Query futures positions.")
+    add_common_args(positions_parser)
+    add_positions_args(positions_parser)
+
+    add_common_args(parser)
+    add_account_args(parser)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    command = args.command or "account"
     api_key = get_env_value(args.api_key)
     if api_key is None:
         print(f"[FAIL] missing env var {args.api_key}", file=sys.stderr)
@@ -267,14 +424,35 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
     )
     try:
-        result = query_account_info(
-            requester=client.get_json,
-            settle=args.settle,
-            currency=args.currency,
-            currency_pair=args.currency_pair,
-            futures_contracts=args.contract,
-            allow_partial=args.allow_partial,
-        )
+        if command == "account":
+            result = query_account_info(
+                requester=client.get_json,
+                settle=args.settle,
+                currency=args.currency,
+                currency_pair=args.currency_pair,
+                futures_contracts=args.contract,
+                allow_partial=args.allow_partial,
+            )
+        elif command == "orders":
+            result = query_order_info(
+                requester=client.get_json,
+                settle=args.settle,
+                contract=args.contract,
+                status=args.status,
+                order_id=args.order_id,
+                limit=args.limit,
+                last_id=args.last_id,
+                allow_partial=args.allow_partial,
+            )
+        elif command == "positions":
+            result = query_position_info(
+                requester=client.get_json,
+                settle=args.settle,
+                contract=args.contract,
+                allow_partial=args.allow_partial,
+            )
+        else:
+            raise RuntimeError(f"unknown command: {command}")
     except Exception as exc:  # pragma: no cover - utility script
         print(f"[FAIL] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

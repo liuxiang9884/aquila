@@ -257,14 +257,14 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 
 两个脚本也支持 `--file`，文件内每行一个 symbol；输出可直接转换为 `pandas.DataFrame`。
 
-## Gate Account Query
+## Gate REST Read-only Query
 
-Gate REST account query 脚本使用 APIv4 read-only GET 接口查询当前 API key 可访问的账户总额、USDT futures
-账户、个人费率和 futures fee。默认读取 `TEST_KEY` / `TEST_SECRET` 环境变量；`--api-key` 和
-`--api-secret` 参数表示环境变量名，不直接传 secret 值。
+Gate REST read-only query 脚本使用 APIv4 authenticated GET 接口查询当前 API key 可访问的账户、订单和
+仓位信息。默认读取 `TEST_KEY` / `TEST_SECRET` 环境变量；`--api-key` 和 `--api-secret` 参数表示环境变量名，
+不直接传 secret 值。不写子命令时兼容旧行为，等价于 `account`。
 
 ```bash
-TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py \
+TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py account \
   --settle usdt \
   --currency USDT \
   --currency-pair BTC_USDT \
@@ -272,13 +272,34 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py \
   --allow-partial
 ```
 
-默认查询：
+账户查询默认覆盖：
 
 ```text
 GET /wallet/total_balance
 GET /futures/{settle}/accounts
 GET /wallet/fee
 GET /futures/{settle}/fee
+```
+
+订单查询：
+
+```bash
+TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py orders \
+  --contract BTC_USDT \
+  --status open \
+  --limit 20
+
+TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py orders \
+  --order-id 36028827892199865
+```
+
+仓位查询：
+
+```bash
+TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py positions
+
+TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py positions \
+  --contract BTC_USDT
 ```
 
 ## Gate REST Futures Order Test
