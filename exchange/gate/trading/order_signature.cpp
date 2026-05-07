@@ -19,7 +19,7 @@ bool GenerateGateApiSignatureHex(
     std::string_view api_secret, std::string_view channel,
     std::string_view request_param, std::int64_t timestamp,
     std::array<char, kGateSignatureHexSize>& output) noexcept {
-  std::array<char, kGateSignatureInputBufferSize> sign_input{};
+  std::array<char, kGateSignatureInputBufferSize> sign_input;
   const auto sign_input_result =
       fmt::format_to_n(sign_input.data(), sign_input.size(), "api\n{}\n{}\n{}",
                        channel, request_param, timestamp);
@@ -27,7 +27,7 @@ bool GenerateGateApiSignatureHex(
     return false;
   }
 
-  std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
+  std::array<unsigned char, EVP_MAX_MD_SIZE> digest;
   unsigned int digest_size = 0;
   const unsigned char* const hmac =
       HMAC(EVP_sha512(), api_secret.data(), static_cast<int>(api_secret.size()),

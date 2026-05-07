@@ -168,7 +168,7 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
-    std::array<char, kPlaceOrderRequestBufferSize> buffer{};
+    std::array<char, kPlaceOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodePlaceOrderRequest(
         PlaceOrderEncodeFields{.timestamp = NowSeconds(),
                                .encoded_request_id = encoded_request_id,
@@ -207,7 +207,7 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kCancelOrder, sequence);
-    std::array<char, kCancelOrderRequestBufferSize> buffer{};
+    std::array<char, kCancelOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
         CancelOrderEncodeFields{.timestamp = NowSeconds(),
                                 .encoded_request_id = encoded_request_id,
@@ -292,7 +292,7 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kLogin, sequence);
-    std::array<char, kLoginRequestBufferSize> buffer{};
+    std::array<char, kLoginRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodeLoginRequest(
         LoginRequestFields{.api_key = credentials_.api_key,
                            .api_secret = credentials_.api_secret,
@@ -376,6 +376,10 @@ class OrderSession {
       return websocket::DeliveryResult::kAccepted;
     }
     if (parsed.kind == GateSubmitResponseKind::kUnknown) {
+      RecordIgnoredMessage();
+      return websocket::DeliveryResult::kAccepted;
+    }
+    if (!ResponseStatusMatchesKind(parsed)) {
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
@@ -469,6 +473,15 @@ class OrderSession {
     return parsed.has_req_id && parsed.req_id.ok &&
            parsed.req_id.type == parsed.request_id.type &&
            parsed.req_id.sequence == parsed.request_id.sequence;
+  }
+
+  [[nodiscard]] bool ResponseStatusMatchesKind(
+      const GateSubmitResponse& parsed) const noexcept {
+    if (parsed.kind == GateSubmitResponseKind::kAck ||
+        parsed.kind == GateSubmitResponseKind::kResult) {
+      return parsed.http_status == 200;
+    }
+    return true;
   }
 
   [[nodiscard]] bool FinalResultMatchesLocalOrder(

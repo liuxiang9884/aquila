@@ -71,7 +71,7 @@ template <std::size_t N, typename... Args>
 template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodeLoginRequest(
     const LoginRequestFields& fields, std::array<char, N>& buffer) noexcept {
-  std::array<char, kGateSignatureHexSize> signature{};
+  std::array<char, kGateSignatureHexSize> signature;
   if (!GenerateGateApiSignatureHex(fields.api_secret, "futures.login", "",
                                    fields.timestamp, signature)) {
     return {.status = OrderEncodeStatus::kSignatureFailed, .text = {}};
@@ -101,7 +101,7 @@ template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodeCancelOrderRequest(
     const CancelOrderEncodeFields& fields,
     std::array<char, N>& buffer) noexcept {
-  std::array<char, 32> fallback_order_id_buffer{};
+  std::array<char, 32> fallback_order_id_buffer;
   std::string_view order_id{};
   if (fields.exchange_order_id != 0) {
     return detail::FormatJsonToBuffer(

@@ -24,6 +24,9 @@ struct ParsedOrderText {
   std::int64_t local_order_id{0};
 };
 
+// Values are prevalidated Gate wire tokens cached by Strategy. String fields
+// must not contain JSON quotes, backslashes, or control bytes; OrderSession
+// formats them directly into fixed request buffers on the hot path.
 struct OrderWireFields {
   std::int64_t local_order_id{0};
   std::string_view contract{};

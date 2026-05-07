@@ -426,6 +426,22 @@ TEST(OrderSessionTest, AckWithMismatchedReqIdKeepsInflightAndSkipsHandler) {
   EXPECT_EQ(session.stats().ignored_messages, 1U);
 }
 
+TEST(OrderSessionTest, AckWithNonOkStatusKeepsInflightAndSkipsHandler) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855874","ack":true,"header":{"status":"400","channel":"futures.order_place","event":"api"},"data":{"result":{"req_id":"144115188075855874"}}})"));
+
+  EXPECT_TRUE(handler.responses.empty());
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
 TEST(OrderSessionTest, MissingAckResultKeepsInflightAndSkipsHandler) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
@@ -452,6 +468,22 @@ TEST(OrderSessionTest, NonBoolAckResultKeepsInflightAndSkipsHandler) {
 
   session.Handle(TextView(
       R"({"request_id":"144115188075855874","ack":"false","header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})"));
+
+  EXPECT_TRUE(handler.responses.empty());
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
+TEST(OrderSessionTest, ResultWithNonOkStatusKeepsInflightAndSkipsHandler) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855874","ack":false,"header":{"status":"400","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})"));
 
   EXPECT_TRUE(handler.responses.empty());
   EXPECT_EQ(session.inflight_count(), 1U);
