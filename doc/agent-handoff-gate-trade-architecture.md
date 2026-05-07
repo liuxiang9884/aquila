@@ -459,6 +459,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 8. place final result 必须有 exchange order id 和匹配的 `text` local id；cancel final result 至少需要 exchange order id 或匹配的 `text` local id。
 9. cancel response 当前以 Gate top-level encoded request id 做主 correlation；若未来需要校验原始 cancel exchange id，需要把 correlation value 从 local id 扩展成 pending request metadata。
 10. 断线、关闭或 reconnect backoff 会清空 login ready、login sequence 和 inflight correlation，不合成订单状态回报。
+11. `gate_order_session_benchmark` 已覆盖 place/cancel request encode、place result parser，以及 `OrderSession::Handle()` 的 place ack / final result dispatch 路径。
 
 当前验证入口：
 
@@ -468,7 +469,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 ./build/debug/test/exchange/gate/trading/gate_submit_response_parser_test
 ./build/debug/test/exchange/gate/trading/gate_order_session_test
 ctest --test-dir build/debug -R 'gate_(order|submit)' --output-on-failure
-./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult' --benchmark_min_time=0.01s
+./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
 ```
 
 ## 双 WebSocket 登录测试
@@ -915,7 +916,7 @@ config/data_sessions/binance_data_session.toml
 5. 明确 feedback stream 断线时是否允许继续 submit。
 6. 设计 REST reconcile：feedback WS 断线或 gap 后如何补齐未决订单状态。
 7. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`feedback decode -> feedback SPSC`、`feedback poll -> order state update`。
-8. 如需要证明 `OrderSession::Handle()` 完整 dispatch 成本，增加 response dispatch benchmark 覆盖 parser 后 request-id 查表、ack/result 分支、erase 和 callback 成本。
+8. 如需要证明端到端热路径成本，增加 `strategy -> submit send` 和 `OrderSession::Handle()` 回调消费组合 benchmark。
 9. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
 
 ## 相关文件

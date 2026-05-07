@@ -34,7 +34,7 @@
 16. WebSocket client 的 `stop_requested_` 只作为停止位使用，已改为 `memory_order_relaxed`；probe/tool 的 signal stop flag 已统一为 `std::atomic<bool> signal_stop_requested`，不再使用 `volatile std::sig_atomic_t`。
 17. `scripts/gate/query_gate_account.py` 已落地，按 Gate APIv4 read-only GET 查询当前 API key 可访问的账户总额、USDT futures 账户、个人费率、futures fee、futures orders 和 futures positions；命令行通过 `account` / `orders` / `positions` 子命令区分。
 18. `scripts/gate/place_futures_order.py` 已落地，支持 Gate REST futures 常规下单测试和 `cancel` 命令行撤单；默认 dry-run，真实提交必须显式 `--execute`，提交后默认撤单，`--keep-open` 才保留挂单；脚本内置 `MAX_ORDER_SIZE = 5` 单次手数上限。
-19. Gate submit/cancel `OrderSession` 第一版已落地：`order_types` / `order_codecs`、login HMAC-SHA512 signature、固定缓冲区 request encoder、submit response decoded correlation、`aquila::gate::OrderSession` 和 encode/parse benchmark 均已实现并验证。
+19. Gate submit/cancel `OrderSession` 第一版已落地：`order_types` / `order_codecs`、login HMAC-SHA512 signature、固定缓冲区 request encoder、submit response decoded correlation、`aquila::gate::OrderSession` 以及 encode / parse / `Handle()` dispatch benchmark 均已实现并验证。
 20. Gate `OrderSession` 当前边界保持不变：Strategy 做风控、订单对象、订单状态机和 Gate wire fields 缓存；`OrderSession` 做 WS login、place/cancel 编码发送、`request_sequence -> local_order_id` correlation 和轻量同步 `OrderResponse` 回调。
 21. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
 
@@ -514,7 +514,7 @@ Gate submit/order benchmark：
 
 ```bash
 taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_response_parse_benchmark --benchmark_filter='gate_submit_response_parse_order_place_ack_echo_simdjson_ack_minimal_padded_view/' --benchmark_repetitions=5 --benchmark_report_aggregates_only=true
-./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult' --benchmark_min_time=0.01s
+./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
 ```
 
 Gate data session dry-run / BBO live probe：
@@ -612,4 +612,4 @@ scripts/gate/place_futures_order.py --contract BTC_USDT --side buy --size 1 --pr
 5. 补 Gate WS submit/cancel live smoke，使用极小数量和明确 `--execute` / 撤单或平仓流程，保留原始输出；不要把 live 结果写成通用性能结论。
 6. 设计并实现 `OrderFeedbackSession`：Gate SBE 私有 `orders`、`usertrades`、`positions` decode，固定 feedback event，feedback SPSC 到 StrategyThread。
 7. 明确 REST reconcile 和 feedback WS 断线策略，再把 symbol metadata、Strategy 订单对象和 `OrderSession` wire-ready request 正式接入。
-8. 如需要进一步证明热路径成本，增加 `OrderSession::Handle()` / response dispatch benchmark，覆盖 parser 后 request-id 查表、ack/result 分支、erase 和 callback 成本。
+8. 如需要进一步证明端到端热路径成本，增加 `strategy -> OrderSession` 下单请求构建 / 发送和 `OrderSession::Handle()` 回调消费的组合 benchmark。
