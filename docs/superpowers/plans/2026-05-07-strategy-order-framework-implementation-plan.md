@@ -141,7 +141,7 @@ struct GateStrategyOrder : StrategyOrder {
 - Keep or modify: `test/strategy/CMakeLists.txt`
 - Keep or modify: `test/CMakeLists.txt`
 
-- [ ] **Step 1: 确认 RED**
+- [x] **Step 1: 确认 RED**
 
 Run:
 
@@ -152,7 +152,7 @@ cmake --build build/debug --target strategy_order_store_test -j8
 
 Expected: compile fails because `strategy/order_store.h` or `aquila_strategy_gate` does not exist.
 
-- [ ] **Step 2: 实现 CMake target**
+- [x] **Step 2: 实现 CMake target**
 
 Create `strategy/CMakeLists.txt`:
 
@@ -187,7 +187,7 @@ add_subdirectory(strategy)
 
 Place it after `add_subdirectory(exchange)` and before `add_subdirectory(tools)`.
 
-- [ ] **Step 3: 实现订单基础类型**
+- [x] **Step 3: 实现订单基础类型**
 
 Create `strategy/order_types.h` using the API constraints above. Add result enums and structs:
 
@@ -242,7 +242,7 @@ struct OrderResponseEvent {
 };
 ```
 
-- [ ] **Step 4: 实现固定容量订单存储**
+- [x] **Step 4: 实现固定容量订单存储**
 
 Create `strategy/order_store.h`:
 
@@ -253,7 +253,7 @@ Create `strategy/order_store.h`:
 - `FindByExchangeOrderId(exchange_order_id)` 先查 exchange 索引，再查本地索引。
 - `size()` 和 `capacity()` 返回当前数量和固定容量。
 
-- [ ] **Step 5: 运行 Task 1 验证**
+- [x] **Step 5: 运行 Task 1 验证**
 
 Run:
 

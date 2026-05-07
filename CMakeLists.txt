@@ -13,6 +13,7 @@ enable_testing()
 
 add_subdirectory(core)
 add_subdirectory(exchange)
+add_subdirectory(strategy)
 add_subdirectory(evaluation)
 add_subdirectory(tools)
 add_subdirectory(test)
