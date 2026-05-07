@@ -33,6 +33,7 @@
 15. 2026-05-06 使用 Gate / Binance data session 实盘写 SHM，`data_reader_probe` 以 `drain` 模式运行 1800s：reader 共读 `4,635,362` 条，Gate `495,255` 条，Binance `4,140,107` 条，两个 source 的 `skipped=0`、`overruns=0`。
 16. WebSocket client 的 `stop_requested_` 只作为停止位使用，已改为 `memory_order_relaxed`；probe/tool 的 signal stop flag 已统一为 `std::atomic<bool> signal_stop_requested`，不再使用 `volatile std::sig_atomic_t`。
 17. `scripts/gate/query_gate_account.py` 已落地，按 Gate APIv4 read-only GET 查询当前 API key 可访问的账户总额、USDT futures 账户、个人费率和 futures fee。
+18. `scripts/gate/place_futures_order.py` 已落地，支持 Gate REST futures 常规下单测试；默认 dry-run，真实提交必须显式 `--execute`，提交后默认撤单，`--keep-open` 才保留挂单。
 
 ## 新对话第一步
 
@@ -188,6 +189,7 @@ doc/data_reader_config.md
 | `scripts/gate/test_gate_ws_connect.py` | Gate WS 连接 / login smoke。 |
 | `scripts/gate/test_gate_ws_dual_login.py` | 同账号双 WebSocket login 验证。 |
 | `scripts/gate/query_gate_account.py` | Gate APIv4 read-only account / fee 查询脚本，默认读取 `TEST_KEY` / `TEST_SECRET` 环境变量。 |
+| `scripts/gate/place_futures_order.py` | Gate APIv4 REST futures 下单测试脚本，默认 dry-run，`--execute` 后真实提交并默认撤单。 |
 | `scripts/gate/query_futures_contracts.py` | 查询 Gate USDT futures 合约基础信息，输出统一字段 DataFrame / CSV。 |
 | `scripts/binance/query_um_futures_contracts.py` | 查询 Binance USD-M futures 合约基础信息，输出统一字段 DataFrame / CSV。 |
 
@@ -518,11 +520,14 @@ Gate account / 期货合约元数据脚本：
 
 ```bash
 scripts/gate/query_gate_account_test.py
+scripts/gate/place_futures_order_test.py
 scripts/gate/query_futures_contracts_test.py
 scripts/binance/query_um_futures_contracts_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python -m py_compile \
   scripts/gate/query_gate_account.py \
   scripts/gate/query_gate_account_test.py \
+  scripts/gate/place_futures_order.py \
+  scripts/gate/place_futures_order_test.py \
   scripts/gate/query_futures_contracts.py \
   scripts/gate/query_futures_contracts_test.py \
   scripts/binance/query_um_futures_contracts.py \
@@ -535,6 +540,12 @@ REST 查询 smoke 需要外网：
 TEST_KEY=... TEST_SECRET=... scripts/gate/query_gate_account.py --settle usdt --currency USDT --contract BTC_USDT --allow-partial
 scripts/gate/query_futures_contracts.py BTC_USDT ETH_USDT --format csv
 scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
+```
+
+Gate REST futures 下单脚本默认 dry-run，不需要外网或凭证；真实提交必须显式 `--execute`，并应确认价格符合当前合约限制：
+
+```bash
+scripts/gate/place_futures_order.py --contract BTC_USDT --side buy --size 1 --price 1 --tif gtc
 ```
 
 ## 接手注意事项

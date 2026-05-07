@@ -281,6 +281,36 @@ GET /wallet/fee
 GET /futures/{settle}/fee
 ```
 
+## Gate REST Futures Order Test
+
+Gate REST futures 下单测试脚本使用 `POST /futures/{settle}/orders` 创建常规 futures order，默认只
+dry-run 打印请求体；必须显式加 `--execute` 才会真实提交。真实提交后默认会立刻调用
+`DELETE /futures/{settle}/orders/{order_id}` 撤单；只有加 `--keep-open` 才会保留挂单。
+
+```bash
+scripts/gate/place_futures_order.py \
+  --contract BTC_USDT \
+  --side buy \
+  --size 1 \
+  --price 1 \
+  --tif gtc
+```
+
+真实提交示例：
+
+```bash
+TEST_KEY=... TEST_SECRET=... scripts/gate/place_futures_order.py \
+  --contract BTC_USDT \
+  --side buy \
+  --size 1 \
+  --price 1 \
+  --tif gtc \
+  --execute
+```
+
+`--api-key` 和 `--api-secret` 参数表示环境变量名，不直接传 secret 值。默认 `price=1` 用于降低误成交
+概率，但真实提交仍可能因交易所价格偏离限制被拒绝；如需 accepted order，应显式传入符合当前行情和合约规则的价格。
+
 ## Public / Private 延迟对比
 
 `websocket_latency_compare` 用于同时连接 Gate public / private 衍生品 WebSocket v4，订阅同一个 `futures.book_ticker` 合约，并按 `symbol:update_id` 匹配同一条行情在两条链路上的本机到达时间。
