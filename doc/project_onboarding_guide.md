@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口，下一阶段继续 strategy 接入、symbol metadata 接入策略 / 下单链路和 Gate 交易 submit/update 设计。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版边界和实现计划已写入 spec / plan，下一阶段按 plan 实现 submit/cancel C++ 主路径。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -34,6 +34,7 @@
 16. WebSocket client 的 `stop_requested_` 只作为停止位使用，已改为 `memory_order_relaxed`；probe/tool 的 signal stop flag 已统一为 `std::atomic<bool> signal_stop_requested`，不再使用 `volatile std::sig_atomic_t`。
 17. `scripts/gate/query_gate_account.py` 已落地，按 Gate APIv4 read-only GET 查询当前 API key 可访问的账户总额、USDT futures 账户、个人费率、futures fee、futures orders 和 futures positions；命令行通过 `account` / `orders` / `positions` 子命令区分。
 18. `scripts/gate/place_futures_order.py` 已落地，支持 Gate REST futures 常规下单测试和 `cancel` 命令行撤单；默认 dry-run，真实提交必须显式 `--execute`，提交后默认撤单，`--keep-open` 才保留挂单；脚本内置 `MAX_ORDER_SIZE = 5` 单次手数上限。
+19. Gate submit/cancel `OrderSession` 第一版设计已固定：Strategy 做风控、订单对象和状态机，`aquila::gate::OrderSession` 做 WS login、place/cancel 编码发送、request correlation 和轻量 response 回调；设计文档在 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`，实现计划在 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。
 
 ## 新对话第一步
 
@@ -53,18 +54,21 @@ doc/project_onboarding_guide.md
 doc/evaluation_support.md
 doc/futures_contract_metadata_fields.md
 doc/agent-handoff-gate-trade-architecture.md
+docs/superpowers/specs/2026-05-07-gate-order-session-design.md
+docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md
 doc/websocket_read_write_benchmark_comparison.md
 doc/data_reader_config.md
 ```
 
-如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
+如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md` 和 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
 
 ## 给下一个对话的 onboarding 提示
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
 以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；如果继续 Gate 交易架构，
-再读 `doc/agent-handoff-gate-trade-architecture.md`，如果继续 Binance 行情，再读
+再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
+和 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`，如果继续 Binance 行情，再读
 `doc/agent-handoff-binance-market-data.md`，如果继续 data session / config，再读
 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
@@ -95,6 +99,8 @@ doc/data_reader_config.md
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
+| `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate submit/cancel C++ 实现前读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、wire-ready 输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
+| `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md` | 开始实现 Gate `OrderSession` 时读 | TDD 实现任务：types/codecs、login signature/request encoder、submit parser correlation、session、benchmark、handoff/onboarding 更新。 |
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance USD-M futures bookTicker 行情时读 | raw stream URL、JSON parser、client/session、benchmark 和 probe 入口。 |
 
 ## 代码入口
@@ -266,8 +272,8 @@ doc/data_reader_config.md
 当前推荐方向：
 
 ```text
-StrategyThread + GateOrderSession
-GateOrderFeedbackThread + GateOrderFeedbackSession
+StrategyThread + Gate OrderSession
+GateOrderFeedbackThread + Gate OrderFeedbackSession
 feedback SPSC -> StrategyThread
 ```
 
@@ -289,17 +295,23 @@ BinanceDataSessionThread
 
 StrategyThread
   - Strategy
-  - GateOrderSession
-  - BinanceOrderSession
+  - Gate OrderSession
+  - Binance OrderSession
 
 GateOrderFeedbackThread
-  - GateOrderFeedbackSession
+  - Gate OrderFeedbackSession
 
 BinanceOrderFeedbackThread
-  - BinanceOrderFeedbackSession
+  - Binance OrderFeedbackSession
 ```
 
 其中 `risk control`、`order management` 和 `order execution` 归属于 `Strategy` 模块；`OrderSession` 是上行交易指令和轻量 API response 通道，`OrderFeedbackSession` 是下行私有回报通道。
+
+2026-05-07 已确认 C++ 命名位于 `aquila::gate` namespace，交易 submit/cancel 类名直接使用
+`OrderSession`，不带交易所名前缀。第一版 `OrderSession` 只覆盖 `futures.login`、
+`futures.order_place`、`futures.order_cancel`、`ack=true`、final result/error、`request_sequence -> local_order_id`
+轻量关联和同步 `OrderResponse` 回调；不做风控、订单状态机、私有订单/成交/仓位回报、REST reconcile、batch/amend/cancel all。
+实现顺序以 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md` 为准。
 
 ### Gate SBE 行情当前状态
 
@@ -563,10 +575,8 @@ scripts/gate/place_futures_order.py --contract BTC_USDT --side buy --size 1 --pr
 如果新对话从 Gate 交易继续，建议顺序：
 
 1. 读取 `doc/agent-handoff-gate-trade-architecture.md`。
-2. 确认统一 symbol metadata 如何在 strategy、risk check 和 exchange adapter 中缓存并进入下单前校验。
-3. 确认是否采用 `GateOrderSession` + `GateOrderFeedbackSession`。
-4. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
-5. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`。
-6. 写最小 benchmark：submit send、ack parse、feedback decode、feedback SPSC。
-7. 如需 live 证据，重跑 BTC_USDT probe 并把原始输出记录到 handoff。
-8. 再开始 C++ 实现。
+2. 读取 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`。
+3. 读取 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。
+4. 按计划先实现 Task 1：`order_types.h`、`order_codecs.h` 和 `gate_order_codecs_test`，通过后单独提交。
+5. 继续按计划实现 login signature/request encoder、submit parser correlation、`OrderSession`、benchmark 和 handoff 更新，每个任务验证后单独提交。
+6. `OrderSession` 第一版完成后，再讨论 `OrderFeedbackSession`、Gate SBE 私有回报 decode、REST reconcile 和 symbol metadata 与 Strategy 订单对象的正式接入。

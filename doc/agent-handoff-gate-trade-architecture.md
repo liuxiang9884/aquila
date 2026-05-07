@@ -4,13 +4,16 @@
 
 这份 handoff 给下一轮模型或开发者使用，用来承接 2026-04-28 关于 Gate futures 交易 WebSocket 架构的讨论。
 
-本文不是已批准的实现计划；它记录已经确认的协议事实、实验结果、Sirius 旧实现结论，以及当前推荐的线程 / session 划分方向。
+本文记录已经确认的协议事实、实验结果、Sirius 旧实现结论，以及当前推荐的线程 / session 划分方向。Gate submit/cancel
+第一版实现计划已经拆到独立文档：`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
+和 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。
 
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 截至 2026-05-06，Gate / Binance data session config、log config、instrument catalog、行情 session tools
-  和 onboarding 流程已完成多轮收口；新接手时以 `git log --oneline -8` 为准。
+- 截至 2026-05-07，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
+  Gate REST 测试脚本、Gate submit/cancel `OrderSession` 设计和实现计划已完成多轮收口；新接手时以
+  `git log --oneline -8` 为准。
 - 新接手时先执行：
 
 ```bash
@@ -230,7 +233,7 @@ aquila::gate::DataSession<
 1. `local_ns` 在 session 收到 binary frame 后立即采集，再传入 client，避免在更深层反复取时钟，也方便未来由外层 runtime 统一传入本地时间。
 2. `DecodeBookTickerWithHeaderBenchmark()` 在 benchmark 中保留完整 header / event 校验；client 热路径删除的是重复防御分支。
 
-后续 TODO（暂不实现）：
+后续事项（暂不实现）：
 
 1. Symbol lookup ownership：考虑引入稳定的 `GateSymbolLookup` / `SymbolTableView`，显式表达 `std::string_view` 的生命周期和 ownership 边界，避免未来多链路共享 symbol 表时重复构造或生命周期误用。
 2. Trading submit types/session split：后续下单链路再把 submit response 类型、parser 和 order session 拆开，保持 ack 热路径最小化，同时避免 market-data 与 trading 结构混在同一层。
@@ -366,14 +369,16 @@ probe 行为：
 
 ## 当前建议命名
 
-不要继续使用过于抽象的 `OrderEntry` / `PrivateReport`。建议命名为：
+不要继续使用过于抽象的 `OrderEntry` / `PrivateReport`。架构讨论中可以用交易所前缀区分物理 session，
+但 C++ 类型位于 `aquila::gate` namespace，因此 Gate 实现类直接命名为 `OrderSession` / `OrderFeedbackSession`。
+跨交易所架构名称仍可写成：
 
 ```text
-GateOrderSession
-GateOrderFeedbackSession
+Gate OrderSession
+Gate OrderFeedbackSession
 
-BinanceOrderSession
-BinanceOrderFeedbackSession
+Binance OrderSession
+Binance OrderFeedbackSession
 ```
 
 完整系统中，行情 session 的架构命名为：
@@ -387,16 +392,43 @@ BinanceDataSession
 
 | 名称 | 主要职责 | 消息格式 |
 | --- | --- | --- |
-| `GateOrderSession` | 登录、下单、撤单、改单、订单查询；读取轻量 API response / ack / error | JSON |
-| `GateOrderFeedbackSession` | 登录或订阅鉴权，订阅订单 / 成交 / 持仓更新；读取持续回报流 | JSON 控制消息 + SBE binary push |
-| `BinanceOrderSession` | Binance 下单、撤单、改单、订单查询；具体协议形态后续确认 | 后续确认 |
-| `BinanceOrderFeedbackSession` | Binance 订单、成交、账户 / 持仓私有更新；转成固定 feedback event | 后续确认 |
+| Gate `aquila::gate::OrderSession` | 登录、下单、撤单；读取轻量 API response / ack / error | JSON |
+| Gate `aquila::gate::OrderFeedbackSession` | 登录或订阅鉴权，订阅订单 / 成交 / 持仓更新；读取持续回报流 | JSON 控制消息 + SBE binary push |
+| Binance `OrderSession` | Binance 下单、撤单、改单、订单查询；具体协议形态后续确认 | 后续确认 |
+| Binance `OrderFeedbackSession` | Binance 订单、成交、账户 / 持仓私有更新；转成固定 feedback event | 后续确认 |
 
 说明：
 
 1. `OrderSession` 是上行交易指令通道，同时读取同一 API WebSocket 上的轻量响应，不只表示 place order。
 2. `OrderFeedbackSession` 是下行交易回报通道，服务于策略内的 order management、risk state 和 execution feedback。
 3. `GateDataSession` / `BinanceDataSession` 是系统架构命名；当前 C++ 落地类已统一为命名空间内的 `DataSession` 模板实现。
+
+### 2026-05-07 OrderSession 第一版设计
+
+设计文档：
+
+```text
+docs/superpowers/specs/2026-05-07-gate-order-session-design.md
+```
+
+实现计划：
+
+```text
+docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md
+```
+
+已确认边界：
+
+1. Strategy 做风控、symbol metadata 校验、订单对象、订单状态机和订单执行逻辑。
+2. Strategy 订单对象可以缓存 Gate wire fields；`OrderSession` 接收薄的 wire-ready request，不接收 Sirius 的重 `OrderStruct`。
+3. `OrderSession` 第一版只做 `futures.login`、`futures.order_place`、`futures.order_cancel`、轻量 response parse 和同步 `OrderResponse` 回调。
+4. `request_sequence -> local_order_id` 是轻量 correlation map，不是 pending order table。
+5. place `ack=true` 只表示 Gate 收到请求，不建立交易所 order id 映射，也不清理 correlation。
+6. place final result 才建立 `local_order_id -> exchange_order_id` 映射，并清理 correlation。
+7. cancel 优先用 `exchange_order_id`；没有交易所 id 时 fallback 到 `text="t-<local_order_id>"`。
+8. `OrderSession` 断线时清空 correlation，不构造假的 rejected/cancelled response；Strategy 后续通过 state/reconcile 处理未知状态。
+9. 第一版固定缓冲区：login 1024B、place 1024B、cancel 512B；编码截断返回本地失败，不发送半截 JSON。
+10. 第一版不做 batch place、amend、cancel all、order status/list、price order、私有回报流和 REST reconcile。
 
 ## 双 WebSocket 登录测试
 
@@ -429,7 +461,8 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/test_gate_ws_dual_login.py --timeout 8
 result=both_logged_in_same_account
 ```
 
-结论：Gate futures WebSocket 允许同一账号同时登录两个物理 WebSocket 连接。这支持 `GateOrderSession` + `GateOrderFeedbackSession` 的双连接设计。
+结论：Gate futures WebSocket 允许同一账号同时登录两个物理 WebSocket 连接。这支持 Gate `OrderSession` +
+Gate `OrderFeedbackSession` 的双连接设计。
 
 ## Submit WS JSON response 解析结论
 
@@ -459,7 +492,8 @@ benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp
 
 1. 数字字符串转换统一走 `core/utils/numeric.h` 中基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToUint64` 等 helper。
 2. `ReadSimdjsonUint64()` 的输出指针是内部调用合约，debug 下 assert，不在 release 热路径做空指针防御。
-3. `RequestIdCodec` / `OrderTextCodec` 尚未落地，当前 submit parser 仍只保留 hash 字段；等下单 session 设计时再替换。
+3. `RequestIdCodec` / `OrderTextCodec` 的设计已在 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
+   固定，但 C++ 实现尚未落地；当前 submit parser 仍只保留 hash 字段，下一步按实现计划升级 correlation 字段。
 
 ### yyjson 与 simdjson 取舍
 
@@ -615,7 +649,7 @@ MarketDataThread
   -> market ring / latest cache
         |
         v
-StrategyThread + GateOrderSession
+StrategyThread + Gate OrderSession
   - poll 行情
   - 策略计算
   - 直接下单 / 撤单 / 改单
@@ -624,7 +658,7 @@ StrategyThread + GateOrderSession
         |
 feedback SPSC
         |
-GateOrderFeedbackThread + GateOrderFeedbackSession
+GateOrderFeedbackThread + Gate OrderFeedbackSession
   - subscribe futures.orders / futures.usertrades / futures.positions
   - decode JSON control + SBE push
   - 写入 feedback SPSC
@@ -652,8 +686,8 @@ StrategyThread
         |
         v
 TradingSessionThread
-  - GateOrderSession
-  - GateOrderFeedbackSession
+  - Gate OrderSession
+  - Gate OrderFeedbackSession
   - order state / dedup / report correlation
         |
         v
@@ -701,15 +735,15 @@ StrategyThread
 如果按性能第一选择：
 
 ```text
-方案 A：Strategy + GateOrderSession 同线程，
-       GateOrderFeedbackSession 独立线程，
+方案 A：Strategy + Gate `OrderSession` 同线程，
+       Gate `OrderFeedbackSession` 独立线程，
        feedback 通过 SPSC 回到 strategy。
 ```
 
 关键约束：
 
-1. `GateOrderSession` 只处理 JSON order API response，不订阅 `futures.orders` / `futures.usertrades`。
-2. `GateOrderFeedbackSession` 可连 `/sbe` endpoint，处理 JSON control + SBE push。
+1. Gate `OrderSession` 只处理 JSON order API response，不订阅 `futures.orders` / `futures.usertrades`。
+2. Gate `OrderFeedbackSession` 可连 `/sbe` endpoint，处理 JSON control + SBE push。
 3. 策略线程必须保持行情最高优先级；feedback ring 只在合适预算下 poll。
 4. order session 的 read budget 必须很小，只处理 login、ack/result/error、pong/close。
 5. feedback session 的回报解析结果必须变成固定结构事件，再写 SPSC，避免把 JSON/SBE buffer 生命周期暴露给策略。
@@ -733,18 +767,18 @@ BinanceDataSessionThread
 
 StrategyThread
   - Strategy
-  - GateOrderSession
-  - BinanceOrderSession
+  - Gate OrderSession
+  - Binance OrderSession
   - risk control
   - order management
   - order execution
 
 GateOrderFeedbackThread
-  - GateOrderFeedbackSession
+  - Gate OrderFeedbackSession
   - Gate private feedback WebSocket
 
 BinanceOrderFeedbackThread
-  - BinanceOrderFeedbackSession
+  - Binance OrderFeedbackSession
   - Binance private feedback WebSocket
 ```
 
@@ -757,16 +791,16 @@ BinanceDataSession  /
 
 StrategyThread
   - Strategy
-  - GateOrderSession
-  - BinanceOrderSession
+  - Gate OrderSession
+  - Binance OrderSession
   -> order submit / cancel / amend
 
-GateOrderFeedbackSession
+Gate OrderFeedbackSession
   -> GateOrderFeedbackThread
   -> feedback SPSC
   -> StrategyThread
 
-BinanceOrderFeedbackSession
+Binance OrderFeedbackSession
   -> BinanceOrderFeedbackThread
   -> feedback SPSC
   -> StrategyThread
@@ -774,8 +808,8 @@ BinanceOrderFeedbackSession
 
 说明：
 
-1. `GateOrderSession` / `BinanceOrderSession` 有独立物理 WebSocket，但默认不拥有独立线程，而是贴在 `StrategyThread` 上运行。
-2. `GateOrderFeedbackSession` / `BinanceOrderFeedbackSession` 独立线程运行，避免私有回报 burst 污染策略主循环。
+1. Gate / Binance `OrderSession` 有独立物理 WebSocket，但默认不拥有独立线程，而是贴在 `StrategyThread` 上运行。
+2. Gate / Binance `OrderFeedbackSession` 独立线程运行，避免私有回报 burst 污染策略主循环。
 3. `risk control`、`order management` 和 `order execution` 属于 `Strategy` 模块，不下沉到 exchange session。
 
 ## 当前推荐进程划分
@@ -796,26 +830,26 @@ binance-md-process
 strategy-trade-process
   StrategyThread
     Strategy
-    GateOrderSession
-    BinanceOrderSession
+    Gate OrderSession
+    Binance OrderSession
     risk control
     order management
     order execution
 
   GateOrderFeedbackThread
-    GateOrderFeedbackSession
+    Gate OrderFeedbackSession
     Gate private feedback WebSocket
 
   BinanceOrderFeedbackThread
-    BinanceOrderFeedbackSession
+    Binance OrderFeedbackSession
     Binance private feedback WebSocket
 ```
 
 取舍：
 
 1. Gate / Binance 行情拆进程，隔离 WebSocket 重连、decode 异常、private link 或公网链路抖动。
-2. Strategy 与 `GateOrderSession` / `BinanceOrderSession` 同进程同线程，避免下单热路径引入 IPC 或跨线程队列。
-3. `GateOrderFeedbackSession` / `BinanceOrderFeedbackSession` 与策略同进程但独立线程，回报通过固定结构事件写入 SPSC，再由 `StrategyThread` 按预算消费。
+2. Strategy 与 Gate / Binance `OrderSession` 同进程同线程，避免下单热路径引入 IPC 或跨线程队列。
+3. Gate / Binance `OrderFeedbackSession` 与策略同进程但独立线程，回报通过固定结构事件写入 SPSC，再由 `StrategyThread` 按预算消费。
 4. 开发期可以用单进程工具组合多份 config 简化调试；生产配置按进程拆分，Gate 行情进程和 Binance 行情进程分别加载自己的 data session TOML。
 
 当前行情进程配置示例：
@@ -834,14 +868,12 @@ config/data_sessions/binance_data_session.toml
 下一轮建议按这个顺序继续：
 
 1. 明确统一 symbol metadata 如何进入 strategy、risk check 和 exchange adapter，并确认 Gate decimal-size 合约的数量步进规则后再用于下单热路径。
-2. 明确 `GateOrderSession` 需要支持哪些 WebSocket API：place、batch place、cancel、cancel ids、cancel cp、amend、status/list。
-3. 设计 `RequestIdCodec`、`OrderTextCodec`、`OrderFeedback` 固定结构。
-4. 继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`，并明确它们与 `OrderFeedback` 的字段映射。
-5. 明确 feedback stream 断线时是否允许继续 submit。
-6. 设计 REST reconcile：feedback WS 断线或 gap 后如何补齐未决订单状态。
-7. 将 `MessageView::readable_tail_bytes` 接入未来 `GateOrderSession`，形成 submit read 快路径：`payload view -> padding check -> simdjson minimal ack parse -> request correlation`。
-8. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`feedback decode -> feedback SPSC`、`feedback poll -> order state update`。
-9. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
+2. 按 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md` 实现 Task 1 到 Task 6，每个任务验证后单独提交。
+3. `OrderSession` 第一版完成后，继续补 Gate SBE 私有回报 decode：`orders`、`usertrades`、`positions`，并明确它们与后续 `OrderFeedback` 的字段映射。
+4. 明确 feedback stream 断线时是否允许继续 submit。
+5. 设计 REST reconcile：feedback WS 断线或 gap 后如何补齐未决订单状态。
+6. 为方案 A / B 写端到端最小 benchmark：`strategy -> submit send`、`submit ack parse -> request correlation`、`feedback decode -> feedback SPSC`、`feedback poll -> order state update`。
+7. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
 
 ## 相关文件
 
@@ -864,6 +896,8 @@ config/data_sessions/binance_data_session.toml
 - `scripts/binance/query_um_futures_contracts.py`
 - `scripts/binance/query_um_futures_contracts_test.py`
 - `exchange/gate/trading/submit_response_parser.h`
+- `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
+- `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`
 - `test/exchange/gate/trading/submit_response_parser_test.cpp`
 - `benchmark/exchange/gate/trading/submit_response_parse_benchmark.cpp`
 - `test/core/common/exchange_test.cpp`
