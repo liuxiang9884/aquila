@@ -63,6 +63,12 @@ doc/evaluation_support.md
 
 因此，这个项目更适合使用能够提升方案拆解、调试、测试、验证和性能分析质量的 skills，而不是偏前端或产品设计类流程。
 
+## Subagent 使用约定
+
+- 当主会话使用 `spawn_agent` / subagent 执行实现、审查或调查任务时，默认必须显式设置 `reasoning_effort = "xhigh"`；不需要覆盖 `model`，除非用户明确指定模型或任务确有特殊理由。
+- 主会话负责统一派发 subagent，默认不让 subagent 再派生下级 subagent；如确需允许下级派生，必须在提示中明确要求继续显式设置 `reasoning_effort = "xhigh"`，并说明原因。
+- 如果当前工具或环境不支持设置 subagent 推理强度，代理必须在继续前向用户说明限制和替代验证方案。
+
 ## 高频系统设计和实现原则
 
 - 默认把最低延迟作为最高优先级，其次才是吞吐量、资源利用率和其他性能指标。
