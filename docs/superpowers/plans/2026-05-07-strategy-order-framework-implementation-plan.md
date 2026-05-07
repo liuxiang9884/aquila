@@ -353,7 +353,7 @@ Expected: all `GateOrderGatewayTest` tests pass.
 - Create: `benchmark/strategy/order_gateway_benchmark.cpp`
 - Modify: `benchmark/CMakeLists.txt`
 
-- [ ] **Step 1: 写 benchmark**
+- [x] **Step 1: 写 benchmark**
 
 Create `benchmark/strategy/order_gateway_benchmark.cpp` with a fake Gate order session that only records `PlaceOrderRequest` / `CancelOrderRequest` and returns `gate::OrderSendStatus::kOk`。
 
@@ -363,7 +363,7 @@ Benchmark cases:
 - `BM_GateStrategyPlaceCachedOrder`: prepares once outside the loop and calls `GateOrderGateway::PlaceOrder()` in the loop。
 - `BM_GateStrategyCancelCachedOrder`: prepares once outside the loop, sets `exchange_order_id`, and calls `GateOrderGateway::CancelOrder()` in the loop。
 
-- [ ] **Step 2: 接入 benchmark target**
+- [x] **Step 2: 接入 benchmark target**
 
 Create `benchmark/strategy/CMakeLists.txt` and add root benchmark subdirectory:
 
@@ -379,7 +379,7 @@ target_link_libraries(strategy_order_gateway_benchmark
 )
 ```
 
-- [ ] **Step 3: 运行 benchmark smoke**
+- [x] **Step 3: 运行 benchmark smoke**
 
 Run:
 
