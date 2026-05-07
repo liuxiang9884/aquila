@@ -290,7 +290,7 @@ absl::flat_hash_map<std::uint64_t, std::int64_t> request_id_to_local_order_id_;
 
 ## JSON response parse
 
-现有 `submit_response_parser.h` 已能解析 `ack`、`result`、`error`、`exchange_order_id` 等字段，但当前 request/text correlation 仍是 hash-only。实现 `OrderSession` 时需要把解析结构升级为可直接返回：
+`submit_response_parser.h` 已能解析 `ack`、`result`、`error`、`exchange_order_id` 等字段，并直接返回 decoded correlation 字段：
 
 - decoded `request_type`；
 - raw `request_sequence`；
@@ -298,6 +298,8 @@ absl::flat_hash_map<std::uint64_t, std::int64_t> request_id_to_local_order_id_;
 - optional `exchange_order_id`；
 - optional parsed `local_order_id` from `text`；
 - optional `error_label` 稳定 hash。
+
+parser 保留 full profile 以兼容测试、benchmark 和诊断中使用的 request / req_id / text hash；`OrderSession` 热路径使用 no-hash profile，成功路径只解析 correlation 所需字段，跳过 request id / req_id / text hash，错误路径仍保留 `error_label_hash`。
 
 生产路径继续使用 `simdjson::ondemand`。如果 payload 没有 padding，沿用现有 fallback 策略，不为了 submit/cancel response 引入新的 JSON 库。
 

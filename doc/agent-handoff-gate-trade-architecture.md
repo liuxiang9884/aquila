@@ -452,14 +452,14 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 1. `RequestIdCodec` 使用高 8 bits 表示 request type、低 56 bits 表示 sequence；`OrderTextCodec` 只接受 `t-<positive local_order_id>`。
 2. login request 使用 Gate WS API 要求的 HMAC-SHA512 lowercase hex signature，签名字符串为 `api\n{channel}\n{request_param}\n{timestamp}`。
 3. place/cancel request encoder 使用固定栈缓冲区和 `fmt::format_to_n`，编码失败返回本地失败，不发送截断 JSON。
-4. submit response parser 已保留原 hash 字段，并新增 decoded root `request_id`、decoded ack `req_id`、channel、local order id 和 exchange order id。
+4. submit response parser 已保留 full profile 的原 hash 字段，并新增 decoded root `request_id`、decoded ack `req_id`、channel、local order id 和 exchange order id；`OrderSession` 使用 no-hash profile，成功路径跳过 request id / req_id / text hash，错误路径仍保留 `error_label_hash`。
 5. `OrderSession` active 后发送 login，login result 必须匹配 request sequence、`futures.login` channel、HTTP 200、result kind 和非零 `uid` 才置为 ready。
 6. place/cancel 发送前要求本地 `local_order_id > 0`；本地 id 非法时返回 `kInvalidLocalOrderId`，不消耗 request sequence，也不写 WebSocket。
 7. place/cancel `ack=true` 只做接收确认和同步回调，不清理 correlation；ack/result 成功形态必须是 HTTP 200，非 200 的 result 视为 malformed 并保留 inflight。
 8. place final result 必须有 exchange order id 和匹配的 `text` local id；cancel final result 至少需要 exchange order id 或匹配的 `text` local id。
 9. cancel response 当前以 Gate top-level encoded request id 做主 correlation；若未来需要校验原始 cancel exchange id，需要把 correlation value 从 local id 扩展成 pending request metadata。
 10. 断线、关闭或 reconnect backoff 会清空 login ready、login sequence 和 inflight correlation，不合成订单状态回报。
-11. `gate_order_session_benchmark` 已覆盖 place/cancel request encode、place result parser，以及 `OrderSession::Handle()` 的 place ack / final result dispatch 路径；final result dispatch 采用批量预置 inflight 口径，避免把 session setup 计入单条 `Handle()` 成本。
+11. `gate_order_session_benchmark` 已覆盖 place/cancel request encode、full / `OrderSession` profile place result parser，以及 `OrderSession::Handle()` 的 place ack / final result dispatch 路径；final result dispatch 采用批量预置 inflight 口径，避免把 session setup 计入单条 `Handle()` 成本。
 
 当前验证入口：
 
@@ -469,7 +469,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 ./build/debug/test/exchange/gate/trading/gate_submit_response_parser_test
 ./build/debug/test/exchange/gate/trading/gate_order_session_test
 ctest --test-dir build/debug -R 'gate_(order|submit)' --output-on-failure
-./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
+./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_ParsePlaceResultForOrderSession|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
 ```
 
 ## 双 WebSocket 登录测试

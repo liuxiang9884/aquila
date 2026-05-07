@@ -34,7 +34,7 @@
 16. WebSocket client 的 `stop_requested_` 只作为停止位使用，已改为 `memory_order_relaxed`；probe/tool 的 signal stop flag 已统一为 `std::atomic<bool> signal_stop_requested`，不再使用 `volatile std::sig_atomic_t`。
 17. `scripts/gate/query_gate_account.py` 已落地，按 Gate APIv4 read-only GET 查询当前 API key 可访问的账户总额、USDT futures 账户、个人费率、futures fee、futures orders 和 futures positions；命令行通过 `account` / `orders` / `positions` 子命令区分。
 18. `scripts/gate/place_futures_order.py` 已落地，支持 Gate REST futures 常规下单测试和 `cancel` 命令行撤单；默认 dry-run，真实提交必须显式 `--execute`，提交后默认撤单，`--keep-open` 才保留挂单；脚本内置 `MAX_ORDER_SIZE = 5` 单次手数上限。
-19. Gate submit/cancel `OrderSession` 第一版已落地：`order_types` / `order_codecs`、login HMAC-SHA512 signature、固定缓冲区 request encoder、submit response decoded correlation、`aquila::gate::OrderSession` 以及 encode / parse / `Handle()` dispatch benchmark 均已实现并验证；final result dispatch benchmark 已改为批量预置 inflight 口径，避免把 session setup 计入单条 `Handle()` 成本。
+19. Gate submit/cancel `OrderSession` 第一版已落地：`order_types` / `order_codecs`、login HMAC-SHA512 signature、固定缓冲区 request encoder、submit response decoded correlation、`aquila::gate::OrderSession` 以及 encode / parse / `Handle()` dispatch benchmark 均已实现并验证；final result dispatch benchmark 已改为批量预置 inflight 口径，`OrderSession` 使用 no-hash parser profile 跳过成功路径不用的 request id / req_id / text hash。
 20. Gate `OrderSession` 当前边界保持不变：Strategy 做风控、订单对象、订单状态机和 Gate wire fields 缓存；`OrderSession` 做 WS login、place/cancel 编码发送、`request_sequence -> local_order_id` correlation 和轻量同步 `OrderResponse` 回调。
 21. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
 
@@ -514,7 +514,7 @@ Gate submit/order benchmark：
 
 ```bash
 taskset -c 2 ./build/release/benchmark/exchange/gate/trading/gate_submit_response_parse_benchmark --benchmark_filter='gate_submit_response_parse_order_place_ack_echo_simdjson_ack_minimal_padded_view/' --benchmark_repetitions=5 --benchmark_report_aggregates_only=true
-./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
+./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_ParsePlaceResultForOrderSession|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
 ```
 
 Gate data session dry-run / BBO live probe：

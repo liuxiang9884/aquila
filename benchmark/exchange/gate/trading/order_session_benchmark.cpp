@@ -243,8 +243,34 @@ void BM_ParsePlaceResult(benchmark::State& state) {
   simdjson::ondemand::parser parser;
 
   for (auto _ : state) {
-    const GateSubmitResponse parsed =
-        ParseGateSubmitResponse(payload, kPlaceResult.size(), parser);
+    const GateSubmitResponse parsed = ParseGateSubmitResponse(
+        std::string_view(payload.data(), kPlaceResult.size()),
+        simdjson::SIMDJSON_PADDING, parser);
+    if (parsed.parse_status != GateSubmitParseStatus::kOk ||
+        parsed.kind != GateSubmitResponseKind::kResult ||
+        !parsed.request_id.ok || !parsed.has_local_order_id) {
+      state.SkipWithError("place result parse failed");
+      return;
+    }
+    std::uint64_t exchange_order_id = parsed.exchange_order_id;
+    std::int64_t local_order_id = parsed.local_order_id;
+    benchmark::DoNotOptimize(exchange_order_id);
+    benchmark::DoNotOptimize(local_order_id);
+  }
+
+  state.SetBytesProcessed(static_cast<int64_t>(state.iterations()) *
+                          static_cast<int64_t>(kPlaceResult.size()));
+}
+
+void BM_ParsePlaceResultForOrderSession(benchmark::State& state) {
+  std::array<char, kPlaceResult.size() + simdjson::SIMDJSON_PADDING> payload{};
+  std::copy(kPlaceResult.begin(), kPlaceResult.end(), payload.begin());
+  simdjson::ondemand::parser parser;
+
+  for (auto _ : state) {
+    const GateSubmitResponse parsed = ParseGateSubmitResponseForOrderSession(
+        std::string_view(payload.data(), kPlaceResult.size()),
+        simdjson::SIMDJSON_PADDING, parser);
     if (parsed.parse_status != GateSubmitParseStatus::kOk ||
         parsed.kind != GateSubmitResponseKind::kResult ||
         !parsed.request_id.ok || !parsed.has_local_order_id) {
@@ -357,6 +383,7 @@ void BM_OrderSessionHandlePlaceResult(benchmark::State& state) {
 BENCHMARK(BM_EncodePlaceOrder);
 BENCHMARK(BM_EncodeCancelOrder);
 BENCHMARK(BM_ParsePlaceResult);
+BENCHMARK(BM_ParsePlaceResultForOrderSession);
 BENCHMARK(BM_OrderSessionHandlePlaceAck);
 BENCHMARK(BM_OrderSessionHandlePlaceResult);
 

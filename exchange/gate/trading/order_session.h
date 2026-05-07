@@ -368,7 +368,7 @@ class OrderSession {
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
 
-    const GateSubmitResponse parsed = ParseGateSubmitResponse(
+    const GateSubmitResponse parsed = ParseGateSubmitResponseForOrderSession(
         payload, view.readable_tail_bytes, text_parser_);
     if (parsed.parse_status != GateSubmitParseStatus::kOk ||
         !parsed.request_id.ok) {

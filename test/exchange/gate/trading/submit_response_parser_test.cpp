@@ -164,6 +164,69 @@ TEST(GateSubmitResponseParserTest, DecodesRequestIdAndOrderText) {
   EXPECT_EQ(parsed.text_hash, HashGateSubmitString("t-12345"));
 }
 
+TEST(GateSubmitResponseParserTest, OrderSessionProfileSkipsSuccessHashes) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "144115188075855881",
+    "ack": false,
+    "header": {
+      "status": "200",
+      "channel": "futures.order_place"
+    },
+    "data": {
+      "result": {
+        "id": "36028827892199865",
+        "text": "t-12345"
+      }
+    }
+  })json";
+  std::array<char, kPayload.size() + simdjson::SIMDJSON_PADDING> scratch{};
+  std::copy(kPayload.begin(), kPayload.end(), scratch.begin());
+  simdjson::ondemand::parser parser;
+
+  const auto parsed = ParseGateSubmitResponseForOrderSession(
+      std::string_view(scratch.data(), kPayload.size()),
+      simdjson::SIMDJSON_PADDING, parser);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kResult);
+  EXPECT_TRUE(parsed.request_id.ok);
+  EXPECT_EQ(parsed.request_id.type, OrderRequestType::kPlaceOrder);
+  EXPECT_EQ(parsed.request_id.sequence, 9U);
+  EXPECT_TRUE(parsed.has_local_order_id);
+  EXPECT_EQ(parsed.local_order_id, 12345);
+  EXPECT_EQ(parsed.exchange_order_id, 36028827892199865U);
+  EXPECT_EQ(parsed.request_id_hash, 0U);
+  EXPECT_EQ(parsed.req_id_hash, 0U);
+  EXPECT_EQ(parsed.text_hash, 0U);
+}
+
+TEST(GateSubmitResponseParserTest, OrderSessionProfileKeepsErrorLabelHash) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "216172782113783818",
+    "ack": false,
+    "header": {
+      "status": "400",
+      "channel": "futures.order_cancel"
+    },
+    "data": {
+      "errs": {
+        "label": "ORDER_NOT_FOUND",
+        "message": "order not found"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponseForOrderSession(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kError);
+  EXPECT_TRUE(parsed.request_id.ok);
+  EXPECT_EQ(parsed.request_id.type, OrderRequestType::kCancelOrder);
+  EXPECT_EQ(parsed.request_id.sequence, 10U);
+  EXPECT_EQ(parsed.request_id_hash, 0U);
+  EXPECT_EQ(parsed.error_label_hash, HashGateSubmitString("ORDER_NOT_FOUND"));
+}
+
 TEST(GateSubmitResponseParserTest, DecodesCancelErrorRequestId) {
   static constexpr std::string_view kPayload = R"json({
     "request_id": 216172782113783818,
@@ -211,9 +274,9 @@ TEST(GateSubmitResponseParserTest, DecodesRequestIdFromPaddedViewOverload) {
   std::copy(kPayload.begin(), kPayload.end(), scratch.begin());
   simdjson::ondemand::parser parser;
 
-  const auto parsed = ParseGateSubmitResponse(
-      std::string_view(scratch.data(), kPayload.size()),
-      simdjson::SIMDJSON_PADDING, parser);
+  const auto parsed =
+      ParseGateSubmitResponse(std::string_view(scratch.data(), kPayload.size()),
+                              simdjson::SIMDJSON_PADDING, parser);
 
   ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
   EXPECT_TRUE(parsed.request_id.ok);
@@ -252,8 +315,7 @@ TEST(GateSubmitResponseParserTest, DecodesRequestIdInMinimalAckParser) {
   ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
   EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kAck);
   EXPECT_TRUE(parsed.ack);
-  EXPECT_EQ(parsed.request_id_hash,
-            HashGateSubmitString("144115188075855881"));
+  EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("144115188075855881"));
   EXPECT_TRUE(parsed.request_id.ok);
   EXPECT_EQ(parsed.request_id.type, OrderRequestType::kPlaceOrder);
   EXPECT_EQ(parsed.request_id.sequence, 9U);

@@ -36,6 +36,11 @@ enum GateSubmitChannel : std::uint8_t {
   kFuturesOrderCancel,
 };
 
+enum class GateSubmitParseProfile : std::uint8_t {
+  kFull,
+  kOrderSession,
+};
+
 struct GateSubmitResponse {
   GateSubmitParseStatus parse_status{GateSubmitParseStatus::kUnexpectedShape};
   GateSubmitResponseKind kind{GateSubmitResponseKind::kUnknown};
@@ -147,6 +152,7 @@ inline DecodedRequestId DecodeSimdjsonRequestId(
   return RequestIdCodec::Decode(encoded);
 }
 
+template <GateSubmitParseProfile Profile>
 inline void ReadSimdjsonRequestIdCorrelation(
     simdjson::ondemand::value value, std::uint64_t* hash,
     DecodedRequestId* decoded) noexcept {
@@ -156,7 +162,9 @@ inline void ReadSimdjsonRequestIdCorrelation(
   std::string_view text{};
   if (ReadSimdjsonString(value, &text)) {
     if (!text.empty()) {
-      *hash = HashGateSubmitString(text);
+      if constexpr (Profile == GateSubmitParseProfile::kFull) {
+        *hash = HashGateSubmitString(text);
+      }
       std::uint64_t encoded = 0;
       if (ParseUint64Text(text, &encoded)) {
         *decoded = RequestIdCodec::Decode(encoded);
@@ -177,6 +185,7 @@ inline std::uint16_t ReadSimdjsonStatusCode(
   return static_cast<std::uint16_t>(parsed);
 }
 
+template <GateSubmitParseProfile Profile>
 inline GateSubmitResponse ParseSimdjsonDocument(
     simdjson::ondemand::document document) noexcept {
   GateSubmitResponse response{};
@@ -189,8 +198,8 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   response.parse_status = GateSubmitParseStatus::kOk;
   simdjson::ondemand::value value;
   if (FindSimdjsonField(root, "request_id", &value)) {
-    ReadSimdjsonRequestIdCorrelation(value, &response.request_id_hash,
-                                     &response.request_id);
+    ReadSimdjsonRequestIdCorrelation<Profile>(value, &response.request_id_hash,
+                                              &response.request_id);
   }
   if (FindSimdjsonField(root, "ack", &value)) {
     bool ack = false;
@@ -238,8 +247,8 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (response.ack) {
     response.kind = GateSubmitResponseKind::kAck;
     if (FindSimdjsonField(result, "req_id", &value)) {
-      ReadSimdjsonRequestIdCorrelation(value, &response.req_id_hash,
-                                       &response.req_id);
+      ReadSimdjsonRequestIdCorrelation<Profile>(value, &response.req_id_hash,
+                                                &response.req_id);
       response.has_req_id = response.req_id.ok;
     }
     return response;
@@ -247,9 +256,8 @@ inline GateSubmitResponse ParseSimdjsonDocument(
 
   response.kind = GateSubmitResponseKind::kResult;
   if (FindSimdjsonField(result, "uid", &value)) {
-    response.has_login_uid =
-        ReadSimdjsonUint64(value, &response.login_uid) &&
-        response.login_uid > 0;
+    response.has_login_uid = ReadSimdjsonUint64(value, &response.login_uid) &&
+                             response.login_uid > 0;
   }
   if (FindSimdjsonField(result, "id", &value)) {
     (void)ReadSimdjsonUint64(value, &response.exchange_order_id);
@@ -257,7 +265,9 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (FindSimdjsonField(result, "text", &value)) {
     std::string_view text{};
     if (ReadSimdjsonString(value, &text) && !text.empty()) {
-      response.text_hash = HashGateSubmitString(text);
+      if constexpr (Profile == GateSubmitParseProfile::kFull) {
+        response.text_hash = HashGateSubmitString(text);
+      }
       const ParsedOrderText parsed_text = OrderTextCodec::Parse(text);
       response.has_local_order_id = parsed_text.ok;
       response.local_order_id = parsed_text.local_order_id;
@@ -278,8 +288,8 @@ inline GateSubmitResponse ParseSimdjsonAckMinimalDocument(
   response.parse_status = GateSubmitParseStatus::kOk;
   simdjson::ondemand::value value;
   if (FindSimdjsonField(root, "request_id", &value)) {
-    ReadSimdjsonRequestIdCorrelation(value, &response.request_id_hash,
-                                     &response.request_id);
+    ReadSimdjsonRequestIdCorrelation<GateSubmitParseProfile::kFull>(
+        value, &response.request_id_hash, &response.request_id);
   }
   if (FindSimdjsonField(root, "ack", &value)) {
     bool ack = false;
@@ -294,6 +304,7 @@ inline GateSubmitResponse ParseSimdjsonAckMinimalDocument(
 
 }  // namespace detail
 
+template <GateSubmitParseProfile Profile>
 inline GateSubmitResponse ParseGateSubmitResponse(
     std::span<char> padded_payload, size_t payload_size,
     simdjson::ondemand::parser& parser) noexcept {
@@ -309,9 +320,24 @@ inline GateSubmitResponse ParseGateSubmitResponse(
     return detail::InvalidJsonSubmitResponse();
   }
 
-  return detail::ParseSimdjsonDocument(std::move(document));
+  return detail::ParseSimdjsonDocument<Profile>(std::move(document));
 }
 
+inline GateSubmitResponse ParseGateSubmitResponse(
+    std::span<char> padded_payload, size_t payload_size,
+    simdjson::ondemand::parser& parser) noexcept {
+  return ParseGateSubmitResponse<GateSubmitParseProfile::kFull>(
+      padded_payload, payload_size, parser);
+}
+
+inline GateSubmitResponse ParseGateSubmitResponseForOrderSession(
+    std::span<char> padded_payload, size_t payload_size,
+    simdjson::ondemand::parser& parser) noexcept {
+  return ParseGateSubmitResponse<GateSubmitParseProfile::kOrderSession>(
+      padded_payload, payload_size, parser);
+}
+
+template <GateSubmitParseProfile Profile>
 inline GateSubmitResponse ParseGateSubmitResponse(
     std::string_view payload, size_t readable_tail_bytes,
     simdjson::ondemand::parser& parser) noexcept {
@@ -320,13 +346,13 @@ inline GateSubmitResponse ParseGateSubmitResponse(
   }
 
   if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
-    simdjson::padded_string_view view(
-        payload.data(), payload.size(), payload.size() + readable_tail_bytes);
+    simdjson::padded_string_view view(payload.data(), payload.size(),
+                                      payload.size() + readable_tail_bytes);
     simdjson::ondemand::document document;
     if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
       return detail::InvalidJsonSubmitResponse();
     }
-    return detail::ParseSimdjsonDocument(std::move(document));
+    return detail::ParseSimdjsonDocument<Profile>(std::move(document));
   }
 
   simdjson::padded_string padded(payload);
@@ -335,7 +361,21 @@ inline GateSubmitResponse ParseGateSubmitResponse(
     return detail::InvalidJsonSubmitResponse();
   }
 
-  return detail::ParseSimdjsonDocument(std::move(document));
+  return detail::ParseSimdjsonDocument<Profile>(std::move(document));
+}
+
+inline GateSubmitResponse ParseGateSubmitResponse(
+    std::string_view payload, size_t readable_tail_bytes,
+    simdjson::ondemand::parser& parser) noexcept {
+  return ParseGateSubmitResponse<GateSubmitParseProfile::kFull>(
+      payload, readable_tail_bytes, parser);
+}
+
+inline GateSubmitResponse ParseGateSubmitResponseForOrderSession(
+    std::string_view payload, size_t readable_tail_bytes,
+    simdjson::ondemand::parser& parser) noexcept {
+  return ParseGateSubmitResponse<GateSubmitParseProfile::kOrderSession>(
+      payload, readable_tail_bytes, parser);
 }
 
 inline GateSubmitResponse ParseGateSubmitAckMinimal(
@@ -356,6 +396,7 @@ inline GateSubmitResponse ParseGateSubmitAckMinimal(
   return detail::ParseSimdjsonAckMinimalDocument(std::move(document));
 }
 
+template <GateSubmitParseProfile Profile>
 inline GateSubmitResponse ParseGateSubmitResponse(
     std::string_view payload) noexcept {
   if (payload.empty()) {
@@ -369,7 +410,18 @@ inline GateSubmitResponse ParseGateSubmitResponse(
     return detail::InvalidJsonSubmitResponse();
   }
 
-  return detail::ParseSimdjsonDocument(std::move(document));
+  return detail::ParseSimdjsonDocument<Profile>(std::move(document));
+}
+
+inline GateSubmitResponse ParseGateSubmitResponse(
+    std::string_view payload) noexcept {
+  return ParseGateSubmitResponse<GateSubmitParseProfile::kFull>(payload);
+}
+
+inline GateSubmitResponse ParseGateSubmitResponseForOrderSession(
+    std::string_view payload) noexcept {
+  return ParseGateSubmitResponse<GateSubmitParseProfile::kOrderSession>(
+      payload);
 }
 
 inline GateSubmitResponse ParseGateSubmitAckMinimal(
