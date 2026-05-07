@@ -1,5 +1,7 @@
 # Gate OrderSession 设计
 
+> 2026-05-07 更新：本设计中的“Strategy 缓存 Gate wire-ready fields”边界已被 `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` 调整。当前事实源以 `doc/project_onboarding_guide.md`、`doc/agent-handoff-gate-trade-architecture.md` 和当前代码为准：Strategy 直接发送订单 struct，Gate `OrderSession` 在发送路径完成 JSON 序列化。
+
 ## 背景
 
 `aquila` 下一步需要把 Gate futures 的上行交易指令接入 C++ 主路径。当前已经有：

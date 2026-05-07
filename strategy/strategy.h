@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "strategy/order_store.h"
+#include "strategy/order_pool.h"
 #include "strategy/order_types.h"
 
 namespace aquila::strategy {
@@ -12,60 +12,35 @@ namespace aquila::strategy {
 template <typename GatewayT>
 class Strategy {
  public:
-  using Order = typename GatewayT::Order;
+  using Order = StrategyOrder;
 
-  Strategy(GatewayT& gateway, std::size_t order_capacity)
-      : gateway_(gateway), orders_(order_capacity) {}
+  Strategy(GatewayT& order_session, std::size_t order_capacity)
+      : order_session_(order_session), orders_(order_capacity) {}
 
   Strategy(const Strategy&) = delete;
   Strategy& operator=(const Strategy&) = delete;
 
-  OrderCreateResult CreateLimitOrder(OrderDraft draft) noexcept {
-    if (draft.symbol.empty() || draft.price_text.empty() ||
-        draft.signed_quantity == 0) {
-      return {.status = OrderCreateStatus::kInvalidOrder,
-              .local_order_id = 0};
+  OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
+    if (request.symbol.empty() || request.price_text.empty() ||
+        request.signed_quantity == 0) {
+      return {.status = OrderPlaceStatus::kInvalidOrder, .local_order_id = 0};
     }
 
-    Order* order = orders_.Create();
+    Order* order = CreateOrder(request);
     if (order == nullptr) {
-      return {.status = OrderCreateStatus::kStoreFull, .local_order_id = 0};
+      return {.status = OrderPlaceStatus::kPoolFull, .local_order_id = 0};
     }
 
-    draft.type = OrderType::kLimit;
-    CopyExchangeNeutralFields(*order, draft);
-    order->status = OrderStatus::kCreated;
-
-    if (!gateway_.PrepareOrder(*order, draft)) {
+    const auto sent = order_session_.PlaceOrder(*order);
+    if (!SendOk(sent)) {
       order->status = OrderStatus::kRejected;
-      return {.status = OrderCreateStatus::kGatewayRejected,
+      return {.status = OrderPlaceStatus::kSessionRejected,
               .local_order_id = order->local_order_id};
     }
 
-    return {.status = OrderCreateStatus::kOk,
-            .local_order_id = order->local_order_id};
-  }
-
-  OrderSubmitResult SubmitOrder(std::int64_t local_order_id) noexcept {
-    Order* order = orders_.Find(local_order_id);
-    if (order == nullptr) {
-      return {.status = OrderSubmitStatus::kOrderNotFound,
-              .local_order_id = local_order_id};
-    }
-    if (order->status != OrderStatus::kCreated) {
-      return {.status = OrderSubmitStatus::kInvalidStatus,
-              .local_order_id = local_order_id};
-    }
-
-    const GatewaySendResult sent = gateway_.PlaceOrder(*order);
-    if (sent.status != GatewaySendStatus::kOk) {
-      order->status = OrderStatus::kRejected;
-      return {.status = OrderSubmitStatus::kGatewayRejected,
-              .local_order_id = local_order_id};
-    }
-
     order->status = OrderStatus::kSubmitted;
-    return {.status = OrderSubmitStatus::kOk, .local_order_id = local_order_id};
+    return {.status = OrderPlaceStatus::kOk,
+            .local_order_id = order->local_order_id};
   }
 
   OrderCancelResult CancelOrder(std::int64_t local_order_id) noexcept {
@@ -79,9 +54,9 @@ class Strategy {
               .local_order_id = local_order_id};
     }
 
-    const GatewaySendResult sent = gateway_.CancelOrder(*order);
-    if (sent.status != GatewaySendStatus::kOk) {
-      return {.status = OrderCancelStatus::kGatewayRejected,
+    const auto sent = order_session_.CancelOrder(*order);
+    if (!SendOk(sent)) {
+      return {.status = OrderCancelStatus::kSessionRejected,
               .local_order_id = local_order_id};
     }
 
@@ -114,8 +89,8 @@ class Strategy {
     }
   }
 
-  // Mutable lookup is intended for same-thread gateway/test integration; Strategy
-  // remains the state owner.
+  // Mutable lookup is intended for same-thread gateway/test integration;
+  // Strategy remains the state owner.
   Order* FindOrder(std::int64_t local_order_id) noexcept {
     return orders_.Find(local_order_id);
   }
@@ -124,8 +99,7 @@ class Strategy {
     return orders_.Find(local_order_id);
   }
 
-  Order* FindOrderByExchangeOrderId(
-      std::uint64_t exchange_order_id) noexcept {
+  Order* FindOrderByExchangeOrderId(std::uint64_t exchange_order_id) noexcept {
     return orders_.FindByExchangeOrderId(exchange_order_id);
   }
 
@@ -134,20 +108,34 @@ class Strategy {
     return orders_.FindByExchangeOrderId(exchange_order_id);
   }
 
-  std::size_t order_count() const noexcept { return orders_.size(); }
+  std::size_t order_count() const noexcept {
+    return orders_.size();
+  }
 
  private:
-  static void CopyExchangeNeutralFields(Order& order,
-                                        const OrderDraft& draft) noexcept {
-    order.exchange = draft.exchange;
-    order.symbol_id = draft.symbol_id;
-    order.side = draft.side;
-    order.type = OrderType::kLimit;
-    order.time_in_force = draft.time_in_force;
-    order.signed_quantity = draft.signed_quantity;
-    order.exchange_order_id = 0;
-    order.reduce_only = draft.reduce_only;
-    order.error_label_hash = 0;
+  Order* CreateOrder(const OrderCreateRequest& request) noexcept {
+    Order* order = orders_.Create();
+    if (order == nullptr) {
+      return nullptr;
+    }
+    order->exchange = request.exchange;
+    order->symbol_id = request.symbol_id;
+    order->symbol = request.symbol;
+    order->side = request.side;
+    order->type = OrderType::kLimit;
+    order->time_in_force = request.time_in_force;
+    order->signed_quantity = request.signed_quantity;
+    order->price_text = request.price_text;
+    order->exchange_order_id = 0;
+    order->reduce_only = request.reduce_only;
+    order->status = OrderStatus::kCreated;
+    order->error_label_hash = 0;
+    return order;
+  }
+
+  template <typename SendResultT>
+  [[nodiscard]] static bool SendOk(const SendResultT& result) noexcept {
+    return result.status == decltype(result.status)::kOk;
   }
 
   static bool CanSubmitCancel(OrderStatus status) noexcept {
@@ -216,8 +204,8 @@ class Strategy {
     return true;
   }
 
-  void BindExchangeOrderIdIfUnbound(
-      Order& order, const OrderResponseEvent& event) noexcept {
+  void BindExchangeOrderIdIfUnbound(Order& order,
+                                    const OrderResponseEvent& event) noexcept {
     if (order.exchange_order_id != 0 || event.exchange_order_id == 0) {
       return;
     }
@@ -234,8 +222,8 @@ class Strategy {
     }
   }
 
-  GatewayT& gateway_;
-  OrderStore<Order> orders_;
+  GatewayT& order_session_;
+  OrderPool<Order> orders_;
 };
 
 }  // namespace aquila::strategy

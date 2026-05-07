@@ -14,6 +14,10 @@ enum class Exchange : std::uint8_t {
   kCoinbase = 5,
 };
 
+enum class OrderSide : std::uint8_t { kBuy, kSell };
+enum class OrderType : std::uint8_t { kLimit, kMarket };
+enum class TimeInForce : std::uint8_t { kGoodTillCancel, kImmediateOrCancel };
+
 }  // namespace aquila
 
 #endif  // AQUILA_CORE_COMMON_TYPES_H_

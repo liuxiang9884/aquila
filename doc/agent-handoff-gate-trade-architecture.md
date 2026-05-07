@@ -489,22 +489,20 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 
 已确认边界：
 
-1. Strategy 负责订单对象、固定容量 store、状态推进和交易所无关 create/submit/cancel/response apply 执行流程。
-2. Gate adapter 负责在 `GateStrategyOrder` 内缓存 contract、price、TIF 和 text wire fields，并把 Strategy 订单转成 `gate::PlaceOrderRequest` / `gate::CancelOrderRequest`。
-3. Gate `OrderSession` 边界保持轻量：只做 WS login、place/cancel 编码发送、`request_sequence -> local_order_id` correlation 和同步 `OrderResponse` 回调。
+1. Strategy 负责订单对象、简单固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程。
+2. Strategy 不缓存 Gate wire fields，不再暴露 `PrepareOrder()` / `SubmitOrder()`；`PlaceLimitOrder()` 创建订单后直接把订单 struct 交给 session。
+3. Gate `OrderSession` 边界保持轻量：只做 WS login、place/cancel JSON 编码发送、`request_sequence -> local_order_id` correlation 和同步 `OrderResponse` 回调。
 4. `OrderSession` 不理解 Strategy order status、symbol metadata、risk check、pending order table 或 Sirius 的重 `OrderStruct`。
-5. Strategy benchmark 使用 fake Gate order session，只记录 request 并返回本地 OK；这是 adapter 本机 smoke baseline，不包含真实 `OrderSession` JSON 编码、WebSocket frame、TLS/plain socket 或交易所响应。
+5. Strategy benchmark 使用 fake order session，只记录订单 struct 并返回本地 OK；这是 Strategy direct-send 本机 smoke baseline，不包含真实 `OrderSession` JSON 编码、WebSocket frame、TLS/plain socket 或交易所响应。
 
 当前已落地文件：
 
 ```text
 strategy/order_types.h
-strategy/order_store.h
+strategy/order_pool.h
 strategy/strategy.h
-exchange/gate/trading/gate_order_gateway.h
-test/strategy/order_store_test.cpp
+test/strategy/order_pool_test.cpp
 test/strategy/strategy_test.cpp
-test/strategy/gate_order_gateway_test.cpp
 benchmark/strategy/order_gateway_benchmark.cpp
 scripts/gate/run_futures_order_smoke.py
 scripts/gate/run_futures_order_smoke_test.py
@@ -521,13 +519,12 @@ scripts/gate/run_futures_order_smoke_test.py
 Strategy 当前验证入口：
 
 ```bash
-cmake --build build/debug --target strategy_order_store_test strategy_test strategy_gate_order_gateway_test -j8
-./build/debug/test/strategy/strategy_order_store_test
+cmake --build build/debug --target strategy_order_pool_test strategy_test -j8
+./build/debug/test/strategy/strategy_order_pool_test
 ./build/debug/test/strategy/strategy_test
-./build/debug/test/strategy/strategy_gate_order_gateway_test
 ctest --test-dir build/debug -R 'strategy' --output-on-failure
 cmake --build build/release --target strategy_order_gateway_benchmark -j8
-./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_GateStrategyPrepareLimitOrder|BM_GateStrategyPlaceCachedOrder|BM_GateStrategyCancelCachedOrder' --benchmark_min_time=0.01s
+./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 ```
 
 REST smoke 状态：

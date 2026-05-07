@@ -4,7 +4,7 @@
 
 **Goal:** 实现 `aquila::gate::OrderSession`，支持 Gate futures WS login、常规下单、命令撤单和轻量 submit response 关联。
 
-**Architecture:** Strategy 与 `OrderSession` 在同一线程内运行；Strategy 负责风控、订单对象、状态机和 Gate wire fields 缓存，`OrderSession` 只负责 Gate 协议适配、固定缓冲区编码、WebSocket 写入、`request_id` 关联和同步 `OrderResponse` 回调。私有订单 / 成交 / 仓位回报留给后续 `OrderFeedbackSession`，不进入本计划。
+**Architecture:** Strategy 与 `OrderSession` 在同一线程内运行。原计划中的 Strategy 侧 Gate wire fields 缓存边界已被 `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` 调整；当前实现是 Strategy 直接发送订单 struct，`OrderSession` 负责 Gate 协议适配、固定缓冲区编码、WebSocket 写入、`request_id` 关联和同步 `OrderResponse` 回调。私有订单 / 成交 / 仓位回报留给后续 `OrderFeedbackSession`，不进入本计划。
 
 **Tech Stack:** C++20, CMake, GoogleTest, benchmark, simdjson ondemand, fmtlib header-only, Abseil flat_hash_map, OpenSSL HMAC-SHA512, existing `core/websocket` client.
 

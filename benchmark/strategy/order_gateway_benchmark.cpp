@@ -1,12 +1,12 @@
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 #include <benchmark/benchmark.h>
 
 #include "core/common/types.h"
-#include "exchange/gate/trading/order_types.h"
-#include "exchange/gate/trading/gate_order_gateway.h"
 #include "strategy/order_types.h"
+#include "strategy/strategy.h"
 
 namespace aquila::strategy {
 namespace {
@@ -15,130 +15,107 @@ constexpr std::int64_t kLocalOrderId = 12345;
 constexpr std::uint64_t kExchangeOrderId = 36028827892199865ULL;
 constexpr std::string_view kContract = "BTC_USDT";
 constexpr std::string_view kPriceText = "81000";
+constexpr std::size_t kPlaceBatchSize = 8192;
 
-struct FakeGateOrderSession {
-  gate::PlaceOrderRequest last_place_request{};
-  gate::CancelOrderRequest last_cancel_request{};
+struct FakeOrderSession {
+  enum class SendStatus : std::uint8_t { kOk, kRejected };
+
+  struct SendResult {
+    SendStatus status{SendStatus::kRejected};
+  };
+
   std::uint64_t place_calls{0};
   std::uint64_t cancel_calls{0};
+  std::int64_t last_place_local_order_id{0};
+  std::int64_t last_cancel_local_order_id{0};
 
-  gate::OrderSendResult PlaceOrder(
-      const gate::PlaceOrderRequest& request) noexcept {
-    last_place_request = request;
+  SendResult PlaceOrder(const StrategyOrder& order) noexcept {
+    ++place_calls;
+    last_place_local_order_id = order.local_order_id;
     benchmark::ClobberMemory();
-    return {.status = gate::OrderSendStatus::kOk,
-            .request_sequence = ++place_calls};
+    return {.status = SendStatus::kOk};
   }
 
-  gate::OrderSendResult CancelOrder(
-      const gate::CancelOrderRequest& request) noexcept {
-    last_cancel_request = request;
+  SendResult CancelOrder(const StrategyOrder& order) noexcept {
+    ++cancel_calls;
+    last_cancel_local_order_id = order.local_order_id;
     benchmark::ClobberMemory();
-    return {.status = gate::OrderSendStatus::kOk,
-            .request_sequence = ++cancel_calls};
+    return {.status = SendStatus::kOk};
   }
 };
 
-[[nodiscard]] constexpr OrderDraft MakeGateLimitDraft() noexcept {
-  return OrderDraft{.exchange = Exchange::kGate,
-                    .symbol_id = 7,
-                    .symbol = kContract,
-                    .side = OrderSide::kBuy,
-                    .type = OrderType::kLimit,
-                    .time_in_force = TimeInForce::kGoodTillCancel,
-                    .signed_quantity = 1,
-                    .price_text = kPriceText,
-                    .reduce_only = false};
+[[nodiscard]] constexpr OrderCreateRequest MakeGateLimitRequest() noexcept {
+  return OrderCreateRequest{.exchange = Exchange::kGate,
+                            .symbol_id = 7,
+                            .symbol = kContract,
+                            .side = OrderSide::kBuy,
+                            .time_in_force = TimeInForce::kGoodTillCancel,
+                            .signed_quantity = 1,
+                            .price_text = kPriceText,
+                            .reduce_only = false};
 }
 
-[[nodiscard]] bool PrepareCachedOrder(
-    GateOrderGateway<FakeGateOrderSession>& gateway,
-    GateStrategyOrder& order) noexcept {
-  order.local_order_id = kLocalOrderId;
-  return gateway.PrepareOrder(order, MakeGateLimitDraft());
-}
-
-void BM_GateStrategyPrepareLimitOrder(benchmark::State& state) {
-  FakeGateOrderSession session;
-  GateOrderGateway<FakeGateOrderSession> gateway(session);
+void BM_StrategyPlaceLimitOrder(benchmark::State& state) {
+  FakeOrderSession session;
+  std::optional<Strategy<FakeOrderSession>> strategy;
+  std::size_t batch_count = kPlaceBatchSize;
 
   for (auto _ : state) {
-    GateStrategyOrder order;
-    order.local_order_id = kLocalOrderId;
-    const bool prepared = gateway.PrepareOrder(order, MakeGateLimitDraft());
-    if (!prepared) {
-      state.SkipWithError("Gate strategy order prepare failed");
-      return;
+    if (batch_count == kPlaceBatchSize) {
+      state.PauseTiming();
+      strategy.emplace(session, kPlaceBatchSize);
+      batch_count = 0;
+      state.ResumeTiming();
     }
 
-    benchmark::DoNotOptimize(order.gate.wire.local_order_id);
-    benchmark::DoNotOptimize(order.gate.wire.contract.data());
-    benchmark::DoNotOptimize(order.gate.wire.contract.size());
-    benchmark::DoNotOptimize(order.gate.wire.signed_size);
-    benchmark::DoNotOptimize(order.gate.wire.price_text.data());
-    benchmark::DoNotOptimize(order.gate.wire.price_text.size());
-    benchmark::DoNotOptimize(order.gate.wire.text.data());
-    benchmark::DoNotOptimize(order.gate.wire.text.size());
-  }
-}
-
-void BM_GateStrategyPlaceCachedOrder(benchmark::State& state) {
-  FakeGateOrderSession session;
-  GateOrderGateway<FakeGateOrderSession> gateway(session);
-  GateStrategyOrder order;
-  if (!PrepareCachedOrder(gateway, order)) {
-    state.SkipWithError("Gate strategy order prepare failed");
-    return;
-  }
-
-  for (auto _ : state) {
-    GatewaySendResult sent = gateway.PlaceOrder(order);
-    if (sent.status != GatewaySendStatus::kOk) {
-      state.SkipWithError("Gate strategy order place failed");
+    OrderPlaceResult placed = strategy->PlaceLimitOrder(MakeGateLimitRequest());
+    if (placed.status != OrderPlaceStatus::kOk) {
+      state.SkipWithError("strategy place limit order failed");
       return;
     }
+    ++batch_count;
 
-    benchmark::DoNotOptimize(sent.status);
-    benchmark::DoNotOptimize(session.last_place_request.wire.local_order_id);
-    benchmark::DoNotOptimize(session.last_place_request.wire.contract.data());
-    benchmark::DoNotOptimize(session.last_place_request.wire.contract.size());
-    benchmark::DoNotOptimize(session.last_place_request.wire.signed_size);
+    benchmark::DoNotOptimize(placed.local_order_id);
+    benchmark::DoNotOptimize(session.last_place_local_order_id);
   }
 
   benchmark::DoNotOptimize(session.place_calls);
-  benchmark::DoNotOptimize(session.last_place_request.wire.local_order_id);
 }
 
-void BM_GateStrategyCancelCachedOrder(benchmark::State& state) {
-  FakeGateOrderSession session;
-  GateOrderGateway<FakeGateOrderSession> gateway(session);
-  GateStrategyOrder order;
-  if (!PrepareCachedOrder(gateway, order)) {
-    state.SkipWithError("Gate strategy order prepare failed");
-    return;
-  }
-  order.exchange_order_id = kExchangeOrderId;
+void BM_StrategyCancelAcceptedOrder(benchmark::State& state) {
+  FakeOrderSession session;
 
   for (auto _ : state) {
-    GatewaySendResult sent = gateway.CancelOrder(order);
-    if (sent.status != GatewaySendStatus::kOk) {
-      state.SkipWithError("Gate strategy order cancel failed");
+    state.PauseTiming();
+    Strategy<FakeOrderSession> strategy(session, 1);
+    const OrderPlaceResult placed =
+        strategy.PlaceLimitOrder(MakeGateLimitRequest());
+    if (placed.status != OrderPlaceStatus::kOk) {
+      state.SkipWithError("strategy place setup failed");
+      return;
+    }
+    strategy.OnOrderResponse(OrderResponseEvent{
+        .kind = OrderResponseKind::kAccepted,
+        .local_order_id = placed.local_order_id,
+        .exchange_order_id = kExchangeOrderId,
+    });
+    state.ResumeTiming();
+
+    OrderCancelResult cancelled = strategy.CancelOrder(placed.local_order_id);
+    if (cancelled.status != OrderCancelStatus::kOk) {
+      state.SkipWithError("strategy cancel order failed");
       return;
     }
 
-    benchmark::DoNotOptimize(sent.status);
-    benchmark::DoNotOptimize(session.last_cancel_request.local_order_id);
-    benchmark::DoNotOptimize(session.last_cancel_request.exchange_order_id);
+    benchmark::DoNotOptimize(cancelled.local_order_id);
+    benchmark::DoNotOptimize(session.last_cancel_local_order_id);
   }
 
   benchmark::DoNotOptimize(session.cancel_calls);
-  benchmark::DoNotOptimize(session.last_cancel_request.local_order_id);
-  benchmark::DoNotOptimize(session.last_cancel_request.exchange_order_id);
 }
 
-BENCHMARK(BM_GateStrategyPrepareLimitOrder);
-BENCHMARK(BM_GateStrategyPlaceCachedOrder);
-BENCHMARK(BM_GateStrategyCancelCachedOrder);
+BENCHMARK(BM_StrategyPlaceLimitOrder);
+BENCHMARK(BM_StrategyCancelAcceptedOrder);
 
 }  // namespace
 }  // namespace aquila::strategy

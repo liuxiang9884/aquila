@@ -4,6 +4,6 @@ add_executable(strategy_order_gateway_benchmark
 
 target_link_libraries(strategy_order_gateway_benchmark
     PRIVATE
-        aquila_strategy_gate
+        aquila_strategy
         benchmark::benchmark_main
 )

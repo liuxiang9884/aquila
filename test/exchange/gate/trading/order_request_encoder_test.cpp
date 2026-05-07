@@ -52,16 +52,12 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderWritesExactJson) {
   const PlaceOrderEncodeFields fields{
       .timestamp = 1700000001,
       .encoded_request_id = 144115188075855873ULL,
-      .wire =
-          {
-              .local_order_id = 9,
-              .contract = "BTC_USDT",
-              .signed_size = 1,
-              .price_text = "81000",
-              .tif = "gtc",
-              .text = "t-9",
-              .reduce_only = false,
-          },
+      .local_order_id = 9,
+      .contract = "BTC_USDT",
+      .signed_size = 1,
+      .price_text = "81000",
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .reduce_only = false,
   };
 
   const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
@@ -109,21 +105,37 @@ TEST(GateOrderRequestEncoderTest, SmallBufferReturnsBufferTooSmall) {
   const PlaceOrderEncodeFields fields{
       .timestamp = 1700000001,
       .encoded_request_id = 144115188075855873ULL,
-      .wire =
-          {
-              .local_order_id = 9,
-              .contract = "BTC_USDT",
-              .signed_size = 1,
-              .price_text = "81000",
-              .tif = "gtc",
-              .text = "t-9",
-              .reduce_only = false,
-          },
+      .local_order_id = 9,
+      .contract = "BTC_USDT",
+      .signed_size = 1,
+      .price_text = "81000",
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .reduce_only = false,
   };
 
   const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kBufferTooSmall);
+  EXPECT_TRUE(encoded.text.empty());
+}
+
+TEST(GateOrderRequestEncoderTest,
+     InvalidPlaceOrderTextReturnsInvalidOrderText) {
+  std::array<char, kPlaceOrderRequestBufferSize> buffer{};
+  const PlaceOrderEncodeFields fields{
+      .timestamp = 1700000001,
+      .encoded_request_id = 144115188075855873ULL,
+      .local_order_id = 0,
+      .contract = "BTC_USDT",
+      .signed_size = 1,
+      .price_text = "81000",
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .reduce_only = false,
+  };
+
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+
+  EXPECT_EQ(encoded.status, OrderEncodeStatus::kInvalidOrderText);
   EXPECT_TRUE(encoded.text.empty());
 }
 

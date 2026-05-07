@@ -90,16 +90,31 @@ class TestOrderSession
   }
 };
 
-PlaceOrderRequest MakePlaceOrder(std::int64_t local_order_id) noexcept {
-  return PlaceOrderRequest{.wire = OrderWireFields{
-                               .local_order_id = local_order_id,
-                               .contract = "BTC_USDT",
-                               .signed_size = 1,
-                               .price_text = "81000",
-                               .tif = "gtc",
-                               .text = "t-123",
-                               .reduce_only = false,
-                           }};
+struct TestOrder {
+  std::int64_t local_order_id{0};
+  std::string_view symbol{};
+  std::int64_t signed_quantity{0};
+  std::string_view price_text{};
+  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
+  std::uint64_t exchange_order_id{0};
+  bool reduce_only{false};
+};
+
+TestOrder MakePlaceOrder(std::int64_t local_order_id) noexcept {
+  return TestOrder{.local_order_id = local_order_id,
+                   .symbol = "BTC_USDT",
+                   .signed_quantity = 1,
+                   .price_text = "81000",
+                   .time_in_force = TimeInForce::kGoodTillCancel,
+                   .exchange_order_id = 0,
+                   .reduce_only = false};
+}
+
+TestOrder MakeCancelOrder(std::int64_t local_order_id,
+                          std::uint64_t exchange_order_id) noexcept {
+  TestOrder order = MakePlaceOrder(local_order_id);
+  order.exchange_order_id = exchange_order_id;
+  return order;
 }
 
 std::string_view LoginSuccessResponse() noexcept {
@@ -143,8 +158,8 @@ TEST(OrderSessionTest, InvalidPlaceLocalOrderIdIsRejectedBeforeSend) {
   const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(0));
 
   EXPECT_EQ(sent.status, OrderSendStatus::kInvalidLocalOrderId);
-  EXPECT_EQ(sent.request_sequence, 0U);
-  EXPECT_EQ(sent.encoded_request_id, 0U);
+  EXPECT_NE(sent.request_sequence, 0U);
+  EXPECT_NE(sent.encoded_request_id, 0U);
   EXPECT_EQ(session.inflight_count(), 0U);
   EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
@@ -221,8 +236,8 @@ TEST(OrderSessionTest, CancelUsesExchangeOrderIdPath) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
-      .local_order_id = 123, .exchange_order_id = 36028827892199865U});
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
 
   EXPECT_EQ(sent.status, OrderSendStatus::kOk);
   EXPECT_EQ(session.inflight_count(), 1U);
@@ -233,8 +248,8 @@ TEST(OrderSessionTest, CancelResultErasesCorrelation) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
-      .local_order_id = 123, .exchange_order_id = 36028827892199865U});
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(
@@ -251,8 +266,8 @@ TEST(OrderSessionTest, CancelResultWithExchangeIdOnlyIsAccepted) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
-      .local_order_id = 123, .exchange_order_id = 36028827892199865U});
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(
@@ -270,8 +285,8 @@ TEST(OrderSessionTest, CancelResultMissingIdentityErasesWithoutHandler) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
-      .local_order_id = 123, .exchange_order_id = 36028827892199865U});
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(
@@ -287,8 +302,8 @@ TEST(OrderSessionTest, CancelErrorMapsRejectedAndErasesCorrelation) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
-      .local_order_id = 123, .exchange_order_id = 36028827892199865U});
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(
@@ -307,8 +322,7 @@ TEST(OrderSessionTest, DisconnectClearsInflightWithoutFakeResponses) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(
-      CancelOrderRequest{.local_order_id = 123, .exchange_order_id = 0});
+  const OrderSendResult sent = session.CancelOrder(MakeCancelOrder(123, 0));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.OnConnectionPhase(websocket::ConnectionPhase::kDisconnected);
@@ -631,17 +645,16 @@ TEST(OrderSessionTest, NoPreparedWriteSlotsMapsToLocalSendFailure) {
   EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
 
-TEST(OrderSessionTest, InvalidCancelLocalOrderIdIsRejectedBeforeSend) {
+TEST(OrderSessionTest, InvalidCancelFallbackLocalOrderIdFailsInEncoder) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(CancelOrderRequest{
-      .local_order_id = 0, .exchange_order_id = 36028827892199865U});
+  const OrderSendResult sent = session.CancelOrder(MakeCancelOrder(0, 0));
 
   EXPECT_EQ(sent.status, OrderSendStatus::kInvalidLocalOrderId);
-  EXPECT_EQ(sent.request_sequence, 0U);
-  EXPECT_EQ(sent.encoded_request_id, 0U);
+  EXPECT_NE(sent.request_sequence, 0U);
+  EXPECT_NE(sent.encoded_request_id, 0U);
   EXPECT_EQ(session.inflight_count(), 0U);
   EXPECT_EQ(session.stats().local_send_failures, 1U);
 }

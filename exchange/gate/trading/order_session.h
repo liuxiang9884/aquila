@@ -157,15 +157,13 @@ class OrderSession {
     }
   }
 
-  OrderSendResult PlaceOrder(const PlaceOrderRequest& request) noexcept {
+  template <typename OrderT>
+  OrderSendResult PlaceOrder(const OrderT& order) noexcept {
     if (!active_) {
       return EarlyLocalReject(OrderSendStatus::kNotActive, true);
     }
     if (!login_ready_) {
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
-    }
-    if (request.wire.local_order_id <= 0) {
-      return EarlyLocalReject(OrderSendStatus::kInvalidLocalOrderId, true);
     }
     if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
@@ -178,7 +176,12 @@ class OrderSession {
     const EncodedTextRequest encoded = EncodePlaceOrderRequest(
         PlaceOrderEncodeFields{.timestamp = NowSeconds(),
                                .encoded_request_id = encoded_request_id,
-                               .wire = request.wire},
+                               .local_order_id = order.local_order_id,
+                               .contract = order.symbol,
+                               .signed_size = order.signed_quantity,
+                               .price_text = order.price_text,
+                               .time_in_force = order.time_in_force,
+                               .reduce_only = order.reduce_only},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
@@ -189,8 +192,7 @@ class OrderSession {
     if (status != OrderSendStatus::kOk) {
       return SendFailure(status, sequence, encoded_request_id);
     }
-    request_id_to_local_order_id_.emplace(sequence,
-                                          request.wire.local_order_id);
+    request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
@@ -199,15 +201,13 @@ class OrderSession {
             .encoded_request_id = encoded_request_id};
   }
 
-  OrderSendResult CancelOrder(const CancelOrderRequest& request) noexcept {
+  template <typename OrderT>
+  OrderSendResult CancelOrder(const OrderT& order) noexcept {
     if (!active_) {
       return EarlyLocalReject(OrderSendStatus::kNotActive, true);
     }
     if (!login_ready_) {
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
-    }
-    if (request.local_order_id <= 0) {
-      return EarlyLocalReject(OrderSendStatus::kInvalidLocalOrderId, true);
     }
     if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
@@ -220,8 +220,8 @@ class OrderSession {
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
         CancelOrderEncodeFields{.timestamp = NowSeconds(),
                                 .encoded_request_id = encoded_request_id,
-                                .local_order_id = request.local_order_id,
-                                .exchange_order_id = request.exchange_order_id},
+                                .local_order_id = order.local_order_id,
+                                .exchange_order_id = order.exchange_order_id},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
@@ -232,7 +232,7 @@ class OrderSession {
     if (status != OrderSendStatus::kOk) {
       return SendFailure(status, sequence, encoded_request_id);
     }
-    request_id_to_local_order_id_.emplace(sequence, request.local_order_id);
+    request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }

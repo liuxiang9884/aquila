@@ -3,7 +3,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string_view>
+
+#include "core/common/types.h"
 
 namespace aquila::gate {
 
@@ -25,28 +26,6 @@ struct DecodedRequestId {
 struct ParsedOrderText {
   bool ok{false};
   std::int64_t local_order_id{0};
-};
-
-// Values are prevalidated Gate wire tokens cached by Strategy. String fields
-// must not contain JSON quotes, backslashes, or control bytes; OrderSession
-// formats them directly into fixed request buffers on the hot path.
-struct OrderWireFields {
-  std::int64_t local_order_id{0};
-  std::string_view contract{};
-  std::int64_t signed_size{0};
-  std::string_view price_text{};
-  std::string_view tif{};
-  std::string_view text{};
-  bool reduce_only{false};
-};
-
-struct PlaceOrderRequest {
-  OrderWireFields wire{};
-};
-
-struct CancelOrderRequest {
-  std::int64_t local_order_id{0};
-  std::uint64_t exchange_order_id{0};
 };
 
 enum class OrderSendStatus : std::uint8_t {

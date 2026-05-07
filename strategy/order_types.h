@@ -8,10 +8,6 @@
 
 namespace aquila::strategy {
 
-enum class OrderSide : std::uint8_t { kBuy, kSell };
-enum class OrderType : std::uint8_t { kLimit, kMarket };
-enum class TimeInForce : std::uint8_t { kGoodTillCancel, kImmediateOrCancel };
-
 enum class OrderStatus : std::uint8_t {
   kCreated,
   kSubmitted,
@@ -23,27 +19,18 @@ enum class OrderStatus : std::uint8_t {
   kCancelRejected,
 };
 
-enum class GatewaySendStatus : std::uint8_t { kOk, kRejected };
-
-enum class OrderCreateStatus : std::uint8_t {
+enum class OrderPlaceStatus : std::uint8_t {
   kOk,
   kInvalidOrder,
-  kStoreFull,
-  kGatewayRejected,
-};
-
-enum class OrderSubmitStatus : std::uint8_t {
-  kOk,
-  kOrderNotFound,
-  kInvalidStatus,
-  kGatewayRejected,
+  kPoolFull,
+  kSessionRejected,
 };
 
 enum class OrderCancelStatus : std::uint8_t {
   kOk,
   kOrderNotFound,
   kInvalidStatus,
-  kGatewayRejected,
+  kSessionRejected,
 };
 
 enum class OrderResponseKind : std::uint8_t {
@@ -54,16 +41,11 @@ enum class OrderResponseKind : std::uint8_t {
   kCancelRejected,
 };
 
-struct GatewaySendResult {
-  GatewaySendStatus status{GatewaySendStatus::kRejected};
-};
-
-struct OrderDraft {
+struct OrderCreateRequest {
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
-  OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::int64_t signed_quantity{0};
   std::string_view price_text{};
@@ -74,23 +56,20 @@ struct StrategyOrder {
   std::int64_t local_order_id{0};
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
+  std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::int64_t signed_quantity{0};
+  std::string_view price_text{};
   std::uint64_t exchange_order_id{0};
   bool reduce_only{false};
   OrderStatus status{OrderStatus::kCreated};
   std::uint64_t error_label_hash{0};
 };
 
-struct OrderCreateResult {
-  OrderCreateStatus status{OrderCreateStatus::kInvalidOrder};
-  std::int64_t local_order_id{0};
-};
-
-struct OrderSubmitResult {
-  OrderSubmitStatus status{OrderSubmitStatus::kOrderNotFound};
+struct OrderPlaceResult {
+  OrderPlaceStatus status{OrderPlaceStatus::kInvalidOrder};
   std::int64_t local_order_id{0};
 };
 

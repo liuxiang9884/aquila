@@ -4,7 +4,7 @@
 
 **Goal:** 实现第一版交易所无关 Strategy 订单框架，并通过 Gate adapter 把 Strategy 订单对象、Gate wire fields 缓存和 `aquila::gate::OrderSession` 的 place/cancel 接口连起来。
 
-**Architecture:** Strategy 与 Gate `OrderSession` 默认同线程运行；Strategy 负责风控、订单对象、订单状态和交易所无关执行流程，Gate adapter 只把 Strategy 订单对象缓存的字段转换为 `gate::PlaceOrderRequest` / `gate::CancelOrderRequest`。第一版不引入跨线程队列、虚接口、pending table、私有成交回报、REST reconcile、batch/amend/cancel-all，也不把 Sirius 的重 `OrderStruct` 搬入主线。
+**Architecture:** 本计划记录原第一版边界，已被 `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` 调整。当前实现是 Strategy 负责风控、订单对象、订单状态和交易所无关执行流程，直接把订单 struct 交给 Gate `OrderSession`；Gate `OrderSession` 在发送路径完成 JSON 序列化，不再使用 Gate adapter 缓存 wire fields。
 
 **Tech Stack:** C++20, CMake, GoogleTest, benchmark, Abseil flat_hash_map, fmtlib header-only, existing `aquila::gate::OrderSession`.
 

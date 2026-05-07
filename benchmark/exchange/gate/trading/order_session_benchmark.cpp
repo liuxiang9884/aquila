@@ -126,16 +126,24 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
   return config;
 }
 
-PlaceOrderRequest MakePlaceOrderRequest() noexcept {
-  return PlaceOrderRequest{.wire = OrderWireFields{
-                               .local_order_id = kLocalOrderId,
-                               .contract = "BTC_USDT",
-                               .signed_size = 1,
-                               .price_text = "81000",
-                               .tif = "gtc",
-                               .text = "t-12345",
-                               .reduce_only = false,
-                           }};
+struct BenchOrder {
+  std::int64_t local_order_id{0};
+  std::string_view symbol{};
+  std::int64_t signed_quantity{0};
+  std::string_view price_text{};
+  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
+  std::uint64_t exchange_order_id{0};
+  bool reduce_only{false};
+};
+
+BenchOrder MakePlaceOrder() noexcept {
+  return BenchOrder{.local_order_id = kLocalOrderId,
+                    .symbol = "BTC_USDT",
+                    .signed_quantity = 1,
+                    .price_text = "81000",
+                    .time_in_force = TimeInForce::kGoodTillCancel,
+                    .exchange_order_id = 0,
+                    .reduce_only = false};
 }
 
 template <typename Session>
@@ -148,8 +156,7 @@ bool ActivateLoginAndPlace(Session& session, std::string_view login_payload,
     return false;
   }
   for (std::size_t i = 0; i < place_order_count; ++i) {
-    if (session.PlaceOrder(MakePlaceOrderRequest()).status !=
-        OrderSendStatus::kOk) {
+    if (session.PlaceOrder(MakePlaceOrder()).status != OrderSendStatus::kOk) {
       return false;
     }
   }
@@ -176,16 +183,12 @@ void BM_EncodePlaceOrder(benchmark::State& state) {
   const PlaceOrderEncodeFields fields{
       .timestamp = kTimestamp,
       .encoded_request_id = kPlaceRequestId,
-      .wire =
-          {
-              .local_order_id = kLocalOrderId,
-              .contract = "BTC_USDT",
-              .signed_size = 1,
-              .price_text = "81000",
-              .tif = "gtc",
-              .text = "t-12345",
-              .reduce_only = false,
-          },
+      .local_order_id = kLocalOrderId,
+      .contract = "BTC_USDT",
+      .signed_size = 1,
+      .price_text = "81000",
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .reduce_only = false,
   };
   const EncodedTextRequest sample = EncodePlaceOrderRequest(fields, buffer);
   if (sample.status != OrderEncodeStatus::kOk) {

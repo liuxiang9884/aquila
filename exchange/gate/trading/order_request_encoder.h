@@ -41,7 +41,12 @@ struct LoginRequestFields {
 struct PlaceOrderEncodeFields {
   std::int64_t timestamp{0};
   std::uint64_t encoded_request_id{0};
-  OrderWireFields wire{};
+  std::int64_t local_order_id{0};
+  std::string_view contract{};
+  std::int64_t signed_size{0};
+  std::string_view price_text{};
+  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
+  bool reduce_only{false};
 };
 
 struct CancelOrderEncodeFields {
@@ -68,6 +73,17 @@ template <std::size_t N, typename... Args>
 
 }  // namespace detail
 
+[[nodiscard]] constexpr std::string_view GateTimeInForceToken(
+    TimeInForce time_in_force) noexcept {
+  switch (time_in_force) {
+    case TimeInForce::kGoodTillCancel:
+      return "gtc";
+    case TimeInForce::kImmediateOrCancel:
+      return "ioc";
+  }
+  return "gtc";
+}
+
 template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodeLoginRequest(
     const LoginRequestFields& fields, std::array<char, N>& buffer) noexcept {
@@ -89,12 +105,19 @@ template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodePlaceOrderRequest(
     const PlaceOrderEncodeFields& fields,
     std::array<char, N>& buffer) noexcept {
+  std::array<char, 32> text_buffer;
+  const std::string_view text =
+      OrderTextCodec::Format(fields.local_order_id, text_buffer);
+  if (text.empty()) {
+    return {.status = OrderEncodeStatus::kInvalidOrderText, .text = {}};
+  }
+
   return detail::FormatJsonToBuffer(
       buffer,
       R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":{},"price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})",
-      fields.timestamp, fields.encoded_request_id, fields.wire.contract,
-      fields.wire.signed_size, fields.wire.price_text, fields.wire.tif,
-      fields.wire.text, fields.wire.reduce_only);
+      fields.timestamp, fields.encoded_request_id, fields.contract,
+      fields.signed_size, fields.price_text,
+      GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
 }
 
 template <std::size_t N>
