@@ -36,7 +36,8 @@
 18. `scripts/gate/place_futures_order.py` 已落地，支持 Gate REST futures 常规下单测试和 `cancel` 命令行撤单；默认 dry-run，真实提交必须显式 `--execute`，提交后默认撤单，`--keep-open` 才保留挂单；脚本内置 `MAX_ORDER_SIZE = 5` 单次手数上限。
 19. Gate submit/cancel `OrderSession` 第一版已落地：`order_types` / `order_codecs`、login HMAC-SHA512 signature、固定缓冲区 request encoder、submit response decoded correlation、`aquila::gate::OrderSession` 以及 encode / parse / `Handle()` dispatch benchmark 均已实现并验证；final result dispatch benchmark 已改为批量预置 inflight 口径，`OrderSession` 使用 no-hash parser profile 跳过成功路径不用的 request id / req_id / text hash。
 20. Gate `OrderSession` 当前边界保持不变：Strategy 做风控、订单对象、订单状态机和 Gate wire fields 缓存；`OrderSession` 做 WS login、place/cancel 编码发送、`request_sequence -> local_order_id` correlation 和轻量同步 `OrderResponse` 回调。
-21. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
+21. `config/order_sessions/gate_order_session.toml` 和 Gate `OrderSessionConfig` parser 已落地，按 data session 风格复用通用 WebSocket config parser；TOML 只写 `[order_session]`、credentials env 名和 `[order_session.websocket.*]`，WS target 由 `settle` 生成 `/v4/ws/<settle>`。
+22. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
 
 ## 新对话第一步
 
@@ -180,10 +181,13 @@ doc/data_reader_config.md
 | `exchange/gate/trading/order_request_encoder.h` | `futures.login`、`futures.order_place`、`futures.order_cancel` JSON request 固定缓冲区编码。 |
 | `exchange/gate/trading/submit_response_parser.h` | Gate submit WS JSON response parser，生产路径使用 `simdjson::ondemand`，保留 hash 字段并新增 decoded request id / req_id / local order id correlation 字段。 |
 | `exchange/gate/trading/order_session.h` | 模板化 `OrderSession<ResponseHandler, WebSocketPolicy, Diagnostics>`，持有 `BasicWebSocketClient`，处理 WS login、place/cancel 发送、response correlation 和同步回调。 |
+| `exchange/gate/trading/order_session_config.h` / `exchange/gate/trading/order_session_config.cpp` | Gate `OrderSession` 启动期 TOML parser；复用通用 WebSocket config，生成 `/v4/ws/<settle>` target，保留 credentials env 名和 `request_map_capacity`。 |
+| `config/order_sessions/gate_order_session.toml` | Gate order session 示例配置；包含 `[log]`、`[order_session]`、`[order_session.credentials]` 和 `[order_session.websocket.*]`。 |
 | `test/exchange/gate/trading/order_codecs_test.cpp` | order codecs 回归测试。 |
 | `test/exchange/gate/trading/order_request_encoder_test.cpp` | login/place/cancel request encoder 回归测试。 |
 | `test/exchange/gate/trading/submit_response_parser_test.cpp` | submit response parser decoded correlation 回归测试。 |
 | `test/exchange/gate/trading/order_session_test.cpp` | fake handler + fake phase/message 驱动的 `OrderSession` 行为测试。 |
+| `test/config/order_session_config_test.cpp` | Gate order session TOML / log / WebSocket target / request map capacity 配置测试。 |
 
 ### Evaluation 辅助代码
 
@@ -503,11 +507,12 @@ Gate submit response parser 测试：
 Gate trading tests：
 
 ```bash
+./build/debug/test/config/order_session_config_test
 ./build/debug/test/exchange/gate/trading/gate_order_codecs_test
 ./build/debug/test/exchange/gate/trading/gate_order_request_encoder_test
 ./build/debug/test/exchange/gate/trading/gate_submit_response_parser_test
 ./build/debug/test/exchange/gate/trading/gate_order_session_test
-ctest --test-dir build/debug -R 'gate_(order|submit)' --output-on-failure
+ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --output-on-failure
 ```
 
 Gate submit/order benchmark：

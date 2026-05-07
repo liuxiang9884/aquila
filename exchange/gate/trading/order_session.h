@@ -22,8 +22,6 @@
 
 namespace aquila::gate {
 
-inline constexpr std::size_t kDefaultOrderInflightCapacity = 16384;
-
 struct LoginCredentials {
   std::string api_key;
   std::string api_secret;
@@ -110,14 +108,19 @@ class OrderSession {
   static constexpr websocket::ClockSource kClockSource =
       WebSocketPolicy::kClockSource;
 
-  OrderSession(websocket::ConnectionConfig config, LoginCredentials credentials,
-               ResponseHandler& response_handler)
+  OrderSession(
+      websocket::ConnectionConfig config, LoginCredentials credentials,
+      ResponseHandler& response_handler,
+      std::size_t request_map_capacity = kDefaultOrderRequestMapCapacity)
       : connection_(ApplyOptions(std::move(config))),
         credentials_(std::move(credentials)),
         response_handler_(response_handler),
         message_handler_(websocket::MakeMessageHandler(*this)),
-        client_(connection_, message_handler_) {
-    request_id_to_local_order_id_.reserve(kDefaultOrderInflightCapacity);
+        client_(connection_, message_handler_),
+        request_map_capacity_(request_map_capacity == 0
+                                  ? kDefaultOrderRequestMapCapacity
+                                  : request_map_capacity) {
+    request_id_to_local_order_id_.reserve(request_map_capacity_);
     client_.SetStateHook(this, &HandleState);
   }
 
@@ -164,7 +167,7 @@ class OrderSession {
     if (request.wire.local_order_id <= 0) {
       return EarlyLocalReject(OrderSendStatus::kInvalidLocalOrderId, true);
     }
-    if (request_id_to_local_order_id_.size() >= kDefaultOrderInflightCapacity) {
+    if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
 
@@ -206,7 +209,7 @@ class OrderSession {
     if (request.local_order_id <= 0) {
       return EarlyLocalReject(OrderSendStatus::kInvalidLocalOrderId, true);
     }
-    if (request_id_to_local_order_id_.size() >= kDefaultOrderInflightCapacity) {
+    if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
 
@@ -244,6 +247,10 @@ class OrderSession {
 
   [[nodiscard]] std::size_t inflight_count() const noexcept {
     return request_id_to_local_order_id_.size();
+  }
+
+  [[nodiscard]] std::size_t request_map_capacity() const noexcept {
+    return request_map_capacity_;
   }
 
   [[nodiscard]] const OrderSessionStats& stats() const noexcept {
@@ -539,6 +546,7 @@ class OrderSession {
   simdjson::ondemand::parser text_parser_;
   absl::flat_hash_map<std::uint64_t, std::int64_t>
       request_id_to_local_order_id_;
+  std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   std::uint64_t request_sequence_{1};
   std::uint64_t login_request_sequence_{0};
   bool active_{false};

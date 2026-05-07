@@ -440,10 +440,14 @@ exchange/gate/trading/order_signature.cpp
 exchange/gate/trading/order_request_encoder.h
 exchange/gate/trading/submit_response_parser.h
 exchange/gate/trading/order_session.h
+exchange/gate/trading/order_session_config.h
+exchange/gate/trading/order_session_config.cpp
+config/order_sessions/gate_order_session.toml
 test/exchange/gate/trading/order_codecs_test.cpp
 test/exchange/gate/trading/order_request_encoder_test.cpp
 test/exchange/gate/trading/submit_response_parser_test.cpp
 test/exchange/gate/trading/order_session_test.cpp
+test/config/order_session_config_test.cpp
 benchmark/exchange/gate/trading/order_session_benchmark.cpp
 ```
 
@@ -460,15 +464,17 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 9. cancel response 当前以 Gate top-level encoded request id 做主 correlation；若未来需要校验原始 cancel exchange id，需要把 correlation value 从 local id 扩展成 pending request metadata。
 10. 断线、关闭或 reconnect backoff 会清空 login ready、login sequence 和 inflight correlation，不合成订单状态回报。
 11. `gate_order_session_benchmark` 已覆盖 place/cancel request encode、full / `OrderSession` profile place result parser，以及 `OrderSession::Handle()` 的 place ack / final result dispatch 路径；final result dispatch 采用批量预置 inflight 口径，避免把 session setup 计入单条 `Handle()` 成本。
+12. Gate `OrderSessionConfig` 已按 data session config 风格落地：TOML 使用 `[order_session]`、`[order_session.credentials]` 和 `[order_session.websocket.*]`，WebSocket 通用字段复用 `ParseWebSocketConfig()`，`settle` 生成 `/v4/ws/<settle>` target，`request_map_capacity` 可选且默认 `kDefaultOrderRequestMapCapacity`。
 
 当前验证入口：
 
 ```bash
+./build/debug/test/config/order_session_config_test
 ./build/debug/test/exchange/gate/trading/gate_order_codecs_test
 ./build/debug/test/exchange/gate/trading/gate_order_request_encoder_test
 ./build/debug/test/exchange/gate/trading/gate_submit_response_parser_test
 ./build/debug/test/exchange/gate/trading/gate_order_session_test
-ctest --test-dir build/debug -R 'gate_(order|submit)' --output-on-failure
+ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --output-on-failure
 ./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_ParsePlaceResultForOrderSession|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
 ```
 

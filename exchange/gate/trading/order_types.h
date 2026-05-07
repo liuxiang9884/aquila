@@ -1,10 +1,13 @@
 #ifndef AQUILA_EXCHANGE_GATE_TRADING_ORDER_TYPES_H_
 #define AQUILA_EXCHANGE_GATE_TRADING_ORDER_TYPES_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
 namespace aquila::gate {
+
+inline constexpr std::size_t kDefaultOrderRequestMapCapacity = 16384;
 
 enum class OrderRequestType : std::uint8_t {
   kUnknown = 0,

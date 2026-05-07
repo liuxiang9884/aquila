@@ -72,6 +72,13 @@ class TestOrderSession
             LoginCredentials{.api_key = "key", .api_secret = "secret"},
             handler) {}
 
+  TestOrderSession(Handler& handler, std::size_t request_map_capacity)
+      : OrderSession<Handler, OrderSessionDefaultPlainWebSocketPolicy,
+                     OrderSessionDiagnostics>(
+            MakeConfig(),
+            LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
+            request_map_capacity) {}
+
   static websocket::ConnectionConfig MakeConfig() {
     websocket::ConnectionConfig config{};
     config.host = "localhost";
@@ -171,6 +178,25 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
   EXPECT_EQ(handler.responses[0].exchange_order_id, 0U);
   EXPECT_EQ(handler.responses[0].request_sequence, 2U);
   EXPECT_EQ(session.inflight_count(), 1U);
+}
+
+TEST(OrderSessionTest, RequestMapCapacityRejectsAdditionalInflightRequests) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler, 1);
+  ActivateAndLogin(session);
+
+  const OrderSendResult first = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(first.status, OrderSendStatus::kOk);
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.request_map_capacity(), 1U);
+
+  const OrderSendResult second = session.PlaceOrder(MakePlaceOrder(124));
+
+  EXPECT_EQ(second.status, OrderSendStatus::kInflightFull);
+  EXPECT_EQ(second.request_sequence, 0U);
+  EXPECT_EQ(second.encoded_request_id, 0U);
+  EXPECT_EQ(session.inflight_count(), 1U);
+  EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
 
 TEST(OrderSessionTest, PlaceResultMapsExchangeOrderIdAndErasesCorrelation) {
