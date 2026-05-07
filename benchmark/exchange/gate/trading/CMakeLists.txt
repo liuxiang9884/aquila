@@ -9,3 +9,13 @@ target_link_libraries(gate_submit_response_parse_benchmark
         fmt::fmt-header-only
         yyjson::yyjson
 )
+
+add_executable(gate_order_session_benchmark
+    order_session_benchmark.cpp
+)
+
+target_link_libraries(gate_order_session_benchmark
+    PRIVATE
+        aquila_gate
+        benchmark::benchmark_main
+)
