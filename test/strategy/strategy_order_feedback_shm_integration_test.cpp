@@ -5,11 +5,11 @@
 #include <gtest/gtest.h>
 
 #include "core/common/types.h"
+#include "core/strategy/order_manager.h"
+#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_feedback_shm.h"
 #include "core/trading/order_id.h"
-#include "strategy/order_manager.h"
-#include "strategy/order_types.h"
 
 namespace aquila::strategy {
 namespace {

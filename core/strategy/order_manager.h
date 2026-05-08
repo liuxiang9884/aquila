@@ -1,0 +1,343 @@
+#ifndef AQUILA_CORE_STRATEGY_ORDER_MANAGER_H_
+#define AQUILA_CORE_STRATEGY_ORDER_MANAGER_H_
+
+#include <cstddef>
+#include <cstdint>
+
+#include "core/strategy/order_types.h"
+#include "core/trading/order_feedback_event.h"
+#include "core/trading/order_pool.h"
+
+namespace aquila::strategy {
+
+template <typename GatewayT>
+class OrderManager {
+ public:
+  using Order = StrategyOrder;
+
+  OrderManager(GatewayT& order_session, std::size_t order_capacity,
+               std::uint8_t strategy_id = 0)
+      : order_session_(order_session), orders_(order_capacity, strategy_id) {}
+
+  OrderManager(const OrderManager&) = delete;
+  OrderManager& operator=(const OrderManager&) = delete;
+
+  OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
+    if (request.symbol.empty() || request.price_text.empty() ||
+        request.quantity <= 0) {
+      return {.status = OrderPlaceStatus::kInvalidOrder, .local_order_id = 0};
+    }
+
+    Order* order = CreateOrder(request);
+    if (order == nullptr) {
+      return {.status = OrderPlaceStatus::kPoolFull, .local_order_id = 0};
+    }
+
+    const auto sent = order_session_.PlaceOrder(*order);
+    if (!SendOk(sent)) {
+      order->status = OrderStatus::kRejected;
+      order->is_finished = true;
+      return {.status = OrderPlaceStatus::kSessionRejected,
+              .local_order_id = order->local_order_id};
+    }
+
+    order->status = OrderStatus::kSent;
+    return {.status = OrderPlaceStatus::kOk,
+            .local_order_id = order->local_order_id};
+  }
+
+  OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept {
+    Order* order = orders_.Find(local_order_id);
+    if (order == nullptr) {
+      return {.status = OrderCancelStatus::kOrderNotFound,
+              .local_order_id = local_order_id};
+    }
+    if (!CanSubmitCancel(order->status)) {
+      return {.status = OrderCancelStatus::kInvalidStatus,
+              .local_order_id = local_order_id};
+    }
+
+    const auto sent = order_session_.CancelOrder(*order);
+    if (!SendOk(sent)) {
+      return {.status = OrderCancelStatus::kSessionRejected,
+              .local_order_id = local_order_id};
+    }
+
+    order->status = OrderStatus::kCancelSent;
+    return {.status = OrderCancelStatus::kOk, .local_order_id = local_order_id};
+  }
+
+  void OnOrderResponse(const OrderResponseEvent& event) noexcept {
+    Order* order = orders_.Find(event.local_order_id);
+    if (order == nullptr) {
+      return;
+    }
+
+    switch (event.kind) {
+      case OrderResponseKind::kAck:
+        break;
+      case OrderResponseKind::kAccepted:
+        OnAccepted(*order, event);
+        break;
+      case OrderResponseKind::kRejected:
+        OnRejected(*order, event);
+        break;
+      case OrderResponseKind::kCancelAccepted:
+        OnCancelAccepted(*order, event);
+        break;
+      case OrderResponseKind::kCancelRejected:
+        OnCancelRejected(*order, event);
+        break;
+    }
+  }
+
+  void OnOrderFeedback(const OrderFeedbackEvent& event) noexcept {
+    if (event.kind == OrderFeedbackKind::kGap) {
+      OnFeedbackGap(event);
+      return;
+    }
+
+    Order* order = orders_.Find(event.local_order_id);
+    if (order == nullptr) {
+      ++feedback_stats_.unknown_local_order_feedbacks;
+      return;
+    }
+    if (order->is_finished) {
+      ++feedback_stats_.terminal_feedbacks_ignored;
+      return;
+    }
+
+    switch (event.kind) {
+      case OrderFeedbackKind::kAccepted:
+        OnAcceptedFeedback(*order, event);
+        break;
+      case OrderFeedbackKind::kPartialFilled:
+        OnPartialFilledFeedback(*order, event);
+        break;
+      case OrderFeedbackKind::kFilled:
+        OnFilledFeedback(*order, event);
+        break;
+      case OrderFeedbackKind::kCancelled:
+        OnCancelledFeedback(*order, event);
+        break;
+      case OrderFeedbackKind::kRejected:
+        OnRejectedFeedback(*order, event);
+        break;
+      case OrderFeedbackKind::kGap:
+        break;
+    }
+  }
+
+  void OnFeedbackGap(const OrderFeedbackEvent&) noexcept {
+    feedback_gap_detected_ = true;
+    ++feedback_stats_.feedback_gap_events;
+  }
+
+  // Mutable lookup is intended for same-thread gateway/test integration;
+  // OrderManager remains the state owner.
+  Order* FindOrder(std::uint64_t local_order_id) noexcept {
+    return orders_.Find(local_order_id);
+  }
+
+  const Order* FindOrder(std::uint64_t local_order_id) const noexcept {
+    return orders_.Find(local_order_id);
+  }
+
+  std::size_t order_count() const noexcept {
+    return orders_.size();
+  }
+
+  [[nodiscard]] bool feedback_gap_detected() const noexcept {
+    return feedback_gap_detected_;
+  }
+
+  [[nodiscard]] const StrategyFeedbackStats& feedback_stats() const noexcept {
+    return feedback_stats_;
+  }
+
+ private:
+  enum class FillApplyResult : std::uint8_t {
+    kApplied,
+    kDuplicate,
+    kStale,
+  };
+
+  Order* CreateOrder(const OrderCreateRequest& request) noexcept {
+    Order* order = orders_.Create();
+    if (order == nullptr) {
+      return nullptr;
+    }
+    order->exchange = request.exchange;
+    order->symbol_id = request.symbol_id;
+    order->symbol = request.symbol;
+    order->side = request.side;
+    order->type = OrderType::kLimit;
+    order->time_in_force = request.time_in_force;
+    order->quantity = request.quantity;
+    order->price_text = request.price_text;
+    order->reduce_only = request.reduce_only;
+    order->status = OrderStatus::kCreated;
+    return order;
+  }
+
+  template <typename SendResultT>
+  [[nodiscard]] static bool SendOk(const SendResultT& result) noexcept {
+    return result.status == decltype(result.status)::kOk;
+  }
+
+  static bool CanSubmitCancel(OrderStatus status) noexcept {
+    return status == OrderStatus::kSent || status == OrderStatus::kAccepted ||
+           status == OrderStatus::kPartialFilled;
+  }
+
+  void OnAccepted(Order& order, const OrderResponseEvent&) noexcept {
+    if (order.status == OrderStatus::kSent) {
+      order.status = OrderStatus::kAccepted;
+      return;
+    }
+  }
+
+  void OnRejected(Order& order, const OrderResponseEvent& event) noexcept {
+    if (order.status == OrderStatus::kSent) {
+      order.status = OrderStatus::kRejected;
+      order.is_finished = true;
+      order.error_label_hash = event.error_label_hash;
+    }
+  }
+
+  void OnCancelAccepted(Order& order, const OrderResponseEvent&) noexcept {
+    if (order.status != OrderStatus::kCancelSent) {
+      return;
+    }
+    order.status = OrderStatus::kCancelled;
+  }
+
+  void OnCancelRejected(Order& order,
+                        const OrderResponseEvent& event) noexcept {
+    if (order.status == OrderStatus::kCancelSent) {
+      order.status = OrderStatus::kRejected;
+      order.error_label_hash = event.error_label_hash;
+    }
+  }
+
+  void OnAcceptedFeedback(Order& order,
+                          const OrderFeedbackEvent& event) noexcept {
+    if (order.status == OrderStatus::kSent) {
+      order.status = OrderStatus::kAccepted;
+    }
+    order.exchange_order_id = event.exchange_order_id;
+    order.exchange_update_ns = event.exchange_update_ns;
+    NotifyCacheExchangeOrderId(order.local_order_id, event.exchange_order_id);
+  }
+
+  void OnPartialFilledFeedback(Order& order,
+                               const OrderFeedbackEvent& event) noexcept {
+    const FillApplyResult result = ApplyCumulativeFill(
+        order, event.cumulative_filled_quantity, event.fill_price);
+    if (result != FillApplyResult::kApplied) {
+      ++feedback_stats_.duplicate_or_stale_feedbacks;
+      return;
+    }
+    if (order.status != OrderStatus::kCancelSent) {
+      order.status = OrderStatus::kPartialFilled;
+    }
+    order.exchange_update_ns = event.exchange_update_ns;
+  }
+
+  void OnFilledFeedback(Order& order,
+                        const OrderFeedbackEvent& event) noexcept {
+    const FillApplyResult result = ApplyCumulativeFill(
+        order, event.cumulative_filled_quantity, event.fill_price);
+    if (result == FillApplyResult::kStale) {
+      ++feedback_stats_.duplicate_or_stale_feedbacks;
+      return;
+    }
+    order.status = OrderStatus::kFilled;
+    order.role = event.role;
+    order.exchange_update_ns = event.exchange_update_ns;
+    FinishOrder(order);
+  }
+
+  void OnCancelledFeedback(Order& order,
+                           const OrderFeedbackEvent& event) noexcept {
+    const FillApplyResult result = ApplyCumulativeFill(
+        order, event.cumulative_filled_quantity, event.fill_price);
+    if (result == FillApplyResult::kStale) {
+      ++feedback_stats_.duplicate_or_stale_feedbacks;
+      return;
+    }
+    order.status = event.cumulative_filled_quantity > 0
+                       ? OrderStatus::kPartiallyCancelled
+                       : OrderStatus::kCancelled;
+    order.finish_reason = event.finish_reason;
+    order.exchange_update_ns = event.exchange_update_ns;
+    FinishOrder(order);
+  }
+
+  void OnRejectedFeedback(Order& order,
+                          const OrderFeedbackEvent& event) noexcept {
+    order.status = OrderStatus::kRejected;
+    order.reject_reason = event.reject_reason;
+    order.exchange_update_ns = event.exchange_update_ns;
+    FinishOrder(order);
+  }
+
+  FillApplyResult ApplyCumulativeFill(Order& order,
+                                      std::int64_t cumulative_quantity,
+                                      double fill_price) noexcept {
+    if (cumulative_quantity < order.cumulative_filled_quantity) {
+      return FillApplyResult::kStale;
+    }
+    if (cumulative_quantity == order.cumulative_filled_quantity) {
+      return FillApplyResult::kDuplicate;
+    }
+
+    order.cumulative_filled_quantity = cumulative_quantity;
+    order.cumulative_filled_value =
+        static_cast<double>(cumulative_quantity) * fill_price;
+    order.last_fill_price = fill_price;
+    return FillApplyResult::kApplied;
+  }
+
+  void FinishOrder(Order& order) noexcept {
+    order.is_finished = true;
+    NotifyForgetExchangeOrderId(order.local_order_id);
+  }
+
+  void NotifyCacheExchangeOrderId(std::uint64_t local_order_id,
+                                  std::uint64_t exchange_order_id) noexcept {
+    if (exchange_order_id == 0) {
+      return;
+    }
+    if constexpr (requires {
+                    order_session_.CacheExchangeOrderId(local_order_id,
+                                                        exchange_order_id);
+                  }) {
+      order_session_.CacheExchangeOrderId(local_order_id, exchange_order_id);
+    }
+  }
+
+  void NotifyForgetExchangeOrderId(std::uint64_t local_order_id) noexcept {
+    if constexpr (requires {
+                    order_session_.ForgetExchangeOrderId(local_order_id);
+                  }) {
+      order_session_.ForgetExchangeOrderId(local_order_id);
+    } else if constexpr (requires {
+                           order_session_
+                               .forget_exchange_order_id_for_local_order(
+                                   local_order_id);
+                         }) {
+      (void)order_session_.forget_exchange_order_id_for_local_order(
+          local_order_id);
+    }
+  }
+
+  GatewayT& order_session_;
+  OrderPool<Order> orders_;
+  StrategyFeedbackStats feedback_stats_{};
+  bool feedback_gap_detected_{false};
+};
+
+}  // namespace aquila::strategy
+
+#endif  // AQUILA_CORE_STRATEGY_ORDER_MANAGER_H_

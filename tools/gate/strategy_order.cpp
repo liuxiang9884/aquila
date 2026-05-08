@@ -19,12 +19,12 @@
 
 #include "core/common/types.h"
 #include "core/config/order_feedback_shm_config.h"
+#include "core/strategy/order_manager.h"
+#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_shm.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
-#include "strategy/order_manager.h"
-#include "strategy/order_types.h"
 #include "tools/gate/strategy_order_feedback_action.h"
 
 namespace {

@@ -5,8 +5,8 @@
 #include <benchmark/benchmark.h>
 
 #include "core/common/types.h"
-#include "strategy/order_manager.h"
-#include "strategy/order_types.h"
+#include "core/strategy/order_manager.h"
+#include "core/strategy/order_types.h"
 
 namespace aquila::strategy {
 namespace {
