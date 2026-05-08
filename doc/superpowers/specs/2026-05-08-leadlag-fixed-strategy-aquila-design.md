@@ -363,10 +363,12 @@ push current lead move into the new/current queue
 
 ### Aquila 链路对应
 
+`leadlag` namespace 内类型不加 `LeadLag` 前缀。统计层当前先记录已确认部分和待 Go 源码确认部分；没有 fixed Go 源码前，不把 guide 中的伪代码误写成已确认内部容器结构。
+
 建议状态：
 
 ```text
-LeadLagRecorderState
+RecorderState
   lead_extrema
   lag_extrema
   lead_noise
@@ -408,7 +410,98 @@ RecorderSnapshot
   lag_spread_mean
 ```
 
-第一版优先保持 fixed 的窗口语义和更新顺序一致，数据结构可以先用清晰固定容量 ring；后续再根据 profile 决定是否改为 monotonic queue 或其他低延迟结构。
+#### 已确认：BBO extrema
+
+`BboExtremaWindow` 的语义是 rolling 最近 `bbo_record.window` 内的 bid / ask 极值。current fixed 常用配置中：
+
+```text
+bbo_record.window = 1s
+```
+
+每个 pair 持有两个 extrema window：
+
+```text
+lead_extrema -> lead side bid_min / bid_max / ask_min / ask_max
+lag_extrema  -> lag side bid_min / bid_max / ask_min / ask_max
+```
+
+更新位置：
+
+```text
+Active lead tick -> lead_extrema.Update(now, bid, ask)
+Active lag tick  -> lag_extrema.Update(now, bid, ask)
+```
+
+实现选择：
+
+```text
+BboExtremaWindow
+  window_ns = bbo_record.window
+  implementation = fixed-capacity monotonic deque
+  storage = preallocated vector
+  default capacity = 16 * 1024 samples
+```
+
+容量统一放入运行期 capacity config，配置文件可选覆盖；未配置时使用默认值：
+
+```text
+RuntimeCapacityConfig
+  extrema_window_capacity = 16 * 1024
+  move_queue_capacity = 16 * 1024
+  noise_window_capacity = 16 * 1024
+  spread_window_capacity = 16 * 1024
+```
+
+容量不足时不在热路径扩容，也不静默覆盖。它只影响新开仓信号完整性，不阻断已有持仓处理：
+
+```text
+on extrema capacity overrun:
+  record diagnostics
+  disable new opens for this pair
+  continue raw / drift / alignment
+  continue close / stoploss / feedback
+  reset and rewarm affected recorder
+  after a full bbo_record.window is rebuilt, allow new opens again
+```
+
+#### 待确认：MoveQueue / noise / spread 的精确窗口语义
+
+guide 中的 `UpdateMoveThreshold()` 伪代码是：
+
+```text
+if MoveQueue.ShouldRoll(now):
+    LeadNoise = lead_volema.GetStdEma()
+    LagNoise  = lag_volema.GetStdEma()
+    sort move queue
+    up   = quantile(Up, quantile.move)
+    down = quantile(Down, 1 - quantile.move)
+    ...
+    MoveQueue.Roll(now)
+
+MoveQueue.Push(
+    lead_bid / bidMin - 1,
+    lead_ask / askMax - 1
+)
+```
+
+当前能确认的行为：
+
+- Move sample 只在 lead active tick 上产生，不在 lag tick 上产生。
+- 每个 lead active tick 产生两个值：`up_move = lead_bid / lead_bid_min - 1`，`down_move = lead_ask / lead_ask_max - 1`。
+- 这里的 `lead_bid_min` / `lead_ask_max` 来自已经更新过的 rolling `BboExtremaWindow`。
+- 伪代码显示 roll 判断先于当前 tick 的 push，因此当前 tick 的 move 不参与刚刚 roll 出来的 threshold。
+
+尚未确认的行为：
+
+- `MoveQueue` 是按 `stats_window` 切窗 roll 后清空，还是严格 rolling 最近 `stats_window`。
+- `StreamStdEmaRecorder` 中 `LeadNoise` / `LagNoise` 的精确更新方式、EMA 公式和窗口边界。
+- `lagContext.spread` 是严格 rolling mean，还是按 `stats_window` roll 的统计器。
+
+这些细节需要 fixed Go 源码确认后再定。没有源码前，`aquila` 不应在 spec 中承诺 exact queue、histogram 或 rolling histogram 的最终实现。后续可选方向包括：
+
+- exact queue + sort reference：最贴近 guide 伪代码，但 roll 计算可能产生尖刺。
+- fixed-bin histogram：计算稳定，适合实盘，但 quantile 是近似值。
+- rolling histogram：表达最近 `stats_window` 语义，但实现和验证更复杂。
 
 ### 验证口径
 
@@ -416,7 +509,9 @@ RecorderSnapshot
 - `SeedActive()` 后 recorder 初始极值等于 seed。
 - lead tick 只更新 lead recorder / lead noise / move queue。
 - lag tick 只更新 lag recorder / lag spread / lag noise。
-- roll 时先用旧 queue 算阈值，再 roll，再 push 当前 tick。
+- BBO extrema 输出 rolling `bbo_record.window` 内的 bid / ask min/max。
+- BBO extrema capacity overrun 只禁用新开仓，不阻断 close / stoploss / feedback。
+- MoveQueue / noise / spread 的精确窗口语义等 fixed Go 源码确认后再补充。
 - `LagSpreadBuffer = max(current_spread - mean_spread, 0)`。
 - 固定 replay 下 extrema、noise、move quantile 与 fixed 对齐到可接受误差。
 
