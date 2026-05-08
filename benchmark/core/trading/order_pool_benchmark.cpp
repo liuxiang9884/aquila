@@ -4,7 +4,7 @@
 
 #include <benchmark/benchmark.h>
 
-#include "core/common/order_pool.h"
+#include "core/trading/order_pool.h"
 
 namespace aquila {
 namespace {

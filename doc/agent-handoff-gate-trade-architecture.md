@@ -489,7 +489,7 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 
 已确认边界：
 
-1. Strategy 负责订单对象、使用 `core/common/order_pool.h` 通用固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程；Strategy 不维护 exchange order id 索引。
+1. Strategy 负责订单对象、使用 `core/trading/order_pool.h` 通用固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程；Strategy 不维护 exchange order id 索引。
 2. Strategy 不缓存 Gate wire fields，不再暴露 `PrepareOrder()` / `SubmitOrder()`；`PlaceLimitOrder()` 创建订单后直接把订单 struct 交给 session。
 3. Gate `OrderSession` 边界保持轻量：只做 WS login、place/cancel JSON 编码发送、`request_sequence -> local_order_id` correlation 和同步 `OrderResponse` 回调。
 4. `OrderSession` 不理解 Strategy order status、symbol metadata、risk check、pending order table 或 Sirius 的重 `OrderStruct`。
@@ -499,11 +499,11 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 
 ```text
 strategy/order_types.h
-core/common/order_pool.h
+core/trading/order_pool.h
 strategy/strategy.h
-test/core/common/order_pool_test.cpp
+test/core/trading/order_pool_test.cpp
 test/strategy/strategy_test.cpp
-benchmark/core/common/order_pool_benchmark.cpp
+benchmark/core/trading/order_pool_benchmark.cpp
 benchmark/strategy/order_gateway_benchmark.cpp
 scripts/gate/run_futures_order_smoke.py
 scripts/gate/run_futures_order_smoke_test.py
@@ -521,11 +521,11 @@ Strategy 当前验证入口：
 
 ```bash
 cmake --build build/debug --target core_order_pool_test strategy_test -j8
-./build/debug/test/core/common/core_order_pool_test
+./build/debug/test/core/trading/core_order_pool_test
 ./build/debug/test/strategy/strategy_test
 ctest --test-dir build/debug -R 'core_order_pool|strategy' --output-on-failure
 cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark -j8
-./build/release/benchmark/core/common/core_order_pool_benchmark --benchmark_min_time=0.01s
+./build/release/benchmark/core/trading/core_order_pool_benchmark --benchmark_min_time=0.01s
 ./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 ```
 

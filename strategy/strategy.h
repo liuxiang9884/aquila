@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "core/common/order_pool.h"
+#include "core/trading/order_pool.h"
 #include "strategy/order_types.h"
 
 namespace aquila::strategy {

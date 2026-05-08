@@ -22,7 +22,7 @@
 
 历史起点曾包含 Strategy 测试草稿；当前实现已被后续 struct-flow plan 调整：
 
-- `test/core/common/order_pool_test.cpp`
+- `test/core/trading/order_pool_test.cpp`
 - `test/strategy/strategy_test.cpp`
 - `test/strategy/CMakeLists.txt`
 - `test/CMakeLists.txt`
@@ -35,12 +35,12 @@
 
 - Create `strategy/CMakeLists.txt`: 定义 header-only `aquila_strategy` target。
 - Create `strategy/order_types.h`: Strategy 订单侧基础枚举、薄 `OrderCreateRequest`、`StrategyOrder`、send/create/cancel/result event 类型。
-- Create `core/common/order_pool.h`: 通用固定容量订单池，维护 `local_order_id -> slot` 索引；不维护 exchange order id 索引。
+- Create `core/trading/order_pool.h`: 通用固定容量订单池，维护 `local_order_id -> slot` 索引；不维护 exchange order id 索引。
 - Create `strategy/strategy.h`: 模板化 `Strategy<GatewayT>`，提供 create/submit/cancel/response apply 的交易所无关执行流程。
 - Modify `CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
 - Modify `test/CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
 - Create or keep `test/strategy/CMakeLists.txt`: 增加 Strategy gtest target。
-- Create or keep `test/core/common/order_pool_test.cpp`: 验证本地订单 ID 分配、容量限制、slot 复用、指针稳定和 zero capacity。
+- Create or keep `test/core/trading/order_pool_test.cpp`: 验证本地订单 ID 分配、容量限制、slot 复用、指针稳定和 zero capacity。
 - Create or keep `test/strategy/strategy_test.cpp`: 验证 create/submit/cancel/response 状态推进。
 - Create `benchmark/strategy/order_gateway_benchmark.cpp`: 最小 benchmark，测 Strategy direct-send fake order session 调用成本。
 - Modify `benchmark/CMakeLists.txt`: 加入 `add_subdirectory(strategy)`。
@@ -111,9 +111,9 @@ struct StrategyOrder {
 **Files:**
 - Create: `strategy/CMakeLists.txt`
 - Create: `strategy/order_types.h`
-- Create: `core/common/order_pool.h`
+- Create: `core/trading/order_pool.h`
 - Modify: `CMakeLists.txt`
-- Keep or modify: `test/core/common/order_pool_test.cpp`
+- Keep or modify: `test/core/trading/order_pool_test.cpp`
 - Keep or modify: `test/strategy/CMakeLists.txt`
 - Keep or modify: `test/CMakeLists.txt`
 
@@ -126,7 +126,7 @@ cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/debug --target core_order_pool_test -j8
 ```
 
-Expected: compile fails before `core/common/order_pool.h` exists.
+Expected: compile fails before `core/trading/order_pool.h` exists.
 
 - [x] **Step 2: 实现 CMake target**
 
@@ -220,7 +220,7 @@ struct OrderResponseEvent {
 
 - [x] **Step 4: 实现固定容量订单存储**
 
-Create `core/common/order_pool.h`:
+Create `core/trading/order_pool.h`:
 
 - `OrderPool<OrderT>(std::size_t max_live_orders)` 在构造期固定 resize `max_live_orders * 2` 个 slot，并 reserve `max_live_orders * 4` 的 `absl::flat_hash_map`。
 - `Create()` 从 free list 取 slot，默认重置 order，分配递增 `local_order_id`，容量满或 free list 为空时返回 `nullptr`。
@@ -236,7 +236,7 @@ Run:
 ```bash
 cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/debug --target core_order_pool_test -j8
-./build/debug/test/core/common/core_order_pool_test
+./build/debug/test/core/trading/core_order_pool_test
 ```
 
 Expected: all `OrderPoolTest` tests pass.
@@ -371,7 +371,7 @@ Update `doc/project_onboarding_guide.md`:
 
 - “最近已完成”增加 Strategy 第一版订单框架、Gate direct struct flow、tests 和 benchmark。
 - “文档索引”增加 this plan。
-- “代码入口”新增 `Strategy 订单框架` 小节，列出 `core/common/order_pool.h`、`strategy/order_types.h`、`strategy/strategy.h`、Strategy tests 和 benchmark。
+- “代码入口”新增 `Strategy 订单框架` 小节，列出 `core/trading/order_pool.h`、`strategy/order_types.h`、`strategy/strategy.h`、Strategy tests 和 benchmark。
 - “验证命令”增加 strategy gtest 和 benchmark smoke 命令。
 - “下一步建议”增加私有 feedback session、REST reconcile、symbol metadata/risk check 接入和端到端 live smoke 的顺序。
 
@@ -404,7 +404,7 @@ ctest --test-dir build/debug -R 'strategy|gate_(order|submit)' --output-on-failu
 
 cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark -j8
-./build/release/benchmark/core/common/core_order_pool_benchmark --benchmark_min_time=0.01s
+./build/release/benchmark/core/trading/core_order_pool_benchmark --benchmark_min_time=0.01s
 ./build/release/benchmark/strategy/strategy_order_gateway_benchmark --benchmark_filter='BM_StrategyPlaceLimitOrder|BM_StrategyCancelAcceptedOrder' --benchmark_min_time=0.01s
 
 git diff --check
