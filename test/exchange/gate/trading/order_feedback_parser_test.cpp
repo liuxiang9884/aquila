@@ -3,125 +3,27 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <string_view>
 
 #include <gtest/gtest.h>
-#include <sbepp/sbepp.hpp>
 
 #include "core/trading/order_feedback_event.h"
-#include "core/trading/order_id.h"
-#include "exchange/gate/sbe/generated/gate/messages/orders.hpp"
-#include "exchange/gate/sbe/generated/gate/types/Event.hpp"
-#include "exchange/gate/sbe/message_dispatcher.h"
+#include "evaluation/exchange/gate/trading/order_feedback_payload_builder.h"
 
 namespace aquila::gate {
 namespace {
 
-constexpr std::uint64_t kLocalOrderId = LocalOrderIdCodec::Encode(3, 42);
-constexpr std::uint64_t kExchangeOrderId = 36'028'827'892'199'865ULL;
+using evaluation::BuildOrderFeedbackOrdersPayload;
+using evaluation::OrderFeedbackPayloadFields;
+
+constexpr std::uint64_t kLocalOrderId =
+    evaluation::kOrderFeedbackPayloadLocalOrderId;
+constexpr std::uint64_t kExchangeOrderId =
+    evaluation::kOrderFeedbackPayloadExchangeOrderId;
 constexpr std::int64_t kLocalReceiveNs = 1'770'000'000'001'222'000;
-constexpr std::int64_t kUpdateTimeUs = 1'770'000'000'001'111;
+constexpr std::int64_t kUpdateTimeUs =
+    evaluation::kOrderFeedbackPayloadUpdateTimeUs;
 constexpr std::int64_t kUpdateTimeNs = kUpdateTimeUs * 1000;
-
-struct OrderPayloadFields {
-  std::uint64_t local_order_id{kLocalOrderId};
-  std::uint64_t exchange_order_id{kExchangeOrderId};
-  std::int8_t size_exponent{0};
-  std::int64_t left_mantissa{4};
-  std::int64_t size_mantissa{10};
-  std::int64_t update_time_us{kUpdateTimeUs};
-  std::int8_t price_exponent{-2};
-  std::int64_t fill_price_mantissa{6'501'250};
-  std::string_view role{};
-  std::string_view text{"t-216172782113783850"};
-  std::string_view finish_as{"_update"};
-};
-
-template <typename T, std::size_t N>
-void WriteLittleEndian(std::array<char, N>& buffer, std::size_t offset,
-                       T value) noexcept {
-  std::memcpy(buffer.data() + offset, &value, sizeof(value));
-}
-
-template <std::size_t N>
-void AppendVarString(std::array<char, N>& buffer, std::size_t* offset,
-                     std::string_view value) noexcept {
-  buffer[(*offset)++] = static_cast<char>(value.size());
-  std::memcpy(buffer.data() + *offset, value.data(), value.size());
-  *offset += value.size();
-}
-
-template <std::size_t N>
-std::string_view BuildOrdersPayload(std::array<char, N>* buffer,
-                                    const OrderPayloadFields& fields) noexcept {
-  static constexpr std::uint16_t kMessageBlockLength =
-      ::sbepp::message_traits<::gate::schema::messages::orders>::block_length();
-  static constexpr std::uint16_t kResultBlockLength = ::sbepp::group_traits<
-      ::gate::schema::messages::orders::result>::block_length();
-  static_assert(kMessageBlockLength == 9);
-  static_assert(kResultBlockLength == 156);
-
-  std::size_t offset = 0;
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, kMessageBlockLength);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, kGateSbeOrdersTemplateId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, kGateSbeSchemaId);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, kGateSbeSchemaVersion);
-  offset += sizeof(std::uint16_t);
-
-  WriteLittleEndian<std::int64_t>(*buffer, offset, kUpdateTimeUs);
-  offset += sizeof(std::int64_t);
-  WriteLittleEndian<std::int8_t>(
-      *buffer, offset, static_cast<std::int8_t>(::gate::types::Event::Update));
-  offset += sizeof(std::int8_t);
-
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, kResultBlockLength);
-  offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, 1);
-  offset += sizeof(std::uint16_t);
-
-  const std::size_t entry_offset = offset;
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 0,
-                                  kUpdateTimeUs - 10);
-  WriteLittleEndian<std::uint64_t>(*buffer, entry_offset + 8,
-                                   fields.exchange_order_id);
-  WriteLittleEndian<std::int8_t>(*buffer, entry_offset + 16,
-                                 fields.size_exponent);
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 25,
-                                  fields.left_mantissa);
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 33,
-                                  fields.size_mantissa);
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 57, 0);
-  WriteLittleEndian<std::int8_t>(*buffer, entry_offset + 65, 1);
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 66,
-                                  fields.update_time_us);
-  WriteLittleEndian<std::int8_t>(*buffer, entry_offset + 87,
-                                 fields.price_exponent);
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 88,
-                                  fields.fill_price_mantissa);
-  WriteLittleEndian<std::int64_t>(*buffer, entry_offset + 96,
-                                  fields.fill_price_mantissa);
-  offset += kResultBlockLength;
-
-  AppendVarString(*buffer, &offset, "BTC_USDT");
-  AppendVarString(*buffer, &offset, fields.role);
-  AppendVarString(*buffer, &offset, fields.text);
-  AppendVarString(*buffer, &offset, "gtc");
-  AppendVarString(*buffer, &offset, fields.finish_as);
-  AppendVarString(*buffer, &offset, "open");
-  AppendVarString(*buffer, &offset, "");
-  AppendVarString(*buffer, &offset, "");
-  AppendVarString(*buffer, &offset, "");
-  AppendVarString(*buffer, &offset, "");
-  AppendVarString(*buffer, &offset, "");
-  AppendVarString(*buffer, &offset, "");
-  AppendVarString(*buffer, &offset, "100");
-  AppendVarString(*buffer, &offset, "futures.orders");
-  return {buffer->data(), offset};
-}
 
 template <std::size_t N = 1>
 struct EventCollector {
@@ -135,19 +37,21 @@ struct EventCollector {
   }
 };
 
-OrderPayloadFields MakeFields(std::string_view finish_as) noexcept {
-  OrderPayloadFields fields{};
+OrderFeedbackPayloadFields MakeFields(std::string_view finish_as) noexcept {
+  OrderFeedbackPayloadFields fields{};
   fields.finish_as = finish_as;
   fields.text = "t-216172782113783850";
   return fields;
 }
 
 template <std::size_t N = 1>
-OrderFeedbackParseResult ParseOne(const OrderPayloadFields& fields,
+OrderFeedbackParseResult ParseOne(const OrderFeedbackPayloadFields& fields,
                                   OrderFeedbackParserStats* stats,
-                                  EventCollector<N>* collector) {
+                                  EventCollector<N>* collector,
+                                  std::string_view channel = "futures.orders") {
   std::array<char, 512> buffer{};
-  const std::string_view payload = BuildOrdersPayload(&buffer, fields);
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, fields, channel);
   return ParseGateOrderFeedbackMessage(payload, kLocalReceiveNs, *stats,
                                        *collector);
 }
@@ -174,7 +78,7 @@ TEST(GateOrderFeedbackParserTest, MapsNewToAcceptedEvent) {
 TEST(GateOrderFeedbackParserTest, MapsUpdateWithLeftToPartialFilledEvent) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("_update");
+  OrderFeedbackPayloadFields fields = MakeFields("_update");
   fields.size_mantissa = 10;
   fields.left_mantissa = 4;
   fields.fill_price_mantissa = 6'501'250;
@@ -192,7 +96,7 @@ TEST(GateOrderFeedbackParserTest, MapsUpdateWithLeftToPartialFilledEvent) {
 TEST(GateOrderFeedbackParserTest, MapsFilledWithZeroLeftToFilledEvent) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("filled");
+  OrderFeedbackPayloadFields fields = MakeFields("filled");
   fields.size_mantissa = 10;
   fields.left_mantissa = 0;
   fields.role = "taker";
@@ -210,7 +114,7 @@ TEST(GateOrderFeedbackParserTest, MapsFilledWithZeroLeftToFilledEvent) {
 TEST(GateOrderFeedbackParserTest, MapsCancelledToManualCancelledEvent) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("cancelled");
+  OrderFeedbackPayloadFields fields = MakeFields("cancelled");
   fields.size_mantissa = 10;
   fields.left_mantissa = 7;
 
@@ -257,7 +161,7 @@ TEST(GateOrderFeedbackParserTest, MapsTerminalFinishReasons) {
 TEST(GateOrderFeedbackParserTest, DropsInvalidTextAndIncrementsDiagnostics) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("_new");
+  OrderFeedbackPayloadFields fields = MakeFields("_new");
   fields.text = "client-order-42";
 
   const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
@@ -269,10 +173,108 @@ TEST(GateOrderFeedbackParserTest, DropsInvalidTextAndIncrementsDiagnostics) {
   EXPECT_EQ(stats.dropped_events, 1U);
 }
 
+TEST(GateOrderFeedbackParserTest, TruncatedChannelDoesNotEmitEvent) {
+  std::array<char, 512> buffer{};
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, MakeFields("_new"));
+
+  const OrderFeedbackParseResult result = ParseGateOrderFeedbackMessage(
+      payload.substr(0, payload.size() - 1), kLocalReceiveNs, stats, collector);
+
+  EXPECT_EQ(result.status, OrderFeedbackParseStatus::kMalformedPayload);
+  EXPECT_EQ(result.events_emitted, 0);
+  EXPECT_EQ(collector.count, 0U);
+  EXPECT_EQ(stats.malformed_payload_count, 1U);
+  EXPECT_EQ(stats.events_emitted, 0U);
+}
+
+TEST(GateOrderFeedbackParserTest, UnexpectedChannelDoesNotEmitEvent) {
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  OrderFeedbackPayloadFields fields = MakeFields("_new");
+
+  const OrderFeedbackParseResult result =
+      ParseOne(fields, &stats, &collector, "futures.usertrades");
+
+  EXPECT_EQ(result.status, OrderFeedbackParseStatus::kUnexpectedChannel);
+  EXPECT_EQ(result.events_emitted, 0);
+  EXPECT_EQ(collector.count, 0U);
+  EXPECT_EQ(stats.unexpected_channel_count, 1U);
+  EXPECT_EQ(stats.events_emitted, 0U);
+}
+
+TEST(GateOrderFeedbackParserTest, TrailingBytesDoNotEmitEvent) {
+  std::array<char, 512> buffer{};
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, MakeFields("_new"));
+  buffer[payload.size()] = '\x01';
+  payload = {buffer.data(), payload.size() + 1};
+
+  const OrderFeedbackParseResult result =
+      ParseGateOrderFeedbackMessage(payload, kLocalReceiveNs, stats, collector);
+
+  EXPECT_EQ(result.status, OrderFeedbackParseStatus::kMalformedPayload);
+  EXPECT_EQ(result.events_emitted, 0);
+  EXPECT_EQ(collector.count, 0U);
+  EXPECT_EQ(stats.malformed_payload_count, 1U);
+  EXPECT_EQ(stats.events_emitted, 0U);
+}
+
+TEST(GateOrderFeedbackParserTest, ParsesMultipleOrdersAfterPayloadValidation) {
+  std::array<char, 1024> buffer{};
+  OrderFeedbackParserStats stats{};
+  EventCollector<2> collector{};
+  std::array<OrderFeedbackPayloadFields, 2> fields{MakeFields("_new"),
+                                                   MakeFields("filled")};
+  fields[1].left_mantissa = 0;
+  fields[1].role = "maker";
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, fields);
+
+  const OrderFeedbackParseResult result =
+      ParseGateOrderFeedbackMessage(payload, kLocalReceiveNs, stats, collector);
+
+  ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_EQ(result.orders_seen, 2);
+  EXPECT_EQ(result.events_emitted, 2);
+  ASSERT_EQ(collector.count, 2U);
+  EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kAccepted);
+  EXPECT_EQ(collector.events[1].kind, OrderFeedbackKind::kFilled);
+  EXPECT_EQ(collector.events[1].role, OrderRole::kMaker);
+  EXPECT_EQ(stats.orders_seen, 2U);
+  EXPECT_EQ(stats.events_emitted, 2U);
+}
+
+TEST(GateOrderFeedbackParserTest, MultipleOrdersUnexpectedChannelDoesNotEmit) {
+  std::array<char, 1024> buffer{};
+  OrderFeedbackParserStats stats{};
+  EventCollector<2> collector{};
+  std::array<OrderFeedbackPayloadFields, 2> fields{MakeFields("_new"),
+                                                   MakeFields("filled")};
+  fields[1].left_mantissa = 0;
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, fields, "futures.usertrades");
+
+  const OrderFeedbackParseResult result =
+      ParseGateOrderFeedbackMessage(payload, kLocalReceiveNs, stats, collector);
+
+  EXPECT_EQ(result.status, OrderFeedbackParseStatus::kUnexpectedChannel);
+  EXPECT_EQ(result.orders_seen, 0);
+  EXPECT_EQ(result.events_emitted, 0);
+  EXPECT_EQ(collector.count, 0U);
+  EXPECT_EQ(stats.unexpected_channel_count, 1U);
+  EXPECT_EQ(stats.orders_seen, 0U);
+  EXPECT_EQ(stats.events_emitted, 0U);
+}
+
 TEST(GateOrderFeedbackParserTest, DropsUnsupportedSizeExponent) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("_update");
+  OrderFeedbackPayloadFields fields = MakeFields("_update");
   fields.size_exponent = -1;
 
   const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
@@ -286,7 +288,7 @@ TEST(GateOrderFeedbackParserTest, DropsUnsupportedSizeExponent) {
 TEST(GateOrderFeedbackParserTest, DropsFilledWithNonZeroLeft) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("filled");
+  OrderFeedbackPayloadFields fields = MakeFields("filled");
   fields.left_mantissa = 1;
 
   const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
@@ -300,7 +302,7 @@ TEST(GateOrderFeedbackParserTest, DropsFilledWithNonZeroLeft) {
 TEST(GateOrderFeedbackParserTest, ConvertsExchangeUpdateTimeToNanoseconds) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
-  OrderPayloadFields fields = MakeFields("_new");
+  OrderFeedbackPayloadFields fields = MakeFields("_new");
   fields.update_time_us = 123'456'789;
 
   const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
@@ -324,7 +326,7 @@ TEST(GateOrderFeedbackParserTest, MapsRoleMakerTakerAndNone) {
   for (const Case& test_case : kCases) {
     OrderFeedbackParserStats stats{};
     EventCollector collector{};
-    OrderPayloadFields fields = MakeFields("filled");
+    OrderFeedbackPayloadFields fields = MakeFields("filled");
     fields.left_mantissa = 0;
     fields.role = test_case.role;
 

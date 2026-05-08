@@ -334,6 +334,7 @@ class OrderFeedbackShmPublisher {
 
       pending_gaps_[i].pending = true;
       pending_gaps_[i].event = gap;
+      RecordLaneQueueFullOnly(static_cast<std::uint8_t>(i));
       all_published = false;
     }
 
@@ -388,6 +389,11 @@ class OrderFeedbackShmPublisher {
     OrderFeedbackLane& lane = channel_.lanes[strategy_id];
     lane.header.queue_full_count.fetch_add(1, std::memory_order_relaxed);
     lane.header.dropped_count.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  void RecordLaneQueueFullOnly(std::uint8_t strategy_id) noexcept {
+    OrderFeedbackLane& lane = channel_.lanes[strategy_id];
+    lane.header.queue_full_count.fetch_add(1, std::memory_order_relaxed);
   }
 
   void SetPendingLaneGap(std::uint8_t strategy_id,

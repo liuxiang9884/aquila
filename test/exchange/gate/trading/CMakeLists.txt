@@ -17,6 +17,7 @@ add_executable(gate_order_feedback_parser_test
 
 target_link_libraries(gate_order_feedback_parser_test
     PRIVATE
+        aquila_evaluation
         aquila_gate
         GTest::gtest_main
 )
@@ -30,6 +31,7 @@ add_executable(gate_order_feedback_session_test
 
 target_link_libraries(gate_order_feedback_session_test
     PRIVATE
+        aquila_evaluation
         aquila_gate
         GTest::gtest_main
 )

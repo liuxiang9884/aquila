@@ -26,6 +26,7 @@ add_executable(gate_order_feedback_parser_benchmark
 
 target_link_libraries(gate_order_feedback_parser_benchmark
     PRIVATE
+        aquila_evaluation
         aquila_core
         aquila_gate
         benchmark::benchmark_main

@@ -465,6 +465,12 @@ TEST(OrderFeedbackShmTest, PublishGlobalGapDefersFullLaneOnly) {
 
   EXPECT_FALSE(publisher.PublishGlobalGap(
       OrderFeedbackGapReason::kSessionDisconnected, 123));
+  EXPECT_EQ(
+      channel->lanes[5].header.queue_full_count.load(std::memory_order_relaxed),
+      1U);
+  EXPECT_EQ(
+      channel->lanes[5].header.dropped_count.load(std::memory_order_relaxed),
+      0U);
 
   std::uint64_t gap_sequence = 0;
   for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {

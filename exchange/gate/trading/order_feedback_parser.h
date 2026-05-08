@@ -8,7 +8,6 @@
 #include <limits>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 
 #include <sbepp/sbepp.hpp>
 
@@ -29,6 +28,7 @@ enum class OrderFeedbackParseStatus : std::uint8_t {
   kUnsupportedTemplate,
   kUnexpectedBlockLength,
   kUnexpectedEvent,
+  kUnexpectedChannel,
   kMalformedPayload,
 };
 
@@ -45,6 +45,7 @@ struct OrderFeedbackParserStats {
   std::uint64_t unsupported_template_count{0};
   std::uint64_t unexpected_block_length_count{0};
   std::uint64_t unexpected_event_count{0};
+  std::uint64_t unexpected_channel_count{0};
   std::uint64_t malformed_payload_count{0};
 
   std::uint64_t invalid_text_count{0};
@@ -65,6 +66,7 @@ struct OrderFeedbackParseResult {
 namespace detail {
 
 inline constexpr std::uint8_t kOrderFeedbackMaxStrategyCount = 8;
+inline constexpr std::string_view kOrdersChannel = "futures.orders";
 inline constexpr std::uint16_t kOrdersMessageBlockLength =
     ::sbepp::message_traits<::gate::schema::messages::orders>::block_length();
 inline constexpr std::uint16_t kOrdersResultBlockLength = ::sbepp::group_traits<
@@ -264,6 +266,31 @@ inline bool ReadRawOrderFeedbackUpdate(std::string_view payload,
          ReadVarString8(payload, offset, &ignored);
 }
 
+inline bool SkipRawOrderFeedbackUpdate(std::string_view payload,
+                                       std::size_t* offset) noexcept {
+  assert(offset != nullptr);
+  if (*offset > payload.size() ||
+      payload.size() - *offset < kOrdersResultBlockLength) {
+    return false;
+  }
+  *offset += kOrdersResultBlockLength;
+
+  std::string_view ignored;
+  return ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored);
+}
+
 inline void CountDroppedEvent(OrderFeedbackParserStats& stats) noexcept {
   ++stats.dropped_events;
 }
@@ -272,8 +299,8 @@ template <typename EventSink>
 inline void EmitOrderFeedbackEvent(OrderFeedbackEvent& event,
                                    OrderFeedbackParserStats& stats,
                                    OrderFeedbackParseResult& result,
-                                   EventSink&& sink) noexcept {
-  std::forward<EventSink>(sink)(event);
+                                   EventSink& sink) noexcept {
+  sink(event);
   ++stats.events_emitted;
   ++result.events_emitted;
 }
@@ -283,7 +310,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
                                           std::int64_t local_receive_ns,
                                           OrderFeedbackParserStats& stats,
                                           OrderFeedbackParseResult& result,
-                                          EventSink&& sink) noexcept {
+                                          EventSink& sink) noexcept {
   const ParsedOrderText parsed_text = OrderTextCodec::Parse(raw.text);
   if (!parsed_text.ok) {
     ++stats.invalid_text_count;
@@ -342,7 +369,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
   if (raw.finish_as == std::string_view("_new")) {
     event.kind = OrderFeedbackKind::kAccepted;
     event.exchange_order_id = raw.exchange_order_id;
-    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    EmitOrderFeedbackEvent(event, stats, result, sink);
     return;
   }
 
@@ -353,7 +380,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
       return;
     }
     event.kind = OrderFeedbackKind::kPartialFilled;
-    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    EmitOrderFeedbackEvent(event, stats, result, sink);
     return;
   }
 
@@ -365,7 +392,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
     }
     event.kind = OrderFeedbackKind::kFilled;
     event.role = ParseOrderRole(raw.role);
-    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    EmitOrderFeedbackEvent(event, stats, result, sink);
     return;
   }
 
@@ -374,7 +401,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
     event.kind = OrderFeedbackKind::kCancelled;
     event.cancelled_quantity = left_quantity;
     event.finish_reason = reason;
-    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    EmitOrderFeedbackEvent(event, stats, result, sink);
     return;
   }
 
@@ -417,9 +444,82 @@ inline void CountDispatchFailure(OrderFeedbackParseStatus status,
     case OrderFeedbackParseStatus::kOk:
     case OrderFeedbackParseStatus::kUnexpectedBlockLength:
     case OrderFeedbackParseStatus::kUnexpectedEvent:
+    case OrderFeedbackParseStatus::kUnexpectedChannel:
     case OrderFeedbackParseStatus::kMalformedPayload:
       return;
   }
+}
+
+struct OrdersPayloadFrame {
+  std::size_t updates_offset{0};
+  std::uint16_t result_count{0};
+};
+
+inline OrderFeedbackParseStatus ValidateOrdersPayloadHeader(
+    std::string_view payload, const SbeDispatchResult& dispatch,
+    OrderFeedbackParserStats& stats, OrdersPayloadFrame* frame) noexcept {
+  assert(frame != nullptr);
+  if (dispatch.header.block_length != kOrdersMessageBlockLength ||
+      payload.size() < kOrdersMinPayloadBytes) {
+    if (payload.size() < kOrdersMinPayloadBytes) {
+      ++stats.need_more_count;
+      return OrderFeedbackParseStatus::kNeedMore;
+    }
+    ++stats.unexpected_block_length_count;
+    return OrderFeedbackParseStatus::kUnexpectedBlockLength;
+  }
+
+  std::int8_t event_type = 0;
+  if (!ReadLittleEndian<std::int8_t>(
+          payload, kSbeMessageHeaderBytes + sizeof(std::int64_t),
+          &event_type)) {
+    ++stats.need_more_count;
+    return OrderFeedbackParseStatus::kNeedMore;
+  }
+  if (event_type != static_cast<std::int8_t>(::gate::types::Event::Update)) {
+    ++stats.unexpected_event_count;
+    return OrderFeedbackParseStatus::kUnexpectedEvent;
+  }
+
+  std::size_t offset = kSbeMessageHeaderBytes + kOrdersMessageBlockLength;
+  std::uint16_t result_block_length = 0;
+  std::uint16_t result_count = 0;
+  if (!ReadLittleEndian<std::uint16_t>(payload, offset, &result_block_length) ||
+      !ReadLittleEndian<std::uint16_t>(payload, offset + sizeof(std::uint16_t),
+                                       &result_count)) {
+    ++stats.need_more_count;
+    return OrderFeedbackParseStatus::kNeedMore;
+  }
+  offset += kOrdersGroupHeaderBytes;
+
+  if (result_block_length != kOrdersResultBlockLength) {
+    ++stats.unexpected_block_length_count;
+    return OrderFeedbackParseStatus::kUnexpectedBlockLength;
+  }
+
+  frame->updates_offset = offset;
+  frame->result_count = result_count;
+  return OrderFeedbackParseStatus::kOk;
+}
+
+inline OrderFeedbackParseStatus ValidateOrdersPayloadTail(
+    std::string_view payload, std::size_t* offset,
+    OrderFeedbackParserStats& stats) noexcept {
+  assert(offset != nullptr);
+  std::string_view channel;
+  if (!ReadVarString8(payload, offset, &channel)) {
+    ++stats.malformed_payload_count;
+    return OrderFeedbackParseStatus::kMalformedPayload;
+  }
+  if (channel != kOrdersChannel) {
+    ++stats.unexpected_channel_count;
+    return OrderFeedbackParseStatus::kUnexpectedChannel;
+  }
+  if (*offset != payload.size()) {
+    ++stats.malformed_payload_count;
+    return OrderFeedbackParseStatus::kMalformedPayload;
+  }
+  return OrderFeedbackParseStatus::kOk;
 }
 
 }  // namespace detail
@@ -441,54 +541,50 @@ inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
     return result;
   }
 
-  if (dispatch.header.block_length != detail::kOrdersMessageBlockLength ||
-      payload.size() < detail::kOrdersMinPayloadBytes) {
-    result.status = payload.size() < detail::kOrdersMinPayloadBytes
-                        ? OrderFeedbackParseStatus::kNeedMore
-                        : OrderFeedbackParseStatus::kUnexpectedBlockLength;
-    if (result.status == OrderFeedbackParseStatus::kNeedMore) {
-      ++stats.need_more_count;
-    } else {
-      ++stats.unexpected_block_length_count;
+  detail::OrdersPayloadFrame frame{};
+  result.status =
+      detail::ValidateOrdersPayloadHeader(payload, dispatch, stats, &frame);
+  if (result.status != OrderFeedbackParseStatus::kOk) {
+    return result;
+  }
+
+  if (frame.result_count == 1) {
+    detail::RawOrderFeedbackUpdate raw{};
+    std::size_t offset = frame.updates_offset;
+    if (!detail::ReadRawOrderFeedbackUpdate(payload, &offset, &raw)) {
+      result.status = OrderFeedbackParseStatus::kMalformedPayload;
+      ++stats.malformed_payload_count;
+      return result;
     }
+    result.status = detail::ValidateOrdersPayloadTail(payload, &offset, stats);
+    if (result.status != OrderFeedbackParseStatus::kOk) {
+      return result;
+    }
+
+    ++stats.orders_seen;
+    ++result.orders_seen;
+    detail::ConvertRawOrderFeedbackUpdate(raw, local_receive_ns, stats, result,
+                                          sink);
+    ++stats.messages_parsed;
     return result;
   }
 
-  std::int8_t event_type = 0;
-  if (!detail::ReadLittleEndian<std::int8_t>(
-          payload, kSbeMessageHeaderBytes + sizeof(std::int64_t),
-          &event_type)) {
-    result.status = OrderFeedbackParseStatus::kNeedMore;
-    ++stats.need_more_count;
-    return result;
+  std::size_t validation_offset = frame.updates_offset;
+  for (std::uint16_t i = 0; i < frame.result_count; ++i) {
+    if (!detail::SkipRawOrderFeedbackUpdate(payload, &validation_offset)) {
+      result.status = OrderFeedbackParseStatus::kMalformedPayload;
+      ++stats.malformed_payload_count;
+      return result;
+    }
   }
-  if (event_type != static_cast<std::int8_t>(::gate::types::Event::Update)) {
-    result.status = OrderFeedbackParseStatus::kUnexpectedEvent;
-    ++stats.unexpected_event_count;
-    return result;
-  }
-
-  std::size_t offset =
-      kSbeMessageHeaderBytes + detail::kOrdersMessageBlockLength;
-  std::uint16_t result_block_length = 0;
-  std::uint16_t result_count = 0;
-  if (!detail::ReadLittleEndian<std::uint16_t>(payload, offset,
-                                               &result_block_length) ||
-      !detail::ReadLittleEndian<std::uint16_t>(
-          payload, offset + sizeof(std::uint16_t), &result_count)) {
-    result.status = OrderFeedbackParseStatus::kNeedMore;
-    ++stats.need_more_count;
-    return result;
-  }
-  offset += detail::kOrdersGroupHeaderBytes;
-
-  if (result_block_length != detail::kOrdersResultBlockLength) {
-    result.status = OrderFeedbackParseStatus::kUnexpectedBlockLength;
-    ++stats.unexpected_block_length_count;
+  result.status =
+      detail::ValidateOrdersPayloadTail(payload, &validation_offset, stats);
+  if (result.status != OrderFeedbackParseStatus::kOk) {
     return result;
   }
 
-  for (std::uint16_t i = 0; i < result_count; ++i) {
+  std::size_t offset = frame.updates_offset;
+  for (std::uint16_t i = 0; i < frame.result_count; ++i) {
     detail::RawOrderFeedbackUpdate raw{};
     if (!detail::ReadRawOrderFeedbackUpdate(payload, &offset, &raw)) {
       result.status = OrderFeedbackParseStatus::kMalformedPayload;
@@ -499,14 +595,7 @@ inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
     ++stats.orders_seen;
     ++result.orders_seen;
     detail::ConvertRawOrderFeedbackUpdate(raw, local_receive_ns, stats, result,
-                                          std::forward<EventSink>(sink));
-  }
-
-  std::string_view channel;
-  if (!detail::ReadVarString8(payload, &offset, &channel)) {
-    result.status = OrderFeedbackParseStatus::kMalformedPayload;
-    ++stats.malformed_payload_count;
-    return result;
+                                          sink);
   }
 
   ++stats.messages_parsed;

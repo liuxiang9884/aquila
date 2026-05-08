@@ -85,6 +85,9 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "events_published={} publish_failures={} global_gaps_published={} "
       "parser_messages_seen={} parser_messages_parsed={} "
       "parser_orders_seen={} parser_events_emitted={} parser_dropped_events={} "
+      "parser_need_more={} parser_unsupported_template={} "
+      "parser_unexpected_block_length={} parser_unexpected_event={} "
+      "parser_unexpected_channel={} parser_malformed_payload={} "
       "shm_published={} shm_invalid_routes={}\n",
       session_stats.text_messages, session_stats.binary_messages,
       session_stats.login_sent, session_stats.login_accepted,
@@ -94,7 +97,12 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       session_stats.publish_failures, session_stats.global_gaps_published,
       parser_stats.messages_seen, parser_stats.messages_parsed,
       parser_stats.orders_seen, parser_stats.events_emitted,
-      parser_stats.dropped_events, publisher.published_count(),
+      parser_stats.dropped_events, parser_stats.need_more_count,
+      parser_stats.unsupported_template_count,
+      parser_stats.unexpected_block_length_count,
+      parser_stats.unexpected_event_count,
+      parser_stats.unexpected_channel_count,
+      parser_stats.malformed_payload_count, publisher.published_count(),
       publisher.invalid_route_count());
 }
 

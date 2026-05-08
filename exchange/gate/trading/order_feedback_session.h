@@ -239,8 +239,7 @@ class OrderFeedbackSession {
       WebSocketPolicy::kClockSource;
 
   OrderFeedbackSession(websocket::ConnectionConfig config,
-                       LoginCredentials credentials,
-                       Publisher& publisher) noexcept
+                       LoginCredentials credentials, Publisher& publisher)
       : connection_(ApplyOptions(std::move(config))),
         credentials_(std::move(credentials)),
         publisher_(publisher),
@@ -526,6 +525,12 @@ class OrderFeedbackSession {
       diagnostics_.RecordControlMessage();
     }
     if (!envelope.channel_is_orders) {
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordIgnoredTextMessage();
+      }
+      return;
+    }
+    if (!login_ready_ || !subscribe_sent_) {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordIgnoredTextMessage();
       }
