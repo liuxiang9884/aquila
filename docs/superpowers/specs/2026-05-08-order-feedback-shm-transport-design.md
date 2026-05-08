@@ -1,0 +1,267 @@
+# OrderFeedback SHM Transport 设计
+
+## 背景
+
+Gate `OrderSession` 第一版已经能通过 WebSocket 提交 place / cancel 请求；`OrderFeedbackSession`
+的 event 语义也已经收敛到只以 Gate private `futures.orders` 为订单生命周期事实源。下一步需要先把
+`OrderFeedbackSession` 到 Strategy 的跨线程 / 跨进程通信边界固定下来，再实现 Gate SBE private
+orders parse 和 Strategy 状态机更新。
+
+本设计对应 Task1：只实现订单 feedback SHM 通讯，不解析 Gate 报文，也不更新 Strategy 订单状态。
+
+## 目标
+
+- 使用 Nova 的 SPSC queue 承载订单 feedback event。
+- 一个 shared memory object 内固定 8 条 strategy lane。
+- `local_order_id` 高 8 bit 作为 `strategy_id`，直接数组路由，不做 string channel map。
+- producer 是共享的 `OrderFeedbackSession` 进程或线程。
+- consumer 是对应 `strategy_id` 的 Strategy 进程或线程。
+- 正常 event publish / poll 热路径不做 atomic 计数累加、不做动态分配、不阻塞。
+- 队列满、WebSocket 断线和 duplicate consumer claim 走冷路径诊断。
+
+## 非目标
+
+- 不实现 Gate `futures.orders` parser。
+- 不实现 Strategy `OnOrderFeedback()`。
+- 不实现 REST reconcile。
+- 不支持动态 strategy lane 数量。
+- 不支持 per-strategy `channel_name` 路由。
+- 不做 overwrite queue；订单 feedback 不能用覆盖旧消息的语义。
+
+## SHM 布局
+
+第一版固定 8 lane：
+
+```text
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+
+OrderFeedbackShmChannel
+  OrderFeedbackShmHeader
+  OrderFeedbackLane lanes[8]
+    OrderFeedbackLaneHeader
+    nova::static_impl::SPSCQueue<OrderFeedbackEvent, 65536>
+```
+
+`channel_name` 只用于打开 SHM 内唯一订单 feedback channel；解析出 `strategy_id` 后直接访问
+`lanes[strategy_id]`。固定 8 lane 会预分配所有 queue 的内存，第一版接受这个成本，以换取路由简单和运行期无 map 查找。
+
+`nova::static_impl::SPSCQueue<T, Capacity>` 要求 `T` 是 trivial / standard-layout，`Capacity` 是 2 的幂。
+`Capacity=65536` 时，queue 为区分空 / 满可能保留一个空槽，因此可同时承载的未消费 event 数量按
+65535 理解。
+
+## Event Carrier
+
+Task1 选择宽结构 `OrderFeedbackEvent` 作为 SHM ABI。理由：
+
+1. `SPSCQueue` 对 trivial / standard-layout 类型约束更直接。
+2. 宽结构没有 union active member 生命周期问题。
+3. parser 填字段、Strategy switch 和 benchmark 都更容易先验证正确性。
+4. 单 event 体积增长在 8 lane、65536 容量下可接受。
+
+第一版建议结构：
+
+```cpp
+enum class OrderFeedbackKind : std::uint8_t {
+  kAccepted,
+  kPartialFilled,
+  kFilled,
+  kCancelled,
+  kRejected,
+};
+
+enum class OrderRole : std::uint8_t {
+  kNone,
+  kMaker,
+  kTaker,
+};
+
+enum class OrderFinishReason : std::uint8_t {
+  kUnknown,
+  kManualCancelled,
+  kImmediateOrCancel,
+  kReduceOnly,
+  kReduceOut,
+  kSelfTradePrevention,
+  kLiquidated,
+  kAutoDeleveraging,
+  kPositionClose,
+};
+
+enum class OrderRejectReason : std::uint8_t {
+  kUnknown,
+  kSessionRejected,
+  kExchangeRejected,
+};
+
+struct OrderFeedbackEvent {
+  OrderFeedbackKind kind{OrderFeedbackKind::kAccepted};
+
+  std::uint64_t local_order_id{0};
+  std::uint64_t exchange_order_id{0};
+  std::int64_t cumulative_filled_quantity{0};
+  std::int64_t left_quantity{0};
+  std::int64_t cancelled_quantity{0};
+
+  double fill_price{0.0};
+  OrderRole role{OrderRole::kNone};
+  OrderFinishReason finish_reason{OrderFinishReason::kUnknown};
+  OrderRejectReason reject_reason{OrderRejectReason::kUnknown};
+
+  std::int64_t exchange_update_ns{0};
+  std::int64_t local_receive_ns{0};
+};
+```
+
+字段语义沿用 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`。
+`local_receive_ns` 是 feedback 进程本地收到并准备发布该 event 的时间，用于链路延迟诊断；它不参与 Strategy
+状态推进。
+
+实现时需要 `static_assert` 固定：
+
+- `std::is_trivial_v<OrderFeedbackEvent>`
+- `std::is_standard_layout_v<OrderFeedbackEvent>`
+- `sizeof(OrderFeedbackEvent)` 在测试中记录，避免无意加入非平凡字段或膨胀 ABI。
+
+## Header 与 Lane Metadata
+
+建议结构：
+
+```cpp
+struct OrderFeedbackShmHeader {
+  std::uint32_t magic;
+  std::uint32_t version;
+  std::uint32_t abi_size;
+  std::uint32_t max_strategy_count;
+  std::uint32_t queue_capacity;
+  std::uint32_t event_size;
+
+  std::uint64_t producer_pid;
+  std::uint64_t producer_run_id;
+  std::atomic<std::uint64_t> producer_heartbeat_ns;
+  std::atomic<std::uint64_t> global_gap_epoch;
+};
+
+struct OrderFeedbackLaneHeader {
+  std::uint8_t strategy_id;
+
+  std::atomic<std::uint64_t> consumer_pid;
+  std::atomic<std::uint64_t> consumer_run_id;
+  std::atomic<std::uint64_t> consumer_heartbeat_ns;
+
+  std::atomic<std::uint64_t> published_count;
+  std::atomic<std::uint64_t> consumed_count;
+  std::atomic<std::uint64_t> queue_full_count;
+  std::atomic<std::uint64_t> dropped_count;
+  std::atomic<std::uint64_t> gap_epoch;
+};
+```
+
+这些 atomic 不在正常每条 event 热路径上递增：
+
+- `producer_heartbeat_ns`：producer 定期更新。
+- `global_gap_epoch`：feedback WebSocket 断线、重连后无法证明无缺口等异常路径更新。
+- `consumer_pid` / `consumer_run_id` / `consumer_heartbeat_ns`：consumer attach 和低频 heartbeat 使用。
+- `published_count` / `consumed_count`：producer / consumer 使用普通本地计数器累计，低频 flush 到 atomic。
+- `queue_full_count` / `dropped_count` / `gap_epoch`：只在 `TryPush()` 失败时更新。
+
+正常 publish 热路径只做：
+
+```text
+strategy_id = DecodeStrategyId(local_order_id)
+lane = lanes[strategy_id]
+lane.queue.TryPush(event)
+```
+
+## Consumer Claim
+
+`strategy_id` 不能依靠君子约定。第一版做两层约束：
+
+1. 配置 parser 检查 `strategy_id < 8`。
+2. Strategy reader attach 时 claim 对应 lane。
+
+claim 规则：
+
+- `consumer_pid == 0`：允许 claim，写入当前 pid、run id 和 heartbeat。
+- `consumer_pid != 0` 且 pid 存活且 heartbeat 新鲜：拒绝 attach。
+- pid 不存活且 heartbeat 已陈旧：允许 reclaim。
+- pid 存活状态或 heartbeat 状态无法判断：拒绝 attach，要求人工处理。
+
+这条规则避免两个 Strategy 进程同时消费同一 lane。实现可通过小的 owner probe 接口隔离 pid 存活检查，方便测试用 fake probe 覆盖 duplicate / stale / ambiguous 场景。
+
+## Gap 语义
+
+### Lane Gap
+
+当某 lane `TryPush()` 失败：
+
+- 不覆盖旧 event；
+- 不阻塞 producer；
+- 不影响其他 lane；
+- 当前 lane `queue_full_count++`；
+- 当前 lane `dropped_count++`；
+- 当前 lane `gap_epoch++`。
+
+Strategy reader 发现自己的 `gap_epoch` 变化后，必须进入 reconcile 状态；在 reconcile 完成前不应继续开新仓。
+
+### Global Gap
+
+当 `OrderFeedbackSession` 的 WebSocket 断线、重连后有未知时间窗口、SBE decode 进入不可恢复状态，或 producer 判断无法证明没有丢失回报时：
+
+- `global_gap_epoch++`；
+- 所有 Strategy reader 都能看到；
+- 所有 Strategy 应进入 reconcile 状态。
+
+Task1 只提供标记和读取接口，不实现 reconcile。
+
+## Reader 语义
+
+订单 feedback reader 只支持 drain 模式，不支持 latest 模式：
+
+```cpp
+template <typename Handler>
+std::size_t Poll(std::size_t max_events, Handler&& handler);
+```
+
+`Poll()` 最多消费 `max_events` 条，并按 FIFO 顺序调用 handler。Strategy 主循环按固定预算调用该接口，避免 feedback burst 长时间占用策略线程。
+
+## 配置建议
+
+Task1 可新增独立示例配置：
+
+```toml
+[order_feedback_shm]
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+max_strategy_count = 8
+queue_capacity = 65536
+heartbeat_interval_ms = 1000
+stale_consumer_timeout_ms = 5000
+```
+
+实现时 `max_strategy_count` 和 `queue_capacity` 第一版只允许等于编译期常量；保留字段是为了把部署配置写清楚，并在未来需要 ABI 版本升级时有显式检查点。
+
+## 测试边界
+
+Task1 至少覆盖：
+
+- event 类型 trivial / standard-layout / size ABI；
+- SHM create / attach header 校验；
+- `local_order_id` 高 8 bit 路由到正确 lane；
+- `strategy_id >= 8` publish 失败并计数；
+- duplicate live consumer claim 被拒绝；
+- stale dead consumer 可 reclaim；
+- `TryPush()` full 时只标记当前 lane gap，不影响其他 lane；
+- global gap epoch 对 reader 可见；
+- `Poll(max_events)` 遵守消费预算。
+
+## Benchmark 边界
+
+Task1 benchmark 只证明 SHM transport 本身：
+
+- producer `Publish()` 单条 event；
+- consumer `Poll()` drain 单条或固定 batch；
+- publish / poll loop；
+- full-path 异常分支不进入低延迟结论。
+
+性能结论必须基于实际 benchmark 输出记录；不能把 Task1 transport benchmark 外推为 Gate parser 或 Strategy 状态机总链路性能。
