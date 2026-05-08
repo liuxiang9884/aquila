@@ -461,20 +461,16 @@ struct RunContext {
       }
     }
 
-    const std::int64_t latency_ns =
-        event.exchange_update_ns == 0
-            ? 0
-            : event.local_receive_ns - event.exchange_update_ns;
     NOVA_INFO(
         "strategy_feedback_applied kind={} local_order_id={} "
         "exchange_order_id={} status_before={} status_after={} "
-        "exchange_update_ns={} local_receive_ns={} latency_ns={} "
+        "exchange_update_ns={} local_receive_ns={} "
         "cumulative_filled_quantity={} left_quantity={} "
         "cancelled_quantity={} fill_price={:.12g} role={} finish_reason={} "
         "reject_reason={} gap_scope={} gap_reason={} gap_sequence={}",
         magic_enum::enum_name(event.kind), event.local_order_id,
         event.exchange_order_id, status_before, status_after,
-        event.exchange_update_ns, event.local_receive_ns, latency_ns,
+        event.exchange_update_ns, event.local_receive_ns,
         event.cumulative_filled_quantity, event.left_quantity,
         event.cancelled_quantity, event.fill_price,
         magic_enum::enum_name(event.role),

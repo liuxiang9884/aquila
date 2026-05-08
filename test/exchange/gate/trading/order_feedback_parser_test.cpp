@@ -271,17 +271,38 @@ TEST(GateOrderFeedbackParserTest, MultipleOrdersUnexpectedChannelDoesNotEmit) {
   EXPECT_EQ(stats.events_emitted, 0U);
 }
 
-TEST(GateOrderFeedbackParserTest, DropsUnsupportedSizeExponent) {
+TEST(GateOrderFeedbackParserTest, MapsIntegralDecimalSizeExponent) {
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  OrderFeedbackPayloadFields fields = MakeFields("filled");
+  fields.size_exponent = -3;
+  fields.size_mantissa = 10'000;
+  fields.left_mantissa = 0;
+
+  const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
+
+  EXPECT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  ASSERT_EQ(collector.count, 1U);
+  EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kFilled);
+  EXPECT_EQ(collector.events[0].cumulative_filled_quantity, 10);
+  EXPECT_EQ(collector.events[0].left_quantity, 0);
+  EXPECT_EQ(stats.events_emitted, 1U);
+  EXPECT_EQ(stats.dropped_events, 0U);
+}
+
+TEST(GateOrderFeedbackParserTest, DropsNonIntegralDecimalQuantity) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
   OrderFeedbackPayloadFields fields = MakeFields("_update");
   fields.size_exponent = -1;
+  fields.size_mantissa = 15;
+  fields.left_mantissa = 5;
 
   const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
 
   EXPECT_EQ(result.status, OrderFeedbackParseStatus::kOk);
   EXPECT_EQ(collector.count, 0U);
-  EXPECT_EQ(stats.unsupported_size_exponent_count, 1U);
+  EXPECT_EQ(stats.invalid_quantity_count, 1U);
   EXPECT_EQ(stats.dropped_events, 1U);
 }
 

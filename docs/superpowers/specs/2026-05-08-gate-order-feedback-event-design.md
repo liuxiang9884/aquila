@@ -83,13 +83,14 @@ core/trading/order_id.h
 Gate futures REST / WebSocket 文档中订单 `size` 和 `left` 的语义是 integer contract quantity；本地 Strategy
 event 使用 `std::int64_t quantity` 表达非负累计数量，不用 `double`。
 
-Gate SBE schema 中 orders message 有 `sizeExponent`、`sizeMantissa` 和 `leftMantissa`，但第一版按 Gate
-futures 订单数量语义处理为整数合约张数：
+Gate SBE schema 中 orders message 有 `sizeExponent`、`sizeMantissa` 和 `leftMantissa`。实盘 smoke
+已确认 BTC_USDT orders 会出现非零 `sizeExponent`，但 Gate futures 订单数量语义仍按整数合约张数处理：
 
-- `cumulative_filled_quantity = abs(size) - abs(left)`；
-- `left_quantity = abs(left)`；
-- SBE `sizeExponent` 第一版要求为 `0`；
-- 如果实盘遇到非零 `sizeExponent`，先记 unsupported parse error，不隐式转成 double。
+- `size_quantity = exact_integer(abs(sizeMantissa) * 10^sizeExponent)`；
+- `left_quantity = exact_integer(abs(leftMantissa) * 10^sizeExponent)`；
+- `cumulative_filled_quantity = size_quantity - left_quantity`；
+- 如果 exponent 转换后不是整数合约张数，记 `invalid_quantity` 并丢弃该 event；
+- 不把数量隐式转成 `double` 进入 Strategy 状态机。
 
 价格使用 `double`：
 

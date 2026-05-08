@@ -53,6 +53,7 @@ void MaybeLogError(std::string_view message) {
     std::string_view settle) {
   std::string target{"/v4/ws/"};
   target.append(settle);
+  target.append("/sbe?sbe_schema_id=1");
   return target;
 }
 
@@ -174,7 +175,7 @@ class OrderFeedbackSessionConfigParser {
         BuildOrderFeedbackSessionTarget(config_.order_feedback_session.settle);
     if (*target != expected_target) {
       Fail("order_feedback_session.websocket.target",
-           " must match /v4/ws/<settle>");
+           " must match /v4/ws/<settle>/sbe?sbe_schema_id=1");
     }
   }
 

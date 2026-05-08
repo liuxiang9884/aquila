@@ -160,6 +160,56 @@ inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   return kPositivePowersOfTen[exponent_value];
 }
 
+inline std::int64_t DecimalExponentScaleInt(std::int8_t exponent) noexcept {
+  static constexpr std::int64_t kPowersOfTen[] = {
+      1,
+      10,
+      100,
+      1'000,
+      10'000,
+      100'000,
+      1'000'000,
+      10'000'000,
+      100'000'000,
+      1'000'000'000,
+      10'000'000'000,
+  };
+
+  assert(exponent >= 0 && exponent <= 10);
+  return kPowersOfTen[exponent];
+}
+
+inline bool TryDecimalMantissaToIntegerQuantity(std::int64_t mantissa,
+                                                std::int8_t exponent,
+                                                std::int64_t* out) noexcept {
+  assert(out != nullptr);
+  std::int64_t abs_mantissa = 0;
+  if (!TryAbsInt64(mantissa, &abs_mantissa)) {
+    return false;
+  }
+
+  if (exponent == 0) {
+    *out = abs_mantissa;
+    return true;
+  }
+
+  if (exponent > 0) {
+    const std::int64_t scale = DecimalExponentScaleInt(exponent);
+    if (abs_mantissa > std::numeric_limits<std::int64_t>::max() / scale) {
+      return false;
+    }
+    *out = abs_mantissa * scale;
+    return true;
+  }
+
+  const std::int64_t scale = DecimalExponentScaleInt(-exponent);
+  if (abs_mantissa % scale != 0) {
+    return false;
+  }
+  *out = abs_mantissa / scale;
+  return true;
+}
+
 inline OrderRole ParseOrderRole(std::string_view role) noexcept {
   if (role == std::string_view("maker")) {
     return OrderRole::kMaker;
@@ -325,7 +375,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
     return;
   }
 
-  if (raw.size_exponent != 0) {
+  if (!IsSupportedDecimalExponent(raw.size_exponent)) {
     ++stats.unsupported_size_exponent_count;
     CountDroppedEvent(stats);
     return;
@@ -333,8 +383,10 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
 
   std::int64_t size_quantity = 0;
   std::int64_t left_quantity = 0;
-  if (!TryAbsInt64(raw.size_mantissa, &size_quantity) ||
-      !TryAbsInt64(raw.left_mantissa, &left_quantity) ||
+  if (!TryDecimalMantissaToIntegerQuantity(raw.size_mantissa, raw.size_exponent,
+                                           &size_quantity) ||
+      !TryDecimalMantissaToIntegerQuantity(raw.left_mantissa, raw.size_exponent,
+                                           &left_quantity) ||
       left_quantity > size_quantity) {
     ++stats.invalid_quantity_count;
     CountDroppedEvent(stats);

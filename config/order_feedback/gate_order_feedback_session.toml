@@ -16,7 +16,7 @@ api_key_env = "TEST_KEY"
 api_secret_env = "TEST_SECRET"
 
 [order_feedback_session.websocket]
-target = "/v4/ws/usdt"
+target = "/v4/ws/usdt/sbe?sbe_schema_id=1"
 
 [order_feedback_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"

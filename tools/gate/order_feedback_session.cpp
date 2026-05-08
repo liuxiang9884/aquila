@@ -116,6 +116,11 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "parser_need_more={} parser_unsupported_template={} "
       "parser_unexpected_block_length={} parser_unexpected_event={} "
       "parser_unexpected_channel={} parser_malformed_payload={} "
+      "parser_invalid_text={} parser_invalid_route={} "
+      "parser_unsupported_size_exponent={} "
+      "parser_unsupported_filled_left={} "
+      "parser_unsupported_finish_as={} "
+      "parser_unsupported_price_exponent={} parser_invalid_quantity={} "
       "shm_published={} shm_invalid_routes={}\n",
       session_stats.text_messages, session_stats.binary_messages,
       session_stats.login_sent, session_stats.login_accepted,
@@ -130,7 +135,13 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       parser_stats.unexpected_block_length_count,
       parser_stats.unexpected_event_count,
       parser_stats.unexpected_channel_count,
-      parser_stats.malformed_payload_count, publisher.published_count(),
+      parser_stats.malformed_payload_count, parser_stats.invalid_text_count,
+      parser_stats.invalid_route_count,
+      parser_stats.unsupported_size_exponent_count,
+      parser_stats.unsupported_filled_left_count,
+      parser_stats.unsupported_finish_as_count,
+      parser_stats.unsupported_price_exponent_count,
+      parser_stats.invalid_quantity_count, publisher.published_count(),
       publisher.invalid_route_count());
   NOVA_INFO(
       "summary text_messages={} binary_messages={} login_sent={} "
@@ -142,6 +153,11 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "parser_need_more={} parser_unsupported_template={} "
       "parser_unexpected_block_length={} parser_unexpected_event={} "
       "parser_unexpected_channel={} parser_malformed_payload={} "
+      "parser_invalid_text={} parser_invalid_route={} "
+      "parser_unsupported_size_exponent={} "
+      "parser_unsupported_filled_left={} "
+      "parser_unsupported_finish_as={} "
+      "parser_unsupported_price_exponent={} parser_invalid_quantity={} "
       "shm_published={} shm_invalid_routes={}",
       session_stats.text_messages, session_stats.binary_messages,
       session_stats.login_sent, session_stats.login_accepted,
@@ -156,7 +172,13 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       parser_stats.unexpected_block_length_count,
       parser_stats.unexpected_event_count,
       parser_stats.unexpected_channel_count,
-      parser_stats.malformed_payload_count, publisher.published_count(),
+      parser_stats.malformed_payload_count, parser_stats.invalid_text_count,
+      parser_stats.invalid_route_count,
+      parser_stats.unsupported_size_exponent_count,
+      parser_stats.unsupported_filled_left_count,
+      parser_stats.unsupported_finish_as_count,
+      parser_stats.unsupported_price_exponent_count,
+      parser_stats.invalid_quantity_count, publisher.published_count(),
       publisher.invalid_route_count());
 }
 
@@ -167,19 +189,15 @@ struct LoggingOrderFeedbackPublisher {
 
   bool Publish(const aquila::OrderFeedbackEvent& event) noexcept {
     const bool ok = publisher.Publish(event);
-    const std::int64_t latency_ns =
-        event.exchange_update_ns == 0
-            ? 0
-            : event.local_receive_ns - event.exchange_update_ns;
     NOVA_INFO(
         "feedback_event publish_ok={} kind={} local_order_id={} "
         "exchange_order_id={} exchange_update_ns={} local_receive_ns={} "
-        "latency_ns={} cumulative_filled_quantity={} left_quantity={} "
+        "cumulative_filled_quantity={} left_quantity={} "
         "cancelled_quantity={} fill_price={:.12g} role={} finish_reason={} "
         "reject_reason={} gap_scope={} gap_reason={} gap_sequence={}",
         ok ? "true" : "false", magic_enum::enum_name(event.kind),
         event.local_order_id, event.exchange_order_id, event.exchange_update_ns,
-        event.local_receive_ns, latency_ns, event.cumulative_filled_quantity,
+        event.local_receive_ns, event.cumulative_filled_quantity,
         event.left_quantity, event.cancelled_quantity, event.fill_price,
         magic_enum::enum_name(event.role),
         magic_enum::enum_name(event.finish_reason),

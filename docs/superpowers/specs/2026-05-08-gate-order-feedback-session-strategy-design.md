@@ -110,7 +110,7 @@ API submit error。
 - `text` 不是 `t-<local_order_id>`；
 - `local_order_id == 0`；
 - `strategy_id >= 8`；
-- `sizeExponent != 0`；
+- `sizeExponent` 转换后不能精确表示整数合约张数；
 - `finish_as="filled"` 但 `left_quantity != 0`；
 - 未支持的 `finish_as`；
 - SBE template / schema mismatch；

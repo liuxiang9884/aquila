@@ -36,7 +36,7 @@ TEST(OrderFeedbackSessionConfigTest,
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.connection.service, "443");
   EXPECT_TRUE(config.connection.enable_tls);
-  EXPECT_EQ(config.connection.target, "/v4/ws/usdt");
+  EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 4);
 
   EXPECT_EQ(config.shm.shm_name, "aquila_gate_order_feedback");
@@ -105,7 +105,7 @@ remove_existing = false
   EXPECT_EQ(result.value.credentials.api_secret_env, "GATE_SECRET");
   EXPECT_EQ(result.value.connection.host, "private-gate.example");
   EXPECT_FALSE(result.value.connection.enable_tls);
-  EXPECT_EQ(result.value.connection.target, "/v4/ws/btc");
+  EXPECT_EQ(result.value.connection.target, "/v4/ws/btc/sbe?sbe_schema_id=1");
   EXPECT_EQ(result.value.connection.runtime_policy.io_cpu_id, 7);
   EXPECT_EQ(result.value.shm.shm_name, "aquila_gate_order_feedback_btc");
   EXPECT_EQ(result.value.shm.channel_name, "orders_btc");
@@ -171,7 +171,7 @@ api_key_env = "GATE_KEY"
 api_secret_env = "GATE_SECRET"
 
 [order_feedback_session.websocket]
-target = "/v4/ws/btc"
+target = "/v4/ws/usdt"
 
 [order_feedback_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
