@@ -97,7 +97,7 @@ class TestOrderSession
 };
 
 struct TestOrder {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   std::int64_t quantity{0};
@@ -108,7 +108,7 @@ struct TestOrder {
 };
 
 struct TestOrderWithoutExchangeOrderId {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   std::int64_t quantity{0};
@@ -117,7 +117,7 @@ struct TestOrderWithoutExchangeOrderId {
   bool reduce_only{false};
 };
 
-TestOrder MakePlaceOrder(std::int64_t local_order_id) noexcept {
+TestOrder MakePlaceOrder(std::uint64_t local_order_id) noexcept {
   return TestOrder{.local_order_id = local_order_id,
                    .symbol = "BTC_USDT",
                    .side = OrderSide::kBuy,
@@ -128,7 +128,7 @@ TestOrder MakePlaceOrder(std::int64_t local_order_id) noexcept {
                    .reduce_only = false};
 }
 
-TestOrder MakeCancelOrder(std::int64_t local_order_id,
+TestOrder MakeCancelOrder(std::uint64_t local_order_id,
                           std::uint64_t exchange_order_id) noexcept {
   TestOrder order = MakePlaceOrder(local_order_id);
   order.exchange_order_id = exchange_order_id;

@@ -49,8 +49,8 @@ class OrderTextCodec {
  public:
   template <std::size_t N>
   [[nodiscard]] static std::string_view Format(
-      std::int64_t local_order_id, std::array<char, N>& output) noexcept {
-    if (local_order_id <= 0) {
+      std::uint64_t local_order_id, std::array<char, N>& output) noexcept {
+    if (local_order_id == 0) {
       return {};
     }
 
@@ -67,11 +67,11 @@ class OrderTextCodec {
       return {};
     }
 
-    std::int64_t local_order_id = 0;
+    std::uint64_t local_order_id = 0;
     const char* const first = text.data() + 2;
     const char* const last = text.data() + text.size();
     const auto result = std::from_chars(first, last, local_order_id);
-    if (result.ec != std::errc{} || result.ptr != last || local_order_id <= 0) {
+    if (result.ec != std::errc{} || result.ptr != last || local_order_id == 0) {
       return {};
     }
 

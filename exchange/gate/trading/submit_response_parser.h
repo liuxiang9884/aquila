@@ -59,7 +59,7 @@ struct GateSubmitResponse {
   std::uint64_t login_uid{0};
   std::uint64_t text_hash{0};
   bool has_local_order_id{false};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::uint64_t error_label_hash{0};
 };
 

@@ -41,7 +41,7 @@ struct LoginRequestFields {
 struct PlaceOrderEncodeFields {
   std::int64_t timestamp{0};
   std::uint64_t encoded_request_id{0};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::string_view contract{};
   std::int64_t signed_size{0};
   std::string_view price_text{};
@@ -52,7 +52,7 @@ struct PlaceOrderEncodeFields {
 struct CancelOrderEncodeFields {
   std::int64_t timestamp{0};
   std::uint64_t encoded_request_id{0};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
 };
 

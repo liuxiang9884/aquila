@@ -53,7 +53,7 @@ struct OrderCreateRequest {
 };
 
 struct StrategyOrder {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
   std::string_view symbol{};
@@ -69,17 +69,17 @@ struct StrategyOrder {
 
 struct OrderPlaceResult {
   OrderPlaceStatus status{OrderPlaceStatus::kInvalidOrder};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 };
 
 struct OrderCancelResult {
   OrderCancelStatus status{OrderCancelStatus::kOrderNotFound};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 };
 
 struct OrderResponseEvent {
   OrderResponseKind kind{OrderResponseKind::kAck};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
   std::uint64_t error_label_hash{0};
 };

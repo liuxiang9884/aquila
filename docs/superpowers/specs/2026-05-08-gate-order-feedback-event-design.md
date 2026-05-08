@@ -54,6 +54,29 @@ Gate private futures.orders
 - 其他 terminal `finish_as` 统一产生 cancelled/finished 类 event，并用 `finish_reason` 表达终止原因。
 - `OrderRejectedFeedback` 不来自 `futures.orders` 主回报流，只保留给本地发送失败或 API submit error。
 
+## Local Order Id
+
+`local_order_id` 是跨 strategy、跨进程路由订单回报的主身份，类型使用 `std::uint64_t`：
+
+```text
+local_order_id = (strategy_id << 56) | strategy_order_id
+```
+
+含义：
+
+- 高 8 bit：`strategy_id`；
+- 低 56 bit：strategy 内部单调递增的 `strategy_order_id`；
+- `local_order_id == 0` 是无效值；
+- Gate `text` 仍使用 `t-<local_order_id>`，不增加额外分隔字段；
+- `OrderFeedbackSession` 从 `text` 解出 `local_order_id` 后，可直接用高 8 bit 路由到对应 strategy；
+- `exchange_order_id` 不是 feedback 路由主键，只作为 accepted 后的辅助身份和 cancel 编码优化。
+
+第一版实现入口：
+
+```text
+core/trading/order_id.h
+```
+
 ## 数量和价格
 
 Gate futures REST / WebSocket 文档中订单 `size` 和 `left` 的语义是 integer contract quantity；本地 Strategy
@@ -78,7 +101,7 @@ futures 订单数量语义处理为整数合约张数：
 
 ```cpp
 struct OrderAcceptedFeedback {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
   std::int64_t exchange_update_ns{0};
 };
@@ -101,7 +124,7 @@ Strategy 处理：
 
 ```cpp
 struct OrderPartialFilledFeedback {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 
   std::int64_t cumulative_filled_quantity{0};
   std::int64_t left_quantity{0};
@@ -138,7 +161,7 @@ enum class OrderRole : std::uint8_t {
 };
 
 struct OrderFilledFeedback {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 
   std::int64_t cumulative_filled_quantity{0};
 
@@ -182,7 +205,7 @@ enum class OrderFinishReason : std::uint8_t {
 };
 
 struct OrderCancelledFeedback {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 
   std::int64_t cumulative_filled_quantity{0};
   std::int64_t cancelled_quantity{0};
@@ -233,7 +256,7 @@ enum class OrderRejectReason : std::uint8_t {
 };
 
 struct OrderRejectedFeedback {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 
   OrderRejectReason reason{OrderRejectReason::kUnknown};
 };
@@ -290,7 +313,7 @@ enum class OrderFeedbackKind : std::uint8_t {
 struct OrderFeedbackEvent {
   OrderFeedbackKind kind{OrderFeedbackKind::kAccepted};
 
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
   std::int64_t cumulative_filled_quantity{0};
   std::int64_t left_quantity{0};

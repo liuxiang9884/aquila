@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "core/common/types.h"
+#include "core/trading/order_id.h"
 #include "strategy/order_types.h"
 
 namespace aquila::strategy {
@@ -24,8 +25,8 @@ struct FakeGateway {
   SendStatus cancel_status{SendStatus::kOk};
   int place_calls{0};
   int cancel_calls{0};
-  std::int64_t last_place_local_order_id{0};
-  std::int64_t last_cancel_local_order_id{0};
+  std::uint64_t last_place_local_order_id{0};
+  std::uint64_t last_cancel_local_order_id{0};
 
   SendResult PlaceOrder(Order& order) noexcept {
     ++place_calls;
@@ -70,6 +71,19 @@ TEST(StrategyTest, PlacesLimitOrderAndStoresSentOrder) {
   EXPECT_EQ(order->symbol_id, 7);
   EXPECT_EQ(order->symbol, "BTC_USDT");
   EXPECT_EQ(order->quantity, 1);
+}
+
+TEST(StrategyTest, EncodesStrategyIdIntoCreatedLocalOrderId) {
+  FakeGateway gateway;
+  Strategy<FakeGateway> strategy(gateway, 8, 7);
+
+  const OrderPlaceResult placed = strategy.PlaceLimitOrder(MakeLimitRequest());
+
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyId(placed.local_order_id), 7);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(placed.local_order_id), 1U);
+  EXPECT_EQ(gateway.last_place_local_order_id, placed.local_order_id);
+  EXPECT_NE(strategy.FindOrder(placed.local_order_id), nullptr);
 }
 
 TEST(StrategyTest, AckResponseKeepsSentOrderUntilFinalResult) {

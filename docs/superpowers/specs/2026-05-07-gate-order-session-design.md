@@ -106,7 +106,7 @@ Sirius 中值得保留的做法：
 
 ```cpp
 struct PlaceOrderStructFields {
-  std::int64_t local_order_id;
+  std::uint64_t local_order_id;
   std::string_view symbol;
   OrderSide side;
   std::int64_t quantity;
@@ -211,7 +211,7 @@ enum class OrderResponseKind : std::uint8_t {
 
 struct OrderResponse {
   OrderResponseKind kind;
-  std::int64_t local_order_id;
+  std::uint64_t local_order_id;
   std::uint64_t exchange_order_id;
   std::uint64_t request_sequence;
   std::uint16_t http_status;

@@ -26,8 +26,8 @@ struct FakeOrderSession {
 
   std::uint64_t place_calls{0};
   std::uint64_t cancel_calls{0};
-  std::int64_t last_place_local_order_id{0};
-  std::int64_t last_cancel_local_order_id{0};
+  std::uint64_t last_place_local_order_id{0};
+  std::uint64_t last_cancel_local_order_id{0};
 
   SendResult PlaceOrder(const StrategyOrder& order) noexcept {
     ++place_calls;

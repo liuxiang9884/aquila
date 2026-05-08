@@ -25,7 +25,7 @@ struct DecodedRequestId {
 
 struct ParsedOrderText {
   bool ok{false};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
 };
 
 enum class OrderSendStatus : std::uint8_t {
@@ -56,7 +56,7 @@ enum class OrderResponseKind : std::uint8_t {
 
 struct OrderResponse {
   OrderResponseKind kind{OrderResponseKind::kAck};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
   std::uint64_t request_sequence{0};
   std::uint16_t http_status{0};

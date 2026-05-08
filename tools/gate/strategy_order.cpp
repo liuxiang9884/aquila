@@ -214,7 +214,7 @@ struct RunContext {
   bool keep_open{false};
   bool submitted{false};
   bool cancel_submitted{false};
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   int exit_code{1};
   std::vector<gate::OrderResponse> responses;
   std::atomic<bool> done{false};
@@ -285,7 +285,7 @@ struct RunContext {
     }
   }
 
-  void SubmitCancel(std::int64_t order_id) noexcept {
+  void SubmitCancel(std::uint64_t order_id) noexcept {
     const strategy::OrderCancelResult cancelled =
         strategy_instance->CancelOrder(order_id);
     fmt::print("cancel status={} local_order_id={}\n",

@@ -12,7 +12,7 @@ namespace {
 constexpr std::size_t kCapacity = 8192;
 
 struct BenchOrder {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::int64_t payload{0};
 };
 
@@ -43,7 +43,7 @@ void BM_OrderPoolCreateUntilCapacity(benchmark::State& state) {
 
 void BM_OrderPoolFindLiveOrders(benchmark::State& state) {
   OrderPool<BenchOrder> pool(kCapacity);
-  std::vector<std::int64_t> local_order_ids;
+  std::vector<std::uint64_t> local_order_ids;
   local_order_ids.reserve(kCapacity);
 
   for (std::size_t i = 0; i < kCapacity; ++i) {
@@ -82,7 +82,7 @@ void BM_OrderPoolCreateFindEraseRecycleLoop(benchmark::State& state) {
       state.SkipWithError("order pool create failed");
       return;
     }
-    std::int64_t local_order_id = order->local_order_id;
+    std::uint64_t local_order_id = order->local_order_id;
     order->payload = local_order_id;
 
     BenchOrder* found = pool.Find(local_order_id);

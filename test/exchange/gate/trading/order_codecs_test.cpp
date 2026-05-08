@@ -6,6 +6,8 @@
 
 #include <gtest/gtest.h>
 
+#include "core/trading/order_id.h"
+
 namespace aquila::gate {
 namespace {
 
@@ -53,6 +55,19 @@ TEST(OrderTextCodecTest, FormatsAndParsesStandardOrderText) {
   EXPECT_EQ(parsed.local_order_id, 123456789);
 }
 
+TEST(OrderTextCodecTest, FormatsAndParsesHighBitLocalOrderId) {
+  std::array<char, 32> buffer{};
+  const std::uint64_t local_order_id = LocalOrderIdCodec::Encode(200, 42);
+
+  const std::string_view text = OrderTextCodec::Format(local_order_id, buffer);
+  const ParsedOrderText parsed = OrderTextCodec::Parse(text);
+
+  EXPECT_TRUE(parsed.ok);
+  EXPECT_EQ(parsed.local_order_id, local_order_id);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyId(parsed.local_order_id), 200);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(parsed.local_order_id), 42U);
+}
+
 TEST(OrderTextCodecTest, RejectsUnsupportedPrefix) {
   const ParsedOrderText parsed = OrderTextCodec::Parse("ao-100");
 
@@ -68,16 +83,12 @@ TEST(OrderTextCodecTest, ReportsTooSmallFormatBuffer) {
   EXPECT_TRUE(text.empty());
 }
 
-TEST(OrderTextCodecTest, DoesNotFormatNonPositiveOrderId) {
+TEST(OrderTextCodecTest, DoesNotFormatZeroOrderId) {
   std::array<char, 32> zero_buffer{};
-  std::array<char, 32> negative_buffer{};
 
   const std::string_view zero_text = OrderTextCodec::Format(0, zero_buffer);
-  const std::string_view negative_text =
-      OrderTextCodec::Format(-1, negative_buffer);
 
   EXPECT_TRUE(zero_text.empty());
-  EXPECT_TRUE(negative_text.empty());
 }
 
 TEST(OrderTextCodecTest, RejectsNonPositiveOrderId) {

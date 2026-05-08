@@ -9,13 +9,15 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "core/trading/order_id.h"
+
 namespace aquila {
 
 template <typename OrderT>
 class OrderPool {
  public:
-  explicit OrderPool(std::size_t max_live_orders)
-      : max_live_orders_(max_live_orders) {
+  explicit OrderPool(std::size_t max_live_orders, std::uint8_t strategy_id = 0)
+      : max_live_orders_(max_live_orders), strategy_id_(strategy_id) {
     if (max_live_orders_ > kMaxLiveOrders) {
       throw std::invalid_argument("OrderPool max_live_orders is too large");
     }
@@ -46,13 +48,14 @@ class OrderPool {
     slot.next_free = kInvalidSlot;
 
     slot.order = OrderT{};
-    slot.order.local_order_id = next_local_order_id_++;
+    slot.order.local_order_id =
+        LocalOrderIdCodec::Encode(strategy_id_, next_strategy_order_id_++);
     local_to_slot_.emplace(slot.order.local_order_id, slot_index);
     ++live_size_;
     return &slot.order;
   }
 
-  bool Erase(std::int64_t local_order_id) {
+  bool Erase(std::uint64_t local_order_id) {
     auto it = local_to_slot_.find(local_order_id);
     if (it == local_to_slot_.end()) {
       return false;
@@ -69,7 +72,7 @@ class OrderPool {
     return true;
   }
 
-  OrderT* Find(std::int64_t local_order_id) {
+  OrderT* Find(std::uint64_t local_order_id) {
     auto it = local_to_slot_.find(local_order_id);
     if (it == local_to_slot_.end()) {
       return nullptr;
@@ -77,7 +80,7 @@ class OrderPool {
     return &slots_[it->second].order;
   }
 
-  const OrderT* Find(std::int64_t local_order_id) const {
+  const OrderT* Find(std::uint64_t local_order_id) const {
     auto it = local_to_slot_.find(local_order_id);
     if (it == local_to_slot_.end()) {
       return nullptr;
@@ -120,10 +123,11 @@ class OrderPool {
   std::size_t max_live_orders_{0};
   std::size_t live_size_{0};
   std::size_t index_reserve_size_{0};
-  std::int64_t next_local_order_id_{1};
+  std::uint64_t next_strategy_order_id_{1};
+  std::uint8_t strategy_id_{0};
   std::uint32_t free_head_{kInvalidSlot};
   std::vector<Slot> slots_;
-  absl::flat_hash_map<std::int64_t, std::uint32_t> local_to_slot_;
+  absl::flat_hash_map<std::uint64_t, std::uint32_t> local_to_slot_;
 };
 
 }  // namespace aquila

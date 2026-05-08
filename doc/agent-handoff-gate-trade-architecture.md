@@ -540,6 +540,7 @@ docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
 8. `OrderRejectedFeedback` 不来自 `futures.orders` 主生命周期流，只保留给本地发送失败或 API submit error。
 9. Strategy 状态需要补 `kPartiallyCancelled`，用于区分“未成交撤单”和“部分成交后剩余终止”。
 10. Event 承载方式暂保留两个方案：宽结构 `OrderFeedbackEvent` 和 tagged union。后续架构讨论再结合 SPSC 队列、cache footprint、测试复杂度和 future extensibility 决定。
+11. `local_order_id` 已升级为 `std::uint64_t`，编码为高 8 bit `strategy_id` 加低 56 bit `strategy_order_id`；Gate `text` 仍为 `t-<local_order_id>`，feedback router 可直接从高 8 bit 路由到对应 strategy。
 
 下一步讨论重点：
 

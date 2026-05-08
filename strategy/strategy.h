@@ -14,8 +14,9 @@ class Strategy {
  public:
   using Order = StrategyOrder;
 
-  Strategy(GatewayT& order_session, std::size_t order_capacity)
-      : order_session_(order_session), orders_(order_capacity) {}
+  Strategy(GatewayT& order_session, std::size_t order_capacity,
+           std::uint8_t strategy_id = 0)
+      : order_session_(order_session), orders_(order_capacity, strategy_id) {}
 
   Strategy(const Strategy&) = delete;
   Strategy& operator=(const Strategy&) = delete;
@@ -43,7 +44,7 @@ class Strategy {
             .local_order_id = order->local_order_id};
   }
 
-  OrderCancelResult CancelOrder(std::int64_t local_order_id) noexcept {
+  OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept {
     Order* order = orders_.Find(local_order_id);
     if (order == nullptr) {
       return {.status = OrderCancelStatus::kOrderNotFound,
@@ -90,11 +91,11 @@ class Strategy {
 
   // Mutable lookup is intended for same-thread gateway/test integration;
   // Strategy remains the state owner.
-  Order* FindOrder(std::int64_t local_order_id) noexcept {
+  Order* FindOrder(std::uint64_t local_order_id) noexcept {
     return orders_.Find(local_order_id);
   }
 
-  const Order* FindOrder(std::int64_t local_order_id) const noexcept {
+  const Order* FindOrder(std::uint64_t local_order_id) const noexcept {
     return orders_.Find(local_order_id);
   }
 

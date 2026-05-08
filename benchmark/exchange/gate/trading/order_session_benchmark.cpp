@@ -82,7 +82,7 @@ constexpr std::string_view kPlaceResult = R"json({
 struct CountingHandler {
   std::uint64_t responses{0};
   OrderResponseKind last_kind{OrderResponseKind::kAck};
-  std::int64_t last_local_order_id{0};
+  std::uint64_t last_local_order_id{0};
   std::uint64_t last_exchange_order_id{0};
 
   void OnOrderResponse(const OrderResponse& response) noexcept {
@@ -127,7 +127,7 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
 }
 
 struct BenchOrder {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   std::int64_t quantity{0};
@@ -258,7 +258,7 @@ void BM_ParsePlaceResult(benchmark::State& state) {
       return;
     }
     std::uint64_t exchange_order_id = parsed.exchange_order_id;
-    std::int64_t local_order_id = parsed.local_order_id;
+    std::uint64_t local_order_id = parsed.local_order_id;
     benchmark::DoNotOptimize(exchange_order_id);
     benchmark::DoNotOptimize(local_order_id);
   }
@@ -283,7 +283,7 @@ void BM_ParsePlaceResultForOrderSession(benchmark::State& state) {
       return;
     }
     std::uint64_t exchange_order_id = parsed.exchange_order_id;
-    std::int64_t local_order_id = parsed.local_order_id;
+    std::uint64_t local_order_id = parsed.local_order_id;
     benchmark::DoNotOptimize(exchange_order_id);
     benchmark::DoNotOptimize(local_order_id);
   }

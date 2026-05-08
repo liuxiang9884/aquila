@@ -263,7 +263,7 @@ class OrderSession {
   }
 
   [[nodiscard]] std::uint64_t exchange_order_id_for_local_order(
-      std::int64_t local_order_id) const noexcept {
+      std::uint64_t local_order_id) const noexcept {
     const auto it = local_order_id_to_exchange_order_id_.find(local_order_id);
     if (it == local_order_id_to_exchange_order_id_.end()) {
       return 0;
@@ -272,7 +272,7 @@ class OrderSession {
   }
 
   [[nodiscard]] bool forget_exchange_order_id_for_local_order(
-      std::int64_t local_order_id) noexcept {
+      std::uint64_t local_order_id) noexcept {
     return local_order_id_to_exchange_order_id_.erase(local_order_id) != 0;
   }
 
@@ -353,7 +353,7 @@ class OrderSession {
     return 0;
   }
 
-  void CacheExchangeOrderId(std::int64_t local_order_id,
+  void CacheExchangeOrderId(std::uint64_t local_order_id,
                             std::uint64_t exchange_order_id) noexcept {
     auto it = local_order_id_to_exchange_order_id_.find(local_order_id);
     if (it != local_order_id_to_exchange_order_id_.end()) {
@@ -449,7 +449,7 @@ class OrderSession {
       return websocket::DeliveryResult::kAccepted;
     }
 
-    const std::int64_t local_order_id = it->second;
+    const std::uint64_t local_order_id = it->second;
     if (!RequestTypeMatchesChannel(parsed)) {
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
@@ -572,7 +572,7 @@ class OrderSession {
 
   [[nodiscard]] bool FinalResultMatchesLocalOrder(
       const GateSubmitResponse& parsed,
-      std::int64_t local_order_id) const noexcept {
+      std::uint64_t local_order_id) const noexcept {
     if (parsed.kind != GateSubmitResponseKind::kResult) {
       return false;
     }
@@ -608,9 +608,9 @@ class OrderSession {
   Client client_;
   [[no_unique_address]] Diagnostics diagnostics_{};
   simdjson::ondemand::parser text_parser_;
-  absl::flat_hash_map<std::uint64_t, std::int64_t>
+  absl::flat_hash_map<std::uint64_t, std::uint64_t>
       request_id_to_local_order_id_;
-  absl::flat_hash_map<std::int64_t, std::uint64_t>
+  absl::flat_hash_map<std::uint64_t, std::uint64_t>
       local_order_id_to_exchange_order_id_;
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   std::uint64_t request_sequence_{1};

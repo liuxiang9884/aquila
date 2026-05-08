@@ -43,6 +43,7 @@
 25. Strategy / Gate 第一版边界已明确：Strategy 负责订单对象、风控位置、状态和执行流程；Gate `OrderSession` 负责从订单 struct 现场编码 place/cancel 请求、correlation 和轻量 response。Strategy benchmark 是 fake session direct-send baseline，不包含真实 WebSocket 或 socket 成本。
 26. `tools/gate/strategy_order.cpp` 已落地为 Strategy + Gate WebSocket 下单工具：CLI 参数类似 REST 下单脚本，默认 dry-run，只有 `--execute` 才连接 `OrderSession` 并实盘发送；登录成功 callback 在 WebSocket 线程内调用 Strategy 下单，避免跨线程直接调用 `OrderSession::PlaceOrder()`。2026-05-08 已用它做最小实盘提交验证：place API ack 可收到，真实订单状态仍需后续 `OrderFeedbackSession` 处理。
 27. Gate `OrderFeedbackSession` 第一版 event 语义已收敛到文档：第一版只以 private `futures.orders` 为生命周期事实源，不接 `futures.usertrades`；已定义 accepted、partial filled、filled、cancelled/terminal finished 和 rejected 的边界，event carrier 保留宽结构与 tagged union 两个待选方案。
+28. `local_order_id` 已升级为 `std::uint64_t`，编码为高 8 bit `strategy_id` 加低 56 bit `strategy_order_id`；`core/trading/order_id.h` 提供 `LocalOrderIdCodec`，`OrderPool` 可在构造时接收 `strategy_id`，Gate `text` 仍为 `t-<local_order_id>`。
 
 ## 新对话第一步
 
@@ -125,6 +126,7 @@ doc/data_reader_config.md
 | --- | --- |
 | `core/common/result.h` | 通用 `Result<T>`，用于启动期 parser / loader 这类显式返回成功值或错误字符串的场景。 |
 | `core/common/types.h` | 项目通用枚举，当前包含 `aquila::Exchange`。 |
+| `core/trading/order_id.h` | `LocalOrderIdCodec`，按高 8 bit `strategy_id` + 低 56 bit `strategy_order_id` 编解码全局 `local_order_id`。 |
 | `core/common/constants.h` | 项目通用常量，当前包含缓存行大小等基础常量。 |
 | `core/trading/order_pool.h` | 交易通用固定容量订单池；slot vector 固定为 max live 的 2 倍，local id 查找走 `absl::flat_hash_map`；map reserve hint 在 max live 小于 1024 时为 16x，否则为 8x；不维护 exchange order id 索引；构造期拒绝超过 `uint32_t` slot index 范围的容量。 |
 | `core/utils/numeric.h` | 基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToDouble` / `ToUint64` 等热路径数字转换 helper，失败只在 debug assert。 |

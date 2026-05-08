@@ -6,11 +6,13 @@
 
 #include <gtest/gtest.h>
 
+#include "core/trading/order_id.h"
+
 namespace aquila {
 namespace {
 
 struct TestOrder {
-  std::int64_t local_order_id{0};
+  std::uint64_t local_order_id{0};
   std::int64_t payload{0};
 };
 
@@ -34,6 +36,20 @@ TEST(OrderPoolTest, CreatesMonotonicLocalIdsAndReportsCapacity) {
   EXPECT_EQ(pool.size(), 2U);
 }
 
+TEST(OrderPoolTest, EncodesStrategyIdInLocalOrderIdHighBits) {
+  OrderPool<TestOrder> pool(2, 7);
+
+  TestOrder* first = pool.Create();
+  ASSERT_NE(first, nullptr);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyId(first->local_order_id), 7);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first->local_order_id), 1U);
+
+  TestOrder* second = pool.Create();
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyId(second->local_order_id), 7);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second->local_order_id), 2U);
+}
+
 TEST(OrderPoolTest, IndexReserveSizeUsesLargerMultiplierForSmallPools) {
   OrderPool<TestOrder> small(1023);
   OrderPool<TestOrder> threshold(1024);
@@ -49,7 +65,7 @@ TEST(OrderPoolTest, FindsOnlyLiveOrdersByLocalId) {
   TestOrder* order = pool.Create();
   ASSERT_NE(order, nullptr);
   order->payload = 7;
-  const std::int64_t local_order_id = order->local_order_id;
+  const std::uint64_t local_order_id = order->local_order_id;
 
   EXPECT_EQ(pool.Find(local_order_id), order);
   EXPECT_EQ(pool.Find(local_order_id)->payload, 7);
@@ -66,7 +82,7 @@ TEST(OrderPoolTest, EraseReleasesSlotAndCreateReusesAddressWithNewId) {
   TestOrder* first = pool.Create();
   ASSERT_NE(first, nullptr);
   first->payload = 91;
-  const std::int64_t first_id = first->local_order_id;
+  const std::uint64_t first_id = first->local_order_id;
 
   EXPECT_TRUE(pool.Erase(first_id));
 
@@ -82,12 +98,12 @@ TEST(OrderPoolTest, LiveOrderPointerStaysStableAcrossOtherRecycles) {
   TestOrder* stable = pool.Create();
   ASSERT_NE(stable, nullptr);
   stable->payload = 123;
-  const std::int64_t stable_id = stable->local_order_id;
+  const std::uint64_t stable_id = stable->local_order_id;
 
   for (int i = 0; i < 16; ++i) {
     TestOrder* transient = pool.Create();
     ASSERT_NE(transient, nullptr);
-    const std::int64_t transient_id = transient->local_order_id;
+    const std::uint64_t transient_id = transient->local_order_id;
     transient->payload = i;
     EXPECT_TRUE(pool.Erase(transient_id));
     EXPECT_EQ(pool.Find(stable_id), stable);
