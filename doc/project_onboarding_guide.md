@@ -38,7 +38,7 @@
 20. Gate `OrderSession` 当前边界已调整：`OrderManager` 做建单、订单池和状态机；`OrderSession` 直接接收订单 struct，在发送路径完成 Gate place/cancel JSON 序列化、`request_sequence -> local_order_id` correlation 和轻量同步 `OrderResponse` 回调。
 21. `config/order_sessions/gate_order_session.toml` 和 Gate `OrderSessionConfig` parser 已落地，按 data session 风格复用通用 WebSocket config parser；TOML 只写 `[order_session]`、credentials env 名和 `[order_session.websocket.*]`，WS target 由 `settle` 生成 `/v4/ws/<settle>`。
 22. `AGENTS.md` 已加入 subagent 规则：主会话派发 `spawn_agent` / subagent 时默认显式设置 `reasoning_effort = "xhigh"`，并默认不让 subagent 再派生下级 subagent。
-23. `OrderManager` 第一版订单框架已按 Sirius 风格重构：`core/trading/order_pool.h`、`strategy/order_types.h` 和 `strategy/order_manager.h` 覆盖通用固定容量订单池、订单创建、状态推进和直接 session 发送；`OrderManager` 不维护 exchange order id 索引，不再缓存 Gate wire fields，也不再暴露 `PrepareOrder()` / `SubmitOrder()` 两阶段接口。
+23. `OrderManager` 第一版订单框架已按 Sirius 风格重构：`core/trading/order_pool.h`、`core/strategy/order_types.h` 和 `core/strategy/order_manager.h` 覆盖通用固定容量订单池、订单创建、状态推进和直接 session 发送；旧 `strategy/order_types.h` / `strategy/order_manager.h` 仅保留为 forwarding compatibility header；`OrderManager` 不维护 exchange order id 索引，不再缓存 Gate wire fields，也不再暴露 `PrepareOrder()` / `SubmitOrder()` 两阶段接口。
 24. `scripts/gate/run_futures_order_smoke.py` 和 `scripts/gate/run_futures_order_smoke_test.py` 已落地；2026-05-07 使用 Gate REST 对 `BTC_USDT`、1 手、5 轮真实 smoke，结果 `5/5 filled_and_closed`，最终 `position size=0`、`pending_orders=0`、`open orders=[]`。这只是 REST smoke，不是 C++ WS `OrderSession` live smoke。
 25. `OrderManager` / Gate 第一版边界已明确：`OrderManager` 负责订单对象、风控位置、状态和执行流程；Gate `OrderSession` 负责从订单 struct 现场编码 place/cancel 请求、correlation 和轻量 response。`OrderManager` benchmark 是 fake session direct-send baseline，不包含真实 WebSocket 或 socket 成本。
 26. `tools/gate/strategy_order.cpp` 已落地为 `OrderManager` + Gate WebSocket 下单工具：CLI 参数类似 REST 下单脚本，默认 dry-run，只有 `--execute` 才连接 `OrderSession` 并实盘发送；登录成功 callback 在 WebSocket 线程内调用 `OrderManager` 下单，避免跨线程直接调用 `OrderSession::PlaceOrder()`。2026-05-08 已用它做最小实盘提交验证：place API ack 可收到，真实订单状态仍需后续 `OrderFeedbackSession` 处理。
@@ -189,8 +189,8 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 
 | 文件 | 职责 |
 | --- | --- |
-| `strategy/order_types.h` | Strategy 订单创建请求、`StrategyOrder`、place/cancel/result event 类型；订单对象保存 symbol、price_text、数量、TIF 和状态，不保存 Gate wire cache。 |
-| `strategy/order_manager.h` | 模板化 `OrderManager<OrderSessionT>`，提供 `PlaceLimitOrder()`、`CancelOrder()`、order response apply 和 feedback apply；发单时直接把订单 struct 交给 session。 |
+| `core/strategy/order_types.h` | Strategy 订单创建请求、`StrategyOrder`、place/cancel/result event 类型；订单对象保存 symbol、price_text、数量、TIF 和状态，不保存 Gate wire cache。旧 `strategy/order_types.h` 仅作 forwarding compatibility header。 |
+| `core/strategy/order_manager.h` | 模板化 `OrderManager<OrderSessionT>`，提供 `PlaceLimitOrder()`、`CancelOrder()`、order response apply 和 feedback apply；发单时直接把订单 struct 交给 session。旧 `strategy/order_manager.h` 仅作 forwarding compatibility header。 |
 | `tools/gate/strategy_order.cpp` | `OrderManager` + Gate WebSocket 单笔下单工具；CLI 接收 contract / side / order-type / size / price / tif / reduce-only / keep-open，默认 dry-run，`--execute` 才实盘连接 WebSocket。 |
 | `test/core/trading/order_pool_test.cpp` | 通用 `OrderPool` 本地订单 ID、容量限制、slot 复用、指针稳定和 zero capacity 测试。 |
 | `test/strategy/strategy_test.cpp` | `OrderManager` place/cancel/response/feedback 状态推进测试。 |

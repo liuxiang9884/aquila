@@ -9,10 +9,19 @@
 #include <string_view>
 #include <utility>
 
+#include <fmt/format.h>
+
+#include "core/config/order_feedback_shm_config.h"
 #include "nova/utils/log.h"
 
 namespace aquila::config {
 namespace {
+
+static_assert(kOrderFeedbackShmMaxStrategyCount > 0);
+static_assert(kOrderFeedbackShmMaxStrategyCount <=
+              static_cast<std::uint32_t>(
+                  std::numeric_limits<std::uint8_t>::max()) +
+                  1U);
 
 void MaybeLogError(std::string_view message) {
   if (::nova::kLogManager.logger() != nullptr) {
@@ -192,8 +201,13 @@ class StrategyConfigParser {
     if (!ok_) {
       return;
     }
-    if (strategy_id < 0 || strategy_id >= 8) {
-      Fail("strategy.strategy_id", " must be between 0 and 7");
+    if (strategy_id < 0 ||
+        strategy_id >=
+            static_cast<std::int64_t>(kOrderFeedbackShmMaxStrategyCount)) {
+      Fail("strategy.strategy_id",
+           fmt::format(" must be between 0 and {} (feedback lane count {})",
+                       kOrderFeedbackShmMaxStrategyCount - 1,
+                       kOrderFeedbackShmMaxStrategyCount));
       return;
     }
     config_.strategy_id = static_cast<std::uint8_t>(strategy_id);

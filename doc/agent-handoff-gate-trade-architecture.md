@@ -505,9 +505,9 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 当前已落地文件：
 
 ```text
-strategy/order_types.h
+core/strategy/order_types.h
 core/trading/order_pool.h
-strategy/order_manager.h
+core/strategy/order_manager.h
 test/core/trading/order_pool_test.cpp
 test/strategy/strategy_test.cpp
 benchmark/core/trading/order_pool_benchmark.cpp
@@ -516,6 +516,8 @@ tools/gate/strategy_order.cpp
 scripts/gate/run_futures_order_smoke.py
 scripts/gate/run_futures_order_smoke_test.py
 ```
+
+旧 `strategy/order_types.h` / `strategy/order_manager.h` 仅保留为 forwarding compatibility header，新实现入口以 `core/strategy/` 为准。
 
 第一版未覆盖：
 
