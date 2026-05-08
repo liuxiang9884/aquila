@@ -7,12 +7,13 @@
 本文记录已经确认的协议事实、实验结果、Sirius 旧实现结论，以及当前推荐的线程 / session 划分方向。Gate submit/cancel
 第一版 `OrderSession` 已按独立设计和实现计划落地；文档入口是 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
 和 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。Strategy 第一版订单框架
-已按 `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` 落地。
+已按 `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` 落地。`OrderFeedbackSession`
+第一版 event 语义已在 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` 中收敛。
 
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 截至 2026-05-07，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
+- 截至 2026-05-08，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
   Gate REST 测试脚本、Gate submit/cancel `OrderSession` 第一版实现、Strategy 第一版订单框架、测试和 benchmark 已完成多轮收口；新接手时以
   `git log --oneline -8` 为准。
 - 新接手时先执行：
@@ -513,11 +514,40 @@ scripts/gate/run_futures_order_smoke_test.py
 
 第一版未覆盖：
 
-1. Private feedback：`futures.orders`、`futures.usertrades`、`futures.positions` 的私有回报 session 和固定 feedback event。
+1. Private feedback：第一版尚未实现 `futures.orders` 私有回报 session 和固定 feedback event；`usertrades` / `positions` 不进入第一版订单生命周期实现。
 2. REST reconcile：断线、未知订单状态和启动恢复后的订单 / 成交 / 仓位对账。
 3. Batch / amend：batch place、改单、cancel all、order status/list 等 Gate 交易 API。
 4. 真实成交回报状态合并：`OrderResponse`、私有订单回报、成交回报和 REST reconcile 之间的状态合并规则。
-5. C++ WS `OrderSession` live smoke：`gate_strategy_order` 工具已落地，但当前只完成 dry-run / build / 单元测试验证；还没有用它执行真实 WebSocket 下单 / 撤单 / 平仓 live smoke。
+5. C++ WS `OrderSession` live smoke：`gate_strategy_order` 工具已落地并做过最小实盘提交验证；当前缺口是不能仅靠 API ack/result 推进真实订单生命周期，必须接 `OrderFeedbackSession`。
+
+### 2026-05-08 OrderFeedback event 第一版设计
+
+设计文档：
+
+```text
+docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
+```
+
+已确认边界：
+
+1. 第一版订单生命周期只以 Gate private `futures.orders` 为事实源，不接 `futures.usertrades`。原因是两个 channel 的到达顺序不稳定，会额外引入幂等和跨 channel 状态合并成本，而 `orders` 已包含第一版生命周期所需信息。
+2. `OrderFeedbackSession` 不访问 Strategy order 或 `OrderPool`，只把 `orders` 信息转换成固定 event，再通过后续架构确定的通道交给 Strategy。
+3. `OrderSession` 的 API `ack=true` 不产生 accepted event；`finish_as="_new"` 才产生 `OrderAcceptedFeedback`。
+4. 数量字段使用 `std::int64_t quantity` 语义，表示非负累计合约数量；Gate futures 下单量和 `left` 按 integer contract quantity 处理。价格字段使用 `double`。
+5. `OrderAcceptedFeedback` 保留 `exchange_order_id`，用于建立本地订单和交易所订单 id 对应；partial/fill/cancel event 只用 `local_order_id` 驱动 Strategy 状态。
+6. `OrderFilledFeedback` 保留可选 `OrderRole`，orders 回报里有 maker/taker 就填，没有则为 `kNone`；Strategy 不依赖 role 推进状态。
+7. `liquidated`、`auto_deleveraging`、`position_close` 不映射为 rejected，而是作为 `OrderFinishReason` 放进 terminal cancelled/finished 类 event。
+8. `OrderRejectedFeedback` 不来自 `futures.orders` 主生命周期流，只保留给本地发送失败或 API submit error。
+9. Strategy 状态需要补 `kPartiallyCancelled`，用于区分“未成交撤单”和“部分成交后剩余终止”。
+10. Event 承载方式暂保留两个方案：宽结构 `OrderFeedbackEvent` 和 tagged union。后续架构讨论再结合 SPSC 队列、cache footprint、测试复杂度和 future extensibility 决定。
+
+下一步讨论重点：
+
+1. `OrderFeedbackSession` 的线程和 SPSC 队列容量、溢出策略、消费预算。
+2. 在宽结构和 tagged union 两个 event carrier 方案中选择第一版实现。
+3. parser diagnostics：unsupported `finish_as`、非零 SBE `sizeExponent`、`filled` 但 `left != 0` 等异常如何计数。
+4. 订单终态后如何清理 `OrderSession` 内部 `local_order_id -> exchange_order_id` cache。
+5. feedback WS 断线后的 REST reconcile 边界。
 
 Strategy 当前验证入口：
 
@@ -771,7 +801,7 @@ StrategyThread + Gate OrderSession
 feedback SPSC
         |
 GateOrderFeedbackThread + Gate OrderFeedbackSession
-  - subscribe futures.orders / futures.usertrades / futures.positions
+  - subscribe futures.orders
   - decode JSON control + SBE push
   - 写入 feedback SPSC
 ```
@@ -780,7 +810,7 @@ GateOrderFeedbackThread + Gate OrderFeedbackSession
 
 - 下单路径最短：`行情 -> 策略 -> encode -> send`。
 - 不经过 `strategy -> order ring -> trading thread` 这一跳。
-- feedback SBE decode / orders / usertrades burst 不进入策略线程。
+- feedback SBE decode / orders burst 不进入策略线程。
 - 最符合“行情 burst 时行情最高优先级”。
 
 缺点：
@@ -979,9 +1009,9 @@ config/data_sessions/binance_data_session.toml
 
 下一轮建议按这个顺序继续：
 
-1. 补 C++ WS `OrderSession` live smoke，使用极小数量、明确撤单或平仓流程，并保留原始输出；live smoke 只能证明连通性和协议行为，不等同于性能结论。
-2. 设计并实现 `OrderFeedbackSession`：Gate SBE 私有 `orders`、`usertrades`、`positions` decode，固定 feedback event，feedback SPSC 到 StrategyThread。
-3. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复和人工介入边界。
+1. 继续 `OrderFeedbackSession` 架构设计：第一版只做 Gate SBE private `orders` 生命周期回报，先确定 event carrier、SPSC 队列和 reconnect/reconcile 边界，再进入实现。
+2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复和人工介入边界。
+3. 如需更多 C++ WS `OrderSession` live smoke，使用极小数量、明确撤单或平仓流程，并保留原始输出；live smoke 只能证明连通性和协议行为，不等同于性能结论。
 4. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；Gate decimal-size 合约的数量步进规则需要先确认再进入下单热路径。
 5. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderSession::Handle() -> Strategy` 回调消费；真实链路性能结论必须另跑 live probe 或 profile。
 6. 如果需要继续审查 Gate `OrderSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、place/cancel final result validation、断线清理和 benchmark 口径。
