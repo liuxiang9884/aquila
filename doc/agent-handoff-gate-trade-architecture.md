@@ -489,7 +489,7 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 
 已确认边界：
 
-1. Strategy 负责订单对象、使用 `core/trading/order_pool.h` 通用固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程；Strategy 不维护 exchange order id 索引。
+1. Strategy 负责订单对象、使用 `core/trading/order_pool.h` 通用固定容量 `OrderPool`、状态推进和交易所无关 place/cancel/response apply 执行流程；`OrderPool` 的 slot vector 固定为 max live 的 2 倍，hash index reserve hint 在 max live 小于 1024 时为 16x，否则为 8x；Strategy 不维护 exchange order id 索引。
 2. Strategy 不缓存 Gate wire fields，不再暴露 `PrepareOrder()` / `SubmitOrder()`；`PlaceLimitOrder()` 创建订单后直接把订单 struct 交给 session。
 3. Gate `OrderSession` 边界保持轻量：只做 WS login、place/cancel JSON 编码发送、`request_sequence -> local_order_id` correlation 和同步 `OrderResponse` 回调。
 4. `OrderSession` 不理解 Strategy order status、symbol metadata、risk check、pending order table 或 Sirius 的重 `OrderStruct`。

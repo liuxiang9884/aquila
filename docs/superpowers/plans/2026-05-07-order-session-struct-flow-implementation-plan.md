@@ -48,7 +48,7 @@ Implementation requirements:
 - Move generic order enums (`OrderSide`、`OrderType`、`TimeInForce`) to `core/common/types.h` so Gate code can use them without depending on `strategy`.
 - Replace `OrderDraft` with `OrderCreateRequest`.
 - Add `symbol` and `price_text` fields to `StrategyOrder`; do not add Gate wire buffer/cache fields.
-- Replace `OrderStore` with `core/trading/order_pool.h`。`OrderPool` 使用固定 resize 的 slot vector、free list 和 `local_order_id -> slot` hash index；不维护 exchange order id 索引。
+- Replace `OrderStore` with `core/trading/order_pool.h`。`OrderPool` 使用固定 resize 的 slot vector、free list 和 `local_order_id -> slot` hash index；hash index reserve hint 在 max live 小于 1024 时为 16x，否则为 8x；不维护 exchange order id 索引。
 - `Strategy::PlaceLimitOrder()` privately creates the order, sends it directly through `order_session_.PlaceOrder(*order)`, and returns the local id.
 - `Strategy::CancelOrder()` sends the stored order directly through `order_session_.CancelOrder(*order)`.
 

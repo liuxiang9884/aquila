@@ -19,6 +19,7 @@ TEST(OrderPoolTest, CreatesMonotonicLocalIdsAndReportsCapacity) {
 
   EXPECT_EQ(pool.capacity(), 2U);
   EXPECT_EQ(pool.slot_capacity(), 4U);
+  EXPECT_EQ(pool.index_reserve_size(), 32U);
   EXPECT_EQ(pool.size(), 0U);
 
   TestOrder* first = pool.Create();
@@ -31,6 +32,16 @@ TEST(OrderPoolTest, CreatesMonotonicLocalIdsAndReportsCapacity) {
 
   EXPECT_EQ(pool.Create(), nullptr);
   EXPECT_EQ(pool.size(), 2U);
+}
+
+TEST(OrderPoolTest, IndexReserveSizeUsesLargerMultiplierForSmallPools) {
+  OrderPool<TestOrder> small(1023);
+  OrderPool<TestOrder> threshold(1024);
+  OrderPool<TestOrder> large(2048);
+
+  EXPECT_EQ(small.index_reserve_size(), 1023U * 16U);
+  EXPECT_EQ(threshold.index_reserve_size(), 1024U * 8U);
+  EXPECT_EQ(large.index_reserve_size(), 2048U * 8U);
 }
 
 TEST(OrderPoolTest, FindsOnlyLiveOrdersByLocalId) {

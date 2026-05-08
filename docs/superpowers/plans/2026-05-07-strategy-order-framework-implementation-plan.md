@@ -222,7 +222,7 @@ struct OrderResponseEvent {
 
 Create `core/trading/order_pool.h`:
 
-- `OrderPool<OrderT>(std::size_t max_live_orders)` 在构造期固定 resize `max_live_orders * 2` 个 slot，并 reserve `max_live_orders * 4` 的 `absl::flat_hash_map`。
+- `OrderPool<OrderT>(std::size_t max_live_orders)` 在构造期固定 resize `max_live_orders * 2` 个 slot；`absl::flat_hash_map` reserve hint 在 max live 小于 1024 时为 16x，否则为 8x。
 - `Create()` 从 free list 取 slot，默认重置 order，分配递增 `local_order_id`，容量满或 free list 为空时返回 `nullptr`。
 - `Find(local_order_id)` 返回订单指针，找不到返回 `nullptr`。
 - `Erase(local_order_id)` 删除 local id 索引、重置 order，并把 slot 放回 free list。

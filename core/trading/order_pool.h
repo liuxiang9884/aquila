@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_COMMON_ORDER_POOL_H_
-#define AQUILA_CORE_COMMON_ORDER_POOL_H_
+#ifndef AQUILA_CORE_TRADING_ORDER_POOL_H_
+#define AQUILA_CORE_TRADING_ORDER_POOL_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -20,8 +20,9 @@ class OrderPool {
       throw std::invalid_argument("OrderPool max_live_orders is too large");
     }
     const std::size_t slot_capacity = max_live_orders_ * 2;
+    index_reserve_size_ = IndexReserveSizeFor(max_live_orders_);
     slots_.resize(slot_capacity);
-    local_to_slot_.reserve(max_live_orders_ * 4);
+    local_to_slot_.reserve(index_reserve_size_);
 
     for (std::size_t i = 0; i < slots_.size(); ++i) {
       slots_[i].next_free = i + 1 < slots_.size()
@@ -96,7 +97,16 @@ class OrderPool {
     return slots_.size();
   }
 
+  std::size_t index_reserve_size() const {
+    return index_reserve_size_;
+  }
+
  private:
+  static constexpr std::size_t IndexReserveSizeFor(
+      std::size_t max_live_orders) noexcept {
+    return max_live_orders * (max_live_orders < 1024 ? 16 : 8);
+  }
+
   static constexpr std::uint32_t kInvalidSlot =
       std::numeric_limits<std::uint32_t>::max();
   static constexpr std::size_t kMaxLiveOrders =
@@ -109,6 +119,7 @@ class OrderPool {
 
   std::size_t max_live_orders_{0};
   std::size_t live_size_{0};
+  std::size_t index_reserve_size_{0};
   std::int64_t next_local_order_id_{1};
   std::uint32_t free_head_{kInvalidSlot};
   std::vector<Slot> slots_;
@@ -117,4 +128,4 @@ class OrderPool {
 
 }  // namespace aquila
 
-#endif  // AQUILA_CORE_COMMON_ORDER_POOL_H_
+#endif  // AQUILA_CORE_TRADING_ORDER_POOL_H_

@@ -111,7 +111,7 @@ doc/data_reader_config.md
 | `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
 | `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md` | 审查 Gate `OrderSession` 第一版实现或追溯任务拆分时读 | TDD 实现任务：types/codecs、login signature/request encoder、submit parser correlation、session、benchmark、handoff/onboarding 更新。当前 Task 1-6 已完成。 |
 | `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` | 追溯 Strategy 订单框架第一版历史边界时读 | Strategy 订单对象、core `OrderPool`、state machine、direct-send fake session benchmark、REST smoke 和文档同步任务拆分；当前实现已被 struct-flow plan 调整。 |
-| `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` | 继续 Strategy / Gate OrderSession 直接 struct 发单边界时读 | Strategy 直接建单入 `core/common` 的 `OrderPool` 并发送订单 struct；Gate `OrderSession` 在发送路径完成 place/cancel JSON 序列化；移除 Strategy 侧 Gate wire cache、exchange id 索引、`PrepareOrder()` 和 `SubmitOrder()`。 |
+| `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` | 继续 Strategy / Gate OrderSession 直接 struct 发单边界时读 | Strategy 直接建单入 `core/trading` 的 `OrderPool` 并发送订单 struct；Gate `OrderSession` 在发送路径完成 place/cancel JSON 序列化；移除 Strategy 侧 Gate wire cache、exchange id 索引、`PrepareOrder()` 和 `SubmitOrder()`。 |
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance USD-M futures bookTicker 行情时读 | raw stream URL、JSON parser、client/session、benchmark 和 probe 入口。 |
 
 ## 代码入口
@@ -123,7 +123,7 @@ doc/data_reader_config.md
 | `core/common/result.h` | 通用 `Result<T>`，用于启动期 parser / loader 这类显式返回成功值或错误字符串的场景。 |
 | `core/common/types.h` | 项目通用枚举，当前包含 `aquila::Exchange`。 |
 | `core/common/constants.h` | 项目通用常量，当前包含缓存行大小等基础常量。 |
-| `core/trading/order_pool.h` | 通用固定容量订单池；slot vector 固定为 max live 的 2 倍，local id 查找走 `absl::flat_hash_map`，不维护 exchange order id 索引；构造期拒绝超过 `uint32_t` slot index 范围的容量。 |
+| `core/trading/order_pool.h` | 交易通用固定容量订单池；slot vector 固定为 max live 的 2 倍，local id 查找走 `absl::flat_hash_map`；map reserve hint 在 max live 小于 1024 时为 16x，否则为 8x；不维护 exchange order id 索引；构造期拒绝超过 `uint32_t` slot index 范围的容量。 |
 | `core/utils/numeric.h` | 基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToDouble` / `ToUint64` 等热路径数字转换 helper，失败只在 debug assert。 |
 | `core/market_data/types.h` | 统一行情数据结构，当前包含 `aquila::BookTicker`。 |
 
