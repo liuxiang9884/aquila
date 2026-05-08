@@ -858,7 +858,7 @@ if order finished:
 fixed 的 `OnOrder(msg)` 在 `aquila` 中应对应：
 
 ```text
-Strategy::OnOrderFeedback(OrderFeedbackEvent)
+OrderManager::OnOrderFeedback(OrderFeedbackEvent)
 ```
 
 而不是 `OrderSession` ack callback。职责边界：

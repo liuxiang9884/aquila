@@ -23,8 +23,8 @@
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
+#include "strategy/order_manager.h"
 #include "strategy/order_types.h"
-#include "strategy/strategy.h"
 #include "tools/gate/strategy_order_feedback_action.h"
 
 namespace {
@@ -281,7 +281,7 @@ struct ToolResponseHandler {
 template <typename SessionT>
 struct RunContext {
   SessionT* session{nullptr};
-  strategy::Strategy<SessionT>* strategy_instance{nullptr};
+  strategy::OrderManager<SessionT>* order_manager{nullptr};
   aquila::OrderFeedbackShmReader* feedback_reader{nullptr};
   strategy::OrderCreateRequest request{};
   bool keep_open{false};
@@ -316,7 +316,7 @@ struct RunContext {
         return;
       }
       const strategy::OrderPlaceResult placed =
-          strategy_instance->PlaceLimitOrder(request);
+          order_manager->PlaceLimitOrder(request);
       fmt::print("place status={} local_order_id={}\n",
                  magic_enum::enum_name(placed.status), placed.local_order_id);
       NOVA_INFO("place status={} local_order_id={}",
@@ -345,7 +345,7 @@ struct RunContext {
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
       responses.push_back(response);
-      strategy_instance->OnOrderResponse(ToStrategyEvent(response));
+      order_manager->OnOrderResponse(ToStrategyEvent(response));
       switch (response.kind) {
         case gate::OrderResponseKind::kAck:
           break;
@@ -401,7 +401,7 @@ struct RunContext {
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
       const strategy::OrderCancelResult cancelled =
-          strategy_instance->CancelOrder(order_id);
+          order_manager->CancelOrder(order_id);
       fmt::print("cancel status={} local_order_id={}\n",
                  magic_enum::enum_name(cancelled.status),
                  cancelled.local_order_id);
@@ -443,13 +443,13 @@ struct RunContext {
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
       if (const strategy::StrategyOrder* order =
-              strategy_instance->FindOrder(event.local_order_id);
+              order_manager->FindOrder(event.local_order_id);
           order != nullptr) {
         status_before = magic_enum::enum_name(order->status);
       }
-      strategy_instance->OnOrderFeedback(event);
+      order_manager->OnOrderFeedback(event);
       if (const strategy::StrategyOrder* order =
-              strategy_instance->FindOrder(event.local_order_id);
+              order_manager->FindOrder(event.local_order_id);
           order != nullptr) {
         status_after = magic_enum::enum_name(order->status);
         order_known_after = true;
@@ -560,12 +560,12 @@ int RunLive(gate::OrderSessionConfig config, gate::LoginCredentials credentials,
 
   Session session(std::move(config.connection), std::move(credentials), handler,
                   config.request_map_capacity);
-  strategy::Strategy<Session> strategy_instance(
+  strategy::OrderManager<Session> order_manager(
       session, options.order_capacity,
       static_cast<std::uint8_t>(options.strategy_id));
   RunContext<Session> context;
   context.session = &session;
-  context.strategy_instance = &strategy_instance;
+  context.order_manager = &order_manager;
   context.feedback_reader = feedback_reader ? &*feedback_reader : nullptr;
   context.request = BuildCreateRequest(prepared_order);
   context.keep_open = options.keep_open;

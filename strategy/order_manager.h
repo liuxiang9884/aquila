@@ -1,5 +1,5 @@
-#ifndef AQUILA_STRATEGY_STRATEGY_H_
-#define AQUILA_STRATEGY_STRATEGY_H_
+#ifndef AQUILA_STRATEGY_ORDER_MANAGER_H_
+#define AQUILA_STRATEGY_ORDER_MANAGER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -11,16 +11,16 @@
 namespace aquila::strategy {
 
 template <typename GatewayT>
-class Strategy {
+class OrderManager {
  public:
   using Order = StrategyOrder;
 
-  Strategy(GatewayT& order_session, std::size_t order_capacity,
-           std::uint8_t strategy_id = 0)
+  OrderManager(GatewayT& order_session, std::size_t order_capacity,
+               std::uint8_t strategy_id = 0)
       : order_session_(order_session), orders_(order_capacity, strategy_id) {}
 
-  Strategy(const Strategy&) = delete;
-  Strategy& operator=(const Strategy&) = delete;
+  OrderManager(const OrderManager&) = delete;
+  OrderManager& operator=(const OrderManager&) = delete;
 
   OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
     if (request.symbol.empty() || request.price_text.empty() ||
@@ -134,7 +134,7 @@ class Strategy {
   }
 
   // Mutable lookup is intended for same-thread gateway/test integration;
-  // Strategy remains the state owner.
+  // OrderManager remains the state owner.
   Order* FindOrder(std::uint64_t local_order_id) noexcept {
     return orders_.Find(local_order_id);
   }
@@ -340,4 +340,4 @@ class Strategy {
 
 }  // namespace aquila::strategy
 
-#endif  // AQUILA_STRATEGY_STRATEGY_H_
+#endif  // AQUILA_STRATEGY_ORDER_MANAGER_H_

@@ -8,8 +8,8 @@
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_feedback_shm.h"
 #include "core/trading/order_id.h"
+#include "strategy/order_manager.h"
 #include "strategy/order_types.h"
-#include "strategy/strategy.h"
 
 namespace aquila::strategy {
 namespace {
@@ -70,7 +70,7 @@ OrderCreateRequest MakeLimitRequest() noexcept {
                             .reduce_only = false};
 }
 
-TEST(StrategyOrderFeedbackShmIntegrationTest,
+TEST(OrderManagerFeedbackShmIntegrationTest,
      ReaderPollAppliesAcceptedAndFilledFeedback) {
   auto channel = MakeChannel();
   OrderFeedbackShmPublisher publisher(*channel);
@@ -78,8 +78,9 @@ TEST(StrategyOrderFeedbackShmIntegrationTest,
   ASSERT_TRUE(reader_result.ok) << reader_result.error;
 
   FakeGateway gateway;
-  Strategy<FakeGateway> strategy(gateway, 8, 3);
-  const OrderPlaceResult placed = strategy.PlaceLimitOrder(MakeLimitRequest());
+  OrderManager<FakeGateway> order_manager(gateway, 8, 3);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
   ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
   ASSERT_EQ(LocalOrderIdCodec::StrategyId(placed.local_order_id), 3);
 
@@ -92,12 +93,12 @@ TEST(StrategyOrderFeedbackShmIntegrationTest,
   }));
   EXPECT_EQ(reader_result.value.Poll(8,
                                      [&](const OrderFeedbackEvent& event) {
-                                       strategy.OnOrderFeedback(event);
+                                       order_manager.OnOrderFeedback(event);
                                      }),
             1U);
 
   const StrategyOrder* accepted_order =
-      strategy.FindOrder(placed.local_order_id);
+      order_manager.FindOrder(placed.local_order_id);
   ASSERT_NE(accepted_order, nullptr);
   EXPECT_EQ(accepted_order->status, OrderStatus::kAccepted);
   EXPECT_EQ(accepted_order->exchange_order_id, 36028827892199865U);
@@ -117,11 +118,12 @@ TEST(StrategyOrderFeedbackShmIntegrationTest,
   }));
   EXPECT_EQ(reader_result.value.Poll(8,
                                      [&](const OrderFeedbackEvent& event) {
-                                       strategy.OnOrderFeedback(event);
+                                       order_manager.OnOrderFeedback(event);
                                      }),
             1U);
 
-  const StrategyOrder* filled_order = strategy.FindOrder(placed.local_order_id);
+  const StrategyOrder* filled_order =
+      order_manager.FindOrder(placed.local_order_id);
   ASSERT_NE(filled_order, nullptr);
   EXPECT_EQ(filled_order->status, OrderStatus::kFilled);
   EXPECT_TRUE(filled_order->is_finished);

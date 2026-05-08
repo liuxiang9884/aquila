@@ -5,8 +5,8 @@
 #include <benchmark/benchmark.h>
 
 #include "core/common/types.h"
+#include "strategy/order_manager.h"
 #include "strategy/order_types.h"
-#include "strategy/strategy.h"
 
 namespace aquila::strategy {
 namespace {
@@ -55,22 +55,23 @@ struct FakeOrderSession {
                             .reduce_only = false};
 }
 
-void BM_StrategyPlaceLimitOrder(benchmark::State& state) {
+void BM_OrderManagerPlaceLimitOrder(benchmark::State& state) {
   FakeOrderSession session;
-  std::optional<Strategy<FakeOrderSession>> strategy;
+  std::optional<OrderManager<FakeOrderSession>> order_manager;
   std::size_t batch_count = kPlaceBatchSize;
 
   for (auto _ : state) {
     if (batch_count == kPlaceBatchSize) {
       state.PauseTiming();
-      strategy.emplace(session, kPlaceBatchSize);
+      order_manager.emplace(session, kPlaceBatchSize);
       batch_count = 0;
       state.ResumeTiming();
     }
 
-    OrderPlaceResult placed = strategy->PlaceLimitOrder(MakeGateLimitRequest());
+    OrderPlaceResult placed =
+        order_manager->PlaceLimitOrder(MakeGateLimitRequest());
     if (placed.status != OrderPlaceStatus::kOk) {
-      state.SkipWithError("strategy place limit order failed");
+      state.SkipWithError("order manager place limit order failed");
       return;
     }
     ++batch_count;
@@ -82,28 +83,29 @@ void BM_StrategyPlaceLimitOrder(benchmark::State& state) {
   benchmark::DoNotOptimize(session.place_calls);
 }
 
-void BM_StrategyCancelAcceptedOrder(benchmark::State& state) {
+void BM_OrderManagerCancelAcceptedOrder(benchmark::State& state) {
   FakeOrderSession session;
 
   for (auto _ : state) {
     state.PauseTiming();
-    Strategy<FakeOrderSession> strategy(session, 1);
+    OrderManager<FakeOrderSession> order_manager(session, 1);
     const OrderPlaceResult placed =
-        strategy.PlaceLimitOrder(MakeGateLimitRequest());
+        order_manager.PlaceLimitOrder(MakeGateLimitRequest());
     if (placed.status != OrderPlaceStatus::kOk) {
-      state.SkipWithError("strategy place setup failed");
+      state.SkipWithError("order manager place setup failed");
       return;
     }
-    strategy.OnOrderResponse(OrderResponseEvent{
+    order_manager.OnOrderResponse(OrderResponseEvent{
         .kind = OrderResponseKind::kAccepted,
         .local_order_id = placed.local_order_id,
         .exchange_order_id = kExchangeOrderId,
     });
     state.ResumeTiming();
 
-    OrderCancelResult cancelled = strategy.CancelOrder(placed.local_order_id);
+    OrderCancelResult cancelled =
+        order_manager.CancelOrder(placed.local_order_id);
     if (cancelled.status != OrderCancelStatus::kOk) {
-      state.SkipWithError("strategy cancel order failed");
+      state.SkipWithError("order manager cancel order failed");
       return;
     }
 
@@ -114,8 +116,8 @@ void BM_StrategyCancelAcceptedOrder(benchmark::State& state) {
   benchmark::DoNotOptimize(session.cancel_calls);
 }
 
-BENCHMARK(BM_StrategyPlaceLimitOrder);
-BENCHMARK(BM_StrategyCancelAcceptedOrder);
+BENCHMARK(BM_OrderManagerPlaceLimitOrder);
+BENCHMARK(BM_OrderManagerCancelAcceptedOrder);
 
 }  // namespace
 }  // namespace aquila::strategy
