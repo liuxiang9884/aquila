@@ -96,23 +96,29 @@ LeadLagStrategyConfig
   pairs: vector<LeadLagPairConfig>
 
 LeadLagPairConfig
+  symbol
   symbol_id
   lead_exchange
   lag_exchange
   open_notional
+  lag_taker_fee
   trigger params
   execution params
   recorder params
 
 LeadLagInstrumentMetadata
   symbol_id
+  lag_exchange
   lag exchange symbol
   price_tick
+  price_decimal_places
   quantity_step / contract quantity unit
+  quantity_decimal_places
   notional_multiplier
-  taker_fee
+  lag_taker_fee
   min/max quantity
   min_notional if needed
+  price_limit flags/values if used
 
 LeadLagRuntimeState
   pairs_by_symbol_id: vector<LeadLagPairSlot>
@@ -133,7 +139,30 @@ BookTicker.symbol_id -> O(1) PairSlot lookup
 BookTicker.exchange  -> Lead / Lag role
 ```
 
-交易基础信息来自 `instrument_catalog`。当前 `InstrumentInfo` 已包含 `exchange_symbol`、`price_tick`、`price_decimal_places`、`quantity_step`、`quantity_decimal_places`、`min_quantity`、`max_quantity`、`max_market_quantity`、`min_notional` 和 `notional_multiplier`。如果策略成本模型需要 `taker_fee`，应作为 instrument catalog schema 的字段或由同一启动期 metadata loader 派生，不放进热路径，也不让 signal 层临时查询。
+pair config 同时写 `symbol` 和 `symbol_id`。`symbol` 让配置可读，`symbol_id` 服务热路径。启动期必须校验：
+
+```text
+lead_info = catalog.Find(lead_exchange, symbol)
+lag_info  = catalog.Find(lag_exchange, symbol)
+
+lead_info exists
+lag_info exists
+lead_info.symbol_id == configured symbol_id
+lag_info.symbol_id == configured symbol_id
+```
+
+交易基础信息来自 `instrument_catalog`。当前 `InstrumentInfo` 已包含 `exchange_symbol`、`price_tick`、`price_decimal_places`、`quantity_step`、`quantity_decimal_places`、`min_quantity`、`max_quantity`、`max_market_quantity`、`min_notional` 和 `notional_multiplier`。启动期使用 lag 交易所的 `InstrumentInfo` 构建一份压缩后的 `LeadLagInstrumentMetadata`，策略运行期只持有这份 metadata，不保存或依赖 `const InstrumentInfo*`。
+
+费用当前不是 `InstrumentInfo` 字段。`lag_taker_fee` 第一版从 pair config、fee config 或同一启动期 metadata loader 注入；后续可以扩展 catalog schema 或接入账户费率 metadata。无论来源如何，fee 必须在启动期成为 pair 的稳定数值，不让 signal 层临时查询。
+
+对 Gate futures，`open_notional` 到交易所原生下单 quantity 的换算必须使用 `notional_multiplier`：
+
+```text
+notional ~= price * quantity * notional_multiplier
+quantity ~= open_notional / (price * notional_multiplier)
+```
+
+随后 quantity 再按 `quantity_step` / `quantity_decimal_places` 归整，并检查 `min_quantity` / `max_quantity` / `min_notional` 等约束。
 
 热路径不做 string exchange 比较、string symbol 比较、TOML/JSON 查表、REST metadata 查询或交易所差异判断。热路径可直接使用的预计算字段包括：
 
@@ -159,7 +188,10 @@ target_profit_rate
 
 - 配置默认值与 fixed `SetDefault()` 一致。
 - fixed JSON 字段能映射到对应 config 字段。
+- pair config 中的 `symbol` 与 `symbol_id` 必须和 lead / lag 两边 catalog 记录一致。
 - `open` 在 `aquila` config 中命名为 `open_notional`，继续表示每次开仓目标名义金额。
+- `open_notional` 到下单 quantity 的转换必须使用 `notional_multiplier`，不能直接用 `open_notional / price` 作为 Gate quantity。
+- 策略运行期持有压缩后的 `LeadLagInstrumentMetadata`，不保存完整 `InstrumentInfo*`。
 - lag metadata 必须从 instrument catalog 解析出 quantity step、notional multiplier、price tick 等下单必要信息；fee 如进入成本模型，也必须从启动期 metadata 获得。
 - lead exchange 和 lag exchange 不允许相同。
 - 同一个 `symbol_id` 不允许重复配置 pair。
