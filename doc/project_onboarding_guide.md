@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版 submit/cancel C++ 主路径、strategy `OrderManager` 第一版订单框架、Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser / `OrderFeedbackSession` / `OrderManager` feedback apply 和 strategy runtime skeleton 已落地；LeadLag fixed 策略到 `aquila` 的分层设计 spec 已开始，配置 / instrument metadata、raw market state 和 BBO extrema 已收敛，MoveQueue / noise / spread 细节等待 fixed Go 源码确认。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版 submit/cancel C++ 主路径、strategy `OrderManager` 第一版订单框架、Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser / `OrderFeedbackSession` / `OrderManager` feedback apply，以及 strategy runtime production loop / Gate adapter / demo 策略 dry-run 工具已落地；LeadLag fixed 策略到 `aquila` 的分层设计 spec 已开始，配置 / instrument metadata、raw market state 和 BBO extrema 已收敛，MoveQueue / noise / spread 细节等待 fixed Go 源码确认。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -51,7 +51,8 @@
 33. `config/order_feedback/gate_order_feedback_session.toml`、`OrderFeedbackSessionConfig` parser、`tools/gate/order_feedback_session.cpp`、parser / session / strategy / SHM fake integration tests 和 `gate_order_feedback_parser_benchmark` 已落地。2026-05-08 release benchmark：parser one order mean `65.2ns`，session binary to counting publisher mean `95.3ns`，session binary to SHM publish + drain mean `105ns`；这些是本机 microbenchmark，不是公网端到端延迟结论。
 34. Task2 已完成小额 live smoke：`gate_order_feedback_session` + `gate_strategy_order` 跑通过 1 手 BTC_USDT market buy + reduce-only sell 填平，以及 79000 buy limit accepted 后自动 cancel；REST 复核无残留 open orders / position。仍未实现 REST reconcile、account / position feedback 和 feedback WS 断线后的未知订单状态恢复。
 35. `doc/leadlag-fixed-strategy-reconstruction-guide.md` 已保存 current fixed LeadLag 策略重建手册；`doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` 已按 fixed 语义还原 + `aquila` 链路对齐方式开始拆解。当前已确认：一个 `leadlag::Strategy` 可管理多个 pair、pair config 同时写 `symbol` / `symbol_id`、交易基础信息从 instrument catalog 压缩到运行期 metadata、`open_notional` 使用 `notional_multiplier` 转 lag 原生 quantity、raw market state 使用 `QuoteSnapshot{local_ns,bid,ask}`、`BookTicker.local_ns` 作为策略时间、`BboExtremaWindow` 使用固定容量 monotonic deque。MoveQueue 是切窗还是 rolling、`StreamStdEmaRecorder` 的 noise 公式细节和 lag spread 统计方式等待 fixed Go 源码确认。
-36. Strategy runtime skeleton 已落地：`config/strategies/lead_lag_btc_strategy.toml` 使用 `[strategy]` 作为策略实例配置，并通过 `strategy.config` 指向 `config/strategies/lead_lag_btc.toml` 的同名 user strategy section；`core/config/strategy_config.*` 解析 strategy runtime 配置；`core/strategy/strategy_context.h` 暴露 user strategy 下单 / 撤单 / 查订单窄接口；`core/strategy/strategy_runtime.h` 当前只提供 test-only factory / dispatch helper，不接 Gate live、不实现正式 loop。runtime 已覆盖 `OnBookTicker()`、`OnOrderResponse()` 和 `OnOrderFeedback()` 分发；response / feedback 都先 apply `OrderManager`，再调用 user strategy hook，保证 hook 中通过 context 查到的是更新后的订单状态。
+36. Strategy runtime production loop 已落地：`core/strategy/strategy_runtime.h` 支持 `StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>`，生产 `Create()` 从已解析 `StrategyConfig` / `DataReaderConfig` 构造 `DataReader`、`OrderSession`、`OrderManager`、`StrategyContext`、user strategy 和可选 feedback reader；`Run()` 启动 order session，按 ready gating poll order response、feedback SHM 和 data reader，并支持 `OnStart` / `OnLoop` / `OnIdle` / `OnStop` / `ShouldStop` 可选 hook、`spin` / `yield` idle policy、`max_loop_seconds` 和 best-effort `bind_cpu_id`。
+37. Gate strategy runtime adapter 和 `demo` 策略工具已落地：`tools/gate/strategy_runtime_adapter.h` 把 Gate `OrderSession` 包装为 runtime 可用的 `OrderSessionT`，Gate 回调线程只入队 response，runtime 线程统一更新 `OrderManager`；下单 / 撤单命令通过 WebSocket runtime hook 回到 Gate session 线程执行。`tools/gate/demo_strategy.h` / `tools/gate/demo_strategy.cpp` 提供 `demo` user strategy 和 `gate_demo_strategy` 工具，默认 dry-run 只解析配置，不打开 WebSocket / SHM；显式 `--execute` 才进入实盘 runtime。本轮没有做实盘测试。
 
 ## 新对话第一步
 
@@ -93,7 +94,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 已在 Task1 order feedback SHM transport 之上完成 Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()` 和 SHM fake integration；并已落地 strategy runtime skeleton：`[strategy]` config parser、`StrategyContext`、`StrategyRuntime<UserStrategyT, OrderSessionT>` test-only factory / dispatch helper，以及 user strategy 的 `OnBookTicker`、`OnOrderResponse`、`OnOrderFeedback` 事件入口。如果继续 Gate 交易架构，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 已在 Task1 order feedback SHM transport 之上完成 Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()` 和 SHM fake integration；并已落地 strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具：`[strategy]` config parser、`StrategyContext`、`StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>` 生产 `Create()` / `Run()`、user strategy 的 `OnBookTicker`、`OnOrderResponse`、`OnOrderFeedback`、`OnLoop` 等事件入口，以及 `tools/gate/gate_demo_strategy`。如果继续 Gate 交易架构，
 再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、
 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`
 、`docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md`、`docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md`、
@@ -101,7 +102,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md`、
 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` 和 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`，如果继续 Binance 行情，再读
 `doc/agent-handoff-binance-market-data.md`，如果继续 data session / config，再读
-`doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，再读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`。Gate / strategy runtime 下一步优先把 skeleton 扩成真实 factory / runner：按 `[strategy]` 加载 `DataReader`、Gate `OrderSession`、feedback reader 和 user strategy config，并把 Gate `OrderSession` callback 接入 runtime 的 `OnOrderResponse()`；Gate 交易仍需 REST reconcile、account / position feedback、最小 live smoke 和端到端 benchmark；LeadLag 下一步优先拿 fixed Go 源码确认 MoveQueue、`StreamStdEmaRecorder` 和 lag spread 统计语义，再继续第 3 部分设计。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+`doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，再读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`。Gate / strategy runtime 下一步优先做用户授权后的最小实盘 smoke：先运行 `gate_order_feedback_session --connect`，再用 `gate_demo_strategy --execute` 小额跑 `demo` 的 accepted / filled-close / cancel 分支，并用 REST 复核无残留订单 / 仓位；之后补 REST reconcile、account / position feedback 和端到端 benchmark。LeadLag 下一步优先拿 fixed Go 源码确认 MoveQueue、`StreamStdEmaRecorder` 和 lag spread 统计语义，再继续第 3 部分设计。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -194,9 +195,13 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 | `core/strategy/order_types.h` | Strategy 订单创建请求、`StrategyOrder`、place/cancel/result event 类型；订单对象保存 symbol、price_text、数量、TIF 和状态，不保存 Gate wire cache。旧 `strategy/order_types.h` 仅作 forwarding compatibility header。 |
 | `core/strategy/order_manager.h` | 模板化 `OrderManager<OrderSessionT>`，提供 `PlaceLimitOrder()`、`CancelOrder()`、order response apply 和 feedback apply；发单时直接把订单 struct 交给 session。旧 `strategy/order_manager.h` 仅作 forwarding compatibility header。 |
 | `core/strategy/strategy_context.h` | user strategy 的窄下单接口，封装 `OrderManager` 的 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`，不暴露 runtime 内部对象。 |
-| `core/strategy/strategy_runtime.h` | `StrategyRuntime<UserStrategyT, OrderSessionT>` skeleton；当前只提供 test-only factory / dispatch helper，负责把 `BookTicker`、`OrderResponseEvent` 和 `OrderFeedbackEvent` 分发给 user strategy，并在订单事件 hook 前先更新 `OrderManager`。 |
-| `test/core/strategy/strategy_runtime_test.cpp` | runtime skeleton 回归测试，覆盖 non-copy/move、行情分发、order response 分发、order feedback 分发、feedback disabled 和 session 构造失败 `Result`。 |
+| `core/strategy/strategy_runtime.h` | `StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>` production runtime；从已解析 config 构造 data reader / order session / order manager / context / user strategy / feedback reader，`Run()` 负责 ready gating、order response、feedback 和行情 poll，并在订单事件 hook 前先更新 `OrderManager`。 |
+| `test/core/strategy/strategy_runtime_test.cpp` | runtime 回归测试，覆盖 non-copy/move、行情分发、order response 分发、order feedback 分发、feedback disabled、session 构造失败、正式 `Run()`、ready gating、`ShouldStop`、feedback reader poll 和 session stopped failure。 |
 | `tools/gate/strategy_order.cpp` | `OrderManager` + Gate WebSocket 单笔下单工具；CLI 接收 contract / side / order-type / size / price / tif / reduce-only / keep-open，默认 dry-run，`--execute` 才实盘连接 WebSocket。 |
+| `tools/gate/strategy_runtime_adapter.h` | Gate-specific runtime adapter；把 Gate `OrderSession` 包装为 `StrategyRuntime` 的 `OrderSessionT`，Gate 回调线程只入队 `OrderResponseEvent`，runtime 线程统一 apply，place/cancel 命令通过 WebSocket runtime hook 在 Gate session 线程执行。 |
+| `tools/gate/demo_strategy.h` | `demo` user strategy：从行情 ask price 下 1 手 buy limit，等待 `wait_minutes`，成交则 market sell reduce-only 平仓，未成交则撤单，循环 `cycles` 次。 |
+| `tools/gate/demo_strategy.cpp` | `gate_demo_strategy` 工具；加载 strategy / demo / data reader / Gate order session 配置，默认 dry-run 只解析和打印，不打开 WebSocket / SHM；`--execute` 才创建 runtime 并进入实盘 loop。 |
+| `config/strategies/demo_strategy.toml` / `config/strategies/demo.toml` | `demo` runtime 配置和 user strategy 参数配置。 |
 | `test/core/trading/order_pool_test.cpp` | 通用 `OrderPool` 本地订单 ID、容量限制、slot 复用、指针稳定和 zero capacity 测试。 |
 | `test/strategy/strategy_test.cpp` | `OrderManager` place/cancel/response/feedback 状态推进测试。 |
 | `benchmark/strategy/order_gateway_benchmark.cpp` | `OrderManager` direct-send fake session baseline；不包含真实 WebSocket 或 socket。 |
@@ -439,16 +444,18 @@ Order feedback Task1 / Task2 关键结论：
 - 当前已有 private `futures.orders` feedback apply；仍没有 REST reconcile、batch/amend/cancel-all、account / position feedback 或断线后未知订单状态恢复。
 - `benchmark/strategy/order_gateway_benchmark.cpp` 只使用 fake order session，作为 `OrderManager` direct-send 本机 smoke baseline；它不包含真实 `OrderSession` request encoding、WebSocket frame、TLS/plain socket 或交易所响应成本，不能写成端到端性能结论。
 
-### Strategy Runtime Skeleton
+### Strategy Runtime
 
-当前 `StrategyRuntime<UserStrategyT, OrderSessionT>` 只完成 core skeleton，不是 live runner：
+当前 `StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>` 已经是可组合的 production runtime，但本轮没有做实盘测试：
 
-- `[strategy]` 配置文件入口示例为 `config/strategies/lead_lag_btc_strategy.toml`，其中 `strategy.name = "lead_lag_btc"` 同时作为 user strategy config section name，`strategy.config` 指向 `config/strategies/lead_lag_btc.toml`。
+- `[strategy]` 配置文件入口示例为 `config/strategies/demo_strategy.toml` 和 `config/strategies/lead_lag_btc_strategy.toml`，其中 `strategy.name` 同时作为 user strategy config section name，`strategy.config` 指向 user strategy config 文件。
 - `core/config/strategy_config.h` 解析 strategy id、mode、order capacity、data reader config、order session config 和 feedback reader 参数；`strategy_id` 范围复用 order feedback SHM lane count。
 - `StrategyContext<OrderSessionT>` 是 user strategy 的下单接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`。
-- runtime hot path 当前只有 test-only dispatch helper：`OnBookTicker()` 直接调用 user strategy；`OnOrderResponse()` / `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 user strategy hook。
-- user strategy 当前应实现 `OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)` 和 `OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`。其中 `OrderResponseEvent` 对应 API submit/cancel response，`OrderFeedbackEvent` 对应 private lifecycle feedback。
-- 当前没有正式 `Run()` loop、没有从 `StrategyConfig` 构造真实 `DataReader` / Gate `OrderSession` / feedback reader，也没有 live strategy tool；后续应在 factory / adapter 层接 Gate，保持 core 不依赖 exchange。
+- `StrategyRuntime::Create()` 接收已解析的 `StrategyConfig` / `DataReaderConfig` 和 order session factory，构造 `DataReader`、`OrderSession`、`OrderManager`、`StrategyContext`、user strategy 和可选 `OrderFeedbackShmReader`。
+- `Run()` 启动 order session，先 poll order response 和 feedback，再在 `OrderSessionT::Ready()` 为 true 后 poll data reader；如果 `OrderSessionT::Running()` 变 false，runtime 返回失败，避免一直等待 ready。
+- user strategy 可实现 `OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()`。`OnOrderResponse()` / `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 user strategy hook。
+- Gate-specific 构造留在 `tools/gate/strategy_runtime_adapter.h` 和 tool 层，core runtime 不 include `exchange/`；Gate adapter 用 WebSocket runtime hook 让 place/cancel 在 Gate session 线程执行，避免跨线程直接改 `OrderSession` 内部 request map。
+- `gate_demo_strategy` 默认 dry-run，不打开 WebSocket / SHM；真实提交必须显式 `--execute`，并需要先启动 `gate_order_feedback_session --connect`。
 
 ### Gate SBE 行情当前状态
 
@@ -827,9 +834,8 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 3. 读取 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`、`docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` 和 `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md`，用于追溯已完成实现边界和验证命令。
 4. 读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md`，确认 Task1 已实现边界和验证命令。
 5. 读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` 和 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`，确认 Task2 已实现边界、验证命令和未完成的 live smoke。
-6. 如果继续 strategy runtime，先读取 `docs/superpowers/plans/2026-05-08-strategy-runtime-implementation-plan.md`，再从 `core/strategy/strategy_runtime.h` 和 `test/core/strategy/strategy_runtime_test.cpp` 接手；当前 skeleton 已有 user strategy 的行情、order response 和 order feedback 三类事件入口，但没有真实 `Run()` loop / factory。
-7. 下一步把 runtime skeleton 扩成真实 factory / runner：按 `[strategy]` 加载 `DataReader`、Gate `OrderSession`、feedback reader 和 user strategy config；Gate-specific 构造应留在 exchange/tool adapter，保持 core 不 include `exchange/`。
+6. 如果继续 strategy runtime，先读取 `docs/superpowers/plans/2026-05-08-demo-strategy-runtime-implementation-plan.md`，再从 `core/strategy/strategy_runtime.h`、`tools/gate/strategy_runtime_adapter.h`、`tools/gate/demo_strategy.h` 和 `tools/gate/demo_strategy.cpp` 接手；当前 production `Run()` / Gate adapter / demo dry-run tool 已实现。
+7. 准备最小 live smoke：先运行 `gate_order_feedback_session --connect`，再在用户明确允许后运行 `gate_demo_strategy --execute`，用 `wait_minutes` / `cycles` 小参数覆盖 filled-close 和 unfilled-cancel 分支，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
 8. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界和新开仓暂停 / 恢复条件。
-9. 准备最小 live smoke：同时运行 `gate_order_feedback_session --connect` 和新的 strategy runner / 现有 `gate_strategy_order --execute` 的小额 accepted / cancel lifecycle，保留原始输出，并用 REST 查询确认无残留订单 / 仓位；真实下单前必须得到用户明确允许。
-10. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验。
-11. 增加端到端 benchmark：覆盖 `Strategy -> OrderSession` 下单请求构建 / 发送、`OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
+9. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 `demo` 只按 ask price 字符串下单，尚未做 tick rounding。
+10. 增加端到端 benchmark：覆盖 `StrategyRuntime -> GateOrderSessionAdapter -> OrderSession` 下单请求和 `OrderFeedbackSession -> SHM -> StrategyRuntime` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。

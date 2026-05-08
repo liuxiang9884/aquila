@@ -23,6 +23,7 @@ namespace {
 
 struct RuntimeLoopState {
   bool order_ready{true};
+  bool order_running{true};
   bool order_start_result{true};
   bool stop_immediately{false};
   int start_calls{0};
@@ -31,6 +32,7 @@ struct RuntimeLoopState {
   int data_poll_calls{0};
   int on_start_calls{0};
   int on_idle_calls{0};
+  int on_loop_calls{0};
   int on_stop_calls{0};
   int should_stop_calls{0};
   int book_ticker_calls{0};
@@ -78,6 +80,10 @@ struct FakeOrderSession {
 
   [[nodiscard]] bool Ready() const noexcept {
     return loop_state == nullptr || loop_state->order_ready;
+  }
+
+  [[nodiscard]] bool Running() const noexcept {
+    return loop_state == nullptr || loop_state->order_running;
   }
 
   template <typename Handler>
@@ -246,6 +252,10 @@ struct LoopUserStrategy {
 
   void OnIdle(ContextT&) noexcept {
     ++state_->on_idle_calls;
+  }
+
+  void OnLoop(ContextT&) noexcept {
+    ++state_->on_loop_calls;
   }
 
   void OnStop(ContextT&) noexcept {
@@ -461,6 +471,7 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.stop_calls, 1);
   EXPECT_EQ(state.on_start_calls, 1);
   EXPECT_EQ(state.on_stop_calls, 1);
+  EXPECT_EQ(state.on_loop_calls, 1);
   EXPECT_EQ(state.data_poll_calls, 1);
   EXPECT_EQ(state.book_ticker_calls, 1);
   EXPECT_EQ(state.last_ticker_id, 42);
@@ -571,6 +582,28 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(runtime_result.value->Run(), 0);
 
   EXPECT_GE(state.on_idle_calls, 3);
+  EXPECT_EQ(state.data_poll_calls, 0);
+  EXPECT_EQ(state.book_ticker_calls, 0);
+}
+
+TEST(StrategyRuntimeTest, ProductionRunFailsWhenOrderSessionStopsRunning) {
+  RuntimeLoopState state;
+  state.order_running = false;
+  state.book_tickers.push_back(MakeBookTicker());
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = LoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 1);
+
+  EXPECT_EQ(state.start_calls, 1);
+  EXPECT_EQ(state.stop_calls, 1);
   EXPECT_EQ(state.data_poll_calls, 0);
   EXPECT_EQ(state.book_ticker_calls, 0);
 }

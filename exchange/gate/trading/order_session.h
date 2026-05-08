@@ -139,6 +139,14 @@ class OrderSession {
     client_.Stop();
   }
 
+  void Wakeup() noexcept {
+    client_.Wakeup();
+  }
+
+  void SetRuntimeHook(void* context, websocket::RuntimeHook handler) noexcept {
+    client_.SetRuntimeHook(context, handler);
+  }
+
   websocket::DeliveryResult Handle(
       const websocket::MessageView& view) noexcept {
     if (view.kind != websocket::PayloadKind::kText) {
@@ -162,6 +170,7 @@ class OrderSession {
       login_request_sequence_ = 0;
       request_id_to_local_order_id_.clear();
       local_order_id_to_exchange_order_id_.clear();
+      NotifyLoginNotReady();
     }
   }
 
@@ -602,6 +611,14 @@ class OrderSession {
   void NotifyLoginReady() noexcept {
     if constexpr (requires { response_handler_.OnOrderSessionLoginReady(); }) {
       response_handler_.OnOrderSessionLoginReady();
+    }
+  }
+
+  void NotifyLoginNotReady() noexcept {
+    if constexpr (requires {
+                    response_handler_.OnOrderSessionLoginNotReady();
+                  }) {
+      response_handler_.OnOrderSessionLoginNotReady();
     }
   }
 

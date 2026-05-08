@@ -20,6 +20,7 @@
 #include "core/strategy/order_manager.h"
 #include "core/strategy/strategy_context.h"
 #include "core/trading/order_feedback_shm.h"
+#include "core/websocket/runtime_policy.h"
 
 namespace aquila::strategy {
 
@@ -158,10 +159,16 @@ class StrategyRuntime {
       return 1;
     }
 
+    ApplyLoopRuntimePolicy();
     CallOnStart();
     const auto loop_started_at = std::chrono::steady_clock::now();
+    int exit_code = 0;
     for (;;) {
       if (ShouldStop() || MaxLoopSecondsElapsed(loop_started_at)) {
+        break;
+      }
+      if (!OrderSessionRunning()) {
+        exit_code = 1;
         break;
       }
 
@@ -171,6 +178,7 @@ class StrategyRuntime {
       if (OrderSessionReady()) {
         handled += PollDataReader();
       }
+      CallOnLoop();
 
       if (ShouldStop() || MaxLoopSecondsElapsed(loop_started_at)) {
         break;
@@ -190,7 +198,7 @@ class StrategyRuntime {
 
     CallOnStop();
     StopOrderSession();
-    return 0;
+    return exit_code;
   }
 
   void OnBookTicker(const BookTicker& ticker) noexcept {
@@ -272,6 +280,25 @@ class StrategyRuntime {
     return true;
   }
 
+  [[nodiscard]] bool OrderSessionRunning() noexcept {
+    if constexpr (requires(OrderSessionT& session) { session.Running(); }) {
+      return static_cast<bool>(order_session_->Running());
+    }
+    return true;
+  }
+
+  void ApplyLoopRuntimePolicy() noexcept {
+    if (config_.loop.bind_cpu_id < 0) {
+      return;
+    }
+    websocket::RuntimePolicy runtime_policy;
+    runtime_policy.affinity_mode = websocket::AffinityMode::kBestEffort;
+    runtime_policy.io_cpu_id = config_.loop.bind_cpu_id;
+    runtime_policy.lock_memory = false;
+    runtime_policy.prefault_stack = false;
+    (void)websocket::ApplyRuntimePolicy(runtime_policy);
+  }
+
   [[nodiscard]] std::uint64_t PollOrderResponses() noexcept {
     if constexpr (requires(OrderSessionT& session, StrategyRuntime& runtime) {
                     session.PollOrderResponses(runtime);
@@ -319,6 +346,14 @@ class StrategyRuntime {
                     strategy.OnIdle(context);
                   }) {
       user_strategy_->OnIdle(*context_);
+    }
+  }
+
+  void CallOnLoop() noexcept {
+    if constexpr (requires(UserStrategyT& strategy, ContextT& context) {
+                    strategy.OnLoop(context);
+                  }) {
+      user_strategy_->OnLoop(*context_);
     }
   }
 

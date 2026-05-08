@@ -1,0 +1,5 @@
+[demo]
+contract = "BTC_USDT"
+symbol_id = 1
+wait_minutes = 1
+cycles = 1

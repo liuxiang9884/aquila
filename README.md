@@ -223,6 +223,14 @@ Data session config dry-run：
 ./build/debug/tools/binance_data_session
 ```
 
+Strategy runtime demo dry-run：
+
+```bash
+./build/debug/tools/gate_demo_strategy --config config/strategies/demo_strategy.toml
+```
+
+`gate_demo_strategy` 默认只解析 strategy / data reader / Gate order session / demo 策略配置，不连接 WebSocket、不打开 SHM、不下单；必须显式传 `--execute` 才进入实盘链路。
+
 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
 `enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置
 `enable_tls = false`。

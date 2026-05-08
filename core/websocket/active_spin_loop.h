@@ -29,6 +29,7 @@ class ActiveSpinLoop {
     std::uint32_t iterations_since_clock = 0;
 
     while (!session.ShouldReconnect()) {
+      BeforeDrive(session);
       session.DriveWrite();
       session.DriveRead();
 
@@ -49,13 +50,17 @@ class ActiveSpinLoop {
 
  private:
   template <typename SessionT>
-  std::uint32_t ClockCheckInterval(const SessionT& session,
-                                   std::uint32_t default_interval) const
-      noexcept {
+  void BeforeDrive(SessionT& session) const noexcept {
+    if constexpr (requires { session.BeforeDrive(); }) {
+      session.BeforeDrive();
+    }
+  }
+
+  template <typename SessionT>
+  std::uint32_t ClockCheckInterval(
+      const SessionT& session, std::uint32_t default_interval) const noexcept {
     std::uint32_t interval = default_interval;
-    if constexpr (requires {
-                    session.ClockCheckInterval(default_interval);
-                  }) {
+    if constexpr (requires { session.ClockCheckInterval(default_interval); }) {
       interval = session.ClockCheckInterval(default_interval);
     }
     return interval == 0 ? 1 : interval;

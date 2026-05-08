@@ -30,6 +30,7 @@ namespace aquila::websocket {
 
 using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
 using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
+using RuntimeHook = void (*)(void* context) noexcept;
 
 template <typename TransportSocketT, typename MessageHandlerT = MessageCallback>
 class BasicWebSocketClient {
@@ -98,6 +99,11 @@ class BasicWebSocketClient {
   void SetErrorHandler(void* context, ErrorHandler handler) noexcept {
     error_context_ = context;
     error_handler_ = handler;
+  }
+
+  void SetRuntimeHook(void* context, RuntimeHook handler) noexcept {
+    runtime_hook_context_ = context;
+    runtime_hook_handler_ = handler;
   }
 
   [[nodiscard]] ConnectionPhase phase() const noexcept {
@@ -205,7 +211,11 @@ class BasicWebSocketClient {
 
   void Stop() noexcept {
     stop_requested_.store(true, std::memory_order_relaxed);
-    Wakeup();
+    SignalWakeup();
+  }
+
+  void Wakeup() noexcept {
+    SignalWakeup();
   }
 
   Metrics SnapshotMetrics() const noexcept {
@@ -224,6 +234,10 @@ class BasicWebSocketClient {
 
     void DriveWrite() noexcept {
       core.DriveWrite();
+    }
+
+    void BeforeDrive() noexcept {
+      client->RunRuntimeHook();
     }
 
     void DriveRead() noexcept {
@@ -311,7 +325,7 @@ class BasicWebSocketClient {
     return wakeup_fd_ >= 0;
   }
 
-  void Wakeup() noexcept {
+  void SignalWakeup() noexcept {
     if (wakeup_fd_ < 0) {
       return;
     }
@@ -457,6 +471,12 @@ class BasicWebSocketClient {
     }
   }
 
+  void RunRuntimeHook() noexcept {
+    if (runtime_hook_handler_ != nullptr) {
+      runtime_hook_handler_(runtime_hook_context_);
+    }
+  }
+
   ConnectionConfig config_{};
   MessageHandlerT message_handler_{};
   Metrics metrics_{};
@@ -483,6 +503,8 @@ class BasicWebSocketClient {
   StateHandler state_handler_{nullptr};
   void* error_context_{nullptr};
   ErrorHandler error_handler_{nullptr};
+  void* runtime_hook_context_{nullptr};
+  RuntimeHook runtime_hook_handler_{nullptr};
 };
 
 template <typename MessageHandlerT>

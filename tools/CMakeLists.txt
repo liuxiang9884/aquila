@@ -52,6 +52,20 @@ target_link_libraries(gate_strategy_order
         nova
 )
 
+add_executable(gate_demo_strategy
+    gate/demo_strategy.cpp
+)
+
+target_link_libraries(gate_demo_strategy
+    PRIVATE
+        aquila_config
+        aquila_gate
+        aquila_strategy
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+)
+
 add_executable(gate_order_feedback_session
     gate/order_feedback_session.cpp
 )
