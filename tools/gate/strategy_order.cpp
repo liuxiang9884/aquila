@@ -25,10 +25,12 @@
 #include "nova/utils/log.h"
 #include "strategy/order_types.h"
 #include "strategy/strategy.h"
+#include "tools/gate/strategy_order_feedback_action.h"
 
 namespace {
 
 namespace gate = aquila::gate;
+namespace gate_order_tool = aquila::tools::gate_strategy_order;
 namespace strategy = aquila::strategy;
 
 constexpr std::int64_t kMaxOrderSize = 5;
@@ -435,6 +437,8 @@ struct RunContext {
   void OnOrderFeedback(const aquila::OrderFeedbackEvent& event) noexcept {
     std::string_view status_before{"missing"};
     std::string_view status_after{"missing"};
+    bool order_known_after = false;
+    bool submit_cancel = false;
     bool terminal_feedback = false;
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
@@ -448,11 +452,17 @@ struct RunContext {
               strategy_instance->FindOrder(event.local_order_id);
           order != nullptr) {
         status_after = magic_enum::enum_name(order->status);
+        order_known_after = true;
       }
       ++feedback_events;
-      terminal_feedback = event.kind == aquila::OrderFeedbackKind::kFilled ||
-                          event.kind == aquila::OrderFeedbackKind::kCancelled ||
-                          event.kind == aquila::OrderFeedbackKind::kRejected;
+      submit_cancel = gate_order_tool::ShouldSubmitCancelAfterFeedback(
+          gate_order_tool::FeedbackCancelInput{
+              .kind = event.kind,
+              .order_known_after = order_known_after,
+              .keep_open = keep_open,
+              .cancel_submitted = cancel_submitted,
+          });
+      terminal_feedback = gate_order_tool::IsTerminalOrderFeedback(event.kind);
       if (terminal_feedback) {
         feedback_terminal_seen = true;
         if (wait_feedback_terminal) {
@@ -478,6 +488,10 @@ struct RunContext {
         magic_enum::enum_name(event.reject_reason),
         magic_enum::enum_name(event.gap_scope),
         magic_enum::enum_name(event.gap_reason), event.gap_sequence);
+    if (submit_cancel) {
+      SubmitCancel(event.local_order_id);
+      return;
+    }
     if (terminal_feedback && wait_feedback_terminal) {
       Finish();
     }
@@ -734,11 +748,11 @@ int main(int argc, char** argv) {
   app.add_flag("--execute", options.execute,
                "Actually submit through WebSocket. Omitted means dry-run");
   app.add_flag("--keep-open", options.keep_open,
-               "Do not auto-cancel after accepted place response");
+               "Do not auto-cancel after accepted response or feedback");
   app.add_flag("--consume-feedback", options.consume_feedback,
                "Claim order feedback SHM lane and apply events to Strategy");
   app.add_flag("--wait-feedback-terminal", options.wait_feedback_terminal,
-               "Wait for terminal feedback after an accepted keep-open order");
+               "Wait for terminal order feedback before exiting");
   app.add_flag("--feedback-force-claim", options.feedback_force_claim,
                "Force claim the configured feedback SHM lane");
   app.add_option("--feedback-shm-config", options.feedback_shm_config_path,
