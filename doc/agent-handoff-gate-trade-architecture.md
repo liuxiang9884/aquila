@@ -21,6 +21,7 @@ Task1 订单 feedback SHM transport 和 Task2 Gate orders parser / session / Str
   `git log --oneline -8` 为准。
 - Order feedback 当前没有进入生产代码实现阶段；已确认 Task1 先实现固定 8 lane SHM transport，Task2 再实现 Gate private
   `futures.orders` parser、`OrderFeedbackSession` 和 Strategy 状态机。
+- 本轮收尾时，order feedback 文档计划提交为 `15084fc Document order feedback implementation plans`；后续交接只更新 onboarding / handoff 状态。
 - 新接手时先执行：
 
 ```bash

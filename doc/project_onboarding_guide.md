@@ -45,6 +45,7 @@
 27. Gate `OrderFeedbackSession` 第一版 event 语义已收敛到文档：第一版只以 private `futures.orders` 为生命周期事实源，不接 `futures.usertrades`；已定义 accepted、partial filled、filled、cancelled/terminal finished 和 rejected 的边界。Task1 文档已选择宽结构 `OrderFeedbackEvent` 作为第一版 SHM ABI，tagged union 暂不进入第一版实现。
 28. `local_order_id` 已升级为 `std::uint64_t`，编码为高 8 bit `strategy_id` 加低 56 bit `strategy_order_id`；`core/trading/order_id.h` 提供 `LocalOrderIdCodec`，`OrderPool` 可在构造时接收 `strategy_id`，Gate `text` 仍为 `t-<local_order_id>`。
 29. Order feedback 后续两步已落地到文档：Task1 使用固定 8 lane、Nova SPSC 的 SHM transport，宽结构 `OrderFeedbackEvent` 作为第一版 ABI；Task2 在 Task1 之上实现 Gate private `futures.orders` parser / `OrderFeedbackSession` / Strategy `OnOrderFeedback()` 状态推进。实现顺序要求先完成并提交 Task1，再进入 Task2。
+30. 本次对话收尾前最新功能文档提交为 `15084fc Document order feedback implementation plans`；随后只补交接状态，不新增生产代码。下一轮从 Task1 订单 feedback SHM transport 开始。
 
 ## 新对话第一步
 
@@ -83,7 +84,7 @@ doc/data_reader_config.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；如果继续 Gate 交易架构，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `15084fc Document order feedback implementation plans`，如果继续 Gate 交易架构，
 再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、
 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`
 、`docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md`、`docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md`、
