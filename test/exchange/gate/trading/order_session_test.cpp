@@ -139,6 +139,10 @@ std::string_view LoginSuccessResponse() noexcept {
   return R"({"request_id":"72057594037927937","ack":false,"header":{"status":"200","channel":"futures.login","event":"api"},"data":{"result":{"uid":"1"}}})";
 }
 
+std::string_view LoginSuccessResponseWithoutAck() noexcept {
+  return R"({"header":{"status":"200","channel":"futures.login","event":"api"},"data":{"result":{"uid":"1"}},"request_id":"72057594037927937"})";
+}
+
 std::string_view PlaceAckResponse() noexcept {
   return R"({"request_id":"144115188075855874","ack":true,"header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"req_id":"144115188075855874"}}})";
 }
@@ -177,6 +181,20 @@ TEST(OrderSessionTest, RejectsPlaceBeforeLoginReady) {
   EXPECT_EQ(result.request_sequence, 0U);
   EXPECT_EQ(result.encoded_request_id, 0U);
   EXPECT_TRUE(handler.responses.empty());
+}
+
+TEST(OrderSessionTest, AcceptsGateLoginResponseWithoutAckField) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  ASSERT_EQ(session.Handle(TextView(LoginSuccessResponseWithoutAck())),
+            websocket::DeliveryResult::kAccepted);
+
+  EXPECT_TRUE(session.login_ready());
+  EXPECT_EQ(handler.login_ready_calls, 1);
+  EXPECT_EQ(session.stats().login_accepted, 1U);
+  EXPECT_EQ(session.stats().ignored_messages, 0U);
 }
 
 TEST(OrderSessionTest, InvalidPlaceLocalOrderIdIsRejectedBeforeSend) {
@@ -528,20 +546,6 @@ TEST(OrderSessionTest, LoginResultWithoutUidDoesNotSetReady) {
   EXPECT_FALSE(session.login_ready());
   EXPECT_EQ(session.stats().login_accepted, 0U);
   EXPECT_EQ(session.stats().login_rejected, 1U);
-}
-
-TEST(OrderSessionTest, LoginResponseMissingAckDoesNotSetReady) {
-  RecordingHandler handler;
-  TestOrderSession<RecordingHandler> session(handler);
-
-  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
-  session.Handle(TextView(
-      R"({"request_id":"72057594037927937","header":{"status":"200","channel":"futures.login","event":"api"},"data":{"result":{"uid":"1"}}})"));
-
-  EXPECT_FALSE(session.login_ready());
-  EXPECT_EQ(session.stats().login_accepted, 0U);
-  EXPECT_EQ(session.stats().login_rejected, 0U);
-  EXPECT_EQ(session.stats().ignored_messages, 1U);
 }
 
 TEST(OrderSessionTest, AckWithMismatchedReqIdKeepsInflightAndSkipsHandler) {

@@ -226,7 +226,7 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (!FindSimdjsonObject(root, "data", &data)) {
     return response;
   }
-  if (!response.has_ack) {
+  if (!response.has_ack && response.channel != kFuturesLogin) {
     return response;
   }
 
