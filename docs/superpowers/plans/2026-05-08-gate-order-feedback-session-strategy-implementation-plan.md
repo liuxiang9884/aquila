@@ -234,7 +234,7 @@ Create `tools/gate/order_feedback_session.cpp`。
 - 默认 dry-run 打印 config；
 - `--connect` 后 login + subscribe；
 - `--duration-sec` 控制运行时长；
-- 低频打印 event count / gap epoch / parser stats；
+- 低频打印 event count / `kGap` control event count / parser stats；
 - 不做下单。
 
 运行：
@@ -264,7 +264,7 @@ Extend `test/strategy/strategy_test.cpp` or create `test/strategy/strategy_feedb
 - terminal event notifies session cache forget；
 - rejected event moves order to `kRejected`；
 - unknown local order id increments diagnostics；
-- lane/global gap epoch change sets `feedback_gap_detected`。
+- `OrderFeedbackKind::kGap` event sets `feedback_gap_detected`。
 
 运行：
 
@@ -295,7 +295,7 @@ Modify `strategy/order_types.h`：
 Modify `strategy/strategy.h`：
 
 - `OnOrderFeedback(const OrderFeedbackEvent&)`；
-- `OnFeedbackGap(std::uint64_t lane_gap_epoch, std::uint64_t global_gap_epoch)`；
+- `OnFeedbackGap(const OrderFeedbackEvent&)`，只处理 `OrderFeedbackKind::kGap`；
 - duplicate / stale event diagnostics；
 - terminal idempotency；
 - session cache update / forget hooks。

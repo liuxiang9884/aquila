@@ -183,19 +183,16 @@ cancel 编码仍保留 `text=t-<local_order_id>` fallback。没有办法在 feed
 
 ## Gap Handling
 
-Strategy reader 每轮 poll 前后读取：
-
-- lane `gap_epoch`；
-- header `global_gap_epoch`。
-
-任一 epoch 变化：
+Strategy reader 通过 Task1 SHM reader `Poll()` 消费 `OrderFeedbackEvent`。当 handler 收到
+`OrderFeedbackKind::kGap`：
 
 - Strategy 设置 `feedback_gap_detected = true`；
 - 暂停新开仓；
 - 后续 REST reconcile 任务负责恢复本地订单状态；
 - 现有订单不凭本地猜测强行推进终态。
 
-Task2 只把 gap 状态传进 Strategy 并暴露可测字段，不实现 REST reconcile。
+Task2 只把 gap event 状态传进 Strategy 并暴露可测字段，不实现 REST reconcile。Gate `futures.orders` parser
+不从主生命周期流产生 `kGap`；`kGap` 只来自 Task1 SHM transport control path。
 
 ## 验证边界
 
@@ -206,5 +203,5 @@ Task2 完成后必须能证明：
 - Strategy 可以从 reader drain event 并推进订单状态；
 - accepted 后 exchange order id 被保存并传给 `OrderSession` cache；
 - filled / cancelled 后终态幂等并清理 cache；
-- gap epoch 变化会让 Strategy 进入 gap detected 状态；
+- `OrderFeedbackKind::kGap` event 会让 Strategy 进入 gap detected 状态；
 - live 下单闭环仍需要极小数量 smoke，并且 smoke 结果只能证明协议连通性，不能证明性能。

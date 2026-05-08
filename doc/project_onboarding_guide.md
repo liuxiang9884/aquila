@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版 submit/cancel C++ 主路径和 Strategy 第一版订单框架已落地，`OrderFeedbackSession` event、SHM transport 和 Strategy 状态机的 Task1 / Task2 文档已落地，下一阶段先实现 Task1 订单 feedback SHM transport，再实现 Task2 Gate private orders parser / session / Strategy apply。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版 submit/cancel C++ 主路径、Strategy 第一版订单框架和 Task1 order feedback SHM transport 已落地，下一阶段进入 Task2 Gate private `futures.orders` parser / `OrderFeedbackSession` / Strategy apply。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -42,10 +42,11 @@
 24. `scripts/gate/run_futures_order_smoke.py` 和 `scripts/gate/run_futures_order_smoke_test.py` 已落地；2026-05-07 使用 Gate REST 对 `BTC_USDT`、1 手、5 轮真实 smoke，结果 `5/5 filled_and_closed`，最终 `position size=0`、`pending_orders=0`、`open orders=[]`。这只是 REST smoke，不是 C++ WS `OrderSession` live smoke。
 25. Strategy / Gate 第一版边界已明确：Strategy 负责订单对象、风控位置、状态和执行流程；Gate `OrderSession` 负责从订单 struct 现场编码 place/cancel 请求、correlation 和轻量 response。Strategy benchmark 是 fake session direct-send baseline，不包含真实 WebSocket 或 socket 成本。
 26. `tools/gate/strategy_order.cpp` 已落地为 Strategy + Gate WebSocket 下单工具：CLI 参数类似 REST 下单脚本，默认 dry-run，只有 `--execute` 才连接 `OrderSession` 并实盘发送；登录成功 callback 在 WebSocket 线程内调用 Strategy 下单，避免跨线程直接调用 `OrderSession::PlaceOrder()`。2026-05-08 已用它做最小实盘提交验证：place API ack 可收到，真实订单状态仍需后续 `OrderFeedbackSession` 处理。
-27. Gate `OrderFeedbackSession` 第一版 event 语义已收敛到文档：第一版只以 private `futures.orders` 为生命周期事实源，不接 `futures.usertrades`；已定义 accepted、partial filled、filled、cancelled/terminal finished 和 rejected 的边界。Task1 文档已选择宽结构 `OrderFeedbackEvent` 作为第一版 SHM ABI，tagged union 暂不进入第一版实现。
+27. Gate `OrderFeedbackSession` 第一版 event 语义已收敛到文档：第一版只以 private `futures.orders` 为生命周期事实源，不接 `futures.usertrades`；已定义 accepted、partial filled、filled、cancelled/terminal finished 和 rejected 的边界。Task1 已实现宽结构 `OrderFeedbackEvent` 作为第一版 SHM ABI，并加入 `kGap` control event；tagged union 暂不进入第一版实现。
 28. `local_order_id` 已升级为 `std::uint64_t`，编码为高 8 bit `strategy_id` 加低 56 bit `strategy_order_id`；`core/trading/order_id.h` 提供 `LocalOrderIdCodec`，`OrderPool` 可在构造时接收 `strategy_id`，Gate `text` 仍为 `t-<local_order_id>`。
-29. Order feedback 后续两步已落地到文档：Task1 使用固定 8 lane、Nova SPSC 的 SHM transport，宽结构 `OrderFeedbackEvent` 作为第一版 ABI；Task2 在 Task1 之上实现 Gate private `futures.orders` parser / `OrderFeedbackSession` / Strategy `OnOrderFeedback()` 状态推进。实现顺序要求先完成并提交 Task1，再进入 Task2。
-30. 本次对话收尾前最新功能文档提交为 `15084fc Document order feedback implementation plans`；随后只补交接状态，不新增生产代码。下一轮从 Task1 订单 feedback SHM transport 开始。
+29. Order feedback Task1 SHM transport 已实现：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`OrderFeedbackShmPublisher`、`OrderFeedbackShmReader`、TOML config parser、tests 和 `order_feedback_shm_benchmark` 均已落地；gap 以 `OrderFeedbackKind::kGap` event 投递到 lane，不再通过 shared gap epoch atomic 进入 Strategy。
+30. Task1 第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe；`consumer_run_id` 是唯一 ownership token，`consumer_pid` 只用于诊断，`Claim(..., force_claim=true)` 是显式恢复动作，`Release()` 只有 CAS 当前 run id 成功才清 pid。
+31. 下一轮进入 Task2：在 Task1 transport 之上实现 Gate private `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()` 状态推进。
 
 ## 新对话第一步
 
@@ -84,7 +85,7 @@ doc/data_reader_config.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `15084fc Document order feedback implementation plans`，如果继续 Gate 交易架构，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `15084fc Document order feedback implementation plans`，当前工作区可能包含 Task1 order feedback SHM transport 未提交实现，下一步进入 Task2。如果继续 Gate 交易架构，
 再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、
 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`
 、`docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md`、`docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md`、
@@ -123,10 +124,10 @@ doc/data_reader_config.md
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
 | `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
 | `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` | 继续 Gate `OrderFeedbackSession` 架构和实现时读 | 第一版只使用 `futures.orders` 的订单生命周期 event、quantity/price/role/finish reason 语义、Strategy 状态推进和宽结构 event carrier。 |
-| `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` | 实现 Task1 订单 feedback SHM transport 前读 | 固定 8 lane、Nova SPSC、宽结构 event ABI、consumer claim、lane/global gap 和 drain-only reader 语义。 |
-| `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md` | 执行 Task1 前读 | 按 TDD 实现 `OrderFeedbackEvent`、SHM layout / manager、publisher、reader claim / poll、config、benchmark 和文档同步。 |
+| `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` | 审查或维护 Task1 订单 feedback SHM transport 时读 | 固定 8 lane、Nova SPSC、宽结构 event ABI、`kGap` event 化 gap、显式 reader ownership、无 heartbeat / stale owner 自动判断和 drain-only reader 语义。 |
+| `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md` | 追溯 Task1 实现状态或验证命令时读 | Task1 已实现；记录 `OrderFeedbackEvent`、SHM layout / manager、publisher、reader claim / poll、config、benchmark、测试和当前 benchmark case 名。 |
 | `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` | 实现 Task2 Gate orders feedback parser / session / Strategy apply 前读 | 多进程共享 feedback session、Gate `futures.orders` 到 event 的映射、Strategy 状态机、OrderSession cache 更新和 gap handling。 |
-| `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md` | Task1 提交后执行 Task2 前读 | 按 TDD 实现 Gate orders parser、`OrderFeedbackSession`、config/tool、Strategy `OnOrderFeedback()`、fake integration、benchmark 和 live smoke。 |
+| `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md` | 执行 Task2 前读 | 按 TDD 实现 Gate orders parser、`OrderFeedbackSession`、config/tool、Strategy `OnOrderFeedback()`、fake integration、benchmark 和 live smoke。 |
 | `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md` | 审查 Gate `OrderSession` 第一版实现或追溯任务拆分时读 | TDD 实现任务：types/codecs、login signature/request encoder、submit parser correlation、session、benchmark、handoff/onboarding 更新。当前 Task 1-6 已完成。 |
 | `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` | 追溯 Strategy 订单框架第一版历史边界时读 | Strategy 订单对象、core `OrderPool`、state machine、direct-send fake session benchmark、REST smoke 和文档同步任务拆分；当前实现已被 struct-flow plan 调整。 |
 | `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md` | 继续 Strategy / Gate OrderSession 直接 struct 发单边界时读 | Strategy 直接建单入 `core/trading` 的 `OrderPool` 并发送订单 struct；Gate `OrderSession` 在发送路径完成 place/cancel JSON 序列化；移除 Strategy 侧 Gate wire cache、exchange id 索引、`PrepareOrder()` 和 `SubmitOrder()`。 |
@@ -222,9 +223,14 @@ doc/data_reader_config.md
 | `exchange/gate/trading/order_session.h` | 模板化 `OrderSession<ResponseHandler, WebSocketPolicy, Diagnostics>`，持有 `BasicWebSocketClient`，处理 WS login、place/cancel 发送、response correlation 和同步回调。 |
 | `exchange/gate/trading/order_session_config.h` / `exchange/gate/trading/order_session_config.cpp` | Gate `OrderSession` 启动期 TOML parser；复用通用 WebSocket config，生成 `/v4/ws/<settle>` target，保留 credentials env 名和 `request_map_capacity`。 |
 | `config/order_sessions/gate_order_session.toml` | Gate order session 示例配置；包含 `[log]`、`[order_session]`、`[order_session.credentials]` 和 `[order_session.websocket.*]`。 |
-| `core/trading/order_feedback_event.h` | Task1 计划新增：订单 feedback 宽结构 event ABI，承载 accepted / partial filled / filled / cancelled / rejected。 |
-| `core/trading/order_feedback_shm.h` | Task1 计划新增：固定 8 lane 的订单 feedback SHM channel、publisher、reader claim 和 drain-only poll。 |
-| `config/order_feedback/gate_order_feedback_shm.toml` | Task1 计划新增：订单 feedback SHM 示例配置，固定 `max_strategy_count=8`、`queue_capacity=65536`。 |
+| `core/trading/order_feedback_event.h` | Task1 已实现：订单 feedback 宽结构 event ABI，承载 accepted / partial filled / filled / cancelled / rejected，并加入 `kGap` control event、gap scope / reason / sequence。 |
+| `core/trading/order_feedback_shm.h` | Task1 已实现：固定 8 lane 的订单 feedback SHM channel、publisher、8 lane global gap fanout、pending lane/global gap、reader claim / release 和 drain-only `Poll()`。 |
+| `core/config/order_feedback_shm_config.h` / `core/config/order_feedback_shm_config.cpp` | Task1 已实现：订单 feedback SHM TOML parser，字段为 `shm_name`、`channel_name`、`max_strategy_count`、`queue_capacity`、`create`、`remove_existing`。 |
+| `config/order_feedback/gate_order_feedback_shm.toml` | Task1 已实现：订单 feedback SHM 示例配置，固定 `max_strategy_count=8`、`queue_capacity=65536`，默认 `create=true`、`remove_existing=false`。 |
+| `test/core/trading/order_feedback_event_test.cpp` | Task1 已实现：`OrderFeedbackEvent` ABI、`kGap` 和 route id 编码测试。 |
+| `test/core/trading/order_feedback_shm_test.cpp` | Task1 已实现：SHM layout / manager、publisher route、queue full pending gap、global gap fanout、reader claim / release / poll 测试。 |
+| `test/config/order_feedback_shm_config_test.cpp` | Task1 已实现：订单 feedback SHM config parser 和示例配置测试，明确不含 heartbeat / stale owner 字段。 |
+| `benchmark/core/trading/order_feedback_shm_benchmark.cpp` | Task1 已实现：`PublishThenDrain`、`PollOneWithRefill`、`PublishPollLoop`、`PublishGlobalGapThenDrain` transport benchmark；单操作 case 包含 drain / refill 维护，不写成纯 publish / poll latency 或端到端性能结论。 |
 | `exchange/gate/trading/order_feedback_parser.h` | Task2 计划新增：Gate private `futures.orders` SBE orders message 到 `OrderFeedbackEvent` 的转换。 |
 | `exchange/gate/trading/order_feedback_session.h` | Task2 计划新增：Gate `OrderFeedbackSession`，负责 login / subscribe / parse / publish，不访问 Strategy order。 |
 | `exchange/gate/trading/order_feedback_session_config.h` / `exchange/gate/trading/order_feedback_session_config.cpp` | Task2 计划新增：Gate order feedback session 启动期 TOML parser。 |
@@ -389,13 +395,15 @@ OrderSession 第一版关键结论：
 
 Order feedback Task1 / Task2 关键结论：
 
-- Task1 先做通用订单 feedback SHM transport，不解析 Gate 报文，不更新 Strategy order。
+- Task1 通用订单 feedback SHM transport 已实现，不解析 Gate 报文，不更新 Strategy order；Task2 在其上实现 Gate private `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()`。
 - SHM transport 使用一个 shared memory object、固定 8 lane、每 lane 一个 Nova SPSC queue；`local_order_id` 高 8 bit 直接作为 `strategy_id` 路由，不做 per-strategy channel name map。
-- 第一版选择宽结构 `OrderFeedbackEvent` 作为 SHM ABI；它保持 trivial / standard-layout，承载 `exchange_update_ns` 和本地诊断用 `local_receive_ns`。
-- 正常 publish 热路径只做 `strategy_id` decode、lane 访问和 `TryPush()`；atomic heartbeat / stats 只在低频或异常路径更新。
-- 队列满不覆盖、不阻塞、不影响其他 lane；当前 lane 增加 `gap_epoch`，Strategy 看到 lane/global gap 后进入 reconcile 状态并暂停新开仓。
-- Strategy consumer attach 不能只靠约定；配置检查 `strategy_id < 8`，SHM lane claim 使用 pid / run id / heartbeat 拒绝 duplicate live consumer。
-- Task2 在 Task1 之上实现 Gate private `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()`。`OrderFeedbackSession` 只做 login / subscribe / parse / publish，不访问 Strategy order 或 `OrderPool`。
+- 第一版选择宽结构 `OrderFeedbackEvent` 作为 SHM ABI；它保持 trivial / standard-layout，承载 `exchange_update_ns`、本地诊断用 `local_receive_ns`，并用 `OrderFeedbackKind::kGap` 表达 transport control gap。
+- gap 不再通过 `global_gap_epoch` / `lane_gap_epoch` atomic 进入 Strategy；reader 只通过 `Poll()` 按 FIFO 消费 event，`kGap` 和普通 order feedback 一样交给 handler。
+- `PublishGlobalGap()` 对 8 lane fanout `kGap`；某条 lane queue full 时 publisher 保留 pending gap，后续本地重试。
+- 普通 publish 遇到当前 lane queue full 时不阻塞、不覆盖、不影响其他 lane；只更新当前 lane `queue_full_count` / `dropped_count` 异常计数，并产生 pending lane `kGap` event。
+- reader ownership：`consumer_run_id` 是唯一 ownership token，0 表示 unclaimed；`consumer_pid` 仅诊断；`Claim(..., force_claim=true)` 是显式恢复动作；`Release()` CAS 当前 run id 成功才清 pid。第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe。
+- 不做 shared successful `published_count` / `consumed_count`；成功计数是 publisher / reader 对象本地字段。
+- Task1 config 字段只有 `shm_name`、`channel_name`、`max_strategy_count`、`queue_capacity`、`create`、`remove_existing`；没有 `heartbeat_interval_ms` / `stale_consumer_timeout_ms`。
 - accepted event 到达 Strategy 后，Strategy 保存 `exchange_order_id` 并在同线程通知自己的 `OrderSession` 更新 cancel cache；filled / cancelled terminal event 后清理该 cache。`exchange_order_id` 不是 feedback route key。
 
 ### Strategy 第一版订单框架
@@ -586,6 +594,22 @@ Gate trading tests：
 ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --output-on-failure
 ```
 
+Order feedback SHM Task1 tests / config / benchmark：
+
+```bash
+cmake --build build/debug --target core_order_feedback_event_test core_order_feedback_shm_test order_feedback_shm_config_test -j8
+./build/debug/test/core/trading/core_order_feedback_event_test
+./build/debug/test/core/trading/core_order_feedback_shm_test
+./build/debug/test/config/order_feedback_shm_config_test
+ctest --test-dir build/debug -R '(core_order_feedback|order_feedback_shm_config)' --output-on-failure
+cmake --build build/release --target order_feedback_shm_benchmark -j8
+./build/release/benchmark/core/trading/order_feedback_shm_benchmark --benchmark_filter='PublishThenDrain|PollOneWithRefill|PublishPollLoop|PublishGlobalGapThenDrain' --benchmark_min_time=0.01s
+```
+
+`order_feedback_shm_benchmark` 是 transport benchmark；`PublishThenDrain` / `PollOneWithRefill`
+包含 drain / refill 维护，不能写成纯 publish / poll latency，也不能外推为 Gate parser、Strategy apply
+或端到端性能结论。
+
 Strategy order framework tests：
 
 ```bash
@@ -716,9 +740,9 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 1. 读取 `doc/agent-handoff-gate-trade-architecture.md`。
 2. 读取 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`。
 3. 读取 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`、`docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` 和 `docs/superpowers/plans/2026-05-07-order-session-struct-flow-implementation-plan.md`，用于追溯已完成实现边界和验证命令。
-4. 读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md`。
-5. 先实现并提交 Task1：`OrderFeedbackEvent`、固定 8 lane SHM transport、publisher、reader claim / poll、config、tests 和 benchmark。
-6. Task1 提交后，再读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` 和 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`，实现 Task2：Gate `futures.orders` parser、`OrderFeedbackSession`、Strategy `OnOrderFeedback()`、fake integration、benchmark 和最小 live smoke。
+4. 读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md`，确认 Task1 已实现边界和验证命令。
+5. 读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` 和 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`，开始 Task2：Gate `futures.orders` parser、`OrderFeedbackSession`、Strategy `OnOrderFeedback()`、fake integration、benchmark 和最小 live smoke。
+6. Task2 中把 `OrderFeedbackKind::kGap` 当作 transport control event 处理；Gate parser 不从 `futures.orders` 主生命周期流产生 `kGap`。
 7. Task2 后明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复和人工介入边界。
 8. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验。
 9. 增加端到端 benchmark：覆盖 `Strategy -> OrderSession` 下单请求构建 / 发送、`OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。

@@ -10,6 +10,35 @@
 
 ---
 
+## 当前实现状态
+
+截至 2026-05-08，Task1 已实现。当前工作区入口：
+
+```text
+core/trading/order_feedback_event.h
+core/trading/order_feedback_shm.h
+core/config/order_feedback_shm_config.h
+core/config/order_feedback_shm_config.cpp
+config/order_feedback/gate_order_feedback_shm.toml
+test/core/trading/order_feedback_event_test.cpp
+test/core/trading/order_feedback_shm_test.cpp
+test/config/order_feedback_shm_config_test.cpp
+benchmark/core/trading/order_feedback_shm_benchmark.cpp
+```
+
+实现相对初版计划做了关键简化：
+
+- `OrderFeedbackEvent` 宽结构 ABI 已实现，并增加 `OrderFeedbackKind::kGap` control event。
+- gap 不再通过 `global_gap_epoch` / `lane_gap_epoch` atomic 进入 Strategy；reader 只通过 `Poll()` 消费 event。
+- `PublishGlobalGap()` 对 8 lane fanout `kGap`；lane queue full 时 publisher 保留 pending gap，本地重试。
+- queue full 不阻塞、不覆盖、不影响其他 lane；只更新当前 lane `queue_full_count` / `dropped_count` 异常计数，并产生 pending lane `kGap`。
+- 第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe。
+- reader ownership 只以 `consumer_run_id` 为 token，`consumer_pid` 仅诊断；`force_claim=true` 是显式恢复动作。
+- 不做 shared successful `published_count` / `consumed_count`；成功计数是 publisher / reader 对象本地字段。
+- config 字段只有 `shm_name`、`channel_name`、`max_strategy_count`、`queue_capacity`、`create`、`remove_existing`。
+
+下面的任务清单保留为历史执行记录；新 worker 不应把它当作下一步功能清单重复执行，下一步应进入 Task2。
+
 ## Reference Docs
 
 - `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md`
@@ -35,8 +64,8 @@ Create `test/core/trading/order_feedback_event_test.cpp`。
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_event_test -j8
-./build/debug/test/core/trading/order_feedback_event_test
+cmake --build build/debug --target core_order_feedback_event_test -j8
+./build/debug/test/core/trading/core_order_feedback_event_test
 ```
 
 Expected: target 初始编译失败，因为类型尚未实现。
@@ -63,13 +92,13 @@ Create `core/trading/order_feedback_event.h`。
 
 - [ ] **Step 3: 接入 CMake**
 
-Modify `test/core/trading/CMakeLists.txt` 增加 `order_feedback_event_test`。
+Modify `test/core/trading/CMakeLists.txt` 增加 `core_order_feedback_event_test`。
 
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_event_test -j8
-./build/debug/test/core/trading/order_feedback_event_test
+cmake --build build/debug --target core_order_feedback_event_test -j8
+./build/debug/test/core/trading/core_order_feedback_event_test
 ```
 
 Expected: event ABI tests pass。
@@ -91,8 +120,8 @@ Create `test/core/trading/order_feedback_shm_test.cpp`。
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_shm_test -j8
-./build/debug/test/core/trading/order_feedback_shm_test
+cmake --build build/debug --target core_order_feedback_shm_test -j8
+./build/debug/test/core/trading/core_order_feedback_shm_test
 ```
 
 Expected: target 初始编译失败，因为 SHM 类型尚未实现。
@@ -129,8 +158,8 @@ Create `core/trading/order_feedback_shm.h`。
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_shm_test -j8
-./build/debug/test/core/trading/order_feedback_shm_test
+cmake --build build/debug --target core_order_feedback_shm_test -j8
+./build/debug/test/core/trading/core_order_feedback_shm_test
 ```
 
 Expected: layout and manager tests pass。
@@ -146,7 +175,7 @@ Extend `test/core/trading/order_feedback_shm_test.cpp`。
 - `Publish(event)` 根据 `LocalOrderIdCodec::StrategyId()` 写入对应 lane；
 - lane 0 event 不出现在 lane 1；
 - `strategy_id >= 8` publish 返回失败并增加 invalid route diagnostics；
-- queue full 时返回失败，只更新当前 lane `queue_full_count` / `dropped_count` / `gap_epoch`。
+- queue full 时返回失败，只更新当前 lane `queue_full_count` / `dropped_count`，并保留 pending lane `kGap` event。
 
 - [ ] **Step 2: 实现 publisher**
 
@@ -160,17 +189,19 @@ class OrderFeedbackShmPublisher {
   explicit OrderFeedbackShmPublisher(OrderFeedbackShmChannel& channel) noexcept;
 
   [[nodiscard]] bool Publish(const OrderFeedbackEvent& event) noexcept;
-  void MarkGlobalGap() noexcept;
-  void UpdateHeartbeatNs(std::uint64_t now_ns) noexcept;
-  void FlushStats() noexcept;
+  [[nodiscard]] bool PublishGlobalGap(OrderFeedbackGapReason reason,
+                                      std::int64_t local_receive_ns) noexcept;
+  [[nodiscard]] std::size_t FlushPendingGapEvents() noexcept;
+  [[nodiscard]] std::uint64_t published_count() const noexcept;
 };
 ```
 
 实现约束：
 
 - 正常路径只做 route、`TryPush()`；
-- `published_count` 使用本地普通计数器，低频 `FlushStats()` 写 atomic；
+- `published_count` 是 publisher 对象本地字段，不写 shared header；
 - full path 使用 `fetch_add` 更新异常计数；
+- lane / global gap 以 `OrderFeedbackKind::kGap` event 投递到 lane；
 - 不阻塞等待 queue 空位。
 
 - [ ] **Step 3: 验证 publish tests**
@@ -178,8 +209,8 @@ class OrderFeedbackShmPublisher {
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_shm_test -j8
-./build/debug/test/core/trading/order_feedback_shm_test
+cmake --build build/debug --target core_order_feedback_shm_test -j8
+./build/debug/test/core/trading/core_order_feedback_shm_test
 ```
 
 Expected: publish route and full-path diagnostics tests pass。
@@ -194,11 +225,10 @@ Extend `test/core/trading/order_feedback_shm_test.cpp`。
 
 - `strategy_id >= 8` reader attach 失败；
 - empty lane claim 成功；
-- live pid + fresh heartbeat duplicate claim 失败；
-- dead pid + stale heartbeat reclaim 成功；
-- ambiguous owner 状态 claim 失败。
-
-为测试引入小的 fake owner probe，不在测试中依赖真实系统 pid。
+- duplicate claim 失败；
+- `force_claim=true` 可显式恢复已 claim lane；
+- `consumer_run_id == 0` claim 失败；
+- `Release()` 只有 run id 匹配才清 `consumer_pid`。
 
 - [ ] **Step 2: 新增 poll 测试**
 
@@ -207,8 +237,8 @@ Extend `test/core/trading/order_feedback_shm_test.cpp`。
 - `Poll(max_events)` 按 FIFO 调用 handler；
 - `Poll(0)` 不消费；
 - `Poll(max_events)` 遵守预算；
-- reader 可看到 lane `gap_epoch` 和 header `global_gap_epoch`；
-- `consumed_count` 通过本地计数器低频 flush。
+- reader 通过 `Poll()` 收到 lane / global `kGap` event；
+- `consumed_count` 是 reader 对象本地字段。
 
 - [ ] **Step 3: 实现 reader**
 
@@ -223,15 +253,13 @@ class OrderFeedbackShmReader {
       OrderFeedbackShmChannel& channel,
       std::uint8_t strategy_id,
       std::uint64_t consumer_run_id,
-      std::uint64_t now_ns);
+      bool force_claim = false);
 
   template <typename Handler>
   std::size_t Poll(std::size_t max_events, Handler&& handler) noexcept;
 
-  [[nodiscard]] std::uint64_t lane_gap_epoch() const noexcept;
-  [[nodiscard]] std::uint64_t global_gap_epoch() const noexcept;
-  void UpdateHeartbeatNs(std::uint64_t now_ns) noexcept;
-  void FlushStats() noexcept;
+  [[nodiscard]] std::uint64_t consumed_count() const noexcept;
+  void Release() noexcept;
 };
 ```
 
@@ -240,6 +268,7 @@ class OrderFeedbackShmReader {
 - reader 只读自己的 lane；
 - 不提供 latest 模式；
 - handler 在 strategy 线程执行，不在 transport 内做状态解释；
+- `kGap` 和普通 order feedback 一样进入 handler；
 - claim 失败返回 `Result` error string。
 
 - [ ] **Step 4: 验证 reader tests**
@@ -247,8 +276,8 @@ class OrderFeedbackShmReader {
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_shm_test -j8
-./build/debug/test/core/trading/order_feedback_shm_test
+cmake --build build/debug --target core_order_feedback_shm_test -j8
+./build/debug/test/core/trading/core_order_feedback_shm_test
 ```
 
 Expected: consumer claim and poll tests pass。
@@ -265,8 +294,8 @@ shm_name = "aquila_gate_order_feedback"
 channel_name = "orders"
 max_strategy_count = 8
 queue_capacity = 65536
-heartbeat_interval_ms = 1000
-stale_consumer_timeout_ms = 5000
+create = true
+remove_existing = false
 ```
 
 - [ ] **Step 2: 新增 config parser 测试**
@@ -278,7 +307,8 @@ Create `test/config/order_feedback_shm_config_test.cpp`。
 - 示例配置 load 成功；
 - `max_strategy_count` 只能是 8；
 - `queue_capacity` 只能是 65536；
-- `strategy_id` parser 使用方必须检查 `< 8`。
+- `create` / `remove_existing` 被正确解析；
+- 示例配置不包含 `heartbeat_interval_ms` / `stale_consumer_timeout_ms`。
 
 - [ ] **Step 3: 实现 config parser**
 
@@ -307,9 +337,10 @@ Create `benchmark/core/trading/order_feedback_shm_benchmark.cpp`。
 
 Cases:
 
-- `BM_OrderFeedbackShmPublish`
-- `BM_OrderFeedbackShmPollOne`
+- `BM_OrderFeedbackShmPublishThenDrain`
+- `BM_OrderFeedbackShmPollOneWithRefill`
 - `BM_OrderFeedbackShmPublishPollLoop`
+- `BM_OrderFeedbackShmPublishGlobalGapThenDrain`
 
 Add target in `benchmark/core/trading/CMakeLists.txt`。
 
@@ -322,7 +353,8 @@ cmake --build build/release --target order_feedback_shm_benchmark -j8
 ./build/release/benchmark/core/trading/order_feedback_shm_benchmark --benchmark_min_time=0.01s
 ```
 
-Expected: benchmark runs and prints timing numbers。文档中只记录原始数值，不把结果外推到 Gate parser 或 Strategy 总链路。
+Expected: benchmark runs and prints timing numbers。`PublishThenDrain` / `PollOneWithRefill` 包含 drain / refill
+维护，不能写成纯 publish / poll latency；文档中只记录原始数值，不把结果外推到 Gate parser 或 Strategy 总链路。
 
 ## Task 7: Documentation And Verification
 
@@ -344,23 +376,18 @@ Modify:
 运行：
 
 ```bash
-cmake --build build/debug --target order_feedback_event_test order_feedback_shm_test order_feedback_shm_config_test -j8
-./build/debug/test/core/trading/order_feedback_event_test
-./build/debug/test/core/trading/order_feedback_shm_test
+cmake --build build/debug --target core_order_feedback_event_test core_order_feedback_shm_test order_feedback_shm_config_test -j8
+./build/debug/test/core/trading/core_order_feedback_event_test
+./build/debug/test/core/trading/core_order_feedback_shm_test
 ./build/debug/test/config/order_feedback_shm_config_test
 cmake --build build/release --target order_feedback_shm_benchmark -j8
-./build/release/benchmark/core/trading/order_feedback_shm_benchmark --benchmark_min_time=0.01s
+./build/release/benchmark/core/trading/order_feedback_shm_benchmark --benchmark_filter='PublishThenDrain|PollOneWithRefill|PublishPollLoop|PublishGlobalGapThenDrain' --benchmark_min_time=0.01s
 git diff --check
 ```
 
 Expected: all tests pass, benchmark runs, diff check clean。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit boundary**
 
-Commit message:
-
-```text
-Add order feedback shm transport
-```
-
-Task1 完成后再开始 Task2，避免把 transport ABI 和 Gate parser / Strategy 状态机混入同一提交。
+Task1 完成后再开始 Task2，避免把 transport ABI 和 Gate parser / Strategy 状态机混入同一提交。当前 Task7
+docs sync worker 不提交；集成 worker 按用户指令决定是否提交 Task1 代码。

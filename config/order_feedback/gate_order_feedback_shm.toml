@@ -1,0 +1,7 @@
+[order_feedback_shm]
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+max_strategy_count = 8
+queue_capacity = 65536
+create = true
+remove_existing = false
