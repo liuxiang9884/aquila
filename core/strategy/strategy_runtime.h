@@ -82,6 +82,10 @@ class StrategyRuntime {
     OnBookTicker(ticker);
   }
 
+  void HandleOrderResponseForTest(const OrderResponseEvent& event) noexcept {
+    OnOrderResponse(event);
+  }
+
   void HandleOrderFeedbackForTest(const OrderFeedbackEvent& event) noexcept {
     OnOrderFeedback(event);
   }
@@ -91,6 +95,11 @@ class StrategyRuntime {
 
   void OnBookTicker(const BookTicker& ticker) noexcept {
     user_strategy_->OnBookTicker(ticker, *context_);
+  }
+
+  void OnOrderResponse(const OrderResponseEvent& event) noexcept {
+    order_manager_->OnOrderResponse(event);
+    user_strategy_->OnOrderResponse(event, *context_);
   }
 
   void OnOrderFeedback(const OrderFeedbackEvent& event) noexcept {

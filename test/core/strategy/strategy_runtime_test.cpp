@@ -62,9 +62,11 @@ struct FakeOrderSession {
 
 struct RuntimeStrategyState {
   bool book_ticker_called{false};
+  bool response_called{false};
   bool feedback_called{false};
   std::int64_t last_ticker_id{0};
   std::uint64_t placed_local_order_id{0};
+  OrderStatus observed_response_status{OrderStatus::kCreated};
   OrderStatus observed_feedback_status{OrderStatus::kCreated};
 };
 
@@ -122,6 +124,15 @@ struct FakeUserStrategy {
     }
   }
 
+  void OnOrderResponse(const OrderResponseEvent& event,
+                       ContextT& context) noexcept {
+    state_->response_called = true;
+    const StrategyOrder* order = context.FindOrder(event.local_order_id);
+    if (order != nullptr) {
+      state_->observed_response_status = order->status;
+    }
+  }
+
  private:
   static OrderCreateRequest MakeLimitRequest() noexcept {
     return OrderCreateRequest{.exchange = Exchange::kGate,
@@ -145,6 +156,7 @@ struct ThrowingSessionUserStrategy {
   explicit ThrowingSessionUserStrategy(RuntimeStrategyState*) noexcept {}
 
   void OnBookTicker(const BookTicker&, ContextT&) noexcept {}
+  void OnOrderResponse(const OrderResponseEvent&, ContextT&) noexcept {}
   void OnOrderFeedback(const OrderFeedbackEvent&, ContextT&) noexcept {}
 };
 
@@ -215,6 +227,26 @@ TEST(StrategyRuntimeTest,
 
   EXPECT_TRUE(state.feedback_called);
   EXPECT_EQ(state.observed_feedback_status, OrderStatus::kAccepted);
+}
+
+TEST(StrategyRuntimeTest,
+     ResponseDispatchUpdatesOrderManagerBeforeUserStrategyHook) {
+  RuntimeStrategyState state;
+  auto runtime_result = Runtime::CreateForTest(
+      MakeRuntimeConfig(), [] { return FakeOrderSession{}; }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+  runtime_result.value->HandleBookTickerForTest(MakeBookTicker());
+  ASSERT_NE(state.placed_local_order_id, 0U);
+
+  runtime_result.value->HandleOrderResponseForTest(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = state.placed_local_order_id,
+      .exchange_order_id = 36028827892199865U,
+  });
+
+  EXPECT_TRUE(state.response_called);
+  EXPECT_EQ(state.observed_response_status, OrderStatus::kAccepted);
 }
 
 TEST(StrategyRuntimeTest, FeedbackDisabledDoesNotRequireFeedbackReader) {
