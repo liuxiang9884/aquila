@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -56,16 +55,17 @@ OrderFeedbackShmConfig MakeOpenConfig(
 }
 
 template <typename Mutator>
-void ExpectOpenThrowsAfterHeaderMutation(std::string_view suffix,
-                                         Mutator mutator) {
+void ExpectOpenFailsAfterHeaderMutation(std::string_view suffix,
+                                        Mutator mutator) {
   const OrderFeedbackShmConfig config = MakeCreateConfig(suffix);
   ShmCleanup cleanup(config.shm_name);
 
-  OrderFeedbackShmManager manager(config);
-  mutator(manager.channel().header);
+  auto create_result = OrderFeedbackShmManager::Create(config);
+  ASSERT_TRUE(create_result.ok) << create_result.error;
+  mutator(create_result.value.channel().header);
 
-  EXPECT_THROW(OrderFeedbackShmManager open_manager(MakeOpenConfig(config)),
-               std::runtime_error);
+  auto open_result = OrderFeedbackShmManager::Open(MakeOpenConfig(config));
+  EXPECT_FALSE(open_result.ok);
 }
 
 OrderFeedbackEvent MakeAcceptedEvent(std::uint8_t strategy_id,
@@ -111,8 +111,9 @@ TEST(OrderFeedbackShmTest, CreateInitializesHeaderAndLanes) {
   const OrderFeedbackShmConfig config = MakeCreateConfig("create_init");
   ShmCleanup cleanup(config.shm_name);
 
-  OrderFeedbackShmManager manager(config);
-  const OrderFeedbackShmChannel& channel = manager.channel();
+  auto manager_result = OrderFeedbackShmManager::Create(config);
+  ASSERT_TRUE(manager_result.ok) << manager_result.error;
+  const OrderFeedbackShmChannel& channel = manager_result.value.channel();
 
   EXPECT_EQ(channel.header.magic, kOrderFeedbackShmMagic);
   EXPECT_EQ(channel.header.version, kOrderFeedbackShmVersion);
@@ -139,21 +140,23 @@ TEST(OrderFeedbackShmTest, OpenFindsExistingChannelAndValidatesHeader) {
   const OrderFeedbackShmConfig config = MakeCreateConfig("open_existing");
   ShmCleanup cleanup(config.shm_name);
 
-  OrderFeedbackShmManager create_manager(config);
-  create_manager.channel().header.producer_run_id = 1234;
-  create_manager.channel().lanes[3].header.consumer_run_id.store(
+  auto create_result = OrderFeedbackShmManager::Create(config);
+  ASSERT_TRUE(create_result.ok) << create_result.error;
+  create_result.value.channel().header.producer_run_id = 1234;
+  create_result.value.channel().lanes[3].header.consumer_run_id.store(
       5678, std::memory_order_relaxed);
 
-  OrderFeedbackShmManager open_manager(MakeOpenConfig(config));
+  auto open_result = OrderFeedbackShmManager::Open(MakeOpenConfig(config));
+  ASSERT_TRUE(open_result.ok) << open_result.error;
 
-  EXPECT_EQ(open_manager.channel().header.producer_run_id, 1234U);
-  EXPECT_EQ(open_manager.channel().lanes[3].header.strategy_id, 3U);
-  EXPECT_EQ(open_manager.channel().lanes[3].header.consumer_run_id.load(
+  EXPECT_EQ(open_result.value.channel().header.producer_run_id, 1234U);
+  EXPECT_EQ(open_result.value.channel().lanes[3].header.strategy_id, 3U);
+  EXPECT_EQ(open_result.value.channel().lanes[3].header.consumer_run_id.load(
                 std::memory_order_relaxed),
             5678U);
 }
 
-TEST(OrderFeedbackShmTest, RejectsMissingChannelOnOpen) {
+TEST(OrderFeedbackShmTest, RejectsMissingSharedMemoryOnOpen) {
   const OrderFeedbackShmConfig config{
       .shm_name = UniqueShmName("missing_open"),
       .channel_name = "orders",
@@ -162,55 +165,81 @@ TEST(OrderFeedbackShmTest, RejectsMissingChannelOnOpen) {
   };
   ShmCleanup cleanup(config.shm_name);
 
-  EXPECT_THROW(OrderFeedbackShmManager manager(config), std::runtime_error);
+  auto result = OrderFeedbackShmManager::Open(config);
+  EXPECT_FALSE(result.ok);
+  EXPECT_FALSE(result.error.empty());
+}
+
+TEST(OrderFeedbackShmTest, RejectsMissingChannelOnOpen) {
+  OrderFeedbackShmConfig create_config = MakeCreateConfig("missing_channel");
+  create_config.channel_name = "other_orders";
+  ShmCleanup cleanup(create_config.shm_name);
+  auto create_result = OrderFeedbackShmManager::Create(create_config);
+  ASSERT_TRUE(create_result.ok) << create_result.error;
+
+  OrderFeedbackShmConfig open_config = MakeOpenConfig(create_config);
+  open_config.channel_name = "orders";
+  auto result = OrderFeedbackShmManager::Open(open_config);
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("channel_name not found"), std::string::npos);
 }
 
 TEST(OrderFeedbackShmTest, RejectsInvalidConfig) {
-  EXPECT_THROW(OrderFeedbackShmManager manager(OrderFeedbackShmConfig{
-                   .shm_name = "",
-                   .channel_name = "orders",
-                   .create = true,
-                   .remove_existing = false,
-               }),
-               std::invalid_argument);
+  auto missing_shm_result =
+      OrderFeedbackShmManager::Create(OrderFeedbackShmConfig{
+          .shm_name = "",
+          .channel_name = "orders",
+          .create = true,
+          .remove_existing = false,
+      });
+  EXPECT_FALSE(missing_shm_result.ok);
+  EXPECT_NE(missing_shm_result.error.find("shm_name is required"),
+            std::string::npos);
 
-  EXPECT_THROW(OrderFeedbackShmManager manager(OrderFeedbackShmConfig{
-                   .shm_name = UniqueShmName("empty_channel"),
-                   .channel_name = "",
-                   .create = true,
-                   .remove_existing = false,
-               }),
-               std::invalid_argument);
+  auto empty_channel_result =
+      OrderFeedbackShmManager::Create(OrderFeedbackShmConfig{
+          .shm_name = UniqueShmName("empty_channel"),
+          .channel_name = "",
+          .create = true,
+          .remove_existing = false,
+      });
+  EXPECT_FALSE(empty_channel_result.ok);
+  EXPECT_NE(empty_channel_result.error.find("channel_name is required"),
+            std::string::npos);
 
-  EXPECT_THROW(OrderFeedbackShmManager manager(OrderFeedbackShmConfig{
-                   .shm_name = UniqueShmName("remove_without_create"),
-                   .channel_name = "orders",
-                   .create = false,
-                   .remove_existing = true,
-               }),
-               std::invalid_argument);
+  auto remove_without_create_result =
+      OrderFeedbackShmManager::OpenOrCreate(OrderFeedbackShmConfig{
+          .shm_name = UniqueShmName("remove_without_create"),
+          .channel_name = "orders",
+          .create = false,
+          .remove_existing = true,
+      });
+  EXPECT_FALSE(remove_without_create_result.ok);
+  EXPECT_NE(remove_without_create_result.error.find(
+                "remove_existing requires create=true"),
+            std::string::npos);
 }
 
 TEST(OrderFeedbackShmTest, RejectsHeaderMismatch) {
-  ExpectOpenThrowsAfterHeaderMutation(
+  ExpectOpenFailsAfterHeaderMutation(
       "magic_mismatch",
       [](OrderFeedbackShmHeader& header) { header.magic = 0; });
-  ExpectOpenThrowsAfterHeaderMutation(
+  ExpectOpenFailsAfterHeaderMutation(
       "version_mismatch",
       [](OrderFeedbackShmHeader& header) { header.version = 2; });
-  ExpectOpenThrowsAfterHeaderMutation(
+  ExpectOpenFailsAfterHeaderMutation(
       "abi_size_mismatch", [](OrderFeedbackShmHeader& header) {
         header.abi_size = sizeof(OrderFeedbackEvent) + 1;
       });
-  ExpectOpenThrowsAfterHeaderMutation(
+  ExpectOpenFailsAfterHeaderMutation(
       "event_size_mismatch", [](OrderFeedbackShmHeader& header) {
         header.event_size = sizeof(OrderFeedbackEvent) + 1;
       });
-  ExpectOpenThrowsAfterHeaderMutation(
+  ExpectOpenFailsAfterHeaderMutation(
       "strategy_count_mismatch", [](OrderFeedbackShmHeader& header) {
         header.max_strategy_count = kMaxOrderFeedbackStrategies - 1;
       });
-  ExpectOpenThrowsAfterHeaderMutation(
+  ExpectOpenFailsAfterHeaderMutation(
       "queue_capacity_mismatch", [](OrderFeedbackShmHeader& header) {
         header.queue_capacity = kOrderFeedbackQueueCapacity / 2;
       });
@@ -524,12 +553,12 @@ TEST(OrderFeedbackShmTest, ReaderClaimRejectsZeroRunId) {
   EXPECT_NE(normal.error.find("consumer_run_id"), std::string::npos);
   EXPECT_FALSE(forced.ok);
   EXPECT_NE(forced.error.find("consumer_run_id"), std::string::npos);
-  EXPECT_EQ(channel->lanes[2].header.consumer_pid.load(
-                std::memory_order_relaxed),
-            0U);
-  EXPECT_EQ(channel->lanes[2].header.consumer_run_id.load(
-                std::memory_order_relaxed),
-            0U);
+  EXPECT_EQ(
+      channel->lanes[2].header.consumer_pid.load(std::memory_order_relaxed),
+      0U);
+  EXPECT_EQ(
+      channel->lanes[2].header.consumer_run_id.load(std::memory_order_relaxed),
+      0U);
 }
 
 TEST(OrderFeedbackShmTest, ReaderClaimUsesRunIdAsOwnershipToken) {
@@ -568,8 +597,7 @@ TEST(OrderFeedbackShmTest, ReaderClaimStoresOwnerAndReleaseClearsOwner) {
   EXPECT_EQ(header.consumer_run_id.load(std::memory_order_relaxed), 0U);
 }
 
-TEST(OrderFeedbackShmTest,
-     ReaderClaimRejectsDuplicateLiveOwnerWithoutForce) {
+TEST(OrderFeedbackShmTest, ReaderClaimRejectsDuplicateLiveOwnerWithoutForce) {
   auto channel = MakeChannelForTest();
 
   auto first = OrderFeedbackShmReader::Claim(*channel, 1, 11);
@@ -579,12 +607,12 @@ TEST(OrderFeedbackShmTest,
 
   EXPECT_FALSE(second.ok);
   EXPECT_NE(second.error.find("already claimed"), std::string::npos);
-  EXPECT_EQ(channel->lanes[1].header.consumer_pid.load(
-                std::memory_order_relaxed),
-            static_cast<std::uint64_t>(::getpid()));
-  EXPECT_EQ(channel->lanes[1].header.consumer_run_id.load(
-                std::memory_order_relaxed),
-            11U);
+  EXPECT_EQ(
+      channel->lanes[1].header.consumer_pid.load(std::memory_order_relaxed),
+      static_cast<std::uint64_t>(::getpid()));
+  EXPECT_EQ(
+      channel->lanes[1].header.consumer_run_id.load(std::memory_order_relaxed),
+      11U);
 }
 
 TEST(OrderFeedbackShmTest, ReaderForceClaimOverridesOwner) {
@@ -670,18 +698,20 @@ TEST(OrderFeedbackShmTest, ReaderPollDrainsFifoWithinBudget) {
   std::vector<std::uint64_t> seen;
   seen.reserve(3);
 
-  EXPECT_EQ(result.value.Poll(2, [&](const OrderFeedbackEvent& event) {
-              seen.push_back(event.local_order_id);
-            }),
+  EXPECT_EQ(result.value.Poll(2,
+                              [&](const OrderFeedbackEvent& event) {
+                                seen.push_back(event.local_order_id);
+                              }),
             2U);
   EXPECT_EQ(result.value.consumed_count(), 2U);
   ASSERT_EQ(seen.size(), 2U);
   EXPECT_EQ(seen[0], LocalOrderIdCodec::Encode(2, 1));
   EXPECT_EQ(seen[1], LocalOrderIdCodec::Encode(2, 2));
 
-  EXPECT_EQ(result.value.Poll(2, [&](const OrderFeedbackEvent& event) {
-              seen.push_back(event.local_order_id);
-            }),
+  EXPECT_EQ(result.value.Poll(2,
+                              [&](const OrderFeedbackEvent& event) {
+                                seen.push_back(event.local_order_id);
+                              }),
             1U);
   EXPECT_EQ(result.value.consumed_count(), 3U);
   ASSERT_EQ(seen.size(), 3U);
@@ -696,17 +726,18 @@ TEST(OrderFeedbackShmTest, ReaderPollZeroDoesNotConsume) {
   ASSERT_TRUE(result.ok) << result.error;
 
   bool called = false;
-  EXPECT_EQ(result.value.Poll(0, [&](const OrderFeedbackEvent&) {
-              called = true;
-            }),
-            0U);
+  EXPECT_EQ(
+      result.value.Poll(0, [&](const OrderFeedbackEvent&) { called = true; }),
+      0U);
   EXPECT_FALSE(called);
   EXPECT_EQ(result.value.consumed_count(), 0U);
 
-  EXPECT_EQ(result.value.Poll(1, [&](const OrderFeedbackEvent& event) {
-              called = true;
-              EXPECT_EQ(event.local_order_id, LocalOrderIdCodec::Encode(7, 700));
-            }),
+  EXPECT_EQ(result.value.Poll(1,
+                              [&](const OrderFeedbackEvent& event) {
+                                called = true;
+                                EXPECT_EQ(event.local_order_id,
+                                          LocalOrderIdCodec::Encode(7, 700));
+                              }),
             1U);
   EXPECT_TRUE(called);
   EXPECT_EQ(result.value.consumed_count(), 1U);
@@ -725,14 +756,16 @@ TEST(OrderFeedbackShmTest, ReaderPollDeliversGapEventAsNormalEvent) {
   ASSERT_TRUE(result.ok) << result.error;
 
   bool saw_gap = false;
-  EXPECT_EQ(result.value.Poll(1, [&](const OrderFeedbackEvent& event) {
-              saw_gap = true;
-              EXPECT_EQ(event.kind, OrderFeedbackKind::kGap);
-              EXPECT_EQ(event.gap_scope, OrderFeedbackGapScope::kGlobal);
-              EXPECT_EQ(event.gap_reason,
-                        OrderFeedbackGapReason::kProducerRestart);
-              EXPECT_EQ(event.gap_sequence, 12345U);
-            }),
+  EXPECT_EQ(result.value.Poll(
+                1,
+                [&](const OrderFeedbackEvent& event) {
+                  saw_gap = true;
+                  EXPECT_EQ(event.kind, OrderFeedbackKind::kGap);
+                  EXPECT_EQ(event.gap_scope, OrderFeedbackGapScope::kGlobal);
+                  EXPECT_EQ(event.gap_reason,
+                            OrderFeedbackGapReason::kProducerRestart);
+                  EXPECT_EQ(event.gap_sequence, 12345U);
+                }),
             1U);
 
   EXPECT_TRUE(saw_gap);

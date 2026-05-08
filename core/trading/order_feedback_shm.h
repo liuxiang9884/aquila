@@ -8,7 +8,8 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
+#include <exception>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -81,6 +82,21 @@ static_assert(std::is_trivially_copyable_v<OrderFeedbackShmChannel>);
 
 namespace order_feedback_shm_detail {
 
+template <typename T>
+[[nodiscard]] inline Result<T> Failure(std::string error) {
+  Result<T> result;
+  result.error = std::move(error);
+  return result;
+}
+
+template <typename T>
+[[nodiscard]] inline Result<T> Success(T value) {
+  Result<T> result;
+  result.value = std::move(value);
+  result.ok = true;
+  return result;
+}
+
 [[nodiscard]] inline std::string NormalizeShmName(std::string_view shm_name) {
   if (shm_name.empty()) {
     return {};
@@ -93,24 +109,24 @@ namespace order_feedback_shm_detail {
   return normalized;
 }
 
-[[nodiscard]] inline std::string ValidateChannelName(
+[[nodiscard]] inline Result<std::string> ValidateChannelName(
     std::string_view channel_name) {
   if (channel_name.empty()) {
-    throw std::invalid_argument("order_feedback_shm.channel_name is required");
+    return Failure<std::string>("order_feedback_shm.channel_name is required");
   }
   if (channel_name.size() >= nova::kShmNameSize) {
-    throw std::invalid_argument("order_feedback_shm.channel_name is too long");
+    return Failure<std::string>("order_feedback_shm.channel_name is too long");
   }
-  return std::string(channel_name);
+  return Success<std::string>(std::string(channel_name));
 }
 
-[[nodiscard]] inline std::string PrepareShmName(
+[[nodiscard]] inline Result<std::string> PrepareShmName(
     const OrderFeedbackShmConfig& config) {
   if (config.shm_name.empty()) {
-    throw std::invalid_argument("order_feedback_shm.shm_name is required");
+    return Failure<std::string>("order_feedback_shm.shm_name is required");
   }
   if (!config.create && config.remove_existing) {
-    throw std::invalid_argument(
+    return Failure<std::string>(
         "order_feedback_shm.remove_existing requires create=true");
   }
 
@@ -118,7 +134,7 @@ namespace order_feedback_shm_detail {
   if (config.remove_existing) {
     ::shm_unlink(shm_name.c_str());
   }
-  return shm_name;
+  return Success<std::string>(std::move(shm_name));
 }
 
 inline void InitializeLaneHeaders(OrderFeedbackShmChannel& channel) noexcept {
@@ -127,51 +143,57 @@ inline void InitializeLaneHeaders(OrderFeedbackShmChannel& channel) noexcept {
   }
 }
 
-inline void ValidateChannelHeader(const OrderFeedbackShmChannel& channel) {
+[[nodiscard]] inline const char* ValidateChannelHeader(
+    const OrderFeedbackShmChannel& channel) noexcept {
   if (channel.header.magic != kOrderFeedbackShmMagic) {
-    throw std::runtime_error("order_feedback_shm.magic mismatch");
+    return "order_feedback_shm.magic mismatch";
   }
   if (channel.header.version != kOrderFeedbackShmVersion) {
-    throw std::runtime_error("order_feedback_shm.version mismatch");
+    return "order_feedback_shm.version mismatch";
   }
   if (channel.header.abi_size != sizeof(OrderFeedbackEvent)) {
-    throw std::runtime_error("order_feedback_shm.abi_size mismatch");
+    return "order_feedback_shm.abi_size mismatch";
   }
   if (channel.header.event_size != sizeof(OrderFeedbackEvent)) {
-    throw std::runtime_error("order_feedback_shm.event_size mismatch");
+    return "order_feedback_shm.event_size mismatch";
   }
   if (channel.header.max_strategy_count != kMaxOrderFeedbackStrategies) {
-    throw std::runtime_error("order_feedback_shm.max_strategy_count mismatch");
+    return "order_feedback_shm.max_strategy_count mismatch";
   }
   if (channel.header.queue_capacity != kOrderFeedbackQueueCapacity) {
-    throw std::runtime_error("order_feedback_shm.queue_capacity mismatch");
+    return "order_feedback_shm.queue_capacity mismatch";
   }
+  return nullptr;
 }
 
 }  // namespace order_feedback_shm_detail
 
 class OrderFeedbackShmManager {
  public:
-  explicit OrderFeedbackShmManager(const OrderFeedbackShmConfig& config)
-      : shm_name_(order_feedback_shm_detail::PrepareShmName(config)),
-        channel_name_(order_feedback_shm_detail::ValidateChannelName(
-            config.channel_name)),
-        allocator_(shm_name_.c_str(), StorageSize(), config.create) {
-    if (config.create) {
-      const bool existed = allocator_.IsConstructed(channel_name_);
-      channel_ = allocator_.Construct<OrderFeedbackShmChannel>(channel_name_);
-      if (!existed) {
-        channel_->header.producer_pid = static_cast<std::uint64_t>(::getpid());
-        order_feedback_shm_detail::InitializeLaneHeaders(*channel_);
-      }
-    } else {
-      channel_ = allocator_.Find<OrderFeedbackShmChannel>(channel_name_);
-      if (channel_ == nullptr) {
-        throw std::runtime_error("order_feedback_shm.channel_name not found");
-      }
-    }
-    order_feedback_shm_detail::ValidateChannelHeader(*channel_);
+  [[nodiscard]] static Result<OrderFeedbackShmManager> OpenOrCreate(
+      const OrderFeedbackShmConfig& config) {
+    return Build(config);
   }
+
+  [[nodiscard]] static Result<OrderFeedbackShmManager> Create(
+      const OrderFeedbackShmConfig& config) {
+    OrderFeedbackShmConfig create_config = config;
+    create_config.create = true;
+    return Build(create_config);
+  }
+
+  [[nodiscard]] static Result<OrderFeedbackShmManager> Open(
+      const OrderFeedbackShmConfig& config) {
+    OrderFeedbackShmConfig open_config = config;
+    open_config.create = false;
+    return Build(open_config);
+  }
+
+  OrderFeedbackShmManager(OrderFeedbackShmManager&&) noexcept = default;
+  OrderFeedbackShmManager& operator=(OrderFeedbackShmManager&&) noexcept =
+      default;
+  OrderFeedbackShmManager(const OrderFeedbackShmManager&) = delete;
+  OrderFeedbackShmManager& operator=(const OrderFeedbackShmManager&) = delete;
 
   [[nodiscard]] OrderFeedbackShmChannel& channel() noexcept {
     return *channel_;
@@ -186,9 +208,78 @@ class OrderFeedbackShmManager {
   }
 
  private:
+  template <typename T>
+  friend struct Result;
+
+  OrderFeedbackShmManager() noexcept = default;
+
+  [[nodiscard]] static Result<OrderFeedbackShmManager> Build(
+      const OrderFeedbackShmConfig& config) {
+    try {
+      auto shm_name_result = order_feedback_shm_detail::PrepareShmName(config);
+      if (!shm_name_result.ok) {
+        return order_feedback_shm_detail::Failure<OrderFeedbackShmManager>(
+            std::move(shm_name_result.error));
+      }
+
+      auto channel_name_result =
+          order_feedback_shm_detail::ValidateChannelName(config.channel_name);
+      if (!channel_name_result.ok) {
+        return order_feedback_shm_detail::Failure<OrderFeedbackShmManager>(
+            std::move(channel_name_result.error));
+      }
+
+      OrderFeedbackShmManager manager;
+      manager.shm_name_ = std::move(shm_name_result.value);
+      manager.channel_name_ = std::move(channel_name_result.value);
+      manager.allocator_ = std::make_unique<
+          nova::ShmAllocator<kOrderFeedbackShmAllocatorInstances>>(
+          manager.shm_name_.c_str(), StorageSize(), config.create);
+
+      if (config.create) {
+        const bool existed =
+            manager.allocator_->IsConstructed(manager.channel_name_);
+        manager.channel_ =
+            manager.allocator_->Construct<OrderFeedbackShmChannel>(
+                manager.channel_name_);
+        if (!existed) {
+          manager.channel_->header.producer_pid =
+              static_cast<std::uint64_t>(::getpid());
+          order_feedback_shm_detail::InitializeLaneHeaders(*manager.channel_);
+        }
+      } else {
+        manager.channel_ = manager.allocator_->Find<OrderFeedbackShmChannel>(
+            manager.channel_name_);
+        if (manager.channel_ == nullptr) {
+          return order_feedback_shm_detail::Failure<OrderFeedbackShmManager>(
+              "order_feedback_shm.channel_name not found");
+        }
+      }
+
+      if (const char* error = order_feedback_shm_detail::ValidateChannelHeader(
+              *manager.channel_);
+          error != nullptr) {
+        return order_feedback_shm_detail::Failure<OrderFeedbackShmManager>(
+            error);
+      }
+
+      return order_feedback_shm_detail::Success<OrderFeedbackShmManager>(
+          std::move(manager));
+    } catch (const std::exception& exc) {
+      std::string error{"order_feedback_shm.manager init failed: "};
+      error.append(exc.what());
+      return order_feedback_shm_detail::Failure<OrderFeedbackShmManager>(
+          std::move(error));
+    } catch (...) {
+      return order_feedback_shm_detail::Failure<OrderFeedbackShmManager>(
+          "order_feedback_shm.manager init failed");
+    }
+  }
+
   std::string shm_name_;
   std::string channel_name_;
-  nova::ShmAllocator<kOrderFeedbackShmAllocatorInstances> allocator_;
+  std::unique_ptr<nova::ShmAllocator<kOrderFeedbackShmAllocatorInstances>>
+      allocator_;
   OrderFeedbackShmChannel* channel_{nullptr};
 };
 
@@ -379,8 +470,7 @@ class OrderFeedbackShmReader {
     MoveFrom(other);
   }
 
-  OrderFeedbackShmReader& operator=(
-      OrderFeedbackShmReader&& other) noexcept {
+  OrderFeedbackShmReader& operator=(OrderFeedbackShmReader&& other) noexcept {
     if (this == &other) {
       return *this;
     }
@@ -393,7 +483,9 @@ class OrderFeedbackShmReader {
   OrderFeedbackShmReader(const OrderFeedbackShmReader&) = delete;
   OrderFeedbackShmReader& operator=(const OrderFeedbackShmReader&) = delete;
 
-  ~OrderFeedbackShmReader() { Release(); }
+  ~OrderFeedbackShmReader() {
+    Release();
+  }
 
   void Release() noexcept {
     if (!claimed_ || lane_ == nullptr) {

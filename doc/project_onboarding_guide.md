@@ -44,7 +44,7 @@
 26. `tools/gate/strategy_order.cpp` 已落地为 Strategy + Gate WebSocket 下单工具：CLI 参数类似 REST 下单脚本，默认 dry-run，只有 `--execute` 才连接 `OrderSession` 并实盘发送；登录成功 callback 在 WebSocket 线程内调用 Strategy 下单，避免跨线程直接调用 `OrderSession::PlaceOrder()`。2026-05-08 已用它做最小实盘提交验证：place API ack 可收到，真实订单状态仍需后续 `OrderFeedbackSession` 处理。
 27. Gate `OrderFeedbackSession` 第一版 event 语义已收敛到文档：第一版只以 private `futures.orders` 为生命周期事实源，不接 `futures.usertrades`；已定义 accepted、partial filled、filled、cancelled/terminal finished 和 rejected 的边界。Task1 已实现宽结构 `OrderFeedbackEvent` 作为第一版 SHM ABI，并加入 `kGap` control event；tagged union 暂不进入第一版实现。
 28. `local_order_id` 已升级为 `std::uint64_t`，编码为高 8 bit `strategy_id` 加低 56 bit `strategy_order_id`；`core/trading/order_id.h` 提供 `LocalOrderIdCodec`，`OrderPool` 可在构造时接收 `strategy_id`，Gate `text` 仍为 `t-<local_order_id>`。
-29. Order feedback Task1 SHM transport 已实现：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`OrderFeedbackShmPublisher`、`OrderFeedbackShmReader`、TOML config parser、tests 和 `order_feedback_shm_benchmark` 均已落地；gap 以 `OrderFeedbackKind::kGap` event 投递到 lane，不再通过 shared gap epoch atomic 进入 Strategy。
+29. Order feedback Task1 SHM transport 已实现：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`OrderFeedbackShmPublisher`、`OrderFeedbackShmReader`、TOML config parser、tests 和 `order_feedback_shm_benchmark` 均已落地；gap 以 `OrderFeedbackKind::kGap` event 投递到 lane，不再通过 shared gap epoch atomic 进入 Strategy。`OrderFeedbackShmManager` 初始化 / attach 通过 `Create()` / `Open()` / `OpenOrCreate()` 返回 `Result`，不向上层暴露 throwing constructor。
 30. Task1 第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe；`consumer_run_id` 是唯一 ownership token，`consumer_pid` 只用于诊断，`Claim(..., force_claim=true)` 是显式恢复动作，`Release()` 只有 CAS 当前 run id 成功才清 pid。
 31. 下一轮进入 Task2：在 Task1 transport 之上实现 Gate private `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()` 状态推进。
 
@@ -224,7 +224,7 @@ doc/data_reader_config.md
 | `exchange/gate/trading/order_session_config.h` / `exchange/gate/trading/order_session_config.cpp` | Gate `OrderSession` 启动期 TOML parser；复用通用 WebSocket config，生成 `/v4/ws/<settle>` target，保留 credentials env 名和 `request_map_capacity`。 |
 | `config/order_sessions/gate_order_session.toml` | Gate order session 示例配置；包含 `[log]`、`[order_session]`、`[order_session.credentials]` 和 `[order_session.websocket.*]`。 |
 | `core/trading/order_feedback_event.h` | Task1 已实现：订单 feedback 宽结构 event ABI，承载 accepted / partial filled / filled / cancelled / rejected，并加入 `kGap` control event、gap scope / reason / sequence。 |
-| `core/trading/order_feedback_shm.h` | Task1 已实现：固定 8 lane 的订单 feedback SHM channel、publisher、8 lane global gap fanout、pending lane/global gap、reader claim / release 和 drain-only `Poll()`。 |
+| `core/trading/order_feedback_shm.h` | Task1 已实现：固定 8 lane 的订单 feedback SHM channel、`Result` factory manager、publisher、8 lane global gap fanout、pending lane/global gap、reader claim / release 和 drain-only `Poll()`。 |
 | `core/config/order_feedback_shm_config.h` / `core/config/order_feedback_shm_config.cpp` | Task1 已实现：订单 feedback SHM TOML parser，字段为 `shm_name`、`channel_name`、`max_strategy_count`、`queue_capacity`、`create`、`remove_existing`。 |
 | `config/order_feedback/gate_order_feedback_shm.toml` | Task1 已实现：订单 feedback SHM 示例配置，固定 `max_strategy_count=8`、`queue_capacity=65536`，默认 `create=true`、`remove_existing=false`。 |
 | `test/core/trading/order_feedback_event_test.cpp` | Task1 已实现：`OrderFeedbackEvent` ABI、`kGap` 和 route id 编码测试。 |

@@ -558,9 +558,10 @@ Task1 / Task2 当前实现顺序：
 3. SHM producer 使用 `TryPush()`，正常路径不阻塞、不覆盖、不做 shared successful stats；queue full 时只更新当前 lane `queue_full_count` / `dropped_count`，并产生 pending lane `kGap` event，不影响其他 lane。
 4. `PublishGlobalGap()` 对 8 lane fanout `kGap`；某条 lane full 时 publisher 保留 pending gap，后续本地重试。
 5. Reader ownership 使用 `consumer_run_id` 作为唯一 ownership token，0 表示 unclaimed；`consumer_pid` 仅诊断；`Claim(..., force_claim=true)` 是显式恢复动作；`Release()` CAS 当前 run id 成功才清 pid。第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe。
-6. Task2 下一步实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()`。parser diagnostics 需要覆盖 unsupported `finish_as`、非零 SBE `sizeExponent`、`filled` 但 `left != 0`、invalid text 和 route failure。
-7. accepted event 到达 Strategy 后，由 Strategy 在自己的线程中通知 `OrderSession` 更新 `local_order_id -> exchange_order_id` cancel cache；filled / cancelled terminal event 后清理该 cache。
-8. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 gap detected 状态和暂停新开仓边界。
+6. `OrderFeedbackShmManager` 初始化 / attach 通过 `Create()` / `Open()` / `OpenOrCreate()` 返回 `Result`；Nova allocator 抛出的底层异常只在 cold factory 边界被转换为错误字符串，不向上层暴露 throwing constructor。
+7. Task2 下一步实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()`。parser diagnostics 需要覆盖 unsupported `finish_as`、非零 SBE `sizeExponent`、`filled` 但 `left != 0`、invalid text 和 route failure。
+8. accepted event 到达 Strategy 后，由 Strategy 在自己的线程中通知 `OrderSession` 更新 `local_order_id -> exchange_order_id` cancel cache；filled / cancelled terminal event 后清理该 cache。
+9. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 gap detected 状态和暂停新开仓边界。
 
 Task1 当前实现入口：
 

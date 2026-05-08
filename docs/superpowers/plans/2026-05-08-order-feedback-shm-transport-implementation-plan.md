@@ -36,6 +36,7 @@ benchmark/core/trading/order_feedback_shm_benchmark.cpp
 - reader ownership 只以 `consumer_run_id` 为 token，`consumer_pid` 仅诊断；`force_claim=true` 是显式恢复动作。
 - 不做 shared successful `published_count` / `consumed_count`；成功计数是 publisher / reader 对象本地字段。
 - config 字段只有 `shm_name`、`channel_name`、`max_strategy_count`、`queue_capacity`、`create`、`remove_existing`。
+- `OrderFeedbackShmManager` 通过 `Create()` / `Open()` / `OpenOrCreate()` 返回 `Result`；初始化和 attach 失败不向上层暴露 throwing constructor。
 
 下面的任务清单保留为历史执行记录；新 worker 不应把它当作下一步功能清单重复执行，下一步应进入 Task2。
 

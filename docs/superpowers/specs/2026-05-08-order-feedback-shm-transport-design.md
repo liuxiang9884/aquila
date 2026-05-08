@@ -194,6 +194,18 @@ lane = lanes[strategy_id]
 lane.queue.TryPush(event)
 ```
 
+## Manager 初始化错误模型
+
+`OrderFeedbackShmManager` 是 cold init / attach 边界，不在 publish / poll 热路径中。第一版对上层暴露显式错误返回：
+
+- `OrderFeedbackShmManager::Create(config)`
+- `OrderFeedbackShmManager::Open(config)`
+- `OrderFeedbackShmManager::OpenOrCreate(config)`
+
+这三个接口返回 `Result<OrderFeedbackShmManager>`。config invalid、SHM 打不开、channel not found、header ABI
+mismatch 都通过 `Result.error` 返回。Nova `ShmAllocator` 底层可能抛出的异常只在 factory 内部 catch 并转换为
+`Result.error`，不向 session / tool / Strategy 上层暴露 throwing constructor。
+
 ## Consumer Claim
 
 `strategy_id` 不能依靠君子约定。第一版做两层约束：
