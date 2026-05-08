@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -67,6 +68,33 @@ struct RuntimeStrategyState {
   OrderStatus observed_feedback_status{OrderStatus::kCreated};
 };
 
+struct ThrowingOrderSession {
+  enum class SendStatus : std::uint8_t { kOk, kRejected };
+
+  struct SendResult {
+    SendStatus status{SendStatus::kRejected};
+  };
+
+  explicit ThrowingOrderSession(bool should_throw) {
+    if (should_throw) {
+      throw std::runtime_error("order session construction failed");
+    }
+  }
+
+  ThrowingOrderSession(ThrowingOrderSession&&) noexcept = default;
+  ThrowingOrderSession& operator=(ThrowingOrderSession&&) noexcept = default;
+  ThrowingOrderSession(const ThrowingOrderSession&) = delete;
+  ThrowingOrderSession& operator=(const ThrowingOrderSession&) = delete;
+
+  SendResult PlaceOrder(StrategyOrder&) noexcept {
+    return {.status = SendStatus::kOk};
+  }
+
+  SendResult CancelOrder(StrategyOrder&) noexcept {
+    return {.status = SendStatus::kOk};
+  }
+};
+
 struct FakeUserStrategy {
   using ContextT = StrategyContext<FakeOrderSession>;
 
@@ -111,6 +139,18 @@ struct FakeUserStrategy {
 
 using Runtime = StrategyRuntime<FakeUserStrategy, FakeOrderSession>;
 
+struct ThrowingSessionUserStrategy {
+  using ContextT = StrategyContext<ThrowingOrderSession>;
+
+  explicit ThrowingSessionUserStrategy(RuntimeStrategyState*) noexcept {}
+
+  void OnBookTicker(const BookTicker&, ContextT&) noexcept {}
+  void OnOrderFeedback(const OrderFeedbackEvent&, ContextT&) noexcept {}
+};
+
+using ThrowingSessionRuntime =
+    StrategyRuntime<ThrowingSessionUserStrategy, ThrowingOrderSession>;
+
 config::StrategyConfig MakeRuntimeConfig() {
   config::StrategyConfig config;
   config.name = "runtime_test";
@@ -143,8 +183,8 @@ TEST(StrategyRuntimeTest, RuntimeIsNonCopyableAndNonMovable) {
 
 TEST(StrategyRuntimeTest, DispatchesBookTickerToUserStrategy) {
   RuntimeStrategyState state;
-  auto runtime_result =
-      Runtime::CreateForTest(MakeRuntimeConfig(), FakeOrderSession{}, &state);
+  auto runtime_result = Runtime::CreateForTest(
+      MakeRuntimeConfig(), [] { return FakeOrderSession{}; }, &state);
   ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
   ASSERT_NE(runtime_result.value, nullptr);
 
@@ -159,8 +199,8 @@ TEST(StrategyRuntimeTest, DispatchesBookTickerToUserStrategy) {
 TEST(StrategyRuntimeTest,
      FeedbackDispatchUpdatesOrderManagerBeforeUserStrategyHook) {
   RuntimeStrategyState state;
-  auto runtime_result =
-      Runtime::CreateForTest(MakeRuntimeConfig(), FakeOrderSession{}, &state);
+  auto runtime_result = Runtime::CreateForTest(
+      MakeRuntimeConfig(), [] { return FakeOrderSession{}; }, &state);
   ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
   ASSERT_NE(runtime_result.value, nullptr);
   runtime_result.value->HandleBookTickerForTest(MakeBookTicker());
@@ -184,8 +224,8 @@ TEST(StrategyRuntimeTest, FeedbackDisabledDoesNotRequireFeedbackReader) {
   config.feedback.shm_name.clear();
   config.feedback.channel_name.clear();
 
-  auto runtime_result =
-      Runtime::CreateForTest(std::move(config), FakeOrderSession{}, &state);
+  auto runtime_result = Runtime::CreateForTest(
+      std::move(config), [] { return FakeOrderSession{}; }, &state);
 
   ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
   EXPECT_NE(runtime_result.value, nullptr);
@@ -196,11 +236,22 @@ TEST(StrategyRuntimeTest, RejectsZeroOrderCapacity) {
   config::StrategyConfig config = MakeRuntimeConfig();
   config.order_capacity = 0;
 
-  auto runtime_result =
-      Runtime::CreateForTest(std::move(config), FakeOrderSession{}, &state);
+  auto runtime_result = Runtime::CreateForTest(
+      std::move(config), [] { return FakeOrderSession{}; }, &state);
 
   EXPECT_FALSE(runtime_result.ok);
   EXPECT_EQ(runtime_result.error, "strategy.order_capacity must be positive");
+  EXPECT_EQ(runtime_result.value, nullptr);
+}
+
+TEST(StrategyRuntimeTest, OrderSessionConstructionFailureReturnsResultError) {
+  RuntimeStrategyState state;
+
+  auto runtime_result = ThrowingSessionRuntime::CreateForTest(
+      MakeRuntimeConfig(), [] { return ThrowingOrderSession(true); }, &state);
+
+  EXPECT_FALSE(runtime_result.ok);
+  EXPECT_EQ(runtime_result.error, "order session construction failed");
   EXPECT_EQ(runtime_result.value, nullptr);
 }
 

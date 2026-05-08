@@ -30,9 +30,10 @@ class StrategyRuntime {
   StrategyRuntime(StrategyRuntime&&) = delete;
   StrategyRuntime& operator=(StrategyRuntime&&) = delete;
 
-  template <typename... UserStrategyArgs>
+  template <typename OrderSessionFactoryT, typename... UserStrategyArgs>
   static Result<std::unique_ptr<StrategyRuntime>> CreateForTest(
-      config::StrategyConfig config, OrderSessionT order_session,
+      config::StrategyConfig config,
+      OrderSessionFactoryT&& order_session_factory,
       UserStrategyArgs&&... user_strategy_args) noexcept {
     Result<std::unique_ptr<StrategyRuntime>> result;
     if (config.order_capacity == 0) {
@@ -53,7 +54,8 @@ class StrategyRuntime {
 
     try {
       runtime->config_ = std::move(config);
-      runtime->order_session_.emplace(std::move(order_session));
+      runtime->order_session_.emplace(
+          std::forward<OrderSessionFactoryT>(order_session_factory)());
       runtime->order_manager_.emplace(*runtime->order_session_, order_capacity,
                                       strategy_id);
       runtime->context_.emplace(*runtime->order_manager_);
