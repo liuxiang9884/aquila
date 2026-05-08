@@ -316,6 +316,21 @@ TEST(OrderSessionTest, ExplicitForgetClearsCachedExchangeOrderId) {
   EXPECT_FALSE(session.forget_exchange_order_id_for_local_order(123));
 }
 
+TEST(OrderSessionTest, ExplicitFeedbackCacheApiUpdatesAndForgetsExchangeId) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  session.CacheExchangeOrderId(123, 36028827892199865U);
+  session.CacheExchangeOrderId(123, 36028827892199866U);
+
+  EXPECT_EQ(session.exchange_order_id_for_local_order(123), 36028827892199866U);
+
+  session.ForgetExchangeOrderId(123);
+
+  EXPECT_EQ(session.exchange_order_id_for_local_order(123), 0U);
+}
+
 TEST(OrderSessionTest, CancelUsesExchangeOrderIdPath) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);

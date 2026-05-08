@@ -1,0 +1,518 @@
+#ifndef AQUILA_EXCHANGE_GATE_TRADING_ORDER_FEEDBACK_PARSER_H_
+#define AQUILA_EXCHANGE_GATE_TRADING_ORDER_FEEDBACK_PARSER_H_
+
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+#include <sbepp/sbepp.hpp>
+
+#include "core/trading/order_feedback_event.h"
+#include "core/trading/order_id.h"
+#include "exchange/gate/sbe/generated/gate/messages/orders.hpp"
+#include "exchange/gate/sbe/generated/gate/types/Event.hpp"
+#include "exchange/gate/sbe/message_dispatcher.h"
+#include "exchange/gate/trading/order_codecs.h"
+
+namespace aquila::gate {
+
+enum class OrderFeedbackParseStatus : std::uint8_t {
+  kOk = 0,
+  kNeedMore,
+  kUnsupportedSchema,
+  kUnsupportedSchemaVersion,
+  kUnsupportedTemplate,
+  kUnexpectedBlockLength,
+  kUnexpectedEvent,
+  kMalformedPayload,
+};
+
+struct OrderFeedbackParserStats {
+  std::uint64_t messages_seen{0};
+  std::uint64_t messages_parsed{0};
+  std::uint64_t orders_seen{0};
+  std::uint64_t events_emitted{0};
+  std::uint64_t dropped_events{0};
+
+  std::uint64_t need_more_count{0};
+  std::uint64_t unsupported_schema_count{0};
+  std::uint64_t unsupported_schema_version_count{0};
+  std::uint64_t unsupported_template_count{0};
+  std::uint64_t unexpected_block_length_count{0};
+  std::uint64_t unexpected_event_count{0};
+  std::uint64_t malformed_payload_count{0};
+
+  std::uint64_t invalid_text_count{0};
+  std::uint64_t invalid_route_count{0};
+  std::uint64_t unsupported_size_exponent_count{0};
+  std::uint64_t unsupported_filled_left_count{0};
+  std::uint64_t unsupported_finish_as_count{0};
+  std::uint64_t unsupported_price_exponent_count{0};
+  std::uint64_t invalid_quantity_count{0};
+};
+
+struct OrderFeedbackParseResult {
+  OrderFeedbackParseStatus status{OrderFeedbackParseStatus::kOk};
+  std::uint16_t orders_seen{0};
+  std::uint16_t events_emitted{0};
+};
+
+namespace detail {
+
+inline constexpr std::uint8_t kOrderFeedbackMaxStrategyCount = 8;
+inline constexpr std::uint16_t kOrdersMessageBlockLength =
+    ::sbepp::message_traits<::gate::schema::messages::orders>::block_length();
+inline constexpr std::uint16_t kOrdersResultBlockLength = ::sbepp::group_traits<
+    ::gate::schema::messages::orders::result>::block_length();
+inline constexpr std::size_t kOrdersGroupHeaderBytes = 4;
+inline constexpr std::size_t kOrdersMinPayloadBytes =
+    kSbeMessageHeaderBytes + kOrdersMessageBlockLength +
+    kOrdersGroupHeaderBytes;
+static_assert(kOrdersMessageBlockLength == 9);
+static_assert(kOrdersResultBlockLength == 156);
+
+template <typename T>
+inline bool ReadLittleEndian(std::string_view payload, std::size_t offset,
+                             T* out) noexcept {
+  static_assert(std::is_integral_v<T>);
+  assert(out != nullptr);
+  if (offset > payload.size() || payload.size() - offset < sizeof(T)) {
+    return false;
+  }
+  std::memcpy(out, payload.data() + offset, sizeof(T));
+  return true;
+}
+
+inline bool ReadVarString8(std::string_view payload, std::size_t* offset,
+                           std::string_view* out) noexcept {
+  assert(offset != nullptr);
+  assert(out != nullptr);
+  if (*offset >= payload.size()) {
+    return false;
+  }
+
+  const std::size_t length =
+      static_cast<unsigned char>(payload.data()[(*offset)++]);
+  if (payload.size() - *offset < length) {
+    return false;
+  }
+
+  *out = payload.substr(*offset, length);
+  *offset += length;
+  return true;
+}
+
+inline bool TryMicrosToNanos(std::int64_t micros,
+                             std::int64_t* nanos) noexcept {
+  assert(nanos != nullptr);
+  if (micros > std::numeric_limits<std::int64_t>::max() / 1000 ||
+      micros < std::numeric_limits<std::int64_t>::min() / 1000) {
+    return false;
+  }
+  *nanos = micros * 1000;
+  return true;
+}
+
+inline bool TryAbsInt64(std::int64_t value, std::int64_t* out) noexcept {
+  assert(out != nullptr);
+  if (value == std::numeric_limits<std::int64_t>::min()) {
+    return false;
+  }
+  *out = value < 0 ? -value : value;
+  return true;
+}
+
+inline bool IsSupportedDecimalExponent(std::int8_t exponent) noexcept {
+  return exponent >= -10 && exponent <= 10;
+}
+
+inline double DecimalExponentScale(std::int8_t exponent) noexcept {
+  static constexpr double kNegativePowersOfTen[] = {
+      1.0,      0.1,       0.01,       0.001,       0.0001,       0.00001,
+      0.000001, 0.0000001, 0.00000001, 0.000000001, 0.0000000001,
+  };
+  static constexpr double kPositivePowersOfTen[] = {
+      1.0,
+      10.0,
+      100.0,
+      1'000.0,
+      10'000.0,
+      100'000.0,
+      1'000'000.0,
+      10'000'000.0,
+      100'000'000.0,
+      1'000'000'000.0,
+      10'000'000'000.0,
+  };
+
+  assert(IsSupportedDecimalExponent(exponent));
+  const int exponent_value = exponent;
+  if (exponent_value <= 0) {
+    return kNegativePowersOfTen[-exponent_value];
+  }
+  return kPositivePowersOfTen[exponent_value];
+}
+
+inline OrderRole ParseOrderRole(std::string_view role) noexcept {
+  if (role == std::string_view("maker")) {
+    return OrderRole::kMaker;
+  }
+  if (role == std::string_view("taker")) {
+    return OrderRole::kTaker;
+  }
+  return OrderRole::kNone;
+}
+
+inline bool ParseTerminalFinishReason(std::string_view finish_as,
+                                      OrderFinishReason* reason) noexcept {
+  assert(reason != nullptr);
+  if (finish_as == std::string_view("cancelled")) {
+    *reason = OrderFinishReason::kManualCancelled;
+    return true;
+  }
+  if (finish_as == std::string_view("ioc")) {
+    *reason = OrderFinishReason::kImmediateOrCancel;
+    return true;
+  }
+  if (finish_as == std::string_view("reduce_only")) {
+    *reason = OrderFinishReason::kReduceOnly;
+    return true;
+  }
+  if (finish_as == std::string_view("reduce_out")) {
+    *reason = OrderFinishReason::kReduceOut;
+    return true;
+  }
+  if (finish_as == std::string_view("stp")) {
+    *reason = OrderFinishReason::kSelfTradePrevention;
+    return true;
+  }
+  if (finish_as == std::string_view("liquidated")) {
+    *reason = OrderFinishReason::kLiquidated;
+    return true;
+  }
+  if (finish_as == std::string_view("auto_deleveraging")) {
+    *reason = OrderFinishReason::kAutoDeleveraging;
+    return true;
+  }
+  if (finish_as == std::string_view("position_close")) {
+    *reason = OrderFinishReason::kPositionClose;
+    return true;
+  }
+  return false;
+}
+
+struct RawOrderFeedbackUpdate {
+  std::uint64_t exchange_order_id{0};
+  std::int8_t size_exponent{0};
+  std::int64_t left_mantissa{0};
+  std::int64_t size_mantissa{0};
+  std::int64_t update_time_us{0};
+  std::int8_t price_exponent{0};
+  std::int64_t fill_price_mantissa{0};
+  std::string_view role{};
+  std::string_view text{};
+  std::string_view finish_as{};
+};
+
+inline bool ReadRawOrderFeedbackUpdate(std::string_view payload,
+                                       std::size_t* offset,
+                                       RawOrderFeedbackUpdate* out) noexcept {
+  assert(offset != nullptr);
+  assert(out != nullptr);
+  if (*offset > payload.size() ||
+      payload.size() - *offset < kOrdersResultBlockLength) {
+    return false;
+  }
+
+  const std::size_t fixed_offset = *offset;
+  if (!ReadLittleEndian<std::uint64_t>(payload, fixed_offset + 8,
+                                       &out->exchange_order_id) ||
+      !ReadLittleEndian<std::int8_t>(payload, fixed_offset + 16,
+                                     &out->size_exponent) ||
+      !ReadLittleEndian<std::int64_t>(payload, fixed_offset + 25,
+                                      &out->left_mantissa) ||
+      !ReadLittleEndian<std::int64_t>(payload, fixed_offset + 33,
+                                      &out->size_mantissa) ||
+      !ReadLittleEndian<std::int64_t>(payload, fixed_offset + 66,
+                                      &out->update_time_us) ||
+      !ReadLittleEndian<std::int8_t>(payload, fixed_offset + 87,
+                                     &out->price_exponent) ||
+      !ReadLittleEndian<std::int64_t>(payload, fixed_offset + 88,
+                                      &out->fill_price_mantissa)) {
+    return false;
+  }
+  *offset += kOrdersResultBlockLength;
+
+  std::string_view ignored;
+  return ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &out->role) &&
+         ReadVarString8(payload, offset, &out->text) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &out->finish_as) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, &ignored);
+}
+
+inline void CountDroppedEvent(OrderFeedbackParserStats& stats) noexcept {
+  ++stats.dropped_events;
+}
+
+template <typename EventSink>
+inline void EmitOrderFeedbackEvent(OrderFeedbackEvent& event,
+                                   OrderFeedbackParserStats& stats,
+                                   OrderFeedbackParseResult& result,
+                                   EventSink&& sink) noexcept {
+  std::forward<EventSink>(sink)(event);
+  ++stats.events_emitted;
+  ++result.events_emitted;
+}
+
+template <typename EventSink>
+inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
+                                          std::int64_t local_receive_ns,
+                                          OrderFeedbackParserStats& stats,
+                                          OrderFeedbackParseResult& result,
+                                          EventSink&& sink) noexcept {
+  const ParsedOrderText parsed_text = OrderTextCodec::Parse(raw.text);
+  if (!parsed_text.ok) {
+    ++stats.invalid_text_count;
+    CountDroppedEvent(stats);
+    return;
+  }
+
+  if (LocalOrderIdCodec::StrategyId(parsed_text.local_order_id) >=
+      kOrderFeedbackMaxStrategyCount) {
+    ++stats.invalid_route_count;
+    CountDroppedEvent(stats);
+    return;
+  }
+
+  if (raw.size_exponent != 0) {
+    ++stats.unsupported_size_exponent_count;
+    CountDroppedEvent(stats);
+    return;
+  }
+
+  std::int64_t size_quantity = 0;
+  std::int64_t left_quantity = 0;
+  if (!TryAbsInt64(raw.size_mantissa, &size_quantity) ||
+      !TryAbsInt64(raw.left_mantissa, &left_quantity) ||
+      left_quantity > size_quantity) {
+    ++stats.invalid_quantity_count;
+    CountDroppedEvent(stats);
+    return;
+  }
+
+  std::int64_t exchange_update_ns = 0;
+  if (!TryMicrosToNanos(raw.update_time_us, &exchange_update_ns)) {
+    ++stats.malformed_payload_count;
+    CountDroppedEvent(stats);
+    return;
+  }
+
+  if (!IsSupportedDecimalExponent(raw.price_exponent)) {
+    ++stats.unsupported_price_exponent_count;
+    CountDroppedEvent(stats);
+    return;
+  }
+
+  const std::int64_t cumulative_filled_quantity = size_quantity - left_quantity;
+  const double fill_price = static_cast<double>(raw.fill_price_mantissa) *
+                            DecimalExponentScale(raw.price_exponent);
+
+  OrderFeedbackEvent event{};
+  event.local_order_id = parsed_text.local_order_id;
+  event.exchange_update_ns = exchange_update_ns;
+  event.local_receive_ns = local_receive_ns;
+  event.cumulative_filled_quantity = cumulative_filled_quantity;
+  event.left_quantity = left_quantity;
+  event.fill_price = fill_price;
+
+  if (raw.finish_as == std::string_view("_new")) {
+    event.kind = OrderFeedbackKind::kAccepted;
+    event.exchange_order_id = raw.exchange_order_id;
+    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    return;
+  }
+
+  if (raw.finish_as == std::string_view("_update")) {
+    if (left_quantity <= 0) {
+      ++stats.unsupported_finish_as_count;
+      CountDroppedEvent(stats);
+      return;
+    }
+    event.kind = OrderFeedbackKind::kPartialFilled;
+    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    return;
+  }
+
+  if (raw.finish_as == std::string_view("filled")) {
+    if (left_quantity != 0) {
+      ++stats.unsupported_filled_left_count;
+      CountDroppedEvent(stats);
+      return;
+    }
+    event.kind = OrderFeedbackKind::kFilled;
+    event.role = ParseOrderRole(raw.role);
+    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    return;
+  }
+
+  OrderFinishReason reason = OrderFinishReason::kUnknown;
+  if (ParseTerminalFinishReason(raw.finish_as, &reason)) {
+    event.kind = OrderFeedbackKind::kCancelled;
+    event.cancelled_quantity = left_quantity;
+    event.finish_reason = reason;
+    EmitOrderFeedbackEvent(event, stats, result, std::forward<EventSink>(sink));
+    return;
+  }
+
+  ++stats.unsupported_finish_as_count;
+  CountDroppedEvent(stats);
+}
+
+inline OrderFeedbackParseStatus MapDispatchStatus(
+    SbeDispatchStatus status) noexcept {
+  switch (status) {
+    case SbeDispatchStatus::kReady:
+      return OrderFeedbackParseStatus::kOk;
+    case SbeDispatchStatus::kNeedMore:
+      return OrderFeedbackParseStatus::kNeedMore;
+    case SbeDispatchStatus::kUnsupportedSchema:
+      return OrderFeedbackParseStatus::kUnsupportedSchema;
+    case SbeDispatchStatus::kUnsupportedSchemaVersion:
+      return OrderFeedbackParseStatus::kUnsupportedSchemaVersion;
+    case SbeDispatchStatus::kUnsupportedTemplate:
+      return OrderFeedbackParseStatus::kUnsupportedTemplate;
+  }
+  return OrderFeedbackParseStatus::kMalformedPayload;
+}
+
+inline void CountDispatchFailure(OrderFeedbackParseStatus status,
+                                 OrderFeedbackParserStats& stats) noexcept {
+  switch (status) {
+    case OrderFeedbackParseStatus::kNeedMore:
+      ++stats.need_more_count;
+      return;
+    case OrderFeedbackParseStatus::kUnsupportedSchema:
+      ++stats.unsupported_schema_count;
+      return;
+    case OrderFeedbackParseStatus::kUnsupportedSchemaVersion:
+      ++stats.unsupported_schema_version_count;
+      return;
+    case OrderFeedbackParseStatus::kUnsupportedTemplate:
+      ++stats.unsupported_template_count;
+      return;
+    case OrderFeedbackParseStatus::kOk:
+    case OrderFeedbackParseStatus::kUnexpectedBlockLength:
+    case OrderFeedbackParseStatus::kUnexpectedEvent:
+    case OrderFeedbackParseStatus::kMalformedPayload:
+      return;
+  }
+}
+
+}  // namespace detail
+
+template <typename EventSink>
+inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
+    std::string_view payload, std::int64_t local_receive_ns,
+    OrderFeedbackParserStats& stats, EventSink&& sink) noexcept {
+  ++stats.messages_seen;
+
+  OrderFeedbackParseResult result{};
+  const SbeDispatchResult dispatch = DispatchSbeMessage(payload);
+  if (dispatch.status != SbeDispatchStatus::kReady ||
+      dispatch.message_type != GateSbeMessageType::kOrders) {
+    result.status = dispatch.status == SbeDispatchStatus::kReady
+                        ? OrderFeedbackParseStatus::kUnsupportedTemplate
+                        : detail::MapDispatchStatus(dispatch.status);
+    detail::CountDispatchFailure(result.status, stats);
+    return result;
+  }
+
+  if (dispatch.header.block_length != detail::kOrdersMessageBlockLength ||
+      payload.size() < detail::kOrdersMinPayloadBytes) {
+    result.status = payload.size() < detail::kOrdersMinPayloadBytes
+                        ? OrderFeedbackParseStatus::kNeedMore
+                        : OrderFeedbackParseStatus::kUnexpectedBlockLength;
+    if (result.status == OrderFeedbackParseStatus::kNeedMore) {
+      ++stats.need_more_count;
+    } else {
+      ++stats.unexpected_block_length_count;
+    }
+    return result;
+  }
+
+  std::int8_t event_type = 0;
+  if (!detail::ReadLittleEndian<std::int8_t>(
+          payload, kSbeMessageHeaderBytes + sizeof(std::int64_t),
+          &event_type)) {
+    result.status = OrderFeedbackParseStatus::kNeedMore;
+    ++stats.need_more_count;
+    return result;
+  }
+  if (event_type != static_cast<std::int8_t>(::gate::types::Event::Update)) {
+    result.status = OrderFeedbackParseStatus::kUnexpectedEvent;
+    ++stats.unexpected_event_count;
+    return result;
+  }
+
+  std::size_t offset =
+      kSbeMessageHeaderBytes + detail::kOrdersMessageBlockLength;
+  std::uint16_t result_block_length = 0;
+  std::uint16_t result_count = 0;
+  if (!detail::ReadLittleEndian<std::uint16_t>(payload, offset,
+                                               &result_block_length) ||
+      !detail::ReadLittleEndian<std::uint16_t>(
+          payload, offset + sizeof(std::uint16_t), &result_count)) {
+    result.status = OrderFeedbackParseStatus::kNeedMore;
+    ++stats.need_more_count;
+    return result;
+  }
+  offset += detail::kOrdersGroupHeaderBytes;
+
+  if (result_block_length != detail::kOrdersResultBlockLength) {
+    result.status = OrderFeedbackParseStatus::kUnexpectedBlockLength;
+    ++stats.unexpected_block_length_count;
+    return result;
+  }
+
+  for (std::uint16_t i = 0; i < result_count; ++i) {
+    detail::RawOrderFeedbackUpdate raw{};
+    if (!detail::ReadRawOrderFeedbackUpdate(payload, &offset, &raw)) {
+      result.status = OrderFeedbackParseStatus::kMalformedPayload;
+      ++stats.malformed_payload_count;
+      return result;
+    }
+
+    ++stats.orders_seen;
+    ++result.orders_seen;
+    detail::ConvertRawOrderFeedbackUpdate(raw, local_receive_ns, stats, result,
+                                          std::forward<EventSink>(sink));
+  }
+
+  std::string_view channel;
+  if (!detail::ReadVarString8(payload, &offset, &channel)) {
+    result.status = OrderFeedbackParseStatus::kMalformedPayload;
+    ++stats.malformed_payload_count;
+    return result;
+  }
+
+  ++stats.messages_parsed;
+  return result;
+}
+
+}  // namespace aquila::gate
+
+#endif  // AQUILA_EXCHANGE_GATE_TRADING_ORDER_FEEDBACK_PARSER_H_

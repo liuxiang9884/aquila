@@ -8,6 +8,8 @@
 
 **Tech Stack:** C++20、CMake、GoogleTest、Google Benchmark、simdjson、Gate SBE generated headers、Nova SHM SPSC、existing `aquila::gate::OrderSession`。
 
+**Implementation status (2026-05-08):** Task2 parser、`OrderFeedbackSession`、config/tool、Strategy feedback apply、SHM fake integration 和 parser/session benchmark 已实现并验证；最小真实下单 live smoke 尚未执行，下一步是 REST reconcile、account / position feedback 和小额 accepted / cancel lifecycle 验证。当前 Task1 gap fanout 接口为 `PublishGlobalGap(...)`。
+
 ---
 
 ## Dependencies
@@ -81,7 +83,7 @@ Create:
 - 不分配动态内存；
 - 不把 Gate string 字段保存到 event；
 - malformed 单条 update 计数并丢弃；
-- session 级不可恢复错误由 session 决定是否 `MarkGlobalGap()`。
+- session 级不可恢复错误由 session 决定是否 `PublishGlobalGap(...)`。
 
 - [ ] **Step 3: 接入 CMake 并验证**
 
@@ -146,7 +148,7 @@ class OrderFeedbackSession {
 - JSON control response parse；
 - SBE binary dispatch to orders parser；
 - successful parse -> `publisher.Publish(event)`；
-- disconnect / reconnect unknown gap -> `publisher.MarkGlobalGap()`。
+- disconnect / reconnect unknown gap -> `publisher.PublishGlobalGap(...)`。
 
 约束：
 
@@ -325,7 +327,7 @@ Expected: Strategy feedback apply tests pass。
 
 - [ ] **Step 1: 新增 fake integration test**
 
-Create `test/exchange/gate/trading/order_feedback_integration_test.cpp`。
+Implemented as `test/strategy/strategy_order_feedback_shm_integration_test.cpp`。
 
 流程：
 
@@ -342,27 +344,27 @@ Create `test/exchange/gate/trading/order_feedback_integration_test.cpp`。
 运行：
 
 ```bash
-cmake --build build/debug --target gate_order_feedback_integration_test -j8
-./build/debug/test/exchange/gate/trading/gate_order_feedback_integration_test
+cmake --build build/debug --target strategy_order_feedback_shm_integration_test -j8
+./build/debug/test/strategy/strategy_order_feedback_shm_integration_test
 ```
 
 Expected: fake end-to-end lifecycle pass。
 
 - [ ] **Step 2: benchmark parse + publish**
 
-Create `benchmark/exchange/gate/trading/order_feedback_session_benchmark.cpp`。
+Implemented as `benchmark/exchange/gate/trading/order_feedback_parser_benchmark.cpp`。
 
 Cases:
 
-- `BM_GateOrdersParseAccepted`
-- `BM_GateOrdersParsePublish`
-- `BM_StrategyApplyOrderFeedback`
+- `BM_GateOrderFeedbackParserOneOrder`
+- `BM_GateOrderFeedbackSessionBinaryToCountingPublisher`
+- `BM_GateOrderFeedbackSessionBinaryToShmPublisherThenDrain`
 
 运行：
 
 ```bash
-cmake --build build/release --target gate_order_feedback_session_benchmark -j8
-./build/release/benchmark/exchange/gate/trading/gate_order_feedback_session_benchmark --benchmark_min_time=0.01s
+cmake --build build/release --target gate_order_feedback_parser_benchmark -j8
+./build/release/benchmark/exchange/gate/trading/gate_order_feedback_parser_benchmark --benchmark_min_time=0.1s --benchmark_repetitions=3
 ```
 
 Expected: benchmark runs and reports raw timing。
@@ -415,13 +417,17 @@ Modify:
 运行：
 
 ```bash
-cmake --build build/debug --target gate_order_feedback_parser_test gate_order_feedback_session_test strategy_test gate_order_feedback_integration_test -j8
+cmake --build build/debug --target gate_order_feedback_parser_test gate_order_feedback_session_test gate_order_request_encoder_test gate_order_session_test order_feedback_session_config_test strategy_test strategy_order_feedback_shm_integration_test gate_order_feedback_session -j8
 ./build/debug/test/exchange/gate/trading/gate_order_feedback_parser_test
 ./build/debug/test/exchange/gate/trading/gate_order_feedback_session_test
+./build/debug/test/exchange/gate/trading/gate_order_request_encoder_test
+./build/debug/test/exchange/gate/trading/gate_order_session_test
+./build/debug/test/config/order_feedback_session_config_test
 ./build/debug/test/strategy/strategy_test
-./build/debug/test/exchange/gate/trading/gate_order_feedback_integration_test
-cmake --build build/release --target gate_order_feedback_session_benchmark -j8
-./build/release/benchmark/exchange/gate/trading/gate_order_feedback_session_benchmark --benchmark_min_time=0.01s
+./build/debug/test/strategy/strategy_order_feedback_shm_integration_test
+./build/debug/tools/gate_order_feedback_session --config config/order_feedback/gate_order_feedback_session.toml --duration-sec 0.1
+cmake --build build/release --target gate_order_feedback_parser_benchmark -j8
+./build/release/benchmark/exchange/gate/trading/gate_order_feedback_parser_benchmark --benchmark_min_time=0.1s --benchmark_repetitions=3
 git diff --check
 ```
 

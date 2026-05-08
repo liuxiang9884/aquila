@@ -276,6 +276,24 @@ class OrderSession {
     return local_order_id_to_exchange_order_id_.erase(local_order_id) != 0;
   }
 
+  void CacheExchangeOrderId(std::uint64_t local_order_id,
+                            std::uint64_t exchange_order_id) noexcept {
+    auto it = local_order_id_to_exchange_order_id_.find(local_order_id);
+    if (it != local_order_id_to_exchange_order_id_.end()) {
+      it->second = exchange_order_id;
+      return;
+    }
+    if (local_order_id_to_exchange_order_id_.size() >= request_map_capacity_) {
+      return;
+    }
+    local_order_id_to_exchange_order_id_.emplace(local_order_id,
+                                                 exchange_order_id);
+  }
+
+  void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept {
+    (void)local_order_id_to_exchange_order_id_.erase(local_order_id);
+  }
+
   [[nodiscard]] const OrderSessionStats& stats() const noexcept {
     return diagnostics_.stats();
   }
@@ -351,20 +369,6 @@ class OrderSession {
       return order.exchange_order_id;
     }
     return 0;
-  }
-
-  void CacheExchangeOrderId(std::uint64_t local_order_id,
-                            std::uint64_t exchange_order_id) noexcept {
-    auto it = local_order_id_to_exchange_order_id_.find(local_order_id);
-    if (it != local_order_id_to_exchange_order_id_.end()) {
-      it->second = exchange_order_id;
-      return;
-    }
-    if (local_order_id_to_exchange_order_id_.size() >= request_map_capacity_) {
-      return;
-    }
-    local_order_id_to_exchange_order_id_.emplace(local_order_id,
-                                                 exchange_order_id);
   }
 
   [[nodiscard]] OrderSendResult SendLogin() noexcept {

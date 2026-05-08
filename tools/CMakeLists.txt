@@ -51,6 +51,20 @@ target_link_libraries(gate_strategy_order
         magic_enum::magic_enum
 )
 
+add_executable(gate_order_feedback_session
+    gate/order_feedback_session.cpp
+)
+
+target_link_libraries(gate_order_feedback_session
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_gate
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+)
+
 add_executable(binance_data_session
     binance/data_session.cpp
 )

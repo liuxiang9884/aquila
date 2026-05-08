@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "core/common/types.h"
+#include "core/trading/order_feedback_event.h"
 
 namespace aquila::strategy {
 
@@ -16,6 +17,7 @@ enum class OrderStatus : std::uint8_t {
   kFilled,
   kCancelSent,
   kCancelled,
+  kPartiallyCancelled,
   kRejected,
 };
 
@@ -54,6 +56,7 @@ struct OrderCreateRequest {
 
 struct StrategyOrder {
   std::uint64_t local_order_id{0};
+  std::uint64_t exchange_order_id{0};
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
   std::string_view symbol{};
@@ -64,7 +67,30 @@ struct StrategyOrder {
   std::string_view price_text{};
   bool reduce_only{false};
   OrderStatus status{OrderStatus::kCreated};
+  std::int64_t cumulative_filled_quantity{0};
+  double cumulative_filled_value{0.0};
+  double last_fill_price{0.0};
+  std::int64_t exchange_update_ns{0};
+  OrderFinishReason finish_reason{OrderFinishReason::kUnknown};
+  OrderRole role{OrderRole::kNone};
+  OrderRejectReason reject_reason{OrderRejectReason::kUnknown};
+  bool is_finished{false};
   std::uint64_t error_label_hash{0};
+
+  [[nodiscard]] double AverageFillPrice() const noexcept {
+    if (cumulative_filled_quantity <= 0) {
+      return 0.0;
+    }
+    return cumulative_filled_value /
+           static_cast<double>(cumulative_filled_quantity);
+  }
+};
+
+struct StrategyFeedbackStats {
+  std::uint64_t unknown_local_order_feedbacks{0};
+  std::uint64_t duplicate_or_stale_feedbacks{0};
+  std::uint64_t terminal_feedbacks_ignored{0};
+  std::uint64_t feedback_gap_events{0};
 };
 
 struct OrderPlaceResult {

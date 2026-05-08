@@ -19,3 +19,15 @@ target_link_libraries(gate_order_session_benchmark
         aquila_gate
         benchmark::benchmark_main
 )
+
+add_executable(gate_order_feedback_parser_benchmark
+    order_feedback_parser_benchmark.cpp
+)
+
+target_link_libraries(gate_order_feedback_parser_benchmark
+    PRIVATE
+        aquila_core
+        aquila_gate
+        benchmark::benchmark_main
+        nova
+)

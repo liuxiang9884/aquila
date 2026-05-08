@@ -11,6 +11,32 @@ target_link_libraries(gate_submit_response_parser_test
 add_test(NAME gate_submit_response_parser_test
          COMMAND gate_submit_response_parser_test)
 
+add_executable(gate_order_feedback_parser_test
+    order_feedback_parser_test.cpp
+)
+
+target_link_libraries(gate_order_feedback_parser_test
+    PRIVATE
+        aquila_gate
+        GTest::gtest_main
+)
+
+add_test(NAME gate_order_feedback_parser_test
+         COMMAND gate_order_feedback_parser_test)
+
+add_executable(gate_order_feedback_session_test
+    order_feedback_session_test.cpp
+)
+
+target_link_libraries(gate_order_feedback_session_test
+    PRIVATE
+        aquila_gate
+        GTest::gtest_main
+)
+
+add_test(NAME gate_order_feedback_session_test
+         COMMAND gate_order_feedback_session_test)
+
 add_executable(gate_order_codecs_test
     order_codecs_test.cpp
 )

@@ -18,6 +18,7 @@ namespace aquila::gate {
 inline constexpr std::size_t kLoginRequestBufferSize = 1024;
 inline constexpr std::size_t kPlaceOrderRequestBufferSize = 1024;
 inline constexpr std::size_t kCancelOrderRequestBufferSize = 512;
+inline constexpr std::size_t kOrderFeedbackSubscribeRequestBufferSize = 1024;
 
 enum class OrderEncodeStatus : std::uint8_t {
   kOk,
@@ -54,6 +55,13 @@ struct CancelOrderEncodeFields {
   std::uint64_t encoded_request_id{0};
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
+};
+
+struct OrderFeedbackSubscribeRequestFields {
+  std::string_view api_key{};
+  std::string_view api_secret{};
+  std::int64_t timestamp{0};
+  std::uint64_t login_uid{0};
 };
 
 namespace detail {
@@ -143,6 +151,24 @@ template <std::size_t N>
       buffer,
       R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})",
       fields.timestamp, fields.encoded_request_id, order_id);
+}
+
+template <std::size_t N>
+[[nodiscard]] EncodedTextRequest EncodeOrderFeedbackSubscribeRequest(
+    const OrderFeedbackSubscribeRequestFields& fields,
+    std::array<char, N>& buffer) noexcept {
+  std::array<char, kGateSignatureHexSize> signature;
+  if (!GenerateGateChannelSignatureHex(fields.api_secret, "futures.orders",
+                                       "subscribe", fields.timestamp,
+                                       signature)) {
+    return {.status = OrderEncodeStatus::kSignatureFailed, .text = {}};
+  }
+
+  return detail::FormatJsonToBuffer(
+      buffer,
+      R"({{"time":{},"channel":"futures.orders","event":"subscribe","payload":["{}","!all"],"auth":{{"method":"api_key","KEY":"{}","SIGN":"{}"}}}})",
+      fields.timestamp, fields.login_uid, fields.api_key,
+      std::string_view(signature.data(), signature.size()));
 }
 
 }  // namespace aquila::gate

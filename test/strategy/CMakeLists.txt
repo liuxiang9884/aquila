@@ -12,3 +12,11 @@ function(add_strategy_gtest target source_file)
 endfunction()
 
 add_strategy_gtest(strategy_test strategy_test.cpp)
+
+add_strategy_gtest(strategy_order_feedback_shm_integration_test
+                   strategy_order_feedback_shm_integration_test.cpp)
+target_link_libraries(strategy_order_feedback_shm_integration_test
+    PRIVATE
+        aquila_core
+        nova
+)

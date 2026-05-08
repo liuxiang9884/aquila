@@ -25,6 +25,19 @@ TEST(GateOrderSignatureTest, MatchesLoginVector) {
             "600e1d4085");
 }
 
+TEST(GateOrderSignatureTest, MatchesPrivateSubscribeVector) {
+  std::array<char, kGateSignatureHexSize> output{};
+
+  const bool ok = GenerateGateChannelSignatureHex(
+      "secret", "futures.orders", "subscribe", 1700000000, output);
+
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(std::string_view(output.data(), output.size()),
+            "e40a0260c1d090a7b5f60f6171dfc3d9ca6a1b1dd6abfd8e92347bad5e13"
+            "4af77fb03930eff122f7f72cdcb3c41898a16dbf1ee7089615f540c11b12c19"
+            "b6d04");
+}
+
 TEST(GateOrderRequestEncoderTest,
      LoginRequestContainsChannelCredentialsTimestampAndRequestId) {
   std::array<char, kLoginRequestBufferSize> buffer{};
@@ -45,6 +58,29 @@ TEST(GateOrderRequestEncoderTest,
             std::string_view::npos);
   EXPECT_NE(encoded.text.find(R"("req_id":"72057594037927937")"),
             std::string_view::npos);
+}
+
+TEST(GateOrderRequestEncoderTest, OrderFeedbackSubscribeRequestWritesJson) {
+  std::array<char, kOrderFeedbackSubscribeRequestBufferSize> buffer{};
+  const OrderFeedbackSubscribeRequestFields fields{
+      .api_key = "key",
+      .api_secret = "secret",
+      .timestamp = 1700000000,
+      .login_uid = 14391412,
+  };
+
+  const EncodedTextRequest encoded =
+      EncodeOrderFeedbackSubscribeRequest(fields, buffer);
+
+  EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
+  EXPECT_NE(encoded.text.find(R"("channel":"futures.orders")"),
+            std::string_view::npos);
+  EXPECT_NE(encoded.text.find(R"("event":"subscribe")"),
+            std::string_view::npos);
+  EXPECT_NE(encoded.text.find(R"("14391412")"), std::string_view::npos);
+  EXPECT_NE(encoded.text.find(R"("!all")"), std::string_view::npos);
+  EXPECT_NE(encoded.text.find(R"("KEY":"key")"), std::string_view::npos);
+  EXPECT_NE(encoded.text.find(R"("SIGN":")"), std::string_view::npos);
 }
 
 TEST(GateOrderRequestEncoderTest, PlaceOrderWritesExactJson) {

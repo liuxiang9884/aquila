@@ -116,7 +116,7 @@ API submit error。
 - SBE template / schema mismatch；
 - price mantissa / exponent 转换失败。
 
-对于单条 malformed order update，第一版可以只计数并丢弃；对于 session 级 decode 不可恢复、断线、重连后未知缺口，必须调用 `MarkGlobalGap()`。
+对于单条 malformed order update，第一版可以只计数并丢弃；对于 session 级 decode 不可恢复、断线、重连后未知缺口，必须调用 Task1 当前接口 `PublishGlobalGap(...)`。
 
 ## Strategy 状态机
 

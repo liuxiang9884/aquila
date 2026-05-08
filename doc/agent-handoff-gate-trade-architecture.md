@@ -9,7 +9,7 @@
 和 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。Strategy 第一版订单框架
 已按 `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` 落地。`OrderFeedbackSession`
 第一版 event 语义已在 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` 中收敛；Task1 订单 feedback
-SHM transport 已实现，下一阶段进入 Task2 Gate orders parser / session / Strategy apply，文档入口分别是
+SHM transport 和 Task2 Gate orders parser / session / Strategy apply 已实现，文档入口分别是
 `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md` 和
 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`。
 
@@ -19,8 +19,8 @@ SHM transport 已实现，下一阶段进入 Task2 Gate orders parser / session 
 - 截至 2026-05-08，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
   Gate REST 测试脚本、Gate submit/cancel `OrderSession` 第一版实现、Strategy 第一版订单框架、测试和 benchmark 已完成多轮收口；新接手时以
   `git log --oneline -8` 为准。
-- Order feedback Task1 SHM transport 已进入代码实现阶段并落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`kGap` control event、publisher / reader、config parser、tests 和 benchmark 已实现。下一步是 Task2 Gate private `futures.orders` parser、`OrderFeedbackSession` 和 Strategy 状态机。
-- 新接手时注意当前工作区可能包含 Task1 未提交实现文件；不要把它们和无关文档混在一起回滚或覆盖。
+- Order feedback Task1 SHM transport 已落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`kGap` control event、publisher / reader、config parser、tests 和 benchmark 已实现。
+- Order feedback Task2 已落地：Gate private `futures.orders` parser、`OrderFeedbackSession` login / subscribe / binary publish、Strategy `OnOrderFeedback()`、SHM fake integration、config / tool 和 parser/session benchmark 均已实现。下一步是 REST reconcile、account / position feedback、最小 live smoke 和端到端 benchmark。
 - 新接手时先执行：
 
 ```bash
@@ -519,11 +519,10 @@ scripts/gate/run_futures_order_smoke_test.py
 
 第一版未覆盖：
 
-1. Private feedback：第一版尚未实现 `futures.orders` 私有回报 session 和固定 feedback event；`usertrades` / `positions` 不进入第一版订单生命周期实现。
-2. REST reconcile：断线、未知订单状态和启动恢复后的订单 / 成交 / 仓位对账。
-3. Batch / amend：batch place、改单、cancel all、order status/list 等 Gate 交易 API。
-4. 真实成交回报状态合并：`OrderResponse`、私有订单回报、成交回报和 REST reconcile 之间的状态合并规则。
-5. C++ WS `OrderSession` live smoke：`gate_strategy_order` 工具已落地并做过最小实盘提交验证；当前缺口是不能仅靠 API ack/result 推进真实订单生命周期，必须接 `OrderFeedbackSession`。
+1. REST reconcile：断线、未知订单状态和启动恢复后的订单 / 成交 / 仓位对账。
+2. Batch / amend：batch place、改单、cancel all、order status/list 等 Gate 交易 API。
+3. 跨来源状态合并：`OrderResponse`、private `futures.orders`、未来 account / position feedback 和 REST reconcile 之间的恢复规则。
+4. C++ WS `OrderSession` + `OrderFeedbackSession` live smoke：`gate_strategy_order` 和 `gate_order_feedback_session` 工具已落地，但尚未在同一轮小额真实下单中完成 accepted / cancel lifecycle 闭环验证。
 
 ### 2026-05-08 OrderFeedback event 第一版设计
 
@@ -559,9 +558,10 @@ Task1 / Task2 当前实现顺序：
 4. `PublishGlobalGap()` 对 8 lane fanout `kGap`；某条 lane full 时 publisher 保留 pending gap，后续本地重试。
 5. Reader ownership 使用 `consumer_run_id` 作为唯一 ownership token，0 表示 unclaimed；`consumer_pid` 仅诊断；`Claim(..., force_claim=true)` 是显式恢复动作；`Release()` CAS 当前 run id 成功才清 pid。第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe。
 6. `OrderFeedbackShmManager` 初始化 / attach 通过 `Create()` / `Open()` / `OpenOrCreate()` 返回 `Result`；Nova allocator 抛出的底层异常只在 cold factory 边界被转换为错误字符串，不向上层暴露 throwing constructor。
-7. Task2 下一步实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()`。parser diagnostics 需要覆盖 unsupported `finish_as`、非零 SBE `sizeExponent`、`filled` 但 `left != 0`、invalid text 和 route failure。
+7. Task2 已实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 Strategy `OnOrderFeedback()`。parser diagnostics 覆盖 unsupported `finish_as`、非零 SBE `sizeExponent`、`filled` 但 `left != 0`、invalid text 和 route failure。
 8. accepted event 到达 Strategy 后，由 Strategy 在自己的线程中通知 `OrderSession` 更新 `local_order_id -> exchange_order_id` cancel cache；filled / cancelled terminal event 后清理该 cache。
-9. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 gap detected 状态和暂停新开仓边界。
+9. cancel 已发出后收到 partial fill 回报时，Strategy 更新累计成交但保持 `kCancelSent`，避免重新开放重复撤单入口；filled / cancelled terminal event 仍可推进终态。
+10. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 gap detected 状态和暂停新开仓边界。
 
 Task1 当前实现入口：
 
@@ -580,6 +580,32 @@ benchmark/core/trading/order_feedback_shm_benchmark.cpp
 `order_feedback_shm_benchmark` case 名包括 `PublishThenDrain`、`PollOneWithRefill`、
 `PublishPollLoop` 和 `PublishGlobalGapThenDrain`；这些是 transport benchmark，单操作 case 包含 drain /
 refill 维护，不能写成纯 publish / poll latency 或端到端性能结论。
+
+Task2 当前实现入口：
+
+```text
+exchange/gate/trading/order_feedback_parser.h
+exchange/gate/trading/order_feedback_session.h
+exchange/gate/trading/order_feedback_session_config.h
+exchange/gate/trading/order_feedback_session_config.cpp
+config/order_feedback/gate_order_feedback_session.toml
+tools/gate/order_feedback_session.cpp
+test/exchange/gate/trading/order_feedback_parser_test.cpp
+test/exchange/gate/trading/order_feedback_session_test.cpp
+test/config/order_feedback_session_config_test.cpp
+test/strategy/strategy_order_feedback_shm_integration_test.cpp
+benchmark/exchange/gate/trading/order_feedback_parser_benchmark.cpp
+```
+
+2026-05-08 release benchmark 摘要：
+
+```text
+BM_GateOrderFeedbackParserOneOrder_mean                         65.2 ns
+BM_GateOrderFeedbackSessionBinaryToCountingPublisher_mean       95.3 ns
+BM_GateOrderFeedbackSessionBinaryToShmPublisherThenDrain_mean    105 ns
+```
+
+这些是本机 parser / session binary publish microbenchmark，不包含真实 WebSocket socket、TLS、公网延迟或 Strategy 主循环调度成本。
 
 Strategy 当前验证入口：
 
@@ -1049,15 +1075,14 @@ config/data_sessions/binance_data_session.toml
 
 下一轮建议按这个顺序继续：
 
-1. Task1 订单 feedback SHM transport 已实现，先按 `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md` 确认当前边界和验证命令。
-2. 按 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md` 实现 Task2：Gate `futures.orders` parser、`OrderFeedbackSession`、Strategy `OnOrderFeedback()`、fake integration、benchmark 和最小 live smoke。
-3. Task2 中把 `OrderFeedbackKind::kGap` 当作 Task1 SHM transport control event 处理；Gate parser 不从 `futures.orders` 主生命周期流产生 `kGap`。
-4. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复和人工介入边界。
-5. 如需更多 C++ WS `OrderSession` live smoke，使用极小数量、明确撤单或平仓流程，并保留原始输出；live smoke 只能证明连通性和协议行为，不等同于性能结论。
-6. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；Gate decimal-size 合约的数量步进规则需要先确认再进入下单热路径。
-7. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
-8. 如果需要继续审查 Gate `OrderSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、place/cancel final result validation、断线清理和 benchmark 口径。
-9. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
+1. 先按 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md` 和 onboarding 确认 Task1 / Task2 已实现边界、验证命令和 benchmark 口径。
+2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 gap 后新开仓暂停 / 恢复条件。
+3. 做最小 C++ WS live smoke：同时运行 `gate_order_feedback_session --connect` 和 `gate_strategy_order --execute` 的小额 accepted / cancel lifecycle，保留原始输出，并用 REST 查询确认无残留订单 / 仓位；真实下单前必须得到用户明确允许。
+4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 gap / reconnect 后恢复订单、持仓和风险状态。
+5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；Gate decimal-size 合约的数量步进规则需要先确认再进入下单热路径。
+6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
+7. 如果需要继续审查 Gate `OrderSession` / `OrderFeedbackSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、subscribe 签名、place/cancel final result validation、断线 gap、cache update / forget 和 benchmark 口径。
+8. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
 
 ## 相关文件
 
@@ -1102,8 +1127,17 @@ config/data_sessions/binance_data_session.toml
 - `test/core/trading/order_feedback_shm_test.cpp`（Task1 已实现）
 - `test/config/order_feedback_shm_config_test.cpp`（Task1 已实现）
 - `benchmark/core/trading/order_feedback_shm_benchmark.cpp`（Task1 已实现）
-- `exchange/gate/trading/order_feedback_parser.h`（Task2 计划新增）
-- `exchange/gate/trading/order_feedback_session.h`（Task2 计划新增）
+- `exchange/gate/trading/order_feedback_parser.h`（Task2 已实现）
+- `exchange/gate/trading/order_feedback_session.h`（Task2 已实现）
+- `exchange/gate/trading/order_feedback_session_config.h`（Task2 已实现）
+- `exchange/gate/trading/order_feedback_session_config.cpp`（Task2 已实现）
+- `config/order_feedback/gate_order_feedback_session.toml`（Task2 已实现）
+- `tools/gate/order_feedback_session.cpp`（Task2 已实现）
+- `test/exchange/gate/trading/order_feedback_parser_test.cpp`（Task2 已实现）
+- `test/exchange/gate/trading/order_feedback_session_test.cpp`（Task2 已实现）
+- `test/config/order_feedback_session_config_test.cpp`（Task2 已实现）
+- `test/strategy/strategy_order_feedback_shm_integration_test.cpp`（Task2 已实现）
+- `benchmark/exchange/gate/trading/order_feedback_parser_benchmark.cpp`（Task2 已实现）
 - `test/exchange/gate/trading/submit_response_parser_test.cpp`
 - `test/exchange/gate/trading/order_codecs_test.cpp`
 - `test/exchange/gate/trading/order_request_encoder_test.cpp`
