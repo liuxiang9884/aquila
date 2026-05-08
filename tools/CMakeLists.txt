@@ -49,6 +49,7 @@ target_link_libraries(gate_strategy_order
         CLI11::CLI11
         fmt::fmt-header-only
         magic_enum::magic_enum
+        nova
 )
 
 add_executable(gate_order_feedback_session
@@ -62,6 +63,7 @@ target_link_libraries(gate_order_feedback_session
         aquila_gate
         CLI11::CLI11
         fmt::fmt-header-only
+        magic_enum::magic_enum
         nova
 )
 
