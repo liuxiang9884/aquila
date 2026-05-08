@@ -105,3 +105,21 @@ target_compile_definitions(order_feedback_session_config_test
 
 add_test(NAME order_feedback_session_config_test
          COMMAND order_feedback_session_config_test)
+
+add_executable(strategy_config_test
+    strategy_config_test.cpp
+)
+
+target_link_libraries(strategy_config_test
+    PRIVATE
+        aquila_config
+        GTest::gtest_main
+        nova
+)
+
+target_compile_definitions(strategy_config_test
+    PRIVATE AQUILA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME strategy_config_test
+         COMMAND strategy_config_test)

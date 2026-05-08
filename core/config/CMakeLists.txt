@@ -5,6 +5,8 @@ add_library(aquila_config STATIC
     instrument_catalog.h
     order_feedback_shm_config.cpp
     order_feedback_shm_config.h
+    strategy_config.cpp
+    strategy_config.h
     websocket_config.cpp
     websocket_config.h
 )
