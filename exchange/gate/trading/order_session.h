@@ -531,6 +531,7 @@ class OrderSession {
         parsed.kind == GateSubmitResponseKind::kResult &&
         parsed.has_login_uid) {
       login_ready_ = true;
+      NotifyLoginReady();
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordLoginAccepted();
       }
@@ -591,6 +592,12 @@ class OrderSession {
   void RecordIgnoredMessage() noexcept {
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordIgnoredMessage();
+    }
+  }
+
+  void NotifyLoginReady() noexcept {
+    if constexpr (requires { response_handler_.OnOrderSessionLoginReady(); }) {
+      response_handler_.OnOrderSessionLoginReady();
     }
   }
 

@@ -47,9 +47,14 @@ websocket::MessageView PingView(std::string_view payload) noexcept {
 
 struct RecordingHandler {
   std::vector<OrderResponse> responses;
+  int login_ready_calls{0};
 
   void OnOrderResponse(const OrderResponse& response) noexcept {
     responses.push_back(response);
+  }
+
+  void OnOrderSessionLoginReady() noexcept {
+    ++login_ready_calls;
   }
 };
 
@@ -199,6 +204,7 @@ TEST(OrderSessionTest, SendsLoginOnActiveAndMarksReadyOnSuccess) {
   EXPECT_TRUE(session.login_ready());
   EXPECT_EQ(session.stats().login_sent, 1U);
   EXPECT_EQ(session.stats().login_accepted, 1U);
+  EXPECT_EQ(handler.login_ready_calls, 1);
 }
 
 TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {

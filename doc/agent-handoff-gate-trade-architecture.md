@@ -494,6 +494,7 @@ docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.m
 3. Gate `OrderSession` 边界保持轻量：只做 WS login、place/cancel JSON 编码发送、`request_sequence -> local_order_id` correlation 和同步 `OrderResponse` 回调。
 4. `OrderSession` 不理解 Strategy order status、symbol metadata、risk check、pending order table 或 Sirius 的重 `OrderStruct`。
 5. Strategy benchmark 使用 fake order session，只记录订单 struct 并返回本地 OK；这是 Strategy direct-send 本机 smoke baseline，不包含真实 `OrderSession` JSON 编码、WebSocket frame、TLS/plain socket 或交易所响应。
+6. `tools/gate/strategy_order.cpp` 是 Strategy + Gate WebSocket 单笔下单工具；默认 dry-run，`--execute` 才用 `config/order_sessions/gate_order_session.toml` 和 credentials env 实盘连接。登录成功 callback 在 WebSocket 线程内调用 Strategy 下单，避免主线程跨线程直接调用 `OrderSession::PlaceOrder()`。
 
 当前已落地文件：
 
@@ -505,6 +506,7 @@ test/core/trading/order_pool_test.cpp
 test/strategy/strategy_test.cpp
 benchmark/core/trading/order_pool_benchmark.cpp
 benchmark/strategy/order_gateway_benchmark.cpp
+tools/gate/strategy_order.cpp
 scripts/gate/run_futures_order_smoke.py
 scripts/gate/run_futures_order_smoke_test.py
 ```
@@ -515,14 +517,15 @@ scripts/gate/run_futures_order_smoke_test.py
 2. REST reconcile：断线、未知订单状态和启动恢复后的订单 / 成交 / 仓位对账。
 3. Batch / amend：batch place、改单、cancel all、order status/list 等 Gate 交易 API。
 4. 真实成交回报状态合并：`OrderResponse`、私有订单回报、成交回报和 REST reconcile 之间的状态合并规则。
-5. C++ WS `OrderSession` live smoke：当前已有 REST futures smoke 结果，但还没有用 C++ `OrderSession` 走真实 WebSocket 下单 / 撤单 / 平仓 live smoke。
+5. C++ WS `OrderSession` live smoke：`gate_strategy_order` 工具已落地，但当前只完成 dry-run / build / 单元测试验证；还没有用它执行真实 WebSocket 下单 / 撤单 / 平仓 live smoke。
 
 Strategy 当前验证入口：
 
 ```bash
-cmake --build build/debug --target core_order_pool_test strategy_test -j8
+cmake --build build/debug --target core_order_pool_test strategy_test gate_strategy_order -j8
 ./build/debug/test/core/trading/core_order_pool_test
 ./build/debug/test/strategy/strategy_test
+./build/debug/tools/gate_strategy_order --contract BTC_USDT --side buy --order-type limit --size 1 --price 81000 --tif gtc
 ctest --test-dir build/debug -R 'core_order_pool|strategy' --output-on-failure
 cmake --build build/release --target core_order_pool_benchmark strategy_order_gateway_benchmark -j8
 ./build/release/benchmark/core/trading/core_order_pool_benchmark --benchmark_min_time=0.01s

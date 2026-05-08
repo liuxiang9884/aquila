@@ -41,6 +41,7 @@
 23. Strategy 第一版订单框架已按 Sirius 风格重构：`core/trading/order_pool.h`、`strategy/order_types.h` 和 `strategy/strategy.h` 覆盖通用固定容量订单池、订单创建、状态推进和直接 session 发送；Strategy 不维护 exchange order id 索引，不再缓存 Gate wire fields，也不再暴露 `PrepareOrder()` / `SubmitOrder()` 两阶段接口。
 24. `scripts/gate/run_futures_order_smoke.py` 和 `scripts/gate/run_futures_order_smoke_test.py` 已落地；2026-05-07 使用 Gate REST 对 `BTC_USDT`、1 手、5 轮真实 smoke，结果 `5/5 filled_and_closed`，最终 `position size=0`、`pending_orders=0`、`open orders=[]`。这只是 REST smoke，不是 C++ WS `OrderSession` live smoke。
 25. Strategy / Gate 第一版边界已明确：Strategy 负责订单对象、风控位置、状态和执行流程；Gate `OrderSession` 负责从订单 struct 现场编码 place/cancel 请求、correlation 和轻量 response。Strategy benchmark 是 fake session direct-send baseline，不包含真实 WebSocket 或 socket 成本。
+26. `tools/gate/strategy_order.cpp` 已落地为 Strategy + Gate WebSocket 下单工具：CLI 参数类似 REST 下单脚本，默认 dry-run，只有 `--execute` 才连接 `OrderSession` 并实盘发送；登录成功 callback 在 WebSocket 线程内调用 Strategy 下单，避免跨线程直接调用 `OrderSession::PlaceOrder()`。当前只验证了 dry-run / build / 单元测试，尚未执行真实 live smoke。
 
 ## 新对话第一步
 
@@ -162,6 +163,7 @@ doc/data_reader_config.md
 | --- | --- |
 | `strategy/order_types.h` | Strategy 订单创建请求、`StrategyOrder`、place/cancel/result event 类型；订单对象保存 symbol、price_text、数量、TIF 和状态，不保存 Gate wire cache。 |
 | `strategy/strategy.h` | 模板化 `Strategy<OrderSessionT>`，提供 `PlaceLimitOrder()`、`CancelOrder()` 和 response apply；发单时直接把订单 struct 交给 session。 |
+| `tools/gate/strategy_order.cpp` | Strategy + Gate WebSocket 单笔下单工具；CLI 接收 contract / side / order-type / size / price / tif / reduce-only / keep-open，默认 dry-run，`--execute` 才实盘连接 WebSocket。 |
 | `test/core/trading/order_pool_test.cpp` | 通用 `OrderPool` 本地订单 ID、容量限制、slot 复用、指针稳定和 zero capacity 测试。 |
 | `test/strategy/strategy_test.cpp` | Strategy place/cancel/response 状态推进测试。 |
 | `benchmark/strategy/order_gateway_benchmark.cpp` | Strategy direct-send fake session baseline；不包含真实 WebSocket 或 socket。 |
@@ -551,9 +553,10 @@ ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --o
 Strategy order framework tests：
 
 ```bash
-cmake --build build/debug --target core_order_pool_test strategy_test -j8
+cmake --build build/debug --target core_order_pool_test strategy_test gate_strategy_order -j8
 ./build/debug/test/core/trading/core_order_pool_test
 ./build/debug/test/strategy/strategy_test
+./build/debug/tools/gate_strategy_order --contract BTC_USDT --side buy --order-type limit --size 1 --price 81000 --tif gtc
 ctest --test-dir build/debug -R 'core_order_pool|strategy' --output-on-failure
 ```
 
