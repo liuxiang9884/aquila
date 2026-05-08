@@ -526,6 +526,31 @@ scripts/gate/run_futures_order_smoke_test.py
 3. 跨来源状态合并：`OrderResponse`、private `futures.orders`、未来 account / position feedback 和 REST reconcile 之间的恢复规则。
 4. C++ WS `OrderSession` + `OrderFeedbackSession` live smoke：`gate_strategy_order` 和 `gate_order_feedback_session` 已在 2026-05-08 完成 1 手 BTC_USDT market buy + reduce-only sell 实盘闭环；private SBE `futures.orders` 产生 `kFilled` feedback，Strategy 读到 terminal feedback，REST 复核最终 `position size=0` 且 open orders 为空。
 
+### 2026-05-08 Strategy runtime skeleton
+
+已落地文件：
+
+```text
+config/strategies/lead_lag_btc_strategy.toml
+config/strategies/lead_lag_btc.toml
+core/config/strategy_config.h
+core/config/strategy_config.cpp
+core/strategy/strategy_context.h
+core/strategy/strategy_runtime.h
+test/config/strategy_config_test.cpp
+test/core/strategy/strategy_context_test.cpp
+test/core/strategy/strategy_runtime_test.cpp
+```
+
+当前边界：
+
+1. `[strategy]` 配置表示一个策略实例的 runtime 接入配置：`name` 同时作为 user strategy config section name，`config` 指向 user strategy config 文件；`data_reader.config`、`order_session.config` 和 feedback SHM reader 参数都在该 section 下。
+2. `StrategyContext<OrderSessionT>` 是 user strategy 的窄接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`，不暴露 `OrderManager` 或 `OrderSession` 内部对象。
+3. `StrategyRuntime<UserStrategyT, OrderSessionT>` 当前是 core skeleton，只提供 test-only factory / dispatch helper；尚未实现正式 `Run()` loop，也未从 config 构造真实 `DataReader`、Gate `OrderSession` 或 feedback reader。
+4. user strategy 事件入口已固定为行情、order response 和 private feedback 三类：`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`。
+5. `OnOrderResponse()` 和 `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 user strategy hook；因此 hook 内通过 `context.FindOrder(local_order_id)` 看到的是已更新后的订单状态。
+6. core runtime 不 include `exchange/`；后续 Gate-specific 构造应放在 exchange/tool factory 或 adapter 层。
+
 ### 2026-05-08 OrderFeedback event 第一版设计
 
 设计文档：
