@@ -552,7 +552,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 - raw market state 不保存完整 `BookTicker`，只保存 `QuoteSnapshot{local_ns,bid_price,ask_price}`、`previous_quote` 和对应 valid flag；策略窗口时间使用 `BookTicker.local_ns`。
 - `price_changed` 只比较 bid / ask price，不比较 volume；same-price raw tick 不替换 quote，但两边 `has_quote` 后仍用已保存 quote 推进 drift / alignment。
 - Active 切换时使用 previous quote seed，lag tick 触发 Active 后下一笔 lead tick 即使 same-price 也允许 resume 一次 lead handler。
-- `BboExtremaWindow` 语义是 rolling `bbo_record.window` 内 bid / ask min/max；实现设计选择固定容量 monotonic deque、预分配 vector、默认 capacity `16 * 1024`，overrun 只禁用新开仓，不阻断 close / stoploss / feedback。
+- `BboExtremaWindow` 语义是 rolling `bbo_record.window` 内 bid / ask min/max；fixed Go 使用本地自定义 `MonotonicQueue`，正常 update 摊还 `O(1)`、min/max 查询 `O(1)`。Aquila 选择 vector-backed monotonic deque，启动期按 `extrema_window_capacity` reserve，允许 vector 自动扩容保证计算准确性；`RecorderStats` 只记录 `extrema_capacity_grow_count`，具体 symbol/exchange/vector/capacity 写 log。
 - fixed Go 源码已解压到 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`，该目录被 git ignore，仅作为源码参考。
 - `MoveQueue` 是按 `stats_window` 时间边界切窗，`t > RollAt` 才 roll，roll 后清空旧 samples；不是严格 rolling 最近 `stats_window`。
 - `StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean：先在 `bbo_record.window` 内算 `std(mid)/mean(mid)`，再在 `stats_window` 内取 mean。

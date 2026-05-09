@@ -557,6 +557,33 @@ OnBBO(milliTs, ask, bid):
       Bid.Pop()
 ```
 
+`queue.MonotonicQueue` 是 fixed Go 的本地自定义实现，不是外部库。它内部包含全量 FIFO queue、max 候选 queue 和 min 候选 queue：
+
+```text
+MonotonicQueue
+  Queue
+  Max
+  Min
+
+Put(value):
+  Queue.Put(value)
+  while Max.back < value:
+      Max.PopTail()
+  Max.Put(value)
+  while Min.back > value:
+      Min.PopTail()
+  Min.Put(value)
+
+Pop():
+  value = Queue.Pop()
+  if Max.front == value:
+      Max.Pop()
+  if Min.front == value:
+      Min.Pop()
+```
+
+比较 price 时使用严格 `<` / `>`，相等价格不会在 push 时被挤掉；重复价格按 FIFO 顺序保留。正常 `OnBBO()` 是摊还 `O(1)`，`GetMin()` / `GetMax()` 是 `O(1)`；Go 容量不足时会动态扩容并 copy ring，当次扩容是 `O(n)`。
+
 注意：fixed Go 这里使用 `bbo.ServerTime`，而非 `Context.Now()`。`aquila` 第一版如果统一使用 `BookTicker.local_ns` 驱动全部策略窗口，这是一个有意的工程取舍；严格 fixed replay 对账时需要单独验证该差异。
 
 `aquila` 实现选择：
@@ -564,10 +591,55 @@ OnBBO(milliTs, ask, bid):
 ```text
 BboExtremaWindow
   window_ns = bbo_record.window
-  implementation = fixed-capacity monotonic deque
-  storage = preallocated vector
-  default capacity = 16 * 1024 samples
+  implementation = vector-backed monotonic deque
+  initial capacity = extrema_window_capacity
+
+  samples
+  bid_min
+  bid_max
+  ask_min
+  ask_max
+
+RecorderStats
+  extrema_capacity_grow_count
 ```
+
+更新输入：
+
+```text
+OnLeadActiveTick(drifted_lead):
+    lead_extrema.Update(drifted_lead.local_ns, drifted_bid, drifted_ask)
+
+OnLagActiveTick(raw_lag):
+    lag_extrema.Update(raw_lag.local_ns, lag_bid, lag_ask)
+```
+
+`lead_extrema` 的输入是 drifted lead quote，`lag_extrema` 的输入是 raw lag quote。进入 Active 时先 reset trading recorder，再用 seed quote 播种 extrema：
+
+```text
+lead_extrema.Reset()
+lag_extrema.Reset()
+
+lead_extrema.Update(lead_seed.local_ns, drifted_lead_seed_bid, drifted_lead_seed_ask)
+lag_extrema.Update(lag_seed.local_ns, lag_seed_bid, lag_seed_ask)
+```
+
+Aquila 的 monotonic deque 同样保持：
+
+```text
+Update() amortized O(1)
+GetMin()/GetMax() O(1)
+space O(window sample count)
+```
+
+每个内部 storage 使用 `std::vector` 并在启动期 `reserve(extrema_window_capacity)`。vector 允许自动扩容，保证计算准确性；扩容不是错误，不丢样本、不 reset recorder、不暂停新开仓。每次 vector 实际扩容后：
+
+```text
+++stats.extrema_capacity_grow_count
+log symbol_id, exchange, vector name, new vector capacity
+```
+
+`Stats` 只记录统计数字，不保存结构化扩容事件；具体哪个 vector、哪个 symbol / exchange、扩容后 capacity 只写入 log。扩容是后续调大初始 capacity 的依据。
 
 容量统一放入运行期 capacity config，配置文件可选覆盖；未配置时使用默认值：
 
@@ -577,18 +649,6 @@ RuntimeCapacityConfig
   move_queue_capacity = 16 * 1024
   noise_window_capacity = 16 * 1024
   spread_window_capacity = 16 * 1024
-```
-
-容量不足时不在热路径扩容，也不静默覆盖。它只影响新开仓信号完整性，不阻断已有持仓处理：
-
-```text
-on extrema capacity overrun:
-  record diagnostics
-  disable new opens for this pair
-  continue raw / drift / alignment
-  continue close / stoploss / feedback
-  reset and rewarm affected recorder
-  after a full bbo_record.window is rebuilt, allow new opens again
 ```
 
 #### Go 源码确认：MoveQueue
@@ -716,7 +776,7 @@ LagSpreadBuffer(lag_bbo):
 - lead tick 只更新 lead recorder / lead noise / move queue。
 - lag tick 只更新 lag recorder / lag spread / lag noise。
 - BBO extrema 输出 rolling `bbo_record.window` 内的 bid / ask min/max。
-- BBO extrema capacity overrun 只禁用新开仓，不阻断 close / stoploss / feedback。
+- BBO extrema vector 扩容后继续计算，不丢样本；`RecorderStats.extrema_capacity_grow_count` 只记录次数，扩容细节写 log。
 - MoveQueue 按 `stats_window` 切窗，roll 后清空；不是严格 rolling 最近 `stats_window`。
 - MoveQueue 在边界时间 `t == RollAt` 不 roll，`t > RollAt` 才 roll。
 - roll 时用旧 queue 计算 quantile，当前 lead tick 的 move 进入新窗口。
