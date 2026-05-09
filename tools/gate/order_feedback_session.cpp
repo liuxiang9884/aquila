@@ -20,6 +20,7 @@
 #include "core/trading/order_feedback_shm.h"
 #include "exchange/gate/trading/order_feedback_session_config.h"
 #include "nova/utils/log.h"
+#include "tools/common/logging_guard.h"
 
 namespace {
 
@@ -30,18 +31,6 @@ struct CliOptions {
       "config/order_feedback/gate_order_feedback_session.toml"};
   double duration_sec{30.0};
   bool connect{false};
-};
-
-struct LoggingGuard {
-  explicit LoggingGuard(const toml::table& toml) {
-    nova::LogConfig log_config;
-    log_config.FromToml(toml["log"]);
-    nova::InitializeLogging(log_config);
-  }
-
-  ~LoggingGuard() {
-    nova::StopLogging();
-  }
 };
 
 void PrintBool(std::string_view name, bool value) {
@@ -351,7 +340,7 @@ int main(int argc, char** argv) {
   try {
     const toml::parse_result toml =
         toml::parse_file(options.config_path.string());
-    LoggingGuard logging_guard{toml};
+    aquila::tools::LoggingGuard logging_guard{toml};
     return Run(options, toml);
   } catch (const std::exception& exc) {
     fmt::print(stderr, "[FAIL] config_error={}\n", exc.what());

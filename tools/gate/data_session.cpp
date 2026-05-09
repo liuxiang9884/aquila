@@ -13,24 +13,13 @@
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/market_data/data_session_config.h"
 #include "nova/utils/log.h"
+#include "tools/common/logging_guard.h"
 
 namespace {
 
 namespace aq_gate = aquila::gate;
 namespace aq_md = aquila::market_data;
 namespace ws = aquila::websocket;
-
-struct LoggingGuard {
-  explicit LoggingGuard(const toml::table& toml) {
-    nova::LogConfig log_config;
-    log_config.FromToml(toml["log"]);
-    nova::InitializeLogging(log_config);
-  }
-
-  ~LoggingGuard() {
-    nova::StopLogging();
-  }
-};
 
 struct CountingDataSink {
   std::uint64_t book_tickers{0};
@@ -137,7 +126,7 @@ int main(int argc, char** argv) {
   CLI11_PARSE(app, argc, argv);
 
   const toml::parse_result toml = toml::parse_file(config_path.string());
-  LoggingGuard logging_guard{toml};
+  aquila::tools::LoggingGuard logging_guard{toml};
 
   aq_gate::DataSessionConfigResult config_result =
       aq_gate::ParseDataSessionConfig(toml, config_path);

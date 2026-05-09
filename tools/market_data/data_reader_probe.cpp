@@ -18,6 +18,7 @@
 #include "core/config/data_reader_config.h"
 #include "core/market_data/data_reader.h"
 #include "nova/utils/log.h"
+#include "tools/common/logging_guard.h"
 
 namespace {
 
@@ -68,8 +69,8 @@ std::vector<SourceLabel> BuildSourceLabels(
   std::vector<SourceLabel> labels;
   labels.reserve(config.sources.size());
   for (const aquila::config::DataReaderSourceConfig& source : config.sources) {
-    labels.push_back(SourceLabel{.name = source.name,
-                                 .exchange = source.exchange});
+    labels.push_back(
+        SourceLabel{.name = source.name, .exchange = source.exchange});
   }
   return labels;
 }
@@ -104,56 +105,57 @@ int main(int argc, char** argv) {
   CLI::App app{"Data reader probe"};
   app.add_option("--config", config_path, "data reader TOML path");
   app.add_option("--max-polls", max_polls, "0 means unlimited");
-  app.add_option("--log-every", log_every,
-                 "log first book ticker and then every N book tickers; 0 disables");
+  app.add_option(
+      "--log-every", log_every,
+      "log first book ticker and then every N book tickers; 0 disables");
   CLI11_PARSE(app, argc, argv);
 
   try {
     const toml::parse_result toml = toml::parse_file(config_path.string());
-    nova::LogConfig log_config;
-    log_config.FromToml(toml["log"]);
-    nova::InitializeLogging(log_config);
+    aquila::tools::LoggingGuard logging_guard{toml};
 
-    const auto config_result =
-        aquila::config::ParseDataReaderConfig(toml, config_path);
-    if (!config_result.ok) {
-      NOVA_ERROR("config_error={}", config_result.error);
-      nova::StopLogging();
+    try {
+      const auto config_result =
+          aquila::config::ParseDataReaderConfig(toml, config_path);
+      if (!config_result.ok) {
+        NOVA_ERROR("config_error={}", config_result.error);
+        return 1;
+      }
+
+      const std::vector<SourceLabel> source_labels =
+          BuildSourceLabels(config_result.value);
+      using Reader = aquila::market_data::DataReader<
+          aquila::market_data::DataReaderDiagnostics>;
+      Reader reader(std::move(config_result.value));
+      ProbeHandler handler(log_every);
+
+      std::signal(SIGINT, HandleSignal);
+      std::signal(SIGTERM, HandleSignal);
+
+      std::uint64_t polls{0};
+      while (!signal_stop_requested.load(std::memory_order_relaxed) &&
+             (max_polls == 0 || polls < max_polls)) {
+        const std::uint64_t handled = reader.Poll(handler);
+        ++polls;
+        if (handled == 0) {
+          std::this_thread::yield();
+        }
+      }
+
+      const auto& stats = reader.diagnostics().stats();
+      NOVA_INFO(
+          "result=ok polls={} handler_book_tickers={} "
+          "diagnostics_book_tickers={} empty_polls={}",
+          polls, handler.book_tickers(), stats.book_tickers, stats.empty_polls);
+      LogSourceStats(source_labels, stats.sources);
+      return 0;
+    } catch (const std::exception& exc) {
+      NOVA_ERROR("data_reader_probe_error={}", exc.what());
       return 1;
     }
-
-    const std::vector<SourceLabel> source_labels =
-        BuildSourceLabels(config_result.value);
-    using Reader = aquila::market_data::DataReader<
-        aquila::market_data::DataReaderDiagnostics>;
-    Reader reader(std::move(config_result.value));
-    ProbeHandler handler(log_every);
-
-    std::signal(SIGINT, HandleSignal);
-    std::signal(SIGTERM, HandleSignal);
-
-    std::uint64_t polls{0};
-    while (!signal_stop_requested.load(std::memory_order_relaxed) &&
-           (max_polls == 0 || polls < max_polls)) {
-      const std::uint64_t handled = reader.Poll(handler);
-      ++polls;
-      if (handled == 0) {
-        std::this_thread::yield();
-      }
-    }
-
-    const auto& stats = reader.diagnostics().stats();
-    NOVA_INFO(
-        "result=ok polls={} handler_book_tickers={} diagnostics_book_tickers={} "
-        "empty_polls={}",
-        polls, handler.book_tickers(), stats.book_tickers, stats.empty_polls);
-    LogSourceStats(source_labels, stats.sources);
-    nova::StopLogging();
-    return 0;
   } catch (const std::exception& exc) {
     if (::nova::kLogManager.logger() != nullptr) {
       NOVA_ERROR("data_reader_probe_error={}", exc.what());
-      nova::StopLogging();
     }
     return 1;
   }

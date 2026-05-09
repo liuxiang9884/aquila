@@ -25,6 +25,7 @@
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
+#include "tools/common/logging_guard.h"
 #include "tools/gate/strategy_order_feedback_action.h"
 
 namespace {
@@ -60,18 +61,6 @@ struct CliOptions {
       "config/order_feedback/gate_order_feedback_shm.toml"};
   std::uint64_t feedback_consumer_run_id{0};
   std::size_t feedback_poll_budget{32};
-};
-
-struct LoggingGuard {
-  explicit LoggingGuard(const toml::table& toml) {
-    nova::LogConfig log_config;
-    log_config.FromToml(toml["log"]);
-    nova::InitializeLogging(log_config);
-  }
-
-  ~LoggingGuard() {
-    nova::StopLogging();
-  }
 };
 
 std::string ToUpper(std::string value) {
@@ -766,7 +755,7 @@ int main(int argc, char** argv) {
   try {
     const toml::parse_result toml =
         toml::parse_file(options.config_path.string());
-    LoggingGuard logging_guard{toml};
+    aquila::tools::LoggingGuard logging_guard{toml};
     return Run(options, toml);
   } catch (const std::exception& exc) {
     fmt::print(stderr, "[FAIL] config_error={}\n", exc.what());

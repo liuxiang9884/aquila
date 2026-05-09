@@ -15,6 +15,7 @@
 #include "core/strategy/strategy_runtime.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
+#include "tools/common/logging_guard.h"
 #include "tools/gate/strategy_runtime_adapter.h"
 
 namespace {
@@ -36,18 +37,6 @@ struct LoadedConfig {
   aquila::config::DataReaderConfig data_reader;
   gate::OrderSessionConfig order_session;
   demo::DemoStrategyConfig demo_strategy;
-};
-
-struct LoggingGuard {
-  explicit LoggingGuard(const toml::table& toml) {
-    nova::LogConfig log_config;
-    log_config.FromToml(toml["log"]);
-    nova::InitializeLogging(log_config);
-  }
-
-  ~LoggingGuard() {
-    nova::StopLogging();
-  }
 };
 
 const char* EnvValue(const std::string& name) {
@@ -287,7 +276,7 @@ int main(int argc, char** argv) {
 
   try {
     const toml::table toml = toml::parse_file(options.config_path.string());
-    LoggingGuard logging_guard{toml};
+    aquila::tools::LoggingGuard logging_guard{toml};
     return Run(options);
   } catch (const std::exception& exc) {
     fmt::print(stderr, "[FAIL] config_error={}\n", exc.what());
