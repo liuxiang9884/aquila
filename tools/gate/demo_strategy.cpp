@@ -15,7 +15,6 @@
 #include "core/strategy/strategy_runtime.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
-#include "tools/common/logging_guard.h"
 #include "tools/gate/strategy_runtime_adapter.h"
 
 namespace {
@@ -276,7 +275,7 @@ int main(int argc, char** argv) {
 
   try {
     const toml::table toml = toml::parse_file(options.config_path.string());
-    aquila::tools::LoggingGuard logging_guard{toml};
+    nova::LoggingGuard logging_guard{toml};
     return Run(options);
   } catch (const std::exception& exc) {
     fmt::print(stderr, "[FAIL] config_error={}\n", exc.what());

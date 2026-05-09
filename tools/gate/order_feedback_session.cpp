@@ -20,7 +20,6 @@
 #include "core/trading/order_feedback_shm.h"
 #include "exchange/gate/trading/order_feedback_session_config.h"
 #include "nova/utils/log.h"
-#include "tools/common/logging_guard.h"
 
 namespace {
 
@@ -340,7 +339,7 @@ int main(int argc, char** argv) {
   try {
     const toml::parse_result toml =
         toml::parse_file(options.config_path.string());
-    aquila::tools::LoggingGuard logging_guard{toml};
+    nova::LoggingGuard logging_guard{toml};
     return Run(options, toml);
   } catch (const std::exception& exc) {
     fmt::print(stderr, "[FAIL] config_error={}\n", exc.what());

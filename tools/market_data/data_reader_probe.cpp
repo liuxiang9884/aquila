@@ -18,7 +18,6 @@
 #include "core/config/data_reader_config.h"
 #include "core/market_data/data_reader.h"
 #include "nova/utils/log.h"
-#include "tools/common/logging_guard.h"
 
 namespace {
 
@@ -112,7 +111,7 @@ int main(int argc, char** argv) {
 
   try {
     const toml::parse_result toml = toml::parse_file(config_path.string());
-    aquila::tools::LoggingGuard logging_guard{toml};
+    nova::LoggingGuard logging_guard{toml};
 
     try {
       const auto config_result =

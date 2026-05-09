@@ -13,7 +13,6 @@
 #include "core/websocket/websocket_client.h"
 #include "exchange/binance/market_data/data_session_config.h"
 #include "nova/utils/log.h"
-#include "tools/common/logging_guard.h"
 
 namespace {
 
@@ -127,7 +126,7 @@ int main(int argc, char** argv) {
   CLI11_PARSE(app, argc, argv);
 
   const toml::parse_result toml = toml::parse_file(config_path.string());
-  aquila::tools::LoggingGuard logging_guard{toml};
+  nova::LoggingGuard logging_guard{toml};
 
   aq_binance::DataSessionConfigResult config_result =
       aq_binance::ParseDataSessionConfig(toml, config_path);
