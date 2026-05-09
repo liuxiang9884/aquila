@@ -871,9 +871,9 @@ log symbol_id, exchange, queue name, new vector capacity
 
 `Stats` 只记录次数，不保存结构化扩容事件；具体哪个 queue 扩容只写 log。
 
-#### Go 源码确认：lag spread
+#### Go 源码确认：3-3 lag_spread / LagSpreadBuffer
 
-`lagContext.spread` 是 `StreamRecorder(stats_window)`，输入是绝对 spread：
+`lagContext.spread` 是 `StreamRecorder(stats_window)`，输入是 lag 侧绝对 spread。它只在 active lag tick 更新，不在 lead tick 更新。
 
 ```text
 OnLagBBO:
@@ -884,6 +884,100 @@ LagSpreadBuffer(lag_bbo):
   history = spread.GetMean()
   return max(current - history, 0)
 ```
+
+Go 初始化：
+
+```text
+enterActivePhase:
+  lagContext.spread.Init(statsWindow, 100)
+```
+
+所以 Go 使用：
+
+```text
+1 StreamRecorder
+2 queue.Queue:
+  data queue.Queue[float64]
+  time queue.Queue[time.Time]
+```
+
+计算过程：
+
+```text
+OnLagBBO(now, lag_bid, lag_ask):
+  spread = lag_ask - lag_bid
+  count++
+  total += spread
+  sqTotal += spread * spread
+  data.Put(spread)
+  time.Put(now)
+  while now - oldest_time > stats_window:
+      old = data.Pop()
+      time.Pop()
+      count--
+      total -= old
+      sqTotal -= old * old
+  mean = total / count
+```
+
+`lag_spread_mean = lagContext.spread.GetMean()`。`sqTotal` 在 Go 的 `StreamRecorder` 中也维护，但 3-3 只读取 mean，不读取 std。时间来源是 `Context.Now()`，不是 `bbo.ServerTime`。淘汰条件仍是严格 `>`，等于 `stats_window` 边界时保留。
+
+复杂度：
+
+```text
+OnData() amortized O(1)
+GetMean() O(1)
+LagSpreadBuffer() O(1)
+space O(lag active ticks inside stats_window)
+grow O(n)
+```
+
+`aquila` 实现选择：
+
+```text
+SpreadState
+  spread_window: MeanWindow  // period = bbo_record.stats_window
+```
+
+底层复用 3-2 的 `RingQueue<TimedValue>`：
+
+```text
+MeanWindow
+  samples: RingQueue<TimedValue>
+  sum
+```
+
+计算逻辑：
+
+```text
+UpdateLagSpread(state, now, lag_bid, lag_ask):
+    spread = lag_ask - lag_bid
+    state.spread_window.OnData(now, spread)
+
+LagSpreadMean(state):
+    return state.spread_window.Mean()
+
+LagSpreadBuffer(state, lag_bid, lag_ask):
+    current = lag_ask - lag_bid
+    history = state.spread_window.Mean()
+    return max(current - history, 0)
+```
+
+3-3 复用 3-2 的底层类型和扩容策略，但不和 noise 合并运行时 queue。运行期状态独立：
+
+```text
+lag_noise.ratio_window   // std(mid)/mean(mid) over stats_window
+lag_spread.spread_window // absolute spread over stats_window
+```
+
+也就是复用类型，不合并实例。扩容仍由 `RingQueue<T>` 控制，capacity 必须是 2 的次幂，索引用 `& mask`，扩容到 `capacity * 2` 后继续计算。Stats 沿用：
+
+```text
+++stats.ring_queue_capacity_grow_count
+log symbol_id, exchange, queue name, new vector capacity
+```
+
+`Stats` 只记录次数；具体扩容的是 `lag_spread.spread_window` 还是其他 ring queue，只写 log。
 
 `BuildEntryCostBreakdown()` 只把 `LagSpreadBuffer / triggerPrice` 记录为 embedded friction；`RequiredEdge()` 不包含 spread 或 lag spread buffer，避免与 `targetSpace` 中已经扣掉的价格摩擦重复计算。
 
