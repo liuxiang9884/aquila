@@ -7,7 +7,7 @@
 ## 30 秒速览
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
-- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版 submit/cancel C++ 主路径、strategy `OrderManager` 第一版订单框架、Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser / `OrderFeedbackSession` / `OrderManager` feedback apply，以及 strategy runtime production loop / Gate adapter / demo 策略 dry-run 工具已落地；LeadLag fixed 策略到 `aquila` 的分层设计 spec 已开始，配置 / instrument metadata、raw market state 和 BBO extrema 已收敛，MoveQueue / noise / spread 细节等待 fixed Go 源码确认。
+- 当前重点：WebSocket 内核已经完成 P0/P1/P2/P3 主体；Gate futures SBE BBO 行情与 Binance USD-M futures JSON bookTicker 行情、`BookTicker`、market data client、data session、SHM sink、strategy `DataReader`、benchmark、live probe 和每进程 config / log config 已落地；Gate / Binance 期货合约元数据脚本已输出统一一类下单前字段；行情热路径已按协议不变量收口；Gate `OrderSession` 第一版 submit/cancel C++ 主路径、strategy `OrderManager` 第一版订单框架、Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser / `OrderFeedbackSession` / `OrderManager` feedback apply，以及 strategy runtime production loop / Gate adapter / demo 策略 dry-run 工具已落地；LeadLag fixed 策略到 `aquila` 的分层设计 spec 已开始，配置 / instrument metadata、raw market state、BBO extrema、MoveQueue、noise 和 spread 统计语义已按 fixed Go 源码补齐。
 - 构建：CMake + `build.sh`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配、性能结论必须有 benchmark / profile / live probe 证据。
 - 当前建议分支入口：`main`。
@@ -50,10 +50,10 @@
 32. `OrderManager` 已实现 `OnOrderFeedback()`：accepted 保存 `exchange_order_id` 并通知同线程 `OrderSession` cache；partial fill 更新累计成交但在 `kCancelSent` 下保持撤单挂起状态；filled / cancelled terminal event 幂等终结订单并清理 cache；`kGap` event 设置 `feedback_gap_detected`。
 33. `config/order_feedback/gate_order_feedback_session.toml`、`OrderFeedbackSessionConfig` parser、`tools/gate/order_feedback_session.cpp`、parser / session / strategy / SHM fake integration tests 和 `gate_order_feedback_parser_benchmark` 已落地。2026-05-08 release benchmark：parser one order mean `65.2ns`，session binary to counting publisher mean `95.3ns`，session binary to SHM publish + drain mean `105ns`；这些是本机 microbenchmark，不是公网端到端延迟结论。
 34. Task2 已完成小额 live smoke：`gate_order_feedback_session` + `gate_strategy_order` 跑通过 1 手 BTC_USDT market buy + reduce-only sell 填平，以及 79000 buy limit accepted 后自动 cancel；REST 复核无残留 open orders / position。仍未实现 REST reconcile、account / position feedback 和 feedback WS 断线后的未知订单状态恢复。
-35. `doc/leadlag-fixed-strategy-reconstruction-guide.md` 已保存 current fixed LeadLag 策略重建手册；`doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` 已按 fixed 语义还原 + `aquila` 链路对齐方式开始拆解。当前已确认：一个 `leadlag::Strategy` 可管理多个 pair、pair config 同时写 `symbol` / `symbol_id`、交易基础信息从 instrument catalog 压缩到运行期 metadata、`open_notional` 使用 `notional_multiplier` 转 lag 原生 quantity、raw market state 使用 `QuoteSnapshot{local_ns,bid,ask}`、`BookTicker.local_ns` 作为策略时间、`BboExtremaWindow` 使用固定容量 monotonic deque。MoveQueue 是切窗还是 rolling、`StreamStdEmaRecorder` 的 noise 公式细节和 lag spread 统计方式等待 fixed Go 源码确认。
+35. `doc/leadlag-fixed-strategy-reconstruction-guide.md` 已保存 current fixed LeadLag 策略重建手册；`config/strategy.zip` 已解压到被 git ignore 的 `third_party/strategy/` 作为 fixed Go 源码参考；`doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` 已按 fixed 语义还原 + `aquila` 链路对齐方式开始拆解。当前已确认：一个 `leadlag::Strategy` 可管理多个 pair、pair config 同时写 `symbol` / `symbol_id`、交易基础信息从 instrument catalog 压缩到运行期 metadata、`open_notional` 使用 `notional_multiplier` 转 lag 原生 quantity、raw market state 使用 `QuoteSnapshot{local_ns,bid,ask}`、same-price raw tick 不替换 quote 但仍推进 drift / alignment、`BboExtremaWindow` 使用固定容量 monotonic deque。fixed Go 源码确认：`MoveQueue` 是按 `stats_window` 切窗 roll 后清空，不是严格 rolling；`StreamStdEmaRecorder` 是 rolling normalized std 的 rolling mean，不是指数 EMA；`lagContext.spread` 是 absolute spread 的 `StreamRecorder(stats_window)` mean。
 36. Strategy runtime production loop 已落地：`core/strategy/strategy_runtime.h` 支持 `StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>`，生产 `Create()` 从已解析 `StrategyConfig` / `DataReaderConfig` 构造 `DataReader`、`OrderSession`、`OrderManager`、`StrategyContext`、user strategy 和可选 feedback reader；Gate production 路径使用 `OrderSessionT::SetRuntimeHook()` 在 WebSocket active spin loop 同线程轮询 feedback SHM / data reader，`OnOrderResponse()` 和 `OnOrderFeedback()` 都先更新 `OrderManager` 再调用 user strategy hook，并支持 `OnStart` / `OnLoop` / `OnIdle` / `OnStop` / `ShouldStop`、`spin` / `yield` idle policy、`max_loop_seconds` 和 best-effort `bind_cpu_id`。
 37. Gate strategy runtime adapter 和 `demo` 策略工具已落地：`tools/gate/strategy_runtime_adapter.h` 把 Gate `OrderSession` 包装为 runtime 可用的 `OrderSessionT`，通过 `BindRuntime()` 让 Gate response handler 同线程直接回调 `StrategyRuntime::OnOrderResponse()`，不再保留 production response queue、background order session thread 或 command queue；place / cancel 直接转发给同线程 Gate session。`tools/gate/demo_strategy.h` / `tools/gate/demo_strategy.cpp` 提供 `demo` user strategy 和 `gate_demo_strategy` 工具，默认 dry-run 只解析配置，不打开 WebSocket / SHM；显式 `--execute` 才进入实盘 runtime。本轮没有做实盘测试。
-38. Nova upstream 已加入 `nova::LoggingGuard`（Nova commit `e40bbc5 Add logging guard`）；Aquila tool 直接使用该 RAII guard 初始化 / 停止 Nova log，本地 `tools/common/logging_guard.h` 已删除。已完成的执行计划文档已清理，后续以 onboarding、handoff、design spec 和当前代码作为事实源。
+38. Nova upstream 已加入 `nova::LoggingGuard`（Nova commit `e40bbc5 Add logging guard`）；Aquila tool 直接使用该 RAII guard 初始化 / 停止 Nova log，本地 `tools/common/logging_guard.h` 已删除。Aquila 本地提交 `21b7740 Clean up completed planning docs` 已清理完成的执行计划文档，后续以 onboarding、handoff、design spec 和当前代码作为事实源。
 
 ## 新对话第一步
 
@@ -84,13 +84,13 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 ```
 
 如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、`docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。已完成的执行计划文档已删除，追溯实现边界和验证命令时以本 onboarding、Gate handoff 和当前代码为准。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
-如果继续 LeadLag fixed 策略迁移，优先读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`；当前第 3 部分 recorder / queue / noise 只确认了 BBO extrema，后续先拿 fixed Go 源码确认 MoveQueue / noise / spread 的精确窗口语义。
+如果继续 LeadLag fixed 策略迁移，优先读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`；fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`，设计 spec 已按 7 层补齐源码对照，下一步可以从第 4 部分 drift / alignment 或第 5 部分 threshold 继续讨论实现取舍。
 
 ## 给下一个对话的 onboarding 提示
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 已在 Task1 order feedback SHM transport 之上完成 Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()` 和 SHM fake integration；并已落地 strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具：`[strategy]` config parser、`StrategyContext`、`StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>` 生产 `Create()` / `Run()` hook mode、user strategy 的 `OnBookTicker`、`OnOrderResponse`、`OnOrderFeedback`、`OnLoop` 等事件入口，以及 `tools/gate/gate_demo_strategy`。Gate production adapter 当前不使用 response queue、background order session thread 或 command queue；Aquila tools 直接使用 Nova upstream 的 `nova::LoggingGuard`，本地 logging guard wrapper 已删除；已完成的执行计划文档也已清理。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、`docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，再读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`。Gate / strategy runtime 下一步优先做用户授权后的最小实盘 smoke：先运行 `gate_order_feedback_session --connect`，再用 `gate_demo_strategy --execute` 小额跑 `demo` 的 accepted / filled-close / cancel 分支，并用 REST 复核无残留订单 / 仓位；之后补 REST reconcile、account / position feedback 和端到端 benchmark。LeadLag 下一步优先拿 fixed Go 源码确认 MoveQueue、`StreamStdEmaRecorder` 和 lag spread 统计语义，再继续第 3 部分设计。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `21b7740 Clean up completed planning docs`，本轮收尾按用户要求 push 到远端；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已在 Task1 order feedback SHM transport 之上完成 Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()` 和 SHM fake integration；并已落地 strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具：`[strategy]` config parser、`StrategyContext`、`StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>` 生产 `Create()` / `Run()` hook mode、user strategy 的 `OnBookTicker`、`OnOrderResponse`、`OnOrderFeedback`、`OnLoop` 等事件入口，以及 `tools/gate/gate_demo_strategy`。Gate production adapter 当前不使用 response queue、background order session thread 或 command queue；Aquila tools 直接使用 Nova upstream 的 `nova::LoggingGuard`，本地 logging guard wrapper 已删除；已完成的执行计划文档也已清理。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、`docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，再读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`，fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`。Gate / strategy runtime 下一步优先做用户授权后的最小实盘 smoke：先运行 `gate_order_feedback_session --connect`，再用 `gate_demo_strategy --execute` 小额跑 `demo` 的 accepted / filled-close / cancel 分支，并用 REST 复核无残留订单 / 仓位；之后补 REST reconcile、account / position feedback 和端到端 benchmark。LeadLag 第 3 部分 recorder / queue / noise / spread 已按 fixed Go 源码补齐，下一步可以继续第 4 部分 drift / alignment 或第 5 部分 threshold 的 `aquila` 实现取舍。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -119,7 +119,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag fixed 策略拆解或对账时读 | current fixed 策略配置、OnRawBBO / OnLeadBBO / OnLagBBO 调用链、drift / alignment、UpdateMoveThreshold、open / close / stoploss 和订单状态机伪代码。 |
-| `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已确认 config / metadata、raw market state、BBO extrema；MoveQueue / noise / spread 等待 fixed Go 源码确认。 |
+| `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已按 fixed Go 源码补齐 raw same-price、BBO extrema、MoveQueue、noise、spread、threshold 和 order state 关键语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
 | `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
 | `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` | 继续 Gate `OrderFeedbackSession` 架构和实现时读 | 第一版只使用 `futures.orders` 的订单生命周期 event、quantity/price/role/finish reason 语义、Strategy 状态推进和宽结构 event carrier。 |
@@ -549,15 +549,17 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 - 交易基础信息从 lag `InstrumentInfo` 压缩成运行期 metadata；策略运行期不保存完整 `InstrumentInfo*`。
 - `open_notional` 表示每次开仓目标名义金额；Gate futures 下单 quantity 换算必须使用 `notional_multiplier`。
 - raw market state 不保存完整 `BookTicker`，只保存 `QuoteSnapshot{local_ns,bid_price,ask_price}` 和 `prev_price`；策略窗口时间使用 `BookTicker.local_ns`。
-- `price_changed` 只比较 bid / ask price，不比较 volume；两边 `has_quote` 后才更新 drift。
+- `price_changed` 只比较 bid / ask price，不比较 volume；same-price raw tick 不替换 quote，但两边 `has_quote` 后仍用已保存 quote 推进 drift / alignment。
 - `BboExtremaWindow` 语义是 rolling `bbo_record.window` 内 bid / ask min/max；实现设计选择固定容量 monotonic deque、预分配 vector、默认 capacity `16 * 1024`，overrun 只禁用新开仓，不阻断 close / stoploss / feedback。
+- fixed Go 源码已解压到 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`，该目录被 git ignore，仅作为源码参考。
+- `MoveQueue` 是按 `stats_window` 时间边界切窗，`t > RollAt` 才 roll，roll 后清空旧 samples；不是严格 rolling 最近 `stats_window`。
+- `StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean：先在 `bbo_record.window` 内算 `std(mid)/mean(mid)`，再在 `stats_window` 内取 mean。
+- `lagContext.spread` 是 absolute spread 的 `StreamRecorder(stats_window)` mean；`LagSpreadBuffer = max(current_spread - mean_spread, 0)`。
 
 当前 pending：
 
-- fixed Go 源码尚未接入；`doc/leadlag-fixed-strategy-reconstruction-guide.md` 只能确认伪代码和行为语义，不能确认 Go 内部容器。
-- MoveQueue 是按 `stats_window` 切窗 roll 后清空，还是严格 rolling 最近 `stats_window`，需要 Go 源码确认。
-- `StreamStdEmaRecorder` 中 `LeadNoise` / `LagNoise` 的 EMA 公式和窗口边界需要 Go 源码确认。
-- `lagContext.spread` 是严格 rolling mean，还是按 `stats_window` roll 的统计器，需要 Go 源码确认。
+- BBO extrema 在 fixed Go 中使用 `bbo.ServerTime` 做窗口淘汰，而 `aquila` 第一版设计倾向统一使用 `BookTicker.local_ns`；严格 fixed replay 对账前需要确认是否要给 extrema 注入 fixed-compatible server timestamp。
+- 后续进入实现计划前，还需要把第 4 / 第 5 部分的 drift / alignment / threshold 设计转换成具体 C++ 结构和测试清单。
 
 ### 期货合约元数据
 
@@ -806,9 +808,9 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 
 1. 读取 `doc/leadlag-fixed-strategy-reconstruction-guide.md`。
 2. 读取 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`。
-3. 先拿到 fixed Go 源码，确认 `BBOVolRecorder`、`MoveQueue`、`StreamStdEmaRecorder`、`StreamRecorder` 和 `lagContext.spread` 的真实结构与窗口语义。
-4. 回到设计 spec 的第 3 部分，补齐 MoveQueue 是切窗还是 rolling、LeadNoise / LagNoise 的精确公式、lag spread mean 的窗口边界。
-5. 第 3 部分确认后，再继续第 4 部分 drift / alignment phase；不要在 MoveQueue / noise / spread 语义未确认前写实现计划。
+3. 参考 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/leadlag/algo/` 中的 fixed Go 源码，尤其是 `strategy.go`、`analysis.go`、`move.go`、`cost_model.go` 和 `execute_cache.go`。
+4. 第 3 部分 recorder / queue / noise / spread 已补齐；下一步优先继续第 4 部分 drift / alignment phase 和第 5 部分 threshold engine 的 `aquila` C++ 落地设计。
+5. 在实现计划前，先决定 BBO extrema 是否继续用 `BookTicker.local_ns`，还是为了 fixed replay 对账引入 server timestamp 输入。
 
 如果新对话从 Gate 交易继续，建议顺序：
 
