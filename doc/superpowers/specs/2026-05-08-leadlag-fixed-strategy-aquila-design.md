@@ -707,9 +707,17 @@ MoveQueue.Push(
 
 `aquila` 第一版建议用 fixed-capacity exact切窗 queue + sort reference 复刻输出语义。后续如为了热路径稳定性改成 fixed-bin histogram，必须保留 replay 对照，明确记录 quantile 近似误差。
 
-#### Go 源码确认：StreamRecorder / noise / spread
+#### Go 源码确认：3-2 lead_noise / lag_noise
 
-`StreamRecorder` 是按时间淘汰的 rolling recorder，不是切窗 roll：
+`lead_noise` / `lag_noise` 不使用单调队列。fixed Go 使用 `StreamStdEmaRecorder`，底层是两个 `StreamRecorder`：
+
+```text
+StreamStdEmaRecorder
+  items: StreamRecorder(window = bbo_record.window)
+  ema:   StreamRecorder(period = bbo_record.stats_window)
+```
+
+每个 `StreamRecorder` 是按时间淘汰的 rolling recorder，不是固定条数窗口，也不是切窗 roll：
 
 ```text
 StreamRecorder
@@ -730,14 +738,24 @@ GetStd():
   sqrt(E[x^2] - E[x]^2)
 ```
 
-fixed Go 的底层 queue 满了会动态扩容；`aquila` 不应这样做，应使用启动期 capacity 并在 overrun 时显式降级或拒绝新开仓。
+Go 的 `StreamRecorder` 里面有两个本地自定义 FIFO queue：
+
+```text
+data queue.Queue[float64]
+time queue.Queue[time.Time]
+```
+
+因此 `lead_noise` / `lag_noise` 一共使用：
+
+```text
+2 sides * 2 StreamRecorder per side * 2 queue per StreamRecorder = 8 Go queues
+```
+
+这些 queue 是 slice-backed ring，正常 push / pop 不分配；满了会动态扩容并 copy，当次扩容是 `O(n)`。
 
 `StreamStdEmaRecorder` 名字带 `Ema`，但源码不是指数 EMA。它是两层 rolling mean：
 
 ```text
-items = StreamRecorder(window = bbo_record.window)
-ema   = StreamRecorder(period = bbo_record.stats_window)
-
 OnData(t, mid):
   items.OnData(t, mid)
   std = items.GetStd()
@@ -754,6 +772,106 @@ GetStdEma():
 - `LeadNoise` 是 lead active tick 中 lead mid 的 `rolling_mean(std(mid over window) / mean(mid over window))`。
 - `LagNoise` 是 lag active tick 中 lag mid 的同一公式。
 - `LeadNoise` / `LagNoise` 只在 `MoveQueue` roll 时冻结到 threshold state；非 roll tick 只继续更新 recorder。
+
+更新输入：
+
+```text
+Active lead tick:
+  lead_mid = (drifted_lead_ask + drifted_lead_bid) / 2
+  lead_noise.OnData(now, lead_mid)
+
+Active lag tick:
+  lag_mid = (lag_ask + lag_bid) / 2
+  lag_noise.OnData(now, lag_mid)
+```
+
+Go 这里的 `now` 来自 `Context.Now()`，不是 `bbo.ServerTime`。淘汰条件是：
+
+```text
+now - oldest_time > period
+```
+
+等于窗口边界时保留。复杂度：
+
+```text
+OnData() amortized O(1)
+GetMean() O(1)
+GetStd() O(1)
+space O(samples inside windows)
+grow O(n)
+```
+
+`aquila` 实现选择：
+
+```text
+RingQueue<T>
+  storage: std::vector<T>
+  capacity: power of two
+  mask = capacity - 1
+  head
+  size
+
+TimedValue
+  local_ns
+  value
+
+MeanStdWindow
+  samples: RingQueue<TimedValue>
+  sum
+  sum_sq
+
+MeanWindow
+  samples: RingQueue<TimedValue>
+  sum
+
+NoiseState
+  mid_window: MeanStdWindow     // period = bbo_record.window
+  ratio_window: MeanWindow      // period = bbo_record.stats_window
+```
+
+`RingQueue<T>` 是纯底层数据结构，支持 struct 元素，不知道 mean / std / noise 语义。时间和值在 Aquila 合成一个 `TimedValue`，等价于 Go 的 `time queue + data queue` 同步 push/pop。`MeanStdWindow` / `MeanWindow` 负责时间窗口淘汰和 running sum；`NoiseState` 负责组合两个窗口。
+
+每个 side 使用两个逻辑 ring queue：
+
+```text
+lead_noise.mid_window
+lead_noise.ratio_window
+lag_noise.mid_window
+lag_noise.ratio_window
+```
+
+也就是 4 个 `RingQueue<TimedValue>`，等价覆盖 Go 的 8 个物理 queue。计算逻辑单独放在 recorder 层：
+
+```text
+UpdateNoise(state, now, mid):
+    state.mid_window.OnData(now, mid)
+    mean = state.mid_window.Mean()
+    std = state.mid_window.Std()
+    if mean != 0:
+        state.ratio_window.OnData(now, std / mean)
+
+NoiseLive(state):
+    return state.ratio_window.Mean()
+```
+
+底层 `RingQueue<T>` 的 capacity 必须是 2 的次幂，索引用 `& mask`：
+
+```text
+index = (head + offset) & mask
+```
+
+初始化时把配置 capacity 归整到 next power of two，并 `resize(capacity)`。容量不足时由 `RingQueue` 控制扩容到 `capacity * 2`，重新按 FIFO 顺序 copy，`head = 0`，更新 `mask`。扩容后继续计算，保证准确性。
+
+扩容记录按 3-1 extrema 的方式处理：
+
+```text
+++stats.ring_queue_capacity_grow_count
+log symbol_id, exchange, queue name, new vector capacity
+```
+
+`Stats` 只记录次数，不保存结构化扩容事件；具体哪个 queue 扩容只写 log。
+
+#### Go 源码确认：lag spread
 
 `lagContext.spread` 是 `StreamRecorder(stats_window)`，输入是绝对 spread：
 
