@@ -21,10 +21,10 @@ aquila::config::StrategyConfigResult ParseConfigToml(std::string_view text) {
 std::string MinimalStrategyConfigToml() {
   return R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategies/lead_lag_btc.toml"
+config = "config/strategy/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -45,12 +45,12 @@ TEST(StrategyConfigTest, LoadsCheckedInLeadLagStrategyConfig) {
   ASSERT_TRUE(result.ok) << result.error;
   const aquila::config::StrategyConfig& config = result.value;
 
-  EXPECT_EQ(config.name, "lead_lag_btc");
+  EXPECT_EQ(config.name, "lead_lag");
   EXPECT_EQ(config.strategy_id, 4);
   EXPECT_EQ(config.mode, aquila::config::StrategyMode::kDryRun);
   EXPECT_EQ(config.order_capacity, 8U);
   EXPECT_EQ(config.user_config_path,
-            SourcePath("config/strategies/lead_lag_btc.toml"));
+            SourcePath("config/strategy/lead_lag.toml"));
 
   EXPECT_EQ(config.loop.idle_policy,
             aquila::config::StrategyLoopIdlePolicy::kSpin);
@@ -72,10 +72,10 @@ TEST(StrategyConfigTest, LoadsCheckedInLeadLagStrategyConfig) {
 TEST(StrategyConfigTest, RejectsStrategyIdOutsideFeedbackLaneRange) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 8
 order_capacity = 8
-config = "config/strategies/lead_lag_btc.toml"
+config = "config/strategy/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -106,7 +106,7 @@ TEST(StrategyConfigTest, RejectsZeroOrderCapacity) {
 TEST(StrategyConfigTest, RejectsMissingStrategyConfigPath) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
 
@@ -128,11 +128,11 @@ channel_name = "orders"
 TEST(StrategyConfigTest, RejectsUnknownMode) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 4
 mode = "paper"
 order_capacity = 8
-config = "config/strategies/lead_lag_btc.toml"
+config = "config/strategy/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -152,10 +152,10 @@ channel_name = "orders"
 TEST(StrategyConfigTest, RejectsFeedbackEnabledWithoutShmName) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategies/lead_lag_btc.toml"
+config = "config/strategy/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -175,10 +175,10 @@ channel_name = "orders"
 TEST(StrategyConfigTest, RejectsZeroFeedbackPollBudget) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategies/lead_lag_btc.toml"
+config = "config/strategy/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -200,10 +200,10 @@ poll_budget = 0
 TEST(StrategyConfigTest, AcceptsFeedbackDisabledWithoutShmFields) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
-name = "lead_lag_btc"
+name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategies/lead_lag_btc.toml"
+config = "config/strategy/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
