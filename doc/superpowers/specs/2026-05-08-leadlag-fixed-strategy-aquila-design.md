@@ -77,7 +77,7 @@ OnBookTicker(ticker):
 | --- | --- | --- |
 | 1. 配置与 metadata | `StrategyConfig`、`SetDefault()`、`LagTakerFee()`、`ExecutionConfig.EntrySpreadLimit()`、`CalOpenQty()`、`FormatQty()` | `max_entry_spread < 0` 时回退到 `trailing_stop`；默认 lag taker fee 来自 hard-coded exchange map；数量按 `price`、`QuantityTick` 和 `ContractValue` 归整。 |
 | 2. Raw market state | `OnRawBBO()`、`updateRawMarketState()` | same-price raw tick 不替换已保存 quote，但仍用旧 quote 推进 drift / alignment；未 Active 前不进入交易 recorder / signal。 |
-| 3. Recorder / queue / noise | `BBOVolRecorder`、`StreamRecorder`、`StreamStdEmaRecorder`、`MoveQueue`、`LagSpreadBuffer()` | BBO extrema 是时间窗口 monotonic queue；`MoveQueue` 是按 `stats_window` 时间边界切窗并 roll 后清空；`StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean；lag spread 是绝对 spread 的 `StreamRecorder(stats_window)` 均值。 |
+| 3. Recorder / queue / noise | `BBOVolRecorder`、`StreamRecorder`、`StreamStdEmaRecorder`、`MoveQueue`、`LagSpreadBuffer()` | BBO extrema 是时间窗口 monotonic queue；`MoveQueue` 是按 `stats_window` 时间边界切窗并 roll 后清空；Aquila 第一版用 dual heap exact empirical quantile，histogram 只作为低延迟近似备选；`StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean；lag spread 是绝对 spread 的 `StreamRecorder(stats_window)` 均值。 |
 | 4. Drift / alignment | `UpdateDrift()`、`alignmentWarmup()`、`alignmentReady()`、`enterActivePhase()` | drift 用 `(lag_ask + lag_bid) / (lead_ask + lead_bid)`；`drift_warmup > 0` 时用配置值，否则回退到 `stats_window`；进入 Active 后重置并播种交易侧 recorder。 |
 | 5. Threshold | `UpdateMoveThreshold()`、`ProfitBuffer()` | roll 时先冻结 noise、用旧 move queue 计算 quantile / threshold，再清空 queue，最后 push 当前 lead tick 的 move；`profitBuffer = fee*2 + LeadNoise + LagNoise`。 |
 | 6. Signal | `OnLeadBBO()`、`OnLagBBO()`、`OpenLong()`、`OpenShort()`、`CloseLong()`、`CloseShort()`、`ExecuteStoploss*()` | lead tick 顺序是更新 recorder / threshold、先平仓再开仓；lag tick 顺序是 spread / noise、trailing、stoploss、signal close；`drift_limit` 只限制新开仓。 |
@@ -602,6 +602,8 @@ BboExtremaWindow
 
 RecorderStats
   extrema_capacity_grow_count
+  ring_queue_capacity_grow_count
+  move_quantile_capacity_grow_count
 ```
 
 更新输入：
@@ -705,7 +707,155 @@ MoveQueue.Push(
 - roll 后 `Up` / `Down` 清空，下一行再 push 当前 tick，进入新窗口。
 - quantile 使用 `gonum/stat.Quantile` 的 `stat.Empirical` 模式；`up = Quantile(p, Up)`，`down = Quantile(1-p, Down)`。
 
-`aquila` 第一版建议用 fixed-capacity exact切窗 queue + sort reference 复刻输出语义。后续如为了热路径稳定性改成 fixed-bin histogram，必须保留 replay 对照，明确记录 quantile 近似误差。
+`gonum/stat.Quantile(..., stat.Empirical, ..., nil)` 要求输入升序；`Empirical` 返回第一个使经验 CDF 达到 `p` 的样本值，不做线性插值。无权重、非空样本下等价于：
+
+```text
+k = max(1, ceil(p * n))
+quantile = sorted[k - 1]
+```
+
+Go 的 `Qunatile()` 在某一侧样本为空时返回 `0`，因为只在 `len(slice) > 0` 时调用 `stat.Quantile()`。
+
+Go 时间复杂度：
+
+```text
+normal active lead tick: append Up/Down, amortized O(1)
+roll tick: sort Up + sort Down, O(n log n)
+quantile after sort: O(1)
+space: O(n)
+```
+
+其中 `n` 是当前 `stats_window` 切窗内 active lead tick 数。这个实现总成本可接受，但 roll tick 会集中承担排序开销，导致主路径 tail spike。
+
+#### Aquila 实现选择：dual-heap exact quantile
+
+`aquila` 第一版使用 dual heap 维护 exact empirical quantile，避免在 roll tick 做 `O(n log n)` 排序。它保留 Go 的切窗语义和 empirical quantile 语义，但把计算成本摊到每个 active lead tick。
+
+```text
+MoveQuantileWindow
+  roll_at_ns
+  window_ns = bbo_record.stats_window
+  up:   OnlineEmpiricalQuantile(p = quantile.move)
+  down: OnlineEmpiricalQuantile(p = 1 - quantile.move)
+```
+
+每个 `OnlineEmpiricalQuantile` 维护两个 heap：
+
+```text
+OnlineEmpiricalQuantile
+  p
+  count
+  lower: max-heap  // 最小的 max(1, ceil(p * count)) 个样本
+  upper: min-heap  // 剩余样本
+```
+
+不变量：
+
+```text
+lower.size == max(1, ceil(p * count)) when count > 0
+all(lower) <= all(upper)
+Value() = lower.top()
+```
+
+`Value()` 在没有样本时返回 `0`，对齐 Go 的空 slice 返回值。`Reset()` 只清 logical size，保留 vector capacity。
+
+底层不用 `std::priority_queue`，而使用：
+
+```text
+std::vector<double> + std::push_heap / std::pop_heap
+```
+
+原因是 `aquila` 需要直接控制 `reserve()`、capacity grow 统计、扩容日志和 reset 语义。初始化时按 `move_queue_capacity` 对 4 个 heap vector 预留容量：
+
+```text
+up.lower
+up.upper
+down.lower
+down.upper
+```
+
+为避免单个 heap 在偏高或偏低 quantile 下超过预留，第一版可让每个 heap 都 `reserve(move_queue_capacity)`；这样只有当前切窗样本数超过该容量时才可能在热路径扩容。内存代价是每个 pair 约：
+
+```text
+4 * move_queue_capacity * sizeof(double)
+```
+
+以 `move_queue_capacity = 16 * 1024` 计算约 512 KiB。
+
+更新过程：
+
+```text
+if now > roll_at_ns:
+    up = up_quantile.Value()
+    down = down_quantile.Value()
+    update thresholds with old window quantiles
+    Reset(now)  // clear heaps, keep capacity
+
+up_quantile.Add(lead_bid / bid_min - 1)
+down_quantile.Add(lead_ask / ask_max - 1)
+```
+
+当前 tick 仍然不参与刚 roll 出来的 threshold；roll 顺序与 fixed Go 一致。
+
+复杂度：
+
+```text
+active lead tick: O(log n) worst/amortized
+roll tick: O(1)
+quantile read: O(1)
+reset: O(1)
+space: O(n)
+```
+
+这个方案不降低每个窗口的总复杂度阶数；它把 Go 的 roll 排序 spike 拆散到每个 active lead tick，使主路径延迟更稳定。
+
+扩容记录按 3-2 / 3-3 的规则：
+
+```text
+++stats.move_quantile_capacity_grow_count
+log symbol_id, exchange, vector name, new vector capacity
+```
+
+`RecorderStats` 只保存次数，不保存结构化扩容事件。具体是 `up.lower`、`up.upper`、`down.lower` 还是 `down.upper` 扩容，以及扩容后的 capacity，只写 log。扩容不丢样本、不暂停计算。
+
+#### Histogram 备选方案
+
+Histogram 是后续低延迟优先的备选，不作为第一版默认实现。它用固定 bins 近似 quantile：
+
+```text
+HistogramQuantile
+  min_value
+  max_value
+  bin_width = (max_value - min_value) / bins
+  counts[bins]
+  count
+  underflow_count
+  overflow_count
+```
+
+更新与查询复杂度：
+
+```text
+active lead tick: O(1)
+roll quantile scan: O(bins)
+reset: O(bins), or O(1) with epoch reset
+space: O(bins)
+```
+
+在样本不发生 underflow / overflow 时，误差由 `bin_width` 控制。若返回 conservative edge：
+
+```text
+up quantile:   bin upper edge
+down quantile: bin lower edge
+```
+
+则阈值方向更保守，绝对误差上界约为 `bin_width`。例如范围 `[0, 0.01]`、`4096` bins：
+
+```text
+bin_width = 0.01 / 4096 ~= 0.0000024414 = 0.0244 bp
+```
+
+Histogram 初始化后固定 range / bins 时不会在热路径分配内存；但它不是 exact empirical quantile，overflow / underflow 时误差不再受 `bin_width` 约束。因此只有当实盘低延迟优先于 fixed replay 精确对齐，并且 range / bins / overflow 策略已经被数据验证后，才考虑替换 dual heap。
 
 #### Go 源码确认：3-2 lead_noise / lag_noise
 
@@ -985,17 +1135,19 @@ log symbol_id, exchange, queue name, new vector capacity
 
 - Active 前输入 BBO 不改变交易 recorder。
 - `SeedActive()` 后 recorder 初始极值等于 seed。
-- lead tick 只更新 lead recorder / lead noise / move queue。
+- lead tick 只更新 lead recorder / lead noise / move quantile window。
 - lag tick 只更新 lag recorder / lag spread / lag noise。
 - BBO extrema 输出 rolling `bbo_record.window` 内的 bid / ask min/max。
 - BBO extrema vector 扩容后继续计算，不丢样本；`RecorderStats.extrema_capacity_grow_count` 只记录次数，扩容细节写 log。
 - MoveQueue 按 `stats_window` 切窗，roll 后清空；不是严格 rolling 最近 `stats_window`。
 - MoveQueue 在边界时间 `t == RollAt` 不 roll，`t > RollAt` 才 roll。
 - roll 时用旧 queue 计算 quantile，当前 lead tick 的 move 进入新窗口。
+- Aquila 第一版用 dual heap exact empirical quantile，`RecorderStats.move_quantile_capacity_grow_count` 只记录次数，扩容细节写 log。
+- Histogram 只作为后续备选；若启用必须记录 range / bins / underflow / overflow，并接受 `bin_width` 级别近似误差。
 - `LeadNoise` / `LagNoise` 是 rolling normalized std 的 rolling mean，不是指数 EMA。
 - `lag_spread_mean` 是 absolute spread 的 `StreamRecorder(stats_window)` mean。
 - `LagSpreadBuffer = max(current_spread - mean_spread, 0)`。
-- 固定 replay 下 extrema、noise、move quantile 与 fixed 对齐到可接受误差。
+- 固定 replay 下 extrema、noise、dual-heap move quantile 与 fixed 对齐；若启用 histogram，则按配置误差单独验收。
 
 ## 4. Drift 与 Alignment Phase
 
@@ -1048,7 +1200,7 @@ else:
 
 进入 Active 时：
 
-- 重置交易 recorder / noise / spread / move queue。
+- 重置交易 recorder / noise / spread / move quantile window。
 - 如果 `driftReady`，先用 drift mean 缩放 lead seed。
 - 用当前 raw lead / raw lag 快照播种交易 recorder。
 - 设置 `resumeLeadTick`，避免 Active 切换 tick 被错误跳过或重复处理。

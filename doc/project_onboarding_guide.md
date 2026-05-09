@@ -555,13 +555,14 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 - `BboExtremaWindow` 语义是 rolling `bbo_record.window` 内 bid / ask min/max；fixed Go 使用本地自定义 `MonotonicQueue`，正常 update 摊还 `O(1)`、min/max 查询 `O(1)`。Aquila 选择 vector-backed monotonic deque，启动期按 `extrema_window_capacity` reserve，允许 vector 自动扩容保证计算准确性；`RecorderStats` 只记录 `extrema_capacity_grow_count`，具体 symbol/exchange/vector/capacity 写 log。
 - fixed Go 源码已解压到 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`，该目录被 git ignore，仅作为源码参考。
 - `MoveQueue` 是按 `stats_window` 时间边界切窗，`t > RollAt` 才 roll，roll 后清空旧 samples；不是严格 rolling 最近 `stats_window`。
+- 3-4 move quantile：fixed Go 是 append-only `Up` / `Down` slice，roll 时 sort 后用 `gonum/stat.Quantile(..., stat.Empirical)`；Aquila 第一版改用 dual heap exact empirical quantile，保留切窗和当前 tick 不参与刚 roll threshold 的语义，避免 roll tick `O(n log n)` spike。Histogram 只作为后续低延迟近似备选。
 - `lead_noise` / `lag_noise` 不使用单调队列；fixed Go 使用 4 个 `StreamRecorder` / 8 个本地 FIFO queue。Aquila 设计为 4 个 `RingQueue<TimedValue>`：lead/lag 各一个 mid window 和 ratio window；`RingQueue<T>` 使用 vector、capacity 必须为 2 的次幂、索引用 `& mask`，扩容后 `RecorderStats.ring_queue_capacity_grow_count` 只记录次数，细节写 log。
 - `lag_spread` 是 absolute spread 的 `StreamRecorder(stats_window)` mean；fixed Go 使用 1 个 `StreamRecorder` / 2 个 FIFO queue。Aquila 设计为 `SpreadState{MeanWindow}`，底层复用 3-2 的 `RingQueue<TimedValue>`、2 的次幂 capacity 和 `RecorderStats.ring_queue_capacity_grow_count`；`LagSpreadBuffer = max(current_spread - mean_spread, 0)`。
 
 当前 pending：
 
 - BBO extrema 在 fixed Go 中使用 `bbo.ServerTime` 做窗口淘汰，而 `aquila` 第一版设计倾向统一使用 `BookTicker.local_ns`；严格 fixed replay 对账前需要确认是否要给 extrema 注入 fixed-compatible server timestamp。
-- 下一步讨论可以继续第 3 部分 MoveQueue / quantile；进入实现计划前，还需要把 drift / alignment / threshold 设计转换成具体 C++ 结构和测试清单。
+- 下一步讨论可以继续第 3 部分 drift std EMA / threshold roll 细节；进入实现计划前，还需要把 drift / alignment / threshold 设计转换成具体 C++ 结构和测试清单。
 
 ### 期货合约元数据
 
