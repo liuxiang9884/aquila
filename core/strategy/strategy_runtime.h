@@ -67,6 +67,7 @@ class StrategyRuntime {
       runtime->context_.emplace(*runtime->order_manager_);
       runtime->user_strategy_.emplace(
           std::forward<UserStrategyArgs>(user_strategy_args)...);
+      runtime->BindRuntimeIfSupported();
     } catch (const std::exception& exception) {
       result.error = exception.what();
       return result;
@@ -113,6 +114,7 @@ class StrategyRuntime {
       runtime->context_.emplace(*runtime->order_manager_);
       runtime->user_strategy_.emplace(
           std::forward<UserStrategyArgs>(user_strategy_args)...);
+      runtime->BindRuntimeIfSupported();
     } catch (const std::exception& exception) {
       result.error = exception.what();
       return result;
@@ -154,6 +156,13 @@ class StrategyRuntime {
   int Run() noexcept {
     if (!order_session_ || !context_ || !user_strategy_) {
       return 1;
+    }
+    if constexpr (requires(OrderSessionT& session) {
+                    session.SetRuntimeHook(
+                        static_cast<void*>(nullptr),
+                        &StrategyRuntime::RuntimeHookCallback);
+                  }) {
+      return RunWithRuntimeHook();
     }
     if (!StartOrderSession()) {
       return 1;
@@ -246,6 +255,80 @@ class StrategyRuntime {
 
  private:
   StrategyRuntime() noexcept = default;
+
+  void BindRuntimeIfSupported() {
+    if constexpr (requires(OrderSessionT& session, StrategyRuntime& runtime) {
+                    session.BindRuntime(runtime);
+                  }) {
+      order_session_->BindRuntime(*this);
+    }
+  }
+
+  static void RuntimeHookCallback(void* context) noexcept {
+    static_cast<StrategyRuntime*>(context)->DriveHookOnce();
+  }
+
+  int RunWithRuntimeHook() noexcept {
+    stop_order_session_requested_ = false;
+    hook_user_started_ = false;
+    hook_exit_code_ = 0;
+    order_session_->SetRuntimeHook(static_cast<void*>(this),
+                                   &StrategyRuntime::RuntimeHookCallback);
+
+    ApplyLoopRuntimePolicy();
+    hook_loop_started_at_ = std::chrono::steady_clock::now();
+    if (!StartOrderSession()) {
+      hook_exit_code_ = 1;
+    }
+    if (hook_user_started_) {
+      CallOnStop();
+    }
+    RequestOrderSessionStop();
+    return hook_exit_code_;
+  }
+
+  void DriveHookOnce() noexcept {
+    if (!hook_user_started_) {
+      hook_user_started_ = true;
+      CallOnStart();
+    }
+    if (ShouldStop() || MaxLoopSecondsElapsed(hook_loop_started_at_)) {
+      RequestOrderSessionStop();
+      return;
+    }
+    if (!OrderSessionRunning()) {
+      hook_exit_code_ = 1;
+      RequestOrderSessionStop();
+      return;
+    }
+
+    std::uint64_t handled = 0;
+    handled += PollOrderResponses();
+    handled += PollOrderFeedback();
+    if (OrderSessionReady()) {
+      handled += PollDataReader();
+    }
+    CallOnLoop();
+
+    if (ShouldStop() || MaxLoopSecondsElapsed(hook_loop_started_at_)) {
+      RequestOrderSessionStop();
+      return;
+    }
+    if (handled == 0) {
+      CallOnIdle();
+      if (ShouldStop() || MaxLoopSecondsElapsed(hook_loop_started_at_)) {
+        RequestOrderSessionStop();
+      }
+    }
+  }
+
+  void RequestOrderSessionStop() noexcept {
+    if (stop_order_session_requested_) {
+      return;
+    }
+    stop_order_session_requested_ = true;
+    StopOrderSession();
+  }
 
   [[nodiscard]] static std::uint64_t DefaultFeedbackConsumerRunId() noexcept {
     const auto now =
@@ -391,6 +474,10 @@ class StrategyRuntime {
   std::optional<OrderFeedbackShmManager> feedback_shm_manager_;
   std::optional<OrderFeedbackShmReader> feedback_reader_;
   std::optional<UserStrategyT> user_strategy_;
+  std::chrono::steady_clock::time_point hook_loop_started_at_{};
+  bool stop_order_session_requested_{false};
+  bool hook_user_started_{false};
+  int hook_exit_code_{0};
 };
 
 }  // namespace aquila::strategy

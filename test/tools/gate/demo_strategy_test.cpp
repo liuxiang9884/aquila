@@ -64,11 +64,11 @@ struct FakeOrderSession {
 using OrderManagerT = strategy::OrderManager<FakeOrderSession>;
 using ContextT = strategy::StrategyContext<FakeOrderSession>;
 
-BookTicker MakeTicker(std::int32_t symbol_id = 7,
-                      double ask_price = 81000.5) noexcept {
+BookTicker MakeTicker(std::int32_t symbol_id = 7, double ask_price = 81000.5,
+                      Exchange exchange = Exchange::kGate) noexcept {
   return BookTicker{.id = 42,
                     .symbol_id = symbol_id,
-                    .exchange = Exchange::kGate,
+                    .exchange = exchange,
                     .exchange_ns = 1000,
                     .local_ns = 2000,
                     .bid_price = 81000.0,
@@ -77,16 +77,21 @@ BookTicker MakeTicker(std::int32_t symbol_id = 7,
                     .ask_volume = 4.0};
 }
 
-OrderFeedbackEvent MakeFeedback(OrderFeedbackKind kind,
-                                std::uint64_t local_order_id) noexcept {
+OrderFeedbackEvent MakeFeedback(
+    OrderFeedbackKind kind, std::uint64_t local_order_id,
+    std::int64_t cumulative_filled_quantity = -1) noexcept {
+  const std::int64_t filled_quantity =
+      cumulative_filled_quantity >= 0
+          ? cumulative_filled_quantity
+          : (kind == OrderFeedbackKind::kFilled ? 1 : 0);
   return OrderFeedbackEvent{
       .kind = kind,
       .local_order_id = local_order_id,
       .exchange_order_id = 36028827892199865U,
-      .cumulative_filled_quantity = kind == OrderFeedbackKind::kFilled ? 1 : 0,
+      .cumulative_filled_quantity = filled_quantity,
       .left_quantity = 0,
       .cancelled_quantity = kind == OrderFeedbackKind::kCancelled ? 1 : 0,
-      .fill_price = kind == OrderFeedbackKind::kFilled ? 81000.5 : 0.0,
+      .fill_price = filled_quantity > 0 ? 81000.5 : 0.0,
       .role = OrderRole::kTaker,
       .finish_reason = OrderFinishReason::kUnknown,
       .reject_reason = OrderRejectReason::kUnknown,
@@ -104,23 +109,23 @@ void ApplyFeedback(OrderManagerT& order_manager, DemoStrategy& strategy,
   strategy.OnOrderFeedback(event, context);
 }
 
-DemoStrategyConfig MakeConfig(std::uint32_t cycles = 1) {
+DemoStrategyConfig MakeConfig(std::uint32_t rounds = 1) {
   return DemoStrategyConfig{
       .contract = "BTC_USDT",
       .symbol_id = 7,
-      .wait_minutes = 0,
-      .cycles = cycles,
+      .wait_seconds = 0,
+      .rounds = rounds,
   };
 }
 
-TEST(DemoStrategyTest, ParsesDemoConfigFromTomlTable) {
+TEST(DemoStrategyTest, ParsesDemoConfigFromTomlTableWithSecondsAndRounds) {
   toml::table table{
       {"demo",
        toml::table{
            {"contract", "ETH_USDT"},
            {"symbol_id", 11},
-           {"wait_minutes", 3},
-           {"cycles", 4},
+           {"wait_seconds", 0},
+           {"rounds", 4},
        }},
   };
 
@@ -129,8 +134,24 @@ TEST(DemoStrategyTest, ParsesDemoConfigFromTomlTable) {
   ASSERT_TRUE(parsed.ok) << parsed.error;
   EXPECT_EQ(parsed.value.contract, "ETH_USDT");
   EXPECT_EQ(parsed.value.symbol_id, 11);
-  EXPECT_EQ(parsed.value.wait_minutes, 3U);
-  EXPECT_EQ(parsed.value.cycles, 4U);
+  EXPECT_EQ(parsed.value.wait_seconds, 0U);
+  EXPECT_EQ(parsed.value.rounds, 4U);
+}
+
+TEST(DemoStrategyTest, RejectsZeroRounds) {
+  toml::table table{
+      {"demo",
+       toml::table{
+           {"contract", "BTC_USDT"},
+           {"symbol_id", 7},
+           {"wait_seconds", 0},
+           {"rounds", 0},
+       }},
+  };
+
+  const Result<DemoStrategyConfig> parsed = ParseDemoStrategyConfig(table);
+
+  EXPECT_FALSE(parsed.ok);
 }
 
 TEST(DemoStrategyTest, PlacesBuyLimitAtAskForMatchingSymbol) {
@@ -152,6 +173,20 @@ TEST(DemoStrategyTest, PlacesBuyLimitAtAskForMatchingSymbol) {
   EXPECT_FALSE(buy.reduce_only);
 }
 
+TEST(DemoStrategyTest, DoesNotPlaceSecondBuyWhileBuyPending) {
+  FakeOrderSession session;
+  OrderManagerT order_manager(session, 8);
+  ContextT context(order_manager);
+  DemoStrategy strategy(MakeConfig());
+
+  strategy.OnBookTicker(MakeTicker(7, 81000.5), context);
+  strategy.OnBookTicker(MakeTicker(7, 81001.5), context);
+
+  ASSERT_EQ(session.placed_orders.size(), 1U);
+  EXPECT_EQ(session.placed_orders.back().price_text, "81000.5");
+  EXPECT_EQ(session.cancel_calls, 0);
+}
+
 TEST(DemoStrategyTest, IgnoresTickerForDifferentSymbol) {
   FakeOrderSession session;
   OrderManagerT order_manager(session, 8);
@@ -159,6 +194,18 @@ TEST(DemoStrategyTest, IgnoresTickerForDifferentSymbol) {
   DemoStrategy strategy(MakeConfig());
 
   strategy.OnBookTicker(MakeTicker(99), context);
+
+  EXPECT_TRUE(session.placed_orders.empty());
+  EXPECT_FALSE(strategy.ShouldStop());
+}
+
+TEST(DemoStrategyTest, IgnoresTickerForDifferentExchange) {
+  FakeOrderSession session;
+  OrderManagerT order_manager(session, 8);
+  ContextT context(order_manager);
+  DemoStrategy strategy(MakeConfig());
+
+  strategy.OnBookTicker(MakeTicker(7, 81000.5, Exchange::kBinance), context);
 
   EXPECT_TRUE(session.placed_orders.empty());
   EXPECT_FALSE(strategy.ShouldStop());
@@ -187,6 +234,30 @@ TEST(DemoStrategyTest, ClosesWithReduceOnlyMarketSellAfterFilledBuyExpires) {
   EXPECT_EQ(close.quantity, 1);
   EXPECT_EQ(close.price_text, "0");
   EXPECT_TRUE(close.reduce_only);
+  EXPECT_EQ(session.cancel_calls, 0);
+}
+
+TEST(DemoStrategyTest, ClosesAfterCumulativeBuyFillReachesQuantity) {
+  FakeOrderSession session;
+  OrderManagerT order_manager(session, 8);
+  ContextT context(order_manager);
+  DemoStrategy strategy(MakeConfig());
+  strategy.OnBookTicker(MakeTicker(), context);
+  ASSERT_EQ(session.placed_orders.size(), 1U);
+  const std::uint64_t buy_local_order_id =
+      session.placed_orders.back().local_order_id;
+
+  ApplyFeedback(
+      order_manager, strategy, context,
+      MakeFeedback(OrderFeedbackKind::kPartialFilled, buy_local_order_id, 1));
+  strategy.OnIdle(context);
+
+  ASSERT_EQ(session.placed_orders.size(), 2U);
+  EXPECT_EQ(session.placed_orders.back().side, OrderSide::kSell);
+  EXPECT_EQ(session.placed_orders.back().time_in_force,
+            TimeInForce::kImmediateOrCancel);
+  EXPECT_TRUE(session.placed_orders.back().reduce_only);
+  EXPECT_EQ(session.cancel_calls, 0);
 }
 
 TEST(DemoStrategyTest, CancelsUnfilledBuyAfterWaitExpires) {
@@ -203,9 +274,88 @@ TEST(DemoStrategyTest, CancelsUnfilledBuyAfterWaitExpires) {
 
   EXPECT_EQ(session.cancel_calls, 1);
   EXPECT_EQ(session.last_cancel_local_order_id, buy_local_order_id);
+  EXPECT_EQ(session.placed_orders.size(), 1U);
 }
 
-TEST(DemoStrategyTest, KeepsHistoricalBuyPriceTextStableAcrossCycles) {
+TEST(DemoStrategyTest, DoesNotOpenNextRoundUntilBuyCancelTerminal) {
+  FakeOrderSession session;
+  OrderManagerT order_manager(session, 8);
+  ContextT context(order_manager);
+  DemoStrategy strategy(MakeConfig(2));
+
+  strategy.OnBookTicker(MakeTicker(7, 81000.5), context);
+  ASSERT_EQ(session.placed_orders.size(), 1U);
+  const std::uint64_t first_buy = session.placed_orders.back().local_order_id;
+  strategy.OnIdle(context);
+  strategy.OnBookTicker(MakeTicker(7, 81001.0), context);
+  EXPECT_EQ(session.placed_orders.size(), 1U);
+
+  ApplyFeedback(order_manager, strategy, context,
+                MakeFeedback(OrderFeedbackKind::kCancelled, first_buy));
+
+  strategy.OnBookTicker(MakeTicker(7, 81001.5), context);
+
+  EXPECT_EQ(strategy.completed_rounds(), 1U);
+  ASSERT_EQ(session.placed_orders.size(), 2U);
+  EXPECT_EQ(session.placed_orders.back().price_text, "81001.5");
+}
+
+TEST(DemoStrategyTest, ClosesPartiallyFilledBuyAfterCancelTerminal) {
+  FakeOrderSession session;
+  OrderManagerT order_manager(session, 8);
+  ContextT context(order_manager);
+  DemoStrategy strategy(MakeConfig(2));
+
+  strategy.OnBookTicker(MakeTicker(7, 81000.5), context);
+  ASSERT_EQ(session.placed_orders.size(), 1U);
+  const std::uint64_t first_buy = session.placed_orders.back().local_order_id;
+  strategy.OnIdle(context);
+  ASSERT_EQ(session.cancel_calls, 1);
+
+  ApplyFeedback(order_manager, strategy, context,
+                MakeFeedback(OrderFeedbackKind::kCancelled, first_buy, 1));
+
+  ASSERT_EQ(session.placed_orders.size(), 2U);
+  const FakeOrderSession::PlacedOrder& close = session.placed_orders.back();
+  EXPECT_EQ(close.side, OrderSide::kSell);
+  EXPECT_EQ(close.time_in_force, TimeInForce::kImmediateOrCancel);
+  EXPECT_TRUE(close.reduce_only);
+  EXPECT_EQ(strategy.completed_rounds(), 0U);
+
+  strategy.OnBookTicker(MakeTicker(7, 81001.0), context);
+
+  EXPECT_EQ(session.placed_orders.size(), 2U);
+}
+
+TEST(DemoStrategyTest, DoesNotOpenNextRoundUntilCloseFilledTerminal) {
+  FakeOrderSession session;
+  OrderManagerT order_manager(session, 8);
+  ContextT context(order_manager);
+  DemoStrategy strategy(MakeConfig(2));
+
+  strategy.OnBookTicker(MakeTicker(7, 81000.5), context);
+  ASSERT_EQ(session.placed_orders.size(), 1U);
+  const std::uint64_t first_buy = session.placed_orders.back().local_order_id;
+  ApplyFeedback(order_manager, strategy, context,
+                MakeFeedback(OrderFeedbackKind::kFilled, first_buy));
+  strategy.OnIdle(context);
+  ASSERT_EQ(session.placed_orders.size(), 2U);
+  const std::uint64_t first_close = session.placed_orders.back().local_order_id;
+
+  strategy.OnBookTicker(MakeTicker(7, 81001.0), context);
+  EXPECT_EQ(session.placed_orders.size(), 2U);
+
+  ApplyFeedback(order_manager, strategy, context,
+                MakeFeedback(OrderFeedbackKind::kFilled, first_close));
+  strategy.OnBookTicker(MakeTicker(7, 81001.5), context);
+
+  EXPECT_EQ(strategy.completed_rounds(), 1U);
+  ASSERT_EQ(session.placed_orders.size(), 3U);
+  EXPECT_EQ(session.placed_orders.back().side, OrderSide::kBuy);
+  EXPECT_EQ(session.placed_orders.back().price_text, "81001.5");
+}
+
+TEST(DemoStrategyTest, KeepsHistoricalBuyPriceTextStableAcrossRounds) {
   FakeOrderSession session;
   OrderManagerT order_manager(session, 8);
   ContextT context(order_manager);
@@ -227,7 +377,7 @@ TEST(DemoStrategyTest, KeepsHistoricalBuyPriceTextStableAcrossCycles) {
   EXPECT_EQ(session.placed_orders.back().price_text, "81001.5");
 }
 
-TEST(DemoStrategyTest, StopsAfterConfiguredCyclesComplete) {
+TEST(DemoStrategyTest, StopsAfterConfiguredRoundsComplete) {
   FakeOrderSession session;
   OrderManagerT order_manager(session, 8);
   ContextT context(order_manager);
@@ -240,6 +390,7 @@ TEST(DemoStrategyTest, StopsAfterConfiguredCyclesComplete) {
   ApplyFeedback(order_manager, strategy, context,
                 MakeFeedback(OrderFeedbackKind::kCancelled, first_buy));
   EXPECT_FALSE(strategy.ShouldStop());
+  EXPECT_EQ(strategy.completed_rounds(), 1U);
 
   strategy.OnBookTicker(MakeTicker(7, 81001.5), context);
   ASSERT_EQ(session.placed_orders.size(), 2U);
@@ -249,6 +400,10 @@ TEST(DemoStrategyTest, StopsAfterConfiguredCyclesComplete) {
                 MakeFeedback(OrderFeedbackKind::kCancelled, second_buy));
 
   EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(strategy.completed_rounds(), 2U);
+
+  strategy.OnBookTicker(MakeTicker(7, 81002.5), context);
+  EXPECT_EQ(session.placed_orders.size(), 2U);
 }
 
 }  // namespace

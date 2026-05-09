@@ -17,6 +17,7 @@
 #include "core/strategy/strategy_context.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_id.h"
+#include "core/websocket/websocket_client.h"
 
 namespace aquila::strategy {
 namespace {
@@ -38,11 +39,15 @@ struct RuntimeLoopState {
   int book_ticker_calls{0};
   int response_calls{0};
   int feedback_calls{0};
+  int bind_runtime_calls{0};
+  int set_runtime_hook_calls{0};
+  int runtime_hook_calls{0};
   int stop_after_book_ticker_calls{0};
   int stop_after_response_calls{0};
   int stop_after_feedback_calls{0};
   int stop_after_idle_calls{0};
   std::int64_t last_ticker_id{0};
+  bool hook_stop_requested{false};
   OrderResponseKind last_response_kind{OrderResponseKind::kAck};
   std::vector<BookTicker> book_tickers;
   std::vector<OrderResponseEvent> order_responses;
@@ -127,6 +132,125 @@ struct FakeOrderSession {
   std::uint64_t last_place_local_order_id{0};
   std::uint64_t last_cancel_local_order_id{0};
   RuntimeLoopState* loop_state{nullptr};
+};
+
+struct FakeHookOrderSession {
+  enum class SendStatus : std::uint8_t { kOk, kRejected };
+
+  struct SendResult {
+    SendStatus status{SendStatus::kRejected};
+  };
+
+  using RuntimeResponseCallback = void (*)(void*,
+                                           const OrderResponseEvent&) noexcept;
+
+  explicit FakeHookOrderSession(RuntimeLoopState* loop_state = nullptr) noexcept
+      : loop_state(loop_state) {}
+  FakeHookOrderSession(FakeHookOrderSession&&) noexcept = default;
+  FakeHookOrderSession& operator=(FakeHookOrderSession&&) noexcept = default;
+  FakeHookOrderSession(const FakeHookOrderSession&) = delete;
+  FakeHookOrderSession& operator=(const FakeHookOrderSession&) = delete;
+
+  template <typename RuntimeT>
+  void BindRuntime(RuntimeT& runtime) noexcept {
+    if (loop_state != nullptr) {
+      ++loop_state->bind_runtime_calls;
+    }
+    bound_runtime = &runtime;
+    runtime_response_callback = [](void* context,
+                                   const OrderResponseEvent& event) noexcept {
+      static_cast<RuntimeT*>(context)->OnOrderResponse(event);
+    };
+  }
+
+  void SetRuntimeHook(void* context, websocket::RuntimeHook handler) noexcept {
+    runtime_hook_context = context;
+    runtime_hook_handler = handler;
+    if (loop_state != nullptr) {
+      ++loop_state->set_runtime_hook_calls;
+    }
+  }
+
+  bool Start() noexcept {
+    if (loop_state != nullptr) {
+      ++loop_state->start_calls;
+      loop_state->hook_stop_requested = false;
+      if (!loop_state->order_start_result) {
+        return false;
+      }
+    }
+    if (runtime_response_callback != nullptr) {
+      runtime_response_callback(bound_runtime,
+                                OrderResponseEvent{
+                                    .kind = OrderResponseKind::kRejected,
+                                    .local_order_id = 77,
+                                    .exchange_order_id = 0,
+                                });
+    }
+    while (loop_state != nullptr && !loop_state->hook_stop_requested &&
+           runtime_hook_handler != nullptr &&
+           loop_state->runtime_hook_calls < 8) {
+      ++loop_state->runtime_hook_calls;
+      runtime_hook_handler(runtime_hook_context);
+    }
+    return loop_state == nullptr || loop_state->order_start_result;
+  }
+
+  void Stop() noexcept {
+    if (loop_state != nullptr) {
+      ++loop_state->stop_calls;
+      loop_state->hook_stop_requested = true;
+    }
+  }
+
+  [[nodiscard]] bool Ready() const noexcept {
+    return loop_state == nullptr || loop_state->order_ready;
+  }
+
+  [[nodiscard]] bool Running() const noexcept {
+    return loop_state == nullptr || !loop_state->hook_stop_requested;
+  }
+
+  template <typename Handler>
+  std::uint64_t PollOrderResponses(Handler& handler) noexcept {
+    if (loop_state == nullptr) {
+      return 0;
+    }
+    ++loop_state->order_response_poll_calls;
+    if (loop_state->next_order_response_index >=
+        loop_state->order_responses.size()) {
+      return 0;
+    }
+    handler.OnOrderResponse(
+        loop_state->order_responses[loop_state->next_order_response_index++]);
+    return 1;
+  }
+
+  SendResult PlaceOrder(StrategyOrder& order) noexcept {
+    last_place_local_order_id = order.local_order_id;
+    return {.status = SendStatus::kOk};
+  }
+
+  SendResult CancelOrder(StrategyOrder& order) noexcept {
+    last_cancel_local_order_id = order.local_order_id;
+    return {.status = SendStatus::kOk};
+  }
+
+  void CacheExchangeOrderId(std::uint64_t local_order_id,
+                            std::uint64_t exchange_order_id) noexcept {
+    last_cache_local_order_id = local_order_id;
+    last_cache_exchange_order_id = exchange_order_id;
+  }
+
+  RuntimeLoopState* loop_state{nullptr};
+  void* bound_runtime{nullptr};
+  RuntimeResponseCallback runtime_response_callback{nullptr};
+  void* runtime_hook_context{nullptr};
+  websocket::RuntimeHook runtime_hook_handler{nullptr};
+  std::uint64_t last_place_local_order_id{0};
+  std::uint64_t last_cancel_local_order_id{0};
+  std::uint64_t last_cache_local_order_id{0};
+  std::uint64_t last_cache_exchange_order_id{0};
 };
 
 struct RuntimeStrategyState {
@@ -306,6 +430,54 @@ struct LoopUserStrategy {
 
 using LoopRuntime =
     StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDataReader>;
+
+struct HookLoopUserStrategy {
+  using ContextT = StrategyContext<FakeHookOrderSession>;
+
+  explicit HookLoopUserStrategy(RuntimeLoopState* state) noexcept
+      : state_(state) {}
+
+  void OnStart(ContextT&) noexcept {
+    ++state_->on_start_calls;
+  }
+
+  void OnIdle(ContextT&) noexcept {
+    ++state_->on_idle_calls;
+  }
+
+  void OnLoop(ContextT&) noexcept {
+    ++state_->on_loop_calls;
+  }
+
+  void OnStop(ContextT&) noexcept {
+    ++state_->on_stop_calls;
+  }
+
+  [[nodiscard]] bool ShouldStop() noexcept {
+    ++state_->should_stop_calls;
+    if (state_->stop_after_book_ticker_calls > 0 &&
+        state_->book_ticker_calls >= state_->stop_after_book_ticker_calls) {
+      return true;
+    }
+    return state_->stop_immediately;
+  }
+
+  void OnBookTicker(const BookTicker& ticker, ContextT&) noexcept {
+    ++state_->book_ticker_calls;
+    state_->last_ticker_id = ticker.id;
+  }
+
+  void OnOrderResponse(const OrderResponseEvent& event, ContextT&) noexcept {
+    ++state_->response_calls;
+    state_->last_response_kind = event.kind;
+  }
+
+ private:
+  RuntimeLoopState* state_;
+};
+
+using HookLoopRuntime =
+    StrategyRuntime<HookLoopUserStrategy, FakeHookOrderSession, FakeDataReader>;
 
 struct ThrowingSessionUserStrategy {
   using ContextT = StrategyContext<ThrowingOrderSession>;
@@ -502,6 +674,68 @@ TEST(StrategyRuntimeTest, ProductionRunDispatchesOrderSessionResponses) {
   EXPECT_EQ(state.response_calls, 1);
   EXPECT_EQ(state.last_response_kind, OrderResponseKind::kRejected);
   EXPECT_EQ(state.data_poll_calls, 0);
+}
+
+TEST(StrategyRuntimeTest,
+     HookModeBindsRuntimeAndDrivesPollingFromOrderSessionHook) {
+  RuntimeLoopState state;
+  state.book_tickers.push_back(MakeBookTicker());
+  state.order_responses.push_back(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = 78,
+      .exchange_order_id = 36028827892199865U,
+  });
+  state.stop_after_book_ticker_calls = 1;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = HookLoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeHookOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  EXPECT_EQ(state.bind_runtime_calls, 1);
+  EXPECT_EQ(state.set_runtime_hook_calls, 1);
+  EXPECT_EQ(state.start_calls, 1);
+  EXPECT_EQ(state.stop_calls, 1);
+  EXPECT_EQ(state.runtime_hook_calls, 1);
+  EXPECT_EQ(state.order_response_poll_calls, 1);
+  EXPECT_EQ(state.data_poll_calls, 1);
+  EXPECT_EQ(state.book_ticker_calls, 1);
+  EXPECT_EQ(state.last_ticker_id, 42);
+  EXPECT_EQ(state.on_start_calls, 1);
+  EXPECT_EQ(state.on_loop_calls, 1);
+  EXPECT_EQ(state.on_stop_calls, 1);
+  EXPECT_GT(state.should_stop_calls, 0);
+  EXPECT_EQ(state.response_calls, 2);
+  EXPECT_EQ(state.last_response_kind, OrderResponseKind::kAccepted);
+}
+
+TEST(StrategyRuntimeTest, HookModeStartFailureDoesNotCallUserLifecycleHooks) {
+  RuntimeLoopState state;
+  state.order_start_result = false;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = HookLoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeHookOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 1);
+
+  EXPECT_EQ(state.set_runtime_hook_calls, 1);
+  EXPECT_EQ(state.start_calls, 1);
+  EXPECT_EQ(state.runtime_hook_calls, 0);
+  EXPECT_EQ(state.on_start_calls, 0);
+  EXPECT_EQ(state.on_stop_calls, 0);
+  EXPECT_EQ(state.stop_calls, 1);
 }
 
 TEST(StrategyRuntimeTest, ProductionRunPollsOrderFeedbackReader) {

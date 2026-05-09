@@ -12,15 +12,20 @@
 `demo` 策略行为：
 
 - 读取行情后，以当前 ask price 下 1 手 `BTC_USDT` buy limit 单。
-- 等待 `m` 分钟。
+- 只接受 Gate `BTC_USDT` 行情，不用 Binance 同 symbol_id 的 tick 驱动 Gate 下单。
+- 等待 `wait_seconds` 秒。
 - 如果 buy 已成交，则发 market sell reduce-only 平仓。
 - 如果 buy 未成交，则撤单。
-- 循环 `n` 次后退出。
-- `m` 和 `n` 来自策略参数配置。
+- 完成 `rounds` 轮后退出。
+- `wait_seconds` 和 `rounds` 来自策略参数配置。
 
 ## Current Status
 
-已实现并验证，未做实盘测试。关键入口：
+已实现并验证，未做实盘测试。当前 production Gate path 采用同线程 hook mode：
+`GateOrderSessionAdapter::Start()` 在 StrategyThread 内运行 Gate `OrderSession`，`SetRuntimeHook()`
+让 runtime 在 WebSocket active spin loop 内 poll feedback / data，`BindRuntime()` 让 Gate response
+handler 同线程直接调用 `StrategyRuntime::OnOrderResponse()`。production path 不再保留
+`GateOrderResponseQueue`、background order session thread 或 command queue。关键入口：
 
 - `core/strategy/strategy_runtime.h`
 - `tools/gate/strategy_runtime_adapter.h`
@@ -47,7 +52,9 @@
    - 如果 `[strategy.feedback].enabled = true`，打开 order feedback SHM 并 claim 当前 `strategy_id` lane。
 2. 实现 `Run()` 主循环。
    - 启动 order session。
-   - 轮询 order session response queue。
+   - 如果 `OrderSessionT` 支持 `SetRuntimeHook()`，使用同线程 hook mode 在 order session active loop 内轮询 runtime。
+   - 如果 `OrderSessionT` 支持 `BindRuntime()`，让 response handler 同线程直接进入 `OnOrderResponse()`。
+   - 兼容测试 session 可以继续通过 fallback `PollOrderResponses(runtime)` 轮询 order response。
    - 轮询 feedback reader。
    - order session ready 后轮询 data reader。
    - 支持 `spin` / `yield` idle policy。
@@ -60,7 +67,7 @@
    - 这些方法在 runtime 线程内调用，先更新 `OrderManager`，再调用 user strategy。
 4. 保持热路径约束。
    - market data hot path 不做动态分配。
-   - response queue / feedback poll 的低频路径可以用更保守实现，但不进入每个行情 tick 的额外锁。
+   - Gate production path 不引入 response queue、command queue、background order session thread 或每个 tick 的额外锁。
 5. 测试覆盖。
    - fake data reader 能驱动 `OnBookTicker`。
    - fake order session 能驱动 order response。
@@ -78,17 +85,19 @@
 
 1. 新增 Gate-specific adapter，作为 runtime 的 `OrderSessionT`。
 2. adapter 内部持有 Gate `OrderSession<ResponseHandler, WebSocketPolicy, Diagnostics>`。
-3. `Start()` 用后台线程运行 Gate order session。
-4. `Stop()` 停止 session 并 join 线程。
-5. `PlaceOrder(...)` / `CancelOrder(...)` 直接转发到 Gate order session。
-6. Gate response handler 不直接改 `OrderManager`。
-   - handler 只把 Gate order response 转成 `strategy::OrderResponseEvent`。
-   - 存入 adapter 本地 response queue。
-   - runtime 在主 loop 中调用 `PollOrderResponses(runtime)`，由 runtime 线程更新 `OrderManager` 和 user strategy。
-7. adapter 暴露 `Ready()`。
+3. `Start()` 同线程运行 Gate order session，不创建后台线程。
+4. `Stop()` 停止 session；无需 join。
+5. `PlaceOrder(...)` / `CancelOrder(...)` 直接转发到同线程 Gate order session。
+6. Gate response handler 只做轻量转换和 dispatch。
+   - `BindRuntime(runtime)` 保存 runtime 指针和无捕获 dispatch 函数。
+   - handler 把 Gate order response 转成 `strategy::OrderResponseEvent`。
+   - handler 同线程调用 `runtime.OnOrderResponse(...)`，由 runtime 先更新 `OrderManager` 再调用 user strategy。
+   - 不使用 production response queue 或 `PollOrderResponses()`。
+7. `SetRuntimeHook(context, hook)` 转发给 Gate `OrderSession`，让 `StrategyRuntime` 在 WebSocket active loop 内 poll feedback / data。
+8. adapter 暴露 `Ready()`。
    - Gate login ready 后返回 true。
    - runtime 只在 ready 后消费行情，避免策略在 private session 未登录时下单。
-8. 测试覆盖 response type 转换和 queue poll，不连接真实 Gate。
+9. 测试覆盖 response type 转换、同步 runtime dispatch、ready flag 和 move-only，不连接真实 Gate。
 
 ## Task 3: Demo user strategy
 
@@ -102,9 +111,9 @@
 
 1. 定义 `DemoStrategyConfig`。
    - `contract = "BTC_USDT"`
-   - `symbol_id = 1`
-   - `wait_minutes = m`
-   - `cycles = n`
+   - `symbol_id = 0`
+   - `wait_seconds = n`
+   - `rounds = m`
 2. 从 `config/strategies/demo.toml` 读取 `[demo]`。
 3. `DemoStrategy` 状态机：
    - `WaitingTicker`
@@ -114,6 +123,7 @@
    - `Done`
    - `Error`
 4. 下 buy limit。
+   - 只处理 `ticker.exchange = Gate` 且 `ticker.symbol_id = symbol_id` 的行情。
    - `side = Buy`
    - `quantity = 1`
    - `price_text = ask price`
@@ -122,14 +132,14 @@
 5. 到期处理。
    - buy 已 filled：发 sell market reduce-only 平仓。
    - buy 未 filled：发 cancel。
-6. 完成一轮后进入下一轮，直到 `cycles` 完成。
-7. `ShouldStop()` 在完成 `n` 轮或进入不可恢复错误后返回 true。
+6. 完成一轮后进入下一轮，直到 `rounds` 完成。
+7. `ShouldStop()` 在完成 `rounds` 轮或进入不可恢复错误后返回 true。
 8. 价格字符串存储必须保证生命周期覆盖 `OrderManager` 内部 `string_view`，不能引用临时字符串。
 9. 测试覆盖：
    - 收到行情后下 buy limit。
    - buy filled 后到期发 close market。
    - buy 未 filled 到期发 cancel。
-   - 达到 `cycles` 后停止。
+   - 达到 `rounds` 后停止。
 
 ## Task 4: Tool and config
 

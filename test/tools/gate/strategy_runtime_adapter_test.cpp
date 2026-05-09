@@ -1,6 +1,7 @@
 #include "tools/gate/strategy_runtime_adapter.h"
 
 #include <cstdint>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -15,18 +16,12 @@
 namespace aquila::tools::gate_strategy_runtime {
 namespace {
 
-struct CollectingHandler {
+struct FakeRuntime {
   std::vector<strategy::OrderResponseEvent> responses;
+  std::thread::id callback_thread;
 
-  void OnOrderResponse(const strategy::OrderResponseEvent& event) {
-    responses.push_back(event);
-  }
-};
-
-struct CallableHandler {
-  std::vector<strategy::OrderResponseEvent> responses;
-
-  void operator()(const strategy::OrderResponseEvent& event) {
+  void OnOrderResponse(const strategy::OrderResponseEvent& event) noexcept {
+    callback_thread = std::this_thread::get_id();
     responses.push_back(event);
   }
 };
@@ -80,11 +75,12 @@ TEST(GateStrategyRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
 }
 
 TEST(GateStrategyRuntimeAdapterTest,
-     QueuesConvertedResponsesUntilRuntimePollsThem) {
+     BindRuntimeDispatchesOrderResponsesSynchronously) {
   GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
-  CollectingHandler handler;
+  FakeRuntime runtime;
 
+  adapter.BindRuntime(runtime);
   adapter.PushOrderResponseForTest(gate::OrderResponse{
       .kind = gate::OrderResponseKind::kAck,
       .local_order_id = 11,
@@ -95,47 +91,28 @@ TEST(GateStrategyRuntimeAdapterTest,
       .error_label_hash = 12345,
   });
 
-  EXPECT_EQ(adapter.PollOrderResponses(handler), 2U);
-  ASSERT_EQ(handler.responses.size(), 2U);
-  EXPECT_EQ(handler.responses[0].kind, strategy::OrderResponseKind::kAck);
-  EXPECT_EQ(handler.responses[0].local_order_id, 11U);
-  EXPECT_EQ(handler.responses[1].kind,
+  ASSERT_EQ(runtime.responses.size(), 2U);
+  EXPECT_EQ(runtime.callback_thread, std::this_thread::get_id());
+  EXPECT_EQ(runtime.responses[0].kind, strategy::OrderResponseKind::kAck);
+  EXPECT_EQ(runtime.responses[0].local_order_id, 11U);
+  EXPECT_EQ(runtime.responses[1].kind,
             strategy::OrderResponseKind::kCancelRejected);
-  EXPECT_EQ(handler.responses[1].local_order_id, 12U);
-  EXPECT_EQ(handler.responses[1].error_label_hash, 12345U);
-
-  EXPECT_EQ(adapter.PollOrderResponses(handler), 0U);
-  EXPECT_EQ(handler.responses.size(), 2U);
-}
-
-TEST(GateStrategyRuntimeAdapterTest, PollSupportsCallableHandlers) {
-  GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
-      adapter(MakeConnectionConfig(), MakeCredentials());
-  CallableHandler handler;
-
-  adapter.PushOrderResponseForTest(gate::OrderResponse{
-      .kind = gate::OrderResponseKind::kRejected,
-      .local_order_id = 21,
-      .error_label_hash = 7,
-  });
-
-  EXPECT_EQ(adapter.PollOrderResponses(handler), 1U);
-  ASSERT_EQ(handler.responses.size(), 1U);
-  EXPECT_EQ(handler.responses[0].kind, strategy::OrderResponseKind::kRejected);
-  EXPECT_EQ(handler.responses[0].local_order_id, 21U);
-  EXPECT_EQ(handler.responses[0].error_label_hash, 7U);
+  EXPECT_EQ(runtime.responses[1].local_order_id, 12U);
+  EXPECT_EQ(runtime.responses[1].error_label_hash, 12345U);
 }
 
 TEST(GateStrategyRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
   GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
   EXPECT_FALSE(adapter.Ready());
-  EXPECT_FALSE(adapter.Running());
 
   adapter.MarkLoginReadyForTest();
 
   EXPECT_TRUE(adapter.Ready());
-  EXPECT_TRUE(adapter.Running());
+
+  adapter.MarkLoginNotReadyForTest();
+
+  EXPECT_FALSE(adapter.Ready());
 }
 
 TEST(GateStrategyRuntimeAdapterTest,

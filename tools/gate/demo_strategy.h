@@ -23,9 +23,9 @@ namespace aquila::tools::gate_demo_strategy {
 
 struct DemoStrategyConfig {
   std::string contract{"BTC_USDT"};
-  std::int32_t symbol_id{1};
-  std::uint32_t wait_minutes{1};
-  std::uint32_t cycles{1};
+  std::int32_t symbol_id{0};
+  std::uint32_t wait_seconds{1};
+  std::uint32_t rounds{1};
 };
 
 enum class DemoStrategyState : std::uint8_t {
@@ -130,11 +130,11 @@ namespace detail {
                                  &error)) {
     return detail::DemoConfigFailure(std::move(error));
   }
-  if (!detail::ReadRequiredUInt32(*demo, "wait_minutes", true,
-                                  &config.wait_minutes, &error)) {
+  if (!detail::ReadRequiredUInt32(*demo, "wait_seconds", true,
+                                  &config.wait_seconds, &error)) {
     return detail::DemoConfigFailure(std::move(error));
   }
-  if (!detail::ReadRequiredUInt32(*demo, "cycles", false, &config.cycles,
+  if (!detail::ReadRequiredUInt32(*demo, "rounds", false, &config.rounds,
                                   &error)) {
     return detail::DemoConfigFailure(std::move(error));
   }
@@ -145,7 +145,7 @@ class DemoStrategy {
  public:
   explicit DemoStrategy(DemoStrategyConfig config)
       : config_(std::move(config)) {
-    if (config_.cycles == 0) {
+    if (config_.rounds == 0) {
       state_ = DemoStrategyState::kDone;
     }
   }
@@ -155,7 +155,8 @@ class DemoStrategy {
     if (state_ != DemoStrategyState::kWaitingTicker || ShouldStop()) {
       return;
     }
-    if (ticker.symbol_id != config_.symbol_id) {
+    if (ticker.exchange != Exchange::kGate ||
+        ticker.symbol_id != config_.symbol_id) {
       return;
     }
 
@@ -179,7 +180,7 @@ class DemoStrategy {
 
     buy_local_order_id_ = placed.local_order_id;
     close_local_order_id_ = 0;
-    wait_deadline_ = Clock::now() + std::chrono::minutes(config_.wait_minutes);
+    wait_deadline_ = Clock::now() + std::chrono::seconds(config_.wait_seconds);
     state_ = DemoStrategyState::kBuyPending;
   }
 
@@ -233,15 +234,15 @@ class DemoStrategy {
   [[nodiscard]] bool ShouldStop() const noexcept {
     return state_ == DemoStrategyState::kDone ||
            state_ == DemoStrategyState::kError ||
-           completed_cycles_ >= config_.cycles;
+           completed_rounds_ >= config_.rounds;
   }
 
   [[nodiscard]] DemoStrategyState state() const noexcept {
     return state_;
   }
 
-  [[nodiscard]] std::uint32_t completed_cycles() const noexcept {
-    return completed_cycles_;
+  [[nodiscard]] std::uint32_t completed_rounds() const noexcept {
+    return completed_rounds_;
   }
 
  private:
@@ -282,7 +283,12 @@ class DemoStrategy {
         }
         return;
       case OrderFeedbackKind::kCancelled:
-        if (state_ == DemoStrategyState::kCancelPending) {
+        if (state_ == DemoStrategyState::kBuyPending ||
+            state_ == DemoStrategyState::kCancelPending) {
+          if (event.cumulative_filled_quantity > 0) {
+            SubmitClose(context);
+            return;
+          }
           CompleteCycle();
         }
         return;
@@ -347,17 +353,17 @@ class DemoStrategy {
   }
 
   void CompleteCycle() noexcept {
-    ++completed_cycles_;
+    ++completed_rounds_;
     buy_local_order_id_ = 0;
     close_local_order_id_ = 0;
-    state_ = completed_cycles_ >= config_.cycles
+    state_ = completed_rounds_ >= config_.rounds
                  ? DemoStrategyState::kDone
                  : DemoStrategyState::kWaitingTicker;
   }
 
   DemoStrategyConfig config_;
   DemoStrategyState state_{DemoStrategyState::kWaitingTicker};
-  std::uint32_t completed_cycles_{0};
+  std::uint32_t completed_rounds_{0};
   std::uint64_t buy_local_order_id_{0};
   std::uint64_t close_local_order_id_{0};
   Clock::time_point wait_deadline_{};

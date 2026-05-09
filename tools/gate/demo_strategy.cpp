@@ -78,19 +78,31 @@ bool ValidateLoadedConfig(const LoadedConfig& loaded) {
                loaded.strategy.name);
     return false;
   }
+  const aquila::config::InstrumentInfo* gate_instrument =
+      loaded.data_reader.instrument_catalog.Find(aquila::Exchange::kGate,
+                                                 loaded.demo_strategy.contract);
+  if (gate_instrument == nullptr ||
+      gate_instrument->symbol_id != loaded.demo_strategy.symbol_id) {
+    fmt::print(stderr,
+               "[FAIL] demo contract={} does not match Gate symbol_id={}\n",
+               loaded.demo_strategy.contract, loaded.demo_strategy.symbol_id);
+    NOVA_ERROR("demo contract/symbol_id mismatch contract={} symbol_id={}",
+               loaded.demo_strategy.contract, loaded.demo_strategy.symbol_id);
+    return false;
+  }
   const std::uint64_t worst_case_orders =
-      static_cast<std::uint64_t>(loaded.demo_strategy.cycles) * 2U;
+      static_cast<std::uint64_t>(loaded.demo_strategy.rounds) * 2U;
   if (loaded.strategy.order_capacity < worst_case_orders) {
     fmt::print(stderr,
                "[FAIL] strategy.order_capacity={} is smaller than worst-case "
-               "demo orders={} for cycles={}\n",
+               "demo orders={} for rounds={}\n",
                loaded.strategy.order_capacity, worst_case_orders,
-               loaded.demo_strategy.cycles);
+               loaded.demo_strategy.rounds);
     NOVA_ERROR(
         "strategy.order_capacity too small capacity={} worst_case_orders={} "
-        "cycles={}",
+        "rounds={}",
         loaded.strategy.order_capacity, worst_case_orders,
-        loaded.demo_strategy.cycles);
+        loaded.demo_strategy.rounds);
     return false;
   }
   return true;
@@ -99,15 +111,15 @@ bool ValidateLoadedConfig(const LoadedConfig& loaded) {
 void PrintSummary(const LoadedConfig& loaded, bool execute) {
   fmt::print(
       "demo_strategy execute={} name={} mode={} strategy_id={} "
-      "order_capacity={} contract={} symbol_id={} wait_minutes={} cycles={} "
+      "order_capacity={} contract={} symbol_id={} wait_seconds={} rounds={} "
       "data_reader={} sources={} order_session={} host={} tls={} "
       "feedback_enabled={} feedback_shm={} feedback_channel={} "
       "feedback_poll_budget={}\n",
       execute ? "true" : "false", loaded.strategy.name,
       ModeText(loaded.strategy.mode), loaded.strategy.strategy_id,
       loaded.strategy.order_capacity, loaded.demo_strategy.contract,
-      loaded.demo_strategy.symbol_id, loaded.demo_strategy.wait_minutes,
-      loaded.demo_strategy.cycles, loaded.data_reader.name,
+      loaded.demo_strategy.symbol_id, loaded.demo_strategy.wait_seconds,
+      loaded.demo_strategy.rounds, loaded.data_reader.name,
       loaded.data_reader.sources.size(), loaded.order_session.name,
       loaded.order_session.connection.host,
       loaded.order_session.connection.enable_tls ? "true" : "false",
@@ -116,15 +128,15 @@ void PrintSummary(const LoadedConfig& loaded, bool execute) {
       loaded.strategy.feedback.poll_budget);
   NOVA_INFO(
       "demo_strategy execute={} name={} mode={} strategy_id={} "
-      "order_capacity={} contract={} symbol_id={} wait_minutes={} cycles={} "
+      "order_capacity={} contract={} symbol_id={} wait_seconds={} rounds={} "
       "data_reader={} sources={} order_session={} host={} tls={} "
       "feedback_enabled={} feedback_shm={} feedback_channel={} "
       "feedback_poll_budget={}",
       execute ? "true" : "false", loaded.strategy.name,
       ModeText(loaded.strategy.mode), loaded.strategy.strategy_id,
       loaded.strategy.order_capacity, loaded.demo_strategy.contract,
-      loaded.demo_strategy.symbol_id, loaded.demo_strategy.wait_minutes,
-      loaded.demo_strategy.cycles, loaded.data_reader.name,
+      loaded.demo_strategy.symbol_id, loaded.demo_strategy.wait_seconds,
+      loaded.demo_strategy.rounds, loaded.data_reader.name,
       loaded.data_reader.sources.size(), loaded.order_session.name,
       loaded.order_session.connection.host,
       loaded.order_session.connection.enable_tls ? "true" : "false",
