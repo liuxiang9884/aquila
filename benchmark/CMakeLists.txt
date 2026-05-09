@@ -1,4 +1,5 @@
 add_subdirectory(websocket)
+add_subdirectory(core/base)
 add_subdirectory(core/market_data)
 add_subdirectory(core/trading)
 add_subdirectory(exchange/gate/market_data)
