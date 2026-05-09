@@ -5,13 +5,10 @@
 这份 handoff 给下一轮模型或开发者使用，用来承接 2026-04-28 关于 Gate futures 交易 WebSocket 架构的讨论。
 
 本文记录已经确认的协议事实、实验结果、Sirius 旧实现结论，以及当前推荐的线程 / session 划分方向。Gate submit/cancel
-第一版 `OrderSession` 已按独立设计和实现计划落地；文档入口是 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
-和 `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`。Strategy 第一版订单框架
-已按 `docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md` 落地。`OrderFeedbackSession`
-第一版 event 语义已在 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` 中收敛；Task1 订单 feedback
-SHM transport 和 Task2 Gate orders parser / session / Strategy apply 已实现，文档入口分别是
-`docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md` 和
-`docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`。
+第一版 `OrderSession` 已按独立设计落地；文档入口是 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`。
+Strategy 第一版订单框架、struct flow、Task1 订单 feedback SHM transport 和 Task2 Gate orders parser / session /
+Strategy apply 均已实现；已完成的执行计划文档已清理，后续以本 handoff、`doc/project_onboarding_guide.md`、
+design spec 和当前代码作为事实源。
 
 ## 当前仓库状态
 
@@ -419,12 +416,6 @@ BinanceDataSession
 docs/superpowers/specs/2026-05-07-gate-order-session-design.md
 ```
 
-实现计划：
-
-```text
-docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md
-```
-
 已确认边界：
 
 1. Strategy 做风控、symbol metadata 校验、订单对象、订单状态机和订单执行逻辑。
@@ -487,12 +478,6 @@ ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --o
 ```
 
 ### 2026-05-07 Strategy 订单框架第一版
-
-实现计划：
-
-```text
-docs/superpowers/plans/2026-05-07-strategy-order-framework-implementation-plan.md
-```
 
 已确认边界：
 
@@ -568,9 +553,7 @@ test/tools/gate/demo_strategy_test.cpp
 ```text
 docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
 docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md
-docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md
 docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
-docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md
 ```
 
 已确认边界：
@@ -1112,7 +1095,7 @@ config/data_sessions/binance_data_session.toml
 
 下一轮建议按这个顺序继续：
 
-1. 先按 `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md` 和 onboarding 确认 Task1 / Task2 已实现边界、验证命令和 benchmark 口径。
+1. 先按 onboarding、本 handoff 和当前代码确认 Task1 / Task2 已实现边界、验证命令和 benchmark 口径。
 2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 gap 后新开仓暂停 / 恢复条件。
 3. 做最小 C++ WS live smoke：同时运行 `gate_order_feedback_session --connect` 和 `gate_strategy_order --execute` 的小额 accepted / cancel lifecycle，保留原始输出，并用 REST 查询确认无残留订单 / 仓位；真实下单前必须得到用户明确允许。
 4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 gap / reconnect 后恢复订单、持仓和风险状态。
@@ -1149,12 +1132,9 @@ config/data_sessions/binance_data_session.toml
 - `exchange/gate/trading/order_request_encoder.h`
 - `exchange/gate/trading/order_session.h`
 - `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
-- `docs/superpowers/plans/2026-05-07-gate-order-session-implementation-plan.md`
 - `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`
 - `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md`
-- `docs/superpowers/plans/2026-05-08-order-feedback-shm-transport-implementation-plan.md`
 - `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`
-- `docs/superpowers/plans/2026-05-08-gate-order-feedback-session-strategy-implementation-plan.md`
 - `core/trading/order_feedback_event.h`（Task1 已实现）
 - `core/trading/order_feedback_shm.h`（Task1 已实现）
 - `core/config/order_feedback_shm_config.h`（Task1 已实现）
