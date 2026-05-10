@@ -41,6 +41,11 @@ struct TimedValue {
   double value{};
 };
 
+enum class HistogramQueryMode {
+  kScalar,
+  kAvx2,
+};
+
 std::vector<double> MakeSamples(std::size_t count) {
   std::vector<double> samples;
   samples.reserve(count);
@@ -80,6 +85,17 @@ const std::vector<TracePoint>& TimeSeriesTrace() {
 std::uint64_t NextRollAt(std::uint64_t timestamp_ns,
                          std::uint64_t window_ns) noexcept {
   return (timestamp_ns / window_ns) * window_ns + window_ns;
+}
+
+double HistogramValue(const HistogramQuantile<double>& quantile,
+                      HistogramQueryMode query_mode) noexcept {
+  switch (query_mode) {
+    case HistogramQueryMode::kScalar:
+      return quantile.ValueScalar();
+    case HistogramQueryMode::kAvx2:
+      return quantile.ValueAvx2();
+  }
+  return quantile.ValueScalar();
 }
 
 void BM_MonotonicDequePushNoGrow(benchmark::State& state) {
@@ -268,7 +284,8 @@ void BM_DoubleHeapQuantileBuildAndRead(benchmark::State& state) {
   state.counters["abs_error_bp"] = std::abs(last_value - exact) * 10000.0;
 }
 
-void BM_HistogramQuantileBuildAndRead(benchmark::State& state) {
+void BM_HistogramQuantileBuildAndRead(benchmark::State& state,
+                                      HistogramQueryMode query_mode) {
   const auto count = static_cast<std::size_t>(state.range(0));
   const auto bins = static_cast<std::size_t>(state.range(1));
   const std::vector<double> samples = MakeSamples(count);
@@ -287,7 +304,7 @@ void BM_HistogramQuantileBuildAndRead(benchmark::State& state) {
     for (double value : samples) {
       quantile.Add(value);
     }
-    last_value = quantile.Value();
+    last_value = HistogramValue(quantile, query_mode);
     benchmark::DoNotOptimize(last_value);
     benchmark::ClobberMemory();
     processed += static_cast<std::int64_t>(count);
@@ -295,6 +312,14 @@ void BM_HistogramQuantileBuildAndRead(benchmark::State& state) {
   state.SetItemsProcessed(processed);
   state.counters["abs_error_bp"] = std::abs(last_value - exact) * 10000.0;
   state.counters["bin_width_bp"] = bin_width * 10000.0;
+}
+
+void BM_HistogramQuantileBuildAndReadScalar(benchmark::State& state) {
+  BM_HistogramQuantileBuildAndRead(state, HistogramQueryMode::kScalar);
+}
+
+void BM_HistogramQuantileBuildAndReadAvx2(benchmark::State& state) {
+  BM_HistogramQuantileBuildAndRead(state, HistogramQueryMode::kAvx2);
 }
 
 void BM_TimeSeriesMonotonicDequeRollingMax(benchmark::State& state) {
@@ -419,7 +444,8 @@ void BM_TimeSeriesDoubleHeapWindowQuantile(benchmark::State& state) {
   state.SetItemsProcessed(processed);
 }
 
-void BM_TimeSeriesHistogramQuantileWindowQuantile(benchmark::State& state) {
+void BM_TimeSeriesHistogramQuantileWindowQuantile(
+    benchmark::State& state, HistogramQueryMode query_mode) {
   const std::vector<TracePoint>& trace = TimeSeriesTrace();
   std::int64_t processed = 0;
   std::uint64_t last_underflow_count = 0;
@@ -442,7 +468,7 @@ void BM_TimeSeriesHistogramQuantileWindowQuantile(benchmark::State& state) {
 
     for (const TracePoint& point : trace) {
       if (point.timestamp_ns > roll_at) {
-        value = quantile.Value();
+        value = HistogramValue(quantile, query_mode);
         benchmark::DoNotOptimize(value);
         underflow_count += quantile.underflow_count();
         overflow_count += quantile.overflow_count();
@@ -451,7 +477,7 @@ void BM_TimeSeriesHistogramQuantileWindowQuantile(benchmark::State& state) {
       }
       quantile.Add(point.value);
     }
-    value = quantile.Value();
+    value = HistogramValue(quantile, query_mode);
     underflow_count += quantile.underflow_count();
     overflow_count += quantile.overflow_count();
     last_underflow_count = underflow_count;
@@ -464,6 +490,17 @@ void BM_TimeSeriesHistogramQuantileWindowQuantile(benchmark::State& state) {
   state.counters["bin_width"] = bin_width;
   state.counters["underflow"] = static_cast<double>(last_underflow_count);
   state.counters["overflow"] = static_cast<double>(last_overflow_count);
+}
+
+void BM_TimeSeriesHistogramQuantileWindowQuantileScalar(
+    benchmark::State& state) {
+  BM_TimeSeriesHistogramQuantileWindowQuantile(state,
+                                               HistogramQueryMode::kScalar);
+}
+
+void BM_TimeSeriesHistogramQuantileWindowQuantileAvx2(benchmark::State& state) {
+  BM_TimeSeriesHistogramQuantileWindowQuantile(state,
+                                               HistogramQueryMode::kAvx2);
 }
 
 BENCHMARK(BM_MonotonicDequePushNoGrow)
@@ -493,7 +530,11 @@ BENCHMARK(BM_DoubleHeapAddGrow)
 BENCHMARK(BM_DoubleHeapQuantileBuildAndRead)
     ->Arg(static_cast<std::int64_t>(kDefaultSamples))
     ->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_HistogramQuantileBuildAndRead)
+BENCHMARK(BM_HistogramQuantileBuildAndReadScalar)
+    ->Args({static_cast<std::int64_t>(kDefaultSamples),
+            static_cast<std::int64_t>(kDefaultBins)})
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileBuildAndReadAvx2)
     ->Args({static_cast<std::int64_t>(kDefaultSamples),
             static_cast<std::int64_t>(kDefaultBins)})
     ->Unit(benchmark::kNanosecond);
@@ -501,7 +542,9 @@ BENCHMARK(BM_TimeSeriesMonotonicDequeRollingMax)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesRingQueueRollingMean)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesHeapBufferWindowMax)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesDoubleHeapWindowQuantile)->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_TimeSeriesHistogramQuantileWindowQuantile)
+BENCHMARK(BM_TimeSeriesHistogramQuantileWindowQuantileScalar)
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_TimeSeriesHistogramQuantileWindowQuantileAvx2)
     ->Unit(benchmark::kNanosecond);
 
 }  // namespace

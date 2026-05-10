@@ -160,14 +160,36 @@ TEST(HistogramQuantileTest, UsesDefaultBinCountWhenBinCountIsOmitted) {
             aquila::HistogramQuantile<double>::kDefaultBinCount);
 }
 
-TEST(HistogramQuantileTest, ComputesBitCeilBinsFromReferenceErrorBp) {
+TEST(HistogramQuantileTest, ComputesExactBinsFromReferenceErrorBp) {
   aquila::HistogramQuantile<double> quantile;
   quantile.InitWithReferenceError(
       900.0, 1100.0, 1000.0, 0.1, 0.6,
       aquila::HistogramQuantileValueMode::kMidpoint);
 
-  EXPECT_EQ(quantile.bin_count(), 16384U);
+  EXPECT_EQ(quantile.bin_count(), 10000U);
   EXPECT_LE(quantile.bin_width(), 0.02);
+}
+
+TEST(HistogramQuantileTest, ComputesBinsFromRangePrecision) {
+  aquila::HistogramQuantile<double> quantile;
+  quantile.InitWithRangePrecision(
+      0.0, 0.02, 0.00001, 0.6, aquila::HistogramQuantileValueMode::kMidpoint);
+
+  EXPECT_EQ(quantile.bin_count(), 1000U);
+  EXPECT_DOUBLE_EQ(quantile.bin_width(), 0.00002);
+}
+
+TEST(HistogramQuantileTest, Avx2ValueMatchesScalarValue) {
+  aquila::HistogramQuantile<double> quantile;
+  quantile.Init(0.0, 1.0, 17, 0.6,
+                aquila::HistogramQuantileValueMode::kMidpoint);
+
+  for (const double value : {0.01, 0.02, 0.11, 0.12, 0.13, 0.21, 0.31, 0.41,
+                             0.42, 0.51, 0.61, 0.62, 0.71, 0.81, 0.91}) {
+    quantile.Add(value);
+  }
+
+  EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx2());
 }
 
 }  // namespace

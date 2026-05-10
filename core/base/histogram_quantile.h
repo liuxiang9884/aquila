@@ -2,7 +2,6 @@
 #define AQUILA_CORE_BASE_HISTOGRAM_QUANTILE_H_
 
 #include <algorithm>
-#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -10,7 +9,54 @@
 #include <type_traits>
 #include <vector>
 
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
+
 namespace aquila {
+
+namespace histogram_quantile_detail {
+
+#if defined(__x86_64__) || defined(__i386__)
+[[gnu::target("avx2")]] inline std::size_t FindQuantileBinAvx2(
+    const std::uint32_t* counts, std::size_t size,
+    std::uint64_t target) noexcept {
+  std::uint64_t cumulative = 0;
+  std::size_t i = 0;
+  alignas(32) std::uint64_t lane_sums[4];
+  for (; i + 8 <= size; i += 8) {
+    const __m128i low_counts =
+        _mm_loadu_si128(reinterpret_cast<const __m128i*>(counts + i));
+    const __m128i high_counts =
+        _mm_loadu_si128(reinterpret_cast<const __m128i*>(counts + i + 4));
+    const __m256i low_u64 = _mm256_cvtepu32_epi64(low_counts);
+    const __m256i high_u64 = _mm256_cvtepu32_epi64(high_counts);
+    const __m256i block_sums = _mm256_add_epi64(low_u64, high_u64);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(lane_sums), block_sums);
+    const std::uint64_t block_sum =
+        lane_sums[0] + lane_sums[1] + lane_sums[2] + lane_sums[3];
+    if (cumulative + block_sum < target) {
+      cumulative += block_sum;
+      continue;
+    }
+    for (std::size_t j = 0; j < 8; ++j) {
+      cumulative += counts[i + j];
+      if (cumulative >= target) {
+        return i + j;
+      }
+    }
+  }
+  for (; i < size; ++i) {
+    cumulative += counts[i];
+    if (cumulative >= target) {
+      return i;
+    }
+  }
+  return size - 1;
+}
+#endif
+
+}  // namespace histogram_quantile_detail
 
 enum class HistogramQuantileValueMode {
   kLowerEdge,
@@ -74,8 +120,22 @@ class HistogramQuantile {
                                : max_abs_error;
     const auto required_bins =
         static_cast<std::size_t>(std::ceil(range / divisor));
-    Init(min_value, max_value, std::bit_ceil(required_bins), quantile,
-         value_mode);
+    Init(min_value, max_value, required_bins, quantile, value_mode);
+  }
+
+  void InitWithRangePrecision(T min_value, T max_value, T precision,
+                              double quantile,
+                              HistogramQuantileValueMode value_mode =
+                                  HistogramQuantileValueMode::kUpperEdge) {
+    assert(precision > T{});
+    const double range =
+        static_cast<double>(max_value) - static_cast<double>(min_value);
+    const double divisor = value_mode == HistogramQuantileValueMode::kMidpoint
+                               ? 2.0 * static_cast<double>(precision)
+                               : static_cast<double>(precision);
+    const auto required_bins =
+        static_cast<std::size_t>(std::ceil(range / divisor));
+    Init(min_value, max_value, required_bins, quantile, value_mode);
   }
 
   void Reset() noexcept {
@@ -97,6 +157,10 @@ class HistogramQuantile {
   }
 
   [[nodiscard]] T Value() const noexcept {
+    return ValueScalar();
+  }
+
+  [[nodiscard]] T ValueScalar() const noexcept {
     if (!HasValue()) {
       return T{};
     }
@@ -109,6 +173,19 @@ class HistogramQuantile {
       }
     }
     return BinValue(counts_.size() - 1);
+  }
+
+  [[nodiscard]] T ValueAvx2() const noexcept {
+    if (!HasValue()) {
+      return T{};
+    }
+#if defined(__x86_64__) || defined(__i386__)
+    const std::size_t index = histogram_quantile_detail::FindQuantileBinAvx2(
+        counts_.data(), counts_.size(), TargetRank());
+    return BinValue(index);
+#else
+    return ValueScalar();
+#endif
   }
 
   [[nodiscard]] std::size_t bin_count() const noexcept {
