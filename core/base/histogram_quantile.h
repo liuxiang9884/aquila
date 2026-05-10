@@ -54,6 +54,46 @@ namespace histogram_quantile_detail {
   }
   return size - 1;
 }
+
+[[gnu::target("avx2")]] inline std::size_t FindQuantileBinReverseAvx2(
+    const std::uint32_t* counts, std::size_t size,
+    std::uint64_t target) noexcept {
+  std::uint64_t cumulative = 0;
+  std::size_t i = size;
+  alignas(32) std::uint64_t lane_sums[4];
+  while (i >= 8) {
+    i -= 8;
+    const __m128i low_counts =
+        _mm_loadu_si128(reinterpret_cast<const __m128i*>(counts + i));
+    const __m128i high_counts =
+        _mm_loadu_si128(reinterpret_cast<const __m128i*>(counts + i + 4));
+    const __m256i low_u64 = _mm256_cvtepu32_epi64(low_counts);
+    const __m256i high_u64 = _mm256_cvtepu32_epi64(high_counts);
+    const __m256i block_sums = _mm256_add_epi64(low_u64, high_u64);
+    _mm256_store_si256(reinterpret_cast<__m256i*>(lane_sums), block_sums);
+    const std::uint64_t block_sum =
+        lane_sums[0] + lane_sums[1] + lane_sums[2] + lane_sums[3];
+    if (cumulative + block_sum < target) {
+      cumulative += block_sum;
+      continue;
+    }
+    for (std::size_t j = 8; j > 0; --j) {
+      const std::size_t index = i + j - 1;
+      cumulative += counts[index];
+      if (cumulative >= target) {
+        return index;
+      }
+    }
+  }
+  while (i > 0) {
+    --i;
+    cumulative += counts[i];
+    if (cumulative >= target) {
+      return i;
+    }
+  }
+  return 0;
+}
 #endif
 
 }  // namespace histogram_quantile_detail
@@ -165,26 +205,30 @@ class HistogramQuantile {
       return T{};
     }
     const std::uint64_t target = TargetRank();
-    std::uint64_t cumulative = 0;
-    for (std::size_t i = 0; i < counts_.size(); ++i) {
-      cumulative += counts_[i];
-      if (cumulative >= target) {
-        return BinValue(i);
-      }
+    if (!UseForwardScan()) {
+      return ValueScalarReverse(ReverseTargetRank(target));
     }
-    return BinValue(counts_.size() - 1);
+    return ValueScalarForward(target);
   }
 
   [[nodiscard]] T ValueAvx2() const noexcept {
     if (!HasValue()) {
       return T{};
     }
+    const std::uint64_t target = TargetRank();
 #if defined(__x86_64__) || defined(__i386__)
-    const std::size_t index = histogram_quantile_detail::FindQuantileBinAvx2(
-        counts_.data(), counts_.size(), TargetRank());
+    const std::size_t index =
+        UseForwardScan()
+            ? histogram_quantile_detail::FindQuantileBinAvx2(
+                  counts_.data(), counts_.size(), target)
+            : histogram_quantile_detail::FindQuantileBinReverseAvx2(
+                  counts_.data(), counts_.size(), ReverseTargetRank(target));
     return BinValue(index);
 #else
-    return ValueScalar();
+    if (!UseForwardScan()) {
+      return ValueScalarReverse(ReverseTargetRank(target));
+    }
+    return ValueScalarForward(target);
 #endif
   }
 
@@ -213,6 +257,29 @@ class HistogramQuantile {
   }
 
  private:
+  [[nodiscard]] T ValueScalarForward(std::uint64_t target) const noexcept {
+    std::uint64_t cumulative = 0;
+    for (std::size_t i = 0; i < counts_.size(); ++i) {
+      cumulative += counts_[i];
+      if (cumulative >= target) {
+        return BinValue(i);
+      }
+    }
+    return BinValue(counts_.size() - 1);
+  }
+
+  [[nodiscard]] T ValueScalarReverse(std::uint64_t target) const noexcept {
+    std::uint64_t cumulative = 0;
+    for (std::size_t i = counts_.size(); i > 0;) {
+      --i;
+      cumulative += counts_[i];
+      if (cumulative >= target) {
+        return BinValue(i);
+      }
+    }
+    return BinValue(0);
+  }
+
   [[nodiscard]] std::size_t BinIndex(T value) noexcept {
     if (value < min_value_) {
       ++underflow_count_;
@@ -237,6 +304,15 @@ class HistogramQuantile {
         static_cast<std::uint64_t>(std::ceil(quantile_ * count_));
     target = std::max<std::uint64_t>(1, target);
     return std::min(target, count_);
+  }
+
+  [[nodiscard]] std::uint64_t ReverseTargetRank(
+      std::uint64_t target) const noexcept {
+    return count_ - target + 1;
+  }
+
+  [[nodiscard]] bool UseForwardScan() const noexcept {
+    return quantile_ <= 0.5;
   }
 
   [[nodiscard]] T BinValue(std::size_t index) const noexcept {

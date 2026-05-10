@@ -179,16 +179,18 @@ TEST(HistogramQuantileTest, ComputesBinsFromRangePrecision) {
   EXPECT_DOUBLE_EQ(quantile.bin_width(), 0.00002);
 }
 
-TEST(HistogramQuantileTest, Avx2ValueMatchesScalarValue) {
+TEST(HistogramQuantileTest, Avx2ValueMatchesScalarValueForUpperQuantile) {
   aquila::HistogramQuantile<double> quantile;
-  quantile.Init(0.0, 1.0, 17, 0.6,
+  quantile.Init(0.0, 1.0, 17, 0.75,
                 aquila::HistogramQuantileValueMode::kMidpoint);
 
-  for (const double value : {0.01, 0.02, 0.11, 0.12, 0.13, 0.21, 0.31, 0.41,
-                             0.42, 0.51, 0.61, 0.62, 0.71, 0.81, 0.91}) {
+  for (const double value :
+       {0.01, 0.02, 0.11, 0.12, 0.13, 0.21, 0.31, 0.41, 0.42, 0.51, 0.61, 0.62,
+        0.71, 0.81, 0.91, 0.92, 0.93}) {
     quantile.Add(value);
   }
 
+  EXPECT_DOUBLE_EQ(quantile.ValueScalar(), 12.5 / 17.0);
   EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx2());
 }
 
