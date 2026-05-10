@@ -1994,23 +1994,59 @@ if order finished:
 
 ### Aquila 链路对应
 
-fixed 的 `OnOrder(msg)` 在 `aquila` 中应对应：
+fixed 的 `OnOrder(msg)` 在 `aquila` 中分成两层：
 
 ```text
 OrderManager::OnOrderFeedback(OrderFeedbackEvent)
+  -> 更新通用 StrategyOrder
+
+LeadLagStrategy::OnOrderFeedback(event, context)
+  -> 读取已更新 StrategyOrder
+  -> 更新 LeadLag execution group / position / trailing
 ```
 
-而不是 `OrderSession` ack callback。职责边界：
+`StrategyRuntime::OnOrderFeedback()` 的调用顺序已经是先 `order_manager_->OnOrderFeedback(event)`，再回调 user strategy。因此 LeadLag 在回调中通过 `context.FindOrder(event.local_order_id)` 读到的是已经应用 feedback 后的 `StrategyOrder`。
+
+通用订单状态仍由 `OrderManager` 负责，不在 LeadLag 内复制：
 
 ```text
-Strategy
-  order object
-  OrderPool
-  position / execution cache
-  signal apply
-  feedback apply
+OrderManager
+  local_order_id allocation
+  StrategyOrder storage
+  Sent / Accepted / PartialFilled / Filled / Cancelled / Rejected status
+  exchange_order_id cache / forget notification
+  stale / duplicate / unknown feedback stats
+  feedback gap stats
 
-Gate OrderSession
+LeadLagExecutionState
+  group stage
+  signed position quantity
+  pending local_order_id
+  trailing price
+  parallel occupancy
+  degraded / needs_reconcile flag
+```
+
+`OrderSession` ack / submit response 不等价于 fixed Go 的 order message。ack 只说明请求发送 / 被接受处理；真正的 position 和 group stage 仍以 private order feedback 为准。唯一例外是 submit response rejected：如果 `OrderResponseKind::kRejected` 已让 `OrderManager` 把 order 标记为 finished，LeadLag 必须清掉对应 pending group，否则会卡在 `Open` / `Close`。
+
+职责边界：
+
+```text
+StrategyRuntime
+  drain feedback SHM
+  call OrderManager before user strategy
+
+OrderManager
+  order object / OrderPool
+  generic order status
+  exchange_order_id cache / cleanup
+
+LeadLagStrategy
+  signal apply
+  position / execution group apply
+  degraded state on feedback gap
+
+GateOrderSession
   place/cancel encode and send
   request_sequence -> local_order_id correlation
   light API response diagnostics
@@ -2024,16 +2060,13 @@ Feedback SHM
   Strategy thread drain
 ```
 
-建议状态：
+建议状态放在第 6 部分已定义的 `strategy/lead_lag/execution_state.h` 中：
 
 ```text
-LeadLagExecutionCache
+LeadLagExecutionGroup
   stage
-  pending_order_id
-  local_open_order_id
-  local_close_order_id
-  exchange_order_id
-  position_quantity
+  pending_local_order_id
+  signed_position_quantity
   avg_entry_price
   trailing_price
   group_id
@@ -2042,32 +2075,36 @@ LeadLagExecutionCache
 
 LeadLagExecutionState
   max_parallel
-  active_caches
-  local_order_id -> cache index
+  active_groups
+  local_order_id -> group index
+  degraded
+  needs_reconcile
 ```
+
+`local_order_id -> group index` 第一版使用 `absl::flat_hash_map`，启动期按 `max_parallel * 2` reserve；由于 `max_parallel` 很小，后续若要进一步降低热路径不确定性，可改成 fixed vector 线性查找。
 
 feedback event 推进：
 
 ```text
 Accepted:
-  record exchange_order_id
-  notify OrderSession cancel cache
+  OrderManager has recorded exchange_order_id
+  LeadLag group stage unchanged
 
 PartialFilled:
-  update cumulative filled diagnostics / pending order fill
-  fixed-compatible execution cache position waits for terminal event
-  keep pending order unless event is terminal
+  OrderManager has updated cumulative filled diagnostics
+  LeadLag position waits for terminal event
+  group stage unchanged
 
 Filled:
   terminal
-  update position
+  apply StrategyOrder.cumulative_filled_quantity by side
   clear pending order
   position == 0 -> delete cache
   position != 0 -> Hold
 
-Cancelled / Finished:
+Cancelled / PartiallyCancelled:
   terminal
-  apply filled quantity
+  apply StrategyOrder.cumulative_filled_quantity by side
   clear pending order
   position == 0 -> delete cache
   position != 0 -> Hold
@@ -2079,7 +2116,76 @@ Rejected:
   existing position -> Hold
 ```
 
+position 更新使用 fixed-compatible terminal-only 语义。也就是说，`PartialFilled` 不提前更新 LeadLag position；等 `Filled` / `Cancelled` / `PartiallyCancelled` terminal event 到达后，使用 `StrategyOrder.cumulative_filled_quantity` 一次性应用到 group。为了和 fixed Go 的 `GetOrderFilled()` 对齐，应用前按 lag instrument 的 `quantity_step * notional_multiplier` 做四舍五入归整。
+
+如果 terminal feedback 是开仓订单且最终 position 非零：
+
+```text
+stage = Hold
+if AverageFillPrice() > 0:
+    trailing_price = AverageFillPrice()
+```
+
+如果 terminal feedback 是平仓订单且剩余 position 非零，则回到 `Hold`，保留原 trailing，后续 lag tick 继续按第 6 部分 stoploss / signal close 管理。
+
+如果 `OrderResponseKind::kRejected` 在 private feedback 前到达：
+
+```text
+find group by local_order_id
+clear pending_local_order_id
+if signed_position_quantity == 0:
+    delete group
+else:
+    stage = Hold
+```
+
+这样 submit rejection 不会让 group 永久占用 `parallel`。
+
 如果 feedback SHM 报 lane/global gap，LeadLag 应进入 degraded / needs reconcile 状态，暂停新开仓，等待后续 REST reconcile 设计补齐状态。
+
+### OrderPool recycle
+
+当前 `OrderManager` 会把 terminal order 标记为 `is_finished`，但没有公开释放 `OrderPool` slot 的 API。LeadLag 长时间实盘运行会持续产生 open / close IOC order，如果 finished order 永远保留在 pool 中，`order_capacity` 会变成运行时长上限。
+
+第 7 部分实现时建议给 `OrderManager` 增加显式 retire API：
+
+```text
+OrderManager::RetireFinishedOrder(local_order_id) -> bool
+```
+
+语义：
+
+```text
+if order not found:
+    return false
+if !order.is_finished:
+    return false
+erase from OrderPool
+return true
+```
+
+LeadLag 在 terminal feedback / submit rejection 已消费、execution group 已更新后调用 retire。这样 `OrderManager` 仍负责通用订单状态，LeadLag 只决定何时已经不再需要查询该 order。
+
+### 复杂度
+
+设 `P = execute.parallel`：
+
+```text
+normal feedback:
+  OrderManager FindOrder: average O(1)
+  local_order_id -> group lookup: average O(1)
+  group state transition: O(1)
+
+gap feedback:
+  O(1)
+
+space:
+  LeadLag execution groups: O(P)
+  local_order_id index:     O(P)
+  OrderManager / OrderPool: O(order_capacity)
+```
+
+第 7 部分不需要独立 benchmark；验证重点是状态转换正确性、feedback gap 后停止新开仓，以及完整链路中的 order feedback 到策略状态更新延迟。
 
 ### 验证口径
 
@@ -2091,10 +2197,12 @@ Rejected:
 - 平仓部分成交：回到 Hold，剩余 position 正确。
 - rejected open：无 position 时删除 cache。
 - rejected close：已有 position 时回到 Hold。
+- submit response rejected：无 position 时删除 cache，有 position 时回到 Hold。
 - filled quantity 按 quantity step / notional multiplier 归整。
 - pending order 存在时 signal 不重复发 close。
 - accepted event 更新 exchange order id，并通知 OrderSession cancel cache。
 - terminal event 清理 OrderSession cancel cache。
+- terminal event 被 LeadLag 消费后 retire finished order，释放 `OrderPool` slot。
 - feedback gap 后暂停新开仓。
 
 ## 阶段性实现边界
