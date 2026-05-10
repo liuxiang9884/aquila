@@ -14,3 +14,4 @@ compile_commands.json
 __pycache__/
 venv
 third_party/
+data/benchmark/*.bin

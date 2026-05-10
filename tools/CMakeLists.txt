@@ -10,6 +10,17 @@ target_link_libraries(websocket_probe
         magic_enum::magic_enum
 )
 
+add_executable(generate_time_series_data
+    benchmark/generate_time_series.cpp
+)
+
+target_link_libraries(generate_time_series_data
+    PRIVATE
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+)
+
 add_executable(gate_futures_book_ticker_probe
     gate/futures_book_ticker_probe.cpp
 )
