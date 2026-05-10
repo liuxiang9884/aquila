@@ -24,6 +24,8 @@ constexpr double kHistogramMin = 0.0;
 constexpr double kHistogramMax = 0.01;
 constexpr std::size_t kDefaultSamples = 10000;
 constexpr std::size_t kDefaultBins = 4096;
+constexpr std::size_t kValueOnlyBins = 10000;
+constexpr std::size_t kValueOnlyQueriesPerIteration = 1024;
 constexpr std::uint64_t kTraceWindowNs = 30'000'000'000ULL;
 constexpr std::size_t kTraceInitialCapacity = 32768;
 constexpr double kTraceHistogramMin = 900.0;
@@ -322,6 +324,40 @@ void BM_HistogramQuantileBuildAndReadAvx2(benchmark::State& state) {
   BM_HistogramQuantileBuildAndRead(state, HistogramQueryMode::kAvx2);
 }
 
+void BM_HistogramQuantileValueOnly(benchmark::State& state,
+                                   HistogramQueryMode query_mode) {
+  const auto bins = static_cast<std::size_t>(state.range(0));
+  const std::vector<double> samples = MakeSamples(kDefaultSamples);
+  HistogramQuantile<double> quantile;
+  quantile.Init(kHistogramMin, kHistogramMax, bins, kQuantile,
+                HistogramQuantileValueMode::kMidpoint);
+  for (double value : samples) {
+    quantile.Add(value);
+  }
+
+  double last_value = 0.0;
+  for (auto _ : state) {
+    for (std::size_t i = 0; i < kValueOnlyQueriesPerIteration; ++i) {
+      benchmark::DoNotOptimize(&quantile);
+      last_value = HistogramValue(quantile, query_mode);
+      benchmark::DoNotOptimize(last_value);
+    }
+  }
+  state.SetItemsProcessed(
+      static_cast<std::int64_t>(state.iterations()) *
+      static_cast<std::int64_t>(kValueOnlyQueriesPerIteration));
+  state.counters["queries_per_iteration"] =
+      static_cast<double>(kValueOnlyQueriesPerIteration);
+}
+
+void BM_HistogramQuantileValueOnlyScalar(benchmark::State& state) {
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kScalar);
+}
+
+void BM_HistogramQuantileValueOnlyAvx2(benchmark::State& state) {
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx2);
+}
+
 void BM_TimeSeriesMonotonicDequeRollingMax(benchmark::State& state) {
   const std::vector<TracePoint>& trace = TimeSeriesTrace();
   std::int64_t processed = 0;
@@ -537,6 +573,12 @@ BENCHMARK(BM_HistogramQuantileBuildAndReadScalar)
 BENCHMARK(BM_HistogramQuantileBuildAndReadAvx2)
     ->Args({static_cast<std::int64_t>(kDefaultSamples),
             static_cast<std::int64_t>(kDefaultBins)})
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileValueOnlyScalar)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileValueOnlyAvx2)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesMonotonicDequeRollingMax)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesRingQueueRollingMean)->Unit(benchmark::kNanosecond);
