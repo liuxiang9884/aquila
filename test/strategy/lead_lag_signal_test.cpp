@@ -190,6 +190,71 @@ TEST(LeadLagSignalTest, OpenShortPassesMirrorGates) {
   EXPECT_DOUBLE_EQ(decision.intent.price, 98.0);
 }
 
+TEST(LeadLagSignalTest, OpenShortRejectsEachGate) {
+  const leadlag::PairConfig pair = PairConfigForSignal();
+  const leadlag::ThresholdSnapshot threshold = ThresholdForSignal();
+  const leadlag::SignalMarket base{
+      .lead = Quote(/*local_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
+      .lag = Quote(/*local_ns=*/10, /*bid_price=*/98.0,
+                   /*ask_price=*/98.5),
+      .recorder =
+          leadlag::RecorderSnapshot{
+              .lead_extrema =
+                  leadlag::BboExtremaSnapshot{
+                      .valid = true,
+                      .bid_min = 96.0,
+                      .bid_max = 99.0,
+                      .ask_min = 97.0,
+                      .ask_max = 100.0,
+                  },
+              .lag_extrema =
+                  leadlag::BboExtremaSnapshot{
+                      .valid = true,
+                      .bid_min = 98.0,
+                      .bid_max = 98.5,
+                      .ask_min = 98.5,
+                      .ask_max = 99.0,
+                  },
+              .lag_spread_mean = 0.4,
+          },
+  };
+
+  leadlag::SignalMarket price_diff = base;
+  price_diff.lag.bid_price = 96.0;
+  EXPECT_EQ(leadlag::SignalEngine::TryOpenShort(pair, price_diff, threshold)
+                .reject_reason,
+            leadlag::SignalRejectReason::kPriceDiff);
+
+  leadlag::SignalMarket threshold_block = base;
+  threshold_block.lead.ask_price = 98.5;
+  threshold_block.lag.bid_price = 99.5;
+  EXPECT_EQ(
+      leadlag::SignalEngine::TryOpenShort(pair, threshold_block, threshold)
+          .reject_reason,
+      leadlag::SignalRejectReason::kThreshold);
+
+  leadlag::SignalMarket lag_part = base;
+  lag_part.lag.bid_price = 97.5;
+  lag_part.lag.ask_price = 98.0;
+  EXPECT_EQ(leadlag::SignalEngine::TryOpenShort(pair, lag_part, threshold)
+                .reject_reason,
+            leadlag::SignalRejectReason::kLagPart);
+
+  leadlag::PairConfig target_cost = pair;
+  target_cost.trigger.target_profit_rate = 0.10;
+  EXPECT_EQ(leadlag::SignalEngine::TryOpenShort(target_cost, base, threshold)
+                .reject_reason,
+            leadlag::SignalRejectReason::kEntryCost);
+
+  leadlag::SignalMarket spread = base;
+  spread.lag.bid_price = 98.0;
+  spread.lag.ask_price = 103.0;
+  spread.recorder.lag_spread_mean = 5.0;
+  EXPECT_EQ(leadlag::SignalEngine::TryOpenShort(pair, spread, threshold)
+                .reject_reason,
+            leadlag::SignalRejectReason::kEntrySpread);
+}
+
 TEST(LeadLagSignalTest, LeadTickClosesHoldBeforeOpeningNewGroup) {
   const leadlag::PairConfig pair = PairConfigForSignal();
   leadlag::ExecutionState execution;
