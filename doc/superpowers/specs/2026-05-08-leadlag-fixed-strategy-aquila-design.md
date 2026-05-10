@@ -1280,32 +1280,74 @@ else:
 
 ### Aquila 链路对应
 
-建议状态：
+第 4 部分可以独立落地为 drift / alignment 状态模块，先不耦合 threshold、signal 或 order state。它只依赖第 2 部分 raw market state 的 `QuoteSnapshot` 和第 3 部分 ring-window 统计能力，输出 Active 切换事件和 `AlignmentSnapshot`，供 recorder seed 和第 5 部分 threshold 使用。
+
+建议文件边界：
 
 ```text
-LeadLagAlignmentState
+strategy/lead_lag/types.h
+  QuoteSnapshot
+  Side / PairRole
+  DriftedQuote helper types shared by raw state, alignment and recorder
+
+strategy/lead_lag/window_stats.h
+  MeanWindow<TimedValue>
+  MeanStdWindow<TimedValue>
+  thin wrappers over core/base/RingQueue<T>
+
+strategy/lead_lag/alignment.h
+  AlignmentPhase
+  AlignmentConfig
+  AlignmentSnapshot
+  ActiveTransition
+  AlignmentState
+
+test/strategy/lead_lag_alignment_test.cpp
+  drift sample, warmup, phase transition and seed semantics
+```
+
+当前不执行实现；上述文件是后续落地时的目标边界。`strategy/CMakeLists.txt` 目前是 interface target，`strategy/lead_lag/*.h` 可以先按 header-only 方式接入；测试通过 `test/strategy/CMakeLists.txt` 新增 `lead_lag_alignment_test` target。
+
+状态：
+
+```text
+AlignmentState
   phase
   drift_ready
   drift_samples
   first_paired_drift_ns
   resume_lead_tick
   logged_active
-  drift_recorder
-  drift_std_ema
+  drift_window        // StreamRecorder(drift_period)
+  drift_std_window    // StreamRecorder(stats_window), stores drift_window.Std()
 ```
+
+`drift_window` 对齐 fixed Go 的 `lagContext.drift`：按 `drift_period` 时间窗口记录 `drift = (lag_ask + lag_bid) / (lead_ask + lead_bid)`，提供 rolling mean 和 rolling std。`drift_std_window` 对齐 fixed Go 的 `threshold.DriftStdEma`：名字带 EMA，但实际是按 `stats_window` 记录 drift rolling std 的 rolling mean，不是指数 EMA。
 
 接口：
 
 ```text
-OnPairedRawBbo(now, raw_lead, raw_lag)
-  -> update drift mean/std/sample counters
+Init(config)
+Reset()
 
-UpdatePhase(now, market_state)
+OnPairedRawBbo(now_ns, raw_lead, raw_lag)
+  -> drift_samples += 1
+  -> first_paired_drift_ns set only for first sample
+  -> drift_window.Add(now_ns, drift)
+  -> drift_ready = true
+  -> drift_std_window.Add(now_ns, drift_window.Std())
+
+UpdatePhase(now_ns, lead_valid, lag_valid)
   -> Bootstrap / Aligning / Active
 
-EnterActive(now, raw_lead, raw_lag, recorder_state)
-  -> reset trading recorder state
-  -> seed with drifted lead and raw lag
+DriftLead(raw_lead)
+  -> raw_lead scaled by drift_window.Mean() when drift_ready
+
+EnterActive(now_ns, lead_seed, lag_seed, trigger_side)
+  -> returns ActiveTransition
+  -> lead_seed_drifted = DriftLead(lead_seed)
+  -> lag_seed = raw lag seed
+  -> resume_lead_tick = trigger_side == lag
 ```
 
 输出 snapshot：
@@ -1314,23 +1356,85 @@ EnterActive(now, raw_lead, raw_lag, recorder_state)
 AlignmentSnapshot
   phase
   drift_ready
+  drift_samples
+  first_paired_drift_ns
   drift_mean
+  drift_std
   drift_std_ema
   drift_deviation = abs(drift_mean - 1)
+  resume_lead_tick
 ```
+
+`AlignmentConfig`：
+
+```text
+drift_period_ns
+stats_window_ns
+drift_warmup_ns
+drift_min_samples
+initial_capacity
+```
+
+`alignment_warmup_ns` 不是单独存储配置项，而是派生值：
+
+```text
+effective_warmup_ns = drift_warmup_ns > 0 ? drift_warmup_ns : stats_window_ns
+```
+
+Active seed 由第 2 部分 raw market state 提供：若当前变价 tick 触发 Active 且存在 previous quote，seed 使用进入当前 tick 前的 previous quote；否则使用 latest quote。`AlignmentState::EnterActive()` 只负责对 lead seed 做 drift scaling，并产生 `resume_lead_tick` 事件；真正 reset / seed BBO extrema、noise、spread 和 move quantile window 由 recorder 组合层消费 `ActiveTransition` 完成。
+
+主循环落地顺序：
+
+```text
+OnBookTicker(ticker):
+  now = ticker.local_ns
+  price_changed, role = raw_market_state.Update(ticker)
+
+  if raw lead and raw lag valid:
+      alignment.OnPairedRawBbo(now, raw.lead.latest, raw.lag.latest)
+
+  prev_phase = alignment.phase()
+  phase = alignment.UpdatePhase(now, raw.lead.valid, raw.lag.valid)
+
+  if prev_phase != Active && phase == Active:
+      transition = alignment.EnterActive(now, lead_seed, lag_seed, role)
+      recorder_state.ResetAndSeed(transition)
+
+  if phase != Active:
+      return
+
+  if !price_changed && prev_phase == Active && !alignment.ConsumeResumeLeadTick(role):
+      return
+
+  continue active lead / lag handler
+```
+
+`ConsumeResumeLeadTick(role)` 只允许 lag tick 触发 Active 后的下一笔 lead tick 穿过 same-price gating；穿过后清掉 `resume_lead_tick`。
 
 ### 验证口径
 
 - 单边行情不会产生 drift 样本。
 - lead / lag 都 valid 后按 fixed 语义产生 paired drift 样本。
 - `first_paired_drift_ns` 只在第一笔 paired sample 设置。
+- drift rolling mean 等于 `drift_window` 当前 mean。
+- `drift_std_ema` 等于 `drift_std_window` 当前 mean，输入样本是每次 paired drift 后的 `drift_window.Std()`。
 - 样本数不足或 warmup 不足时保持 Aligning。
 - readiness 满足后只切一次 Active。
 - Active 切换时重置并播种交易 recorder。
+- lag tick 触发 Active 时设置 `resume_lead_tick`，下一笔 lead same-price tick 允许进入一次 active handler，然后清掉 flag。
+- lead tick 触发 Active 时当前 lead tick 继续进入 active handler，不设置下一笔 lead resume。
 - `drift_limit` 超限只禁止开仓。
 - drifted lead 等于 raw lead 乘 drift mean。
 - `drift_warmup=0` 时使用 `stats_window` 作为 alignment warmup。
 - same-price raw tick 不替换 raw quote，但仍可推进 drift sample 和 alignment phase。
+
+后续实现任务拆分建议：
+
+1. 写 `window_stats.h` 的 `MeanWindow` / `MeanStdWindow` 单测和实现，覆盖时间淘汰、mean/std、capacity grow 后结果不变。
+2. 写 `alignment.h` 的 drift 单测和实现，覆盖 paired sample、first timestamp、drift mean/std、drift std rolling mean。
+3. 写 phase readiness 单测和实现，覆盖 Bootstrap / Aligning / Active、`drift_warmup=0` fallback 和只切一次 Active。
+4. 写 Active transition 单测和实现，覆盖 drifted lead seed、raw lag seed、lag-triggered resume lead、lead-triggered no resume。
+5. 把 `AlignmentSnapshot` 接到第 5 部分 threshold 设计，暂不接 order / signal。
 
 ## 5. Threshold Engine
 
