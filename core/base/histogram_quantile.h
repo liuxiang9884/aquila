@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 #include <vector>
 
@@ -254,10 +255,8 @@ class HistogramQuantile {
 
   void Reset() noexcept {
     if (HasValue()) {
-      std::fill(
-          counts_.begin() + static_cast<std::ptrdiff_t>(touched_min_bin_),
-          counts_.begin() + static_cast<std::ptrdiff_t>(touched_max_bin_ + 1),
-          std::uint32_t{0});
+      std::memset(counts_.data() + touched_min_bin_, 0,
+                  TouchedBinCount() * sizeof(std::uint32_t));
     }
     count_ = 0;
     underflow_count_ = 0;
