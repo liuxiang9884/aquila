@@ -22,6 +22,18 @@
 | Signal / execution | `strategy/lead_lag/cost_model.h`、`strategy/lead_lag/execution_state.h`、`strategy/lead_lag/signal.h` | open/close/stoploss gate、execution group、IOC limit order intent。 |
 | Strategy integration | `strategy/lead_lag/strategy.h` | 串接 runtime hooks：`OnBookTicker()`、`OnOrderResponse()`、`OnOrderFeedback()`、`ShouldStop()`。 |
 
+## 计算边界
+
+| 部分 | 主要计算 |
+| --- | --- |
+| 1. Config / metadata | TOML 数值解析，duration 转 ns，quantile bins = `ceil((max - min) / precision)`，catalog 一致性校验，`max_entry_spread < 0` 时 fallback 到 `trailing_stop`。 |
+| 2. Raw market state | `symbol_id` vector lookup，`BookTicker.exchange` role 判断，bid/ask 是否变价比较，latest / previous quote 搬迁，Active seed 选择和 `resume_lead_tick` 标记。 |
+| 3. Recorder / stats | rolling bid/ask min/max，mid rolling mean/std，normalized std rolling mean，lag spread rolling mean，move sample 计算和 histogram quantile window。 |
+| 4. Drift / alignment | `drift = (lag_ask + lag_bid) / (lead_ask + lead_bid)`，drift rolling mean/std，drift std rolling mean，warmup / sample count readiness，drifted lead quote。 |
+| 5. Threshold | `up_move = lead_bid / bid_min - 1`，`down_move = lead_ask / ask_max - 1`，up/down quantile 查询，`profitBuffer = fee*2 + LeadNoise + LagNoise`，entry/exit threshold 更新。 |
+| 6. Signal / execution | open/close/stoploss gate、lead / lag price diff、move space / lag_part、required edge、lag spread gate、trailing high/low 和 open/close quantity/price 归整。 |
+| 7. Feedback state | terminal feedback 的 cumulative filled quantity 应用，signed position 更新，Open/Hold/Close stage 转移，trailing 初始化，finished order retire。 |
+
 ## Tasks
 
 ### Task 1: Config / Metadata
@@ -47,11 +59,11 @@
 - Create: `strategy/lead_lag/raw_market_state.h`
 - Test: `test/strategy/lead_lag_raw_market_state_test.cpp`
 
-- [ ] 写测试覆盖 lead / lag role 路由、超出 `symbol_id`、slot 未初始化、非 pair exchange 直接返回。
-- [ ] 实现 `QuoteSnapshot`、`MarketSideState`、`PairMarketState` 和 `MarketSideUpdate`。
-- [ ] 覆盖 same-price tick 不替换 latest / previous quote，但返回 `price_changed=false`。
-- [ ] 覆盖变价 tick 更新 `previous_quote` 和 `latest_quote`。
-- [ ] 暴露 Active seed 所需 previous/latest quote 选择 helper。
+- [x] 写测试覆盖 lead / lag role 路由、超出 `symbol_id`、slot 未初始化、非 pair exchange 直接返回。
+- [x] 实现 `QuoteSnapshot`、`MarketSideState`、`PairMarketState` 和 `MarketSideUpdate`。
+- [x] 覆盖 same-price tick 不替换 latest / previous quote，但返回 `price_changed=false`。
+- [x] 覆盖变价 tick 更新 `previous_quote` 和 `latest_quote`。
+- [x] 暴露 Active seed 所需 previous/latest quote 选择 helper。
 
 ### Task 3: Recorder Wrappers
 

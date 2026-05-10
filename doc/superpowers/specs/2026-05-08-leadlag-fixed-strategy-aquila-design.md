@@ -18,7 +18,7 @@ third_party/strategy/wt-invariant-strategy-leadlag-must-fix/utils/queue/monotoni
 
 本文不实现代码，不承诺性能收益，不替代后续实现计划。它的作用是让后续实现先对齐 fixed 行为，再按 `aquila` 的低延迟结构落地。
 
-截至 2026-05-10，本文 1-7 部分整体仍是 LeadLag 策略层设计，不表示完整策略 C++ 实现已经完成。当前仓库已有的是 `config/strategy/lead_lag.toml`、`strategy/lead_lag/config.h`、`strategy/lead_lag/config.cpp`、`test/strategy/lead_lag_config_test.cpp`，以及 `core/base/` 中可复用的通用底层结构；raw market state、recorder 组合层、drift / alignment、threshold、signal、execution feedback state 和整体 `leadlag::Strategy` 尚未实现。
+截至 2026-05-10，本文 1-7 部分整体仍是 LeadLag 策略层设计，不表示完整策略 C++ 实现已经完成。当前仓库已有的是 `config/strategy/lead_lag.toml`、`strategy/lead_lag/config.h`、`strategy/lead_lag/config.cpp`、`strategy/lead_lag/types.h`、`strategy/lead_lag/raw_market_state.h`、`test/strategy/lead_lag_config_test.cpp`、`test/strategy/lead_lag_raw_market_state_test.cpp`，以及 `core/base/` 中可复用的通用底层结构；recorder 组合层、drift / alignment、threshold、signal、execution feedback state 和整体 `leadlag::Strategy` 尚未实现。
 
 ## 设计原则
 
