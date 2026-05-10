@@ -151,4 +151,23 @@ TEST(HistogramQuantileTest, TracksOverflowAndDoesNotGrowCounts) {
   EXPECT_EQ(quantile.counts_capacity(), capacity);
 }
 
+TEST(HistogramQuantileTest, UsesDefaultBinCountWhenBinCountIsOmitted) {
+  aquila::HistogramQuantile<double> quantile;
+  quantile.Init(900.0, 1100.0, 0.6,
+                aquila::HistogramQuantileValueMode::kMidpoint);
+
+  EXPECT_EQ(quantile.bin_count(),
+            aquila::HistogramQuantile<double>::kDefaultBinCount);
+}
+
+TEST(HistogramQuantileTest, ComputesBitCeilBinsFromReferenceErrorBp) {
+  aquila::HistogramQuantile<double> quantile;
+  quantile.InitWithReferenceError(
+      900.0, 1100.0, 1000.0, 0.1, 0.6,
+      aquila::HistogramQuantileValueMode::kMidpoint);
+
+  EXPECT_EQ(quantile.bin_count(), 16384U);
+  EXPECT_LE(quantile.bin_width(), 0.02);
+}
+
 }  // namespace

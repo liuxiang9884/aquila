@@ -28,6 +28,8 @@ constexpr std::uint64_t kTraceWindowNs = 30'000'000'000ULL;
 constexpr std::size_t kTraceInitialCapacity = 32768;
 constexpr double kTraceHistogramMin = 900.0;
 constexpr double kTraceHistogramMax = 1100.0;
+constexpr double kTraceReferenceValue = 1000.0;
+constexpr double kTraceMaxErrorBp = 0.1;
 constexpr const char* kTracePathEnv = "AQUILA_TIME_SERIES_TRACE";
 constexpr const char* kDefaultTracePath =
     "data/benchmark/time_series_1m_1000s_f64.bin";
@@ -426,8 +428,9 @@ void BM_TimeSeriesHistogramQuantileWindowQuantile(benchmark::State& state) {
   for (auto _ : state) {
     state.PauseTiming();
     HistogramQuantile<double> quantile;
-    quantile.Init(kTraceHistogramMin, kTraceHistogramMax, kDefaultBins,
-                  kQuantile, HistogramQuantileValueMode::kMidpoint);
+    quantile.InitWithReferenceError(
+        kTraceHistogramMin, kTraceHistogramMax, kTraceReferenceValue,
+        kTraceMaxErrorBp, kQuantile, HistogramQuantileValueMode::kMidpoint);
     bin_width = quantile.bin_width();
     std::uint64_t roll_at =
         trace.empty() ? 0

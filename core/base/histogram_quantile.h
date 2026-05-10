@@ -2,6 +2,7 @@
 #define AQUILA_CORE_BASE_HISTOGRAM_QUANTILE_H_
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -22,6 +23,7 @@ class HistogramQuantile {
  public:
   static_assert(std::is_arithmetic_v<T>,
                 "HistogramQuantile requires an arithmetic value type");
+  static constexpr std::size_t kDefaultBinCount = 4096;
 
   HistogramQuantile() = default;
 
@@ -30,6 +32,12 @@ class HistogramQuantile {
                     HistogramQuantileValueMode value_mode =
                         HistogramQuantileValueMode::kUpperEdge) {
     Init(min_value, max_value, bin_count, quantile, value_mode);
+  }
+
+  void Init(T min_value, T max_value, double quantile,
+            HistogramQuantileValueMode value_mode =
+                HistogramQuantileValueMode::kUpperEdge) {
+    Init(min_value, max_value, kDefaultBinCount, quantile, value_mode);
   }
 
   void Init(T min_value, T max_value, std::size_t bin_count, double quantile,
@@ -51,8 +59,27 @@ class HistogramQuantile {
     counts_.assign(bin_count, 0);
   }
 
+  void InitWithReferenceError(T min_value, T max_value, T reference_value,
+                              double max_error_bp, double quantile,
+                              HistogramQuantileValueMode value_mode =
+                                  HistogramQuantileValueMode::kUpperEdge) {
+    assert(reference_value > T{});
+    assert(max_error_bp > 0.0);
+    const double max_abs_error =
+        static_cast<double>(reference_value) * max_error_bp / 10000.0;
+    const double range =
+        static_cast<double>(max_value) - static_cast<double>(min_value);
+    const double divisor = value_mode == HistogramQuantileValueMode::kMidpoint
+                               ? 2.0 * max_abs_error
+                               : max_abs_error;
+    const auto required_bins =
+        static_cast<std::size_t>(std::ceil(range / divisor));
+    Init(min_value, max_value, std::bit_ceil(required_bins), quantile,
+         value_mode);
+  }
+
   void Reset() noexcept {
-    std::fill(counts_.begin(), counts_.end(), std::uint64_t{0});
+    std::fill(counts_.begin(), counts_.end(), std::uint32_t{0});
     count_ = 0;
     underflow_count_ = 0;
     overflow_count_ = 0;
@@ -158,7 +185,7 @@ class HistogramQuantile {
   double quantile_{0.5};
   HistogramQuantileValueMode value_mode_{
       HistogramQuantileValueMode::kUpperEdge};
-  std::vector<std::uint64_t> counts_;
+  std::vector<std::uint32_t> counts_;
   std::uint64_t count_{0};
   std::uint64_t underflow_count_{0};
   std::uint64_t overflow_count_{0};
