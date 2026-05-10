@@ -1,4 +1,5 @@
 add_library(aquila_strategy STATIC
+    lead_lag/alignment.h
     lead_lag/config.cpp
     lead_lag/config.h
     lead_lag/recorders.h
