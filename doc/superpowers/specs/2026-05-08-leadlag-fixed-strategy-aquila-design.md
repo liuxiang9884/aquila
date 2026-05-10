@@ -77,7 +77,7 @@ OnBookTicker(ticker):
 | --- | --- | --- |
 | 1. 配置与 metadata | `StrategyConfig`、`SetDefault()`、`LagTakerFee()`、`ExecutionConfig.EntrySpreadLimit()`、`CalOpenQty()`、`FormatQty()` | `max_entry_spread < 0` 时回退到 `trailing_stop`；默认 lag taker fee 来自 hard-coded exchange map；数量按 `price`、`QuantityTick` 和 `ContractValue` 归整。 |
 | 2. Raw market state | `OnRawBBO()`、`updateRawMarketState()` | same-price raw tick 不替换已保存 quote，但仍用旧 quote 推进 drift / alignment；未 Active 前不进入交易 recorder / signal。 |
-| 3. Recorder / queue / noise | `BBOVolRecorder`、`StreamRecorder`、`StreamStdEmaRecorder`、`MoveQueue`、`LagSpreadBuffer()` | BBO extrema 是时间窗口 monotonic queue；`MoveQueue` 是按 `stats_window` 时间边界切窗并 roll 后清空；Aquila 第一版用 dual heap exact empirical quantile，histogram 只作为低延迟近似备选；`StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean；lag spread 是绝对 spread 的 `StreamRecorder(stats_window)` 均值。 |
+| 3. Recorder / queue / noise | `BBOVolRecorder`、`StreamRecorder`、`StreamStdEmaRecorder`、`MoveQueue`、`LagSpreadBuffer()` | BBO extrema 是时间窗口 monotonic queue；`MoveQueue` 是按 `stats_window` 时间边界切窗并 roll 后清空；Aquila 生产低延迟路径默认使用 fixed-bin histogram 近似 quantile，dual heap 保留为单 quantile exact / replay 对照口径；`StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean；lag spread 是绝对 spread 的 `StreamRecorder(stats_window)` 均值。 |
 | 4. Drift / alignment | `UpdateDrift()`、`alignmentWarmup()`、`alignmentReady()`、`enterActivePhase()` | drift 用 `(lag_ask + lag_bid) / (lead_ask + lead_bid)`；`drift_warmup > 0` 时用配置值，否则回退到 `stats_window`；进入 Active 后重置并播种交易侧 recorder。 |
 | 5. Threshold | `UpdateMoveThreshold()`、`ProfitBuffer()` | roll 时先冻结 noise、用旧 move queue 计算 quantile / threshold，再清空 queue，最后 push 当前 lead tick 的 move；`profitBuffer = fee*2 + LeadNoise + LagNoise`。 |
 | 6. Signal | `OnLeadBBO()`、`OnLagBBO()`、`OpenLong()`、`OpenShort()`、`CloseLong()`、`CloseShort()`、`ExecuteStoploss*()` | lead tick 顺序是更新 recorder / threshold、先平仓再开仓；lag tick 顺序是 spread / noise、trailing、stoploss、signal close；`drift_limit` 只限制新开仓。 |
@@ -832,7 +832,7 @@ log symbol_id, exchange, vector name, new vector capacity
 
 LeadLag 后续 threshold engine 可能需要从同一批 move 样本读取多组 quantile。当前 `aquila` 默认选择 `HistogramQuantile<T>` 作为 move quantile 的实现方向：它牺牲 exact empirical quantile，换取单次样本更新后支持多 quantile 读取。
 
-Histogram 用固定 bins 近似 quantile：
+Histogram 用固定 bins 近似 quantile。`range = [min_value, max_value]` 是固定数值坐标系，不是当前窗口真实价格上下界；当前窗口真实样本只会让其中一段 bins 的 counter 非零：
 
 ```text
 HistogramQuantile
@@ -843,22 +843,46 @@ HistogramQuantile
   count
   underflow_count
   overflow_count
+  touched_min_bin
+  touched_max_bin
 ```
 
 单 quantile 更新与查询复杂度：
 
 ```text
 active lead tick: O(1)
-roll quantile scan: O(bins)
-reset: O(bins), or O(1) with epoch reset
+roll quantile scan: O(touched_bins)
+reset: O(touched_bins)
 space: O(bins)
 ```
+
+其中：
+
+```text
+touched_bins = touched_max_bin - touched_min_bin + 1
+```
+
+`Add(value)` 时直接通过 `(value - min_value) / bin_width` 算 bin index，更新 counter，并维护当前窗口触达的最小 / 最大 bin。`Value()` 只在 touched bin 区间内按 rank 扫描；`Reset()` 只对 touched bin 区间执行清零，并重置 touched 边界。因此当 configured range 较大、当前窗口实际发生区间较窄时，查询和 reset 都不会再扫完整 range。
+
+查询 rank 仍保持 empirical quantile 语义：
+
+```text
+target = max(1, ceil(p * count))
+```
+
+当 `p <= 0.5` 时从 touched low 端向右累计；当 `p > 0.5` 时从 touched high 端向左累计，并使用：
+
+```text
+reverse_target = count - target + 1
+```
+
+两种方向返回的 bin 与 full forward scan 等价。当前 `core/base/histogram_quantile.h` 提供 `ValueScalar()`、`ValueAvx2()`、`ValueAvx512()`；本机 microbenchmark 显示 AVX2 是 10000 bins 场景下更稳的默认 SIMD 路径，AVX512 没有胜过 AVX2。
 
 多 quantile 可以在同一个 `counts` 上完成。若 quantile 列表已排序，可以一遍扫描 bins 输出全部目标 quantile：
 
 ```text
 add all samples: O(n)
-read k quantiles: O(bins + k)
+read k quantiles: O(touched_bins + k)
 space: O(bins)
 ```
 
@@ -878,6 +902,31 @@ bin_width = 0.01 / 4096 ~= 0.0000024414 = 0.0244 bp
 ```
 
 Histogram 初始化后固定 range / bins 时不会在热路径分配内存；但它不是 exact empirical quantile，overflow / underflow 时误差不再受 `bin_width` 约束。因此 fixed replay 精确对齐仍应保留 exact 对照路径，生产低延迟路径默认使用 histogram，并通过 range / bins / overflow 统计验证误差边界。
+
+当前 `core/base` 实现结论：
+
+- `counts` 使用 `std::vector<std::uint32_t>` 预分配；`count`、underflow、overflow 使用 `std::uint64_t`。
+- bins 数不强制 `bit_ceil`，按 range / precision 或 reference / bp error 精确计算；默认 bins 为 `4096`。
+- 提供 `InitWithReferenceError()` 和 `InitWithRangePrecision()`，分别从 reference bp 误差、range 绝对精度推导 bins。
+- `Reset()` 使用 touched bin 区间清零；当前代码用 `std::memset` 表达连续内存清零语义，但 benchmark 未显示相对 `std::fill(..., 0)` 有稳定收益。
+- 不采用 epoch reset：明确知道窗口 roll 点时，直接 reset 更简单；epoch 会把额外 epoch 读写转移到更高频的 `Add()` / `Value()` 路径。
+- 暂不实现 `ValueMany()`；若第 5 部分 threshold engine 需要同一窗口读取多组 quantile，再在 `MoveQuantileWindow` 层增加一次扫描多输出接口。
+
+2026-05-10 本机 release microbenchmark，`10000 bins`、`p=0.6`、configured range `[900,1100]`、窗口样本 `[980,1015]`：
+
+```text
+ValueOnly, ns/query:
+Scalar:  1549 -> 237   touched-bin scan ~6.5x
+AVX2:     825 -> 125   touched-bin scan ~6.6x
+AVX512:   878 -> 129   touched-bin scan ~6.8x
+
+Value+Reset, ns:
+Scalar:  2147 -> 566   touched-bin reset ~3.8x
+AVX2:    1410 -> 454   touched-bin reset ~3.1x
+AVX512:  1474 -> 465   touched-bin reset ~3.2x
+```
+
+这些数字是 `core_base_structures_benchmark` 的局部 microbenchmark，只用于指导 `HistogramQuantile<T>` 设计，不外推为完整 LeadLag 策略链路时延。
 
 #### Go 源码确认：3-2 lead_noise / lag_noise
 
@@ -1164,12 +1213,12 @@ log symbol_id, exchange, queue name, new vector capacity
 - MoveQueue 按 `stats_window` 切窗，roll 后清空；不是严格 rolling 最近 `stats_window`。
 - MoveQueue 在边界时间 `t == RollAt` 不 roll，`t > RollAt` 才 roll。
 - roll 时用旧 queue 计算 quantile，当前 lead tick 的 move 进入新窗口。
-- Aquila 第一版用 dual heap exact empirical quantile，`RecorderStats.move_quantile_capacity_grow_count` 只记录次数，扩容细节写 log。
-- Histogram 只作为后续备选；若启用必须记录 range / bins / underflow / overflow，并接受 `bin_width` 级别近似误差。
+- Aquila 生产低延迟路径默认使用 fixed-bin histogram 近似 move quantile；dual heap exact empirical quantile 只作为单 quantile exact / replay 对照口径。
+- Histogram 必须记录 range / bins / bin_width / underflow / overflow，并接受 `bin_width` 级别近似误差；触发 underflow / overflow 后误差不再只由 `bin_width` 约束。
 - `LeadNoise` / `LagNoise` 是 rolling normalized std 的 rolling mean，不是指数 EMA。
 - `lag_spread_mean` 是 absolute spread 的 `StreamRecorder(stats_window)` mean。
 - `LagSpreadBuffer = max(current_spread - mean_spread, 0)`。
-- 固定 replay 下 extrema、noise、dual-heap move quantile 与 fixed 对齐；若启用 histogram，则按配置误差单独验收。
+- 固定 replay 下 extrema、noise 与 fixed 对齐；move quantile 若使用 histogram，则按配置误差、underflow / overflow 和 exact 对照路径单独验收。
 
 ## 4. Drift 与 Alignment Phase
 
@@ -1752,7 +1801,7 @@ Rejected:
 
 1. 配置与 instrument catalog metadata 已定为 `lead_lag` / `version="1.0"` / `config/strategy/lead_lag.toml` / pair array；后续实现需按本节验证口径落 parser。
 2. raw market state 的时间、`symbol_id` vector lookup 和 `BookTicker.exchange` role 判断是否符合 `aquila` 当前 DataReader。
-3. recorder / queue 输出语义按 fixed Go 对齐；实现可不同，但必须覆盖切窗 MoveQueue、rolling normalized std mean 和 absolute spread mean。
+3. recorder / queue 输出语义按 fixed Go 对齐；实现可不同，但必须覆盖切窗 MoveQueue、histogram move quantile、rolling normalized std mean 和 absolute spread mean。
 4. alignment readiness 使用 `drift_warmup`，未配置时回退到 `stats_window`。
 5. threshold 符号和 roll 顺序是否确认。
 6. signal 的成本模型、spread buffer、stoploss 价格是否确认。

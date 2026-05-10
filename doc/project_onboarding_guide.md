@@ -54,7 +54,7 @@
 36. Strategy runtime production loop 已落地：`core/strategy/strategy_runtime.h` 支持 `StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>`，生产 `Create()` 从已解析 `StrategyConfig` / `DataReaderConfig` 构造 `DataReader`、`OrderSession`、`OrderManager`、`StrategyContext`、user strategy 和可选 feedback reader；Gate production 路径使用 `OrderSessionT::SetRuntimeHook()` 在 WebSocket active spin loop 同线程轮询 feedback SHM / data reader，`OnOrderResponse()` 和 `OnOrderFeedback()` 都先更新 `OrderManager` 再调用 user strategy hook，并支持 `OnStart` / `OnLoop` / `OnIdle` / `OnStop` / `ShouldStop`、`spin` / `yield` idle policy、`max_loop_seconds` 和 best-effort `bind_cpu_id`。
 37. Gate strategy runtime adapter 和 `demo` 策略工具已落地：`tools/gate/strategy_runtime_adapter.h` 把 Gate `OrderSession` 包装为 runtime 可用的 `OrderSessionT`，通过 `BindRuntime()` 让 Gate response handler 同线程直接回调 `StrategyRuntime::OnOrderResponse()`，不再保留 production response queue、background order session thread 或 command queue；place / cancel 直接转发给同线程 Gate session。`tools/gate/demo_strategy.h` / `tools/gate/demo_strategy.cpp` 提供 `demo` user strategy 和 `gate_demo_strategy` 工具，默认 dry-run 只解析配置，不打开 WebSocket / SHM；显式 `--execute` 才进入实盘 runtime。本轮没有做实盘测试。
 38. Nova upstream 已加入 `nova::LoggingGuard`（Nova commit `e40bbc5 Add logging guard`）；Aquila tool 直接使用该 RAII guard 初始化 / 停止 Nova log，本地 `tools/common/logging_guard.h` 已删除。Aquila 本地提交 `21b7740 Clean up completed planning docs` 已清理完成的执行计划文档，后续以 onboarding、handoff、design spec 和当前代码作为事实源。
-39. LeadLag 第 3 部分底层数据结构已在 `core/base/` 落地：`MonotonicDeque<T>`、`RingQueue<T>`、`HeapBuffer<T>`、`DoubleHeap<T>` 和 `HistogramQuantile<T>` 均为 header-only template，实现启动期预分配、必要时 vector 扩容并保持计算准确性；`test/core/base/base_structures_test.cpp` 覆盖基本语义，`benchmark/core/base/base_structures_benchmark.cpp` 覆盖扩容 / 不扩容成本，以及 `DoubleHeap` exact quantile 与 `HistogramQuantile` 近似 quantile 的成本和误差。2026-05-09 release benchmark 短跑（`n=10000`、`bins=4096`）显示 `DoubleHeap` exact error 为 `0 bp`，`HistogramQuantile` 相对 exact empirical quantile 的绝对误差约 `0.00205 bp`，bin width 约 `0.0244 bp`；这是本机 microbenchmark，不代表完整策略链路性能。
+39. LeadLag 第 3 部分底层数据结构已在 `core/base/` 落地：`MonotonicDeque<T>`、`RingQueue<T>`、`HeapBuffer<T>`、`DoubleHeap<T>` 和 `HistogramQuantile<T>` 均为 header-only template，实现启动期预分配、必要时 vector 扩容并保持计算准确性；`test/core/base/base_structures_test.cpp` 覆盖基本语义，`benchmark/core/base/base_structures_benchmark.cpp` 覆盖扩容 / 不扩容成本、`DoubleHeap` exact quantile、`HistogramQuantile` 近似 quantile 误差、value-only 查询和 value+reset 查询。当前生产低延迟 move quantile 方向是 fixed-bin histogram，dual heap 保留为单 quantile exact / replay 对照口径；histogram 使用 touched-bin 查询 / reset，当前本机 release benchmark 在 `10000 bins`、configured range `[900,1100]`、窗口样本 `[980,1015]`、`p=0.6` 下显示 AVX2 value-only 约从 `825 ns/query` 降到 `125 ns/query`，AVX2 value+reset 约从 `1410 ns` 降到 `454 ns`。这是本机 microbenchmark，不代表完整策略链路性能。
 
 ## 新对话第一步
 
@@ -143,8 +143,8 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 | `core/base/monotonic_deque.h` | 通用 vector-backed `MonotonicDeque<T>`，用于 rolling extrema 候选队列；保留相等值 FIFO 语义，初始化可 reserve，必要时 vector 扩容。 |
 | `core/base/ring_queue.h` | 通用 `RingQueue<T>`，capacity 归整到 2 的次幂，索引用 `& mask`，满时扩容并按 FIFO 顺序搬迁。 |
 | `core/base/heap_buffer.h` | 通用 `HeapBuffer<T>`，封装 `std::vector<T>` + `std::push_heap` / `std::pop_heap`，避免 `std::priority_queue` 隐藏 capacity 控制。 |
-| `core/base/double_heap.h` | `DoubleHeap<T>` exact empirical quantile，底层 lower max-heap / upper min-heap，空值返回 `T{}`；LeadLag 3-4 第一版 move quantile 使用该抽象。 |
-| `core/base/histogram_quantile.h` | `HistogramQuantile<T>` fixed-bin 近似 quantile，记录 underflow / overflow，支持 lower / midpoint / upper edge 返回模式，作为 LeadLag 低延迟近似备选。 |
+| `core/base/double_heap.h` | `DoubleHeap<T>` exact empirical quantile，底层 lower max-heap / upper min-heap，空值返回 `T{}`；LeadLag 3-4 保留为单 quantile exact / replay 对照口径。 |
+| `core/base/histogram_quantile.h` | `HistogramQuantile<T>` fixed-bin 近似 quantile，记录 underflow / overflow，支持 lower / midpoint / upper edge 返回模式，使用 touched-bin 查询 / reset；作为 LeadLag 生产低延迟 move quantile 默认方向。 |
 | `core/market_data/types.h` | 统一行情数据结构，当前包含 `aquila::BookTicker`。 |
 
 ### 配置实现
@@ -561,7 +561,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 - `BboExtremaWindow` 语义是 rolling `bbo_record.window` 内 bid / ask min/max；fixed Go 使用本地自定义 `MonotonicQueue`，正常 update 摊还 `O(1)`、min/max 查询 `O(1)`。Aquila 选择 vector-backed monotonic deque，启动期按 `extrema_window_capacity` reserve，允许 vector 自动扩容保证计算准确性；`RecorderStats` 只记录 `extrema_capacity_grow_count`，具体 symbol/exchange/vector/capacity 写 log。
 - fixed Go 源码已解压到 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`，该目录被 git ignore，仅作为源码参考。
 - `MoveQueue` 是按 `stats_window` 时间边界切窗，`t > RollAt` 才 roll，roll 后清空旧 samples；不是严格 rolling 最近 `stats_window`。
-- 3-4 move quantile：fixed Go 是 append-only `Up` / `Down` slice，roll 时 sort 后用 `gonum/stat.Quantile(..., stat.Empirical)`；`DoubleHeap<T>` 可作为单 quantile exact 对照，能避免 roll tick `O(n log n)` spike，但同一批样本若要算多组 quantile，需要维护多组 heap，更新和内存成本随 quantile 数线性增加。当前 LeadLag threshold engine 的生产方向改为 `HistogramQuantile<T>`：单次样本更新后可在同一组 bins 上读取多组 quantile，固定 range / bins 时热路径不分配，误差由 `bin_width` 和 underflow / overflow 统计约束；exact replay 对账仍保留 exact 对照口径。
+- 3-4 move quantile：fixed Go 是 append-only `Up` / `Down` slice，roll 时 sort 后用 `gonum/stat.Quantile(..., stat.Empirical)`；`DoubleHeap<T>` 可作为单 quantile exact 对照，能避免 roll tick `O(n log n)` spike，但同一批样本若要算多组 quantile，需要维护多组 heap，更新和内存成本随 quantile 数线性增加。当前 LeadLag threshold engine 的生产方向改为 `HistogramQuantile<T>`：单次样本更新后可在同一组 bins 上读取多组 quantile，固定 range / bins 时热路径不分配，误差由 `bin_width` 和 underflow / overflow 统计约束；实现已支持 touched-bin 查询 / reset、AVX2 / AVX512 显式查询接口，benchmark 显示当前机器上 AVX2 更稳，exact replay 对账仍保留 exact 对照口径。
 - `lead_noise` / `lag_noise` 不使用单调队列；fixed Go 使用 4 个 `StreamRecorder` / 8 个本地 FIFO queue。Aquila 设计为 4 个 `RingQueue<TimedValue>`：lead/lag 各一个 mid window 和 ratio window；`RingQueue<T>` 使用 vector、capacity 必须为 2 的次幂、索引用 `& mask`，扩容后 `RecorderStats.ring_queue_capacity_grow_count` 只记录次数，细节写 log。
 - `lag_spread` 是 absolute spread 的 `StreamRecorder(stats_window)` mean；fixed Go 使用 1 个 `StreamRecorder` / 2 个 FIFO queue。Aquila 设计为 `SpreadState{MeanWindow}`，底层复用 3-2 的 `RingQueue<TimedValue>`、2 的次幂 capacity 和 `RecorderStats.ring_queue_capacity_grow_count`；`LagSpreadBuffer = max(current_spread - mean_spread, 0)`。
 - `core/base/` 已实现第 3 部分所需的通用抽象数据结构：`MonotonicDeque<T>`、`RingQueue<T>`、`HeapBuffer<T>`、`DoubleHeap<T>`、`HistogramQuantile<T>`；测试入口是 `core_base_structures_test`，benchmark 入口是 `core_base_structures_benchmark`。
@@ -726,7 +726,7 @@ ctest --test-dir build/release -R core_base_structures_test --output-on-failure
 ./build/release/benchmark/core/base/core_base_structures_benchmark --benchmark_min_time=0.05s
 ```
 
-`core_base_structures_benchmark` 是 `core/base` 局部 microbenchmark，只比较数据结构扩容 / 不扩容、`DoubleHeap` exact quantile 和 `HistogramQuantile` 近似 quantile 的局部成本与误差；不能外推为完整 LeadLag 策略链路时延。
+`core_base_structures_benchmark` 是 `core/base` 局部 microbenchmark，只比较数据结构扩容 / 不扩容、`DoubleHeap` exact quantile、`HistogramQuantile` 近似 quantile、value-only 查询和 value+reset 查询的局部成本与误差；不能外推为完整 LeadLag 策略链路时延。
 
 Gate data session dry-run / BBO live probe：
 
