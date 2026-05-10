@@ -28,12 +28,12 @@ class MeanWindow {
   }
 
   void Update(std::int64_t local_ns, double value) {
+    EvictExpired(local_ns);
     samples_.PushBack(TimedValue{
         .local_ns = local_ns,
         .value = value,
     });
     sum_ += value;
-    EvictExpired(local_ns);
   }
 
   [[nodiscard]] double mean() const noexcept {
@@ -89,13 +89,13 @@ class MeanStdWindow {
   }
 
   void Update(std::int64_t local_ns, double value) {
+    EvictExpired(local_ns);
     samples_.PushBack(TimedValue{
         .local_ns = local_ns,
         .value = value,
     });
     sum_ += value;
     sum_sq_ += value * value;
-    EvictExpired(local_ns);
   }
 
   [[nodiscard]] double mean() const noexcept {

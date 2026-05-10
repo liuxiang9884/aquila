@@ -100,6 +100,7 @@ class BboExtremaWindow {
   }
 
   void Update(const QuoteSnapshot& quote) {
+    EvictExpired(quote.local_ns);
     recorder_detail::PushAndTrackGrow(
         &bid_min_,
         recorder_detail::PricePoint{.local_ns = quote.local_ns,
@@ -120,7 +121,6 @@ class BboExtremaWindow {
         recorder_detail::PricePoint{.local_ns = quote.local_ns,
                                     .price = quote.ask_price},
         stats_);
-    EvictExpired(quote.local_ns);
   }
 
   [[nodiscard]] BboExtremaSnapshot snapshot() const noexcept {

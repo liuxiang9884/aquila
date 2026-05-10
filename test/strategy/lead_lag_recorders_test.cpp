@@ -61,6 +61,26 @@ TEST(LeadLagWindowStatsTest, MeanWindowEvictsByTimeAndKeepsBoundarySample) {
   EXPECT_DOUBLE_EQ(window.mean(), 25.0);
 }
 
+TEST(LeadLagWindowStatsTest, MeanWindowsEvictExpiredBeforePushing) {
+  leadlag::MeanWindow mean;
+  mean.Init(/*window_ns=*/10, /*capacity=*/2);
+  mean.Update(/*local_ns=*/0, /*value=*/10.0);
+  mean.Update(/*local_ns=*/10, /*value=*/20.0);
+  mean.Update(/*local_ns=*/11, /*value=*/30.0);
+
+  EXPECT_EQ(mean.size(), 2U);
+  EXPECT_EQ(mean.capacity(), 2U);
+
+  leadlag::MeanStdWindow mean_std;
+  mean_std.Init(/*window_ns=*/10, /*capacity=*/2);
+  mean_std.Update(/*local_ns=*/0, /*value=*/10.0);
+  mean_std.Update(/*local_ns=*/10, /*value=*/20.0);
+  mean_std.Update(/*local_ns=*/11, /*value=*/30.0);
+
+  EXPECT_EQ(mean_std.size(), 2U);
+  EXPECT_EQ(mean_std.capacity(), 2U);
+}
+
 TEST(LeadLagWindowStatsTest, MeanStdWindowComputesPopulationStd) {
   leadlag::MeanStdWindow window;
   window.Init(/*window_ns=*/100, /*capacity=*/2);
@@ -127,6 +147,22 @@ TEST(LeadLagRecordersTest, BboExtremaWindowTracksRollingMinAndMax) {
   EXPECT_DOUBLE_EQ(snapshot.bid_max, 102.0);
   EXPECT_DOUBLE_EQ(snapshot.ask_min, 100.5);
   EXPECT_DOUBLE_EQ(snapshot.ask_max, 104.0);
+}
+
+TEST(LeadLagRecordersTest, BboExtremaEvictsExpiredBeforePushing) {
+  leadlag::RecorderStats stats;
+  leadlag::BboExtremaWindow window;
+  window.Init(/*window_ns=*/10, /*capacity=*/2, &stats);
+
+  window.Update(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+                      /*ask_price=*/101.0));
+  window.Update(Quote(/*local_ns=*/10, /*bid_price=*/101.0,
+                      /*ask_price=*/102.0));
+  window.Update(Quote(/*local_ns=*/11, /*bid_price=*/102.0,
+                      /*ask_price=*/103.0));
+
+  ASSERT_TRUE(window.snapshot().valid);
+  EXPECT_EQ(stats.extrema_capacity_grow_count, 0U);
 }
 
 TEST(LeadLagRecordersTest, NoiseStateReturnsRollingMeanOfNormalizedStd) {
