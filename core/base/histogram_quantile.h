@@ -216,6 +216,7 @@ class HistogramQuantile {
     underflow_count_ = 0;
     overflow_count_ = 0;
     counts_.assign(bin_count, 0);
+    ResetTouchedBins();
   }
 
   void InitWithReferenceError(T min_value, T max_value, T reference_value,
@@ -252,10 +253,16 @@ class HistogramQuantile {
   }
 
   void Reset() noexcept {
-    std::fill(counts_.begin(), counts_.end(), std::uint32_t{0});
+    if (HasValue()) {
+      std::fill(
+          counts_.begin() + static_cast<std::ptrdiff_t>(touched_min_bin_),
+          counts_.begin() + static_cast<std::ptrdiff_t>(touched_max_bin_ + 1),
+          std::uint32_t{0});
+    }
     count_ = 0;
     underflow_count_ = 0;
     overflow_count_ = 0;
+    ResetTouchedBins();
   }
 
   void Add(T value) noexcept {
@@ -263,6 +270,7 @@ class HistogramQuantile {
     const std::size_t index = BinIndex(value);
     ++counts_[index];
     ++count_;
+    MarkTouchedBin(index);
   }
 
   [[nodiscard]] bool HasValue() const noexcept {
@@ -290,13 +298,15 @@ class HistogramQuantile {
     }
     const std::uint64_t target = TargetRank();
 #if defined(__x86_64__) || defined(__i386__)
+    const std::size_t touched_bin_count = TouchedBinCount();
+    const std::uint32_t* touched_counts = counts_.data() + touched_min_bin_;
     const std::size_t index =
         UseForwardScan()
             ? histogram_quantile_detail::FindQuantileBinAvx2(
-                  counts_.data(), counts_.size(), target)
+                  touched_counts, touched_bin_count, target)
             : histogram_quantile_detail::FindQuantileBinReverseAvx2(
-                  counts_.data(), counts_.size(), ReverseTargetRank(target));
-    return BinValue(index);
+                  touched_counts, touched_bin_count, ReverseTargetRank(target));
+    return BinValue(touched_min_bin_ + index);
 #else
     if (!UseForwardScan()) {
       return ValueScalarReverse(ReverseTargetRank(target));
@@ -311,13 +321,15 @@ class HistogramQuantile {
     }
     const std::uint64_t target = TargetRank();
 #if defined(__x86_64__) || defined(__i386__)
+    const std::size_t touched_bin_count = TouchedBinCount();
+    const std::uint32_t* touched_counts = counts_.data() + touched_min_bin_;
     const std::size_t index =
         UseForwardScan()
             ? histogram_quantile_detail::FindQuantileBinAvx512(
-                  counts_.data(), counts_.size(), target)
+                  touched_counts, touched_bin_count, target)
             : histogram_quantile_detail::FindQuantileBinReverseAvx512(
-                  counts_.data(), counts_.size(), ReverseTargetRank(target));
-    return BinValue(index);
+                  touched_counts, touched_bin_count, ReverseTargetRank(target));
+    return BinValue(touched_min_bin_ + index);
 #else
     if (!UseForwardScan()) {
       return ValueScalarReverse(ReverseTargetRank(target));
@@ -353,25 +365,26 @@ class HistogramQuantile {
  private:
   [[nodiscard]] T ValueScalarForward(std::uint64_t target) const noexcept {
     std::uint64_t cumulative = 0;
-    for (std::size_t i = 0; i < counts_.size(); ++i) {
+    const std::size_t end = touched_max_bin_ + 1;
+    for (std::size_t i = touched_min_bin_; i < end; ++i) {
       cumulative += counts_[i];
       if (cumulative >= target) {
         return BinValue(i);
       }
     }
-    return BinValue(counts_.size() - 1);
+    return BinValue(touched_max_bin_);
   }
 
   [[nodiscard]] T ValueScalarReverse(std::uint64_t target) const noexcept {
     std::uint64_t cumulative = 0;
-    for (std::size_t i = counts_.size(); i > 0;) {
+    for (std::size_t i = touched_max_bin_ + 1; i > touched_min_bin_;) {
       --i;
       cumulative += counts_[i];
       if (cumulative >= target) {
         return BinValue(i);
       }
     }
-    return BinValue(0);
+    return BinValue(touched_min_bin_);
   }
 
   [[nodiscard]] std::size_t BinIndex(T value) noexcept {
@@ -409,6 +422,20 @@ class HistogramQuantile {
     return quantile_ <= 0.5;
   }
 
+  [[nodiscard]] std::size_t TouchedBinCount() const noexcept {
+    return touched_max_bin_ - touched_min_bin_ + 1;
+  }
+
+  void MarkTouchedBin(std::size_t index) noexcept {
+    touched_min_bin_ = std::min(touched_min_bin_, index);
+    touched_max_bin_ = std::max(touched_max_bin_, index);
+  }
+
+  void ResetTouchedBins() noexcept {
+    touched_min_bin_ = counts_.size();
+    touched_max_bin_ = 0;
+  }
+
   [[nodiscard]] T BinValue(std::size_t index) const noexcept {
     const double lower = static_cast<double>(min_value_) +
                          static_cast<double>(index) * bin_width_;
@@ -436,6 +463,8 @@ class HistogramQuantile {
   std::uint64_t count_{0};
   std::uint64_t underflow_count_{0};
   std::uint64_t overflow_count_{0};
+  std::size_t touched_min_bin_{0};
+  std::size_t touched_max_bin_{0};
 };
 
 }  // namespace aquila

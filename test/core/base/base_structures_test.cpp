@@ -195,4 +195,35 @@ TEST(HistogramQuantileTest, SimdValuesMatchScalarValueForUpperQuantile) {
   EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx512());
 }
 
+TEST(HistogramQuantileTest, SimdValuesMatchScalarValueForSparseTouchedBins) {
+  aquila::HistogramQuantile<double> quantile;
+  quantile.Init(900.0, 1100.0, 10000, 0.6,
+                aquila::HistogramQuantileValueMode::kMidpoint);
+
+  for (const double value :
+       {980.01, 990.0, 1000.0, 1005.0, 1010.0, 1014.0, 1015.0}) {
+    quantile.Add(value);
+  }
+
+  EXPECT_NEAR(quantile.ValueScalar(), 1010.01, 1e-12);
+  EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx2());
+  EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx512());
+}
+
+TEST(HistogramQuantileTest, ResetClearsOnlyTouchedBinsWithoutStaleValues) {
+  aquila::HistogramQuantile<double> quantile;
+  quantile.Init(900.0, 1100.0, 10000, 0.6,
+                aquila::HistogramQuantileValueMode::kMidpoint);
+
+  quantile.Add(980.0);
+  quantile.Add(1015.0);
+  quantile.Reset();
+  quantile.Add(900.01);
+
+  EXPECT_EQ(quantile.count(), 1U);
+  EXPECT_NEAR(quantile.ValueScalar(), 900.01, 1e-12);
+  EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx2());
+  EXPECT_DOUBLE_EQ(quantile.ValueScalar(), quantile.ValueAvx512());
+}
+
 }  // namespace

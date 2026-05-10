@@ -26,6 +26,10 @@ constexpr std::size_t kDefaultSamples = 10000;
 constexpr std::size_t kDefaultBins = 4096;
 constexpr std::size_t kValueOnlyBins = 10000;
 constexpr std::size_t kValueOnlyQueriesPerIteration = 1024;
+constexpr double kNarrowHistogramMin = 900.0;
+constexpr double kNarrowHistogramMax = 1100.0;
+constexpr double kNarrowSampleMin = 980.0;
+constexpr double kNarrowSampleMax = 1015.0;
 constexpr std::uint64_t kTraceWindowNs = 30'000'000'000ULL;
 constexpr std::size_t kTraceInitialCapacity = 32768;
 constexpr double kTraceHistogramMin = 900.0;
@@ -49,7 +53,8 @@ enum class HistogramQueryMode {
   kAvx512,
 };
 
-std::vector<double> MakeSamples(std::size_t count) {
+std::vector<double> MakeSamples(std::size_t count, double min_value,
+                                double max_value) {
   std::vector<double> samples;
   samples.reserve(count);
   std::uint64_t state = 0x9E3779B97F4A7C15ULL;
@@ -57,9 +62,13 @@ std::vector<double> MakeSamples(std::size_t count) {
     state = state * 2862933555777941757ULL + 3037000493ULL;
     const double unit =
         static_cast<double>((state >> 16) % 1'000'000ULL) / 1'000'000.0;
-    samples.push_back(kHistogramMin + unit * (kHistogramMax - kHistogramMin));
+    samples.push_back(min_value + unit * (max_value - min_value));
   }
   return samples;
+}
+
+std::vector<double> MakeSamples(std::size_t count) {
+  return MakeSamples(count, kHistogramMin, kHistogramMax);
 }
 
 double ExactEmpiricalQuantile(std::vector<double> samples, double quantile) {
@@ -332,11 +341,14 @@ void BM_HistogramQuantileBuildAndReadAvx512(benchmark::State& state) {
 }
 
 void BM_HistogramQuantileValueOnly(benchmark::State& state,
-                                   HistogramQueryMode query_mode) {
+                                   HistogramQueryMode query_mode,
+                                   double histogram_min, double histogram_max,
+                                   double sample_min, double sample_max) {
   const auto bins = static_cast<std::size_t>(state.range(0));
-  const std::vector<double> samples = MakeSamples(kDefaultSamples);
+  const std::vector<double> samples =
+      MakeSamples(kDefaultSamples, sample_min, sample_max);
   HistogramQuantile<double> quantile;
-  quantile.Init(kHistogramMin, kHistogramMax, bins, kQuantile,
+  quantile.Init(histogram_min, histogram_max, bins, kQuantile,
                 HistogramQuantileValueMode::kMidpoint);
   for (double value : samples) {
     quantile.Add(value);
@@ -358,23 +370,50 @@ void BM_HistogramQuantileValueOnly(benchmark::State& state,
 }
 
 void BM_HistogramQuantileValueOnlyScalar(benchmark::State& state) {
-  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kScalar);
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kScalar,
+                                kHistogramMin, kHistogramMax, kHistogramMin,
+                                kHistogramMax);
 }
 
 void BM_HistogramQuantileValueOnlyAvx2(benchmark::State& state) {
-  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx2);
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx2, kHistogramMin,
+                                kHistogramMax, kHistogramMin, kHistogramMax);
 }
 
 void BM_HistogramQuantileValueOnlyAvx512(benchmark::State& state) {
-  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx512);
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx512,
+                                kHistogramMin, kHistogramMax, kHistogramMin,
+                                kHistogramMax);
+}
+
+void BM_HistogramQuantileNarrowValueOnlyScalar(benchmark::State& state) {
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kScalar,
+                                kNarrowHistogramMin, kNarrowHistogramMax,
+                                kNarrowSampleMin, kNarrowSampleMax);
+}
+
+void BM_HistogramQuantileNarrowValueOnlyAvx2(benchmark::State& state) {
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx2,
+                                kNarrowHistogramMin, kNarrowHistogramMax,
+                                kNarrowSampleMin, kNarrowSampleMax);
+}
+
+void BM_HistogramQuantileNarrowValueOnlyAvx512(benchmark::State& state) {
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx512,
+                                kNarrowHistogramMin, kNarrowHistogramMax,
+                                kNarrowSampleMin, kNarrowSampleMax);
 }
 
 void BM_HistogramQuantileValueAndReset(benchmark::State& state,
-                                       HistogramQueryMode query_mode) {
+                                       HistogramQueryMode query_mode,
+                                       double histogram_min,
+                                       double histogram_max, double sample_min,
+                                       double sample_max) {
   const auto bins = static_cast<std::size_t>(state.range(0));
-  const std::vector<double> samples = MakeSamples(kDefaultSamples);
+  const std::vector<double> samples =
+      MakeSamples(kDefaultSamples, sample_min, sample_max);
   HistogramQuantile<double> prepared;
-  prepared.Init(kHistogramMin, kHistogramMax, bins, kQuantile,
+  prepared.Init(histogram_min, histogram_max, bins, kQuantile,
                 HistogramQuantileValueMode::kMidpoint);
   for (double value : samples) {
     prepared.Add(value);
@@ -398,15 +437,39 @@ void BM_HistogramQuantileValueAndReset(benchmark::State& state,
 }
 
 void BM_HistogramQuantileValueAndResetScalar(benchmark::State& state) {
-  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kScalar);
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kScalar,
+                                    kHistogramMin, kHistogramMax, kHistogramMin,
+                                    kHistogramMax);
 }
 
 void BM_HistogramQuantileValueAndResetAvx2(benchmark::State& state) {
-  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx2);
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx2,
+                                    kHistogramMin, kHistogramMax, kHistogramMin,
+                                    kHistogramMax);
 }
 
 void BM_HistogramQuantileValueAndResetAvx512(benchmark::State& state) {
-  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx512);
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx512,
+                                    kHistogramMin, kHistogramMax, kHistogramMin,
+                                    kHistogramMax);
+}
+
+void BM_HistogramQuantileNarrowValueAndResetScalar(benchmark::State& state) {
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kScalar,
+                                    kNarrowHistogramMin, kNarrowHistogramMax,
+                                    kNarrowSampleMin, kNarrowSampleMax);
+}
+
+void BM_HistogramQuantileNarrowValueAndResetAvx2(benchmark::State& state) {
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx2,
+                                    kNarrowHistogramMin, kNarrowHistogramMax,
+                                    kNarrowSampleMin, kNarrowSampleMax);
+}
+
+void BM_HistogramQuantileNarrowValueAndResetAvx512(benchmark::State& state) {
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx512,
+                                    kNarrowHistogramMin, kNarrowHistogramMax,
+                                    kNarrowSampleMin, kNarrowSampleMax);
 }
 
 void BM_TimeSeriesMonotonicDequeRollingMax(benchmark::State& state) {
@@ -644,6 +707,15 @@ BENCHMARK(BM_HistogramQuantileValueOnlyAvx2)
 BENCHMARK(BM_HistogramQuantileValueOnlyAvx512)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileNarrowValueOnlyScalar)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileNarrowValueOnlyAvx2)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileNarrowValueOnlyAvx512)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_HistogramQuantileValueAndResetScalar)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
@@ -651,6 +723,15 @@ BENCHMARK(BM_HistogramQuantileValueAndResetAvx2)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_HistogramQuantileValueAndResetAvx512)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileNarrowValueAndResetScalar)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileNarrowValueAndResetAvx2)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileNarrowValueAndResetAvx512)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesMonotonicDequeRollingMax)->Unit(benchmark::kNanosecond);
