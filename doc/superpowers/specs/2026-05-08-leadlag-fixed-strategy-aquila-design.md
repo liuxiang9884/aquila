@@ -16,9 +16,9 @@ third_party/strategy/wt-invariant-strategy-leadlag-must-fix/utils/queue/queue.go
 third_party/strategy/wt-invariant-strategy-leadlag-must-fix/utils/queue/monotonic_queue.go
 ```
 
-本文不实现代码，不承诺性能收益，不替代后续实现计划。它的作用是让后续实现先对齐 fixed 行为，再按 `aquila` 的低延迟结构落地。
+本文主要记录设计和 fixed 语义，不单独承诺性能收益，不替代后续实现计划。它的作用是让后续实现先对齐 fixed 行为，再按 `aquila` 的低延迟结构落地。
 
-截至 2026-05-10，本文 1-7 部分整体仍是 LeadLag 策略层设计，不表示完整策略 C++ 实现已经完成。当前仓库已有的是 `config/strategy/lead_lag.toml`、`strategy/lead_lag/config.h`、`strategy/lead_lag/config.cpp`、`strategy/lead_lag/types.h`、`strategy/lead_lag/raw_market_state.h`、`test/strategy/lead_lag_config_test.cpp`、`test/strategy/lead_lag_raw_market_state_test.cpp`，以及 `core/base/` 中可复用的通用底层结构；recorder 组合层、drift / alignment、threshold、signal、execution feedback state 和整体 `leadlag::Strategy` 尚未实现。
+截至 2026-05-10，本文 1-7 部分的策略层模块已经分步落地到 C++：config / metadata、raw market state、recorder wrappers、drift / alignment、threshold、signal / execution state、feedback state / order retire 均已有实现和 GTest 覆盖。整体 `leadlag::Strategy` 目前仍只有 user strategy hook skeleton，完整 `OnBookTicker()` 主链路、`OnOrderResponse()` / `OnOrderFeedback()` execution state 串接、dry-run runtime 工具和 fixed Go replay 对账入口仍待实现。
 
 ## 设计原则
 
@@ -97,7 +97,7 @@ name = "lead_lag"
 config = "config/strategy/lead_lag.toml"
 ```
 
-user strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 构造路径尚未实现。
+user strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 已有接收 `leadlag::Config` 的 user strategy hook skeleton，完整主链路尚未串接。
 
 pair 配置使用数组：
 
@@ -1311,7 +1311,7 @@ test/strategy/lead_lag_alignment_test.cpp
   drift sample, warmup, phase transition and seed semantics
 ```
 
-当前不执行实现；上述文件是后续落地时的目标边界。`strategy/CMakeLists.txt` 目前是 interface target，`strategy/lead_lag/*.h` 可以先按 header-only 方式接入；测试通过 `test/strategy/CMakeLists.txt` 新增 `lead_lag_alignment_test` target。
+当前已按上述边界实现 `strategy/lead_lag/alignment.h` 和 `test/strategy/lead_lag_alignment_test.cpp`，并接入 `strategy/CMakeLists.txt` / `test/strategy/CMakeLists.txt`。该实现仍保持独立状态模块，尚未接入完整 `leadlag::Strategy::OnBookTicker()` 主链路。
 
 状态：
 

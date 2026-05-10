@@ -22,6 +22,30 @@
 | Signal / execution | `strategy/lead_lag/cost_model.h`、`strategy/lead_lag/execution_state.h`、`strategy/lead_lag/signal.h` | open/close/stoploss gate、execution group、IOC limit order intent。 |
 | Strategy integration | `strategy/lead_lag/strategy.h` | 串接 runtime hooks：`OnBookTicker()`、`OnOrderResponse()`、`OnOrderFeedback()`、`ShouldStop()`。 |
 
+## User Strategy 接口
+
+`leadlag::Strategy` 第一版对齐 `StrategyRuntime` 的 user strategy hook 形状，构造函数只接收 `leadlag::Config`。runtime 层已经消费 `StrategyConfig`、`DataReaderConfig`、order capacity、strategy id、feedback SHM 和 loop policy，LeadLag 策略运行期不保存这些冷路径配置。
+
+固定接口：
+
+```cpp
+explicit Strategy(leadlag::Config config);
+
+template <typename ContextT>
+void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept;
+
+template <typename ContextT>
+void OnOrderResponse(const strategy::OrderResponseEvent& event,
+                     ContextT& context) noexcept;
+
+template <typename ContextT>
+void OnOrderFeedback(const OrderFeedbackEvent& event, ContextT& context) noexcept;
+
+[[nodiscard]] bool ShouldStop() const noexcept;
+```
+
+第一版 `OnBookTicker()` 是主链路入口；`OnOrderFeedback()` 处理 gap、terminal feedback、position / stage 和 order retire；`OnOrderResponse()` 只处理 submit rejected 这类 fast failure。`OnStart()` / `OnStop()` / `OnLoop()` / `OnIdle()` 不作为固定必需接口；如需诊断或测试退出，可后续加空实现或显式状态。
+
 ## 计算边界
 
 | 部分 | 主要计算 |
@@ -72,10 +96,10 @@
 - Create: `strategy/lead_lag/recorders.h`
 - Test: `test/strategy/lead_lag_recorders_test.cpp`
 
-- [ ] 写 `MeanWindow` / `MeanStdWindow` 测试，覆盖时间淘汰、mean/std、capacity grow 后结果不变。
-- [ ] 实现 `BboExtremaWindow`，输入 drifted lead / raw lag quote，输出 rolling bid/ask min/max。
-- [ ] 实现 `NoiseState` 和 `SpreadState`。
-- [ ] 实现 `MoveQuantileWindow` wrapper，使用两个 `HistogramQuantile<double>`。
+- [x] 写 `MeanWindow` / `MeanStdWindow` 测试，覆盖时间淘汰、mean/std、capacity grow 后结果不变。
+- [x] 实现 `BboExtremaWindow`，输入 drifted lead / raw lag quote，输出 rolling bid/ask min/max。
+- [x] 实现 `NoiseState` 和 `SpreadState`。
+- [x] 实现 `MoveQuantileWindow` wrapper，使用两个 `HistogramQuantile<double>`。
 
 ### Task 4: Drift / Alignment
 
@@ -83,10 +107,10 @@
 - Create: `strategy/lead_lag/alignment.h`
 - Test: `test/strategy/lead_lag_alignment_test.cpp`
 
-- [ ] 写 paired drift、first timestamp、warmup、phase transition 和 seed 测试。
-- [ ] 实现 `AlignmentState`、`AlignmentConfig`、`AlignmentSnapshot`、`ActiveTransition`。
-- [ ] 覆盖 `drift_warmup=0` fallback 到 `stats_window`。
-- [ ] 覆盖 lag tick 触发 Active 后下一笔 lead same-price resume。
+- [x] 写 paired drift、first timestamp、warmup、phase transition 和 seed 测试。
+- [x] 实现 `AlignmentState`、`AlignmentConfig`、`AlignmentSnapshot`、`ActiveTransition`。
+- [x] 覆盖 `drift_warmup=0` fallback 到 `stats_window`。
+- [x] 覆盖 lag tick 触发 Active 后下一笔 lead same-price resume。
 
 ### Task 5: Threshold Engine
 
@@ -94,10 +118,10 @@
 - Create: `strategy/lead_lag/threshold.h`
 - Test: `test/strategy/lead_lag_threshold_test.cpp`
 
-- [ ] 写 roll 边界测试：`now > roll_at` 才 roll，当前 lead tick move 进入新窗口。
-- [ ] 实现 `ThresholdState` 和 `ThresholdSnapshot`。
-- [ ] 覆盖 up 使用 `quantile.move` + upper edge，down 使用 `1 - quantile.move` + lower edge。
-- [ ] 覆盖 `fee*2 + LeadNoise + LagNoise` profit buffer。
+- [x] 写 roll 边界测试：`now > roll_at` 才 roll，当前 lead tick move 进入新窗口。
+- [x] 实现 `ThresholdState` 和 `ThresholdSnapshot`。
+- [x] 覆盖 up 使用 `quantile.move` + upper edge，down 使用 `1 - quantile.move` + lower edge。
+- [x] 覆盖 `fee*2 + LeadNoise + LagNoise` profit buffer。
 
 ### Task 6: Signal / Execution State
 
@@ -107,10 +131,10 @@
 - Create: `strategy/lead_lag/signal.h`
 - Test: `test/strategy/lead_lag_signal_test.cpp`
 
-- [ ] 写 open long / open short 每个 reject gate 测试。
-- [ ] 实现 `EntryCostBreakdown`，确保 `RequiredEdge()` 不重复加入 spread / lag spread buffer。
-- [ ] 实现 `ExecutionGroup` / `ExecutionState`。
-- [ ] 实现 lead close 先于 open、lag stoploss 先于 signal close。
+- [x] 写 open long / open short 每个 reject gate 测试。
+- [x] 实现 `EntryCostBreakdown`，确保 `RequiredEdge()` 不重复加入 spread / lag spread buffer。
+- [x] 实现 `ExecutionGroup` / `ExecutionState`。
+- [x] 实现 lead close 先于 open、lag stoploss 先于 signal close。
 
 ### Task 7: Feedback State / Order Retire
 
@@ -119,10 +143,10 @@
 - Create/modify: `strategy/lead_lag/execution_state.h`
 - Test: `test/strategy/lead_lag_feedback_state_test.cpp`
 
-- [ ] 给 `OrderManager` 增加 `RetireFinishedOrder(local_order_id)`。
-- [ ] 覆盖 open terminal feedback 到 Hold / delete cache。
-- [ ] 覆盖 close terminal feedback 到 Hold / delete cache。
-- [ ] 覆盖 submit rejected 和 feedback gap 后暂停新开仓。
+- [x] 给 `OrderManager` 增加 `RetireFinishedOrder(local_order_id)`。
+- [x] 覆盖 open terminal feedback 到 Hold / delete cache。
+- [x] 覆盖 close terminal feedback 到 Hold / delete cache。
+- [x] 覆盖 submit rejected 和 feedback gap 后暂停新开仓。
 
 ### Task 8: Strategy Integration
 
@@ -131,7 +155,9 @@
 - Modify/create: Gate LeadLag runtime tool after dry-run boundary明确
 - Test: `test/strategy/lead_lag_strategy_test.cpp`
 
-- [ ] 串接 `OnBookTicker()` 主链路。
-- [ ] 串接 `OnOrderResponse()` / `OnOrderFeedback()`。
+- [x] 增加 `leadlag::Strategy` user strategy hook skeleton，构造函数接收 `leadlag::Config`。
+- [x] 增加 strategy interface 测试，验证 `StrategyRuntime` 可以构造并 dispatch hooks。
+- [ ] 串接 `OnBookTicker()` 完整主链路。
+- [ ] 串接 `OnOrderResponse()` / `OnOrderFeedback()` 完整 execution state。
 - [ ] 增加 dry-run config load test。
 - [ ] 增加 fixed Go replay 对账入口计划。
