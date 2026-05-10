@@ -18,6 +18,8 @@ third_party/strategy/wt-invariant-strategy-leadlag-must-fix/utils/queue/monotoni
 
 本文不实现代码，不承诺性能收益，不替代后续实现计划。它的作用是让后续实现先对齐 fixed 行为，再按 `aquila` 的低延迟结构落地。
 
+截至 2026-05-10，本文 1-7 部分都是 LeadLag 策略层设计，不表示对应策略 C++ 实现已经完成。当前仓库已有的是 `config/strategy/lead_lag.toml` 样例配置和 `core/base/` 中可复用的通用底层结构；LeadLag strategy config parser、raw market state、recorder 组合层、drift / alignment、threshold、signal、execution feedback state 和整体 `leadlag::Strategy` 尚未实现。
+
 ## 设计原则
 
 - 先复原 fixed 语义，再对齐 `aquila` 结构。
@@ -77,7 +79,7 @@ OnBookTicker(ticker):
 | --- | --- | --- |
 | 1. 配置与 metadata | `StrategyConfig`、`SetDefault()`、`LagTakerFee()`、`ExecutionConfig.EntrySpreadLimit()`、`CalOpenQty()`、`FormatQty()` | `max_entry_spread < 0` 时回退到 `trailing_stop`；默认 lag taker fee 来自 hard-coded exchange map；数量按 `price`、`QuantityTick` 和 `ContractValue` 归整。 |
 | 2. Raw market state | `OnRawBBO()`、`updateRawMarketState()` | same-price raw tick 不替换已保存 quote，但仍用旧 quote 推进 drift / alignment；未 Active 前不进入交易 recorder / signal。 |
-| 3. Recorder / queue / noise | `BBOVolRecorder`、`StreamRecorder`、`StreamStdEmaRecorder`、`MoveQueue`、`LagSpreadBuffer()` | BBO extrema 是时间窗口 monotonic queue；`MoveQueue` 是按 `stats_window` 时间边界切窗并 roll 后清空；Aquila 生产低延迟路径默认使用 fixed-bin histogram 近似 quantile，dual heap 保留为单 quantile exact / replay 对照口径；`StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean；lag spread 是绝对 spread 的 `StreamRecorder(stats_window)` 均值。 |
+| 3. Recorder / queue / noise | `BBOVolRecorder`、`StreamRecorder`、`StreamStdEmaRecorder`、`MoveQueue`、`LagSpreadBuffer()` | BBO extrema 是时间窗口 monotonic queue；`MoveQueue` 是按 `stats_window` 时间边界切窗并 roll 后清空；Aquila 设计中的低延迟路径默认使用 fixed-bin histogram 近似 quantile，dual heap 保留为单 quantile exact / replay 对照口径；`StreamStdEmaRecorder` 名字带 EMA，但实现是 rolling normalized std 的 rolling mean；lag spread 是绝对 spread 的 `StreamRecorder(stats_window)` 均值。 |
 | 4. Drift / alignment | `UpdateDrift()`、`alignmentWarmup()`、`alignmentReady()`、`enterActivePhase()` | drift 用 `(lag_ask + lag_bid) / (lead_ask + lead_bid)`；`drift_warmup > 0` 时用配置值，否则回退到 `stats_window`；进入 Active 后重置并播种交易侧 recorder。 |
 | 5. Threshold | `UpdateMoveThreshold()`、`ProfitBuffer()` | roll 时先冻结 noise、用旧 move queue 计算 quantile / threshold，再清空 queue，最后 push 当前 lead tick 的 move；`profitBuffer = fee*2 + LeadNoise + LagNoise`。 |
 | 6. Signal | `OnLeadBBO()`、`OnLagBBO()`、`OpenLong()`、`OpenShort()`、`CloseLong()`、`CloseShort()`、`ExecuteStoploss*()` | lead tick 顺序是更新 recorder / threshold、先平仓再开仓；lag tick 顺序是 spread / noise、trailing、stoploss、signal close；`drift_limit` 只限制新开仓。 |
@@ -85,7 +87,7 @@ OnBookTicker(ticker):
 
 ## 1. 配置与 Symbol Metadata
 
-### Aquila 第一版决定
+### Aquila 第一版设计决定
 
 第一版策略名固定为 `lead_lag`。runtime config 仍使用 `[strategy]`，其中：
 
@@ -95,7 +97,7 @@ name = "lead_lag"
 config = "config/strategy/lead_lag.toml"
 ```
 
-user strategy config 固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。
+user strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库中的同名 TOML 只是样例配置；LeadLag config parser 和 `leadlag::Strategy` 构造路径尚未实现。
 
 pair 配置使用数组：
 
@@ -587,7 +589,7 @@ Pop():
 
 注意：fixed Go 这里使用 `bbo.ServerTime`，而非 `Context.Now()`。`aquila` 第一版如果统一使用 `BookTicker.local_ns` 驱动全部策略窗口，这是一个有意的工程取舍；严格 fixed replay 对账时需要单独验证该差异。
 
-`aquila` 实现选择：
+`aquila` 设计选择：
 
 ```text
 BboExtremaWindow
@@ -902,9 +904,11 @@ down quantile: bin lower edge
 bin_width = 0.01 / 4096 ~= 0.0000024414 = 0.0244 bp
 ```
 
-Histogram 初始化后固定 range / bins 时不会在热路径分配内存；但它不是 exact empirical quantile，overflow / underflow 时误差不再受 `bin_width` 约束。因此 fixed replay 精确对齐仍应保留 exact 对照路径，生产低延迟路径默认使用 histogram，并通过 range / bins / overflow 统计验证误差边界。
+Histogram 初始化后固定 range / bins 时不会在热路径分配内存；但它不是 exact empirical quantile，overflow / underflow 时误差不再受 `bin_width` 约束。因此 fixed replay 精确对齐仍应保留 exact 对照路径，设计中的低延迟路径默认使用 histogram，并通过 range / bins / overflow 统计验证误差边界。
 
-当前 `core/base` 实现结论：
+已存在的通用 `core/base` 结论：
+
+这些结论只说明底层可复用结构已经存在，不表示 `BboExtremaWindow`、`NoiseState`、`SpreadState` 或 `MoveQuantileWindow` 已经作为 LeadLag 策略层实现。
 
 - `counts` 使用 `std::vector<std::uint32_t>` 预分配；`count`、underflow、overflow 使用 `std::uint64_t`。
 - bins 数不强制 `bit_ceil`，按 range / precision 或 reference / bp error 精确计算；默认 bins 为 `4096`。
@@ -1023,7 +1027,7 @@ space O(samples inside windows)
 grow O(n)
 ```
 
-`aquila` 实现选择：
+`aquila` 设计选择：
 
 ```text
 RingQueue<T>
@@ -1154,7 +1158,7 @@ space O(lag active ticks inside stats_window)
 grow O(n)
 ```
 
-`aquila` 实现选择：
+`aquila` 设计选择：
 
 ```text
 SpreadState
@@ -1214,7 +1218,7 @@ log symbol_id, exchange, queue name, new vector capacity
 - MoveQueue 按 `stats_window` 切窗，roll 后清空；不是严格 rolling 最近 `stats_window`。
 - MoveQueue 在边界时间 `t == RollAt` 不 roll，`t > RollAt` 才 roll。
 - roll 时用旧 queue 计算 quantile，当前 lead tick 的 move 进入新窗口。
-- Aquila 生产低延迟路径默认使用 fixed-bin histogram 近似 move quantile；dual heap exact empirical quantile 只作为单 quantile exact / replay 对照口径。
+- Aquila 设计中的低延迟路径默认使用 fixed-bin histogram 近似 move quantile；dual heap exact empirical quantile 只作为单 quantile exact / replay 对照口径。
 - Histogram 必须记录 range / bins / bin_width / underflow / overflow，并接受 `bin_width` 级别近似误差；触发 underflow / overflow 后误差不再只由 `bin_width` 约束。
 - `LeadNoise` / `LagNoise` 是 rolling normalized std 的 rolling mean，不是指数 EMA。
 - `lag_spread_mean` 是 absolute spread 的 `StreamRecorder(stats_window)` mean。
@@ -2219,7 +2223,7 @@ space:
 
 建议按本文 7 层逐段审阅：
 
-1. 配置与 instrument catalog metadata 已定为 `lead_lag` / `version="1.0"` / `config/strategy/lead_lag.toml` / pair array；后续实现需按本节验证口径落 parser。
+1. 配置与 instrument catalog metadata 的设计形状已定为 `lead_lag` / `version="1.0"` / `config/strategy/lead_lag.toml` / pair array；后续实现需按本节验证口径落 parser。
 2. raw market state 的时间、`symbol_id` vector lookup 和 `BookTicker.exchange` role 判断是否符合 `aquila` 当前 DataReader。
 3. recorder / queue 输出语义按 fixed Go 对齐；实现可不同，但必须覆盖切窗 MoveQueue、histogram move quantile、rolling normalized std mean 和 absolute spread mean。
 4. alignment readiness 使用 `drift_warmup`，未配置时回退到 `stats_window`。
