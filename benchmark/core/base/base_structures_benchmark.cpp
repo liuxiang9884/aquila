@@ -46,6 +46,7 @@ struct TimedValue {
 enum class HistogramQueryMode {
   kScalar,
   kAvx2,
+  kAvx512,
 };
 
 std::vector<double> MakeSamples(std::size_t count) {
@@ -96,6 +97,8 @@ double HistogramValue(const HistogramQuantile<double>& quantile,
       return quantile.ValueScalar();
     case HistogramQueryMode::kAvx2:
       return quantile.ValueAvx2();
+    case HistogramQueryMode::kAvx512:
+      return quantile.ValueAvx512();
   }
   return quantile.ValueScalar();
 }
@@ -324,6 +327,10 @@ void BM_HistogramQuantileBuildAndReadAvx2(benchmark::State& state) {
   BM_HistogramQuantileBuildAndRead(state, HistogramQueryMode::kAvx2);
 }
 
+void BM_HistogramQuantileBuildAndReadAvx512(benchmark::State& state) {
+  BM_HistogramQuantileBuildAndRead(state, HistogramQueryMode::kAvx512);
+}
+
 void BM_HistogramQuantileValueOnly(benchmark::State& state,
                                    HistogramQueryMode query_mode) {
   const auto bins = static_cast<std::size_t>(state.range(0));
@@ -356,6 +363,10 @@ void BM_HistogramQuantileValueOnlyScalar(benchmark::State& state) {
 
 void BM_HistogramQuantileValueOnlyAvx2(benchmark::State& state) {
   BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx2);
+}
+
+void BM_HistogramQuantileValueOnlyAvx512(benchmark::State& state) {
+  BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx512);
 }
 
 void BM_TimeSeriesMonotonicDequeRollingMax(benchmark::State& state) {
@@ -539,6 +550,12 @@ void BM_TimeSeriesHistogramQuantileWindowQuantileAvx2(benchmark::State& state) {
                                                HistogramQueryMode::kAvx2);
 }
 
+void BM_TimeSeriesHistogramQuantileWindowQuantileAvx512(
+    benchmark::State& state) {
+  BM_TimeSeriesHistogramQuantileWindowQuantile(state,
+                                               HistogramQueryMode::kAvx512);
+}
+
 BENCHMARK(BM_MonotonicDequePushNoGrow)
     ->Arg(static_cast<std::int64_t>(kDefaultSamples))
     ->Unit(benchmark::kNanosecond);
@@ -574,10 +591,17 @@ BENCHMARK(BM_HistogramQuantileBuildAndReadAvx2)
     ->Args({static_cast<std::int64_t>(kDefaultSamples),
             static_cast<std::int64_t>(kDefaultBins)})
     ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileBuildAndReadAvx512)
+    ->Args({static_cast<std::int64_t>(kDefaultSamples),
+            static_cast<std::int64_t>(kDefaultBins)})
+    ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_HistogramQuantileValueOnlyScalar)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_HistogramQuantileValueOnlyAvx2)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileValueOnlyAvx512)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesMonotonicDequeRollingMax)->Unit(benchmark::kNanosecond);
@@ -587,6 +611,8 @@ BENCHMARK(BM_TimeSeriesDoubleHeapWindowQuantile)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesHistogramQuantileWindowQuantileScalar)
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesHistogramQuantileWindowQuantileAvx2)
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_TimeSeriesHistogramQuantileWindowQuantileAvx512)
     ->Unit(benchmark::kNanosecond);
 
 }  // namespace

@@ -94,6 +94,79 @@ namespace histogram_quantile_detail {
   }
   return 0;
 }
+
+[[gnu::target("avx512f,avx2")]] inline std::size_t FindQuantileBinAvx512(
+    const std::uint32_t* counts, std::size_t size,
+    std::uint64_t target) noexcept {
+  std::uint64_t cumulative = 0;
+  std::size_t i = 0;
+  for (; i + 16 <= size; i += 16) {
+    const __m256i low_counts =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(counts + i));
+    const __m256i high_counts =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(counts + i + 8));
+    const __m512i low_u64 = _mm512_cvtepu32_epi64(low_counts);
+    const __m512i high_u64 = _mm512_cvtepu32_epi64(high_counts);
+    const std::uint64_t block_sum =
+        static_cast<std::uint64_t>(_mm512_reduce_add_epi64(low_u64)) +
+        static_cast<std::uint64_t>(_mm512_reduce_add_epi64(high_u64));
+    if (cumulative + block_sum < target) {
+      cumulative += block_sum;
+      continue;
+    }
+    for (std::size_t j = 0; j < 16; ++j) {
+      cumulative += counts[i + j];
+      if (cumulative >= target) {
+        return i + j;
+      }
+    }
+  }
+  for (; i < size; ++i) {
+    cumulative += counts[i];
+    if (cumulative >= target) {
+      return i;
+    }
+  }
+  return size - 1;
+}
+
+[[gnu::target("avx512f,avx2")]] inline std::size_t FindQuantileBinReverseAvx512(
+    const std::uint32_t* counts, std::size_t size,
+    std::uint64_t target) noexcept {
+  std::uint64_t cumulative = 0;
+  std::size_t i = size;
+  while (i >= 16) {
+    i -= 16;
+    const __m256i low_counts =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(counts + i));
+    const __m256i high_counts =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(counts + i + 8));
+    const __m512i low_u64 = _mm512_cvtepu32_epi64(low_counts);
+    const __m512i high_u64 = _mm512_cvtepu32_epi64(high_counts);
+    const std::uint64_t block_sum =
+        static_cast<std::uint64_t>(_mm512_reduce_add_epi64(low_u64)) +
+        static_cast<std::uint64_t>(_mm512_reduce_add_epi64(high_u64));
+    if (cumulative + block_sum < target) {
+      cumulative += block_sum;
+      continue;
+    }
+    for (std::size_t j = 16; j > 0; --j) {
+      const std::size_t index = i + j - 1;
+      cumulative += counts[index];
+      if (cumulative >= target) {
+        return index;
+      }
+    }
+  }
+  while (i > 0) {
+    --i;
+    cumulative += counts[i];
+    if (cumulative >= target) {
+      return i;
+    }
+  }
+  return 0;
+}
 #endif
 
 }  // namespace histogram_quantile_detail
@@ -222,6 +295,27 @@ class HistogramQuantile {
             ? histogram_quantile_detail::FindQuantileBinAvx2(
                   counts_.data(), counts_.size(), target)
             : histogram_quantile_detail::FindQuantileBinReverseAvx2(
+                  counts_.data(), counts_.size(), ReverseTargetRank(target));
+    return BinValue(index);
+#else
+    if (!UseForwardScan()) {
+      return ValueScalarReverse(ReverseTargetRank(target));
+    }
+    return ValueScalarForward(target);
+#endif
+  }
+
+  [[nodiscard]] T ValueAvx512() const noexcept {
+    if (!HasValue()) {
+      return T{};
+    }
+    const std::uint64_t target = TargetRank();
+#if defined(__x86_64__) || defined(__i386__)
+    const std::size_t index =
+        UseForwardScan()
+            ? histogram_quantile_detail::FindQuantileBinAvx512(
+                  counts_.data(), counts_.size(), target)
+            : histogram_quantile_detail::FindQuantileBinReverseAvx512(
                   counts_.data(), counts_.size(), ReverseTargetRank(target));
     return BinValue(index);
 #else
