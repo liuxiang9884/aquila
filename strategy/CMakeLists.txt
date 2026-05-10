@@ -1,9 +1,11 @@
 add_library(aquila_strategy STATIC
     lead_lag/config.cpp
     lead_lag/config.h
+    lead_lag/recorders.h
     lead_lag/raw_market_state.h
     lead_lag/strategy.h
     lead_lag/types.h
+    lead_lag/window_stats.h
 )
 
 target_include_directories(aquila_strategy
