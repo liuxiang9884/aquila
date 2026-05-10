@@ -369,6 +369,46 @@ void BM_HistogramQuantileValueOnlyAvx512(benchmark::State& state) {
   BM_HistogramQuantileValueOnly(state, HistogramQueryMode::kAvx512);
 }
 
+void BM_HistogramQuantileValueAndReset(benchmark::State& state,
+                                       HistogramQueryMode query_mode) {
+  const auto bins = static_cast<std::size_t>(state.range(0));
+  const std::vector<double> samples = MakeSamples(kDefaultSamples);
+  HistogramQuantile<double> prepared;
+  prepared.Init(kHistogramMin, kHistogramMax, bins, kQuantile,
+                HistogramQuantileValueMode::kMidpoint);
+  for (double value : samples) {
+    prepared.Add(value);
+  }
+
+  HistogramQuantile<double> quantile;
+  double last_value = 0.0;
+  for (auto _ : state) {
+    state.PauseTiming();
+    quantile = prepared;
+    state.ResumeTiming();
+
+    benchmark::DoNotOptimize(&quantile);
+    last_value = HistogramValue(quantile, query_mode);
+    quantile.Reset();
+    benchmark::DoNotOptimize(last_value);
+    benchmark::DoNotOptimize(&quantile);
+    benchmark::ClobberMemory();
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_HistogramQuantileValueAndResetScalar(benchmark::State& state) {
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kScalar);
+}
+
+void BM_HistogramQuantileValueAndResetAvx2(benchmark::State& state) {
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx2);
+}
+
+void BM_HistogramQuantileValueAndResetAvx512(benchmark::State& state) {
+  BM_HistogramQuantileValueAndReset(state, HistogramQueryMode::kAvx512);
+}
+
 void BM_TimeSeriesMonotonicDequeRollingMax(benchmark::State& state) {
   const std::vector<TracePoint>& trace = TimeSeriesTrace();
   std::int64_t processed = 0;
@@ -602,6 +642,15 @@ BENCHMARK(BM_HistogramQuantileValueOnlyAvx2)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_HistogramQuantileValueOnlyAvx512)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileValueAndResetScalar)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileValueAndResetAvx2)
+    ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_HistogramQuantileValueAndResetAvx512)
     ->Arg(static_cast<std::int64_t>(kValueOnlyBins))
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_TimeSeriesMonotonicDequeRollingMax)->Unit(benchmark::kNanosecond);
