@@ -727,9 +727,9 @@ space: O(n)
 
 其中 `n` 是当前 `stats_window` 切窗内 active lead tick 数。这个实现总成本可接受，但 roll tick 会集中承担排序开销，导致主路径 tail spike。
 
-#### Aquila 实现选择：dual-heap exact quantile
+#### Aquila exact quantile 方案：dual heap
 
-`aquila` 第一版使用 dual heap 维护 exact empirical quantile，避免在 roll tick 做 `O(n log n)` 排序。它保留 Go 的切窗语义和 empirical quantile 语义，但把计算成本摊到每个 active lead tick。
+`DoubleHeap<T>` 可以维护单个 exact empirical quantile，避免在 roll tick 做 `O(n log n)` 排序。它保留 Go 的切窗语义和 empirical quantile 语义，但把计算成本摊到每个 active lead tick。
 
 ```text
 MoveQuantileWindow
@@ -809,6 +809,16 @@ space: O(n)
 
 这个方案不降低每个窗口的总复杂度阶数；它把 Go 的 roll 排序 spike 拆散到每个 active lead tick，使主路径延迟更稳定。
 
+但 `DoubleHeap<T>` 只服务一个 quantile。若同一批 move 样本需要同时计算多组 quantile，例如 p50 / p60 / p75 / p90，当前只能为每个 quantile 各维护一组 `DoubleHeap<T>`：
+
+```text
+k quantiles -> k * DoubleHeap
+update cost -> O(k * log n) per sample
+memory      -> O(k * n)
+```
+
+因此 dual heap 适合单 quantile exact 场景，不适合作为 LeadLag 后续多 quantile threshold engine 的默认方案。
+
 扩容记录按 3-2 / 3-3 的规则：
 
 ```text
@@ -818,9 +828,11 @@ log symbol_id, exchange, vector name, new vector capacity
 
 `RecorderStats` 只保存次数，不保存结构化扩容事件。具体是 `up.lower`、`up.upper`、`down.lower` 还是 `down.upper` 扩容，以及扩容后的 capacity，只写 log。扩容不丢样本、不暂停计算。
 
-#### Histogram 备选方案
+#### Aquila 默认选择：Histogram 多 quantile
 
-Histogram 是后续低延迟优先的备选，不作为第一版默认实现。它用固定 bins 近似 quantile：
+LeadLag 后续 threshold engine 可能需要从同一批 move 样本读取多组 quantile。当前 `aquila` 默认选择 `HistogramQuantile<T>` 作为 move quantile 的实现方向：它牺牲 exact empirical quantile，换取单次样本更新后支持多 quantile 读取。
+
+Histogram 用固定 bins 近似 quantile：
 
 ```text
 HistogramQuantile
@@ -833,7 +845,7 @@ HistogramQuantile
   overflow_count
 ```
 
-更新与查询复杂度：
+单 quantile 更新与查询复杂度：
 
 ```text
 active lead tick: O(1)
@@ -841,6 +853,16 @@ roll quantile scan: O(bins)
 reset: O(bins), or O(1) with epoch reset
 space: O(bins)
 ```
+
+多 quantile 可以在同一个 `counts` 上完成。若 quantile 列表已排序，可以一遍扫描 bins 输出全部目标 quantile：
+
+```text
+add all samples: O(n)
+read k quantiles: O(bins + k)
+space: O(bins)
+```
+
+这比维护 `k` 组 dual heap 更适合多 quantile 的低延迟路径。
 
 在样本不发生 underflow / overflow 时，误差由 `bin_width` 控制。若返回 conservative edge：
 
@@ -855,7 +877,7 @@ down quantile: bin lower edge
 bin_width = 0.01 / 4096 ~= 0.0000024414 = 0.0244 bp
 ```
 
-Histogram 初始化后固定 range / bins 时不会在热路径分配内存；但它不是 exact empirical quantile，overflow / underflow 时误差不再受 `bin_width` 约束。因此只有当实盘低延迟优先于 fixed replay 精确对齐，并且 range / bins / overflow 策略已经被数据验证后，才考虑替换 dual heap。
+Histogram 初始化后固定 range / bins 时不会在热路径分配内存；但它不是 exact empirical quantile，overflow / underflow 时误差不再受 `bin_width` 约束。因此 fixed replay 精确对齐仍应保留 exact 对照路径，生产低延迟路径默认使用 histogram，并通过 range / bins / overflow 统计验证误差边界。
 
 #### Go 源码确认：3-2 lead_noise / lag_noise
 
