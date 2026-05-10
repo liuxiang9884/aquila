@@ -2,8 +2,11 @@ add_library(aquila_strategy STATIC
     lead_lag/alignment.h
     lead_lag/config.cpp
     lead_lag/config.h
+    lead_lag/cost_model.h
+    lead_lag/execution_state.h
     lead_lag/recorders.h
     lead_lag/raw_market_state.h
+    lead_lag/signal.h
     lead_lag/strategy.h
     lead_lag/threshold.h
     lead_lag/types.h
