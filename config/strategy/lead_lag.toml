@@ -21,6 +21,11 @@ drift_warmup = "30s"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
 
 [lead_lag.pairs.execute]
 open_notional = 100.0

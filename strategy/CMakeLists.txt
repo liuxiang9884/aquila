@@ -1,11 +1,17 @@
-add_library(aquila_strategy INTERFACE)
+add_library(aquila_strategy STATIC
+    lead_lag/config.cpp
+    lead_lag/config.h
+)
 
 target_include_directories(aquila_strategy
-    INTERFACE
+    PUBLIC
         ${PROJECT_SOURCE_DIR}
 )
 
 target_link_libraries(aquila_strategy
-    INTERFACE
+    PUBLIC
         aquila_core
+        aquila_config
+        PkgConfig::tomlplusplus
+        fmt::fmt-header-only
 )

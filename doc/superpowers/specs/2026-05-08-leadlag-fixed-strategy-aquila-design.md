@@ -18,7 +18,7 @@ third_party/strategy/wt-invariant-strategy-leadlag-must-fix/utils/queue/monotoni
 
 本文不实现代码，不承诺性能收益，不替代后续实现计划。它的作用是让后续实现先对齐 fixed 行为，再按 `aquila` 的低延迟结构落地。
 
-截至 2026-05-10，本文 1-7 部分都是 LeadLag 策略层设计，不表示对应策略 C++ 实现已经完成。当前仓库已有的是 `config/strategy/lead_lag.toml` 样例配置和 `core/base/` 中可复用的通用底层结构；LeadLag strategy config parser、raw market state、recorder 组合层、drift / alignment、threshold、signal、execution feedback state 和整体 `leadlag::Strategy` 尚未实现。
+截至 2026-05-10，本文 1-7 部分整体仍是 LeadLag 策略层设计，不表示完整策略 C++ 实现已经完成。当前仓库已有的是 `config/strategy/lead_lag.toml`、`strategy/lead_lag/config.h`、`strategy/lead_lag/config.cpp`、`test/strategy/lead_lag_config_test.cpp`，以及 `core/base/` 中可复用的通用底层结构；raw market state、recorder 组合层、drift / alignment、threshold、signal、execution feedback state 和整体 `leadlag::Strategy` 尚未实现。
 
 ## 设计原则
 
@@ -97,7 +97,7 @@ name = "lead_lag"
 config = "config/strategy/lead_lag.toml"
 ```
 
-user strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库中的同名 TOML 只是样例配置；LeadLag config parser 和 `leadlag::Strategy` 构造路径尚未实现。
+user strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 构造路径尚未实现。
 
 pair 配置使用数组：
 
