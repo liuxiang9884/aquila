@@ -21,6 +21,13 @@ add_strategy_gtest(lead_lag_config_test lead_lag_config_test.cpp)
 add_strategy_gtest(lead_lag_raw_market_state_test
                    lead_lag_raw_market_state_test.cpp)
 
+add_strategy_gtest(lead_lag_strategy_interface_test
+                   lead_lag_strategy_interface_test.cpp)
+target_link_libraries(lead_lag_strategy_interface_test
+    PRIVATE
+        nova
+)
+
 add_strategy_gtest(strategy_order_feedback_shm_integration_test
                    strategy_order_feedback_shm_integration_test.cpp)
 target_link_libraries(strategy_order_feedback_shm_integration_test
