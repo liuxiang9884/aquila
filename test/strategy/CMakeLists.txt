@@ -25,6 +25,8 @@ add_strategy_gtest(lead_lag_recorders_test lead_lag_recorders_test.cpp)
 
 add_strategy_gtest(lead_lag_alignment_test lead_lag_alignment_test.cpp)
 
+add_strategy_gtest(lead_lag_threshold_test lead_lag_threshold_test.cpp)
+
 add_strategy_gtest(lead_lag_strategy_interface_test
                    lead_lag_strategy_interface_test.cpp)
 target_link_libraries(lead_lag_strategy_interface_test
