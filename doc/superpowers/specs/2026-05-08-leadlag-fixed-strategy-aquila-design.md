@@ -1747,27 +1747,73 @@ EntryCostBreakdown.EmbeddedPriceFriction()
 
 ### Aquila 链路对应
 
-Signal 层输出订单意图，不直接编码 Gate JSON：
+第 6 部分没有重计算，主要是把第 3-5 部分的统计结果转成开平仓订单意图，并维护当前 pair 的 execution group。建议拆成三个局部模块：
 
 ```text
-LeadLagOrderIntent
-  action: OpenLong / OpenShort / CloseLong / CloseShort
-  reason: Signal / Stoploss
-  side
-  price
-  quantity or notional
-  time_in_force = IOC
-  reduce_only
-  target execution cache
+strategy/lead_lag/cost_model.h
+  EntryCostBreakdown
+
+strategy/lead_lag/execution_state.h
+  ExecutionStage
+  ExecutionGroup
+  ExecutionState
+
+strategy/lead_lag/signal.h
+  LeadLagSignalEngine
 ```
 
-链路：
+`EntryCostBreakdown` 对齐 fixed Go：
 
 ```text
-signal produces intent
-  -> Strategy allocates/updates order state
-  -> OrderPool stores StrategyOrder
-  -> Gate OrderSession sends place/cancel from order struct
+RequiredEdge()
+  = fee * 2 + lead_noise + lag_noise
+
+RequiredEdgeWithTargetProfit(target_profit_rate)
+  = RequiredEdge() + target_profit_rate
+
+EmbeddedPriceFriction()
+  = spread + lag_spread_buffer
+```
+
+`spread` 和 `lag_spread_buffer` 只进入 attribution / diagnostics，不重复加入 `RequiredEdge()`。原因是 `targetSpace` 已用 bid / ask 触发价并显式扣减或加入 `LagSpreadBuffer()`，否则会重复计算 entry-side price friction。
+
+`ExecutionGroup` 对齐 fixed Go 的 `ExecuteCache`，但使用 `aquila` 已有 order manager 的 local order id：
+
+```text
+ExecutionGroup
+  stage: Idle / Open / Hold / Close
+  local_order_id
+  signed_position_quantity
+  trailing_price
+  group_id
+```
+
+第 6 部分只负责创建 / 更新 group 与发出订单；订单回报如何把 `Open -> Hold`、`Close -> Idle` 推进，放到第 7 部分 order / position / feedback 状态机。
+
+Signal 层直接调用 `StrategyContext::PlaceLimitOrder()`，不编码 Gate JSON：
+
+```text
+OpenLong:
+  side = Buy
+  price = lag_ask
+  time_in_force = IOC
+  reduce_only = false
+
+OpenShort:
+  side = Sell
+  price = lag_bid
+  time_in_force = IOC
+  reduce_only = false
+
+CloseLong / StoplossLong:
+  side = Sell
+  time_in_force = IOC
+  reduce_only = true
+
+CloseShort / StoplossShort:
+  side = Buy
+  time_in_force = IOC
+  reduce_only = true
 ```
 
 数量边界：
@@ -1777,18 +1823,89 @@ open quantity = format(open_notional / price)
 close quantity = format(current position quantity)
 ```
 
-格式化依赖启动期缓存的 metadata。Signal 公式不混入 Gate wire encoding。
+格式化依赖启动期缓存的 instrument metadata：`price_tick` / `price_decimal_places` 负责价格文本，`quantity_step` / `notional_multiplier` 负责 lag 原生数量。Signal 公式不混入 Gate wire encoding，也不在热路径查 instrument catalog。
+
+`ExecutionConfig::EntrySpreadLimit()` 保留 fixed Go 兼容语义：
+
+```text
+if max_entry_spread < 0:
+    return trailing_stop
+return max_entry_spread
+```
+
+但生产配置建议显式给出正的 `max_entry_spread`，不要依赖 fallback。
+
+### Aquila 处理顺序
+
+lead active tick：
+
+```text
+OnLeadActiveTick:
+  update lead recorder / lead noise / threshold
+
+  for each Hold group:
+      try signal close with latest lag quote
+
+  if active group count >= parallel:
+      return
+  if drift_ready and abs(drift - 1) > drift_limit:
+      return
+
+  if TryOpenLong():
+      return
+  TryOpenShort()
+```
+
+lag active tick：
+
+```text
+OnLagActiveTick:
+  update lag recorder / spread / lag noise / latest lag quote
+
+  for each Hold group:
+      update trailing
+      if TryStoploss():
+          continue
+      try signal close with latest drifted lead quote
+```
+
+这里的 `active group count` 对齐 fixed Go 的 `len(caches)`，包括 Open / Hold / Close 阶段；只要 group 还没被第 7 部分状态机清掉，就占用 `parallel`。
+
+### 复杂度
+
+设 `P = execute.parallel`，第一版按 group 数线性扫描，不为 `parallel = 1` 做特殊分支：
+
+```text
+lead active tick:
+  manage existing Hold groups: O(P)
+  open long / short checks:    O(1)
+
+lag active tick:
+  stoploss / close checks:     O(P)
+
+single open / close / stoploss decision:
+  O(1)
+
+space per pair:
+  O(P)
+```
+
+第 6 部分没有需要 benchmark 的独立数值结构；后续性能验证重点是完整 strategy loop 中 signal branch 的主路径延迟，以及订单提交路径的端到端耗时。
 
 ### 验证口径
 
 - `OpenLong` 每个 reject gate 单独覆盖。
 - `OpenShort` 镜像逻辑和符号方向单独覆盖。
+- `EntryCostBreakdown::RequiredEdge()` 不包含 spread / lag spread buffer；`RequiredEdgeWithTargetProfit()` 只额外加 `target_profit_rate`。
+- `max_entry_spread < 0` fallback 到 `trailing_stop`，显式配置正值时使用 `max_entry_spread`。
 - `parallel` 达上限时不新开仓。
 - `drift_limit` 超限时不新开仓，但 close / stoploss 仍可触发。
 - lead tick 中 close 先于 open。
 - lag tick 中 stoploss 先于 signal close。
 - pending order 时不重复 close / stoploss。
+- open order 使用 IOC limit、`reduce_only=false`；close / stoploss order 使用 IOC limit、`reduce_only=true`。
 - stoploss long 使用 `lag_bid * 0.995`；short 使用 `lag_ask * 1.005`。
+- 第 6 部分只创建 / 更新 execution group 和 local order id；`Open -> Hold` / `Close -> Idle` 由第 7 部分 feedback 状态机验证。
 - 固定 replay 下 open / close 触发点与 fixed 对齐。
 
 ## 7. Order / Position / Feedback 状态机
