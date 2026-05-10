@@ -143,6 +143,14 @@ class OrderManager {
     return orders_.Find(local_order_id);
   }
 
+  bool RetireFinishedOrder(std::uint64_t local_order_id) noexcept {
+    const Order* order = orders_.Find(local_order_id);
+    if (order == nullptr || !order->is_finished) {
+      return false;
+    }
+    return orders_.Erase(local_order_id);
+  }
+
   std::size_t order_count() const noexcept {
     return orders_.size();
   }

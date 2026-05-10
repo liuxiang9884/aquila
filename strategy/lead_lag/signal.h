@@ -36,6 +36,7 @@ enum class SignalRejectReason : std::uint8_t {
   kParallelLimit,
   kDriftLimit,
   kPendingOrder,
+  kDegraded,
 };
 
 struct OrderIntent {
@@ -180,6 +181,9 @@ class SignalEngine {
     }
     if (execution->active_group_count() >= execution->capacity()) {
       return Reject(SignalRejectReason::kParallelLimit);
+    }
+    if (execution->new_entries_paused()) {
+      return Reject(SignalRejectReason::kDegraded);
     }
     if (alignment.drift_ready &&
         alignment.drift_deviation > pair.trigger.drift_limit) {
