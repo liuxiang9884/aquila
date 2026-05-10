@@ -159,4 +159,42 @@ inline void WriteTimeSeriesFile(const std::filesystem::path& output_path,
   }
 }
 
+inline std::vector<TimeSeriesPoint> ReadTimeSeriesFile(
+    const std::filesystem::path& input_path,
+    TimeSeriesFileHeader* out_header = nullptr) {
+  std::ifstream input(input_path, std::ios::binary);
+  if (!input.is_open()) {
+    throw std::runtime_error("failed to open input file");
+  }
+
+  TimeSeriesFileHeader header{};
+  input.read(reinterpret_cast<char*>(&header), sizeof(header));
+  if (!input.good()) {
+    throw std::runtime_error("failed to read time series header");
+  }
+  if (!IsTimeSeriesFileHeader(header)) {
+    throw std::runtime_error("invalid time series file header");
+  }
+  if (header.count >
+      static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max() /
+                                 sizeof(TimeSeriesPoint))) {
+    throw std::runtime_error("time series file is too large");
+  }
+
+  std::vector<TimeSeriesPoint> points(static_cast<std::size_t>(header.count));
+  input.read(
+      reinterpret_cast<char*>(points.data()),
+      static_cast<std::streamsize>(points.size() * sizeof(TimeSeriesPoint)));
+  if (!input.good()) {
+    throw std::runtime_error("failed to read time series records");
+  }
+  if (input.peek() != std::ifstream::traits_type::eof()) {
+    throw std::runtime_error("time series file has trailing bytes");
+  }
+  if (out_header != nullptr) {
+    *out_header = header;
+  }
+  return points;
+}
+
 }  // namespace aquila::tools::benchmark_data

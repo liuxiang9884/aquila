@@ -107,5 +107,36 @@ TEST(TimeSeriesDataTest, WritesHeaderAndRecords) {
   std::filesystem::remove(output_path);
 }
 
+TEST(TimeSeriesDataTest, ReadsWrittenFile) {
+  const std::filesystem::path output_path =
+      std::filesystem::temp_directory_path() /
+      "aquila_time_series_data_read_test.bin";
+  std::filesystem::remove(output_path);
+
+  TimeSeriesGenerationOptions options;
+  options.count = 128;
+  options.duration_ns = 10'000'000;
+  options.min_value = 900.0;
+  options.max_value = 1100.0;
+  options.seed = 20260510;
+
+  const std::vector<TimeSeriesPoint> points = GenerateTimeSeries(options);
+  WriteTimeSeriesFile(output_path, options, points);
+
+  TimeSeriesFileHeader header{};
+  const std::vector<TimeSeriesPoint> loaded =
+      ReadTimeSeriesFile(output_path, &header);
+
+  EXPECT_TRUE(IsTimeSeriesFileHeader(header));
+  EXPECT_EQ(header.count, options.count);
+  ASSERT_EQ(loaded.size(), points.size());
+  for (std::size_t i = 0; i < loaded.size(); ++i) {
+    EXPECT_EQ(loaded[i].timestamp_ns, points[i].timestamp_ns);
+    EXPECT_EQ(loaded[i].value, points[i].value);
+  }
+
+  std::filesystem::remove(output_path);
+}
+
 }  // namespace
 }  // namespace aquila::tools::benchmark_data
