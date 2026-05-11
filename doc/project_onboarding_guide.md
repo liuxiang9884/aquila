@@ -14,7 +14,7 @@
 
 ## 最近已完成
 
-截至 2026-05-10，`main` 已完成的主要内容：
+截至 2026-05-11，`main` 已完成的主要内容：
 
 1. Gate / Binance market data 热路径防御性分支收口。
 2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
@@ -56,6 +56,9 @@
 38. Nova upstream 已加入 `nova::LoggingGuard`（Nova commit `e40bbc5 Add logging guard`）；Aquila tool 直接使用该 RAII guard 初始化 / 停止 Nova log，本地 `tools/common/logging_guard.h` 已删除。Aquila 本地提交 `21b7740 Clean up completed planning docs` 已清理完成的执行计划文档，后续以 onboarding、handoff、design spec 和当前代码作为事实源。
 39. LeadLag 第 3 部分可复用的通用底层数据结构已在 `core/base/` 落地：`MonotonicDeque<T>`、`RingQueue<T>`、`HeapBuffer<T>`、`DoubleHeap<T>` 和 `HistogramQuantile<T>` 均为 header-only template，实现启动期预分配、必要时 vector 扩容并保持计算准确性；`test/core/base/base_structures_test.cpp` 覆盖基本语义，`benchmark/core/base/base_structures_benchmark.cpp` 覆盖扩容 / 不扩容成本、`DoubleHeap` exact quantile、`HistogramQuantile` 近似 quantile 误差、value-only 查询和 value+reset 查询。LeadLag recorder 组合层已在 `strategy/lead_lag/window_stats.h` / `recorders.h` 落地，包含 `BboExtremaWindow`、noise / spread recorder 和 `MoveQuantileWindow`。
 40. LeadLag 第 4-7 部分策略层 C++ 模块已落地：`alignment.h` 实现 drift / alignment phase，`threshold.h` 实现 fixed Go roll 顺序和 threshold snapshot，`cost_model.h` / `signal.h` / `execution_state.h` 实现 open / close / stoploss gate、execution group 和 feedback terminal apply，`OrderManager::RetireFinishedOrder()` 已加入通用 order manager。当前低延迟 move quantile 路径使用 fixed-bin histogram；up histogram 记录 `lead_bid / bid_min - 1` 并查询 `quantile.move` 返回 upper edge，down histogram 记录 `lead_ask / ask_max - 1` 并查询 `1 - quantile.move` 返回 lower edge。`leadlag::Strategy` 仍只有固定 user strategy hook skeleton，尚未把 raw market state、alignment、recorder、threshold、signal 和 execution feedback 串成完整生产主链路。
+41. LeadLag 第 1-7 部分完成一轮性能 / 设计 / 冗余 review 并落地：`AlignmentState` 的 drift mean 改用 `drift_period_ns` 窗口，`MoveQuantileWindow` roll 查询改走 AVX2，`RecorderState` 删除只在初始化阶段使用的缓存字段，`Strategy` 删除空 lifecycle hook；`ExecutionState` 删除小集合 `flat_hash_map`，改为在 `execute.parallel` 硬上限内线性扫描 pending `local_order_id`，`SignalEngine` 合并 active group 计数扫描并缓存 lag spread。验证命令：`ctest --test-dir build/debug -R lead_lag --output-on-failure` 和 `git diff --check`。
+42. LeadLag 文档已补齐 `ExecutionGroup` 与 fixed Go `ExecuteCache` 的映射：它表示 `open order -> held position -> close order` 的策略 position 生命周期；Aquila 不保存完整 order object，只保存 pending `local_order_id` 并从 `OrderManager` 读取通用订单状态。
+43. 项目文档已整理为单一 `doc/` 目录；原 `docs/superpowers/specs/` 下的 Gate specs 已迁到 `doc/superpowers/specs/`，空 `docs/` 目录和已完成的 LeadLag implementation plan 已删除。后续追溯实现边界以本 onboarding、handoff、design spec 和当前代码为准。
 
 ## 新对话第一步
 
@@ -92,7 +95,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解和 C++ 策略层模块：config / metadata、raw market state、recorder wrappers、alignment、threshold、signal / execution state、feedback state / order retire；整体 `leadlag::Strategy` 仍只有固定 user strategy hook skeleton，完整 `OnBookTicker()` / `OnOrderResponse()` / `OnOrderFeedback()` 主链路尚未串接。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步优先把 1-7 模块接入 `leadlag::Strategy` 的固定 hook，并补 strategy-level 主链路测试；已完成的 LeadLag implementation plan 已删除。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `41fecb5 Consolidate project documentation`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解和 C++ 策略层模块：config / metadata、raw market state、recorder wrappers、alignment、threshold、signal / execution state、feedback state / order retire；整体 `leadlag::Strategy` 仍只有固定 user strategy hook skeleton，完整 `OnBookTicker()` / `OnOrderResponse()` / `OnOrderFeedback()` 主链路尚未串接。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步先读取 `strategy/lead_lag/strategy.h`、`raw_market_state.h`、`alignment.h`、`recorders.h`、`threshold.h`、`signal.h` 和 `execution_state.h`，给出最小集成 plan，然后优先把 raw market state / alignment / recorder / threshold / signal 接入 `Strategy::OnBookTicker()`，再串 `OnOrderResponse()` / `OnOrderFeedback()` execution state，并补 strategy-level 主链路测试；已完成的 LeadLag implementation plan 已删除。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -855,7 +858,8 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 3. 参考 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/leadlag/algo/` 中的 fixed Go 源码，尤其是 `strategy.go`、`analysis.go`、`move.go`、`cost_model.go` 和 `execute_cache.go`。
 4. 第 1-7 部分 `aquila` C++ 策略层模块已落地，测试入口是 `ctest --test-dir build/debug -R lead_lag --output-on-failure`。
 5. 在实现计划前，先决定 BBO extrema 是否继续用 `BookTicker.local_ns`，还是为了 fixed replay 对账引入 server timestamp 输入。
-6. 下一步优先把 raw market state、alignment、recorder、threshold、signal 和 execution feedback state 接入 `leadlag::Strategy` 的固定 hook，补 strategy-level 主链路测试；随后补 dry-run runtime 工具和 fixed Go replay 对账测试。
+6. 下一步先读取 `strategy/lead_lag/strategy.h`、`raw_market_state.h`、`alignment.h`、`recorders.h`、`threshold.h`、`signal.h` 和 `execution_state.h`，给出最小集成 plan。
+7. 优先把 raw market state、alignment、recorder、threshold 和 signal 接入 `leadlag::Strategy::OnBookTicker()`，形成 tick 流触发 order intent 的最小闭环；随后串 `OnOrderResponse()` / `OnOrderFeedback()` execution state，补 strategy-level 主链路测试，再考虑 dry-run runtime 工具和 fixed Go replay 对账测试。
 
 如果新对话从 Gate 交易继续，建议顺序：
 
