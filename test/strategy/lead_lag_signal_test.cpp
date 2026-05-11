@@ -268,7 +268,7 @@ TEST(LeadLagSignalTest, LeadTickClosesHoldBeforeOpeningNewGroup) {
   market.lag.bid_price = 101.0;
 
   const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLeadTick(
-      pair, &execution, market, ThresholdForSignal(),
+      pair, execution, market, ThresholdForSignal(),
       leadlag::AlignmentSnapshot{
           .drift_ready = true,
           .drift_deviation = 0.0,
@@ -295,7 +295,7 @@ TEST(LeadLagSignalTest, LagTickRunsStoplossBeforeSignalClose) {
   };
 
   const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLagTick(
-      pair, &execution, market, ThresholdForSignal());
+      pair, execution, market, ThresholdForSignal());
 
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kStoplossLong);

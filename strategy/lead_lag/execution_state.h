@@ -6,8 +6,6 @@
 #include <cstdint>
 #include <vector>
 
-#include <absl/container/flat_hash_map.h>
-
 #include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
 #include "strategy/lead_lag/config.h"
@@ -60,8 +58,6 @@ class ExecutionState {
  public:
   void Init(std::uint32_t parallel) {
     groups_.assign(parallel, ExecutionGroup{});
-    order_to_group_.clear();
-    order_to_group_.reserve(static_cast<std::size_t>(parallel) * 2);
     next_group_id_ = 1;
     degraded_ = false;
     needs_reconcile_ = false;
@@ -73,25 +69,21 @@ class ExecutionState {
     if (group == nullptr) {
       return nullptr;
     }
-    const std::size_t index = static_cast<std::size_t>(group - groups_.data());
     *group = ExecutionGroup{
         .stage = ExecutionStage::kOpen,
         .local_order_id = local_order_id,
         .group_id = next_group_id_++,
     };
-    order_to_group_[local_order_id] = index;
     return group;
   }
 
-  [[nodiscard]] bool StartCloseOrder(ExecutionGroup* group,
+  [[nodiscard]] bool StartCloseOrder(ExecutionGroup& group,
                                      std::uint64_t local_order_id) noexcept {
-    if (group == nullptr || !group->hold() || group->pending_order()) {
+    if (!group.hold() || group.pending_order()) {
       return false;
     }
-    const std::size_t index = static_cast<std::size_t>(group - groups_.data());
-    group->stage = ExecutionStage::kClose;
-    group->local_order_id = local_order_id;
-    order_to_group_[local_order_id] = index;
+    group.stage = ExecutionStage::kClose;
+    group.local_order_id = local_order_id;
     return true;
   }
 
@@ -116,44 +108,40 @@ class ExecutionState {
     if (!order.is_finished) {
       return ExecutionApplyResult::kIgnoredNonTerminal;
     }
-    auto it = order_to_group_.find(order.local_order_id);
-    if (it == order_to_group_.end()) {
+    ExecutionGroup* group = FindPendingOrder(order.local_order_id);
+    if (group == nullptr) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
 
-    ExecutionGroup& group = groups_[it->second];
-    order_to_group_.erase(it);
-    const ExecutionStage previous_stage = group.stage;
-    group.local_order_id = 0;
-    group.signed_position_quantity += SignedFilledQuantity(order, instrument);
+    const ExecutionStage previous_stage = group->stage;
+    group->local_order_id = 0;
+    group->signed_position_quantity += SignedFilledQuantity(order, instrument);
 
-    if (group.signed_position_quantity == 0) {
-      group = ExecutionGroup{};
+    if (group->signed_position_quantity == 0) {
+      *group = ExecutionGroup{};
       return ExecutionApplyResult::kAppliedDeleted;
     }
 
     if (previous_stage == ExecutionStage::kOpen &&
         order.AverageFillPrice() > 0.0) {
-      group.trailing_price = order.AverageFillPrice();
+      group->trailing_price = order.AverageFillPrice();
     }
-    group.stage = ExecutionStage::kHold;
+    group->stage = ExecutionStage::kHold;
     return ExecutionApplyResult::kAppliedHold;
   }
 
   [[nodiscard]] ExecutionApplyResult ApplySubmitRejected(
       std::uint64_t local_order_id) noexcept {
-    auto it = order_to_group_.find(local_order_id);
-    if (it == order_to_group_.end()) {
+    ExecutionGroup* group = FindPendingOrder(local_order_id);
+    if (group == nullptr) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
-    ExecutionGroup& group = groups_[it->second];
-    order_to_group_.erase(it);
-    group.local_order_id = 0;
-    if (group.signed_position_quantity == 0) {
-      group = ExecutionGroup{};
+    group->local_order_id = 0;
+    if (group->signed_position_quantity == 0) {
+      *group = ExecutionGroup{};
       return ExecutionApplyResult::kAppliedDeleted;
     }
-    group.stage = ExecutionStage::kHold;
+    group->stage = ExecutionStage::kHold;
     return ExecutionApplyResult::kAppliedHold;
   }
 
@@ -244,8 +232,19 @@ class ExecutionState {
     return nullptr;
   }
 
+  [[nodiscard]] ExecutionGroup* FindPendingOrder(
+      std::uint64_t local_order_id) noexcept {
+    // execute.parallel is a small bounded risk limit, so scanning contiguous
+    // groups avoids maintaining a second order index.
+    for (ExecutionGroup& group : groups_) {
+      if (group.pending_order() && group.local_order_id == local_order_id) {
+        return &group;
+      }
+    }
+    return nullptr;
+  }
+
   std::vector<ExecutionGroup> groups_;
-  absl::flat_hash_map<std::uint64_t, std::size_t> order_to_group_;
   std::uint64_t next_group_id_{1};
   bool degraded_{false};
   bool needs_reconcile_{false};

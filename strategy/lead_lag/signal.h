@@ -2,6 +2,7 @@
 #define AQUILA_STRATEGY_LEAD_LAG_SIGNAL_H_
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 #include "core/common/types.h"
@@ -98,14 +99,15 @@ class SignalEngine {
                                 market.lead.bid_price * threshold.up_exit -
                                 lag_spread_buffer;
     const double target_space = target_price / trigger_price - 1.0;
+    const double lag_spread_pct = SpreadPct(market.lag);
     const EntryCostBreakdown entry_cost = BuildEntryCostBreakdown(
-        pair, market, threshold, trigger_price, lag_spread_buffer);
+        pair, threshold, trigger_price, lag_spread_buffer, lag_spread_pct);
     const double required_edge = entry_cost.RequiredEdgeWithTargetProfit(
         pair.trigger.target_profit_rate);
     if (target_space < required_edge) {
       return Reject(SignalRejectReason::kEntryCost);
     }
-    if (SpreadPct(market.lag) > pair.execute.EntrySpreadLimit()) {
+    if (lag_spread_pct > pair.execute.EntrySpreadLimit()) {
       return Reject(SignalRejectReason::kEntrySpread);
     }
 
@@ -149,14 +151,15 @@ class SignalEngine {
                                 lead_extrema.ask_max * threshold.down_exit +
                                 lag_spread_buffer;
     const double target_space = target_price / trigger_price - 1.0;
+    const double lag_spread_pct = SpreadPct(market.lag);
     const EntryCostBreakdown entry_cost = BuildEntryCostBreakdown(
-        pair, market, threshold, trigger_price, lag_spread_buffer);
+        pair, threshold, trigger_price, lag_spread_buffer, lag_spread_pct);
     const double required_edge = entry_cost.RequiredEdgeWithTargetProfit(
         pair.trigger.target_profit_rate);
     if (-target_space < required_edge) {
       return Reject(SignalRejectReason::kEntryCost);
     }
-    if (SpreadPct(market.lag) > pair.execute.EntrySpreadLimit()) {
+    if (lag_spread_pct > pair.execute.EntrySpreadLimit()) {
       return Reject(SignalRejectReason::kEntrySpread);
     }
 
@@ -165,10 +168,14 @@ class SignalEngine {
   }
 
   [[nodiscard]] static SignalDecision OnLeadTick(
-      const PairConfig& pair, ExecutionState* execution,
+      const PairConfig& pair, ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold,
       const AlignmentSnapshot& alignment) noexcept {
-    for (ExecutionGroup& group : execution->groups()) {
+    std::size_t active_group_count = 0;
+    for (ExecutionGroup& group : execution.groups()) {
+      if (group.active()) {
+        ++active_group_count;
+      }
       if (!group.hold()) {
         continue;
       }
@@ -179,10 +186,10 @@ class SignalEngine {
         return close;
       }
     }
-    if (execution->active_group_count() >= execution->capacity()) {
+    if (active_group_count >= execution.capacity()) {
       return Reject(SignalRejectReason::kParallelLimit);
     }
-    if (execution->new_entries_paused()) {
+    if (execution.new_entries_paused()) {
       return Reject(SignalRejectReason::kDegraded);
     }
     if (alignment.drift_ready &&
@@ -197,9 +204,9 @@ class SignalEngine {
   }
 
   [[nodiscard]] static SignalDecision OnLagTick(
-      const PairConfig& pair, ExecutionState* execution,
+      const PairConfig& pair, ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold) noexcept {
-    for (ExecutionGroup& group : execution->groups()) {
+    for (ExecutionGroup& group : execution.groups()) {
       if (!group.hold()) {
         continue;
       }
@@ -221,16 +228,16 @@ class SignalEngine {
 
  private:
   [[nodiscard]] static EntryCostBreakdown BuildEntryCostBreakdown(
-      const PairConfig& pair, const SignalMarket& market,
-      const ThresholdSnapshot& threshold, double trigger_price,
-      double lag_spread_buffer) noexcept {
+      const PairConfig& pair, const ThresholdSnapshot& threshold,
+      double trigger_price, double lag_spread_buffer,
+      double lag_spread_pct) noexcept {
     double normalized_lag_spread_buffer = 0.0;
     if (trigger_price > 0.0) {
       normalized_lag_spread_buffer = lag_spread_buffer / trigger_price;
     }
     return EntryCostBreakdown{
         .fee = pair.lag_taker_fee * 2.0,
-        .spread = SpreadPct(market.lag),
+        .spread = lag_spread_pct,
         .lag_spread_buffer = normalized_lag_spread_buffer,
         .lead_noise = threshold.lead_noise,
         .lag_noise = threshold.lag_noise,

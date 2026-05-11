@@ -49,6 +49,23 @@ TEST(LeadLagAlignmentTest, TracksDriftMeanStdAndFirstTimestamp) {
   EXPECT_NEAR(snapshot.drift_deviation, std::abs(1.015 - 1.0), 1e-12);
 }
 
+TEST(LeadLagAlignmentTest, DriftMeanUsesDriftPeriodWindow) {
+  leadlag::AlignmentConfig config = Config(/*warmup_ns=*/0);
+  config.drift_period_ns = 10;
+  config.stats_window_ns = 100;
+  config.drift_min_samples = 1;
+
+  leadlag::AlignmentState alignment;
+  alignment.Init(config);
+
+  alignment.OnPairedRawBbo(/*now_ns=*/100, Quote(100, 100.0, 100.0),
+                           Quote(100, 100.0, 100.0));
+  alignment.OnPairedRawBbo(/*now_ns=*/111, Quote(111, 100.0, 100.0),
+                           Quote(111, 200.0, 200.0));
+
+  EXPECT_DOUBLE_EQ(alignment.Snapshot().drift_mean, 2.0);
+}
+
 TEST(LeadLagAlignmentTest, ActivatesAfterMinSamplesAndWarmup) {
   leadlag::AlignmentState alignment;
   alignment.Init(Config(/*warmup_ns=*/10));

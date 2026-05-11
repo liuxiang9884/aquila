@@ -266,8 +266,8 @@ class MoveQuantileWindow {
     }
 
     roll.rolled = true;
-    roll.up_quantile = up_histogram_.Value();
-    roll.down_quantile = down_histogram_.Value();
+    roll.up_quantile = up_histogram_.ValueAvx2();
+    roll.down_quantile = down_histogram_.ValueAvx2();
     up_histogram_.Reset();
     down_histogram_.Reset();
     roll_at_ns_ = recorder_detail::NextRollAt(now_ns, stats_window_ns_);
@@ -301,19 +301,19 @@ struct RecorderSnapshot {
 class RecorderState {
  public:
   void Init(const PairConfig& pair) {
-    bbo_window_ns_ = pair.bbo_record.window_ns;
-    stats_window_ns_ = pair.bbo_record.stats_window_ns;
-    quantile_ = pair.trigger.quantile;
-    lead_extrema_.Init(bbo_window_ns_, pair.capacity.extrema_window_capacity,
+    const std::uint64_t bbo_window_ns = pair.bbo_record.window_ns;
+    const std::uint64_t stats_window_ns = pair.bbo_record.stats_window_ns;
+    lead_extrema_.Init(bbo_window_ns, pair.capacity.extrema_window_capacity,
                        &stats_);
-    lag_extrema_.Init(bbo_window_ns_, pair.capacity.extrema_window_capacity,
+    lag_extrema_.Init(bbo_window_ns, pair.capacity.extrema_window_capacity,
                       &stats_);
-    lead_noise_.Init(bbo_window_ns_, stats_window_ns_,
+    lead_noise_.Init(bbo_window_ns, stats_window_ns,
                      pair.capacity.noise_window_capacity);
-    lag_noise_.Init(bbo_window_ns_, stats_window_ns_,
+    lag_noise_.Init(bbo_window_ns, stats_window_ns,
                     pair.capacity.noise_window_capacity);
-    lag_spread_.Init(stats_window_ns_, pair.capacity.spread_window_capacity);
-    move_quantile_.Init(/*start_ns=*/0, stats_window_ns_, quantile_);
+    lag_spread_.Init(stats_window_ns, pair.capacity.spread_window_capacity);
+    move_quantile_.Init(/*start_ns=*/0, stats_window_ns,
+                        pair.trigger.quantile);
   }
 
   void SeedActive(const QuoteSnapshot& lead_seed,
@@ -368,9 +368,6 @@ class RecorderState {
   }
 
  private:
-  std::uint64_t bbo_window_ns_{0};
-  std::uint64_t stats_window_ns_{0};
-  QuantileConfig quantile_;
   RecorderStats stats_;
   BboExtremaWindow lead_extrema_;
   BboExtremaWindow lag_extrema_;

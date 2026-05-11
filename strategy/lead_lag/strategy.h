@@ -23,9 +23,6 @@ class Strategy {
   Strategy& operator=(Strategy&&) noexcept = default;
 
   template <typename ContextT>
-  void OnStart(ContextT&) noexcept {}
-
-  template <typename ContextT>
   void OnBookTicker(const BookTicker& ticker, ContextT&) noexcept {
     last_market_update_ = raw_market_state_.OnBookTicker(ticker);
   }
@@ -40,15 +37,6 @@ class Strategy {
       degraded_ = true;
     }
   }
-
-  template <typename ContextT>
-  void OnLoop(ContextT&) noexcept {}
-
-  template <typename ContextT>
-  void OnIdle(ContextT&) noexcept {}
-
-  template <typename ContextT>
-  void OnStop(ContextT&) noexcept {}
 
   [[nodiscard]] bool ShouldStop() const noexcept {
     return stop_requested_;

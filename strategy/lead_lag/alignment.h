@@ -52,7 +52,7 @@ class AlignmentState {
  public:
   void Init(const AlignmentConfig& config) {
     config_ = config;
-    drift_window_.Init(config_.stats_window_ns, config_.initial_capacity);
+    drift_window_.Init(config_.drift_period_ns, config_.initial_capacity);
     drift_std_window_.Init(config_.stats_window_ns, config_.initial_capacity);
     Reset();
   }

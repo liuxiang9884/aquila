@@ -165,6 +165,20 @@ TEST(LeadLagFeedbackStateTest, OpenTerminalFeedbackMovesGroupToHold) {
   EXPECT_DOUBLE_EQ(group->trailing_price, 102.0);
 }
 
+TEST(LeadLagFeedbackStateTest, SubmitRejectedDeletesEmptyOpenGroup) {
+  leadlag::ExecutionState state;
+  state.Init(/*parallel=*/2);
+  ASSERT_NE(state.StartOpenOrder(/*local_order_id=*/21), nullptr);
+
+  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/21),
+            leadlag::ExecutionApplyResult::kAppliedDeleted);
+  EXPECT_EQ(state.active_group_count(), 0U);
+  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/0),
+            leadlag::ExecutionApplyResult::kIgnoredUnknownOrder);
+  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/21),
+            leadlag::ExecutionApplyResult::kIgnoredUnknownOrder);
+}
+
 TEST(LeadLagFeedbackStateTest, CloseTerminalFeedbackDeletesFlatGroup) {
   leadlag::ExecutionState state;
   state.Init(/*parallel=*/1);
@@ -172,7 +186,7 @@ TEST(LeadLagFeedbackStateTest, CloseTerminalFeedbackDeletesFlatGroup) {
       state.AddHoldGroup(/*signed_position_quantity=*/3,
                          /*trailing_price=*/102.0);
   ASSERT_NE(group, nullptr);
-  ASSERT_TRUE(state.StartCloseOrder(group, /*local_order_id=*/12));
+  ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/12));
 
   const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
       Order(/*local_order_id=*/12, aquila::OrderSide::kSell,
@@ -191,7 +205,7 @@ TEST(LeadLagFeedbackStateTest, RejectedCloseReturnsExistingPositionToHold) {
       state.AddHoldGroup(/*signed_position_quantity=*/3,
                          /*trailing_price=*/102.0);
   ASSERT_NE(group, nullptr);
-  ASSERT_TRUE(state.StartCloseOrder(group, /*local_order_id=*/13));
+  ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13));
 
   aquila::strategy::StrategyOrder rejected =
       Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
@@ -219,7 +233,7 @@ TEST(LeadLagFeedbackStateTest, FeedbackGapPausesNewOpens) {
   });
 
   const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLeadTick(
-      pair, &state, OpenLongMarketForFeedback(), ThresholdForFeedback(),
+      pair, state, OpenLongMarketForFeedback(), ThresholdForFeedback(),
       leadlag::AlignmentSnapshot{
           .drift_ready = true,
           .drift_deviation = 0.0,
