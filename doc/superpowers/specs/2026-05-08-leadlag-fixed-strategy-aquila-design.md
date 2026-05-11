@@ -1781,7 +1781,7 @@ EmbeddedPriceFriction()
 
 `spread` 和 `lag_spread_buffer` 只进入 attribution / diagnostics，不重复加入 `RequiredEdge()`。原因是 `targetSpace` 已用 bid / ask 触发价并显式扣减或加入 `LagSpreadBuffer()`，否则会重复计算 entry-side price friction。
 
-`ExecutionGroup` 对齐 fixed Go 的 `ExecuteCache`，但使用 `aquila` 已有 order manager 的 local order id：
+`ExecutionGroup` 对齐 fixed Go 的 `ExecuteCache`，本质是“和订单生命周期绑定的一份策略 position”。它不是纯订单，也不是纯 position，而是把 `open order -> held position -> close order` 串成一个交易组。Aquila 不在这里保存完整 order object，而是使用已有 `OrderManager` 的 `local_order_id` 关联回通用订单状态：
 
 ```text
 ExecutionGroup
@@ -1791,6 +1791,20 @@ ExecutionGroup
   trailing_price
   group_id
 ```
+
+对应 Go 源码中：
+
+```text
+ExecuteCache
+  stage
+  order
+  position
+  trailing
+  groupTag
+  grouping
+```
+
+发送 open order 时，Go 先创建 `ExecuteCache` 并放入 `s.caches[cacheKey]`，再通过 `registerCacheOrder()` 把 pending order 和 cache 关联，最后进入 `StageOpen`。Aquila 的 `ExecutionState::StartOpenOrder()` 做同样的生命周期占用，但只记录 `local_order_id`，完整 order filled / status / avg price 留在 `OrderManager::StrategyOrder`。
 
 第 6 部分只负责创建 / 更新 group 与发出订单；订单回报如何把 `Open -> Hold`、`Close -> Idle` 推进，放到第 7 部分 order / position / feedback 状态机。
 
@@ -1877,7 +1891,7 @@ OnLagActiveTick:
 
 ### 复杂度
 
-设 `P = execute.parallel`，第一版按 group 数线性扫描，不为 `parallel = 1` 做特殊分支：
+设 `P = execute.parallel`。Aquila 第一版按 group 数线性扫描，不为 `parallel = 1` 做特殊分支；`P` 是明确的并行风控上限，通常很小，连续 `vector<ExecutionGroup>` 扫描比维护额外 order index 更少状态、更少内存写入，尾部不确定性也更低：
 
 ```text
 lead active tick:
@@ -2080,12 +2094,22 @@ LeadLagExecutionGroup
 LeadLagExecutionState
   max_parallel
   active_groups
-  local_order_id -> group index
+  pending local_order_id lookup by bounded group scan
   degraded
   needs_reconcile
 ```
 
-`local_order_id -> group index` 第一版使用 `absl::flat_hash_map`，启动期按 `max_parallel * 2` reserve；由于 `max_parallel` 很小，后续若要进一步降低热路径不确定性，可改成 fixed vector 线性查找。
+Aquila 当前实现不再维护 `local_order_id -> group index` 的 `flat_hash_map`。原因是 `execute.parallel` 是很小的硬上限，pending order 查询发生在 bounded `groups_` 上，按 `group.pending_order() && group.local_order_id == local_order_id` 线性扫描即可：
+
+```text
+FindPendingOrder(local_order_id):
+  for group in groups:
+      if group.pending_order and group.local_order_id == local_order_id:
+          return group
+  return null
+```
+
+这个实现与 Go 的 `cacheOrderMap[ClientID] -> cacheKey` 语义等价，但更贴近 Aquila 的固定并行槽结构，避免为小集合维护第二份索引。若未来 `execute.parallel` 扩大到几十或上百，再重新评估是否恢复索引结构。
 
 feedback event 推进：
 
