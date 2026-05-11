@@ -75,24 +75,24 @@ doc/project_onboarding_guide.md
 doc/evaluation_support.md
 doc/futures_contract_metadata_fields.md
 doc/agent-handoff-gate-trade-architecture.md
-docs/superpowers/specs/2026-05-07-gate-order-session-design.md
-docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
-docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md
-docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
+doc/superpowers/specs/2026-05-07-gate-order-session-design.md
+doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
+doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md
+doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 doc/websocket_read_write_benchmark_comparison.md
 doc/data_reader_config.md
 doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 ```
 
-如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、`docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。已完成的执行计划文档已删除，追溯实现边界和验证命令时以本 onboarding、Gate handoff 和当前代码为准。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
-如果继续 LeadLag fixed 策略迁移，优先读 `doc/leadlag-fixed-strategy-reconstruction-guide.md`、`doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` 和 `doc/superpowers/plans/2026-05-10-leadlag-strategy-implementation-plan.md`；fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`。当前第 1-7 部分策略层模块已实现，下一步优先把这些模块串进 `leadlag::Strategy::OnBookTicker()`、`OnOrderResponse()` 和 `OnOrderFeedback()`。
+如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。已完成的执行计划文档已删除，追溯实现边界和验证命令时以本 onboarding、Gate handoff 和当前代码为准。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
+如果继续 LeadLag fixed 策略迁移，优先读 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`；fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`。当前第 1-7 部分策略层模块已实现，下一步优先把这些模块串进 `leadlag::Strategy::OnBookTicker()`、`OnOrderResponse()` 和 `OnOrderFeedback()`；已完成的 LeadLag implementation plan 已删除，后续以本 onboarding、LeadLag design spec 和当前代码为准。
 
 ## 给下一个对话的 onboarding 提示
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `4968aa9 Cover lead lag short signal gates`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解和 C++ 策略层模块：config / metadata、raw market state、recorder wrappers、alignment、threshold、signal / execution state、feedback state / order retire；整体 `leadlag::Strategy` 仍只有固定 user strategy hook skeleton，完整 `OnBookTicker()` / `OnOrderResponse()` / `OnOrderFeedback()` 主链路尚未串接。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`docs/superpowers/specs/2026-05-07-gate-order-session-design.md`、`docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步优先把 1-7 模块接入 `leadlag::Strategy` 的固定 hook，并补 strategy-level 主链路测试；实现计划见 `doc/superpowers/plans/2026-05-10-leadlag-strategy-implementation-plan.md`。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解和 C++ 策略层模块：config / metadata、raw market state、recorder wrappers、alignment、threshold、signal / execution state、feedback state / order retire；整体 `leadlag::Strategy` 仍只有固定 user strategy hook skeleton，完整 `OnBookTicker()` / `OnOrderResponse()` / `OnOrderFeedback()` 主链路尚未串接。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步优先把 1-7 模块接入 `leadlag::Strategy` 的固定 hook，并补 strategy-level 主链路测试；已完成的 LeadLag implementation plan 已删除。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -123,10 +123,10 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 | `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag fixed 策略拆解或对账时读 | current fixed 策略配置、OnRawBBO / OnLeadBBO / OnLagBBO 调用链、drift / alignment、UpdateMoveThreshold、open / close / stoploss 和订单状态机伪代码。 |
 | `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已按 fixed Go 源码补齐 raw same-price、BBO extrema、MoveQueue、noise、spread、threshold 和 order state 关键语义。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
-| `docs/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
-| `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` | 继续 Gate `OrderFeedbackSession` 架构和实现时读 | 第一版只使用 `futures.orders` 的订单生命周期 event、quantity/price/role/finish reason 语义、Strategy 状态推进和宽结构 event carrier。 |
-| `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` | 审查或维护 Task1 订单 feedback SHM transport 时读 | 固定 8 lane、Nova SPSC、宽结构 event ABI、`kGap` event 化 gap、显式 reader ownership、无 heartbeat / stale owner 自动判断和 drain-only reader 语义。 |
-| `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` | 实现 Task2 Gate orders feedback parser / session / Strategy apply 前读 | 多进程共享 feedback session、Gate `futures.orders` 到 event 的映射、Strategy 状态机、OrderSession cache 更新和 gap handling。 |
+| `doc/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
+| `doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md` | 继续 Gate `OrderFeedbackSession` 架构和实现时读 | 第一版只使用 `futures.orders` 的订单生命周期 event、quantity/price/role/finish reason 语义、Strategy 状态推进和宽结构 event carrier。 |
+| `doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` | 审查或维护 Task1 订单 feedback SHM transport 时读 | 固定 8 lane、Nova SPSC、宽结构 event ABI、`kGap` event 化 gap、显式 reader ownership、无 heartbeat / stale owner 自动判断和 drain-only reader 语义。 |
+| `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md` | 实现 Task2 Gate orders feedback parser / session / Strategy apply 前读 | 多进程共享 feedback session、Gate `futures.orders` 到 event 的映射、Strategy 状态机、OrderSession cache 更新和 gap handling。 |
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance USD-M futures bookTicker 行情时读 | raw stream URL、JSON parser、client/session、benchmark 和 probe 入口。 |
 
 ## 代码入口
@@ -560,7 +560,6 @@ LeadLag fixed 策略迁移当前处于 1-7 策略层模块已落地、完整 str
 ```text
 doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
-doc/superpowers/plans/2026-05-10-leadlag-strategy-implementation-plan.md
 ```
 
 当前已确认：
@@ -861,8 +860,8 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 如果新对话从 Gate 交易继续，建议顺序：
 
 1. 读取 `doc/agent-handoff-gate-trade-architecture.md`。
-2. 读取 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`。
-3. 读取 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。
+2. 读取 `doc/superpowers/specs/2026-05-07-gate-order-session-design.md`。
+3. 读取 `doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。
 4. 直接从“代码入口”和 `doc/agent-handoff-gate-trade-architecture.md` 追溯已实现边界、验证命令和 benchmark 口径；已完成的执行计划文档不再保留。
 5. 如果继续 strategy runtime，从 `core/strategy/strategy_runtime.h`、`tools/gate/strategy_runtime_adapter.h`、`tools/gate/demo_strategy.h` 和 `tools/gate/demo_strategy.cpp` 接手；当前 production `Run()` hook mode / Gate adapter / demo dry-run tool 已实现。
 6. 准备最小 live smoke：先运行 `gate_order_feedback_session --connect`，再在用户明确允许后运行 `gate_demo_strategy --execute`，用 `wait_seconds` / `rounds` 小参数覆盖 filled-close 和 unfilled-cancel 分支，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。

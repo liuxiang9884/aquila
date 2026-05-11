@@ -135,7 +135,7 @@ struct OrderFeedbackEvent {
 };
 ```
 
-字段语义沿用 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`。
+字段语义沿用 `doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`。
 `local_receive_ns` 是 feedback 进程本地收到并准备发布该 event 的时间，用于链路延迟诊断；它不参与 Strategy
 状态推进。
 

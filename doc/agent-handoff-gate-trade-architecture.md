@@ -5,7 +5,7 @@
 这份 handoff 给下一轮模型或开发者使用，用来承接 2026-04-28 关于 Gate futures 交易 WebSocket 架构的讨论。
 
 本文记录已经确认的协议事实、实验结果、Sirius 旧实现结论，以及当前推荐的线程 / session 划分方向。Gate submit/cancel
-第一版 `OrderSession` 已按独立设计落地；文档入口是 `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`。
+第一版 `OrderSession` 已按独立设计落地；文档入口是 `doc/superpowers/specs/2026-05-07-gate-order-session-design.md`。
 Strategy 第一版订单框架、struct flow、Task1 订单 feedback SHM transport 和 Task2 Gate orders parser / session /
 Strategy apply 均已实现；已完成的执行计划文档已清理，后续以本 handoff、`doc/project_onboarding_guide.md`、
 design spec 和当前代码作为事实源。
@@ -413,7 +413,7 @@ BinanceDataSession
 设计文档：
 
 ```text
-docs/superpowers/specs/2026-05-07-gate-order-session-design.md
+doc/superpowers/specs/2026-05-07-gate-order-session-design.md
 ```
 
 已确认边界：
@@ -551,9 +551,9 @@ test/tools/gate/demo_strategy_test.cpp
 设计文档：
 
 ```text
-docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
-docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md
-docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
+doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md
+doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md
+doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 ```
 
 已确认边界：
@@ -1131,10 +1131,10 @@ config/data_sessions/binance_data_session.toml
 - `exchange/gate/trading/order_signature.cpp`
 - `exchange/gate/trading/order_request_encoder.h`
 - `exchange/gate/trading/order_session.h`
-- `docs/superpowers/specs/2026-05-07-gate-order-session-design.md`
-- `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`
-- `docs/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md`
-- `docs/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`
+- `doc/superpowers/specs/2026-05-07-gate-order-session-design.md`
+- `doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`
+- `doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md`
+- `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`
 - `core/trading/order_feedback_event.h`（Task1 已实现）
 - `core/trading/order_feedback_shm.h`（Task1 已实现）
 - `core/config/order_feedback_shm_config.h`（Task1 已实现）

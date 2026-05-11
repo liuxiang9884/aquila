@@ -83,7 +83,7 @@ strategy-2-process
 
 ## Orders Event Mapping
 
-字段与语义沿用 `docs/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`：
+字段与语义沿用 `doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`：
 
 | Gate `finish_as` | Event | Strategy 状态 |
 | --- | --- | --- |
