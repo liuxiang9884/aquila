@@ -427,7 +427,8 @@ struct RunContext {
     std::string_view status_after{"missing"};
     bool order_known_after = false;
     bool submit_cancel = false;
-    bool terminal_feedback = false;
+    bool order_finished_after = false;
+    bool finish_after_feedback = false;
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
       if (const strategy::StrategyOrder* order =
@@ -441,21 +442,28 @@ struct RunContext {
           order != nullptr) {
         status_after = magic_enum::enum_name(order->status);
         order_known_after = true;
+        order_finished_after = order->is_finished;
       }
       ++feedback_events;
       submit_cancel = gate_order_tool::ShouldSubmitCancelAfterFeedback(
           gate_order_tool::FeedbackCancelInput{
               .kind = event.kind,
               .order_known_after = order_known_after,
+              .order_finished_after = order_finished_after,
               .keep_open = keep_open,
               .cancel_submitted = cancel_submitted,
           });
-      terminal_feedback = gate_order_tool::IsTerminalOrderFeedback(event.kind);
-      if (terminal_feedback) {
+      finish_after_feedback = gate_order_tool::ShouldFinishAfterFeedback(
+          gate_order_tool::FeedbackFinishInput{
+              .order_known_after = order_known_after,
+              .order_finished_after = order_finished_after,
+              .wait_feedback_terminal = wait_feedback_terminal,
+          });
+      if (order_finished_after) {
         feedback_terminal_seen = true;
-        if (wait_feedback_terminal) {
-          exit_code = 0;
-        }
+      }
+      if (finish_after_feedback) {
+        exit_code = 0;
       }
     }
 
@@ -480,7 +488,7 @@ struct RunContext {
       SubmitCancel(event.local_order_id);
       return;
     }
-    if (terminal_feedback && wait_feedback_terminal) {
+    if (finish_after_feedback) {
       Finish();
     }
   }
