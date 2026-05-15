@@ -11,6 +11,11 @@
 
 namespace aquila::strategy::leadlag {
 
+[[nodiscard]] inline std::int64_t BookTickerEventTimeNs(
+    const BookTicker& ticker) noexcept {
+  return ticker.exchange_ns != 0 ? ticker.exchange_ns : ticker.local_ns;
+}
+
 struct MarketUpdate {
   std::int32_t symbol_id{-1};
   PairRole role{PairRole::kNone};
@@ -34,7 +39,7 @@ struct MarketSideState {
 
   [[nodiscard]] bool Update(const BookTicker& ticker) noexcept {
     const QuoteSnapshot next{
-        .local_ns = ticker.local_ns,
+        .local_ns = BookTickerEventTimeNs(ticker),
         .bid_price = ticker.bid_price,
         .ask_price = ticker.ask_price,
     };
@@ -77,7 +82,7 @@ struct PairMarketState {
     } else if (role == PairRole::kLag) {
       update.price_changed = lag.Update(ticker);
     }
-    last_event_ns = ticker.local_ns;
+    last_event_ns = BookTickerEventTimeNs(ticker);
     update.both_sides_valid = BothSidesValid();
     return update;
   }

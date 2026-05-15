@@ -19,9 +19,20 @@
 
 namespace aquila::strategy::leadlag {
 
+enum class PositionAccountingMode : std::uint8_t {
+  kExternalOrders,
+  kSyntheticSignals,
+};
+
+struct StrategyOptions {
+  PositionAccountingMode position_accounting{
+      PositionAccountingMode::kExternalOrders};
+};
+
 class Strategy {
  public:
-  explicit Strategy(Config config) : config_(std::move(config)) {
+  explicit Strategy(Config config, StrategyOptions options = {})
+      : config_(std::move(config)), options_(options) {
     raw_market_state_.Reset(config_);
     InitPairRuntimeStates();
   }
@@ -46,7 +57,7 @@ class Strategy {
       return;
     }
 
-    const std::int64_t now_ns = EventTimeNs(ticker);
+    const std::int64_t now_ns = BookTickerEventTimeNs(ticker);
     if (last_market_update_.both_sides_valid) {
       runtime->alignment.OnPairedRawBbo(now_ns, market->lead.latest_quote,
                                         market->lag.latest_quote);
@@ -203,11 +214,6 @@ class Strategy {
     return runtime.initialized ? &runtime : nullptr;
   }
 
-  [[nodiscard]] static std::int64_t EventTimeNs(
-      const BookTicker& ticker) noexcept {
-    return ticker.exchange_ns != 0 ? ticker.exchange_ns : ticker.local_ns;
-  }
-
   void OnActiveLeadTick(PairRuntimeState* runtime,
                         const PairMarketState& market) noexcept {
     QuoteSnapshot drifted_lead =
@@ -230,7 +236,9 @@ class Strategy {
                                      .recorder = recorder,
                                  },
                                  threshold, alignment);
-    ApplySyntheticSignal(runtime, last_signal_decision_);
+    if (SyntheticPositionAccounting()) {
+      ApplySyntheticSignal(runtime, last_signal_decision_);
+    }
   }
 
   void OnActiveLagTick(PairRuntimeState* runtime,
@@ -250,7 +258,14 @@ class Strategy {
                                     .recorder = runtime->recorder.snapshot(),
                                 },
                                 runtime->threshold.snapshot());
-    ApplySyntheticSignal(runtime, last_signal_decision_);
+    if (SyntheticPositionAccounting()) {
+      ApplySyntheticSignal(runtime, last_signal_decision_);
+    }
+  }
+
+  [[nodiscard]] bool SyntheticPositionAccounting() const noexcept {
+    return options_.position_accounting ==
+           PositionAccountingMode::kSyntheticSignals;
   }
 
   static void ApplySyntheticSignal(PairRuntimeState* runtime,
@@ -299,6 +314,7 @@ class Strategy {
   }
 
   Config config_;
+  StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
   MarketUpdate last_market_update_;

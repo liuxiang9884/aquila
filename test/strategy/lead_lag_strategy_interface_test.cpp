@@ -200,8 +200,37 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
   EXPECT_EQ(decision.intent.symbol_id, 3);
 }
 
-TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsCloseSignalForSyntheticHold) {
+TEST(LeadLagStrategyInterfaceTest, DefaultModeDoesNotCreateSyntheticHold) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
+                                                                 8, 4};
+  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
+  ASSERT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenLong);
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  const leadlag::SignalDecision& decision = strategy.last_signal_decision();
+  EXPECT_FALSE(decision.triggered);
+  EXPECT_NE(decision.action, leadlag::SignalAction::kCloseLong);
+}
+
+TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
+  leadlag::Strategy strategy{
+      SignalOnlyConfig(),
+      leadlag::StrategyOptions{
+          .position_accounting =
+              leadlag::PositionAccountingMode::kSyntheticSignals,
+      }};
   FakeOrderSession order_session;
   aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
                                                                  8, 4};
