@@ -641,10 +641,9 @@ space O(window sample count)
 
 ```text
 ++stats.extrema_capacity_grow_count
-log symbol_id, exchange, vector name, new vector capacity
 ```
 
-`Stats` 只记录统计数字，不保存结构化扩容事件；具体哪个 vector、哪个 symbol / exchange、扩容后 capacity 只写入 log。扩容是后续调大初始 capacity 的依据。
+当前 C++ 落地规则是：`Stats` 只记录扩容总次数，不保存结构化扩容事件；不记录具体哪个 vector、哪个 symbol / exchange 或扩容后 capacity，扩容点也不写 log。该计数只能作为后续调大初始 capacity 的粗粒度依据。
 
 容量统一放入运行期 capacity config，配置文件可选覆盖；未配置时使用默认值：
 
@@ -822,14 +821,13 @@ memory      -> O(k * n)
 
 因此 dual heap 适合单 quantile exact 场景，不适合作为 LeadLag 后续多 quantile threshold engine 的默认方案。
 
-扩容记录按 3-2 / 3-3 的规则：
+若未来启用 `DoubleHeap<T>` exact move quantile，对应扩容记录也应沿用当前 stats 规则：
 
 ```text
 ++stats.move_quantile_capacity_grow_count
-log symbol_id, exchange, vector name, new vector capacity
 ```
 
-`RecorderStats` 只保存次数，不保存结构化扩容事件。具体是 `up.lower`、`up.upper`、`down.lower` 还是 `down.upper` 扩容，以及扩容后的 capacity，只写 log。扩容不丢样本、不暂停计算。
+`RecorderStats` 只保存扩容总次数，不保存结构化扩容事件；不记录具体是 `up.lower`、`up.upper`、`down.lower` 还是 `down.upper` 扩容，也不记录扩容后的 capacity 或在扩容点写 log。当前 C++ 默认 move quantile 使用 `HistogramQuantile<T>`，并没有落地 `move_quantile_capacity_grow_count`。
 
 #### Aquila 默认选择：Histogram quantile
 
@@ -1092,10 +1090,9 @@ index = (head + offset) & mask
 
 ```text
 ++stats.ring_queue_capacity_grow_count
-log symbol_id, exchange, queue name, new vector capacity
 ```
 
-`Stats` 只记录次数，不保存结构化扩容事件；具体哪个 queue 扩容只写 log。
+当前 C++ 落地规则是：`Stats` 只记录 recorder 内部 RingQueue 扩容总次数，不保存结构化扩容事件；不区分 lead noise / lag noise / lag spread，不记录具体 queue 或扩容后 capacity，扩容点也不写 log。
 
 #### Go 源码确认：3-3 lag_spread / LagSpreadBuffer
 
@@ -1200,10 +1197,9 @@ lag_spread.spread_window // absolute spread over stats_window
 
 ```text
 ++stats.ring_queue_capacity_grow_count
-log symbol_id, exchange, queue name, new vector capacity
 ```
 
-`Stats` 只记录次数；具体扩容的是 `lag_spread.spread_window` 还是其他 ring queue，只写 log。
+当前 C++ 落地规则是：`Stats` 只记录 RingQueue 扩容总次数；不区分 `lag_spread.spread_window` 和其他 recorder ring queue，不记录 queue 名称或扩容后 capacity，扩容点也不写 log。
 
 `BuildEntryCostBreakdown()` 只把 `LagSpreadBuffer / triggerPrice` 记录为 embedded friction；`RequiredEdge()` 不包含 spread 或 lag spread buffer，避免与 `targetSpace` 中已经扣掉的价格摩擦重复计算。
 
@@ -1214,7 +1210,7 @@ log symbol_id, exchange, queue name, new vector capacity
 - lead tick 只更新 lead recorder / lead noise / move quantile window。
 - lag tick 只更新 lag recorder / lag spread / lag noise。
 - BBO extrema 输出 rolling `bbo_record.window` 内的 bid / ask min/max。
-- BBO extrema vector 扩容后继续计算，不丢样本；`RecorderStats.extrema_capacity_grow_count` 只记录次数，扩容细节写 log。
+- BBO extrema vector 扩容后继续计算，不丢样本；`RecorderStats.extrema_capacity_grow_count` 只记录扩容总次数，不记录具体 queue / vector / symbol / exchange / capacity，扩容点也不写 log。
 - MoveQueue 按 `stats_window` 切窗，roll 后清空；不是严格 rolling 最近 `stats_window`。
 - MoveQueue 在边界时间 `t == RollAt` 不 roll，`t > RollAt` 才 roll。
 - roll 时用旧 queue 计算 quantile，当前 lead tick 的 move 进入新窗口。
