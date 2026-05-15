@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 #include <array>
 #include <cerrno>
 #include <charconv>
@@ -254,6 +256,10 @@ std::uintmax_t ExpectedOutputSize(
          static_cast<std::uintmax_t>(sizeof(aquila::BookTicker));
 }
 
+std::string TemporaryOutputSuffix(std::string_view date) {
+  return fmt::format(".tmp.{}.{}", date, static_cast<long>(::getpid()));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -304,6 +310,8 @@ int main(int argc, char** argv) {
       const std::filesystem::path gate_path =
           BuildInputPath(options.data_root, gate_source, date);
       const std::filesystem::path output_path = output_dir / (date + ".bin");
+      tardis::ScopedOutputFileReplacement scoped_output(
+          output_path, TemporaryOutputSuffix(date));
 
       OwnedInputStream binance_input(binance_path);
       OwnedInputStream gate_input(gate_path);
@@ -315,17 +323,20 @@ int main(int argc, char** argv) {
       };
 
       const tardis::BookTickerBinaryWriteStats stats =
-          tardis::WriteMergedBookTickerCsvStreams(output_path, inputs);
+          tardis::WriteMergedBookTickerCsvStreams(scoped_output.temp_path(),
+                                                  inputs);
       binance_input.CloseOrThrow();
       gate_input.CloseOrThrow();
 
-      const std::uintmax_t file_size = std::filesystem::file_size(output_path);
+      const std::uintmax_t file_size =
+          std::filesystem::file_size(scoped_output.temp_path());
       const std::uintmax_t expected_size = ExpectedOutputSize(stats);
       if (file_size != expected_size) {
         throw std::runtime_error(
             fmt::format("output size mismatch for {}: expected {}, got {}",
                         date, expected_size, file_size));
       }
+      scoped_output.Commit();
 
       fmt::print(
           "converted date={} output={} records={} binance_records={} "

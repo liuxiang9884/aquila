@@ -56,6 +56,50 @@ struct BookTickerBinaryWriteStats {
   std::vector<std::uint64_t> records_by_input;
 };
 
+class ScopedOutputFileReplacement {
+ public:
+  ScopedOutputFileReplacement(std::filesystem::path final_path,
+                              std::string temp_suffix)
+      : final_path_(std::move(final_path)),
+        temp_path_(final_path_.string() + std::move(temp_suffix)) {
+    if (final_path_.empty()) {
+      throw std::invalid_argument("final output path must not be empty");
+    }
+    if (temp_path_ == final_path_) {
+      throw std::invalid_argument("temporary output path must differ");
+    }
+  }
+
+  ScopedOutputFileReplacement(const ScopedOutputFileReplacement&) = delete;
+  ScopedOutputFileReplacement& operator=(const ScopedOutputFileReplacement&) =
+      delete;
+
+  ~ScopedOutputFileReplacement() {
+    if (!committed_) {
+      std::error_code error;
+      std::filesystem::remove(temp_path_, error);
+    }
+  }
+
+  [[nodiscard]] const std::filesystem::path& final_path() const noexcept {
+    return final_path_;
+  }
+
+  [[nodiscard]] const std::filesystem::path& temp_path() const noexcept {
+    return temp_path_;
+  }
+
+  void Commit() {
+    std::filesystem::rename(temp_path_, final_path_);
+    committed_ = true;
+  }
+
+ private:
+  std::filesystem::path final_path_;
+  std::filesystem::path temp_path_;
+  bool committed_{false};
+};
+
 namespace detail {
 
 inline constexpr std::string_view kBookTickerCsvHeader =
