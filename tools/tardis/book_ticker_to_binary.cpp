@@ -83,7 +83,7 @@ class PipeInputStreamBuffer : public std::streambuf {
 
  private:
   FILE* file_{};
-  std::array<char, 64 * 1024> buffer_{};
+  std::array<char, 1024 * 1024> buffer_{};
 };
 
 class GzipInputStream {

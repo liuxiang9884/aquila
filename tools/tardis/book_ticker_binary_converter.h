@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -21,11 +20,11 @@
 #include <utility>
 #include <vector>
 
-#include <fast_float/fast_float.h>
 #include <fmt/core.h>
 
 #include "core/common/types.h"
 #include "core/market_data/types.h"
+#include "core/utils/numeric.h"
 
 namespace aquila::tools::tardis {
 
@@ -144,23 +143,14 @@ inline BookTickerCsvFields SplitBookTickerCsvLine(std::string_view line,
   return fields;
 }
 
-template <typename T>
-inline T ParseIntegralField(std::string_view text, std::string_view field_name,
-                            std::uint64_t line_number) {
-  static_assert(std::is_integral_v<T>);
+inline std::int64_t ParseInt64Field(std::string_view text,
+                                    std::string_view field_name,
+                                    std::uint64_t line_number) {
   if (text.empty()) {
     throw std::runtime_error(
         fmt::format("empty {} at line {}", field_name, line_number));
   }
-  T value{};
-  const char* const begin = text.data();
-  const char* const end = text.data() + text.size();
-  const auto result = std::from_chars(begin, end, value);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    throw std::runtime_error(
-        fmt::format("invalid {} at line {}", field_name, line_number));
-  }
-  return value;
+  return ToInt64(text);
 }
 
 inline double ParseDoubleField(std::string_view text,
@@ -170,15 +160,7 @@ inline double ParseDoubleField(std::string_view text,
     throw std::runtime_error(
         fmt::format("empty {} at line {}", field_name, line_number));
   }
-  double value{};
-  const char* const begin = text.data();
-  const char* const end = text.data() + text.size();
-  const auto result = fast_float::from_chars(begin, end, value);
-  if (result.ec != std::errc{} || result.ptr != end) {
-    throw std::runtime_error(
-        fmt::format("invalid {} at line {}", field_name, line_number));
-  }
-  return value;
+  return ToDouble(text);
 }
 
 inline std::int64_t TimestampUsToNs(std::int64_t timestamp_us,
@@ -229,10 +211,10 @@ inline ParsedBookTickerRecord ParseBookTickerCsvLine(
                     csv_symbol, line_number, source.csv_symbol));
   }
 
-  const std::int64_t timestamp_us = ParseIntegralField<std::int64_t>(
-      fields.values[2], "timestamp", line_number);
-  const std::int64_t local_timestamp_us = ParseIntegralField<std::int64_t>(
-      fields.values[3], "local_timestamp", line_number);
+  const std::int64_t timestamp_us =
+      ParseInt64Field(fields.values[2], "timestamp", line_number);
+  const std::int64_t local_timestamp_us =
+      ParseInt64Field(fields.values[3], "local_timestamp", line_number);
   const double ask_amount =
       ParseDoubleField(fields.values[4], "ask_amount", line_number);
   const double ask_price =
@@ -282,10 +264,9 @@ class BookTickerCsvReader {
       throw std::invalid_argument("out must not be null");
     }
 
-    std::string line;
-    while (std::getline(*input_, line)) {
+    while (std::getline(*input_, line_)) {
       ++line_number_;
-      const std::string_view trimmed = detail::TrimLineEnd(line);
+      const std::string_view trimmed = detail::TrimLineEnd(line_);
       if (trimmed.empty()) {
         continue;
       }
@@ -324,6 +305,7 @@ class BookTickerCsvReader {
   std::uint64_t line_number_{0};
   std::uint64_t input_sequence_{0};
   std::optional<std::int64_t> last_exchange_ns_;
+  std::string line_;
 };
 
 inline std::vector<ParsedBookTickerRecord> ReadBookTickerCsv(
