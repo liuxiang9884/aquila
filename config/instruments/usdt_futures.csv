@@ -5,3 +5,5 @@ symbol_id,symbol,exchange,exchange_symbol,base_asset,quote_asset,settle_asset,pr
 1,ETH_USDT,binance,ETHUSDT,ETH,USDT,USDT,linear_perpetual,TRADING,PERPETUAL,0.01,2,0.001,3,0.001,10000,1000,20,1,0.05,0.05,0.05
 2,SOL_USDT,gate,SOL_USDT,SOL,USDT,USDT,linear_perpetual,trading,direct,0.001,3,1,0,1,100000,,,1,0.5,0.5,
 2,SOL_USDT,binance,SOLUSDT,SOL,USDT,USDT,linear_perpetual,TRADING,PERPETUAL,0.001,3,0.1,1,0.1,100000,10000,5,1,0.05,0.05,0.05
+3,ORDI_USDT,gate,ORDI_USDT,ORDI,USDT,USDT,linear_perpetual,TRADING,direct,0.001,3,1.0,0,1.0,3000000.0,2000000.0,,0.1,0.07,0.07,0.025
+3,ORDI_USDT,binance,ORDIUSDT,ORDI,USDT,USDT,linear_perpetual,TRADING,PERPETUAL,0.001,3,0.1,1,0.1,200000.0,20000.0,5.0,1.0,0.15,0.15,0.15

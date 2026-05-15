@@ -119,6 +119,18 @@ target_link_libraries(binance_futures_book_ticker_probe
         magic_enum::magic_enum
 )
 
+add_executable(tardis_book_ticker_to_binary
+    tardis/book_ticker_to_binary.cpp
+)
+
+target_link_libraries(tardis_book_ticker_to_binary
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+)
+
 add_executable(book_ticker_shm_reader
     market_data/book_ticker_shm_reader.cpp
 )
