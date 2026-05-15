@@ -12,7 +12,7 @@ from pathlib import Path
 
 DEFAULT_BUCKET = "tko-s3-tardis-share"
 DEFAULT_PREFIX = "tardis"
-DEFAULT_OUTPUT_DIR = Path.home() / "tardis"
+DEFAULT_DOWNLOAD_DIR = Path.home()
 DATE_FORMAT = "%Y%m%d"
 
 
@@ -72,11 +72,13 @@ def s3_prefix(bucket: str, prefix: str, exchange: str, data_type: str, date: str
     return f"s3://{bucket}/{prefix}/{exchange}/{data_type}/{date}/"
 
 
-def local_date_dir(output_dir: Path, prefix: str, exchange: str, data_type: str, date: str) -> Path:
+def local_date_dir(
+    download_dir: Path, prefix: str, exchange: str, data_type: str, date: str
+) -> Path:
     prefix = normalize_path_part(prefix, "prefix")
     exchange = normalize_path_part(exchange, "exchange")
     data_type = normalize_path_part(data_type, "data-type")
-    return output_dir.expanduser() / prefix / exchange / data_type / date
+    return download_dir.expanduser() / prefix / exchange / data_type / date
 
 
 def build_symbol_downloads(
@@ -87,7 +89,7 @@ def build_symbol_downloads(
     data_type: str,
     dates: list[str],
     symbols: list[str],
-    output_dir: Path,
+    download_dir: Path,
     aws_profile: str | None,
     no_overwrite: bool,
 ) -> list[DownloadCommand]:
@@ -96,7 +98,7 @@ def build_symbol_downloads(
     data_type = normalize_path_part(data_type, "data-type")
     for date in dates:
         date_prefix = s3_prefix(bucket, prefix, exchange, data_type, date)
-        destination_dir = local_date_dir(output_dir, prefix, exchange, data_type, date)
+        destination_dir = local_date_dir(download_dir, prefix, exchange, data_type, date)
         for raw_symbol in symbols:
             symbol = normalize_symbol(raw_symbol)
             if not symbol:
@@ -120,7 +122,7 @@ def build_all_symbols_downloads(
     exchange: str,
     data_type: str,
     dates: list[str],
-    output_dir: Path,
+    download_dir: Path,
     aws_profile: str | None,
     no_overwrite: bool,
     include_empty_marker: bool,
@@ -129,7 +131,7 @@ def build_all_symbols_downloads(
     base_command = aws_base_command(aws_profile)
     for date in dates:
         source = s3_prefix(bucket, prefix, exchange, data_type, date)
-        destination = local_date_dir(output_dir, prefix, exchange, data_type, date)
+        destination = local_date_dir(download_dir, prefix, exchange, data_type, date)
         command = [
             *base_command,
             "cp",
@@ -147,7 +149,7 @@ def build_all_symbols_downloads(
 
 def build_downloads(args: argparse.Namespace) -> list[DownloadCommand]:
     dates = expand_date_range(args.start_date, args.end_date)
-    output_dir = Path(args.output_dir).expanduser()
+    download_dir = Path(args.download_dir).expanduser()
     if args.all_symbols:
         return build_all_symbols_downloads(
             bucket=args.bucket,
@@ -155,7 +157,7 @@ def build_downloads(args: argparse.Namespace) -> list[DownloadCommand]:
             exchange=args.exchange,
             data_type=args.data_type,
             dates=dates,
-            output_dir=output_dir,
+            download_dir=download_dir,
             aws_profile=args.aws_profile,
             no_overwrite=args.no_overwrite,
             include_empty_marker=args.include_empty_marker,
@@ -167,7 +169,7 @@ def build_downloads(args: argparse.Namespace) -> list[DownloadCommand]:
         data_type=args.data_type,
         dates=dates,
         symbols=args.symbols,
-        output_dir=output_dir,
+        download_dir=download_dir,
         aws_profile=args.aws_profile,
         no_overwrite=args.no_overwrite,
     )
@@ -187,9 +189,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--start-date", required=True, help="Inclusive start date, YYYYMMDD.")
     parser.add_argument("--end-date", required=True, help="Inclusive end date, YYYYMMDD.")
     parser.add_argument(
-        "--output-dir",
-        default=str(DEFAULT_OUTPUT_DIR),
-        help=f"Local root directory. Default: {DEFAULT_OUTPUT_DIR}",
+        "--download-dir",
+        default=str(DEFAULT_DOWNLOAD_DIR),
+        help=f"Local download root directory. Default: {DEFAULT_DOWNLOAD_DIR}",
     )
     parser.add_argument("--aws-profile", help="Optional AWS CLI profile name.")
     parser.add_argument("--dry-run", action="store_true", help="Print AWS CLI commands only.")

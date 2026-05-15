@@ -28,7 +28,7 @@ class DownloadTardisS3Test(unittest.TestCase):
             data_type="book_ticker",
             dates=["20260415"],
             symbols=["btcusdc", "ETHUSDC"],
-            output_dir=Path("/home/liuxiang/tardis"),
+            download_dir=Path("/home/liuxiang"),
             aws_profile=None,
             no_overwrite=False,
         )
@@ -42,7 +42,7 @@ class DownloadTardisS3Test(unittest.TestCase):
         self.assertEqual(
             plan[0].destination,
             Path(
-                "/home/liuxiang/tardis/tardis/binance-futures/book_ticker/20260415/"
+                "/home/liuxiang/tardis/binance-futures/book_ticker/20260415/"
                 "BTCUSDC-book_ticker-20260415.csv.gz"
             ),
         )
@@ -54,7 +54,7 @@ class DownloadTardisS3Test(unittest.TestCase):
                 "cp",
                 "s3://tko-s3-tardis-share/tardis/binance-futures/book_ticker/20260415/"
                 "BTCUSDC-book_ticker-20260415.csv.gz",
-                "/home/liuxiang/tardis/tardis/binance-futures/book_ticker/20260415/"
+                "/home/liuxiang/tardis/binance-futures/book_ticker/20260415/"
                 "BTCUSDC-book_ticker-20260415.csv.gz",
             ],
         )
@@ -67,7 +67,7 @@ class DownloadTardisS3Test(unittest.TestCase):
             data_type="book_ticker",
             dates=["20260415"],
             symbols=["ordi_usdt"],
-            output_dir=Path("/home/liuxiang/tardis"),
+            download_dir=Path("/home/liuxiang"),
             aws_profile=None,
             no_overwrite=False,
         )
@@ -80,7 +80,7 @@ class DownloadTardisS3Test(unittest.TestCase):
         self.assertEqual(
             plan[0].destination,
             Path(
-                "/home/liuxiang/tardis/tardis/gate-io-futures/book_ticker/20260415/"
+                "/home/liuxiang/tardis/gate-io-futures/book_ticker/20260415/"
                 "ORDI_USDT-book_ticker-20260415.csv.gz"
             ),
         )
@@ -92,7 +92,7 @@ class DownloadTardisS3Test(unittest.TestCase):
             exchange="binance-futures",
             data_type="book_ticker",
             dates=["20260415", "20260416"],
-            output_dir=Path("/tmp/tardis"),
+            download_dir=Path("/tmp"),
             aws_profile="research",
             no_overwrite=True,
             include_empty_marker=False,
@@ -108,7 +108,7 @@ class DownloadTardisS3Test(unittest.TestCase):
                 "s3",
                 "cp",
                 "s3://tko-s3-tardis-share/tardis/binance-futures/book_ticker/20260415/",
-                "/tmp/tardis/tardis/binance-futures/book_ticker/20260415",
+                "/tmp/tardis/binance-futures/book_ticker/20260415",
                 "--recursive",
                 "--exclude",
                 "*",
@@ -125,7 +125,7 @@ class DownloadTardisS3Test(unittest.TestCase):
             exchange="binance-futures",
             data_type="book_ticker",
             dates=["20260415"],
-            output_dir=Path("/tmp/tardis"),
+            download_dir=Path("/tmp"),
             aws_profile=None,
             no_overwrite=False,
             include_empty_marker=True,
@@ -138,10 +138,28 @@ class DownloadTardisS3Test(unittest.TestCase):
                 "s3",
                 "cp",
                 "s3://tko-s3-tardis-share/tardis/binance-futures/book_ticker/20260415/",
-                "/tmp/tardis/tardis/binance-futures/book_ticker/20260415",
+                "/tmp/tardis/binance-futures/book_ticker/20260415",
                 "--recursive",
             ],
         )
+
+    def test_parse_args_defaults_download_dir_to_home(self):
+        args = downloader.parse_args(
+            [
+                "--exchange",
+                "binance-futures",
+                "--data-type",
+                "book_ticker",
+                "--start-date",
+                "20260415",
+                "--end-date",
+                "20260415",
+                "--symbols",
+                "BTCUSDC",
+            ]
+        )
+
+        self.assertEqual(args.download_dir, str(Path.home()))
 
     def test_parse_args_requires_symbols_or_all_symbols(self):
         with redirect_stderr(StringIO()):
