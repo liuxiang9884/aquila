@@ -59,6 +59,32 @@ class DownloadTardisS3Test(unittest.TestCase):
             ],
         )
 
+    def test_symbol_download_plan_preserves_exchange_symbol_separator(self):
+        plan = downloader.build_symbol_downloads(
+            bucket="tko-s3-tardis-share",
+            prefix="tardis",
+            exchange="gate-io-futures",
+            data_type="book_ticker",
+            dates=["20260415"],
+            symbols=["ordi_usdt"],
+            output_dir=Path("/home/liuxiang/tardis"),
+            aws_profile=None,
+            no_overwrite=False,
+        )
+
+        self.assertEqual(
+            plan[0].source,
+            "s3://tko-s3-tardis-share/tardis/gate-io-futures/book_ticker/20260415/"
+            "ORDI_USDT-book_ticker-20260415.csv.gz",
+        )
+        self.assertEqual(
+            plan[0].destination,
+            Path(
+                "/home/liuxiang/tardis/tardis/gate-io-futures/book_ticker/20260415/"
+                "ORDI_USDT-book_ticker-20260415.csv.gz"
+            ),
+        )
+
     def test_all_symbols_uses_recursive_cp_for_each_date_directory(self):
         plan = downloader.build_all_symbols_downloads(
             bucket="tko-s3-tardis-share",

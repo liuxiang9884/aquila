@@ -54,7 +54,7 @@ def normalize_path_part(value: str, name: str) -> str:
 
 
 def normalize_symbol(symbol: str) -> str:
-    return symbol.strip().upper().replace("_", "").replace("/", "")
+    return symbol.strip().upper()
 
 
 def aws_base_command(aws_profile: str | None) -> list[str]:
