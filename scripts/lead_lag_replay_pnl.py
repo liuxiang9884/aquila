@@ -14,6 +14,8 @@ getcontext().prec = 28
 
 DEFAULT_OPEN_NOTIONAL = Decimal("1000")
 DEFAULT_FEE_RATE = Decimal("0.0002")
+DEFAULT_TICK_SIZE = Decimal("0")
+DEFAULT_SLIPPAGE_TICKS = 0
 
 OPEN_ACTIONS = {
     "kOpenLong": "long",
@@ -160,13 +162,16 @@ def normalize_rows(rows: Iterable[dict[str, str] | SignalRow]) -> list[SignalRow
 
 
 def close_position(
-    open_position: OpenPosition, close_signal: SignalRow, fee_rate: Decimal
+    open_position: OpenPosition,
+    close_signal: SignalRow,
+    close_price: Decimal,
+    fee_rate: Decimal,
 ) -> ClosedTrade:
-    close_notional = open_position.quantity * close_signal.price
+    close_notional = open_position.quantity * close_price
     if open_position.direction == "long":
-        gross_pnl = (close_signal.price - open_position.price) * open_position.quantity
+        gross_pnl = (close_price - open_position.price) * open_position.quantity
     else:
-        gross_pnl = (open_position.price - close_signal.price) * open_position.quantity
+        gross_pnl = (open_position.price - close_price) * open_position.quantity
     close_fee = close_notional * fee_rate
     fees = open_position.open_fee + close_fee
     net_pnl = gross_pnl - fees
@@ -184,7 +189,7 @@ def close_position(
         open_side=open_position.side,
         close_side=close_signal.side,
         open_price=open_position.price,
-        close_price=close_signal.price,
+        close_price=close_price,
         quantity=open_position.quantity,
         open_notional=open_position.open_notional,
         close_notional=close_notional,
@@ -199,11 +204,17 @@ def calculate_pnl(
     *,
     open_notional: Decimal,
     fee_rate: Decimal,
+    tick_size: Decimal = DEFAULT_TICK_SIZE,
+    slippage_ticks: int = DEFAULT_SLIPPAGE_TICKS,
 ) -> PnlResult:
     if open_notional <= 0:
         raise ValueError("open_notional must be positive")
     if fee_rate < 0:
         raise ValueError("fee_rate must be non-negative")
+    if tick_size < 0:
+        raise ValueError("tick_size must be non-negative")
+    if slippage_ticks < 0:
+        raise ValueError("slippage_ticks must be non-negative")
 
     signals = normalize_rows(rows)
     positions: dict[tuple[str, str], deque[OpenPosition]] = defaultdict(deque)
@@ -214,6 +225,7 @@ def calculate_pnl(
     for signal in signals:
         if signal.action in OPEN_ACTIONS:
             direction = OPEN_ACTIONS[signal.action]
+            open_price = slippage_price(signal, tick_size, slippage_ticks)
             positions[(signal.symbol_id, direction)].append(
                 OpenPosition(
                     ticker_id=signal.ticker_id,
@@ -223,8 +235,8 @@ def calculate_pnl(
                     direction=direction,
                     action=signal.action,
                     side=signal.side,
-                    price=signal.price,
-                    quantity=open_notional / signal.price,
+                    price=open_price,
+                    quantity=open_notional / open_price,
                     open_notional=open_notional,
                     open_fee=open_notional * fee_rate,
                 )
@@ -240,7 +252,10 @@ def calculate_pnl(
                     f"close without open: ticker_id={signal.ticker_id} "
                     f"action={signal.action} symbol_id={signal.symbol_id}"
                 )
-            trades.append(close_position(positions[key].popleft(), signal, fee_rate))
+            close_price = slippage_price(signal, tick_size, slippage_ticks)
+            trades.append(
+                close_position(positions[key].popleft(), signal, close_price, fee_rate)
+            )
             close_signal_count += 1
             continue
 
@@ -263,6 +278,24 @@ def calculate_pnl(
         ),
         trades=trades,
     )
+
+
+def slippage_price(
+    signal: SignalRow, tick_size: Decimal, slippage_ticks: int
+) -> Decimal:
+    slippage = tick_size * Decimal(slippage_ticks)
+    if signal.side == "kBuy":
+        price = signal.price + slippage
+    elif signal.side == "kSell":
+        price = signal.price - slippage
+    else:
+        raise ValueError(f"unsupported side: {signal.side}")
+    if price <= 0:
+        raise ValueError(
+            f"slipped price must be positive: ticker_id={signal.ticker_id} "
+            f"side={signal.side} price={signal.price} slippage={slippage}"
+        )
+    return price
 
 
 def decimal_text(value: Decimal) -> str:
@@ -315,7 +348,13 @@ def write_trades_csv(path: Path, trades: list[ClosedTrade]) -> None:
             )
 
 
-def print_summary(result: PnlResult, open_notional: Decimal, fee_rate: Decimal) -> None:
+def print_summary(
+    result: PnlResult,
+    open_notional: Decimal,
+    fee_rate: Decimal,
+    tick_size: Decimal,
+    slippage_ticks: int,
+) -> None:
     summary = result.summary
     print(f"signals={summary.signals}")
     print(f"open_signals={summary.open_signals}")
@@ -324,6 +363,8 @@ def print_summary(result: PnlResult, open_notional: Decimal, fee_rate: Decimal) 
     print(f"open_positions={summary.open_positions}")
     print(f"open_notional={decimal_text(open_notional)}")
     print(f"fee_rate={decimal_text(fee_rate)}")
+    print(f"tick_size={decimal_text(tick_size)}")
+    print(f"slippage_ticks={slippage_ticks}")
     print(f"gross_pnl={decimal_text(summary.gross_pnl)}")
     print(f"fees={decimal_text(summary.fees)}")
     print(f"net_pnl={decimal_text(summary.net_pnl)}")
@@ -348,6 +389,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"Fee rate per fill, charged on notional. Default: {DEFAULT_FEE_RATE}",
     )
     parser.add_argument(
+        "--tick-size",
+        default=str(DEFAULT_TICK_SIZE),
+        help=(
+            "Price tick size used for slippage. Buy fills add ticks, "
+            "sell fills subtract ticks. Default: 0"
+        ),
+    )
+    parser.add_argument(
+        "--slippage-ticks",
+        type=int,
+        default=DEFAULT_SLIPPAGE_TICKS,
+        help="Adverse slippage ticks per fill. Default: 0",
+    )
+    parser.add_argument(
         "--trades-output",
         type=Path,
         help="Optional output CSV path for per-trade PnL rows.",
@@ -360,13 +415,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         open_notional = parse_decimal(args.open_notional, "open-notional")
         fee_rate = parse_non_negative_decimal(args.fee_rate, "fee-rate")
+        tick_size = parse_non_negative_decimal(args.tick_size, "tick-size")
         signals = read_signal_csv(args.signals_csv)
         result = calculate_pnl(
-            signals, open_notional=open_notional, fee_rate=fee_rate
+            signals,
+            open_notional=open_notional,
+            fee_rate=fee_rate,
+            tick_size=tick_size,
+            slippage_ticks=args.slippage_ticks,
         )
         if args.trades_output is not None:
             write_trades_csv(args.trades_output, result.trades)
-        print_summary(result, open_notional, fee_rate)
+        print_summary(
+            result,
+            open_notional,
+            fee_rate,
+            tick_size,
+            args.slippage_ticks,
+        )
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

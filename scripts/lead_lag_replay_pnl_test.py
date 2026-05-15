@@ -86,6 +86,43 @@ class LeadLagReplayPnlTest(unittest.TestCase):
                 rows, open_notional=Decimal("1000"), fee_rate=Decimal("0.0002")
             )
 
+    def test_applies_slippage_against_signal_side(self):
+        rows = [
+            {
+                "ticker_id": "1",
+                "symbol_id": "3",
+                "exchange_ns": "100",
+                "local_ns": "100",
+                "action": "kOpenLong",
+                "side": "kBuy",
+                "price": "10",
+                "reduce_only": "false",
+            },
+            {
+                "ticker_id": "2",
+                "symbol_id": "3",
+                "exchange_ns": "110",
+                "local_ns": "110",
+                "action": "kCloseLong",
+                "side": "kSell",
+                "price": "13",
+                "reduce_only": "true",
+            },
+        ]
+
+        result = pnl.calculate_pnl(
+            rows,
+            open_notional=Decimal("100"),
+            fee_rate=Decimal("0"),
+            tick_size=Decimal("1"),
+            slippage_ticks=1,
+        )
+
+        self.assertEqual(result.trades[0].open_price, Decimal("11"))
+        self.assertEqual(result.trades[0].close_price, Decimal("12"))
+        self.assertEqual(result.trades[0].gross_pnl, Decimal("100") / Decimal("11"))
+        self.assertEqual(result.summary.net_pnl, Decimal("100") / Decimal("11"))
+
 
 if __name__ == "__main__":
     unittest.main()
