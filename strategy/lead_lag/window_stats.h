@@ -16,8 +16,10 @@ struct TimedValue {
 
 class MeanWindow {
  public:
-  void Init(std::uint64_t window_ns, std::size_t capacity) {
+  void Init(std::uint64_t window_ns, std::size_t capacity,
+            std::uint64_t* ring_queue_capacity_grow_count = nullptr) {
     window_ns_ = window_ns;
+    ring_queue_capacity_grow_count_ = ring_queue_capacity_grow_count;
     samples_.Init(capacity);
     sum_ = 0.0;
   }
@@ -29,10 +31,21 @@ class MeanWindow {
 
   void Update(std::int64_t local_ns, double value) {
     EvictExpired(local_ns);
+    if (ring_queue_capacity_grow_count_ == nullptr) {
+      samples_.PushBack(TimedValue{
+          .local_ns = local_ns,
+          .value = value,
+      });
+      sum_ += value;
+      return;
+    }
+
+    const std::size_t old_capacity = samples_.capacity();
     samples_.PushBack(TimedValue{
         .local_ns = local_ns,
         .value = value,
     });
+    TrackGrow(old_capacity);
     sum_ += value;
   }
 
@@ -68,15 +81,24 @@ class MeanWindow {
     }
   }
 
+  void TrackGrow(std::size_t old_capacity) noexcept {
+    if (samples_.capacity() > old_capacity) {
+      ++*ring_queue_capacity_grow_count_;
+    }
+  }
+
   RingQueue<TimedValue> samples_;
   std::uint64_t window_ns_{0};
+  std::uint64_t* ring_queue_capacity_grow_count_{nullptr};
   double sum_{0.0};
 };
 
 class MeanStdWindow {
  public:
-  void Init(std::uint64_t window_ns, std::size_t capacity) {
+  void Init(std::uint64_t window_ns, std::size_t capacity,
+            std::uint64_t* ring_queue_capacity_grow_count = nullptr) {
     window_ns_ = window_ns;
+    ring_queue_capacity_grow_count_ = ring_queue_capacity_grow_count;
     samples_.Init(capacity);
     sum_ = 0.0;
     sum_sq_ = 0.0;
@@ -90,10 +112,22 @@ class MeanStdWindow {
 
   void Update(std::int64_t local_ns, double value) {
     EvictExpired(local_ns);
+    if (ring_queue_capacity_grow_count_ == nullptr) {
+      samples_.PushBack(TimedValue{
+          .local_ns = local_ns,
+          .value = value,
+      });
+      sum_ += value;
+      sum_sq_ += value * value;
+      return;
+    }
+
+    const std::size_t old_capacity = samples_.capacity();
     samples_.PushBack(TimedValue{
         .local_ns = local_ns,
         .value = value,
     });
+    TrackGrow(old_capacity);
     sum_ += value;
     sum_sq_ += value * value;
   }
@@ -141,8 +175,15 @@ class MeanStdWindow {
     }
   }
 
+  void TrackGrow(std::size_t old_capacity) noexcept {
+    if (samples_.capacity() > old_capacity) {
+      ++*ring_queue_capacity_grow_count_;
+    }
+  }
+
   RingQueue<TimedValue> samples_;
   std::uint64_t window_ns_{0};
+  std::uint64_t* ring_queue_capacity_grow_count_{nullptr};
   double sum_{0.0};
   double sum_sq_{0.0};
 };

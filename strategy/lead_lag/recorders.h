@@ -16,6 +16,7 @@ namespace aquila::strategy::leadlag {
 
 struct RecorderStats {
   std::uint64_t extrema_capacity_grow_count{0};
+  std::uint64_t ring_queue_capacity_grow_count{0};
 };
 
 struct BboExtremaSnapshot {
@@ -160,9 +161,11 @@ class BboExtremaWindow {
 class NoiseState {
  public:
   void Init(std::uint64_t mid_window_ns, std::uint64_t ratio_window_ns,
-            std::size_t capacity) {
-    mid_window_.Init(mid_window_ns, capacity);
-    ratio_window_.Init(ratio_window_ns, capacity);
+            std::size_t capacity,
+            std::uint64_t* ring_queue_capacity_grow_count = nullptr) {
+    mid_window_.Init(mid_window_ns, capacity, ring_queue_capacity_grow_count);
+    ratio_window_.Init(ratio_window_ns, capacity,
+                       ring_queue_capacity_grow_count);
   }
 
   void Clear() noexcept {
@@ -190,8 +193,9 @@ class NoiseState {
 
 class SpreadState {
  public:
-  void Init(std::uint64_t window_ns, std::size_t capacity) {
-    spread_window_.Init(window_ns, capacity);
+  void Init(std::uint64_t window_ns, std::size_t capacity,
+            std::uint64_t* ring_queue_capacity_grow_count = nullptr) {
+    spread_window_.Init(window_ns, capacity, ring_queue_capacity_grow_count);
   }
 
   void Clear() noexcept {
@@ -301,6 +305,7 @@ struct RecorderSnapshot {
 class RecorderState {
  public:
   void Init(const PairConfig& pair) {
+    stats_ = {};
     const std::uint64_t bbo_window_ns = pair.bbo_record.window_ns;
     const std::uint64_t stats_window_ns = pair.bbo_record.stats_window_ns;
     lead_extrema_.Init(bbo_window_ns, pair.capacity.extrema_window_capacity,
@@ -308,10 +313,13 @@ class RecorderState {
     lag_extrema_.Init(bbo_window_ns, pair.capacity.extrema_window_capacity,
                       &stats_);
     lead_noise_.Init(bbo_window_ns, stats_window_ns,
-                     pair.capacity.noise_window_capacity);
+                     pair.capacity.noise_window_capacity,
+                     &stats_.ring_queue_capacity_grow_count);
     lag_noise_.Init(bbo_window_ns, stats_window_ns,
-                    pair.capacity.noise_window_capacity);
-    lag_spread_.Init(stats_window_ns, pair.capacity.spread_window_capacity);
+                    pair.capacity.noise_window_capacity,
+                    &stats_.ring_queue_capacity_grow_count);
+    lag_spread_.Init(stats_window_ns, pair.capacity.spread_window_capacity,
+                     &stats_.ring_queue_capacity_grow_count);
     move_quantile_.Init(/*start_ns=*/0, stats_window_ns,
                         pair.trigger.quantile);
   }

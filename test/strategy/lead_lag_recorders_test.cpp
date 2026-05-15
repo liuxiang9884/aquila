@@ -165,6 +165,55 @@ TEST(LeadLagRecordersTest, BboExtremaEvictsExpiredBeforePushing) {
   EXPECT_EQ(stats.extrema_capacity_grow_count, 0U);
 }
 
+TEST(LeadLagRecordersTest, RecorderStateCountsRingQueueCapacityGrow) {
+  leadlag::PairConfig pair = PairConfigForRecorder();
+  pair.bbo_record.window_ns = 100;
+  pair.bbo_record.stats_window_ns = 1000;
+  pair.capacity.noise_window_capacity = 1;
+  pair.capacity.spread_window_capacity = 1;
+
+  leadlag::RecorderState state;
+  state.Init(pair);
+  state.SeedActive(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+                         /*ask_price=*/101.0),
+                   Quote(/*local_ns=*/0, /*bid_price=*/99.0,
+                         /*ask_price=*/100.0));
+
+  [[maybe_unused]] const leadlag::MoveQuantileRoll lead_roll =
+      state.OnLeadActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/101.0,
+                                   /*ask_price=*/102.0));
+  state.OnLagActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/98.5,
+                              /*ask_price=*/100.5));
+
+  EXPECT_EQ(state.stats().ring_queue_capacity_grow_count, 5U);
+}
+
+TEST(LeadLagRecordersTest, RecorderStateInitResetsCapacityGrowStats) {
+  leadlag::PairConfig pair = PairConfigForRecorder();
+  pair.bbo_record.window_ns = 100;
+  pair.bbo_record.stats_window_ns = 1000;
+  pair.capacity.noise_window_capacity = 1;
+  pair.capacity.spread_window_capacity = 1;
+
+  leadlag::RecorderState state;
+  state.Init(pair);
+  state.SeedActive(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+                         /*ask_price=*/101.0),
+                   Quote(/*local_ns=*/0, /*bid_price=*/99.0,
+                         /*ask_price=*/100.0));
+  [[maybe_unused]] const leadlag::MoveQuantileRoll lead_roll =
+      state.OnLeadActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/101.0,
+                                   /*ask_price=*/102.0));
+  state.OnLagActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/98.5,
+                              /*ask_price=*/100.5));
+  ASSERT_GT(state.stats().ring_queue_capacity_grow_count, 0U);
+
+  state.Init(pair);
+
+  EXPECT_EQ(state.stats().extrema_capacity_grow_count, 0U);
+  EXPECT_EQ(state.stats().ring_queue_capacity_grow_count, 0U);
+}
+
 TEST(LeadLagRecordersTest, NoiseStateReturnsRollingMeanOfNormalizedStd) {
   leadlag::NoiseState noise;
   noise.Init(/*mid_window_ns=*/100, /*ratio_window_ns=*/1000,
