@@ -16,6 +16,7 @@ namespace aquila::config {
 
 enum class DataReaderSourceType : std::uint8_t {
   kShm,
+  kBinaryFile,
 };
 
 enum class DataReaderFeed : std::uint8_t {
@@ -39,6 +40,7 @@ struct DataReaderSourceConfig {
   DataReaderFeed feed{DataReaderFeed::kBookTicker};
   std::string shm_name;
   std::string channel_name;
+  std::vector<std::filesystem::path> files;
   DataReaderStartPosition start_position{DataReaderStartPosition::kLatest};
   DataReaderReadMode read_mode{DataReaderReadMode::kLatest};
   bool required{true};

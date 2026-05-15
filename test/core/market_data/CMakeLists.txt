@@ -41,3 +41,18 @@ target_link_libraries(core_market_data_reader_test
 
 add_test(NAME core_market_data_reader_test
          COMMAND core_market_data_reader_test)
+
+add_executable(core_market_data_binary_data_reader_test
+    binary_data_reader_test.cpp
+)
+
+target_link_libraries(core_market_data_binary_data_reader_test
+    PRIVATE
+        aquila_config
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+)
+
+add_test(NAME core_market_data_binary_data_reader_test
+         COMMAND core_market_data_binary_data_reader_test)

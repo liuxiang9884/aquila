@@ -77,6 +77,21 @@ target_link_libraries(gate_demo_strategy
         nova
 )
 
+add_executable(lead_lag_replay
+    lead_lag/replay.cpp
+)
+
+target_link_libraries(lead_lag_replay
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_strategy
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+)
+
 add_executable(gate_order_feedback_session
     gate/order_feedback_session.cpp
 )

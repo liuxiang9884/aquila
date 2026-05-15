@@ -1,0 +1,33 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/lead_lag_ordi_binary_replay.log"
+console_sink_name = "lead_lag_ordi_binary_replay_console"
+backend_thread_name = "lead_lag_ordi_binary_replay_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_reader]
+name = "lead_lag_ordi_binary_replay"
+max_events_per_source = 4096
+
+[data_reader.execution_policy]
+bind_cpu_id = -1
+idle_policy = "spin"
+
+[[data_reader.sources]]
+name = "ordi_merged_book_ticker"
+type = "binary_file"
+feed = "book_ticker"
+files = [
+  "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin",
+  "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260416.bin",
+  "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260417.bin",
+]
+start_position = "earliest_visible"
+read_mode = "drain"
+required = true

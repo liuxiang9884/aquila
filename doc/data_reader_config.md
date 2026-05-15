@@ -2,13 +2,15 @@
 
 ## 范围
 
-`data_reader` 描述 strategy 侧行情输入。第一版只支持从 SHM 读取 `book_ticker`：
+`data_reader` 描述 strategy 侧行情输入。当前支持两类 `book_ticker` source：
 
 - `type = "shm"`
+- `type = "binary_file"`
 - `feed = "book_ticker"`
 
-`DataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)`。reader attach data session
-创建的 SHM channel，不负责 create / remove SHM。
+`DataReader` / `BinaryDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)`。SHM reader attach
+data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的
+`BookTicker` 二进制文件，适合 replay / 对账。
 
 ## 示例
 
@@ -52,6 +54,31 @@ read_mode = "latest"
 required = true
 ```
 
+Binary replay 示例：
+
+```text
+config/data_readers/lead_lag_ordi_binary_replay.toml
+```
+
+```toml
+[data_reader]
+name = "lead_lag_ordi_binary_replay"
+max_events_per_source = 4096
+
+[[data_reader.sources]]
+name = "ordi_merged_book_ticker"
+type = "binary_file"
+feed = "book_ticker"
+files = [
+  "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin",
+  "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260416.bin",
+  "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260417.bin",
+]
+start_position = "earliest_visible"
+read_mode = "drain"
+required = true
+```
+
 ## 字段
 
 | 字段 | 默认值 | 含义 |
@@ -63,13 +90,14 @@ required = true
 | `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
 | `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `DataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
-| `data_reader.sources.type` | `shm` | source 实现类型，第一版只支持 `shm`。 |
-| `data_reader.sources.exchange` | 无，必须显式配置 | `gate` 或 `binance`。 |
+| `data_reader.sources.type` | `shm` | source 实现类型，支持 `shm` 和 `binary_file`。 |
+| `data_reader.sources.exchange` | SHM 无默认值，必须显式配置；binary file 可省略 | `gate` 或 `binance`。binary file 中每条 `BookTicker` 自带 exchange。 |
 | `data_reader.sources.feed` | `book_ticker` | 行情类型，第一版只支持 `book_ticker`。 |
-| `data_reader.sources.shm_name` | 无，必须显式配置 | SHM segment 名称。 |
-| `data_reader.sources.channel_name` | 无，必须显式配置 | SHM channel 名称。 |
-| `data_reader.sources.start_position` | `latest` | attach 后从 `latest` 或 `earliest_visible` 开始读。 |
-| `data_reader.sources.read_mode` | `latest` | 读取语义，支持 `latest` 和 `drain`。 |
+| `data_reader.sources.shm_name` | 无，SHM 必须显式配置 | SHM segment 名称。binary file 不使用。 |
+| `data_reader.sources.channel_name` | 无，SHM 必须显式配置 | SHM channel 名称。binary file 不使用。 |
+| `data_reader.sources.files` | 无，binary file 必须显式配置 | `BookTicker` 二进制文件列表，按配置顺序读取。SHM 不使用。 |
+| `data_reader.sources.start_position` | SHM 为 `latest`，binary file 为 `earliest_visible` | attach / replay 起点；binary file 只允许 `earliest_visible`。 |
+| `data_reader.sources.read_mode` | SHM 为 `latest`，binary file 为 `drain` | 读取语义，支持 `latest` 和 `drain`；binary file 只允许 `drain`。 |
 | `data_reader.sources.required` | `true` | 预留字段；第一版 source attach 失败会直接启动失败。 |
 
 ## read_mode
@@ -85,7 +113,11 @@ required = true
 
 - 每个 source 每次 `Poll()` 最多产出 `max_events_per_source` 条。
 - 不主动跳到最后一条；除非 reader 已经落后超过 SHM ring capacity，底层 reader 会记录 overrun 并拉回可见窗口。
-- 适合需要完整事件流的验证、probe、benchmark，以及未来不能丢中间事件的 feed。
+- 适合需要完整事件流的验证、probe、benchmark、binary replay，以及未来不能丢中间事件的 feed。
+
+`binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`BinaryDataReader`
+会在构造时检查文件存在、文件大小是 `BookTicker` 大小的整数倍，并在历史文件读完后让后续 `Poll()` 返回
+0；外层 runtime 需要在 idle hook 中主动停止 replay loop。
 
 ## Poll 语义
 

@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
@@ -105,6 +106,102 @@ read_mode = "all"
   const auto result = aquila::config::ParseDataReaderConfig(parsed);
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("read_mode"), std::string::npos);
+}
+
+TEST(DataReaderConfigTest, ParsesBinaryFileSource) {
+  const std::filesystem::path first_file = SourcePath("tmp/book_ticker_1.bin");
+  const std::filesystem::path second_file = SourcePath("tmp/book_ticker_2.bin");
+  const std::string toml_text = fmt::format(
+      R"toml({}
+[data_reader]
+name = "binary_replay_reader"
+max_events_per_source = 8
+
+[[data_reader.sources]]
+name = "binary_book_ticker"
+type = "binary_file"
+feed = "book_ticker"
+files = ["{}", "{}"]
+start_position = "earliest_visible"
+read_mode = "drain"
+)toml",
+      CatalogPrefix(), first_file.string(), second_file.string());
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  const aquila::config::DataReaderSourceConfig& source =
+      result.value.sources[0];
+  EXPECT_EQ(source.name, "binary_book_ticker");
+  EXPECT_EQ(source.type, aquila::config::DataReaderSourceType::kBinaryFile);
+  EXPECT_EQ(source.feed, aquila::config::DataReaderFeed::kBookTicker);
+  EXPECT_TRUE(source.shm_name.empty());
+  EXPECT_TRUE(source.channel_name.empty());
+  EXPECT_EQ(source.start_position,
+            aquila::config::DataReaderStartPosition::kEarliestVisible);
+  EXPECT_EQ(source.read_mode, aquila::config::DataReaderReadMode::kDrain);
+  ASSERT_EQ(source.files.size(), 2U);
+  EXPECT_EQ(source.files[0], first_file);
+  EXPECT_EQ(source.files[1], second_file);
+}
+
+TEST(DataReaderConfigTest, RejectsBinaryFileWithoutFiles) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "binary_replay_reader"
+
+[[data_reader.sources]]
+name = "binary_book_ticker"
+type = "binary_file"
+feed = "book_ticker"
+read_mode = "drain"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("files"), std::string::npos);
+}
+
+TEST(DataReaderConfigTest, RejectsBinaryFileLatestReadMode) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "binary_replay_reader"
+
+[[data_reader.sources]]
+name = "binary_book_ticker"
+type = "binary_file"
+feed = "book_ticker"
+files = ["/tmp/book_ticker.bin"]
+read_mode = "latest"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("read_mode"), std::string::npos);
+}
+
+TEST(DataReaderConfigTest, RejectsBinaryFileLatestStartPosition) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "binary_replay_reader"
+
+[[data_reader.sources]]
+name = "binary_book_ticker"
+type = "binary_file"
+feed = "book_ticker"
+files = ["/tmp/book_ticker.bin"]
+start_position = "latest"
+read_mode = "drain"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("start_position"), std::string::npos);
 }
 
 TEST(DataReaderConfigTest, RejectsMissingShmNameForShmSource) {

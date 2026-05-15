@@ -53,6 +53,10 @@ void MaybeLogError(std::string_view message) {
     *type = DataReaderSourceType::kShm;
     return true;
   }
+  if (text == "binary_file") {
+    *type = DataReaderSourceType::kBinaryFile;
+    return true;
+  }
   return false;
 }
 
@@ -247,6 +251,10 @@ class DataReaderConfigParser {
       if (!ok_) {
         return;
       }
+      ParseFilesField(*source_table, &source);
+      if (!ok_) {
+        return;
+      }
 
       source.shm_name = StringOr((*source_table)["shm_name"], source.shm_name);
       source.channel_name =
@@ -267,12 +275,17 @@ class DataReaderConfigParser {
     const std::string type_text =
         StringOr(source_table["type"], std::string{"shm"});
     if (!ParseSourceType(type_text, &source->type)) {
-      Fail("data_reader.sources.type", " must be shm");
+      Fail("data_reader.sources.type", " must be shm or binary_file");
     }
   }
 
   void ParseExchangeField(const toml::table& source_table,
                           DataReaderSourceConfig* source) {
+    if (source->type == DataReaderSourceType::kBinaryFile &&
+        !source_table["exchange"]) {
+      return;
+    }
+
     const std::string exchange_text = RequiredString(
         source_table["exchange"], "data_reader.sources.exchange");
     if (!ok_) {
@@ -294,8 +307,12 @@ class DataReaderConfigParser {
 
   void ParseStartPositionField(const toml::table& source_table,
                                DataReaderSourceConfig* source) {
+    const std::string default_start_position =
+        source->type == DataReaderSourceType::kBinaryFile
+            ? std::string{"earliest_visible"}
+            : std::string{"latest"};
     const std::string start_position_text =
-        StringOr(source_table["start_position"], std::string{"latest"});
+        StringOr(source_table["start_position"], default_start_position);
     if (!ParseStartPosition(start_position_text, &source->start_position)) {
       Fail("data_reader.sources.start_position",
            " must be latest or earliest_visible");
@@ -304,10 +321,32 @@ class DataReaderConfigParser {
 
   void ParseReadModeField(const toml::table& source_table,
                           DataReaderSourceConfig* source) {
+    const std::string default_read_mode =
+        source->type == DataReaderSourceType::kBinaryFile
+            ? std::string{"drain"}
+            : std::string{"latest"};
     const std::string read_mode_text =
-        StringOr(source_table["read_mode"], std::string{"latest"});
+        StringOr(source_table["read_mode"], default_read_mode);
     if (!ParseReadMode(read_mode_text, &source->read_mode)) {
       Fail("data_reader.sources.read_mode", " must be latest or drain");
+    }
+  }
+
+  void ParseFilesField(const toml::table& source_table,
+                       DataReaderSourceConfig* source) {
+    const toml::array* files = source_table["files"].as_array();
+    if (files == nullptr) {
+      return;
+    }
+    source->files.reserve(files->size());
+    for (const toml::node& file_node : *files) {
+      const std::optional<std::string> file_path =
+          file_node.value<std::string>();
+      if (!file_path || file_path->empty()) {
+        Fail("data_reader.sources.files", " entries must be non-empty strings");
+        return;
+      }
+      source->files.emplace_back(*file_path);
     }
   }
 
@@ -319,6 +358,22 @@ class DataReaderConfigParser {
       }
       if (source.channel_name.empty()) {
         Fail("data_reader.sources.channel_name", " is required");
+        return;
+      }
+    }
+    if (source.type == DataReaderSourceType::kBinaryFile) {
+      if (source.files.empty()) {
+        Fail("data_reader.sources.files", " is required");
+        return;
+      }
+      if (source.start_position == DataReaderStartPosition::kLatest) {
+        Fail("data_reader.sources.start_position",
+             " must be earliest_visible for binary_file sources");
+        return;
+      }
+      if (source.read_mode != DataReaderReadMode::kDrain) {
+        Fail("data_reader.sources.read_mode",
+             " must be drain for binary_file sources");
         return;
       }
     }
