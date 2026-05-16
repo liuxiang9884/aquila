@@ -26,6 +26,8 @@ enum class ExecutionApplyResult : std::uint8_t {
   kAppliedDeleted,
 };
 
+class SignalEngine;
+
 struct ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
@@ -189,10 +191,6 @@ class ExecutionState {
     return groups_.size();
   }
 
-  [[nodiscard]] std::vector<ExecutionGroup>& groups() noexcept {
-    return groups_;
-  }
-
   [[nodiscard]] const std::vector<ExecutionGroup>& groups() const noexcept {
     return groups_;
   }
@@ -210,6 +208,8 @@ class ExecutionState {
   }
 
  private:
+  friend class SignalEngine;
+
   [[nodiscard]] static std::int64_t SignedFilledQuantity(
       const strategy::StrategyOrder& order,
       const InstrumentMetadata& instrument) noexcept {
@@ -243,6 +243,10 @@ class ExecutionState {
       --active_group_count_;
     }
     group = ExecutionGroup{};
+  }
+
+  [[nodiscard]] std::vector<ExecutionGroup>& mutable_groups() noexcept {
+    return groups_;
   }
 
   [[nodiscard]] ExecutionGroup* FindPendingOrder(

@@ -204,7 +204,7 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision OnLagTick(
       const PairConfig& pair, ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold) noexcept {
-    for (ExecutionGroup& group : execution.groups()) {
+    for (ExecutionGroup& group : execution.mutable_groups()) {
       if (!group.hold()) {
         continue;
       }
