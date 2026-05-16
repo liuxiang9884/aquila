@@ -33,6 +33,7 @@ constexpr std::uint64_t kCancelRequestId = 216172782113783818ULL;
 constexpr std::uint64_t kExchangeOrderId = 36028827892199865ULL;
 constexpr std::size_t kDispatchBatchSize = 512;
 constexpr std::size_t kOrderSendLatencyIterations = 4096;
+constexpr std::size_t kOrderSendWarmupCount = 512;
 constexpr std::size_t kBenchmarkPayloadBufferSize =
     512 + simdjson::SIMDJSON_PADDING;
 
@@ -291,6 +292,84 @@ struct SocketPairOrderWebSocketPolicy : websocket::DefaultWebSocketOptions {
   using TransportSocket = SocketPairOrderTransport;
 };
 
+class CountingOrderTransport {
+ public:
+  static constexpr bool kUsesTls = false;
+
+  bool Init() noexcept {
+    wants_read_ = false;
+    wants_write_ = false;
+    return true;
+  }
+
+  bool OpenAndConnect(const websocket::ConnectionConfig&) noexcept {
+    return Init();
+  }
+
+  bool FinishHandshake() noexcept {
+    return true;
+  }
+
+  ssize_t ReadSome(std::span<std::byte>) noexcept {
+    wants_read_ = true;
+    wants_write_ = false;
+    errno = EAGAIN;
+    return -1;
+  }
+
+  size_t PendingReadableBytes() const noexcept {
+    return 0;
+  }
+
+  ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
+    wants_read_ = false;
+    wants_write_ = false;
+    if (buffer.empty()) {
+      ++stats_.invalid_writes;
+      errno = EINVAL;
+      return -1;
+    }
+    ++stats_.write_calls;
+    stats_.bytes_sent += static_cast<std::uint64_t>(buffer.size());
+    return static_cast<ssize_t>(buffer.size());
+  }
+
+  bool WantsRead() const noexcept {
+    return wants_read_;
+  }
+
+  bool WantsWrite() const noexcept {
+    return wants_write_;
+  }
+
+  int NativeFd() const noexcept {
+    return -1;
+  }
+
+  void Close() noexcept {
+    wants_read_ = false;
+    wants_write_ = false;
+  }
+
+  static void ResetStats() noexcept {
+    stats_ = {};
+  }
+
+  [[nodiscard]] static SocketPairWriteStats stats() noexcept {
+    return stats_;
+  }
+
+ private:
+  bool wants_read_{false};
+  bool wants_write_{false};
+
+  inline static SocketPairWriteStats stats_{};
+};
+
+struct CountingOrderWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = CountingOrderTransport;
+};
+
 struct PaddedTextPayload {
   std::array<char, kBenchmarkPayloadBufferSize> data{};
   std::size_t size{0};
@@ -383,6 +462,23 @@ MakeGateLimitRequest() noexcept {
       .quantity = 1,
       .price_text = "81000",
       .reduce_only = false};
+}
+
+[[nodiscard]] constexpr strategy::StrategyOrder MakeStrategyPlaceOrder(
+    std::uint64_t local_order_id) noexcept {
+  return strategy::StrategyOrder{
+      .local_order_id = local_order_id,
+      .exchange_order_id = 0,
+      .exchange = Exchange::kGate,
+      .symbol_id = 7,
+      .symbol = "BTC_USDT",
+      .side = OrderSide::kBuy,
+      .type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .quantity = 1,
+      .price_text = "81000",
+      .reduce_only = false,
+  };
 }
 
 bool FormatPlaceResultPayload(std::uint64_t sequence,
@@ -619,14 +715,64 @@ void SetSocketPairWriteCounters(benchmark::State& state,
   state.counters["eagain_writes"] = static_cast<double>(stats.eagain_writes);
 }
 
+void SetOutlierCounters(benchmark::State& state,
+                        std::span<const std::uint64_t> samples_ns) {
+  std::uint64_t over_1us = 0;
+  std::uint64_t over_1us_first_256 = 0;
+  std::uint64_t over_1us_first_512 = 0;
+  std::uint64_t over_1us_after_512 = 0;
+  std::uint64_t over_2us = 0;
+  std::uint64_t over_5us = 0;
+  std::uint64_t max_index = 0;
+  std::uint64_t max_ns = 0;
+  std::uint64_t last_over_1us_index = 0;
+
+  for (std::size_t i = 0; i < samples_ns.size(); ++i) {
+    const std::uint64_t sample_ns = samples_ns[i];
+    if (sample_ns > 1'000) {
+      ++over_1us;
+      over_1us_first_256 += i < 256 ? 1 : 0;
+      over_1us_first_512 += i < 512 ? 1 : 0;
+      over_1us_after_512 += i >= 512 ? 1 : 0;
+      last_over_1us_index = static_cast<std::uint64_t>(i);
+    }
+    over_2us += sample_ns > 2'000 ? 1 : 0;
+    over_5us += sample_ns > 5'000 ? 1 : 0;
+    if (sample_ns > max_ns) {
+      max_ns = sample_ns;
+      max_index = static_cast<std::uint64_t>(i);
+    }
+  }
+
+  state.counters["over_1us"] = static_cast<double>(over_1us);
+  state.counters["over_1us_first_256"] =
+      static_cast<double>(over_1us_first_256);
+  state.counters["over_1us_first_512"] =
+      static_cast<double>(over_1us_first_512);
+  state.counters["over_1us_after_512"] =
+      static_cast<double>(over_1us_after_512);
+  state.counters["over_2us"] = static_cast<double>(over_2us);
+  state.counters["over_5us"] = static_cast<double>(over_5us);
+  state.counters["max_index"] = static_cast<double>(max_index);
+  state.counters["last_over_1us"] = static_cast<double>(last_over_1us_index);
+}
+
 [[nodiscard]] bool HasSocketWriteFailure(SocketPairWriteStats stats) noexcept {
   return stats.invalid_writes != 0 || stats.send_errors != 0 ||
          stats.eagain_writes != 0 || stats.zero_writes != 0 ||
          stats.partial_writes != 0;
 }
 
+template <typename Transport>
+void DrainTransportPeer() noexcept {
+  if constexpr (requires { Transport::DrainPeer(); }) {
+    Transport::DrainPeer();
+  }
+}
+
+template <typename Transport>
 [[nodiscard]] bool ValidateLoginSocketWrite(benchmark::State& state) {
-  const SocketPairWriteStats stats = SocketPairOrderTransport::stats();
+  const SocketPairWriteStats stats = Transport::stats();
   if (stats.write_calls != 1 || stats.bytes_sent == 0 ||
       HasSocketWriteFailure(stats)) {
     SetSocketPairWriteCounters(state, stats);
@@ -636,9 +782,10 @@ void SetSocketPairWriteCounters(benchmark::State& state,
   return true;
 }
 
+template <typename Transport>
 [[nodiscard]] bool ValidateOrderSocketWrites(benchmark::State& state,
                                              std::uint64_t expected_writes) {
-  const SocketPairWriteStats stats = SocketPairOrderTransport::stats();
+  const SocketPairWriteStats stats = Transport::stats();
   if (stats.write_calls != expected_writes || stats.bytes_sent == 0 ||
       HasSocketWriteFailure(stats)) {
     SetSocketPairWriteCounters(state, stats);
@@ -649,28 +796,42 @@ void SetSocketPairWriteCounters(benchmark::State& state,
   return true;
 }
 
-void BM_OrderSessionPlaceOrderToSocketPair(benchmark::State& state) {
-  SocketPairOrderTransport::ResetStats();
+template <typename WebSocketPolicy>
+void RunOrderSessionPlaceOrderWriteBenchmark(benchmark::State& state,
+                                             std::size_t warmup_count = 0) {
+  using Transport = typename WebSocketPolicy::TransportSocket;
+  Transport::ResetStats();
   CountingHandler handler;
-  using BenchOrderSession =
-      OrderSession<CountingHandler, SocketPairOrderWebSocketPolicy>;
+  using BenchOrderSession = OrderSession<CountingHandler, WebSocketPolicy>;
   BenchOrderSession session(
-      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      MakeOrderSessionConfig(kOrderSendLatencyIterations + warmup_count + 2,
+                             1U << 20),
       LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
-      kOrderSendLatencyIterations + 2);
+      kOrderSendLatencyIterations + warmup_count + 2);
   if (!ActivateLoginOnly(session, kLoginSuccess)) {
     state.SkipWithError("order session login setup failed");
     return;
   }
-  if (!ValidateLoginSocketWrite(state)) {
+  if (!ValidateLoginSocketWrite<Transport>(state)) {
     return;
   }
-  SocketPairOrderTransport::DrainPeer();
-  SocketPairOrderTransport::ResetStats();
+  DrainTransportPeer<Transport>();
+  Transport::ResetStats();
 
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kOrderSendLatencyIterations);
   std::uint64_t local_order_id = kLocalOrderId;
+
+  for (std::size_t i = 0; i < warmup_count; ++i) {
+    BenchOrder order = MakePlaceOrder();
+    order.local_order_id = local_order_id++;
+    if (session.PlaceOrder(order).status != OrderSendStatus::kOk) {
+      state.SkipWithError("order session warmup place order failed");
+      return;
+    }
+    DrainTransportPeer<Transport>();
+  }
+  Transport::ResetStats();
 
   for (auto _ : state) {
     BenchOrder order = MakePlaceOrder();
@@ -688,39 +849,53 @@ void BM_OrderSessionPlaceOrderToSocketPair(benchmark::State& state) {
     samples_ns.push_back(elapsed_ns);
 
     state.PauseTiming();
-    SocketPairOrderTransport::DrainPeer();
+    DrainTransportPeer<Transport>();
     state.ResumeTiming();
     std::uint64_t encoded_request_id = result.encoded_request_id;
     benchmark::DoNotOptimize(encoded_request_id);
   }
 
+  SetOutlierCounters(state, samples_ns);
   websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
                                               "orders", state.iterations());
-  (void)ValidateOrderSocketWrites(
+  (void)ValidateOrderSocketWrites<Transport>(
       state, static_cast<std::uint64_t>(state.iterations()));
 }
 
-void BM_StrategyContextPlaceLimitOrderToSocketPair(benchmark::State& state) {
-  SocketPairOrderTransport::ResetStats();
+template <typename WebSocketPolicy>
+void RunStrategyContextPlaceLimitOrderWriteBenchmark(
+    benchmark::State& state, std::size_t warmup_count = 0) {
+  using Transport = typename WebSocketPolicy::TransportSocket;
+  Transport::ResetStats();
   CountingHandler handler;
-  using BenchOrderSession =
-      OrderSession<CountingHandler, SocketPairOrderWebSocketPolicy>;
+  using BenchOrderSession = OrderSession<CountingHandler, WebSocketPolicy>;
   BenchOrderSession session(
-      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      MakeOrderSessionConfig(kOrderSendLatencyIterations + warmup_count + 2,
+                             1U << 20),
       LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
-      kOrderSendLatencyIterations + 2);
+      kOrderSendLatencyIterations + warmup_count + 2);
   if (!ActivateLoginOnly(session, kLoginSuccess)) {
     state.SkipWithError("order session login setup failed");
     return;
   }
-  if (!ValidateLoginSocketWrite(state)) {
+  if (!ValidateLoginSocketWrite<Transport>(state)) {
     return;
   }
   strategy::OrderManager<BenchOrderSession> order_manager(
-      session, kOrderSendLatencyIterations + 2);
+      session, kOrderSendLatencyIterations + warmup_count + 2);
   strategy::StrategyContext<BenchOrderSession> context(order_manager);
-  SocketPairOrderTransport::DrainPeer();
-  SocketPairOrderTransport::ResetStats();
+  DrainTransportPeer<Transport>();
+  Transport::ResetStats();
+
+  for (std::size_t i = 0; i < warmup_count; ++i) {
+    if (context.PlaceLimitOrder(MakeGateLimitRequest()).status !=
+        strategy::OrderPlaceStatus::kOk) {
+      state.SkipWithError("strategy warmup place limit order failed");
+      return;
+    }
+    DrainTransportPeer<Transport>();
+  }
+  Transport::ResetStats();
 
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kOrderSendLatencyIterations);
@@ -739,16 +914,99 @@ void BM_StrategyContextPlaceLimitOrderToSocketPair(benchmark::State& state) {
     samples_ns.push_back(elapsed_ns);
 
     state.PauseTiming();
-    SocketPairOrderTransport::DrainPeer();
+    DrainTransportPeer<Transport>();
     state.ResumeTiming();
     std::uint64_t local_order_id = result.local_order_id;
     benchmark::DoNotOptimize(local_order_id);
   }
 
+  SetOutlierCounters(state, samples_ns);
   websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
                                               "orders", state.iterations());
-  (void)ValidateOrderSocketWrites(
+  (void)ValidateOrderSocketWrites<Transport>(
       state, static_cast<std::uint64_t>(state.iterations()));
+}
+
+void BM_OrderSessionPlaceOrderToSocketPair(benchmark::State& state) {
+  RunOrderSessionPlaceOrderWriteBenchmark<SocketPairOrderWebSocketPolicy>(
+      state);
+}
+
+void BM_StrategyContextPlaceLimitOrderToSocketPair(benchmark::State& state) {
+  RunStrategyContextPlaceLimitOrderWriteBenchmark<
+      SocketPairOrderWebSocketPolicy>(state);
+}
+
+void BM_StrategyContextPlaceLimitOrderToSocketPairWarm(
+    benchmark::State& state) {
+  RunStrategyContextPlaceLimitOrderWriteBenchmark<
+      SocketPairOrderWebSocketPolicy>(state, kOrderSendWarmupCount);
+}
+
+void BM_OrderSessionPlaceOrderToCountingTransport(benchmark::State& state) {
+  RunOrderSessionPlaceOrderWriteBenchmark<CountingOrderWebSocketPolicy>(state);
+}
+
+void BM_OrderSessionPlaceStrategyOrderToCountingTransport(
+    benchmark::State& state) {
+  using Transport = CountingOrderTransport;
+  Transport::ResetStats();
+  CountingHandler handler;
+  using BenchOrderSession =
+      OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
+  BenchOrderSession session(
+      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
+      kOrderSendLatencyIterations + 2);
+  if (!ActivateLoginOnly(session, kLoginSuccess)) {
+    state.SkipWithError("order session login setup failed");
+    return;
+  }
+  if (!ValidateLoginSocketWrite<Transport>(state)) {
+    return;
+  }
+  Transport::ResetStats();
+
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kOrderSendLatencyIterations);
+  std::uint64_t strategy_order_id = 1;
+
+  for (auto _ : state) {
+    const strategy::StrategyOrder order =
+        MakeStrategyPlaceOrder(strategy_order_id++);
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    const OrderSendResult result = session.PlaceOrder(order);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    if (result.status != OrderSendStatus::kOk) {
+      state.SkipWithError("order session place order failed");
+      return;
+    }
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+
+    std::uint64_t encoded_request_id = result.encoded_request_id;
+    benchmark::DoNotOptimize(encoded_request_id);
+  }
+
+  SetOutlierCounters(state, samples_ns);
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
+  (void)ValidateOrderSocketWrites<Transport>(
+      state, static_cast<std::uint64_t>(state.iterations()));
+}
+
+void BM_StrategyContextPlaceLimitOrderToCountingTransport(
+    benchmark::State& state) {
+  RunStrategyContextPlaceLimitOrderWriteBenchmark<CountingOrderWebSocketPolicy>(
+      state);
+}
+
+void BM_StrategyContextPlaceLimitOrderToCountingTransportWarm(
+    benchmark::State& state) {
+  RunStrategyContextPlaceLimitOrderWriteBenchmark<CountingOrderWebSocketPolicy>(
+      state, kOrderSendWarmupCount);
 }
 
 BENCHMARK(BM_EncodePlaceOrder);
@@ -762,6 +1020,26 @@ BENCHMARK(BM_OrderSessionPlaceOrderToSocketPair)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_StrategyContextPlaceLimitOrderToSocketPair)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_StrategyContextPlaceLimitOrderToSocketPairWarm)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_OrderSessionPlaceOrderToCountingTransport)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_OrderSessionPlaceStrategyOrderToCountingTransport)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_StrategyContextPlaceLimitOrderToCountingTransport)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_StrategyContextPlaceLimitOrderToCountingTransportWarm)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
