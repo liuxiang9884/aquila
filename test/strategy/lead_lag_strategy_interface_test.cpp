@@ -288,6 +288,57 @@ TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
   EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     ReplayModeClearsTriggeredSyntheticGroupById) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{
+      config,
+      leadlag::StrategyOptions{
+          .position_accounting =
+              leadlag::PositionAccountingMode::kSyntheticSignals,
+      }};
+  FakeOrderSession order_session;
+  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
+                                                                 8, 4};
+  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
+  ASSERT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenLong);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 103, 170.0, 171.0), context);
+  ASSERT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenLong);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 104, 100.4, 101.4),
+                        context);
+
+  const leadlag::SignalDecision& stoploss = strategy.last_signal_decision();
+  ASSERT_TRUE(stoploss.triggered);
+  ASSERT_EQ(stoploss.action, leadlag::SignalAction::kStoplossLong);
+  ASSERT_NE(stoploss.group_id, 0U);
+  const std::uint64_t stopped_group_id = stoploss.group_id;
+  EXPECT_DOUBLE_EQ(stoploss.trailing_price, 106.0);
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 106, 100.0, 101.0), context);
+
+  const leadlag::SignalDecision& close = strategy.last_signal_decision();
+  ASSERT_TRUE(close.triggered)
+      << static_cast<int>(close.reject_reason);
+  ASSERT_EQ(close.action, leadlag::SignalAction::kCloseLong);
+  EXPECT_NE(close.group_id, stopped_group_id);
+}
+
 TEST(LeadLagStrategyInterfaceTest, FeedbackGapPausesNewOpenSignals) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;

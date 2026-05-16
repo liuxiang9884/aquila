@@ -335,28 +335,27 @@ class Strategy {
       }
       case SignalAction::kCloseLong:
       case SignalAction::kStoplossLong:
-        ClearFirstSyntheticHold(runtime, /*long_position=*/true);
+        ClearSyntheticHold(runtime, decision, /*long_position=*/true);
         break;
       case SignalAction::kCloseShort:
       case SignalAction::kStoplossShort:
-        ClearFirstSyntheticHold(runtime, /*long_position=*/false);
+        ClearSyntheticHold(runtime, decision, /*long_position=*/false);
         break;
       case SignalAction::kNone:
         break;
     }
   }
 
-  static void ClearFirstSyntheticHold(PairRuntimeState* runtime,
-                                      bool long_position) noexcept {
-    for (ExecutionGroup& group : runtime->execution.groups()) {
-      if (!group.hold()) {
-        continue;
-      }
-      if ((long_position && group.long_position()) ||
-          (!long_position && group.short_position())) {
-        group = ExecutionGroup{};
-        return;
-      }
+  static void ClearSyntheticHold(PairRuntimeState* runtime,
+                                 const SignalDecision& decision,
+                                 bool long_position) noexcept {
+    ExecutionGroup* group = runtime->execution.FindGroupById(decision.group_id);
+    if (group == nullptr || !group->hold()) {
+      return;
+    }
+    if ((long_position && group->long_position()) ||
+        (!long_position && group->short_position())) {
+      *group = ExecutionGroup{};
     }
   }
 
