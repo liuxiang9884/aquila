@@ -39,7 +39,7 @@ struct MarketSideState {
 
   [[nodiscard]] bool Update(const BookTicker& ticker) noexcept {
     const QuoteSnapshot next{
-        .local_ns = BookTickerEventTimeNs(ticker),
+        .event_ns = BookTickerEventTimeNs(ticker),
         .bid_price = ticker.bid_price,
         .ask_price = ticker.ask_price,
     };

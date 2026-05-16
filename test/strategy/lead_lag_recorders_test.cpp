@@ -13,10 +13,10 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
-leadlag::QuoteSnapshot Quote(std::int64_t local_ns, double bid_price,
+leadlag::QuoteSnapshot Quote(std::int64_t event_ns, double bid_price,
                              double ask_price) {
   return leadlag::QuoteSnapshot{
-      .local_ns = local_ns,
+      .event_ns = event_ns,
       .bid_price = bid_price,
       .ask_price = ask_price,
   };
@@ -51,12 +51,12 @@ TEST(LeadLagWindowStatsTest, MeanWindowEvictsByTimeAndKeepsBoundarySample) {
   leadlag::MeanWindow window;
   window.Init(/*window_ns=*/10, /*capacity=*/2);
 
-  window.Update(/*local_ns=*/0, /*value=*/10.0);
-  window.Update(/*local_ns=*/10, /*value=*/20.0);
+  window.Update(/*event_ns=*/0, /*value=*/10.0);
+  window.Update(/*event_ns=*/10, /*value=*/20.0);
   EXPECT_EQ(window.size(), 2U);
   EXPECT_DOUBLE_EQ(window.mean(), 15.0);
 
-  window.Update(/*local_ns=*/11, /*value=*/30.0);
+  window.Update(/*event_ns=*/11, /*value=*/30.0);
   EXPECT_EQ(window.size(), 2U);
   EXPECT_DOUBLE_EQ(window.mean(), 25.0);
 }
@@ -64,18 +64,18 @@ TEST(LeadLagWindowStatsTest, MeanWindowEvictsByTimeAndKeepsBoundarySample) {
 TEST(LeadLagWindowStatsTest, MeanWindowsEvictExpiredBeforePushing) {
   leadlag::MeanWindow mean;
   mean.Init(/*window_ns=*/10, /*capacity=*/2);
-  mean.Update(/*local_ns=*/0, /*value=*/10.0);
-  mean.Update(/*local_ns=*/10, /*value=*/20.0);
-  mean.Update(/*local_ns=*/11, /*value=*/30.0);
+  mean.Update(/*event_ns=*/0, /*value=*/10.0);
+  mean.Update(/*event_ns=*/10, /*value=*/20.0);
+  mean.Update(/*event_ns=*/11, /*value=*/30.0);
 
   EXPECT_EQ(mean.size(), 2U);
   EXPECT_EQ(mean.capacity(), 2U);
 
   leadlag::MeanStdWindow mean_std;
   mean_std.Init(/*window_ns=*/10, /*capacity=*/2);
-  mean_std.Update(/*local_ns=*/0, /*value=*/10.0);
-  mean_std.Update(/*local_ns=*/10, /*value=*/20.0);
-  mean_std.Update(/*local_ns=*/11, /*value=*/30.0);
+  mean_std.Update(/*event_ns=*/0, /*value=*/10.0);
+  mean_std.Update(/*event_ns=*/10, /*value=*/20.0);
+  mean_std.Update(/*event_ns=*/11, /*value=*/30.0);
 
   EXPECT_EQ(mean_std.size(), 2U);
   EXPECT_EQ(mean_std.capacity(), 2U);
@@ -86,7 +86,7 @@ TEST(LeadLagWindowStatsTest, MeanStdWindowComputesPopulationStd) {
   window.Init(/*window_ns=*/100, /*capacity=*/2);
 
   for (const double value : {1.0, 2.0, 3.0, 4.0}) {
-    window.Update(/*local_ns=*/1, value);
+    window.Update(/*event_ns=*/1, value);
   }
 
   EXPECT_EQ(window.size(), 4U);
@@ -125,11 +125,11 @@ TEST(LeadLagRecordersTest, BboExtremaWindowTracksRollingMinAndMax) {
   leadlag::BboExtremaWindow window;
   window.Init(/*window_ns=*/10, /*capacity=*/2);
 
-  window.Update(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+  window.Update(Quote(/*event_ns=*/0, /*bid_price=*/100.0,
                       /*ask_price=*/101.0));
-  window.Update(Quote(/*local_ns=*/5, /*bid_price=*/99.0,
+  window.Update(Quote(/*event_ns=*/5, /*bid_price=*/99.0,
                       /*ask_price=*/103.0));
-  window.Update(Quote(/*local_ns=*/10, /*bid_price=*/102.0,
+  window.Update(Quote(/*event_ns=*/10, /*bid_price=*/102.0,
                       /*ask_price=*/100.5));
 
   leadlag::BboExtremaSnapshot snapshot = window.snapshot();
@@ -139,7 +139,7 @@ TEST(LeadLagRecordersTest, BboExtremaWindowTracksRollingMinAndMax) {
   EXPECT_DOUBLE_EQ(snapshot.ask_min, 100.5);
   EXPECT_DOUBLE_EQ(snapshot.ask_max, 103.0);
 
-  window.Update(Quote(/*local_ns=*/16, /*bid_price=*/101.0,
+  window.Update(Quote(/*event_ns=*/16, /*bid_price=*/101.0,
                       /*ask_price=*/104.0));
   snapshot = window.snapshot();
   ASSERT_TRUE(snapshot.valid);
@@ -154,11 +154,11 @@ TEST(LeadLagRecordersTest, BboExtremaEvictsExpiredBeforePushing) {
   leadlag::BboExtremaWindow window;
   window.Init(/*window_ns=*/10, /*capacity=*/2, &stats);
 
-  window.Update(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+  window.Update(Quote(/*event_ns=*/0, /*bid_price=*/100.0,
                       /*ask_price=*/101.0));
-  window.Update(Quote(/*local_ns=*/10, /*bid_price=*/101.0,
+  window.Update(Quote(/*event_ns=*/10, /*bid_price=*/101.0,
                       /*ask_price=*/102.0));
-  window.Update(Quote(/*local_ns=*/11, /*bid_price=*/102.0,
+  window.Update(Quote(/*event_ns=*/11, /*bid_price=*/102.0,
                       /*ask_price=*/103.0));
 
   ASSERT_TRUE(window.snapshot().valid);
@@ -174,15 +174,15 @@ TEST(LeadLagRecordersTest, RecorderStateCountsRingQueueCapacityGrow) {
 
   leadlag::RecorderState state;
   state.Init(pair);
-  state.SeedActive(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+  state.SeedActive(Quote(/*event_ns=*/0, /*bid_price=*/100.0,
                          /*ask_price=*/101.0),
-                   Quote(/*local_ns=*/0, /*bid_price=*/99.0,
+                   Quote(/*event_ns=*/0, /*bid_price=*/99.0,
                          /*ask_price=*/100.0));
 
   [[maybe_unused]] const leadlag::MoveQuantileRoll lead_roll =
-      state.OnLeadActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/101.0,
+      state.OnLeadActiveTick(Quote(/*event_ns=*/1, /*bid_price=*/101.0,
                                    /*ask_price=*/102.0));
-  state.OnLagActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/98.5,
+  state.OnLagActiveTick(Quote(/*event_ns=*/1, /*bid_price=*/98.5,
                               /*ask_price=*/100.5));
 
   EXPECT_EQ(state.stats().ring_queue_capacity_grow_count, 5U);
@@ -197,14 +197,14 @@ TEST(LeadLagRecordersTest, RecorderStateInitResetsCapacityGrowStats) {
 
   leadlag::RecorderState state;
   state.Init(pair);
-  state.SeedActive(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+  state.SeedActive(Quote(/*event_ns=*/0, /*bid_price=*/100.0,
                          /*ask_price=*/101.0),
-                   Quote(/*local_ns=*/0, /*bid_price=*/99.0,
+                   Quote(/*event_ns=*/0, /*bid_price=*/99.0,
                          /*ask_price=*/100.0));
   [[maybe_unused]] const leadlag::MoveQuantileRoll lead_roll =
-      state.OnLeadActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/101.0,
+      state.OnLeadActiveTick(Quote(/*event_ns=*/1, /*bid_price=*/101.0,
                                    /*ask_price=*/102.0));
-  state.OnLagActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/98.5,
+  state.OnLagActiveTick(Quote(/*event_ns=*/1, /*bid_price=*/98.5,
                               /*ask_price=*/100.5));
   ASSERT_GT(state.stats().ring_queue_capacity_grow_count, 0U);
 
@@ -219,9 +219,9 @@ TEST(LeadLagRecordersTest, NoiseStateReturnsRollingMeanOfNormalizedStd) {
   noise.Init(/*mid_window_ns=*/100, /*ratio_window_ns=*/1000,
              /*capacity=*/4);
 
-  noise.Update(Quote(/*local_ns=*/0, /*bid_price=*/99.0,
+  noise.Update(Quote(/*event_ns=*/0, /*bid_price=*/99.0,
                      /*ask_price=*/101.0));
-  noise.Update(Quote(/*local_ns=*/1, /*bid_price=*/101.0,
+  noise.Update(Quote(/*event_ns=*/1, /*bid_price=*/101.0,
                      /*ask_price=*/103.0));
 
   EXPECT_NEAR(noise.value(), 0.0049504950495049506, 1e-15);
@@ -231,9 +231,9 @@ TEST(LeadLagRecordersTest, SpreadStateTracksMeanAndPositiveBuffer) {
   leadlag::SpreadState spread;
   spread.Init(/*window_ns=*/100, /*capacity=*/2);
 
-  spread.Update(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+  spread.Update(Quote(/*event_ns=*/0, /*bid_price=*/100.0,
                       /*ask_price=*/101.0));
-  spread.Update(Quote(/*local_ns=*/1, /*bid_price=*/100.0,
+  spread.Update(Quote(/*event_ns=*/1, /*bid_price=*/100.0,
                       /*ask_price=*/103.0));
 
   EXPECT_DOUBLE_EQ(spread.mean(), 2.0);
@@ -254,19 +254,19 @@ TEST(LeadLagRecordersTest, MoveQuantileWindowRollsOnlyAfterBoundary) {
   };
 
   leadlag::MoveQuantileRoll first = window.Update(
-      Quote(/*local_ns=*/10, /*bid_price=*/101.0, /*ask_price=*/104.0),
+      Quote(/*event_ns=*/10, /*bid_price=*/101.0, /*ask_price=*/104.0),
       extrema);
   EXPECT_FALSE(first.rolled);
   EXPECT_EQ(window.sample_count(), 1U);
 
   leadlag::MoveQuantileRoll boundary = window.Update(
-      Quote(/*local_ns=*/100, /*bid_price=*/101.0, /*ask_price=*/104.0),
+      Quote(/*event_ns=*/100, /*bid_price=*/101.0, /*ask_price=*/104.0),
       extrema);
   EXPECT_FALSE(boundary.rolled);
   EXPECT_EQ(window.sample_count(), 2U);
 
   leadlag::MoveQuantileRoll rolled = window.Update(
-      Quote(/*local_ns=*/101, /*bid_price=*/102.0, /*ask_price=*/103.0),
+      Quote(/*event_ns=*/101, /*bid_price=*/102.0, /*ask_price=*/103.0),
       extrema);
   ASSERT_TRUE(rolled.rolled);
   EXPECT_EQ(rolled.roll_at_ns, 200);
@@ -288,7 +288,7 @@ TEST(LeadLagRecordersTest, MoveQuantileWindowReturnsZeroForEmptyRolledWindow) {
   };
 
   const leadlag::MoveQuantileRoll rolled = window.Update(
-      Quote(/*local_ns=*/101, /*bid_price=*/101.0, /*ask_price=*/104.0),
+      Quote(/*event_ns=*/101, /*bid_price=*/101.0, /*ask_price=*/104.0),
       extrema);
 
   ASSERT_TRUE(rolled.rolled);
@@ -301,14 +301,14 @@ TEST(LeadLagRecordersTest, RecorderStateSeedsAndExposesSnapshot) {
   leadlag::RecorderState state;
   state.Init(PairConfigForRecorder());
 
-  state.SeedActive(Quote(/*local_ns=*/0, /*bid_price=*/100.0,
+  state.SeedActive(Quote(/*event_ns=*/0, /*bid_price=*/100.0,
                          /*ask_price=*/101.0),
-                   Quote(/*local_ns=*/0, /*bid_price=*/99.0,
+                   Quote(/*event_ns=*/0, /*bid_price=*/99.0,
                          /*ask_price=*/100.0));
   [[maybe_unused]] const leadlag::MoveQuantileRoll lead_roll =
-      state.OnLeadActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/101.0,
+      state.OnLeadActiveTick(Quote(/*event_ns=*/1, /*bid_price=*/101.0,
                                    /*ask_price=*/102.0));
-  state.OnLagActiveTick(Quote(/*local_ns=*/1, /*bid_price=*/98.5,
+  state.OnLagActiveTick(Quote(/*event_ns=*/1, /*bid_price=*/98.5,
                               /*ask_price=*/100.5));
 
   const leadlag::RecorderSnapshot snapshot = state.snapshot();

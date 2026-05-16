@@ -79,13 +79,13 @@ leadlag::SignalMarket OpenLongMarketForFeedback() {
   return leadlag::SignalMarket{
       .lead =
           leadlag::QuoteSnapshot{
-              .local_ns = 10,
+              .event_ns = 10,
               .bid_price = 104.0,
               .ask_price = 105.0,
           },
       .lag =
           leadlag::QuoteSnapshot{
-              .local_ns = 10,
+              .event_ns = 10,
               .bid_price = 101.5,
               .ask_price = 102.0,
           },

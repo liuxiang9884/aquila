@@ -30,7 +30,7 @@ struct BboExtremaSnapshot {
 namespace recorder_detail {
 
 struct PricePoint {
-  std::int64_t local_ns{0};
+  std::int64_t event_ns{0};
   double price{0.0};
 };
 
@@ -63,8 +63,8 @@ void EvictExpired(MonotonicDeque<PricePoint, Compare>* deque,
                   std::int64_t now_ns, std::uint64_t window_ns) {
   while (!deque->empty()) {
     const PricePoint& oldest = deque->Front();
-    if (now_ns < oldest.local_ns ||
-        static_cast<std::uint64_t>(now_ns - oldest.local_ns) <= window_ns) {
+    if (now_ns < oldest.event_ns ||
+        static_cast<std::uint64_t>(now_ns - oldest.event_ns) <= window_ns) {
       break;
     }
     deque->PopFront();
@@ -101,25 +101,25 @@ class BboExtremaWindow {
   }
 
   void Update(const QuoteSnapshot& quote) {
-    EvictExpired(quote.local_ns);
+    EvictExpired(quote.event_ns);
     recorder_detail::PushAndTrackGrow(
         &bid_min_,
-        recorder_detail::PricePoint{.local_ns = quote.local_ns,
+        recorder_detail::PricePoint{.event_ns = quote.event_ns,
                                     .price = quote.bid_price},
         stats_);
     recorder_detail::PushAndTrackGrow(
         &bid_max_,
-        recorder_detail::PricePoint{.local_ns = quote.local_ns,
+        recorder_detail::PricePoint{.event_ns = quote.event_ns,
                                     .price = quote.bid_price},
         stats_);
     recorder_detail::PushAndTrackGrow(
         &ask_min_,
-        recorder_detail::PricePoint{.local_ns = quote.local_ns,
+        recorder_detail::PricePoint{.event_ns = quote.event_ns,
                                     .price = quote.ask_price},
         stats_);
     recorder_detail::PushAndTrackGrow(
         &ask_max_,
-        recorder_detail::PricePoint{.local_ns = quote.local_ns,
+        recorder_detail::PricePoint{.event_ns = quote.event_ns,
                                     .price = quote.ask_price},
         stats_);
   }
@@ -175,10 +175,10 @@ class NoiseState {
 
   void Update(const QuoteSnapshot& quote) {
     const double mid = (quote.bid_price + quote.ask_price) * 0.5;
-    mid_window_.Update(quote.local_ns, mid);
+    mid_window_.Update(quote.event_ns, mid);
     const double mean = mid_window_.mean();
     if (mean != 0.0) {
-      ratio_window_.Update(quote.local_ns, mid_window_.stddev() / mean);
+      ratio_window_.Update(quote.event_ns, mid_window_.stddev() / mean);
     }
   }
 
@@ -203,7 +203,7 @@ class SpreadState {
   }
 
   void Update(const QuoteSnapshot& quote) {
-    spread_window_.Update(quote.local_ns, quote.ask_price - quote.bid_price);
+    spread_window_.Update(quote.event_ns, quote.ask_price - quote.bid_price);
   }
 
   [[nodiscard]] double mean() const noexcept {
@@ -250,7 +250,7 @@ class MoveQuantileWindow {
 
   [[nodiscard]] MoveQuantileRoll Update(
       const QuoteSnapshot& lead, const BboExtremaSnapshot& extrema) noexcept {
-    MoveQuantileRoll roll = RollIfNeeded(lead.local_ns);
+    MoveQuantileRoll roll = RollIfNeeded(lead.event_ns);
     if (extrema.valid) {
       up_histogram_.Add(lead.bid_price / extrema.bid_min - 1.0);
       down_histogram_.Add(lead.ask_price / extrema.ask_max - 1.0);
@@ -331,7 +331,7 @@ class RecorderState {
     lead_noise_.Clear();
     lag_noise_.Clear();
     lag_spread_.Clear();
-    move_quantile_.Reset(lead_seed.local_ns);
+    move_quantile_.Reset(lead_seed.event_ns);
 
     lead_extrema_.Update(lead_seed);
     lead_noise_.Update(lead_seed);

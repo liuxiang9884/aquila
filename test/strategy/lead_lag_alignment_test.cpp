@@ -11,10 +11,10 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
-leadlag::QuoteSnapshot Quote(std::int64_t local_ns, double bid_price,
+leadlag::QuoteSnapshot Quote(std::int64_t event_ns, double bid_price,
                              double ask_price) {
   return leadlag::QuoteSnapshot{
-      .local_ns = local_ns,
+      .event_ns = event_ns,
       .bid_price = bid_price,
       .ask_price = ask_price,
   };
@@ -128,8 +128,8 @@ TEST(LeadLagAlignmentTest, EnterActiveDriftsLeadSeedAndConsumesResumeLead) {
   ASSERT_TRUE(transition.valid);
   EXPECT_EQ(transition.trigger_role, leadlag::PairRole::kLag);
   EXPECT_TRUE(transition.resume_lead_tick);
-  EXPECT_EQ(transition.lead_seed_raw.local_ns, 90);
-  EXPECT_EQ(transition.lag_seed.local_ns, 95);
+  EXPECT_EQ(transition.lead_seed_raw.event_ns, 90);
+  EXPECT_EQ(transition.lag_seed.event_ns, 95);
   EXPECT_DOUBLE_EQ(transition.lead_seed_drifted.bid_price, 101.0);
   EXPECT_DOUBLE_EQ(transition.lead_seed_drifted.ask_price, 102.01);
 

@@ -15,10 +15,10 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
-leadlag::QuoteSnapshot Quote(std::int64_t local_ns, double bid_price,
+leadlag::QuoteSnapshot Quote(std::int64_t event_ns, double bid_price,
                              double ask_price) {
   return leadlag::QuoteSnapshot{
-      .local_ns = local_ns,
+      .event_ns = event_ns,
       .bid_price = bid_price,
       .ask_price = ask_price,
   };
@@ -62,9 +62,9 @@ leadlag::ThresholdSnapshot ThresholdForSignal() {
 
 leadlag::SignalMarket OpenLongMarket() {
   return leadlag::SignalMarket{
-      .lead = Quote(/*local_ns=*/10, /*bid_price=*/104.0,
+      .lead = Quote(/*event_ns=*/10, /*bid_price=*/104.0,
                     /*ask_price=*/105.0),
-      .lag = Quote(/*local_ns=*/10, /*bid_price=*/101.5,
+      .lag = Quote(/*event_ns=*/10, /*bid_price=*/101.5,
                    /*ask_price=*/102.0),
       .recorder =
           leadlag::RecorderSnapshot{
@@ -156,8 +156,8 @@ TEST(LeadLagSignalTest, OpenLongRejectsEachGate) {
 
 TEST(LeadLagSignalTest, OpenShortPassesMirrorGates) {
   const leadlag::SignalMarket market{
-      .lead = Quote(/*local_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
-      .lag = Quote(/*local_ns=*/10, /*bid_price=*/98.0, /*ask_price=*/98.5),
+      .lead = Quote(/*event_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
+      .lag = Quote(/*event_ns=*/10, /*bid_price=*/98.0, /*ask_price=*/98.5),
       .recorder =
           leadlag::RecorderSnapshot{
               .lead_extrema =
@@ -194,8 +194,8 @@ TEST(LeadLagSignalTest, OpenShortRejectsEachGate) {
   const leadlag::PairConfig pair = PairConfigForSignal();
   const leadlag::ThresholdSnapshot threshold = ThresholdForSignal();
   const leadlag::SignalMarket base{
-      .lead = Quote(/*local_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
-      .lag = Quote(/*local_ns=*/10, /*bid_price=*/98.0,
+      .lead = Quote(/*event_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
+      .lag = Quote(/*event_ns=*/10, /*bid_price=*/98.0,
                    /*ask_price=*/98.5),
       .recorder =
           leadlag::RecorderSnapshot{
@@ -289,8 +289,8 @@ TEST(LeadLagSignalTest, LagTickRunsStoplossBeforeSignalClose) {
             nullptr);
 
   const leadlag::SignalMarket market{
-      .lead = Quote(/*local_ns=*/10, /*bid_price=*/95.0, /*ask_price=*/96.0),
-      .lag = Quote(/*local_ns=*/10, /*bid_price=*/98.0, /*ask_price=*/98.5),
+      .lead = Quote(/*event_ns=*/10, /*bid_price=*/95.0, /*ask_price=*/96.0),
+      .lag = Quote(/*event_ns=*/10, /*bid_price=*/98.0, /*ask_price=*/98.5),
       .recorder = OpenLongMarket().recorder,
   };
 

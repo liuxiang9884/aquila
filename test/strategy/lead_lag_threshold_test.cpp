@@ -12,10 +12,10 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
-leadlag::QuoteSnapshot Quote(std::int64_t local_ns, double bid_price,
+leadlag::QuoteSnapshot Quote(std::int64_t event_ns, double bid_price,
                              double ask_price) {
   return leadlag::QuoteSnapshot{
-      .local_ns = local_ns,
+      .event_ns = event_ns,
       .bid_price = bid_price,
       .ask_price = ask_price,
   };
@@ -70,12 +70,12 @@ TEST(LeadLagThresholdTest, RollsOldMoveWindowAndKeepsCurrentTickInNewWindow) {
       .ask_max = 110.0,
   };
   EXPECT_FALSE(moves
-                   .Update(Quote(/*local_ns=*/10, /*bid_price=*/101.1,
+                   .Update(Quote(/*event_ns=*/10, /*bid_price=*/101.1,
                                  /*ask_price=*/107.69),
                            extrema)
                    .rolled);
   EXPECT_FALSE(moves
-                   .Update(Quote(/*local_ns=*/100, /*bid_price=*/102.9,
+                   .Update(Quote(/*event_ns=*/100, /*bid_price=*/102.9,
                                  /*ask_price=*/105.71),
                            extrema)
                    .rolled);
@@ -91,7 +91,7 @@ TEST(LeadLagThresholdTest, RollsOldMoveWindowAndKeepsCurrentTickInNewWindow) {
   };
 
   const leadlag::MoveQuantileRoll roll =
-      moves.Update(Quote(/*local_ns=*/101, /*bid_price=*/101.5,
+      moves.Update(Quote(/*event_ns=*/101, /*bid_price=*/101.5,
                          /*ask_price=*/106.7),
                    extrema);
   const leadlag::ThresholdSnapshot snapshot =

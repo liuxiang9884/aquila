@@ -10,7 +10,7 @@
 namespace aquila::strategy::leadlag {
 
 struct TimedValue {
-  std::int64_t local_ns{0};
+  std::int64_t event_ns{0};
   double value{0.0};
 };
 
@@ -29,11 +29,11 @@ class MeanWindow {
     sum_ = 0.0;
   }
 
-  void Update(std::int64_t local_ns, double value) {
-    EvictExpired(local_ns);
+  void Update(std::int64_t event_ns, double value) {
+    EvictExpired(event_ns);
     if (ring_queue_capacity_grow_count_ == nullptr) {
       samples_.PushBack(TimedValue{
-          .local_ns = local_ns,
+          .event_ns = event_ns,
           .value = value,
       });
       sum_ += value;
@@ -42,7 +42,7 @@ class MeanWindow {
 
     const std::size_t old_capacity = samples_.capacity();
     samples_.PushBack(TimedValue{
-        .local_ns = local_ns,
+        .event_ns = event_ns,
         .value = value,
     });
     TrackGrow(old_capacity);
@@ -72,8 +72,8 @@ class MeanWindow {
   void EvictExpired(std::int64_t now_ns) {
     while (!samples_.empty()) {
       const TimedValue& oldest = samples_.Front();
-      if (now_ns < oldest.local_ns ||
-          static_cast<std::uint64_t>(now_ns - oldest.local_ns) <= window_ns_) {
+      if (now_ns < oldest.event_ns ||
+          static_cast<std::uint64_t>(now_ns - oldest.event_ns) <= window_ns_) {
         break;
       }
       const TimedValue popped = samples_.PopFront();
@@ -110,11 +110,11 @@ class MeanStdWindow {
     sum_sq_ = 0.0;
   }
 
-  void Update(std::int64_t local_ns, double value) {
-    EvictExpired(local_ns);
+  void Update(std::int64_t event_ns, double value) {
+    EvictExpired(event_ns);
     if (ring_queue_capacity_grow_count_ == nullptr) {
       samples_.PushBack(TimedValue{
-          .local_ns = local_ns,
+          .event_ns = event_ns,
           .value = value,
       });
       sum_ += value;
@@ -124,7 +124,7 @@ class MeanStdWindow {
 
     const std::size_t old_capacity = samples_.capacity();
     samples_.PushBack(TimedValue{
-        .local_ns = local_ns,
+        .event_ns = event_ns,
         .value = value,
     });
     TrackGrow(old_capacity);
@@ -165,8 +165,8 @@ class MeanStdWindow {
   void EvictExpired(std::int64_t now_ns) {
     while (!samples_.empty()) {
       const TimedValue& oldest = samples_.Front();
-      if (now_ns < oldest.local_ns ||
-          static_cast<std::uint64_t>(now_ns - oldest.local_ns) <= window_ns_) {
+      if (now_ns < oldest.event_ns ||
+          static_cast<std::uint64_t>(now_ns - oldest.event_ns) <= window_ns_) {
         break;
       }
       const TimedValue popped = samples_.PopFront();

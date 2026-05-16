@@ -95,7 +95,7 @@ TEST(LeadLagRawMarketStateTest, SamePriceTickDoesNotReplaceLatestQuote) {
 
   const leadlag::PairMarketState* pair = state.FindPair(3);
   ASSERT_NE(pair, nullptr);
-  EXPECT_EQ(pair->lead.latest_quote.local_ns, 90);
+  EXPECT_EQ(pair->lead.latest_quote.event_ns, 90);
   EXPECT_DOUBLE_EQ(pair->lead.latest_quote.bid_price, 100.0);
   EXPECT_DOUBLE_EQ(pair->lead.latest_quote.ask_price, 101.0);
   EXPECT_FALSE(pair->lead.has_previous_quote);
@@ -112,7 +112,7 @@ TEST(LeadLagRawMarketStateTest, UsesExchangeTimestampForQuoteEventTime) {
   ASSERT_TRUE(lead.tracked);
   const leadlag::PairMarketState* pair = state.FindPair(3);
   ASSERT_NE(pair, nullptr);
-  EXPECT_EQ(pair->lead.latest_quote.local_ns, 190);
+  EXPECT_EQ(pair->lead.latest_quote.event_ns, 190);
   EXPECT_EQ(pair->last_event_ns, 190);
 }
 
@@ -131,10 +131,10 @@ TEST(LeadLagRawMarketStateTest, PriceChangePromotesPreviousQuote) {
   const leadlag::PairMarketState* pair = state.FindPair(3);
   ASSERT_NE(pair, nullptr);
   EXPECT_TRUE(pair->lead.has_previous_quote);
-  EXPECT_EQ(pair->lead.previous_quote.local_ns, 90);
+  EXPECT_EQ(pair->lead.previous_quote.event_ns, 90);
   EXPECT_DOUBLE_EQ(pair->lead.previous_quote.bid_price, 100.0);
   EXPECT_DOUBLE_EQ(pair->lead.previous_quote.ask_price, 101.0);
-  EXPECT_EQ(pair->lead.latest_quote.local_ns, 120);
+  EXPECT_EQ(pair->lead.latest_quote.event_ns, 120);
   EXPECT_DOUBLE_EQ(pair->lead.latest_quote.bid_price, 100.5);
   EXPECT_DOUBLE_EQ(pair->lead.latest_quote.ask_price, 101.5);
 }
@@ -159,15 +159,15 @@ TEST(LeadLagRawMarketStateTest, ActiveSeedUsesPreviousQuoteAndResumeFlag) {
       pair->SelectActiveSeed(leadlag::PairRole::kLag, true);
   EXPECT_TRUE(lag_trigger_seed.valid);
   EXPECT_TRUE(lag_trigger_seed.resume_lead_tick);
-  EXPECT_EQ(lag_trigger_seed.lead.local_ns, 90);
-  EXPECT_EQ(lag_trigger_seed.lag.local_ns, 100);
+  EXPECT_EQ(lag_trigger_seed.lead.event_ns, 90);
+  EXPECT_EQ(lag_trigger_seed.lag.event_ns, 100);
 
   const leadlag::ActiveSeed lead_trigger_seed =
       pair->SelectActiveSeed(leadlag::PairRole::kLead, true);
   EXPECT_TRUE(lead_trigger_seed.valid);
   EXPECT_FALSE(lead_trigger_seed.resume_lead_tick);
-  EXPECT_EQ(lead_trigger_seed.lead.local_ns, 90);
-  EXPECT_EQ(lead_trigger_seed.lag.local_ns, 120);
+  EXPECT_EQ(lead_trigger_seed.lead.event_ns, 90);
+  EXPECT_EQ(lead_trigger_seed.lag.event_ns, 120);
 }
 
 }  // namespace

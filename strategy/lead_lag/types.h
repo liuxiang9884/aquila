@@ -12,7 +12,7 @@ enum class PairRole : std::uint8_t {
 };
 
 struct QuoteSnapshot {
-  std::int64_t local_ns{0};
+  std::int64_t event_ns{0};
   double bid_price{0.0};
   double ask_price{0.0};
 };

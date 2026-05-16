@@ -572,7 +572,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 - pair config 同时写 `symbol` 和 `symbol_id`；`strategy/lead_lag/config.cpp` 启动期用 lead / lag 两边 `instrument_catalog` 记录校验一致性，并拒绝重复 `symbol_id`。
 - 交易基础信息从 lag `InstrumentInfo` 压缩成运行期 metadata；策略运行期不保存完整 `InstrumentInfo*`。当前已解析 `price_tick`、`price_decimal_places`、`quantity_step`、`quantity_decimal_places`、`min_quantity`、`max_quantity`、`notional_multiplier` 和 `lag_taker_fee`。
 - `open_notional` 表示每次开仓目标名义金额；Gate futures 下单 quantity 换算必须使用 `notional_multiplier`。
-- raw market state 已在 `strategy/lead_lag/raw_market_state.h` 落地：不保存完整 `BookTicker`，只保存 `QuoteSnapshot{local_ns,bid_price,ask_price}`、`previous_quote` 和对应 valid flag；策略窗口时间使用 `BookTicker.local_ns`。
+- raw market state 已在 `strategy/lead_lag/raw_market_state.h` 落地：不保存完整 `BookTicker`，只保存 `QuoteSnapshot{event_ns,bid_price,ask_price}`、`previous_quote` 和对应 valid flag；策略窗口时间使用 `BookTickerEventTimeNs(ticker)`，即优先 `BookTicker.exchange_ns`，缺失时 fallback 到 `BookTicker.local_ns`。
 - `price_changed` 只比较 bid / ask price，不比较 volume；same-price raw tick 不替换 quote，但两边 `has_quote` 后仍用已保存 quote 推进 drift / alignment。
 - Active 切换时使用 previous quote seed，lag tick 触发 Active 后下一笔 lead tick 即使 same-price 也允许 resume 一次 lead handler。
 - `BboExtremaWindow` 语义是 rolling `bbo_record.window` 内 bid / ask min/max；fixed Go 使用本地自定义 `MonotonicQueue`，正常 update 摊还 `O(1)`、min/max 查询 `O(1)`。Aquila 选择 vector-backed monotonic deque，启动期按 `extrema_window_capacity` reserve，允许 vector 自动扩容保证计算准确性；当前 `RecorderStats.extrema_capacity_grow_count` 只统计 extrema 内部队列扩容总次数，不记录具体 symbol / exchange / vector / capacity，也不在扩容点写 log。
@@ -586,7 +586,7 @@ doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 
 当前 pending：
 
-- BBO extrema 在 fixed Go 中使用 `bbo.ServerTime` 做窗口淘汰，而 `aquila` 第一版设计倾向统一使用 `BookTicker.local_ns`；严格 fixed replay 对账前需要确认是否要给 extrema 注入 fixed-compatible server timestamp。
+- BBO extrema 在 fixed Go 中使用 `bbo.ServerTime` 做窗口淘汰；Aquila 当前统一使用 `BookTickerEventTimeNs(ticker)` 填充 `QuoteSnapshot.event_ns` 并驱动 recorder 窗口。严格 fixed replay 对账前仍需确认该时间口径是否完全兼容 fixed。
 - 第 1-7 部分模块测试入口是 `lead_lag_config_test`、`lead_lag_raw_market_state_test`、`lead_lag_recorders_test`、`lead_lag_alignment_test`、`lead_lag_threshold_test`、`lead_lag_signal_test` 和 `lead_lag_feedback_state_test`。下一步是把这些模块接入 `leadlag::Strategy::OnBookTicker()` / `OnOrderResponse()` / `OnOrderFeedback()`，并补 strategy-level 主链路测试；随后再补 dry-run runtime 工具和 fixed Go replay 对账入口。
 
 ### 期货合约元数据
@@ -857,7 +857,7 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 2. 读取 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`。
 3. 参考 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/leadlag/algo/` 中的 fixed Go 源码，尤其是 `strategy.go`、`analysis.go`、`move.go`、`cost_model.go` 和 `execute_cache.go`。
 4. 第 1-7 部分 `aquila` C++ 策略层模块已落地，测试入口是 `ctest --test-dir build/debug -R lead_lag --output-on-failure`。
-5. 在实现计划前，先决定 BBO extrema 是否继续用 `BookTicker.local_ns`，还是为了 fixed replay 对账引入 server timestamp 输入。
+5. 在实现计划前，先确认 BBO extrema 当前使用的 `BookTickerEventTimeNs(ticker)` 是否足够匹配 fixed replay，对账不一致时再评估是否引入独立 server timestamp 输入。
 6. 下一步先读取 `strategy/lead_lag/strategy.h`、`raw_market_state.h`、`alignment.h`、`recorders.h`、`threshold.h`、`signal.h` 和 `execution_state.h`，给出最小集成 plan。
 7. 优先把 raw market state、alignment、recorder、threshold 和 signal 接入 `leadlag::Strategy::OnBookTicker()`，形成 tick 流触发 order intent 的最小闭环；随后串 `OnOrderResponse()` / `OnOrderFeedback()` execution state，补 strategy-level 主链路测试，再考虑 dry-run runtime 工具和 fixed Go replay 对账测试。
 
