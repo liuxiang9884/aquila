@@ -46,6 +46,7 @@ struct SignalDiagnostics {
   ThresholdSnapshot threshold;
   RecorderSnapshot recorder;
   std::size_t active_group_count{0};
+  std::uint64_t group_id{0};
   PositionDirection position_direction{PositionDirection::kNone};
   double trailing_price{0.0};
 };
@@ -66,7 +67,7 @@ class Strategy {
   template <typename ContextT>
   void OnBookTicker(const BookTicker& ticker, ContextT&) noexcept {
     last_signal_decision_ = {};
-    last_signal_diagnostics_ = {};
+    last_signal_diagnostics_valid_ = false;
     last_market_update_ = raw_market_state_.OnBookTicker(ticker);
     if (!last_market_update_.tracked) {
       return;
@@ -174,6 +175,10 @@ class Strategy {
     return last_signal_diagnostics_;
   }
 
+  [[nodiscard]] bool last_signal_diagnostics_valid() const noexcept {
+    return last_signal_diagnostics_valid_;
+  }
+
  private:
   struct PairRuntimeState {
     bool initialized{false};
@@ -266,6 +271,7 @@ class Strategy {
     if (last_signal_decision_.triggered) {
       last_signal_diagnostics_ = BuildSignalDiagnostics(
           *runtime, market, drifted_lead, recorder, alignment, threshold);
+      last_signal_diagnostics_valid_ = true;
     }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
@@ -297,6 +303,7 @@ class Strategy {
       last_signal_diagnostics_ = BuildSignalDiagnostics(
           *runtime, market, runtime->drifted_lead, recorder, alignment,
           threshold);
+      last_signal_diagnostics_valid_ = true;
     }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
@@ -369,10 +376,10 @@ class Strategy {
         .threshold = threshold,
         .recorder = recorder,
         .active_group_count = runtime.execution.active_group_count(),
+        .group_id = last_signal_decision_.group_id,
         .position_direction =
             PositionDirectionForAction(last_signal_decision_.action),
-        .trailing_price =
-            TrailingPriceForAction(runtime.execution, last_signal_decision_),
+        .trailing_price = last_signal_decision_.trailing_price,
     };
   }
 
@@ -393,26 +400,6 @@ class Strategy {
     return PositionDirection::kNone;
   }
 
-  [[nodiscard]] static double TrailingPriceForAction(
-      const ExecutionState& execution,
-      const SignalDecision& decision) noexcept {
-    const PositionDirection direction =
-        PositionDirectionForAction(decision.action);
-    if (direction == PositionDirection::kNone) {
-      return 0.0;
-    }
-    for (const ExecutionGroup& group : execution.groups()) {
-      if (!group.hold()) {
-        continue;
-      }
-      if ((direction == PositionDirection::kLong && group.long_position()) ||
-          (direction == PositionDirection::kShort && group.short_position())) {
-        return group.trailing_price;
-      }
-    }
-    return 0.0;
-  }
-
   Config config_;
   StrategyOptions options_;
   RawMarketState raw_market_state_;
@@ -420,6 +407,7 @@ class Strategy {
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
   SignalDiagnostics last_signal_diagnostics_;
+  bool last_signal_diagnostics_valid_{false};
   bool degraded_{false};
   bool stop_requested_{false};
 };

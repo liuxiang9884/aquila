@@ -53,6 +53,8 @@ struct SignalDecision {
   bool triggered{false};
   SignalAction action{SignalAction::kNone};
   SignalRejectReason reject_reason{SignalRejectReason::kNone};
+  std::uint64_t group_id{0};
+  double trailing_price{0.0};
   OrderIntent intent;
 };
 
@@ -254,8 +256,10 @@ class SignalEngine {
     if (lag_diff >= threshold.up_exit) {
       return {};
     }
-    return Trigger(SignalAction::kCloseLong, pair, OrderSide::kSell,
-                   market.lag.bid_price, /*reduce_only=*/true);
+    return AttachGroup(
+        Trigger(SignalAction::kCloseLong, pair, OrderSide::kSell,
+                market.lag.bid_price, /*reduce_only=*/true),
+        group);
   }
 
   [[nodiscard]] static SignalDecision TryCloseShort(
@@ -268,8 +272,10 @@ class SignalEngine {
     if (lag_diff <= threshold.down_exit) {
       return {};
     }
-    return Trigger(SignalAction::kCloseShort, pair, OrderSide::kBuy,
-                   market.lag.ask_price, /*reduce_only=*/true);
+    return AttachGroup(
+        Trigger(SignalAction::kCloseShort, pair, OrderSide::kBuy,
+                market.lag.ask_price, /*reduce_only=*/true),
+        group);
   }
 
   [[nodiscard]] static SignalDecision TryStoplossLong(
@@ -285,8 +291,10 @@ class SignalEngine {
     if (fallback > -pair.execute.trailing_stop) {
       return {};
     }
-    return Trigger(SignalAction::kStoplossLong, pair, OrderSide::kSell,
-                   market.lag.bid_price * 0.995, /*reduce_only=*/true);
+    return AttachGroup(
+        Trigger(SignalAction::kStoplossLong, pair, OrderSide::kSell,
+                market.lag.bid_price * 0.995, /*reduce_only=*/true),
+        *group);
   }
 
   [[nodiscard]] static SignalDecision TryStoplossShort(
@@ -303,8 +311,10 @@ class SignalEngine {
     if (fallback > -pair.execute.trailing_stop) {
       return {};
     }
-    return Trigger(SignalAction::kStoplossShort, pair, OrderSide::kBuy,
-                   market.lag.ask_price * 1.005, /*reduce_only=*/true);
+    return AttachGroup(
+        Trigger(SignalAction::kStoplossShort, pair, OrderSide::kBuy,
+                market.lag.ask_price * 1.005, /*reduce_only=*/true),
+        *group);
   }
 
   [[nodiscard]] static SignalDecision Reject(
@@ -329,6 +339,13 @@ class SignalEngine {
                 .reduce_only = reduce_only,
             },
     };
+  }
+
+  [[nodiscard]] static SignalDecision AttachGroup(
+      SignalDecision decision, const ExecutionGroup& group) noexcept {
+    decision.group_id = group.group_id;
+    decision.trailing_price = group.trailing_price;
+    return decision;
   }
 };
 

@@ -114,6 +114,7 @@ strategy::leadlag::SignalDiagnostics Diagnostics() {
               .lag_spread_mean = 0.01,
           },
       .active_group_count = 1,
+      .group_id = 42,
       .position_direction = strategy::leadlag::PositionDirection::kLong,
       .trailing_price = 2.05,
   };
@@ -151,17 +152,17 @@ TEST(SignalCsvWriterTest, WritesHeaderAndRowsThroughQuillCsvWriter) {
       "lead_drifted_ask,lag_event_ns,lag_bid,lag_ask,drift_mean,"
       "drift_ready,drift_deviation,up_entry,down_entry,up_exit,down_exit,"
       "lag_spread_mean,lead_noise,lag_noise,active_group_count,"
-      "position_direction,trailing_price\n"
+      "group_id,position_direction,trailing_price\n"
       "7,3,kGate,kLead,1776211200000000000,1776211200000001000,"
       "1776211200000000000,true,kOpenLong,kBuy,2.12345678901,false,"
       "1776211199999999000,2.1,2.2,1776211199999999000,2.11,2.21,"
       "1776211200000000000,2,2.01,1.00476190476,true,0.0003,0.004,"
-      "-0.004,0.001,-0.001,0.01,0.00011,0.00022,1,kLong,2.05\n"
+      "-0.004,0.001,-0.001,0.01,0.00011,0.00022,1,42,kLong,2.05\n"
       "8,3,kGate,kLead,1776211200000002000,1776211200000003000,"
       "1776211200000000000,true,kCloseLong,kSell,2.2,true,"
       "1776211199999999000,2.1,2.2,1776211199999999000,2.11,2.21,"
       "1776211200000000000,2,2.01,1.00476190476,true,0.0003,0.004,"
-      "-0.004,0.001,-0.001,0.01,0.00011,0.00022,1,kLong,2.05\n");
+      "-0.004,0.001,-0.001,0.01,0.00011,0.00022,1,42,kLong,2.05\n");
 }
 
 }  // namespace

@@ -22,11 +22,11 @@ struct SignalCsvSchema {
       "lead_drifted_ask,lag_event_ns,lag_bid,lag_ask,drift_mean,"
       "drift_ready,drift_deviation,up_entry,down_entry,up_exit,down_exit,"
       "lag_spread_mean,lead_noise,lag_noise,active_group_count,"
-      "position_direction,trailing_price";
+      "group_id,position_direction,trailing_price";
   static constexpr char const* format =
       "{},{},{},{},{},{},{},{},{},{},{:.12g},{},{},{:.12g},{:.12g},{},"
       "{:.12g},{:.12g},{},{:.12g},{:.12g},{:.12g},{},{:.12g},{:.12g},"
-      "{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{},{},{:.12g}";
+      "{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{},{},{},{:.12g}";
 };
 
 class SignalCsvWriter {

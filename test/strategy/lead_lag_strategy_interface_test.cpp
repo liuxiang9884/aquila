@@ -194,10 +194,13 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(decision.group_id, 0U);
+  EXPECT_DOUBLE_EQ(decision.trailing_price, 0.0);
   EXPECT_EQ(decision.intent.side, aquila::OrderSide::kBuy);
   EXPECT_FALSE(decision.intent.reduce_only);
   EXPECT_EQ(decision.intent.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(decision.intent.symbol_id, 3);
+  EXPECT_TRUE(strategy.last_signal_diagnostics_valid());
 
   const leadlag::SignalDiagnostics& diagnostics =
       strategy.last_signal_diagnostics();
@@ -213,6 +216,7 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
   EXPECT_EQ(diagnostics.position_direction,
             leadlag::PositionDirection::kLong);
   EXPECT_EQ(diagnostics.active_group_count, 0U);
+  EXPECT_EQ(diagnostics.group_id, 0U);
   EXPECT_DOUBLE_EQ(diagnostics.trailing_price, 0.0);
 }
 
@@ -267,8 +271,21 @@ TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kCloseLong);
+  EXPECT_NE(decision.group_id, 0U);
+  EXPECT_DOUBLE_EQ(decision.trailing_price, 102.0);
   EXPECT_EQ(decision.intent.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(decision.intent.reduce_only);
+
+  EXPECT_TRUE(strategy.last_signal_diagnostics_valid());
+  const leadlag::SignalDiagnostics& diagnostics =
+      strategy.last_signal_diagnostics();
+  EXPECT_EQ(diagnostics.group_id, decision.group_id);
+  EXPECT_DOUBLE_EQ(diagnostics.trailing_price, 102.0);
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
 }
 
 TEST(LeadLagStrategyInterfaceTest, FeedbackGapPausesNewOpenSignals) {

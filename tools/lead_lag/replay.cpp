@@ -111,7 +111,7 @@ class ReplayStrategy {
     }
 
     RecordSignal(decision);
-    if (signal_writer_ != nullptr) {
+    if (signal_writer_ != nullptr && inner_.last_signal_diagnostics_valid()) {
       signal_writer_->Write(ticker, decision,
                             inner_.last_signal_diagnostics());
     }

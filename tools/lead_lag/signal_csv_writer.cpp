@@ -45,7 +45,7 @@ void SignalCsvWriter::Write(
       diagnostics.threshold.down_entry, diagnostics.threshold.up_exit,
       diagnostics.threshold.down_exit, diagnostics.recorder.lag_spread_mean,
       diagnostics.recorder.lead_noise, diagnostics.recorder.lag_noise,
-      diagnostics.active_group_count,
+      diagnostics.active_group_count, diagnostics.group_id,
       magic_enum::enum_name(diagnostics.position_direction),
       diagnostics.trailing_price);
 }
