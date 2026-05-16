@@ -1,15 +1,11 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <utility>
 
 #include <CLI/CLI.hpp>
 #include <fmt/core.h>
-#include <fmt/format.h>
-#include <magic_enum/magic_enum.hpp>
 #include <toml++/toml.hpp>
 
 #include "core/config/data_reader_config.h"
@@ -23,6 +19,7 @@
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/signal.h"
 #include "strategy/lead_lag/strategy.h"
+#include "tools/lead_lag/signal_csv_writer.h"
 
 namespace {
 
@@ -30,6 +27,7 @@ namespace config = aquila::config;
 namespace leadlag = aquila::strategy::leadlag;
 namespace market_data = aquila::market_data;
 namespace strategy = aquila::strategy;
+namespace tools_lead_lag = aquila::tools::lead_lag;
 
 struct CliOptions {
   std::filesystem::path config_path{
@@ -85,55 +83,11 @@ struct NullOrderSession {
   }
 };
 
-class SignalCsvWriter {
- public:
-  SignalCsvWriter() = default;
-
-  SignalCsvWriter(const SignalCsvWriter&) = delete;
-  SignalCsvWriter& operator=(const SignalCsvWriter&) = delete;
-
-  [[nodiscard]] bool Open(const std::filesystem::path& path,
-                          std::string* error) {
-    output_.open(path, std::ios::out | std::ios::trunc);
-    if (!output_.is_open()) {
-      if (error != nullptr) {
-        *error =
-            fmt::format("failed to open signals output '{}'", path.string());
-      }
-      return false;
-    }
-    fmt::format_to(std::ostreambuf_iterator<char>(output_),
-                   "ticker_id,symbol_id,exchange_ns,local_ns,action,side,"
-                   "price,reduce_only\n");
-    return true;
-  }
-
-  void Write(const aquila::BookTicker& ticker,
-             const leadlag::SignalDecision& decision) noexcept {
-    if (!output_.is_open()) {
-      return;
-    }
-    fmt::format_to(std::ostreambuf_iterator<char>(output_),
-                   "{},{},{},{},{},{},{:.12g},{}\n", ticker.id,
-                   ticker.symbol_id, ticker.exchange_ns, ticker.local_ns,
-                   magic_enum::enum_name(decision.action),
-                   magic_enum::enum_name(decision.intent.side),
-                   decision.intent.price,
-                   decision.intent.reduce_only ? "true" : "false");
-  }
-
-  void Close() {
-    output_.close();
-  }
-
- private:
-  std::ofstream output_;
-};
-
 class ReplayStrategy {
  public:
   ReplayStrategy(leadlag::Config config, leadlag::StrategyOptions options,
-                 ReplayStats* stats, SignalCsvWriter* signal_writer)
+                 ReplayStats* stats,
+                 tools_lead_lag::SignalCsvWriter* signal_writer)
       : inner_(std::move(config), options),
         stats_(stats),
         signal_writer_(signal_writer) {}
@@ -210,7 +164,7 @@ class ReplayStrategy {
 
   leadlag::Strategy inner_;
   ReplayStats* stats_{};
-  SignalCsvWriter* signal_writer_{};
+  tools_lead_lag::SignalCsvWriter* signal_writer_{};
   bool stop_requested_{false};
 };
 
@@ -312,8 +266,8 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
       strategy::StrategyRuntime<ReplayStrategy, NullOrderSession, BinaryReader>;
 
   ReplayStats stats;
-  SignalCsvWriter signal_writer;
-  SignalCsvWriter* signal_writer_ptr = nullptr;
+  tools_lead_lag::SignalCsvWriter signal_writer;
+  tools_lead_lag::SignalCsvWriter* signal_writer_ptr = nullptr;
   if (!options.signals_output_path.empty()) {
     std::string error;
     if (!signal_writer.Open(options.signals_output_path, &error)) {

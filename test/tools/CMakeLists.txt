@@ -1,3 +1,4 @@
 add_subdirectory(gate)
 add_subdirectory(benchmark)
 add_subdirectory(tardis)
+add_subdirectory(lead_lag)
