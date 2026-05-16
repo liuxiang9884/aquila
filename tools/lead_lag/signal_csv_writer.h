@@ -10,13 +10,23 @@
 #include "core/market_data/types.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/signal.h"
+#include "strategy/lead_lag/strategy.h"
 
 namespace aquila::tools::lead_lag {
 
 struct SignalCsvSchema {
   static constexpr char const* header =
-      "ticker_id,symbol_id,exchange_ns,local_ns,action,side,price,reduce_only";
-  static constexpr char const* format = "{},{},{},{},{},{},{:.12g},{}";
+      "ticker_id,symbol_id,exchange,role,exchange_ns,local_ns,event_ns,"
+      "price_changed,action,side,price,reduce_only,lead_raw_event_ns,"
+      "lead_raw_bid,lead_raw_ask,lead_drifted_event_ns,lead_drifted_bid,"
+      "lead_drifted_ask,lag_event_ns,lag_bid,lag_ask,drift_mean,"
+      "drift_ready,drift_deviation,up_entry,down_entry,up_exit,down_exit,"
+      "lag_spread_mean,lead_noise,lag_noise,active_group_count,"
+      "position_direction,trailing_price";
+  static constexpr char const* format =
+      "{},{},{},{},{},{},{},{},{},{},{:.12g},{},{},{:.12g},{:.12g},{},"
+      "{:.12g},{:.12g},{},{:.12g},{:.12g},{:.12g},{},{:.12g},{:.12g},"
+      "{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{},{},{:.12g}";
 };
 
 class SignalCsvWriter {
@@ -34,7 +44,8 @@ class SignalCsvWriter {
   [[nodiscard]] bool Open(const std::filesystem::path& path,
                           std::string* error);
   void Write(const BookTicker& ticker,
-             const strategy::leadlag::SignalDecision& decision) noexcept;
+             const strategy::leadlag::SignalDecision& decision,
+             const strategy::leadlag::SignalDiagnostics& diagnostics) noexcept;
   void Close();
 
  private:

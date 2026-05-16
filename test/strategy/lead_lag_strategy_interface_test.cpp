@@ -198,6 +198,22 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
   EXPECT_FALSE(decision.intent.reduce_only);
   EXPECT_EQ(decision.intent.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(decision.intent.symbol_id, 3);
+
+  const leadlag::SignalDiagnostics& diagnostics =
+      strategy.last_signal_diagnostics();
+  EXPECT_EQ(diagnostics.role, leadlag::PairRole::kLead);
+  EXPECT_TRUE(diagnostics.price_changed);
+  EXPECT_EQ(diagnostics.event_ns, 91);
+  EXPECT_EQ(diagnostics.lead_raw.event_ns, 91);
+  EXPECT_DOUBLE_EQ(diagnostics.lead_raw.bid_price, 112.0);
+  EXPECT_DOUBLE_EQ(diagnostics.lead_raw.ask_price, 113.0);
+  EXPECT_EQ(diagnostics.lag.event_ns, 90);
+  EXPECT_DOUBLE_EQ(diagnostics.lag.bid_price, 101.5);
+  EXPECT_DOUBLE_EQ(diagnostics.lag.ask_price, 102.0);
+  EXPECT_EQ(diagnostics.position_direction,
+            leadlag::PositionDirection::kLong);
+  EXPECT_EQ(diagnostics.active_group_count, 0U);
+  EXPECT_DOUBLE_EQ(diagnostics.trailing_price, 0.0);
 }
 
 TEST(LeadLagStrategyInterfaceTest, DefaultModeDoesNotCreateSyntheticHold) {

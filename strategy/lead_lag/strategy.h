@@ -29,6 +29,27 @@ struct StrategyOptions {
       PositionAccountingMode::kExternalOrders};
 };
 
+enum class PositionDirection : std::uint8_t {
+  kNone,
+  kLong,
+  kShort,
+};
+
+struct SignalDiagnostics {
+  std::int64_t event_ns{0};
+  PairRole role{PairRole::kNone};
+  bool price_changed{false};
+  QuoteSnapshot lead_raw;
+  QuoteSnapshot lead_drifted;
+  QuoteSnapshot lag;
+  AlignmentSnapshot alignment;
+  ThresholdSnapshot threshold;
+  RecorderSnapshot recorder;
+  std::size_t active_group_count{0};
+  PositionDirection position_direction{PositionDirection::kNone};
+  double trailing_price{0.0};
+};
+
 class Strategy {
  public:
   explicit Strategy(Config config, StrategyOptions options = {})
@@ -45,6 +66,7 @@ class Strategy {
   template <typename ContextT>
   void OnBookTicker(const BookTicker& ticker, ContextT&) noexcept {
     last_signal_decision_ = {};
+    last_signal_diagnostics_ = {};
     last_market_update_ = raw_market_state_.OnBookTicker(ticker);
     if (!last_market_update_.tracked) {
       return;
@@ -147,6 +169,11 @@ class Strategy {
     return last_signal_decision_;
   }
 
+  [[nodiscard]] const SignalDiagnostics& last_signal_diagnostics()
+      const noexcept {
+    return last_signal_diagnostics_;
+  }
+
  private:
   struct PairRuntimeState {
     bool initialized{false};
@@ -236,6 +263,10 @@ class Strategy {
                                      .recorder = recorder,
                                  },
                                  threshold, alignment);
+    if (last_signal_decision_.triggered) {
+      last_signal_diagnostics_ = BuildSignalDiagnostics(
+          *runtime, market, drifted_lead, recorder, alignment, threshold);
+    }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
     }
@@ -250,14 +281,23 @@ class Strategy {
       runtime->has_drifted_lead = true;
     }
 
+    const RecorderSnapshot recorder = runtime->recorder.snapshot();
+    const ThresholdSnapshot threshold = runtime->threshold.snapshot();
+
     last_signal_decision_ =
         SignalEngine::OnLagTick(runtime->pair, runtime->execution,
                                 SignalMarket{
                                     .lead = runtime->drifted_lead,
                                     .lag = market.lag.latest_quote,
-                                    .recorder = runtime->recorder.snapshot(),
+                                    .recorder = recorder,
                                 },
-                                runtime->threshold.snapshot());
+                                threshold);
+    if (last_signal_decision_.triggered) {
+      const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
+      last_signal_diagnostics_ = BuildSignalDiagnostics(
+          *runtime, market, runtime->drifted_lead, recorder, alignment,
+          threshold);
+    }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
     }
@@ -313,12 +353,73 @@ class Strategy {
     }
   }
 
+  [[nodiscard]] SignalDiagnostics BuildSignalDiagnostics(
+      const PairRuntimeState& runtime, const PairMarketState& market,
+      const QuoteSnapshot& lead_drifted, const RecorderSnapshot& recorder,
+      const AlignmentSnapshot& alignment,
+      const ThresholdSnapshot& threshold) const noexcept {
+    return SignalDiagnostics{
+        .event_ns = market.last_event_ns,
+        .role = last_market_update_.role,
+        .price_changed = last_market_update_.price_changed,
+        .lead_raw = market.lead.latest_quote,
+        .lead_drifted = lead_drifted,
+        .lag = market.lag.latest_quote,
+        .alignment = alignment,
+        .threshold = threshold,
+        .recorder = recorder,
+        .active_group_count = runtime.execution.active_group_count(),
+        .position_direction =
+            PositionDirectionForAction(last_signal_decision_.action),
+        .trailing_price =
+            TrailingPriceForAction(runtime.execution, last_signal_decision_),
+    };
+  }
+
+  [[nodiscard]] static PositionDirection PositionDirectionForAction(
+      SignalAction action) noexcept {
+    switch (action) {
+      case SignalAction::kOpenLong:
+      case SignalAction::kCloseLong:
+      case SignalAction::kStoplossLong:
+        return PositionDirection::kLong;
+      case SignalAction::kOpenShort:
+      case SignalAction::kCloseShort:
+      case SignalAction::kStoplossShort:
+        return PositionDirection::kShort;
+      case SignalAction::kNone:
+        return PositionDirection::kNone;
+    }
+    return PositionDirection::kNone;
+  }
+
+  [[nodiscard]] static double TrailingPriceForAction(
+      const ExecutionState& execution,
+      const SignalDecision& decision) noexcept {
+    const PositionDirection direction =
+        PositionDirectionForAction(decision.action);
+    if (direction == PositionDirection::kNone) {
+      return 0.0;
+    }
+    for (const ExecutionGroup& group : execution.groups()) {
+      if (!group.hold()) {
+        continue;
+      }
+      if ((direction == PositionDirection::kLong && group.long_position()) ||
+          (direction == PositionDirection::kShort && group.short_position())) {
+        return group.trailing_price;
+      }
+    }
+    return 0.0;
+  }
+
   Config config_;
   StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
+  SignalDiagnostics last_signal_diagnostics_;
   bool degraded_{false};
   bool stop_requested_{false};
 };
