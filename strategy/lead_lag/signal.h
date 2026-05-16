@@ -170,14 +170,10 @@ class SignalEngine {
   }
 
   [[nodiscard]] static SignalDecision OnLeadTick(
-      const PairConfig& pair, ExecutionState& execution,
+      const PairConfig& pair, const ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold,
       const AlignmentSnapshot& alignment) noexcept {
-    std::size_t active_group_count = 0;
-    for (ExecutionGroup& group : execution.groups()) {
-      if (group.active()) {
-        ++active_group_count;
-      }
+    for (const ExecutionGroup& group : execution.groups()) {
       if (!group.hold()) {
         continue;
       }
@@ -188,7 +184,7 @@ class SignalEngine {
         return close;
       }
     }
-    if (active_group_count >= execution.capacity()) {
+    if (execution.active_group_count() >= execution.capacity()) {
       return Reject(SignalRejectReason::kParallelLimit);
     }
     if (execution.new_entries_paused()) {
