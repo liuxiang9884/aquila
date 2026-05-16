@@ -224,6 +224,29 @@ TEST(LeadLagFeedbackStateTest, RejectedCloseReturnsExistingPositionToHold) {
   EXPECT_EQ(updated->local_order_id, 0U);
 }
 
+TEST(LeadLagFeedbackStateTest, ClearGroupByIdRemovesActiveGroup) {
+  leadlag::ExecutionState state;
+  state.Init(/*parallel=*/2);
+  leadlag::ExecutionGroup* first =
+      state.AddHoldGroup(/*signed_position_quantity=*/3,
+                         /*trailing_price=*/102.0);
+  leadlag::ExecutionGroup* second =
+      state.AddHoldGroup(/*signed_position_quantity=*/-2,
+                         /*trailing_price=*/99.0);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  const std::uint64_t first_group_id = first->group_id;
+  const std::uint64_t second_group_id = second->group_id;
+  ASSERT_EQ(state.active_group_count(), 2U);
+
+  EXPECT_TRUE(state.ClearGroupById(second_group_id));
+  EXPECT_EQ(state.active_group_count(), 1U);
+  EXPECT_EQ(state.FindGroupById(second_group_id), nullptr);
+  EXPECT_NE(state.FindGroupById(first_group_id), nullptr);
+  EXPECT_FALSE(state.ClearGroupById(second_group_id));
+  EXPECT_EQ(state.active_group_count(), 1U);
+}
+
 TEST(LeadLagFeedbackStateTest, FeedbackGapPausesNewOpens) {
   const leadlag::PairConfig pair = PairConfigForFeedback();
   leadlag::ExecutionState state;

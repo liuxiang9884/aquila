@@ -355,7 +355,8 @@ class Strategy {
     }
     if ((long_position && group->long_position()) ||
         (!long_position && group->short_position())) {
-      *group = ExecutionGroup{};
+      [[maybe_unused]] const bool cleared =
+          runtime->execution.ClearGroupById(decision.group_id);
     }
   }
 

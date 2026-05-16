@@ -58,6 +58,7 @@ class ExecutionState {
  public:
   void Init(std::uint32_t parallel) {
     groups_.assign(parallel, ExecutionGroup{});
+    active_group_count_ = 0;
     next_group_id_ = 1;
     degraded_ = false;
     needs_reconcile_ = false;
@@ -74,6 +75,7 @@ class ExecutionState {
         .local_order_id = local_order_id,
         .group_id = next_group_id_++,
     };
+    ++active_group_count_;
     return group;
   }
 
@@ -99,6 +101,7 @@ class ExecutionState {
         .trailing_price = trailing_price,
         .group_id = next_group_id_++,
     };
+    ++active_group_count_;
     return group;
   }
 
@@ -118,7 +121,7 @@ class ExecutionState {
     group->signed_position_quantity += SignedFilledQuantity(order, instrument);
 
     if (group->signed_position_quantity == 0) {
-      *group = ExecutionGroup{};
+      ClearGroup(*group);
       return ExecutionApplyResult::kAppliedDeleted;
     }
 
@@ -138,7 +141,7 @@ class ExecutionState {
     }
     group->local_order_id = 0;
     if (group->signed_position_quantity == 0) {
-      *group = ExecutionGroup{};
+      ClearGroup(*group);
       return ExecutionApplyResult::kAppliedDeleted;
     }
     group->stage = ExecutionStage::kHold;
@@ -169,14 +172,17 @@ class ExecutionState {
     return nullptr;
   }
 
-  [[nodiscard]] std::size_t active_group_count() const noexcept {
-    std::size_t count = 0;
-    for (const ExecutionGroup& group : groups_) {
-      if (group.active()) {
-        ++count;
-      }
+  [[nodiscard]] bool ClearGroupById(std::uint64_t group_id) noexcept {
+    ExecutionGroup* group = FindGroupById(group_id);
+    if (group == nullptr) {
+      return false;
     }
-    return count;
+    ClearGroup(*group);
+    return true;
+  }
+
+  [[nodiscard]] std::size_t active_group_count() const noexcept {
+    return active_group_count_;
   }
 
   [[nodiscard]] std::size_t capacity() const noexcept {
@@ -232,6 +238,13 @@ class ExecutionState {
     return nullptr;
   }
 
+  void ClearGroup(ExecutionGroup& group) noexcept {
+    if (group.active() && active_group_count_ > 0) {
+      --active_group_count_;
+    }
+    group = ExecutionGroup{};
+  }
+
   [[nodiscard]] ExecutionGroup* FindPendingOrder(
       std::uint64_t local_order_id) noexcept {
     // execute.parallel is a small bounded risk limit, so scanning contiguous
@@ -245,6 +258,7 @@ class ExecutionState {
   }
 
   std::vector<ExecutionGroup> groups_;
+  std::size_t active_group_count_{0};
   std::uint64_t next_group_id_{1};
   bool degraded_{false};
   bool needs_reconcile_{false};
