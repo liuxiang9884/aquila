@@ -112,14 +112,15 @@ try-flush-one:
 | `session_write_path_benchmark` | 本地 socketpair 下 `CommitPreparedWrite()` 到 `DriveWrite()` 的路径已可测。 | 不含 TLS、真实 TCP、网卡、交易所 ACK。 |
 | `session_tls_write_path_benchmark` | local TLS single-frame write 基线已补齐，TLS write 成本不可忽略。 | 仍是本地 loopback，不代表公网或 private link。 |
 | `session_write_path_control_slot_full_business_queue` | dedicated control slot 用户态路径很轻，业务队列满时 heartbeat ping 可绕过业务 pending queue。 | fake socket，不代表真实发送成本。 |
+| `gate_order_session_benchmark` | 已覆盖 `StrategyContext` -> `OrderManager` -> Gate `OrderSession` -> WebSocket encode -> fake transport / local socketpair `send()`。 | 不含 TLS、真实 TCP、网卡、交易所 ACK；p99 / p999 需按 cold / warm 口径解读，详见 `doc/agent-handoff-gate-trade-architecture.md`。 |
 
 历史 local TLS single-frame write 基线显示，p50 约为 plain local socket 的两倍以上；这个结论只限本地 loopback TLS，不代表交易所公网或 private link。
 
 后续优先补：
 
 1. TLS burst / control / partial write benchmark。
-2. 真实 Gate order / cancel payload benchmark。
-3. 签名、timestamp、JSON serialization 和 `kTryFlushOne` 组合 benchmark。
+2. Gate order / cancel payload 的 TLS 发送 benchmark 或 live probe。
+3. 签名、timestamp、JSON serialization、`kTryFlushOne` 和 TLS / socket 配置的组合 benchmark。
 4. 如果 syscall / TLS 是主成本，先调 socket/TLS 配置，再考虑 queue 微优化。
 
 ## Prepared Write 配置

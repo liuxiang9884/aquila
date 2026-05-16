@@ -477,6 +477,40 @@ ctest --test-dir build/debug -R '(gate_(order|submit)|order_session_config)' --o
 ./build/release/benchmark/exchange/gate/trading/gate_order_session_benchmark --benchmark_filter='BM_EncodePlaceOrder|BM_EncodeCancelOrder|BM_ParsePlaceResult|BM_ParsePlaceResultForOrderSession|BM_OrderSessionHandlePlaceAck|BM_OrderSessionHandlePlaceResult' --benchmark_min_time=0.01s
 ```
 
+### 2026-05-16 Strategy -> OrderSession 发送延迟 benchmark 口径
+
+`gate_order_session_benchmark` 已新增 strategy 下单到 WebSocket 发送路径 benchmark：
+
+```text
+benchmark/exchange/gate/trading/order_session_benchmark.cpp
+benchmark/strategy/order_gateway_benchmark.cpp
+```
+
+新增 case 分两类：
+
+- `*ToCountingTransport`：纯用户态 fake transport，`WriteSome()` 只计数并返回完整写入，不进入内核。
+- `*ToSocketPair`：本地 `socketpair` transport，覆盖真实 `send()` syscall，但不含 TLS、真实 TCP、网卡、公网、交易所 ACK。
+
+本轮 release benchmark 的核心观察：
+
+| case | mean | p50 | p99 | `>1us` 样本 | `>1us` 前 512 样本 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `StrategyContextPlaceLimitOrderToCountingTransport` cold | `488ns` | `393ns` | `1.91us` | `259/4096` | `245/4096` |
+| `StrategyContextPlaceLimitOrderToCountingTransportWarm` warm 512 | `405ns` | `391ns` | `521ns` | `11/4096` | `6.6/4096` |
+| `StrategyContextPlaceLimitOrderToSocketPair` cold | `884ns` | `780ns` | `2.36us` | `276/4096` | `248/4096` |
+| `StrategyContextPlaceLimitOrderToSocketPairWarm` warm 512 | `809ns` | `781ns` | `958ns` | `35/4096` | `9.8/4096` |
+
+p99 / p999 解读规则：
+
+1. 不要把 cold benchmark 的 p99 / p999 直接解释为稳定态下单路径成本。cold case 中绝大多数 `>1us` 样本集中在前 512 次下单，主要反映 `OrderManager` / `OrderPool` / hash table / cache first-touch 和 benchmark 启动阶段，而不是每次下单都会稳定出现的慢路径。
+2. warm 512 后，纯用户态路径 p99 从约 `1.9us` 收敛到约 `0.52us`，说明 strategy -> `OrderManager` -> `OrderSession` -> WebSocket encode 的稳定态常规成本应优先看 warm p50 / p99。
+3. 每次下单都有 `send()` syscall，但 syscall 不是固定成本操作。`send()` 大多数时候走快路径，少数样本会受内核 socket 状态、锁、拷贝、cache miss、系统中断和调度影响；`socketpair` 只避免公网和网卡，不消除 syscall 尾部。
+4. 当前 benchmark 用 wall-clock 包住整条路径：`NowNs()` -> strategy / order manager / order session / encode / `send()` -> `NowNs()`。线程在中间任何位置被 CFS 抢占、迁核或被中断打断，都会进入样本值。
+5. 4096 样本的 p999 基本由最慢的约 4 个样本决定。一次调度、中断、mask key refill、cache/TLB 抖动或 syscall 慢路径就能把 p999 拉到数微秒到十几微秒；因此 p999 必须结合多轮结果、warmup、`>1us` outlier 计数和 p50 / p99 判断。
+6. 本机尝试 `SCHED_FIFO` 运行 benchmark 失败：`Operation not permitted`。`taskset` 只能固定 CPU，不能隔离同核中断或保证实时调度，所以当前 p999 仍包含普通 Linux 环境噪声。
+
+后续如果要把 p999 作为严格交易路径指标，需要在隔离 CPU、迁移 IRQ、固定频率、允许实时调度的机器上重测，并增加分段埋点拆出 `OrderManager`、Gate JSON 编码、WebSocket encode / mask、`send()` syscall 前后的耗时。
+
 ### 2026-05-07 Strategy 订单框架第一版
 
 已确认边界：
