@@ -10,12 +10,17 @@
 #include "core/common/types.h"
 #include "core/market_data/types.h"
 #include "strategy/lead_lag/config.h"
+#include "strategy/lead_lag/recorders.h"
 #include "strategy/lead_lag/strategy.h"
+#include "strategy/lead_lag/window_stats.h"
 
 namespace aquila::strategy::leadlag {
 namespace {
 
 constexpr std::size_t kTraceRecordLimit = 1'000'000;
+constexpr std::size_t kWindowCapacity = 16'384;
+constexpr std::uint64_t kWindowNs = 1'000'000'000ULL;
+constexpr std::uint64_t kStatsWindowNs = 30'000'000'000ULL;
 constexpr char kTracePathEnv[] = "AQUILA_LEAD_LAG_TRACE";
 constexpr char kDefaultTracePath[] =
     "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin";
@@ -231,6 +236,85 @@ BENCHMARK(BM_LeadLagStrategyActiveLeadTickNoSignal)
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagStrategyActiveLagTickNoSignal)
     ->Unit(benchmark::kNanosecond);
+
+void BM_MeanStdWindowUpdateOnly(benchmark::State& state) {
+  MeanStdWindow window;
+  window.Init(kWindowNs, kWindowCapacity);
+  std::int64_t event_ns = 1'000'000'000;
+  double value = 100.0;
+
+  for (auto _ : state) {
+    window.Update(event_ns, value);
+    benchmark::DoNotOptimize(window.size());
+    event_ns += 1'000;
+    value += 0.0001;
+  }
+
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_MeanStdWindowStddevOnly(benchmark::State& state) {
+  MeanStdWindow window;
+  window.Init(kWindowNs, kWindowCapacity);
+  std::int64_t event_ns = 1'000'000'000;
+  for (std::size_t i = 0; i < kWindowCapacity; ++i) {
+    window.Update(event_ns, 100.0 + static_cast<double>(i % 100) * 0.0001);
+    event_ns += 1'000;
+  }
+
+  double value = 0.0;
+  for (auto _ : state) {
+    value += window.stddev();
+    benchmark::DoNotOptimize(value);
+  }
+
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_MeanStdWindowUpdateAndStddev(benchmark::State& state) {
+  MeanStdWindow window;
+  window.Init(kWindowNs, kWindowCapacity);
+  std::int64_t event_ns = 1'000'000'000;
+  double value = 100.0;
+  double stddev = 0.0;
+
+  for (auto _ : state) {
+    window.Update(event_ns, value);
+    stddev += window.stddev();
+    benchmark::DoNotOptimize(stddev);
+    event_ns += 1'000;
+    value += 0.0001;
+  }
+
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_NoiseStateUpdate(benchmark::State& state) {
+  NoiseState noise;
+  noise.Init(kWindowNs, kStatsWindowNs, kWindowCapacity);
+  std::int64_t event_ns = 1'000'000'000;
+  double bid = 100.0;
+  double noise_value = 0.0;
+
+  for (auto _ : state) {
+    noise.Update(QuoteSnapshot{
+        .event_ns = event_ns,
+        .bid_price = bid,
+        .ask_price = bid + 0.001,
+    });
+    noise_value += noise.value();
+    benchmark::DoNotOptimize(noise_value);
+    event_ns += 1'000;
+    bid += 0.0001;
+  }
+
+  state.SetItemsProcessed(state.iterations());
+}
+
+BENCHMARK(BM_MeanStdWindowUpdateOnly)->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_MeanStdWindowStddevOnly)->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_MeanStdWindowUpdateAndStddev)->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_NoiseStateUpdate)->Unit(benchmark::kNanosecond);
 
 }  // namespace
 }  // namespace aquila::strategy::leadlag
