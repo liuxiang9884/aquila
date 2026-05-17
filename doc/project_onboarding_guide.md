@@ -92,12 +92,13 @@ doc/data_reader_config.md
 doc/data_session_shm_communication_design.md
 doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
+doc/lead_lag_go_cpp_semantic_audit.md
 strategy/lead_lag/README.md
 doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 ```
 
 如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。已完成的执行计划文档已删除，追溯实现边界和验证命令时以本 onboarding、Gate handoff 和当前代码为准。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 data session / SHM 行情通讯，读 `doc/data_session_config.md`、`doc/data_reader_config.md` 和 `doc/data_session_shm_communication_design.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
-如果继续 LeadLag fixed 策略迁移，优先读 `strategy/lead_lag/README.md`、`doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`；fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`。当前第 1-7 部分策略层模块和 `Strategy::OnBookTicker()` replay 信号主链路已实现；后续优先补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 闭环、REST reconcile 和 fixed Go / 数据源对账。若继续 ORDI replay / 数据源对账，先读 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
+如果继续 LeadLag fixed 策略迁移，优先读 `strategy/lead_lag/README.md`、`doc/leadlag-fixed-strategy-reconstruction-guide.md`、`doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` 和 `doc/lead_lag_go_cpp_semantic_audit.md`；fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`。当前第 1-7 部分策略层模块和 `Strategy::OnBookTicker()` replay 信号主链路已实现；后续优先补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 闭环、REST reconcile 和 fixed Go / 数据源对账。若继续 ORDI replay / 数据源对账，先读 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
 
 ## 给下一个对话的 onboarding 提示
 
@@ -135,6 +136,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag C++ 策略目录时读 | 模块职责、`OnBookTicker()` 主流程、配置入口、replay 输出、测试/benchmark 和当前边界。 |
 | `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag fixed 策略拆解或对账时读 | current fixed 策略配置、OnRawBBO / OnLeadBBO / OnLagBBO 调用链、drift / alignment、UpdateMoveThreshold、open / close / stoploss 和订单状态机伪代码。 |
 | `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已按 fixed Go 源码补齐 raw same-price、BBO extrema、MoveQueue、noise、spread、threshold 和 order state 关键语义。 |
+| `doc/lead_lag_go_cpp_semantic_audit.md` | 静态审计 fixed Go 与 Aquila C++ LeadLag 语义差异时读 | Go / C++ 源码位置、语义一致项、设计差异、高影响差异、影响评估和是否建议修改。 |
 | `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` | 对账 ORDI_USDT Tardis / HDF replay、signal 或 PnL 时读 | 三天输入记录数、按交易所拆分、signal key 交集、slip 0～5 PnL，以及 HDF 与 Tardis 不一致原因。 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构或 Gate SBE 行情时读 | Gate 文档结论、SBE BBO 当前落地状态、Sirius 旧实现、双 WS login 测试、三种线程模型。 |
 | `doc/superpowers/specs/2026-05-07-gate-order-session-design.md` | 继续 Gate 交易架构或审查 submit/cancel 边界时读 | `aquila::gate::OrderSession` 第一版范围、Strategy / OrderSession / OrderFeedbackSession 边界、直接 struct 发单输入、`RequestIdCodec` / `OrderTextCodec` / response correlation 语义。 |
