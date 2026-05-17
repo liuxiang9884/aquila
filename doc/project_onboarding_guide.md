@@ -89,13 +89,14 @@ doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md
 doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 doc/websocket_read_write_benchmark_comparison.md
 doc/data_reader_config.md
+doc/data_session_shm_communication_design.md
 doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 strategy/lead_lag/README.md
 doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 ```
 
-如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。已完成的执行计划文档已删除，追溯实现边界和验证命令时以本 onboarding、Gate handoff 和当前代码为准。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
+如果继续 Gate 交易架构，优先读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`。已完成的执行计划文档已删除，追溯实现边界和验证命令时以本 onboarding、Gate handoff 和当前代码为准。如果继续 Binance 行情，优先读 `doc/agent-handoff-binance-market-data.md`。如果继续 data session / SHM 行情通讯，读 `doc/data_session_config.md`、`doc/data_reader_config.md` 和 `doc/data_session_shm_communication_design.md`。如果继续 WebSocket 性能优化，优先读 `doc/websocket_client_future_optimizations.md`。
 如果继续 LeadLag fixed 策略迁移，优先读 `strategy/lead_lag/README.md`、`doc/leadlag-fixed-strategy-reconstruction-guide.md` 和 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`；fixed Go 源码参考在 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/`。当前第 1-7 部分策略层模块和 `Strategy::OnBookTicker()` replay 信号主链路已实现；后续优先补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 闭环、REST reconcile 和 fixed Go / 数据源对账。若继续 ORDI replay / 数据源对账，先读 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
 
 ## 给下一个对话的 onboarding 提示
@@ -128,6 +129,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 | `doc/websocket_client_future_optimizations.md` | 继续 WebSocket 优化或调整写路径容量时读 | read/write/active spin/network 的未来优化 backlog，`DefaultWebSocketOptions`、`MakeConnectionConfig<OptionsT>()`、prepared write slots/bytes 的含义和使用边界。 |
 | `doc/data_session_config.md` | 修改 `config/data_sessions/*.toml` 或新增 data session 配置时读 | 每进程一份 data session config、`instrument_catalog`、`data_session.subscribe_symbols`、symbol pool 生成、WebSocket endpoint / execution_policy / read_path / heartbeat / reconnect 字段和默认值，以及 TOML / CSV / log 依赖边界。 |
 | `doc/data_reader_config.md` | 修改 `config/data_readers/*.toml` 或 strategy reader 行情入口时读 | Strategy `DataReader` 的多 SHM source 配置、`latest` / `drain` read mode、`Poll(handler)` 语义和 diagnostics policy。 |
+| `doc/data_session_shm_communication_design.md` | 维护 data session 到 strategy 的 `BookTicker` SHM 通讯时读 | `DataShmPublisher` / `BookTickerShmReader` 第一版 typed broadcast ring 设计、overrun 边界、slot-writer fast path、验证命令和 benchmark 摘要。 |
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag C++ 策略目录时读 | 模块职责、`OnBookTicker()` 主流程、配置入口、replay 输出、测试/benchmark 和当前边界。 |
