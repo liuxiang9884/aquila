@@ -65,6 +65,7 @@
 47. Tardis / HDF replay 对比已完成并记录在 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`：两条输入 tick 流不完全一致，HDF 三天总记录数比 Tardis 少 `512,137` 条，缺口主要来自 Gate；HDF 当前使用普通 `bbo` 表，时间字段是 ms，不是 `bbo_ns`。该文档同时记录了 signal 数、共同/独有 signal key 和 slip 0～5 PnL。
 48. `data/reports/lead_lag_ordi_tardis_hdf_compare_20260415_20260417.tar.gz` 已提交，包含 Tardis/HDF 对比 md 和两份 signal CSV；`data/reports/lead_lag_strategy_source_20260516.tar.gz` 已提交，包含 `strategy/lead_lag/` 源码和 README，供外部分发。
 49. `doc/lead_lag_go_cpp_semantic_audit.md` 已完成 fixed Go / Aquila C++ LeadLag 静态语义审计：主要开平仓公式、same-price tick、active seed、drift、noise、spread、threshold 顺序、close / stoploss 顺序基本一致；高影响差异集中在时间口径、move quantile exact vs histogram、以及 signal-only synthetic replay 不等价于真实 order/fill 回测。
+50. `doc/strategy_order_component_model.md` 已记录 `DataReader`、`OrderSession`、`OrderFeedbackSession`、`OrderManager` 和 `Strategy` 的解耦模型：行情通过 `DataReader` 进入策略；下单走 `Strategy -> OrderManager -> OrderSession`；ack / response 和 private feedback 都先进入 `OrderManager` 更新订单状态，再通知 `Strategy`。
 
 ## 新对话第一步
 
@@ -94,6 +95,7 @@ doc/data_session_shm_communication_design.md
 doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 doc/lead_lag_go_cpp_semantic_audit.md
+doc/strategy_order_component_model.md
 strategy/lead_lag/README.md
 doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 ```
@@ -134,6 +136,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 | `doc/data_session_shm_communication_design.md` | 维护 data session 到 strategy 的 `BookTicker` SHM 通讯时读 | `DataShmPublisher` / `BookTickerShmReader` 第一版 typed broadcast ring 设计、overrun 边界、slot-writer fast path、验证命令和 benchmark 摘要。 |
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
+| `doc/strategy_order_component_model.md` | 细化 Strategy / DataReader / OrderSession / OrderFeedbackSession / OrderManager 边界时读 | 五个组件的功能表述、解耦接口、ack / response / feedback 事件顺序、进程/线程模型和当前未覆盖边界。 |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag C++ 策略目录时读 | 模块职责、`OnBookTicker()` 主流程、配置入口、replay 输出、测试/benchmark 和当前边界。 |
 | `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag fixed 策略拆解或对账时读 | current fixed 策略配置、OnRawBBO / OnLeadBBO / OnLagBBO 调用链、drift / alignment、UpdateMoveThreshold、open / close / stoploss 和订单状态机伪代码。 |
 | `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已按 fixed Go 源码补齐 raw same-price、BBO extrema、MoveQueue、noise、spread、threshold 和 order state 关键语义。 |
@@ -477,6 +480,17 @@ Order feedback Task1 / Task2 关键结论：
 - user strategy 可实现 `OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()`。`OnOrderResponse()` / `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 user strategy hook。
 - Gate-specific 构造留在 `tools/gate/strategy_runtime_adapter.h` 和 tool 层，core runtime 不 include `exchange/`；Gate adapter 不创建后台线程、不维护 command queue，place/cancel 在 StrategyThread / Gate session 同线程直接调用。
 - `gate_demo_strategy` 默认 dry-run，不打开 WebSocket / SHM；真实提交必须显式 `--execute`，并需要先启动 `gate_order_feedback_session --connect`。
+
+### Strategy / Order 组件解耦模型
+
+`doc/strategy_order_component_model.md` 已把 `DataReader`、`OrderSession`、`OrderFeedbackSession`、`OrderManager` 和 `Strategy` 的边界整理成当前讨论模型：
+
+- `DataReader` 是 Strategy 侧行情 reader，只读取统一 `BookTicker`，不解析交易所协议。
+- `Strategy` 保存策略级 execution group 和自己关心的 `local_order_id`，通过窄 context 下单 / 撤单 / 查询订单，不复制通用订单状态机。
+- `OrderManager` 是订单状态 owner，统一创建本地订单、分配 `local_order_id`、调用 `OrderSession` 发单 / 撤单，并消费 ack / response / feedback 推进订单状态。
+- `OrderSession` 是上行交易指令通道，只负责 place / cancel 编码、发送、ack / response 解析和轻量 correlation，不管理完整订单生命周期。
+- `OrderFeedbackSession` 是下行私有订单事实通道，只负责解析 exchange feedback 并发布统一 `OrderFeedbackEvent`；跨进程生产模型通过 order feedback SHM 进入 StrategyThread。
+- 事件顺序固定为：`OrderSession` ack / response 和 `OrderFeedbackSession` feedback 都先进入 `OrderManager`，再通知 `Strategy`。后续 position book、REST reconcile 和 account / position feedback 仍待单独设计。
 
 ### Gate SBE 行情当前状态
 
