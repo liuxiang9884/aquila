@@ -79,6 +79,38 @@ read_mode = "drain"
 required = true
 ```
 
+ORDI_USDT 三天 Tardis replay binary 当前默认放在：
+
+```text
+/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin
+/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260416.bin
+/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260417.bin
+```
+
+HDF / xex_mars `bbo` 数据也可以先转换成同一个 `aquila::BookTicker` binary ABI，再用同类
+`binary_file` 配置回放。转换入口是：
+
+```bash
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/hdf_book_ticker_to_binary.py \
+  --start-date 20260415 \
+  --end-date 20260417
+```
+
+该脚本按 HDF `config` 表读取 `bbo_ns` 或 `bbo`，其中 `bbo_ns` 时间字段按 ns 解释，普通 `bbo`
+时间字段按 ms 解释；dataset 会先一次读取成 `pandas.DataFrame`，再映射到 `BookTicker` struct 写出。
+当前 ORDI_USDT HDF binary 输出在：
+
+```text
+/home/liuxiang/tardis/merged_book_ticker_hdf/ORDI_USDT/20260415.bin
+/home/liuxiang/tardis/merged_book_ticker_hdf/ORDI_USDT/20260416.bin
+/home/liuxiang/tardis/merged_book_ticker_hdf/ORDI_USDT/20260417.bin
+```
+
+Tardis `book_ticker` 与 HDF `bbo` 是两条不同输入链路。ORDI_USDT 20260415～20260417 的对账显示，
+HDF 三天比 Tardis 少 `512,137` 条 `BookTicker`，差异主要来自 Gate；因此 HDF replay 结果不能直接当作
+Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比见
+`doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
+
 ## 字段
 
 | 字段 | 默认值 | 含义 |
