@@ -64,6 +64,7 @@
 46. HDF / xex_mars `bbo` 数据转换工具已落地：`scripts/hdf_book_ticker_to_binary.py` 使用用户环境 `/home/liuxiang/dev/pyenv/lx/bin/python`，按 HDF `config` 决定读取 `bbo_ns` 或 `bbo`，把 dataset 一次读成 `pandas.DataFrame` 后转换为 `BookTicker` binary；测试入口是 `scripts/hdf_book_ticker_to_binary_test.py`。当前 ORDI_USDT HDF binary 输出在 `/home/liuxiang/tardis/merged_book_ticker_hdf/ORDI_USDT/*.bin`。
 47. Tardis / HDF replay 对比已完成并记录在 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`：两条输入 tick 流不完全一致，HDF 三天总记录数比 Tardis 少 `512,137` 条，缺口主要来自 Gate；HDF 当前使用普通 `bbo` 表，时间字段是 ms，不是 `bbo_ns`。该文档同时记录了 signal 数、共同/独有 signal key 和 slip 0～5 PnL。
 48. `data/reports/lead_lag_ordi_tardis_hdf_compare_20260415_20260417.tar.gz` 已提交，包含 Tardis/HDF 对比 md 和两份 signal CSV；`data/reports/lead_lag_strategy_source_20260516.tar.gz` 已提交，包含 `strategy/lead_lag/` 源码和 README，供外部分发。
+49. `doc/lead_lag_go_cpp_semantic_audit.md` 已完成 fixed Go / Aquila C++ LeadLag 静态语义审计：主要开平仓公式、same-price tick、active seed、drift、noise、spread、threshold 顺序、close / stoploss 顺序基本一致；高影响差异集中在时间口径、move quantile exact vs histogram、以及 signal-only synthetic replay 不等价于真实 order/fill 回测。
 
 ## 新对话第一步
 
@@ -104,7 +105,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `4d659c0 Add LeadLag strategy README package`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解、C++ 策略层模块和 `Strategy::OnBookTicker()` replay 信号主链路；`strategy/lead_lag/README.md` 是策略目录入口。Tardis/HDF ORDI_USDT replay 对比、signal/PnL 结论见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader / binary replay，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步先读 `strategy/lead_lag/README.md` 和相关 headers，再优先补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state、REST reconcile 和 fixed Go / 数据源对账。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `ed412ef Add LeadLag Go C++ semantic audit`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解、C++ 策略层模块、`Strategy::OnBookTicker()` replay 信号主链路和 fixed Go / C++ 静态语义审计；`strategy/lead_lag/README.md` 是策略目录入口，`doc/lead_lag_go_cpp_semantic_audit.md` 是 Go/C++ 差异讨论入口。Tardis/HDF ORDI_USDT replay 对比、signal/PnL 结论见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader / binary replay，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步先确认时间口径、是否需要 replay-only exact empirical quantile、以及 synthetic replay 的边界，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 和 REST reconcile。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -577,6 +578,7 @@ LeadLag fixed 策略迁移当前处于 1-7 策略层模块已落地、`Strategy:
 strategy/lead_lag/README.md
 doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
+doc/lead_lag_go_cpp_semantic_audit.md
 doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 ```
 
@@ -600,11 +602,13 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 - `core/base/` 已实现第 3 部分可复用的通用抽象数据结构：`MonotonicDeque<T>`、`RingQueue<T>`、`HeapBuffer<T>`、`DoubleHeap<T>`、`HistogramQuantile<T>`；测试入口是 `core_base_structures_test`，benchmark 入口是 `core_base_structures_benchmark`。LeadLag 第 3 部分组合层已在 `strategy/lead_lag/window_stats.h` / `recorders.h` 落地。
 - `tools/lead_lag/replay.cpp` 已可用 binary file reader 回放 ORDI_USDT 三天数据，`--signals-output` 输出 signal CSV；replay 使用 `PositionAccountingMode::kSyntheticSignals`，不依赖真实订单 session。
 - Tardis / HDF ORDI_USDT replay 对账已完成：HDF 三天比 Tardis 少 `512,137` 条 book ticker，主要来自 Gate；信号和 PnL 不逐条一致，详见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
+- fixed Go / C++ 静态语义审计已完成，详见 `doc/lead_lag_go_cpp_semantic_audit.md`。审计结论：主要开平仓公式、same-price tick、active seed、drift、noise、spread、threshold 顺序、close / stoploss 顺序基本一致；需优先讨论的高影响差异是时间口径、move quantile exact vs histogram、以及 synthetic replay 不等价于真实 order/fill 回测。
 
 当前 pending：
 
-- BBO extrema 在 fixed Go 中使用 `bbo.ServerTime` 做窗口淘汰；Aquila 当前统一使用 `BookTickerEventTimeNs(ticker)` 填充 `QuoteSnapshot.event_ns` 并驱动 recorder 窗口。严格 fixed replay 对账前仍需确认该时间口径是否完全兼容 fixed。
-- 第 1-7 部分模块测试入口是 `lead_lag_config_test`、`lead_lag_raw_market_state_test`、`lead_lag_recorders_test`、`lead_lag_alignment_test`、`lead_lag_threshold_test`、`lead_lag_signal_test`、`lead_lag_feedback_state_test` 和 `lead_lag_strategy_interface_test`。下一步是补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 闭环、REST reconcile / feedback gap 后恢复、fixed Go exact replay 对账，以及针对数据源差异的原始 tick diff。
+- 先和策略研发确认是否坚持“交易所撮合时间戳 / tx time 作为 Aquila replay 全局时间”。fixed Go 静态源码中大部分窗口用 `Context.Now()`，BBO extrema 用 `bbo.ServerTime`；Aquila 当前统一使用 `BookTickerEventTimeNs(ticker)` 填充 `QuoteSnapshot.event_ns` 并驱动 recorder 窗口。
+- 讨论是否需要 replay-only exact empirical quantile mode。当前生产低延迟路径默认使用 histogram；如果要解释逐条 threshold 差异，建议增加仅用于对账的 exact mode，而不是替换生产默认路径。
+- 第 1-7 部分模块测试入口是 `lead_lag_config_test`、`lead_lag_raw_market_state_test`、`lead_lag_recorders_test`、`lead_lag_alignment_test`、`lead_lag_threshold_test`、`lead_lag_signal_test`、`lead_lag_feedback_state_test` 和 `lead_lag_strategy_interface_test`。时间口径 / exact quantile / synthetic replay 边界确认后，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 闭环、REST reconcile / feedback gap 后恢复，以及针对数据源差异的原始 tick diff。
 
 ### 期货合约元数据
 
@@ -884,11 +888,11 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 
 1. 读取 `doc/leadlag-fixed-strategy-reconstruction-guide.md`。
 2. 读取 `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md`。
-3. 读取 `strategy/lead_lag/README.md`，再按需看 `strategy.h`、`raw_market_state.h`、`alignment.h`、`recorders.h`、`threshold.h`、`signal.h` 和 `execution_state.h`。
-4. 如果做 ORDI replay / 数据源对账，先读 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`，确认 Tardis 与 HDF 输入不是逐 tick 等价源。
-5. 参考 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/leadlag/algo/` 中的 fixed Go 源码，尤其是 `strategy.go`、`analysis.go`、`move.go`、`cost_model.go` 和 `execute_cache.go`。
-6. 当前 `aquila` C++ replay 信号主链路已落地，测试入口是 `ctest --test-dir build/debug -R lead_lag --output-on-failure`。
-7. 下一步优先补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state、REST reconcile / feedback gap 后恢复和 fixed Go exact replay 对账；做性能结论时重新跑 `lead_lag_strategy_benchmark` 或 replay profiling。
+3. 读取 `doc/lead_lag_go_cpp_semantic_audit.md`，先确认时间口径、move quantile exact vs histogram、synthetic replay 边界这三类高影响差异。
+4. 读取 `strategy/lead_lag/README.md`，再按需看 `strategy.h`、`raw_market_state.h`、`alignment.h`、`recorders.h`、`threshold.h`、`signal.h` 和 `execution_state.h`。
+5. 如果做 ORDI replay / 数据源对账，先读 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`，确认 Tardis 与 HDF 输入不是逐 tick 等价源。
+6. 参考 `third_party/strategy/wt-invariant-strategy-leadlag-must-fix/leadlag/algo/` 中的 fixed Go 源码，尤其是 `strategy.go`、`analysis.go`、`move.go`、`cost_model.go` 和 `execute_cache.go`。
+7. 当前 `aquila` C++ replay 信号主链路已落地，测试入口是 `ctest --test-dir build/debug -R lead_lag --output-on-failure`。时间口径 / exact quantile / synthetic replay 边界确认后，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state、REST reconcile / feedback gap 后恢复；做性能结论时重新跑 `lead_lag_strategy_benchmark` 或 replay profiling。
 
 如果新对话从 Gate 交易继续，建议顺序：
 
