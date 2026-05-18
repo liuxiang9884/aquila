@@ -61,6 +61,7 @@ ack / response 和 feedback 都必须先进入 `OrderManager`，再通知 `Strat
 - 历史数据第一版只支持已经处理好的 binary source；CSV / HDF / parquet 等 source 后续需要时再补。
 - `Strategy` 不关心数据来自 SHM、SPSC、broadcast queue 还是 binary file。
 - `Diagnostics` 是否启用由模板静态指定；`Diagnostics` 是记录器 / policy，`Stats` 是计数快照，不建议在组件内部命名为 `Metrics`。
+- `poll_calls` / `empty_polls` 描述外层轮询循环行为，不属于 `DataReader` 内部数据流统计；如果需要，应放到 runtime / scheduler / 组装层 diagnostics。
 
 ### 职责边界
 
@@ -70,7 +71,7 @@ ack / response 和 feedback 都必须先进入 `OrderManager`，再通知 `Strat
 - 支持多个实时 source 或历史 binary source。
 - 按配置控制每次 poll 的事件预算。
 - 输出给 handler 的 `OnBookTicker()`。
-- 在 diagnostics policy 启用时记录 poll、empty poll、book ticker 数、skipped、overrun、文件完成等统计。
+- 在 diagnostics policy 启用时记录 book ticker 数、skipped、overrun、最后行情 id、文件完成等数据流统计。
 
 `DataReader` 不负责：
 
@@ -110,6 +111,24 @@ core/market_data/binary_data_reader.h
   ~= ReplayDataReader / BinaryBookTickerSource first version
 ```
 
+关系定义：
+
+```text
+DataReader
+  - concept / 接口约束 / Strategy-facing capability
+  - 不要求是虚基类，也不要求存在一个运行时多态 base class
+
+LiveDataReader
+  - DataReader concept 的实时实现
+  - 从 SHM broadcast queue / SHM SPSC 等标准化实时 source 读取
+
+ReplayDataReader
+  - DataReader concept 的历史回放实现
+  - 从预处理后的 binary BookTicker source 读取
+```
+
+`DataReader` 这个名字在架构层表示能力边界，而不是必须落成一个继承体系。关键路径优先使用 concept / template / inline direct call 保证接口一致，避免让 `Poll()` 和 handler dispatch 变成虚调用。
+
 ### Strategy-facing concept
 
 `Strategy` 侧只依赖这个能力：
@@ -127,54 +146,68 @@ handler 只需要实现：
 void OnBookTicker(const BookTicker& ticker) noexcept;
 ```
 
+如果调用方需要判断 reader 是否天然有限，可以额外约束：
+
+```cpp
+template <typename ReaderT>
+concept FiniteDataReader = requires(const ReaderT reader) {
+  { reader.finished() } -> std::convertible_to<bool>;
+};
+```
+
+`LiveDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不要求提供 `finished()`；`ReplayDataReader` 满足 `DataReaderLike` 和 `FiniteDataReader`，`finished()` 用于区分 replay 中 `Poll() == 0` 是暂时没有输出还是已经读完。
+
 ### Diagnostics / Stats 模板
 
 推荐命名：
 
 ```text
-DataReaderDiagnostics
-NoopDataReaderDiagnostics
-DataReaderStats
-DataReaderSourceStats
+LiveDataReaderDiagnostics
+NoopLiveDataReaderDiagnostics
+LiveDataReaderStats
+LiveDataReaderSourceStats
+
+ReplayDataReaderDiagnostics
+NoopReplayDataReaderDiagnostics
+ReplayDataReaderStats
 ```
 
 推荐形态：
 
 ```cpp
-struct DataReaderSourceStats {
+struct LiveDataReaderSourceStats {
   std::uint64_t book_tickers{0};
   std::uint64_t skipped{0};
   std::uint64_t overruns{0};
   std::int64_t last_book_ticker_id{0};
 };
 
-struct DataReaderStats {
-  std::uint64_t poll_calls{0};
-  std::uint64_t empty_polls{0};
+struct LiveDataReaderStats {
   std::uint64_t book_tickers{0};
-  std::vector<DataReaderSourceStats> sources;
+  std::vector<LiveDataReaderSourceStats> sources;
 };
 
-class NoopDataReaderDiagnostics {
+struct ReplayDataReaderStats {
+  std::uint64_t book_tickers{0};
+  std::uint64_t files_completed{0};
+};
+
+class NoopLiveDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = false;
 
-  explicit NoopDataReaderDiagnostics(std::size_t) noexcept {}
-  void RecordPoll() noexcept {}
-  void RecordEmptyPoll() noexcept {}
+  explicit NoopLiveDataReaderDiagnostics(std::size_t) noexcept {}
   void RecordBookTicker(std::size_t, const BookTicker&) noexcept {}
   void RecordSkipped(std::size_t, std::uint64_t) noexcept {}
   void RecordOverrun(std::size_t, std::uint64_t) noexcept {}
 };
 
-class DataReaderDiagnostics {
+class LiveDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
-  explicit DataReaderDiagnostics(std::size_t source_count);
+  explicit LiveDataReaderDiagnostics(std::size_t source_count);
 
-  void RecordPoll() noexcept;
-  void RecordEmptyPoll() noexcept;
   void RecordBookTicker(std::size_t source_index,
                         const BookTicker& ticker) noexcept;
   void RecordSkipped(std::size_t source_index,
@@ -182,22 +215,38 @@ class DataReaderDiagnostics {
   void RecordOverrun(std::size_t source_index,
                      std::uint64_t overrun_delta) noexcept;
 
-  [[nodiscard]] const DataReaderStats& stats() const noexcept;
+  [[nodiscard]] const LiveDataReaderStats& stats() const noexcept;
+};
+
+class NoopReplayDataReaderDiagnostics {
+ public:
+  static constexpr bool kEnabled = false;
+
+  void RecordBookTicker(const BookTicker&) noexcept {}
+  void RecordFileCompleted() noexcept {}
+};
+
+class ReplayDataReaderDiagnostics {
+ public:
+  static constexpr bool kEnabled = true;
+
+  void RecordBookTicker(const BookTicker& ticker) noexcept;
+  void RecordFileCompleted() noexcept;
+
+  [[nodiscard]] const ReplayDataReaderStats& stats() const noexcept;
 };
 ```
 
-`DataReader` 内部使用：
+`poll_calls` / `empty_polls` 不放在 `LiveDataReaderStats` 或 `ReplayDataReaderStats` 中。它们回答的是“外层循环调用 reader 多少次”和“外层循环有多少次没有拿到任何事件”，更适合放在 `StrategyRuntime`、scheduler 或未来的组装层 diagnostics。
+
+`LiveDataReader` 内部使用：
 
 ```cpp
-template <typename Diagnostics = NoopDataReaderDiagnostics>
+template <typename Diagnostics = NoopLiveDataReaderDiagnostics>
 class LiveDataReader {
  public:
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) noexcept {
-    if constexpr (Diagnostics::kEnabled) {
-      diagnostics_.RecordPoll();
-    }
-
     // Poll source and emit handler.OnBookTicker(...)
   }
 
@@ -237,7 +286,7 @@ struct LiveDataReaderConfig {
 };
 
 template <typename SourceT,
-          typename Diagnostics = NoopDataReaderDiagnostics>
+          typename Diagnostics = NoopLiveDataReaderDiagnostics>
 class LiveDataReader {
  public:
   explicit LiveDataReader(LiveDataReaderConfig config);
