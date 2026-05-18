@@ -14,7 +14,7 @@
 
 ## 最近已完成
 
-截至 2026-05-17，`main` 已完成的主要内容：
+截至 2026-05-18，`main` 已完成的主要内容：
 
 1. Gate / Binance market data 热路径防御性分支收口。
 2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
@@ -66,6 +66,7 @@
 48. `data/reports/lead_lag_ordi_tardis_hdf_compare_20260415_20260417.tar.gz` 已提交，包含 Tardis/HDF 对比 md 和两份 signal CSV；`data/reports/lead_lag_strategy_source_20260516.tar.gz` 已提交，包含 `strategy/lead_lag/` 源码和 README，供外部分发。
 49. `doc/lead_lag_go_cpp_semantic_audit.md` 已完成 fixed Go / Aquila C++ LeadLag 静态语义审计：主要开平仓公式、same-price tick、active seed、drift、noise、spread、threshold 顺序、close / stoploss 顺序基本一致；高影响差异集中在时间口径、move quantile exact vs histogram、以及 signal-only synthetic replay 不等价于真实 order/fill 回测。
 50. `doc/strategy_order_component_model.md` 已记录 `DataReader`、`OrderSession`、`OrderFeedbackSession`、`OrderManager` 和 `Strategy` 的解耦模型：行情通过 `DataReader` 进入策略；下单走 `Strategy -> OrderManager -> OrderSession`；ack / response 和 private feedback 都先进入 `OrderManager` 更新订单状态，再通知 `Strategy`。
+51. `doc/trading_component_architecture_discussion.md` 已作为交易组件架构持续讨论入口，当前已细化 `DataReader`：`DataReader` 是 Strategy-facing concept / 接口约束，不要求虚基类；`LiveDataReader` 和 `ReplayDataReader` 通过 `Poll(handler)` 保持接口一致；`ReplayDataReader` 额外提供 `finished()`；`DataReader` 不做 merge，realtime merge 归上游 data session / producer，history merge 归离线预处理；第一版 replay 只要求 binary source；`poll_calls` / `empty_polls` 归 runtime / scheduler / 组装层 diagnostics，不放在 reader 内部 stats。
 
 ## 新对话第一步
 
@@ -108,7 +109,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `da4eec1 Update onboarding for LeadLag semantic audit`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解、C++ 策略层模块、`Strategy::OnBookTicker()` replay 信号主链路和 fixed Go / C++ 静态语义审计；`strategy/lead_lag/README.md` 是策略目录入口，`doc/lead_lag_go_cpp_semantic_audit.md` 是 Go/C++ 差异讨论入口。Tardis/HDF ORDI_USDT replay 对比、signal/PnL 结论见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader / binary replay，再读 `doc/data_reader_config.md`；如果继续 LeadLag fixed 策略迁移，下一步先确认时间口径、是否需要 replay-only exact empirical quantile、以及 synthetic replay 的边界，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 和 REST reconcile。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `fbcc970 Refine data reader architecture discussion`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。交易组件边界讨论入口是 `doc/strategy_order_component_model.md` 和 `doc/trading_component_architecture_discussion.md`；当前已确认 `DataReader` 是 concept / 接口约束，不做 merge，`LiveDataReader` / `ReplayDataReader` 用 `Poll(handler)` 保持接口一致，`ReplayDataReader` 额外用 `finished()` 表达 EOF，`poll_calls` / `empty_polls` 归 runtime / scheduler diagnostics。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解、C++ 策略层模块、`Strategy::OnBookTicker()` replay 信号主链路和 fixed Go / C++ 静态语义审计；`strategy/lead_lag/README.md` 是策略目录入口，`doc/lead_lag_go_cpp_semantic_audit.md` 是 Go/C++ 差异讨论入口。Tardis/HDF ORDI_USDT replay 对比、signal/PnL 结论见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader / binary replay，再读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`；如果继续 LeadLag fixed 策略迁移，下一步先确认时间口径、是否需要 replay-only exact empirical quantile、以及 synthetic replay 的边界，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 和 REST reconcile。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -138,7 +139,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/strategy_order_component_model.md` | 细化 Strategy / DataReader / OrderSession / OrderFeedbackSession / OrderManager 边界时读 | 五个组件的功能表述、解耦接口、ack / response / feedback 事件顺序、进程/线程模型和当前未覆盖边界。 |
-| `doc/trading_component_architecture_discussion.md` | 继续逐个讨论 DataReader / OrderSession / OrderFeedbackSession / OrderManager / Strategy 架构时读 | 当前进行中的组件架构讨论；已记录 DataReader live/replay 设计、no-merge 约束、binary-only replay 第一版和 diagnostics / stats 命名约定。 |
+| `doc/trading_component_architecture_discussion.md` | 继续逐个讨论 DataReader / OrderSession / OrderFeedbackSession / OrderManager / Strategy 架构时读 | 当前进行中的组件架构讨论；已记录 DataReader concept、LiveDataReader / ReplayDataReader 接口一致性、no-merge 约束、binary-only replay 第一版，以及 reader stats 与 runtime poll diagnostics 的边界。 |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag C++ 策略目录时读 | 模块职责、`OnBookTicker()` 主流程、配置入口、replay 输出、测试/benchmark 和当前边界。 |
 | `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag fixed 策略拆解或对账时读 | current fixed 策略配置、OnRawBBO / OnLeadBBO / OnLagBBO 调用链、drift / alignment、UpdateMoveThreshold、open / close / stoploss 和订单状态机伪代码。 |
 | `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已按 fixed Go 源码补齐 raw same-price、BBO extrema、MoveQueue、noise、spread、threshold 和 order state 关键语义。 |
@@ -493,6 +494,17 @@ Order feedback Task1 / Task2 关键结论：
 - `OrderSession` 是上行交易指令通道，只负责 place / cancel 编码、发送、ack / response 解析和轻量 correlation，不管理完整订单生命周期。
 - `OrderFeedbackSession` 是下行私有订单事实通道，只负责解析 exchange feedback 并发布统一 `OrderFeedbackEvent`；跨进程生产模型通过 order feedback SHM 进入 StrategyThread。
 - 事件顺序固定为：`OrderSession` ack / response 和 `OrderFeedbackSession` feedback 都先进入 `OrderManager`，再通知 `Strategy`。后续 position book、REST reconcile 和 account / position feedback 仍待单独设计。
+
+### DataReader 架构讨论
+
+`doc/trading_component_architecture_discussion.md` 是当前交易组件架构持续讨论入口，`DataReader` 部分已有以下结论：
+
+- `DataReader` 在架构上是 Strategy-facing capability / concept，不要求落成虚基类或运行时多态继承体系。
+- `Strategy` 侧只依赖 `Poll(handler) -> std::uint64_t` 和 handler 的 `OnBookTicker(const BookTicker&)`；`LiveDataReader` 和 `ReplayDataReader` 都通过这个接口保持一致。
+- `LiveDataReader` 没有天然 EOF；`ReplayDataReader` 额外满足 `FiniteDataReader`，通过 `finished()` 区分 replay 中 `Poll() == 0` 是暂时无输出还是读完。
+- `DataReader` 不负责 merge。实时多路行情 merge 归上游 `DataSession` / producer，历史多路行情 merge 归离线预处理程序；第一版 replay 只要求预处理后的 binary `BookTicker` source。
+- `Diagnostics` 是否启用由模板静态指定；`Diagnostics` 是记录器 / policy，`Stats` 是计数快照，不建议在组件内部命名为 `Metrics`。
+- `poll_calls` / `empty_polls` 描述外层轮询循环行为，应放到 `StrategyRuntime`、scheduler 或组装层 diagnostics；reader 内部 stats 聚焦数据流本身，例如 live 的 book tickers、per-source skipped / overruns / last id，以及 replay 的 book tickers / files completed。
 
 ### Gate SBE 行情当前状态
 
@@ -899,6 +911,13 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/run_futures_order_smoke.py --contract 
 - 如果用户输入“结束对话”，按本文档的固定流程先整理文档和 onboarding，再提交并给出下一轮 onboarding 提示。
 
 ## 下一步建议
+
+如果新对话从交易组件架构继续，建议顺序：
+
+1. 读取 `doc/strategy_order_component_model.md`，先确认 `DataReader`、`OrderSession`、`OrderFeedbackSession`、`OrderManager` 和 `Strategy` 的总边界。
+2. 读取 `doc/trading_component_architecture_discussion.md`，当前正在逐项细化这些组件；`DataReader` 部分已经确认 no-merge、binary-only replay 第一版、concept 接口、`LiveDataReader` / `ReplayDataReader` 关系和 stats / diagnostics 边界。
+3. 若继续 `DataReader`，先对齐现有 `core/market_data/data_reader.h` 和 `core/market_data/binary_data_reader.h` 与文档命名，再决定是否拆出 `LiveDataReader` / `ReplayDataReader` 类型或只先以 concept 文档约束当前实现。
+4. 若继续下一个组件，建议按 `OrderSession`、`OrderFeedbackSession`、`OrderManager`、`Strategy` 的顺序继续讨论接口边界；设计确定后再对照当前实现拆修改任务。
 
 如果新对话从 LeadLag fixed 策略迁移继续，建议顺序：
 
