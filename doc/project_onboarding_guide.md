@@ -96,6 +96,7 @@ doc/leadlag-fixed-strategy-reconstruction-guide.md
 doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md
 doc/lead_lag_go_cpp_semantic_audit.md
 doc/strategy_order_component_model.md
+doc/trading_component_architecture_discussion.md
 strategy/lead_lag/README.md
 doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 ```
@@ -137,6 +138,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码时读 | `evaluation/` 目录、`aquila_evaluation` target、生产路径禁止依赖 evaluation 的边界。 |
 | `doc/futures_contract_metadata_fields.md` | 处理 Gate / Binance 合约基础信息和下单前校验字段时读 | 统一 DataFrame 字段、Gate/Binance 字段映射、quantity 单位差异和当前空值语义。 |
 | `doc/strategy_order_component_model.md` | 细化 Strategy / DataReader / OrderSession / OrderFeedbackSession / OrderManager 边界时读 | 五个组件的功能表述、解耦接口、ack / response / feedback 事件顺序、进程/线程模型和当前未覆盖边界。 |
+| `doc/trading_component_architecture_discussion.md` | 继续逐个讨论 DataReader / OrderSession / OrderFeedbackSession / OrderManager / Strategy 架构时读 | 当前进行中的组件架构讨论；已记录 DataReader live/replay 设计、no-merge 约束、binary-only replay 第一版和 diagnostics / stats 命名约定。 |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag C++ 策略目录时读 | 模块职责、`OnBookTicker()` 主流程、配置入口、replay 输出、测试/benchmark 和当前边界。 |
 | `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag fixed 策略拆解或对账时读 | current fixed 策略配置、OnRawBBO / OnLeadBBO / OnLagBBO 调用链、drift / alignment、UpdateMoveThreshold、open / close / stoploss 和订单状态机伪代码。 |
 | `doc/superpowers/specs/2026-05-08-leadlag-fixed-strategy-aquila-design.md` | 继续把 LeadLag fixed 策略映射到 `aquila` 时读 | 按 7 层拆解 fixed 语义和 `aquila` 链路；已按 fixed Go 源码补齐 raw same-price、BBO extrema、MoveQueue、noise、spread、threshold 和 order state 关键语义。 |
