@@ -470,4 +470,30 @@ binance_market_data/parse_book_ticker_then_shm_push_mean   183   ns CPU 183   ns
 binance_market_data/parse_book_ticker_into_shm_slot_mean   185   ns CPU 185   ns
 ```
 
+2026-05-19 复核 `BookTickerShmReader` overrun 边界后，reader 恢复为完整 capacity 窗口：`unread_count == capacity`
+仍读取当前 ring 中最老的一条已发布 `BookTicker`，只有 `unread_count > capacity` 才记录 overrun 并拉回
+`current - capacity`。这次改动是语义恢复，不作为性能优化；若未来要严格避免 `== capacity` 边界读到正在被
+producer 覆盖的 slot，应升级 per-slot sequence，而不是主动丢掉已发布 BBO。
+
+本轮验证命令：
+
+```bash
+cmake --build build/debug --target core_market_data_shm_test -j8
+./build/debug/test/core/market_data/core_market_data_shm_test
+ctest --test-dir build/debug -R 'core_market_data_(shm|realtime_data_reader)' --output-on-failure
+cmake --build build/release --target data_shm_benchmark data_reader_benchmark -j8
+./build/release/benchmark/core/market_data/data_shm_benchmark --benchmark_filter=BM_BookTickerShmReaderTryReadOne --benchmark_min_time=0.1s --benchmark_repetitions=3 --benchmark_report_aggregates_only=true
+./build/release/benchmark/core/market_data/data_reader_benchmark --benchmark_filter=BM_RealtimeDataReaderEmptyPoll --benchmark_min_time=0.1s --benchmark_repetitions=3 --benchmark_report_aggregates_only=true
+git diff --check
+```
+
+benchmark 对比：
+
+| case | 保守窗口记录 | 完整 capacity 恢复后 | 结论 |
+| --- | ---: | ---: | --- |
+| `BM_BookTickerShmReaderTryReadOne_mean` | 1.94ns | 1.95ns | 基本持平 |
+| `BM_RealtimeDataReaderEmptyPoll/1_mean` | 1.52ns | 1.21ns | 不触发 overrun 边界，不能归因于本次改动 |
+| `BM_RealtimeDataReaderEmptyPoll/2_mean` | 2.29ns | 2.29ns | 持平 |
+| `BM_RealtimeDataReaderEmptyPoll/4_mean` | 3.97ns | 4.04ns | 基本持平 |
+
 上述 benchmark 输出只作为本机本次运行记录，不单独推导跨机器性能结论。

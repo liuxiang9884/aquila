@@ -820,6 +820,13 @@ Drain 明显减少循环开销。
 `max_rss_kb=3486756`。microbenchmark 对批量 drain 略有改善，完整 replay 耗时基本持平；由于当前机器
 `perf_event_paranoid=4`，无法用 `perf stat` 读取 page-fault counters。
 
+2026-05-19 `BookTickerShmReader` capacity 边界 review 后，恢复为完整 capacity 窗口：`unread_count == capacity`
+时不主动丢当前 ring 中最老的一条已发布 `BookTicker`，只有 `unread_count > capacity` 才记录 overrun 并拉回
+`current - capacity`。这次改动服务于 reader 语义一致性，不是性能优化；`BM_BookTickerShmReaderTryReadOne`
+从保守窗口记录的 `1.94ns` 到恢复后的 `1.95ns`，基本持平。同期 `BM_RealtimeDataReaderEmptyPoll` 1/2/4 source
+为 `1.21ns` / `2.29ns` / `4.04ns`，该 benchmark 不触发 SHM overrun 边界，不能把 1 source 数值变化归因于本次
+capacity 边界恢复。
+
 当前仍未做的整理：
 
 - `DataReaderConfig::max_events_per_source` 字段名仍保留旧名字；当前语义已改为外层 `Drain()` budget。
