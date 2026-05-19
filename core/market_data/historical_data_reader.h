@@ -70,6 +70,10 @@ class HistoricalDataReader {
 
   explicit HistoricalDataReader(config::DataReaderConfig data_reader_config)
       : diagnostics_(CountFiles(data_reader_config)) {
+    if (data_reader_config.sources.size() != 1) {
+      throw std::invalid_argument(
+          "historical data reader requires exactly one binary_file source");
+    }
     files_.reserve(CountFiles(data_reader_config));
     for (const config::DataReaderSourceConfig& source :
          data_reader_config.sources) {

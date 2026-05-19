@@ -68,7 +68,7 @@ ack / response 和 feedback 都必须先进入 `OrderManager`，再通知 `Strat
 `DataReader` 负责：
 
 - 读取已经标准化的 `BookTicker`。
-- 支持多个实时 source 或历史 binary source。
+- 支持多个实时 source，或一个历史 binary source 中的多个预处理文件。
 - 按配置控制每次 poll 的事件预算。
 - 输出给 handler 的 `OnBookTicker()`。
 - 在 diagnostics policy 启用时记录 book ticker 数、skipped、overrun、最后行情 id、文件完成等数据流统计。
@@ -640,6 +640,8 @@ class BinaryBookTickerSource {
 
 - 文件按配置顺序读取。
 - 输入文件必须已经按目标 replay 顺序预处理好。
+- 第一版只接受一个 `binary_file` source；多日 / 分片 replay 用同一个 source 下的多个 `files` 表达。
+- 如果需要多交易所 / 多 feed 历史 merge，必须在离线数据程序中先合成一个目标 replay binary source。
 - `HistoricalDataReader` 不支持 `latest`。
 - `Poll()` 每次最多输出 1 条事件；输出成功返回 1。
 - `Poll() == 0` 表示 replay 已结束，且 `finished() == true`。

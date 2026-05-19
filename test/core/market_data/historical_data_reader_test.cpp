@@ -335,4 +335,29 @@ TEST(HistoricalDataReaderTest, RejectsFileWithTrailingBytes) {
                std::runtime_error);
 }
 
+TEST(HistoricalDataReaderTest, RejectsEmptySources) {
+  cfg::DataReaderConfig config;
+  config.name = "binary_reader";
+
+  EXPECT_THROW((md::HistoricalDataReader{std::move(config)}),
+               std::invalid_argument);
+}
+
+TEST(HistoricalDataReaderTest, RejectsMultipleSources) {
+  TempDir temp_dir;
+  const std::filesystem::path first_file = temp_dir.File("first.bin");
+  const std::filesystem::path second_file = temp_dir.File("second.bin");
+  WriteBookTickerFile(first_file, {MakeBookTicker(1, aquila::Exchange::kGate)});
+  WriteBookTickerFile(second_file,
+                      {MakeBookTicker(2, aquila::Exchange::kBinance)});
+
+  cfg::DataReaderConfig config = MakeBinaryReaderConfig({first_file});
+  config.sources.push_back(config.sources.front());
+  config.sources.back().name = "second_binary_book_ticker";
+  config.sources.back().files = {second_file};
+
+  EXPECT_THROW((md::HistoricalDataReader{std::move(config)}),
+               std::invalid_argument);
+}
+
 }  // namespace

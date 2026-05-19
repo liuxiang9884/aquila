@@ -152,11 +152,12 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
   `capacity - 1` 保守窗口，避免读取可能正在被 producer 覆盖的边界 slot。
 - 适合需要完整事件流的验证、probe、benchmark、binary replay，以及未来不能丢中间事件的 feed。
 
-`binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`HistoricalDataReader`
-会在构造时检查文件存在、文件大小是 `BookTicker` 大小的整数倍；空文件是合法的已完成输入，构造后如果所有文件为空则
-`finished() == true`，最后一个有数据文件后的尾部空文件会在最后一条数据读完时一并计入完成。`Poll()` 每次最多输出一条，
-非空当前文件使用 read-only mmap 顺序读取；文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime
-需要在 idle hook 中主动停止 replay loop。
+`binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。第一版
+`HistoricalDataReader` 只接受一个 `binary_file` source；多日 / 分片 replay 用同一个 source 下的多个 `files`
+表达，跨 source merge 必须在离线数据程序中预先完成。reader 会在构造时检查文件存在、文件大小是 `BookTicker`
+大小的整数倍；空文件是合法的已完成输入，构造后如果所有文件为空则 `finished() == true`，最后一个有数据文件后的
+尾部空文件会在最后一条数据读完时一并计入完成。`Poll()` 每次最多输出一条，非空当前文件使用 read-only mmap
+顺序读取；文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime 需要在 idle hook 中主动停止 replay loop。
 
 ## Poll 语义
 
