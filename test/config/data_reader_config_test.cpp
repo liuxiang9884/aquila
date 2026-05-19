@@ -245,6 +245,28 @@ channel_name = "book_ticker_channel"
             std::string::npos);
 }
 
+TEST(DataReaderConfigTest, RejectsOverflowMaxEventsPerSource) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "strategy_data_reader"
+max_events_per_source = 4294967296
+
+[[data_reader.sources]]
+name = "gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_reader.max_events_per_source"),
+            std::string::npos);
+}
+
 TEST(DataReaderConfigTest, RejectsEmptySources) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]

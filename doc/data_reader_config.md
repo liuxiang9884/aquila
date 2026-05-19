@@ -121,7 +121,7 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 | `instrument_catalog.file` | 无，必须显式配置 | instrument CSV 路径。相对路径会在加载配置文件时解析到仓库路径。 |
 | `instrument_catalog.schema` | 无，必须显式配置 | CSV schema，当前固定 `aquila.instrument.v1`。 |
 | `data_reader.name` | 无，必须显式配置 | reader 实例名。 |
-| `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算；`Poll()` 本身始终是单事件接口。`TradingRuntime` 只在 finite / replay reader 上使用该预算。 |
+| `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算，必须是正的 `uint32` 范围整数；`Poll()` 本身始终是单事件接口。`TradingRuntime` 只在 finite / replay reader 上使用该预算。 |
 | `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
 | `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `RealtimeDataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |

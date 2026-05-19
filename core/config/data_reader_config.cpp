@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -147,6 +148,11 @@ class DataReaderConfigParser {
     }
     if (*value <= 0) {
       Fail("data_reader.max_events_per_source", " must be positive");
+      return fallback;
+    }
+    if (*value >
+        static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+      Fail("data_reader.max_events_per_source", " exceeds uint32 max");
       return fallback;
     }
     return static_cast<std::uint32_t>(*value);
