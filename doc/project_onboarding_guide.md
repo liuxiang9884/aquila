@@ -14,7 +14,7 @@
 
 ## 最近已完成
 
-截至 2026-05-18，`main` 已完成的主要内容：
+截至 2026-05-19，`main` 已完成的主要内容：
 
 1. Gate / Binance market data 热路径防御性分支收口。
 2. Gate BBO 生产 decoder 只保留 trusted 路径，保守 decode 和 benchmark wrapper 已移出生产 header。
@@ -83,6 +83,11 @@
 65. `HistoricalDataReader` 构造期已拒绝 0 或多个 source：第一版只接受一个 `binary_file` source，多个日期 / 分片文件继续放在该 source 的 `files` 列表中；跨 source 历史 merge 仍归离线数据程序，避免 reader 静默串接多个 source 生成错误 replay 顺序。
 66. `RealtimeDataReader` 构造期已补齐 source 边界校验：拒绝空 sources、非 `shm` source、非 `book_ticker` feed，以及未知 `start_position` / `read_mode` 枚举值；这让程序化构造的错误在 reader 边界直接失败，不再退化成下层 SHM attach 报错。2026-05-19 release empty poll benchmark 1/2/4 source 为 `1.22ns` / `2.29ns` / `4.02ns`。
 67. `DataReaderConfig` parser 已拒绝 `max_events_per_source` 的 `uint32_t` 上界溢出，避免 TOML 大整数被 `static_cast<std::uint32_t>` 截断；字段名仍保留旧名，是否迁移到 `max_events_per_drain` 另行讨论。
+68. 本轮对 `BookTickerShmReader` capacity 边界做了复核和收尾：`ad7e0d5 Restore full capacity data SHM reader window` 恢复完整 capacity 语义并在代码中注释说明原因，`b5a4bd6 Document data SHM capacity boundary review` 记录 benchmark 对比和“语义恢复，不是性能优化”的结论；`signal.csv` 仍是未跟踪文件，未纳入本轮提交。
+
+## 给下一个对话的 onboarding 提示
+
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，以实际输出确认分支 ahead 数、未提交改动和最近提交。2026-05-19 本轮收尾前最近提交包含 `b5a4bd6 Document data SHM capacity boundary review`、`ad7e0d5 Restore full capacity data SHM reader window`、`9a564c3 Reject overflowing data reader drain budget`；当时工作区只有未跟踪的 `signal.csv`，默认不要处理它。先读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。如果继续交易组件架构，读 `doc/strategy_order_component_model.md` 和 `doc/trading_component_architecture_discussion.md`；当前 `DataReader` 已确认 no-merge、binary-only replay 第一版、`Poll()` / `Drain()` concept 接口、`RealtimeDataReader` / `HistoricalDataReader` 关系、stats / diagnostics 边界、多 feed 未来 typed storage + unified scan table，以及 `BookTickerShmReader` 完整 capacity overrun 语义。下一步若继续 `DataReader`，优先讨论 `DataReaderConfig::max_events_per_source` 是否改名为 `max_events_per_drain`，以及 runtime / scheduler 层是否新增 loop diagnostics；若进入下一个组件，建议按 `OrderSession`、`OrderFeedbackSession`、`OrderManager`、`Strategy` 的顺序继续讨论接口边界。不要 push，除非用户明确要求。
 
 ## 新对话第一步
 
