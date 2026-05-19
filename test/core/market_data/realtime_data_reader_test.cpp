@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -230,15 +231,13 @@ TEST(RealtimeDataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
   EXPECT_EQ(stats.sources[0].last_book_ticker_id, 3);
 }
 
-TEST(RealtimeDataReaderTest, DefaultDiagnosticsCompileAndPoll) {
+TEST(RealtimeDataReaderTest, RejectsEmptySources) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
   config.max_events_per_source = 64;
 
-  md::RealtimeDataReader reader(std::move(config));
-  RecordingHandler handler;
-  EXPECT_EQ(reader.Drain(handler, 0), 0U);
-  EXPECT_EQ(reader.Poll(handler), 0U);
+  EXPECT_THROW((void)md::RealtimeDataReader<>(std::move(config)),
+               std::invalid_argument);
 }
 
 }  // namespace

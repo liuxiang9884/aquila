@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -73,6 +74,11 @@ class RealtimeDataReader {
  public:
   explicit RealtimeDataReader(config::DataReaderConfig data_reader_config)
       : diagnostics_(data_reader_config.sources.size()) {
+    if (data_reader_config.sources.empty()) {
+      throw std::invalid_argument(
+          "realtime data reader requires at least one source");
+    }
+
     sources_.reserve(data_reader_config.sources.size());
     for (config::DataReaderSourceConfig& source_config :
          data_reader_config.sources) {

@@ -465,6 +465,7 @@ class LiveBookTickerSource {
 
 语义：
 
+- 构造期要求至少一个 source；空 source 配置是启动期配置错误，直接拒绝，不进入运行循环。
 - `Poll()`：从 `next_source_index_` 开始 round-robin 扫描 source；找到第一个可读 source 后输出 1 条并返回 1；所有 source 都没数据时返回 0。
 - source `latest`：被 `Poll()` 选中时调用 `TryReadLatest()`，最多输出最新一条；允许 skip 中间 tick，适合状态型低延迟策略。
 - source `drain`：被 `Poll()` 选中时调用 `TryReadOne()`，最多输出下一条；不在单次 `Poll()` 内批量吞掉一个 source。
@@ -554,6 +555,7 @@ class BinaryBookTickerSource {
 ```text
 core/market_data/realtime_data_reader.h
   - 类名是 RealtimeDataReader，承担实时 SHM reader 第一版职责。
+  - 构造期拒绝空 sources；Poll() 语义不依赖空 reader 分支，当前保留冗余空检查是基于本轮 A/B benchmark 的代码生成结果。
   - 已提供 Poll(handler) 单事件接口和 Drain(handler, max_events) 批量接口。
   - Poll() 从 next_source_index_ 开始 round-robin 扫描 source，最多输出 1 条。
   - source read_mode = latest 时调用 TryReadLatest()。
@@ -589,17 +591,18 @@ core/strategy/strategy_runtime.h
 
 | case | baseline mean | optimized mean |
 | --- | ---: | ---: |
-| `BM_RealtimeDataReaderEmptyPoll/1` | 3.08ns | 1.43ns |
-| `BM_RealtimeDataReaderEmptyPoll/2` | 6.18ns | 2.66ns |
-| `BM_RealtimeDataReaderEmptyPoll/4` | 12.3ns | 4.22ns |
-| `BM_HistoricalDataReaderDrainSingleFile/1` | 27.6ns | 25.4ns |
-| `BM_HistoricalDataReaderDrainSingleFile/64` | 1677ns | 1610ns |
-| `BM_HistoricalDataReaderDrainSingleFile/4096` | 109459ns | 102888ns |
+| `BM_RealtimeDataReaderEmptyPoll/1` | 3.08ns | 1.36ns |
+| `BM_RealtimeDataReaderEmptyPoll/2` | 6.18ns | 2.63ns |
+| `BM_RealtimeDataReaderEmptyPoll/4` | 12.3ns | 4.29ns |
+| `BM_HistoricalDataReaderDrainSingleFile/1` | 27.6ns | 25.0ns |
+| `BM_HistoricalDataReaderDrainSingleFile/64` | 1677ns | 1550ns |
+| `BM_HistoricalDataReaderDrainSingleFile/4096` | 109459ns | 98639ns |
 
 对应代码变化：
 
 - `RealtimeDataReader::Poll()` 将运行期 `% source_count` 替换为分支 wrap，并为单 source 增加快路径。
 - `RealtimeDataReader` hot `Source` 只保留 `read_mode`、SHM reader 和 overrun 基线，不再保存完整 `DataReaderSourceConfig`。
+- `RealtimeDataReader` 构造期拒绝空 sources；本轮 A/B 显示强删 `Poll()` 空检查在当前编译结果下更慢，因此语义改为启动期失败，但实现暂保留该冗余分支。
 - `RealtimeDataReader` / `HistoricalDataReader` 读入 `BookTicker` 时不再先清零局部对象。
 - `HistoricalDataReader` 将 empty-file skip、文件打开和文件完成状态维护放到构造 / 文件边界慢路径，单条 `Poll()` 不再每次进入完整文件状态机。
 

@@ -13,6 +13,8 @@ SHM live reader 在 `StrategyRuntime` 中走 `Poll()`；binary replay / finite r
 data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的 `BookTicker`
 二进制文件，适合 replay / 对账。
 
+`RealtimeDataReader` 要求至少配置一个实时 source；空 source 配置属于启动期配置错误，会在构造 reader 时直接失败。
+
 ## 示例
 
 仓库内示例：
@@ -165,6 +167,7 @@ drain source  -> TryReadOne()
 ```
 
 成功输出后，`RealtimeDataReader` 把下一次扫描起点移动到当前 source 的后一个位置，避免固定 source 长期先被处理。
+构造期已经保证 sources 非空；如果配置没有任何实时 source，应在启动阶段失败，而不是进入运行循环后持续返回 0。当前实现不依赖 `Poll()` 的空 reader 分支表达语义。
 
 `RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。
