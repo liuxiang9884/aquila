@@ -468,6 +468,102 @@ class LiveBookTickerSource {
 - 构造期要求至少一个 source；空 source 配置是启动期配置错误，直接拒绝，不进入运行循环。
 - `Poll()`：从 `next_source_index_` 开始 round-robin 扫描 source；找到第一个可读 source 后输出 1 条并返回 1；所有 source 都没数据时返回 0。
 - 多 source round-robin 可以在构造期生成扫描表，热路径按表线性扫描，避免每次递增 index 后判断是否 wrap 到 0。
+
+#### 多 feed source 未来实现
+
+当前实现只有 `BookTickerShmReader`，因此 `RealtimeDataReader` 可以用一个 owning `sources_` vector 保存同构 `Source`。未来加入
+`TradeShmReader` 和 `OrderBookShmReader` 后，source 会变成异构对象；第一选择不是引入虚基类，也不是把
+`std::variant` 放进热路径，而是采用 typed storage + unified scan table：
+
+```cpp
+struct BookTickerSource {
+  BookTickerShmReader reader;
+  std::uint64_t last_overrun_count{0};
+};
+
+struct TradeSource {
+  TradeShmReader reader;
+  std::uint64_t last_overrun_count{0};
+};
+
+struct OrderBookSource {
+  OrderBookShmReader reader;
+  std::uint64_t last_overrun_count{0};
+};
+
+enum class SourcePollKind : std::uint8_t {
+  kBookTickerLatest,
+  kBookTickerDrain,
+  kTradeDrain,
+  kOrderBookLatest,
+  kOrderBookDrain,
+};
+
+struct SourceRef {
+  SourcePollKind kind;
+  std::size_t source_index;
+  void* source;
+};
+
+class RealtimeDataReader {
+ private:
+  std::vector<std::unique_ptr<BookTickerSource>> book_ticker_sources_;
+  std::vector<std::unique_ptr<TradeSource>> trade_sources_;
+  std::vector<std::unique_ptr<OrderBookSource>> order_book_sources_;
+
+  std::vector<SourceRef> scan_sources_;
+  std::size_t next_source_index_{0};
+  std::size_t source_count_{0};
+};
+```
+
+这里的 owning storage 按 feed 类型分开，保持 reader 对象强类型；`scan_sources_` 只作为统一 round-robin 调度表。多 source
+双表扫描优化仍可保留：构造期把 `SourceRef` 表重复一轮，`Poll()` 继续按 `[next_source_index_, next_source_index_ + source_count)`
+线性扫描。
+
+热路径 dispatch 使用 `SourcePollKind` 合并 feed 和 read mode，避免先 switch feed 再 switch read mode：
+
+```cpp
+template <typename Handler>
+std::uint64_t Poll(Handler& handler) noexcept {
+  const std::size_t scan_end = next_source_index_ + source_count_;
+  for (std::size_t scan_position = next_source_index_;
+       scan_position < scan_end; ++scan_position) {
+    const SourceRef& ref = scan_sources_[scan_position];
+
+    std::uint64_t handled = 0;
+    switch (ref.kind) {
+      case SourcePollKind::kBookTickerLatest:
+        handled = PollBookTickerLatest(ref, handler);
+        break;
+      case SourcePollKind::kBookTickerDrain:
+        handled = PollBookTickerDrain(ref, handler);
+        break;
+      case SourcePollKind::kTradeDrain:
+        handled = PollTradeDrain(ref, handler);
+        break;
+      case SourcePollKind::kOrderBookLatest:
+        handled = PollOrderBookLatest(ref, handler);
+        break;
+      case SourcePollKind::kOrderBookDrain:
+        handled = PollOrderBookDrain(ref, handler);
+        break;
+    }
+
+    if (handled != 0) {
+      next_source_index_ = scan_sources_[scan_position + 1].source_index;
+      return handled;
+    }
+  }
+  return 0;
+}
+```
+
+read mode 约束：
+
+- `book_ticker` 可支持 `latest` / `drain`。
+- `trade` 第一版只支持 `drain`；trade 是事件流，`latest` 会主动丢成交事件。
+- `order_book` 如果是 data session 已处理好的固定深度快照 / state，可支持 `latest` / `drain`；如果是 delta，只允许 `drain`，且 gap / rebuild 仍归 data session 或专门 order book builder，不放进 `RealtimeDataReader`。
 - source `latest`：被 `Poll()` 选中时调用 `TryReadLatest()`，最多输出最新一条；允许 skip 中间 tick，适合状态型低延迟策略。
 - source `drain`：被 `Poll()` 选中时调用 `TryReadOne()`，最多输出下一条；不在单次 `Poll()` 内批量吞掉一个 source。
 - reader `Drain(handler, max_events)`：在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条；用于完整事件消费、验证或对账。
@@ -667,7 +763,7 @@ core/strategy/trading_runtime.h
 
 1. 配置整理：评估是否把 `DataReaderConfig::max_events_per_source` 改名为更准确的 `drain_budget` / `max_events_per_drain`；如改名，需要处理现有 TOML 兼容。
 2. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `TradingRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
-3. feed 扩展：新增 trade / order book 时，在 source stats 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
+3. feed 扩展：新增 trade / order book 时，`RealtimeDataReader` 使用 typed storage + unified scan table，不在热路径引入虚基类或 `std::variant`；stats 在 source 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
 
 ## OrderSession 架构占位
 
