@@ -148,7 +148,8 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 
 - 每个 source 每次 `Poll()` 最多产出一条。
 - 调用方如果需要批量消费，应调用 `Drain(handler, max_events)`，由 reader 循环执行 `Poll()`，最多输出 `max_events` 条。
-- 不主动跳到最后一条；除非 reader 已经落后超过 SHM ring capacity，底层 reader 会记录 overrun 并拉回可见窗口。
+- 不主动跳到最后一条；除非 reader 已经到达 SHM ring 完整 capacity 边界，底层 reader 会记录 overrun 并拉回
+  `capacity - 1` 保守窗口，避免读取可能正在被 producer 覆盖的边界 slot。
 - 适合需要完整事件流的验证、probe、benchmark、binary replay，以及未来不能丢中间事件的 feed。
 
 `binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`HistoricalDataReader`

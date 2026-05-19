@@ -185,10 +185,11 @@ read_pos_ = queue_.Current();
 
 ```cpp
 const auto current = queue_.Current();
-read_pos_ = current > queue_.capacity() ? current - queue_.capacity() : 0;
+const auto readable_capacity = queue_.capacity() - 1;
+read_pos_ = current > readable_capacity ? current - readable_capacity : 0;
 ```
 
-第一版 reader 使用完整 `capacity` 窗口，只在 reader 已经落后超过 capacity 时判定 overrun：
+当前 reader 使用 `capacity - 1` 保守窗口；当 reader 已经到达完整 capacity 边界时即判定 overrun：
 
 ```cpp
 bool TryReadOne(aquila::BookTicker* out) {
@@ -199,10 +200,11 @@ bool TryReadOne(aquila::BookTicker* out) {
   }
 
   const auto capacity = queue_.capacity();
+  const auto readable_capacity = capacity - 1;
   const auto unread_count = current - read_pos_;
 
-  if (unread_count > capacity) {
-    read_pos_ = current - capacity;
+  if (unread_count > readable_capacity) {
+    read_pos_ = current - readable_capacity;
     ++overrun_count_;
   }
 
@@ -225,38 +227,34 @@ reader 约束：
 
 - reader 必须 copy `Value()`，不要持有 queue slot 的 `Ref()`。
 - reader 本地 cursor 不写 SHM。
-- `unread_count > capacity` 时，reader 状态已经落后当前 ring 窗口；必须把 `read_pos_` 拉回
-  `current - capacity`，否则会继续按旧 sequence 读取已经被覆盖的 slot。
+- `unread_count >= capacity` 时，reader 已经处在可能和 producer 下一次写入同槽位竞争的边界；必须把
+  `read_pos_` 拉回 `current - (capacity - 1)`，避免读取可能正在被覆盖的 slot。
 
 ## 当前方案的已知边界
 
-当前选定方案暂不处理：
+当前保守窗口会主动丢弃完整 capacity 边界上的最老一条已发布 `BookTicker`：
 
 ```text
 current - read_pos_ == capacity
 ```
 
-此时 reader 读取的是当前 ring 中最老的一条已发布数据。该数据按完整 capacity 语义仍在 ring
-里，但 producer 下一条消息会覆盖同一个 slot。若 producer 已经开始写下一条，但还没发布新的
-`Current()`，reader 只看全局 `Current()` 无法判断该 slot 是否正在被覆盖。
+原因是 reader 只看全局 `Current()`，没有 per-slot sequence；该边界 slot 虽然按完整 capacity 语义仍在
+ring 里，但 producer 下一条消息会覆盖同一个 slot。若 producer 已经开始写下一条但还没发布新的
+`Current()`，reader 无法判断该 slot 是否正在被覆盖。当前选择丢弃一条边界旧 BBO，而不是读取可能 torn 的
+payload。
 
-因此在极端边界上，reader 可能读到：
+当前仍然保留的边界：
 
-- 旧 `BookTicker`。
-- 新 `BookTicker`。
-- 半旧半新的 torn payload。
-
-第一版接受这个边界风险，原因是：
-
-- 第一版只承载 latest-BBO 语义的 `BookTicker`，不是 trade、orderbook diff 或 order feedback。
 - producer 不被 reader 背压是 data session 主路径更重要的约束。
+- 第一版只承载 latest-BBO 语义的 `BookTicker`，不是 trade、orderbook diff 或 order feedback；若未来需要
+  drain trade / orderbook diff 的完整序列，需要升级到 per-slot sequence / seqlock 或其他 transport。
 - 后续可以通过更严格的 slot sequence 方案升级，而不改变上层 `DataSink::OnBookTicker()` 抽象。
 
 ## 讨论过的边界处理方案
 
 ### 完整 capacity + `Current()`，只处理 `> capacity`
 
-这是当前选定方案。
+这是此前方案，现已被 `capacity - 1` 保守窗口替代。
 
 ```text
 current - read_pos_ < capacity   正常读
@@ -276,6 +274,8 @@ current - read_pos_ > capacity   overrun，跳到 current - capacity
 
 ### `capacity - 1` 保守窗口
 
+这是当前选定方案。
+
 ```text
 current - read_pos_ < capacity   正常读
 current - read_pos_ >= capacity  overrun，跳到 current - (capacity - 1)
@@ -291,7 +291,8 @@ current - read_pos_ >= capacity  overrun，跳到 current - (capacity - 1)
 - 会主动遗漏一条已经发布、但处在边界上的数据。
 - 如果 reader 更慢，跳转时遗漏的不止一条。
 
-该方案被放弃，因为当前希望尽量不主动丢已发布的 `BookTicker`。
+当前接受这个取舍，因为在没有 per-slot sequence 的 SHM ring 上，避免读取可能 torn 的 slot 比保留一条边界旧
+BBO 更重要。
 
 ### 遇到 `== capacity` 时等待下一轮
 

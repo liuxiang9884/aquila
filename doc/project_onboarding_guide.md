@@ -77,6 +77,7 @@
 59. `doc/trading_component_architecture_discussion.md` 已记录 `RealtimeDataReader` 多 feed 未来实现方向：新增 `trade` / `order_book` SHM reader 时，owning storage 按 feed 类型拆成 typed vectors，统一 round-robin 只扫 `SourceRef` scan table；不优先在热路径引入虚基类或 `std::variant`。
 60. `HistoricalDataReader::Drain()` 已从逐条调用 `Poll()` 改为在当前 mmap 文件内按 cursor 批量读取，只在文件边界进入 `CompleteCurrentFile()`。2026-05-19 release benchmark：historical drain 1/64/4096 从 `6.49ns` / `377ns` / `24178ns` 到 `6.53ns` / `338ns` / `21784ns`；单事件基本持平，批量 drain 更快。ORDI_USDT 三天 LeadLag replay 保持 `book_tickers=94799061`、`signals=2350`、`open=1175`、`close=1173`、`stoploss=2`，耗时 `5.57s`，`max_rss_kb=3486864`。
 61. `DataShmPublisher` 已将 shared header `published_count` 写入移出 `OnBookTicker()` / `EmplaceBookTickerWith()` 热路径：热路径只更新本地计数，`FlushPublishedCount()` 或 `UpdateHeartbeatNs()` 冷路径刷新 SHM header。2026-05-19 release benchmark：`data_shm/publisher_temp_book_ticker_push` 从 `8.06ns` 到 `7.50ns`，`data_shm/publisher_emplace_book_ticker_with` 从 `4.51ns` 到 `4.25ns`；`BM_BookTickerShmReaderTryReadOne` 基本持平 `1.94ns`。
+62. `BookTickerShmReader` overrun 边界已从完整 capacity 改成 `capacity - 1` 保守窗口：`unread_count >= capacity` 时记录 overrun 并拉回 `current - (capacity - 1)`，避免在没有 per-slot sequence 的 SHM ring 上读取可能正被 producer 下一条消息覆盖的边界 slot。2026-05-19 release benchmark：`BM_BookTickerShmReaderTryReadOne` 为 `1.94ns`，`BM_RealtimeDataReaderEmptyPoll` 1/2/4 source 为 `1.52ns` / `2.29ns` / `3.97ns`。
 
 ## 新对话第一步
 

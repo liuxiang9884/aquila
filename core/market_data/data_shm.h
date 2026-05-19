@@ -209,7 +209,7 @@ class BookTickerShmReader {
 
   void SeekEarliestVisible() noexcept {
     const auto current = queue_->Current();
-    read_pos_ = current > kCapacity ? current - kCapacity : 0;
+    read_pos_ = current > kReadableCapacity ? current - kReadableCapacity : 0;
   }
 
   [[nodiscard]] bool TryReadOne(aquila::BookTicker* out) noexcept {
@@ -260,14 +260,15 @@ class BookTickerShmReader {
     }
 
     const auto unread_count = current - read_pos_;
-    if (unread_count > kCapacity) {
-      read_pos_ = current - kCapacity;
+    if (unread_count > kReadableCapacity) {
+      read_pos_ = current - kReadableCapacity;
       ++overrun_count_;
     }
     return current - read_pos_;
   }
 
   static constexpr std::uint64_t kCapacity = kBookTickerShmCapacity;
+  static constexpr std::uint64_t kReadableCapacity = kCapacity - 1;
 
   BookTickerShmManager manager_;
   BookTickerQueue* queue_{nullptr};

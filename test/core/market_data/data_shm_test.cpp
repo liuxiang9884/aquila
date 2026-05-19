@@ -150,6 +150,43 @@ TEST(DataShmTest, ReaderCanSeekEarliestVisible) {
   EXPECT_FALSE(reader.TryReadOne(&actual));
 }
 
+TEST(DataShmTest, ReaderSeekEarliestVisibleUsesConservativeWindow) {
+  const md::BookTickerShmConfig config = MakeCreateConfig("seek_earliest_full");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  for (std::uint64_t id = 0; id < md::kBookTickerShmCapacity; ++id) {
+    publisher.OnBookTicker(MakeBookTicker(static_cast<std::int64_t>(id)));
+  }
+
+  md::BookTickerShmReader reader(MakeAttachConfig(config));
+  reader.SeekEarliestVisible();
+
+  aquila::BookTicker actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  EXPECT_EQ(actual.id, 1);
+  EXPECT_EQ(reader.overrun_count(), 0U);
+}
+
+TEST(DataShmTest, ReaderCountsOverrunAtExactCapacityBoundary) {
+  const md::BookTickerShmConfig config =
+      MakeCreateConfig("overrun_exact_capacity");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::BookTickerShmReader reader(MakeAttachConfig(config));
+  reader.SeekLatest();
+
+  for (std::uint64_t id = 0; id < md::kBookTickerShmCapacity; ++id) {
+    publisher.OnBookTicker(MakeBookTicker(static_cast<std::int64_t>(id)));
+  }
+
+  aquila::BookTicker actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  EXPECT_EQ(actual.id, 1);
+  EXPECT_EQ(reader.overrun_count(), 1U);
+}
+
 TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity) {
   const md::BookTickerShmConfig config = MakeCreateConfig("overrun");
   ShmCleanup cleanup(config.shm_name);
@@ -164,7 +201,7 @@ TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity) {
 
   aquila::BookTicker actual{};
   ASSERT_TRUE(reader.TryReadOne(&actual));
-  EXPECT_EQ(actual.id, 2);
+  EXPECT_EQ(actual.id, 3);
   EXPECT_EQ(reader.overrun_count(), 1U);
 }
 
@@ -207,7 +244,7 @@ TEST(DataShmTest, ReaderTryReadLatestCountsOverrunAndSkipsToLast) {
   EXPECT_EQ(actual.id,
             static_cast<std::int64_t>(md::kBookTickerShmCapacity + 2));
   EXPECT_EQ(reader.overrun_count(), 1U);
-  EXPECT_EQ(skipped, md::kBookTickerShmCapacity - 1);
+  EXPECT_EQ(skipped, md::kBookTickerShmCapacity - 2);
 }
 
 TEST(DataShmTest, RejectsHeaderCapacityMismatchOnAttach) {
