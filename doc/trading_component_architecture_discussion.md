@@ -176,19 +176,19 @@ ReplayDataReaderStats
 
 ```cpp
 struct LiveDataReaderSourceStats {
-  std::uint64_t book_tickers{0};
+  std::uint64_t book_ticker_count{0};
   std::uint64_t skipped{0};
   std::uint64_t overruns{0};
   std::int64_t last_book_ticker_id{0};
 };
 
 struct LiveDataReaderStats {
-  std::uint64_t book_tickers{0};
+  std::uint64_t total_count{0};
   std::vector<LiveDataReaderSourceStats> sources;
 };
 
 struct ReplayDataReaderStats {
-  std::uint64_t book_tickers{0};
+  std::uint64_t total_count{0};
   std::uint64_t files_completed{0};
 };
 
@@ -238,6 +238,52 @@ class ReplayDataReaderDiagnostics {
 ```
 
 `poll_calls` / `empty_polls` 不放在 `LiveDataReaderStats` 或 `ReplayDataReaderStats` 中。它们回答的是“外层循环调用 reader 多少次”和“外层循环有多少次没有拿到任何事件”，更适合放在 `StrategyRuntime`、scheduler 或未来的组装层 diagnostics。
+
+第一版 stats 字段语义：
+
+```text
+LiveDataReaderStats::total_count
+  - live reader 已经输出给 handler 的所有 source 数据总数。
+  - 当前只实现 BookTicker，因此它等于所有 source 的 book_ticker_count 之和。
+
+LiveDataReaderSourceStats::book_ticker_count
+  - 单个 source 已经输出给 handler 的 BookTicker 数量。
+
+LiveDataReaderSourceStats::skipped
+  - 单个 source 在 latest 模式下为读取最新值而跳过的中间 BookTicker 数量。
+
+LiveDataReaderSourceStats::overruns
+  - 单个 source 底层 SHM / queue 发生 overrun 的累计增量。
+
+LiveDataReaderSourceStats::last_book_ticker_id
+  - 单个 source 最后一次成功输出的 BookTicker.id。
+
+ReplayDataReaderStats::total_count
+  - replay reader 已经输出给 handler 的所有数据总数。
+  - 当前只实现 binary BookTicker replay，因此它等于 replay 输出的 BookTicker 数量。
+
+ReplayDataReaderStats::files_completed
+  - replay reader 已经完整读完的 binary 文件数。
+```
+
+未来扩展 `trade` / `order book` 时，顶层 `total_count` 仍表示 reader 输出给 handler 的所有事件总数，不按 feed 类型拆分；feed 类型相关统计放在 `SourceStats` 中，例如：
+
+```cpp
+struct LiveDataReaderSourceStats {
+  std::uint64_t book_ticker_count{0};
+  std::uint64_t trade_count{0};
+  std::uint64_t order_book_count{0};
+
+  std::uint64_t skipped{0};
+  std::uint64_t overruns{0};
+
+  std::int64_t last_book_ticker_id{0};
+  std::int64_t last_trade_id{0};
+  std::int64_t last_order_book_id{0};
+};
+```
+
+`ReplayDataReaderStats` 的顶层也保持 `total_count` / `files_completed`。如果未来 replay 同时支持多 feed 且需要区分 feed 数量，应优先增加 replay source / feed 维度的 stats，而不是把顶层拆成多个 `total_*_count`。
 
 `LiveDataReader` 内部使用：
 
