@@ -75,6 +75,7 @@
 57. `core/utils/mapped_file.h` 已新增 read-only mmap RAII helper；`HistoricalDataReader` 当前文件读取已从 `std::ifstream::read` 切换为 `MappedFile + cursor + memcpy`。2026-05-19 release benchmark：historical drain 1/64/4096 从 `25.0ns` / `1550ns` / `98639ns` 降到 `6.37ns` / `369ns` / `23821ns`。ORDI_USDT 三天 LeadLag replay 保持 `book_tickers=94799061`、`signals=2350`、`open=1175`、`close=1173`、`stoploss=2`，耗时 `7.73s`，`max_rss_kb=3486796`；mmap 会提升 reader 吞吐，但完整顺序读大文件时 peak RSS 会反映 fault-in 的映射页。
 58. 交易全链路 runtime 命名已从 `StrategyRuntime` 收敛为 `TradingRuntime`，`UserStrategyT` / `user_strategy_` 收敛为 `StrategyT` / `strategy_`；对应入口改为 `core/strategy/trading_runtime.h`、`test/core/strategy/trading_runtime_test.cpp`、`tools/gate/trading_runtime_adapter.h` 和 `test/tools/gate/trading_runtime_adapter_test.cpp`，不保留旧 include 名称。
 59. `doc/trading_component_architecture_discussion.md` 已记录 `RealtimeDataReader` 多 feed 未来实现方向：新增 `trade` / `order_book` SHM reader 时，owning storage 按 feed 类型拆成 typed vectors，统一 round-robin 只扫 `SourceRef` scan table；不优先在热路径引入虚基类或 `std::variant`。
+60. `HistoricalDataReader::Drain()` 已从逐条调用 `Poll()` 改为在当前 mmap 文件内按 cursor 批量读取，只在文件边界进入 `CompleteCurrentFile()`。2026-05-19 release benchmark：historical drain 1/64/4096 从 `6.49ns` / `377ns` / `24178ns` 到 `6.53ns` / `338ns` / `21784ns`；单事件基本持平，批量 drain 更快。ORDI_USDT 三天 LeadLag replay 保持 `book_tickers=94799061`、`signals=2350`、`open=1175`、`close=1173`、`stoploss=2`，耗时 `5.57s`，`max_rss_kb=3486864`。
 
 ## 新对话第一步
 

@@ -114,12 +114,26 @@ class HistoricalDataReader {
   template <typename Handler>
   std::uint64_t Drain(Handler& handler, std::uint64_t max_events) {
     std::uint64_t count = 0;
-    while (count < max_events) {
-      const std::uint64_t handled = Poll(handler);
-      if (handled == 0) {
-        break;
+    while (count < max_events && !finished()) {
+      const std::uint64_t events_left = max_events - count;
+      const std::uint64_t batch_count = current_records_remaining_ < events_left
+                                            ? current_records_remaining_
+                                            : events_left;
+      for (std::uint64_t i = 0; i < batch_count; ++i) {
+        BookTicker book_ticker;
+        std::memcpy(&book_ticker, current_cursor_, sizeof(BookTicker));
+        current_cursor_ += sizeof(BookTicker);
+        if constexpr (Diagnostics::kEnabled) {
+          diagnostics_.RecordBookTicker(book_ticker);
+        }
+        handler.OnBookTicker(book_ticker);
       }
-      count += handled;
+
+      current_records_remaining_ -= batch_count;
+      count += batch_count;
+      if (current_records_remaining_ == 0) {
+        CompleteCurrentFile();
+      }
     }
     return count;
   }

@@ -206,6 +206,36 @@ TEST(HistoricalDataReaderTest, DrainReadsAtMostMaxEvents) {
   EXPECT_TRUE(reader.finished());
 }
 
+TEST(HistoricalDataReaderTest, DrainContinuesAcrossFileBoundaries) {
+  TempDir temp_dir;
+  const std::filesystem::path first_file = temp_dir.File("first.bin");
+  const std::filesystem::path second_file = temp_dir.File("second.bin");
+  const std::filesystem::path empty_file = temp_dir.File("empty.bin");
+  const std::vector<aquila::BookTicker> expected{
+      MakeBookTicker(30, aquila::Exchange::kGate),
+      MakeBookTicker(31, aquila::Exchange::kGate),
+      MakeBookTicker(32, aquila::Exchange::kBinance),
+  };
+  WriteBookTickerFile(first_file, {expected[0]});
+  WriteBookTickerFile(empty_file, {});
+  WriteBookTickerFile(second_file, {expected[1], expected[2]});
+
+  md::HistoricalDataReader<md::HistoricalDataReaderDiagnostics> reader(
+      MakeBinaryReaderConfig({first_file, empty_file, second_file}, 8));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Drain(handler, 8), expected.size());
+  ASSERT_EQ(handler.book_tickers.size(), expected.size());
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    ExpectBookTickerEquals(handler.book_tickers[i], expected[i]);
+  }
+  EXPECT_TRUE(reader.finished());
+
+  const md::HistoricalDataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.total_count, expected.size());
+  EXPECT_EQ(stats.files_completed, 3U);
+}
+
 TEST(HistoricalDataReaderTest, EmptyPollAfterAllFilesCompleted) {
   TempDir temp_dir;
   const std::filesystem::path file = temp_dir.File("single.bin");

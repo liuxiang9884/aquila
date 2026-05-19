@@ -753,6 +753,37 @@ core/strategy/trading_runtime.h
 `elapsed_sec=7.73`，`user_sec=7.68`，`sys_sec=0.38`，`max_rss_kb=3486796`。mmap 提升 replay reader
 吞吐，但顺序读完整大文件时 peak RSS 会反映被 fault-in 的映射页；如果后续要控制 replay 内存峰值，需要再评估分段 mmap 或显式 page advice。
 
+2026-05-19 historical `Drain()` batch cursor 优化，命令为：
+
+```bash
+./build/release/benchmark/core/market_data/data_reader_benchmark \
+  --benchmark_filter=BM_HistoricalDataReaderDrainSingleFile \
+  --benchmark_min_time=0.5s \
+  --benchmark_repetitions=5
+```
+
+| case | mmap Poll-loop Drain mean | batch cursor Drain mean |
+| --- | ---: | ---: |
+| `BM_HistoricalDataReaderDrainSingleFile/1` | 6.49ns | 6.53ns |
+| `BM_HistoricalDataReaderDrainSingleFile/64` | 377ns | 338ns |
+| `BM_HistoricalDataReaderDrainSingleFile/4096` | 24178ns | 21784ns |
+
+这轮改动让 `HistoricalDataReader::Drain()` 在当前 mmap 文件内直接按 cursor 批量读取，只有到达文件边界时才进入
+`CompleteCurrentFile()`，避免每条记录重复调用 `Poll()` 并走 `finished()` / 文件边界分支。单事件 case 基本持平，批量
+Drain 明显减少循环开销。
+
+同一实现跑 ORDI_USDT 三天 LeadLag replay：
+
+```bash
+/usr/bin/time -f 'elapsed_sec=%e user_sec=%U sys_sec=%S max_rss_kb=%M' \
+  ./build/release/tools/lead_lag_replay \
+  --config /tmp/aquila_lead_lag_ordi_replay.toml \
+  --signals-output /tmp/lead_lag_historical_drain_opt_signal.csv
+```
+
+结果：`book_tickers=94799061`，`signals=2350`，`open=1175`，`close=1173`，`stoploss=2`，
+`elapsed_sec=5.57`，`user_sec=5.50`，`sys_sec=0.32`，`max_rss_kb=3486864`。
+
 当前仍未做的整理：
 
 - `DataReaderConfig::max_events_per_source` 字段名仍保留旧名字；当前语义已改为外层 `Drain()` budget。
