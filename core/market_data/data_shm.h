@@ -200,62 +200,47 @@ class DataShmPublisher {
 class BookTickerShmReader {
  public:
   explicit BookTickerShmReader(const BookTickerShmConfig& config)
-      : manager_(config) {
+      : manager_(config), queue_(&manager_.channel().queue) {
     SeekLatest();
   }
 
   void SeekLatest() noexcept {
-    read_pos_ = manager_.channel().queue.Current();
+    read_pos_ = queue_->Current();
   }
 
   void SeekEarliestVisible() noexcept {
-    const auto current = manager_.channel().queue.Current();
-    const auto capacity = manager_.channel().queue.capacity();
-    read_pos_ = current > capacity ? current - capacity : 0;
+    const auto current = queue_->Current();
+    read_pos_ = current > kCapacity ? current - kCapacity : 0;
   }
 
   [[nodiscard]] bool TryReadOne(aquila::BookTicker* out) noexcept {
-    const auto current = manager_.channel().queue.Current();
-    if (read_pos_ == current) {
+    const auto current = queue_->Current();
+    if (PrepareReadableWindow(current) == 0) {
       return false;
     }
 
-    const auto capacity = manager_.channel().queue.capacity();
-    const auto unread_count = current - read_pos_;
-    if (unread_count > capacity) {
-      read_pos_ = current - capacity;
-      ++overrun_count_;
-    }
-
-    *out = manager_.channel().queue.Value(read_pos_);
+    *out = queue_->Value(read_pos_);
     ++read_pos_;
     return true;
   }
 
   [[nodiscard]] bool TryReadLatest(aquila::BookTicker* out,
                                    std::uint64_t* skipped_count) noexcept {
-    const auto current = manager_.channel().queue.Current();
-    if (read_pos_ == current) {
+    const auto current = queue_->Current();
+    const auto visible_unread_count = PrepareReadableWindow(current);
+    if (visible_unread_count == 0) {
       if (skipped_count != nullptr) {
         *skipped_count = 0;
       }
       return false;
     }
 
-    const auto capacity = manager_.channel().queue.capacity();
-    const auto unread_count = current - read_pos_;
-    if (unread_count > capacity) {
-      read_pos_ = current - capacity;
-      ++overrun_count_;
-    }
-
-    const auto visible_unread_count = current - read_pos_;
     const auto latest_pos = current - 1;
-    *out = manager_.channel().queue.Value(latest_pos);
+    *out = queue_->Value(latest_pos);
     read_pos_ = current;
 
     if (skipped_count != nullptr) {
-      *skipped_count = visible_unread_count > 0 ? visible_unread_count - 1 : 0;
+      *skipped_count = visible_unread_count - 1;
     }
     return true;
   }
@@ -269,7 +254,24 @@ class BookTickerShmReader {
   }
 
  private:
+  [[nodiscard]] std::uint64_t PrepareReadableWindow(
+      std::uint64_t current) noexcept {
+    if (read_pos_ == current) {
+      return 0;
+    }
+
+    const auto unread_count = current - read_pos_;
+    if (unread_count > kCapacity) {
+      read_pos_ = current - kCapacity;
+      ++overrun_count_;
+    }
+    return current - read_pos_;
+  }
+
+  static constexpr std::uint64_t kCapacity = kBookTickerShmCapacity;
+
   BookTickerShmManager manager_;
+  BookTickerQueue* queue_{nullptr};
   std::uint64_t read_pos_{0};
   std::uint64_t overrun_count_{0};
 };
