@@ -222,7 +222,8 @@ class HistoricalDataReader {
   }
 
   void OpenCurrentFile() {
-    current_mapping_ = MappedFile(files_[current_file_index_].path);
+    current_mapping_ = MappedFile(files_[current_file_index_].path,
+                                  MappedFileAccessPattern::kSequential);
     const std::size_t expected_size =
         static_cast<std::size_t>(files_[current_file_index_].record_count) *
         sizeof(BookTicker);

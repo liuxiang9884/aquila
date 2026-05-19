@@ -784,6 +784,19 @@ Drain 明显减少循环开销。
 结果：`book_tickers=94799061`，`signals=2350`，`open=1175`，`close=1173`，`stoploss=2`，
 `elapsed_sec=5.57`，`user_sec=5.50`，`sys_sec=0.32`，`max_rss_kb=3486864`。
 
+2026-05-19 `MappedFileAccessPattern::kSequential` / `MADV_SEQUENTIAL` 实验，命令同上：
+
+| case | batch cursor Drain mean | sequential mmap advice mean |
+| --- | ---: | ---: |
+| `BM_HistoricalDataReaderDrainSingleFile/1` | 6.53ns | 6.58ns |
+| `BM_HistoricalDataReaderDrainSingleFile/64` | 338ns | 335ns |
+| `BM_HistoricalDataReaderDrainSingleFile/4096` | 21784ns | 21294ns |
+
+同一实现跑 ORDI_USDT 三天 LeadLag replay：`book_tickers=94799061`，`signals=2350`，`open=1175`，
+`close=1173`，`stoploss=2`，`elapsed_sec=5.61`，`user_sec=5.48`，`sys_sec=0.38`，
+`max_rss_kb=3486756`。microbenchmark 对批量 drain 略有改善，完整 replay 耗时基本持平；由于当前机器
+`perf_event_paranoid=4`，无法用 `perf stat` 读取 page-fault counters。
+
 当前仍未做的整理：
 
 - `DataReaderConfig::max_events_per_source` 字段名仍保留旧名字；当前语义已改为外层 `Drain()` budget。

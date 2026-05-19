@@ -58,6 +58,19 @@ TEST(MappedFileTest, MapsReadOnlyFileBytes) {
   EXPECT_EQ(std::string_view(mapped.data(), mapped.size()), "abcdef");
 }
 
+TEST(MappedFileTest, MapsSequentialReadOnlyFileBytes) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("sequential.bin");
+  WriteFile(file, "abcdef");
+
+  const aquila::MappedFile mapped(file,
+                                  aquila::MappedFileAccessPattern::kSequential);
+
+  ASSERT_NE(mapped.data(), nullptr);
+  EXPECT_EQ(mapped.size(), 6U);
+  EXPECT_EQ(std::string_view(mapped.data(), mapped.size()), "abcdef");
+}
+
 TEST(MappedFileTest, EmptyFileHasNullDataAndZeroSize) {
   TempDir temp_dir;
   const std::filesystem::path file = temp_dir.File("empty.bin");

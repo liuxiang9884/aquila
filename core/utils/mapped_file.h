@@ -19,12 +19,19 @@
 
 namespace aquila {
 
+enum class MappedFileAccessPattern : std::uint8_t {
+  kNormal,
+  kSequential,
+};
+
 class MappedFile {
  public:
   MappedFile() noexcept = default;
 
-  explicit MappedFile(const std::filesystem::path& path) {
-    Open(path);
+  explicit MappedFile(const std::filesystem::path& path,
+                      MappedFileAccessPattern access_pattern =
+                          MappedFileAccessPattern::kNormal) {
+    Open(path, access_pattern);
   }
 
   MappedFile(const MappedFile&) = delete;
@@ -59,7 +66,8 @@ class MappedFile {
   }
 
  private:
-  void Open(const std::filesystem::path& path) {
+  void Open(const std::filesystem::path& path,
+            MappedFileAccessPattern access_pattern) {
     if (path.empty()) {
       throw std::invalid_argument("mapped file path is empty");
     }
@@ -99,8 +107,21 @@ class MappedFile {
                                            path.string(), error.message()));
     }
 
+    ApplyAccessPattern(mapping, map_size, access_pattern);
     data_ = static_cast<const char*>(mapping);
     size_ = map_size;
+  }
+
+  static void ApplyAccessPattern(
+      void* mapping, std::size_t map_size,
+      MappedFileAccessPattern access_pattern) noexcept {
+    switch (access_pattern) {
+      case MappedFileAccessPattern::kNormal:
+        return;
+      case MappedFileAccessPattern::kSequential:
+        (void)::madvise(mapping, map_size, MADV_SEQUENTIAL);
+        return;
+    }
   }
 
   void Reset() noexcept {
