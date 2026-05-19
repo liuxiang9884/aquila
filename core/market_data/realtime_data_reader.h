@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include "core/config/data_reader_config.h"
 #include "core/market_data/data_shm.h"
 
@@ -82,6 +84,7 @@ class RealtimeDataReader {
     sources_.reserve(data_reader_config.sources.size());
     for (config::DataReaderSourceConfig& source_config :
          data_reader_config.sources) {
+      ValidateSource(source_config);
       BookTickerShmConfig shm_config{
           .enabled = true,
           .shm_name = source_config.shm_name,
@@ -182,6 +185,36 @@ class RealtimeDataReader {
     BookTickerShmReader reader;
     std::uint64_t last_overrun_count{0};
   };
+
+  static void ValidateSource(const config::DataReaderSourceConfig& source) {
+    if (source.type != config::DataReaderSourceType::kShm) {
+      throw std::invalid_argument(fmt::format(
+          "realtime data reader source '{}' must have type shm", source.name));
+    }
+    if (source.feed != config::DataReaderFeed::kBookTicker) {
+      throw std::invalid_argument(fmt::format(
+          "realtime data reader source '{}' must use book_ticker feed",
+          source.name));
+    }
+    switch (source.start_position) {
+      case config::DataReaderStartPosition::kLatest:
+      case config::DataReaderStartPosition::kEarliestVisible:
+        break;
+      default:
+        throw std::invalid_argument(fmt::format(
+            "realtime data reader source '{}' has invalid start_position",
+            source.name));
+    }
+    switch (source.read_mode) {
+      case config::DataReaderReadMode::kLatest:
+      case config::DataReaderReadMode::kDrain:
+        break;
+      default:
+        throw std::invalid_argument(fmt::format(
+            "realtime data reader source '{}' has invalid read_mode",
+            source.name));
+    }
+  }
 
   template <typename Handler>
   std::uint64_t PollLatestSource(std::size_t source_index, Source& source,

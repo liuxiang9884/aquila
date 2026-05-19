@@ -81,6 +81,7 @@
 63. `MappedFile` 已支持 `MappedFileAccessPattern::kSequential`，`HistoricalDataReader` 打开 replay binary 时使用 `MADV_SEQUENTIAL` hint。2026-05-19 release benchmark：historical drain 1/64/4096 为 `6.58ns` / `335ns` / `21294ns`；ORDI_USDT 三天 LeadLag replay 保持 `book_tickers=94799061`、`signals=2350`、`open=1175`、`close=1173`、`stoploss=2`，耗时 `5.61s`，`max_rss_kb=3486756`。当前机器 `perf_event_paranoid=4`，未能采集 page-fault perf counters。
 64. `data_reader_benchmark` 已新增 `BM_RealtimeDataReaderDrainSingleSource`，覆盖 realtime 单 source drain 预算 1/64/4096；当前 production 基线为 `2.75ns` / `156ns` / `9966ns`。single-source `Drain()` fast path 实验能把 4096 预算降到约 `8102ns`，但同一 benchmark binary 中 live `BM_RealtimeDataReaderEmptyPoll/1` 从约 `1.52ns` 回退到约 `3.45ns`，因此未保留生产实现；后续继续优化 live drain 时必须先保护 live `Poll()` 主路径。
 65. `HistoricalDataReader` 构造期已拒绝 0 或多个 source：第一版只接受一个 `binary_file` source，多个日期 / 分片文件继续放在该 source 的 `files` 列表中；跨 source 历史 merge 仍归离线数据程序，避免 reader 静默串接多个 source 生成错误 replay 顺序。
+66. `RealtimeDataReader` 构造期已补齐 source 边界校验：拒绝空 sources、非 `shm` source、非 `book_ticker` feed，以及未知 `start_position` / `read_mode` 枚举值；这让程序化构造的错误在 reader 边界直接失败，不再退化成下层 SHM attach 报错。2026-05-19 release empty poll benchmark 1/2/4 source 为 `1.22ns` / `2.29ns` / `4.02ns`。
 
 ## 新对话第一步
 

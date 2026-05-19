@@ -286,4 +286,57 @@ TEST(RealtimeDataReaderTest, RejectsEmptySources) {
                std::invalid_argument);
 }
 
+TEST(RealtimeDataReaderTest, RejectsNonShmSource) {
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_source = 64;
+  config.sources.push_back(MakeSourceConfig("bad_source",
+                                            aquila::Exchange::kGate, "/unused",
+                                            cfg::DataReaderReadMode::kLatest));
+  config.sources.back().type = cfg::DataReaderSourceType::kBinaryFile;
+
+  EXPECT_THROW((void)md::RealtimeDataReader<>(std::move(config)),
+               std::invalid_argument);
+}
+
+TEST(RealtimeDataReaderTest, RejectsInvalidFeed) {
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_source = 64;
+  config.sources.push_back(MakeSourceConfig("bad_feed", aquila::Exchange::kGate,
+                                            "/unused",
+                                            cfg::DataReaderReadMode::kLatest));
+  config.sources.back().feed = static_cast<cfg::DataReaderFeed>(255);
+
+  EXPECT_THROW((void)md::RealtimeDataReader<>(std::move(config)),
+               std::invalid_argument);
+}
+
+TEST(RealtimeDataReaderTest, RejectsInvalidStartPosition) {
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_source = 64;
+  config.sources.push_back(MakeSourceConfig("bad_start_position",
+                                            aquila::Exchange::kGate, "/unused",
+                                            cfg::DataReaderReadMode::kLatest));
+  config.sources.back().start_position =
+      static_cast<cfg::DataReaderStartPosition>(255);
+
+  EXPECT_THROW((void)md::RealtimeDataReader<>(std::move(config)),
+               std::invalid_argument);
+}
+
+TEST(RealtimeDataReaderTest, RejectsInvalidReadMode) {
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_source = 64;
+  config.sources.push_back(MakeSourceConfig("bad_read_mode",
+                                            aquila::Exchange::kGate, "/unused",
+                                            cfg::DataReaderReadMode::kLatest));
+  config.sources.back().read_mode = static_cast<cfg::DataReaderReadMode>(255);
+
+  EXPECT_THROW((void)md::RealtimeDataReader<>(std::move(config)),
+               std::invalid_argument);
+}
+
 }  // namespace

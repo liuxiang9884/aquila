@@ -656,7 +656,7 @@ class BinaryBookTickerSource {
 ```text
 core/market_data/realtime_data_reader.h
   - 类名是 RealtimeDataReader，承担实时 SHM reader 第一版职责。
-  - 构造期拒绝空 sources；Poll() 语义不依赖空 reader 分支，当前保留冗余空检查是基于本轮 A/B benchmark 的代码生成结果。
+  - 构造期拒绝空 sources，并校验每个 source 必须是 shm / book_ticker，start_position 和 read_mode 必须是已知枚举值；Poll() 语义不依赖空 reader 分支，当前保留冗余空检查是基于本轮 A/B benchmark 的代码生成结果。
   - 已提供 Poll(handler) 单事件接口和 Drain(handler, max_events) 批量接口。
   - Poll() 从 next_source_index_ 开始 round-robin 扫描 source，最多输出 1 条；多 source 路径使用构造期双倍 scan table，消除循环内 wrap 分支。
   - source read_mode = latest 时调用 TryReadLatest()。
