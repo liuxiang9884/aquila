@@ -76,8 +76,9 @@ struct BookTickerShmChannel {
 创建端写入 `capacity = kBookTickerShmCapacity`，attach 端必须校验 header capacity、二进制编译期
 capacity、`BookTicker` ABI size 和版本一致。
 `published_count` 和 `heartbeat_ns` 只用于诊断，不作为 reader 判断消息可见性的依据。
-`published_count` 可以在 `OnBookTicker()` 热路径中随每条消息更新；`heartbeat_ns` 不放在
-`OnBookTicker()` 热路径里，由 data session 外层冷路径或定时路径使用 relaxed store 低频更新。
+`published_count` 是 publisher 对象本地计数；不在 `OnBookTicker()` / `EmplaceBookTickerWith()` 热路径中
+写 shared header。需要对外暴露 SHM header 计数时，调用 `FlushPublishedCount()`，或在
+`UpdateHeartbeatNs()` 这种 data session 外层冷路径里顺带刷新。
 
 ## 命名和接口约定
 
@@ -108,6 +109,7 @@ class DataShmPublisher {
   template <typename Writer>
   void EmplaceBookTickerWith(Writer&& writer) noexcept;
 
+  void FlushPublishedCount() noexcept;
   void UpdateHeartbeatNs(std::uint64_t heartbeat_ns) noexcept;
 };
 ```
@@ -122,17 +124,20 @@ class DataShmPublisher {
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     queue_.Push(book_ticker);
     ++published_count_;
-    header_->published_count.store(published_count_, std::memory_order_relaxed);
   }
 
   template <typename Writer>
   void EmplaceBookTickerWith(Writer&& writer) noexcept {
     queue_.EmplaceWith(std::forward<Writer>(writer));
     ++published_count_;
+  }
+
+  void FlushPublishedCount() noexcept {
     header_->published_count.store(published_count_, std::memory_order_relaxed);
   }
 
   void UpdateHeartbeatNs(std::uint64_t heartbeat_ns) noexcept {
+    FlushPublishedCount();
     header_->heartbeat_ns.store(heartbeat_ns, std::memory_order_relaxed);
   }
 };
@@ -454,15 +459,15 @@ cmake --build build/release --target data_shm_benchmark gate_futures_market_data
 git diff --check
 ```
 
-最近一次 release benchmark 原始输出摘要：
+2026-05-19 将 shared header `published_count` 写入移出 publisher 热路径后，release benchmark 原始输出摘要：
 
 ```text
-data_shm/publisher_temp_book_ticker_push_mean              8.07 ns CPU  8.07 ns
-data_shm/publisher_emplace_book_ticker_with_mean           4.64 ns CPU  4.64 ns
-gate_market_data/decode_book_ticker_then_shm_push_mean    12.8  ns CPU 12.8  ns
-gate_market_data/decode_book_ticker_into_shm_slot_mean     4.67 ns CPU  4.66 ns
-binance_market_data/parse_book_ticker_then_shm_push_mean   184   ns CPU 184   ns
-binance_market_data/parse_book_ticker_into_shm_slot_mean   184   ns CPU 184   ns
+data_shm/publisher_temp_book_ticker_push_mean              7.50 ns CPU  7.50 ns
+data_shm/publisher_emplace_book_ticker_with_mean           4.25 ns CPU  4.25 ns
+gate_market_data/decode_book_ticker_then_shm_push_mean    12.7  ns CPU 12.7  ns
+gate_market_data/decode_book_ticker_into_shm_slot_mean     4.26 ns CPU  4.26 ns
+binance_market_data/parse_book_ticker_then_shm_push_mean   183   ns CPU 183   ns
+binance_market_data/parse_book_ticker_into_shm_slot_mean   185   ns CPU 185   ns
 ```
 
 上述 benchmark 输出只作为本机本次运行记录，不单独推导跨机器性能结论。

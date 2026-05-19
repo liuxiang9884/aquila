@@ -161,29 +161,28 @@ class DataShmPublisher {
  public:
   explicit DataShmPublisher(const BookTickerShmConfig& config)
       : manager_(config),
-        published_count_(manager_.channel().header.published_count.load(
-            std::memory_order_relaxed)) {}
+        published_count_(manager_.channel().queue.Current()) {}
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
-    BookTickerShmChannel& channel = manager_.channel();
-    channel.queue.Push(book_ticker);
+    manager_.channel().queue.Push(book_ticker);
     ++published_count_;
-    channel.header.published_count.store(published_count_,
-                                         std::memory_order_relaxed);
   }
 
   template <typename Writer>
   void EmplaceBookTickerWith(Writer&& writer) noexcept(
       noexcept(std::declval<BookTickerQueue&>().EmplaceWith(
           std::forward<Writer>(writer)))) {
-    BookTickerShmChannel& channel = manager_.channel();
-    channel.queue.EmplaceWith(std::forward<Writer>(writer));
+    manager_.channel().queue.EmplaceWith(std::forward<Writer>(writer));
     ++published_count_;
-    channel.header.published_count.store(published_count_,
-                                         std::memory_order_relaxed);
+  }
+
+  void FlushPublishedCount() noexcept {
+    manager_.channel().header.published_count.store(published_count_,
+                                                    std::memory_order_relaxed);
   }
 
   void UpdateHeartbeatNs(std::uint64_t heartbeat_ns) noexcept {
+    FlushPublishedCount();
     manager_.channel().header.heartbeat_ns.store(heartbeat_ns,
                                                  std::memory_order_relaxed);
   }

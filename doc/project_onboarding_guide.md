@@ -76,6 +76,7 @@
 58. 交易全链路 runtime 命名已从 `StrategyRuntime` 收敛为 `TradingRuntime`，`UserStrategyT` / `user_strategy_` 收敛为 `StrategyT` / `strategy_`；对应入口改为 `core/strategy/trading_runtime.h`、`test/core/strategy/trading_runtime_test.cpp`、`tools/gate/trading_runtime_adapter.h` 和 `test/tools/gate/trading_runtime_adapter_test.cpp`，不保留旧 include 名称。
 59. `doc/trading_component_architecture_discussion.md` 已记录 `RealtimeDataReader` 多 feed 未来实现方向：新增 `trade` / `order_book` SHM reader 时，owning storage 按 feed 类型拆成 typed vectors，统一 round-robin 只扫 `SourceRef` scan table；不优先在热路径引入虚基类或 `std::variant`。
 60. `HistoricalDataReader::Drain()` 已从逐条调用 `Poll()` 改为在当前 mmap 文件内按 cursor 批量读取，只在文件边界进入 `CompleteCurrentFile()`。2026-05-19 release benchmark：historical drain 1/64/4096 从 `6.49ns` / `377ns` / `24178ns` 到 `6.53ns` / `338ns` / `21784ns`；单事件基本持平，批量 drain 更快。ORDI_USDT 三天 LeadLag replay 保持 `book_tickers=94799061`、`signals=2350`、`open=1175`、`close=1173`、`stoploss=2`，耗时 `5.57s`，`max_rss_kb=3486864`。
+61. `DataShmPublisher` 已将 shared header `published_count` 写入移出 `OnBookTicker()` / `EmplaceBookTickerWith()` 热路径：热路径只更新本地计数，`FlushPublishedCount()` 或 `UpdateHeartbeatNs()` 冷路径刷新 SHM header。2026-05-19 release benchmark：`data_shm/publisher_temp_book_ticker_push` 从 `8.06ns` 到 `7.50ns`，`data_shm/publisher_emplace_book_ticker_with` 从 `4.51ns` 到 `4.25ns`；`BM_BookTickerShmReaderTryReadOne` 基本持平 `1.94ns`。
 
 ## 新对话第一步
 
@@ -605,8 +606,8 @@ binance_book_ticker book_ticker_count=4140107 skipped=0 overruns=0 last_book_tic
 ```
 
 结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动
-skip，因此 reader 统计中 `skipped=0`。data session producer 的 `published_count()` 从已有 SHM header
-读取初始值，`remove_existing=false` 时不一定等于本次运行窗口内的生产条数；判断本次 reader 读取结果时以
+skip，因此 reader 统计中 `skipped=0`。data session producer 的 `published_count()` 以 SHM queue 当前 producer
+position 初始化，`remove_existing=false` 时不一定等于本次运行窗口内的生产条数；判断本次 reader 读取结果时以
 `RealtimeDataReaderDiagnostics` 的 per-source summary 为准。
 
 ### LeadLag fixed 策略设计当前状态

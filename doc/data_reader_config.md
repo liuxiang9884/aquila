@@ -252,6 +252,6 @@ source index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=4140
 ```
 
 结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动
-skip，因此 `skipped=0`。producer 侧 `DataShmPublisher::published_count()` 会从 SHM header 读取初始值；
-当 data session 配置 `remove_existing=false` 时，producer 的最终 `book_tickers` 不一定等于本次窗口内生产条数。
-评估本次 reader 读取情况时以 reader per-source summary 为准。
+skip，因此 `skipped=0`。producer 侧 `DataShmPublisher::published_count()` 以 SHM queue 当前 producer position
+初始化；当 data session 配置 `remove_existing=false` 时，producer 的最终 `book_tickers` 仍不一定等于本次窗口内
+生产条数。评估本次 reader 读取情况时以 reader per-source summary 为准。

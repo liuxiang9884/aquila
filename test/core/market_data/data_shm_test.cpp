@@ -240,4 +240,29 @@ TEST(DataShmTest, PublisherUpdatesHeartbeatOutsideHotPath) {
       123456789U);
 }
 
+TEST(DataShmTest, PublisherFlushesSharedPublishedCountOnColdPath) {
+  const md::BookTickerShmConfig config = MakeCreateConfig("published_flush");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::BookTickerShmManager manager(MakeAttachConfig(config));
+
+  publisher.OnBookTicker(MakeBookTicker(1));
+  EXPECT_EQ(publisher.published_count(), 1U);
+  EXPECT_EQ(
+      manager.channel().header.published_count.load(std::memory_order_relaxed),
+      0U);
+
+  publisher.FlushPublishedCount();
+  EXPECT_EQ(
+      manager.channel().header.published_count.load(std::memory_order_relaxed),
+      1U);
+
+  publisher.OnBookTicker(MakeBookTicker(2));
+  publisher.UpdateHeartbeatNs(123456789);
+  EXPECT_EQ(
+      manager.channel().header.published_count.load(std::memory_order_relaxed),
+      2U);
+}
+
 }  // namespace
