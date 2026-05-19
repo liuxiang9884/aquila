@@ -13,6 +13,8 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include "core/market_data/data_reader_concepts.h"
+
 namespace {
 
 namespace cfg = aquila::config;
@@ -51,6 +53,21 @@ struct RecordingHandler {
 
   std::vector<aquila::BookTicker> book_tickers;
 };
+
+static_assert(md::DataReaderLike<md::BinaryDataReader<>, RecordingHandler>);
+static_assert(md::FiniteDataReader<md::BinaryDataReader<>>);
+
+template <typename StatsT>
+concept HasPollDiagnostics = requires(StatsT stats) {
+  stats.poll_calls;
+  stats.empty_polls;
+};
+
+template <typename StatsT>
+concept HasOldBookTickersField = requires(StatsT stats) { stats.book_tickers; };
+
+static_assert(!HasPollDiagnostics<md::BinaryDataReaderStats>);
+static_assert(!HasOldBookTickersField<md::BinaryDataReaderStats>);
 
 aquila::BookTicker MakeBookTicker(std::int64_t id, aquila::Exchange exchange) {
   return aquila::BookTicker{
@@ -122,7 +139,7 @@ void ExpectBookTickerEquals(const aquila::BookTicker& actual,
   EXPECT_DOUBLE_EQ(actual.ask_volume, expected.ask_volume);
 }
 
-TEST(BinaryDataReaderTest, ReadsMultipleFilesSequentially) {
+TEST(BinaryDataReaderTest, PollReadsOneRecordAtATimeAcrossFiles) {
   TempDir temp_dir;
   const std::filesystem::path first_file = temp_dir.File("first.bin");
   const std::filesystem::path second_file = temp_dir.File("second.bin");
@@ -136,22 +153,34 @@ TEST(BinaryDataReaderTest, ReadsMultipleFilesSequentially) {
 
   md::BinaryDataReader<md::BinaryDataReaderDiagnostics> reader(
       MakeBinaryReaderConfig({first_file, second_file}));
+  EXPECT_FALSE(reader.finished());
 
   RecordingHandler handler;
-  EXPECT_EQ(reader.Poll(handler), 3U);
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 1U);
+  ExpectBookTickerEquals(handler.book_tickers[0], expected[0]);
+  EXPECT_FALSE(reader.finished());
+
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 2U);
+  ExpectBookTickerEquals(handler.book_tickers[1], expected[1]);
+  EXPECT_FALSE(reader.finished());
+
+  EXPECT_EQ(reader.Poll(handler), 1U);
   ASSERT_EQ(handler.book_tickers.size(), expected.size());
-  for (std::size_t i = 0; i < expected.size(); ++i) {
-    ExpectBookTickerEquals(handler.book_tickers[i], expected[i]);
-  }
+  ExpectBookTickerEquals(handler.book_tickers[2], expected[2]);
+  EXPECT_TRUE(reader.finished());
+
+  EXPECT_EQ(reader.Poll(handler), 0U);
+  EXPECT_EQ(handler.book_tickers.size(), expected.size());
+  EXPECT_TRUE(reader.finished());
 
   const md::BinaryDataReaderStats& stats = reader.diagnostics().stats();
-  EXPECT_EQ(stats.poll_calls, 1U);
-  EXPECT_EQ(stats.empty_polls, 0U);
-  EXPECT_EQ(stats.book_tickers, 3U);
+  EXPECT_EQ(stats.total_count, 3U);
   EXPECT_EQ(stats.files_completed, 2U);
 }
 
-TEST(BinaryDataReaderTest, RespectsMaxEventsPerSource) {
+TEST(BinaryDataReaderTest, DrainReadsAtMostMaxEvents) {
   TempDir temp_dir;
   const std::filesystem::path file = temp_dir.File("records.bin");
   WriteBookTickerFile(file, {MakeBookTicker(10, aquila::Exchange::kGate),
@@ -161,15 +190,20 @@ TEST(BinaryDataReaderTest, RespectsMaxEventsPerSource) {
   md::BinaryDataReader reader(MakeBinaryReaderConfig({file}, 2));
 
   RecordingHandler handler;
-  EXPECT_EQ(reader.Poll(handler), 2U);
+  EXPECT_EQ(reader.Drain(handler, 0), 0U);
+  EXPECT_TRUE(handler.book_tickers.empty());
+
+  EXPECT_EQ(reader.Drain(handler, 2), 2U);
   ASSERT_EQ(handler.book_tickers.size(), 2U);
   EXPECT_EQ(handler.book_tickers[0].id, 10);
   EXPECT_EQ(handler.book_tickers[1].id, 11);
+  EXPECT_FALSE(reader.finished());
 
   handler.book_tickers.clear();
-  EXPECT_EQ(reader.Poll(handler), 1U);
+  EXPECT_EQ(reader.Drain(handler, 10), 1U);
   ASSERT_EQ(handler.book_tickers.size(), 1U);
   EXPECT_EQ(handler.book_tickers[0].id, 12);
+  EXPECT_TRUE(reader.finished());
 }
 
 TEST(BinaryDataReaderTest, EmptyPollAfterAllFilesCompleted) {
@@ -179,18 +213,63 @@ TEST(BinaryDataReaderTest, EmptyPollAfterAllFilesCompleted) {
 
   md::BinaryDataReader<md::BinaryDataReaderDiagnostics> reader(
       MakeBinaryReaderConfig({file}));
+  EXPECT_FALSE(reader.finished());
 
   RecordingHandler handler;
   EXPECT_EQ(reader.Poll(handler), 1U);
+  EXPECT_TRUE(reader.finished());
   handler.book_tickers.clear();
+  EXPECT_EQ(reader.Poll(handler), 0U);
+  EXPECT_TRUE(handler.book_tickers.empty());
+  EXPECT_TRUE(reader.finished());
+
+  const md::BinaryDataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.total_count, 1U);
+  EXPECT_EQ(stats.files_completed, 1U);
+}
+
+TEST(BinaryDataReaderTest, EmptyFileIsCompletedAfterConstruction) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("empty.bin");
+  WriteBookTickerFile(file, {});
+
+  md::BinaryDataReader<md::BinaryDataReaderDiagnostics> reader(
+      MakeBinaryReaderConfig({file}));
+
+  EXPECT_TRUE(reader.finished());
+  RecordingHandler handler;
   EXPECT_EQ(reader.Poll(handler), 0U);
   EXPECT_TRUE(handler.book_tickers.empty());
 
   const md::BinaryDataReaderStats& stats = reader.diagnostics().stats();
-  EXPECT_EQ(stats.poll_calls, 2U);
-  EXPECT_EQ(stats.empty_polls, 1U);
-  EXPECT_EQ(stats.book_tickers, 1U);
+  EXPECT_EQ(stats.total_count, 0U);
   EXPECT_EQ(stats.files_completed, 1U);
+}
+
+TEST(BinaryDataReaderTest, TrailingEmptyFilesCompleteWithLastDataRecord) {
+  TempDir temp_dir;
+  const std::filesystem::path data_file = temp_dir.File("data.bin");
+  const std::filesystem::path empty_first = temp_dir.File("empty_first.bin");
+  const std::filesystem::path empty_second = temp_dir.File("empty_second.bin");
+  const aquila::BookTicker expected =
+      MakeBookTicker(21, aquila::Exchange::kGate);
+  WriteBookTickerFile(data_file, {expected});
+  WriteBookTickerFile(empty_first, {});
+  WriteBookTickerFile(empty_second, {});
+
+  md::BinaryDataReader<md::BinaryDataReaderDiagnostics> reader(
+      MakeBinaryReaderConfig({data_file, empty_first, empty_second}));
+  EXPECT_FALSE(reader.finished());
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 1U);
+  ExpectBookTickerEquals(handler.book_tickers[0], expected);
+  EXPECT_TRUE(reader.finished());
+
+  const md::BinaryDataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.total_count, 1U);
+  EXPECT_EQ(stats.files_completed, 3U);
 }
 
 TEST(BinaryDataReaderTest, DoesNotModifyRecordFields) {

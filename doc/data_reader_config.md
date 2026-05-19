@@ -8,9 +8,10 @@
 - `type = "binary_file"`
 - `feed = "book_ticker"`
 
-`DataReader` / `BinaryDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)`。SHM reader attach
-data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的
-`BookTicker` 二进制文件，适合 replay / 对账。
+`DataReader` / `BinaryDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)` 或 `Drain(handler, budget)`。
+SHM live reader 在 `StrategyRuntime` 中走 `Poll()`；binary replay / finite reader 走 `Drain()`。SHM reader attach
+data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的 `BookTicker`
+二进制文件，适合 replay / 对账。
 
 ## 示例
 
@@ -118,7 +119,7 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 | `instrument_catalog.file` | 无，必须显式配置 | instrument CSV 路径。相对路径会在加载配置文件时解析到仓库路径。 |
 | `instrument_catalog.schema` | 无，必须显式配置 | CSV schema，当前固定 `aquila.instrument.v1`。 |
 | `data_reader.name` | 无，必须显式配置 | reader 实例名。 |
-| `data_reader.max_events_per_source` | `64` | `drain` 模式下每个 source 单次 `Poll()` 最多产出的事件数；`latest` 模式忽略该值。 |
+| `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算；`Poll()` 本身始终是单事件接口。`StrategyRuntime` 只在 finite / replay reader 上使用该预算。 |
 | `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
 | `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `DataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
@@ -143,25 +144,34 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 
 `drain`：
 
-- 每个 source 每次 `Poll()` 最多产出 `max_events_per_source` 条。
+- 每个 source 每次 `Poll()` 最多产出一条。
+- 调用方如果需要批量消费，应调用 `Drain(handler, max_events)`，由 reader 循环执行 `Poll()`，最多输出 `max_events` 条。
 - 不主动跳到最后一条；除非 reader 已经落后超过 SHM ring capacity，底层 reader 会记录 overrun 并拉回可见窗口。
 - 适合需要完整事件流的验证、probe、benchmark、binary replay，以及未来不能丢中间事件的 feed。
 
 `binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`BinaryDataReader`
-会在构造时检查文件存在、文件大小是 `BookTicker` 大小的整数倍，并在历史文件读完后让后续 `Poll()` 返回
-0；外层 runtime 需要在 idle hook 中主动停止 replay loop。
+会在构造时检查文件存在、文件大小是 `BookTicker` 大小的整数倍；空文件是合法的已完成输入，构造后如果所有文件为空则
+`finished() == true`，最后一个有数据文件后的尾部空文件会在最后一条数据读完时一并计入完成。`Poll()` 每次最多输出一条，
+文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime 需要在 idle hook 中主动停止 replay loop。
 
 ## Poll 语义
 
-`DataReader::Poll(handler)` 会扫一遍 sources，并按每个 source 的 `read_mode` 直接分发：
+`DataReader::Poll(handler)` 是单事件接口：从 `next_source_index_` 开始 round-robin 扫描 sources，找到
+第一个可读 source 后输出一条并返回 1；所有 source 当前都无数据时返回 0。按 source `read_mode` 分发：
 
 ```text
 latest source -> TryReadLatest()
-drain source  -> TryReadOne() 最多 max_events_per_source 次
+drain source  -> TryReadOne()
 ```
 
-`DataReader` 保存 `next_source_index_`，每次 `Poll()` 后把起始 source 向后移动一位，避免固定 source
-长期先被处理。`Poll()` 返回本次交给 handler 的 book ticker 数量。
+成功输出后，`DataReader` 把下一次扫描起点移动到当前 source 的后一个位置，避免固定 source 长期先被处理。
+
+`DataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
+`max_events = 0` 时不读取并返回 0。
+
+`StrategyRuntime` 的调用规则按 reader 是否满足 `FiniteDataReader` 区分：live reader 不提供 `finished()`，每轮只调用
+`Poll(runtime)`；finite / replay reader 提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_source)`。
+不支持 `Drain()` 的兼容 reader 仍走 `Poll()` fallback。
 
 handler 需要提供：
 
@@ -178,13 +188,13 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 
 当前统计包括：
 
-- `poll_calls`
-- `empty_polls`
-- `book_tickers`
-- per-source `book_tickers`
+- `total_count`
+- per-source `book_ticker_count`
 - per-source `skipped`
 - per-source `overruns`
 - per-source `last_book_ticker_id`
+
+`poll_calls` / `empty_polls` 属于外层 runtime / scheduler / probe 的循环诊断，不放在 reader 内部 stats。
 
 统计不使用 atomic；第一版假设 `DataReader` 被单个 strategy 线程拥有。
 
@@ -199,12 +209,12 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 参数：
 
 - `--config`：data reader TOML 路径。
-- `--max-polls`：最多调用多少次 `Poll()`；`0` 表示直到 SIGINT / SIGTERM。
+- `--max-polls`：最多执行多少次 probe loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
 - `--log-every`：打印首条 book ticker，然后每 N 条打印一次采样；`0` 表示关闭采样日志。
 
 probe 使用 `DataReader<DataReaderDiagnostics>`，退出时会打印整体统计和每个 source 的：
 
-- `book_tickers`
+- `book_ticker_count`
 - `skipped`
 - `overruns`
 - `last_book_ticker_id`
@@ -228,12 +238,12 @@ reader log：
 /home/liuxiang/log/strategy_data_reader_drain_live_20260506_133639.log
 ```
 
-reader final summary：
+reader final summary（按当前字段名归一化）：
 
 ```text
-result=ok polls=5236281282 handler_book_tickers=4635362 diagnostics_book_tickers=4635362 empty_polls=5231647606
-source index=0 name=gate_book_ticker exchange=kGate book_tickers=495255 skipped=0 overruns=0 last_book_ticker_id=111902051288
-source index=1 name=binance_book_ticker exchange=kBinance book_tickers=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
+result=ok polls=5236281282 handler_book_tickers=4635362 diagnostics_total_count=4635362
+source index=0 name=gate_book_ticker exchange=kGate book_ticker_count=495255 skipped=0 overruns=0 last_book_ticker_id=111902051288
+source index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
 ```
 
 结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动

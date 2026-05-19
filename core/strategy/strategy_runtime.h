@@ -15,6 +15,7 @@
 #include "core/common/result.h"
 #include "core/config/data_reader_config.h"
 #include "core/config/strategy_config.h"
+#include "core/market_data/data_reader_concepts.h"
 #include "core/market_data/data_reader.h"
 #include "core/market_data/types.h"
 #include "core/strategy/order_manager.h"
@@ -106,6 +107,8 @@ class StrategyRuntime {
 
     try {
       runtime->config_ = std::move(config);
+      runtime->data_reader_poll_budget_ =
+          data_reader_config.max_events_per_source;
       runtime->data_reader_.emplace(std::move(data_reader_config));
       runtime->order_session_.emplace(
           std::forward<OrderSessionFactoryT>(order_session_factory)());
@@ -413,6 +416,14 @@ class StrategyRuntime {
     if (!data_reader_) {
       return 0;
     }
+    if constexpr (market_data::FiniteDataReader<DataReaderT> &&
+                  requires(DataReaderT& reader, StrategyRuntime& runtime,
+                           std::uint64_t max_events) {
+                    reader.Drain(runtime, max_events);
+                  }) {
+      return static_cast<std::uint64_t>(
+          data_reader_->Drain(*this, data_reader_poll_budget_));
+    }
     return static_cast<std::uint64_t>(data_reader_->Poll(*this));
   }
 
@@ -468,6 +479,7 @@ class StrategyRuntime {
 
   config::StrategyConfig config_;
   std::optional<DataReaderT> data_reader_;
+  std::uint64_t data_reader_poll_budget_{1};
   std::optional<OrderSessionT> order_session_;
   std::optional<OrderManagerT> order_manager_;
   std::optional<ContextT> context_;

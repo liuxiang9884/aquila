@@ -67,6 +67,7 @@
 49. `doc/lead_lag_go_cpp_semantic_audit.md` 已完成 fixed Go / Aquila C++ LeadLag 静态语义审计：主要开平仓公式、same-price tick、active seed、drift、noise、spread、threshold 顺序、close / stoploss 顺序基本一致；高影响差异集中在时间口径、move quantile exact vs histogram、以及 signal-only synthetic replay 不等价于真实 order/fill 回测。
 50. `doc/strategy_order_component_model.md` 已记录 `DataReader`、`OrderSession`、`OrderFeedbackSession`、`OrderManager` 和 `Strategy` 的解耦模型：行情通过 `DataReader` 进入策略；下单走 `Strategy -> OrderManager -> OrderSession`；ack / response 和 private feedback 都先进入 `OrderManager` 更新订单状态，再通知 `Strategy`。
 51. `doc/trading_component_architecture_discussion.md` 已作为交易组件架构持续讨论入口，当前已细化 `DataReader`：`DataReader` 是 Strategy-facing concept / 接口约束，不要求虚基类；`LiveDataReader` 和 `ReplayDataReader` 通过 `Poll(handler)` 单事件接口和 `Drain(handler, max_events)` 批量接口保持一致；`ReplayDataReader` 额外提供 `finished()`，且目标语义中 replay `Poll() == 0` 表示 EOF；`DataReader` 不做 merge，realtime merge 归上游 data session / producer，history merge 归离线预处理；第一版 replay 只要求 binary source；`poll_calls` / `empty_polls` 归 runtime / scheduler / 组装层 diagnostics，不放在 reader 内部 stats。
+52. DataReader Poll / Drain 目标语义已落地到当前实现：`core/market_data/data_reader_concepts.h` 提供 `DataReaderLike` / `FiniteDataReader`；`core/market_data/data_reader.h` 的 `Poll()` 已改成单事件 round-robin，`Drain()` 承担批量消费；`core/market_data/binary_data_reader.h` 的 `Poll()` 已改成单事件 replay step，并新增 `Drain()` / `finished()`；reader stats 已改为 `total_count`、per-source `book_ticker_count` 和 replay `files_completed`。`StrategyRuntime` 对 live reader 每轮调用 `Poll()`，只对满足 `FiniteDataReader` 的 replay / finite reader 使用 `Drain(runtime, data_reader.max_events_per_source)`。
 
 ## 新对话第一步
 
@@ -109,7 +110,7 @@ doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，
 然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。
-以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `f05bc73 Update data reader stats design`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。交易组件边界讨论入口是 `doc/strategy_order_component_model.md` 和 `doc/trading_component_architecture_discussion.md`；当前已确认 `DataReader` 是 concept / 接口约束，不做 merge，`LiveDataReader` / `ReplayDataReader` 用 `Poll(handler)` 单事件接口和 `Drain(handler, max_events)` 批量接口保持一致，`ReplayDataReader` 额外用 `finished()` 表达 EOF，`poll_calls` / `empty_polls` 归 runtime / scheduler diagnostics。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解、C++ 策略层模块、`Strategy::OnBookTicker()` replay 信号主链路和 fixed Go / C++ 静态语义审计；`strategy/lead_lag/README.md` 是策略目录入口，`doc/lead_lag_go_cpp_semantic_audit.md` 是 Go/C++ 差异讨论入口。Tardis/HDF ORDI_USDT replay 对比、signal/PnL 结论见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader / binary replay，再读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`；如果继续 LeadLag fixed 策略迁移，下一步先确认时间口径、是否需要 replay-only exact empirical quantile、以及 synthetic replay 的边界，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 和 REST reconcile。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
+以 onboarding 的“最近已完成”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前 `main` 至少包含 `bf41c27 Document data reader poll drain design`，默认不 push，除非用户明确要求 push；下一轮先用 `git status --short --branch` 和 `git log --oneline -8` 重新确认分支状态。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run 工具。交易组件边界讨论入口是 `doc/strategy_order_component_model.md` 和 `doc/trading_component_architecture_discussion.md`；当前已确认 `DataReader` 是 concept / 接口约束，不做 merge，`LiveDataReader` / `ReplayDataReader` 用 `Poll(handler)` 单事件接口和 `Drain(handler, max_events)` 批量接口保持一致，`ReplayDataReader` 额外用 `finished()` 表达 EOF，`poll_calls` / `empty_polls` 归 runtime / scheduler diagnostics。LeadLag fixed 策略迁移当前完成的是 1-7 部分设计拆解、C++ 策略层模块、`Strategy::OnBookTicker()` replay 信号主链路和 fixed Go / C++ 静态语义审计；`strategy/lead_lag/README.md` 是策略目录入口，`doc/lead_lag_go_cpp_semantic_audit.md` 是 Go/C++ 差异讨论入口。Tardis/HDF ORDI_USDT replay 对比、signal/PnL 结论见 `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。后续如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`、`doc/superpowers/specs/2026-05-07-gate-order-session-design.md`、`doc/superpowers/specs/2026-05-08-gate-order-feedback-event-design.md`、`doc/superpowers/specs/2026-05-08-order-feedback-shm-transport-design.md` 和 `doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md`；如果继续 Binance 行情，再读 `doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读 `doc/data_session_config.md`；如果继续 strategy data reader / binary replay，再读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`；如果继续 LeadLag fixed 策略迁移，下一步先确认时间口径、是否需要 replay-only exact empirical quantile、以及 synthetic replay 的边界，再补生产 `OnOrderResponse()` / `OnOrderFeedback()` execution state 和 REST reconcile。修改后按项目规则跑对应验证并自动提交；如果用户输入“结束对话”，
 先整理相关文档和 onboarding，写好下一轮交接提示，验证后提交，除非用户明确要求不要提交或要求 push。
 
 ## 结束对话固定流程
@@ -480,6 +481,7 @@ Order feedback Task1 / Task2 关键结论：
 - `StrategyContext<OrderSessionT>` 是 user strategy 的下单接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`。
 - `StrategyRuntime::Create()` 接收已解析的 `StrategyConfig` / `DataReaderConfig` 和 order session factory，构造 `DataReader`、`OrderSession`、`OrderManager`、`StrategyContext`、user strategy 和可选 `OrderFeedbackShmReader`。
 - `Run()` 在支持 `SetRuntimeHook()` 的 order session 上使用同线程 hook mode：Gate WebSocket active spin loop 每轮先驱动 runtime hook，runtime 轮询 feedback SHM，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；`OrderResponse` 由 Gate response handler 通过 `BindRuntime()` 同线程直接进入 `OnOrderResponse()`。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
+- data reader 调用规则：live reader 不提供 `finished()`，runtime 每轮调用 `Poll(runtime)`；replay / finite reader 满足 `FiniteDataReader`，runtime 使用 `Drain(runtime, data_reader.max_events_per_source)`；不支持 `Drain()` 的兼容 reader 仍可走 `Poll()` fallback。
 - user strategy 可实现 `OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()`。`OnOrderResponse()` / `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 user strategy hook。
 - Gate-specific 构造留在 `tools/gate/strategy_runtime_adapter.h` 和 tool 层，core runtime 不 include `exchange/`；Gate adapter 不创建后台线程、不维护 command queue，place/cancel 在 StrategyThread / Gate session 同线程直接调用。
 - `gate_demo_strategy` 默认 dry-run，不打开 WebSocket / SHM；真实提交必须显式 `--execute`，并需要先启动 `gate_order_feedback_session --connect`。
@@ -499,12 +501,12 @@ Order feedback Task1 / Task2 关键结论：
 
 `doc/trading_component_architecture_discussion.md` 是当前交易组件架构持续讨论入口，`DataReader` 部分已有以下结论：
 
-- `DataReader` 在架构上是 Strategy-facing capability / concept，不要求落成虚基类或运行时多态继承体系。
-- `Strategy` 侧只依赖 `Poll(handler)` 单事件接口、`Drain(handler, max_events)` 批量接口和 handler 的 `OnBookTicker(const BookTicker&)`；`LiveDataReader` 和 `ReplayDataReader` 都通过这组接口保持一致。
-- `LiveDataReader` 没有天然 EOF；`ReplayDataReader` 额外满足 `FiniteDataReader`，通过 `finished()` 显式查询 EOF；目标语义中 replay `Poll() == 0` 表示已读完。
+- `DataReader` 在架构上是 Strategy-facing capability / concept，不要求落成虚基类或运行时多态继承体系；当前代码已新增 `core/market_data/data_reader_concepts.h`。
+- `Strategy` 侧只依赖 `Poll(handler)` 单事件接口、`Drain(handler, max_events)` 批量接口和 handler 的 `OnBookTicker(const BookTicker&)`；当前 `core/market_data/data_reader.h` 和 `core/market_data/binary_data_reader.h` 都已实现这组接口。
+- `LiveDataReader` 没有天然 EOF；当前 live 实现仍使用类名 `DataReader`，不提供 `finished()`；当前 replay 实现仍使用类名 `BinaryDataReader`，已满足 `FiniteDataReader`，通过 `finished()` 显式查询 EOF，且 replay `Poll() == 0` 表示已读完。
 - `DataReader` 不负责 merge。实时多路行情 merge 归上游 `DataSession` / producer，历史多路行情 merge 归离线预处理程序；第一版 replay 只要求预处理后的 binary `BookTicker` source。
 - `Diagnostics` 是否启用由模板静态指定；`Diagnostics` 是记录器 / policy，`Stats` 是计数快照，不建议在组件内部命名为 `Metrics`。
-- `poll_calls` / `empty_polls` 描述外层轮询循环行为，应放到 `StrategyRuntime`、scheduler 或组装层 diagnostics；reader 内部 stats 聚焦数据流本身，例如 live 的 `total_count`、per-source `book_ticker_count` / skipped / overruns / last id，以及 replay 的 `total_count` / `files_completed`。
+- `poll_calls` / `empty_polls` 描述外层轮询循环行为，应放到 `StrategyRuntime`、scheduler 或组装层 diagnostics；当前 reader stats 已移除这两个字段，聚焦数据流本身，例如 live 的 `total_count`、per-source `book_ticker_count` / skipped / overruns / last id，以及 replay 的 `total_count` / `files_completed`。
 
 ### Gate SBE 行情当前状态
 
@@ -588,9 +590,9 @@ log: /home/liuxiang/log/strategy_data_reader_drain_live_20260506_133639.log
 reader final summary：
 
 ```text
-handler_book_tickers=4635362 diagnostics_book_tickers=4635362
-gate_book_ticker    book_tickers=495255  skipped=0 overruns=0 last_book_ticker_id=111902051288
-binance_book_ticker book_tickers=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
+handler_book_tickers=4635362 diagnostics_total_count=4635362
+gate_book_ticker    book_ticker_count=495255  skipped=0 overruns=0 last_book_ticker_id=111902051288
+binance_book_ticker book_ticker_count=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
 ```
 
 结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动

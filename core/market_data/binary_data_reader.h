@@ -24,38 +24,30 @@ static_assert(std::is_trivially_copyable_v<BookTicker>);
 static_assert(std::is_standard_layout_v<BookTicker>);
 
 struct BinaryDataReaderStats {
-  std::uint64_t poll_calls{0};
-  std::uint64_t empty_polls{0};
-  std::uint64_t book_tickers{0};
+  std::uint64_t total_count{0};
   std::uint64_t files_completed{0};
 };
 
 struct NoopBinaryDataReaderDiagnostics {
+  static constexpr bool kEnabled = false;
+
   explicit NoopBinaryDataReaderDiagnostics(std::size_t file_count) noexcept {
     (void)file_count;
   }
-  void RecordPoll() noexcept {}
-  void RecordEmptyPoll() noexcept {}
   void RecordBookTicker(const BookTicker&) noexcept {}
   void RecordFileCompleted() noexcept {}
 };
 
 class BinaryDataReaderDiagnostics {
  public:
+  static constexpr bool kEnabled = true;
+
   explicit BinaryDataReaderDiagnostics(std::size_t file_count) noexcept {
     (void)file_count;
   }
 
-  void RecordPoll() noexcept {
-    ++stats_.poll_calls;
-  }
-
-  void RecordEmptyPoll() noexcept {
-    ++stats_.empty_polls;
-  }
-
   void RecordBookTicker(const BookTicker&) noexcept {
-    ++stats_.book_tickers;
+    ++stats_.total_count;
   }
 
   void RecordFileCompleted() noexcept {
@@ -74,13 +66,7 @@ template <typename Diagnostics = NoopBinaryDataReaderDiagnostics>
 class BinaryDataReader {
  public:
   explicit BinaryDataReader(config::DataReaderConfig data_reader_config)
-      : max_events_per_poll_(data_reader_config.max_events_per_source),
-        diagnostics_(CountFiles(data_reader_config)) {
-    if (max_events_per_poll_ == 0) {
-      throw std::invalid_argument(
-          "data_reader.max_events_per_source must be positive");
-    }
-
+      : diagnostics_(CountFiles(data_reader_config)) {
     files_.reserve(CountFiles(data_reader_config));
     for (const config::DataReaderSourceConfig& source :
          data_reader_config.sources) {
@@ -92,6 +78,7 @@ class BinaryDataReader {
         });
       }
     }
+    SkipEmptyFiles();
   }
 
   BinaryDataReader(const BinaryDataReader&) = delete;
@@ -101,43 +88,47 @@ class BinaryDataReader {
 
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) {
-    if constexpr (!std::is_same_v<Diagnostics,
-                                  NoopBinaryDataReaderDiagnostics>) {
-      diagnostics_.RecordPoll();
+    if (!EnsureReadableFile()) {
+      return 0;
     }
 
-    std::uint64_t handled = 0;
-    while (handled < max_events_per_poll_ && EnsureReadableFile()) {
-      BookTicker book_ticker{};
-      current_input_.read(reinterpret_cast<char*>(&book_ticker),
-                          static_cast<std::streamsize>(sizeof(BookTicker)));
-      if (current_input_.gcount() !=
-          static_cast<std::streamsize>(sizeof(BookTicker))) {
-        throw std::runtime_error(
-            fmt::format("failed to read binary data file '{}'",
-                        files_[current_file_index_].path.string()));
-      }
-
-      --current_records_remaining_;
-      if constexpr (!std::is_same_v<Diagnostics,
-                                    NoopBinaryDataReaderDiagnostics>) {
-        diagnostics_.RecordBookTicker(book_ticker);
-      }
-      handler.OnBookTicker(book_ticker);
-      ++handled;
-
-      if (current_records_remaining_ == 0) {
-        CompleteCurrentFile();
-      }
+    BookTicker book_ticker{};
+    current_input_.read(reinterpret_cast<char*>(&book_ticker),
+                        static_cast<std::streamsize>(sizeof(BookTicker)));
+    if (current_input_.gcount() !=
+        static_cast<std::streamsize>(sizeof(BookTicker))) {
+      throw std::runtime_error(
+          fmt::format("failed to read binary data file '{}'",
+                      files_[current_file_index_].path.string()));
     }
 
-    if (handled == 0) {
-      if constexpr (!std::is_same_v<Diagnostics,
-                                    NoopBinaryDataReaderDiagnostics>) {
-        diagnostics_.RecordEmptyPoll();
-      }
+    --current_records_remaining_;
+    if constexpr (Diagnostics::kEnabled) {
+      diagnostics_.RecordBookTicker(book_ticker);
     }
-    return handled;
+    handler.OnBookTicker(book_ticker);
+
+    if (current_records_remaining_ == 0) {
+      CompleteCurrentFile();
+    }
+    return 1;
+  }
+
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) {
+    std::uint64_t count = 0;
+    while (count < max_events) {
+      const std::uint64_t handled = Poll(handler);
+      if (handled == 0) {
+        break;
+      }
+      count += handled;
+    }
+    return count;
+  }
+
+  [[nodiscard]] bool finished() const noexcept {
+    return current_file_index_ >= files_.size();
   }
 
   [[nodiscard]] const Diagnostics& diagnostics() const noexcept {
@@ -238,6 +229,7 @@ class BinaryDataReader {
   }
 
   [[nodiscard]] bool EnsureReadableFile() {
+    SkipEmptyFiles();
     while (current_file_index_ < files_.size()) {
       if (!current_input_.is_open()) {
         OpenCurrentFile();
@@ -254,13 +246,24 @@ class BinaryDataReader {
     current_input_.close();
     current_input_.clear();
     ++current_file_index_;
-    if constexpr (!std::is_same_v<Diagnostics,
-                                  NoopBinaryDataReaderDiagnostics>) {
+    if constexpr (Diagnostics::kEnabled) {
       diagnostics_.RecordFileCompleted();
+    }
+    SkipEmptyFiles();
+  }
+
+  void SkipEmptyFiles() {
+    while (current_file_index_ < files_.size() &&
+           files_[current_file_index_].record_count == 0) {
+      current_input_.close();
+      current_input_.clear();
+      ++current_file_index_;
+      if constexpr (Diagnostics::kEnabled) {
+        diagnostics_.RecordFileCompleted();
+      }
     }
   }
 
-  std::uint32_t max_events_per_poll_{64};
   std::vector<FileState> files_;
   std::size_t current_file_index_{0};
   std::uint64_t current_records_remaining_{0};

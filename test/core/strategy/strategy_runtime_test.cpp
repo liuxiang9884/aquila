@@ -12,6 +12,7 @@
 
 #include "core/common/types.h"
 #include "core/config/strategy_config.h"
+#include "core/market_data/data_reader_concepts.h"
 #include "core/market_data/types.h"
 #include "core/strategy/order_types.h"
 #include "core/strategy/strategy_context.h"
@@ -31,6 +32,7 @@ struct RuntimeLoopState {
   int stop_calls{0};
   int order_response_poll_calls{0};
   int data_poll_calls{0};
+  int data_drain_calls{0};
   int on_start_calls{0};
   int on_idle_calls{0};
   int on_loop_calls{0};
@@ -47,9 +49,11 @@ struct RuntimeLoopState {
   int stop_after_feedback_calls{0};
   int stop_after_idle_calls{0};
   std::int64_t last_ticker_id{0};
+  std::uint64_t last_data_drain_budget{0};
   bool hook_stop_requested{false};
   OrderResponseKind last_response_kind{OrderResponseKind::kAck};
   std::vector<BookTicker> book_tickers;
+  std::vector<std::int64_t> handled_book_ticker_ids;
   std::vector<OrderResponseEvent> order_responses;
   std::size_t next_book_ticker_index{0};
   std::size_t next_order_response_index{0};
@@ -365,6 +369,90 @@ struct FakeDataReader {
   RuntimeLoopState* state{nullptr};
 };
 
+struct FakeDrainDataReader {
+  explicit FakeDrainDataReader(config::DataReaderConfig) noexcept
+      : state(g_fake_data_reader_state) {}
+
+  template <typename Handler>
+  std::uint64_t Poll(Handler& handler) noexcept {
+    if (state == nullptr) {
+      return 0;
+    }
+    ++state->data_poll_calls;
+    if (state->next_book_ticker_index >= state->book_tickers.size()) {
+      return 0;
+    }
+    handler.OnBookTicker(state->book_tickers[state->next_book_ticker_index++]);
+    return 1;
+  }
+
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) noexcept {
+    if (state == nullptr) {
+      return 0;
+    }
+    ++state->data_drain_calls;
+    state->last_data_drain_budget = max_events;
+    std::uint64_t handled = 0;
+    while (handled < max_events &&
+           state->next_book_ticker_index < state->book_tickers.size()) {
+      handler.OnBookTicker(
+          state->book_tickers[state->next_book_ticker_index++]);
+      ++handled;
+    }
+    return handled;
+  }
+
+  RuntimeLoopState* state{nullptr};
+};
+
+struct FakeFiniteDrainDataReader {
+  explicit FakeFiniteDrainDataReader(config::DataReaderConfig) noexcept
+      : state(g_fake_data_reader_state) {}
+
+  template <typename Handler>
+  std::uint64_t Poll(Handler& handler) noexcept {
+    if (state == nullptr) {
+      return 0;
+    }
+    ++state->data_poll_calls;
+    if (state->next_book_ticker_index >= state->book_tickers.size()) {
+      return 0;
+    }
+    handler.OnBookTicker(state->book_tickers[state->next_book_ticker_index++]);
+    return 1;
+  }
+
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) noexcept {
+    if (state == nullptr) {
+      return 0;
+    }
+    ++state->data_drain_calls;
+    state->last_data_drain_budget = max_events;
+    std::uint64_t handled = 0;
+    while (handled < max_events &&
+           state->next_book_ticker_index < state->book_tickers.size()) {
+      handler.OnBookTicker(
+          state->book_tickers[state->next_book_ticker_index++]);
+      ++handled;
+    }
+    return handled;
+  }
+
+  [[nodiscard]] bool finished() const noexcept {
+    return state == nullptr ||
+           state->next_book_ticker_index >= state->book_tickers.size();
+  }
+
+  RuntimeLoopState* state{nullptr};
+};
+
+static_assert(
+    !market_data::FiniteDataReader<FakeDrainDataReader>,
+    "live-like readers can expose Drain helpers without replay EOF semantics");
+static_assert(market_data::FiniteDataReader<FakeFiniteDrainDataReader>);
+
 struct LoopUserStrategy {
   using ContextT = StrategyContext<FakeOrderSession>;
 
@@ -413,6 +501,7 @@ struct LoopUserStrategy {
   void OnBookTicker(const BookTicker& ticker, ContextT&) noexcept {
     ++state_->book_ticker_calls;
     state_->last_ticker_id = ticker.id;
+    state_->handled_book_ticker_ids.push_back(ticker.id);
   }
 
   void OnOrderResponse(const OrderResponseEvent& event, ContextT&) noexcept {
@@ -430,6 +519,10 @@ struct LoopUserStrategy {
 
 using LoopRuntime =
     StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDataReader>;
+using DrainLoopRuntime =
+    StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDrainDataReader>;
+using FiniteDrainLoopRuntime = StrategyRuntime<
+    LoopUserStrategy, FakeOrderSession, FakeFiniteDrainDataReader>;
 
 struct HookLoopUserStrategy {
   using ContextT = StrategyContext<FakeHookOrderSession>;
@@ -509,8 +602,8 @@ config::DataReaderConfig MakeDataReaderConfig() {
   return config;
 }
 
-BookTicker MakeBookTicker() noexcept {
-  return BookTicker{.id = 42,
+BookTicker MakeBookTicker(std::int64_t id = 42) noexcept {
+  return BookTicker{.id = id,
                     .symbol_id = 7,
                     .exchange = Exchange::kGate,
                     .exchange_ns = 1000,
@@ -647,6 +740,64 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.data_poll_calls, 1);
   EXPECT_EQ(state.book_ticker_calls, 1);
   EXPECT_EQ(state.last_ticker_id, 42);
+}
+
+TEST(StrategyRuntimeTest, ProductionRunPollsLiveLikeDrainCapableDataReader) {
+  RuntimeLoopState state;
+  state.book_tickers.push_back(MakeBookTicker(101));
+  state.book_tickers.push_back(MakeBookTicker(102));
+  state.stop_after_book_ticker_calls = 1;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+  config::DataReaderConfig data_reader_config = MakeDataReaderConfig();
+  data_reader_config.max_events_per_source = 2;
+
+  auto runtime_result = DrainLoopRuntime::Create(
+      std::move(config), std::move(data_reader_config),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  EXPECT_EQ(state.data_poll_calls, 1);
+  EXPECT_EQ(state.data_drain_calls, 0);
+  EXPECT_EQ(state.book_ticker_calls, 1);
+  ASSERT_EQ(state.handled_book_ticker_ids.size(), 1U);
+  EXPECT_EQ(state.handled_book_ticker_ids[0], 101);
+  EXPECT_EQ(state.on_loop_calls, 1);
+}
+
+TEST(StrategyRuntimeTest,
+     ProductionRunDrainsFiniteDataReaderWithConfiguredEventBudget) {
+  RuntimeLoopState state;
+  state.book_tickers.push_back(MakeBookTicker(101));
+  state.book_tickers.push_back(MakeBookTicker(102));
+  state.book_tickers.push_back(MakeBookTicker(103));
+  state.stop_after_book_ticker_calls = 2;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+  config::DataReaderConfig data_reader_config = MakeDataReaderConfig();
+  data_reader_config.max_events_per_source = 2;
+
+  auto runtime_result = FiniteDrainLoopRuntime::Create(
+      std::move(config), std::move(data_reader_config),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  EXPECT_EQ(state.data_drain_calls, 1);
+  EXPECT_EQ(state.data_poll_calls, 0);
+  EXPECT_EQ(state.last_data_drain_budget, 2U);
+  EXPECT_EQ(state.book_ticker_calls, 2);
+  ASSERT_EQ(state.handled_book_ticker_ids.size(), 2U);
+  EXPECT_EQ(state.handled_book_ticker_ids[0], 101);
+  EXPECT_EQ(state.handled_book_ticker_ids[1], 102);
+  EXPECT_EQ(state.on_loop_calls, 1);
 }
 
 TEST(StrategyRuntimeTest, ProductionRunDispatchesOrderSessionResponses) {

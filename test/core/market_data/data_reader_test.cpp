@@ -12,6 +12,7 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include "core/market_data/data_reader_concepts.h"
 #include "core/market_data/data_shm.h"
 
 namespace {
@@ -37,6 +38,22 @@ struct RecordingHandler {
 
   std::vector<aquila::BookTicker> book_tickers;
 };
+
+static_assert(md::DataReaderLike<md::DataReader<>, RecordingHandler>);
+static_assert(!md::FiniteDataReader<md::DataReader<>>);
+
+template <typename StatsT>
+concept HasPollDiagnostics = requires(StatsT stats) {
+  stats.poll_calls;
+  stats.empty_polls;
+};
+
+template <typename StatsT>
+concept HasOldBookTickersField = requires(StatsT stats) { stats.book_tickers; };
+
+static_assert(!HasPollDiagnostics<md::DataReaderStats>);
+static_assert(!HasOldBookTickersField<md::DataReaderStats>);
+static_assert(!HasOldBookTickersField<md::DataReaderSourceStats>);
 
 std::string UniqueShmName(std::string_view suffix) {
   return fmt::format("/aquila_data_reader_test_{}_{}", ::getpid(), suffix);
@@ -106,20 +123,23 @@ TEST(DataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
   binance_publisher.OnBookTicker(MakeBookTicker(2, aquila::Exchange::kBinance));
 
   RecordingHandler handler;
-  EXPECT_EQ(reader.Poll(handler), 2U);
-  ASSERT_EQ(handler.book_tickers.size(), 2U);
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 1U);
   EXPECT_EQ(handler.book_tickers[0].exchange, aquila::Exchange::kGate);
+
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 2U);
   EXPECT_EQ(handler.book_tickers[1].exchange, aquila::Exchange::kBinance);
 }
 
-TEST(DataReaderTest, DrainReadsAtMostMaxEventsPerSource) {
+TEST(DataReaderTest, DrainReadsAtMostMaxEvents) {
   const md::BookTickerShmConfig gate_config = MakeCreateConfig("drain_limit");
   ShmCleanup cleanup(gate_config.shm_name);
   md::DataShmPublisher publisher(gate_config);
 
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 2;
+  config.max_events_per_source = 64;
   config.sources.push_back(
       MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
                        gate_config.shm_name, cfg::DataReaderReadMode::kDrain));
@@ -130,13 +150,16 @@ TEST(DataReaderTest, DrainReadsAtMostMaxEventsPerSource) {
   publisher.OnBookTicker(MakeBookTicker(3, aquila::Exchange::kGate));
 
   RecordingHandler handler;
-  EXPECT_EQ(reader.Poll(handler), 2U);
+  EXPECT_EQ(reader.Drain(handler, 0), 0U);
+  EXPECT_TRUE(handler.book_tickers.empty());
+
+  EXPECT_EQ(reader.Drain(handler, 2), 2U);
   ASSERT_EQ(handler.book_tickers.size(), 2U);
   EXPECT_EQ(handler.book_tickers[0].id, 1);
   EXPECT_EQ(handler.book_tickers[1].id, 2);
 
   handler.book_tickers.clear();
-  EXPECT_EQ(reader.Poll(handler), 1U);
+  EXPECT_EQ(reader.Drain(handler, 10), 1U);
   ASSERT_EQ(handler.book_tickers.size(), 1U);
   EXPECT_EQ(handler.book_tickers[0].id, 3);
 }
@@ -169,7 +192,7 @@ TEST(DataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
   EXPECT_TRUE(handler.book_tickers.empty());
 }
 
-TEST(DataReaderTest, DiagnosticsTrackBookTickersSkippedAndEmptyPolls) {
+TEST(DataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
   using Reader = md::DataReader<md::DataReaderDiagnostics>;
 
   const md::BookTickerShmConfig config = MakeCreateConfig("diag_latest");
@@ -193,11 +216,9 @@ TEST(DataReaderTest, DiagnosticsTrackBookTickersSkippedAndEmptyPolls) {
   EXPECT_EQ(reader.Poll(handler), 0U);
 
   const md::DataReaderStats& stats = reader.diagnostics().stats();
-  EXPECT_EQ(stats.poll_calls, 2U);
-  EXPECT_EQ(stats.empty_polls, 1U);
-  EXPECT_EQ(stats.book_tickers, 1U);
+  EXPECT_EQ(stats.total_count, 1U);
   ASSERT_EQ(stats.sources.size(), 1U);
-  EXPECT_EQ(stats.sources[0].book_tickers, 1U);
+  EXPECT_EQ(stats.sources[0].book_ticker_count, 1U);
   EXPECT_EQ(stats.sources[0].skipped, 2U);
   EXPECT_EQ(stats.sources[0].last_book_ticker_id, 3);
 }
@@ -209,6 +230,7 @@ TEST(DataReaderTest, DefaultDiagnosticsCompileAndPoll) {
 
   md::DataReader reader(std::move(config));
   RecordingHandler handler;
+  EXPECT_EQ(reader.Drain(handler, 0), 0U);
   EXPECT_EQ(reader.Poll(handler), 0U);
 }
 

@@ -86,9 +86,9 @@ void LogSourceStats(
       exchange = magic_enum::enum_name(label->exchange);
     }
     NOVA_INFO(
-        "source index={} name={} exchange={} book_tickers={} skipped={} "
+        "source index={} name={} exchange={} book_ticker_count={} skipped={} "
         "overruns={} last_book_ticker_id={}",
-        i, name, exchange, stats[i].book_tickers, stats[i].skipped,
+        i, name, exchange, stats[i].book_ticker_count, stats[i].skipped,
         stats[i].overruns, stats[i].last_book_ticker_id);
   }
 }
@@ -123,6 +123,8 @@ int main(int argc, char** argv) {
 
       const std::vector<SourceLabel> source_labels =
           BuildSourceLabels(config_result.value);
+      const std::uint64_t drain_budget =
+          config_result.value.max_events_per_source;
       using Reader = aquila::market_data::DataReader<
           aquila::market_data::DataReaderDiagnostics>;
       Reader reader(std::move(config_result.value));
@@ -134,7 +136,7 @@ int main(int argc, char** argv) {
       std::uint64_t polls{0};
       while (!signal_stop_requested.load(std::memory_order_relaxed) &&
              (max_polls == 0 || polls < max_polls)) {
-        const std::uint64_t handled = reader.Poll(handler);
+        const std::uint64_t handled = reader.Drain(handler, drain_budget);
         ++polls;
         if (handled == 0) {
           std::this_thread::yield();
@@ -144,8 +146,8 @@ int main(int argc, char** argv) {
       const auto& stats = reader.diagnostics().stats();
       NOVA_INFO(
           "result=ok polls={} handler_book_tickers={} "
-          "diagnostics_book_tickers={} empty_polls={}",
-          polls, handler.book_tickers(), stats.book_tickers, stats.empty_polls);
+          "diagnostics_total_count={}",
+          polls, handler.book_tickers(), stats.total_count);
       LogSourceStats(source_labels, stats.sources);
       return 0;
     } catch (const std::exception& exc) {

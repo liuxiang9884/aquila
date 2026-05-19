@@ -539,43 +539,48 @@ class BinaryBookTickerSource {
 
 ### 当前实现对照
 
-当前实现还没有完全按上述目标拆分：
+当前实现已完成目标语义改造，但仍保留历史类名：
 
 ```text
 core/market_data/data_reader.h
   - 目前类名仍是 DataReader，实际承担 LiveDataReader 第一版职责。
-  - 当前 Poll() 会扫描所有 source。
-  - source read_mode = latest 时，每个 source 最多输出最新一条。
-  - source read_mode = drain 时，每个 source 最多输出 max_events_per_source_ 条。
-  - 当前还没有 Drain(handler, max_events)。
-  - 当前 stats 仍包含 poll_calls / empty_polls / book_tickers。
-  - 当前 SourceStats 字段仍叫 book_tickers，不是目标设计里的 book_ticker_count。
+  - 已提供 Poll(handler) 单事件接口和 Drain(handler, max_events) 批量接口。
+  - Poll() 从 next_source_index_ 开始 round-robin 扫描 source，最多输出 1 条。
+  - source read_mode = latest 时调用 TryReadLatest()。
+  - source read_mode = drain 时调用 TryReadOne()。
+  - stats 已移除 poll_calls / empty_polls，使用 total_count 和 per-source book_ticker_count。
 
 core/market_data/binary_data_reader.h
   - 目前类名是 BinaryDataReader，目标架构中更接近 ReplayDataReader + BinaryBookTickerSource。
-  - 当前 Poll() 会一次最多读取 max_events_per_poll_ 条。
-  - 当前没有 finished()。
-  - 当前没有 Drain(handler, max_events)。
-  - 当前 stats 仍包含 poll_calls / empty_polls / book_tickers。
+  - 已提供 Poll(handler) 单事件 step、Drain(handler, max_events) 和 finished()。
+  - Poll() 成功输出 1 条时返回 1，EOF 返回 0。
+  - 已移除 replay 内部 max_events_per_poll_ 语义。
+  - stats 已移除 poll_calls / empty_polls，使用 total_count / files_completed。
+
+core/market_data/data_reader_concepts.h
+  - 已提供 DataReaderLike 和 FiniteDataReader concept。
+
+core/strategy/strategy_runtime.h
+  - 已在 Create() 中保存 data_reader.max_events_per_source 作为外层 data reader poll budget。
+  - PollDataReader() 只对满足 FiniteDataReader 的 replay / finite reader 使用 reader.Drain(runtime, budget)。
+  - live reader 即使提供 Drain() helper，只要不提供 finished()，runtime 仍调用 reader.Poll(runtime)。
+  - 不支持 Drain() 的兼容 reader 继续 fallback 到 reader.Poll(runtime)。
 ```
 
-因此当前实现的主要差异不是底层读取能力，而是接口语义还没收敛：
+当前仍未做的命名整理：
 
-- `Poll()` 还混合了单步读取和批量读取。
-- live / replay 的批量预算还藏在 reader config 或 reader 成员里。
-- replay EOF 只能从 `Poll() == 0` 间接判断，没有显式 `finished()`。
-- stats 还包含外层 loop 行为字段，命名也还没对齐目标设计。
+- `DataReader` 还没有改名为 `LiveDataReader`。
+- `BinaryDataReader` 还没有改名为 `ReplayDataReader`。
+- `DataReaderConfig::max_events_per_source` 字段名仍保留旧名字；当前语义已改为外层 `Drain()` budget。
 
 ### 下一步建议
 
-建议按小步提交推进，不一次性改完整 runtime：
+后续建议拆成独立任务继续推进：
 
-1. 先补编译期接口约束：新增 `DataReaderLike` / `FiniteDataReader` concept，并在 test 中用 fake handler 对当前 live reader 和 binary reader 做 `static_assert`。
-2. 调整 live reader 语义：把当前 `DataReader::Poll()` 改成单事件 round-robin；新增 `Drain(handler, max_events)` 承担批量消费；保留 source read mode 的 `latest` / `drain`，但它只决定单个 source 的读取方式，不决定单次 `Poll()` 的批量预算。
-3. 调整 replay reader 语义：把 `BinaryDataReader::Poll()` 改成单事件 step；新增 `Drain(handler, max_events)`；新增 `finished()`；去掉 replay 内部 `max_events_per_poll_` 语义。
-4. 调整 stats：删除 live / replay stats 中的 `poll_calls` 和 `empty_polls`；把顶层 `book_tickers` 改为 `total_count`；把 live source `book_tickers` 改为 `book_ticker_count`。
-5. 再更新工具 / runtime 调用点：需要批量消费的 probe、replay、对账工具改用 `Drain(handler, max_events)`；生产 runtime 如果希望每轮有预算，也在外层 runtime / scheduler diagnostics 和配置中表达。
-6. 最后同步 `doc/data_reader_config.md`，明确配置中的 batch budget 属于调用方 drain budget，而不是 reader 内部 `Poll()` 语义。
+1. 命名整理：评估是否把 `DataReader` 改名为 `LiveDataReader`，把 `BinaryDataReader` 改名为 `ReplayDataReader`，并保留兼容 alias 或 forwarding header。
+2. 配置整理：评估是否把 `DataReaderConfig::max_events_per_source` 改名为更准确的 `drain_budget` / `max_events_per_drain`；如改名，需要处理现有 TOML 兼容。
+3. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `StrategyRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
+4. feed 扩展：新增 trade / order book 时，在 source stats 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
 
 ## OrderSession 架构占位
 
