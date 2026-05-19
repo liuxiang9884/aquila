@@ -18,7 +18,7 @@ third_party/strategy/wt-invariant-strategy-leadlag-must-fix/utils/queue/monotoni
 
 本文主要记录设计和 fixed 语义，不单独承诺性能收益，不替代后续实现计划。它的作用是让后续实现先对齐 fixed 行为，再按 `aquila` 的低延迟结构落地。
 
-截至 2026-05-10，本文 1-7 部分的策略层模块已经分步落地到 C++：config / metadata、raw market state、recorder wrappers、drift / alignment、threshold、signal / execution state、feedback state / order retire 均已有实现和 GTest 覆盖。整体 `leadlag::Strategy` 目前仍只有 user strategy hook skeleton，完整 `OnBookTicker()` 主链路、`OnOrderResponse()` / `OnOrderFeedback()` execution state 串接、dry-run runtime 工具和 fixed Go replay 对账入口仍待实现。
+截至 2026-05-10，本文 1-7 部分的策略层模块已经分步落地到 C++：config / metadata、raw market state、recorder wrappers、drift / alignment、threshold、signal / execution state、feedback state / order retire 均已有实现和 GTest 覆盖。整体 `leadlag::Strategy` 目前仍只有 strategy hook skeleton，完整 `OnBookTicker()` 主链路、`OnOrderResponse()` / `OnOrderFeedback()` execution state 串接、dry-run runtime 工具和 fixed Go replay 对账入口仍待实现。
 
 ## 设计原则
 
@@ -97,7 +97,7 @@ name = "lead_lag"
 config = "config/strategy/lead_lag.toml"
 ```
 
-user strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 已有接收 `leadlag::Config` 的 user strategy hook skeleton，完整主链路尚未串接。
+strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 已有接收 `leadlag::Config` 的 strategy hook skeleton，完整主链路尚未串接。
 
 pair 配置使用数组：
 
@@ -2019,7 +2019,7 @@ LeadLagStrategy::OnOrderFeedback(event, context)
   -> 更新 LeadLag execution group / position / trailing
 ```
 
-`StrategyRuntime::OnOrderFeedback()` 的调用顺序已经是先 `order_manager_->OnOrderFeedback(event)`，再回调 user strategy。因此 LeadLag 在回调中通过 `context.FindOrder(event.local_order_id)` 读到的是已经应用 feedback 后的 `StrategyOrder`。
+`TradingRuntime::OnOrderFeedback()` 的调用顺序已经是先 `order_manager_->OnOrderFeedback(event)`，再回调 strategy。因此 LeadLag 在回调中通过 `context.FindOrder(event.local_order_id)` 读到的是已经应用 feedback 后的 `StrategyOrder`。
 
 通用订单状态仍由 `OrderManager` 负责，不在 LeadLag 内复制：
 
@@ -2046,9 +2046,9 @@ LeadLagExecutionState
 职责边界：
 
 ```text
-StrategyRuntime
+TradingRuntime
   drain feedback SHM
-  call OrderManager before user strategy
+  call OrderManager before strategy
 
 OrderManager
   order object / OrderPool

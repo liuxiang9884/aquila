@@ -1,6 +1,6 @@
 # aquila
 
-`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片包括低延迟 WebSocket client、Gate futures SBE BBO 行情、Binance USD-M futures JSON bookTicker 行情、data session / strategy `DataReader`、Gate 下单与订单回报第一版、strategy runtime、LeadLag binary replay，以及 Gate / Binance 期货合约元数据查询脚本。WebSocket 冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
+`aquila` 是面向 crypto 高频交易系统的 C++20 仓库。当前仓库的主要可运行切片包括低延迟 WebSocket client、Gate futures SBE BBO 行情、Binance USD-M futures JSON bookTicker 行情、data session / strategy `DataReader`、Gate 下单与订单回报第一版、trading runtime、LeadLag binary replay，以及 Gate / Binance 期货合约元数据查询脚本。WebSocket 冷路径负责 DNS / TCP / TLS / WebSocket handshake，热路径由单 owner thread 驱动 `CriticalSession::DriveRead()` / `DriveWrite()` / heartbeat。
 
 ## Onboarding
 
@@ -227,7 +227,7 @@ Data session config dry-run：
 ./build/debug/tools/binance_data_session
 ```
 
-Strategy runtime demo dry-run：
+Trading runtime demo dry-run：
 
 ```bash
 ./build/debug/tools/gate_demo_strategy --config config/strategies/demo_strategy.toml

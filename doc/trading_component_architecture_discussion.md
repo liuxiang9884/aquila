@@ -302,7 +302,7 @@ class HistoricalDataReaderDiagnostics {
 };
 ```
 
-`poll_calls` / `empty_polls` 不放在 `RealtimeDataReaderStats` 或 `HistoricalDataReaderStats` 中。它们回答的是“外层循环调用 reader 多少次”和“外层循环有多少次没有拿到任何事件”，更适合放在 `StrategyRuntime`、scheduler 或未来的组装层 diagnostics。
+`poll_calls` / `empty_polls` 不放在 `RealtimeDataReaderStats` 或 `HistoricalDataReaderStats` 中。它们回答的是“外层循环调用 reader 多少次”和“外层循环有多少次没有拿到任何事件”，更适合放在 `TradingRuntime`、scheduler 或未来的组装层 diagnostics。
 
 第一版 stats 字段语义：
 
@@ -576,7 +576,7 @@ core/market_data/historical_data_reader.h
 core/market_data/data_reader_concepts.h
   - 已提供 PollDataReaderLike、DrainCapableDataReader、DataReaderLike 和 FiniteDataReader concept。
 
-core/strategy/strategy_runtime.h
+core/strategy/trading_runtime.h
   - 已在 Create() 中保存 data_reader.max_events_per_source 作为外层 data reader poll budget。
   - PollDataReader() 只对同时满足 FiniteDataReader 和 DrainCapableDataReader 的 replay / finite reader 使用 reader.Drain(runtime, budget)。
   - live reader 即使提供 Drain() helper，只要不显式声明 kFiniteDataReader，runtime 仍调用 reader.Poll(runtime)。
@@ -666,7 +666,7 @@ core/strategy/strategy_runtime.h
 后续建议拆成独立任务继续推进：
 
 1. 配置整理：评估是否把 `DataReaderConfig::max_events_per_source` 改名为更准确的 `drain_budget` / `max_events_per_drain`；如改名，需要处理现有 TOML 兼容。
-2. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `StrategyRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
+2. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `TradingRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
 3. feed 扩展：新增 trade / order book 时，在 source stats 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
 
 ## OrderSession 架构占位

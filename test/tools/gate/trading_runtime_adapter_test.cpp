@@ -1,4 +1,4 @@
-#include "tools/gate/strategy_runtime_adapter.h"
+#include "tools/gate/trading_runtime_adapter.h"
 
 #include <cstdint>
 #include <thread>
@@ -13,7 +13,7 @@
 #include "core/websocket/types.h"
 #include "exchange/gate/trading/order_types.h"
 
-namespace aquila::tools::gate_strategy_runtime {
+namespace aquila::tools::gate_trading_runtime {
 namespace {
 
 struct FakeRuntime {
@@ -40,7 +40,7 @@ gate::LoginCredentials MakeCredentials() {
                                 .api_secret = "test_secret"};
 }
 
-TEST(GateStrategyRuntimeAdapterTest, ConvertsGateResponsesToStrategyEvents) {
+TEST(GateTradingRuntimeAdapterTest, ConvertsGateResponsesToStrategyEvents) {
   const gate::OrderResponse accepted{
       .kind = gate::OrderResponseKind::kAccepted,
       .local_order_id = 0x0400000000000007ULL,
@@ -59,7 +59,7 @@ TEST(GateStrategyRuntimeAdapterTest, ConvertsGateResponsesToStrategyEvents) {
   EXPECT_EQ(event.error_label_hash, accepted.error_label_hash);
 }
 
-TEST(GateStrategyRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
+TEST(GateTradingRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
   EXPECT_EQ(ToStrategyOrderResponseKind(gate::OrderResponseKind::kAck),
             strategy::OrderResponseKind::kAck);
   EXPECT_EQ(ToStrategyOrderResponseKind(gate::OrderResponseKind::kAccepted),
@@ -74,7 +74,7 @@ TEST(GateStrategyRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
       strategy::OrderResponseKind::kCancelRejected);
 }
 
-TEST(GateStrategyRuntimeAdapterTest,
+TEST(GateTradingRuntimeAdapterTest,
      BindRuntimeDispatchesOrderResponsesSynchronously) {
   GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
@@ -101,7 +101,7 @@ TEST(GateStrategyRuntimeAdapterTest,
   EXPECT_EQ(runtime.responses[1].error_label_hash, 12345U);
 }
 
-TEST(GateStrategyRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
+TEST(GateTradingRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
   GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
   EXPECT_FALSE(adapter.Ready());
@@ -115,7 +115,7 @@ TEST(GateStrategyRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
   EXPECT_FALSE(adapter.Ready());
 }
 
-TEST(GateStrategyRuntimeAdapterTest,
+TEST(GateTradingRuntimeAdapterTest,
      CanBackStrategyOrderManagerWithoutConnectingGate) {
   using Adapter =
       GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>;
@@ -138,7 +138,7 @@ TEST(GateStrategyRuntimeAdapterTest,
   EXPECT_NE(placed.local_order_id, 0U);
 }
 
-TEST(GateStrategyRuntimeAdapterTest, AdapterIsMoveOnly) {
+TEST(GateTradingRuntimeAdapterTest, AdapterIsMoveOnly) {
   using Adapter =
       GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>;
 
@@ -156,4 +156,4 @@ TEST(GateStrategyRuntimeAdapterTest, AdapterIsMoveOnly) {
 }
 
 }  // namespace
-}  // namespace aquila::tools::gate_strategy_runtime
+}  // namespace aquila::tools::gate_trading_runtime

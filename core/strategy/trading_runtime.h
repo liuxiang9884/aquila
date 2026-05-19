@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_STRATEGY_STRATEGY_RUNTIME_H_
-#define AQUILA_CORE_STRATEGY_STRATEGY_RUNTIME_H_
+#ifndef AQUILA_CORE_STRATEGY_TRADING_RUNTIME_H_
+#define AQUILA_CORE_STRATEGY_TRADING_RUNTIME_H_
 
 #include <chrono>
 #include <cstddef>
@@ -25,24 +25,24 @@
 
 namespace aquila::strategy {
 
-template <typename UserStrategyT, typename OrderSessionT,
+template <typename StrategyT, typename OrderSessionT,
           typename DataReaderT = market_data::RealtimeDataReader<>>
-class StrategyRuntime {
+class TradingRuntime {
  public:
   using OrderManagerT = OrderManager<OrderSessionT>;
   using ContextT = StrategyContext<OrderSessionT>;
 
-  StrategyRuntime(const StrategyRuntime&) = delete;
-  StrategyRuntime& operator=(const StrategyRuntime&) = delete;
-  StrategyRuntime(StrategyRuntime&&) = delete;
-  StrategyRuntime& operator=(StrategyRuntime&&) = delete;
+  TradingRuntime(const TradingRuntime&) = delete;
+  TradingRuntime& operator=(const TradingRuntime&) = delete;
+  TradingRuntime(TradingRuntime&&) = delete;
+  TradingRuntime& operator=(TradingRuntime&&) = delete;
 
-  template <typename OrderSessionFactoryT, typename... UserStrategyArgs>
-  static Result<std::unique_ptr<StrategyRuntime>> CreateForTest(
+  template <typename OrderSessionFactoryT, typename... StrategyArgs>
+  static Result<std::unique_ptr<TradingRuntime>> CreateForTest(
       config::StrategyConfig config,
       OrderSessionFactoryT&& order_session_factory,
-      UserStrategyArgs&&... user_strategy_args) noexcept {
-    Result<std::unique_ptr<StrategyRuntime>> result;
+      StrategyArgs&&... strategy_args) noexcept {
+    Result<std::unique_ptr<TradingRuntime>> result;
     if (config.order_capacity == 0) {
       result.error = "strategy.order_capacity must be positive";
       return result;
@@ -52,10 +52,10 @@ class StrategyRuntime {
     const std::uint8_t strategy_id =
         static_cast<std::uint8_t>(config.strategy_id);
 
-    std::unique_ptr<StrategyRuntime> runtime(new (std::nothrow)
-                                                 StrategyRuntime());
+    std::unique_ptr<TradingRuntime> runtime(new (std::nothrow)
+                                                TradingRuntime());
     if (runtime == nullptr) {
-      result.error = "strategy runtime allocation failed";
+      result.error = "trading runtime allocation failed";
       return result;
     }
 
@@ -66,14 +66,13 @@ class StrategyRuntime {
       runtime->order_manager_.emplace(*runtime->order_session_, order_capacity,
                                       strategy_id);
       runtime->context_.emplace(*runtime->order_manager_);
-      runtime->user_strategy_.emplace(
-          std::forward<UserStrategyArgs>(user_strategy_args)...);
+      runtime->strategy_.emplace(std::forward<StrategyArgs>(strategy_args)...);
       runtime->BindRuntimeIfSupported();
     } catch (const std::exception& exception) {
       result.error = exception.what();
       return result;
     } catch (...) {
-      result.error = "strategy runtime create failed";
+      result.error = "trading runtime create failed";
       return result;
     }
 
@@ -82,13 +81,13 @@ class StrategyRuntime {
     return result;
   }
 
-  template <typename OrderSessionFactoryT, typename... UserStrategyArgs>
-  static Result<std::unique_ptr<StrategyRuntime>> Create(
+  template <typename OrderSessionFactoryT, typename... StrategyArgs>
+  static Result<std::unique_ptr<TradingRuntime>> Create(
       config::StrategyConfig config,
       config::DataReaderConfig data_reader_config,
       OrderSessionFactoryT&& order_session_factory,
-      UserStrategyArgs&&... user_strategy_args) noexcept {
-    Result<std::unique_ptr<StrategyRuntime>> result;
+      StrategyArgs&&... strategy_args) noexcept {
+    Result<std::unique_ptr<TradingRuntime>> result;
     if (config.order_capacity == 0) {
       result.error = "strategy.order_capacity must be positive";
       return result;
@@ -98,10 +97,10 @@ class StrategyRuntime {
     const std::uint8_t strategy_id =
         static_cast<std::uint8_t>(config.strategy_id);
 
-    std::unique_ptr<StrategyRuntime> runtime(new (std::nothrow)
-                                                 StrategyRuntime());
+    std::unique_ptr<TradingRuntime> runtime(new (std::nothrow)
+                                                TradingRuntime());
     if (runtime == nullptr) {
-      result.error = "strategy runtime allocation failed";
+      result.error = "trading runtime allocation failed";
       return result;
     }
 
@@ -115,14 +114,13 @@ class StrategyRuntime {
       runtime->order_manager_.emplace(*runtime->order_session_, order_capacity,
                                       strategy_id);
       runtime->context_.emplace(*runtime->order_manager_);
-      runtime->user_strategy_.emplace(
-          std::forward<UserStrategyArgs>(user_strategy_args)...);
+      runtime->strategy_.emplace(std::forward<StrategyArgs>(strategy_args)...);
       runtime->BindRuntimeIfSupported();
     } catch (const std::exception& exception) {
       result.error = exception.what();
       return result;
     } catch (...) {
-      result.error = "strategy runtime create failed";
+      result.error = "trading runtime create failed";
       return result;
     }
 
@@ -157,13 +155,13 @@ class StrategyRuntime {
   }
 
   int Run() noexcept {
-    if (!order_session_ || !context_ || !user_strategy_) {
+    if (!order_session_ || !context_ || !strategy_) {
       return 1;
     }
     if constexpr (requires(OrderSessionT& session) {
                     session.SetRuntimeHook(
                         static_cast<void*>(nullptr),
-                        &StrategyRuntime::RuntimeHookCallback);
+                        &TradingRuntime::RuntimeHookCallback);
                   }) {
       return RunWithRuntimeHook();
     }
@@ -214,33 +212,33 @@ class StrategyRuntime {
   }
 
   void OnBookTicker(const BookTicker& ticker) noexcept {
-    if constexpr (requires(UserStrategyT& strategy, const BookTicker& event,
+    if constexpr (requires(StrategyT& strategy, const BookTicker& event,
                            ContextT& context) {
                     strategy.OnBookTicker(event, context);
                   }) {
-      user_strategy_->OnBookTicker(ticker, *context_);
+      strategy_->OnBookTicker(ticker, *context_);
     }
   }
 
   void OnOrderResponse(const OrderResponseEvent& event) noexcept {
     order_manager_->OnOrderResponse(event);
-    if constexpr (requires(UserStrategyT& strategy,
+    if constexpr (requires(StrategyT& strategy,
                            const OrderResponseEvent& response,
                            ContextT& context) {
                     strategy.OnOrderResponse(response, context);
                   }) {
-      user_strategy_->OnOrderResponse(event, *context_);
+      strategy_->OnOrderResponse(event, *context_);
     }
   }
 
   void OnOrderFeedback(const OrderFeedbackEvent& event) noexcept {
     order_manager_->OnOrderFeedback(event);
-    if constexpr (requires(UserStrategyT& strategy,
+    if constexpr (requires(StrategyT& strategy,
                            const OrderFeedbackEvent& feedback,
                            ContextT& context) {
                     strategy.OnOrderFeedback(feedback, context);
                   }) {
-      user_strategy_->OnOrderFeedback(event, *context_);
+      strategy_->OnOrderFeedback(event, *context_);
     }
   }
 
@@ -257,10 +255,10 @@ class StrategyRuntime {
   }
 
  private:
-  StrategyRuntime() noexcept = default;
+  TradingRuntime() noexcept = default;
 
   void BindRuntimeIfSupported() {
-    if constexpr (requires(OrderSessionT& session, StrategyRuntime& runtime) {
+    if constexpr (requires(OrderSessionT& session, TradingRuntime& runtime) {
                     session.BindRuntime(runtime);
                   }) {
       order_session_->BindRuntime(*this);
@@ -268,22 +266,22 @@ class StrategyRuntime {
   }
 
   static void RuntimeHookCallback(void* context) noexcept {
-    static_cast<StrategyRuntime*>(context)->DriveHookOnce();
+    static_cast<TradingRuntime*>(context)->DriveHookOnce();
   }
 
   int RunWithRuntimeHook() noexcept {
     stop_order_session_requested_ = false;
-    hook_user_started_ = false;
+    hook_strategy_started_ = false;
     hook_exit_code_ = 0;
     order_session_->SetRuntimeHook(static_cast<void*>(this),
-                                   &StrategyRuntime::RuntimeHookCallback);
+                                   &TradingRuntime::RuntimeHookCallback);
 
     ApplyLoopRuntimePolicy();
     hook_loop_started_at_ = std::chrono::steady_clock::now();
     if (!StartOrderSession()) {
       hook_exit_code_ = 1;
     }
-    if (hook_user_started_) {
+    if (hook_strategy_started_) {
       CallOnStop();
     }
     RequestOrderSessionStop();
@@ -291,8 +289,8 @@ class StrategyRuntime {
   }
 
   void DriveHookOnce() noexcept {
-    if (!hook_user_started_) {
-      hook_user_started_ = true;
+    if (!hook_strategy_started_) {
+      hook_strategy_started_ = true;
       CallOnStart();
     }
     if (ShouldStop() || MaxLoopSecondsElapsed(hook_loop_started_at_)) {
@@ -386,12 +384,12 @@ class StrategyRuntime {
   }
 
   [[nodiscard]] std::uint64_t PollOrderResponses() noexcept {
-    if constexpr (requires(OrderSessionT& session, StrategyRuntime& runtime) {
+    if constexpr (requires(OrderSessionT& session, TradingRuntime& runtime) {
                     session.PollOrderResponses(runtime);
                   }) {
       using PollResultT =
           decltype(std::declval<OrderSessionT&>().PollOrderResponses(
-              std::declval<StrategyRuntime&>()));
+              std::declval<TradingRuntime&>()));
       if constexpr (std::is_void_v<PollResultT>) {
         order_session_->PollOrderResponses(*this);
         return 0;
@@ -418,7 +416,7 @@ class StrategyRuntime {
     }
     if constexpr (market_data::FiniteDataReader<DataReaderT> &&
                   market_data::DrainCapableDataReader<DataReaderT,
-                                                      StrategyRuntime>) {
+                                                      TradingRuntime>) {
       return static_cast<std::uint64_t>(
           data_reader_->Drain(*this, data_reader_poll_budget_));
     }
@@ -426,42 +424,40 @@ class StrategyRuntime {
   }
 
   void CallOnStart() noexcept {
-    if constexpr (requires(UserStrategyT& strategy, ContextT& context) {
+    if constexpr (requires(StrategyT& strategy, ContextT& context) {
                     strategy.OnStart(context);
                   }) {
-      user_strategy_->OnStart(*context_);
+      strategy_->OnStart(*context_);
     }
   }
 
   void CallOnIdle() noexcept {
-    if constexpr (requires(UserStrategyT& strategy, ContextT& context) {
+    if constexpr (requires(StrategyT& strategy, ContextT& context) {
                     strategy.OnIdle(context);
                   }) {
-      user_strategy_->OnIdle(*context_);
+      strategy_->OnIdle(*context_);
     }
   }
 
   void CallOnLoop() noexcept {
-    if constexpr (requires(UserStrategyT& strategy, ContextT& context) {
+    if constexpr (requires(StrategyT& strategy, ContextT& context) {
                     strategy.OnLoop(context);
                   }) {
-      user_strategy_->OnLoop(*context_);
+      strategy_->OnLoop(*context_);
     }
   }
 
   void CallOnStop() noexcept {
-    if constexpr (requires(UserStrategyT& strategy, ContextT& context) {
+    if constexpr (requires(StrategyT& strategy, ContextT& context) {
                     strategy.OnStop(context);
                   }) {
-      user_strategy_->OnStop(*context_);
+      strategy_->OnStop(*context_);
     }
   }
 
   [[nodiscard]] bool ShouldStop() noexcept {
-    if constexpr (requires(UserStrategyT& strategy) {
-                    strategy.ShouldStop();
-                  }) {
-      return static_cast<bool>(user_strategy_->ShouldStop());
+    if constexpr (requires(StrategyT& strategy) { strategy.ShouldStop(); }) {
+      return static_cast<bool>(strategy_->ShouldStop());
     }
     return false;
   }
@@ -483,13 +479,13 @@ class StrategyRuntime {
   std::optional<ContextT> context_;
   std::optional<OrderFeedbackShmManager> feedback_shm_manager_;
   std::optional<OrderFeedbackShmReader> feedback_reader_;
-  std::optional<UserStrategyT> user_strategy_;
+  std::optional<StrategyT> strategy_;
   std::chrono::steady_clock::time_point hook_loop_started_at_{};
   bool stop_order_session_requested_{false};
-  bool hook_user_started_{false};
+  bool hook_strategy_started_{false};
   int hook_exit_code_{0};
 };
 
 }  // namespace aquila::strategy
 
-#endif  // AQUILA_CORE_STRATEGY_STRATEGY_RUNTIME_H_
+#endif  // AQUILA_CORE_STRATEGY_TRADING_RUNTIME_H_

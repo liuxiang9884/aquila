@@ -1,4 +1,4 @@
-#include "core/strategy/strategy_runtime.h"
+#include "core/strategy/trading_runtime.h"
 
 #include <cstdint>
 #include <memory>
@@ -294,16 +294,15 @@ struct ThrowingOrderSession {
   }
 };
 
-struct FakeUserStrategy {
+struct FakeStrategy {
   using ContextT = StrategyContext<FakeOrderSession>;
 
-  explicit FakeUserStrategy(RuntimeStrategyState* state) noexcept
-      : state_(state) {}
+  explicit FakeStrategy(RuntimeStrategyState* state) noexcept : state_(state) {}
 
-  FakeUserStrategy(FakeUserStrategy&&) noexcept = default;
-  FakeUserStrategy& operator=(FakeUserStrategy&&) noexcept = default;
-  FakeUserStrategy(const FakeUserStrategy&) = delete;
-  FakeUserStrategy& operator=(const FakeUserStrategy&) = delete;
+  FakeStrategy(FakeStrategy&&) noexcept = default;
+  FakeStrategy& operator=(FakeStrategy&&) noexcept = default;
+  FakeStrategy(const FakeStrategy&) = delete;
+  FakeStrategy& operator=(const FakeStrategy&) = delete;
 
   void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
     state_->book_ticker_called = true;
@@ -345,7 +344,7 @@ struct FakeUserStrategy {
   RuntimeStrategyState* state_;
 };
 
-using Runtime = StrategyRuntime<FakeUserStrategy, FakeOrderSession>;
+using Runtime = TradingRuntime<FakeStrategy, FakeOrderSession>;
 
 RuntimeLoopState* g_fake_data_reader_state = nullptr;
 
@@ -455,10 +454,10 @@ static_assert(
     "live-like readers can expose Drain helpers without replay EOF semantics");
 static_assert(market_data::FiniteDataReader<FakeFiniteDrainDataReader>);
 
-struct LoopUserStrategy {
+struct LoopStrategy {
   using ContextT = StrategyContext<FakeOrderSession>;
 
-  explicit LoopUserStrategy(RuntimeLoopState* state) noexcept : state_(state) {}
+  explicit LoopStrategy(RuntimeLoopState* state) noexcept : state_(state) {}
 
   void OnStart(ContextT&) noexcept {
     ++state_->on_start_calls;
@@ -520,18 +519,16 @@ struct LoopUserStrategy {
 };
 
 using LoopRuntime =
-    StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDataReader>;
+    TradingRuntime<LoopStrategy, FakeOrderSession, FakeDataReader>;
 using DrainLoopRuntime =
-    StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDrainDataReader>;
+    TradingRuntime<LoopStrategy, FakeOrderSession, FakeDrainDataReader>;
 using FiniteDrainLoopRuntime =
-    StrategyRuntime<LoopUserStrategy, FakeOrderSession,
-                    FakeFiniteDrainDataReader>;
+    TradingRuntime<LoopStrategy, FakeOrderSession, FakeFiniteDrainDataReader>;
 
-struct HookLoopUserStrategy {
+struct HookLoopStrategy {
   using ContextT = StrategyContext<FakeHookOrderSession>;
 
-  explicit HookLoopUserStrategy(RuntimeLoopState* state) noexcept
-      : state_(state) {}
+  explicit HookLoopStrategy(RuntimeLoopState* state) noexcept : state_(state) {}
 
   void OnStart(ContextT&) noexcept {
     ++state_->on_start_calls;
@@ -573,12 +570,12 @@ struct HookLoopUserStrategy {
 };
 
 using HookLoopRuntime =
-    StrategyRuntime<HookLoopUserStrategy, FakeHookOrderSession, FakeDataReader>;
+    TradingRuntime<HookLoopStrategy, FakeHookOrderSession, FakeDataReader>;
 
-struct ThrowingSessionUserStrategy {
+struct ThrowingSessionStrategy {
   using ContextT = StrategyContext<ThrowingOrderSession>;
 
-  explicit ThrowingSessionUserStrategy(RuntimeStrategyState*) noexcept {}
+  explicit ThrowingSessionStrategy(RuntimeStrategyState*) noexcept {}
 
   void OnBookTicker(const BookTicker&, ContextT&) noexcept {}
   void OnOrderResponse(const OrderResponseEvent&, ContextT&) noexcept {}
@@ -586,7 +583,7 @@ struct ThrowingSessionUserStrategy {
 };
 
 using ThrowingSessionRuntime =
-    StrategyRuntime<ThrowingSessionUserStrategy, ThrowingOrderSession>;
+    TradingRuntime<ThrowingSessionStrategy, ThrowingOrderSession>;
 
 config::StrategyConfig MakeRuntimeConfig() {
   config::StrategyConfig config;
@@ -601,7 +598,7 @@ config::StrategyConfig MakeRuntimeConfig() {
 
 config::DataReaderConfig MakeDataReaderConfig() {
   config::DataReaderConfig config;
-  config.name = "fake_strategy_runtime_reader";
+  config.name = "fake_trading_runtime_reader";
   return config;
 }
 
@@ -617,14 +614,14 @@ BookTicker MakeBookTicker(std::int64_t id = 42) noexcept {
                     .ask_volume = 4.0};
 }
 
-TEST(StrategyRuntimeTest, RuntimeIsNonCopyableAndNonMovable) {
+TEST(TradingRuntimeTest, RuntimeIsNonCopyableAndNonMovable) {
   static_assert(!std::is_copy_constructible_v<Runtime>);
   static_assert(!std::is_copy_assignable_v<Runtime>);
   static_assert(!std::is_move_constructible_v<Runtime>);
   static_assert(!std::is_move_assignable_v<Runtime>);
 }
 
-TEST(StrategyRuntimeTest, DispatchesBookTickerToUserStrategy) {
+TEST(TradingRuntimeTest, DispatchesBookTickerToStrategy) {
   RuntimeStrategyState state;
   auto runtime_result = Runtime::CreateForTest(
       MakeRuntimeConfig(), [] { return FakeOrderSession{}; }, &state);
@@ -639,8 +636,8 @@ TEST(StrategyRuntimeTest, DispatchesBookTickerToUserStrategy) {
   EXPECT_EQ(LocalOrderIdCodec::StrategyId(state.placed_local_order_id), 4);
 }
 
-TEST(StrategyRuntimeTest,
-     FeedbackDispatchUpdatesOrderManagerBeforeUserStrategyHook) {
+TEST(TradingRuntimeTest,
+     FeedbackDispatchUpdatesOrderManagerBeforeStrategyHook) {
   RuntimeStrategyState state;
   auto runtime_result = Runtime::CreateForTest(
       MakeRuntimeConfig(), [] { return FakeOrderSession{}; }, &state);
@@ -660,8 +657,8 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.observed_feedback_status, OrderStatus::kAccepted);
 }
 
-TEST(StrategyRuntimeTest,
-     ResponseDispatchUpdatesOrderManagerBeforeUserStrategyHook) {
+TEST(TradingRuntimeTest,
+     ResponseDispatchUpdatesOrderManagerBeforeStrategyHook) {
   RuntimeStrategyState state;
   auto runtime_result = Runtime::CreateForTest(
       MakeRuntimeConfig(), [] { return FakeOrderSession{}; }, &state);
@@ -680,7 +677,7 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.observed_response_status, OrderStatus::kAccepted);
 }
 
-TEST(StrategyRuntimeTest, FeedbackDisabledDoesNotRequireFeedbackReader) {
+TEST(TradingRuntimeTest, FeedbackDisabledDoesNotRequireFeedbackReader) {
   RuntimeStrategyState state;
   config::StrategyConfig config = MakeRuntimeConfig();
   config.feedback.enabled = false;
@@ -694,7 +691,7 @@ TEST(StrategyRuntimeTest, FeedbackDisabledDoesNotRequireFeedbackReader) {
   EXPECT_NE(runtime_result.value, nullptr);
 }
 
-TEST(StrategyRuntimeTest, RejectsZeroOrderCapacity) {
+TEST(TradingRuntimeTest, RejectsZeroOrderCapacity) {
   RuntimeStrategyState state;
   config::StrategyConfig config = MakeRuntimeConfig();
   config.order_capacity = 0;
@@ -707,7 +704,7 @@ TEST(StrategyRuntimeTest, RejectsZeroOrderCapacity) {
   EXPECT_EQ(runtime_result.value, nullptr);
 }
 
-TEST(StrategyRuntimeTest, OrderSessionConstructionFailureReturnsResultError) {
+TEST(TradingRuntimeTest, OrderSessionConstructionFailureReturnsResultError) {
   RuntimeStrategyState state;
 
   auto runtime_result = ThrowingSessionRuntime::CreateForTest(
@@ -718,7 +715,7 @@ TEST(StrategyRuntimeTest, OrderSessionConstructionFailureReturnsResultError) {
   EXPECT_EQ(runtime_result.value, nullptr);
 }
 
-TEST(StrategyRuntimeTest,
+TEST(TradingRuntimeTest,
      ProductionRunDispatchesDataReaderBookTickerWhenOrderSessionReady) {
   RuntimeLoopState state;
   state.book_tickers.push_back(MakeBookTicker());
@@ -745,7 +742,7 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.last_ticker_id, 42);
 }
 
-TEST(StrategyRuntimeTest, ProductionRunPollsLiveLikeDrainCapableDataReader) {
+TEST(TradingRuntimeTest, ProductionRunPollsLiveLikeDrainCapableDataReader) {
   RuntimeLoopState state;
   state.book_tickers.push_back(MakeBookTicker(101));
   state.book_tickers.push_back(MakeBookTicker(102));
@@ -772,7 +769,7 @@ TEST(StrategyRuntimeTest, ProductionRunPollsLiveLikeDrainCapableDataReader) {
   EXPECT_EQ(state.on_loop_calls, 1);
 }
 
-TEST(StrategyRuntimeTest,
+TEST(TradingRuntimeTest,
      ProductionRunDrainsFiniteDataReaderWithConfiguredEventBudget) {
   RuntimeLoopState state;
   state.book_tickers.push_back(MakeBookTicker(101));
@@ -803,7 +800,7 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.on_loop_calls, 1);
 }
 
-TEST(StrategyRuntimeTest, ProductionRunDispatchesOrderSessionResponses) {
+TEST(TradingRuntimeTest, ProductionRunDispatchesOrderSessionResponses) {
   RuntimeLoopState state;
   state.order_ready = false;
   state.stop_after_response_calls = 1;
@@ -830,7 +827,7 @@ TEST(StrategyRuntimeTest, ProductionRunDispatchesOrderSessionResponses) {
   EXPECT_EQ(state.data_poll_calls, 0);
 }
 
-TEST(StrategyRuntimeTest,
+TEST(TradingRuntimeTest,
      HookModeBindsRuntimeAndDrivesPollingFromOrderSessionHook) {
   RuntimeLoopState state;
   state.book_tickers.push_back(MakeBookTicker());
@@ -869,7 +866,7 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.last_response_kind, OrderResponseKind::kAccepted);
 }
 
-TEST(StrategyRuntimeTest, HookModeStartFailureDoesNotCallUserLifecycleHooks) {
+TEST(TradingRuntimeTest, HookModeStartFailureDoesNotCallUserLifecycleHooks) {
   RuntimeLoopState state;
   state.order_start_result = false;
   g_fake_data_reader_state = &state;
@@ -892,7 +889,7 @@ TEST(StrategyRuntimeTest, HookModeStartFailureDoesNotCallUserLifecycleHooks) {
   EXPECT_EQ(state.stop_calls, 1);
 }
 
-TEST(StrategyRuntimeTest, ProductionRunPollsOrderFeedbackReader) {
+TEST(TradingRuntimeTest, ProductionRunPollsOrderFeedbackReader) {
   OrderFeedbackShmConfig shm_config{
       .shm_name = "srt_fb_test",
       .channel_name = "srt_fb_ch",
@@ -928,7 +925,7 @@ TEST(StrategyRuntimeTest, ProductionRunPollsOrderFeedbackReader) {
   EXPECT_EQ(state.data_poll_calls, 0);
 }
 
-TEST(StrategyRuntimeTest, ProductionRunStopsWhenUserStrategyShouldStop) {
+TEST(TradingRuntimeTest, ProductionRunStopsWhenStrategyShouldStop) {
   RuntimeLoopState state;
   state.stop_immediately = true;
   state.book_tickers.push_back(MakeBookTicker());
@@ -950,7 +947,7 @@ TEST(StrategyRuntimeTest, ProductionRunStopsWhenUserStrategyShouldStop) {
   EXPECT_EQ(state.stop_calls, 1);
 }
 
-TEST(StrategyRuntimeTest,
+TEST(TradingRuntimeTest,
      ProductionRunDoesNotPollDataReaderBeforeOrderSessionReady) {
   RuntimeLoopState state;
   state.order_ready = false;
@@ -974,7 +971,7 @@ TEST(StrategyRuntimeTest,
   EXPECT_EQ(state.book_ticker_calls, 0);
 }
 
-TEST(StrategyRuntimeTest, ProductionRunFailsWhenOrderSessionStopsRunning) {
+TEST(TradingRuntimeTest, ProductionRunFailsWhenOrderSessionStopsRunning) {
   RuntimeLoopState state;
   state.order_running = false;
   state.book_tickers.push_back(MakeBookTicker());

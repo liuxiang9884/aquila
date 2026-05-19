@@ -9,7 +9,7 @@
 - `feed = "book_ticker"`
 
 `RealtimeDataReader` / `HistoricalDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)` 或 `Drain(handler, budget)`。
-SHM live reader 在 `StrategyRuntime` 中走 `Poll()`；binary replay / finite reader 走 `Drain()`。SHM reader attach
+SHM live reader 在 `TradingRuntime` 中走 `Poll()`；binary replay / finite reader 走 `Drain()`。SHM reader attach
 data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的 `BookTicker`
 二进制文件，适合 replay / 对账。
 
@@ -121,7 +121,7 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 | `instrument_catalog.file` | 无，必须显式配置 | instrument CSV 路径。相对路径会在加载配置文件时解析到仓库路径。 |
 | `instrument_catalog.schema` | 无，必须显式配置 | CSV schema，当前固定 `aquila.instrument.v1`。 |
 | `data_reader.name` | 无，必须显式配置 | reader 实例名。 |
-| `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算；`Poll()` 本身始终是单事件接口。`StrategyRuntime` 只在 finite / replay reader 上使用该预算。 |
+| `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算；`Poll()` 本身始终是单事件接口。`TradingRuntime` 只在 finite / replay reader 上使用该预算。 |
 | `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
 | `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `RealtimeDataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
@@ -174,7 +174,7 @@ drain source  -> TryReadOne()
 `RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。
 
-`StrategyRuntime` 的调用规则按 reader 是否显式满足 `FiniteDataReader` 区分：live reader 不声明 `kFiniteDataReader`，每轮只调用
+`TradingRuntime` 的调用规则按 reader 是否显式满足 `FiniteDataReader` 区分：live reader 不声明 `kFiniteDataReader`，每轮只调用
 `Poll(runtime)`；finite / replay reader 声明 `kFiniteDataReader = true` 并提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_source)`。
 不支持 `Drain()` 的兼容 reader 仍走 `Poll()` fallback。
 

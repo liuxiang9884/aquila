@@ -13,7 +13,7 @@
 #include "core/market_data/historical_data_reader.h"
 #include "core/market_data/types.h"
 #include "core/strategy/order_types.h"
-#include "core/strategy/strategy_runtime.h"
+#include "core/strategy/trading_runtime.h"
 #include "core/trading/order_feedback_event.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
@@ -262,8 +262,8 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
 int RunReplay(LoadedConfig loaded, const CliOptions& options) {
   using HistoricalReader = market_data::HistoricalDataReader<
       market_data::HistoricalDataReaderDiagnostics>;
-  using Runtime = strategy::StrategyRuntime<ReplayStrategy, NullOrderSession,
-                                            HistoricalReader>;
+  using Runtime = strategy::TradingRuntime<ReplayStrategy, NullOrderSession,
+                                           HistoricalReader>;
 
   ReplayStats stats;
   tools_lead_lag::SignalCsvWriter signal_writer;
@@ -321,7 +321,7 @@ int main(int argc, char** argv) {
 
   CLI::App app{
       "Replay lead_lag strategy signals from Aquila BookTicker binary files"};
-  app.add_option("--config", options.config_path, "Strategy runtime TOML path");
+  app.add_option("--config", options.config_path, "Trading runtime TOML path");
   app.add_option("--data-reader-config", options.data_reader_config_path,
                  "Override strategy.data_reader.config path");
   app.add_option("--signals-output", options.signals_output_path,

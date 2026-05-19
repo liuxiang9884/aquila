@@ -1,5 +1,5 @@
-#ifndef AQUILA_TOOLS_GATE_STRATEGY_RUNTIME_ADAPTER_H_
-#define AQUILA_TOOLS_GATE_STRATEGY_RUNTIME_ADAPTER_H_
+#ifndef AQUILA_TOOLS_GATE_TRADING_RUNTIME_ADAPTER_H_
+#define AQUILA_TOOLS_GATE_TRADING_RUNTIME_ADAPTER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +12,7 @@
 #include "exchange/gate/trading/order_session_config.h"
 #include "exchange/gate/trading/order_types.h"
 
-namespace aquila::tools::gate_strategy_runtime {
+namespace aquila::tools::gate_trading_runtime {
 
 [[nodiscard]] inline strategy::OrderResponseKind ToStrategyOrderResponseKind(
     gate::OrderResponseKind kind) noexcept {
@@ -183,7 +183,7 @@ class GateOrderSessionAdapter {
     }
   }
 
-#if defined(AQUILA_GATE_STRATEGY_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
   void MarkLoginReadyForTest() noexcept {
     if (impl_ != nullptr) {
       impl_->MarkLoginReadyForTest();
@@ -260,7 +260,7 @@ class GateOrderSessionAdapter {
       session_.SetRuntimeHook(context, hook);
     }
 
-#if defined(AQUILA_GATE_STRATEGY_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
     void MarkLoginReadyForTest() noexcept {
       response_handler_.OnOrderSessionLoginReady();
     }
@@ -283,6 +283,6 @@ class GateOrderSessionAdapter {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace aquila::tools::gate_strategy_runtime
+}  // namespace aquila::tools::gate_trading_runtime
 
-#endif  // AQUILA_TOOLS_GATE_STRATEGY_RUNTIME_ADAPTER_H_
+#endif  // AQUILA_TOOLS_GATE_TRADING_RUNTIME_ADAPTER_H_

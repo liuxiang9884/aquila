@@ -18,7 +18,7 @@ design spec 和当前代码作为事实源。
   `git log --oneline -8` 为准。
 - Order feedback Task1 SHM transport 已落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`kGap` control event、publisher / reader、config parser、tests 和 benchmark 已实现。
 - Order feedback Task2 已落地：Gate private `futures.orders` parser、`OrderFeedbackSession` login / subscribe / binary publish、`OrderManager::OnOrderFeedback()`、SHM fake integration、config / tool、parser/session benchmark 和 1 手 BTC_USDT live smoke 均已实现并验证。下一步是 REST reconcile、account / position feedback 和端到端 benchmark。
-- Strategy runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run tool 已落地；Gate production adapter 当前不使用 response queue、background order session thread 或 command queue，本轮没有做 `gate_demo_strategy --execute` 实盘测试。
+- Trading runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run tool 已落地；Gate production adapter 当前不使用 response queue、background order session thread 或 command queue，本轮没有做 `gate_demo_strategy --execute` 实盘测试。
 - 新接手时先执行：
 
 ```bash
@@ -546,7 +546,7 @@ scripts/gate/run_futures_order_smoke_test.py
 3. 跨来源状态合并：`OrderResponse`、private `futures.orders`、未来 account / position feedback 和 REST reconcile 之间的恢复规则。
 4. C++ WS `OrderSession` + `OrderFeedbackSession` live smoke：`gate_strategy_order` 和 `gate_order_feedback_session` 已在 2026-05-08 完成 1 手 BTC_USDT market buy + reduce-only sell 实盘闭环；private SBE `futures.orders` 产生 `kFilled` feedback，Strategy 读到 terminal feedback，REST 复核最终 `position size=0` 且 open orders 为空。
 
-### 2026-05-08 Strategy runtime production loop
+### 2026-05-08 Trading runtime production loop
 
 已落地文件：
 
@@ -558,26 +558,26 @@ config/strategies/demo.toml
 core/config/strategy_config.h
 core/config/strategy_config.cpp
 core/strategy/strategy_context.h
-core/strategy/strategy_runtime.h
-tools/gate/strategy_runtime_adapter.h
+core/strategy/trading_runtime.h
+tools/gate/trading_runtime_adapter.h
 tools/gate/demo_strategy.h
 tools/gate/demo_strategy.cpp
 test/config/strategy_config_test.cpp
 test/core/strategy/strategy_context_test.cpp
-test/core/strategy/strategy_runtime_test.cpp
-test/tools/gate/strategy_runtime_adapter_test.cpp
+test/core/strategy/trading_runtime_test.cpp
+test/tools/gate/trading_runtime_adapter_test.cpp
 test/tools/gate/demo_strategy_test.cpp
 ```
 
 当前边界：
 
-1. `[strategy]` 配置表示一个策略实例的 runtime 接入配置：`name` 同时作为 user strategy config section name，`config` 指向 user strategy config 文件；`data_reader.config`、`order_session.config` 和 feedback SHM reader 参数都在该 section 下。
-2. `StrategyContext<OrderSessionT>` 是 user strategy 的窄接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`，不暴露 `OrderManager` 或 `OrderSession` 内部对象。
-3. `StrategyRuntime<UserStrategyT, OrderSessionT, DataReaderT>` 已实现生产 `Create()` 和 `Run()`：从已解析 `StrategyConfig` / `DataReaderConfig` 构造 `DataReader`、order session、`OrderManager`、context、user strategy 和可选 feedback reader。
+1. `[strategy]` 配置表示一个策略实例的 runtime 接入配置：`name` 同时作为 strategy config section name，`config` 指向 strategy config 文件；`data_reader.config`、`order_session.config` 和 feedback SHM reader 参数都在该 section 下。
+2. `StrategyContext<OrderSessionT>` 是 strategy 的窄接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`，不暴露 `OrderManager` 或 `OrderSession` 内部对象。
+3. `TradingRuntime<StrategyT, OrderSessionT, DataReaderT>` 已实现生产 `Create()` 和 `Run()`：从已解析 `StrategyConfig` / `DataReaderConfig` 构造 `DataReader`、order session、`OrderManager`、context、strategy 和可选 feedback reader。
 4. `Run()` 对支持 `SetRuntimeHook()` 的 order session 使用同线程 hook mode：Gate WebSocket active spin loop 每轮先调用 runtime hook，runtime 轮询 feedback reader，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；如果 `OrderSessionT::Running()` 变 false，runtime 返回失败，避免 private session 启动失败后空转。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
-5. user strategy 事件入口包括行情、order response、private feedback 和 loop lifecycle：`OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()` 都是可选 hook。
-6. `OnOrderResponse()` 和 `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 user strategy hook；因此 hook 内通过 `context.FindOrder(local_order_id)` 看到的是已更新后的订单状态。
-7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `tools/gate/strategy_runtime_adapter.h` 和 tool 层。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `StrategyRuntime::OnOrderResponse()`；place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
+5. strategy 事件入口包括行情、order response、private feedback 和 loop lifecycle：`OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()` 都是可选 hook。
+6. `OnOrderResponse()` 和 `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 strategy hook；因此 hook 内通过 `context.FindOrder(local_order_id)` 看到的是已更新后的订单状态。
+7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `tools/gate/trading_runtime_adapter.h` 和 tool 层。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
 8. `demo` 策略行为：按 Gate BTC_USDT 行情 ask price 下 1 手 buy limit，等待 `wait_seconds`，buy filled 后发 `price=0` / IOC / reduce-only sell 平仓，否则撤单；循环 `rounds` 次后 `ShouldStop()`。一轮 terminal 前不再开下一单；当前只做 dry-run / unit test，未做实盘。
 
 ### 2026-05-08 OrderFeedback event 第一版设计

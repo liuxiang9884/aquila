@@ -12,16 +12,16 @@
 
 #include "core/config/data_reader_config.h"
 #include "core/config/strategy_config.h"
-#include "core/strategy/strategy_runtime.h"
+#include "core/strategy/trading_runtime.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
-#include "tools/gate/strategy_runtime_adapter.h"
+#include "tools/gate/trading_runtime_adapter.h"
 
 namespace {
 
 namespace demo = aquila::tools::gate_demo_strategy;
 namespace gate = aquila::gate;
-namespace gate_runtime = aquila::tools::gate_strategy_runtime;
+namespace gate_runtime = aquila::tools::gate_trading_runtime;
 namespace strategy = aquila::strategy;
 
 struct CliOptions {
@@ -209,7 +209,7 @@ int RunRuntime(LoadedConfig loaded, gate::LoginCredentials credentials) {
   using OrderSession =
       gate_runtime::GateOrderSessionAdapter<WebSocketPolicy,
                                             gate::OrderSessionDiagnostics>;
-  using Runtime = strategy::StrategyRuntime<demo::DemoStrategy, OrderSession>;
+  using Runtime = strategy::TradingRuntime<demo::DemoStrategy, OrderSession>;
 
   gate::OrderSessionConfig order_session_config =
       std::move(loaded.order_session);
@@ -262,9 +262,9 @@ int main(int argc, char** argv) {
   CliOptions options;
 
   CLI::App app{
-      "Run the Gate demo strategy through StrategyRuntime. Defaults to "
+      "Run the Gate demo strategy through TradingRuntime. Defaults to "
       "dry-run"};
-  app.add_option("--config", options.config_path, "Strategy runtime TOML path");
+  app.add_option("--config", options.config_path, "Trading runtime TOML path");
   app.add_option("--api-key", options.api_key_env,
                  "Override API key environment variable name from config");
   app.add_option("--api-secret", options.api_secret_env,

@@ -6,7 +6,7 @@
 #include "core/config/strategy_config.h"
 #include "core/market_data/types.h"
 #include "core/strategy/order_types.h"
-#include "core/strategy/strategy_runtime.h"
+#include "core/strategy/trading_runtime.h"
 #include "core/trading/order_feedback_event.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/signal.h"
@@ -126,7 +126,7 @@ aquila::BookTicker Ticker(std::int32_t symbol_id, aquila::Exchange exchange,
 
 TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
   using Runtime =
-      aquila::strategy::StrategyRuntime<leadlag::Strategy, FakeOrderSession>;
+      aquila::strategy::TradingRuntime<leadlag::Strategy, FakeOrderSession>;
 
   auto runtime_result = Runtime::CreateForTest(
       RuntimeConfig(), [] { return FakeOrderSession{}; }, OnePairConfig());
@@ -213,8 +213,7 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
   EXPECT_EQ(diagnostics.lag.event_ns, 90);
   EXPECT_DOUBLE_EQ(diagnostics.lag.bid_price, 101.5);
   EXPECT_DOUBLE_EQ(diagnostics.lag.ask_price, 102.0);
-  EXPECT_EQ(diagnostics.position_direction,
-            leadlag::PositionDirection::kLong);
+  EXPECT_EQ(diagnostics.position_direction, leadlag::PositionDirection::kLong);
   EXPECT_EQ(diagnostics.active_group_count, 0U);
   EXPECT_EQ(diagnostics.group_id, 0U);
   EXPECT_DOUBLE_EQ(diagnostics.trailing_price, 0.0);
@@ -293,11 +292,10 @@ TEST(LeadLagStrategyInterfaceTest,
   leadlag::Config config = SignalOnlyConfig();
   config.pairs[0].execute.parallel = 2;
   leadlag::Strategy strategy{
-      config,
-      leadlag::StrategyOptions{
-          .position_accounting =
-              leadlag::PositionAccountingMode::kSyntheticSignals,
-      }};
+      config, leadlag::StrategyOptions{
+                  .position_accounting =
+                      leadlag::PositionAccountingMode::kSyntheticSignals,
+              }};
   FakeOrderSession order_session;
   aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
                                                                  8, 4};
@@ -333,8 +331,7 @@ TEST(LeadLagStrategyInterfaceTest,
       Ticker(3, aquila::Exchange::kBinance, 106, 100.0, 101.0), context);
 
   const leadlag::SignalDecision& close = strategy.last_signal_decision();
-  ASSERT_TRUE(close.triggered)
-      << static_cast<int>(close.reject_reason);
+  ASSERT_TRUE(close.triggered) << static_cast<int>(close.reject_reason);
   ASSERT_EQ(close.action, leadlag::SignalAction::kCloseLong);
   EXPECT_NE(close.group_id, stopped_group_id);
 }
