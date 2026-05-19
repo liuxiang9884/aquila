@@ -209,7 +209,7 @@ class BookTickerShmReader {
 
   void SeekEarliestVisible() noexcept {
     const auto current = queue_->Current();
-    read_pos_ = current > kReadableCapacity ? current - kReadableCapacity : 0;
+    read_pos_ = current > kCapacity ? current - kCapacity : 0;
   }
 
   [[nodiscard]] bool TryReadOne(aquila::BookTicker* out) noexcept {
@@ -260,15 +260,17 @@ class BookTickerShmReader {
     }
 
     const auto unread_count = current - read_pos_;
-    if (unread_count > kReadableCapacity) {
-      read_pos_ = current - kReadableCapacity;
+    // Keep the exact-capacity boundary readable: first-version BookTicker SHM
+    // prioritizes not dropping an already published BBO. Stronger in-flight
+    // overwrite detection at this boundary requires per-slot sequence metadata.
+    if (unread_count > kCapacity) {
+      read_pos_ = current - kCapacity;
       ++overrun_count_;
     }
     return current - read_pos_;
   }
 
   static constexpr std::uint64_t kCapacity = kBookTickerShmCapacity;
-  static constexpr std::uint64_t kReadableCapacity = kCapacity - 1;
 
   BookTickerShmManager manager_;
   BookTickerQueue* queue_{nullptr};

@@ -150,7 +150,7 @@ TEST(DataShmTest, ReaderCanSeekEarliestVisible) {
   EXPECT_FALSE(reader.TryReadOne(&actual));
 }
 
-TEST(DataShmTest, ReaderSeekEarliestVisibleUsesConservativeWindow) {
+TEST(DataShmTest, ReaderSeekEarliestVisibleUsesFullCapacityWindow) {
   const md::BookTickerShmConfig config = MakeCreateConfig("seek_earliest_full");
   ShmCleanup cleanup(config.shm_name);
 
@@ -164,11 +164,11 @@ TEST(DataShmTest, ReaderSeekEarliestVisibleUsesConservativeWindow) {
 
   aquila::BookTicker actual{};
   ASSERT_TRUE(reader.TryReadOne(&actual));
-  EXPECT_EQ(actual.id, 1);
+  EXPECT_EQ(actual.id, 0);
   EXPECT_EQ(reader.overrun_count(), 0U);
 }
 
-TEST(DataShmTest, ReaderCountsOverrunAtExactCapacityBoundary) {
+TEST(DataShmTest, ReaderKeepsExactCapacityBoundaryInWindow) {
   const md::BookTickerShmConfig config =
       MakeCreateConfig("overrun_exact_capacity");
   ShmCleanup cleanup(config.shm_name);
@@ -183,8 +183,8 @@ TEST(DataShmTest, ReaderCountsOverrunAtExactCapacityBoundary) {
 
   aquila::BookTicker actual{};
   ASSERT_TRUE(reader.TryReadOne(&actual));
-  EXPECT_EQ(actual.id, 1);
-  EXPECT_EQ(reader.overrun_count(), 1U);
+  EXPECT_EQ(actual.id, 0);
+  EXPECT_EQ(reader.overrun_count(), 0U);
 }
 
 TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity) {
@@ -201,7 +201,7 @@ TEST(DataShmTest, ReaderCountsOverrunWhenUnreadCountExceedsCapacity) {
 
   aquila::BookTicker actual{};
   ASSERT_TRUE(reader.TryReadOne(&actual));
-  EXPECT_EQ(actual.id, 3);
+  EXPECT_EQ(actual.id, 2);
   EXPECT_EQ(reader.overrun_count(), 1U);
 }
 
@@ -244,7 +244,7 @@ TEST(DataShmTest, ReaderTryReadLatestCountsOverrunAndSkipsToLast) {
   EXPECT_EQ(actual.id,
             static_cast<std::int64_t>(md::kBookTickerShmCapacity + 2));
   EXPECT_EQ(reader.overrun_count(), 1U);
-  EXPECT_EQ(skipped, md::kBookTickerShmCapacity - 2);
+  EXPECT_EQ(skipped, md::kBookTickerShmCapacity - 1);
 }
 
 TEST(DataShmTest, RejectsHeaderCapacityMismatchOnAttach) {
