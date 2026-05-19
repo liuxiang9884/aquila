@@ -66,6 +66,8 @@ class HistoricalDataReaderDiagnostics {
 template <typename Diagnostics = NoopHistoricalDataReaderDiagnostics>
 class HistoricalDataReader {
  public:
+  static constexpr bool kFiniteDataReader = true;
+
   explicit HistoricalDataReader(config::DataReaderConfig data_reader_config)
       : diagnostics_(CountFiles(data_reader_config)) {
     files_.reserve(CountFiles(data_reader_config));
@@ -79,7 +81,7 @@ class HistoricalDataReader {
         });
       }
     }
-    SkipEmptyFiles();
+    PrepareCurrentFile();
   }
 
   HistoricalDataReader(const HistoricalDataReader&) = delete;
@@ -89,11 +91,11 @@ class HistoricalDataReader {
 
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) {
-    if (!EnsureReadableFile()) {
+    if (finished()) {
       return 0;
     }
 
-    BookTicker book_ticker{};
+    BookTicker book_ticker;
     current_input_.read(reinterpret_cast<char*>(&book_ticker),
                         static_cast<std::streamsize>(sizeof(BookTicker)));
     if (current_input_.gcount() !=
@@ -229,18 +231,11 @@ class HistoricalDataReader {
     current_records_remaining_ = files_[current_file_index_].record_count;
   }
 
-  [[nodiscard]] bool EnsureReadableFile() {
+  void PrepareCurrentFile() {
     SkipEmptyFiles();
-    while (current_file_index_ < files_.size()) {
-      if (!current_input_.is_open()) {
-        OpenCurrentFile();
-      }
-      if (current_records_remaining_ > 0) {
-        return true;
-      }
-      CompleteCurrentFile();
+    if (current_file_index_ < files_.size()) {
+      OpenCurrentFile();
     }
-    return false;
   }
 
   void CompleteCurrentFile() {
@@ -250,7 +245,7 @@ class HistoricalDataReader {
     if constexpr (Diagnostics::kEnabled) {
       diagnostics_.RecordFileCompleted();
     }
-    SkipEmptyFiles();
+    PrepareCurrentFile();
   }
 
   void SkipEmptyFiles() {

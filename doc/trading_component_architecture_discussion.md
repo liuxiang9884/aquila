@@ -135,11 +135,20 @@ HistoricalDataReader
 
 ```cpp
 template <typename ReaderT, typename HandlerT>
-concept DataReaderLike = requires(ReaderT& reader, HandlerT& handler,
-                                  std::uint64_t max_events) {
+concept PollDataReaderLike = requires(ReaderT& reader, HandlerT& handler) {
   { reader.Poll(handler) } -> std::convertible_to<std::uint64_t>;
+};
+
+template <typename ReaderT, typename HandlerT>
+concept DrainCapableDataReader = requires(ReaderT& reader, HandlerT& handler,
+                                          std::uint64_t max_events) {
   { reader.Drain(handler, max_events) } -> std::convertible_to<std::uint64_t>;
 };
+
+template <typename ReaderT, typename HandlerT>
+concept DataReaderLike =
+    PollDataReaderLike<ReaderT, HandlerT> &&
+    DrainCapableDataReader<ReaderT, HandlerT>;
 ```
 
 handler 只需要实现：
@@ -153,11 +162,12 @@ void OnBookTicker(const BookTicker& ticker) noexcept;
 ```cpp
 template <typename ReaderT>
 concept FiniteDataReader = requires(const ReaderT& reader) {
+  { ReaderT::kFiniteDataReader } -> std::convertible_to<bool>;
   { reader.finished() } -> std::convertible_to<bool>;
-};
+} && ReaderT::kFiniteDataReader;
 ```
 
-`RealtimeDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不要求提供 `finished()`；`HistoricalDataReader` 满足 `DataReaderLike` 和 `FiniteDataReader`，`finished()` 用于显式查询 replay EOF。
+`RealtimeDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不提供 `kFiniteDataReader` 和 `finished()`；`HistoricalDataReader` 显式声明 `static constexpr bool kFiniteDataReader = true`，并提供 `finished()`，因此满足 `DataReaderLike` 和 `FiniteDataReader`。单纯提供 `finished()` 不会让 live-like reader 被误判为 finite reader。
 
 ### Poll / Drain 统一语义
 
@@ -558,14 +568,40 @@ core/market_data/historical_data_reader.h
   - stats 已移除 poll_calls / empty_polls，使用 total_count / files_completed。
 
 core/market_data/data_reader_concepts.h
-  - 已提供 DataReaderLike 和 FiniteDataReader concept。
+  - 已提供 PollDataReaderLike、DrainCapableDataReader、DataReaderLike 和 FiniteDataReader concept。
 
 core/strategy/strategy_runtime.h
   - 已在 Create() 中保存 data_reader.max_events_per_source 作为外层 data reader poll budget。
-  - PollDataReader() 只对满足 FiniteDataReader 的 replay / finite reader 使用 reader.Drain(runtime, budget)。
-  - live reader 即使提供 Drain() helper，只要不提供 finished()，runtime 仍调用 reader.Poll(runtime)。
+  - PollDataReader() 只对同时满足 FiniteDataReader 和 DrainCapableDataReader 的 replay / finite reader 使用 reader.Drain(runtime, budget)。
+  - live reader 即使提供 Drain() helper，只要不显式声明 kFiniteDataReader，runtime 仍调用 reader.Poll(runtime)。
   - 不支持 Drain() 的兼容 reader 继续 fallback 到 reader.Poll(runtime)。
 ```
+
+### 当前 reader benchmark 证据
+
+2026-05-19 新增 `benchmark/core/market_data/data_reader_benchmark.cpp`，用于覆盖 reader 层热路径：
+
+```bash
+./build/release/benchmark/core/market_data/data_reader_benchmark --benchmark_min_time=0.2s --benchmark_repetitions=3
+```
+
+本轮优化前后对比：
+
+| case | baseline mean | optimized mean |
+| --- | ---: | ---: |
+| `BM_RealtimeDataReaderEmptyPoll/1` | 3.08ns | 1.43ns |
+| `BM_RealtimeDataReaderEmptyPoll/2` | 6.18ns | 2.66ns |
+| `BM_RealtimeDataReaderEmptyPoll/4` | 12.3ns | 4.22ns |
+| `BM_HistoricalDataReaderDrainSingleFile/1` | 27.6ns | 25.4ns |
+| `BM_HistoricalDataReaderDrainSingleFile/64` | 1677ns | 1610ns |
+| `BM_HistoricalDataReaderDrainSingleFile/4096` | 109459ns | 102888ns |
+
+对应代码变化：
+
+- `RealtimeDataReader::Poll()` 将运行期 `% source_count` 替换为分支 wrap，并为单 source 增加快路径。
+- `RealtimeDataReader` hot `Source` 只保留 `read_mode`、SHM reader 和 overrun 基线，不再保存完整 `DataReaderSourceConfig`。
+- `RealtimeDataReader` / `HistoricalDataReader` 读入 `BookTicker` 时不再先清零局部对象。
+- `HistoricalDataReader` 将 empty-file skip、文件打开和文件完成状态维护放到构造 / 文件边界慢路径，单条 `Poll()` 不再每次进入完整文件状态机。
 
 当前仍未做的整理：
 

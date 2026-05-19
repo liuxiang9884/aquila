@@ -84,10 +84,11 @@ class RealtimeDataReader {
           .remove_existing = false,
       };
 
-      auto source =
-          std::make_unique<Source>(std::move(source_config), shm_config);
-      if (source->config.start_position ==
-          config::DataReaderStartPosition::kLatest) {
+      const config::DataReaderStartPosition start_position =
+          source_config.start_position;
+      const config::DataReaderReadMode read_mode = source_config.read_mode;
+      auto source = std::make_unique<Source>(read_mode, shm_config);
+      if (start_position == config::DataReaderStartPosition::kLatest) {
         source->reader.SeekLatest();
       } else {
         source->reader.SeekEarliestVisible();
@@ -103,12 +104,23 @@ class RealtimeDataReader {
     }
 
     const std::size_t source_count = sources_.size();
+    if (source_count == 1) {
+      Source& source = *sources_[0];
+      switch (source.read_mode) {
+        case config::DataReaderReadMode::kLatest:
+          return PollLatestSource(0, source, handler);
+        case config::DataReaderReadMode::kDrain:
+          return PollDrainSource(0, source, handler);
+      }
+      return 0;
+    }
+
+    std::size_t index = next_source_index_;
     for (std::size_t checked = 0; checked < source_count; ++checked) {
-      const std::size_t index = (next_source_index_ + checked) % source_count;
       Source& source = *sources_[index];
 
       std::uint64_t handled = 0;
-      switch (source.config.read_mode) {
+      switch (source.read_mode) {
         case config::DataReaderReadMode::kLatest:
           handled = PollLatestSource(index, source, handler);
           break;
@@ -117,8 +129,16 @@ class RealtimeDataReader {
           break;
       }
       if (handled != 0) {
-        next_source_index_ = (index + 1) % source_count;
+        ++index;
+        if (index == source_count) {
+          index = 0;
+        }
+        next_source_index_ = index;
         return handled;
+      }
+      ++index;
+      if (index == source_count) {
+        index = 0;
       }
     }
 
@@ -144,11 +164,11 @@ class RealtimeDataReader {
 
  private:
   struct Source {
-    Source(config::DataReaderSourceConfig source_config,
+    Source(config::DataReaderReadMode read_mode_in,
            const BookTickerShmConfig& shm_config)
-        : config(std::move(source_config)), reader(shm_config) {}
+        : read_mode(read_mode_in), reader(shm_config) {}
 
-    config::DataReaderSourceConfig config;
+    config::DataReaderReadMode read_mode{config::DataReaderReadMode::kLatest};
     BookTickerShmReader reader;
     std::uint64_t last_overrun_count{0};
   };
@@ -156,7 +176,7 @@ class RealtimeDataReader {
   template <typename Handler>
   std::uint64_t PollLatestSource(std::size_t source_index, Source& source,
                                  Handler& handler) noexcept {
-    BookTicker book_ticker{};
+    BookTicker book_ticker;
     std::uint64_t skipped{0};
     if (!source.reader.TryReadLatest(&book_ticker, &skipped)) {
       return 0;
@@ -176,7 +196,7 @@ class RealtimeDataReader {
   template <typename Handler>
   std::uint64_t PollDrainSource(std::size_t source_index, Source& source,
                                 Handler& handler) noexcept {
-    BookTicker book_ticker{};
+    BookTicker book_ticker;
     if (!source.reader.TryReadOne(&book_ticker)) {
       return 0;
     }

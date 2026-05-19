@@ -39,8 +39,15 @@ struct RecordingHandler {
   std::vector<aquila::BookTicker> book_tickers;
 };
 
+struct FinishedOnlyReader {
+  [[nodiscard]] bool finished() const noexcept {
+    return false;
+  }
+};
+
 static_assert(md::DataReaderLike<md::RealtimeDataReader<>, RecordingHandler>);
 static_assert(!md::FiniteDataReader<md::RealtimeDataReader<>>);
+static_assert(!md::FiniteDataReader<FinishedOnlyReader>);
 
 template <typename StatsT>
 concept HasPollDiagnostics = requires(StatsT stats) {

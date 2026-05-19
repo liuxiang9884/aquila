@@ -169,8 +169,8 @@ drain source  -> TryReadOne()
 `RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。
 
-`StrategyRuntime` 的调用规则按 reader 是否满足 `FiniteDataReader` 区分：live reader 不提供 `finished()`，每轮只调用
-`Poll(runtime)`；finite / replay reader 提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_source)`。
+`StrategyRuntime` 的调用规则按 reader 是否显式满足 `FiniteDataReader` 区分：live reader 不声明 `kFiniteDataReader`，每轮只调用
+`Poll(runtime)`；finite / replay reader 声明 `kFiniteDataReader = true` 并提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_source)`。
 不支持 `Drain()` 的兼容 reader 仍走 `Poll()` fallback。
 
 handler 需要提供：

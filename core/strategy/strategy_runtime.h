@@ -417,10 +417,8 @@ class StrategyRuntime {
       return 0;
     }
     if constexpr (market_data::FiniteDataReader<DataReaderT> &&
-                  requires(DataReaderT& reader, StrategyRuntime& runtime,
-                           std::uint64_t max_events) {
-                    reader.Drain(runtime, max_events);
-                  }) {
+                  market_data::DrainCapableDataReader<DataReaderT,
+                                                      StrategyRuntime>) {
       return static_cast<std::uint64_t>(
           data_reader_->Drain(*this, data_reader_poll_budget_));
     }

@@ -407,6 +407,8 @@ struct FakeDrainDataReader {
 };
 
 struct FakeFiniteDrainDataReader {
+  static constexpr bool kFiniteDataReader = true;
+
   explicit FakeFiniteDrainDataReader(config::DataReaderConfig) noexcept
       : state(g_fake_data_reader_state) {}
 
