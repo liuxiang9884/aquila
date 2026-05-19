@@ -154,7 +154,8 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 `binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`HistoricalDataReader`
 会在构造时检查文件存在、文件大小是 `BookTicker` 大小的整数倍；空文件是合法的已完成输入，构造后如果所有文件为空则
 `finished() == true`，最后一个有数据文件后的尾部空文件会在最后一条数据读完时一并计入完成。`Poll()` 每次最多输出一条，
-文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime 需要在 idle hook 中主动停止 replay loop。
+非空当前文件使用 read-only mmap 顺序读取；文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime
+需要在 idle hook 中主动停止 replay loop。
 
 ## Poll 语义
 

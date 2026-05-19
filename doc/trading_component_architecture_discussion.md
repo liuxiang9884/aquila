@@ -535,7 +535,8 @@ class BinaryBookTickerSource {
   std::vector<std::filesystem::path> files_;
   std::size_t current_file_index_{0};
   std::uint64_t current_records_remaining_{0};
-  std::ifstream input_;
+  MappedFile current_mapping_;
+  const char* current_cursor_{nullptr};
 };
 ```
 
@@ -548,6 +549,7 @@ class BinaryBookTickerSource {
 - `Poll() == 0` 表示 replay 已结束，且 `finished() == true`。
 - `Drain(handler, max_events)` 在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条。
 - 文件大小必须是 `sizeof(BookTicker)` 的整数倍；否则启动期或打开文件时拒绝。
+- 非空当前文件使用 read-only mmap 打开，`Poll()` 从当前 cursor 拷贝一条 `BookTicker` 并推进 cursor；空文件不 mmap，只在文件边界计入完成。
 
 ### 当前实现对照
 
@@ -568,6 +570,7 @@ core/market_data/historical_data_reader.h
   - 已提供 Poll(handler) 单事件 step、Drain(handler, max_events) 和 finished()。
   - Poll() 成功输出 1 条时返回 1，EOF 返回 0。
   - 已移除 replay 内部 max_events_per_poll_ 语义。
+  - 当前文件读取已从 std::ifstream::read 切到 core/utils/mapped_file.h 的 read-only mmap + cursor。
   - stats 已移除 poll_calls / empty_polls，使用 total_count / files_completed。
 
 core/market_data/data_reader_concepts.h
@@ -607,6 +610,7 @@ core/strategy/strategy_runtime.h
 - `RealtimeDataReader` 多 source round-robin 后续改为构造期双表扫描：`Source*` 表和 source index 表各重复一轮，`Poll()` 线性扫描 `[next_source_index_, next_source_index_ + source_count)`；index-only 表 A/B 明显更慢，未采用。
 - `RealtimeDataReader` / `HistoricalDataReader` 读入 `BookTicker` 时不再先清零局部对象。
 - `HistoricalDataReader` 将 empty-file skip、文件打开和文件完成状态维护放到构造 / 文件边界慢路径，单条 `Poll()` 不再每次进入完整文件状态机。
+- `HistoricalDataReader` 后续使用 `MappedFile` 对当前 replay 文件做 read-only mmap，替代 `std::ifstream::read`。
 
 2026-05-19 round-robin scan table A/B，命令为：
 
@@ -624,6 +628,34 @@ core/strategy/strategy_runtime.h
 | `BM_RealtimeDataReaderEmptyPoll/4` | 4.19ns | 4.02ns | 4.90ns |
 
 1 source 不走多 source round-robin table，差异主要反映代码布局和运行波动；2 / 4 source 的结果支持采用双表实现，不支持 index-only 实现。
+
+2026-05-19 historical mmap A/B，命令为：
+
+```bash
+./build/release/benchmark/core/market_data/data_reader_benchmark \
+  --benchmark_filter=BM_HistoricalDataReaderDrainSingleFile \
+  --benchmark_min_time=0.5s \
+  --benchmark_repetitions=5
+```
+
+| case | ifstream path mean | mmap path mean |
+| --- | ---: | ---: |
+| `BM_HistoricalDataReaderDrainSingleFile/1` | 25.0ns | 6.37ns |
+| `BM_HistoricalDataReaderDrainSingleFile/64` | 1550ns | 369ns |
+| `BM_HistoricalDataReaderDrainSingleFile/4096` | 98639ns | 23821ns |
+
+同一实现跑 ORDI_USDT 三天 LeadLag replay：
+
+```bash
+/usr/bin/time -f 'elapsed_sec=%e user_sec=%U sys_sec=%S max_rss_kb=%M' \
+  ./build/release/tools/lead_lag_replay \
+  --config /tmp/aquila_lead_lag_ordi_mmap_replay.toml \
+  --signals-output /tmp/lead_lag_mmap_signal.csv
+```
+
+结果：`book_tickers=94799061`，`signals=2350`，`open=1175`，`close=1173`，`stoploss=2`，
+`elapsed_sec=7.73`，`user_sec=7.68`，`sys_sec=0.38`，`max_rss_kb=3486796`。mmap 提升 replay reader
+吞吐，但顺序读完整大文件时 peak RSS 会反映被 fault-in 的映射页；如果后续要控制 replay 内存峰值，需要再评估分段 mmap 或显式 page advice。
 
 当前仍未做的整理：
 

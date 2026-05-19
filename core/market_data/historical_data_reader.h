@@ -3,9 +3,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -17,6 +16,7 @@
 
 #include "core/config/data_reader_config.h"
 #include "core/market_data/types.h"
+#include "core/utils/mapped_file.h"
 
 namespace aquila::market_data {
 
@@ -96,14 +96,8 @@ class HistoricalDataReader {
     }
 
     BookTicker book_ticker;
-    current_input_.read(reinterpret_cast<char*>(&book_ticker),
-                        static_cast<std::streamsize>(sizeof(BookTicker)));
-    if (current_input_.gcount() !=
-        static_cast<std::streamsize>(sizeof(BookTicker))) {
-      throw std::runtime_error(
-          fmt::format("failed to read binary data file '{}'",
-                      files_[current_file_index_].path.string()));
-    }
+    std::memcpy(&book_ticker, current_cursor_, sizeof(BookTicker));
+    current_cursor_ += sizeof(BookTicker);
 
     --current_records_remaining_;
     if constexpr (Diagnostics::kEnabled) {
@@ -210,25 +204,21 @@ class HistoricalDataReader {
           fmt::format("binary data file '{}' is too large", file.string()));
     }
 
-    std::ifstream input(file, std::ios::binary);
-    if (!input.is_open()) {
-      throw std::runtime_error(
-          fmt::format("failed to open binary data file '{}'", file.string()));
-    }
-
     return static_cast<std::uint64_t>(record_count);
   }
 
   void OpenCurrentFile() {
-    current_input_.close();
-    current_input_.clear();
-    current_input_.open(files_[current_file_index_].path, std::ios::binary);
-    if (!current_input_.is_open()) {
+    current_mapping_ = MappedFile(files_[current_file_index_].path);
+    const std::size_t expected_size =
+        static_cast<std::size_t>(files_[current_file_index_].record_count) *
+        sizeof(BookTicker);
+    if (current_mapping_.size() != expected_size) {
       throw std::runtime_error(
-          fmt::format("failed to open binary data file '{}'",
+          fmt::format("binary data file '{}' size changed during open",
                       files_[current_file_index_].path.string()));
     }
     current_records_remaining_ = files_[current_file_index_].record_count;
+    current_cursor_ = current_mapping_.data();
   }
 
   void PrepareCurrentFile() {
@@ -239,8 +229,8 @@ class HistoricalDataReader {
   }
 
   void CompleteCurrentFile() {
-    current_input_.close();
-    current_input_.clear();
+    current_mapping_ = MappedFile();
+    current_cursor_ = nullptr;
     ++current_file_index_;
     if constexpr (Diagnostics::kEnabled) {
       diagnostics_.RecordFileCompleted();
@@ -251,8 +241,6 @@ class HistoricalDataReader {
   void SkipEmptyFiles() {
     while (current_file_index_ < files_.size() &&
            files_[current_file_index_].record_count == 0) {
-      current_input_.close();
-      current_input_.clear();
       ++current_file_index_;
       if constexpr (Diagnostics::kEnabled) {
         diagnostics_.RecordFileCompleted();
@@ -263,7 +251,8 @@ class HistoricalDataReader {
   std::vector<FileState> files_;
   std::size_t current_file_index_{0};
   std::uint64_t current_records_remaining_{0};
-  std::ifstream current_input_;
+  MappedFile current_mapping_;
+  const char* current_cursor_{nullptr};
   [[no_unique_address]] Diagnostics diagnostics_;
 };
 
