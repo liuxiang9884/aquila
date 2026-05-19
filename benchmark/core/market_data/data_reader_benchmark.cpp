@@ -26,6 +26,7 @@ namespace cfg = aquila::config;
 namespace md = aquila::market_data;
 
 constexpr std::uint64_t kHistoricalRecords = 1'048'576;
+constexpr std::uint64_t kRealtimePrefillMessages = md::kBookTickerShmCapacity;
 
 struct NoopHandler {
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
@@ -92,7 +93,9 @@ md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix,
 
 cfg::DataReaderSourceConfig MakeRealtimeSourceConfig(
     std::string name, aquila::Exchange exchange, std::string shm_name,
-    cfg::DataReaderReadMode read_mode) {
+    cfg::DataReaderReadMode read_mode,
+    cfg::DataReaderStartPosition start_position =
+        cfg::DataReaderStartPosition::kLatest) {
   return cfg::DataReaderSourceConfig{
       .name = std::move(name),
       .type = cfg::DataReaderSourceType::kShm,
@@ -100,7 +103,7 @@ cfg::DataReaderSourceConfig MakeRealtimeSourceConfig(
       .feed = cfg::DataReaderFeed::kBookTicker,
       .shm_name = std::move(shm_name),
       .channel_name = "book_ticker_channel",
-      .start_position = cfg::DataReaderStartPosition::kLatest,
+      .start_position = start_position,
       .read_mode = read_mode,
       .required = true,
   };
@@ -136,6 +139,20 @@ void WriteBookTickerFile(const std::filesystem::path& path,
     throw std::runtime_error(fmt::format("failed to write {}", path.string()));
   }
 }
+
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+[[gnu::noinline]] void PrefillBookTickerShm(md::DataShmPublisher* publisher,
+                                            std::uint64_t record_count) {
+  for (std::uint64_t i = 0; i < record_count; ++i) {
+    publisher->OnBookTicker(MakeBookTicker(static_cast<std::int64_t>(i)));
+  }
+}
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 cfg::DataReaderConfig MakeHistoricalConfig(const std::filesystem::path& file) {
   cfg::DataReaderConfig config;
@@ -217,10 +234,55 @@ void BM_HistoricalDataReaderDrainSingleFile(benchmark::State& state) {
   state.SetItemsProcessed(handled_total);
 }
 
+void BM_RealtimeDataReaderDrainSingleSource(benchmark::State& state) {
+  const std::uint64_t drain_budget = static_cast<std::uint64_t>(state.range(0));
+  const md::BookTickerShmConfig shm_config =
+      MakeCreateConfig("drain_single_source", 0);
+  ShmCleanup cleanup(shm_config.shm_name);
+  md::DataShmPublisher publisher(shm_config);
+  PrefillBookTickerShm(&publisher, kRealtimePrefillMessages);
+
+  cfg::DataReaderConfig config;
+  config.name = "realtime_reader_drain_benchmark";
+  config.max_events_per_source = static_cast<std::uint32_t>(drain_budget);
+  config.sources.push_back(MakeRealtimeSourceConfig(
+      "source_0", aquila::Exchange::kGate, shm_config.shm_name,
+      cfg::DataReaderReadMode::kDrain,
+      cfg::DataReaderStartPosition::kEarliestVisible));
+
+  auto reader = std::make_unique<md::RealtimeDataReader<>>(config);
+  NoopHandler handler;
+  std::uint64_t handled_total = 0;
+  std::uint64_t remaining = md::kBookTickerShmCapacity - 1;
+
+  for (auto _ : state) {
+    if (remaining < drain_budget) {
+      state.PauseTiming();
+      reader = std::make_unique<md::RealtimeDataReader<>>(config);
+      remaining = md::kBookTickerShmCapacity - 1;
+      state.ResumeTiming();
+    }
+    const std::uint64_t handled = reader->Drain(handler, drain_budget);
+    handled_total += handled;
+    remaining -= handled;
+  }
+
+  benchmark::DoNotOptimize(handler.count);
+  benchmark::DoNotOptimize(handler.last_id);
+  benchmark::DoNotOptimize(handled_total);
+  state.SetItemsProcessed(handled_total);
+}
+
 BENCHMARK(BM_RealtimeDataReaderEmptyPoll)
     ->Arg(1)
     ->Arg(2)
     ->Arg(4)
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BM_RealtimeDataReaderDrainSingleSource)
+    ->Arg(1)
+    ->Arg(64)
+    ->Arg(4096)
     ->Unit(benchmark::kNanosecond);
 
 BENCHMARK(BM_HistoricalDataReaderDrainSingleFile)

@@ -725,6 +725,27 @@ core/strategy/trading_runtime.h
 
 1 source 不走多 source round-robin table，差异主要反映代码布局和运行波动；2 / 4 source 的结果支持采用双表实现，不支持 index-only 实现。
 
+2026-05-19 新增 single-source realtime drain benchmark，命令为：
+
+```bash
+./build/release/benchmark/core/market_data/data_reader_benchmark \
+  --benchmark_filter=BM_RealtimeDataReaderDrainSingleSource \
+  --benchmark_min_time=0.5s \
+  --benchmark_repetitions=5
+```
+
+当前 production 实现仍用 `Drain()` 循环调用 `Poll()`；新增 benchmark 的当前基线：
+
+| case | current mean |
+| --- | ---: |
+| `BM_RealtimeDataReaderDrainSingleSource/1` | 2.75ns |
+| `BM_RealtimeDataReaderDrainSingleSource/64` | 156ns |
+| `BM_RealtimeDataReaderDrainSingleSource/4096` | 9966ns |
+
+本轮试过 single-source `Drain()` fast path，drain 4096 可降到约 `8102ns`，但同一 benchmark binary 中
+`BM_RealtimeDataReaderEmptyPoll/1` 从约 `1.52ns` 回退到约 `3.45ns`，因此没有保留该生产实现。后续若继续优化
+live drain，需要先证明不会影响 live `Poll()` 主路径，或者把 drain 优化隔离到不改变 `Poll()` 代码生成的实现方式。
+
 2026-05-19 historical mmap A/B，命令为：
 
 ```bash

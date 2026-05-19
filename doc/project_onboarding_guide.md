@@ -79,6 +79,7 @@
 61. `DataShmPublisher` 已将 shared header `published_count` 写入移出 `OnBookTicker()` / `EmplaceBookTickerWith()` 热路径：热路径只更新本地计数，`FlushPublishedCount()` 或 `UpdateHeartbeatNs()` 冷路径刷新 SHM header。2026-05-19 release benchmark：`data_shm/publisher_temp_book_ticker_push` 从 `8.06ns` 到 `7.50ns`，`data_shm/publisher_emplace_book_ticker_with` 从 `4.51ns` 到 `4.25ns`；`BM_BookTickerShmReaderTryReadOne` 基本持平 `1.94ns`。
 62. `BookTickerShmReader` overrun 边界已从完整 capacity 改成 `capacity - 1` 保守窗口：`unread_count >= capacity` 时记录 overrun 并拉回 `current - (capacity - 1)`，避免在没有 per-slot sequence 的 SHM ring 上读取可能正被 producer 下一条消息覆盖的边界 slot。2026-05-19 release benchmark：`BM_BookTickerShmReaderTryReadOne` 为 `1.94ns`，`BM_RealtimeDataReaderEmptyPoll` 1/2/4 source 为 `1.52ns` / `2.29ns` / `3.97ns`。
 63. `MappedFile` 已支持 `MappedFileAccessPattern::kSequential`，`HistoricalDataReader` 打开 replay binary 时使用 `MADV_SEQUENTIAL` hint。2026-05-19 release benchmark：historical drain 1/64/4096 为 `6.58ns` / `335ns` / `21294ns`；ORDI_USDT 三天 LeadLag replay 保持 `book_tickers=94799061`、`signals=2350`、`open=1175`、`close=1173`、`stoploss=2`，耗时 `5.61s`，`max_rss_kb=3486756`。当前机器 `perf_event_paranoid=4`，未能采集 page-fault perf counters。
+64. `data_reader_benchmark` 已新增 `BM_RealtimeDataReaderDrainSingleSource`，覆盖 realtime 单 source drain 预算 1/64/4096；当前 production 基线为 `2.75ns` / `156ns` / `9966ns`。single-source `Drain()` fast path 实验能把 4096 预算降到约 `8102ns`，但同一 benchmark binary 中 live `BM_RealtimeDataReaderEmptyPoll/1` 从约 `1.52ns` 回退到约 `3.45ns`，因此未保留生产实现；后续继续优化 live drain 时必须先保护 live `Poll()` 主路径。
 
 ## 新对话第一步
 
