@@ -135,8 +135,10 @@ ReplayDataReader
 
 ```cpp
 template <typename ReaderT, typename HandlerT>
-concept DataReaderLike = requires(ReaderT reader, HandlerT handler) {
+concept DataReaderLike = requires(ReaderT& reader, HandlerT& handler,
+                                  std::uint64_t max_events) {
   { reader.Poll(handler) } -> std::convertible_to<std::uint64_t>;
+  { reader.Drain(handler, max_events) } -> std::convertible_to<std::uint64_t>;
 };
 ```
 
@@ -150,12 +152,65 @@ void OnBookTicker(const BookTicker& ticker) noexcept;
 
 ```cpp
 template <typename ReaderT>
-concept FiniteDataReader = requires(const ReaderT reader) {
+concept FiniteDataReader = requires(const ReaderT& reader) {
   { reader.finished() } -> std::convertible_to<bool>;
 };
 ```
 
-`LiveDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不要求提供 `finished()`；`ReplayDataReader` 满足 `DataReaderLike` 和 `FiniteDataReader`，`finished()` 用于区分 replay 中 `Poll() == 0` 是暂时没有输出还是已经读完。
+`LiveDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不要求提供 `finished()`；`ReplayDataReader` 满足 `DataReaderLike` 和 `FiniteDataReader`，`finished()` 用于显式查询 replay EOF。
+
+### Poll / Drain 统一语义
+
+`LiveDataReader` 和 `ReplayDataReader` 都提供 `Poll()` 和 `Drain()`：
+
+```text
+Poll(handler)
+  - 单事件接口。
+  - 每次最多输出 1 条事件。
+  - 输出 1 条时返回 1。
+  - 没有输出时返回 0。
+
+Drain(handler, max_events)
+  - 批量接口。
+  - 循环调用 Poll(handler)，最多输出 max_events 条事件。
+  - 返回实际输出的事件数量。
+```
+
+二者的差异只在 EOF：
+
+```text
+LiveDataReader
+  - Poll() == 0 表示当前没有实时数据，不代表结束。
+  - 不提供 finished()。
+
+ReplayDataReader
+  - Poll() == 0 表示 replay 已结束。
+  - finished() 是显式 EOF 状态查询，应与 Poll() == 0 的 EOF 语义一致。
+```
+
+`Drain()` 的默认实现可以由 reader 直接内联提供：
+
+```cpp
+template <typename Handler>
+std::uint64_t Drain(Handler& handler, std::uint64_t max_events) {
+  std::uint64_t count = 0;
+  while (count < max_events) {
+    const std::uint64_t n = Poll(handler);
+    if (n == 0) {
+      break;
+    }
+    count += n;
+  }
+  return count;
+}
+```
+
+第一版约束：
+
+- 不在 `Poll()` 中表达批量预算。
+- 不在 replay reader 中保留 `max_events_per_poll`。
+- 批量消费预算由 `Drain(handler, max_events)` 的调用方传入。
+- `Drain(handler, 0)` 返回 0，不读取数据。
 
 ### Diagnostics / Stats 模板
 
@@ -296,6 +351,19 @@ class LiveDataReader {
     // Poll source and emit handler.OnBookTicker(...)
   }
 
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) noexcept {
+    std::uint64_t count = 0;
+    while (count < max_events) {
+      const std::uint64_t n = Poll(handler);
+      if (n == 0) {
+        break;
+      }
+      count += n;
+    }
+    return count;
+  }
+
   [[nodiscard]] const Diagnostics& diagnostics() const noexcept {
     return diagnostics_;
   }
@@ -327,7 +395,6 @@ struct LiveDataSourceConfig {
 
 struct LiveDataReaderConfig {
   std::string name;
-  std::uint32_t max_events_per_source{64};
   std::vector<LiveDataSourceConfig> sources;
 };
 
@@ -340,6 +407,19 @@ class LiveDataReader {
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) noexcept;
 
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) noexcept {
+    std::uint64_t count = 0;
+    while (count < max_events) {
+      const std::uint64_t n = Poll(handler);
+      if (n == 0) {
+        break;
+      }
+      count += n;
+    }
+    return count;
+  }
+
  private:
   struct SourceState {
     std::string name;
@@ -349,14 +429,9 @@ class LiveDataReader {
   };
 
   template <typename Handler>
-  std::uint64_t PollLatest(std::size_t source_index, SourceState& source,
+  std::uint64_t PollSource(std::size_t source_index, SourceState& source,
                            Handler& handler) noexcept;
 
-  template <typename Handler>
-  std::uint64_t PollDrain(std::size_t source_index, SourceState& source,
-                          Handler& handler) noexcept;
-
-  std::uint32_t max_events_per_source_{64};
   std::size_t next_source_index_{0};
   std::vector<SourceState> sources_;
   [[no_unique_address]] Diagnostics diagnostics_;
@@ -380,8 +455,10 @@ class LiveBookTickerSource {
 
 语义：
 
-- `latest`：每个 source 每轮最多输出最新一条；允许 skip 中间 tick，适合状态型低延迟策略。
-- `drain`：每个 source 每轮最多输出 `max_events_per_source` 条；用于完整事件消费、验证或对账。
+- `Poll()`：从 `next_source_index_` 开始 round-robin 扫描 source；找到第一个可读 source 后输出 1 条并返回 1；所有 source 都没数据时返回 0。
+- source `latest`：被 `Poll()` 选中时调用 `TryReadLatest()`，最多输出最新一条；允许 skip 中间 tick，适合状态型低延迟策略。
+- source `drain`：被 `Poll()` 选中时调用 `TryReadOne()`，最多输出下一条；不在单次 `Poll()` 内批量吞掉一个 source。
+- reader `Drain(handler, max_events)`：在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条；用于完整事件消费、验证或对账。
 - overrun / skipped 只记录诊断，不在 `DataReader` 内部做策略决策。
 
 ### ReplayDataReader 模板
@@ -391,7 +468,6 @@ class LiveBookTickerSource {
 ```cpp
 struct ReplayDataReaderConfig {
   std::string name;
-  std::uint32_t max_events_per_poll{4096};
   std::vector<std::filesystem::path> files;
 };
 
@@ -403,6 +479,19 @@ class ReplayDataReader {
   template <typename Handler>
   std::uint64_t Poll(Handler& handler);
 
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) {
+    std::uint64_t count = 0;
+    while (count < max_events) {
+      const std::uint64_t n = Poll(handler);
+      if (n == 0) {
+        break;
+      }
+      count += n;
+    }
+    return count;
+  }
+
   [[nodiscard]] bool finished() const noexcept;
 
   [[nodiscard]] const Diagnostics& diagnostics() const noexcept {
@@ -411,7 +500,6 @@ class ReplayDataReader {
 
  private:
   BinaryBookTickerSource source_;
-  std::uint32_t max_events_per_poll_{4096};
   [[no_unique_address]] Diagnostics diagnostics_;
 };
 ```
@@ -444,8 +532,50 @@ class BinaryBookTickerSource {
 - 文件按配置顺序读取。
 - 输入文件必须已经按目标 replay 顺序预处理好。
 - `ReplayDataReader` 不支持 `latest`。
-- `Poll() == 0` 在 replay 中可能表示 EOF，因此需要 `finished()` 区分。
+- `Poll()` 每次最多输出 1 条事件；输出成功返回 1。
+- `Poll() == 0` 表示 replay 已结束，且 `finished() == true`。
+- `Drain(handler, max_events)` 在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条。
 - 文件大小必须是 `sizeof(BookTicker)` 的整数倍；否则启动期或打开文件时拒绝。
+
+### 当前实现对照
+
+当前实现还没有完全按上述目标拆分：
+
+```text
+core/market_data/data_reader.h
+  - 目前类名仍是 DataReader，实际承担 LiveDataReader 第一版职责。
+  - 当前 Poll() 会扫描所有 source。
+  - source read_mode = latest 时，每个 source 最多输出最新一条。
+  - source read_mode = drain 时，每个 source 最多输出 max_events_per_source_ 条。
+  - 当前还没有 Drain(handler, max_events)。
+  - 当前 stats 仍包含 poll_calls / empty_polls / book_tickers。
+  - 当前 SourceStats 字段仍叫 book_tickers，不是目标设计里的 book_ticker_count。
+
+core/market_data/binary_data_reader.h
+  - 目前类名是 BinaryDataReader，目标架构中更接近 ReplayDataReader + BinaryBookTickerSource。
+  - 当前 Poll() 会一次最多读取 max_events_per_poll_ 条。
+  - 当前没有 finished()。
+  - 当前没有 Drain(handler, max_events)。
+  - 当前 stats 仍包含 poll_calls / empty_polls / book_tickers。
+```
+
+因此当前实现的主要差异不是底层读取能力，而是接口语义还没收敛：
+
+- `Poll()` 还混合了单步读取和批量读取。
+- live / replay 的批量预算还藏在 reader config 或 reader 成员里。
+- replay EOF 只能从 `Poll() == 0` 间接判断，没有显式 `finished()`。
+- stats 还包含外层 loop 行为字段，命名也还没对齐目标设计。
+
+### 下一步建议
+
+建议按小步提交推进，不一次性改完整 runtime：
+
+1. 先补编译期接口约束：新增 `DataReaderLike` / `FiniteDataReader` concept，并在 test 中用 fake handler 对当前 live reader 和 binary reader 做 `static_assert`。
+2. 调整 live reader 语义：把当前 `DataReader::Poll()` 改成单事件 round-robin；新增 `Drain(handler, max_events)` 承担批量消费；保留 source read mode 的 `latest` / `drain`，但它只决定单个 source 的读取方式，不决定单次 `Poll()` 的批量预算。
+3. 调整 replay reader 语义：把 `BinaryDataReader::Poll()` 改成单事件 step；新增 `Drain(handler, max_events)`；新增 `finished()`；去掉 replay 内部 `max_events_per_poll_` 语义。
+4. 调整 stats：删除 live / replay stats 中的 `poll_calls` 和 `empty_polls`；把顶层 `book_tickers` 改为 `total_count`；把 live source `book_tickers` 改为 `book_ticker_count`。
+5. 再更新工具 / runtime 调用点：需要批量消费的 probe、replay、对账工具改用 `Drain(handler, max_events)`；生产 runtime 如果希望每轮有预算，也在外层 runtime / scheduler diagnostics 和配置中表达。
+6. 最后同步 `doc/data_reader_config.md`，明确配置中的 batch budget 属于调用方 drain budget，而不是 reader 内部 `Poll()` 语义。
 
 ## OrderSession 架构占位
 
