@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_MARKET_DATA_BINARY_DATA_READER_H_
-#define AQUILA_CORE_MARKET_DATA_BINARY_DATA_READER_H_
+#ifndef AQUILA_CORE_MARKET_DATA_HISTORICAL_DATA_READER_H_
+#define AQUILA_CORE_MARKET_DATA_HISTORICAL_DATA_READER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -23,26 +23,27 @@ namespace aquila::market_data {
 static_assert(std::is_trivially_copyable_v<BookTicker>);
 static_assert(std::is_standard_layout_v<BookTicker>);
 
-struct BinaryDataReaderStats {
+struct HistoricalDataReaderStats {
   std::uint64_t total_count{0};
   std::uint64_t files_completed{0};
 };
 
-struct NoopBinaryDataReaderDiagnostics {
+struct NoopHistoricalDataReaderDiagnostics {
   static constexpr bool kEnabled = false;
 
-  explicit NoopBinaryDataReaderDiagnostics(std::size_t file_count) noexcept {
+  explicit NoopHistoricalDataReaderDiagnostics(
+      std::size_t file_count) noexcept {
     (void)file_count;
   }
   void RecordBookTicker(const BookTicker&) noexcept {}
   void RecordFileCompleted() noexcept {}
 };
 
-class BinaryDataReaderDiagnostics {
+class HistoricalDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
-  explicit BinaryDataReaderDiagnostics(std::size_t file_count) noexcept {
+  explicit HistoricalDataReaderDiagnostics(std::size_t file_count) noexcept {
     (void)file_count;
   }
 
@@ -54,18 +55,18 @@ class BinaryDataReaderDiagnostics {
     ++stats_.files_completed;
   }
 
-  [[nodiscard]] const BinaryDataReaderStats& stats() const noexcept {
+  [[nodiscard]] const HistoricalDataReaderStats& stats() const noexcept {
     return stats_;
   }
 
  private:
-  BinaryDataReaderStats stats_;
+  HistoricalDataReaderStats stats_;
 };
 
-template <typename Diagnostics = NoopBinaryDataReaderDiagnostics>
-class BinaryDataReader {
+template <typename Diagnostics = NoopHistoricalDataReaderDiagnostics>
+class HistoricalDataReader {
  public:
-  explicit BinaryDataReader(config::DataReaderConfig data_reader_config)
+  explicit HistoricalDataReader(config::DataReaderConfig data_reader_config)
       : diagnostics_(CountFiles(data_reader_config)) {
     files_.reserve(CountFiles(data_reader_config));
     for (const config::DataReaderSourceConfig& source :
@@ -81,10 +82,10 @@ class BinaryDataReader {
     SkipEmptyFiles();
   }
 
-  BinaryDataReader(const BinaryDataReader&) = delete;
-  BinaryDataReader& operator=(const BinaryDataReader&) = delete;
-  BinaryDataReader(BinaryDataReader&&) = default;
-  BinaryDataReader& operator=(BinaryDataReader&&) = default;
+  HistoricalDataReader(const HistoricalDataReader&) = delete;
+  HistoricalDataReader& operator=(const HistoricalDataReader&) = delete;
+  HistoricalDataReader(HistoricalDataReader&&) = default;
+  HistoricalDataReader& operator=(HistoricalDataReader&&) = default;
 
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) {
@@ -154,29 +155,29 @@ class BinaryDataReader {
   static void ValidateSource(const config::DataReaderSourceConfig& source) {
     if (source.type != config::DataReaderSourceType::kBinaryFile) {
       throw std::invalid_argument(fmt::format(
-          "binary data reader source '{}' must have type binary_file",
+          "historical data reader source '{}' must have type binary_file",
           source.name));
     }
     if (source.feed != config::DataReaderFeed::kBookTicker) {
       throw std::invalid_argument(fmt::format(
-          "binary data reader source '{}' must use book_ticker feed",
+          "historical data reader source '{}' must use book_ticker feed",
           source.name));
     }
     if (source.files.empty()) {
       throw std::invalid_argument(fmt::format(
-          "binary data reader source '{}' requires at least one file",
+          "historical data reader source '{}' requires at least one file",
           source.name));
     }
     if (source.start_position == config::DataReaderStartPosition::kLatest) {
-      throw std::invalid_argument(
-          fmt::format("binary data reader source '{}' does not support latest "
-                      "start_position",
-                      source.name));
+      throw std::invalid_argument(fmt::format(
+          "historical data reader source '{}' does not support latest "
+          "start_position",
+          source.name));
     }
     if (source.read_mode != config::DataReaderReadMode::kDrain) {
-      throw std::invalid_argument(
-          fmt::format("binary data reader source '{}' must use drain read_mode",
-                      source.name));
+      throw std::invalid_argument(fmt::format(
+          "historical data reader source '{}' must use drain read_mode",
+          source.name));
     }
   }
 
@@ -273,4 +274,4 @@ class BinaryDataReader {
 
 }  // namespace aquila::market_data
 
-#endif  // AQUILA_CORE_MARKET_DATA_BINARY_DATA_READER_H_
+#endif  // AQUILA_CORE_MARKET_DATA_HISTORICAL_DATA_READER_H_

@@ -16,7 +16,7 @@
 #include "core/config/data_reader_config.h"
 #include "core/config/strategy_config.h"
 #include "core/market_data/data_reader_concepts.h"
-#include "core/market_data/data_reader.h"
+#include "core/market_data/realtime_data_reader.h"
 #include "core/market_data/types.h"
 #include "core/strategy/order_manager.h"
 #include "core/strategy/strategy_context.h"
@@ -26,7 +26,7 @@
 namespace aquila::strategy {
 
 template <typename UserStrategyT, typename OrderSessionT,
-          typename DataReaderT = market_data::DataReader<>>
+          typename DataReaderT = market_data::RealtimeDataReader<>>
 class StrategyRuntime {
  public:
   using OrderManagerT = OrderManager<OrderSessionT>;

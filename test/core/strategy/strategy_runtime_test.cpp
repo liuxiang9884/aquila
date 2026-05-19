@@ -521,8 +521,9 @@ using LoopRuntime =
     StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDataReader>;
 using DrainLoopRuntime =
     StrategyRuntime<LoopUserStrategy, FakeOrderSession, FakeDrainDataReader>;
-using FiniteDrainLoopRuntime = StrategyRuntime<
-    LoopUserStrategy, FakeOrderSession, FakeFiniteDrainDataReader>;
+using FiniteDrainLoopRuntime =
+    StrategyRuntime<LoopUserStrategy, FakeOrderSession,
+                    FakeFiniteDrainDataReader>;
 
 struct HookLoopUserStrategy {
   using ContextT = StrategyContext<FakeHookOrderSession>;

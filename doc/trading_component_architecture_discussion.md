@@ -87,13 +87,13 @@ ack / response 和 feedback 都必须先进入 `OrderManager`，再通知 `Strat
 DataReader concept
   - Strategy-facing reader abstraction
 
-LiveDataReader
+RealtimeDataReader
   - realtime source reader
   - source: SHM broadcast queue or SHM SPSC
   - read mode: latest / drain
   - no natural EOF
 
-ReplayDataReader
+HistoricalDataReader
   - historical replay reader
   - source: preprocessed binary BookTicker files
   - read mode: drain only
@@ -104,11 +104,11 @@ ReplayDataReader
 当前实现映射：
 
 ```text
-core/market_data/data_reader.h
-  ~= LiveDataReader first version
+core/market_data/realtime_data_reader.h
+  ~= RealtimeDataReader first version
 
-core/market_data/binary_data_reader.h
-  ~= ReplayDataReader / BinaryBookTickerSource first version
+core/market_data/historical_data_reader.h
+  ~= HistoricalDataReader / BinaryBookTickerSource first version
 ```
 
 关系定义：
@@ -118,11 +118,11 @@ DataReader
   - concept / 接口约束 / Strategy-facing capability
   - 不要求是虚基类，也不要求存在一个运行时多态 base class
 
-LiveDataReader
+RealtimeDataReader
   - DataReader concept 的实时实现
   - 从 SHM broadcast queue / SHM SPSC 等标准化实时 source 读取
 
-ReplayDataReader
+HistoricalDataReader
   - DataReader concept 的历史回放实现
   - 从预处理后的 binary BookTicker source 读取
 ```
@@ -157,11 +157,11 @@ concept FiniteDataReader = requires(const ReaderT& reader) {
 };
 ```
 
-`LiveDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不要求提供 `finished()`；`ReplayDataReader` 满足 `DataReaderLike` 和 `FiniteDataReader`，`finished()` 用于显式查询 replay EOF。
+`RealtimeDataReader` 满足 `DataReaderLike`，但没有天然 EOF，不要求提供 `finished()`；`HistoricalDataReader` 满足 `DataReaderLike` 和 `FiniteDataReader`，`finished()` 用于显式查询 replay EOF。
 
 ### Poll / Drain 统一语义
 
-`LiveDataReader` 和 `ReplayDataReader` 都提供 `Poll()` 和 `Drain()`：
+`RealtimeDataReader` 和 `HistoricalDataReader` 都提供 `Poll()` 和 `Drain()`：
 
 ```text
 Poll(handler)
@@ -179,11 +179,11 @@ Drain(handler, max_events)
 二者的差异只在 EOF：
 
 ```text
-LiveDataReader
+RealtimeDataReader
   - Poll() == 0 表示当前没有实时数据，不代表结束。
   - 不提供 finished()。
 
-ReplayDataReader
+HistoricalDataReader
   - Poll() == 0 表示 replay 已结束。
   - finished() 是显式 EOF 状态查询，应与 Poll() == 0 的 EOF 语义一致。
 ```
@@ -217,51 +217,51 @@ std::uint64_t Drain(Handler& handler, std::uint64_t max_events) {
 推荐命名：
 
 ```text
-LiveDataReaderDiagnostics
-NoopLiveDataReaderDiagnostics
-LiveDataReaderStats
-LiveDataReaderSourceStats
+RealtimeDataReaderDiagnostics
+NoopRealtimeDataReaderDiagnostics
+RealtimeDataReaderStats
+RealtimeDataReaderSourceStats
 
-ReplayDataReaderDiagnostics
-NoopReplayDataReaderDiagnostics
-ReplayDataReaderStats
+HistoricalDataReaderDiagnostics
+NoopHistoricalDataReaderDiagnostics
+HistoricalDataReaderStats
 ```
 
 推荐形态：
 
 ```cpp
-struct LiveDataReaderSourceStats {
+struct RealtimeDataReaderSourceStats {
   std::uint64_t book_ticker_count{0};
   std::uint64_t skipped{0};
   std::uint64_t overruns{0};
   std::int64_t last_book_ticker_id{0};
 };
 
-struct LiveDataReaderStats {
+struct RealtimeDataReaderStats {
   std::uint64_t total_count{0};
-  std::vector<LiveDataReaderSourceStats> sources;
+  std::vector<RealtimeDataReaderSourceStats> sources;
 };
 
-struct ReplayDataReaderStats {
+struct HistoricalDataReaderStats {
   std::uint64_t total_count{0};
   std::uint64_t files_completed{0};
 };
 
-class NoopLiveDataReaderDiagnostics {
+class NoopRealtimeDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = false;
 
-  explicit NoopLiveDataReaderDiagnostics(std::size_t) noexcept {}
+  explicit NoopRealtimeDataReaderDiagnostics(std::size_t) noexcept {}
   void RecordBookTicker(std::size_t, const BookTicker&) noexcept {}
   void RecordSkipped(std::size_t, std::uint64_t) noexcept {}
   void RecordOverrun(std::size_t, std::uint64_t) noexcept {}
 };
 
-class LiveDataReaderDiagnostics {
+class RealtimeDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
-  explicit LiveDataReaderDiagnostics(std::size_t source_count);
+  explicit RealtimeDataReaderDiagnostics(std::size_t source_count);
 
   void RecordBookTicker(std::size_t source_index,
                         const BookTicker& ticker) noexcept;
@@ -270,10 +270,10 @@ class LiveDataReaderDiagnostics {
   void RecordOverrun(std::size_t source_index,
                      std::uint64_t overrun_delta) noexcept;
 
-  [[nodiscard]] const LiveDataReaderStats& stats() const noexcept;
+  [[nodiscard]] const RealtimeDataReaderStats& stats() const noexcept;
 };
 
-class NoopReplayDataReaderDiagnostics {
+class NoopHistoricalDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = false;
 
@@ -281,50 +281,50 @@ class NoopReplayDataReaderDiagnostics {
   void RecordFileCompleted() noexcept {}
 };
 
-class ReplayDataReaderDiagnostics {
+class HistoricalDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
   void RecordBookTicker(const BookTicker& ticker) noexcept;
   void RecordFileCompleted() noexcept;
 
-  [[nodiscard]] const ReplayDataReaderStats& stats() const noexcept;
+  [[nodiscard]] const HistoricalDataReaderStats& stats() const noexcept;
 };
 ```
 
-`poll_calls` / `empty_polls` 不放在 `LiveDataReaderStats` 或 `ReplayDataReaderStats` 中。它们回答的是“外层循环调用 reader 多少次”和“外层循环有多少次没有拿到任何事件”，更适合放在 `StrategyRuntime`、scheduler 或未来的组装层 diagnostics。
+`poll_calls` / `empty_polls` 不放在 `RealtimeDataReaderStats` 或 `HistoricalDataReaderStats` 中。它们回答的是“外层循环调用 reader 多少次”和“外层循环有多少次没有拿到任何事件”，更适合放在 `StrategyRuntime`、scheduler 或未来的组装层 diagnostics。
 
 第一版 stats 字段语义：
 
 ```text
-LiveDataReaderStats::total_count
+RealtimeDataReaderStats::total_count
   - live reader 已经输出给 handler 的所有 source 数据总数。
   - 当前只实现 BookTicker，因此它等于所有 source 的 book_ticker_count 之和。
 
-LiveDataReaderSourceStats::book_ticker_count
+RealtimeDataReaderSourceStats::book_ticker_count
   - 单个 source 已经输出给 handler 的 BookTicker 数量。
 
-LiveDataReaderSourceStats::skipped
+RealtimeDataReaderSourceStats::skipped
   - 单个 source 在 latest 模式下为读取最新值而跳过的中间 BookTicker 数量。
 
-LiveDataReaderSourceStats::overruns
+RealtimeDataReaderSourceStats::overruns
   - 单个 source 底层 SHM / queue 发生 overrun 的累计增量。
 
-LiveDataReaderSourceStats::last_book_ticker_id
+RealtimeDataReaderSourceStats::last_book_ticker_id
   - 单个 source 最后一次成功输出的 BookTicker.id。
 
-ReplayDataReaderStats::total_count
+HistoricalDataReaderStats::total_count
   - replay reader 已经输出给 handler 的所有数据总数。
   - 当前只实现 binary BookTicker replay，因此它等于 replay 输出的 BookTicker 数量。
 
-ReplayDataReaderStats::files_completed
+HistoricalDataReaderStats::files_completed
   - replay reader 已经完整读完的 binary 文件数。
 ```
 
 未来扩展 `trade` / `order book` 时，顶层 `total_count` 仍表示 reader 输出给 handler 的所有事件总数，不按 feed 类型拆分；feed 类型相关统计放在 `SourceStats` 中，例如：
 
 ```cpp
-struct LiveDataReaderSourceStats {
+struct RealtimeDataReaderSourceStats {
   std::uint64_t book_ticker_count{0};
   std::uint64_t trade_count{0};
   std::uint64_t order_book_count{0};
@@ -338,13 +338,13 @@ struct LiveDataReaderSourceStats {
 };
 ```
 
-`ReplayDataReaderStats` 的顶层也保持 `total_count` / `files_completed`。如果未来 replay 同时支持多 feed 且需要区分 feed 数量，应优先增加 replay source / feed 维度的 stats，而不是把顶层拆成多个 `total_*_count`。
+`HistoricalDataReaderStats` 的顶层也保持 `total_count` / `files_completed`。如果未来 replay 同时支持多 feed 且需要区分 feed 数量，应优先增加 replay source / feed 维度的 stats，而不是把顶层拆成多个 `total_*_count`。
 
-`LiveDataReader` 内部使用：
+`RealtimeDataReader` 内部使用：
 
 ```cpp
-template <typename Diagnostics = NoopLiveDataReaderDiagnostics>
-class LiveDataReader {
+template <typename Diagnostics = NoopRealtimeDataReaderDiagnostics>
+class RealtimeDataReader {
  public:
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) noexcept {
@@ -375,7 +375,7 @@ class LiveDataReader {
 
 关闭 diagnostics 时，记录逻辑应被编译器消除，不使用 runtime bool。
 
-### LiveDataReader 模板
+### RealtimeDataReader 模板
 
 实时 reader 第一版支持 SHM broadcast queue / SPSC。多 source 轮询采用 round-robin 起点，避免每轮固定偏向第一个 source。
 
@@ -385,7 +385,7 @@ enum class LiveReadMode : std::uint8_t {
   kDrain,
 };
 
-struct LiveDataSourceConfig {
+struct RealtimeDataSourceConfig {
   std::string name;
   std::string shm_name;
   std::string channel_name;
@@ -393,16 +393,16 @@ struct LiveDataSourceConfig {
   bool required{true};
 };
 
-struct LiveDataReaderConfig {
+struct RealtimeDataReaderConfig {
   std::string name;
-  std::vector<LiveDataSourceConfig> sources;
+  std::vector<RealtimeDataSourceConfig> sources;
 };
 
 template <typename SourceT,
-          typename Diagnostics = NoopLiveDataReaderDiagnostics>
-class LiveDataReader {
+          typename Diagnostics = NoopRealtimeDataReaderDiagnostics>
+class RealtimeDataReader {
  public:
-  explicit LiveDataReader(LiveDataReaderConfig config);
+  explicit RealtimeDataReader(RealtimeDataReaderConfig config);
 
   template <typename Handler>
   std::uint64_t Poll(Handler& handler) noexcept;
@@ -461,20 +461,20 @@ class LiveBookTickerSource {
 - reader `Drain(handler, max_events)`：在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条；用于完整事件消费、验证或对账。
 - overrun / skipped 只记录诊断，不在 `DataReader` 内部做策略决策。
 
-### ReplayDataReader 模板
+### HistoricalDataReader 模板
 
 历史 replay 第一版只读预处理后的 binary `BookTicker` 文件，不做 merge，不做 CSV。
 
 ```cpp
-struct ReplayDataReaderConfig {
+struct HistoricalDataReaderConfig {
   std::string name;
   std::vector<std::filesystem::path> files;
 };
 
-template <typename Diagnostics = NoopReplayDataReaderDiagnostics>
-class ReplayDataReader {
+template <typename Diagnostics = NoopHistoricalDataReaderDiagnostics>
+class HistoricalDataReader {
  public:
-  explicit ReplayDataReader(ReplayDataReaderConfig config);
+  explicit HistoricalDataReader(HistoricalDataReaderConfig config);
 
   template <typename Handler>
   std::uint64_t Poll(Handler& handler);
@@ -531,7 +531,7 @@ class BinaryBookTickerSource {
 
 - 文件按配置顺序读取。
 - 输入文件必须已经按目标 replay 顺序预处理好。
-- `ReplayDataReader` 不支持 `latest`。
+- `HistoricalDataReader` 不支持 `latest`。
 - `Poll()` 每次最多输出 1 条事件；输出成功返回 1。
 - `Poll() == 0` 表示 replay 已结束，且 `finished() == true`。
 - `Drain(handler, max_events)` 在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条。
@@ -539,19 +539,19 @@ class BinaryBookTickerSource {
 
 ### 当前实现对照
 
-当前实现已完成目标语义改造，但仍保留历史类名：
+当前实现已完成目标语义改造，并已完成实现类命名整理：
 
 ```text
-core/market_data/data_reader.h
-  - 目前类名仍是 DataReader，实际承担 LiveDataReader 第一版职责。
+core/market_data/realtime_data_reader.h
+  - 类名是 RealtimeDataReader，承担实时 SHM reader 第一版职责。
   - 已提供 Poll(handler) 单事件接口和 Drain(handler, max_events) 批量接口。
   - Poll() 从 next_source_index_ 开始 round-robin 扫描 source，最多输出 1 条。
   - source read_mode = latest 时调用 TryReadLatest()。
   - source read_mode = drain 时调用 TryReadOne()。
   - stats 已移除 poll_calls / empty_polls，使用 total_count 和 per-source book_ticker_count。
 
-core/market_data/binary_data_reader.h
-  - 目前类名是 BinaryDataReader，目标架构中更接近 ReplayDataReader + BinaryBookTickerSource。
+core/market_data/historical_data_reader.h
+  - 类名是 HistoricalDataReader，承担历史 binary BookTicker reader 第一版职责。
   - 已提供 Poll(handler) 单事件 step、Drain(handler, max_events) 和 finished()。
   - Poll() 成功输出 1 条时返回 1，EOF 返回 0。
   - 已移除 replay 内部 max_events_per_poll_ 语义。
@@ -567,20 +567,17 @@ core/strategy/strategy_runtime.h
   - 不支持 Drain() 的兼容 reader 继续 fallback 到 reader.Poll(runtime)。
 ```
 
-当前仍未做的命名整理：
+当前仍未做的整理：
 
-- `DataReader` 还没有改名为 `LiveDataReader`。
-- `BinaryDataReader` 还没有改名为 `ReplayDataReader`。
 - `DataReaderConfig::max_events_per_source` 字段名仍保留旧名字；当前语义已改为外层 `Drain()` budget。
 
 ### 下一步建议
 
 后续建议拆成独立任务继续推进：
 
-1. 命名整理：评估是否把 `DataReader` 改名为 `LiveDataReader`，把 `BinaryDataReader` 改名为 `ReplayDataReader`，并保留兼容 alias 或 forwarding header。
-2. 配置整理：评估是否把 `DataReaderConfig::max_events_per_source` 改名为更准确的 `drain_budget` / `max_events_per_drain`；如改名，需要处理现有 TOML 兼容。
-3. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `StrategyRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
-4. feed 扩展：新增 trade / order book 时，在 source stats 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
+1. 配置整理：评估是否把 `DataReaderConfig::max_events_per_source` 改名为更准确的 `drain_budget` / `max_events_per_drain`；如改名，需要处理现有 TOML 兼容。
+2. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `StrategyRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
+3. feed 扩展：新增 trade / order book 时，在 source stats 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
 
 ## OrderSession 架构占位
 

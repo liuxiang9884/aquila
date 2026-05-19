@@ -16,7 +16,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/config/data_reader_config.h"
-#include "core/market_data/data_reader.h"
+#include "core/market_data/realtime_data_reader.h"
 #include "nova/utils/log.h"
 
 namespace {
@@ -76,7 +76,7 @@ std::vector<SourceLabel> BuildSourceLabels(
 
 void LogSourceStats(
     std::span<const SourceLabel> labels,
-    std::span<const aquila::market_data::DataReaderSourceStats> stats) {
+    std::span<const aquila::market_data::RealtimeDataReaderSourceStats> stats) {
   for (std::size_t i = 0; i < stats.size(); ++i) {
     const SourceLabel* label = i < labels.size() ? &labels[i] : nullptr;
     std::string_view name{"unknown"};
@@ -125,8 +125,8 @@ int main(int argc, char** argv) {
           BuildSourceLabels(config_result.value);
       const std::uint64_t drain_budget =
           config_result.value.max_events_per_source;
-      using Reader = aquila::market_data::DataReader<
-          aquila::market_data::DataReaderDiagnostics>;
+      using Reader = aquila::market_data::RealtimeDataReader<
+          aquila::market_data::RealtimeDataReaderDiagnostics>;
       Reader reader(std::move(config_result.value));
       ProbeHandler handler(log_every);
 

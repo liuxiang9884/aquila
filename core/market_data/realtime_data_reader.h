@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_MARKET_DATA_DATA_READER_H_
-#define AQUILA_CORE_MARKET_DATA_DATA_READER_H_
+#ifndef AQUILA_CORE_MARKET_DATA_REALTIME_DATA_READER_H_
+#define AQUILA_CORE_MARKET_DATA_REALTIME_DATA_READER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -12,22 +12,23 @@
 
 namespace aquila::market_data {
 
-struct DataReaderSourceStats {
+struct RealtimeDataReaderSourceStats {
   std::uint64_t book_ticker_count{0};
   std::uint64_t skipped{0};
   std::uint64_t overruns{0};
   std::int64_t last_book_ticker_id{0};
 };
 
-struct DataReaderStats {
+struct RealtimeDataReaderStats {
   std::uint64_t total_count{0};
-  std::vector<DataReaderSourceStats> sources;
+  std::vector<RealtimeDataReaderSourceStats> sources;
 };
 
-struct NoopDataReaderDiagnostics {
+struct NoopRealtimeDataReaderDiagnostics {
   static constexpr bool kEnabled = false;
 
-  explicit NoopDataReaderDiagnostics(std::size_t source_count) noexcept {
+  explicit NoopRealtimeDataReaderDiagnostics(
+      std::size_t source_count) noexcept {
     (void)source_count;
   }
   void RecordBookTicker(std::size_t, const BookTicker&) noexcept {}
@@ -35,12 +36,13 @@ struct NoopDataReaderDiagnostics {
   void RecordOverrun(std::size_t, std::uint64_t) noexcept {}
 };
 
-class DataReaderDiagnostics {
+class RealtimeDataReaderDiagnostics {
  public:
   static constexpr bool kEnabled = true;
 
-  explicit DataReaderDiagnostics(std::size_t source_count)
-      : stats_{.sources = std::vector<DataReaderSourceStats>(source_count)} {}
+  explicit RealtimeDataReaderDiagnostics(std::size_t source_count)
+      : stats_{.sources =
+                   std::vector<RealtimeDataReaderSourceStats>(source_count)} {}
 
   void RecordBookTicker(std::size_t source_index,
                         const BookTicker& book_ticker) noexcept {
@@ -58,18 +60,18 @@ class DataReaderDiagnostics {
     stats_.sources[source_index].overruns += overrun_delta;
   }
 
-  [[nodiscard]] const DataReaderStats& stats() const noexcept {
+  [[nodiscard]] const RealtimeDataReaderStats& stats() const noexcept {
     return stats_;
   }
 
  private:
-  DataReaderStats stats_;
+  RealtimeDataReaderStats stats_;
 };
 
-template <typename Diagnostics = NoopDataReaderDiagnostics>
-class DataReader {
+template <typename Diagnostics = NoopRealtimeDataReaderDiagnostics>
+class RealtimeDataReader {
  public:
-  explicit DataReader(config::DataReaderConfig data_reader_config)
+  explicit RealtimeDataReader(config::DataReaderConfig data_reader_config)
       : diagnostics_(data_reader_config.sources.size()) {
     sources_.reserve(data_reader_config.sources.size());
     for (config::DataReaderSourceConfig& source_config :
@@ -196,4 +198,4 @@ class DataReader {
 
 }  // namespace aquila::market_data
 
-#endif  // AQUILA_CORE_MARKET_DATA_DATA_READER_H_
+#endif  // AQUILA_CORE_MARKET_DATA_REALTIME_DATA_READER_H_

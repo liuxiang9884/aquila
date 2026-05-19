@@ -10,7 +10,7 @@
 
 #include "core/config/data_reader_config.h"
 #include "core/config/strategy_config.h"
-#include "core/market_data/binary_data_reader.h"
+#include "core/market_data/historical_data_reader.h"
 #include "core/market_data/types.h"
 #include "core/strategy/order_types.h"
 #include "core/strategy/strategy_runtime.h"
@@ -112,8 +112,7 @@ class ReplayStrategy {
 
     RecordSignal(decision);
     if (signal_writer_ != nullptr && inner_.last_signal_diagnostics_valid()) {
-      signal_writer_->Write(ticker, decision,
-                            inner_.last_signal_diagnostics());
+      signal_writer_->Write(ticker, decision, inner_.last_signal_diagnostics());
     }
   }
 
@@ -261,10 +260,10 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
 }
 
 int RunReplay(LoadedConfig loaded, const CliOptions& options) {
-  using BinaryReader =
-      market_data::BinaryDataReader<market_data::BinaryDataReaderDiagnostics>;
-  using Runtime =
-      strategy::StrategyRuntime<ReplayStrategy, NullOrderSession, BinaryReader>;
+  using HistoricalReader = market_data::HistoricalDataReader<
+      market_data::HistoricalDataReaderDiagnostics>;
+  using Runtime = strategy::StrategyRuntime<ReplayStrategy, NullOrderSession,
+                                            HistoricalReader>;
 
   ReplayStats stats;
   tools_lead_lag::SignalCsvWriter signal_writer;

@@ -1,4 +1,4 @@
-#include "core/market_data/data_reader.h"
+#include "core/market_data/realtime_data_reader.h"
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -39,8 +39,8 @@ struct RecordingHandler {
   std::vector<aquila::BookTicker> book_tickers;
 };
 
-static_assert(md::DataReaderLike<md::DataReader<>, RecordingHandler>);
-static_assert(!md::FiniteDataReader<md::DataReader<>>);
+static_assert(md::DataReaderLike<md::RealtimeDataReader<>, RecordingHandler>);
+static_assert(!md::FiniteDataReader<md::RealtimeDataReader<>>);
 
 template <typename StatsT>
 concept HasPollDiagnostics = requires(StatsT stats) {
@@ -51,9 +51,9 @@ concept HasPollDiagnostics = requires(StatsT stats) {
 template <typename StatsT>
 concept HasOldBookTickersField = requires(StatsT stats) { stats.book_tickers; };
 
-static_assert(!HasPollDiagnostics<md::DataReaderStats>);
-static_assert(!HasOldBookTickersField<md::DataReaderStats>);
-static_assert(!HasOldBookTickersField<md::DataReaderSourceStats>);
+static_assert(!HasPollDiagnostics<md::RealtimeDataReaderStats>);
+static_assert(!HasOldBookTickersField<md::RealtimeDataReaderStats>);
+static_assert(!HasOldBookTickersField<md::RealtimeDataReaderSourceStats>);
 
 std::string UniqueShmName(std::string_view suffix) {
   return fmt::format("/aquila_data_reader_test_{}_{}", ::getpid(), suffix);
@@ -99,7 +99,7 @@ cfg::DataReaderSourceConfig MakeSourceConfig(
   };
 }
 
-TEST(DataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
+TEST(RealtimeDataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
   const md::BookTickerShmConfig gate_config = MakeCreateConfig("gate");
   const md::BookTickerShmConfig binance_config = MakeCreateConfig("binance");
   ShmCleanup gate_cleanup(gate_config.shm_name);
@@ -118,7 +118,7 @@ TEST(DataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
       "binance_book_ticker", aquila::Exchange::kBinance,
       binance_config.shm_name, cfg::DataReaderReadMode::kLatest));
 
-  md::DataReader reader(std::move(config));
+  md::RealtimeDataReader reader(std::move(config));
   gate_publisher.OnBookTicker(MakeBookTicker(1, aquila::Exchange::kGate));
   binance_publisher.OnBookTicker(MakeBookTicker(2, aquila::Exchange::kBinance));
 
@@ -132,7 +132,7 @@ TEST(DataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
   EXPECT_EQ(handler.book_tickers[1].exchange, aquila::Exchange::kBinance);
 }
 
-TEST(DataReaderTest, DrainReadsAtMostMaxEvents) {
+TEST(RealtimeDataReaderTest, DrainReadsAtMostMaxEvents) {
   const md::BookTickerShmConfig gate_config = MakeCreateConfig("drain_limit");
   ShmCleanup cleanup(gate_config.shm_name);
   md::DataShmPublisher publisher(gate_config);
@@ -144,7 +144,7 @@ TEST(DataReaderTest, DrainReadsAtMostMaxEvents) {
       MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
                        gate_config.shm_name, cfg::DataReaderReadMode::kDrain));
 
-  md::DataReader reader(std::move(config));
+  md::RealtimeDataReader reader(std::move(config));
   publisher.OnBookTicker(MakeBookTicker(1, aquila::Exchange::kGate));
   publisher.OnBookTicker(MakeBookTicker(2, aquila::Exchange::kGate));
   publisher.OnBookTicker(MakeBookTicker(3, aquila::Exchange::kGate));
@@ -164,7 +164,7 @@ TEST(DataReaderTest, DrainReadsAtMostMaxEvents) {
   EXPECT_EQ(handler.book_tickers[0].id, 3);
 }
 
-TEST(DataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
+TEST(RealtimeDataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
   const md::BookTickerShmConfig binance_config =
       MakeCreateConfig("latest_only");
   ShmCleanup cleanup(binance_config.shm_name);
@@ -177,7 +177,7 @@ TEST(DataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
       "binance_book_ticker", aquila::Exchange::kBinance,
       binance_config.shm_name, cfg::DataReaderReadMode::kLatest));
 
-  md::DataReader reader(std::move(config));
+  md::RealtimeDataReader reader(std::move(config));
   publisher.OnBookTicker(MakeBookTicker(10, aquila::Exchange::kBinance));
   publisher.OnBookTicker(MakeBookTicker(11, aquila::Exchange::kBinance));
   publisher.OnBookTicker(MakeBookTicker(12, aquila::Exchange::kBinance));
@@ -192,8 +192,8 @@ TEST(DataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
   EXPECT_TRUE(handler.book_tickers.empty());
 }
 
-TEST(DataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
-  using Reader = md::DataReader<md::DataReaderDiagnostics>;
+TEST(RealtimeDataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
+  using Reader = md::RealtimeDataReader<md::RealtimeDataReaderDiagnostics>;
 
   const md::BookTickerShmConfig config = MakeCreateConfig("diag_latest");
   ShmCleanup cleanup(config.shm_name);
@@ -215,7 +215,7 @@ TEST(DataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
   EXPECT_EQ(reader.Poll(handler), 1U);
   EXPECT_EQ(reader.Poll(handler), 0U);
 
-  const md::DataReaderStats& stats = reader.diagnostics().stats();
+  const md::RealtimeDataReaderStats& stats = reader.diagnostics().stats();
   EXPECT_EQ(stats.total_count, 1U);
   ASSERT_EQ(stats.sources.size(), 1U);
   EXPECT_EQ(stats.sources[0].book_ticker_count, 1U);
@@ -223,12 +223,12 @@ TEST(DataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
   EXPECT_EQ(stats.sources[0].last_book_ticker_id, 3);
 }
 
-TEST(DataReaderTest, DefaultDiagnosticsCompileAndPoll) {
+TEST(RealtimeDataReaderTest, DefaultDiagnosticsCompileAndPoll) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
   config.max_events_per_source = 64;
 
-  md::DataReader reader(std::move(config));
+  md::RealtimeDataReader reader(std::move(config));
   RecordingHandler handler;
   EXPECT_EQ(reader.Drain(handler, 0), 0U);
   EXPECT_EQ(reader.Poll(handler), 0U);

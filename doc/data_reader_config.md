@@ -8,7 +8,7 @@
 - `type = "binary_file"`
 - `feed = "book_ticker"`
 
-`DataReader` / `BinaryDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)` 或 `Drain(handler, budget)`。
+`RealtimeDataReader` / `HistoricalDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)` 或 `Drain(handler, budget)`。
 SHM live reader 在 `StrategyRuntime` 中走 `Poll()`；binary replay / finite reader 走 `Drain()`。SHM reader attach
 data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的 `BookTicker`
 二进制文件，适合 replay / 对账。
@@ -121,7 +121,7 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 | `data_reader.name` | 无，必须显式配置 | reader 实例名。 |
 | `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算；`Poll()` 本身始终是单事件接口。`StrategyRuntime` 只在 finite / replay reader 上使用该预算。 |
 | `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
-| `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `DataReader` 不自己执行 idle。 |
+| `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `RealtimeDataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
 | `data_reader.sources.type` | `shm` | source 实现类型，支持 `shm` 和 `binary_file`。 |
 | `data_reader.sources.exchange` | SHM 无默认值，必须显式配置；binary file 可省略 | `gate` 或 `binance`。binary file 中每条 `BookTicker` 自带 exchange。 |
@@ -149,14 +149,14 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 - 不主动跳到最后一条；除非 reader 已经落后超过 SHM ring capacity，底层 reader 会记录 overrun 并拉回可见窗口。
 - 适合需要完整事件流的验证、probe、benchmark、binary replay，以及未来不能丢中间事件的 feed。
 
-`binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`BinaryDataReader`
+`binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。`HistoricalDataReader`
 会在构造时检查文件存在、文件大小是 `BookTicker` 大小的整数倍；空文件是合法的已完成输入，构造后如果所有文件为空则
 `finished() == true`，最后一个有数据文件后的尾部空文件会在最后一条数据读完时一并计入完成。`Poll()` 每次最多输出一条，
 文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime 需要在 idle hook 中主动停止 replay loop。
 
 ## Poll 语义
 
-`DataReader::Poll(handler)` 是单事件接口：从 `next_source_index_` 开始 round-robin 扫描 sources，找到
+`RealtimeDataReader::Poll(handler)` 是单事件接口：从 `next_source_index_` 开始 round-robin 扫描 sources，找到
 第一个可读 source 后输出一条并返回 1；所有 source 当前都无数据时返回 0。按 source `read_mode` 分发：
 
 ```text
@@ -164,9 +164,9 @@ latest source -> TryReadLatest()
 drain source  -> TryReadOne()
 ```
 
-成功输出后，`DataReader` 把下一次扫描起点移动到当前 source 的后一个位置，避免固定 source 长期先被处理。
+成功输出后，`RealtimeDataReader` 把下一次扫描起点移动到当前 source 的后一个位置，避免固定 source 长期先被处理。
 
-`DataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
+`RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。
 
 `StrategyRuntime` 的调用规则按 reader 是否满足 `FiniteDataReader` 区分：live reader 不提供 `finished()`，每轮只调用
@@ -181,10 +181,10 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 
 ## Diagnostics
 
-`DataReader` 的统计通过编译期 diagnostics policy 开关：
+`RealtimeDataReader` 的统计通过编译期 diagnostics policy 开关：
 
-- 生产默认 `DataReader<>` 使用 `NoopDataReaderDiagnostics`。
-- probe / test 可以使用 `DataReader<DataReaderDiagnostics>`。
+- 生产默认 `RealtimeDataReader<>` 使用 `NoopRealtimeDataReaderDiagnostics`。
+- probe / test 可以使用 `RealtimeDataReader<RealtimeDataReaderDiagnostics>`。
 
 当前统计包括：
 
@@ -196,7 +196,7 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 
 `poll_calls` / `empty_polls` 属于外层 runtime / scheduler / probe 的循环诊断，不放在 reader 内部 stats。
 
-统计不使用 atomic；第一版假设 `DataReader` 被单个 strategy 线程拥有。
+统计不使用 atomic；第一版假设 `RealtimeDataReader` 被单个 strategy 线程拥有。
 
 ## Probe
 
@@ -212,7 +212,7 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 - `--max-polls`：最多执行多少次 probe loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
 - `--log-every`：打印首条 book ticker，然后每 N 条打印一次采样；`0` 表示关闭采样日志。
 
-probe 使用 `DataReader<DataReaderDiagnostics>`，退出时会打印整体统计和每个 source 的：
+probe 使用 `RealtimeDataReader<RealtimeDataReaderDiagnostics>`，退出时会打印整体统计和每个 source 的：
 
 - `book_ticker_count`
 - `skipped`
