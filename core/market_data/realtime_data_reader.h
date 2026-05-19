@@ -101,6 +101,16 @@ class RealtimeDataReader {
       }
       sources_.push_back(std::move(source));
     }
+    if (sources_.size() > 1) {
+      scan_sources_.reserve(sources_.size() * 2);
+      scan_source_indices_.reserve(sources_.size() * 2);
+      for (std::size_t repeat = 0; repeat < 2; ++repeat) {
+        for (std::size_t i = 0; i < sources_.size(); ++i) {
+          scan_sources_.push_back(sources_[i].get());
+          scan_source_indices_.push_back(i);
+        }
+      }
+    }
   }
 
   template <typename Handler>
@@ -121,30 +131,24 @@ class RealtimeDataReader {
       return 0;
     }
 
-    std::size_t index = next_source_index_;
-    for (std::size_t checked = 0; checked < source_count; ++checked) {
-      Source& source = *sources_[index];
+    const std::size_t scan_end = next_source_index_ + source_count;
+    for (std::size_t scan_position = next_source_index_;
+         scan_position < scan_end; ++scan_position) {
+      Source& source = *scan_sources_[scan_position];
+      const std::size_t source_index = scan_source_indices_[scan_position];
 
       std::uint64_t handled = 0;
       switch (source.read_mode) {
         case config::DataReaderReadMode::kLatest:
-          handled = PollLatestSource(index, source, handler);
+          handled = PollLatestSource(source_index, source, handler);
           break;
         case config::DataReaderReadMode::kDrain:
-          handled = PollDrainSource(index, source, handler);
+          handled = PollDrainSource(source_index, source, handler);
           break;
       }
       if (handled != 0) {
-        ++index;
-        if (index == source_count) {
-          index = 0;
-        }
-        next_source_index_ = index;
+        next_source_index_ = scan_source_indices_[scan_position + 1];
         return handled;
-      }
-      ++index;
-      if (index == source_count) {
-        index = 0;
       }
     }
 
@@ -219,6 +223,8 @@ class RealtimeDataReader {
 
   std::size_t next_source_index_{0};
   std::vector<std::unique_ptr<Source>> sources_;
+  std::vector<Source*> scan_sources_;
+  std::vector<std::size_t> scan_source_indices_;
   [[no_unique_address]] Diagnostics diagnostics_;
 };
 

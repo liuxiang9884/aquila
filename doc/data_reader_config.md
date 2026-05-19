@@ -168,6 +168,7 @@ drain source  -> TryReadOne()
 
 成功输出后，`RealtimeDataReader` 把下一次扫描起点移动到当前 source 的后一个位置，避免固定 source 长期先被处理。
 构造期已经保证 sources 非空；如果配置没有任何实时 source，应在启动阶段失败，而不是进入运行循环后持续返回 0。当前实现不依赖 `Poll()` 的空 reader 分支表达语义。
+多 source round-robin 当前使用构造期生成的双倍扫描表，避免在 `Poll()` 循环中反复执行 index wrap 分支。
 
 `RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。

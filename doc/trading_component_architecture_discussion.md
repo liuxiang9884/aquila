@@ -467,6 +467,7 @@ class LiveBookTickerSource {
 
 - 构造期要求至少一个 source；空 source 配置是启动期配置错误，直接拒绝，不进入运行循环。
 - `Poll()`：从 `next_source_index_` 开始 round-robin 扫描 source；找到第一个可读 source 后输出 1 条并返回 1；所有 source 都没数据时返回 0。
+- 多 source round-robin 可以在构造期生成扫描表，热路径按表线性扫描，避免每次递增 index 后判断是否 wrap 到 0。
 - source `latest`：被 `Poll()` 选中时调用 `TryReadLatest()`，最多输出最新一条；允许 skip 中间 tick，适合状态型低延迟策略。
 - source `drain`：被 `Poll()` 选中时调用 `TryReadOne()`，最多输出下一条；不在单次 `Poll()` 内批量吞掉一个 source。
 - reader `Drain(handler, max_events)`：在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条；用于完整事件消费、验证或对账。
@@ -557,7 +558,7 @@ core/market_data/realtime_data_reader.h
   - 类名是 RealtimeDataReader，承担实时 SHM reader 第一版职责。
   - 构造期拒绝空 sources；Poll() 语义不依赖空 reader 分支，当前保留冗余空检查是基于本轮 A/B benchmark 的代码生成结果。
   - 已提供 Poll(handler) 单事件接口和 Drain(handler, max_events) 批量接口。
-  - Poll() 从 next_source_index_ 开始 round-robin 扫描 source，最多输出 1 条。
+  - Poll() 从 next_source_index_ 开始 round-robin 扫描 source，最多输出 1 条；多 source 路径使用构造期双倍 scan table，消除循环内 wrap 分支。
   - source read_mode = latest 时调用 TryReadLatest()。
   - source read_mode = drain 时调用 TryReadOne()。
   - stats 已移除 poll_calls / empty_polls，使用 total_count 和 per-source book_ticker_count。
@@ -603,8 +604,26 @@ core/strategy/strategy_runtime.h
 - `RealtimeDataReader::Poll()` 将运行期 `% source_count` 替换为分支 wrap，并为单 source 增加快路径。
 - `RealtimeDataReader` hot `Source` 只保留 `read_mode`、SHM reader 和 overrun 基线，不再保存完整 `DataReaderSourceConfig`。
 - `RealtimeDataReader` 构造期拒绝空 sources；本轮 A/B 显示强删 `Poll()` 空检查在当前编译结果下更慢，因此语义改为启动期失败，但实现暂保留该冗余分支。
+- `RealtimeDataReader` 多 source round-robin 后续改为构造期双表扫描：`Source*` 表和 source index 表各重复一轮，`Poll()` 线性扫描 `[next_source_index_, next_source_index_ + source_count)`；index-only 表 A/B 明显更慢，未采用。
 - `RealtimeDataReader` / `HistoricalDataReader` 读入 `BookTicker` 时不再先清零局部对象。
 - `HistoricalDataReader` 将 empty-file skip、文件打开和文件完成状态维护放到构造 / 文件边界慢路径，单条 `Poll()` 不再每次进入完整文件状态机。
+
+2026-05-19 round-robin scan table A/B，命令为：
+
+```bash
+./build/release/benchmark/core/market_data/data_reader_benchmark \
+  --benchmark_filter=BM_RealtimeDataReaderEmptyPoll \
+  --benchmark_min_time=0.5s \
+  --benchmark_repetitions=5
+```
+
+| case | wrap branch mean | double table mean | index-only table mean |
+| --- | ---: | ---: | ---: |
+| `BM_RealtimeDataReaderEmptyPoll/1` | 1.20ns | 1.18ns | 1.84ns |
+| `BM_RealtimeDataReaderEmptyPoll/2` | 2.53ns | 2.32ns | 3.64ns |
+| `BM_RealtimeDataReaderEmptyPoll/4` | 4.19ns | 4.02ns | 4.90ns |
+
+1 source 不走多 source round-robin table，差异主要反映代码布局和运行波动；2 / 4 source 的结果支持采用双表实现，不支持 index-only 实现。
 
 当前仍未做的整理：
 

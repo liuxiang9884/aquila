@@ -140,6 +140,52 @@ TEST(RealtimeDataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
   EXPECT_EQ(handler.book_tickers[1].exchange, aquila::Exchange::kBinance);
 }
 
+TEST(RealtimeDataReaderTest, PollRoundRobinsAcrossThreeSources) {
+  const md::BookTickerShmConfig gate_config = MakeCreateConfig("rr_gate");
+  const md::BookTickerShmConfig binance_config = MakeCreateConfig("rr_binance");
+  const md::BookTickerShmConfig okx_config = MakeCreateConfig("rr_okx");
+  ShmCleanup gate_cleanup(gate_config.shm_name);
+  ShmCleanup binance_cleanup(binance_config.shm_name);
+  ShmCleanup okx_cleanup(okx_config.shm_name);
+
+  md::DataShmPublisher gate_publisher(gate_config);
+  md::DataShmPublisher binance_publisher(binance_config);
+  md::DataShmPublisher okx_publisher(okx_config);
+
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_source = 64;
+  config.sources.push_back(
+      MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
+                       gate_config.shm_name, cfg::DataReaderReadMode::kLatest));
+  config.sources.push_back(MakeSourceConfig(
+      "binance_book_ticker", aquila::Exchange::kBinance,
+      binance_config.shm_name, cfg::DataReaderReadMode::kLatest));
+  config.sources.push_back(
+      MakeSourceConfig("okx_book_ticker", aquila::Exchange::kOkx,
+                       okx_config.shm_name, cfg::DataReaderReadMode::kLatest));
+
+  md::RealtimeDataReader reader(std::move(config));
+  gate_publisher.OnBookTicker(MakeBookTicker(1, aquila::Exchange::kGate));
+  binance_publisher.OnBookTicker(MakeBookTicker(2, aquila::Exchange::kBinance));
+  okx_publisher.OnBookTicker(MakeBookTicker(3, aquila::Exchange::kOkx));
+
+  RecordingHandler handler;
+  ASSERT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 3U);
+  EXPECT_EQ(handler.book_tickers[0].exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(handler.book_tickers[1].exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(handler.book_tickers[2].exchange, aquila::Exchange::kOkx);
+
+  gate_publisher.OnBookTicker(MakeBookTicker(4, aquila::Exchange::kGate));
+  handler.book_tickers.clear();
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 1U);
+  EXPECT_EQ(handler.book_tickers[0].exchange, aquila::Exchange::kGate);
+}
+
 TEST(RealtimeDataReaderTest, DrainReadsAtMostMaxEvents) {
   const md::BookTickerShmConfig gate_config = MakeCreateConfig("drain_limit");
   ShmCleanup cleanup(gate_config.shm_name);
