@@ -629,14 +629,18 @@ class BinaryBookTickerSource {
   [[nodiscard]] bool finished() const noexcept;
 
  private:
-  bool EnsureReadableFile();
-  void OpenCurrentFile();
+  void PrepareCurrentFile();
   void CompleteCurrentFile();
 
-  std::vector<std::filesystem::path> files_;
+  struct FileState {
+    std::filesystem::path path;
+    std::uint64_t record_count{0};
+    MappedFile mapping;
+  };
+
+  std::vector<FileState> files_;
   std::size_t current_file_index_{0};
   std::uint64_t current_records_remaining_{0};
-  MappedFile current_mapping_;
   const char* current_cursor_{nullptr};
 };
 ```
@@ -651,8 +655,9 @@ class BinaryBookTickerSource {
 - `Poll()` 每次最多输出 1 条事件；输出成功返回 1。
 - `Poll() == 0` 表示 replay 已结束，且 `finished() == true`。
 - `Drain(handler, max_events)` 在 reader 层循环调用 `Poll()`，最多输出 `max_events` 条。
-- 文件大小必须是 `sizeof(BookTicker)` 的整数倍；否则启动期或打开文件时拒绝。
-- 非空当前文件使用 read-only mmap 打开，`Poll()` 从当前 cursor 拷贝一条 `BookTicker` 并推进 cursor；空文件不 mmap，只在文件边界计入完成。
+- 文件大小必须是 `sizeof(BookTicker)` 的整数倍；否则启动期拒绝。
+- 非空文件在构造期完成 read-only mmap 和大小复核，`Poll()` / `Drain()` 热路径从当前 cursor 拷贝
+  `BookTicker` 并推进状态，不打开文件、不抛出异常；空文件不 mmap，只在构造期或文件边界计入完成。
 
 ### 当前实现对照
 
@@ -670,10 +675,10 @@ core/market_data/realtime_data_reader.h
 
 core/market_data/historical_data_reader.h
   - 类名是 HistoricalDataReader，承担历史 binary BookTicker reader 第一版职责。
-  - 已提供 Poll(handler) 单事件 step、Drain(handler, max_events) 和 finished()。
+  - 已提供 noexcept Poll(handler) 单事件 step、noexcept Drain(handler, max_events) 和 finished()。
   - Poll() 成功输出 1 条时返回 1，EOF 返回 0。
   - 已移除 replay 内部 max_events_per_poll_ 语义。
-  - 当前文件读取已从 std::ifstream::read 切到 core/utils/mapped_file.h 的 read-only mmap + cursor。
+  - 非空 replay 文件在构造期完成 core/utils/mapped_file.h 的 read-only mmap，热路径只使用 cursor 读取。
   - stats 已移除 poll_calls / empty_polls，使用 total_count / files_completed。
 
 core/market_data/data_reader_concepts.h

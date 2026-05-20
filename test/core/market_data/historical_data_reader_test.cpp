@@ -56,6 +56,10 @@ struct RecordingHandler {
 
 static_assert(md::DataReaderLike<md::HistoricalDataReader<>, RecordingHandler>);
 static_assert(md::FiniteDataReader<md::HistoricalDataReader<>>);
+static_assert(noexcept(std::declval<md::HistoricalDataReader<>&>().Poll(
+    std::declval<RecordingHandler&>())));
+static_assert(noexcept(std::declval<md::HistoricalDataReader<>&>().Drain(
+    std::declval<RecordingHandler&>(), std::uint64_t{1})));
 
 template <typename StatsT>
 concept HasPollDiagnostics = requires(StatsT stats) {

@@ -155,8 +155,9 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 `HistoricalDataReader` 只接受一个 `binary_file` source；多日 / 分片 replay 用同一个 source 下的多个 `files`
 表达，跨 source merge 必须在离线数据程序中预先完成。reader 会在构造时检查文件存在、文件大小是 `BookTicker`
 大小的整数倍；空文件是合法的已完成输入，构造后如果所有文件为空则 `finished() == true`，最后一个有数据文件后的
-尾部空文件会在最后一条数据读完时一并计入完成。`Poll()` 每次最多输出一条，非空当前文件使用 read-only mmap
-顺序读取；文件读完后 `Poll()` 返回 0 且 `finished() == true`；外层 runtime 需要在 idle hook 中主动停止 replay loop。
+尾部空文件会在最后一条数据读完时一并计入完成。非空文件在构造期完成 read-only mmap 和大小复核；`Poll()` /
+`Drain()` 热路径只按 cursor 从已 mmap 区域拷贝 `BookTicker` 并推进状态，不打开文件、不抛出异常。文件读完后
+`Poll()` 返回 0 且 `finished() == true`；外层 runtime 需要在 idle hook 中主动停止 replay loop。
 
 ## Poll 语义
 
@@ -179,6 +180,10 @@ SHM source，或在 replay 前离线生成目标顺序的 binary source。
 
 `RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。
+
+`RealtimeDataReader` 和 `HistoricalDataReader` 的 `Poll()` / `Drain()` 当前都以 `noexcept` 暴露。配置校验、
+SHM attach、binary 文件检查和 mmap 失败仍在构造 / 启动冷路径通过异常报告；handler 也应保持 `noexcept`，避免把
+策略异常引入 reader 热路径。
 
 `TradingRuntime` 的调用规则按 reader 是否显式满足 `FiniteDataReader` 区分：live reader 不声明 `kFiniteDataReader`，每轮只调用
 `Poll(runtime)`；finite / replay reader 声明 `kFiniteDataReader = true` 并提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_source)`。

@@ -49,6 +49,10 @@ struct FinishedOnlyReader {
 static_assert(md::DataReaderLike<md::RealtimeDataReader<>, RecordingHandler>);
 static_assert(!md::FiniteDataReader<md::RealtimeDataReader<>>);
 static_assert(!md::FiniteDataReader<FinishedOnlyReader>);
+static_assert(noexcept(std::declval<md::RealtimeDataReader<>&>().Poll(
+    std::declval<RecordingHandler&>())));
+static_assert(noexcept(std::declval<md::RealtimeDataReader<>&>().Drain(
+    std::declval<RecordingHandler&>(), std::uint64_t{1})));
 
 template <typename StatsT>
 concept HasPollDiagnostics = requires(StatsT stats) {

@@ -79,9 +79,12 @@ class HistoricalDataReader {
          data_reader_config.sources) {
       ValidateSource(source);
       for (const std::filesystem::path& file : source.files) {
+        const std::uint64_t record_count = CheckedRecordCount(file);
         files_.push_back(FileState{
             .path = file,
-            .record_count = CheckedRecordCount(file),
+            .record_count = record_count,
+            .mapping = record_count == 0 ? MappedFile()
+                                         : OpenMappedFile(file, record_count),
         });
       }
     }
@@ -94,7 +97,7 @@ class HistoricalDataReader {
   HistoricalDataReader& operator=(HistoricalDataReader&&) = default;
 
   template <typename Handler>
-  std::uint64_t Poll(Handler& handler) {
+  std::uint64_t Poll(Handler& handler) noexcept {
     if (finished()) {
       return 0;
     }
@@ -116,7 +119,7 @@ class HistoricalDataReader {
   }
 
   template <typename Handler>
-  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) {
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) noexcept {
     std::uint64_t count = 0;
     while (count < max_events && !finished()) {
       const std::uint64_t events_left = max_events - count;
@@ -154,6 +157,7 @@ class HistoricalDataReader {
   struct FileState {
     std::filesystem::path path;
     std::uint64_t record_count{0};
+    MappedFile mapping;
   };
 
   [[nodiscard]] static std::size_t CountFiles(
@@ -225,31 +229,33 @@ class HistoricalDataReader {
     return static_cast<std::uint64_t>(record_count);
   }
 
-  void OpenCurrentFile() {
-    current_mapping_ = MappedFile(files_[current_file_index_].path,
-                                  MappedFileAccessPattern::kSequential);
+  [[nodiscard]] static MappedFile OpenMappedFile(
+      const std::filesystem::path& file, std::uint64_t record_count) {
+    MappedFile mapping(file, MappedFileAccessPattern::kSequential);
     const std::size_t expected_size =
-        static_cast<std::size_t>(files_[current_file_index_].record_count) *
-        sizeof(BookTicker);
-    if (current_mapping_.size() != expected_size) {
-      throw std::runtime_error(
-          fmt::format("binary data file '{}' size changed during open",
-                      files_[current_file_index_].path.string()));
+        static_cast<std::size_t>(record_count) * sizeof(BookTicker);
+    if (mapping.size() != expected_size) {
+      throw std::runtime_error(fmt::format(
+          "binary data file '{}' size changed during open", file.string()));
     }
-    current_records_remaining_ = files_[current_file_index_].record_count;
-    current_cursor_ = current_mapping_.data();
+    return mapping;
   }
 
-  void PrepareCurrentFile() {
-    SkipEmptyFiles();
-    if (current_file_index_ < files_.size()) {
-      OpenCurrentFile();
-    }
-  }
-
-  void CompleteCurrentFile() {
-    current_mapping_ = MappedFile();
+  void PrepareCurrentFile() noexcept {
+    current_records_remaining_ = 0;
     current_cursor_ = nullptr;
+    SkipEmptyFiles();
+    if (current_file_index_ >= files_.size()) {
+      return;
+    }
+
+    current_records_remaining_ = files_[current_file_index_].record_count;
+    current_cursor_ = files_[current_file_index_].mapping.data();
+  }
+
+  void CompleteCurrentFile() noexcept {
+    current_cursor_ = nullptr;
+    current_records_remaining_ = 0;
     ++current_file_index_;
     if constexpr (Diagnostics::kEnabled) {
       diagnostics_.RecordFileCompleted();
@@ -257,7 +263,7 @@ class HistoricalDataReader {
     PrepareCurrentFile();
   }
 
-  void SkipEmptyFiles() {
+  void SkipEmptyFiles() noexcept {
     while (current_file_index_ < files_.size() &&
            files_[current_file_index_].record_count == 0) {
       ++current_file_index_;
@@ -270,7 +276,6 @@ class HistoricalDataReader {
   std::vector<FileState> files_;
   std::size_t current_file_index_{0};
   std::uint64_t current_records_remaining_{0};
-  MappedFile current_mapping_;
   const char* current_cursor_{nullptr};
   [[no_unique_address]] Diagnostics diagnostics_;
 };
