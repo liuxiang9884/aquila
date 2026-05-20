@@ -580,6 +580,38 @@ test/tools/gate/demo_strategy_test.cpp
 7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `tools/gate/trading_runtime_adapter.h` 和 tool 层。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；转换成 strategy event 前会记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash`。place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
 8. `demo` 策略行为：按 Gate BTC_USDT 行情 ask price 下 1 手 buy limit，等待 `wait_seconds`，buy filled 后发 `price=0` / IOC / reduce-only sell 平仓，否则撤单；循环 `rounds` 次后 `ShouldStop()`。一轮 terminal 前不再开下一单；当前只做 dry-run / unit test，未做实盘。
 
+当前完整组装链路：
+
+```text
+DataReader --> TradingRuntime --> Strategy
+                    |              ^
+                    |              |
+                    v              |
+             StrategyContext ------+
+                    |
+                    v
+              OrderManager
+                    |
+                    v
+        GateOrderSessionAdapter
+                    |
+                    v
+          Gate OrderSession <---- Gate WS order response
+                    |
+                    v
+              Gate WS send
+
+Gate private feedback WS
+  -> OrderFeedbackSession
+  -> OrderFeedback SHM
+  -> TradingRuntime
+  -> OrderManager
+  -> Strategy
+```
+
+adapter 层只做 Gate session 到 core runtime 的协议隔离、类型转换和接线；`OrderSession` 仍负责 Gate 协议、发送、
+解析、correlation 和内部 diagnostics，`OrderManager` 仍负责订单状态。
+
 ### 2026-05-08 OrderFeedback event 第一版设计
 
 设计文档：

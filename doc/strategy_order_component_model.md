@@ -47,6 +47,79 @@ OrderFeedbackSession feedback
   -> Strategy::OnOrderFeedback(...)
 ```
 
+## TradingRuntime 组装链路
+
+当前 `TradingRuntime<StrategyT, OrderSessionT, DataReaderT>` 是交易链路组合器。它持有并组装：
+
+```text
+DataReader
+OrderSession
+OrderManager
+StrategyContext
+Strategy
+OrderFeedbackShmReader(optional)
+```
+
+主要 adapter / 适配边界：
+
+- `tools/gate/trading_runtime_adapter.h` 是 Gate-specific runtime adapter，把 Gate `OrderSession` 包装成
+  `TradingRuntime` 可用的 `OrderSessionT`，负责 Gate response kind 到 strategy response kind 的转换、
+  `BindRuntime()` 回调接线和 `SetRuntimeHook()` 转发。
+- `StrategyContext<OrderSessionT>` 是 strategy 到 `OrderManager` 的窄下单接口；strategy 不直接拿
+  `OrderManager` 或 exchange session。
+- `OrderFeedbackShmReader` 把 SHM 中的统一 `OrderFeedbackEvent` drain 到 `TradingRuntime::OnOrderFeedback()`；
+  它是 feedback transport 到 runtime 的 reader 边界。
+
+完整结构图：
+
+```text
+              market data session
+                    |
+                    v
+              BookTicker SHM
+                    |
+                    v
+DataReader --> TradingRuntime --> Strategy
+                    |              ^
+                    |              |
+                    v              |
+             StrategyContext ------+
+                    |
+                    v
+              OrderManager
+                    |
+                    v
+        GateOrderSessionAdapter
+                    |
+                    v
+          Gate OrderSession <---- Gate WS order response
+                    |
+                    v
+              Gate WS send
+
+
+Gate private feedback WS
+          |
+          v
+OrderFeedbackSession
+          |
+          v
+OrderFeedback SHM
+          |
+          v
+TradingRuntime -> OrderManager -> Strategy
+```
+
+关键运行规则：
+
+- `TradingRuntime::Create()` 从已解析 config 构造 data reader、order session、`OrderManager`、context、strategy
+  和可选 feedback reader，然后在 order session 支持时调用 `BindRuntime()`。
+- 上行下单链路是 `Strategy -> StrategyContext -> OrderManager -> OrderSessionAdapter -> OrderSession`。
+- order response 链路是 `OrderSession -> adapter -> TradingRuntime::OnOrderResponse() -> OrderManager -> Strategy`。
+- private feedback 链路是 `OrderFeedbackSession -> SHM -> TradingRuntime::OnOrderFeedback() -> OrderManager -> Strategy`。
+- `OrderSession::Ready() == false` 只 gate data reader / 行情驱动交易意图，不阻塞 order response 或 feedback drain。
+- adapter 层应保持很薄，只做协议隔离、类型转换和 runtime 接线；不要承载业务状态机、错误决策、队列或长期诊断字段搬运。
+
 ## DataReader
 
 ### 功能表述

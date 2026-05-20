@@ -51,6 +51,39 @@ order feedback:
 
 ack / response 和 feedback 都必须先进入 `OrderManager`，再通知 `Strategy`。这样 `Strategy` 收到事件时，通过查询接口看到的是已经更新后的订单状态。
 
+当前实现中的 `TradingRuntime` 负责把上述组件组合成同一运行链路；Gate 侧通过很薄的 runtime adapter 接入：
+
+```text
+DataReader --> TradingRuntime --> Strategy
+                    |              ^
+                    |              |
+                    v              |
+             StrategyContext ------+
+                    |
+                    v
+              OrderManager
+                    |
+                    v
+        GateOrderSessionAdapter
+                    |
+                    v
+          Gate OrderSession <---- Gate WS order response
+                    |
+                    v
+              Gate WS send
+
+Gate private feedback WS
+  -> OrderFeedbackSession
+  -> OrderFeedback SHM
+  -> TradingRuntime
+  -> OrderManager
+  -> Strategy
+```
+
+`GateOrderSessionAdapter` 只做 exchange-specific session 到 core runtime 的 glue：`Ready()` / `PlaceOrder()` /
+`CancelOrder()` 转发、Gate response kind 到 strategy response kind 的转换，以及 `BindRuntime()` /
+`SetRuntimeHook()` 接线。它不应承载订单状态机、策略决策或长期错误字段搬运。
+
 ## DataReader 架构
 
 ### 已确认约束
