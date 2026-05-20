@@ -13,12 +13,12 @@ design spec 和当前代码作为事实源。
 ## 当前仓库状态
 
 - 当前主线分支：`main`
-- 截至 2026-05-08，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
-  Gate REST 测试脚本、Gate submit/cancel `OrderSession` 第一版实现、Strategy 第一版订单框架、测试和 benchmark 已完成多轮收口；新接手时以
+- 截至 2026-05-20，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
+  Gate REST 测试脚本、Gate submit/cancel `OrderSession` 第一版实现、Strategy 第一版订单框架、TradingRuntime、测试和 benchmark 已完成多轮收口；新接手时以
   `git log --oneline -8` 为准。
 - Order feedback Task1 SHM transport 已落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`kContinuityLost` control event、publisher / reader、config parser、tests 和 benchmark 已实现。
 - Order feedback Task2 已落地：Gate private `futures.orders` parser、`OrderFeedbackSession` login / subscribe / binary publish、`OrderManager::OnOrderFeedback()`、SHM fake integration、config / tool、parser/session benchmark 和 1 手 BTC_USDT live smoke 均已实现并验证。下一步是 REST reconcile、account / position feedback 和端到端 benchmark。
-- Trading runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run tool 已落地；Gate production adapter 当前不使用 response queue、background order session thread 或 command queue，本轮没有做 `gate_demo_strategy --execute` 实盘测试。
+- Trading runtime production loop、Gate runtime adapter 和 `demo` 策略 tool 已落地；Gate production adapter 当前不使用 response queue、background order session thread 或 command queue。2026-05-20 已完成 `gate_demo_strategy --execute` 3 轮 BTC_USDT live smoke，REST 复核无残留订单 / 仓位。
 - 新接手时先执行：
 
 ```bash
@@ -578,7 +578,14 @@ test/tools/gate/demo_strategy_test.cpp
 5. strategy 事件入口包括行情、order response、private feedback 和 loop lifecycle：`OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()` 都是可选 hook。
 6. `OnOrderResponse()` 和 `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 strategy hook；因此 hook 内通过 `context.FindOrder(local_order_id)` 看到的是已更新后的订单状态。
 7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `exchange/gate/trading/order_session_runtime_adapter.h`，namespace 为 `aquila::gate`。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；转换成 core event 前会记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash`。place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
-8. `demo` 策略行为：按 Gate BTC_USDT 行情 ask price 下 1 手 buy limit，等待 `wait_seconds`，buy filled 后发 `price=0` / IOC / reduce-only sell 平仓，否则撤单；循环 `rounds` 次后 `ShouldStop()`。一轮 terminal 前不再开下一单；当前只做 dry-run / unit test，未做实盘。
+8. `demo` 策略行为：按 Gate BTC_USDT 行情 ask price 下 1 手 buy limit，等待 `wait_seconds`，buy filled 后发 `price=0` / IOC / reduce-only sell 平仓，否则撤单；循环 `rounds` 次后 `ShouldStop()`。一轮 terminal 前不再开下一单；当前已有 dry-run / unit test，并在 2026-05-20 完成 3 轮 filled-close live smoke。
+
+2026-05-20 `demo` live smoke 证据：
+
+- Gate / Binance data session 先实时写 SHM，`data_reader_probe` 对 `config/data_readers/strategy_data_reader.toml` 跑到 `handler_book_tickers=14`，两个 source 都是 `skipped=0` / `overruns=0`。
+- `gate_order_feedback_session --connect` 运行期间收到并发布 6 个 `kFilled` event，`parse_errors=0`、`publish_failures=0`；停止 session 时发布 1 个全局 continuity-lost control event。
+- `gate_demo_strategy --config /tmp/aquila_demo_strategy_3.toml --execute` 使用临时配置完成 `rounds=3`，stdout summary 显示 `feedback_enabled=true`。
+- REST 复核 `orders --status open` 返回空列表，BTC_USDT position `size=0`、`pending_orders=0`。
 
 当前完整组装链路：
 
@@ -715,6 +722,10 @@ scripts/gate/run_futures_order_smoke_test.py
 
 2026-05-07 使用 Gate REST 对 `BTC_USDT`、1 手、5 轮真实 smoke：`5/5 filled_and_closed`，最终
 `position size=0`、`pending_orders=0`、`open orders=[]`。这不是 C++ WS `OrderSession` live smoke。
+
+2026-05-20 使用 C++ trading runtime / `gate_demo_strategy` 对 `BTC_USDT` 跑 3 轮 live smoke：
+feedback session 发布 6 个 `kFilled` event，REST 复核 `open orders=[]`、`position size=0`、
+`pending_orders=0`。
 
 ## 双 WebSocket 登录测试
 
@@ -1163,7 +1174,7 @@ config/data_sessions/binance_data_session.toml
 
 1. 先按 onboarding、本 handoff 和当前代码确认 Task1 / Task2 已实现边界、验证命令和 benchmark 口径。
 2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 continuity lost 后新开仓暂停 / 恢复条件。
-3. 做最小 C++ WS live smoke：同时运行 `gate_order_feedback_session --connect` 和 `gate_strategy_order --execute` 的小额 accepted / cancel lifecycle，保留原始输出，并用 REST 查询确认无残留订单 / 仓位；真实下单前必须得到用户明确允许。
+3. 扩展 C++ WS live smoke：当前已有 `gate_strategy_order` 小额 accepted / cancel lifecycle 和 `gate_demo_strategy` 3 轮 filled-close 证据；下一步在用户明确允许后覆盖 unfilled-cancel、rejected / cancel-rejected、feedback WS 断线和 REST reconcile 分支，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
 4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 continuity lost / reconnect 后恢复订单、持仓和风险状态。
 5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；Gate decimal-size 合约的数量步进规则需要先确认再进入下单热路径。
 6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
