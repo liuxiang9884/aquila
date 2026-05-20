@@ -5,9 +5,9 @@
 #include "core/common/types.h"
 #include "core/config/strategy_config.h"
 #include "core/market_data/types.h"
-#include "core/strategy/order_types.h"
-#include "core/strategy/trading_runtime.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_types.h"
+#include "core/trading/trading_runtime.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/signal.h"
 #include "strategy/lead_lag/strategy.h"
@@ -24,11 +24,11 @@ struct FakeOrderSession {
     SendStatus status{SendStatus::kOk};
   };
 
-  SendResult PlaceOrder(aquila::strategy::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(aquila::core::StrategyOrder&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(aquila::strategy::StrategyOrder&) noexcept {
+  SendResult CancelOrder(aquila::core::StrategyOrder&) noexcept {
     return {};
   }
 };
@@ -126,7 +126,7 @@ aquila::BookTicker Ticker(std::int32_t symbol_id, aquila::Exchange exchange,
 
 TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
   using Runtime =
-      aquila::strategy::TradingRuntime<leadlag::Strategy, FakeOrderSession>;
+      aquila::core::TradingRuntime<leadlag::Strategy, FakeOrderSession>;
 
   auto runtime_result = Runtime::CreateForTest(
       RuntimeConfig(), [] { return FakeOrderSession{}; }, OnePairConfig());
@@ -139,8 +139,8 @@ TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
   runtime_result.value->HandleBookTickerForTest(
       Ticker(3, aquila::Exchange::kGate, 110, 99.5, 100.5));
   runtime_result.value->HandleOrderResponseForTest(
-      aquila::strategy::OrderResponseEvent{
-          .kind = aquila::strategy::OrderResponseKind::kAck,
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAck,
           .local_order_id = 0,
       });
   runtime_result.value->HandleOrderFeedbackForTest(aquila::OrderFeedbackEvent{
@@ -154,9 +154,9 @@ TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
 TEST(LeadLagStrategyInterfaceTest, StoresRawMarketUpdates) {
   leadlag::Strategy strategy{OnePairConfig()};
   FakeOrderSession order_session;
-  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
-                                                                 8, 4};
-  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+  aquila::core::OrderManager<FakeOrderSession> order_manager{order_session, 8,
+                                                             4};
+  aquila::core::StrategyContext<FakeOrderSession> context{order_manager};
 
   strategy.OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
@@ -179,9 +179,9 @@ TEST(LeadLagStrategyInterfaceTest, StoresRawMarketUpdates) {
 TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
-  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
-                                                                 8, 4};
-  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+  aquila::core::OrderManager<FakeOrderSession> order_manager{order_session, 8,
+                                                             4};
+  aquila::core::StrategyContext<FakeOrderSession> context{order_manager};
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
                         context);
@@ -223,9 +223,9 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
 TEST(LeadLagStrategyInterfaceTest, DefaultModeDoesNotCreateSyntheticHold) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
-  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
-                                                                 8, 4};
-  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+  aquila::core::OrderManager<FakeOrderSession> order_manager{order_session, 8,
+                                                             4};
+  aquila::core::StrategyContext<FakeOrderSession> context{order_manager};
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
                         context);
@@ -252,9 +252,9 @@ TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
               leadlag::PositionAccountingMode::kSyntheticSignals,
       }};
   FakeOrderSession order_session;
-  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
-                                                                 8, 4};
-  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+  aquila::core::OrderManager<FakeOrderSession> order_manager{order_session, 8,
+                                                             4};
+  aquila::core::StrategyContext<FakeOrderSession> context{order_manager};
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
                         context);
@@ -298,9 +298,9 @@ TEST(LeadLagStrategyInterfaceTest,
                       leadlag::PositionAccountingMode::kSyntheticSignals,
               }};
   FakeOrderSession order_session;
-  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
-                                                                 8, 4};
-  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+  aquila::core::OrderManager<FakeOrderSession> order_manager{order_session, 8,
+                                                             4};
+  aquila::core::StrategyContext<FakeOrderSession> context{order_manager};
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
                         context);
@@ -340,9 +340,9 @@ TEST(LeadLagStrategyInterfaceTest,
 TEST(LeadLagStrategyInterfaceTest, FeedbackContinuityLostPausesNewOpenSignals) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
-  aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
-                                                                 8, 4};
-  aquila::strategy::StrategyContext<FakeOrderSession> context{order_manager};
+  aquila::core::OrderManager<FakeOrderSession> order_manager{order_session, 8,
+                                                             4};
+  aquila::core::StrategyContext<FakeOrderSession> context{order_manager};
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
                         context);

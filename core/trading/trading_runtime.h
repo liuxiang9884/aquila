@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_STRATEGY_TRADING_RUNTIME_H_
-#define AQUILA_CORE_STRATEGY_TRADING_RUNTIME_H_
+#ifndef AQUILA_CORE_TRADING_TRADING_RUNTIME_H_
+#define AQUILA_CORE_TRADING_TRADING_RUNTIME_H_
 
 #include <chrono>
 #include <cstddef>
@@ -18,12 +18,12 @@
 #include "core/market_data/data_reader_concepts.h"
 #include "core/market_data/realtime_data_reader.h"
 #include "core/market_data/types.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/strategy_context.h"
 #include "core/trading/order_feedback_shm.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/strategy_context.h"
 #include "core/websocket/runtime_policy.h"
 
-namespace aquila::strategy {
+namespace aquila::core {
 
 template <typename StrategyT, typename OrderSessionT,
           typename DataReaderT = market_data::RealtimeDataReader<>>
@@ -486,6 +486,6 @@ class TradingRuntime {
   int hook_exit_code_{0};
 };
 
-}  // namespace aquila::strategy
+}  // namespace aquila::core
 
-#endif  // AQUILA_CORE_STRATEGY_TRADING_RUNTIME_H_
+#endif  // AQUILA_CORE_TRADING_TRADING_RUNTIME_H_

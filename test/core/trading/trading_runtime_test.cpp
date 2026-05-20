@@ -1,4 +1,4 @@
-#include "core/strategy/trading_runtime.h"
+#include "core/trading/trading_runtime.h"
 
 #include <cstdint>
 #include <memory>
@@ -14,13 +14,13 @@
 #include "core/config/strategy_config.h"
 #include "core/market_data/data_reader_concepts.h"
 #include "core/market_data/types.h"
-#include "core/strategy/order_types.h"
-#include "core/strategy/strategy_context.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_id.h"
+#include "core/trading/order_types.h"
+#include "core/trading/strategy_context.h"
 #include "core/websocket/websocket_client.h"
 
-namespace aquila::strategy {
+namespace aquila::core {
 namespace {
 
 struct RuntimeLoopState {
@@ -904,8 +904,9 @@ TEST(TradingRuntimeTest,
   EXPECT_EQ(state.last_response_kind, OrderResponseKind::kAccepted);
 }
 
-TEST(TradingRuntimeTest,
-     HookModeDoesNotPollDataReaderBeforeOrderSessionReadyAndStillDrainsResponses) {
+TEST(
+    TradingRuntimeTest,
+    HookModeDoesNotPollDataReaderBeforeOrderSessionReadyAndStillDrainsResponses) {
   OrderFeedbackShmConfig shm_config{
       .shm_name = "srt_hook_ready_fb_test",
       .channel_name = "srt_hook_ready_fb_ch",
@@ -926,8 +927,7 @@ TEST(TradingRuntimeTest,
   state.place_order_on_start = true;
   state.stop_after_feedback_calls = 1;
   state.book_tickers.push_back(MakeBookTicker());
-  const std::uint64_t expected_local_order_id =
-      LocalOrderIdCodec::Encode(4, 1);
+  const std::uint64_t expected_local_order_id = LocalOrderIdCodec::Encode(4, 1);
   state.order_responses.push_back(OrderResponseEvent{
       .kind = OrderResponseKind::kAccepted,
       .local_order_id = expected_local_order_id,
@@ -1092,4 +1092,4 @@ TEST(TradingRuntimeTest, ProductionRunFailsWhenOrderSessionStopsRunning) {
 }
 
 }  // namespace
-}  // namespace aquila::strategy
+}  // namespace aquila::core

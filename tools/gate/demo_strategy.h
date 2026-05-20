@@ -16,8 +16,8 @@
 #include "core/common/result.h"
 #include "core/common/types.h"
 #include "core/market_data/types.h"
-#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_types.h"
 
 namespace aquila::tools::gate_demo_strategy {
 
@@ -162,8 +162,8 @@ class DemoStrategy {
 
     buy_price_texts_.push_back(fmt::format("{:.12g}", ticker.ask_price));
     const std::string_view price_text = buy_price_texts_.back();
-    const strategy::OrderPlaceResult placed =
-        context.PlaceLimitOrder(strategy::OrderCreateRequest{
+    const core::OrderPlaceResult placed =
+        context.PlaceLimitOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
             .symbol_id = config_.symbol_id,
             .symbol = config_.contract,
@@ -173,7 +173,7 @@ class DemoStrategy {
             .price_text = price_text,
             .reduce_only = false,
         });
-    if (placed.status != strategy::OrderPlaceStatus::kOk) {
+    if (placed.status != core::OrderPlaceStatus::kOk) {
       state_ = DemoStrategyState::kError;
       return;
     }
@@ -185,20 +185,20 @@ class DemoStrategy {
   }
 
   template <typename ContextT>
-  void OnOrderResponse(const strategy::OrderResponseEvent& event,
+  void OnOrderResponse(const core::OrderResponseEvent& event,
                        ContextT&) noexcept {
     if (event.local_order_id == buy_local_order_id_ &&
-        event.kind == strategy::OrderResponseKind::kRejected) {
+        event.kind == core::OrderResponseKind::kRejected) {
       state_ = DemoStrategyState::kError;
       return;
     }
     if (event.local_order_id == buy_local_order_id_ &&
-        event.kind == strategy::OrderResponseKind::kCancelRejected) {
+        event.kind == core::OrderResponseKind::kCancelRejected) {
       state_ = DemoStrategyState::kError;
       return;
     }
     if (event.local_order_id == close_local_order_id_ &&
-        event.kind == strategy::OrderResponseKind::kRejected) {
+        event.kind == core::OrderResponseKind::kRejected) {
       state_ = DemoStrategyState::kError;
     }
   }
@@ -259,13 +259,12 @@ class DemoStrategy {
       return;
     }
 
-    const strategy::StrategyOrder* order =
-        context.FindOrder(buy_local_order_id_);
+    const core::StrategyOrder* order = context.FindOrder(buy_local_order_id_);
     if (order == nullptr) {
       state_ = DemoStrategyState::kError;
       return;
     }
-    if (order->status == strategy::OrderStatus::kFilled ||
+    if (order->status == core::OrderStatus::kFilled ||
         order->cumulative_filled_quantity >= kQuantity) {
       SubmitClose(context);
       return;
@@ -322,9 +321,9 @@ class DemoStrategy {
 
   template <typename ContextT>
   void SubmitCancel(ContextT& context) noexcept {
-    const strategy::OrderCancelResult cancelled =
+    const core::OrderCancelResult cancelled =
         context.CancelOrder(buy_local_order_id_);
-    if (cancelled.status != strategy::OrderCancelStatus::kOk) {
+    if (cancelled.status != core::OrderCancelStatus::kOk) {
       state_ = DemoStrategyState::kError;
       return;
     }
@@ -333,8 +332,8 @@ class DemoStrategy {
 
   template <typename ContextT>
   void SubmitClose(ContextT& context) noexcept {
-    const strategy::OrderPlaceResult placed =
-        context.PlaceLimitOrder(strategy::OrderCreateRequest{
+    const core::OrderPlaceResult placed =
+        context.PlaceLimitOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
             .symbol_id = config_.symbol_id,
             .symbol = config_.contract,
@@ -344,7 +343,7 @@ class DemoStrategy {
             .price_text = market_price_text_,
             .reduce_only = true,
         });
-    if (placed.status != strategy::OrderPlaceStatus::kOk) {
+    if (placed.status != core::OrderPlaceStatus::kOk) {
       state_ = DemoStrategyState::kError;
       return;
     }

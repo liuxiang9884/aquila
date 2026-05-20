@@ -1,14 +1,14 @@
-#ifndef AQUILA_CORE_STRATEGY_ORDER_MANAGER_H_
-#define AQUILA_CORE_STRATEGY_ORDER_MANAGER_H_
+#ifndef AQUILA_CORE_TRADING_ORDER_MANAGER_H_
+#define AQUILA_CORE_TRADING_ORDER_MANAGER_H_
 
 #include <cstddef>
 #include <cstdint>
 
-#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_pool.h"
+#include "core/trading/order_types.h"
 
-namespace aquila::strategy {
+namespace aquila::core {
 
 template <typename GatewayT>
 class OrderManager {
@@ -343,6 +343,6 @@ class OrderManager {
   bool feedback_continuity_lost_detected_{false};
 };
 
-}  // namespace aquila::strategy
+}  // namespace aquila::core
 
-#endif  // AQUILA_CORE_STRATEGY_ORDER_MANAGER_H_
+#endif  // AQUILA_CORE_TRADING_ORDER_MANAGER_H_

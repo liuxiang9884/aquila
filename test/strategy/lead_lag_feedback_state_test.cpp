@@ -4,9 +4,9 @@
 #include <gtest/gtest.h>
 
 #include "core/common/types.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/order_types.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/execution_state.h"
 #include "strategy/lead_lag/signal.h"
@@ -23,11 +23,11 @@ struct FakeOrderSession {
     SendStatus status{SendStatus::kOk};
   };
 
-  SendResult PlaceOrder(aquila::strategy::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(aquila::core::StrategyOrder&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(aquila::strategy::StrategyOrder&) noexcept {
+  SendResult CancelOrder(aquila::core::StrategyOrder&) noexcept {
     return {};
   }
 };
@@ -39,15 +39,15 @@ leadlag::InstrumentMetadata Instrument() {
   };
 }
 
-aquila::strategy::StrategyOrder Order(std::uint64_t local_order_id,
-                                      aquila::OrderSide side,
-                                      std::int64_t cumulative_filled_quantity,
-                                      double fill_price) {
-  return aquila::strategy::StrategyOrder{
+aquila::core::StrategyOrder Order(std::uint64_t local_order_id,
+                                  aquila::OrderSide side,
+                                  std::int64_t cumulative_filled_quantity,
+                                  double fill_price) {
+  return aquila::core::StrategyOrder{
       .local_order_id = local_order_id,
       .side = side,
       .quantity = cumulative_filled_quantity,
-      .status = aquila::strategy::OrderStatus::kFilled,
+      .status = aquila::core::OrderStatus::kFilled,
       .cumulative_filled_quantity = cumulative_filled_quantity,
       .cumulative_filled_value =
           static_cast<double>(cumulative_filled_quantity) * fill_price,
@@ -124,17 +124,17 @@ leadlag::ThresholdSnapshot ThresholdForFeedback() {
 
 TEST(LeadLagFeedbackStateTest, OrderManagerRetiresOnlyFinishedOrders) {
   FakeOrderSession session;
-  aquila::strategy::OrderManager<FakeOrderSession> manager(session, 2, 1);
+  aquila::core::OrderManager<FakeOrderSession> manager(session, 2, 1);
 
-  const aquila::strategy::OrderPlaceResult placed =
-      manager.PlaceLimitOrder(aquila::strategy::OrderCreateRequest{
+  const aquila::core::OrderPlaceResult placed =
+      manager.PlaceLimitOrder(aquila::core::OrderCreateRequest{
           .symbol = std::string_view{"BTC_USDT"},
           .time_in_force = aquila::TimeInForce::kImmediateOrCancel,
           .quantity = 1,
           .price_text = std::string_view{"100.0"},
       });
 
-  ASSERT_EQ(placed.status, aquila::strategy::OrderPlaceStatus::kOk);
+  ASSERT_EQ(placed.status, aquila::core::OrderPlaceStatus::kOk);
   EXPECT_FALSE(manager.RetireFinishedOrder(placed.local_order_id));
   ASSERT_NE(manager.FindOrder(placed.local_order_id), nullptr);
 
@@ -207,10 +207,10 @@ TEST(LeadLagFeedbackStateTest, RejectedCloseReturnsExistingPositionToHold) {
   ASSERT_NE(group, nullptr);
   ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13));
 
-  aquila::strategy::StrategyOrder rejected =
+  aquila::core::StrategyOrder rejected =
       Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
             /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0);
-  rejected.status = aquila::strategy::OrderStatus::kRejected;
+  rejected.status = aquila::core::OrderStatus::kRejected;
 
   const leadlag::ExecutionApplyResult result =
       state.ApplyTerminalOrder(rejected, Instrument());

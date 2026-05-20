@@ -77,3 +77,23 @@ target_link_libraries(gate_order_session_test
 
 add_test(NAME gate_order_session_test
          COMMAND gate_order_session_test)
+
+add_executable(gate_order_session_runtime_adapter_test
+    order_session_runtime_adapter_test.cpp
+)
+
+target_compile_definitions(gate_order_session_runtime_adapter_test
+    PRIVATE
+        AQUILA_GATE_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS
+)
+
+target_link_libraries(gate_order_session_runtime_adapter_test
+    PRIVATE
+        aquila_gate
+        magic_enum::magic_enum
+        nova
+        GTest::gtest_main
+)
+
+add_test(NAME gate_order_session_runtime_adapter_test
+         COMMAND gate_order_session_runtime_adapter_test)

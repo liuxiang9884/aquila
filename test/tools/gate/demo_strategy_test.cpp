@@ -10,10 +10,10 @@
 
 #include "core/common/types.h"
 #include "core/market_data/types.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/order_types.h"
-#include "core/strategy/strategy_context.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/order_types.h"
+#include "core/trading/strategy_context.h"
 
 namespace aquila::tools::gate_demo_strategy {
 namespace {
@@ -36,7 +36,7 @@ struct FakeOrderSession {
     bool reduce_only{false};
   };
 
-  SendResult PlaceOrder(const strategy::StrategyOrder& order) {
+  SendResult PlaceOrder(const core::StrategyOrder& order) {
     placed_orders.push_back(PlacedOrder{
         .local_order_id = order.local_order_id,
         .symbol_id = order.symbol_id,
@@ -50,7 +50,7 @@ struct FakeOrderSession {
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(const strategy::StrategyOrder& order) noexcept {
+  SendResult CancelOrder(const core::StrategyOrder& order) noexcept {
     ++cancel_calls;
     last_cancel_local_order_id = order.local_order_id;
     return {.status = SendStatus::kOk};
@@ -61,8 +61,8 @@ struct FakeOrderSession {
   std::uint64_t last_cancel_local_order_id{0};
 };
 
-using OrderManagerT = strategy::OrderManager<FakeOrderSession>;
-using ContextT = strategy::StrategyContext<FakeOrderSession>;
+using OrderManagerT = core::OrderManager<FakeOrderSession>;
+using ContextT = core::StrategyContext<FakeOrderSession>;
 
 BookTicker MakeTicker(std::int32_t symbol_id = 7, double ask_price = 81000.5,
                       Exchange exchange = Exchange::kGate) noexcept {
@@ -370,7 +370,7 @@ TEST(DemoStrategyTest, KeepsHistoricalBuyPriceTextStableAcrossRounds) {
 
   strategy.OnBookTicker(MakeTicker(7, 81001.5), context);
 
-  const strategy::StrategyOrder* first_order = context.FindOrder(first_buy);
+  const core::StrategyOrder* first_order = context.FindOrder(first_buy);
   ASSERT_NE(first_order, nullptr);
   EXPECT_EQ(first_order->price_text, "81000.5");
   ASSERT_EQ(session.placed_orders.size(), 2U);

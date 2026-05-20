@@ -4,6 +4,7 @@ add_library(aquila_gate STATIC
     trading/order_feedback_session.h
     trading/order_feedback_session_config.cpp
     trading/order_feedback_session_config.h
+    trading/order_session_runtime_adapter.h
     trading/order_session_config.cpp
     trading/order_session_config.h
     trading/order_request_encoder.h
@@ -21,10 +22,11 @@ target_link_libraries(aquila_gate
     PUBLIC
         aquila_config
         fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
         simdjson::simdjson
         FastFloat::fast_float
         absl::flat_hash_map
     PRIVATE
-        nova
         OpenSSL::Crypto
 )

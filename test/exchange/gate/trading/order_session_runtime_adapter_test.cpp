@@ -1,4 +1,4 @@
-#include "tools/gate/trading_runtime_adapter.h"
+#include "exchange/gate/trading/order_session_runtime_adapter.h"
 
 #include <array>
 #include <cstdint>
@@ -9,31 +9,33 @@
 #include <gtest/gtest.h>
 
 #include "core/common/types.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/order_types.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/order_types.h"
 #include "core/websocket/types.h"
 #include "exchange/gate/trading/order_types.h"
 
-namespace aquila::tools::gate_trading_runtime {
+namespace aquila::gate {
 namespace {
 
 struct FakeRuntime {
-  std::vector<strategy::OrderResponseEvent> responses;
+  std::vector<core::OrderResponseEvent> responses;
   std::thread::id callback_thread;
 
-  void OnOrderResponse(const strategy::OrderResponseEvent& event) noexcept {
+  void OnOrderResponse(const core::OrderResponseEvent& event) noexcept {
     callback_thread = std::this_thread::get_id();
     responses.push_back(event);
   }
 };
 
-std::array<detail::GateErrorResponseLogRecordForTest, 4> g_logged_errors{};
+std::array<detail::OrderSessionRuntimeErrorResponseLogRecordForTest, 4>
+    g_logged_errors{};
 std::array<std::size_t, 4> g_response_count_at_log{};
 std::size_t g_logged_error_count{0};
 const FakeRuntime* g_runtime_seen_by_log{nullptr};
 
-void CaptureGateErrorResponseLogForTest(
-    const detail::GateErrorResponseLogRecordForTest& record) noexcept {
+void CaptureOrderSessionRuntimeErrorResponseLogForTest(
+    const detail::OrderSessionRuntimeErrorResponseLogRecordForTest&
+        record) noexcept {
   if (g_logged_error_count >= g_logged_errors.size()) {
     return;
   }
@@ -45,32 +47,32 @@ void CaptureGateErrorResponseLogForTest(
   ++g_logged_error_count;
 }
 
-void ResetGateErrorResponseLogCapture() noexcept {
+void ResetOrderSessionRuntimeErrorResponseLogCapture() noexcept {
   g_logged_errors = {};
   g_response_count_at_log = {};
   g_logged_error_count = 0;
   g_runtime_seen_by_log = nullptr;
-  detail::SetGateErrorResponseLogObserverForTest(nullptr);
+  detail::SetOrderSessionRuntimeErrorResponseLogObserverForTest(nullptr);
 }
 
-class GateErrorResponseLogCaptureGuard {
+class OrderSessionRuntimeErrorResponseLogCaptureGuard {
  public:
-  explicit GateErrorResponseLogCaptureGuard(
+  explicit OrderSessionRuntimeErrorResponseLogCaptureGuard(
       const FakeRuntime& runtime) noexcept {
-    ResetGateErrorResponseLogCapture();
+    ResetOrderSessionRuntimeErrorResponseLogCapture();
     g_runtime_seen_by_log = &runtime;
-    detail::SetGateErrorResponseLogObserverForTest(
-        CaptureGateErrorResponseLogForTest);
+    detail::SetOrderSessionRuntimeErrorResponseLogObserverForTest(
+        CaptureOrderSessionRuntimeErrorResponseLogForTest);
   }
 
-  ~GateErrorResponseLogCaptureGuard() noexcept {
-    ResetGateErrorResponseLogCapture();
+  ~OrderSessionRuntimeErrorResponseLogCaptureGuard() noexcept {
+    ResetOrderSessionRuntimeErrorResponseLogCapture();
   }
 
-  GateErrorResponseLogCaptureGuard(const GateErrorResponseLogCaptureGuard&) =
-      delete;
-  GateErrorResponseLogCaptureGuard& operator=(
-      const GateErrorResponseLogCaptureGuard&) = delete;
+  OrderSessionRuntimeErrorResponseLogCaptureGuard(
+      const OrderSessionRuntimeErrorResponseLogCaptureGuard&) = delete;
+  OrderSessionRuntimeErrorResponseLogCaptureGuard& operator=(
+      const OrderSessionRuntimeErrorResponseLogCaptureGuard&) = delete;
 };
 
 websocket::ConnectionConfig MakeConnectionConfig() {
@@ -87,12 +89,12 @@ gate::LoginCredentials MakeCredentials() {
                                 .api_secret = "test_secret"};
 }
 
-TEST(GateTradingRuntimeAdapterTest,
+TEST(OrderSessionRuntimeAdapterTest,
      LogsGateErrorResponsesBeforeRuntimeDispatch) {
-  GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
+  OrderSessionRuntimeAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
   FakeRuntime runtime;
-  GateErrorResponseLogCaptureGuard log_capture(runtime);
+  OrderSessionRuntimeErrorResponseLogCaptureGuard log_capture(runtime);
 
   adapter.BindRuntime(runtime);
   adapter.PushOrderResponseForTest(gate::OrderResponse{
@@ -146,7 +148,7 @@ TEST(GateTradingRuntimeAdapterTest,
   EXPECT_EQ(g_response_count_at_log[1], 2U);
 }
 
-TEST(GateTradingRuntimeAdapterTest, ConvertsGateResponsesToStrategyEvents) {
+TEST(OrderSessionRuntimeAdapterTest, ConvertsGateResponsesToCoreEvents) {
   const gate::OrderResponse accepted{
       .kind = gate::OrderResponseKind::kAccepted,
       .local_order_id = 0x0400000000000007ULL,
@@ -156,32 +158,29 @@ TEST(GateTradingRuntimeAdapterTest, ConvertsGateResponsesToStrategyEvents) {
       .error_label_hash = 99,
   };
 
-  const strategy::OrderResponseEvent event =
-      ToStrategyOrderResponseEvent(accepted);
+  const core::OrderResponseEvent event = ToCoreOrderResponseEvent(accepted);
 
-  EXPECT_EQ(event.kind, strategy::OrderResponseKind::kAccepted);
+  EXPECT_EQ(event.kind, core::OrderResponseKind::kAccepted);
   EXPECT_EQ(event.local_order_id, accepted.local_order_id);
   EXPECT_EQ(event.exchange_order_id, accepted.exchange_order_id);
 }
 
-TEST(GateTradingRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
-  EXPECT_EQ(ToStrategyOrderResponseKind(gate::OrderResponseKind::kAck),
-            strategy::OrderResponseKind::kAck);
-  EXPECT_EQ(ToStrategyOrderResponseKind(gate::OrderResponseKind::kAccepted),
-            strategy::OrderResponseKind::kAccepted);
-  EXPECT_EQ(ToStrategyOrderResponseKind(gate::OrderResponseKind::kRejected),
-            strategy::OrderResponseKind::kRejected);
-  EXPECT_EQ(
-      ToStrategyOrderResponseKind(gate::OrderResponseKind::kCancelAccepted),
-      strategy::OrderResponseKind::kCancelAccepted);
-  EXPECT_EQ(
-      ToStrategyOrderResponseKind(gate::OrderResponseKind::kCancelRejected),
-      strategy::OrderResponseKind::kCancelRejected);
+TEST(OrderSessionRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
+  EXPECT_EQ(ToCoreOrderResponseKind(gate::OrderResponseKind::kAck),
+            core::OrderResponseKind::kAck);
+  EXPECT_EQ(ToCoreOrderResponseKind(gate::OrderResponseKind::kAccepted),
+            core::OrderResponseKind::kAccepted);
+  EXPECT_EQ(ToCoreOrderResponseKind(gate::OrderResponseKind::kRejected),
+            core::OrderResponseKind::kRejected);
+  EXPECT_EQ(ToCoreOrderResponseKind(gate::OrderResponseKind::kCancelAccepted),
+            core::OrderResponseKind::kCancelAccepted);
+  EXPECT_EQ(ToCoreOrderResponseKind(gate::OrderResponseKind::kCancelRejected),
+            core::OrderResponseKind::kCancelRejected);
 }
 
-TEST(GateTradingRuntimeAdapterTest,
+TEST(OrderSessionRuntimeAdapterTest,
      BindRuntimeDispatchesOrderResponsesSynchronously) {
-  GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
+  OrderSessionRuntimeAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
   FakeRuntime runtime;
 
@@ -198,15 +197,15 @@ TEST(GateTradingRuntimeAdapterTest,
 
   ASSERT_EQ(runtime.responses.size(), 2U);
   EXPECT_EQ(runtime.callback_thread, std::this_thread::get_id());
-  EXPECT_EQ(runtime.responses[0].kind, strategy::OrderResponseKind::kAck);
+  EXPECT_EQ(runtime.responses[0].kind, core::OrderResponseKind::kAck);
   EXPECT_EQ(runtime.responses[0].local_order_id, 11U);
   EXPECT_EQ(runtime.responses[1].kind,
-            strategy::OrderResponseKind::kCancelRejected);
+            core::OrderResponseKind::kCancelRejected);
   EXPECT_EQ(runtime.responses[1].local_order_id, 12U);
 }
 
-TEST(GateTradingRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
-  GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
+TEST(OrderSessionRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
+  OrderSessionRuntimeAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>
       adapter(MakeConnectionConfig(), MakeCredentials());
   EXPECT_FALSE(adapter.Ready());
 
@@ -219,15 +218,15 @@ TEST(GateTradingRuntimeAdapterTest, LoginReadyCallbackUpdatesReadyFlag) {
   EXPECT_FALSE(adapter.Ready());
 }
 
-TEST(GateTradingRuntimeAdapterTest,
+TEST(OrderSessionRuntimeAdapterTest,
      CanBackStrategyOrderManagerWithoutConnectingGate) {
   using Adapter =
-      GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>;
+      OrderSessionRuntimeAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>;
   Adapter adapter(MakeConnectionConfig(), MakeCredentials());
-  strategy::OrderManager<Adapter> order_manager(adapter, 4, 3);
+  core::OrderManager<Adapter> order_manager(adapter, 4, 3);
 
-  const strategy::OrderPlaceResult placed =
-      order_manager.PlaceLimitOrder(strategy::OrderCreateRequest{
+  const core::OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(core::OrderCreateRequest{
           .exchange = Exchange::kGate,
           .symbol_id = 7,
           .symbol = "BTC_USDT",
@@ -238,13 +237,13 @@ TEST(GateTradingRuntimeAdapterTest,
           .reduce_only = false,
       });
 
-  EXPECT_EQ(placed.status, strategy::OrderPlaceStatus::kSessionRejected);
+  EXPECT_EQ(placed.status, core::OrderPlaceStatus::kSessionRejected);
   EXPECT_NE(placed.local_order_id, 0U);
 }
 
-TEST(GateTradingRuntimeAdapterTest, AdapterIsMoveOnly) {
+TEST(OrderSessionRuntimeAdapterTest, AdapterIsMoveOnly) {
   using Adapter =
-      GateOrderSessionAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>;
+      OrderSessionRuntimeAdapter<gate::OrderSessionDefaultPlainWebSocketPolicy>;
 
   static_assert(!std::is_copy_constructible_v<Adapter>);
   static_assert(!std::is_copy_assignable_v<Adapter>);
@@ -260,4 +259,4 @@ TEST(GateTradingRuntimeAdapterTest, AdapterIsMoveOnly) {
 }
 
 }  // namespace
-}  // namespace aquila::tools::gate_trading_runtime
+}  // namespace aquila::gate

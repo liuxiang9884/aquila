@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_STRATEGY_ORDER_TYPES_H_
-#define AQUILA_CORE_STRATEGY_ORDER_TYPES_H_
+#ifndef AQUILA_CORE_TRADING_ORDER_TYPES_H_
+#define AQUILA_CORE_TRADING_ORDER_TYPES_H_
 
 #include <cstdint>
 #include <string_view>
@@ -7,7 +7,7 @@
 #include "core/common/types.h"
 #include "core/trading/order_feedback_event.h"
 
-namespace aquila::strategy {
+namespace aquila::core {
 
 enum class OrderStatus : std::uint8_t {
   kCreated,
@@ -108,6 +108,6 @@ struct OrderResponseEvent {
   std::uint64_t exchange_order_id{0};
 };
 
-}  // namespace aquila::strategy
+}  // namespace aquila::core
 
-#endif  // AQUILA_CORE_STRATEGY_ORDER_TYPES_H_
+#endif  // AQUILA_CORE_TRADING_ORDER_TYPES_H_

@@ -1,12 +1,12 @@
-#ifndef AQUILA_CORE_STRATEGY_STRATEGY_CONTEXT_H_
-#define AQUILA_CORE_STRATEGY_STRATEGY_CONTEXT_H_
+#ifndef AQUILA_CORE_TRADING_STRATEGY_CONTEXT_H_
+#define AQUILA_CORE_TRADING_STRATEGY_CONTEXT_H_
 
 #include <cstdint>
 #include <utility>
 
-#include "core/strategy/order_manager.h"
+#include "core/trading/order_manager.h"
 
-namespace aquila::strategy {
+namespace aquila::core {
 
 template <typename OrderSessionT>
 class StrategyContext {
@@ -33,6 +33,6 @@ class StrategyContext {
   OrderManagerT& order_manager_;
 };
 
-}  // namespace aquila::strategy
+}  // namespace aquila::core
 
-#endif  // AQUILA_CORE_STRATEGY_STRATEGY_CONTEXT_H_
+#endif  // AQUILA_CORE_TRADING_STRATEGY_CONTEXT_H_

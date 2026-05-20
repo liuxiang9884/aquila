@@ -1,5 +1,5 @@
-#ifndef AQUILA_TOOLS_GATE_TRADING_RUNTIME_ADAPTER_H_
-#define AQUILA_TOOLS_GATE_TRADING_RUNTIME_ADAPTER_H_
+#ifndef AQUILA_EXCHANGE_GATE_TRADING_ORDER_SESSION_RUNTIME_ADAPTER_H_
+#define AQUILA_EXCHANGE_GATE_TRADING_ORDER_SESSION_RUNTIME_ADAPTER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -8,36 +8,36 @@
 
 #include <magic_enum/magic_enum.hpp>
 
-#include "core/strategy/order_types.h"
+#include "core/trading/order_types.h"
 #include "core/websocket/types.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "exchange/gate/trading/order_types.h"
 #include "nova/utils/log.h"
 
-namespace aquila::tools::gate_trading_runtime {
+namespace aquila::gate {
 
-[[nodiscard]] inline strategy::OrderResponseKind ToStrategyOrderResponseKind(
+[[nodiscard]] inline core::OrderResponseKind ToCoreOrderResponseKind(
     gate::OrderResponseKind kind) noexcept {
   switch (kind) {
     case gate::OrderResponseKind::kAck:
-      return strategy::OrderResponseKind::kAck;
+      return core::OrderResponseKind::kAck;
     case gate::OrderResponseKind::kAccepted:
-      return strategy::OrderResponseKind::kAccepted;
+      return core::OrderResponseKind::kAccepted;
     case gate::OrderResponseKind::kRejected:
-      return strategy::OrderResponseKind::kRejected;
+      return core::OrderResponseKind::kRejected;
     case gate::OrderResponseKind::kCancelAccepted:
-      return strategy::OrderResponseKind::kCancelAccepted;
+      return core::OrderResponseKind::kCancelAccepted;
     case gate::OrderResponseKind::kCancelRejected:
-      return strategy::OrderResponseKind::kCancelRejected;
+      return core::OrderResponseKind::kCancelRejected;
   }
-  return strategy::OrderResponseKind::kRejected;
+  return core::OrderResponseKind::kRejected;
 }
 
-[[nodiscard]] inline strategy::OrderResponseEvent ToStrategyOrderResponseEvent(
+[[nodiscard]] inline core::OrderResponseEvent ToCoreOrderResponseEvent(
     const gate::OrderResponse& response) noexcept {
-  return strategy::OrderResponseEvent{
-      .kind = ToStrategyOrderResponseKind(response.kind),
+  return core::OrderResponseEvent{
+      .kind = ToCoreOrderResponseKind(response.kind),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
   };
@@ -51,8 +51,8 @@ namespace detail {
          kind == gate::OrderResponseKind::kCancelRejected;
 }
 
-#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
-struct GateErrorResponseLogRecordForTest {
+#if defined(AQUILA_GATE_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+struct OrderSessionRuntimeErrorResponseLogRecordForTest {
   gate::OrderResponseKind kind{gate::OrderResponseKind::kRejected};
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
@@ -61,28 +61,28 @@ struct GateErrorResponseLogRecordForTest {
   std::uint64_t error_label_hash{0};
 };
 
-using GateErrorResponseLogObserverForTest =
-    void (*)(const GateErrorResponseLogRecordForTest& record) noexcept;
+using OrderSessionRuntimeErrorResponseLogObserverForTest = void (*)(
+    const OrderSessionRuntimeErrorResponseLogRecordForTest& record) noexcept;
 
-[[nodiscard]] inline GateErrorResponseLogObserverForTest&
-GateErrorResponseLogObserverSlotForTest() noexcept {
-  static GateErrorResponseLogObserverForTest observer = nullptr;
+[[nodiscard]] inline OrderSessionRuntimeErrorResponseLogObserverForTest&
+OrderSessionRuntimeErrorResponseLogObserverSlotForTest() noexcept {
+  static OrderSessionRuntimeErrorResponseLogObserverForTest observer = nullptr;
   return observer;
 }
 
-inline void SetGateErrorResponseLogObserverForTest(
-    GateErrorResponseLogObserverForTest observer) noexcept {
-  GateErrorResponseLogObserverSlotForTest() = observer;
+inline void SetOrderSessionRuntimeErrorResponseLogObserverForTest(
+    OrderSessionRuntimeErrorResponseLogObserverForTest observer) noexcept {
+  OrderSessionRuntimeErrorResponseLogObserverSlotForTest() = observer;
 }
 
-inline void NotifyGateErrorResponseLogObserverForTest(
+inline void NotifyOrderSessionRuntimeErrorResponseLogObserverForTest(
     const gate::OrderResponse& response) noexcept {
-  GateErrorResponseLogObserverForTest observer =
-      GateErrorResponseLogObserverSlotForTest();
+  OrderSessionRuntimeErrorResponseLogObserverForTest observer =
+      OrderSessionRuntimeErrorResponseLogObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }
-  observer(GateErrorResponseLogRecordForTest{
+  observer(OrderSessionRuntimeErrorResponseLogRecordForTest{
       .kind = response.kind,
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
@@ -106,22 +106,22 @@ inline void LogGateErrorResponse(const gate::OrderResponse& response) noexcept {
         response.exchange_order_id, response.request_sequence,
         response.http_status, response.error_label_hash);
   }
-#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
-  NotifyGateErrorResponseLogObserverForTest(response);
+#if defined(AQUILA_GATE_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+  NotifyOrderSessionRuntimeErrorResponseLogObserverForTest(response);
 #endif
 }
 
-class GateOrderSessionResponseHandler {
+class OrderSessionRuntimeResponseHandler {
  public:
   using RuntimeDispatch =
       void (*)(void* context, const gate::OrderResponse& response) noexcept;
 
-  GateOrderSessionResponseHandler() = default;
+  OrderSessionRuntimeResponseHandler() = default;
 
-  GateOrderSessionResponseHandler(const GateOrderSessionResponseHandler&) =
-      delete;
-  GateOrderSessionResponseHandler& operator=(
-      const GateOrderSessionResponseHandler&) = delete;
+  OrderSessionRuntimeResponseHandler(
+      const OrderSessionRuntimeResponseHandler&) = delete;
+  OrderSessionRuntimeResponseHandler& operator=(
+      const OrderSessionRuntimeResponseHandler&) = delete;
 
   template <typename RuntimeT>
   void BindRuntime(RuntimeT& runtime) noexcept {
@@ -130,7 +130,7 @@ class GateOrderSessionResponseHandler {
                            const gate::OrderResponse& response) noexcept {
       LogGateErrorResponse(response);
       static_cast<RuntimeT*>(context)->OnOrderResponse(
-          ToStrategyOrderResponseEvent(response));
+          ToCoreOrderResponseEvent(response));
     };
   }
 
@@ -163,32 +163,33 @@ class GateOrderSessionResponseHandler {
 template <typename WebSocketPolicy =
               gate::OrderSessionDefaultTlsWebSocketPolicy,
           typename Diagnostics = gate::NoopOrderSessionDiagnostics>
-class GateOrderSessionAdapter {
+class OrderSessionRuntimeAdapter {
  public:
-  using ResponseHandler = detail::GateOrderSessionResponseHandler;
+  using ResponseHandler = detail::OrderSessionRuntimeResponseHandler;
   using Session =
       gate::OrderSession<ResponseHandler, WebSocketPolicy, Diagnostics>;
 
-  GateOrderSessionAdapter(
+  OrderSessionRuntimeAdapter(
       websocket::ConnectionConfig config, gate::LoginCredentials credentials,
       std::size_t request_map_capacity = gate::kDefaultOrderRequestMapCapacity)
       : impl_(std::make_unique<Impl>(std::move(config), std::move(credentials),
                                      request_map_capacity)) {}
 
-  GateOrderSessionAdapter(gate::OrderSessionConfig config,
-                          gate::LoginCredentials credentials)
-      : GateOrderSessionAdapter(std::move(config.connection),
-                                std::move(credentials),
-                                config.request_map_capacity) {}
+  OrderSessionRuntimeAdapter(gate::OrderSessionConfig config,
+                             gate::LoginCredentials credentials)
+      : OrderSessionRuntimeAdapter(std::move(config.connection),
+                                   std::move(credentials),
+                                   config.request_map_capacity) {}
 
-  ~GateOrderSessionAdapter() {
+  ~OrderSessionRuntimeAdapter() {
     Stop();
   }
 
-  GateOrderSessionAdapter(const GateOrderSessionAdapter&) = delete;
-  GateOrderSessionAdapter& operator=(const GateOrderSessionAdapter&) = delete;
-  GateOrderSessionAdapter(GateOrderSessionAdapter&&) noexcept = default;
-  GateOrderSessionAdapter& operator=(GateOrderSessionAdapter&&) noexcept =
+  OrderSessionRuntimeAdapter(const OrderSessionRuntimeAdapter&) = delete;
+  OrderSessionRuntimeAdapter& operator=(const OrderSessionRuntimeAdapter&) =
+      delete;
+  OrderSessionRuntimeAdapter(OrderSessionRuntimeAdapter&&) noexcept = default;
+  OrderSessionRuntimeAdapter& operator=(OrderSessionRuntimeAdapter&&) noexcept =
       default;
 
   [[nodiscard]] bool Start() noexcept {
@@ -252,7 +253,7 @@ class GateOrderSessionAdapter {
     }
   }
 
-#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+#if defined(AQUILA_GATE_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
   void MarkLoginReadyForTest() noexcept {
     if (impl_ != nullptr) {
       impl_->MarkLoginReadyForTest();
@@ -329,7 +330,7 @@ class GateOrderSessionAdapter {
       session_.SetRuntimeHook(context, hook);
     }
 
-#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+#if defined(AQUILA_GATE_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
     void MarkLoginReadyForTest() noexcept {
       response_handler_.OnOrderSessionLoginReady();
     }
@@ -352,6 +353,6 @@ class GateOrderSessionAdapter {
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace aquila::tools::gate_trading_runtime
+}  // namespace aquila::gate
 
-#endif  // AQUILA_TOOLS_GATE_TRADING_RUNTIME_ADAPTER_H_
+#endif  // AQUILA_EXCHANGE_GATE_TRADING_ORDER_SESSION_RUNTIME_ADAPTER_H_

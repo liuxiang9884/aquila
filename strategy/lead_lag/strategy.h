@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "core/market_data/types.h"
-#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_types.h"
 #include "strategy/lead_lag/alignment.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/execution_state.h"
@@ -127,8 +127,7 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void OnOrderResponse(const strategy::OrderResponseEvent&,
-                       ContextT&) noexcept {}
+  void OnOrderResponse(const core::OrderResponseEvent&, ContextT&) noexcept {}
 
   template <typename ContextT>
   void OnOrderFeedback(const OrderFeedbackEvent& event, ContextT&) noexcept {

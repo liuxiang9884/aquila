@@ -15,8 +15,8 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/strategy_context.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/strategy_context.h"
 #include "core/websocket/message_view.h"
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/order_session.h"
@@ -451,22 +451,21 @@ bool ActivateLoginOnly(Session& session,
          session.login_ready();
 }
 
-[[nodiscard]] constexpr strategy::OrderCreateRequest
+[[nodiscard]] constexpr core::OrderCreateRequest
 MakeGateLimitRequest() noexcept {
-  return strategy::OrderCreateRequest{
-      .exchange = Exchange::kGate,
-      .symbol_id = 7,
-      .symbol = "BTC_USDT",
-      .side = OrderSide::kBuy,
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .quantity = 1,
-      .price_text = "81000",
-      .reduce_only = false};
+  return core::OrderCreateRequest{.exchange = Exchange::kGate,
+                                  .symbol_id = 7,
+                                  .symbol = "BTC_USDT",
+                                  .side = OrderSide::kBuy,
+                                  .time_in_force = TimeInForce::kGoodTillCancel,
+                                  .quantity = 1,
+                                  .price_text = "81000",
+                                  .reduce_only = false};
 }
 
-[[nodiscard]] constexpr strategy::StrategyOrder MakeStrategyPlaceOrder(
+[[nodiscard]] constexpr core::StrategyOrder MakeStrategyPlaceOrder(
     std::uint64_t local_order_id) noexcept {
-  return strategy::StrategyOrder{
+  return core::StrategyOrder{
       .local_order_id = local_order_id,
       .exchange_order_id = 0,
       .exchange = Exchange::kGate,
@@ -881,15 +880,15 @@ void RunStrategyContextPlaceLimitOrderWriteBenchmark(
   if (!ValidateLoginSocketWrite<Transport>(state)) {
     return;
   }
-  strategy::OrderManager<BenchOrderSession> order_manager(
+  core::OrderManager<BenchOrderSession> order_manager(
       session, kOrderSendLatencyIterations + warmup_count + 2);
-  strategy::StrategyContext<BenchOrderSession> context(order_manager);
+  core::StrategyContext<BenchOrderSession> context(order_manager);
   DrainTransportPeer<Transport>();
   Transport::ResetStats();
 
   for (std::size_t i = 0; i < warmup_count; ++i) {
     if (context.PlaceLimitOrder(MakeGateLimitRequest()).status !=
-        strategy::OrderPlaceStatus::kOk) {
+        core::OrderPlaceStatus::kOk) {
       state.SkipWithError("strategy warmup place limit order failed");
       return;
     }
@@ -902,11 +901,11 @@ void RunStrategyContextPlaceLimitOrderWriteBenchmark(
 
   for (auto _ : state) {
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
-    const strategy::OrderPlaceResult result =
+    const core::OrderPlaceResult result =
         context.PlaceLimitOrder(MakeGateLimitRequest());
     const std::uint64_t elapsed_ns =
         websocket::benchmarking::NowNs() - start_ns;
-    if (result.status != strategy::OrderPlaceStatus::kOk) {
+    if (result.status != core::OrderPlaceStatus::kOk) {
       state.SkipWithError("strategy place limit order failed");
       return;
     }
@@ -972,7 +971,7 @@ void BM_OrderSessionPlaceStrategyOrderToCountingTransport(
   std::uint64_t strategy_order_id = 1;
 
   for (auto _ : state) {
-    const strategy::StrategyOrder order =
+    const core::StrategyOrder order =
         MakeStrategyPlaceOrder(strategy_order_id++);
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();

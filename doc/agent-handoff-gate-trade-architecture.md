@@ -525,9 +525,9 @@ p99 / p999 解读规则：
 当前已落地文件：
 
 ```text
-core/strategy/order_types.h
+core/trading/order_types.h
 core/trading/order_pool.h
-core/strategy/order_manager.h
+core/trading/order_manager.h
 test/core/trading/order_pool_test.cpp
 test/strategy/strategy_test.cpp
 benchmark/core/trading/order_pool_benchmark.cpp
@@ -537,7 +537,7 @@ scripts/gate/run_futures_order_smoke.py
 scripts/gate/run_futures_order_smoke_test.py
 ```
 
-旧 `strategy/order_types.h` / `strategy/order_manager.h` 仅保留为 forwarding compatibility header，新实现入口以 `core/strategy/` 为准。
+旧 `core/strategy/*` 与 `strategy/order_types.h` / `strategy/order_manager.h` 兼容头已删除，新实现入口以 `core/trading/` 和 `aquila::core` 为准。
 
 第一版未覆盖：
 
@@ -557,15 +557,15 @@ config/strategies/demo_strategy.toml
 config/strategies/demo.toml
 core/config/strategy_config.h
 core/config/strategy_config.cpp
-core/strategy/strategy_context.h
-core/strategy/trading_runtime.h
-tools/gate/trading_runtime_adapter.h
+core/trading/strategy_context.h
+core/trading/trading_runtime.h
+exchange/gate/trading/order_session_runtime_adapter.h
 tools/gate/demo_strategy.h
 tools/gate/demo_strategy.cpp
 test/config/strategy_config_test.cpp
-test/core/strategy/strategy_context_test.cpp
-test/core/strategy/trading_runtime_test.cpp
-test/tools/gate/trading_runtime_adapter_test.cpp
+test/core/trading/strategy_context_test.cpp
+test/core/trading/trading_runtime_test.cpp
+test/exchange/gate/trading/order_session_runtime_adapter_test.cpp
 test/tools/gate/demo_strategy_test.cpp
 ```
 
@@ -577,7 +577,7 @@ test/tools/gate/demo_strategy_test.cpp
 4. `Run()` 对支持 `SetRuntimeHook()` 的 order session 使用同线程 hook mode：Gate WebSocket active spin loop 每轮先调用 runtime hook，runtime 轮询 order response 和 feedback reader，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；`Ready() == false` 不阻塞 order response / feedback drain。如果 `OrderSessionT::Running()` 变 false，runtime 返回失败，避免 private session 启动失败后空转。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
 5. strategy 事件入口包括行情、order response、private feedback 和 loop lifecycle：`OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()` 都是可选 hook。
 6. `OnOrderResponse()` 和 `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 strategy hook；因此 hook 内通过 `context.FindOrder(local_order_id)` 看到的是已更新后的订单状态。
-7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `tools/gate/trading_runtime_adapter.h` 和 tool 层。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；转换成 strategy event 前会记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash`。place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
+7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `exchange/gate/trading/order_session_runtime_adapter.h`，namespace 为 `aquila::gate`。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；转换成 core event 前会记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash`。place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
 8. `demo` 策略行为：按 Gate BTC_USDT 行情 ask price 下 1 手 buy limit，等待 `wait_seconds`，buy filled 后发 `price=0` / IOC / reduce-only sell 平仓，否则撤单；循环 `rounds` 次后 `ShouldStop()`。一轮 terminal 前不再开下一单；当前只做 dry-run / unit test，未做实盘。
 
 当前完整组装链路：
@@ -593,7 +593,7 @@ DataReader --> TradingRuntime --> Strategy
               OrderManager
                     |
                     v
-        GateOrderSessionAdapter
+        OrderSessionRuntimeAdapter
                     |
                     v
           Gate OrderSession <---- Gate WS order response

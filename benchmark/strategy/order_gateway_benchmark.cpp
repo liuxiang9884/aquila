@@ -8,10 +8,10 @@
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
 #include "core/common/types.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/order_types.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/order_types.h"
 
-namespace aquila::strategy {
+namespace aquila::core {
 namespace {
 
 constexpr std::int64_t kLocalOrderId = 12345;
@@ -184,4 +184,4 @@ BENCHMARK(BM_OrderManagerPlaceLimitOrderLatency)
 BENCHMARK(BM_OrderManagerCancelAcceptedOrder);
 
 }  // namespace
-}  // namespace aquila::strategy
+}  // namespace aquila::core

@@ -19,9 +19,9 @@
 
 #include "core/common/types.h"
 #include "core/config/order_feedback_shm_config.h"
-#include "core/strategy/order_manager.h"
-#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_shm.h"
+#include "core/trading/order_manager.h"
+#include "core/trading/order_types.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
@@ -31,7 +31,7 @@ namespace {
 
 namespace gate = aquila::gate;
 namespace gate_order_tool = aquila::tools::gate_strategy_order;
-namespace strategy = aquila::strategy;
+namespace core = aquila::core;
 
 constexpr std::int64_t kMaxOrderSize = 5;
 
@@ -119,26 +119,25 @@ aquila::TimeInForce ParseTimeInForce(std::string_view tif) {
   return aquila::TimeInForce::kGoodTillCancel;
 }
 
-strategy::OrderResponseKind ToStrategyKind(gate::OrderResponseKind kind) {
+core::OrderResponseKind ToCoreKind(gate::OrderResponseKind kind) {
   switch (kind) {
     case gate::OrderResponseKind::kAck:
-      return strategy::OrderResponseKind::kAck;
+      return core::OrderResponseKind::kAck;
     case gate::OrderResponseKind::kAccepted:
-      return strategy::OrderResponseKind::kAccepted;
+      return core::OrderResponseKind::kAccepted;
     case gate::OrderResponseKind::kRejected:
-      return strategy::OrderResponseKind::kRejected;
+      return core::OrderResponseKind::kRejected;
     case gate::OrderResponseKind::kCancelAccepted:
-      return strategy::OrderResponseKind::kCancelAccepted;
+      return core::OrderResponseKind::kCancelAccepted;
     case gate::OrderResponseKind::kCancelRejected:
-      return strategy::OrderResponseKind::kCancelRejected;
+      return core::OrderResponseKind::kCancelRejected;
   }
-  return strategy::OrderResponseKind::kRejected;
+  return core::OrderResponseKind::kRejected;
 }
 
-strategy::OrderResponseEvent ToStrategyEvent(
-    const gate::OrderResponse& response) {
-  return strategy::OrderResponseEvent{
-      .kind = ToStrategyKind(response.kind),
+core::OrderResponseEvent ToCoreEvent(const gate::OrderResponse& response) {
+  return core::OrderResponseEvent{
+      .kind = ToCoreKind(response.kind),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
   };
@@ -233,8 +232,8 @@ bool PrepareOrder(const CliOptions& options, PreparedOrder* output) {
   return true;
 }
 
-strategy::OrderCreateRequest BuildCreateRequest(const PreparedOrder& order) {
-  return strategy::OrderCreateRequest{
+core::OrderCreateRequest BuildCreateRequest(const PreparedOrder& order) {
+  return core::OrderCreateRequest{
       .exchange = aquila::Exchange::kGate,
       .symbol_id = order.symbol_id,
       .symbol = order.contract,
@@ -268,9 +267,9 @@ struct ToolResponseHandler {
 template <typename SessionT>
 struct RunContext {
   SessionT* session{nullptr};
-  strategy::OrderManager<SessionT>* order_manager{nullptr};
+  core::OrderManager<SessionT>* order_manager{nullptr};
   aquila::OrderFeedbackShmReader* feedback_reader{nullptr};
-  strategy::OrderCreateRequest request{};
+  core::OrderCreateRequest request{};
   bool keep_open{false};
   bool wait_feedback_terminal{false};
   std::size_t feedback_poll_budget{32};
@@ -302,13 +301,13 @@ struct RunContext {
       if (submitted) {
         return;
       }
-      const strategy::OrderPlaceResult placed =
+      const core::OrderPlaceResult placed =
           order_manager->PlaceLimitOrder(request);
       fmt::print("place status={} local_order_id={}\n",
                  magic_enum::enum_name(placed.status), placed.local_order_id);
       NOVA_INFO("place status={} local_order_id={}",
                 magic_enum::enum_name(placed.status), placed.local_order_id);
-      if (placed.status != strategy::OrderPlaceStatus::kOk) {
+      if (placed.status != core::OrderPlaceStatus::kOk) {
         exit_code = 1;
         finish = true;
       } else {
@@ -332,7 +331,7 @@ struct RunContext {
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
       responses.push_back(response);
-      order_manager->OnOrderResponse(ToStrategyEvent(response));
+      order_manager->OnOrderResponse(ToCoreEvent(response));
       switch (response.kind) {
         case gate::OrderResponseKind::kAck:
           break;
@@ -387,7 +386,7 @@ struct RunContext {
     bool finish = false;
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
-      const strategy::OrderCancelResult cancelled =
+      const core::OrderCancelResult cancelled =
           order_manager->CancelOrder(order_id);
       fmt::print("cancel status={} local_order_id={}\n",
                  magic_enum::enum_name(cancelled.status),
@@ -395,7 +394,7 @@ struct RunContext {
       NOVA_INFO("cancel status={} local_order_id={}",
                 magic_enum::enum_name(cancelled.status),
                 cancelled.local_order_id);
-      if (cancelled.status != strategy::OrderCancelStatus::kOk) {
+      if (cancelled.status != core::OrderCancelStatus::kOk) {
         exit_code = 1;
         finish = true;
       } else {
@@ -430,13 +429,13 @@ struct RunContext {
     bool finish_after_feedback = false;
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
-      if (const strategy::StrategyOrder* order =
+      if (const core::StrategyOrder* order =
               order_manager->FindOrder(event.local_order_id);
           order != nullptr) {
         status_before = magic_enum::enum_name(order->status);
       }
       order_manager->OnOrderFeedback(event);
-      if (const strategy::StrategyOrder* order =
+      if (const core::StrategyOrder* order =
               order_manager->FindOrder(event.local_order_id);
           order != nullptr) {
         status_after = magic_enum::enum_name(order->status);
@@ -557,7 +556,7 @@ int RunLive(gate::OrderSessionConfig config, gate::LoginCredentials credentials,
 
   Session session(std::move(config.connection), std::move(credentials), handler,
                   config.request_map_capacity);
-  strategy::OrderManager<Session> order_manager(
+  core::OrderManager<Session> order_manager(
       session, options.order_capacity,
       static_cast<std::uint8_t>(options.strategy_id));
   RunContext<Session> context;

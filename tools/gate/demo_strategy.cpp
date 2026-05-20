@@ -12,17 +12,16 @@
 
 #include "core/config/data_reader_config.h"
 #include "core/config/strategy_config.h"
-#include "core/strategy/trading_runtime.h"
+#include "core/trading/trading_runtime.h"
 #include "exchange/gate/trading/order_session_config.h"
+#include "exchange/gate/trading/order_session_runtime_adapter.h"
 #include "nova/utils/log.h"
-#include "tools/gate/trading_runtime_adapter.h"
 
 namespace {
 
 namespace demo = aquila::tools::gate_demo_strategy;
 namespace gate = aquila::gate;
-namespace gate_runtime = aquila::tools::gate_trading_runtime;
-namespace strategy = aquila::strategy;
+namespace core = aquila::core;
 
 struct CliOptions {
   std::filesystem::path config_path{"config/strategies/demo_strategy.toml"};
@@ -207,9 +206,9 @@ gate::LoginCredentials LoadCredentials(const CliOptions& options,
 template <typename WebSocketPolicy>
 int RunRuntime(LoadedConfig loaded, gate::LoginCredentials credentials) {
   using OrderSession =
-      gate_runtime::GateOrderSessionAdapter<WebSocketPolicy,
-                                            gate::OrderSessionDiagnostics>;
-  using Runtime = strategy::TradingRuntime<demo::DemoStrategy, OrderSession>;
+      gate::OrderSessionRuntimeAdapter<WebSocketPolicy,
+                                       gate::OrderSessionDiagnostics>;
+  using Runtime = core::TradingRuntime<demo::DemoStrategy, OrderSession>;
 
   gate::OrderSessionConfig order_session_config =
       std::move(loaded.order_session);

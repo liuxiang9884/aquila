@@ -12,9 +12,9 @@
 #include "core/config/strategy_config.h"
 #include "core/market_data/historical_data_reader.h"
 #include "core/market_data/types.h"
-#include "core/strategy/order_types.h"
-#include "core/strategy/trading_runtime.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_types.h"
+#include "core/trading/trading_runtime.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/signal.h"
@@ -26,7 +26,7 @@ namespace {
 namespace config = aquila::config;
 namespace leadlag = aquila::strategy::leadlag;
 namespace market_data = aquila::market_data;
-namespace strategy = aquila::strategy;
+namespace core = aquila::core;
 namespace tools_lead_lag = aquila::tools::lead_lag;
 
 struct CliOptions {
@@ -74,11 +74,11 @@ struct NullOrderSession {
     return true;
   }
 
-  SendResult PlaceOrder(strategy::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(core::StrategyOrder&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(strategy::StrategyOrder&) noexcept {
+  SendResult CancelOrder(core::StrategyOrder&) noexcept {
     return {};
   }
 };
@@ -117,7 +117,7 @@ class ReplayStrategy {
   }
 
   template <typename ContextT>
-  void OnOrderResponse(const strategy::OrderResponseEvent& event,
+  void OnOrderResponse(const core::OrderResponseEvent& event,
                        ContextT& context) noexcept {
     inner_.OnOrderResponse(event, context);
   }
@@ -262,8 +262,8 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
 int RunReplay(LoadedConfig loaded, const CliOptions& options) {
   using HistoricalReader = market_data::HistoricalDataReader<
       market_data::HistoricalDataReaderDiagnostics>;
-  using Runtime = strategy::TradingRuntime<ReplayStrategy, NullOrderSession,
-                                           HistoricalReader>;
+  using Runtime =
+      core::TradingRuntime<ReplayStrategy, NullOrderSession, HistoricalReader>;
 
   ReplayStats stats;
   tools_lead_lag::SignalCsvWriter signal_writer;

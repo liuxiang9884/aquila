@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "core/strategy/order_types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_types.h"
 #include "strategy/lead_lag/config.h"
 
 namespace aquila::strategy::leadlag {
@@ -108,7 +108,7 @@ class ExecutionState {
   }
 
   [[nodiscard]] ExecutionApplyResult ApplyTerminalOrder(
-      const strategy::StrategyOrder& order,
+      const core::StrategyOrder& order,
       const InstrumentMetadata& instrument) noexcept {
     if (!order.is_finished) {
       return ExecutionApplyResult::kIgnoredNonTerminal;
@@ -211,7 +211,7 @@ class ExecutionState {
   friend class SignalEngine;
 
   [[nodiscard]] static std::int64_t SignedFilledQuantity(
-      const strategy::StrategyOrder& order,
+      const core::StrategyOrder& order,
       const InstrumentMetadata& instrument) noexcept {
     const std::int64_t filled =
         NormalizeFilledQuantity(order.cumulative_filled_quantity, instrument);

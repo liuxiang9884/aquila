@@ -64,7 +64,7 @@ DataReader --> TradingRuntime --> Strategy
               OrderManager
                     |
                     v
-        GateOrderSessionAdapter
+        OrderSessionRuntimeAdapter
                     |
                     v
           Gate OrderSession <---- Gate WS order response
@@ -80,8 +80,8 @@ Gate private feedback WS
   -> Strategy
 ```
 
-`GateOrderSessionAdapter` 只做 exchange-specific session 到 core runtime 的 glue：`Ready()` / `PlaceOrder()` /
-`CancelOrder()` 转发、Gate response kind 到 strategy response kind 的转换，以及 `BindRuntime()` /
+`OrderSessionRuntimeAdapter` 只做 exchange-specific session 到 core runtime 的 glue：`Ready()` / `PlaceOrder()` /
+`CancelOrder()` 转发、Gate response kind 到 core response kind 的转换，以及 `BindRuntime()` /
 `SetRuntimeHook()` 接线。它不应承载订单状态机、策略决策或长期错误字段搬运。
 
 ## DataReader 架构
@@ -717,7 +717,7 @@ core/market_data/historical_data_reader.h
 core/market_data/data_reader_concepts.h
   - 已提供 PollDataReaderLike、DrainCapableDataReader、DataReaderLike 和 FiniteDataReader concept。
 
-core/strategy/trading_runtime.h
+core/trading/trading_runtime.h
   - 已在 Create() 中保存 data_reader.max_events_per_source 作为外层 data reader poll budget。
   - PollDataReader() 只对同时满足 FiniteDataReader 和 DrainCapableDataReader 的 replay / finite reader 使用 reader.Drain(runtime, budget)。
   - live reader 即使提供 Drain() helper，只要不显式声明 kFiniteDataReader，runtime 仍调用 reader.Poll(runtime)。

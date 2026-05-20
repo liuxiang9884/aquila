@@ -62,8 +62,8 @@ OrderFeedbackShmReader(optional)
 
 主要 adapter / 适配边界：
 
-- `tools/gate/trading_runtime_adapter.h` 是 Gate-specific runtime adapter，把 Gate `OrderSession` 包装成
-  `TradingRuntime` 可用的 `OrderSessionT`，负责 Gate response kind 到 strategy response kind 的转换、
+- `exchange/gate/trading/order_session_runtime_adapter.h` 是 Gate-specific runtime adapter，把 Gate `OrderSession` 包装成
+  `TradingRuntime` 可用的 `OrderSessionT`，负责 Gate response kind 到 core response kind 的转换、
   `BindRuntime()` 回调接线和 `SetRuntimeHook()` 转发。
 - `StrategyContext<OrderSessionT>` 是 strategy 到 `OrderManager` 的窄下单接口；strategy 不直接拿
   `OrderManager` 或 exchange session。
@@ -89,7 +89,7 @@ DataReader --> TradingRuntime --> Strategy
               OrderManager
                     |
                     v
-        GateOrderSessionAdapter
+        OrderSessionRuntimeAdapter
                     |
                     v
           Gate OrderSession <---- Gate WS order response
