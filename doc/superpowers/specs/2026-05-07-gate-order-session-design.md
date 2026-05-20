@@ -282,12 +282,18 @@ parser 保留 full profile 以兼容测试、benchmark 和诊断中使用的 req
 
 ## Session 状态
 
-`OrderSession` 至少需要区分：
+`OrderSession` 内部可以区分 websocket active、login request sent、login ready、disconnected 等阶段，但这些不是
+组件间业务契约。对外只暴露一个交易可用性信号：
 
-- websocket active；
-- login request sent；
-- login ready；
-- disconnected。
+```cpp
+bool Ready() const noexcept;
+```
+
+语义：
+
+- `Ready() == true` 表示调用方可以尝试发送 place / cancel。
+- `Ready() == false` 表示调用方不应发起新的上行交易指令。
+- 外部不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；内部具体原因只进入 diagnostics / log。
 
 第一版规则：
 
@@ -295,7 +301,8 @@ parser 保留 full profile 以兼容测试、benchmark 和诊断中使用的 req
 - websocket inactive 时返回 `kNotActive`；
 - disconnect 后清空 request correlation；
 - reconnect 后重新 login；
-- 不在断线时主动构造 rejected/cancelled response。
+- 不在断线时主动构造 rejected/cancelled response；
+- disconnect / not ready 不产生 `OrderFeedbackEvent::kGap`，也不直接改变订单生命周期状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
 
 ## 测试边界
 

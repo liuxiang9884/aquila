@@ -466,7 +466,8 @@ OrderSession 第一版关键结论：
 - place `ack=true` 只表示 Gate 收到请求，不建立交易所 order id 映射，也不清理 correlation。
 - ack/result 成功形态必须是 HTTP 200；place final result 才在 `OrderSession` 内建立本地订单和交易所订单的匹配信息，并清理 correlation。
 - cancel 优先使用 `OrderSession` 内部缓存的 exchange order id 编码；没有缓存时 fallback 到本地 `text="t-<local_order_id>"`。该缓存最多保留 `request_map_capacity` 条，可通过 `forget_exchange_order_id_for_local_order()` 显式清理。cancel response 使用 encoded request id 做主 correlation；如果 result 携带 `text`，必须匹配本地 id；仅 exchange-id 的进一步原始 cancel id 校验属于后续增强设计。
-- 断线时清空 correlation，不构造假的 rejected/cancelled response；`OrderManager` / 策略后续通过 state/reconcile 处理未知状态。
+- `Ready()` 是 `OrderSession` 对外唯一交易可用性信号：`true` 表示可以尝试发送 place / cancel，`false` 表示不应发起新的上行交易指令；外部不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in，具体原因只进入 diagnostics / log。
+- 断线时清空 correlation，不构造假的 rejected/cancelled response，不产生 `OrderFeedbackEvent::kGap`，也不直接改变订单状态；`OrderManager` / 策略后续通过 feedback 或 REST reconcile 处理未知状态。
 
 Order feedback Task1 / Task2 关键结论：
 
@@ -514,7 +515,7 @@ Order feedback Task1 / Task2 关键结论：
 - `DataReader` 是 Strategy 侧行情 reader，只读取统一 `BookTicker`，不解析交易所协议。
 - `Strategy` 保存策略级 execution group 和自己关心的 `local_order_id`，通过窄 context 下单 / 撤单 / 查询订单，不复制通用订单状态机。
 - `OrderManager` 是订单状态 owner，统一创建本地订单、分配 `local_order_id`、调用 `OrderSession` 发单 / 撤单，并消费 ack / response / feedback 推进订单状态。
-- `OrderSession` 是上行交易指令通道，只负责 place / cancel 编码、发送、ack / response 解析和轻量 correlation，不管理完整订单生命周期。
+- `OrderSession` 是上行交易指令通道，只负责 place / cancel 编码、发送、ack / response 解析和轻量 correlation，不管理完整订单生命周期；对外只通过 `Ready()` 表达交易可用性，不暴露内部连接阶段作为业务分支。
 - `OrderFeedbackSession` 是下行私有订单事实通道，只负责解析 exchange feedback 并发布统一 `OrderFeedbackEvent`；跨进程生产模型通过 order feedback SHM 进入 StrategyThread。
 - 事件顺序固定为：`OrderSession` ack / response 和 `OrderFeedbackSession` feedback 都先进入 `OrderManager`，再通知 `Strategy`。后续 position book、REST reconcile 和 account / position feedback 仍待单独设计。
 

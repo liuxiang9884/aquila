@@ -239,6 +239,13 @@ void Stop() noexcept;
 bool Ready() const noexcept;
 ```
 
+`Ready()` 是 `OrderSession` 对外唯一交易可用性信号：
+
+- `Ready() == true` 表示调用方可以尝试发送 place / cancel。
+- `Ready() == false` 表示调用方不应发起新的上行交易指令。
+- 外部组件不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；这些原因只进入 `OrderSession` 内部 diagnostics / log。
+- 断线或 not ready 不产生 `OrderFeedbackEvent::kGap`，也不直接修改订单生命周期状态。
+
 发送入口：
 
 ```cpp

@@ -857,8 +857,11 @@ capacity 边界恢复。
 
 - 负责下单、撤单、接收 ack / response。
 - 不创建订单对象，不管理完整订单生命周期。
+- 对外只暴露 `Ready()` 作为交易可用性信号；`Ready() == true` 表示可以尝试发送 place / cancel，`Ready() == false` 表示不应发起新的上行交易指令。
+- 外部不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；内部具体原因只进入 `OrderSession` diagnostics / log。
 - ack / response 输出后，组合层应先调用 `OrderManager::OnOrderResponse()`，再调用 `Strategy::OnOrderResponse()`。
 - ack 只表示交易所接口收到请求，不代表订单已经进入订单簿。
+- 断线 / not ready 不产生 `OrderFeedbackEvent::kGap`，也不直接改变订单状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
 
 ## OrderFeedbackSession 架构占位
 
