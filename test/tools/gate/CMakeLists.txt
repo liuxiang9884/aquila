@@ -37,6 +37,8 @@ target_compile_definitions(gate_trading_runtime_adapter_test
 target_link_libraries(gate_trading_runtime_adapter_test
     PRIVATE
         aquila_gate
+        magic_enum::magic_enum
+        nova
         GTest::gtest_main
 )
 

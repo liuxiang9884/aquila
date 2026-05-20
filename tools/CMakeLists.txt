@@ -74,6 +74,7 @@ target_link_libraries(gate_demo_strategy
         aquila_strategy
         CLI11::CLI11
         fmt::fmt-header-only
+        magic_enum::magic_enum
         nova
 )
 

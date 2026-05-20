@@ -492,6 +492,8 @@ Order feedback Task1 / Task2 关键结论：
 - `OrderManager` 负责订单对象生命周期、订单状态、place/cancel 执行流程和后续风控 / symbol metadata 接入位置。
 - `OrderManager` 不缓存 Gate wire fields，也不暴露 `PrepareOrder()` / `SubmitOrder()`；`PlaceLimitOrder()` 创建订单后立即调用 session。
 - Gate `OrderSession` 边界不扩大：仍只做 WS login、place/cancel 编码发送、`request_sequence -> local_order_id` correlation 和轻量 `OrderResponse` 回调。
+- strategy 层 `OrderResponseEvent` 只包含 `kind`、`local_order_id` 和 `exchange_order_id`；`error_label_hash` 保留在 Gate/tool
+  诊断日志中，下游只按 `OrderResponseKind` 处理错误分支。
 - 当前已有 private `futures.orders` feedback apply；仍没有 REST reconcile、batch/amend/cancel-all、account / position feedback 或断线后未知订单状态恢复。
 - `benchmark/strategy/order_gateway_benchmark.cpp` 只使用 fake order session，作为 `OrderManager` direct-send 本机 smoke baseline；它不包含真实 `OrderSession` request encoding、WebSocket frame、TLS/plain socket 或交易所响应成本，不能写成端到端性能结论。
 
@@ -503,7 +505,7 @@ Order feedback Task1 / Task2 关键结论：
 - `core/config/strategy_config.h` 解析 strategy id、mode、order capacity、data reader config、order session config 和 feedback reader 参数；`strategy_id` 范围复用 order feedback SHM lane count。
 - `StrategyContext<OrderSessionT>` 是 strategy 的下单接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`。
 - `TradingRuntime::Create()` 接收已解析的 `StrategyConfig` / `DataReaderConfig` 和 order session factory，构造 `DataReader`、`OrderSession`、`OrderManager`、`StrategyContext`、strategy 和可选 `OrderFeedbackShmReader`。
-- `Run()` 在支持 `SetRuntimeHook()` 的 order session 上使用同线程 hook mode：Gate WebSocket active spin loop 每轮先驱动 runtime hook，runtime 轮询 feedback SHM，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；`OrderResponse` 由 Gate response handler 通过 `BindRuntime()` 同线程直接进入 `OnOrderResponse()`。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
+- `Run()` 在支持 `SetRuntimeHook()` 的 order session 上使用同线程 hook mode：Gate WebSocket active spin loop 每轮先驱动 runtime hook，runtime 轮询 feedback SHM，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；`OrderResponse` 由 Gate response handler 通过 `BindRuntime()` 同线程直接进入 `OnOrderResponse()`。`Ready() == false` 只 gate data reader / 行情驱动交易意图，不阻塞 order response 或 feedback drain。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
 - data reader 调用规则：live reader 不声明 `kFiniteDataReader`，runtime 每轮调用 `Poll(runtime)`；replay / finite reader 显式满足 `FiniteDataReader`，runtime 使用 `Drain(runtime, data_reader.max_events_per_source)`；不支持 `Drain()` 的兼容 reader 仍可走 `Poll()` fallback。
 - strategy 可实现 `OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()`。`OnOrderResponse()` / `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 strategy hook。
 - Gate-specific 构造留在 `tools/gate/trading_runtime_adapter.h` 和 tool 层，core runtime 不 include `exchange/`；Gate adapter 不创建后台线程、不维护 command queue，place/cancel 在 StrategyThread / Gate session 同线程直接调用。

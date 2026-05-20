@@ -6,11 +6,14 @@
 #include <memory>
 #include <utility>
 
+#include <magic_enum/magic_enum.hpp>
+
 #include "core/strategy/order_types.h"
 #include "core/websocket/types.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "exchange/gate/trading/order_types.h"
+#include "nova/utils/log.h"
 
 namespace aquila::tools::gate_trading_runtime {
 
@@ -37,11 +40,76 @@ namespace aquila::tools::gate_trading_runtime {
       .kind = ToStrategyOrderResponseKind(response.kind),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
-      .error_label_hash = response.error_label_hash,
   };
 }
 
 namespace detail {
+
+[[nodiscard]] inline bool IsGateErrorResponse(
+    gate::OrderResponseKind kind) noexcept {
+  return kind == gate::OrderResponseKind::kRejected ||
+         kind == gate::OrderResponseKind::kCancelRejected;
+}
+
+#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+struct GateErrorResponseLogRecordForTest {
+  gate::OrderResponseKind kind{gate::OrderResponseKind::kRejected};
+  std::uint64_t local_order_id{0};
+  std::uint64_t exchange_order_id{0};
+  std::uint64_t request_sequence{0};
+  std::uint16_t http_status{0};
+  std::uint64_t error_label_hash{0};
+};
+
+using GateErrorResponseLogObserverForTest =
+    void (*)(const GateErrorResponseLogRecordForTest& record) noexcept;
+
+[[nodiscard]] inline GateErrorResponseLogObserverForTest&
+GateErrorResponseLogObserverSlotForTest() noexcept {
+  static GateErrorResponseLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+inline void SetGateErrorResponseLogObserverForTest(
+    GateErrorResponseLogObserverForTest observer) noexcept {
+  GateErrorResponseLogObserverSlotForTest() = observer;
+}
+
+inline void NotifyGateErrorResponseLogObserverForTest(
+    const gate::OrderResponse& response) noexcept {
+  GateErrorResponseLogObserverForTest observer =
+      GateErrorResponseLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(GateErrorResponseLogRecordForTest{
+      .kind = response.kind,
+      .local_order_id = response.local_order_id,
+      .exchange_order_id = response.exchange_order_id,
+      .request_sequence = response.request_sequence,
+      .http_status = response.http_status,
+      .error_label_hash = response.error_label_hash,
+  });
+}
+#endif
+
+inline void LogGateErrorResponse(const gate::OrderResponse& response) noexcept {
+  if (!IsGateErrorResponse(response.kind)) {
+    return;
+  }
+  if (::nova::kLogManager.logger() != nullptr) {
+    NOVA_WARNING(
+        "gate_order_response_error kind={} local_order_id={} "
+        "exchange_order_id={} request_sequence={} http_status={} "
+        "error_label_hash={}",
+        magic_enum::enum_name(response.kind), response.local_order_id,
+        response.exchange_order_id, response.request_sequence,
+        response.http_status, response.error_label_hash);
+  }
+#if defined(AQUILA_GATE_TRADING_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
+  NotifyGateErrorResponseLogObserverForTest(response);
+#endif
+}
 
 class GateOrderSessionResponseHandler {
  public:
@@ -60,6 +128,7 @@ class GateOrderSessionResponseHandler {
     runtime_context_ = &runtime;
     runtime_dispatch_ = [](void* context,
                            const gate::OrderResponse& response) noexcept {
+      LogGateErrorResponse(response);
       static_cast<RuntimeT*>(context)->OnOrderResponse(
           ToStrategyOrderResponseEvent(response));
     };

@@ -80,13 +80,13 @@ class OrderManager {
         OnAccepted(*order, event);
         break;
       case OrderResponseKind::kRejected:
-        OnRejected(*order, event);
+        OnRejected(*order);
         break;
       case OrderResponseKind::kCancelAccepted:
         OnCancelAccepted(*order, event);
         break;
       case OrderResponseKind::kCancelRejected:
-        OnCancelRejected(*order, event);
+        OnCancelRejected(*order);
         break;
     }
   }
@@ -205,11 +205,10 @@ class OrderManager {
     }
   }
 
-  void OnRejected(Order& order, const OrderResponseEvent& event) noexcept {
+  void OnRejected(Order& order) noexcept {
     if (order.status == OrderStatus::kSent) {
       order.status = OrderStatus::kRejected;
       order.is_finished = true;
-      order.error_label_hash = event.error_label_hash;
     }
   }
 
@@ -220,11 +219,9 @@ class OrderManager {
     order.status = OrderStatus::kCancelled;
   }
 
-  void OnCancelRejected(Order& order,
-                        const OrderResponseEvent& event) noexcept {
+  void OnCancelRejected(Order& order) noexcept {
     if (order.status == OrderStatus::kCancelSent) {
       order.status = OrderStatus::kRejected;
-      order.error_label_hash = event.error_label_hash;
     }
   }
 

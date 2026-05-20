@@ -75,7 +75,6 @@ struct StrategyOrder {
   OrderRole role{OrderRole::kNone};
   OrderRejectReason reject_reason{OrderRejectReason::kUnknown};
   bool is_finished{false};
-  std::uint64_t error_label_hash{0};
 
   [[nodiscard]] double AverageFillPrice() const noexcept {
     if (cumulative_filled_quantity <= 0) {
@@ -107,7 +106,6 @@ struct OrderResponseEvent {
   OrderResponseKind kind{OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
-  std::uint64_t error_label_hash{0};
 };
 
 }  // namespace aquila::strategy

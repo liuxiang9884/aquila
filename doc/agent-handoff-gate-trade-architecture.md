@@ -455,7 +455,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 1. `RequestIdCodec` 使用高 8 bits 表示 request type、低 56 bits 表示 sequence；`OrderTextCodec` 只接受 `t-<positive local_order_id>`。
 2. login request 使用 Gate WS API 要求的 HMAC-SHA512 lowercase hex signature，签名字符串为 `api\n{channel}\n{request_param}\n{timestamp}`。
 3. place/cancel request encoder 使用固定栈缓冲区和 `fmt::format_to_n`，编码失败返回本地失败，不发送截断 JSON。
-4. submit response parser 已保留 full profile 的原 hash 字段，并新增 decoded root `request_id`、decoded ack `req_id`、channel、local order id 和 exchange order id；`OrderSession` 使用 no-hash profile，成功路径跳过 request id / req_id / text hash，错误路径仍保留 `error_label_hash`。
+4. submit response parser 已保留 full profile 的原 hash 字段，并新增 decoded root `request_id`、decoded ack `req_id`、channel、local order id 和 exchange order id；`OrderSession` 使用 no-hash profile，成功路径跳过 request id / req_id / text hash，错误路径仍保留 `error_label_hash`，但 strategy 层 `OrderResponseEvent` 不携带该字段，错误详情只在 Gate / tool 日志定位。
 5. `OrderSession` active 后发送 login，login result 必须匹配 request sequence、`futures.login` channel、HTTP 200、result kind 和非零 `uid` 才置为 ready。
 6. place/cancel 发送前要求本地 `local_order_id > 0`；本地 id 非法时返回 `kInvalidLocalOrderId`，不消耗 request sequence，也不写 WebSocket。
 7. place/cancel `ack=true` 只做接收确认和同步回调，不清理 correlation；ack/result 成功形态必须是 HTTP 200，非 200 的 result 视为 malformed 并保留 inflight。
@@ -574,10 +574,10 @@ test/tools/gate/demo_strategy_test.cpp
 1. `[strategy]` 配置表示一个策略实例的 runtime 接入配置：`name` 同时作为 strategy config section name，`config` 指向 strategy config 文件；`data_reader.config`、`order_session.config` 和 feedback SHM reader 参数都在该 section 下。
 2. `StrategyContext<OrderSessionT>` 是 strategy 的窄接口，只暴露 `PlaceLimitOrder()`、`CancelOrder()` 和 `FindOrder()`，不暴露 `OrderManager` 或 `OrderSession` 内部对象。
 3. `TradingRuntime<StrategyT, OrderSessionT, DataReaderT>` 已实现生产 `Create()` 和 `Run()`：从已解析 `StrategyConfig` / `DataReaderConfig` 构造 `DataReader`、order session、`OrderManager`、context、strategy 和可选 feedback reader。
-4. `Run()` 对支持 `SetRuntimeHook()` 的 order session 使用同线程 hook mode：Gate WebSocket active spin loop 每轮先调用 runtime hook，runtime 轮询 feedback reader，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；如果 `OrderSessionT::Running()` 变 false，runtime 返回失败，避免 private session 启动失败后空转。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
+4. `Run()` 对支持 `SetRuntimeHook()` 的 order session 使用同线程 hook mode：Gate WebSocket active spin loop 每轮先调用 runtime hook，runtime 轮询 order response 和 feedback reader，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader；`Ready() == false` 不阻塞 order response / feedback drain。如果 `OrderSessionT::Running()` 变 false，runtime 返回失败，避免 private session 启动失败后空转。兼容测试 session 仍可走旧的 `PollOrderResponses()` fallback。
 5. strategy 事件入口包括行情、order response、private feedback 和 loop lifecycle：`OnStart(ContextT&)`、`OnBookTicker(const BookTicker&, ContextT&)`、`OnOrderResponse(const OrderResponseEvent&, ContextT&)`、`OnOrderFeedback(const OrderFeedbackEvent&, ContextT&)`、`OnLoop(ContextT&)`、`OnIdle(ContextT&)`、`OnStop(ContextT&)` 和 `ShouldStop()` 都是可选 hook。
 6. `OnOrderResponse()` 和 `OnOrderFeedback()` 都先调用 `OrderManager` apply，再调用 strategy hook；因此 hook 内通过 `context.FindOrder(local_order_id)` 看到的是已更新后的订单状态。
-7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `tools/gate/trading_runtime_adapter.h` 和 tool 层。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
+7. core runtime 不 include `exchange/`；Gate-specific 构造放在 `tools/gate/trading_runtime_adapter.h` 和 tool 层。adapter 通过 `BindRuntime()` 让 Gate response handler 同线程直接调用 `TradingRuntime::OnOrderResponse()`；转换成 strategy event 前会记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash`。place/cancel 直接转发给同线程 Gate session，不创建后台线程、不维护 response queue 或 command queue。
 8. `demo` 策略行为：按 Gate BTC_USDT 行情 ask price 下 1 手 buy limit，等待 `wait_seconds`，buy filled 后发 `price=0` / IOC / reduce-only sell 平仓，否则撤单；循环 `rounds` 次后 `ShouldStop()`。一轮 terminal 前不再开下一单；当前只做 dry-run / unit test，未做实盘。
 
 ### 2026-05-08 OrderFeedback event 第一版设计

@@ -50,7 +50,11 @@ struct RuntimeLoopState {
   int stop_after_idle_calls{0};
   std::int64_t last_ticker_id{0};
   std::uint64_t last_data_drain_budget{0};
+  std::uint64_t placed_local_order_id{0};
+  OrderStatus observed_response_status{OrderStatus::kCreated};
   bool hook_stop_requested{false};
+  bool emit_start_runtime_response{true};
+  bool place_order_on_start{false};
   OrderResponseKind last_response_kind{OrderResponseKind::kAck};
   std::vector<BookTicker> book_tickers;
   std::vector<std::int64_t> handled_book_ticker_ids;
@@ -183,7 +187,8 @@ struct FakeHookOrderSession {
         return false;
       }
     }
-    if (runtime_response_callback != nullptr) {
+    if (runtime_response_callback != nullptr &&
+        (loop_state == nullptr || loop_state->emit_start_runtime_response)) {
       runtime_response_callback(bound_runtime,
                                 OrderResponseEvent{
                                     .kind = OrderResponseKind::kRejected,
@@ -530,8 +535,13 @@ struct HookLoopStrategy {
 
   explicit HookLoopStrategy(RuntimeLoopState* state) noexcept : state_(state) {}
 
-  void OnStart(ContextT&) noexcept {
+  void OnStart(ContextT& context) noexcept {
     ++state_->on_start_calls;
+    if (!state_->place_order_on_start) {
+      return;
+    }
+    const OrderPlaceResult placed = context.PlaceLimitOrder(MakeLimitRequest());
+    state_->placed_local_order_id = placed.local_order_id;
   }
 
   void OnIdle(ContextT&) noexcept {
@@ -552,6 +562,14 @@ struct HookLoopStrategy {
         state_->book_ticker_calls >= state_->stop_after_book_ticker_calls) {
       return true;
     }
+    if (state_->stop_after_response_calls > 0 &&
+        state_->response_calls >= state_->stop_after_response_calls) {
+      return true;
+    }
+    if (state_->stop_after_feedback_calls > 0 &&
+        state_->feedback_calls >= state_->stop_after_feedback_calls) {
+      return true;
+    }
     return state_->stop_immediately;
   }
 
@@ -560,12 +578,32 @@ struct HookLoopStrategy {
     state_->last_ticker_id = ticker.id;
   }
 
-  void OnOrderResponse(const OrderResponseEvent& event, ContextT&) noexcept {
+  void OnOrderResponse(const OrderResponseEvent& event,
+                       ContextT& context) noexcept {
     ++state_->response_calls;
     state_->last_response_kind = event.kind;
+    const StrategyOrder* order = context.FindOrder(event.local_order_id);
+    if (order != nullptr) {
+      state_->observed_response_status = order->status;
+    }
+  }
+
+  void OnOrderFeedback(const OrderFeedbackEvent&, ContextT&) noexcept {
+    ++state_->feedback_calls;
   }
 
  private:
+  static OrderCreateRequest MakeLimitRequest() noexcept {
+    return OrderCreateRequest{.exchange = Exchange::kGate,
+                              .symbol_id = 7,
+                              .symbol = "BTC_USDT",
+                              .side = OrderSide::kBuy,
+                              .time_in_force = TimeInForce::kGoodTillCancel,
+                              .quantity = 1,
+                              .price_text = "81000",
+                              .reduce_only = false};
+  }
+
   RuntimeLoopState* state_;
 };
 
@@ -863,6 +901,66 @@ TEST(TradingRuntimeTest,
   EXPECT_EQ(state.on_stop_calls, 1);
   EXPECT_GT(state.should_stop_calls, 0);
   EXPECT_EQ(state.response_calls, 2);
+  EXPECT_EQ(state.last_response_kind, OrderResponseKind::kAccepted);
+}
+
+TEST(TradingRuntimeTest,
+     HookModeDoesNotPollDataReaderBeforeOrderSessionReadyAndStillDrainsResponses) {
+  OrderFeedbackShmConfig shm_config{
+      .shm_name = "srt_hook_ready_fb_test",
+      .channel_name = "srt_hook_ready_fb_ch",
+      .create = true,
+      .remove_existing = true,
+  };
+  auto manager_result = OrderFeedbackShmManager::Create(shm_config);
+  ASSERT_TRUE(manager_result.ok) << manager_result.error;
+  OrderFeedbackShmPublisher publisher(manager_result.value.channel());
+  ASSERT_TRUE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kSessionDisconnected, 123456));
+
+  RuntimeLoopState state;
+  state.order_ready = false;
+  state.emit_start_runtime_response = false;
+  // Seed an existing order for response-order assertions; this is not a
+  // ready-gate order entry policy assertion.
+  state.place_order_on_start = true;
+  state.stop_after_feedback_calls = 1;
+  state.book_tickers.push_back(MakeBookTicker());
+  const std::uint64_t expected_local_order_id =
+      LocalOrderIdCodec::Encode(4, 1);
+  state.order_responses.push_back(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = expected_local_order_id,
+      .exchange_order_id = 36028827892199865U,
+  });
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = true;
+  config.feedback.shm_name = shm_config.shm_name;
+  config.feedback.channel_name = shm_config.channel_name;
+  config.feedback.poll_budget = 4;
+  config.feedback.force_claim = true;
+
+  auto runtime_result = HookLoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeHookOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  EXPECT_EQ(state.bind_runtime_calls, 1);
+  EXPECT_EQ(state.set_runtime_hook_calls, 1);
+  EXPECT_EQ(state.start_calls, 1);
+  EXPECT_EQ(state.stop_calls, 1);
+  EXPECT_EQ(state.runtime_hook_calls, 1);
+  EXPECT_EQ(state.order_response_poll_calls, 1);
+  EXPECT_EQ(state.response_calls, 1);
+  EXPECT_EQ(state.feedback_calls, 1);
+  EXPECT_EQ(state.data_poll_calls, 0);
+  EXPECT_EQ(state.book_ticker_calls, 0);
+  EXPECT_EQ(state.placed_local_order_id, expected_local_order_id);
+  EXPECT_EQ(state.observed_response_status, OrderStatus::kAccepted);
   EXPECT_EQ(state.last_response_kind, OrderResponseKind::kAccepted);
 }
 

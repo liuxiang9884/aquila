@@ -141,7 +141,6 @@ strategy::OrderResponseEvent ToStrategyEvent(
       .kind = ToStrategyKind(response.kind),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
-      .error_label_hash = response.error_label_hash,
   };
 }
 

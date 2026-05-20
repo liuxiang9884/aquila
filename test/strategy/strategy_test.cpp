@@ -12,6 +12,12 @@
 namespace aquila::strategy {
 namespace {
 
+template <typename T>
+concept HasErrorLabelHash = requires(T value) { value.error_label_hash; };
+
+static_assert(!HasErrorLabelHash<OrderResponseEvent>);
+static_assert(!HasErrorLabelHash<StrategyOrder>);
+
 struct FakeGateway {
   using Order = StrategyOrder;
 
@@ -252,13 +258,11 @@ TEST(OrderManagerTest, CancelRejectedResponseMarksOrderRejected) {
   order_manager.OnOrderResponse(OrderResponseEvent{
       .kind = OrderResponseKind::kCancelRejected,
       .local_order_id = placed.local_order_id,
-      .error_label_hash = 91U,
   });
 
   const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
   EXPECT_EQ(order->status, OrderStatus::kRejected);
-  EXPECT_EQ(order->error_label_hash, 91U);
 }
 
 TEST(OrderManagerTest, DuplicateCancelIsRejectedByInvalidStatus) {

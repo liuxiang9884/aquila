@@ -97,6 +97,8 @@ void OnBookTicker(const aquila::BookTicker& ticker) noexcept;
 - 保存策略级执行状态，例如 signal、execution group、pair 状态和自己关心的 `local_order_id`。
 - 在行情事件中根据策略状态产生下单 / 撤单意图。
 - 在订单 response / feedback 到达后更新策略级 execution state。
+- 对 order response 只根据 `OrderResponseKind` 和订单 id 做状态推进；错误详情在 Gate / tool 日志处理，不进入
+  strategy event。
 - 通过只读查询查看订单最新状态，而不是复制 `OrderManager` 的订单状态机。
 - 把 `OrderManager::feedback_continuity_lost_detected()` 作为策略 / 风控输入信号，决定是否暂停开仓、只允许减仓、
   触发 reconcile 或人工介入。
@@ -220,7 +222,9 @@ correlation。
 - 把 `StrategyOrder` 编码成交易所 place / cancel 请求。
 - 发送请求并维护 request sequence 到 `local_order_id` 的轻量 correlation。
 - 解析 exchange ack / final result / error。
-- 产出统一 `OrderResponseEvent` 或可转换为该事件的 exchange response。
+- 产出统一 `OrderResponseEvent` 或可转换为该事件的 exchange response；strategy 层 response 只保留
+  `kind` / `local_order_id` / `exchange_order_id`。
+- 在 Gate / tool 层记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash` 等诊断字段。
 - 根据 `OrderManager` 通知维护本地 `local_order_id -> exchange_order_id` cancel cache。
 
 它不负责：
@@ -248,6 +252,7 @@ bool Ready() const noexcept;
 - 外部组件不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；这些原因只进入 `OrderSession` 内部 diagnostics / log。
 - 断线或 not ready 不产生 `OrderFeedbackKind::kContinuityLost`，也不直接修改订单生命周期状态。
 - `Ready() == false` 是上行交易能力的硬边界；组合层或 `StrategyContext` 可以用它阻止新的开仓指令。
+- `Ready() == false` 不阻塞既有 order response 和 private feedback 的 drain；它只阻止新的行情驱动交易意图。
 
 发送入口：
 
@@ -274,6 +279,7 @@ OnOrderResponse(event):
 
 - `ack` 只表示交易所 WS API 收到请求，不代表订单进入订单簿。
 - `accepted / rejected` 来自 place final result，可推进本地订单提交状态。
+- `rejected / cancel_rejected` 下游只按 `OrderResponseKind` 处理；错误标签和原始错误信息只在 Gate / tool 日志中定位。
 - 最终生命周期仍以 private order feedback 为更高可信事实源。
 
 ## OrderFeedbackSession
