@@ -36,6 +36,18 @@
 - 优先使用 `BookTicker.exchange_ns`。
 - 如果 `exchange_ns == 0`，回退到 `BookTicker.local_ns`。
 
+## DataReader 顺序边界
+
+LeadLag 对 lead / lag tick 的处理顺序敏感，因为每个 `OnBookTicker()` 都可能推进 alignment、recorder、threshold
+和 signal state。实时 `RealtimeDataReader` 的多 source round-robin 只解决公平调度问题：它避免某个高频 SHM
+source 长期优先，但不按 `exchange_ns` 或 `local_ns` 做全局排序，也不等价于 merge。
+
+因此：
+
+- live 模式可以把 round-robin 作为低成本默认调度。
+- 如果策略研发要求严格事件时间顺序，应让上游 data session / producer 产出已 merge 的统一 source。
+- replay / 对账应继续使用预处理后的单一 binary source；多交易所或多 feed 历史输入需要在离线阶段先合成目标顺序。
+
 ## 配置入口
 
 常用配置文件：

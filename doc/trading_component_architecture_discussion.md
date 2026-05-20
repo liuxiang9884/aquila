@@ -59,6 +59,11 @@ ack / response 和 feedback 都必须先进入 `OrderManager`，再通知 `Strat
 - 实时多路行情如果需要 merge，应由上游 `DataSession` 或行情生产层完成。
 - 历史多路行情如果需要 merge，应在 load 数据前由离线数据程序完成。
 - 历史数据第一版只支持已经处理好的 binary source；CSV / HDF / parquet 等 source 后续需要时再补。
+- 多 source `round-robin` 只用于实时 reader 的公平调度，避免固定 source 长期优先；它不是时间顺序语义，不按
+  `exchange_ns` / `local_ns` 做全局排序。
+- 对 LeadLag 这类对 lead / lag tick 顺序敏感的策略，live 模式可以使用 `round-robin` 作为低成本公平调度，但不能
+  依赖它复现严格事件时间顺序；如果策略研发要求严格排序，应让上游 producer 产出已 merge 的统一流，或在 replay
+  前离线生成目标顺序的 binary source。
 - `Strategy` 不关心数据来自 SHM、SPSC、broadcast queue 还是 binary file。
 - `Diagnostics` 是否启用由模板静态指定；`Diagnostics` 是记录器 / policy，`Stats` 是计数快照，不建议在组件内部命名为 `Metrics`。
 - `poll_calls` / `empty_polls` 描述外层轮询循环行为，不属于 `DataReader` 内部数据流统计；如果需要，应放到 runtime / scheduler / 组装层 diagnostics。

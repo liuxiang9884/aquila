@@ -526,6 +526,8 @@ Order feedback Task1 / Task2 关键结论：
 - `Strategy` 侧只依赖 `Poll(handler)` 单事件接口、`Drain(handler, max_events)` 批量接口和 handler 的 `OnBookTicker(const BookTicker&)`；当前 `core/market_data/realtime_data_reader.h` 和 `core/market_data/historical_data_reader.h` 都已实现这组接口。
 - `RealtimeDataReader` 没有天然 EOF，不提供 `kFiniteDataReader` / `finished()`；`HistoricalDataReader` 已满足 `FiniteDataReader`，通过 `finished()` 显式查询 EOF，且 replay `Poll() == 0` 表示已读完。
 - `DataReader` 不负责 merge。实时多路行情 merge 归上游 `DataSession` / producer，历史多路行情 merge 归离线预处理程序；第一版 replay 只要求预处理后的 binary `BookTicker` source。
+- 多 source round-robin 是实时 reader 的公平调度，不是全局时间排序。LeadLag live 模式可以使用它避免高频 source
+  长期优先，但如果要求严格 lead / lag 事件时间顺序，应由上游 producer 或离线预处理生成已 merge 的统一 source。
 - `Diagnostics` 是否启用由模板静态指定；`Diagnostics` 是记录器 / policy，`Stats` 是计数快照，不建议在组件内部命名为 `Metrics`。
 - `poll_calls` / `empty_polls` 描述外层轮询循环行为，应放到 `TradingRuntime`、scheduler 或组装层 diagnostics；当前 reader stats 已移除这两个字段，聚焦数据流本身，例如 live 的 `total_count`、per-source `book_ticker_count` / skipped / overruns / last id，以及 replay 的 `total_count` / `files_completed`。
 

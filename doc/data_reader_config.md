@@ -172,6 +172,11 @@ drain source  -> TryReadOne()
 构造期已经保证 sources 非空；如果配置没有任何实时 source，应在启动阶段失败，而不是进入运行循环后持续返回 0。当前实现不依赖 `Poll()` 的空 reader 分支表达语义。
 多 source round-robin 当前使用构造期生成的双倍扫描表，避免在 `Poll()` 循环中反复执行 index wrap 分支。
 
+round-robin 只是实时多 source 的公平调度，不是 merge 或时间排序。它不比较 `BookTicker.exchange_ns` /
+`BookTicker.local_ns`，也不保证 lead / lag 事件按全局时间顺序输出。LeadLag live 模式可以使用这个调度来避免
+高频 source 长期压住低频 source；如果需要严格事件时间语义，应由上游 data session / producer 写出已 merge 的统一
+SHM source，或在 replay 前离线生成目标顺序的 binary source。
+
 `RealtimeDataReader::Drain(handler, max_events)` 是批量接口：循环调用 `Poll()`，最多输出 `max_events` 条；
 `max_events = 0` 时不读取并返回 0。
 
