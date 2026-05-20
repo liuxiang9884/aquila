@@ -95,9 +95,9 @@ OrderFeedbackEvent MakeFeedback(
       .role = OrderRole::kTaker,
       .finish_reason = OrderFinishReason::kUnknown,
       .reject_reason = OrderRejectReason::kUnknown,
-      .gap_scope = OrderFeedbackGapScope::kLane,
-      .gap_reason = OrderFeedbackGapReason::kUnknown,
-      .gap_sequence = 0,
+      .continuity_scope = OrderFeedbackContinuityScope::kLane,
+      .continuity_reason = OrderFeedbackContinuityReason::kUnknown,
+      .continuity_sequence = 0,
       .exchange_update_ns = 1234567890,
       .local_receive_ns = 1234567999,
   };

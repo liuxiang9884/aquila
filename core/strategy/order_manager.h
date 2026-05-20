@@ -92,8 +92,8 @@ class OrderManager {
   }
 
   void OnOrderFeedback(const OrderFeedbackEvent& event) noexcept {
-    if (event.kind == OrderFeedbackKind::kGap) {
-      OnFeedbackGap(event);
+    if (event.kind == OrderFeedbackKind::kContinuityLost) {
+      OnFeedbackContinuityLost(event);
       return;
     }
 
@@ -123,14 +123,14 @@ class OrderManager {
       case OrderFeedbackKind::kRejected:
         OnRejectedFeedback(*order, event);
         break;
-      case OrderFeedbackKind::kGap:
+      case OrderFeedbackKind::kContinuityLost:
         break;
     }
   }
 
-  void OnFeedbackGap(const OrderFeedbackEvent&) noexcept {
-    feedback_gap_detected_ = true;
-    ++feedback_stats_.feedback_gap_events;
+  void OnFeedbackContinuityLost(const OrderFeedbackEvent&) noexcept {
+    feedback_continuity_lost_detected_ = true;
+    ++feedback_stats_.feedback_continuity_lost_events;
   }
 
   // Mutable lookup is intended for same-thread gateway/test integration;
@@ -155,8 +155,8 @@ class OrderManager {
     return orders_.size();
   }
 
-  [[nodiscard]] bool feedback_gap_detected() const noexcept {
-    return feedback_gap_detected_;
+  [[nodiscard]] bool feedback_continuity_lost_detected() const noexcept {
+    return feedback_continuity_lost_detected_;
   }
 
   [[nodiscard]] const StrategyFeedbackStats& feedback_stats() const noexcept {
@@ -343,7 +343,7 @@ class OrderManager {
   GatewayT& order_session_;
   OrderPool<Order> orders_;
   StrategyFeedbackStats feedback_stats_{};
-  bool feedback_gap_detected_{false};
+  bool feedback_continuity_lost_detected_{false};
 };
 
 }  // namespace aquila::strategy

@@ -15,7 +15,7 @@
 | `threshold.h` | 根据 move quantile、drift std、lead / lag noise 和手续费更新开平仓阈值。 |
 | `cost_model.h` | 计算开仓成本、手续费、spread buffer 和目标收益要求。 |
 | `signal.h` | 信号判断核心，输出 open / close / stoploss 的 `SignalDecision` 和 `OrderIntent`。 |
-| `execution_state.h` | 跟踪策略 position 生命周期：open order、hold position、close order，以及 feedback gap 后暂停新开仓。 |
+| `execution_state.h` | 跟踪策略 position 生命周期：open order、hold position、close order，以及 feedback continuity lost 后暂停新开仓。 |
 | `strategy.h` | 策略入口，串接行情状态、alignment、recorder、threshold、signal 和 execution state。 |
 
 ## 主流程
@@ -99,6 +99,6 @@ ctest --test-dir build/debug -R lead_lag --output-on-failure
 ## 当前边界
 
 - replay 可以使用 `PositionAccountingMode::kSyntheticSignals`，不依赖真实订单 session。
-- 生产模式下订单生命周期依赖 `OrderManager` 和 feedback 更新；遇到 feedback gap 后会暂停新开仓，等待后续 reconcile 能力。
+- 生产模式下订单生命周期依赖 `OrderManager` 和 feedback 更新；遇到 feedback continuity lost 后会暂停新开仓，等待后续 reconcile 能力。
 - 该目录只包含策略层实现，不包含交易所接入、SHM data reader、binary reader 或 replay 工具本身。
 - 当前实现关注确定性和低延迟热路径：初始化阶段绑定 catalog 和 pair，热路径避免字符串 lookup，窗口结构启动期预分配，扩容只记录统计，不作为策略计算指标落地。

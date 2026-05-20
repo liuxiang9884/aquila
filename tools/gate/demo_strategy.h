@@ -206,7 +206,7 @@ class DemoStrategy {
   template <typename ContextT>
   void OnOrderFeedback(const OrderFeedbackEvent& event,
                        ContextT& context) noexcept {
-    if (event.kind == OrderFeedbackKind::kGap) {
+    if (event.kind == OrderFeedbackKind::kContinuityLost) {
       state_ = DemoStrategyState::kError;
       return;
     }
@@ -297,7 +297,7 @@ class DemoStrategy {
         return;
       case OrderFeedbackKind::kAccepted:
       case OrderFeedbackKind::kPartialFilled:
-      case OrderFeedbackKind::kGap:
+      case OrderFeedbackKind::kContinuityLost:
         return;
     }
   }
@@ -315,7 +315,7 @@ class DemoStrategy {
         return;
       case OrderFeedbackKind::kAccepted:
       case OrderFeedbackKind::kPartialFilled:
-      case OrderFeedbackKind::kGap:
+      case OrderFeedbackKind::kContinuityLost:
         return;
     }
   }

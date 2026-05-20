@@ -144,9 +144,10 @@ TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
           .local_order_id = 0,
       });
   runtime_result.value->HandleOrderFeedbackForTest(aquila::OrderFeedbackEvent{
-      .kind = aquila::OrderFeedbackKind::kGap,
-      .gap_scope = aquila::OrderFeedbackGapScope::kLane,
-      .gap_reason = aquila::OrderFeedbackGapReason::kSessionDisconnected,
+      .kind = aquila::OrderFeedbackKind::kContinuityLost,
+      .continuity_scope = aquila::OrderFeedbackContinuityScope::kLane,
+      .continuity_reason =
+          aquila::OrderFeedbackContinuityReason::kSessionDisconnected,
   });
 }
 
@@ -168,7 +169,7 @@ TEST(LeadLagStrategyInterfaceTest, StoresRawMarketUpdates) {
 
   strategy.OnOrderFeedback(
       aquila::OrderFeedbackEvent{
-          .kind = aquila::OrderFeedbackKind::kGap,
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
       },
       context);
   EXPECT_TRUE(strategy.degraded());
@@ -336,7 +337,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(close.group_id, stopped_group_id);
 }
 
-TEST(LeadLagStrategyInterfaceTest, FeedbackGapPausesNewOpenSignals) {
+TEST(LeadLagStrategyInterfaceTest, FeedbackContinuityLostPausesNewOpenSignals) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   aquila::strategy::OrderManager<FakeOrderSession> order_manager{order_session,
@@ -349,7 +350,7 @@ TEST(LeadLagStrategyInterfaceTest, FeedbackGapPausesNewOpenSignals) {
       Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
   strategy.OnOrderFeedback(
       aquila::OrderFeedbackEvent{
-          .kind = aquila::OrderFeedbackKind::kGap,
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
       },
       context);
 

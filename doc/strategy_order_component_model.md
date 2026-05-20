@@ -154,7 +154,7 @@ accepted 当成持仓变化。
 - 维护固定容量订单池和订单状态。
 - 调用 `OrderSession` 发送 place / cancel。
 - 处理 ack / accepted / rejected / cancel accepted / cancel rejected 等 response。
-- 处理 accepted / partial filled / filled / cancelled / rejected / gap 等 feedback。
+- 处理 accepted / partial filled / filled / cancelled / rejected / continuity lost 等 feedback。
 - 维护累计成交、成交价格、终态、error / reject reason。
 - 在 accepted feedback 到达后通知 `OrderSession` 缓存 `exchange_order_id`，终态后通知其清理 cache。
 - 暴露只读订单查询给 `Strategy`。
@@ -187,7 +187,7 @@ void OnOrderFeedback(const OrderFeedbackEvent& event) noexcept;
 ```cpp
 const StrategyOrder* FindOrder(std::uint64_t local_order_id) const noexcept;
 bool RetireFinishedOrder(std::uint64_t local_order_id) noexcept;
-bool feedback_gap_detected() const noexcept;
+bool feedback_continuity_lost_detected() const noexcept;
 ```
 
 `OrderManager` 依赖的是一个窄的 order gateway 能力，而不是某个具体交易所 session：
@@ -244,7 +244,7 @@ bool Ready() const noexcept;
 - `Ready() == true` 表示调用方可以尝试发送 place / cancel。
 - `Ready() == false` 表示调用方不应发起新的上行交易指令。
 - 外部组件不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；这些原因只进入 `OrderSession` 内部 diagnostics / log。
-- 断线或 not ready 不产生 `OrderFeedbackEvent::kGap`，也不直接修改订单生命周期状态。
+- 断线或 not ready 不产生 `OrderFeedbackKind::kContinuityLost`，也不直接修改订单生命周期状态。
 
 发送入口：
 
@@ -285,15 +285,15 @@ orders payload 转成统一 `OrderFeedbackEvent`。
 - 维护私有订单回报 WebSocket 连接。
 - login 后订阅订单回报 channel。
 - 解析 exchange feedback payload。
-- 产出 accepted / partial filled / filled / cancelled / rejected / gap 等统一 feedback event。
-- 断线或 transport gap 时发出 `OrderFeedbackKind::kGap` 控制事件。
+- 产出 accepted / partial filled / filled / cancelled / rejected / continuity lost 等统一 feedback event。
+- 断线或 transport continuity lost 时发出 `OrderFeedbackKind::kContinuityLost` 控制事件。
 
 它不负责：
 
 - 维护 `StrategyOrder` 对象。
 - 直接修改策略 execution state。
 - 管理下单 / 撤单请求。
-- 判断 gap 后如何恢复；恢复策略应由订单管理、持仓管理和 reconcile 设计共同决定。
+- 判断 feedback continuity lost 后如何恢复；恢复策略应由订单管理、持仓管理和 reconcile 设计共同决定。
 
 ### 接口契约
 
@@ -309,7 +309,7 @@ feedback 输出推荐只依赖发布 / sink 能力：
 
 ```cpp
 bool Publish(const OrderFeedbackEvent& event) noexcept;
-bool PublishGlobalGap(OrderFeedbackGapReason reason,
+bool PublishGlobalContinuityLost(OrderFeedbackContinuityReason reason,
                       std::int64_t local_receive_ns) noexcept;
 ```
 
@@ -371,7 +371,7 @@ GateOrderFeedbackThread / Process
 
 - `PositionBook` / `PositionManager`：按 strategy / symbol 聚合真实持仓，并明确 partial fill、reduce-only、close
   order 和手续费字段。
-- REST reconcile：feedback gap、WS 断线、进程重启后如何恢复订单和持仓可信状态。
+- REST reconcile：feedback continuity lost、WS 断线、进程重启后如何恢复订单和持仓可信状态。
 - account / position feedback：是否需要接入交易所账户 / 仓位私有事件。
 - 多交易所 `OrderSession` interface：Gate / Binance / 其他交易所的 common order gateway 概念如何收敛。
 - 事件 dispatcher 命名：当前只要求顺序语义，不强制引入虚基类；热路径优先 template / concept 或函数对象组合。

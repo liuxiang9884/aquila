@@ -899,8 +899,8 @@ TEST(TradingRuntimeTest, ProductionRunPollsOrderFeedbackReader) {
   auto manager_result = OrderFeedbackShmManager::Create(shm_config);
   ASSERT_TRUE(manager_result.ok) << manager_result.error;
   OrderFeedbackShmPublisher publisher(manager_result.value.channel());
-  ASSERT_TRUE(publisher.PublishGlobalGap(
-      OrderFeedbackGapReason::kSessionDisconnected, 123456));
+  ASSERT_TRUE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kSessionDisconnected, 123456));
 
   RuntimeLoopState state;
   state.order_ready = false;

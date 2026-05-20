@@ -473,7 +473,8 @@ struct RunContext {
         "exchange_update_ns={} local_receive_ns={} "
         "cumulative_filled_quantity={} left_quantity={} "
         "cancelled_quantity={} fill_price={:.12g} role={} finish_reason={} "
-        "reject_reason={} gap_scope={} gap_reason={} gap_sequence={}",
+        "reject_reason={} continuity_scope={} continuity_reason={} "
+        "continuity_sequence={}",
         magic_enum::enum_name(event.kind), event.local_order_id,
         event.exchange_order_id, status_before, status_after,
         event.exchange_update_ns, event.local_receive_ns,
@@ -482,8 +483,9 @@ struct RunContext {
         magic_enum::enum_name(event.role),
         magic_enum::enum_name(event.finish_reason),
         magic_enum::enum_name(event.reject_reason),
-        magic_enum::enum_name(event.gap_scope),
-        magic_enum::enum_name(event.gap_reason), event.gap_sequence);
+        magic_enum::enum_name(event.continuity_scope),
+        magic_enum::enum_name(event.continuity_reason),
+        event.continuity_sequence);
     if (submit_cancel) {
       SubmitCancel(event.local_order_id);
       return;

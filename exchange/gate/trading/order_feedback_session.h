@@ -44,8 +44,8 @@ struct OrderFeedbackSessionStats {
   std::uint64_t parse_errors{0};
   std::uint64_t events_published{0};
   std::uint64_t publish_failures{0};
-  std::uint64_t global_gaps_published{0};
-  std::uint64_t global_gap_publish_failures{0};
+  std::uint64_t global_continuity_lost_events_published{0};
+  std::uint64_t global_continuity_lost_publish_failures{0};
 };
 
 class NoopOrderFeedbackSessionDiagnostics {
@@ -109,11 +109,11 @@ class OrderFeedbackSessionDiagnostics {
   void RecordPublishFailure() noexcept {
     ++stats_.publish_failures;
   }
-  void RecordGlobalGapPublished() noexcept {
-    ++stats_.global_gaps_published;
+  void RecordGlobalContinuityLostPublished() noexcept {
+    ++stats_.global_continuity_lost_events_published;
   }
-  void RecordGlobalGapPublishFailure() noexcept {
-    ++stats_.global_gap_publish_failures;
+  void RecordGlobalContinuityLostPublishFailure() noexcept {
+    ++stats_.global_continuity_lost_publish_failures;
   }
 
   [[nodiscard]] const OrderFeedbackSessionStats& stats() const noexcept {
@@ -285,12 +285,12 @@ class OrderFeedbackSession {
         phase == websocket::ConnectionPhase::kReconnectBackoff ||
         phase == websocket::ConnectionPhase::kClosing ||
         phase == websocket::ConnectionPhase::kClosed) {
-      const bool publish_gap = active_;
+      const bool publish_continuity_lost = active_;
       active_ = false;
       ResetAuthenticatedState();
-      if (publish_gap) {
-        PublishGlobalGap(OrderFeedbackGapReason::kSessionDisconnected,
-                         NowNsInt64());
+      if (publish_continuity_lost) {
+        PublishGlobalContinuityLost(
+            OrderFeedbackContinuityReason::kSessionDisconnected, NowNsInt64());
       }
     }
   }
@@ -631,16 +631,16 @@ class OrderFeedbackSession {
     }
   }
 
-  void PublishGlobalGap(OrderFeedbackGapReason reason,
-                        std::int64_t local_receive_ns) noexcept {
-    if (publisher_.PublishGlobalGap(reason, local_receive_ns)) {
+  void PublishGlobalContinuityLost(OrderFeedbackContinuityReason reason,
+                                   std::int64_t local_receive_ns) noexcept {
+    if (publisher_.PublishGlobalContinuityLost(reason, local_receive_ns)) {
       if constexpr (DiagnosticsEnabled) {
-        diagnostics_.RecordGlobalGapPublished();
+        diagnostics_.RecordGlobalContinuityLostPublished();
       }
       return;
     }
     if constexpr (DiagnosticsEnabled) {
-      diagnostics_.RecordGlobalGapPublishFailure();
+      diagnostics_.RecordGlobalContinuityLostPublishFailure();
       diagnostics_.RecordPublishFailure();
     }
   }

@@ -161,17 +161,19 @@ void BM_OrderFeedbackShmPublishPollLoop(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations());
 }
 
-void BM_OrderFeedbackShmPublishGlobalGapThenDrain(benchmark::State& state) {
+void BM_OrderFeedbackShmPublishGlobalContinuityLostThenDrain(
+    benchmark::State& state) {
   auto channel = MakeChannelForBenchmark();
   OrderFeedbackShmPublisher publisher(*channel);
   OrderFeedbackEvent popped{};
 
   for (auto _ : state) {
-    bool published = publisher.PublishGlobalGap(
-        OrderFeedbackGapReason::kSessionDisconnected, 123);
+    bool published = publisher.PublishGlobalContinuityLost(
+        OrderFeedbackContinuityReason::kSessionDisconnected, 123);
     benchmark::DoNotOptimize(published);
     if (!published) {
-      state.SkipWithError("order feedback global gap publish failed");
+      state.SkipWithError(
+          "order feedback global continuity lost publish failed");
       return;
     }
 
@@ -180,7 +182,8 @@ void BM_OrderFeedbackShmPublishGlobalGapThenDrain(benchmark::State& state) {
       benchmark::DoNotOptimize(popped_event);
       benchmark::DoNotOptimize(popped);
       if (!popped_event) {
-        state.SkipWithError("order feedback global gap drain failed");
+        state.SkipWithError(
+            "order feedback global continuity lost drain failed");
         return;
       }
     }
@@ -197,7 +200,7 @@ void BM_OrderFeedbackShmPublishGlobalGapThenDrain(benchmark::State& state) {
 BENCHMARK(BM_OrderFeedbackShmPublishThenDrain)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_OrderFeedbackShmPollOneWithRefill)->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_OrderFeedbackShmPublishPollLoop)->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_OrderFeedbackShmPublishGlobalGapThenDrain)
+BENCHMARK(BM_OrderFeedbackShmPublishGlobalContinuityLostThenDrain)
     ->Unit(benchmark::kNanosecond);
 
 }  // namespace

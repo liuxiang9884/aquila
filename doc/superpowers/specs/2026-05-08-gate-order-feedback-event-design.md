@@ -53,7 +53,7 @@ Gate private futures.orders
 - `finish_as="filled"` 表示订单终态完全成交，产生 filled event。
 - 其他 terminal `finish_as` 统一产生 cancelled/finished 类 event，并用 `finish_reason` 表达终止原因。
 - `OrderRejectedFeedback` 不来自 `futures.orders` 主回报流，只保留给本地发送失败或 API submit error。
-- `OrderFeedbackKind::kGap` 是 Task1 SHM transport control event，不是 Gate `futures.orders` 生命周期 event；Gate parser 不从 orders 主流产生 `kGap`。
+- `OrderFeedbackKind::kContinuityLost` 是 Task1 SHM transport control event，不是 Gate `futures.orders` 生命周期 event；Gate parser 不从 orders 主流产生 `kContinuityLost`。
 
 ## Local Order Id
 

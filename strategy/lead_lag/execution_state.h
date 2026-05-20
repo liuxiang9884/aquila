@@ -150,7 +150,7 @@ class ExecutionState {
     return ExecutionApplyResult::kAppliedHold;
   }
 
-  void OnFeedbackGap(const OrderFeedbackEvent&) noexcept {
+  void OnFeedbackContinuityLost(const OrderFeedbackEvent&) noexcept {
     degraded_ = true;
     needs_reconcile_ = true;
   }

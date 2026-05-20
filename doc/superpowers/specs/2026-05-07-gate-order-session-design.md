@@ -302,7 +302,7 @@ bool Ready() const noexcept;
 - disconnect 后清空 request correlation；
 - reconnect 后重新 login；
 - 不在断线时主动构造 rejected/cancelled response；
-- disconnect / not ready 不产生 `OrderFeedbackEvent::kGap`，也不直接改变订单生命周期状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
+- disconnect / not ready 不产生 `OrderFeedbackKind::kContinuityLost`，也不直接改变订单生命周期状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
 
 ## 测试边界
 

@@ -31,48 +31,51 @@ TEST(OrderFeedbackEventTest, ValueInitializationUsesAbiDefaults) {
 
   EXPECT_EQ(event.kind, OrderFeedbackKind::kAccepted);
   EXPECT_EQ(event.local_order_id, 0U);
-  EXPECT_EQ(event.gap_scope, OrderFeedbackGapScope::kLane);
-  EXPECT_EQ(event.gap_reason, OrderFeedbackGapReason::kUnknown);
-  EXPECT_EQ(event.gap_sequence, 0U);
+  EXPECT_EQ(event.continuity_scope, OrderFeedbackContinuityScope::kLane);
+  EXPECT_EQ(event.continuity_reason, OrderFeedbackContinuityReason::kUnknown);
+  EXPECT_EQ(event.continuity_sequence, 0U);
 }
 
-TEST(OrderFeedbackEventTest, GapEventCanDescribeGlobalReconnectUnknownWindow) {
+TEST(OrderFeedbackEventTest,
+     ContinuityLostEventCanDescribeGlobalReconnectUnknownWindow) {
   const OrderFeedbackEvent event{
-      .kind = OrderFeedbackKind::kGap,
-      .gap_scope = OrderFeedbackGapScope::kGlobal,
-      .gap_reason = OrderFeedbackGapReason::kReconnectUnknownWindow,
-      .gap_sequence = 7,
+      .kind = OrderFeedbackKind::kContinuityLost,
+      .continuity_scope = OrderFeedbackContinuityScope::kGlobal,
+      .continuity_reason =
+          OrderFeedbackContinuityReason::kReconnectUnknownWindow,
+      .continuity_sequence = 7,
       .local_receive_ns = 123,
   };
 
-  EXPECT_EQ(event.kind, OrderFeedbackKind::kGap);
+  EXPECT_EQ(event.kind, OrderFeedbackKind::kContinuityLost);
   EXPECT_EQ(event.local_order_id, 0U);
-  EXPECT_EQ(event.gap_scope, OrderFeedbackGapScope::kGlobal);
-  EXPECT_EQ(event.gap_reason, OrderFeedbackGapReason::kReconnectUnknownWindow);
-  EXPECT_EQ(event.gap_sequence, 7U);
+  EXPECT_EQ(event.continuity_scope, OrderFeedbackContinuityScope::kGlobal);
+  EXPECT_EQ(event.continuity_reason,
+            OrderFeedbackContinuityReason::kReconnectUnknownWindow);
+  EXPECT_EQ(event.continuity_sequence, 7U);
   EXPECT_EQ(event.local_receive_ns, 123);
 }
 
-TEST(OrderFeedbackEventTest, GapControlEventCarriesNoLocalOrderId) {
+TEST(OrderFeedbackEventTest, ContinuityLostEventCarriesNoLocalOrderId) {
   const OrderFeedbackEvent event{
-      .kind = OrderFeedbackKind::kGap,
-      .gap_scope = OrderFeedbackGapScope::kLane,
-      .gap_reason = OrderFeedbackGapReason::kLaneQueueFull,
-      .gap_sequence = 9,
+      .kind = OrderFeedbackKind::kContinuityLost,
+      .continuity_scope = OrderFeedbackContinuityScope::kLane,
+      .continuity_reason = OrderFeedbackContinuityReason::kLaneQueueFull,
+      .continuity_sequence = 9,
   };
 
-  EXPECT_EQ(event.kind, OrderFeedbackKind::kGap);
+  EXPECT_EQ(event.kind, OrderFeedbackKind::kContinuityLost);
   EXPECT_EQ(event.local_order_id, 0U);
 }
 
-TEST(OrderFeedbackEventTest, NonGapOrderEventLocalOrderIdRoutesToStrategy) {
+TEST(OrderFeedbackEventTest, ContinuousOrderEventLocalOrderIdRoutesToStrategy) {
   constexpr std::uint64_t local_order_id = LocalOrderIdCodec::Encode(3, 42);
   const OrderFeedbackEvent event{
       .kind = OrderFeedbackKind::kAccepted,
       .local_order_id = local_order_id,
   };
 
-  EXPECT_NE(event.kind, OrderFeedbackKind::kGap);
+  EXPECT_NE(event.kind, OrderFeedbackKind::kContinuityLost);
   EXPECT_EQ(LocalOrderIdCodec::StrategyId(event.local_order_id), 3);
   EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(event.local_order_id), 42U);
 }
@@ -94,27 +97,30 @@ TEST(OrderFeedbackEventTest, FieldOffsetsAreFixedForShmAbi) {
   static_assert(offsetof(OrderFeedbackEvent, cumulative_filled_quantity) == 24);
   static_assert(offsetof(OrderFeedbackEvent, fill_price) == 48);
   static_assert(offsetof(OrderFeedbackEvent, role) == 56);
-  static_assert(offsetof(OrderFeedbackEvent, gap_scope) == 59);
-  static_assert(offsetof(OrderFeedbackEvent, gap_reason) == 60);
-  static_assert(offsetof(OrderFeedbackEvent, gap_sequence) == 64);
+  static_assert(offsetof(OrderFeedbackEvent, continuity_scope) == 59);
+  static_assert(offsetof(OrderFeedbackEvent, continuity_reason) == 60);
+  static_assert(offsetof(OrderFeedbackEvent, continuity_sequence) == 64);
   static_assert(offsetof(OrderFeedbackEvent, exchange_update_ns) == 72);
   static_assert(offsetof(OrderFeedbackEvent, local_receive_ns) == 80);
 }
 
 TEST(OrderFeedbackEventTest, EnumValuesAreFixedForShmAbi) {
   static_assert(static_cast<std::uint8_t>(OrderFeedbackKind::kAccepted) == 0);
-  static_assert(static_cast<std::uint8_t>(OrderFeedbackKind::kGap) == 5);
-  static_assert(static_cast<std::uint8_t>(OrderFeedbackGapScope::kGlobal) == 1);
+  static_assert(static_cast<std::uint8_t>(OrderFeedbackKind::kContinuityLost) ==
+                5);
+  static_assert(
+      static_cast<std::uint8_t>(OrderFeedbackContinuityScope::kGlobal) == 1);
   static_assert(static_cast<std::uint8_t>(
-                    OrderFeedbackGapReason::kReconnectUnknownWindow) == 3);
+                    OrderFeedbackContinuityReason::kReconnectUnknownWindow) ==
+                3);
 
   EXPECT_EQ(static_cast<std::uint8_t>(OrderFeedbackKind::kAccepted), 0U);
-  EXPECT_EQ(static_cast<std::uint8_t>(OrderFeedbackKind::kGap), 5U);
-  EXPECT_EQ(static_cast<std::uint8_t>(OrderFeedbackGapScope::kGlobal), 1U);
-  EXPECT_EQ(
-      static_cast<std::uint8_t>(
-          OrderFeedbackGapReason::kReconnectUnknownWindow),
-      3U);
+  EXPECT_EQ(static_cast<std::uint8_t>(OrderFeedbackKind::kContinuityLost), 5U);
+  EXPECT_EQ(static_cast<std::uint8_t>(OrderFeedbackContinuityScope::kGlobal),
+            1U);
+  EXPECT_EQ(static_cast<std::uint8_t>(
+                OrderFeedbackContinuityReason::kReconnectUnknownWindow),
+            3U);
 }
 
 }  // namespace

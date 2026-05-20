@@ -2030,7 +2030,7 @@ OrderManager
   Sent / Accepted / PartialFilled / Filled / Cancelled / Rejected status
   exchange_order_id cache / forget notification
   stale / duplicate / unknown feedback stats
-  feedback gap stats
+  feedback continuity lost stats
 
 LeadLagExecutionState
   group stage
@@ -2058,7 +2058,7 @@ OrderManager
 LeadLagStrategy
   signal apply
   position / execution group apply
-  degraded state on feedback gap
+  degraded state on feedback continuity lost
 
 GateOrderSession
   place/cancel encode and send
@@ -2165,7 +2165,7 @@ else:
 
 这样 submit rejection 不会让 group 永久占用 `parallel`。
 
-如果 feedback SHM 报 lane/global gap，LeadLag 应进入 degraded / needs reconcile 状态，暂停新开仓，等待后续 REST reconcile 设计补齐状态。
+如果 feedback SHM 报 lane/global continuity lost，LeadLag 应进入 degraded / needs reconcile 状态，暂停新开仓，等待后续 REST reconcile 设计补齐状态。
 
 ### OrderPool recycle
 
@@ -2200,7 +2200,7 @@ normal feedback:
   local_order_id -> group lookup: average O(1)
   group state transition: O(1)
 
-gap feedback:
+continuity lost feedback:
   O(1)
 
 space:
@@ -2209,7 +2209,7 @@ space:
   OrderManager / OrderPool: O(order_capacity)
 ```
 
-第 7 部分不需要独立 benchmark；验证重点是状态转换正确性、feedback gap 后停止新开仓，以及完整链路中的 order feedback 到策略状态更新延迟。
+第 7 部分不需要独立 benchmark；验证重点是状态转换正确性、feedback continuity lost 后停止新开仓，以及完整链路中的 order feedback 到策略状态更新延迟。
 
 ### 验证口径
 
@@ -2227,7 +2227,7 @@ space:
 - accepted event 更新 exchange order id，并通知 OrderSession cancel cache。
 - terminal event 清理 OrderSession cancel cache。
 - terminal event 被 LeadLag 消费后 retire finished order，释放 `OrderPool` slot。
-- feedback gap 后暂停新开仓。
+- feedback continuity lost 后暂停新开仓。
 
 ## 阶段性实现边界
 

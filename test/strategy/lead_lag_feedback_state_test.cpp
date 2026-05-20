@@ -247,12 +247,12 @@ TEST(LeadLagFeedbackStateTest, ClearGroupByIdRemovesActiveGroup) {
   EXPECT_EQ(state.active_group_count(), 1U);
 }
 
-TEST(LeadLagFeedbackStateTest, FeedbackGapPausesNewOpens) {
+TEST(LeadLagFeedbackStateTest, FeedbackContinuityLostPausesNewOpens) {
   const leadlag::PairConfig pair = PairConfigForFeedback();
   leadlag::ExecutionState state;
   state.Init(pair.execute.parallel);
-  state.OnFeedbackGap(aquila::OrderFeedbackEvent{
-      .kind = aquila::OrderFeedbackKind::kGap,
+  state.OnFeedbackContinuityLost(aquila::OrderFeedbackEvent{
+      .kind = aquila::OrderFeedbackKind::kContinuityLost,
   });
 
   const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLeadTick(

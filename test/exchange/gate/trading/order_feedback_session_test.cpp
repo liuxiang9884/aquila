@@ -44,12 +44,13 @@ websocket::MessageView BinaryView(std::string_view payload) noexcept {
 
 struct RecordingPublisher {
   bool publish_result{true};
-  bool global_gap_result{true};
+  bool global_continuity_lost_result{true};
   int publish_calls{0};
-  int global_gap_calls{0};
+  int global_continuity_lost_calls{0};
   OrderFeedbackEvent last_event{};
-  OrderFeedbackGapReason last_gap_reason{OrderFeedbackGapReason::kUnknown};
-  std::int64_t last_gap_receive_ns{0};
+  OrderFeedbackContinuityReason last_continuity_reason{
+      OrderFeedbackContinuityReason::kUnknown};
+  std::int64_t last_continuity_lost_receive_ns{0};
 
   bool Publish(const OrderFeedbackEvent& event) noexcept {
     ++publish_calls;
@@ -57,12 +58,12 @@ struct RecordingPublisher {
     return publish_result;
   }
 
-  bool PublishGlobalGap(OrderFeedbackGapReason reason,
-                        std::int64_t local_receive_ns) noexcept {
-    ++global_gap_calls;
-    last_gap_reason = reason;
-    last_gap_receive_ns = local_receive_ns;
-    return global_gap_result;
+  bool PublishGlobalContinuityLost(OrderFeedbackContinuityReason reason,
+                                   std::int64_t local_receive_ns) noexcept {
+    ++global_continuity_lost_calls;
+    last_continuity_reason = reason;
+    last_continuity_lost_receive_ns = local_receive_ns;
+    return global_continuity_lost_result;
   }
 };
 
@@ -188,17 +189,18 @@ TEST(OrderFeedbackSessionTest, MalformedBinaryPayloadIncrementsDiagnostics) {
   EXPECT_EQ(session.stats().parse_errors, 1U);
 }
 
-TEST(OrderFeedbackSessionTest, DisconnectAfterActivePublishesGlobalGap) {
+TEST(OrderFeedbackSessionTest,
+     DisconnectAfterActivePublishesGlobalContinuityLost) {
   RecordingPublisher publisher;
   Session session = MakeSession(publisher);
 
   session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
   session.OnConnectionPhase(websocket::ConnectionPhase::kDisconnected);
 
-  EXPECT_EQ(publisher.global_gap_calls, 1);
-  EXPECT_EQ(publisher.last_gap_reason,
-            OrderFeedbackGapReason::kSessionDisconnected);
-  EXPECT_EQ(session.stats().global_gaps_published, 1U);
+  EXPECT_EQ(publisher.global_continuity_lost_calls, 1);
+  EXPECT_EQ(publisher.last_continuity_reason,
+            OrderFeedbackContinuityReason::kSessionDisconnected);
+  EXPECT_EQ(session.stats().global_continuity_lost_events_published, 1U);
 }
 
 TEST(OrderFeedbackSessionTest, PublishFailureIncrementsDiagnostics) {

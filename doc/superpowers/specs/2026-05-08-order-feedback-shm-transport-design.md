@@ -8,8 +8,8 @@ Gate `OrderSession` 第一版已经能通过 WebSocket 提交 place / cancel 请
 orders parse 和 Strategy 状态机更新。
 
 本设计对应 Task1：只实现订单 feedback SHM 通讯，不解析 Gate 报文，也不更新 Strategy 订单状态。当前 Task1
-已按本设计的简化版落地：gap 通过 `OrderFeedbackEvent::kGap` control event 投递到 lane，不再使用 shared
-gap epoch atomic。
+已按本设计的简化版落地：feedback continuity lost 通过 `OrderFeedbackKind::kContinuityLost` control event
+投递到 lane，不再使用 shared epoch atomic。
 
 ## 目标
 
@@ -71,7 +71,7 @@ enum class OrderFeedbackKind : std::uint8_t {
   kFilled,
   kCancelled,
   kRejected,
-  kGap,
+  kContinuityLost,
 };
 
 enum class OrderRole : std::uint8_t {
@@ -98,12 +98,12 @@ enum class OrderRejectReason : std::uint8_t {
   kExchangeRejected,
 };
 
-enum class OrderFeedbackGapScope : std::uint8_t {
+enum class OrderFeedbackContinuityScope : std::uint8_t {
   kLane,
   kGlobal,
 };
 
-enum class OrderFeedbackGapReason : std::uint8_t {
+enum class OrderFeedbackContinuityReason : std::uint8_t {
   kUnknown,
   kLaneQueueFull,
   kSessionDisconnected,
@@ -126,9 +126,9 @@ struct OrderFeedbackEvent {
   OrderFinishReason finish_reason{OrderFinishReason::kUnknown};
   OrderRejectReason reject_reason{OrderRejectReason::kUnknown};
 
-  OrderFeedbackGapScope gap_scope{OrderFeedbackGapScope::kLane};
-  OrderFeedbackGapReason gap_reason{OrderFeedbackGapReason::kUnknown};
-  std::uint64_t gap_sequence{0};
+  OrderFeedbackContinuityScope continuity_scope{OrderFeedbackContinuityScope::kLane};
+  OrderFeedbackContinuityReason continuity_reason{OrderFeedbackContinuityReason::kUnknown};
+  std::uint64_t continuity_sequence{0};
 
   std::int64_t exchange_update_ns{0};
   std::int64_t local_receive_ns{0};
@@ -139,8 +139,9 @@ struct OrderFeedbackEvent {
 `local_receive_ns` 是 feedback 进程本地收到并准备发布该 event 的时间，用于链路延迟诊断；它不参与 Strategy
 状态推进。
 
-`kGap` 是 transport control event。Strategy reader 不读取 shared gap epoch；它只通过 `Poll()` 消费 event，
-并把 `kGap` 和普通 order feedback 一样交给 handler。Gate `futures.orders` 主生命周期 parser 不产生 `kGap`。
+`kContinuityLost` 是 transport control event，表示 feedback 流连续性已经无法证明。Strategy reader 不读取
+shared epoch；它只通过 `Poll()` 消费 event，并把 `kContinuityLost` 和普通 order feedback 一样交给
+handler。Gate `futures.orders` 主生命周期 parser 不产生 `kContinuityLost`。
 
 实现时需要 `static_assert` 固定：
 
@@ -224,9 +225,9 @@ claim 规则：
 这条规则避免两个 Strategy 进程同时消费同一 lane。第一版不做 stale owner 自动判断、不做 pid alive probe，也不做
 reader heartbeat；需要恢复时由运维或上层显式调用 `force_claim=true`。
 
-## Gap 语义
+## Continuity Lost 语义
 
-### Lane Gap
+### Lane Continuity Lost
 
 当某 lane 普通 order feedback `TryPush()` 失败：
 
@@ -235,20 +236,20 @@ reader heartbeat；需要恢复时由运维或上层显式调用 `force_claim=tr
 - 不影响其他 lane；
 - 当前 lane `queue_full_count++`；
 - 当前 lane `dropped_count++`；
-- publisher 在本地保留 pending lane `kGap` event；
-- 后续 publish 或 `FlushPendingGapEvents()` 会先重试该 pending gap。
+- publisher 在本地保留 pending lane `kContinuityLost` event；
+- 后续 publish 或 `FlushPendingContinuityLostEvents()` 会先重试该 pending continuity lost。
 
-Strategy reader poll 到 lane `kGap` 后，必须进入 reconcile 状态；在 reconcile 完成前不应继续开新仓。
+Strategy reader poll 到 lane `kContinuityLost` 后，必须进入 reconcile 状态；在 reconcile 完成前不应继续开新仓。
 
-### Global Gap
+### Global Continuity Lost
 
 当 `OrderFeedbackSession` 的 WebSocket 断线、重连后有未知时间窗口、SBE decode 进入不可恢复状态，或 producer 判断无法证明没有丢失回报时：
 
-- `PublishGlobalGap(reason, local_receive_ns)` 对 8 lane fanout `kGap`；
-- lane queue full 时，不阻塞、不覆盖，publisher 保留该 lane pending global gap 并本地重试；
+- `PublishGlobalContinuityLost(reason, local_receive_ns)` 对 8 lane fanout `kContinuityLost`；
+- lane queue full 时，不阻塞、不覆盖，publisher 保留该 lane pending global continuity lost 并本地重试；
 - 所有 Strategy 应进入 reconcile 状态。
 
-Task1 只提供 `kGap` 投递和读取接口，不实现 reconcile。
+Task1 只提供 `kContinuityLost` 投递和读取接口，不实现 reconcile。
 
 ## Reader 语义
 
@@ -282,15 +283,15 @@ remove_existing = false
 Task1 至少覆盖：
 
 - event 类型 trivial / standard-layout / size ABI；
-- `kGap` event 的 scope / reason / sequence 字段；
+- `kContinuityLost` event 的 scope / reason / sequence 字段；
 - SHM create / attach header 校验；
 - `local_order_id` 高 8 bit 路由到正确 lane；
 - `strategy_id >= 8` publish 失败并计数；
 - duplicate live consumer claim 被拒绝；
 - `force_claim=true` 可显式恢复已 claim lane；
 - `Release()` 只有 run id 匹配才清 pid；
-- `TryPush()` full 时只更新当前 lane异常计数，并保留 pending lane `kGap`，不影响其他 lane；
-- `PublishGlobalGap()` 对 8 lane fanout `kGap`，full lane 只保留自身 pending gap；
+- `TryPush()` full 时只更新当前 lane异常计数，并保留 pending lane `kContinuityLost`，不影响其他 lane；
+- `PublishGlobalContinuityLost()` 对 8 lane fanout `kContinuityLost`，full lane 只保留自身 pending continuity lost；
 - `Poll(max_events)` 遵守消费预算。
 
 ## Benchmark 边界
@@ -300,6 +301,6 @@ Task1 benchmark 只证明 SHM transport 本身：
 - `PublishThenDrain`；
 - `PollOneWithRefill`；
 - `PublishPollLoop`；
-- `PublishGlobalGapThenDrain`。
+- `PublishGlobalContinuityLostThenDrain`。
 
 `PublishThenDrain` / `PollOneWithRefill` 包含 drain / refill 维护，不是纯 publish / poll latency。性能结论必须基于实际 benchmark 输出记录；不能把 Task1 transport benchmark 外推为 Gate parser、Strategy 状态机或端到端链路性能。

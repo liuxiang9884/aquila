@@ -90,7 +90,7 @@ struct StrategyFeedbackStats {
   std::uint64_t unknown_local_order_feedbacks{0};
   std::uint64_t duplicate_or_stale_feedbacks{0};
   std::uint64_t terminal_feedbacks_ignored{0};
-  std::uint64_t feedback_gap_events{0};
+  std::uint64_t feedback_continuity_lost_events{0};
 };
 
 struct OrderPlaceResult {

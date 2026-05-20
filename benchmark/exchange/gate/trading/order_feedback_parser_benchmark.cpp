@@ -35,7 +35,7 @@ websocket::MessageView BinaryView(std::string_view payload) noexcept {
 
 struct CountingPublisher {
   std::uint64_t event_count{0};
-  std::uint64_t gap_count{0};
+  std::uint64_t continuity_lost_count{0};
 
   bool Publish(const OrderFeedbackEvent& event) noexcept {
     ++event_count;
@@ -44,8 +44,9 @@ struct CountingPublisher {
     return true;
   }
 
-  bool PublishGlobalGap(OrderFeedbackGapReason, std::int64_t) noexcept {
-    ++gap_count;
+  bool PublishGlobalContinuityLost(OrderFeedbackContinuityReason,
+                                   std::int64_t) noexcept {
+    ++continuity_lost_count;
     return true;
   }
 };

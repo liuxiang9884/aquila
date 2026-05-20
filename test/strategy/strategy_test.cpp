@@ -576,19 +576,21 @@ TEST(OrderManagerFeedbackTest, UnknownLocalOrderIdIncrementsDiagnostics) {
   EXPECT_EQ(gateway.cache_update_calls, 0);
 }
 
-TEST(OrderManagerFeedbackTest, GapFeedbackSetsGapDetected) {
+TEST(OrderManagerFeedbackTest,
+     ContinuityLostFeedbackSetsContinuityLostDetected) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);
 
   order_manager.OnOrderFeedback(OrderFeedbackEvent{
-      .kind = OrderFeedbackKind::kGap,
-      .gap_scope = OrderFeedbackGapScope::kGlobal,
-      .gap_reason = OrderFeedbackGapReason::kReconnectUnknownWindow,
-      .gap_sequence = 42,
+      .kind = OrderFeedbackKind::kContinuityLost,
+      .continuity_scope = OrderFeedbackContinuityScope::kGlobal,
+      .continuity_reason =
+          OrderFeedbackContinuityReason::kReconnectUnknownWindow,
+      .continuity_sequence = 42,
   });
 
-  EXPECT_TRUE(order_manager.feedback_gap_detected());
-  EXPECT_EQ(order_manager.feedback_stats().feedback_gap_events, 1U);
+  EXPECT_TRUE(order_manager.feedback_continuity_lost_detected());
+  EXPECT_EQ(order_manager.feedback_stats().feedback_continuity_lost_events, 1U);
 }
 
 }  // namespace

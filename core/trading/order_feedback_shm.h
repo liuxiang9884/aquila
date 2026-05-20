@@ -289,7 +289,8 @@ class OrderFeedbackShmPublisher {
       : channel_(channel) {}
 
   [[nodiscard]] bool Publish(const OrderFeedbackEvent& event) noexcept {
-    if (event.kind == OrderFeedbackKind::kGap || event.local_order_id == 0) {
+    if (event.kind == OrderFeedbackKind::kContinuityLost ||
+        event.local_order_id == 0) {
       RecordInvalidRoute();
       return false;
     }
@@ -301,7 +302,7 @@ class OrderFeedbackShmPublisher {
       return false;
     }
 
-    if (!FlushPendingGapForLane(strategy_id)) {
+    if (!FlushPendingContinuityLossForLane(strategy_id)) {
       RecordLaneQueueFull(strategy_id);
       return false;
     }
@@ -313,27 +314,29 @@ class OrderFeedbackShmPublisher {
     }
 
     RecordLaneQueueFull(strategy_id);
-    SetPendingLaneGap(strategy_id, event.local_receive_ns);
+    SetPendingLaneContinuityLoss(strategy_id, event.local_receive_ns);
     return false;
   }
 
-  [[nodiscard]] bool PublishGlobalGap(OrderFeedbackGapReason reason,
-                                      std::int64_t local_receive_ns) noexcept {
-    const std::uint64_t sequence = ++gap_sequence_;
+  [[nodiscard]] bool PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason reason,
+      std::int64_t local_receive_ns) noexcept {
+    const std::uint64_t sequence = ++continuity_sequence_;
     bool all_published = true;
 
     for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {
-      OrderFeedbackEvent gap = MakeGapEvent(OrderFeedbackGapScope::kGlobal,
-                                            reason, sequence, local_receive_ns);
+      OrderFeedbackEvent event =
+          MakeContinuityLostEvent(OrderFeedbackContinuityScope::kGlobal, reason,
+                                  sequence, local_receive_ns);
       OrderFeedbackLane& lane = channel_.lanes[i];
-      if (lane.queue.TryPush(gap)) {
-        pending_gaps_[i].pending = false;
+      if (lane.queue.TryPush(event)) {
+        pending_continuity_losses_[i].pending = false;
         ++published_count_;
         continue;
       }
 
-      pending_gaps_[i].pending = true;
-      pending_gaps_[i].event = gap;
+      pending_continuity_losses_[i].pending = true;
+      pending_continuity_losses_[i].event = event;
       RecordLaneQueueFullOnly(static_cast<std::uint8_t>(i));
       all_published = false;
     }
@@ -341,11 +344,12 @@ class OrderFeedbackShmPublisher {
     return all_published;
   }
 
-  [[nodiscard]] std::size_t FlushPendingGapEvents() noexcept {
+  [[nodiscard]] std::size_t FlushPendingContinuityLostEvents() noexcept {
     std::size_t flushed_count = 0;
     for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {
       bool flushed = false;
-      if (FlushPendingGapForLane(static_cast<std::uint8_t>(i), &flushed) &&
+      if (FlushPendingContinuityLossForLane(static_cast<std::uint8_t>(i),
+                                            &flushed) &&
           flushed) {
         ++flushed_count;
       }
@@ -362,22 +366,22 @@ class OrderFeedbackShmPublisher {
   }
 
  private:
-  struct PendingGap {
+  struct PendingContinuityLoss {
     bool pending{false};
     OrderFeedbackEvent event{};
   };
 
-  [[nodiscard]] static OrderFeedbackEvent MakeGapEvent(
-      OrderFeedbackGapScope scope, OrderFeedbackGapReason reason,
+  [[nodiscard]] static OrderFeedbackEvent MakeContinuityLostEvent(
+      OrderFeedbackContinuityScope scope, OrderFeedbackContinuityReason reason,
       std::uint64_t sequence, std::int64_t local_receive_ns) noexcept {
-    OrderFeedbackEvent gap{};
-    gap.kind = OrderFeedbackKind::kGap;
-    gap.local_order_id = 0;
-    gap.gap_scope = scope;
-    gap.gap_reason = reason;
-    gap.gap_sequence = sequence;
-    gap.local_receive_ns = local_receive_ns;
-    return gap;
+    OrderFeedbackEvent event{};
+    event.kind = OrderFeedbackKind::kContinuityLost;
+    event.local_order_id = 0;
+    event.continuity_scope = scope;
+    event.continuity_reason = reason;
+    event.continuity_sequence = sequence;
+    event.local_receive_ns = local_receive_ns;
+    return event;
   }
 
   void RecordInvalidRoute() noexcept {
@@ -396,36 +400,39 @@ class OrderFeedbackShmPublisher {
     lane.header.queue_full_count.fetch_add(1, std::memory_order_relaxed);
   }
 
-  void SetPendingLaneGap(std::uint8_t strategy_id,
-                         std::int64_t local_receive_ns) noexcept {
-    PendingGap& pending_gap = pending_gaps_[strategy_id];
-    if (pending_gap.pending &&
-        pending_gap.event.gap_scope == OrderFeedbackGapScope::kGlobal) {
+  void SetPendingLaneContinuityLoss(std::uint8_t strategy_id,
+                                    std::int64_t local_receive_ns) noexcept {
+    PendingContinuityLoss& pending_loss =
+        pending_continuity_losses_[strategy_id];
+    if (pending_loss.pending && pending_loss.event.continuity_scope ==
+                                    OrderFeedbackContinuityScope::kGlobal) {
       return;
     }
 
-    pending_gap.pending = true;
-    pending_gap.event = MakeGapEvent(OrderFeedbackGapScope::kLane,
-                                     OrderFeedbackGapReason::kLaneQueueFull,
-                                     ++gap_sequence_, local_receive_ns);
+    pending_loss.pending = true;
+    pending_loss.event =
+        MakeContinuityLostEvent(OrderFeedbackContinuityScope::kLane,
+                                OrderFeedbackContinuityReason::kLaneQueueFull,
+                                ++continuity_sequence_, local_receive_ns);
   }
 
-  [[nodiscard]] bool FlushPendingGapForLane(std::uint8_t strategy_id,
-                                            bool* flushed = nullptr) noexcept {
+  [[nodiscard]] bool FlushPendingContinuityLossForLane(
+      std::uint8_t strategy_id, bool* flushed = nullptr) noexcept {
     if (flushed != nullptr) {
       *flushed = false;
     }
-    PendingGap& pending_gap = pending_gaps_[strategy_id];
-    if (!pending_gap.pending) {
+    PendingContinuityLoss& pending_loss =
+        pending_continuity_losses_[strategy_id];
+    if (!pending_loss.pending) {
       return true;
     }
 
     OrderFeedbackLane& lane = channel_.lanes[strategy_id];
-    if (!lane.queue.TryPush(pending_gap.event)) {
+    if (!lane.queue.TryPush(pending_loss.event)) {
       return false;
     }
 
-    pending_gap.pending = false;
+    pending_loss.pending = false;
     ++published_count_;
     if (flushed != nullptr) {
       *flushed = true;
@@ -434,10 +441,11 @@ class OrderFeedbackShmPublisher {
   }
 
   OrderFeedbackShmChannel& channel_;
-  std::array<PendingGap, kMaxOrderFeedbackStrategies> pending_gaps_{};
+  std::array<PendingContinuityLoss, kMaxOrderFeedbackStrategies>
+      pending_continuity_losses_{};
   std::uint64_t published_count_{0};
   std::uint64_t invalid_route_count_{0};
-  std::uint64_t gap_sequence_{0};
+  std::uint64_t continuity_sequence_{0};
 };
 
 class OrderFeedbackShmReader {

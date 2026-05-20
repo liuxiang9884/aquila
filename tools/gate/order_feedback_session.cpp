@@ -98,7 +98,8 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "stats text_messages={} binary_messages={} login_sent={} "
       "login_accepted={} login_rejected={} subscribe_sent={} "
       "subscribe_acks={} control_errors={} parse_errors={} "
-      "events_published={} publish_failures={} global_gaps_published={} "
+      "events_published={} publish_failures={} "
+      "global_continuity_lost_events_published={} "
       "parser_messages_seen={} parser_messages_parsed={} "
       "parser_orders_seen={} parser_events_emitted={} parser_dropped_events={} "
       "parser_need_more={} parser_unsupported_template={} "
@@ -115,7 +116,8 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       session_stats.login_rejected, session_stats.subscribe_sent,
       session_stats.subscribe_acks, session_stats.control_errors,
       session_stats.parse_errors, session_stats.events_published,
-      session_stats.publish_failures, session_stats.global_gaps_published,
+      session_stats.publish_failures,
+      session_stats.global_continuity_lost_events_published,
       parser_stats.messages_seen, parser_stats.messages_parsed,
       parser_stats.orders_seen, parser_stats.events_emitted,
       parser_stats.dropped_events, parser_stats.need_more_count,
@@ -135,7 +137,8 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "summary text_messages={} binary_messages={} login_sent={} "
       "login_accepted={} login_rejected={} subscribe_sent={} "
       "subscribe_acks={} control_errors={} parse_errors={} "
-      "events_published={} publish_failures={} global_gaps_published={} "
+      "events_published={} publish_failures={} "
+      "global_continuity_lost_events_published={} "
       "parser_messages_seen={} parser_messages_parsed={} "
       "parser_orders_seen={} parser_events_emitted={} parser_dropped_events={} "
       "parser_need_more={} parser_unsupported_template={} "
@@ -152,7 +155,8 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       session_stats.login_rejected, session_stats.subscribe_sent,
       session_stats.subscribe_acks, session_stats.control_errors,
       session_stats.parse_errors, session_stats.events_published,
-      session_stats.publish_failures, session_stats.global_gaps_published,
+      session_stats.publish_failures,
+      session_stats.global_continuity_lost_events_published,
       parser_stats.messages_seen, parser_stats.messages_parsed,
       parser_stats.orders_seen, parser_stats.events_emitted,
       parser_stats.dropped_events, parser_stats.need_more_count,
@@ -182,7 +186,8 @@ struct LoggingOrderFeedbackPublisher {
         "exchange_order_id={} exchange_update_ns={} local_receive_ns={} "
         "cumulative_filled_quantity={} left_quantity={} "
         "cancelled_quantity={} fill_price={:.12g} role={} finish_reason={} "
-        "reject_reason={} gap_scope={} gap_reason={} gap_sequence={}",
+        "reject_reason={} continuity_scope={} continuity_reason={} "
+        "continuity_sequence={}",
         ok ? "true" : "false", magic_enum::enum_name(event.kind),
         event.local_order_id, event.exchange_order_id, event.exchange_update_ns,
         event.local_receive_ns, event.cumulative_filled_quantity,
@@ -190,8 +195,9 @@ struct LoggingOrderFeedbackPublisher {
         magic_enum::enum_name(event.role),
         magic_enum::enum_name(event.finish_reason),
         magic_enum::enum_name(event.reject_reason),
-        magic_enum::enum_name(event.gap_scope),
-        magic_enum::enum_name(event.gap_reason), event.gap_sequence);
+        magic_enum::enum_name(event.continuity_scope),
+        magic_enum::enum_name(event.continuity_reason),
+        event.continuity_sequence);
     if (!ok) {
       NOVA_WARNING("feedback_event_publish_failed local_order_id={} kind={}",
                    event.local_order_id, magic_enum::enum_name(event.kind));
@@ -199,11 +205,13 @@ struct LoggingOrderFeedbackPublisher {
     return ok;
   }
 
-  bool PublishGlobalGap(aquila::OrderFeedbackGapReason reason,
-                        std::int64_t local_receive_ns) noexcept {
-    const bool ok = publisher.PublishGlobalGap(reason, local_receive_ns);
+  bool PublishGlobalContinuityLost(aquila::OrderFeedbackContinuityReason reason,
+                                   std::int64_t local_receive_ns) noexcept {
+    const bool ok =
+        publisher.PublishGlobalContinuityLost(reason, local_receive_ns);
     NOVA_WARNING(
-        "feedback_global_gap publish_ok={} reason={} local_receive_ns={}",
+        "feedback_global_continuity_lost publish_ok={} reason={} "
+        "local_receive_ns={}",
         ok ? "true" : "false", magic_enum::enum_name(reason), local_receive_ns);
     return ok;
   }

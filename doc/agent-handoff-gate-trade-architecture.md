@@ -16,7 +16,7 @@ design spec 和当前代码作为事实源。
 - 截至 2026-05-08，Gate / Binance data session config、log config、instrument catalog、行情 session tools、
   Gate REST 测试脚本、Gate submit/cancel `OrderSession` 第一版实现、Strategy 第一版订单框架、测试和 benchmark 已完成多轮收口；新接手时以
   `git log --oneline -8` 为准。
-- Order feedback Task1 SHM transport 已落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`kGap` control event、publisher / reader、config parser、tests 和 benchmark 已实现。
+- Order feedback Task1 SHM transport 已落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、`kContinuityLost` control event、publisher / reader、config parser、tests 和 benchmark 已实现。
 - Order feedback Task2 已落地：Gate private `futures.orders` parser、`OrderFeedbackSession` login / subscribe / binary publish、`OrderManager::OnOrderFeedback()`、SHM fake integration、config / tool、parser/session benchmark 和 1 手 BTC_USDT live smoke 均已实现并验证。下一步是 REST reconcile、account / position feedback 和端到端 benchmark。
 - Trading runtime production loop、Gate runtime adapter 和 `demo` 策略 dry-run tool 已落地；Gate production adapter 当前不使用 response queue、background order session thread 或 command queue，本轮没有做 `gate_demo_strategy --execute` 实盘测试。
 - 新接手时先执行：
@@ -607,15 +607,15 @@ doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 Task1 / Task2 当前实现顺序：
 
 1. Task1 订单 feedback SHM transport 已实现：一个 SHM object 固定 8 lane，每 lane 一个 Nova SPSC queue；`strategy_id = local_order_id >> 56`，直接数组路由，不做 per-strategy channel name map。
-2. Task1 `OrderFeedbackEvent` 已加入 `OrderFeedbackKind::kGap`、gap scope / reason / sequence；gap 不再通过 `global_gap_epoch` / `lane_gap_epoch` atomic 进入 Strategy，Strategy reader 只需要 `Poll()` 消费 event。
-3. SHM producer 使用 `TryPush()`，正常路径不阻塞、不覆盖、不做 shared successful stats；queue full 时只更新当前 lane `queue_full_count` / `dropped_count`，并产生 pending lane `kGap` event，不影响其他 lane。
-4. `PublishGlobalGap()` 对 8 lane fanout `kGap`；某条 lane full 时 publisher 保留 pending gap，后续本地重试。
+2. Task1 `OrderFeedbackEvent` 已加入 `OrderFeedbackKind::kContinuityLost`、continuity scope / reason / sequence；continuity lost 不再通过 shared epoch atomic 进入 Strategy，Strategy reader 只需要 `Poll()` 消费 event。
+3. SHM producer 使用 `TryPush()`，正常路径不阻塞、不覆盖、不做 shared successful stats；queue full 时只更新当前 lane `queue_full_count` / `dropped_count`，并产生 pending lane `kContinuityLost` event，不影响其他 lane。
+4. `PublishGlobalContinuityLost()` 对 8 lane fanout `kContinuityLost`；某条 lane full 时 publisher 保留 pending continuity lost，后续本地重试。
 5. Reader ownership 使用 `consumer_run_id` 作为唯一 ownership token，0 表示 unclaimed；`consumer_pid` 仅诊断；`Claim(..., force_claim=true)` 是显式恢复动作；`Release()` CAS 当前 run id 成功才清 pid。第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe。
 6. `OrderFeedbackShmManager` 初始化 / attach 通过 `Create()` / `Open()` / `OpenOrCreate()` 返回 `Result`；Nova allocator 抛出的底层异常只在 cold factory 边界被转换为错误字符串，不向上层暴露 throwing constructor。
 7. Task2 已实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 `OrderManager::OnOrderFeedback()`。parser diagnostics 覆盖 unsupported `finish_as`、SBE quantity exponent 无法精确还原整数合约张数、`filled` 但 `left != 0`、invalid text 和 route failure。
 8. accepted event 到达 Strategy 后，由 Strategy 在自己的线程中通知 `OrderSession` 更新 `local_order_id -> exchange_order_id` cancel cache；filled / cancelled terminal event 后清理该 cache。
 9. cancel 已发出后收到 partial fill 回报时，Strategy 更新累计成交但保持 `kCancelSent`，避免重新开放重复撤单入口；filled / cancelled terminal event 仍可推进终态。
-10. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 gap detected 状态和暂停新开仓边界。
+10. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 continuity lost detected 状态和暂停新开仓边界。
 
 Task1 当前实现入口：
 
@@ -632,7 +632,7 @@ benchmark/core/trading/order_feedback_shm_benchmark.cpp
 ```
 
 `order_feedback_shm_benchmark` case 名包括 `PublishThenDrain`、`PollOneWithRefill`、
-`PublishPollLoop` 和 `PublishGlobalGapThenDrain`；这些是 transport benchmark，单操作 case 包含 drain /
+`PublishPollLoop` 和 `PublishGlobalContinuityLostThenDrain`；这些是 transport benchmark，单操作 case 包含 drain /
 refill 维护，不能写成纯 publish / poll latency 或端到端性能结论。
 
 Task2 当前实现入口：
@@ -1111,7 +1111,7 @@ strategy-2-process
 1. Gate / Binance 行情拆进程，隔离 WebSocket 重连、decode 异常、private link 或公网链路抖动。
 2. Strategy 与 Gate / Binance `OrderSession` 同进程同线程，避免下单热路径引入 IPC 或跨线程队列。
 3. Gate `OrderFeedbackSession` 可以账号级共享，独立进程接收 private `futures.orders`，按 `local_order_id` 高 8 bit 路由到固定 SHM lane。
-4. 每个 Strategy 进程只 claim 自己的 lane；duplicate live consumer 会被拒绝，queue full 或 global gap 通过 `OrderFeedbackKind::kGap` event 触发 Strategy 进入 reconcile 状态。
+4. 每个 Strategy 进程只 claim 自己的 lane；duplicate live consumer 会被拒绝，queue full 或 global continuity lost 通过 `OrderFeedbackKind::kContinuityLost` event 触发 Strategy 进入 reconcile 状态。
 5. 开发期可以用单进程工具组合多份 config 简化调试；生产配置按进程拆分，Gate 行情进程、Binance 行情进程、Gate feedback 进程和各 Strategy 进程分别加载自己的配置。
 
 当前行情进程配置示例：
@@ -1130,12 +1130,12 @@ config/data_sessions/binance_data_session.toml
 下一轮建议按这个顺序继续：
 
 1. 先按 onboarding、本 handoff 和当前代码确认 Task1 / Task2 已实现边界、验证命令和 benchmark 口径。
-2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 gap 后新开仓暂停 / 恢复条件。
+2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 continuity lost 后新开仓暂停 / 恢复条件。
 3. 做最小 C++ WS live smoke：同时运行 `gate_order_feedback_session --connect` 和 `gate_strategy_order --execute` 的小额 accepted / cancel lifecycle，保留原始输出，并用 REST 查询确认无残留订单 / 仓位；真实下单前必须得到用户明确允许。
-4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 gap / reconnect 后恢复订单、持仓和风险状态。
+4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 continuity lost / reconnect 后恢复订单、持仓和风险状态。
 5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；Gate decimal-size 合约的数量步进规则需要先确认再进入下单热路径。
 6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
-7. 如果需要继续审查 Gate `OrderSession` / `OrderFeedbackSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、subscribe 签名、place/cancel final result validation、断线 gap、cache update / forget 和 benchmark 口径。
+7. 如果需要继续审查 Gate `OrderSession` / `OrderFeedbackSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、subscribe 签名、place/cancel final result validation、断线 continuity lost、cache update / forget 和 benchmark 口径。
 8. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
 
 ## 相关文件

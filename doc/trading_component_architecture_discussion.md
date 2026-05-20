@@ -861,7 +861,7 @@ capacity 边界恢复。
 - 外部不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；内部具体原因只进入 `OrderSession` diagnostics / log。
 - ack / response 输出后，组合层应先调用 `OrderManager::OnOrderResponse()`，再调用 `Strategy::OnOrderResponse()`。
 - ack 只表示交易所接口收到请求，不代表订单已经进入订单簿。
-- 断线 / not ready 不产生 `OrderFeedbackEvent::kGap`，也不直接改变订单状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
+- 断线 / not ready 不产生 `OrderFeedbackKind::kContinuityLost`，也不直接改变订单状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
 
 ## OrderFeedbackSession 架构占位
 
@@ -903,7 +903,7 @@ capacity 边界恢复。
 
 1. `DataReader`：确认 live / replay 类名、config 是否拆分、是否保留当前 `DataReaderConfig` 兼容层。
 2. `OrderSession`：定义 place / cancel 输入、ack / response 输出、correlation 和 exchange id cache 边界。
-3. `OrderFeedbackSession`：定义 feedback event、gap 语义、transport 和恢复边界。
+3. `OrderFeedbackSession`：定义 feedback event、continuity lost 语义、transport 和恢复边界。
 4. `OrderManager`：定义订单状态机、查询接口、执行关系和 position book 分界。
 5. `Strategy`：定义 strategy context、execution group、事件回调和状态查询方式。
 6. 组合层：在不影响性能的前提下，定义事件顺序保证和实际组装方式。

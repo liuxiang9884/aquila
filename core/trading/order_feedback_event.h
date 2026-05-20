@@ -12,7 +12,7 @@ enum class OrderFeedbackKind : std::uint8_t {
   kFilled = 2,
   kCancelled = 3,
   kRejected = 4,
-  kGap = 5,
+  kContinuityLost = 5,
 };
 
 enum class OrderRole : std::uint8_t {
@@ -39,12 +39,12 @@ enum class OrderRejectReason : std::uint8_t {
   kExchangeRejected = 2,
 };
 
-enum class OrderFeedbackGapScope : std::uint8_t {
+enum class OrderFeedbackContinuityScope : std::uint8_t {
   kLane = 0,
   kGlobal = 1,
 };
 
-enum class OrderFeedbackGapReason : std::uint8_t {
+enum class OrderFeedbackContinuityReason : std::uint8_t {
   kUnknown = 0,
   kLaneQueueFull = 1,
   kSessionDisconnected = 2,
@@ -64,9 +64,9 @@ struct OrderFeedbackEvent {
   OrderRole role;
   OrderFinishReason finish_reason;
   OrderRejectReason reject_reason;
-  OrderFeedbackGapScope gap_scope;
-  OrderFeedbackGapReason gap_reason;
-  std::uint64_t gap_sequence;
+  OrderFeedbackContinuityScope continuity_scope;
+  OrderFeedbackContinuityReason continuity_reason;
+  std::uint64_t continuity_sequence;
   std::int64_t exchange_update_ns;
   std::int64_t local_receive_ns;
 };

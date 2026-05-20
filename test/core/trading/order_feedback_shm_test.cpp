@@ -296,17 +296,18 @@ TEST(OrderFeedbackShmTest, PublisherRejectsInvalidRoute) {
   auto channel = MakeChannelForTest();
   OrderFeedbackShmPublisher publisher(*channel);
 
-  OrderFeedbackEvent gap_event{};
-  gap_event.kind = OrderFeedbackKind::kGap;
-  gap_event.gap_scope = OrderFeedbackGapScope::kLane;
-  gap_event.gap_reason = OrderFeedbackGapReason::kLaneQueueFull;
+  OrderFeedbackEvent continuity_lost_event{};
+  continuity_lost_event.kind = OrderFeedbackKind::kContinuityLost;
+  continuity_lost_event.continuity_scope = OrderFeedbackContinuityScope::kLane;
+  continuity_lost_event.continuity_reason =
+      OrderFeedbackContinuityReason::kLaneQueueFull;
 
   OrderFeedbackEvent zero_order_event = MakeAcceptedEvent(1, 1);
   zero_order_event.local_order_id = 0;
 
   OrderFeedbackEvent invalid_strategy_event = MakeAcceptedEvent(9, 1);
 
-  EXPECT_FALSE(publisher.Publish(gap_event));
+  EXPECT_FALSE(publisher.Publish(continuity_lost_event));
   EXPECT_FALSE(publisher.Publish(zero_order_event));
   EXPECT_FALSE(publisher.Publish(invalid_strategy_event));
 
@@ -317,7 +318,7 @@ TEST(OrderFeedbackShmTest, PublisherRejectsInvalidRoute) {
 }
 
 TEST(OrderFeedbackShmTest,
-     PublisherQueueFullSetsPendingLaneGapAndDoesNotAffectOtherLane) {
+     PublisherQueueFullSetsPendingLaneContinuityLostAndDoesNotAffectOtherLane) {
   auto channel = MakeChannelForTest();
   OrderFeedbackShmPublisher publisher(*channel);
 
@@ -342,7 +343,8 @@ TEST(OrderFeedbackShmTest,
   EXPECT_EQ(popped.local_order_id, lane4_event.local_order_id);
 }
 
-TEST(OrderFeedbackShmTest, PendingLaneGapFlushesBeforeNextOrderEvent) {
+TEST(OrderFeedbackShmTest,
+     PendingLaneContinuityLostFlushesBeforeNextOrderEvent) {
   auto channel = MakeChannelForTest();
   OrderFeedbackShmPublisher publisher(*channel);
 
@@ -359,32 +361,37 @@ TEST(OrderFeedbackShmTest, PendingLaneGapFlushesBeforeNextOrderEvent) {
   const OrderFeedbackEvent next_event = MakeAcceptedEvent(3, 102);
   EXPECT_TRUE(publisher.Publish(next_event));
 
-  bool saw_gap = false;
+  bool saw_continuity_lost = false;
   bool saw_next_event = false;
   while (Pop(channel->lanes[3], popped)) {
-    if (!saw_gap && popped.kind == OrderFeedbackKind::kGap) {
-      EXPECT_EQ(popped.gap_scope, OrderFeedbackGapScope::kLane);
-      EXPECT_EQ(popped.gap_reason, OrderFeedbackGapReason::kLaneQueueFull);
+    if (!saw_continuity_lost &&
+        popped.kind == OrderFeedbackKind::kContinuityLost) {
+      EXPECT_EQ(popped.continuity_scope, OrderFeedbackContinuityScope::kLane);
+      EXPECT_EQ(popped.continuity_reason,
+                OrderFeedbackContinuityReason::kLaneQueueFull);
       EXPECT_EQ(popped.local_receive_ns, first_event.local_receive_ns);
-      saw_gap = true;
+      saw_continuity_lost = true;
       continue;
     }
 
-    if (saw_gap && popped.local_order_id == next_event.local_order_id) {
+    if (saw_continuity_lost &&
+        popped.local_order_id == next_event.local_order_id) {
       EXPECT_EQ(popped.kind, OrderFeedbackKind::kAccepted);
       saw_next_event = true;
       break;
     }
 
-    EXPECT_FALSE(saw_gap) << "ordinary event crossed pending gap";
+    EXPECT_FALSE(saw_continuity_lost)
+        << "ordinary event crossed pending continuity lost";
   }
 
-  EXPECT_TRUE(saw_gap);
+  EXPECT_TRUE(saw_continuity_lost);
   EXPECT_TRUE(saw_next_event);
 }
 
-TEST(OrderFeedbackShmTest,
-     PendingLaneGapCountsNewDropWhenFlushStillFullAndPreservesOriginalGap) {
+TEST(
+    OrderFeedbackShmTest,
+    PendingLaneContinuityLostCountsNewDropWhenFlushStillFullAndPreservesOriginalContinuityLost) {
   auto channel = MakeChannelForTest();
   OrderFeedbackShmPublisher publisher(*channel);
 
@@ -412,59 +419,61 @@ TEST(OrderFeedbackShmTest,
 
   OrderFeedbackEvent popped{};
   EXPECT_TRUE(Pop(channel->lanes[3], popped));
-  EXPECT_EQ(publisher.FlushPendingGapEvents(), 1U);
+  EXPECT_EQ(publisher.FlushPendingContinuityLostEvents(), 1U);
 
-  bool saw_gap = false;
+  bool saw_continuity_lost = false;
   while (Pop(channel->lanes[3], popped)) {
     ASSERT_NE(popped.local_order_id, event_b.local_order_id)
-        << "event B crossed the pending gap";
-    if (popped.kind != OrderFeedbackKind::kGap) {
+        << "event B crossed the pending continuity lost";
+    if (popped.kind != OrderFeedbackKind::kContinuityLost) {
       continue;
     }
 
-    EXPECT_EQ(popped.gap_scope, OrderFeedbackGapScope::kLane);
-    EXPECT_EQ(popped.gap_reason, OrderFeedbackGapReason::kLaneQueueFull);
+    EXPECT_EQ(popped.continuity_scope, OrderFeedbackContinuityScope::kLane);
+    EXPECT_EQ(popped.continuity_reason,
+              OrderFeedbackContinuityReason::kLaneQueueFull);
     EXPECT_EQ(popped.local_receive_ns, event_a.local_receive_ns);
-    saw_gap = true;
+    saw_continuity_lost = true;
     break;
   }
-  EXPECT_TRUE(saw_gap);
+  EXPECT_TRUE(saw_continuity_lost);
 }
 
-TEST(OrderFeedbackShmTest, PublishGlobalGapWritesAllLanes) {
+TEST(OrderFeedbackShmTest, PublishGlobalContinuityLostWritesAllLanes) {
   auto channel = MakeChannelForTest();
   OrderFeedbackShmPublisher publisher(*channel);
 
-  EXPECT_TRUE(publisher.PublishGlobalGap(
-      OrderFeedbackGapReason::kSessionDisconnected, 123));
+  EXPECT_TRUE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kSessionDisconnected, 123));
   EXPECT_EQ(publisher.published_count(), kMaxOrderFeedbackStrategies);
 
-  std::uint64_t gap_sequence = 0;
+  std::uint64_t continuity_sequence = 0;
   for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {
     OrderFeedbackEvent popped{};
     EXPECT_TRUE(Pop(channel->lanes[i], popped)) << "lane=" << i;
-    EXPECT_EQ(popped.kind, OrderFeedbackKind::kGap);
-    EXPECT_EQ(popped.gap_scope, OrderFeedbackGapScope::kGlobal);
-    EXPECT_EQ(popped.gap_reason, OrderFeedbackGapReason::kSessionDisconnected);
+    EXPECT_EQ(popped.kind, OrderFeedbackKind::kContinuityLost);
+    EXPECT_EQ(popped.continuity_scope, OrderFeedbackContinuityScope::kGlobal);
+    EXPECT_EQ(popped.continuity_reason,
+              OrderFeedbackContinuityReason::kSessionDisconnected);
     EXPECT_EQ(popped.local_order_id, 0U);
     EXPECT_EQ(popped.local_receive_ns, 123);
     if (i == 0) {
-      gap_sequence = popped.gap_sequence;
+      continuity_sequence = popped.continuity_sequence;
     } else {
-      EXPECT_EQ(popped.gap_sequence, gap_sequence);
+      EXPECT_EQ(popped.continuity_sequence, continuity_sequence);
     }
     EXPECT_FALSE(Pop(channel->lanes[i], popped)) << "lane=" << i;
   }
 }
 
-TEST(OrderFeedbackShmTest, PublishGlobalGapDefersFullLaneOnly) {
+TEST(OrderFeedbackShmTest, PublishGlobalContinuityLostDefersFullLaneOnly) {
   auto channel = MakeChannelForTest();
   OrderFeedbackShmPublisher publisher(*channel);
 
   EXPECT_GT(FillLaneUntilFull(channel->lanes[5]), 0U);
 
-  EXPECT_FALSE(publisher.PublishGlobalGap(
-      OrderFeedbackGapReason::kSessionDisconnected, 123));
+  EXPECT_FALSE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kSessionDisconnected, 123));
   EXPECT_EQ(
       channel->lanes[5].header.queue_full_count.load(std::memory_order_relaxed),
       1U);
@@ -472,40 +481,42 @@ TEST(OrderFeedbackShmTest, PublishGlobalGapDefersFullLaneOnly) {
       channel->lanes[5].header.dropped_count.load(std::memory_order_relaxed),
       0U);
 
-  std::uint64_t gap_sequence = 0;
+  std::uint64_t continuity_sequence = 0;
   for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {
     if (i == 5) {
       continue;
     }
     OrderFeedbackEvent popped{};
     EXPECT_TRUE(Pop(channel->lanes[i], popped)) << "lane=" << i;
-    EXPECT_EQ(popped.kind, OrderFeedbackKind::kGap);
-    EXPECT_EQ(popped.gap_scope, OrderFeedbackGapScope::kGlobal);
-    EXPECT_EQ(popped.gap_reason, OrderFeedbackGapReason::kSessionDisconnected);
-    if (gap_sequence == 0) {
-      gap_sequence = popped.gap_sequence;
+    EXPECT_EQ(popped.kind, OrderFeedbackKind::kContinuityLost);
+    EXPECT_EQ(popped.continuity_scope, OrderFeedbackContinuityScope::kGlobal);
+    EXPECT_EQ(popped.continuity_reason,
+              OrderFeedbackContinuityReason::kSessionDisconnected);
+    if (continuity_sequence == 0) {
+      continuity_sequence = popped.continuity_sequence;
     } else {
-      EXPECT_EQ(popped.gap_sequence, gap_sequence);
+      EXPECT_EQ(popped.continuity_sequence, continuity_sequence);
     }
   }
 
   OrderFeedbackEvent popped{};
   EXPECT_TRUE(Pop(channel->lanes[5], popped));
-  EXPECT_EQ(publisher.FlushPendingGapEvents(), 1U);
+  EXPECT_EQ(publisher.FlushPendingContinuityLostEvents(), 1U);
 
-  bool saw_global_gap = false;
+  bool saw_global_continuity_lost = false;
   while (Pop(channel->lanes[5], popped)) {
-    if (popped.kind != OrderFeedbackKind::kGap) {
+    if (popped.kind != OrderFeedbackKind::kContinuityLost) {
       continue;
     }
-    EXPECT_EQ(popped.gap_scope, OrderFeedbackGapScope::kGlobal);
-    EXPECT_EQ(popped.gap_reason, OrderFeedbackGapReason::kSessionDisconnected);
+    EXPECT_EQ(popped.continuity_scope, OrderFeedbackContinuityScope::kGlobal);
+    EXPECT_EQ(popped.continuity_reason,
+              OrderFeedbackContinuityReason::kSessionDisconnected);
     EXPECT_EQ(popped.local_receive_ns, 123);
-    EXPECT_EQ(popped.gap_sequence, gap_sequence);
-    saw_global_gap = true;
+    EXPECT_EQ(popped.continuity_sequence, continuity_sequence);
+    saw_global_continuity_lost = true;
     break;
   }
-  EXPECT_TRUE(saw_global_gap);
+  EXPECT_TRUE(saw_global_continuity_lost);
 }
 
 TEST(OrderFeedbackShmTest, GlobalPendingOverridesLanePending) {
@@ -517,26 +528,26 @@ TEST(OrderFeedbackShmTest, GlobalPendingOverridesLanePending) {
   OrderFeedbackEvent lane_event = MakeAcceptedEvent(6, 201);
   EXPECT_FALSE(publisher.Publish(lane_event));
 
-  EXPECT_FALSE(publisher.PublishGlobalGap(
-      OrderFeedbackGapReason::kReconnectUnknownWindow, 456));
+  EXPECT_FALSE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kReconnectUnknownWindow, 456));
 
   OrderFeedbackEvent popped{};
   EXPECT_TRUE(Pop(channel->lanes[6], popped));
-  EXPECT_EQ(publisher.FlushPendingGapEvents(), 1U);
+  EXPECT_EQ(publisher.FlushPendingContinuityLostEvents(), 1U);
 
-  bool saw_gap = false;
+  bool saw_continuity_lost = false;
   while (Pop(channel->lanes[6], popped)) {
-    if (popped.kind != OrderFeedbackKind::kGap) {
+    if (popped.kind != OrderFeedbackKind::kContinuityLost) {
       continue;
     }
-    EXPECT_EQ(popped.gap_scope, OrderFeedbackGapScope::kGlobal);
-    EXPECT_EQ(popped.gap_reason,
-              OrderFeedbackGapReason::kReconnectUnknownWindow);
+    EXPECT_EQ(popped.continuity_scope, OrderFeedbackContinuityScope::kGlobal);
+    EXPECT_EQ(popped.continuity_reason,
+              OrderFeedbackContinuityReason::kReconnectUnknownWindow);
     EXPECT_EQ(popped.local_receive_ns, 456);
-    saw_gap = true;
+    saw_continuity_lost = true;
     break;
   }
-  EXPECT_TRUE(saw_gap);
+  EXPECT_TRUE(saw_continuity_lost);
 }
 
 TEST(OrderFeedbackShmTest, ReaderClaimRejectsInvalidStrategyId) {
@@ -749,32 +760,34 @@ TEST(OrderFeedbackShmTest, ReaderPollZeroDoesNotConsume) {
   EXPECT_EQ(result.value.consumed_count(), 1U);
 }
 
-TEST(OrderFeedbackShmTest, ReaderPollDeliversGapEventAsNormalEvent) {
+TEST(OrderFeedbackShmTest, ReaderPollDeliversContinuityLostEventAsNormalEvent) {
   auto channel = MakeChannelForTest();
-  OrderFeedbackEvent gap{};
-  gap.kind = OrderFeedbackKind::kGap;
-  gap.gap_scope = OrderFeedbackGapScope::kGlobal;
-  gap.gap_reason = OrderFeedbackGapReason::kProducerRestart;
-  gap.gap_sequence = 12345;
-  ASSERT_TRUE(channel->lanes[0].queue.TryPush(gap));
+  OrderFeedbackEvent continuity_lost{};
+  continuity_lost.kind = OrderFeedbackKind::kContinuityLost;
+  continuity_lost.continuity_scope = OrderFeedbackContinuityScope::kGlobal;
+  continuity_lost.continuity_reason =
+      OrderFeedbackContinuityReason::kProducerRestart;
+  continuity_lost.continuity_sequence = 12345;
+  ASSERT_TRUE(channel->lanes[0].queue.TryPush(continuity_lost));
 
   auto result = OrderFeedbackShmReader::Claim(*channel, 0, 99);
   ASSERT_TRUE(result.ok) << result.error;
 
-  bool saw_gap = false;
+  bool saw_continuity_lost = false;
   EXPECT_EQ(result.value.Poll(
                 1,
                 [&](const OrderFeedbackEvent& event) {
-                  saw_gap = true;
-                  EXPECT_EQ(event.kind, OrderFeedbackKind::kGap);
-                  EXPECT_EQ(event.gap_scope, OrderFeedbackGapScope::kGlobal);
-                  EXPECT_EQ(event.gap_reason,
-                            OrderFeedbackGapReason::kProducerRestart);
-                  EXPECT_EQ(event.gap_sequence, 12345U);
+                  saw_continuity_lost = true;
+                  EXPECT_EQ(event.kind, OrderFeedbackKind::kContinuityLost);
+                  EXPECT_EQ(event.continuity_scope,
+                            OrderFeedbackContinuityScope::kGlobal);
+                  EXPECT_EQ(event.continuity_reason,
+                            OrderFeedbackContinuityReason::kProducerRestart);
+                  EXPECT_EQ(event.continuity_sequence, 12345U);
                 }),
             1U);
 
-  EXPECT_TRUE(saw_gap);
+  EXPECT_TRUE(saw_continuity_lost);
   EXPECT_EQ(result.value.consumed_count(), 1U);
 }
 

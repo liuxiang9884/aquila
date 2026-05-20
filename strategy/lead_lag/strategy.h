@@ -132,11 +132,11 @@ class Strategy {
 
   template <typename ContextT>
   void OnOrderFeedback(const OrderFeedbackEvent& event, ContextT&) noexcept {
-    if (event.kind == OrderFeedbackKind::kGap) {
+    if (event.kind == OrderFeedbackKind::kContinuityLost) {
       degraded_ = true;
       for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
         if (runtime.initialized) {
-          runtime.execution.OnFeedbackGap(event);
+          runtime.execution.OnFeedbackContinuityLost(event);
         }
       }
     }
@@ -300,9 +300,9 @@ class Strategy {
                                 threshold);
     if (last_signal_decision_.triggered) {
       const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
-      last_signal_diagnostics_ = BuildSignalDiagnostics(
-          *runtime, market, runtime->drifted_lead, recorder, alignment,
-          threshold);
+      last_signal_diagnostics_ =
+          BuildSignalDiagnostics(*runtime, market, runtime->drifted_lead,
+                                 recorder, alignment, threshold);
       last_signal_diagnostics_valid_ = true;
     }
     if (SyntheticPositionAccounting()) {
