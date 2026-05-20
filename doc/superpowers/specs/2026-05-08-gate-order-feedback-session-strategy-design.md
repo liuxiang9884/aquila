@@ -186,13 +186,15 @@ cancel 编码仍保留 `text=t-<local_order_id>` fallback。没有办法在 feed
 Strategy reader 通过 Task1 SHM reader `Poll()` 消费 `OrderFeedbackEvent`。当 handler 收到
 `OrderFeedbackKind::kContinuityLost`：
 
-- Strategy 设置 `feedback_continuity_lost_detected = true`；
-- 暂停新开仓；
+- `OrderManager` 设置 `feedback_continuity_lost_detected = true`；
+- `Strategy` 把该状态作为策略 / 风控输入，决定是否暂停开仓、只允许 reduce-only / hedge、触发 REST reconcile
+  或人工介入；
 - 后续 REST reconcile 任务负责恢复本地订单状态；
 - 现有订单不凭本地猜测强行推进终态。
 
 Task2 只把 continuity lost event 状态传进 Strategy 并暴露可测字段，不实现 REST reconcile。Gate `futures.orders`
-parser 不从主生命周期流产生 `kContinuityLost`；`kContinuityLost` 只来自 Task1 SHM transport control path。
+parser 不从主生命周期流产生 `kContinuityLost`；`kContinuityLost` 只来自 Task1 SHM transport control path。runtime
+不把该状态统一解释成所有策略禁止开仓。
 
 ## 验证边界
 

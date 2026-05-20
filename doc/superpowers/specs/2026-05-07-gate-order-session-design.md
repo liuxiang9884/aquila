@@ -294,6 +294,9 @@ bool Ready() const noexcept;
 - `Ready() == true` 表示调用方可以尝试发送 place / cancel。
 - `Ready() == false` 表示调用方不应发起新的上行交易指令。
 - 外部不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；内部具体原因只进入 diagnostics / log。
+- `Ready() == false` 是上行硬边界，组合层或 strategy context 可以用它阻止新的开仓指令；下行
+  `feedback_continuity_lost_detected()` 是否暂停开仓属于具体 Strategy / risk policy，不属于 `OrderSession`
+  状态契约。
 
 第一版规则：
 

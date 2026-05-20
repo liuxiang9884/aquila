@@ -859,6 +859,7 @@ capacity 边界恢复。
 - 不创建订单对象，不管理完整订单生命周期。
 - 对外只暴露 `Ready()` 作为交易可用性信号；`Ready() == true` 表示可以尝试发送 place / cancel，`Ready() == false` 表示不应发起新的上行交易指令。
 - 外部不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；内部具体原因只进入 `OrderSession` diagnostics / log。
+- `Ready() == false` 是上行硬边界；组合层或 strategy context 可以用它阻止新的开仓指令。
 - ack / response 输出后，组合层应先调用 `OrderManager::OnOrderResponse()`，再调用 `Strategy::OnOrderResponse()`。
 - ack 只表示交易所接口收到请求，不代表订单已经进入订单簿。
 - 断线 / not ready 不产生 `OrderFeedbackKind::kContinuityLost`，也不直接改变订单状态；未知订单状态后续通过 feedback 或 REST reconcile 收口。
@@ -872,6 +873,7 @@ capacity 边界恢复。
 - 负责接收订单回报。
 - 不维护 `StrategyOrder`。
 - 不直接修改策略 execution state。
+- continuity lost 只表达下行订单事实流连续性不可证明；它作为 `Strategy` / risk policy 的输入，不由 runtime 统一强制禁止开仓。
 - feedback 输出后，组合层应先调用 `OrderManager::OnOrderFeedback()`，再调用 `Strategy::OnOrderFeedback()`。
 
 ## OrderManager 架构占位

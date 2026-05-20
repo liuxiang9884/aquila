@@ -84,6 +84,7 @@
 66. `RealtimeDataReader` 构造期已补齐 source 边界校验：拒绝空 sources、非 `shm` source、非 `book_ticker` feed，以及未知 `start_position` / `read_mode` 枚举值；这让程序化构造的错误在 reader 边界直接失败，不再退化成下层 SHM attach 报错。2026-05-19 release empty poll benchmark 1/2/4 source 为 `1.22ns` / `2.29ns` / `4.02ns`。
 67. `DataReaderConfig` parser 已拒绝 `max_events_per_source` 的 `uint32_t` 上界溢出，避免 TOML 大整数被 `static_cast<std::uint32_t>` 截断；字段名仍保留旧名，是否迁移到 `max_events_per_drain` 另行讨论。
 68. 本轮对 `BookTickerShmReader` capacity 边界做了复核和收尾：`ad7e0d5 Restore full capacity data SHM reader window` 恢复完整 capacity 语义并在代码中注释说明原因，`b5a4bd6 Document data SHM capacity boundary review` 记录 benchmark 对比和“语义恢复，不是性能优化”的结论；`signal.csv` 仍是未跟踪文件，未纳入本轮提交。
+69. `OrderSession::Ready()` 与 feedback continuity lost 的开仓边界已确认：`Ready() == false` 是上行交易能力硬边界，组合层或 `StrategyContext` 可以用它阻止新的开仓指令；`OrderManager::feedback_continuity_lost_detected()` 只表达下行订单事实流连续性不可证明，是否暂停开仓、只允许 reduce-only / hedge、触发 REST reconcile 或人工介入，由具体 `Strategy` / risk policy 决定，runtime 不统一强制禁止开仓。
 
 ## 给下一个对话的 onboarding 提示
 
@@ -517,6 +518,7 @@ Order feedback Task1 / Task2 关键结论：
 - `OrderManager` 是订单状态 owner，统一创建本地订单、分配 `local_order_id`、调用 `OrderSession` 发单 / 撤单，并消费 ack / response / feedback 推进订单状态。
 - `OrderSession` 是上行交易指令通道，只负责 place / cancel 编码、发送、ack / response 解析和轻量 correlation，不管理完整订单生命周期；对外只通过 `Ready()` 表达交易可用性，不暴露内部连接阶段作为业务分支。
 - `OrderFeedbackSession` 是下行私有订单事实通道，只负责解析 exchange feedback 并发布统一 `OrderFeedbackEvent`；跨进程生产模型通过 order feedback SHM 进入 StrategyThread。
+- `Ready() == false` 是上行硬边界；`feedback_continuity_lost_detected()` 是下行可信度信号，不由 runtime 合并成统一禁止开仓 gate。
 - 事件顺序固定为：`OrderSession` ack / response 和 `OrderFeedbackSession` feedback 都先进入 `OrderManager`，再通知 `Strategy`。后续 position book、REST reconcile 和 account / position feedback 仍待单独设计。
 
 ### DataReader 架构讨论

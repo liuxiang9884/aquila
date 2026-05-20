@@ -98,6 +98,8 @@ void OnBookTicker(const aquila::BookTicker& ticker) noexcept;
 - 在行情事件中根据策略状态产生下单 / 撤单意图。
 - 在订单 response / feedback 到达后更新策略级 execution state。
 - 通过只读查询查看订单最新状态，而不是复制 `OrderManager` 的订单状态机。
+- 把 `OrderManager::feedback_continuity_lost_detected()` 作为策略 / 风控输入信号，决定是否暂停开仓、只允许减仓、
+  触发 reconcile 或人工介入。
 
 它不负责：
 
@@ -245,6 +247,7 @@ bool Ready() const noexcept;
 - `Ready() == false` 表示调用方不应发起新的上行交易指令。
 - 外部组件不区分 disconnected、reconnect backoff、login rejected、closing、closed、not active 或 not logged in；这些原因只进入 `OrderSession` 内部 diagnostics / log。
 - 断线或 not ready 不产生 `OrderFeedbackKind::kContinuityLost`，也不直接修改订单生命周期状态。
+- `Ready() == false` 是上行交易能力的硬边界；组合层或 `StrategyContext` 可以用它阻止新的开仓指令。
 
 发送入口：
 
@@ -287,6 +290,8 @@ orders payload 转成统一 `OrderFeedbackEvent`。
 - 解析 exchange feedback payload。
 - 产出 accepted / partial filled / filled / cancelled / rejected / continuity lost 等统一 feedback event。
 - 断线或 transport continuity lost 时发出 `OrderFeedbackKind::kContinuityLost` 控制事件。
+- `OrderFeedbackKind::kContinuityLost` 只表达下行订单事实流连续性不可证明；它不由 `OrderFeedbackSession`、
+  `OrderManager` 或 runtime 统一解释成“所有策略禁止开仓”。
 
 它不负责：
 
@@ -331,6 +336,17 @@ OnOrderFeedback(event):
 ```
 
 `OrderFeedbackSession` 本身不需要知道这个顺序由哪个编排层执行。
+
+上行可用性和下行可信性不合并成一个统一强制 gate：
+
+```text
+OrderSession::Ready() == false
+  -> 上行交易指令不可用，外层可以阻止新的开仓指令。
+
+OrderManager::feedback_continuity_lost_detected() == true
+  -> 下行订单事实流连续性不可证明。
+  -> 是否暂停开仓、只允许 reduce-only / hedge、触发 REST reconcile 或人工介入，由具体 Strategy / risk policy 决定。
+```
 
 ## 进程 / 线程模型
 
