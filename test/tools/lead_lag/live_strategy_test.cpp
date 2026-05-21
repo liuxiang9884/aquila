@@ -27,6 +27,16 @@ TEST(LeadLagLiveStrategyTest, ConnectDataSelectsSignalOnlyWithoutExecute) {
   EXPECT_EQ(result.mode, RunMode::kSignalOnly);
 }
 
+TEST(LeadLagLiveStrategyTest,
+     ConnectDataSelectsSignalOnlyWithLiveStrategyModeWithoutExecute) {
+  const RunModeResult result = ResolveRunMode(
+      aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+      /*execute=*/false);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.mode, RunMode::kSignalOnly);
+}
+
 TEST(LeadLagLiveStrategyTest, ExecuteRequiresLiveStrategyMode) {
   const RunModeResult result = ResolveRunMode(
       aquila::config::StrategyMode::kDryRun, /*connect_data=*/false,
@@ -43,6 +53,21 @@ TEST(LeadLagLiveStrategyTest, ExecuteSelectsLiveOrdersWithLiveMode) {
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.mode, RunMode::kLiveOrders);
+}
+
+TEST(LeadLagLiveStrategyTest, ExecuteTakesPriorityOverConnectDataWithLiveMode) {
+  const RunModeResult result = ResolveRunMode(
+      aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+      /*execute=*/true);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.mode, RunMode::kLiveOrders);
+}
+
+TEST(LeadLagLiveStrategyTest, RunModeNameReturnsStableSummaryText) {
+  EXPECT_STREQ(RunModeName(RunMode::kValidateOnly), "validate_only");
+  EXPECT_STREQ(RunModeName(RunMode::kSignalOnly), "signal_only");
+  EXPECT_STREQ(RunModeName(RunMode::kLiveOrders), "live_orders");
 }
 
 }  // namespace

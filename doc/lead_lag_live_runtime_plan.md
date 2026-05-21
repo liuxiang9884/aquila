@@ -4,7 +4,7 @@
 
 **Goal:** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步进入小额真实下单、恢复链路验证和端到端性能测试。
 
-**Architecture:** 第一阶段新增独立 LeadLag live runner，复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM，默认只跑信号与诊断，不提交订单。第二阶段补齐 LeadLag 生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 执行状态闭环；第三阶段补 REST reconcile、account / position 校验、异常 smoke 和端到端 benchmark。
+**Architecture:** 第一阶段新增独立 LeadLag live runner，复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM，默认只跑信号与诊断，不提交订单。第二阶段已在 strategy 层补齐 LeadLag 生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 执行状态闭环；真实 `--execute` runner 仍保持禁用，等待 REST reconcile、account / position 校验、异常 smoke 和端到端 benchmark。
 
 **Tech Stack:** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -13,9 +13,9 @@
 ## 当前判断
 
 - LeadLag replay / signal 主链路已落地，`leadlag::Strategy::OnBookTicker()` 已串起 raw market、alignment、recorder、threshold、signal 和 synthetic position accounting。
-- 当前没有 LeadLag live runner；现有 live runtime 工具是 `tools/gate/demo_strategy.*`，LeadLag 工具只有 `tools/lead_lag/replay.cpp`。
-- `strategy/lead_lag/strategy.h` 中 `OnOrderResponse()` 仍为空，`OnOrderFeedback()` 目前只处理 feedback continuity lost。
-- `strategy/lead_lag/execution_state.h` 已有生产闭环所需的 `StartOpenOrder()`、`StartCloseOrder()`、`ApplyTerminalOrder()`、`ApplySubmitRejected()`，但还没有从 strategy hook 接入。
+- LeadLag live runner 已落地为 `tools/lead_lag/live_strategy.cpp`：默认 validate-only；`--connect-data` 进入 signal-only；`--execute` 只有在 `strategy.mode=live` 时解析为 `RunMode::kLiveOrders`。
+- 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
+- 真实 `RunLiveOrders()` 仍是禁用 stub；即使 `--execute` 解析到 `RunMode::kLiveOrders`，runner 也返回禁用错误，不打开真实订单路径。
 - 长时间真实下单前仍缺 REST reconcile、feedback WS 断线未知订单恢复、account / position 事实源、unfilled-cancel / failure live smoke 和端到端 benchmark。
 
 ## 文件结构
@@ -25,7 +25,7 @@
 - Create: `tools/lead_lag/live_strategy.cpp`
   - LeadLag live 入口，加载 `config/strategies/lead_lag_btc_strategy.toml`。
   - 默认 dry-run / signal-only，不调用真实下单。
-  - 显式 `--execute` 后才允许进入真实订单模式。
+  - 显式 `--execute` 后才允许解析到 `RunMode::kLiveOrders`；当前真实订单运行路径仍禁用。
   - 支持运行时长、低频 summary、signals 输出路径和 diagnostics 输出。
 - Modify: `tools/CMakeLists.txt`
   - 增加 `lead_lag_strategy` executable。
@@ -186,7 +186,7 @@ Expected: no SHM overrun requiring manual reset, signal counters and last event 
 - Modify: `strategy/lead_lag/execution_state.h` only if existing state interface is insufficient
 - Test: `test/strategy/lead_lag_strategy_interface_test.cpp`
 
-- [ ] **Step 1: 写状态机测试**
+- [x] **Step 1: 写状态机测试**
 
 覆盖 open 下单成功、close 下单成功、submit rejected、terminal filled、partial non-terminal、continuity lost 后停止新开仓。
 
@@ -196,17 +196,17 @@ Run:
 ctest --test-dir build/debug -R lead_lag_strategy_interface --output-on-failure
 ```
 
-Expected before implementation: new production order cases fail.
+Completed: production order cases were added to `test/strategy/lead_lag_strategy_interface_test.cpp` and verified.
 
-- [ ] **Step 2: 实现订单请求转换**
+- [x] **Step 2: 实现订单请求转换**
 
 把 `SignalDecision::intent` 转成 `core::OrderCreateRequest`，使用 lag side metadata 进行 symbol、side、quantity、price、time-in-force、reduce-only 设置。数量来自 `open_notional` 和 lag quote，价格必须符合 instrument tick 约束。
 
-- [ ] **Step 3: 实现 response / feedback hook**
+- [x] **Step 3: 实现 response / feedback hook**
 
 `OnOrderResponse()` 只处理 submit rejected / cancel rejected 等上行响应；position 和 stage 只由 terminal private feedback 推进。`OnOrderFeedback()` 在 runtime 先更新 `OrderManager` 之后读取 `context.FindOrder(event.local_order_id)`，再调用 `ExecutionState::ApplyTerminalOrder()`。
 
-- [ ] **Step 4: 验证状态机**
+- [x] **Step 4: 验证状态机**
 
 Run:
 
@@ -215,20 +215,63 @@ Run:
 ctest --test-dir build/debug -R lead_lag --output-on-failure
 ```
 
-Expected: LeadLag tests pass.
+2026-05-21 status: strategy-layer order wiring is complete and covered by `lead_lag_strategy_interface` tests. Follow-up commits also covered IOC terminal handling, cancelled / partially-cancelled and rejected feedback edge cases, and fixed-buffer `price_text` boundaries.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add strategy/lead_lag/strategy.h strategy/lead_lag/execution_state.h test/strategy/lead_lag_strategy_interface_test.cpp
 git commit -m "Wire lead lag production order feedback"
 ```
 
+Commit boundary:
+
+- `ae66ee0 Wire lead lag external orders`
+- `4c992d6 Fix lead lag order feedback edge cases`
+- `37a3cc3 Fix lead lag IOC terminal handling`
+- `0ae3a7e Add lead lag price text boundary tests`
+
+### Task 3.5: Live Runner Execute Gating Smoke Boundaries
+
+**Files:**
+- Modify: `test/tools/lead_lag/live_strategy_test.cpp`
+- Modify: `doc/lead_lag_live_runtime_plan.md`
+- Modify: `strategy/lead_lag/README.md`
+- Optional summary: `doc/project_onboarding_guide.md`
+
+- [x] **Step 1: 覆盖 execute=false / live / connect-data 边界**
+
+`execute=false` 时即使 `strategy.mode=live` 且 `connect_data=true`，`ResolveRunMode()` 仍必须返回 `RunMode::kSignalOnly`，不进入 live orders。
+
+- [x] **Step 2: 覆盖 execute=true 优先级**
+
+`execute=true`、`strategy.mode=live`、`connect_data=true` 时解析为 `RunMode::kLiveOrders`。这只验证 gating 选择；真实 `RunLiveOrders()` 仍是禁用 stub。
+
+- [x] **Step 3: 覆盖 summary 文本稳定性**
+
+`RunModeName()` 覆盖 `validate_only`、`signal_only`、`live_orders`，避免 runner summary 文本无意漂移。
+
+Verification:
+
+```bash
+cmake --build build/debug --target lead_lag_live_strategy_test -j8
+ctest --test-dir build/debug -R lead_lag_live_strategy --output-on-failure
+./build.sh debug
+ctest --test-dir build/debug -R '(lead_lag_live_strategy|lead_lag_strategy_interface|core_trading_strategy_context|gate_order)' --output-on-failure
+git diff --check
+```
+
+2026-05-21 result: target build passed; target `lead_lag_live_strategy` ctest passed; full debug build passed; focused ctest passed 9/9; `git diff --check` passed.
+
+Commit boundary: this task only adds gating/smoke tests and documentation. It must not enable `RunLiveOrders()` or open the real live order path.
+
 ### Task 4: 小额真实下单 Smoke
 
 **Files:**
 - Modify: `doc/lead_lag_live_runtime_plan.md`
 - Runtime evidence: Gate REST query output and live runner output
+
+Precondition: Task4 前，`lead_lag_strategy --execute` 仍应作为禁用边界处理；真实订单路径不可打开，直到 REST reconcile、feedback 断线恢复边界和异常 smoke 标准明确完成。
 
 - [ ] **Step 1: Filled open / close smoke**
 
@@ -332,19 +375,21 @@ Expected: benchmark 正常完成；文档只记录实测数据，不写没有证
 1. `lead_lag_strategy` dry-run 1 秒启动验证。
 2. signal-only 30 分钟观察。
 3. signal-only 2 到 4 小时观察。
-4. 小额 filled open / close。
-5. unfilled-cancel。
-6. rejected / cancel-rejected。
-7. feedback session 断线 / reconnect。
-8. REST reconcile。
-9. 30 分钟真实订单 run。
-10. 2 到 4 小时真实订单 run。
-11. 更长时间真实订单 run。
+4. `lead_lag_strategy --execute` gating smoke：允许解析到 `RunMode::kLiveOrders`，但 `RunLiveOrders()` 必须返回禁用边界，不提交真实订单。
+5. 小额 filled open / close。
+6. unfilled-cancel。
+7. rejected / cancel-rejected。
+8. feedback session 断线 / reconnect。
+9. REST reconcile。
+10. 30 分钟真实订单 run。
+11. 2 到 4 小时真实订单 run。
+12. 更长时间真实订单 run。
 
 ## 完成标准
 
 - signal-only live runner 可以长时间消费 Gate / Binance realtime SHM，并低频输出可解释 diagnostics。
-- LeadLag 真实订单模式只在显式 `--execute` 后启用，默认 dry-run 不提交订单。
+- Task4 前，`lead_lag_strategy --execute` 仍是禁用边界：`ResolveRunMode()` 可以选择 `live_orders`，但 `RunLiveOrders()` 不可提交真实订单。
+- LeadLag strategy 层 default production accounting 可以提交 IOC limit order intent；runner 默认 dry-run / signal-only 不提交订单。
 - 订单状态只由 `OrderManager` 和 private feedback 推进；submit rejected 只清理 pending 状态，不伪造成交事实。
 - feedback continuity lost 后暂停新开仓；REST reconcile 成功前不自动恢复。
 - 每次 live smoke 后都有 REST open orders / position / pending orders 复核。
