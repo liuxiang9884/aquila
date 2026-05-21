@@ -95,6 +95,24 @@ target_link_libraries(lead_lag_replay
         quill::quill
 )
 
+add_executable(lead_lag_strategy
+    lead_lag/live_strategy.cpp
+    lead_lag/signal_csv_writer.cpp
+)
+
+target_link_libraries(lead_lag_strategy
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_gate
+        aquila_strategy
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+        quill::quill
+)
+
 add_executable(gate_order_feedback_session
     gate/order_feedback_session.cpp
 )

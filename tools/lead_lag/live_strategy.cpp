@@ -1,0 +1,414 @@
+#include "tools/lead_lag/live_strategy.h"
+
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <string>
+#include <utility>
+
+#include <CLI/CLI.hpp>
+#include <fmt/core.h>
+#include <toml++/toml.hpp>
+
+#include "core/config/data_reader_config.h"
+#include "core/config/strategy_config.h"
+#include "core/market_data/realtime_data_reader.h"
+#include "core/market_data/types.h"
+#include "core/trading/order_feedback_event.h"
+#include "core/trading/order_types.h"
+#include "core/trading/trading_runtime.h"
+#include "exchange/gate/trading/order_session_config.h"
+#include "nova/utils/log.h"
+#include "strategy/lead_lag/config.h"
+#include "strategy/lead_lag/signal.h"
+#include "strategy/lead_lag/strategy.h"
+#include "tools/lead_lag/signal_csv_writer.h"
+
+namespace {
+
+namespace config = aquila::config;
+namespace core = aquila::core;
+namespace gate = aquila::gate;
+namespace leadlag = aquila::strategy::leadlag;
+namespace live = aquila::tools::lead_lag;
+namespace market_data = aquila::market_data;
+
+struct CliOptions {
+  std::filesystem::path config_path{
+      "config/strategies/lead_lag_btc_strategy.toml"};
+  std::filesystem::path signals_output_path;
+  std::string api_key_env;
+  std::string api_secret_env;
+  std::uint64_t duration_sec{0};
+  bool connect_data{false};
+  bool execute{false};
+};
+
+struct LoadedConfig {
+  config::StrategyConfig strategy;
+  config::DataReaderConfig data_reader;
+  gate::OrderSessionConfig order_session;
+  leadlag::Config lead_lag;
+};
+
+struct SignalOnlyStats {
+  std::uint64_t book_tickers{0};
+  std::uint64_t signals{0};
+  std::uint64_t open_signals{0};
+  std::uint64_t close_signals{0};
+  std::uint64_t stoploss_signals{0};
+  std::uint64_t order_responses{0};
+  std::uint64_t order_feedbacks{0};
+};
+
+struct NullOrderSession {
+  enum class SendStatus : std::uint8_t {
+    kOk,
+    kRejected,
+  };
+
+  struct SendResult {
+    SendStatus status{SendStatus::kRejected};
+  };
+
+  [[nodiscard]] bool Start() noexcept {
+    running = true;
+    return true;
+  }
+
+  void Stop() noexcept {
+    running = false;
+  }
+
+  [[nodiscard]] bool Ready() const noexcept {
+    return true;
+  }
+
+  [[nodiscard]] bool Running() const noexcept {
+    return running;
+  }
+
+  SendResult PlaceOrder(core::StrategyOrder&) noexcept {
+    return {};
+  }
+
+  SendResult CancelOrder(core::StrategyOrder&) noexcept {
+    return {};
+  }
+
+  bool running{false};
+};
+
+class SignalOnlyStrategy {
+ public:
+  SignalOnlyStrategy(leadlag::Config config, SignalOnlyStats* stats,
+                     aquila::tools::lead_lag::SignalCsvWriter* signal_writer)
+      : inner_(std::move(config),
+               leadlag::StrategyOptions{
+                   .position_accounting =
+                       leadlag::PositionAccountingMode::kSyntheticSignals,
+               }),
+        stats_(stats),
+        signal_writer_(signal_writer) {}
+
+  template <typename ContextT>
+  void OnBookTicker(const aquila::BookTicker& ticker,
+                    ContextT& context) noexcept {
+    if (stats_ != nullptr) {
+      ++stats_->book_tickers;
+    }
+    inner_.OnBookTicker(ticker, context);
+
+    const leadlag::SignalDecision& decision = inner_.last_signal_decision();
+    if (!decision.triggered) {
+      return;
+    }
+    RecordSignal(decision);
+    if (signal_writer_ != nullptr && inner_.last_signal_diagnostics_valid()) {
+      signal_writer_->Write(ticker, decision, inner_.last_signal_diagnostics());
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderResponse(const core::OrderResponseEvent& event,
+                       ContextT& context) noexcept {
+    if (stats_ != nullptr) {
+      ++stats_->order_responses;
+    }
+    inner_.OnOrderResponse(event, context);
+  }
+
+  template <typename ContextT>
+  void OnOrderFeedback(const aquila::OrderFeedbackEvent& event,
+                       ContextT& context) noexcept {
+    if (stats_ != nullptr) {
+      ++stats_->order_feedbacks;
+    }
+    inner_.OnOrderFeedback(event, context);
+  }
+
+  [[nodiscard]] bool ShouldStop() const noexcept {
+    return inner_.ShouldStop();
+  }
+
+ private:
+  void RecordSignal(const leadlag::SignalDecision& decision) noexcept {
+    if (stats_ == nullptr) {
+      return;
+    }
+    ++stats_->signals;
+    switch (decision.action) {
+      case leadlag::SignalAction::kOpenLong:
+      case leadlag::SignalAction::kOpenShort:
+        ++stats_->open_signals;
+        break;
+      case leadlag::SignalAction::kCloseLong:
+      case leadlag::SignalAction::kCloseShort:
+        ++stats_->close_signals;
+        break;
+      case leadlag::SignalAction::kStoplossLong:
+      case leadlag::SignalAction::kStoplossShort:
+        ++stats_->stoploss_signals;
+        break;
+      case leadlag::SignalAction::kNone:
+        break;
+    }
+  }
+
+  leadlag::Strategy inner_;
+  SignalOnlyStats* stats_{};
+  aquila::tools::lead_lag::SignalCsvWriter* signal_writer_{};
+};
+
+std::string_view StrategyModeText(config::StrategyMode mode) noexcept {
+  switch (mode) {
+    case config::StrategyMode::kDryRun:
+      return "dry_run";
+    case config::StrategyMode::kLive:
+      return "live";
+  }
+  return "unknown";
+}
+
+bool ValidateLoadedConfig(const LoadedConfig& loaded) {
+  if (loaded.strategy.name != "lead_lag") {
+    fmt::print(stderr, "[FAIL] strategy.name must be lead_lag for this tool\n");
+    NOVA_ERROR("strategy.name must be lead_lag actual={}",
+               loaded.strategy.name);
+    return false;
+  }
+  if (loaded.lead_lag.pairs.empty()) {
+    fmt::print(stderr,
+               "[FAIL] lead_lag config must contain at least one pair\n");
+    NOVA_ERROR("lead_lag config must contain at least one pair");
+    return false;
+  }
+  return true;
+}
+
+bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
+  auto strategy_result = config::LoadStrategyConfigFile(options.config_path);
+  if (!strategy_result.ok) {
+    fmt::print(stderr, "[FAIL] strategy_config_error={}\n",
+               strategy_result.error);
+    NOVA_ERROR("strategy_config_error={}", strategy_result.error);
+    return false;
+  }
+  loaded->strategy = std::move(strategy_result.value);
+
+  auto data_reader_result = config::LoadDataReaderConfigFile(
+      loaded->strategy.data_reader.config_path);
+  if (!data_reader_result.ok) {
+    fmt::print(stderr, "[FAIL] data_reader_config_error={}\n",
+               data_reader_result.error);
+    NOVA_ERROR("data_reader_config_error={}", data_reader_result.error);
+    return false;
+  }
+  loaded->data_reader = std::move(data_reader_result.value);
+
+  auto order_session_result = gate::LoadOrderSessionConfigFile(
+      loaded->strategy.order_session.config_path);
+  if (!order_session_result.ok) {
+    fmt::print(stderr, "[FAIL] order_session_config_error={}\n",
+               order_session_result.error);
+    NOVA_ERROR("order_session_config_error={}", order_session_result.error);
+    return false;
+  }
+  loaded->order_session = std::move(order_session_result.value);
+
+  auto lead_lag_result =
+      leadlag::LoadConfigFile(loaded->strategy.user_config_path,
+                              loaded->data_reader.instrument_catalog);
+  if (!lead_lag_result.ok) {
+    fmt::print(stderr, "[FAIL] lead_lag_config_error={}\n",
+               lead_lag_result.error);
+    NOVA_ERROR("lead_lag_config_error={}", lead_lag_result.error);
+    return false;
+  }
+  loaded->lead_lag = std::move(lead_lag_result.value);
+
+  return ValidateLoadedConfig(*loaded);
+}
+
+void ApplyDurationOverride(const CliOptions& options, LoadedConfig* loaded) {
+  if (options.duration_sec != 0) {
+    loaded->strategy.loop.max_loop_seconds = options.duration_sec;
+  }
+}
+
+void PrintLoadedConfigSummary(const CliOptions& options,
+                              const LoadedConfig& loaded, live::RunMode mode) {
+  fmt::print(
+      "lead_lag_strategy run_mode={} execute={} connect_data={} config={} "
+      "signals_output={} strategy_name={} mode={} strategy_id={} "
+      "order_capacity={} max_loop_seconds={} reader_name={} sources={} "
+      "order_session={} feedback_enabled={} feedback_shm={} "
+      "feedback_channel={} feedback_poll_budget={} pairs={}\n",
+      live::RunModeName(mode), options.execute ? "true" : "false",
+      options.connect_data ? "true" : "false", options.config_path.string(),
+      options.signals_output_path.empty()
+          ? "-"
+          : options.signals_output_path.string(),
+      loaded.strategy.name, StrategyModeText(loaded.strategy.mode),
+      loaded.strategy.strategy_id, loaded.strategy.order_capacity,
+      loaded.strategy.loop.max_loop_seconds, loaded.data_reader.name,
+      loaded.data_reader.sources.size(), loaded.order_session.name,
+      loaded.strategy.feedback.enabled ? "true" : "false",
+      loaded.strategy.feedback.shm_name, loaded.strategy.feedback.channel_name,
+      loaded.strategy.feedback.poll_budget, loaded.lead_lag.pairs.size());
+}
+
+int RunValidateOnly() {
+  fmt::print(
+      "lead_lag_strategy_validate_only dry_run=true no websocket connection "
+      "opened no shm opened\n");
+  NOVA_INFO(
+      "lead_lag_strategy_validate_only dry_run=true no websocket connection "
+      "opened no shm opened");
+  return 0;
+}
+
+int RunSignalOnly(LoadedConfig loaded, const CliOptions& options) {
+  using DataReader = market_data::RealtimeDataReader<
+      market_data::RealtimeDataReaderDiagnostics>;
+  using Runtime =
+      core::TradingRuntime<SignalOnlyStrategy, NullOrderSession, DataReader,
+                           core::TradingRuntimeDiagnostics>;
+
+  loaded.strategy.feedback.enabled = false;
+
+  SignalOnlyStats stats;
+  aquila::tools::lead_lag::SignalCsvWriter signal_writer;
+  aquila::tools::lead_lag::SignalCsvWriter* signal_writer_ptr = nullptr;
+  if (!options.signals_output_path.empty()) {
+    std::string error;
+    if (!signal_writer.Open(options.signals_output_path, &error)) {
+      fmt::print(stderr, "[FAIL] signals_output_error={}\n", error);
+      return 1;
+    }
+    signal_writer_ptr = &signal_writer;
+  }
+
+  auto runtime_result = Runtime::Create(
+      std::move(loaded.strategy), std::move(loaded.data_reader),
+      [] { return NullOrderSession{}; }, std::move(loaded.lead_lag), &stats,
+      signal_writer_ptr);
+  if (!runtime_result.ok) {
+    fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
+               runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
+    return 1;
+  }
+
+  const int exit_code = runtime_result.value->Run();
+  const core::TradingRuntimeLoopStats& loop_stats =
+      runtime_result.value->diagnostics().stats();
+  signal_writer.Close();
+
+  fmt::print(
+      "lead_lag_strategy_signal_only_summary exit_code={} book_tickers={} "
+      "signals={} open={} close={} stoploss={} order_responses={} "
+      "order_feedbacks={} loop_iterations={} idle_iterations={} "
+      "data_reader_polls={} data_reader_empty_polls={} data_reader_events={} "
+      "signals_output={}\n",
+      exit_code, stats.book_tickers, stats.signals, stats.open_signals,
+      stats.close_signals, stats.stoploss_signals, stats.order_responses,
+      stats.order_feedbacks, loop_stats.loop_iterations,
+      loop_stats.idle_iterations, loop_stats.data_reader_poll_calls,
+      loop_stats.data_reader_empty_polls, loop_stats.data_reader_events,
+      options.signals_output_path.empty()
+          ? "-"
+          : options.signals_output_path.string());
+  return exit_code;
+}
+
+int RunLiveOrders() {
+  fmt::print(stderr,
+             "[FAIL] lead_lag live order mode requires production order wiring "
+             "and reconcile work before it is enabled\n");
+  NOVA_ERROR(
+      "lead_lag live order mode requires production order wiring and reconcile "
+      "work before it is enabled");
+  return 3;
+}
+
+int Run(const CliOptions& options) {
+  LoadedConfig loaded;
+  if (!LoadConfig(options, &loaded)) {
+    return 1;
+  }
+  ApplyDurationOverride(options, &loaded);
+
+  const live::RunModeResult mode_result = live::ResolveRunMode(
+      loaded.strategy.mode, options.connect_data, options.execute);
+  if (!mode_result.ok) {
+    fmt::print(stderr, "[FAIL] {}\n", mode_result.error);
+    NOVA_ERROR("{}", mode_result.error);
+    return 2;
+  }
+
+  PrintLoadedConfigSummary(options, loaded, mode_result.mode);
+  switch (mode_result.mode) {
+    case live::RunMode::kValidateOnly:
+      return RunValidateOnly();
+    case live::RunMode::kSignalOnly:
+      return RunSignalOnly(std::move(loaded), options);
+    case live::RunMode::kLiveOrders:
+      return RunLiveOrders();
+  }
+  return 1;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  CliOptions options;
+
+  CLI::App app{
+      "Run LeadLag live validation or signal-only realtime SHM observation"};
+  app.add_option("--config", options.config_path, "Trading runtime TOML path");
+  app.add_option("--duration-sec", options.duration_sec,
+                 "Override strategy.loop.max_loop_seconds; 0 uses config");
+  app.add_option("--signals-output", options.signals_output_path,
+                 "Optional CSV path for triggered signal-only signals");
+  app.add_option("--api-key", options.api_key_env,
+                 "Reserved for live order mode API key env override");
+  app.add_option("--api-secret", options.api_secret_env,
+                 "Reserved for live order mode API secret env override");
+  app.add_flag("--connect-data", options.connect_data,
+               "Open realtime SHM data reader and run signal-only");
+  app.add_flag("--execute", options.execute,
+               "Enable live order mode; requires strategy.mode=live");
+  CLI11_PARSE(app, argc, argv);
+
+  try {
+    const toml::parse_result toml =
+        toml::parse_file(options.config_path.string());
+    nova::LoggingGuard logging_guard{toml};
+    return Run(options);
+  } catch (const std::exception& exc) {
+    fmt::print(stderr, "[FAIL] lead_lag_strategy_error={}\n", exc.what());
+    return 1;
+  }
+}

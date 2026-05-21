@@ -93,7 +93,7 @@
 - Modify: `tools/CMakeLists.txt`
 - Test: `test/tools/lead_lag/live_strategy_test.cpp`
 
-- [ ] **Step 1: 写 CLI gating 测试**
+- [x] **Step 1: 写 CLI gating 测试**
 
 验证默认模式不会真实下单，只有显式 `--execute` 才允许真实订单模式。
 
@@ -105,15 +105,15 @@ ctest --test-dir build/debug -R lead_lag_live_strategy --output-on-failure
 
 Expected before implementation: test target or cases fail.
 
-- [ ] **Step 2: 实现 live runner 冷路径**
+- [x] **Step 2: 实现 live runner 冷路径**
 
 加载 strategy config、data reader config、order session config 和 feedback config；复用现有 `TradingRuntime` create pattern。默认 dry-run 时构造 signal-only wrapper，不调用 `StrategyContext::PlaceLimitOrder()`。
 
-- [ ] **Step 3: 接入低频 diagnostics**
+- [x] **Step 3: 接入低频 diagnostics**
 
 输出 runtime loop counters、data reader poll counters、feedback counters、signal counters、degraded / needs_reconcile 和最后行情时间。低频输出放在 runner 层，避免在 LeadLag 热路径加日志。
 
-- [ ] **Step 4: 验证 dry-run runner**
+- [x] **Step 4: 验证 dry-run runner**
 
 Run:
 
@@ -125,7 +125,13 @@ ctest --test-dir build/debug -R '(lead_lag|trading_runtime|order_feedback)' --ou
 
 Expected: build succeeds, tests pass, runner exits normally without submitting orders.
 
-- [ ] **Step 5: Commit**
+2026-05-21 result:
+
+- `./build.sh debug` passed.
+- `ctest --test-dir build/debug -R '(lead_lag|trading_runtime|order_feedback)' --output-on-failure` passed 18/18.
+- `./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --duration-sec 1` passed in validate-only mode. In the sandbox this command needed elevated filesystem permission because the configured log sink writes under `/home/liuxiang/log`.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/lead_lag/live_strategy.cpp tools/CMakeLists.txt test/tools/lead_lag/live_strategy_test.cpp
@@ -150,7 +156,7 @@ Run:
 ./build/debug/tools/gate_order_feedback_session --config config/order_feedback/gate_order_feedback_session.toml --connect
 ./build/debug/tools/gate_data_session
 ./build/debug/tools/binance_data_session
-./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --duration-sec 1800
+./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --connect-data --duration-sec 1800
 ```
 
 Expected: strategy exits by duration, no real orders submitted, diagnostics shows data reader progress and no unexpected degraded state.
@@ -160,7 +166,7 @@ Expected: strategy exits by duration, no real orders submitted, diagnostics show
 Run:
 
 ```bash
-./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --duration-sec 14400
+./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --connect-data --duration-sec 14400
 ```
 
 Expected: no SHM overrun requiring manual reset, signal counters and last event timestamps remain plausible, process exits cleanly.
