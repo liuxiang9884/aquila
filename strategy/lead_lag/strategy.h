@@ -1,10 +1,17 @@
 #ifndef AQUILA_STRATEGY_LEAD_LAG_STRATEGY_H_
 #define AQUILA_STRATEGY_LEAD_LAG_STRATEGY_H_
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <limits>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <fmt/format.h>
 
 #include "core/market_data/types.h"
 #include "core/trading/order_feedback_event.h"
@@ -65,7 +72,7 @@ class Strategy {
   Strategy& operator=(Strategy&&) noexcept = default;
 
   template <typename ContextT>
-  void OnBookTicker(const BookTicker& ticker, ContextT&) noexcept {
+  void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
     last_signal_decision_ = {};
     last_signal_diagnostics_valid_ = false;
     last_market_update_ = raw_market_state_.OnBookTicker(ticker);
@@ -116,10 +123,10 @@ class Strategy {
 
     switch (last_market_update_.role) {
       case PairRole::kLead:
-        OnActiveLeadTick(runtime, *market);
+        OnActiveLeadTick(runtime, *market, context);
         break;
       case PairRole::kLag:
-        OnActiveLagTick(runtime, *market);
+        OnActiveLagTick(runtime, *market, context);
         break;
       case PairRole::kNone:
         break;
@@ -127,10 +134,14 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void OnOrderResponse(const core::OrderResponseEvent&, ContextT&) noexcept {}
+  void OnOrderResponse(const core::OrderResponseEvent& event,
+                       ContextT& context) noexcept {
+    ApplyFinishedOrder(event.local_order_id, context);
+  }
 
   template <typename ContextT>
-  void OnOrderFeedback(const OrderFeedbackEvent& event, ContextT&) noexcept {
+  void OnOrderFeedback(const OrderFeedbackEvent& event,
+                       ContextT& context) noexcept {
     if (event.kind == OrderFeedbackKind::kContinuityLost) {
       degraded_ = true;
       for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
@@ -138,7 +149,9 @@ class Strategy {
           runtime.execution.OnFeedbackContinuityLost(event);
         }
       }
+      return;
     }
+    ApplyFinishedOrder(event.local_order_id, context);
   }
 
   [[nodiscard]] bool ShouldStop() const noexcept {
@@ -245,8 +258,10 @@ class Strategy {
     return runtime.initialized ? &runtime : nullptr;
   }
 
+  template <typename ContextT>
   void OnActiveLeadTick(PairRuntimeState* runtime,
-                        const PairMarketState& market) noexcept {
+                        const PairMarketState& market,
+                        ContextT& context) noexcept {
     QuoteSnapshot drifted_lead =
         runtime->alignment.DriftLead(market.lead.latest_quote);
     runtime->drifted_lead = drifted_lead;
@@ -274,11 +289,14 @@ class Strategy {
     }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
+    } else {
+      SubmitExternalSignal(runtime, context);
     }
   }
 
-  void OnActiveLagTick(PairRuntimeState* runtime,
-                       const PairMarketState& market) noexcept {
+  template <typename ContextT>
+  void OnActiveLagTick(PairRuntimeState* runtime, const PairMarketState& market,
+                       ContextT& context) noexcept {
     runtime->recorder.OnLagActiveTick(market.lag.latest_quote);
     if (!runtime->has_drifted_lead) {
       runtime->drifted_lead =
@@ -306,6 +324,8 @@ class Strategy {
     }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
+    } else {
+      SubmitExternalSignal(runtime, context);
     }
   }
 
@@ -359,6 +379,220 @@ class Strategy {
     }
   }
 
+  template <typename ContextT>
+  void SubmitExternalSignal(PairRuntimeState* runtime,
+                            ContextT& context) noexcept {
+    if (runtime == nullptr || !last_signal_decision_.triggered) {
+      return;
+    }
+
+    std::int64_t quantity = 0;
+    ExecutionGroup* close_group = nullptr;
+    if (last_signal_decision_.intent.reduce_only) {
+      close_group =
+          runtime->execution.FindGroupById(last_signal_decision_.group_id);
+      if (close_group == nullptr) {
+        return;
+      }
+      quantity = AbsolutePositionQuantity(*close_group);
+    } else {
+      quantity =
+          OpenOrderQuantity(runtime->pair, last_signal_decision_.intent.price,
+                            last_signal_decision_.intent.side);
+    }
+    if (quantity <= 0) {
+      return;
+    }
+
+    const double order_price = RoundedOrderPrice(
+        last_signal_decision_.intent.price, runtime->pair.lag_instrument,
+        last_signal_decision_.intent.side);
+    if (order_price <= 0.0) {
+      return;
+    }
+
+    order_price_texts_.push_back(FormatOrderPrice(
+        order_price, runtime->pair.lag_instrument.price_decimal_places));
+    const std::string_view price_text = order_price_texts_.back();
+    const std::string_view symbol =
+        runtime->pair.lag_instrument.exchange_symbol.empty()
+            ? std::string_view(runtime->pair.symbol)
+            : std::string_view(runtime->pair.lag_instrument.exchange_symbol);
+
+    const core::OrderPlaceResult placed =
+        context.PlaceOrder(core::OrderCreateRequest{
+            .exchange = last_signal_decision_.intent.exchange,
+            .symbol_id = last_signal_decision_.intent.symbol_id,
+            .symbol = symbol,
+            .side = last_signal_decision_.intent.side,
+            .order_type = OrderType::kLimit,
+            .time_in_force = TimeInForce::kImmediateOrCancel,
+            .quantity = quantity,
+            .price_text = price_text,
+            .reduce_only = last_signal_decision_.intent.reduce_only,
+        });
+    if (placed.local_order_id == 0) {
+      return;
+    }
+
+    if (placed.status == core::OrderPlaceStatus::kOk) {
+      OnExternalOrderAccepted(runtime, close_group, placed.local_order_id);
+      return;
+    }
+
+    RollbackRejectedSubmit(runtime, close_group, placed.local_order_id,
+                           context);
+  }
+
+  void OnExternalOrderAccepted(PairRuntimeState* runtime,
+                               ExecutionGroup* close_group,
+                               std::uint64_t local_order_id) noexcept {
+    ExecutionGroup* group = close_group;
+    if (last_signal_decision_.intent.reduce_only) {
+      if (group == nullptr ||
+          !runtime->execution.StartCloseOrder(*group, local_order_id)) {
+        return;
+      }
+    } else {
+      group = runtime->execution.StartOpenOrder(local_order_id);
+      if (group == nullptr) {
+        return;
+      }
+      last_signal_decision_.group_id = group->group_id;
+    }
+    UpdateSubmittedSignalDiagnostics(runtime, group);
+  }
+
+  template <typename ContextT>
+  void RollbackRejectedSubmit(PairRuntimeState* runtime,
+                              ExecutionGroup* close_group,
+                              std::uint64_t local_order_id,
+                              ContextT& context) noexcept {
+    if (last_signal_decision_.intent.reduce_only) {
+      if (close_group != nullptr) {
+        [[maybe_unused]] const bool started =
+            runtime->execution.StartCloseOrder(*close_group, local_order_id);
+      }
+    } else {
+      [[maybe_unused]] ExecutionGroup* group =
+          runtime->execution.StartOpenOrder(local_order_id);
+    }
+    [[maybe_unused]] const ExecutionApplyResult applied =
+        runtime->execution.ApplySubmitRejected(local_order_id);
+    [[maybe_unused]] const bool retired =
+        context.RetireFinishedOrder(local_order_id);
+  }
+
+  void UpdateSubmittedSignalDiagnostics(const PairRuntimeState* runtime,
+                                        const ExecutionGroup* group) noexcept {
+    if (group == nullptr) {
+      return;
+    }
+    last_signal_decision_.group_id = group->group_id;
+    if (!last_signal_diagnostics_valid_) {
+      return;
+    }
+    last_signal_diagnostics_.active_group_count =
+        runtime->execution.active_group_count();
+    last_signal_diagnostics_.group_id = group->group_id;
+    last_signal_diagnostics_.trailing_price = group->trailing_price;
+  }
+
+  template <typename ContextT>
+  void ApplyFinishedOrder(std::uint64_t local_order_id,
+                          ContextT& context) noexcept {
+    if (local_order_id == 0) {
+      return;
+    }
+    const core::StrategyOrder* order = context.FindOrder(local_order_id);
+    if (order == nullptr || !order->is_finished) {
+      return;
+    }
+    PairRuntimeState* runtime = MutableRuntime(order->symbol_id);
+    if (runtime != nullptr) {
+      [[maybe_unused]] const ExecutionApplyResult applied =
+          runtime->execution.ApplyTerminalOrder(*order,
+                                                runtime->pair.lag_instrument);
+    }
+    [[maybe_unused]] const bool retired =
+        context.RetireFinishedOrder(local_order_id);
+  }
+
+  [[nodiscard]] static std::int64_t AbsolutePositionQuantity(
+      const ExecutionGroup& group) noexcept {
+    if (group.signed_position_quantity ==
+        std::numeric_limits<std::int64_t>::min()) {
+      return 0;
+    }
+    return group.signed_position_quantity >= 0
+               ? group.signed_position_quantity
+               : -group.signed_position_quantity;
+  }
+
+  [[nodiscard]] static std::int64_t OpenOrderQuantity(const PairConfig& pair,
+                                                      double intent_price,
+                                                      OrderSide side) noexcept {
+    const InstrumentMetadata& instrument = pair.lag_instrument;
+    const double order_price =
+        RoundedOrderPrice(intent_price, instrument, side);
+    if (order_price <= 0.0 || instrument.notional_multiplier <= 0.0 ||
+        instrument.quantity_step <= 0.0 || pair.execute.open_notional <= 0.0) {
+      return 0;
+    }
+
+    const double raw_quantity = pair.execute.open_notional /
+                                (order_price * instrument.notional_multiplier);
+    if (!std::isfinite(raw_quantity) || raw_quantity <= 0.0) {
+      return 0;
+    }
+
+    double quantity = FloorToStep(raw_quantity, instrument.quantity_step);
+    if (instrument.max_quantity > 0.0 && quantity > instrument.max_quantity) {
+      quantity = FloorToStep(instrument.max_quantity, instrument.quantity_step);
+    }
+    if (instrument.min_quantity > 0.0 &&
+        quantity + kQuantityEpsilon < instrument.min_quantity) {
+      return 0;
+    }
+    if (!std::isfinite(quantity) || quantity <= 0.0 ||
+        quantity >
+            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+      return 0;
+    }
+    return static_cast<std::int64_t>(quantity);
+  }
+
+  [[nodiscard]] static double RoundedOrderPrice(
+      double intent_price, const InstrumentMetadata& instrument,
+      OrderSide side) noexcept {
+    if (!std::isfinite(intent_price) || intent_price <= 0.0 ||
+        instrument.price_tick <= 0.0 || instrument.price_decimal_places < 0) {
+      return 0.0;
+    }
+    const double scaled = intent_price / instrument.price_tick;
+    if (!std::isfinite(scaled)) {
+      return 0.0;
+    }
+    const double units = side == OrderSide::kBuy
+                             ? std::ceil(scaled - kPriceEpsilon)
+                             : std::floor(scaled + kPriceEpsilon);
+    const double rounded = units * instrument.price_tick;
+    return std::isfinite(rounded) && rounded > 0.0 ? rounded : 0.0;
+  }
+
+  [[nodiscard]] static double FloorToStep(double quantity,
+                                          double step) noexcept {
+    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+      return 0.0;
+    }
+    return std::floor(quantity / step + kQuantityEpsilon) * step;
+  }
+
+  [[nodiscard]] static std::string FormatOrderPrice(
+      double price, std::int32_t decimal_places) {
+    return fmt::format("{:.{}f}", price, decimal_places);
+  }
+
   [[nodiscard]] SignalDiagnostics BuildSignalDiagnostics(
       const PairRuntimeState& runtime, const PairMarketState& market,
       const QuoteSnapshot& lead_drifted, const RecorderSnapshot& recorder,
@@ -403,12 +637,15 @@ class Strategy {
   StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
+  std::deque<std::string> order_price_texts_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
   SignalDiagnostics last_signal_diagnostics_;
   bool last_signal_diagnostics_valid_{false};
   bool degraded_{false};
   bool stop_requested_{false};
+  static constexpr double kPriceEpsilon = 1e-12;
+  static constexpr double kQuantityEpsilon = 1e-12;
 };
 
 }  // namespace aquila::strategy::leadlag

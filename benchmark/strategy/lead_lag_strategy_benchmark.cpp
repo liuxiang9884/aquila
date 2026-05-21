@@ -9,6 +9,7 @@
 
 #include "core/common/types.h"
 #include "core/market_data/types.h"
+#include "core/trading/order_types.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/recorders.h"
 #include "strategy/lead_lag/strategy.h"
@@ -25,7 +26,16 @@ constexpr char kTracePathEnv[] = "AQUILA_LEAD_LAG_TRACE";
 constexpr char kDefaultTracePath[] =
     "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin";
 
-struct NoopContext {};
+struct NoopContext {
+  [[nodiscard]] core::OrderPlaceResult PlaceOrder(
+      core::OrderCreateRequest) noexcept {
+    return {};
+  }
+
+  bool RetireFinishedOrder(std::uint64_t) noexcept {
+    return false;
+  }
+};
 
 [[nodiscard]] Config MakeOrdiConfig() {
   Config config;
@@ -142,9 +152,9 @@ void WarmActive(Strategy* strategy, NoopContext* context) noexcept {
     strategy->OnBookTicker(
         Ticker(event_ns, Exchange::kGate, 101.50 + step, 102.00 + step),
         *context);
-    strategy->OnBookTicker(Ticker(event_ns + 10, Exchange::kBinance,
-                                  100.00 + step, 101.00 + step),
-                           *context);
+    strategy->OnBookTicker(
+        Ticker(event_ns + 10, Exchange::kBinance, 100.00 + step, 101.00 + step),
+        *context);
     event_ns += 1'500'000'000;
   }
 }
