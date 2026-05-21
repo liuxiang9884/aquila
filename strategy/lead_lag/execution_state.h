@@ -26,6 +26,84 @@ enum class ExecutionApplyResult : std::uint8_t {
   kAppliedDeleted,
 };
 
+enum class RecoveryState : std::uint8_t {
+  kNormal,
+  kDegradedNeedsReconcile,
+  kReconciling,
+  kRecovered,
+  kManualIntervention,
+};
+
+struct RecoveryApplyResult {
+  bool recovered{false};
+  bool position_match{false};
+  bool open_orders_resolved{false};
+  bool terminal_facts_resolved{false};
+  bool manual_intervention{false};
+};
+
+[[nodiscard]] constexpr bool RecoveryApplySucceeded(
+    const RecoveryApplyResult& result) noexcept {
+  return result.recovered && result.position_match &&
+         result.open_orders_resolved && result.terminal_facts_resolved &&
+         !result.manual_intervention;
+}
+
+[[nodiscard]] constexpr bool RecoveryStateNeedsReconcile(
+    RecoveryState state) noexcept {
+  switch (state) {
+    case RecoveryState::kDegradedNeedsReconcile:
+    case RecoveryState::kReconciling:
+    case RecoveryState::kManualIntervention:
+      return true;
+    case RecoveryState::kNormal:
+    case RecoveryState::kRecovered:
+      return false;
+  }
+  return true;
+}
+
+[[nodiscard]] constexpr bool RecoveryStateManualIntervention(
+    RecoveryState state) noexcept {
+  return state == RecoveryState::kManualIntervention;
+}
+
+[[nodiscard]] constexpr bool RecoveryStatePausesNewEntries(
+    RecoveryState state) noexcept {
+  switch (state) {
+    case RecoveryState::kDegradedNeedsReconcile:
+    case RecoveryState::kReconciling:
+    case RecoveryState::kManualIntervention:
+      return true;
+    case RecoveryState::kNormal:
+    case RecoveryState::kRecovered:
+      return false;
+  }
+  return true;
+}
+
+[[nodiscard]] constexpr std::uint8_t RecoveryStateSeverity(
+    RecoveryState state) noexcept {
+  switch (state) {
+    case RecoveryState::kNormal:
+      return 0;
+    case RecoveryState::kRecovered:
+      return 1;
+    case RecoveryState::kDegradedNeedsReconcile:
+      return 2;
+    case RecoveryState::kReconciling:
+      return 3;
+    case RecoveryState::kManualIntervention:
+      return 4;
+  }
+  return 4;
+}
+
+[[nodiscard]] constexpr RecoveryState MoreSevereRecoveryState(
+    RecoveryState lhs, RecoveryState rhs) noexcept {
+  return RecoveryStateSeverity(lhs) >= RecoveryStateSeverity(rhs) ? lhs : rhs;
+}
+
 class SignalEngine;
 
 struct ExecutionGroup {
@@ -62,7 +140,7 @@ class ExecutionState {
     groups_.assign(parallel, ExecutionGroup{});
     active_group_count_ = 0;
     next_group_id_ = 1;
-    degraded_ = false;
+    recovery_state_ = RecoveryState::kNormal;
     needs_reconcile_ = false;
   }
 
@@ -151,8 +229,34 @@ class ExecutionState {
   }
 
   void OnFeedbackContinuityLost(const OrderFeedbackEvent&) noexcept {
-    degraded_ = true;
+    if (recovery_state_ != RecoveryState::kManualIntervention) {
+      recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
+    }
     needs_reconcile_ = true;
+  }
+
+  [[nodiscard]] bool BeginReconcile() noexcept {
+    if (recovery_state_ == RecoveryState::kReconciling) {
+      return true;
+    }
+    if (recovery_state_ != RecoveryState::kDegradedNeedsReconcile) {
+      return false;
+    }
+    recovery_state_ = RecoveryState::kReconciling;
+    needs_reconcile_ = true;
+    return true;
+  }
+
+  [[nodiscard]] bool ApplyRecoveryResult(
+      const RecoveryApplyResult& result) noexcept {
+    if (RecoveryApplySucceeded(result)) {
+      recovery_state_ = RecoveryState::kNormal;
+      needs_reconcile_ = false;
+      return true;
+    }
+    recovery_state_ = RecoveryState::kManualIntervention;
+    needs_reconcile_ = true;
+    return false;
   }
 
   [[nodiscard]] const ExecutionGroup* FindGroupById(
@@ -196,15 +300,23 @@ class ExecutionState {
   }
 
   [[nodiscard]] bool degraded() const noexcept {
-    return degraded_;
+    return RecoveryStatePausesNewEntries(recovery_state_);
   }
 
   [[nodiscard]] bool needs_reconcile() const noexcept {
     return needs_reconcile_;
   }
 
+  [[nodiscard]] RecoveryState recovery_state() const noexcept {
+    return recovery_state_;
+  }
+
+  [[nodiscard]] bool manual_intervention() const noexcept {
+    return RecoveryStateManualIntervention(recovery_state_);
+  }
+
   [[nodiscard]] bool new_entries_paused() const noexcept {
-    return degraded_ || needs_reconcile_;
+    return RecoveryStatePausesNewEntries(recovery_state_) || needs_reconcile_;
   }
 
  private:
@@ -264,7 +376,7 @@ class ExecutionState {
   std::vector<ExecutionGroup> groups_;
   std::size_t active_group_count_{0};
   std::uint64_t next_group_id_{1};
-  bool degraded_{false};
+  RecoveryState recovery_state_{RecoveryState::kNormal};
   bool needs_reconcile_{false};
 };
 

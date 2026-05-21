@@ -142,7 +142,9 @@ class Strategy {
   void OnOrderFeedback(const OrderFeedbackEvent& event,
                        ContextT& context) noexcept {
     if (event.kind == OrderFeedbackKind::kContinuityLost) {
-      degraded_ = true;
+      if (recovery_state_ != RecoveryState::kManualIntervention) {
+        recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
+      }
       for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
         if (runtime.initialized) {
           runtime.execution.OnFeedbackContinuityLost(event);
@@ -174,7 +176,77 @@ class Strategy {
   }
 
   [[nodiscard]] bool degraded() const noexcept {
-    return degraded_;
+    return RecoveryStatePausesNewEntries(recovery_state());
+  }
+
+  [[nodiscard]] RecoveryState recovery_state() const noexcept {
+    RecoveryState state = recovery_state_;
+    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized) {
+        state =
+            MoreSevereRecoveryState(state, runtime.execution.recovery_state());
+      }
+    }
+    return state;
+  }
+
+  [[nodiscard]] bool needs_reconcile() const noexcept {
+    if (RecoveryStateNeedsReconcile(recovery_state_)) {
+      return true;
+    }
+    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized && runtime.execution.needs_reconcile()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool manual_intervention() const noexcept {
+    return RecoveryStateManualIntervention(recovery_state());
+  }
+
+  [[nodiscard]] bool new_entries_paused() const noexcept {
+    if (RecoveryStatePausesNewEntries(recovery_state_)) {
+      return true;
+    }
+    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized && runtime.execution.new_entries_paused()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] bool BeginReconcile() noexcept {
+    bool started = false;
+    if (recovery_state_ == RecoveryState::kReconciling) {
+      started = true;
+    } else if (recovery_state_ == RecoveryState::kDegradedNeedsReconcile) {
+      recovery_state_ = RecoveryState::kReconciling;
+      started = true;
+    }
+    for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized) {
+        started = runtime.execution.BeginReconcile() || started;
+      }
+    }
+    return started;
+  }
+
+  [[nodiscard]] bool ApplyRecoveryResult(
+      const RecoveryApplyResult& result) noexcept {
+    const bool recovered = RecoveryApplySucceeded(result);
+    recovery_state_ =
+        recovered ? RecoveryState::kNormal : RecoveryState::kManualIntervention;
+    bool all_recovered = recovered;
+    for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized) {
+        all_recovered =
+            runtime.execution.ApplyRecoveryResult(result) && all_recovered;
+      }
+    }
+    return all_recovered;
   }
 
   [[nodiscard]] const SignalDecision& last_signal_decision() const noexcept {
@@ -713,7 +785,7 @@ class Strategy {
   SignalDecision last_signal_decision_;
   SignalDiagnostics last_signal_diagnostics_;
   bool last_signal_diagnostics_valid_{false};
-  bool degraded_{false};
+  RecoveryState recovery_state_{RecoveryState::kNormal};
   bool stop_requested_{false};
   static constexpr double kPriceEpsilon = 1e-12;
   static constexpr double kQuantityEpsilon = 1e-12;

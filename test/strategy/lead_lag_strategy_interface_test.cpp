@@ -1260,6 +1260,10 @@ TEST(LeadLagStrategyInterfaceTest, FeedbackContinuityLostPausesNewOpenSignals) {
           .kind = aquila::OrderFeedbackKind::kContinuityLost,
       },
       context);
+  EXPECT_EQ(strategy.recovery_state(),
+            leadlag::RecoveryState::kDegradedNeedsReconcile);
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
 
   strategy.OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
@@ -1268,6 +1272,107 @@ TEST(LeadLagStrategyInterfaceTest, FeedbackContinuityLostPausesNewOpenSignals) {
   EXPECT_FALSE(decision.triggered);
   EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kDegraded);
   EXPECT_TRUE(strategy.degraded());
+  EXPECT_TRUE(order_session.placed_orders.empty());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     BeginReconcileMovesDegradedStateAndKeepsOpenSignalsPaused) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
+      },
+      context);
+
+  ASSERT_TRUE(strategy.BeginReconcile());
+  EXPECT_EQ(strategy.recovery_state(), leadlag::RecoveryState::kReconciling);
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
+
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kDegraded);
+  EXPECT_TRUE(order_session.placed_orders.empty());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FailedRecoveryResultRequiresManualInterventionAndCannotClearReconcile) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
+      },
+      context);
+  ASSERT_TRUE(strategy.BeginReconcile());
+
+  EXPECT_FALSE(strategy.ApplyRecoveryResult(leadlag::RecoveryApplyResult{
+      .recovered = false,
+      .position_match = false,
+      .open_orders_resolved = false,
+      .terminal_facts_resolved = false,
+      .manual_intervention = true,
+  }));
+
+  EXPECT_EQ(strategy.recovery_state(),
+            leadlag::RecoveryState::kManualIntervention);
+  EXPECT_TRUE(strategy.manual_intervention());
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     SuccessfulRecoveryResultClearsReconcileAndAllowsLaterOpenSignal) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
+      },
+      context);
+  ASSERT_TRUE(strategy.BeginReconcile());
+
+  ASSERT_TRUE(strategy.ApplyRecoveryResult(leadlag::RecoveryApplyResult{
+      .recovered = true,
+      .position_match = true,
+      .open_orders_resolved = true,
+      .terminal_facts_resolved = true,
+      .manual_intervention = false,
+  }));
+  EXPECT_EQ(strategy.recovery_state(), leadlag::RecoveryState::kNormal);
+  EXPECT_FALSE(strategy.needs_reconcile());
+  EXPECT_FALSE(strategy.manual_intervention());
+  EXPECT_FALSE(strategy.new_entries_paused());
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
+
+  EXPECT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
+  EXPECT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenLong);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
 }
 
 }  // namespace
