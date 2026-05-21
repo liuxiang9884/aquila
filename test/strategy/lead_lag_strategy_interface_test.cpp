@@ -314,6 +314,36 @@ leadlag::Config SignalOnlyConfig() {
   return config;
 }
 
+leadlag::Config TwoPairSignalOnlyConfig() {
+  leadlag::Config config = SignalOnlyConfig();
+  leadlag::PairConfig second_pair = config.pairs.front();
+  second_pair.symbol = "ETH_USDT";
+  second_pair.symbol_id = 7;
+  second_pair.lag_instrument.exchange_symbol = "ETH_USDT_GATE";
+  config.pairs.push_back(second_pair);
+  return config;
+}
+
+leadlag::RecoveryApplyResult SuccessfulRecoveryResult() {
+  return leadlag::RecoveryApplyResult{
+      .recovered = true,
+      .position_match = true,
+      .open_orders_resolved = true,
+      .terminal_facts_resolved = true,
+      .manual_intervention = false,
+  };
+}
+
+leadlag::RecoveryApplyResult ManualRecoveryResult() {
+  return leadlag::RecoveryApplyResult{
+      .recovered = false,
+      .position_match = false,
+      .open_orders_resolved = false,
+      .terminal_facts_resolved = false,
+      .manual_intervention = true,
+  };
+}
+
 aquila::config::StrategyConfig RuntimeConfig() {
   aquila::config::StrategyConfig config;
   config.name = "lead_lag";
@@ -1307,6 +1337,44 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ExecutionRecoverySuccessWithoutBeginReconcileDoesNotRestoreNormal) {
+  leadlag::ExecutionState execution;
+  execution.Init(/*parallel=*/1);
+  execution.OnFeedbackContinuityLost(aquila::OrderFeedbackEvent{
+      .kind = aquila::OrderFeedbackKind::kContinuityLost,
+  });
+
+  ASSERT_EQ(execution.recovery_state(),
+            leadlag::RecoveryState::kDegradedNeedsReconcile);
+
+  EXPECT_FALSE(execution.ApplyRecoveryResult(SuccessfulRecoveryResult()));
+  EXPECT_EQ(execution.recovery_state(),
+            leadlag::RecoveryState::kDegradedNeedsReconcile);
+  EXPECT_TRUE(execution.needs_reconcile());
+  EXPECT_TRUE(execution.new_entries_paused());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExecutionManualInterventionIsStickyAcrossSuccessfulRecoveryResult) {
+  leadlag::ExecutionState execution;
+  execution.Init(/*parallel=*/1);
+  execution.OnFeedbackContinuityLost(aquila::OrderFeedbackEvent{
+      .kind = aquila::OrderFeedbackKind::kContinuityLost,
+  });
+  ASSERT_TRUE(execution.BeginReconcile());
+  ASSERT_FALSE(execution.ApplyRecoveryResult(ManualRecoveryResult()));
+  ASSERT_EQ(execution.recovery_state(),
+            leadlag::RecoveryState::kManualIntervention);
+
+  EXPECT_FALSE(execution.ApplyRecoveryResult(SuccessfulRecoveryResult()));
+  EXPECT_EQ(execution.recovery_state(),
+            leadlag::RecoveryState::kManualIntervention);
+  EXPECT_TRUE(execution.manual_intervention());
+  EXPECT_TRUE(execution.needs_reconcile());
+  EXPECT_TRUE(execution.new_entries_paused());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      FailedRecoveryResultRequiresManualInterventionAndCannotClearReconcile) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
@@ -1320,13 +1388,7 @@ TEST(LeadLagStrategyInterfaceTest,
       context);
   ASSERT_TRUE(strategy.BeginReconcile());
 
-  EXPECT_FALSE(strategy.ApplyRecoveryResult(leadlag::RecoveryApplyResult{
-      .recovered = false,
-      .position_match = false,
-      .open_orders_resolved = false,
-      .terminal_facts_resolved = false,
-      .manual_intervention = true,
-  }));
+  EXPECT_FALSE(strategy.ApplyRecoveryResult(ManualRecoveryResult()));
 
   EXPECT_EQ(strategy.recovery_state(),
             leadlag::RecoveryState::kManualIntervention);
@@ -1353,13 +1415,7 @@ TEST(LeadLagStrategyInterfaceTest,
       context);
   ASSERT_TRUE(strategy.BeginReconcile());
 
-  ASSERT_TRUE(strategy.ApplyRecoveryResult(leadlag::RecoveryApplyResult{
-      .recovered = true,
-      .position_match = true,
-      .open_orders_resolved = true,
-      .terminal_facts_resolved = true,
-      .manual_intervention = false,
-  }));
+  ASSERT_TRUE(strategy.ApplyRecoveryResult(SuccessfulRecoveryResult()));
   EXPECT_EQ(strategy.recovery_state(), leadlag::RecoveryState::kNormal);
   EXPECT_FALSE(strategy.needs_reconcile());
   EXPECT_FALSE(strategy.manual_intervention());
@@ -1373,6 +1429,53 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(strategy.last_signal_decision().action,
             leadlag::SignalAction::kOpenLong);
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     StrategyWideRecoverySuccessWithoutBeginReconcileKeepsMultiPairPaused) {
+  leadlag::Strategy strategy{TwoPairSignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
+      },
+      context);
+  ASSERT_EQ(strategy.recovery_state(),
+            leadlag::RecoveryState::kDegradedNeedsReconcile);
+
+  EXPECT_FALSE(strategy.ApplyRecoveryResult(SuccessfulRecoveryResult()));
+  EXPECT_EQ(strategy.recovery_state(),
+            leadlag::RecoveryState::kDegradedNeedsReconcile);
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     StrategyWideRecoverySuccessDoesNotClearManualMultiPairRuntime) {
+  leadlag::Strategy strategy{TwoPairSignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
+      },
+      context);
+  ASSERT_TRUE(strategy.BeginReconcile());
+  ASSERT_FALSE(strategy.ApplyRecoveryResult(ManualRecoveryResult()));
+  ASSERT_EQ(strategy.recovery_state(),
+            leadlag::RecoveryState::kManualIntervention);
+
+  EXPECT_FALSE(strategy.ApplyRecoveryResult(SuccessfulRecoveryResult()));
+  EXPECT_EQ(strategy.recovery_state(),
+            leadlag::RecoveryState::kManualIntervention);
+  EXPECT_TRUE(strategy.manual_intervention());
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
 }
 
 }  // namespace

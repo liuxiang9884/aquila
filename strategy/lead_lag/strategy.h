@@ -237,15 +237,38 @@ class Strategy {
   [[nodiscard]] bool ApplyRecoveryResult(
       const RecoveryApplyResult& result) noexcept {
     const bool recovered = RecoveryApplySucceeded(result);
-    recovery_state_ =
-        recovered ? RecoveryState::kNormal : RecoveryState::kManualIntervention;
-    bool all_recovered = recovered;
+    if (!recovered) {
+      recovery_state_ = RecoveryState::kManualIntervention;
+      for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+        if (runtime.initialized) {
+          [[maybe_unused]] const bool applied =
+              runtime.execution.ApplyRecoveryResult(result);
+        }
+      }
+      return false;
+    }
+
+    if (recovery_state_ != RecoveryState::kReconciling ||
+        !AllInitializedRuntimesReconciling()) {
+      MarkNeedsReconcile();
+      for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+        if (runtime.initialized) {
+          runtime.execution.MarkNeedsReconcile();
+        }
+      }
+      return false;
+    }
+
+    bool all_recovered = true;
     for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
       if (runtime.initialized) {
         all_recovered =
             runtime.execution.ApplyRecoveryResult(result) && all_recovered;
       }
     }
+    recovery_state_ =
+        all_recovered ? RecoveryState::kNormal
+                      : RecoveryState::kDegradedNeedsReconcile;
     return all_recovered;
   }
 
@@ -345,6 +368,22 @@ class Strategy {
     PairRuntimeState& runtime =
         pair_runtime_by_symbol_id_[static_cast<std::size_t>(symbol_id)];
     return runtime.initialized ? &runtime : nullptr;
+  }
+
+  [[nodiscard]] bool AllInitializedRuntimesReconciling() const noexcept {
+    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized &&
+          runtime.execution.recovery_state() != RecoveryState::kReconciling) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void MarkNeedsReconcile() noexcept {
+    if (recovery_state_ != RecoveryState::kManualIntervention) {
+      recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
+    }
   }
 
   template <typename ContextT>

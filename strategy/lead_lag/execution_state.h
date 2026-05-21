@@ -229,6 +229,10 @@ class ExecutionState {
   }
 
   void OnFeedbackContinuityLost(const OrderFeedbackEvent&) noexcept {
+    MarkNeedsReconcile();
+  }
+
+  void MarkNeedsReconcile() noexcept {
     if (recovery_state_ != RecoveryState::kManualIntervention) {
       recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
     }
@@ -249,14 +253,18 @@ class ExecutionState {
 
   [[nodiscard]] bool ApplyRecoveryResult(
       const RecoveryApplyResult& result) noexcept {
-    if (RecoveryApplySucceeded(result)) {
-      recovery_state_ = RecoveryState::kNormal;
-      needs_reconcile_ = false;
-      return true;
+    if (!RecoveryApplySucceeded(result)) {
+      recovery_state_ = RecoveryState::kManualIntervention;
+      needs_reconcile_ = true;
+      return false;
     }
-    recovery_state_ = RecoveryState::kManualIntervention;
-    needs_reconcile_ = true;
-    return false;
+    if (recovery_state_ != RecoveryState::kReconciling) {
+      MarkNeedsReconcile();
+      return false;
+    }
+    recovery_state_ = RecoveryState::kNormal;
+    needs_reconcile_ = false;
+    return true;
   }
 
   [[nodiscard]] const ExecutionGroup* FindGroupById(
