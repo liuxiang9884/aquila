@@ -189,16 +189,29 @@ def _to_integral_size(value: Any, label: str) -> int:
     return int(parsed)
 
 
-def _pending_orders(value: Any) -> int:
-    if value is None:
-        return 0
-    return _to_integral_size(value, "pending_orders")
+def _pending_orders(position: dict[str, Any], contract: str) -> int:
+    if "pending_orders" not in position:
+        raise RestFailure(f"invalid {contract}.pending_orders: missing pending_orders")
+    return _to_integral_size(position.get("pending_orders"), f"{contract}.pending_orders")
 
 
-def _position_contract(position: dict[str, Any], fallback_contract: str | None) -> str:
-    raw_contract = position.get("contract", fallback_contract)
-    if raw_contract is None:
-        raise RestFailure("invalid position response: missing contract")
+def _response_contract(
+    mapping: dict[str, Any],
+    fallback_contract: str | None,
+    label: str,
+) -> str:
+    raw_contract = mapping.get("contract")
+    if fallback_contract is not None:
+        expected = normalize_rest_contract(fallback_contract)
+        if raw_contract is None or str(raw_contract).strip() == "":
+            return expected
+        actual = normalize_rest_contract(raw_contract)
+        if actual != expected:
+            raise RestFailure(f"invalid {label}: contract mismatch: expected {expected}, got {actual}")
+        return actual
+
+    if raw_contract is None or str(raw_contract).strip() == "":
+        raise RestFailure(f"invalid {label}: missing contract")
     return normalize_rest_contract(raw_contract)
 
 
@@ -213,11 +226,11 @@ def parse_position(value: Any, fallback_contract: str | None = None) -> Position
         raise RestFailure(f"position response missing contract {normalized}")
     if not isinstance(value, dict):
         raise RestFailure(f"invalid position response: expected object, got {type(value).__name__}")
-    contract = _position_contract(value, fallback_contract)
+    contract = _response_contract(value, fallback_contract, "position response")
     return PositionSnapshot(
         contract=contract,
         size=_to_integral_size(value.get("size"), f"{contract}.size"),
-        pending_orders=_pending_orders(value.get("pending_orders")),
+        pending_orders=_pending_orders(value, contract),
     )
 
 
@@ -244,9 +257,7 @@ def parse_open_orders(value: Any, fallback_contract: str | None) -> list[OpenOrd
             order_id = order.get("text")
         if order_id is None or str(order_id).strip() == "":
             raise RestFailure(f"invalid open_orders[{index}]: missing id or text")
-        if fallback_contract is None and not str(order.get("contract", "")).strip():
-            raise RestFailure(f"invalid open_orders[{index}]: missing contract")
-        contract = normalize_rest_contract(order.get("contract", fallback_contract))
+        contract = _response_contract(order, fallback_contract, f"open_orders[{index}]")
         orders.append(OpenOrder(contract=contract, order_id=str(order_id).strip()))
     return orders
 
