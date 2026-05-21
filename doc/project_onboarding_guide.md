@@ -130,6 +130,7 @@ doc/evaluation_support.md
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance 行情 | raw stream、JSON parser、client/session、benchmark |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag 目录 | 模块职责、OnBookTicker 主流程、replay 输出、边界 |
 | `doc/lead_lag_live_runtime_plan.md` | 准备 LeadLag 长时间实盘运行和测试 | signal-only runner、订单闭环、reconcile、live smoke、benchmark 顺序 |
+| `doc/lead_lag_reconcile_design.md` | 准备 LeadLag REST reconcile / feedback recovery 实现 | read-only reconcile 边界、恢复状态机、匹配规则、guardrails、后续任务和验证命令 |
 | LeadLag reconstruction / design / audit docs | 继续 LeadLag 迁移 | fixed Go 语义、Aquila 映射、Go/C++ 差异 |
 | `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` | ORDI replay / 对账 | Tardis / HDF 输入差异、signal key、slip PnL |
 
