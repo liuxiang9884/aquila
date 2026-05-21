@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import sys
 import time
 from dataclasses import dataclass
@@ -113,6 +114,10 @@ def validate_config(config: FlattenConfig) -> None:
     normalize_settle(config.settle)
     if config.scope not in {"dedicated-account", "allowlist"}:
         raise ScopeRefused("scope must be dedicated-account or allowlist")
+    if not math.isfinite(config.poll_timeout_sec):
+        raise ScopeRefused("poll-timeout-sec must be finite")
+    if not math.isfinite(config.poll_interval_sec):
+        raise ScopeRefused("poll-interval-sec must be finite")
     if config.poll_timeout_sec < 0:
         raise ScopeRefused("poll-timeout-sec must be non-negative")
     if config.poll_interval_sec <= 0:
@@ -531,9 +536,10 @@ def poll_until_flat(
         open_orders = query_scoped_open_orders(requester, settle, contracts)
         if final_state_is_flat(positions, open_orders):
             return True, polls, positions, open_orders
-        if clock.time() >= deadline:
+        now = clock.time()
+        if now >= deadline:
             return False, polls, positions, open_orders
-        clock.sleep(interval_sec)
+        clock.sleep(min(interval_sec, max(0.0, deadline - now)))
 
 
 def check_max_position_count(positions: list[PositionSnapshot], max_position_count: int) -> None:

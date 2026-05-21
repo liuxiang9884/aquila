@@ -78,6 +78,57 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(summary["result"], "scope_refused")
         self.assertIn("confirm-dedicated-account", summary["errors"][0])
 
+    def test_poll_time_parameters_reject_nan_and_inf(self):
+        invalid_configs = [
+            allowlist_config(poll_timeout_sec=float("nan")),
+            allowlist_config(poll_timeout_sec=float("inf")),
+            allowlist_config(poll_timeout_sec=float("-inf")),
+            allowlist_config(poll_interval_sec=float("nan")),
+            allowlist_config(poll_interval_sec=float("inf")),
+            allowlist_config(poll_interval_sec=float("-inf")),
+        ]
+
+        def fail_request(api_request):
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        for config in invalid_configs:
+            with self.subTest(config=config):
+                exit_code, summary = flatten.run_emergency_flatten(
+                    config=config,
+                    requester=fail_request,
+                    clock=FakeClock(),
+                )
+
+                self.assertEqual(exit_code, flatten.EXIT_SCOPE_REFUSED)
+                self.assertEqual(summary["result"], "scope_refused")
+
+    def test_poll_sleep_is_clipped_to_remaining_timeout(self):
+        clock = FakeClock()
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
+                return {"contract": "BTC_USDT", "size": 1, "pending_orders": 0}
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        verified, polls, final_positions, final_open_orders = flatten.poll_until_flat(
+            requester=fake_request,
+            settle="usdt",
+            contracts=["BTC_USDT"],
+            timeout_sec=2.5,
+            interval_sec=10.0,
+            clock=clock,
+        )
+
+        self.assertFalse(verified)
+        self.assertEqual(polls, 2)
+        self.assertEqual(clock.sleeps, [2.5])
+        self.assertEqual(final_positions[0].size, 1)
+        self.assertEqual(final_open_orders, [])
+
     def test_dry_run_does_not_send_mutating_requests(self):
         calls = []
 
