@@ -185,6 +185,10 @@ class OrderSession {
     if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
+    const OrderType order_type = OrderTypeForGate(order);
+    if (order_type != OrderType::kLimit) {
+      return EarlyLocalReject(OrderSendStatus::kUnsupportedOrderType, true);
+    }
 
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
@@ -194,6 +198,7 @@ class OrderSession {
         PlaceOrderEncodeFields{.timestamp = NowSeconds(),
                                .encoded_request_id = encoded_request_id,
                                .local_order_id = order.local_order_id,
+                               .order_type = order_type,
                                .contract = order.symbol,
                                .signed_size = SignedOrderSizeForGate(order),
                                .price_text = order.price_text,
@@ -352,10 +357,21 @@ class OrderSession {
         return OrderSendStatus::kEncodeBufferTooSmall;
       case OrderEncodeStatus::kInvalidOrderText:
         return OrderSendStatus::kInvalidLocalOrderId;
+      case OrderEncodeStatus::kUnsupportedOrderType:
+        return OrderSendStatus::kUnsupportedOrderType;
       case OrderEncodeStatus::kSignatureFailed:
         return OrderSendStatus::kSignatureFailed;
     }
     return OrderSendStatus::kEncodeBufferTooSmall;
+  }
+
+  template <typename OrderT>
+  [[nodiscard]] static OrderType OrderTypeForGate(
+      const OrderT& order) noexcept {
+    if constexpr (requires { order.type; }) {
+      return order.type;
+    }
+    return OrderType::kLimit;
   }
 
   [[nodiscard]] websocket::SendStatus SendText(

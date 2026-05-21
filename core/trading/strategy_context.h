@@ -16,6 +16,10 @@ class StrategyContext {
   explicit StrategyContext(OrderManagerT& order_manager) noexcept
       : order_manager_(order_manager) {}
 
+  OrderPlaceResult PlaceOrder(OrderCreateRequest request) noexcept {
+    return order_manager_.PlaceOrder(std::move(request));
+  }
+
   OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
     return order_manager_.PlaceLimitOrder(std::move(request));
   }
@@ -27,6 +31,10 @@ class StrategyContext {
   [[nodiscard]] const StrategyOrder* FindOrder(
       std::uint64_t local_order_id) const noexcept {
     return order_manager_.FindOrder(local_order_id);
+  }
+
+  bool RetireFinishedOrder(std::uint64_t local_order_id) noexcept {
+    return order_manager_.RetireFinishedOrder(local_order_id);
   }
 
  private:

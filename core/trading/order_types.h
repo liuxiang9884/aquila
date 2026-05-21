@@ -48,6 +48,7 @@ struct OrderCreateRequest {
   std::int32_t symbol_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
+  OrderType order_type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::int64_t quantity{0};
   std::string_view price_text{};

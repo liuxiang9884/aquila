@@ -25,6 +25,7 @@ enum class OrderEncodeStatus : std::uint8_t {
   kBufferTooSmall,
   kSignatureFailed,
   kInvalidOrderText,
+  kUnsupportedOrderType,
 };
 
 struct EncodedTextRequest {
@@ -43,6 +44,7 @@ struct PlaceOrderEncodeFields {
   std::int64_t timestamp{0};
   std::uint64_t encoded_request_id{0};
   std::uint64_t local_order_id{0};
+  OrderType order_type{OrderType::kLimit};
   std::string_view contract{};
   std::int64_t signed_size{0};
   std::string_view price_text{};
@@ -113,6 +115,10 @@ template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodePlaceOrderRequest(
     const PlaceOrderEncodeFields& fields,
     std::array<char, N>& buffer) noexcept {
+  if (fields.order_type != OrderType::kLimit) {
+    return {.status = OrderEncodeStatus::kUnsupportedOrderType, .text = {}};
+  }
+
   std::array<char, 32> text_buffer;
   const std::string_view text =
       OrderTextCodec::Format(fields.local_order_id, text_buffer);

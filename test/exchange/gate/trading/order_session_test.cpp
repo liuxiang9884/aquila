@@ -100,6 +100,7 @@ struct TestOrder {
   std::uint64_t local_order_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
+  OrderType type{OrderType::kLimit};
   std::int64_t quantity{0};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
@@ -121,6 +122,7 @@ TestOrder MakePlaceOrder(std::uint64_t local_order_id) noexcept {
   return TestOrder{.local_order_id = local_order_id,
                    .symbol = "BTC_USDT",
                    .side = OrderSide::kBuy,
+                   .type = OrderType::kLimit,
                    .quantity = 1,
                    .price_text = "81000",
                    .time_in_force = TimeInForce::kGoodTillCancel,
@@ -181,6 +183,22 @@ TEST(OrderSessionTest, RejectsPlaceBeforeLoginReady) {
   EXPECT_EQ(result.request_sequence, 0U);
   EXPECT_EQ(result.encoded_request_id, 0U);
   EXPECT_TRUE(handler.responses.empty());
+}
+
+TEST(OrderSessionTest, RejectsUnsupportedMarketOrderTypeBeforeSend) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+  TestOrder order = MakePlaceOrder(123);
+  order.type = OrderType::kMarket;
+
+  const OrderSendResult sent = session.PlaceOrder(order);
+
+  EXPECT_EQ(sent.status, OrderSendStatus::kUnsupportedOrderType);
+  EXPECT_EQ(sent.request_sequence, 0U);
+  EXPECT_EQ(sent.encoded_request_id, 0U);
+  EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.stats().local_send_failures, 1U);
 }
 
 TEST(OrderSessionTest, AcceptsGateLoginResponseWithoutAckField) {

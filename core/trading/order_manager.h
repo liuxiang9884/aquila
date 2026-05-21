@@ -22,7 +22,7 @@ class OrderManager {
   OrderManager(const OrderManager&) = delete;
   OrderManager& operator=(const OrderManager&) = delete;
 
-  OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
+  OrderPlaceResult PlaceOrder(OrderCreateRequest request) noexcept {
     if (request.symbol.empty() || request.price_text.empty() ||
         request.quantity <= 0) {
       return {.status = OrderPlaceStatus::kInvalidOrder, .local_order_id = 0};
@@ -44,6 +44,11 @@ class OrderManager {
     order->status = OrderStatus::kSent;
     return {.status = OrderPlaceStatus::kOk,
             .local_order_id = order->local_order_id};
+  }
+
+  OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
+    request.order_type = OrderType::kLimit;
+    return PlaceOrder(request);
   }
 
   OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept {
@@ -179,7 +184,7 @@ class OrderManager {
     order->symbol_id = request.symbol_id;
     order->symbol = request.symbol;
     order->side = request.side;
-    order->type = OrderType::kLimit;
+    order->type = request.order_type;
     order->time_in_force = request.time_in_force;
     order->quantity = request.quantity;
     order->price_text = request.price_text;

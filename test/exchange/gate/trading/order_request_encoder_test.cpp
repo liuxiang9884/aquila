@@ -89,6 +89,7 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderWritesExactJson) {
       .timestamp = 1700000001,
       .encoded_request_id = 144115188075855873ULL,
       .local_order_id = 9,
+      .order_type = OrderType::kLimit,
       .contract = "BTC_USDT",
       .signed_size = 1,
       .price_text = "81000",
@@ -102,6 +103,26 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderWritesExactJson) {
   EXPECT_EQ(
       encoded.text,
       R"({"time":1700000001,"channel":"futures.order_place","event":"api","payload":{"req_id":"144115188075855873","req_param":{"contract":"BTC_USDT","size":1,"price":"81000","tif":"gtc","text":"t-9","reduce_only":false}}})");
+}
+
+TEST(GateOrderRequestEncoderTest, MarketOrderReturnsUnsupportedOrderType) {
+  std::array<char, kPlaceOrderRequestBufferSize> buffer{};
+  const PlaceOrderEncodeFields fields{
+      .timestamp = 1700000001,
+      .encoded_request_id = 144115188075855873ULL,
+      .local_order_id = 9,
+      .order_type = OrderType::kMarket,
+      .contract = "BTC_USDT",
+      .signed_size = 1,
+      .price_text = "81000",
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .reduce_only = false,
+  };
+
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+
+  EXPECT_EQ(encoded.status, OrderEncodeStatus::kUnsupportedOrderType);
+  EXPECT_TRUE(encoded.text.empty());
 }
 
 TEST(GateOrderRequestEncoderTest, CancelByExchangeOrderIdWritesExactJson) {
