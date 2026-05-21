@@ -34,6 +34,21 @@ def allowlist_config(**overrides):
     return flatten.FlattenConfig(**values)
 
 
+def dedicated_config(**overrides):
+    values = {
+        "settle": "usdt",
+        "scope": "dedicated-account",
+        "contracts": [],
+        "confirm_dedicated_account": True,
+        "dry_run": False,
+        "poll_timeout_sec": 0.0,
+        "poll_interval_sec": 1.0,
+        "max_position_count": 8,
+    }
+    values.update(overrides)
+    return flatten.FlattenConfig(**values)
+
+
 class EmergencyFlattenFuturesTest(unittest.TestCase):
     def test_allowlist_scope_requires_contract(self):
         def fail_request(api_request):
@@ -233,24 +248,155 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertFalse(any(call.method in {"DELETE", "POST"} for call in calls))
         self.assertIn("max-position-count", summary["errors"][0])
 
-    def test_dedicated_account_reports_open_order_discovery_limitation(self):
+    def test_dedicated_account_queries_and_cancels_all_open_orders_without_positions(self):
+        calls = []
+        positions_query_count = 0
+        order_query_count = 0
+
         def fake_request(api_request):
+            nonlocal positions_query_count, order_query_count
+            calls.append(api_request)
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions"):
+                positions_query_count += 1
                 return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                order_query_count += 1
+                self.assertEqual(api_request.query_string, "status=open")
+                return [{"id": "999", "contract": "DOGE_USDT"}] if order_query_count == 1 else []
+            if api_request.method == "DELETE":
+                return {"id": "999", "status": "finished", "finish_as": "cancelled"}
             raise AssertionError(f"unexpected request: {api_request}")
 
         exit_code, summary = flatten.run_emergency_flatten(
-            config=allowlist_config(
-                scope="dedicated-account",
-                contracts=[],
-                confirm_dedicated_account=True,
-            ),
+            config=dedicated_config(),
             requester=fake_request,
             clock=FakeClock(),
         )
 
         self.assertEqual(exit_code, flatten.EXIT_OK)
-        self.assertIn("all-open-orders-not-discoverable", summary["scope"]["limitations"])
+        self.assertEqual(summary["result"], "verified_flat")
+        self.assertEqual(summary["scope"]["contracts"], ["DOGE_USDT"])
+        self.assertEqual(summary["scope"]["limitations"], [])
+        self.assertEqual(summary["orders_cancelled"][0]["order_id"], "999")
+        self.assertGreaterEqual(positions_query_count, 2)
+        self.assertTrue(any(call.method == "DELETE" for call in calls))
+
+    def test_dedicated_account_dry_run_uses_all_positions_and_all_open_orders(self):
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions"):
+                return [
+                    {"contract": "BTC_USDT", "size": -2, "pending_orders": 0},
+                    {"contract": "ETH_USDT", "size": 0, "pending_orders": 0},
+                ]
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                self.assertEqual(api_request.query_string, "status=open")
+                return [{"id": "123", "contract": "SOL_USDT"}]
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=dedicated_config(dry_run=True),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(summary["result"], "dry_run")
+        self.assertEqual(summary["scope"]["contracts"], ["BTC_USDT", "SOL_USDT"])
+        self.assertEqual(summary["plan"]["open_orders_to_cancel"][0]["order_id"], "123")
+        self.assertEqual(summary["plan"]["positions_to_close"][0]["contract"], "BTC_USDT")
+        self.assertFalse(any(call.method in {"DELETE", "POST"} for call in calls))
+
+    def test_dedicated_account_cancels_all_orders_before_closing_all_positions(self):
+        calls = []
+        positions_query_count = 0
+        order_query_count = 0
+
+        def fake_request(api_request):
+            nonlocal positions_query_count, order_query_count
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions"):
+                positions_query_count += 1
+                size = 2 if positions_query_count < 3 else 0
+                return [
+                    {"contract": "BTC_USDT", "size": size, "pending_orders": 0},
+                    {"contract": "ETH_USDT", "size": 0, "pending_orders": 0},
+                ]
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                order_query_count += 1
+                self.assertEqual(api_request.query_string, "status=open")
+                return [{"id": "abc", "contract": "SOL_USDT"}] if order_query_count == 1 else []
+            if api_request.method == "DELETE":
+                return {"id": "abc", "status": "finished", "finish_as": "cancelled"}
+            if api_request.method == "POST":
+                return {"id": "close-1", "status": "finished", "finish_as": "filled"}
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=dedicated_config(),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        methods = [call.method for call in calls]
+        close_posts = [call for call in calls if call.method == "POST"]
+        close_payload = json.loads(close_posts[0].body)
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(summary["scope"]["contracts"], ["BTC_USDT", "SOL_USDT"])
+        self.assertLess(methods.index("DELETE"), methods.index("POST"))
+        self.assertEqual(close_payload["contract"], "BTC_USDT")
+        self.assertEqual(close_payload["size"], -2)
+        self.assertTrue(close_payload["reduce_only"])
+
+    def test_requester_failure_returns_rest_failed_exit_code(self):
+        def failing_request(api_request):
+            raise RuntimeError("HTTP 500: unavailable")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(),
+            requester=failing_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("HTTP 500", summary["errors"][0])
+
+    def test_malformed_open_orders_response_returns_rest_failed_exit_code(self):
+        def fake_request(api_request):
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return {"id": "not-a-list"}
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("expected list", summary["errors"][0])
+
+    def test_malformed_positions_response_returns_rest_failed_exit_code(self):
+        def fake_request(api_request):
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
+                return {"contract": "BTC_USDT", "size": "0.5"}
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("expected integer size", summary["errors"][0])
 
 
 if __name__ == "__main__":

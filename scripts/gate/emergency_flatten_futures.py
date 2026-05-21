@@ -232,7 +232,7 @@ def parse_position_list(value: Any) -> list[PositionSnapshot]:
     return positions
 
 
-def parse_open_orders(value: Any, fallback_contract: str) -> list[OpenOrder]:
+def parse_open_orders(value: Any, fallback_contract: str | None) -> list[OpenOrder]:
     if not isinstance(value, list):
         raise RestFailure("invalid open orders response: expected list")
     orders = []
@@ -244,6 +244,8 @@ def parse_open_orders(value: Any, fallback_contract: str) -> list[OpenOrder]:
             order_id = order.get("text")
         if order_id is None or str(order_id).strip() == "":
             raise RestFailure(f"invalid open_orders[{index}]: missing id or text")
+        if fallback_contract is None and not str(order.get("contract", "")).strip():
+            raise RestFailure(f"invalid open_orders[{index}]: missing contract")
         contract = normalize_rest_contract(order.get("contract", fallback_contract))
         orders.append(OpenOrder(contract=contract, order_id=str(order_id).strip()))
     return orders
@@ -257,7 +259,14 @@ def _convert_account_request(method: str, api_request: account.ApiRequest) -> Ap
     )
 
 
-def build_open_orders_request(settle: str, contract: str) -> ApiRequest:
+def build_open_orders_request(settle: str, contract: str | None) -> ApiRequest:
+    if contract is None:
+        return ApiRequest(
+            method="GET",
+            endpoint_path=f"/futures/{normalize_settle(settle)}/orders",
+            query_string=account.build_query_string([("status", "open")]),
+        )
+
     account_request = account.build_order_query_plan(
         settle=settle,
         contract=contract,
@@ -306,24 +315,18 @@ def query_open_orders(
     return orders
 
 
-def determine_scope_contracts(
+def query_all_open_orders(
     requester: Requester,
-    config: FlattenConfig,
-    summary: dict[str, Any],
-) -> tuple[list[str], list[PositionSnapshot]]:
-    if config.scope == "allowlist":
-        contracts = normalize_contracts(config.contracts)
-        summary["scope"]["contracts"] = contracts
-        return contracts, []
+    settle: str,
+) -> list[OpenOrder]:
+    response = _request(requester, build_open_orders_request(settle, None))
+    return parse_open_orders(response, fallback_contract=None)
 
-    positions = query_all_positions(requester, normalize_settle(config.settle))
-    non_zero_positions = [position for position in positions if position.size != 0]
-    if len(non_zero_positions) > config.max_position_count:
-        raise ScopeRefused(
-            "max-position-count exceeded: "
-            f"{len(non_zero_positions)} non-zero positions > {config.max_position_count}"
-        )
 
+def scope_contract_union(
+    positions: Iterable[PositionSnapshot],
+    open_orders: Iterable[OpenOrder],
+) -> list[str]:
     contracts = []
     seen = set()
     for position in positions:
@@ -333,15 +336,23 @@ def determine_scope_contracts(
             continue
         contracts.append(position.contract)
         seen.add(position.contract)
+    for order in open_orders:
+        if order.contract in seen:
+            continue
+        contracts.append(order.contract)
+        seen.add(order.contract)
+    return contracts
 
-    summary["initial_positions"] = [position.to_summary() for position in positions]
+
+def determine_scope_contracts(
+    requester: Requester,
+    config: FlattenConfig,
+    summary: dict[str, Any],
+) -> tuple[list[str], list[PositionSnapshot]]:
+    del requester
+    contracts = normalize_contracts(config.contracts)
     summary["scope"]["contracts"] = contracts
-    summary["scope"]["discovered_non_zero_position_count"] = len(non_zero_positions)
-    summary["scope"]["discovered_pending_order_contract_count"] = sum(
-        1 for position in positions if position.pending_orders != 0
-    )
-    summary["scope"]["limitations"].append("all-open-orders-not-discoverable")
-    return contracts, positions
+    return contracts, []
 
 
 def _open_order_summaries(open_orders: Iterable[OpenOrder]) -> list[dict[str, str]]:
@@ -457,10 +468,30 @@ def final_state_is_flat(
     )
 
 
+def query_scoped_positions(
+    requester: Requester,
+    settle: str,
+    contracts: list[str] | None,
+) -> list[PositionSnapshot]:
+    if contracts is None:
+        return query_all_positions(requester, settle)
+    return query_positions(requester, settle, contracts)
+
+
+def query_scoped_open_orders(
+    requester: Requester,
+    settle: str,
+    contracts: list[str] | None,
+) -> list[OpenOrder]:
+    if contracts is None:
+        return query_all_open_orders(requester, settle)
+    return query_open_orders(requester, settle, contracts)
+
+
 def poll_until_flat(
     requester: Requester,
     settle: str,
-    contracts: list[str],
+    contracts: list[str] | None,
     timeout_sec: float,
     interval_sec: float,
     clock: Any,
@@ -469,13 +500,142 @@ def poll_until_flat(
     polls = 0
     while True:
         polls += 1
-        positions = query_positions(requester, settle, contracts)
-        open_orders = query_open_orders(requester, settle, contracts)
+        positions = query_scoped_positions(requester, settle, contracts)
+        open_orders = query_scoped_open_orders(requester, settle, contracts)
         if final_state_is_flat(positions, open_orders):
             return True, polls, positions, open_orders
         if clock.time() >= deadline:
             return False, polls, positions, open_orders
         clock.sleep(interval_sec)
+
+
+def check_max_position_count(positions: list[PositionSnapshot], max_position_count: int) -> None:
+    non_zero_positions = [position for position in positions if position.size != 0]
+    if len(non_zero_positions) > max_position_count:
+        raise ScopeRefused(
+            "max-position-count exceeded: "
+            f"{len(non_zero_positions)} non-zero positions > {max_position_count}"
+        )
+
+
+def finish_summary(
+    summary: dict[str, Any],
+    verified: bool,
+    polls: int,
+    final_positions: list[PositionSnapshot],
+    final_open_orders: list[OpenOrder],
+) -> tuple[int, dict[str, Any]]:
+    summary["polls"] = polls
+    summary["final_positions"] = _position_summaries(final_positions)
+    summary["final_open_orders"] = _open_order_summaries(final_open_orders)
+    if verified:
+        summary["ok"] = True
+        summary["result"] = "verified_flat"
+        summary["exit_code"] = EXIT_OK
+        return EXIT_OK, summary
+
+    summary["ok"] = False
+    summary["result"] = "not_flat"
+    summary["exit_code"] = EXIT_NOT_FLAT
+    summary["errors"].append("timeout or final verification still has positions/open orders")
+    return EXIT_NOT_FLAT, summary
+
+
+def run_allowlist_flatten(
+    config: FlattenConfig,
+    requester: Requester,
+    clock: Any,
+    summary: dict[str, Any],
+    settle: str,
+) -> tuple[int, dict[str, Any]]:
+    contracts, _ = determine_scope_contracts(requester, config, summary)
+    summary["plan"]["contracts"] = contracts
+
+    initial_open_orders = query_open_orders(requester, settle, contracts)
+    summary["initial_open_orders"] = _open_order_summaries(initial_open_orders)
+    summary["plan"]["open_orders_to_cancel"] = _open_order_summaries(initial_open_orders)
+
+    if config.dry_run:
+        positions = query_positions(requester, settle, contracts)
+        summary["initial_positions"] = _position_summaries(positions)
+        summary["plan"]["positions_to_close"] = plan_positions_to_close(positions)
+        summary["ok"] = True
+        summary["result"] = "dry_run"
+        summary["exit_code"] = EXIT_OK
+        return EXIT_OK, summary
+
+    cancel_open_orders(requester, settle, initial_open_orders, "before_close", summary)
+    positions = query_positions(requester, settle, contracts)
+    summary["initial_positions"] = _position_summaries(positions)
+    positions_to_close = [position for position in positions if position.size != 0]
+    summary["plan"]["positions_to_close"] = plan_positions_to_close(positions_to_close)
+    submit_close_orders(requester, settle, positions_to_close, clock, summary)
+
+    post_close_open_orders = query_open_orders(requester, settle, contracts)
+    summary["post_close_open_orders"] = _open_order_summaries(post_close_open_orders)
+    cancel_open_orders(requester, settle, post_close_open_orders, "after_close", summary)
+
+    verified, polls, final_positions, final_open_orders = poll_until_flat(
+        requester=requester,
+        settle=settle,
+        contracts=contracts,
+        timeout_sec=config.poll_timeout_sec,
+        interval_sec=config.poll_interval_sec,
+        clock=clock,
+    )
+    return finish_summary(summary, verified, polls, final_positions, final_open_orders)
+
+
+def run_dedicated_account_flatten(
+    config: FlattenConfig,
+    requester: Requester,
+    clock: Any,
+    summary: dict[str, Any],
+    settle: str,
+) -> tuple[int, dict[str, Any]]:
+    initial_positions = query_all_positions(requester, settle)
+    check_max_position_count(initial_positions, config.max_position_count)
+    initial_open_orders = query_all_open_orders(requester, settle)
+    contracts = scope_contract_union(initial_positions, initial_open_orders)
+
+    summary["scope"]["contracts"] = contracts
+    summary["scope"]["discovered_non_zero_position_count"] = sum(
+        1 for position in initial_positions if position.size != 0
+    )
+    summary["scope"]["discovered_pending_order_contract_count"] = sum(
+        1 for position in initial_positions if position.pending_orders != 0
+    )
+    summary["plan"]["contracts"] = contracts
+    summary["initial_positions"] = _position_summaries(initial_positions)
+    summary["initial_open_orders"] = _open_order_summaries(initial_open_orders)
+    summary["plan"]["open_orders_to_cancel"] = _open_order_summaries(initial_open_orders)
+    summary["plan"]["positions_to_close"] = plan_positions_to_close(initial_positions)
+
+    if config.dry_run:
+        summary["ok"] = True
+        summary["result"] = "dry_run"
+        summary["exit_code"] = EXIT_OK
+        return EXIT_OK, summary
+
+    cancel_open_orders(requester, settle, initial_open_orders, "before_close", summary)
+    positions = query_all_positions(requester, settle)
+    positions_to_close = [position for position in positions if position.size != 0]
+    summary["plan"]["positions_to_close"] = plan_positions_to_close(positions_to_close)
+    submit_close_orders(requester, settle, positions_to_close, clock, summary)
+
+    post_close_open_orders = query_all_open_orders(requester, settle)
+    summary["post_close_open_orders"] = _open_order_summaries(post_close_open_orders)
+    cancel_open_orders(requester, settle, post_close_open_orders, "after_close", summary)
+
+    verified, polls, final_positions, final_open_orders = poll_until_flat(
+        requester=requester,
+        settle=settle,
+        contracts=None,
+        timeout_sec=config.poll_timeout_sec,
+        interval_sec=config.poll_interval_sec,
+        clock=clock,
+    )
+    return finish_summary(summary, verified, polls, final_positions, final_open_orders)
 
 
 def run_emergency_flatten(
@@ -492,65 +652,9 @@ def run_emergency_flatten(
     summary = initial_summary(config)
     settle = normalize_settle(config.settle)
     try:
-        contracts, initial_scope_positions = determine_scope_contracts(requester, config, summary)
-        summary["plan"]["contracts"] = contracts
-        if not contracts:
-            summary["ok"] = True
-            summary["result"] = "verified_flat"
-            summary["exit_code"] = EXIT_OK
-            return EXIT_OK, summary
-
-        initial_open_orders = query_open_orders(requester, settle, contracts)
-        summary["initial_open_orders"] = _open_order_summaries(initial_open_orders)
-        summary["plan"]["open_orders_to_cancel"] = _open_order_summaries(initial_open_orders)
-
-        if config.dry_run:
-            positions = (
-                initial_scope_positions
-                if config.scope == "dedicated-account"
-                else query_positions(requester, settle, contracts)
-            )
-            scoped_positions = [position for position in positions if position.contract in contracts]
-            summary["initial_positions"] = _position_summaries(scoped_positions)
-            summary["plan"]["positions_to_close"] = plan_positions_to_close(scoped_positions)
-            summary["ok"] = True
-            summary["result"] = "dry_run"
-            summary["exit_code"] = EXIT_OK
-            return EXIT_OK, summary
-
-        cancel_open_orders(requester, settle, initial_open_orders, "before_close", summary)
-        positions = query_positions(requester, settle, contracts)
-        summary["initial_positions"] = _position_summaries(positions)
-        positions_to_close = [position for position in positions if position.size != 0]
-        summary["plan"]["positions_to_close"] = plan_positions_to_close(positions_to_close)
-        submit_close_orders(requester, settle, positions_to_close, clock, summary)
-
-        post_close_open_orders = query_open_orders(requester, settle, contracts)
-        summary["post_close_open_orders"] = _open_order_summaries(post_close_open_orders)
-        cancel_open_orders(requester, settle, post_close_open_orders, "after_close", summary)
-
-        verified, polls, final_positions, final_open_orders = poll_until_flat(
-            requester=requester,
-            settle=settle,
-            contracts=contracts,
-            timeout_sec=config.poll_timeout_sec,
-            interval_sec=config.poll_interval_sec,
-            clock=clock,
-        )
-        summary["polls"] = polls
-        summary["final_positions"] = _position_summaries(final_positions)
-        summary["final_open_orders"] = _open_order_summaries(final_open_orders)
-        if verified:
-            summary["ok"] = True
-            summary["result"] = "verified_flat"
-            summary["exit_code"] = EXIT_OK
-            return EXIT_OK, summary
-
-        summary["ok"] = False
-        summary["result"] = "not_flat"
-        summary["exit_code"] = EXIT_NOT_FLAT
-        summary["errors"].append("timeout or final verification still has positions/open orders")
-        return EXIT_NOT_FLAT, summary
+        if config.scope == "dedicated-account":
+            return run_dedicated_account_flatten(config, requester, clock, summary, settle)
+        return run_allowlist_flatten(config, requester, clock, summary, settle)
     except ScopeRefused as exc:
         summary["ok"] = False
         summary["result"] = "scope_refused"
