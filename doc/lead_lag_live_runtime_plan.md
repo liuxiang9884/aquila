@@ -173,11 +173,11 @@ Run:
 
 Expected: no SHM overrun requiring manual reset, signal counters and last event timestamps remain plausible, process exits cleanly.
 
-2026-05-21 status: 4 小时 run 已启动，当前仍在运行。最终 summary 等运行自然结束后补齐；见“运行记录 / 2026-05-21 4 小时 signal-only live 观察（进行中）”。
+2026-05-21 result: interrupted. 该轮运行在约 3 小时 6 分后收到 SIGTERM，未自然达到 14400 秒，不能作为 4 小时通过证据；见“运行记录 / 2026-05-21 4 小时 signal-only live 观察（中断）”。
 
-- [ ] **Step 4: 记录证据**
+- [x] **Step 4: 记录证据**
 
-把运行命令、起止时间、signal summary、runtime diagnostics summary 和异常记录补到本文件的“运行记录”。
+把运行命令、起止时间、signal summary、runtime diagnostics summary 和异常记录补到本文件的“运行记录”。2026-05-21 中断轮已记录；后续仍需重新跑一次自然完成的 2 到 4 小时 signal-only 观察。
 
 ### Task 3: 接入 LeadLag 生产订单闭环
 
@@ -466,7 +466,7 @@ Expected: benchmark 正常完成；文档只记录实测数据，不写没有证
 - Gate feedback summary: `start_result=true duration_reached=true ready=false text_messages=2 binary_messages=0 login_sent=1 login_accepted=1 subscribe_sent=1 subscribe_acks=1 events_published=0 global_continuity_lost_events_published=1 shm_published=8`.
 - Notes: first attempt at 03:37 UTC was interrupted by SIGTERM around 03:40 UTC and is not counted as the 30-minute run. The feedback session published `kSessionDisconnected` continuity lost when its configured duration ended; this was expected for a private feedback disconnect and did not affect signal-only observation because the runner did not read feedback and did not submit orders.
 
-### 2026-05-21 4 小时 signal-only live 观察（进行中）
+### 2026-05-21 4 小时 signal-only live 观察（中断）
 
 - Commit: `39cc962 Document lead lag signal-only smoke`
 - Window: started at 2026-05-21 04:37:38 UTC; expected natural LeadLag exit around 2026-05-21 08:37:38 UTC.
@@ -486,4 +486,10 @@ Expected: benchmark 正常完成；文档只记录实测数据，不写没有证
 ```
 
 - Current observation: Gate / Binance data sessions and LeadLag signal-only process remained alive at the 3-hour checkpoint. Gate feedback session published one `kSessionDisconnected` continuity lost at 2026-05-21 06:54:17 UTC. This does not affect signal-only observation because the runner does not read feedback and does not submit orders, but it remains a blocker/risk to handle before real-order smoke.
-- Final summary: pending. Fill in LeadLag summary, producer summaries, and final feedback session summary after the run ends.
+- Final result: interrupted at 2026-05-21 07:44:04 UTC by `SIGTERM`, about 3h06m after the LeadLag process started. This run is not counted as a completed 4-hour signal-only observation.
+- LeadLag log summary: `/home/liuxiang/log/lead_lag_strategy_20260521_043738.log` contains startup instrument catalog load and `Received signal: Terminated`; no normal duration-reached LeadLag summary was available in the log.
+- Gate data session summary: `/home/liuxiang/log/gate_data_session_20260521_043727.log` recorded `result=ok active=true phase=kClosed error=kNone book_tickers=1281236 rx_messages=639501 tx_messages=2242`.
+- Binance data session summary: `/home/liuxiang/log/binance_data_session_20260521_043733.log` recorded `result=ok active=true phase=kClosed error=kNone book_tickers=14775719 rx_messages=5228333 tx_messages=2300`.
+- Gate feedback summary: `/home/liuxiang/log/gate_order_feedback_session_20260521_043720.log` recorded one `feedback_global_continuity_lost` at 2026-05-21 06:54:17 UTC and then `Received signal: Terminated` at 2026-05-21 07:44:04 UTC. No feedback order events were expected for signal-only mode.
+- REST account check at 2026-05-21 09:45 UTC: `orders --contract BTC_USDT --status open` returned `[]`; `positions --contract BTC_USDT` returned `size=0` and `pending_orders=0`; `account --currency USDT --contract BTC_USDT` returned `order_margin=0`.
+- Follow-up: rerun a clean 2 to 4 hour signal-only observation and make the runner/launch wrapper retain stdout summary and explicit exit code so interrupted runs are distinguishable without relying only on log sink records.

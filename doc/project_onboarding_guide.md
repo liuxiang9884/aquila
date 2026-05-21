@@ -361,7 +361,7 @@ rg 'aquila_evaluation' core exchange tools
 ### LeadLag
 
 1. 读取 `doc/lead_lag_live_runtime_plan.md` 和 `strategy/lead_lag/README.md`，确认当前 runner gating、strategy 层订单闭环和禁用边界。
-2. 如继续 signal-only 长跑，优先补齐已有 4 小时观察的最终 summary 和异常摘要。
+2. 如继续 signal-only 长跑，先读 `doc/lead_lag_live_runtime_plan.md` 的 2026-05-21 中断记录；上一轮约 3h06m 后被 SIGTERM，REST 复核无 open order / position / pending order，但不能算 4 小时通过，需要重跑一次自然完成的 2 到 4 小时观察。
 3. 保持 `lead_lag_strategy --execute` 为禁用边界，先补 REST reconcile / feedback continuity lost 后恢复。
 4. 按计划补 unfilled-cancel、rejected / cancel-rejected、feedback 断线 / reconnect、REST reconcile smoke 和端到端 benchmark，再评估打开真实 runner。
 
