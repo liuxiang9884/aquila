@@ -91,6 +91,28 @@ TEST(StrategyConfigTest, LoadsCheckedInLeadLagFirst5StrategyConfig) {
   EXPECT_FALSE(config.feedback.enabled);
 }
 
+TEST(StrategyConfigTest, LoadsCheckedInLeadLagRequestedStrategyConfig) {
+  const auto result = aquila::config::LoadStrategyConfigFile(SourcePath(
+      "config/strategies/lead_lag_requested_strategy_20260521.toml"));
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const aquila::config::StrategyConfig& config = result.value;
+
+  EXPECT_EQ(config.name, "lead_lag");
+  EXPECT_EQ(config.strategy_id, 4);
+  EXPECT_EQ(config.mode, aquila::config::StrategyMode::kDryRun);
+  EXPECT_EQ(config.order_capacity, 32U);
+  EXPECT_EQ(config.user_config_path,
+            SourcePath("config/strategies/lead_lag_requested_20260521.toml"));
+  EXPECT_EQ(
+      config.data_reader.config_path,
+      SourcePath(
+          "config/data_readers/strategy_data_reader_requested_20260521.toml"));
+  EXPECT_EQ(config.order_session.config_path,
+            SourcePath("config/order_sessions/gate_order_session.toml"));
+  EXPECT_FALSE(config.feedback.enabled);
+}
+
 TEST(StrategyConfigTest, RejectsStrategyIdOutsideFeedbackLaneRange) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]

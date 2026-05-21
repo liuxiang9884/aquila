@@ -115,6 +115,35 @@ TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[3].lag_instrument.quantity_decimal_places, 0);
 }
 
+TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = leadlag::LoadConfigFile(
+      SourcePath("config/strategies/lead_lag_requested_20260521.toml"),
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const leadlag::Config& config = result.value;
+  ASSERT_EQ(config.pairs.size(), 8U);
+
+  EXPECT_EQ(config.pairs[0].symbol, "PROVE_USDT");
+  EXPECT_EQ(config.pairs[0].symbol_id, 4);
+  EXPECT_EQ(config.pairs[1].symbol, "ZEC_USDT");
+  EXPECT_EQ(config.pairs[1].symbol_id, 6);
+  EXPECT_EQ(config.pairs[2].symbol, "ETC_USDT");
+  EXPECT_EQ(config.pairs[2].symbol_id, 8);
+  EXPECT_EQ(config.pairs[3].symbol, "DASH_USDT");
+  EXPECT_EQ(config.pairs[3].symbol_id, 9);
+  EXPECT_EQ(config.pairs[4].symbol, "SUI_USDT");
+  EXPECT_EQ(config.pairs[4].symbol_id, 11);
+  EXPECT_EQ(config.pairs[5].symbol, "INJ_USDT");
+  EXPECT_EQ(config.pairs[5].symbol_id, 12);
+  EXPECT_EQ(config.pairs[6].symbol, "ENA_USDT");
+  EXPECT_EQ(config.pairs[6].symbol_id, 13);
+  EXPECT_EQ(config.pairs[7].symbol, "BRETT_USDT");
+  EXPECT_EQ(config.pairs[7].symbol_id, 14);
+}
+
 TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {
   leadlag::ExecuteConfig config{
       .trailing_stop = 0.0125,

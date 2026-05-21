@@ -67,12 +67,17 @@
   - `config/strategies/lead_lag.toml`
   - `config/strategies/lead_lag_first5_strategy_20260521.toml`
   - `config/strategies/lead_lag_first5_20260521.toml`
+  - `config/strategies/lead_lag_requested_strategy_20260521.toml`
+  - `config/strategies/lead_lag_requested_20260521.toml`
   - `config/data_readers/strategy_data_reader.toml`
   - `config/data_readers/strategy_data_reader_first5_20260521.toml`
+  - `config/data_readers/strategy_data_reader_requested_20260521.toml`
   - `config/order_feedback/gate_order_feedback_session.toml`
   - Gate / Binance data session configs
   - 2026-05-21 first5 配置对应 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`。
   - `RAVE_USDT` 和 `SIREN_USDT` 的 Gate quantity metadata 使用 signal-only 占位值，不能直接作为真实下单参数。
+  - 2026-05-21 requested data session 配置订阅 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`。
+  - 2026-05-21 requested LeadLag pair 配置暂不包含 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT`，因为 Gate REST 返回 decimal-size 合约，当前 catalog 保留真实空 quantity metadata。
 - Evidence outputs:
   - live runner summary
   - feedback session summary

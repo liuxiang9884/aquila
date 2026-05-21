@@ -171,6 +171,32 @@ TEST(DataSessionConfigTest, LoadsReadyFirst5GateDataSessionConfig) {
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
 }
 
+TEST(DataSessionConfigTest, LoadsReadyRequestedGateDataSessionConfig) {
+  const auto config_result = aquila::gate::LoadDataSessionConfigFile(SourcePath(
+      "config/data_sessions/gate_data_session_requested_20260521.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  const aquila::gate::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "gate_data_session_requested");
+  ASSERT_EQ(config.exchange_symbols.size(), 11u);
+  EXPECT_EQ(config.exchange_symbols[0], "PROVE_USDT");
+  EXPECT_EQ(config.exchange_symbols[1], "RAVE_USDT");
+  EXPECT_EQ(config.exchange_symbols[2], "ZEC_USDT");
+  EXPECT_EQ(config.exchange_symbols[3], "SIREN_USDT");
+  EXPECT_EQ(config.exchange_symbols[4], "ETC_USDT");
+  EXPECT_EQ(config.exchange_symbols[5], "DASH_USDT");
+  EXPECT_EQ(config.exchange_symbols[6], "RIVER_USDT");
+  EXPECT_EQ(config.exchange_symbols[7], "SUI_USDT");
+  EXPECT_EQ(config.exchange_symbols[8], "INJ_USDT");
+  EXPECT_EQ(config.exchange_symbols[9], "ENA_USDT");
+  EXPECT_EQ(config.exchange_symbols[10], "BRETT_USDT");
+  EXPECT_EQ(config.symbol_ids[0], 4);
+  EXPECT_EQ(config.symbol_ids[10], 14);
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_gate_market_data_requested_20260521");
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+}
+
 TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
   const toml::table toml = toml::parse_file(
       SourcePath("config/data_sessions/gate_data_session.toml").string());
@@ -500,6 +526,33 @@ TEST(DataSessionConfigTest, LoadsReadyFirst5BinanceDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[4], "ETCUSDT");
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_binance_market_data_first5_20260521");
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+}
+
+TEST(DataSessionConfigTest, LoadsReadyRequestedBinanceDataSessionConfig) {
+  const auto config_result =
+      aquila::binance::LoadDataSessionConfigFile(SourcePath(
+          "config/data_sessions/binance_data_session_requested_20260521.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  const aquila::binance::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "binance_data_session_requested");
+  ASSERT_EQ(config.exchange_symbols.size(), 11u);
+  EXPECT_EQ(config.exchange_symbols[0], "PROVEUSDT");
+  EXPECT_EQ(config.exchange_symbols[1], "RAVEUSDT");
+  EXPECT_EQ(config.exchange_symbols[2], "ZECUSDT");
+  EXPECT_EQ(config.exchange_symbols[3], "SIRENUSDT");
+  EXPECT_EQ(config.exchange_symbols[4], "ETCUSDT");
+  EXPECT_EQ(config.exchange_symbols[5], "DASHUSDT");
+  EXPECT_EQ(config.exchange_symbols[6], "RIVERUSDT");
+  EXPECT_EQ(config.exchange_symbols[7], "SUIUSDT");
+  EXPECT_EQ(config.exchange_symbols[8], "INJUSDT");
+  EXPECT_EQ(config.exchange_symbols[9], "ENAUSDT");
+  EXPECT_EQ(config.exchange_symbols[10], "BRETTUSDT");
+  EXPECT_EQ(config.symbol_ids[0], 4);
+  EXPECT_EQ(config.symbol_ids[10], 14);
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_binance_market_data_requested_20260521");
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
 }
 

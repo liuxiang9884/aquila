@@ -76,6 +76,24 @@ TEST(DataReaderConfigTest, LoadsReadyFirst5StrategyDataReaderConfig) {
             "aquila_binance_market_data_first5_20260521");
 }
 
+TEST(DataReaderConfigTest, LoadsReadyRequestedStrategyDataReaderConfig) {
+  const auto result = aquila::config::LoadDataReaderConfigFile(SourcePath(
+      "config/data_readers/strategy_data_reader_requested_20260521.toml"));
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const aquila::config::DataReaderConfig& config = result.value;
+
+  EXPECT_EQ(config.name, "strategy_data_reader_requested");
+  EXPECT_EQ(config.max_events_per_drain, 128U);
+  ASSERT_EQ(config.sources.size(), 2U);
+  EXPECT_EQ(config.sources[0].name, "gate_book_ticker_requested");
+  EXPECT_EQ(config.sources[0].shm_name,
+            "aquila_gate_market_data_requested_20260521");
+  EXPECT_EQ(config.sources[1].name, "binance_book_ticker_requested");
+  EXPECT_EQ(config.sources[1].shm_name,
+            "aquila_binance_market_data_requested_20260521");
+}
+
 TEST(DataReaderConfigTest, RejectsDuplicateSourceNames) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]
