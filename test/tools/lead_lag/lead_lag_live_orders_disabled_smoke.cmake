@@ -27,6 +27,11 @@ if(NOT combined_output MATCHES "${expected_error}")
           "expected disabled live order error in output\nexpected: ${expected_error}\nactual:\n${combined_output}")
 endif()
 
+if(NOT combined_output MATCHES "lead_lag_strategy run_mode=live_orders")
+  message(FATAL_ERROR
+          "expected live_orders run mode before disabled path\n${combined_output}")
+endif()
+
 if(combined_output MATCHES "missing env var|runtime_create_error|lead_lag_strategy_signal_only_summary")
   message(FATAL_ERROR
           "live order disabled smoke reached an unexpected runtime path\n${combined_output}")

@@ -60,6 +60,7 @@ struct SignalOnlyStats {
   std::uint64_t stoploss_signals{0};
   std::uint64_t order_responses{0};
   std::uint64_t order_feedbacks{0};
+  live::RecoveryDiagnostics recovery;
 };
 
 struct NullOrderSession {
@@ -110,7 +111,9 @@ class SignalOnlyStrategy {
                        leadlag::PositionAccountingMode::kSyntheticSignals,
                }),
         stats_(stats),
-        signal_writer_(signal_writer) {}
+        signal_writer_(signal_writer) {
+    RefreshRecoveryDiagnostics();
+  }
 
   template <typename ContextT>
   void OnBookTicker(const aquila::BookTicker& ticker,
@@ -137,6 +140,7 @@ class SignalOnlyStrategy {
       ++stats_->order_responses;
     }
     inner_.OnOrderResponse(event, context);
+    RefreshRecoveryDiagnostics();
   }
 
   template <typename ContextT>
@@ -146,6 +150,7 @@ class SignalOnlyStrategy {
       ++stats_->order_feedbacks;
     }
     inner_.OnOrderFeedback(event, context);
+    RefreshRecoveryDiagnostics();
   }
 
   [[nodiscard]] bool ShouldStop() const noexcept {
@@ -153,6 +158,18 @@ class SignalOnlyStrategy {
   }
 
  private:
+  void RefreshRecoveryDiagnostics() noexcept {
+    if (stats_ == nullptr) {
+      return;
+    }
+    stats_->recovery = live::RecoveryDiagnostics{
+        .recovery_state = inner_.recovery_state(),
+        .needs_reconcile = inner_.needs_reconcile(),
+        .manual_intervention = inner_.manual_intervention(),
+        .new_entries_paused = inner_.new_entries_paused(),
+    };
+  }
+
   void RecordSignal(const leadlag::SignalDecision& decision) noexcept {
     if (stats_ == nullptr) {
       return;
@@ -324,17 +341,19 @@ int RunSignalOnly(LoadedConfig loaded, const CliOptions& options) {
   const int exit_code = runtime_result.value->Run();
   const core::TradingRuntimeLoopStats& loop_stats =
       runtime_result.value->diagnostics().stats();
+  const std::string recovery_fields =
+      live::FormatRecoveryDiagnosticsFields(stats.recovery);
   signal_writer.Close();
 
   fmt::print(
       "lead_lag_strategy_signal_only_summary exit_code={} book_tickers={} "
       "signals={} open={} close={} stoploss={} order_responses={} "
-      "order_feedbacks={} loop_iterations={} idle_iterations={} "
+      "order_feedbacks={} {} loop_iterations={} idle_iterations={} "
       "data_reader_polls={} data_reader_empty_polls={} data_reader_events={} "
       "signals_output={}\n",
       exit_code, stats.book_tickers, stats.signals, stats.open_signals,
       stats.close_signals, stats.stoploss_signals, stats.order_responses,
-      stats.order_feedbacks, loop_stats.loop_iterations,
+      stats.order_feedbacks, recovery_fields, loop_stats.loop_iterations,
       loop_stats.idle_iterations, loop_stats.data_reader_poll_calls,
       loop_stats.data_reader_empty_polls, loop_stats.data_reader_events,
       options.signals_output_path.empty()
