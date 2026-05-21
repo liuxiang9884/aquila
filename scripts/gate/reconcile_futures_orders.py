@@ -347,29 +347,107 @@ def _parse_text_local_order_id(text: Any) -> int | None:
     text_value = "" if text is None else str(text).strip()
     if not text_value.startswith("t-"):
         return None
-    return _to_int(text_value[2:])
+    text_id = text_value[2:]
+    if not text_id.isdigit():
+        return None
+    local_id = _to_int(text_id)
+    if local_id is None or text_value != f"t-{local_id}":
+        return None
+    return local_id
+
+
+def _first_text(mapping: dict[str, Any], keys: Iterable[str]) -> str:
+    for key in keys:
+        value = mapping.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _candidate_decimal(mapping: dict[str, Any], keys: Iterable[str]) -> Decimal | None:
+    for key in keys:
+        if key in mapping:
+            value = _to_decimal(mapping[key])
+            if value is not None:
+                return abs(value)
+    return None
+
+
+def _candidate_match(
+    local_order: dict[str, Any],
+    remote_order: dict[str, Any],
+    normalized_contract: str,
+) -> bool:
+    local_contract = str(local_order.get("contract", normalized_contract)).upper()
+    remote_contract = str(remote_order.get("contract", normalized_contract)).upper()
+    if local_contract != normalized_contract or remote_contract != normalized_contract:
+        return False
+
+    local_side = _first_text(local_order, ("side", "order_side")).lower()
+    remote_side = _first_text(remote_order, ("side", "order_side")).lower()
+    if not local_side or not remote_side or local_side != remote_side:
+        return False
+
+    local_size = _candidate_decimal(
+        local_order,
+        ("size", "quantity", "amount", "contracts"),
+    )
+    remote_size = _candidate_decimal(
+        remote_order,
+        ("size", "quantity", "amount", "contracts"),
+    )
+    if local_size is None or remote_size is None or local_size != remote_size:
+        return False
+
+    local_price = _candidate_decimal(local_order, ("price", "limit_price"))
+    remote_price = _candidate_decimal(remote_order, ("price", "limit_price"))
+    return local_price is not None and remote_price is not None and local_price == remote_price
 
 
 def _map_remote_orders(
     pending_local_orders: list[dict[str, Any]],
     open_orders: list[dict[str, Any]],
     finished_orders: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
-    local_by_id = {
-        _to_int(order.get("local_order_id")): order
-        for order in pending_local_orders
-        if _to_int(order.get("local_order_id")) is not None
-    }
-    local_by_exchange_id = {
-        _exchange_order_id(order): order
-        for order in pending_local_orders
-        if _exchange_order_id(order)
-    }
+    contract: str,
+    strategy_id: int,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[str],
+]:
+    normalized_contract = account.normalize_contract(contract)
+    local_by_id: dict[int, dict[str, Any]] = {}
+    local_by_exchange_id: dict[str, list[dict[str, Any]]] = {}
+    for order in pending_local_orders:
+        local_id = _to_int(order.get("local_order_id"))
+        if local_id is not None:
+            local_by_id[local_id] = order
+        exchange_order_id = _exchange_order_id(order)
+        if exchange_order_id:
+            local_by_exchange_id.setdefault(exchange_order_id, []).append(order)
 
     mapped_orders: list[dict[str, Any]] = []
     mapped_local_ids: set[int] = set()
     mapped_open_indexes: set[int] = set()
+    unmapped_finished_remote_orders: list[dict[str, Any]] = []
+    mapping_candidates: list[dict[str, Any]] = []
     duplicate_local_ids: set[int] = set()
+    mapping_errors: list[str] = []
+    mapping_error_keys: set[tuple[str, str]] = set()
+
+    def add_mapping_error(error_type: str, key: str, message: str) -> None:
+        error_key = (error_type, key)
+        if error_key in mapping_error_keys:
+            return
+        mapping_error_keys.add(error_key)
+        mapping_errors.append(message)
+
+    def local_order_id(order: dict[str, Any] | None) -> int | None:
+        if order is None:
+            return None
+        return _to_int(order.get("local_order_id"))
 
     remote_sources = [("open_orders", open_orders), ("finished_orders", finished_orders)]
     for source, remote_orders in remote_sources:
@@ -377,19 +455,111 @@ def _map_remote_orders(
             local_order = None
             matched_by = ""
             text_local_id = _parse_text_local_order_id(remote_order.get("text"))
-            if text_local_id is not None and text_local_id in local_by_id:
-                local_order = local_by_id[text_local_id]
-                matched_by = "text"
-            else:
-                remote_exchange_id = _exchange_order_id(remote_order)
-                if remote_exchange_id and remote_exchange_id in local_by_exchange_id:
-                    local_order = local_by_exchange_id[remote_exchange_id]
-                    matched_by = "exchange_order_id"
+            text_local_order = (
+                local_by_id.get(text_local_id) if text_local_id is not None else None
+            )
+            remote_exchange_id = _exchange_order_id(remote_order)
+            exchange_local_orders = (
+                local_by_exchange_id.get(remote_exchange_id, [])
+                if remote_exchange_id
+                else []
+            )
+            exchange_local_order = (
+                exchange_local_orders[0] if len(exchange_local_orders) == 1 else None
+            )
 
-            if local_order is None:
+            if text_local_order is not None and len(exchange_local_orders) > 1:
+                add_mapping_error(
+                    "duplicate_local_exchange_id",
+                    remote_exchange_id,
+                    f"duplicate local orders for exchange_order_id={remote_exchange_id}",
+                )
                 continue
 
-            local_id = _to_int(local_order.get("local_order_id"))
+            if text_local_order is not None and exchange_local_order is not None:
+                text_matched_id = local_order_id(text_local_order)
+                exchange_matched_id = local_order_id(exchange_local_order)
+                if (
+                    text_matched_id is not None
+                    and exchange_matched_id is not None
+                    and text_matched_id != exchange_matched_id
+                ):
+                    add_mapping_error(
+                        "identity_conflict",
+                        f"{source}:{index}",
+                        "identity conflict: "
+                        f"text local_order_id={text_matched_id} "
+                        f"exchange_order_id={remote_exchange_id} "
+                        f"local_order_id={exchange_matched_id}",
+                    )
+                    continue
+
+            if text_local_id is not None and text_local_order is None:
+                if len(exchange_local_orders) > 1:
+                    add_mapping_error(
+                        "duplicate_local_exchange_id",
+                        remote_exchange_id,
+                        f"duplicate local orders for exchange_order_id={remote_exchange_id}",
+                    )
+                    continue
+                if exchange_local_order is not None:
+                    exchange_matched_id = local_order_id(exchange_local_order)
+                    add_mapping_error(
+                        "identity_conflict",
+                        f"{source}:{index}",
+                        "identity conflict: "
+                        f"text local_order_id={text_local_id} "
+                        f"exchange_order_id={remote_exchange_id} "
+                        f"local_order_id={exchange_matched_id}",
+                    )
+                    continue
+                if (text_local_id >> 56) == strategy_id:
+                    if source == "finished_orders":
+                        unmapped_finished_remote_orders.append(remote_order)
+                        add_mapping_error(
+                            "unmapped_remote_finished_order",
+                            f"{source}:{index}",
+                            "unmapped remote finished order",
+                        )
+                    continue
+
+            if text_local_order is not None:
+                local_order = text_local_order
+                matched_by = "text"
+            elif len(exchange_local_orders) > 1:
+                add_mapping_error(
+                    "duplicate_local_exchange_id",
+                    remote_exchange_id,
+                    f"duplicate local orders for exchange_order_id={remote_exchange_id}",
+                )
+                continue
+            elif exchange_local_order is not None:
+                local_order = exchange_local_order
+                matched_by = "exchange_order_id"
+
+            if local_order is None:
+                if source == "finished_orders":
+                    for candidate_order in pending_local_orders:
+                        candidate_local_id = local_order_id(candidate_order)
+                        if candidate_local_id is None or candidate_local_id in mapped_local_ids:
+                            continue
+                        if not _candidate_match(
+                            candidate_order,
+                            remote_order,
+                            normalized_contract,
+                        ):
+                            continue
+                        mapping_candidates.append(
+                            {
+                                "local_order_id": candidate_local_id,
+                                "remote_source": source,
+                                "remote_order": remote_order,
+                                "matched_by": "contract_side_size_price",
+                            }
+                        )
+                continue
+
+            local_id = local_order_id(local_order)
             if local_id is None:
                 continue
             if local_id in mapped_local_ids:
@@ -415,11 +585,18 @@ def _map_remote_orders(
     unmapped_remote_orders = [
         order for index, order in enumerate(open_orders) if index not in mapped_open_indexes
     ]
-    duplicate_errors = [
+    unmapped_remote_orders.extend(unmapped_finished_remote_orders)
+    mapping_errors.extend(
         f"duplicate remote facts for local_order_id={local_id}"
         for local_id in sorted(duplicate_local_ids)
-    ]
-    return mapped_orders, unmapped_local_orders, unmapped_remote_orders, duplicate_errors
+    )
+    return (
+        mapped_orders,
+        unmapped_local_orders,
+        unmapped_remote_orders,
+        mapping_candidates,
+        mapping_errors,
+    )
 
 
 def _manual_reason(
@@ -433,15 +610,15 @@ def _manual_reason(
     mapped_orders: list[dict[str, Any]],
     unmapped_local_orders: list[dict[str, Any]],
     unmapped_remote_orders: list[dict[str, Any]],
-    duplicate_errors: list[str],
+    mapping_errors: list[str],
 ) -> str:
     if not queries["ok"]:
         labels = ", ".join(sorted(queries["errors"].keys()))
         return f"REST query failed: {labels}"
     if validation_errors:
         return validation_errors[0]
-    if duplicate_errors:
-        return "; ".join(duplicate_errors)
+    if mapping_errors:
+        return "; ".join(mapping_errors)
     if not position_match:
         return (
             "position mismatch: "
@@ -536,11 +713,14 @@ def reconcile_futures_orders(
         mapped_orders,
         unmapped_local_orders,
         unmapped_remote_orders,
-        duplicate_errors,
+        mapping_candidates,
+        mapping_errors,
     ) = _map_remote_orders(
         pending_local_orders=pending_local_orders,
         open_orders=open_orders,
         finished_orders=finished_orders,
+        contract=normalized_contract,
+        strategy_id=strategy_id,
     )
 
     reason = _manual_reason(
@@ -553,7 +733,7 @@ def reconcile_futures_orders(
         mapped_orders=mapped_orders,
         unmapped_local_orders=unmapped_local_orders,
         unmapped_remote_orders=unmapped_remote_orders,
-        duplicate_errors=duplicate_errors,
+        mapping_errors=mapping_errors,
     )
     state = RECOVERED if reason == "" else MANUAL_INTERVENTION
 
@@ -561,6 +741,7 @@ def reconcile_futures_orders(
         "state": state,
         "manual_intervention_reason": reason,
         "mapped_orders": mapped_orders,
+        "mapping_candidates": mapping_candidates,
         "unmapped_local_orders": unmapped_local_orders,
         "unmapped_remote_orders": unmapped_remote_orders,
         "rest_position": rest_position,

@@ -161,6 +161,233 @@ class ReconcileFuturesOrdersTest(unittest.TestCase):
         self.assertEqual(summary["mapped_orders"][0]["matched_by"], "text")
         self.assertEqual(summary["mapped_orders"][0]["remote_order"]["id"], "gate-2")
 
+    def test_text_identity_conflict_with_exchange_id_requires_manual_intervention(self):
+        text_order_id = local_order_id(sequence=1)
+        exchange_order_id = local_order_id(sequence=2)
+        requester = FakeRequester(
+            open_orders=[
+                {
+                    "id": "gate-B",
+                    "text": f"t-{text_order_id}",
+                    "contract": "BTC_USDT",
+                    "size": "1",
+                }
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={
+                "orders": [
+                    {
+                        "local_order_id": text_order_id,
+                        "exchange_order_id": "gate-A",
+                        "contract": "BTC_USDT",
+                        "status": "accepted",
+                    },
+                    {
+                        "local_order_id": exchange_order_id,
+                        "exchange_order_id": "gate-B",
+                        "contract": "BTC_USDT",
+                        "status": "accepted",
+                    },
+                ],
+                "execution_groups": [],
+                "position": {"size": "0"},
+            },
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("identity conflict", summary["manual_intervention_reason"])
+        self.assertEqual(summary["mapped_orders"], [])
+
+    def test_duplicate_remote_text_facts_require_manual_intervention(self):
+        order_id = local_order_id()
+        requester = FakeRequester(
+            open_orders=[
+                {"id": "gate-1", "text": f"t-{order_id}", "contract": "BTC_USDT"},
+                {"id": "gate-2", "text": f"t-{order_id}", "contract": "BTC_USDT"},
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={
+                "orders": [
+                    {
+                        "local_order_id": order_id,
+                        "contract": "BTC_USDT",
+                        "status": "accepted",
+                    }
+                ],
+                "execution_groups": [],
+                "position": {"size": "0"},
+            },
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("duplicate remote facts", summary["manual_intervention_reason"])
+
+    def test_duplicate_local_exchange_id_requires_manual_intervention(self):
+        first_order_id = local_order_id(sequence=10)
+        second_order_id = local_order_id(sequence=11)
+        requester = FakeRequester(
+            open_orders=[
+                {"id": "gate-shared", "contract": "BTC_USDT", "size": "1"}
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={
+                "orders": [
+                    {
+                        "local_order_id": first_order_id,
+                        "exchange_order_id": "gate-shared",
+                        "contract": "BTC_USDT",
+                        "status": "accepted",
+                    },
+                    {
+                        "local_order_id": second_order_id,
+                        "exchange_order_id": "gate-shared",
+                        "contract": "BTC_USDT",
+                        "status": "accepted",
+                    },
+                ],
+                "execution_groups": [],
+                "position": {"size": "0"},
+            },
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("duplicate local orders", summary["manual_intervention_reason"])
+        self.assertEqual(summary["mapped_orders"], [])
+
+    def test_duplicate_remote_exchange_id_facts_require_manual_intervention(self):
+        order_id = local_order_id()
+        requester = FakeRequester(
+            open_orders=[
+                {"id": "gate-dup", "contract": "BTC_USDT", "size": "1"},
+                {"id": "gate-dup", "contract": "BTC_USDT", "size": "1"},
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={
+                "orders": [
+                    {
+                        "local_order_id": order_id,
+                        "exchange_order_id": "gate-dup",
+                        "contract": "BTC_USDT",
+                        "status": "accepted",
+                    }
+                ],
+                "execution_groups": [],
+                "position": {"size": "0"},
+            },
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("duplicate remote facts", summary["manual_intervention_reason"])
+
+    def test_unknown_strategy_lane_open_order_stays_unmapped(self):
+        unknown_order_id = local_order_id(sequence=99)
+        requester = FakeRequester(
+            open_orders=[
+                {
+                    "id": "gate-open-unknown",
+                    "text": f"t-{unknown_order_id}",
+                    "contract": "BTC_USDT",
+                }
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={"orders": [], "execution_groups": [], "position": {"size": "0"}},
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("unmapped remote open order", summary["manual_intervention_reason"])
+        self.assertEqual(
+            summary["unmapped_remote_orders"],
+            [{"id": "gate-open-unknown", "text": f"t-{unknown_order_id}", "contract": "BTC_USDT"}],
+        )
+
+    def test_unknown_strategy_lane_finished_order_blocks_recovery(self):
+        unknown_order_id = local_order_id(sequence=100)
+        requester = FakeRequester(
+            finished_orders=[
+                {
+                    "id": "gate-finished-unknown",
+                    "text": f"t-{unknown_order_id}",
+                    "contract": "BTC_USDT",
+                    "status": "finished",
+                }
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={"orders": [], "execution_groups": [], "position": {"size": "0"}},
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertEqual(summary["mapped_orders"], [])
+        self.assertIn("unmapped remote finished order", summary["manual_intervention_reason"])
+        self.assertEqual(summary["unmapped_remote_orders"], requester.finished_orders)
+
+    def test_finished_time_window_candidate_is_reported_but_not_mapped(self):
+        order_id = local_order_id()
+        requester = FakeRequester(
+            finished_orders=[
+                {
+                    "id": "gate-candidate",
+                    "contract": "BTC_USDT",
+                    "side": "buy",
+                    "size": "2",
+                    "price": "101.50",
+                    "status": "finished",
+                }
+            ]
+        )
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={
+                "orders": [
+                    {
+                        "local_order_id": order_id,
+                        "contract": "BTC_USDT",
+                        "side": "buy",
+                        "size": "2.0",
+                        "price": "101.5",
+                        "status": "accepted",
+                    }
+                ],
+                "execution_groups": [],
+                "position": {"size": "0"},
+            },
+            window_sec=30,
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertEqual(summary["mapped_orders"], [])
+        self.assertIn("local pending order missing REST fact", summary["manual_intervention_reason"])
+        self.assertEqual(summary["window_sec"], 30)
+        self.assertEqual(
+            summary["mapping_candidates"],
+            [
+                {
+                    "local_order_id": order_id,
+                    "remote_source": "finished_orders",
+                    "remote_order": requester.finished_orders[0],
+                    "matched_by": "contract_side_size_price",
+                }
+            ],
+        )
+
     def test_partial_rest_failure_blocks_recovery_and_reports_errors(self):
         local_state = {"orders": [], "execution_groups": [], "position": {"size": "0"}}
 
