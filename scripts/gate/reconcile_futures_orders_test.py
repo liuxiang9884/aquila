@@ -86,6 +86,43 @@ class ReconcileFuturesOrdersTest(unittest.TestCase):
         self.assertFalse(summary["position_match"])
         self.assertEqual(summary["rest_position"], {"contract": "BTC_USDT", "size": "2"})
 
+    def test_invalid_rest_position_size_requires_manual_intervention(self):
+        requester = FakeRequester(position={"contract": "BTC_USDT", "size": "bad"})
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={"orders": [], "execution_groups": [], "position": {"size": "0"}},
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("invalid REST position", summary["manual_intervention_reason"])
+        self.assertFalse(summary["position_match"])
+
+    def test_invalid_rest_open_orders_shape_requires_manual_intervention(self):
+        requester = FakeRequester(open_orders={"unexpected": "shape"})
+
+        summary = reconcile.reconcile_futures_orders(
+            requester=requester,
+            local_state={"orders": [], "execution_groups": [], "position": {"size": "0"}},
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("invalid REST open_orders", summary["manual_intervention_reason"])
+
+    def test_conflicting_local_position_sources_require_manual_intervention(self):
+        summary = reconcile.reconcile_futures_orders(
+            requester=FakeRequester(),
+            local_state={
+                "orders": [],
+                "position": {"size": "0"},
+                "execution_groups": [{"group_id": 1, "signed_position_quantity": "1"}],
+            },
+        )
+
+        self.assertEqual(summary["state"], "ManualIntervention")
+        self.assertIn("conflicting local position", summary["manual_intervention_reason"])
+        self.assertEqual(summary["local_position_size"], "0")
+
     def test_local_pending_order_maps_to_remote_text(self):
         order_id = local_order_id()
         requester = FakeRequester(

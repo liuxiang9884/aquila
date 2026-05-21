@@ -126,16 +126,30 @@ def _as_list(value: Any) -> list[Any]:
     return [value]
 
 
-def _as_order_dicts(value: Any) -> list[dict[str, Any]]:
+def _local_order_dicts(value: Any) -> list[dict[str, Any]]:
     orders = value.values() if isinstance(value, dict) else _as_list(value)
     return [dict(order) for order in orders if isinstance(order, dict)]
 
 
+def _rest_order_dicts(value: Any, label: str) -> tuple[list[dict[str, Any]], list[str]]:
+    if not isinstance(value, list):
+        return [], [f"invalid REST {label}: expected list of order objects"]
+
+    orders: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, order in enumerate(value):
+        if not isinstance(order, dict):
+            errors.append(f"invalid REST {label}[{index}]: expected order object")
+            continue
+        orders.append(dict(order))
+    return orders, errors
+
+
 def _local_orders(local_state: dict[str, Any]) -> list[dict[str, Any]]:
     if "orders" in local_state:
-        return _as_order_dicts(local_state["orders"])
+        return _local_order_dicts(local_state["orders"])
     if "local_orders" in local_state:
-        return _as_order_dicts(local_state["local_orders"])
+        return _local_order_dicts(local_state["local_orders"])
     return []
 
 
@@ -148,13 +162,16 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
-def _to_decimal(value: Any) -> Decimal:
+def _to_decimal(value: Any) -> Decimal | None:
     if isinstance(value, bool) or value is None:
-        return Decimal(0)
+        return None
     try:
-        return Decimal(str(value).strip())
+        parsed = Decimal(str(value).strip())
     except (InvalidOperation, ValueError):
-        return Decimal(0)
+        return None
+    if not parsed.is_finite():
+        return None
+    return parsed
 
 
 def _decimal_text(value: Decimal) -> str:
@@ -163,59 +180,130 @@ def _decimal_text(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-def _first_decimal(mapping: dict[str, Any], keys: Iterable[str]) -> Decimal:
+def _first_decimal(
+    mapping: dict[str, Any],
+    keys: Iterable[str],
+    label: str,
+) -> tuple[Decimal | None, str | None]:
     for key in keys:
         if key in mapping:
-            return _to_decimal(mapping[key])
-    return Decimal(0)
+            parsed = _to_decimal(mapping[key])
+            if parsed is None:
+                return None, f"invalid {label}.{key}: expected finite decimal"
+            return parsed, None
+    return None, None
 
 
-def _local_position_size(local_state: dict[str, Any]) -> Decimal:
-    top_level = _first_decimal(
+def _local_position_size(local_state: dict[str, Any]) -> tuple[Decimal, list[str]]:
+    sources: list[tuple[str, Decimal]] = []
+    errors: list[str] = []
+
+    top_level, error = _first_decimal(
         local_state,
         ("position_size", "signed_position_quantity", "signed_position_size"),
+        "local_state",
     )
-    if top_level != 0:
-        return top_level
+    if error is not None:
+        errors.append(error)
+    elif top_level is not None:
+        sources.append(("top_level", top_level))
 
-    position = local_state.get("position")
-    if isinstance(position, dict):
-        return _first_decimal(position, ("size", "quantity", "position_size", "signed_quantity"))
+    if "position" in local_state:
+        position = local_state.get("position")
+        if not isinstance(position, dict):
+            errors.append("invalid local position: expected object")
+        else:
+            position_size, error = _first_decimal(
+                position,
+                ("size", "quantity", "position_size", "signed_quantity"),
+                "local position",
+            )
+            if error is not None:
+                errors.append(error)
+            elif position_size is not None:
+                sources.append(("position", position_size))
 
-    groups = local_state.get("execution_groups", [])
-    total = Decimal(0)
-    for group in _as_list(groups):
-        if not isinstance(group, dict):
-            continue
-        total += _first_decimal(
-            group,
-            ("signed_position_quantity", "position_size", "size", "quantity"),
+    if "execution_groups" in local_state:
+        groups = local_state.get("execution_groups")
+        if not isinstance(groups, list):
+            errors.append("invalid local execution_groups: expected list")
+        else:
+            total = Decimal(0)
+            for index, group in enumerate(groups):
+                if not isinstance(group, dict):
+                    errors.append(f"invalid local execution_groups[{index}]: expected object")
+                    continue
+                group_size, error = _first_decimal(
+                    group,
+                    ("signed_position_quantity", "position_size", "size", "quantity"),
+                    f"local execution_groups[{index}]",
+                )
+                if error is not None:
+                    errors.append(error)
+                elif group_size is not None:
+                    total += group_size
+            sources.append(("execution_groups", total))
+
+    if not sources:
+        return Decimal(0), errors
+
+    first_value = sources[0][1]
+    conflicting_sources = [(name, value) for name, value in sources if value != first_value]
+    if conflicting_sources:
+        source_text = ", ".join(
+            f"{name}={_decimal_text(value)}" for name, value in sources
         )
-    return total
+        errors.append(f"conflicting local position sources: {source_text}")
+    return first_value, errors
 
 
-def _rest_position_from_result(value: Any, contract: str) -> dict[str, Any] | None:
+def _rest_position_from_result(
+    value: Any,
+    contract: str,
+) -> tuple[dict[str, Any] | None, list[str]]:
     if isinstance(value, dict):
-        return value
+        return dict(value), []
     normalized_contract = account.normalize_contract(contract)
-    for item in _as_list(value):
+    if not isinstance(value, list):
+        return None, ["invalid REST position: expected object or list"]
+
+    errors: list[str] = []
+    for index, item in enumerate(value):
         if not isinstance(item, dict):
+            errors.append(f"invalid REST position[{index}]: expected object")
             continue
         if str(item.get("contract", "")).upper() == normalized_contract:
-            return item
-    return None
+            return dict(item), errors
+    errors.append(f"invalid REST position: missing contract {normalized_contract}")
+    return None, errors
 
 
-def _rest_position_size(rest_position: dict[str, Any] | None) -> Decimal:
+def _rest_position_size(rest_position: dict[str, Any] | None) -> tuple[Decimal, list[str]]:
     if rest_position is None:
-        return Decimal(0)
-    return _first_decimal(rest_position, ("size", "quantity", "position_size"))
+        return Decimal(0), []
+    value, error = _first_decimal(
+        rest_position,
+        ("size", "quantity", "position_size"),
+        "REST position",
+    )
+    if error is not None:
+        return Decimal(0), [f"invalid REST position: {error}"]
+    if value is None:
+        return Decimal(0), ["invalid REST position: missing size"]
+    return value, []
 
 
-def _rest_pending_orders(rest_position: dict[str, Any] | None) -> Decimal:
+def _rest_pending_orders(rest_position: dict[str, Any] | None) -> tuple[Decimal, list[str]]:
     if rest_position is None:
-        return Decimal(0)
-    return _first_decimal(rest_position, ("pending_orders", "pending_order_count"))
+        return Decimal(0), []
+    value, error = _first_decimal(
+        rest_position,
+        ("pending_orders", "pending_order_count"),
+        "REST position",
+    )
+    if error is not None:
+        return Decimal(0), [f"invalid REST position: {error}"]
+    return Decimal(0) if value is None else value, []
 
 
 def _order_is_finished(order: dict[str, Any]) -> bool:
@@ -337,6 +425,7 @@ def _map_remote_orders(
 def _manual_reason(
     *,
     queries: dict[str, Any],
+    validation_errors: list[str],
     position_match: bool,
     local_position: Decimal,
     rest_position: Decimal,
@@ -349,6 +438,8 @@ def _manual_reason(
     if not queries["ok"]:
         labels = ", ".join(sorted(queries["errors"].keys()))
         return f"REST query failed: {labels}"
+    if validation_errors:
+        return validation_errors[0]
     if duplicate_errors:
         return "; ".join(duplicate_errors)
     if not position_match:
@@ -389,7 +480,7 @@ def reconcile_futures_orders(
     local_state = {} if local_state is None else local_state
     local_orders = _local_orders(local_state)
     pending_local_orders = _pending_local_orders(local_orders, normalized_contract, strategy_id)
-    local_position = _local_position_size(local_state)
+    local_position, local_validation_errors = _local_position_size(local_state)
 
     query_plan = build_reconcile_query_plan(
         settle=settle,
@@ -402,12 +493,44 @@ def reconcile_futures_orders(
         allow_partial=allow_partial,
     )
     results = queries["results"]
-    open_orders = _as_order_dicts(results.get("open_orders"))
-    finished_orders = _as_order_dicts(results.get("finished_orders"))
-    rest_position = _rest_position_from_result(results.get("rest_position"), normalized_contract)
-    rest_position_size = _rest_position_size(rest_position)
-    rest_pending_orders = _rest_pending_orders(rest_position)
-    position_match = local_position == rest_position_size
+    validation_errors = list(local_validation_errors)
+    open_orders: list[dict[str, Any]] = []
+    finished_orders: list[dict[str, Any]] = []
+    rest_position: dict[str, Any] | None = None
+    rest_position_size = Decimal(0)
+    rest_pending_orders = Decimal(0)
+
+    if "open_orders" in results:
+        open_orders, errors = _rest_order_dicts(results["open_orders"], "open_orders")
+        validation_errors.extend(errors)
+    elif queries["ok"]:
+        validation_errors.append("invalid REST open_orders: missing response")
+
+    if "finished_orders" in results:
+        finished_orders, errors = _rest_order_dicts(results["finished_orders"], "finished_orders")
+        validation_errors.extend(errors)
+    elif queries["ok"]:
+        validation_errors.append("invalid REST finished_orders: missing response")
+
+    if "rest_position" in results:
+        rest_position, errors = _rest_position_from_result(
+            results["rest_position"],
+            normalized_contract,
+        )
+        validation_errors.extend(errors)
+        rest_position_size, errors = _rest_position_size(rest_position)
+        validation_errors.extend(errors)
+        rest_pending_orders, errors = _rest_pending_orders(rest_position)
+        validation_errors.extend(errors)
+    elif queries["ok"]:
+        validation_errors.append("invalid REST position: missing response")
+
+    rest_position_valid = not any(error.startswith("invalid REST position") for error in validation_errors)
+    local_position_valid = not any(error.startswith("invalid local") for error in validation_errors)
+    local_position_valid = local_position_valid and not any(
+        error.startswith("conflicting local position") for error in validation_errors
+    )
+    position_match = rest_position_valid and local_position_valid and local_position == rest_position_size
 
     (
         mapped_orders,
@@ -422,6 +545,7 @@ def reconcile_futures_orders(
 
     reason = _manual_reason(
         queries=queries,
+        validation_errors=validation_errors,
         position_match=position_match,
         local_position=local_position,
         rest_position=rest_position_size,
@@ -442,6 +566,7 @@ def reconcile_futures_orders(
         "rest_position": rest_position,
         "position_match": position_match,
         "queries": queries,
+        "validation_errors": validation_errors,
         "local_position_size": _decimal_text(local_position),
         "rest_position_size": _decimal_text(rest_position_size),
         "strategy_id": strategy_id,
