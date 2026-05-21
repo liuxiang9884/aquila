@@ -1,4 +1,8 @@
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -14,6 +18,141 @@
 #include "strategy/lead_lag/signal.h"
 #include "strategy/lead_lag/strategy.h"
 #include "strategy/lead_lag/types.h"
+
+namespace {
+
+std::atomic<bool> g_count_allocations{false};
+std::atomic<std::int64_t> g_counted_live_bytes{0};
+
+// Counts only allocations made while enabled, so the test can verify
+// price_text storage retirement without exposing Strategy internals.
+struct AllocationHeader {
+  void* raw{nullptr};
+  std::size_t size{0};
+  bool counted{false};
+};
+
+void* AllocateForTest(std::size_t size, std::size_t alignment) {
+  if (size == 0) {
+    size = 1;
+  }
+  if (alignment < alignof(void*)) {
+    alignment = alignof(void*);
+  }
+  const std::size_t total = size + sizeof(AllocationHeader) + alignment - 1;
+  void* raw = std::malloc(total);
+  if (raw == nullptr) {
+    throw std::bad_alloc();
+  }
+  const auto start =
+      reinterpret_cast<std::uintptr_t>(raw) + sizeof(AllocationHeader);
+  const auto aligned = (start + alignment - 1) & ~(alignment - 1);
+  auto* header = reinterpret_cast<AllocationHeader*>(aligned) - 1;
+  header->raw = raw;
+  header->size = size;
+  header->counted = g_count_allocations.load(std::memory_order_relaxed);
+  if (header->counted) {
+    g_counted_live_bytes.fetch_add(static_cast<std::int64_t>(size),
+                                   std::memory_order_relaxed);
+  }
+  return reinterpret_cast<void*>(aligned);
+}
+
+void DeallocateForTest(void* ptr) noexcept {
+  if (ptr == nullptr) {
+    return;
+  }
+  auto* header = reinterpret_cast<AllocationHeader*>(ptr) - 1;
+  if (header->counted) {
+    g_counted_live_bytes.fetch_sub(static_cast<std::int64_t>(header->size),
+                                   std::memory_order_relaxed);
+  }
+  std::free(header->raw);
+}
+
+void StartAllocationCounting() noexcept {
+  g_counted_live_bytes.store(0, std::memory_order_relaxed);
+  g_count_allocations.store(true, std::memory_order_relaxed);
+}
+
+std::int64_t StopAllocationCounting() noexcept {
+  g_count_allocations.store(false, std::memory_order_relaxed);
+  return g_counted_live_bytes.load(std::memory_order_relaxed);
+}
+
+}  // namespace
+
+void* operator new(std::size_t size) {
+  return AllocateForTest(size, alignof(std::max_align_t));
+}
+
+void* operator new[](std::size_t size) {
+  return AllocateForTest(size, alignof(std::max_align_t));
+}
+
+void* operator new(std::size_t size, std::align_val_t alignment) {
+  return AllocateForTest(size, static_cast<std::size_t>(alignment));
+}
+
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+  return AllocateForTest(size, static_cast<std::size_t>(alignment));
+}
+
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+  try {
+    return AllocateForTest(size, alignof(std::max_align_t));
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+  try {
+    return AllocateForTest(size, alignof(std::max_align_t));
+  } catch (...) {
+    return nullptr;
+  }
+}
+
+void operator delete(void* ptr) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete[](void* ptr) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete(void* ptr, std::size_t) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete[](void* ptr, std::size_t) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete(void* ptr, std::align_val_t) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete[](void* ptr, std::align_val_t) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete(void* ptr, std::size_t, std::align_val_t) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete[](void* ptr, std::size_t, std::align_val_t) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete(void* ptr, const std::nothrow_t&) noexcept {
+  DeallocateForTest(ptr);
+}
+
+void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
+  DeallocateForTest(ptr);
+}
 
 namespace {
 
@@ -49,7 +188,8 @@ struct FakeOrderSession {
         .order_type = order.type,
         .time_in_force = order.time_in_force,
         .quantity = order.quantity,
-        .price_text = std::string(order.price_text),
+        .price_text =
+            capture_price_text ? std::string(order.price_text) : std::string{},
         .reduce_only = order.reduce_only,
     });
     return {.status = next_place_status};
@@ -60,6 +200,7 @@ struct FakeOrderSession {
   }
 
   SendStatus next_place_status{SendStatus::kOk};
+  bool capture_price_text{true};
   std::vector<CapturedOrder> placed_orders;
 };
 
@@ -170,6 +311,15 @@ void FeedOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
       Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), *context);
 }
 
+void FeedOpenShortSignal(leadlag::Strategy* strategy, ContextT* context) {
+  strategy->OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 97.99, 99.79),
+                         *context);
+  strategy->OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), *context);
+  strategy->OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 101, 90.0, 91.0),
+                         *context);
+}
+
 aquila::OrderFeedbackEvent FilledFeedback(std::uint64_t local_order_id,
                                           std::int64_t quantity,
                                           double fill_price) {
@@ -192,10 +342,39 @@ aquila::OrderFeedbackEvent FilledFeedback(std::uint64_t local_order_id,
   };
 }
 
+aquila::OrderFeedbackEvent PartialFilledFeedback(
+    std::uint64_t local_order_id, std::int64_t cumulative_quantity,
+    std::int64_t left_quantity, double fill_price) {
+  return aquila::OrderFeedbackEvent{
+      .kind = aquila::OrderFeedbackKind::kPartialFilled,
+      .local_order_id = local_order_id,
+      .exchange_order_id = local_order_id + 1000,
+      .cumulative_filled_quantity = cumulative_quantity,
+      .left_quantity = left_quantity,
+      .cancelled_quantity = 0,
+      .fill_price = fill_price,
+      .role = aquila::OrderRole::kTaker,
+      .finish_reason = aquila::OrderFinishReason::kUnknown,
+      .reject_reason = aquila::OrderRejectReason::kUnknown,
+      .continuity_scope = aquila::OrderFeedbackContinuityScope::kLane,
+      .continuity_reason = aquila::OrderFeedbackContinuityReason::kUnknown,
+      .continuity_sequence = 0,
+      .exchange_update_ns = 200,
+      .local_receive_ns = 201,
+  };
+}
+
 void ApplyFeedback(leadlag::Strategy* strategy, OrderManagerT* order_manager,
                    ContextT* context, const aquila::OrderFeedbackEvent& event) {
   order_manager->OnOrderFeedback(event);
   strategy->OnOrderFeedback(event, *context);
+}
+
+void ApplyResponse(leadlag::Strategy* strategy, OrderManagerT* order_manager,
+                   ContextT* context,
+                   const aquila::core::OrderResponseEvent& event) {
+  order_manager->OnOrderResponse(event);
+  strategy->OnOrderResponse(event, *context);
 }
 
 TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
@@ -384,6 +563,65 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeKeepsPartialOpenFeedbackPending) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                PartialFilledFeedback(open_order_id, 3, 4, 102.1));
+
+  const aquila::core::StrategyOrder* open_order =
+      context.FindOrder(open_order_id);
+  ASSERT_NE(open_order, nullptr);
+  EXPECT_EQ(open_order->status, aquila::core::OrderStatus::kPartialFilled);
+  EXPECT_FALSE(open_order->is_finished);
+  EXPECT_EQ(open_order->cumulative_filled_quantity, 3);
+  EXPECT_EQ(order_manager.order_count(), 1U);
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  EXPECT_EQ(order_session.placed_orders.size(), 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest, ExternalModeRetiresTerminalCloseFeedback) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const std::uint64_t close_order_id =
+      order_session.placed_orders.back().local_order_id;
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(close_order_id, 7, 101.5));
+
+  EXPECT_EQ(context.FindOrder(close_order_id), nullptr);
+  EXPECT_EQ(order_manager.order_count(), 0U);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
+                        context);
+  EXPECT_EQ(order_session.placed_orders.size(), 2U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      ExternalModeUsesFilledPositionQuantityForStoplossOrder) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
@@ -411,6 +649,37 @@ TEST(LeadLagStrategyInterfaceTest,
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kStoplossLong);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeRetiresTerminalStoplossFeedback) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 11, 102.1));
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 95.0, 96.0),
+                        context);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const std::uint64_t stoploss_order_id =
+      order_session.placed_orders.back().local_order_id;
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(stoploss_order_id, 11, 94.5));
+
+  EXPECT_EQ(context.FindOrder(stoploss_order_id), nullptr);
+  EXPECT_EQ(order_manager.order_count(), 0U);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 103, 90.0, 91.0),
+                        context);
+  EXPECT_EQ(order_session.placed_orders.size(), 2U);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -470,6 +739,158 @@ TEST(LeadLagStrategyInterfaceTest,
             rejected_order_id);
   EXPECT_TRUE(strategy.last_signal_decision().triggered);
   EXPECT_NE(strategy.last_signal_decision().group_id, 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeRejectedCloseReturnsHoldAndCanRetry) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const std::uint64_t rejected_close_order_id =
+      order_session.placed_orders.back().local_order_id;
+
+  ApplyResponse(&strategy, &order_manager, &context,
+                aquila::core::OrderResponseEvent{
+                    .kind = aquila::core::OrderResponseKind::kRejected,
+                    .local_order_id = rejected_close_order_id,
+                });
+
+  EXPECT_EQ(context.FindOrder(rejected_close_order_id), nullptr);
+  EXPECT_EQ(order_manager.order_count(), 0U);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
+                        context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 3U);
+  const FakeOrderSession::CapturedOrder& retry_close =
+      order_session.placed_orders.back();
+  EXPECT_NE(retry_close.local_order_id, rejected_close_order_id);
+  EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
+  EXPECT_TRUE(retry_close.reduce_only);
+  EXPECT_EQ(retry_close.quantity, 7);
+}
+
+TEST(LeadLagStrategyInterfaceTest, RetiredRejectedOrdersReleasePriceText) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].lag_instrument.price_decimal_places = 128;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  order_session.next_place_status = FakeOrderSession::SendStatus::kRejected;
+  order_session.capture_price_text = false;
+  order_session.placed_orders.reserve(64);
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.57, 102.02),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+
+  StartAllocationCounting();
+  for (int i = 0; i < 64; ++i) {
+    const double lead_bid = 112.0 + static_cast<double>(i);
+    strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 101 + i,
+                                 lead_bid, lead_bid + 1.0),
+                          context);
+  }
+  const std::int64_t live_bytes = StopAllocationCounting();
+
+  ASSERT_GE(order_session.placed_orders.size(), 32U);
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_LT(live_bytes, 1024) << "retired price_text storage still retained";
+}
+
+TEST(LeadLagStrategyInterfaceTest, ExternalModeClampsOpenQuantityToMax) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.open_notional = 100000.0;
+  config.pairs[0].lag_instrument.max_quantity = 5.0;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  EXPECT_EQ(order_session.placed_orders.back().quantity, 5);
+}
+
+TEST(LeadLagStrategyInterfaceTest, ExternalModeSkipsOpenBelowMinQuantity) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.open_notional = 10.0;
+  config.pairs[0].lag_instrument.min_quantity = 1.0;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(strategy.last_signal_decision().triggered);
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest, ExternalModeOpenShortUsesSellPriceFloor) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenShortSignal(&strategy, &context);
+
+  EXPECT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const FakeOrderSession::CapturedOrder& order =
+      order_session.placed_orders.back();
+  EXPECT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenShort);
+  EXPECT_EQ(order.side, aquila::OrderSide::kSell);
+  EXPECT_FALSE(order.reduce_only);
+  EXPECT_EQ(order.price_text, "97.9");
+  EXPECT_EQ(order.quantity, 10);
+}
+
+TEST(LeadLagStrategyInterfaceTest, ExternalModeStoplossShortUsesBuyPriceCeil) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenShortSignal(&strategy, &context);
+  EXPECT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 10, 97.9));
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 102.1, 103.03),
+                        context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder& stoploss_order =
+      order_session.placed_orders.back();
+  EXPECT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kStoplossShort);
+  EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kBuy);
+  EXPECT_TRUE(stoploss_order.reduce_only);
+  EXPECT_EQ(stoploss_order.price_text, "103.6");
+  EXPECT_EQ(stoploss_order.quantity, 10);
 }
 
 TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {

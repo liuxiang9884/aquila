@@ -4,8 +4,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <limits>
+#include <list>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -201,6 +201,11 @@ class Strategy {
     ExecutionState execution;
     QuoteSnapshot drifted_lead;
     bool has_drifted_lead{false};
+  };
+
+  struct OrderPriceTextStorage {
+    std::uint64_t local_order_id{0};
+    std::string price_text;
   };
 
   void InitPairRuntimeStates() {
@@ -411,9 +416,14 @@ class Strategy {
       return;
     }
 
-    order_price_texts_.push_back(FormatOrderPrice(
-        order_price, runtime->pair.lag_instrument.price_decimal_places));
-    const std::string_view price_text = order_price_texts_.back();
+    auto price_text_storage = order_price_texts_.insert(
+        order_price_texts_.end(),
+        OrderPriceTextStorage{
+            .local_order_id = 0,
+            .price_text = FormatOrderPrice(
+                order_price, runtime->pair.lag_instrument.price_decimal_places),
+        });
+    const std::string_view price_text = price_text_storage->price_text;
     const std::string_view symbol =
         runtime->pair.lag_instrument.exchange_symbol.empty()
             ? std::string_view(runtime->pair.symbol)
@@ -432,8 +442,10 @@ class Strategy {
             .reduce_only = last_signal_decision_.intent.reduce_only,
         });
     if (placed.local_order_id == 0) {
+      order_price_texts_.erase(price_text_storage);
       return;
     }
+    price_text_storage->local_order_id = placed.local_order_id;
 
     if (placed.status == core::OrderPlaceStatus::kOk) {
       OnExternalOrderAccepted(runtime, close_group, placed.local_order_id);
@@ -479,8 +491,9 @@ class Strategy {
     }
     [[maybe_unused]] const ExecutionApplyResult applied =
         runtime->execution.ApplySubmitRejected(local_order_id);
-    [[maybe_unused]] const bool retired =
-        context.RetireFinishedOrder(local_order_id);
+    if (context.RetireFinishedOrder(local_order_id)) {
+      EraseOrderPriceText(local_order_id);
+    }
   }
 
   void UpdateSubmittedSignalDiagnostics(const PairRuntimeState* runtime,
@@ -514,8 +527,19 @@ class Strategy {
           runtime->execution.ApplyTerminalOrder(*order,
                                                 runtime->pair.lag_instrument);
     }
-    [[maybe_unused]] const bool retired =
-        context.RetireFinishedOrder(local_order_id);
+    if (context.RetireFinishedOrder(local_order_id)) {
+      EraseOrderPriceText(local_order_id);
+    }
+  }
+
+  void EraseOrderPriceText(std::uint64_t local_order_id) noexcept {
+    for (auto it = order_price_texts_.begin(); it != order_price_texts_.end();
+         ++it) {
+      if (it->local_order_id == local_order_id) {
+        order_price_texts_.erase(it);
+        return;
+      }
+    }
   }
 
   [[nodiscard]] static std::int64_t AbsolutePositionQuantity(
@@ -637,7 +661,7 @@ class Strategy {
   StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
-  std::deque<std::string> order_price_texts_;
+  std::list<OrderPriceTextStorage> order_price_texts_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
   SignalDiagnostics last_signal_diagnostics_;
