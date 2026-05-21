@@ -7,6 +7,10 @@ build*
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+.codex/
+.superpowers/
+.agents/
+.claude/
 .DS_Store
 verbose
 compile_commands.json
