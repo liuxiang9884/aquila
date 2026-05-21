@@ -36,6 +36,7 @@ doc/evaluation_support.md
 | 方向 | 优先文档 |
 | --- | --- |
 | Gate 交易架构 | `doc/agent-handoff-gate-trade-architecture.md`、Gate order / feedback specs |
+| TUI / account monitor | `doc/tui_onboarding_guide.md`、`doc/tui_gate_account_monitor_design.md` |
 | Binance 行情 | `doc/agent-handoff-binance-market-data.md` |
 | data session / config | `doc/data_session_config.md`、`doc/data_reader_config.md`、`doc/data_session_shm_communication_design.md` |
 | 交易组件边界 | `doc/strategy_order_component_model.md`、`doc/trading_component_architecture_discussion.md` |
