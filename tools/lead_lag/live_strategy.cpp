@@ -345,11 +345,12 @@ int RunSignalOnly(LoadedConfig loaded, const CliOptions& options) {
 
 int RunLiveOrders() {
   fmt::print(stderr,
-             "[FAIL] lead_lag live order mode requires production order wiring "
-             "and reconcile work before it is enabled\n");
+             "[FAIL] lead_lag live order mode remains disabled until REST "
+             "reconcile, feedback recovery, and live smoke guardrails are "
+             "complete\n");
   NOVA_ERROR(
-      "lead_lag live order mode requires production order wiring and reconcile "
-      "work before it is enabled");
+      "lead_lag live order mode remains disabled until REST reconcile, "
+      "feedback recovery, and live smoke guardrails are complete");
   return 3;
 }
 
