@@ -173,6 +173,8 @@ Run:
 
 Expected: no SHM overrun requiring manual reset, signal counters and last event timestamps remain plausible, process exits cleanly.
 
+2026-05-21 status: 4 小时 run 已启动，当前仍在运行。最终 summary 等运行自然结束后补齐；见“运行记录 / 2026-05-21 4 小时 signal-only live 观察（进行中）”。
+
 - [ ] **Step 4: 记录证据**
 
 把运行命令、起止时间、signal summary、runtime diagnostics summary 和异常记录补到本文件的“运行记录”。
@@ -371,3 +373,25 @@ Expected: benchmark 正常完成；文档只记录实测数据，不写没有证
 - Binance data session summary: `result=ok active=true phase=kClosed error=kNone book_tickers=9547386 rx_messages=719935 tx_messages=401`.
 - Gate feedback summary: `start_result=true duration_reached=true ready=false text_messages=2 binary_messages=0 login_sent=1 login_accepted=1 subscribe_sent=1 subscribe_acks=1 events_published=0 global_continuity_lost_events_published=1 shm_published=8`.
 - Notes: first attempt at 03:37 UTC was interrupted by SIGTERM around 03:40 UTC and is not counted as the 30-minute run. The feedback session published `kSessionDisconnected` continuity lost when its configured duration ended; this was expected for a private feedback disconnect and did not affect signal-only observation because the runner did not read feedback and did not submit orders.
+
+### 2026-05-21 4 小时 signal-only live 观察（进行中）
+
+- Commit: `39cc962 Document lead lag signal-only smoke`
+- Window: started at 2026-05-21 04:37:38 UTC; expected natural LeadLag exit around 2026-05-21 08:37:38 UTC.
+- Checkpoint: at 2026-05-21 07:39:40 UTC the four processes were still running:
+  - `1231230 ./build/debug/tools/gate_order_feedback_session --config config/order_feedback/gate_order_feedback_session.toml --connect --duration-sec 14500`
+  - `1231262 ./build/debug/tools/gate_data_session --config config/data_sessions/gate_data_session.toml --connect`
+  - `1231285 ./build/debug/tools/binance_data_session --config config/data_sessions/binance_data_session.toml --connect`
+  - `1231306 ./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --connect-data --duration-sec 14400`
+- Mode: `lead_lag_strategy run_mode=signal_only execute=false connect_data=true`; no live orders are enabled.
+- Commands:
+
+```bash
+./build/debug/tools/gate_order_feedback_session --config config/order_feedback/gate_order_feedback_session.toml --connect --duration-sec 14500
+./build/debug/tools/gate_data_session --config config/data_sessions/gate_data_session.toml --connect
+./build/debug/tools/binance_data_session --config config/data_sessions/binance_data_session.toml --connect
+./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --connect-data --duration-sec 14400
+```
+
+- Current observation: Gate / Binance data sessions and LeadLag signal-only process remained alive at the 3-hour checkpoint. Gate feedback session published one `kSessionDisconnected` continuity lost at 2026-05-21 06:54:17 UTC. This does not affect signal-only observation because the runner does not read feedback and does not submit orders, but it remains a blocker/risk to handle before real-order smoke.
+- Final summary: pending. Fill in LeadLag summary, producer summaries, and final feedback session summary after the run ends.
