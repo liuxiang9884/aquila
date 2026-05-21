@@ -344,7 +344,9 @@ def _exchange_order_id(order: dict[str, Any]) -> str:
 
 
 def _parse_text_local_order_id(text: Any) -> int | None:
-    text_value = "" if text is None else str(text).strip()
+    if not isinstance(text, str):
+        return None
+    text_value = text
     if not text_value.startswith("t-"):
         return None
     text_id = text_value[2:]
@@ -450,6 +452,21 @@ def _map_remote_orders(
         return _to_int(order.get("local_order_id"))
 
     remote_sources = [("open_orders", open_orders), ("finished_orders", finished_orders)]
+    remote_exchange_ids: dict[str, tuple[str, int]] = {}
+    for source, remote_orders in remote_sources:
+        for index, remote_order in enumerate(remote_orders):
+            remote_exchange_id = _exchange_order_id(remote_order)
+            if not remote_exchange_id:
+                continue
+            if remote_exchange_id in remote_exchange_ids:
+                add_mapping_error(
+                    "duplicate_remote_exchange_id",
+                    remote_exchange_id,
+                    f"duplicate remote facts for exchange_order_id={remote_exchange_id}",
+                )
+            else:
+                remote_exchange_ids[remote_exchange_id] = (source, index)
+
     for source, remote_orders in remote_sources:
         for index, remote_order in enumerate(remote_orders):
             local_order = None
