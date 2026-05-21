@@ -529,6 +529,12 @@ using DrainLoopRuntime =
     TradingRuntime<LoopStrategy, FakeOrderSession, FakeDrainDataReader>;
 using FiniteDrainLoopRuntime =
     TradingRuntime<LoopStrategy, FakeOrderSession, FakeFiniteDrainDataReader>;
+using DiagnosticLoopRuntime =
+    TradingRuntime<LoopStrategy, FakeOrderSession, FakeDataReader,
+                   TradingRuntimeDiagnostics>;
+using DiagnosticFiniteDrainLoopRuntime =
+    TradingRuntime<LoopStrategy, FakeOrderSession, FakeFiniteDrainDataReader,
+                   TradingRuntimeDiagnostics>;
 
 struct HookLoopStrategy {
   using ContextT = StrategyContext<FakeHookOrderSession>;
@@ -789,7 +795,7 @@ TEST(TradingRuntimeTest, ProductionRunPollsLiveLikeDrainCapableDataReader) {
   config::StrategyConfig config = MakeRuntimeConfig();
   config.feedback.enabled = false;
   config::DataReaderConfig data_reader_config = MakeDataReaderConfig();
-  data_reader_config.max_events_per_source = 2;
+  data_reader_config.max_events_per_drain = 2;
 
   auto runtime_result = DrainLoopRuntime::Create(
       std::move(config), std::move(data_reader_config),
@@ -818,7 +824,7 @@ TEST(TradingRuntimeTest,
   config::StrategyConfig config = MakeRuntimeConfig();
   config.feedback.enabled = false;
   config::DataReaderConfig data_reader_config = MakeDataReaderConfig();
-  data_reader_config.max_events_per_source = 2;
+  data_reader_config.max_events_per_drain = 2;
 
   auto runtime_result = FiniteDrainLoopRuntime::Create(
       std::move(config), std::move(data_reader_config),
@@ -836,6 +842,69 @@ TEST(TradingRuntimeTest,
   EXPECT_EQ(state.handled_book_ticker_ids[0], 101);
   EXPECT_EQ(state.handled_book_ticker_ids[1], 102);
   EXPECT_EQ(state.on_loop_calls, 1);
+}
+
+TEST(TradingRuntimeTest, DiagnosticsRecordLivePollAndIdleLoop) {
+  RuntimeLoopState state;
+  state.stop_after_idle_calls = 1;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = DiagnosticLoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  const TradingRuntimeLoopStats& stats =
+      runtime_result.value->diagnostics().stats();
+  EXPECT_EQ(stats.loop_iterations, 1U);
+  EXPECT_EQ(stats.idle_iterations, 1U);
+  EXPECT_EQ(stats.order_response_poll_calls, 1U);
+  EXPECT_EQ(stats.order_response_empty_polls, 1U);
+  EXPECT_EQ(stats.order_response_events, 0U);
+  EXPECT_EQ(stats.order_feedback_poll_calls, 0U);
+  EXPECT_EQ(stats.order_feedback_empty_polls, 0U);
+  EXPECT_EQ(stats.order_feedback_events, 0U);
+  EXPECT_EQ(stats.data_reader_poll_calls, 1U);
+  EXPECT_EQ(stats.data_reader_drain_calls, 0U);
+  EXPECT_EQ(stats.data_reader_empty_polls, 1U);
+  EXPECT_EQ(stats.data_reader_events, 0U);
+}
+
+TEST(TradingRuntimeTest, DiagnosticsRecordFiniteDrainBudgetAndEvents) {
+  RuntimeLoopState state;
+  state.book_tickers.push_back(MakeBookTicker(101));
+  state.book_tickers.push_back(MakeBookTicker(102));
+  state.stop_after_book_ticker_calls = 2;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+  config::DataReaderConfig data_reader_config = MakeDataReaderConfig();
+  data_reader_config.max_events_per_drain = 2;
+
+  auto runtime_result = DiagnosticFiniteDrainLoopRuntime::Create(
+      std::move(config), std::move(data_reader_config),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  const TradingRuntimeLoopStats& stats =
+      runtime_result.value->diagnostics().stats();
+  EXPECT_EQ(stats.loop_iterations, 1U);
+  EXPECT_EQ(stats.idle_iterations, 0U);
+  EXPECT_EQ(stats.order_response_poll_calls, 1U);
+  EXPECT_EQ(stats.order_response_empty_polls, 1U);
+  EXPECT_EQ(stats.order_response_events, 0U);
+  EXPECT_EQ(stats.data_reader_poll_calls, 0U);
+  EXPECT_EQ(stats.data_reader_drain_calls, 1U);
+  EXPECT_EQ(stats.data_reader_empty_polls, 0U);
+  EXPECT_EQ(stats.data_reader_events, 2U);
 }
 
 TEST(TradingRuntimeTest, ProductionRunDispatchesOrderSessionResponses) {
@@ -1021,6 +1090,51 @@ TEST(TradingRuntimeTest, ProductionRunPollsOrderFeedbackReader) {
 
   EXPECT_EQ(state.feedback_calls, 1);
   EXPECT_EQ(state.data_poll_calls, 0);
+}
+
+TEST(TradingRuntimeTest, DiagnosticsRecordOrderFeedbackPollEvents) {
+  OrderFeedbackShmConfig shm_config{
+      .shm_name = "srt_diag_fb_test",
+      .channel_name = "srt_diag_fb_ch",
+      .create = true,
+      .remove_existing = true,
+  };
+  auto manager_result = OrderFeedbackShmManager::Create(shm_config);
+  ASSERT_TRUE(manager_result.ok) << manager_result.error;
+  OrderFeedbackShmPublisher publisher(manager_result.value.channel());
+  ASSERT_TRUE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kSessionDisconnected, 123456));
+
+  RuntimeLoopState state;
+  state.order_ready = false;
+  state.stop_after_feedback_calls = 1;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = true;
+  config.feedback.shm_name = shm_config.shm_name;
+  config.feedback.channel_name = shm_config.channel_name;
+  config.feedback.poll_budget = 4;
+  config.feedback.force_claim = true;
+
+  auto runtime_result = DiagnosticLoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 0);
+
+  const TradingRuntimeLoopStats& stats =
+      runtime_result.value->diagnostics().stats();
+  EXPECT_EQ(stats.loop_iterations, 1U);
+  EXPECT_EQ(stats.order_response_poll_calls, 1U);
+  EXPECT_EQ(stats.order_response_empty_polls, 1U);
+  EXPECT_EQ(stats.order_feedback_poll_calls, 1U);
+  EXPECT_EQ(stats.order_feedback_empty_polls, 0U);
+  EXPECT_EQ(stats.order_feedback_events, 1U);
+  EXPECT_EQ(stats.data_reader_poll_calls, 0U);
+  EXPECT_EQ(stats.data_reader_drain_calls, 0U);
+  EXPECT_EQ(stats.data_reader_events, 0U);
 }
 
 TEST(TradingRuntimeTest, ProductionRunStopsWhenStrategyShouldStop) {

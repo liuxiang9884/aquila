@@ -111,10 +111,10 @@ void WriteTrailingByteFile(const std::filesystem::path& path) {
 
 cfg::DataReaderConfig MakeBinaryReaderConfig(
     std::vector<std::filesystem::path> files,
-    std::uint32_t max_events_per_source = 64) {
+    std::uint32_t max_events_per_drain = 64) {
   cfg::DataReaderConfig config;
   config.name = "binary_reader";
-  config.max_events_per_source = max_events_per_source;
+  config.max_events_per_drain = max_events_per_drain;
   config.sources.push_back(cfg::DataReaderSourceConfig{
       .name = "binary_book_ticker",
       .type = cfg::DataReaderSourceType::kBinaryFile,

@@ -141,18 +141,19 @@ class DataReaderConfigParser {
   }
 
   [[nodiscard]] std::uint32_t UInt32Or(
-      toml::node_view<const toml::node> value_node, std::uint32_t fallback) {
+      toml::node_view<const toml::node> value_node, std::uint32_t fallback,
+      std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
       return fallback;
     }
     if (*value <= 0) {
-      Fail("data_reader.max_events_per_source", " must be positive");
+      Fail(name, " must be positive");
       return fallback;
     }
     if (*value >
         static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
-      Fail("data_reader.max_events_per_source", " exceeds uint32 max");
+      Fail(name, " exceeds uint32 max");
       return fallback;
     }
     return static_cast<std::uint32_t>(*value);
@@ -197,8 +198,15 @@ class DataReaderConfigParser {
       return;
     }
 
-    config_.max_events_per_source = UInt32Or(
-        data_reader["max_events_per_source"], config_.max_events_per_source);
+    if (data_reader["max_events_per_source"]) {
+      Fail("data_reader.max_events_per_source",
+           " was removed; use data_reader.max_events_per_drain");
+      return;
+    }
+
+    config_.max_events_per_drain = UInt32Or(data_reader["max_events_per_drain"],
+                                            config_.max_events_per_drain,
+                                            "data_reader.max_events_per_drain");
   }
 
   void ParseExecutionPolicy() {

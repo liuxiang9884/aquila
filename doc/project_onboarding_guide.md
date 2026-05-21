@@ -74,7 +74,8 @@ doc/evaluation_support.md
 - `DataReader` 不做 merge：实时多路 merge 归上游 data session / producer，历史多路 merge 归离线预处理。
 - `RealtimeDataReader` 构造期要求至少一个 realtime source；多 source round-robin 使用构造期双表扫描。
 - `HistoricalDataReader` 构造期 mmap 非空 binary 文件，热路径不打开文件、不抛异常。
-- reader stats 已聚焦数据流本身；`poll_calls` / `empty_polls` 归 runtime / scheduler diagnostics。
+- `DataReaderConfig::max_events_per_drain` 是 finite / replay reader 的外层 `Drain()` budget；旧字段 `max_events_per_source` 已删除。
+- reader stats 已聚焦数据流本身；`poll_calls` / `empty_polls` 归 runtime / scheduler diagnostics，当前可通过 `TradingRuntimeDiagnostics` 记录。
 - 2026-05-06 live drain 验证中 Gate / Binance source 均未检测到 SHM ring overrun。
 
 ### Gate 交易
@@ -242,7 +243,7 @@ feedback SHM lane -> StrategyThread
 - `TradingRuntime::Run()` 在支持 `SetRuntimeHook()` 的 order session 上使用同线程 hook mode。
 - Gate WebSocket active spin loop 每轮先驱动 runtime hook，runtime 轮询 feedback SHM，并在 `OrderSessionT::Ready()` 为 true 后 poll data reader。
 - `Ready() == false` 只 gate 行情驱动交易意图，不阻塞 order response 或 feedback drain。
-- live reader 每轮调用 `Poll(runtime)`；finite replay reader 优先使用 `Drain(runtime, data_reader.max_events_per_source)`。
+- live reader 每轮调用 `Poll(runtime)`；finite replay reader 优先使用 `Drain(runtime, data_reader.max_events_per_drain)`。
 - `gate_demo_strategy` 默认 dry-run；真实提交必须显式 `--execute`，并需要先启动 `gate_order_feedback_session --connect`。
 
 ### DataReader
@@ -349,8 +350,8 @@ rg 'aquila_evaluation' core exchange tools
 
 1. 读取 `doc/strategy_order_component_model.md`。
 2. 读取 `doc/trading_component_architecture_discussion.md`。
-3. 若继续 DataReader，优先讨论 `DataReaderConfig::max_events_per_source` 是否改名为 `max_events_per_drain`。
-4. 讨论 runtime / scheduler 层是否需要新增 loop diagnostics。
+3. 若继续 DataReader feed 扩展，优先讨论 trade / order book 的 typed storage + unified scan table。
+4. 如果生产工具需要导出 runtime loop diagnostics，再在具体 tool / strategy runner 中选择启用 `TradingRuntimeDiagnostics` 并低频打印 stats。
 5. 若继续下一个组件，建议按 `OrderSession`、`OrderFeedbackSession`、`OrderManager`、`Strategy` 的顺序继续讨论接口边界。
 
 ### LeadLag
@@ -374,4 +375,4 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的 onboarding 提示
 
-请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；预期 `main` 与 `origin/main` 同步，工作区仍可能只有未跟踪的 `signal.csv`，默认不要处理。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke，feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。后续如果继续 Gate 交易架构，先读 Gate handoff 和 specs，优先补 REST reconcile、feedback WS 断线未知订单恢复、account / position feedback、unfilled-cancel / failure live smoke 和端到端 benchmark；如果继续 DataReader，读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`，优先讨论 `DataReaderConfig::max_events_per_source` 是否改名为 `max_events_per_drain` 与 runtime loop diagnostics；如果继续 LeadLag，先确认时间口径、exact quantile 和 synthetic replay 边界，再补生产订单回报闭环。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；预期 `main` 与 `origin/main` 同步，工作区仍可能只有未跟踪的 `signal.csv`，默认不要处理。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke，feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。后续如果继续 Gate 交易架构，先读 Gate handoff 和 specs，优先补 REST reconcile、feedback WS 断线未知订单恢复、account / position feedback、unfilled-cancel / failure live smoke 和端到端 benchmark；如果继续 DataReader，读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`，优先讨论 trade / order book feed 扩展；如果继续 LeadLag，先确认时间口径、exact quantile 和 synthetic replay 边界，再补生产订单回报闭环。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。

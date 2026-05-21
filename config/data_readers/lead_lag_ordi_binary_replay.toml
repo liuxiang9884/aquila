@@ -13,7 +13,7 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
 [data_reader]
 name = "lead_lag_ordi_binary_replay"
-max_events_per_source = 4096
+max_events_per_drain = 4096
 
 [data_reader.execution_policy]
 bind_cpu_id = -1

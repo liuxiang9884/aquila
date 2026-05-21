@@ -13,7 +13,7 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
 [data_reader]
 name = "strategy_data_reader"
-max_events_per_source = 64
+max_events_per_drain = 64
 
 [data_reader.execution_policy]
 bind_cpu_id = 4

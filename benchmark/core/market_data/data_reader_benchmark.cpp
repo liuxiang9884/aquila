@@ -157,7 +157,7 @@ void WriteBookTickerFile(const std::filesystem::path& path,
 cfg::DataReaderConfig MakeHistoricalConfig(const std::filesystem::path& file) {
   cfg::DataReaderConfig config;
   config.name = "historical_reader_benchmark";
-  config.max_events_per_source = 4096;
+  config.max_events_per_drain = 4096;
   config.sources.push_back(cfg::DataReaderSourceConfig{
       .name = "historical_book_ticker",
       .type = cfg::DataReaderSourceType::kBinaryFile,
@@ -184,7 +184,7 @@ void BM_RealtimeDataReaderEmptyPoll(benchmark::State& state) {
 
   cfg::DataReaderConfig config;
   config.name = "realtime_reader_benchmark";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   for (std::size_t i = 0; i < source_count; ++i) {
     shm_configs.push_back(MakeCreateConfig("empty_poll", i));
     cleanups.push_back(
@@ -244,7 +244,7 @@ void BM_RealtimeDataReaderDrainSingleSource(benchmark::State& state) {
 
   cfg::DataReaderConfig config;
   config.name = "realtime_reader_drain_benchmark";
-  config.max_events_per_source = static_cast<std::uint32_t>(drain_budget);
+  config.max_events_per_drain = static_cast<std::uint32_t>(drain_budget);
   config.sources.push_back(MakeRealtimeSourceConfig(
       "source_0", aquila::Exchange::kGate, shm_config.shm_name,
       cfg::DataReaderReadMode::kDrain,

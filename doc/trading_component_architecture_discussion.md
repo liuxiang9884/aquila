@@ -718,10 +718,11 @@ core/market_data/data_reader_concepts.h
   - 已提供 PollDataReaderLike、DrainCapableDataReader、DataReaderLike 和 FiniteDataReader concept。
 
 core/trading/trading_runtime.h
-  - 已在 Create() 中保存 data_reader.max_events_per_source 作为外层 data reader poll budget。
+  - 已在 Create() 中保存 data_reader.max_events_per_drain 作为外层 finite reader drain budget。
   - PollDataReader() 只对同时满足 FiniteDataReader 和 DrainCapableDataReader 的 replay / finite reader 使用 reader.Drain(runtime, budget)。
   - live reader 即使提供 Drain() helper，只要不显式声明 kFiniteDataReader，runtime 仍调用 reader.Poll(runtime)。
   - 不支持 Drain() 的兼容 reader 继续 fallback 到 reader.Poll(runtime)。
+  - TradingRuntimeDiagnostics 可记录 loop iterations、idle iterations、order response / feedback poll calls、data reader poll / drain calls、empty polls 和 handled events；生产默认 NoopTradingRuntimeDiagnostics。
 ```
 
 ### 当前 reader benchmark 证据
@@ -870,17 +871,17 @@ Drain 明显减少循环开销。
 为 `1.21ns` / `2.29ns` / `4.04ns`，该 benchmark 不触发 SHM overrun 边界，不能把 1 source 数值变化归因于本次
 capacity 边界恢复。
 
-当前仍未做的整理：
+当前已完成的整理：
 
-- `DataReaderConfig::max_events_per_source` 字段名仍保留旧名字；当前语义已改为外层 `Drain()` budget。
+- `DataReaderConfig::max_events_per_source` 已改名为 `max_events_per_drain`；旧字段不兼容，配置中出现会直接报错。
+- `poll_calls` / `empty_polls` 没有放回 reader stats，外层循环诊断落在 `TradingRuntimeDiagnostics`。
 
 ### 下一步建议
 
 后续建议拆成独立任务继续推进：
 
-1. 配置整理：评估是否把 `DataReaderConfig::max_events_per_source` 改名为更准确的 `drain_budget` / `max_events_per_drain`；如改名，需要处理现有 TOML 兼容。
-2. runtime diagnostics：如需要 `poll_calls` / `empty_polls`，在 `TradingRuntime` / probe / scheduler 维度新增 loop diagnostics，不放回 reader stats。
-3. feed 扩展：新增 trade / order book 时，`RealtimeDataReader` 使用 typed storage + unified scan table，不在热路径引入虚基类或 `std::variant`；stats 在 source 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
+1. feed 扩展：新增 trade / order book 时，`RealtimeDataReader` 使用 typed storage + unified scan table，不在热路径引入虚基类或 `std::variant`；stats 在 source 维度增加 `trade_count` / `order_book_count` 和对应 last id，顶层继续使用 `total_count`。
+2. 如果生产工具需要导出 runtime loop diagnostics，再在具体 tool / strategy runner 中选择启用 `TradingRuntimeDiagnostics` 并低频打印 stats。
 
 ## OrderSession 架构占位
 

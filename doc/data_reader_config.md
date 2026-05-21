@@ -28,7 +28,7 @@ config/data_readers/strategy_data_reader.toml
 ```toml
 [data_reader]
 name = "strategy_data_reader"
-max_events_per_source = 64
+max_events_per_drain = 64
 
 [data_reader.execution_policy]
 bind_cpu_id = 4
@@ -66,7 +66,7 @@ config/data_readers/lead_lag_ordi_binary_replay.toml
 ```toml
 [data_reader]
 name = "lead_lag_ordi_binary_replay"
-max_events_per_source = 4096
+max_events_per_drain = 4096
 
 [[data_reader.sources]]
 name = "ordi_merged_book_ticker"
@@ -121,7 +121,7 @@ Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比
 | `instrument_catalog.file` | 无，必须显式配置 | instrument CSV 路径。相对路径会在加载配置文件时解析到仓库路径。 |
 | `instrument_catalog.schema` | 无，必须显式配置 | CSV schema，当前固定 `aquila.instrument.v1`。 |
 | `data_reader.name` | 无，必须显式配置 | reader 实例名。 |
-| `data_reader.max_events_per_source` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算，必须是正的 `uint32` 范围整数；`Poll()` 本身始终是单事件接口。`TradingRuntime` 只在 finite / replay reader 上使用该预算。 |
+| `data_reader.max_events_per_drain` | `64` | 外层调用 `Drain(handler, max_events)` 时使用的默认批量预算，必须是正的 `uint32` 范围整数；`Poll()` 本身始终是单事件接口。`TradingRuntime` 只在 finite / replay reader 上使用该预算。旧字段 `max_events_per_source` 已删除，配置中出现会直接报错。 |
 | `data_reader.execution_policy.bind_cpu_id` | `-1` | 预留给 strategy / probe 绑核使用；第一版 parser 只保留配置值。 |
 | `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `RealtimeDataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
@@ -186,7 +186,7 @@ SHM attach、binary 文件检查和 mmap 失败仍在构造 / 启动冷路径通
 策略异常引入 reader 热路径。
 
 `TradingRuntime` 的调用规则按 reader 是否显式满足 `FiniteDataReader` 区分：live reader 不声明 `kFiniteDataReader`，每轮只调用
-`Poll(runtime)`；finite / replay reader 声明 `kFiniteDataReader = true` 并提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_source)`。
+`Poll(runtime)`；finite / replay reader 声明 `kFiniteDataReader = true` 并提供 `finished()`，runtime 每轮调用 `Drain(runtime, data_reader.max_events_per_drain)`。
 不支持 `Drain()` 的兼容 reader 仍走 `Poll()` fallback。
 
 handler 需要提供：
@@ -211,6 +211,7 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 - per-source `last_book_ticker_id`
 
 `poll_calls` / `empty_polls` 属于外层 runtime / scheduler / probe 的循环诊断，不放在 reader 内部 stats。
+`TradingRuntime` 可通过编译期 diagnostics policy 记录外层 loop 维度的 poll / drain 调用、empty poll、idle loop 和处理事件数；生产默认使用 no-op diagnostics。
 
 统计不使用 atomic；第一版假设 `RealtimeDataReader` 被单个 strategy 线程拥有。
 

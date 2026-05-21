@@ -25,8 +25,88 @@
 
 namespace aquila::core {
 
+struct TradingRuntimeLoopStats {
+  std::uint64_t loop_iterations{0};
+  std::uint64_t idle_iterations{0};
+  std::uint64_t order_response_poll_calls{0};
+  std::uint64_t order_response_empty_polls{0};
+  std::uint64_t order_response_events{0};
+  std::uint64_t order_feedback_poll_calls{0};
+  std::uint64_t order_feedback_empty_polls{0};
+  std::uint64_t order_feedback_events{0};
+  std::uint64_t data_reader_poll_calls{0};
+  std::uint64_t data_reader_drain_calls{0};
+  std::uint64_t data_reader_empty_polls{0};
+  std::uint64_t data_reader_events{0};
+};
+
+class NoopTradingRuntimeDiagnostics {
+ public:
+  void RecordLoopIteration() noexcept {}
+  void RecordIdleIteration() noexcept {}
+  void RecordOrderResponsePoll(std::uint64_t) noexcept {}
+  void RecordOrderFeedbackPoll(std::uint64_t) noexcept {}
+  void RecordDataReaderPoll(std::uint64_t) noexcept {}
+  void RecordDataReaderDrain(std::uint64_t) noexcept {}
+
+  [[nodiscard]] TradingRuntimeLoopStats stats() const noexcept {
+    return {};
+  }
+};
+
+class TradingRuntimeDiagnostics {
+ public:
+  void RecordLoopIteration() noexcept {
+    ++stats_.loop_iterations;
+  }
+
+  void RecordIdleIteration() noexcept {
+    ++stats_.idle_iterations;
+  }
+
+  void RecordOrderResponsePoll(std::uint64_t events) noexcept {
+    ++stats_.order_response_poll_calls;
+    stats_.order_response_events += events;
+    if (events == 0) {
+      ++stats_.order_response_empty_polls;
+    }
+  }
+
+  void RecordOrderFeedbackPoll(std::uint64_t events) noexcept {
+    ++stats_.order_feedback_poll_calls;
+    stats_.order_feedback_events += events;
+    if (events == 0) {
+      ++stats_.order_feedback_empty_polls;
+    }
+  }
+
+  void RecordDataReaderPoll(std::uint64_t events) noexcept {
+    ++stats_.data_reader_poll_calls;
+    stats_.data_reader_events += events;
+    if (events == 0) {
+      ++stats_.data_reader_empty_polls;
+    }
+  }
+
+  void RecordDataReaderDrain(std::uint64_t events) noexcept {
+    ++stats_.data_reader_drain_calls;
+    stats_.data_reader_events += events;
+    if (events == 0) {
+      ++stats_.data_reader_empty_polls;
+    }
+  }
+
+  [[nodiscard]] const TradingRuntimeLoopStats& stats() const noexcept {
+    return stats_;
+  }
+
+ private:
+  TradingRuntimeLoopStats stats_;
+};
+
 template <typename StrategyT, typename OrderSessionT,
-          typename DataReaderT = market_data::RealtimeDataReader<>>
+          typename DataReaderT = market_data::RealtimeDataReader<>,
+          typename Diagnostics = NoopTradingRuntimeDiagnostics>
 class TradingRuntime {
  public:
   using OrderManagerT = OrderManager<OrderSessionT>;
@@ -106,8 +186,8 @@ class TradingRuntime {
 
     try {
       runtime->config_ = std::move(config);
-      runtime->data_reader_poll_budget_ =
-          data_reader_config.max_events_per_source;
+      runtime->data_reader_drain_budget_ =
+          data_reader_config.max_events_per_drain;
       runtime->data_reader_.emplace(std::move(data_reader_config));
       runtime->order_session_.emplace(
           std::forward<OrderSessionFactoryT>(order_session_factory)());
@@ -183,6 +263,7 @@ class TradingRuntime {
       }
 
       std::uint64_t handled = 0;
+      diagnostics_.RecordLoopIteration();
       handled += PollOrderResponses();
       handled += PollOrderFeedback();
       if (OrderSessionReady()) {
@@ -195,6 +276,7 @@ class TradingRuntime {
       }
 
       if (handled == 0) {
+        diagnostics_.RecordIdleIteration();
         CallOnIdle();
         if (ShouldStop() || MaxLoopSecondsElapsed(loop_started_at)) {
           break;
@@ -254,6 +336,10 @@ class TradingRuntime {
     OnOrderFeedback(event);
   }
 
+  [[nodiscard]] const Diagnostics& diagnostics() const noexcept {
+    return diagnostics_;
+  }
+
  private:
   TradingRuntime() noexcept = default;
 
@@ -304,6 +390,7 @@ class TradingRuntime {
     }
 
     std::uint64_t handled = 0;
+    diagnostics_.RecordLoopIteration();
     handled += PollOrderResponses();
     handled += PollOrderFeedback();
     if (OrderSessionReady()) {
@@ -316,6 +403,7 @@ class TradingRuntime {
       return;
     }
     if (handled == 0) {
+      diagnostics_.RecordIdleIteration();
       CallOnIdle();
       if (ShouldStop() || MaxLoopSecondsElapsed(hook_loop_started_at_)) {
         RequestOrderSessionStop();
@@ -392,10 +480,13 @@ class TradingRuntime {
               std::declval<TradingRuntime&>()));
       if constexpr (std::is_void_v<PollResultT>) {
         order_session_->PollOrderResponses(*this);
+        diagnostics_.RecordOrderResponsePoll(0);
         return 0;
       } else {
-        return static_cast<std::uint64_t>(
+        const std::uint64_t handled = static_cast<std::uint64_t>(
             order_session_->PollOrderResponses(*this));
+        diagnostics_.RecordOrderResponsePoll(handled);
+        return handled;
       }
     }
     return 0;
@@ -405,9 +496,13 @@ class TradingRuntime {
     if (!feedback_reader_) {
       return 0;
     }
-    return static_cast<std::uint64_t>(feedback_reader_->Poll(
-        config_.feedback.poll_budget,
-        [this](const OrderFeedbackEvent& event) { OnOrderFeedback(event); }));
+    const std::uint64_t handled = static_cast<std::uint64_t>(
+        feedback_reader_->Poll(config_.feedback.poll_budget,
+                               [this](const OrderFeedbackEvent& event) {
+                                 OnOrderFeedback(event);
+                               }));
+    diagnostics_.RecordOrderFeedbackPoll(handled);
+    return handled;
   }
 
   [[nodiscard]] std::uint64_t PollDataReader() noexcept {
@@ -417,10 +512,15 @@ class TradingRuntime {
     if constexpr (market_data::FiniteDataReader<DataReaderT> &&
                   market_data::DrainCapableDataReader<DataReaderT,
                                                       TradingRuntime>) {
-      return static_cast<std::uint64_t>(
-          data_reader_->Drain(*this, data_reader_poll_budget_));
+      const std::uint64_t handled = static_cast<std::uint64_t>(
+          data_reader_->Drain(*this, data_reader_drain_budget_));
+      diagnostics_.RecordDataReaderDrain(handled);
+      return handled;
     }
-    return static_cast<std::uint64_t>(data_reader_->Poll(*this));
+    const std::uint64_t handled =
+        static_cast<std::uint64_t>(data_reader_->Poll(*this));
+    diagnostics_.RecordDataReaderPoll(handled);
+    return handled;
   }
 
   void CallOnStart() noexcept {
@@ -473,7 +573,7 @@ class TradingRuntime {
 
   config::StrategyConfig config_;
   std::optional<DataReaderT> data_reader_;
-  std::uint64_t data_reader_poll_budget_{1};
+  std::uint64_t data_reader_drain_budget_{1};
   std::optional<OrderSessionT> order_session_;
   std::optional<OrderManagerT> order_manager_;
   std::optional<ContextT> context_;
@@ -484,6 +584,7 @@ class TradingRuntime {
   bool stop_order_session_requested_{false};
   bool hook_strategy_started_{false};
   int hook_exit_code_{0};
+  [[no_unique_address]] Diagnostics diagnostics_;
 };
 
 }  // namespace aquila::core

@@ -53,7 +53,7 @@ struct DataReaderExecutionPolicyConfig {
 
 struct DataReaderConfig {
   std::string name;
-  std::uint32_t max_events_per_source{64};
+  std::uint32_t max_events_per_drain{64};
   DataReaderExecutionPolicyConfig execution_policy;
   InstrumentCatalog instrument_catalog;
   std::vector<DataReaderSourceConfig> sources;

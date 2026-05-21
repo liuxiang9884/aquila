@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
       const std::vector<SourceLabel> source_labels =
           BuildSourceLabels(config_result.value);
       const std::uint64_t drain_budget =
-          config_result.value.max_events_per_source;
+          config_result.value.max_events_per_drain;
       using Reader = aquila::market_data::RealtimeDataReader<
           aquila::market_data::RealtimeDataReaderDiagnostics>;
       Reader reader(std::move(config_result.value));

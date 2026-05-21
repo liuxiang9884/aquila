@@ -122,7 +122,7 @@ TEST(RealtimeDataReaderTest, PollReadsLatestBookTickerFromTwoSources) {
 
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(
       MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
                        gate_config.shm_name, cfg::DataReaderReadMode::kLatest));
@@ -158,7 +158,7 @@ TEST(RealtimeDataReaderTest, PollRoundRobinsAcrossThreeSources) {
 
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(
       MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
                        gate_config.shm_name, cfg::DataReaderReadMode::kLatest));
@@ -197,7 +197,7 @@ TEST(RealtimeDataReaderTest, DrainReadsAtMostMaxEvents) {
 
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(
       MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
                        gate_config.shm_name, cfg::DataReaderReadMode::kDrain));
@@ -230,7 +230,7 @@ TEST(RealtimeDataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
 
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(MakeSourceConfig(
       "binance_book_ticker", aquila::Exchange::kBinance,
       binance_config.shm_name, cfg::DataReaderReadMode::kLatest));
@@ -259,7 +259,7 @@ TEST(RealtimeDataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
 
   cfg::DataReaderConfig reader_config;
   reader_config.name = "test_data_reader";
-  reader_config.max_events_per_source = 64;
+  reader_config.max_events_per_drain = 64;
   reader_config.sources.push_back(
       MakeSourceConfig("gate_book_ticker", aquila::Exchange::kGate,
                        config.shm_name, cfg::DataReaderReadMode::kLatest));
@@ -284,7 +284,7 @@ TEST(RealtimeDataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
 TEST(RealtimeDataReaderTest, RejectsEmptySources) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
 
   EXPECT_THROW((void)md::RealtimeDataReader<>(std::move(config)),
                std::invalid_argument);
@@ -293,7 +293,7 @@ TEST(RealtimeDataReaderTest, RejectsEmptySources) {
 TEST(RealtimeDataReaderTest, RejectsNonShmSource) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(MakeSourceConfig("bad_source",
                                             aquila::Exchange::kGate, "/unused",
                                             cfg::DataReaderReadMode::kLatest));
@@ -306,7 +306,7 @@ TEST(RealtimeDataReaderTest, RejectsNonShmSource) {
 TEST(RealtimeDataReaderTest, RejectsInvalidFeed) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(MakeSourceConfig("bad_feed", aquila::Exchange::kGate,
                                             "/unused",
                                             cfg::DataReaderReadMode::kLatest));
@@ -319,7 +319,7 @@ TEST(RealtimeDataReaderTest, RejectsInvalidFeed) {
 TEST(RealtimeDataReaderTest, RejectsInvalidStartPosition) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(MakeSourceConfig("bad_start_position",
                                             aquila::Exchange::kGate, "/unused",
                                             cfg::DataReaderReadMode::kLatest));
@@ -333,7 +333,7 @@ TEST(RealtimeDataReaderTest, RejectsInvalidStartPosition) {
 TEST(RealtimeDataReaderTest, RejectsInvalidReadMode) {
   cfg::DataReaderConfig config;
   config.name = "test_data_reader";
-  config.max_events_per_source = 64;
+  config.max_events_per_drain = 64;
   config.sources.push_back(MakeSourceConfig("bad_read_mode",
                                             aquila::Exchange::kGate, "/unused",
                                             cfg::DataReaderReadMode::kLatest));

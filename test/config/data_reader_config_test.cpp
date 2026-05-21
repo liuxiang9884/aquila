@@ -33,7 +33,7 @@ TEST(DataReaderConfigTest, LoadsReadyStrategyDataReaderConfig) {
   const aquila::config::DataReaderConfig& config = result.value;
 
   EXPECT_EQ(config.name, "strategy_data_reader");
-  EXPECT_EQ(config.max_events_per_source, 64U);
+  EXPECT_EQ(config.max_events_per_drain, 64U);
   EXPECT_EQ(config.execution_policy.bind_cpu_id, 4);
   EXPECT_EQ(config.execution_policy.idle_policy, "spin");
 
@@ -62,7 +62,7 @@ TEST(DataReaderConfigTest, RejectsDuplicateSourceNames) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]
 name = "strategy_data_reader"
-max_events_per_source = 64
+max_events_per_drain = 64
 
 [[data_reader.sources]]
 name = "dup"
@@ -115,7 +115,7 @@ TEST(DataReaderConfigTest, ParsesBinaryFileSource) {
       R"toml({}
 [data_reader]
 name = "binary_replay_reader"
-max_events_per_source = 8
+max_events_per_drain = 8
 
 [[data_reader.sources]]
 name = "binary_book_ticker"
@@ -223,11 +223,55 @@ channel_name = "book_ticker_channel"
   EXPECT_NE(result.error.find("shm_name"), std::string::npos);
 }
 
-TEST(DataReaderConfigTest, RejectsZeroMaxEventsPerSource) {
+TEST(DataReaderConfigTest, RejectsZeroMaxEventsPerDrain) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]
 name = "strategy_data_reader"
-max_events_per_source = 0
+max_events_per_drain = 0
+
+[[data_reader.sources]]
+name = "gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_reader.max_events_per_drain"),
+            std::string::npos);
+}
+
+TEST(DataReaderConfigTest, RejectsOverflowMaxEventsPerDrain) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "strategy_data_reader"
+max_events_per_drain = 4294967296
+
+[[data_reader.sources]]
+name = "gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_reader.max_events_per_drain"),
+            std::string::npos);
+}
+
+TEST(DataReaderConfigTest, RejectsLegacyMaxEventsPerSourceField) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "strategy_data_reader"
+max_events_per_source = 64
 
 [[data_reader.sources]]
 name = "gate_book_ticker"
@@ -243,27 +287,7 @@ channel_name = "book_ticker_channel"
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("data_reader.max_events_per_source"),
             std::string::npos);
-}
-
-TEST(DataReaderConfigTest, RejectsOverflowMaxEventsPerSource) {
-  const std::string toml_text = CatalogPrefix() + R"toml(
-[data_reader]
-name = "strategy_data_reader"
-max_events_per_source = 4294967296
-
-[[data_reader.sources]]
-name = "gate_book_ticker"
-type = "shm"
-exchange = "gate"
-feed = "book_ticker"
-shm_name = "aquila_gate_market_data"
-channel_name = "book_ticker_channel"
-)toml";
-
-  const toml::parse_result parsed = toml::parse(toml_text);
-  const auto result = aquila::config::ParseDataReaderConfig(parsed);
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("data_reader.max_events_per_source"),
+  EXPECT_NE(result.error.find("data_reader.max_events_per_drain"),
             std::string::npos);
 }
 
@@ -271,7 +295,7 @@ TEST(DataReaderConfigTest, RejectsEmptySources) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]
 name = "strategy_data_reader"
-max_events_per_source = 64
+max_events_per_drain = 64
 )toml";
 
   const toml::parse_result parsed = toml::parse(toml_text);
