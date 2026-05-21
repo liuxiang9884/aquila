@@ -220,10 +220,26 @@ def parse_position(value: Any, fallback_contract: str | None = None) -> Position
         if fallback_contract is None:
             raise RestFailure("position response list requires fallback contract")
         normalized = normalize_rest_contract(fallback_contract)
-        for item in value:
-            if isinstance(item, dict) and str(item.get("contract", "")).upper() == normalized:
-                return parse_position(item, fallback_contract=normalized)
-        raise RestFailure(f"position response missing contract {normalized}")
+        matches = []
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise RestFailure(f"invalid position response[{index}]: expected object")
+            raw_contract = item.get("contract")
+            if raw_contract is None or str(raw_contract).strip() == "":
+                raise RestFailure(f"invalid position response[{index}]: missing contract")
+            actual = normalize_rest_contract(raw_contract)
+            if actual != normalized:
+                raise RestFailure(
+                    f"invalid position response[{index}]: contract mismatch: "
+                    f"expected {normalized}, got {actual}"
+                )
+            matches.append(item)
+        if len(matches) != 1:
+            raise RestFailure(
+                f"invalid position response: expected exactly one {normalized} item, "
+                f"got {len(matches)}"
+            )
+        return parse_position(matches[0], fallback_contract=normalized)
     if not isinstance(value, dict):
         raise RestFailure(f"invalid position response: expected object, got {type(value).__name__}")
     contract = _response_contract(value, fallback_contract, "position response")

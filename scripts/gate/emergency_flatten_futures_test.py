@@ -422,6 +422,38 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertIn("contract mismatch", summary["errors"][0])
         self.assertFalse(any(call.method == "POST" for call in calls))
 
+    def test_allowlist_position_list_with_extra_contract_returns_rest_failed_without_close(self):
+        calls = []
+        position_query_count = 0
+
+        def fake_request(api_request):
+            nonlocal position_query_count
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
+                position_query_count += 1
+                if position_query_count == 1:
+                    return [
+                        {"contract": "BTC_USDT", "size": 1, "pending_orders": 0},
+                        {"contract": "ETH_USDT", "size": 0, "pending_orders": 0},
+                    ]
+                return {"contract": "BTC_USDT", "size": 0, "pending_orders": 0}
+            if api_request.method == "POST":
+                return {"id": "bad-close", "status": "finished", "finish_as": "filled"}
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("contract mismatch", summary["errors"][0])
+        self.assertFalse(any(call.method in {"DELETE", "POST"} for call in calls))
+
     def test_malformed_open_orders_response_returns_rest_failed_exit_code(self):
         def fake_request(api_request):
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
