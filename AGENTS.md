@@ -36,6 +36,18 @@ doc/evaluation_support.md
 `doc/data_session_config.md`。读取后以 `doc/project_onboarding_guide.md` 的“最近已完成”“代码入口”
 和“下一步建议”为当前事实源，再结合 `git status` / `git log` 判断是否存在未提交或未 push 的工作。
 
+### Onboarding 文档书写规则
+
+`doc/project_onboarding_guide.md` 是新对话接手入口，不是完整历史记录或设计说明。更新 onboarding 时默认遵守：
+
+- 只写摘要和索引：记录当前事实、关键入口、重要边界、验证命令和下一步建议；不要把设计推导、实现细节、完整 benchmark 输出、live smoke 原始日志或逐提交历史写进 onboarding。
+- 细节放到对应专题文档：Gate 交易放 Gate handoff / specs，DataReader 放 data reader / trading component 文档，LeadLag 放 strategy README / reconstruction / audit / replay 对账文档，benchmark 和性能分析放对应 benchmark / 对比文档。
+- 已完成内容按模块合并：只说明“已经完成什么、现在入口在哪、仍缺什么”，不要保留每轮优化过程、历史数值流水账或已废弃方案。
+- 性能和 live 证据只保留最新摘要：格式优先为日期、场景或命令、关键结果和边界说明；需要追溯原始输出时，在 onboarding 中给出专题文档路径。
+- 下一步建议必须可执行：按方向列出优先动作、先读哪些文档、从哪些代码入口接手；避免宽泛 backlog。
+- 不设置硬性大小上限；但如果 onboarding 明显膨胀，应优先压缩旧完成项和优化细节，而不是继续追加段落。
+- “给下一个对话的 onboarding 提示”也只保留下一轮真正需要的事实和索引，避免复制整段历史。
+
 ### 结束对话触发词
 
 当用户输入“结束对话”，或明确要求结束当前对话并交接时，默认自动执行下面的收尾流程：
