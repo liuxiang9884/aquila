@@ -87,6 +87,36 @@ std::int64_t StopAllocationCounting() noexcept {
   return g_counted_live_bytes.load(std::memory_order_relaxed);
 }
 
+class AllocationCountingGuard {
+ public:
+  AllocationCountingGuard() noexcept {
+    StartAllocationCounting();
+  }
+
+  AllocationCountingGuard(const AllocationCountingGuard&) = delete;
+  AllocationCountingGuard& operator=(const AllocationCountingGuard&) = delete;
+
+  ~AllocationCountingGuard() {
+    Stop();
+  }
+
+  [[nodiscard]] std::int64_t allocations() const noexcept {
+    return CountedAllocations();
+  }
+
+  std::int64_t Stop() noexcept {
+    if (!stopped_) {
+      live_bytes_ = StopAllocationCounting();
+      stopped_ = true;
+    }
+    return live_bytes_;
+  }
+
+ private:
+  bool stopped_{false};
+  std::int64_t live_bytes_{0};
+};
+
 }  // namespace
 
 void* operator new(std::size_t size) {
@@ -316,6 +346,18 @@ void FeedOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
       Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), *context);
   strategy->OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), *context);
+}
+
+void FeedHugeOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
+  strategy->OnBookTicker(
+      Ticker(3, aquila::Exchange::kGate, 100, 1.0157e64, 1.0202e64),
+      *context);
+  strategy->OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 1.0e64, 1.01e64),
+      *context);
+  strategy->OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 1.12e64, 1.13e64),
+      *context);
 }
 
 void FeedOpenShortSignal(leadlag::Strategy* strategy, ContextT* context) {
@@ -942,21 +984,56 @@ TEST(LeadLagStrategyInterfaceTest,
   strategy.OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
 
-  StartAllocationCounting();
+  AllocationCountingGuard allocations;
   for (int i = 0; i < 64; ++i) {
     const double lead_bid = 112.0 + static_cast<double>(i);
     strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 101 + i,
                                  lead_bid, lead_bid + 1.0),
                           context);
   }
-  const std::int64_t counted_allocations = CountedAllocations();
-  const std::int64_t live_bytes = StopAllocationCounting();
+  const std::int64_t counted_allocations = allocations.allocations();
+  const std::int64_t live_bytes = allocations.Stop();
 
   ASSERT_GE(order_session.placed_orders.size(), 32U);
   EXPECT_EQ(order_manager.order_count(), 0U);
   EXPECT_EQ(counted_allocations, 0)
       << "price_text storage allocated in the per-order path";
   EXPECT_EQ(live_bytes, 0) << "retired price_text storage still retained";
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     PoolFullOrderPathReleasesPriceTextSlotForNextContext) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession pool_full_session;
+  OrderManagerT pool_full_manager{pool_full_session, 0, 4};
+  ContextT pool_full_context{pool_full_manager};
+
+  {
+    AllocationCountingGuard allocations;
+    FeedOpenLongSignal(&strategy, &pool_full_context);
+    const std::int64_t counted_allocations = allocations.allocations();
+    const std::int64_t live_bytes = allocations.Stop();
+    EXPECT_EQ(counted_allocations, 0)
+        << "pool-full price_text path allocated per order";
+    EXPECT_EQ(live_bytes, 0) << "pool-full price_text storage still retained";
+  }
+
+  ASSERT_TRUE(strategy.last_signal_decision().triggered);
+  EXPECT_TRUE(pool_full_session.placed_orders.empty());
+  EXPECT_EQ(pool_full_manager.order_count(), 0U);
+
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 102, 80.0, 81.0),
+                        context);
+
+  ASSERT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  EXPECT_NE(order_session.placed_orders.back().local_order_id, 0U);
+  EXPECT_EQ(order_manager.order_count(), 1U);
 }
 
 TEST(LeadLagStrategyInterfaceTest, ExternalModeClampsOpenQuantityToMax) {
@@ -1001,6 +1078,25 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeSkipsOrderWhenPriceTextInvalid) {
   FeedOpenLongSignal(&strategy, &context);
 
   EXPECT_TRUE(strategy.last_signal_decision().triggered);
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeSkipsOrderWhenPriceTextBufferTooSmall) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.open_notional = 1.0e66;
+  config.pairs[0].lag_instrument.price_tick = 1.0;
+  config.pairs[0].lag_instrument.price_decimal_places = 18;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedHugeOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
   EXPECT_TRUE(order_session.placed_orders.empty());
   EXPECT_EQ(order_manager.order_count(), 0U);
 }
