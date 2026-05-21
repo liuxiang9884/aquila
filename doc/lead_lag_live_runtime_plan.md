@@ -144,11 +144,11 @@ git commit -m "Add lead lag live signal runner"
 - Modify: `doc/lead_lag_live_runtime_plan.md`
 - Runtime evidence: log files under `/home/liuxiang/log/`
 
-- [ ] **Step 1: 启动前检查**
+- [x] **Step 1: 启动前检查**
 
 确认 `lead_lag_btc_strategy.toml` 仍是 `mode = "dry_run"`，确认 Gate / Binance data session 和 Gate feedback session configs 指向预期 SHM。
 
-- [ ] **Step 2: 30 分钟 signal-only run**
+- [x] **Step 2: 30 分钟 signal-only run**
 
 Run:
 
@@ -160,6 +160,8 @@ Run:
 ```
 
 Expected: strategy exits by duration, no real orders submitted, diagnostics shows data reader progress and no unexpected degraded state.
+
+2026-05-21 result: passed. See “运行记录 / 2026-05-21 30 分钟 signal-only live 观察”。
 
 - [ ] **Step 3: 2 到 4 小时 signal-only run**
 
@@ -349,3 +351,23 @@ Expected: benchmark 正常完成；文档只记录实测数据，不写没有证
 ## 运行记录
 
 本节只记录已经发生的长时间运行或 smoke 证据。新增记录应包含日期、commit、命令、运行时长、账户复核摘要和异常摘要。
+
+### 2026-05-21 30 分钟 signal-only live 观察
+
+- Commit: `92ed8a2 Add lead lag live signal runner`
+- Window: 2026-05-21 04:02:29 UTC 到 2026-05-21 04:32 左右 UTC；producer 在 04:34:51 UTC 手动 TERM 后正常收尾。
+- Mode: `lead_lag_strategy run_mode=signal_only execute=false connect_data=true`; no live orders were enabled.
+- Commands:
+
+```bash
+./build/debug/tools/gate_order_feedback_session --config config/order_feedback/gate_order_feedback_session.toml --connect --duration-sec 1900
+./build/debug/tools/gate_data_session --config config/data_sessions/gate_data_session.toml --connect
+./build/debug/tools/binance_data_session --config config/data_sessions/binance_data_session.toml --connect
+./build/debug/tools/lead_lag_strategy --config config/strategies/lead_lag_btc_strategy.toml --connect-data --duration-sec 1800
+```
+
+- LeadLag summary: `exit_code=0 book_tickers=480259 signals=0 open=0 close=0 stoploss=0 order_responses=0 order_feedbacks=0 loop_iterations=3374031710 idle_iterations=3373551451 data_reader_polls=3374031710 data_reader_empty_polls=3373551451 data_reader_events=480259 signals_output=-`.
+- Gate data session summary: `result=ok active=true phase=kClosed error=kNone book_tickers=641739 rx_messages=85156 tx_messages=392`.
+- Binance data session summary: `result=ok active=true phase=kClosed error=kNone book_tickers=9547386 rx_messages=719935 tx_messages=401`.
+- Gate feedback summary: `start_result=true duration_reached=true ready=false text_messages=2 binary_messages=0 login_sent=1 login_accepted=1 subscribe_sent=1 subscribe_acks=1 events_published=0 global_continuity_lost_events_published=1 shm_published=8`.
+- Notes: first attempt at 03:37 UTC was interrupted by SIGTERM around 03:40 UTC and is not counted as the 30-minute run. The feedback session published `kSessionDisconnected` continuity lost when its configured duration ended; this was expected for a private feedback disconnect and did not affect signal-only observation because the runner did not read feedback and did not submit orders.
