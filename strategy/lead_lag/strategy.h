@@ -1,17 +1,16 @@
 #ifndef AQUILA_STRATEGY_LEAD_LAG_STRATEGY_H_
 #define AQUILA_STRATEGY_LEAD_LAG_STRATEGY_H_
 
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <list>
-#include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "core/market_data/types.h"
 #include "core/trading/order_feedback_event.h"
@@ -192,6 +191,9 @@ class Strategy {
   }
 
  private:
+  static constexpr std::size_t kOrderPriceTextCapacity = 64;
+  static constexpr std::int32_t kMaxOrderPriceDecimalPlaces = 18;
+
   struct PairRuntimeState {
     bool initialized{false};
     PairConfig pair;
@@ -205,7 +207,13 @@ class Strategy {
 
   struct OrderPriceTextStorage {
     std::uint64_t local_order_id{0};
-    std::string price_text;
+    std::array<char, kOrderPriceTextCapacity> price_text{};
+    std::size_t size{0};
+    bool active{false};
+
+    [[nodiscard]] std::string_view view() const noexcept {
+      return std::string_view(price_text.data(), size);
+    }
   };
 
   void InitPairRuntimeStates() {
@@ -220,12 +228,15 @@ class Strategy {
     }
 
     pair_runtime_by_symbol_id_.clear();
+    order_price_texts_.clear();
     pair_runtime_by_symbol_id_.resize(
         static_cast<std::size_t>(max_symbol_id + 1));
+    std::size_t price_text_slot_count = 0;
     for (const PairConfig& pair : config_.pairs) {
       if (!RuntimeConfigReady(pair)) {
         continue;
       }
+      price_text_slot_count += pair.execute.parallel;
       PairRuntimeState& runtime =
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
       runtime.initialized = true;
@@ -241,6 +252,7 @@ class Strategy {
       runtime.threshold.Init(pair);
       runtime.execution.Init(pair.execute.parallel);
     }
+    order_price_texts_.resize(price_text_slot_count);
   }
 
   [[nodiscard]] static bool RuntimeConfigReady(
@@ -416,14 +428,12 @@ class Strategy {
       return;
     }
 
-    auto price_text_storage = order_price_texts_.insert(
-        order_price_texts_.end(),
-        OrderPriceTextStorage{
-            .local_order_id = 0,
-            .price_text = FormatOrderPrice(
-                order_price, runtime->pair.lag_instrument.price_decimal_places),
-        });
-    const std::string_view price_text = price_text_storage->price_text;
+    OrderPriceTextStorage* price_text_storage = AcquireOrderPriceText(
+        order_price, runtime->pair.lag_instrument.price_decimal_places);
+    if (price_text_storage == nullptr) {
+      return;
+    }
+    const std::string_view price_text = price_text_storage->view();
     const std::string_view symbol =
         runtime->pair.lag_instrument.exchange_symbol.empty()
             ? std::string_view(runtime->pair.symbol)
@@ -442,7 +452,7 @@ class Strategy {
             .reduce_only = last_signal_decision_.intent.reduce_only,
         });
     if (placed.local_order_id == 0) {
-      order_price_texts_.erase(price_text_storage);
+      ReleaseOrderPriceText(price_text_storage);
       return;
     }
     price_text_storage->local_order_id = placed.local_order_id;
@@ -533,10 +543,9 @@ class Strategy {
   }
 
   void EraseOrderPriceText(std::uint64_t local_order_id) noexcept {
-    for (auto it = order_price_texts_.begin(); it != order_price_texts_.end();
-         ++it) {
-      if (it->local_order_id == local_order_id) {
-        order_price_texts_.erase(it);
+    for (OrderPriceTextStorage& storage : order_price_texts_) {
+      if (storage.active && storage.local_order_id == local_order_id) {
+        ReleaseOrderPriceText(&storage);
         return;
       }
     }
@@ -612,9 +621,47 @@ class Strategy {
     return std::floor(quantity / step + kQuantityEpsilon) * step;
   }
 
-  [[nodiscard]] static std::string FormatOrderPrice(
-      double price, std::int32_t decimal_places) {
-    return fmt::format("{:.{}f}", price, decimal_places);
+  [[nodiscard]] OrderPriceTextStorage* AcquireOrderPriceText(
+      double price, std::int32_t decimal_places) noexcept {
+    if (!ValidOrderPriceDecimalPlaces(decimal_places) ||
+        !std::isfinite(price) || price <= 0.0) {
+      return nullptr;
+    }
+    for (OrderPriceTextStorage& storage : order_price_texts_) {
+      if (storage.active) {
+        continue;
+      }
+      char* const begin = storage.price_text.data();
+      char* const end = begin + storage.price_text.size();
+      const auto result =
+          std::to_chars(begin, end, price, std::chars_format::fixed,
+                        static_cast<int>(decimal_places));
+      if (result.ec != std::errc{} || result.ptr == begin) {
+        storage.size = 0;
+        storage.local_order_id = 0;
+        storage.active = false;
+        return nullptr;
+      }
+      storage.size = static_cast<std::size_t>(result.ptr - begin);
+      storage.local_order_id = 0;
+      storage.active = true;
+      return &storage;
+    }
+    return nullptr;
+  }
+
+  static void ReleaseOrderPriceText(OrderPriceTextStorage* storage) noexcept {
+    if (storage == nullptr) {
+      return;
+    }
+    storage->local_order_id = 0;
+    storage->size = 0;
+    storage->active = false;
+  }
+
+  [[nodiscard]] static bool ValidOrderPriceDecimalPlaces(
+      std::int32_t decimal_places) noexcept {
+    return decimal_places >= 0 && decimal_places <= kMaxOrderPriceDecimalPlaces;
   }
 
   [[nodiscard]] SignalDiagnostics BuildSignalDiagnostics(
@@ -661,7 +708,7 @@ class Strategy {
   StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
-  std::list<OrderPriceTextStorage> order_price_texts_;
+  std::vector<OrderPriceTextStorage> order_price_texts_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
   SignalDiagnostics last_signal_diagnostics_;
