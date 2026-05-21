@@ -417,6 +417,7 @@ def _map_remote_orders(
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
+    list[dict[str, Any]],
     list[str],
 ]:
     normalized_contract = account.normalize_contract(contract)
@@ -433,7 +434,9 @@ def _map_remote_orders(
     mapped_orders: list[dict[str, Any]] = []
     mapped_local_ids: set[int] = set()
     mapped_open_indexes: set[int] = set()
+    out_of_scope_open_indexes: set[int] = set()
     unmapped_finished_remote_orders: list[dict[str, Any]] = []
+    out_of_scope_remote_orders: list[dict[str, Any]] = []
     mapping_candidates: list[dict[str, Any]] = []
     duplicate_local_ids: set[int] = set()
     mapping_errors: list[str] = []
@@ -484,6 +487,23 @@ def _map_remote_orders(
             exchange_local_order = (
                 exchange_local_orders[0] if len(exchange_local_orders) == 1 else None
             )
+
+            if text_local_order is not None and remote_exchange_id:
+                text_local_exchange_id = _exchange_order_id(text_local_order)
+                if (
+                    text_local_exchange_id
+                    and text_local_exchange_id != remote_exchange_id
+                ):
+                    text_matched_id = local_order_id(text_local_order)
+                    add_mapping_error(
+                        "identity_conflict",
+                        f"{source}:{index}",
+                        "identity conflict: "
+                        f"text local_order_id={text_matched_id} "
+                        f"local_exchange_order_id={text_local_exchange_id} "
+                        f"remote_exchange_order_id={remote_exchange_id}",
+                    )
+                    continue
 
             if text_local_order is not None and len(exchange_local_orders) > 1:
                 add_mapping_error(
@@ -539,6 +559,10 @@ def _map_remote_orders(
                             "unmapped remote finished order",
                         )
                     continue
+                out_of_scope_remote_orders.append(remote_order)
+                if source == "open_orders":
+                    out_of_scope_open_indexes.add(index)
+                continue
 
             if text_local_order is not None:
                 local_order = text_local_order
@@ -600,7 +624,9 @@ def _map_remote_orders(
         if _to_int(order.get("local_order_id")) not in mapped_local_ids
     ]
     unmapped_remote_orders = [
-        order for index, order in enumerate(open_orders) if index not in mapped_open_indexes
+        order
+        for index, order in enumerate(open_orders)
+        if index not in mapped_open_indexes and index not in out_of_scope_open_indexes
     ]
     unmapped_remote_orders.extend(unmapped_finished_remote_orders)
     mapping_errors.extend(
@@ -611,6 +637,7 @@ def _map_remote_orders(
         mapped_orders,
         unmapped_local_orders,
         unmapped_remote_orders,
+        out_of_scope_remote_orders,
         mapping_candidates,
         mapping_errors,
     )
@@ -730,6 +757,7 @@ def reconcile_futures_orders(
         mapped_orders,
         unmapped_local_orders,
         unmapped_remote_orders,
+        out_of_scope_remote_orders,
         mapping_candidates,
         mapping_errors,
     ) = _map_remote_orders(
@@ -761,6 +789,7 @@ def reconcile_futures_orders(
         "mapping_candidates": mapping_candidates,
         "unmapped_local_orders": unmapped_local_orders,
         "unmapped_remote_orders": unmapped_remote_orders,
+        "out_of_scope_remote_orders": out_of_scope_remote_orders,
         "rest_position": rest_position,
         "position_match": position_match,
         "queries": queries,
