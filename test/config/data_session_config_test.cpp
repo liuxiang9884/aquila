@@ -153,6 +153,24 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
             std::string_view::npos);
 }
 
+TEST(DataSessionConfigTest, LoadsReadyFirst5GateDataSessionConfig) {
+  const auto config_result = aquila::gate::LoadDataSessionConfigFile(SourcePath(
+      "config/data_sessions/gate_data_session_first5_20260521.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  const aquila::gate::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "gate_data_session_first5");
+  ASSERT_EQ(config.exchange_symbols.size(), 5u);
+  EXPECT_EQ(config.exchange_symbols[0], "PROVE_USDT");
+  EXPECT_EQ(config.exchange_symbols[1], "RAVE_USDT");
+  EXPECT_EQ(config.exchange_symbols[2], "ZEC_USDT");
+  EXPECT_EQ(config.exchange_symbols[3], "SIREN_USDT");
+  EXPECT_EQ(config.exchange_symbols[4], "ETC_USDT");
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_gate_market_data_first5_20260521");
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+}
+
 TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
   const toml::table toml = toml::parse_file(
       SourcePath("config/data_sessions/gate_data_session.toml").string());
@@ -464,6 +482,25 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   EXPECT_EQ(symbols[1].symbol_id, 1);
   EXPECT_EQ(symbols[2].symbol, "SOLUSDT");
   EXPECT_EQ(symbols[2].symbol_id, 2);
+}
+
+TEST(DataSessionConfigTest, LoadsReadyFirst5BinanceDataSessionConfig) {
+  const auto config_result =
+      aquila::binance::LoadDataSessionConfigFile(SourcePath(
+          "config/data_sessions/binance_data_session_first5_20260521.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  const aquila::binance::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "binance_data_session_first5");
+  ASSERT_EQ(config.exchange_symbols.size(), 5u);
+  EXPECT_EQ(config.exchange_symbols[0], "PROVEUSDT");
+  EXPECT_EQ(config.exchange_symbols[1], "RAVEUSDT");
+  EXPECT_EQ(config.exchange_symbols[2], "ZECUSDT");
+  EXPECT_EQ(config.exchange_symbols[3], "SIRENUSDT");
+  EXPECT_EQ(config.exchange_symbols[4], "ETCUSDT");
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_binance_market_data_first5_20260521");
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
 }
 
 TEST(DataSessionConfigTest, RejectsUnknownBinanceSubscribeSymbol) {

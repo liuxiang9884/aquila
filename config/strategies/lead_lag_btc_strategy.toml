@@ -12,7 +12,7 @@ name = "lead_lag"
 strategy_id = 4
 mode = "dry_run"
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.loop]
 idle_policy = "spin"

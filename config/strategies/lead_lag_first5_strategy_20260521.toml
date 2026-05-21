@@ -1,8 +1,8 @@
 [log]
 log_level = "info"
-file_sink_name = "/tmp/aquila_lead_lag_live_orders_disabled_strategy.log"
-console_sink_name = "lead_lag_live_orders_disabled_strategy_console"
-backend_thread_name = "lead_lag_live_orders_disabled_strategy_log"
+file_sink_name = "/home/liuxiang/log/lead_lag_strategy_first5_20260521.log"
+console_sink_name = "lead_lag_strategy_first5_console"
+backend_thread_name = "lead_lag_strategy_first5_log"
 backend_cpu_affinity = 5
 format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
@@ -10,9 +10,9 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 [strategy]
 name = "lead_lag"
 strategy_id = 4
-mode = "live"
-order_capacity = 8
-config = "config/strategies/lead_lag.toml"
+mode = "dry_run"
+order_capacity = 16
+config = "config/strategies/lead_lag_first5_20260521.toml"
 
 [strategy.loop]
 idle_policy = "spin"
@@ -20,13 +20,13 @@ bind_cpu_id = 4
 max_loop_seconds = 0
 
 [strategy.data_reader]
-config = "config/data_readers/strategy_data_reader.toml"
+config = "config/data_readers/strategy_data_reader_first5_20260521.toml"
 
 [strategy.order_session]
 config = "config/order_sessions/gate_order_session.toml"
 
 [strategy.feedback]
-enabled = true
+enabled = false
 shm_name = "aquila_gate_order_feedback"
 channel_name = "orders"
 poll_budget = 32

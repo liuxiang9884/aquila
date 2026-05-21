@@ -94,10 +94,10 @@ OnBookTicker(ticker):
 ```toml
 [strategy]
 name = "lead_lag"
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 ```
 
-strategy config 设计上固定放在 `config/strategy/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 已有接收 `leadlag::Config` 的 strategy hook skeleton，完整主链路尚未串接。
+strategy config 设计上固定放在 `config/strategies/lead_lag.toml`，root table 为 `[lead_lag]`，并显式写入 `version = "1.0"`。`version` 使用字符串保存，避免后续 `1.10` 一类版本被 TOML 数值语义改写。当前仓库已实现 `strategy/lead_lag/config.h` / `config.cpp` 解析该 TOML，并在启动期用 instrument catalog 校验 lead / lag metadata；`leadlag::Strategy` 已有接收 `leadlag::Config` 的 strategy hook skeleton，完整主链路尚未串接。
 
 pair 配置使用数组：
 
@@ -2243,7 +2243,7 @@ space:
 
 建议按本文 7 层逐段审阅：
 
-1. 配置与 instrument catalog metadata 的设计形状已定为 `lead_lag` / `version="1.0"` / `config/strategy/lead_lag.toml` / pair array；后续实现需按本节验证口径落 parser。
+1. 配置与 instrument catalog metadata 的设计形状已定为 `lead_lag` / `version="1.0"` / `config/strategies/lead_lag.toml` / pair array；后续实现需按本节验证口径落 parser。
 2. raw market state 的时间、`symbol_id` vector lookup 和 `BookTicker.exchange` role 判断是否符合 `aquila` 当前 DataReader。
 3. recorder / queue 输出语义按 fixed Go 对齐；实现可不同，但必须覆盖切窗 MoveQueue、histogram move quantile、rolling normalized std mean 和 absolute spread mean。
 4. alignment readiness 使用 `drift_warmup`，未配置时回退到 `stats_window`。

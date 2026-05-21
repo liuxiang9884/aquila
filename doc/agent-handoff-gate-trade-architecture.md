@@ -552,7 +552,7 @@ scripts/gate/run_futures_order_smoke_test.py
 
 ```text
 config/strategies/lead_lag_btc_strategy.toml
-config/strategy/lead_lag.toml
+config/strategies/lead_lag.toml
 config/strategies/demo_strategy.toml
 config/strategies/demo.toml
 core/config/strategy_config.h

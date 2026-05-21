@@ -17,9 +17,9 @@ std::filesystem::path SourcePath(std::string_view path) {
   return std::filesystem::path{AQUILA_SOURCE_DIR} / path;
 }
 
-aquila::config::InstrumentCatalog LoadCatalog() {
-  auto result = aquila::config::LoadInstrumentCatalogFromCsv(
-      SourcePath("config/instruments/usdt_futures.csv"));
+aquila::config::InstrumentCatalog LoadCatalog(
+    std::string_view path = "config/instruments/usdt_futures.csv") {
+  auto result = aquila::config::LoadInstrumentCatalogFromCsv(SourcePath(path));
   EXPECT_TRUE(result.ok) << result.error;
   return std::move(result.value);
 }
@@ -34,7 +34,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = leadlag::LoadConfigFile(
-      SourcePath("config/strategy/lead_lag.toml"), catalog);
+      SourcePath("config/strategies/lead_lag.toml"), catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   const leadlag::Config& config = result.value;
@@ -90,6 +90,29 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_DOUBLE_EQ(pair.lag_instrument.max_quantity, 100000.0);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.notional_multiplier, 0.0001);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.lag_taker_fee, 0.00016);
+}
+
+TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
+  const aquila::config::InstrumentCatalog catalog =
+      LoadCatalog("config/instruments/usdt_futures_first5_20260521.csv");
+
+  const auto result = leadlag::LoadConfigFile(
+      SourcePath("config/strategies/lead_lag_first5_20260521.toml"), catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const leadlag::Config& config = result.value;
+  ASSERT_EQ(config.pairs.size(), 5U);
+
+  EXPECT_EQ(config.pairs[0].symbol, "PROVE_USDT");
+  EXPECT_EQ(config.pairs[1].symbol, "RAVE_USDT");
+  EXPECT_EQ(config.pairs[2].symbol, "ZEC_USDT");
+  EXPECT_EQ(config.pairs[3].symbol, "SIREN_USDT");
+  EXPECT_EQ(config.pairs[4].symbol, "ETC_USDT");
+
+  EXPECT_DOUBLE_EQ(config.pairs[1].lag_instrument.quantity_step, 1.0);
+  EXPECT_EQ(config.pairs[1].lag_instrument.quantity_decimal_places, 0);
+  EXPECT_DOUBLE_EQ(config.pairs[3].lag_instrument.quantity_step, 1.0);
+  EXPECT_EQ(config.pairs[3].lag_instrument.quantity_decimal_places, 0);
 }
 
 TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {

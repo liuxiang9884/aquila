@@ -24,7 +24,7 @@ std::string MinimalStrategyConfigToml() {
 name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -50,7 +50,7 @@ TEST(StrategyConfigTest, LoadsCheckedInLeadLagStrategyConfig) {
   EXPECT_EQ(config.mode, aquila::config::StrategyMode::kDryRun);
   EXPECT_EQ(config.order_capacity, 8U);
   EXPECT_EQ(config.user_config_path,
-            SourcePath("config/strategy/lead_lag.toml"));
+            SourcePath("config/strategies/lead_lag.toml"));
 
   EXPECT_EQ(config.loop.idle_policy,
             aquila::config::StrategyLoopIdlePolicy::kSpin);
@@ -69,13 +69,35 @@ TEST(StrategyConfigTest, LoadsCheckedInLeadLagStrategyConfig) {
   EXPECT_FALSE(config.feedback.force_claim);
 }
 
+TEST(StrategyConfigTest, LoadsCheckedInLeadLagFirst5StrategyConfig) {
+  const auto result = aquila::config::LoadStrategyConfigFile(
+      SourcePath("config/strategies/lead_lag_first5_strategy_20260521.toml"));
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const aquila::config::StrategyConfig& config = result.value;
+
+  EXPECT_EQ(config.name, "lead_lag");
+  EXPECT_EQ(config.strategy_id, 4);
+  EXPECT_EQ(config.mode, aquila::config::StrategyMode::kDryRun);
+  EXPECT_EQ(config.order_capacity, 16U);
+  EXPECT_EQ(config.user_config_path,
+            SourcePath("config/strategies/lead_lag_first5_20260521.toml"));
+  EXPECT_EQ(
+      config.data_reader.config_path,
+      SourcePath(
+          "config/data_readers/strategy_data_reader_first5_20260521.toml"));
+  EXPECT_EQ(config.order_session.config_path,
+            SourcePath("config/order_sessions/gate_order_session.toml"));
+  EXPECT_FALSE(config.feedback.enabled);
+}
+
 TEST(StrategyConfigTest, RejectsStrategyIdOutsideFeedbackLaneRange) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
 name = "lead_lag"
 strategy_id = 8
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -132,7 +154,7 @@ name = "lead_lag"
 strategy_id = 4
 mode = "paper"
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -155,7 +177,7 @@ TEST(StrategyConfigTest, RejectsFeedbackEnabledWithoutShmName) {
 name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -178,7 +200,7 @@ TEST(StrategyConfigTest, RejectsZeroFeedbackPollBudget) {
 name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
@@ -203,7 +225,7 @@ TEST(StrategyConfigTest, AcceptsFeedbackDisabledWithoutShmFields) {
 name = "lead_lag"
 strategy_id = 4
 order_capacity = 8
-config = "config/strategy/lead_lag.toml"
+config = "config/strategies/lead_lag.toml"
 
 [strategy.data_reader]
 config = "config/data_readers/strategy_data_reader.toml"
