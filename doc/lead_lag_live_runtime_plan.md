@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；长期运行前仍需 failure smoke、account / position 校验和后续 benchmark。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。长期运行前仍需 failure protocol probe、account / position 校验和后续 benchmark。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -17,7 +17,7 @@
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
-- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；长时间真实下单前还需要 rejected / cancel-rejected smoke、account / position 复核和后续端到端 benchmark。
+- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。长时间真实下单前还需要 failure protocol probe、account / position 复核和后续端到端 benchmark。
 
 ## 文件结构
 
@@ -414,11 +414,18 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 2026-05-22 已完成：新增 `lead_lag_strategy --smoke-unfilled-cancel` 显式模式，只在 `--execute` 且 `strategy.mode=live` 时进入，仍复用 `TradingRuntime`、Gate `OrderSessionRuntimeAdapter`、`OrderManager`、feedback SHM 和外围 `run_live_with_guard.py`。本轮使用 ZEC-only Gate data session / data reader、fresh feedback SHM 和 `ZEC_USDT` 目标 notional `$10`；passive buy 价格使用 Gate best bid 下方 `200 bps`，GTC limit，非 reduce-only。运行结果：`completed=true`、`state=done`、`open_quantity=1`、`order_responses=1`、`order_feedbacks=2`、`cancel_requested=true`、`estimated_open_notional=6.3854`；feedback session 发布 `kAccepted` 和 `kCancelled`，cancelled event 为 `cumulative_filled_quantity=0`、`left_quantity=1`、`cancelled_quantity=1`。最终 REST 复核 open orders 为空、position `size=0`、`pending_orders=0`。
 
-- [ ] **Step 3: Rejected / cancel-rejected smoke**
+- [ ] **Step 3: Rejected / cancel-rejected protocol probe**
 
 用受控非法价格、数量或过期订单构造 rejected 场景。
 
 期望：LeadLag execution group 不残留 pending order；strategy 不继续盲目开仓。
+
+2026-05-22 状态：新增 `lead_lag_strategy --smoke-submit-reject` 诊断模式并通过单元测试，覆盖 `Ack` 不完成、`kRejected` 才完成、unexpected accepted / cancel response / private feedback 失败和 `ContinuityLost` handoff。随后做了两次 ZEC_USDT 安全 live 探测：
+
+- LeadLag guarded smoke：`buy limit IOC`、`price=0.01`、`quantity=1`、`reduce_only=true`，120 秒内只收到 1 个 `kAck`，未收到最终 `kRejected`；外围 guard 执行 final check / flatten，REST 复核 open orders 为空、position `size=0`。
+- `gate_strategy_order` 单变量协议探测：同样 `buy limit IOC`、`price=0.01`、`quantity=1`，但 `reduce_only=false`，25 秒内仍只收到 1 个 `kAck`，未收到最终 response；REST 复核 open orders 为空、ZEC_USDT position `size=0` / `pending_orders=0`。
+
+结论：这个安全 invalid-price IOC 场景在 Gate WS 下表现为请求 `Ack` 后无最终 rejected response，不适合作为 LeadLag submit-rejected live smoke。不要继续用随机非法价格或数量硬凑 smoke；若需要 rejected / cancel-rejected 实盘证据，应单独做 `OrderSession` protocol probe，明确协议字段、风险边界和 REST 复核。`cancel-rejected` 不应强塞进 LeadLag runtime：LeadLag 只取消已知订单，未知订单、重复取消或 terminal 订单取消在当前系统里属于本地拒绝，不是交易所 cancel-rejected。
 
 - [x] **Step 4: Commit smoke evidence**
 

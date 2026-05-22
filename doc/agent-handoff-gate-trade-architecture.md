@@ -1174,7 +1174,7 @@ config/data_sessions/binance_data_session.toml
 
 1. 先按 onboarding、本 handoff 和当前代码确认 Task1 / Task2 已实现边界、验证命令和 benchmark 口径。
 2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 continuity lost 后新开仓暂停 / 恢复条件。
-3. 扩展 C++ WS live smoke：当前已有 `gate_strategy_order` 小额 accepted / cancel lifecycle 和 `gate_demo_strategy` 3 轮 filled-close 证据；下一步在用户明确允许后覆盖 unfilled-cancel、rejected / cancel-rejected、feedback WS 断线和 REST reconcile 分支，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
+3. 扩展 C++ WS live smoke / probe：当前已有 `gate_strategy_order` 小额 accepted / cancel lifecycle、`gate_demo_strategy` 3 轮 filled-close、LeadLag ZEC filled open / close 和 unfilled-cancel 证据。2026-05-22 ZEC 安全 IOC submit-reject 探测只收到 `Ack`、未收到最终 `kRejected`，不计入完成项；后续 rejected / cancel-rejected 应作为独立 `OrderSession` protocol probe 设计，不要硬塞进 LeadLag runtime。继续补 feedback WS 断线和 REST reconcile 分支时，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
 4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 continuity lost / reconnect 后恢复订单、持仓和风险状态。
 5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 Gate decimal-size 合约只走整数 `size`，完整 decimal 支持需要先引入定点数量模型，再进入下单热路径。
 6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
