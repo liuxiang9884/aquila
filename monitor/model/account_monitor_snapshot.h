@@ -42,6 +42,51 @@ struct AccountBalance {
   double total_pnl{0.0};
 };
 
+struct ServerMetric {
+  std::string_view metric;
+  std::string_view value;
+  std::string_view state;
+  std::string_view updated_time;
+};
+
+struct ProcessHealth {
+  std::string_view name;
+  std::string_view role;
+  int pid{0};
+  std::string_view uptime;
+  double cpu_percent{0.0};
+  double memory_percent{0.0};
+  std::string_view status;
+  std::string_view heartbeat;
+  std::string_view updated_time;
+};
+
+struct ConnectionHealth {
+  std::string_view venue;
+  std::string_view channel;
+  std::string_view state;
+  std::string_view latency;
+  std::string_view last_message;
+  int reconnects{0};
+  std::string_view updated_time;
+};
+
+struct RuntimeHealth {
+  std::string_view server_state;
+  double cpu_percent{0.0};
+  double memory_percent{0.0};
+  double disk_percent{0.0};
+  int market_processes_up{0};
+  int market_processes_total{0};
+  int trading_processes_up{0};
+  int trading_processes_total{0};
+  int stale_count{0};
+  int restart_count{0};
+  std::span<const ServerMetric> server_metrics;
+  std::span<const ProcessHealth> processes;
+  std::span<const ConnectionHealth> connections;
+};
+
 struct MarketDataRow {
   std::string_view exchange;
   std::string_view exchange_symbol;
@@ -116,6 +161,7 @@ struct AccountMonitorSnapshot {
   std::string_view mode;
   std::string_view selected_symbol;
   AccountBalance balance;
+  RuntimeHealth runtime_health;
   std::span<const SymbolSummary> symbols;
   const SymbolDetail* selected_detail{nullptr};
   std::span<const std::string_view> events;

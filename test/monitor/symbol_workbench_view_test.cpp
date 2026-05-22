@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "monitor/demo/symbol_workbench_demo_data.h"
+#include "monitor/tui/runtime_health_view.h"
 
 namespace aquila::monitor {
 namespace {
@@ -84,7 +85,57 @@ TEST(SymbolWorkbenchViewTest, FullWorkbenchRendersBalanceStripUnderTopBar) {
 
   ExpectTokensInOrder(rendered, {"AQUILA GATE USDT ACCOUNT", "BALANCE", "total",
                                  "12548.72 USDT", "available", "9876.54", "pnl",
-                                 "+42.68", "SYMBOLS"});
+                                 "+42.68", "HEALTH", "server ok", "SYMBOLS"});
+}
+
+TEST(SymbolWorkbenchViewTest, HealthSummaryStripRendersProcessCounts) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  const std::string rendered =
+      RenderToString(RenderHealthSummaryStrip(snapshot.runtime_health), 180, 3);
+
+  ExpectTokensInOrder(rendered,
+                      {"HEALTH", "server ok", "cpu 18%", "mem 42%", "disk 71%",
+                       "md 2/2 up", "trading 3/3 up", "stale 1", "restart 0"});
+}
+
+TEST(SymbolWorkbenchViewTest, HealthPageRendersServerProcessesAndConnections) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  const std::string rendered =
+      RenderToString(RenderRuntimeHealthPage(snapshot), 260, 42);
+
+  ExpectTokensInOrder(
+      rendered, {"AQUILA RUNTIME HEALTH", "SERVER", "metric", "value", "state",
+                 "updated", "disk_root", "warn"});
+  ExpectTokensInOrder(rendered, {"PROCESSES",
+                                 "num",
+                                 "name",
+                                 "role",
+                                 "pid",
+                                 "uptime",
+                                 "cpu",
+                                 "mem",
+                                 "status",
+                                 "heartbeat",
+                                 "updated",
+                                 "1",
+                                 "gate_data_session",
+                                 "market",
+                                 "2",
+                                 "binance_data_session",
+                                 "market",
+                                 "3",
+                                 "lead_lag_strategy",
+                                 "trading",
+                                 "4",
+                                 "gate_order_feedback_session",
+                                 "feedback",
+                                 "stale"});
+  ExpectTokensInOrder(
+      rendered,
+      {"CONNECTIONS", "num", "venue", "channel", "state", "latency", "last_msg",
+       "reconnects", "updated", "Gate", "futures.orders", "connected"});
 }
 
 }  // namespace

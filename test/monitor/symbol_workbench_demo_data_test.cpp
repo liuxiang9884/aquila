@@ -41,6 +41,21 @@ TEST(SymbolWorkbenchDemoDataTest, ExposesAccountBalanceSummary) {
   EXPECT_DOUBLE_EQ(snapshot.balance.total_pnl, 42.68);
 }
 
+TEST(SymbolWorkbenchDemoDataTest, ExposesRuntimeHealthSummary) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  EXPECT_EQ(snapshot.runtime_health.server_state, "ok");
+  EXPECT_DOUBLE_EQ(snapshot.runtime_health.cpu_percent, 18.0);
+  EXPECT_EQ(snapshot.runtime_health.market_processes_up, 2);
+  EXPECT_EQ(snapshot.runtime_health.market_processes_total, 2);
+  EXPECT_EQ(snapshot.runtime_health.trading_processes_up, 3);
+  EXPECT_EQ(snapshot.runtime_health.trading_processes_total, 3);
+  EXPECT_EQ(snapshot.runtime_health.stale_count, 1);
+  EXPECT_EQ(snapshot.runtime_health.server_metrics.size(), 5U);
+  EXPECT_EQ(snapshot.runtime_health.processes.size(), 4U);
+  EXPECT_EQ(snapshot.runtime_health.connections.size(), 3U);
+}
+
 TEST(SymbolWorkbenchDemoDataTest, ZecOrdersExposeAllSourceClasses) {
   const SymbolDetail* detail = DemoSelectedSymbolDetail();
   ASSERT_NE(detail, nullptr);

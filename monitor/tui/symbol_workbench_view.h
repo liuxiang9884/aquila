@@ -9,6 +9,7 @@
 #include <ftxui/dom/elements.hpp>
 
 #include "monitor/model/account_monitor_snapshot.h"
+#include "monitor/tui/runtime_health_view.h"
 
 namespace aquila::monitor {
 
@@ -339,6 +340,7 @@ inline ftxui::Element RenderSymbolWorkbench(
                      ftxui::color(ftxui::Color::GrayLight),
              }),
              symbol_workbench_view_detail::BalancePane(snapshot.balance),
+             RenderHealthSummaryStrip(snapshot.runtime_health),
              ftxui::separator(),
              ftxui::hbox({
                  symbol_workbench_view_detail::SymbolPane(snapshot),
