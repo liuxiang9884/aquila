@@ -24,4 +24,6 @@ target_link_libraries(aquila_strategy
         aquila_config
         PkgConfig::tomlplusplus
         fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
 )

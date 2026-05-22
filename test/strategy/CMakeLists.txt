@@ -38,6 +38,10 @@ target_link_libraries(lead_lag_strategy_interface_test
     PRIVATE
         nova
 )
+target_compile_definitions(lead_lag_strategy_interface_test
+    PRIVATE
+        AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS
+)
 
 add_strategy_gtest(strategy_order_feedback_shm_integration_test
                    strategy_order_feedback_shm_integration_test.cpp)

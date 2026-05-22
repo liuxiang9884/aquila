@@ -431,6 +431,15 @@ int RunLiveOrdersRuntime(LoadedConfig loaded,
                            core::TradingRuntimeDiagnostics>;
 
   live::LiveOrdersStrategyStats stats;
+  const int strategy_id = loaded.strategy.strategy_id;
+  const std::size_t pair_count = loaded.lead_lag.pairs.size();
+  const std::uint64_t max_loop_seconds = loaded.strategy.loop.max_loop_seconds;
+  const bool feedback_enabled = loaded.strategy.feedback.enabled;
+  const std::string feedback_shm = loaded.strategy.feedback.shm_name;
+  const std::string feedback_channel = loaded.strategy.feedback.channel_name;
+  const std::string data_reader_name = loaded.data_reader.name;
+  const std::size_t data_reader_sources = loaded.data_reader.sources.size();
+  const std::string order_session_name = loaded.order_session.name;
   gate::OrderSessionConfig order_session_config =
       std::move(loaded.order_session);
   auto runtime_result = Runtime::Create(
@@ -448,11 +457,21 @@ int RunLiveOrdersRuntime(LoadedConfig loaded,
     return 1;
   }
 
+  NOVA_INFO(
+      "lead_lag_live_orders_runtime_started strategy_id={} pairs={} "
+      "max_loop_seconds={} feedback_enabled={} feedback_shm={} "
+      "feedback_channel={} order_session={} data_reader={} sources={}",
+      strategy_id, pair_count, max_loop_seconds,
+      feedback_enabled ? "true" : "false", feedback_shm, feedback_channel,
+      order_session_name, data_reader_name, data_reader_sources);
+
   const int runtime_exit_code = runtime_result.value->Run();
   const int exit_code =
       live::ResolveLiveOrdersExitCode(runtime_exit_code, stats);
   const core::TradingRuntimeLoopStats& loop_stats =
       runtime_result.value->diagnostics().stats();
+  const core::StrategyFeedbackStats& feedback_stats =
+      runtime_result.value->order_manager().feedback_stats();
   const std::string recovery_fields =
       live::FormatRecoveryDiagnosticsFields(stats.recovery);
 
@@ -471,7 +490,9 @@ int RunLiveOrdersRuntime(LoadedConfig loaded,
       "order_responses={} order_feedbacks={} {} loop_iterations={} "
       "idle_iterations={} order_response_polls={} order_response_events={} "
       "order_feedback_polls={} order_feedback_events={} data_reader_polls={} "
-      "data_reader_empty_polls={} data_reader_events={}\n",
+      "data_reader_empty_polls={} data_reader_events={} "
+      "unknown_local_order_feedbacks={} duplicate_or_stale_feedbacks={} "
+      "terminal_feedbacks_ignored={} feedback_continuity_lost_events={}\n",
       exit_code, runtime_exit_code,
       stats.continuity_lost_stop_requested ? "true" : "false",
       stats.book_tickers, stats.order_responses, stats.order_feedbacks,
@@ -479,7 +500,11 @@ int RunLiveOrdersRuntime(LoadedConfig loaded,
       loop_stats.order_response_poll_calls, loop_stats.order_response_events,
       loop_stats.order_feedback_poll_calls, loop_stats.order_feedback_events,
       loop_stats.data_reader_poll_calls, loop_stats.data_reader_empty_polls,
-      loop_stats.data_reader_events);
+      loop_stats.data_reader_events,
+      feedback_stats.unknown_local_order_feedbacks,
+      feedback_stats.duplicate_or_stale_feedbacks,
+      feedback_stats.terminal_feedbacks_ignored,
+      feedback_stats.feedback_continuity_lost_events);
   return exit_code;
 }
 

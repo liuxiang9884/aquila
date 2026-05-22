@@ -12,9 +12,12 @@
 #include <utility>
 #include <vector>
 
+#include <magic_enum/magic_enum.hpp>
+
 #include "core/market_data/types.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_types.h"
+#include "nova/utils/log.h"
 #include "strategy/lead_lag/alignment.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/execution_state.h"
@@ -56,6 +59,165 @@ struct SignalDiagnostics {
   PositionDirection position_direction{PositionDirection::kNone};
   double trailing_price{0.0};
 };
+
+namespace detail {
+
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+struct StrategyOrderIntentLogRecordForTest {
+  std::string_view symbol;
+  std::int32_t symbol_id{0};
+  SignalAction action{SignalAction::kNone};
+  OrderSide side{OrderSide::kBuy};
+  bool reduce_only{false};
+  std::uint64_t group_id{0};
+  std::int64_t quantity{0};
+  double price{0.0};
+  double target_open_notional{0.0};
+  double estimated_notional{0.0};
+  std::size_t active_groups{0};
+};
+
+using StrategyOrderIntentLogObserverForTest = void (*)(
+    const StrategyOrderIntentLogRecordForTest& record) noexcept;
+
+[[nodiscard]] inline StrategyOrderIntentLogObserverForTest&
+StrategyOrderIntentLogObserverSlotForTest() noexcept {
+  static StrategyOrderIntentLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+inline void SetStrategyOrderIntentLogObserverForTest(
+    StrategyOrderIntentLogObserverForTest observer) noexcept {
+  StrategyOrderIntentLogObserverSlotForTest() = observer;
+}
+
+inline void NotifyStrategyOrderIntentLogObserverForTest(
+    const StrategyOrderIntentLogRecordForTest& record) noexcept {
+  StrategyOrderIntentLogObserverForTest observer =
+      StrategyOrderIntentLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+#endif
+
+inline void LogStrategyOrderIntent(
+    std::string_view symbol, std::int32_t symbol_id, SignalAction action,
+    OrderSide side, bool reduce_only, std::uint64_t group_id,
+    std::int64_t quantity, double price, double target_open_notional,
+    double estimated_notional, std::size_t active_groups) noexcept {
+  if (::nova::kLogManager.logger() != nullptr) {
+    NOVA_INFO(
+        "lead_lag_order_intent symbol={} symbol_id={} action={} side={} "
+        "reduce_only={} group_id={} quantity={} price={:.12g} "
+        "target_open_notional={:.12g} estimated_notional={:.12g} "
+        "active_groups={}",
+        symbol, symbol_id, magic_enum::enum_name(action),
+        magic_enum::enum_name(side), reduce_only ? "true" : "false", group_id,
+        quantity, price, target_open_notional, estimated_notional,
+        active_groups);
+  }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  NotifyStrategyOrderIntentLogObserverForTest(
+      StrategyOrderIntentLogRecordForTest{.symbol = symbol,
+                                          .symbol_id = symbol_id,
+                                          .action = action,
+                                          .side = side,
+                                          .reduce_only = reduce_only,
+                                          .group_id = group_id,
+                                          .quantity = quantity,
+                                          .price = price,
+                                          .target_open_notional =
+                                              target_open_notional,
+                                          .estimated_notional =
+                                              estimated_notional,
+                                          .active_groups = active_groups});
+#endif
+}
+
+inline void LogStrategyOrderIntentRejected(
+    std::string_view reason, std::string_view symbol, std::int32_t symbol_id,
+    SignalAction action, OrderSide side, bool reduce_only,
+    std::uint64_t group_id, std::int64_t quantity, double price,
+    double target_open_notional, double estimated_notional,
+    double gross_before = 0.0, double gross_after = 0.0,
+    double max_gross_notional = 0.0, std::uint64_t local_order_id = 0,
+    std::string_view place_status = "-") noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_WARNING(
+      "lead_lag_order_intent_rejected reason={} symbol={} symbol_id={} "
+      "action={} side={} reduce_only={} group_id={} quantity={} "
+      "price={:.12g} target_open_notional={:.12g} "
+      "estimated_notional={:.12g} gross_before={:.12g} "
+      "gross_after={:.12g} max_gross_notional={:.12g} "
+      "local_order_id={} place_status={}",
+      reason, symbol, symbol_id, magic_enum::enum_name(action),
+      magic_enum::enum_name(side), reduce_only ? "true" : "false", group_id,
+      quantity, price, target_open_notional, estimated_notional, gross_before,
+      gross_after, max_gross_notional, local_order_id, place_status);
+}
+
+inline void LogStrategyOrderResponse(
+    const core::OrderResponseEvent& event) noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_INFO("lead_lag_order_response kind={} local_order_id={} "
+            "exchange_order_id={}",
+            magic_enum::enum_name(event.kind), event.local_order_id,
+            event.exchange_order_id);
+}
+
+inline void LogStrategyOrderFeedback(const OrderFeedbackEvent& event) noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_INFO(
+      "lead_lag_order_feedback kind={} local_order_id={} exchange_order_id={} "
+      "cumulative_filled_quantity={} left_quantity={} cancelled_quantity={} "
+      "fill_price={:.12g} role={} finish_reason={} reject_reason={}",
+      magic_enum::enum_name(event.kind), event.local_order_id,
+      event.exchange_order_id, event.cumulative_filled_quantity,
+      event.left_quantity, event.cancelled_quantity, event.fill_price,
+      magic_enum::enum_name(event.role),
+      magic_enum::enum_name(event.finish_reason),
+      magic_enum::enum_name(event.reject_reason));
+}
+
+inline void LogStrategyFeedbackContinuityLost(
+    const OrderFeedbackEvent& event) noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_ERROR(
+      "lead_lag_feedback_continuity_lost scope={} reason={} sequence={} "
+      "local_receive_ns={} new_entries_paused=true needs_reconcile=true",
+      magic_enum::enum_name(event.continuity_scope),
+      magic_enum::enum_name(event.continuity_reason),
+      event.continuity_sequence, event.local_receive_ns);
+}
+
+inline void LogStrategyOrderFinished(
+    const core::StrategyOrder& order, std::size_t active_groups) noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_INFO(
+      "lead_lag_order_finished local_order_id={} symbol_id={} symbol={} "
+      "status={} reduce_only={} quantity={} cumulative_filled_quantity={} "
+      "average_fill_price={:.12g} last_fill_price={:.12g} "
+      "exchange_order_id={} active_groups={}",
+      order.local_order_id, order.symbol_id, order.symbol,
+      magic_enum::enum_name(order.status),
+      order.reduce_only ? "true" : "false", order.quantity,
+      order.cumulative_filled_quantity, order.AverageFillPrice(),
+      order.last_fill_price, order.exchange_order_id, active_groups);
+}
+
+}  // namespace detail
 
 class Strategy {
  public:
@@ -135,6 +297,7 @@ class Strategy {
   template <typename ContextT>
   void OnOrderResponse(const core::OrderResponseEvent& event,
                        ContextT& context) noexcept {
+    detail::LogStrategyOrderResponse(event);
     ApplyFinishedOrder(event.local_order_id, context);
   }
 
@@ -142,6 +305,7 @@ class Strategy {
   void OnOrderFeedback(const OrderFeedbackEvent& event,
                        ContextT& context) noexcept {
     if (event.kind == OrderFeedbackKind::kContinuityLost) {
+      detail::LogStrategyFeedbackContinuityLost(event);
       if (recovery_state_ != RecoveryState::kManualIntervention) {
         recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
       }
@@ -152,6 +316,7 @@ class Strategy {
       }
       return;
     }
+    detail::LogStrategyOrderFeedback(event);
     ApplyFinishedOrder(event.local_order_id, context);
   }
 
@@ -530,7 +695,18 @@ class Strategy {
           OpenOrderQuantity(runtime->pair, last_signal_decision_.intent.price,
                             last_signal_decision_.intent.side);
     }
+    const std::string_view symbol =
+        runtime->pair.lag_instrument.exchange_symbol.empty()
+            ? std::string_view(runtime->pair.symbol)
+            : std::string_view(runtime->pair.lag_instrument.exchange_symbol);
     if (quantity <= 0) {
+      detail::LogStrategyOrderIntentRejected(
+          "zero_quantity", symbol, runtime->pair.symbol_id,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, quantity,
+          last_signal_decision_.intent.price,
+          runtime->pair.execute.open_notional, 0.0);
       return;
     }
 
@@ -538,6 +714,12 @@ class Strategy {
         last_signal_decision_.intent.price, runtime->pair.lag_instrument,
         last_signal_decision_.intent.side);
     if (order_price <= 0.0) {
+      detail::LogStrategyOrderIntentRejected(
+          "invalid_price", symbol, runtime->pair.symbol_id,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, quantity, order_price,
+          runtime->pair.execute.open_notional, 0.0);
       return;
     }
 
@@ -545,6 +727,15 @@ class Strategy {
         quantity, order_price, runtime->pair.lag_instrument);
     if (!last_signal_decision_.intent.reduce_only &&
         !GlobalRiskAllowsOpen(quantity, order_notional)) {
+      const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
+      detail::LogStrategyOrderIntentRejected(
+          "risk_limit", symbol, runtime->pair.symbol_id,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, quantity, order_price,
+          runtime->pair.execute.open_notional, order_notional,
+          totals.gross_notional, totals.gross_notional + order_notional,
+          config_.risk.max_gross_notional);
       RejectSignal(SignalRejectReason::kRiskLimit);
       return;
     }
@@ -552,13 +743,23 @@ class Strategy {
     OrderPriceTextStorage* price_text_storage = AcquireOrderPriceText(
         order_price, runtime->pair.lag_instrument.price_decimal_places);
     if (price_text_storage == nullptr) {
+      detail::LogStrategyOrderIntentRejected(
+          "price_text_slot_full", symbol, runtime->pair.symbol_id,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, quantity, order_price,
+          runtime->pair.execute.open_notional, order_notional);
       return;
     }
     const std::string_view price_text = price_text_storage->view();
-    const std::string_view symbol =
-        runtime->pair.lag_instrument.exchange_symbol.empty()
-            ? std::string_view(runtime->pair.symbol)
-            : std::string_view(runtime->pair.lag_instrument.exchange_symbol);
+
+    detail::LogStrategyOrderIntent(
+        symbol, runtime->pair.symbol_id, last_signal_decision_.action,
+        last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only,
+        last_signal_decision_.group_id, quantity, order_price,
+        runtime->pair.execute.open_notional, order_notional,
+        runtime->execution.active_group_count());
 
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
@@ -573,6 +774,13 @@ class Strategy {
             .reduce_only = last_signal_decision_.intent.reduce_only,
         });
     if (placed.local_order_id == 0) {
+      detail::LogStrategyOrderIntentRejected(
+          "place_local_rejected", symbol, runtime->pair.symbol_id,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, quantity, order_price,
+          runtime->pair.execute.open_notional, order_notional, 0.0, 0.0, 0.0,
+          placed.local_order_id, magic_enum::enum_name(placed.status));
       ReleaseOrderPriceText(price_text_storage);
       return;
     }
@@ -587,6 +795,13 @@ class Strategy {
       return;
     }
 
+    detail::LogStrategyOrderIntentRejected(
+        "place_local_rejected", symbol, runtime->pair.symbol_id,
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only, last_signal_decision_.group_id,
+        quantity, order_price, runtime->pair.execute.open_notional,
+        order_notional, 0.0, 0.0, 0.0, placed.local_order_id,
+        magic_enum::enum_name(placed.status));
     RollbackRejectedSubmit(runtime, close_group, placed.local_order_id,
                            context);
   }
@@ -662,6 +877,10 @@ class Strategy {
       [[maybe_unused]] const ExecutionApplyResult applied =
           runtime->execution.ApplyTerminalOrder(*order,
                                                 runtime->pair.lag_instrument);
+      detail::LogStrategyOrderFinished(
+          *order, runtime->execution.active_group_count());
+    } else {
+      detail::LogStrategyOrderFinished(*order, 0);
     }
     if (context.RetireFinishedOrder(local_order_id)) {
       EraseOrderPriceText(local_order_id);

@@ -11,6 +11,8 @@
 #include <utility>
 
 #include <absl/container/flat_hash_map.h>
+#include <magic_enum/magic_enum.hpp>
+#include <simdjson.h>
 
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
@@ -18,7 +20,7 @@
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/submit_response_parser.h"
-#include <simdjson.h>
+#include "nova/utils/log.h"
 
 namespace aquila::gate {
 
@@ -177,16 +179,28 @@ class OrderSession {
   template <typename OrderT>
   OrderSendResult PlaceOrder(const OrderT& order) noexcept {
     if (!active_) {
+      LogGateOrderSendFailed("place", OrderSendStatus::kNotActive,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotActive, true);
     }
     if (!login_ready_) {
+      LogGateOrderSendFailed("place", OrderSendStatus::kNotLoggedIn,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
     if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
+      LogGateOrderSendFailed("place", OrderSendStatus::kInflightFull,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
     const OrderType order_type = OrderTypeForGate(order);
     if (order_type != OrderType::kLimit) {
+      LogGateOrderSendFailed("place", OrderSendStatus::kUnsupportedOrderType,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kUnsupportedOrderType, true);
     }
 
@@ -206,18 +220,26 @@ class OrderSession {
                                .reduce_only = order.reduce_only},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
-      return SendFailure(MapEncodeStatus(encoded.status), sequence,
-                         encoded_request_id);
+      const OrderSendStatus status = MapEncodeStatus(encoded.status);
+      LogGateOrderSendFailed("place", status, order.local_order_id, active_,
+                             login_ready_, inflight_count(),
+                             request_map_capacity_);
+      return SendFailure(status, sequence, encoded_request_id);
     }
 
     const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
     if (status != OrderSendStatus::kOk) {
+      LogGateOrderSendFailed("place", status, order.local_order_id, active_,
+                             login_ready_, inflight_count(),
+                             request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
+    LogGatePlaceOrderSent(order, sequence, encoded_request_id,
+                          inflight_count());
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id};
@@ -226,39 +248,57 @@ class OrderSession {
   template <typename OrderT>
   OrderSendResult CancelOrder(const OrderT& order) noexcept {
     if (!active_) {
+      LogGateOrderSendFailed("cancel", OrderSendStatus::kNotActive,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotActive, true);
     }
     if (!login_ready_) {
+      LogGateOrderSendFailed("cancel", OrderSendStatus::kNotLoggedIn,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
     if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
+      LogGateOrderSendFailed("cancel", OrderSendStatus::kInflightFull,
+                             order.local_order_id, active_, login_ready_,
+                             inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
 
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kCancelOrder, sequence);
+    const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(order);
     std::array<char, kCancelOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
         CancelOrderEncodeFields{
             .timestamp = NowSeconds(),
             .encoded_request_id = encoded_request_id,
             .local_order_id = order.local_order_id,
-            .exchange_order_id = ExchangeOrderIdForCancel(order)},
+            .exchange_order_id = exchange_order_id},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
-      return SendFailure(MapEncodeStatus(encoded.status), sequence,
-                         encoded_request_id);
+      const OrderSendStatus status = MapEncodeStatus(encoded.status);
+      LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
+                             login_ready_, inflight_count(),
+                             request_map_capacity_);
+      return SendFailure(status, sequence, encoded_request_id);
     }
 
     const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
     if (status != OrderSendStatus::kOk) {
+      LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
+                             login_ready_, inflight_count(),
+                             request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
+    LogGateCancelOrderSent(order.local_order_id, exchange_order_id, sequence,
+                           encoded_request_id, inflight_count());
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id};
@@ -383,6 +423,92 @@ class OrderSession {
   }
 
   template <typename OrderT>
+  static void LogGatePlaceOrderSent(
+      const OrderT& order, std::uint64_t request_sequence,
+      std::uint64_t encoded_request_id, std::size_t inflight) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "gate_order_send_ok type=place local_order_id={} "
+        "request_sequence={} encoded_request_id={} contract={} side={} "
+        "signed_size={} price={} tif={} reduce_only={} inflight={}",
+        order.local_order_id, request_sequence, encoded_request_id,
+        order.symbol, magic_enum::enum_name(order.side),
+        SignedOrderSizeForGate(order), order.price_text,
+        magic_enum::enum_name(order.time_in_force),
+        order.reduce_only ? "true" : "false", inflight);
+  }
+
+  static void LogGateCancelOrderSent(
+      std::uint64_t local_order_id, std::uint64_t exchange_order_id,
+      std::uint64_t request_sequence, std::uint64_t encoded_request_id,
+      std::size_t inflight) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "gate_order_send_ok type=cancel local_order_id={} "
+        "exchange_order_id={} request_sequence={} encoded_request_id={} "
+        "inflight={}",
+        local_order_id, exchange_order_id, request_sequence,
+        encoded_request_id, inflight);
+  }
+
+  static void LogGateOrderSendFailed(
+      std::string_view type, OrderSendStatus status,
+      std::uint64_t local_order_id, bool active, bool login_ready,
+      std::size_t inflight, std::size_t capacity) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_WARNING(
+        "gate_order_send_failed type={} status={} local_order_id={} "
+        "active={} login_ready={} inflight={} capacity={}",
+        type, magic_enum::enum_name(status), local_order_id,
+        active ? "true" : "false", login_ready ? "true" : "false", inflight,
+        capacity);
+  }
+
+  static void LogGateOrderResponse(
+      const GateSubmitResponse& parsed, std::uint64_t local_order_id,
+      std::uint64_t exchange_order_id) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "gate_order_response kind={} local_order_id={} exchange_order_id={} "
+        "request_sequence={} channel={} http_status={} error_label_hash={}",
+        magic_enum::enum_name(parsed.kind), local_order_id, exchange_order_id,
+        parsed.request_id.sequence, static_cast<int>(parsed.channel),
+        parsed.http_status, parsed.error_label_hash);
+  }
+
+  static void LogGateOrderResponseIgnored(
+      std::string_view reason, const GateSubmitResponse& parsed) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_WARNING(
+        "gate_order_response_ignored reason={} request_sequence={} "
+        "channel={} kind={} http_status={}",
+        reason, parsed.request_id.sequence, static_cast<int>(parsed.channel),
+        magic_enum::enum_name(parsed.kind), parsed.http_status);
+  }
+
+  static void LogGateOrderResponseUnknownRequestId(
+      const GateSubmitResponse& parsed) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_WARNING(
+        "gate_order_response_unknown_request_id request_sequence={} "
+        "channel={} kind={} http_status={}",
+        parsed.request_id.sequence, static_cast<int>(parsed.channel),
+        magic_enum::enum_name(parsed.kind), parsed.http_status);
+  }
+
+  template <typename OrderT>
   [[nodiscard]] std::uint64_t ExchangeOrderIdForCancel(
       const OrderT& order) const noexcept {
     const std::uint64_t exchange_order_id =
@@ -472,6 +598,7 @@ class OrderSession {
 
     auto it = request_id_to_local_order_id_.find(parsed.request_id.sequence);
     if (it == request_id_to_local_order_id_.end()) {
+      LogGateOrderResponseUnknownRequestId(parsed);
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordUnknownRequestId();
       }
@@ -480,22 +607,27 @@ class OrderSession {
 
     const std::uint64_t local_order_id = it->second;
     if (!RequestTypeMatchesChannel(parsed)) {
+      LogGateOrderResponseIgnored("request_type_channel_mismatch", parsed);
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
     if (parsed.kind == GateSubmitResponseKind::kUnknown) {
+      LogGateOrderResponseIgnored("unknown_kind", parsed);
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
     if (!ResponseStatusMatchesKind(parsed)) {
+      LogGateOrderResponseIgnored("status_kind_mismatch", parsed);
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
     if (parsed.kind == GateSubmitResponseKind::kAck) {
       if (!AckReqIdMatchesRequestId(parsed)) {
+        LogGateOrderResponseIgnored("ack_req_id_mismatch", parsed);
         RecordIgnoredMessage();
         return websocket::DeliveryResult::kAccepted;
       }
+      LogGateOrderResponse(parsed, local_order_id, 0);
       response_handler_.OnOrderResponse(
           OrderResponse{.kind = OrderResponseKind::kAck,
                         .local_order_id = local_order_id,
@@ -514,6 +646,7 @@ class OrderSession {
     const bool is_error = parsed.kind == GateSubmitResponseKind::kError;
     if (!is_error && !FinalResultMatchesLocalOrder(parsed, local_order_id)) {
       request_id_to_local_order_id_.erase(it);
+      LogGateOrderResponseIgnored("final_result_local_order_mismatch", parsed);
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
@@ -530,6 +663,7 @@ class OrderSession {
                               : OrderResponseKind::kCancelAccepted)
                   : (is_error ? OrderResponseKind::kRejected
                               : OrderResponseKind::kAccepted);
+    LogGateOrderResponse(parsed, local_order_id, parsed.exchange_order_id);
     response_handler_.OnOrderResponse(
         OrderResponse{.kind = kind,
                       .local_order_id = local_order_id,

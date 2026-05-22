@@ -195,6 +195,44 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
+std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
+    g_order_intent_logs{};
+std::size_t g_order_intent_log_count{0};
+
+void CaptureStrategyOrderIntentLogForTest(
+    const leadlag::detail::StrategyOrderIntentLogRecordForTest& record)
+    noexcept {
+  if (g_order_intent_log_count >= g_order_intent_logs.size()) {
+    return;
+  }
+  g_order_intent_logs[g_order_intent_log_count] = record;
+  ++g_order_intent_log_count;
+}
+
+void ResetStrategyOrderIntentLogCapture() noexcept {
+  g_order_intent_logs = {};
+  g_order_intent_log_count = 0;
+  leadlag::detail::SetStrategyOrderIntentLogObserverForTest(nullptr);
+}
+
+class StrategyOrderIntentLogCaptureGuard {
+ public:
+  StrategyOrderIntentLogCaptureGuard() noexcept {
+    ResetStrategyOrderIntentLogCapture();
+    leadlag::detail::SetStrategyOrderIntentLogObserverForTest(
+        CaptureStrategyOrderIntentLogForTest);
+  }
+
+  ~StrategyOrderIntentLogCaptureGuard() noexcept {
+    ResetStrategyOrderIntentLogCapture();
+  }
+
+  StrategyOrderIntentLogCaptureGuard(
+      const StrategyOrderIntentLogCaptureGuard&) = delete;
+  StrategyOrderIntentLogCaptureGuard& operator=(
+      const StrategyOrderIntentLogCaptureGuard&) = delete;
+};
+
 struct FakeOrderSession {
   enum class SendStatus : std::uint8_t { kOk, kRejected };
 
@@ -642,6 +680,32 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_TRUE(strategy.last_signal_diagnostics_valid());
   EXPECT_EQ(strategy.last_signal_diagnostics().group_id, decision.group_id);
   EXPECT_EQ(strategy.last_signal_diagnostics().active_group_count, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderIntentLogCaptureGuard log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  ASSERT_EQ(g_order_intent_log_count, 1U);
+  const leadlag::detail::StrategyOrderIntentLogRecordForTest& record =
+      g_order_intent_logs[0];
+  EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(record.symbol_id, 3);
+  EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
+  EXPECT_FALSE(record.reduce_only);
+  EXPECT_EQ(record.group_id, 0U);
+  EXPECT_EQ(record.quantity, 9);
+  EXPECT_DOUBLE_EQ(record.price, 102.1);
+  EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
+  EXPECT_DOUBLE_EQ(record.estimated_notional, 918.9);
+  EXPECT_EQ(record.active_groups, 0U);
 }
 
 TEST(LeadLagStrategyInterfaceTest,

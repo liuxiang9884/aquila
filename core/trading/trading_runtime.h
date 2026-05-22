@@ -340,6 +340,10 @@ class TradingRuntime {
     return diagnostics_;
   }
 
+  [[nodiscard]] const OrderManagerT& order_manager() const noexcept {
+    return *order_manager_;
+  }
+
  private:
   TradingRuntime() noexcept = default;
 
