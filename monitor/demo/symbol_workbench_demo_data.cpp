@@ -6,7 +6,7 @@ namespace aquila::monitor {
 namespace {
 
 constexpr std::array<SymbolSummary, 11> kSymbolSummaries{{
-    {.symbol = "ROVE_USDT",
+    {.symbol = "PROVE_USDT",
      .net_position = -8.0,
      .open_order_count = 3,
      .total_pnl = -18.4,
@@ -325,7 +325,7 @@ constexpr SymbolDetail kZecDetail{
 constexpr std::array<std::string_view, 6> kEvents{{
     "11:40:02 ZEC_USDT Aquila buy filled qty=3 avg=62.08 fee=-0.06",
     "11:40:05 ZEC_USDT Manual sell open qty=2 px=63.40",
-    "11:40:09 ROVE_USDT drift: REST open order not seen in WS",
+    "11:40:09 PROVE_USDT drift: REST open order not seen in WS",
     "11:40:12 health warning disk_root usage 71%",
     "11:40:14 feedback stale gate_order_feedback_session heartbeat 5.2s",
     "11:40:16 ZEC_USDT market placeholder refresh",

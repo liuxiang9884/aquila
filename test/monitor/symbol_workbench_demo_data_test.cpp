@@ -12,7 +12,7 @@ TEST(SymbolWorkbenchDemoDataTest, ContainsRequestedSymbolsInOrder) {
   ASSERT_EQ(symbols.size(), 11U);
 
   constexpr std::string_view kExpected[] = {
-      "ROVE_USDT", "RAVE_USDT", "ZEC_USDT",   "SIREN_USDT",
+      "PROVE_USDT", "RAVE_USDT", "ZEC_USDT",   "SIREN_USDT",
       "ETC_USDT",  "DASH_USDT", "RIVER_USDT", "SUI_USDT",
       "INJ_USDT",  "ENA_USDT",  "BRETT_USDT",
   };

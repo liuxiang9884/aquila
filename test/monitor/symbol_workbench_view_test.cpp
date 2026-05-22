@@ -74,7 +74,7 @@ TEST(SymbolWorkbenchViewTest, SymbolPaneUsesVisibleRowNumbers) {
 
   ExpectTokensInOrder(rendered, {"num", "symbol", "pos", "open", "pnl"});
   ExpectTokensInOrder(rendered,
-                      {"1", "ROVE_USDT", "2", "RAVE_USDT", "3", "ZEC_USDT"});
+                      {"1", "PROVE_USDT", "2", "RAVE_USDT", "3", "ZEC_USDT"});
 }
 
 TEST(SymbolWorkbenchViewTest, FullWorkbenchRendersBalanceStripUnderTopBar) {
