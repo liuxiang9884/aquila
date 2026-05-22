@@ -99,12 +99,15 @@ struct MarketDataRow {
   std::string_view exchange_symbol;
   std::string_view market_data_id;
   bool has_data{true};
+  bool has_last_price{true};
   double last_price{0.0};
   double bid_price{0.0};
   double bid_volume{0.0};
   double ask_price{0.0};
   double ask_volume{0.0};
+  bool has_volume{true};
   double volume{0.0};
+  bool has_turnover{true};
   double turnover{0.0};
   std::string_view updated_time;
 };

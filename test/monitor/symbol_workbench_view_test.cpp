@@ -1,5 +1,6 @@
 #include "monitor/tui/symbol_workbench_view.h"
 
+#include <array>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -8,7 +9,11 @@
 #include <ftxui/screen/screen.hpp>
 #include <gtest/gtest.h>
 
+#include "core/common/types.h"
+#include "core/config/instrument_catalog.h"
 #include "monitor/demo/symbol_workbench_demo_data.h"
+#include "monitor/market_data/market_data_update.h"
+#include "monitor/model/market_data_view_model.h"
 #include "monitor/tui/runtime_health_view.h"
 
 namespace aquila::monitor {
@@ -34,7 +39,52 @@ void ExpectTokensInOrder(std::string_view text,
   }
 }
 
-TEST(SymbolWorkbenchViewTest, MarketPaneUsesCompactHeadersAndNaPlaceholder) {
+[[nodiscard]] std::array<config::InstrumentInfo, 2> ZecInstruments() {
+  return {
+      config::InstrumentInfo{
+          .symbol_id = 6,
+          .exchange = Exchange::kGate,
+          .symbol = "ZEC_USDT",
+          .exchange_symbol = "ZEC_USDT",
+      },
+      config::InstrumentInfo{
+          .symbol_id = 6,
+          .exchange = Exchange::kBinance,
+          .symbol = "ZEC_USDT",
+          .exchange_symbol = "ZECUSDT",
+      },
+  };
+}
+
+[[nodiscard]] MarketDataBatch LiveZecBatch() {
+  MarketDataBatch batch{};
+  batch.row_count = 2;
+  batch.rows[0] = MarketDataRowUpdate{
+      .exchange = Exchange::kGate,
+      .symbol_id = 6,
+      .id = 9841,
+      .exchange_ns = 45'296'700'000'000,
+      .local_ns = 45'296'789'000'000,
+      .bid_price = 62.85,
+      .bid_volume = 18.4,
+      .ask_price = 62.86,
+      .ask_volume = 9.7,
+  };
+  batch.rows[1] = MarketDataRowUpdate{
+      .exchange = Exchange::kBinance,
+      .symbol_id = 6,
+      .id = 4427,
+      .exchange_ns = 45'296'701'000'000,
+      .local_ns = 45'296'790'000'000,
+      .bid_price = 62.84,
+      .bid_volume = 31.2,
+      .ask_price = 62.87,
+      .ask_volume = 24.1,
+  };
+  return batch;
+}
+
+TEST(SymbolWorkbenchViewTest, MarketPaneUsesCompactHeadersAndNeutralRowLabel) {
   const SymbolDetail* detail = DemoSelectedSymbolDetail();
   ASSERT_NE(detail, nullptr);
 
@@ -43,11 +93,38 @@ TEST(SymbolWorkbenchViewTest, MarketPaneUsesCompactHeadersAndNaPlaceholder) {
 
   EXPECT_EQ(rendered.find("market_data_id"), std::string::npos);
   EXPECT_EQ(rendered.find("not available"), std::string::npos);
+  EXPECT_EQ(rendered.find("placeholder"), std::string::npos);
   EXPECT_NE(rendered.find("NA"), std::string::npos);
   ExpectTokensInOrder(
       rendered, {"num", "exch", "symbol", "id", "last", "bid", "bid_vol", "ask",
                  "ask_vol", "vol", "turnover", "updated"});
   ExpectTokensInOrder(rendered, {"1", "Gate", "2", "Binance", "3", "OKX"});
+}
+
+TEST(SymbolWorkbenchViewTest,
+     MarketPaneRendersLiveRowsWithNaUnsupportedFields) {
+  const auto instruments = ZecInstruments();
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+  MarketDataViewModel model(snapshot.symbols, instruments,
+                            snapshot.selected_symbol);
+  model.ApplyBatch(LiveZecBatch());
+
+  ASSERT_NE(snapshot.selected_detail, nullptr);
+  SymbolDetail detail = *snapshot.selected_detail;
+  detail.market_data = model.SelectedRows();
+
+  const std::string rendered = RenderToString(
+      symbol_workbench_view_detail::MarketDataPane(detail), 220, 8);
+
+  EXPECT_EQ(rendered.find("placeholder"), std::string::npos);
+  ExpectTokensInOrder(rendered,
+                      {"MARKET BY EXCHANGE: ZEC_USDT", "2 rows / market rows"});
+  ExpectTokensInOrder(rendered,
+                      {"1", "Gate", "ZEC_USDT", "9841", "NA", "62.85", "18.4",
+                       "62.86", "9.7", "NA", "NA", "12:34:56.789"});
+  ExpectTokensInOrder(rendered,
+                      {"2", "Binance", "ZECUSDT", "4427", "NA", "62.84", "31.2",
+                       "62.87", "24.1", "NA", "NA", "12:34:56.790"});
 }
 
 TEST(SymbolWorkbenchViewTest, OrdersPaneMovesIdsBeforeUpdated) {

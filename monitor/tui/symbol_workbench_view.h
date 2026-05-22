@@ -38,8 +38,8 @@ inline std::string PriceText(double value) {
 }
 
 inline std::string MarketNumberText(const MarketDataRow& row, double value,
-                                    int precision) {
-  if (!row.has_data) {
+                                    int precision, bool has_value = true) {
+  if (!row.has_data || !has_value) {
     return "NA";
   }
   if (precision == 1) {
@@ -123,13 +123,14 @@ inline ftxui::Element MarketDataRowElement(std::size_t visible_index,
       "{:>3} {:<7} {:<11} {:<16} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} "
       "{:>12} {:<12}",
       visible_index, row.exchange, row.exchange_symbol, row.market_data_id,
-      MarketNumberText(row, row.last_price, 2),
+      MarketNumberText(row, row.last_price, 2, row.has_last_price),
       MarketNumberText(row, row.bid_price, 2),
       MarketNumberText(row, row.bid_volume, 1),
       MarketNumberText(row, row.ask_price, 2),
       MarketNumberText(row, row.ask_volume, 1),
-      MarketNumberText(row, row.volume, 1),
-      MarketNumberText(row, row.turnover, 2), row.updated_time));
+      MarketNumberText(row, row.volume, 1, row.has_volume),
+      MarketNumberText(row, row.turnover, 2, row.has_turnover),
+      row.updated_time));
   if (!row.has_data) {
     return line | ftxui::color(ftxui::Color::GrayLight);
   }
@@ -185,8 +186,7 @@ inline ftxui::Element MarketDataPane(const SymbolDetail& detail) {
   rows.push_back(ftxui::hbox({
       BoxTitle(fmt::format("MARKET BY EXCHANGE: {}", detail.symbol)),
       ftxui::filler(),
-      BoxTitle(
-          fmt::format("{} rows / placeholder data", detail.market_data.size())),
+      BoxTitle(fmt::format("{} rows / market rows", detail.market_data.size())),
   }));
   rows.push_back(ftxui::separator());
   rows.push_back(
