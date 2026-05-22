@@ -391,9 +391,12 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 **文件：**
 - Modify: `doc/lead_lag_live_runtime_plan.md`
+- Config: `config/order_feedback/gate_order_feedback_session_live_smoke_20260522.toml`
 - Runtime evidence: Gate REST query output and live runner output
 
 前置条件：Task4 的 emergency helper、`ContinuityLost` stop handoff 和 smoke 完成后，才允许开始小额真实订单 smoke。
+
+2026-05-22 ZEC_USDT `$10` guarded live smoke 记录：第一次启动时，strategy 读到旧 feedback SHM lane 中残留的 global `ContinuityLost`，立即返回 handoff exit code `10`，外围 guard 执行 emergency flatten，REST 复核 ZEC flat 且 open orders 为空。随后新增 live-smoke 专用 feedback session 配置，使用 `remove_existing=true` 在启动前重建 feedback SHM；第二次运行 600 秒正常退出，`book_tickers=124058`、`order_responses=0`、`order_feedbacks=0`、`recovery_state=normal`、`needs_reconcile=false`，最终 REST check flat。该记录只说明 runner / guard / fresh feedback SHM 可以无残留运行；因为窗口内没有产生订单，不计入 filled open / close smoke 完成项。
 
 - [ ] **Step 1: Filled open / close smoke**
 

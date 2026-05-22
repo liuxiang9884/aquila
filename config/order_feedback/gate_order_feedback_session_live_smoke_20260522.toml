@@ -1,0 +1,34 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_order_feedback_session_live_smoke_20260522.log"
+console_sink_name = "gate_order_feedback_session_live_smoke_console"
+backend_thread_name = "gate_order_feedback_session_live_smoke_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[order_feedback_session]
+name = "gate_order_feedback_session_live_smoke"
+settle = "usdt"
+
+[order_feedback_session.credentials]
+api_key_env = "TEST_KEY"
+api_secret_env = "TEST_SECRET"
+
+[order_feedback_session.websocket]
+target = "/v4/ws/usdt/sbe?sbe_schema_id=1"
+
+[order_feedback_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = true
+
+[order_feedback_session.websocket.execution_policy]
+bind_cpu_id = 4
+
+[order_feedback_session.shm]
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+max_strategy_count = 8
+queue_capacity = 65536
+create = true
+remove_existing = true
