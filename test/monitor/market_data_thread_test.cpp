@@ -134,6 +134,17 @@ template <std::size_t Capacity>
   return false;
 }
 
+[[nodiscard]] const MarketDataRowUpdate* FindRow(
+    std::span<const MarketDataRowUpdate> rows, Exchange exchange,
+    std::int32_t symbol_id) {
+  for (const MarketDataRowUpdate& row : rows) {
+    if (row.exchange == exchange && row.symbol_id == symbol_id) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
 [[nodiscard]] std::string UniqueMissingShmName() {
   const auto suffix =
       std::chrono::steady_clock::now().time_since_epoch().count();
@@ -531,6 +542,77 @@ required = false
   EXPECT_EQ(result.batch.rows[0].id, 7001);
   EXPECT_DOUBLE_EQ(result.batch.rows[0].bid_price, 62.85);
   EXPECT_DOUBLE_EQ(result.batch.rows[0].ask_price, 62.86);
+
+  std::error_code ignored;
+  std::filesystem::remove(config_path, ignored);
+  UnlinkShm(present_shm_name);
+}
+
+TEST(MarketDataSnapshotTest, ForcesDrainModeForVisibleRows) {
+  const std::string present_shm_name = UniquePresentShmName();
+  UnlinkShm(present_shm_name);
+
+  const market_data::BookTickerShmConfig shm_config{
+      .enabled = true,
+      .shm_name = present_shm_name,
+      .channel_name = "book_ticker_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  market_data::DataShmPublisher publisher(shm_config);
+  publisher.OnBookTicker(MakeTicker(Exchange::kGate, 4, 8001, 1.25, 1.26));
+  publisher.OnBookTicker(MakeTicker(Exchange::kGate, 6, 8002, 62.85, 62.86));
+
+  const std::filesystem::path config_path =
+      std::filesystem::temp_directory_path() /
+      ("aquila_snapshot_latest_monitor_shm_" + std::to_string(::getpid()) +
+       ".toml");
+  {
+    std::ofstream out(config_path);
+    out << R"toml(
+[instrument_catalog]
+file = ")toml"
+        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << R"toml("
+schema = "aquila.instrument.v1"
+
+[data_reader]
+name = "snapshot_latest_monitor_shm"
+max_events_per_drain = 4
+
+[[data_reader.sources]]
+name = "present_gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = ")toml"
+        << present_shm_name << R"toml("
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "latest"
+required = false
+)toml";
+  }
+
+  const MarketDataSnapshotResult result =
+      ReadMarketDataSnapshot(config_path, 223456789);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.batch.row_count, 2);
+  const std::span<const MarketDataRowUpdate> rows{
+      result.batch.rows.data(), result.batch.row_count};
+
+  const MarketDataRowUpdate* prove = FindRow(rows, Exchange::kGate, 4);
+  ASSERT_NE(prove, nullptr);
+  EXPECT_EQ(prove->id, 8001);
+  EXPECT_DOUBLE_EQ(prove->bid_price, 1.25);
+  EXPECT_DOUBLE_EQ(prove->ask_price, 1.26);
+
+  const MarketDataRowUpdate* zec = FindRow(rows, Exchange::kGate, 6);
+  ASSERT_NE(zec, nullptr);
+  EXPECT_EQ(zec->id, 8002);
+  EXPECT_DOUBLE_EQ(zec->bid_price, 62.85);
+  EXPECT_DOUBLE_EQ(zec->ask_price, 62.86);
 
   std::error_code ignored;
   std::filesystem::remove(config_path, ignored);

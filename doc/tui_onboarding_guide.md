@@ -15,7 +15,7 @@
 - Market data 第一版直接读取现有 Gate / Binance data session 发布的 `BookTicker` SHM；这是 broadcast queue，多 reader 独立 cursor，不会抢 strategy 的行情数据。
 - TUI 不自动启动 Gate / Binance data session；optional market data SHM 缺失时跳过对应 source，行情显示 `NA`，并在 alert 中提示对应 SHM unavailable；required source 缺失或全部 source 不可用时 live market data 标为 unavailable，但 TUI 进程继续运行。
 - 第一版跨线程交互只用 SPSC queue，不用 mutex 共享 UI model；UI thread 是 visible model 的唯一 owner。
-- 线程拆分为 UI thread、MarketDataThread、AccountMonitorThread 和 Nova log backend thread；order 和 health 暂放同一个 AccountMonitorThread。
+- 完整第一版目标线程拆分为 UI thread、MarketDataThread、AccountMonitorThread 和 Nova log backend thread；当前代码已落地 UI thread 和显式 `--live-market-data` 下的 MarketDataThread，order 和 health 后续暂放同一个 AccountMonitorThread。
 - MarketDataThread 使用 `drain` 模式读 SHM，在本线程内按严格单调的 Gate / Binance `BookTicker.id` coalesce 最新值，每 100ms 只把 changed rows 推给 UI。
 - 监控对象是单一 Gate futures 账户的全账户订单 / 仓位 / PnL，而不是只看 Aquila 自己创建的订单。
 - Aquila 订单通过 `text = t-<local_order_id>` 识别并标记 strategy id / local order id；外部程序订单、手工订单、未知 text 订单必须保留可见。

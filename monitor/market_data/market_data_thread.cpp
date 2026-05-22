@@ -261,9 +261,10 @@ struct StoreBookTickerHandler {
   return count;
 }
 
-void ForceEarliestVisibleStart(config::DataReaderConfig* config) noexcept {
+void ForceSnapshotReadMode(config::DataReaderConfig* config) noexcept {
   for (config::DataReaderSourceConfig& source : config->sources) {
     source.start_position = config::DataReaderStartPosition::kEarliestVisible;
+    source.read_mode = config::DataReaderReadMode::kDrain;
   }
 }
 
@@ -354,7 +355,7 @@ MarketDataSnapshotResult ReadMarketDataSnapshot(
     return result;
   }
 
-  ForceEarliestVisibleStart(&config_result.value);
+  ForceSnapshotReadMode(&config_result.value);
   try {
     MonitorRealtimeReader reader(&config_result.value,
                                  &result.unavailable_sources);

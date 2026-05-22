@@ -87,13 +87,15 @@ core/exchange/strategy/tools -> monitor
 
 ## 运行方式
 
-预期可执行文件：
+当前已实现的 demo / market data 运行入口：
 
 ```bash
-./build/debug/monitor/gate_account_tui --config config/monitors/gate_account_tui.toml
+./build/debug/monitor/gate_account_tui
+./build/debug/monitor/gate_account_tui --live-market-data
+./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
 ```
 
-典型配置内容：
+后续完整 account monitor 可再增加 `--config config/monitors/gate_account_tui.toml`。目标配置内容：
 
 ```toml
 [monitor]
@@ -492,13 +494,20 @@ SPSC backpressure 策略：
 - REST snapshot fixture + WS incremental fixture 组合。
 - FTXUI view model snapshot 测试，不做脆弱的 terminal pixel 测试。
 
-Live smoke：
+当前 market data smoke：
 
 ```bash
-./build/debug/monitor/gate_account_tui --config config/monitors/gate_account_tui.toml
+./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
+ctest --test-dir build/debug -R monitor_ --output-on-failure
 ```
 
-验证条件：
+当前验证条件：
+
+- 未启动 data session 时，Gate / Binance 行情行显示 `NA`，并出现 market data unavailable alert。
+- 如果已启动 Gate / Binance data session，dump snapshot 能读取 visible `BookTicker` SHM 并显示 bid / ask。
+- `last_price`、volume、turnover 仍显示 `NA`。
+
+后续完整 account monitor live smoke 验证条件：
 
 - 能登录 Gate private WS 并订阅 `futures.orders`。
 - REST snapshot 成功，状态栏显示 snapshot age。
