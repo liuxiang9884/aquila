@@ -18,6 +18,8 @@
 - 如果 Gate 账户是 LeadLag 专用账户，应急工具可以扫描并处理账户下所有 futures position。
 - 如果 Gate 账户可能混用其他策略或人工仓位，应急工具必须要求显式 contract allowlist，不能默认平掉全账户。
 - 市价平仓必须使用 reduce-only，避免应急脚本因方向、数量或重复执行错误打开新仓。
+- V1 不新增独立 `AccountPositionFeedbackSession`，也不把 account / position realtime feedback 放进恢复前置条件。
+- 对齐 Sirius 当前边界：`third_party/sirius/exchange/gate/trade/TradeEngine` 只启用 `futures.orders` 反馈进入策略事件队列，策略持仓由订单 filled / partial filled / cancel / reject 回报推导；account / position REST 查询用于快照和复核，不作为策略实时状态主线。
 
 ## 当前事实
 
@@ -332,5 +334,5 @@ V1 稳定后再评估是否继续实现自动恢复。已有 `scripts/gate/recon
 - `lead_lag_strategy --execute` 已接到真实 live-orders runtime；仍需要显式 `strategy.mode=live`、API 凭据、feedback SHM 和 data reader，默认 validate-only / signal-only 不提交订单。
 - `ContinuityLost` stop handoff、flat-account smoke、tiny-position smoke 和 continuity-lost stop-and-flat smoke 已完成。
 - `scripts/lead_lag/run_live_with_guard.py` 已作为外围 guard wrapper 落地，覆盖 preflight 拒绝启动、正常退出 final-check、异常退出 flatten、final-check 非 flat flatten 和 flatten failure 映射。
-- V1 应急成功后系统仍保持停止，不自动恢复交易；长期无人值守运行仍需要后续小额订单异常 smoke、account / position feedback 和 benchmark 证据。
+- V1 应急成功后系统仍保持停止，不自动恢复交易；外围 guard / emergency flatten 已完成，不再作为下一步开发目标。长期无人值守运行下一步优先补端到端 benchmark 和更长时间真实订单 guardrails；account / position realtime feedback 作为 V2 可选能力评估。
 - V2 read-only reconcile / resume 是后续优化，不是当前应急方案。

@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。长期运行前仍需 failure protocol probe、account / position 校验和后续 benchmark。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。当前 V1 不新增独立 account / position realtime feedback session；长期运行前优先补端到端 benchmark 和更长时间真实订单 guardrails。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -17,7 +17,7 @@
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
-- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。长时间真实下单前还需要 failure protocol probe、account / position 复核和后续端到端 benchmark。
+- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。长时间真实下单前还需要端到端 benchmark 和更长时间 guarded 运行证据；failure protocol probe 继续前要先确认 Gate 会返回最终 error 的安全请求形态。
 
 ## 文件结构
 
@@ -435,7 +435,9 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 - `cancel-rejected`，fallback text `order_id=t-999999`：cancel request send `kOk`，20 秒内 `responses=0`，timeout；REST 复核 BTC_USDT open orders 为空、position `size=0`。
 - `submit-rejected`，`BTC_USDT buy limit IOC size=0 price=0.01`：只收到 `kAck`，20 秒内无最终 `kRejected`，timeout；REST 复核 BTC_USDT open orders 为空、position `size=0`。
 
-结论：当前可以保留独立 probe 作为后续协议诊断入口，但 rejected / cancel-rejected live 证据仍未完成。后续优先级应转向 account / position feedback、REST reconcile / final check 和真实订单长跑 guardrails；如继续 failure response，需要先基于 Gate 官方协议或更低风险 sandbox / dedicated account 明确可返回最终 error 的请求形态。
+结论：当前可以保留独立 probe 作为后续协议诊断入口，但 rejected / cancel-rejected live 证据仍未完成。后续优先级应转向端到端 benchmark 和真实订单长跑 guardrails；如继续 failure response，需要先基于 Gate 官方协议或更低风险 sandbox / dedicated account 明确可返回最终 error 的请求形态。
+
+V1 不新增独立 `AccountPositionFeedbackSession`：运行中策略持仓由订单回报推导，停机、异常或 `ContinuityLost` 后由外围 guard 做 REST final check / emergency flatten；account / position realtime feedback 作为 V2 风控状态能力保留。
 
 - [x] **Step 4: Commit smoke evidence**
 
