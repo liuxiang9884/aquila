@@ -94,9 +94,9 @@
 ### 第五阶段：End-to-End Benchmark
 
 - Create: `benchmark/strategy/lead_lag_runtime_benchmark.cpp`
-  - 覆盖 `RealtimeDataReader -> LeadLag OnBookTicker -> order intent -> OrderManager -> Gate adapter` 的本地路径。
+  - 覆盖本地 book ticker 进入 `TradingRuntime -> LeadLag OnBookTicker -> OrderManager -> fake order session` 的 submit 路径。
 - Create: `benchmark/strategy/lead_lag_feedback_runtime_benchmark.cpp`
-  - 覆盖 `OrderFeedbackSession parser -> SHM -> TradingRuntime -> OrderManager -> LeadLag OnOrderFeedback()`。
+  - 覆盖 Gate `futures.orders` parser -> in-memory SHM -> `TradingRuntime -> OrderManager -> LeadLag OnOrderFeedback()` 的回报路径。
 - Modify: `benchmark/strategy/CMakeLists.txt`
 - Verify:
   - benchmark 只作为本地链路证据，不把没有 live 证据的结果写成生产收益结论。
@@ -469,27 +469,35 @@ git commit -m "Document lead lag live smoke evidence"
 
 **文件：**
 - Create: `benchmark/strategy/lead_lag_runtime_benchmark.cpp`
+- Create: `benchmark/strategy/lead_lag_feedback_runtime_benchmark.cpp`
 - Modify: `benchmark/strategy/CMakeLists.txt`
 
-- [ ] **Step 1: 写本地 runtime benchmark**
+- [x] **Step 1: 写本地 runtime benchmark**
 
-覆盖行情事件进入 LeadLag 到 OrderManager / Gate adapter 的本地路径；不访问外网。
+覆盖本地行情触发进入 `TradingRuntime -> LeadLag OnBookTicker -> OrderManager -> fake order session` 的 submit 路径；不访问外网。benchmark 使用确定性的三条 book ticker 触发 open-long IOC limit order，计时范围只包含触发 ticker 进入 runtime 到 fake session 收到订单。
 
-- [ ] **Step 2: 写 feedback benchmark**
+- [x] **Step 2: 写 feedback benchmark**
 
-覆盖 private feedback 固定事件进入 SHM、runtime 消费、OrderManager 更新和 LeadLag feedback hook。
+覆盖固定 terminal feedback event 进入 in-memory feedback SHM、reader poll、`TradingRuntime::HandleOrderFeedbackForTest()`、`OrderManager::OnOrderFeedback()` 和 LeadLag `OnOrderFeedback()`；不访问外网。fixture setup 使用 `PauseTiming()`，release 结果只解释本地路径，不解释真实网络或交易所延迟。
 
-- [ ] **Step 3: 运行 release benchmark**
+- [x] **Step 3: 运行 release benchmark**
 
 运行：
 
 ```bash
-./build.sh release
-taskset -c 2 ./build/release/benchmark/strategy/lead_lag_strategy_benchmark
-taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
+cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release --target lead_lag_runtime_benchmark lead_lag_feedback_runtime_benchmark -- -j8
+./build/release/benchmark/strategy/lead_lag_runtime_benchmark --benchmark_min_time=0.01s
+./build/release/benchmark/strategy/lead_lag_feedback_runtime_benchmark --benchmark_min_time=0.01s
 ```
 
-期望：benchmark 正常完成；文档只记录实测数据，不写没有证据的性能收益结论。
+2026-05-22 结果：
+
+- `lead_lag_runtime_benchmark`：4096 samples，p50 `1.019 us`、p99 `1.181 us`、p999 `12.729 us`、max `16.205 us`。
+- `lead_lag_feedback_runtime_benchmark`：4096 samples，p50 `635 ns`、p99 `780 ns`、p999 `1.212 us`、max `6.071 us`。
+- 额外验证：`cmake --build build/debug --target lead_lag_runtime_benchmark lead_lag_feedback_runtime_benchmark -- -j8` passed；`ctest --test-dir build/debug -R lead_lag --output-on-failure` passed 10/10；两个 debug benchmark smoke 均通过。
+
+边界：benchmark 正常完成；这些数字只作为本地链路证据，不写成真实交易环境收益结论。
 
 ## Live Smoke 顺序
 
@@ -502,10 +510,11 @@ taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
 7. feedback session 断线 / `ContinuityLost` stop-and-flat smoke。已完成。
 8. 小额 filled open / close。已完成。
 9. unfilled-cancel。已完成。
-10. rejected / cancel-rejected。
-11. 30 分钟真实订单 run。
-12. 2 到 4 小时真实订单 run。
-13. 更长时间真实订单 run。
+10. 端到端本地 benchmark。已完成。
+11. rejected / cancel-rejected。
+12. 30 分钟真实订单 run。
+13. 2 到 4 小时真实订单 run。
+14. 更长时间真实订单 run。
 
 ## 完成标准
 

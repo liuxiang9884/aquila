@@ -17,3 +17,27 @@ target_link_libraries(lead_lag_strategy_benchmark
         aquila_strategy
         benchmark::benchmark_main
 )
+
+add_executable(lead_lag_runtime_benchmark
+    lead_lag_runtime_benchmark.cpp
+)
+
+target_link_libraries(lead_lag_runtime_benchmark
+    PRIVATE
+        aquila_strategy
+        benchmark::benchmark_main
+        nova
+)
+
+add_executable(lead_lag_feedback_runtime_benchmark
+    lead_lag_feedback_runtime_benchmark.cpp
+)
+
+target_link_libraries(lead_lag_feedback_runtime_benchmark
+    PRIVATE
+        aquila_evaluation
+        aquila_gate
+        aquila_strategy
+        benchmark::benchmark_main
+        nova
+)
