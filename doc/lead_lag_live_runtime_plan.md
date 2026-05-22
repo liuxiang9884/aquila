@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。小额真实订单和长期运行仍等待 flat-account / tiny-position / continuity-lost smoke、account / position 校验和端到端 benchmark。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。小额真实订单和长期运行仍等待 filled open / close、unfilled-cancel、failure smoke、account / position 校验和后续 benchmark。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -16,7 +16,8 @@
 - LeadLag live runner 已落地为 `tools/lead_lag/live_strategy.cpp`：默认 validate-only；`--connect-data` 进入 signal-only；`--execute` 只有在 `strategy.mode=live` 时解析为 `RunMode::kLiveOrders`。
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
-- 小额真实下单前仍缺 flat-account / tiny-position emergency smoke、`ContinuityLost` stop-and-flat smoke、account / position 复核和 live smoke guardrails；长时间真实下单前还需要 unfilled-cancel / failure smoke 和端到端 benchmark。
+- V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
+- 小额真实下单前仍缺 filled open / close、unfilled-cancel、rejected / cancel-rejected smoke；长时间真实下单前还需要 account / position 复核和后续端到端 benchmark。
 
 ## 文件结构
 
@@ -55,8 +56,12 @@
   - 保持 read-only 查询职责，输出 live smoke 后需要复核的 open orders、position、pending orders 和 margin / balance 摘要。
 - Create: `scripts/gate/reconcile_futures_orders.py`
   - 从本地 `local_order_id` / exchange order id / text 字段映射到 Gate open orders 和 historical order facts。
+- Create: `scripts/lead_lag/run_live_with_guard.py`
+  - 外围运行 guard：启动前 REST preflight，正常退出后 final REST check，异常退出或 final 非 flat 时调用 emergency flatten。
 - Test: `test/tools/gate/reconcile_futures_orders_test.cpp`
   - 覆盖 open order 恢复、已成交恢复、已撤单恢复、无法匹配进入 manual intervention。
+- Test: `scripts/lead_lag/run_live_with_guard_test.py`
+  - 覆盖 preflight 拒绝启动、正常退出 final-check、异常退出 flatten、final-check 非 flat flatten 和 flatten failure 映射。
 
 ### 第四阶段：Live Smoke Ladder
 

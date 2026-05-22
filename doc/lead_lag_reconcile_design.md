@@ -28,7 +28,7 @@
   - global continuity lost fanout 时 lane 满，publisher 会保留 pending event 后续重试。
 - 枚举中还保留了 `kReconnectUnknownWindow`、`kDecodeUnrecoverable`、`kProducerRestart`，这些应作为后续增强场景处理。
 - `OrderManager` 和 LeadLag `ExecutionState` 仍是内存状态；进程退出后不能靠它们自动恢复交易。
-- 当前已有 `scripts/gate/query_gate_account.py`、read-only `scripts/gate/reconcile_futures_orders.py` 和 V1 可下单应急工具 `scripts/gate/emergency_flatten_futures.py`。
+- 当前已有 `scripts/gate/query_gate_account.py`、read-only `scripts/gate/reconcile_futures_orders.py`、V1 可下单应急工具 `scripts/gate/emergency_flatten_futures.py` 和外围 guard wrapper `scripts/lead_lag/run_live_with_guard.py`。
 
 ## V1 应急流程
 
@@ -128,6 +128,34 @@ scripts/gate/emergency_flatten_futures.py \
 - `10`：检测到 `ContinuityLost`，live runner 已停止，等待外层执行 emergency flatten。
 - `11`：检测到 `ContinuityLost`，runner 尝试执行 emergency flatten 但失败或未确认 flat。
 
+## 外围 guard wrapper
+
+`scripts/lead_lag/run_live_with_guard.py` 是 V1 推荐入口，用于把 preflight、live runner、final REST check 和 emergency flatten 串成一个外围安全壳。它不改变 `TradingRuntime` 热路径，也不让 C++ runner 直接执行 REST 平仓。
+
+典型 allowlist 用法：
+
+```bash
+scripts/lead_lag/run_live_with_guard.py \
+  --settle usdt \
+  --contract BTC_USDT \
+  --poll-timeout-sec 30 \
+  --no-pretty \
+  -- \
+  ./build/debug/tools/lead_lag_strategy \
+    --config config/strategies/lead_lag_btc_strategy.toml \
+    --connect-data \
+    --execute \
+    --duration-sec 60
+```
+
+wrapper 行为：
+
+- 启动前查询 allowlist contracts，要求 open orders 为空、position `size=0`、`pending_orders=0`；不满足时拒绝启动，不自动清理共享账户残留。
+- 子进程 exit code 为 `0` 时仍执行 final REST check；final check flat 才返回 `0`。
+- 子进程 exit code 非 `0`、子进程异常、final REST check 失败或 final check 非 flat 时，调用 `emergency_flatten_futures.py` 的同模块逻辑执行 stop-and-flat。
+- emergency flatten 成功时 wrapper 返回 `10`，表示系统已经执行应急平仓但仍保持停机，等待人工复核。
+- emergency flatten 失败或无法确认 flat 时 wrapper 返回 `11`，不得自动重启交易。
+
 ## V1 验证
 
 最小验证顺序：
@@ -137,6 +165,7 @@ scripts/gate/emergency_flatten_futures.py \
 ```bash
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/query_gate_account_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/lead_lag/run_live_with_guard_test.py
 ```
 
 2. dry-run / plan-only
@@ -302,5 +331,6 @@ V1 稳定后再评估是否继续实现自动恢复。已有 `scripts/gate/recon
 
 - `lead_lag_strategy --execute` 已接到真实 live-orders runtime；仍需要显式 `strategy.mode=live`、API 凭据、feedback SHM 和 data reader，默认 validate-only / signal-only 不提交订单。
 - `ContinuityLost` stop handoff、flat-account smoke、tiny-position smoke 和 continuity-lost stop-and-flat smoke 已完成。
+- `scripts/lead_lag/run_live_with_guard.py` 已作为外围 guard wrapper 落地，覆盖 preflight 拒绝启动、正常退出 final-check、异常退出 flatten、final-check 非 flat flatten 和 flatten failure 映射。
 - V1 应急成功后系统仍保持停止，不自动恢复交易；长期无人值守运行仍需要后续小额订单异常 smoke、account / position feedback 和 benchmark 证据。
 - V2 read-only reconcile / resume 是后续优化，不是当前应急方案。
