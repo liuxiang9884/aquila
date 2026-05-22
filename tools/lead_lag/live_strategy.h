@@ -1,8 +1,8 @@
 #ifndef AQUILA_TOOLS_LEAD_LAG_LIVE_STRATEGY_H_
 #define AQUILA_TOOLS_LEAD_LAG_LIVE_STRATEGY_H_
 
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <utility>
@@ -26,6 +26,7 @@ enum class RunMode : std::uint8_t {
   kSignalOnly,
   kLiveOrders,
   kLiveOpenCloseSmoke,
+  kLiveUnfilledCancelSmoke,
 };
 
 struct RunModeResult {
@@ -77,6 +78,37 @@ struct LiveOpenCloseSmokeStats {
   double target_notional{0.0};
   double estimated_open_notional{0.0};
   bool used_min_quantity{false};
+  bool completed{false};
+  bool continuity_lost_stop_requested{false};
+  std::string error;
+};
+
+enum class LiveUnfilledCancelSmokeState : std::uint8_t {
+  kWaitingTicker,
+  kOpenPending,
+  kCancelPending,
+  kDone,
+  kError,
+};
+
+struct LiveUnfilledCancelSmokeOptions {
+  std::string symbol;
+  double passive_price_bps{200.0};
+  double max_notional{100.0};
+};
+
+struct LiveUnfilledCancelSmokeStats {
+  std::uint64_t book_tickers{0};
+  std::uint64_t order_responses{0};
+  std::uint64_t order_feedbacks{0};
+  LiveUnfilledCancelSmokeState state{
+      LiveUnfilledCancelSmokeState::kWaitingTicker};
+  std::uint64_t open_local_order_id{0};
+  std::int64_t open_quantity{0};
+  double target_notional{0.0};
+  double estimated_open_notional{0.0};
+  bool used_min_quantity{false};
+  bool cancel_requested{false};
   bool completed{false};
   bool continuity_lost_stop_requested{false};
   std::string error;
@@ -241,8 +273,7 @@ class LiveOpenCloseSmokeStrategy {
       SetError("smoke aggressive price bps must be non-negative");
       return;
     }
-    if (!std::isfinite(options_.max_notional) ||
-        options_.max_notional <= 0.0) {
+    if (!std::isfinite(options_.max_notional) || options_.max_notional <= 0.0) {
       SetError("smoke max notional must be positive");
     }
   }
@@ -401,8 +432,7 @@ class LiveOpenCloseSmokeStrategy {
 
     stats_->target_notional = pair_->execute.open_notional;
     const double raw_quantity =
-        pair_->execute.open_notional /
-        (price * instrument.notional_multiplier);
+        pair_->execute.open_notional / (price * instrument.notional_multiplier);
     double quantity = FloorToStep(raw_quantity, instrument.quantity_step);
     if (instrument.min_quantity > 0.0 && quantity < instrument.min_quantity) {
       quantity = instrument.min_quantity;
@@ -433,11 +463,11 @@ class LiveOpenCloseSmokeStrategy {
     return static_cast<std::int64_t>(quantity);
   }
 
-  [[nodiscard]] double RoundedPrice(double price, OrderSide side) const noexcept {
+  [[nodiscard]] double RoundedPrice(double price,
+                                    OrderSide side) const noexcept {
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
-    if (!std::isfinite(price) || price <= 0.0 ||
-        instrument.price_tick <= 0.0) {
+    if (!std::isfinite(price) || price <= 0.0 || instrument.price_tick <= 0.0) {
       return 0.0;
     }
     const double scaled = price / instrument.price_tick;
@@ -461,8 +491,8 @@ class LiveOpenCloseSmokeStrategy {
            std::abs(quantity - std::round(quantity)) <= kEpsilon;
   }
 
-  [[nodiscard]] static std::string FormatPrice(
-      double price, std::int32_t decimal_places) {
+  [[nodiscard]] static std::string FormatPrice(double price,
+                                               std::int32_t decimal_places) {
     if (decimal_places < 0) {
       decimal_places = 0;
     }
@@ -493,6 +523,308 @@ class LiveOpenCloseSmokeStrategy {
   std::int64_t pending_close_quantity_{0};
 };
 
+class LiveUnfilledCancelSmokeStrategy {
+ public:
+  LiveUnfilledCancelSmokeStrategy(strategy::leadlag::Config config,
+                                  LiveUnfilledCancelSmokeOptions options,
+                                  LiveUnfilledCancelSmokeStats* stats)
+      : config_(std::move(config)),
+        options_(std::move(options)),
+        stats_(stats == nullptr ? &owned_stats_ : stats) {
+    pair_ = FindSmokePair();
+    if (pair_ == nullptr) {
+      SetError("smoke symbol not found in lead_lag config");
+      return;
+    }
+    ValidateOptions();
+  }
+
+  template <typename ContextT>
+  void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
+    ++stats_->book_tickers;
+    if (pair_ == nullptr) {
+      return;
+    }
+    if (ticker.exchange != Exchange::kGate ||
+        ticker.symbol_id != pair_->symbol_id) {
+      return;
+    }
+    if (stats_->state == LiveUnfilledCancelSmokeState::kWaitingTicker) {
+      SubmitPassiveOpen(ticker, context);
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderResponse(const core::OrderResponseEvent& event,
+                       ContextT& context) noexcept {
+    ++stats_->order_responses;
+    if (stats_->open_local_order_id == 0 ||
+        event.local_order_id != stats_->open_local_order_id) {
+      return;
+    }
+    switch (event.kind) {
+      case core::OrderResponseKind::kAccepted:
+        RequestCancel(context);
+        return;
+      case core::OrderResponseKind::kRejected:
+        SetError("smoke unfilled order rejected by order session");
+        return;
+      case core::OrderResponseKind::kCancelRejected:
+        SetError("smoke unfilled cancel rejected by order session");
+        return;
+      case core::OrderResponseKind::kAck:
+      case core::OrderResponseKind::kCancelAccepted:
+        return;
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderFeedback(const OrderFeedbackEvent& event,
+                       ContextT& context) noexcept {
+    ++stats_->order_feedbacks;
+    if (event.kind == OrderFeedbackKind::kContinuityLost) {
+      stats_->continuity_lost_stop_requested = true;
+      SetError("feedback continuity lost");
+      return;
+    }
+    if (stats_->open_local_order_id == 0 ||
+        event.local_order_id != stats_->open_local_order_id) {
+      return;
+    }
+    switch (event.kind) {
+      case OrderFeedbackKind::kAccepted:
+        RequestCancel(context);
+        return;
+      case OrderFeedbackKind::kCancelled:
+        CompleteCancelled(event);
+        return;
+      case OrderFeedbackKind::kRejected:
+        SetError("smoke unfilled order rejected");
+        return;
+      case OrderFeedbackKind::kPartialFilled:
+      case OrderFeedbackKind::kFilled:
+        SetError("unexpected fill before cancel");
+        return;
+      case OrderFeedbackKind::kContinuityLost:
+        return;
+    }
+  }
+
+  [[nodiscard]] bool ShouldStop() const noexcept {
+    return stats_->state == LiveUnfilledCancelSmokeState::kDone ||
+           stats_->state == LiveUnfilledCancelSmokeState::kError ||
+           stats_->continuity_lost_stop_requested;
+  }
+
+  [[nodiscard]] const LiveUnfilledCancelSmokeStats& stats() const noexcept {
+    return *stats_;
+  }
+
+ private:
+  static constexpr double kEpsilon = 1e-9;
+
+  const strategy::leadlag::PairConfig* FindSmokePair() const noexcept {
+    if (options_.symbol.empty()) {
+      return config_.pairs.empty() ? nullptr : &config_.pairs.front();
+    }
+    for (const strategy::leadlag::PairConfig& pair : config_.pairs) {
+      if (pair.symbol == options_.symbol ||
+          pair.lag_instrument.exchange_symbol == options_.symbol) {
+        return &pair;
+      }
+    }
+    return nullptr;
+  }
+
+  void ValidateOptions() noexcept {
+    if (!std::isfinite(options_.passive_price_bps) ||
+        options_.passive_price_bps < 0.0 ||
+        options_.passive_price_bps >= 10000.0) {
+      SetError("smoke passive price bps must be in [0, 10000)");
+      return;
+    }
+    if (!std::isfinite(options_.max_notional) || options_.max_notional <= 0.0) {
+      SetError("smoke max notional must be positive");
+    }
+  }
+
+  template <typename ContextT>
+  void SubmitPassiveOpen(const BookTicker& ticker, ContextT& context) noexcept {
+    const double order_price = RoundedDownPrice(
+        ticker.bid_price * (1.0 - options_.passive_price_bps / 10000.0));
+    if (order_price <= 0.0) {
+      SetError("invalid smoke passive price");
+      return;
+    }
+    const std::int64_t quantity = ComputeOpenQuantity(order_price);
+    if (quantity <= 0) {
+      return;
+    }
+
+    open_price_text_ =
+        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    const core::OrderPlaceResult placed =
+        context.PlaceOrder(core::OrderCreateRequest{
+            .exchange = Exchange::kGate,
+            .symbol_id = pair_->symbol_id,
+            .symbol = GateSymbol(),
+            .side = OrderSide::kBuy,
+            .order_type = OrderType::kLimit,
+            .time_in_force = TimeInForce::kGoodTillCancel,
+            .quantity = quantity,
+            .price_text = open_price_text_,
+            .reduce_only = false,
+        });
+    if (placed.status != core::OrderPlaceStatus::kOk ||
+        placed.local_order_id == 0) {
+      SetError("failed to place smoke unfilled order");
+      return;
+    }
+
+    stats_->open_local_order_id = placed.local_order_id;
+    stats_->open_quantity = quantity;
+    stats_->state = LiveUnfilledCancelSmokeState::kOpenPending;
+  }
+
+  template <typename ContextT>
+  void RequestCancel(ContextT& context) noexcept {
+    if (stats_->completed ||
+        stats_->state == LiveUnfilledCancelSmokeState::kDone ||
+        stats_->state == LiveUnfilledCancelSmokeState::kError) {
+      return;
+    }
+    if (stats_->cancel_requested) {
+      return;
+    }
+    if (stats_->open_local_order_id == 0) {
+      SetError("invalid smoke unfilled local order id");
+      return;
+    }
+    const core::OrderCancelResult cancelled =
+        context.CancelOrder(stats_->open_local_order_id);
+    if (cancelled.status != core::OrderCancelStatus::kOk) {
+      SetError("failed to cancel smoke unfilled order");
+      return;
+    }
+    stats_->cancel_requested = true;
+    stats_->state = LiveUnfilledCancelSmokeState::kCancelPending;
+  }
+
+  void CompleteCancelled(const OrderFeedbackEvent& event) noexcept {
+    if (event.cumulative_filled_quantity != 0) {
+      SetError("unexpected fill before cancel");
+      return;
+    }
+    if (event.cancelled_quantity != stats_->open_quantity) {
+      SetError("unexpected cancelled quantity");
+      return;
+    }
+    stats_->completed = true;
+    stats_->state = LiveUnfilledCancelSmokeState::kDone;
+  }
+
+  [[nodiscard]] std::int64_t ComputeOpenQuantity(double price) noexcept {
+    if (pair_ == nullptr || !std::isfinite(price) || price <= 0.0) {
+      SetError("invalid smoke market price");
+      return 0;
+    }
+    const strategy::leadlag::InstrumentMetadata& instrument =
+        pair_->lag_instrument;
+    if (instrument.notional_multiplier <= 0.0 ||
+        instrument.quantity_step <= 0.0 ||
+        pair_->execute.open_notional <= 0.0) {
+      SetError("invalid smoke instrument sizing metadata");
+      return 0;
+    }
+
+    stats_->target_notional = pair_->execute.open_notional;
+    const double raw_quantity =
+        pair_->execute.open_notional / (price * instrument.notional_multiplier);
+    double quantity = FloorToStep(raw_quantity, instrument.quantity_step);
+    if (instrument.min_quantity > 0.0 && quantity < instrument.min_quantity) {
+      quantity = instrument.min_quantity;
+      stats_->used_min_quantity = true;
+    }
+    if (instrument.max_quantity > 0.0 && quantity > instrument.max_quantity) {
+      quantity = FloorToStep(instrument.max_quantity, instrument.quantity_step);
+    }
+
+    const double estimated_notional =
+        quantity * price * instrument.notional_multiplier;
+    stats_->estimated_open_notional = estimated_notional;
+    if (stats_->used_min_quantity &&
+        estimated_notional > options_.max_notional + kEpsilon) {
+      SetError("minimum notional exceeds cap");
+      return 0;
+    }
+    if (!IsIntegerQuantity(quantity)) {
+      SetError("decimal smoke quantity is not supported in this version");
+      return 0;
+    }
+    if (quantity <= 0.0 ||
+        quantity >
+            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+      SetError("invalid smoke quantity");
+      return 0;
+    }
+    return static_cast<std::int64_t>(quantity);
+  }
+
+  [[nodiscard]] double RoundedDownPrice(double price) const noexcept {
+    const strategy::leadlag::InstrumentMetadata& instrument =
+        pair_->lag_instrument;
+    if (!std::isfinite(price) || price <= 0.0 || instrument.price_tick <= 0.0) {
+      return 0.0;
+    }
+    const double scaled = price / instrument.price_tick;
+    const double rounded =
+        std::floor(scaled + kEpsilon) * instrument.price_tick;
+    return std::isfinite(rounded) && rounded > 0.0 ? rounded : 0.0;
+  }
+
+  [[nodiscard]] static double FloorToStep(double quantity,
+                                          double step) noexcept {
+    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+      return 0.0;
+    }
+    return std::floor(quantity / step + kEpsilon) * step;
+  }
+
+  [[nodiscard]] static bool IsIntegerQuantity(double quantity) noexcept {
+    return std::isfinite(quantity) &&
+           std::abs(quantity - std::round(quantity)) <= kEpsilon;
+  }
+
+  [[nodiscard]] static std::string FormatPrice(double price,
+                                               std::int32_t decimal_places) {
+    if (decimal_places < 0) {
+      decimal_places = 0;
+    }
+    return fmt::format("{:.{}f}", price, decimal_places);
+  }
+
+  [[nodiscard]] std::string_view GateSymbol() const noexcept {
+    if (!pair_->lag_instrument.exchange_symbol.empty()) {
+      return pair_->lag_instrument.exchange_symbol;
+    }
+    return pair_->symbol;
+  }
+
+  void SetError(std::string error) noexcept {
+    if (stats_->error.empty()) {
+      stats_->error = std::move(error);
+    }
+    stats_->state = LiveUnfilledCancelSmokeState::kError;
+  }
+
+  strategy::leadlag::Config config_;
+  LiveUnfilledCancelSmokeOptions options_;
+  LiveUnfilledCancelSmokeStats owned_stats_;
+  LiveUnfilledCancelSmokeStats* stats_{&owned_stats_};
+  const strategy::leadlag::PairConfig* pair_{nullptr};
+  std::string open_price_text_;
+};
+
 [[nodiscard]] inline int ResolveLiveOrdersExitCode(
     int runtime_exit_code, const LiveOrdersStrategyStats& stats) noexcept {
   if (stats.continuity_lost_stop_requested) {
@@ -512,13 +844,34 @@ class LiveOpenCloseSmokeStrategy {
   return stats.completed ? 0 : 1;
 }
 
+[[nodiscard]] inline int ResolveLiveUnfilledCancelSmokeExitCode(
+    int runtime_exit_code, const LiveUnfilledCancelSmokeStats& stats) noexcept {
+  if (stats.continuity_lost_stop_requested) {
+    return kContinuityLostEmergencyHandoffExitCode;
+  }
+  if (runtime_exit_code != 0) {
+    return runtime_exit_code;
+  }
+  return stats.completed ? 0 : 1;
+}
+
 [[nodiscard]] inline RunModeResult ResolveRunMode(
     config::StrategyMode strategy_mode, bool connect_data, bool execute,
-    bool smoke_open_close = false) {
+    bool smoke_open_close = false, bool smoke_unfilled_cancel = false) {
+  if (smoke_open_close && smoke_unfilled_cancel) {
+    return {.ok = false,
+            .mode = RunMode::kValidateOnly,
+            .error = "only one smoke mode may be selected"};
+  }
   if (smoke_open_close && !execute) {
     return {.ok = false,
             .mode = RunMode::kValidateOnly,
             .error = "--smoke-open-close requires --execute"};
+  }
+  if (smoke_unfilled_cancel && !execute) {
+    return {.ok = false,
+            .mode = RunMode::kValidateOnly,
+            .error = "--smoke-unfilled-cancel requires --execute"};
   }
   if (execute && strategy_mode != config::StrategyMode::kLive) {
     return {.ok = false,
@@ -527,6 +880,9 @@ class LiveOpenCloseSmokeStrategy {
   }
   if (smoke_open_close) {
     return {.ok = true, .mode = RunMode::kLiveOpenCloseSmoke};
+  }
+  if (smoke_unfilled_cancel) {
+    return {.ok = true, .mode = RunMode::kLiveUnfilledCancelSmoke};
   }
   if (execute) {
     return {.ok = true, .mode = RunMode::kLiveOrders};
@@ -547,6 +903,8 @@ class LiveOpenCloseSmokeStrategy {
       return "live_orders";
     case RunMode::kLiveOpenCloseSmoke:
       return "live_open_close_smoke";
+    case RunMode::kLiveUnfilledCancelSmoke:
+      return "live_unfilled_cancel_smoke";
   }
   return "unknown";
 }
@@ -582,6 +940,23 @@ class LiveOpenCloseSmokeStrategy {
     case LiveOpenCloseSmokeState::kDone:
       return "done";
     case LiveOpenCloseSmokeState::kError:
+      return "error";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] inline const char* LiveUnfilledCancelSmokeStateName(
+    LiveUnfilledCancelSmokeState state) noexcept {
+  switch (state) {
+    case LiveUnfilledCancelSmokeState::kWaitingTicker:
+      return "waiting_ticker";
+    case LiveUnfilledCancelSmokeState::kOpenPending:
+      return "open_pending";
+    case LiveUnfilledCancelSmokeState::kCancelPending:
+      return "cancel_pending";
+    case LiveUnfilledCancelSmokeState::kDone:
+      return "done";
+    case LiveUnfilledCancelSmokeState::kError:
       return "error";
   }
   return "unknown";

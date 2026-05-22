@@ -45,10 +45,12 @@ struct CliOptions {
   std::uint64_t duration_sec{0};
   std::string smoke_symbol;
   double smoke_aggressive_price_bps{100.0};
+  double smoke_passive_price_bps{200.0};
   double smoke_max_notional{100.0};
   bool connect_data{false};
   bool execute{false};
   bool smoke_open_close{false};
+  bool smoke_unfilled_cancel{false};
 };
 
 struct LoadedConfig {
@@ -326,7 +328,8 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       "order_capacity={} max_loop_seconds={} reader_name={} sources={} "
       "order_session={} feedback_enabled={} feedback_shm={} "
       "feedback_channel={} feedback_poll_budget={} pairs={} "
-      "smoke_open_close={} smoke_symbol={} smoke_aggressive_price_bps={} "
+      "smoke_open_close={} smoke_unfilled_cancel={} smoke_symbol={} "
+      "smoke_aggressive_price_bps={} smoke_passive_price_bps={} "
       "smoke_max_notional={}\n",
       live::RunModeName(mode), options.execute ? "true" : "false",
       options.connect_data ? "true" : "false", options.config_path.string(),
@@ -341,8 +344,10 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       loaded.strategy.feedback.shm_name, loaded.strategy.feedback.channel_name,
       loaded.strategy.feedback.poll_budget, loaded.lead_lag.pairs.size(),
       options.smoke_open_close ? "true" : "false",
+      options.smoke_unfilled_cancel ? "true" : "false",
       options.smoke_symbol.empty() ? "-" : options.smoke_symbol,
-      options.smoke_aggressive_price_bps, options.smoke_max_notional);
+      options.smoke_aggressive_price_bps, options.smoke_passive_price_bps,
+      options.smoke_max_notional);
 }
 
 int RunValidateOnly() {
@@ -594,6 +599,108 @@ int RunLiveOpenCloseSmoke(LoadedConfig loaded, const CliOptions& options) {
       std::move(loaded), std::move(credentials), options);
 }
 
+template <typename WebSocketPolicy>
+int RunLiveUnfilledCancelSmokeRuntime(LoadedConfig loaded,
+                                      gate::LoginCredentials credentials,
+                                      const CliOptions& options) {
+  using DataReader = market_data::RealtimeDataReader<
+      market_data::RealtimeDataReaderDiagnostics>;
+  using OrderSession =
+      gate::OrderSessionRuntimeAdapter<WebSocketPolicy,
+                                       gate::OrderSessionDiagnostics>;
+  using Runtime =
+      core::TradingRuntime<live::LiveUnfilledCancelSmokeStrategy, OrderSession,
+                           DataReader, core::TradingRuntimeDiagnostics>;
+
+  live::LiveUnfilledCancelSmokeStats stats;
+  gate::OrderSessionConfig order_session_config =
+      std::move(loaded.order_session);
+  live::LiveUnfilledCancelSmokeOptions smoke_options{
+      .symbol = options.smoke_symbol,
+      .passive_price_bps = options.smoke_passive_price_bps,
+      .max_notional = options.smoke_max_notional,
+  };
+  auto runtime_result = Runtime::Create(
+      std::move(loaded.strategy), std::move(loaded.data_reader),
+      [order_session_config = std::move(order_session_config),
+       credentials = std::move(credentials)]() mutable {
+        return OrderSession(std::move(order_session_config),
+                            std::move(credentials));
+      },
+      std::move(loaded.lead_lag), std::move(smoke_options), &stats);
+  if (!runtime_result.ok) {
+    fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
+               runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
+    return 1;
+  }
+
+  const int runtime_exit_code = runtime_result.value->Run();
+  const int exit_code =
+      live::ResolveLiveUnfilledCancelSmokeExitCode(runtime_exit_code, stats);
+  const core::TradingRuntimeLoopStats& loop_stats =
+      runtime_result.value->diagnostics().stats();
+
+  if (stats.continuity_lost_stop_requested) {
+    fmt::print(stderr,
+               "[FAIL] lead_lag smoke order feedback continuity lost; "
+               "runtime stopped; run emergency flatten before restart\n");
+    NOVA_ERROR(
+        "lead_lag smoke order feedback continuity lost; runtime stopped; "
+        "run emergency flatten before restart");
+  } else if (exit_code != 0) {
+    const std::string_view error_text =
+        stats.error.empty() ? std::string_view{"smoke did not complete"}
+                            : std::string_view{stats.error};
+    fmt::print(stderr, "[FAIL] lead_lag smoke unfilled cancel failed: {}\n",
+               error_text);
+    NOVA_ERROR("lead_lag smoke unfilled cancel failed: {}", error_text);
+  }
+
+  fmt::print(
+      "lead_lag_strategy_live_unfilled_cancel_smoke_summary exit_code={} "
+      "runtime_exit_code={} emergency_handoff={} completed={} state={} "
+      "book_tickers={} order_responses={} order_feedbacks={} "
+      "open_local_order_id={} open_quantity={} target_notional={} "
+      "estimated_open_notional={} used_min_quantity={} cancel_requested={} "
+      "error={} loop_iterations={} idle_iterations={} order_response_polls={} "
+      "order_response_events={} order_feedback_polls={} "
+      "order_feedback_events={} data_reader_polls={} "
+      "data_reader_empty_polls={} data_reader_events={}\n",
+      exit_code, runtime_exit_code,
+      stats.continuity_lost_stop_requested ? "true" : "false",
+      stats.completed ? "true" : "false",
+      live::LiveUnfilledCancelSmokeStateName(stats.state), stats.book_tickers,
+      stats.order_responses, stats.order_feedbacks, stats.open_local_order_id,
+      stats.open_quantity, stats.target_notional, stats.estimated_open_notional,
+      stats.used_min_quantity ? "true" : "false",
+      stats.cancel_requested ? "true" : "false",
+      stats.error.empty() ? "-" : stats.error, loop_stats.loop_iterations,
+      loop_stats.idle_iterations, loop_stats.order_response_poll_calls,
+      loop_stats.order_response_events, loop_stats.order_feedback_poll_calls,
+      loop_stats.order_feedback_events, loop_stats.data_reader_poll_calls,
+      loop_stats.data_reader_empty_polls, loop_stats.data_reader_events);
+  return exit_code;
+}
+
+int RunLiveUnfilledCancelSmoke(LoadedConfig loaded, const CliOptions& options) {
+  bool credentials_ok = false;
+  gate::LoginCredentials credentials =
+      LoadCredentials(options, loaded.order_session, &credentials_ok);
+  if (!credentials_ok) {
+    return 2;
+  }
+
+  if (loaded.order_session.connection.enable_tls) {
+    return RunLiveUnfilledCancelSmokeRuntime<
+        gate::OrderSessionDefaultTlsWebSocketPolicy>(
+        std::move(loaded), std::move(credentials), options);
+  }
+  return RunLiveUnfilledCancelSmokeRuntime<
+      gate::OrderSessionDefaultPlainWebSocketPolicy>(
+      std::move(loaded), std::move(credentials), options);
+}
+
 int Run(const CliOptions& options) {
   LoadedConfig loaded;
   if (!LoadConfig(options, &loaded)) {
@@ -603,7 +710,7 @@ int Run(const CliOptions& options) {
 
   const live::RunModeResult mode_result = live::ResolveRunMode(
       loaded.strategy.mode, options.connect_data, options.execute,
-      options.smoke_open_close);
+      options.smoke_open_close, options.smoke_unfilled_cancel);
   if (!mode_result.ok) {
     fmt::print(stderr, "[FAIL] {}\n", mode_result.error);
     NOVA_ERROR("{}", mode_result.error);
@@ -620,6 +727,8 @@ int Run(const CliOptions& options) {
       return RunLiveOrders(std::move(loaded), options);
     case live::RunMode::kLiveOpenCloseSmoke:
       return RunLiveOpenCloseSmoke(std::move(loaded), options);
+    case live::RunMode::kLiveUnfilledCancelSmoke:
+      return RunLiveUnfilledCancelSmoke(std::move(loaded), options);
   }
   return 1;
 }
@@ -641,10 +750,13 @@ int main(int argc, char** argv) {
   app.add_option("--api-secret", options.api_secret_env,
                  "Live order mode API secret env override");
   app.add_option("--smoke-symbol", options.smoke_symbol,
-                 "LeadLag symbol for --smoke-open-close; empty uses first pair");
+                 "LeadLag symbol for smoke modes; empty uses first pair");
   app.add_option("--smoke-aggressive-price-bps",
                  options.smoke_aggressive_price_bps,
                  "Open smoke IOC buy limit price offset from ask, in bps");
+  app.add_option(
+      "--smoke-passive-price-bps", options.smoke_passive_price_bps,
+      "Unfilled cancel smoke GTC buy price offset below bid, in bps");
   app.add_option("--smoke-max-notional", options.smoke_max_notional,
                  "Maximum estimated notional when smoke uses min quantity");
   app.add_flag("--connect-data", options.connect_data,
@@ -653,6 +765,9 @@ int main(int argc, char** argv) {
                "Enable live order mode; requires strategy.mode=live");
   app.add_flag("--smoke-open-close", options.smoke_open_close,
                "Run one controlled open/close live smoke; requires --execute");
+  app.add_flag("--smoke-unfilled-cancel", options.smoke_unfilled_cancel,
+               "Run one controlled unfilled cancel live smoke; requires "
+               "--execute");
   CLI11_PARSE(app, argc, argv);
 
   try {

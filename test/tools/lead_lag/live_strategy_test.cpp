@@ -44,8 +44,11 @@ struct CapturedOrder {
 struct SmokeStrategyContext {
   aquila::core::OrderPlaceStatus place_status{
       aquila::core::OrderPlaceStatus::kOk};
+  aquila::core::OrderCancelStatus cancel_status{
+      aquila::core::OrderCancelStatus::kOk};
   std::uint64_t next_local_order_id{100};
   std::vector<CapturedOrder> orders;
+  std::vector<std::uint64_t> cancelled_local_order_ids;
 
   aquila::core::OrderPlaceResult PlaceOrder(
       aquila::core::OrderCreateRequest request) {
@@ -64,6 +67,14 @@ struct SmokeStrategyContext {
       return {.status = place_status, .local_order_id = 0};
     }
     return {.status = place_status, .local_order_id = next_local_order_id++};
+  }
+
+  aquila::core::OrderCancelResult CancelOrder(std::uint64_t local_order_id) {
+    cancelled_local_order_ids.push_back(local_order_id);
+    if (cancel_status != aquila::core::OrderCancelStatus::kOk) {
+      return {.status = cancel_status, .local_order_id = local_order_id};
+    }
+    return {.status = cancel_status, .local_order_id = local_order_id};
   }
 };
 
@@ -189,6 +200,42 @@ TEST(LeadLagLiveStrategyTest, SmokeOpenCloseSelectsDedicatedRunMode) {
   EXPECT_EQ(result.mode, RunMode::kLiveOpenCloseSmoke);
 }
 
+TEST(LeadLagLiveStrategyTest, SmokeUnfilledCancelDefaultPassiveOffsetIsSafe) {
+  EXPECT_DOUBLE_EQ(LiveUnfilledCancelSmokeOptions{}.passive_price_bps, 200.0);
+}
+
+TEST(LeadLagLiveStrategyTest, SmokeUnfilledCancelRequiresExecute) {
+  const RunModeResult result =
+      ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+                     /*execute=*/false, /*smoke_open_close=*/false,
+                     /*smoke_unfilled_cancel=*/true);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("--smoke-unfilled-cancel requires --execute"),
+            std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest, SmokeModesAreMutuallyExclusive) {
+  const RunModeResult result =
+      ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+                     /*execute=*/true, /*smoke_open_close=*/true,
+                     /*smoke_unfilled_cancel=*/true);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("only one smoke mode may be selected"),
+            std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest, SmokeUnfilledCancelSelectsDedicatedRunMode) {
+  const RunModeResult result =
+      ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+                     /*execute=*/true, /*smoke_open_close=*/false,
+                     /*smoke_unfilled_cancel=*/true);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.mode, RunMode::kLiveUnfilledCancelSmoke);
+}
+
 TEST(LeadLagLiveStrategyTest, ExecuteTakesPriorityOverConnectDataWithLiveMode) {
   const RunModeResult result =
       ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
@@ -204,6 +251,8 @@ TEST(LeadLagLiveStrategyTest, RunModeNameReturnsStableSummaryText) {
   EXPECT_STREQ(RunModeName(RunMode::kLiveOrders), "live_orders");
   EXPECT_STREQ(RunModeName(RunMode::kLiveOpenCloseSmoke),
                "live_open_close_smoke");
+  EXPECT_STREQ(RunModeName(RunMode::kLiveUnfilledCancelSmoke),
+               "live_unfilled_cancel_smoke");
 }
 
 TEST(LeadLagLiveStrategyTest, RecoveryStateNameReturnsStableSummaryText) {
@@ -439,7 +488,263 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_TRUE(context.orders.empty());
   EXPECT_TRUE(strategy.ShouldStop());
   EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kError);
-  EXPECT_NE(stats.error.find("minimum notional exceeds cap"), std::string::npos);
+  EXPECT_NE(stats.error.find("minimum notional exceeds cap"),
+            std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelSubmitsPassiveGtcBuyThenCancelsOnAcceptedResponse) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(context.orders[0].symbol_id, 3);
+  EXPECT_EQ(context.orders[0].symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(context.orders[0].side, aquila::OrderSide::kBuy);
+  EXPECT_EQ(context.orders[0].time_in_force,
+            aquila::TimeInForce::kGoodTillCancel);
+  EXPECT_EQ(context.orders[0].quantity, 10);
+  EXPECT_EQ(context.orders[0].price_text, "95.0");
+  EXPECT_FALSE(context.orders[0].reduce_only);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kOpenPending);
+
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+          .exchange_order_id = 9001,
+      },
+      context);
+
+  ASSERT_EQ(context.cancelled_local_order_ids.size(), 1U);
+  EXPECT_EQ(context.cancelled_local_order_ids[0], stats.open_local_order_id);
+  EXPECT_TRUE(stats.cancel_requested);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kCancelPending);
+
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kCancelled,
+          .local_order_id = stats.open_local_order_id,
+          .cumulative_filled_quantity = 0,
+          .cancelled_quantity = 10,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_TRUE(stats.completed);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kDone);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelCanCancelOnAcceptedFeedbackWhenResponseIsNotObserved) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+
+  ASSERT_EQ(context.cancelled_local_order_ids.size(), 1U);
+  EXPECT_EQ(context.cancelled_local_order_ids[0], stats.open_local_order_id);
+  EXPECT_TRUE(stats.cancel_requested);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kCancelPending);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelDoesNotCompleteOnCancelAcceptedResponse) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kCancelAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+
+  EXPECT_FALSE(strategy.ShouldStop());
+  EXPECT_FALSE(stats.completed);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kCancelPending);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelSubmitsCancelOnlyOnceWhenBothAcceptedSignalsArrive) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+
+  ASSERT_EQ(context.cancelled_local_order_ids.size(), 1U);
+  EXPECT_EQ(context.cancelled_local_order_ids[0], stats.open_local_order_id);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelTreatsAnyFillBeforeCancelAsFailure) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kFilled,
+          .local_order_id = stats.open_local_order_id,
+          .cumulative_filled_quantity = 10,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kError);
+  EXPECT_NE(stats.error.find("unexpected fill"), std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelRejectsUnexpectedCancelledQuantity) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kCancelled,
+          .local_order_id = stats.open_local_order_id,
+          .cumulative_filled_quantity = 0,
+          .cancelled_quantity = 9,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_FALSE(stats.completed);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kError);
+  EXPECT_NE(stats.error.find("unexpected cancelled quantity"),
+            std::string::npos);
 }
 
 }  // namespace
