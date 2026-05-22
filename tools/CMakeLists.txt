@@ -63,6 +63,20 @@ target_link_libraries(gate_strategy_order
         nova
 )
 
+add_executable(gate_order_session_failure_probe
+    gate/order_session_failure_probe.cpp
+)
+
+target_link_libraries(gate_order_session_failure_probe
+    PRIVATE
+        aquila_config
+        aquila_gate
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+)
+
 add_executable(gate_demo_strategy
     gate/demo_strategy.cpp
 )

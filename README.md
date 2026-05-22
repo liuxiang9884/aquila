@@ -236,6 +236,14 @@ Trading runtime demo dry-run：
 
 `gate_demo_strategy` 默认只解析 strategy / data reader / Gate order session / demo 策略配置，不连接 WebSocket、不打开 SHM、不下单；必须显式传 `--execute` 才进入实盘链路。
 
+Gate `OrderSession` failure response 诊断工具 dry-run：
+
+```bash
+./build/debug/tools/gate_order_session_failure_probe --probe cancel-rejected
+```
+
+该工具只直接测试 Gate `OrderSession` 协议响应，默认不连接 WebSocket；必须显式传 `--execute` 才发送真实请求。
+
 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
 `enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置
 `enable_tls = false`。

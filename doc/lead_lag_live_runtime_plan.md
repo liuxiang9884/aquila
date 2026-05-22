@@ -427,6 +427,16 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 结论：这个安全 invalid-price IOC 场景在 Gate WS 下表现为请求 `Ack` 后无最终 rejected response，不适合作为 LeadLag submit-rejected live smoke。不要继续用随机非法价格或数量硬凑 smoke；若需要 rejected / cancel-rejected 实盘证据，应单独做 `OrderSession` protocol probe，明确协议字段、风险边界和 REST 复核。`cancel-rejected` 不应强塞进 LeadLag runtime：LeadLag 只取消已知订单，未知订单、重复取消或 terminal 订单取消在当前系统里属于本地拒绝，不是交易所 cancel-rejected。
 
+2026-05-22 后续状态：新增独立 `gate_order_session_failure_probe`，只直接使用 Gate `OrderSession`，不经过 `OrderManager`、`TradingRuntime` 或 LeadLag。它支持 `--probe cancel-rejected` 和 `--probe submit-rejected`，默认 dry-run，只有显式 `--execute` 才连接 WebSocket；`Ack` 不算成功，必须收到匹配请求的最终 `kRejected` / `kCancelRejected`。
+
+已做的安全 live 探测仍未拿到最终 failure response：
+
+- `cancel-rejected`，`order_id=9000000000000000000`：cancel request send `kOk`，20 秒内 `responses=0`，timeout；REST 复核 BTC_USDT open orders 为空、position `size=0`。
+- `cancel-rejected`，fallback text `order_id=t-999999`：cancel request send `kOk`，20 秒内 `responses=0`，timeout；REST 复核 BTC_USDT open orders 为空、position `size=0`。
+- `submit-rejected`，`BTC_USDT buy limit IOC size=0 price=0.01`：只收到 `kAck`，20 秒内无最终 `kRejected`，timeout；REST 复核 BTC_USDT open orders 为空、position `size=0`。
+
+结论：当前可以保留独立 probe 作为后续协议诊断入口，但 rejected / cancel-rejected live 证据仍未完成。后续优先级应转向 account / position feedback、REST reconcile / final check 和真实订单长跑 guardrails；如继续 failure response，需要先基于 Gate 官方协议或更低风险 sandbox / dedicated account 明确可返回最终 error 的请求形态。
+
 - [x] **Step 4: Commit smoke evidence**
 
 只提交整理后的文档证据，不提交密钥、原始敏感日志或本地临时配置。
