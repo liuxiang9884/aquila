@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。小额真实订单和长期运行仍等待 filled open / close、unfilled-cancel、failure smoke、account / position 校验和后续 benchmark。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；长期运行前仍需 failure smoke、account / position 校验和后续 benchmark。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -17,7 +17,7 @@
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
-- 小额真实下单前仍缺 filled open / close、unfilled-cancel、rejected / cancel-rejected smoke；长时间真实下单前还需要 account / position 复核和后续端到端 benchmark。
+- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；长时间真实下单前还需要 rejected / cancel-rejected smoke、account / position 复核和后续端到端 benchmark。
 
 ## 文件结构
 
@@ -406,11 +406,13 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 2026-05-22 已完成：新增 `lead_lag_strategy --smoke-open-close` 显式模式，只在 `--execute` 且 `strategy.mode=live` 时进入，仍复用 `TradingRuntime`、Gate `OrderSessionRuntimeAdapter`、`OrderManager`、feedback SHM 和外围 `run_live_with_guard.py`。本轮使用 ZEC-only Gate data session / data reader、fresh feedback SHM 和 `ZEC_USDT` 目标 notional `$10`；受整数张数约束，实际 open quantity 为 1 张，估算 notional `6.5678`。运行结果：`completed=true`、`open_quantity=1`、`close_quantity=1`、`order_responses=2`、`order_feedbacks=2`；feedback session 发布 open / close 两个 `kFilled` taker event，fill price 分别为 `656.78` 和 `656.77`。最终 REST 复核 open orders 为空、position `size=0`、`pending_orders=0`。
 
-- [ ] **Step 2: Unfilled cancel smoke**
+- [x] **Step 2: Unfilled cancel smoke**
 
 使用不可立即成交价格触发挂单，然后走 cancel 分支。
 
 期望：feedback terminal cancelled；REST 复核无残留 open orders。
+
+2026-05-22 已完成：新增 `lead_lag_strategy --smoke-unfilled-cancel` 显式模式，只在 `--execute` 且 `strategy.mode=live` 时进入，仍复用 `TradingRuntime`、Gate `OrderSessionRuntimeAdapter`、`OrderManager`、feedback SHM 和外围 `run_live_with_guard.py`。本轮使用 ZEC-only Gate data session / data reader、fresh feedback SHM 和 `ZEC_USDT` 目标 notional `$10`；passive buy 价格使用 Gate best bid 下方 `200 bps`，GTC limit，非 reduce-only。运行结果：`completed=true`、`state=done`、`open_quantity=1`、`order_responses=1`、`order_feedbacks=2`、`cancel_requested=true`、`estimated_open_notional=6.3854`；feedback session 发布 `kAccepted` 和 `kCancelled`，cancelled event 为 `cumulative_filled_quantity=0`、`left_quantity=1`、`cancelled_quantity=1`。最终 REST 复核 open orders 为空、position `size=0`、`pending_orders=0`。
 
 - [ ] **Step 3: Rejected / cancel-rejected smoke**
 
@@ -418,7 +420,7 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 期望：LeadLag execution group 不残留 pending order；strategy 不继续盲目开仓。
 
-- [ ] **Step 4: Commit smoke evidence**
+- [x] **Step 4: Commit smoke evidence**
 
 只提交整理后的文档证据，不提交密钥、原始敏感日志或本地临时配置。
 
@@ -479,8 +481,8 @@ taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
 5. Python emergency flatten flat-account smoke。已完成。
 6. tiny position emergency flatten smoke。已完成。
 7. feedback session 断线 / `ContinuityLost` stop-and-flat smoke。已完成。
-8. 小额 filled open / close。
-9. unfilled-cancel。
+8. 小额 filled open / close。已完成。
+9. unfilled-cancel。已完成。
 10. rejected / cancel-rejected。
 11. 30 分钟真实订单 run。
 12. 2 到 4 小时真实订单 run。
