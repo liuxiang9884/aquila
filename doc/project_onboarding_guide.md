@@ -108,7 +108,7 @@ doc/evaluation_support.md
 - `doc/lead_lag_live_runtime_plan.md` 已记录 LeadLag signal-only 长时间实盘观察、strategy 层真实订单闭环、runner `--execute` 真实入口、`ContinuityLost` stop-and-flat 应急链路、异常 smoke、端到端 benchmark 和后续真实订单长跑顺序。
 - LeadLag default production accounting 已可提交 IOC limit order intent；`tools/lead_lag/live_strategy.cpp::RunLiveOrders()` 已接到 Gate live-orders runtime，缺凭据时返回 exit code `2`，收到 `ContinuityLost` 时返回 handoff exit code `10`。2026-05-22 已完成 BTC_USDT flat-account、tiny-position、隔离 `ContinuityLost` stop-and-flat smoke，以及 ZEC_USDT `--smoke-open-close` 小额 filled open / close 和 `--smoke-unfilled-cancel` 小额挂单撤单 smoke；最终 REST 复核 open orders 为空、position `size=0`。本地端到端 benchmark 已覆盖 `TradingRuntime -> LeadLag -> OrderManager -> fake order session` submit 路径和 Gate `futures.orders` parser -> feedback SHM -> `TradingRuntime -> OrderManager -> LeadLag OnOrderFeedback()` 回报路径，结果见 `doc/lead_lag_live_runtime_plan.md`。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response；后续不要把 rejected / cancel-rejected 算作已完成 smoke。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 account / position feedback session。
 - `scripts/lead_lag/run_live_with_guard.py` 已作为外围 guard wrapper 落地：启动前 REST preflight，正常退出后 final REST check，异常退出或 final 非 flat 时调用 emergency flatten；该 wrapper 不改 `TradingRuntime` 热路径。
-- `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 和 `config/strategies/lead_lag_requested_11symbols_20260522.toml` 已覆盖 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`；其中 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 仍只按整数下单。11-symbol 配置已增加 `[lead_lag.risk]`：`max_gross_notional=500.0`、`max_holding_position=100000`，限制 strategy 全局持仓和 pending open reservation，只拒绝新开仓，不阻止 reduce-only close。
+- `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 和 `config/strategies/lead_lag_requested_11symbols_20260522.toml` 已覆盖 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`；其中 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 仍只按整数下单。11-symbol 配置当前启用 `[lead_lag.risk]`：`max_gross_notional=2000.0`，限制 strategy 全局持仓和 pending open reservation 的总 notional，只拒绝新开仓，不阻止 reduce-only close；`max_holding_position` 未配置，暂不限制张数。
 
 ### Evaluation
 
@@ -368,7 +368,7 @@ rg 'aquila_evaluation' core exchange tools
 1. 读取 `doc/lead_lag_live_runtime_plan.md`、`doc/lead_lag_reconcile_design.md` 和 `strategy/lead_lag/README.md`，确认当前 runner gating、strategy 层订单闭环和 `ContinuityLost` handoff 边界。
 2. 如继续 signal-only 长跑，可使用 `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 观察 11 个 requested symbol；decimal-size 合约当前只按整数下单，完整 decimal quantity 支持留到后续版本。
 3. V1 emergency smoke、外围 guard wrapper、ZEC 小额 filled open / close 和 unfilled-cancel smoke 已完成；submit rejected / cancel-rejected 安全 live 探测未通过，不计入完成项。
-4. 之后优先做更长时间真实订单运行 guardrails 和继续补齐风控审查；当前已先加入 LeadLag strategy 全局 `max_gross_notional` / `max_holding_position`。account / position realtime feedback 作为 V2 可选能力，不作为当前 V1 前置项。failure response 继续前先确认 Gate 可返回最终 error 的请求形态。
+4. 之后优先做更长时间真实订单运行 guardrails 和继续补齐风控审查；当前已先加入 LeadLag strategy 全局 `max_gross_notional`，`max_holding_position` 可选但本版本暂不启用。account / position realtime feedback 作为 V2 可选能力，不作为当前 V1 前置项。failure response 继续前先确认 Gate 可返回最终 error 的请求形态。
 
 ## 结束对话固定流程
 

@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 #include <gtest/gtest.h>
@@ -28,6 +29,52 @@ leadlag::ConfigResult ParseConfigToml(
     std::string_view text, const aquila::config::InstrumentCatalog& catalog) {
   const toml::parse_result parsed = toml::parse(text);
   return leadlag::ParseConfig(parsed, catalog);
+}
+
+std::string MinimalConfigTomlWithRisk(std::string_view risk_section) {
+  return std::string{R"toml(
+[lead_lag]
+name = "lead_lag"
+version = "1.0"
+
+)toml"} + std::string{risk_section} +
+         std::string{R"toml(
+
+[[lead_lag.pairs]]
+symbol = "BTC_USDT"
+symbol_id = 0
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00016
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_limit = 0.02
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 100.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+parallel = 1
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+)toml"};
 }
 
 TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
@@ -155,9 +202,42 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested11SymbolsRiskLimits) {
 
   ASSERT_TRUE(result.ok) << result.error;
   const leadlag::Config& config = result.value;
-  EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 500.0);
-  EXPECT_EQ(config.risk.max_holding_position, 100000);
+  EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 2000.0);
+  EXPECT_EQ(config.risk.max_holding_position, 0);
   ASSERT_EQ(config.pairs.size(), 11U);
+}
+
+TEST(LeadLagConfigTest, ParsesRiskWithOnlyGrossNotionalLimit) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk(R"toml([lead_lag.risk]
+max_gross_notional = 2000.0
+)toml"),
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_DOUBLE_EQ(result.value.risk.max_gross_notional, 2000.0);
+  EXPECT_EQ(result.value.risk.max_holding_position, 0);
+  EXPECT_TRUE(result.value.risk.GrossNotionalLimitEnabled());
+  EXPECT_FALSE(result.value.risk.HoldingPositionLimitEnabled());
+}
+
+TEST(LeadLagConfigTest, ParsesRiskWithZeroHoldingPositionLimitDisabled) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk(R"toml([lead_lag.risk]
+max_gross_notional = 2000.0
+max_holding_position = 0
+)toml"),
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_DOUBLE_EQ(result.value.risk.max_gross_notional, 2000.0);
+  EXPECT_EQ(result.value.risk.max_holding_position, 0);
+  EXPECT_TRUE(result.value.risk.GrossNotionalLimitEnabled());
+  EXPECT_FALSE(result.value.risk.HoldingPositionLimitEnabled());
 }
 
 TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {

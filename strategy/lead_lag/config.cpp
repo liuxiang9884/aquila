@@ -300,9 +300,11 @@ class Parser {
     risk.max_gross_notional =
         RequiredDouble(table, "max_gross_notional",
                        "lead_lag.risk.max_gross_notional");
-    risk.max_holding_position =
-        RequiredInt64(table, "max_holding_position",
-                      "lead_lag.risk.max_holding_position");
+    if (table.contains("max_holding_position")) {
+      risk.max_holding_position =
+          RequiredInt64(table, "max_holding_position",
+                        "lead_lag.risk.max_holding_position");
+    }
     if (!ok_) {
       return risk;
     }
@@ -310,8 +312,10 @@ class Parser {
       Fail("lead_lag.risk.max_gross_notional", " must be positive");
       return risk;
     }
-    if (risk.max_holding_position <= 0) {
-      Fail("lead_lag.risk.max_holding_position", " must be positive");
+    if (table.contains("max_holding_position") &&
+        risk.max_holding_position < 0) {
+      Fail("lead_lag.risk.max_holding_position",
+           " must be non-negative when set");
     }
     return risk;
   }
