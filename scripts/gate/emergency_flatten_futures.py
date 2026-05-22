@@ -26,6 +26,7 @@ EXIT_REST_FAILED = 4
 DEFAULT_POLL_TIMEOUT_SEC = 30.0
 DEFAULT_POLL_INTERVAL_SEC = 1.0
 DEFAULT_MAX_POSITION_COUNT = 8
+POSITION_NOT_FOUND_LABEL = "POSITION_NOT_FOUND"
 
 Requester = Callable[[ApiRequest], Any]
 
@@ -330,7 +331,20 @@ def query_positions(
 ) -> list[PositionSnapshot]:
     positions = []
     for contract in contracts:
-        response = _request(requester, build_position_request(settle, contract))
+        normalized_contract = normalize_rest_contract(contract)
+        try:
+            response = _request(requester, build_position_request(settle, normalized_contract))
+        except RestFailure as exc:
+            if POSITION_NOT_FOUND_LABEL not in str(exc):
+                raise
+            positions.append(
+                PositionSnapshot(
+                    contract=normalized_contract,
+                    size=0,
+                    pending_orders=0,
+                )
+            )
+            continue
         positions.append(parse_position(response, fallback_contract=contract))
     return positions
 

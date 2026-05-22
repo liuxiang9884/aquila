@@ -76,6 +76,26 @@ def config(command=None):
 
 
 class RunLiveWithGuardTest(unittest.TestCase):
+    def test_query_guard_state_treats_position_not_found_as_flat_contract(self):
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/ZEC_USDT"):
+                raise RuntimeError('HTTP 400: {"label":"POSITION_NOT_FOUND"}')
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        state = guard.query_guard_state(fake_request, "usdt", ["ZEC_USDT"])
+
+        self.assertTrue(state.flat())
+        self.assertEqual(state.positions[0].contract, "ZEC_USDT")
+        self.assertEqual(state.positions[0].size, 0)
+        self.assertEqual(state.positions[0].pending_orders, 0)
+        self.assertEqual(state.open_orders, [])
+        self.assertEqual(len(calls), 2)
+
     def test_preflight_not_flat_refuses_to_start_or_flatten(self):
         process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
         flatten = FakeFlattenRunner(
