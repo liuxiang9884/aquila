@@ -32,11 +32,11 @@ target_link_libraries(lead_lag_live_strategy_test
 add_test(NAME lead_lag_live_strategy_test
          COMMAND lead_lag_live_strategy_test)
 
-add_test(NAME lead_lag_live_strategy_orders_disabled_smoke
+add_test(NAME lead_lag_live_strategy_orders_missing_credentials_smoke
          COMMAND ${CMAKE_COMMAND}
                  -DLEAD_LAG_STRATEGY=$<TARGET_FILE:lead_lag_strategy>
-                 -DLEAD_LAG_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_disabled_strategy.toml
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_disabled_smoke.cmake)
-set_tests_properties(lead_lag_live_strategy_orders_disabled_smoke
+                 -DLEAD_LAG_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_strategy.toml
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_missing_credentials_smoke.cmake)
+set_tests_properties(lead_lag_live_strategy_orders_missing_credentials_smoke
                      PROPERTIES
                          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

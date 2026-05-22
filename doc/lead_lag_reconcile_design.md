@@ -28,7 +28,7 @@
   - global continuity lost fanout 时 lane 满，publisher 会保留 pending event 后续重试。
 - 枚举中还保留了 `kReconnectUnknownWindow`、`kDecodeUnrecoverable`、`kProducerRestart`，这些应作为后续增强场景处理。
 - `OrderManager` 和 LeadLag `ExecutionState` 仍是内存状态；进程退出后不能靠它们自动恢复交易。
-- 当前已有 `scripts/gate/query_gate_account.py` 和 read-only `scripts/gate/reconcile_futures_orders.py`，但 V1 应急平仓需要一个单独的可下单 Python REST helper。
+- 当前已有 `scripts/gate/query_gate_account.py`、read-only `scripts/gate/reconcile_futures_orders.py` 和 V1 可下单应急工具 `scripts/gate/emergency_flatten_futures.py`。
 
 ## V1 应急流程
 
@@ -191,7 +191,7 @@ V2 可保留以下原则：
 - Modify: `scripts/gate/query_gate_account.py`
 - Modify: `scripts/gate/query_gate_account_test.py`
 
-- [ ] **Step 1: 增加 REST cancel / market close request builder**
+- [x] **Step 1: 增加 REST cancel / market close request builder**
 
 保留 `query_gate_account.py` 的 read-only 查询职责；可把共享签名和 request helper 复用出来，但不要让查询命令默认具备下单副作用。
 
@@ -201,7 +201,7 @@ V2 可保留以下原则：
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/query_gate_account_test.py
 ```
 
-- [ ] **Step 2: 实现 emergency flatten CLI**
+- [x] **Step 2: 实现 emergency flatten CLI**
 
 覆盖 dedicated-account scope、allowlist scope、dry-run、open order cancel、reduce-only market close、poll verify、失败 exit code。
 
@@ -215,7 +215,7 @@ V2 可保留以下原则：
 
 先在无仓位状态执行 dry-run 和 flat account smoke，确认脚本不会提交不必要订单。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add scripts/gate/emergency_flatten_futures.py scripts/gate/emergency_flatten_futures_test.py scripts/gate/query_gate_account.py scripts/gate/query_gate_account_test.py
@@ -230,19 +230,23 @@ git commit -m "Add gate emergency futures flatten helper"
 - Modify: `tools/lead_lag/live_strategy.h`
 - Modify: `test/tools/lead_lag/live_strategy_test.cpp`
 
-- [ ] **Step 1: 定义 live runner emergency exit code**
+- [x] **Step 1: 定义 live runner emergency exit code**
 
 `ContinuityLost` 在 live orders 模式下必须停止 trading loop。signal-only 只记录 diagnostics。
 
-- [ ] **Step 2: 接入 stop-and-flat handoff**
+- [x] **Step 2: 接入 stop-and-flat handoff**
 
 第一版建议 runner 返回专用 exit code，由外层 supervisor / runbook 调 `scripts/gate/emergency_flatten_futures.py`。如果后续决定由 runner 直接调用脚本，应单独审查参数、超时和日志边界。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
+
+2026-05-22 状态：`LiveOrdersStrategy` 已在 live orders wrapper 中处理 `ContinuityLost`，会请求 runtime stop，并让 runner 返回 exit code `10`。`RunLiveOrders()` 已接入 Gate `OrderSessionRuntimeAdapter`、realtime data reader 和 feedback SHM；缺少凭据时先返回 exit code `2`，不会进入 runtime create。
+
+验证：
 
 ```bash
-git add tools/lead_lag/live_strategy.cpp tools/lead_lag/live_strategy.h test/tools/lead_lag/live_strategy_test.cpp
-git commit -m "Stop lead lag live runner on continuity loss"
+cmake --build build/debug --target lead_lag_strategy lead_lag_live_strategy_test -j 8
+ctest --test-dir build/debug -R lead_lag_live_strategy --output-on-failure
 ```
 
 ### Task 3: Emergency Smoke
@@ -287,7 +291,7 @@ V1 稳定后再评估是否继续实现自动恢复。已有 `scripts/gate/recon
 
 ## 当前边界
 
-- `lead_lag_strategy --execute` 仍是禁用边界，真实订单 runner 尚未打开。
-- 打开真实订单 runner 前，V1 emergency flatten helper 和 `ContinuityLost` stop handoff 必须先完成并通过 smoke。
-- V1 成功后系统仍保持停止，不自动恢复交易。
+- `lead_lag_strategy --execute` 已接到真实 live-orders runtime；仍需要显式 `strategy.mode=live`、API 凭据、feedback SHM 和 data reader，默认 validate-only / signal-only 不提交订单。
+- `ContinuityLost` stop handoff 已完成；flat-account、tiny-position 和 continuity-lost live smoke 仍未完成，因此不应把它当作已可长期无人值守运行。
+- V1 应急成功后系统仍保持停止，不自动恢复交易。
 - V2 read-only reconcile / resume 是后续优化，不是当前应急方案。

@@ -9,7 +9,7 @@
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
 - 构建：CMake + `build.sh`，依赖通过本机 `$HOME/vcpkg`。
 - 当前重点：WebSocket 内核、Gate / Binance 行情、data session / SHM、strategy `DataReader`、Gate submit/cancel、order feedback SHM、Gate private `futures.orders` feedback、`OrderManager`、`TradingRuntime`、Gate runtime adapter、`demo` 策略 live smoke，以及 LeadLag replay 信号链路均已落地。
-- 当前边界：LeadLag strategy 层生产订单闭环已完成；真实 runner `--execute` 仍禁用，当前优先补 `ContinuityLost` 后 stop-and-flat 应急链路、account / position 复核、unfilled-cancel / failure live smoke 和端到端 benchmark。更复杂的 read-only reconcile / resume 作为后续 V2。
+- 当前边界：LeadLag strategy 层生产订单闭环已完成；`lead_lag_strategy --execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止、返回 handoff exit code。当前仍缺 flat-account / tiny-position / continuity-lost live smoke、account / position 复核、unfilled-cancel / failure live smoke 和端到端 benchmark。更复杂的 read-only reconcile / resume 作为后续 V2。
 - 当前建议分支入口：`main`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配；性能结论必须有 benchmark / profile / live probe 证据。
 
@@ -49,7 +49,7 @@ doc/evaluation_support.md
 
 以本节、`git status`、`git log` 和当前代码为准；旧执行计划文档已清理，不再作为事实源。
 
-截至 2026-05-20：
+截至 2026-05-22：
 
 - `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke。
 - 公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`；旧 `core/strategy/*` 和 `strategy/order_types.h` / `strategy/order_manager.h` 兼容头已删除。
@@ -104,8 +104,8 @@ doc/evaluation_support.md
 - 已实现 config / metadata、raw market state、recorder wrappers、drift / alignment、threshold、signal / execution state、feedback state / order retire。
 - `tools/lead_lag/replay.cpp` 可从 `BookTicker` binary 生成 signal CSV；ORDI_USDT Tardis / HDF replay 对比和 PnL 结论已记录。
 - fixed Go / C++ 静态语义审计已完成；高影响差异集中在时间口径、move quantile exact vs histogram、synthetic replay 不等价于真实 order/fill 回测。
-- `doc/lead_lag_live_runtime_plan.md` 已记录 LeadLag signal-only 长时间实盘观察、strategy 层真实订单闭环、runner `--execute` 禁用边界、`ContinuityLost` stop-and-flat 应急链路、异常 smoke 和端到端 benchmark 的推进顺序。
-- LeadLag default production accounting 已可提交 IOC limit order intent；`tools/lead_lag/live_strategy.cpp::RunLiveOrders()` 仍是禁用 stub，未打开真实订单 runner。
+- `doc/lead_lag_live_runtime_plan.md` 已记录 LeadLag signal-only 长时间实盘观察、strategy 层真实订单闭环、runner `--execute` 真实入口、`ContinuityLost` stop-and-flat 应急链路、异常 smoke 和端到端 benchmark 的推进顺序。
+- LeadLag default production accounting 已可提交 IOC limit order intent；`tools/lead_lag/live_strategy.cpp::RunLiveOrders()` 已接到 Gate live-orders runtime，缺凭据时返回 exit code `2`，收到 `ContinuityLost` 时返回 handoff exit code `10`。
 
 ### Evaluation
 
@@ -361,10 +361,10 @@ rg 'aquila_evaluation' core exchange tools
 
 ### LeadLag
 
-1. 读取 `doc/lead_lag_live_runtime_plan.md` 和 `strategy/lead_lag/README.md`，确认当前 runner gating、strategy 层订单闭环和禁用边界。
+1. 读取 `doc/lead_lag_live_runtime_plan.md`、`doc/lead_lag_reconcile_design.md` 和 `strategy/lead_lag/README.md`，确认当前 runner gating、strategy 层订单闭环和 `ContinuityLost` handoff 边界。
 2. 如继续 signal-only 长跑，先读 `doc/lead_lag_live_runtime_plan.md` 的 2026-05-21 中断记录；上一轮约 3h06m 后被 SIGTERM，REST 复核无 open order / position / pending order，但不能算 4 小时通过，需要重跑一次自然完成的 2 到 4 小时观察。
-3. 保持 `lead_lag_strategy --execute` 为禁用边界，先补 `ContinuityLost` stop-and-flat 应急链路。
-4. 按计划补 Python emergency flatten、feedback 断线 / `ContinuityLost` stop-and-flat smoke、unfilled-cancel、rejected / cancel-rejected 和端到端 benchmark，再评估打开真实 runner。
+3. 先完成 flat-account / tiny-position emergency flatten smoke，再做 feedback 断线 / `ContinuityLost` stop-and-flat smoke。
+4. 之后按计划补 unfilled-cancel、rejected / cancel-rejected、小额 filled open / close 和端到端 benchmark。
 
 ## 结束对话固定流程
 
@@ -380,4 +380,4 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的 onboarding 提示
 
-请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke，feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。后续如果继续 Gate 交易架构，先读 Gate handoff 和 specs，优先补 account / position feedback、unfilled-cancel / failure live smoke 和端到端 benchmark；如果继续 DataReader，读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`，优先讨论 trade / order book feed 扩展；如果继续 LeadLag 长时间实盘运行和测试，先读 `doc/lead_lag_live_runtime_plan.md` 和 `doc/lead_lag_reconcile_design.md`，当前 strategy 层订单闭环已完成但 `lead_lag_strategy --execute` 仍是禁用边界，优先补 `ContinuityLost` stop-and-flat 应急链路、Python REST emergency flatten、异常 smoke 和端到端 benchmark，再评估打开真实 runner。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke，feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。后续如果继续 Gate 交易架构，先读 Gate handoff 和 specs，优先补 account / position feedback、unfilled-cancel / failure live smoke 和端到端 benchmark；如果继续 DataReader，读 `doc/data_reader_config.md` 和 `doc/trading_component_architecture_discussion.md`，优先讨论 trade / order book feed 扩展；如果继续 LeadLag 长时间实盘运行和测试，先读 `doc/lead_lag_live_runtime_plan.md` 和 `doc/lead_lag_reconcile_design.md`，当前 strategy 层订单闭环、Python REST emergency flatten helper 和 `lead_lag_strategy --execute` live-orders handoff 已完成；优先补 flat-account / tiny-position emergency smoke、feedback 断线 / `ContinuityLost` stop-and-flat smoke、unfilled-cancel / failure smoke 和端到端 benchmark。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。

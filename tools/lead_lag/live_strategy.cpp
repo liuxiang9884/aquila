@@ -5,6 +5,7 @@
 #include <exception>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <CLI/CLI.hpp>
@@ -19,6 +20,7 @@
 #include "core/trading/order_types.h"
 #include "core/trading/trading_runtime.h"
 #include "exchange/gate/trading/order_session_config.h"
+#include "exchange/gate/trading/order_session_runtime_adapter.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/signal.h"
@@ -62,6 +64,17 @@ struct SignalOnlyStats {
   std::uint64_t order_feedbacks{0};
   live::RecoveryDiagnostics recovery;
 };
+
+const char* EnvValue(const std::string& name) {
+  if (name.empty()) {
+    return nullptr;
+  }
+  const char* value = std::getenv(name.c_str());
+  if (value == nullptr || value[0] == '\0') {
+    return nullptr;
+  }
+  return value;
+}
 
 struct NullOrderSession {
   enum class SendStatus : std::uint8_t {
@@ -268,6 +281,33 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
   return ValidateLoadedConfig(*loaded);
 }
 
+gate::LoginCredentials LoadCredentials(const CliOptions& options,
+                                       const gate::OrderSessionConfig& config,
+                                       bool* ok) {
+  const std::string api_key_env = options.api_key_env.empty()
+                                      ? config.credentials.api_key_env
+                                      : options.api_key_env;
+  const std::string api_secret_env = options.api_secret_env.empty()
+                                         ? config.credentials.api_secret_env
+                                         : options.api_secret_env;
+  const char* api_key = EnvValue(api_key_env);
+  if (api_key == nullptr) {
+    fmt::print(stderr, "[FAIL] missing env var {}\n", api_key_env);
+    NOVA_ERROR("missing env var {}", api_key_env);
+    *ok = false;
+    return {};
+  }
+  const char* api_secret = EnvValue(api_secret_env);
+  if (api_secret == nullptr) {
+    fmt::print(stderr, "[FAIL] missing env var {}\n", api_secret_env);
+    NOVA_ERROR("missing env var {}", api_secret_env);
+    *ok = false;
+    return {};
+  }
+  *ok = true;
+  return gate::LoginCredentials{.api_key = api_key, .api_secret = api_secret};
+}
+
 void ApplyDurationOverride(const CliOptions& options, LoadedConfig* loaded) {
   if (options.duration_sec != 0) {
     loaded->strategy.loop.max_loop_seconds = options.duration_sec;
@@ -362,15 +402,85 @@ int RunSignalOnly(LoadedConfig loaded, const CliOptions& options) {
   return exit_code;
 }
 
-int RunLiveOrders() {
-  fmt::print(stderr,
-             "[FAIL] lead_lag live order mode remains disabled until REST "
-             "reconcile, feedback recovery, and live smoke guardrails are "
-             "complete\n");
-  NOVA_ERROR(
-      "lead_lag live order mode remains disabled until REST reconcile, "
-      "feedback recovery, and live smoke guardrails are complete");
-  return 3;
+template <typename WebSocketPolicy>
+int RunLiveOrdersRuntime(LoadedConfig loaded,
+                         gate::LoginCredentials credentials) {
+  using DataReader = market_data::RealtimeDataReader<
+      market_data::RealtimeDataReaderDiagnostics>;
+  using OrderSession =
+      gate::OrderSessionRuntimeAdapter<WebSocketPolicy,
+                                       gate::OrderSessionDiagnostics>;
+  using Runtime =
+      core::TradingRuntime<live::LiveOrdersStrategy, OrderSession, DataReader,
+                           core::TradingRuntimeDiagnostics>;
+
+  live::LiveOrdersStrategyStats stats;
+  gate::OrderSessionConfig order_session_config =
+      std::move(loaded.order_session);
+  auto runtime_result = Runtime::Create(
+      std::move(loaded.strategy), std::move(loaded.data_reader),
+      [order_session_config = std::move(order_session_config),
+       credentials = std::move(credentials)]() mutable {
+        return OrderSession(std::move(order_session_config),
+                            std::move(credentials));
+      },
+      std::move(loaded.lead_lag), &stats);
+  if (!runtime_result.ok) {
+    fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
+               runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
+    return 1;
+  }
+
+  const int runtime_exit_code = runtime_result.value->Run();
+  const int exit_code =
+      live::ResolveLiveOrdersExitCode(runtime_exit_code, stats);
+  const core::TradingRuntimeLoopStats& loop_stats =
+      runtime_result.value->diagnostics().stats();
+  const std::string recovery_fields =
+      live::FormatRecoveryDiagnosticsFields(stats.recovery);
+
+  if (stats.continuity_lost_stop_requested) {
+    fmt::print(stderr,
+               "[FAIL] lead_lag live order feedback continuity lost; "
+               "runtime stopped; run emergency flatten before restart\n");
+    NOVA_ERROR(
+        "lead_lag live order feedback continuity lost; runtime stopped; "
+        "run emergency flatten before restart");
+  }
+
+  fmt::print(
+      "lead_lag_strategy_live_orders_summary exit_code={} "
+      "runtime_exit_code={} emergency_handoff={} book_tickers={} "
+      "order_responses={} order_feedbacks={} {} loop_iterations={} "
+      "idle_iterations={} order_response_polls={} order_response_events={} "
+      "order_feedback_polls={} order_feedback_events={} data_reader_polls={} "
+      "data_reader_empty_polls={} data_reader_events={}\n",
+      exit_code, runtime_exit_code,
+      stats.continuity_lost_stop_requested ? "true" : "false",
+      stats.book_tickers, stats.order_responses, stats.order_feedbacks,
+      recovery_fields, loop_stats.loop_iterations, loop_stats.idle_iterations,
+      loop_stats.order_response_poll_calls, loop_stats.order_response_events,
+      loop_stats.order_feedback_poll_calls, loop_stats.order_feedback_events,
+      loop_stats.data_reader_poll_calls, loop_stats.data_reader_empty_polls,
+      loop_stats.data_reader_events);
+  return exit_code;
+}
+
+int RunLiveOrders(LoadedConfig loaded, const CliOptions& options) {
+  bool credentials_ok = false;
+  gate::LoginCredentials credentials =
+      LoadCredentials(options, loaded.order_session, &credentials_ok);
+  if (!credentials_ok) {
+    return 2;
+  }
+
+  if (loaded.order_session.connection.enable_tls) {
+    return RunLiveOrdersRuntime<gate::OrderSessionDefaultTlsWebSocketPolicy>(
+        std::move(loaded), std::move(credentials));
+  }
+  return RunLiveOrdersRuntime<gate::OrderSessionDefaultPlainWebSocketPolicy>(
+      std::move(loaded), std::move(credentials));
 }
 
 int Run(const CliOptions& options) {
@@ -395,7 +505,7 @@ int Run(const CliOptions& options) {
     case live::RunMode::kSignalOnly:
       return RunSignalOnly(std::move(loaded), options);
     case live::RunMode::kLiveOrders:
-      return RunLiveOrders();
+      return RunLiveOrders(std::move(loaded), options);
   }
   return 1;
 }
@@ -413,9 +523,9 @@ int main(int argc, char** argv) {
   app.add_option("--signals-output", options.signals_output_path,
                  "Optional CSV path for triggered signal-only signals");
   app.add_option("--api-key", options.api_key_env,
-                 "Reserved for live order mode API key env override");
+                 "Live order mode API key env override");
   app.add_option("--api-secret", options.api_secret_env,
-                 "Reserved for live order mode API secret env override");
+                 "Live order mode API secret env override");
   app.add_flag("--connect-data", options.connect_data,
                "Open realtime SHM data reader and run signal-only");
   app.add_flag("--execute", options.execute,

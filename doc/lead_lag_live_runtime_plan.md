@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 第一阶段新增独立 LeadLag live runner，复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM，默认只跑信号与诊断，不提交订单。第二阶段已在 strategy 层补齐 LeadLag 生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 执行状态闭环；真实 `--execute` runner 仍保持禁用，等待 `ContinuityLost` 后 stop-and-flat 应急链路、account / position 校验、小额真实订单 smoke guardrails 和端到端 benchmark。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。小额真实订单和长期运行仍等待 flat-account / tiny-position / continuity-lost smoke、account / position 校验和端到端 benchmark。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -15,8 +15,8 @@
 - LeadLag replay / signal 主链路已落地，`leadlag::Strategy::OnBookTicker()` 已串起 raw market、alignment、recorder、threshold、signal 和 synthetic position accounting。
 - LeadLag live runner 已落地为 `tools/lead_lag/live_strategy.cpp`：默认 validate-only；`--connect-data` 进入 signal-only；`--execute` 只有在 `strategy.mode=live` 时解析为 `RunMode::kLiveOrders`。
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
-- 真实 `RunLiveOrders()` 仍是禁用 stub；即使 `--execute` 解析到 `RunMode::kLiveOrders`，runner 也返回禁用错误，不打开真实订单路径。
-- 小额真实下单前仍缺 `ContinuityLost` 后停止系统、Python REST 撤单 / reduce-only 市价平仓、account / position 复核和 live smoke guardrails；长时间真实下单前还需要 unfilled-cancel / failure smoke 和端到端 benchmark。
+- 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
+- 小额真实下单前仍缺 flat-account / tiny-position emergency smoke、`ContinuityLost` stop-and-flat smoke、account / position 复核和 live smoke guardrails；长时间真实下单前还需要 unfilled-cancel / failure smoke 和端到端 benchmark。
 
 ## 文件结构
 
@@ -25,7 +25,7 @@
 - Create: `tools/lead_lag/live_strategy.cpp`
   - LeadLag live 入口，加载 `config/strategies/lead_lag_btc_strategy.toml`。
   - 默认 dry-run / signal-only，不调用真实下单。
-  - 显式 `--execute` 后才允许解析到 `RunMode::kLiveOrders`；当前真实订单运行路径仍禁用。
+  - 显式 `--execute` 且 `strategy.mode=live` 后才允许进入 `RunMode::kLiveOrders`；默认 validate-only / signal-only 不提交订单。
   - 支持运行时长、低频 summary、signals 输出路径和 diagnostics 输出。
 - Modify: `tools/CMakeLists.txt`
   - 增加 `lead_lag_strategy` executable。
@@ -255,7 +255,7 @@ Commit boundary:
 
 - [x] **Step 2: 覆盖 execute=true 优先级**
 
-`execute=true`、`strategy.mode=live`、`connect_data=true` 时解析为 `RunMode::kLiveOrders`。这只验证 gating 选择；真实 `RunLiveOrders()` 仍是禁用 stub。
+`execute=true`、`strategy.mode=live`、`connect_data=true` 时解析为 `RunMode::kLiveOrders`。该任务只覆盖当时的 gating 选择；真实 live-orders runtime 后续在 Task4 接入。
 
 - [x] **Step 3: 覆盖 summary 文本稳定性**
 
@@ -273,21 +273,21 @@ git diff --check
 
 2026-05-21 result: target build passed; target `lead_lag_live_strategy` ctest passed; full debug build passed; focused ctest passed 9/9; `git diff --check` passed.
 
-Commit boundary: this task only adds gating/smoke tests and documentation. It must not enable `RunLiveOrders()` or open the real live order path.
+Commit boundary: this historical task only added gating/smoke tests and documentation;真实 live order path 后续在 Task4 单独打开。
 
 ### Task 3.6: Review Findings 后续处理
 
 **文件：**
-- Create: `test/tools/lead_lag/lead_lag_live_orders_disabled_strategy.toml`
-- Create: `test/tools/lead_lag/lead_lag_live_orders_disabled_smoke.cmake`
+- Create: `test/tools/lead_lag/lead_lag_live_orders_strategy.toml`
+- Create: `test/tools/lead_lag/lead_lag_live_orders_missing_credentials_smoke.cmake`
 - Modify: `test/tools/lead_lag/CMakeLists.txt`
 - Modify: `tools/lead_lag/live_strategy.cpp`
 - Modify: `doc/lead_lag_live_runtime_plan.md`
 - Modify: `doc/project_onboarding_guide.md`
 
-- [x] **Step 1: 覆盖实际 runner 禁用路径**
+- [x] **Step 1: 覆盖当时实际 runner 禁用路径**
 
-新增 CTest wrapper 实际运行 `lead_lag_strategy --execute --duration-sec 1`，断言 exit code 为 3，输出包含禁用错误，并避免进入 signal-only / runtime create / credentials 错误路径。
+历史状态：新增 CTest wrapper 实际运行 `lead_lag_strategy --execute --duration-sec 1`，断言 exit code 为 3，输出包含禁用错误，并避免进入 signal-only / runtime create / credentials 错误路径。Task4 打开 live-orders runtime 后，该 smoke 已替换为 missing-credentials 冷路径检查。
 
 - [x] **Step 2: 修正禁用文案**
 
@@ -322,13 +322,11 @@ REST reconcile / feedback recovery 之后。
 - Modify: `tools/lead_lag/live_strategy.h`
 - Modify: `tools/lead_lag/live_strategy.cpp`
 - Modify: `test/tools/lead_lag/live_strategy_test.cpp`
-- Modify: `test/tools/lead_lag/lead_lag_live_orders_disabled_smoke.cmake`
+- Modify: `test/tools/lead_lag/lead_lag_live_orders_missing_credentials_smoke.cmake`
 
-- [x] **Step 1: 保持 live orders 禁用边界**
+- [x] **Step 1: 保持当时 live orders 禁用边界**
 
-`lead_lag_strategy --execute` 仍解析到 `RunMode::kLiveOrders` 后立即走 `RunLiveOrders()` 禁用
-stub，返回 exit 3；smoke 断言不会进入 runtime create、credentials error 或
-`lead_lag_strategy_signal_only_summary` 路径。
+历史状态：`lead_lag_strategy --execute` 解析到 `RunMode::kLiveOrders` 后立即走 `RunLiveOrders()` 禁用 stub，返回 exit 3。Task4 打开 live-orders runtime 后，该检查改为缺凭据时 exit code `2` 且不进入 runtime create。
 
 - [x] **Step 2: 接入 signal-only recovery diagnostics summary**
 
@@ -360,19 +358,19 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 - Test: `scripts/gate/emergency_flatten_futures_test.py`
 - Test: `test/tools/lead_lag/live_strategy_test.cpp`
 
-前置条件：Task4 完成前，`lead_lag_strategy --execute` 仍应作为禁用边界处理；真实订单路径不可打开。
+边界：`lead_lag_strategy --execute` 已在 Task4 中打开真实 live-orders runtime，但仍必须显式 opt-in；未完成 flat-account / tiny-position / continuity-lost smoke 前，不把它视为可长期无人值守运行。
 
 - [x] **Step 1: 写 stop-and-flat 应急设计**
 
 已完成：`doc/lead_lag_reconcile_design.md` 已把当前 V1 固定为：收到 `ContinuityLost` 后停止自动交易，用 Python REST API 查询 in-scope position，先撤 open orders，再用 reduce-only market close 平掉非零仓位，最后用 REST 复核 positions flat 且 open orders 为空。V2 read-only reconcile / resume 只作为后续优化保留。
 
-- [ ] **Step 2: 实现 Python emergency flatten helper**
+- [x] **Step 2: 实现 Python emergency flatten helper**
 
 实现 `scripts/gate/emergency_flatten_futures.py`，支持 dedicated-account scope、contract allowlist、dry-run、撤单、reduce-only market close、REST 轮询复核和结构化 summary。
 
-- [ ] **Step 3: 接入 live runner stop handoff**
+- [x] **Step 3: 接入 live runner stop handoff**
 
-真实 live orders 模式下，一旦 strategy 收到 `ContinuityLost`，runner 必须停止自动交易并返回专用 exit code；signal-only 模式只记录 diagnostics，不提交订单。
+真实 live orders 模式下，一旦 strategy 收到 `ContinuityLost`，runner 停止自动交易并返回专用 exit code `10`；signal-only 模式只记录 diagnostics，不提交订单。2026-05-22 已完成代码接入和 missing-credentials smoke，仍缺 live continuity-lost smoke。
 
 - [ ] **Step 4: 验证 flat account emergency smoke**
 
@@ -388,7 +386,7 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 - Modify: `doc/lead_lag_live_runtime_plan.md`
 - Runtime evidence: Gate REST query output and live runner output
 
-前置条件：Task4 的 `ContinuityLost` stop-and-flat 应急链路和 smoke 完成后，才允许用单独审查过的提交打开真实 runner 并开始 Task5。
+前置条件：Task4 的 emergency helper、`ContinuityLost` stop handoff 和 smoke 完成后，才允许开始小额真实订单 smoke。
 
 - [ ] **Step 1: Filled open / close smoke**
 
@@ -465,7 +463,7 @@ taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
 1. `lead_lag_strategy` dry-run 1 秒启动验证。
 2. signal-only 30 分钟观察。
 3. signal-only 2 到 4 小时观察。
-4. `lead_lag_strategy --execute` gating smoke：允许解析到 `RunMode::kLiveOrders`，但 `RunLiveOrders()` 必须返回禁用边界，不提交真实订单。
+4. `lead_lag_strategy --execute` missing-credentials smoke：允许解析到 `RunMode::kLiveOrders`，但缺凭据时必须在 runtime create 前返回。
 5. Python emergency flatten flat-account smoke。
 6. tiny position emergency flatten smoke。
 7. feedback session 断线 / `ContinuityLost` stop-and-flat smoke。
@@ -479,8 +477,8 @@ taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
 ## 完成标准
 
 - signal-only live runner 可以长时间消费 Gate / Binance realtime SHM，并低频输出可解释 diagnostics。
-- `ContinuityLost` stop-and-flat 应急链路完成前，`lead_lag_strategy --execute` 仍是禁用边界：`ResolveRunMode()` 可以选择 `live_orders`，但 `RunLiveOrders()` 不可提交真实订单。
-- LeadLag strategy 层 default production accounting 可以提交 IOC limit order intent；runner 默认 dry-run / signal-only 不提交订单。
+- `lead_lag_strategy --execute` 是显式 opt-in 真实 live-orders 入口；缺凭据时必须在 runtime create 前失败，收到 `ContinuityLost` 时必须停止并返回应急 handoff exit code。
+- LeadLag strategy 层 default production accounting 可以提交 IOC limit order intent；runner 默认 validate-only / signal-only 不提交订单。
 - 订单状态只由 `OrderManager` 和 private feedback 推进；submit rejected 只清理 pending 状态，不伪造成交事实。
 - feedback continuity lost 后停止自动交易，并通过 Python REST helper 撤销 in-scope open orders、reduce-only 市价平仓、REST 复核 flat；V1 不自动恢复交易。
 - 每次 live smoke 后都有 REST open orders / position / pending orders 复核。
