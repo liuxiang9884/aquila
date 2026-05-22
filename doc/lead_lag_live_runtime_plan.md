@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。当前 V1 不新增独立 account / position realtime feedback session；长期运行前优先补端到端 benchmark 和更长时间真实订单 guardrails。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。2026-05-22 release 真实订单运行暴露了 IOC partial-fill terminal feedback 缺失和 decimal-size flat 判断不足，修复前不继续无人值守长跑。当前 V1 不新增独立 account / position realtime feedback session。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -17,7 +17,7 @@
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。`execute.open_slippage` 和 `execute.close_slippage` 按 `price_tick` 对最终 IOC limit 下单价做不利方向调整；order intent / reject 日志同时输出 `raw_price` 和 `order_price`。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
-- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。长时间真实下单前还需要端到端 benchmark 和更长时间 guarded 运行证据；failure protocol probe 继续前要先确认 Gate 会返回最终 error 的安全请求形态。
+- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。端到端 benchmark 已完成。2026-05-22 release 真实订单运行不是通过项：RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失；decimal-size 合约还暴露出只看 integer `size` 的 flat 判断不足。继续真实订单长跑前先修这两个 blocker。
 
 ## 文件结构
 
@@ -531,6 +531,33 @@ cmake --build build/release --target lead_lag_runtime_benchmark lead_lag_feedbac
 ## 运行记录
 
 本节只记录已经发生的长时间运行或 smoke 证据。新增记录应包含日期、commit、命令、运行时长、账户复核摘要和异常摘要。
+
+### 2026-05-22 11-symbol release live-orders guarded run（中止）
+
+- Commit under test: `9cc933f Add lead lag execution slippage` 之后的 release build；run dir: `run_logs/live_release_20260522_155232`。
+- Window: 2026-05-22 15:52:43 UTC 启动 strategy，16:04 UTC 左右因异常人工停止；未跑满 1 小时，不计入长期运行通过项。
+- Mode: release `lead_lag_strategy --execute --duration-sec 3600`，外围 `scripts/lead_lag/run_live_with_guard.py`，11 个 requested symbols，feedback SHM 为 fresh create。
+- Strategy log summary:
+  - `lead_lag_order_intent=8`，其中 open intent `7`，close intent `1`。
+  - Gate place send `8`，Ack `8`。
+  - Strategy terminal feedback `7`，其中 filled `2`，cancelled `5`；缺失 terminal feedback `1`。
+  - 完整 strategy open / close 交易只有 1 组：`RIVER_USDT` open short 14 张、close short 14 张。
+- `RIVER_USDT` 完整交易复盘：
+  - Open short: raw `6.816`，order / fill `6.813`，实际 open slippage `3` ticks。
+  - Close short: raw `6.814`，order `6.817`，fill `6.8145`，实际 close slippage `0.5` ticks。
+  - `RIVER_USDT` Gate multiplier 为 `1.0`，gross PnL = `(6.813 - 6.8145) * 14 = -0.021` USDT。
+  - 按 fee rate `0.0002`，fee = `(6.813 * 14 + 6.8145 * 14) * 0.0002 = 0.038157` USDT。
+  - 信号价理论 PnL = `(6.816 - 6.814) * 14 = 0.028` USDT；实际滑点成本 `0.049` USDT；net PnL = `-0.059157` USDT。
+- `RAVE_USDT` 异常：
+  - Strategy 发出 open long 17 张，order price `0.5624`，raw `0.5619`，配置 open slippage `5` ticks。
+  - REST finished order 显示 IOC 部分成交：filled 10 张，left 6，fill price `0.562399019608`，finish_as=`ioc`。
+  - `OrderFeedbackSession` 和 strategy log 均未发布 / 消费该 order 的 terminal feedback；strategy 因此不知道真实持仓。
+  - 人工停止 runner 后，guard final check 发现 `RAVE_USDT size=10`，提交 reduce-only IOC market sell 10 张，fill price `0.562881`，guard summary `result=verified_flat`。
+  - REST 随后显示 open orders 为空、`size=0`；但 `RAVE_USDT` position 仍有非零 `value` / margin 字段，按 mark price 和 multiplier 反推约 `0.2` 张残余风险。原因与 Gate decimal-size 合约和当前 integer-only flat 判断有关，不能把本轮视为完全干净的实盘通过证据。
+- 结论 / blocker:
+  - 修复 Gate private `futures.orders` parser / feedback path 对 IOC partial fill / partial cancel 的 terminal event 处理，必须让 REST 可见的 partial-fill order 进入 strategy terminal feedback。
+  - 修复 REST final check / emergency flatten 的 decimal quantity 处理；flat 判断不能只看 integer `size`，还要处理 `value` / margin / decimal residual。
+  - 在上述两个 blocker 修复并复测前，不继续 1 小时以上真实订单长跑。
 
 ### 2026-05-22 V1 emergency flatten / ContinuityLost smoke
 
