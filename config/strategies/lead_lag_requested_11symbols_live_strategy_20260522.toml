@@ -1,0 +1,33 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/lead_lag_strategy_requested_11symbols_live_20260522.log"
+console_sink_name = "lead_lag_strategy_requested_11symbols_live_console"
+backend_thread_name = "lead_lag_strategy_requested_11symbols_live_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[strategy]
+name = "lead_lag"
+strategy_id = 4
+mode = "live"
+order_capacity = 32
+config = "config/strategies/lead_lag_requested_11symbols_20260522.toml"
+
+[strategy.loop]
+idle_policy = "spin"
+bind_cpu_id = 4
+max_loop_seconds = 0
+
+[strategy.data_reader]
+config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
+
+[strategy.order_session]
+config = "config/order_sessions/gate_order_session.toml"
+
+[strategy.feedback]
+enabled = true
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+poll_budget = 32
+force_claim = false
