@@ -1,5 +1,6 @@
 add_library(aquila_monitor STATIC
     demo/symbol_workbench_demo_data.cpp
+    market_data/market_data_thread.cpp
 )
 
 target_include_directories(aquila_monitor
@@ -10,6 +11,9 @@ target_include_directories(aquila_monitor
 target_link_libraries(aquila_monitor
     PUBLIC
         aquila_core
+        aquila_config
+    PRIVATE
+        nova
 )
 
 add_executable(gate_account_tui

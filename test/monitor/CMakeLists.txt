@@ -65,3 +65,20 @@ target_link_libraries(monitor_spsc_queue_test
 
 add_test(NAME monitor_spsc_queue_test
          COMMAND monitor_spsc_queue_test)
+
+add_executable(monitor_market_data_thread_test
+    market_data_thread_test.cpp
+)
+
+target_compile_definitions(monitor_market_data_thread_test
+    PRIVATE AQUILA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(monitor_market_data_thread_test
+    PRIVATE
+        aquila_monitor
+        GTest::gtest_main
+)
+
+add_test(NAME monitor_market_data_thread_test
+         COMMAND monitor_market_data_thread_test)
