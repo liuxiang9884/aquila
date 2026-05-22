@@ -398,11 +398,13 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 2026-05-22 ZEC_USDT `$10` guarded live smoke 记录：第一次启动时，strategy 读到旧 feedback SHM lane 中残留的 global `ContinuityLost`，立即返回 handoff exit code `10`，外围 guard 执行 emergency flatten，REST 复核 ZEC flat 且 open orders 为空。随后新增 live-smoke 专用 feedback session 配置，使用 `remove_existing=true` 在启动前重建 feedback SHM；第二次运行 600 秒正常退出，`book_tickers=124058`、`order_responses=0`、`order_feedbacks=0`、`recovery_state=normal`、`needs_reconcile=false`，最终 REST check flat。该记录只说明 runner / guard / fresh feedback SHM 可以无残留运行；因为窗口内没有产生订单，不计入 filled open / close smoke 完成项。
 
-- [ ] **Step 1: Filled open / close smoke**
+- [x] **Step 1: Filled open / close smoke**
 
 用极小 size 或最小合约张数跑一轮 open / close，要求真实执行前显式传入 `--execute`。
 
 期望：feedback 至少包含 open terminal 和 close terminal；REST 复核 open orders 为空、position size 为 0。
+
+2026-05-22 已完成：新增 `lead_lag_strategy --smoke-open-close` 显式模式，只在 `--execute` 且 `strategy.mode=live` 时进入，仍复用 `TradingRuntime`、Gate `OrderSessionRuntimeAdapter`、`OrderManager`、feedback SHM 和外围 `run_live_with_guard.py`。本轮使用 ZEC-only Gate data session / data reader、fresh feedback SHM 和 `ZEC_USDT` 目标 notional `$10`；受整数张数约束，实际 open quantity 为 1 张，估算 notional `6.5678`。运行结果：`completed=true`、`open_quantity=1`、`close_quantity=1`、`order_responses=2`、`order_feedbacks=2`；feedback session 发布 open / close 两个 `kFilled` taker event，fill price 分别为 `656.78` 和 `656.77`。最终 REST 复核 open orders 为空、position `size=0`、`pending_orders=0`。
 
 - [ ] **Step 2: Unfilled cancel smoke**
 
