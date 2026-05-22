@@ -211,7 +211,7 @@ V2 可保留以下原则：
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/emergency_flatten_futures_test.py
 ```
 
-- [ ] **Step 3: live read-only / dry-run smoke**
+- [x] **Step 3: live read-only / dry-run smoke**
 
 先在无仓位状态执行 dry-run 和 flat account smoke，确认脚本不会提交不必要订单。
 
@@ -255,24 +255,33 @@ ctest --test-dir build/debug -R lead_lag_live_strategy --output-on-failure
 
 - Modify: `doc/lead_lag_live_runtime_plan.md`
 
-- [ ] **Step 1: flat account smoke**
+- [x] **Step 1: flat account smoke**
 
 执行 emergency helper，确认无仓位时不会制造订单。
 
-- [ ] **Step 2: tiny position smoke**
+- [x] **Step 2: tiny position smoke**
 
 建立最小可控仓位，执行 emergency helper，确认 reduce-only market close 后 REST flat。
 
-- [ ] **Step 3: continuity lost smoke**
+- [x] **Step 3: continuity lost smoke**
 
 触发 `ContinuityLost`，确认 runner 停止，helper 完成 flat，REST open orders / position 复核通过。
 
-- [ ] **Step 4: Commit smoke evidence**
+- [x] **Step 4: Commit smoke evidence**
 
 ```bash
 git add doc/lead_lag_live_runtime_plan.md
 git commit -m "Document lead lag emergency flatten smoke"
 ```
+
+### 2026-05-22 V1 Emergency Smoke Evidence
+
+- Commit under test: `45fcf96 Stop lead lag live runner on continuity loss`.
+- Scope: `allowlist` / `BTC_USDT`; 不使用 dedicated-account 全账户平仓。
+- Flat-account smoke: initial open orders 为空，initial position `size=0` / `pending_orders=0`; dry-run 计划无撤单、无 close order；实际 helper 返回 `result=verified_flat`，`close_orders_submitted=[]`，最终 `size=0` / open orders 为空。
+- Tiny-position smoke: 先用 REST IOC market buy 建立 BTC_USDT `size=1`；helper 计划并提交 reduce-only IOC market close，payload 关键字段为 `size=-1`、`price=0`、`tif=ioc`、`reduce_only=true`；返回 `result=verified_flat`，最终 `size=0` / `pending_orders=0` / open orders 为空。
+- ContinuityLost smoke: 使用 `/tmp/aquila_v1_continuity_20260522_011533` 隔离 market-data SHM 和 feedback SHM；data sessions 只创建空 SHM、不连接行情 websocket；feedback session 发布 `global_continuity_lost_events_published=1` / `shm_published=8`；`lead_lag_strategy --execute` 返回 exit code `10`，summary 显示 `emergency_handoff=true`、`order_feedbacks=1`、`book_tickers=0`、`data_reader_events=0`、`recovery_state=degraded_needs_reconcile`、`needs_reconcile=true`、`new_entries_paused=true`。
+- ContinuityLost handoff 后执行 emergency helper，返回 `result=verified_flat`；REST 复核 BTC_USDT open orders 为空、position `size=0` / `pending_orders=0`。
 
 ### Task 4: V2 Read-Only Reconcile
 
@@ -292,6 +301,6 @@ V1 稳定后再评估是否继续实现自动恢复。已有 `scripts/gate/recon
 ## 当前边界
 
 - `lead_lag_strategy --execute` 已接到真实 live-orders runtime；仍需要显式 `strategy.mode=live`、API 凭据、feedback SHM 和 data reader，默认 validate-only / signal-only 不提交订单。
-- `ContinuityLost` stop handoff 已完成；flat-account、tiny-position 和 continuity-lost live smoke 仍未完成，因此不应把它当作已可长期无人值守运行。
-- V1 应急成功后系统仍保持停止，不自动恢复交易。
+- `ContinuityLost` stop handoff、flat-account smoke、tiny-position smoke 和 continuity-lost stop-and-flat smoke 已完成。
+- V1 应急成功后系统仍保持停止，不自动恢复交易；长期无人值守运行仍需要后续小额订单异常 smoke、account / position feedback 和 benchmark 证据。
 - V2 read-only reconcile / resume 是后续优化，不是当前应急方案。

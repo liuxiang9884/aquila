@@ -370,13 +370,13 @@ Build passed；focused ctest 分别通过 2/2 和 3/3；`git diff --check` passe
 
 - [x] **Step 3: 接入 live runner stop handoff**
 
-真实 live orders 模式下，一旦 strategy 收到 `ContinuityLost`，runner 停止自动交易并返回专用 exit code `10`；signal-only 模式只记录 diagnostics，不提交订单。2026-05-22 已完成代码接入和 missing-credentials smoke，仍缺 live continuity-lost smoke。
+真实 live orders 模式下，一旦 strategy 收到 `ContinuityLost`，runner 停止自动交易并返回专用 exit code `10`；signal-only 模式只记录 diagnostics，不提交订单。2026-05-22 已完成代码接入、missing-credentials smoke 和隔离 continuity-lost stop-and-flat smoke。
 
-- [ ] **Step 4: 验证 flat account emergency smoke**
+- [x] **Step 4: 验证 flat account emergency smoke**
 
 期望：无仓位时 emergency helper 不提交不必要订单；REST 复核 open orders 为空、position size 为 0。
 
-- [ ] **Step 5: 验证 tiny position emergency smoke**
+- [x] **Step 5: 验证 tiny position emergency smoke**
 
 期望：有最小受控仓位时，helper 提交 reduce-only market close；REST 复核 open orders 为空、position size 为 0。
 
@@ -463,10 +463,10 @@ taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
 1. `lead_lag_strategy` dry-run 1 秒启动验证。
 2. signal-only 30 分钟观察。
 3. signal-only 2 到 4 小时观察。
-4. `lead_lag_strategy --execute` missing-credentials smoke：允许解析到 `RunMode::kLiveOrders`，但缺凭据时必须在 runtime create 前返回。
-5. Python emergency flatten flat-account smoke。
-6. tiny position emergency flatten smoke。
-7. feedback session 断线 / `ContinuityLost` stop-and-flat smoke。
+4. `lead_lag_strategy --execute` missing-credentials smoke：允许解析到 `RunMode::kLiveOrders`，但缺凭据时必须在 runtime create 前返回。已完成。
+5. Python emergency flatten flat-account smoke。已完成。
+6. tiny position emergency flatten smoke。已完成。
+7. feedback session 断线 / `ContinuityLost` stop-and-flat smoke。已完成。
 8. 小额 filled open / close。
 9. unfilled-cancel。
 10. rejected / cancel-rejected。
@@ -487,6 +487,25 @@ taskset -c 2 ./build/release/benchmark/strategy/lead_lag_runtime_benchmark
 ## 运行记录
 
 本节只记录已经发生的长时间运行或 smoke 证据。新增记录应包含日期、commit、命令、运行时长、账户复核摘要和异常摘要。
+
+### 2026-05-22 V1 emergency flatten / ContinuityLost smoke
+
+- Commit under test: `45fcf96 Stop lead lag live runner on continuity loss`.
+- Scope: `allowlist` / `BTC_USDT`; 未使用 dedicated-account 全账户平仓。
+- Flat-account smoke:
+  - Initial REST: BTC_USDT open orders 为空，position `size=0` / `pending_orders=0`。
+  - Dry-run: `result=dry_run`，`positions_to_close=[]`，无撤单计划。
+  - Live helper: `result=verified_flat`，`close_orders_submitted=[]`，final position `size=0` / `pending_orders=0`，final open orders 为空。
+- Tiny-position smoke:
+  - Setup: REST IOC market buy BTC_USDT `size=1`，成交价约 `77381.7`，随后 REST position `size=1` / `pending_orders=0`，open orders 为空。
+  - Emergency helper: 提交 reduce-only IOC market close，关键字段 `size=-1`、`price=0`、`tif=ioc`、`reduce_only=true`，成交价约 `77412.3`。
+  - Final REST: BTC_USDT position `size=0` / `pending_orders=0`，open orders 为空。
+- ContinuityLost stop-and-flat smoke:
+  - 使用 `/tmp/aquila_v1_continuity_20260522_011533` 隔离 market-data SHM 和 feedback SHM；data sessions 只创建空 SHM，不连接行情 websocket。
+  - `gate_order_feedback_session --duration-sec 3 --connect` 发布 `global_continuity_lost_events_published=1`、`shm_published=8`。
+  - `lead_lag_strategy --execute --duration-sec 10` 返回 exit code `10`；summary: `runtime_exit_code=0`、`emergency_handoff=true`、`book_tickers=0`、`order_responses=0`、`order_feedbacks=1`、`recovery_state=degraded_needs_reconcile`、`needs_reconcile=true`、`new_entries_paused=true`、`data_reader_events=0`。
+  - Handoff 后执行 emergency helper，`result=verified_flat`；REST 复核 BTC_USDT open orders 为空，position `size=0` / `pending_orders=0`。
+- 边界：该 smoke 证明 V1 stop-and-flat handoff 和 emergency helper 可工作；它不是长时间真实订单运行证据。
 
 ### 2026-05-21 30 分钟 signal-only live 观察
 

@@ -109,6 +109,6 @@ ctest --test-dir build/debug -R lead_lag --output-on-failure
 - replay 可以使用 `PositionAccountingMode::kSyntheticSignals`，不依赖真实订单 session。
 - default production accounting 可以把信号转换为 IOC limit order intent，并通过 `StrategyContext` / `OrderManager` 提交；订单生命周期依赖 `OrderManager` 和 private feedback 更新。
 - `tools/lead_lag/live_strategy.cpp` 的 live runner 默认 validate-only / signal-only；显式 `--execute` 且 `strategy.mode=live` 时进入真实 live-orders runtime，缺凭据会在 runtime create 前返回。
-- 当前 V1 应急策略是：真实交易中遇到 feedback `ContinuityLost` 后停止自动交易并返回 handoff exit code `10`，再通过 Python REST helper 撤销 in-scope open orders、提交 reduce-only 市价平仓、用 REST 复核 flat；不在同一轮运行中自动恢复交易。更复杂的 read-only reconcile / resume 作为后续 V2 设计保留。
+- 当前 V1 应急策略是：真实交易中遇到 feedback `ContinuityLost` 后停止自动交易并返回 handoff exit code `10`，再通过 Python REST helper 撤销 in-scope open orders、提交 reduce-only 市价平仓、用 REST 复核 flat；不在同一轮运行中自动恢复交易。2026-05-22 已完成 BTC_USDT flat-account、tiny-position 和隔离 `ContinuityLost` stop-and-flat smoke。更复杂的 read-only reconcile / resume 作为后续 V2 设计保留。
 - 该目录只包含策略层实现，不包含交易所接入、SHM data reader、binary reader 或 replay 工具本身。
 - 当前实现关注确定性和低延迟热路径：初始化阶段绑定 catalog 和 pair，热路径避免字符串 lookup，窗口结构启动期预分配，扩容只记录统计，不作为策略计算指标落地。
