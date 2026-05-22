@@ -38,6 +38,7 @@ enum class SignalRejectReason : std::uint8_t {
   kDriftLimit,
   kPendingOrder,
   kDegraded,
+  kRiskLimit,
 };
 
 struct OrderIntent {

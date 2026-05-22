@@ -304,6 +304,8 @@ class Strategy {
     std::uint64_t local_order_id{0};
     std::array<char, kOrderPriceTextCapacity> price_text{};
     std::size_t size{0};
+    std::int64_t reserved_open_quantity{0};
+    double reserved_open_notional{0.0};
     bool active{false};
 
     [[nodiscard]] std::string_view view() const noexcept {
@@ -539,6 +541,14 @@ class Strategy {
       return;
     }
 
+    const double order_notional = OrderNotional(
+        quantity, order_price, runtime->pair.lag_instrument);
+    if (!last_signal_decision_.intent.reduce_only &&
+        !GlobalRiskAllowsOpen(quantity, order_notional)) {
+      RejectSignal(SignalRejectReason::kRiskLimit);
+      return;
+    }
+
     OrderPriceTextStorage* price_text_storage = AcquireOrderPriceText(
         order_price, runtime->pair.lag_instrument.price_decimal_places);
     if (price_text_storage == nullptr) {
@@ -569,7 +579,11 @@ class Strategy {
     price_text_storage->local_order_id = placed.local_order_id;
 
     if (placed.status == core::OrderPlaceStatus::kOk) {
-      OnExternalOrderAccepted(runtime, close_group, placed.local_order_id);
+      const bool tracked =
+          OnExternalOrderAccepted(runtime, close_group, placed.local_order_id);
+      if (tracked && !last_signal_decision_.intent.reduce_only) {
+        ReserveOpenRisk(price_text_storage, quantity, order_notional);
+      }
       return;
     }
 
@@ -577,23 +591,24 @@ class Strategy {
                            context);
   }
 
-  void OnExternalOrderAccepted(PairRuntimeState* runtime,
-                               ExecutionGroup* close_group,
-                               std::uint64_t local_order_id) noexcept {
+  [[nodiscard]] bool OnExternalOrderAccepted(
+      PairRuntimeState* runtime, ExecutionGroup* close_group,
+      std::uint64_t local_order_id) noexcept {
     ExecutionGroup* group = close_group;
     if (last_signal_decision_.intent.reduce_only) {
       if (group == nullptr ||
           !runtime->execution.StartCloseOrder(*group, local_order_id)) {
-        return;
+        return false;
       }
     } else {
       group = runtime->execution.StartOpenOrder(local_order_id);
       if (group == nullptr) {
-        return;
+        return false;
       }
       last_signal_decision_.group_id = group->group_id;
     }
     UpdateSubmittedSignalDiagnostics(runtime, group);
+    return true;
   }
 
   template <typename ContextT>
@@ -662,6 +677,11 @@ class Strategy {
     }
   }
 
+  void RejectSignal(SignalRejectReason reason) noexcept {
+    last_signal_decision_ = SignalDecision{.reject_reason = reason};
+    last_signal_diagnostics_valid_ = false;
+  }
+
   [[nodiscard]] static std::int64_t AbsolutePositionQuantity(
       const ExecutionGroup& group) noexcept {
     if (group.signed_position_quantity ==
@@ -704,6 +724,89 @@ class Strategy {
       return 0;
     }
     return static_cast<std::int64_t>(quantity);
+  }
+
+  struct GlobalRiskTotals {
+    double gross_notional{0.0};
+    std::int64_t holding_position{0};
+  };
+
+  [[nodiscard]] GlobalRiskTotals CurrentGlobalRiskTotals() const noexcept {
+    GlobalRiskTotals totals;
+    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (!runtime.initialized) {
+        continue;
+      }
+      for (const ExecutionGroup& group : runtime.execution.groups()) {
+        const std::int64_t quantity = AbsolutePositionQuantity(group);
+        if (quantity <= 0) {
+          continue;
+        }
+        totals.gross_notional +=
+            OrderNotional(quantity, group.trailing_price,
+                          runtime.pair.lag_instrument);
+        totals.holding_position =
+            SaturatingAdd(totals.holding_position, quantity);
+      }
+    }
+    for (const OrderPriceTextStorage& storage : order_price_texts_) {
+      if (!storage.active || storage.reserved_open_quantity <= 0) {
+        continue;
+      }
+      totals.gross_notional += storage.reserved_open_notional;
+      totals.holding_position =
+          SaturatingAdd(totals.holding_position,
+                        storage.reserved_open_quantity);
+    }
+    return totals;
+  }
+
+  [[nodiscard]] bool GlobalRiskAllowsOpen(std::int64_t quantity,
+                                          double notional) const noexcept {
+    if (quantity <= 0 || !std::isfinite(notional) || notional <= 0.0) {
+      return false;
+    }
+    if (!config_.risk.GrossNotionalLimitEnabled() &&
+        !config_.risk.HoldingPositionLimitEnabled()) {
+      return true;
+    }
+
+    const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
+    if (config_.risk.GrossNotionalLimitEnabled() &&
+        totals.gross_notional + notional >
+            config_.risk.max_gross_notional + kQuantityEpsilon) {
+      return false;
+    }
+    if (config_.risk.HoldingPositionLimitEnabled()) {
+      if (totals.holding_position >= config_.risk.max_holding_position) {
+        return false;
+      }
+      if (quantity > config_.risk.max_holding_position -
+                         totals.holding_position) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] static std::int64_t SaturatingAdd(std::int64_t lhs,
+                                                  std::int64_t rhs) noexcept {
+    if (rhs > 0 && lhs > std::numeric_limits<std::int64_t>::max() - rhs) {
+      return std::numeric_limits<std::int64_t>::max();
+    }
+    return lhs + rhs;
+  }
+
+  [[nodiscard]] static double OrderNotional(
+      std::int64_t quantity, double price,
+      const InstrumentMetadata& instrument) noexcept {
+    if (quantity <= 0 || !std::isfinite(price) || price <= 0.0 ||
+        !std::isfinite(instrument.notional_multiplier) ||
+        instrument.notional_multiplier <= 0.0) {
+      return 0.0;
+    }
+    return static_cast<double>(quantity) * price *
+           instrument.notional_multiplier;
   }
 
   [[nodiscard]] static double RoundedOrderPrice(
@@ -755,10 +858,23 @@ class Strategy {
       }
       storage.size = static_cast<std::size_t>(result.ptr - begin);
       storage.local_order_id = 0;
+      storage.reserved_open_quantity = 0;
+      storage.reserved_open_notional = 0.0;
       storage.active = true;
       return &storage;
     }
     return nullptr;
+  }
+
+  static void ReserveOpenRisk(OrderPriceTextStorage* storage,
+                              std::int64_t quantity,
+                              double notional) noexcept {
+    if (storage == nullptr || quantity <= 0 || !std::isfinite(notional) ||
+        notional <= 0.0) {
+      return;
+    }
+    storage->reserved_open_quantity = quantity;
+    storage->reserved_open_notional = notional;
   }
 
   static void ReleaseOrderPriceText(OrderPriceTextStorage* storage) noexcept {
@@ -767,6 +883,8 @@ class Strategy {
     }
     storage->local_order_id = 0;
     storage->size = 0;
+    storage->reserved_open_quantity = 0;
+    storage->reserved_open_notional = 0.0;
     storage->active = false;
   }
 

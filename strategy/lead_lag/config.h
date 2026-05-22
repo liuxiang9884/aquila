@@ -50,6 +50,14 @@ struct ExecuteConfig {
   [[nodiscard]] double EntrySpreadLimit() const noexcept;
 };
 
+struct RiskConfig {
+  double max_gross_notional{0.0};
+  std::int64_t max_holding_position{0};
+
+  [[nodiscard]] bool GrossNotionalLimitEnabled() const noexcept;
+  [[nodiscard]] bool HoldingPositionLimitEnabled() const noexcept;
+};
+
 struct BboRecordConfig {
   std::uint64_t window_ns{0};
   std::uint64_t stats_window_ns{0};
@@ -92,6 +100,7 @@ struct PairConfig {
 struct Config {
   std::string name;
   std::string version;
+  RiskConfig risk;
   std::vector<PairConfig> pairs;
 };
 

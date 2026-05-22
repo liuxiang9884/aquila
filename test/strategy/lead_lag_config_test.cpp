@@ -40,6 +40,8 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   const leadlag::Config& config = result.value;
   EXPECT_EQ(config.name, "lead_lag");
   EXPECT_EQ(config.version, "1.0");
+  EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 0.0);
+  EXPECT_EQ(config.risk.max_holding_position, 0);
   ASSERT_EQ(config.pairs.size(), 1U);
 
   const leadlag::PairConfig& pair = config.pairs.front();
@@ -142,6 +144,20 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[6].symbol_id, 13);
   EXPECT_EQ(config.pairs[7].symbol, "BRETT_USDT");
   EXPECT_EQ(config.pairs[7].symbol_id, 14);
+}
+
+TEST(LeadLagConfigTest, LoadsCheckedInRequested11SymbolsRiskLimits) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = leadlag::LoadConfigFile(
+      SourcePath("config/strategies/lead_lag_requested_11symbols_20260522.toml"),
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const leadlag::Config& config = result.value;
+  EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 500.0);
+  EXPECT_EQ(config.risk.max_holding_position, 100000);
+  ASSERT_EQ(config.pairs.size(), 11U);
 }
 
 TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {

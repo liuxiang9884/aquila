@@ -84,6 +84,14 @@ class Parser {
       return Failure("lead_lag.version must be 1.0");
     }
 
+    if (const toml::table* risk = (*lead_lag)["risk"].as_table();
+        risk != nullptr) {
+      config_.risk = ParseRisk(*risk);
+      if (!ok_) {
+        return Failure(std::move(error_));
+      }
+    }
+
     const toml::array* pairs = (*lead_lag)["pairs"].as_array();
     if (pairs == nullptr || pairs->empty()) {
       return Failure("lead_lag.pairs is required");
@@ -287,6 +295,27 @@ class Parser {
     return execute;
   }
 
+  [[nodiscard]] RiskConfig ParseRisk(const toml::table& table) {
+    RiskConfig risk;
+    risk.max_gross_notional =
+        RequiredDouble(table, "max_gross_notional",
+                       "lead_lag.risk.max_gross_notional");
+    risk.max_holding_position =
+        RequiredInt64(table, "max_holding_position",
+                      "lead_lag.risk.max_holding_position");
+    if (!ok_) {
+      return risk;
+    }
+    if (risk.max_gross_notional <= 0.0) {
+      Fail("lead_lag.risk.max_gross_notional", " must be positive");
+      return risk;
+    }
+    if (risk.max_holding_position <= 0) {
+      Fail("lead_lag.risk.max_holding_position", " must be positive");
+    }
+    return risk;
+  }
+
   [[nodiscard]] BboRecordConfig ParseBboRecord(const toml::table& table,
                                                const std::string& prefix) {
     return BboRecordConfig{
@@ -396,6 +425,17 @@ class Parser {
       return 0;
     }
     return static_cast<std::int32_t>(*value);
+  }
+
+  [[nodiscard]] std::int64_t RequiredInt64(const toml::table& table,
+                                           std::string_view key,
+                                           std::string_view name) {
+    const std::optional<std::int64_t> value = table[key].value<std::int64_t>();
+    if (!value) {
+      Fail(name, " is required");
+      return 0;
+    }
+    return *value;
   }
 
   [[nodiscard]] std::uint32_t RequiredUInt32(const toml::table& table,
@@ -527,6 +567,14 @@ double ExecuteConfig::EntrySpreadLimit() const noexcept {
     return trailing_stop;
   }
   return max_entry_spread;
+}
+
+bool RiskConfig::GrossNotionalLimitEnabled() const noexcept {
+  return max_gross_notional > 0.0;
+}
+
+bool RiskConfig::HoldingPositionLimitEnabled() const noexcept {
+  return max_holding_position > 0;
 }
 
 ConfigResult ParseConfig(const toml::table& node,

@@ -108,6 +108,7 @@ ctest --test-dir build/debug -R lead_lag --output-on-failure
 
 - replay 可以使用 `PositionAccountingMode::kSyntheticSignals`，不依赖真实订单 session。
 - default production accounting 可以把信号转换为 IOC limit order intent，并通过 `StrategyContext` / `OrderManager` 提交；订单生命周期依赖 `OrderManager` 和 private feedback 更新。
+- `[lead_lag.risk]` 提供 strategy 全局持仓硬限制：`max_gross_notional` 统计所有持仓和 pending open reservation 的绝对 notional，`max_holding_position` 统计绝对张数；触达限制后只拒绝新开仓，reduce-only close 继续允许。
 - `tools/lead_lag/live_strategy.cpp` 的 live runner 默认 validate-only / signal-only；显式 `--execute` 且 `strategy.mode=live` 时进入真实 live-orders runtime，缺凭据会在 runtime create 前返回。
 - 当前 V1 应急策略是：真实交易中遇到 feedback `ContinuityLost` 后停止自动交易并返回 handoff exit code `10`，再通过 Python REST helper 撤销 in-scope open orders、提交 reduce-only 市价平仓、用 REST 复核 flat；不在同一轮运行中自动恢复交易。2026-05-22 已完成 BTC_USDT flat-account、tiny-position 和隔离 `ContinuityLost` stop-and-flat smoke。更复杂的 read-only reconcile / resume 作为后续 V2 设计保留。
 - `scripts/lead_lag/run_live_with_guard.py` 是当前推荐的真实 runner 外围入口：启动前做 REST preflight，runner 退出后做 final REST check，异常退出或 final 非 flat 时调用 emergency flatten。

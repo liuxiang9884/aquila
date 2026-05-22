@@ -2,6 +2,10 @@
 name = "lead_lag"
 version = "1.0"
 
+[lead_lag.risk]
+max_gross_notional = 500.0
+max_holding_position = 100000
+
 [[lead_lag.pairs]]
 symbol = "PROVE_USDT"
 symbol_id = 4

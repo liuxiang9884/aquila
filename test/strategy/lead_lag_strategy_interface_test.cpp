@@ -378,6 +378,20 @@ void FeedOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
       Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), *context);
 }
 
+void FeedOpenLongSignalForSymbol(leadlag::Strategy* strategy,
+                                 ContextT* context,
+                                 std::int32_t symbol_id) {
+  strategy->OnBookTicker(
+      Ticker(symbol_id, aquila::Exchange::kGate, 100, 101.57, 102.02),
+      *context);
+  strategy->OnBookTicker(
+      Ticker(symbol_id, aquila::Exchange::kBinance, 100, 100.0, 101.0),
+      *context);
+  strategy->OnBookTicker(
+      Ticker(symbol_id, aquila::Exchange::kBinance, 101, 112.0, 113.0),
+      *context);
+}
+
 void FeedHugeOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
   strategy->OnBookTicker(
       Ticker(3, aquila::Exchange::kGate, 100, 1.0157e64, 1.0202e64),
@@ -662,6 +676,85 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kCloseLong);
   EXPECT_NE(decision.group_id, 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     GlobalRiskMaxHoldingPositionBlocksNewOpenAcrossPairs) {
+  leadlag::Config config = TwoPairSignalOnlyConfig();
+  config.risk.max_gross_notional = 1'000'000.0;
+  config.risk.max_holding_position = 9;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 3);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 9, 102.1));
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 7);
+
+  EXPECT_EQ(order_session.placed_orders.size(), 1U);
+  const leadlag::SignalDecision& decision = strategy.last_signal_decision();
+  EXPECT_FALSE(decision.triggered);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kRiskLimit);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     GlobalRiskMaxGrossNotionalBlocksNewOpenAcrossPairs) {
+  leadlag::Config config = TwoPairSignalOnlyConfig();
+  config.risk.max_gross_notional = 1'000.0;
+  config.risk.max_holding_position = 1'000;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 3);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 9, 102.1));
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 7);
+
+  EXPECT_EQ(order_session.placed_orders.size(), 1U);
+  const leadlag::SignalDecision& decision = strategy.last_signal_decision();
+  EXPECT_FALSE(decision.triggered);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kRiskLimit);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     GlobalRiskLimitAllowsReduceOnlyClose) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.risk.max_gross_notional = 920.0;
+  config.risk.max_holding_position = 9;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 9, 102.1));
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder& close_order =
+      order_session.placed_orders.back();
+  EXPECT_TRUE(close_order.reduce_only);
+  EXPECT_EQ(close_order.quantity, 9);
+  EXPECT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kCloseLong);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
