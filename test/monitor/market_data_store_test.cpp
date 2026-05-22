@@ -1,6 +1,7 @@
 #include "monitor/market_data/market_data_store.h"
 
 #include <array>
+#include <span>
 
 #include <gtest/gtest.h>
 
@@ -55,7 +56,10 @@ TEST(MarketDataStoreTest, SameIdDoesNotRepeatChangedRow) {
   MarketDataStore store(keys);
 
   store.OnBookTicker(MakeTicker(Exchange::kGate, 7, 11));
-  ASSERT_EQ(store.BuildChangedBatch(1).row_count, 1);
+  const MarketDataBatch first_batch = store.BuildChangedBatch(1);
+  ASSERT_EQ(first_batch.row_count, 1);
+  store.ClearChangedRows(std::span<const MarketDataRowUpdate>{
+      first_batch.rows.data(), first_batch.row_count});
 
   store.OnBookTicker(MakeTicker(Exchange::kGate, 7, 11, 99.0, 100.0));
   const MarketDataBatch batch = store.BuildChangedBatch(2);
@@ -72,7 +76,10 @@ TEST(MarketDataStoreTest, NewIdUpdatesLatestRow) {
   MarketDataStore store(keys);
 
   store.OnBookTicker(MakeTicker(Exchange::kBinance, 9, 20, 10.0, 11.0));
-  ASSERT_EQ(store.BuildChangedBatch(1).row_count, 1);
+  const MarketDataBatch first_batch = store.BuildChangedBatch(1);
+  ASSERT_EQ(first_batch.row_count, 1);
+  store.ClearChangedRows(std::span<const MarketDataRowUpdate>{
+      first_batch.rows.data(), first_batch.row_count});
 
   store.OnBookTicker(MakeTicker(Exchange::kBinance, 9, 21, 12.0, 13.0));
   const MarketDataBatch batch = store.BuildChangedBatch(2);
@@ -120,7 +127,7 @@ TEST(MarketDataStoreTest, UnknownSymbolIsCountedAndIgnored) {
   EXPECT_EQ(store.stats().changed_count, 0);
 }
 
-TEST(MarketDataStoreTest, BuildBatchClearsChangedFlags) {
+TEST(MarketDataStoreTest, BuildBatchRetainsChangedFlagsUntilCommit) {
   constexpr std::array<MarketDataKey, 1> keys = {
       MarketDataKey{.exchange = Exchange::kGate, .symbol_id = 7},
   };
@@ -131,8 +138,29 @@ TEST(MarketDataStoreTest, BuildBatchClearsChangedFlags) {
 
   const MarketDataBatch batch = store.BuildChangedBatch(2);
 
-  EXPECT_EQ(batch.row_count, 0);
+  ASSERT_EQ(batch.row_count, 1);
+  EXPECT_EQ(batch.rows[0].id, 11);
   EXPECT_EQ(batch.drained_count, 1);
+}
+
+TEST(MarketDataStoreTest, ClearChangedRowsClearsCommittedRows) {
+  constexpr std::array<MarketDataKey, 2> keys = {
+      MarketDataKey{.exchange = Exchange::kGate, .symbol_id = 7},
+      MarketDataKey{.exchange = Exchange::kBinance, .symbol_id = 9},
+  };
+  MarketDataStore store(keys);
+
+  store.OnBookTicker(MakeTicker(Exchange::kGate, 7, 11));
+  store.OnBookTicker(MakeTicker(Exchange::kBinance, 9, 21));
+  const MarketDataBatch first_batch = store.BuildChangedBatch(1);
+  ASSERT_EQ(first_batch.row_count, 2);
+
+  store.ClearChangedRows(std::span<const MarketDataRowUpdate>{
+      first_batch.rows.data(), first_batch.row_count});
+  const MarketDataBatch second_batch = store.BuildChangedBatch(2);
+
+  EXPECT_EQ(second_batch.row_count, 0);
+  EXPECT_EQ(second_batch.drained_count, 2);
 }
 
 TEST(MarketDataStoreTest, OverrunAndDroppedBatchStatsAppearInBatch) {

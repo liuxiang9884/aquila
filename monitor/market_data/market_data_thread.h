@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,8 @@ class MarketDataPump {
     }
 
     if (queue_.TryPush(batch)) {
+      store_.ClearChangedRows(std::span<const MarketDataRowUpdate>{
+          batch.rows.data(), batch.row_count});
       result.batch_pushed = true;
       return result;
     }

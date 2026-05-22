@@ -77,10 +77,21 @@ class MarketDataStore {
         batch.rows[batch.row_count] = entry.latest;
         ++batch.row_count;
       }
-      entry.changed = false;
     }
 
     return batch;
+  }
+
+  void ClearChangedRows(std::span<const MarketDataRowUpdate> rows) noexcept {
+    for (const MarketDataRowUpdate& row : rows) {
+      Entry* entry = FindEntry(row.exchange, row.symbol_id);
+      if (entry == nullptr || !entry->changed || !entry->has_latest) {
+        continue;
+      }
+      if (entry->latest.id == row.id) {
+        entry->changed = false;
+      }
+    }
   }
 
   void RecordOverrun(std::uint64_t delta) noexcept {

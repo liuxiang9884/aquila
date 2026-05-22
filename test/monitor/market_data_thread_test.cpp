@@ -1,11 +1,14 @@
 #include "monitor/market_data/market_data_thread.h"
 
+#include <sys/mman.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -91,6 +94,20 @@ template <std::size_t Capacity>
     }
   }
   return false;
+}
+
+[[nodiscard]] std::string UniqueMissingShmName() {
+  const auto suffix =
+      std::chrono::steady_clock::now().time_since_epoch().count();
+  std::ostringstream out;
+  out << "aquila_missing_md_" << ::getpid() << '_' << suffix;
+  return out.str();
+}
+
+void UnlinkShm(std::string_view shm_name) {
+  std::string normalized{"/"};
+  normalized.append(shm_name);
+  ::shm_unlink(normalized.c_str());
 }
 
 TEST(MarketDataPumpTest, DrainsAndCoalescesUntilPublishInterval) {
@@ -183,6 +200,49 @@ TEST(MarketDataPumpTest, FullQueueRecordsDroppedBatchWithoutBlocking) {
   EXPECT_EQ(store.stats().dropped_batch_count, 1);
 }
 
+TEST(MarketDataPumpTest, FullQueueKeepsChangedRowForNextPublishAttempt) {
+  constexpr MarketDataKey kKey{.exchange = Exchange::kGate, .symbol_id = 7};
+  FakeReader reader;
+  FakeClock clock;
+  MarketDataStore store(std::span<const MarketDataKey>{&kKey, 1});
+  MonitorSpscQueue<MarketDataBatch, 2> queue;
+  MarketDataPump<FakeReader, MonitorSpscQueue<MarketDataBatch, 2>, FakeClock>
+      pump(reader, store, queue, clock,
+           MarketDataPumpOptions{.drain_budget = 8});
+
+  MarketDataBatch filler{};
+  ASSERT_TRUE(queue.TryPush(filler));
+  ASSERT_TRUE(queue.TryPush(filler));
+
+  reader.Push(MakeTicker(Exchange::kGate, 7, 42));
+  clock.set_now_ns(100'000'000);
+  MarketDataPumpResult result = pump.StepOnce();
+
+  ASSERT_TRUE(result.publish_due);
+  ASSERT_FALSE(result.batch_pushed);
+  ASSERT_TRUE(result.batch_dropped);
+
+  MarketDataBatch popped{};
+  ASSERT_TRUE(PopBatch(&queue, &popped));
+  ASSERT_TRUE(PopBatch(&queue, &popped));
+  ASSERT_TRUE(queue.empty());
+
+  clock.set_now_ns(200'000'000);
+  result = pump.StepOnce();
+
+  EXPECT_EQ(result.drained_count, 0);
+  EXPECT_TRUE(result.publish_due);
+  ASSERT_TRUE(result.batch_pushed);
+  EXPECT_FALSE(result.batch_dropped);
+  EXPECT_EQ(result.row_count, 1);
+
+  MarketDataBatch batch{};
+  ASSERT_TRUE(PopBatch(&queue, &batch));
+  ASSERT_EQ(batch.row_count, 1);
+  EXPECT_EQ(batch.rows[0].symbol_id, 7);
+  EXPECT_EQ(batch.rows[0].id, 42);
+}
+
 TEST(MarketDataThreadTest, BuildMarketDataKeysIncludesSourceExchanges) {
   const config::DataReaderConfigResult config_result =
       config::LoadDataReaderConfigFile(
@@ -199,6 +259,8 @@ TEST(MarketDataThreadTest, BuildMarketDataKeysIncludesSourceExchanges) {
 }
 
 TEST(MarketDataThreadTest, StartReturnsFalseWhenRealtimeShmIsMissing) {
+  const std::string missing_shm_name = UniqueMissingShmName();
+  UnlinkShm(missing_shm_name);
   const std::filesystem::path config_path =
       std::filesystem::temp_directory_path() /
       ("aquila_missing_monitor_shm_" + std::to_string(::getpid()) + ".toml");
@@ -220,7 +282,8 @@ name = "missing_gate_book_ticker"
 type = "shm"
 exchange = "gate"
 feed = "book_ticker"
-shm_name = "aquila_missing_monitor_shm_gate_123456789"
+shm_name = ")toml"
+        << missing_shm_name << R"toml("
 channel_name = "book_ticker_channel"
 start_position = "latest"
 read_mode = "drain"
@@ -236,6 +299,7 @@ required = false
 
   std::error_code ignored;
   std::filesystem::remove(config_path, ignored);
+  UnlinkShm(missing_shm_name);
 }
 
 }  // namespace
