@@ -260,7 +260,7 @@ doc/futures_contract_metadata_fields.md
 1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `notional_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`notional_multiplier=1.0`。
 2. Gate `price_tick` 来自 `order_price_round`；Binance `price_tick` 来自 `PRICE_FILTER.tickSize`。
 3. Gate 未提供 `min_notional`，当前输出空值；Binance 从 `MIN_NOTIONAL` / `NOTIONAL` filter 映射。
-4. Gate 在 `enable_decimal=false` 时 `quantity_step=1.0`、`quantity_decimal_places=0`；如果 `enable_decimal=true`，当前脚本暂不推导 decimal contract size，`quantity_step` 和 `quantity_decimal_places` 输出空值，避免把未验证规则带入下单热路径。
+4. Gate 当前 runtime 仍按整数合约张数下单，`quantity_step=1.0`、`quantity_decimal_places=0`。如果合约返回 `enable_decimal=true`，脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，但仍输出整数 runtime 约束；decimal-size 完整支持留到下一版本。
 5. Gate 的 `order_price_deviate` 是相对标记价的订单价格偏离比例；Binance 的 `PERCENT_PRICE` 是 bidirectional multiplier，脚本统一为相对偏离比例。
 
 这组 metadata 应在启动期构建并缓存，供 strategy、risk check 和 exchange adapter 共享；不要在行情或下单热路径里反复查询 REST 或重复解析交易所 JSON。
@@ -1176,7 +1176,7 @@ config/data_sessions/binance_data_session.toml
 2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 continuity lost 后新开仓暂停 / 恢复条件。
 3. 扩展 C++ WS live smoke：当前已有 `gate_strategy_order` 小额 accepted / cancel lifecycle 和 `gate_demo_strategy` 3 轮 filled-close 证据；下一步在用户明确允许后覆盖 unfilled-cancel、rejected / cancel-rejected、feedback WS 断线和 REST reconcile 分支，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
 4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 continuity lost / reconnect 后恢复订单、持仓和风险状态。
-5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；Gate decimal-size 合约的数量步进规则需要先确认再进入下单热路径。
+5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 Gate decimal-size 合约只走整数 `size`，完整 decimal 支持需要先引入定点数量模型，再进入下单热路径。
 6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
 7. 如果需要继续审查 Gate `OrderSession` / `OrderFeedbackSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、subscribe 签名、place/cancel final result validation、断线 continuity lost、cache update / forget 和 benchmark 口径。
 8. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。

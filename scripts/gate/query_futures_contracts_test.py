@@ -38,6 +38,15 @@ class QueryFuturesContractsTest(unittest.TestCase):
 
         self.assertEqual(parsed, ["BTC_USDT", "ETH_USDT", "SOL_USDT"])
 
+    def test_contract_request_requests_decimal_size_metadata(self):
+        request = contracts.contract_request("rave_usdt", "https://api.example.test/")
+
+        self.assertEqual(
+            request.full_url,
+            "https://api.example.test/futures/usdt/contracts/RAVE_USDT",
+        )
+        self.assertEqual(request.get_header("X-gate-size-decimal"), "1")
+
     def test_contract_payload_maps_to_dataframe_row(self):
         payload = {
             "name": "BTC_USDT",
@@ -88,21 +97,22 @@ class QueryFuturesContractsTest(unittest.TestCase):
         self.assertEqual(list(frame["price_limit_down"]), [0.5])
         self.assertEqual(list(frame["market_price_bound"]), [0.025])
 
-    def test_decimal_size_contract_leaves_quantity_step_unknown(self):
+    def test_decimal_size_contract_uses_integer_runtime_quantity_metadata(self):
         payload = {
             "name": "ETH_USDT",
             "type": "direct",
             "quanto_multiplier": "0.01",
             "order_price_round": "0.01",
-            "order_size_min": 0,
+            "order_size_min": "0.1",
             "order_size_max": 3800000,
             "enable_decimal": True,
         }
 
         frame = contracts.contracts_to_dataframe([payload])
 
-        self.assertEqual(list(frame["quantity_step"]), [None])
-        self.assertEqual(list(frame["quantity_decimal_places"]), [None])
+        self.assertEqual(list(frame["quantity_step"]), [1.0])
+        self.assertEqual(list(frame["quantity_decimal_places"]), [0])
+        self.assertEqual(list(frame["min_quantity"]), [0.1])
 
 
 if __name__ == "__main__":

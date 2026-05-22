@@ -46,8 +46,8 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 | `contract_type` | 合约类型。 | REST `type`，常见为 `direct`。 | `contractType`，例如 `PERPETUAL`。 |
 | `price_tick` | 最小变价单位。 | `order_price_round`。 | `PRICE_FILTER.tickSize`。 |
 | `price_decimal_places` | 价格格式化小数位，由 `price_tick` 推导。 | 由 `order_price_round` 推导。 | 由 `tickSize` 推导。 |
-| `quantity_step` | 下单数量步长。 | `enable_decimal=false` 时为 `1.0`；`enable_decimal=true` 时暂为空。 | `LOT_SIZE.stepSize`。 |
-| `quantity_decimal_places` | 数量格式化小数位。 | `enable_decimal=false` 时为 `0`；`enable_decimal=true` 时暂为空。 | 由 `LOT_SIZE.stepSize` 推导。 |
+| `quantity_step` | 当前 runtime 使用的下单数量步长。 | 当前版本统一按整数下单，输出 `1.0`。 | `LOT_SIZE.stepSize`。 |
+| `quantity_decimal_places` | 当前 runtime 使用的数量格式化小数位。 | 当前版本统一按整数下单，输出 `0`。 | 由 `LOT_SIZE.stepSize` 推导。 |
 | `min_quantity` | 最小下单数量。 | `order_size_min`。 | `LOT_SIZE.minQty`。 |
 | `max_quantity` | 最大限价单数量。 | `order_size_max`。 | `LOT_SIZE.maxQty`。 |
 | `max_market_quantity` | 最大市价单数量。 | `market_order_size_max`。 | `MARKET_LOT_SIZE.maxQty`。 |
@@ -71,16 +71,16 @@ Binance notional ~= price * quantity * 1.0
 Spot notional ~= price * quantity * 1.0
 ```
 
-### Gate decimal size 暂不猜测
+### Gate decimal size 当前按整数下单
 
-Gate 的部分合约会返回 `enable_decimal=true`，例如此前实测 `ETH_USDT` 出现 `order_size_min=0`。当前脚本在这种情况下让：
+Gate 的部分合约会返回 `enable_decimal=true`。当前 `core/trading` 订单数量、Gate feedback parser、LeadLag execution state 和 Python emergency flatten 仍以整数合约张数为边界，因此本版本不提交 decimal size。metadata 查询会带 `X-Gate-Size-Decimal: 1` 保留真实 `order_size_min` / `order_size_max`，但 `quantity_step` 和 `quantity_decimal_places` 仍写成当前 runtime 使用的整数下单约束：
 
 ```text
-quantity_step = None
-quantity_decimal_places = None
+quantity_step = 1.0
+quantity_decimal_places = 0
 ```
 
-这样做是为了避免在未确认 Gate decimal size 规则前，把错误的数量步长写入交易主路径。后续如果确认 Gate 对 decimal contract size 的精确规则，应补测试后再填充这两个字段。
+这表示策略只会生成整数 `size`；它不是 Gate decimal-size 的完整支持，也不表示 `order_size_min` 就是 step。下一版本如果要支持 decimal size，应先引入定点数量类型，覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing，再补 parser / smoke 测试。
 
 ### `price_limit_*` 不是完全同一规则
 

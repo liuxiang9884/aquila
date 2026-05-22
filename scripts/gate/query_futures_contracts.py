@@ -108,14 +108,10 @@ def split_gate_symbol(symbol: str) -> tuple[str, str]:
 
 
 def gate_quantity_step(payload: dict[str, Any]) -> float | None:
-    if bool(payload.get("enable_decimal", False)):
-        return None
     return 1.0
 
 
 def gate_quantity_decimal_places(payload: dict[str, Any]) -> int | None:
-    if bool(payload.get("enable_decimal", False)):
-        return None
     return 0
 
 
@@ -158,11 +154,19 @@ def contract_url(symbol: str, base_url: str = DEFAULT_BASE_URL) -> str:
     return f"{base_url.rstrip('/')}/futures/{SETTLE}/contracts/{encoded_symbol}"
 
 
-def fetch_contract(symbol: str, base_url: str = DEFAULT_BASE_URL, timeout: float = 8.0) -> dict[str, Any]:
-    request = urllib.request.Request(
+def contract_request(symbol: str, base_url: str = DEFAULT_BASE_URL) -> urllib.request.Request:
+    return urllib.request.Request(
         contract_url(symbol, base_url),
-        headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+        headers={
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+            "X-Gate-Size-Decimal": "1",
+        },
     )
+
+
+def fetch_contract(symbol: str, base_url: str = DEFAULT_BASE_URL, timeout: float = 8.0) -> dict[str, Any]:
+    request = contract_request(symbol, base_url)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")

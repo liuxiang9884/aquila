@@ -69,15 +69,17 @@
   - `config/strategies/lead_lag_first5_20260521.toml`
   - `config/strategies/lead_lag_requested_strategy_20260521.toml`
   - `config/strategies/lead_lag_requested_20260521.toml`
+  - `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml`
+  - `config/strategies/lead_lag_requested_11symbols_20260522.toml`
   - `config/data_readers/strategy_data_reader.toml`
   - `config/data_readers/strategy_data_reader_first5_20260521.toml`
   - `config/data_readers/strategy_data_reader_requested_20260521.toml`
   - `config/order_feedback/gate_order_feedback_session.toml`
   - Gate / Binance data session configs
   - 2026-05-21 first5 配置对应 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`。
-  - `RAVE_USDT` 和 `SIREN_USDT` 的 Gate quantity metadata 使用 signal-only 占位值，不能直接作为真实下单参数。
   - 2026-05-21 requested data session 配置订阅 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`。
-  - 2026-05-21 requested LeadLag pair 配置暂不包含 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT`，因为 Gate REST 返回 decimal-size 合约，当前 catalog 保留真实空 quantity metadata。
+  - 2026-05-22 requested 11-symbol LeadLag pair 配置包含上述全部 symbol。`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 是 Gate decimal-size 合约；当前版本仍只按整数 `size` 下单，catalog 中这些 Gate 行使用 `quantity_step=1.0`、`quantity_decimal_places=0` 的 runtime 约束。
+  - decimal-size 完整支持留到下一版本：不要只把下单接口改成 string 或 double，应先做定点数量类型，并覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing。
 - Evidence outputs:
   - live runner summary
   - feedback session summary
