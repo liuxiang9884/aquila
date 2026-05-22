@@ -8,8 +8,8 @@
 
 - 项目：面向 crypto 高频交易的 C++20 低延迟交易系统。
 - 构建：CMake + `build.sh`，依赖通过本机 `$HOME/vcpkg`。
-- 当前重点：WebSocket 内核、Gate / Binance 行情、data session / SHM、strategy `DataReader`、Gate submit/cancel、order feedback SHM、Gate private `futures.orders` feedback、`OrderManager`、`TradingRuntime`、Gate runtime adapter、`demo` 策略 live smoke，以及 LeadLag replay 信号链路均已落地。
-- 当前边界：LeadLag strategy 层生产订单闭环已完成；`lead_lag_strategy --execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止、返回 handoff exit code。V1 flat-account、tiny-position、continuity-lost stop-and-flat、ZEC 小额 filled open / close、unfilled-cancel smoke 和本地端到端 benchmark 已完成；外围 `run_live_with_guard.py` 已负责 preflight、final REST check 和异常 stop-and-flat。submit rejected / cancel-rejected 安全 live 探测未拿到最终 failure response，不计入已完成 smoke。当前版本不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 作为 V2 可选能力，下一步优先更长时间真实订单 guardrails 和风控审查。更复杂的 read-only reconcile / resume 作为后续 V2。
+- 当前重点：WebSocket 内核、Gate / Binance 行情、data session / SHM、strategy `DataReader`、Gate submit/cancel、order feedback SHM、Gate private `futures.orders` feedback、`OrderManager`、`TradingRuntime`、Gate runtime adapter、`demo` 策略 live smoke、LeadLag replay / live-orders 链路，以及 TUI Symbol Workbench / market data monitor demo 均已落地。
+- 当前边界：LeadLag strategy 层生产订单闭环已完成；`lead_lag_strategy --execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止、返回 handoff exit code。V1 flat-account、tiny-position、continuity-lost stop-and-flat、ZEC 小额 filled open / close、unfilled-cancel smoke 和本地端到端 benchmark 已完成；外围 `run_live_with_guard.py` 已负责 preflight、final REST check 和异常 stop-and-flat。submit rejected / cancel-rejected 安全 live 探测未拿到最终 failure response，不计入已完成 smoke。当前版本不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 作为 V2 可选能力，下一步优先更长时间真实订单 guardrails 和风控审查。更复杂的 read-only reconcile / resume 作为后续 V2。TUI 当前仍是只读 monitor demo：market data 可从现有 Gate / Binance `BookTicker` SHM 读取并降级显示 `NA`，订单、仓位、PnL 和 health 还未接真实账户数据。
 - 当前建议分支入口：`main`。
 - 核心原则：正确性、确定性、最低延迟、尾延迟可控、固定容量、少动态分配；性能结论必须有 benchmark / profile / live probe 证据。
 
@@ -55,7 +55,8 @@ doc/evaluation_support.md
 - 公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`；旧 `core/strategy/*` 和 `strategy/order_types.h` / `strategy/order_manager.h` 兼容头已删除。
 - Gate runtime adapter 已迁到 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`，不再放在 `tools/`。
 - 2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke；feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。
-- 本轮已验证 `ctest --test-dir build/debug --output-on-failure` 为 68/68 passed。
+- 2026-05-22 TUI / monitor 已完成 `monitor/` skeleton、FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot live dump snapshot 和 monitor smoke tests。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance data session SHM，不自动启动 data session；缺失 SHM 时显示 `NA` 并产生 alert。
+- 本轮已验证 `ctest --test-dir build/debug --output-on-failure` 为 80/80 passed。
 - 工作区状态以 `git status` 为准；如出现本地未提交或未跟踪文件，先确认用途和归属再处理。
 
 ## 已完成摘要
@@ -80,6 +81,16 @@ doc/evaluation_support.md
 - `DataReaderConfig::max_events_per_drain` 是 finite / replay reader 的外层 `Drain()` budget；旧字段 `max_events_per_source` 已删除。
 - reader stats 已聚焦数据流本身；`poll_calls` / `empty_polls` 归 runtime / scheduler diagnostics，当前可通过 `TradingRuntimeDiagnostics` 记录。
 - 2026-05-06 live drain 验证中 Gate / Binance source 均未检测到 SHM ring overrun。
+
+### TUI / Account Monitor
+
+- `monitor/` 已作为独立顶层目录落地，依赖方向为 `monitor/* -> core/config/exchange`；生产交易链路不反向依赖 `monitor/`。
+- `gate_account_tui` 当前支持 interactive TUI、`--dump`、`--view health`、`--live-market-data` 和 `--market-data-config`。默认无参数显示静态 Symbol Workbench demo；live market data 需要外部 Gate / Binance data session 已经发布 SHM。
+- Symbol Workbench 当前覆盖 requested 11 symbols：`PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`；默认选中 `ZEC_USDT`。
+- `MarketDataThread` 使用 monitor 专用 SHM reader，支持 optional source attach 失败后继续运行；按 Gate / Binance 严格单调 `BookTicker.id` coalesce 最新 BBO，每 100ms 通过 SPSC 只向 UI 推 changed rows。
+- `--dump --live-market-data` 使用 one-shot snapshot，从 visible window 按 `earliest_visible + drain` 读取并渲染一帧，适合 SSH / 隧道环境检查。interactive live path 仍沿用 config 中的 `latest + drain`。
+- market data diagnostics 已可见：SHM unavailable、reader overrun 和 UI dropped batch 会进入 alert；当前 `BookTicker` 不含 `last_price`、最新成交量、24h volume、turnover / value，这些字段在 TUI 中显示 `NA`。
+- 订单、仓位、PnL 和 health 仍是 demo / 静态数据；后续需要实现 monitor 专用 order source、REST snapshot、account model 和真实 health sampler。
 
 ### Gate 交易
 
@@ -124,6 +135,8 @@ doc/evaluation_support.md
 | `README.md` | 了解构建和工具入口 | build、ctest、benchmark、probe、latency compare |
 | `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码 | `evaluation/` 边界和提交前检查 |
 | `doc/futures_contract_metadata_fields.md` | 处理合约基础信息 | 统一 metadata 字段、Gate / Binance 映射、数量单位差异 |
+| `doc/tui_onboarding_guide.md` | 接手 TUI / account monitor | 当前范围、运行命令、实现入口、未完成项 |
+| `doc/tui_gate_account_monitor_design.md` | 继续 TUI 设计或实现 | Symbol Workbench、market data SHM、order / health 线程模型和测试建议 |
 | `doc/strategy_order_component_model.md` | 细化交易组件边界 | DataReader、OrderSession、OrderFeedbackSession、OrderManager、Strategy |
 | `doc/trading_component_architecture_discussion.md` | 继续组件架构讨论 | DataReader concept、Poll / Drain、no-merge、diagnostics 边界 |
 | `doc/data_session_config.md` | 修改 data session 配置 | instrument catalog、subscribe symbols、WS / log / SHM 配置 |
@@ -167,6 +180,24 @@ doc/evaluation_support.md
 | `exchange/gate/market_data/*` | Gate SBE BBO client / session / config |
 | `exchange/binance/market_data/*` | Binance bookTicker stream / parser / client / session / config |
 | `tools/market_data/data_reader_probe.cpp` | 多 SHM source reader probe |
+
+### Monitor / TUI
+
+| 文件 | 职责 |
+| --- | --- |
+| `monitor/CMakeLists.txt` | `aquila_monitor` library 和 `gate_account_tui` executable |
+| `monitor/tui/gate_account_tui.cpp` | TUI 入口，支持 static demo、live market data、dump 和 health view |
+| `monitor/tui/symbol_workbench_view.h` | Symbol Workbench FTXUI 布局 |
+| `monitor/tui/runtime_health_view.h` | health / alert view 布局 |
+| `monitor/tui/quit_events.h` | `q` / `Esc` / Ctrl-C quit event 处理 |
+| `monitor/model/account_monitor_snapshot.h` | TUI 可见 snapshot model |
+| `monitor/model/market_data_view_model.h` | market data batch 到 UI 行的转换 |
+| `monitor/model/monitor_spsc_queue.h` | monitor 内部固定容量 SPSC queue |
+| `monitor/demo/symbol_workbench_demo_data.*` | 当前静态 demo 数据 |
+| `monitor/market_data/market_data_thread.*` | monitor 专用 market data reader thread 和 one-shot snapshot |
+| `monitor/market_data/market_data_store.h` | 按 `(exchange, symbol_id)` coalesce latest BBO |
+| `monitor/market_data/market_data_update.h` | MarketData batch / row / diagnostics payload |
+| `config/monitors/gate_account_tui_market_data.toml` | TUI market data SHM reader 配置 |
 
 ### Trading / Gate
 
@@ -263,6 +294,14 @@ feedback SHM lane -> StrategyThread
 - `Poll()` / `Drain()` 是 `noexcept` 热路径；配置校验、SHM attach、binary 文件检查和 mmap 失败保留在冷路径。
 - `Diagnostics` 是记录器 / policy，`Stats` 是计数快照；不要在组件内部泛化命名为 `Metrics`。
 
+### TUI / Account Monitor
+
+- TUI 是独立只读 monitor，不是交易系统事实源；不能接入 `TradingRuntime`，也不应把 UI ledger 写回策略或订单状态机。
+- 第一版跨线程边界是 worker thread 本地状态 + SPSC queue + UI thread owned visible model，不用 mutex 共享 UI model。
+- market data 从既有 Gate / Binance `BookTicker` SHM 读取；SHM 缺失是可见降级状态，不由 TUI 自动启动 data session。
+- 当前 `BookTicker` ABI 只有 BBO 和 id / timestamp 字段；`last_price`、成交量、turnover / value 显示 `NA` 是设计边界。
+- 后续 order / position / PnL 需要 monitor 专用 raw event 和 REST snapshot；不要直接把交易系统 `OrderFeedbackEvent` 当作 account monitor 主事件。
+
 ### LeadLag
 
 - `leadlag::Strategy::OnBookTicker()` 已串起 raw market state、alignment、recorder、threshold、signal engine 和 synthetic position accounting。
@@ -313,6 +352,16 @@ ctest --test-dir build/debug -R '(gate_.*market_data|binance_.*market_data|data_
 ```
 
 Live drain 验证需要先启动 Gate / Binance data session 写 SHM，再用临时 drain 配置运行 probe；不要把仓库默认 `strategy_data_reader.toml` 改成 drain。
+
+### TUI / Monitor
+
+```bash
+cmake --build build/debug --target gate_account_tui monitor_symbol_workbench_demo_data_test monitor_symbol_workbench_view_test monitor_market_data_view_model_test monitor_market_data_store_test monitor_spsc_queue_test monitor_market_data_thread_test -j 8
+ctest --test-dir build/debug -R monitor_ --output-on-failure
+./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
+```
+
+未启动 Gate / Binance data session 时，dump smoke 期望显示 `market data unavailable` / SHM unavailable alert，并保留 Gate / Binance 行情 `NA` 行。如果已启动 data session，dump snapshot 应能从 visible SHM 读取 bid / ask；`last_price`、volume、turnover 仍应显示 `NA`。
 
 ### Gate Trading
 
@@ -370,6 +419,15 @@ rg 'aquila_evaluation' core exchange tools
 3. V1 emergency smoke、外围 guard wrapper、ZEC 小额 filled open / close 和 unfilled-cancel smoke 已完成；submit rejected / cancel-rejected 安全 live 探测未通过，不计入完成项。
 4. 之后优先做更长时间真实订单运行 guardrails 和继续补齐风控审查；当前已先加入 LeadLag strategy 全局 `max_gross_notional`，`max_holding_position` 可选但本版本暂不启用。account / position realtime feedback 作为 V2 可选能力，不作为当前 V1 前置项。failure response 继续前先确认 Gate 可返回最终 error 的请求形态。
 
+### TUI / Account Monitor
+
+1. 读取 `doc/tui_onboarding_guide.md` 和 `doc/tui_gate_account_monitor_design.md`，以当前 `monitor/` 实现为边界。
+2. 下一步优先实现 monitor 专用 Gate orders raw parser 和 fixture tests；不要直接复用交易系统 `OrderFeedbackEvent` 作为 TUI 主事件。
+3. 实现启动期 REST snapshot：open orders、positions、account summary；运行期先做 drift 标记，不自动修正或交易。
+4. 实现 `MonitorOrderBook`、`PositionLedger`、`PnlLedger` 和真实 `AccountMonitorThread`，通过 SPSC 向 UI thread 发布 order / health batch。
+5. 后续如果接 order pool SHM，应保留 `OrderSource` 可替换边界，使 UI model 不依赖具体来源。
+6. market data 若要展示 `last_price`、成交量或 turnover，需要新增 trade / ticker SHM 或低频 REST ticker；补齐前继续显示 `NA`，不要用 bid / ask 伪造。
+
 ## 结束对话固定流程
 
 用户输入“结束对话”时，只做收尾、同步和交接，不主动开启新功能：
@@ -384,4 +442,4 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的 onboarding 提示
 
-请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。如果继续 LeadLag 长时间实盘运行和测试，先读 `doc/lead_lag_live_runtime_plan.md` 和 `doc/lead_lag_reconcile_design.md`；当前 strategy 层订单闭环、Python REST emergency flatten helper、`lead_lag_strategy --execute` live-orders handoff、flat-account / tiny-position emergency smoke、隔离 `ContinuityLost` stop-and-flat smoke、外围 `scripts/lead_lag/run_live_with_guard.py`、ZEC_USDT `--smoke-open-close` 小额 filled open / close、`--smoke-unfilled-cancel` 小额挂单撤单 smoke 和本地端到端 benchmark 已完成。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 是 V2 可选能力。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不计入已完成 smoke；后续优先做更长时间真实订单 guardrails 和风控审查。`config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 已覆盖 requested 11 symbols，Gate decimal-size 合约当前仍只按整数 `size` 下单。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。如果继续 TUI / account monitor，先读 `doc/tui_onboarding_guide.md` 和 `doc/tui_gate_account_monitor_design.md`；当前 `monitor/` 已完成 FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot dump snapshot 和 monitor tests，`gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM，订单、仓位、PnL 和 health 仍未接真实账户数据。下一步 TUI 优先做 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。如果继续 LeadLag 长时间实盘运行和测试，先读 `doc/lead_lag_live_runtime_plan.md` 和 `doc/lead_lag_reconcile_design.md`；当前 strategy 层订单闭环、Python REST emergency flatten helper、`lead_lag_strategy --execute` live-orders handoff、flat-account / tiny-position emergency smoke、隔离 `ContinuityLost` stop-and-flat smoke、外围 `scripts/lead_lag/run_live_with_guard.py`、ZEC_USDT `--smoke-open-close` 小额 filled open / close、`--smoke-unfilled-cancel` 小额挂单撤单 smoke 和本地端到端 benchmark 已完成。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 是 V2 可选能力。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不计入已完成 smoke；后续优先做更长时间真实订单 guardrails 和风控审查。`config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 已覆盖 requested 11 symbols，Gate decimal-size 合约当前仍只按整数 `size` 下单。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。

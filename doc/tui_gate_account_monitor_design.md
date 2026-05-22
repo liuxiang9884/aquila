@@ -37,9 +37,9 @@
 - TUI 虽然独立于交易系统，但需要复用 Gate private WS 和 SBE dispatch；C++ 避免再实现一套协议栈。
 - FTXUI 适合 terminal dashboard、表格、tab、滚动列表和鼠标选择。
 
-## 目录建议
+## 目录
 
-建议新增独立顶层目录：
+当前已新增独立顶层目录 `monitor/`。已落地部分包括 demo data、market data reader thread、UI snapshot model、SPSC queue、FTXUI workbench / health view 和 `gate_account_tui` 入口；下面的 `gate/`、order book、position / PnL ledger 仍是后续完整 account monitor 的建议结构。
 
 ```text
 monitor/
@@ -93,6 +93,8 @@ core/exchange/strategy/tools -> monitor
 ./build/debug/monitor/gate_account_tui
 ./build/debug/monitor/gate_account_tui --live-market-data
 ./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
+./build/debug/monitor/gate_account_tui --dump --view health --width 160 --height 40
+./build/debug/monitor/gate_account_tui --dump --live-market-data --market-data-config config/monitors/gate_account_tui_market_data.toml --width 260 --height 60
 ```
 
 后续完整 account monitor 可再增加 `--config config/monitors/gate_account_tui.toml`。目标配置内容：
@@ -169,7 +171,7 @@ exchange, symbol, id, bid_price, bid_volume, ask_price, ask_volume, updated
 
 `last_price`、最新成交量、24h volume、turnover / value 当前不在 `BookTicker` SHM ABI 中，第一版显示 `NA`。后续如果需要补齐，可以新增 trade / ticker feed SHM，或由 TUI 低频 REST ticker 补充；补齐前不能用 bid / ask 伪造这些字段。
 
-MarketDataThread 使用 monitor 专用 SHM reader 读取两个 source；正常 interactive live path 使用 config 中的 `start_position = latest` 和 `read_mode = drain`，dump snapshot path 会从 visible window 读取已有数据并 coalesce 一帧。线程内维护 `latest_by(exchange, symbol_id)` 和 changed set；Gate 和 Binance 的 `BookTicker.id` 都按 source 严格单调，因此第一版 change predicate 是：
+MarketDataThread 使用 monitor 专用 SHM reader 读取两个 source；该 reader 在构造时直接 attach 每个 source，并按 `required` 决定是否跳过或失败，不再先 probe 再 attach。正常 interactive live path 使用 config 中的 `start_position = latest` 和 `read_mode = drain`，dump snapshot path 强制 `earliest_visible + drain`，从 visible window 读取已有数据并 coalesce 一帧。线程内维护 `latest_by(exchange, symbol_id)` 和 changed set；Gate 和 Binance 的 `BookTicker.id` 都按 source 严格单调，因此第一版 change predicate 是：
 
 ```text
 same exchange + symbol_id:
@@ -177,7 +179,7 @@ same exchange + symbol_id:
   else ignore
 ```
 
-MarketDataThread 每 100ms 只把 changed rows 批量推给 UI thread，避免 UI 读取完整 tick stream。输入是 drain，输出是 coalesced latest batch。
+MarketDataThread 每 100ms 只把 changed rows 批量推给 UI thread，避免 UI 读取完整 tick stream。输入是 drain，输出是 coalesced latest batch。即使本轮没有 changed rows，只要 overrun / dropped batch diagnostics 发生变化，也会发布 diagnostics-only batch，让 UI alert 可见。
 
 建议第一版 payload 使用固定容量 batch，例如：
 
@@ -497,6 +499,7 @@ SPSC backpressure 策略：
 当前 market data smoke：
 
 ```bash
+cmake --build build/debug --target gate_account_tui monitor_symbol_workbench_demo_data_test monitor_symbol_workbench_view_test monitor_market_data_view_model_test monitor_market_data_store_test monitor_spsc_queue_test monitor_market_data_thread_test -j 8
 ./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
 ctest --test-dir build/debug -R monitor_ --output-on-failure
 ```
@@ -506,6 +509,7 @@ ctest --test-dir build/debug -R monitor_ --output-on-failure
 - 未启动 data session 时，Gate / Binance 行情行显示 `NA`，并出现 market data unavailable alert。
 - 如果已启动 Gate / Binance data session，dump snapshot 能读取 visible `BookTicker` SHM 并显示 bid / ask。
 - `last_price`、volume、turnover 仍显示 `NA`。
+- 2026-05-22 已验证完整 debug `ctest --test-dir build/debug --output-on-failure` 为 80/80 passed；未启动真实 data session 的环境只覆盖 missing-SHM fallback，present-SHM 路径由 fake SHM integration tests 覆盖。
 
 后续完整 account monitor live smoke 验证条件：
 

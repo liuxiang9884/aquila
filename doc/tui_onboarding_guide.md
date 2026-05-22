@@ -24,7 +24,7 @@
 
 ## 当前 Demo / Market Data 状态
 
-截至 2026-05-22，Symbol Workbench demo 和 market data live path 已落地。默认无参数仍显示静态 layout demo；加 `--live-market-data` 后会 attach `config/monitors/gate_account_tui_market_data.toml` 中的 Gate / Binance `BookTicker` SHM；`--dump --live-market-data` 会做一次 bounded live snapshot 并渲染一帧，适合 SSH 环境检查：
+截至 2026-05-22，Symbol Workbench demo 和 market data live path 已落地。默认无参数仍显示静态 layout demo；加 `--live-market-data` 后会 attach `config/monitors/gate_account_tui_market_data.toml` 中的 Gate / Binance `BookTicker` SHM；`--dump --live-market-data` 会从 SHM visible window 做一次 bounded live snapshot 并渲染一帧，适合 SSH 环境检查：
 
 ```bash
 ./build/debug/monitor/gate_account_tui
@@ -32,7 +32,7 @@
 ./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
 ```
 
-当前订单、仓位、PnL、health 仍是静态 demo 数据，不连接 Gate private order WebSocket、不查询 REST、不显示真实账户数据。market data 只读取既有 data session SHM；若 data session 未启动，Gate / Binance 行情行显示 `NA` 并在 alert 中提示 unavailable。目标 11 个 symbol：
+当前订单、仓位、PnL、health 仍是静态 demo 数据，不连接 Gate private order WebSocket、不查询 REST、不显示真实账户数据。market data 只读取既有 data session SHM；若 data session 未启动，Gate / Binance 行情行显示 `NA` 并在 alert 中提示 unavailable。optional source attach 失败不会让整个 TUI 退出；required source 或全部 source 不可用时 live market data 标记为 unavailable，但进程仍保留静态 UI。目标 11 个 symbol：
 
 ```text
 PROVE_USDT, RAVE_USDT, ZEC_USDT, SIREN_USDT, ETC_USDT, DASH_USDT,
@@ -40,6 +40,14 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 ```
 
 默认选中 `ZEC_USDT`，展示 Aquila / Manual / External 三类订单、仓位 / PnL、source mix、health 和事件流。
+
+当前 market data 行为边界：
+
+- interactive live path 使用 config 中的 `start_position = latest` 和 `read_mode = drain`。
+- dump snapshot path 强制 `earliest_visible + drain`，用于读取当前 SHM visible window 中已经存在的行。
+- Gate / Binance `BookTicker.id` 都按 source 严格单调；reader thread 只在 id 变化时更新 latest row。
+- 每 100ms 只向 UI 推 changed rows；reader overrun、UI dropped batch 和 unavailable source 会进入 alert。
+- `BookTicker` SHM 当前没有 `last_price`、最新成交量、24h volume、turnover / value，这些字段显示 `NA`，不要用 bid / ask 伪造。
 
 ## 文档索引
 
@@ -72,6 +80,17 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 - `scripts/gate/query_gate_account.py`：REST account / order / position read-only 查询语义参考；第一版 TUI 可以先在 C++ 中实现等价查询或通过后续 REST helper 复用其签名规则。
 - `core/config/*` 和已有 TOML parser：TUI config 应沿用 TOML + CLI override 风格。
 
+## 当前验证命令
+
+```bash
+cmake --build build/debug --target gate_account_tui monitor_symbol_workbench_demo_data_test monitor_symbol_workbench_view_test monitor_market_data_view_model_test monitor_market_data_store_test monitor_spsc_queue_test monitor_market_data_thread_test -j 8
+ctest --test-dir build/debug -R monitor_ --output-on-failure
+./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
+git diff --check
+```
+
+2026-05-22 已验证完整 debug `ctest --test-dir build/debug --output-on-failure` 为 80/80 passed。当前环境未启动真实 Gate / Binance data session 时，dump smoke 覆盖的是 missing-SHM fallback；present-SHM 路径由 fake SHM 测试覆盖。
+
 ## 不建议复用的点
 
 - 不复用 `TradingRuntime`：TUI 不是策略执行链路，不应该进入交易系统 event loop。
@@ -83,10 +102,10 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 ## 下一步建议
 
 1. 阅读 `doc/tui_gate_account_monitor_design.md`。
-2. 后续实现 monitor 专用 Gate orders raw parser，覆盖全账户订单，不丢弃非 Aquila text。
-3. 实现独立 Gate account monitor session：只订阅 private `futures.orders`，输出 monitor raw update；order source 保持可替换，后续可以改为 order pool SHM。
-4. 增加启动期 REST snapshot：open orders、positions、account summary；运行中低频校验 drift。
-5. 实现 monitor model：按 symbol 聚合 orders、position ledger、realized / unrealized PnL、source classification 和 stale 状态。
+2. 后续实现 monitor 专用 Gate orders raw parser，覆盖全账户订单，不丢弃非 Aquila text；先用 fixture 固化 `futures.orders` 字段语义。
+3. 增加启动期 REST snapshot：open orders、positions、account summary；运行中低频校验 drift。
+4. 实现 monitor model：按 symbol 聚合 orders、position ledger、realized / unrealized PnL、source classification 和 stale 状态。
+5. 实现独立 Gate account monitor session：只订阅 private `futures.orders`，输出 monitor raw update；order source 保持可替换，后续可以改为 order pool SHM。
 6. 将 health / order thread 接入真实系统 API 和 monitor order source，保留 SPSC 到 UI thread 的边界。
 
 ## 当前开放问题
