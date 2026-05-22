@@ -24,14 +24,14 @@ inline std::string SideValueText(int side_value) {
 
 inline std::string IdText(std::uint64_t id) {
   if (id == 0) {
-    return "not available";
+    return "-";
   }
   return fmt::format("{}", id);
 }
 
 inline std::string PriceText(double value) {
   if (value == 0.0) {
-    return "not available";
+    return "NA";
   }
   return fmt::format("{:.2f}", value);
 }
@@ -39,7 +39,7 @@ inline std::string PriceText(double value) {
 inline std::string MarketNumberText(const MarketDataRow& row, double value,
                                     int precision) {
   if (!row.has_data) {
-    return "not available";
+    return "NA";
   }
   if (precision == 1) {
     return fmt::format("{:.1f}", value);
@@ -97,13 +97,13 @@ inline ftxui::Element SymbolRow(const SymbolSummary& summary) {
 
 inline ftxui::Element OrderRow(const MonitorOrder& order, bool selected) {
   auto row = ftxui::text(fmt::format(
-      "{:<9} {:<11} {:<12} {:<18} {:<5} {:>9.2f} {:>9.1f} {:>8.1f} "
-      "{:>8.1f} {:>13} {:>8.2f} {:<8} {:<10} {:<12}",
-      order.exchange, order.exchange_symbol, IdText(order.exchange_order_id),
-      IdText(order.local_order_id), SideValueText(order.side_value),
+      "{:<7} {:<11} {:<5} {:>8.2f} {:>8.1f} {:>8.1f} {:>8.1f} {:>8} "
+      "{:>8.2f} {:<8} {:<10} {:<12} {:<18} {:<12}",
+      order.exchange, order.exchange_symbol, SideValueText(order.side_value),
       order.price, order.quantity, order.left_quantity, order.filled_quantity,
       PriceText(order.average_fill_price), order.fee, order.status,
-      order.source_label, order.updated_time));
+      order.source_label, IdText(order.exchange_order_id),
+      IdText(order.local_order_id), order.updated_time));
   if (selected) {
     return row | ftxui::inverted;
   }
@@ -115,7 +115,7 @@ inline ftxui::Element OrderRow(const MonitorOrder& order, bool selected) {
 
 inline ftxui::Element MarketDataRowElement(const MarketDataRow& row) {
   auto line = ftxui::text(fmt::format(
-      "{:<9} {:<11} {:<16} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} "
+      "{:<7} {:<11} {:<16} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} "
       "{:>12} {:<12}",
       row.exchange, row.exchange_symbol, row.market_data_id,
       MarketNumberText(row, row.last_price, 2),
@@ -164,9 +164,9 @@ inline ftxui::Element OrdersPane(const SymbolDetail& detail) {
   }));
   rows.push_back(ftxui::separator());
   rows.push_back(
-      ftxui::text("exchange  symbol      exchange_id  local_id           side"
-                  "      price  quantity     left   filled average_price"
-                  "      fee status   source     updated") |
+      ftxui::text("exch    symbol      side        px      qty     left"
+                  "   filled      avg      fee status   source     exch_id"
+                  "      local_id           updated") |
       ftxui::color(ftxui::Color::GrayLight));
   for (std::size_t i = 0; i < detail.orders.size(); ++i) {
     rows.push_back(OrderRow(detail.orders[i], i == 1));
@@ -185,9 +185,9 @@ inline ftxui::Element MarketDataPane(const SymbolDetail& detail) {
   }));
   rows.push_back(ftxui::separator());
   rows.push_back(
-      ftxui::text("exchange  symbol      market_data_id   last_price"
-                  "  bid_price bid_volume  ask_price ask_volume     volume"
-                  "     turnover updated") |
+      ftxui::text("exch    symbol      id                 last        bid"
+                  "    bid_vol        ask    ask_vol        vol     turnover"
+                  " updated") |
       ftxui::color(ftxui::Color::GrayLight));
   for (const MarketDataRow& row : detail.market_data) {
     rows.push_back(MarketDataRowElement(row));
@@ -254,9 +254,9 @@ inline ftxui::Element PositionPane(const SymbolDetail& detail) {
     const MonitorOrder& order = detail.orders[1];
     rows.push_back(
         ftxui::vbox({
-            ftxui::text(fmt::format("exchange      {}", order.exchange)),
+            ftxui::text(fmt::format("exch          {}", order.exchange)),
             ftxui::text(fmt::format("symbol        {}", order.exchange_symbol)),
-            ftxui::text(fmt::format("exchange_id   {}",
+            ftxui::text(fmt::format("exch_id       {}",
                                     IdText(order.exchange_order_id))),
             ftxui::text(
                 fmt::format("local_id      {}", IdText(order.local_order_id))),

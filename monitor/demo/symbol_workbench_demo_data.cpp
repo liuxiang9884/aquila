@@ -73,7 +73,7 @@ constexpr std::array<MarketDataRow, 3> kZecMarketData{{
      .exchange_symbol = "ZEC-USDT",
      .market_data_id = "okx-zec-empty",
      .has_data = false,
-     .updated_time = "--:--:--.---"},
+     .updated_time = "-"},
 }};
 
 constexpr std::array<MonitorOrder, 6> kZecOrders{{

@@ -24,3 +24,18 @@ target_link_libraries(monitor_tui_quit_events_test
 
 add_test(NAME monitor_tui_quit_events_test
          COMMAND monitor_tui_quit_events_test)
+
+add_executable(monitor_symbol_workbench_view_test
+    symbol_workbench_view_test.cpp
+)
+
+target_link_libraries(monitor_symbol_workbench_view_test
+    PRIVATE
+        aquila_monitor
+        ftxui::dom
+        ftxui::screen
+        GTest::gtest_main
+)
+
+add_test(NAME monitor_symbol_workbench_view_test
+         COMMAND monitor_symbol_workbench_view_test)

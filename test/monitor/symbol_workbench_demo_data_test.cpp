@@ -95,7 +95,7 @@ TEST(SymbolWorkbenchDemoDataTest, ZecMarketDataUsesExchangeRows) {
 
   const MarketDataRow& okx = detail->market_data[2];
   EXPECT_EQ(okx.exchange, "OKX");
-  EXPECT_EQ(okx.updated_time, "--:--:--.---");
+  EXPECT_EQ(okx.updated_time, "-");
 }
 
 TEST(SymbolWorkbenchDemoDataTest, ZecTotalPnlIncludesFees) {
