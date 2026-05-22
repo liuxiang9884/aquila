@@ -195,6 +195,23 @@ handler 需要提供：
 void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 ```
 
+## 下一步：SHM 到 replay binary 落地
+
+后续需要增加一个实时录制工具：通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。
+
+第一版建议边界：
+
+- 使用一份 data reader TOML 作为输入，复用现有 SHM source 配置、`read_mode` 和 `max_events_per_drain`。
+- 只输出一个 merged `.bin`，记录顺序就是 `RealtimeDataReader` 实际交给 handler 的顺序。
+- 默认按 `drain` 语义录制完整可读事件流；如果输入配置仍是 `latest`，则输出也继承 latest 的跳点语义，并应在工具启动日志中显式打印。
+- 写入前直接校验 `sizeof(aquila::BookTicker)` 与 replay reader 约定一致；写入路径使用二进制追加或截断模式由命令行参数明确控制，默认建议截断。
+- 统计至少包括 total records、per-exchange records、per-source skipped / overrun、first / last `exchange_ns` 和 `local_ns`。
+
+当前 `BookTicker.local_ns` 不是 DataReader 或策略层打点，而是在 data session 收到 WebSocket frame 后、进入交易所 parser / decoder 前采集：
+
+- Gate 在 `exchange/gate/market_data/data_session.h` 的 binary frame path 调用 `websocket::NowNs(kClockSource)`，随后传给 `DecodeBookTickerWithHeader()` 写入 `BookTicker.local_ns`。
+- Binance 在 `exchange/binance/market_data/data_session.h` 的 text frame path 调用 `websocket::NowNs(kClockSource)`，随后由 `AssignBookTickerFromUpdate()` 写入 `BookTicker.local_ns`。
+
 ## Diagnostics
 
 `RealtimeDataReader` 的统计通过编译期 diagnostics policy 开关：
