@@ -51,6 +51,7 @@ struct CliOptions {
   bool execute{false};
   bool smoke_open_close{false};
   bool smoke_unfilled_cancel{false};
+  bool smoke_submit_reject{false};
 };
 
 struct LoadedConfig {
@@ -328,9 +329,9 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       "order_capacity={} max_loop_seconds={} reader_name={} sources={} "
       "order_session={} feedback_enabled={} feedback_shm={} "
       "feedback_channel={} feedback_poll_budget={} pairs={} "
-      "smoke_open_close={} smoke_unfilled_cancel={} smoke_symbol={} "
-      "smoke_aggressive_price_bps={} smoke_passive_price_bps={} "
-      "smoke_max_notional={}\n",
+      "smoke_open_close={} smoke_unfilled_cancel={} "
+      "smoke_submit_reject={} smoke_symbol={} smoke_aggressive_price_bps={} "
+      "smoke_passive_price_bps={} smoke_max_notional={}\n",
       live::RunModeName(mode), options.execute ? "true" : "false",
       options.connect_data ? "true" : "false", options.config_path.string(),
       options.signals_output_path.empty()
@@ -345,6 +346,7 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       loaded.strategy.feedback.poll_budget, loaded.lead_lag.pairs.size(),
       options.smoke_open_close ? "true" : "false",
       options.smoke_unfilled_cancel ? "true" : "false",
+      options.smoke_submit_reject ? "true" : "false",
       options.smoke_symbol.empty() ? "-" : options.smoke_symbol,
       options.smoke_aggressive_price_bps, options.smoke_passive_price_bps,
       options.smoke_max_notional);
@@ -701,6 +703,107 @@ int RunLiveUnfilledCancelSmoke(LoadedConfig loaded, const CliOptions& options) {
       std::move(loaded), std::move(credentials), options);
 }
 
+template <typename WebSocketPolicy>
+int RunLiveSubmitRejectSmokeRuntime(LoadedConfig loaded,
+                                    gate::LoginCredentials credentials,
+                                    const CliOptions& options) {
+  using DataReader = market_data::RealtimeDataReader<
+      market_data::RealtimeDataReaderDiagnostics>;
+  using OrderSession =
+      gate::OrderSessionRuntimeAdapter<WebSocketPolicy,
+                                       gate::OrderSessionDiagnostics>;
+  using Runtime =
+      core::TradingRuntime<live::LiveSubmitRejectSmokeStrategy, OrderSession,
+                           DataReader, core::TradingRuntimeDiagnostics>;
+
+  live::LiveSubmitRejectSmokeStats stats;
+  gate::OrderSessionConfig order_session_config =
+      std::move(loaded.order_session);
+  live::LiveSubmitRejectSmokeOptions smoke_options{
+      .symbol = options.smoke_symbol,
+      .max_notional = options.smoke_max_notional,
+  };
+  auto runtime_result = Runtime::Create(
+      std::move(loaded.strategy), std::move(loaded.data_reader),
+      [order_session_config = std::move(order_session_config),
+       credentials = std::move(credentials)]() mutable {
+        return OrderSession(std::move(order_session_config),
+                            std::move(credentials));
+      },
+      std::move(loaded.lead_lag), std::move(smoke_options), &stats);
+  if (!runtime_result.ok) {
+    fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
+               runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
+    return 1;
+  }
+
+  const int runtime_exit_code = runtime_result.value->Run();
+  const int exit_code =
+      live::ResolveLiveSubmitRejectSmokeExitCode(runtime_exit_code, stats);
+  const core::TradingRuntimeLoopStats& loop_stats =
+      runtime_result.value->diagnostics().stats();
+
+  if (stats.continuity_lost_stop_requested) {
+    fmt::print(stderr,
+               "[FAIL] lead_lag smoke order feedback continuity lost; "
+               "runtime stopped; run emergency flatten before restart\n");
+    NOVA_ERROR(
+        "lead_lag smoke order feedback continuity lost; runtime stopped; "
+        "run emergency flatten before restart");
+  } else if (exit_code != 0) {
+    const std::string_view error_text =
+        stats.error.empty() ? std::string_view{"smoke did not complete"}
+                            : std::string_view{stats.error};
+    fmt::print(stderr, "[FAIL] lead_lag smoke submit reject failed: {}\n",
+               error_text);
+    NOVA_ERROR("lead_lag smoke submit reject failed: {}", error_text);
+  }
+
+  fmt::print(
+      "lead_lag_strategy_live_submit_reject_smoke_summary exit_code={} "
+      "runtime_exit_code={} emergency_handoff={} completed={} state={} "
+      "book_tickers={} order_responses={} order_feedbacks={} "
+      "local_order_id={} quantity={} target_notional={} "
+      "estimated_notional={} used_min_quantity={} rejected_seen={} error={} "
+      "loop_iterations={} idle_iterations={} order_response_polls={} "
+      "order_response_events={} order_feedback_polls={} "
+      "order_feedback_events={} data_reader_polls={} "
+      "data_reader_empty_polls={} data_reader_events={}\n",
+      exit_code, runtime_exit_code,
+      stats.continuity_lost_stop_requested ? "true" : "false",
+      stats.completed ? "true" : "false",
+      live::LiveSubmitRejectSmokeStateName(stats.state), stats.book_tickers,
+      stats.order_responses, stats.order_feedbacks, stats.local_order_id,
+      stats.quantity, stats.target_notional, stats.estimated_notional,
+      stats.used_min_quantity ? "true" : "false",
+      stats.rejected_seen ? "true" : "false",
+      stats.error.empty() ? "-" : stats.error, loop_stats.loop_iterations,
+      loop_stats.idle_iterations, loop_stats.order_response_poll_calls,
+      loop_stats.order_response_events, loop_stats.order_feedback_poll_calls,
+      loop_stats.order_feedback_events, loop_stats.data_reader_poll_calls,
+      loop_stats.data_reader_empty_polls, loop_stats.data_reader_events);
+  return exit_code;
+}
+
+int RunLiveSubmitRejectSmoke(LoadedConfig loaded, const CliOptions& options) {
+  bool credentials_ok = false;
+  gate::LoginCredentials credentials =
+      LoadCredentials(options, loaded.order_session, &credentials_ok);
+  if (!credentials_ok) {
+    return 2;
+  }
+
+  if (loaded.order_session.connection.enable_tls) {
+    return RunLiveSubmitRejectSmokeRuntime<
+        gate::OrderSessionDefaultTlsWebSocketPolicy>(
+        std::move(loaded), std::move(credentials), options);
+  }
+  return RunLiveSubmitRejectSmokeRuntime<
+      gate::OrderSessionDefaultPlainWebSocketPolicy>(
+      std::move(loaded), std::move(credentials), options);
+}
+
 int Run(const CliOptions& options) {
   LoadedConfig loaded;
   if (!LoadConfig(options, &loaded)) {
@@ -710,7 +813,11 @@ int Run(const CliOptions& options) {
 
   const live::RunModeResult mode_result = live::ResolveRunMode(
       loaded.strategy.mode, options.connect_data, options.execute,
-      options.smoke_open_close, options.smoke_unfilled_cancel);
+      live::SmokeModeSelection{
+          .open_close = options.smoke_open_close,
+          .unfilled_cancel = options.smoke_unfilled_cancel,
+          .submit_reject = options.smoke_submit_reject,
+      });
   if (!mode_result.ok) {
     fmt::print(stderr, "[FAIL] {}\n", mode_result.error);
     NOVA_ERROR("{}", mode_result.error);
@@ -729,6 +836,8 @@ int Run(const CliOptions& options) {
       return RunLiveOpenCloseSmoke(std::move(loaded), options);
     case live::RunMode::kLiveUnfilledCancelSmoke:
       return RunLiveUnfilledCancelSmoke(std::move(loaded), options);
+    case live::RunMode::kLiveSubmitRejectSmoke:
+      return RunLiveSubmitRejectSmoke(std::move(loaded), options);
   }
   return 1;
 }
@@ -767,6 +876,9 @@ int main(int argc, char** argv) {
                "Run one controlled open/close live smoke; requires --execute");
   app.add_flag("--smoke-unfilled-cancel", options.smoke_unfilled_cancel,
                "Run one controlled unfilled cancel live smoke; requires "
+               "--execute");
+  app.add_flag("--smoke-submit-reject", options.smoke_submit_reject,
+               "Run one controlled submit rejected live smoke; requires "
                "--execute");
   CLI11_PARSE(app, argc, argv);
 

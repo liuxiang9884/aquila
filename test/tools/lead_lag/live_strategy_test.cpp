@@ -215,11 +215,24 @@ TEST(LeadLagLiveStrategyTest, SmokeUnfilledCancelRequiresExecute) {
             std::string::npos);
 }
 
+TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectRequiresExecute) {
+  const RunModeResult result = ResolveRunMode(
+      aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+      /*execute=*/false, SmokeModeSelection{.submit_reject = true});
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("--smoke-submit-reject requires --execute"),
+            std::string::npos);
+}
+
 TEST(LeadLagLiveStrategyTest, SmokeModesAreMutuallyExclusive) {
   const RunModeResult result =
       ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
-                     /*execute=*/true, /*smoke_open_close=*/true,
-                     /*smoke_unfilled_cancel=*/true);
+                     /*execute=*/true,
+                     SmokeModeSelection{
+                         .open_close = true,
+                         .unfilled_cancel = true,
+                     });
 
   EXPECT_FALSE(result.ok);
   EXPECT_NE(result.error.find("only one smoke mode may be selected"),
@@ -234,6 +247,15 @@ TEST(LeadLagLiveStrategyTest, SmokeUnfilledCancelSelectsDedicatedRunMode) {
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.mode, RunMode::kLiveUnfilledCancelSmoke);
+}
+
+TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectSelectsDedicatedRunMode) {
+  const RunModeResult result = ResolveRunMode(
+      aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+      /*execute=*/true, SmokeModeSelection{.submit_reject = true});
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.mode, RunMode::kLiveSubmitRejectSmoke);
 }
 
 TEST(LeadLagLiveStrategyTest, ExecuteTakesPriorityOverConnectDataWithLiveMode) {
@@ -253,6 +275,8 @@ TEST(LeadLagLiveStrategyTest, RunModeNameReturnsStableSummaryText) {
                "live_open_close_smoke");
   EXPECT_STREQ(RunModeName(RunMode::kLiveUnfilledCancelSmoke),
                "live_unfilled_cancel_smoke");
+  EXPECT_STREQ(RunModeName(RunMode::kLiveSubmitRejectSmoke),
+               "live_submit_reject_smoke");
 }
 
 TEST(LeadLagLiveStrategyTest, RecoveryStateNameReturnsStableSummaryText) {
@@ -745,6 +769,232 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kError);
   EXPECT_NE(stats.error.find("unexpected cancelled quantity"),
             std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelFailsOnCancelRejectedResponse) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAccepted,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kCancelRejected,
+          .local_order_id = stats.open_local_order_id,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_FALSE(stats.completed);
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kError);
+  EXPECT_NE(stats.error.find("smoke unfilled cancel rejected"),
+            std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectSubmitsReduceOnlyIocAtOneTickAndCompletesOnResponse) {
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(context.orders[0].symbol_id, 3);
+  EXPECT_EQ(context.orders[0].symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(context.orders[0].side, aquila::OrderSide::kBuy);
+  EXPECT_EQ(context.orders[0].time_in_force,
+            aquila::TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(context.orders[0].quantity, 1);
+  EXPECT_EQ(context.orders[0].price_text, "0.1");
+  EXPECT_TRUE(context.orders[0].reduce_only);
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kOrderPending);
+
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kRejected,
+          .local_order_id = stats.local_order_id,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_TRUE(stats.completed);
+  EXPECT_TRUE(stats.rejected_seen);
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kDone);
+}
+
+TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectAckDoesNotComplete) {
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAck,
+          .local_order_id = stats.local_order_id,
+      },
+      context);
+
+  EXPECT_FALSE(strategy.ShouldStop());
+  EXPECT_FALSE(stats.completed);
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kOrderPending);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectFailsWhenOrderIsUnexpectedlyAccepted) {
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderResponse(
+      aquila::core::OrderResponseEvent{
+          .kind = aquila::core::OrderResponseKind::kAccepted,
+          .local_order_id = stats.local_order_id,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_FALSE(stats.completed);
+  EXPECT_TRUE(context.cancelled_local_order_ids.empty());
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kError);
+  EXPECT_NE(stats.error.find("submit reject smoke order accepted"),
+            std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectFailsOnPrivateLifecycleFeedback) {
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kRejected,
+          .local_order_id = stats.local_order_id,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_FALSE(stats.completed);
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kError);
+  EXPECT_NE(stats.error.find("unexpected private feedback"), std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectContinuityLostUsesEmergencyHandoffExitCode) {
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kContinuityLost,
+          .local_order_id = stats.local_order_id,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_TRUE(stats.continuity_lost_stop_requested);
+  EXPECT_EQ(
+      ResolveLiveSubmitRejectSmokeExitCode(/*runtime_exit_code=*/0, stats),
+      kContinuityLostEmergencyHandoffExitCode);
 }
 
 }  // namespace

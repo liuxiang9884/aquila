@@ -27,6 +27,13 @@ enum class RunMode : std::uint8_t {
   kLiveOrders,
   kLiveOpenCloseSmoke,
   kLiveUnfilledCancelSmoke,
+  kLiveSubmitRejectSmoke,
+};
+
+struct SmokeModeSelection {
+  bool open_close{false};
+  bool unfilled_cancel{false};
+  bool submit_reject{false};
 };
 
 struct RunModeResult {
@@ -109,6 +116,34 @@ struct LiveUnfilledCancelSmokeStats {
   double estimated_open_notional{0.0};
   bool used_min_quantity{false};
   bool cancel_requested{false};
+  bool completed{false};
+  bool continuity_lost_stop_requested{false};
+  std::string error;
+};
+
+enum class LiveSubmitRejectSmokeState : std::uint8_t {
+  kWaitingTicker,
+  kOrderPending,
+  kDone,
+  kError,
+};
+
+struct LiveSubmitRejectSmokeOptions {
+  std::string symbol;
+  double max_notional{100.0};
+};
+
+struct LiveSubmitRejectSmokeStats {
+  std::uint64_t book_tickers{0};
+  std::uint64_t order_responses{0};
+  std::uint64_t order_feedbacks{0};
+  LiveSubmitRejectSmokeState state{LiveSubmitRejectSmokeState::kWaitingTicker};
+  std::uint64_t local_order_id{0};
+  std::int64_t quantity{0};
+  double target_notional{0.0};
+  double estimated_notional{0.0};
+  bool used_min_quantity{false};
+  bool rejected_seen{false};
   bool completed{false};
   bool continuity_lost_stop_requested{false};
   std::string error;
@@ -825,6 +860,253 @@ class LiveUnfilledCancelSmokeStrategy {
   std::string open_price_text_;
 };
 
+class LiveSubmitRejectSmokeStrategy {
+ public:
+  LiveSubmitRejectSmokeStrategy(strategy::leadlag::Config config,
+                                LiveSubmitRejectSmokeOptions options,
+                                LiveSubmitRejectSmokeStats* stats)
+      : config_(std::move(config)),
+        options_(std::move(options)),
+        stats_(stats == nullptr ? &owned_stats_ : stats) {
+    pair_ = FindSmokePair();
+    if (pair_ == nullptr) {
+      SetError("smoke symbol not found in lead_lag config");
+      return;
+    }
+    ValidateOptions();
+  }
+
+  template <typename ContextT>
+  void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
+    ++stats_->book_tickers;
+    if (pair_ == nullptr) {
+      return;
+    }
+    if (ticker.exchange != Exchange::kGate ||
+        ticker.symbol_id != pair_->symbol_id) {
+      return;
+    }
+    if (stats_->state == LiveSubmitRejectSmokeState::kWaitingTicker) {
+      SubmitOrder(ticker, context);
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderResponse(const core::OrderResponseEvent& event,
+                       ContextT& context) noexcept {
+    ++stats_->order_responses;
+    if (stats_->local_order_id == 0 ||
+        event.local_order_id != stats_->local_order_id) {
+      return;
+    }
+    switch (event.kind) {
+      case core::OrderResponseKind::kAck:
+        return;
+      case core::OrderResponseKind::kRejected:
+        CompleteRejected();
+        return;
+      case core::OrderResponseKind::kAccepted:
+        SetError("submit reject smoke order accepted unexpectedly");
+        return;
+      case core::OrderResponseKind::kCancelRejected:
+        SetError("submit reject smoke cancel rejected unexpectedly");
+        return;
+      case core::OrderResponseKind::kCancelAccepted:
+        SetError("submit reject smoke cancel accepted unexpectedly");
+        return;
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderFeedback(const OrderFeedbackEvent& event,
+                       ContextT& context) noexcept {
+    ++stats_->order_feedbacks;
+    if (event.kind == OrderFeedbackKind::kContinuityLost) {
+      stats_->continuity_lost_stop_requested = true;
+      SetError("feedback continuity lost");
+      return;
+    }
+    if (stats_->local_order_id == 0 ||
+        event.local_order_id != stats_->local_order_id) {
+      return;
+    }
+    switch (event.kind) {
+      case OrderFeedbackKind::kAccepted:
+      case OrderFeedbackKind::kCancelled:
+      case OrderFeedbackKind::kRejected:
+      case OrderFeedbackKind::kPartialFilled:
+      case OrderFeedbackKind::kFilled:
+        SetError("unexpected private feedback for submit reject smoke");
+        return;
+      case OrderFeedbackKind::kContinuityLost:
+        return;
+    }
+  }
+
+  [[nodiscard]] bool ShouldStop() const noexcept {
+    return stats_->state == LiveSubmitRejectSmokeState::kDone ||
+           stats_->state == LiveSubmitRejectSmokeState::kError ||
+           stats_->continuity_lost_stop_requested;
+  }
+
+  [[nodiscard]] const LiveSubmitRejectSmokeStats& stats() const noexcept {
+    return *stats_;
+  }
+
+ private:
+  static constexpr double kEpsilon = 1e-9;
+
+  const strategy::leadlag::PairConfig* FindSmokePair() const noexcept {
+    if (options_.symbol.empty()) {
+      return config_.pairs.empty() ? nullptr : &config_.pairs.front();
+    }
+    for (const strategy::leadlag::PairConfig& pair : config_.pairs) {
+      if (pair.symbol == options_.symbol ||
+          pair.lag_instrument.exchange_symbol == options_.symbol) {
+        return &pair;
+      }
+    }
+    return nullptr;
+  }
+
+  void ValidateOptions() noexcept {
+    if (!std::isfinite(options_.max_notional) || options_.max_notional <= 0.0) {
+      SetError("smoke max notional must be positive");
+    }
+  }
+
+  template <typename ContextT>
+  void SubmitOrder(const BookTicker& ticker, ContextT& context) noexcept {
+    if (!std::isfinite(ticker.bid_price) || ticker.bid_price <= 0.0) {
+      SetError("invalid submit reject smoke market price");
+      return;
+    }
+    const double order_price = pair_->lag_instrument.price_tick;
+    if (order_price <= 0.0) {
+      SetError("invalid submit reject smoke price");
+      return;
+    }
+    const std::int64_t quantity = ComputeQuantity();
+    if (quantity <= 0) {
+      return;
+    }
+
+    price_text_ =
+        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    const core::OrderPlaceResult placed =
+        context.PlaceOrder(core::OrderCreateRequest{
+            .exchange = Exchange::kGate,
+            .symbol_id = pair_->symbol_id,
+            .symbol = GateSymbol(),
+            .side = OrderSide::kBuy,
+            .order_type = OrderType::kLimit,
+            .time_in_force = TimeInForce::kImmediateOrCancel,
+            .quantity = quantity,
+            .price_text = price_text_,
+            .reduce_only = true,
+        });
+    if (placed.status != core::OrderPlaceStatus::kOk ||
+        placed.local_order_id == 0) {
+      SetError("failed to place submit reject smoke order");
+      return;
+    }
+
+    stats_->local_order_id = placed.local_order_id;
+    stats_->quantity = quantity;
+    stats_->state = LiveSubmitRejectSmokeState::kOrderPending;
+  }
+
+  void CompleteRejected() noexcept {
+    stats_->rejected_seen = true;
+    stats_->completed = true;
+    stats_->state = LiveSubmitRejectSmokeState::kDone;
+  }
+
+  [[nodiscard]] std::int64_t ComputeQuantity() noexcept {
+    if (pair_ == nullptr) {
+      SetError("invalid submit reject smoke pair");
+      return 0;
+    }
+    const strategy::leadlag::InstrumentMetadata& instrument =
+        pair_->lag_instrument;
+    if (instrument.notional_multiplier <= 0.0 ||
+        instrument.quantity_step <= 0.0 || instrument.min_quantity <= 0.0) {
+      SetError("invalid submit reject smoke instrument sizing metadata");
+      return 0;
+    }
+
+    stats_->target_notional = pair_->execute.open_notional;
+    double quantity =
+        FloorToStep(instrument.min_quantity, instrument.quantity_step);
+    stats_->used_min_quantity = true;
+    if (instrument.max_quantity > 0.0 && quantity > instrument.max_quantity) {
+      quantity = FloorToStep(instrument.max_quantity, instrument.quantity_step);
+    }
+
+    const double estimated_notional =
+        quantity * instrument.price_tick * instrument.notional_multiplier;
+    stats_->estimated_notional = estimated_notional;
+    if (stats_->used_min_quantity &&
+        estimated_notional > options_.max_notional + kEpsilon) {
+      SetError("minimum notional exceeds cap");
+      return 0;
+    }
+    if (!IsIntegerQuantity(quantity)) {
+      SetError("decimal smoke quantity is not supported in this version");
+      return 0;
+    }
+    if (quantity <= 0.0 ||
+        quantity >
+            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+      SetError("invalid submit reject smoke quantity");
+      return 0;
+    }
+    return static_cast<std::int64_t>(quantity);
+  }
+
+  [[nodiscard]] static double FloorToStep(double quantity,
+                                          double step) noexcept {
+    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+      return 0.0;
+    }
+    return std::floor(quantity / step + kEpsilon) * step;
+  }
+
+  [[nodiscard]] static bool IsIntegerQuantity(double quantity) noexcept {
+    return std::isfinite(quantity) &&
+           std::abs(quantity - std::round(quantity)) <= kEpsilon;
+  }
+
+  [[nodiscard]] static std::string FormatPrice(double price,
+                                               std::int32_t decimal_places) {
+    if (decimal_places < 0) {
+      decimal_places = 0;
+    }
+    return fmt::format("{:.{}f}", price, decimal_places);
+  }
+
+  [[nodiscard]] std::string_view GateSymbol() const noexcept {
+    if (!pair_->lag_instrument.exchange_symbol.empty()) {
+      return pair_->lag_instrument.exchange_symbol;
+    }
+    return pair_->symbol;
+  }
+
+  void SetError(std::string error) noexcept {
+    if (stats_->error.empty()) {
+      stats_->error = std::move(error);
+    }
+    stats_->state = LiveSubmitRejectSmokeState::kError;
+  }
+
+  strategy::leadlag::Config config_;
+  LiveSubmitRejectSmokeOptions options_;
+  LiveSubmitRejectSmokeStats owned_stats_;
+  LiveSubmitRejectSmokeStats* stats_{&owned_stats_};
+  const strategy::leadlag::PairConfig* pair_{nullptr};
+  std::string price_text_;
+};
+
 [[nodiscard]] inline int ResolveLiveOrdersExitCode(
     int runtime_exit_code, const LiveOrdersStrategyStats& stats) noexcept {
   if (stats.continuity_lost_stop_requested) {
@@ -855,34 +1137,60 @@ class LiveUnfilledCancelSmokeStrategy {
   return stats.completed ? 0 : 1;
 }
 
+[[nodiscard]] inline int ResolveLiveSubmitRejectSmokeExitCode(
+    int runtime_exit_code, const LiveSubmitRejectSmokeStats& stats) noexcept {
+  if (stats.continuity_lost_stop_requested) {
+    return kContinuityLostEmergencyHandoffExitCode;
+  }
+  if (runtime_exit_code != 0) {
+    return runtime_exit_code;
+  }
+  return stats.completed ? 0 : 1;
+}
+
+[[nodiscard]] inline std::uint8_t CountSmokeModes(
+    SmokeModeSelection selection) noexcept {
+  return static_cast<std::uint8_t>(selection.open_close) +
+         static_cast<std::uint8_t>(selection.unfilled_cancel) +
+         static_cast<std::uint8_t>(selection.submit_reject);
+}
+
 [[nodiscard]] inline RunModeResult ResolveRunMode(
     config::StrategyMode strategy_mode, bool connect_data, bool execute,
-    bool smoke_open_close = false, bool smoke_unfilled_cancel = false) {
-  if (smoke_open_close && smoke_unfilled_cancel) {
+    SmokeModeSelection smoke_modes) {
+  if (CountSmokeModes(smoke_modes) > 1) {
     return {.ok = false,
             .mode = RunMode::kValidateOnly,
             .error = "only one smoke mode may be selected"};
   }
-  if (smoke_open_close && !execute) {
+  if (smoke_modes.open_close && !execute) {
     return {.ok = false,
             .mode = RunMode::kValidateOnly,
             .error = "--smoke-open-close requires --execute"};
   }
-  if (smoke_unfilled_cancel && !execute) {
+  if (smoke_modes.unfilled_cancel && !execute) {
     return {.ok = false,
             .mode = RunMode::kValidateOnly,
             .error = "--smoke-unfilled-cancel requires --execute"};
+  }
+  if (smoke_modes.submit_reject && !execute) {
+    return {.ok = false,
+            .mode = RunMode::kValidateOnly,
+            .error = "--smoke-submit-reject requires --execute"};
   }
   if (execute && strategy_mode != config::StrategyMode::kLive) {
     return {.ok = false,
             .mode = RunMode::kValidateOnly,
             .error = "strategy.mode must be live when --execute is specified"};
   }
-  if (smoke_open_close) {
+  if (smoke_modes.open_close) {
     return {.ok = true, .mode = RunMode::kLiveOpenCloseSmoke};
   }
-  if (smoke_unfilled_cancel) {
+  if (smoke_modes.unfilled_cancel) {
     return {.ok = true, .mode = RunMode::kLiveUnfilledCancelSmoke};
+  }
+  if (smoke_modes.submit_reject) {
+    return {.ok = true, .mode = RunMode::kLiveSubmitRejectSmoke};
   }
   if (execute) {
     return {.ok = true, .mode = RunMode::kLiveOrders};
@@ -891,6 +1199,16 @@ class LiveUnfilledCancelSmokeStrategy {
     return {.ok = true, .mode = RunMode::kSignalOnly};
   }
   return {.ok = true, .mode = RunMode::kValidateOnly};
+}
+
+[[nodiscard]] inline RunModeResult ResolveRunMode(
+    config::StrategyMode strategy_mode, bool connect_data, bool execute,
+    bool smoke_open_close = false, bool smoke_unfilled_cancel = false) {
+  return ResolveRunMode(strategy_mode, connect_data, execute,
+                        SmokeModeSelection{
+                            .open_close = smoke_open_close,
+                            .unfilled_cancel = smoke_unfilled_cancel,
+                        });
 }
 
 [[nodiscard]] inline const char* RunModeName(RunMode mode) noexcept {
@@ -905,6 +1223,8 @@ class LiveUnfilledCancelSmokeStrategy {
       return "live_open_close_smoke";
     case RunMode::kLiveUnfilledCancelSmoke:
       return "live_unfilled_cancel_smoke";
+    case RunMode::kLiveSubmitRejectSmoke:
+      return "live_submit_reject_smoke";
   }
   return "unknown";
 }
@@ -957,6 +1277,21 @@ class LiveUnfilledCancelSmokeStrategy {
     case LiveUnfilledCancelSmokeState::kDone:
       return "done";
     case LiveUnfilledCancelSmokeState::kError:
+      return "error";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] inline const char* LiveSubmitRejectSmokeStateName(
+    LiveSubmitRejectSmokeState state) noexcept {
+  switch (state) {
+    case LiveSubmitRejectSmokeState::kWaitingTicker:
+      return "waiting_ticker";
+    case LiveSubmitRejectSmokeState::kOrderPending:
+      return "order_pending";
+    case LiveSubmitRejectSmokeState::kDone:
+      return "done";
+    case LiveSubmitRejectSmokeState::kError:
       return "error";
   }
   return "unknown";
