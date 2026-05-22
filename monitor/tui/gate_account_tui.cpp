@@ -55,12 +55,20 @@ class TuiSnapshotState {
                         snapshot_.runtime_health.alerts.end());
     RebuildRuntimeAlerts();
   }
+  TuiSnapshotState(const TuiSnapshotState&) = delete;
+  TuiSnapshotState& operator=(const TuiSnapshotState&) = delete;
+  TuiSnapshotState(TuiSnapshotState&&) = delete;
+  TuiSnapshotState& operator=(TuiSnapshotState&&) = delete;
 
   void EnableMarketDataRows(
       std::span<const aquila::config::InstrumentInfo> instruments) {
     market_data_model_.emplace(snapshot_.symbols, instruments,
                                snapshot_.selected_symbol);
     RefreshMarketDataRows();
+  }
+
+  void EnableFallbackMarketDataRows() {
+    EnableMarketDataRows(std::span<const aquila::config::InstrumentInfo>{});
   }
 
   void ApplyMarketDataBatch(const aquila::monitor::MarketDataBatch& batch) {
@@ -238,6 +246,7 @@ bool LoadMarketDataModel(TuiSnapshotState& state,
   const aquila::config::DataReaderConfigResult config_result =
       aquila::config::LoadDataReaderConfigFile(config_path);
   if (!config_result.ok) {
+    state.EnableFallbackMarketDataRows();
     state.MarkMarketDataUnavailable(config_result.error);
     return false;
   }
@@ -246,27 +255,18 @@ bool LoadMarketDataModel(TuiSnapshotState& state,
   return true;
 }
 
-void StopAndDrainMarketDataThread(
-    aquila::monitor::MarketDataThread* thread,
-    aquila::monitor::MarketDataThreadQueue* queue, TuiSnapshotState* state) {
-  thread->Stop();
-  thread->Join();
-  DrainMarketDataQueue(*queue, *state);
-}
-
 void RunBoundedLiveMarketDataSnapshot(
     TuiSnapshotState& state, const std::filesystem::path& config_path) {
-  aquila::monitor::MarketDataThreadQueue market_data_queue;
-  aquila::monitor::MarketDataThread thread(config_path, market_data_queue);
-  if (!thread.Start()) {
-    state.MarkMarketDataUnavailable(thread.last_error());
-    state.AddMarketDataSourceAlerts(thread.unavailable_sources());
+  const aquila::monitor::MarketDataSnapshotResult snapshot_result =
+      aquila::monitor::ReadMarketDataSnapshot(
+          config_path, aquila::monitor::SteadyMarketDataClock{}.NowNs());
+  state.AddMarketDataSourceAlerts(snapshot_result.unavailable_sources);
+  if (!snapshot_result.ok) {
+    state.MarkMarketDataUnavailable(snapshot_result.error);
     return;
   }
 
-  state.AddMarketDataSourceAlerts(thread.unavailable_sources());
-  std::this_thread::sleep_for(std::chrono::milliseconds(300));
-  StopAndDrainMarketDataThread(&thread, &market_data_queue, &state);
+  state.ApplyMarketDataBatch(snapshot_result.batch);
   state.MarkLiveMarketDataDump();
 }
 

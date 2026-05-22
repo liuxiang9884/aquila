@@ -105,11 +105,13 @@ set_tests_properties(monitor_gate_account_tui_help_test
         PASS_REGULAR_EXPRESSION "Aquila Gate account TUI monitor"
 )
 
-add_test(NAME monitor_gate_account_tui_live_dump_smoke
-         COMMAND gate_account_tui --dump --live-market-data --width 260 --height 60)
+add_test(NAME monitor_gate_account_tui_live_dump_missing_config_smoke
+         COMMAND gate_account_tui --dump --live-market-data
+                 --market-data-config config/monitors/missing_gate_account_tui_market_data.toml
+                 --width 260 --height 60)
 
-set_tests_properties(monitor_gate_account_tui_live_dump_smoke
+set_tests_properties(monitor_gate_account_tui_live_dump_missing_config_smoke
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-        PASS_REGULAR_EXPRESSION "MARKET BY EXCHANGE: ZEC_USDT"
+        PASS_REGULAR_EXPRESSION "market data unavailable"
 )

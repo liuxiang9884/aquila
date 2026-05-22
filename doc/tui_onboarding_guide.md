@@ -13,7 +13,7 @@
 - 第一版是只读监控，不执行撤单、平仓、暂停策略或修改配置；但 UI 和模型保留后续操作入口位置。
 - TUI 不接入 `TradingRuntime`，不读取 `OrderManager` 内存状态，不消费交易系统的 order feedback SHM lane。
 - Market data 第一版直接读取现有 Gate / Binance data session 发布的 `BookTicker` SHM；这是 broadcast queue，多 reader 独立 cursor，不会抢 strategy 的行情数据。
-- TUI 不自动启动 Gate / Binance data session；若 market data SHM 不存在，行情显示 `NA`，并在 alert 中提示对应 SHM unavailable。
+- TUI 不自动启动 Gate / Binance data session；optional market data SHM 缺失时跳过对应 source，行情显示 `NA`，并在 alert 中提示对应 SHM unavailable；required source 缺失或全部 source 不可用时 live market data 标为 unavailable，但 TUI 进程继续运行。
 - 第一版跨线程交互只用 SPSC queue，不用 mutex 共享 UI model；UI thread 是 visible model 的唯一 owner。
 - 线程拆分为 UI thread、MarketDataThread、AccountMonitorThread 和 Nova log backend thread；order 和 health 暂放同一个 AccountMonitorThread。
 - MarketDataThread 使用 `drain` 模式读 SHM，在本线程内按严格单调的 Gate / Binance `BookTicker.id` coalesce 最新值，每 100ms 只把 changed rows 推给 UI。
@@ -22,16 +22,17 @@
 - 首页布局采用 Symbol Workbench：左侧 symbol 列表，中间当前 symbol 订单表，右侧仓位和 PnL，底部或副页展示事件流和连接状态。
 - TUI 以键盘优先设计，同时支持鼠标选择；鼠标不能成为唯一操作路径。
 
-## 当前 Demo 状态
+## 当前 Demo / Market Data 状态
 
-截至 2026-05-22，已新增静态数据版 Symbol Workbench demo：
+截至 2026-05-22，Symbol Workbench demo 和 market data live path 已落地。默认无参数仍显示静态 layout demo；加 `--live-market-data` 后会 attach `config/monitors/gate_account_tui_market_data.toml` 中的 Gate / Binance `BookTicker` SHM；`--dump --live-market-data` 会做一次 bounded live snapshot 并渲染一帧，适合 SSH 环境检查：
 
 ```bash
 ./build/debug/monitor/gate_account_tui
-./build/debug/monitor/gate_account_tui --dump --width 220 --height 55
+./build/debug/monitor/gate_account_tui --live-market-data
+./build/debug/monitor/gate_account_tui --dump --live-market-data --width 260 --height 60
 ```
 
-当前 demo 只验证 layout 和界面信息密度，不连接 Gate WebSocket、不查询 REST、不显示真实账户数据。market data 接入前需将旧静态 demo 中的 `ROVE_USDT` 同步为已确认的 `PROVE_USDT`。目标 11 个 symbol：
+当前订单、仓位、PnL、health 仍是静态 demo 数据，不连接 Gate private order WebSocket、不查询 REST、不显示真实账户数据。market data 只读取既有 data session SHM；若 data session 未启动，Gate / Binance 行情行显示 `NA` 并在 alert 中提示 unavailable。目标 11 个 symbol：
 
 ```text
 PROVE_USDT, RAVE_USDT, ZEC_USDT, SIREN_USDT, ETC_USDT, DASH_USDT,
@@ -56,10 +57,12 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 - `monitor/model/account_monitor_snapshot.h`：TUI 静态 view model。
 - `monitor/demo/symbol_workbench_demo_data.*`：当前 Symbol Workbench fake data source。
 - `monitor/tui/symbol_workbench_view.h`：FTXUI Symbol Workbench 布局。
-- `monitor/tui/gate_account_tui.cpp`：当前 demo 入口，支持 interactive 和 `--dump`。
+- `monitor/tui/gate_account_tui.cpp`：当前 demo / live market data 入口，支持 interactive、`--dump`、`--live-market-data` 和 `--market-data-config`。
+- `monitor/market_data/market_data_thread.*`：monitor 专用 market data reader thread，支持 optional SHM source 降级、100ms changed batch 和 one-shot snapshot。
+- `monitor/market_data/market_data_store.h` / `monitor/market_data/market_data_update.h`：按 `(exchange, symbol_id)` coalesce latest BBO，输出固定容量 batch 和 diagnostics。
+- `monitor/model/market_data_view_model.h`：将 `MarketDataBatch` 转成 UI-owned market rows；`last_price`、volume、turnover 暂显示 `NA`。
 - `core/market_data/data_shm.h`：`BookTickerShmReader` / `DataShmPublisher`，market data SHM broadcast queue。
-- `core/market_data/realtime_data_reader.h`：多 SHM source realtime reader，TUI market data 计划使用 `drain` 模式。
-- `config/data_readers/strategy_data_reader_requested_20260521.toml`：当前 requested 11-symbol Gate + Binance SHM reader 配置，monitor config 第一版会从这里复制。
+- `config/monitors/gate_account_tui_market_data.toml`：monitor 专用 requested 11-symbol Gate + Binance SHM reader 配置。
 - `config/data_sessions/gate_data_session_requested_20260521.toml` 和 `config/data_sessions/binance_data_session_requested_20260521.toml`：requested 11-symbol data session producer 配置。
 - `core/websocket/*`：WebSocket cold / hot path、TLS socket、message view、runtime policy。
 - `exchange/gate/trading/order_feedback_session.h`：Gate private WS login / subscribe / connection lifecycle 参考实现。
@@ -80,14 +83,11 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 ## 下一步建议
 
 1. 阅读 `doc/tui_gate_account_monitor_design.md`。
-2. 新增 `config/monitors/gate_account_tui_market_data.toml`，复制 requested 11-symbol Gate + Binance SHM source。
-3. 将静态 demo symbol 从 `ROVE_USDT` 同步为 `PROVE_USDT`。
-4. 实现 monitor market data path：MarketDataThread drain SHM、按 monotonic `id` coalesce、每 100ms 通过 SPSC 推 changed rows 到 UI thread。
-5. 将 Symbol Workbench 行情栏接到真实 `BookTicker` SHM；`last_price`、volume、turnover 暂显示 `NA`。
-6. 后续再实现 monitor 专用 Gate orders raw parser，覆盖全账户订单，不丢弃非 Aquila text。
-7. 再实现独立 Gate account monitor session：只订阅 private `futures.orders`，输出 monitor raw update；order source 保持可替换，后续可以改为 order pool SHM。
-8. 增加启动期 REST snapshot：open orders、positions、account summary；运行中低频校验 drift。
-9. 实现 monitor model：按 symbol 聚合 orders、position ledger、realized / unrealized PnL、source classification 和 stale 状态。
+2. 后续实现 monitor 专用 Gate orders raw parser，覆盖全账户订单，不丢弃非 Aquila text。
+3. 实现独立 Gate account monitor session：只订阅 private `futures.orders`，输出 monitor raw update；order source 保持可替换，后续可以改为 order pool SHM。
+4. 增加启动期 REST snapshot：open orders、positions、account summary；运行中低频校验 drift。
+5. 实现 monitor model：按 symbol 聚合 orders、position ledger、realized / unrealized PnL、source classification 和 stale 状态。
+6. 将 health / order thread 接入真实系统 API 和 monitor order source，保留 SPSC 到 UI thread 的边界。
 
 ## 当前开放问题
 

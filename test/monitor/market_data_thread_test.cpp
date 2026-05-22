@@ -314,6 +314,33 @@ TEST(MarketDataPumpTest, ReaderOverrunDeltaIsPublishedInNextBatch) {
   EXPECT_EQ(batch.overrun_count, 2);
 }
 
+TEST(MarketDataPumpTest, DiagnosticsOnlyOverrunPublishesEmptyBatch) {
+  constexpr MarketDataKey kKey{.exchange = Exchange::kGate, .symbol_id = 7};
+  FakeReaderWithDiagnostics reader;
+  FakeClock clock;
+  MarketDataStore store(std::span<const MarketDataKey>{&kKey, 1});
+  MonitorSpscQueue<MarketDataBatch, 4> queue;
+  MarketDataPump<FakeReaderWithDiagnostics,
+                 MonitorSpscQueue<MarketDataBatch, 4>, FakeClock>
+      pump(reader, store, queue, clock,
+           MarketDataPumpOptions{.drain_budget = 8});
+
+  reader.AddOverrun(3);
+  clock.set_now_ns(100'000'000);
+
+  const MarketDataPumpResult result = pump.StepOnce();
+
+  EXPECT_EQ(result.drained_count, 0);
+  EXPECT_EQ(result.overrun_delta, 3);
+  ASSERT_TRUE(result.batch_pushed);
+  EXPECT_EQ(result.row_count, 0);
+
+  MarketDataBatch batch{};
+  ASSERT_TRUE(PopBatch(&queue, &batch));
+  EXPECT_EQ(batch.row_count, 0);
+  EXPECT_EQ(batch.overrun_count, 3);
+}
+
 TEST(MarketDataThreadTest, BuildMarketDataKeysIncludesSourceExchanges) {
   const config::DataReaderConfigResult config_result =
       config::LoadDataReaderConfigFile(
@@ -446,6 +473,68 @@ required = false
   std::filesystem::remove(config_path, ignored);
   UnlinkShm(present_shm_name);
   UnlinkShm(missing_shm_name);
+}
+
+TEST(MarketDataSnapshotTest, ReadsVisibleRowsPublishedBeforeAttach) {
+  const std::string present_shm_name = UniquePresentShmName();
+  UnlinkShm(present_shm_name);
+
+  const market_data::BookTickerShmConfig shm_config{
+      .enabled = true,
+      .shm_name = present_shm_name,
+      .channel_name = "book_ticker_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  market_data::DataShmPublisher publisher(shm_config);
+  publisher.OnBookTicker(MakeTicker(Exchange::kGate, 6, 7001, 62.85, 62.86));
+
+  const std::filesystem::path config_path =
+      std::filesystem::temp_directory_path() /
+      ("aquila_snapshot_monitor_shm_" + std::to_string(::getpid()) + ".toml");
+  {
+    std::ofstream out(config_path);
+    out << R"toml(
+[instrument_catalog]
+file = ")toml"
+        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << R"toml("
+schema = "aquila.instrument.v1"
+
+[data_reader]
+name = "snapshot_monitor_shm"
+max_events_per_drain = 4
+
+[[data_reader.sources]]
+name = "present_gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = ")toml"
+        << present_shm_name << R"toml("
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "drain"
+required = false
+)toml";
+  }
+
+  const MarketDataSnapshotResult result =
+      ReadMarketDataSnapshot(config_path, 123456789);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.unavailable_sources.empty());
+  ASSERT_EQ(result.batch.row_count, 1);
+  EXPECT_EQ(result.batch.published_ns, 123456789);
+  EXPECT_EQ(result.batch.rows[0].exchange, Exchange::kGate);
+  EXPECT_EQ(result.batch.rows[0].symbol_id, 6);
+  EXPECT_EQ(result.batch.rows[0].id, 7001);
+  EXPECT_DOUBLE_EQ(result.batch.rows[0].bid_price, 62.85);
+  EXPECT_DOUBLE_EQ(result.batch.rows[0].ask_price, 62.86);
+
+  std::error_code ignored;
+  std::filesystem::remove(config_path, ignored);
+  UnlinkShm(present_shm_name);
 }
 
 }  // namespace

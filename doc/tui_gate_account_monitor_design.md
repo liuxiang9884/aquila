@@ -125,7 +125,7 @@ default_layout = "symbol_workbench"
 
 第一版 market data 不由 TUI 直接连接行情 WebSocket。Gate 和 Binance 行情仍由现有 data session 进程负责连接交易所并发布 `BookTicker` SHM，TUI 只作为另一个 reader attach 已存在的 SHM。
 
-推荐新增 monitor 专用 data reader config：
+当前 monitor 专用 data reader config：
 
 ```text
 config/monitors/gate_account_tui_market_data.toml
@@ -138,11 +138,11 @@ aquila_gate_market_data_requested_20260521
 aquila_binance_market_data_requested_20260521
 ```
 
-TUI 启动时只尝试 attach，不自动拉起 data session。若某个 SHM 不存在或 attach 失败：
+TUI 启动时只尝试 attach，不自动拉起 data session。monitor market data source 第一版按 `required` 区分降级行为：
 
-- TUI 继续运行。
-- 对应 exchange 的行情字段显示 `NA` 或 `-`。
-- `ALERTS` 显示 `market data shm <exchange> unavailable`。
+- optional source attach 失败：跳过该 source，TUI 继续运行；对应 exchange 的行情字段显示 `NA` 或 `-`；`ALERTS` 显示 `market data shm <exchange> unavailable` warning。
+- required source attach 失败：live market data thread 不启动，TUI 继续运行，行情显示 `NA`，`ALERTS` 显示 error。
+- 全部 source 不可用：live market data 标记为 unavailable，TUI 继续运行，行情显示 `NA`。
 - 后续可以重试 attach，但第一版不做子进程管理。
 
 订阅 symbol 第一版固定为：
@@ -167,7 +167,7 @@ exchange, symbol, id, bid_price, bid_volume, ask_price, ask_volume, updated
 
 `last_price`、最新成交量、24h volume、turnover / value 当前不在 `BookTicker` SHM ABI 中，第一版显示 `NA`。后续如果需要补齐，可以新增 trade / ticker feed SHM，或由 TUI 低频 REST ticker 补充；补齐前不能用 bid / ask 伪造这些字段。
 
-MarketDataThread 使用 `RealtimeDataReader` 的 `drain` 模式读取两个 SHM source。线程内维护 `latest_by(exchange, symbol_id)` 和 changed set；Gate 和 Binance 的 `BookTicker.id` 都按 source 严格单调，因此第一版 change predicate 是：
+MarketDataThread 使用 monitor 专用 SHM reader 读取两个 source；正常 interactive live path 使用 config 中的 `start_position = latest` 和 `read_mode = drain`，dump snapshot path 会从 visible window 读取已有数据并 coalesce 一帧。线程内维护 `latest_by(exchange, symbol_id)` 和 changed set；Gate 和 Binance 的 `BookTicker.id` 都按 source 严格单调，因此第一版 change predicate 是：
 
 ```text
 same exchange + symbol_id:
@@ -478,7 +478,7 @@ SPSC backpressure 策略：
 
 单元测试：
 
-- market data thread / store：drain 输入、按 `id` 变化更新、100ms changed batch、Gate / Binance symbol 映射、SHM unavailable alert。
+- market data thread / store：drain 输入、按 `id` 变化更新、100ms changed batch、Gate / Binance symbol 映射、optional SHM unavailable alert、diagnostics-only overrun batch。
 - monitor order parser：Aquila text、external text、empty text、fee、signed size、finish_as、partial / terminal。
 - order source classification：`t-<local_order_id>`、invalid text、manual order。
 - position ledger：open long、partial close、flip、fee、启动非零仓位。
@@ -487,7 +487,7 @@ SPSC backpressure 策略：
 
 集成测试：
 
-- fake `BookTicker` SHM publisher + MarketDataThread，验证 UI 收到 changed rows，`last_price / volume / turnover` 显示 `NA`。
+- fake `BookTicker` SHM publisher + MarketDataThread / one-shot snapshot，验证 UI 收到 changed rows，`last_price / volume / turnover` 显示 `NA`。
 - fake Gate order update stream 驱动 monitor model。
 - REST snapshot fixture + WS incremental fixture 组合。
 - FTXUI view model snapshot 测试，不做脆弱的 terminal pixel 测试。
@@ -508,16 +508,12 @@ Live smoke：
 
 ## 实现顺序建议
 
-1. 新增 `monitor/` CMake skeleton 和 `gate_account_tui` 空工具。
-2. 新增 `config/monitors/gate_account_tui_market_data.toml`，复制 requested 11-symbol Gate + Binance SHM source。
-3. 实现 MarketDataThread / MarketDataStore：drain SHM、按 monotonic `id` coalesce、100ms changed batch 推 UI。
-4. 将 FTXUI demo 从 static market rows 接到 UI-owned market data model；缺字段显示 `NA`。
-5. 新增 monitor config parser。
-6. 实现 monitor 专用 Gate orders raw parser 和 fixture tests。
-7. 实现 REST snapshot client 或 C++ read-only query helper。
-8. 实现 `MonitorOrderBook`、`PositionLedger`、`PnlLedger`。
-9. 实现 independent Gate account monitor session。
-10. 增加 live smoke 文档和验证命令。
+1. 已完成：`monitor/` CMake skeleton、`gate_account_tui`、Symbol Workbench layout、market data config、MarketDataThread / MarketDataStore、UI-owned market data model、one-shot dump snapshot 和基础 smoke tests。
+2. 实现 monitor 专用 Gate orders raw parser 和 fixture tests。
+3. 实现 REST snapshot client 或 C++ read-only query helper。
+4. 实现 `MonitorOrderBook`、`PositionLedger`、`PnlLedger`。
+5. 实现 independent Gate account monitor session。
+6. 增加真实 Gate account monitor live smoke 文档和验证命令。
 
 ## 收尾边界
 

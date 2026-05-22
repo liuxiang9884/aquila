@@ -44,6 +44,13 @@ struct MarketDataUnavailableSource {
   bool required{false};
 };
 
+struct MarketDataSnapshotResult {
+  bool ok{false};
+  MarketDataBatch batch{};
+  std::vector<MarketDataUnavailableSource> unavailable_sources;
+  std::string error;
+};
+
 class SteadyMarketDataClock {
  public:
   [[nodiscard]] std::int64_t NowNs() const noexcept;
@@ -82,13 +89,18 @@ class MarketDataPump {
 
     MarketDataBatch batch = store_.BuildChangedBatch(now_ns);
     result.row_count = batch.row_count;
-    if (batch.row_count == 0) {
+    const bool diagnostics_changed =
+        batch.overrun_count != last_published_overrun_count_ ||
+        batch.dropped_batch_count != last_published_dropped_batch_count_;
+    if (batch.row_count == 0 && !diagnostics_changed) {
       return result;
     }
 
     if (queue_.TryPush(batch)) {
       store_.ClearChangedRows(std::span<const MarketDataRowUpdate>{
           batch.rows.data(), batch.row_count});
+      last_published_overrun_count_ = batch.overrun_count;
+      last_published_dropped_batch_count_ = batch.dropped_batch_count;
       result.batch_pushed = true;
       return result;
     }
@@ -123,9 +135,19 @@ class MarketDataPump {
     if constexpr (requires { reader.diagnostics().stats().sources; }) {
       std::uint64_t count = 0;
       for (const auto& source : reader.diagnostics().stats().sources) {
-        count += source.overruns;
+        count += SourceOverrunCount(source);
       }
       return count;
+    } else {
+      return 0;
+    }
+  }
+
+  template <typename SourceStats>
+  [[nodiscard]] static std::uint64_t SourceOverrunCount(
+      const SourceStats& source) noexcept {
+    if constexpr (requires { static_cast<std::uint64_t>(source.overruns); }) {
+      return static_cast<std::uint64_t>(source.overruns);
     } else {
       return 0;
     }
@@ -138,10 +160,15 @@ class MarketDataPump {
   MarketDataPumpOptions options_;
   std::int64_t last_publish_ns_{0};
   std::uint64_t last_reader_overrun_count_{0};
+  std::uint64_t last_published_overrun_count_{0};
+  std::uint64_t last_published_dropped_batch_count_{0};
 };
 
 [[nodiscard]] std::vector<MarketDataKey> BuildMarketDataKeys(
     const config::DataReaderConfig& config);
+
+[[nodiscard]] MarketDataSnapshotResult ReadMarketDataSnapshot(
+    const std::filesystem::path& config_path, std::int64_t published_ns);
 
 class MarketDataThread {
  public:
