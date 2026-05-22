@@ -9,7 +9,7 @@
 - 账户级视角：显示所有 Gate futures 订单、仓位和 PnL。
 - Aquila 订单特殊标记：解析 `text = t-<local_order_id>`，展示 strategy id / local order id。
 - 外部订单不隐藏：手工单、其他程序订单、未知 text 订单必须进入同一 symbol 视图。
-- 独立运行：TUI 进程自己连接 Gate private WebSocket 和 REST，不消费交易系统 SHM。
+- 独立运行：TUI 进程不接入 `TradingRuntime`，不读取 `OrderManager` 内存状态；market data 从现有 data session SHM 读取，order / health 由 monitor 自己采集。
 - 只读优先：第一版不提供撤单、平仓或暂停策略；界面保留后续操作入口位置。
 
 ## 非目标
@@ -17,6 +17,7 @@
 - 不实现交易操作：cancel、flatten、pause strategy、cancel-all、reduce-only close 都不在第一版。
 - 不接入 `TradingRuntime`，不复用 `OrderManager` 作为账户状态 owner。
 - 不抢读 `OrderFeedbackShmReader` lane。
+- 不由 TUI 自动启动 Gate / Binance data session；market data SHM 不存在时显示 `NA` 并产生 alert。
 - 不把 TUI ledger 作为交易系统恢复事实源；它只服务监控和诊断。
 - 不基于未验证数据源宣称 PnL 精度；PnL 口径必须由 fixture、REST 对账或 live sample 验证。
 
@@ -51,7 +52,12 @@ monitor/
     order_update_parser.h
     rest_snapshot_client.h
     rest_snapshot_client.cpp
+  market_data/
+    market_data_thread.h
+    market_data_update.h
+    market_data_store.h
   model/
+    monitor_spsc_queue.h
     order_source.h
     monitor_order_book.h
     position_ledger.h
@@ -84,7 +90,7 @@ core/exchange/strategy/tools -> monitor
 预期可执行文件：
 
 ```bash
-./build/debug/monitor/gate_account_tui --config config/monitor/gate_account_tui.toml
+./build/debug/monitor/gate_account_tui --config config/monitors/gate_account_tui.toml
 ```
 
 典型配置内容：
@@ -115,6 +121,89 @@ default_layout = "symbol_workbench"
 
 ## 数据源
 
+### Market Data SHM
+
+第一版 market data 不由 TUI 直接连接行情 WebSocket。Gate 和 Binance 行情仍由现有 data session 进程负责连接交易所并发布 `BookTicker` SHM，TUI 只作为另一个 reader attach 已存在的 SHM。
+
+推荐新增 monitor 专用 data reader config：
+
+```text
+config/monitors/gate_account_tui_market_data.toml
+```
+
+该配置第一版复制 `config/data_readers/strategy_data_reader_requested_20260521.toml`，仍指向：
+
+```text
+aquila_gate_market_data_requested_20260521
+aquila_binance_market_data_requested_20260521
+```
+
+TUI 启动时只尝试 attach，不自动拉起 data session。若某个 SHM 不存在或 attach 失败：
+
+- TUI 继续运行。
+- 对应 exchange 的行情字段显示 `NA` 或 `-`。
+- `ALERTS` 显示 `market data shm <exchange> unavailable`。
+- 后续可以重试 attach，但第一版不做子进程管理。
+
+订阅 symbol 第一版固定为：
+
+```text
+PROVE_USDT, RAVE_USDT, ZEC_USDT, SIREN_USDT, ETC_USDT, DASH_USDT,
+RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
+```
+
+`BookTicker` 当前提供的真实字段：
+
+```text
+id, symbol_id, exchange, exchange_ns, local_ns,
+bid_price, bid_volume, ask_price, ask_volume
+```
+
+因此第一版 market data 行真实展示：
+
+```text
+exchange, symbol, id, bid_price, bid_volume, ask_price, ask_volume, updated
+```
+
+`last_price`、最新成交量、24h volume、turnover / value 当前不在 `BookTicker` SHM ABI 中，第一版显示 `NA`。后续如果需要补齐，可以新增 trade / ticker feed SHM，或由 TUI 低频 REST ticker 补充；补齐前不能用 bid / ask 伪造这些字段。
+
+MarketDataThread 使用 `RealtimeDataReader` 的 `drain` 模式读取两个 SHM source。线程内维护 `latest_by(exchange, symbol_id)` 和 changed set；Gate 和 Binance 的 `BookTicker.id` 都按 source 严格单调，因此第一版 change predicate 是：
+
+```text
+same exchange + symbol_id:
+  if incoming.id != latest.id -> update latest and mark changed
+  else ignore
+```
+
+MarketDataThread 每 100ms 只把 changed rows 批量推给 UI thread，避免 UI 读取完整 tick stream。输入是 drain，输出是 coalesced latest batch。
+
+建议第一版 payload 使用固定容量 batch，例如：
+
+```cpp
+struct MarketDataRowUpdate {
+  Exchange exchange;
+  std::int32_t symbol_id;
+  std::int64_t id;
+  std::int64_t exchange_ns;
+  std::int64_t local_ns;
+  double bid_price;
+  double bid_volume;
+  double ask_price;
+  double ask_volume;
+};
+
+struct MarketDataBatch {
+  std::int64_t published_ns;
+  std::uint16_t row_count;
+  std::array<MarketDataRowUpdate, 32> rows;
+  std::uint64_t drained_count;
+  std::uint64_t overrun_count;
+  std::uint64_t dropped_batch_count;
+};
+```
+
+当前最多 `2 exchanges * 11 symbols = 22 rows`，固定 32 行容量足够第一版使用。
+
 ### 启动期 REST Snapshot
 
 启动时查询一次：
@@ -135,6 +224,19 @@ REST snapshot 的用途：
 TUI 自己建立 Gate private WS 连接，只为 monitor 订阅 private `futures.orders`。该连接独立于交易系统的 `OrderFeedbackSession`。
 
 现有 `exchange/gate/trading/order_feedback_session.h` 可以作为 login / subscribe / lifecycle 参考，但 TUI 应输出 monitor 专用 update，不发布到 order feedback SHM。
+
+Order source 必须保留可替换边界：
+
+```text
+OrderSource
+  v1: GateFuturesOrdersWsSource
+      独立 private WS，解析 futures.orders
+
+  later: OrderPoolShmSource
+      读取后续可能新增的 order pool SHM
+```
+
+下游 `OrderStore`、PnL / position ledger 和 UI snapshot 只消费 monitor 专用 order update，不关心 update 来自 WS 还是 SHM。第一版按 independent `futures.orders` WS 实现；后续切换 order pool SHM 不应影响 TUI view 和 store。
 
 ### 运行期 REST 校验
 
@@ -237,7 +339,14 @@ struct GateMonitorOrderUpdate {
 - 为 FTXUI view 提供只读快照。
 - 在 UI 线程和网络线程之间提供清晰同步边界。
 
-建议第一版采用单 producer / UI consumer 模型：网络线程解析事件后写入 model event queue，UI loop 以固定频率 drain 并刷新。不要让 WebSocket 回调直接操作 FTXUI widget。
+第一版展示状态 owner 是 UI thread。worker thread 不共享可变 store，不持有 UI model mutex，也不直接操作 FTXUI。跨线程交互只通过单向 SPSC queue 传递 delta 或 batch：
+
+```text
+MarketDataThread -> market_data_spsc -> UIThread
+AccountMonitorThread -> account_spsc -> UIThread
+```
+
+UI thread drain SPSC 后在本线程内更新可见 `UiModel`，再构造 `AccountMonitorSnapshot` 渲染。这样 worker 异常、重连或系统 API 延迟不会因为持锁阻塞 UI。
 
 ## UI 设计
 
@@ -320,27 +429,56 @@ drift 示例：
 
 ## 并发模型
 
-建议线程模型：
+第一版线程模型：
 
 ```text
-GateMonitorNetworkThread
-  Gate private WS session
-  REST snapshot timer / client
-  parse update
-  push MonitorEvent queue
+UIThread
+  FTXUI render / keyboard / mouse
+  每 100ms tick 一次
+  drain market_data_spsc 和 account_spsc
+  更新 UI-owned UiModel
 
-TuiThread
-  drain MonitorEvent queue
-  update AccountMonitorModel
-  render FTXUI
+MarketDataThread
+  RealtimeDataReader drain Gate + Binance BookTicker SHM
+  latest_by(exchange, symbol_id)
+  每 100ms push changed MarketDataBatch
+
+AccountMonitorThread
+  v1 order source: independent Gate futures.orders WS
+  later order source: order pool SHM
+  health sampler: /proc, statvfs, pid / process, connection status
+  order view publish cadence: 200ms
+  health publish cadence: 1s
+
+LogBackendThread
+  Nova logging backend
 ```
 
-第一版可以先用互斥保护 cold monitor model；TUI 不在交易热路径内，不需要把复杂无锁结构放在第一版。若后续高频刷新或多 feed 导致 UI 卡顿，再用 SPSC event queue 优化。
+刷新语义：
+
+- UI redraw tick：100ms。
+- Market data input：`drain` 模式持续读取；publish 给 UI 的 cadence 是 100ms。
+- Order input：WS 消息实时读取和解析；publish 给 UI 的 cadence 是 200ms。
+- Health input：1s 采样和 publish。
+
+跨线程约束：
+
+- 不用 mutex 共享 UI model 或跨线程 store。
+- worker thread 只写自己的本地状态和 SPSC producer。
+- UI thread 是最终 visible model 的唯一 owner。
+- WebSocket callback、SHM reader 和 system API 不直接调用 FTXUI。
+
+SPSC backpressure 策略：
+
+- `market_data_spsc`：market data 是 latest-BBO 语义，full 时可以丢弃本次 batch 或覆盖旧 batch，记录 `dropped_batch_count` 并产生可见诊断。
+- `account_spsc`：order update 不能静默丢弃。若 full，进入 degraded，标记 order / position / PnL stale，并在 alert 中显示 queue overflow。
+- health update 可以 coalesce 或丢弃，因为下一秒会重新采样；但不能影响 order update 的完整性判断。
 
 ## 测试建议
 
 单元测试：
 
+- market data thread / store：drain 输入、按 `id` 变化更新、100ms changed batch、Gate / Binance symbol 映射、SHM unavailable alert。
 - monitor order parser：Aquila text、external text、empty text、fee、signed size、finish_as、partial / terminal。
 - order source classification：`t-<local_order_id>`、invalid text、manual order。
 - position ledger：open long、partial close、flip、fee、启动非零仓位。
@@ -349,6 +487,7 @@ TuiThread
 
 集成测试：
 
+- fake `BookTicker` SHM publisher + MarketDataThread，验证 UI 收到 changed rows，`last_price / volume / turnover` 显示 `NA`。
 - fake Gate order update stream 驱动 monitor model。
 - REST snapshot fixture + WS incremental fixture 组合。
 - FTXUI view model snapshot 测试，不做脆弱的 terminal pixel 测试。
@@ -356,7 +495,7 @@ TuiThread
 Live smoke：
 
 ```bash
-./build/debug/monitor/gate_account_tui --config config/monitor/gate_account_tui.toml
+./build/debug/monitor/gate_account_tui --config config/monitors/gate_account_tui.toml
 ```
 
 验证条件：
@@ -370,13 +509,15 @@ Live smoke：
 ## 实现顺序建议
 
 1. 新增 `monitor/` CMake skeleton 和 `gate_account_tui` 空工具。
-2. 新增 monitor config parser。
-3. 实现 monitor 专用 Gate orders raw parser 和 fixture tests。
-4. 实现 REST snapshot client 或 C++ read-only query helper。
-5. 实现 `MonitorOrderBook`、`PositionLedger`、`PnlLedger`。
-6. 实现 independent Gate account monitor session。
-7. 接入 FTXUI Symbol Workbench。
-8. 增加 live smoke 文档和验证命令。
+2. 新增 `config/monitors/gate_account_tui_market_data.toml`，复制 requested 11-symbol Gate + Binance SHM source。
+3. 实现 MarketDataThread / MarketDataStore：drain SHM、按 monotonic `id` coalesce、100ms changed batch 推 UI。
+4. 将 FTXUI demo 从 static market rows 接到 UI-owned market data model；缺字段显示 `NA`。
+5. 新增 monitor config parser。
+6. 实现 monitor 专用 Gate orders raw parser 和 fixture tests。
+7. 实现 REST snapshot client 或 C++ read-only query helper。
+8. 实现 `MonitorOrderBook`、`PositionLedger`、`PnlLedger`。
+9. 实现 independent Gate account monitor session。
+10. 增加 live smoke 文档和验证命令。
 
 ## 收尾边界
 
