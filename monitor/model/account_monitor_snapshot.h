@@ -71,6 +71,12 @@ struct ConnectionHealth {
   std::string_view updated_time;
 };
 
+struct RuntimeAlert {
+  std::string_view severity;
+  std::string_view message;
+  std::string_view updated_time;
+};
+
 struct RuntimeHealth {
   std::string_view server_state;
   double cpu_percent{0.0};
@@ -85,6 +91,7 @@ struct RuntimeHealth {
   std::span<const ServerMetric> server_metrics;
   std::span<const ProcessHealth> processes;
   std::span<const ConnectionHealth> connections;
+  std::span<const RuntimeAlert> alerts;
 };
 
 struct MarketDataRow {

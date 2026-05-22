@@ -85,7 +85,34 @@ TEST(SymbolWorkbenchViewTest, FullWorkbenchRendersBalanceStripUnderTopBar) {
 
   ExpectTokensInOrder(rendered, {"AQUILA GATE USDT ACCOUNT", "BALANCE", "total",
                                  "12548.72 USDT", "available", "9876.54", "pnl",
-                                 "+42.68", "HEALTH", "server ok", "SYMBOLS"});
+                                 "+42.68", "SYMBOLS"});
+  const std::size_t symbols_position = rendered.find("SYMBOLS");
+  const std::size_t health_position = rendered.find("server ok");
+  ASSERT_NE(symbols_position, std::string::npos);
+  ASSERT_NE(health_position, std::string::npos);
+  EXPECT_GT(health_position, symbols_position);
+}
+
+TEST(SymbolWorkbenchViewTest, EventsPaneShowsOnlyFiveRows) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  const std::string rendered = RenderToString(
+      symbol_workbench_view_detail::EventsPane(snapshot), 180, 9);
+
+  ExpectTokensInOrder(rendered, {"EVENTS", "11:40:02", "11:40:05", "11:40:09",
+                                 "11:40:12", "11:40:14"});
+  EXPECT_EQ(rendered.find("11:40:16"), std::string::npos);
+}
+
+TEST(SymbolWorkbenchViewTest, BottomPaneSplitsEventsAndHealthAlerts) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  const std::string rendered = RenderToString(
+      symbol_workbench_view_detail::BottomPane(snapshot), 260, 12);
+
+  ExpectTokensInOrder(rendered,
+                      {"EVENTS", "HEALTH", "server ok", "ALERTS", "warning",
+                       "disk_root", "error", "gate_order_feedback_session"});
 }
 
 TEST(SymbolWorkbenchViewTest, HealthSummaryStripRendersProcessCounts) {

@@ -142,6 +142,15 @@ constexpr std::array<ConnectionHealth, 3> kConnections{{
      .updated_time = "11:40:12.384"},
 }};
 
+constexpr std::array<RuntimeAlert, 2> kRuntimeAlerts{{
+    {.severity = "warning",
+     .message = "disk_root usage reached 71%",
+     .updated_time = "11:40:12.384"},
+    {.severity = "error",
+     .message = "gate_order_feedback_session heartbeat stale for 5.2s",
+     .updated_time = "11:40:12.384"},
+}};
+
 constexpr RuntimeHealth kRuntimeHealth{
     .server_state = "ok",
     .cpu_percent = 18.0,
@@ -156,6 +165,7 @@ constexpr RuntimeHealth kRuntimeHealth{
     .server_metrics = kServerMetrics,
     .processes = kProcesses,
     .connections = kConnections,
+    .alerts = kRuntimeAlerts,
 };
 
 constexpr std::array<MarketDataRow, 3> kZecMarketData{{
@@ -312,10 +322,13 @@ constexpr SymbolDetail kZecDetail{
         },
 };
 
-constexpr std::array<std::string_view, 3> kEvents{{
+constexpr std::array<std::string_view, 6> kEvents{{
     "11:40:02 ZEC_USDT Aquila buy filled qty=3 avg=62.08 fee=-0.06",
     "11:40:05 ZEC_USDT Manual sell open qty=2 px=63.40",
     "11:40:09 ROVE_USDT drift: REST open order not seen in WS",
+    "11:40:12 health warning disk_root usage 71%",
+    "11:40:14 feedback stale gate_order_feedback_session heartbeat 5.2s",
+    "11:40:16 ZEC_USDT market placeholder refresh",
 }};
 
 }  // namespace

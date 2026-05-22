@@ -308,10 +308,29 @@ inline ftxui::Element PositionPane(const SymbolDetail& detail) {
 inline ftxui::Element EventsPane(const AccountMonitorSnapshot& snapshot) {
   ftxui::Elements events;
   events.push_back(BoxTitle("EVENTS"));
-  for (std::string_view event : snapshot.events) {
-    events.push_back(ftxui::text(std::string(event)));
+  const std::size_t visible_count =
+      snapshot.events.size() < 5 ? snapshot.events.size() : 5;
+  for (std::size_t i = 0; i < visible_count; ++i) {
+    events.push_back(ftxui::text(std::string(snapshot.events[i])));
   }
   return ftxui::vbox(std::move(events)) | ftxui::border;
+}
+
+inline ftxui::Element HealthAlertsPane(const RuntimeHealth& health) {
+  return ftxui::vbox({
+             RenderHealthSummaryLine(health),
+             ftxui::separator(),
+             RenderAlertsPane(health),
+         }) |
+         ftxui::border | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 118);
+}
+
+inline ftxui::Element BottomPane(const AccountMonitorSnapshot& snapshot) {
+  return ftxui::hbox({
+      EventsPane(snapshot) | ftxui::flex,
+      ftxui::separator(),
+      HealthAlertsPane(snapshot.runtime_health),
+  });
 }
 
 }  // namespace symbol_workbench_view_detail
@@ -340,7 +359,6 @@ inline ftxui::Element RenderSymbolWorkbench(
                      ftxui::color(ftxui::Color::GrayLight),
              }),
              symbol_workbench_view_detail::BalancePane(snapshot.balance),
-             RenderHealthSummaryStrip(snapshot.runtime_health),
              ftxui::separator(),
              ftxui::hbox({
                  symbol_workbench_view_detail::SymbolPane(snapshot),
@@ -349,7 +367,7 @@ inline ftxui::Element RenderSymbolWorkbench(
                  ftxui::separator(),
                  symbol_workbench_view_detail::PositionPane(*detail),
              }) | ftxui::flex,
-             symbol_workbench_view_detail::EventsPane(snapshot),
+             symbol_workbench_view_detail::BottomPane(snapshot),
          }) |
          ftxui::border;
 }

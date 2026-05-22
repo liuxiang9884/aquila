@@ -28,6 +28,13 @@ inline ftxui::Color StateColor(std::string_view state) {
   return ftxui::Color::GrayLight;
 }
 
+inline ftxui::Color AlertColor(std::string_view severity) {
+  if (severity == "warning" || severity == "error") {
+    return ftxui::Color::Red;
+  }
+  return StateColor(severity);
+}
+
 inline ftxui::Element Title(std::string text) {
   return ftxui::text(std::move(text)) | ftxui::color(ftxui::Color::GrayLight);
 }
@@ -102,27 +109,46 @@ inline ftxui::Element ConnectionsPane(const RuntimeHealth& health) {
 
 }  // namespace runtime_health_view_detail
 
-inline ftxui::Element RenderHealthSummaryStrip(const RuntimeHealth& health) {
+inline ftxui::Element RenderHealthSummaryLine(const RuntimeHealth& health) {
   return ftxui::hbox({
-             runtime_health_view_detail::Title("HEALTH"),
-             ftxui::text(fmt::format("  server {}", health.server_state)) |
-                 ftxui::color(runtime_health_view_detail::StateColor(
-                     health.server_state)),
-             ftxui::text(fmt::format(" | cpu {:.0f}%", health.cpu_percent)),
-             ftxui::text(fmt::format(" | mem {:.0f}%", health.memory_percent)),
-             ftxui::text(fmt::format(" | disk {:.0f}%", health.disk_percent)),
-             ftxui::text(fmt::format(" | md {}/{} up",
-                                     health.market_processes_up,
-                                     health.market_processes_total)),
-             ftxui::text(fmt::format(" | trading {}/{} up",
-                                     health.trading_processes_up,
-                                     health.trading_processes_total)),
-             ftxui::text(fmt::format(" | stale {}", health.stale_count)) |
-                 ftxui::color(runtime_health_view_detail::StateColor(
-                     health.stale_count == 0 ? "ok" : "warn")),
-             ftxui::text(fmt::format(" | restart {}", health.restart_count)),
-         }) |
-         ftxui::border;
+      runtime_health_view_detail::Title("HEALTH"),
+      ftxui::text(fmt::format("  server {}", health.server_state)) |
+          ftxui::color(
+              runtime_health_view_detail::StateColor(health.server_state)),
+      ftxui::text(fmt::format(" | cpu {:.0f}%", health.cpu_percent)),
+      ftxui::text(fmt::format(" | mem {:.0f}%", health.memory_percent)),
+      ftxui::text(fmt::format(" | disk {:.0f}%", health.disk_percent)),
+      ftxui::text(fmt::format(" | md {}/{} up", health.market_processes_up,
+                              health.market_processes_total)),
+      ftxui::text(fmt::format(" | trading {}/{} up",
+                              health.trading_processes_up,
+                              health.trading_processes_total)),
+      ftxui::text(fmt::format(" | stale {}", health.stale_count)) |
+          ftxui::color(runtime_health_view_detail::StateColor(
+              health.stale_count == 0 ? "ok" : "warn")),
+      ftxui::text(fmt::format(" | restart {}", health.restart_count)),
+  });
+}
+
+inline ftxui::Element RenderHealthSummaryStrip(const RuntimeHealth& health) {
+  return RenderHealthSummaryLine(health) | ftxui::border;
+}
+
+inline ftxui::Element RenderAlertsPane(const RuntimeHealth& health) {
+  ftxui::Elements rows;
+  rows.push_back(runtime_health_view_detail::Title("ALERTS"));
+  rows.push_back(ftxui::separator());
+  if (health.alerts.empty()) {
+    rows.push_back(ftxui::text("ok - no active alerts") |
+                   ftxui::color(ftxui::Color::Green));
+  }
+  for (const RuntimeAlert& alert : health.alerts) {
+    rows.push_back(
+        ftxui::text(fmt::format("{:<7} {:<62} {}", alert.severity,
+                                alert.message, alert.updated_time)) |
+        ftxui::color(runtime_health_view_detail::AlertColor(alert.severity)));
+  }
+  return ftxui::vbox(std::move(rows)) | ftxui::flex;
 }
 
 inline ftxui::Element RenderRuntimeHealthPage(

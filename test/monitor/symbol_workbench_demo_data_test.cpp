@@ -54,6 +54,9 @@ TEST(SymbolWorkbenchDemoDataTest, ExposesRuntimeHealthSummary) {
   EXPECT_EQ(snapshot.runtime_health.server_metrics.size(), 5U);
   EXPECT_EQ(snapshot.runtime_health.processes.size(), 4U);
   EXPECT_EQ(snapshot.runtime_health.connections.size(), 3U);
+  EXPECT_EQ(snapshot.runtime_health.alerts.size(), 2U);
+  EXPECT_EQ(snapshot.runtime_health.alerts[0].severity, "warning");
+  EXPECT_EQ(snapshot.runtime_health.alerts[1].severity, "error");
 }
 
 TEST(SymbolWorkbenchDemoDataTest, ZecOrdersExposeAllSourceClasses) {
