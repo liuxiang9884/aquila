@@ -90,8 +90,26 @@ target_compile_definitions(monitor_market_data_thread_test
 target_link_libraries(monitor_market_data_thread_test
     PRIVATE
         aquila_monitor
+        nova
         GTest::gtest_main
 )
 
 add_test(NAME monitor_market_data_thread_test
          COMMAND monitor_market_data_thread_test)
+
+add_test(NAME monitor_gate_account_tui_help_test
+         COMMAND gate_account_tui --help)
+
+set_tests_properties(monitor_gate_account_tui_help_test
+    PROPERTIES
+        PASS_REGULAR_EXPRESSION "Aquila Gate account TUI monitor"
+)
+
+add_test(NAME monitor_gate_account_tui_live_dump_smoke
+         COMMAND gate_account_tui --dump --live-market-data --width 260 --height 60)
+
+set_tests_properties(monitor_gate_account_tui_live_dump_smoke
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+        PASS_REGULAR_EXPRESSION "MARKET BY EXCHANGE: ZEC_USDT"
+)

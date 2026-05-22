@@ -30,10 +30,18 @@ struct MarketDataPumpOptions {
 
 struct MarketDataPumpResult {
   std::uint64_t drained_count{0};
+  std::uint64_t overrun_delta{0};
   bool publish_due{false};
   bool batch_pushed{false};
   bool batch_dropped{false};
   std::uint16_t row_count{0};
+};
+
+struct MarketDataUnavailableSource {
+  Exchange exchange{Exchange::kGate};
+  std::string name;
+  std::string reason;
+  bool required{false};
 };
 
 class SteadyMarketDataClock {
@@ -57,6 +65,12 @@ class MarketDataPump {
     StoreBookTickerHandler handler{.store = &store_};
     MarketDataPumpResult result{
         .drained_count = reader_.Drain(handler, options_.drain_budget)};
+    const std::uint64_t overrun_count = ReaderOverrunCount(reader_);
+    if (overrun_count > last_reader_overrun_count_) {
+      result.overrun_delta = overrun_count - last_reader_overrun_count_;
+      store_.RecordOverrun(result.overrun_delta);
+      last_reader_overrun_count_ = overrun_count;
+    }
 
     const std::int64_t now_ns = clock_.NowNs();
     if (now_ns - last_publish_ns_ < options_.publish_interval_ns) {
@@ -104,12 +118,26 @@ class MarketDataPump {
     return options;
   }
 
+  [[nodiscard]] static std::uint64_t ReaderOverrunCount(
+      const Reader& reader) noexcept {
+    if constexpr (requires { reader.diagnostics().stats().sources; }) {
+      std::uint64_t count = 0;
+      for (const auto& source : reader.diagnostics().stats().sources) {
+        count += source.overruns;
+      }
+      return count;
+    } else {
+      return 0;
+    }
+  }
+
   Reader& reader_;
   MarketDataStore& store_;
   Queue& queue_;
   Clock& clock_;
   MarketDataPumpOptions options_;
   std::int64_t last_publish_ns_{0};
+  std::uint64_t last_reader_overrun_count_{0};
 };
 
 [[nodiscard]] std::vector<MarketDataKey> BuildMarketDataKeys(
@@ -130,6 +158,8 @@ class MarketDataThread {
   void Join();
 
   [[nodiscard]] const std::string& last_error() const noexcept;
+  [[nodiscard]] std::span<const MarketDataUnavailableSource>
+  unavailable_sources() const noexcept;
 
  private:
   struct State;

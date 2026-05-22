@@ -17,6 +17,7 @@
 
 #include "core/common/types.h"
 #include "core/config/data_reader_config.h"
+#include "core/market_data/data_shm.h"
 #include "core/market_data/types.h"
 #include "monitor/market_data/market_data_store.h"
 #include "monitor/model/monitor_spsc_queue.h"
@@ -60,6 +61,43 @@ class FakeReader {
   std::size_t next_index_{0};
 };
 
+struct FakeDiagnosticsSourceStats {
+  std::uint64_t overruns{0};
+};
+
+struct FakeDiagnosticsStats {
+  std::vector<FakeDiagnosticsSourceStats> sources{
+      FakeDiagnosticsSourceStats{}};
+};
+
+class FakeDiagnostics {
+ public:
+  [[nodiscard]] const FakeDiagnosticsStats& stats() const noexcept {
+    return stats_;
+  }
+
+  void AddOverrun(std::uint64_t delta) noexcept {
+    stats_.sources[0].overruns += delta;
+  }
+
+ private:
+  FakeDiagnosticsStats stats_;
+};
+
+class FakeReaderWithDiagnostics : public FakeReader {
+ public:
+  [[nodiscard]] const FakeDiagnostics& diagnostics() const noexcept {
+    return diagnostics_;
+  }
+
+  void AddOverrun(std::uint64_t delta) noexcept {
+    diagnostics_.AddOverrun(delta);
+  }
+
+ private:
+  FakeDiagnostics diagnostics_;
+};
+
 [[nodiscard]] std::filesystem::path SourcePath(std::string_view path) {
   return std::filesystem::path{AQUILA_SOURCE_DIR} / path;
 }
@@ -101,6 +139,14 @@ template <std::size_t Capacity>
       std::chrono::steady_clock::now().time_since_epoch().count();
   std::ostringstream out;
   out << "aquila_missing_md_" << ::getpid() << '_' << suffix;
+  return out.str();
+}
+
+[[nodiscard]] std::string UniquePresentShmName() {
+  const auto suffix =
+      std::chrono::steady_clock::now().time_since_epoch().count();
+  std::ostringstream out;
+  out << "aquila_present_md_" << ::getpid() << '_' << suffix;
   return out.str();
 }
 
@@ -243,6 +289,31 @@ TEST(MarketDataPumpTest, FullQueueKeepsChangedRowForNextPublishAttempt) {
   EXPECT_EQ(batch.rows[0].id, 42);
 }
 
+TEST(MarketDataPumpTest, ReaderOverrunDeltaIsPublishedInNextBatch) {
+  constexpr MarketDataKey kKey{.exchange = Exchange::kGate, .symbol_id = 7};
+  FakeReaderWithDiagnostics reader;
+  FakeClock clock;
+  MarketDataStore store(std::span<const MarketDataKey>{&kKey, 1});
+  MonitorSpscQueue<MarketDataBatch, 4> queue;
+  MarketDataPump<FakeReaderWithDiagnostics,
+                 MonitorSpscQueue<MarketDataBatch, 4>, FakeClock>
+      pump(reader, store, queue, clock,
+           MarketDataPumpOptions{.drain_budget = 8});
+
+  reader.Push(MakeTicker(Exchange::kGate, 7, 43));
+  reader.AddOverrun(2);
+  clock.set_now_ns(100'000'000);
+
+  const MarketDataPumpResult result = pump.StepOnce();
+
+  EXPECT_EQ(result.overrun_delta, 2);
+  ASSERT_TRUE(result.batch_pushed);
+
+  MarketDataBatch batch{};
+  ASSERT_TRUE(PopBatch(&queue, &batch));
+  EXPECT_EQ(batch.overrun_count, 2);
+}
+
 TEST(MarketDataThreadTest, BuildMarketDataKeysIncludesSourceExchanges) {
   const config::DataReaderConfigResult config_result =
       config::LoadDataReaderConfigFile(
@@ -299,6 +370,81 @@ required = false
 
   std::error_code ignored;
   std::filesystem::remove(config_path, ignored);
+  UnlinkShm(missing_shm_name);
+}
+
+TEST(MarketDataThreadTest, StartSkipsMissingOptionalSourceWhenAnotherSourceExists) {
+  const std::string present_shm_name = UniquePresentShmName();
+  const std::string missing_shm_name = UniqueMissingShmName();
+  UnlinkShm(present_shm_name);
+  UnlinkShm(missing_shm_name);
+
+  const market_data::BookTickerShmConfig shm_config{
+      .enabled = true,
+      .shm_name = present_shm_name,
+      .channel_name = "book_ticker_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  market_data::DataShmPublisher publisher(shm_config);
+
+  const std::filesystem::path config_path =
+      std::filesystem::temp_directory_path() /
+      ("aquila_partial_monitor_shm_" + std::to_string(::getpid()) + ".toml");
+  {
+    std::ofstream out(config_path);
+    out << R"toml(
+[instrument_catalog]
+file = ")toml"
+        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << R"toml("
+schema = "aquila.instrument.v1"
+
+[data_reader]
+name = "partial_monitor_shm"
+max_events_per_drain = 4
+
+[[data_reader.sources]]
+name = "present_gate_book_ticker"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = ")toml"
+        << present_shm_name << R"toml("
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "drain"
+required = false
+
+[[data_reader.sources]]
+name = "missing_binance_book_ticker"
+type = "shm"
+exchange = "binance"
+feed = "book_ticker"
+shm_name = ")toml"
+        << missing_shm_name << R"toml("
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "drain"
+required = false
+)toml";
+  }
+
+  MarketDataThreadQueue queue;
+  MarketDataThread thread(config_path, queue);
+
+  EXPECT_TRUE(thread.Start()) << thread.last_error();
+  ASSERT_EQ(thread.unavailable_sources().size(), 1U);
+  EXPECT_EQ(thread.unavailable_sources()[0].exchange, Exchange::kBinance);
+  EXPECT_EQ(thread.unavailable_sources()[0].name, "missing_binance_book_ticker");
+  EXPECT_FALSE(thread.unavailable_sources()[0].required);
+
+  thread.Stop();
+  thread.Join();
+
+  std::error_code ignored;
+  std::filesystem::remove(config_path, ignored);
+  UnlinkShm(present_shm_name);
   UnlinkShm(missing_shm_name);
 }
 

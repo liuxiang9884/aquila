@@ -5,11 +5,13 @@
 #include <chrono>
 #include <exception>
 #include <span>
+#include <string>
 #include <thread>
 #include <utility>
 
 #include <fmt/format.h>
 
+#include "core/market_data/data_shm.h"
 #include "core/market_data/realtime_data_reader.h"
 
 namespace aquila::monitor {
@@ -32,6 +34,73 @@ namespace {
   return false;
 }
 
+[[nodiscard]] bool CanAttachSource(
+    const config::DataReaderSourceConfig& source, std::string* reason) {
+  if (source.type != config::DataReaderSourceType::kShm ||
+      source.feed != config::DataReaderFeed::kBookTicker) {
+    return true;
+  }
+
+  try {
+    market_data::BookTickerShmConfig shm_config{
+        .enabled = true,
+        .shm_name = source.shm_name,
+        .channel_name = source.channel_name,
+        .create = false,
+        .remove_existing = false,
+    };
+    market_data::BookTickerShmReader probe(shm_config);
+    return true;
+  } catch (const std::exception& exc) {
+    if (reason != nullptr) {
+      *reason = exc.what();
+    }
+  } catch (...) {
+    if (reason != nullptr) {
+      *reason = "unknown attach error";
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool SelectAvailableSources(
+    config::DataReaderConfig* config,
+    std::vector<MarketDataUnavailableSource>* unavailable_sources,
+    std::string* error) {
+  std::vector<config::DataReaderSourceConfig> active_sources;
+  active_sources.reserve(config->sources.size());
+
+  for (const config::DataReaderSourceConfig& source : config->sources) {
+    std::string reason;
+    if (CanAttachSource(source, &reason)) {
+      active_sources.push_back(source);
+      continue;
+    }
+
+    unavailable_sources->push_back(MarketDataUnavailableSource{
+        .exchange = source.exchange,
+        .name = source.name,
+        .reason = reason,
+        .required = source.required,
+    });
+    if (source.required) {
+      *error = fmt::format("required market data source '{}' unavailable: {}",
+                           source.name, reason);
+      return false;
+    }
+  }
+
+  if (active_sources.empty()) {
+    *error = unavailable_sources->empty()
+                 ? "no market data sources configured"
+                 : "no market data SHM sources available";
+    return false;
+  }
+
+  config->sources = std::move(active_sources);
+  return true;
+}
+
 }  // namespace
 
 struct MarketDataThread::State {
@@ -51,7 +120,7 @@ struct MarketDataThread::State {
     while (!stop_requested.load(std::memory_order_relaxed)) {
       const MarketDataPumpResult result = pump.StepOnce();
       if (result.drained_count == 0) {
-        std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     }
   }
@@ -65,6 +134,7 @@ struct MarketDataThread::State {
   std::uint64_t drain_budget{64};
   std::int64_t publish_interval_ns{kMarketDataPublishIntervalNs};
   std::string last_error;
+  std::vector<MarketDataUnavailableSource> unavailable_sources;
 };
 
 std::int64_t SteadyMarketDataClock::NowNs() const noexcept {
@@ -120,6 +190,7 @@ bool MarketDataThread::Start() {
   }
 
   state_->last_error.clear();
+  state_->unavailable_sources.clear();
   config::DataReaderConfigResult config_result =
       config::LoadDataReaderConfigFile(state_->config_path);
   if (!config_result.ok) {
@@ -128,6 +199,12 @@ bool MarketDataThread::Start() {
   }
 
   state_->drain_budget = config_result.value.max_events_per_drain;
+  std::string source_error;
+  if (!SelectAvailableSources(&config_result.value, &state_->unavailable_sources,
+                              &source_error)) {
+    state_->last_error = std::move(source_error);
+    return false;
+  }
   std::vector<MarketDataKey> keys = BuildMarketDataKeys(config_result.value);
 
   try {
@@ -165,6 +242,11 @@ void MarketDataThread::Join() {
 
 const std::string& MarketDataThread::last_error() const noexcept {
   return state_->last_error;
+}
+
+std::span<const MarketDataUnavailableSource>
+MarketDataThread::unavailable_sources() const noexcept {
+  return state_->unavailable_sources;
 }
 
 }  // namespace aquila::monitor

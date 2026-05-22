@@ -111,13 +111,13 @@ TEST(SymbolWorkbenchDemoDataTest, ZecMarketDataUsesExchangeRows) {
   EXPECT_EQ(gate.exchange, "Gate");
   EXPECT_EQ(gate.exchange_symbol, "ZEC_USDT");
   EXPECT_EQ(gate.market_data_id, "gate-zec-9841");
-  EXPECT_DOUBLE_EQ(gate.last_price, 62.86);
+  EXPECT_FALSE(gate.has_last_price);
   EXPECT_DOUBLE_EQ(gate.bid_price, 62.85);
   EXPECT_DOUBLE_EQ(gate.bid_volume, 18.4);
   EXPECT_DOUBLE_EQ(gate.ask_price, 62.86);
   EXPECT_DOUBLE_EQ(gate.ask_volume, 9.7);
-  EXPECT_DOUBLE_EQ(gate.volume, 1240.6);
-  EXPECT_DOUBLE_EQ(gate.turnover, 77982.12);
+  EXPECT_FALSE(gate.has_volume);
+  EXPECT_FALSE(gate.has_turnover);
   EXPECT_EQ(gate.updated_time, "11:40:12.384");
 
   const MarketDataRow& okx = detail->market_data[2];
