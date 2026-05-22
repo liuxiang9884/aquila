@@ -31,7 +31,8 @@ leadlag::ConfigResult ParseConfigToml(
   return leadlag::ParseConfig(parsed, catalog);
 }
 
-std::string MinimalConfigTomlWithRisk(std::string_view risk_section) {
+std::string MinimalConfigTomlWithRisk(std::string_view risk_section,
+                                      std::string_view execute_extra = {}) {
   return std::string{R"toml(
 [lead_lag]
 name = "lead_lag"
@@ -69,6 +70,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
+)toml"} + std::string{execute_extra} +
+         std::string{R"toml(
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -119,6 +122,8 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_DOUBLE_EQ(pair.execute.trailing_stop, 0.01);
   EXPECT_DOUBLE_EQ(pair.execute.max_entry_spread, 0.01);
   EXPECT_DOUBLE_EQ(pair.execute.EntrySpreadLimit(), 0.01);
+  EXPECT_EQ(pair.execute.open_slippage, 0U);
+  EXPECT_EQ(pair.execute.close_slippage, 0U);
   EXPECT_EQ(pair.execute.parallel, 1U);
 
   EXPECT_EQ(pair.bbo_record.window_ns, 1'000'000'000ULL);
@@ -197,7 +202,8 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested11SymbolsRiskLimits) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = leadlag::LoadConfigFile(
-      SourcePath("config/strategies/lead_lag_requested_11symbols_20260522.toml"),
+      SourcePath(
+          "config/strategies/lead_lag_requested_11symbols_20260522.toml"),
       catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
@@ -205,16 +211,23 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested11SymbolsRiskLimits) {
   EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 2000.0);
   EXPECT_EQ(config.risk.max_holding_position, 0);
   ASSERT_EQ(config.pairs.size(), 11U);
+  for (std::size_t index = 0; index < config.pairs.size(); ++index) {
+    const std::uint32_t expected_slippage = index < 5 ? 5U : 3U;
+    EXPECT_EQ(config.pairs[index].execute.open_slippage, expected_slippage)
+        << config.pairs[index].symbol;
+    EXPECT_EQ(config.pairs[index].execute.close_slippage, expected_slippage)
+        << config.pairs[index].symbol;
+  }
 }
 
 TEST(LeadLagConfigTest, ParsesRiskWithOnlyGrossNotionalLimit) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = ParseConfigToml(
-      MinimalConfigTomlWithRisk(R"toml([lead_lag.risk]
+  const auto result =
+      ParseConfigToml(MinimalConfigTomlWithRisk(R"toml([lead_lag.risk]
 max_gross_notional = 2000.0
 )toml"),
-      catalog);
+                      catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_DOUBLE_EQ(result.value.risk.max_gross_notional, 2000.0);
@@ -226,12 +239,12 @@ max_gross_notional = 2000.0
 TEST(LeadLagConfigTest, ParsesRiskWithZeroHoldingPositionLimitDisabled) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = ParseConfigToml(
-      MinimalConfigTomlWithRisk(R"toml([lead_lag.risk]
+  const auto result =
+      ParseConfigToml(MinimalConfigTomlWithRisk(R"toml([lead_lag.risk]
 max_gross_notional = 2000.0
 max_holding_position = 0
 )toml"),
-      catalog);
+                      catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_DOUBLE_EQ(result.value.risk.max_gross_notional, 2000.0);
@@ -247,6 +260,34 @@ TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {
   };
 
   EXPECT_DOUBLE_EQ(config.EntrySpreadLimit(), 0.0125);
+}
+
+TEST(LeadLagConfigTest, ParsesExecutionSlippageTicks) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result =
+      ParseConfigToml(MinimalConfigTomlWithRisk("", R"toml(open_slippage = 7
+close_slippage = 11
+)toml"),
+                      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.pairs.size(), 1U);
+  EXPECT_EQ(result.value.pairs[0].execute.open_slippage, 7U);
+  EXPECT_EQ(result.value.pairs[0].execute.close_slippage, 11U);
+}
+
+TEST(LeadLagConfigTest, RejectsNegativeExecutionSlippageTicks) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result =
+      ParseConfigToml(MinimalConfigTomlWithRisk("", R"toml(open_slippage = -1
+close_slippage = 0
+)toml"),
+                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("open_slippage"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsDuplicateSymbolId) {

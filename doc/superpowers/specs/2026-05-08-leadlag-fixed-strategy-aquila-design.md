@@ -125,13 +125,14 @@ lag    = gateio
 配置分为三组：
 
 - `trigger`：lead / close 初始阈值、`lag_part`、`quantile.move`、`target_profit_rate`、`drift_limit`、`drift_period`、`drift_min_samples`、`drift_warmup`。
-- `execute`：`open` 名义金额、`trailing_stop`、`max_entry_spread`、`parallel`。
+- `execute`：`open` 名义金额、`trailing_stop`、`max_entry_spread`、`open_slippage`、`close_slippage`、`parallel`。
 - `bbo_record`：`window`、`stats_window`、`size`。
 
 关键语义：
 
 - `lead` 是信号源，`lag` 是唯一交易场所。
 - `execute.open` 是名义金额，开仓时才用价格和合约 metadata 换算数量。
+- `open_slippage` / `close_slippage` 是整数 tick 数，按 `price_tick` 对真实 IOC limit 下单价做不利方向调整；Buy 加 tick，Sell 减 tick，stoploss 使用 `close_slippage`。
 - `parallel = 1` 表示同一时间只允许一个 active 交易组。
 - `max_entry_spread` 只管开仓前 lag 盘口宽度；`trailing_stop` 只管持仓回撤。
 - `fee`、`quantity_tick`、`contract_value` 虽不完整体现在策略 JSON 中，但 fixed 逻辑依赖它们做成本和数量归整；`aquila` 中对应交易基础信息从 instrument catalog 解析，合约面值使用 `notional_multiplier` 表达。

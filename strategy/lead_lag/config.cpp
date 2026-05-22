@@ -281,6 +281,12 @@ class Parser {
         RequiredDouble(table, "trailing_stop", prefix + ".trailing_stop");
     execute.max_entry_spread =
         RequiredDouble(table, "max_entry_spread", prefix + ".max_entry_spread");
+    execute.open_slippage =
+        UInt32Or(table, "open_slippage", execute.open_slippage,
+                 prefix + ".open_slippage");
+    execute.close_slippage =
+        UInt32Or(table, "close_slippage", execute.close_slippage,
+                 prefix + ".close_slippage");
     execute.parallel = RequiredUInt32(table, "parallel", prefix + ".parallel");
     if (!ok_) {
       return execute;
@@ -297,13 +303,11 @@ class Parser {
 
   [[nodiscard]] RiskConfig ParseRisk(const toml::table& table) {
     RiskConfig risk;
-    risk.max_gross_notional =
-        RequiredDouble(table, "max_gross_notional",
-                       "lead_lag.risk.max_gross_notional");
+    risk.max_gross_notional = RequiredDouble(
+        table, "max_gross_notional", "lead_lag.risk.max_gross_notional");
     if (table.contains("max_holding_position")) {
-      risk.max_holding_position =
-          RequiredInt64(table, "max_holding_position",
-                        "lead_lag.risk.max_holding_position");
+      risk.max_holding_position = RequiredInt64(
+          table, "max_holding_position", "lead_lag.risk.max_holding_position");
     }
     if (!ok_) {
       return risk;
@@ -456,6 +460,16 @@ class Parser {
       return 0;
     }
     return static_cast<std::uint32_t>(*value);
+  }
+
+  [[nodiscard]] std::uint32_t UInt32Or(const toml::table& table,
+                                       std::string_view key,
+                                       std::uint32_t fallback,
+                                       std::string_view name) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    return RequiredUInt32(table, key, name);
   }
 
   [[nodiscard]] std::size_t SizeOr(const toml::table& table,

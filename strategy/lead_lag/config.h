@@ -45,6 +45,8 @@ struct ExecuteConfig {
   double open_notional{0.0};
   double trailing_stop{0.0};
   double max_entry_spread{-1.0};
+  std::uint32_t open_slippage{0};
+  std::uint32_t close_slippage{0};
   std::uint32_t parallel{1};
 
   [[nodiscard]] double EntrySpreadLimit() const noexcept;

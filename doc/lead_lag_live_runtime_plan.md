@@ -14,7 +14,7 @@
 
 - LeadLag replay / signal 主链路已落地，`leadlag::Strategy::OnBookTicker()` 已串起 raw market、alignment、recorder、threshold、signal 和 synthetic position accounting。
 - LeadLag live runner 已落地为 `tools/lead_lag/live_strategy.cpp`：默认 validate-only；`--connect-data` 进入 signal-only；`--execute` 只有在 `strategy.mode=live` 时解析为 `RunMode::kLiveOrders`。
-- 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。
+- 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。`execute.open_slippage` 和 `execute.close_slippage` 按 `price_tick` 对最终 IOC limit 下单价做不利方向调整；order intent / reject 日志同时输出 `raw_price` 和 `order_price`。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
 - 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。长时间真实下单前还需要端到端 benchmark 和更长时间 guarded 运行证据；failure protocol probe 继续前要先确认 Gate 会返回最终 error 的安全请求形态。
@@ -85,6 +85,7 @@
   - 2026-05-21 requested data session 配置订阅 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`。
   - 2026-05-22 requested 11-symbol LeadLag pair 配置包含上述全部 symbol。`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 是 Gate decimal-size 合约；当前版本仍只按整数 `size` 下单，catalog 中这些 Gate 行使用 `quantity_step=1.0`、`quantity_decimal_places=0` 的 runtime 约束。
   - 2026-05-22 requested 11-symbol LeadLag 配置已增加 strategy 全局 `[lead_lag.risk]`：当前启用 `max_gross_notional=2000.0`，限制所有持仓和 pending open reservation 的绝对 notional 之和；`max_holding_position` 可选，未配置时不限制张数。触达限制后只拒绝新开仓，不阻止 reduce-only close。
+  - 2026-05-22 requested 11-symbol LeadLag 配置已显式设置 `execute.open_slippage` / `execute.close_slippage`：前五个 symbol 为 `5` ticks，后六个 symbol 为 `3` ticks。slippage 只调整实际 IOC limit 下单价，不改变 signal 触发条件；stoploss 使用 `close_slippage`。
   - decimal-size 完整支持留到下一版本：不要只把下单接口改成 string 或 double，应先做定点数量类型，并覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing。
 - Evidence outputs:
   - live runner summary

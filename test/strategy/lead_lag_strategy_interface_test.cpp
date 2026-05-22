@@ -200,8 +200,8 @@ std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
 std::size_t g_order_intent_log_count{0};
 
 void CaptureStrategyOrderIntentLogForTest(
-    const leadlag::detail::StrategyOrderIntentLogRecordForTest& record)
-    noexcept {
+    const leadlag::detail::StrategyOrderIntentLogRecordForTest&
+        record) noexcept {
   if (g_order_intent_log_count >= g_order_intent_logs.size()) {
     return;
   }
@@ -330,6 +330,8 @@ leadlag::Config SignalOnlyConfig() {
               .open_notional = 1000.0,
               .trailing_stop = 0.05,
               .max_entry_spread = 0.02,
+              .open_slippage = 0,
+              .close_slippage = 0,
               .parallel = 1,
           },
       .bbo_record =
@@ -349,6 +351,14 @@ leadlag::Config SignalOnlyConfig() {
               .notional_multiplier = 1.0,
           },
   });
+  return config;
+}
+
+leadlag::Config SignalOnlyConfigWithSlippage(std::uint32_t open_slippage,
+                                             std::uint32_t close_slippage) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.open_slippage = open_slippage;
+  config.pairs[0].execute.close_slippage = close_slippage;
   return config;
 }
 
@@ -416,8 +426,7 @@ void FeedOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
       Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), *context);
 }
 
-void FeedOpenLongSignalForSymbol(leadlag::Strategy* strategy,
-                                 ContextT* context,
+void FeedOpenLongSignalForSymbol(leadlag::Strategy* strategy, ContextT* context,
                                  std::int32_t symbol_id) {
   strategy->OnBookTicker(
       Ticker(symbol_id, aquila::Exchange::kGate, 100, 101.57, 102.02),
@@ -432,14 +441,11 @@ void FeedOpenLongSignalForSymbol(leadlag::Strategy* strategy,
 
 void FeedHugeOpenLongSignal(leadlag::Strategy* strategy, ContextT* context) {
   strategy->OnBookTicker(
-      Ticker(3, aquila::Exchange::kGate, 100, 1.0157e64, 1.0202e64),
-      *context);
+      Ticker(3, aquila::Exchange::kGate, 100, 1.0157e64, 1.0202e64), *context);
   strategy->OnBookTicker(
-      Ticker(3, aquila::Exchange::kBinance, 100, 1.0e64, 1.01e64),
-      *context);
+      Ticker(3, aquila::Exchange::kBinance, 100, 1.0e64, 1.01e64), *context);
   strategy->OnBookTicker(
-      Ticker(3, aquila::Exchange::kBinance, 101, 1.12e64, 1.13e64),
-      *context);
+      Ticker(3, aquila::Exchange::kBinance, 101, 1.12e64, 1.13e64), *context);
 }
 
 void FeedOpenShortSignal(leadlag::Strategy* strategy, ContextT* context) {
@@ -702,10 +708,55 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_FALSE(record.reduce_only);
   EXPECT_EQ(record.group_id, 0U);
   EXPECT_EQ(record.quantity, 9);
+  EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
+  EXPECT_DOUBLE_EQ(record.order_price, 102.1);
   EXPECT_DOUBLE_EQ(record.price, 102.1);
   EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
   EXPECT_DOUBLE_EQ(record.estimated_notional, 918.9);
   EXPECT_EQ(record.active_groups, 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeAppliesOpenSlippageToOpenLongOrder) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(3, 0)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderIntentLogCaptureGuard log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const FakeOrderSession::CapturedOrder& order =
+      order_session.placed_orders.back();
+  EXPECT_EQ(order.side, aquila::OrderSide::kBuy);
+  EXPECT_FALSE(order.reduce_only);
+  EXPECT_EQ(order.price_text, "102.4");
+  EXPECT_EQ(order.quantity, 9);
+  ASSERT_EQ(g_order_intent_log_count, 1U);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].raw_price, 102.02);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].order_price, 102.4);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].price, 102.4);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeAppliesOpenSlippageToOpenShortOrder) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(2, 0)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenShortSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const FakeOrderSession::CapturedOrder& order =
+      order_session.placed_orders.back();
+  EXPECT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenShort);
+  EXPECT_EQ(order.side, aquila::OrderSide::kSell);
+  EXPECT_FALSE(order.reduce_only);
+  EXPECT_EQ(order.price_text, "97.7");
+  EXPECT_EQ(order.quantity, 10);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -740,6 +791,37 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kCloseLong);
   EXPECT_NE(decision.group_id, 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeAppliesCloseSlippageToCloseLongOrder) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(0, 3)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderIntentLogCaptureGuard log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder& close_order =
+      order_session.placed_orders.back();
+  EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
+  EXPECT_TRUE(close_order.reduce_only);
+  EXPECT_EQ(close_order.price_text, "101.2");
+  EXPECT_EQ(close_order.quantity, 7);
+  ASSERT_EQ(g_order_intent_log_count, 2U);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[1].raw_price, 101.57);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[1].order_price, 101.2);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[1].price, 101.2);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -792,8 +874,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kRiskLimit);
 }
 
-TEST(LeadLagStrategyInterfaceTest,
-     GlobalRiskLimitAllowsReduceOnlyClose) {
+TEST(LeadLagStrategyInterfaceTest, GlobalRiskLimitAllowsReduceOnlyClose) {
   leadlag::Config config = SignalOnlyConfig();
   config.risk.max_gross_notional = 920.0;
   config.risk.max_holding_position = 9;
@@ -958,7 +1039,7 @@ TEST(LeadLagStrategyInterfaceTest,
 
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeUsesFilledPositionQuantityForStoplossOrder) {
-  leadlag::Strategy strategy{SignalOnlyConfig()};
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(0, 2)};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -978,7 +1059,7 @@ TEST(LeadLagStrategyInterfaceTest,
       order_session.placed_orders.back();
   EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(stoploss_order.reduce_only);
-  EXPECT_EQ(stoploss_order.price_text, "94.5");
+  EXPECT_EQ(stoploss_order.price_text, "94.3");
   EXPECT_EQ(stoploss_order.quantity, 11);
 
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
@@ -1310,7 +1391,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeOpenShortUsesSellPriceFloor) {
 }
 
 TEST(LeadLagStrategyInterfaceTest, ExternalModeStoplossShortUsesBuyPriceCeil) {
-  leadlag::Strategy strategy{SignalOnlyConfig()};
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(0, 4)};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -1334,7 +1415,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeStoplossShortUsesBuyPriceCeil) {
             leadlag::SignalAction::kStoplossShort);
   EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kBuy);
   EXPECT_TRUE(stoploss_order.reduce_only);
-  EXPECT_EQ(stoploss_order.price_text, "103.6");
+  EXPECT_EQ(stoploss_order.price_text, "104.0");
   EXPECT_EQ(stoploss_order.quantity, 10);
 }
 
