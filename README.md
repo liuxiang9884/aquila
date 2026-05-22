@@ -44,6 +44,7 @@ $HOME/vcpkg/vcpkg install \
   fast-float \
   benchmark \
   abseil \
+  ftxui \
   --triplet x64-linux
 ```
 

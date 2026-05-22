@@ -17,6 +17,24 @@
 - 首页布局采用 Symbol Workbench：左侧 symbol 列表，中间当前 symbol 订单表，右侧仓位和 PnL，底部或副页展示事件流和连接状态。
 - TUI 以键盘优先设计，同时支持鼠标选择；鼠标不能成为唯一操作路径。
 
+## 当前 Demo 状态
+
+截至 2026-05-22，已新增静态数据版 Symbol Workbench demo：
+
+```bash
+./build/debug/monitor/gate_account_tui
+./build/debug/monitor/gate_account_tui --dump --width 220 --height 55
+```
+
+当前 demo 只验证 layout 和界面信息密度，不连接 Gate WebSocket、不查询 REST、不消费交易系统 SHM，也不显示真实账户数据。静态数据覆盖用户指定的 11 个 symbol：
+
+```text
+ROVE_USDT, RAVE_USDT, ZEC_USDT, SIREN_USDT, ETC_USDT, DASH_USDT,
+RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
+```
+
+默认选中 `ZEC_USDT`，展示 Aquila / Manual / External 三类订单、仓位 / PnL、source mix、health 和事件流。
+
 ## 文档索引
 
 | 文档 | 什么时候读 | 内容 |
@@ -30,6 +48,10 @@
 
 ## 当前实现可复用点
 
+- `monitor/model/account_monitor_snapshot.h`：TUI 静态 view model。
+- `monitor/demo/symbol_workbench_demo_data.*`：当前 Symbol Workbench fake data source。
+- `monitor/tui/symbol_workbench_view.h`：FTXUI Symbol Workbench 布局。
+- `monitor/tui/gate_account_tui.cpp`：当前 demo 入口，支持 interactive 和 `--dump`。
 - `core/websocket/*`：WebSocket cold / hot path、TLS socket、message view、runtime policy。
 - `exchange/gate/trading/order_feedback_session.h`：Gate private WS login / subscribe / connection lifecycle 参考实现。
 - `exchange/gate/sbe/message_dispatcher.h` 和 `exchange/gate/sbe/generated/`：Gate SBE schema dispatch 和生成代码。
