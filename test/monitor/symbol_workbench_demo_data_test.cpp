@@ -32,6 +32,15 @@ TEST(SymbolWorkbenchDemoDataTest, SelectsZecByDefault) {
   EXPECT_EQ(detail->market_data.size(), 3U);
 }
 
+TEST(SymbolWorkbenchDemoDataTest, ExposesAccountBalanceSummary) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  EXPECT_EQ(snapshot.balance.currency, "USDT");
+  EXPECT_DOUBLE_EQ(snapshot.balance.total_equity, 12548.72);
+  EXPECT_DOUBLE_EQ(snapshot.balance.available, 9876.54);
+  EXPECT_DOUBLE_EQ(snapshot.balance.total_pnl, 42.68);
+}
+
 TEST(SymbolWorkbenchDemoDataTest, ZecOrdersExposeAllSourceClasses) {
   const SymbolDetail* detail = DemoSelectedSymbolDetail();
   ASSERT_NE(detail, nullptr);

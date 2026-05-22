@@ -32,6 +32,16 @@ struct SymbolSummary {
   SymbolHealth health{SymbolHealth::kOk};
 };
 
+struct AccountBalance {
+  std::string_view currency;
+  double total_equity{0.0};
+  double available{0.0};
+  double used_margin{0.0};
+  double realized_pnl{0.0};
+  double unrealized_pnl{0.0};
+  double total_pnl{0.0};
+};
+
 struct MarketDataRow {
   std::string_view exchange;
   std::string_view exchange_symbol;
@@ -105,6 +115,7 @@ struct AccountMonitorSnapshot {
   std::string_view rest_state;
   std::string_view mode;
   std::string_view selected_symbol;
+  AccountBalance balance;
   std::span<const SymbolSummary> symbols;
   const SymbolDetail* selected_detail{nullptr};
   std::span<const std::string_view> events;

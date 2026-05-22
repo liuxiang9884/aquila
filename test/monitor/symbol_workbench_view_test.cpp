@@ -43,9 +43,10 @@ TEST(SymbolWorkbenchViewTest, MarketPaneUsesCompactHeadersAndNaPlaceholder) {
   EXPECT_EQ(rendered.find("market_data_id"), std::string::npos);
   EXPECT_EQ(rendered.find("not available"), std::string::npos);
   EXPECT_NE(rendered.find("NA"), std::string::npos);
-  ExpectTokensInOrder(rendered,
-                      {"exch", "symbol", "id", "last", "bid", "bid_vol", "ask",
-                       "ask_vol", "vol", "turnover", "updated"});
+  ExpectTokensInOrder(
+      rendered, {"num", "exch", "symbol", "id", "last", "bid", "bid_vol", "ask",
+                 "ask_vol", "vol", "turnover", "updated"});
+  ExpectTokensInOrder(rendered, {"1", "Gate", "2", "Binance", "3", "OKX"});
 }
 
 TEST(SymbolWorkbenchViewTest, OrdersPaneMovesIdsBeforeUpdated) {
@@ -56,12 +57,34 @@ TEST(SymbolWorkbenchViewTest, OrdersPaneMovesIdsBeforeUpdated) {
       symbol_workbench_view_detail::OrdersPane(*detail), 260, 12);
 
   EXPECT_EQ(rendered.find("not available"), std::string::npos);
-  ExpectTokensInOrder(
-      rendered, {"exch", "symbol", "side", "px", "qty", "left", "filled", "avg",
-                 "fee", "status", "source", "exch_id", "local_id", "updated"});
-  ExpectTokensInOrder(
-      rendered, {"Gate", "ZEC_USDT", "-1", "63.40", "2.0", "2.0", "0.0", "NA",
-                 "0.00", "open", "Manual", "9138472901", "-", "11:40:05.442"});
+  ExpectTokensInOrder(rendered, {"num", "exch", "symbol", "side", "px", "qty",
+                                 "left", "filled", "avg", "fee", "status",
+                                 "source", "exch_id", "local_id", "updated"});
+  ExpectTokensInOrder(rendered, {"2", "Gate", "ZEC_USDT", "-1", "63.40", "2.0",
+                                 "2.0", "0.0", "NA", "0.00", "open", "Manual",
+                                 "9138472901", "-", "11:40:05.442"});
+}
+
+TEST(SymbolWorkbenchViewTest, SymbolPaneUsesVisibleRowNumbers) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  const std::string rendered = RenderToString(
+      symbol_workbench_view_detail::SymbolPane(snapshot), 60, 18);
+
+  ExpectTokensInOrder(rendered, {"num", "symbol", "pos", "open", "pnl"});
+  ExpectTokensInOrder(rendered,
+                      {"1", "ROVE_USDT", "2", "RAVE_USDT", "3", "ZEC_USDT"});
+}
+
+TEST(SymbolWorkbenchViewTest, FullWorkbenchRendersBalanceStripUnderTopBar) {
+  const AccountMonitorSnapshot snapshot = DemoAccountMonitorSnapshot();
+
+  const std::string rendered =
+      RenderToString(RenderSymbolWorkbench(snapshot), 260, 40);
+
+  ExpectTokensInOrder(rendered, {"AQUILA GATE USDT ACCOUNT", "BALANCE", "total",
+                                 "12548.72 USDT", "available", "9876.54", "pnl",
+                                 "+42.68", "SYMBOLS"});
 }
 
 }  // namespace

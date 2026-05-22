@@ -75,11 +75,12 @@ inline ftxui::Element BoxTitle(std::string text) {
   return ftxui::text(std::move(text)) | ftxui::color(ftxui::Color::GrayLight);
 }
 
-inline ftxui::Element SymbolRow(const SymbolSummary& summary) {
-  auto row = ftxui::text(
-      fmt::format("{:<12} {:>7.1f} {:>4} {:>8.1f} {:>1}", summary.symbol,
-                  summary.net_position, summary.open_order_count,
-                  summary.total_pnl, HealthText(summary.health)));
+inline ftxui::Element SymbolRow(std::size_t visible_index,
+                                const SymbolSummary& summary) {
+  auto row = ftxui::text(fmt::format(
+      "{:>3} {:<12} {:>7.1f} {:>4} {:>8.1f} {:>1}", visible_index,
+      summary.symbol, summary.net_position, summary.open_order_count,
+      summary.total_pnl, HealthText(summary.health)));
   if (summary.health == SymbolHealth::kSelected) {
     return row | ftxui::inverted;
   }
@@ -95,12 +96,14 @@ inline ftxui::Element SymbolRow(const SymbolSummary& summary) {
   return row;
 }
 
-inline ftxui::Element OrderRow(const MonitorOrder& order, bool selected) {
+inline ftxui::Element OrderRow(std::size_t visible_index,
+                               const MonitorOrder& order, bool selected) {
   auto row = ftxui::text(fmt::format(
-      "{:<7} {:<11} {:<5} {:>8.2f} {:>8.1f} {:>8.1f} {:>8.1f} {:>8} "
+      "{:>3} {:<7} {:<11} {:<5} {:>8.2f} {:>8.1f} {:>8.1f} {:>8.1f} {:>8} "
       "{:>8.2f} {:<8} {:<10} {:<12} {:<18} {:<12}",
-      order.exchange, order.exchange_symbol, SideValueText(order.side_value),
-      order.price, order.quantity, order.left_quantity, order.filled_quantity,
+      visible_index, order.exchange, order.exchange_symbol,
+      SideValueText(order.side_value), order.price, order.quantity,
+      order.left_quantity, order.filled_quantity,
       PriceText(order.average_fill_price), order.fee, order.status,
       order.source_label, IdText(order.exchange_order_id),
       IdText(order.local_order_id), order.updated_time));
@@ -113,11 +116,12 @@ inline ftxui::Element OrderRow(const MonitorOrder& order, bool selected) {
   return row | ftxui::color(ftxui::Color::Red);
 }
 
-inline ftxui::Element MarketDataRowElement(const MarketDataRow& row) {
+inline ftxui::Element MarketDataRowElement(std::size_t visible_index,
+                                           const MarketDataRow& row) {
   auto line = ftxui::text(fmt::format(
-      "{:<7} {:<11} {:<16} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} "
+      "{:>3} {:<7} {:<11} {:<16} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} "
       "{:>12} {:<12}",
-      row.exchange, row.exchange_symbol, row.market_data_id,
+      visible_index, row.exchange, row.exchange_symbol, row.market_data_id,
       MarketNumberText(row, row.last_price, 2),
       MarketNumberText(row, row.bid_price, 2),
       MarketNumberText(row, row.bid_volume, 1),
@@ -140,10 +144,10 @@ inline ftxui::Element SymbolPane(const AccountMonitorSnapshot& snapshot) {
       BoxTitle("risk sort"),
   }));
   rows.push_back(ftxui::separator());
-  rows.push_back(ftxui::text("symbol           pos open      pnl !") |
+  rows.push_back(ftxui::text("num symbol           pos open      pnl !") |
                  ftxui::color(ftxui::Color::GrayLight));
-  for (const SymbolSummary& summary : snapshot.symbols) {
-    rows.push_back(SymbolRow(summary));
+  for (std::size_t i = 0; i < snapshot.symbols.size(); ++i) {
+    rows.push_back(SymbolRow(i + 1, snapshot.symbols[i]));
   }
   rows.push_back(ftxui::filler());
   rows.push_back(ftxui::separator());
@@ -164,12 +168,12 @@ inline ftxui::Element OrdersPane(const SymbolDetail& detail) {
   }));
   rows.push_back(ftxui::separator());
   rows.push_back(
-      ftxui::text("exch    symbol      side        px      qty     left"
+      ftxui::text("num exch    symbol      side        px      qty     left"
                   "   filled      avg      fee status   source     exch_id"
                   "      local_id           updated") |
       ftxui::color(ftxui::Color::GrayLight));
   for (std::size_t i = 0; i < detail.orders.size(); ++i) {
-    rows.push_back(OrderRow(detail.orders[i], i == 1));
+    rows.push_back(OrderRow(i + 1, detail.orders[i], i == 1));
   }
   rows.push_back(ftxui::filler());
   return ftxui::vbox(std::move(rows)) | ftxui::flex;
@@ -185,12 +189,12 @@ inline ftxui::Element MarketDataPane(const SymbolDetail& detail) {
   }));
   rows.push_back(ftxui::separator());
   rows.push_back(
-      ftxui::text("exch    symbol      id                 last        bid"
+      ftxui::text("num exch    symbol      id                 last        bid"
                   "    bid_vol        ask    ask_vol        vol     turnover"
                   " updated") |
       ftxui::color(ftxui::Color::GrayLight));
-  for (const MarketDataRow& row : detail.market_data) {
-    rows.push_back(MarketDataRowElement(row));
+  for (std::size_t i = 0; i < detail.market_data.size(); ++i) {
+    rows.push_back(MarketDataRowElement(i + 1, detail.market_data[i]));
   }
   return ftxui::vbox(std::move(rows));
 }
@@ -202,6 +206,31 @@ inline ftxui::Element MiddlePane(const SymbolDetail& detail) {
              OrdersPane(detail) | ftxui::flex,
          }) |
          ftxui::flex;
+}
+
+inline ftxui::Element BalancePane(const AccountBalance& balance) {
+  return ftxui::hbox({
+             BoxTitle("BALANCE"),
+             ftxui::text("  total "),
+             ftxui::text(fmt::format("{:.2f} {}", balance.total_equity,
+                                     balance.currency)) |
+                 ftxui::bold,
+             ftxui::text(" | available "),
+             ftxui::text(fmt::format("{:.2f}", balance.available)) |
+                 ftxui::color(ftxui::Color::Green),
+             ftxui::text(" | used "),
+             ftxui::text(fmt::format("{:.2f}", balance.used_margin)),
+             ftxui::text(" | pnl "),
+             ftxui::text(fmt::format("{:+.2f}", balance.total_pnl)) |
+                 ftxui::bold | ftxui::color(PnlColor(balance.total_pnl)),
+             ftxui::text(" | realized "),
+             ftxui::text(fmt::format("{:+.2f}", balance.realized_pnl)) |
+                 ftxui::color(PnlColor(balance.realized_pnl)),
+             ftxui::text(" | unrealized "),
+             ftxui::text(fmt::format("{:+.2f}", balance.unrealized_pnl)) |
+                 ftxui::color(PnlColor(balance.unrealized_pnl)),
+         }) |
+         ftxui::border;
 }
 
 inline ftxui::Element PositionPane(const SymbolDetail& detail) {
@@ -309,6 +338,7 @@ inline ftxui::Element RenderSymbolWorkbench(
                      "  q/esc quit | / search | r refresh | f active/all") |
                      ftxui::color(ftxui::Color::GrayLight),
              }),
+             symbol_workbench_view_detail::BalancePane(snapshot.balance),
              ftxui::separator(),
              ftxui::hbox({
                  symbol_workbench_view_detail::SymbolPane(snapshot),

@@ -46,6 +46,16 @@ constexpr std::array<SymbolSummary, 11> kSymbolSummaries{{
     {.symbol = "BRETT_USDT"},
 }};
 
+constexpr AccountBalance kAccountBalance{
+    .currency = "USDT",
+    .total_equity = 12548.72,
+    .available = 9876.54,
+    .used_margin = 2672.18,
+    .realized_pnl = 38.50,
+    .unrealized_pnl = 4.29,
+    .total_pnl = 42.68,
+};
+
 constexpr std::array<MarketDataRow, 3> kZecMarketData{{
     {.exchange = "Gate",
      .exchange_symbol = "ZEC_USDT",
@@ -227,6 +237,7 @@ AccountMonitorSnapshot DemoAccountMonitorSnapshot() noexcept {
       .rest_state = "REST ok 4s",
       .mode = "read-only demo",
       .selected_symbol = DemoSelectedSymbol(),
+      .balance = kAccountBalance,
       .symbols = DemoSymbolSummaries(),
       .selected_detail = DemoSelectedSymbolDetail(),
       .events = kEvents,
