@@ -39,3 +39,29 @@ target_link_libraries(monitor_symbol_workbench_view_test
 
 add_test(NAME monitor_symbol_workbench_view_test
          COMMAND monitor_symbol_workbench_view_test)
+
+add_executable(monitor_market_data_store_test
+    market_data_store_test.cpp
+)
+
+target_link_libraries(monitor_market_data_store_test
+    PRIVATE
+        aquila_monitor
+        GTest::gtest_main
+)
+
+add_test(NAME monitor_market_data_store_test
+         COMMAND monitor_market_data_store_test)
+
+add_executable(monitor_spsc_queue_test
+    monitor_spsc_queue_test.cpp
+)
+
+target_link_libraries(monitor_spsc_queue_test
+    PRIVATE
+        aquila_monitor
+        GTest::gtest_main
+)
+
+add_test(NAME monitor_spsc_queue_test
+         COMMAND monitor_spsc_queue_test)
