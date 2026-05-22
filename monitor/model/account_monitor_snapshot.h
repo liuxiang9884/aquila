@@ -32,10 +32,28 @@ struct SymbolSummary {
   SymbolHealth health{SymbolHealth::kOk};
 };
 
+struct MarketDataRow {
+  std::string_view exchange;
+  std::string_view exchange_symbol;
+  std::string_view market_data_id;
+  bool has_data{true};
+  double last_price{0.0};
+  double bid_price{0.0};
+  double bid_volume{0.0};
+  double ask_price{0.0};
+  double ask_volume{0.0};
+  double volume{0.0};
+  double turnover{0.0};
+  std::string_view updated_time;
+};
+
 struct MonitorOrder {
+  std::string_view exchange;
+  std::string_view exchange_symbol;
   OrderSource source{OrderSource::kUnknown};
   std::string_view source_label;
   OrderSide side{OrderSide::kBuy};
+  int side_value{1};
   double quantity{0.0};
   double left_quantity{0.0};
   double filled_quantity{0.0};
@@ -46,6 +64,7 @@ struct MonitorOrder {
   std::uint64_t exchange_order_id{0};
   std::uint64_t local_order_id{0};
   std::string_view text;
+  std::string_view updated_time;
   int age_seconds{0};
 };
 
@@ -74,6 +93,7 @@ struct SourceMix {
 
 struct SymbolDetail {
   std::string_view symbol;
+  std::span<const MarketDataRow> market_data;
   std::span<const MonitorOrder> orders;
   PositionPnl position;
   SourceMix source_mix;

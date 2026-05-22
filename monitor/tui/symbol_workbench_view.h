@@ -18,6 +18,35 @@ inline std::string SideText(OrderSide side) {
   return side == OrderSide::kBuy ? "buy" : "sell";
 }
 
+inline std::string SideValueText(int side_value) {
+  return fmt::format("{:+d}", side_value);
+}
+
+inline std::string IdText(std::uint64_t id) {
+  if (id == 0) {
+    return "not available";
+  }
+  return fmt::format("{}", id);
+}
+
+inline std::string PriceText(double value) {
+  if (value == 0.0) {
+    return "not available";
+  }
+  return fmt::format("{:.2f}", value);
+}
+
+inline std::string MarketNumberText(const MarketDataRow& row, double value,
+                                    int precision) {
+  if (!row.has_data) {
+    return "not available";
+  }
+  if (precision == 1) {
+    return fmt::format("{:.1f}", value);
+  }
+  return fmt::format("{:.2f}", value);
+}
+
 inline ftxui::Color PnlColor(double value) {
   if (value > 0.0) {
     return ftxui::Color::Green;
@@ -47,11 +76,10 @@ inline ftxui::Element BoxTitle(std::string text) {
 }
 
 inline ftxui::Element SymbolRow(const SymbolSummary& summary) {
-  auto row = ftxui::text(fmt::format("{:<12} {:>7.1f} {:>4} {:>8.1f} {:>1}",
-                                     summary.symbol, summary.net_position,
-                                     summary.open_order_count,
-                                     summary.total_pnl,
-                                     HealthText(summary.health)));
+  auto row = ftxui::text(
+      fmt::format("{:<12} {:>7.1f} {:>4} {:>8.1f} {:>1}", summary.symbol,
+                  summary.net_position, summary.open_order_count,
+                  summary.total_pnl, HealthText(summary.health)));
   if (summary.health == SymbolHealth::kSelected) {
     return row | ftxui::inverted;
   }
@@ -69,25 +97,45 @@ inline ftxui::Element SymbolRow(const SymbolSummary& summary) {
 
 inline ftxui::Element OrderRow(const MonitorOrder& order, bool selected) {
   auto row = ftxui::text(fmt::format(
-      "{:<10} {:<4} {:>5.1f} {:>5.1f} {:>5.1f} {:>7.2f} {:>7.2f} {:>7.2f} "
-      "{:<8}",
-      order.source_label, SideText(order.side), order.quantity,
-      order.left_quantity, order.filled_quantity, order.price,
-      order.average_fill_price, order.fee, order.status));
+      "{:<9} {:<11} {:<12} {:<18} {:<5} {:>9.2f} {:>9.1f} {:>8.1f} "
+      "{:>8.1f} {:>13} {:>8.2f} {:<8} {:<10} {:<12}",
+      order.exchange, order.exchange_symbol, IdText(order.exchange_order_id),
+      IdText(order.local_order_id), SideValueText(order.side_value),
+      order.price, order.quantity, order.left_quantity, order.filled_quantity,
+      PriceText(order.average_fill_price), order.fee, order.status,
+      order.source_label, order.updated_time));
   if (selected) {
     return row | ftxui::inverted;
   }
-  if (order.side == OrderSide::kBuy) {
+  if (order.side_value >= 0) {
     return row | ftxui::color(ftxui::Color::Green);
   }
   return row | ftxui::color(ftxui::Color::Red);
 }
 
+inline ftxui::Element MarketDataRowElement(const MarketDataRow& row) {
+  auto line = ftxui::text(fmt::format(
+      "{:<9} {:<11} {:<16} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} "
+      "{:>12} {:<12}",
+      row.exchange, row.exchange_symbol, row.market_data_id,
+      MarketNumberText(row, row.last_price, 2),
+      MarketNumberText(row, row.bid_price, 2),
+      MarketNumberText(row, row.bid_volume, 1),
+      MarketNumberText(row, row.ask_price, 2),
+      MarketNumberText(row, row.ask_volume, 1),
+      MarketNumberText(row, row.volume, 1),
+      MarketNumberText(row, row.turnover, 2), row.updated_time));
+  if (!row.has_data) {
+    return line | ftxui::color(ftxui::Color::GrayLight);
+  }
+  return line;
+}
+
 inline ftxui::Element SymbolPane(const AccountMonitorSnapshot& snapshot) {
   ftxui::Elements rows;
   rows.push_back(ftxui::hbox({
-      BoxTitle(fmt::format("SYMBOLS active {} / all {}", snapshot.symbols.size(),
-                           snapshot.symbols.size())),
+      BoxTitle(fmt::format("SYMBOLS active {} / all {}",
+                           snapshot.symbols.size(), snapshot.symbols.size())),
       ftxui::filler(),
       BoxTitle("risk sort"),
   }));
@@ -103,7 +151,8 @@ inline ftxui::Element SymbolPane(const AccountMonitorSnapshot& snapshot) {
                  ftxui::color(ftxui::Color::GrayLight));
   rows.push_back(ftxui::text("Filter: active only | search: empty") |
                  ftxui::color(ftxui::Color::GrayLight));
-  return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 42);
+  return ftxui::vbox(std::move(rows)) |
+         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 42);
 }
 
 inline ftxui::Element OrdersPane(const SymbolDetail& detail) {
@@ -114,81 +163,116 @@ inline ftxui::Element OrdersPane(const SymbolDetail& detail) {
       BoxTitle(fmt::format("{} rows / source: all", detail.orders.size())),
   }));
   rows.push_back(ftxui::separator());
-  rows.push_back(ftxui::text(
-                     "source     side   qty  left  fill      px     avg     fee "
-                     "status") |
-                 ftxui::color(ftxui::Color::GrayLight));
+  rows.push_back(
+      ftxui::text("exchange  symbol      exchange_id  local_id           side"
+                  "      price  quantity     left   filled average_price"
+                  "      fee status   source     updated") |
+      ftxui::color(ftxui::Color::GrayLight));
   for (std::size_t i = 0; i < detail.orders.size(); ++i) {
     rows.push_back(OrderRow(detail.orders[i], i == 1));
   }
   rows.push_back(ftxui::filler());
-  rows.push_back(ftxui::separator());
-  rows.push_back(BoxTitle("SELECTED ORDER"));
-  if (detail.orders.size() > 1) {
-    const MonitorOrder& order = detail.orders[1];
-    rows.push_back(ftxui::hbox({
-        ftxui::vbox({
-            ftxui::text(fmt::format("source: {}", order.source_label)),
-            ftxui::text(fmt::format("exchange id: {}", order.exchange_order_id)),
-            ftxui::text(fmt::format("text: {}", order.text.empty() ? "empty"
-                                                                   : order.text)),
-            ftxui::text(fmt::format("age: {}s", order.age_seconds)),
-        }) | ftxui::flex,
-        ftxui::separator(),
-        ftxui::vbox({
-            ftxui::text(fmt::format("side: {}", SideText(order.side))),
-            ftxui::text(fmt::format("qty: {:.1f} left: {:.1f}", order.quantity,
-                                    order.left_quantity)),
-            ftxui::text(fmt::format("price: {:.2f}", order.price)),
-            ftxui::text(fmt::format("status: {}", order.status)),
-        }) | ftxui::flex,
-    }) | ftxui::border);
-  }
   return ftxui::vbox(std::move(rows)) | ftxui::flex;
+}
+
+inline ftxui::Element MarketDataPane(const SymbolDetail& detail) {
+  ftxui::Elements rows;
+  rows.push_back(ftxui::hbox({
+      BoxTitle(fmt::format("MARKET BY EXCHANGE: {}", detail.symbol)),
+      ftxui::filler(),
+      BoxTitle(
+          fmt::format("{} rows / placeholder data", detail.market_data.size())),
+  }));
+  rows.push_back(ftxui::separator());
+  rows.push_back(
+      ftxui::text("exchange  symbol      market_data_id   last_price"
+                  "  bid_price bid_volume  ask_price ask_volume     volume"
+                  "     turnover updated") |
+      ftxui::color(ftxui::Color::GrayLight));
+  for (const MarketDataRow& row : detail.market_data) {
+    rows.push_back(MarketDataRowElement(row));
+  }
+  return ftxui::vbox(std::move(rows));
+}
+
+inline ftxui::Element MiddlePane(const SymbolDetail& detail) {
+  return ftxui::vbox({
+             MarketDataPane(detail),
+             ftxui::separator(),
+             OrdersPane(detail) | ftxui::flex,
+         }) |
+         ftxui::flex;
 }
 
 inline ftxui::Element PositionPane(const SymbolDetail& detail) {
   const PositionPnl& pnl = detail.position;
   const SourceMix& mix = detail.source_mix;
-  return ftxui::vbox({
-             BoxTitle(fmt::format("POSITION / PNL: {}", detail.symbol)),
-             ftxui::vbox({
-                 ftxui::text(fmt::format("net pos       {:+.1f}", pnl.net_position)) |
-                     ftxui::bold | ftxui::color(PnlColor(pnl.net_position)),
-                 ftxui::text(fmt::format("open orders   {}", detail.orders.size())),
-                 ftxui::text(fmt::format("avg entry     {:.2f}", pnl.average_entry)),
-                 ftxui::text(fmt::format("mark          {:.2f}", pnl.mark_price)),
-                 ftxui::text(fmt::format("notional      {:.2f}", pnl.notional)),
-                 ftxui::text(fmt::format("exposure      {}", pnl.exposure)),
-             }) | ftxui::border,
-             ftxui::vbox({
-                 ftxui::text(fmt::format("realized      {:+.2f}", pnl.realized_pnl)) |
-                     ftxui::color(PnlColor(pnl.realized_pnl)),
-                 ftxui::text(fmt::format("unrealized    {:+.2f}", pnl.unrealized_pnl)) |
-                     ftxui::color(PnlColor(pnl.unrealized_pnl)),
-                 ftxui::text(fmt::format("fees          {:+.2f}", pnl.fees)) |
-                     ftxui::color(PnlColor(pnl.fees)),
-                 ftxui::text(fmt::format("total         {:+.2f}", pnl.total_pnl)) |
-                     ftxui::bold | ftxui::color(PnlColor(pnl.total_pnl)),
-             }) | ftxui::border,
-             BoxTitle("SOURCE MIX"),
-             ftxui::vbox({
-                 ftxui::text(fmt::format("Aquila        {} orders", mix.aquila)),
-                 ftxui::text(fmt::format("Manual        {} orders", mix.manual)),
-                 ftxui::text(fmt::format("External      {} orders", mix.external)),
-                 ftxui::text(fmt::format("Unknown       {} orders", mix.unknown)),
-             }) | ftxui::border,
-             BoxTitle("HEALTH"),
-             ftxui::vbox({
-                 ftxui::text(fmt::format("ws updates    {}s ago",
-                                         pnl.ws_update_age_seconds)),
-                 ftxui::text(fmt::format("rest snapshot {}s ago",
-                                         pnl.rest_snapshot_age_seconds)),
-                 ftxui::text(fmt::format("ledger        {}", pnl.ledger_state)),
-                 ftxui::text(fmt::format("drift         {}", pnl.drift_state)),
-             }) | ftxui::border,
-         }) |
-         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 42);
+  ftxui::Elements rows;
+  rows.push_back(BoxTitle(fmt::format("POSITION / PNL: {}", detail.symbol)));
+  rows.push_back(
+      ftxui::vbox({
+          ftxui::text(fmt::format("net position  {:+.1f}", pnl.net_position)) |
+              ftxui::bold | ftxui::color(PnlColor(pnl.net_position)),
+          ftxui::text(fmt::format("open orders   {}", detail.orders.size())),
+          ftxui::text(fmt::format("average entry {:.2f}", pnl.average_entry)),
+          ftxui::text(fmt::format("mark price    {:.2f}", pnl.mark_price)),
+          ftxui::text(fmt::format("notional      {:.2f}", pnl.notional)),
+          ftxui::text(fmt::format("exposure      {}", pnl.exposure)),
+      }) |
+      ftxui::border);
+  rows.push_back(
+      ftxui::vbox({
+          ftxui::text(fmt::format("realized pnl  {:+.2f}", pnl.realized_pnl)) |
+              ftxui::color(PnlColor(pnl.realized_pnl)),
+          ftxui::text(
+              fmt::format("unrealized pnl {:+.2f}", pnl.unrealized_pnl)) |
+              ftxui::color(PnlColor(pnl.unrealized_pnl)),
+          ftxui::text(fmt::format("fees          {:+.2f}", pnl.fees)) |
+              ftxui::color(PnlColor(pnl.fees)),
+          ftxui::text(fmt::format("total pnl     {:+.2f}", pnl.total_pnl)) |
+              ftxui::bold | ftxui::color(PnlColor(pnl.total_pnl)),
+      }) |
+      ftxui::border);
+  rows.push_back(BoxTitle("SOURCE MIX / HEALTH"));
+  rows.push_back(
+      ftxui::vbox({
+          ftxui::text(fmt::format("Aquila orders {}", mix.aquila)),
+          ftxui::text(fmt::format("Manual orders {}", mix.manual)),
+          ftxui::text(fmt::format("External orders {}", mix.external)),
+          ftxui::text(fmt::format("Unknown orders {}", mix.unknown)),
+          ftxui::separator(),
+          ftxui::text(
+              fmt::format("ws updates    {}s ago", pnl.ws_update_age_seconds)),
+          ftxui::text(fmt::format("rest snapshot {}s ago",
+                                  pnl.rest_snapshot_age_seconds)),
+          ftxui::text(fmt::format("ledger        {}", pnl.ledger_state)),
+          ftxui::text(fmt::format("drift         {}", pnl.drift_state)),
+      }) |
+      ftxui::border);
+  rows.push_back(BoxTitle("SELECTED ORDER"));
+  if (detail.orders.size() > 1) {
+    const MonitorOrder& order = detail.orders[1];
+    rows.push_back(
+        ftxui::vbox({
+            ftxui::text(fmt::format("exchange      {}", order.exchange)),
+            ftxui::text(fmt::format("symbol        {}", order.exchange_symbol)),
+            ftxui::text(fmt::format("exchange_id   {}",
+                                    IdText(order.exchange_order_id))),
+            ftxui::text(
+                fmt::format("local_id      {}", IdText(order.local_order_id))),
+            ftxui::text(fmt::format("side          {}",
+                                    SideValueText(order.side_value))),
+            ftxui::text(fmt::format("quantity/left {:.1f}/{:.1f}",
+                                    order.quantity, order.left_quantity)),
+            ftxui::text(fmt::format("price         {:.2f}", order.price)),
+            ftxui::text(fmt::format("updated       {}", order.updated_time)),
+            ftxui::text(fmt::format("source        {}", order.source_label)),
+            ftxui::text(fmt::format("status        {}", order.status)),
+        }) |
+        ftxui::border);
+  }
+  return ftxui::vbox(std::move(rows)) |
+         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 52);
 }
 
 inline ftxui::Element EventsPane(const AccountMonitorSnapshot& snapshot) {
@@ -221,14 +305,15 @@ inline ftxui::Element RenderSymbolWorkbench(
                  ftxui::text("  "),
                  ftxui::text(std::string(snapshot.mode)) |
                      ftxui::color(ftxui::Color::Yellow),
-                 ftxui::text("  q/esc quit | / search | r refresh | f active/all") |
+                 ftxui::text(
+                     "  q/esc quit | / search | r refresh | f active/all") |
                      ftxui::color(ftxui::Color::GrayLight),
              }),
              ftxui::separator(),
              ftxui::hbox({
                  symbol_workbench_view_detail::SymbolPane(snapshot),
                  ftxui::separator(),
-                 symbol_workbench_view_detail::OrdersPane(*detail),
+                 symbol_workbench_view_detail::MiddlePane(*detail),
                  ftxui::separator(),
                  symbol_workbench_view_detail::PositionPane(*detail),
              }) | ftxui::flex,
