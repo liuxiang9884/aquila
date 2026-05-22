@@ -10,6 +10,7 @@
 #include <ftxui/screen/screen.hpp>
 
 #include "monitor/demo/symbol_workbench_demo_data.h"
+#include "monitor/tui/quit_events.h"
 #include "monitor/tui/symbol_workbench_view.h"
 
 namespace {
@@ -37,8 +38,7 @@ int RunInteractive(const aquila::monitor::AccountMonitorSnapshot& snapshot) {
     return aquila::monitor::RenderSymbolWorkbench(snapshot);
   });
   component = ftxui::CatchEvent(component, [&](ftxui::Event event) {
-    if (event == ftxui::Event::Character('q') ||
-        event == ftxui::Event::Escape) {
+    if (aquila::monitor::IsQuitEvent(event)) {
       screen.ExitLoopClosure()();
       return true;
     }

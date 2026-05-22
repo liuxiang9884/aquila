@@ -221,7 +221,7 @@ inline ftxui::Element RenderSymbolWorkbench(
                  ftxui::text("  "),
                  ftxui::text(std::string(snapshot.mode)) |
                      ftxui::color(ftxui::Color::Yellow),
-                 ftxui::text("  q quit | / search | r refresh | f active/all") |
+                 ftxui::text("  q/esc quit | / search | r refresh | f active/all") |
                      ftxui::color(ftxui::Color::GrayLight),
              }),
              ftxui::separator(),
