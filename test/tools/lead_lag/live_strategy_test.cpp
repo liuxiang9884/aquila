@@ -1,6 +1,9 @@
 #include "tools/lead_lag/live_strategy.h"
 
+#include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -23,6 +26,44 @@ struct TestStrategyContext {
 
   bool RetireFinishedOrder(std::uint64_t) noexcept {
     return false;
+  }
+};
+
+struct CapturedOrder {
+  aquila::Exchange exchange{aquila::Exchange::kGate};
+  std::int32_t symbol_id{0};
+  std::string symbol;
+  aquila::OrderSide side{aquila::OrderSide::kBuy};
+  aquila::OrderType order_type{aquila::OrderType::kLimit};
+  aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
+  std::int64_t quantity{0};
+  std::string price_text;
+  bool reduce_only{false};
+};
+
+struct SmokeStrategyContext {
+  aquila::core::OrderPlaceStatus place_status{
+      aquila::core::OrderPlaceStatus::kOk};
+  std::uint64_t next_local_order_id{100};
+  std::vector<CapturedOrder> orders;
+
+  aquila::core::OrderPlaceResult PlaceOrder(
+      aquila::core::OrderCreateRequest request) {
+    orders.push_back(CapturedOrder{
+        .exchange = request.exchange,
+        .symbol_id = request.symbol_id,
+        .symbol = std::string(request.symbol),
+        .side = request.side,
+        .order_type = request.order_type,
+        .time_in_force = request.time_in_force,
+        .quantity = request.quantity,
+        .price_text = std::string(request.price_text),
+        .reduce_only = request.reduce_only,
+    });
+    if (place_status != aquila::core::OrderPlaceStatus::kOk) {
+      return {.status = place_status, .local_order_id = 0};
+    }
+    return {.status = place_status, .local_order_id = next_local_order_id++};
   }
 };
 
@@ -129,6 +170,25 @@ TEST(LeadLagLiveStrategyTest, ExecuteSelectsLiveOrdersWithLiveMode) {
   EXPECT_EQ(result.mode, RunMode::kLiveOrders);
 }
 
+TEST(LeadLagLiveStrategyTest, SmokeOpenCloseRequiresExecute) {
+  const RunModeResult result =
+      ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+                     /*execute=*/false, /*smoke_open_close=*/true);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("--smoke-open-close requires --execute"),
+            std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest, SmokeOpenCloseSelectsDedicatedRunMode) {
+  const RunModeResult result =
+      ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
+                     /*execute=*/true, /*smoke_open_close=*/true);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.mode, RunMode::kLiveOpenCloseSmoke);
+}
+
 TEST(LeadLagLiveStrategyTest, ExecuteTakesPriorityOverConnectDataWithLiveMode) {
   const RunModeResult result =
       ResolveRunMode(aquila::config::StrategyMode::kLive, /*connect_data=*/true,
@@ -142,6 +202,8 @@ TEST(LeadLagLiveStrategyTest, RunModeNameReturnsStableSummaryText) {
   EXPECT_STREQ(RunModeName(RunMode::kValidateOnly), "validate_only");
   EXPECT_STREQ(RunModeName(RunMode::kSignalOnly), "signal_only");
   EXPECT_STREQ(RunModeName(RunMode::kLiveOrders), "live_orders");
+  EXPECT_STREQ(RunModeName(RunMode::kLiveOpenCloseSmoke),
+               "live_open_close_smoke");
 }
 
 TEST(LeadLagLiveStrategyTest, RecoveryStateNameReturnsStableSummaryText) {
@@ -238,6 +300,146 @@ TEST(LeadLagLiveStrategyTest,
 
   EXPECT_EQ(ResolveLiveOrdersExitCode(/*runtime_exit_code=*/0, stats), 0);
   EXPECT_EQ(ResolveLiveOrdersExitCode(/*runtime_exit_code=*/7, stats), 7);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeOpenCloseSubmitsAggressiveOpenThenReduceOnlyAggressiveClose) {
+  LiveOpenCloseSmokeStats stats;
+  LiveOpenCloseSmokeStrategy strategy{
+      MakeLeadLagConfig(),
+      LiveOpenCloseSmokeOptions{
+          .symbol = "BTC_USDT",
+          .aggressive_price_bps = 100.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 99.0,
+          .ask_price = 100.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(context.orders[0].symbol_id, 3);
+  EXPECT_EQ(context.orders[0].symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(context.orders[0].side, aquila::OrderSide::kBuy);
+  EXPECT_EQ(context.orders[0].time_in_force,
+            aquila::TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(context.orders[0].quantity, 10);
+  EXPECT_EQ(context.orders[0].price_text, "101.0");
+  EXPECT_FALSE(context.orders[0].reduce_only);
+  EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kOpenPending);
+
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kFilled,
+          .local_order_id = stats.open_local_order_id,
+          .cumulative_filled_quantity = 10,
+      },
+      context);
+
+  EXPECT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kWaitingCloseTicker);
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 99.0,
+          .ask_price = 100.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 2U);
+  EXPECT_EQ(context.orders[1].side, aquila::OrderSide::kSell);
+  EXPECT_EQ(context.orders[1].time_in_force,
+            aquila::TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(context.orders[1].quantity, 10);
+  EXPECT_EQ(context.orders[1].price_text, "98.0");
+  EXPECT_TRUE(context.orders[1].reduce_only);
+  EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kClosePending);
+
+  strategy.OnOrderFeedback(
+      aquila::OrderFeedbackEvent{
+          .kind = aquila::OrderFeedbackKind::kFilled,
+          .local_order_id = stats.close_local_order_id,
+          .cumulative_filled_quantity = 10,
+      },
+      context);
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kDone);
+  EXPECT_TRUE(stats.completed);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeOpenCloseUsesMinQuantityWhenTargetNotionalIsBelowMinimum) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].execute.open_notional = 10.0;
+  LiveOpenCloseSmokeStats stats;
+  LiveOpenCloseSmokeStrategy strategy{
+      std::move(config),
+      LiveOpenCloseSmokeOptions{
+          .symbol = "BTC_USDT",
+          .aggressive_price_bps = 0.0,
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 39.0,
+          .ask_price = 40.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].quantity, 1);
+  EXPECT_TRUE(stats.used_min_quantity);
+  EXPECT_DOUBLE_EQ(stats.target_notional, 10.0);
+  EXPECT_DOUBLE_EQ(stats.estimated_open_notional, 40.0);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeOpenCloseRejectsMinimumQuantityAboveNotionalCap) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].execute.open_notional = 10.0;
+  LiveOpenCloseSmokeStats stats;
+  LiveOpenCloseSmokeStrategy strategy{
+      std::move(config),
+      LiveOpenCloseSmokeOptions{
+          .symbol = "BTC_USDT",
+          .aggressive_price_bps = 0.0,
+          .max_notional = 30.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 39.0,
+          .ask_price = 40.0,
+      },
+      context);
+
+  EXPECT_TRUE(context.orders.empty());
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kError);
+  EXPECT_NE(stats.error.find("minimum notional exceeds cap"), std::string::npos);
 }
 
 }  // namespace

@@ -2,8 +2,12 @@
 #define AQUILA_TOOLS_LEAD_LAG_LIVE_STRATEGY_H_
 
 #include <cstdint>
+#include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
+
+#include <fmt/format.h>
 
 #include "core/config/strategy_config.h"
 #include "core/market_data/types.h"
@@ -21,6 +25,7 @@ enum class RunMode : std::uint8_t {
   kValidateOnly,
   kSignalOnly,
   kLiveOrders,
+  kLiveOpenCloseSmoke,
 };
 
 struct RunModeResult {
@@ -43,6 +48,38 @@ struct LiveOrdersStrategyStats {
   std::uint64_t order_feedbacks{0};
   bool continuity_lost_stop_requested{false};
   RecoveryDiagnostics recovery;
+};
+
+enum class LiveOpenCloseSmokeState : std::uint8_t {
+  kWaitingTicker,
+  kOpenPending,
+  kWaitingCloseTicker,
+  kClosePending,
+  kDone,
+  kError,
+};
+
+struct LiveOpenCloseSmokeOptions {
+  std::string symbol;
+  double aggressive_price_bps{100.0};
+  double max_notional{100.0};
+};
+
+struct LiveOpenCloseSmokeStats {
+  std::uint64_t book_tickers{0};
+  std::uint64_t order_responses{0};
+  std::uint64_t order_feedbacks{0};
+  LiveOpenCloseSmokeState state{LiveOpenCloseSmokeState::kWaitingTicker};
+  std::uint64_t open_local_order_id{0};
+  std::uint64_t close_local_order_id{0};
+  std::int64_t open_quantity{0};
+  std::int64_t close_quantity{0};
+  double target_notional{0.0};
+  double estimated_open_notional{0.0};
+  bool used_min_quantity{false};
+  bool completed{false};
+  bool continuity_lost_stop_requested{false};
+  std::string error;
 };
 
 class LiveOrdersStrategy {
@@ -108,6 +145,354 @@ class LiveOrdersStrategy {
   LiveOrdersStrategyStats* stats_{&owned_stats_};
 };
 
+class LiveOpenCloseSmokeStrategy {
+ public:
+  LiveOpenCloseSmokeStrategy(strategy::leadlag::Config config,
+                             LiveOpenCloseSmokeOptions options,
+                             LiveOpenCloseSmokeStats* stats)
+      : config_(std::move(config)),
+        options_(std::move(options)),
+        stats_(stats == nullptr ? &owned_stats_ : stats) {
+    pair_ = FindSmokePair();
+    if (pair_ == nullptr) {
+      SetError("smoke symbol not found in lead_lag config");
+      return;
+    }
+    ValidateOptions();
+  }
+
+  template <typename ContextT>
+  void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
+    ++stats_->book_tickers;
+    if (pair_ == nullptr) {
+      return;
+    }
+    if (ticker.exchange != Exchange::kGate ||
+        ticker.symbol_id != pair_->symbol_id) {
+      return;
+    }
+    if (stats_->state == LiveOpenCloseSmokeState::kWaitingTicker) {
+      SubmitOpen(ticker, context);
+      return;
+    }
+    if (stats_->state == LiveOpenCloseSmokeState::kWaitingCloseTicker) {
+      SubmitClose(ticker, context);
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderResponse(const core::OrderResponseEvent& event,
+                       ContextT&) noexcept {
+    ++stats_->order_responses;
+    if ((event.local_order_id == stats_->open_local_order_id ||
+         event.local_order_id == stats_->close_local_order_id) &&
+        event.kind == core::OrderResponseKind::kRejected) {
+      SetError("smoke order rejected by order session");
+    }
+  }
+
+  template <typename ContextT>
+  void OnOrderFeedback(const OrderFeedbackEvent& event,
+                       ContextT& context) noexcept {
+    ++stats_->order_feedbacks;
+    if (event.kind == OrderFeedbackKind::kContinuityLost) {
+      stats_->continuity_lost_stop_requested = true;
+      SetError("feedback continuity lost");
+      return;
+    }
+    if (event.local_order_id == stats_->open_local_order_id) {
+      OnOpenFeedback(event, context);
+      return;
+    }
+    if (event.local_order_id == stats_->close_local_order_id) {
+      OnCloseFeedback(event);
+    }
+  }
+
+  [[nodiscard]] bool ShouldStop() const noexcept {
+    return stats_->state == LiveOpenCloseSmokeState::kDone ||
+           stats_->state == LiveOpenCloseSmokeState::kError ||
+           stats_->continuity_lost_stop_requested;
+  }
+
+  [[nodiscard]] const LiveOpenCloseSmokeStats& stats() const noexcept {
+    return *stats_;
+  }
+
+ private:
+  static constexpr double kEpsilon = 1e-9;
+
+  const strategy::leadlag::PairConfig* FindSmokePair() const noexcept {
+    if (options_.symbol.empty()) {
+      return config_.pairs.empty() ? nullptr : &config_.pairs.front();
+    }
+    for (const strategy::leadlag::PairConfig& pair : config_.pairs) {
+      if (pair.symbol == options_.symbol ||
+          pair.lag_instrument.exchange_symbol == options_.symbol) {
+        return &pair;
+      }
+    }
+    return nullptr;
+  }
+
+  void ValidateOptions() noexcept {
+    if (!std::isfinite(options_.aggressive_price_bps) ||
+        options_.aggressive_price_bps < 0.0) {
+      SetError("smoke aggressive price bps must be non-negative");
+      return;
+    }
+    if (!std::isfinite(options_.max_notional) ||
+        options_.max_notional <= 0.0) {
+      SetError("smoke max notional must be positive");
+    }
+  }
+
+  template <typename ContextT>
+  void SubmitOpen(const BookTicker& ticker, ContextT& context) noexcept {
+    const std::int64_t quantity = ComputeOpenQuantity(ticker.ask_price);
+    if (quantity <= 0) {
+      return;
+    }
+    const double order_price = RoundedPrice(
+        ticker.ask_price * (1.0 + options_.aggressive_price_bps / 10000.0),
+        OrderSide::kBuy);
+    if (order_price <= 0.0) {
+      SetError("invalid smoke open price");
+      return;
+    }
+
+    open_price_text_ =
+        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    const std::string_view symbol = GateSymbol();
+    const core::OrderPlaceResult placed =
+        context.PlaceOrder(core::OrderCreateRequest{
+            .exchange = Exchange::kGate,
+            .symbol_id = pair_->symbol_id,
+            .symbol = symbol,
+            .side = OrderSide::kBuy,
+            .order_type = OrderType::kLimit,
+            .time_in_force = TimeInForce::kImmediateOrCancel,
+            .quantity = quantity,
+            .price_text = open_price_text_,
+            .reduce_only = false,
+        });
+    if (placed.status != core::OrderPlaceStatus::kOk ||
+        placed.local_order_id == 0) {
+      SetError("failed to place smoke open order");
+      return;
+    }
+
+    stats_->open_local_order_id = placed.local_order_id;
+    stats_->open_quantity = quantity;
+    stats_->state = LiveOpenCloseSmokeState::kOpenPending;
+  }
+
+  template <typename ContextT>
+  void OnOpenFeedback(const OrderFeedbackEvent& event,
+                      ContextT& context) noexcept {
+    switch (event.kind) {
+      case OrderFeedbackKind::kFilled:
+        PrepareClose(event.cumulative_filled_quantity);
+        return;
+      case OrderFeedbackKind::kCancelled:
+        if (event.cumulative_filled_quantity > 0) {
+          PrepareClose(event.cumulative_filled_quantity);
+          return;
+        }
+        SetError("smoke open order did not fill");
+        return;
+      case OrderFeedbackKind::kRejected:
+        SetError("smoke open order rejected");
+        return;
+      case OrderFeedbackKind::kAccepted:
+      case OrderFeedbackKind::kPartialFilled:
+      case OrderFeedbackKind::kContinuityLost:
+        return;
+    }
+  }
+
+  void PrepareClose(std::int64_t filled_quantity) noexcept {
+    if (stats_->state == LiveOpenCloseSmokeState::kClosePending ||
+        stats_->state == LiveOpenCloseSmokeState::kDone) {
+      return;
+    }
+    if (filled_quantity <= 0) {
+      SetError("invalid smoke open filled quantity");
+      return;
+    }
+    pending_close_quantity_ = filled_quantity;
+    stats_->close_quantity = filled_quantity;
+    stats_->state = LiveOpenCloseSmokeState::kWaitingCloseTicker;
+  }
+
+  template <typename ContextT>
+  void SubmitClose(const BookTicker& ticker, ContextT& context) noexcept {
+    if (pending_close_quantity_ <= 0) {
+      SetError("invalid smoke close quantity");
+      return;
+    }
+    const double order_price = RoundedPrice(
+        ticker.bid_price * (1.0 - options_.aggressive_price_bps / 10000.0),
+        OrderSide::kSell);
+    if (order_price <= 0.0) {
+      SetError("invalid smoke close price");
+      return;
+    }
+    close_price_text_ =
+        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    const core::OrderPlaceResult placed =
+        context.PlaceOrder(core::OrderCreateRequest{
+            .exchange = Exchange::kGate,
+            .symbol_id = pair_->symbol_id,
+            .symbol = GateSymbol(),
+            .side = OrderSide::kSell,
+            .order_type = OrderType::kLimit,
+            .time_in_force = TimeInForce::kImmediateOrCancel,
+            .quantity = pending_close_quantity_,
+            .price_text = close_price_text_,
+            .reduce_only = true,
+        });
+    if (placed.status != core::OrderPlaceStatus::kOk ||
+        placed.local_order_id == 0) {
+      SetError("failed to place smoke close order");
+      return;
+    }
+    stats_->close_local_order_id = placed.local_order_id;
+    stats_->state = LiveOpenCloseSmokeState::kClosePending;
+  }
+
+  void OnCloseFeedback(const OrderFeedbackEvent& event) noexcept {
+    switch (event.kind) {
+      case OrderFeedbackKind::kFilled:
+        stats_->completed = true;
+        stats_->state = LiveOpenCloseSmokeState::kDone;
+        return;
+      case OrderFeedbackKind::kCancelled:
+        if (event.cumulative_filled_quantity >= stats_->close_quantity) {
+          stats_->completed = true;
+          stats_->state = LiveOpenCloseSmokeState::kDone;
+          return;
+        }
+        SetError("smoke close order did not fill");
+        return;
+      case OrderFeedbackKind::kRejected:
+        SetError("smoke close order rejected");
+        return;
+      case OrderFeedbackKind::kAccepted:
+      case OrderFeedbackKind::kPartialFilled:
+      case OrderFeedbackKind::kContinuityLost:
+        return;
+    }
+  }
+
+  [[nodiscard]] std::int64_t ComputeOpenQuantity(double price) noexcept {
+    if (pair_ == nullptr || !std::isfinite(price) || price <= 0.0) {
+      SetError("invalid smoke market price");
+      return 0;
+    }
+    const strategy::leadlag::InstrumentMetadata& instrument =
+        pair_->lag_instrument;
+    if (instrument.notional_multiplier <= 0.0 ||
+        instrument.quantity_step <= 0.0 ||
+        pair_->execute.open_notional <= 0.0) {
+      SetError("invalid smoke instrument sizing metadata");
+      return 0;
+    }
+
+    stats_->target_notional = pair_->execute.open_notional;
+    const double raw_quantity =
+        pair_->execute.open_notional /
+        (price * instrument.notional_multiplier);
+    double quantity = FloorToStep(raw_quantity, instrument.quantity_step);
+    if (instrument.min_quantity > 0.0 && quantity < instrument.min_quantity) {
+      quantity = instrument.min_quantity;
+      stats_->used_min_quantity = true;
+    }
+    if (instrument.max_quantity > 0.0 && quantity > instrument.max_quantity) {
+      quantity = FloorToStep(instrument.max_quantity, instrument.quantity_step);
+    }
+
+    const double estimated_notional =
+        quantity * price * instrument.notional_multiplier;
+    stats_->estimated_open_notional = estimated_notional;
+    if (stats_->used_min_quantity &&
+        estimated_notional > options_.max_notional + kEpsilon) {
+      SetError("minimum notional exceeds cap");
+      return 0;
+    }
+    if (!IsIntegerQuantity(quantity)) {
+      SetError("decimal smoke quantity is not supported in this version");
+      return 0;
+    }
+    if (quantity <= 0.0 ||
+        quantity >
+            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+      SetError("invalid smoke quantity");
+      return 0;
+    }
+    return static_cast<std::int64_t>(quantity);
+  }
+
+  [[nodiscard]] double RoundedPrice(double price, OrderSide side) const noexcept {
+    const strategy::leadlag::InstrumentMetadata& instrument =
+        pair_->lag_instrument;
+    if (!std::isfinite(price) || price <= 0.0 ||
+        instrument.price_tick <= 0.0) {
+      return 0.0;
+    }
+    const double scaled = price / instrument.price_tick;
+    const double units = side == OrderSide::kBuy
+                             ? std::ceil(scaled - kEpsilon)
+                             : std::floor(scaled + kEpsilon);
+    const double rounded = units * instrument.price_tick;
+    return std::isfinite(rounded) && rounded > 0.0 ? rounded : 0.0;
+  }
+
+  [[nodiscard]] static double FloorToStep(double quantity,
+                                          double step) noexcept {
+    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+      return 0.0;
+    }
+    return std::floor(quantity / step + kEpsilon) * step;
+  }
+
+  [[nodiscard]] static bool IsIntegerQuantity(double quantity) noexcept {
+    return std::isfinite(quantity) &&
+           std::abs(quantity - std::round(quantity)) <= kEpsilon;
+  }
+
+  [[nodiscard]] static std::string FormatPrice(
+      double price, std::int32_t decimal_places) {
+    if (decimal_places < 0) {
+      decimal_places = 0;
+    }
+    return fmt::format("{:.{}f}", price, decimal_places);
+  }
+
+  [[nodiscard]] std::string_view GateSymbol() const noexcept {
+    if (!pair_->lag_instrument.exchange_symbol.empty()) {
+      return pair_->lag_instrument.exchange_symbol;
+    }
+    return pair_->symbol;
+  }
+
+  void SetError(std::string error) noexcept {
+    if (stats_->error.empty()) {
+      stats_->error = std::move(error);
+    }
+    stats_->state = LiveOpenCloseSmokeState::kError;
+  }
+
+  strategy::leadlag::Config config_;
+  LiveOpenCloseSmokeOptions options_;
+  LiveOpenCloseSmokeStats owned_stats_;
+  LiveOpenCloseSmokeStats* stats_{&owned_stats_};
+  const strategy::leadlag::PairConfig* pair_{nullptr};
+  std::string open_price_text_;
+  std::string close_price_text_;
+  std::int64_t pending_close_quantity_{0};
+};
+
 [[nodiscard]] inline int ResolveLiveOrdersExitCode(
     int runtime_exit_code, const LiveOrdersStrategyStats& stats) noexcept {
   if (stats.continuity_lost_stop_requested) {
@@ -116,12 +501,32 @@ class LiveOrdersStrategy {
   return runtime_exit_code;
 }
 
+[[nodiscard]] inline int ResolveLiveOpenCloseSmokeExitCode(
+    int runtime_exit_code, const LiveOpenCloseSmokeStats& stats) noexcept {
+  if (stats.continuity_lost_stop_requested) {
+    return kContinuityLostEmergencyHandoffExitCode;
+  }
+  if (runtime_exit_code != 0) {
+    return runtime_exit_code;
+  }
+  return stats.completed ? 0 : 1;
+}
+
 [[nodiscard]] inline RunModeResult ResolveRunMode(
-    config::StrategyMode strategy_mode, bool connect_data, bool execute) {
+    config::StrategyMode strategy_mode, bool connect_data, bool execute,
+    bool smoke_open_close = false) {
+  if (smoke_open_close && !execute) {
+    return {.ok = false,
+            .mode = RunMode::kValidateOnly,
+            .error = "--smoke-open-close requires --execute"};
+  }
   if (execute && strategy_mode != config::StrategyMode::kLive) {
     return {.ok = false,
             .mode = RunMode::kValidateOnly,
             .error = "strategy.mode must be live when --execute is specified"};
+  }
+  if (smoke_open_close) {
+    return {.ok = true, .mode = RunMode::kLiveOpenCloseSmoke};
   }
   if (execute) {
     return {.ok = true, .mode = RunMode::kLiveOrders};
@@ -140,6 +545,8 @@ class LiveOrdersStrategy {
       return "signal_only";
     case RunMode::kLiveOrders:
       return "live_orders";
+    case RunMode::kLiveOpenCloseSmoke:
+      return "live_open_close_smoke";
   }
   return "unknown";
 }
@@ -157,6 +564,25 @@ class LiveOrdersStrategy {
       return "recovered";
     case strategy::leadlag::RecoveryState::kManualIntervention:
       return "manual_intervention";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] inline const char* LiveOpenCloseSmokeStateName(
+    LiveOpenCloseSmokeState state) noexcept {
+  switch (state) {
+    case LiveOpenCloseSmokeState::kWaitingTicker:
+      return "waiting_ticker";
+    case LiveOpenCloseSmokeState::kOpenPending:
+      return "open_pending";
+    case LiveOpenCloseSmokeState::kWaitingCloseTicker:
+      return "waiting_close_ticker";
+    case LiveOpenCloseSmokeState::kClosePending:
+      return "close_pending";
+    case LiveOpenCloseSmokeState::kDone:
+      return "done";
+    case LiveOpenCloseSmokeState::kError:
+      return "error";
   }
   return "unknown";
 }
