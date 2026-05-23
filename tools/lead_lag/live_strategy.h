@@ -3,7 +3,6 @@
 
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <string>
 #include <utility>
 
@@ -80,8 +79,8 @@ struct LiveOpenCloseSmokeStats {
   LiveOpenCloseSmokeState state{LiveOpenCloseSmokeState::kWaitingTicker};
   std::uint64_t open_local_order_id{0};
   std::uint64_t close_local_order_id{0};
-  std::int64_t open_quantity{0};
-  std::int64_t close_quantity{0};
+  double open_quantity{0.0};
+  double close_quantity{0.0};
   double target_notional{0.0};
   double estimated_open_notional{0.0};
   bool used_min_quantity{false};
@@ -111,7 +110,7 @@ struct LiveUnfilledCancelSmokeStats {
   LiveUnfilledCancelSmokeState state{
       LiveUnfilledCancelSmokeState::kWaitingTicker};
   std::uint64_t open_local_order_id{0};
-  std::int64_t open_quantity{0};
+  double open_quantity{0.0};
   double target_notional{0.0};
   double estimated_open_notional{0.0};
   bool used_min_quantity{false};
@@ -139,7 +138,7 @@ struct LiveSubmitRejectSmokeStats {
   std::uint64_t order_feedbacks{0};
   LiveSubmitRejectSmokeState state{LiveSubmitRejectSmokeState::kWaitingTicker};
   std::uint64_t local_order_id{0};
-  std::int64_t quantity{0};
+  double quantity{0.0};
   double target_notional{0.0};
   double estimated_notional{0.0};
   bool used_min_quantity{false};
@@ -315,8 +314,8 @@ class LiveOpenCloseSmokeStrategy {
 
   template <typename ContextT>
   void SubmitOpen(const BookTicker& ticker, ContextT& context) noexcept {
-    const std::int64_t quantity = ComputeOpenQuantity(ticker.ask_price);
-    if (quantity <= 0) {
+    const double quantity = ComputeOpenQuantity(ticker.ask_price);
+    if (quantity <= kEpsilon) {
       return;
     }
     const double order_price = RoundedPrice(
@@ -330,8 +329,7 @@ class LiveOpenCloseSmokeStrategy {
     open_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
     open_quantity_text_ = FormatPrice(
-        static_cast<double>(quantity),
-        pair_->lag_instrument.quantity_decimal_places);
+        quantity, pair_->lag_instrument.quantity_decimal_places);
     const std::string_view symbol = GateSymbol();
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
@@ -341,7 +339,7 @@ class LiveOpenCloseSmokeStrategy {
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = static_cast<double>(quantity),
+            .quantity = quantity,
             .quantity_text = open_quantity_text_,
             .price_text = open_price_text_,
             .reduce_only = false,
@@ -365,7 +363,7 @@ class LiveOpenCloseSmokeStrategy {
         PrepareClose(event.cumulative_filled_quantity);
         return;
       case OrderFeedbackKind::kCancelled:
-        if (event.cumulative_filled_quantity > 0) {
+        if (event.cumulative_filled_quantity > kEpsilon) {
           PrepareClose(event.cumulative_filled_quantity);
           return;
         }
@@ -381,12 +379,12 @@ class LiveOpenCloseSmokeStrategy {
     }
   }
 
-  void PrepareClose(std::int64_t filled_quantity) noexcept {
+  void PrepareClose(double filled_quantity) noexcept {
     if (stats_->state == LiveOpenCloseSmokeState::kClosePending ||
         stats_->state == LiveOpenCloseSmokeState::kDone) {
       return;
     }
-    if (filled_quantity <= 0) {
+    if (filled_quantity <= kEpsilon) {
       SetError("invalid smoke open filled quantity");
       return;
     }
@@ -397,7 +395,7 @@ class LiveOpenCloseSmokeStrategy {
 
   template <typename ContextT>
   void SubmitClose(const BookTicker& ticker, ContextT& context) noexcept {
-    if (pending_close_quantity_ <= 0) {
+    if (pending_close_quantity_ <= kEpsilon) {
       SetError("invalid smoke close quantity");
       return;
     }
@@ -411,8 +409,7 @@ class LiveOpenCloseSmokeStrategy {
     close_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
     close_quantity_text_ = FormatPrice(
-        static_cast<double>(pending_close_quantity_),
-        pair_->lag_instrument.quantity_decimal_places);
+        pending_close_quantity_, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -421,7 +418,7 @@ class LiveOpenCloseSmokeStrategy {
             .side = OrderSide::kSell,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = static_cast<double>(pending_close_quantity_),
+            .quantity = pending_close_quantity_,
             .quantity_text = close_quantity_text_,
             .price_text = close_price_text_,
             .reduce_only = true,
@@ -442,7 +439,8 @@ class LiveOpenCloseSmokeStrategy {
         stats_->state = LiveOpenCloseSmokeState::kDone;
         return;
       case OrderFeedbackKind::kCancelled:
-        if (event.cumulative_filled_quantity >= stats_->close_quantity) {
+        if (event.cumulative_filled_quantity + kEpsilon >=
+            stats_->close_quantity) {
           stats_->completed = true;
           stats_->state = LiveOpenCloseSmokeState::kDone;
           return;
@@ -459,10 +457,10 @@ class LiveOpenCloseSmokeStrategy {
     }
   }
 
-  [[nodiscard]] std::int64_t ComputeOpenQuantity(double price) noexcept {
+  [[nodiscard]] double ComputeOpenQuantity(double price) noexcept {
     if (pair_ == nullptr || !std::isfinite(price) || price <= 0.0) {
       SetError("invalid smoke market price");
-      return 0;
+      return 0.0;
     }
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
@@ -470,7 +468,7 @@ class LiveOpenCloseSmokeStrategy {
         instrument.quantity_step <= 0.0 ||
         pair_->execute.open_notional <= 0.0) {
       SetError("invalid smoke instrument sizing metadata");
-      return 0;
+      return 0.0;
     }
 
     stats_->target_notional = pair_->execute.open_notional;
@@ -491,19 +489,13 @@ class LiveOpenCloseSmokeStrategy {
     if (stats_->used_min_quantity &&
         estimated_notional > options_.max_notional + kEpsilon) {
       SetError("minimum notional exceeds cap");
-      return 0;
+      return 0.0;
     }
-    if (!IsIntegerQuantity(quantity)) {
-      SetError("decimal smoke quantity is not supported in this version");
-      return 0;
-    }
-    if (quantity <= 0.0 ||
-        quantity >
-            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+    if (!std::isfinite(quantity) || quantity <= kEpsilon) {
       SetError("invalid smoke quantity");
-      return 0;
+      return 0.0;
     }
-    return static_cast<std::int64_t>(quantity);
+    return quantity;
   }
 
   [[nodiscard]] double RoundedPrice(double price,
@@ -527,11 +519,6 @@ class LiveOpenCloseSmokeStrategy {
       return 0.0;
     }
     return std::floor(quantity / step + kEpsilon) * step;
-  }
-
-  [[nodiscard]] static bool IsIntegerQuantity(double quantity) noexcept {
-    return std::isfinite(quantity) &&
-           std::abs(quantity - std::round(quantity)) <= kEpsilon;
   }
 
   [[nodiscard]] static std::string FormatPrice(double price,
@@ -565,7 +552,7 @@ class LiveOpenCloseSmokeStrategy {
   std::string open_quantity_text_;
   std::string close_price_text_;
   std::string close_quantity_text_;
-  std::int64_t pending_close_quantity_{0};
+  double pending_close_quantity_{0.0};
 };
 
 class LiveUnfilledCancelSmokeStrategy {
@@ -701,16 +688,15 @@ class LiveUnfilledCancelSmokeStrategy {
       SetError("invalid smoke passive price");
       return;
     }
-    const std::int64_t quantity = ComputeOpenQuantity(order_price);
-    if (quantity <= 0) {
+    const double quantity = ComputeOpenQuantity(order_price);
+    if (quantity <= kEpsilon) {
       return;
     }
 
     open_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
     open_quantity_text_ = FormatPrice(
-        static_cast<double>(quantity),
-        pair_->lag_instrument.quantity_decimal_places);
+        quantity, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -719,7 +705,7 @@ class LiveUnfilledCancelSmokeStrategy {
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kGoodTillCancel,
-            .quantity = static_cast<double>(quantity),
+            .quantity = quantity,
             .quantity_text = open_quantity_text_,
             .price_text = open_price_text_,
             .reduce_only = false,
@@ -760,11 +746,12 @@ class LiveUnfilledCancelSmokeStrategy {
   }
 
   void CompleteCancelled(const OrderFeedbackEvent& event) noexcept {
-    if (event.cumulative_filled_quantity != 0) {
+    if (std::abs(event.cumulative_filled_quantity) > kEpsilon) {
       SetError("unexpected fill before cancel");
       return;
     }
-    if (event.cancelled_quantity != stats_->open_quantity) {
+    if (std::abs(event.cancelled_quantity - stats_->open_quantity) >
+        kEpsilon) {
       SetError("unexpected cancelled quantity");
       return;
     }
@@ -772,10 +759,10 @@ class LiveUnfilledCancelSmokeStrategy {
     stats_->state = LiveUnfilledCancelSmokeState::kDone;
   }
 
-  [[nodiscard]] std::int64_t ComputeOpenQuantity(double price) noexcept {
+  [[nodiscard]] double ComputeOpenQuantity(double price) noexcept {
     if (pair_ == nullptr || !std::isfinite(price) || price <= 0.0) {
       SetError("invalid smoke market price");
-      return 0;
+      return 0.0;
     }
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
@@ -783,7 +770,7 @@ class LiveUnfilledCancelSmokeStrategy {
         instrument.quantity_step <= 0.0 ||
         pair_->execute.open_notional <= 0.0) {
       SetError("invalid smoke instrument sizing metadata");
-      return 0;
+      return 0.0;
     }
 
     stats_->target_notional = pair_->execute.open_notional;
@@ -804,19 +791,13 @@ class LiveUnfilledCancelSmokeStrategy {
     if (stats_->used_min_quantity &&
         estimated_notional > options_.max_notional + kEpsilon) {
       SetError("minimum notional exceeds cap");
-      return 0;
+      return 0.0;
     }
-    if (!IsIntegerQuantity(quantity)) {
-      SetError("decimal smoke quantity is not supported in this version");
-      return 0;
-    }
-    if (quantity <= 0.0 ||
-        quantity >
-            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+    if (!std::isfinite(quantity) || quantity <= kEpsilon) {
       SetError("invalid smoke quantity");
-      return 0;
+      return 0.0;
     }
-    return static_cast<std::int64_t>(quantity);
+    return quantity;
   }
 
   [[nodiscard]] double RoundedDownPrice(double price) const noexcept {
@@ -837,11 +818,6 @@ class LiveUnfilledCancelSmokeStrategy {
       return 0.0;
     }
     return std::floor(quantity / step + kEpsilon) * step;
-  }
-
-  [[nodiscard]] static bool IsIntegerQuantity(double quantity) noexcept {
-    return std::isfinite(quantity) &&
-           std::abs(quantity - std::round(quantity)) <= kEpsilon;
   }
 
   [[nodiscard]] static std::string FormatPrice(double price,
@@ -1001,16 +977,15 @@ class LiveSubmitRejectSmokeStrategy {
       SetError("invalid submit reject smoke price");
       return;
     }
-    const std::int64_t quantity = ComputeQuantity();
-    if (quantity <= 0) {
+    const double quantity = ComputeQuantity();
+    if (quantity <= kEpsilon) {
       return;
     }
 
     price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    quantity_text_ = FormatPrice(
-        static_cast<double>(quantity),
-        pair_->lag_instrument.quantity_decimal_places);
+    quantity_text_ =
+        FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -1019,7 +994,7 @@ class LiveSubmitRejectSmokeStrategy {
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = static_cast<double>(quantity),
+            .quantity = quantity,
             .quantity_text = quantity_text_,
             .price_text = price_text_,
             .reduce_only = true,
@@ -1041,17 +1016,17 @@ class LiveSubmitRejectSmokeStrategy {
     stats_->state = LiveSubmitRejectSmokeState::kDone;
   }
 
-  [[nodiscard]] std::int64_t ComputeQuantity() noexcept {
+  [[nodiscard]] double ComputeQuantity() noexcept {
     if (pair_ == nullptr) {
       SetError("invalid submit reject smoke pair");
-      return 0;
+      return 0.0;
     }
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
     if (instrument.notional_multiplier <= 0.0 ||
         instrument.quantity_step <= 0.0 || instrument.min_quantity <= 0.0) {
       SetError("invalid submit reject smoke instrument sizing metadata");
-      return 0;
+      return 0.0;
     }
 
     stats_->target_notional = pair_->execute.open_notional;
@@ -1068,19 +1043,13 @@ class LiveSubmitRejectSmokeStrategy {
     if (stats_->used_min_quantity &&
         estimated_notional > options_.max_notional + kEpsilon) {
       SetError("minimum notional exceeds cap");
-      return 0;
+      return 0.0;
     }
-    if (!IsIntegerQuantity(quantity)) {
-      SetError("decimal smoke quantity is not supported in this version");
-      return 0;
-    }
-    if (quantity <= 0.0 ||
-        quantity >
-            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+    if (!std::isfinite(quantity) || quantity <= kEpsilon) {
       SetError("invalid submit reject smoke quantity");
-      return 0;
+      return 0.0;
     }
-    return static_cast<std::int64_t>(quantity);
+    return quantity;
   }
 
   [[nodiscard]] static double FloorToStep(double quantity,
@@ -1089,11 +1058,6 @@ class LiveSubmitRejectSmokeStrategy {
       return 0.0;
     }
     return std::floor(quantity / step + kEpsilon) * step;
-  }
-
-  [[nodiscard]] static bool IsIntegerQuantity(double quantity) noexcept {
-    return std::isfinite(quantity) &&
-           std::abs(quantity - std::round(quantity)) <= kEpsilon;
   }
 
   [[nodiscard]] static std::string FormatPrice(double price,

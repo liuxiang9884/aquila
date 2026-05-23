@@ -460,7 +460,7 @@ void FeedOpenShortSignal(leadlag::Strategy* strategy, ContextT* context) {
 }
 
 aquila::OrderFeedbackEvent FilledFeedback(std::uint64_t local_order_id,
-                                          std::int64_t quantity,
+                                          double quantity,
                                           double fill_price) {
   return aquila::OrderFeedbackEvent{
       .kind = aquila::OrderFeedbackKind::kFilled,
@@ -482,8 +482,8 @@ aquila::OrderFeedbackEvent FilledFeedback(std::uint64_t local_order_id,
 }
 
 aquila::OrderFeedbackEvent PartialFilledFeedback(
-    std::uint64_t local_order_id, std::int64_t cumulative_quantity,
-    std::int64_t left_quantity, double fill_price) {
+    std::uint64_t local_order_id, double cumulative_quantity,
+    double left_quantity, double fill_price) {
   return aquila::OrderFeedbackEvent{
       .kind = aquila::OrderFeedbackKind::kPartialFilled,
       .local_order_id = local_order_id,
@@ -504,8 +504,8 @@ aquila::OrderFeedbackEvent PartialFilledFeedback(
 }
 
 aquila::OrderFeedbackEvent CancelledFeedback(std::uint64_t local_order_id,
-                                             std::int64_t cumulative_quantity,
-                                             std::int64_t cancelled_quantity,
+                                             double cumulative_quantity,
+                                             double cancelled_quantity,
                                              double fill_price) {
   return aquila::OrderFeedbackEvent{
       .kind = aquila::OrderFeedbackKind::kCancelled,
@@ -688,6 +688,27 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_TRUE(strategy.last_signal_diagnostics_valid());
   EXPECT_EQ(strategy.last_signal_diagnostics().group_id, decision.group_id);
   EXPECT_EQ(strategy.last_signal_diagnostics().active_group_count, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModePlacesDecimalQuantityFromInstrumentStep) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.open_notional = 10.21;
+  config.pairs[0].lag_instrument.quantity_step = 0.1;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 1;
+  config.pairs[0].lag_instrument.min_quantity = 0.1;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const FakeOrderSession::CapturedOrder& order =
+      order_session.placed_orders.back();
+  EXPECT_DOUBLE_EQ(order.quantity, 0.1);
+  EXPECT_EQ(order.quantity_text, "0.1");
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {

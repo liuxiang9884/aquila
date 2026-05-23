@@ -54,7 +54,7 @@ struct ExecuteConfig {
 
 struct RiskConfig {
   double max_gross_notional{0.0};
-  std::int64_t max_holding_position{0};
+  double max_holding_position{0.0};
 
   [[nodiscard]] bool GrossNotionalLimitEnabled() const noexcept;
   [[nodiscard]] bool HoldingPositionLimitEnabled() const noexcept;

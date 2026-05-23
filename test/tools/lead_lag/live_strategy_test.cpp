@@ -487,6 +487,41 @@ TEST(LeadLagLiveStrategyTest,
 }
 
 TEST(LeadLagLiveStrategyTest,
+     SmokeOpenCloseSubmitsDecimalQuantityFromInstrumentStep) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].execute.open_notional = 10.0;
+  config.pairs[0].lag_instrument.quantity_step = 0.1;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 1;
+  config.pairs[0].lag_instrument.min_quantity = 0.1;
+  LiveOpenCloseSmokeStats stats;
+  LiveOpenCloseSmokeStrategy strategy{
+      std::move(config),
+      LiveOpenCloseSmokeOptions{
+          .symbol = "BTC_USDT",
+          .aggressive_price_bps = 0.0,
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 99.0,
+          .ask_price = 100.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
+  EXPECT_EQ(context.orders[0].quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(stats.open_quantity, 0.1);
+  EXPECT_DOUBLE_EQ(stats.estimated_open_notional, 10.0);
+}
+
+TEST(LeadLagLiveStrategyTest,
      SmokeOpenCloseRejectsMinimumQuantityAboveNotionalCap) {
   leadlag::Config config = MakeLeadLagConfig();
   config.pairs[0].execute.open_notional = 10.0;
@@ -578,6 +613,41 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_TRUE(strategy.ShouldStop());
   EXPECT_TRUE(stats.completed);
   EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kDone);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelSubmitsDecimalQuantityFromInstrumentStep) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].execute.open_notional = 9.5;
+  config.pairs[0].lag_instrument.quantity_step = 0.1;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 1;
+  config.pairs[0].lag_instrument.min_quantity = 0.1;
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      std::move(config),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
+  EXPECT_EQ(context.orders[0].quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(stats.open_quantity, 0.1);
+  EXPECT_DOUBLE_EQ(stats.estimated_open_notional, 9.5);
 }
 
 TEST(LeadLagLiveStrategyTest,
@@ -860,6 +930,38 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_TRUE(stats.completed);
   EXPECT_TRUE(stats.rejected_seen);
   EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kDone);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectSubmitsDecimalMinimumQuantity) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].lag_instrument.quantity_step = 0.1;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 1;
+  config.pairs[0].lag_instrument.min_quantity = 0.1;
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      std::move(config),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
+  EXPECT_EQ(context.orders[0].quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(stats.quantity, 0.1);
 }
 
 TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectAckDoesNotComplete) {

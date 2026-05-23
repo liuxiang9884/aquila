@@ -306,7 +306,7 @@ class Parser {
     risk.max_gross_notional = RequiredDouble(
         table, "max_gross_notional", "lead_lag.risk.max_gross_notional");
     if (table.contains("max_holding_position")) {
-      risk.max_holding_position = RequiredInt64(
+      risk.max_holding_position = RequiredDouble(
           table, "max_holding_position", "lead_lag.risk.max_holding_position");
     }
     if (!ok_) {
@@ -413,11 +413,16 @@ class Parser {
                                       std::string_view key,
                                       std::string_view name) {
     const std::optional<double> value = table[key].value<double>();
-    if (!value) {
-      Fail(name, " is required");
-      return 0.0;
+    if (value) {
+      return *value;
     }
-    return *value;
+    const std::optional<std::int64_t> int_value =
+        table[key].value<std::int64_t>();
+    if (int_value) {
+      return static_cast<double>(*int_value);
+    }
+    Fail(name, " is required");
+    return 0.0;
   }
 
   [[nodiscard]] std::int32_t RequiredInt32(const toml::table& table,
@@ -593,7 +598,7 @@ bool RiskConfig::GrossNotionalLimitEnabled() const noexcept {
 }
 
 bool RiskConfig::HoldingPositionLimitEnabled() const noexcept {
-  return max_holding_position > 0;
+  return max_holding_position > 0.0;
 }
 
 ConfigResult ParseConfig(const toml::table& node,

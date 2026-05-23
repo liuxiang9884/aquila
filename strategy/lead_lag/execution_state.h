@@ -12,6 +12,8 @@
 
 namespace aquila::strategy::leadlag {
 
+inline constexpr double kExecutionQuantityEpsilon = 1e-12;
+
 enum class ExecutionStage : std::uint8_t {
   kIdle,
   kOpen,
@@ -109,7 +111,7 @@ class SignalEngine;
 struct ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
-  std::int64_t signed_position_quantity{0};
+  double signed_position_quantity{0.0};
   double trailing_price{0.0};
   std::uint64_t group_id{0};
 
@@ -126,11 +128,11 @@ struct ExecutionGroup {
   }
 
   [[nodiscard]] bool long_position() const noexcept {
-    return signed_position_quantity > 0;
+    return signed_position_quantity > kExecutionQuantityEpsilon;
   }
 
   [[nodiscard]] bool short_position() const noexcept {
-    return signed_position_quantity < 0;
+    return signed_position_quantity < -kExecutionQuantityEpsilon;
   }
 };
 
@@ -170,7 +172,7 @@ class ExecutionState {
   }
 
   [[nodiscard]] ExecutionGroup* AddHoldGroup(
-      std::int64_t signed_position_quantity, double trailing_price) noexcept {
+      double signed_position_quantity, double trailing_price) noexcept {
     ExecutionGroup* group = FindIdleGroup();
     if (group == nullptr) {
       return nullptr;
@@ -200,7 +202,8 @@ class ExecutionState {
     group->local_order_id = 0;
     group->signed_position_quantity += SignedFilledQuantity(order, instrument);
 
-    if (group->signed_position_quantity == 0) {
+    if (std::abs(group->signed_position_quantity) <=
+        kExecutionQuantityEpsilon) {
       ClearGroup(*group);
       return ExecutionApplyResult::kAppliedDeleted;
     }
@@ -220,7 +223,8 @@ class ExecutionState {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
     group->local_order_id = 0;
-    if (group->signed_position_quantity == 0) {
+    if (std::abs(group->signed_position_quantity) <=
+        kExecutionQuantityEpsilon) {
       ClearGroup(*group);
       return ExecutionApplyResult::kAppliedDeleted;
     }
@@ -330,23 +334,31 @@ class ExecutionState {
  private:
   friend class SignalEngine;
 
-  [[nodiscard]] static std::int64_t SignedFilledQuantity(
+  [[nodiscard]] static double SignedFilledQuantity(
       const core::StrategyOrder& order,
       const InstrumentMetadata& instrument) noexcept {
-    const std::int64_t filled =
+    const double filled =
         NormalizeFilledQuantity(order.cumulative_filled_quantity, instrument);
     return order.side == OrderSide::kBuy ? filled : -filled;
   }
 
-  [[nodiscard]] static std::int64_t NormalizeFilledQuantity(
+  [[nodiscard]] static double NormalizeFilledQuantity(
       double quantity, const InstrumentMetadata& instrument) noexcept {
-    const double unit =
-        instrument.quantity_step * instrument.notional_multiplier;
-    if (unit <= 0.0) {
-      return static_cast<std::int64_t>(std::llround(quantity));
+    if (!std::isfinite(quantity) || quantity <= 0.0) {
+      return 0.0;
     }
-    return static_cast<std::int64_t>(
-        std::llround(std::round(quantity / unit) * unit));
+    if (!std::isfinite(instrument.quantity_step) ||
+        instrument.quantity_step <= 0.0) {
+      return quantity;
+    }
+    const double rounded =
+        std::round(quantity / instrument.quantity_step) *
+        instrument.quantity_step;
+    if (!std::isfinite(rounded) ||
+        rounded <= kExecutionQuantityEpsilon) {
+      return 0.0;
+    }
+    return rounded;
   }
 
   [[nodiscard]] ExecutionGroup* FindIdleGroup() noexcept {

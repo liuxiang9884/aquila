@@ -70,7 +70,7 @@ struct StrategyOrderIntentLogRecordForTest {
   OrderSide side{OrderSide::kBuy};
   bool reduce_only{false};
   std::uint64_t group_id{0};
-  std::int64_t quantity{0};
+  double quantity{0.0};
   double raw_price{0.0};
   double order_price{0.0};
   double price{0.0};
@@ -107,14 +107,14 @@ inline void NotifyStrategyOrderIntentLogObserverForTest(
 inline void LogStrategyOrderIntent(
     std::string_view symbol, std::int32_t symbol_id, SignalAction action,
     OrderSide side, bool reduce_only, std::uint64_t group_id,
-    std::int64_t quantity, double raw_price, double order_price,
+    double quantity, double raw_price, double order_price,
     std::uint32_t slippage_ticks, double price_tick,
     double target_open_notional, double estimated_notional,
     std::size_t active_groups) noexcept {
   if (::nova::kLogManager.logger() != nullptr) {
     NOVA_INFO(
         "lead_lag_order_intent symbol={} symbol_id={} action={} side={} "
-        "reduce_only={} group_id={} quantity={} price={:.12g} "
+        "reduce_only={} group_id={} quantity={:.12g} price={:.12g} "
         "raw_price={:.12g} order_price={:.12g} slippage_ticks={} "
         "price_tick={:.12g} target_open_notional={:.12g} "
         "estimated_notional={:.12g} active_groups={}",
@@ -145,7 +145,7 @@ inline void LogStrategyOrderIntent(
 inline void LogStrategyOrderIntentRejected(
     std::string_view reason, std::string_view symbol, std::int32_t symbol_id,
     SignalAction action, OrderSide side, bool reduce_only,
-    std::uint64_t group_id, std::int64_t quantity, double raw_price,
+    std::uint64_t group_id, double quantity, double raw_price,
     double order_price, std::uint32_t slippage_ticks, double price_tick,
     double target_open_notional, double estimated_notional,
     double gross_before = 0.0, double gross_after = 0.0,
@@ -156,7 +156,7 @@ inline void LogStrategyOrderIntentRejected(
   }
   NOVA_WARNING(
       "lead_lag_order_intent_rejected reason={} symbol={} symbol_id={} "
-      "action={} side={} reduce_only={} group_id={} quantity={} "
+      "action={} side={} reduce_only={} group_id={} quantity={:.12g} "
       "price={:.12g} raw_price={:.12g} order_price={:.12g} "
       "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
       "estimated_notional={:.12g} gross_before={:.12g} gross_after={:.12g} "
@@ -186,7 +186,8 @@ inline void LogStrategyOrderFeedback(const OrderFeedbackEvent& event) noexcept {
   }
   NOVA_INFO(
       "lead_lag_order_feedback kind={} local_order_id={} exchange_order_id={} "
-      "cumulative_filled_quantity={} left_quantity={} cancelled_quantity={} "
+      "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
+      "cancelled_quantity={:.12g} "
       "fill_price={:.12g} role={} finish_reason={} reject_reason={}",
       magic_enum::enum_name(event.kind), event.local_order_id,
       event.exchange_order_id, event.cumulative_filled_quantity,
@@ -216,7 +217,8 @@ inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
   }
   NOVA_INFO(
       "lead_lag_order_finished local_order_id={} symbol_id={} symbol={} "
-      "status={} reduce_only={} quantity={} cumulative_filled_quantity={} "
+      "status={} reduce_only={} quantity={:.12g} "
+      "cumulative_filled_quantity={:.12g} "
       "average_fill_price={:.12g} last_fill_price={:.12g} "
       "exchange_order_id={} active_groups={}",
       order.local_order_id, order.symbol_id, order.symbol,
@@ -479,7 +481,7 @@ class Strategy {
     std::array<char, kOrderPriceTextCapacity> quantity_text{};
     std::size_t price_size{0};
     std::size_t quantity_size{0};
-    std::int64_t reserved_open_quantity{0};
+    double reserved_open_quantity{0.0};
     double reserved_open_notional{0.0};
     bool active{false};
 
@@ -651,13 +653,13 @@ class Strategy {
     switch (decision.action) {
       case SignalAction::kOpenLong: {
         [[maybe_unused]] ExecutionGroup* long_group =
-            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/1,
+            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/1.0,
                                             decision.intent.price);
         break;
       }
       case SignalAction::kOpenShort: {
         [[maybe_unused]] ExecutionGroup* short_group =
-            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/-1,
+            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/-1.0,
                                             decision.intent.price);
         break;
       }
@@ -717,7 +719,7 @@ class Strategy {
       return;
     }
 
-    std::int64_t quantity = 0;
+    double quantity = 0.0;
     ExecutionGroup* close_group = nullptr;
     if (last_signal_decision_.intent.reduce_only) {
       close_group =
@@ -729,7 +731,7 @@ class Strategy {
     } else {
       quantity = OpenOrderQuantity(runtime->pair, order_price);
     }
-    if (quantity <= 0) {
+    if (quantity <= kQuantityEpsilon) {
       detail::LogStrategyOrderIntentRejected(
           "zero_quantity", symbol, runtime->pair.symbol_id,
           last_signal_decision_.action, last_signal_decision_.intent.side,
@@ -759,8 +761,8 @@ class Strategy {
     }
 
     OrderPriceTextStorage* order_text_storage = AcquireOrderText(
-        order_price, instrument.price_decimal_places,
-        static_cast<double>(quantity), instrument.quantity_decimal_places);
+        order_price, instrument.price_decimal_places, quantity,
+        instrument.quantity_decimal_places);
     if (order_text_storage == nullptr) {
       detail::LogStrategyOrderIntentRejected(
           "order_text_slot_full", symbol, runtime->pair.symbol_id,
@@ -791,7 +793,7 @@ class Strategy {
             .side = last_signal_decision_.intent.side,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = static_cast<double>(quantity),
+            .quantity = quantity,
             .quantity_text = quantity_text,
             .price_text = price_text,
             .reduce_only = last_signal_decision_.intent.reduce_only,
@@ -926,29 +928,26 @@ class Strategy {
     last_signal_diagnostics_valid_ = false;
   }
 
-  [[nodiscard]] static std::int64_t AbsolutePositionQuantity(
+  [[nodiscard]] static double AbsolutePositionQuantity(
       const ExecutionGroup& group) noexcept {
-    if (group.signed_position_quantity ==
-        std::numeric_limits<std::int64_t>::min()) {
-      return 0;
+    if (!std::isfinite(group.signed_position_quantity)) {
+      return 0.0;
     }
-    return group.signed_position_quantity >= 0
-               ? group.signed_position_quantity
-               : -group.signed_position_quantity;
+    return std::abs(group.signed_position_quantity);
   }
 
-  [[nodiscard]] static std::int64_t OpenOrderQuantity(
+  [[nodiscard]] static double OpenOrderQuantity(
       const PairConfig& pair, double order_price) noexcept {
     const InstrumentMetadata& instrument = pair.lag_instrument;
     if (order_price <= 0.0 || instrument.notional_multiplier <= 0.0 ||
         instrument.quantity_step <= 0.0 || pair.execute.open_notional <= 0.0) {
-      return 0;
+      return 0.0;
     }
 
     const double raw_quantity = pair.execute.open_notional /
                                 (order_price * instrument.notional_multiplier);
     if (!std::isfinite(raw_quantity) || raw_quantity <= 0.0) {
-      return 0;
+      return 0.0;
     }
 
     double quantity = FloorToStep(raw_quantity, instrument.quantity_step);
@@ -957,19 +956,17 @@ class Strategy {
     }
     if (instrument.min_quantity > 0.0 &&
         quantity + kQuantityEpsilon < instrument.min_quantity) {
-      return 0;
+      return 0.0;
     }
-    if (!std::isfinite(quantity) || quantity <= 0.0 ||
-        quantity >
-            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
-      return 0;
+    if (!std::isfinite(quantity) || quantity <= kQuantityEpsilon) {
+      return 0.0;
     }
-    return static_cast<std::int64_t>(quantity);
+    return quantity;
   }
 
   struct GlobalRiskTotals {
     double gross_notional{0.0};
-    std::int64_t holding_position{0};
+    double holding_position{0.0};
   };
 
   [[nodiscard]] GlobalRiskTotals CurrentGlobalRiskTotals() const noexcept {
@@ -979,30 +976,30 @@ class Strategy {
         continue;
       }
       for (const ExecutionGroup& group : runtime.execution.groups()) {
-        const std::int64_t quantity = AbsolutePositionQuantity(group);
-        if (quantity <= 0) {
+        const double quantity = AbsolutePositionQuantity(group);
+        if (quantity <= kQuantityEpsilon) {
           continue;
         }
         totals.gross_notional += OrderNotional(quantity, group.trailing_price,
                                                runtime.pair.lag_instrument);
-        totals.holding_position =
-            SaturatingAdd(totals.holding_position, quantity);
+        totals.holding_position += quantity;
       }
     }
     for (const OrderPriceTextStorage& storage : order_price_texts_) {
-      if (!storage.active || storage.reserved_open_quantity <= 0) {
+      if (!storage.active ||
+          storage.reserved_open_quantity <= kQuantityEpsilon) {
         continue;
       }
       totals.gross_notional += storage.reserved_open_notional;
-      totals.holding_position = SaturatingAdd(totals.holding_position,
-                                              storage.reserved_open_quantity);
+      totals.holding_position += storage.reserved_open_quantity;
     }
     return totals;
   }
 
-  [[nodiscard]] bool GlobalRiskAllowsOpen(std::int64_t quantity,
+  [[nodiscard]] bool GlobalRiskAllowsOpen(double quantity,
                                           double notional) const noexcept {
-    if (quantity <= 0 || !std::isfinite(notional) || notional <= 0.0) {
+    if (quantity <= kQuantityEpsilon || !std::isfinite(notional) ||
+        notional <= 0.0) {
       return false;
     }
     if (!config_.risk.GrossNotionalLimitEnabled() &&
@@ -1017,35 +1014,29 @@ class Strategy {
       return false;
     }
     if (config_.risk.HoldingPositionLimitEnabled()) {
-      if (totals.holding_position >= config_.risk.max_holding_position) {
+      if (totals.holding_position >=
+          config_.risk.max_holding_position - kQuantityEpsilon) {
         return false;
       }
       if (quantity >
-          config_.risk.max_holding_position - totals.holding_position) {
+          config_.risk.max_holding_position - totals.holding_position +
+              kQuantityEpsilon) {
         return false;
       }
     }
     return true;
   }
 
-  [[nodiscard]] static std::int64_t SaturatingAdd(std::int64_t lhs,
-                                                  std::int64_t rhs) noexcept {
-    if (rhs > 0 && lhs > std::numeric_limits<std::int64_t>::max() - rhs) {
-      return std::numeric_limits<std::int64_t>::max();
-    }
-    return lhs + rhs;
-  }
-
   [[nodiscard]] static double OrderNotional(
-      std::int64_t quantity, double price,
+      double quantity, double price,
       const InstrumentMetadata& instrument) noexcept {
-    if (quantity <= 0 || !std::isfinite(price) || price <= 0.0 ||
+    if (quantity <= kQuantityEpsilon || !std::isfinite(price) ||
+        price <= 0.0 ||
         !std::isfinite(instrument.notional_multiplier) ||
         instrument.notional_multiplier <= 0.0) {
       return 0.0;
     }
-    return static_cast<double>(quantity) * price *
-           instrument.notional_multiplier;
+    return quantity * price * instrument.notional_multiplier;
   }
 
   [[nodiscard]] static double RoundedOrderPrice(
@@ -1144,7 +1135,7 @@ class Strategy {
       storage.quantity_size =
           static_cast<std::size_t>(quantity_result.ptr - quantity_begin);
       storage.local_order_id = 0;
-      storage.reserved_open_quantity = 0;
+      storage.reserved_open_quantity = 0.0;
       storage.reserved_open_notional = 0.0;
       storage.active = true;
       return &storage;
@@ -1153,9 +1144,9 @@ class Strategy {
   }
 
   static void ReserveOpenRisk(OrderPriceTextStorage* storage,
-                              std::int64_t quantity, double notional) noexcept {
-    if (storage == nullptr || quantity <= 0 || !std::isfinite(notional) ||
-        notional <= 0.0) {
+                              double quantity, double notional) noexcept {
+    if (storage == nullptr || quantity <= kQuantityEpsilon ||
+        !std::isfinite(notional) || notional <= 0.0) {
       return;
     }
     storage->reserved_open_quantity = quantity;
@@ -1169,7 +1160,7 @@ class Strategy {
     storage->local_order_id = 0;
     storage->price_size = 0;
     storage->quantity_size = 0;
-    storage->reserved_open_quantity = 0;
+    storage->reserved_open_quantity = 0.0;
     storage->reserved_open_notional = 0.0;
     storage->active = false;
   }
