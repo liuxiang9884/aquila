@@ -1,6 +1,7 @@
 #ifndef AQUILA_STRATEGY_LEAD_LAG_EXECUTION_STATE_H_
 #define AQUILA_STRATEGY_LEAD_LAG_EXECUTION_STATE_H_
 
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -171,8 +172,8 @@ class ExecutionState {
     return true;
   }
 
-  [[nodiscard]] ExecutionGroup* AddHoldGroup(
-      double signed_position_quantity, double trailing_price) noexcept {
+  [[nodiscard]] ExecutionGroup* AddHoldGroup(double signed_position_quantity,
+                                             double trailing_price) noexcept {
     ExecutionGroup* group = FindIdleGroup();
     if (group == nullptr) {
       return nullptr;
@@ -347,15 +348,11 @@ class ExecutionState {
     if (!std::isfinite(quantity) || quantity <= 0.0) {
       return 0.0;
     }
-    if (!std::isfinite(instrument.quantity_step) ||
-        instrument.quantity_step <= 0.0) {
-      return quantity;
-    }
-    const double rounded =
-        std::round(quantity / instrument.quantity_step) *
-        instrument.quantity_step;
-    if (!std::isfinite(rounded) ||
-        rounded <= kExecutionQuantityEpsilon) {
+    assert(std::isfinite(instrument.quantity_step));
+    assert(instrument.quantity_step > 0.0);
+    const double rounded = std::round(quantity / instrument.quantity_step) *
+                           instrument.quantity_step;
+    if (!std::isfinite(rounded) || rounded <= kExecutionQuantityEpsilon) {
       return 0.0;
     }
     return rounded;

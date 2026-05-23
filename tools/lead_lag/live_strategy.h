@@ -153,6 +153,11 @@ namespace detail {
 
 inline constexpr std::int32_t kSmokeOrderDecimalPlaceLimit = 12;
 
+enum class SmokeOrderMetadataUse : std::uint8_t {
+  kNotionalSizedOrder,
+  kMinimumQuantityOrder,
+};
+
 [[nodiscard]] inline bool SmokeOrderDecimalPlacesWithinRuntimeBounds(
     const strategy::leadlag::InstrumentMetadata& instrument) noexcept {
   const std::int32_t price_decimal_places = instrument.price_decimal_places;
@@ -168,7 +173,7 @@ inline constexpr std::int32_t kSmokeOrderDecimalPlaceLimit = 12;
 
 [[nodiscard]] inline bool SmokeOrderMetadataValid(
     const strategy::leadlag::PairConfig& pair,
-    bool require_min_quantity) noexcept {
+    SmokeOrderMetadataUse use) noexcept {
   const strategy::leadlag::InstrumentMetadata& instrument = pair.lag_instrument;
   if (!SmokeOrderDecimalPlacesWithinRuntimeBounds(instrument)) {
     return false;
@@ -178,15 +183,20 @@ inline constexpr std::int32_t kSmokeOrderDecimalPlaceLimit = 12;
       instrument.notional_multiplier <= 0.0 ||
       !std::isfinite(instrument.quantity_step) ||
       instrument.quantity_step <= 0.0 ||
-      !std::isfinite(pair.execute.open_notional) ||
-      pair.execute.open_notional <= 0.0 ||
       !std::isfinite(instrument.min_quantity) ||
       instrument.min_quantity < 0.0 ||
       !std::isfinite(instrument.max_quantity) ||
       instrument.max_quantity < 0.0) {
     return false;
   }
-  return !require_min_quantity || instrument.min_quantity > 0.0;
+  switch (use) {
+    case SmokeOrderMetadataUse::kNotionalSizedOrder:
+      return std::isfinite(pair.execute.open_notional) &&
+             pair.execute.open_notional > 0.0;
+    case SmokeOrderMetadataUse::kMinimumQuantityOrder:
+      return instrument.min_quantity > 0.0;
+  }
+  return false;
 }
 
 }  // namespace detail
@@ -268,7 +278,8 @@ class LiveOpenCloseSmokeStrategy {
       return;
     }
     ValidateOptions();
-    if (!detail::SmokeOrderMetadataValid(*pair_, false)) {
+    if (!detail::SmokeOrderMetadataValid(
+            *pair_, detail::SmokeOrderMetadataUse::kNotionalSizedOrder)) {
       SetError("invalid smoke instrument sizing metadata");
     }
   }
@@ -505,7 +516,8 @@ class LiveOpenCloseSmokeStrategy {
 
   [[nodiscard]] double ComputeOpenQuantity(double price) noexcept {
     assert(pair_ != nullptr);
-    assert(detail::SmokeOrderMetadataValid(*pair_, false));
+    assert(detail::SmokeOrderMetadataValid(
+        *pair_, detail::SmokeOrderMetadataUse::kNotionalSizedOrder));
     if (!std::isfinite(price) || price <= 0.0) {
       SetError("invalid smoke market price");
       return 0.0;
@@ -615,7 +627,8 @@ class LiveUnfilledCancelSmokeStrategy {
       return;
     }
     ValidateOptions();
-    if (!detail::SmokeOrderMetadataValid(*pair_, false)) {
+    if (!detail::SmokeOrderMetadataValid(
+            *pair_, detail::SmokeOrderMetadataUse::kNotionalSizedOrder)) {
       SetError("invalid smoke instrument sizing metadata");
     }
   }
@@ -809,7 +822,8 @@ class LiveUnfilledCancelSmokeStrategy {
 
   [[nodiscard]] double ComputeOpenQuantity(double price) noexcept {
     assert(pair_ != nullptr);
-    assert(detail::SmokeOrderMetadataValid(*pair_, false));
+    assert(detail::SmokeOrderMetadataValid(
+        *pair_, detail::SmokeOrderMetadataUse::kNotionalSizedOrder));
     if (!std::isfinite(price) || price <= 0.0) {
       SetError("invalid smoke market price");
       return 0.0;
@@ -913,7 +927,8 @@ class LiveSubmitRejectSmokeStrategy {
       return;
     }
     ValidateOptions();
-    if (!detail::SmokeOrderMetadataValid(*pair_, true)) {
+    if (!detail::SmokeOrderMetadataValid(
+            *pair_, detail::SmokeOrderMetadataUse::kMinimumQuantityOrder)) {
       SetError("invalid submit reject smoke instrument sizing metadata");
     }
   }
@@ -1066,7 +1081,8 @@ class LiveSubmitRejectSmokeStrategy {
 
   [[nodiscard]] double ComputeQuantity() noexcept {
     assert(pair_ != nullptr);
-    assert(detail::SmokeOrderMetadataValid(*pair_, true));
+    assert(detail::SmokeOrderMetadataValid(
+        *pair_, detail::SmokeOrderMetadataUse::kMinimumQuantityOrder));
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
 

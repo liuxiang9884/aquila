@@ -1005,6 +1005,36 @@ TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectSubmitsDecimalMinimumQuantity) {
 }
 
 TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectDoesNotRequireOpenNotionalMetadata) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].execute.open_notional = 0.0;
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      std::move(config),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 1.0);
+  EXPECT_EQ(context.orders[0].quantity_text, "1");
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kOrderPending);
+}
+
+TEST(LeadLagLiveStrategyTest,
      SmokeSubmitRejectRejectsInvalidOrderMetadataAtInitialization) {
   leadlag::Config config = MakeLeadLagConfig();
   config.pairs[0].lag_instrument.min_quantity = 0.0;
