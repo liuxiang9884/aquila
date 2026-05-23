@@ -199,7 +199,7 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 
 `data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。
 
-示例：
+基础示例：
 
 ```bash
 ./build/debug/tools/data_reader_recorder \
@@ -214,6 +214,22 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 - `--output`：输出 `.bin` 路径，必填。
 - `--mode`：写入模式，支持 `truncate` 和 `append`，默认 `truncate`。
 - `--max-polls`：最多执行多少次 recorder loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
+
+实盘交易并行录制：
+
+- `data_reader_recorder` 是只读 SHM consumer，可以在 LeadLag / demo 策略实盘交易运行时并行启动；它不会消费掉 SHM 中的数据，也不触碰订单链路。
+- 如果目标是完整 replay dump，不要直接使用仓库默认 `strategy_data_reader.toml`。默认 live strategy 配置通常使用 `read_mode = "latest"`，会主动跳过中间 BBO，只适合低频状态采样。
+- 完整 dump 应使用临时 data reader 配置，把目标 source 设为 `read_mode = "drain"`。`start_position = "latest"` 表示从 recorder 启动后开始录；`start_position = "earliest_visible"` 表示先从当前 SHM 可见窗口开始补录。
+- 录制输出和临时配置默认放到 `/home/liuxiang/tmp`。实盘交易同时录制时，应观察 recorder 退出统计里的 per-source `overruns` / `skipped`，并避免 recorder 抢占 strategy / order session 的关键 CPU。
+
+完整 dump 示例：
+
+```bash
+./build/debug/tools/data_reader_recorder \
+  --config /home/liuxiang/tmp/aquila_strategy_data_reader_drain.toml \
+  --output /home/liuxiang/tmp/live_merged_book_ticker.bin \
+  --mode truncate
+```
 
 当前边界：
 
