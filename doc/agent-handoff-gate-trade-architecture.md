@@ -260,7 +260,7 @@ doc/futures_contract_metadata_fields.md
 1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `notional_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`notional_multiplier=1.0`。
 2. Gate `price_tick` 来自 `order_price_round`；Binance `price_tick` 来自 `PRICE_FILTER.tickSize`。
 3. Gate 未提供 `min_notional`，当前输出空值；Binance 从 `MIN_NOTIONAL` / `NOTIONAL` filter 映射。
-4. Gate 当前 runtime 仍按整数合约张数下单，`quantity_step=1.0`、`quantity_decimal_places=0`。如果合约返回 `enable_decimal=true`，脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，但仍输出整数 runtime 约束；decimal-size 完整支持留到下一版本。
+4. Gate 脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，并从 `order_size_min` 推导 `quantity_step` / `quantity_decimal_places`；例如 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 当前为 `0.1` / `1`。这只是 catalog metadata，完整 decimal-size 下单、回报和 REST flat 判断仍需后续覆盖。
 5. Gate 的 `order_price_deviate` 是相对标记价的订单价格偏离比例；Binance 的 `PERCENT_PRICE` 是 bidirectional multiplier，脚本统一为相对偏离比例。
 
 这组 metadata 应在启动期构建并缓存，供 strategy、risk check 和 exchange adapter 共享；不要在行情或下单热路径里反复查询 REST 或重复解析交易所 JSON。

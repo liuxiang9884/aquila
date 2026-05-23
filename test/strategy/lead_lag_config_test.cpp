@@ -163,10 +163,10 @@ TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[3].symbol, "SIREN_USDT");
   EXPECT_EQ(config.pairs[4].symbol, "ETC_USDT");
 
-  EXPECT_DOUBLE_EQ(config.pairs[1].lag_instrument.quantity_step, 1.0);
-  EXPECT_EQ(config.pairs[1].lag_instrument.quantity_decimal_places, 0);
-  EXPECT_DOUBLE_EQ(config.pairs[3].lag_instrument.quantity_step, 1.0);
-  EXPECT_EQ(config.pairs[3].lag_instrument.quantity_decimal_places, 0);
+  EXPECT_DOUBLE_EQ(config.pairs[1].lag_instrument.quantity_step, 0.1);
+  EXPECT_EQ(config.pairs[1].lag_instrument.quantity_decimal_places, 1);
+  EXPECT_DOUBLE_EQ(config.pairs[3].lag_instrument.quantity_step, 0.1);
+  EXPECT_EQ(config.pairs[3].lag_instrument.quantity_decimal_places, 1);
 }
 
 TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {

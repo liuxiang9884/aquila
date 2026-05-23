@@ -97,7 +97,7 @@ class QueryFuturesContractsTest(unittest.TestCase):
         self.assertEqual(list(frame["price_limit_down"]), [0.5])
         self.assertEqual(list(frame["market_price_bound"]), [0.025])
 
-    def test_decimal_size_contract_uses_integer_runtime_quantity_metadata(self):
+    def test_decimal_size_contract_infers_quantity_decimals_from_min_order_size(self):
         payload = {
             "name": "ETH_USDT",
             "type": "direct",
@@ -110,8 +110,8 @@ class QueryFuturesContractsTest(unittest.TestCase):
 
         frame = contracts.contracts_to_dataframe([payload])
 
-        self.assertEqual(list(frame["quantity_step"]), [1.0])
-        self.assertEqual(list(frame["quantity_decimal_places"]), [0])
+        self.assertEqual(list(frame["quantity_step"]), [0.1])
+        self.assertEqual(list(frame["quantity_decimal_places"]), [1])
         self.assertEqual(list(frame["min_quantity"]), [0.1])
 
 

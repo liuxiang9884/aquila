@@ -46,8 +46,8 @@ scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 | `contract_type` | 合约类型。 | REST `type`，常见为 `direct`。 | `contractType`，例如 `PERPETUAL`。 |
 | `price_tick` | 最小变价单位。 | `order_price_round`。 | `PRICE_FILTER.tickSize`。 |
 | `price_decimal_places` | 价格格式化小数位，由 `price_tick` 推导。 | 由 `order_price_round` 推导。 | 由 `tickSize` 推导。 |
-| `quantity_step` | 当前 runtime 使用的下单数量步长。 | 当前版本统一按整数下单，输出 `1.0`。 | `LOT_SIZE.stepSize`。 |
-| `quantity_decimal_places` | 当前 runtime 使用的数量格式化小数位。 | 当前版本统一按整数下单，输出 `0`。 | 由 `LOT_SIZE.stepSize` 推导。 |
+| `quantity_step` | 下单数量步长。 | 由 `order_size_min` 推导。 | `LOT_SIZE.stepSize`。 |
+| `quantity_decimal_places` | 数量格式化小数位。 | 由 `order_size_min` 推导。 | 由 `LOT_SIZE.stepSize` 推导。 |
 | `min_quantity` | 最小下单数量。 | `order_size_min`。 | `LOT_SIZE.minQty`。 |
 | `max_quantity` | 最大限价单数量。 | `order_size_max`。 | `LOT_SIZE.maxQty`。 |
 | `max_market_quantity` | 最大市价单数量。 | `market_order_size_max`。 | `MARKET_LOT_SIZE.maxQty`。 |
@@ -71,16 +71,17 @@ Binance notional ~= price * quantity * 1.0
 Spot notional ~= price * quantity * 1.0
 ```
 
-### Gate decimal size 当前按整数下单
+### Gate decimal size metadata
 
-Gate 的部分合约会返回 `enable_decimal=true`。当前 `core/trading` 订单数量、Gate feedback parser、LeadLag execution state 和 Python emergency flatten 仍以整数合约张数为边界，因此本版本不提交 decimal size。metadata 查询会带 `X-Gate-Size-Decimal: 1` 保留真实 `order_size_min` / `order_size_max`，但 `quantity_step` 和 `quantity_decimal_places` 仍写成当前 runtime 使用的整数下单约束：
+Gate 的部分合约会返回 `enable_decimal=true`。metadata 查询会带 `X-Gate-Size-Decimal: 1` 保留真实
+`order_size_min` / `order_size_max`，并从 `order_size_min` 推导：
 
 ```text
-quantity_step = 1.0
-quantity_decimal_places = 0
+quantity_step = order_size_min
+quantity_decimal_places = decimal_places(order_size_min)
 ```
 
-这表示策略只会生成整数 `size`；它不是 Gate decimal-size 的完整支持，也不表示 `order_size_min` 就是 step。下一版本如果要支持 decimal size，应先引入定点数量类型，覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing，再补 parser / smoke 测试。
+这只是 catalog 层的 decimal metadata，不等于完整 decimal-size 下单已经完成。下一步仍应先引入定点数量类型或等价的精确数量表示，覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing，再补 parser / smoke 测试。`order_size_min` 作为当前脚本可见的最小数量和精度来源；如后续 Gate 暴露独立 step 字段，应优先使用官方 step 字段。
 
 ### `price_limit_*` 不是完全同一规则
 

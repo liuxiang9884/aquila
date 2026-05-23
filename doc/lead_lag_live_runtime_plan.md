@@ -83,7 +83,7 @@
   - Gate / Binance data session configs
   - 2026-05-21 first5 配置对应 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`。
   - 2026-05-21 requested data session 配置订阅 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`。
-  - 2026-05-22 requested 11-symbol LeadLag pair 配置包含上述全部 symbol。`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 是 Gate decimal-size 合约；当前版本仍只按整数 `size` 下单，catalog 中这些 Gate 行使用 `quantity_step=1.0`、`quantity_decimal_places=0` 的 runtime 约束。
+  - 2026-05-22 requested 11-symbol LeadLag pair 配置包含上述全部 symbol。`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 是 Gate decimal-size 合约；catalog 当前从 `order_size_min=0.1` 推导这些 Gate 行的 `quantity_step=0.1`、`quantity_decimal_places=1`。这只是 metadata 修正，完整 decimal quantity 下单和回报处理仍需后续覆盖 core order、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing。
   - 2026-05-22 requested 11-symbol LeadLag 配置已增加 strategy 全局 `[lead_lag.risk]`：当前启用 `max_gross_notional=2000.0`，限制所有持仓和 pending open reservation 的绝对 notional 之和；`max_holding_position` 可选，未配置时不限制张数。触达限制后只拒绝新开仓，不阻止 reduce-only close。
   - 2026-05-22 requested 11-symbol LeadLag 配置已显式设置 `execute.open_slippage` / `execute.close_slippage`：前五个 symbol 为 `5` ticks，后六个 symbol 为 `3` ticks。slippage 只调整实际 IOC limit 下单价，不改变 signal 触发条件；stoploss 使用 `close_slippage`。
   - decimal-size 完整支持留到下一版本：不要只把下单接口改成 string 或 double，应先做定点数量类型，并覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing。

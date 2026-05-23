@@ -108,11 +108,11 @@ def split_gate_symbol(symbol: str) -> tuple[str, str]:
 
 
 def gate_quantity_step(payload: dict[str, Any]) -> float | None:
-    return 1.0
+    return to_float(payload.get("order_size_min"))
 
 
 def gate_quantity_decimal_places(payload: dict[str, Any]) -> int | None:
-    return 0
+    return decimal_places(payload.get("order_size_min"))
 
 
 def contract_to_row(symbol_id: int, payload: dict[str, Any]) -> dict[str, Any]:
