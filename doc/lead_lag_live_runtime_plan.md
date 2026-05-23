@@ -4,7 +4,7 @@
 
 **目标：** 支持 LeadLag 先做 signal-only 长时间实盘观察，再逐步完成恢复链路验证、小额真实下单和端到端性能测试。
 
-**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。2026-05-22 release 真实订单运行暴露了 IOC partial-fill terminal feedback 缺失和 decimal-size REST flat 判断不足；当前 C++ order / feedback / Gate encoder / LeadLag sizing 已支持 decimal quantity，REST final check / emergency flatten 的 decimal residual 仍待修复，修复前不继续无人值守长跑。当前 V1 不新增独立 account / position realtime feedback session。
+**架构：** 独立 LeadLag live runner 复用现有 `TradingRuntime`、`RealtimeDataReader`、Gate `OrderSessionRuntimeAdapter` 和 feedback SHM；默认 validate-only / signal-only 不提交订单。Strategy 层生产订单意图、`OnOrderResponse()` / `OnOrderFeedback()` 闭环已完成；`--execute` 已接到真实 live-orders runtime，并在 `ContinuityLost` 后停止自动交易、返回应急 handoff exit code。外围 guard wrapper 负责 preflight、runner 退出监控、final REST check 和 stop-and-flat handoff。filled open / close 与 unfilled-cancel 小额真实订单 smoke 已完成；submit rejected 安全 live 探测只收到 `Ack`、未收到最终 `kRejected`，不计入已完成 smoke。2026-05-22 release 真实订单运行暴露了 IOC partial-fill terminal feedback 缺失和 decimal-size REST flat 判断不足；当前 C++ order / feedback / Gate encoder / LeadLag sizing 已支持 decimal quantity，Gate `futures.orders` parser 已补高精度 fill price 的 IOC partial-fill terminal 单元测试，但仍需小额 live smoke 复核；REST final check / emergency flatten 的 decimal residual 仍待修复，REST 修复和 feedback live smoke 复核前不继续无人值守长跑。当前 V1 不新增独立 account / position realtime feedback session。
 
 **技术栈：** C++20、CMake、`core/trading/*`、`core/market_data/*`、`exchange/gate/trading/*`、`strategy/lead_lag/*`、Gate REST 辅助脚本。
 
@@ -17,7 +17,7 @@
 - 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。`execute.open_slippage` 和 `execute.close_slippage` 按 `price_tick` 对最终 IOC limit 下单价做不利方向调整；order intent / reject 日志同时输出 `raw_price` 和 `order_price`。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
-- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。端到端 benchmark 已完成。2026-05-22 release 真实订单运行不是通过项：RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失；decimal-size 合约还暴露出 REST flat 判断只看 integer `size` 的不足。当前已修复 C++ decimal order / feedback / LeadLag sizing，继续真实订单长跑前还需要修 Gate IOC partial-fill terminal feedback 和 REST decimal residual flat 判断。
+- 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。端到端 benchmark 已完成。2026-05-22 release 真实订单运行不是通过项：RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失；decimal-size 合约还暴露出 REST flat 判断只看 integer `size` 的不足。当前已修复 C++ decimal order / feedback / LeadLag sizing，并把 Gate order feedback parser 的 decimal exponent 支持扩到 `[-15, 15]` 以覆盖 `0.562399019608` 这类高精度 fill price；继续真实订单长跑前还需要做小额 live smoke 复核该 feedback 修复，并修 REST decimal residual flat 判断。
 
 ## 文件结构
 
@@ -555,9 +555,9 @@ cmake --build build/release --target lead_lag_runtime_benchmark lead_lag_feedbac
   - 人工停止 runner 后，guard final check 发现 `RAVE_USDT size=10`，提交 reduce-only IOC market sell 10 张，fill price `0.562881`，guard summary `result=verified_flat`。
   - REST 随后显示 open orders 为空、`size=0`；但 `RAVE_USDT` position 仍有非零 `value` / margin 字段，按 mark price 和 multiplier 反推约 `0.2` 张残余风险。原因与 Gate decimal-size 合约和当时 REST flat 判断只看 integer `size` 有关，不能把本轮视为完全干净的实盘通过证据。
 - 结论 / blocker:
-  - 修复 Gate private `futures.orders` parser / feedback path 对 IOC partial fill / partial cancel 的 terminal event 处理，必须让 REST 可见的 partial-fill order 进入 strategy terminal feedback。
+  - Gate private `futures.orders` parser 已完成代码级修复：decimal exponent 支持扩到 `[-15, 15]`，新增 `finish_as=ioc`、partial fill、`fill_price=0.562399019608` 的 terminal feedback 单元测试。下一步仍需小额 live smoke 复核 REST 可见的 partial-fill order 会进入 strategy terminal feedback。
   - 修复 REST final check / emergency flatten 的 decimal quantity 处理；flat 判断不能只看 integer `size`，还要处理 `value` / margin / decimal residual。
-  - 在上述两个 blocker 修复并复测前，不继续 1 小时以上真实订单长跑。
+  - 在 feedback live smoke 复核和 REST residual blocker 修复前，不继续 1 小时以上真实订单长跑。
 
 ### 2026-05-22 V1 emergency flatten / ContinuityLost smoke
 
