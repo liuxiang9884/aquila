@@ -1,8 +1,8 @@
 [log]
 log_level = "info"
-file_sink_name = "/home/liuxiang/log/lead_lag_strategy_requested_11symbols_live_20260522.log"
-console_sink_name = "lead_lag_strategy_requested_11symbols_live_console"
-backend_thread_name = "lead_lag_strategy_requested_11symbols_live_log"
+file_sink_name = "/home/liuxiang/log/lead_lag_strategy_requested_12symbols_live_20260522.log"
+console_sink_name = "lead_lag_strategy_requested_12symbols_live_console"
+backend_thread_name = "lead_lag_strategy_requested_12symbols_live_log"
 backend_cpu_affinity = 5
 format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"

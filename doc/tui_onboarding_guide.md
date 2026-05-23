@@ -70,8 +70,8 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 - `monitor/market_data/market_data_store.h` / `monitor/market_data/market_data_update.h`：按 `(exchange, symbol_id)` coalesce latest BBO，输出固定容量 batch 和 diagnostics。
 - `monitor/model/market_data_view_model.h`：将 `MarketDataBatch` 转成 UI-owned market rows；`last_price`、volume、turnover 暂显示 `NA`。
 - `core/market_data/data_shm.h`：`BookTickerShmReader` / `DataShmPublisher`，market data SHM broadcast queue。
-- `config/monitors/gate_account_tui_market_data.toml`：monitor 专用 requested 11-symbol Gate + Binance SHM reader 配置。
-- `config/data_sessions/gate_data_session_requested_20260521.toml` 和 `config/data_sessions/binance_data_session_requested_20260521.toml`：requested 11-symbol data session producer 配置。
+- `config/monitors/gate_account_tui_market_data.toml`：monitor 专用 Gate + Binance SHM reader 配置，读取当前 requested data session SHM。
+- `config/data_sessions/gate_data_session_requested_20260521.toml` 和 `config/data_sessions/binance_data_session_requested_20260521.toml`：requested 12-symbol data session producer 配置，当前已追加 `ETH_USDT`。
 - `core/websocket/*`：WebSocket cold / hot path、TLS socket、message view、runtime policy。
 - `exchange/gate/trading/order_feedback_session.h`：Gate private WS login / subscribe / connection lifecycle 参考实现。
 - `exchange/gate/sbe/message_dispatcher.h` 和 `exchange/gate/sbe/generated/`：Gate SBE schema dispatch 和生成代码。

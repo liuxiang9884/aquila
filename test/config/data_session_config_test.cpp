@@ -185,7 +185,7 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedGateDataSessionConfig) {
 
   const aquila::gate::DataSessionConfig& config = config_result.value;
   EXPECT_EQ(config.name, "gate_data_session_requested");
-  ASSERT_EQ(config.exchange_symbols.size(), 11u);
+  ASSERT_EQ(config.exchange_symbols.size(), 12u);
   EXPECT_EQ(config.exchange_symbols[0], "PROVE_USDT");
   EXPECT_EQ(config.exchange_symbols[1], "RAVE_USDT");
   EXPECT_EQ(config.exchange_symbols[2], "ZEC_USDT");
@@ -197,8 +197,10 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedGateDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[8], "INJ_USDT");
   EXPECT_EQ(config.exchange_symbols[9], "ENA_USDT");
   EXPECT_EQ(config.exchange_symbols[10], "BRETT_USDT");
+  EXPECT_EQ(config.exchange_symbols[11], "ETH_USDT");
   EXPECT_EQ(config.symbol_ids[0], 4);
   EXPECT_EQ(config.symbol_ids[10], 14);
+  EXPECT_EQ(config.symbol_ids[11], 1);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_gate_market_data_requested_20260521");
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
@@ -544,7 +546,7 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedBinanceDataSessionConfig) {
 
   const aquila::binance::DataSessionConfig& config = config_result.value;
   EXPECT_EQ(config.name, "binance_data_session_requested");
-  ASSERT_EQ(config.exchange_symbols.size(), 11u);
+  ASSERT_EQ(config.exchange_symbols.size(), 12u);
   EXPECT_EQ(config.exchange_symbols[0], "PROVEUSDT");
   EXPECT_EQ(config.exchange_symbols[1], "RAVEUSDT");
   EXPECT_EQ(config.exchange_symbols[2], "ZECUSDT");
@@ -556,8 +558,10 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedBinanceDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[8], "INJUSDT");
   EXPECT_EQ(config.exchange_symbols[9], "ENAUSDT");
   EXPECT_EQ(config.exchange_symbols[10], "BRETTUSDT");
+  EXPECT_EQ(config.exchange_symbols[11], "ETHUSDT");
   EXPECT_EQ(config.symbol_ids[0], 4);
   EXPECT_EQ(config.symbol_ids[10], 14);
+  EXPECT_EQ(config.symbol_ids[11], 1);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_binance_market_data_requested_20260521");
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);

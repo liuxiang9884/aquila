@@ -244,7 +244,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[7].symbol_id, 14);
 }
 
-TEST(LeadLagConfigTest, LoadsCheckedInRequested11SymbolsRiskLimits) {
+TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = leadlag::LoadConfigFile(
@@ -256,7 +256,15 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested11SymbolsRiskLimits) {
   const leadlag::Config& config = result.value;
   EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 2000.0);
   EXPECT_EQ(config.risk.max_holding_position, 0);
-  ASSERT_EQ(config.pairs.size(), 11U);
+  ASSERT_EQ(config.pairs.size(), 12U);
+  EXPECT_EQ(config.pairs[10].symbol, "BRETT_USDT");
+  EXPECT_EQ(config.pairs[10].symbol_id, 14);
+  EXPECT_EQ(config.pairs[11].symbol, "ETH_USDT");
+  EXPECT_EQ(config.pairs[11].symbol_id, 1);
+  EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.price_tick, 0.01);
+  EXPECT_EQ(config.pairs[11].lag_instrument.price_decimal_places, 2);
+  EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.quantity_step, 1.0);
+  EXPECT_EQ(config.pairs[11].lag_instrument.quantity_decimal_places, 0);
   for (std::size_t index = 0; index < config.pairs.size(); ++index) {
     const std::uint32_t expected_slippage = index < 5 ? 5U : 3U;
     EXPECT_EQ(config.pairs[index].execute.open_slippage, expected_slippage)

@@ -206,7 +206,7 @@ struct MarketDataBatch {
 };
 ```
 
-当前最多 `2 exchanges * 11 symbols = 22 rows`，固定 32 行容量足够第一版使用。
+当前 requested data session 最多 `2 exchanges * 12 symbols = 24 rows`，固定 32 行容量足够第一版使用。
 
 ### 启动期 REST Snapshot
 
