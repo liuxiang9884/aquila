@@ -65,7 +65,22 @@ struct SignalDiagnostics {
 namespace detail {
 
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+struct StrategySignalTriggeredLogRecordForTest {
+  std::int64_t trigger_ticker_id{0};
+  Exchange trigger_exchange{Exchange::kGate};
+  std::int32_t trigger_symbol_id{0};
+  std::string_view symbol;
+  std::int32_t symbol_id{0};
+  PairRole role{PairRole::kNone};
+  SignalAction action{SignalAction::kNone};
+  OrderSide side{OrderSide::kBuy};
+  bool reduce_only{false};
+  std::uint64_t group_id{0};
+  double raw_price{0.0};
+};
+
 struct StrategyOrderIntentLogRecordForTest {
+  std::int64_t trigger_ticker_id{0};
   std::string_view symbol;
   std::int32_t symbol_id{0};
   SignalAction action{SignalAction::kNone};
@@ -81,8 +96,17 @@ struct StrategyOrderIntentLogRecordForTest {
   std::size_t active_groups{0};
 };
 
+using StrategySignalTriggeredLogObserverForTest =
+    void (*)(const StrategySignalTriggeredLogRecordForTest& record) noexcept;
+
 using StrategyOrderIntentLogObserverForTest =
     void (*)(const StrategyOrderIntentLogRecordForTest& record) noexcept;
+
+[[nodiscard]] inline StrategySignalTriggeredLogObserverForTest&
+StrategySignalTriggeredLogObserverSlotForTest() noexcept {
+  static StrategySignalTriggeredLogObserverForTest observer = nullptr;
+  return observer;
+}
 
 [[nodiscard]] inline StrategyOrderIntentLogObserverForTest&
 StrategyOrderIntentLogObserverSlotForTest() noexcept {
@@ -90,9 +114,24 @@ StrategyOrderIntentLogObserverSlotForTest() noexcept {
   return observer;
 }
 
+inline void SetStrategySignalTriggeredLogObserverForTest(
+    StrategySignalTriggeredLogObserverForTest observer) noexcept {
+  StrategySignalTriggeredLogObserverSlotForTest() = observer;
+}
+
 inline void SetStrategyOrderIntentLogObserverForTest(
     StrategyOrderIntentLogObserverForTest observer) noexcept {
   StrategyOrderIntentLogObserverSlotForTest() = observer;
+}
+
+inline void NotifyStrategySignalTriggeredLogObserverForTest(
+    const StrategySignalTriggeredLogRecordForTest& record) noexcept {
+  StrategySignalTriggeredLogObserverForTest observer =
+      StrategySignalTriggeredLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
 }
 
 inline void NotifyStrategyOrderIntentLogObserverForTest(
@@ -106,20 +145,53 @@ inline void NotifyStrategyOrderIntentLogObserverForTest(
 }
 #endif
 
+inline void LogStrategySignalTriggered(
+    std::int64_t trigger_ticker_id, Exchange trigger_exchange,
+    std::int32_t trigger_symbol_id, std::string_view symbol,
+    std::int32_t symbol_id, PairRole role, SignalAction action, OrderSide side,
+    bool reduce_only, std::uint64_t group_id, double raw_price) noexcept {
+  if (::nova::kLogManager.logger() != nullptr) {
+    NOVA_INFO(
+        "lead_lag_signal_triggered trigger_ticker_id={} trigger_exchange={} "
+        "trigger_symbol_id={} symbol={} symbol_id={} role={} action={} "
+        "side={} reduce_only={} group_id={} raw_price={:.12g}",
+        trigger_ticker_id, magic_enum::enum_name(trigger_exchange),
+        trigger_symbol_id, symbol, symbol_id, magic_enum::enum_name(role),
+        magic_enum::enum_name(action), magic_enum::enum_name(side),
+        reduce_only ? "true" : "false", group_id, raw_price);
+  }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  NotifyStrategySignalTriggeredLogObserverForTest(
+      StrategySignalTriggeredLogRecordForTest{
+          .trigger_ticker_id = trigger_ticker_id,
+          .trigger_exchange = trigger_exchange,
+          .trigger_symbol_id = trigger_symbol_id,
+          .symbol = symbol,
+          .symbol_id = symbol_id,
+          .role = role,
+          .action = action,
+          .side = side,
+          .reduce_only = reduce_only,
+          .group_id = group_id,
+          .raw_price = raw_price});
+#endif
+}
+
 inline void LogStrategyOrderIntent(
-    std::string_view symbol, std::int32_t symbol_id, SignalAction action,
-    OrderSide side, bool reduce_only, std::uint64_t group_id, double quantity,
-    double raw_price, double order_price, std::uint32_t slippage_ticks,
-    double price_tick, double target_open_notional, double estimated_notional,
+    std::int64_t trigger_ticker_id, std::string_view symbol,
+    std::int32_t symbol_id, SignalAction action, OrderSide side,
+    bool reduce_only, std::uint64_t group_id, double quantity, double raw_price,
+    double order_price, std::uint32_t slippage_ticks, double price_tick,
+    double target_open_notional, double estimated_notional,
     std::size_t active_groups) noexcept {
   if (::nova::kLogManager.logger() != nullptr) {
     NOVA_INFO(
-        "lead_lag_order_intent symbol={} symbol_id={} action={} side={} "
-        "reduce_only={} group_id={} quantity={:.12g} price={:.12g} "
-        "raw_price={:.12g} order_price={:.12g} slippage_ticks={} "
-        "price_tick={:.12g} target_open_notional={:.12g} "
+        "lead_lag_order_intent trigger_ticker_id={} symbol={} symbol_id={} "
+        "action={} side={} reduce_only={} group_id={} quantity={:.12g} "
+        "price={:.12g} raw_price={:.12g} order_price={:.12g} "
+        "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
         "estimated_notional={:.12g} active_groups={}",
-        symbol, symbol_id, magic_enum::enum_name(action),
+        trigger_ticker_id, symbol, symbol_id, magic_enum::enum_name(action),
         magic_enum::enum_name(side), reduce_only ? "true" : "false", group_id,
         quantity, order_price, raw_price, order_price, slippage_ticks,
         price_tick, target_open_notional, estimated_notional, active_groups);
@@ -127,6 +199,7 @@ inline void LogStrategyOrderIntent(
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderIntentLogObserverForTest(
       StrategyOrderIntentLogRecordForTest{
+          .trigger_ticker_id = trigger_ticker_id,
           .symbol = symbol,
           .symbol_id = symbol_id,
           .action = action,
@@ -144,11 +217,11 @@ inline void LogStrategyOrderIntent(
 }
 
 inline void LogStrategyOrderIntentRejected(
-    std::string_view reason, std::string_view symbol, std::int32_t symbol_id,
-    SignalAction action, OrderSide side, bool reduce_only,
-    std::uint64_t group_id, double quantity, double raw_price,
-    double order_price, std::uint32_t slippage_ticks, double price_tick,
-    double target_open_notional, double estimated_notional,
+    std::string_view reason, std::int64_t trigger_ticker_id,
+    std::string_view symbol, std::int32_t symbol_id, SignalAction action,
+    OrderSide side, bool reduce_only, std::uint64_t group_id, double quantity,
+    double raw_price, double order_price, std::uint32_t slippage_ticks,
+    double price_tick, double target_open_notional, double estimated_notional,
     double gross_before = 0.0, double gross_after = 0.0,
     double max_gross_notional = 0.0, std::uint64_t local_order_id = 0,
     std::string_view place_status = "-") noexcept {
@@ -156,17 +229,19 @@ inline void LogStrategyOrderIntentRejected(
     return;
   }
   NOVA_WARNING(
-      "lead_lag_order_intent_rejected reason={} symbol={} symbol_id={} "
-      "action={} side={} reduce_only={} group_id={} quantity={:.12g} "
-      "price={:.12g} raw_price={:.12g} order_price={:.12g} "
-      "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
-      "estimated_notional={:.12g} gross_before={:.12g} gross_after={:.12g} "
-      "max_gross_notional={:.12g} local_order_id={} place_status={}",
-      reason, symbol, symbol_id, magic_enum::enum_name(action),
-      magic_enum::enum_name(side), reduce_only ? "true" : "false", group_id,
-      quantity, order_price, raw_price, order_price, slippage_ticks, price_tick,
-      target_open_notional, estimated_notional, gross_before, gross_after,
-      max_gross_notional, local_order_id, place_status);
+      "lead_lag_order_intent_rejected reason={} trigger_ticker_id={} "
+      "symbol={} symbol_id={} action={} side={} reduce_only={} group_id={} "
+      "quantity={:.12g} price={:.12g} raw_price={:.12g} "
+      "order_price={:.12g} slippage_ticks={} price_tick={:.12g} "
+      "target_open_notional={:.12g} estimated_notional={:.12g} "
+      "gross_before={:.12g} gross_after={:.12g} max_gross_notional={:.12g} "
+      "local_order_id={} place_status={}",
+      reason, trigger_ticker_id, symbol, symbol_id,
+      magic_enum::enum_name(action), magic_enum::enum_name(side),
+      reduce_only ? "true" : "false", group_id, quantity, order_price,
+      raw_price, order_price, slippage_ticks, price_tick, target_open_notional,
+      estimated_notional, gross_before, gross_after, max_gross_notional,
+      local_order_id, place_status);
 }
 
 inline void LogStrategyOrderResponse(
@@ -326,10 +401,10 @@ class Strategy {
 
     switch (last_market_update_.role) {
       case PairRole::kLead:
-        OnActiveLeadTick(runtime, *market, context);
+        OnActiveLeadTick(runtime, *market, ticker, context);
         break;
       case PairRole::kLag:
-        OnActiveLagTick(runtime, *market, context);
+        OnActiveLagTick(runtime, *market, ticker, context);
         break;
       case PairRole::kNone:
         break;
@@ -651,6 +726,7 @@ class Strategy {
   template <typename ContextT>
   void OnActiveLeadTick(PairRuntimeState* runtime,
                         const PairMarketState& market,
+                        const BookTicker& trigger_ticker,
                         ContextT& context) noexcept {
     QuoteSnapshot drifted_lead =
         runtime->alignment.DriftLead(market.lead.latest_quote);
@@ -676,16 +752,23 @@ class Strategy {
       last_signal_diagnostics_ = BuildSignalDiagnostics(
           *runtime, market, drifted_lead, recorder, alignment, threshold);
       last_signal_diagnostics_valid_ = true;
+      detail::LogStrategySignalTriggered(
+          trigger_ticker.id, trigger_ticker.exchange, trigger_ticker.symbol_id,
+          runtime->pair.symbol, runtime->pair.symbol_id, PairRole::kLead,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, last_signal_decision_.intent.price);
     }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
     } else {
-      SubmitExternalSignal(runtime, context);
+      SubmitExternalSignal(runtime, trigger_ticker.id, context);
     }
   }
 
   template <typename ContextT>
   void OnActiveLagTick(PairRuntimeState* runtime, const PairMarketState& market,
+                       const BookTicker& trigger_ticker,
                        ContextT& context) noexcept {
     runtime->recorder.OnLagActiveTick(market.lag.latest_quote);
     if (!runtime->has_drifted_lead) {
@@ -711,11 +794,17 @@ class Strategy {
           BuildSignalDiagnostics(*runtime, market, runtime->drifted_lead,
                                  recorder, alignment, threshold);
       last_signal_diagnostics_valid_ = true;
+      detail::LogStrategySignalTriggered(
+          trigger_ticker.id, trigger_ticker.exchange, trigger_ticker.symbol_id,
+          runtime->pair.symbol, runtime->pair.symbol_id, PairRole::kLag,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, last_signal_decision_.intent.price);
     }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
     } else {
-      SubmitExternalSignal(runtime, context);
+      SubmitExternalSignal(runtime, trigger_ticker.id, context);
     }
   }
 
@@ -771,6 +860,7 @@ class Strategy {
 
   template <typename ContextT>
   void SubmitExternalSignal(PairRuntimeState* runtime,
+                            std::int64_t trigger_ticker_id,
                             ContextT& context) noexcept {
     if (runtime == nullptr || !last_signal_decision_.triggered) {
       return;
@@ -789,7 +879,7 @@ class Strategy {
             : std::string_view(instrument.exchange_symbol);
     if (rounded_order_price <= 0.0) {
       detail::LogStrategyOrderIntentRejected(
-          "invalid_price", symbol, runtime->pair.symbol_id,
+          "invalid_price", trigger_ticker_id, symbol, runtime->pair.symbol_id,
           last_signal_decision_.action, last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, 0, raw_order_price,
@@ -802,8 +892,9 @@ class Strategy {
     if (!DecimalUnitsFromValue(rounded_order_price,
                                instrument.price_decimal_places, &price_units)) {
       detail::LogStrategyOrderIntentRejected(
-          "order_text_slot_full", symbol, runtime->pair.symbol_id,
-          last_signal_decision_.action, last_signal_decision_.intent.side,
+          "order_text_slot_full", trigger_ticker_id, symbol,
+          runtime->pair.symbol_id, last_signal_decision_.action,
+          last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, 0, raw_order_price,
           rounded_order_price, slippage_ticks, instrument.price_tick,
@@ -838,7 +929,7 @@ class Strategy {
     }
     if (quantity <= kQuantityEpsilon) {
       detail::LogStrategyOrderIntentRejected(
-          "zero_quantity", symbol, runtime->pair.symbol_id,
+          "zero_quantity", trigger_ticker_id, symbol, runtime->pair.symbol_id,
           last_signal_decision_.action, last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, quantity, raw_order_price,
@@ -853,7 +944,7 @@ class Strategy {
         !GlobalRiskAllowsOpen(quantity, order_notional)) {
       const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
       detail::LogStrategyOrderIntentRejected(
-          "risk_limit", symbol, runtime->pair.symbol_id,
+          "risk_limit", trigger_ticker_id, symbol, runtime->pair.symbol_id,
           last_signal_decision_.action, last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, quantity, raw_order_price,
@@ -870,8 +961,9 @@ class Strategy {
                          quantity_units, instrument.quantity_decimal_places);
     if (order_text_storage == nullptr) {
       detail::LogStrategyOrderIntentRejected(
-          "order_text_slot_full", symbol, runtime->pair.symbol_id,
-          last_signal_decision_.action, last_signal_decision_.intent.side,
+          "order_text_slot_full", trigger_ticker_id, symbol,
+          runtime->pair.symbol_id, last_signal_decision_.action,
+          last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, quantity, raw_order_price,
           order_price, slippage_ticks, instrument.price_tick,
@@ -882,8 +974,8 @@ class Strategy {
     const std::string_view price_text = order_text_storage->price_view();
 
     detail::LogStrategyOrderIntent(
-        symbol, runtime->pair.symbol_id, last_signal_decision_.action,
-        last_signal_decision_.intent.side,
+        trigger_ticker_id, symbol, runtime->pair.symbol_id,
+        last_signal_decision_.action, last_signal_decision_.intent.side,
         last_signal_decision_.intent.reduce_only,
         last_signal_decision_.group_id, quantity, raw_order_price, order_price,
         slippage_ticks, instrument.price_tick,
@@ -905,8 +997,9 @@ class Strategy {
         });
     if (placed.local_order_id == 0) {
       detail::LogStrategyOrderIntentRejected(
-          "place_local_rejected", symbol, runtime->pair.symbol_id,
-          last_signal_decision_.action, last_signal_decision_.intent.side,
+          "place_local_rejected", trigger_ticker_id, symbol,
+          runtime->pair.symbol_id, last_signal_decision_.action,
+          last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, quantity, raw_order_price,
           order_price, slippage_ticks, instrument.price_tick,
@@ -927,8 +1020,9 @@ class Strategy {
     }
 
     detail::LogStrategyOrderIntentRejected(
-        "place_local_rejected", symbol, runtime->pair.symbol_id,
-        last_signal_decision_.action, last_signal_decision_.intent.side,
+        "place_local_rejected", trigger_ticker_id, symbol,
+        runtime->pair.symbol_id, last_signal_decision_.action,
+        last_signal_decision_.intent.side,
         last_signal_decision_.intent.reduce_only,
         last_signal_decision_.group_id, quantity, raw_order_price, order_price,
         slippage_ticks, instrument.price_tick,

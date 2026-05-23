@@ -198,6 +198,9 @@ namespace leadlag = aquila::strategy::leadlag;
 std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
     g_order_intent_logs{};
 std::size_t g_order_intent_log_count{0};
+std::array<leadlag::detail::StrategySignalTriggeredLogRecordForTest, 4>
+    g_signal_triggered_logs{};
+std::size_t g_signal_triggered_log_count{0};
 
 void CaptureStrategyOrderIntentLogForTest(
     const leadlag::detail::StrategyOrderIntentLogRecordForTest&
@@ -213,6 +216,22 @@ void ResetStrategyOrderIntentLogCapture() noexcept {
   g_order_intent_logs = {};
   g_order_intent_log_count = 0;
   leadlag::detail::SetStrategyOrderIntentLogObserverForTest(nullptr);
+}
+
+void CaptureStrategySignalTriggeredLogForTest(
+    const leadlag::detail::StrategySignalTriggeredLogRecordForTest&
+        record) noexcept {
+  if (g_signal_triggered_log_count >= g_signal_triggered_logs.size()) {
+    return;
+  }
+  g_signal_triggered_logs[g_signal_triggered_log_count] = record;
+  ++g_signal_triggered_log_count;
+}
+
+void ResetStrategySignalTriggeredLogCapture() noexcept {
+  g_signal_triggered_logs = {};
+  g_signal_triggered_log_count = 0;
+  leadlag::detail::SetStrategySignalTriggeredLogObserverForTest(nullptr);
 }
 
 class StrategyOrderIntentLogCaptureGuard {
@@ -231,6 +250,24 @@ class StrategyOrderIntentLogCaptureGuard {
       const StrategyOrderIntentLogCaptureGuard&) = delete;
   StrategyOrderIntentLogCaptureGuard& operator=(
       const StrategyOrderIntentLogCaptureGuard&) = delete;
+};
+
+class StrategySignalTriggeredLogCaptureGuard {
+ public:
+  StrategySignalTriggeredLogCaptureGuard() noexcept {
+    ResetStrategySignalTriggeredLogCapture();
+    leadlag::detail::SetStrategySignalTriggeredLogObserverForTest(
+        CaptureStrategySignalTriggeredLogForTest);
+  }
+
+  ~StrategySignalTriggeredLogCaptureGuard() noexcept {
+    ResetStrategySignalTriggeredLogCapture();
+  }
+
+  StrategySignalTriggeredLogCaptureGuard(
+      const StrategySignalTriggeredLogCaptureGuard&) = delete;
+  StrategySignalTriggeredLogCaptureGuard& operator=(
+      const StrategySignalTriggeredLogCaptureGuard&) = delete;
 };
 
 struct FakeOrderSession {
@@ -803,14 +840,26 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
+  StrategySignalTriggeredLogCaptureGuard signal_log_capture;
   StrategyOrderIntentLogCaptureGuard log_capture;
 
   FeedOpenLongSignal(&strategy, &context);
 
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  ASSERT_EQ(g_signal_triggered_log_count, 1U);
+  const leadlag::detail::StrategySignalTriggeredLogRecordForTest& signal =
+      g_signal_triggered_logs[0];
+  EXPECT_EQ(signal.trigger_ticker_id, 101);
+  EXPECT_EQ(signal.symbol, "BTC_USDT");
+  EXPECT_EQ(signal.symbol_id, 3);
+  EXPECT_EQ(signal.trigger_exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(signal.role, leadlag::PairRole::kLead);
+  EXPECT_EQ(signal.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(signal.side, aquila::OrderSide::kBuy);
   ASSERT_EQ(g_order_intent_log_count, 1U);
   const leadlag::detail::StrategyOrderIntentLogRecordForTest& record =
       g_order_intent_logs[0];
+  EXPECT_EQ(record.trigger_ticker_id, signal.trigger_ticker_id);
   EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
   EXPECT_EQ(record.symbol_id, 3);
   EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);

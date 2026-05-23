@@ -14,7 +14,7 @@
 
 - LeadLag replay / signal 主链路已落地，`leadlag::Strategy::OnBookTicker()` 已串起 raw market、alignment、recorder、threshold、signal 和 synthetic position accounting。
 - LeadLag live runner 已落地为 `tools/lead_lag/live_strategy.cpp`：默认 validate-only；`--connect-data` 进入 signal-only；`--execute` 只有在 `strategy.mode=live` 时解析为 `RunMode::kLiveOrders`。
-- 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。`execute.open_slippage` 和 `execute.close_slippage` 按 `price_tick` 对最终 IOC limit 下单价做不利方向调整；order intent / reject 日志同时输出 `raw_price` 和 `order_price`。
+- 生产订单闭环已在 strategy 层完成并通过测试：`SignalDecision::intent` 会转换为 IOC limit `core::OrderCreateRequest`，open / close / stoploss 订单接入 execution state，`OnOrderResponse()` 处理 rejected / cancel-rejected，`OnOrderFeedback()` 处理 terminal feedback、cancelled / partially-cancelled 和 rejected，`price_text` 使用固定 storage。`execute.open_slippage` 和 `execute.close_slippage` 按 `price_tick` 对最终 IOC limit 下单价做不利方向调整；`lead_lag_signal_triggered` 日志输出触发行情 `trigger_ticker_id`，order intent / reject 日志输出同一个 `trigger_ticker_id` 以及 `raw_price` / `order_price`，便于把信号和下单对齐复盘。
 - 真实 `RunLiveOrders()` 已打开：显式 `--execute`、`strategy.mode=live`、API 凭据、feedback SHM 和 data reader 都满足后，会构造 Gate order session runtime。缺凭据时返回 exit code `2`，不会进入 runtime create。
 - V1 flat-account、tiny-position emergency smoke 和隔离 `ContinuityLost` stop-and-flat smoke 已完成；`scripts/lead_lag/run_live_with_guard.py` 已提供外围 preflight / final-check / abnormal-exit flatten guard。
 - 小额真实下单已完成 filled open / close 与 unfilled-cancel smoke；`lead_lag_strategy --smoke-submit-reject` 已有单元测试和诊断入口，但 ZEC_USDT 安全 live 探测没有得到最终 rejected，因此不能作为通过证据。端到端 benchmark 已完成。2026-05-22 release 真实订单运行不是通过项：RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失；decimal-size 合约还暴露出 REST flat 判断只看 integer `size` 的不足。当前已修复 C++ decimal order / feedback / LeadLag sizing，并把 Gate order feedback parser 的 decimal exponent 支持扩到 `[-15, 15]` 以覆盖 `0.562399019608` 这类高精度 fill price；REST final check / emergency flatten 已带 `X-Gate-Size-Decimal: 1`、用 `Decimal` 解析 position size、检查 `value` / `margin` residual，并可提交 decimal reduce-only close。继续真实订单长跑前还需要小额 live smoke 复核 feedback 和 REST residual 修复。
@@ -91,7 +91,7 @@
   - live runner summary
   - feedback session summary
   - REST open orders / position / pending orders 复核
-  - signal CSV 或低频 signal summary
+  - signal CSV 或低频 signal summary；真实订单模式不写 per-signal CSV，信号 / 下单对齐看策略日志里的 `lead_lag_signal_triggered`、`lead_lag_order_intent` 和 `lead_lag_order_intent_rejected`
 
 ### 第五阶段：End-to-End Benchmark
 
