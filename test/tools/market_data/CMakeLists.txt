@@ -4,8 +4,11 @@ add_executable(data_reader_recorder_test
 
 target_link_libraries(data_reader_recorder_test
     PRIVATE
+        aquila_config
         aquila_core
+        fmt::fmt-header-only
         GTest::gtest_main
+        nova
 )
 
 add_test(NAME data_reader_recorder_test
