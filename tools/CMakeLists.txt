@@ -207,6 +207,20 @@ target_link_libraries(data_reader_probe
         nova
 )
 
+add_executable(data_reader_recorder
+    market_data/data_reader_recorder.cpp
+)
+
+target_link_libraries(data_reader_recorder
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+)
+
 add_executable(websocket_latency_compare
     websocket/latency_compare.cpp
 )

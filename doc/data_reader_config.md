@@ -195,17 +195,34 @@ handler 需要提供：
 void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 ```
 
-## 下一步：SHM 到 replay binary 落地
+## SHM 到 replay binary recorder
 
-后续需要增加一个实时录制工具：通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。
+`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。
 
-第一版建议边界：
+示例：
+
+```bash
+./build/debug/tools/data_reader_recorder \
+  --config config/data_readers/strategy_data_reader.toml \
+  --output /tmp/aquila_merged_book_ticker.bin \
+  --mode truncate
+```
+
+参数：
+
+- `--config`：data reader TOML 路径，默认 `config/data_readers/strategy_data_reader.toml`。
+- `--output`：输出 `.bin` 路径，必填。
+- `--mode`：写入模式，支持 `truncate` 和 `append`，默认 `truncate`。
+- `--max-polls`：最多执行多少次 recorder loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
+
+当前边界：
 
 - 使用一份 data reader TOML 作为输入，复用现有 SHM source 配置、`read_mode` 和 `max_events_per_drain`。
 - 只输出一个 merged `.bin`，记录顺序就是 `RealtimeDataReader` 实际交给 handler 的顺序。
-- 默认按 `drain` 语义录制完整可读事件流；如果输入配置仍是 `latest`，则输出也继承 latest 的跳点语义，并应在工具启动日志中显式打印。
-- 写入前直接校验 `sizeof(aquila::BookTicker)` 与 replay reader 约定一致；写入路径使用二进制追加或截断模式由命令行参数明确控制，默认建议截断。
-- 统计至少包括 total records、per-exchange records、per-source skipped / overrun、first / last `exchange_ns` 和 `local_ns`。
+- 如果输入配置使用 `drain`，recorder 会按 reader 可见事件流顺序连续写出；如果输入配置仍是 `latest`，则输出也继承 latest 的跳点语义，工具启动日志会显式打印 `latest_read_mode_source` warning。
+- 启动日志打印 `book_ticker_abi_size=sizeof(aquila::BookTicker)`；SHM attach 仍会校验 producer header 中的 ABI size。输出文件本身不写 header。
+- 写入路径使用二进制追加或截断模式，由 `--mode` 明确控制，默认截断。
+- 退出统计包括 total records、per-exchange records、per-source skipped / overrun、first / last `exchange_ns` 和 `local_ns`。
 
 当前 `BookTicker.local_ns` 不是 DataReader 或策略层打点，而是在 data session 收到 WebSocket frame 后、进入交易所 parser / decoder 前采集：
 
