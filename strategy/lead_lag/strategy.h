@@ -209,6 +209,21 @@ inline void LogStrategyFeedbackContinuityLost(
       event.local_receive_ns);
 }
 
+inline void LogStrategyPairDisabledForOrderDecimalPlaces(
+    std::string_view symbol, std::int32_t symbol_id,
+    std::int32_t price_decimal_places, std::int32_t quantity_decimal_places,
+    std::int32_t decimal_place_limit) noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_ERROR(
+      "lead_lag_pair_disabled reason=order_decimal_places_out_of_bounds "
+      "symbol={} symbol_id={} price_decimal_places={} "
+      "quantity_decimal_places={} decimal_place_limit_exclusive={}",
+      symbol, symbol_id, price_decimal_places, quantity_decimal_places,
+      decimal_place_limit);
+}
+
 inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
                                      std::size_t active_groups) noexcept {
   if (::nova::kLogManager.logger() == nullptr) {
@@ -461,7 +476,8 @@ class Strategy {
 
  private:
   static constexpr std::size_t kOrderPriceTextCapacity = 64;
-  static constexpr std::int32_t kMaxOrderPriceDecimalPlaces =
+  static constexpr std::int32_t kOrderDecimalPlaceLimit = 12;
+  static constexpr std::int32_t kMaxCoreOrderDecimalPlaces =
       ::aquila::core::kMaxOrderDecimalPlaces;
 
   struct PairRuntimeState {
@@ -529,6 +545,14 @@ class Strategy {
       if (!RuntimeConfigReady(pair)) {
         continue;
       }
+      if (!OrderDecimalPlacesWithinRuntimeBounds(pair)) {
+        detail::LogStrategyPairDisabledForOrderDecimalPlaces(
+            pair.symbol, pair.symbol_id,
+            pair.lag_instrument.price_decimal_places,
+            pair.lag_instrument.quantity_decimal_places,
+            kOrderDecimalPlaceLimit);
+        continue;
+      }
       price_text_slot_count += pair.execute.parallel;
       PairRuntimeState& runtime =
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
@@ -556,6 +580,20 @@ class Strategy {
            pair.bbo_record.stats_window_ns > 0 &&
            pair.trigger.quantile.up_max > pair.trigger.quantile.up_min &&
            pair.trigger.quantile.down_max > pair.trigger.quantile.down_min;
+  }
+
+  [[nodiscard]] static bool OrderDecimalPlacesWithinRuntimeBounds(
+      const PairConfig& pair) noexcept {
+    const InstrumentMetadata& instrument = pair.lag_instrument;
+    const std::int32_t price_decimal_places = instrument.price_decimal_places;
+    const std::int32_t quantity_decimal_places =
+        instrument.quantity_decimal_places;
+    return price_decimal_places >= 0 &&
+           price_decimal_places < kOrderDecimalPlaceLimit &&
+           quantity_decimal_places >= 0 &&
+           quantity_decimal_places < kOrderDecimalPlaceLimit &&
+           price_decimal_places + quantity_decimal_places <
+               kOrderDecimalPlaceLimit;
   }
 
   [[nodiscard]] PairRuntimeState* MutableRuntime(
@@ -736,8 +774,7 @@ class Strategy {
     }
 
     std::int64_t price_units = 0;
-    if (!ValidOrderDecimalPlaces(instrument.price_decimal_places) ||
-        !DecimalUnitsFromValue(rounded_order_price,
+    if (!DecimalUnitsFromValue(rounded_order_price,
                                instrument.price_decimal_places, &price_units)) {
       detail::LogStrategyOrderIntentRejected(
           "order_text_slot_full", symbol, runtime->pair.symbol_id,
@@ -761,8 +798,7 @@ class Strategy {
         return;
       }
       quantity = AbsolutePositionQuantity(*close_group);
-      if (!ValidOrderDecimalPlaces(instrument.quantity_decimal_places) ||
-          !DecimalUnitsFromValue(quantity, instrument.quantity_decimal_places,
+      if (!DecimalUnitsFromValue(quantity, instrument.quantity_decimal_places,
                                  &quantity_units)) {
         quantity = 0.0;
       } else {
@@ -989,10 +1025,7 @@ class Strategy {
         instrument.quantity_decimal_places;
     const std::int32_t notional_decimal_places =
         price_decimal_places + quantity_decimal_places;
-    if (!ValidOrderDecimalPlaces(price_decimal_places) ||
-        !ValidOrderDecimalPlaces(quantity_decimal_places) ||
-        !ValidOrderDecimalPlaces(notional_decimal_places) ||
-        instrument.notional_multiplier <= 0.0 ||
+    if (instrument.notional_multiplier <= 0.0 ||
         instrument.quantity_step <= 0.0 || pair.execute.open_notional <= 0.0) {
       return metadata;
     }
@@ -1197,7 +1230,7 @@ class Strategy {
   [[nodiscard]] static bool DecimalUnitsFromValueAutoPlaces(
       double value, std::int64_t* units,
       std::int32_t* decimal_places) noexcept {
-    for (std::int32_t places = 0; places <= kMaxOrderPriceDecimalPlaces;
+    for (std::int32_t places = 0; places <= kMaxCoreOrderDecimalPlaces;
          ++places) {
       std::int64_t candidate_units = 0;
       if (!DecimalUnitsFromValue(value, places, &candidate_units)) {
@@ -1225,9 +1258,7 @@ class Strategy {
       std::int64_t price_units, std::int32_t price_decimal_places,
       std::int64_t quantity_units,
       std::int32_t quantity_decimal_places) noexcept {
-    if (!ValidOrderDecimalPlaces(price_decimal_places) ||
-        !ValidOrderDecimalPlaces(quantity_decimal_places) || price_units <= 0 ||
-        quantity_units <= 0) {
+    if (price_units <= 0 || quantity_units <= 0) {
       return nullptr;
     }
     for (OrderPriceTextStorage& storage : order_price_texts_) {
@@ -1271,11 +1302,6 @@ class Strategy {
     storage->reserved_open_quantity = 0.0;
     storage->reserved_open_notional = 0.0;
     storage->active = false;
-  }
-
-  [[nodiscard]] static bool ValidOrderDecimalPlaces(
-      std::int32_t decimal_places) noexcept {
-    return decimal_places >= 0 && decimal_places <= kMaxOrderPriceDecimalPlaces;
   }
 
   [[nodiscard]] SignalDiagnostics BuildSignalDiagnostics(

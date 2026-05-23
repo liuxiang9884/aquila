@@ -460,8 +460,7 @@ void FeedOpenShortSignal(leadlag::Strategy* strategy, ContextT* context) {
 }
 
 aquila::OrderFeedbackEvent FilledFeedback(std::uint64_t local_order_id,
-                                          double quantity,
-                                          double fill_price) {
+                                          double quantity, double fill_price) {
   return aquila::OrderFeedbackEvent{
       .kind = aquila::OrderFeedbackKind::kFilled,
       .local_order_id = local_order_id,
@@ -481,9 +480,10 @@ aquila::OrderFeedbackEvent FilledFeedback(std::uint64_t local_order_id,
   };
 }
 
-aquila::OrderFeedbackEvent PartialFilledFeedback(
-    std::uint64_t local_order_id, double cumulative_quantity,
-    double left_quantity, double fill_price) {
+aquila::OrderFeedbackEvent PartialFilledFeedback(std::uint64_t local_order_id,
+                                                 double cumulative_quantity,
+                                                 double left_quantity,
+                                                 double fill_price) {
   return aquila::OrderFeedbackEvent{
       .kind = aquila::OrderFeedbackKind::kPartialFilled,
       .local_order_id = local_order_id,
@@ -709,6 +709,49 @@ TEST(LeadLagStrategyInterfaceTest,
       order_session.placed_orders.back();
   EXPECT_DOUBLE_EQ(order.quantity, 0.1);
   EXPECT_EQ(order.quantity_text, "0.1");
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     InitializationSkipsPairWhenOrderDecimalPlacesExceedBounds) {
+  struct DecimalPlacesCase {
+    std::int32_t price_decimal_places{0};
+    std::int32_t quantity_decimal_places{0};
+    double quantity_step{1.0};
+    double min_quantity{1.0};
+  };
+  const DecimalPlacesCase cases[] = {
+      {.price_decimal_places = 12, .quantity_decimal_places = 0},
+      {.price_decimal_places = 0,
+       .quantity_decimal_places = 12,
+       .quantity_step = 0.000000000001,
+       .min_quantity = 0.000000000001},
+      {.price_decimal_places = 6,
+       .quantity_decimal_places = 6,
+       .quantity_step = 0.000001,
+       .min_quantity = 0.000001},
+  };
+
+  for (const DecimalPlacesCase& test_case : cases) {
+    leadlag::Config config = SignalOnlyConfig();
+    config.pairs[0].lag_instrument.price_decimal_places =
+        test_case.price_decimal_places;
+    config.pairs[0].lag_instrument.quantity_step = test_case.quantity_step;
+    config.pairs[0].lag_instrument.quantity_decimal_places =
+        test_case.quantity_decimal_places;
+    config.pairs[0].lag_instrument.min_quantity = test_case.min_quantity;
+    leadlag::Strategy strategy{config};
+    FakeOrderSession order_session;
+    OrderManagerT order_manager{order_session, 8, 4};
+    ContextT context{order_manager};
+
+    FeedOpenLongSignal(&strategy, &context);
+
+    EXPECT_FALSE(strategy.last_signal_decision().triggered)
+        << "price_decimal_places=" << test_case.price_decimal_places
+        << " quantity_decimal_places=" << test_case.quantity_decimal_places;
+    EXPECT_TRUE(order_session.placed_orders.empty());
+    EXPECT_EQ(order_manager.order_count(), 0U);
+  }
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
@@ -1358,7 +1401,8 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeSkipsOpenBelowMinQuantity) {
   EXPECT_EQ(order_manager.order_count(), 0U);
 }
 
-TEST(LeadLagStrategyInterfaceTest, ExternalModeSkipsOrderWhenPriceTextInvalid) {
+TEST(LeadLagStrategyInterfaceTest,
+     InitializationSkipsPairWhenPriceDecimalPlacesInvalid) {
   leadlag::Config config = SignalOnlyConfig();
   config.pairs[0].lag_instrument.price_decimal_places = 128;
   leadlag::Strategy strategy{config};
@@ -1368,17 +1412,16 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeSkipsOrderWhenPriceTextInvalid) {
 
   FeedOpenLongSignal(&strategy, &context);
 
-  EXPECT_TRUE(strategy.last_signal_decision().triggered);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
   EXPECT_TRUE(order_session.placed_orders.empty());
   EXPECT_EQ(order_manager.order_count(), 0U);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     ExternalModeSkipsOrderWhenPriceTextBufferTooSmall) {
+     ExternalModeSkipsOrderWhenPriceUnitsOverflow) {
   leadlag::Config config = SignalOnlyConfig();
-  config.pairs[0].execute.open_notional = 1.0e66;
   config.pairs[0].lag_instrument.price_tick = 1.0;
-  config.pairs[0].lag_instrument.price_decimal_places = 18;
+  config.pairs[0].lag_instrument.price_decimal_places = 11;
   leadlag::Strategy strategy{config};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
