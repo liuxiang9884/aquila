@@ -57,7 +57,7 @@ doc/evaluation_support.md
 - C++ trading quantity contract 已改为 `double quantity` + `quantity_text`：`core::OrderCreateRequest` / `core::StrategyOrder`、`OrderFeedbackEvent` / feedback SHM、`OrderManager`、Gate private feedback parser、Gate order session encoder 和 `OrderSessionRuntimeAdapter` 已支持 decimal quantity；Gate order JSON `size` 由 `quantity_text` 按 side 生成正负文本。`kOrderFeedbackShmVersion` 已 bump 到 2，旧 feedback SHM 需要重建。
 - 2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke；feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。
 - 2026-05-22 TUI / monitor 已完成 `monitor/` skeleton、FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot live dump snapshot 和 monitor smoke tests。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance data session SHM，不自动启动 data session；缺失 SHM 时显示 `NA` 并产生 alert。
-- 本轮已验证 `ctest --test-dir build/debug --output-on-failure` 为 80/80 passed。
+- 2026-05-23 requested 12-symbol / ETH_USDT 配置整理已验证：`data_session_config_test`、`strategy_config_test`、`lead_lag_config_test` 和 `ctest --test-dir build/debug -R lead_lag --output-on-failure` 均通过；未跑全量 ctest。
 - 工作区状态以 `git status` 为准；如出现本地未提交或未跟踪文件，先确认用途和归属再处理。
 
 ## 已完成摘要
