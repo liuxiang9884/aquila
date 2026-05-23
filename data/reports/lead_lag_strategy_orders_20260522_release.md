@@ -10,6 +10,11 @@
 
 本次测试因 `RAVE_USDT` partial fill 没有进入 strategy terminal feedback 而中止，未跑满 1 小时。
 
+触发 `BookTicker.id` 口径：本轮运行的 `lead_lag_order_intent` 日志没有记录触发订单的 `BookTicker.id`，`signals_output=-`
+也没有落地 signal CSV；data session 日志只保留启动和汇总信息，没有逐条行情记录。当前 `/dev/shm` 中残留的旧共享内存对象也无法重新
+挂载回放，因此本轮历史订单无法从现有 artifact 精确恢复触发行情 id。后续 live order 报告需要依赖策略 order-intent 日志直接写入触发
+`BookTicker.id`，或同时开启 signal CSV / SHM binary recorder。
+
 ## 总览
 
 | 指标 | 数量 |
@@ -27,16 +32,16 @@
 
 ## Strategy 订单明细
 
-| # | Time UTC | Symbol | Local order id | Action | Side | Reduce-only | Qty | Raw price | Order price | Slippage cfg | Strategy / REST 结果 | Fill |
-| ---: | --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 1 | 15:55:43.378 | DASH_USDT | 288230376151711745 | kOpenShort | Sell | false | 223 | 44.71 | 44.68 | 3 ticks | `kCancelled` | 0 / left 223 |
-| 2 | 15:56:32.785 | ZEC_USDT | 288230376151711746 | kOpenShort | Sell | false | 15 | 631.17 | 631.12 | 5 ticks | `kCancelled` | 0 / left 15 |
-| 3 | 15:58:31.474 | RIVER_USDT | 288230376151711747 | kOpenShort | Sell | false | 14 | 6.809 | 6.806 | 3 ticks | `kCancelled` | 0 / left 14 |
-| 4 | 16:00:04.501 | RIVER_USDT | 288230376151711748 | kOpenShort | Sell | false | 14 | 6.816 | 6.813 | 3 ticks | `kFilled` | 14 @ 6.813 |
-| 5 | 16:00:04.592 | RIVER_USDT | 288230376151711749 | kCloseShort | Buy | true | 14 | 6.814 | 6.817 | 3 ticks | `kFilled` | 14 @ 6.8145 |
-| 6 | 16:00:16.100 | ZEC_USDT | 288230376151711750 | kOpenLong | Buy | false | 15 | 629.24 | 629.29 | 5 ticks | `kCancelled` | 0 / left 15 |
-| 7 | 16:02:03.561 | RAVE_USDT | 288230376151711751 | kOpenLong | Buy | false | 17 | 0.5619 | 0.5624 | 5 ticks | Strategy 只有 Ack；REST 显示 `finish_as=ioc` partial fill | REST: `size=17`, `left=6`, `fill_price=0.562399019608` |
-| 8 | 16:04:02.825 | DASH_USDT | 288230376151711752 | kOpenLong | Buy | false | 222 | 44.95 | 44.98 | 3 ticks | `kCancelled` | 0 / left 222 |
+| # | Time UTC | Trigger BookTicker.id | Symbol | Local order id | Action | Side | Reduce-only | Qty | Raw price | Order price | Slippage cfg | Strategy / REST 结果 | Fill |
+| ---: | --- | --- | --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | 15:55:43.378 | 未记录 | DASH_USDT | 288230376151711745 | kOpenShort | Sell | false | 223 | 44.71 | 44.68 | 3 ticks | `kCancelled` | 0 / left 223 |
+| 2 | 15:56:32.785 | 未记录 | ZEC_USDT | 288230376151711746 | kOpenShort | Sell | false | 15 | 631.17 | 631.12 | 5 ticks | `kCancelled` | 0 / left 15 |
+| 3 | 15:58:31.474 | 未记录 | RIVER_USDT | 288230376151711747 | kOpenShort | Sell | false | 14 | 6.809 | 6.806 | 3 ticks | `kCancelled` | 0 / left 14 |
+| 4 | 16:00:04.501 | 未记录 | RIVER_USDT | 288230376151711748 | kOpenShort | Sell | false | 14 | 6.816 | 6.813 | 3 ticks | `kFilled` | 14 @ 6.813 |
+| 5 | 16:00:04.592 | 未记录 | RIVER_USDT | 288230376151711749 | kCloseShort | Buy | true | 14 | 6.814 | 6.817 | 3 ticks | `kFilled` | 14 @ 6.8145 |
+| 6 | 16:00:16.100 | 未记录 | ZEC_USDT | 288230376151711750 | kOpenLong | Buy | false | 15 | 629.24 | 629.29 | 5 ticks | `kCancelled` | 0 / left 15 |
+| 7 | 16:02:03.561 | 未记录 | RAVE_USDT | 288230376151711751 | kOpenLong | Buy | false | 17 | 0.5619 | 0.5624 | 5 ticks | Strategy 只有 Ack；REST 显示 `finish_as=ioc` partial fill | REST: `size=17`, `left=6`, `fill_price=0.562399019608` |
+| 8 | 16:04:02.825 | 未记录 | DASH_USDT | 288230376151711752 | kOpenLong | Buy | false | 222 | 44.95 | 44.98 | 3 ticks | `kCancelled` | 0 / left 222 |
 
 ## 完整成交交易：RIVER_USDT
 
