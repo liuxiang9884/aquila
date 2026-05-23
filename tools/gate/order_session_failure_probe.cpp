@@ -57,6 +57,7 @@ struct ProbeOrder {
   aquila::OrderType type{aquila::OrderType::kLimit};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kImmediateOrCancel};
   std::int64_t quantity{0};
+  std::string quantity_text;
   std::string_view price_text{};
   bool reduce_only{false};
 };
@@ -130,6 +131,7 @@ ProbeOrder BuildProbeOrder(const CliOptions& options) {
       .type = aquila::OrderType::kLimit,
       .time_in_force = ParseTimeInForce(options.tif),
       .quantity = options.size,
+      .quantity_text = fmt::format("{}", options.size),
       .price_text = options.price,
       .reduce_only = options.reduce_only,
   };

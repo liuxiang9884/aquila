@@ -36,6 +36,7 @@ enum class OrderSendStatus : std::uint8_t {
   kEncodeBufferTooSmall,
   kInvalidLocalOrderId,
   kUnsupportedOrderType,
+  kInvalidQuantityText,
   kSignatureFailed,
   kNoPreparedWriteSlot,
   kWriteUnavailable,

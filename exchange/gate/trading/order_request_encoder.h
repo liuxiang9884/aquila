@@ -25,6 +25,7 @@ enum class OrderEncodeStatus : std::uint8_t {
   kBufferTooSmall,
   kSignatureFailed,
   kInvalidOrderText,
+  kInvalidQuantityText,
   kUnsupportedOrderType,
 };
 
@@ -46,7 +47,7 @@ struct PlaceOrderEncodeFields {
   std::uint64_t local_order_id{0};
   OrderType order_type{OrderType::kLimit};
   std::string_view contract{};
-  std::int64_t signed_size{0};
+  std::string_view signed_size_text{};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   bool reduce_only{false};
@@ -118,6 +119,9 @@ template <std::size_t N>
   if (fields.order_type != OrderType::kLimit) {
     return {.status = OrderEncodeStatus::kUnsupportedOrderType, .text = {}};
   }
+  if (fields.signed_size_text.empty()) {
+    return {.status = OrderEncodeStatus::kInvalidQuantityText, .text = {}};
+  }
 
   std::array<char, 32> text_buffer;
   const std::string_view text =
@@ -130,7 +134,7 @@ template <std::size_t N>
       buffer,
       R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":{},"price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})",
       fields.timestamp, fields.encoded_request_id, fields.contract,
-      fields.signed_size, fields.price_text,
+      fields.signed_size_text, fields.price_text,
       GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
 }
 

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <cstring>
 #include <span>
 #include <string>
 #include <string_view>
@@ -30,9 +31,24 @@ struct LoginCredentials {
 };
 
 template <typename OrderT>
-[[nodiscard]] std::int64_t SignedOrderSizeForGate(
-    const OrderT& order) noexcept {
-  return order.side == OrderSide::kBuy ? order.quantity : -order.quantity;
+[[nodiscard]] std::string_view SignedOrderSizeTextForGate(
+    const OrderT& order, std::span<char> buffer) noexcept {
+  const std::string_view quantity_text = order.quantity_text;
+  if (quantity_text.empty()) {
+    return {};
+  }
+  if (quantity_text.front() == '-') {
+    return order.side == OrderSide::kSell ? quantity_text : std::string_view{};
+  }
+  if (order.side == OrderSide::kBuy) {
+    return quantity_text;
+  }
+  if (buffer.size() < quantity_text.size() + 1) {
+    return {};
+  }
+  buffer[0] = '-';
+  std::memcpy(buffer.data() + 1, quantity_text.data(), quantity_text.size());
+  return std::string_view(buffer.data(), quantity_text.size() + 1);
 }
 
 class NoopOrderSessionDiagnostics {
@@ -207,6 +223,10 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
+    std::array<char, 64> signed_size_buffer{};
+    const std::string_view signed_size_text = SignedOrderSizeTextForGate(
+        order, std::span<char>(signed_size_buffer.data(),
+                               signed_size_buffer.size()));
     std::array<char, kPlaceOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodePlaceOrderRequest(
         PlaceOrderEncodeFields{.timestamp = NowSeconds(),
@@ -214,7 +234,7 @@ class OrderSession {
                                .local_order_id = order.local_order_id,
                                .order_type = order_type,
                                .contract = order.symbol,
-                               .signed_size = SignedOrderSizeForGate(order),
+                               .signed_size_text = signed_size_text,
                                .price_text = order.price_text,
                                .time_in_force = order.time_in_force,
                                .reduce_only = order.reduce_only},
@@ -399,6 +419,8 @@ class OrderSession {
         return OrderSendStatus::kInvalidLocalOrderId;
       case OrderEncodeStatus::kUnsupportedOrderType:
         return OrderSendStatus::kUnsupportedOrderType;
+      case OrderEncodeStatus::kInvalidQuantityText:
+        return OrderSendStatus::kInvalidQuantityText;
       case OrderEncodeStatus::kSignatureFailed:
         return OrderSendStatus::kSignatureFailed;
     }
@@ -432,10 +454,10 @@ class OrderSession {
     NOVA_INFO(
         "gate_order_send_ok type=place local_order_id={} "
         "request_sequence={} encoded_request_id={} contract={} side={} "
-        "signed_size={} price={} tif={} reduce_only={} inflight={}",
+        "quantity={} price={} tif={} reduce_only={} inflight={}",
         order.local_order_id, request_sequence, encoded_request_id,
         order.symbol, magic_enum::enum_name(order.side),
-        SignedOrderSizeForGate(order), order.price_text,
+        order.quantity_text, order.price_text,
         magic_enum::enum_name(order.time_in_force),
         order.reduce_only ? "true" : "false", inflight);
   }

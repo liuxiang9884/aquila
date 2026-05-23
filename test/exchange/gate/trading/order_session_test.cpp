@@ -102,6 +102,7 @@ struct TestOrder {
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
   std::int64_t quantity{0};
+  std::string_view quantity_text{};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::uint64_t exchange_order_id{0};
@@ -113,6 +114,7 @@ struct TestOrderWithoutExchangeOrderId {
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   std::int64_t quantity{0};
+  std::string_view quantity_text{};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   bool reduce_only{false};
@@ -124,6 +126,7 @@ TestOrder MakePlaceOrder(std::uint64_t local_order_id) noexcept {
                    .side = OrderSide::kBuy,
                    .type = OrderType::kLimit,
                    .quantity = 1,
+                   .quantity_text = "1",
                    .price_text = "81000",
                    .time_in_force = TimeInForce::kGoodTillCancel,
                    .exchange_order_id = 0,
@@ -165,11 +168,25 @@ TEST(OrderSessionTest, SignedSizeUsesSideAndPositiveQuantity) {
   TestOrder buy = MakePlaceOrder(123);
   buy.side = OrderSide::kBuy;
   buy.quantity = 2;
+  buy.quantity_text = "2";
   TestOrder sell = buy;
   sell.side = OrderSide::kSell;
+  std::array<char, 64> buffer{};
 
-  EXPECT_EQ(SignedOrderSizeForGate(buy), 2);
-  EXPECT_EQ(SignedOrderSizeForGate(sell), -2);
+  EXPECT_EQ(SignedOrderSizeTextForGate(buy, buffer), "2");
+  EXPECT_EQ(SignedOrderSizeTextForGate(sell, buffer), "-2");
+}
+
+TEST(OrderSessionTest, SignedSizeKeepsDecimalQuantityText) {
+  TestOrder buy = MakePlaceOrder(123);
+  buy.quantity = 0;
+  buy.quantity_text = "0.1";
+  TestOrder sell = buy;
+  sell.side = OrderSide::kSell;
+  std::array<char, 64> buffer{};
+
+  EXPECT_EQ(SignedOrderSizeTextForGate(buy, buffer), "0.1");
+  EXPECT_EQ(SignedOrderSizeTextForGate(sell, buffer), "-0.1");
 }
 
 TEST(OrderSessionTest, RejectsPlaceBeforeLoginReady) {
