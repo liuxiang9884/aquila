@@ -24,6 +24,19 @@ target_link_libraries(core_order_feedback_event_test
 add_test(NAME core_order_feedback_event_test
          COMMAND core_order_feedback_event_test)
 
+add_executable(core_order_decimal_test
+    order_decimal_test.cpp
+)
+
+target_link_libraries(core_order_decimal_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_order_decimal_test
+         COMMAND core_order_decimal_test)
+
 add_executable(core_order_feedback_shm_test
     order_feedback_shm_test.cpp
 )
