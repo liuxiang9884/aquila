@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -29,6 +30,51 @@ leadlag::ConfigResult ParseConfigToml(
     std::string_view text, const aquila::config::InstrumentCatalog& catalog) {
   const toml::parse_result parsed = toml::parse(text);
   return leadlag::ParseConfig(parsed, catalog);
+}
+
+aquila::config::InstrumentCatalog CatalogWithLagQuantityMetadata(
+    std::optional<double> quantity_step,
+    std::optional<std::int32_t> quantity_decimal_places) {
+  aquila::config::InstrumentCatalog catalog;
+  catalog.Add(aquila::config::InstrumentInfo{
+      .symbol_id = 0,
+      .exchange = aquila::Exchange::kBinance,
+      .symbol = "BTC_USDT",
+      .exchange_symbol = "BTCUSDT",
+      .base_asset = "BTC",
+      .quote_asset = "USDT",
+      .settle_asset = "USDT",
+      .product_type = "linear_perpetual",
+      .status = "TRADING",
+      .contract_type = "PERPETUAL",
+      .price_tick = 0.1,
+      .price_decimal_places = 1,
+      .quantity_step = 0.001,
+      .quantity_decimal_places = 3,
+      .min_quantity = 0.001,
+      .max_quantity = 1000.0,
+      .notional_multiplier = 1.0,
+  });
+  catalog.Add(aquila::config::InstrumentInfo{
+      .symbol_id = 0,
+      .exchange = aquila::Exchange::kGate,
+      .symbol = "BTC_USDT",
+      .exchange_symbol = "BTC_USDT",
+      .base_asset = "BTC",
+      .quote_asset = "USDT",
+      .settle_asset = "USDT",
+      .product_type = "linear_perpetual",
+      .status = "trading",
+      .contract_type = "direct",
+      .price_tick = 0.1,
+      .price_decimal_places = 1,
+      .quantity_step = quantity_step,
+      .quantity_decimal_places = quantity_decimal_places,
+      .min_quantity = 1.0,
+      .max_quantity = 100000.0,
+      .notional_multiplier = 0.0001,
+  });
+  return catalog;
 }
 
 std::string MinimalConfigTomlWithRisk(std::string_view risk_section,
@@ -275,6 +321,17 @@ close_slippage = 11
   ASSERT_EQ(result.value.pairs.size(), 1U);
   EXPECT_EQ(result.value.pairs[0].execute.open_slippage, 7U);
   EXPECT_EQ(result.value.pairs[0].execute.close_slippage, 11U);
+}
+
+TEST(LeadLagConfigTest, RejectsNegativeLagQuantityDecimalPlaces) {
+  const aquila::config::InstrumentCatalog catalog =
+      CatalogWithLagQuantityMetadata(/*quantity_step=*/0.1,
+                                     /*quantity_decimal_places=*/-1);
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk(""), catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("trading metadata"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsNegativeExecutionSlippageTicks) {

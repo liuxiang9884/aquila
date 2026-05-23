@@ -68,6 +68,13 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   ExpectOptionalDoubleEq(gate_btc->price_limit_down, 0.5);
   EXPECT_FALSE(gate_btc->market_price_bound.has_value());
 
+  const aquila::config::InstrumentInfo* gate_rave =
+      catalog.Find(aquila::Exchange::kGate, "RAVE_USDT");
+  ASSERT_NE(gate_rave, nullptr);
+  ExpectOptionalDoubleEq(gate_rave->quantity_step, 0.1);
+  ExpectOptionalIntEq(gate_rave->quantity_decimal_places, 1);
+  EXPECT_DOUBLE_EQ(gate_rave->min_quantity, 0.1);
+
   const aquila::config::InstrumentInfo* binance_btc =
       catalog.Find(aquila::Exchange::kBinance, "BTC_USDT");
   ASSERT_NE(binance_btc, nullptr);

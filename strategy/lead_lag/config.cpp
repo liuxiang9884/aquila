@@ -376,6 +376,7 @@ class Parser {
       return false;
     }
     if (lag->price_tick <= 0.0 || *lag->quantity_step <= 0.0 ||
+        *lag->quantity_decimal_places < 0 ||
         lag->notional_multiplier <= 0.0) {
       Fail(prefix + ".symbol", " lag instrument trading metadata is invalid");
       return false;
