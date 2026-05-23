@@ -23,7 +23,7 @@ class OrderManager {
   OrderManager(const OrderManager&) = delete;
   OrderManager& operator=(const OrderManager&) = delete;
 
-  OrderPlaceResult PlaceOrder(OrderCreateRequest request) noexcept {
+  OrderPlaceResult PlaceOrder(const OrderCreateRequest& request) noexcept {
     if (request.symbol.empty() || request.price_text.empty() ||
         request.quantity_text.empty() || !std::isfinite(request.quantity) ||
         request.quantity <= 0.0) {

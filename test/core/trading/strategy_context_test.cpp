@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string_view>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 
@@ -44,6 +45,11 @@ struct FakeOrderSession {
     return {.status = SendStatus::kOk};
   }
 };
+
+static_assert(std::is_same_v<
+              decltype(&StrategyContext<FakeOrderSession>::PlaceOrder),
+              OrderPlaceResult (StrategyContext<FakeOrderSession>::*)(
+                  const OrderCreateRequest&) noexcept>);
 
 OrderCreateRequest MakeLimitRequest() noexcept {
   return OrderCreateRequest{.exchange = Exchange::kGate,

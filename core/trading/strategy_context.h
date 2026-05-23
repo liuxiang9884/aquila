@@ -16,8 +16,8 @@ class StrategyContext {
   explicit StrategyContext(OrderManagerT& order_manager) noexcept
       : order_manager_(order_manager) {}
 
-  OrderPlaceResult PlaceOrder(OrderCreateRequest request) noexcept {
-    return order_manager_.PlaceOrder(std::move(request));
+  OrderPlaceResult PlaceOrder(const OrderCreateRequest& request) noexcept {
+    return order_manager_.PlaceOrder(request);
   }
 
   OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
