@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -222,6 +223,21 @@ inline void LogStrategyPairDisabledForOrderDecimalPlaces(
       "quantity_decimal_places={} decimal_place_limit_exclusive={}",
       symbol, symbol_id, price_decimal_places, quantity_decimal_places,
       decimal_place_limit);
+}
+
+inline void LogStrategyPairDisabledForOrderMetadata(
+    std::string_view symbol, std::int32_t symbol_id, double price_tick,
+    double open_notional, double quantity_step,
+    double notional_multiplier) noexcept {
+  if (::nova::kLogManager.logger() == nullptr) {
+    return;
+  }
+  NOVA_ERROR(
+      "lead_lag_pair_disabled reason=order_metadata_invalid "
+      "symbol={} symbol_id={} price_tick={:.12g} open_notional={:.12g} "
+      "quantity_step={:.12g} notional_multiplier={:.12g}",
+      symbol, symbol_id, price_tick, open_notional, quantity_step,
+      notional_multiplier);
 }
 
 inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
@@ -553,12 +569,21 @@ class Strategy {
             kOrderDecimalPlaceLimit);
         continue;
       }
+      const PairRuntimeState::OrderDecimalMetadata order_decimal =
+          BuildOrderDecimalMetadata(pair);
+      if (!order_decimal.valid) {
+        detail::LogStrategyPairDisabledForOrderMetadata(
+            pair.symbol, pair.symbol_id, pair.lag_instrument.price_tick,
+            pair.execute.open_notional, pair.lag_instrument.quantity_step,
+            pair.lag_instrument.notional_multiplier);
+        continue;
+      }
       price_text_slot_count += pair.execute.parallel;
       PairRuntimeState& runtime =
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
       runtime.initialized = true;
       runtime.pair = pair;
-      runtime.order_decimal = BuildOrderDecimalMetadata(pair);
+      runtime.order_decimal = order_decimal;
       runtime.alignment.Init(AlignmentConfig{
           .drift_period_ns = pair.trigger.drift_period_ns,
           .stats_window_ns = pair.bbo_record.stats_window_ns,
@@ -1025,8 +1050,13 @@ class Strategy {
         instrument.quantity_decimal_places;
     const std::int32_t notional_decimal_places =
         price_decimal_places + quantity_decimal_places;
-    if (instrument.notional_multiplier <= 0.0 ||
-        instrument.quantity_step <= 0.0 || pair.execute.open_notional <= 0.0) {
+    if (!std::isfinite(instrument.price_tick) || instrument.price_tick <= 0.0 ||
+        !std::isfinite(instrument.notional_multiplier) ||
+        instrument.notional_multiplier <= 0.0 ||
+        !std::isfinite(instrument.quantity_step) ||
+        instrument.quantity_step <= 0.0 ||
+        !std::isfinite(pair.execute.open_notional) ||
+        pair.execute.open_notional <= 0.0) {
       return metadata;
     }
 
@@ -1061,9 +1091,8 @@ class Strategy {
     const InstrumentMetadata& instrument = runtime.pair.lag_instrument;
     const PairRuntimeState::OrderDecimalMetadata& metadata =
         runtime.order_decimal;
-    if (!metadata.valid || price_units <= 0) {
-      return {};
-    }
+    assert(metadata.valid);
+    assert(price_units > 0);
 
     const ::aquila::core::OpenQuantityUnitsResult result =
         ::aquila::core::CalculateOpenQuantityUnits(
@@ -1152,9 +1181,9 @@ class Strategy {
   [[nodiscard]] static double OrderNotional(
       double quantity, double price,
       const InstrumentMetadata& instrument) noexcept {
-    if (quantity <= kQuantityEpsilon || !std::isfinite(price) || price <= 0.0 ||
-        !std::isfinite(instrument.notional_multiplier) ||
-        instrument.notional_multiplier <= 0.0) {
+    assert(std::isfinite(instrument.notional_multiplier));
+    assert(instrument.notional_multiplier > 0.0);
+    if (quantity <= kQuantityEpsilon || !std::isfinite(price) || price <= 0.0) {
       return 0.0;
     }
     return quantity * price * instrument.notional_multiplier;
@@ -1163,8 +1192,9 @@ class Strategy {
   [[nodiscard]] static double RoundedOrderPrice(
       double intent_price, const InstrumentMetadata& instrument,
       OrderSide side) noexcept {
-    if (!std::isfinite(intent_price) || intent_price <= 0.0 ||
-        instrument.price_tick <= 0.0 || instrument.price_decimal_places < 0) {
+    assert(std::isfinite(instrument.price_tick));
+    assert(instrument.price_tick > 0.0);
+    if (!std::isfinite(intent_price) || intent_price <= 0.0) {
       return 0.0;
     }
     const double scaled = intent_price / instrument.price_tick;
@@ -1181,8 +1211,9 @@ class Strategy {
   [[nodiscard]] static double SlippedRoundedOrderPrice(
       double raw_price, const InstrumentMetadata& instrument, OrderSide side,
       std::uint32_t slippage_ticks) noexcept {
-    if (!std::isfinite(raw_price) || raw_price <= 0.0 ||
-        !std::isfinite(instrument.price_tick) || instrument.price_tick <= 0.0) {
+    assert(std::isfinite(instrument.price_tick));
+    assert(instrument.price_tick > 0.0);
+    if (!std::isfinite(raw_price) || raw_price <= 0.0) {
       return 0.0;
     }
     const double slippage =
@@ -1258,9 +1289,8 @@ class Strategy {
       std::int64_t price_units, std::int32_t price_decimal_places,
       std::int64_t quantity_units,
       std::int32_t quantity_decimal_places) noexcept {
-    if (price_units <= 0 || quantity_units <= 0) {
-      return nullptr;
-    }
+    assert(price_units > 0);
+    assert(quantity_units > 0);
     for (OrderPriceTextStorage& storage : order_price_texts_) {
       if (storage.active) {
         continue;

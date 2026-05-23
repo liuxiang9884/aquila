@@ -754,6 +754,50 @@ TEST(LeadLagStrategyInterfaceTest,
   }
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     InitializationSkipsPairWhenOrderMetadataInvalid) {
+  enum class InvalidOrderMetadataField : std::uint8_t {
+    kPriceTick,
+    kOpenNotional,
+    kQuantityStep,
+    kNotionalMultiplier,
+  };
+  const InvalidOrderMetadataField cases[] = {
+      InvalidOrderMetadataField::kPriceTick,
+      InvalidOrderMetadataField::kOpenNotional,
+      InvalidOrderMetadataField::kQuantityStep,
+      InvalidOrderMetadataField::kNotionalMultiplier,
+  };
+
+  for (const InvalidOrderMetadataField field : cases) {
+    leadlag::Config config = SignalOnlyConfig();
+    switch (field) {
+      case InvalidOrderMetadataField::kPriceTick:
+        config.pairs[0].lag_instrument.price_tick = 0.0;
+        break;
+      case InvalidOrderMetadataField::kOpenNotional:
+        config.pairs[0].execute.open_notional = 0.0;
+        break;
+      case InvalidOrderMetadataField::kQuantityStep:
+        config.pairs[0].lag_instrument.quantity_step = 0.0;
+        break;
+      case InvalidOrderMetadataField::kNotionalMultiplier:
+        config.pairs[0].lag_instrument.notional_multiplier = 0.0;
+        break;
+    }
+    leadlag::Strategy strategy{config};
+    FakeOrderSession order_session;
+    OrderManagerT order_manager{order_session, 8, 4};
+    ContextT context{order_manager};
+
+    FeedOpenLongSignal(&strategy, &context);
+
+    EXPECT_FALSE(strategy.last_signal_decision().triggered);
+    EXPECT_TRUE(order_session.placed_orders.empty());
+    EXPECT_EQ(order_manager.order_count(), 0U);
+  }
+}
+
 TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
