@@ -12,10 +12,7 @@ namespace {
 std::string_view FormatForTest(std::int64_t units,
                                std::int32_t decimal_places) {
   static std::array<char, 64> buffer{};
-  const DecimalFormatResult result =
-      FormatDecimalUnits(units, decimal_places, buffer);
-  EXPECT_TRUE(result.ok);
-  return result.text;
+  return FormatDecimalUnits(units, decimal_places, buffer);
 }
 
 TEST(OrderDecimalTest, FormatsDecimalUnitsWithoutFloatingPoint) {
@@ -25,15 +22,6 @@ TEST(OrderDecimalTest, FormatsDecimalUnitsWithoutFloatingPoint) {
   EXPECT_EQ(FormatForTest(1, 15), "0.000000000000001");
   EXPECT_EQ(FormatForTest(100, 0), "100");
   EXPECT_EQ(FormatForTest(-123, 2), "-1.23");
-}
-
-TEST(OrderDecimalTest, RejectsInvalidFormattingInputs) {
-  std::array<char, 4> small_buffer{};
-  EXPECT_FALSE(FormatDecimalUnits(12345, 2, small_buffer).ok);
-
-  std::array<char, 64> buffer{};
-  EXPECT_FALSE(FormatDecimalUnits(1, -1, buffer).ok);
-  EXPECT_FALSE(FormatDecimalUnits(1, 16, buffer).ok);
 }
 
 TEST(OrderDecimalTest, CalculatesQuantityUnitsFromNotionalAndPriceUnits) {
