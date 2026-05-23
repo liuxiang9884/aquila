@@ -2,10 +2,8 @@
 #define AQUILA_CORE_TRADING_ORDER_DECIMAL_H_
 
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <string_view>
 
 namespace aquila::core {
@@ -66,6 +64,31 @@ struct OpenQuantityUnitsResult {
   return static_cast<std::uint64_t>(-(value + 1)) + 1;
 }
 
+[[nodiscard]] inline char* WriteFixedWidthDecimalDigits(std::uint64_t value,
+                                                        std::size_t width,
+                                                        char* out) noexcept {
+  char* const end = out + width;
+  char* cursor = end;
+  for (std::size_t i = 0; i < width; ++i) {
+    *--cursor = static_cast<char>('0' + (value % 10));
+    value /= 10;
+  }
+  return end;
+}
+
+[[nodiscard]] inline char* WriteUnsignedDecimalDigits(std::uint64_t value,
+                                                      char* out) noexcept {
+  if (value < 10) {
+    *out++ = static_cast<char>('0' + value);
+    return out;
+  }
+  std::size_t width = 1;
+  for (std::uint64_t remaining = value; remaining >= 10; remaining /= 10) {
+    ++width;
+  }
+  return WriteFixedWidthDecimalDigits(value, width, out);
+}
+
 template <std::size_t N>
 [[nodiscard]] inline std::string_view FormatDecimalUnits(
     std::int64_t units, std::int32_t decimal_places,
@@ -73,7 +96,6 @@ template <std::size_t N>
   const std::int64_t scale = Pow10Int64(decimal_places);
 
   char* out = buffer.data();
-  char* const end = buffer.data() + buffer.size();
   if (units < 0) {
     *out++ = '-';
   }
@@ -81,8 +103,7 @@ template <std::size_t N>
   const std::uint64_t magnitude = AbsMagnitude(units);
   const std::uint64_t integer_units =
       magnitude / static_cast<std::uint64_t>(scale);
-  const auto integer_result = std::to_chars(out, end, integer_units);
-  out = integer_result.ptr;
+  out = WriteUnsignedDecimalDigits(integer_units, out);
 
   if (decimal_places == 0) {
     return std::string_view(buffer.data(),
@@ -92,19 +113,8 @@ template <std::size_t N>
 
   const std::uint64_t fractional_units =
       magnitude % static_cast<std::uint64_t>(scale);
-  std::array<char, kMaxOrderDecimalPlaces + 1> fractional_buffer{};
-  const auto fractional_result = std::to_chars(
-      fractional_buffer.data(),
-      fractional_buffer.data() + fractional_buffer.size(), fractional_units);
-
-  const std::size_t fractional_digits = static_cast<std::size_t>(
-      fractional_result.ptr - fractional_buffer.data());
-  const std::size_t leading_zeros =
-      static_cast<std::size_t>(decimal_places) - fractional_digits;
-  std::memset(out, '0', leading_zeros);
-  out += leading_zeros;
-  std::memcpy(out, fractional_buffer.data(), fractional_digits);
-  out += fractional_digits;
+  out = WriteFixedWidthDecimalDigits(
+      fractional_units, static_cast<std::size_t>(decimal_places), out);
 
   return std::string_view(buffer.data(),
                           static_cast<std::size_t>(out - buffer.data()));

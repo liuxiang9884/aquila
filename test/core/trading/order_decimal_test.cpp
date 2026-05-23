@@ -24,6 +24,32 @@ TEST(OrderDecimalTest, FormatsDecimalUnitsWithoutFloatingPoint) {
   EXPECT_EQ(FormatForTest(-123, 2), "-1.23");
 }
 
+TEST(OrderDecimalTest, WritesFixedWidthDecimalDigits) {
+  std::array<char, 8> buffer{};
+
+  char* out = WriteFixedWidthDecimalDigits(5, 3, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "005");
+
+  out = WriteFixedWidthDecimalDigits(0, 2, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "00");
+
+  out = WriteFixedWidthDecimalDigits(42, 2, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "42");
+}
+
+TEST(OrderDecimalTest, WritesUnsignedDecimalDigits) {
+  std::array<char, 32> buffer{};
+
+  char* out = WriteUnsignedDecimalDigits(0, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "0");
+
+  out = WriteUnsignedDecimalDigits(102, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "102");
+
+  out = WriteUnsignedDecimalDigits(123456789, buffer.data());
+  EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "123456789");
+}
+
 TEST(OrderDecimalTest, CalculatesQuantityUnitsFromNotionalAndPriceUnits) {
   const OpenQuantityUnitsResult result =
       CalculateOpenQuantityUnits(OpenQuantityUnitsInput{
