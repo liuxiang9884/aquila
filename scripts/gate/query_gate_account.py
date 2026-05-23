@@ -19,6 +19,8 @@ DEFAULT_TIMEOUT = 8.0
 DEFAULT_API_KEY_ENV = "TEST_KEY"
 DEFAULT_API_SECRET_ENV = "TEST_SECRET"
 USER_AGENT = "aquila-gate-account-query/1.0"
+SIZE_DECIMAL_HEADER = "X-Gate-Size-Decimal"
+SIZE_DECIMAL_HEADER_VALUE = "1"
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,7 @@ class SignedGateRestClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
+            SIZE_DECIMAL_HEADER: SIZE_DECIMAL_HEADER_VALUE,
         }
         headers.update(
             build_signature_headers(

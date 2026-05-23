@@ -233,7 +233,9 @@ def run_guarded_live(
     if not preflight.flat():
         summary["result"] = "preflight_not_flat"
         summary["exit_code"] = EXIT_PREFLIGHT_FAILED
-        summary["errors"].append("preflight found open orders, positions, or pending orders")
+        summary["errors"].append(
+            "preflight found open orders, positions, residual exposure, or pending orders"
+        )
         return EXIT_PREFLIGHT_FAILED, summary
 
     try:

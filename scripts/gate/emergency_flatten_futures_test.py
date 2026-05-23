@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from decimal import Decimal
 
 import emergency_flatten_futures as flatten
 
@@ -47,6 +48,14 @@ def dedicated_config(**overrides):
     }
     values.update(overrides)
     return flatten.FlattenConfig(**values)
+
+
+def position_payload(contract="BTC_USDT", size=0, pending_orders=0):
+    payload = {"contract": contract, "size": size, "pending_orders": pending_orders}
+    if Decimal(str(size)) == 0:
+        payload["value"] = "0"
+        payload["margin"] = "0"
+    return payload
 
 
 class EmergencyFlattenFuturesTest(unittest.TestCase):
@@ -167,11 +176,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 return {"id": "12345", "status": "finished", "finish_as": "cancelled"}
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
                 position_query_count += 1
-                return {
-                    "contract": "BTC_USDT",
-                    "size": 2 if position_query_count == 1 else 0,
-                    "pending_orders": 0,
-                }
+                return position_payload(size=2 if position_query_count == 1 else 0)
             if api_request.method == "POST":
                 return {"id": "54321", "status": "finished", "finish_as": "filled"}
             raise AssertionError(f"unexpected request: {api_request}")
@@ -200,11 +205,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 return []
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
                 position_query_count += 1
-                return {
-                    "contract": "BTC_USDT",
-                    "size": -3 if position_query_count == 1 else 0,
-                    "pending_orders": 0,
-                }
+                return position_payload(size=-3 if position_query_count == 1 else 0)
             if api_request.method == "POST":
                 return {"id": "54321", "status": "finished", "finish_as": "filled"}
             raise AssertionError(f"unexpected request: {api_request}")
@@ -226,6 +227,57 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(summary["close_orders_submitted"][0]["side"], "buy")
         self.assertEqual(summary["close_orders_submitted"][0]["size"], 3)
 
+    def test_decimal_position_size_closes_with_decimal_order_size(self):
+        calls = []
+        position_query_count = 0
+
+        def fake_request(api_request):
+            nonlocal position_query_count
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/RAVE_USDT"):
+                position_query_count += 1
+                return {
+                    "contract": "RAVE_USDT",
+                    "size": "0.2" if position_query_count == 1 else "0",
+                    "pending_orders": 0,
+                    "value": "0.11248" if position_query_count == 1 else "0",
+                    "margin": "0.022496" if position_query_count == 1 else "0",
+                }
+            if api_request.method == "POST":
+                return {"id": "decimal-close", "status": "finished", "finish_as": "filled"}
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(contracts=["RAVE_USDT"]),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        close_posts = [call for call in calls if call.method == "POST"]
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(len(close_posts), 1)
+        self.assertIn('"size":-0.2', close_posts[0].body)
+        self.assertEqual(summary["close_orders_submitted"][0]["signed_size"], "-0.2")
+        self.assertEqual(summary["close_orders_submitted"][0]["size"], "0.2")
+
+    def test_zero_integer_size_with_residual_value_is_not_flat(self):
+        self.assertFalse(
+            flatten.final_state_is_flat(
+                [
+                    flatten.PositionSnapshot(
+                        contract="RAVE_USDT",
+                        size=Decimal("0"),
+                        pending_orders=0,
+                        value=Decimal("0.11248"),
+                        margin=Decimal("0.022496"),
+                    )
+                ],
+                [],
+            )
+        )
+
     def test_idempotent_flat_account_sends_no_mutating_requests(self):
         calls = []
 
@@ -234,7 +286,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
                 return []
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
-                return {"contract": "BTC_USDT", "size": 0, "pending_orders": 0}
+                return position_payload(size=0)
             raise AssertionError(f"unexpected request: {api_request}")
 
         exit_code, summary = flatten.run_emergency_flatten(
@@ -270,6 +322,81 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(summary["result"], "not_flat")
         self.assertEqual(summary["close_orders_submitted"][0]["contract"], "BTC_USDT")
         self.assertEqual(summary["final_positions"][0]["size"], 2)
+
+    def test_residual_value_without_size_returns_not_flat_without_close(self):
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/RAVE_USDT"):
+                return {
+                    "contract": "RAVE_USDT",
+                    "size": 0,
+                    "pending_orders": 0,
+                    "value": "0.11248",
+                    "margin": "0.022496",
+                }
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(contracts=["RAVE_USDT"], poll_timeout_sec=0.0),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_NOT_FLAT)
+        self.assertEqual(summary["result"], "not_flat")
+        self.assertFalse(any(call.method == "POST" for call in calls))
+        self.assertEqual(summary["final_positions"][0]["size"], 0)
+        self.assertEqual(summary["final_positions"][0]["value"], "0.11248")
+        self.assertEqual(summary["final_positions"][0]["margin"], "0.022496")
+
+    def test_invalid_residual_value_returns_rest_failed_exit_code(self):
+        def fake_request(api_request):
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/RAVE_USDT"):
+                return {
+                    "contract": "RAVE_USDT",
+                    "size": 0,
+                    "pending_orders": 0,
+                    "value": "bad",
+                }
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(contracts=["RAVE_USDT"], poll_timeout_sec=0.0),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("RAVE_USDT.value", summary["errors"][0])
+
+    def test_missing_residual_fields_for_zero_size_returns_rest_failed_exit_code(self):
+        def fake_request(api_request):
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/RAVE_USDT"):
+                return {
+                    "contract": "RAVE_USDT",
+                    "size": 0,
+                    "pending_orders": 0,
+                }
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(contracts=["RAVE_USDT"], poll_timeout_sec=0.0),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("RAVE_USDT.value", summary["errors"][0])
 
     def test_max_position_count_guard_refuses_dedicated_account(self):
         calls = []
@@ -340,7 +467,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions"):
                 return [
                     {"contract": "BTC_USDT", "size": -2, "pending_orders": 0},
-                    {"contract": "ETH_USDT", "size": 0, "pending_orders": 0},
+                    position_payload(contract="ETH_USDT", size=0),
                 ]
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
                 self.assertEqual(api_request.query_string, "status=open")
@@ -360,6 +487,38 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(summary["plan"]["positions_to_close"][0]["contract"], "BTC_USDT")
         self.assertFalse(any(call.method in {"DELETE", "POST"} for call in calls))
 
+    def test_dedicated_account_dry_run_counts_residual_position_separately(self):
+        calls = []
+
+        def fake_request(api_request):
+            calls.append(api_request)
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions"):
+                return [
+                    {
+                        "contract": "RAVE_USDT",
+                        "size": 0,
+                        "pending_orders": 0,
+                        "value": "0.11248",
+                        "margin": "0.022496",
+                    }
+                ]
+            if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
+                return []
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=dedicated_config(dry_run=True),
+            requester=fake_request,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(summary["scope"]["contracts"], ["RAVE_USDT"])
+        self.assertEqual(summary["scope"]["discovered_non_zero_position_count"], 0)
+        self.assertEqual(summary["scope"]["discovered_residual_position_count"], 1)
+        self.assertEqual(summary["plan"]["positions_to_close"], [])
+        self.assertFalse(any(call.method in {"DELETE", "POST"} for call in calls))
+
     def test_dedicated_account_cancels_all_orders_before_closing_all_positions(self):
         calls = []
         positions_query_count = 0
@@ -372,8 +531,8 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 positions_query_count += 1
                 size = 2 if positions_query_count < 3 else 0
                 return [
-                    {"contract": "BTC_USDT", "size": size, "pending_orders": 0},
-                    {"contract": "ETH_USDT", "size": 0, "pending_orders": 0},
+                    position_payload(contract="BTC_USDT", size=size),
+                    position_payload(contract="ETH_USDT", size=0),
                 ]
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
                 order_query_count += 1
@@ -526,7 +685,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
                 return []
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/positions/BTC_USDT"):
-                return {"contract": "BTC_USDT", "size": "0.5", "pending_orders": 0}
+                return {"contract": "BTC_USDT", "size": "bad", "pending_orders": 0}
             raise AssertionError(f"unexpected request: {api_request}")
 
         exit_code, summary = flatten.run_emergency_flatten(
@@ -537,7 +696,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
         self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
         self.assertEqual(summary["result"], "rest_failed")
-        self.assertIn("expected integer size", summary["errors"][0])
+        self.assertIn("expected finite decimal", summary["errors"][0])
 
     def test_missing_pending_orders_in_final_verification_returns_rest_failed(self):
         calls = []
@@ -550,7 +709,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 position_query_count += 1
                 if position_query_count == 1:
                     return [{"contract": "BTC_USDT", "size": 1, "pending_orders": 0}]
-                return [{"contract": "BTC_USDT", "size": 0}]
+                return [{"contract": "BTC_USDT", "size": 0, "value": "0", "margin": "0"}]
             if api_request.method == "GET" and api_request.endpoint_path.endswith("/orders"):
                 return []
             if api_request.method == "POST":

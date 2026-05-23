@@ -1,6 +1,7 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import unittest
+from decimal import Decimal
 
 import run_live_with_guard as guard
 
@@ -64,6 +65,21 @@ def position_state(contract="BTC_USDT", size=1):
     )
 
 
+def residual_value_state(contract="RAVE_USDT"):
+    return guard.GuardState(
+        positions=[
+            guard.PositionSnapshot(
+                contract=contract,
+                size=Decimal("0"),
+                pending_orders=0,
+                value=Decimal("0.11248"),
+                margin=Decimal("0.022496"),
+            )
+        ],
+        open_orders=[],
+    )
+
+
 def config(command=None):
     return guard.GuardConfig(
         settle="usdt",
@@ -119,6 +135,30 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertEqual(process.commands, [])
         self.assertEqual(flatten.calls, [])
         self.assertEqual(summary["preflight"]["open_orders"][0]["order_id"], "12345")
+
+    def test_preflight_residual_value_refuses_to_start_or_flatten(self):
+        process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
+        flatten = FakeFlattenRunner(
+            (
+                guard.FLATTEN_EXIT_OK,
+                {"ok": True, "result": "verified_flat"},
+            )
+        )
+
+        exit_code, summary = guard.run_guarded_live(
+            config=config(),
+            requester=lambda request: {},
+            process_runner=process,
+            flatten_runner=flatten,
+            state_reader=FakeStateReader([residual_value_state()]),
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_PREFLIGHT_FAILED)
+        self.assertEqual(summary["result"], "preflight_not_flat")
+        self.assertEqual(process.commands, [])
+        self.assertEqual(flatten.calls, [])
+        self.assertFalse(summary["preflight"]["flat"])
+        self.assertEqual(summary["preflight"]["positions"][0]["value"], "0.11248")
 
     def test_normal_exit_and_flat_final_state_returns_ok(self):
         process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
@@ -191,6 +231,30 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertFalse(summary["ok"])
         self.assertEqual(summary["result"], "final_check_flattened")
         self.assertEqual(summary["final_check"]["positions"][0]["size"], 2)
+        self.assertEqual(len(flatten.calls), 1)
+
+    def test_normal_exit_with_residual_value_final_state_runs_flatten(self):
+        process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
+        flatten = FakeFlattenRunner(
+            (
+                guard.FLATTEN_EXIT_OK,
+                {"ok": True, "result": "verified_flat"},
+            )
+        )
+
+        exit_code, summary = guard.run_guarded_live(
+            config=config(),
+            requester=lambda request: {},
+            process_runner=process,
+            flatten_runner=flatten,
+            state_reader=FakeStateReader([flat_state("RAVE_USDT"), residual_value_state()]),
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_EMERGENCY_FLATTENED)
+        self.assertFalse(summary["ok"])
+        self.assertEqual(summary["result"], "final_check_flattened")
+        self.assertFalse(summary["final_check"]["flat"])
+        self.assertEqual(summary["final_check"]["positions"][0]["value"], "0.11248")
         self.assertEqual(len(flatten.calls), 1)
 
     def test_flatten_failure_returns_emergency_failed(self):

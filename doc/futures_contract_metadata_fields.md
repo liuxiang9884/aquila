@@ -86,8 +86,9 @@ quantity_decimal_places = decimal_places(order_size_min)
 `quantity_decimal_places` 生成的 `quantity_text`；Gate order session 直接用
 `quantity_text` 编码 JSON `size`，Gate private feedback parser / SHM / `OrderManager`
 也按 `double` 累计数量；LeadLag sizing 和 live smoke 会用 lag instrument 的
-`quantity_step` / `quantity_decimal_places` 计算并格式化数量。仍未完成的是 REST
-final check / emergency flatten 对 decimal residual 的 flat 判断与平仓处理。`order_size_min`
+`quantity_step` / `quantity_decimal_places` 计算并格式化数量。REST final check /
+emergency flatten 已带 `X-Gate-Size-Decimal: 1` 查询 / 下单，使用 decimal position size，
+并把 `value` / `margin` residual 纳入 flat 判断；仍需小额 live smoke 复核。`order_size_min`
 作为当前脚本可见的最小数量和精度来源；如后续 Gate 暴露独立 step 字段，应优先使用官方 step 字段。
 
 ### `price_limit_*` 不是完全同一规则

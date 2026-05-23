@@ -5,6 +5,20 @@ import unittest
 import query_gate_account as account
 
 
+class FakeHttpResponse:
+    def __init__(self, body=b"{}"):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self.body
+
+
 class QueryGateAccountTest(unittest.TestCase):
     def test_signature_matches_gate_rest_docs_example(self):
         headers = account.build_signature_headers(
@@ -152,6 +166,28 @@ class QueryGateAccountTest(unittest.TestCase):
             [(request.label, request.endpoint_path, request.query_string) for request in plan],
             [("futures_position_BTC_USDT", "/futures/usdt/positions/BTC_USDT", "")],
         )
+
+    def test_signed_rest_client_requests_decimal_size_payloads(self):
+        seen = {}
+        original_urlopen = account.urllib.request.urlopen
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            seen["size_decimal"] = request.get_header("X-gate-size-decimal")
+            return FakeHttpResponse()
+
+        account.urllib.request.urlopen = fake_urlopen
+        try:
+            client = account.SignedGateRestClient(
+                api_key="key",
+                api_secret="secret",
+                base_url="https://api.example.test/api/v4",
+            )
+            client.get_json(account.ApiRequest(label="position", endpoint_path="/futures/usdt/positions/RAVE_USDT"))
+        finally:
+            account.urllib.request.urlopen = original_urlopen
+
+        self.assertEqual(seen["size_decimal"], "1")
 
     def test_query_requests_aggregates_partial_errors(self):
         requests = [

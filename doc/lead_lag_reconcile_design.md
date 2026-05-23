@@ -152,11 +152,15 @@ scripts/lead_lag/run_live_with_guard.py \
 
 wrapper 行为：
 
-- 启动前查询 allowlist contracts，要求 open orders 为空、position `size=0`、`pending_orders=0`；不满足时拒绝启动，不自动清理共享账户残留。
+- 启动前查询 allowlist contracts，要求 open orders 为空、position `size=0`、`pending_orders=0`，且 `value` / `margin` residual 为 0；不满足时拒绝启动，不自动清理共享账户残留。
 - 子进程 exit code 为 `0` 时仍执行 final REST check；final check flat 才返回 `0`。
 - 子进程 exit code 非 `0`、子进程异常、final REST check 失败或 final check 非 flat 时，调用 `emergency_flatten_futures.py` 的同模块逻辑执行 stop-and-flat。
 - emergency flatten 成功时 wrapper 返回 `10`，表示系统已经执行应急平仓但仍保持停机，等待人工复核。
 - emergency flatten 失败或无法确认 flat 时 wrapper 返回 `11`，不得自动重启交易。
+`emergency_flatten_futures.py` 会带 `X-Gate-Size-Decimal: 1` 做 REST 查询 / 下单，position
+`size` 使用 `Decimal` 解析；`size=0` 的 REST position 必须携带 `value` / `margin` 才能证明
+flat，字段缺失会按 REST 响应无法解释处理；decimal size 会以 raw JSON number 提交 reduce-only
+close。
 
 ## V1 验证
 
@@ -166,6 +170,7 @@ wrapper 行为：
 
 ```bash
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/query_gate_account_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/place_futures_order_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/emergency_flatten_futures_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/lead_lag/run_live_with_guard_test.py
 ```

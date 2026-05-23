@@ -6,6 +6,20 @@ import unittest
 import place_futures_order as orders
 
 
+class FakeHttpResponse:
+    def __init__(self, body=b"{}"):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self.body
+
+
 class PlaceFuturesOrderTest(unittest.TestCase):
     def test_build_order_payload_uses_positive_size_for_buy(self):
         payload = orders.build_order_payload(
@@ -120,6 +134,31 @@ class PlaceFuturesOrderTest(unittest.TestCase):
             '{"contract":"BTC_USDT","size":1,"iceberg":0,"price":"1","tif":"gtc","text":"t-aquila-rest-test"}',
         )
 
+    def test_build_place_order_request_serializes_raw_decimal_size(self):
+        api_request = orders.build_place_order_request(
+            settle="usdt",
+            payload={
+                "contract": "RAVE_USDT",
+                "size": orders.RawJsonNumber("-0.2"),
+                "iceberg": 0,
+                "price": "0",
+                "tif": "ioc",
+                "text": "t-aquila-rest-test",
+                "reduce_only": True,
+            },
+        )
+
+        self.assertIn('"size":-0.2', api_request.body)
+        self.assertEqual(json.loads(api_request.body)["size"], -0.2)
+
+    def test_raw_json_number_rejects_non_json_number_text(self):
+        invalid_values = ["", "01", "1e-1", "0.2, \"price\":\"1\"", "NaN"]
+
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "invalid raw JSON number"):
+                    orders.RawJsonNumber(value)
+
     def test_dry_run_does_not_call_client(self):
         def fail_request(api_request):
             raise AssertionError(f"unexpected request: {api_request}")
@@ -231,6 +270,34 @@ class PlaceFuturesOrderTest(unittest.TestCase):
         )
 
         self.assertEqual(calls[0].endpoint_path, "/futures/usdt/orders/t-aquila%2Frest-test")
+
+    def test_signed_trading_client_requests_decimal_size_payloads(self):
+        seen = {}
+        original_urlopen = orders.urllib.request.urlopen
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            seen["size_decimal"] = request.get_header("X-gate-size-decimal")
+            return FakeHttpResponse()
+
+        orders.urllib.request.urlopen = fake_urlopen
+        try:
+            client = orders.SignedGateTradingClient(
+                api_key="key",
+                api_secret="secret",
+                base_url="https://api.example.test/api/v4",
+            )
+            client.request_json(
+                orders.ApiRequest(
+                    method="POST",
+                    endpoint_path="/futures/usdt/orders",
+                    body='{"contract":"RAVE_USDT","size":0.2}',
+                )
+            )
+        finally:
+            orders.urllib.request.urlopen = original_urlopen
+
+        self.assertEqual(seen["size_decimal"], "1")
 
     def test_json_result_is_serializable(self):
         result = orders.place_order(

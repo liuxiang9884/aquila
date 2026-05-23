@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -23,9 +24,12 @@ from query_gate_account import (
 
 
 USER_AGENT = "aquila-gate-futures-order-test/1.0"
+SIZE_DECIMAL_HEADER = "X-Gate-Size-Decimal"
+SIZE_DECIMAL_HEADER_VALUE = "1"
 DEFAULT_CONTRACT = "BTC_USDT"
 DEFAULT_TEXT_PREFIX = "t-aquila-rest"
 MAX_ORDER_SIZE = 5
+RAW_JSON_NUMBER_RE = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z")
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,15 @@ class ApiRequest:
 
 
 Requester = Callable[[ApiRequest], Any]
+
+
+@dataclass(frozen=True)
+class RawJsonNumber:
+    text: str
+
+    def __post_init__(self) -> None:
+        if RAW_JSON_NUMBER_RE.fullmatch(self.text) is None:
+            raise ValueError(f"invalid raw JSON number: {self.text}")
 
 
 def normalize_settle(settle: str) -> str:
@@ -125,7 +138,18 @@ def build_order_payload(
 
 
 def stable_json(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    parts: list[str] = ["{"]
+    for index, (key, value) in enumerate(payload.items()):
+        if index:
+            parts.append(",")
+        parts.append(json.dumps(str(key), ensure_ascii=False, separators=(",", ":")))
+        parts.append(":")
+        if isinstance(value, RawJsonNumber):
+            parts.append(value.text)
+        else:
+            parts.append(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    parts.append("}")
+    return "".join(parts)
 
 
 def build_place_order_request(settle: str, payload: dict[str, Any]) -> ApiRequest:
@@ -163,6 +187,7 @@ class SignedGateTradingClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
+            SIZE_DECIMAL_HEADER: SIZE_DECIMAL_HEADER_VALUE,
         }
         headers.update(
             build_signature_headers(

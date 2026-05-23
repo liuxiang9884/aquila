@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable
 import query_gate_account as account
 from place_futures_order import (
     ApiRequest,
+    RawJsonNumber,
     SignedGateTradingClient,
     build_cancel_order_request,
     build_place_order_request,
@@ -62,15 +63,37 @@ class FlattenConfig:
 @dataclass(frozen=True)
 class PositionSnapshot:
     contract: str
-    size: int
+    size: Decimal
     pending_orders: int = 0
+    value: Decimal | None = None
+    margin: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "size", Decimal(str(self.size)))
+        if self.value is not None:
+            object.__setattr__(self, "value", Decimal(str(self.value)))
+        if self.margin is not None:
+            object.__setattr__(self, "margin", Decimal(str(self.margin)))
+
+    def has_residual_exposure(self) -> bool:
+        return (self.value is not None and self.value != 0) or (
+            self.margin is not None and self.margin != 0
+        )
+
+    def flat(self) -> bool:
+        return self.size == 0 and self.pending_orders == 0 and not self.has_residual_exposure()
 
     def to_summary(self) -> dict[str, Any]:
-        return {
+        summary = {
             "contract": self.contract,
-            "size": self.size,
+            "size": _decimal_json_value(self.size),
             "pending_orders": self.pending_orders,
         }
+        if self.value is not None:
+            summary["value"] = _decimal_text(self.value)
+        if self.margin is not None:
+            summary["margin"] = _decimal_text(self.margin)
+        return summary
 
 
 @dataclass(frozen=True)
@@ -195,6 +218,43 @@ def _to_integral_size(value: Any, label: str) -> int:
     return int(parsed)
 
 
+def _to_decimal(value: Any, label: str) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise RestFailure(f"invalid {label}: expected finite decimal")
+    try:
+        parsed = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise RestFailure(f"invalid {label}: expected finite decimal, got {value}") from exc
+    if not parsed.is_finite():
+        raise RestFailure(f"invalid {label}: expected finite decimal, got {value}")
+    return parsed
+
+
+def _optional_decimal(mapping: dict[str, Any], key: str, label: str) -> Decimal | None:
+    if key not in mapping or mapping.get(key) is None or str(mapping.get(key)).strip() == "":
+        return None
+    return _to_decimal(mapping.get(key), f"{label}.{key}")
+
+
+def _required_decimal(mapping: dict[str, Any], key: str, label: str) -> Decimal:
+    value = _optional_decimal(mapping, key, label)
+    if value is None:
+        raise RestFailure(f"invalid {label}.{key}: missing {key}")
+    return value
+
+
+def _decimal_text(value: Decimal) -> str:
+    if value == value.to_integral_value():
+        return str(int(value))
+    return format(value.normalize(), "f")
+
+
+def _decimal_json_value(value: Decimal) -> int | str:
+    if value == value.to_integral_value():
+        return int(value)
+    return _decimal_text(value)
+
+
 def _pending_orders(position: dict[str, Any], contract: str) -> int:
     if "pending_orders" not in position:
         raise RestFailure(f"invalid {contract}.pending_orders: missing pending_orders")
@@ -249,10 +309,19 @@ def parse_position(value: Any, fallback_contract: str | None = None) -> Position
     if not isinstance(value, dict):
         raise RestFailure(f"invalid position response: expected object, got {type(value).__name__}")
     contract = _response_contract(value, fallback_contract, "position response")
+    size = _to_decimal(value.get("size"), f"{contract}.size")
+    if size == 0:
+        position_value = _required_decimal(value, "value", contract)
+        position_margin = _required_decimal(value, "margin", contract)
+    else:
+        position_value = _optional_decimal(value, "value", contract)
+        position_margin = _optional_decimal(value, "margin", contract)
     return PositionSnapshot(
         contract=contract,
-        size=_to_integral_size(value.get("size"), f"{contract}.size"),
+        size=size,
         pending_orders=_pending_orders(value, contract),
+        value=position_value,
+        margin=position_margin,
     )
 
 
@@ -340,7 +409,7 @@ def query_positions(
             positions.append(
                 PositionSnapshot(
                     contract=normalized_contract,
-                    size=0,
+                    size=Decimal(0),
                     pending_orders=0,
                 )
             )
@@ -376,7 +445,7 @@ def scope_contract_union(
     contracts = []
     seen = set()
     for position in positions:
-        if position.size == 0 and position.pending_orders == 0:
+        if position.flat():
             continue
         if position.contract in seen:
             continue
@@ -417,14 +486,14 @@ def build_close_order_text(clock: Any, sequence: int) -> str:
 def build_market_close_payload(
     position: PositionSnapshot,
     text: str,
-) -> tuple[dict[str, Any], str, int]:
+) -> tuple[dict[str, Any], str, Decimal]:
     if position.size == 0:
         raise ValueError("cannot build close payload for zero position")
     signed_size = -position.size
     side = "buy" if signed_size > 0 else "sell"
     payload = {
         "contract": position.contract,
-        "size": signed_size,
+        "size": RawJsonNumber(_decimal_text(signed_size)),
         "iceberg": 0,
         "price": "0",
         "tif": "ioc",
@@ -475,8 +544,8 @@ def submit_close_orders(
             {
                 "contract": position.contract,
                 "side": side,
-                "size": close_size,
-                "signed_size": payload["size"],
+                "size": _decimal_json_value(close_size),
+                "signed_size": _decimal_json_value(-position.size),
                 "request": close_request.to_public_dict(),
                 "response": response,
             }
@@ -493,8 +562,8 @@ def plan_positions_to_close(positions: Iterable[PositionSnapshot]) -> list[dict[
             {
                 "contract": position.contract,
                 "side": "buy" if signed_size > 0 else "sell",
-                "size": abs(position.size),
-                "signed_size": signed_size,
+                "size": _decimal_json_value(abs(position.size)),
+                "signed_size": _decimal_json_value(signed_size),
                 "reduce_only": True,
                 "price": "0",
                 "tif": "ioc",
@@ -507,11 +576,7 @@ def final_state_is_flat(
     positions: list[PositionSnapshot],
     open_orders: list[OpenOrder],
 ) -> bool:
-    return (
-        not open_orders
-        and all(position.size == 0 for position in positions)
-        and all(position.pending_orders == 0 for position in positions)
-    )
+    return not open_orders and all(position.flat() for position in positions)
 
 
 def query_scoped_positions(
@@ -557,11 +622,15 @@ def poll_until_flat(
 
 
 def check_max_position_count(positions: list[PositionSnapshot], max_position_count: int) -> None:
-    non_zero_positions = [position for position in positions if position.size != 0]
-    if len(non_zero_positions) > max_position_count:
+    non_flat_positions = [
+        position
+        for position in positions
+        if position.size != 0 or position.has_residual_exposure()
+    ]
+    if len(non_flat_positions) > max_position_count:
         raise ScopeRefused(
             "max-position-count exceeded: "
-            f"{len(non_zero_positions)} non-zero positions > {max_position_count}"
+            f"{len(non_flat_positions)} non-flat positions > {max_position_count}"
         )
 
 
@@ -584,7 +653,10 @@ def finish_summary(
     summary["ok"] = False
     summary["result"] = "not_flat"
     summary["exit_code"] = EXIT_NOT_FLAT
-    summary["errors"].append("timeout or final verification still has positions/open orders")
+    summary["errors"].append(
+        "timeout or final verification still has positions, residual exposure, "
+        "pending orders, or open orders"
+    )
     return EXIT_NOT_FLAT, summary
 
 
@@ -648,6 +720,9 @@ def run_dedicated_account_flatten(
     summary["scope"]["contracts"] = contracts
     summary["scope"]["discovered_non_zero_position_count"] = sum(
         1 for position in initial_positions if position.size != 0
+    )
+    summary["scope"]["discovered_residual_position_count"] = sum(
+        1 for position in initial_positions if position.has_residual_exposure()
     )
     summary["scope"]["discovered_pending_order_contract_count"] = sum(
         1 for position in initial_positions if position.pending_orders != 0
@@ -780,7 +855,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--max-position-count",
         type=int,
         default=DEFAULT_MAX_POSITION_COUNT,
-        help="Dedicated-account guard for maximum non-zero position count.",
+        help="Dedicated-account guard for maximum non-flat position count.",
     )
     return parser.parse_args(argv)
 
