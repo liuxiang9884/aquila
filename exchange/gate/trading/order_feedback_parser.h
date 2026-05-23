@@ -2,6 +2,7 @@
 #define AQUILA_EXCHANGE_GATE_TRADING_ORDER_FEEDBACK_PARSER_H_
 
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -160,54 +161,16 @@ inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   return kPositivePowersOfTen[exponent_value];
 }
 
-inline std::int64_t DecimalExponentScaleInt(std::int8_t exponent) noexcept {
-  static constexpr std::int64_t kPowersOfTen[] = {
-      1,
-      10,
-      100,
-      1'000,
-      10'000,
-      100'000,
-      1'000'000,
-      10'000'000,
-      100'000'000,
-      1'000'000'000,
-      10'000'000'000,
-  };
-
-  assert(exponent >= 0 && exponent <= 10);
-  return kPowersOfTen[exponent];
-}
-
-inline bool TryDecimalMantissaToIntegerQuantity(std::int64_t mantissa,
-                                                std::int8_t exponent,
-                                                std::int64_t* out) noexcept {
+inline bool TryDecimalMantissaToQuantity(std::int64_t mantissa,
+                                         std::int8_t exponent,
+                                         double* out) noexcept {
   assert(out != nullptr);
   std::int64_t abs_mantissa = 0;
   if (!TryAbsInt64(mantissa, &abs_mantissa)) {
     return false;
   }
-
-  if (exponent == 0) {
-    *out = abs_mantissa;
-    return true;
-  }
-
-  if (exponent > 0) {
-    const std::int64_t scale = DecimalExponentScaleInt(exponent);
-    if (abs_mantissa > std::numeric_limits<std::int64_t>::max() / scale) {
-      return false;
-    }
-    *out = abs_mantissa * scale;
-    return true;
-  }
-
-  const std::int64_t scale = DecimalExponentScaleInt(-exponent);
-  if (abs_mantissa % scale != 0) {
-    return false;
-  }
-  *out = abs_mantissa / scale;
-  return true;
+  *out = static_cast<double>(abs_mantissa) * DecimalExponentScale(exponent);
+  return std::isfinite(*out);
 }
 
 inline OrderRole ParseOrderRole(std::string_view role) noexcept {
@@ -381,13 +344,13 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
     return;
   }
 
-  std::int64_t size_quantity = 0;
-  std::int64_t left_quantity = 0;
-  if (!TryDecimalMantissaToIntegerQuantity(raw.size_mantissa, raw.size_exponent,
-                                           &size_quantity) ||
-      !TryDecimalMantissaToIntegerQuantity(raw.left_mantissa, raw.size_exponent,
-                                           &left_quantity) ||
-      left_quantity > size_quantity) {
+  double size_quantity = 0.0;
+  double left_quantity = 0.0;
+  if (!TryDecimalMantissaToQuantity(raw.size_mantissa, raw.size_exponent,
+                                    &size_quantity) ||
+      !TryDecimalMantissaToQuantity(raw.left_mantissa, raw.size_exponent,
+                                    &left_quantity) ||
+      left_quantity > size_quantity + 1e-12) {
     ++stats.invalid_quantity_count;
     CountDroppedEvent(stats);
     return;
@@ -406,7 +369,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
     return;
   }
 
-  const std::int64_t cumulative_filled_quantity = size_quantity - left_quantity;
+  const double cumulative_filled_quantity = size_quantity - left_quantity;
   const double fill_price = static_cast<double>(raw.fill_price_mantissa) *
                             DecimalExponentScale(raw.price_exponent);
 
@@ -426,7 +389,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
   }
 
   if (raw.finish_as == std::string_view("_update")) {
-    if (left_quantity <= 0) {
+    if (left_quantity <= 0.0) {
       ++stats.unsupported_finish_as_count;
       CountDroppedEvent(stats);
       return;
@@ -437,7 +400,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
   }
 
   if (raw.finish_as == std::string_view("filled")) {
-    if (left_quantity != 0) {
+    if (std::abs(left_quantity) > 1e-12) {
       ++stats.unsupported_filled_left_count;
       CountDroppedEvent(stats);
       return;

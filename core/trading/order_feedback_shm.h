@@ -24,7 +24,7 @@
 namespace aquila {
 
 inline constexpr std::uint32_t kOrderFeedbackShmMagic = 0x41514C4FU;
-inline constexpr std::uint32_t kOrderFeedbackShmVersion = 1;
+inline constexpr std::uint32_t kOrderFeedbackShmVersion = 2;
 inline constexpr std::uint32_t kMaxOrderFeedbackStrategies = 8;
 inline constexpr std::uint32_t kOrderFeedbackQueueCapacity = 65536;
 inline constexpr std::size_t kOrderFeedbackShmAllocatorInstances = 64;

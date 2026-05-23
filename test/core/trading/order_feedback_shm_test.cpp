@@ -226,7 +226,9 @@ TEST(OrderFeedbackShmTest, RejectsHeaderMismatch) {
       [](OrderFeedbackShmHeader& header) { header.magic = 0; });
   ExpectOpenFailsAfterHeaderMutation(
       "version_mismatch",
-      [](OrderFeedbackShmHeader& header) { header.version = 2; });
+      [](OrderFeedbackShmHeader& header) {
+        header.version = kOrderFeedbackShmVersion + 1;
+      });
   ExpectOpenFailsAfterHeaderMutation(
       "abi_size_mismatch", [](OrderFeedbackShmHeader& header) {
         header.abi_size = sizeof(OrderFeedbackEvent) + 1;

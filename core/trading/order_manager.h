@@ -171,6 +171,8 @@ class OrderManager {
   }
 
  private:
+  static constexpr double kQuantityEpsilon = 1e-12;
+
   enum class FillApplyResult : std::uint8_t {
     kApplied,
     kDuplicate,
@@ -279,7 +281,7 @@ class OrderManager {
       ++feedback_stats_.duplicate_or_stale_feedbacks;
       return;
     }
-    order.status = event.cumulative_filled_quantity > 0
+    order.status = event.cumulative_filled_quantity > kQuantityEpsilon
                        ? OrderStatus::kPartiallyCancelled
                        : OrderStatus::kCancelled;
     order.finish_reason = event.finish_reason;
@@ -295,19 +297,19 @@ class OrderManager {
     FinishOrder(order);
   }
 
-  FillApplyResult ApplyCumulativeFill(Order& order,
-                                      std::int64_t cumulative_quantity,
+  FillApplyResult ApplyCumulativeFill(Order& order, double cumulative_quantity,
                                       double fill_price) noexcept {
-    if (cumulative_quantity < order.cumulative_filled_quantity) {
+    if (cumulative_quantity + kQuantityEpsilon <
+        order.cumulative_filled_quantity) {
       return FillApplyResult::kStale;
     }
-    if (cumulative_quantity == order.cumulative_filled_quantity) {
+    if (std::abs(cumulative_quantity - order.cumulative_filled_quantity) <=
+        kQuantityEpsilon) {
       return FillApplyResult::kDuplicate;
     }
 
     order.cumulative_filled_quantity = cumulative_quantity;
-    order.cumulative_filled_value =
-        static_cast<double>(cumulative_quantity) * fill_price;
+    order.cumulative_filled_value = cumulative_quantity * fill_price;
     order.last_fill_price = fill_price;
     return FillApplyResult::kApplied;
   }

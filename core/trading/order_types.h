@@ -70,7 +70,7 @@ struct StrategyOrder {
   std::string_view price_text{};
   bool reduce_only{false};
   OrderStatus status{OrderStatus::kCreated};
-  std::int64_t cumulative_filled_quantity{0};
+  double cumulative_filled_quantity{0.0};
   double cumulative_filled_value{0.0};
   double last_fill_price{0.0};
   std::int64_t exchange_update_ns{0};
@@ -80,11 +80,10 @@ struct StrategyOrder {
   bool is_finished{false};
 
   [[nodiscard]] double AverageFillPrice() const noexcept {
-    if (cumulative_filled_quantity <= 0) {
+    if (cumulative_filled_quantity <= 0.0) {
       return 0.0;
     }
-    return cumulative_filled_value /
-           static_cast<double>(cumulative_filled_quantity);
+    return cumulative_filled_value / cumulative_filled_quantity;
   }
 };
 

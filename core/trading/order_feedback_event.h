@@ -57,9 +57,9 @@ struct OrderFeedbackEvent {
   OrderFeedbackKind kind;
   std::uint64_t local_order_id;
   std::uint64_t exchange_order_id;
-  std::int64_t cumulative_filled_quantity;
-  std::int64_t left_quantity;
-  std::int64_t cancelled_quantity;
+  double cumulative_filled_quantity;
+  double left_quantity;
+  double cancelled_quantity;
   double fill_price;
   OrderRole role;
   OrderFinishReason finish_reason;

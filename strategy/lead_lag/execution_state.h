@@ -339,14 +339,14 @@ class ExecutionState {
   }
 
   [[nodiscard]] static std::int64_t NormalizeFilledQuantity(
-      std::int64_t quantity, const InstrumentMetadata& instrument) noexcept {
+      double quantity, const InstrumentMetadata& instrument) noexcept {
     const double unit =
         instrument.quantity_step * instrument.notional_multiplier;
     if (unit <= 0.0) {
-      return quantity;
+      return static_cast<std::int64_t>(std::llround(quantity));
     }
     return static_cast<std::int64_t>(
-        std::llround(std::round(static_cast<double>(quantity) / unit) * unit));
+        std::llround(std::round(quantity / unit) * unit));
   }
 
   [[nodiscard]] ExecutionGroup* FindIdleGroup() noexcept {

@@ -290,7 +290,7 @@ TEST(GateOrderFeedbackParserTest, MapsIntegralDecimalSizeExponent) {
   EXPECT_EQ(stats.dropped_events, 0U);
 }
 
-TEST(GateOrderFeedbackParserTest, DropsNonIntegralDecimalQuantity) {
+TEST(GateOrderFeedbackParserTest, MapsNonIntegralDecimalQuantity) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
   OrderFeedbackPayloadFields fields = MakeFields("_update");
@@ -301,9 +301,12 @@ TEST(GateOrderFeedbackParserTest, DropsNonIntegralDecimalQuantity) {
   const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
 
   EXPECT_EQ(result.status, OrderFeedbackParseStatus::kOk);
-  EXPECT_EQ(collector.count, 0U);
-  EXPECT_EQ(stats.invalid_quantity_count, 1U);
-  EXPECT_EQ(stats.dropped_events, 1U);
+  ASSERT_EQ(collector.count, 1U);
+  EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kPartialFilled);
+  EXPECT_DOUBLE_EQ(collector.events[0].cumulative_filled_quantity, 1.0);
+  EXPECT_DOUBLE_EQ(collector.events[0].left_quantity, 0.5);
+  EXPECT_EQ(stats.invalid_quantity_count, 0U);
+  EXPECT_EQ(stats.dropped_events, 0U);
 }
 
 TEST(GateOrderFeedbackParserTest, DropsFilledWithNonZeroLeft) {

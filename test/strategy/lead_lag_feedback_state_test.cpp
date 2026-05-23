@@ -48,7 +48,8 @@ aquila::core::StrategyOrder Order(std::uint64_t local_order_id,
       .side = side,
       .quantity = static_cast<double>(cumulative_filled_quantity),
       .status = aquila::core::OrderStatus::kFilled,
-      .cumulative_filled_quantity = cumulative_filled_quantity,
+      .cumulative_filled_quantity =
+          static_cast<double>(cumulative_filled_quantity),
       .cumulative_filled_value =
           static_cast<double>(cumulative_filled_quantity) * fill_price,
       .last_fill_price = fill_price,
