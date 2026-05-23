@@ -28,7 +28,7 @@ namespace {
 namespace gate = aquila::gate;
 namespace probe = aquila::tools::gate_order_session_failure_probe;
 
-constexpr std::int64_t kMaxSubmitSize = 5;
+constexpr double kMaxSubmitSize = 5.0;
 
 struct CliOptions {
   std::filesystem::path config_path{
@@ -40,7 +40,7 @@ struct CliOptions {
   std::string side{"buy"};
   std::string price{"0.01"};
   std::string tif{"ioc"};
-  std::int64_t size{0};
+  double size{0.0};
   std::uint64_t local_order_id{1};
   std::uint64_t cancel_exchange_order_id{9000000000000000000ULL};
   double wait_seconds{20.0};
@@ -56,7 +56,7 @@ struct ProbeOrder {
   aquila::OrderSide side{aquila::OrderSide::kBuy};
   aquila::OrderType type{aquila::OrderType::kLimit};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kImmediateOrCancel};
-  std::int64_t quantity{0};
+  double quantity{0.0};
   std::string quantity_text;
   std::string_view price_text{};
   bool reduce_only{false};

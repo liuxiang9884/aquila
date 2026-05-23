@@ -407,7 +407,8 @@ struct BenchOrder {
   std::uint64_t local_order_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
-  std::int64_t quantity{0};
+  double quantity{0.0};
+  std::string_view quantity_text{};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   std::uint64_t exchange_order_id{0};
@@ -418,7 +419,8 @@ BenchOrder MakePlaceOrder() noexcept {
   return BenchOrder{.local_order_id = kLocalOrderId,
                     .symbol = "BTC_USDT",
                     .side = OrderSide::kBuy,
-                    .quantity = 1,
+                    .quantity = 1.0,
+                    .quantity_text = "1",
                     .price_text = "81000",
                     .time_in_force = TimeInForce::kGoodTillCancel,
                     .exchange_order_id = 0,
@@ -458,7 +460,8 @@ MakeGateLimitRequest() noexcept {
                                   .symbol = "BTC_USDT",
                                   .side = OrderSide::kBuy,
                                   .time_in_force = TimeInForce::kGoodTillCancel,
-                                  .quantity = 1,
+                                  .quantity = 1.0,
+                                  .quantity_text = "1",
                                   .price_text = "81000",
                                   .reduce_only = false};
 }
@@ -474,7 +477,8 @@ MakeGateLimitRequest() noexcept {
       .side = OrderSide::kBuy,
       .type = OrderType::kLimit,
       .time_in_force = TimeInForce::kGoodTillCancel,
-      .quantity = 1,
+      .quantity = 1.0,
+      .quantity_text = "1",
       .price_text = "81000",
       .reduce_only = false,
   };
@@ -502,7 +506,7 @@ void BM_EncodePlaceOrder(benchmark::State& state) {
       .encoded_request_id = kPlaceRequestId,
       .local_order_id = kLocalOrderId,
       .contract = "BTC_USDT",
-      .signed_size = 1,
+      .signed_size_text = "1",
       .price_text = "81000",
       .time_in_force = TimeInForce::kGoodTillCancel,
       .reduce_only = false,

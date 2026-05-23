@@ -69,6 +69,10 @@ OrderFeedbackShmReader(optional)
   `OrderManager` 或 exchange session。
 - `OrderFeedbackShmReader` 把 SHM 中的统一 `OrderFeedbackEvent` drain 到 `TradingRuntime::OnOrderFeedback()`；
   它是 feedback transport 到 runtime 的 reader 边界。
+- 当前 order quantity contract 是 `double quantity` + `quantity_text`：strategy / risk 使用 `double`
+  做数量和名义金额计算，exchange adapter 使用已按 instrument `quantity_decimal_places` 格式化的
+  `quantity_text` 编码真实下单字段；feedback event / SHM / `OrderManager` 也用 `double`
+  表示累计成交、剩余和撤单数量。
 
 完整结构图：
 

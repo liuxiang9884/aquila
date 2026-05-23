@@ -260,7 +260,7 @@ doc/futures_contract_metadata_fields.md
 1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `notional_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`notional_multiplier=1.0`。
 2. Gate `price_tick` 来自 `order_price_round`；Binance `price_tick` 来自 `PRICE_FILTER.tickSize`。
 3. Gate 未提供 `min_notional`，当前输出空值；Binance 从 `MIN_NOTIONAL` / `NOTIONAL` filter 映射。
-4. Gate 脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，并从 `order_size_min` 推导 `quantity_step` / `quantity_decimal_places`；例如 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 当前为 `0.1` / `1`。这只是 catalog metadata，完整 decimal-size 下单、回报和 REST flat 判断仍需后续覆盖。
+4. Gate 脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，并从 `order_size_min` 推导 `quantity_step` / `quantity_decimal_places`；例如 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 当前为 `0.1` / `1`。C++ order / feedback / Gate encoder / LeadLag sizing 已消费该 metadata；REST final check / emergency flatten 的 decimal residual flat 判断仍需后续覆盖。
 5. Gate 的 `order_price_deviate` 是相对标记价的订单价格偏离比例；Binance 的 `PERCENT_PRICE` 是 bidirectional multiplier，脚本统一为相对偏离比例。
 
 这组 metadata 应在启动期构建并缓存，供 strategy、risk check 和 exchange adapter 共享；不要在行情或下单热路径里反复查询 REST 或重复解析交易所 JSON。
@@ -634,7 +634,7 @@ doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 1. 第一版订单生命周期只以 Gate private `futures.orders` 为事实源，不接 `futures.usertrades`。原因是两个 channel 的到达顺序不稳定，会额外引入幂等和跨 channel 状态合并成本，而 `orders` 已包含第一版生命周期所需信息。
 2. `OrderFeedbackSession` 不访问 Strategy order 或 `OrderPool`，只把 `orders` 信息转换成固定 event，再通过后续架构确定的通道交给 Strategy。
 3. `OrderSession` 的 API `ack=true` 不产生 accepted event；`finish_as="_new"` 才产生 `OrderAcceptedFeedback`。
-4. 数量字段使用 `std::int64_t quantity` 语义，表示非负累计合约数量；Gate futures 下单量和 `left` 按 integer contract quantity 处理。价格字段使用 `double`。
+4. 数量字段当前使用 `double quantity` + decimal text contract：`OrderCreateRequest` / `StrategyOrder` 携带 `quantity_text`，Gate futures 下单 JSON `size` 直接使用已按 `quantity_decimal_places` 格式化的文本；`OrderFeedbackEvent` / SHM / `OrderManager` 用 `double` 表示累计成交、剩余和撤单数量。价格字段仍使用 `double` + `price_text`。
 5. `OrderAcceptedFeedback` 保留 `exchange_order_id`，用于建立本地订单和交易所订单 id 对应；partial/fill/cancel event 只用 `local_order_id` 驱动 Strategy 状态。
 6. `OrderFilledFeedback` 保留可选 `OrderRole`，orders 回报里有 maker/taker 就填，没有则为 `kNone`；Strategy 不依赖 role 推进状态。
 7. `liquidated`、`auto_deleveraging`、`position_close` 不映射为 rejected，而是作为 `OrderFinishReason` 放进 terminal cancelled/finished 类 event。
@@ -651,7 +651,7 @@ Task1 / Task2 当前实现顺序：
 4. `PublishGlobalContinuityLost()` 对 8 lane fanout `kContinuityLost`；某条 lane full 时 publisher 保留 pending continuity lost，后续本地重试。
 5. Reader ownership 使用 `consumer_run_id` 作为唯一 ownership token，0 表示 unclaimed；`consumer_pid` 仅诊断；`Claim(..., force_claim=true)` 是显式恢复动作；`Release()` CAS 当前 run id 成功才清 pid。第一版不做 producer / reader heartbeat，不做 stale owner 自动判断或 pid alive probe。
 6. `OrderFeedbackShmManager` 初始化 / attach 通过 `Create()` / `Open()` / `OpenOrCreate()` 返回 `Result`；Nova allocator 抛出的底层异常只在 cold factory 边界被转换为错误字符串，不向上层暴露 throwing constructor。
-7. Task2 已实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 `OrderManager::OnOrderFeedback()`。parser diagnostics 覆盖 unsupported `finish_as`、SBE quantity exponent 无法精确还原整数合约张数、`filled` 但 `left != 0`、invalid text 和 route failure。
+7. Task2 已实现 Gate `futures.orders` parser、`OrderFeedbackSession` 和 `OrderManager::OnOrderFeedback()`。parser diagnostics 覆盖 unsupported `finish_as`、invalid decimal quantity text、`filled` 但 `left != 0` 和 route failure。
 8. accepted event 到达 Strategy 后，由 Strategy 在自己的线程中通知 `OrderSession` 更新 `local_order_id -> exchange_order_id` cancel cache；filled / cancelled terminal event 后清理该 cache。
 9. cancel 已发出后收到 partial fill 回报时，Strategy 更新累计成交但保持 `kCancelSent`，避免重新开放重复撤单入口；filled / cancelled terminal event 仍可推进终态。
 10. feedback WS 断线后的 REST reconcile 仍是 Task2 之后的下一项，只在 Task2 中保留 continuity lost detected 状态和暂停新开仓边界。
@@ -1176,7 +1176,7 @@ config/data_sessions/binance_data_session.toml
 2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 continuity lost 后新开仓暂停 / 恢复条件。
 3. 扩展 C++ WS live smoke / probe：当前已有 `gate_strategy_order` 小额 accepted / cancel lifecycle、`gate_demo_strategy` 3 轮 filled-close、LeadLag ZEC filled open / close 和 unfilled-cancel 证据。2026-05-22 已新增独立 `gate_order_session_failure_probe`，但 ZEC 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不计入完成项；后续 rejected / cancel-rejected 不要硬塞进 LeadLag runtime，应先确认 Gate 可返回最终 error 的请求形态。继续补 feedback WS 断线和 REST reconcile 分支时，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
 4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 continuity lost / reconnect 后恢复订单、持仓和风险状态。
-5. 接入 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 Gate decimal-size 合约只走整数 `size`，完整 decimal 支持需要先引入定点数量模型，再进入下单热路径。
+5. 接入更完整的 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 C++ Gate decimal-size 下单已通过 `quantity_text` 走小数 `size`，剩余重点是 REST reconcile / final check / emergency flatten 的 decimal residual 处理。
 6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
 7. 如果需要继续审查 Gate `OrderSession` / `OrderFeedbackSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、subscribe 签名、place/cancel final result validation、断线 continuity lost、cache update / forget 和 benchmark 口径。
 8. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。

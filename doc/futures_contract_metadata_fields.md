@@ -81,7 +81,14 @@ quantity_step = order_size_min
 quantity_decimal_places = decimal_places(order_size_min)
 ```
 
-这只是 catalog 层的 decimal metadata，不等于完整 decimal-size 下单已经完成。下一步仍应先引入定点数量类型或等价的精确数量表示，覆盖 core order、feedback SHM、OrderManager、Gate encoder / parser、REST reconcile、emergency flatten 和 LeadLag sizing，再补 parser / smoke 测试。`order_size_min` 作为当前脚本可见的最小数量和精度来源；如后续 Gate 暴露独立 step 字段，应优先使用官方 step 字段。
+当前 C++ 下单 / 回报链路已经消费这组 decimal metadata：`core::OrderCreateRequest` /
+`core::StrategyOrder` 的 `quantity` 为 `double`，并额外携带按
+`quantity_decimal_places` 生成的 `quantity_text`；Gate order session 直接用
+`quantity_text` 编码 JSON `size`，Gate private feedback parser / SHM / `OrderManager`
+也按 `double` 累计数量；LeadLag sizing 和 live smoke 会用 lag instrument 的
+`quantity_step` / `quantity_decimal_places` 计算并格式化数量。仍未完成的是 REST
+final check / emergency flatten 对 decimal residual 的 flat 判断与平仓处理。`order_size_min`
+作为当前脚本可见的最小数量和精度来源；如后续 Gate 暴露独立 step 字段，应优先使用官方 step 字段。
 
 ### `price_limit_*` 不是完全同一规则
 

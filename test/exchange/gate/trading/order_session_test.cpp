@@ -101,7 +101,7 @@ struct TestOrder {
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
-  std::int64_t quantity{0};
+  double quantity{0.0};
   std::string_view quantity_text{};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
@@ -113,7 +113,7 @@ struct TestOrderWithoutExchangeOrderId {
   std::uint64_t local_order_id{0};
   std::string_view symbol{};
   OrderSide side{OrderSide::kBuy};
-  std::int64_t quantity{0};
+  double quantity{0.0};
   std::string_view quantity_text{};
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
@@ -125,7 +125,7 @@ TestOrder MakePlaceOrder(std::uint64_t local_order_id) noexcept {
                    .symbol = "BTC_USDT",
                    .side = OrderSide::kBuy,
                    .type = OrderType::kLimit,
-                   .quantity = 1,
+                   .quantity = 1.0,
                    .quantity_text = "1",
                    .price_text = "81000",
                    .time_in_force = TimeInForce::kGoodTillCancel,

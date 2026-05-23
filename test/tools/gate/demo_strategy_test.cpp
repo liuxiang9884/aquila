@@ -81,18 +81,18 @@ BookTicker MakeTicker(std::int32_t symbol_id = 7, double ask_price = 81000.5,
 
 OrderFeedbackEvent MakeFeedback(
     OrderFeedbackKind kind, std::uint64_t local_order_id,
-    std::int64_t cumulative_filled_quantity = -1) noexcept {
-  const std::int64_t filled_quantity =
+    double cumulative_filled_quantity = -1.0) noexcept {
+  const double filled_quantity =
       cumulative_filled_quantity >= 0
           ? cumulative_filled_quantity
-          : (kind == OrderFeedbackKind::kFilled ? 1 : 0);
+          : (kind == OrderFeedbackKind::kFilled ? 1.0 : 0.0);
   return OrderFeedbackEvent{
       .kind = kind,
       .local_order_id = local_order_id,
       .exchange_order_id = 36028827892199865U,
       .cumulative_filled_quantity = filled_quantity,
-      .left_quantity = 0,
-      .cancelled_quantity = kind == OrderFeedbackKind::kCancelled ? 1 : 0,
+      .left_quantity = 0.0,
+      .cancelled_quantity = kind == OrderFeedbackKind::kCancelled ? 1.0 : 0.0,
       .fill_price = filled_quantity > 0 ? 81000.5 : 0.0,
       .role = OrderRole::kTaker,
       .finish_reason = OrderFinishReason::kUnknown,

@@ -33,7 +33,7 @@ namespace gate = aquila::gate;
 namespace gate_order_tool = aquila::tools::gate_strategy_order;
 namespace core = aquila::core;
 
-constexpr std::int64_t kMaxOrderSize = 5;
+constexpr double kMaxOrderSize = 5.0;
 
 struct CliOptions {
   std::filesystem::path config_path{
@@ -45,7 +45,7 @@ struct CliOptions {
   std::string order_type{"limit"};
   std::string price{"1"};
   std::string tif{"gtc"};
-  std::int64_t size{1};
+  double size{1.0};
   std::uint32_t strategy_id{0};
   std::int32_t symbol_id{0};
   std::size_t order_capacity{8};
@@ -149,7 +149,7 @@ struct PreparedOrder {
   std::string price_text;
   aquila::OrderSide side{aquila::OrderSide::kBuy};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
-  std::int64_t size{1};
+  double size{1.0};
   std::int32_t symbol_id{0};
   bool reduce_only{false};
 };
@@ -159,8 +159,8 @@ bool PrepareOrder(const CliOptions& options, PreparedOrder* output) {
   const std::string tif = ToLower(options.tif);
   const std::string side = ToLower(options.side);
   if (options.size <= 0 || options.size > kMaxOrderSize) {
-    fmt::print(stderr, "[FAIL] size must be in [1, {}]\n", kMaxOrderSize);
-    NOVA_ERROR("size must be in [1, {}]", kMaxOrderSize);
+    fmt::print(stderr, "[FAIL] size must be in (0, {}]\n", kMaxOrderSize);
+    NOVA_ERROR("size must be in (0, {}]", kMaxOrderSize);
     return false;
   }
   if (options.order_capacity == 0) {
@@ -241,7 +241,7 @@ core::OrderCreateRequest BuildCreateRequest(const PreparedOrder& order) {
       .symbol = order.contract,
       .side = order.side,
       .time_in_force = order.time_in_force,
-      .quantity = static_cast<double>(order.size),
+      .quantity = order.size,
       .quantity_text = order.quantity_text,
       .price_text = order.price_text,
       .reduce_only = order.reduce_only,
