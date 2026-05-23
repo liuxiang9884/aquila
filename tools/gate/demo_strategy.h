@@ -170,6 +170,7 @@ class DemoStrategy {
             .side = OrderSide::kBuy,
             .time_in_force = TimeInForce::kGoodTillCancel,
             .quantity = kQuantity,
+            .quantity_text = kQuantityText,
             .price_text = price_text,
             .reduce_only = false,
         });
@@ -249,6 +250,7 @@ class DemoStrategy {
   using Clock = std::chrono::steady_clock;
 
   static constexpr std::int64_t kQuantity = 1;
+  static constexpr std::string_view kQuantityText = "1";
 
   template <typename ContextT>
   void CheckDeadline(ContextT& context) noexcept {
@@ -340,6 +342,7 @@ class DemoStrategy {
             .side = OrderSide::kSell,
             .time_in_force = TimeInForce::kImmediateOrCancel,
             .quantity = kQuantity,
+            .quantity_text = kQuantityText,
             .price_text = market_price_text_,
             .reduce_only = true,
         });

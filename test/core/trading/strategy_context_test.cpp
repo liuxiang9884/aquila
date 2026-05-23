@@ -24,6 +24,7 @@ struct FakeOrderSession {
   std::uint64_t last_place_local_order_id{0};
   std::uint64_t last_cancel_local_order_id{0};
   std::string_view last_place_symbol{};
+  std::string_view last_place_quantity_text{};
   std::string_view last_place_price_text{};
   OrderType last_place_order_type{OrderType::kLimit};
 
@@ -31,6 +32,7 @@ struct FakeOrderSession {
     ++place_calls;
     last_place_local_order_id = order.local_order_id;
     last_place_symbol = order.symbol;
+    last_place_quantity_text = order.quantity_text;
     last_place_price_text = order.price_text;
     last_place_order_type = order.type;
     return {.status = SendStatus::kOk};
@@ -51,6 +53,7 @@ OrderCreateRequest MakeLimitRequest() noexcept {
                             .order_type = OrderType::kLimit,
                             .time_in_force = TimeInForce::kGoodTillCancel,
                             .quantity = 1,
+                            .quantity_text = "1",
                             .price_text = "65000",
                             .reduce_only = false};
 }
@@ -68,6 +71,7 @@ TEST(StrategyContextTest,
   EXPECT_EQ(order_session.place_calls, 1);
   EXPECT_EQ(order_session.last_place_local_order_id, placed.local_order_id);
   EXPECT_EQ(order_session.last_place_symbol, "BTC_USDT");
+  EXPECT_EQ(order_session.last_place_quantity_text, "1");
   EXPECT_EQ(order_session.last_place_price_text, "65000");
   const StrategyOrder* order = context.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);

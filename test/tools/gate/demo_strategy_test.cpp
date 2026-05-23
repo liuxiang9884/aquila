@@ -31,7 +31,8 @@ struct FakeOrderSession {
     std::string symbol;
     OrderSide side{OrderSide::kBuy};
     TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-    std::int64_t quantity{0};
+    double quantity{0.0};
+    std::string quantity_text;
     std::string price_text;
     bool reduce_only{false};
   };
@@ -44,6 +45,7 @@ struct FakeOrderSession {
         .side = order.side,
         .time_in_force = order.time_in_force,
         .quantity = order.quantity,
+        .quantity_text = std::string(order.quantity_text),
         .price_text = std::string(order.price_text),
         .reduce_only = order.reduce_only,
     });

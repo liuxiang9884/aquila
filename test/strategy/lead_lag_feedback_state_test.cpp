@@ -46,7 +46,7 @@ aquila::core::StrategyOrder Order(std::uint64_t local_order_id,
   return aquila::core::StrategyOrder{
       .local_order_id = local_order_id,
       .side = side,
-      .quantity = cumulative_filled_quantity,
+      .quantity = static_cast<double>(cumulative_filled_quantity),
       .status = aquila::core::OrderStatus::kFilled,
       .cumulative_filled_quantity = cumulative_filled_quantity,
       .cumulative_filled_value =
@@ -131,6 +131,7 @@ TEST(LeadLagFeedbackStateTest, OrderManagerRetiresOnlyFinishedOrders) {
           .symbol = std::string_view{"BTC_USDT"},
           .time_in_force = aquila::TimeInForce::kImmediateOrCancel,
           .quantity = 1,
+          .quantity_text = std::string_view{"1"},
           .price_text = std::string_view{"100.0"},
       });
 

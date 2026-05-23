@@ -1,6 +1,7 @@
 #ifndef AQUILA_CORE_TRADING_ORDER_MANAGER_H_
 #define AQUILA_CORE_TRADING_ORDER_MANAGER_H_
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -24,7 +25,8 @@ class OrderManager {
 
   OrderPlaceResult PlaceOrder(OrderCreateRequest request) noexcept {
     if (request.symbol.empty() || request.price_text.empty() ||
-        request.quantity <= 0) {
+        request.quantity_text.empty() || !std::isfinite(request.quantity) ||
+        request.quantity <= 0.0) {
       return {.status = OrderPlaceStatus::kInvalidOrder, .local_order_id = 0};
     }
 
@@ -187,6 +189,7 @@ class OrderManager {
     order->type = request.order_type;
     order->time_in_force = request.time_in_force;
     order->quantity = request.quantity;
+    order->quantity_text = request.quantity_text;
     order->price_text = request.price_text;
     order->reduce_only = request.reduce_only;
     order->status = OrderStatus::kCreated;

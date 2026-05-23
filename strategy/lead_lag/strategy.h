@@ -476,13 +476,19 @@ class Strategy {
   struct OrderPriceTextStorage {
     std::uint64_t local_order_id{0};
     std::array<char, kOrderPriceTextCapacity> price_text{};
-    std::size_t size{0};
+    std::array<char, kOrderPriceTextCapacity> quantity_text{};
+    std::size_t price_size{0};
+    std::size_t quantity_size{0};
     std::int64_t reserved_open_quantity{0};
     double reserved_open_notional{0.0};
     bool active{false};
 
-    [[nodiscard]] std::string_view view() const noexcept {
-      return std::string_view(price_text.data(), size);
+    [[nodiscard]] std::string_view price_view() const noexcept {
+      return std::string_view(price_text.data(), price_size);
+    }
+
+    [[nodiscard]] std::string_view quantity_view() const noexcept {
+      return std::string_view(quantity_text.data(), quantity_size);
     }
   };
 
@@ -752,11 +758,12 @@ class Strategy {
       return;
     }
 
-    OrderPriceTextStorage* price_text_storage =
-        AcquireOrderPriceText(order_price, instrument.price_decimal_places);
-    if (price_text_storage == nullptr) {
+    OrderPriceTextStorage* order_text_storage = AcquireOrderText(
+        order_price, instrument.price_decimal_places,
+        static_cast<double>(quantity), instrument.quantity_decimal_places);
+    if (order_text_storage == nullptr) {
       detail::LogStrategyOrderIntentRejected(
-          "price_text_slot_full", symbol, runtime->pair.symbol_id,
+          "order_text_slot_full", symbol, runtime->pair.symbol_id,
           last_signal_decision_.action, last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, quantity, raw_order_price,
@@ -764,7 +771,8 @@ class Strategy {
           runtime->pair.execute.open_notional, order_notional);
       return;
     }
-    const std::string_view price_text = price_text_storage->view();
+    const std::string_view quantity_text = order_text_storage->quantity_view();
+    const std::string_view price_text = order_text_storage->price_view();
 
     detail::LogStrategyOrderIntent(
         symbol, runtime->pair.symbol_id, last_signal_decision_.action,
@@ -783,7 +791,8 @@ class Strategy {
             .side = last_signal_decision_.intent.side,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity,
+            .quantity = static_cast<double>(quantity),
+            .quantity_text = quantity_text,
             .price_text = price_text,
             .reduce_only = last_signal_decision_.intent.reduce_only,
         });
@@ -796,16 +805,16 @@ class Strategy {
           order_price, slippage_ticks, instrument.price_tick,
           runtime->pair.execute.open_notional, order_notional, 0.0, 0.0, 0.0,
           placed.local_order_id, magic_enum::enum_name(placed.status));
-      ReleaseOrderPriceText(price_text_storage);
+      ReleaseOrderPriceText(order_text_storage);
       return;
     }
-    price_text_storage->local_order_id = placed.local_order_id;
+    order_text_storage->local_order_id = placed.local_order_id;
 
     if (placed.status == core::OrderPlaceStatus::kOk) {
       const bool tracked =
           OnExternalOrderAccepted(runtime, close_group, placed.local_order_id);
       if (tracked && !last_signal_decision_.intent.reduce_only) {
-        ReserveOpenRisk(price_text_storage, quantity, order_notional);
+        ReserveOpenRisk(order_text_storage, quantity, order_notional);
       }
       return;
     }
@@ -1096,28 +1105,44 @@ class Strategy {
     return std::floor(quantity / step + kQuantityEpsilon) * step;
   }
 
-  [[nodiscard]] OrderPriceTextStorage* AcquireOrderPriceText(
-      double price, std::int32_t decimal_places) noexcept {
-    if (!ValidOrderPriceDecimalPlaces(decimal_places) ||
-        !std::isfinite(price) || price <= 0.0) {
+  [[nodiscard]] OrderPriceTextStorage* AcquireOrderText(
+      double price, std::int32_t price_decimal_places, double quantity,
+      std::int32_t quantity_decimal_places) noexcept {
+    if (!ValidOrderDecimalPlaces(price_decimal_places) ||
+        !ValidOrderDecimalPlaces(quantity_decimal_places) ||
+        !std::isfinite(price) || price <= 0.0 || !std::isfinite(quantity) ||
+        quantity <= 0.0) {
       return nullptr;
     }
     for (OrderPriceTextStorage& storage : order_price_texts_) {
       if (storage.active) {
         continue;
       }
-      char* const begin = storage.price_text.data();
-      char* const end = begin + storage.price_text.size();
-      const auto result =
-          std::to_chars(begin, end, price, std::chars_format::fixed,
-                        static_cast<int>(decimal_places));
-      if (result.ec != std::errc{} || result.ptr == begin) {
-        storage.size = 0;
-        storage.local_order_id = 0;
-        storage.active = false;
+      char* const price_begin = storage.price_text.data();
+      char* const price_end = price_begin + storage.price_text.size();
+      const auto price_result =
+          std::to_chars(price_begin, price_end, price, std::chars_format::fixed,
+                        static_cast<int>(price_decimal_places));
+      if (price_result.ec != std::errc{} || price_result.ptr == price_begin) {
+        ReleaseOrderPriceText(&storage);
         return nullptr;
       }
-      storage.size = static_cast<std::size_t>(result.ptr - begin);
+      char* const quantity_begin = storage.quantity_text.data();
+      char* const quantity_end =
+          quantity_begin + storage.quantity_text.size();
+      const auto quantity_result =
+          std::to_chars(quantity_begin, quantity_end, quantity,
+                        std::chars_format::fixed,
+                        static_cast<int>(quantity_decimal_places));
+      if (quantity_result.ec != std::errc{} ||
+          quantity_result.ptr == quantity_begin) {
+        ReleaseOrderPriceText(&storage);
+        return nullptr;
+      }
+      storage.price_size =
+          static_cast<std::size_t>(price_result.ptr - price_begin);
+      storage.quantity_size =
+          static_cast<std::size_t>(quantity_result.ptr - quantity_begin);
       storage.local_order_id = 0;
       storage.reserved_open_quantity = 0;
       storage.reserved_open_notional = 0.0;
@@ -1142,13 +1167,14 @@ class Strategy {
       return;
     }
     storage->local_order_id = 0;
-    storage->size = 0;
+    storage->price_size = 0;
+    storage->quantity_size = 0;
     storage->reserved_open_quantity = 0;
     storage->reserved_open_notional = 0.0;
     storage->active = false;
   }
 
-  [[nodiscard]] static bool ValidOrderPriceDecimalPlaces(
+  [[nodiscard]] static bool ValidOrderDecimalPlaces(
       std::int32_t decimal_places) noexcept {
     return decimal_places >= 0 && decimal_places <= kMaxOrderPriceDecimalPlaces;
   }

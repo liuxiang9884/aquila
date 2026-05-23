@@ -145,6 +145,7 @@ core::OrderResponseEvent ToCoreEvent(const gate::OrderResponse& response) {
 
 struct PreparedOrder {
   std::string contract;
+  std::string quantity_text;
   std::string price_text;
   aquila::OrderSide side{aquila::OrderSide::kBuy};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
@@ -208,6 +209,7 @@ bool PrepareOrder(const CliOptions& options, PreparedOrder* output) {
   output->contract = ToUpper(options.contract);
   output->side = ParseSide(side);
   output->size = options.size;
+  output->quantity_text = fmt::format("{}", options.size);
   output->symbol_id = options.symbol_id;
   output->reduce_only = options.reduce_only;
   if (order_type == "market") {
@@ -239,7 +241,8 @@ core::OrderCreateRequest BuildCreateRequest(const PreparedOrder& order) {
       .symbol = order.contract,
       .side = order.side,
       .time_in_force = order.time_in_force,
-      .quantity = order.size,
+      .quantity = static_cast<double>(order.size),
+      .quantity_text = order.quantity_text,
       .price_text = order.price_text,
       .reduce_only = order.reduce_only,
   };

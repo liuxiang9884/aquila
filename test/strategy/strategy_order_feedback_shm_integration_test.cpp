@@ -66,6 +66,7 @@ OrderCreateRequest MakeLimitRequest() noexcept {
                             .side = OrderSide::kBuy,
                             .time_in_force = TimeInForce::kGoodTillCancel,
                             .quantity = 2,
+                            .quantity_text = "2",
                             .price_text = "81000",
                             .reduce_only = false};
 }

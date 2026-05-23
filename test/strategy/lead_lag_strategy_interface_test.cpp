@@ -248,7 +248,8 @@ struct FakeOrderSession {
     aquila::OrderSide side{aquila::OrderSide::kBuy};
     aquila::OrderType order_type{aquila::OrderType::kLimit};
     aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
-    std::int64_t quantity{0};
+    double quantity{0.0};
+    std::string quantity_text;
     std::string price_text;
     bool reduce_only{false};
   };
@@ -263,6 +264,7 @@ struct FakeOrderSession {
         .order_type = order.type,
         .time_in_force = order.time_in_force,
         .quantity = order.quantity,
+        .quantity_text = std::string(order.quantity_text),
         .price_text =
             capture_price_text ? std::string(order.price_text) : std::string{},
         .reduce_only = order.reduce_only,

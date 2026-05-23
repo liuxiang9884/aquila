@@ -342,6 +342,7 @@ struct FakeStrategy {
                               .side = OrderSide::kBuy,
                               .time_in_force = TimeInForce::kGoodTillCancel,
                               .quantity = 1,
+                              .quantity_text = "1",
                               .price_text = "81000",
                               .reduce_only = false};
   }
@@ -606,6 +607,7 @@ struct HookLoopStrategy {
                               .side = OrderSide::kBuy,
                               .time_in_force = TimeInForce::kGoodTillCancel,
                               .quantity = 1,
+                              .quantity_text = "1",
                               .price_text = "81000",
                               .reduce_only = false};
   }

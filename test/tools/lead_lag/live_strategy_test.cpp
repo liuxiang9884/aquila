@@ -36,7 +36,8 @@ struct CapturedOrder {
   aquila::OrderSide side{aquila::OrderSide::kBuy};
   aquila::OrderType order_type{aquila::OrderType::kLimit};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
-  std::int64_t quantity{0};
+  double quantity{0.0};
+  std::string quantity_text;
   std::string price_text;
   bool reduce_only{false};
 };
@@ -60,6 +61,7 @@ struct SmokeStrategyContext {
         .order_type = request.order_type,
         .time_in_force = request.time_in_force,
         .quantity = request.quantity,
+        .quantity_text = std::string(request.quantity_text),
         .price_text = std::string(request.price_text),
         .reduce_only = request.reduce_only,
     });

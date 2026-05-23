@@ -41,6 +41,7 @@ TEST(CoreTradingContractNamespaceTest, PublicContractsLiveInAquilaCore) {
       .symbol_id = 42,
       .symbol = "BTC_USDT",
       .quantity = 1,
+      .quantity_text = "1",
       .price_text = "50000",
   });
 

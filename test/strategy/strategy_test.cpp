@@ -38,11 +38,13 @@ struct FakeGateway {
   std::uint64_t last_cache_local_order_id{0};
   std::uint64_t last_cache_exchange_order_id{0};
   std::uint64_t last_forget_local_order_id{0};
+  std::string_view expected_quantity_text{"1"};
 
   SendResult PlaceOrder(Order& order) noexcept {
     ++place_calls;
     last_place_local_order_id = order.local_order_id;
     EXPECT_EQ(order.symbol, "BTC_USDT");
+    EXPECT_EQ(order.quantity_text, expected_quantity_text);
     EXPECT_EQ(order.price_text, "81000");
     return {.status = place_status};
   }
@@ -73,6 +75,7 @@ OrderCreateRequest MakeLimitRequest() noexcept {
                             .side = OrderSide::kBuy,
                             .time_in_force = TimeInForce::kGoodTillCancel,
                             .quantity = 1,
+                            .quantity_text = "1",
                             .price_text = "81000",
                             .reduce_only = false};
 }
@@ -95,6 +98,25 @@ TEST(OrderManagerTest, PlacesLimitOrderAndStoresSentOrder) {
   EXPECT_EQ(order->symbol_id, 7);
   EXPECT_EQ(order->symbol, "BTC_USDT");
   EXPECT_EQ(order->quantity, 1);
+  EXPECT_EQ(order->quantity_text, "1");
+}
+
+TEST(OrderManagerTest, PlacesDecimalQuantityWithStableQuantityText) {
+  FakeGateway gateway;
+  gateway.expected_quantity_text = "0.1";
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  OrderCreateRequest request = MakeLimitRequest();
+  request.quantity = 0.1;
+  request.quantity_text = "0.1";
+
+  const OrderPlaceResult placed = order_manager.PlaceLimitOrder(request);
+
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  EXPECT_EQ(gateway.place_calls, 1);
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_DOUBLE_EQ(order->quantity, 0.1);
+  EXPECT_EQ(order->quantity_text, "0.1");
 }
 
 TEST(OrderManagerTest, EncodesStrategyIdIntoCreatedLocalOrderId) {

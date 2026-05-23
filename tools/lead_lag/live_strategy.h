@@ -329,6 +329,9 @@ class LiveOpenCloseSmokeStrategy {
 
     open_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    open_quantity_text_ = FormatPrice(
+        static_cast<double>(quantity),
+        pair_->lag_instrument.quantity_decimal_places);
     const std::string_view symbol = GateSymbol();
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
@@ -338,7 +341,8 @@ class LiveOpenCloseSmokeStrategy {
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity,
+            .quantity = static_cast<double>(quantity),
+            .quantity_text = open_quantity_text_,
             .price_text = open_price_text_,
             .reduce_only = false,
         });
@@ -406,6 +410,9 @@ class LiveOpenCloseSmokeStrategy {
     }
     close_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    close_quantity_text_ = FormatPrice(
+        static_cast<double>(pending_close_quantity_),
+        pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -414,7 +421,8 @@ class LiveOpenCloseSmokeStrategy {
             .side = OrderSide::kSell,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = pending_close_quantity_,
+            .quantity = static_cast<double>(pending_close_quantity_),
+            .quantity_text = close_quantity_text_,
             .price_text = close_price_text_,
             .reduce_only = true,
         });
@@ -554,7 +562,9 @@ class LiveOpenCloseSmokeStrategy {
   LiveOpenCloseSmokeStats* stats_{&owned_stats_};
   const strategy::leadlag::PairConfig* pair_{nullptr};
   std::string open_price_text_;
+  std::string open_quantity_text_;
   std::string close_price_text_;
+  std::string close_quantity_text_;
   std::int64_t pending_close_quantity_{0};
 };
 
@@ -698,6 +708,9 @@ class LiveUnfilledCancelSmokeStrategy {
 
     open_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    open_quantity_text_ = FormatPrice(
+        static_cast<double>(quantity),
+        pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -706,7 +719,8 @@ class LiveUnfilledCancelSmokeStrategy {
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kGoodTillCancel,
-            .quantity = quantity,
+            .quantity = static_cast<double>(quantity),
+            .quantity_text = open_quantity_text_,
             .price_text = open_price_text_,
             .reduce_only = false,
         });
@@ -858,6 +872,7 @@ class LiveUnfilledCancelSmokeStrategy {
   LiveUnfilledCancelSmokeStats* stats_{&owned_stats_};
   const strategy::leadlag::PairConfig* pair_{nullptr};
   std::string open_price_text_;
+  std::string open_quantity_text_;
 };
 
 class LiveSubmitRejectSmokeStrategy {
@@ -993,6 +1008,9 @@ class LiveSubmitRejectSmokeStrategy {
 
     price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
+    quantity_text_ = FormatPrice(
+        static_cast<double>(quantity),
+        pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -1001,7 +1019,8 @@ class LiveSubmitRejectSmokeStrategy {
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity,
+            .quantity = static_cast<double>(quantity),
+            .quantity_text = quantity_text_,
             .price_text = price_text_,
             .reduce_only = true,
         });
@@ -1105,6 +1124,7 @@ class LiveSubmitRejectSmokeStrategy {
   LiveSubmitRejectSmokeStats* stats_{&owned_stats_};
   const strategy::leadlag::PairConfig* pair_{nullptr};
   std::string price_text_;
+  std::string quantity_text_;
 };
 
 [[nodiscard]] inline int ResolveLiveOrdersExitCode(
