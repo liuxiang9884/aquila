@@ -131,13 +131,27 @@ inline bool TryAbsInt64(std::int64_t value, std::int64_t* out) noexcept {
 }
 
 inline bool IsSupportedDecimalExponent(std::int8_t exponent) noexcept {
-  return exponent >= -10 && exponent <= 10;
+  return exponent >= -15 && exponent <= 15;
 }
 
 inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   static constexpr double kNegativePowersOfTen[] = {
-      1.0,      0.1,       0.01,       0.001,       0.0001,       0.00001,
-      0.000001, 0.0000001, 0.00000001, 0.000000001, 0.0000000001,
+      1.0,
+      0.1,
+      0.01,
+      0.001,
+      0.0001,
+      0.00001,
+      0.000001,
+      0.0000001,
+      0.00000001,
+      0.000000001,
+      0.0000000001,
+      0.00000000001,
+      0.000000000001,
+      0.0000000000001,
+      0.00000000000001,
+      0.000000000000001,
   };
   static constexpr double kPositivePowersOfTen[] = {
       1.0,
@@ -151,6 +165,11 @@ inline double DecimalExponentScale(std::int8_t exponent) noexcept {
       100'000'000.0,
       1'000'000'000.0,
       10'000'000'000.0,
+      100'000'000'000.0,
+      1'000'000'000'000.0,
+      10'000'000'000'000.0,
+      100'000'000'000'000.0,
+      1'000'000'000'000'000.0,
   };
 
   assert(IsSupportedDecimalExponent(exponent));

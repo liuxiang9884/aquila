@@ -158,6 +158,32 @@ TEST(GateOrderFeedbackParserTest, MapsTerminalFinishReasons) {
   }
 }
 
+TEST(GateOrderFeedbackParserTest,
+     MapsIocPartialFillWithHighPrecisionFillPriceToTerminalCancel) {
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  OrderFeedbackPayloadFields fields = MakeFields("ioc");
+  fields.size_mantissa = 16;
+  fields.left_mantissa = 6;
+  fields.price_exponent = -12;
+  fields.fill_price_mantissa = 562'399'019'608;
+
+  const OrderFeedbackParseResult result = ParseOne(fields, &stats, &collector);
+
+  ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_EQ(result.events_emitted, 1);
+  ASSERT_EQ(collector.count, 1U);
+  EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kCancelled);
+  EXPECT_EQ(collector.events[0].finish_reason,
+            OrderFinishReason::kImmediateOrCancel);
+  EXPECT_EQ(collector.events[0].cumulative_filled_quantity, 10);
+  EXPECT_EQ(collector.events[0].left_quantity, 6);
+  EXPECT_EQ(collector.events[0].cancelled_quantity, 6);
+  EXPECT_DOUBLE_EQ(collector.events[0].fill_price, 0.562399019608);
+  EXPECT_EQ(stats.unsupported_price_exponent_count, 0U);
+  EXPECT_EQ(stats.dropped_events, 0U);
+}
+
 TEST(GateOrderFeedbackParserTest, DropsInvalidTextAndIncrementsDiagnostics) {
   OrderFeedbackParserStats stats{};
   EventCollector collector{};
