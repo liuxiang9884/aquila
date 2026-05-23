@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -506,7 +507,6 @@ class Strategy {
     QuoteSnapshot drifted_lead;
     bool has_drifted_lead{false};
     struct OrderDecimalMetadata {
-      bool valid{false};
       std::int64_t open_notional_units{0};
       std::int32_t notional_decimal_places{0};
       std::int64_t quantity_step_units{0};
@@ -569,9 +569,9 @@ class Strategy {
             kOrderDecimalPlaceLimit);
         continue;
       }
-      const PairRuntimeState::OrderDecimalMetadata order_decimal =
-          BuildOrderDecimalMetadata(pair);
-      if (!order_decimal.valid) {
+      const std::optional<PairRuntimeState::OrderDecimalMetadata>
+          order_decimal = BuildOrderDecimalMetadata(pair);
+      if (!order_decimal) {
         detail::LogStrategyPairDisabledForOrderMetadata(
             pair.symbol, pair.symbol_id, pair.lag_instrument.price_tick,
             pair.execute.open_notional, pair.lag_instrument.quantity_step,
@@ -583,7 +583,7 @@ class Strategy {
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
       runtime.initialized = true;
       runtime.pair = pair;
-      runtime.order_decimal = order_decimal;
+      runtime.order_decimal = *order_decimal;
       runtime.alignment.Init(AlignmentConfig{
           .drift_period_ns = pair.trigger.drift_period_ns,
           .stats_window_ns = pair.bbo_record.stats_window_ns,
@@ -1041,7 +1041,7 @@ class Strategy {
     return std::abs(group.signed_position_quantity);
   }
 
-  [[nodiscard]] static PairRuntimeState::OrderDecimalMetadata
+  [[nodiscard]] static std::optional<PairRuntimeState::OrderDecimalMetadata>
   BuildOrderDecimalMetadata(const PairConfig& pair) noexcept {
     PairRuntimeState::OrderDecimalMetadata metadata;
     const InstrumentMetadata& instrument = pair.lag_instrument;
@@ -1057,7 +1057,7 @@ class Strategy {
         instrument.quantity_step <= 0.0 ||
         !std::isfinite(pair.execute.open_notional) ||
         pair.execute.open_notional <= 0.0) {
-      return metadata;
+      return std::nullopt;
     }
 
     if (!DecimalUnitsFromValue(pair.execute.open_notional,
@@ -1069,20 +1069,19 @@ class Strategy {
         !DecimalUnitsFromValueAutoPlaces(instrument.notional_multiplier,
                                          &metadata.multiplier_units,
                                          &metadata.multiplier_decimal_places)) {
-      return metadata;
+      return std::nullopt;
     }
     if (instrument.min_quantity > 0.0 &&
         !DecimalUnitsFromValue(instrument.min_quantity, quantity_decimal_places,
                                &metadata.min_quantity_units)) {
-      return metadata;
+      return std::nullopt;
     }
     if (instrument.max_quantity > 0.0 &&
         !DecimalUnitsFromValue(instrument.max_quantity, quantity_decimal_places,
                                &metadata.max_quantity_units)) {
-      return metadata;
+      return std::nullopt;
     }
     metadata.notional_decimal_places = notional_decimal_places;
-    metadata.valid = true;
     return metadata;
   }
 
@@ -1091,7 +1090,6 @@ class Strategy {
     const InstrumentMetadata& instrument = runtime.pair.lag_instrument;
     const PairRuntimeState::OrderDecimalMetadata& metadata =
         runtime.order_decimal;
-    assert(metadata.valid);
     assert(price_units > 0);
 
     const ::aquila::core::OpenQuantityUnitsResult result =
