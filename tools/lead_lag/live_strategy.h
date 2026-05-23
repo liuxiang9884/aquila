@@ -1,6 +1,7 @@
 #ifndef AQUILA_TOOLS_LEAD_LAG_LIVE_STRATEGY_H_
 #define AQUILA_TOOLS_LEAD_LAG_LIVE_STRATEGY_H_
 
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -148,6 +149,48 @@ struct LiveSubmitRejectSmokeStats {
   std::string error;
 };
 
+namespace detail {
+
+inline constexpr std::int32_t kSmokeOrderDecimalPlaceLimit = 12;
+
+[[nodiscard]] inline bool SmokeOrderDecimalPlacesWithinRuntimeBounds(
+    const strategy::leadlag::InstrumentMetadata& instrument) noexcept {
+  const std::int32_t price_decimal_places = instrument.price_decimal_places;
+  const std::int32_t quantity_decimal_places =
+      instrument.quantity_decimal_places;
+  return price_decimal_places >= 0 &&
+         price_decimal_places < kSmokeOrderDecimalPlaceLimit &&
+         quantity_decimal_places >= 0 &&
+         quantity_decimal_places < kSmokeOrderDecimalPlaceLimit &&
+         price_decimal_places + quantity_decimal_places <
+             kSmokeOrderDecimalPlaceLimit;
+}
+
+[[nodiscard]] inline bool SmokeOrderMetadataValid(
+    const strategy::leadlag::PairConfig& pair,
+    bool require_min_quantity) noexcept {
+  const strategy::leadlag::InstrumentMetadata& instrument = pair.lag_instrument;
+  if (!SmokeOrderDecimalPlacesWithinRuntimeBounds(instrument)) {
+    return false;
+  }
+  if (!std::isfinite(instrument.price_tick) || instrument.price_tick <= 0.0 ||
+      !std::isfinite(instrument.notional_multiplier) ||
+      instrument.notional_multiplier <= 0.0 ||
+      !std::isfinite(instrument.quantity_step) ||
+      instrument.quantity_step <= 0.0 ||
+      !std::isfinite(pair.execute.open_notional) ||
+      pair.execute.open_notional <= 0.0 ||
+      !std::isfinite(instrument.min_quantity) ||
+      instrument.min_quantity < 0.0 ||
+      !std::isfinite(instrument.max_quantity) ||
+      instrument.max_quantity < 0.0) {
+    return false;
+  }
+  return !require_min_quantity || instrument.min_quantity > 0.0;
+}
+
+}  // namespace detail
+
 class LiveOrdersStrategy {
  public:
   explicit LiveOrdersStrategy(strategy::leadlag::Config config)
@@ -225,6 +268,9 @@ class LiveOpenCloseSmokeStrategy {
       return;
     }
     ValidateOptions();
+    if (!detail::SmokeOrderMetadataValid(*pair_, false)) {
+      SetError("invalid smoke instrument sizing metadata");
+    }
   }
 
   template <typename ContextT>
@@ -328,8 +374,8 @@ class LiveOpenCloseSmokeStrategy {
 
     open_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    open_quantity_text_ = FormatPrice(
-        quantity, pair_->lag_instrument.quantity_decimal_places);
+    open_quantity_text_ =
+        FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
     const std::string_view symbol = GateSymbol();
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
@@ -458,18 +504,14 @@ class LiveOpenCloseSmokeStrategy {
   }
 
   [[nodiscard]] double ComputeOpenQuantity(double price) noexcept {
-    if (pair_ == nullptr || !std::isfinite(price) || price <= 0.0) {
+    assert(pair_ != nullptr);
+    assert(detail::SmokeOrderMetadataValid(*pair_, false));
+    if (!std::isfinite(price) || price <= 0.0) {
       SetError("invalid smoke market price");
       return 0.0;
     }
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
-    if (instrument.notional_multiplier <= 0.0 ||
-        instrument.quantity_step <= 0.0 ||
-        pair_->execute.open_notional <= 0.0) {
-      SetError("invalid smoke instrument sizing metadata");
-      return 0.0;
-    }
 
     stats_->target_notional = pair_->execute.open_notional;
     const double raw_quantity =
@@ -500,9 +542,12 @@ class LiveOpenCloseSmokeStrategy {
 
   [[nodiscard]] double RoundedPrice(double price,
                                     OrderSide side) const noexcept {
+    assert(pair_ != nullptr);
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
-    if (!std::isfinite(price) || price <= 0.0 || instrument.price_tick <= 0.0) {
+    assert(std::isfinite(instrument.price_tick));
+    assert(instrument.price_tick > 0.0);
+    if (!std::isfinite(price) || price <= 0.0) {
       return 0.0;
     }
     const double scaled = price / instrument.price_tick;
@@ -515,7 +560,9 @@ class LiveOpenCloseSmokeStrategy {
 
   [[nodiscard]] static double FloorToStep(double quantity,
                                           double step) noexcept {
-    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+    assert(std::isfinite(step));
+    assert(step > 0.0);
+    if (!std::isfinite(quantity)) {
       return 0.0;
     }
     return std::floor(quantity / step + kEpsilon) * step;
@@ -523,9 +570,8 @@ class LiveOpenCloseSmokeStrategy {
 
   [[nodiscard]] static std::string FormatPrice(double price,
                                                std::int32_t decimal_places) {
-    if (decimal_places < 0) {
-      decimal_places = 0;
-    }
+    assert(decimal_places >= 0);
+    assert(decimal_places < detail::kSmokeOrderDecimalPlaceLimit);
     return fmt::format("{:.{}f}", price, decimal_places);
   }
 
@@ -569,6 +615,9 @@ class LiveUnfilledCancelSmokeStrategy {
       return;
     }
     ValidateOptions();
+    if (!detail::SmokeOrderMetadataValid(*pair_, false)) {
+      SetError("invalid smoke instrument sizing metadata");
+    }
   }
 
   template <typename ContextT>
@@ -695,8 +744,8 @@ class LiveUnfilledCancelSmokeStrategy {
 
     open_price_text_ =
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    open_quantity_text_ = FormatPrice(
-        quantity, pair_->lag_instrument.quantity_decimal_places);
+    open_quantity_text_ =
+        FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
             .exchange = Exchange::kGate,
@@ -750,8 +799,7 @@ class LiveUnfilledCancelSmokeStrategy {
       SetError("unexpected fill before cancel");
       return;
     }
-    if (std::abs(event.cancelled_quantity - stats_->open_quantity) >
-        kEpsilon) {
+    if (std::abs(event.cancelled_quantity - stats_->open_quantity) > kEpsilon) {
       SetError("unexpected cancelled quantity");
       return;
     }
@@ -760,18 +808,14 @@ class LiveUnfilledCancelSmokeStrategy {
   }
 
   [[nodiscard]] double ComputeOpenQuantity(double price) noexcept {
-    if (pair_ == nullptr || !std::isfinite(price) || price <= 0.0) {
+    assert(pair_ != nullptr);
+    assert(detail::SmokeOrderMetadataValid(*pair_, false));
+    if (!std::isfinite(price) || price <= 0.0) {
       SetError("invalid smoke market price");
       return 0.0;
     }
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
-    if (instrument.notional_multiplier <= 0.0 ||
-        instrument.quantity_step <= 0.0 ||
-        pair_->execute.open_notional <= 0.0) {
-      SetError("invalid smoke instrument sizing metadata");
-      return 0.0;
-    }
 
     stats_->target_notional = pair_->execute.open_notional;
     const double raw_quantity =
@@ -801,9 +845,12 @@ class LiveUnfilledCancelSmokeStrategy {
   }
 
   [[nodiscard]] double RoundedDownPrice(double price) const noexcept {
+    assert(pair_ != nullptr);
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
-    if (!std::isfinite(price) || price <= 0.0 || instrument.price_tick <= 0.0) {
+    assert(std::isfinite(instrument.price_tick));
+    assert(instrument.price_tick > 0.0);
+    if (!std::isfinite(price) || price <= 0.0) {
       return 0.0;
     }
     const double scaled = price / instrument.price_tick;
@@ -814,7 +861,9 @@ class LiveUnfilledCancelSmokeStrategy {
 
   [[nodiscard]] static double FloorToStep(double quantity,
                                           double step) noexcept {
-    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+    assert(std::isfinite(step));
+    assert(step > 0.0);
+    if (!std::isfinite(quantity)) {
       return 0.0;
     }
     return std::floor(quantity / step + kEpsilon) * step;
@@ -822,9 +871,8 @@ class LiveUnfilledCancelSmokeStrategy {
 
   [[nodiscard]] static std::string FormatPrice(double price,
                                                std::int32_t decimal_places) {
-    if (decimal_places < 0) {
-      decimal_places = 0;
-    }
+    assert(decimal_places >= 0);
+    assert(decimal_places < detail::kSmokeOrderDecimalPlaceLimit);
     return fmt::format("{:.{}f}", price, decimal_places);
   }
 
@@ -865,6 +913,9 @@ class LiveSubmitRejectSmokeStrategy {
       return;
     }
     ValidateOptions();
+    if (!detail::SmokeOrderMetadataValid(*pair_, true)) {
+      SetError("invalid submit reject smoke instrument sizing metadata");
+    }
   }
 
   template <typename ContextT>
@@ -973,10 +1024,7 @@ class LiveSubmitRejectSmokeStrategy {
       return;
     }
     const double order_price = pair_->lag_instrument.price_tick;
-    if (order_price <= 0.0) {
-      SetError("invalid submit reject smoke price");
-      return;
-    }
+    assert(order_price > 0.0);
     const double quantity = ComputeQuantity();
     if (quantity <= kEpsilon) {
       return;
@@ -1017,17 +1065,10 @@ class LiveSubmitRejectSmokeStrategy {
   }
 
   [[nodiscard]] double ComputeQuantity() noexcept {
-    if (pair_ == nullptr) {
-      SetError("invalid submit reject smoke pair");
-      return 0.0;
-    }
+    assert(pair_ != nullptr);
+    assert(detail::SmokeOrderMetadataValid(*pair_, true));
     const strategy::leadlag::InstrumentMetadata& instrument =
         pair_->lag_instrument;
-    if (instrument.notional_multiplier <= 0.0 ||
-        instrument.quantity_step <= 0.0 || instrument.min_quantity <= 0.0) {
-      SetError("invalid submit reject smoke instrument sizing metadata");
-      return 0.0;
-    }
 
     stats_->target_notional = pair_->execute.open_notional;
     double quantity =
@@ -1054,7 +1095,9 @@ class LiveSubmitRejectSmokeStrategy {
 
   [[nodiscard]] static double FloorToStep(double quantity,
                                           double step) noexcept {
-    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
+    assert(std::isfinite(step));
+    assert(step > 0.0);
+    if (!std::isfinite(quantity)) {
       return 0.0;
     }
     return std::floor(quantity / step + kEpsilon) * step;
@@ -1062,9 +1105,8 @@ class LiveSubmitRejectSmokeStrategy {
 
   [[nodiscard]] static std::string FormatPrice(double price,
                                                std::int32_t decimal_places) {
-    if (decimal_places < 0) {
-      decimal_places = 0;
-    }
+    assert(decimal_places >= 0);
+    assert(decimal_places < detail::kSmokeOrderDecimalPlaceLimit);
     return fmt::format("{:.{}f}", price, decimal_places);
   }
 

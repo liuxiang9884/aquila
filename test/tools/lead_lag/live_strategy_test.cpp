@@ -554,6 +554,26 @@ TEST(LeadLagLiveStrategyTest,
 }
 
 TEST(LeadLagLiveStrategyTest,
+     SmokeOpenCloseRejectsInvalidOrderMetadataAtInitialization) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].lag_instrument.quantity_step = 0.0;
+  LiveOpenCloseSmokeStats stats;
+  LiveOpenCloseSmokeStrategy strategy{
+      std::move(config),
+      LiveOpenCloseSmokeOptions{
+          .symbol = "BTC_USDT",
+          .aggressive_price_bps = 0.0,
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kError);
+  EXPECT_NE(stats.error.find("instrument sizing metadata"), std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
      SmokeUnfilledCancelSubmitsPassiveGtcBuyThenCancelsOnAcceptedResponse) {
   LiveUnfilledCancelSmokeStats stats;
   LiveUnfilledCancelSmokeStrategy strategy{
@@ -648,6 +668,27 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(context.orders[0].quantity_text, "0.1");
   EXPECT_DOUBLE_EQ(stats.open_quantity, 0.1);
   EXPECT_DOUBLE_EQ(stats.estimated_open_notional, 9.5);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelRejectsInvalidOrderMetadataAtInitialization) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].lag_instrument.price_decimal_places = 6;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 6;
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      std::move(config),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTC_USDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kError);
+  EXPECT_NE(stats.error.find("instrument sizing metadata"), std::string::npos);
 }
 
 TEST(LeadLagLiveStrategyTest,
@@ -932,8 +973,7 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kDone);
 }
 
-TEST(LeadLagLiveStrategyTest,
-     SmokeSubmitRejectSubmitsDecimalMinimumQuantity) {
+TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectSubmitsDecimalMinimumQuantity) {
   leadlag::Config config = MakeLeadLagConfig();
   config.pairs[0].lag_instrument.quantity_step = 0.1;
   config.pairs[0].lag_instrument.quantity_decimal_places = 1;
@@ -962,6 +1002,25 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
   EXPECT_EQ(context.orders[0].quantity_text, "0.1");
   EXPECT_DOUBLE_EQ(stats.quantity, 0.1);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectRejectsInvalidOrderMetadataAtInitialization) {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].lag_instrument.min_quantity = 0.0;
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      std::move(config),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTC_USDT",
+          .max_notional = 100.0,
+      },
+      &stats,
+  };
+
+  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kError);
+  EXPECT_NE(stats.error.find("instrument sizing metadata"), std::string::npos);
 }
 
 TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectAckDoesNotComplete) {
