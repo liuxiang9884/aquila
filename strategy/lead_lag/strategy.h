@@ -1,20 +1,20 @@
 #ifndef AQUILA_STRATEGY_LEAD_LAG_STRATEGY_H_
 #define AQUILA_STRATEGY_LEAD_LAG_STRATEGY_H_
 
+#include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 
 #include <magic_enum/magic_enum.hpp>
 
 #include "core/market_data/types.h"
+#include "core/trading/order_decimal.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_types.h"
 #include "nova/utils/log.h"
@@ -106,10 +106,9 @@ inline void NotifyStrategyOrderIntentLogObserverForTest(
 
 inline void LogStrategyOrderIntent(
     std::string_view symbol, std::int32_t symbol_id, SignalAction action,
-    OrderSide side, bool reduce_only, std::uint64_t group_id,
-    double quantity, double raw_price, double order_price,
-    std::uint32_t slippage_ticks, double price_tick,
-    double target_open_notional, double estimated_notional,
+    OrderSide side, bool reduce_only, std::uint64_t group_id, double quantity,
+    double raw_price, double order_price, std::uint32_t slippage_ticks,
+    double price_tick, double target_open_notional, double estimated_notional,
     std::size_t active_groups) noexcept {
   if (::nova::kLogManager.logger() != nullptr) {
     NOVA_INFO(
@@ -462,7 +461,8 @@ class Strategy {
 
  private:
   static constexpr std::size_t kOrderPriceTextCapacity = 64;
-  static constexpr std::int32_t kMaxOrderPriceDecimalPlaces = 18;
+  static constexpr std::int32_t kMaxOrderPriceDecimalPlaces =
+      ::aquila::core::kMaxOrderDecimalPlaces;
 
   struct PairRuntimeState {
     bool initialized{false};
@@ -473,6 +473,16 @@ class Strategy {
     ExecutionState execution;
     QuoteSnapshot drifted_lead;
     bool has_drifted_lead{false};
+    struct OrderDecimalMetadata {
+      bool valid{false};
+      std::int64_t open_notional_units{0};
+      std::int32_t notional_decimal_places{0};
+      std::int64_t quantity_step_units{0};
+      std::int64_t min_quantity_units{0};
+      std::int64_t max_quantity_units{0};
+      std::int64_t multiplier_units{1};
+      std::int32_t multiplier_decimal_places{0};
+    } order_decimal;
   };
 
   struct OrderPriceTextStorage {
@@ -492,6 +502,11 @@ class Strategy {
     [[nodiscard]] std::string_view quantity_view() const noexcept {
       return std::string_view(quantity_text.data(), quantity_size);
     }
+  };
+
+  struct OpenOrderQuantity {
+    double quantity{0.0};
+    std::int64_t quantity_units{0};
   };
 
   void InitPairRuntimeStates() {
@@ -519,6 +534,7 @@ class Strategy {
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
       runtime.initialized = true;
       runtime.pair = pair;
+      runtime.order_decimal = BuildOrderDecimalMetadata(pair);
       runtime.alignment.Init(AlignmentConfig{
           .drift_period_ns = pair.trigger.drift_period_ns,
           .stats_window_ns = pair.bbo_record.stats_window_ns,
@@ -701,25 +717,42 @@ class Strategy {
     const double raw_order_price = last_signal_decision_.intent.price;
     const std::uint32_t slippage_ticks = SlippageTicksForAction(
         runtime->pair.execute, last_signal_decision_.action);
-    const double order_price = SlippedRoundedOrderPrice(
+    const double rounded_order_price = SlippedRoundedOrderPrice(
         raw_order_price, instrument, last_signal_decision_.intent.side,
         slippage_ticks);
     const std::string_view symbol =
         instrument.exchange_symbol.empty()
             ? std::string_view(runtime->pair.symbol)
             : std::string_view(instrument.exchange_symbol);
-    if (order_price <= 0.0) {
+    if (rounded_order_price <= 0.0) {
       detail::LogStrategyOrderIntentRejected(
           "invalid_price", symbol, runtime->pair.symbol_id,
           last_signal_decision_.action, last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, 0, raw_order_price, order_price,
-          slippage_ticks, instrument.price_tick,
+          last_signal_decision_.group_id, 0, raw_order_price,
+          rounded_order_price, slippage_ticks, instrument.price_tick,
           runtime->pair.execute.open_notional, 0.0);
       return;
     }
 
+    std::int64_t price_units = 0;
+    if (!ValidOrderDecimalPlaces(instrument.price_decimal_places) ||
+        !DecimalUnitsFromValue(rounded_order_price,
+                               instrument.price_decimal_places, &price_units)) {
+      detail::LogStrategyOrderIntentRejected(
+          "order_text_slot_full", symbol, runtime->pair.symbol_id,
+          last_signal_decision_.action, last_signal_decision_.intent.side,
+          last_signal_decision_.intent.reduce_only,
+          last_signal_decision_.group_id, 0, raw_order_price,
+          rounded_order_price, slippage_ticks, instrument.price_tick,
+          runtime->pair.execute.open_notional, 0.0);
+      return;
+    }
+    const double order_price =
+        DecimalUnitsToValue(price_units, instrument.price_decimal_places);
+
     double quantity = 0.0;
+    std::int64_t quantity_units = 0;
     ExecutionGroup* close_group = nullptr;
     if (last_signal_decision_.intent.reduce_only) {
       close_group =
@@ -728,8 +761,19 @@ class Strategy {
         return;
       }
       quantity = AbsolutePositionQuantity(*close_group);
+      if (!ValidOrderDecimalPlaces(instrument.quantity_decimal_places) ||
+          !DecimalUnitsFromValue(quantity, instrument.quantity_decimal_places,
+                                 &quantity_units)) {
+        quantity = 0.0;
+      } else {
+        quantity = DecimalUnitsToValue(quantity_units,
+                                       instrument.quantity_decimal_places);
+      }
     } else {
-      quantity = OpenOrderQuantity(runtime->pair, order_price);
+      const OpenOrderQuantity open_quantity =
+          CalculateOpenOrderQuantity(*runtime, price_units);
+      quantity = open_quantity.quantity;
+      quantity_units = open_quantity.quantity_units;
     }
     if (quantity <= kQuantityEpsilon) {
       detail::LogStrategyOrderIntentRejected(
@@ -760,9 +804,9 @@ class Strategy {
       return;
     }
 
-    OrderPriceTextStorage* order_text_storage = AcquireOrderText(
-        order_price, instrument.price_decimal_places, quantity,
-        instrument.quantity_decimal_places);
+    OrderPriceTextStorage* order_text_storage =
+        AcquireOrderText(price_units, instrument.price_decimal_places,
+                         quantity_units, instrument.quantity_decimal_places);
     if (order_text_storage == nullptr) {
       detail::LogStrategyOrderIntentRejected(
           "order_text_slot_full", symbol, runtime->pair.symbol_id,
@@ -936,32 +980,78 @@ class Strategy {
     return std::abs(group.signed_position_quantity);
   }
 
-  [[nodiscard]] static double OpenOrderQuantity(
-      const PairConfig& pair, double order_price) noexcept {
+  [[nodiscard]] static PairRuntimeState::OrderDecimalMetadata
+  BuildOrderDecimalMetadata(const PairConfig& pair) noexcept {
+    PairRuntimeState::OrderDecimalMetadata metadata;
     const InstrumentMetadata& instrument = pair.lag_instrument;
-    if (order_price <= 0.0 || instrument.notional_multiplier <= 0.0 ||
+    const std::int32_t price_decimal_places = instrument.price_decimal_places;
+    const std::int32_t quantity_decimal_places =
+        instrument.quantity_decimal_places;
+    const std::int32_t notional_decimal_places =
+        price_decimal_places + quantity_decimal_places;
+    if (!ValidOrderDecimalPlaces(price_decimal_places) ||
+        !ValidOrderDecimalPlaces(quantity_decimal_places) ||
+        !ValidOrderDecimalPlaces(notional_decimal_places) ||
+        instrument.notional_multiplier <= 0.0 ||
         instrument.quantity_step <= 0.0 || pair.execute.open_notional <= 0.0) {
-      return 0.0;
+      return metadata;
     }
 
-    const double raw_quantity = pair.execute.open_notional /
-                                (order_price * instrument.notional_multiplier);
-    if (!std::isfinite(raw_quantity) || raw_quantity <= 0.0) {
-      return 0.0;
-    }
-
-    double quantity = FloorToStep(raw_quantity, instrument.quantity_step);
-    if (instrument.max_quantity > 0.0 && quantity > instrument.max_quantity) {
-      quantity = FloorToStep(instrument.max_quantity, instrument.quantity_step);
+    if (!DecimalUnitsFromValue(pair.execute.open_notional,
+                               notional_decimal_places,
+                               &metadata.open_notional_units) ||
+        !DecimalUnitsFromValue(instrument.quantity_step,
+                               quantity_decimal_places,
+                               &metadata.quantity_step_units) ||
+        !DecimalUnitsFromValueAutoPlaces(instrument.notional_multiplier,
+                                         &metadata.multiplier_units,
+                                         &metadata.multiplier_decimal_places)) {
+      return metadata;
     }
     if (instrument.min_quantity > 0.0 &&
-        quantity + kQuantityEpsilon < instrument.min_quantity) {
-      return 0.0;
+        !DecimalUnitsFromValue(instrument.min_quantity, quantity_decimal_places,
+                               &metadata.min_quantity_units)) {
+      return metadata;
     }
-    if (!std::isfinite(quantity) || quantity <= kQuantityEpsilon) {
-      return 0.0;
+    if (instrument.max_quantity > 0.0 &&
+        !DecimalUnitsFromValue(instrument.max_quantity, quantity_decimal_places,
+                               &metadata.max_quantity_units)) {
+      return metadata;
     }
-    return quantity;
+    metadata.notional_decimal_places = notional_decimal_places;
+    metadata.valid = true;
+    return metadata;
+  }
+
+  [[nodiscard]] static OpenOrderQuantity CalculateOpenOrderQuantity(
+      const PairRuntimeState& runtime, std::int64_t price_units) noexcept {
+    const InstrumentMetadata& instrument = runtime.pair.lag_instrument;
+    const PairRuntimeState::OrderDecimalMetadata& metadata =
+        runtime.order_decimal;
+    if (!metadata.valid || price_units <= 0) {
+      return {};
+    }
+
+    const ::aquila::core::OpenQuantityUnitsResult result =
+        ::aquila::core::CalculateOpenQuantityUnits(
+            ::aquila::core::OpenQuantityUnitsInput{
+                .notional_units = metadata.open_notional_units,
+                .notional_decimal_places = metadata.notional_decimal_places,
+                .price_units = price_units,
+                .price_decimal_places = instrument.price_decimal_places,
+                .multiplier_units = metadata.multiplier_units,
+                .multiplier_decimal_places = metadata.multiplier_decimal_places,
+                .quantity_decimal_places = instrument.quantity_decimal_places,
+                .quantity_step_units = metadata.quantity_step_units,
+                .min_quantity_units = metadata.min_quantity_units,
+                .max_quantity_units = metadata.max_quantity_units,
+            });
+    if (result.status != ::aquila::core::OpenQuantityUnitsStatus::kOk) {
+      return {};
+    }
+    return {.quantity = DecimalUnitsToValue(result.quantity_units,
+                                            instrument.quantity_decimal_places),
+            .quantity_units = result.quantity_units};
   }
 
   struct GlobalRiskTotals {
@@ -1018,9 +1108,8 @@ class Strategy {
           config_.risk.max_holding_position - kQuantityEpsilon) {
         return false;
       }
-      if (quantity >
-          config_.risk.max_holding_position - totals.holding_position +
-              kQuantityEpsilon) {
+      if (quantity > config_.risk.max_holding_position -
+                         totals.holding_position + kQuantityEpsilon) {
         return false;
       }
     }
@@ -1030,8 +1119,7 @@ class Strategy {
   [[nodiscard]] static double OrderNotional(
       double quantity, double price,
       const InstrumentMetadata& instrument) noexcept {
-    if (quantity <= kQuantityEpsilon || !std::isfinite(price) ||
-        price <= 0.0 ||
+    if (quantity <= kQuantityEpsilon || !std::isfinite(price) || price <= 0.0 ||
         !std::isfinite(instrument.notional_multiplier) ||
         instrument.notional_multiplier <= 0.0) {
       return 0.0;
@@ -1088,52 +1176,72 @@ class Strategy {
     return 0;
   }
 
-  [[nodiscard]] static double FloorToStep(double quantity,
-                                          double step) noexcept {
-    if (!std::isfinite(quantity) || !std::isfinite(step) || step <= 0.0) {
-      return 0.0;
+  [[nodiscard]] static bool DecimalUnitsFromValue(
+      double value, std::int32_t decimal_places, std::int64_t* units) noexcept {
+    const double scaled =
+        value * static_cast<double>(::aquila::core::Pow10Int64(decimal_places));
+    if (!std::isfinite(scaled) || scaled <= 0.0 ||
+        scaled >
+            static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+      return false;
     }
-    return std::floor(quantity / step + kQuantityEpsilon) * step;
+    const std::int64_t scaled_units =
+        static_cast<std::int64_t>(std::llround(scaled));
+    if (scaled_units <= 0) {
+      return false;
+    }
+    *units = scaled_units;
+    return true;
+  }
+
+  [[nodiscard]] static bool DecimalUnitsFromValueAutoPlaces(
+      double value, std::int64_t* units,
+      std::int32_t* decimal_places) noexcept {
+    for (std::int32_t places = 0; places <= kMaxOrderPriceDecimalPlaces;
+         ++places) {
+      std::int64_t candidate_units = 0;
+      if (!DecimalUnitsFromValue(value, places, &candidate_units)) {
+        continue;
+      }
+      const double restored = DecimalUnitsToValue(candidate_units, places);
+      const double tolerance =
+          std::max(kQuantityEpsilon, std::abs(value) * kQuantityEpsilon);
+      if (std::abs(restored - value) <= tolerance) {
+        *units = candidate_units;
+        *decimal_places = places;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] static double DecimalUnitsToValue(
+      std::int64_t units, std::int32_t decimal_places) noexcept {
+    return static_cast<double>(units) /
+           static_cast<double>(::aquila::core::Pow10Int64(decimal_places));
   }
 
   [[nodiscard]] OrderPriceTextStorage* AcquireOrderText(
-      double price, std::int32_t price_decimal_places, double quantity,
+      std::int64_t price_units, std::int32_t price_decimal_places,
+      std::int64_t quantity_units,
       std::int32_t quantity_decimal_places) noexcept {
     if (!ValidOrderDecimalPlaces(price_decimal_places) ||
-        !ValidOrderDecimalPlaces(quantity_decimal_places) ||
-        !std::isfinite(price) || price <= 0.0 || !std::isfinite(quantity) ||
-        quantity <= 0.0) {
+        !ValidOrderDecimalPlaces(quantity_decimal_places) || price_units <= 0 ||
+        quantity_units <= 0) {
       return nullptr;
     }
     for (OrderPriceTextStorage& storage : order_price_texts_) {
       if (storage.active) {
         continue;
       }
-      char* const price_begin = storage.price_text.data();
-      char* const price_end = price_begin + storage.price_text.size();
-      const auto price_result =
-          std::to_chars(price_begin, price_end, price, std::chars_format::fixed,
-                        static_cast<int>(price_decimal_places));
-      if (price_result.ec != std::errc{} || price_result.ptr == price_begin) {
-        ReleaseOrderPriceText(&storage);
-        return nullptr;
-      }
-      char* const quantity_begin = storage.quantity_text.data();
-      char* const quantity_end =
-          quantity_begin + storage.quantity_text.size();
-      const auto quantity_result =
-          std::to_chars(quantity_begin, quantity_end, quantity,
-                        std::chars_format::fixed,
-                        static_cast<int>(quantity_decimal_places));
-      if (quantity_result.ec != std::errc{} ||
-          quantity_result.ptr == quantity_begin) {
-        ReleaseOrderPriceText(&storage);
-        return nullptr;
-      }
       storage.price_size =
-          static_cast<std::size_t>(price_result.ptr - price_begin);
+          ::aquila::core::FormatDecimalUnits(price_units, price_decimal_places,
+                                             storage.price_text)
+              .size();
       storage.quantity_size =
-          static_cast<std::size_t>(quantity_result.ptr - quantity_begin);
+          ::aquila::core::FormatDecimalUnits(
+              quantity_units, quantity_decimal_places, storage.quantity_text)
+              .size();
       storage.local_order_id = 0;
       storage.reserved_open_quantity = 0.0;
       storage.reserved_open_notional = 0.0;
@@ -1143,8 +1251,8 @@ class Strategy {
     return nullptr;
   }
 
-  static void ReserveOpenRisk(OrderPriceTextStorage* storage,
-                              double quantity, double notional) noexcept {
+  static void ReserveOpenRisk(OrderPriceTextStorage* storage, double quantity,
+                              double notional) noexcept {
     if (storage == nullptr || quantity <= kQuantityEpsilon ||
         !std::isfinite(notional) || notional <= 0.0) {
       return;
