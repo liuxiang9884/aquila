@@ -55,6 +55,7 @@ struct FakeOrderSession {
                             .side = OrderSide::kBuy,
                             .time_in_force = TimeInForce::kGoodTillCancel,
                             .quantity = 1,
+                            .quantity_text = "1",
                             .price_text = kPriceText,
                             .reduce_only = false};
 }
