@@ -83,8 +83,9 @@ quantity_decimal_places = decimal_places(order_size_min)
 
 当前 C++ 下单 / 回报链路已经消费这组 decimal metadata：`core::OrderCreateRequest` /
 `core::StrategyOrder` 的 `quantity` 为 `double`，并额外携带按
-`quantity_decimal_places` 生成的 `quantity_text`；Gate order session 直接用
-`quantity_text` 编码 JSON `size`，Gate private feedback parser / SHM / `OrderManager`
+`quantity_decimal_places` 生成的 `quantity_text`；Gate order session 在带
+`X-Gate-Size-Decimal: 1` 的连接上用 `quantity_text` 把 JSON `size` 编码为 string，
+避免小数 size 以 JSON number 发送时被 Gate 按 `int64` 类型拒绝。Gate private feedback parser / SHM / `OrderManager`
 也按 `double` 累计数量；LeadLag sizing 和 live smoke 会用 lag instrument 的
 `quantity_step` / `quantity_decimal_places` 计算并格式化数量。REST final check /
 emergency flatten 已带 `X-Gate-Size-Decimal: 1` 查询 / 下单，使用 decimal position size，

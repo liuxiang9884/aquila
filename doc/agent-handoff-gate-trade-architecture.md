@@ -260,7 +260,7 @@ doc/futures_contract_metadata_fields.md
 1. Gate `quantity` 默认是合约张数，脚本用 `quanto_multiplier` 输出 `notional_multiplier`；Binance USD-M futures `quantity` 是 base asset 数量，`notional_multiplier=1.0`。
 2. Gate `price_tick` 来自 `order_price_round`；Binance `price_tick` 来自 `PRICE_FILTER.tickSize`。
 3. Gate 未提供 `min_notional`，当前输出空值；Binance 从 `MIN_NOTIONAL` / `NOTIONAL` filter 映射。
-4. Gate 脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，并从 `order_size_min` 推导 `quantity_step` / `quantity_decimal_places`；例如 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 当前为 `0.1` / `1`。C++ order / feedback / Gate encoder / LeadLag sizing 已消费该 metadata；REST final check / emergency flatten 已完成 decimal residual 代码级覆盖，仍需小额 live smoke 复核。
+4. Gate 脚本会带 `X-Gate-Size-Decimal: 1` 查询真实 min / max，并从 `order_size_min` 推导 `quantity_step` / `quantity_decimal_places`；例如 `RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 当前为 `0.1` / `1`。C++ order / feedback / Gate encoder / LeadLag sizing 已消费该 metadata；Gate WS 下单带 decimal header 时 quote JSON `size`；REST final check / emergency flatten 已完成 decimal residual 代码级覆盖，仍需完整 strategy 小额 live smoke 复核。
 5. Gate 的 `order_price_deviate` 是相对标记价的订单价格偏离比例；Binance 的 `PERCENT_PRICE` 是 bidirectional multiplier，脚本统一为相对偏离比例。
 
 这组 metadata 应在启动期构建并缓存，供 strategy、risk check 和 exchange adapter 共享；不要在行情或下单热路径里反复查询 REST 或重复解析交易所 JSON。
@@ -634,7 +634,7 @@ doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 1. 第一版订单生命周期只以 Gate private `futures.orders` 为事实源，不接 `futures.usertrades`。原因是两个 channel 的到达顺序不稳定，会额外引入幂等和跨 channel 状态合并成本，而 `orders` 已包含第一版生命周期所需信息。
 2. `OrderFeedbackSession` 不访问 Strategy order 或 `OrderPool`，只把 `orders` 信息转换成固定 event，再通过后续架构确定的通道交给 Strategy。
 3. `OrderSession` 的 API `ack=true` 不产生 accepted event；`finish_as="_new"` 才产生 `OrderAcceptedFeedback`。
-4. 数量字段当前使用 `double quantity` + decimal text contract：`OrderCreateRequest` / `StrategyOrder` 携带 `quantity_text`，Gate futures 下单 JSON `size` 直接使用已按 `quantity_decimal_places` 格式化的文本；`OrderFeedbackEvent` / SHM / `OrderManager` 用 `double` 表示累计成交、剩余和撤单数量。价格字段仍使用 `double` + `price_text`。
+4. 数量字段当前使用 `double quantity` + decimal text contract：`OrderCreateRequest` / `StrategyOrder` 携带 `quantity_text`，Gate futures 下单 JSON `size` 使用已按 `quantity_decimal_places` 格式化的文本；带 `X-Gate-Size-Decimal: 1` 的 WS order session 会把 `size` 编码为 JSON string，避免小数 JSON number 被 Gate 按 `int64` 拒绝。`OrderFeedbackEvent` / SHM / `OrderManager` 用 `double` 表示累计成交、剩余和撤单数量。价格字段仍使用 `double` + `price_text`。
 5. `OrderAcceptedFeedback` 保留 `exchange_order_id`，用于建立本地订单和交易所订单 id 对应；partial/fill/cancel event 只用 `local_order_id` 驱动 Strategy 状态。
 6. `OrderFilledFeedback` 保留可选 `OrderRole`，orders 回报里有 maker/taker 就填，没有则为 `kNone`；Strategy 不依赖 role 推进状态。
 7. `liquidated`、`auto_deleveraging`、`position_close` 不映射为 rejected，而是作为 `OrderFinishReason` 放进 terminal cancelled/finished 类 event。
@@ -1176,7 +1176,7 @@ config/data_sessions/binance_data_session.toml
 2. 明确 REST reconcile 和 feedback WS 断线策略，覆盖未知订单状态、断线后本地状态恢复、人工介入边界以及 continuity lost 后新开仓暂停 / 恢复条件。
 3. 扩展 C++ WS live smoke / probe：当前已有 `gate_strategy_order` 小额 accepted / cancel lifecycle、`gate_demo_strategy` 3 轮 filled-close、LeadLag ZEC filled open / close 和 unfilled-cancel 证据。2026-05-22 已新增独立 `gate_order_session_failure_probe`，但 ZEC 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不计入完成项；后续 rejected / cancel-rejected 不要硬塞进 LeadLag runtime，应先确认 Gate 可返回最终 error 的请求形态。继续补 feedback WS 断线和 REST reconcile 分支时，保留原始输出，并用 REST 查询确认无残留订单 / 仓位。
 4. 接入 account / position feedback 或 REST 查询辅助，让 Strategy 能在 continuity lost / reconnect 后恢复订单、持仓和风险状态。
-5. 接入更完整的 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 C++ Gate decimal-size 下单已通过 `quantity_text` 走小数 `size`，REST final check / emergency flatten 已带 decimal REST header 并覆盖 `value` / `margin` residual 判断；REST reconcile 的 residual 覆盖可后续补齐。
+5. 接入更完整的 symbol metadata / risk check：启动期缓存合约元数据，Strategy submit 前完成 tick、quantity、notional、reduce-only 等校验；当前 C++ Gate decimal-size 下单已通过 `quantity_text` 走小数 `size`，WS 带 decimal header 时 quote JSON `size`，REST final check / emergency flatten 已带 decimal REST header 并覆盖 `value` / `margin` residual 判断；REST reconcile 的 residual 覆盖可后续补齐。
 6. 增加端到端 benchmark：覆盖 `Strategy -> Gate adapter -> OrderSession` 下单请求构建 / 发送和 `OrderFeedbackSession -> SHM -> Strategy` 回报消费；真实链路性能结论必须另跑 live probe 或 profile。
 7. 如果需要继续审查 Gate `OrderSession` / `OrderFeedbackSession` 第一版，可做 targeted review：login readiness、request id / req_id type 校验、subscribe 签名、place/cancel final result validation、断线 continuity lost、cache update / forget 和 benchmark 口径。
 8. 如果需要引用 Gate live 稳定性证据，重新运行 `gate_futures_book_ticker_probe` 并把原始输出写入文档。
