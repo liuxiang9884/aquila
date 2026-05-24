@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文记录 LeadLag 相关实盘测试和 replay 测试的标准流程、输出约定和历史证据。这里的“实盘”默认指连接真实 Gate / Binance 行情
+本文记录 LeadLag 相关实盘测试和 replay 测试的标准流程、输出约定和分析方法。这里的“实盘”默认指连接真实 Gate / Binance 行情
 WebSocket 和本机 SHM，但不等于真实下单；是否下单必须由测试项显式说明。
 
 所有新测试默认把临时 config、stdout / stderr、策略 log、CSV、binary 和对比报告写入 `/home/liuxiang/tmp/<run_id>`。不要为了单次
@@ -186,6 +186,17 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
   --markdown-output <run_dir>/compare_intent_summary.md
 ```
 
+### 使用程序
+
+| 程序 | 用途 |
+| --- | --- |
+| `./build/debug/tools/gate_data_session` | 连接 Gate futures book ticker WebSocket，发布 Gate `BookTicker` SHM。 |
+| `./build/debug/tools/binance_data_session` | 连接 Binance USD-M futures bookTicker WebSocket，发布 Binance `BookTicker` SHM。 |
+| `./build/debug/tools/data_reader_recorder` | 用 `RealtimeDataReader::Drain()` 从 Gate / Binance SHM 导出连续 `aquila::BookTicker` binary。 |
+| `./build/debug/tools/lead_lag_strategy` | signal-only live 策略运行入口；本测试只使用 `--connect-data`，不使用 `--execute`。 |
+| `./build/debug/tools/lead_lag_replay` | 从 recorder 导出的 binary replay，生成 replay signal CSV。 |
+| `scripts/lead_lag/compare_signal_csv.py` | 比较 live / replay signal CSV，输出 JSON 和 Markdown 差异报告。 |
+
 ### 通过判定
 
 最低通过条件：
@@ -208,116 +219,30 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 4. 如果 recorder 记录数大于 live strategy 处理数，优先检查 recorder 是否早于 live strategy 启动或晚于 live strategy 停止。
 5. 如果 replay-only 信号集中在开头或末尾，优先按启动 / 收尾窗口偏移解释；如果分布在中间，再检查 live `latest` 是否跳过关键中间 tick。
 
-## 运行记录
+## 测试后分析方法
 
-### 2026-05-24 `lead_lag_live_replay_signal_parity 30m`
+每次测试结束后，只把本轮具体结果写入 `/home/liuxiang/tmp/<run_id>` 下的报告和最终回复，不把结果追加到本文档。
 
-运行目录：
+建议按下面顺序分析：
 
-```text
-/home/liuxiang/tmp/lead_lag_live_replay_compare_20260524_033401
-```
+1. 读取 `<run_dir>/exit_codes.tsv`，确认 data session、recorder、live strategy、replay 和 compare 的退出码。
+2. 读取 `<run_dir>/orchestrator.log`，确认启动顺序、运行时间窗口、停止顺序和 replay / compare 是否完成。
+3. 检查 `<run_dir>/recorded_book_ticker.bin` 文件大小，确认大小可以被 `64` 整除；记录数为 `bytes / 64`。
+4. 在 `<run_dir>/data_reader_recorder.stdout.log` 中查找 `recorder_stats`、`exchange_stats` 和 `source_stats`，重点看每个 source 的 `book_ticker_count`、`skipped`、`overruns` 和最后 `BookTicker.id`。
+5. 在 Gate / Binance data session stdout 或 log 中查找最终 `result=... active=...`，确认 WebSocket session 曾进入 active 状态并正常关闭。
+6. 在 `<run_dir>/lead_lag_strategy_live.stdout.log` 中查找 `lead_lag_strategy_signal_only_summary`，记录 live 侧 `book_tickers`、`signals`、`open`、`close`、`stoploss`、runtime loop diagnostics 和 recovery fields。
+7. 在 `<run_dir>/lead_lag_replay.stdout.log` 中查找 `lead_lag_replay_summary`，记录 replay 侧 `book_tickers`、`signals`、`open`、`close` 和 `stoploss`。
+8. 读取 `<run_dir>/compare_intent_summary.md`，优先判断核心交易意图是否一致；这是本测试的主要 pass / fail 依据。
+9. 读取 `<run_dir>/compare_summary.md`，分析完整 diagnostics 字段差异；这部分用于解释滚动状态、threshold、noise 和 drifted BBO 的差异。
+10. 如果存在 `live_only` 或 `replay_only`，先按时间窗口偏移、live `latest` 跳过中间 tick、recorder `drain` 多处理 tick、SHM overrun / skipped 这几个方向排查。
+11. 如果只有 diagnostics mismatch，先确认 `action`、`side`、`price`、`reduce_only` 和事件时间是否一致；若一致，再结合 recorder / live 处理条数差异解释。
 
-时间窗口：
+最终回复中应包含：
 
-- data session 启动：2026-05-24 03:34:35 UTC
-- recorder 启动：2026-05-24 03:34:50 UTC
-- live strategy 启动：2026-05-24 03:34:51 UTC
-- live strategy 自然退出：2026-05-24 04:04:51 UTC
-- replay / compare 完成：2026-05-24 04:04:52 UTC
-
-退出码：
-
-| process | exit code |
-| --- | ---: |
-| `lead_lag_strategy_live` | 0 |
-| `data_reader_recorder` | 0 |
-| `gate_data_session` | 0 |
-| `binance_data_session` | 0 |
-| `lead_lag_replay` | 0 |
-| `compare_signal_csv` | 0 |
-
-Data session 结果：
-
-| source | book_tickers | rx_messages | tx_messages | result |
-| --- | ---: | ---: | ---: | --- |
-| Gate | 122,027 | 122,028 | 365 | `ok active=true phase=kClosed error=kNone` |
-| Binance | 634,266 | 634,266 | 374 | `ok active=true phase=kClosed error=kNone` |
-
-Recorder 结果：
-
-| metric | value |
-| --- | ---: |
-| output bytes | 47,975,552 |
-| `BookTicker` records | 749,618 |
-| trailing bytes | 0 |
-| Gate records | 120,766 |
-| Binance records | 628,852 |
-| Gate skipped / overruns | 0 / 0 |
-| Binance skipped / overruns | 0 / 0 |
-
-Live strategy summary：
-
-| metric | value |
-| --- | ---: |
-| book_tickers | 749,292 |
-| signals | 34 |
-| open | 17 |
-| close | 17 |
-| stoploss | 0 |
-| order_responses | 0 |
-| order_feedbacks | 0 |
-| recovery_state | `normal` |
-| needs_reconcile | `false` |
-| manual_intervention | `false` |
-| new_entries_paused | `false` |
-
-Replay summary：
-
-| metric | value |
-| --- | ---: |
-| book_tickers | 749,618 |
-| signals | 34 |
-| open | 17 |
-| close | 17 |
-| stoploss | 0 |
-
-Signal CSV action 分布：
-
-| action | live | replay |
-| --- | ---: | ---: |
-| `kOpenShort` | 11 | 11 |
-| `kCloseShort` | 11 | 11 |
-| `kOpenLong` | 6 | 6 |
-| `kCloseLong` | 6 | 6 |
-
-基础对比结果：
-
-| metric | count |
-| --- | ---: |
-| live_signals | 34 |
-| replay_signals | 34 |
-| matched | 34 |
-| live_only | 0 |
-| replay_only | 0 |
-| mismatched | 8 |
-
-核心交易意图对比结果：
-
-| metric | count |
-| --- | ---: |
-| live_signals | 34 |
-| replay_signals | 34 |
-| matched | 34 |
-| live_only | 0 |
-| replay_only | 0 |
-| mismatched | 0 |
-
-结论：
-
-- 30 分钟 signal-only live 与 recorded binary replay 的 34 条 signal key 全部匹配，没有 live-only 或 replay-only。
-- `action`、`side`、`price`、`reduce_only`、事件时间、raw BBO、`group_id`、`position_direction` 和 `trailing_price` 等核心交易意图字段完全一致。
-- 全 diagnostics 对比中有 8 个 key 出现差异，字段集中在 `up_entry`、`down_entry`、`lead_noise`、`lead_drifted_bid` / `lead_drifted_ask`、`drift_mean` 和 `drift_deviation`。
-- replay 比 live 多处理 326 条 `BookTicker`，符合 recorder `drain` 覆盖更完整启动 / 收尾窗口，而 live strategy 使用 `latest` 采样的边界；这些差异未影响本轮 signal intent。
-
-本轮通过 `lead_lag_live_replay_signal_parity` 的最低通过条件。
+- run directory；
+- 使用的测试名和时长；
+- 各进程 exit code；
+- recorder 记录数、每个 source 的 `skipped` / `overruns`；
+- live / replay signal summary；
+- `compare_intent_summary` 的 counts；
+- 若有差异，按上述优先级给出原因判断和下一步建议。
