@@ -35,12 +35,12 @@ doc/evaluation_support.md
 
 | 方向 | 优先文档 |
 | --- | --- |
-| Gate 交易架构 | `doc/agent-handoff-gate-trade-architecture.md`、Gate order / feedback specs |
+| Gate 交易架构 | `doc/agent-handoff-gate-trade-architecture.md` |
 | TUI / account monitor | `doc/tui_onboarding_guide.md`、`doc/tui_gate_account_monitor_design.md` |
 | Binance 行情 | `doc/agent-handoff-binance-market-data.md` |
 | data session / config | `doc/data_session_config.md`、`doc/data_reader_config.md`、`doc/data_session_shm_communication_design.md` |
-| 交易组件边界 | `doc/strategy_order_component_model.md`、`doc/trading_component_architecture_discussion.md` |
-| LeadLag fixed 策略 | `strategy/lead_lag/README.md`、LeadLag reconstruction / design / audit docs |
+| 交易组件边界 | `doc/strategy_order_component_model.md` |
+| LeadLag fixed 策略 | `strategy/lead_lag/README.md`、`doc/leadlag-fixed-strategy-reconstruction-guide.md` |
 | LeadLag 实盘长跑 / 测试 | `doc/lead_lag_live_runtime_plan.md` |
 | LeadLag live / replay 测试 runbook | `doc/lead_lag_live_replay_testing.md` |
 | ORDI replay / 对账 | `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` |
@@ -48,7 +48,7 @@ doc/evaluation_support.md
 
 ## 当前事实源
 
-以本节、`git status`、`git log` 和当前代码为准；旧执行计划文档已清理，不再作为事实源。
+以本节、`git status`、`git log` 和当前代码为准；旧执行计划、旧 spec 和重复讨论文档已清理，不再作为事实源。
 
 截至 2026-05-24：
 
@@ -121,8 +121,8 @@ doc/evaluation_support.md
 - LeadLag fixed 策略第 1-7 部分设计拆解、C++ 策略层模块和 `leadlag::Strategy::OnBookTicker()` replay 信号主链路已落地。
 - 已实现 config / metadata、raw market state、recorder wrappers、drift / alignment、threshold、signal / execution state、feedback state / order retire。
 - `tools/lead_lag/replay.cpp` 可从 `BookTicker` binary 生成 signal CSV；ORDI_USDT Tardis / HDF replay 对比和 PnL 结论已记录。
-- fixed Go / C++ 静态语义审计已完成；高影响差异集中在时间口径、move quantile exact vs histogram、synthetic replay 不等价于真实 order/fill 回测。
-- `doc/lead_lag_live_runtime_plan.md` 已记录 LeadLag signal-only 长时间实盘观察、strategy 层真实订单闭环、runner `--execute` 真实入口、`ContinuityLost` stop-and-flat 应急链路、异常 smoke、端到端 benchmark 和后续真实订单长跑顺序。
+- LeadLag 与 fixed Go 的已知语义边界：时间口径不同、move quantile 使用生产 histogram 而非 Go exact empirical、synthetic replay 不等价于真实 order/fill 回测；当前以 `strategy/lead_lag/README.md` 和 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 为接手入口。
+- `doc/lead_lag_live_runtime_plan.md` 已压缩为 LeadLag 实盘 runbook，记录 signal-only、真实订单 smoke、`ContinuityLost` stop-and-flat、decimal-size 复核和后续长跑顺序，不再保留逐任务执行流水账。
 - `doc/lead_lag_live_replay_testing.md` 已作为 live / replay 测试 runbook 落地；标准测试名 `lead_lag_live_replay_signal_parity` 表示 signal-only live、并行 DataReader recorder、binary replay 和 live/replay signal CSV 对比。下次用户只给测试名和时长时，按该文档直接执行，所有输出写入 `/home/liuxiang/tmp/<run_id>`。
 - LeadLag default production accounting 已可提交 IOC limit order intent；`tools/lead_lag/live_strategy.cpp::RunLiveOrders()` 已接到 Gate live-orders runtime，缺凭据时返回 exit code `2`，收到 `ContinuityLost` 时返回 handoff exit code `10`。2026-05-22 已完成 BTC_USDT flat-account、tiny-position、隔离 `ContinuityLost` stop-and-flat smoke，以及 ZEC_USDT `--smoke-open-close` 小额 filled open / close 和 `--smoke-unfilled-cancel` 小额挂单撤单 smoke；最终 REST 复核 open orders 为空、position `size=0`。本地端到端 benchmark 已覆盖 submit 路径和 feedback 回报路径，结果见 `doc/lead_lag_live_runtime_plan.md`。2026-05-22 release 11-symbol live-orders guarded run 不是通过项：RIVER_USDT 完成 1 组完整 strategy open / close；RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失，guard 停机后平仓。2026-05-23 已修复 LeadLag C++ sizing / execution state / risk reservation / live smoke 的 decimal quantity，并把 Gate order feedback parser 的 decimal exponent 支持扩到 `[-15, 15]`，覆盖 `finish_as=ioc`、partial fill、`fill_price=0.562399019608` 的 terminal feedback 单元测试；REST final check / emergency flatten 已带 `X-Gate-Size-Decimal: 1`，用 `Decimal` 解析 position size，检查 `value` / `margin` residual，并可提交 decimal reduce-only close。上述 feedback 与 REST residual 修复仍需小额 live smoke 复核。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response；后续不要把 rejected / cancel-rejected 算作已完成 smoke。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 account / position feedback session。
 - `scripts/lead_lag/run_live_with_guard.py` 已作为外围 guard wrapper 落地：启动前 REST preflight，正常退出后 final REST check，异常退出或 final 非 flat 时调用 emergency flatten；该 wrapper 不改 `TradingRuntime` 热路径。
@@ -146,18 +146,16 @@ doc/evaluation_support.md
 | `doc/tui_onboarding_guide.md` | 接手 TUI / account monitor | 当前范围、运行命令、实现入口、未完成项 |
 | `doc/tui_gate_account_monitor_design.md` | 继续 TUI 设计或实现 | Symbol Workbench、market data SHM、order / health 线程模型和测试建议 |
 | `doc/strategy_order_component_model.md` | 细化交易组件边界 | DataReader、OrderSession、OrderFeedbackSession、OrderManager、Strategy |
-| `doc/trading_component_architecture_discussion.md` | 继续组件架构讨论 | DataReader concept、Poll / Drain、no-merge、diagnostics 边界 |
 | `doc/data_session_config.md` | 修改 data session 配置 | instrument catalog、subscribe symbols、WS / log / SHM 配置 |
 | `doc/data_reader_config.md` | 修改 strategy reader 配置 | SHM source、read mode、Poll / Drain、diagnostics policy |
 | `doc/data_session_shm_communication_design.md` | 维护行情 SHM | DataShmPublisher、BookTickerShmReader、overrun 边界 |
 | `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构 | Gate 文档结论、SBE BBO、双 WS login、线程模型 |
-| Gate order / feedback specs | 继续 Gate submit / feedback | OrderSession、feedback event、SHM transport、strategy apply |
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance 行情 | raw stream、JSON parser、client/session、benchmark |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag 目录 | 模块职责、OnBookTicker 主流程、replay 输出、边界 |
 | `doc/lead_lag_live_runtime_plan.md` | 准备 LeadLag 长时间实盘运行和测试 | signal-only runner、订单闭环、`ContinuityLost` 应急链路、live smoke、benchmark 顺序 |
 | `doc/lead_lag_live_replay_testing.md` | 准备 LeadLag live / replay 对比测试 | 标准测试名、输出目录、临时 config、使用程序、signal parity 分析方法 |
 | `doc/lead_lag_reconcile_design.md` | 准备 LeadLag `ContinuityLost` 应急处理 | stop-and-flat V1、Python REST 撤单 / reduce-only 市价平仓、V2 read-only reconcile 边界 |
-| LeadLag reconstruction / design / audit docs | 继续 LeadLag 迁移 | fixed Go 语义、Aquila 映射、Go/C++ 差异 |
+| `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag 迁移 | fixed Go 语义、Aquila 映射、信号链路重建 |
 | `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` | ORDI replay / 对账 | Tardis / HDF 输入差异、signal key、slip PnL |
 
 ## 代码入口
@@ -409,7 +407,7 @@ rg 'aquila_evaluation' core exchange tools
 
 ### Gate 交易
 
-1. 读取 `doc/agent-handoff-gate-trade-architecture.md` 和 Gate order / feedback specs。
+1. 读取 `doc/agent-handoff-gate-trade-architecture.md` 和 `doc/strategy_order_component_model.md`。
 2. 从 `core/trading/trading_runtime.h`、`exchange/gate/trading/order_session_runtime_adapter.h`、`tools/gate/demo_strategy.h` 和 `tools/gate/demo_strategy.cpp` 接手。
 3. failure protocol probe 已有独立工具，但安全 live 请求未拿到最终 failure response；继续前先基于 Gate 官方协议或 dedicated account 明确可返回最终 error 的请求形态。
 4. V2 再评估 read-only reconcile / resume：未知订单状态、本地状态恢复、人工介入、新开仓暂停 / 恢复条件。
@@ -418,12 +416,11 @@ rg 'aquila_evaluation' core exchange tools
 
 ### DataReader / 交易组件
 
-1. 读取 `doc/strategy_order_component_model.md`。
-2. 读取 `doc/trading_component_architecture_discussion.md`。
-3. DataReader recorder live record smoke / replay 可读性验证已完成；若继续 recorder，下一步可做更长时间 guarded recording、录制脚本化或与 LeadLag / demo 实盘并行录制验证。继续使用临时 `drain` 配置，输出到 `/home/liuxiang/tmp`，观察 `overruns` / `skipped` 和 CPU 抢占，不要把仓库默认 `strategy_data_reader.toml` 改成 drain。
-4. 若继续 DataReader feed 扩展，优先讨论 trade / order book 的 typed storage + unified scan table。
-5. 如果生产工具需要导出 runtime loop diagnostics，再在具体 tool / strategy runner 中选择启用 `TradingRuntimeDiagnostics` 并低频打印 stats。
-6. 若继续下一个组件，建议按 `OrderSession`、`OrderFeedbackSession`、`OrderManager`、`Strategy` 的顺序继续讨论接口边界。
+1. 读取 `doc/strategy_order_component_model.md`、`doc/data_reader_config.md` 和 `doc/data_session_shm_communication_design.md`。
+2. DataReader recorder live record smoke / replay 可读性验证已完成；若继续 recorder，下一步可做更长时间 guarded recording、录制脚本化或与 LeadLag / demo 实盘并行录制验证。继续使用临时 `drain` 配置，输出到 `/home/liuxiang/tmp`，观察 `overruns` / `skipped` 和 CPU 抢占，不要把仓库默认 `strategy_data_reader.toml` 改成 drain。
+3. 若继续 DataReader feed 扩展，优先讨论 trade / order book 的 typed storage + unified scan table。
+4. 如果生产工具需要导出 runtime loop diagnostics，再在具体 tool / strategy runner 中选择启用 `TradingRuntimeDiagnostics` 并低频打印 stats。
+5. 若继续下一个组件，建议按 `OrderSession`、`OrderFeedbackSession`、`OrderManager`、`Strategy` 的顺序继续讨论接口边界。
 
 ### LeadLag
 
