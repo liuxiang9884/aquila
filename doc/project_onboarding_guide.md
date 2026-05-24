@@ -59,6 +59,7 @@ doc/evaluation_support.md
 - 2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke；feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。
 - 2026-05-22 TUI / monitor 已完成 `monitor/` skeleton、FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot live dump snapshot 和 monitor smoke tests。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance data session SHM，不自动启动 data session；缺失 SHM 时显示 `NA` 并产生 alert。
 - 2026-05-23 requested 12-symbol / ETH_USDT 配置整理已验证：`data_session_config_test`、`strategy_config_test`、`lead_lag_config_test` 和 `ctest --test-dir build/debug -R lead_lag --output-on-failure` 均通过；未跑全量 ctest。
+- 2026-05-24 文档整理已完成：旧 `doc/superpowers/` plan/spec、重复交易组件讨论、LeadLag 静态审计、单次运行报告和旧 signal report artifact 已删除；`doc/agent-handoff-gate-trade-architecture.md` 已压缩为当前 Gate 交易 handoff，下一轮不再读取被删除的历史文档。
 - 工作区状态以 `git status` 为准；如出现本地未提交或未跟踪文件，先确认用途和归属再处理。
 
 ## 已完成摘要
@@ -149,7 +150,7 @@ doc/evaluation_support.md
 | `doc/data_session_config.md` | 修改 data session 配置 | instrument catalog、subscribe symbols、WS / log / SHM 配置 |
 | `doc/data_reader_config.md` | 修改 strategy reader 配置 | SHM source、read mode、Poll / Drain、diagnostics policy |
 | `doc/data_session_shm_communication_design.md` | 维护行情 SHM | DataShmPublisher、BookTickerShmReader、overrun 边界 |
-| `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构 | Gate 文档结论、SBE BBO、双 WS login、线程模型 |
+| `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构 | 当前 Gate 协议事实、线程 / 进程边界、组件职责、代码入口和验证入口 |
 | `doc/agent-handoff-binance-market-data.md` | 继续 Binance 行情 | raw stream、JSON parser、client/session、benchmark |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag 目录 | 模块职责、OnBookTicker 主流程、replay 输出、边界 |
 | `doc/lead_lag_live_runtime_plan.md` | 准备 LeadLag 长时间实盘运行和测试 | signal-only runner、订单闭环、`ContinuityLost` 应急链路、live smoke、benchmark 顺序 |
@@ -453,7 +454,7 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的 onboarding 提示
 
-请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。2026-05-24 本轮已完成文档清理：旧 `doc/superpowers/` plan/spec、重复交易组件讨论、LeadLag 静态审计、单次运行报告和旧 signal report artifact 已删除；`doc/agent-handoff-gate-trade-architecture.md` 已压缩为当前 Gate 交易 handoff。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。
 
 如果继续 DataReader 小任务，先读 `doc/data_reader_config.md`；当前 `data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写出单个 merged replay binary，输出格式是连续 `aquila::BookTicker` 结构体记录，并已有双 SHM source 本地集成测试。2026-05-24 live record smoke / replay 可读性验证已完成：临时 `drain` recorder 写出 `15,685` 条裸 `BookTicker` binary，Gate `1,825` 条、Binance `13,860` 条，两个 source 的 `skipped=0`、`overruns=0`，`data_reader_probe` historical mode 通过 `HistoricalDataReader` 读完同一文件。recorder 是只读 SHM consumer，可和 LeadLag / demo 策略实盘交易并行运行；完整 dump 需要临时 `drain` 配置，默认 `latest` 配置只适合状态采样，运行时要观察 `overruns` / `skipped` 和 CPU 抢占。下一步可做更长时间 guarded recording、录制脚本化，或继续 trade / order book feed 扩展。如果继续 TUI / account monitor，先读 `doc/tui_onboarding_guide.md` 和 `doc/tui_gate_account_monitor_design.md`；当前 `monitor/` 已完成 FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot dump snapshot 和 monitor tests，`gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM，订单、仓位、PnL 和 health 仍未接真实账户数据。下一步 TUI 优先做 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。
 
