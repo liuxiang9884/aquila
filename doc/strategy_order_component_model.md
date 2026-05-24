@@ -388,6 +388,11 @@ accepted / `_new` 写入 `accepted_exchange_ns`，filled / cancelled / rejected 
 `exchange_update_ns` 字段仍保留为“最后一次已应用 feedback 的 exchange update time”兼容字段；需要区分阶段时优先使用
 `accepted_exchange_ns` / `finish_exchange_ns`。
 
+日志输出只挂在低频订单事件上，不进入行情 / data reader / runtime loop 热路径：Gate `OrderSession` 的
+`gate_order_send_ok` / `gate_order_response` 输出原始 send / receive / exchange 时间；LeadLag 的
+`lead_lag_order_response` / `lead_lag_order_finished` 和 `gate_strategy_order` 工具日志输出 RTT、exchange-to-local
+和 exchange lifecycle 派生值。`OrderManager` 仍保持无日志，只负责状态推进和字段落地。
+
 ## OrderFeedbackSession
 
 ### 功能表述

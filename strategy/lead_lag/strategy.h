@@ -18,6 +18,7 @@
 #include "core/market_data/types.h"
 #include "core/trading/order_decimal.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_latency.h"
 #include "core/trading/order_types.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/alignment.h"
@@ -245,15 +246,23 @@ inline void LogStrategyOrderIntentRejected(
 }
 
 inline void LogStrategyOrderResponse(
-    const core::OrderResponseEvent& event) noexcept {
+    const core::OrderResponseEvent& event,
+    const core::StrategyOrder* order) noexcept {
   if (::nova::kLogManager.logger() == nullptr) {
     return;
   }
+  const core::StrategyOrderTimingSnapshot timing =
+      order == nullptr ? core::StrategyOrderTimingSnapshot{}
+                       : core::MakeStrategyOrderTimingSnapshot(*order);
+  const std::int64_t exchange_to_local_ns =
+      core::LatencyDeltaNs(event.local_receive_ns, event.exchange_ns);
   NOVA_INFO(
       "lead_lag_order_response kind={} local_order_id={} "
-      "exchange_order_id={}",
+      "exchange_order_id={} local_receive_ns={} exchange_ns={} "
+      "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={}",
       magic_enum::enum_name(event.kind), event.local_order_id,
-      event.exchange_order_id);
+      event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
+      exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns);
 }
 
 inline void LogStrategyOrderFeedback(const OrderFeedbackEvent& event) noexcept {
@@ -321,17 +330,29 @@ inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
   if (::nova::kLogManager.logger() == nullptr) {
     return;
   }
+  const core::StrategyOrderTimingSnapshot timing =
+      core::MakeStrategyOrderTimingSnapshot(order);
   NOVA_INFO(
       "lead_lag_order_finished local_order_id={} symbol_id={} symbol={} "
       "status={} reduce_only={} quantity={:.12g} "
       "cumulative_filled_quantity={:.12g} "
       "average_fill_price={:.12g} last_fill_price={:.12g} "
-      "exchange_order_id={} active_groups={}",
+      "exchange_order_id={} active_groups={} request_send_local_ns={} "
+      "ack_local_receive_ns={} response_local_receive_ns={} "
+      "ack_exchange_ns={} response_exchange_ns={} accepted_exchange_ns={} "
+      "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
+      "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
+      "exchange_lifecycle_ns={}",
       order.local_order_id, order.symbol_id, order.symbol,
       magic_enum::enum_name(order.status), order.reduce_only ? "true" : "false",
       order.quantity, order.cumulative_filled_quantity,
       order.AverageFillPrice(), order.last_fill_price, order.exchange_order_id,
-      active_groups);
+      active_groups, timing.request_send_local_ns, timing.ack_local_receive_ns,
+      timing.response_local_receive_ns, timing.ack_exchange_ns,
+      timing.response_exchange_ns, timing.accepted_exchange_ns,
+      timing.finish_exchange_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
+      timing.ack_exchange_to_local_ns, timing.response_exchange_to_local_ns,
+      timing.exchange_lifecycle_ns);
 }
 
 }  // namespace detail
@@ -414,7 +435,11 @@ class Strategy {
   template <typename ContextT>
   void OnOrderResponse(const core::OrderResponseEvent& event,
                        ContextT& context) noexcept {
-    detail::LogStrategyOrderResponse(event);
+    const core::StrategyOrder* order_for_log = nullptr;
+    if (::nova::kLogManager.logger() != nullptr) {
+      order_for_log = context.FindOrder(event.local_order_id);
+    }
+    detail::LogStrategyOrderResponse(event, order_for_log);
     ApplyFinishedOrder(event.local_order_id, context);
   }
 

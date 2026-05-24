@@ -14,6 +14,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <magic_enum/magic_enum.hpp>
 
+#include "core/trading/order_latency.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
@@ -262,8 +263,8 @@ class OrderSession {
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
-    LogGatePlaceOrderSent(order, sequence, encoded_request_id,
-                          inflight_count());
+    LogGatePlaceOrderSent(order, sequence, encoded_request_id, inflight_count(),
+                          send_local_ns);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -323,7 +324,7 @@ class OrderSession {
       diagnostics_.RecordCancelSent();
     }
     LogGateCancelOrderSent(order.local_order_id, exchange_order_id, sequence,
-                           encoded_request_id, inflight_count());
+                           encoded_request_id, inflight_count(), send_local_ns);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -455,37 +456,37 @@ class OrderSession {
   }
 
   template <typename OrderT>
-  static void LogGatePlaceOrderSent(const OrderT& order,
-                                    std::uint64_t request_sequence,
-                                    std::uint64_t encoded_request_id,
-                                    std::size_t inflight) noexcept {
+  static void LogGatePlaceOrderSent(
+      const OrderT& order, std::uint64_t request_sequence,
+      std::uint64_t encoded_request_id, std::size_t inflight,
+      std::int64_t request_send_local_ns) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
     NOVA_INFO(
         "gate_order_send_ok type=place local_order_id={} "
         "request_sequence={} encoded_request_id={} contract={} side={} "
-        "quantity={} price={} tif={} reduce_only={} inflight={}",
+        "quantity={} price={} tif={} reduce_only={} inflight={} "
+        "request_send_local_ns={}",
         order.local_order_id, request_sequence, encoded_request_id,
         order.symbol, magic_enum::enum_name(order.side), order.quantity_text,
         order.price_text, magic_enum::enum_name(order.time_in_force),
-        order.reduce_only ? "true" : "false", inflight);
+        order.reduce_only ? "true" : "false", inflight, request_send_local_ns);
   }
 
-  static void LogGateCancelOrderSent(std::uint64_t local_order_id,
-                                     std::uint64_t exchange_order_id,
-                                     std::uint64_t request_sequence,
-                                     std::uint64_t encoded_request_id,
-                                     std::size_t inflight) noexcept {
+  static void LogGateCancelOrderSent(
+      std::uint64_t local_order_id, std::uint64_t exchange_order_id,
+      std::uint64_t request_sequence, std::uint64_t encoded_request_id,
+      std::size_t inflight, std::int64_t request_send_local_ns) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
     NOVA_INFO(
         "gate_order_send_ok type=cancel local_order_id={} "
         "exchange_order_id={} request_sequence={} encoded_request_id={} "
-        "inflight={}",
+        "inflight={} request_send_local_ns={}",
         local_order_id, exchange_order_id, request_sequence, encoded_request_id,
-        inflight);
+        inflight, request_send_local_ns);
   }
 
   static void LogGateOrderSendFailed(std::string_view type,
@@ -506,18 +507,23 @@ class OrderSession {
 
   static void LogGateOrderResponse(const GateSubmitResponse& parsed,
                                    std::uint64_t local_order_id,
-                                   std::uint64_t exchange_order_id) noexcept {
+                                   std::uint64_t exchange_order_id,
+                                   std::int64_t local_receive_ns) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
+    const std::int64_t exchange_to_local_ns =
+        ::aquila::core::LatencyDeltaNs(local_receive_ns, parsed.exchange_ns);
     NOVA_INFO(
         "gate_order_response kind={} local_order_id={} exchange_order_id={} "
         "request_sequence={} channel={} http_status={} error_label_hash={} "
-        "error_label={} error_message={}",
+        "error_label={} error_message={} local_receive_ns={} exchange_ns={} "
+        "exchange_to_local_ns={}",
         magic_enum::enum_name(parsed.kind), local_order_id, exchange_order_id,
         parsed.request_id.sequence, static_cast<int>(parsed.channel),
         parsed.http_status, parsed.error_label_hash, parsed.error_label,
-        parsed.error_message);
+        parsed.error_message, local_receive_ns, parsed.exchange_ns,
+        exchange_to_local_ns);
   }
 
   static void LogGateOrderResponseIgnored(
@@ -668,7 +674,7 @@ class OrderSession {
         RecordIgnoredMessage();
         return websocket::DeliveryResult::kAccepted;
       }
-      LogGateOrderResponse(parsed, local_order_id, 0);
+      LogGateOrderResponse(parsed, local_order_id, 0, local_receive_ns);
       response_handler_.OnOrderResponse(
           OrderResponse{.kind = OrderResponseKind::kAck,
                         .local_order_id = local_order_id,
@@ -706,7 +712,8 @@ class OrderSession {
                               : OrderResponseKind::kCancelAccepted)
                   : (is_error ? OrderResponseKind::kRejected
                               : OrderResponseKind::kAccepted);
-    LogGateOrderResponse(parsed, local_order_id, parsed.exchange_order_id);
+    LogGateOrderResponse(parsed, local_order_id, parsed.exchange_order_id,
+                         local_receive_ns);
     response_handler_.OnOrderResponse(
         OrderResponse{.kind = kind,
                       .local_order_id = local_order_id,

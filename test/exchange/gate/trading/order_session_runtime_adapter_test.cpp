@@ -112,6 +112,8 @@ TEST(OrderSessionRuntimeAdapterTest,
       .request_sequence = 20,
       .http_status = 400,
       .error_label_hash = 222,
+      .local_receive_ns = 1'770'000'000'000'001'234LL,
+      .exchange_ns = 1'770'000'000'000'001'000LL,
   });
   adapter.PushOrderResponseForTest(gate::OrderResponse{
       .kind = gate::OrderResponseKind::kCancelRejected,
@@ -120,6 +122,8 @@ TEST(OrderSessionRuntimeAdapterTest,
       .request_sequence = 30,
       .http_status = 404,
       .error_label_hash = 444,
+      .local_receive_ns = 1'770'000'000'000'002'345LL,
+      .exchange_ns = 1'770'000'000'000'002'000LL,
   });
   adapter.PushOrderResponseForTest(gate::OrderResponse{
       .kind = gate::OrderResponseKind::kCancelAccepted,
@@ -138,6 +142,9 @@ TEST(OrderSessionRuntimeAdapterTest,
   EXPECT_EQ(g_logged_errors[0].request_sequence, 20U);
   EXPECT_EQ(g_logged_errors[0].http_status, 400);
   EXPECT_EQ(g_logged_errors[0].error_label_hash, 222U);
+  EXPECT_EQ(g_logged_errors[0].local_receive_ns, 1'770'000'000'000'001'234LL);
+  EXPECT_EQ(g_logged_errors[0].exchange_ns, 1'770'000'000'000'001'000LL);
+  EXPECT_EQ(g_logged_errors[0].exchange_to_local_ns, 234);
   EXPECT_EQ(g_response_count_at_log[0], 1U);
   EXPECT_EQ(g_logged_errors[1].kind, gate::OrderResponseKind::kCancelRejected);
   EXPECT_EQ(g_logged_errors[1].local_order_id, 13U);
@@ -145,6 +152,9 @@ TEST(OrderSessionRuntimeAdapterTest,
   EXPECT_EQ(g_logged_errors[1].request_sequence, 30U);
   EXPECT_EQ(g_logged_errors[1].http_status, 404);
   EXPECT_EQ(g_logged_errors[1].error_label_hash, 444U);
+  EXPECT_EQ(g_logged_errors[1].local_receive_ns, 1'770'000'000'000'002'345LL);
+  EXPECT_EQ(g_logged_errors[1].exchange_ns, 1'770'000'000'000'002'000LL);
+  EXPECT_EQ(g_logged_errors[1].exchange_to_local_ns, 345);
   EXPECT_EQ(g_response_count_at_log[1], 2U);
 }
 

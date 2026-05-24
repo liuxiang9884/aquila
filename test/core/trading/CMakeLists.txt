@@ -37,6 +37,19 @@ target_link_libraries(core_order_decimal_test
 add_test(NAME core_order_decimal_test
          COMMAND core_order_decimal_test)
 
+add_executable(core_order_latency_test
+    order_latency_test.cpp
+)
+
+target_link_libraries(core_order_latency_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_order_latency_test
+         COMMAND core_order_latency_test)
+
 add_executable(core_order_feedback_shm_test
     order_feedback_shm_test.cpp
 )

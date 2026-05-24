@@ -19,6 +19,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/types.h"
+#include "core/trading/order_latency.h"
 #include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
@@ -284,18 +285,24 @@ struct RunContext {
       }
     }
 
+    const std::int64_t exchange_to_local_ns = aquila::core::LatencyDeltaNs(
+        response.local_receive_ns, response.exchange_ns);
     fmt::print(
         "response kind={} local_order_id={} exchange_order_id={} "
-        "request_sequence={} http_status={} error_label_hash={}\n",
+        "request_sequence={} http_status={} error_label_hash={} "
+        "local_receive_ns={} exchange_ns={} exchange_to_local_ns={}\n",
         magic_enum::enum_name(response.kind), response.local_order_id,
         response.exchange_order_id, response.request_sequence,
-        response.http_status, response.error_label_hash);
+        response.http_status, response.error_label_hash,
+        response.local_receive_ns, response.exchange_ns, exchange_to_local_ns);
     NOVA_INFO(
         "response kind={} local_order_id={} exchange_order_id={} "
-        "request_sequence={} http_status={} error_label_hash={}",
+        "request_sequence={} http_status={} error_label_hash={} "
+        "local_receive_ns={} exchange_ns={} exchange_to_local_ns={}",
         magic_enum::enum_name(response.kind), response.local_order_id,
         response.exchange_order_id, response.request_sequence,
-        response.http_status, response.error_label_hash);
+        response.http_status, response.error_label_hash,
+        response.local_receive_ns, response.exchange_ns, exchange_to_local_ns);
 
     if (submit_safety_cancel) {
       SubmitCancel(response.local_order_id, response.exchange_order_id,

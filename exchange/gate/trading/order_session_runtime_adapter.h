@@ -8,6 +8,7 @@
 
 #include <magic_enum/magic_enum.hpp>
 
+#include "core/trading/order_latency.h"
 #include "core/trading/order_types.h"
 #include "core/websocket/types.h"
 #include "exchange/gate/trading/order_session.h"
@@ -61,6 +62,9 @@ struct OrderSessionRuntimeErrorResponseLogRecordForTest {
   std::uint64_t request_sequence{0};
   std::uint16_t http_status{0};
   std::uint64_t error_label_hash{0};
+  std::int64_t local_receive_ns{0};
+  std::int64_t exchange_ns{0};
+  std::int64_t exchange_to_local_ns{0};
 };
 
 using OrderSessionRuntimeErrorResponseLogObserverForTest = void (*)(
@@ -91,6 +95,10 @@ inline void NotifyOrderSessionRuntimeErrorResponseLogObserverForTest(
       .request_sequence = response.request_sequence,
       .http_status = response.http_status,
       .error_label_hash = response.error_label_hash,
+      .local_receive_ns = response.local_receive_ns,
+      .exchange_ns = response.exchange_ns,
+      .exchange_to_local_ns =
+          core::LatencyDeltaNs(response.local_receive_ns, response.exchange_ns),
   });
 }
 #endif
@@ -100,13 +108,17 @@ inline void LogGateErrorResponse(const gate::OrderResponse& response) noexcept {
     return;
   }
   if (::nova::kLogManager.logger() != nullptr) {
+    const std::int64_t exchange_to_local_ns =
+        core::LatencyDeltaNs(response.local_receive_ns, response.exchange_ns);
     NOVA_WARNING(
         "gate_order_response_error kind={} local_order_id={} "
         "exchange_order_id={} request_sequence={} http_status={} "
-        "error_label_hash={}",
+        "error_label_hash={} local_receive_ns={} exchange_ns={} "
+        "exchange_to_local_ns={}",
         magic_enum::enum_name(response.kind), response.local_order_id,
         response.exchange_order_id, response.request_sequence,
-        response.http_status, response.error_label_hash);
+        response.http_status, response.error_label_hash,
+        response.local_receive_ns, response.exchange_ns, exchange_to_local_ns);
   }
 #if defined(AQUILA_GATE_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS)
   NotifyOrderSessionRuntimeErrorResponseLogObserverForTest(response);
