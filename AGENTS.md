@@ -59,8 +59,9 @@ doc/evaluation_support.md
 3. 如果本轮改动影响 evaluation 边界、data session config、WebSocket 行为或 Gate / Binance handoff，同步更新对应文档。
 4. 在 onboarding 中保留或更新一段“给下一个对话的 onboarding 提示”，让下一轮对话可以直接按该段话接手。
 5. 跑本次文档整理所需的最小验证，至少包括 `git diff --check`；如果触碰 evaluation 边界，再运行 evaluation 边界检查。
-6. 按项目规则自动提交本次文档整理，commit message 使用英文；除非用户明确要求，不 push。
-7. 最终回复中给出提交哈希、验证结果，并直接贴出给下一个对话使用的 onboarding 提示段落。
+6. 按项目规则自动提交本次文档整理，commit message 使用英文。
+7. 提交成功后自动 push 当前分支到其 configured upstream / 默认远端；如果 push 失败，最终回复必须说明失败原因和当前 ahead/behind 状态。
+8. 最终回复中给出提交哈希、push 结果、验证结果，并直接贴出给下一个对话使用的 onboarding 提示段落。
 
 “结束对话”流程只做收尾、同步和交接，不主动开启新的功能实现。
 

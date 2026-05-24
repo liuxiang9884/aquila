@@ -449,8 +449,9 @@ rg 'aquila_evaluation' core exchange tools
 3. 如果触碰 evaluation、data session config、WebSocket、Gate / Binance handoff 或 README，同步对应文档。
 4. 更新“给下一个对话的 onboarding 提示”。
 5. 至少运行 `git diff --check`；如触碰 evaluation 边界，再运行 evaluation 边界检查。
-6. 自动提交文档整理，commit message 使用英文；除非用户明确要求，不 push。
-7. 最终回复给出提交哈希、验证结果，并贴出下一轮 onboarding 提示段落。
+6. 自动提交文档整理，commit message 使用英文。
+7. 提交成功后自动 push 当前分支到其 configured upstream / 默认远端；如果 push 失败，最终回复必须说明失败原因和当前 ahead/behind 状态。
+8. 最终回复给出提交哈希、push 结果、验证结果，并贴出下一轮 onboarding 提示段落。
 
 ## 给下一个对话的 onboarding 提示
 
