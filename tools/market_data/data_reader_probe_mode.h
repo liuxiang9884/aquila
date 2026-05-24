@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string_view>
 
@@ -17,7 +17,8 @@ enum class DataReaderProbeMode : std::uint8_t {
 [[nodiscard]] inline DataReaderProbeMode DetectProbeMode(
     const config::DataReaderConfig& config) {
   if (config.sources.empty()) {
-    throw std::invalid_argument("data reader probe requires at least one source");
+    throw std::invalid_argument(
+        "data reader probe requires at least one source");
   }
 
   std::size_t shm_sources = 0;

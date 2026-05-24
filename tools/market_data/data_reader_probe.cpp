@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -16,8 +17,11 @@
 #include <toml++/toml.hpp>
 
 #include "core/config/data_reader_config.h"
+#include "core/market_data/historical_data_reader.h"
 #include "core/market_data/realtime_data_reader.h"
 #include "nova/utils/log.h"
+#include "tools/market_data/data_reader_probe_mode.h"
+#include "tools/market_data/data_reader_tool_logging.h"
 
 namespace {
 
@@ -93,6 +97,80 @@ void LogSourceStats(
   }
 }
 
+void LogSourceConfig(const aquila::config::DataReaderConfig& config) {
+  for (std::size_t i = 0; i < config.sources.size(); ++i) {
+    NOVA_INFO("{}", aquila::tools::market_data::FormatSourceConfigLog(
+                        i, config.sources[i]));
+  }
+}
+
+int RunRealtimeProbe(aquila::config::DataReaderConfig config,
+                     const std::vector<SourceLabel>& source_labels,
+                     std::uint64_t max_polls, std::uint64_t log_every,
+                     std::uint64_t drain_budget) {
+  using Reader = aquila::market_data::RealtimeDataReader<
+      aquila::market_data::RealtimeDataReaderDiagnostics>;
+  Reader reader(std::move(config));
+  ProbeHandler handler(log_every);
+
+  std::uint64_t polls{0};
+  while (!signal_stop_requested.load(std::memory_order_relaxed) &&
+         (max_polls == 0 || polls < max_polls)) {
+    const std::uint64_t handled = reader.Drain(handler, drain_budget);
+    ++polls;
+    if (handled == 0) {
+      std::this_thread::yield();
+    }
+  }
+
+  const bool stopped_by_signal =
+      signal_stop_requested.load(std::memory_order_relaxed);
+  const bool stopped_by_max_polls = max_polls != 0 && polls >= max_polls;
+  const auto& stats = reader.diagnostics().stats();
+  NOVA_INFO(
+      "result=ok mode=realtime stop_reason={} polls={} "
+      "handler_book_tickers={} diagnostics_total_count={}",
+      stopped_by_signal      ? "signal"
+      : stopped_by_max_polls ? "max_polls"
+                             : "completed",
+      polls, handler.book_tickers(), stats.total_count);
+  LogSourceStats(source_labels, stats.sources);
+  return 0;
+}
+
+int RunHistoricalProbe(aquila::config::DataReaderConfig config,
+                       std::uint64_t max_polls, std::uint64_t log_every,
+                       std::uint64_t drain_budget) {
+  using Reader = aquila::market_data::HistoricalDataReader<
+      aquila::market_data::HistoricalDataReaderDiagnostics>;
+  Reader reader(std::move(config));
+  ProbeHandler handler(log_every);
+
+  std::uint64_t polls{0};
+  while (!signal_stop_requested.load(std::memory_order_relaxed) &&
+         !reader.finished() && (max_polls == 0 || polls < max_polls)) {
+    const std::uint64_t handled = reader.Drain(handler, drain_budget);
+    ++polls;
+    if (handled == 0) {
+      std::this_thread::yield();
+    }
+  }
+
+  const bool stopped_by_signal =
+      signal_stop_requested.load(std::memory_order_relaxed);
+  const bool stopped_by_max_polls = max_polls != 0 && polls >= max_polls;
+  const auto& stats = reader.diagnostics().stats();
+  NOVA_INFO(
+      "result=ok mode=historical stop_reason={} polls={} "
+      "handler_book_tickers={} diagnostics_total_count={} files_completed={}",
+      reader.finished()      ? "finished"
+      : stopped_by_signal    ? "signal"
+      : stopped_by_max_polls ? "max_polls"
+                             : "completed",
+      polls, handler.book_tickers(), stats.total_count, stats.files_completed);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -125,31 +203,27 @@ int main(int argc, char** argv) {
           BuildSourceLabels(config_result.value);
       const std::uint64_t drain_budget =
           config_result.value.max_events_per_drain;
-      using Reader = aquila::market_data::RealtimeDataReader<
-          aquila::market_data::RealtimeDataReaderDiagnostics>;
-      Reader reader(std::move(config_result.value));
-      ProbeHandler handler(log_every);
+      const aquila::tools::market_data::DataReaderProbeMode mode =
+          aquila::tools::market_data::DetectProbeMode(config_result.value);
+      NOVA_INFO("{}", aquila::tools::market_data::FormatToolStartupLog(
+                          "data_reader_probe",
+                          aquila::tools::market_data::ProbeModeName(mode),
+                          config_path, std::nullopt, max_polls, drain_budget,
+                          sizeof(aquila::BookTicker)));
+      LogSourceConfig(config_result.value);
 
       std::signal(SIGINT, HandleSignal);
       std::signal(SIGTERM, HandleSignal);
 
-      std::uint64_t polls{0};
-      while (!signal_stop_requested.load(std::memory_order_relaxed) &&
-             (max_polls == 0 || polls < max_polls)) {
-        const std::uint64_t handled = reader.Drain(handler, drain_budget);
-        ++polls;
-        if (handled == 0) {
-          std::this_thread::yield();
-        }
+      switch (mode) {
+        case aquila::tools::market_data::DataReaderProbeMode::kRealtime:
+          return RunRealtimeProbe(std::move(config_result.value), source_labels,
+                                  max_polls, log_every, drain_budget);
+        case aquila::tools::market_data::DataReaderProbeMode::kHistorical:
+          return RunHistoricalProbe(std::move(config_result.value), max_polls,
+                                    log_every, drain_budget);
       }
-
-      const auto& stats = reader.diagnostics().stats();
-      NOVA_INFO(
-          "result=ok polls={} handler_book_tickers={} "
-          "diagnostics_total_count={}",
-          polls, handler.book_tickers(), stats.total_count);
-      LogSourceStats(source_labels, stats.sources);
-      return 0;
+      return 1;
     } catch (const std::exception& exc) {
       NOVA_ERROR("data_reader_probe_error={}", exc.what());
       return 1;

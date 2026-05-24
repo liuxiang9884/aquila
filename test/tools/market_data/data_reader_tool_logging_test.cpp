@@ -53,8 +53,7 @@ TEST(DataReaderToolLoggingTest, FormatsShmSourceConfig) {
   EXPECT_NE(line.find("start_position=latest"), std::string::npos);
   EXPECT_NE(line.find("read_mode=drain"), std::string::npos);
   EXPECT_NE(line.find("shm_name=aquila_gate_market_data"), std::string::npos);
-  EXPECT_NE(line.find("channel_name=book_ticker_channel"),
-            std::string::npos);
+  EXPECT_NE(line.find("channel_name=book_ticker_channel"), std::string::npos);
 }
 
 TEST(DataReaderToolLoggingTest, FormatsBinarySourceConfig) {

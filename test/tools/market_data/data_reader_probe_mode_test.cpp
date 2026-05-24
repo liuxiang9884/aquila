@@ -22,18 +22,16 @@ cfg::DataReaderSourceConfig MakeSource(std::string name,
   source.type = type;
   source.exchange = aquila::Exchange::kGate;
   source.feed = cfg::DataReaderFeed::kBookTicker;
-  source.shm_name = type == cfg::DataReaderSourceType::kShm
-                        ? "aquila_gate_market_data"
-                        : "";
+  source.shm_name =
+      type == cfg::DataReaderSourceType::kShm ? "aquila_gate_market_data" : "";
   source.channel_name =
       type == cfg::DataReaderSourceType::kShm ? "book_ticker_channel" : "";
   source.files = type == cfg::DataReaderSourceType::kBinaryFile
                      ? std::vector<std::filesystem::path>{"/tmp/recorded.bin"}
                      : std::vector<std::filesystem::path>{};
-  source.start_position =
-      type == cfg::DataReaderSourceType::kBinaryFile
-          ? cfg::DataReaderStartPosition::kEarliestVisible
-          : cfg::DataReaderStartPosition::kLatest;
+  source.start_position = type == cfg::DataReaderSourceType::kBinaryFile
+                              ? cfg::DataReaderStartPosition::kEarliestVisible
+                              : cfg::DataReaderStartPosition::kLatest;
   source.read_mode = cfg::DataReaderReadMode::kDrain;
   source.required = true;
   return source;
