@@ -127,6 +127,29 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderWritesDecimalSizeJson) {
       R"({"time":1700000001,"channel":"futures.order_place","event":"api","payload":{"req_id":"144115188075855873","req_param":{"contract":"RAVE_USDT","size":0.1,"price":"0.1234","tif":"ioc","text":"t-9","reduce_only":false}}})");
 }
 
+TEST(GateOrderRequestEncoderTest, PlaceOrderQuotesSizeWhenRequested) {
+  std::array<char, kPlaceOrderRequestBufferSize> buffer{};
+  const PlaceOrderEncodeFields fields{
+      .timestamp = 1700000001,
+      .encoded_request_id = 144115188075855873ULL,
+      .local_order_id = 9,
+      .order_type = OrderType::kLimit,
+      .contract = "RAVE_USDT",
+      .signed_size_text = "0.1",
+      .price_text = "0.1234",
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .reduce_only = false,
+      .quote_size = true,
+  };
+
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+
+  EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
+  EXPECT_EQ(
+      encoded.text,
+      R"({"time":1700000001,"channel":"futures.order_place","event":"api","payload":{"req_id":"144115188075855873","req_param":{"contract":"RAVE_USDT","size":"0.1","price":"0.1234","tif":"ioc","text":"t-9","reduce_only":false}}})");
+}
+
 TEST(GateOrderRequestEncoderTest, MarketOrderReturnsUnsupportedOrderType) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
   const PlaceOrderEncodeFields fields{

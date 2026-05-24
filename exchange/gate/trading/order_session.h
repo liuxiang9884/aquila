@@ -18,6 +18,7 @@
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
+#include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/submit_response_parser.h"
 #include "nova/utils/log.h"
@@ -137,6 +138,7 @@ class OrderSession {
       ResponseHandler& response_handler,
       std::size_t request_map_capacity = kDefaultOrderRequestMapCapacity)
       : connection_(ApplyOptions(std::move(config))),
+        quote_order_size_(HasGateSizeDecimalHeader(connection_)),
         credentials_(std::move(credentials)),
         response_handler_(response_handler),
         message_handler_(websocket::MakeMessageHandler(*this)),
@@ -237,7 +239,8 @@ class OrderSession {
                                .signed_size_text = signed_size_text,
                                .price_text = order.price_text,
                                .time_in_force = order.time_in_force,
-                               .reduce_only = order.reduce_only},
+                               .reduce_only = order.reduce_only,
+                               .quote_size = quote_order_size_},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       const OrderSendStatus status = MapEncodeStatus(encoded.status);
@@ -802,6 +805,7 @@ class OrderSession {
   }
 
   websocket::ConnectionConfig connection_;
+  bool quote_order_size_{false};
   LoginCredentials credentials_;
   ResponseHandler& response_handler_;
   MessageHandler message_handler_;

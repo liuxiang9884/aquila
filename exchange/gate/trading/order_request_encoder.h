@@ -51,6 +51,7 @@ struct PlaceOrderEncodeFields {
   std::string_view price_text{};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   bool reduce_only{false};
+  bool quote_size{false};
 };
 
 struct CancelOrderEncodeFields {
@@ -130,6 +131,14 @@ template <std::size_t N>
     return {.status = OrderEncodeStatus::kInvalidOrderText, .text = {}};
   }
 
+  if (fields.quote_size) {
+    return detail::FormatJsonToBuffer(
+        buffer,
+        R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":"{}","price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})",
+        fields.timestamp, fields.encoded_request_id, fields.contract,
+        fields.signed_size_text, fields.price_text,
+        GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
+  }
   return detail::FormatJsonToBuffer(
       buffer,
       R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":{},"price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})",
