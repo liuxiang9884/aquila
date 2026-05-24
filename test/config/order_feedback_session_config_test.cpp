@@ -22,6 +22,13 @@ aquila::gate::OrderFeedbackSessionConfigResult ParseConfigToml(
   return aquila::gate::ParseOrderFeedbackSessionConfig(parsed);
 }
 
+void ExpectSingleGateSizeDecimalHeader(
+    const aquila::websocket::ConnectionConfig& connection) {
+  ASSERT_EQ(connection.extra_headers.size(), 1u);
+  EXPECT_EQ(connection.extra_headers[0].name, "X-Gate-Size-Decimal");
+  EXPECT_EQ(connection.extra_headers[0].value, "1");
+}
+
 TEST(OrderFeedbackSessionConfigTest,
      LoadsCheckedInGateOrderFeedbackSessionConfig) {
   const auto result = aquila::gate::LoadOrderFeedbackSessionConfigFile(
@@ -38,6 +45,7 @@ TEST(OrderFeedbackSessionConfigTest,
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 4);
+  ExpectSingleGateSizeDecimalHeader(config.connection);
 
   EXPECT_EQ(config.shm.shm_name, "aquila_gate_order_feedback");
   EXPECT_EQ(config.shm.channel_name, "orders");
@@ -107,6 +115,7 @@ remove_existing = false
   EXPECT_FALSE(result.value.connection.enable_tls);
   EXPECT_EQ(result.value.connection.target, "/v4/ws/btc/sbe?sbe_schema_id=1");
   EXPECT_EQ(result.value.connection.runtime_policy.io_cpu_id, 7);
+  ExpectSingleGateSizeDecimalHeader(result.value.connection);
   EXPECT_EQ(result.value.shm.shm_name, "aquila_gate_order_feedback_btc");
   EXPECT_EQ(result.value.shm.channel_name, "orders_btc");
   EXPECT_FALSE(result.value.shm.create);

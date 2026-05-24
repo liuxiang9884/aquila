@@ -18,6 +18,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/trading/order_feedback_shm.h"
+#include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_feedback_session_config.h"
 #include "nova/utils/log.h"
 
@@ -61,11 +62,13 @@ void PrintConfig(const gate::OrderFeedbackSessionConfig& config,
                  const CliOptions& options) {
   fmt::print("config name={} duration_sec={:.3f} connect={}\n", config.name,
              options.duration_sec, options.connect ? "true" : "false");
-  fmt::print("websocket host={} service={} target={} tls={} bind_cpu_id={}\n",
-             config.connection.host, config.connection.service,
-             config.connection.target,
-             config.connection.enable_tls ? "true" : "false",
-             config.connection.runtime_policy.io_cpu_id);
+  fmt::print(
+      "websocket host={} service={} target={} tls={} bind_cpu_id={} "
+      "size_decimal_header={}\n",
+      config.connection.host, config.connection.service,
+      config.connection.target, config.connection.enable_tls ? "true" : "false",
+      config.connection.runtime_policy.io_cpu_id,
+      gate::HasGateSizeDecimalHeader(config.connection) ? "true" : "false");
   fmt::print("credentials api_key_env={} api_secret_env={}\n",
              config.credentials.api_key_env, config.credentials.api_secret_env);
   fmt::print(
@@ -79,13 +82,15 @@ void PrintConfig(const gate::OrderFeedbackSessionConfig& config,
   fmt::print("\n");
   NOVA_INFO(
       "config name={} duration_sec={:.3f} connect={} host={} service={} "
-      "target={} tls={} bind_cpu_id={} shm_name={} channel_name={} "
+      "target={} tls={} bind_cpu_id={} size_decimal_header={} "
+      "shm_name={} channel_name={} "
       "queue_capacity={} create={} remove_existing={}",
       config.name, options.duration_sec, options.connect ? "true" : "false",
       config.connection.host, config.connection.service,
       config.connection.target, config.connection.enable_tls ? "true" : "false",
-      config.connection.runtime_policy.io_cpu_id, config.shm.shm_name,
-      config.shm.channel_name, config.shm.queue_capacity,
+      config.connection.runtime_policy.io_cpu_id,
+      gate::HasGateSizeDecimalHeader(config.connection) ? "true" : "false",
+      config.shm.shm_name, config.shm.channel_name, config.shm.queue_capacity,
       config.shm.create ? "true" : "false",
       config.shm.remove_existing ? "true" : "false");
 }

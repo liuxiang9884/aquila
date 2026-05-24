@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "core/config/websocket_config.h"
+#include "exchange/gate/trading/decimal_size_header.h"
 #include "nova/utils/log.h"
 
 namespace aquila::gate {
@@ -243,6 +244,7 @@ class OrderFeedbackSessionConfigParser {
     OrderFeedbackSessionConfig session_config;
     session_config.name = std::move(config_.order_feedback_session.name);
     session_config.connection = std::move(connection_result.value);
+    AddGateSizeDecimalHeader(session_config.connection);
     session_config.credentials =
         std::move(config_.order_feedback_session.credentials);
     session_config.shm = std::move(config_.order_feedback_session.shm);

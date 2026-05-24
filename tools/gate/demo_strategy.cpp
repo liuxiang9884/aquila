@@ -13,6 +13,7 @@
 #include "core/config/data_reader_config.h"
 #include "core/config/strategy_config.h"
 #include "core/trading/trading_runtime.h"
+#include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "exchange/gate/trading/order_session_runtime_adapter.h"
 #include "nova/utils/log.h"
@@ -100,6 +101,7 @@ void PrintSummary(const LoadedConfig& loaded, bool execute) {
       "demo_strategy execute={} name={} mode={} strategy_id={} "
       "order_capacity={} contract={} symbol_id={} wait_seconds={} rounds={} "
       "data_reader={} sources={} order_session={} host={} tls={} "
+      "size_decimal_header={} "
       "feedback_enabled={} feedback_shm={} feedback_channel={} "
       "feedback_poll_budget={}\n",
       execute ? "true" : "false", loaded.strategy.name,
@@ -110,6 +112,8 @@ void PrintSummary(const LoadedConfig& loaded, bool execute) {
       loaded.data_reader.sources.size(), loaded.order_session.name,
       loaded.order_session.connection.host,
       loaded.order_session.connection.enable_tls ? "true" : "false",
+      gate::HasGateSizeDecimalHeader(loaded.order_session.connection) ? "true"
+                                                                      : "false",
       loaded.strategy.feedback.enabled ? "true" : "false",
       loaded.strategy.feedback.shm_name, loaded.strategy.feedback.channel_name,
       loaded.strategy.feedback.poll_budget);
@@ -117,6 +121,7 @@ void PrintSummary(const LoadedConfig& loaded, bool execute) {
       "demo_strategy execute={} name={} mode={} strategy_id={} "
       "order_capacity={} contract={} symbol_id={} wait_seconds={} rounds={} "
       "data_reader={} sources={} order_session={} host={} tls={} "
+      "size_decimal_header={} "
       "feedback_enabled={} feedback_shm={} feedback_channel={} "
       "feedback_poll_budget={}",
       execute ? "true" : "false", loaded.strategy.name,
@@ -127,6 +132,8 @@ void PrintSummary(const LoadedConfig& loaded, bool execute) {
       loaded.data_reader.sources.size(), loaded.order_session.name,
       loaded.order_session.connection.host,
       loaded.order_session.connection.enable_tls ? "true" : "false",
+      gate::HasGateSizeDecimalHeader(loaded.order_session.connection) ? "true"
+                                                                      : "false",
       loaded.strategy.feedback.enabled ? "true" : "false",
       loaded.strategy.feedback.shm_name, loaded.strategy.feedback.channel_name,
       loaded.strategy.feedback.poll_budget);

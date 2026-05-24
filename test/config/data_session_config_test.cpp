@@ -113,6 +113,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 2);
+  EXPECT_TRUE(config.connection.extra_headers.empty());
 
   ASSERT_EQ(config.exchange_symbols.size(), 3u);
   EXPECT_EQ(config.exchange_symbols[0], "BTC_USDT");
@@ -143,6 +144,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_TRUE(session.connection().enable_tls);
   EXPECT_EQ(session.connection().target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(session.connection().runtime_policy.io_cpu_id, 2);
+  EXPECT_TRUE(session.connection().extra_headers.empty());
 
   const std::span<const aquila::gate::SymbolBinding> symbols =
       session.symbols();
@@ -317,6 +319,7 @@ TEST(DataSessionConfigTest, ParsesBinanceDataSessionFromAlreadyParsedToml) {
   EXPECT_EQ(config_result.value.connection.target,
             "/public/ws/btcusdt@bookTicker/ethusdt@bookTicker/"
             "solusdt@bookTicker");
+  EXPECT_TRUE(config_result.value.connection.extra_headers.empty());
   ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
   EXPECT_EQ(config_result.value.exchange_symbols[0], "BTCUSDT");
   EXPECT_EQ(config_result.value.symbol_ids[0], 0);

@@ -19,6 +19,7 @@
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_types.h"
 #include "core/trading/trading_runtime.h"
+#include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "exchange/gate/trading/order_session_runtime_adapter.h"
 #include "nova/utils/log.h"
@@ -327,7 +328,8 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       "lead_lag_strategy run_mode={} execute={} connect_data={} config={} "
       "signals_output={} strategy_name={} mode={} strategy_id={} "
       "order_capacity={} max_loop_seconds={} reader_name={} sources={} "
-      "order_session={} feedback_enabled={} feedback_shm={} "
+      "order_session={} size_decimal_header={} feedback_enabled={} "
+      "feedback_shm={} "
       "feedback_channel={} feedback_poll_budget={} pairs={} "
       "smoke_open_close={} smoke_unfilled_cancel={} "
       "smoke_submit_reject={} smoke_symbol={} smoke_aggressive_price_bps={} "
@@ -341,6 +343,8 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       loaded.strategy.strategy_id, loaded.strategy.order_capacity,
       loaded.strategy.loop.max_loop_seconds, loaded.data_reader.name,
       loaded.data_reader.sources.size(), loaded.order_session.name,
+      gate::HasGateSizeDecimalHeader(loaded.order_session.connection) ? "true"
+                                                                      : "false",
       loaded.strategy.feedback.enabled ? "true" : "false",
       loaded.strategy.feedback.shm_name, loaded.strategy.feedback.channel_name,
       loaded.strategy.feedback.poll_budget, loaded.lead_lag.pairs.size(),

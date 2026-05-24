@@ -15,6 +15,13 @@ std::filesystem::path SourcePath(std::string_view path) {
   return std::filesystem::path{AQUILA_SOURCE_DIR} / path;
 }
 
+void ExpectSingleGateSizeDecimalHeader(
+    const aquila::websocket::ConnectionConfig& connection) {
+  ASSERT_EQ(connection.extra_headers.size(), 1u);
+  EXPECT_EQ(connection.extra_headers[0].name, "X-Gate-Size-Decimal");
+  EXPECT_EQ(connection.extra_headers[0].value, "1");
+}
+
 TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
   const auto result = aquila::gate::LoadOrderSessionConfigFile(
       SourcePath("config/order_sessions/gate_order_session.toml"));
@@ -32,6 +39,7 @@ TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 4);
+  ExpectSingleGateSizeDecimalHeader(config.connection);
 }
 
 TEST(OrderSessionConfigTest, LoadsGateOrderSessionLogConfigFromToml) {
@@ -83,6 +91,7 @@ bind_cpu_id = 7
   EXPECT_FALSE(result.value.connection.enable_tls);
   EXPECT_EQ(result.value.connection.target, "/v4/ws/btc");
   EXPECT_EQ(result.value.connection.runtime_policy.io_cpu_id, 7);
+  ExpectSingleGateSizeDecimalHeader(result.value.connection);
 }
 
 TEST(OrderSessionConfigTest, RejectsMissingCredentials) {

@@ -22,6 +22,7 @@
 #include "core/trading/order_feedback_shm.h"
 #include "core/trading/order_manager.h"
 #include "core/trading/order_types.h"
+#include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
@@ -696,14 +697,19 @@ int Run(const CliOptions& options, const toml::table& toml) {
   gate::LoginCredentials credentials{.api_key = api_key,
                                      .api_secret = api_secret};
   fmt::print(
-      "config name={} host={} target={} tls={} request_map_capacity={}\n",
+      "config name={} host={} target={} tls={} request_map_capacity={} "
+      "size_decimal_header={}\n",
       config.name, config.connection.host, config.connection.target,
       config.connection.enable_tls ? "true" : "false",
-      config.request_map_capacity);
-  NOVA_INFO("config name={} host={} target={} tls={} request_map_capacity={}",
-            config.name, config.connection.host, config.connection.target,
-            config.connection.enable_tls ? "true" : "false",
-            config.request_map_capacity);
+      config.request_map_capacity,
+      gate::HasGateSizeDecimalHeader(config.connection) ? "true" : "false");
+  NOVA_INFO(
+      "config name={} host={} target={} tls={} request_map_capacity={} "
+      "size_decimal_header={}",
+      config.name, config.connection.host, config.connection.target,
+      config.connection.enable_tls ? "true" : "false",
+      config.request_map_capacity,
+      gate::HasGateSizeDecimalHeader(config.connection) ? "true" : "false");
   if (config.connection.enable_tls) {
     return RunLive<gate::OrderSessionDefaultTlsWebSocketPolicy>(
         std::move(config), std::move(credentials), options, prepared_order);

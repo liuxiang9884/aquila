@@ -1,6 +1,7 @@
 add_library(aquila_gate STATIC
     market_data/data_session_config.cpp
     market_data/data_session_config.h
+    trading/decimal_size_header.h
     trading/order_feedback_session.h
     trading/order_feedback_session_config.cpp
     trading/order_feedback_session_config.h
