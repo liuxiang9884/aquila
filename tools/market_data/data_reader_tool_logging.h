@@ -51,11 +51,15 @@ namespace aquila::tools::market_data {
 
 [[nodiscard]] inline std::string FormatSourceConfigLog(
     std::size_t index, const config::DataReaderSourceConfig& source) {
+  const std::string_view exchange =
+      source.type == config::DataReaderSourceType::kBinaryFile
+          ? std::string_view{"record_embedded"}
+          : magic_enum::enum_name(source.exchange);
   return fmt::format(
       "source_config index={} name={} exchange={} type={} feed={} "
       "start_position={} read_mode={} shm_name={} channel_name={} files=[{}]",
-      index, source.name, magic_enum::enum_name(source.exchange),
-      magic_enum::enum_name(source.type), magic_enum::enum_name(source.feed),
+      index, source.name, exchange, magic_enum::enum_name(source.type),
+      magic_enum::enum_name(source.feed),
       StartPositionName(source.start_position), ReadModeName(source.read_mode),
       source.shm_name.empty() ? "none" : source.shm_name,
       source.channel_name.empty() ? "none" : source.channel_name,

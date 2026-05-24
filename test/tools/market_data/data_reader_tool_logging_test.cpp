@@ -60,6 +60,8 @@ TEST(DataReaderToolLoggingTest, FormatsBinarySourceConfig) {
   const std::string line =
       md_tools::FormatSourceConfigLog(0, MakeBinarySource());
   EXPECT_NE(line.find("source_config index=0"), std::string::npos);
+  EXPECT_NE(line.find("exchange=record_embedded"), std::string::npos);
+  EXPECT_EQ(line.find("exchange=kGate"), std::string::npos);
   EXPECT_NE(line.find("type=kBinaryFile"), std::string::npos);
   EXPECT_NE(line.find("start_position=earliest_visible"), std::string::npos);
   EXPECT_NE(line.find("files=[/home/liuxiang/tmp/live.bin]"),
