@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -68,6 +69,8 @@ static_assert(
     std::is_same_v<decltype(ws::ConnectionConfig{}.service), std::string>);
 static_assert(
     std::is_same_v<decltype(ws::ConnectionConfig{}.target), std::string>);
+static_assert(std::is_same_v<decltype(ws::ConnectionConfig{}.extra_headers),
+                             std::vector<ws::HttpHeader>>);
 static_assert(std::is_same_v<
               decltype(ws::RuntimePolicy{}.spin_iterations_before_clock_check),
               std::uint32_t>);
@@ -82,6 +85,7 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_EQ(config.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.service, "443");
   EXPECT_EQ(config.target, "/v4/ws/usdt");
+  EXPECT_TRUE(config.extra_headers.empty());
   EXPECT_EQ(config.read_buffer_bytes, (size_t{1} << 20));
   EXPECT_EQ(config.frame_buffer_bytes, (size_t{1} << 20));
   EXPECT_EQ(config.max_frame_payload_bytes, (size_t{1} << 20));

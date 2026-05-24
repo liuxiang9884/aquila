@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "core/websocket/runtime_policy.h"
 
@@ -91,6 +92,11 @@ struct DegradedThresholds {
   std::uint32_t evaluation_interval_iterations = 0;
 };
 
+struct HttpHeader {
+  std::string name;
+  std::string value;
+};
+
 struct DefaultWebSocketOptions {
   static constexpr ClockSource kClockSource = ClockSource::kSteady;
   static constexpr size_t kPreparedWriteSlots = 2048;
@@ -101,6 +107,7 @@ struct ConnectionConfig {
   std::string host = "fx-ws.gateio.ws";
   std::string service = "443";
   std::string target = "/v4/ws/usdt";
+  std::vector<HttpHeader> extra_headers{};
   bool enable_tls = true;
   // Reserved for legacy/external-buffer read paths. CriticalSession's hot path
   // reads directly into FrameCodec's mirrored receive ring instead.

@@ -91,6 +91,12 @@ class PlainWebSocketServer {
     return sent_frame_count_.load(std::memory_order_acquire);
   }
 
+  bool LastRequestHeaderEquals(std::string_view header,
+                               std::string_view expected_value) const {
+    std::lock_guard lock(request_mutex_);
+    return FindHeader(last_request_, header) == expected_value;
+  }
+
  private:
   void Run() noexcept {
     while (!stop_.load(std::memory_order_acquire)) {
@@ -131,6 +137,10 @@ class PlainWebSocketServer {
       if (request.size() > 4096) {
         return;
       }
+    }
+    {
+      std::lock_guard lock(request_mutex_);
+      last_request_ = request;
     }
 
     const std::string_view key = FindHeader(request, "Sec-WebSocket-Key");
@@ -226,6 +236,8 @@ class PlainWebSocketServer {
 
   std::string payload_;
   bool coalesce_first_frame_with_handshake_{false};
+  mutable std::mutex request_mutex_;
+  std::string last_request_;
   std::atomic<bool> stop_{false};
   std::atomic<int> active_client_fd_{-1};
   std::atomic<size_t> sent_frame_count_{0};
@@ -416,6 +428,40 @@ TEST(PlainWebSocketClientTest, ConnectsWithoutTlsAndReceivesMessage) {
   EXPECT_TRUE(received_message);
   EXPECT_TRUE(result);
   EXPECT_FALSE(states.Contains(ConnectionPhase::kTlsHandshaking));
+}
+
+TEST(PlainWebSocketClientTest, SendsConfiguredExtraHandshakeHeaders) {
+  PlainWebSocketServer server("extra-header-ok");
+  ASSERT_TRUE(server.Start());
+
+  ConnectionConfig config{};
+  config.host = "127.0.0.1";
+  config.service = fmt::format("{}", server.port());
+  config.target = "/";
+  config.enable_tls = false;
+  config.heartbeat_interval_ms = 60'000;
+  config.heartbeat_timeout_ms = 60'000;
+  config.runtime_policy.active_spin = false;
+  config.extra_headers.push_back({.name = "X-Gate-Size-Decimal", .value = "1"});
+
+  MessageCapture messages;
+  StateCapture states;
+  MessageCallback consumer{&messages, &CaptureMessage};
+  PlainWebSocketClient client(config, consumer);
+  client.SetStateHandler(&states, &CaptureState);
+
+  bool result = false;
+  std::thread io_thread([&] { result = client.Start(); });
+
+  const bool entered_active = states.WaitFor(ConnectionPhase::kActive, 2s);
+  const bool received_message = messages.WaitForMessage("extra-header-ok", 2s);
+  client.Stop();
+  io_thread.join();
+
+  EXPECT_TRUE(entered_active);
+  EXPECT_TRUE(received_message);
+  EXPECT_TRUE(result);
+  EXPECT_TRUE(server.LastRequestHeaderEquals("X-Gate-Size-Decimal", "1"));
 }
 
 TEST(PlainWebSocketClientTest,

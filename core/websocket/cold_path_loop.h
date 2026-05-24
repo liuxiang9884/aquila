@@ -1,6 +1,9 @@
 #ifndef AQUILA_CORE_WEBSOCKET_COLD_PATH_LOOP_H_
 #define AQUILA_CORE_WEBSOCKET_COLD_PATH_LOOP_H_
 
+#include <sys/epoll.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -10,9 +13,6 @@
 #include <limits>
 #include <span>
 #include <string_view>
-
-#include <sys/epoll.h>
-#include <unistd.h>
 
 #include "core/websocket/handshake.h"
 #include "core/websocket/state_machine.h"
@@ -33,7 +33,9 @@ class ColdPathLoop {
   ColdPathLoop(const ColdPathLoop&) = delete;
   ColdPathLoop& operator=(const ColdPathLoop&) = delete;
 
-  void SetInterruptFd(int fd) noexcept { interrupt_fd_ = fd; }
+  void SetInterruptFd(int fd) noexcept {
+    interrupt_fd_ = fd;
+  }
 
   std::span<const std::byte> HandshakeLeftover(
       std::span<const char> handshake_storage) const noexcept {
@@ -45,8 +47,8 @@ class ColdPathLoop {
             handshake_storage.size() - handshake_leftover_offset_) {
       return {};
     }
-    return std::as_bytes(handshake_storage.subspan(
-        handshake_leftover_offset_, handshake_leftover_size_));
+    return std::as_bytes(handshake_storage.subspan(handshake_leftover_offset_,
+                                                   handshake_leftover_size_));
   }
 
   bool Init() noexcept {
@@ -136,7 +138,7 @@ class ColdPathLoop {
       return false;
     }
     auto built = BuildClientHandshake(config.host, config.target, client_key,
-                                      handshake_storage);
+                                      config.extra_headers, handshake_storage);
     if (!built.ok) {
       state_machine.Fail(ConnectionError::kHandshakeFailure,
                          ConnectionPhase::kWsHandshaking);
@@ -225,8 +227,8 @@ class ColdPathLoop {
     const auto remaining =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
             .count();
-    return static_cast<int>(std::min<std::int64_t>(
-        remaining, std::numeric_limits<int>::max()));
+    return static_cast<int>(
+        std::min<std::int64_t>(remaining, std::numeric_limits<int>::max()));
   }
 
   template <typename TransportSocketT>

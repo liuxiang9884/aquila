@@ -6,11 +6,14 @@
 #include <cstddef>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include <fmt/compile.h>
 #include <fmt/format.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+
+#include "core/websocket/types.h"
 
 namespace aquila::websocket {
 
@@ -76,6 +79,70 @@ inline bool ContainsTokenIgnoreCase(std::string_view header_value,
   return false;
 }
 
+inline bool AsciiStartsWithIgnoreCase(std::string_view value,
+                                      std::string_view prefix) noexcept {
+  return value.size() >= prefix.size() &&
+         AsciiEqualsIgnoreCase(value.substr(0, prefix.size()), prefix);
+}
+
+inline bool IsHttpTokenChar(unsigned char value) noexcept {
+  if (value <= 32 || value >= 127) {
+    return false;
+  }
+  switch (value) {
+    case '(':
+    case ')':
+    case '<':
+    case '>':
+    case '@':
+    case ',':
+    case ';':
+    case ':':
+    case '\\':
+    case '"':
+    case '/':
+    case '[':
+    case ']':
+    case '?':
+    case '=':
+    case '{':
+    case '}':
+      return false;
+    default:
+      return true;
+  }
+}
+
+inline bool IsValidHttpHeaderName(std::string_view name) noexcept {
+  if (name.empty()) {
+    return false;
+  }
+  for (const char byte : name) {
+    if (!IsHttpTokenChar(static_cast<unsigned char>(byte))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline bool IsValidHttpHeaderValue(std::string_view value) noexcept {
+  for (const char byte : value) {
+    const auto ch = static_cast<unsigned char>(byte);
+    if (ch != '\t' && (ch < 32 || ch >= 127)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline bool IsReservedClientHandshakeHeaderName(
+    std::string_view name) noexcept {
+  return AsciiEqualsIgnoreCase(name, "Host") ||
+         AsciiEqualsIgnoreCase(name, "Upgrade") ||
+         AsciiEqualsIgnoreCase(name, "Connection") ||
+         AsciiStartsWithIgnoreCase(name, "Sec-WebSocket-");
+}
+
 inline bool HasSwitchingProtocolsStatus(std::string_view status_line) noexcept {
   constexpr std::string_view kHttp11Prefix = "HTTP/1.1 ";
   constexpr std::string_view kHttp10Prefix = "HTTP/1.0 ";
@@ -86,16 +153,14 @@ inline bool HasSwitchingProtocolsStatus(std::string_view status_line) noexcept {
     if (status_line.size() < kHttp11Prefix.size() + 4) {
       return false;
     }
-    return status_code == "101" &&
-           status_line[kHttp11Prefix.size() + 3] == ' ';
+    return status_code == "101" && status_line[kHttp11Prefix.size() + 3] == ' ';
   }
   if (status_line.rfind(kHttp10Prefix, 0) == 0) {
     status_code = status_line.substr(kHttp10Prefix.size(), 3);
     if (status_line.size() < kHttp10Prefix.size() + 4) {
       return false;
     }
-    return status_code == "101" &&
-           status_line[kHttp10Prefix.size() + 3] == ' ';
+    return status_code == "101" && status_line[kHttp10Prefix.size() + 3] == ' ';
   }
   return false;
 }
@@ -113,7 +178,8 @@ inline bool ComputeAcceptKey(std::string_view client_key,
   const bool digest_ok =
       EVP_DigestInit_ex(md_ctx, EVP_sha1(), nullptr) == 1 &&
       EVP_DigestUpdate(md_ctx, client_key.data(), client_key.size()) == 1 &&
-      EVP_DigestUpdate(md_ctx, kWebsocketGuid.data(), kWebsocketGuid.size()) == 1 &&
+      EVP_DigestUpdate(md_ctx, kWebsocketGuid.data(), kWebsocketGuid.size()) ==
+          1 &&
       EVP_DigestFinal_ex(md_ctx, digest, &digest_size) == 1;
   EVP_MD_CTX_free(md_ctx);
   if (!digest_ok) {
@@ -123,13 +189,29 @@ inline bool ComputeAcceptKey(std::string_view client_key,
   const int encoded_size =
       EVP_EncodeBlock(reinterpret_cast<unsigned char*>(output.data()), digest,
                       static_cast<int>(digest_size));
-  if (encoded_size <= 0 ||
-      static_cast<size_t>(encoded_size) > output.size()) {
+  if (encoded_size <= 0 || static_cast<size_t>(encoded_size) > output.size()) {
     return false;
   }
 
-  accept_key = std::string_view(output.data(),
-                                static_cast<size_t>(encoded_size));
+  accept_key =
+      std::string_view(output.data(), static_cast<size_t>(encoded_size));
+  return true;
+}
+
+template <typename FormatT, typename... Args>
+inline bool AppendHandshakeLine(std::span<char> output, std::size_t* used,
+                                const FormatT& format,
+                                Args&&... args) noexcept {
+  if (used == nullptr || *used > output.size()) {
+    return false;
+  }
+  const std::size_t remaining = output.size() - *used;
+  const auto result = fmt::format_to_n(output.data() + *used, remaining, format,
+                                       std::forward<Args>(args)...);
+  if (result.size > remaining) {
+    return false;
+  }
+  *used += result.size;
   return true;
 }
 
@@ -150,39 +232,67 @@ inline std::string_view GenerateClientKey(std::span<char> output) noexcept {
     return {};
   }
 
-  const int encoded_size = EVP_EncodeBlock(
-      reinterpret_cast<unsigned char*>(output.data()), raw,
-      static_cast<int>(kRawKeyBytes));
+  const int encoded_size =
+      EVP_EncodeBlock(reinterpret_cast<unsigned char*>(output.data()), raw,
+                      static_cast<int>(kRawKeyBytes));
   if (encoded_size != static_cast<int>(kEncodedBytes)) {
     return {};
   }
   return std::string_view(output.data(), kEncodedBytes);
 }
 
-inline HandshakeBuildResult BuildClientHandshake(std::string_view host,
-                                                 std::string_view target,
-                                                 std::string_view client_key,
-                                                 std::span<char> output) noexcept {
+inline HandshakeBuildResult BuildClientHandshake(
+    std::string_view host, std::string_view target, std::string_view client_key,
+    std::span<const HttpHeader> extra_headers,
+    std::span<char> output) noexcept {
   if (host.empty() || target.empty() || client_key.empty() || output.empty()) {
     return {};
   }
+  for (size_t i = 0; i < extra_headers.size(); ++i) {
+    const HttpHeader& header = extra_headers[i];
+    if (!detail::IsValidHttpHeaderName(header.name) ||
+        !detail::IsValidHttpHeaderValue(header.value) ||
+        detail::IsReservedClientHandshakeHeaderName(header.name)) {
+      return {};
+    }
+    for (size_t previous = 0; previous < i; ++previous) {
+      if (detail::AsciiEqualsIgnoreCase(header.name,
+                                        extra_headers[previous].name)) {
+        return {};
+      }
+    }
+  }
 
-  const auto result = fmt::format_to_n(
-      output.data(), output.size(),
-      FMT_COMPILE("GET {} HTTP/1.1\r\n"
-                  "Host: {}\r\n"
-                  "Upgrade: websocket\r\n"
-                  "Connection: Upgrade\r\n"
-                  "Sec-WebSocket-Key: {}\r\n"
-                  "Sec-WebSocket-Version: 13\r\n"
-                  "\r\n"),
-      target, host, client_key);
-  if (result.size == 0 || result.size > output.size()) {
+  std::size_t used = 0;
+  if (!detail::AppendHandshakeLine(output, &used,
+                                   FMT_COMPILE("GET {} HTTP/1.1\r\n"
+                                               "Host: {}\r\n"
+                                               "Upgrade: websocket\r\n"
+                                               "Connection: Upgrade\r\n"
+                                               "Sec-WebSocket-Key: {}\r\n"
+                                               "Sec-WebSocket-Version: 13\r\n"),
+                                   target, host, client_key)) {
+    return {};
+  }
+  for (const HttpHeader& header : extra_headers) {
+    if (!detail::AppendHandshakeLine(output, &used, FMT_COMPILE("{}: {}\r\n"),
+                                     header.name, header.value)) {
+      return {};
+    }
+  }
+  if (!detail::AppendHandshakeLine(output, &used, FMT_COMPILE("\r\n")) ||
+      used == 0) {
     return {};
   }
 
-  return {true,
-          std::string_view(output.data(), result.size)};
+  return {true, std::string_view(output.data(), used)};
+}
+
+inline HandshakeBuildResult BuildClientHandshake(
+    std::string_view host, std::string_view target, std::string_view client_key,
+    std::span<char> output) noexcept {
+  return BuildClientHandshake(host, target, client_key,
+                              std::span<const HttpHeader>{}, output);
 }
 
 inline bool ValidateServerHandshake(std::string_view response,
@@ -220,7 +330,8 @@ inline bool ValidateServerHandshake(std::string_view response,
       break;
     }
 
-    const std::string_view line = response.substr(line_begin, line_end - line_begin);
+    const std::string_view line =
+        response.substr(line_begin, line_end - line_begin);
     const size_t colon = line.find(':');
     if (colon == std::string_view::npos) {
       return false;
