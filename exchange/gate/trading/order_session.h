@@ -4,8 +4,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <ctime>
 #include <cstring>
+#include <ctime>
 #include <span>
 #include <string>
 #include <string_view>
@@ -13,7 +13,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <magic_enum/magic_enum.hpp>
-#include <simdjson.h>
 
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
@@ -22,6 +21,7 @@
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/submit_response_parser.h"
 #include "nova/utils/log.h"
+#include <simdjson.h>
 
 namespace aquila::gate {
 
@@ -225,8 +225,8 @@ class OrderSession {
         RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
     std::array<char, 64> signed_size_buffer{};
     const std::string_view signed_size_text = SignedOrderSizeTextForGate(
-        order, std::span<char>(signed_size_buffer.data(),
-                               signed_size_buffer.size()));
+        order,
+        std::span<char>(signed_size_buffer.data(), signed_size_buffer.size()));
     std::array<char, kPlaceOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodePlaceOrderRequest(
         PlaceOrderEncodeFields{.timestamp = NowSeconds(),
@@ -292,11 +292,10 @@ class OrderSession {
     const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(order);
     std::array<char, kCancelOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-        CancelOrderEncodeFields{
-            .timestamp = NowSeconds(),
-            .encoded_request_id = encoded_request_id,
-            .local_order_id = order.local_order_id,
-            .exchange_order_id = exchange_order_id},
+        CancelOrderEncodeFields{.timestamp = NowSeconds(),
+                                .encoded_request_id = encoded_request_id,
+                                .local_order_id = order.local_order_id,
+                                .exchange_order_id = exchange_order_id},
         buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       const OrderSendStatus status = MapEncodeStatus(encoded.status);
@@ -445,9 +444,10 @@ class OrderSession {
   }
 
   template <typename OrderT>
-  static void LogGatePlaceOrderSent(
-      const OrderT& order, std::uint64_t request_sequence,
-      std::uint64_t encoded_request_id, std::size_t inflight) noexcept {
+  static void LogGatePlaceOrderSent(const OrderT& order,
+                                    std::uint64_t request_sequence,
+                                    std::uint64_t encoded_request_id,
+                                    std::size_t inflight) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -456,16 +456,16 @@ class OrderSession {
         "request_sequence={} encoded_request_id={} contract={} side={} "
         "quantity={} price={} tif={} reduce_only={} inflight={}",
         order.local_order_id, request_sequence, encoded_request_id,
-        order.symbol, magic_enum::enum_name(order.side),
-        order.quantity_text, order.price_text,
-        magic_enum::enum_name(order.time_in_force),
+        order.symbol, magic_enum::enum_name(order.side), order.quantity_text,
+        order.price_text, magic_enum::enum_name(order.time_in_force),
         order.reduce_only ? "true" : "false", inflight);
   }
 
-  static void LogGateCancelOrderSent(
-      std::uint64_t local_order_id, std::uint64_t exchange_order_id,
-      std::uint64_t request_sequence, std::uint64_t encoded_request_id,
-      std::size_t inflight) noexcept {
+  static void LogGateCancelOrderSent(std::uint64_t local_order_id,
+                                     std::uint64_t exchange_order_id,
+                                     std::uint64_t request_sequence,
+                                     std::uint64_t encoded_request_id,
+                                     std::size_t inflight) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -473,14 +473,15 @@ class OrderSession {
         "gate_order_send_ok type=cancel local_order_id={} "
         "exchange_order_id={} request_sequence={} encoded_request_id={} "
         "inflight={}",
-        local_order_id, exchange_order_id, request_sequence,
-        encoded_request_id, inflight);
+        local_order_id, exchange_order_id, request_sequence, encoded_request_id,
+        inflight);
   }
 
-  static void LogGateOrderSendFailed(
-      std::string_view type, OrderSendStatus status,
-      std::uint64_t local_order_id, bool active, bool login_ready,
-      std::size_t inflight, std::size_t capacity) noexcept {
+  static void LogGateOrderSendFailed(std::string_view type,
+                                     OrderSendStatus status,
+                                     std::uint64_t local_order_id, bool active,
+                                     bool login_ready, std::size_t inflight,
+                                     std::size_t capacity) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -492,9 +493,9 @@ class OrderSession {
         capacity);
   }
 
-  static void LogGateOrderResponse(
-      const GateSubmitResponse& parsed, std::uint64_t local_order_id,
-      std::uint64_t exchange_order_id) noexcept {
+  static void LogGateOrderResponse(const GateSubmitResponse& parsed,
+                                   std::uint64_t local_order_id,
+                                   std::uint64_t exchange_order_id) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -513,9 +514,10 @@ class OrderSession {
     }
     NOVA_WARNING(
         "gate_order_response_ignored reason={} request_sequence={} "
-        "channel={} kind={} http_status={}",
+        "channel={} kind={} http_status={} error_label_hash={}",
         reason, parsed.request_id.sequence, static_cast<int>(parsed.channel),
-        magic_enum::enum_name(parsed.kind), parsed.http_status);
+        magic_enum::enum_name(parsed.kind), parsed.http_status,
+        parsed.error_label_hash);
   }
 
   static void LogGateOrderResponseUnknownRequestId(
@@ -525,9 +527,10 @@ class OrderSession {
     }
     NOVA_WARNING(
         "gate_order_response_unknown_request_id request_sequence={} "
-        "channel={} kind={} http_status={}",
+        "channel={} kind={} http_status={} error_label_hash={}",
         parsed.request_id.sequence, static_cast<int>(parsed.channel),
-        magic_enum::enum_name(parsed.kind), parsed.http_status);
+        magic_enum::enum_name(parsed.kind), parsed.http_status,
+        parsed.error_label_hash);
   }
 
   template <typename OrderT>

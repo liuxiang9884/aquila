@@ -226,12 +226,15 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (!FindSimdjsonObject(root, "data", &data)) {
     return response;
   }
-  if (!response.has_ack && response.channel != kFuturesLogin) {
+  const bool can_parse_error =
+      response.has_ack ? !response.ack : response.http_status >= 400;
+  if (!response.has_ack && response.channel != kFuturesLogin &&
+      !can_parse_error) {
     return response;
   }
 
   simdjson::ondemand::object errs;
-  if (!response.ack && FindSimdjsonObject(data, "errs", &errs)) {
+  if (can_parse_error && FindSimdjsonObject(data, "errs", &errs)) {
     response.kind = GateSubmitResponseKind::kError;
     if (FindSimdjsonField(errs, "label", &value)) {
       response.error_label_hash = HashSimdjsonString(value);

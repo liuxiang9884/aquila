@@ -465,6 +465,27 @@ TEST(OrderSessionTest, CancelErrorMapsRejectedAndErasesCorrelation) {
   EXPECT_EQ(session.inflight_count(), 0U);
 }
 
+TEST(OrderSessionTest, CancelErrorWithoutAckMapsRejectedAndErasesCorrelation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"216172782113783810","header":{"status":"404","channel":"futures.order_cancel","event":"api"},"data":{"errs":{"label":"ORDER_NOT_FOUND","message":"order not found"}}})"));
+
+  ASSERT_EQ(handler.responses.size(), 1U);
+  EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kCancelRejected);
+  EXPECT_EQ(handler.responses[0].local_order_id, 123);
+  EXPECT_EQ(handler.responses[0].http_status, 404);
+  EXPECT_EQ(handler.responses[0].error_label_hash,
+            HashGateSubmitString("ORDER_NOT_FOUND"));
+  EXPECT_EQ(session.inflight_count(), 0U);
+}
+
 TEST(OrderSessionTest, DisconnectClearsInflightWithoutFakeResponses) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
@@ -726,6 +747,26 @@ TEST(OrderSessionTest, PlaceErrorMapsRejectedAndErasesCorrelation) {
   EXPECT_EQ(handler.responses[0].local_order_id, 123);
   EXPECT_EQ(handler.responses[0].error_label_hash,
             HashGateSubmitString("TOO_MANY_REQUESTS"));
+  EXPECT_EQ(session.inflight_count(), 0U);
+}
+
+TEST(OrderSessionTest, PlaceErrorWithoutAckMapsRejectedAndErasesCorrelation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"144115188075855874","header":{"status":"400","channel":"futures.order_place","event":"api"},"data":{"errs":{"label":"INVALID_PARAM_VALUE","message":"invalid size"}}})"));
+
+  ASSERT_EQ(handler.responses.size(), 1U);
+  EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kRejected);
+  EXPECT_EQ(handler.responses[0].local_order_id, 123);
+  EXPECT_EQ(handler.responses[0].http_status, 400);
+  EXPECT_EQ(handler.responses[0].error_label_hash,
+            HashGateSubmitString("INVALID_PARAM_VALUE"));
   EXPECT_EQ(session.inflight_count(), 0U);
 }
 

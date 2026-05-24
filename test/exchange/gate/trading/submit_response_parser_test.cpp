@@ -227,6 +227,65 @@ TEST(GateSubmitResponseParserTest, OrderSessionProfileKeepsErrorLabelHash) {
   EXPECT_EQ(parsed.error_label_hash, HashGateSubmitString("ORDER_NOT_FOUND"));
 }
 
+TEST(GateSubmitResponseParserTest, ParsesOrderPlaceErrorWithoutAck) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "144115188075855874",
+    "header": {
+      "status": "400",
+      "channel": "futures.order_place",
+      "event": "api"
+    },
+    "data": {
+      "errs": {
+        "label": "INVALID_PARAM_VALUE",
+        "message": "invalid size"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponseForOrderSession(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kError);
+  EXPECT_FALSE(parsed.has_ack);
+  EXPECT_TRUE(parsed.request_id.ok);
+  EXPECT_EQ(parsed.request_id.type, OrderRequestType::kPlaceOrder);
+  EXPECT_EQ(parsed.request_id.sequence, 2U);
+  EXPECT_EQ(parsed.channel, kFuturesOrderPlace);
+  EXPECT_EQ(parsed.http_status, 400);
+  EXPECT_EQ(parsed.error_label_hash,
+            HashGateSubmitString("INVALID_PARAM_VALUE"));
+}
+
+TEST(GateSubmitResponseParserTest, ParsesCancelErrorWithoutAck) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "216172782113783818",
+    "header": {
+      "status": "404",
+      "channel": "futures.order_cancel",
+      "event": "api"
+    },
+    "data": {
+      "errs": {
+        "label": "ORDER_NOT_FOUND",
+        "message": "order not found"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponseForOrderSession(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kError);
+  EXPECT_FALSE(parsed.has_ack);
+  EXPECT_TRUE(parsed.request_id.ok);
+  EXPECT_EQ(parsed.request_id.type, OrderRequestType::kCancelOrder);
+  EXPECT_EQ(parsed.request_id.sequence, 10U);
+  EXPECT_EQ(parsed.channel, kFuturesOrderCancel);
+  EXPECT_EQ(parsed.http_status, 404);
+  EXPECT_EQ(parsed.error_label_hash, HashGateSubmitString("ORDER_NOT_FOUND"));
+}
+
 TEST(GateSubmitResponseParserTest, DecodesCancelErrorRequestId) {
   static constexpr std::string_view kPayload = R"json({
     "request_id": 216172782113783818,
