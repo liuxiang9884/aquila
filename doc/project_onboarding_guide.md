@@ -101,6 +101,7 @@ doc/evaluation_support.md
 
 - Gate `OrderSession` 第一版 submit/cancel C++ 主路径已落地：login HMAC-SHA512、固定缓冲区 request encoder、place/cancel、response correlation、同步 `OrderResponse` 回调和 benchmark。
 - `OrderManager` 负责订单对象、订单池、状态机和直接 session 发送；不缓存 Gate wire fields，不维护 exchange order id 索引，不暴露两阶段 `PrepareOrder()` / `SubmitOrder()`。
+- 下单 RTT 观测字段已进入 `StrategyOrder`：`request_send_local_ns`、`ack_local_receive_ns`、`response_local_receive_ns` 使用本机 Unix epoch ns，其中 `request_send_local_ns` 是请求提交给 WebSocket 发送路径前的本地时间；`ack_exchange_ns` / `response_exchange_ns` 来自 Gate submit response header 的 `x_out_time` 或 `response_time`；`accepted_exchange_ns` / `finish_exchange_ns` 来自 private `futures.orders` feedback。旧 `exchange_update_ns` 仍保留为最后一次已应用 feedback 的兼容字段。
 - Task1 order feedback SHM transport 已落地：固定 8 lane、Nova SPSC、宽结构 `OrderFeedbackEvent`、continuity lost control event、publisher / reader / config / tests / benchmark。
 - Task2 Gate order feedback 已落地：private `futures.orders` parser、`OrderFeedbackSession`、SHM publish、disconnect continuity lost 和 `OrderManager::OnOrderFeedback()`。
 - `OrderManager::OnOrderFeedback()` 已处理 accepted、partial filled、filled、cancelled / terminal、rejected 和 continuity lost；accepted 后保存 exchange order id 并更新 cancel cache，terminal 后清理 cache。

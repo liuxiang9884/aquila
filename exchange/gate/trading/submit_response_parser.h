@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <system_error>
@@ -63,6 +64,7 @@ struct GateSubmitResponse {
   std::uint64_t error_label_hash{0};
   std::string_view error_label{};
   std::string_view error_message{};
+  std::int64_t exchange_ns{0};
 };
 
 inline constexpr std::uint64_t HashGateSubmitString(
@@ -179,6 +181,18 @@ inline std::uint16_t ReadSimdjsonStatusCode(
   return static_cast<std::uint16_t>(parsed);
 }
 
+inline bool TryScaleUint64ToInt64(std::uint64_t value, std::uint64_t scale,
+                                  std::int64_t* output) noexcept {
+  assert(output != nullptr);
+  if (scale == 0 || value > static_cast<std::uint64_t>(
+                                std::numeric_limits<std::int64_t>::max()) /
+                                scale) {
+    return false;
+  }
+  *output = static_cast<std::int64_t>(value * scale);
+  return true;
+}
+
 template <GateSubmitParseProfile Profile>
 inline GateSubmitResponse ParseSimdjsonDocument(
     simdjson::ondemand::document document) noexcept {
@@ -203,6 +217,15 @@ inline GateSubmitResponse ParseSimdjsonDocument(
 
   simdjson::ondemand::object header;
   if (FindSimdjsonObject(root, "header", &header)) {
+    if (FindSimdjsonField(header, "response_time", &value)) {
+      std::uint64_t response_time_ms = 0;
+      std::int64_t response_time_ns = 0;
+      if (ReadSimdjsonUint64(value, &response_time_ms) &&
+          TryScaleUint64ToInt64(response_time_ms, 1'000'000,
+                                &response_time_ns)) {
+        response.exchange_ns = response_time_ns;
+      }
+    }
     if (FindSimdjsonField(header, "status", &value)) {
       response.http_status = ReadSimdjsonStatusCode(value);
     }
@@ -212,6 +235,14 @@ inline GateSubmitResponse ParseSimdjsonDocument(
         response.channel = ParseGateSubmitChannel(channel);
         response.channel_is_order_place =
             response.channel == kFuturesOrderPlace;
+      }
+    }
+    if (FindSimdjsonField(header, "x_out_time", &value)) {
+      std::uint64_t out_time_us = 0;
+      std::int64_t out_time_ns = 0;
+      if (ReadSimdjsonUint64(value, &out_time_us) &&
+          TryScaleUint64ToInt64(out_time_us, 1000, &out_time_ns)) {
+        response.exchange_ns = out_time_ns;
       }
     }
   }

@@ -44,6 +44,7 @@ class OrderManager {
     }
 
     order->status = OrderStatus::kSent;
+    StoreSendLocalNs(*order, sent);
     return {.status = OrderPlaceStatus::kOk,
             .local_order_id = order->local_order_id};
   }
@@ -82,12 +83,13 @@ class OrderManager {
 
     switch (event.kind) {
       case OrderResponseKind::kAck:
+        OnAck(*order, event);
         break;
       case OrderResponseKind::kAccepted:
         OnAccepted(*order, event);
         break;
       case OrderResponseKind::kRejected:
-        OnRejected(*order);
+        OnRejected(*order, event);
         break;
       case OrderResponseKind::kCancelAccepted:
         OnCancelAccepted(*order, event);
@@ -203,19 +205,53 @@ class OrderManager {
     return result.status == decltype(result.status)::kOk;
   }
 
+  template <typename SendResultT>
+  static void StoreSendLocalNs(Order& order,
+                               const SendResultT& result) noexcept {
+    if constexpr (requires { result.send_local_ns; }) {
+      order.request_send_local_ns = result.send_local_ns;
+    }
+  }
+
   static bool CanSubmitCancel(OrderStatus status) noexcept {
     return status == OrderStatus::kSent || status == OrderStatus::kAccepted ||
            status == OrderStatus::kPartialFilled;
   }
 
-  void OnAccepted(Order& order, const OrderResponseEvent&) noexcept {
-    if (order.status == OrderStatus::kSent) {
-      order.status = OrderStatus::kAccepted;
+  static void RecordAckTiming(Order& order,
+                              const OrderResponseEvent& event) noexcept {
+    if (order.ack_local_receive_ns != 0 || order.ack_exchange_ns != 0) {
       return;
+    }
+    order.ack_local_receive_ns = event.local_receive_ns;
+    order.ack_exchange_ns = event.exchange_ns;
+  }
+
+  static void RecordResponseTiming(Order& order,
+                                   const OrderResponseEvent& event) noexcept {
+    if (order.response_local_receive_ns != 0 ||
+        order.response_exchange_ns != 0) {
+      return;
+    }
+    order.response_local_receive_ns = event.local_receive_ns;
+    order.response_exchange_ns = event.exchange_ns;
+  }
+
+  void OnAck(Order& order, const OrderResponseEvent& event) noexcept {
+    if (order.status == OrderStatus::kSent) {
+      RecordAckTiming(order, event);
     }
   }
 
-  void OnRejected(Order& order) noexcept {
+  void OnAccepted(Order& order, const OrderResponseEvent& event) noexcept {
+    RecordResponseTiming(order, event);
+    if (order.status == OrderStatus::kSent) {
+      order.status = OrderStatus::kAccepted;
+    }
+  }
+
+  void OnRejected(Order& order, const OrderResponseEvent& event) noexcept {
+    RecordResponseTiming(order, event);
     if (order.status == OrderStatus::kSent) {
       order.status = OrderStatus::kRejected;
       order.is_finished = true;
@@ -242,6 +278,7 @@ class OrderManager {
     }
     order.exchange_order_id = event.exchange_order_id;
     order.exchange_update_ns = event.exchange_update_ns;
+    order.accepted_exchange_ns = event.exchange_update_ns;
     NotifyCacheExchangeOrderId(order.local_order_id, event.exchange_order_id);
   }
 
@@ -270,6 +307,7 @@ class OrderManager {
     order.status = OrderStatus::kFilled;
     order.role = event.role;
     order.exchange_update_ns = event.exchange_update_ns;
+    order.finish_exchange_ns = event.exchange_update_ns;
     FinishOrder(order);
   }
 
@@ -286,6 +324,7 @@ class OrderManager {
                        : OrderStatus::kCancelled;
     order.finish_reason = event.finish_reason;
     order.exchange_update_ns = event.exchange_update_ns;
+    order.finish_exchange_ns = event.exchange_update_ns;
     FinishOrder(order);
   }
 
@@ -294,6 +333,7 @@ class OrderManager {
     order.status = OrderStatus::kRejected;
     order.reject_reason = event.reject_reason;
     order.exchange_update_ns = event.exchange_update_ns;
+    order.finish_exchange_ns = event.exchange_update_ns;
     FinishOrder(order);
   }
 

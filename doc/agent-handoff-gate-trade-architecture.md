@@ -642,6 +642,7 @@ doc/superpowers/specs/2026-05-08-gate-order-feedback-session-strategy-design.md
 9. Strategy 状态需要补 `kPartiallyCancelled`，用于区分“未成交撤单”和“部分成交后剩余终止”。
 10. Event 承载方式已经在 Task1 文档中选择宽结构 `OrderFeedbackEvent` 作为第一版 SHM ABI；tagged union 暂不进入第一版实现。
 11. `local_order_id` 已升级为 `std::uint64_t`，编码为高 8 bit `strategy_id` 加低 56 bit `strategy_order_id`；Gate `text` 仍为 `t-<local_order_id>`，feedback router 可直接从高 8 bit 路由到对应 strategy。
+12. `StrategyOrder` 现在为下单 RTT 观测记录分阶段时间：`request_send_local_ns`、`ack_local_receive_ns`、`response_local_receive_ns` 使用本机 Unix epoch ns；`request_send_local_ns` 是请求提交给 WebSocket 发送路径前的本地时间，不表示 TCP 帧已完整写出；`ack_exchange_ns` / `response_exchange_ns` 来自 Gate submit response header；`accepted_exchange_ns` / `finish_exchange_ns` 来自 private `futures.orders` feedback。旧 `exchange_update_ns` 保留为最后一次已应用 feedback 的兼容字段。
 
 Task1 / Task2 当前实现顺序：
 
@@ -776,7 +777,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 
 | 路径 | 含义 | 提取字段 |
 | --- | --- | --- |
-| full business parse | 当前业务完整解析，不等于提取 JSON 全字段 | `request_id`、`ack`、`header.status`、`header.channel`、`data.errs.label`、`data.result.req_id/id/text` |
+| full business parse | 当前业务完整解析，不等于提取 JSON 全字段 | `request_id`、`ack`、`header.status`、`header.channel`、`header.x_out_time` / `header.response_time`、`data.errs.label`、`data.result.req_id/id/text` |
 | minimal ack parse | Submit WS ACK 快路径 | `request_id`、`ack` |
 
 `minimal ack parse` 的定位：
@@ -791,6 +792,7 @@ benchmark/exchange/gate/trading/order_session_benchmark.cpp
 1. 数字字符串转换统一走 `core/utils/numeric.h` 中基于 `fast_float::from_chars` 的 `ToNumeric<T>` / `ToUint64` 等 helper。
 2. `ReadSimdjsonUint64()` 的输出指针是内部调用合约，debug 下 assert，不在 release 热路径做空指针防御。
 3. `RequestIdCodec` / `OrderTextCodec` 已在 `exchange/gate/trading/order_codecs.h` 落地；submit parser 现在同时暴露 hash 字段和 decoded correlation 字段，便于旧 benchmark 对照和新 `OrderSession` 使用。
+4. submit parser 会把 Gate header 的 exchange-side 时间转换为 `exchange_ns`：优先使用 `x_out_time` 微秒转 ns，缺失时 fallback 到 `response_time` 毫秒转 ns。`OrderSession` 在 encoded request 即将提交给 WebSocket send path 前打本机 Unix epoch ns，并在收到 response 时打本机 Unix epoch ns；send 时间不表示 TCP frame 已完整写出，只用于计算“本地提交发送路径 -> 收到 Gate response”的 `ack` / final response RTT，以及在本机时钟同步较好时粗略观察 exchange-to-local 差值。
 
 ### yyjson 与 simdjson 取舍
 

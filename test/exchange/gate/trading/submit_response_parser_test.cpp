@@ -91,6 +91,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEcho) {
   EXPECT_TRUE(parsed.ack);
   EXPECT_EQ(parsed.http_status, 200);
   EXPECT_TRUE(parsed.channel_is_order_place);
+  EXPECT_EQ(parsed.exchange_ns, 1681985856667598000LL);
   EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
   EXPECT_EQ(parsed.req_id_hash, HashGateSubmitString("request-id-1"));
   EXPECT_EQ(parsed.exchange_order_id, 0U);
@@ -389,6 +390,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceApiResult) {
   EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kResult);
   EXPECT_FALSE(parsed.ack);
   EXPECT_EQ(parsed.http_status, 200);
+  EXPECT_EQ(parsed.exchange_ns, 1681195484360000000LL);
   EXPECT_EQ(parsed.exchange_order_id, 74046511U);
   EXPECT_EQ(parsed.text_hash, HashGateSubmitString("t-my-custom-id"));
   EXPECT_EQ(parsed.error_label_hash, 0U);
@@ -401,6 +403,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
   EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kError);
   EXPECT_FALSE(parsed.ack);
   EXPECT_EQ(parsed.http_status, 400);
+  EXPECT_EQ(parsed.exchange_ns, 1681195484360000000LL);
   EXPECT_EQ(parsed.error_label_hash, HashGateSubmitString("TOO_MANY_REQUESTS"));
   EXPECT_EQ(parsed.error_label, "TOO_MANY_REQUESTS");
   EXPECT_EQ(parsed.error_message, "Request Rate limit Exceeded");

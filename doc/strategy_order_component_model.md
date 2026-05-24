@@ -299,8 +299,9 @@ correlation。
 - 把 `StrategyOrder` 编码成交易所 place / cancel 请求。
 - 发送请求并维护 request sequence 到 `local_order_id` 的轻量 correlation。
 - 解析 exchange ack / final result / error。
-- 产出统一 `OrderResponseEvent` 或可转换为该事件的 exchange response；strategy 层 response 只保留
-  `kind` / `local_order_id` / `exchange_order_id`。
+- 产出统一 `OrderResponseEvent` 或可转换为该事件的 exchange response；strategy 层 response 保留
+  `kind` / `local_order_id` / `exchange_order_id`，并携带 submit response latency 所需的
+  `local_receive_ns` / `exchange_ns`。
 - 在 Gate / tool 层记录 rejected / cancel-rejected 的 request sequence、HTTP status 和 `error_label_hash` 等诊断字段。
 - 根据 `OrderManager` 通知维护本地 `local_order_id -> exchange_order_id` cancel cache。
 
@@ -358,6 +359,34 @@ OnOrderResponse(event):
 - `accepted / rejected` 来自 place final result，可推进本地订单提交状态。
 - `rejected / cancel_rejected` 下游只按 `OrderResponseKind` 处理；错误标签和原始错误信息只在 Gate / tool 日志中定位。
 - 最终生命周期仍以 private order feedback 为更高可信事实源。
+
+### 下单延迟时间字段
+
+`StrategyOrder` 记录精简后的下单 RTT 观测字段：
+
+```cpp
+std::int64_t request_send_local_ns;
+std::int64_t ack_local_receive_ns;
+std::int64_t response_local_receive_ns;
+std::int64_t ack_exchange_ns;
+std::int64_t response_exchange_ns;
+std::int64_t accepted_exchange_ns;
+std::int64_t finish_exchange_ns;
+```
+
+其中 `request_send_local_ns`、`ack_local_receive_ns` 和 `response_local_receive_ns` 是 `OrderSession`
+在 submit/cancel WebSocket 通道上打的本机 Unix epoch ns，不使用 runtime 内部 monotonic clock。
+`request_send_local_ns` 表示请求即将提交给 WebSocket 发送路径的本地时间点，不表示 TCP 帧已经完整写出；这样可以直接计算
+`ack_local_receive_ns - request_send_local_ns` 和
+`response_local_receive_ns - request_send_local_ns`，观测“本地提交发送路径 -> 收到 Gate response”的 RTT，并可在本机时钟同步较好时和 Gate header 时间做粗略对比。
+
+`ack_exchange_ns` / `response_exchange_ns` 来自 Gate submit response header，优先使用 `x_out_time` 转 ns；缺失时使用
+`response_time` 转 ns。它们分别表示 Gate 发出 ack / final result 的 exchange-side 时间。
+
+`accepted_exchange_ns` 和 `finish_exchange_ns` 来自 private `futures.orders` feedback 的 `exchange_update_ns`：
+accepted / `_new` 写入 `accepted_exchange_ns`，filled / cancelled / rejected 等终态写入 `finish_exchange_ns`。旧的
+`exchange_update_ns` 字段仍保留为“最后一次已应用 feedback 的 exchange update time”兼容字段；需要区分阶段时优先使用
+`accepted_exchange_ns` / `finish_exchange_ns`。
 
 ## OrderFeedbackSession
 

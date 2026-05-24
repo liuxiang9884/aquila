@@ -15,6 +15,9 @@
 namespace aquila::gate {
 namespace {
 
+inline constexpr std::int64_t kReasonableUnixEpochNs =
+    1'600'000'000'000'000'000LL;
+
 websocket::MessageView TextView(std::string_view payload) noexcept {
   return {
       .kind = websocket::PayloadKind::kText,
@@ -149,11 +152,11 @@ std::string_view LoginSuccessResponseWithoutAck() noexcept {
 }
 
 std::string_view PlaceAckResponse() noexcept {
-  return R"({"request_id":"144115188075855874","ack":true,"header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"req_id":"144115188075855874"}}})";
+  return R"({"request_id":"144115188075855874","ack":true,"header":{"response_time":"1681195484268","status":"200","channel":"futures.order_place","event":"api","x_out_time":1681985856667598},"data":{"result":{"req_id":"144115188075855874"}}})";
 }
 
 std::string_view PlaceResultResponse() noexcept {
-  return R"({"request_id":"144115188075855874","ack":false,"header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})";
+  return R"({"request_id":"144115188075855874","ack":false,"header":{"response_time":"1681195484360","status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})";
 }
 
 template <typename Handler>
@@ -267,6 +270,7 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
 
   const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  EXPECT_GT(sent.send_local_ns, kReasonableUnixEpochNs);
 
   session.Handle(TextView(PlaceAckResponse()));
 
@@ -275,6 +279,9 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
   EXPECT_EQ(handler.responses[0].local_order_id, 123);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 0U);
   EXPECT_EQ(handler.responses[0].request_sequence, 2U);
+  EXPECT_GE(handler.responses[0].local_receive_ns, sent.send_local_ns);
+  EXPECT_GT(handler.responses[0].local_receive_ns, kReasonableUnixEpochNs);
+  EXPECT_EQ(handler.responses[0].exchange_ns, 1681985856667598000LL);
   EXPECT_EQ(session.inflight_count(), 1U);
 }
 
@@ -304,6 +311,7 @@ TEST(OrderSessionTest, PlaceResultMapsExchangeOrderIdAndErasesCorrelation) {
 
   const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  EXPECT_GT(sent.send_local_ns, kReasonableUnixEpochNs);
 
   session.Handle(TextView(PlaceResultResponse()));
 
@@ -311,6 +319,9 @@ TEST(OrderSessionTest, PlaceResultMapsExchangeOrderIdAndErasesCorrelation) {
   EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kAccepted);
   EXPECT_EQ(handler.responses[0].local_order_id, 123);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 36028827892199865U);
+  EXPECT_GE(handler.responses[0].local_receive_ns, sent.send_local_ns);
+  EXPECT_GT(handler.responses[0].local_receive_ns, kReasonableUnixEpochNs);
+  EXPECT_EQ(handler.responses[0].exchange_ns, 1681195484360000000LL);
   EXPECT_EQ(session.inflight_count(), 0U);
   EXPECT_EQ(session.exchange_order_id_for_local_order(123), 36028827892199865U);
 }

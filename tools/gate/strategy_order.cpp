@@ -27,6 +27,7 @@
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
 #include "tools/gate/strategy_order_feedback_action.h"
+#include "tools/gate/strategy_order_response_conversion.h"
 
 namespace {
 
@@ -118,30 +119,6 @@ aquila::TimeInForce ParseTimeInForce(std::string_view tif) {
     return aquila::TimeInForce::kImmediateOrCancel;
   }
   return aquila::TimeInForce::kGoodTillCancel;
-}
-
-core::OrderResponseKind ToCoreKind(gate::OrderResponseKind kind) {
-  switch (kind) {
-    case gate::OrderResponseKind::kAck:
-      return core::OrderResponseKind::kAck;
-    case gate::OrderResponseKind::kAccepted:
-      return core::OrderResponseKind::kAccepted;
-    case gate::OrderResponseKind::kRejected:
-      return core::OrderResponseKind::kRejected;
-    case gate::OrderResponseKind::kCancelAccepted:
-      return core::OrderResponseKind::kCancelAccepted;
-    case gate::OrderResponseKind::kCancelRejected:
-      return core::OrderResponseKind::kCancelRejected;
-  }
-  return core::OrderResponseKind::kRejected;
-}
-
-core::OrderResponseEvent ToCoreEvent(const gate::OrderResponse& response) {
-  return core::OrderResponseEvent{
-      .kind = ToCoreKind(response.kind),
-      .local_order_id = response.local_order_id,
-      .exchange_order_id = response.exchange_order_id,
-  };
 }
 
 struct PreparedOrder {
@@ -335,7 +312,7 @@ struct RunContext {
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
       responses.push_back(response);
-      order_manager->OnOrderResponse(ToCoreEvent(response));
+      order_manager->OnOrderResponse(gate_order_tool::ToCoreEvent(response));
       switch (response.kind) {
         case gate::OrderResponseKind::kAck:
           break;

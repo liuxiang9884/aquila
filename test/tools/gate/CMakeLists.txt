@@ -11,6 +11,20 @@ target_link_libraries(gate_strategy_order_feedback_action_test
 add_test(NAME gate_strategy_order_feedback_action_test
          COMMAND gate_strategy_order_feedback_action_test)
 
+add_executable(gate_strategy_order_response_conversion_test
+    strategy_order_response_conversion_test.cpp
+)
+
+target_link_libraries(gate_strategy_order_response_conversion_test
+    PRIVATE
+        aquila_core
+        aquila_gate
+        GTest::gtest_main
+)
+
+add_test(NAME gate_strategy_order_response_conversion_test
+         COMMAND gate_strategy_order_response_conversion_test)
+
 add_executable(gate_order_session_failure_probe_test
     order_session_failure_probe_test.cpp
 )

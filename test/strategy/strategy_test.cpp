@@ -25,10 +25,13 @@ struct FakeGateway {
 
   struct SendResult {
     SendStatus status{SendStatus::kRejected};
+    std::int64_t send_local_ns{0};
   };
 
   SendStatus place_status{SendStatus::kOk};
   SendStatus cancel_status{SendStatus::kOk};
+  std::int64_t place_send_local_ns{1234};
+  std::int64_t cancel_send_local_ns{5678};
   int place_calls{0};
   int cancel_calls{0};
   int cache_update_calls{0};
@@ -46,13 +49,13 @@ struct FakeGateway {
     EXPECT_EQ(order.symbol, "BTC_USDT");
     EXPECT_EQ(order.quantity_text, expected_quantity_text);
     EXPECT_EQ(order.price_text, "81000");
-    return {.status = place_status};
+    return {.status = place_status, .send_local_ns = place_send_local_ns};
   }
 
   SendResult CancelOrder(Order& order) noexcept {
     ++cancel_calls;
     last_cancel_local_order_id = order.local_order_id;
-    return {.status = cancel_status};
+    return {.status = cancel_status, .send_local_ns = cancel_send_local_ns};
   }
 
   void CacheExchangeOrderId(std::uint64_t local_order_id,
@@ -99,6 +102,7 @@ TEST(OrderManagerTest, PlacesLimitOrderAndStoresSentOrder) {
   EXPECT_EQ(order->symbol, "BTC_USDT");
   EXPECT_EQ(order->quantity, 1);
   EXPECT_EQ(order->quantity_text, "1");
+  EXPECT_EQ(order->request_send_local_ns, gateway.place_send_local_ns);
 }
 
 TEST(OrderManagerTest, PlacesDecimalQuantityWithStableQuantityText) {
@@ -143,11 +147,94 @@ TEST(OrderManagerTest, AckResponseKeepsSentOrderUntilFinalResult) {
   order_manager.OnOrderResponse(OrderResponseEvent{
       .kind = OrderResponseKind::kAck,
       .local_order_id = placed.local_order_id,
+      .local_receive_ns = 2345,
+      .exchange_ns = 1681985856667598000LL,
   });
 
   const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
   EXPECT_EQ(order->status, OrderStatus::kSent);
+  EXPECT_EQ(order->ack_local_receive_ns, 2345);
+  EXPECT_EQ(order->ack_exchange_ns, 1681985856667598000LL);
+}
+
+TEST(OrderManagerTest, DuplicateAckKeepsFirstAckTiming) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 2345,
+      .exchange_ns = 1681985856667598000LL,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 3456,
+      .exchange_ns = 1681985856668600000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kSent);
+  EXPECT_EQ(order->ack_local_receive_ns, 2345);
+  EXPECT_EQ(order->ack_exchange_ns, 1681985856667598000LL);
+}
+
+TEST(OrderManagerTest, DuplicateAckKeepsFirstExchangeOnlyAckTiming) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 0,
+      .exchange_ns = 1681985856667598000LL,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 3456,
+      .exchange_ns = 1681985856668600000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kSent);
+  EXPECT_EQ(order->ack_local_receive_ns, 0);
+  EXPECT_EQ(order->ack_exchange_ns, 1681985856667598000LL);
+}
+
+TEST(OrderManagerTest, UnknownAckTimingDoesNotBlockLaterAckTiming) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 3456,
+      .exchange_ns = 1681985856668600000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kSent);
+  EXPECT_EQ(order->ack_local_receive_ns, 3456);
+  EXPECT_EQ(order->ack_exchange_ns, 1681985856668600000LL);
 }
 
 TEST(OrderManagerTest, RejectsInvalidLimitOrderBeforeAllocatingOrder) {
@@ -205,11 +292,124 @@ TEST(OrderManagerTest, AcceptedResponseMarksSentOrderAccepted) {
       .kind = OrderResponseKind::kAccepted,
       .local_order_id = placed.local_order_id,
       .exchange_order_id = 36028827892199865U,
+      .local_receive_ns = 3456,
+      .exchange_ns = 1681195484360000000LL,
   });
 
   const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
   EXPECT_EQ(order->status, OrderStatus::kAccepted);
+  EXPECT_EQ(order->response_local_receive_ns, 3456);
+  EXPECT_EQ(order->response_exchange_ns, 1681195484360000000LL);
+}
+
+TEST(OrderManagerTest, RejectedResponseRecordsResponseTime) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kRejected,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 4567,
+      .exchange_ns = 1681195484361000000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kRejected);
+  EXPECT_EQ(order->response_local_receive_ns, 4567);
+  EXPECT_EQ(order->response_exchange_ns, 1681195484361000000LL);
+}
+
+TEST(OrderManagerTest, AcceptedResponseAfterFeedbackRecordsResponseTime) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  order_manager.OnOrderFeedback(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .exchange_update_ns = 1234567890,
+  });
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .local_receive_ns = 5678,
+      .exchange_ns = 1681195484362000000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kAccepted);
+  EXPECT_EQ(order->accepted_exchange_ns, 1234567890);
+  EXPECT_EQ(order->response_local_receive_ns, 5678);
+  EXPECT_EQ(order->response_exchange_ns, 1681195484362000000LL);
+}
+
+TEST(OrderManagerTest,
+     AcceptedResponseAfterTerminalFeedbackRecordsResponseTime) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  order_manager.OnOrderFeedback(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kFilled,
+      .local_order_id = placed.local_order_id,
+      .cumulative_filled_quantity = 1.0,
+      .fill_price = 80500.0,
+      .exchange_update_ns = 1234567890,
+  });
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .local_receive_ns = 6789,
+      .exchange_ns = 1681195484363000000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kFilled);
+  EXPECT_TRUE(order->is_finished);
+  EXPECT_EQ(order->finish_exchange_ns, 1234567890);
+  EXPECT_EQ(order->response_local_receive_ns, 6789);
+  EXPECT_EQ(order->response_exchange_ns, 1681195484363000000LL);
+}
+
+TEST(OrderManagerTest, UnknownFinalResponseTimingDoesNotBlockLaterTiming) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .local_receive_ns = 7890,
+      .exchange_ns = 1681195484364000000LL,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kAccepted);
+  EXPECT_EQ(order->response_local_receive_ns, 7890);
+  EXPECT_EQ(order->response_exchange_ns, 1681195484364000000LL);
 }
 
 TEST(OrderManagerTest, CancelsAcceptedOrderAndAppliesCancelResponse) {
@@ -326,6 +526,51 @@ TEST(OrderManagerTest, DelayedAckAfterCancelSentDoesNotOverwriteStatus) {
   EXPECT_EQ(order->status, OrderStatus::kCancelSent);
 }
 
+TEST(OrderManagerTest, CancelResponsesDoNotOverwritePlaceTiming) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 111,
+      .exchange_ns = 222,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .local_receive_ns = 333,
+      .exchange_ns = 444,
+  });
+  ASSERT_EQ(order_manager.CancelOrder(placed.local_order_id).status,
+            OrderCancelStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAck,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 555,
+      .exchange_ns = 666,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kCancelAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .local_receive_ns = 777,
+      .exchange_ns = 888,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kCancelled);
+  EXPECT_EQ(order->ack_local_receive_ns, 111);
+  EXPECT_EQ(order->ack_exchange_ns, 222);
+  EXPECT_EQ(order->response_local_receive_ns, 333);
+  EXPECT_EQ(order->response_exchange_ns, 444);
+}
+
 TEST(OrderManagerTest, DelayedAcceptedAfterCancelSentKeepsCancelSent) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);
@@ -366,6 +611,7 @@ TEST(OrderManagerFeedbackTest,
   EXPECT_EQ(order->status, OrderStatus::kAccepted);
   EXPECT_EQ(order->exchange_order_id, 36028827892199865U);
   EXPECT_EQ(order->exchange_update_ns, 1234567890);
+  EXPECT_EQ(order->accepted_exchange_ns, 1234567890);
   EXPECT_EQ(gateway.cache_update_calls, 1);
   EXPECT_EQ(gateway.last_cache_local_order_id, placed.local_order_id);
   EXPECT_EQ(gateway.last_cache_exchange_order_id, 36028827892199865U);
@@ -504,6 +750,7 @@ TEST(OrderManagerFeedbackTest, FilledFeedbackFinalizesOrderAndIsIdempotent) {
   EXPECT_DOUBLE_EQ(order->AverageFillPrice(), 80200.0);
   EXPECT_EQ(order->role, OrderRole::kMaker);
   EXPECT_EQ(order->exchange_update_ns, 4000);
+  EXPECT_EQ(order->finish_exchange_ns, 4000);
   EXPECT_EQ(gateway.cache_forget_calls, 1);
   EXPECT_EQ(gateway.last_forget_local_order_id, placed.local_order_id);
   EXPECT_EQ(order_manager.feedback_stats().terminal_feedbacks_ignored, 1U);
@@ -533,6 +780,7 @@ TEST(OrderManagerFeedbackTest, CancelledFeedbackWithoutFillMarksCancelled) {
   EXPECT_DOUBLE_EQ(order->cumulative_filled_value, 0.0);
   EXPECT_EQ(order->finish_reason, OrderFinishReason::kManualCancelled);
   EXPECT_EQ(order->exchange_update_ns, 5000);
+  EXPECT_EQ(order->finish_exchange_ns, 5000);
   EXPECT_EQ(gateway.cache_forget_calls, 1);
 }
 
@@ -563,6 +811,7 @@ TEST(OrderManagerFeedbackTest,
   EXPECT_DOUBLE_EQ(order->cumulative_filled_value, 161000.0);
   EXPECT_DOUBLE_EQ(order->AverageFillPrice(), 80500.0);
   EXPECT_EQ(order->finish_reason, OrderFinishReason::kImmediateOrCancel);
+  EXPECT_EQ(order->finish_exchange_ns, 6000);
   EXPECT_EQ(gateway.cache_forget_calls, 1);
 }
 
@@ -586,6 +835,7 @@ TEST(OrderManagerFeedbackTest, RejectedFeedbackMarksOrderRejected) {
   EXPECT_TRUE(order->is_finished);
   EXPECT_EQ(order->reject_reason, OrderRejectReason::kExchangeRejected);
   EXPECT_EQ(order->exchange_update_ns, 7000);
+  EXPECT_EQ(order->finish_exchange_ns, 7000);
 }
 
 TEST(OrderManagerFeedbackTest, UnknownLocalOrderIdIncrementsDiagnostics) {

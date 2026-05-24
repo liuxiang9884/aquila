@@ -73,6 +73,13 @@ struct StrategyOrder {
   double cumulative_filled_quantity{0.0};
   double cumulative_filled_value{0.0};
   double last_fill_price{0.0};
+  std::int64_t request_send_local_ns{0};
+  std::int64_t ack_local_receive_ns{0};
+  std::int64_t response_local_receive_ns{0};
+  std::int64_t ack_exchange_ns{0};
+  std::int64_t response_exchange_ns{0};
+  std::int64_t accepted_exchange_ns{0};
+  std::int64_t finish_exchange_ns{0};
   std::int64_t exchange_update_ns{0};
   OrderFinishReason finish_reason{OrderFinishReason::kUnknown};
   OrderRole role{OrderRole::kNone};
@@ -108,6 +115,8 @@ struct OrderResponseEvent {
   OrderResponseKind kind{OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
+  std::int64_t local_receive_ns{0};
+  std::int64_t exchange_ns{0};
 };
 
 }  // namespace aquila::core

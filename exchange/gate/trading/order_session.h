@@ -250,6 +250,7 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
 
+    const std::int64_t send_local_ns = RealtimeNowNsInt64();
     const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
     if (status != OrderSendStatus::kOk) {
       LogGateOrderSendFailed("place", status, order.local_order_id, active_,
@@ -265,7 +266,8 @@ class OrderSession {
                           inflight_count());
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
-            .encoded_request_id = encoded_request_id};
+            .encoded_request_id = encoded_request_id,
+            .send_local_ns = send_local_ns};
   }
 
   template <typename OrderT>
@@ -308,6 +310,7 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
 
+    const std::int64_t send_local_ns = RealtimeNowNsInt64();
     const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
     if (status != OrderSendStatus::kOk) {
       LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
@@ -323,7 +326,8 @@ class OrderSession {
                            encoded_request_id, inflight_count());
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
-            .encoded_request_id = encoded_request_id};
+            .encoded_request_id = encoded_request_id,
+            .send_local_ns = send_local_ns};
   }
 
   [[nodiscard]] bool login_ready() const noexcept {
@@ -388,6 +392,10 @@ class OrderSession {
 
   [[nodiscard]] std::int64_t NowSeconds() const noexcept {
     return static_cast<std::int64_t>(std::time(nullptr));
+  }
+
+  [[nodiscard]] static std::int64_t RealtimeNowNsInt64() noexcept {
+    return static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
   }
 
   [[nodiscard]] std::uint64_t NextRequestSequence() noexcept {
@@ -609,6 +617,7 @@ class OrderSession {
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordTextMessage();
     }
+    const std::int64_t local_receive_ns = RealtimeNowNsInt64();
     const std::string_view payload{
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
@@ -666,7 +675,9 @@ class OrderSession {
                         .exchange_order_id = 0,
                         .request_sequence = parsed.request_id.sequence,
                         .http_status = parsed.http_status,
-                        .error_label_hash = 0});
+                        .error_label_hash = 0,
+                        .local_receive_ns = local_receive_ns,
+                        .exchange_ns = parsed.exchange_ns});
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordResponse();
       }
@@ -702,7 +713,9 @@ class OrderSession {
                       .exchange_order_id = parsed.exchange_order_id,
                       .request_sequence = parsed.request_id.sequence,
                       .http_status = parsed.http_status,
-                      .error_label_hash = parsed.error_label_hash});
+                      .error_label_hash = parsed.error_label_hash,
+                      .local_receive_ns = local_receive_ns,
+                      .exchange_ns = parsed.exchange_ns});
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();
     }

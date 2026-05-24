@@ -18,6 +18,19 @@ inline std::uint64_t SteadyClockNowNs() noexcept {
       std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
 }
 
+inline std::uint64_t RealtimeClockNowNs() noexcept {
+#if defined(__linux__)
+  timespec ts{};
+  if (::clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+    return static_cast<std::uint64_t>(ts.tv_sec) * 1'000'000'000ULL +
+           static_cast<std::uint64_t>(ts.tv_nsec);
+  }
+#endif
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+}
+
 inline std::uint64_t NowNs(ClockSource source) noexcept {
   if (source == ClockSource::kSteady) {
     return SteadyClockNowNs();

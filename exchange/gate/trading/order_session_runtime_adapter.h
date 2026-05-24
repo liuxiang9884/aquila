@@ -40,6 +40,8 @@ namespace aquila::gate {
       .kind = ToCoreOrderResponseKind(response.kind),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
+      .local_receive_ns = response.local_receive_ns,
+      .exchange_ns = response.exchange_ns,
   };
 }
 

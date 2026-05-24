@@ -156,6 +156,8 @@ TEST(OrderSessionRuntimeAdapterTest, ConvertsGateResponsesToCoreEvents) {
       .request_sequence = 42,
       .http_status = 200,
       .error_label_hash = 99,
+      .local_receive_ns = 123456789,
+      .exchange_ns = 1681985856667598000LL,
   };
 
   const core::OrderResponseEvent event = ToCoreOrderResponseEvent(accepted);
@@ -163,6 +165,8 @@ TEST(OrderSessionRuntimeAdapterTest, ConvertsGateResponsesToCoreEvents) {
   EXPECT_EQ(event.kind, core::OrderResponseKind::kAccepted);
   EXPECT_EQ(event.local_order_id, accepted.local_order_id);
   EXPECT_EQ(event.exchange_order_id, accepted.exchange_order_id);
+  EXPECT_EQ(event.local_receive_ns, accepted.local_receive_ns);
+  EXPECT_EQ(event.exchange_ns, accepted.exchange_ns);
 }
 
 TEST(OrderSessionRuntimeAdapterTest, ConvertsEveryGateResponseKind) {

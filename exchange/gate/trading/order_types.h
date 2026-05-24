@@ -46,6 +46,7 @@ struct OrderSendResult {
   OrderSendStatus status{OrderSendStatus::kNotActive};
   std::uint64_t request_sequence{0};
   std::uint64_t encoded_request_id{0};
+  std::int64_t send_local_ns{0};
 };
 
 enum class OrderResponseKind : std::uint8_t {
@@ -63,6 +64,8 @@ struct OrderResponse {
   std::uint64_t request_sequence{0};
   std::uint16_t http_status{0};
   std::uint64_t error_label_hash{0};
+  std::int64_t local_receive_ns{0};
+  std::int64_t exchange_ns{0};
 };
 
 struct OrderSessionStats {
