@@ -318,3 +318,51 @@ source index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=4140
 skip，因此 `skipped=0`。producer 侧 `DataShmPublisher::published_count()` 以 SHM queue 当前 producer position
 初始化；当 data session 配置 `remove_existing=false` 时，producer 的最终 `book_tickers` 仍不一定等于本次窗口内
 生产条数。评估本次 reader 读取情况时以 reader per-source summary 为准。
+
+## Live Record Smoke Evidence
+
+2026-05-24 使用 Gate / Binance data session 写 SHM，并用临时 `drain` 配置运行
+`data_reader_recorder` 写出单个裸 `BookTicker` replay binary。临时配置、日志和输出均在：
+
+```text
+/home/liuxiang/tmp/aquila_data_reader_live_smoke_20260524/
+```
+
+录制命令：
+
+```bash
+/usr/bin/timeout --kill-after=5s 45s ./build/debug/tools/data_reader_recorder \
+  --config /home/liuxiang/tmp/aquila_data_reader_live_smoke_20260524/strategy_data_reader_drain.toml \
+  --output /home/liuxiang/tmp/aquila_data_reader_live_smoke_20260524/live_merged_book_ticker.bin \
+  --mode truncate
+```
+
+recorder 由 `timeout` 发送 SIGTERM 后正常收尾，输出文件大小为 `1,003,840` bytes，即 `15,685`
+条 `sizeof(aquila::BookTicker)=64` 的连续记录。recorder summary：
+
+```text
+result=ok stop_reason=signal polls=146025092 handler_book_tickers=15685 diagnostics_total_count=15685
+recorder_stats total_records=15685 first_exchange_ns=1779591707743090000 first_local_ns=6790761886994204 last_exchange_ns=1779591752524000000 last_local_ns=6790806665512928
+exchange_stats exchange=kBinance records=13860
+exchange_stats exchange=kGate records=1825
+source_stats index=0 name=gate_book_ticker exchange=kGate book_ticker_count=1825 skipped=0 overruns=0 last_book_ticker_id=113244034670
+source_stats index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=13860 skipped=0 overruns=0 last_book_ticker_id=10617499964819
+```
+
+随后使用临时 `binary_file` data reader 配置验证 replay 可读性：
+
+```bash
+./build/debug/tools/data_reader_probe \
+  --config /home/liuxiang/tmp/aquila_data_reader_live_smoke_20260524/recorded_binary_reader.toml \
+  --max-polls 0 \
+  --log-every 100000
+```
+
+`data_reader_probe` 进入 `mode=historical`，通过 `HistoricalDataReader` 读完 recorder 输出：
+
+```text
+result=ok mode=historical stop_reason=finished polls=4 handler_book_tickers=15685 diagnostics_total_count=15685 files_completed=1
+```
+
+结论：本次 live record smoke 中 Gate / Binance 两个 source 都有记录，输出裸 binary 可被
+`HistoricalDataReader` 顺序读完；两个 live SHM source 的 `skipped=0`、`overruns=0`。
