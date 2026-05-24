@@ -61,6 +61,8 @@ struct GateSubmitResponse {
   bool has_local_order_id{false};
   std::uint64_t local_order_id{0};
   std::uint64_t error_label_hash{0};
+  std::string_view error_label{};
+  std::string_view error_message{};
 };
 
 inline constexpr std::uint64_t HashGateSubmitString(
@@ -79,14 +81,6 @@ inline GateSubmitResponse InvalidJsonSubmitResponse() noexcept {
   GateSubmitResponse response{};
   response.parse_status = GateSubmitParseStatus::kInvalidJson;
   return response;
-}
-
-inline std::uint64_t HashSimdjsonString(
-    simdjson::ondemand::value value) noexcept {
-  std::string_view text{};
-  return ReadSimdjsonString(value, &text) && !text.empty()
-             ? HashGateSubmitString(text)
-             : 0;
 }
 
 inline bool ParseUint64Text(std::string_view text,
@@ -237,7 +231,13 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   if (can_parse_error && FindSimdjsonObject(data, "errs", &errs)) {
     response.kind = GateSubmitResponseKind::kError;
     if (FindSimdjsonField(errs, "label", &value)) {
-      response.error_label_hash = HashSimdjsonString(value);
+      if (ReadSimdjsonString(value, &response.error_label) &&
+          !response.error_label.empty()) {
+        response.error_label_hash = HashGateSubmitString(response.error_label);
+      }
+    }
+    if (FindSimdjsonField(errs, "message", &value)) {
+      (void)ReadSimdjsonString(value, &response.error_message);
     }
     return response;
   }

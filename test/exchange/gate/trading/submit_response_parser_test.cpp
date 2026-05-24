@@ -255,6 +255,8 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceErrorWithoutAck) {
   EXPECT_EQ(parsed.http_status, 400);
   EXPECT_EQ(parsed.error_label_hash,
             HashGateSubmitString("INVALID_PARAM_VALUE"));
+  EXPECT_EQ(parsed.error_label, "INVALID_PARAM_VALUE");
+  EXPECT_EQ(parsed.error_message, "invalid size");
 }
 
 TEST(GateSubmitResponseParserTest, ParsesCancelErrorWithoutAck) {
@@ -400,6 +402,8 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
   EXPECT_FALSE(parsed.ack);
   EXPECT_EQ(parsed.http_status, 400);
   EXPECT_EQ(parsed.error_label_hash, HashGateSubmitString("TOO_MANY_REQUESTS"));
+  EXPECT_EQ(parsed.error_label, "TOO_MANY_REQUESTS");
+  EXPECT_EQ(parsed.error_message, "Request Rate limit Exceeded");
   EXPECT_EQ(parsed.exchange_order_id, 0U);
   EXPECT_EQ(parsed.text_hash, 0U);
 }

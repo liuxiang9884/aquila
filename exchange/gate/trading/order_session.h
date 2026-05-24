@@ -501,10 +501,12 @@ class OrderSession {
     }
     NOVA_INFO(
         "gate_order_response kind={} local_order_id={} exchange_order_id={} "
-        "request_sequence={} channel={} http_status={} error_label_hash={}",
+        "request_sequence={} channel={} http_status={} error_label_hash={} "
+        "error_label={} error_message={}",
         magic_enum::enum_name(parsed.kind), local_order_id, exchange_order_id,
         parsed.request_id.sequence, static_cast<int>(parsed.channel),
-        parsed.http_status, parsed.error_label_hash);
+        parsed.http_status, parsed.error_label_hash, parsed.error_label,
+        parsed.error_message);
   }
 
   static void LogGateOrderResponseIgnored(
@@ -514,10 +516,11 @@ class OrderSession {
     }
     NOVA_WARNING(
         "gate_order_response_ignored reason={} request_sequence={} "
-        "channel={} kind={} http_status={} error_label_hash={}",
+        "channel={} kind={} http_status={} error_label_hash={} "
+        "error_label={} error_message={}",
         reason, parsed.request_id.sequence, static_cast<int>(parsed.channel),
         magic_enum::enum_name(parsed.kind), parsed.http_status,
-        parsed.error_label_hash);
+        parsed.error_label_hash, parsed.error_label, parsed.error_message);
   }
 
   static void LogGateOrderResponseUnknownRequestId(
@@ -527,10 +530,11 @@ class OrderSession {
     }
     NOVA_WARNING(
         "gate_order_response_unknown_request_id request_sequence={} "
-        "channel={} kind={} http_status={} error_label_hash={}",
+        "channel={} kind={} http_status={} error_label_hash={} "
+        "error_label={} error_message={}",
         parsed.request_id.sequence, static_cast<int>(parsed.channel),
         magic_enum::enum_name(parsed.kind), parsed.http_status,
-        parsed.error_label_hash);
+        parsed.error_label_hash, parsed.error_label, parsed.error_message);
   }
 
   template <typename OrderT>
