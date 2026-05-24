@@ -85,7 +85,7 @@
   - 2026-05-21 requested data session 配置当前订阅 `PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`、`ETH_USDT`。
   - 2026-05-22 requested LeadLag pair 配置当前包含上述 12 个 symbol；文件名保留历史 `11symbols`，但 runtime 内容已追加 `ETH_USDT`。`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 是 Gate decimal-size 合约；catalog 当前从 `order_size_min=0.1` 推导这些 Gate 行的 `quantity_step=0.1`、`quantity_decimal_places=1`。C++ order / feedback / Gate encoder / LeadLag sizing 已消费这组 metadata；REST final check / emergency flatten 已完成 decimal residual 代码级覆盖，仍需小额 live smoke 复核。
   - requested 12-symbol LeadLag 配置已增加 strategy 全局 `[lead_lag.risk]`：当前启用 `max_gross_notional=2000.0`，限制所有持仓和 pending open reservation 的绝对 notional 之和；`max_holding_position` 可选，未配置时不限制数量。触达限制后只拒绝新开仓，不阻止 reduce-only close。
-  - requested 12-symbol LeadLag 配置已显式设置 `execute.open_slippage` / `execute.close_slippage`：前五个 symbol 为 `5` ticks，后七个 symbol 为 `3` ticks。slippage 只调整实际 IOC limit 下单价，不改变 signal 触发条件；stoploss 使用 `close_slippage`。
+  - requested 12-symbol LeadLag 配置已显式设置 `execute.open_slippage` / `execute.close_slippage`：12 个 symbol 均为 `3` ticks。slippage 只调整实际 IOC limit 下单价，不改变 signal 触发条件；stoploss 使用 `close_slippage`。
   - decimal-size C++ 订单链路已使用 `double quantity` + `quantity_text` 支持小数 size；REST final check / emergency flatten 已使用 decimal REST header、`Decimal` position size、`value` / `margin` residual 判断和 decimal reduce-only close。REST reconcile 的 residual 覆盖仍可后续补齐。
 - Evidence outputs:
   - live runner summary
