@@ -26,3 +26,16 @@ target_link_libraries(data_reader_tool_logging_test
 
 add_test(NAME data_reader_tool_logging_test
          COMMAND data_reader_tool_logging_test)
+
+add_executable(data_reader_probe_mode_test
+    data_reader_probe_mode_test.cpp
+)
+
+target_link_libraries(data_reader_probe_mode_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME data_reader_probe_mode_test
+         COMMAND data_reader_probe_mode_test)
