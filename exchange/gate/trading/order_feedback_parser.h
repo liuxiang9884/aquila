@@ -394,6 +394,7 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
 
   OrderFeedbackEvent event{};
   event.local_order_id = parsed_text.local_order_id;
+  event.exchange_order_id = raw.exchange_order_id;
   event.exchange_update_ns = exchange_update_ns;
   event.local_receive_ns = local_receive_ns;
   event.cumulative_filled_quantity = cumulative_filled_quantity;
@@ -402,7 +403,6 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
 
   if (raw.finish_as == std::string_view("_new")) {
     event.kind = OrderFeedbackKind::kAccepted;
-    event.exchange_order_id = raw.exchange_order_id;
     EmitOrderFeedbackEvent(event, stats, result, sink);
     return;
   }

@@ -88,6 +88,7 @@ TEST(GateOrderFeedbackParserTest, MapsUpdateWithLeftToPartialFilledEvent) {
   ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
   ASSERT_EQ(collector.count, 1U);
   EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kPartialFilled);
+  EXPECT_EQ(collector.events[0].exchange_order_id, kExchangeOrderId);
   EXPECT_EQ(collector.events[0].cumulative_filled_quantity, 6);
   EXPECT_EQ(collector.events[0].left_quantity, 4);
   EXPECT_DOUBLE_EQ(collector.events[0].fill_price, 65'012.5);
@@ -106,6 +107,7 @@ TEST(GateOrderFeedbackParserTest, MapsFilledWithZeroLeftToFilledEvent) {
   ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
   ASSERT_EQ(collector.count, 1U);
   EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kFilled);
+  EXPECT_EQ(collector.events[0].exchange_order_id, kExchangeOrderId);
   EXPECT_EQ(collector.events[0].cumulative_filled_quantity, 10);
   EXPECT_EQ(collector.events[0].left_quantity, 0);
   EXPECT_EQ(collector.events[0].role, OrderRole::kTaker);
@@ -123,6 +125,7 @@ TEST(GateOrderFeedbackParserTest, MapsCancelledToManualCancelledEvent) {
   ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
   ASSERT_EQ(collector.count, 1U);
   EXPECT_EQ(collector.events[0].kind, OrderFeedbackKind::kCancelled);
+  EXPECT_EQ(collector.events[0].exchange_order_id, kExchangeOrderId);
   EXPECT_EQ(collector.events[0].finish_reason,
             OrderFinishReason::kManualCancelled);
   EXPECT_EQ(collector.events[0].cumulative_filled_quantity, 3);

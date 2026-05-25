@@ -785,6 +785,31 @@ TEST(OrderManagerFeedbackTest, CancelledFeedbackWithoutFillMarksCancelled) {
 }
 
 TEST(OrderManagerFeedbackTest,
+     TerminalFeedbackStoresExchangeOrderIdWithoutAcceptedFeedback) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+
+  order_manager.OnOrderFeedback(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kCancelled,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .cumulative_filled_quantity = 0,
+      .cancelled_quantity = 1,
+      .finish_reason = OrderFinishReason::kImmediateOrCancel,
+      .exchange_update_ns = 5000,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kCancelled);
+  EXPECT_EQ(order->exchange_order_id, 36028827892199865U);
+  EXPECT_TRUE(order->is_finished);
+}
+
+TEST(OrderManagerFeedbackTest,
      CancelledFeedbackWithFillMarksPartiallyCancelled) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);

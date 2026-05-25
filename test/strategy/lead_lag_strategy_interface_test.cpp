@@ -198,6 +198,9 @@ namespace leadlag = aquila::strategy::leadlag;
 std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
     g_order_intent_logs{};
 std::size_t g_order_intent_log_count{0};
+std::array<leadlag::detail::StrategyOrderSubmittedLogRecordForTest, 4>
+    g_order_submitted_logs{};
+std::size_t g_order_submitted_log_count{0};
 std::array<leadlag::detail::StrategySignalTriggeredLogRecordForTest, 4>
     g_signal_triggered_logs{};
 std::size_t g_signal_triggered_log_count{0};
@@ -216,6 +219,22 @@ void ResetStrategyOrderIntentLogCapture() noexcept {
   g_order_intent_logs = {};
   g_order_intent_log_count = 0;
   leadlag::detail::SetStrategyOrderIntentLogObserverForTest(nullptr);
+}
+
+void CaptureStrategyOrderSubmittedLogForTest(
+    const leadlag::detail::StrategyOrderSubmittedLogRecordForTest&
+        record) noexcept {
+  if (g_order_submitted_log_count >= g_order_submitted_logs.size()) {
+    return;
+  }
+  g_order_submitted_logs[g_order_submitted_log_count] = record;
+  ++g_order_submitted_log_count;
+}
+
+void ResetStrategyOrderSubmittedLogCapture() noexcept {
+  g_order_submitted_logs = {};
+  g_order_submitted_log_count = 0;
+  leadlag::detail::SetStrategyOrderSubmittedLogObserverForTest(nullptr);
 }
 
 void CaptureStrategySignalTriggeredLogForTest(
@@ -250,6 +269,24 @@ class StrategyOrderIntentLogCaptureGuard {
       const StrategyOrderIntentLogCaptureGuard&) = delete;
   StrategyOrderIntentLogCaptureGuard& operator=(
       const StrategyOrderIntentLogCaptureGuard&) = delete;
+};
+
+class StrategyOrderSubmittedLogCaptureGuard {
+ public:
+  StrategyOrderSubmittedLogCaptureGuard() noexcept {
+    ResetStrategyOrderSubmittedLogCapture();
+    leadlag::detail::SetStrategyOrderSubmittedLogObserverForTest(
+        CaptureStrategyOrderSubmittedLogForTest);
+  }
+
+  ~StrategyOrderSubmittedLogCaptureGuard() noexcept {
+    ResetStrategyOrderSubmittedLogCapture();
+  }
+
+  StrategyOrderSubmittedLogCaptureGuard(
+      const StrategyOrderSubmittedLogCaptureGuard&) = delete;
+  StrategyOrderSubmittedLogCaptureGuard& operator=(
+      const StrategyOrderSubmittedLogCaptureGuard&) = delete;
 };
 
 class StrategySignalTriggeredLogCaptureGuard {
@@ -873,6 +910,46 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
   EXPECT_DOUBLE_EQ(record.estimated_notional, 918.9);
   EXPECT_EQ(record.active_groups, 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(3, 0)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderSubmittedLogCaptureGuard submitted_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const FakeOrderSession::CapturedOrder& order =
+      order_session.placed_orders.back();
+  ASSERT_EQ(g_order_submitted_log_count, 1U);
+  const leadlag::detail::StrategyOrderSubmittedLogRecordForTest& record =
+      g_order_submitted_logs[0];
+  EXPECT_EQ(record.local_order_id, order.local_order_id);
+  EXPECT_EQ(record.trigger_ticker_id, 101);
+  EXPECT_EQ(record.trigger_exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(record.trigger_symbol_id, 3);
+  EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(record.symbol_id, 3);
+  EXPECT_EQ(record.signal_role, leadlag::PairRole::kLead);
+  EXPECT_EQ(record.order_role, "entry");
+  EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
+  EXPECT_FALSE(record.reduce_only);
+  EXPECT_NE(record.group_id, 0U);
+  EXPECT_EQ(record.quantity, 9);
+  EXPECT_EQ(record.quantity_text, "9");
+  EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
+  EXPECT_DOUBLE_EQ(record.order_price, 102.4);
+  EXPECT_EQ(record.price_text, "102.4");
+  EXPECT_EQ(record.slippage_ticks, 3U);
+  EXPECT_DOUBLE_EQ(record.price_tick, 0.1);
+  EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
+  EXPECT_DOUBLE_EQ(record.estimated_notional, 921.6);
+  EXPECT_EQ(record.active_groups, 1U);
+  EXPECT_EQ(record.place_status, aquila::core::OrderPlaceStatus::kOk);
 }
 
 TEST(LeadLagStrategyInterfaceTest,

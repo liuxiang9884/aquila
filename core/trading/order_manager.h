@@ -276,7 +276,7 @@ class OrderManager {
     if (order.status == OrderStatus::kSent) {
       order.status = OrderStatus::kAccepted;
     }
-    order.exchange_order_id = event.exchange_order_id;
+    RecordFeedbackExchangeOrderId(order, event);
     order.exchange_update_ns = event.exchange_update_ns;
     order.accepted_exchange_ns = event.exchange_update_ns;
     NotifyCacheExchangeOrderId(order.local_order_id, event.exchange_order_id);
@@ -284,6 +284,7 @@ class OrderManager {
 
   void OnPartialFilledFeedback(Order& order,
                                const OrderFeedbackEvent& event) noexcept {
+    RecordFeedbackExchangeOrderId(order, event);
     const FillApplyResult result = ApplyCumulativeFill(
         order, event.cumulative_filled_quantity, event.fill_price);
     if (result != FillApplyResult::kApplied) {
@@ -298,6 +299,7 @@ class OrderManager {
 
   void OnFilledFeedback(Order& order,
                         const OrderFeedbackEvent& event) noexcept {
+    RecordFeedbackExchangeOrderId(order, event);
     const FillApplyResult result = ApplyCumulativeFill(
         order, event.cumulative_filled_quantity, event.fill_price);
     if (result == FillApplyResult::kStale) {
@@ -313,6 +315,7 @@ class OrderManager {
 
   void OnCancelledFeedback(Order& order,
                            const OrderFeedbackEvent& event) noexcept {
+    RecordFeedbackExchangeOrderId(order, event);
     const FillApplyResult result = ApplyCumulativeFill(
         order, event.cumulative_filled_quantity, event.fill_price);
     if (result == FillApplyResult::kStale) {
@@ -330,11 +333,19 @@ class OrderManager {
 
   void OnRejectedFeedback(Order& order,
                           const OrderFeedbackEvent& event) noexcept {
+    RecordFeedbackExchangeOrderId(order, event);
     order.status = OrderStatus::kRejected;
     order.reject_reason = event.reject_reason;
     order.exchange_update_ns = event.exchange_update_ns;
     order.finish_exchange_ns = event.exchange_update_ns;
     FinishOrder(order);
+  }
+
+  static void RecordFeedbackExchangeOrderId(
+      Order& order, const OrderFeedbackEvent& event) noexcept {
+    if (event.exchange_order_id != 0) {
+      order.exchange_order_id = event.exchange_order_id;
+    }
   }
 
   FillApplyResult ApplyCumulativeFill(Order& order, double cumulative_quantity,
