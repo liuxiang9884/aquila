@@ -241,6 +241,42 @@ rotation_enabled = true
   EXPECT_NE(result.error.find("append"), std::string::npos);
 }
 
+TEST(DataReaderRecorderConfigTest, RejectsWrongTypedRecorderFields) {
+  const std::vector<std::pair<std::string, std::string>> cases{
+      {"rotation_enabled", R"toml(
+[recorder]
+rotation_enabled = "true"
+)toml"},
+      {"rotation_interval_sec", R"toml(
+[recorder]
+rotation_interval_sec = "3600"
+)toml"},
+      {"output_dir", R"toml(
+[recorder]
+output_dir = 7
+)toml"},
+      {"file_prefix", R"toml(
+[recorder]
+file_prefix = false
+)toml"},
+      {"manifest_path", R"toml(
+[recorder]
+manifest_path = 9
+)toml"},
+  };
+
+  for (const auto& [field_name, toml_text] : cases) {
+    SCOPED_TRACE(field_name);
+    const toml::parse_result parsed = toml::parse(toml_text);
+
+    const auto result = ParseRecorderConfig(
+        parsed, "/home/liuxiang/tmp/live.bin", RecorderWriteMode::kTruncate);
+
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find(field_name), std::string::npos);
+  }
+}
+
 TEST(DataReaderRecorderTest,
      RealtimeReaderDrainsTwoShmSourcesIntoSingleReplayBinary) {
   const md::BookTickerShmConfig gate_config = MakeCreateConfig("gate");
@@ -420,6 +456,40 @@ TEST(DataReaderRecorderTest, RotatingRecorderKeepsActiveTmpOutOfManifest) {
   EXPECT_TRUE(FilesWithExtension(rotation.output_dir, ".bin").empty());
   EXPECT_FALSE(std::filesystem::exists(rotation.manifest_path));
   EXPECT_TRUE(recorder.Flush());
+
+  std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderTest, RotatingRecorderRejectsExistingActiveTmpSegment) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_recorder_collision_test_" + std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "manifest.jsonl",
+  };
+  const std::filesystem::path expected_tmp =
+      rotation.output_dir / "book_ticker_19700101_000000_000001.bin.tmp";
+  std::filesystem::create_directories(rotation.output_dir);
+  {
+    std::ofstream existing(expected_tmp, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(existing.is_open());
+    existing << "existing";
+  }
+
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{0}},
+  };
+  EXPECT_THROW(
+      RotatingBookTickerBinaryRecorder recorder(rotation, [&] { return now; }),
+      std::runtime_error);
+  EXPECT_EQ(std::filesystem::file_size(expected_tmp), 8U);
 
   std::filesystem::remove_all(root);
 }

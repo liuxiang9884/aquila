@@ -43,18 +43,29 @@ namespace {
          fmt::format("{}_manifest.jsonl", file_prefix);
 }
 
-[[nodiscard]] bool BoolOr(toml::node_view<const toml::node> node,
-                          bool fallback) {
+[[nodiscard]] bool BoolOr(toml::node_view<const toml::node> node, bool fallback,
+                          std::string_view field_name, std::string* error) {
+  if (!node) {
+    return fallback;
+  }
   const std::optional<bool> value = node.value<bool>();
-  return value.value_or(fallback);
+  if (!value.has_value()) {
+    *error = fmt::format("recorder.{} must be a boolean", field_name);
+    return fallback;
+  }
+  return *value;
 }
 
 [[nodiscard]] std::uint32_t UInt32Or(toml::node_view<const toml::node> node,
                                      std::uint32_t fallback,
                                      std::string_view field_name,
                                      std::string* error) {
+  if (!node) {
+    return fallback;
+  }
   const std::optional<std::int64_t> value = node.value<std::int64_t>();
   if (!value.has_value()) {
+    *error = fmt::format("recorder.{} must be an integer", field_name);
     return fallback;
   }
   if (*value <= 0) {
@@ -70,9 +81,18 @@ namespace {
 }
 
 [[nodiscard]] std::string StringOr(toml::node_view<const toml::node> node,
-                                   std::string fallback) {
+                                   std::string fallback,
+                                   std::string_view field_name,
+                                   std::string* error) {
+  if (!node) {
+    return fallback;
+  }
   const std::optional<std::string> value = node.value<std::string>();
-  return value.value_or(std::move(fallback));
+  if (!value.has_value()) {
+    *error = fmt::format("recorder.{} must be a string", field_name);
+    return fallback;
+  }
+  return *value;
 }
 
 }  // namespace
@@ -91,10 +111,14 @@ RecorderConfigResult ParseRecorderConfig(
     return Success(std::move(config));
   }
 
-  config.rotation.enabled =
-      BoolOr((*recorder)["rotation_enabled"], config.rotation.enabled);
-
   std::string error;
+  config.rotation.enabled =
+      BoolOr((*recorder)["rotation_enabled"], config.rotation.enabled,
+             "rotation_enabled", &error);
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
+
   config.rotation.rotation_interval_sec = UInt32Or(
       (*recorder)["rotation_interval_sec"],
       config.rotation.rotation_interval_sec, "rotation_interval_sec", &error);
@@ -103,11 +127,23 @@ RecorderConfigResult ParseRecorderConfig(
   }
 
   config.rotation.output_dir = std::filesystem::path{
-      StringOr((*recorder)["output_dir"], config.rotation.output_dir.string())};
+      StringOr((*recorder)["output_dir"], config.rotation.output_dir.string(),
+               "output_dir", &error)};
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
   config.rotation.file_prefix =
-      StringOr((*recorder)["file_prefix"], config.rotation.file_prefix);
+      StringOr((*recorder)["file_prefix"], config.rotation.file_prefix,
+               "file_prefix", &error);
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
   config.rotation.manifest_path = std::filesystem::path{StringOr(
-      (*recorder)["manifest_path"], config.rotation.manifest_path.string())};
+      (*recorder)["manifest_path"], config.rotation.manifest_path.string(),
+      "manifest_path", &error)};
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
 
   if (config.rotation.output_dir.empty()) {
     return Failure("recorder.output_dir must not be empty");

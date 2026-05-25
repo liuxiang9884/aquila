@@ -213,7 +213,10 @@ class RotatingBookTickerBinaryRecorder {
     if (config_.manifest_path.has_parent_path()) {
       std::filesystem::create_directories(config_.manifest_path.parent_path());
     }
-    OpenSegment(clock_());
+    if (!OpenSegment(clock_())) {
+      throw std::runtime_error(fmt::format(
+          "failed to open rotation segment '{}'", current_tmp_path_.string()));
+    }
   }
 
   RotatingBookTickerBinaryRecorder(const RotatingBookTickerBinaryRecorder&) =
@@ -265,8 +268,7 @@ class RotatingBookTickerBinaryRecorder {
       if (!FinalizeCurrentSegment("rotation_interval")) {
         return;
       }
-      OpenSegment(now);
-      if (write_error_) {
+      if (!OpenSegment(now)) {
         return;
       }
     }
@@ -319,7 +321,7 @@ class RotatingBookTickerBinaryRecorder {
     return escaped;
   }
 
-  void OpenSegment(const RecorderTimeSnapshot& now) {
+  [[nodiscard]] bool OpenSegment(const RecorderTimeSnapshot& now) {
     current_stats_ = RecorderStats{};
     current_sequence_ = next_sequence_++;
     const std::string file_name =
@@ -331,10 +333,26 @@ class RotatingBookTickerBinaryRecorder {
     next_rotation_deadline_ =
         now.steady + std::chrono::seconds{config_.rotation_interval_sec};
 
+    std::error_code exists_error;
+    const bool tmp_exists =
+        std::filesystem::exists(current_tmp_path_, exists_error);
+    if (exists_error || tmp_exists) {
+      write_error_ = true;
+      return false;
+    }
+    const bool final_exists =
+        std::filesystem::exists(current_final_path_, exists_error);
+    if (exists_error || final_exists) {
+      write_error_ = true;
+      return false;
+    }
+
     output_.open(current_tmp_path_, std::ios::binary | std::ios::trunc);
     if (!output_.is_open()) {
       write_error_ = true;
+      return false;
     }
+    return true;
   }
 
   [[nodiscard]] bool FinalizeCurrentSegment(std::string_view reason) {
