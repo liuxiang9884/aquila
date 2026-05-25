@@ -65,6 +65,48 @@ docs/evaluation_support.md
 
 “结束对话”流程只做收尾、同步和交接，不主动开启新的功能实现。
 
+### 实盘交易 report 触发词
+
+当用户输入“总结上一次实盘交易”、“生成上一次实盘 report”、“生成本次实盘 report”或等价表达时，默认自动执行 LeadLag live report pipeline：
+
+1. 先确认当前工作区状态：运行 `git status --short --branch`，避免把无关改动混进 report 提交。
+2. 定位本次实盘输入：
+   - 优先使用用户明确给出的 `run_id`、strategy log、guard stdout 和 config。
+   - 如果用户只说“上一次”，从 `/home/liuxiang/log/` 中按 mtime 查找最近的 `lead_lag_strategy*live*.log`，并从 `/home/liuxiang/tmp/` 中查找同轮 `guarded_live*.stdout`；如果存在多个候选或无法判断对应关系，先向用户确认，不要猜。
+   - 策略配置优先使用 guard / runner 启动命令里的 config；无法从上下文确定时，使用当前 12-symbol live 默认配置 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`，并在最终回复中说明该假设。
+   - `run_id` 优先使用用户给定值；否则从日志文件名或启动时间推导为 `YYYYMMDD_HHMMSS_<label>`，推导不唯一时先确认。
+3. 使用固定脚本生成报告目录：
+
+```bash
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/lead_lag/generate_live_report.py \
+  --run-id <run_id> \
+  --log <lead_lag_strategy.log> \
+  --config <strategy_config.toml> \
+  --guard-stdout <guard_stdout> \
+  --output-root reports
+```
+
+生成目录必须是 `reports/<run_id>/`，包含：
+
+```text
+report.md
+signal.csv
+order_detail.csv
+position.csv
+latency.csv
+lead_lag_live_report_csv_schema.md
+```
+
+4. 如果 `reports/<run_id>/` 已存在，默认不要覆盖；先检查已有内容并询问用户是复用、另取 run id，还是明确重新生成。
+5. 生成后做最小校验：
+   - `signal.csv`、`order_detail.csv`、`position.csv`、`latency.csv` 都存在且有 header。
+   - `lead_lag_live_report_csv_schema.md` 与 `docs/lead_lag_live_report_csv_schema.md` 一致。
+   - 用 report schema 检查四个 CSV 的所有 header 字段都有说明。
+   - 运行 `git diff --check`。
+6. 最终回复必须概述 report 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；不要只说“已生成”。
+7. “打包”默认表示把完整 `reports/<run_id>/` 作为一个原子 git commit，不额外生成 tar/zip，除非用户明确要求压缩包。commit message 使用英文，例如 `Add LeadLag live report <run_id>`。
+8. 只有用户明确说“push”、“上传到 git”或等价表达时，才在 commit 后执行 `git push`；否则只提交并说明当前 ahead 状态。
+
 ## 项目背景
 
 `aquila` 用于实现 crypto 高频交易系统。当前仓库以 `CMake` 为主构建入口，核心工作通常会围绕以下方向展开：
