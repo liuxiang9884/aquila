@@ -105,6 +105,9 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "subscribe_acks={} control_errors={} parse_errors={} "
       "events_published={} publish_failures={} "
       "global_continuity_lost_events_published={} "
+      "connection_phase_transitions={} disconnect_phase_transitions={} "
+      "last_connection_phase={} last_connection_error={} "
+      "last_continuity_lost_phase={} last_continuity_lost_error={} "
       "parser_messages_seen={} parser_messages_parsed={} "
       "parser_orders_seen={} parser_events_emitted={} parser_dropped_events={} "
       "parser_need_more={} parser_unsupported_template={} "
@@ -123,6 +126,12 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       session_stats.parse_errors, session_stats.events_published,
       session_stats.publish_failures,
       session_stats.global_continuity_lost_events_published,
+      session_stats.connection_phase_transitions,
+      session_stats.disconnect_phase_transitions,
+      magic_enum::enum_name(session_stats.last_connection_phase),
+      magic_enum::enum_name(session_stats.last_connection_error),
+      magic_enum::enum_name(session_stats.last_continuity_lost_phase),
+      magic_enum::enum_name(session_stats.last_continuity_lost_error),
       parser_stats.messages_seen, parser_stats.messages_parsed,
       parser_stats.orders_seen, parser_stats.events_emitted,
       parser_stats.dropped_events, parser_stats.need_more_count,
@@ -144,6 +153,9 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       "subscribe_acks={} control_errors={} parse_errors={} "
       "events_published={} publish_failures={} "
       "global_continuity_lost_events_published={} "
+      "connection_phase_transitions={} disconnect_phase_transitions={} "
+      "last_connection_phase={} last_connection_error={} "
+      "last_continuity_lost_phase={} last_continuity_lost_error={} "
       "parser_messages_seen={} parser_messages_parsed={} "
       "parser_orders_seen={} parser_events_emitted={} parser_dropped_events={} "
       "parser_need_more={} parser_unsupported_template={} "
@@ -162,6 +174,12 @@ void PrintStats(const gate::OrderFeedbackSessionStats& session_stats,
       session_stats.parse_errors, session_stats.events_published,
       session_stats.publish_failures,
       session_stats.global_continuity_lost_events_published,
+      session_stats.connection_phase_transitions,
+      session_stats.disconnect_phase_transitions,
+      magic_enum::enum_name(session_stats.last_connection_phase),
+      magic_enum::enum_name(session_stats.last_connection_error),
+      magic_enum::enum_name(session_stats.last_continuity_lost_phase),
+      magic_enum::enum_name(session_stats.last_continuity_lost_error),
       parser_stats.messages_seen, parser_stats.messages_parsed,
       parser_stats.orders_seen, parser_stats.events_emitted,
       parser_stats.dropped_events, parser_stats.need_more_count,
@@ -273,12 +291,22 @@ int RunLive(gate::OrderFeedbackSessionConfig config,
     session_thread.join();
   }
 
-  fmt::print("summary start_result={} duration_reached={} ready={}\n",
-             start_result ? "true" : "false", timed_out ? "true" : "false",
-             session.ready() ? "true" : "false");
-  NOVA_INFO("session_result start_result={} duration_reached={} ready={}",
-            start_result ? "true" : "false", timed_out ? "true" : "false",
-            session.ready() ? "true" : "false");
+  fmt::print(
+      "summary start_result={} duration_reached={} ready={} phase={} "
+      "last_error={} ever_active={}\n",
+      start_result ? "true" : "false", timed_out ? "true" : "false",
+      session.ready() ? "true" : "false",
+      magic_enum::enum_name(session.phase()),
+      magic_enum::enum_name(session.last_error()),
+      session.ever_active() ? "true" : "false");
+  NOVA_INFO(
+      "session_result start_result={} duration_reached={} ready={} phase={} "
+      "last_error={} ever_active={}",
+      start_result ? "true" : "false", timed_out ? "true" : "false",
+      session.ready() ? "true" : "false",
+      magic_enum::enum_name(session.phase()),
+      magic_enum::enum_name(session.last_error()),
+      session.ever_active() ? "true" : "false");
   PrintStats(session.stats(), session.parser_stats(), publisher);
   return start_result ? 0 : 1;
 }

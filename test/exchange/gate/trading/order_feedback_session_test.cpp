@@ -201,6 +201,10 @@ TEST(OrderFeedbackSessionTest,
   EXPECT_EQ(publisher.last_continuity_reason,
             OrderFeedbackContinuityReason::kSessionDisconnected);
   EXPECT_EQ(session.stats().global_continuity_lost_events_published, 1U);
+  EXPECT_EQ(session.stats().last_continuity_lost_phase,
+            websocket::ConnectionPhase::kDisconnected);
+  EXPECT_EQ(session.stats().last_continuity_lost_error,
+            websocket::ConnectionError::kNone);
 }
 
 TEST(OrderFeedbackSessionTest, PublishFailureIncrementsDiagnostics) {

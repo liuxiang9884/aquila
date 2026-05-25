@@ -13,6 +13,8 @@
 #include <string_view>
 #include <utility>
 
+#include <magic_enum/magic_enum.hpp>
+
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
@@ -22,6 +24,7 @@
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/submit_response_parser.h"
+#include "nova/utils/log.h"
 #include <simdjson.h>
 
 namespace aquila::gate {
@@ -46,6 +49,16 @@ struct OrderFeedbackSessionStats {
   std::uint64_t publish_failures{0};
   std::uint64_t global_continuity_lost_events_published{0};
   std::uint64_t global_continuity_lost_publish_failures{0};
+  std::uint64_t connection_phase_transitions{0};
+  std::uint64_t disconnect_phase_transitions{0};
+  websocket::ConnectionPhase last_connection_phase{
+      websocket::ConnectionPhase::kDisconnected};
+  websocket::ConnectionError last_connection_error{
+      websocket::ConnectionError::kNone};
+  websocket::ConnectionPhase last_continuity_lost_phase{
+      websocket::ConnectionPhase::kDisconnected};
+  websocket::ConnectionError last_continuity_lost_error{
+      websocket::ConnectionError::kNone};
 };
 
 class NoopOrderFeedbackSessionDiagnostics {
@@ -114,6 +127,20 @@ class OrderFeedbackSessionDiagnostics {
   }
   void RecordGlobalContinuityLostPublishFailure() noexcept {
     ++stats_.global_continuity_lost_publish_failures;
+  }
+  void RecordConnectionPhase(websocket::ConnectionPhase phase,
+                             websocket::ConnectionError error) noexcept {
+    ++stats_.connection_phase_transitions;
+    stats_.last_connection_phase = phase;
+    stats_.last_connection_error = error;
+  }
+  void RecordDisconnectPhase() noexcept {
+    ++stats_.disconnect_phase_transitions;
+  }
+  void RecordContinuityLostContext(websocket::ConnectionPhase phase,
+                                   websocket::ConnectionError error) noexcept {
+    stats_.last_continuity_lost_phase = phase;
+    stats_.last_continuity_lost_error = error;
   }
 
   [[nodiscard]] const OrderFeedbackSessionStats& stats() const noexcept {
@@ -273,6 +300,25 @@ class OrderFeedbackSession {
   }
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
+    const websocket::ConnectionError last_error = client_.last_error();
+    const bool active_before = active_;
+    const bool login_ready_before = login_ready_;
+    const bool subscribed_before = subscribed_;
+    if constexpr (DiagnosticsEnabled) {
+      diagnostics_.RecordConnectionPhase(phase, last_error);
+    }
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_INFO(
+          "order_feedback_session_phase phase={} last_error={} "
+          "active_before={} login_ready_before={} subscribed_before={} "
+          "ready_before={}",
+          magic_enum::enum_name(phase), magic_enum::enum_name(last_error),
+          active_before ? "true" : "false",
+          login_ready_before ? "true" : "false",
+          subscribed_before ? "true" : "false",
+          (login_ready_before && subscribed_before) ? "true" : "false");
+    }
+
     if (phase == websocket::ConnectionPhase::kActive) {
       active_ = true;
       ever_active_.store(true, std::memory_order_release);
@@ -285,10 +331,28 @@ class OrderFeedbackSession {
         phase == websocket::ConnectionPhase::kReconnectBackoff ||
         phase == websocket::ConnectionPhase::kClosing ||
         phase == websocket::ConnectionPhase::kClosed) {
-      const bool publish_continuity_lost = active_;
+      const bool publish_continuity_lost = active_before;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordDisconnectPhase();
+      }
       active_ = false;
       ResetAuthenticatedState();
       if (publish_continuity_lost) {
+        if constexpr (DiagnosticsEnabled) {
+          diagnostics_.RecordContinuityLostContext(phase, last_error);
+        }
+        if (::nova::kLogManager.logger() != nullptr) {
+          NOVA_WARNING(
+              "order_feedback_session_disconnect_continuity_lost phase={} "
+              "last_error={} active_before={} login_ready_before={} "
+              "subscribed_before={} reason={}",
+              magic_enum::enum_name(phase), magic_enum::enum_name(last_error),
+              active_before ? "true" : "false",
+              login_ready_before ? "true" : "false",
+              subscribed_before ? "true" : "false",
+              magic_enum::enum_name(
+                  OrderFeedbackContinuityReason::kSessionDisconnected));
+        }
         PublishGlobalContinuityLost(
             OrderFeedbackContinuityReason::kSessionDisconnected, NowNsInt64());
       }
