@@ -65,6 +65,69 @@ docs/evaluation_support.md
 
 “结束对话”流程只做收尾、同步和交接，不主动开启新的功能实现。
 
+### 实盘交易启动触发词
+
+当用户输入“启动实盘测试”、“启动 12 pair 跑一小时”、“开始 live smoke”、“启动交易端”、“跑一段实盘交易”或等价表达时，默认执行 LeadLag live-orders guarded run pipeline。该流程只负责交易端；已健康运行的 Gate / Binance data session 和 recorder 默认保持不变，不随每次交易测试重启或停止。
+
+1. 先确认当前工作区和事实源：
+   - 运行 `git status --short --branch`，记录当前分支、ahead/behind 和未提交状态；不要预设本地与 `origin/main` 同步。
+   - 快速复核 `docs/project_onboarding_guide.md`、`docs/lead_lag_live_runtime_plan.md` 和 `docs/lead_lag_reconcile_design.md` 中的当前阻断条件、测试顺序和安全边界。
+   - 如果文档仍要求“复核前不要启动无人值守真实订单长跑”，只能启动符合该边界的小额 guarded smoke；不能因为用户说“后台跑一小时”就绕过当前交接限制。
+2. 明确本次 run 参数：
+   - `duration_sec` 来自用户要求；未给出时先确认，不默认长跑真实订单。
+   - `contracts` 优先使用用户指定列表；用户只说“12 pair”时使用当前 requested 12-symbol 列表：`PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`、`ETH_USDT`。
+   - 真实订单默认 strategy config 使用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`；不要误用 signal-only config 搭配 `--execute`。
+   - `run_id` 默认用启动时间和标签生成，例如 `YYYYMMDD_HHMMSS_12pair_live`；临时运行目录写入 `/home/liuxiang/tmp/<run_id>/`。
+3. 如果本轮刚修改过代码或交易配置，先完成相应 build / test / commit，再启动 live run；不要用过期 binary 或未验证配置下真实订单。只修改报告或文档时不需要重编译。
+4. 检查行情端：
+   - 通过 `ps`、日志或 SHM probe 确认 `gate_data_session` 和 `binance_data_session` 正在运行并写入预期 SHM。
+   - 如果行情端缺失，按 `config/data_sessions/gate_data_session_requested_20260521.toml` 和 `config/data_sessions/binance_data_session_requested_20260521.toml` 启动；启动 stdout / stderr 写入本次 `/home/liuxiang/tmp/<run_id>/`。
+   - 如果 recorder 已按用户要求长期运行，保持运行；如需新 recorder，按 recorder runbook 单独启动，不把 recorder 和交易端生命周期绑死。
+5. 启动 Gate order feedback session：
+   - 必须使用 `config/order_feedback/gate_order_feedback_session.toml` 的临时副本，把 `file_sink_name` 和 stdout / stderr 指向 `/home/liuxiang/tmp/<run_id>/`。
+   - `duration-sec` 至少为策略 `duration_sec + 300`，保证策略退出和 guard final check 有回报缓冲时间。
+   - 默认不清理正在使用的 feedback SHM；只有确认没有 live strategy 正在消费、且需要清理 stale state 时，才可在临时副本中设置 `remove_existing = true`。
+   - feedback session 必须先进入 ready / subscribed 状态，再启动真实订单策略。
+6. 用 guard wrapper 启动真实订单策略，后台运行必须使用可脱离当前 shell 的方式，例如 `setsid ... > <run_dir>/guarded_live.stdout 2>&1 < /dev/null &`。推荐命令形态：
+
+```bash
+scripts/lead_lag/run_live_with_guard.py \
+  --settle usdt \
+  --contract <SYMBOL_1> \
+  --contract <SYMBOL_2> \
+  --poll-timeout-sec 30 \
+  --no-pretty \
+  -- \
+  ./build/release/tools/lead_lag_strategy \
+    --config config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml \
+    --connect-data \
+    --execute \
+    --duration-sec <duration_sec>
+```
+
+7. 启动后必须做一次即时检查：
+   - guard / strategy / feedback PIDs 是否存在。
+   - strategy log 是否出现 `lead_lag_live_orders_runtime_started`。
+   - guard preflight 是否通过，账户初始 open orders 为空、目标 contracts flat。
+   - 是否出现 `ERROR`、`FATAL`、`ContinuityLost`、`feedback_global_continuity_lost` 或 `needs_reconcile=true`。
+8. 对持续时间超过 10 分钟的真实订单 run，默认每 10 分钟做一次健康检查，除非用户明确说“不需要监控”。每次检查至少统计：
+   - strategy / guard / feedback PIDs。
+   - `lead_lag_signal_triggered`、`lead_lag_order_submitted`、`lead_lag_order_finished` 数量。
+   - `ERROR`、`FATAL`、`ContinuityLost`、`feedback_global_continuity_lost`、`needs_reconcile`、`manual_intervention` 命中。
+   - 最新 guard stdout、strategy log 和 feedback stdout 尾部摘要。
+   - 对明显异常立即汇报；不要等到整个 run 结束才说明。
+9. guard / strategy 退出后立即做结束检查：
+   - 读取 guard 最后一行 JSON summary，确认 `ok`、`result`、`exit_code`、`final_check.flat`、`open_orders` 和目标 contracts position。
+   - 核对 strategy summary 中 `order_responses`、`order_feedbacks`、`feedback_continuity_lost_events`、`needs_reconcile`、`manual_intervention`。
+   - 统计 submitted / finished / filled / cancelled 数量；fill 数量必须以 `cumulative_filled_quantity > 0` 或 terminal filled feedback 为准。
+   - 如果 feedback session 在策略结束后因自身 `duration-sec` 到期发布 `feedback_global_continuity_lost`，最终回复要明确它发生在策略退出之后；如果发生在策略运行期间，则按异常处理。
+10. 最终回复必须给出本次 run 的路径和核心证据：
+    - run directory、strategy log、guard stdout、feedback stdout。
+    - 启动参数：duration、contracts、strategy config、当前 commit / ahead 状态。
+    - 退出状态：normal flat、guard flatten、needs reconcile 或失败原因。
+    - signal/order/fill 简要统计和任何延迟 / feedback 异常摘要。
+    - 如果用户随后要求“生成 report”，继续执行“实盘交易 report 触发词”流程。
+
 ### 实盘交易 report 触发词
 
 当用户输入“总结上一次实盘交易”、“生成上一次实盘 report”、“生成本次实盘 report”或等价表达时，默认自动执行 LeadLag live report pipeline：
