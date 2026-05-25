@@ -1,5 +1,6 @@
 add_executable(data_reader_recorder_test
     data_reader_recorder_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/market_data/data_reader_recorder_config.cpp
 )
 
 target_link_libraries(data_reader_recorder_test

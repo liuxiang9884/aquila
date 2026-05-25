@@ -3,6 +3,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -12,16 +14,19 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <toml++/toml.hpp>
 
 #include "core/config/data_reader_config.h"
 #include "core/market_data/data_shm.h"
 #include "core/market_data/realtime_data_reader.h"
+#include "tools/market_data/data_reader_recorder_config.h"
 
 namespace aquila::tools::market_data {
 namespace {
 
 namespace cfg = aquila::config;
 namespace md = aquila::market_data;
+namespace chrono = std::chrono;
 
 struct ShmCleanup {
   explicit ShmCleanup(std::string shm_name_in)
@@ -111,6 +116,129 @@ std::vector<BookTicker> ReadBookTickers(
     EXPECT_TRUE(input.good());
   }
   return records;
+}
+
+std::vector<std::filesystem::path> FilesWithExtension(
+    const std::filesystem::path& directory, std::string_view extension) {
+  std::vector<std::filesystem::path> files;
+  if (!std::filesystem::exists(directory)) {
+    return files;
+  }
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(directory)) {
+    if (entry.path().extension() == extension) {
+      files.push_back(entry.path());
+    }
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
+std::vector<std::string> ReadLines(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(input, line)) {
+    lines.push_back(line);
+  }
+  return lines;
+}
+
+TEST(DataReaderRecorderConfigTest, DefaultsToSingleFileRecorder) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[data_reader]
+name = "unused"
+)toml");
+  const std::filesystem::path output_path =
+      std::filesystem::temp_directory_path() / "merged_book_ticker.bin";
+
+  const auto result =
+      ParseRecorderConfig(parsed, output_path, RecorderWriteMode::kTruncate);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_FALSE(result.value.rotation.enabled);
+  EXPECT_EQ(result.value.rotation.rotation_interval_sec, 3600U);
+  EXPECT_EQ(result.value.rotation.output_dir,
+            output_path.parent_path() / "segments");
+  EXPECT_EQ(result.value.rotation.file_prefix, "merged_book_ticker");
+  EXPECT_EQ(result.value.rotation.manifest_path,
+            output_path.parent_path() / "merged_book_ticker_manifest.jsonl");
+}
+
+TEST(DataReaderRecorderConfigTest, ParsesRotationDefaults) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[recorder]
+rotation_enabled = true
+)toml");
+  const std::filesystem::path output_path =
+      std::filesystem::temp_directory_path() / "live.bin";
+
+  const auto result =
+      ParseRecorderConfig(parsed, output_path, RecorderWriteMode::kTruncate);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.value.rotation.enabled);
+  EXPECT_EQ(result.value.rotation.rotation_interval_sec, 3600U);
+  EXPECT_EQ(result.value.rotation.output_dir,
+            output_path.parent_path() / "segments");
+  EXPECT_EQ(result.value.rotation.file_prefix, "live");
+  EXPECT_EQ(result.value.rotation.manifest_path,
+            output_path.parent_path() / "live_manifest.jsonl");
+}
+
+TEST(DataReaderRecorderConfigTest, ParsesExplicitRotationFields) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "aquila_recorder_config_test";
+  const std::filesystem::path output_dir = root / "out";
+  const std::filesystem::path manifest_path = root / "manifest.jsonl";
+  const std::string toml_text = fmt::format(
+      R"toml(
+[recorder]
+rotation_enabled = true
+rotation_interval_sec = 17
+output_dir = "{}"
+file_prefix = "book_ticker"
+manifest_path = "{}"
+)toml",
+      output_dir.string(), manifest_path.string());
+  const toml::parse_result parsed = toml::parse(toml_text);
+
+  const auto result = ParseRecorderConfig(parsed, root / "ignored.bin",
+                                          RecorderWriteMode::kTruncate);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.value.rotation.enabled);
+  EXPECT_EQ(result.value.rotation.rotation_interval_sec, 17U);
+  EXPECT_EQ(result.value.rotation.output_dir, output_dir);
+  EXPECT_EQ(result.value.rotation.file_prefix, "book_ticker");
+  EXPECT_EQ(result.value.rotation.manifest_path, manifest_path);
+}
+
+TEST(DataReaderRecorderConfigTest, RejectsInvalidRotationInterval) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[recorder]
+rotation_enabled = true
+rotation_interval_sec = 0
+)toml");
+
+  const auto result = ParseRecorderConfig(parsed, "/home/liuxiang/tmp/live.bin",
+                                          RecorderWriteMode::kTruncate);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("rotation_interval_sec"), std::string::npos);
+}
+
+TEST(DataReaderRecorderConfigTest, RejectsAppendModeWithRotation) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[recorder]
+rotation_enabled = true
+)toml");
+
+  const auto result = ParseRecorderConfig(parsed, "/home/liuxiang/tmp/live.bin",
+                                          RecorderWriteMode::kAppend);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("append"), std::string::npos);
 }
 
 TEST(DataReaderRecorderTest,
@@ -265,6 +393,90 @@ TEST(DataReaderRecorderTest, AppendModePreservesExistingRecords) {
   ExpectBookTickerEq(records[1], second);
 
   std::filesystem::remove(output_path);
+}
+
+TEST(DataReaderRecorderTest, RotatingRecorderKeepsActiveTmpOutOfManifest) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_recorder_active_test_" + std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "manifest.jsonl",
+  };
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{1'779'669'600}},
+  };
+  RotatingBookTickerBinaryRecorder recorder(rotation, [&] { return now; });
+
+  recorder.OnBookTicker(MakeTicker(1, Exchange::kGate, 10, 20));
+
+  EXPECT_EQ(FilesWithExtension(rotation.output_dir, ".tmp").size(), 1U);
+  EXPECT_TRUE(FilesWithExtension(rotation.output_dir, ".bin").empty());
+  EXPECT_FALSE(std::filesystem::exists(rotation.manifest_path));
+  EXPECT_TRUE(recorder.Flush());
+
+  std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderTest, RotatingRecorderFinalizesSegmentsAndManifest) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_recorder_manifest_test_" + std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig rotation{
+      .enabled = true,
+      .rotation_interval_sec = 1,
+      .output_dir = root / "segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "manifest.jsonl",
+  };
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{1'779'669'600}},
+  };
+  RotatingBookTickerBinaryRecorder recorder(rotation, [&] { return now; });
+
+  const BookTicker first = MakeTicker(1, Exchange::kGate, 100, 200);
+  const BookTicker second = MakeTicker(2, Exchange::kBinance, 300, 400);
+  recorder.OnBookTicker(first);
+  now.steady += chrono::seconds{2};
+  now.wall += chrono::seconds{2};
+  recorder.OnBookTicker(second);
+  EXPECT_TRUE(recorder.Flush());
+  EXPECT_FALSE(recorder.write_error());
+
+  const std::vector<std::filesystem::path> tmp_files =
+      FilesWithExtension(rotation.output_dir, ".tmp");
+  const std::vector<std::filesystem::path> bin_files =
+      FilesWithExtension(rotation.output_dir, ".bin");
+  ASSERT_TRUE(tmp_files.empty());
+  ASSERT_EQ(bin_files.size(), 2U);
+  ASSERT_EQ(ReadBookTickers(bin_files[0]).size(), 1U);
+  ASSERT_EQ(ReadBookTickers(bin_files[1]).size(), 1U);
+  ExpectBookTickerEq(ReadBookTickers(bin_files[0])[0], first);
+  ExpectBookTickerEq(ReadBookTickers(bin_files[1])[0], second);
+
+  const std::vector<std::string> lines = ReadLines(rotation.manifest_path);
+  ASSERT_EQ(lines.size(), 2U);
+  EXPECT_NE(lines[0].find(R"("sequence":1)"), std::string::npos);
+  EXPECT_NE(lines[0].find(R"("records":1)"), std::string::npos);
+  EXPECT_NE(lines[0].find(R"("closed_reason":"rotation_interval")"),
+            std::string::npos);
+  EXPECT_NE(lines[1].find(R"("sequence":2)"), std::string::npos);
+  EXPECT_NE(lines[1].find(R"("records":1)"), std::string::npos);
+  EXPECT_NE(lines[1].find(R"("closed_reason":"flush")"), std::string::npos);
+
+  EXPECT_EQ(recorder.stats().total_records, 2U);
+  EXPECT_EQ(recorder.segments_completed(), 2U);
+
+  std::filesystem::remove_all(root);
 }
 
 }  // namespace

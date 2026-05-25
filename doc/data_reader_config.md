@@ -215,6 +215,29 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 - `--mode`：写入模式，支持 `truncate` 和 `append`，默认 `truncate`。
 - `--max-polls`：最多执行多少次 recorder loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
 
+可选 recorder 专用配置放在同一 TOML 的 `[recorder]` 表。未配置或
+`rotation_enabled = false` 时保持单文件输出；启用 rotation 时，当前段先写 `.tmp`，关闭后
+atomic rename 成 `.bin` 并追加 manifest JSONL。默认 rotation interval 为 1 小时：
+
+```toml
+[recorder]
+rotation_enabled = true
+rotation_interval_sec = 3600
+output_dir = "/home/liuxiang/tmp/aquila_persistent_md/segments"
+file_prefix = "book_ticker"
+manifest_path = "/home/liuxiang/tmp/aquila_persistent_md/manifest.jsonl"
+```
+
+省略可选字段时：
+
+- `rotation_interval_sec = 3600`
+- `output_dir = parent(--output) / "segments"`
+- `file_prefix = stem(--output)`
+- `manifest_path = parent(--output) / (stem(--output) + "_manifest.jsonl")`
+
+rotation 第一版只支持 `--mode truncate`；`--mode append` 会在启动期拒绝，避免追加模式下 sequence 和
+manifest 恢复语义不清晰。
+
 实盘交易并行录制：
 
 - `data_reader_recorder` 是只读 SHM consumer，可以在 LeadLag / demo 策略实盘交易运行时并行启动；它不会消费掉 SHM 中的数据，也不触碰订单链路。
@@ -234,12 +257,29 @@ void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
 当前边界：
 
 - 使用一份 data reader TOML 作为输入，复用现有 SHM source 配置、`read_mode` 和 `max_events_per_drain`。
-- 只输出一个 merged `.bin`，记录顺序就是 `RealtimeDataReader` 实际交给 handler 的顺序。
+- 默认只输出一个 merged `.bin`；启用 `[recorder].rotation_enabled` 后输出多个 segment `.bin` 和一个
+  manifest JSONL。记录顺序就是 `RealtimeDataReader` 实际交给 handler 的顺序。
 - 如果输入配置使用 `drain`，recorder 会按 reader 可见事件流顺序连续写出；如果输入配置仍是 `latest`，则输出也继承 latest 的跳点语义，工具启动日志会显式打印 `latest_read_mode_source` warning。
 - 启动日志打印 `book_ticker_abi_size=sizeof(aquila::BookTicker)`；SHM attach 仍会校验 producer header 中的 ABI size。输出文件本身不写 header。
-- 写入路径使用二进制追加或截断模式，由 `--mode` 明确控制，默认截断。
-- 退出统计包括 total records、per-exchange records、per-source skipped / overrun、first / last `exchange_ns` 和 `local_ns`。
+- 单文件写入路径使用二进制追加或截断模式，由 `--mode` 明确控制，默认截断；rotation 模式只支持截断。
+- rotation manifest 每行一个 JSON object，记录 segment `sequence`、`file`、`records`、`bytes`、first / last
+  `exchange_ns`、first / last `local_ns` 和 `closed_reason`。正在写的 `.tmp` 不写入 manifest，replay 只读取已关闭的 `.bin`。
+- 退出统计包括 total records、per-exchange records、per-source skipped / overrun、first / last `exchange_ns` 和 `local_ns`，rotation 模式额外输出 `segments_completed`。
 - 本地测试 `data_reader_recorder_test` 覆盖两个 `BookTicker` SHM source 经 `RealtimeDataReader::Drain()` 写入同一个裸 replay binary 的路径。
+
+rotation replay 不需要修改 `HistoricalDataReader`。现有 `binary_file` source 已支持一个 source 下多个 `files`；
+可用 manifest 生成 replay data reader TOML：
+
+```bash
+scripts/market_data/manifest_to_data_reader_config.py \
+  --manifest /home/liuxiang/tmp/aquila_persistent_md/manifest.jsonl \
+  --output /home/liuxiang/tmp/aquila_persistent_md/replay_data_reader.toml \
+  --name persistent_md_replay \
+  --catalog config/instruments/usdt_futures.csv
+```
+
+生成的 TOML 会把已关闭 segment `.bin` 按 manifest 顺序写入 `files = [...]`，随后可直接用于
+`data_reader_probe`、`lead_lag_replay` 或其他 `HistoricalDataReader` 使用方。
 
 当前 `BookTicker.local_ns` 不是 DataReader 或策略层打点，而是在 data session 收到 WebSocket frame 后、进入交易所 parser / decoder 前采集：
 

@@ -209,6 +209,7 @@ target_link_libraries(data_reader_probe
 
 add_executable(data_reader_recorder
     market_data/data_reader_recorder.cpp
+    market_data/data_reader_recorder_config.cpp
 )
 
 target_link_libraries(data_reader_recorder
