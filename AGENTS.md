@@ -103,9 +103,17 @@ lead_lag_live_report_csv_schema.md
    - `lead_lag_live_report_csv_schema.md` 与 `docs/lead_lag_live_report_csv_schema.md` 一致。
    - 用 report schema 检查四个 CSV 的所有 header 字段都有说明。
    - 运行 `git diff --check`。
-6. 最终回复必须概述 report 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；不要只说“已生成”。
-7. “打包”默认表示把完整 `reports/<run_id>/` 作为一个原子 git commit，不额外生成 tar/zip，除非用户明确要求压缩包。commit message 使用英文，例如 `Add LeadLag live report <run_id>`。
-8. 只有用户明确说“push”、“上传到 git”或等价表达时，才在 commit 后执行 `git push`；否则只提交并说明当前 ahead 状态。
+6. “打包”默认表示在 `reports/` 目录中，把本次 `reports/<run_id>/` report folder 压缩成 zip 文件，输出为 `reports/<run_id>.zip`。推荐命令：
+
+```bash
+cd reports
+/home/liuxiang/dev/pyenv/lx/bin/python -m zipfile -c <run_id>.zip <run_id>
+```
+
+zip 文件中应包含 `<run_id>/report.md`、四个 CSV 和 `lead_lag_live_report_csv_schema.md`；生成后用 `python -m zipfile -l reports/<run_id>.zip` 或等价命令确认内容。除非用户明确要求其他格式，不生成 tar/zst。
+7. 最终回复必须概述 report 目录、zip 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；不要只说“已生成”。
+8. 将 `reports/<run_id>/` 和 `reports/<run_id>.zip` 作为一个原子 git commit；commit message 使用英文，例如 `Add LeadLag live report <run_id>`。
+9. 只有用户明确说“push”、“上传到 git”或等价表达时，才在 commit 后执行 `git push`；否则只提交并说明当前 ahead 状态。
 
 ## 项目背景
 
