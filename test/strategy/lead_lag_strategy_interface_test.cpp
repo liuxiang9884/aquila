@@ -201,6 +201,9 @@ std::size_t g_order_intent_log_count{0};
 std::array<leadlag::detail::StrategyOrderSubmittedLogRecordForTest, 4>
     g_order_submitted_logs{};
 std::size_t g_order_submitted_log_count{0};
+std::array<leadlag::detail::StrategyOrderFinishedLogRecordForTest, 4>
+    g_order_finished_logs{};
+std::size_t g_order_finished_log_count{0};
 std::array<leadlag::detail::StrategySignalTriggeredLogRecordForTest, 4>
     g_signal_triggered_logs{};
 std::size_t g_signal_triggered_log_count{0};
@@ -235,6 +238,22 @@ void ResetStrategyOrderSubmittedLogCapture() noexcept {
   g_order_submitted_logs = {};
   g_order_submitted_log_count = 0;
   leadlag::detail::SetStrategyOrderSubmittedLogObserverForTest(nullptr);
+}
+
+void CaptureStrategyOrderFinishedLogForTest(
+    const leadlag::detail::StrategyOrderFinishedLogRecordForTest&
+        record) noexcept {
+  if (g_order_finished_log_count >= g_order_finished_logs.size()) {
+    return;
+  }
+  g_order_finished_logs[g_order_finished_log_count] = record;
+  ++g_order_finished_log_count;
+}
+
+void ResetStrategyOrderFinishedLogCapture() noexcept {
+  g_order_finished_logs = {};
+  g_order_finished_log_count = 0;
+  leadlag::detail::SetStrategyOrderFinishedLogObserverForTest(nullptr);
 }
 
 void CaptureStrategySignalTriggeredLogForTest(
@@ -287,6 +306,24 @@ class StrategyOrderSubmittedLogCaptureGuard {
       const StrategyOrderSubmittedLogCaptureGuard&) = delete;
   StrategyOrderSubmittedLogCaptureGuard& operator=(
       const StrategyOrderSubmittedLogCaptureGuard&) = delete;
+};
+
+class StrategyOrderFinishedLogCaptureGuard {
+ public:
+  StrategyOrderFinishedLogCaptureGuard() noexcept {
+    ResetStrategyOrderFinishedLogCapture();
+    leadlag::detail::SetStrategyOrderFinishedLogObserverForTest(
+        CaptureStrategyOrderFinishedLogForTest);
+  }
+
+  ~StrategyOrderFinishedLogCaptureGuard() noexcept {
+    ResetStrategyOrderFinishedLogCapture();
+  }
+
+  StrategyOrderFinishedLogCaptureGuard(
+      const StrategyOrderFinishedLogCaptureGuard&) = delete;
+  StrategyOrderFinishedLogCaptureGuard& operator=(
+      const StrategyOrderFinishedLogCaptureGuard&) = delete;
 };
 
 class StrategySignalTriggeredLogCaptureGuard {
@@ -902,7 +939,7 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
   EXPECT_FALSE(record.reduce_only);
-  EXPECT_EQ(record.group_id, 0U);
+  EXPECT_EQ(record.position_id, 0U);
   EXPECT_EQ(record.quantity, 9);
   EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
   EXPECT_DOUBLE_EQ(record.order_price, 102.1);
@@ -938,7 +975,10 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
   EXPECT_FALSE(record.reduce_only);
-  EXPECT_NE(record.group_id, 0U);
+  EXPECT_NE(record.position_id, 0U);
+  EXPECT_EQ(record.position_event, "kEntrySubmit");
+  EXPECT_EQ(record.position_direction, leadlag::PositionDirection::kLong);
+  EXPECT_EQ(record.entry_local_order_id, order.local_order_id);
   EXPECT_EQ(record.quantity, 9);
   EXPECT_EQ(record.quantity_text, "9");
   EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
@@ -950,6 +990,71 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_DOUBLE_EQ(record.estimated_notional, 921.6);
   EXPECT_EQ(record.active_groups, 1U);
   EXPECT_EQ(record.place_status, aquila::core::OrderPlaceStatus::kOk);
+}
+
+TEST(LeadLagStrategyInterfaceTest, LogsCloseOrderSubmittedWithPositionId) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(0, 3)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderSubmittedLogCaptureGuard submitted_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  ASSERT_EQ(g_order_submitted_log_count, 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  const std::uint64_t position_id = g_order_submitted_logs[0].position_id;
+  ASSERT_NE(position_id, 0U);
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  ASSERT_EQ(g_order_submitted_log_count, 2U);
+  const FakeOrderSession::CapturedOrder& close_order =
+      order_session.placed_orders.back();
+  const leadlag::detail::StrategyOrderSubmittedLogRecordForTest& record =
+      g_order_submitted_logs[1];
+  EXPECT_EQ(record.local_order_id, close_order.local_order_id);
+  EXPECT_EQ(record.position_id, position_id);
+  EXPECT_EQ(record.position_event, "kExitSubmit");
+  EXPECT_EQ(record.position_direction, leadlag::PositionDirection::kLong);
+  EXPECT_EQ(record.entry_local_order_id, open_order_id);
+  EXPECT_EQ(record.order_role, "exit");
+  EXPECT_TRUE(record.reduce_only);
+}
+
+TEST(LeadLagStrategyInterfaceTest, LogsOrderFinishedWithPositionId) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderSubmittedLogCaptureGuard submitted_log_capture;
+  StrategyOrderFinishedLogCaptureGuard finished_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  ASSERT_EQ(g_order_submitted_log_count, 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+  const std::uint64_t position_id = g_order_submitted_logs[0].position_id;
+  ASSERT_NE(position_id, 0U);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  ASSERT_EQ(g_order_finished_log_count, 1U);
+  const leadlag::detail::StrategyOrderFinishedLogRecordForTest& record =
+      g_order_finished_logs[0];
+  EXPECT_EQ(record.local_order_id, open_order_id);
+  EXPECT_EQ(record.position_id, position_id);
+  EXPECT_EQ(record.position_direction, leadlag::PositionDirection::kLong);
+  EXPECT_EQ(record.order_role, "entry");
+  EXPECT_EQ(record.entry_local_order_id, open_order_id);
+  EXPECT_GT(record.order_finished_local_ns, 0);
 }
 
 TEST(LeadLagStrategyInterfaceTest,

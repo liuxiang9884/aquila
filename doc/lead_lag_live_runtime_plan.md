@@ -12,7 +12,7 @@
 - 缺少凭据时 `RunLiveOrders()` 返回 exit code `2`；真实订单模式收到 `OrderFeedbackKind::kContinuityLost` 后停止 trading loop，并返回 handoff exit code `10`。
 - V1 对齐 Sirius 边界：策略持仓由订单回报推导；停机后用 REST final check / emergency flatten 校验真实账户；不新增独立 `AccountPositionFeedbackSession`。
 - `scripts/lead_lag/run_live_with_guard.py` 是真实订单测试推荐外层入口，负责 REST preflight、runner 退出监控、final REST check 和异常 stop-and-flat。
-- 真实订单模式不写 per-signal CSV；信号与下单意图通过日志中的 `trigger_ticker_id`、`lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 对齐；成功提交后的订单主事实源是 `lead_lag_order_submitted`，其中包含 `local_order_id`、最终 `group_id`、`signal_role`、`order_role`、`quantity_text` 和 `price_text`。
+- 真实订单模式不写 per-signal CSV；信号与下单意图通过日志中的 `trigger_ticker_id`、`lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 对齐；成功提交后的订单主事实源是 `lead_lag_order_submitted`，其中包含 `local_order_id`、最终 `position_id`、`position_event`、`position_direction`、`entry_local_order_id`、`signal_role`、`order_role`、`quantity_text` 和 `price_text`；终态日志 `lead_lag_order_finished` 同步输出 `position_id`、`position_direction`、`order_role`、`entry_local_order_id` 和 `order_finished_local_ns`，用于后续生成 `position.csv`。
 - replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV。
 
 ## 关键配置

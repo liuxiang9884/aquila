@@ -5,7 +5,6 @@ import csv
 import re
 import sys
 import tomllib
-from collections import deque
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, getcontext
 from pathlib import Path
@@ -28,7 +27,10 @@ ORDER_DETAIL_FIELDS = [
     "trigger_symbol_id",
     "signal_role",
     "order_role",
-    "group_id",
+    "position_id",
+    "position_event",
+    "position_direction",
+    "entry_local_order_id",
     "action",
     "side",
     "reduce_only",
@@ -64,6 +66,7 @@ ORDER_DETAIL_FIELDS = [
     "ack_rtt_ns",
     "request_send_local_ns",
     "ack_local_receive_ns",
+    "order_finished_local_ns",
     "source_schema",
     "warnings",
 ]
@@ -209,31 +212,6 @@ def choose_nonzero(*values: str | None) -> str:
     return ""
 
 
-def match_legacy_intent(
-    pending_intents: deque[dict[str, str]], send: dict[str, str]
-) -> dict[str, str] | None:
-    for index, intent in enumerate(pending_intents):
-        if intent.get("symbol") != send.get("contract"):
-            continue
-        if intent.get("side") != send.get("side"):
-            continue
-        if intent.get("reduce_only") != send.get("reduce_only"):
-            continue
-        intent_quantity = parse_decimal(intent.get("quantity"))
-        send_quantity = parse_decimal(send.get("quantity"))
-        intent_price = parse_decimal(intent.get("order_price") or intent.get("price"))
-        send_price = parse_decimal(send.get("price"))
-        if intent_quantity != send_quantity or intent_price != send_price:
-            continue
-        pending_intents.rotate(-index)
-        matched = pending_intents.popleft()
-        pending_intents.rotate(index)
-        return matched
-    if pending_intents:
-        return pending_intents.popleft()
-    return None
-
-
 def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     copy_fields = {
         "local_order_id",
@@ -244,7 +222,10 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
         "symbol_id",
         "signal_role",
         "order_role",
-        "group_id",
+        "position_id",
+        "position_event",
+        "position_direction",
+        "entry_local_order_id",
         "action",
         "side",
         "reduce_only",
@@ -262,37 +243,6 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
         if key in fields:
             order[key] = fields[key]
     order["source_schema"] = "submitted_v1"
-
-
-def merge_legacy_intent(order: dict[str, str], intent: dict[str, str]) -> None:
-    mapping = {
-        "trigger_ticker_id": "trigger_ticker_id",
-        "trigger_exchange": "trigger_exchange",
-        "trigger_symbol_id": "trigger_symbol_id",
-        "symbol": "symbol",
-        "symbol_id": "symbol_id",
-        "signal_role": "signal_role",
-        "group_id": "group_id",
-        "action": "action",
-        "side": "side",
-        "reduce_only": "reduce_only",
-        "quantity": "quantity",
-        "raw_price": "raw_price",
-        "order_price": "order_price",
-        "price_tick": "price_tick",
-        "slippage_ticks": "slippage_ticks",
-        "target_open_notional": "target_open_notional",
-        "estimated_notional": "estimated_notional",
-    }
-    for source, target in mapping.items():
-        value = intent.get(source)
-        if value is not None:
-            order[target] = value
-    order["order_role"] = order_role_for(
-        order.get("action", ""), order.get("reduce_only", "")
-    )
-    order["source_schema"] = "legacy_intent_order_sequence"
-    append_warning(order, "missing_submitted_log")
 
 
 def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
@@ -357,6 +307,11 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
         "request_send_local_ns",
         "ack_local_receive_ns",
         "ack_rtt_ns",
+        "position_id",
+        "position_direction",
+        "order_role",
+        "entry_local_order_id",
+        "order_finished_local_ns",
     ):
         if key in fields:
             order[key] = fields[key]
@@ -457,7 +412,7 @@ def enrich_order(order: dict[str, str], pair_config: dict[str, str], instrument:
         append_warning(order, "missing_exchange_order_id")
     if order.get("source_schema", "") == "":
         order["source_schema"] = "unknown"
-        append_warning(order, "missing_order_intent")
+        append_warning(order, "missing_submitted_log")
     if symbol == "":
         append_warning(order, "missing_symbol")
 
@@ -472,8 +427,6 @@ def analyze_order_detail(
     pair_configs = load_pair_config(config_path)
     instruments = load_instrument_catalog(instrument_catalog_path)
     orders: dict[str, dict[str, str]] = {}
-    pending_intents: deque[dict[str, str]] = deque()
-    signals_by_trigger: dict[str, dict[str, str]] = {}
     run = run_id or log_path.parent.name
 
     with log_path.open(encoding="utf-8") as input_file:
@@ -482,17 +435,7 @@ def analyze_order_detail(
             if message is None:
                 continue
             tag, fields = parse_message(message)
-            if tag == "lead_lag_signal_triggered":
-                signals_by_trigger[fields.get("trigger_ticker_id", "")] = fields
-            elif tag == "lead_lag_order_intent":
-                intent = dict(fields)
-                signal = signals_by_trigger.get(intent.get("trigger_ticker_id", ""))
-                if signal is not None:
-                    intent["signal_role"] = signal.get("role", "")
-                    intent["trigger_exchange"] = signal.get("trigger_exchange", "")
-                    intent["trigger_symbol_id"] = signal.get("trigger_symbol_id", "")
-                pending_intents.append(intent)
-            elif tag == "lead_lag_order_submitted":
+            if tag == "lead_lag_order_submitted":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
                     continue
@@ -503,10 +446,6 @@ def analyze_order_detail(
                 if local_order_id == "":
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                if order.get("source_schema", "") == "":
-                    intent = match_legacy_intent(pending_intents, fields)
-                    if intent is not None:
-                        merge_legacy_intent(order, intent)
                 merge_send(order, fields)
             elif tag == "gate_order_response" and fields.get("kind") == "kAck":
                 local_order_id = fields.get("local_order_id", "")

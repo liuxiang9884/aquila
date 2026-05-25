@@ -112,6 +112,7 @@ class SignalEngine;
 struct ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
+  std::uint64_t entry_local_order_id{0};
   double signed_position_quantity{0.0};
   double trailing_price{0.0};
   std::uint64_t group_id{0};
@@ -156,6 +157,7 @@ class ExecutionState {
     *group = ExecutionGroup{
         .stage = ExecutionStage::kOpen,
         .local_order_id = local_order_id,
+        .entry_local_order_id = local_order_id,
         .group_id = next_group_id_++,
     };
     ++active_group_count_;
@@ -194,7 +196,8 @@ class ExecutionState {
     if (!order.is_finished) {
       return ExecutionApplyResult::kIgnoredNonTerminal;
     }
-    ExecutionGroup* group = FindPendingOrder(order.local_order_id);
+    ExecutionGroup* group =
+        FindPendingOrderByLocalOrderId(order.local_order_id);
     if (group == nullptr) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
@@ -219,7 +222,7 @@ class ExecutionState {
 
   [[nodiscard]] ExecutionApplyResult ApplySubmitRejected(
       std::uint64_t local_order_id) noexcept {
-    ExecutionGroup* group = FindPendingOrder(local_order_id);
+    ExecutionGroup* group = FindPendingOrderByLocalOrderId(local_order_id);
     if (group == nullptr) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
@@ -300,6 +303,28 @@ class ExecutionState {
     return true;
   }
 
+  [[nodiscard]] const ExecutionGroup* FindPendingOrderByLocalOrderId(
+      std::uint64_t local_order_id) const noexcept {
+    // execute.parallel is a small bounded risk limit, so scanning contiguous
+    // groups avoids maintaining a second order index.
+    for (const ExecutionGroup& group : groups_) {
+      if (group.pending_order() && group.local_order_id == local_order_id) {
+        return &group;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] ExecutionGroup* FindPendingOrderByLocalOrderId(
+      std::uint64_t local_order_id) noexcept {
+    for (ExecutionGroup& group : groups_) {
+      if (group.pending_order() && group.local_order_id == local_order_id) {
+        return &group;
+      }
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] std::size_t active_group_count() const noexcept {
     return active_group_count_;
   }
@@ -376,18 +401,6 @@ class ExecutionState {
 
   [[nodiscard]] std::vector<ExecutionGroup>& mutable_groups() noexcept {
     return groups_;
-  }
-
-  [[nodiscard]] ExecutionGroup* FindPendingOrder(
-      std::uint64_t local_order_id) noexcept {
-    // execute.parallel is a small bounded risk limit, so scanning contiguous
-    // groups avoids maintaining a second order index.
-    for (ExecutionGroup& group : groups_) {
-      if (group.pending_order() && group.local_order_id == local_order_id) {
-        return &group;
-      }
-    }
-    return nullptr;
   }
 
   std::vector<ExecutionGroup> groups_;
