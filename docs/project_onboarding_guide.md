@@ -27,24 +27,24 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 ```text
 AGENTS.md
 README.md
-doc/project_onboarding_guide.md
-doc/evaluation_support.md
+docs/project_onboarding_guide.md
+docs/evaluation_support.md
 ```
 
 按方向继续读：
 
 | 方向 | 优先文档 |
 | --- | --- |
-| Gate 交易架构 | `doc/agent-handoff-gate-trade-architecture.md` |
-| TUI / account monitor | `doc/tui_onboarding_guide.md`、`doc/tui_gate_account_monitor_design.md` |
-| Binance 行情 | `doc/agent-handoff-binance-market-data.md` |
-| data session / config | `doc/data_session_config.md`、`doc/data_reader_config.md`、`doc/data_session_shm_communication_design.md` |
-| 交易组件边界 | `doc/strategy_order_component_model.md` |
-| LeadLag fixed 策略 | `strategy/lead_lag/README.md`、`doc/leadlag-fixed-strategy-reconstruction-guide.md` |
-| LeadLag 实盘长跑 / 测试 | `doc/lead_lag_live_runtime_plan.md` |
-| LeadLag live / replay 测试 runbook | `doc/lead_lag_live_replay_testing.md` |
-| ORDI replay / 对账 | `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` |
-| WebSocket 性能 | `doc/websocket_client_future_optimizations.md`、`doc/websocket_read_write_benchmark_comparison.md` |
+| Gate 交易架构 | `docs/agent-handoff-gate-trade-architecture.md` |
+| TUI / account monitor | `docs/tui_onboarding_guide.md`、`docs/tui_gate_account_monitor_design.md` |
+| Binance 行情 | `docs/agent-handoff-binance-market-data.md` |
+| data session / config | `docs/data_session_config.md`、`docs/data_reader_config.md`、`docs/data_session_shm_communication_design.md` |
+| 交易组件边界 | `docs/strategy_order_component_model.md` |
+| LeadLag fixed 策略 | `strategy/lead_lag/README.md`、`docs/leadlag-fixed-strategy-reconstruction-guide.md` |
+| LeadLag 实盘长跑 / 测试 | `docs/lead_lag_live_runtime_plan.md` |
+| LeadLag live / replay 测试 runbook | `docs/lead_lag_live_replay_testing.md` |
+| ORDI replay / 对账 | `docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` |
+| WebSocket 性能 | `docs/websocket_client_future_optimizations.md`、`docs/websocket_read_write_benchmark_comparison.md` |
 
 ## 当前事实源
 
@@ -59,7 +59,7 @@ doc/evaluation_support.md
 - 2026-05-20 `gate_demo_strategy` 用临时 3 轮配置完成 BTC_USDT live smoke；feedback 发布 6 个 `kFilled` event，REST 复核 open orders 为空、`position size=0`、`pending_orders=0`。
 - 2026-05-22 TUI / monitor 已完成 `monitor/` skeleton、FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot live dump snapshot 和 monitor smoke tests。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance data session SHM，不自动启动 data session；缺失 SHM 时显示 `NA` 并产生 alert。
 - 2026-05-23 requested 12-symbol / ETH_USDT 配置整理已验证：`data_session_config_test`、`strategy_config_test`、`lead_lag_config_test` 和 `ctest --test-dir build/debug -R lead_lag --output-on-failure` 均通过；未跑全量 ctest。
-- 2026-05-24 文档整理已完成：旧 `doc/superpowers/` plan/spec、重复交易组件讨论、LeadLag 静态审计、单次运行报告和旧 signal report artifact 已删除；`doc/agent-handoff-gate-trade-architecture.md` 已压缩为当前 Gate 交易 handoff，下一轮不再读取被删除的历史文档。
+- 2026-05-24 文档整理已完成：旧 `docs/superpowers/` plan/spec、重复交易组件讨论、LeadLag 静态审计、单次运行报告和旧 signal report artifact 已删除；`docs/agent-handoff-gate-trade-architecture.md` 已压缩为当前 Gate 交易 handoff，下一轮不再读取被删除的历史文档。
 - 2026-05-24 `AGENTS.md` 已明确：普通开发修改仍按用户要求决定是否 push；用户输入“结束对话”时，收尾流程会自动提交交接文档并 push 当前分支到 upstream / 默认远端。
 - 工作区状态以 `git status` 为准；如出现本地未提交或未跟踪文件，先确认用途和归属再处理。
 
@@ -72,7 +72,7 @@ doc/evaluation_support.md
 - Binance USD-M futures JSON bookTicker 行情已落地：raw stream target、`simdjson::ondemand` parser、client/session、live probe 和 benchmark。
 - Gate / Binance data session TOML parser、instrument catalog、SHM sink、startup tools 和 log config 已落地。
 - `BookTicker` 作为统一行情结构进入 strategy `DataReader`；生产热路径不保存字符串 symbol，只保存内部 `symbol_id`。
-- Gate / Binance 合约元数据脚本已输出统一一类下单前字段，字段语义见 `doc/futures_contract_metadata_fields.md`。
+- Gate / Binance 合约元数据脚本已输出统一一类下单前字段，字段语义见 `docs/futures_contract_metadata_fields.md`。
 - Gate decimal-size 合约的 catalog metadata 已从 `order_size_min` 推导 `quantity_step` / `quantity_decimal_places`；`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 的 Gate 行当前为 `quantity_step=0.1`、`quantity_decimal_places=1`。C++ 下单 / 回报 / LeadLag sizing 已消费该 metadata。2026-05-24 RAVE 小额 order session probe 确认未 quote 的 `"size":0.1` 会被 Gate 以 `INVALID_REQUEST` / `Mismatch type int64 with value number` 拒绝；带 decimal header 时 quote 为 `"size":"0.1"` 后不再 400，REST 复核 open orders 为空、position `size=0` / `pending_orders=0`。REST final check / emergency flatten 已带 decimal-size header、解析 decimal position size 并检查 `value` / `margin` residual；完整 strategy 小额 live smoke 仍需复核。
 
 ### DataReader / SHM
@@ -123,10 +123,10 @@ doc/evaluation_support.md
 - LeadLag fixed 策略第 1-7 部分设计拆解、C++ 策略层模块和 `leadlag::Strategy::OnBookTicker()` replay 信号主链路已落地。
 - 已实现 config / metadata、raw market state、recorder wrappers、drift / alignment、threshold、signal / execution state、feedback state / order retire。
 - `tools/lead_lag/replay.cpp` 可从 `BookTicker` binary 生成 signal CSV；ORDI_USDT Tardis / HDF replay 对比和 PnL 结论已记录。
-- LeadLag 与 fixed Go 的已知语义边界：时间口径不同、move quantile 使用生产 histogram 而非 Go exact empirical、synthetic replay 不等价于真实 order/fill 回测；当前以 `strategy/lead_lag/README.md` 和 `doc/leadlag-fixed-strategy-reconstruction-guide.md` 为接手入口。
-- `doc/lead_lag_live_runtime_plan.md` 已压缩为 LeadLag 实盘 runbook，记录 signal-only、真实订单 smoke、`ContinuityLost` stop-and-flat、decimal-size 复核和后续长跑顺序，不再保留逐任务执行流水账。
-- `doc/lead_lag_live_replay_testing.md` 已作为 live / replay 测试 runbook 落地；标准测试名 `lead_lag_live_replay_signal_parity` 表示 signal-only live、并行 DataReader recorder、binary replay 和 live/replay signal CSV 对比。下次用户只给测试名和时长时，按该文档直接执行，所有输出写入 `/home/liuxiang/tmp/<run_id>`。
-- LeadLag default production accounting 已可提交 IOC limit order intent；`tools/lead_lag/live_strategy.cpp::RunLiveOrders()` 已接到 Gate live-orders runtime，缺凭据时返回 exit code `2`，收到 `ContinuityLost` 时返回 handoff exit code `10`。2026-05-22 已完成 BTC_USDT flat-account、tiny-position、隔离 `ContinuityLost` stop-and-flat smoke，以及 ZEC_USDT `--smoke-open-close` 小额 filled open / close 和 `--smoke-unfilled-cancel` 小额挂单撤单 smoke；最终 REST 复核 open orders 为空、position `size=0`。本地端到端 benchmark 已覆盖 submit 路径和 feedback 回报路径，结果见 `doc/lead_lag_live_runtime_plan.md`。2026-05-22 release 11-symbol live-orders guarded run 不是通过项：RIVER_USDT 完成 1 组完整 strategy open / close；RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失，guard 停机后平仓。2026-05-23 已修复 LeadLag C++ sizing / execution state / risk reservation / live smoke 的 decimal quantity，并把 Gate order feedback parser 的 decimal exponent 支持扩到 `[-15, 15]`，覆盖 `finish_as=ioc`、partial fill、`fill_price=0.562399019608` 的 terminal feedback 单元测试；REST final check / emergency flatten 已带 `X-Gate-Size-Decimal: 1`，用 `Decimal` 解析 position size，检查 `value` / `margin` residual，并可提交 decimal reduce-only close。上述 feedback 与 REST residual 修复仍需小额 live smoke 复核。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response；后续不要把 rejected / cancel-rejected 算作已完成 smoke。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 account / position feedback session。
+- LeadLag 与 fixed Go 的已知语义边界：时间口径不同、move quantile 使用生产 histogram 而非 Go exact empirical、synthetic replay 不等价于真实 order/fill 回测；当前以 `strategy/lead_lag/README.md` 和 `docs/leadlag-fixed-strategy-reconstruction-guide.md` 为接手入口。
+- `docs/lead_lag_live_runtime_plan.md` 已压缩为 LeadLag 实盘 runbook，记录 signal-only、真实订单 smoke、`ContinuityLost` stop-and-flat、decimal-size 复核和后续长跑顺序，不再保留逐任务执行流水账。
+- `docs/lead_lag_live_replay_testing.md` 已作为 live / replay 测试 runbook 落地；标准测试名 `lead_lag_live_replay_signal_parity` 表示 signal-only live、并行 DataReader recorder、binary replay 和 live/replay signal CSV 对比。下次用户只给测试名和时长时，按该文档直接执行，所有输出写入 `/home/liuxiang/tmp/<run_id>`。
+- LeadLag default production accounting 已可提交 IOC limit order intent；`tools/lead_lag/live_strategy.cpp::RunLiveOrders()` 已接到 Gate live-orders runtime，缺凭据时返回 exit code `2`，收到 `ContinuityLost` 时返回 handoff exit code `10`。2026-05-22 已完成 BTC_USDT flat-account、tiny-position、隔离 `ContinuityLost` stop-and-flat smoke，以及 ZEC_USDT `--smoke-open-close` 小额 filled open / close 和 `--smoke-unfilled-cancel` 小额挂单撤单 smoke；最终 REST 复核 open orders 为空、position `size=0`。本地端到端 benchmark 已覆盖 submit 路径和 feedback 回报路径，结果见 `docs/lead_lag_live_runtime_plan.md`。2026-05-22 release 11-symbol live-orders guarded run 不是通过项：RIVER_USDT 完成 1 组完整 strategy open / close；RAVE_USDT IOC partial fill 在 REST 上可见，但 private feedback / strategy terminal feedback 缺失，guard 停机后平仓。2026-05-23 已修复 LeadLag C++ sizing / execution state / risk reservation / live smoke 的 decimal quantity，并把 Gate order feedback parser 的 decimal exponent 支持扩到 `[-15, 15]`，覆盖 `finish_as=ioc`、partial fill、`fill_price=0.562399019608` 的 terminal feedback 单元测试；REST final check / emergency flatten 已带 `X-Gate-Size-Decimal: 1`，用 `Decimal` 解析 position size，检查 `value` / `margin` residual，并可提交 decimal reduce-only close。上述 feedback 与 REST residual 修复仍需小额 live smoke 复核。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response；后续不要把 rejected / cancel-rejected 算作已完成 smoke。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 account / position feedback session。
 - `scripts/lead_lag/run_live_with_guard.py` 已作为外围 guard wrapper 落地：启动前 REST preflight，正常退出后 final REST check，异常退出或 final 非 flat 时调用 emergency flatten；该 wrapper 不改 `TradingRuntime` 热路径。
 - `config/data_sessions/gate_data_session_requested_20260521.toml`、`config/data_sessions/binance_data_session_requested_20260521.toml`、`config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 和 `config/strategies/lead_lag_requested_11symbols_20260522.toml` 当前覆盖 12 个 requested symbol：`PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`、`ETH_USDT`。文件名保留历史 `11symbols`，但 runtime 内容已追加 `ETH_USDT`；runtime log sink 名称已更新为 `12symbols`。`RAVE_USDT`、`SIREN_USDT`、`RIVER_USDT` 的 Gate decimal-size metadata 当前会走 0.1 张数量格式化，Gate order session 带 `X-Gate-Size-Decimal: 1` 时会把 JSON `size` quote 成 string。12-symbol 配置当前启用 `[lead_lag.risk]`：`max_gross_notional=2000.0`，限制 strategy 全局持仓和 pending open reservation 的总 notional，只拒绝新开仓，不阻止 reduce-only close；`max_holding_position` 未配置，暂不限制数量。`execute.open_slippage` / `execute.close_slippage` 已显式配置为按 `price_tick` 调整 IOC limit 价格：12 个 symbol 均为 `3` ticks；`lead_lag_signal_triggered` 日志输出触发行情 `trigger_ticker_id`，order intent / reject 日志输出同一个 `trigger_ticker_id` 以及 `raw_price` / `order_price` 便于复盘；成功提交后 `lead_lag_order_submitted` 输出 `local_order_id`、最终 `position_id`、`position_event`、`position_direction`、`entry_local_order_id`、`signal_role`、`order_role`、`quantity_text` 和 `price_text`，作为 `order_detail.csv` 的主事实源；`lead_lag_order_finished` 同步输出 `position_id`、`position_direction`、`order_role`、`entry_local_order_id` 和 `order_finished_local_ns`。`scripts/lead_lag/analyze_order_detail.py --positions-output <path> --latency-output <path>` 可同时生成 `position.csv` 和 `latency.csv`；`position.csv` 按 `run_id + symbol_id + position_id` 配对 entry / exit，并输出 closed / partial_closed / open position rows、gross / net PnL 和 fee 估算；`latency.csv` 按 local order 输出 send / ack / finish 本地时间、ack RTT、send-to-finish、ack-to-finish、exchange timestamp 和 exchange-to-local 诊断字段。
 - 2026-05-23 LeadLag 信号输出边界已明确：replay / signal-only live 只有显式 `--signals-output` 才写 per-signal CSV，CSV 包含 `ticker_id`；真实订单模式不写 per-signal CSV，`lead_lag_signal_triggered` 与 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 通过同一个 `trigger_ticker_id` 关联；订单提交成功后 `lead_lag_order_submitted` 直接关联 `local_order_id`。验证命令：`ctest --test-dir build/debug -R '(lead_lag|signal_csv_writer)' --output-on-failure` 通过 11/11。
@@ -143,22 +143,22 @@ doc/evaluation_support.md
 | --- | --- | --- |
 | `AGENTS.md` | 每次新会话最先读 | 中文/英文约定、低延迟原则、测试 / benchmark / 提交规则 |
 | `README.md` | 了解构建和工具入口 | build、ctest、benchmark、probe、latency compare |
-| `doc/evaluation_support.md` | 增加 test / benchmark 共享辅助代码 | `evaluation/` 边界和提交前检查 |
-| `doc/futures_contract_metadata_fields.md` | 处理合约基础信息 | 统一 metadata 字段、Gate / Binance 映射、数量单位差异 |
-| `doc/tui_onboarding_guide.md` | 接手 TUI / account monitor | 当前范围、运行命令、实现入口、未完成项 |
-| `doc/tui_gate_account_monitor_design.md` | 继续 TUI 设计或实现 | Symbol Workbench、market data SHM、order / health 线程模型和测试建议 |
-| `doc/strategy_order_component_model.md` | 细化交易组件边界 | DataReader、OrderSession、OrderFeedbackSession、OrderManager、Strategy |
-| `doc/data_session_config.md` | 修改 data session 配置 | instrument catalog、subscribe symbols、WS / log / SHM 配置 |
-| `doc/data_reader_config.md` | 修改 strategy reader 配置 | SHM source、read mode、Poll / Drain、diagnostics policy |
-| `doc/data_session_shm_communication_design.md` | 维护行情 SHM | DataShmPublisher、BookTickerShmReader、overrun 边界 |
-| `doc/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构 | 当前 Gate 协议事实、线程 / 进程边界、组件职责、代码入口和验证入口 |
-| `doc/agent-handoff-binance-market-data.md` | 继续 Binance 行情 | raw stream、JSON parser、client/session、benchmark |
+| `docs/evaluation_support.md` | 增加 test / benchmark 共享辅助代码 | `evaluation/` 边界和提交前检查 |
+| `docs/futures_contract_metadata_fields.md` | 处理合约基础信息 | 统一 metadata 字段、Gate / Binance 映射、数量单位差异 |
+| `docs/tui_onboarding_guide.md` | 接手 TUI / account monitor | 当前范围、运行命令、实现入口、未完成项 |
+| `docs/tui_gate_account_monitor_design.md` | 继续 TUI 设计或实现 | Symbol Workbench、market data SHM、order / health 线程模型和测试建议 |
+| `docs/strategy_order_component_model.md` | 细化交易组件边界 | DataReader、OrderSession、OrderFeedbackSession、OrderManager、Strategy |
+| `docs/data_session_config.md` | 修改 data session 配置 | instrument catalog、subscribe symbols、WS / log / SHM 配置 |
+| `docs/data_reader_config.md` | 修改 strategy reader 配置 | SHM source、read mode、Poll / Drain、diagnostics policy |
+| `docs/data_session_shm_communication_design.md` | 维护行情 SHM | DataShmPublisher、BookTickerShmReader、overrun 边界 |
+| `docs/agent-handoff-gate-trade-architecture.md` | 继续 Gate 交易架构 | 当前 Gate 协议事实、线程 / 进程边界、组件职责、代码入口和验证入口 |
+| `docs/agent-handoff-binance-market-data.md` | 继续 Binance 行情 | raw stream、JSON parser、client/session、benchmark |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag 目录 | 模块职责、OnBookTicker 主流程、replay 输出、边界 |
-| `doc/lead_lag_live_runtime_plan.md` | 准备 LeadLag 长时间实盘运行和测试 | signal-only runner、订单闭环、`ContinuityLost` 应急链路、live smoke、benchmark 顺序 |
-| `doc/lead_lag_live_replay_testing.md` | 准备 LeadLag live / replay 对比测试 | 标准测试名、输出目录、临时 config、使用程序、signal parity 分析方法 |
-| `doc/lead_lag_reconcile_design.md` | 准备 LeadLag `ContinuityLost` 应急处理 | stop-and-flat V1、Python REST 撤单 / reduce-only 市价平仓、V2 read-only reconcile 边界 |
-| `doc/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag 迁移 | fixed Go 语义、Aquila 映射、信号链路重建 |
-| `doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` | ORDI replay / 对账 | Tardis / HDF 输入差异、signal key、slip PnL |
+| `docs/lead_lag_live_runtime_plan.md` | 准备 LeadLag 长时间实盘运行和测试 | signal-only runner、订单闭环、`ContinuityLost` 应急链路、live smoke、benchmark 顺序 |
+| `docs/lead_lag_live_replay_testing.md` | 准备 LeadLag live / replay 对比测试 | 标准测试名、输出目录、临时 config、使用程序、signal parity 分析方法 |
+| `docs/lead_lag_reconcile_design.md` | 准备 LeadLag `ContinuityLost` 应急处理 | stop-and-flat V1、Python REST 撤单 / reduce-only 市价平仓、V2 read-only reconcile 边界 |
+| `docs/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag 迁移 | fixed Go 语义、Aquila 映射、信号链路重建 |
+| `docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` | ORDI replay / 对账 | Tardis / HDF 输入差异、signal key、slip PnL |
 
 ## 代码入口
 
@@ -410,7 +410,7 @@ rg 'aquila_evaluation' core exchange tools
 
 ### Gate 交易
 
-1. 读取 `doc/agent-handoff-gate-trade-architecture.md` 和 `doc/strategy_order_component_model.md`。
+1. 读取 `docs/agent-handoff-gate-trade-architecture.md` 和 `docs/strategy_order_component_model.md`。
 2. 从 `core/trading/trading_runtime.h`、`exchange/gate/trading/order_session_runtime_adapter.h`、`tools/gate/demo_strategy.h` 和 `tools/gate/demo_strategy.cpp` 接手。
 3. failure protocol probe 已有独立工具，但安全 live 请求未拿到最终 failure response；继续前先基于 Gate 官方协议或 dedicated account 明确可返回最终 error 的请求形态。
 4. V2 再评估 read-only reconcile / resume：未知订单状态、本地状态恢复、人工介入、新开仓暂停 / 恢复条件。
@@ -419,7 +419,7 @@ rg 'aquila_evaluation' core exchange tools
 
 ### DataReader / 交易组件
 
-1. 读取 `doc/strategy_order_component_model.md`、`doc/data_reader_config.md` 和 `doc/data_session_shm_communication_design.md`。
+1. 读取 `docs/strategy_order_component_model.md`、`docs/data_reader_config.md` 和 `docs/data_session_shm_communication_design.md`。
 2. DataReader recorder live record smoke / replay 可读性验证已完成；recorder 已支持 `[recorder]` rotation、默认 1 小时切分和 manifest 生成 replay config。若继续 recorder，下一步可做更长时间 guarded recording、录制脚本化或与 LeadLag / demo 实盘并行录制验证。继续使用临时 `drain` 配置，输出到 `/home/liuxiang/tmp`，观察 `overruns` / `skipped` 和 CPU 抢占，不要把仓库默认 `strategy_data_reader.toml` 改成 drain。
 3. 若继续 DataReader feed 扩展，优先讨论 trade / order book 的 typed storage + unified scan table。
 4. 如果生产工具需要导出 runtime loop diagnostics，再在具体 tool / strategy runner 中选择启用 `TradingRuntimeDiagnostics` 并低频打印 stats。
@@ -427,15 +427,15 @@ rg 'aquila_evaluation' core exchange tools
 
 ### LeadLag
 
-1. 读取 `doc/lead_lag_live_runtime_plan.md`、`doc/lead_lag_live_replay_testing.md`、`doc/lead_lag_reconcile_design.md` 和 `strategy/lead_lag/README.md`，确认当前 runner gating、live / replay 测试名、strategy 层订单闭环和 `ContinuityLost` handoff 边界。
-2. 如继续 signal-only 长跑，可使用 `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 观察 12 个 requested symbol；文件名保留历史 `11symbols`，当前已追加 `ETH_USDT`。若用户说 `lead_lag_live_replay_signal_parity <duration>`，直接按 `doc/lead_lag_live_replay_testing.md` 执行 live signal、DataReader binary record、replay 和 signal CSV 对比，所有产物写入 `/home/liuxiang/tmp/<run_id>`。decimal-size 合约的 C++ 下单 / 回报 / LeadLag sizing 已支持 1 位小数，Gate WS 下单带 decimal header 时已 quote JSON `size`，REST final check / emergency flatten 已完成 decimal residual 代码级修复，但仍需完整 strategy 小额 live smoke 复核。
+1. 读取 `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_reconcile_design.md` 和 `strategy/lead_lag/README.md`，确认当前 runner gating、live / replay 测试名、strategy 层订单闭环和 `ContinuityLost` handoff 边界。
+2. 如继续 signal-only 长跑，可使用 `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 观察 12 个 requested symbol；文件名保留历史 `11symbols`，当前已追加 `ETH_USDT`。若用户说 `lead_lag_live_replay_signal_parity <duration>`，直接按 `docs/lead_lag_live_replay_testing.md` 执行 live signal、DataReader binary record、replay 和 signal CSV 对比，所有产物写入 `/home/liuxiang/tmp/<run_id>`。decimal-size 合约的 C++ 下单 / 回报 / LeadLag sizing 已支持 1 位小数，Gate WS 下单带 decimal header 时已 quote JSON `size`，REST final check / emergency flatten 已完成 decimal residual 代码级修复，但仍需完整 strategy 小额 live smoke 复核。
 3. V1 emergency smoke、外围 guard wrapper、ZEC 小额 filled open / close 和 unfilled-cancel smoke 已完成；submit rejected / cancel-rejected 安全 live 探测未通过，不计入完成项。
 4. 下一步优先处理 2026-05-22 release run 暴露的剩余 blocker：用小额 live smoke 复核 Gate private feedback 的 IOC partial-fill / partial-cancel terminal event 修复，以及 REST final check / emergency flatten 的 decimal residual 修复。复核前不要继续无人值守真实订单长跑。
 5. 之后再做更长时间真实订单运行 guardrails 和继续补齐风控审查；当前已先加入 LeadLag strategy 全局 `max_gross_notional`，`max_holding_position` 可选但本版本暂不启用。account / position realtime feedback 作为 V2 可选能力，不作为当前 V1 前置项。failure response 继续前先确认 Gate 可返回最终 error 的请求形态。
 
 ### TUI / Account Monitor
 
-1. 读取 `doc/tui_onboarding_guide.md` 和 `doc/tui_gate_account_monitor_design.md`，以当前 `monitor/` 实现为边界。
+1. 读取 `docs/tui_onboarding_guide.md` 和 `docs/tui_gate_account_monitor_design.md`，以当前 `monitor/` 实现为边界。
 2. 下一步优先实现 monitor 专用 Gate orders raw parser 和 fixture tests；不要直接复用交易系统 `OrderFeedbackEvent` 作为 TUI 主事件。
 3. 实现启动期 REST snapshot：open orders、positions、account summary；运行期先做 drift 标记，不自动修正或交易。
 4. 实现 `MonitorOrderBook`、`PositionLedger`、`PnlLedger` 和真实 `AccountMonitorThread`，通过 SPSC 向 UI thread 发布 order / health batch。
@@ -457,8 +457,8 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的 onboarding 提示
 
-请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`doc/project_onboarding_guide.md`、`doc/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。2026-05-24 本轮已完成文档清理：旧 `doc/superpowers/` plan/spec、重复交易组件讨论、LeadLag 静态审计、单次运行报告和旧 signal report artifact 已删除；`doc/agent-handoff-gate-trade-architecture.md` 已压缩为当前 Gate 交易 handoff；`AGENTS.md` 已明确“结束对话”流程会自动提交并 push 交接文档。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，然后依次阅读 `AGENTS.md`、`README.md`、`docs/project_onboarding_guide.md`、`docs/evaluation_support.md`。以 onboarding 的“当前事实源”“代码入口”“当前重要结论”和“下一步建议”为事实源；当前分支、ahead/behind 和未提交状态以 `git status` 为准，不预设 `main` 与 `origin/main` 同步。2026-05-24 本轮已完成文档清理：旧 `docs/superpowers/` plan/spec、重复交易组件讨论、LeadLag 静态审计、单次运行报告和旧 signal report artifact 已删除；`docs/agent-handoff-gate-trade-architecture.md` 已压缩为当前 Gate 交易 handoff；`AGENTS.md` 已明确“结束对话”流程会自动提交并 push 交接文档。当前公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h` + `aquila::gate::OrderSessionRuntimeAdapter`。当前 `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke；`DataReaderConfig::max_events_per_drain` 已替代旧 `max_events_per_source`，runtime loop diagnostics 已落在 `TradingRuntimeDiagnostics`。
 
-如果继续 DataReader 小任务，先读 `doc/data_reader_config.md`；当前 `data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写出 merged replay binary，默认单文件，也可通过 `[recorder].rotation_enabled = true` 按时间切分 segment，默认 `rotation_interval_sec = 3600`，关闭后的 `.bin` segment 写入 manifest JSONL，并可用 `scripts/market_data/manifest_to_data_reader_config.py` 生成多文件 replay TOML。输出格式是连续 `aquila::BookTicker` 结构体记录，并已有双 SHM source 本地集成测试。2026-05-24 live record smoke / replay 可读性验证已完成：临时 `drain` recorder 写出 `15,685` 条裸 `BookTicker` binary，Gate `1,825` 条、Binance `13,860` 条，两个 source 的 `skipped=0`、`overruns=0`，`data_reader_probe` historical mode 通过 `HistoricalDataReader` 读完同一文件。recorder 是只读 SHM consumer，可和 LeadLag / demo 策略实盘交易并行运行；完整 dump 需要临时 `drain` 配置，默认 `latest` 配置只适合状态采样，运行时要观察 `overruns` / `skipped` 和 CPU 抢占。下一步可做更长时间 guarded recording、录制脚本化，或继续 trade / order book feed 扩展。如果继续 TUI / account monitor，先读 `doc/tui_onboarding_guide.md` 和 `doc/tui_gate_account_monitor_design.md`；当前 `monitor/` 已完成 FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot dump snapshot 和 monitor tests，`gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM，订单、仓位、PnL 和 health 仍未接真实账户数据。下一步 TUI 优先做 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。
+如果继续 DataReader 小任务，先读 `docs/data_reader_config.md`；当前 `data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写出 merged replay binary，默认单文件，也可通过 `[recorder].rotation_enabled = true` 按时间切分 segment，默认 `rotation_interval_sec = 3600`，关闭后的 `.bin` segment 写入 manifest JSONL，并可用 `scripts/market_data/manifest_to_data_reader_config.py` 生成多文件 replay TOML。输出格式是连续 `aquila::BookTicker` 结构体记录，并已有双 SHM source 本地集成测试。2026-05-24 live record smoke / replay 可读性验证已完成：临时 `drain` recorder 写出 `15,685` 条裸 `BookTicker` binary，Gate `1,825` 条、Binance `13,860` 条，两个 source 的 `skipped=0`、`overruns=0`，`data_reader_probe` historical mode 通过 `HistoricalDataReader` 读完同一文件。recorder 是只读 SHM consumer，可和 LeadLag / demo 策略实盘交易并行运行；完整 dump 需要临时 `drain` 配置，默认 `latest` 配置只适合状态采样，运行时要观察 `overruns` / `skipped` 和 CPU 抢占。下一步可做更长时间 guarded recording、录制脚本化，或继续 trade / order book feed 扩展。如果继续 TUI / account monitor，先读 `docs/tui_onboarding_guide.md` 和 `docs/tui_gate_account_monitor_design.md`；当前 `monitor/` 已完成 FTXUI Symbol Workbench demo、health / alert / balance 静态布局、monitor 专用 market data SHM reader、optional source fallback、one-shot dump snapshot 和 monitor tests，`gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM，订单、仓位、PnL 和 health 仍未接真实账户数据。下一步 TUI 优先做 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。
 
-如果继续 LeadLag 长时间实盘运行和测试，先读 `doc/lead_lag_live_runtime_plan.md`、`doc/lead_lag_live_replay_testing.md` 和 `doc/lead_lag_reconcile_design.md`；当前 strategy 层订单闭环、Python REST emergency flatten helper、`lead_lag_strategy --execute` live-orders handoff、flat-account / tiny-position emergency smoke、隔离 `ContinuityLost` stop-and-flat smoke、外围 `scripts/lead_lag/run_live_with_guard.py`、ZEC_USDT `--smoke-open-close` 小额 filled open / close、`--smoke-unfilled-cancel` 小额挂单撤单 smoke 和本地端到端 benchmark 已完成。标准测试名 `lead_lag_live_replay_signal_parity <duration>` 已定义：signal-only live、并行 DataReader recorder、binary replay、live/replay signal CSV 对比，产物写入 `/home/liuxiang/tmp/<run_id>`；该 runbook 只记录使用程序和测试后分析方法，每次具体结果留在对应 run directory 和最终回复中。2026-05-22 release 11-symbol live-orders guarded run 只完成 1 组完整 strategy open / close，并暴露 Gate IOC partial-fill terminal feedback 缺失和 decimal-size REST flat 判断不足；当前 C++ order / feedback / Gate encoder / LeadLag sizing 已支持 decimal quantity，Gate WS 下单带 `X-Gate-Size-Decimal: 1` 时会把 JSON `size` quote 成 string，Gate `futures.orders` parser 已补高精度 fill price 的 IOC partial-fill terminal 单元测试，REST final check / emergency flatten 已带 decimal-size header、解析 decimal position size、检查 `value` / `margin` residual 并可提交 decimal reduce-only close；这些修复仍需完整 strategy 小额 live smoke 复核，复核前不要继续无人值守真实订单长跑。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 是 V2 可选能力。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不计入已完成 smoke。`config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 当前已覆盖 12 个 requested symbols，文件名保留历史 `11symbols`，内容已追加 `ETH_USDT`；Gate decimal-size 合约 catalog metadata 已从 `order_size_min` 推导小数位，C++ 订单链路已用 `quantity_text` 下发小数 size。信号输出边界：replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV；真实订单模式不写 per-signal CSV，信号和订单意图用日志中的 `trigger_ticker_id` 关联，提交成功后用 `lead_lag_order_submitted.local_order_id` 作为订单分析主键；`scripts/lead_lag/analyze_order_detail.py` 可从 live log 生成 `order_detail.csv`，当前 CSV 已输出 `position_id`、`position_event`、`position_direction`、`entry_local_order_id` 和 `order_finished_local_ns`，传入 `--positions-output` 会生成 `position.csv`（closed / partial_closed / open，含 gross_pnl / net_pnl / fee），传入 `--latency-output` 会生成 `latency.csv`（send / ack / finish 本地时间、ack RTT、send-to-finish、ack-to-finish、exchange timestamp 诊断）。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。
+如果继续 LeadLag 长时间实盘运行和测试，先读 `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_replay_testing.md` 和 `docs/lead_lag_reconcile_design.md`；当前 strategy 层订单闭环、Python REST emergency flatten helper、`lead_lag_strategy --execute` live-orders handoff、flat-account / tiny-position emergency smoke、隔离 `ContinuityLost` stop-and-flat smoke、外围 `scripts/lead_lag/run_live_with_guard.py`、ZEC_USDT `--smoke-open-close` 小额 filled open / close、`--smoke-unfilled-cancel` 小额挂单撤单 smoke 和本地端到端 benchmark 已完成。标准测试名 `lead_lag_live_replay_signal_parity <duration>` 已定义：signal-only live、并行 DataReader recorder、binary replay、live/replay signal CSV 对比，产物写入 `/home/liuxiang/tmp/<run_id>`；该 runbook 只记录使用程序和测试后分析方法，每次具体结果留在对应 run directory 和最终回复中。2026-05-22 release 11-symbol live-orders guarded run 只完成 1 组完整 strategy open / close，并暴露 Gate IOC partial-fill terminal feedback 缺失和 decimal-size REST flat 判断不足；当前 C++ order / feedback / Gate encoder / LeadLag sizing 已支持 decimal quantity，Gate WS 下单带 `X-Gate-Size-Decimal: 1` 时会把 JSON `size` quote 成 string，Gate `futures.orders` parser 已补高精度 fill price 的 IOC partial-fill terminal 单元测试，REST final check / emergency flatten 已带 decimal-size header、解析 decimal position size、检查 `value` / `margin` residual 并可提交 decimal reduce-only close；这些修复仍需完整 strategy 小额 live smoke 复核，复核前不要继续无人值守真实订单长跑。当前 V1 对齐 Sirius 边界：策略持仓由订单回报推导，停机后用 REST final check / emergency flatten 校验真实账户，不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 是 V2 可选能力。`--smoke-submit-reject` 和独立 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不计入已完成 smoke。`config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` 当前已覆盖 12 个 requested symbols，文件名保留历史 `11symbols`，内容已追加 `ETH_USDT`；Gate decimal-size 合约 catalog metadata 已从 `order_size_min` 推导小数位，C++ 订单链路已用 `quantity_text` 下发小数 size。信号输出边界：replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV；真实订单模式不写 per-signal CSV，信号和订单意图用日志中的 `trigger_ticker_id` 关联，提交成功后用 `lead_lag_order_submitted.local_order_id` 作为订单分析主键；`scripts/lead_lag/analyze_order_detail.py` 可从 live log 生成 `order_detail.csv`，当前 CSV 已输出 `position_id`、`position_event`、`position_direction`、`entry_local_order_id` 和 `order_finished_local_ns`，传入 `--positions-output` 会生成 `position.csv`（closed / partial_closed / open，含 gross_pnl / net_pnl / fee），传入 `--latency-output` 会生成 `latency.csv`（send / ack / finish 本地时间、ack RTT、send-to-finish、ack-to-finish、exchange timestamp 诊断）。修改后按项目规则验证并自动提交；不要 push，除非用户明确要求。

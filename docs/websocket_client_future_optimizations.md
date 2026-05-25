@@ -112,7 +112,7 @@ try-flush-one:
 | `session_write_path_benchmark` | 本地 socketpair 下 `CommitPreparedWrite()` 到 `DriveWrite()` 的路径已可测。 | 不含 TLS、真实 TCP、网卡、交易所 ACK。 |
 | `session_tls_write_path_benchmark` | local TLS single-frame write 基线已补齐，TLS write 成本不可忽略。 | 仍是本地 loopback，不代表公网或 private link。 |
 | `session_write_path_control_slot_full_business_queue` | dedicated control slot 用户态路径很轻，业务队列满时 heartbeat ping 可绕过业务 pending queue。 | fake socket，不代表真实发送成本。 |
-| `gate_order_session_benchmark` | 已覆盖 `StrategyContext` -> `OrderManager` -> Gate `OrderSession` -> WebSocket encode -> fake transport / local socketpair `send()`。 | 不含 TLS、真实 TCP、网卡、交易所 ACK；p99 / p999 需按 cold / warm 口径解读，详见 `doc/agent-handoff-gate-trade-architecture.md`。 |
+| `gate_order_session_benchmark` | 已覆盖 `StrategyContext` -> `OrderManager` -> Gate `OrderSession` -> WebSocket encode -> fake transport / local socketpair `send()`。 | 不含 TLS、真实 TCP、网卡、交易所 ACK；p99 / p999 需按 cold / warm 口径解读，详见 `docs/agent-handoff-gate-trade-architecture.md`。 |
 
 历史 local TLS single-frame write 基线显示，p50 约为 plain local socket 的两倍以上；这个结论只限本地 loopback TLS，不代表交易所公网或 private link。
 
@@ -250,6 +250,6 @@ live 工具：
 
 ## 相关文档
 
-- `doc/websocket_frame_codec_receive_strategies.md`
-- `doc/websocket_read_write_benchmark_comparison.md`
-- `doc/data_session_config.md`
+- `docs/websocket_frame_codec_receive_strategies.md`
+- `docs/websocket_read_write_benchmark_comparison.md`
+- `docs/data_session_config.md`

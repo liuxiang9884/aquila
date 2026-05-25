@@ -362,7 +362,7 @@ max_reads_per_drive = 8
 | `max_reads_per_drive` | `8` | `ConnectionConfig.max_reads_per_drive` | 一次 `DriveRead()` 最多调用多少次 `ReadSome()`。 |
 | `read_until_would_block` | `false` | `ConnectionConfig.read_until_would_block` | 是否在 read budget 内更积极地读到 `EAGAIN` / would-block。 |
 
-read path 的机制对照见 `doc/websocket_read_write_benchmark_comparison.md`。这些字段影响 burst
+read path 的机制对照见 `docs/websocket_read_write_benchmark_comparison.md`。这些字段影响 burst
 drain 能力和单轮 loop 占用时间；生产推荐值必须由 benchmark 或 live probe 支撑。
 
 ## WebSocket Heartbeat

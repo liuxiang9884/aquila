@@ -7,7 +7,7 @@
 - `position.csv`
 - `latency.csv`
 
-当前字段以 `data/report/20260525_091251_12pair_live/` 生成的 CSV 表头和 `scripts/lead_lag/analyze_order_detail.py` 为准。真实订单模式不会直接写 per-signal CSV，`signal.csv` 是从 live log 中的 `lead_lag_signal_triggered` 与订单明细关联后生成的分析产物。
+当前字段以 `reports/20260525_091251_12pair_live/` 生成的 CSV 表头和 `scripts/lead_lag/analyze_order_detail.py` 为准。真实订单模式不会直接写 per-signal CSV，`signal.csv` 是从 live log 中的 `lead_lag_signal_triggered` 与订单明细关联后生成的分析产物。
 
 ## 通用约定
 

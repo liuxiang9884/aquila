@@ -33,7 +33,7 @@ tools/binance/futures_book_ticker_probe.cpp
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
 scripts/binance/query_um_futures_contracts.py
 scripts/binance/query_um_futures_contracts_test.py
-doc/futures_contract_metadata_fields.md
+docs/futures_contract_metadata_fields.md
 ```
 
 共享 JSON helper 已放到：
@@ -72,7 +72,7 @@ log thread；Nova file sink 会在实际文件名上追加启动时间。
 
 `scripts/binance/query_um_futures_contracts.py` 查询 USD-M futures `GET /fapi/v1/exchangeInfo`，按输入 symbol 顺序生成 `pandas.DataFrame`；CLI 支持一个或多个 symbol，也支持 `--file`，文件内每行一个 symbol。脚本把 `settle_asset` 映射为 `marginAsset`；当前使用约定是调用方只传 USDT settled symbols。
 
-当前输出字段与 Gate 脚本保持一致，字段语义见 `doc/futures_contract_metadata_fields.md`。Binance 侧主要映射如下：
+当前输出字段与 Gate 脚本保持一致，字段语义见 `docs/futures_contract_metadata_fields.md`。Binance 侧主要映射如下：
 
 1. `price_tick` 来自 `PRICE_FILTER.tickSize`。
 2. `quantity_step`、`min_quantity`、`max_quantity` 来自 `LOT_SIZE`。

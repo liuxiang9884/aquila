@@ -112,7 +112,7 @@ HDF / xex_mars `bbo` 数据也可以先转换成同一个 `aquila::BookTicker` b
 Tardis `book_ticker` 与 HDF `bbo` 是两条不同输入链路。ORDI_USDT 20260415～20260417 的对账显示，
 HDF 三天比 Tardis 少 `512,137` 条 `BookTicker`，差异主要来自 Gate；因此 HDF replay 结果不能直接当作
 Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比见
-`doc/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
+`docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
 
 ## 字段
 

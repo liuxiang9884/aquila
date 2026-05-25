@@ -299,7 +299,7 @@ p50 / p99 / p99.9
 - 合规 masking 后，`third_party` 在所有 payload size 上都明显慢于 `aquila` 当前实现。
 - `aquila` 的 8-byte XOR 优化对 256B 以上 payload 收益明显，4096B p50 已降到 `712ns`。
 - Drogon-style 大 payload 成本明显高于 `aquila`，主要来自更通用的 buffer / copy 模型。
-- 这组 benchmark 不含 TLS。TLS write 基线在 `doc/websocket_client_future_optimizations.md` 中记录：local TLS single-frame write p50 约为 plain local socket 的两倍以上。
+- 这组 benchmark 不含 TLS。TLS write 基线在 `docs/websocket_client_future_optimizations.md` 中记录：local TLS single-frame write p50 约为 plain local socket 的两倍以上。
 
 ## 设计结论
 
@@ -317,5 +317,5 @@ p50 / p99 / p99.9
 - `core/websocket/types.h`
 - `benchmark/websocket/third_party_frame_codec_comparison_benchmark.cpp`
 - `benchmark/websocket/session_write_path_benchmark.cpp`
-- `doc/websocket_frame_codec_receive_strategies.md`
-- `doc/websocket_client_future_optimizations.md`
+- `docs/websocket_frame_codec_receive_strategies.md`
+- `docs/websocket_client_future_optimizations.md`

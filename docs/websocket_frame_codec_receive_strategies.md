@@ -3,7 +3,7 @@
 ## 文档信息
 
 - 状态：`accepted`（FrameCodec decode 主体已收口）
-- 记录位置：`doc/`
+- 记录位置：`docs/`
 - 适用范围：`WebSocket frame receive codec`、接收缓冲、payload 生命周期与低延迟路径设计
 - 背景：本文总结当前讨论过的三类完整消息接收/解析方法，并说明 `third_party/websocket` 这类 parser-only 实现为什么不能单独承担生产 receive codec。
 

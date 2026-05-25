@@ -5,7 +5,7 @@
 ## 默认约定
 
 - 默认使用中文回答，除非用户明确要求其他语言。
-- 文档（`doc/`、`README.md`、设计/审查/计划等 markdown）使用中文撰写；代码注释（`.h`、`.cpp` 中的注释和 docstring）使用英文撰写。提交信息（commit message）使用英文。
+- 文档（`docs/`、`README.md`、设计/审查/计划等 markdown）使用中文撰写；代码注释（`.h`、`.cpp` 中的注释和 docstring）使用英文撰写。提交信息（commit message）使用英文。
 - 文档中的描述性语言默认使用中文；专业名词、协议字段、枚举值、配置项、命令行参数、文件路径、代码标识符、日志原文和外部 API 名称保留英文或原文。不要把非专业叙述整段写成英文。
 - 提交 PR 时，PR 标题与正文以中文为主；命令行、报错原文、外部链接和代码片段保留英文 / 原文。
 - 优先遵循仓库现有的 `CMake + C++20` 结构、构建脚本和依赖管理方式，不做与当前任务无关的重构。
@@ -29,18 +29,18 @@ git log --oneline -8
 ```text
 AGENTS.md
 README.md
-doc/project_onboarding_guide.md
-doc/evaluation_support.md
+docs/project_onboarding_guide.md
+docs/evaluation_support.md
 ```
 
-如果继续 Gate 交易架构，再读 `doc/agent-handoff-gate-trade-architecture.md`；如果继续 Binance 行情，再读
-`doc/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读
-`doc/data_session_config.md`。读取后以 `doc/project_onboarding_guide.md` 的“最近已完成”“代码入口”
+如果继续 Gate 交易架构，再读 `docs/agent-handoff-gate-trade-architecture.md`；如果继续 Binance 行情，再读
+`docs/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读
+`docs/data_session_config.md`。读取后以 `docs/project_onboarding_guide.md` 的“最近已完成”“代码入口”
 和“下一步建议”为当前事实源，再结合 `git status` / `git log` 判断是否存在未提交或未 push 的工作。
 
 ### Onboarding 文档书写规则
 
-`doc/project_onboarding_guide.md` 是新对话接手入口，不是完整历史记录或设计说明。更新 onboarding 时默认遵守：
+`docs/project_onboarding_guide.md` 是新对话接手入口，不是完整历史记录或设计说明。更新 onboarding 时默认遵守：
 
 - 只写摘要和索引：记录当前事实、关键入口、重要边界、验证命令和下一步建议；不要把设计推导、实现细节、完整 benchmark 输出、live smoke 原始日志或逐提交历史写进 onboarding。
 - 细节放到对应专题文档：Gate 交易放 Gate handoff / specs，DataReader 放 data reader / trading component 文档，LeadLag 放 strategy README / reconstruction / audit / replay 对账文档，benchmark 和性能分析放对应 benchmark / 对比文档。
@@ -55,7 +55,7 @@ doc/evaluation_support.md
 当用户输入“结束对话”，或明确要求结束当前对话并交接时，默认自动执行下面的收尾流程：
 
 1. 运行 `git status --short --branch` 和 `git log --oneline -8`，确认当前分支、未提交改动和最近提交。
-2. 对照当前实现、配置和最近提交，整理相关文档；重点更新 `doc/project_onboarding_guide.md` 的当前状态、代码入口、验证命令和下一步建议。
+2. 对照当前实现、配置和最近提交，整理相关文档；重点更新 `docs/project_onboarding_guide.md` 的当前状态、代码入口、验证命令和下一步建议。
 3. 如果本轮改动影响 evaluation 边界、data session config、WebSocket 行为或 Gate / Binance handoff，同步更新对应文档。
 4. 在 onboarding 中保留或更新一段“给下一个对话的 onboarding 提示”，让下一轮对话可以直接按该段话接手。
 5. 跑本次文档整理所需的最小验证，至少包括 `git diff --check`；如果触碰 evaluation 边界，再运行 evaluation 边界检查。

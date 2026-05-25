@@ -53,12 +53,12 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 
 | 文档 | 什么时候读 | 内容 |
 | --- | --- | --- |
-| `doc/tui_gate_account_monitor_design.md` | 继续设计或开始实现 TUI | 第一版 Gate account TUI 的详细架构、组件、数据流、错误处理和测试建议 |
-| `doc/project_onboarding_guide.md` | 新对话总体接手 | 项目当前事实源、代码入口和全局下一步 |
-| `doc/agent-handoff-gate-trade-architecture.md` | 复用 Gate private WS / SBE / order feedback 代码前 | Gate 交易 WebSocket、private feedback、SHM 和线程模型边界 |
-| `doc/strategy_order_component_model.md` | 判断 TUI 是否能复用交易组件时 | `OrderManager`、`OrderFeedbackSession`、`TradingRuntime` 的职责边界 |
-| `doc/lead_lag_reconcile_design.md` | 处理 REST snapshot / drift / manual intervention 语义时 | read-only reconcile、REST 事实校验和恢复边界 |
-| `doc/futures_contract_metadata_fields.md` | 计算合约数量、notional、PnL 单位时 | Gate / Binance futures metadata 字段和单位差异 |
+| `docs/tui_gate_account_monitor_design.md` | 继续设计或开始实现 TUI | 第一版 Gate account TUI 的详细架构、组件、数据流、错误处理和测试建议 |
+| `docs/project_onboarding_guide.md` | 新对话总体接手 | 项目当前事实源、代码入口和全局下一步 |
+| `docs/agent-handoff-gate-trade-architecture.md` | 复用 Gate private WS / SBE / order feedback 代码前 | Gate 交易 WebSocket、private feedback、SHM 和线程模型边界 |
+| `docs/strategy_order_component_model.md` | 判断 TUI 是否能复用交易组件时 | `OrderManager`、`OrderFeedbackSession`、`TradingRuntime` 的职责边界 |
+| `docs/lead_lag_reconcile_design.md` | 处理 REST snapshot / drift / manual intervention 语义时 | read-only reconcile、REST 事实校验和恢复边界 |
+| `docs/futures_contract_metadata_fields.md` | 计算合约数量、notional、PnL 单位时 | Gate / Binance futures metadata 字段和单位差异 |
 
 ## 当前实现可复用点
 
@@ -101,7 +101,7 @@ git diff --check
 
 ## 下一步建议
 
-1. 阅读 `doc/tui_gate_account_monitor_design.md`。
+1. 阅读 `docs/tui_gate_account_monitor_design.md`。
 2. 后续实现 monitor 专用 Gate orders raw parser，覆盖全账户订单，不丢弃非 Aquila text；先用 fixture 固化 `futures.orders` 字段语义。
 3. 增加启动期 REST snapshot：open orders、positions、account summary；运行中低频校验 drift。
 4. 实现 monitor model：按 symbol 聚合 orders、position ledger、realized / unrealized PnL、source classification 和 stale 状态。

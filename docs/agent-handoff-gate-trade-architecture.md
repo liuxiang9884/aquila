@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文是继续 Gate 交易链路时的轻量 handoff。旧的设计讨论、执行计划、实验流水账和逐轮 benchmark 记录已清理；当前事实以本文件、`doc/project_onboarding_guide.md`、`doc/strategy_order_component_model.md` 和代码为准。
+本文是继续 Gate 交易链路时的轻量 handoff。旧的设计讨论、执行计划、实验流水账和逐轮 benchmark 记录已清理；当前事实以本文件、`docs/project_onboarding_guide.md`、`docs/strategy_order_component_model.md` 和代码为准。
 
 新接手时先运行：
 
@@ -16,9 +16,9 @@ git -C /home/liuxiang/dev/aquila log --oneline -8
 ```text
 AGENTS.md
 README.md
-doc/project_onboarding_guide.md
-doc/evaluation_support.md
-doc/strategy_order_component_model.md
+docs/project_onboarding_guide.md
+docs/evaluation_support.md
+docs/strategy_order_component_model.md
 ```
 
 ## 当前状态
@@ -197,12 +197,12 @@ Live probe / smoke 只在明确允许真实连接或真实下单时运行：
 
 ## 相关文档
 
-- `doc/project_onboarding_guide.md`
-- `doc/strategy_order_component_model.md`
-- `doc/data_session_config.md`
-- `doc/data_reader_config.md`
-- `doc/futures_contract_metadata_fields.md`
-- `doc/websocket_read_write_benchmark_comparison.md`
-- `doc/websocket_client_future_optimizations.md`
-- `doc/lead_lag_reconcile_design.md`
-- `doc/lead_lag_live_runtime_plan.md`
+- `docs/project_onboarding_guide.md`
+- `docs/strategy_order_component_model.md`
+- `docs/data_session_config.md`
+- `docs/data_reader_config.md`
+- `docs/futures_contract_metadata_fields.md`
+- `docs/websocket_read_write_benchmark_comparison.md`
+- `docs/websocket_client_future_optimizations.md`
+- `docs/lead_lag_reconcile_design.md`
+- `docs/lead_lag_live_runtime_plan.md`

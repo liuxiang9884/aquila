@@ -13,7 +13,7 @@
 - V1 对齐 Sirius 边界：策略持仓由订单回报推导；停机后用 REST final check / emergency flatten 校验真实账户；不新增独立 `AccountPositionFeedbackSession`。
 - `scripts/lead_lag/run_live_with_guard.py` 是真实订单测试推荐外层入口，负责 REST preflight、runner 退出监控、final REST check 和异常 stop-and-flat。
 - 真实订单模式不写 per-signal CSV；信号与下单意图通过日志中的 `trigger_ticker_id`、`lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 对齐；成功提交后的订单主事实源是 `lead_lag_order_submitted`，其中包含 `local_order_id`、最终 `position_id`、`position_event`、`position_direction`、`entry_local_order_id`、`signal_role`、`order_role`、`quantity_text` 和 `price_text`；终态日志 `lead_lag_order_finished` 同步输出 `position_id`、`position_direction`、`order_role`、`entry_local_order_id` 和 `order_finished_local_ns`。`scripts/lead_lag/analyze_order_detail.py --positions-output <path> --latency-output <path>` 可在生成 `order_detail.csv` 的同时生成 `position.csv` 和 `latency.csv`：`position.csv` 按 `run_id + symbol_id + position_id` 配对 entry / exit，每个有成交 exit 输出一行 closed / partial_closed slice，未平 entry 输出 open 行；`gross_pnl` 用 average fill price、matched volume 和 `contract_multiplier` 计算，`net_pnl` 再扣除 config 估算 fee。`latency.csv` 一行对应一个本地订单，输出 send / ack / finish 本地时间、ack RTT、send-to-finish、ack-to-finish、exchange timestamp 和 exchange-to-local 诊断字段；延迟判断优先看本地 RTT，不把本地和交易所时钟直接相减当作单程网络延迟。
-- `signal.csv`、`order_detail.csv`、`position.csv` 和 `latency.csv` 字段说明见 `doc/lead_lag_live_report_csv_schema.md`。
+- `signal.csv`、`order_detail.csv`、`position.csv` 和 `latency.csv` 字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
 - replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV。
 
 ## 关键配置
@@ -53,7 +53,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 ## 推荐测试顺序
 
 1. 启动 Gate / Binance data session 和 Gate order feedback session，确认 SHM 和 feedback 都在预期路径。
-2. 如需 live / replay 信号对比，执行 `doc/lead_lag_live_replay_testing.md` 中的 `lead_lag_live_replay_signal_parity <duration>`，不使用 `--execute`。
+2. 如需 live / replay 信号对比，执行 `docs/lead_lag_live_replay_testing.md` 中的 `lead_lag_live_replay_signal_parity <duration>`，不使用 `--execute`。
 3. 真实订单复核前，先跑 targeted tests：
 
 ```bash
