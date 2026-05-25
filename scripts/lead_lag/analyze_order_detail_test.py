@@ -141,6 +141,145 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["order_finished_local_ns"], "1779676175135543485")
         self.assertEqual(row["warnings"], "")
 
+    def test_builds_closed_position_detail_from_entry_and_exit_orders(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            config_path = base / "strategy.toml"
+            catalog_path = base / "catalog.csv"
+            output_path = base / "positions.csv"
+            write_config(config_path)
+            write_catalog(catalog_path)
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 trigger_ticker_id=10624277384126 trigger_exchange=kBinance trigger_symbol_id=4 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
+                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348
+                I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kFilled local_order_id=288230376151711749 exchange_order_id=260082878984634644 cumulative_filled_quantity=36 left_quantity=0 cancelled_quantity=0 fill_price=0.2714 role=kTaker finish_reason=kUnknown reject_reason=kUnknown
+                I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
+                I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 trigger_ticker_id=10624277385364 trigger_exchange=kBinance trigger_symbol_id=4 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=1 position_event=kExitSubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2713 order_price=0.271 price_text=0.2710 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.56 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.125612335 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711750 request_sequence=7 encoded_request_id=144115188075855879 contract=PROVE_USDT side=kSell quantity=36 price=0.2710 tif=kImmediateOrCancel reduce_only=true inflight=6 request_send_local_ns=1779676175125607942
+                I2026-05-25 02:29:35.129547287 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711750 exchange_order_id=0 request_sequence=7 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175129546235 exchange_ns=1779676175127009000 exchange_to_local_ns=2537235
+                I2026-05-25 02:29:35.135543485 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711750 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=true position_id=1 position_direction=kLong order_role=exit entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175135543485 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.271244 last_fill_price=0.271244 exchange_order_id=260082878984634672 active_groups=0 request_send_local_ns=1779676175125607942 ack_local_receive_ns=1779676175129546235 response_local_receive_ns=0 ack_exchange_ns=1779676175127009000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175128000000 ack_rtt_ns=3938293 response_rtt_ns=0 ack_exchange_to_local_ns=2537235 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
+                """,
+            )
+
+            result = orders.analyze_order_detail(
+                log_path,
+                config_path=config_path,
+                instrument_catalog_path=catalog_path,
+                run_id="run-1",
+            )
+            position_rows = orders.build_position_detail_rows(result.rows)
+            orders.write_position_detail_csv(position_rows, output_path)
+
+            with output_path.open(newline="", encoding="utf-8") as input_file:
+                row = next(csv.DictReader(input_file))
+
+        self.assertEqual(len(position_rows), 1)
+        self.assertEqual(row["run_id"], "run-1")
+        self.assertEqual(row["position_key"], "run-1:4:1:288230376151711750")
+        self.assertEqual(row["symbol"], "PROVE_USDT")
+        self.assertEqual(row["position_id"], "1")
+        self.assertEqual(row["position_direction"], "kLong")
+        self.assertEqual(row["status"], "closed")
+        self.assertEqual(row["entry_local_order_id"], "288230376151711749")
+        self.assertEqual(row["exit_local_order_id"], "288230376151711750")
+        self.assertEqual(row["entry_ns"], "1779676175117545430")
+        self.assertEqual(row["exit_ns"], "1779676175135543485")
+        self.assertEqual(row["holding_ns"], "17998055")
+        self.assertEqual(row["entry_price"], "0.2714")
+        self.assertEqual(row["exit_price"], "0.271244")
+        self.assertEqual(row["entry_volume"], "36")
+        self.assertEqual(row["exit_volume"], "36")
+        self.assertEqual(row["gross_pnl"], "-0.05616")
+        self.assertEqual(row["entry_fee_quote_estimated"], "0.01563264")
+        self.assertEqual(row["exit_fee_quote_estimated"], "0.0156236544")
+        self.assertEqual(row["total_fee_quote_estimated"], "0.0312562944")
+        self.assertEqual(row["net_pnl"], "-0.0874162944")
+        self.assertEqual(row["warnings"], "")
+
+    def test_builds_short_closed_and_open_position_detail_rows(self):
+        rows = orders.build_position_detail_rows(
+            [
+                {
+                    "run_id": "run-2",
+                    "local_order_id": "10",
+                    "exchange_order_id": "110",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "entry",
+                    "position_id": "2",
+                    "position_direction": "kShort",
+                    "side": "kSell",
+                    "raw_price": "0.3",
+                    "order_price": "0.2997",
+                    "average_fill_price": "0.2998",
+                    "cumulative_filled_quantity": "10",
+                    "contract_multiplier": "10",
+                    "fee_quote_estimated": "0.004",
+                    "fee_source": "config_estimated",
+                    "ack_rtt_ns": "1000",
+                    "order_finished_local_ns": "100",
+                },
+                {
+                    "run_id": "run-2",
+                    "local_order_id": "11",
+                    "exchange_order_id": "111",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "exit",
+                    "position_id": "2",
+                    "position_direction": "kShort",
+                    "side": "kBuy",
+                    "raw_price": "0.299",
+                    "order_price": "0.2993",
+                    "average_fill_price": "0.2992",
+                    "cumulative_filled_quantity": "10",
+                    "contract_multiplier": "10",
+                    "fee_quote_estimated": "0.003",
+                    "fee_source": "config_estimated",
+                    "ack_rtt_ns": "2000",
+                    "order_finished_local_ns": "140",
+                },
+                {
+                    "run_id": "run-2",
+                    "local_order_id": "12",
+                    "exchange_order_id": "112",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "entry",
+                    "position_id": "3",
+                    "position_direction": "kLong",
+                    "side": "kBuy",
+                    "average_fill_price": "0.5",
+                    "cumulative_filled_quantity": "4",
+                    "contract_multiplier": "10",
+                    "fee_quote_estimated": "0.002",
+                    "fee_source": "config_estimated",
+                    "order_finished_local_ns": "150",
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 2)
+        closed = rows[0]
+        self.assertEqual(closed["position_key"], "run-2:4:2:11")
+        self.assertEqual(closed["position_direction"], "kShort")
+        self.assertEqual(closed["status"], "closed")
+        self.assertEqual(closed["gross_pnl"], "0.06")
+        self.assertEqual(closed["total_fee_quote_estimated"], "0.007")
+        self.assertEqual(closed["net_pnl"], "0.053")
+        self.assertEqual(closed["holding_ns"], "40")
+
+        open_row = rows[1]
+        self.assertEqual(open_row["position_key"], "run-2:4:3:open")
+        self.assertEqual(open_row["status"], "open")
+        self.assertEqual(open_row["entry_volume"], "4")
+        self.assertEqual(open_row["entry_notional"], "20")
+        self.assertEqual(open_row["net_pnl"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

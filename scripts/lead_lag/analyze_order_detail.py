@@ -72,6 +72,49 @@ ORDER_DETAIL_FIELDS = [
 ]
 
 
+POSITION_DETAIL_FIELDS = [
+    "run_id",
+    "position_key",
+    "symbol",
+    "symbol_id",
+    "position_id",
+    "position_direction",
+    "status",
+    "entry_local_order_id",
+    "exit_local_order_id",
+    "entry_exchange_order_id",
+    "exit_exchange_order_id",
+    "entry_ns",
+    "exit_ns",
+    "holding_ns",
+    "entry_side",
+    "exit_side",
+    "entry_raw_price",
+    "exit_raw_price",
+    "entry_order_price",
+    "exit_order_price",
+    "entry_price",
+    "exit_price",
+    "entry_volume",
+    "exit_volume",
+    "matched_volume",
+    "remaining_entry_volume",
+    "contract_multiplier",
+    "entry_notional",
+    "exit_notional",
+    "gross_pnl",
+    "entry_fee_quote_estimated",
+    "exit_fee_quote_estimated",
+    "total_fee_quote_estimated",
+    "net_pnl",
+    "entry_ack_rtt_ns",
+    "exit_ack_rtt_ns",
+    "entry_fee_source",
+    "exit_fee_source",
+    "warnings",
+]
+
+
 LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_).*$")
 
 
@@ -320,7 +363,11 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
     )
 
 
-def enrich_order(order: dict[str, str], pair_config: dict[str, str], instrument: dict[str, str]) -> None:
+def enrich_order(
+    order: dict[str, str],
+    pair_config: dict[str, str],
+    instrument: dict[str, str],
+) -> None:
     symbol = order.get("symbol", "")
     if order.get("text_order_id", "") == "" and order.get("local_order_id", ""):
         order["text_order_id"] = "t-" + order["local_order_id"]
@@ -482,6 +529,378 @@ def write_order_detail_csv(rows: list[dict[str, str]], output_path: Path) -> Non
         writer.writerows(rows)
 
 
+def order_fill_price(order: dict[str, str]) -> Decimal | None:
+    average_fill = parse_decimal(order.get("average_fill_price"))
+    if average_fill is not None and average_fill > 0:
+        return average_fill
+    last_fill = parse_decimal(order.get("last_fill_price"))
+    if last_fill is not None and last_fill > 0:
+        return last_fill
+    return None
+
+
+def order_filled_quantity(order: dict[str, str]) -> Decimal:
+    return parse_decimal(order.get("cumulative_filled_quantity")) or Decimal(0)
+
+
+def order_finished_ns(order: dict[str, str]) -> str:
+    return (
+        order.get("order_finished_local_ns")
+        or order.get("ack_local_receive_ns")
+        or order.get("request_send_local_ns")
+        or ""
+    )
+
+
+def int_delta_text(lhs: str, rhs: str) -> str:
+    if lhs == "" or rhs == "":
+        return ""
+    try:
+        return str(int(lhs) - int(rhs))
+    except ValueError:
+        return ""
+
+
+def decimal_ratio(
+    amount: Decimal | None, numerator: Decimal, denominator: Decimal
+) -> Decimal | None:
+    if amount is None:
+        return None
+    if denominator == 0:
+        return None
+    return amount * numerator / denominator
+
+
+def notional_for(
+    price: Decimal | None, quantity: Decimal, multiplier: Decimal | None
+) -> Decimal | None:
+    if price is None or multiplier is None:
+        return None
+    return price * quantity * multiplier
+
+
+def position_group_key(order: dict[str, str]) -> tuple[str, str, str]:
+    return (
+        order.get("run_id", ""),
+        order.get("symbol_id", ""),
+        order.get("position_id", ""),
+    )
+
+
+def position_sort_key(key: tuple[str, str, str]) -> tuple[str, int, int]:
+    run_id, symbol_id, position_id = key
+    try:
+        symbol_sort = int(symbol_id)
+    except ValueError:
+        symbol_sort = -1
+    try:
+        position_sort = int(position_id)
+    except ValueError:
+        position_sort = -1
+    return run_id, symbol_sort, position_sort
+
+
+def order_sort_key(order: dict[str, str]) -> tuple[int, int]:
+    ns = order_finished_ns(order)
+    local_order_id = order.get("local_order_id", "")
+    try:
+        ns_sort = int(ns)
+    except ValueError:
+        ns_sort = 0
+    try:
+        order_sort = int(local_order_id)
+    except ValueError:
+        order_sort = 0
+    return ns_sort, order_sort
+
+
+def append_row_warning(row: dict[str, str], warning: str) -> None:
+    append_warning(row, warning)
+
+
+def build_closed_position_row(
+    entry: dict[str, str],
+    exit_order: dict[str, str],
+    matched_volume: Decimal,
+    remaining_entry_volume: Decimal,
+    entry_fee: Decimal | None,
+    exit_fee: Decimal | None,
+    status: str,
+    warnings: list[str],
+) -> dict[str, str]:
+    entry_price = order_fill_price(entry)
+    exit_price = order_fill_price(exit_order)
+    multiplier = parse_decimal(entry.get("contract_multiplier")) or parse_decimal(
+        exit_order.get("contract_multiplier")
+    )
+    direction = entry.get("position_direction") or exit_order.get("position_direction", "")
+    gross_pnl: Decimal | None = None
+    if entry_price is not None and exit_price is not None and multiplier is not None:
+        if direction == "kLong":
+            gross_pnl = (exit_price - entry_price) * matched_volume * multiplier
+        elif direction == "kShort":
+            gross_pnl = (entry_price - exit_price) * matched_volume * multiplier
+    total_fee: Decimal | None = None
+    if entry_fee is not None or exit_fee is not None:
+        total_fee = (entry_fee or Decimal(0)) + (exit_fee or Decimal(0))
+    net_pnl = None
+    if gross_pnl is not None:
+        net_pnl = gross_pnl - (total_fee or Decimal(0))
+    entry_ns = order_finished_ns(entry)
+    exit_ns = order_finished_ns(exit_order)
+    row = {
+        "run_id": entry.get("run_id", exit_order.get("run_id", "")),
+        "position_key": (
+            f"{entry.get('run_id', exit_order.get('run_id', ''))}:"
+            f"{entry.get('symbol_id', exit_order.get('symbol_id', ''))}:"
+            f"{entry.get('position_id', exit_order.get('position_id', ''))}:"
+            f"{exit_order.get('local_order_id', '')}"
+        ),
+        "symbol": entry.get("symbol") or exit_order.get("symbol", ""),
+        "symbol_id": entry.get("symbol_id") or exit_order.get("symbol_id", ""),
+        "position_id": entry.get("position_id") or exit_order.get("position_id", ""),
+        "position_direction": direction,
+        "status": status,
+        "entry_local_order_id": entry.get("local_order_id", ""),
+        "exit_local_order_id": exit_order.get("local_order_id", ""),
+        "entry_exchange_order_id": entry.get("exchange_order_id", ""),
+        "exit_exchange_order_id": exit_order.get("exchange_order_id", ""),
+        "entry_ns": entry_ns,
+        "exit_ns": exit_ns,
+        "holding_ns": int_delta_text(exit_ns, entry_ns),
+        "entry_side": entry.get("side", ""),
+        "exit_side": exit_order.get("side", ""),
+        "entry_raw_price": entry.get("raw_price", ""),
+        "exit_raw_price": exit_order.get("raw_price", ""),
+        "entry_order_price": entry.get("order_price", ""),
+        "exit_order_price": exit_order.get("order_price", ""),
+        "entry_price": format_decimal(entry_price),
+        "exit_price": format_decimal(exit_price),
+        "entry_volume": format_decimal(matched_volume),
+        "exit_volume": format_decimal(order_filled_quantity(exit_order)),
+        "matched_volume": format_decimal(matched_volume),
+        "remaining_entry_volume": format_decimal(remaining_entry_volume),
+        "contract_multiplier": format_decimal(multiplier),
+        "entry_notional": format_decimal(
+            notional_for(entry_price, matched_volume, multiplier)
+        ),
+        "exit_notional": format_decimal(
+            notional_for(exit_price, matched_volume, multiplier)
+        ),
+        "gross_pnl": format_decimal(gross_pnl),
+        "entry_fee_quote_estimated": format_decimal(entry_fee),
+        "exit_fee_quote_estimated": format_decimal(exit_fee),
+        "total_fee_quote_estimated": format_decimal(total_fee),
+        "net_pnl": format_decimal(net_pnl),
+        "entry_ack_rtt_ns": entry.get("ack_rtt_ns", ""),
+        "exit_ack_rtt_ns": exit_order.get("ack_rtt_ns", ""),
+        "entry_fee_source": entry.get("fee_source", ""),
+        "exit_fee_source": exit_order.get("fee_source", ""),
+        "warnings": "",
+    }
+    for warning in warnings:
+        append_row_warning(row, warning)
+    return row
+
+
+def build_open_position_row(
+    entry: dict[str, str],
+    remaining_entry_volume: Decimal,
+    entry_fee: Decimal | None,
+    warnings: list[str],
+) -> dict[str, str]:
+    entry_price = order_fill_price(entry)
+    multiplier = parse_decimal(entry.get("contract_multiplier"))
+    entry_ns = order_finished_ns(entry)
+    row = {
+        "run_id": entry.get("run_id", ""),
+        "position_key": (
+            f"{entry.get('run_id', '')}:{entry.get('symbol_id', '')}:"
+            f"{entry.get('position_id', '')}:open"
+        ),
+        "symbol": entry.get("symbol", ""),
+        "symbol_id": entry.get("symbol_id", ""),
+        "position_id": entry.get("position_id", ""),
+        "position_direction": entry.get("position_direction", ""),
+        "status": "open",
+        "entry_local_order_id": entry.get("local_order_id", ""),
+        "exit_local_order_id": "",
+        "entry_exchange_order_id": entry.get("exchange_order_id", ""),
+        "exit_exchange_order_id": "",
+        "entry_ns": entry_ns,
+        "exit_ns": "",
+        "holding_ns": "",
+        "entry_side": entry.get("side", ""),
+        "exit_side": "",
+        "entry_raw_price": entry.get("raw_price", ""),
+        "exit_raw_price": "",
+        "entry_order_price": entry.get("order_price", ""),
+        "exit_order_price": "",
+        "entry_price": format_decimal(entry_price),
+        "exit_price": "",
+        "entry_volume": format_decimal(remaining_entry_volume),
+        "exit_volume": "",
+        "matched_volume": "",
+        "remaining_entry_volume": format_decimal(remaining_entry_volume),
+        "contract_multiplier": format_decimal(multiplier),
+        "entry_notional": format_decimal(
+            notional_for(entry_price, remaining_entry_volume, multiplier)
+        ),
+        "exit_notional": "",
+        "gross_pnl": "",
+        "entry_fee_quote_estimated": format_decimal(entry_fee),
+        "exit_fee_quote_estimated": "",
+        "total_fee_quote_estimated": format_decimal(entry_fee),
+        "net_pnl": "",
+        "entry_ack_rtt_ns": entry.get("ack_rtt_ns", ""),
+        "exit_ack_rtt_ns": "",
+        "entry_fee_source": entry.get("fee_source", ""),
+        "exit_fee_source": "",
+        "warnings": "",
+    }
+    for warning in warnings:
+        append_row_warning(row, warning)
+    return row
+
+
+def build_missing_entry_position_row(exit_order: dict[str, str]) -> dict[str, str]:
+    exit_price = order_fill_price(exit_order)
+    exit_volume = order_filled_quantity(exit_order)
+    multiplier = parse_decimal(exit_order.get("contract_multiplier"))
+    exit_fee = parse_decimal(exit_order.get("fee_quote_estimated"))
+    exit_ns = order_finished_ns(exit_order)
+    row = {
+        "run_id": exit_order.get("run_id", ""),
+        "position_key": (
+            f"{exit_order.get('run_id', '')}:{exit_order.get('symbol_id', '')}:"
+            f"{exit_order.get('position_id', '')}:{exit_order.get('local_order_id', '')}"
+        ),
+        "symbol": exit_order.get("symbol", ""),
+        "symbol_id": exit_order.get("symbol_id", ""),
+        "position_id": exit_order.get("position_id", ""),
+        "position_direction": exit_order.get("position_direction", ""),
+        "status": "missing_entry",
+        "entry_local_order_id": exit_order.get("entry_local_order_id", ""),
+        "exit_local_order_id": exit_order.get("local_order_id", ""),
+        "entry_exchange_order_id": "",
+        "exit_exchange_order_id": exit_order.get("exchange_order_id", ""),
+        "entry_ns": "",
+        "exit_ns": exit_ns,
+        "holding_ns": "",
+        "entry_side": "",
+        "exit_side": exit_order.get("side", ""),
+        "entry_raw_price": "",
+        "exit_raw_price": exit_order.get("raw_price", ""),
+        "entry_order_price": "",
+        "exit_order_price": exit_order.get("order_price", ""),
+        "entry_price": "",
+        "exit_price": format_decimal(exit_price),
+        "entry_volume": "",
+        "exit_volume": format_decimal(exit_volume),
+        "matched_volume": "",
+        "remaining_entry_volume": "",
+        "contract_multiplier": format_decimal(multiplier),
+        "entry_notional": "",
+        "exit_notional": format_decimal(
+            notional_for(exit_price, exit_volume, multiplier)
+        ),
+        "gross_pnl": "",
+        "entry_fee_quote_estimated": "",
+        "exit_fee_quote_estimated": format_decimal(exit_fee),
+        "total_fee_quote_estimated": format_decimal(exit_fee),
+        "net_pnl": "",
+        "entry_ack_rtt_ns": "",
+        "exit_ack_rtt_ns": exit_order.get("ack_rtt_ns", ""),
+        "entry_fee_source": "",
+        "exit_fee_source": exit_order.get("fee_source", ""),
+        "warnings": "missing_entry_order",
+    }
+    return row
+
+
+def build_position_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    groups: dict[tuple[str, str, str], dict[str, list[dict[str, str]]]] = {}
+    for order in order_rows:
+        position_id = order.get("position_id", "")
+        if position_id in ("", "0"):
+            continue
+        role = order.get("order_role", "")
+        if role not in {"entry", "exit"}:
+            continue
+        if order_filled_quantity(order) <= 0:
+            continue
+        bucket = groups.setdefault(position_group_key(order), {"entry": [], "exit": []})
+        bucket[role].append(order)
+
+    rows: list[dict[str, str]] = []
+    for key in sorted(groups, key=position_sort_key):
+        entries = sorted(groups[key]["entry"], key=order_sort_key)
+        exits = sorted(groups[key]["exit"], key=order_sort_key)
+        if not entries:
+            for exit_order in exits:
+                rows.append(build_missing_entry_position_row(exit_order))
+            continue
+        entry = entries[0]
+        entry_volume = order_filled_quantity(entry)
+        remaining_entry_volume = entry_volume
+        entry_fee_total = parse_decimal(entry.get("fee_quote_estimated"))
+        common_warnings: list[str] = []
+        if len(entries) > 1:
+            common_warnings.append("multiple_entry_orders")
+
+        for exit_order in exits:
+            exit_volume = order_filled_quantity(exit_order)
+            matched_volume = min(exit_volume, remaining_entry_volume)
+            row_warnings = list(common_warnings)
+            status = "closed" if remaining_entry_volume == 0 else "partial_closed"
+            if matched_volume <= 0:
+                row_warnings.append("exit_volume_exceeds_entry")
+                status = "over_closed"
+            elif exit_volume > remaining_entry_volume:
+                row_warnings.append("exit_volume_exceeds_entry")
+            entry_fee = decimal_ratio(entry_fee_total, matched_volume, entry_volume)
+            exit_fee = parse_decimal(exit_order.get("fee_quote_estimated"))
+            remaining_entry_volume -= min(exit_volume, remaining_entry_volume)
+            if matched_volume > 0:
+                status = "closed" if remaining_entry_volume == 0 else "partial_closed"
+            rows.append(
+                build_closed_position_row(
+                    entry,
+                    exit_order,
+                    matched_volume,
+                    remaining_entry_volume,
+                    entry_fee,
+                    exit_fee,
+                    status,
+                    row_warnings,
+                )
+            )
+
+        if remaining_entry_volume > 0:
+            entry_fee = decimal_ratio(
+                entry_fee_total, remaining_entry_volume, entry_volume
+            )
+            rows.append(
+                build_open_position_row(
+                    entry,
+                    remaining_entry_volume,
+                    entry_fee,
+                    common_warnings,
+                )
+            )
+    return [
+        {field: row.get(field, "") for field in POSITION_DETAIL_FIELDS}
+        for row in rows
+    ]
+
+
+def write_position_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
+    with output_path.open("w", newline="", encoding="utf-8") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=POSITION_DETAIL_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build LeadLag order_detail.csv")
     parser.add_argument("--log", required=True, type=Path)
@@ -493,6 +912,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--run-id")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--positions-output", type=Path)
     return parser.parse_args(argv)
 
 
@@ -506,6 +926,10 @@ def main(argv: list[str]) -> int:
     )
     write_order_detail_csv(result.rows, args.output)
     print(f"wrote {len(result.rows)} order rows to {args.output}")
+    if args.positions_output is not None:
+        position_rows = build_position_detail_rows(result.rows)
+        write_position_detail_csv(position_rows, args.positions_output)
+        print(f"wrote {len(position_rows)} position rows to {args.positions_output}")
     return 0
 
 
