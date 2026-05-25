@@ -34,8 +34,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -77,8 +77,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -120,8 +120,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -163,8 +163,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -206,8 +206,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -249,8 +249,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -292,8 +292,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -335,8 +335,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -378,8 +378,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -421,8 +421,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -464,8 +464,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -507,8 +507,8 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 3
-close_slippage = 3
+open_slippage = 2
+close_slippage = 2
 parallel = 1
 
 [lead_lag.pairs.bbo_record]

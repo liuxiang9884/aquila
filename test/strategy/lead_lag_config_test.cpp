@@ -266,9 +266,9 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.quantity_step, 1.0);
   EXPECT_EQ(config.pairs[11].lag_instrument.quantity_decimal_places, 0);
   for (std::size_t index = 0; index < config.pairs.size(); ++index) {
-    EXPECT_EQ(config.pairs[index].execute.open_slippage, 3U)
+    EXPECT_EQ(config.pairs[index].execute.open_slippage, 2U)
         << config.pairs[index].symbol;
-    EXPECT_EQ(config.pairs[index].execute.close_slippage, 3U)
+    EXPECT_EQ(config.pairs[index].execute.close_slippage, 2U)
         << config.pairs[index].symbol;
   }
 }

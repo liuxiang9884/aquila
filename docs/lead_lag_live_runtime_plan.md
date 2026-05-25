@@ -40,7 +40,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 12-symbol 策略当前启用：
 
 - `lead_lag.risk.max_gross_notional = 2000.0`：限制 strategy 全局持仓和 pending open reservation 的总 notional；只拒绝新开仓，不阻止 reduce-only close。
-- `execute.open_slippage = 3`、`execute.close_slippage = 3`：12 个 symbol 均按 `price_tick` 调整 IOC limit 价格；slippage 只影响实际下单价，不改变 signal 触发条件。
+- `execute.open_slippage = 2`、`execute.close_slippage = 2`：12 个 symbol 均按 `price_tick` 调整 IOC limit 价格；slippage 只影响实际下单价，不改变 signal 触发条件。
 
 ## 已完成证据摘要
 
