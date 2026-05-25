@@ -18,6 +18,7 @@
 - `order_detail.csv`: 12 条 order 明细
 - `position.csv`: 4 条闭合 position 明细
 - `latency.csv`: 12 条 order latency 明细
+- 字段参考: `lead_lag_live_report_csv_schema.md`
 
 ## Signal 和 Order
 
