@@ -200,6 +200,49 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["net_pnl"], "-0.0874162944")
         self.assertEqual(row["warnings"], "")
 
+    def test_builds_latency_detail_from_order_timing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            output_path = base / "latency.csv"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 trigger_ticker_id=10624277384126 trigger_exchange=kBinance trigger_symbol_id=4 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
+                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348
+                I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path, run_id="run-latency")
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+            orders.write_latency_detail_csv(latency_rows, output_path)
+
+            with output_path.open(newline="", encoding="utf-8") as input_file:
+                row = next(csv.DictReader(input_file))
+
+        self.assertEqual(len(latency_rows), 1)
+        self.assertEqual(row["run_id"], "run-latency")
+        self.assertEqual(row["latency_key"], "run-latency:288230376151711749")
+        self.assertEqual(row["local_order_id"], "288230376151711749")
+        self.assertEqual(row["position_id"], "1")
+        self.assertEqual(row["order_role"], "entry")
+        self.assertEqual(row["status"], "kFilled")
+        self.assertEqual(row["request_sequence"], "6")
+        self.assertEqual(row["encoded_request_id"], "144115188075855878")
+        self.assertEqual(row["request_send_local_ns"], "1779676175105554883")
+        self.assertEqual(row["ack_local_receive_ns"], "1779676175111547348")
+        self.assertEqual(row["order_finished_local_ns"], "1779676175117545430")
+        self.assertEqual(row["ack_exchange_ns"], "1779676175107083000")
+        self.assertEqual(row["finish_exchange_ns"], "1779676175113000000")
+        self.assertEqual(row["ack_rtt_ns"], "5992465")
+        self.assertEqual(row["send_to_finish_local_ns"], "11990547")
+        self.assertEqual(row["ack_to_finish_local_ns"], "5998082")
+        self.assertEqual(row["ack_exchange_to_local_ns"], "4464348")
+        self.assertEqual(row["exchange_lifecycle_ns"], "0")
+        self.assertEqual(row["warnings"], "")
+
     def test_builds_short_closed_and_open_position_detail_rows(self):
         rows = orders.build_position_detail_rows(
             [

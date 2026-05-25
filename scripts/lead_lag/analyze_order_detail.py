@@ -115,6 +115,45 @@ POSITION_DETAIL_FIELDS = [
 ]
 
 
+LATENCY_DETAIL_FIELDS = [
+    "run_id",
+    "latency_key",
+    "local_order_id",
+    "exchange_order_id",
+    "symbol",
+    "symbol_id",
+    "position_id",
+    "position_direction",
+    "order_role",
+    "action",
+    "side",
+    "reduce_only",
+    "status",
+    "finish_reason",
+    "reject_reason",
+    "request_sequence",
+    "encoded_request_id",
+    "request_send_local_ns",
+    "ack_local_receive_ns",
+    "response_local_receive_ns",
+    "order_finished_local_ns",
+    "ack_exchange_ns",
+    "response_exchange_ns",
+    "accepted_exchange_ns",
+    "finish_exchange_ns",
+    "ack_rtt_ns",
+    "response_rtt_ns",
+    "send_to_ack_local_ns",
+    "send_to_response_local_ns",
+    "send_to_finish_local_ns",
+    "ack_to_finish_local_ns",
+    "ack_exchange_to_local_ns",
+    "response_exchange_to_local_ns",
+    "exchange_lifecycle_ns",
+    "warnings",
+]
+
+
 LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_).*$")
 
 
@@ -305,6 +344,8 @@ def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
 
 def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
     order["ack_local_receive_ns"] = fields.get("local_receive_ns", "")
+    order["ack_exchange_ns"] = fields.get("exchange_ns", "")
+    order["ack_exchange_to_local_ns"] = fields.get("exchange_to_local_ns", "")
     if fields.get("exchange_order_id") not in (None, "", "0"):
         order["exchange_order_id"] = fields["exchange_order_id"]
     send_ns = fields.get("request_send_local_ns") or order.get("request_send_local_ns")
@@ -349,7 +390,16 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
         "last_fill_price",
         "request_send_local_ns",
         "ack_local_receive_ns",
+        "response_local_receive_ns",
+        "ack_exchange_ns",
+        "response_exchange_ns",
+        "accepted_exchange_ns",
+        "finish_exchange_ns",
         "ack_rtt_ns",
+        "response_rtt_ns",
+        "ack_exchange_to_local_ns",
+        "response_exchange_to_local_ns",
+        "exchange_lifecycle_ns",
         "position_id",
         "position_direction",
         "order_role",
@@ -518,13 +568,15 @@ def analyze_order_detail(
         order = orders[local_order_id]
         symbol = order.get("symbol", "")
         enrich_order(order, pair_configs.get(symbol, {}), instruments.get(symbol, {}))
-        rows.append({field: order.get(field, "") for field in ORDER_DETAIL_FIELDS})
+        rows.append(dict(order))
     return AnalysisResult(rows=rows)
 
 
 def write_order_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=ORDER_DETAIL_FIELDS)
+        writer = csv.DictWriter(
+            output_file, fieldnames=ORDER_DETAIL_FIELDS, extrasaction="ignore"
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -901,8 +953,85 @@ def write_position_detail_csv(rows: list[dict[str, str]], output_path: Path) -> 
         writer.writerows(rows)
 
 
+def ns_delta_text(lhs: str, rhs: str) -> str:
+    return int_delta_text(lhs, rhs)
+
+
+def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for order in order_rows:
+        local_order_id = order.get("local_order_id", "")
+        if local_order_id == "":
+            continue
+        request_send_ns = order.get("request_send_local_ns", "")
+        ack_receive_ns = order.get("ack_local_receive_ns", "")
+        response_receive_ns = order.get("response_local_receive_ns", "")
+        finished_ns = order_finished_ns(order)
+        row = {
+            "run_id": order.get("run_id", ""),
+            "latency_key": f"{order.get('run_id', '')}:{local_order_id}",
+            "local_order_id": local_order_id,
+            "exchange_order_id": order.get("exchange_order_id", ""),
+            "symbol": order.get("symbol", ""),
+            "symbol_id": order.get("symbol_id", ""),
+            "position_id": order.get("position_id", ""),
+            "position_direction": order.get("position_direction", ""),
+            "order_role": order.get("order_role", ""),
+            "action": order.get("action", ""),
+            "side": order.get("side", ""),
+            "reduce_only": order.get("reduce_only", ""),
+            "status": order.get("status", ""),
+            "finish_reason": order.get("finish_reason", ""),
+            "reject_reason": order.get("reject_reason", ""),
+            "request_sequence": order.get("request_sequence", ""),
+            "encoded_request_id": order.get("encoded_request_id", ""),
+            "request_send_local_ns": request_send_ns,
+            "ack_local_receive_ns": ack_receive_ns,
+            "response_local_receive_ns": response_receive_ns,
+            "order_finished_local_ns": finished_ns,
+            "ack_exchange_ns": order.get("ack_exchange_ns", ""),
+            "response_exchange_ns": order.get("response_exchange_ns", ""),
+            "accepted_exchange_ns": order.get("accepted_exchange_ns", ""),
+            "finish_exchange_ns": order.get("finish_exchange_ns", ""),
+            "ack_rtt_ns": order.get("ack_rtt_ns", ""),
+            "response_rtt_ns": order.get("response_rtt_ns", ""),
+            "send_to_ack_local_ns": ns_delta_text(ack_receive_ns, request_send_ns),
+            "send_to_response_local_ns": ns_delta_text(
+                response_receive_ns, request_send_ns
+            ),
+            "send_to_finish_local_ns": ns_delta_text(finished_ns, request_send_ns),
+            "ack_to_finish_local_ns": ns_delta_text(finished_ns, ack_receive_ns),
+            "ack_exchange_to_local_ns": order.get("ack_exchange_to_local_ns", ""),
+            "response_exchange_to_local_ns": order.get(
+                "response_exchange_to_local_ns", ""
+            ),
+            "exchange_lifecycle_ns": order.get("exchange_lifecycle_ns", ""),
+            "warnings": "",
+        }
+        if row["ack_rtt_ns"] == "":
+            row["ack_rtt_ns"] = row["send_to_ack_local_ns"]
+        if request_send_ns == "":
+            append_row_warning(row, "missing_request_send_local_ns")
+        if ack_receive_ns == "":
+            append_row_warning(row, "missing_ack_local_receive_ns")
+        rows.append(row)
+    return [
+        {field: row.get(field, "") for field in LATENCY_DETAIL_FIELDS}
+        for row in sorted(rows, key=order_sort_key)
+    ]
+
+
+def write_latency_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
+    with output_path.open("w", newline="", encoding="utf-8") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=LATENCY_DETAIL_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build LeadLag order_detail.csv")
+    parser = argparse.ArgumentParser(
+        description="Build LeadLag order, position, and latency CSVs"
+    )
     parser.add_argument("--log", required=True, type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument(
@@ -913,6 +1042,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--run-id")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--positions-output", type=Path)
+    parser.add_argument("--latency-output", type=Path)
     return parser.parse_args(argv)
 
 
@@ -930,6 +1060,10 @@ def main(argv: list[str]) -> int:
         position_rows = build_position_detail_rows(result.rows)
         write_position_detail_csv(position_rows, args.positions_output)
         print(f"wrote {len(position_rows)} position rows to {args.positions_output}")
+    if args.latency_output is not None:
+        latency_rows = build_latency_detail_rows(result.rows)
+        write_latency_detail_csv(latency_rows, args.latency_output)
+        print(f"wrote {len(latency_rows)} latency rows to {args.latency_output}")
     return 0
 
 
