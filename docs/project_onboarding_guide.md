@@ -41,7 +41,7 @@ docs/evaluation_support.md
 | data session / config | `docs/data_session_config.md`、`docs/data_reader_config.md`、`docs/data_session_shm_communication_design.md` |
 | 交易组件边界 | `docs/strategy_order_component_model.md` |
 | LeadLag fixed 策略 | `strategy/lead_lag/README.md`、`docs/leadlag-fixed-strategy-reconstruction-guide.md` |
-| LeadLag 实盘长跑 / 测试 | `docs/lead_lag_live_runtime_plan.md` |
+| LeadLag 实盘长跑 / 测试 | `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_operations_pipeline.md` |
 | LeadLag live / replay 测试 runbook | `docs/lead_lag_live_replay_testing.md` |
 | ORDI replay / 对账 | `docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` |
 | WebSocket 性能 | `docs/websocket_client_future_optimizations.md`、`docs/websocket_read_write_benchmark_comparison.md` |
@@ -155,6 +155,7 @@ docs/evaluation_support.md
 | `docs/agent-handoff-binance-market-data.md` | 继续 Binance 行情 | raw stream、JSON parser、client/session、benchmark |
 | `strategy/lead_lag/README.md` | 快速理解 LeadLag 目录 | 模块职责、OnBookTicker 主流程、replay 输出、边界 |
 | `docs/lead_lag_live_runtime_plan.md` | 准备 LeadLag 长时间实盘运行和测试 | signal-only runner、订单闭环、`ContinuityLost` 应急链路、live smoke、benchmark 顺序 |
+| `docs/lead_lag_live_operations_pipeline.md` | 执行 LeadLag 实盘 agent 操作 | 启动触发词、guarded live run pipeline、10 分钟巡检、report 生成和 zip 打包 |
 | `docs/lead_lag_live_replay_testing.md` | 准备 LeadLag live / replay 对比测试 | 标准测试名、输出目录、临时 config、使用程序、signal parity 分析方法 |
 | `docs/lead_lag_reconcile_design.md` | 准备 LeadLag `ContinuityLost` 应急处理 | stop-and-flat V1、Python REST 撤单 / reduce-only 市价平仓、V2 read-only reconcile 边界 |
 | `docs/leadlag-fixed-strategy-reconstruction-guide.md` | 继续 LeadLag 迁移 | fixed Go 语义、Aquila 映射、信号链路重建 |
