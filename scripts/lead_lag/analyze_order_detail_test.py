@@ -296,6 +296,41 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["response_exchange_to_local_ns"], "4464348")
         self.assertIn("missing_ack_local_receive_ns", row["warnings"])
 
+    def test_parses_feedback_session_publish_event_as_order_feedback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            config_path = base / "strategy.toml"
+            catalog_path = base / "catalog.csv"
+            write_config(config_path)
+            write_catalog(catalog_path)
+            write_file(
+                log_path,
+                """
+                I2026-05-26 04:13:58.450501908 1:1 order_session.h:LogGatePlaceOrderSent:477] gate_order_send_ok type=place local_order_id=288230376151711745 request_sequence=2 encoded_request_id=144115188075855874 contract=PROVE_USDT side=kBuy quantity=18 price=0.5404 tif=kImmediateOrCancel reduce_only=false inflight=1 request_send_local_ns=1779768838450489176
+                I2026-05-26 04:13:58.454460064 1:1 order_session.h:LogGateOrderResponse:528] gate_order_response kind=kAck local_order_id=288230376151711745 exchange_order_id=0 request_sequence=2 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779768838454451971 exchange_ns=1779768838452525000 exchange_to_local_ns=1926971
+                I2026-05-26 04:13:58.461376899 1:1 order_feedback_session.cpp:Publish:207] feedback_event publish_ok=true kind=kFilled local_order_id=288230376151711745 exchange_order_id=294985777053717137 exchange_update_ns=1779768838459000000 local_receive_ns=6967892601839617 cumulative_filled_quantity=18 left_quantity=0 cancelled_quantity=0 fill_price=0.535 role=kTaker finish_reason=kUnknown reject_reason=kUnknown continuity_scope=kLane continuity_reason=kUnknown continuity_sequence=0
+                """,
+            )
+
+            result = orders.analyze_order_detail(
+                log_path,
+                config_path=config_path,
+                instrument_catalog_path=catalog_path,
+                run_id="run-feedback",
+            )
+
+        self.assertEqual(len(result.rows), 1)
+        row = result.rows[0]
+        self.assertEqual(row["status"], "kFilled")
+        self.assertEqual(row["exchange_order_id"], "294985777053717137")
+        self.assertEqual(row["cumulative_filled_quantity"], "18")
+        self.assertEqual(row["last_fill_price"], "0.535")
+        self.assertEqual(row["fill_role"], "kTaker")
+        self.assertEqual(row["filled_notional"], "96.3")
+        self.assertEqual(row["finish_exchange_ns"], "1779768838459000000")
+        self.assertNotIn("order_finished_local_ns", row)
+
     def test_builds_short_closed_and_open_position_detail_rows(self):
         rows = orders.build_position_detail_rows(
             [

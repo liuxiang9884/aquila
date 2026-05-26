@@ -168,7 +168,7 @@ LATENCY_DETAIL_FIELDS = [
 ]
 
 
-LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_).*$")
+LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_|feedback_event).*$")
 
 
 @dataclass(frozen=True)
@@ -482,6 +482,15 @@ def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
         "finish_reason", order.get("finish_reason", "")
     )
     order["reject_reason"] = fields.get("reject_reason", order.get("reject_reason", ""))
+    kind = fields.get("kind", "")
+    if kind in ("kFilled", "kCancelled", "kRejected"):
+        order["finish_exchange_ns"] = fields.get(
+            "exchange_update_ns", order.get("finish_exchange_ns", "")
+        )
+    elif kind == "kAccepted":
+        order["accepted_exchange_ns"] = fields.get(
+            "exchange_update_ns", order.get("accepted_exchange_ns", "")
+        )
     if "kind" in fields and "status" not in order:
         order["status"] = fields["kind"]
 
@@ -668,6 +677,12 @@ def analyze_order_detail(
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
                 merge_latency_diagnostic(order, fields)
             elif tag == "lead_lag_order_feedback":
+                local_order_id = fields.get("local_order_id", "")
+                if local_order_id == "":
+                    continue
+                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+                merge_feedback(order, fields)
+            elif tag == "feedback_event" and fields.get("publish_ok") == "true":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
                     continue
