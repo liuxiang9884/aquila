@@ -249,15 +249,50 @@ def load_guard_summary(path: Path | None) -> dict | None:
     try:
         value = json.loads(text)
     except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            return None
-        try:
-            value = json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            return None
+        decoder = json.JSONDecoder()
+        candidates: list[dict] = []
+        index = 0
+        while True:
+            start = text.find("{", index)
+            if start < 0:
+                break
+            try:
+                value, end = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                index = start + 1
+                continue
+            if isinstance(value, dict):
+                candidates.append(value)
+            index = start + max(end, 1)
+        for candidate in reversed(candidates):
+            if any(key in candidate for key in ("affinity", "result", "strategy")):
+                return candidate
+        return candidates[-1] if candidates else None
     return value if isinstance(value, dict) else None
+
+
+def copy_runtime_configs(report_dir: Path, guard_summary: dict | None) -> None:
+    if guard_summary is None:
+        return
+    affinity = guard_summary.get("affinity")
+    if not isinstance(affinity, dict):
+        return
+    runtime_dir = report_dir / "runtime_configs"
+    copies: list[tuple[str, str]] = []
+    profile = affinity.get("profile")
+    if isinstance(profile, str) and profile:
+        copies.append(("profile", profile))
+    generated = affinity.get("generated_configs", {})
+    if isinstance(generated, dict):
+        for name, path in generated.items():
+            if isinstance(name, str) and isinstance(path, str) and path:
+                copies.append((name, path))
+    for name, source_text in copies:
+        source = Path(source_text)
+        if not source.exists() or not source.is_file():
+            continue
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, runtime_dir / f"{name}__{source.name}")
 
 
 def append_affinity_summary(lines: list[str], guard_summary: dict | None) -> None:
@@ -463,6 +498,7 @@ def generate_live_report(
     latency_rows = orders.build_latency_detail_rows(order_rows)
     signal_rows = build_signal_detail_rows(log_path, order_rows, run_id)
     guard_summary = load_guard_summary(guard_stdout_path)
+    copy_runtime_configs(report_dir, guard_summary)
 
     write_signal_detail_csv(signal_rows, report_dir / "signal.csv")
     orders.write_order_detail_csv(order_rows, report_dir / "order_detail.csv")

@@ -433,10 +433,49 @@ class RunLiveWithGuardTest(unittest.TestCase):
             base = Path(tmp)
             profile_path = base / "profile.toml"
             output_dir = base / "out" / "configs"
+            strategy_path = base / "strategy.toml"
+            data_reader_path = base / "data_reader.toml"
+            order_session_path = base / "order_session.toml"
             gate_market_path = base / "gate_data.toml"
             binance_market_path = base / "binance_data.toml"
             feedback_path = base / "feedback.toml"
             write_affinity_profile(profile_path)
+            write_text(
+                strategy_path,
+                f"""
+                [log]
+                backend_cpu_affinity = 99
+
+                [strategy.loop]
+                bind_cpu_id = 99
+
+                [strategy.data_reader]
+                config = "{data_reader_path}"
+
+                [strategy.order_session]
+                config = "{order_session_path}"
+                """,
+            )
+            write_text(
+                data_reader_path,
+                """
+                [log]
+                backend_cpu_affinity = 99
+
+                [data_reader.execution_policy]
+                bind_cpu_id = 99
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [log]
+                backend_cpu_affinity = 99
+
+                [order_session.websocket.execution_policy]
+                bind_cpu_id = 99
+                """,
+            )
             for path, section in [
                 (gate_market_path, "data_session.websocket.execution_policy"),
                 (binance_market_path, "data_session.websocket.execution_policy"),
@@ -458,7 +497,11 @@ class RunLiveWithGuardTest(unittest.TestCase):
                 config=guard.GuardConfig(
                     settle="usdt",
                     contracts=["BTC_USDT"],
-                    strategy_command=["./build/debug/tools/lead_lag_strategy"],
+                    strategy_command=[
+                        "./build/debug/tools/lead_lag_strategy",
+                        "--config",
+                        str(strategy_path),
+                    ],
                     affinity_profile_path=profile_path,
                     affinity_output_dir=output_dir,
                     affinity_gate_market_config=gate_market_path,
@@ -474,6 +517,19 @@ class RunLiveWithGuardTest(unittest.TestCase):
             )
 
             self.assertEqual(exit_code, guard.EXIT_OK)
+            self.assertFalse(summary["affinity"]["affinity_split"])
+            self.assertEqual(
+                summary["affinity"]["applied_configs"],
+                ["strategy", "strategy_data_reader", "gate_order_session"],
+            )
+            self.assertEqual(
+                summary["affinity"]["generated_only_configs"],
+                [
+                    "binance_market_data",
+                    "gate_market_data",
+                    "gate_order_feedback",
+                ],
+            )
             generated = summary["affinity"]["generated_configs"]
             gate_market = Path(generated["gate_market_data"])
             binance_market = Path(generated["binance_market_data"])
@@ -484,6 +540,166 @@ class RunLiveWithGuardTest(unittest.TestCase):
             self.assertIn("bind_cpu_id = 3", binance_market.read_text())
             self.assertIn("backend_cpu_affinity = 5", feedback.read_text())
             self.assertIn("bind_cpu_id = 6", feedback.read_text())
+
+    def test_affinity_summary_can_mark_external_overlays_applied(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            profile_path = base / "profile.toml"
+            output_dir = base / "out" / "configs"
+            strategy_path = base / "strategy.toml"
+            data_reader_path = base / "data_reader.toml"
+            order_session_path = base / "order_session.toml"
+            gate_market_path = base / "gate_data.toml"
+            binance_market_path = base / "binance_data.toml"
+            feedback_path = base / "feedback.toml"
+            write_affinity_profile(profile_path)
+            write_text(
+                strategy_path,
+                f"""
+                [log]
+                backend_cpu_affinity = 99
+
+                [strategy.loop]
+                bind_cpu_id = 99
+
+                [strategy.data_reader]
+                config = "{data_reader_path}"
+
+                [strategy.order_session]
+                config = "{order_session_path}"
+                """,
+            )
+            write_text(
+                data_reader_path,
+                """
+                [log]
+                backend_cpu_affinity = 99
+
+                [data_reader.execution_policy]
+                bind_cpu_id = 99
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [log]
+                backend_cpu_affinity = 99
+
+                [order_session.websocket.execution_policy]
+                bind_cpu_id = 99
+                """,
+            )
+            for path, section in [
+                (gate_market_path, "data_session.websocket.execution_policy"),
+                (binance_market_path, "data_session.websocket.execution_policy"),
+                (feedback_path, "order_feedback_session.websocket.execution_policy"),
+            ]:
+                write_text(
+                    path,
+                    f"""
+                    [log]
+                    backend_cpu_affinity = 99
+
+                    [{section}]
+                    bind_cpu_id = 99
+                    """,
+                )
+
+            exit_code, summary = guard.run_guarded_live(
+                config=guard.GuardConfig(
+                    settle="usdt",
+                    contracts=["BTC_USDT"],
+                    strategy_command=[
+                        "./build/debug/tools/lead_lag_strategy",
+                        "--config",
+                        str(strategy_path),
+                    ],
+                    affinity_profile_path=profile_path,
+                    affinity_output_dir=output_dir,
+                    affinity_gate_market_config=gate_market_path,
+                    affinity_binance_market_config=binance_market_path,
+                    affinity_order_feedback_config=feedback_path,
+                    affinity_external_configs_applied=True,
+                ),
+                requester=lambda request: {},
+                process_runner=FakeProcessRunner(guard.ProcessResult(exit_code=0)),
+                flatten_runner=FakeFlattenRunner(
+                    (guard.FLATTEN_EXIT_OK, {"ok": True})
+                ),
+                state_reader=FakeStateReader([flat_state(), flat_state()]),
+            )
+
+            self.assertEqual(exit_code, guard.EXIT_OK)
+            self.assertTrue(summary["affinity"]["affinity_split"])
+            self.assertEqual(summary["affinity"]["generated_only_configs"], [])
+            self.assertIn(
+                "gate_order_feedback", summary["affinity"]["applied_configs"]
+            )
+
+    def test_prepare_affinity_only_generates_summary_without_running_process(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            profile_path = base / "profile.toml"
+            strategy_path = base / "strategy.toml"
+            data_reader_path = base / "data_reader.toml"
+            order_session_path = base / "order_session.toml"
+            output_dir = base / "out" / "configs"
+            write_affinity_profile(profile_path)
+            write_text(
+                strategy_path,
+                f"""
+                [log]
+                backend_cpu_affinity = 99
+
+                [strategy.loop]
+                bind_cpu_id = 99
+
+                [strategy.data_reader]
+                config = "{data_reader_path}"
+
+                [strategy.order_session]
+                config = "{order_session_path}"
+                """,
+            )
+            write_text(
+                data_reader_path,
+                """
+                [log]
+                backend_cpu_affinity = 99
+
+                [data_reader.execution_policy]
+                bind_cpu_id = 99
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [log]
+                backend_cpu_affinity = 99
+
+                [order_session.websocket.execution_policy]
+                bind_cpu_id = 99
+                """,
+            )
+
+            exit_code, summary = guard.prepare_affinity_only(
+                guard.GuardConfig(
+                    settle="usdt",
+                    contracts=["BTC_USDT"],
+                    strategy_command=[
+                        "./build/debug/tools/lead_lag_strategy",
+                        "--config",
+                        str(strategy_path),
+                    ],
+                    affinity_profile_path=profile_path,
+                    affinity_output_dir=output_dir,
+                )
+            )
+
+            self.assertEqual(exit_code, guard.EXIT_OK)
+            self.assertTrue(summary["ok"])
+            self.assertEqual(summary["result"], "affinity_prepared")
+            self.assertIn("strategy", summary["affinity"]["generated_configs"])
 
 
 if __name__ == "__main__":

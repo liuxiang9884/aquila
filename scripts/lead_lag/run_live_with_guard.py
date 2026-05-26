@@ -59,6 +59,7 @@ class GuardConfig:
     affinity_gate_market_config: Path | None = None
     affinity_binance_market_config: Path | None = None
     affinity_order_feedback_config: Path | None = None
+    affinity_external_configs_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,7 @@ def prepare_affinity_overlays(
         config.affinity_output_dir or default_affinity_output_dir(config.run_id)
     )
     generated_configs: dict[str, str] = {}
+    applied_configs: list[str] = []
     strategy_command = list(config.strategy_command)
 
     config_arg = find_strategy_config_arg(strategy_command)
@@ -364,6 +366,9 @@ def prepare_affinity_overlays(
                 "gate_order_session": str(order_session_overlay),
             }
         )
+        applied_configs.extend(
+            ["strategy", "strategy_data_reader", "gate_order_session"]
+        )
 
     if config.affinity_gate_market_config is not None:
         gate_market_overlay = write_runtime_config_overlay(
@@ -396,11 +401,34 @@ def prepare_affinity_overlays(
         )
         generated_configs["gate_order_feedback"] = str(feedback_overlay)
 
+    external_configs = sorted(
+        key
+        for key in (
+            "gate_market_data",
+            "binance_market_data",
+            "gate_order_feedback",
+        )
+        if key in generated_configs
+    )
+    if config.affinity_external_configs_applied:
+        applied_configs.extend(external_configs)
+    generated_only_configs = sorted(
+        key for key in generated_configs if key not in set(applied_configs)
+    )
+    full_split_roles = {
+        "strategy",
+        "strategy_data_reader",
+        "gate_order_session",
+        "gate_market_data",
+        "binance_market_data",
+        "gate_order_feedback",
+    }
+    applied_set = set(applied_configs)
     summary = {
         "profile": str(profile.path),
         "profile_name": profile.name,
         "numa_node": profile.numa_node,
-        "affinity_split": True,
+        "affinity_split": full_split_roles.issubset(applied_set),
         "output_dir": str(output_dir),
         "core_path": {
             "gate_market_data_cpu": profile.gate_market_data_cpu,
@@ -412,6 +440,8 @@ def prepare_affinity_overlays(
         "reserved_core_cpus": list(profile.reserved_core_cpus),
         "preferred_aux_cpus": list(profile.preferred_aux_cpus),
         "generated_configs": generated_configs,
+        "applied_configs": applied_configs,
+        "generated_only_configs": generated_only_configs,
     }
     return replace(config, strategy_command=strategy_command), summary
 
@@ -517,6 +547,27 @@ def run_flatten_for_reason(
     return EXIT_EMERGENCY_FAILED, summary
 
 
+def prepare_affinity_only(config: GuardConfig) -> tuple[int, dict[str, Any]]:
+    summary = initial_summary(config)
+    try:
+        validate_config(config)
+        if config.affinity_profile_path is None:
+            raise ValueError("--affinity-profile is required with --prepare-affinity-only")
+        config, affinity_summary = prepare_affinity_overlays(config)
+    except Exception as exc:
+        summary["result"] = "config_error"
+        summary["exit_code"] = EXIT_CONFIG_ERROR
+        summary["errors"].append(f"affinity overlay failed: {type(exc).__name__}: {exc}")
+        return EXIT_CONFIG_ERROR, summary
+
+    summary = initial_summary(config)
+    summary["affinity"] = affinity_summary
+    summary["ok"] = True
+    summary["result"] = "affinity_prepared"
+    summary["exit_code"] = EXIT_OK
+    return EXIT_OK, summary
+
+
 def run_guarded_live(
     config: GuardConfig,
     requester: Requester,
@@ -538,6 +589,7 @@ def run_guarded_live(
         affinity_gate_market_config=config.affinity_gate_market_config,
         affinity_binance_market_config=config.affinity_binance_market_config,
         affinity_order_feedback_config=config.affinity_order_feedback_config,
+        affinity_external_configs_applied=config.affinity_external_configs_applied,
     )
     summary = initial_summary(config)
     try:
@@ -648,6 +700,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--affinity-gate-market-config", type=Path)
     parser.add_argument("--affinity-binance-market-config", type=Path)
     parser.add_argument("--affinity-order-feedback-config", type=Path)
+    parser.add_argument(
+        "--prepare-affinity-only",
+        action="store_true",
+        help="Generate affinity overlay TOMLs, print the summary, and exit.",
+    )
+    parser.add_argument(
+        "--affinity-external-configs-applied",
+        action="store_true",
+        help=(
+            "Mark generated market-data and order-feedback overlays as already "
+            "used by their external processes."
+        ),
+    )
     parser.add_argument("strategy_command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.strategy_command and args.strategy_command[0] == "--":
@@ -668,6 +733,7 @@ def config_from_args(args: argparse.Namespace) -> GuardConfig:
         affinity_gate_market_config=args.affinity_gate_market_config,
         affinity_binance_market_config=args.affinity_binance_market_config,
         affinity_order_feedback_config=args.affinity_order_feedback_config,
+        affinity_external_configs_applied=args.affinity_external_configs_applied,
     )
 
 
@@ -687,6 +753,11 @@ def missing_env_summary(config: GuardConfig, env_name: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     config = config_from_args(args)
+
+    if args.prepare_affinity_only:
+        exit_code, summary = prepare_affinity_only(config)
+        print_summary(summary, args.pretty)
+        return exit_code
 
     api_key = account.get_env_value(args.api_key)
     if api_key is None:

@@ -272,6 +272,30 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["max_observed_drive_read_duration_ns"], "1300001")
         self.assertEqual(row["latency_diagnostic_inflight_at_send"], "7")
 
+    def test_latency_detail_includes_non_ack_submit_response_timing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
+                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kResult local_order_id=288230376151711749 exchange_order_id=260082878984634644 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path, run_id="run-latency")
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(latency_rows), 1)
+        row = latency_rows[0]
+        self.assertEqual(row["exchange_order_id"], "260082878984634644")
+        self.assertEqual(row["response_local_receive_ns"], "1779676175111547348")
+        self.assertEqual(row["response_exchange_ns"], "1779676175107083000")
+        self.assertEqual(row["send_to_response_local_ns"], "5992465")
+        self.assertEqual(row["response_exchange_to_local_ns"], "4464348")
+        self.assertIn("missing_ack_local_receive_ns", row["warnings"])
+
     def test_builds_short_closed_and_open_position_detail_rows(self):
         rows = orders.build_position_detail_rows(
             [

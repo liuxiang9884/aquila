@@ -405,6 +405,22 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
             pass
 
 
+def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None:
+    order["exchange_order_id"] = choose_nonzero(
+        fields.get("exchange_order_id"), order.get("exchange_order_id")
+    )
+    order["response_local_receive_ns"] = fields.get("local_receive_ns", "")
+    order["response_exchange_ns"] = fields.get("exchange_ns", "")
+    order["response_exchange_to_local_ns"] = fields.get("exchange_to_local_ns", "")
+    send_ns = order.get("request_send_local_ns")
+    response_ns = fields.get("local_receive_ns")
+    if send_ns and response_ns:
+        try:
+            order["response_rtt_ns"] = str(int(response_ns) - int(send_ns))
+        except ValueError:
+            pass
+
+
 def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> None:
     append_unique_text(order, "latency_diagnostic_reason", fields.get("reason"))
     order["latency_diagnostic_ack_rtt_ns"] = max_int_text(
@@ -636,12 +652,15 @@ def analyze_order_detail(
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
                 merge_send(order, fields)
-            elif tag == "gate_order_response" and fields.get("kind") == "kAck":
+            elif tag == "gate_order_response":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_ack(order, fields)
+                if fields.get("kind") == "kAck":
+                    merge_ack(order, fields)
+                else:
+                    merge_submit_response(order, fields)
             elif tag == "gate_order_ack_latency_diagnostic":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":

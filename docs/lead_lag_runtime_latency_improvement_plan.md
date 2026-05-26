@@ -304,13 +304,13 @@ scripts/lead_lag/run_live_with_guard.py \
   ./build/release/tools/lead_lag_strategy ...
 ```
 
-脚本职责：
+脚本职责已落地：
 
-1. 读取 affinity profile。
-2. 复制相关 TOML 到 `/home/liuxiang/tmp/<run_id>/configs/`。
-3. 替换临时 TOML 中的 `bind_cpu_id` / `backend_cpu_affinity`。
-4. 启动各组件时使用临时 TOML。
-5. 将 profile 和临时 TOML 副本复制进 report 目录。
+1. `run_live_with_guard.py --prepare-affinity-only` 读取 affinity profile，并在 `/home/liuxiang/tmp/<run_id>/configs/` 生成临时 TOML overlay；该模式不连接交易所、不启动策略。
+2. live guard 正常启动时可以用同一 profile / output dir 重新生成相同 overlay，并自动把 strategy `--config` 改写到临时 strategy TOML。
+3. guard 只会直接启动 strategy，因此 Gate / Binance market data 和 Gate order feedback 的临时 TOML 必须由 live pipeline 显式用于对应进程；只有确认外部组件已使用这些临时 TOML 时，才传 `--affinity-external-configs-applied`。
+4. guard summary 中 `affinity_split=true` 只表示 strategy、data reader、order session、Gate / Binance market data 和 Gate order feedback 六类 config 都已标记为 applied；否则会通过 `generated_only_configs` 保留只生成但未由 guard 确认使用的配置。
+5. `generate_live_report.py` 会把 guard stdout 中仍可访问的 profile / generated TOML 复制到 report 目录的 `runtime_configs/`，同时在 `report.md` 记录 profile、split、core_path 和 generated config 路径。
 
 Phase 1C 只实现 profile + 脚本 overlay；后续如果该机制稳定，再评估是否让 C++ config loader 原生支持 affinity profile / overlay。
 

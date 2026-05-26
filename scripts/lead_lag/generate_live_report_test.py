@@ -156,6 +156,9 @@ class GenerateLiveReportTest(unittest.TestCase):
             catalog_path = base / "catalog.csv"
             schema_path = base / "schema.md"
             guard_stdout_path = base / "guard.stdout"
+            generated_strategy_path = base / "tmp" / "configs" / "strategy.toml"
+            generated_strategy_path.parent.mkdir(parents=True)
+            generated_strategy_path.write_text("[strategy]\n", encoding="utf-8")
             output_root = base / "reports"
             write_config(config_path)
             write_catalog(catalog_path)
@@ -168,6 +171,7 @@ class GenerateLiveReportTest(unittest.TestCase):
             )
             guard_stdout_path.write_text(
                 """
+                noisy child log {"ignored": true}
                 {
                   "affinity": {
                     "profile_name": "lead_lag_requested_12symbols_node0",
@@ -181,11 +185,12 @@ class GenerateLiveReportTest(unittest.TestCase):
                       "log_backend_cpu": 5
                     },
                     "generated_configs": {
-                      "strategy": "/home/liuxiang/tmp/run-1/configs/strategy.toml"
+                      "strategy": "%s"
                     }
                   }
                 }
-                """,
+                """
+                % generated_strategy_path,
                 encoding="utf-8",
             )
 
@@ -202,11 +207,18 @@ class GenerateLiveReportTest(unittest.TestCase):
             report_text = (output_root / "run-1" / "report.md").read_text(
                 encoding="utf-8"
             )
+            copied_config_exists = (
+                output_root
+                / "run-1"
+                / "runtime_configs"
+                / "strategy__strategy.toml"
+            ).exists()
 
         self.assertIn("- affinity profile: `lead_lag_requested_12symbols_node0`", report_text)
         self.assertIn("- affinity split: `true`", report_text)
         self.assertIn("- strategy_order_owner_cpu: `4`", report_text)
         self.assertIn("- generated strategy config:", report_text)
+        self.assertTrue(copied_config_exists)
 
 
 if __name__ == "__main__":
