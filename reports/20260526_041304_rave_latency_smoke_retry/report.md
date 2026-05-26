@@ -28,7 +28,7 @@
 
 - `signal.csv`: 0 条 signal，并关联对应 order
 - `order_detail.csv`: 2 条 order 明细
-- `position.csv`: 0 条 position 明细
+- `position.csv`: 1 条 position 明细
 - `latency.csv`: 2 条 order latency 明细
 - 字段参考: `lead_lag_live_report_csv_schema.md`
 
@@ -47,8 +47,12 @@
 
 ## PnL
 
-- gross PnL: `0`
-- net PnL: `0`
+- gross PnL: `-0.0372`
+- net PnL: `-0.069037248`
+
+| symbol | direction | matched | gross_pnl | net_pnl |
+| --- | --- | --- | --- | --- |
+| RAVE_USDT | kLong | 18.6 | -0.0372 | -0.069037248 |
 
 ## 延迟
 
@@ -59,8 +63,4 @@
 - ack RTT avg: `3.864 ms`
 - ack RTT p95: `3.963 ms`
 - ack RTT max: `3.963 ms`
-- send-to-finish min: `3.765 ms`
-- send-to-finish median: `3.765 ms`
-- send-to-finish avg: `3.864 ms`
-- send-to-finish p95: `3.963 ms`
-- send-to-finish max: `3.963 ms`
+- send-to-finish: 无可用本地终态时间
