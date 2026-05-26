@@ -236,24 +236,37 @@ perf sched latency
 
 ## CPU 拆分讨论入口
 
-已有建议是下一轮 live run 前先避免明显同核竞争：
+已定稿：下一轮 live run 前先避免核心行情和交易链路的明显同核竞争。当前机器 `CPU 0-31` 全在 `NUMA node0`，`Thread(s) per core = 1`，因此下面的核心绑核方案满足“不同 core、同一 NUMA”要求。
 
-- strategy / order session owner thread 保持 CPU4。
-- `gate_order_feedback_session` 改到 CPU6 或 CPU7。
-- recorder 不使用 CPU4。
-- Gate data session / Binance data session 分别保持独立 CPU。
-- log backend 继续使用 CPU5。
+核心行情和交易链路：
 
-该变更属于运行配置和实盘验证计划，不属于 Ack RTT instrumentation 本身。是否先拆 CPU、还是先加 instrumentation，需要继续讨论后写入最终执行顺序。
+| CPU | 组件 | 说明 |
+| --- | --- | --- |
+| CPU2 | Gate market data session | Gate `BookTicker` producer。 |
+| CPU3 | Binance market data session | Binance `BookTicker` producer。 |
+| CPU4 | LeadLag strategy + Gate `OrderSession` owner thread | Ack path 的 `request_send_local_ns` 和 `ack_local_receive_ns` 都在该线程。strategy `DataReader` 也在 runtime hook 内由该线程调用。 |
+| CPU6 | Gate `OrderFeedbackSession` | 从 CPU4 拆出，避免和 Ack path 的 owner thread active-spin 竞争。 |
+| CPU5 | log backend | 可保留在同 NUMA，但不算交易热链路。 |
+
+非核心辅助进程：
+
+- `data_reader_recorder`、TUI、report、guard、shell 不纳入“核心链路同 NUMA”硬约束。
+- 这些辅助进程不得绑定到 CPU2 / CPU3 / CPU4 / CPU6。
+- 如需运行 recorder 或 TUI，优先放到 CPU7+ 或其它非核心 core；只要不抢核心 core 即可。
+
+执行顺序：
+
+1. Phase 1A：实现 Gate `OrderSession` 专用 Ack latency diagnostic。
+2. Phase 1B：整理 live run affinity profile，把 `gate_order_feedback_session` 从 CPU4 移到 CPU6，保留 Gate / Binance data session 在 CPU2 / CPU3，strategy + order owner 在 CPU4。
+3. Phase 1C：live 验证报告中明确记录 `diagnostic_enabled=true` 和 `affinity_split=true`。如需严格归因，可先短跑 `diagnostic_only`，再短跑 `diagnostic + split_cpu`。
 
 ## 待继续讨论
 
 在开始执行前，至少还需要讨论并定稿：
 
-1. CPU affinity 调整是否纳入同一轮计划，还是作为 live run 参数变更单独执行。
-2. `inflight` 泄漏风险是否排在 latency instrumentation 前面。
-3. 下一轮 live smoke 的范围：只做 signal / dry-run、单 symbol 小额真实订单，还是 12-symbol guarded smoke。
-4. report 侧是否新增 latency outlier 字段，例如 `send_to_first_drive_read_ns`、`drive_read_duration_ns`、`diag_reason`。
+1. `inflight` 泄漏风险是否排在 latency instrumentation 前面。
+2. 下一轮 live smoke 的范围：只做 signal / dry-run、单 symbol 小额真实订单，还是 12-symbol guarded smoke。
+3. report 侧是否新增 latency outlier 字段，例如 `send_to_first_drive_read_ns`、`drive_read_duration_ns`、`diag_reason`。
 
 ## 当前执行边界
 
