@@ -1,0 +1,23 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_order_session.log"
+console_sink_name = "gate_order_session_console"
+backend_thread_name = "gate_order_session_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[order_session]
+name = "gate_order_session"
+settle = "usdt"
+
+[order_session.credentials]
+api_key_env = "TEST_KEY"
+api_secret_env = "TEST_SECRET"
+
+[order_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = true
+
+[order_session.websocket.execution_policy]
+bind_cpu_id = 4

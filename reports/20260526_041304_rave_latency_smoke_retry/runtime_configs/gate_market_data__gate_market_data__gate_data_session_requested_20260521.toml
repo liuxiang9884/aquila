@@ -1,0 +1,34 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_data_session_requested_20260521.log"
+console_sink_name = "gate_data_session_requested_console"
+backend_thread_name = "gate_data_session_requested_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_session]
+name = "gate_data_session_requested"
+subscribe_symbols = ["PROVE_USDT", "RAVE_USDT", "ZEC_USDT", "SIREN_USDT", "ETC_USDT", "DASH_USDT", "RIVER_USDT", "SUI_USDT", "INJ_USDT", "ENA_USDT", "BRETT_USDT", "ETH_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = true
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_gate_market_data_requested_20260521"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = true
