@@ -169,6 +169,9 @@ LATENCY_DETAIL_FIELDS = [
 
 
 LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_|feedback_event).*$")
+RAW_MESSAGE_PREFIXES = (
+    "lead_lag_strategy_live_open_close_smoke_summary ",
+)
 
 
 @dataclass(frozen=True)
@@ -198,9 +201,12 @@ def format_decimal(value: Decimal | None) -> str:
 
 def message_from_line(line: str) -> str | None:
     match = LOG_MESSAGE_RE.search(line)
-    if match is None:
-        return None
-    return line[match.start("message") :].strip()
+    if match is not None:
+        return line[match.start("message") :].strip()
+    stripped = line.strip()
+    if stripped.startswith(RAW_MESSAGE_PREFIXES):
+        return stripped
+    return None
 
 
 def parse_message(message: str) -> tuple[str, dict[str, str]]:
@@ -271,6 +277,7 @@ def load_instrument_catalog(path: Path | None) -> dict[str, dict[str, str]]:
             if symbol == "":
                 continue
             result[symbol] = {
+                "symbol_id": row.get("symbol_id", ""),
                 "contract_multiplier": row.get("notional_multiplier", ""),
                 "price_tick": row.get("price_tick", ""),
             }
@@ -530,6 +537,56 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
     )
 
 
+def mark_open_close_smoke_position(
+    orders: dict[str, dict[str, str]], run: str, fields: dict[str, str]
+) -> None:
+    if fields.get("completed") != "true":
+        return
+    open_local_order_id = fields.get("open_local_order_id", "")
+    close_local_order_id = fields.get("close_local_order_id", "")
+    if open_local_order_id in ("", "0") or close_local_order_id in ("", "0"):
+        return
+    open_order = orders.setdefault(
+        open_local_order_id, {"run_id": run, "warnings": ""}
+    )
+    close_order = orders.setdefault(
+        close_local_order_id, {"run_id": run, "warnings": ""}
+    )
+    open_order.setdefault("local_order_id", open_local_order_id)
+    close_order.setdefault("local_order_id", close_local_order_id)
+
+    open_side = open_order.get("side", "")
+    close_side = close_order.get("side", "")
+    if open_side == "kSell" or close_side == "kBuy":
+        direction = "kShort"
+        open_action = "kOpenShort"
+        close_action = "kCloseShort"
+    else:
+        direction = "kLong"
+        open_action = "kOpenLong"
+        close_action = "kCloseLong"
+
+    position_id = open_local_order_id
+    for order, role, action, event in (
+        (open_order, "entry", open_action, "kEntrySubmit"),
+        (close_order, "exit", close_action, "kExitSubmit"),
+    ):
+        if order.get("order_role", "") == "":
+            order["order_role"] = role
+        if order.get("position_id", "") == "":
+            order["position_id"] = position_id
+        if order.get("position_direction", "") == "":
+            order["position_direction"] = direction
+        if order.get("entry_local_order_id", "") == "":
+            order["entry_local_order_id"] = open_local_order_id
+        if order.get("action", "") == "":
+            order["action"] = action
+        if order.get("position_event", "") == "":
+            order["position_event"] = event
+        if order.get("source_schema", "") == "":
+            order["source_schema"] = "smoke_summary_v1"
+
+
 def enrich_order(
     order: dict[str, str],
     pair_config: dict[str, str],
@@ -544,6 +601,8 @@ def enrich_order(
         )
     if order.get("price_tick", "") == "":
         order["price_tick"] = instrument.get("price_tick", "")
+    if order.get("symbol_id", "") == "":
+        order["symbol_id"] = instrument.get("symbol_id", "")
     order["contract_multiplier"] = instrument.get("contract_multiplier", "")
     if order.get("fee_rate_config", "") == "":
         order["fee_rate_config"] = pair_config.get("fee_rate_config", "")
@@ -694,6 +753,8 @@ def analyze_order_detail(
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
                 merge_finished(order, fields)
+            elif tag == "lead_lag_strategy_live_open_close_smoke_summary":
+                mark_open_close_smoke_position(orders, run, fields)
 
     rows: list[dict[str, str]] = []
     for local_order_id in sorted(orders, key=lambda value: int(value)):
@@ -707,7 +768,10 @@ def analyze_order_detail(
 def write_order_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(
-            output_file, fieldnames=ORDER_DETAIL_FIELDS, extrasaction="ignore"
+            output_file,
+            fieldnames=ORDER_DETAIL_FIELDS,
+            extrasaction="ignore",
+            lineterminator="\n",
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -728,6 +792,10 @@ def order_filled_quantity(order: dict[str, str]) -> Decimal:
 
 
 def order_finished_ns(order: dict[str, str]) -> str:
+    return order.get("order_finished_local_ns", "")
+
+
+def order_sort_ns(order: dict[str, str]) -> str:
     return (
         order.get("order_finished_local_ns")
         or order.get("ack_local_receive_ns")
@@ -785,7 +853,7 @@ def position_sort_key(key: tuple[str, str, str]) -> tuple[str, int, int]:
 
 
 def order_sort_key(order: dict[str, str]) -> tuple[int, int]:
-    ns = order_finished_ns(order)
+    ns = order_sort_ns(order)
     local_order_id = order.get("local_order_id", "")
     try:
         ns_sort = int(ns)
@@ -1080,7 +1148,9 @@ def build_position_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[st
 
 def write_position_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=POSITION_DETAIL_FIELDS)
+        writer = csv.DictWriter(
+            output_file, fieldnames=POSITION_DETAIL_FIELDS, lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -1172,7 +1242,9 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
 
 def write_latency_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=LATENCY_DETAIL_FIELDS)
+        writer = csv.DictWriter(
+            output_file, fieldnames=LATENCY_DETAIL_FIELDS, lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(rows)
 

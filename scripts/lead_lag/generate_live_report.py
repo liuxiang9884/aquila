@@ -171,7 +171,9 @@ def build_signal_detail_rows(
 
 def write_signal_detail_csv(rows: list[dict[str, str]], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=SIGNAL_DETAIL_FIELDS)
+        writer = csv.DictWriter(
+            output_file, fieldnames=SIGNAL_DETAIL_FIELDS, lineterminator="\n"
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -470,6 +472,8 @@ def write_markdown_report(
             f"- send-to-finish p95: `{format_ms(percentile_nearest(finish_values, 95, 100))} ms`",
             f"- send-to-finish max: `{format_ms(max(finish_values))} ms`",
         ]
+    else:
+        lines.append("- send-to-finish: 无可用本地终态时间")
     lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
 

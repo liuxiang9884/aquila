@@ -51,6 +51,7 @@ scripts/lead_lag/run_live_with_guard.py \
    - 必须使用上一步生成的 `gate_order_feedback` 临时 TOML，并把 `file_sink_name` 和 stdout / stderr 指向 `/home/liuxiang/tmp/<run_id>/`；如果未使用 affinity 临时 TOML，最终回复和 report 中不能声称 full affinity split 已应用。
    - `duration-sec` 至少为策略 `duration_sec + 300`，保证策略退出和 guard final check 有回报缓冲时间。
    - 默认不清理正在使用的 feedback SHM；只有确认没有 live strategy 正在消费、且需要清理 stale state 时，才可在临时副本中设置 `remove_existing = true`。
+   - 单 symbol 小额 smoke 或刚经历过 `ContinuityLost` / emergency flatten 后的重试，必须先确认没有任何 live strategy 正在消费 `aquila_gate_order_feedback`，然后把本轮 feedback 临时 TOML 的 `remove_existing` 改为 `true` 再启动 feedback session；否则旧 SHM 中残留的控制事件可能导致策略第一轮 feedback poll 立即停止。若已有健康 feedback session 正在服务其它策略，不要清理它，改用新的隔离 SHM 或先停止相关策略。
    - feedback session 必须先进入 ready / subscribed 状态，再启动真实订单策略。
 7. 用 guard wrapper 启动真实订单策略，后台运行必须使用可脱离当前 shell 的方式，例如 `setsid ... > <run_dir>/guarded_live.stdout 2>&1 < /dev/null &`。推荐命令形态：
 
@@ -111,6 +112,7 @@ scripts/lead_lag/run_live_with_guard.py \
    - 优先使用用户明确给出的 `run_id`、strategy log、guard stdout 和 config。
    - 如果用户只说“上一次”，从 `/home/liuxiang/log/` 中按 mtime 查找最近的 `lead_lag_strategy*live*.log`，并从 `/home/liuxiang/tmp/` 中查找同轮 `guarded_live*.stdout`；如果存在多个候选或无法判断对应关系，先向用户确认，不要猜。
    - 策略配置优先使用 guard / runner 启动命令里的 config；无法从上下文确定时，使用当前 12-symbol live 默认配置 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`，并在最终回复中说明该假设。
+   - 如果策略 stdout / guard stdout 与 `gate_order_feedback_session.stdout` 分离，先在 `/home/liuxiang/tmp/<run_id>/` 生成一个 merged log，顺序拼接 strategy / guard stdout 和 feedback stdout；report 的 `--log` 使用 merged log，`--guard-stdout` 仍使用原始 guard stdout。这样 `feedback_event`、guard summary 和 runtime affinity 都能被同一份报告解析。
    - 如果 guard stdout 包含 `affinity` summary，report 会在 `report.md` 中记录 profile、split、core_path 和 generated config 路径；`latency.csv` 会包含 `gate_order_ack_latency_diagnostic` outlier 字段。
    - `run_id` 优先使用用户给定值；否则从日志文件名或启动时间推导为 `YYYYMMDD_HHMMSS_<label>`，推导不唯一时先确认。
 3. 使用固定脚本生成报告目录：

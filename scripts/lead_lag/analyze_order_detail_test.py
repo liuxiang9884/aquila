@@ -331,6 +331,60 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["finish_exchange_ns"], "1779768838459000000")
         self.assertNotIn("order_finished_local_ns", row)
 
+    def test_builds_closed_position_from_open_close_smoke_summary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            config_path = base / "strategy.toml"
+            catalog_path = base / "catalog.csv"
+            write_config(config_path)
+            write_catalog(catalog_path)
+            write_file(
+                log_path,
+                """
+                I2026-05-26 04:13:58.450501908 1:1 order_session.h:LogGatePlaceOrderSent:477] gate_order_send_ok type=place local_order_id=288230376151711745 request_sequence=2 encoded_request_id=144115188075855874 contract=PROVE_USDT side=kBuy quantity=18 price=0.5404 tif=kImmediateOrCancel reduce_only=false inflight=1 request_send_local_ns=1779768838450489176
+                I2026-05-26 04:13:58.454460064 1:1 order_session.h:LogGateOrderResponse:528] gate_order_response kind=kAck local_order_id=288230376151711745 exchange_order_id=0 request_sequence=2 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779768838454451971 exchange_ns=1779768838452525000 exchange_to_local_ns=1926971
+                I2026-05-26 04:13:58.461163733 1:1 order_session.h:LogGateOrderResponse:528] gate_order_response kind=kResult local_order_id=288230376151711745 exchange_order_id=294985777053717137 request_sequence=2 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779768838461159141 exchange_ns=1779768838459293000 exchange_to_local_ns=1866141
+                I2026-05-26 04:13:58.461376899 1:1 order_feedback_session.cpp:Publish:207] feedback_event publish_ok=true kind=kFilled local_order_id=288230376151711745 exchange_order_id=294985777053717137 exchange_update_ns=1779768838459000000 local_receive_ns=6967892601839617 cumulative_filled_quantity=18 left_quantity=0 cancelled_quantity=0 fill_price=0.535 role=kTaker finish_reason=kUnknown reject_reason=kUnknown continuity_scope=kLane continuity_reason=kUnknown continuity_sequence=0
+                I2026-05-26 04:13:58.461553499 1:1 order_session.h:LogGatePlaceOrderSent:477] gate_order_send_ok type=place local_order_id=288230376151711746 request_sequence=3 encoded_request_id=144115188075855875 contract=PROVE_USDT side=kSell quantity=18 price=0.5293 tif=kImmediateOrCancel reduce_only=true inflight=1 request_send_local_ns=1779768838461548378
+                I2026-05-26 04:13:58.465314975 1:1 order_session.h:LogGateOrderResponse:528] gate_order_response kind=kAck local_order_id=288230376151711746 exchange_order_id=0 request_sequence=3 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779768838465313629 exchange_ns=1779768838463409000 exchange_to_local_ns=1904629
+                I2026-05-26 04:13:58.466279351 1:1 order_session.h:LogGateOrderResponse:528] gate_order_response kind=kResult local_order_id=288230376151711746 exchange_order_id=294985777053717146 request_sequence=3 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779768838466276654 exchange_ns=1779768838464431000 exchange_to_local_ns=1845654
+                I2026-05-26 04:13:58.466470289 1:1 order_feedback_session.cpp:Publish:207] feedback_event publish_ok=true kind=kFilled local_order_id=288230376151711746 exchange_order_id=294985777053717146 exchange_update_ns=1779768838464000000 local_receive_ns=6967892606935428 cumulative_filled_quantity=18 left_quantity=0 cancelled_quantity=0 fill_price=0.5348 role=kTaker finish_reason=kUnknown reject_reason=kUnknown continuity_scope=kLane continuity_reason=kUnknown continuity_sequence=0
+                lead_lag_strategy_live_open_close_smoke_summary exit_code=0 runtime_exit_code=0 emergency_handoff=false completed=true state=done book_tickers=1041 order_responses=4 order_feedbacks=2 open_local_order_id=288230376151711745 close_local_order_id=288230376151711746 open_quantity=18 close_quantity=18 target_notional=100 estimated_open_notional=99.51 used_min_quantity=false error=-
+                """,
+            )
+
+            result = orders.analyze_order_detail(
+                log_path,
+                config_path=config_path,
+                instrument_catalog_path=catalog_path,
+                run_id="run-smoke",
+            )
+            position_rows = orders.build_position_detail_rows(result.rows)
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(position_rows), 1)
+        position = position_rows[0]
+        self.assertEqual(position["position_key"], "run-smoke:4:288230376151711745:288230376151711746")
+        self.assertEqual(position["status"], "closed")
+        self.assertEqual(position["position_direction"], "kLong")
+        self.assertEqual(position["entry_local_order_id"], "288230376151711745")
+        self.assertEqual(position["exit_local_order_id"], "288230376151711746")
+        self.assertEqual(position["entry_ns"], "")
+        self.assertEqual(position["exit_ns"], "")
+        self.assertEqual(position["holding_ns"], "")
+        self.assertEqual(position["entry_price"], "0.535")
+        self.assertEqual(position["exit_price"], "0.5348")
+        self.assertEqual(position["gross_pnl"], "-0.036")
+        self.assertEqual(position["warnings"], "")
+        self.assertEqual(len(latency_rows), 2)
+        self.assertEqual(
+            [row["order_finished_local_ns"] for row in latency_rows], ["", ""]
+        )
+        self.assertEqual(
+            [row["send_to_finish_local_ns"] for row in latency_rows], ["", ""]
+        )
+
     def test_builds_short_closed_and_open_position_detail_rows(self):
         rows = orders.build_position_detail_rows(
             [
