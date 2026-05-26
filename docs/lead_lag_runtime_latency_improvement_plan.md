@@ -47,7 +47,48 @@
    - 它适合观察 Gate submit Ack 到 private order terminal update 的相对间隔，不用于解释 Ack RTT，也不表示本地和交易所之间的单程网络延迟。
    - 若后续 IOC terminal lifecycle tail 继续偏高，应单独分析 Gate private `futures.orders` update 路径，不要并入 Ack RTT 根因分析。
 
-3. **IOC partial-fill / decimal filled close blocker 仍需 live 复核**
+3. **多 OrderSession / 多 WebSocket 连接的 Ack RTT 可能不同**
+   - 同一个账号可以启动多个 Gate `OrderSession`，也就是多个 WebSocket 连接；即使 WebSocket URL 相同，各连接的 Ack RTT 分布也可能不同。
+   - 相同 URL 只说明入口 hostname 一样，不保证每条 TCP/WebSocket 连接落到同一个远端 IP、同一个 load balancer backend、同一个 gateway shard、同一个 per-connection queue 或同一条网络路径。
+   - 每条连接有独立 TCP socket、TLS state、kernel buffer、local port、remote endpoint 和交易所 session state；本地 owner thread 的调度、C-state、`DriveRead()` 时机、日志 / runtime hook 负载也会让不同连接出现不同 Ack RTT。
+   - 后续不能把“URL 相同”作为 Ack path 相同的证据。分析多连接差异时必须以 connection / session 为维度保留统计。
+
+   建议新增或记录的诊断字段：
+
+   ```text
+   order_session_id
+   local_ip
+   local_port
+   remote_ip
+   remote_port
+   resolved_ips
+   connected_remote_ip
+   owner_thread_cpu
+   request_sequence
+   request_send_local_ns
+   ack_local_receive_ns
+   ack_exchange_ns
+   ack_rtt_ns
+   exchange_to_local_ns
+   tcp_info_rtt_us
+   tcp_info_retrans
+   ```
+
+   快速人工检查可以用：
+
+   ```bash
+   ss -tinp | rg '443|lead_lag|gate'
+   ```
+
+   复核重点：
+
+   - 慢连接是否连接到不同 remote IP。
+   - remote IP 相同但 local port 不同，是否仍有稳定 RTT 差异。
+   - 慢连接是否有更高 `TCP_INFO` RTT 或 retrans。
+   - 慢连接的 `send_to_first_drive_read_ns` 是否偏大，说明本地 owner thread 没及时进入 read。
+   - `ack_exchange_ns` 到本地 receive 是否只在某条连接上异常偏大。
+
+4. **IOC partial-fill / decimal filled close blocker 仍需 live 复核**
    - 2026-05-25 和 2026-05-26 两轮 12-symbol run 都没有成交，不能证明 IOC partial-fill / decimal filled close 修复已通过。
    - 复核前不要启动无人值守真实订单长跑。
 
@@ -74,6 +115,7 @@ perf sched latency
 ```
 
 5. report 摘要必须同时列出 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish，避免混淆 Ack receive 延迟与交易所终态 lifecycle 延迟。
+6. 如果本轮使用多个 `OrderSession` / WebSocket 连接，report 或附加日志必须按 session / connection 维度保留 remote endpoint、local port、owner CPU、Ack RTT 分布和 TCP diagnostics；不要只汇总全局 Ack RTT。
 
 ## 执行边界
 
