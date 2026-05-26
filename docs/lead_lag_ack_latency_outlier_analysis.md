@@ -260,60 +260,17 @@ ack_to_finish_local_ns  = 39.239 ms
 
 结论：这不是 Ack path outlier，而是 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟。由于 `exchange_lifecycle_ns` 只使用 Gate exchange timestamp，可用于观察 Gate 侧 Ack 到终态 update 的相对间隔；但它不说明本地和交易所之间的单程网络延迟，也不应和 `ack_rtt_ns` 混为一个指标。后续报告需要同时保留 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish，避免把交易所终态生命周期延迟误判成 Ack receive 延迟。
 
-## 下一轮验证建议
+## 后续验证建议
 
-### 1. 拆 CPU
+拆 CPU、Gate `OrderSession` 专用 Ack latency diagnostic、affinity profile overlay、report diagnostic 字段和 exchange Ack-to-finish 字段已经落地。2026-05-26 的 30 分钟拆核 run 没有复现 Ack RTT outlier，因此下一步不是继续增加报告字段，而是等待更多 live 样本或在复现时结合调度证据归因。
 
-下一轮 live run 前先避免明显同核竞争：
-
-- strategy / order session runtime 保持 CPU4。
-- `gate_order_feedback_session` 改到 CPU6 或 CPU7。
-- recorder 不使用 CPU4；已经存在的长期 recorder 若继续运行，应固定到非交易 CPU。
-- data session 保持 Gate CPU2、Binance CPU3。
-- log backend CPU5 可保留。
-
-期望：如果 p95/p99 明显下降，说明同核竞争是主要因素之一。
-
-### 2. 加 runtime 分段时间戳
-
-在 WebSocket active loop / order session runtime 增加低频异常诊断，不在每轮热路径打印日志，只在超过阈值时输出。建议字段：
-
-```text
-loop_iteration_start_ns
-before_runtime_hook_ns
-after_runtime_hook_ns
-before_drive_write_ns
-after_drive_write_ns
-before_drive_read_ns
-after_drive_read_ns
-runtime_hook_duration_ns
-drive_read_duration_ns
-loop_gap_ns
-last_order_send_local_ns
-last_order_send_to_next_drive_read_ns
-```
-
-触发条件：
-
-```text
-runtime_hook_duration_ns > 1ms
-drive_read_duration_ns > 1ms
-last_order_send_to_next_drive_read_ns > 3ms
-ack_rtt_ns > 20ms
-```
-
-这能区分：
-
-- `runtime_hook_duration_ns` 很大：data reader / strategy / feedback polling 推迟 read。
-- `before_drive_read_ns - request_send_local_ns` 很大，但 hook 不大：线程可能被 deschedule 或 socket read 未及时返回。
-- `drive_read_duration_ns` 很大：socket / TLS / frame decode 路径需要继续拆。
-
-### 3. 运行期采集调度证据
-
-live run 时并行采集：
+后续 live run 如果继续复核 Ack latency，应并行采集：
 
 ```bash
 pidstat -wt -p <strategy_pid>,<feedback_pid> 1
+sar -u -P 2,3,4,5,6 1
+sar -q 1
+sar -w 1
 ```
 
 如需要更强证据，短窗口运行：
@@ -326,33 +283,18 @@ perf sched latency
 若环境权限不足，至少保留：
 
 ```bash
-sar -u -P 4 1
+sar -u -P 2,3,4,5,6 1
 sar -q 1
 sar -w 1
 ```
 
 10 分钟 sysstat 只能证明趋势，不能解释 200ms 单点 outlier。
 
-### 4. 报告中保留 outlier 上下文
+复现 Ack RTT outlier 时优先看：
 
-后续 report 中建议新增或派生：
+1. `send_to_first_drive_read_ns` 是否显著增大：判断 owner thread 是否在 send 后迟迟未进入 read。
+2. `drive_read_duration_ns` / `max_observed_drive_read_duration_ns` 是否显著增大：判断 socket / TLS / frame decode 路径是否耗时。
+3. `pidstat` / `perf sched` 是否显示 strategy owner thread 被 deschedule。
+4. `exchange_lifecycle_ns` 是否同步变大：若只是 exchange Ack-to-finish 变大，应归入 Gate terminal lifecycle，而不是 Ack RTT。
 
-```text
-ack_outlier_rank
-ack_rtt_bucket
-send_to_next_drive_read_ns
-runtime_hook_max_ns_near_order
-cpu_id_strategy
-cpu_id_order_session
-cpu_id_feedback_session
-perf_sched_available
-```
-
-其中新增字段需要先通过日志或 runtime diagnostics 产生；当前系统没有这些字段。
-
-## 下一步优先级
-
-1. 先拆 CPU，避免 strategy / order session / feedback session 全部绑 CPU4。
-2. 增加 order session active loop 的异常分段诊断，尤其是 `send_to_next_drive_read_ns` 和 `runtime_hook_duration_ns`。
-3. 下一轮 live run 同时跑 1 秒粒度 `pidstat` / `sar`，必要时短窗口 `perf sched`。
-4. 生成 report 时把 Ack RTT outlier 与调度证据一起保存，避免只凭单个 `ack_rtt_ns` 猜原因。
+当前仍未完成的是根因复现和归因；IOC partial-fill / decimal filled close live 复核仍是独立 blocker，不能因为 30 分钟 cancelled-only run 正常就视为通过。

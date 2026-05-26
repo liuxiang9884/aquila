@@ -15,7 +15,7 @@
 - 真实订单模式不写 per-signal CSV；信号与下单意图通过日志中的 `trigger_ticker_id`、`lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 对齐；成功提交后的订单主事实源是 `lead_lag_order_submitted`，其中包含 `local_order_id`、最终 `position_id`、`position_event`、`position_direction`、`entry_local_order_id`、`signal_role`、`order_role`、`quantity_text` 和 `price_text`；终态日志 `lead_lag_order_finished` 同步输出 `position_id`、`position_direction`、`order_role`、`entry_local_order_id` 和 `order_finished_local_ns`。`scripts/lead_lag/analyze_order_detail.py --positions-output <path> --latency-output <path>` 可在生成 `order_detail.csv` 的同时生成 `position.csv` 和 `latency.csv`：`position.csv` 按 `run_id + symbol_id + position_id` 配对 entry / exit，每个有成交 exit 输出一行 closed / partial_closed slice，未平 entry 输出 open 行；`gross_pnl` 用 average fill price、matched volume 和 `contract_multiplier` 计算，`net_pnl` 再扣除 config 估算 fee。`latency.csv` 一行对应一个本地订单，输出 send / ack / finish 本地时间、ack RTT、send-to-finish、ack-to-finish、exchange timestamp 和 exchange-to-local 诊断字段；延迟判断优先看本地 RTT，不把本地和交易所时钟直接相减当作单程网络延迟。
 - `scripts/lead_lag/generate_live_report.py` 是真实订单运行结束后的报告生成入口，给定 `--run-id`、策略日志、策略配置和可选 guard stdout 后，生成 `reports/<run_id>/report.md`、`signal.csv`、`order_detail.csv`、`position.csv`、`latency.csv` 和同目录字段说明副本；生成后再由 agent 检查、commit，并在用户要求时 push。
 - Agent 触发词、实盘启动巡检和 report 打包提交流程见 `docs/lead_lag_live_operations_pipeline.md`。
-- 2026-05-25 live run 中出现一笔 `219.023ms` Ack RTT outlier；分析与下一步验证建议见 `docs/lead_lag_ack_latency_outlier_analysis.md`。当前判断是 CPU4 同核竞争 / 调度或 runtime hook 推迟 read path 均为候选，现有日志不能继续拆分根因。
+- 2026-05-25 live run 中出现一笔 `219.023ms` Ack RTT outlier；分析见 `docs/lead_lag_ack_latency_outlier_analysis.md`。后续已落地 Gate `OrderSession` Ack latency diagnostic、affinity profile overlay 和 report diagnostic 字段；2026-05-26 拆核 30 分钟 run 没有复现 Ack outlier，最大 Ack RTT `6.738ms`，但仍未证明 2026-05-25 outlier 根因。
 - `signal.csv`、`order_detail.csv`、`position.csv` 和 `latency.csv` 字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
 - replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV。
 
@@ -23,12 +23,14 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` | requested 12-symbol live strategy runtime；文件名保留历史 `11symbols`，内容已追加 `ETH_USDT`。 |
+| `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml` | requested 12-symbol signal-only / dry-run runtime；文件名保留历史 `11symbols`，内容已追加 `ETH_USDT`。 |
+| `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml` | requested 12-symbol live-orders runtime；真实订单 `--execute` 默认使用该配置，不要误用 signal-only config。 |
 | `config/strategies/lead_lag_requested_11symbols_20260522.toml` | requested 12-symbol LeadLag pair / execute / risk 配置。 |
 | `config/data_sessions/gate_data_session_requested_20260521.toml` | Gate requested symbols data session。 |
 | `config/data_sessions/binance_data_session_requested_20260521.toml` | Binance requested symbols data session。 |
 | `config/data_readers/strategy_data_reader_requested_20260521.toml` | LeadLag requested symbols realtime reader。 |
 | `config/order_feedback/gate_order_feedback_session.toml` | Gate private order feedback session。 |
+| `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml` | live-orders 核心链路 affinity profile；目标为 Gate MD CPU2、Binance MD CPU3、strategy / order owner CPU4、feedback CPU6、log CPU5。 |
 
 requested 配置当前覆盖：
 
@@ -52,6 +54,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 - 2026-05-22 release 11-symbol live-orders guarded run 不是通过项：只完成 1 组 RIVER_USDT strategy open / close；RAVE_USDT IOC partial fill 在 REST 上可见，但当时 private feedback / strategy terminal feedback 缺失，guard 停机后平仓。
 - 2026-05-23/24 已修复 decimal quantity、Gate decimal-size WS 编码、Gate `futures.orders` 高精度 fill price parser、REST final check / emergency flatten decimal residual 判断；这些修复仍需完整 strategy 小额 live smoke 复核。
 - `--smoke-submit-reject` 和 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不能计入已完成 smoke。
+- 2026-05-26 已落地 Gate `OrderSession` Ack latency diagnostic、runtime affinity profile overlay、report diagnostic 字段和 `exchange_lifecycle_ns = finish_exchange_ns - ack_exchange_ns`；30 分钟拆核 run 正常退出 flat，最大 Ack RTT `6.738ms`，最大 exchange Ack-to-finish `37.336ms`，无成交。
 
 ## 推荐测试顺序
 
@@ -90,10 +93,12 @@ scripts/lead_lag/run_live_with_guard.py \
   --settle usdt \
   --contract <SYMBOL> \
   --poll-timeout-sec 30 \
+  --affinity-profile config/runtime_affinity/lead_lag_requested_12symbols_node0.toml \
+  --affinity-output-dir /home/liuxiang/tmp/<run_id>/configs \
   --no-pretty \
   -- \
   ./build/release/tools/lead_lag_strategy \
-    --config config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml \
+    --config config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml \
     --connect-data \
     --execute \
     --duration-sec <duration_sec>
@@ -117,7 +122,8 @@ scripts/gate/query_gate_account.py positions --contract <SYMBOL> --no-pretty
 
 ## 下一步
 
-- 优先做 decimal-size / IOC partial-fill 修复后的完整 strategy 小额 live smoke。
+- 优先做 decimal-size / IOC partial-fill 修复后的完整 strategy 小额 live smoke；2026-05-25 和 2026-05-26 的 12-symbol run 都没有成交，不能替代该复核。
 - 继续 failure response 探测前，先确认 Gate 可返回最终 error 的安全请求形态。
-- 小额复核通过后，再安排 12-symbol guarded live smoke；不要在复核前启动无人值守真实订单长跑。
+- 后续 12-symbol latency / guarded run 必须按 `docs/lead_lag_live_operations_pipeline.md` 使用 affinity profile，并在 report 中同时区分 Ack RTT、send-to-finish 和 exchange Ack-to-finish。
+- 不要在 IOC partial-fill / decimal filled close 复核前启动无人值守真实订单长跑。
 - account / position realtime feedback 是 V2 可选能力，不是当前 V1 长跑前置项。
