@@ -260,6 +260,55 @@ perf sched latency
 2. Phase 1B：整理 live run affinity profile，把 `gate_order_feedback_session` 从 CPU4 移到 CPU6，保留 Gate / Binance data session 在 CPU2 / CPU3，strategy + order owner 在 CPU4。
 3. Phase 1C：live 验证报告中明确记录 `diagnostic_enabled=true` 和 `affinity_split=true`。如需严格归因，可先短跑 `diagnostic_only`，再短跑 `diagnostic + split_cpu`。
 
+### Affinity profile config
+
+已定稿：第一版使用独立 affinity profile config 作为核心链路绑核的唯一事实源，但不让 C++ runtime config loader 直接解析该 profile。
+
+原因：
+
+- 当前 CPU 绑定分散在 data session、strategy、data reader、order session、feedback session 和 log backend 多个 TOML 中，人工同步容易漏改。
+- 直接给 C++ config loader 增加 include / overlay 会扩大改动范围，影响 latency instrumentation 主线。
+- 先由启动脚本读取 profile，并在 `/home/liuxiang/tmp/<run_id>/configs/` 生成临时 TOML overlay，可以保证每次 live run 的实际绑核可复现，同时不污染仓库默认配置。
+
+建议 profile 文件：
+
+```toml
+# config/runtime_affinity/lead_lag_requested_12symbols_node0.toml
+[profile]
+name = "lead_lag_requested_12symbols_node0"
+numa_node = 0
+
+[core_path]
+gate_market_data_cpu = 2
+binance_market_data_cpu = 3
+strategy_order_owner_cpu = 4
+gate_order_feedback_cpu = 6
+log_backend_cpu = 5
+
+[auxiliary]
+reserved_core_cpus = [2, 3, 4, 6]
+preferred_aux_cpus = [7, 8, 9, 10]
+```
+
+建议使用方式：
+
+```bash
+scripts/lead_lag/run_live_with_guard.py \
+  --affinity-profile config/runtime_affinity/lead_lag_requested_12symbols_node0.toml \
+  -- \
+  ./build/release/tools/lead_lag_strategy ...
+```
+
+脚本职责：
+
+1. 读取 affinity profile。
+2. 复制相关 TOML 到 `/home/liuxiang/tmp/<run_id>/configs/`。
+3. 替换临时 TOML 中的 `bind_cpu_id` / `backend_cpu_affinity`。
+4. 启动各组件时使用临时 TOML。
+5. 将 profile 和临时 TOML 副本复制进 report 目录。
+
+Phase 1B 只实现 profile + 脚本 overlay；后续如果该机制稳定，再评估是否让 C++ config loader 原生支持 affinity profile / overlay。
+
 ## 待继续讨论
 
 在开始执行前，至少还需要讨论并定稿：
