@@ -1,0 +1,14 @@
+[profile]
+name = "lead_lag_requested_12symbols_node0"
+numa_node = 0
+
+[core_path]
+gate_market_data_cpu = 2
+binance_market_data_cpu = 3
+strategy_order_owner_cpu = 4
+gate_order_feedback_cpu = 6
+log_backend_cpu = 5
+
+[auxiliary]
+reserved_core_cpus = [2, 3, 4, 6]
+preferred_aux_cpus = [7, 8, 9, 10]

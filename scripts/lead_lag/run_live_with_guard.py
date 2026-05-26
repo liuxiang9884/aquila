@@ -2,10 +2,13 @@
 
 import argparse
 import json
+import re
 import signal
 import subprocess
 import sys
-from dataclasses import dataclass
+import tomllib
+from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -18,6 +21,9 @@ import emergency_flatten_futures as flatten  # noqa: E402
 import query_gate_account as account  # noqa: E402
 from place_futures_order import SignedGateTradingClient  # noqa: E402
 
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_TMP_ROOT = Path("/home/liuxiang/tmp")
 
 EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2
@@ -47,6 +53,26 @@ class GuardConfig:
     strategy_command: list[str]
     poll_timeout_sec: float = flatten.DEFAULT_POLL_TIMEOUT_SEC
     poll_interval_sec: float = flatten.DEFAULT_POLL_INTERVAL_SEC
+    run_id: str | None = None
+    affinity_profile_path: Path | None = None
+    affinity_output_dir: Path | None = None
+    affinity_gate_market_config: Path | None = None
+    affinity_binance_market_config: Path | None = None
+    affinity_order_feedback_config: Path | None = None
+
+
+@dataclass(frozen=True)
+class AffinityProfile:
+    path: Path
+    name: str
+    numa_node: int
+    gate_market_data_cpu: int
+    binance_market_data_cpu: int
+    strategy_order_owner_cpu: int
+    gate_order_feedback_cpu: int
+    log_backend_cpu: int
+    reserved_core_cpus: list[int]
+    preferred_aux_cpus: list[int]
 
 
 @dataclass(frozen=True)
@@ -95,6 +121,299 @@ def validate_config(config: GuardConfig) -> None:
         raise ValueError("--poll-timeout-sec must be non-negative")
     if config.poll_interval_sec <= 0:
         raise ValueError("--poll-interval-sec must be positive")
+
+
+def resolve_repo_path(path: Path | str) -> Path:
+    resolved = Path(path).expanduser()
+    if resolved.is_absolute():
+        return resolved
+    return (PROJECT_ROOT / resolved).resolve()
+
+
+def resolve_output_dir(path: Path | str) -> Path:
+    resolved = Path(path).expanduser()
+    if resolved.is_absolute():
+        return resolved
+    return (PROJECT_ROOT / resolved).resolve()
+
+
+def required_table(data: dict[str, Any], name: str) -> dict[str, Any]:
+    value = data.get(name)
+    if not isinstance(value, dict):
+        raise ValueError(f"affinity profile missing [{name}]")
+    return value
+
+
+def required_int(table: dict[str, Any], key: str, section: str) -> int:
+    value = table.get(key)
+    if not isinstance(value, int):
+        raise ValueError(f"affinity profile missing integer {section}.{key}")
+    return value
+
+
+def int_list(table: dict[str, Any], key: str) -> list[int]:
+    value = table.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, int) for item in value):
+        raise ValueError(f"affinity profile field {key} must be an integer list")
+    return list(value)
+
+
+def load_affinity_profile(path: Path) -> AffinityProfile:
+    resolved_path = resolve_repo_path(path)
+    data = tomllib.loads(resolved_path.read_text(encoding="utf-8"))
+    profile = required_table(data, "profile")
+    core_path = required_table(data, "core_path")
+    auxiliary = data.get("auxiliary", {})
+    if not isinstance(auxiliary, dict):
+        raise ValueError("affinity profile [auxiliary] must be a table")
+    name = profile.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("affinity profile missing profile.name")
+    numa_node = required_int(profile, "numa_node", "profile")
+    return AffinityProfile(
+        path=resolved_path,
+        name=name,
+        numa_node=numa_node,
+        gate_market_data_cpu=required_int(
+            core_path, "gate_market_data_cpu", "core_path"
+        ),
+        binance_market_data_cpu=required_int(
+            core_path, "binance_market_data_cpu", "core_path"
+        ),
+        strategy_order_owner_cpu=required_int(
+            core_path, "strategy_order_owner_cpu", "core_path"
+        ),
+        gate_order_feedback_cpu=required_int(
+            core_path, "gate_order_feedback_cpu", "core_path"
+        ),
+        log_backend_cpu=required_int(core_path, "log_backend_cpu", "core_path"),
+        reserved_core_cpus=int_list(auxiliary, "reserved_core_cpus"),
+        preferred_aux_cpus=int_list(auxiliary, "preferred_aux_cpus"),
+    )
+
+
+def default_affinity_output_dir(run_id: str | None) -> Path:
+    label = run_id or f"lead_lag_live_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    return DEFAULT_TMP_ROOT / label / "configs"
+
+
+def toml_scalar(value: int | str | Path) -> str:
+    if isinstance(value, int):
+        return str(value)
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+SECTION_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
+
+
+def write_toml_overlay(
+    source_path: Path,
+    output_path: Path,
+    replacements: dict[tuple[str, str], int | str | Path],
+) -> None:
+    source_path = resolve_repo_path(source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pending = set(replacements)
+    section = ""
+    output_lines: list[str] = []
+    for line in source_path.read_text(encoding="utf-8").splitlines(keepends=True):
+        section_match = SECTION_RE.match(line)
+        if section_match:
+            section = section_match.group(1)
+        replaced = False
+        for section_key, value in replacements.items():
+            target_section, key = section_key
+            if section != target_section:
+                continue
+            if re.match(rf"^\s*{re.escape(key)}\s*=", line):
+                output_lines.append(f"{key} = {toml_scalar(value)}\n")
+                pending.discard(section_key)
+                replaced = True
+                break
+        if not replaced:
+            output_lines.append(line)
+
+    if pending:
+        missing = ", ".join(f"{section}.{key}" for section, key in sorted(pending))
+        raise ValueError(f"{source_path} missing TOML keys: {missing}")
+    output_path.write_text("".join(output_lines), encoding="utf-8")
+
+
+def load_toml(path: Path) -> dict[str, Any]:
+    return tomllib.loads(resolve_repo_path(path).read_text(encoding="utf-8"))
+
+
+def nested_config_path(data: dict[str, Any], section_path: tuple[str, ...]) -> Path:
+    current: Any = data
+    dotted = ".".join(section_path)
+    for key in section_path:
+        if not isinstance(current, dict):
+            raise ValueError(f"strategy config missing [{dotted}]")
+        current = current.get(key)
+    if not isinstance(current, dict):
+        raise ValueError(f"strategy config missing [{dotted}]")
+    config_path = current.get("config")
+    if not isinstance(config_path, str) or not config_path:
+        raise ValueError(f"strategy config missing {dotted}.config")
+    return resolve_repo_path(config_path)
+
+
+def find_strategy_config_arg(command: list[str]) -> tuple[int, Path, bool] | None:
+    for index, arg in enumerate(command):
+        if arg == "--config":
+            if index + 1 >= len(command):
+                raise ValueError("strategy command has --config without a path")
+            return index, Path(command[index + 1]), False
+        if arg.startswith("--config="):
+            return index, Path(arg.split("=", 1)[1]), True
+    return None
+
+
+def replace_strategy_config_arg(
+    command: list[str], config_index: int, config_path: Path, inline_arg: bool
+) -> list[str]:
+    rewritten = list(command)
+    if inline_arg:
+        rewritten[config_index] = f"--config={config_path}"
+    else:
+        rewritten[config_index + 1] = str(config_path)
+    return rewritten
+
+
+def overlay_path(output_dir: Path, label: str, source_path: Path) -> Path:
+    return output_dir / f"{label}__{source_path.name}"
+
+
+def write_runtime_config_overlay(
+    source_path: Path,
+    output_dir: Path,
+    label: str,
+    execution_section: str,
+    bind_cpu_id: int,
+    log_backend_cpu: int,
+) -> Path:
+    destination = overlay_path(output_dir, label, resolve_repo_path(source_path))
+    write_toml_overlay(
+        source_path,
+        destination,
+        {
+            ("log", "backend_cpu_affinity"): log_backend_cpu,
+            (execution_section, "bind_cpu_id"): bind_cpu_id,
+        },
+    )
+    return destination
+
+
+def prepare_affinity_overlays(
+    config: GuardConfig,
+) -> tuple[GuardConfig, dict[str, Any]]:
+    if config.affinity_profile_path is None:
+        return config, {}
+    profile = load_affinity_profile(config.affinity_profile_path)
+    output_dir = resolve_output_dir(
+        config.affinity_output_dir or default_affinity_output_dir(config.run_id)
+    )
+    generated_configs: dict[str, str] = {}
+    strategy_command = list(config.strategy_command)
+
+    config_arg = find_strategy_config_arg(strategy_command)
+    if config_arg is not None:
+        config_index, strategy_source, inline_arg = config_arg
+        strategy_source = resolve_repo_path(strategy_source)
+        strategy_data = load_toml(strategy_source)
+        data_reader_source = nested_config_path(
+            strategy_data, ("strategy", "data_reader")
+        )
+        order_session_source = nested_config_path(
+            strategy_data, ("strategy", "order_session")
+        )
+        data_reader_overlay = write_runtime_config_overlay(
+            data_reader_source,
+            output_dir,
+            "strategy_data_reader",
+            "data_reader.execution_policy",
+            profile.strategy_order_owner_cpu,
+            profile.log_backend_cpu,
+        )
+        order_session_overlay = write_runtime_config_overlay(
+            order_session_source,
+            output_dir,
+            "gate_order_session",
+            "order_session.websocket.execution_policy",
+            profile.strategy_order_owner_cpu,
+            profile.log_backend_cpu,
+        )
+        strategy_overlay = overlay_path(output_dir, "strategy", strategy_source)
+        write_toml_overlay(
+            strategy_source,
+            strategy_overlay,
+            {
+                ("log", "backend_cpu_affinity"): profile.log_backend_cpu,
+                ("strategy.loop", "bind_cpu_id"): profile.strategy_order_owner_cpu,
+                ("strategy.data_reader", "config"): data_reader_overlay,
+                ("strategy.order_session", "config"): order_session_overlay,
+            },
+        )
+        strategy_command = replace_strategy_config_arg(
+            strategy_command, config_index, strategy_overlay, inline_arg
+        )
+        generated_configs.update(
+            {
+                "strategy": str(strategy_overlay),
+                "strategy_data_reader": str(data_reader_overlay),
+                "gate_order_session": str(order_session_overlay),
+            }
+        )
+
+    if config.affinity_gate_market_config is not None:
+        gate_market_overlay = write_runtime_config_overlay(
+            config.affinity_gate_market_config,
+            output_dir,
+            "gate_market_data",
+            "data_session.websocket.execution_policy",
+            profile.gate_market_data_cpu,
+            profile.log_backend_cpu,
+        )
+        generated_configs["gate_market_data"] = str(gate_market_overlay)
+    if config.affinity_binance_market_config is not None:
+        binance_market_overlay = write_runtime_config_overlay(
+            config.affinity_binance_market_config,
+            output_dir,
+            "binance_market_data",
+            "data_session.websocket.execution_policy",
+            profile.binance_market_data_cpu,
+            profile.log_backend_cpu,
+        )
+        generated_configs["binance_market_data"] = str(binance_market_overlay)
+    if config.affinity_order_feedback_config is not None:
+        feedback_overlay = write_runtime_config_overlay(
+            config.affinity_order_feedback_config,
+            output_dir,
+            "gate_order_feedback",
+            "order_feedback_session.websocket.execution_policy",
+            profile.gate_order_feedback_cpu,
+            profile.log_backend_cpu,
+        )
+        generated_configs["gate_order_feedback"] = str(feedback_overlay)
+
+    summary = {
+        "profile": str(profile.path),
+        "profile_name": profile.name,
+        "numa_node": profile.numa_node,
+        "affinity_split": True,
+        "output_dir": str(output_dir),
+        "core_path": {
+            "gate_market_data_cpu": profile.gate_market_data_cpu,
+            "binance_market_data_cpu": profile.binance_market_data_cpu,
+            "strategy_order_owner_cpu": profile.strategy_order_owner_cpu,
+            "gate_order_feedback_cpu": profile.gate_order_feedback_cpu,
+            "log_backend_cpu": profile.log_backend_cpu,
+        },
+        "reserved_core_cpus": list(profile.reserved_core_cpus),
+        "preferred_aux_cpus": list(profile.preferred_aux_cpus),
+        "generated_configs": generated_configs,
+    }
+    return replace(config, strategy_command=strategy_command), summary
 
 
 def query_guard_state(
@@ -158,9 +477,11 @@ def initial_summary(config: GuardConfig) -> dict[str, Any]:
     return {
         "ok": False,
         "result": "not_started",
+        "run_id": config.run_id,
         "settle": flatten.normalize_settle(config.settle),
         "contracts": list(config.contracts),
         "strategy_command": list(config.strategy_command),
+        "affinity": None,
         "preflight": None,
         "strategy": None,
         "final_check": None,
@@ -211,6 +532,12 @@ def run_guarded_live(
         strategy_command=list(config.strategy_command),
         poll_timeout_sec=config.poll_timeout_sec,
         poll_interval_sec=config.poll_interval_sec,
+        run_id=config.run_id,
+        affinity_profile_path=config.affinity_profile_path,
+        affinity_output_dir=config.affinity_output_dir,
+        affinity_gate_market_config=config.affinity_gate_market_config,
+        affinity_binance_market_config=config.affinity_binance_market_config,
+        affinity_order_feedback_config=config.affinity_order_feedback_config,
     )
     summary = initial_summary(config)
     try:
@@ -220,6 +547,17 @@ def run_guarded_live(
         summary["exit_code"] = EXIT_CONFIG_ERROR
         summary["errors"].append(str(exc))
         return EXIT_CONFIG_ERROR, summary
+
+    if config.affinity_profile_path is not None:
+        try:
+            config, affinity_summary = prepare_affinity_overlays(config)
+        except Exception as exc:
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append(f"affinity overlay failed: {type(exc).__name__}: {exc}")
+            return EXIT_CONFIG_ERROR, summary
+        summary = initial_summary(config)
+        summary["affinity"] = affinity_summary
 
     try:
         preflight = state_reader(requester, config.settle, config.contracts)
@@ -304,6 +642,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=True,
         help="Pretty-print JSON summary.",
     )
+    parser.add_argument("--run-id")
+    parser.add_argument("--affinity-profile", type=Path)
+    parser.add_argument("--affinity-output-dir", type=Path)
+    parser.add_argument("--affinity-gate-market-config", type=Path)
+    parser.add_argument("--affinity-binance-market-config", type=Path)
+    parser.add_argument("--affinity-order-feedback-config", type=Path)
     parser.add_argument("strategy_command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.strategy_command and args.strategy_command[0] == "--":
@@ -318,6 +662,12 @@ def config_from_args(args: argparse.Namespace) -> GuardConfig:
         strategy_command=list(args.strategy_command),
         poll_timeout_sec=args.poll_timeout_sec,
         poll_interval_sec=args.poll_interval_sec,
+        run_id=args.run_id,
+        affinity_profile_path=args.affinity_profile,
+        affinity_output_dir=args.affinity_output_dir,
+        affinity_gate_market_config=args.affinity_gate_market_config,
+        affinity_binance_market_config=args.affinity_binance_market_config,
+        affinity_order_feedback_config=args.affinity_order_feedback_config,
     )
 
 
