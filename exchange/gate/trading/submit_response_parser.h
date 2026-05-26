@@ -45,6 +45,7 @@ enum class GateSubmitParseProfile : std::uint8_t {
 struct GateSubmitResponse {
   GateSubmitParseStatus parse_status{GateSubmitParseStatus::kUnexpectedShape};
   GateSubmitResponseKind kind{GateSubmitResponseKind::kUnknown};
+  bool ack_field_present{false};
   bool has_ack{false};
   bool ack{false};
   GateSubmitChannel channel{kUnknown};
@@ -210,6 +211,7 @@ inline GateSubmitResponse ParseSimdjsonDocument(
                                               &response.request_id);
   }
   if (FindSimdjsonField(root, "ack", &value)) {
+    response.ack_field_present = true;
     bool ack = false;
     response.has_ack = ReadSimdjsonBool(value, &ack);
     response.ack = response.has_ack && ack;
@@ -253,8 +255,15 @@ inline GateSubmitResponse ParseSimdjsonDocument(
   }
   const bool can_parse_error =
       response.has_ack ? !response.ack : response.http_status >= 400;
+  const bool can_parse_missing_ack_result =
+      !response.ack_field_present && response.http_status == 200 &&
+      (response.channel == kFuturesOrderPlace ||
+       response.channel == kFuturesOrderCancel);
+  if (response.ack_field_present && !response.has_ack) {
+    return response;
+  }
   if (!response.has_ack && response.channel != kFuturesLogin &&
-      !can_parse_error) {
+      !can_parse_error && !can_parse_missing_ack_result) {
     return response;
   }
 
@@ -326,6 +335,7 @@ inline GateSubmitResponse ParseSimdjsonAckMinimalDocument(
         value, &response.request_id_hash, &response.request_id);
   }
   if (FindSimdjsonField(root, "ack", &value)) {
+    response.ack_field_present = true;
     bool ack = false;
     response.has_ack = ReadSimdjsonBool(value, &ack);
     response.ack = response.has_ack && ack;

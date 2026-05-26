@@ -411,7 +411,7 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceError) {
   EXPECT_EQ(parsed.text_hash, 0U);
 }
 
-TEST(GateSubmitResponseParserTest, MissingAckKeepsResponseKindUnknown) {
+TEST(GateSubmitResponseParserTest, MissingAckOrderPlaceResultParsesResult) {
   static constexpr std::string_view kPayload = R"json({
     "request_id": "144115188075855881",
     "header": {
@@ -431,10 +431,38 @@ TEST(GateSubmitResponseParserTest, MissingAckKeepsResponseKindUnknown) {
   ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
   EXPECT_FALSE(parsed.has_ack);
   EXPECT_FALSE(parsed.ack);
-  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kUnknown);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kResult);
   EXPECT_TRUE(parsed.request_id.ok);
-  EXPECT_EQ(parsed.exchange_order_id, 0U);
-  EXPECT_FALSE(parsed.has_local_order_id);
+  EXPECT_EQ(parsed.exchange_order_id, 36028827892199865U);
+  EXPECT_TRUE(parsed.has_local_order_id);
+  EXPECT_EQ(parsed.local_order_id, 12345U);
+}
+
+TEST(GateSubmitResponseParserTest, MissingAckCancelResultParsesResult) {
+  static constexpr std::string_view kPayload = R"json({
+    "request_id": "216172782113783818",
+    "header": {
+      "status": "200",
+      "channel": "futures.order_cancel"
+    },
+    "data": {
+      "result": {
+        "id": "36028827892199865"
+      }
+    }
+  })json";
+
+  const auto parsed = ParseGateSubmitResponseForOrderSession(kPayload);
+
+  ASSERT_EQ(parsed.parse_status, GateSubmitParseStatus::kOk);
+  EXPECT_FALSE(parsed.has_ack);
+  EXPECT_FALSE(parsed.ack);
+  EXPECT_EQ(parsed.kind, GateSubmitResponseKind::kResult);
+  EXPECT_TRUE(parsed.request_id.ok);
+  EXPECT_EQ(parsed.request_id.type, OrderRequestType::kCancelOrder);
+  EXPECT_EQ(parsed.request_id.sequence, 10U);
+  EXPECT_EQ(parsed.channel, kFuturesOrderCancel);
+  EXPECT_EQ(parsed.exchange_order_id, 36028827892199865U);
 }
 
 TEST(GateSubmitResponseParserTest, NonBoolAckKeepsResponseKindUnknown) {

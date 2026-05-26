@@ -662,7 +662,7 @@ TEST(OrderSessionTest, AckWithNonOkStatusKeepsInflightAndSkipsHandler) {
   EXPECT_EQ(session.stats().ignored_messages, 1U);
 }
 
-TEST(OrderSessionTest, MissingAckResultKeepsInflightAndSkipsHandler) {
+TEST(OrderSessionTest, MissingAckPlaceResultErasesCorrelation) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
@@ -673,9 +673,32 @@ TEST(OrderSessionTest, MissingAckResultKeepsInflightAndSkipsHandler) {
   session.Handle(TextView(
       R"({"request_id":"144115188075855874","header":{"status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})"));
 
-  EXPECT_TRUE(handler.responses.empty());
-  EXPECT_EQ(session.inflight_count(), 1U);
-  EXPECT_EQ(session.stats().ignored_messages, 1U);
+  ASSERT_EQ(handler.responses.size(), 1U);
+  EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kAccepted);
+  EXPECT_EQ(handler.responses[0].local_order_id, 123);
+  EXPECT_EQ(handler.responses[0].exchange_order_id, 36028827892199865U);
+  EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.stats().ignored_messages, 0U);
+}
+
+TEST(OrderSessionTest, MissingAckCancelResultErasesCorrelation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent =
+      session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(
+      R"({"request_id":"216172782113783810","header":{"status":"200","channel":"futures.order_cancel","event":"api"},"data":{"result":{"id":"36028827892199865"}}})"));
+
+  ASSERT_EQ(handler.responses.size(), 1U);
+  EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kCancelAccepted);
+  EXPECT_EQ(handler.responses[0].local_order_id, 123);
+  EXPECT_EQ(handler.responses[0].exchange_order_id, 36028827892199865U);
+  EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_EQ(session.stats().ignored_messages, 0U);
 }
 
 TEST(OrderSessionTest, NonBoolAckResultKeepsInflightAndSkipsHandler) {
