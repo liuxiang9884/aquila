@@ -20,6 +20,7 @@
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/gate/trading/decimal_size_header.h"
+#include "exchange/gate/trading/order_latency_diagnostics.h"
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/submit_response_parser.h"
 #include "nova/utils/log.h"
@@ -149,7 +150,9 @@ class OrderSession {
                                   : request_map_capacity) {
     request_id_to_local_order_id_.reserve(request_map_capacity_);
     local_order_id_to_exchange_order_id_.reserve(request_map_capacity_);
+    ack_latency_diagnostics_.reserve(request_map_capacity_);
     client_.SetStateHook(this, &HandleState);
+    client_.SetRuntimeLoopProbe(this, &HandleRuntimeLoopProbe);
   }
 
   bool Start() noexcept {
@@ -191,6 +194,7 @@ class OrderSession {
       login_request_sequence_ = 0;
       request_id_to_local_order_id_.clear();
       local_order_id_to_exchange_order_id_.clear();
+      ack_latency_diagnostics_.clear();
       NotifyLoginNotReady();
     }
   }
@@ -260,6 +264,7 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
+    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
@@ -320,6 +325,7 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
+    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
@@ -383,6 +389,11 @@ class OrderSession {
   static void HandleState(void* context,
                           websocket::ConnectionPhase phase) noexcept {
     static_cast<OrderSession*>(context)->OnConnectionPhase(phase);
+  }
+
+  static void HandleRuntimeLoopProbe(
+      void* context, websocket::RuntimeLoopProbePoint point) noexcept {
+    static_cast<OrderSession*>(context)->OnRuntimeLoopProbe(point);
   }
 
   static websocket::ConnectionConfig ApplyOptions(
@@ -554,6 +565,26 @@ class OrderSession {
         parsed.error_label_hash, parsed.error_label, parsed.error_message);
   }
 
+  static void LogOrderLatencyDiagnostic(
+      const OrderLatencyDiagnosticLogRecord& record) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_WARNING(
+        "gate_order_ack_latency_diagnostic reason={} local_order_id={} "
+        "request_sequence={} request_send_local_ns={} "
+        "ack_local_receive_ns={} ack_exchange_ns={} ack_rtt_ns={} "
+        "send_to_first_after_hook_ns={} send_to_first_drive_read_ns={} "
+        "drive_read_duration_ns={} max_observed_drive_read_duration_ns={} "
+        "inflight_at_send={}",
+        magic_enum::enum_name(record.reason), record.local_order_id,
+        record.request_sequence, record.request_send_local_ns,
+        record.ack_local_receive_ns, record.ack_exchange_ns, record.ack_rtt_ns,
+        record.send_to_first_after_hook_ns, record.send_to_first_drive_read_ns,
+        record.drive_read_duration_ns,
+        record.max_observed_drive_read_duration_ns, record.inflight_at_send);
+  }
+
   template <typename OrderT>
   [[nodiscard]] std::uint64_t ExchangeOrderIdForCancel(
       const OrderT& order) const noexcept {
@@ -618,6 +649,51 @@ class OrderSession {
             .encoded_request_id = encoded_request_id};
   }
 
+  void ArmAckLatencyDiagnostic(std::uint64_t local_order_id,
+                               std::uint64_t sequence,
+                               std::int64_t send_local_ns) noexcept {
+    ack_latency_diagnostics_.Arm(OrderLatencyDiagnosticWindow{
+        .local_order_id = local_order_id,
+        .request_sequence = sequence,
+        .request_send_local_ns = send_local_ns,
+        .inflight_at_send = inflight_count(),
+    });
+  }
+
+  void RecordAckLatencyDiagnostic(std::uint64_t sequence,
+                                  std::int64_t ack_local_receive_ns,
+                                  std::int64_t ack_exchange_ns) noexcept {
+    (void)ack_latency_diagnostics_.RecordAck(
+        sequence, ack_local_receive_ns, ack_exchange_ns,
+        [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
+          LogOrderLatencyDiagnostic(record);
+        });
+  }
+
+  void OnRuntimeLoopProbe(websocket::RuntimeLoopProbePoint point) noexcept {
+    const std::int64_t now_ns = RealtimeNowNsInt64();
+    switch (point) {
+      case websocket::RuntimeLoopProbePoint::kAfterRuntimeHook:
+        (void)ack_latency_diagnostics_.RecordAfterRuntimeHook(
+            now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
+              LogOrderLatencyDiagnostic(record);
+            });
+        return;
+      case websocket::RuntimeLoopProbePoint::kBeforeDriveRead:
+        (void)ack_latency_diagnostics_.RecordBeforeDriveRead(
+            now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
+              LogOrderLatencyDiagnostic(record);
+            });
+        return;
+      case websocket::RuntimeLoopProbePoint::kAfterDriveRead:
+        (void)ack_latency_diagnostics_.RecordAfterDriveRead(
+            now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
+              LogOrderLatencyDiagnostic(record);
+            });
+        return;
+    }
+  }
+
   websocket::DeliveryResult HandleText(
       const websocket::MessageView& view) noexcept {
     if constexpr (DiagnosticsEnabled) {
@@ -674,6 +750,8 @@ class OrderSession {
         RecordIgnoredMessage();
         return websocket::DeliveryResult::kAccepted;
       }
+      RecordAckLatencyDiagnostic(parsed.request_id.sequence, local_receive_ns,
+                                 parsed.exchange_ns);
       LogGateOrderResponse(parsed, local_order_id, 0, local_receive_ns);
       response_handler_.OnOrderResponse(
           OrderResponse{.kind = OrderResponseKind::kAck,
@@ -695,12 +773,14 @@ class OrderSession {
     const bool is_error = parsed.kind == GateSubmitResponseKind::kError;
     if (!is_error && !FinalResultMatchesLocalOrder(parsed, local_order_id)) {
       request_id_to_local_order_id_.erase(it);
+      ack_latency_diagnostics_.Erase(parsed.request_id.sequence);
       LogGateOrderResponseIgnored("final_result_local_order_mismatch", parsed);
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
 
     request_id_to_local_order_id_.erase(it);
+    ack_latency_diagnostics_.Erase(parsed.request_id.sequence);
     if (!is_error && !is_cancel && parsed.exchange_order_id != 0) {
       CacheExchangeOrderId(local_order_id, parsed.exchange_order_id);
     }
@@ -836,6 +916,7 @@ class OrderSession {
       request_id_to_local_order_id_;
   absl::flat_hash_map<std::uint64_t, std::uint64_t>
       local_order_id_to_exchange_order_id_;
+  OrderAckLatencyDiagnostics ack_latency_diagnostics_;
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   std::uint64_t request_sequence_{1};
   std::uint64_t login_request_sequence_{0};

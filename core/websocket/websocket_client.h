@@ -31,6 +31,13 @@ namespace aquila::websocket {
 using StateHandler = void (*)(void* context, ConnectionPhase phase) noexcept;
 using ErrorHandler = void (*)(void* context, ConnectionError error) noexcept;
 using RuntimeHook = void (*)(void* context) noexcept;
+enum class RuntimeLoopProbePoint : std::uint8_t {
+  kAfterRuntimeHook,
+  kBeforeDriveRead,
+  kAfterDriveRead,
+};
+using RuntimeLoopProbe = void (*)(void* context,
+                                  RuntimeLoopProbePoint point) noexcept;
 
 template <typename TransportSocketT, typename MessageHandlerT = MessageCallback>
 class BasicWebSocketClient {
@@ -104,6 +111,11 @@ class BasicWebSocketClient {
   void SetRuntimeHook(void* context, RuntimeHook handler) noexcept {
     runtime_hook_context_ = context;
     runtime_hook_handler_ = handler;
+  }
+
+  void SetRuntimeLoopProbe(void* context, RuntimeLoopProbe handler) noexcept {
+    runtime_loop_probe_context_ = context;
+    runtime_loop_probe_handler_ = handler;
   }
 
   [[nodiscard]] ConnectionPhase phase() const noexcept {
@@ -238,10 +250,19 @@ class BasicWebSocketClient {
 
     void BeforeDrive() noexcept {
       client->RunRuntimeHook();
+      client->NotifyRuntimeLoopProbe(RuntimeLoopProbePoint::kAfterRuntimeHook);
     }
 
     void DriveRead() noexcept {
       core.DriveRead();
+    }
+
+    void BeforeDriveRead() noexcept {
+      client->NotifyRuntimeLoopProbe(RuntimeLoopProbePoint::kBeforeDriveRead);
+    }
+
+    void AfterDriveRead() noexcept {
+      client->NotifyRuntimeLoopProbe(RuntimeLoopProbePoint::kAfterDriveRead);
     }
 
     void AdvanceHeartbeat(std::uint64_t now_ns) noexcept {
@@ -477,6 +498,12 @@ class BasicWebSocketClient {
     }
   }
 
+  void NotifyRuntimeLoopProbe(RuntimeLoopProbePoint point) noexcept {
+    if (runtime_loop_probe_handler_ != nullptr) {
+      runtime_loop_probe_handler_(runtime_loop_probe_context_, point);
+    }
+  }
+
   ConnectionConfig config_{};
   MessageHandlerT message_handler_{};
   Metrics metrics_{};
@@ -505,6 +532,8 @@ class BasicWebSocketClient {
   ErrorHandler error_handler_{nullptr};
   void* runtime_hook_context_{nullptr};
   RuntimeHook runtime_hook_handler_{nullptr};
+  void* runtime_loop_probe_context_{nullptr};
+  RuntimeLoopProbe runtime_loop_probe_handler_{nullptr};
 };
 
 template <typename MessageHandlerT>

@@ -31,7 +31,9 @@ class ActiveSpinLoop {
     while (!session.ShouldReconnect()) {
       BeforeDrive(session);
       session.DriveWrite();
+      BeforeDriveRead(session);
       session.DriveRead();
+      AfterDriveRead(session);
 
       ++iterations_since_clock;
       if (iterations_since_clock >= iteration_budget) {
@@ -53,6 +55,20 @@ class ActiveSpinLoop {
   void BeforeDrive(SessionT& session) const noexcept {
     if constexpr (requires { session.BeforeDrive(); }) {
       session.BeforeDrive();
+    }
+  }
+
+  template <typename SessionT>
+  void BeforeDriveRead(SessionT& session) const noexcept {
+    if constexpr (requires { session.BeforeDriveRead(); }) {
+      session.BeforeDriveRead();
+    }
+  }
+
+  template <typename SessionT>
+  void AfterDriveRead(SessionT& session) const noexcept {
+    if constexpr (requires { session.AfterDriveRead(); }) {
+      session.AfterDriveRead();
     }
   }
 
