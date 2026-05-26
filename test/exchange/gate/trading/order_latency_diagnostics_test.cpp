@@ -80,6 +80,71 @@ TEST(OrderLatencyDiagnosticsTest, RateLimitsRepeatedLoopThresholdRecords) {
   EXPECT_EQ(records.size(), 1U);
 }
 
+TEST(OrderLatencyDiagnosticsTest, AckRecordIncludesCurrentDriveReadDuration) {
+  OrderAckLatencyDiagnostics diagnostics(OrderLatencyDiagnosticConfig{
+      .ack_rtt_threshold_ns = 1'000,
+      .send_to_first_drive_read_threshold_ns = 100'000'000,
+      .drive_read_duration_threshold_ns = 100'000'000,
+      .diagnostic_window_timeout_ns = 250'000'000,
+      .max_logs_per_second = 10,
+  });
+  std::vector<OrderLatencyDiagnosticLogRecord> records;
+
+  diagnostics.Arm(OrderLatencyDiagnosticWindow{
+      .local_order_id = 123,
+      .request_sequence = 40,
+      .request_send_local_ns = 1'000,
+      .inflight_at_send = 1,
+  });
+  EXPECT_EQ(
+      diagnostics.RecordBeforeDriveRead(
+          24'000'000, [&](const auto& record) { records.push_back(record); }),
+      0U);
+
+  EXPECT_TRUE(diagnostics.RecordAck(
+      40, 25'500'000, 5'000, 24'000'000,
+      [&](const auto& record) { records.push_back(record); }));
+
+  ASSERT_EQ(records.size(), 1U);
+  EXPECT_EQ(records.back().reason,
+            OrderLatencyDiagnosticReason::kAckRttThreshold);
+  EXPECT_EQ(records.back().drive_read_duration_ns, 1'500'000);
+  EXPECT_EQ(records.back().max_observed_drive_read_duration_ns, 1'500'000);
+}
+
+TEST(OrderLatencyDiagnosticsTest, AckDriveReadDurationCanEmitThresholdRecord) {
+  OrderAckLatencyDiagnostics diagnostics(OrderLatencyDiagnosticConfig{
+      .ack_rtt_threshold_ns = 100'000'000,
+      .send_to_first_drive_read_threshold_ns = 100'000'000,
+      .drive_read_duration_threshold_ns = 1'000'000,
+      .diagnostic_window_timeout_ns = 250'000'000,
+      .max_logs_per_second = 10,
+  });
+  std::vector<OrderLatencyDiagnosticLogRecord> records;
+
+  diagnostics.Arm(OrderLatencyDiagnosticWindow{
+      .local_order_id = 123,
+      .request_sequence = 40,
+      .request_send_local_ns = 1'000,
+      .inflight_at_send = 1,
+  });
+  EXPECT_EQ(
+      diagnostics.RecordBeforeDriveRead(
+          24'000'000, [&](const auto& record) { records.push_back(record); }),
+      0U);
+
+  EXPECT_TRUE(diagnostics.RecordAck(
+      40, 25'500'000, 5'000, 24'000'000,
+      [&](const auto& record) { records.push_back(record); }));
+
+  ASSERT_EQ(records.size(), 1U);
+  EXPECT_EQ(records.back().reason,
+            OrderLatencyDiagnosticReason::kDriveReadDurationThreshold);
+  EXPECT_EQ(records.back().drive_read_duration_ns, 1'500'000);
+  EXPECT_EQ(records.back().max_observed_drive_read_duration_ns, 1'500'000);
+  EXPECT_TRUE(diagnostics.empty());
+}
+
 TEST(OrderLatencyDiagnosticsTest, ClearRemovesActiveDiagnosticWindows) {
   OrderAckLatencyDiagnostics diagnostics;
   diagnostics.Arm(OrderLatencyDiagnosticWindow{

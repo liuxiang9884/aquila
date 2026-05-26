@@ -136,10 +136,7 @@ class OrderAckLatencyDiagnostics {
     for (auto& [_, window] : windows_) {
       if (window.last_before_drive_read_ns > 0) {
         const std::int64_t duration = now_ns - window.last_before_drive_read_ns;
-        if (duration > window.max_observed_drive_read_duration_ns) {
-          window.max_observed_drive_read_duration_ns = duration;
-        }
-        window.last_drive_read_duration_ns = duration;
+        UpdateDriveReadDuration(window, duration);
         if (!window.logged_drive_read_duration &&
             duration > config_.drive_read_duration_threshold_ns) {
           window.logged_drive_read_duration = true;
@@ -157,6 +154,16 @@ class OrderAckLatencyDiagnostics {
   bool RecordAck(std::uint64_t request_sequence,
                  std::int64_t ack_local_receive_ns,
                  std::int64_t ack_exchange_ns, Handler&& handler) noexcept {
+    return RecordAck(request_sequence, ack_local_receive_ns, ack_exchange_ns, 0,
+                     handler);
+  }
+
+  template <typename Handler>
+  bool RecordAck(std::uint64_t request_sequence,
+                 std::int64_t ack_local_receive_ns,
+                 std::int64_t ack_exchange_ns,
+                 std::int64_t current_drive_read_start_ns,
+                 Handler&& handler) noexcept {
     auto it = windows_.find(request_sequence);
     if (it == windows_.end()) {
       return false;
@@ -164,6 +171,19 @@ class OrderAckLatencyDiagnostics {
     WindowState window = it->second;
     window.ack_local_receive_ns = ack_local_receive_ns;
     window.ack_exchange_ns = ack_exchange_ns;
+    bool should_emit_drive_read_duration = false;
+    if (current_drive_read_start_ns > 0 &&
+        ack_local_receive_ns > current_drive_read_start_ns) {
+      const std::int64_t duration =
+          ack_local_receive_ns - current_drive_read_start_ns;
+      UpdateDriveReadDuration(window, duration);
+      should_emit_drive_read_duration =
+          !window.logged_drive_read_duration &&
+          duration > config_.drive_read_duration_threshold_ns;
+      if (should_emit_drive_read_duration) {
+        window.logged_drive_read_duration = true;
+      }
+    }
     const std::int64_t ack_rtt_ns =
         ack_local_receive_ns - window.request_send_local_ns;
     const bool should_log = ack_rtt_ns > config_.ack_rtt_threshold_ns &&
@@ -171,9 +191,14 @@ class OrderAckLatencyDiagnostics {
     if (should_log) {
       handler(
           MakeRecord(OrderLatencyDiagnosticReason::kAckRttThreshold, window));
+    } else if (should_emit_drive_read_duration) {
+      should_emit_drive_read_duration =
+          Emit(ack_local_receive_ns,
+               OrderLatencyDiagnosticReason::kDriveReadDurationThreshold,
+               window, handler) != 0;
     }
     windows_.erase(it);
-    return should_log;
+    return should_log || should_emit_drive_read_duration;
   }
 
  private:
@@ -204,6 +229,14 @@ class OrderAckLatencyDiagnostics {
     window.logged_timeout = true;
     return Emit(now_ns, OrderLatencyDiagnosticReason::kDiagnosticTimeout,
                 window, handler);
+  }
+
+  static void UpdateDriveReadDuration(WindowState& window,
+                                      std::int64_t duration_ns) noexcept {
+    window.last_drive_read_duration_ns = duration_ns;
+    if (duration_ns > window.max_observed_drive_read_duration_ns) {
+      window.max_observed_drive_read_duration_ns = duration_ns;
+    }
   }
 
   template <typename Handler>

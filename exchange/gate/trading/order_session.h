@@ -665,12 +665,20 @@ class OrderSession {
                                   std::int64_t ack_exchange_ns) noexcept {
     (void)ack_latency_diagnostics_.RecordAck(
         sequence, ack_local_receive_ns, ack_exchange_ns,
+        current_drive_read_start_ns_,
         [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
           LogOrderLatencyDiagnostic(record);
         });
   }
 
   void OnRuntimeLoopProbe(websocket::RuntimeLoopProbePoint point) noexcept {
+    if (ack_latency_diagnostics_.empty()) {
+      if (point == websocket::RuntimeLoopProbePoint::kAfterDriveRead ||
+          point == websocket::RuntimeLoopProbePoint::kBeforeDriveRead) {
+        current_drive_read_start_ns_ = 0;
+      }
+      return;
+    }
     const std::int64_t now_ns = RealtimeNowNsInt64();
     switch (point) {
       case websocket::RuntimeLoopProbePoint::kAfterRuntimeHook:
@@ -680,6 +688,7 @@ class OrderSession {
             });
         return;
       case websocket::RuntimeLoopProbePoint::kBeforeDriveRead:
+        current_drive_read_start_ns_ = now_ns;
         (void)ack_latency_diagnostics_.RecordBeforeDriveRead(
             now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
               LogOrderLatencyDiagnostic(record);
@@ -690,6 +699,7 @@ class OrderSession {
             now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
               LogOrderLatencyDiagnostic(record);
             });
+        current_drive_read_start_ns_ = 0;
         return;
     }
   }
@@ -917,6 +927,7 @@ class OrderSession {
   absl::flat_hash_map<std::uint64_t, std::uint64_t>
       local_order_id_to_exchange_order_id_;
   OrderAckLatencyDiagnostics ack_latency_diagnostics_;
+  std::int64_t current_drive_read_start_ns_{0};
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   std::uint64_t request_sequence_{1};
   std::uint64_t login_request_sequence_{0};
