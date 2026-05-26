@@ -79,6 +79,22 @@ exchange_to_local_ns = ack_local_receive_ns - ack_exchange_ns
 
 ## Latency 诊断改进计划
 
+### 已定稿边界
+
+第一阶段采用 **Gate `OrderSession` 专用 Ack latency diagnostic**，不先做通用 WebSocket loop observer。
+
+理由：
+
+- 当前问题只针对 Gate submit Ack 的 `request_send_local_ns -> ack_local_receive_ns`，诊断状态天然绑定 `local_order_id`、`request_sequence`、`ack_rtt_ns` 和 `inflight_count`。
+- 通用 WebSocket observer 需要额外抽象 hook、状态对象和回调接口，当前阶段成本高于收益。
+- 专用诊断可以只在订单 send 后 arm，正常无订单时不取时、不打日志。
+- 如果下一轮证据证明该模式对其它 WebSocket session 也有价值，再抽成通用 loop observer。
+
+执行顺序：
+
+1. Phase 1：实现 Gate `OrderSession` 专用 Ack latency diagnostic。
+2. Phase 2：根据 live 证据决定是否抽象为通用 WebSocket loop observer。
+
 ### 设计目标
 
 - 只诊断同一 owner thread 内 `request_send_local_ns -> ack_local_receive_ns` 的时间分布。
@@ -234,11 +250,10 @@ perf sched latency
 
 在开始执行前，至少还需要讨论并定稿：
 
-1. latency instrumentation 的实现边界：通用 WebSocket loop observer，还是 Gate `OrderSession` 专用诊断。
-2. CPU affinity 调整是否纳入同一轮计划，还是作为 live run 参数变更单独执行。
-3. `inflight` 泄漏风险是否排在 latency instrumentation 前面。
-4. 下一轮 live smoke 的范围：只做 signal / dry-run、单 symbol 小额真实订单，还是 12-symbol guarded smoke。
-5. report 侧是否新增 latency outlier 字段，例如 `send_to_first_drive_read_ns`、`drive_read_duration_ns`、`diag_reason`。
+1. CPU affinity 调整是否纳入同一轮计划，还是作为 live run 参数变更单独执行。
+2. `inflight` 泄漏风险是否排在 latency instrumentation 前面。
+3. 下一轮 live smoke 的范围：只做 signal / dry-run、单 symbol 小额真实订单，还是 12-symbol guarded smoke。
+4. report 侧是否新增 latency outlier 字段，例如 `send_to_first_drive_read_ns`、`drive_read_duration_ns`、`diag_reason`。
 
 ## 当前执行边界
 
