@@ -114,9 +114,19 @@ class GenerateLiveReportTest(unittest.TestCase):
         self.assertEqual(signal_row["order_position_id"], "1")
         self.assertEqual(signal_row["status"], "kFilled")
         self.assertEqual(latency_row["latency_diagnostic_reason"], "kAckRttThreshold")
+        self.assertEqual(latency_row["exchange_lifecycle_ns"], "5917000")
         self.assertIn("- signal: `1`", report_text)
         self.assertIn("- submitted order: `1`", report_text)
         self.assertIn("- latency diagnostic outliers: `1`", report_text)
+        self.assertIn("- exchange Ack-to-finish min: `5.917 ms`", report_text)
+        self.assertIn("- exchange Ack-to-finish median: `5.917 ms`", report_text)
+        self.assertIn("- exchange Ack-to-finish avg: `5.917 ms`", report_text)
+        self.assertIn("- exchange Ack-to-finish p95: `5.917 ms`", report_text)
+        self.assertIn("- exchange Ack-to-finish max: `5.917 ms`", report_text)
+        self.assertIn(
+            "| 288230376151711749 | PROVE_USDT | kFilled | kUnknown | 5.917 | 5.998 | 11.991 |",
+            report_text,
+        )
         self.assertIn("- 字段参考: `lead_lag_live_report_csv_schema.md`", report_text)
 
     def test_refuses_to_overwrite_existing_report_without_flag(self):

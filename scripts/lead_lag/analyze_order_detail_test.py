@@ -240,8 +240,24 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["send_to_finish_local_ns"], "11990547")
         self.assertEqual(row["ack_to_finish_local_ns"], "5998082")
         self.assertEqual(row["ack_exchange_to_local_ns"], "4464348")
-        self.assertEqual(row["exchange_lifecycle_ns"], "0")
+        self.assertEqual(row["exchange_lifecycle_ns"], "5917000")
         self.assertEqual(row["warnings"], "")
+
+    def test_latency_detail_requires_ack_and_finish_exchange_for_lifecycle(self):
+        latency_rows = orders.build_latency_detail_rows(
+            [
+                {
+                    "run_id": "run-latency",
+                    "local_order_id": "1",
+                    "ack_exchange_ns": "0",
+                    "finish_exchange_ns": "1779676175113000000",
+                    "exchange_lifecycle_ns": "123456789",
+                }
+            ]
+        )
+
+        self.assertEqual(len(latency_rows), 1)
+        self.assertEqual(latency_rows[0]["exchange_lifecycle_ns"], "")
 
     def test_latency_detail_includes_gate_ack_diagnostic_outlier_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:

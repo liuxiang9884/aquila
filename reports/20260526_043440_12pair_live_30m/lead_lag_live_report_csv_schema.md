@@ -211,7 +211,7 @@
 | `ack_to_finish_local_ns` | 本地收到 Ack 到订单终态处理完成的时间。 | `order_finished_local_ns - ack_local_receive_ns`。 |
 | `ack_exchange_to_local_ns` | Ack exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `response_exchange_to_local_ns` | response exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
-| `exchange_lifecycle_ns` | 交易所侧生命周期诊断值。 | order detail。受交易所 timestamp 语义限制，只作辅助诊断。 |
+| `exchange_lifecycle_ns` | 交易所侧 Ack 到订单终态 update 的生命周期诊断值。 | 优先由 `finish_exchange_ns - ack_exchange_ns` 计算，只使用 Gate exchange timestamp，不混用本地时钟；如果 exchange timestamp 缺失则为空。该值仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。 |
 | `latency_diagnostic_reason` | Gate order session 分阶段 Ack latency diagnostic 触发原因；同一订单多次触发时用 `;` 合并。 | order detail 中合并后的 diagnostic 字段。 |
 | `latency_diagnostic_ack_rtt_ns` | diagnostic 日志中记录的最大 Ack RTT。 | order detail 中合并后的 diagnostic 字段。 |
 | `send_to_first_after_hook_ns` | 下单发送到下一次 runtime hook 完成探针的本地耗时。 | order detail 中合并后的 diagnostic 字段。 |

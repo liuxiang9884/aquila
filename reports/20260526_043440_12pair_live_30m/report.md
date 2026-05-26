@@ -59,3 +59,19 @@
 - send-to-finish avg: `16.144 ms`
 - send-to-finish p95: `45.977 ms`
 - send-to-finish max: `45.977 ms`
+
+`exchange_lifecycle_ns` 是 Gate exchange timestamp 中 Ack 到订单终态 update 的差值；它不混用本地时钟，但仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。
+
+- exchange Ack-to-finish min: `0.079 ms`
+- exchange Ack-to-finish median: `5.423 ms`
+- exchange Ack-to-finish avg: `10.937 ms`
+- exchange Ack-to-finish p95: `37.336 ms`
+- exchange Ack-to-finish max: `37.336 ms`
+
+| local_order_id | symbol | status | finish_reason | exchange_ack_to_finish_ms | ack_to_finish_local_ms | send_to_finish_ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| 288230376151711749 | DASH_USDT | kCancelled | kImmediateOrCancel | 37.336 | 39.239 | 45.977 |
+| 288230376151711748 | SUI_USDT | kCancelled | kImmediateOrCancel | 24.384 | 25.59 | 28.783 |
+| 288230376151711747 | INJ_USDT | kCancelled | kImmediateOrCancel | 22.52 | 23.336 | 26.644 |
+| 288230376151711746 | ZEC_USDT | kCancelled | kImmediateOrCancel | 12.133 | 13.075 | 16.138 |
+| 288230376151711745 | PROVE_USDT | kCancelled | kImmediateOrCancel | 5.577 | 6.286 | 9.303 |

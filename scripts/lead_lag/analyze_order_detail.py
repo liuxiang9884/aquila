@@ -1159,6 +1159,18 @@ def ns_delta_text(lhs: str, rhs: str) -> str:
     return int_delta_text(lhs, rhs)
 
 
+def nonzero_ns_delta_text(lhs: str, rhs: str) -> str:
+    if lhs in ("", "0") or rhs in ("", "0"):
+        return ""
+    return ns_delta_text(lhs, rhs)
+
+
+def exchange_lifecycle_ns(order: dict[str, str]) -> str:
+    return nonzero_ns_delta_text(
+        order.get("finish_exchange_ns", ""), order.get("ack_exchange_ns", "")
+    )
+
+
 def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for order in order_rows:
@@ -1207,7 +1219,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "response_exchange_to_local_ns": order.get(
                 "response_exchange_to_local_ns", ""
             ),
-            "exchange_lifecycle_ns": order.get("exchange_lifecycle_ns", ""),
+            "exchange_lifecycle_ns": exchange_lifecycle_ns(order),
             "latency_diagnostic_reason": order.get("latency_diagnostic_reason", ""),
             "latency_diagnostic_ack_rtt_ns": order.get(
                 "latency_diagnostic_ack_rtt_ns", ""

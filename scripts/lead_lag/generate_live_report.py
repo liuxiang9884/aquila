@@ -244,6 +244,22 @@ def markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return lines
 
 
+def latency_rows_by_descending_ns(
+    rows: list[dict[str, str]], field: str
+) -> list[dict[str, str]]:
+    def row_value(row: dict[str, str]) -> int:
+        try:
+            return int(row.get(field, ""))
+        except ValueError:
+            return -1
+
+    return sorted(
+        [row for row in rows if row_value(row) >= 0],
+        key=row_value,
+        reverse=True,
+    )
+
+
 def load_guard_summary(path: Path | None) -> dict | None:
     if path is None:
         return None
@@ -345,6 +361,7 @@ def write_markdown_report(
     symbol_counts = Counter(row.get("symbol", "") or "unknown" for row in signal_rows)
     ack_values = ns_values(latency_rows, "ack_rtt_ns")
     finish_values = ns_values(latency_rows, "send_to_finish_local_ns")
+    exchange_lifecycle_values = ns_values(latency_rows, "exchange_lifecycle_ns")
     gross_pnl = sum_decimal(position_rows, "gross_pnl")
     net_pnl = sum_decimal(position_rows, "net_pnl")
     any_fill_count = count_positive(order_rows, "cumulative_filled_quantity")
@@ -474,6 +491,48 @@ def write_markdown_report(
         ]
     else:
         lines.append("- send-to-finish: 无可用本地终态时间")
+    if exchange_lifecycle_values:
+        avg_exchange_lifecycle = sum(exchange_lifecycle_values) // len(
+            exchange_lifecycle_values
+        )
+        lines += [
+            "",
+            "`exchange_lifecycle_ns` 是 Gate exchange timestamp 中 Ack 到订单终态 update 的差值；它不混用本地时钟，但仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。",
+            "",
+            f"- exchange Ack-to-finish min: `{format_ms(min(exchange_lifecycle_values))} ms`",
+            f"- exchange Ack-to-finish median: `{format_ms(percentile_nearest(exchange_lifecycle_values, 1, 2))} ms`",
+            f"- exchange Ack-to-finish avg: `{format_ms(avg_exchange_lifecycle)} ms`",
+            f"- exchange Ack-to-finish p95: `{format_ms(percentile_nearest(exchange_lifecycle_values, 95, 100))} ms`",
+            f"- exchange Ack-to-finish max: `{format_ms(max(exchange_lifecycle_values))} ms`",
+            "",
+        ]
+        lines += markdown_table(
+            [
+                "local_order_id",
+                "symbol",
+                "status",
+                "finish_reason",
+                "exchange_ack_to_finish_ms",
+                "ack_to_finish_local_ms",
+                "send_to_finish_ms",
+            ],
+            [
+                [
+                    row.get("local_order_id", ""),
+                    row.get("symbol", ""),
+                    row.get("status", ""),
+                    row.get("finish_reason", ""),
+                    format_optional_ms(row.get("exchange_lifecycle_ns")),
+                    format_optional_ms(row.get("ack_to_finish_local_ns")),
+                    format_optional_ms(row.get("send_to_finish_local_ns")),
+                ]
+                for row in latency_rows_by_descending_ns(
+                    latency_rows, "exchange_lifecycle_ns"
+                )[:5]
+            ],
+        )
+    else:
+        lines.append("- exchange Ack-to-finish: 无可用交易所终态时间")
     lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
 

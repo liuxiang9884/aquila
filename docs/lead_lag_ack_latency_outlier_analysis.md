@@ -205,6 +205,61 @@ DriveRead()
 
 `ack_exchange_ns` 可作为辅助线索，但跨机器 clock 不能直接证明单程耗时。
 
+## 2026-05-26 拆核 30 分钟 run 补充证据
+
+2026-05-26 的 12-symbol guarded live-orders 30 分钟 run 已生成报告：
+
+- Report 目录：`reports/20260526_043440_12pair_live_30m/`
+- Run 目录：`/home/liuxiang/tmp/20260526_043440_12pair_live_30m/`
+- 策略与 order session owner 使用 CPU4，Gate order feedback 使用 CPU6，Gate / Binance data session 分别使用 CPU2 / CPU3，log backend 使用 CPU5。
+
+本轮最终 `normal_exit_flat`，`signals=10`、`orders=10`、`finished=10`、`filled=0`，全部 terminal `kCancelled`。未出现 `gate_order_ack_latency_diagnostic`、`ContinuityLost`、`needs_reconcile` 或 `manual_intervention`。
+
+Ack RTT 概况：
+
+| metric | value |
+| --- | ---: |
+| min | `3.016ms` |
+| p50 | `3.193ms` |
+| avg | `3.890ms` |
+| p95 | `6.738ms` |
+| max | `6.738ms` |
+
+这轮没有复现 `219ms` 级别 Ack RTT outlier。最大 send-to-finish 出现在：
+
+| 字段 | 值 |
+| --- | --- |
+| `local_order_id` | `288230376151711749` |
+| `exchange_order_id` | `51509920985043349` |
+| `symbol` | `DASH_USDT` |
+| `action` | `kOpenShort` |
+| `status` | `kCancelled` |
+| `finish_reason` | `kImmediateOrCancel` |
+| `ack_rtt_ns` | `6738050` |
+| `send_to_finish_local_ns` | `45976983` |
+| `exchange_lifecycle_ns` | `37336000` |
+
+该订单的 exchange timestamp 显示：
+
+```text
+ack_exchange_ns    = 1779771255433664000
+finish_exchange_ns = 1779771255471000000
+exchange_lifecycle_ns = 37,336,000 ns = 37.336 ms
+```
+
+本地时间闭环显示：
+
+```text
+request_send_local_ns   = 1779771255428674541
+ack_local_receive_ns    = 1779771255435412591
+order_finished_local_ns = 1779771255474651524
+ack_rtt_ns              = 6.738 ms
+send_to_finish_local_ns = 45.977 ms
+ack_to_finish_local_ns  = 39.239 ms
+```
+
+结论：这不是 Ack path outlier，而是 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟。由于 `exchange_lifecycle_ns` 只使用 Gate exchange timestamp，可用于观察 Gate 侧 Ack 到终态 update 的相对间隔；但它不说明本地和交易所之间的单程网络延迟，也不应和 `ack_rtt_ns` 混为一个指标。后续报告需要同时保留 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish，避免把交易所终态生命周期延迟误判成 Ack receive 延迟。
+
 ## 下一轮验证建议
 
 ### 1. 拆 CPU

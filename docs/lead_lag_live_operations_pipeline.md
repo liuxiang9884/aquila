@@ -100,7 +100,7 @@ scripts/lead_lag/run_live_with_guard.py \
     - run directory、strategy log、guard stdout、feedback stdout。
     - 启动参数：duration、contracts、strategy config、当前 commit / ahead 状态。
     - 退出状态：normal flat、guard flatten、needs reconcile 或失败原因。
-    - signal/order/fill 简要统计和任何延迟 / feedback 异常摘要。
+    - signal/order/fill 简要统计和任何延迟 / feedback 异常摘要；延迟摘要至少区分 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish 交易所侧 lifecycle。
     - 如果用户随后要求“生成 report”，继续执行本文的“实盘交易 report pipeline”。
 
 ## 实盘交易 Report Pipeline
@@ -153,6 +153,6 @@ cd reports
 ```
 
 zip 文件中应包含 `<run_id>/report.md`、四个 CSV 和 `lead_lag_live_report_csv_schema.md`；生成后用 `python -m zipfile -l reports/<run_id>.zip` 或等价命令确认内容。除非用户明确要求其他格式，不生成 tar/zst。
-7. 最终回复必须概述 report 目录、zip 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；不要只说“已生成”。
+7. 最终回复必须概述 report 目录、zip 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；latency 摘要至少区分 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish 交易所侧 lifecycle，不要只说“已生成”。
 8. 将 `reports/<run_id>/` 和 `reports/<run_id>.zip` 作为一个原子 git commit；commit message 使用英文，例如 `Add LeadLag live report <run_id>`。
 9. 只有用户明确说“push”、“上传到 git”或等价表达时，才在 commit 后执行 `git push`；否则只提交并说明当前 ahead 状态。
