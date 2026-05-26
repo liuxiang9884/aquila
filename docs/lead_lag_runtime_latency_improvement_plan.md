@@ -228,11 +228,14 @@ perf sched latency
 - 长时间运行或高频下单时，若 final result 持续被解析为 `unknown_kind`，最终可能触发 `kInflightFull`。
 - 该问题需要单独分析 Gate final submit response 的实际 payload shape、parser profile 和清理时机；不要把它和 Ack RTT 根因混在同一个修复里。
 
-后续讨论项：
+已定稿：本轮修改必须修复该风险，但不要把它解释为 219ms Ack RTT 的直接原因。
 
-1. 是否先修 parser / cleanup，再做 latency instrumentation。
-2. Ack 后是否允许保留 request correlation 直到 final result。
-3. 如果 final result 可能长期无法按预期解析，是否需要按 Ack + private `futures.orders` feedback 清理 correlation。
+执行要求：
+
+1. 先确认 Gate final submit response 的实际 payload shape，以及 parser 为什么产出 `GateSubmitResponseKind::kUnknown`。
+2. 修复 parser / cleanup 行为，使已完成的 submit request 不会长期留在 `request_id_to_local_order_id_`。
+3. 增加单元测试覆盖 final result 解析和 correlation cleanup。
+4. 该修复必须在下一轮 live smoke 前完成并通过本地测试。
 
 ## CPU 拆分讨论入口
 
@@ -257,8 +260,10 @@ perf sched latency
 执行顺序：
 
 1. Phase 1A：实现 Gate `OrderSession` 专用 Ack latency diagnostic。
-2. Phase 1B：整理 live run affinity profile，把 `gate_order_feedback_session` 从 CPU4 移到 CPU6，保留 Gate / Binance data session 在 CPU2 / CPU3，strategy + order owner 在 CPU4。
-3. Phase 1C：live 验证报告中明确记录 `diagnostic_enabled=true` 和 `affinity_split=true`。如需严格归因，可先短跑 `diagnostic_only`，再短跑 `diagnostic + split_cpu`。
+2. Phase 1B：修复 Gate order session submit final result parser / correlation cleanup，消除 `inflight` 长期递增风险。
+3. Phase 1C：整理 live run affinity profile，把 `gate_order_feedback_session` 从 CPU4 移到 CPU6，保留 Gate / Binance data session 在 CPU2 / CPU3，strategy + order owner 在 CPU4。
+4. Phase 1D：report 增加 latency outlier 字段和运行 profile 摘要。
+5. Phase 1E：本轮修改完成并通过本地验证后，再执行 live smoke；报告中明确记录 `diagnostic_enabled=true` 和 `affinity_split=true`。如需严格归因，可先短跑 `diagnostic_only`，再短跑 `diagnostic + split_cpu`。
 
 ### Affinity profile config
 
@@ -307,19 +312,37 @@ scripts/lead_lag/run_live_with_guard.py \
 4. 启动各组件时使用临时 TOML。
 5. 将 profile 和临时 TOML 副本复制进 report 目录。
 
-Phase 1B 只实现 profile + 脚本 overlay；后续如果该机制稳定，再评估是否让 C++ config loader 原生支持 affinity profile / overlay。
+Phase 1C 只实现 profile + 脚本 overlay；后续如果该机制稳定，再评估是否让 C++ config loader 原生支持 affinity profile / overlay。
 
-## 待继续讨论
+## Report 字段计划
 
-在开始执行前，至少还需要讨论并定稿：
+已定稿：本轮增加 latency outlier 相关 report 字段。第一版优先保证 `report.md` 能呈现关键诊断字段；`latency.csv` 是否同步扩 schema 由实现阶段按日志字段稳定性决定，但若扩展 CSV，必须同步更新 `docs/lead_lag_live_report_csv_schema.md`。
 
-1. `inflight` 泄漏风险是否排在 latency instrumentation 前面。
-2. 下一轮 live smoke 的范围：只做 signal / dry-run、单 symbol 小额真实订单，还是 12-symbol guarded smoke。
-3. report 侧是否新增 latency outlier 字段，例如 `send_to_first_drive_read_ns`、`drive_read_duration_ns`、`diag_reason`。
+候选字段：
+
+- `diagnostic_enabled`
+- `affinity_profile`
+- `affinity_split`
+- `diag_reason`
+- `send_to_first_after_hook_ns`
+- `send_to_first_drive_read_ns`
+- `drive_read_duration_ns`
+- `max_observed_drive_read_duration_ns`
+- `inflight_at_send`
+
+## Live smoke 执行边界
+
+已定稿：下一轮 live smoke 等本轮修改完成并通过本地验证后再执行。本轮计划阶段不启动 signal-only、单 symbol 小额真实订单或 12-symbol guarded run。
+
+执行前置条件：
+
+1. latency diagnostic 已落地并通过本地测试。
+2. `inflight` cleanup 修复已落地并通过本地测试。
+3. affinity profile overlay 已落地，临时 TOML 可复现本轮核心绑核。
+4. report 能记录本轮 diagnostic / affinity 关键信息。
 
 ## 当前执行边界
 
-- 本文落地后仍不开始实现。
-- 继续讨论上述未定项，并把结论追加到本文。
-- 等所有讨论项定稿后，再拆成具体实现任务、测试任务和提交顺序。
+- 本文落地后仍不立即启动 live smoke。
+- 讨论项已定稿后，再拆成具体实现任务、测试任务和提交顺序。
 - 最终计划定稿前，不启动新的无人值守真实订单长跑。
