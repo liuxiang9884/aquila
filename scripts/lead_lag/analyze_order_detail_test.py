@@ -243,6 +243,35 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["exchange_lifecycle_ns"], "0")
         self.assertEqual(row["warnings"], "")
 
+    def test_latency_detail_includes_gate_ack_diagnostic_outlier_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
+                W2026-05-25 02:29:35.125000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kSendToDriveReadThreshold local_order_id=288230376151711749 request_sequence=6 request_send_local_ns=1779676175105554883 ack_local_receive_ns=0 ack_exchange_ns=0 ack_rtt_ns=0 send_to_first_after_hook_ns=1000 send_to_first_drive_read_ns=3499001 drive_read_duration_ns=0 max_observed_drive_read_duration_ns=0 inflight_at_send=7
+                W2026-05-25 02:29:35.130000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kAckRttThreshold local_order_id=288230376151711749 request_sequence=6 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175324554883 ack_exchange_ns=1779676175300000000 ack_rtt_ns=219000000 send_to_first_after_hook_ns=1000 send_to_first_drive_read_ns=3499001 drive_read_duration_ns=1300001 max_observed_drive_read_duration_ns=1300001 inflight_at_send=7
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path, run_id="run-latency")
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(latency_rows), 1)
+        row = latency_rows[0]
+        self.assertEqual(
+            row["latency_diagnostic_reason"],
+            "kSendToDriveReadThreshold;kAckRttThreshold",
+        )
+        self.assertEqual(row["latency_diagnostic_ack_rtt_ns"], "219000000")
+        self.assertEqual(row["send_to_first_after_hook_ns"], "1000")
+        self.assertEqual(row["send_to_first_drive_read_ns"], "3499001")
+        self.assertEqual(row["drive_read_duration_ns"], "1300001")
+        self.assertEqual(row["max_observed_drive_read_duration_ns"], "1300001")
+        self.assertEqual(row["latency_diagnostic_inflight_at_send"], "7")
+
     def test_builds_short_closed_and_open_position_detail_rows(self):
         rows = orders.build_position_detail_rows(
             [

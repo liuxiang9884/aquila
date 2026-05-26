@@ -19,6 +19,7 @@
    - `contracts` 优先使用用户指定列表；用户只说“12 pair”时使用当前 requested 12-symbol 列表：`PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`、`ETH_USDT`。
    - 真实订单默认 strategy config 使用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`；不要误用 signal-only config 搭配 `--execute`。
    - `run_id` 默认用启动时间和标签生成，例如 `YYYYMMDD_HHMMSS_12pair_live`；临时运行目录写入 `/home/liuxiang/tmp/<run_id>/`。
+   - 本轮 Ack RTT 复核默认使用 affinity profile `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml`；核心链路目标绑核为 Gate MD CPU2、Binance MD CPU3、strategy / Gate order owner CPU4、Gate order feedback CPU6、log backend CPU5。
 3. 如果本轮刚修改过代码或交易配置，先完成相应 build / test / commit，再启动 live run；不要用过期 binary 或未验证配置下真实订单。只修改报告或文档时不需要重编译。
 4. 检查行情端：
    - 通过 `ps`、日志或 SHM probe 确认 `gate_data_session` 和 `binance_data_session` 正在运行并写入预期 SHM。
@@ -33,10 +34,16 @@
 
 ```bash
 scripts/lead_lag/run_live_with_guard.py \
+  --run-id <run_id> \
   --settle usdt \
   --contract <SYMBOL_1> \
   --contract <SYMBOL_2> \
   --poll-timeout-sec 30 \
+  --affinity-profile config/runtime_affinity/lead_lag_requested_12symbols_node0.toml \
+  --affinity-output-dir /home/liuxiang/tmp/<run_id>/configs \
+  --affinity-gate-market-config config/data_sessions/gate_data_session_requested_20260521.toml \
+  --affinity-binance-market-config config/data_sessions/binance_data_session_requested_20260521.toml \
+  --affinity-order-feedback-config config/order_feedback/gate_order_feedback_session.toml \
   --no-pretty \
   -- \
   ./build/release/tools/lead_lag_strategy \
@@ -50,6 +57,7 @@ scripts/lead_lag/run_live_with_guard.py \
    - guard / strategy / feedback PIDs 是否存在。
    - strategy log 是否出现 `lead_lag_live_orders_runtime_started`。
    - guard preflight 是否通过，账户初始 open orders 为空、目标 contracts flat。
+   - guard stdout 中的 `affinity.generated_configs` 是否存在，并确认实际 strategy command 使用 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时 strategy TOML。
    - 是否出现 `ERROR`、`FATAL`、`ContinuityLost`、`feedback_global_continuity_lost` 或 `needs_reconcile=true`。
 8. 对持续时间超过 10 分钟的真实订单 run，默认每 10 分钟做一次健康检查，除非用户明确说“不需要监控”。每次检查至少统计：
    - strategy / guard / feedback PIDs。
@@ -78,6 +86,7 @@ scripts/lead_lag/run_live_with_guard.py \
    - 优先使用用户明确给出的 `run_id`、strategy log、guard stdout 和 config。
    - 如果用户只说“上一次”，从 `/home/liuxiang/log/` 中按 mtime 查找最近的 `lead_lag_strategy*live*.log`，并从 `/home/liuxiang/tmp/` 中查找同轮 `guarded_live*.stdout`；如果存在多个候选或无法判断对应关系，先向用户确认，不要猜。
    - 策略配置优先使用 guard / runner 启动命令里的 config；无法从上下文确定时，使用当前 12-symbol live 默认配置 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`，并在最终回复中说明该假设。
+   - 如果 guard stdout 包含 `affinity` summary，report 会在 `report.md` 中记录 profile、split、core_path 和 generated config 路径；`latency.csv` 会包含 `gate_order_ack_latency_diagnostic` outlier 字段。
    - `run_id` 优先使用用户给定值；否则从日志文件名或启动时间推导为 `YYYYMMDD_HHMMSS_<label>`，推导不唯一时先确认。
 3. 使用固定脚本生成报告目录：
 

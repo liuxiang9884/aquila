@@ -113,6 +113,13 @@
 | `fee_quote_estimated` | 按配置 fee rate 估算的成交手续费。 | `filled_notional * fee_rate_config`。 |
 | `fee_source` | fee 来源说明。当前估算值为 `config_estimated`。 | 分析脚本填充。 |
 | `ack_rtt_ns` | 本地下单发送到收到 Ack 的 RTT。 | `ack_local_receive_ns - request_send_local_ns`，或终态日志中的 `ack_rtt_ns`。 |
+| `latency_diagnostic_reason` | Gate order session 分阶段 Ack latency diagnostic 触发原因；同一订单多次触发时用 `;` 合并。 | `gate_order_ack_latency_diagnostic.reason`。 |
+| `latency_diagnostic_ack_rtt_ns` | diagnostic 日志中记录的最大 Ack RTT。 | `gate_order_ack_latency_diagnostic.ack_rtt_ns`。 |
+| `send_to_first_after_hook_ns` | 下单发送到下一次 runtime hook 完成探针的本地耗时。 | `gate_order_ack_latency_diagnostic.send_to_first_after_hook_ns`。 |
+| `send_to_first_drive_read_ns` | 下单发送到第一次进入 `DriveRead()` 前探针的本地耗时。 | `gate_order_ack_latency_diagnostic.send_to_first_drive_read_ns`。 |
+| `drive_read_duration_ns` | diagnostic 窗口内观察到的最大单次 `DriveRead()` 耗时。 | `gate_order_ack_latency_diagnostic.drive_read_duration_ns`。 |
+| `max_observed_drive_read_duration_ns` | diagnostic 窗口内记录的最大 `DriveRead()` 耗时。 | `gate_order_ack_latency_diagnostic.max_observed_drive_read_duration_ns`。 |
+| `latency_diagnostic_inflight_at_send` | 发送该订单后 Gate order session 中的 inflight 数量。 | `gate_order_ack_latency_diagnostic.inflight_at_send`。 |
 | `request_send_local_ns` | 调用 WebSocket send 并记录发送成功后的本地时间戳。 | `gate_order_send_ok.request_send_local_ns` 或终态日志。 |
 | `ack_local_receive_ns` | 本地收到 Gate Ack 的时间戳。 | `gate_order_response.kind=kAck.local_receive_ns` 或终态日志。 |
 | `order_finished_local_ns` | 策略层完成订单终态处理的本地时间戳。 | `lead_lag_order_finished.order_finished_local_ns`。 |
@@ -205,6 +212,13 @@
 | `ack_exchange_to_local_ns` | Ack exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `response_exchange_to_local_ns` | response exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `exchange_lifecycle_ns` | 交易所侧生命周期诊断值。 | order detail。受交易所 timestamp 语义限制，只作辅助诊断。 |
+| `latency_diagnostic_reason` | Gate order session 分阶段 Ack latency diagnostic 触发原因；同一订单多次触发时用 `;` 合并。 | order detail 中合并后的 diagnostic 字段。 |
+| `latency_diagnostic_ack_rtt_ns` | diagnostic 日志中记录的最大 Ack RTT。 | order detail 中合并后的 diagnostic 字段。 |
+| `send_to_first_after_hook_ns` | 下单发送到下一次 runtime hook 完成探针的本地耗时。 | order detail 中合并后的 diagnostic 字段。 |
+| `send_to_first_drive_read_ns` | 下单发送到第一次进入 `DriveRead()` 前探针的本地耗时。 | order detail 中合并后的 diagnostic 字段。 |
+| `drive_read_duration_ns` | diagnostic 窗口内观察到的最大单次 `DriveRead()` 耗时。 | order detail 中合并后的 diagnostic 字段。 |
+| `max_observed_drive_read_duration_ns` | diagnostic 窗口内记录的最大 `DriveRead()` 耗时。 | order detail 中合并后的 diagnostic 字段。 |
+| `latency_diagnostic_inflight_at_send` | 发送该订单后 Gate order session 中的 inflight 数量。 | order detail 中合并后的 diagnostic 字段。 |
 | `warnings` | latency 分析异常。 | 例如 `missing_request_send_local_ns`、`missing_ack_local_receive_ns`。 |
 
 ## 当前建议新增字段

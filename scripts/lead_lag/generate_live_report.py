@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import json
 import re
 import shutil
 import sys
@@ -211,6 +212,15 @@ def format_ms(ns: int | Decimal) -> str:
     return format_decimal(value.quantize(Decimal("0.001")))
 
 
+def format_optional_ms(value: str | None) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        return format_ms(int(value))
+    except ValueError:
+        return ""
+
+
 def percentile_nearest(values: list[int], numerator: int, denominator: int) -> int:
     if not values:
         return 0
@@ -232,6 +242,55 @@ def markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return lines
 
 
+def load_guard_summary(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    text = path.read_text(encoding="utf-8")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            value = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return value if isinstance(value, dict) else None
+
+
+def append_affinity_summary(lines: list[str], guard_summary: dict | None) -> None:
+    if guard_summary is None:
+        return
+    affinity = guard_summary.get("affinity")
+    if not isinstance(affinity, dict):
+        return
+    lines += [
+        "",
+        "## Runtime Profile",
+        "",
+        f"- affinity profile: `{affinity.get('profile_name', '')}`",
+        f"- affinity split: `{str(affinity.get('affinity_split', False)).lower()}`",
+        f"- affinity output dir: `{affinity.get('output_dir', '')}`",
+    ]
+    core_path = affinity.get("core_path", {})
+    if isinstance(core_path, dict):
+        for key in (
+            "gate_market_data_cpu",
+            "binance_market_data_cpu",
+            "strategy_order_owner_cpu",
+            "gate_order_feedback_cpu",
+            "log_backend_cpu",
+        ):
+            if key in core_path:
+                lines.append(f"- {key}: `{core_path[key]}`")
+    generated = affinity.get("generated_configs", {})
+    if isinstance(generated, dict):
+        for name, path in sorted(generated.items()):
+            lines.append(f"- generated {name} config: `{path}`")
+
+
 def write_markdown_report(
     *,
     output_path: Path,
@@ -243,6 +302,7 @@ def write_markdown_report(
     order_rows: list[dict[str, str]],
     position_rows: list[dict[str, str]],
     latency_rows: list[dict[str, str]],
+    guard_summary: dict | None = None,
 ) -> None:
     status_counts = Counter(row.get("status", "") or "unknown" for row in order_rows)
     symbol_counts = Counter(row.get("symbol", "") or "unknown" for row in signal_rows)
@@ -273,6 +333,7 @@ def write_markdown_report(
     if signal_rows:
         lines.append(f"- 首个 signal 时间: `{signal_rows[0].get('log_time', '')}`")
         lines.append(f"- 最后 signal 时间: `{signal_rows[-1].get('log_time', '')}`")
+    append_affinity_summary(lines, guard_summary)
     lines += [
         "",
         "## 同目录 CSV",
@@ -341,6 +402,30 @@ def write_markdown_report(
         ]
     else:
         lines.append("- ack RTT: 无可用数据")
+    diagnostic_rows = [
+        row for row in latency_rows if row.get("latency_diagnostic_reason", "")
+    ]
+    if diagnostic_rows:
+        lines.append(f"- latency diagnostic outliers: `{len(diagnostic_rows)}`")
+        lines += markdown_table(
+            [
+                "local_order_id",
+                "reason",
+                "ack_rtt_ms",
+                "send_to_first_drive_read_ms",
+                "drive_read_duration_ms",
+            ],
+            [
+                [
+                    row.get("local_order_id", ""),
+                    row.get("latency_diagnostic_reason", ""),
+                    format_optional_ms(row.get("latency_diagnostic_ack_rtt_ns")),
+                    format_optional_ms(row.get("send_to_first_drive_read_ns")),
+                    format_optional_ms(row.get("drive_read_duration_ns")),
+                ]
+                for row in diagnostic_rows[:10]
+            ],
+        )
     if finish_values:
         avg_finish = sum(finish_values) // len(finish_values)
         lines += [
@@ -377,6 +462,7 @@ def generate_live_report(
     position_rows = orders.build_position_detail_rows(order_rows)
     latency_rows = orders.build_latency_detail_rows(order_rows)
     signal_rows = build_signal_detail_rows(log_path, order_rows, run_id)
+    guard_summary = load_guard_summary(guard_stdout_path)
 
     write_signal_detail_csv(signal_rows, report_dir / "signal.csv")
     orders.write_order_detail_csv(order_rows, report_dir / "order_detail.csv")
@@ -393,6 +479,7 @@ def generate_live_report(
         order_rows=order_rows,
         position_rows=position_rows,
         latency_rows=latency_rows,
+        guard_summary=guard_summary,
     )
     return LiveReportResult(
         report_dir=report_dir,

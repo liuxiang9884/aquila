@@ -64,6 +64,13 @@ ORDER_DETAIL_FIELDS = [
     "fee_quote_estimated",
     "fee_source",
     "ack_rtt_ns",
+    "latency_diagnostic_reason",
+    "latency_diagnostic_ack_rtt_ns",
+    "send_to_first_after_hook_ns",
+    "send_to_first_drive_read_ns",
+    "drive_read_duration_ns",
+    "max_observed_drive_read_duration_ns",
+    "latency_diagnostic_inflight_at_send",
     "request_send_local_ns",
     "ack_local_receive_ns",
     "order_finished_local_ns",
@@ -150,6 +157,13 @@ LATENCY_DETAIL_FIELDS = [
     "ack_exchange_to_local_ns",
     "response_exchange_to_local_ns",
     "exchange_lifecycle_ns",
+    "latency_diagnostic_reason",
+    "latency_diagnostic_ack_rtt_ns",
+    "send_to_first_after_hook_ns",
+    "send_to_first_drive_read_ns",
+    "drive_read_duration_ns",
+    "max_observed_drive_read_duration_ns",
+    "latency_diagnostic_inflight_at_send",
     "warnings",
 ]
 
@@ -271,6 +285,40 @@ def append_warning(order: dict[str, str], warning: str) -> None:
         order["warnings"] = existing + ";" + warning
 
 
+def append_unique_text(order: dict[str, str], field: str, value: str | None) -> None:
+    if value in (None, ""):
+        return
+    existing = order.get(field, "")
+    if existing == "":
+        order[field] = value
+    elif value not in existing.split(";"):
+        order[field] = existing + ";" + value
+
+
+def choose_first_nonzero_text(existing: str | None, value: str | None) -> str:
+    if existing not in (None, "", "0"):
+        return existing
+    if value not in (None, "", "0"):
+        return value
+    return existing or value or ""
+
+
+def max_int_text(existing: str | None, value: str | None) -> str:
+    if value in (None, ""):
+        return existing or ""
+    try:
+        parsed = int(value)
+    except ValueError:
+        return existing or ""
+    if existing in (None, ""):
+        return value
+    try:
+        current = int(existing)
+    except ValueError:
+        return value
+    return str(max(current, parsed))
+
+
 def order_role_for(action: str, reduce_only: str) -> str:
     if reduce_only == "true" or action in {
         "kCloseLong",
@@ -355,6 +403,50 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
             order["ack_rtt_ns"] = str(int(ack_ns) - int(send_ns))
         except ValueError:
             pass
+
+
+def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> None:
+    append_unique_text(order, "latency_diagnostic_reason", fields.get("reason"))
+    order["latency_diagnostic_ack_rtt_ns"] = max_int_text(
+        order.get("latency_diagnostic_ack_rtt_ns"), fields.get("ack_rtt_ns")
+    )
+    order["send_to_first_after_hook_ns"] = choose_first_nonzero_text(
+        order.get("send_to_first_after_hook_ns"),
+        fields.get("send_to_first_after_hook_ns"),
+    )
+    order["send_to_first_drive_read_ns"] = choose_first_nonzero_text(
+        order.get("send_to_first_drive_read_ns"),
+        fields.get("send_to_first_drive_read_ns"),
+    )
+    order["drive_read_duration_ns"] = max_int_text(
+        order.get("drive_read_duration_ns"), fields.get("drive_read_duration_ns")
+    )
+    order["max_observed_drive_read_duration_ns"] = max_int_text(
+        order.get("max_observed_drive_read_duration_ns"),
+        fields.get("max_observed_drive_read_duration_ns"),
+    )
+    order["latency_diagnostic_inflight_at_send"] = choose_first_nonzero_text(
+        order.get("latency_diagnostic_inflight_at_send"),
+        fields.get("inflight_at_send"),
+    )
+    if order.get("request_send_local_ns", "") == "":
+        order["request_send_local_ns"] = fields.get("request_send_local_ns", "")
+    if (
+        order.get("ack_local_receive_ns", "") == ""
+        and fields.get("ack_local_receive_ns") not in (None, "", "0")
+    ):
+        order["ack_local_receive_ns"] = fields["ack_local_receive_ns"]
+    if (
+        order.get("ack_exchange_ns", "") == ""
+        and fields.get("ack_exchange_ns") not in (None, "", "0")
+    ):
+        order["ack_exchange_ns"] = fields["ack_exchange_ns"]
+    if order.get("ack_rtt_ns", "") == "" and fields.get("ack_rtt_ns") not in (
+        None,
+        "",
+        "0",
+    ):
+        order["ack_rtt_ns"] = fields["ack_rtt_ns"]
 
 
 def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
@@ -550,6 +642,12 @@ def analyze_order_detail(
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
                 merge_ack(order, fields)
+            elif tag == "gate_order_ack_latency_diagnostic":
+                local_order_id = fields.get("local_order_id", "")
+                if local_order_id == "":
+                    continue
+                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+                merge_latency_diagnostic(order, fields)
             elif tag == "lead_lag_order_feedback":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
@@ -1006,6 +1104,23 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
                 "response_exchange_to_local_ns", ""
             ),
             "exchange_lifecycle_ns": order.get("exchange_lifecycle_ns", ""),
+            "latency_diagnostic_reason": order.get("latency_diagnostic_reason", ""),
+            "latency_diagnostic_ack_rtt_ns": order.get(
+                "latency_diagnostic_ack_rtt_ns", ""
+            ),
+            "send_to_first_after_hook_ns": order.get(
+                "send_to_first_after_hook_ns", ""
+            ),
+            "send_to_first_drive_read_ns": order.get(
+                "send_to_first_drive_read_ns", ""
+            ),
+            "drive_read_duration_ns": order.get("drive_read_duration_ns", ""),
+            "max_observed_drive_read_duration_ns": order.get(
+                "max_observed_drive_read_duration_ns", ""
+            ),
+            "latency_diagnostic_inflight_at_send": order.get(
+                "latency_diagnostic_inflight_at_send", ""
+            ),
             "warnings": "",
         }
         if row["ack_rtt_ns"] == "":
