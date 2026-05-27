@@ -19,6 +19,7 @@
 - 2026-05-25 run 所在 10 分钟 sysstat 窗口中 CPU4 满载，且 strategy / order session / feedback session 当时都绑 CPU4 并 active-spin；本地调度或同核竞争仍是强候选，但原始日志不能证明具体根因。
 - 2026-05-26 的 12-symbol guarded live-orders 30 分钟拆核运行正常退出 flat，`signals=10`、`orders=10`、`finished=10`、`filled=0`，最大 Ack RTT 为 `6.738ms`，没有复现 `219ms` 级别 Ack outlier。
 - 2026-05-26 run 中最大 send-to-finish 为 DASH_USDT 的 `45.977ms`；其中 Gate exchange timestamp 的 Ack-to-finish 为 `37.336ms`。这属于 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟，不是 Ack path outlier。
+- 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为本 latency 计划的 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 
 ## 已落地
 
@@ -36,7 +37,7 @@
 - Gate submit final result parser / correlation cleanup 已修复旧 run 中的 `gate_order_response_ignored reason=unknown_kind` / inflight 长期递增风险；该问题不再作为本 latency 计划的未完成项。
 - report 已能解析 guard affinity summary、latency diagnostic outlier、feedback session event，以及 `exchange_lifecycle_ns = finish_exchange_ns - ack_exchange_ns`。字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
 
-## 仍未完成
+## 仍需观察
 
 1. **Ack outlier 根因仍未证明**
    - 2026-05-26 拆核 30 分钟 run 没有复现 Ack outlier，只能说明这轮条件下 Ack RTT 正常，不能证明 2026-05-25 的 `219.023ms` 根因。
@@ -87,10 +88,6 @@
    - 慢连接是否有更高 `TCP_INFO` RTT 或 retrans。
    - 慢连接的 `send_to_first_drive_read_ns` 是否偏大，说明本地 owner thread 没及时进入 read。
    - `ack_exchange_ns` 到本地 receive 是否只在某条连接上异常偏大。
-
-4. **IOC partial-fill / decimal filled close blocker 仍需 live 复核**
-   - 2026-05-25 和 2026-05-26 两轮 12-symbol run 都没有成交，不能证明 IOC partial-fill / decimal filled close 修复已通过。
-   - 复核前不要启动无人值守真实订单长跑。
 
 ## 下一轮验证要求
 

@@ -16,6 +16,7 @@
 - `scripts/lead_lag/generate_live_report.py` 是真实订单运行结束后的报告生成入口，给定 `--run-id`、策略日志、策略配置和可选 guard stdout 后，生成 `reports/<run_id>/report.md`、`signal.csv`、`order_detail.csv`、`position.csv`、`latency.csv` 和同目录字段说明副本；生成后再由 agent 检查、commit，并在用户要求时 push。
 - Agent 触发词、实盘启动巡检和 report 打包提交流程见 `docs/lead_lag_live_operations_pipeline.md`。
 - 2026-05-25 live run 中出现一笔 `219.023ms` Ack RTT outlier；分析见 `docs/lead_lag_ack_latency_outlier_analysis.md`。后续已落地 Gate `OrderSession` Ack latency diagnostic、affinity profile overlay 和 report diagnostic 字段；2026-05-26 拆核 30 分钟 run 没有复现 Ack outlier，最大 Ack RTT `6.738ms`，但仍未证明 2026-05-25 outlier 根因。
+- 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为当前阶段 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 - `signal.csv`、`order_detail.csv`、`position.csv` 和 `latency.csv` 字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
 - replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV。
 
@@ -52,7 +53,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 - ZEC_USDT `--smoke-open-close` 小额 filled open / close 和 `--smoke-unfilled-cancel` 小额挂单撤单 smoke 已完成；最终 REST 复核 open orders 为空、position `size=0`。
 - 本地端到端 benchmark 已覆盖 signal-to-submit 路径和 feedback 回报路径。
 - 2026-05-22 release 11-symbol live-orders guarded run 不是通过项：只完成 1 组 RIVER_USDT strategy open / close；RAVE_USDT IOC partial fill 在 REST 上可见，但当时 private feedback / strategy terminal feedback 缺失，guard 停机后平仓。
-- 2026-05-23/24 已修复 decimal quantity、Gate decimal-size WS 编码、Gate `futures.orders` 高精度 fill price parser、REST final check / emergency flatten decimal residual 判断；这些修复仍需完整 strategy 小额 live smoke 复核。
+- 2026-05-23/24 已修复 decimal quantity、Gate decimal-size WS 编码、Gate `futures.orders` 高精度 fill price parser、REST final check / emergency flatten decimal residual 判断；按 2026-05-27 当前接手决策，这些项不再作为当前阶段 active blocker，后续遇到 terminal feedback、filled close 或 REST residual 异常再复查。
 - `--smoke-submit-reject` 和 `gate_order_session_failure_probe` 已有诊断入口和测试，但 ZEC_USDT 安全 IOC、BTC zero-size submit、nonexistent cancel live 探测均未收到最终 failure response，不能计入已完成 smoke。
 - 2026-05-26 已落地 Gate `OrderSession` Ack latency diagnostic、runtime affinity profile overlay、report diagnostic 字段和 `exchange_lifecycle_ns = finish_exchange_ns - ack_exchange_ns`；30 分钟拆核 run 正常退出 flat，最大 Ack RTT `6.738ms`，最大 exchange Ack-to-finish `37.336ms`，无成交。
 
@@ -66,13 +67,13 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 ctest --test-dir build/debug -R '(lead_lag|signal_csv_writer|gate_order_feedback|gate_submit_response_parser|order_latency)' --output-on-failure
 ```
 
-4. 用小额 live smoke 复核 decimal-size / IOC partial-fill 修复：
+4. 如果本轮目标是重新复查 decimal-size / IOC partial-fill，使用小额 live smoke：
    - 选择 allowlist symbol，优先覆盖 `RAVE_USDT` 或同类 decimal-size 合约。
    - 使用 `scripts/lead_lag/run_live_with_guard.py` 包住 `lead_lag_strategy --execute`。
    - 所有临时 log、stdout、REST summary 和运行产物写入 `/home/liuxiang/tmp/<run_id>`。
    - 结束后检查 strategy terminal feedback、feedback session summary、REST open orders、position `size`、`value` 和 `margin` residual。
-5. 小额复核通过后，再做 12-symbol guarded live smoke。
-6. 12-symbol smoke 通过后，才继续 30 分钟、2-4 小时或更长时间真实订单 guarded run。
+5. 常规 12-symbol guarded live smoke / latency run 继续按 `docs/lead_lag_live_operations_pipeline.md` 执行，并保留 guard、REST final check 和 affinity profile。
+6. 12-symbol smoke 稳定后，再继续 30 分钟、2-4 小时或更长时间真实订单 guarded run。
 
 ## 常用命令形态
 
@@ -122,8 +123,7 @@ scripts/gate/query_gate_account.py positions --contract <SYMBOL> --no-pretty
 
 ## 下一步
 
-- 优先做 decimal-size / IOC partial-fill 修复后的完整 strategy 小额 live smoke；2026-05-25 和 2026-05-26 的 12-symbol run 都没有成交，不能替代该复核。
 - 继续 failure response 探测前，先确认 Gate 可返回最终 error 的安全请求形态。
 - 后续 12-symbol latency / guarded run 必须按 `docs/lead_lag_live_operations_pipeline.md` 使用 affinity profile，并在 report 中同时区分 Ack RTT、send-to-finish 和 exchange Ack-to-finish。
-- 不要在 IOC partial-fill / decimal filled close 复核前启动无人值守真实订单长跑。
+- IOC partial-fill / decimal filled close 当前不再作为 active blocker；如果后续 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再恢复 targeted small smoke 复查。
 - account / position realtime feedback 是 V2 可选能力，不是当前 V1 长跑前置项。
