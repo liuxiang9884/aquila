@@ -2,6 +2,7 @@
 #define AQUILA_EXCHANGE_GATE_TRADING_ORDER_SESSION_H_
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -25,6 +26,10 @@
 #include "exchange/gate/trading/submit_response_parser.h"
 #include "nova/utils/log.h"
 #include <simdjson.h>
+
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 namespace aquila::gate {
 
@@ -122,6 +127,167 @@ struct OrderSessionDefaultPlainWebSocketPolicy
   using TransportSocket = websocket::PlainSocket;
 };
 
+namespace detail {
+
+[[nodiscard]] inline std::uint64_t NextOrderSessionIdForDiagnostics() noexcept {
+  static std::atomic_uint64_t next_id{1};
+  return next_id.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline int CurrentCpuForOrderSessionDiagnostics() noexcept {
+#if defined(__linux__)
+  const int cpu = ::sched_getcpu();
+  return cpu >= 0 ? cpu : -1;
+#else
+  return -1;
+#endif
+}
+
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+struct OrderSessionConnectionLogRecordForTest {
+  std::uint64_t order_session_id{0};
+  int owner_thread_cpu{-1};
+};
+
+struct OrderSessionSendLogRecordForTest {
+  std::uint64_t order_session_id{0};
+  std::uint64_t local_order_id{0};
+  std::uint64_t request_sequence{0};
+  int send_cpu{-1};
+};
+
+struct OrderSessionResponseLogRecordForTest {
+  std::uint64_t order_session_id{0};
+  std::uint64_t local_order_id{0};
+  std::uint64_t request_sequence{0};
+  int ack_cpu{-1};
+};
+
+struct OrderSessionLatencyDiagnosticLogRecordForTest {
+  std::uint64_t order_session_id{0};
+  std::uint64_t local_order_id{0};
+  std::uint64_t request_sequence{0};
+  int diagnostic_cpu{-1};
+};
+
+using OrderSessionConnectionLogObserverForTest =
+    void (*)(const OrderSessionConnectionLogRecordForTest& record) noexcept;
+using OrderSessionSendLogObserverForTest =
+    void (*)(const OrderSessionSendLogRecordForTest& record) noexcept;
+using OrderSessionResponseLogObserverForTest =
+    void (*)(const OrderSessionResponseLogRecordForTest& record) noexcept;
+using OrderSessionLatencyDiagnosticLogObserverForTest = void (*)(
+    const OrderSessionLatencyDiagnosticLogRecordForTest& record) noexcept;
+
+[[nodiscard]] inline OrderSessionConnectionLogObserverForTest&
+OrderSessionConnectionLogObserverSlotForTest() noexcept {
+  static OrderSessionConnectionLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+[[nodiscard]] inline OrderSessionSendLogObserverForTest&
+OrderSessionSendLogObserverSlotForTest() noexcept {
+  static OrderSessionSendLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+[[nodiscard]] inline OrderSessionResponseLogObserverForTest&
+OrderSessionResponseLogObserverSlotForTest() noexcept {
+  static OrderSessionResponseLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+[[nodiscard]] inline OrderSessionLatencyDiagnosticLogObserverForTest&
+OrderSessionLatencyDiagnosticLogObserverSlotForTest() noexcept {
+  static OrderSessionLatencyDiagnosticLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+inline void SetOrderSessionConnectionLogObserverForTest(
+    OrderSessionConnectionLogObserverForTest observer) noexcept {
+  OrderSessionConnectionLogObserverSlotForTest() = observer;
+}
+
+inline void SetOrderSessionSendLogObserverForTest(
+    OrderSessionSendLogObserverForTest observer) noexcept {
+  OrderSessionSendLogObserverSlotForTest() = observer;
+}
+
+inline void SetOrderSessionResponseLogObserverForTest(
+    OrderSessionResponseLogObserverForTest observer) noexcept {
+  OrderSessionResponseLogObserverSlotForTest() = observer;
+}
+
+inline void SetOrderSessionLatencyDiagnosticLogObserverForTest(
+    OrderSessionLatencyDiagnosticLogObserverForTest observer) noexcept {
+  OrderSessionLatencyDiagnosticLogObserverSlotForTest() = observer;
+}
+
+inline void NotifyOrderSessionConnectionLogObserverForTest(
+    std::uint64_t order_session_id, int owner_thread_cpu) noexcept {
+  OrderSessionConnectionLogObserverForTest observer =
+      OrderSessionConnectionLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(OrderSessionConnectionLogRecordForTest{
+      .order_session_id = order_session_id,
+      .owner_thread_cpu = owner_thread_cpu,
+  });
+}
+
+inline void NotifyOrderSessionSendLogObserverForTest(
+    std::uint64_t order_session_id, std::uint64_t local_order_id,
+    std::uint64_t request_sequence, int send_cpu) noexcept {
+  OrderSessionSendLogObserverForTest observer =
+      OrderSessionSendLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(OrderSessionSendLogRecordForTest{
+      .order_session_id = order_session_id,
+      .local_order_id = local_order_id,
+      .request_sequence = request_sequence,
+      .send_cpu = send_cpu,
+  });
+}
+
+inline void NotifyOrderSessionResponseLogObserverForTest(
+    std::uint64_t order_session_id, std::uint64_t local_order_id,
+    std::uint64_t request_sequence, int ack_cpu) noexcept {
+  OrderSessionResponseLogObserverForTest observer =
+      OrderSessionResponseLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(OrderSessionResponseLogRecordForTest{
+      .order_session_id = order_session_id,
+      .local_order_id = local_order_id,
+      .request_sequence = request_sequence,
+      .ack_cpu = ack_cpu,
+  });
+}
+
+inline void NotifyOrderSessionLatencyDiagnosticLogObserverForTest(
+    std::uint64_t order_session_id,
+    const OrderLatencyDiagnosticLogRecord& record,
+    int diagnostic_cpu) noexcept {
+  OrderSessionLatencyDiagnosticLogObserverForTest observer =
+      OrderSessionLatencyDiagnosticLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(OrderSessionLatencyDiagnosticLogRecordForTest{
+      .order_session_id = order_session_id,
+      .local_order_id = record.local_order_id,
+      .request_sequence = record.request_sequence,
+      .diagnostic_cpu = diagnostic_cpu,
+  });
+}
+#endif
+
+}  // namespace detail
+
 template <typename ResponseHandler,
           typename WebSocketPolicy = OrderSessionDefaultTlsWebSocketPolicy,
           typename Diagnostics = NoopOrderSessionDiagnostics>
@@ -182,6 +348,8 @@ class OrderSession {
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
     if (phase == websocket::ConnectionPhase::kActive) {
       active_ = true;
+      LogGateOrderSessionConnected(
+          order_session_id_, detail::CurrentCpuForOrderSessionDiagnostics());
       (void)SendLogin();
       return;
     }
@@ -255,6 +423,7 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
 
+    const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
     const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
     if (status != OrderSendStatus::kOk) {
@@ -269,7 +438,7 @@ class OrderSession {
       diagnostics_.RecordPlaceSent();
     }
     LogGatePlaceOrderSent(order, sequence, encoded_request_id, inflight_count(),
-                          send_local_ns);
+                          send_local_ns, order_session_id_, send_cpu);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -316,6 +485,7 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
 
+    const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
     const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
     if (status != OrderSendStatus::kOk) {
@@ -330,7 +500,8 @@ class OrderSession {
       diagnostics_.RecordCancelSent();
     }
     LogGateCancelOrderSent(order.local_order_id, exchange_order_id, sequence,
-                           encoded_request_id, inflight_count(), send_local_ns);
+                           encoded_request_id, inflight_count(), send_local_ns,
+                           order_session_id_, send_cpu);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -347,6 +518,10 @@ class OrderSession {
 
   [[nodiscard]] std::size_t request_map_capacity() const noexcept {
     return request_map_capacity_;
+  }
+
+  [[nodiscard]] std::uint64_t order_session_id() const noexcept {
+    return order_session_id_;
   }
 
   [[nodiscard]] std::uint64_t exchange_order_id_for_local_order(
@@ -467,10 +642,17 @@ class OrderSession {
   }
 
   template <typename OrderT>
-  static void LogGatePlaceOrderSent(
-      const OrderT& order, std::uint64_t request_sequence,
-      std::uint64_t encoded_request_id, std::size_t inflight,
-      std::int64_t request_send_local_ns) noexcept {
+  static void LogGatePlaceOrderSent(const OrderT& order,
+                                    std::uint64_t request_sequence,
+                                    std::uint64_t encoded_request_id,
+                                    std::size_t inflight,
+                                    std::int64_t request_send_local_ns,
+                                    std::uint64_t order_session_id,
+                                    int send_cpu) noexcept {
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    detail::NotifyOrderSessionSendLogObserverForTest(
+        order_session_id, order.local_order_id, request_sequence, send_cpu);
+#endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -478,26 +660,33 @@ class OrderSession {
         "gate_order_send_ok type=place local_order_id={} "
         "request_sequence={} encoded_request_id={} contract={} side={} "
         "quantity={} price={} tif={} reduce_only={} inflight={} "
-        "request_send_local_ns={}",
+        "request_send_local_ns={} order_session_id={} send_cpu={}",
         order.local_order_id, request_sequence, encoded_request_id,
         order.symbol, magic_enum::enum_name(order.side), order.quantity_text,
         order.price_text, magic_enum::enum_name(order.time_in_force),
-        order.reduce_only ? "true" : "false", inflight, request_send_local_ns);
+        order.reduce_only ? "true" : "false", inflight, request_send_local_ns,
+        order_session_id, send_cpu);
   }
 
   static void LogGateCancelOrderSent(
       std::uint64_t local_order_id, std::uint64_t exchange_order_id,
       std::uint64_t request_sequence, std::uint64_t encoded_request_id,
-      std::size_t inflight, std::int64_t request_send_local_ns) noexcept {
+      std::size_t inflight, std::int64_t request_send_local_ns,
+      std::uint64_t order_session_id, int send_cpu) noexcept {
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    detail::NotifyOrderSessionSendLogObserverForTest(
+        order_session_id, local_order_id, request_sequence, send_cpu);
+#endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
     NOVA_INFO(
         "gate_order_send_ok type=cancel local_order_id={} "
         "exchange_order_id={} request_sequence={} encoded_request_id={} "
-        "inflight={} request_send_local_ns={}",
+        "inflight={} request_send_local_ns={} order_session_id={} "
+        "send_cpu={}",
         local_order_id, exchange_order_id, request_sequence, encoded_request_id,
-        inflight, request_send_local_ns);
+        inflight, request_send_local_ns, order_session_id, send_cpu);
   }
 
   static void LogGateOrderSendFailed(std::string_view type,
@@ -519,7 +708,13 @@ class OrderSession {
   static void LogGateOrderResponse(const GateSubmitResponse& parsed,
                                    std::uint64_t local_order_id,
                                    std::uint64_t exchange_order_id,
-                                   std::int64_t local_receive_ns) noexcept {
+                                   std::int64_t local_receive_ns,
+                                   std::uint64_t order_session_id,
+                                   int ack_cpu) noexcept {
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    detail::NotifyOrderSessionResponseLogObserverForTest(
+        order_session_id, local_order_id, parsed.request_id.sequence, ack_cpu);
+#endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -529,12 +724,12 @@ class OrderSession {
         "gate_order_response kind={} local_order_id={} exchange_order_id={} "
         "request_sequence={} channel={} http_status={} error_label_hash={} "
         "error_label={} error_message={} local_receive_ns={} exchange_ns={} "
-        "exchange_to_local_ns={}",
+        "exchange_to_local_ns={} order_session_id={} ack_cpu={}",
         magic_enum::enum_name(parsed.kind), local_order_id, exchange_order_id,
         parsed.request_id.sequence, static_cast<int>(parsed.channel),
         parsed.http_status, parsed.error_label_hash, parsed.error_label,
         parsed.error_message, local_receive_ns, parsed.exchange_ns,
-        exchange_to_local_ns);
+        exchange_to_local_ns, order_session_id, ack_cpu);
   }
 
   static void LogGateOrderResponseIgnored(
@@ -566,7 +761,12 @@ class OrderSession {
   }
 
   static void LogOrderLatencyDiagnostic(
-      const OrderLatencyDiagnosticLogRecord& record) noexcept {
+      const OrderLatencyDiagnosticLogRecord& record,
+      std::uint64_t order_session_id, int diagnostic_cpu) noexcept {
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    detail::NotifyOrderSessionLatencyDiagnosticLogObserverForTest(
+        order_session_id, record, diagnostic_cpu);
+#endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -576,13 +776,29 @@ class OrderSession {
         "ack_local_receive_ns={} ack_exchange_ns={} ack_rtt_ns={} "
         "send_to_first_after_hook_ns={} send_to_first_drive_read_ns={} "
         "drive_read_duration_ns={} max_observed_drive_read_duration_ns={} "
-        "inflight_at_send={}",
+        "inflight_at_send={} order_session_id={} diagnostic_cpu={}",
         magic_enum::enum_name(record.reason), record.local_order_id,
         record.request_sequence, record.request_send_local_ns,
         record.ack_local_receive_ns, record.ack_exchange_ns, record.ack_rtt_ns,
         record.send_to_first_after_hook_ns, record.send_to_first_drive_read_ns,
         record.drive_read_duration_ns,
-        record.max_observed_drive_read_duration_ns, record.inflight_at_send);
+        record.max_observed_drive_read_duration_ns, record.inflight_at_send,
+        order_session_id, diagnostic_cpu);
+  }
+
+  static void LogGateOrderSessionConnected(std::uint64_t order_session_id,
+                                           int owner_thread_cpu) noexcept {
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    detail::NotifyOrderSessionConnectionLogObserverForTest(order_session_id,
+                                                           owner_thread_cpu);
+#endif
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "gate_order_session_connected order_session_id={} "
+        "owner_thread_cpu={}",
+        order_session_id, owner_thread_cpu);
   }
 
   template <typename OrderT>
@@ -662,12 +878,15 @@ class OrderSession {
 
   void RecordAckLatencyDiagnostic(std::uint64_t sequence,
                                   std::int64_t ack_local_receive_ns,
-                                  std::int64_t ack_exchange_ns) noexcept {
+                                  std::int64_t ack_exchange_ns,
+                                  int diagnostic_cpu) noexcept {
+    const std::uint64_t order_session_id = order_session_id_;
     (void)ack_latency_diagnostics_.RecordAck(
         sequence, ack_local_receive_ns, ack_exchange_ns,
         current_drive_read_start_ns_,
-        [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
-          LogOrderLatencyDiagnostic(record);
+        [order_session_id, diagnostic_cpu](
+            const OrderLatencyDiagnosticLogRecord& record) noexcept {
+          LogOrderLatencyDiagnostic(record, order_session_id, diagnostic_cpu);
         });
   }
 
@@ -681,24 +900,46 @@ class OrderSession {
     }
     const std::int64_t now_ns = RealtimeNowNsInt64();
     switch (point) {
-      case websocket::RuntimeLoopProbePoint::kAfterRuntimeHook:
+      case websocket::RuntimeLoopProbePoint::kAfterRuntimeHook: {
+        const std::uint64_t order_session_id = order_session_id_;
         (void)ack_latency_diagnostics_.RecordAfterRuntimeHook(
-            now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
-              LogOrderLatencyDiagnostic(record);
+            now_ns,
+            [order_session_id](
+                const OrderLatencyDiagnosticLogRecord& record) noexcept {
+              const int diagnostic_cpu =
+                  detail::CurrentCpuForOrderSessionDiagnostics();
+              LogOrderLatencyDiagnostic(record, order_session_id,
+                                        diagnostic_cpu);
             });
+      }
         return;
       case websocket::RuntimeLoopProbePoint::kBeforeDriveRead:
         current_drive_read_start_ns_ = now_ns;
-        (void)ack_latency_diagnostics_.RecordBeforeDriveRead(
-            now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
-              LogOrderLatencyDiagnostic(record);
-            });
+        {
+          const std::uint64_t order_session_id = order_session_id_;
+          (void)ack_latency_diagnostics_.RecordBeforeDriveRead(
+              now_ns,
+              [order_session_id](
+                  const OrderLatencyDiagnosticLogRecord& record) noexcept {
+                const int diagnostic_cpu =
+                    detail::CurrentCpuForOrderSessionDiagnostics();
+                LogOrderLatencyDiagnostic(record, order_session_id,
+                                          diagnostic_cpu);
+              });
+        }
         return;
-      case websocket::RuntimeLoopProbePoint::kAfterDriveRead:
+      case websocket::RuntimeLoopProbePoint::kAfterDriveRead: {
+        const std::uint64_t order_session_id = order_session_id_;
         (void)ack_latency_diagnostics_.RecordAfterDriveRead(
-            now_ns, [](const OrderLatencyDiagnosticLogRecord& record) noexcept {
-              LogOrderLatencyDiagnostic(record);
+            now_ns,
+            [order_session_id](
+                const OrderLatencyDiagnosticLogRecord& record) noexcept {
+              const int diagnostic_cpu =
+                  detail::CurrentCpuForOrderSessionDiagnostics();
+              LogOrderLatencyDiagnostic(record, order_session_id,
+                                        diagnostic_cpu);
             });
+      }
         current_drive_read_start_ns_ = 0;
         return;
     }
@@ -760,9 +1001,11 @@ class OrderSession {
         RecordIgnoredMessage();
         return websocket::DeliveryResult::kAccepted;
       }
+      const int ack_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
       RecordAckLatencyDiagnostic(parsed.request_id.sequence, local_receive_ns,
-                                 parsed.exchange_ns);
-      LogGateOrderResponse(parsed, local_order_id, 0, local_receive_ns);
+                                 parsed.exchange_ns, ack_cpu);
+      LogGateOrderResponse(parsed, local_order_id, 0, local_receive_ns,
+                           order_session_id_, ack_cpu);
       response_handler_.OnOrderResponse(
           OrderResponse{.kind = OrderResponseKind::kAck,
                         .local_order_id = local_order_id,
@@ -802,8 +1045,9 @@ class OrderSession {
                               : OrderResponseKind::kCancelAccepted)
                   : (is_error ? OrderResponseKind::kRejected
                               : OrderResponseKind::kAccepted);
+    const int ack_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     LogGateOrderResponse(parsed, local_order_id, parsed.exchange_order_id,
-                         local_receive_ns);
+                         local_receive_ns, order_session_id_, ack_cpu);
     response_handler_.OnOrderResponse(
         OrderResponse{.kind = kind,
                       .local_order_id = local_order_id,
@@ -929,6 +1173,8 @@ class OrderSession {
   OrderAckLatencyDiagnostics ack_latency_diagnostics_;
   std::int64_t current_drive_read_start_ns_{0};
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
+  const std::uint64_t order_session_id_{
+      detail::NextOrderSessionIdForDiagnostics()};
   std::uint64_t request_sequence_{1};
   std::uint64_t login_request_sequence_{0};
   bool active_{false};

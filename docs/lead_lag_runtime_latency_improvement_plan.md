@@ -36,6 +36,10 @@
 - 当前核心链路绑核目标是 Gate market data CPU2、Binance market data CPU3、strategy / Gate order owner CPU4、Gate order feedback CPU6、log backend CPU5。recorder、TUI、guard、report 和 shell 不属于核心交易链路，不能抢占 CPU2 / CPU3 / CPU4 / CPU6。
 - Gate submit final result parser / correlation cleanup 已修复旧 run 中的 `gate_order_response_ignored reason=unknown_kind` / inflight 长期递增风险；该问题不再作为本 latency 计划的未完成项。
 - report 已能解析 guard affinity summary、latency diagnostic outlier、feedback session event，以及 `exchange_lifecycle_ns = finish_exchange_ns - ack_exchange_ns`。字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
+- Gate `OrderSession` 多连接诊断第一阶段已落地：每个 session 生成进程内 `order_session_id`；`gate_order_session_connected`
+  输出 `order_session_id` / `owner_thread_cpu`；`gate_order_send_ok` 输出 `order_session_id` / `send_cpu`；`gate_order_response`
+  输出 `order_session_id` / `ack_cpu`；`gate_order_ack_latency_diagnostic` 输出 `order_session_id` / `diagnostic_cpu`。
+  endpoint 和 `TCP_INFO` 尚未接入，字段索引见 `docs/diagnostic_fields.md`。
 
 ## 仍需观察
 
@@ -54,17 +58,20 @@
    - 每条连接有独立 TCP socket、TLS state、kernel buffer、local port、remote endpoint 和交易所 session state；本地 owner thread 的调度、C-state、`DriveRead()` 时机、日志 / runtime hook 负载也会让不同连接出现不同 Ack RTT。
    - 后续不能把“URL 相同”作为 Ack path 相同的证据。分析多连接差异时必须以 connection / session 为维度保留统计。
 
-   建议新增或记录的诊断字段：
+   已落地和建议新增或记录的诊断字段：
 
    ```text
-   order_session_id
+   order_session_id                    # 已落地
+   owner_thread_cpu                    # 已落地于 connected log
+   send_cpu                            # 已落地于 send log
+   ack_cpu                             # 已落地于 response log
+   diagnostic_cpu                      # 已落地于 latency diagnostic log
    local_ip
    local_port
    remote_ip
    remote_port
    resolved_ips
    connected_remote_ip
-   owner_thread_cpu
    request_sequence
    request_send_local_ns
    ack_local_receive_ns

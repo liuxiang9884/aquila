@@ -33,17 +33,17 @@
 
 ### 连接级字段
 
-这些字段用于区分多条 Gate `OrderSession` / WebSocket 连接的实际路径。当前第一批连接级字段为 planned，
-后续实现时应优先输出在低频 log `gate_order_session_connected` 中。
+这些字段用于区分多条 Gate `OrderSession` / WebSocket 连接的实际路径。第一批已落地字段输出在低频 log
+`gate_order_session_connected` 中；endpoint / DNS 字段仍等待 WebSocket 层暴露稳定连接快照。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `order_session_id` | log / stats / CSV | planned | 本进程内单调 id 或配置 id | 关联同一条 `OrderSession` 的 send、ack、diagnostic 和 summary。 | 多 session 诊断停止且所有下游 parser 不再依赖。 |
+| `order_session_id` | `gate_order_session_connected` / `gate_order_send_ok` / `gate_order_response` / `gate_order_ack_latency_diagnostic` | experiment | 本进程内单调 id | 关联同一条 `OrderSession` 的 send、ack、diagnostic 和 summary。 | 多 session 诊断停止且所有下游 parser 不再依赖。 |
 | `local_ip` | `gate_order_session_connected` | planned | IP 文本 | 记录本地 TCP endpoint，用于区分 NAT / source address。 | 被等价 endpoint snapshot 取代。 |
 | `local_port` | `gate_order_session_connected` | planned | TCP port | 区分同 remote endpoint 下的不同连接。 | 被等价 endpoint snapshot 取代。 |
 | `remote_ip` | `gate_order_session_connected` | planned | IP 文本 | 判断慢 session 是否落到不同 remote IP / gateway。 | 被等价 endpoint snapshot 取代。 |
 | `remote_port` | `gate_order_session_connected` | planned | TCP port | 记录远端 TCP endpoint。 | 被等价 endpoint snapshot 取代。 |
-| `owner_thread_cpu` | `gate_order_session_connected` / summary | planned | Linux CPU id，失败为 `-1` | 确认 session owner thread 实际运行 CPU。 | 被更完整 thread affinity / sched snapshot 取代。 |
+| `owner_thread_cpu` | `gate_order_session_connected` | experiment | Linux CPU id，失败为 `-1` | 确认 session 进入 active 时 owner thread 实际运行 CPU。 | 被更完整 thread affinity / sched snapshot 取代。 |
 | `resolved_ips` | `gate_order_session_connected` | planned | DNS 结果列表 | 区分 hostname 相同但 DNS / connect 目标不同的情况。 | WebSocket 层无法稳定提供时可留空；若无消费者可删除。 |
 
 ### 请求与 Ack 字段
@@ -63,6 +63,8 @@
 | `ack_rtt_ns` | diagnostic / report CSV | stable | ns | 本地发送到本地收到 Ack 的主指标。 | 不能删除；latency report 主字段。 |
 | `inflight` | `gate_order_send_ok` | stable | 当前 inflight 数量 | 观察 request map pressure。 | 若被 per-session summary 全面取代，可评估删除。 |
 | `latency_diagnostic_inflight_at_send` | diagnostic / report CSV | experiment | 当前 inflight 数量 | Ack outlier 时确认发送瞬间是否存在排队压力。 | Ack outlier 诊断结束且无下游依赖后可删除。 |
+| `send_cpu` | `gate_order_send_ok` | experiment | Linux CPU id，失败为 `-1` | 确认发送时 owner thread 运行 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
+| `ack_cpu` | `gate_order_response` | experiment | Linux CPU id，失败为 `-1` | 确认 Ack / submit result 本地处理时 owner thread 运行 CPU；用于对比 send CPU 和 owner CPU。 | 被完整 sched trace 或 thread sample 取代。 |
 
 ### 分阶段 Ack latency diagnostic 字段
 
@@ -76,16 +78,15 @@
 | `send_to_first_drive_read_ns` | diagnostic / report CSV | experiment | ns | 判断 owner thread 是否及时进入 `DriveRead()`。 | 若被更直接 scheduler trace 取代可删除。 |
 | `drive_read_duration_ns` | diagnostic / report CSV | experiment | ns | 记录触发时单次 `DriveRead()` 耗时。 | 若 read path tail 已通过其他 profile 覆盖可删除。 |
 | `max_observed_drive_read_duration_ns` | diagnostic / report CSV | experiment | ns | 诊断窗口内最大 `DriveRead()` 耗时。 | 同上。 |
+| `diagnostic_cpu` | `gate_order_ack_latency_diagnostic` | experiment | Linux CPU id，失败为 `-1` | 记录触发 latency diagnostic log 时 owner thread 所在 CPU；Ack RTT 阈值触发时通常等价于 Ack 处理 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
 
-### 计划中的 CPU / TCP_INFO 字段
+### 计划中的 TCP_INFO 字段
 
-这些字段用于解释多个 `OrderSession` Ack RTT 不同的问题。采集点应限制在 send、ack、diagnostic 或 summary，
-不要放入无订单 hot loop。
+这些字段用于解释多个 `OrderSession` Ack RTT 不同的问题。采集点应限制在 ack、diagnostic 或 summary，不要放入无订单
+hot loop。endpoint 字段和 `TCP_INFO` 计划一起补齐，便于同一轮实验直接判断 remote endpoint 与 kernel RTT。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `send_cpu` | send log / report CSV | planned | Linux CPU id，失败为 `-1` | 确认发送时 owner thread 运行 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
-| `ack_cpu` | response log / report CSV | planned | Linux CPU id，失败为 `-1` | 确认 Ack 处理时 owner thread 运行 CPU。 | 同上。 |
 | `tcp_info_rtt_us` | response / diagnostic / summary | planned | microseconds | kernel TCP RTT 估计，用于区分网络 RTT 与本地调度。 | TCP_INFO 不可用或被外部采样取代。 |
 | `tcp_info_rttvar_us` | response / diagnostic / summary | planned | microseconds | kernel TCP RTT variance 估计。 | 同上。 |
 | `tcp_info_retrans` | response / diagnostic / summary | planned | counter | 当前 TCP retrans 相关字段，字段语义需按 Linux `tcp_info` 明确。 | 同上。 |

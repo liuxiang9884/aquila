@@ -1,8 +1,11 @@
 #include "exchange/gate/trading/order_session.h"
 
+#include <array>
+#include <chrono>
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -159,6 +162,60 @@ std::string_view PlaceResultResponse() noexcept {
   return R"({"request_id":"144115188075855874","ack":false,"header":{"response_time":"1681195484360","status":"200","channel":"futures.order_place","event":"api"},"data":{"result":{"id":"36028827892199865","text":"t-123"}}})";
 }
 
+std::array<detail::OrderSessionConnectionLogRecordForTest, 4>
+    g_connection_log_records{};
+std::array<detail::OrderSessionSendLogRecordForTest, 4> g_send_log_records{};
+std::array<detail::OrderSessionResponseLogRecordForTest, 4>
+    g_response_log_records{};
+std::array<detail::OrderSessionLatencyDiagnosticLogRecordForTest, 4>
+    g_latency_diagnostic_log_records{};
+std::size_t g_connection_log_record_count = 0;
+std::size_t g_send_log_record_count = 0;
+std::size_t g_response_log_record_count = 0;
+std::size_t g_latency_diagnostic_log_record_count = 0;
+
+void CaptureConnectionLog(
+    const detail::OrderSessionConnectionLogRecordForTest& record) noexcept {
+  if (g_connection_log_record_count < g_connection_log_records.size()) {
+    g_connection_log_records[g_connection_log_record_count++] = record;
+  }
+}
+
+void CaptureSendLog(
+    const detail::OrderSessionSendLogRecordForTest& record) noexcept {
+  if (g_send_log_record_count < g_send_log_records.size()) {
+    g_send_log_records[g_send_log_record_count++] = record;
+  }
+}
+
+void CaptureResponseLog(
+    const detail::OrderSessionResponseLogRecordForTest& record) noexcept {
+  if (g_response_log_record_count < g_response_log_records.size()) {
+    g_response_log_records[g_response_log_record_count++] = record;
+  }
+}
+
+void CaptureLatencyDiagnosticLog(
+    const detail::OrderSessionLatencyDiagnosticLogRecordForTest&
+        record) noexcept {
+  if (g_latency_diagnostic_log_record_count <
+      g_latency_diagnostic_log_records.size()) {
+    g_latency_diagnostic_log_records[g_latency_diagnostic_log_record_count++] =
+        record;
+  }
+}
+
+void ResetOrderSessionLogObservers() {
+  detail::SetOrderSessionConnectionLogObserverForTest(nullptr);
+  detail::SetOrderSessionSendLogObserverForTest(nullptr);
+  detail::SetOrderSessionResponseLogObserverForTest(nullptr);
+  detail::SetOrderSessionLatencyDiagnosticLogObserverForTest(nullptr);
+  g_connection_log_record_count = 0;
+  g_send_log_record_count = 0;
+  g_response_log_record_count = 0;
+  g_latency_diagnostic_log_record_count = 0;
+}
+
 template <typename Handler>
 void ActivateAndLogin(TestOrderSession<Handler>& session) {
   session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
@@ -261,6 +318,91 @@ TEST(OrderSessionTest, SendsLoginOnActiveAndMarksReadyOnSuccess) {
   EXPECT_EQ(session.stats().login_sent, 1U);
   EXPECT_EQ(session.stats().login_accepted, 1U);
   EXPECT_EQ(handler.login_ready_calls, 1);
+}
+
+TEST(OrderSessionTest, AssignsDistinctOrderSessionIds) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session_one(handler);
+  TestOrderSession<RecordingHandler> session_two(handler);
+
+  EXPECT_NE(session_one.order_session_id(), 0U);
+  EXPECT_NE(session_two.order_session_id(), 0U);
+  EXPECT_NE(session_one.order_session_id(), session_two.order_session_id());
+}
+
+TEST(OrderSessionTest, LogsConnectionWithSessionIdAndOwnerCpu) {
+  ResetOrderSessionLogObservers();
+  detail::SetOrderSessionConnectionLogObserverForTest(&CaptureConnectionLog);
+
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  ASSERT_EQ(g_connection_log_record_count, 1U);
+  const detail::OrderSessionConnectionLogRecordForTest& record =
+      g_connection_log_records[0];
+  EXPECT_EQ(record.order_session_id, session.order_session_id());
+  EXPECT_GE(record.owner_thread_cpu, -1);
+
+  ResetOrderSessionLogObservers();
+}
+
+TEST(OrderSessionTest, SendAndAckLogsExposeSessionIdAndCpu) {
+  ResetOrderSessionLogObservers();
+  detail::SetOrderSessionSendLogObserverForTest(&CaptureSendLog);
+  detail::SetOrderSessionResponseLogObserverForTest(&CaptureResponseLog);
+
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  ASSERT_EQ(g_send_log_record_count, 1U);
+  const detail::OrderSessionSendLogRecordForTest& send_record =
+      g_send_log_records[0];
+  EXPECT_EQ(send_record.order_session_id, session.order_session_id());
+  EXPECT_EQ(send_record.local_order_id, 123U);
+  EXPECT_EQ(send_record.request_sequence, 2U);
+  EXPECT_GE(send_record.send_cpu, -1);
+
+  session.Handle(TextView(PlaceAckResponse()));
+
+  ASSERT_EQ(g_response_log_record_count, 1U);
+  const detail::OrderSessionResponseLogRecordForTest& response_record =
+      g_response_log_records[0];
+  EXPECT_EQ(response_record.order_session_id, session.order_session_id());
+  EXPECT_EQ(response_record.local_order_id, 123U);
+  EXPECT_EQ(response_record.request_sequence, 2U);
+  EXPECT_GE(response_record.ack_cpu, -1);
+
+  ResetOrderSessionLogObservers();
+}
+
+TEST(OrderSessionTest, AckLatencyDiagnosticLogExposeSessionIdAndCpu) {
+  ResetOrderSessionLogObservers();
+  detail::SetOrderSessionLatencyDiagnosticLogObserverForTest(
+      &CaptureLatencyDiagnosticLog);
+
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+  session.Handle(TextView(PlaceAckResponse()));
+
+  ASSERT_EQ(g_latency_diagnostic_log_record_count, 1U);
+  const detail::OrderSessionLatencyDiagnosticLogRecordForTest& record =
+      g_latency_diagnostic_log_records[0];
+  EXPECT_EQ(record.order_session_id, session.order_session_id());
+  EXPECT_EQ(record.local_order_id, 123U);
+  EXPECT_EQ(record.request_sequence, 2U);
+  EXPECT_GE(record.diagnostic_cpu, -1);
+
+  ResetOrderSessionLogObservers();
 }
 
 TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {

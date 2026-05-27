@@ -82,6 +82,11 @@ add_executable(gate_order_session_test
     order_session_test.cpp
 )
 
+target_compile_definitions(gate_order_session_test
+    PRIVATE
+        AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS
+)
+
 target_link_libraries(gate_order_session_test
     PRIVATE
         aquila_gate
