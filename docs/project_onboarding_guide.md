@@ -149,6 +149,7 @@ docs/evaluation_support.md
 | `AGENTS.md` | 每次新会话最先读 | 中文/英文约定、低延迟原则、测试 / benchmark / 提交规则 |
 | `README.md` | 了解构建和工具入口 | build、ctest、benchmark、probe、latency compare |
 | `docs/evaluation_support.md` | 增加 test / benchmark 共享辅助代码 | `evaluation/` 边界和提交前检查 |
+| `docs/diagnostic_fields.md` | 新增或删除诊断字段、log key、stats、report CSV 字段 | 按组件登记字段用途、表面、生命周期、删除条件和代码入口 |
 | `docs/futures_contract_metadata_fields.md` | 处理合约基础信息 | 统一 metadata 字段、Gate / Binance 映射、数量单位差异 |
 | `docs/tui_onboarding_guide.md` | 接手 TUI / account monitor | 当前范围、运行命令、实现入口、未完成项 |
 | `docs/tui_gate_account_monitor_design.md` | 继续 TUI 设计或实现 | Symbol Workbench、market data SHM、order / health 线程模型和测试建议 |
