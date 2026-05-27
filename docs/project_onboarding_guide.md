@@ -51,7 +51,7 @@ docs/evaluation_support.md
 
 以本节、`git status`、`git log` 和当前代码为准；旧执行计划、旧 spec 和重复讨论文档已清理，不再作为事实源。
 
-截至 2026-05-26：
+截至 2026-05-27：
 
 - `main` 已完成 Task1 order feedback SHM transport、Task2 Gate private `futures.orders` parser、`OrderFeedbackSession`、`OrderManager::OnOrderFeedback()`、trading runtime production loop、Gate adapter 和 `demo` 策略 3 轮 live smoke。
 - 公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`；旧 `core/strategy/*` 和 `strategy/order_types.h` / `strategy/order_manager.h` 兼容头已删除。
