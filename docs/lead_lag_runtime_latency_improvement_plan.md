@@ -63,6 +63,52 @@
   TCP RTT 是 Linux `TCP_INFO.tcpi_rtt` 的连接层平滑估计，不是同一笔订单的精确网络往返，因此单笔样本里可能出现
   `TCP RTT > Ack RTT`。这次结果主要证明：同一 hostname 的并发连接实际落到了不同 remote IP，endpoint / CPU /
   TCP_INFO 字段在真实订单路径上可用。
+- 2026-05-27 完成三组 Gate WebSocket IP pinning 验证，目标 IP 取自上面的 3 session smoke。结论：
+  TCP 连接可以固定到指定 IP；TLS 不能把 IP 当作证书 hostname 使用；正确模式是 TCP 直连 `connect_ip:port`，
+  TLS SNI / 证书校验 / WebSocket Host 继续使用 `host`。
+
+  第一组：把 IP 同时作为 TCP remote、TLS hostname / SNI 和 WebSocket Host。带正常证书校验时三条 IP
+  均失败，错误为 IP address mismatch；关闭证书校验后 TLS 协议握手本身均可建立，因此失败点是
+  hostname / certificate mismatch，不是 TCP 或 TLS 协议不可达。
+
+  | IP | 正常证书校验 | 关闭证书校验 TLS handshake | TLS handshake | total |
+  | --- | --- | --- | ---: | ---: |
+  | `52.198.250.74` | `CERTIFICATE_VERIFY_FAILED` | OK | `4.941ms` | `8.532ms` |
+  | `52.199.212.24` | `CERTIFICATE_VERIFY_FAILED` | OK | `5.652ms` | `7.742ms` |
+  | `57.181.9.46` | `CERTIFICATE_VERIFY_FAILED` | OK | `2.993ms` | `3.481ms` |
+
+  第二组：Python `scripts/gate/probe_gate_ws_connect_ip.py` 使用 `connect_ip=<IP>`、`host=fx-ws.gateio.ws`、
+  `port=443` 和 `target=/v4/ws/usdt/sbe?sbe_schema_id=1` 做 no-order WebSocket handshake。三条 IP
+  均返回 `HTTP/1.1 101 Switching Protocols`，且 `remote_endpoint` 等于指定 IP。
+
+  | IP | TCP connect | TLS handshake | WebSocket handshake | total |
+  | --- | ---: | ---: | ---: | ---: |
+  | `52.198.250.74` | `2.790ms` | `6.023ms` | `4.581ms` | `32.617ms` |
+  | `52.199.212.24` | `1.917ms` | `5.844ms` | `5.695ms` | `32.071ms` |
+  | `57.181.9.46` | `0.298ms` | `2.610ms` | `1.284ms` | `22.745ms` |
+
+  同一脚本的 private `futures.login` only 验证也已完成：三条 IP 均返回 `login_status=200`，仅发送
+  `futures.login`，没有下单。
+
+  | IP | login status | login RTT | total |
+  | --- | ---: | ---: | ---: |
+  | `52.198.250.74` | `200` | `41.780ms` | `74.660ms` |
+  | `52.199.212.24` | `200` | `20.316ms` | `52.977ms` |
+  | `57.181.9.46` | `200` | `17.466ms` | `40.002ms` |
+
+  第三组：C++ 通用 WebSocket 层已落地 `host` / 可选 `connect_ip` / `port`。`websocket_probe`
+  使用下面命令 live 验证通过，输出 `state=kActive`，socket peer 为 `57.181.9.46:443`，最终
+  `result=ok`。配置 parser 已拒绝旧端口字段，避免旧配置被静默回退到默认 `443`。
+
+  ```bash
+  ./build/debug/tools/websocket_probe \
+    --host fx-ws.gateio.ws \
+    --connect-ip 57.181.9.46 \
+    --port 443 \
+    --target /v4/ws/usdt/sbe?sbe_schema_id=1 \
+    --tls \
+    --duration-ms 1000
+  ```
 
 ## 仍需观察
 
