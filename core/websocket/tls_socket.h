@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include <arpa/inet.h>
@@ -38,7 +39,9 @@ class TlsSocket {
   TlsSocket(const TlsSocket&) = delete;
   TlsSocket& operator=(const TlsSocket&) = delete;
 
-  TlsSocket(TlsSocket&& other) noexcept { MoveFrom(other); }
+  TlsSocket(TlsSocket&& other) noexcept {
+    MoveFrom(other);
+  }
 
   TlsSocket& operator=(TlsSocket&& other) noexcept {
     if (this != &other) {
@@ -91,9 +94,14 @@ class TlsSocket {
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
+    const std::string& connect_host =
+        config.connect_ip.empty() ? config.host : config.connect_ip;
+    if (!config.connect_ip.empty()) {
+      hints.ai_flags |= AI_NUMERICHOST;
+    }
 
     addrinfo* addresses = nullptr;
-    if (getaddrinfo(config.host.c_str(), config.service.c_str(), &hints,
+    if (getaddrinfo(connect_host.c_str(), config.port.c_str(), &hints,
                     &addresses) != 0) {
       return false;
     }
@@ -101,8 +109,8 @@ class TlsSocket {
     bool connected = false;
     for (addrinfo* current = addresses; current != nullptr;
          current = current->ai_next) {
-      const int fd =
-          ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+      const int fd = ::socket(current->ai_family, current->ai_socktype,
+                              current->ai_protocol);
       if (fd < 0) {
         continue;
       }
@@ -247,11 +255,17 @@ class TlsSocket {
     return -1;
   }
 
-  bool WantsRead() const noexcept { return wants_read_; }
+  bool WantsRead() const noexcept {
+    return wants_read_;
+  }
 
-  bool WantsWrite() const noexcept { return wants_write_; }
+  bool WantsWrite() const noexcept {
+    return wants_write_;
+  }
 
-  int NativeFd() const noexcept { return fd_; }
+  int NativeFd() const noexcept {
+    return fd_;
+  }
 
   void Close() noexcept {
     wants_read_ = false;

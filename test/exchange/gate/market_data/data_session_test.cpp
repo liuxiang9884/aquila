@@ -99,7 +99,7 @@ Session MakeSession(RecordingDataSink& data_sink) {
                                   .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "443";
+  config.port = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   return Session(std::move(config), symbols, data_sink);
 }
@@ -110,7 +110,7 @@ DiagnosticSession MakeDiagnosticSession(RecordingDataSink& data_sink) {
                                   .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "443";
+  config.port = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   return DiagnosticSession(std::move(config), symbols, data_sink);
 }
@@ -121,7 +121,7 @@ Session MakeSessionWithNoPreparedWriteSlots(RecordingDataSink& data_sink) {
                                   .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "443";
+  config.port = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   config.prepared_write_slots = 0;
   return Session(std::move(config), symbols, data_sink);
@@ -133,7 +133,7 @@ DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingDataSink& data_sink) {
                                   .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "443";
+  config.port = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   return DefaultNoStatsSession(std::move(config), symbols, data_sink);
 }

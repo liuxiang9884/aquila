@@ -107,7 +107,7 @@ TEST(WebsocketColdPathLoopTest, TotalBudgetTimeoutDuringTlsHandshake) {
 
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = std::to_string(server.port());
+  config.port = std::to_string(server.port());
   config.target = "/";
   config.enable_tls = true;
   config.cold_path_total_timeout_ms = 200;

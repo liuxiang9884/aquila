@@ -57,6 +57,12 @@ class ProbeGateWsConnectIpTest(unittest.TestCase):
         self.assertEqual(result.status, "401")
         self.assertIn("INVALID_KEY", result.detail)
 
+    def test_parse_args_uses_port_name(self):
+        args = probe.parse_args(["--connect-ip", "57.181.9.46", "--port", "443"])
+
+        self.assertEqual(args.connect_ip, ["57.181.9.46"])
+        self.assertEqual(args.port, "443")
+
 
 if __name__ == "__main__":
     unittest.main()

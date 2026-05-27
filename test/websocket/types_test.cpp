@@ -66,7 +66,9 @@ static_assert(
 static_assert(
     std::is_same_v<decltype(ws::ConnectionConfig{}.host), std::string>);
 static_assert(
-    std::is_same_v<decltype(ws::ConnectionConfig{}.service), std::string>);
+    std::is_same_v<decltype(ws::ConnectionConfig{}.connect_ip), std::string>);
+static_assert(
+    std::is_same_v<decltype(ws::ConnectionConfig{}.port), std::string>);
 static_assert(
     std::is_same_v<decltype(ws::ConnectionConfig{}.target), std::string>);
 static_assert(std::is_same_v<decltype(ws::ConnectionConfig{}.extra_headers),
@@ -83,7 +85,8 @@ TEST(WebsocketTypesTest, ExposesExpectedDefaultsAndHandlers) {
   EXPECT_TRUE(config.runtime_policy.lock_memory);
   EXPECT_TRUE(config.runtime_policy.active_spin);
   EXPECT_EQ(config.host, "fx-ws.gateio.ws");
-  EXPECT_EQ(config.service, "443");
+  EXPECT_TRUE(config.connect_ip.empty());
+  EXPECT_EQ(config.port, "443");
   EXPECT_EQ(config.target, "/v4/ws/usdt");
   EXPECT_TRUE(config.extra_headers.empty());
   EXPECT_EQ(config.read_buffer_bytes, (size_t{1} << 20));

@@ -171,7 +171,7 @@ class ProbeRunner {
   static ws::ConnectionConfig BuildConnectionConfig(const ProbeConfig& config) {
     ws::ConnectionConfig connection_config{};
     connection_config.host = config.host;
-    connection_config.service = config.port;
+    connection_config.port = config.port;
     connection_config.enable_tls = TransportSocket::kUsesTls;
     connection_config.max_reads_per_drive = 8;
     connection_config.read_until_would_block = false;

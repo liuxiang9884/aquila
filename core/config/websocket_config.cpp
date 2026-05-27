@@ -116,8 +116,9 @@ class WebSocketConfigParser {
     }
     config_.endpoint.host = *host;
 
-    config_.endpoint.service =
-        StringOr(endpoint["service"], config_.endpoint.service);
+    config_.endpoint.connect_ip =
+        StringOr(endpoint["connect_ip"], config_.endpoint.connect_ip);
+    config_.endpoint.port = StringOr(endpoint["port"], config_.endpoint.port);
     config_.endpoint.enable_tls =
         BoolOr(endpoint["enable_tls"], config_.endpoint.enable_tls);
     config_.endpoint.connect_timeout_ms = UInt32Or(
@@ -221,7 +222,8 @@ ConnectionConfigResult ToConnectionConfig(const WebSocketConfig& config,
 
   websocket::ConnectionConfig connection;
   connection.host = config.endpoint.host;
-  connection.service = config.endpoint.service;
+  connection.connect_ip = config.endpoint.connect_ip;
+  connection.port = config.endpoint.port;
   connection.target = std::move(target);
   connection.enable_tls = config.endpoint.enable_tls;
   connection.cold_path_total_timeout_ms = config.endpoint.connect_timeout_ms;

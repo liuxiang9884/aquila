@@ -15,7 +15,7 @@ DeliveryResult AcceptAll(void*, const MessageView&) noexcept {
 TEST(WebSocketLoopbackIntegrationTest, PreparesRuntimeForLoopbackConfig) {
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = "9443";
+  config.port = "9443";
   config.target = "/v4/ws/usdt";
   MessageCallback consumer{nullptr, &AcceptAll};
   WebSocketClient client(config, consumer);

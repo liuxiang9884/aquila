@@ -108,6 +108,7 @@ feed = "book_ticker"
 
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
+port = "443"
 enable_tls = true
 
 [data_session.websocket.execution_policy]
@@ -123,7 +124,7 @@ remove_existing = false
 
 仓库内示例配置指向 Gate 公网行情 endpoint，语义是
 `wss://fx-ws.gateio.ws:443/v4/ws/usdt/sbe?sbe_schema_id=1`。如果生产部署使用
-Gate private link / plain WS，需要同时替换为 private host / service，并显式设置
+Gate private link / plain WS，需要同时替换为 private host / port，并显式设置
 `enable_tls = false`；不要把公网 `fx-ws.gateio.ws:443` 和 `enable_tls = false` 组合使用。
 
 ## Binance 行情进程示例
@@ -298,24 +299,27 @@ parser 只做启动配置需要的最低限度解析约束：`endpoint.host` 和
 ```toml
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
+port = "443"
 enable_tls = true
 ```
 
 | 字段 | 默认值 | 映射 | 含义 |
 | --- | --- | --- | --- |
-| `host` | 无，必须显式配置 | `ConnectionConfig.host` | DNS host。 |
-| `service` | `"443"` | `ConnectionConfig.service` | 端口或服务名。 |
+| `host` | 无，必须显式配置 | `ConnectionConfig.host` | WebSocket logical host；始终用于 HTTP Upgrade `Host` header；TLS 开启时也用于 SNI 和证书 hostname verification。 |
+| `connect_ip` | `""` | `ConnectionConfig.connect_ip` | 可选 TCP connect IP。为空时 TCP connect 解析 `host`；非空时 TCP connect 直连 `connect_ip:port`，`host` 仍保留为协议层 logical host。 |
+| `port` | `"443"` | `ConnectionConfig.port` | TCP 端口。 |
 | `enable_tls` | `true` | `ConnectionConfig.enable_tls` | 是否使用 TLS。 |
 | `connect_timeout_ms` | `10000` | `ConnectionConfig.cold_path_total_timeout_ms` | DNS + TCP + TLS + WebSocket handshake 总超时。 |
 
 `enable_tls` 表示当前 WebSocket 物理连接是否走 TLS；tool 会用它选择编译期
 `DefaultTlsWebSocketPolicy` 或 `DefaultPlainWebSocketPolicy`。典型组合如下：
 
-| 场景 | host / service | `enable_tls` | 协议语义 |
+| 场景 | host / connect_ip / port | `enable_tls` | 协议语义 |
 | --- | --- | --- | --- |
-| Gate 公网行情 | `fx-ws.gateio.ws` / `443` | `true` | `wss://fx-ws.gateio.ws:443/...` |
-| Gate private link plain WS | private host / plain WS port | `false` | `ws://<private-host>:<port>/...` |
-| Binance 公网行情 | `fstream.binance.com` / `443` | `true` | `wss://fstream.binance.com:443/...` |
+| Gate 公网行情 | `fx-ws.gateio.ws` / 空 / `443` | `true` | TCP 解析 `fx-ws.gateio.ws`，TLS SNI / cert verify / WebSocket Host 均为 `fx-ws.gateio.ws`。 |
+| Gate 公网行情 IP pinning | `fx-ws.gateio.ws` / `57.181.9.46` / `443` | `true` | TCP 直连 `57.181.9.46:443`，TLS SNI / cert verify / WebSocket Host 仍为 `fx-ws.gateio.ws`。 |
+| Gate private link plain WS | private host 或 logical host / 可选 private IP / plain WS port | `false` | TCP 连接 `connect_ip:port` 或解析 `host:port`；WebSocket Host 始终为 `host`。 |
+| Binance 公网行情 | `fstream.binance.com` / 空 / `443` | `true` | TCP 解析 `fstream.binance.com`，TLS SNI / cert verify / WebSocket Host 均为 `fstream.binance.com`。 |
 
 因此 Gate public config 应保留默认 `enable_tls = true`，或显式写成 `true`。Gate private link
 部署可以显式设置 `enable_tls = false`，但必须同时使用对应 private endpoint。

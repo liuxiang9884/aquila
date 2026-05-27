@@ -56,6 +56,10 @@
   | `strategy_3` | `57.181.9.46:443` | `42396` | `0.665ms` | `3.240ms` | `5.760ms` | `0` |
 
   口径说明：Ack RTT 是应用层单笔订单 `request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`；
+  C++ WebSocket endpoint 已支持可选 `connect_ip`：为空时继续解析 `host`，非空时 TCP connect 直连
+  `connect_ip:port`，TLS SNI / 证书校验和 WebSocket Host 仍使用 `host`。可先用 no-order
+  `tools/websocket/probe.cpp` 的 `--connect-ip` 验证 remote endpoint，再用 order session 临时 config
+  观察 `gate_order_session_connected.remote_ip` 是否固定到目标 IP。
   TCP RTT 是 Linux `TCP_INFO.tcpi_rtt` 的连接层平滑估计，不是同一笔订单的精确网络往返，因此单笔样本里可能出现
   `TCP RTT > Ack RTT`。这次结果主要证明：同一 hostname 的并发连接实际落到了不同 remote IP，endpoint / CPU /
   TCP_INFO 字段在真实订单路径上可用。

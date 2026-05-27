@@ -123,7 +123,7 @@ SymbolSet BuildSymbols(size_t symbol_count) {
 ws::ConnectionConfig BuildConnectionConfig() {
   ws::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "443";
+  config.port = "443";
   config.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
   config.enable_tls = false;
   return config;

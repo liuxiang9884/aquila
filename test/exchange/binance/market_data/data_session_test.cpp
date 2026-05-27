@@ -97,7 +97,7 @@ Session MakeSession(RecordingDataSink& data_sink) {
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
-  config.service = "443";
+  config.port = "443";
   return Session(std::move(config), symbols, data_sink);
 }
 
@@ -106,7 +106,7 @@ DefaultNoStatsSession MakeDefaultNoStatsSession(RecordingDataSink& data_sink) {
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
-  config.service = "443";
+  config.port = "443";
   return DefaultNoStatsSession(std::move(config), symbols, data_sink);
 }
 
@@ -115,7 +115,7 @@ DiagnosticSession MakeDiagnosticSession(RecordingDataSink& data_sink) {
       aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
   aquila::websocket::ConnectionConfig config{};
   config.host = "fstream.binance.com";
-  config.service = "443";
+  config.port = "443";
   return DiagnosticSession(std::move(config), symbols, data_sink);
 }
 
@@ -183,7 +183,7 @@ TEST(BinanceDataSessionTest, RejectsEmptyStreamTargetOnStart) {
   RecordingDataSink data_sink;
   aquila::websocket::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "1";
+  config.port = "1";
   Session session(std::move(config), symbols, data_sink);
 
   EXPECT_EQ(session.stream_target(), "");

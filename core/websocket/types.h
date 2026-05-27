@@ -104,8 +104,13 @@ struct DefaultWebSocketOptions {
 };
 
 struct ConnectionConfig {
+  // Logical WebSocket host. It is always used for the HTTP Host header, and
+  // for TLS SNI / certificate hostname verification when TLS is enabled.
   std::string host = "fx-ws.gateio.ws";
-  std::string service = "443";
+  // Optional numeric TCP connect target. When empty, TCP connects to `host`.
+  // When set, TCP connects to this IP while `host` remains the protocol host.
+  std::string connect_ip;
+  std::string port = "443";
   std::string target = "/v4/ws/usdt";
   std::vector<HttpHeader> extra_headers{};
   bool enable_tls = true;

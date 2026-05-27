@@ -15,7 +15,7 @@ from typing import BinaryIO
 
 
 DEFAULT_HOST = "fx-ws.gateio.ws"
-DEFAULT_SERVICE = "443"
+DEFAULT_PORT = "443"
 DEFAULT_TARGET = "/v4/ws/usdt"
 DEFAULT_TIMEOUT = 8.0
 DEFAULT_API_KEY_ENV = "TEST_KEY"
@@ -39,7 +39,7 @@ class LoginParseResult:
 class ProbeResult:
     connect_ip: str
     host: str
-    service: str
+    port: str
     target: str
     tls: bool
     ok: bool
@@ -225,7 +225,7 @@ def format_endpoint(sockname: tuple) -> str:
 def probe_connect_ip(
     connect_ip: str,
     host: str,
-    service: str,
+    port: str,
     target: str,
     timeout: float,
     use_tls: bool,
@@ -237,7 +237,7 @@ def probe_connect_ip(
     result = ProbeResult(
         connect_ip=connect_ip,
         host=host,
-        service=service,
+        port=port,
         target=target,
         tls=use_tls,
         ok=False,
@@ -246,7 +246,7 @@ def probe_connect_ip(
     sock = None
     try:
         tcp_start = time.perf_counter_ns()
-        raw = socket.create_connection((connect_ip, int(service)), timeout=timeout)
+        raw = socket.create_connection((connect_ip, int(port)), timeout=timeout)
         tcp_done = time.perf_counter_ns()
         raw.settimeout(timeout)
         raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -337,7 +337,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Remote IP to connect. Repeat to test multiple IPs.",
     )
     parser.add_argument("--host", default=DEFAULT_HOST, help="TLS SNI and WebSocket Host.")
-    parser.add_argument("--service", default=DEFAULT_SERVICE, help="Remote TCP service/port.")
+    parser.add_argument("--port", default=DEFAULT_PORT, help="Remote TCP port.")
     parser.add_argument("--target", default=DEFAULT_TARGET, help="WebSocket target path.")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--plain", action="store_true", help="Disable TLS.")
@@ -379,7 +379,7 @@ def main() -> int:
         probe_connect_ip(
             connect_ip=connect_ip,
             host=args.host,
-            service=args.service,
+            port=args.port,
             target=args.target,
             timeout=args.timeout,
             use_tls=not args.plain,

@@ -36,7 +36,7 @@ TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
   EXPECT_FALSE(config.enable_tcp_info_diagnostics);
 
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
-  EXPECT_EQ(config.connection.service, "443");
+  EXPECT_EQ(config.connection.port, "443");
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 4);

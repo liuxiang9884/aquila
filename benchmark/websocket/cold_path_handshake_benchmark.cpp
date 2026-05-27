@@ -444,7 +444,7 @@ void BenchmarkColdPathHandshake(benchmark::State& state) {
 
   ConnectionConfig config{};
   config.host = "localhost";
-  config.service = fmt::format(FMT_COMPILE("{}"), server.port());
+  config.port = fmt::format(FMT_COMPILE("{}"), server.port());
   config.target = "/cold-path";
   config.enable_tls = true;
   config.read_buffer_bytes = 4096;

@@ -402,7 +402,7 @@ TEST(PlainWebSocketClientTest, ConnectsWithoutTlsAndReceivesMessage) {
 
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = fmt::format("{}", server.port());
+  config.port = fmt::format("{}", server.port());
   config.target = "/";
   config.enable_tls = false;
   config.heartbeat_interval_ms = 60'000;
@@ -436,7 +436,7 @@ TEST(PlainWebSocketClientTest, SendsConfiguredExtraHandshakeHeaders) {
 
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = fmt::format("{}", server.port());
+  config.port = fmt::format("{}", server.port());
   config.target = "/";
   config.enable_tls = false;
   config.heartbeat_interval_ms = 60'000;
@@ -471,7 +471,7 @@ TEST(PlainWebSocketClientTest,
 
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = fmt::format("{}", server.port());
+  config.port = fmt::format("{}", server.port());
   config.target = "/";
   config.enable_tls = false;
   config.heartbeat_interval_ms = 60'000;
@@ -510,7 +510,7 @@ TEST(PlainWebSocketClientTest, SupportsTypedMessageHandler) {
 
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = fmt::format("{}", server.port());
+  config.port = fmt::format("{}", server.port());
   config.target = "/";
   config.enable_tls = false;
   config.heartbeat_interval_ms = 60'000;
@@ -546,7 +546,7 @@ TEST(PlainWebSocketClientTest, ReceivesFrameCoalescedWithHandshakeResponse) {
 
   ConnectionConfig config{};
   config.host = "127.0.0.1";
-  config.service = fmt::format("{}", server.port());
+  config.port = fmt::format("{}", server.port());
   config.target = "/";
   config.enable_tls = false;
   config.heartbeat_interval_ms = 60'000;

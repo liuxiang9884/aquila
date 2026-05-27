@@ -44,15 +44,14 @@ struct ProbeContext {
 std::string FormatSockaddr(const sockaddr_storage& storage,
                            socklen_t storage_len) {
   char host[NI_MAXHOST]{};
-  char service[NI_MAXSERV]{};
-  const int rc =
-      ::getnameinfo(reinterpret_cast<const sockaddr*>(&storage), storage_len,
-                    host, sizeof(host), service, sizeof(service),
-                    NI_NUMERICHOST | NI_NUMERICSERV);
+  char port[NI_MAXSERV]{};
+  const int rc = ::getnameinfo(reinterpret_cast<const sockaddr*>(&storage),
+                               storage_len, host, sizeof(host), port,
+                               sizeof(port), NI_NUMERICHOST | NI_NUMERICSERV);
   if (rc != 0) {
     return "unavailable";
   }
-  return fmt::format(FMT_COMPILE("{}:{}"), host, service);
+  return fmt::format(FMT_COMPILE("{}:{}"), host, port);
 }
 
 void PrintSocketInfo(int fd) {
@@ -77,8 +76,7 @@ void PrintSocketInfo(int fd) {
                    &incoming_cpu_len) == 0;
 
   fmt::print(stderr,
-             FMT_COMPILE(
-                 "socket fd={} local={} peer={} so_incoming_cpu={}\n"),
+             FMT_COMPILE("socket fd={} local={} peer={} so_incoming_cpu={}\n"),
              fd, has_local ? FormatSockaddr(local, local_len) : "unavailable",
              has_peer ? FormatSockaddr(peer, peer_len) : "unavailable",
              has_incoming_cpu ? fmt::format(FMT_COMPILE("{}"), incoming_cpu)
@@ -126,8 +124,8 @@ SendStatus SubmitSubscription(ProbeRuntime<ClientT>& runtime) noexcept {
     return SendStatus::kNoPreparedWriteSlot;
   }
 
-  const auto payload = std::as_bytes(
-      std::span<const char>(runtime.subscribe.data(), runtime.subscribe.size()));
+  const auto payload = std::as_bytes(std::span<const char>(
+      runtime.subscribe.data(), runtime.subscribe.size()));
   const auto encoded = runtime.encoder.EncodeText(payload, write->storage);
   if (!encoded.ok) {
     core.CancelPreparedWrite(write);
@@ -173,7 +171,7 @@ void RecordRuntimeError(void* context, ConnectionError error) noexcept {
 }  // namespace
 
 template <typename ClientT>
-int RunProbe(ConnectionConfig config, std::string subscribe) {
+int RunProbe(ConnectionConfig config, std::string subscribe, int duration_ms) {
   signal_stop_requested.store(false, std::memory_order_relaxed);
   ProbeRuntime<ClientT> runtime(std::move(subscribe));
   MessageCallback consumer{&runtime.probe, &CountPayload};
@@ -182,9 +180,14 @@ int RunProbe(ConnectionConfig config, std::string subscribe) {
   client.SetStateHandler(&runtime, &RecordStateAndMaybeSubscribe<ClientT>);
   client.SetErrorHandler(&runtime, &RecordRuntimeError<ClientT>);
   std::atomic<bool> client_done{false};
-  std::thread stop_watcher([&client, &client_done]() noexcept {
+  std::thread stop_watcher([&client, &client_done, duration_ms]() noexcept {
+    const auto deadline = duration_ms > 0
+                              ? std::chrono::steady_clock::now() +
+                                    std::chrono::milliseconds(duration_ms)
+                              : std::chrono::steady_clock::time_point::max();
     while (!client_done.load(std::memory_order_acquire)) {
-      if (signal_stop_requested.load(std::memory_order_relaxed)) {
+      if (signal_stop_requested.load(std::memory_order_relaxed) ||
+          std::chrono::steady_clock::now() >= deadline) {
         client.Stop();
         return;
       }
@@ -197,19 +200,22 @@ int RunProbe(ConnectionConfig config, std::string subscribe) {
     stop_watcher.join();
   }
   const Metrics metrics = client.SnapshotMetrics();
-  const std::string_view final_state = magic_enum::enum_name(runtime.probe.phase);
-  const std::string_view final_error = magic_enum::enum_name(runtime.probe.error);
-  fmt::print(stderr,
-             FMT_COMPILE("result={} stop_requested={} final_state={} "
-                         "final_error={} rx_bytes={} "
-                         "tx_bytes={} rx_messages={} tx_messages={} "
-                         "heartbeat_timeouts={} subscribe={}\n"),
-             ok ? "ok" : "failed",
-             signal_stop_requested.load(std::memory_order_relaxed) ? "yes" : "no",
-             final_state, final_error,
-             runtime.probe.bytes, metrics.tx_bytes, metrics.rx_messages,
-             metrics.tx_messages, metrics.heartbeat_timeouts,
-             magic_enum::enum_name(runtime.subscribe_status));
+  const std::string_view final_state =
+      magic_enum::enum_name(runtime.probe.phase);
+  const std::string_view final_error =
+      magic_enum::enum_name(runtime.probe.error);
+  fmt::print(
+      stderr,
+      FMT_COMPILE("result={} stop_requested={} final_state={} "
+                  "final_error={} duration_ms={} rx_bytes={} "
+                  "tx_bytes={} rx_messages={} tx_messages={} "
+                  "heartbeat_timeouts={} subscribe={}\n"),
+      ok ? "ok" : "failed",
+      signal_stop_requested.load(std::memory_order_relaxed) ? "yes" : "no",
+      final_state, final_error, duration_ms, runtime.probe.bytes,
+      metrics.tx_bytes, metrics.rx_messages, metrics.tx_messages,
+      metrics.heartbeat_timeouts,
+      magic_enum::enum_name(runtime.subscribe_status));
   return ok ? 0 : 1;
 }
 
@@ -218,17 +224,23 @@ int main(int argc, char** argv) {
 
   CLI::App app{"critical websocket probe"};
   std::string host{"fx-ws.gateio.ws"};
+  std::string connect_ip{};
   std::string port{"443"};
   std::string target{"/v4/ws/usdt"};
   std::string subscribe{};
   int cpu{-1};
+  int duration_ms{0};
   bool tls{true};
   bool no_tls{false};
-  app.add_option("--host", host, "remote host");
+  app.add_option("--host", host, "logical WebSocket host");
+  app.add_option("--connect-ip", connect_ip, "optional TCP connect IP");
   app.add_option("--port", port, "remote port");
   app.add_option("--target", target, "websocket target");
-  app.add_option("--subscribe", subscribe, "optional text frame to send once active");
+  app.add_option("--subscribe", subscribe,
+                 "optional text frame to send once active");
   app.add_option("--cpu", cpu, "owner cpu id");
+  app.add_option("--duration-ms", duration_ms,
+                 "stop automatically after this many ms");
   app.add_flag("--tls", tls, "enable tls");
   app.add_flag("--no-tls", no_tls, "disable tls");
   CLI11_PARSE(app, argc, argv);
@@ -238,7 +250,8 @@ int main(int argc, char** argv) {
 
   ConnectionConfig config{};
   config.host = host;
-  config.service = port;
+  config.connect_ip = connect_ip;
+  config.port = port;
   config.target = target;
   config.enable_tls = tls;
   config.runtime_policy.io_cpu_id = cpu;
@@ -246,7 +259,9 @@ int main(int argc, char** argv) {
       cpu >= 0 ? AffinityMode::kBestEffort : AffinityMode::kNone;
 
   if (tls) {
-    return RunProbe<WebSocketClient>(std::move(config), std::move(subscribe));
+    return RunProbe<WebSocketClient>(std::move(config), std::move(subscribe),
+                                     duration_ms);
   }
-  return RunProbe<PlainWebSocketClient>(std::move(config), std::move(subscribe));
+  return RunProbe<PlainWebSocketClient>(std::move(config), std::move(subscribe),
+                                        duration_ms);
 }

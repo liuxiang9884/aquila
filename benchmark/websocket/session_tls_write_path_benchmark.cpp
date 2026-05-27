@@ -36,7 +36,7 @@ void BenchmarkSessionTlsWritePath(benchmark::State& state) {
 
   ConnectionConfig config{};
   config.host = "localhost";
-  config.service = fmt::format(FMT_COMPILE("{}"), server.port());
+  config.port = fmt::format(FMT_COMPILE("{}"), server.port());
   config.target = "/tls-write-path";
   config.enable_tls = true;
   config.prepared_write_slots = 8;
@@ -128,7 +128,7 @@ void BenchmarkSessionTlsWritePathWithEncode(benchmark::State& state) {
 
   ConnectionConfig config{};
   config.host = "localhost";
-  config.service = fmt::format(FMT_COMPILE("{}"), server.port());
+  config.port = fmt::format(FMT_COMPILE("{}"), server.port());
   config.target = "/tls-write-path";
   config.enable_tls = true;
   config.prepared_write_slots = 8;

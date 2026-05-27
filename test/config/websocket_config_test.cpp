@@ -32,7 +32,8 @@ bind_cpu_id = 2
   const aquila::config::WebSocketConfig& config = result.value;
 
   EXPECT_EQ(config.endpoint.host, "fx-ws.gateio.ws");
-  EXPECT_EQ(config.endpoint.service, "443");
+  EXPECT_TRUE(config.endpoint.connect_ip.empty());
+  EXPECT_EQ(config.endpoint.port, "443");
   EXPECT_FALSE(config.endpoint.enable_tls);
   EXPECT_EQ(config.endpoint.connect_timeout_ms, 10'000u);
 
@@ -62,7 +63,8 @@ bind_cpu_id = 2
       connection_result.value;
 
   EXPECT_EQ(connection.host, "fx-ws.gateio.ws");
-  EXPECT_EQ(connection.service, "443");
+  EXPECT_TRUE(connection.connect_ip.empty());
+  EXPECT_EQ(connection.port, "443");
   EXPECT_EQ(connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_FALSE(connection.enable_tls);
   EXPECT_EQ(connection.cold_path_total_timeout_ms, 10'000u);
@@ -90,7 +92,8 @@ TEST(WebSocketConfigTest, ParsesOptionalSectionsAndMapsAllFields) {
   const auto result = ParseWebSocketToml(R"toml(
 [data_session.websocket.endpoint]
 host = "fstream.binance.com"
-service = "9443"
+connect_ip = "203.0.113.7"
+port = "9443"
 enable_tls = true
 connect_timeout_ms = 2500
 
@@ -128,7 +131,8 @@ max_attempts = 7
       connection_result.value;
 
   EXPECT_EQ(connection.host, "fstream.binance.com");
-  EXPECT_EQ(connection.service, "9443");
+  EXPECT_EQ(connection.connect_ip, "203.0.113.7");
+  EXPECT_EQ(connection.port, "9443");
   EXPECT_EQ(connection.target, "/public/ws/btcusdt@bookTicker");
   EXPECT_TRUE(connection.enable_tls);
   EXPECT_EQ(connection.cold_path_total_timeout_ms, 2500u);

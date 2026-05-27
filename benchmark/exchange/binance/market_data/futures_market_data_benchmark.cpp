@@ -388,7 +388,7 @@ SymbolSet BuildSymbols(size_t symbol_count) {
 ws::ConnectionConfig BuildConnectionConfig() {
   ws::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "443";
+  config.port = "443";
   config.enable_tls = false;
   return config;
 }

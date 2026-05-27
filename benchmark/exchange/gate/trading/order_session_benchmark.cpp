@@ -396,7 +396,7 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
     std::size_t prepared_write_bytes = 4096) {
   websocket::ConnectionConfig config{};
   config.host = "localhost";
-  config.service = "80";
+  config.port = "80";
   config.target = "/v4/ws/usdt";
   config.prepared_write_slots = prepared_write_slots;
   config.prepared_write_bytes = prepared_write_bytes;

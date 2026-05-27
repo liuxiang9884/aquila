@@ -102,7 +102,7 @@ class TestOrderSession
   static websocket::ConnectionConfig MakeConfig() {
     websocket::ConnectionConfig config{};
     config.host = "localhost";
-    config.service = "80";
+    config.port = "80";
     config.target = "/v4/ws/usdt";
     config.prepared_write_slots = 8;
     config.prepared_write_bytes = 4096;

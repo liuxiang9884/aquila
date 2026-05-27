@@ -79,7 +79,7 @@ websocket::ConnectionConfig MakeConnectionConfig() {
   websocket::ConnectionConfig config;
   config.host = "127.0.0.1";
   config.target = "/v4/ws/usdt";
-  config.service = "1";
+  config.port = "1";
   config.enable_tls = false;
   return config;
 }

@@ -41,7 +41,7 @@ TEST(OrderFeedbackSessionConfigTest,
   EXPECT_EQ(config.credentials.api_secret_env, "TEST_SECRET");
 
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
-  EXPECT_EQ(config.connection.service, "443");
+  EXPECT_EQ(config.connection.port, "443");
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 4);

@@ -52,8 +52,8 @@ template <typename SessionT>
 void PrintSession(const SessionT& session) {
   const ws::ConnectionConfig& connection = session.connection();
   NOVA_INFO("name={}", session.name());
-  NOVA_INFO("websocket host={} service={} target={} tls={} bind_cpu_id={}",
-            connection.host, connection.service, connection.target,
+  NOVA_INFO("websocket host={} port={} target={} tls={} bind_cpu_id={}",
+            connection.host, connection.port, connection.target,
             connection.enable_tls ? "true" : "false",
             connection.runtime_policy.io_cpu_id);
   for (const aq_binance::SymbolBinding& symbol : session.symbols()) {

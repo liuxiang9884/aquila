@@ -63,10 +63,10 @@ void PrintConfig(const gate::OrderFeedbackSessionConfig& config,
   fmt::print("config name={} duration_sec={:.3f} connect={}\n", config.name,
              options.duration_sec, options.connect ? "true" : "false");
   fmt::print(
-      "websocket host={} service={} target={} tls={} bind_cpu_id={} "
+      "websocket host={} port={} target={} tls={} bind_cpu_id={} "
       "size_decimal_header={}\n",
-      config.connection.host, config.connection.service,
-      config.connection.target, config.connection.enable_tls ? "true" : "false",
+      config.connection.host, config.connection.port, config.connection.target,
+      config.connection.enable_tls ? "true" : "false",
       config.connection.runtime_policy.io_cpu_id,
       gate::HasGateSizeDecimalHeader(config.connection) ? "true" : "false");
   fmt::print("credentials api_key_env={} api_secret_env={}\n",
@@ -81,13 +81,13 @@ void PrintConfig(const gate::OrderFeedbackSessionConfig& config,
   PrintBool("remove_existing", config.shm.remove_existing);
   fmt::print("\n");
   NOVA_INFO(
-      "config name={} duration_sec={:.3f} connect={} host={} service={} "
+      "config name={} duration_sec={:.3f} connect={} host={} port={} "
       "target={} tls={} bind_cpu_id={} size_decimal_header={} "
       "shm_name={} channel_name={} "
       "queue_capacity={} create={} remove_existing={}",
       config.name, options.duration_sec, options.connect ? "true" : "false",
-      config.connection.host, config.connection.service,
-      config.connection.target, config.connection.enable_tls ? "true" : "false",
+      config.connection.host, config.connection.port, config.connection.target,
+      config.connection.enable_tls ? "true" : "false",
       config.connection.runtime_policy.io_cpu_id,
       gate::HasGateSizeDecimalHeader(config.connection) ? "true" : "false",
       config.shm.shm_name, config.shm.channel_name, config.shm.queue_capacity,

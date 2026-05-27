@@ -13,7 +13,8 @@ namespace aquila::config {
 
 struct WebSocketEndpointConfig {
   std::string host;
-  std::string service{"443"};
+  std::string connect_ip;
+  std::string port{"443"};
   bool enable_tls{true};
   std::uint32_t connect_timeout_ms{10'000};
 };

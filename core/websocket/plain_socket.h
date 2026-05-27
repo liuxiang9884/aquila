@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstddef>
 #include <span>
+#include <string>
 
 #include <fcntl.h>
 #include <netdb.h>
@@ -22,12 +23,16 @@ class PlainSocket {
 
   PlainSocket() = default;
 
-  ~PlainSocket() noexcept { Close(); }
+  ~PlainSocket() noexcept {
+    Close();
+  }
 
   PlainSocket(const PlainSocket&) = delete;
   PlainSocket& operator=(const PlainSocket&) = delete;
 
-  PlainSocket(PlainSocket&& other) noexcept { MoveFrom(other); }
+  PlainSocket(PlainSocket&& other) noexcept {
+    MoveFrom(other);
+  }
 
   PlainSocket& operator=(PlainSocket&& other) noexcept {
     if (this != &other) {
@@ -60,9 +65,14 @@ class PlainSocket {
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
+    const std::string& connect_host =
+        config.connect_ip.empty() ? config.host : config.connect_ip;
+    if (!config.connect_ip.empty()) {
+      hints.ai_flags |= AI_NUMERICHOST;
+    }
 
     addrinfo* addresses = nullptr;
-    if (getaddrinfo(config.host.c_str(), config.service.c_str(), &hints,
+    if (getaddrinfo(connect_host.c_str(), config.port.c_str(), &hints,
                     &addresses) != 0) {
       return false;
     }
@@ -70,8 +80,8 @@ class PlainSocket {
     bool connected = false;
     for (addrinfo* current = addresses; current != nullptr;
          current = current->ai_next) {
-      const int fd =
-          ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+      const int fd = ::socket(current->ai_family, current->ai_socktype,
+                              current->ai_protocol);
       if (fd < 0) {
         continue;
       }
@@ -142,7 +152,9 @@ class PlainSocket {
     return result;
   }
 
-  size_t PendingReadableBytes() const noexcept { return 0; }
+  size_t PendingReadableBytes() const noexcept {
+    return 0;
+  }
 
   ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
     wants_read_ = false;
@@ -158,11 +170,17 @@ class PlainSocket {
     return result;
   }
 
-  bool WantsRead() const noexcept { return wants_read_; }
+  bool WantsRead() const noexcept {
+    return wants_read_;
+  }
 
-  bool WantsWrite() const noexcept { return wants_write_; }
+  bool WantsWrite() const noexcept {
+    return wants_write_;
+  }
 
-  int NativeFd() const noexcept { return fd_; }
+  int NativeFd() const noexcept {
+    return fd_;
+  }
 
   void Close() noexcept {
     wants_read_ = false;

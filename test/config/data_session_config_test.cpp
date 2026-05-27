@@ -109,7 +109,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   const aquila::gate::DataSessionConfig& config = config_result.value;
   EXPECT_EQ(config.name, "gate_data_session");
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
-  EXPECT_EQ(config.connection.service, "443");
+  EXPECT_EQ(config.connection.port, "443");
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 2);
@@ -140,7 +140,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   Session session(config, data_sink);
   EXPECT_EQ(session.name(), "gate_data_session");
   EXPECT_EQ(session.connection().host, "fx-ws.gateio.ws");
-  EXPECT_EQ(session.connection().service, "443");
+  EXPECT_EQ(session.connection().port, "443");
   EXPECT_TRUE(session.connection().enable_tls);
   EXPECT_EQ(session.connection().target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
   EXPECT_EQ(session.connection().runtime_policy.io_cpu_id, 2);
@@ -471,7 +471,7 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   const aquila::binance::DataSessionConfig& config = config_result.value;
   EXPECT_EQ(config.name, "binance_data_session");
   EXPECT_EQ(config.connection.host, "fstream.binance.com");
-  EXPECT_EQ(config.connection.service, "443");
+  EXPECT_EQ(config.connection.port, "443");
   EXPECT_TRUE(config.connection.enable_tls);
   EXPECT_EQ(config.connection.target,
             "/public/ws/btcusdt@bookTicker/ethusdt@bookTicker/"
@@ -502,7 +502,7 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   Session session(config, data_sink);
   EXPECT_EQ(session.name(), "binance_data_session");
   EXPECT_EQ(session.connection().host, "fstream.binance.com");
-  EXPECT_EQ(session.connection().service, "443");
+  EXPECT_EQ(session.connection().port, "443");
   EXPECT_TRUE(session.connection().enable_tls);
   EXPECT_EQ(session.connection().target,
             "/public/ws/btcusdt@bookTicker/ethusdt@bookTicker/"

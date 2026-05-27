@@ -63,7 +63,7 @@ void RecordState(void* context, ConnectionPhase phase) noexcept {
 ConnectionConfig BuildDegradedConfig(int port) {
   ConnectionConfig config{};
   config.host = "localhost";
-  config.service = fmt::format("{}", port);
+  config.port = fmt::format("{}", port);
   config.target = "/";
   config.enable_tls = true;
   config.cold_path_total_timeout_ms = 2'000;

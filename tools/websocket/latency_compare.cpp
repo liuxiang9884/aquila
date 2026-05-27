@@ -60,14 +60,14 @@ struct EndpointCounters {
 std::string FormatSockaddr(const sockaddr_storage& storage,
                            socklen_t storage_len) {
   char host[NI_MAXHOST]{};
-  char service[NI_MAXSERV]{};
-  const int rc = ::getnameinfo(
-      reinterpret_cast<const sockaddr*>(&storage), storage_len, host,
-      sizeof(host), service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);
+  char port[NI_MAXSERV]{};
+  const int rc = ::getnameinfo(reinterpret_cast<const sockaddr*>(&storage),
+                               storage_len, host, sizeof(host), port,
+                               sizeof(port), NI_NUMERICHOST | NI_NUMERICSERV);
   if (rc != 0) {
     return "unavailable";
   }
-  return fmt::format(FMT_COMPILE("{}:{}"), host, service);
+  return fmt::format(FMT_COMPILE("{}:{}"), host, port);
 }
 
 int PrintSocketInfo(std::string_view label, int fd) {
@@ -127,7 +127,7 @@ class EndpointRunner {
   void Start() {
     ws::ConnectionConfig config{};
     config.host = endpoint_.host;
-    config.service = endpoint_.port;
+    config.port = endpoint_.port;
     config.target = endpoint_.target;
     config.enable_tls = ClientT::TransportUsesTls;
     config.max_reads_per_drive = 8;
