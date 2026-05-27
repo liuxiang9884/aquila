@@ -185,15 +185,19 @@ class OrderSessionRuntimeAdapter {
 
   OrderSessionRuntimeAdapter(
       websocket::ConnectionConfig config, gate::LoginCredentials credentials,
-      std::size_t request_map_capacity = gate::kDefaultOrderRequestMapCapacity)
+      std::size_t request_map_capacity = gate::kDefaultOrderRequestMapCapacity,
+      OrderSessionSocketDiagnosticsConfig socket_diagnostics_config = {})
       : impl_(std::make_unique<Impl>(std::move(config), std::move(credentials),
-                                     request_map_capacity)) {}
+                                     request_map_capacity,
+                                     socket_diagnostics_config)) {}
 
   OrderSessionRuntimeAdapter(gate::OrderSessionConfig config,
                              gate::LoginCredentials credentials)
-      : OrderSessionRuntimeAdapter(std::move(config.connection),
-                                   std::move(credentials),
-                                   config.request_map_capacity) {}
+      : OrderSessionRuntimeAdapter(
+            std::move(config.connection), std::move(credentials),
+            config.request_map_capacity,
+            OrderSessionSocketDiagnosticsConfig{
+                .enable_tcp_info = config.enable_tcp_info_diagnostics}) {}
 
   ~OrderSessionRuntimeAdapter() {
     Stop();
@@ -291,9 +295,10 @@ class OrderSessionRuntimeAdapter {
   class Impl {
    public:
     Impl(websocket::ConnectionConfig config, gate::LoginCredentials credentials,
-         std::size_t request_map_capacity)
+         std::size_t request_map_capacity,
+         OrderSessionSocketDiagnosticsConfig socket_diagnostics_config)
         : session_(std::move(config), std::move(credentials), response_handler_,
-                   request_map_capacity) {}
+                   request_map_capacity, socket_diagnostics_config) {}
 
     ~Impl() {
       Stop();

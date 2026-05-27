@@ -91,6 +91,14 @@ class TestOrderSession
             LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
             request_map_capacity) {}
 
+  TestOrderSession(Handler& handler,
+                   OrderSessionSocketDiagnosticsConfig diagnostics_config)
+      : OrderSession<Handler, OrderSessionDefaultPlainWebSocketPolicy,
+                     OrderSessionDiagnostics>(
+            MakeConfig(),
+            LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
+            kDefaultOrderRequestMapCapacity, diagnostics_config) {}
+
   static websocket::ConnectionConfig MakeConfig() {
     websocket::ConnectionConfig config{};
     config.host = "localhost";
@@ -343,6 +351,11 @@ TEST(OrderSessionTest, LogsConnectionWithSessionIdAndOwnerCpu) {
       g_connection_log_records[0];
   EXPECT_EQ(record.order_session_id, session.order_session_id());
   EXPECT_GE(record.owner_thread_cpu, -1);
+  EXPECT_FALSE(record.endpoint_available);
+  EXPECT_EQ(record.local_ip, "");
+  EXPECT_EQ(record.local_port, 0U);
+  EXPECT_EQ(record.remote_ip, "");
+  EXPECT_EQ(record.remote_port, 0U);
 
   ResetOrderSessionLogObservers();
 }
@@ -375,6 +388,32 @@ TEST(OrderSessionTest, SendAndAckLogsExposeSessionIdAndCpu) {
   EXPECT_EQ(response_record.local_order_id, 123U);
   EXPECT_EQ(response_record.request_sequence, 2U);
   EXPECT_GE(response_record.ack_cpu, -1);
+  EXPECT_FALSE(response_record.tcp_info_available);
+  EXPECT_EQ(response_record.tcp_info_rtt_us, 0U);
+  EXPECT_EQ(response_record.tcp_info_total_retrans, 0U);
+
+  ResetOrderSessionLogObservers();
+}
+
+TEST(OrderSessionTest, TcpInfoDiagnosticsCanBeEnabledWithoutSocketSnapshot) {
+  ResetOrderSessionLogObservers();
+  detail::SetOrderSessionResponseLogObserverForTest(&CaptureResponseLog);
+
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(
+      handler, OrderSessionSocketDiagnosticsConfig{.enable_tcp_info = true});
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  session.Handle(TextView(PlaceAckResponse()));
+
+  ASSERT_EQ(g_response_log_record_count, 1U);
+  const detail::OrderSessionResponseLogRecordForTest& response_record =
+      g_response_log_records[0];
+  EXPECT_TRUE(response_record.tcp_info_requested);
+  EXPECT_FALSE(response_record.tcp_info_available);
+  EXPECT_EQ(response_record.tcp_info_rtt_us, 0U);
 
   ResetOrderSessionLogObservers();
 }
@@ -401,6 +440,8 @@ TEST(OrderSessionTest, AckLatencyDiagnosticLogExposeSessionIdAndCpu) {
   EXPECT_EQ(record.local_order_id, 123U);
   EXPECT_EQ(record.request_sequence, 2U);
   EXPECT_GE(record.diagnostic_cpu, -1);
+  EXPECT_FALSE(record.tcp_info_available);
+  EXPECT_EQ(record.tcp_info_rtt_us, 0U);
 
   ResetOrderSessionLogObservers();
 }

@@ -33,16 +33,17 @@
 
 ### 连接级字段
 
-这些字段用于区分多条 Gate `OrderSession` / WebSocket 连接的实际路径。第一批已落地字段输出在低频 log
-`gate_order_session_connected` 中；endpoint / DNS 字段仍等待 WebSocket 层暴露稳定连接快照。
+这些字段用于区分多条 Gate `OrderSession` / WebSocket 连接的实际路径。连接 active 时低频输出在
+`gate_order_session_connected` 中；DNS `resolved_ips` 仍等待 WebSocket 层暴露稳定 resolver 快照。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `order_session_id` | `gate_order_session_connected` / `gate_order_send_ok` / `gate_order_response` / `gate_order_ack_latency_diagnostic` | experiment | 本进程内单调 id | 关联同一条 `OrderSession` 的 send、ack、diagnostic 和 summary。 | 多 session 诊断停止且所有下游 parser 不再依赖。 |
-| `local_ip` | `gate_order_session_connected` | planned | IP 文本 | 记录本地 TCP endpoint，用于区分 NAT / source address。 | 被等价 endpoint snapshot 取代。 |
-| `local_port` | `gate_order_session_connected` | planned | TCP port | 区分同 remote endpoint 下的不同连接。 | 被等价 endpoint snapshot 取代。 |
-| `remote_ip` | `gate_order_session_connected` | planned | IP 文本 | 判断慢 session 是否落到不同 remote IP / gateway。 | 被等价 endpoint snapshot 取代。 |
-| `remote_port` | `gate_order_session_connected` | planned | TCP port | 记录远端 TCP endpoint。 | 被等价 endpoint snapshot 取代。 |
+| `endpoint_available` | `gate_order_session_connected` | experiment | `true` / `false` | 表示本地 / 远端 endpoint snapshot 是否可用；不可用时 endpoint 字段为空或 0。 | endpoint snapshot 不再使用时删除。 |
+| `local_ip` | `gate_order_session_connected` / report CSV | experiment | IP 文本 | 记录本地 TCP endpoint，用于区分 NAT / source address。 | 被等价 endpoint snapshot 取代。 |
+| `local_port` | `gate_order_session_connected` / report CSV | experiment | TCP port | 区分同 remote endpoint 下的不同连接。 | 被等价 endpoint snapshot 取代。 |
+| `remote_ip` | `gate_order_session_connected` / report CSV | experiment | IP 文本 | 判断慢 session 是否落到不同 remote IP / gateway。 | 被等价 endpoint snapshot 取代。 |
+| `remote_port` | `gate_order_session_connected` / report CSV | experiment | TCP port | 记录远端 TCP endpoint。 | 被等价 endpoint snapshot 取代。 |
 | `owner_thread_cpu` | `gate_order_session_connected` | experiment | Linux CPU id，失败为 `-1` | 确认 session 进入 active 时 owner thread 实际运行 CPU。 | 被更完整 thread affinity / sched snapshot 取代。 |
 | `resolved_ips` | `gate_order_session_connected` | planned | DNS 结果列表 | 区分 hostname 相同但 DNS / connect 目标不同的情况。 | WebSocket 层无法稳定提供时可留空；若无消费者可删除。 |
 
@@ -63,8 +64,8 @@
 | `ack_rtt_ns` | diagnostic / report CSV | stable | ns | 本地发送到本地收到 Ack 的主指标。 | 不能删除；latency report 主字段。 |
 | `inflight` | `gate_order_send_ok` | stable | 当前 inflight 数量 | 观察 request map pressure。 | 若被 per-session summary 全面取代，可评估删除。 |
 | `latency_diagnostic_inflight_at_send` | diagnostic / report CSV | experiment | 当前 inflight 数量 | Ack outlier 时确认发送瞬间是否存在排队压力。 | Ack outlier 诊断结束且无下游依赖后可删除。 |
-| `send_cpu` | `gate_order_send_ok` | experiment | Linux CPU id，失败为 `-1` | 确认发送时 owner thread 运行 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
-| `ack_cpu` | `gate_order_response` | experiment | Linux CPU id，失败为 `-1` | 确认 Ack / submit result 本地处理时 owner thread 运行 CPU；用于对比 send CPU 和 owner CPU。 | 被完整 sched trace 或 thread sample 取代。 |
+| `send_cpu` | `gate_order_send_ok` / report CSV | experiment | Linux CPU id，失败为 `-1` | 确认发送时 owner thread 运行 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
+| `ack_cpu` | `gate_order_response` / report CSV | experiment | Linux CPU id，失败为 `-1` | 确认 Ack / submit result 本地处理时 owner thread 运行 CPU；用于对比 send CPU 和 owner CPU。 | 被完整 sched trace 或 thread sample 取代。 |
 
 ### 分阶段 Ack latency diagnostic 字段
 
@@ -78,21 +79,24 @@
 | `send_to_first_drive_read_ns` | diagnostic / report CSV | experiment | ns | 判断 owner thread 是否及时进入 `DriveRead()`。 | 若被更直接 scheduler trace 取代可删除。 |
 | `drive_read_duration_ns` | diagnostic / report CSV | experiment | ns | 记录触发时单次 `DriveRead()` 耗时。 | 若 read path tail 已通过其他 profile 覆盖可删除。 |
 | `max_observed_drive_read_duration_ns` | diagnostic / report CSV | experiment | ns | 诊断窗口内最大 `DriveRead()` 耗时。 | 同上。 |
-| `diagnostic_cpu` | `gate_order_ack_latency_diagnostic` | experiment | Linux CPU id，失败为 `-1` | 记录触发 latency diagnostic log 时 owner thread 所在 CPU；Ack RTT 阈值触发时通常等价于 Ack 处理 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
+| `diagnostic_cpu` | `gate_order_ack_latency_diagnostic` / report CSV | experiment | Linux CPU id，失败为 `-1` | 记录触发 latency diagnostic log 时 owner thread 所在 CPU；Ack RTT 阈值触发时通常等价于 Ack 处理 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
 
-### 计划中的 TCP_INFO 字段
+### TCP_INFO 字段
 
-这些字段用于解释多个 `OrderSession` Ack RTT 不同的问题。采集点应限制在 ack、diagnostic 或 summary，不要放入无订单
-hot loop。endpoint 字段和 `TCP_INFO` 计划一起补齐，便于同一轮实验直接判断 remote endpoint 与 kernel RTT。
+这些字段用于解释多个 `OrderSession` Ack RTT 不同的问题。采集点限制在 `gate_order_response` 和
+`gate_order_ack_latency_diagnostic`，由 `order_session.diagnostics.enable_tcp_info` 显式打开；默认关闭时仍输出
+`tcp_info_requested=false` / `tcp_info_available=false`，但不调用 `getsockopt(TCP_INFO)`。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `tcp_info_rtt_us` | response / diagnostic / summary | planned | microseconds | kernel TCP RTT 估计，用于区分网络 RTT 与本地调度。 | TCP_INFO 不可用或被外部采样取代。 |
-| `tcp_info_rttvar_us` | response / diagnostic / summary | planned | microseconds | kernel TCP RTT variance 估计。 | 同上。 |
-| `tcp_info_retrans` | response / diagnostic / summary | planned | counter | 当前 TCP retrans 相关字段，字段语义需按 Linux `tcp_info` 明确。 | 同上。 |
-| `tcp_info_total_retrans` | response / diagnostic / summary | planned | counter | 连接累计重传数。 | 同上。 |
-| `tcp_info_unacked` | response / diagnostic / summary | planned | packet count | 当前未确认 packet 数。 | 同上。 |
-| `tcp_info_snd_cwnd` | response / diagnostic / summary | planned | packet count | TCP send congestion window。 | 同上。 |
+| `tcp_info_requested` | response / diagnostic | experiment | `true` / `false` | 标记本条 log 是否启用了 TCP_INFO 采集，区分“未请求”和“请求但不可用”。 | TCP_INFO 诊断删除时同步删除。 |
+| `tcp_info_available` | response / diagnostic / report CSV | experiment | `true` / `false` | 标记本次 `TCP_INFO` snapshot 是否成功。 | 同上。 |
+| `tcp_info_rtt_us` | response / diagnostic / report CSV | experiment | microseconds | kernel TCP RTT 估计，用于区分网络 RTT 与本地调度。 | TCP_INFO 不可用或被外部采样取代。 |
+| `tcp_info_rttvar_us` | response / diagnostic / report CSV | experiment | microseconds | kernel TCP RTT variance 估计。 | 同上。 |
+| `tcp_info_retrans` | response / diagnostic / report CSV | experiment | counter | Linux `tcp_info.tcpi_retrans`。 | 同上。 |
+| `tcp_info_total_retrans` | response / diagnostic / report CSV | experiment | counter | Linux `tcp_info.tcpi_total_retrans`，连接累计重传数。 | 同上。 |
+| `tcp_info_unacked` | response / diagnostic / report CSV | experiment | packet count | Linux `tcp_info.tcpi_unacked`，当前未确认 packet 数。 | 同上。 |
+| `tcp_info_snd_cwnd` | response / diagnostic / report CSV | experiment | packet count | Linux `tcp_info.tcpi_snd_cwnd`，TCP send congestion window。 | 同上。 |
 
 ## Gate OrderFeedbackSession
 
@@ -162,6 +166,12 @@ hot loop。endpoint 字段和 `TCP_INFO` 计划一起补齐，便于同一轮实
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
+| `order_session_id` | `order_detail.csv` / `latency.csv` | experiment | 本进程内单调 id | 将订单行关联回 Gate `OrderSession`。 | Gate OrderSession 多连接诊断删除后同步删除。 |
+| `owner_thread_cpu` | `order_detail.csv` / `latency.csv` | experiment | Linux CPU id，失败为 `-1` | 将 session active 时 owner CPU 合并进 report。 | 同上。 |
+| `local_ip` / `local_port` | `order_detail.csv` / `latency.csv` | experiment | TCP endpoint | 将本地 TCP endpoint 合并进 report。 | endpoint 诊断删除后同步删除。 |
+| `remote_ip` / `remote_port` | `order_detail.csv` / `latency.csv` | experiment | TCP endpoint | 将远端 TCP endpoint 合并进 report。 | endpoint 诊断删除后同步删除。 |
+| `send_cpu` / `ack_cpu` / `diagnostic_cpu` | `order_detail.csv` / `latency.csv` | experiment | Linux CPU id，失败为 `-1`；多 diagnostic CPU 用 `;` 合并 | 将下单发送、Ack 处理和 diagnostic 输出时的 owner CPU 合并进 report。 | CPU 诊断删除后同步删除。 |
+| `tcp_info_*` | `order_detail.csv` / `latency.csv` | experiment | 见 Gate OrderSession section | 将 `gate_order_response` / `gate_order_ack_latency_diagnostic` 的 TCP_INFO snapshot 合并进 report；数值字段多次出现取最大值。 | TCP_INFO 诊断删除后同步删除。 |
 | `latency_diagnostic_*` | `order_detail.csv` / `latency.csv` | experiment | 见 Gate OrderSession section | 将 `gate_order_ack_latency_diagnostic` 合并进 report。 | Gate OrderSession diagnostic 删除后同步删除。 |
 | `send_to_ack_local_ns` | `latency.csv` | stable | ns | 本地 send 到 Ack receive。 | 不能删除；等价于主 Ack RTT 校验字段。 |
 | `send_to_finish_local_ns` | `latency.csv` | stable | ns | 本地 send 到策略终态处理完成。 | 不能删除；用于区分 Ack path 与 terminal lifecycle。 |

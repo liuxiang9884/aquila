@@ -21,6 +21,7 @@ struct RawOrderSessionConfig {
   OrderSessionCredentialsConfig credentials;
   config::WebSocketConfig websocket;
   std::size_t request_map_capacity{kDefaultOrderRequestMapCapacity};
+  bool enable_tcp_info_diagnostics{false};
 };
 
 struct RawConfigFile {
@@ -107,6 +108,12 @@ class OrderSessionConfigParser {
     return static_cast<std::size_t>(*value);
   }
 
+  [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
+                            bool fallback) const {
+    const std::optional<bool> value = value_node.value<bool>();
+    return value.value_or(fallback);
+  }
+
   void ParseOrderSession() {
     const toml::node_view<const toml::node> order_session =
         node_["order_session"];
@@ -128,6 +135,9 @@ class OrderSessionConfigParser {
     if (!ok_) {
       return;
     }
+    config_.order_session.enable_tcp_info_diagnostics =
+        BoolOr(order_session["diagnostics"]["enable_tcp_info"],
+               config_.order_session.enable_tcp_info_diagnostics);
 
     const toml::node_view<const toml::node> credentials =
         order_session["credentials"];
@@ -158,6 +168,8 @@ class OrderSessionConfigParser {
         std::move(config_.order_session.credentials);
     order_session_config.request_map_capacity =
         config_.order_session.request_map_capacity;
+    order_session_config.enable_tcp_info_diagnostics =
+        config_.order_session.enable_tcp_info_diagnostics;
     return Success(std::move(order_session_config));
   }
 

@@ -67,9 +67,10 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
                 """
                 I2026-05-25 02:29:35.105545332 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_ticker_id=10624277384126 trigger_exchange=kBinance trigger_symbol_id=4 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2711
                 I2026-05-25 02:29:35.105549026 1:1 strategy.h:LogStrategyOrderIntent:189] lead_lag_order_intent trigger_ticker_id=10624277384126 symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=36 price=0.2714 raw_price=0.2711 order_price=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=0
-                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
+                I2026-05-25 02:29:35.105560000 1:1 order_session.h:LogGateOrderSessionConnected:1] gate_order_session_connected order_session_id=9 owner_thread_cpu=4 endpoint_available=true local_ip=10.0.0.1 local_port=12345 remote_ip=1.2.3.4 remote_port=443
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883 order_session_id=9 send_cpu=4
                 I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711749 trigger_ticker_id=10624277384126 trigger_exchange=kBinance trigger_symbol_id=4 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711749 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
-                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348
+                I2026-05-25 02:29:35.111554171 1:1 order_session.h:LogGateOrderResponse:517] gate_order_response kind=kAck local_order_id=288230376151711749 exchange_order_id=0 request_sequence=6 channel=2 http_status=200 error_label_hash=0 error_label= error_message= local_receive_ns=1779676175111547348 exchange_ns=1779676175107083000 exchange_to_local_ns=4464348 order_session_id=9 ack_cpu=4 tcp_info_available=true tcp_info_rtt_us=7123 tcp_info_rttvar_us=456 tcp_info_retrans=0 tcp_info_total_retrans=1 tcp_info_unacked=0 tcp_info_snd_cwnd=10
                 I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kFilled local_order_id=288230376151711749 exchange_order_id=260082878984634644 cumulative_filled_quantity=36 left_quantity=0 cancelled_quantity=0 fill_price=0.2714 role=kTaker finish_reason=kUnknown reject_reason=kUnknown
                 I2026-05-25 02:29:35.117545430 1:1 strategy.h:LogStrategyOrderFinished:335] lead_lag_order_finished local_order_id=288230376151711749 symbol_id=4 symbol=PROVE_USDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=288230376151711749 order_finished_local_ns=1779676175117545430 quantity=36 cumulative_filled_quantity=36 average_fill_price=0.2714 last_fill_price=0.2714 exchange_order_id=260082878984634644 active_groups=1 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175111547348 response_local_receive_ns=0 ack_exchange_ns=1779676175107083000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1779676175113000000 ack_rtt_ns=5992465 response_rtt_ns=0 ack_exchange_to_local_ns=4464348 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
                 """,
@@ -108,6 +109,17 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["fee_quote_estimated"], "0.01563264")
         self.assertEqual(row["fee_source"], "config_estimated")
         self.assertEqual(row["ack_rtt_ns"], "5992465")
+        self.assertEqual(row["order_session_id"], "9")
+        self.assertEqual(row["owner_thread_cpu"], "4")
+        self.assertEqual(row["local_ip"], "10.0.0.1")
+        self.assertEqual(row["local_port"], "12345")
+        self.assertEqual(row["remote_ip"], "1.2.3.4")
+        self.assertEqual(row["remote_port"], "443")
+        self.assertEqual(row["send_cpu"], "4")
+        self.assertEqual(row["ack_cpu"], "4")
+        self.assertEqual(row["tcp_info_available"], "true")
+        self.assertEqual(row["tcp_info_rtt_us"], "7123")
+        self.assertEqual(row["tcp_info_total_retrans"], "1")
         self.assertEqual(row["order_finished_local_ns"], "1779676175117545430")
         self.assertEqual(row["source_schema"], "submitted_v1")
         self.assertEqual(row["warnings"], "")
@@ -267,8 +279,8 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
                 log_path,
                 """
                 I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=288230376151711749 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1779676175105554883
-                W2026-05-25 02:29:35.125000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kSendToDriveReadThreshold local_order_id=288230376151711749 request_sequence=6 request_send_local_ns=1779676175105554883 ack_local_receive_ns=0 ack_exchange_ns=0 ack_rtt_ns=0 send_to_first_after_hook_ns=1000 send_to_first_drive_read_ns=3499001 drive_read_duration_ns=0 max_observed_drive_read_duration_ns=0 inflight_at_send=7
-                W2026-05-25 02:29:35.130000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kAckRttThreshold local_order_id=288230376151711749 request_sequence=6 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175324554883 ack_exchange_ns=1779676175300000000 ack_rtt_ns=219000000 send_to_first_after_hook_ns=1000 send_to_first_drive_read_ns=3499001 drive_read_duration_ns=1300001 max_observed_drive_read_duration_ns=1300001 inflight_at_send=7
+                W2026-05-25 02:29:35.125000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kSendToDriveReadThreshold local_order_id=288230376151711749 request_sequence=6 request_send_local_ns=1779676175105554883 ack_local_receive_ns=0 ack_exchange_ns=0 ack_rtt_ns=0 send_to_first_after_hook_ns=1000 send_to_first_drive_read_ns=3499001 drive_read_duration_ns=0 max_observed_drive_read_duration_ns=0 inflight_at_send=7 order_session_id=9 diagnostic_cpu=4 tcp_info_available=true tcp_info_rtt_us=7000 tcp_info_rttvar_us=450 tcp_info_retrans=0 tcp_info_total_retrans=1 tcp_info_unacked=0 tcp_info_snd_cwnd=10
+                W2026-05-25 02:29:35.130000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kAckRttThreshold local_order_id=288230376151711749 request_sequence=6 request_send_local_ns=1779676175105554883 ack_local_receive_ns=1779676175324554883 ack_exchange_ns=1779676175300000000 ack_rtt_ns=219000000 send_to_first_after_hook_ns=1000 send_to_first_drive_read_ns=3499001 drive_read_duration_ns=1300001 max_observed_drive_read_duration_ns=1300001 inflight_at_send=7 order_session_id=9 diagnostic_cpu=5 tcp_info_available=true tcp_info_rtt_us=9000 tcp_info_rttvar_us=500 tcp_info_retrans=0 tcp_info_total_retrans=2 tcp_info_unacked=0 tcp_info_snd_cwnd=10
                 """,
             )
 
@@ -287,6 +299,11 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["drive_read_duration_ns"], "1300001")
         self.assertEqual(row["max_observed_drive_read_duration_ns"], "1300001")
         self.assertEqual(row["latency_diagnostic_inflight_at_send"], "7")
+        self.assertEqual(row["order_session_id"], "9")
+        self.assertEqual(row["diagnostic_cpu"], "4;5")
+        self.assertEqual(row["tcp_info_available"], "true")
+        self.assertEqual(row["tcp_info_rtt_us"], "9000")
+        self.assertEqual(row["tcp_info_total_retrans"], "2")
 
     def test_latency_detail_includes_non_ack_submit_response_timing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

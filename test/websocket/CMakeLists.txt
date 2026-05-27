@@ -19,6 +19,8 @@ target_link_libraries(websocket_frame_codec_test
         aquila_evaluation
 )
 add_websocket_gtest(websocket_tls_socket_test tls_socket_test.cpp)
+add_websocket_gtest(websocket_socket_diagnostics_test
+                    socket_diagnostics_test.cpp)
 add_websocket_gtest(websocket_critical_session_test critical_session_test.cpp)
 add_websocket_gtest(websocket_reconnect_classifier_test
                     reconnect_classifier_test.cpp)

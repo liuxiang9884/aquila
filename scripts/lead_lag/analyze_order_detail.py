@@ -63,6 +63,22 @@ ORDER_DETAIL_FIELDS = [
     "fee_rate_config",
     "fee_quote_estimated",
     "fee_source",
+    "order_session_id",
+    "owner_thread_cpu",
+    "local_ip",
+    "local_port",
+    "remote_ip",
+    "remote_port",
+    "send_cpu",
+    "ack_cpu",
+    "diagnostic_cpu",
+    "tcp_info_available",
+    "tcp_info_rtt_us",
+    "tcp_info_rttvar_us",
+    "tcp_info_retrans",
+    "tcp_info_total_retrans",
+    "tcp_info_unacked",
+    "tcp_info_snd_cwnd",
     "ack_rtt_ns",
     "latency_diagnostic_reason",
     "latency_diagnostic_ack_rtt_ns",
@@ -157,6 +173,22 @@ LATENCY_DETAIL_FIELDS = [
     "ack_exchange_to_local_ns",
     "response_exchange_to_local_ns",
     "exchange_lifecycle_ns",
+    "order_session_id",
+    "owner_thread_cpu",
+    "local_ip",
+    "local_port",
+    "remote_ip",
+    "remote_port",
+    "send_cpu",
+    "ack_cpu",
+    "diagnostic_cpu",
+    "tcp_info_available",
+    "tcp_info_rtt_us",
+    "tcp_info_rttvar_us",
+    "tcp_info_retrans",
+    "tcp_info_total_retrans",
+    "tcp_info_unacked",
+    "tcp_info_snd_cwnd",
     "latency_diagnostic_reason",
     "latency_diagnostic_ack_rtt_ns",
     "send_to_first_after_hook_ns",
@@ -386,6 +418,9 @@ def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order["local_order_id"] = fields.get("local_order_id", order.get("local_order_id", ""))
     order["request_sequence"] = fields.get("request_sequence", "")
     order["encoded_request_id"] = fields.get("encoded_request_id", "")
+    for key in ("order_session_id", "send_cpu"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
     order.setdefault("symbol", fields.get("contract", ""))
     order.setdefault("side", fields.get("side", ""))
     order.setdefault("reduce_only", fields.get("reduce_only", ""))
@@ -397,7 +432,54 @@ def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order["request_send_local_ns"] = fields.get("request_send_local_ns", "")
 
 
+def merge_session_connected(
+    session: dict[str, str], fields: dict[str, str]
+) -> None:
+    for key in (
+        "order_session_id",
+        "owner_thread_cpu",
+        "local_ip",
+        "local_port",
+        "remote_ip",
+        "remote_port",
+    ):
+        if fields.get(key) not in (None, ""):
+            session[key] = fields[key]
+
+
+def merge_session_snapshot(order: dict[str, str], session: dict[str, str]) -> None:
+    for key in (
+        "owner_thread_cpu",
+        "local_ip",
+        "local_port",
+        "remote_ip",
+        "remote_port",
+    ):
+        if order.get(key, "") == "" and session.get(key, "") != "":
+            order[key] = session[key]
+
+
+def merge_tcp_info(order: dict[str, str], fields: dict[str, str]) -> None:
+    if fields.get("tcp_info_available") == "true":
+        order["tcp_info_available"] = "true"
+    elif order.get("tcp_info_available", "") == "":
+        order["tcp_info_available"] = fields.get("tcp_info_available", "")
+    for key in (
+        "tcp_info_rtt_us",
+        "tcp_info_rttvar_us",
+        "tcp_info_retrans",
+        "tcp_info_total_retrans",
+        "tcp_info_unacked",
+        "tcp_info_snd_cwnd",
+    ):
+        order[key] = max_int_text(order.get(key), fields.get(key))
+
+
 def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
+    for key in ("order_session_id", "ack_cpu"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
+    merge_tcp_info(order, fields)
     order["ack_local_receive_ns"] = fields.get("local_receive_ns", "")
     order["ack_exchange_ns"] = fields.get("exchange_ns", "")
     order["ack_exchange_to_local_ns"] = fields.get("exchange_to_local_ns", "")
@@ -413,6 +495,10 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
 
 
 def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None:
+    for key in ("order_session_id", "ack_cpu"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
+    merge_tcp_info(order, fields)
     order["exchange_order_id"] = choose_nonzero(
         fields.get("exchange_order_id"), order.get("exchange_order_id")
     )
@@ -429,6 +515,10 @@ def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None
 
 
 def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> None:
+    if fields.get("order_session_id") not in (None, ""):
+        order["order_session_id"] = fields["order_session_id"]
+    append_unique_text(order, "diagnostic_cpu", fields.get("diagnostic_cpu"))
+    merge_tcp_info(order, fields)
     append_unique_text(order, "latency_diagnostic_reason", fields.get("reason"))
     order["latency_diagnostic_ack_rtt_ns"] = max_int_text(
         order.get("latency_diagnostic_ack_rtt_ns"), fields.get("ack_rtt_ns")
@@ -700,6 +790,7 @@ def analyze_order_detail(
     pair_configs = load_pair_config(config_path)
     instruments = load_instrument_catalog(instrument_catalog_path)
     orders: dict[str, dict[str, str]] = {}
+    order_sessions: dict[str, dict[str, str]] = {}
     run = run_id or log_path.parent.name
 
     with log_path.open(encoding="utf-8") as input_file:
@@ -708,7 +799,12 @@ def analyze_order_detail(
             if message is None:
                 continue
             tag, fields = parse_message(message)
-            if tag == "lead_lag_order_submitted":
+            if tag == "gate_order_session_connected":
+                order_session_id = fields.get("order_session_id", "")
+                if order_session_id != "":
+                    session = order_sessions.setdefault(order_session_id, {})
+                    merge_session_connected(session, fields)
+            elif tag == "lead_lag_order_submitted":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
                     continue
@@ -759,6 +855,11 @@ def analyze_order_detail(
     rows: list[dict[str, str]] = []
     for local_order_id in sorted(orders, key=lambda value: int(value)):
         order = orders[local_order_id]
+        order_session_id = order.get("order_session_id", "")
+        if order_session_id != "":
+            merge_session_snapshot(
+                order, order_sessions.get(order_session_id, {})
+            )
         symbol = order.get("symbol", "")
         enrich_order(order, pair_configs.get(symbol, {}), instruments.get(symbol, {}))
         rows.append(dict(order))
@@ -1220,6 +1321,22 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
                 "response_exchange_to_local_ns", ""
             ),
             "exchange_lifecycle_ns": exchange_lifecycle_ns(order),
+            "order_session_id": order.get("order_session_id", ""),
+            "owner_thread_cpu": order.get("owner_thread_cpu", ""),
+            "local_ip": order.get("local_ip", ""),
+            "local_port": order.get("local_port", ""),
+            "remote_ip": order.get("remote_ip", ""),
+            "remote_port": order.get("remote_port", ""),
+            "send_cpu": order.get("send_cpu", ""),
+            "ack_cpu": order.get("ack_cpu", ""),
+            "diagnostic_cpu": order.get("diagnostic_cpu", ""),
+            "tcp_info_available": order.get("tcp_info_available", ""),
+            "tcp_info_rtt_us": order.get("tcp_info_rtt_us", ""),
+            "tcp_info_rttvar_us": order.get("tcp_info_rttvar_us", ""),
+            "tcp_info_retrans": order.get("tcp_info_retrans", ""),
+            "tcp_info_total_retrans": order.get("tcp_info_total_retrans", ""),
+            "tcp_info_unacked": order.get("tcp_info_unacked", ""),
+            "tcp_info_snd_cwnd": order.get("tcp_info_snd_cwnd", ""),
             "latency_diagnostic_reason": order.get("latency_diagnostic_reason", ""),
             "latency_diagnostic_ack_rtt_ns": order.get(
                 "latency_diagnostic_ack_rtt_ns", ""

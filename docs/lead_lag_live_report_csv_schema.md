@@ -112,6 +112,20 @@
 | `fee_rate_config` | 策略配置中的 taker fee rate。 | strategy config 的 `lag_taker_fee`。 |
 | `fee_quote_estimated` | 按配置 fee rate 估算的成交手续费。 | `filled_notional * fee_rate_config`。 |
 | `fee_source` | fee 来源说明。当前估算值为 `config_estimated`。 | 分析脚本填充。 |
+| `order_session_id` | Gate `OrderSession` 本进程内 session id。 | `gate_order_send_ok` / `gate_order_response` / diagnostic log。 |
+| `owner_thread_cpu` | session active 时 owner thread 所在 CPU。 | `gate_order_session_connected.owner_thread_cpu`，按 `order_session_id` 合并。 |
+| `local_ip` / `local_port` | 本地 TCP endpoint。 | `gate_order_session_connected`，按 `order_session_id` 合并。 |
+| `remote_ip` / `remote_port` | 远端 TCP endpoint。 | `gate_order_session_connected`，按 `order_session_id` 合并。 |
+| `send_cpu` | 发送下单请求时 owner thread 所在 CPU。 | `gate_order_send_ok.send_cpu`。 |
+| `ack_cpu` | 处理 Gate submit response 时 owner thread 所在 CPU。 | `gate_order_response.ack_cpu`。 |
+| `diagnostic_cpu` | 输出 Ack latency diagnostic 时 owner thread 所在 CPU；多次触发用 `;` 合并。 | `gate_order_ack_latency_diagnostic.diagnostic_cpu`。 |
+| `tcp_info_available` | 是否成功采集 Linux `TCP_INFO` snapshot。 | `gate_order_response` / diagnostic log。 |
+| `tcp_info_rtt_us` | Linux `tcp_info.tcpi_rtt`，单位 microseconds；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
+| `tcp_info_rttvar_us` | Linux `tcp_info.tcpi_rttvar`，单位 microseconds；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
+| `tcp_info_retrans` | Linux `tcp_info.tcpi_retrans`；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
+| `tcp_info_total_retrans` | Linux `tcp_info.tcpi_total_retrans`；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
+| `tcp_info_unacked` | Linux `tcp_info.tcpi_unacked`；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
+| `tcp_info_snd_cwnd` | Linux `tcp_info.tcpi_snd_cwnd`；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
 | `ack_rtt_ns` | 本地下单发送到收到 Ack 的 RTT。 | `ack_local_receive_ns - request_send_local_ns`，或终态日志中的 `ack_rtt_ns`。 |
 | `latency_diagnostic_reason` | Gate order session 分阶段 Ack latency diagnostic 触发原因；同一订单多次触发时用 `;` 合并。 | `gate_order_ack_latency_diagnostic.reason`。 |
 | `latency_diagnostic_ack_rtt_ns` | diagnostic 日志中记录的最大 Ack RTT。 | `gate_order_ack_latency_diagnostic.ack_rtt_ns`。 |
@@ -212,6 +226,20 @@
 | `ack_exchange_to_local_ns` | Ack exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `response_exchange_to_local_ns` | response exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `exchange_lifecycle_ns` | 交易所侧 Ack 到订单终态 update 的生命周期诊断值。 | 优先由 `finish_exchange_ns - ack_exchange_ns` 计算，只使用 Gate exchange timestamp，不混用本地时钟；如果 exchange timestamp 缺失则为空。该值仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。 |
+| `order_session_id` | Gate `OrderSession` 本进程内 session id。 | order detail 中合并后的 session 字段。 |
+| `owner_thread_cpu` | session active 时 owner thread 所在 CPU。 | order detail 中合并后的 session 字段。 |
+| `local_ip` / `local_port` | 本地 TCP endpoint。 | order detail 中合并后的 session 字段。 |
+| `remote_ip` / `remote_port` | 远端 TCP endpoint。 | order detail 中合并后的 session 字段。 |
+| `send_cpu` | 发送下单请求时 owner thread 所在 CPU。 | order detail 中合并后的 send 字段。 |
+| `ack_cpu` | 处理 Gate submit response 时 owner thread 所在 CPU。 | order detail 中合并后的 response 字段。 |
+| `diagnostic_cpu` | 输出 Ack latency diagnostic 时 owner thread 所在 CPU；多次触发用 `;` 合并。 | order detail 中合并后的 diagnostic 字段。 |
+| `tcp_info_available` | 是否成功采集 Linux `TCP_INFO` snapshot。 | order detail 中合并后的 TCP_INFO 字段。 |
+| `tcp_info_rtt_us` | Linux `tcp_info.tcpi_rtt`，单位 microseconds；多次出现取最大值。 | order detail 中合并后的 TCP_INFO 字段。 |
+| `tcp_info_rttvar_us` | Linux `tcp_info.tcpi_rttvar`，单位 microseconds；多次出现取最大值。 | order detail 中合并后的 TCP_INFO 字段。 |
+| `tcp_info_retrans` | Linux `tcp_info.tcpi_retrans`；多次出现取最大值。 | order detail 中合并后的 TCP_INFO 字段。 |
+| `tcp_info_total_retrans` | Linux `tcp_info.tcpi_total_retrans`；多次出现取最大值。 | order detail 中合并后的 TCP_INFO 字段。 |
+| `tcp_info_unacked` | Linux `tcp_info.tcpi_unacked`；多次出现取最大值。 | order detail 中合并后的 TCP_INFO 字段。 |
+| `tcp_info_snd_cwnd` | Linux `tcp_info.tcpi_snd_cwnd`；多次出现取最大值。 | order detail 中合并后的 TCP_INFO 字段。 |
 | `latency_diagnostic_reason` | Gate order session 分阶段 Ack latency diagnostic 触发原因；同一订单多次触发时用 `;` 合并。 | order detail 中合并后的 diagnostic 字段。 |
 | `latency_diagnostic_ack_rtt_ns` | diagnostic 日志中记录的最大 Ack RTT。 | order detail 中合并后的 diagnostic 字段。 |
 | `send_to_first_after_hook_ns` | 下单发送到下一次 runtime hook 完成探针的本地耗时。 | order detail 中合并后的 diagnostic 字段。 |

@@ -33,6 +33,7 @@ TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
   EXPECT_EQ(config.credentials.api_secret_env, "TEST_SECRET");
   EXPECT_EQ(config.request_map_capacity,
             aquila::gate::kDefaultOrderRequestMapCapacity);
+  EXPECT_FALSE(config.enable_tcp_info_diagnostics);
 
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.connection.service, "443");
@@ -68,6 +69,9 @@ name = "gate_order_session"
 settle = "btc"
 request_map_capacity = 1024
 
+[order_session.diagnostics]
+enable_tcp_info = true
+
 [order_session.credentials]
 api_key_env = "GATE_KEY"
 api_secret_env = "GATE_SECRET"
@@ -87,6 +91,7 @@ bind_cpu_id = 7
   EXPECT_EQ(result.value.credentials.api_key_env, "GATE_KEY");
   EXPECT_EQ(result.value.credentials.api_secret_env, "GATE_SECRET");
   EXPECT_EQ(result.value.request_map_capacity, 1024u);
+  EXPECT_TRUE(result.value.enable_tcp_info_diagnostics);
   EXPECT_EQ(result.value.connection.host, "private-gate.example");
   EXPECT_FALSE(result.value.connection.enable_tls);
   EXPECT_EQ(result.value.connection.target, "/v4/ws/btc");

@@ -23,6 +23,7 @@ struct OrderSessionConfig {
   websocket::ConnectionConfig connection;
   OrderSessionCredentialsConfig credentials;
   std::size_t request_map_capacity{kDefaultOrderRequestMapCapacity};
+  bool enable_tcp_info_diagnostics{false};
 };
 
 using OrderSessionConfigResult = Result<OrderSessionConfig>;
