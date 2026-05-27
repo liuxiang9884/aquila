@@ -40,6 +40,25 @@
   输出 owner CPU 和 TCP endpoint；`gate_order_send_ok` 输出 send CPU；`gate_order_response` 输出 ack CPU 和可选
   `TCP_INFO`；`gate_order_ack_latency_diagnostic` 输出 diagnostic CPU 和可选 `TCP_INFO`。`TCP_INFO` 由
   `order_session.diagnostics.enable_tcp_info` 打开，默认关闭；字段索引见 `docs/diagnostic_fields.md`。
+- 2026-05-27 完成一次 3 条独立 Gate `OrderSession` 并发 smoke，run 目录为
+  `/home/liuxiang/tmp/20260527_063410_3session_tcpinfo/`。本轮使用 3 个独立 `lead_lag_strategy
+  --smoke-unfilled-cancel` 进程，分别用 `strategy_id=4/5/6`，每个进程各自打开一条 order session、发送
+  1 笔 ZEC_USDT 低价 GTC buy 后 cancel；3 个进程均 `exit=0`，feedback 均完成 `Accepted -> Cancelled`，
+  最终 REST 复核 ZEC_USDT open orders 为空、position `size=0`。本轮所有 session 的 owner / send / ack CPU
+  均为 CPU4，`tcp_info_available=true`，`tcp_info_total_retrans=0`。由于每个 session 在独立进程中运行，
+  `order_session_id` 都是进程内的 `1`，只能用 `strategy_1/2/3` 和 endpoint 区分；本轮每条连接只有 1 笔订单，
+  不构成稳定 RTT 分布结论。
+
+  | session | remote endpoint | local port | Ack RTT | TCP RTT | TCP RTT var | retrans |
+  | --- | --- | ---: | ---: | ---: | ---: | ---: |
+  | `strategy_1` | `52.198.250.74:443` | `34222` | `7.868ms` | `4.130ms` | `3.559ms` | `0` |
+  | `strategy_2` | `52.199.212.24:443` | `53180` | `7.036ms` | `4.213ms` | `3.026ms` | `0` |
+  | `strategy_3` | `57.181.9.46:443` | `42396` | `0.665ms` | `3.240ms` | `5.760ms` | `0` |
+
+  口径说明：Ack RTT 是应用层单笔订单 `request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`；
+  TCP RTT 是 Linux `TCP_INFO.tcpi_rtt` 的连接层平滑估计，不是同一笔订单的精确网络往返，因此单笔样本里可能出现
+  `TCP RTT > Ack RTT`。这次结果主要证明：同一 hostname 的并发连接实际落到了不同 remote IP，endpoint / CPU /
+  TCP_INFO 字段在真实订单路径上可用。
 
 ## 仍需观察
 
