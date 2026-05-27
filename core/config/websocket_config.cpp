@@ -116,6 +116,10 @@ class WebSocketConfigParser {
     }
     config_.endpoint.host = *host;
 
+    if (endpoint["service"].node() != nullptr) {
+      Fail("endpoint.service", " is no longer supported; use endpoint.port");
+      return;
+    }
     config_.endpoint.connect_ip =
         StringOr(endpoint["connect_ip"], config_.endpoint.connect_ip);
     config_.endpoint.port = StringOr(endpoint["port"], config_.endpoint.port);

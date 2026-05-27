@@ -209,6 +209,21 @@ bind_cpu_id = 2
   EXPECT_NE(result.error.find("endpoint.host"), std::string::npos);
 }
 
+TEST(WebSocketConfigTest, RejectsLegacyEndpointService) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+service = "80"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("endpoint.service"), std::string::npos);
+  EXPECT_NE(result.error.find("endpoint.port"), std::string::npos);
+}
+
 TEST(WebSocketConfigTest, RejectsMissingBindCpuId) {
   const auto result = ParseWebSocketToml(R"toml(
 [data_session.websocket.endpoint]
