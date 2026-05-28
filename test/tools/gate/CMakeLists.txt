@@ -55,6 +55,7 @@ add_test(NAME gate_demo_strategy_test
 
 add_executable(gate_order_session_rtt_probe_test
     ../../../tools/gate/order_session_rtt_probe/config.cpp
+    ../../../tools/gate/order_session_rtt_probe/sample_csv_writer.cpp
     order_session_rtt_probe/order_session_rtt_probe_test.cpp
 )
 
@@ -65,6 +66,8 @@ target_link_libraries(gate_order_session_rtt_probe_test
         aquila_gate
         absl::flat_hash_set
         GTest::gtest_main
+        nova
+        quill::quill
 )
 
 add_dependencies(gate_order_session_rtt_probe_test

@@ -79,6 +79,7 @@ target_link_libraries(gate_order_session_failure_probe
 
 add_executable(gate_order_session_rtt_probe
     gate/order_session_rtt_probe/config.cpp
+    gate/order_session_rtt_probe/sample_csv_writer.cpp
     gate/order_session_rtt_probe/main.cpp
 )
 
@@ -88,7 +89,9 @@ target_link_libraries(gate_order_session_rtt_probe
         absl::flat_hash_set
         CLI11::CLI11
         fmt::fmt-header-only
+        nova
         PkgConfig::tomlplusplus
+        quill::quill
 )
 
 add_executable(gate_demo_strategy

@@ -1,3 +1,7 @@
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
@@ -5,16 +9,43 @@
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/types.h"
 #include "exchange/gate/trading/order_types.h"
+#include "nova/utils/log.h"
 #include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
+#include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
 #include "tools/gate/order_session_rtt_probe/sample_flow.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 namespace {
+
+std::filesystem::path TestTmpDir() {
+  const std::filesystem::path path{"/home/liuxiang/tmp"};
+  std::filesystem::create_directories(path);
+  return path;
+}
+
+void EnsureRttProbeLoggingStarted() {
+  static const bool started = [] {
+    nova::LogConfig config;
+    config.set_console_sink_name("");
+    config.set_file_sink_name(
+        (TestTmpDir() / "aquila_order_session_rtt_probe_test.log").string());
+    nova::InitializeLogging(config);
+    return true;
+  }();
+  (void)started;
+}
+
+std::string ReadTextFileForTest(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
 
 [[nodiscard]] ProbeConfigResult ParseMinimalProbeConfigWith(
     std::string_view toml_tail) {
@@ -402,6 +433,75 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
   EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
+}
+
+TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
+  EnsureRttProbeLoggingStarted();
+  const std::filesystem::path output_path =
+      TestTmpDir() / "aquila_order_session_rtt_probe_samples_test.csv";
+  std::filesystem::remove(output_path);
+
+  SampleCsvWriter writer;
+  std::string error;
+  ASSERT_TRUE(writer.Open(output_path, &error)) << error;
+  writer.Write(ProbeSampleCsvRow{
+      .run_id = "run_1",
+      .connect_ip = "52.198.250.74",
+      .order_session_id = 7,
+      .connection_generation = 0,
+      .round_index = 2,
+      .sample_index = 3,
+      .contract = "ZEC_USDT",
+      .quantity_text = "0.1",
+      .sample_start_ns = 1000,
+      .sample_end_ns = 2000,
+      .gtc_bbo_ticker_id = 42,
+      .gtc_bbo_local_ns = 900,
+      .gtc_price_text = "75.0",
+      .ioc_bbo_ticker_id = 43,
+      .ioc_bbo_local_ns = 1400,
+      .ioc_price_text = "74.9",
+      .gtc_place_ack_receive_local_ns = 1100,
+      .gtc_place_ack_rtt_ns = 100,
+      .gtc_cancel_ack_receive_local_ns = 1300,
+      .gtc_cancel_ack_rtt_ns = 200,
+      .ioc_place_ack_receive_local_ns = 1600,
+      .ioc_place_ack_rtt_ns = 300,
+      .gtc_close_submitted = false,
+      .gtc_close_ack_receive_local_ns = 0,
+      .gtc_close_ack_rtt_ns = -1,
+      .gtc_close_status = "not_submitted",
+      .ioc_close_submitted = true,
+      .ioc_close_ack_receive_local_ns = 1700,
+      .ioc_close_ack_rtt_ns = 100,
+      .ioc_close_status = "rejected_flat_safe",
+      .gtc_place_status = "acked",
+      .gtc_cancel_status = "acked",
+      .ioc_place_status = "acked",
+      .unexpected_fill = false,
+      .invalid_for_rtt_distribution = false,
+      .invalid_reason = "",
+  });
+  writer.Close();
+
+  EXPECT_EQ(
+      ReadTextFileForTest(output_path),
+      "run_id,connect_ip,order_session_id,connection_generation,round_index,"
+      "sample_index,contract,quantity_text,sample_start_ns,sample_end_ns,"
+      "gtc_bbo_ticker_id,gtc_bbo_local_ns,gtc_price_text,ioc_bbo_ticker_id,"
+      "ioc_bbo_local_ns,ioc_price_text,gtc_place_ack_receive_local_ns,"
+      "gtc_place_ack_rtt_ns,gtc_cancel_ack_receive_local_ns,"
+      "gtc_cancel_ack_rtt_ns,ioc_place_ack_receive_local_ns,"
+      "ioc_place_ack_rtt_ns,gtc_close_submitted,"
+      "gtc_close_ack_receive_local_ns,gtc_close_ack_rtt_ns,gtc_close_status,"
+      "ioc_close_submitted,ioc_close_ack_receive_local_ns,"
+      "ioc_close_ack_rtt_ns,ioc_close_status,gtc_place_status,"
+      "gtc_cancel_status,ioc_place_status,unexpected_fill,"
+      "invalid_for_rtt_distribution,invalid_reason\n"
+      "run_1,52.198.250.74,7,0,2,3,ZEC_USDT,0.1,1000,2000,42,900,"
+      "75.0,43,1400,74.9,1100,100,1300,200,1600,300,false,0,-1,"
+      "not_submitted,true,1700,100,rejected_flat_safe,acked,acked,acked,"
+      "false,false,\n");
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsPassiveBuyUsingHalfPriceLimitDown) {
