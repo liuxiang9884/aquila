@@ -32,7 +32,7 @@ tools/binance/data_session.cpp
 tools/binance/futures_book_ticker_probe.cpp
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
 scripts/binance/query_um_futures_contracts.py
-scripts/binance/query_um_futures_contracts_test.py
+scripts/test/binance/query_um_futures_contracts_test.py
 docs/futures_contract_metadata_fields.md
 ```
 
@@ -152,7 +152,7 @@ DataSession::Handle(text MessageView)
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
 ./build/debug/test/exchange/binance/market_data/binance_data_session_test
 ./build/debug/test/config/data_session_config_test
-scripts/binance/query_um_futures_contracts_test.py
+scripts/test/binance/query_um_futures_contracts_test.py
 ```
 
 benchmark：

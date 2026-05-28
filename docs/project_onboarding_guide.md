@@ -371,7 +371,7 @@ ctest --test-dir build/debug -R '(gate_.*market_data|binance_.*market_data|data_
 ./build/debug/test/core/market_data/core_market_data_historical_data_reader_test
 ./build/debug/test/core/market_data/core_market_data_shm_test
 TMPDIR=/home/liuxiang/tmp ./build/debug/test/tools/market_data/data_reader_recorder_test
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/market_data/manifest_to_data_reader_config_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/market_data/manifest_to_data_reader_config_test.py
 ./build/debug/tools/data_reader_probe --config config/data_readers/strategy_data_reader.toml --max-polls 1 --log-every 1
 ./build/debug/tools/data_reader_recorder --config /home/liuxiang/tmp/aquila_strategy_data_reader_drain.toml --output /home/liuxiang/tmp/live_merged_book_ticker.bin --mode truncate
 ```

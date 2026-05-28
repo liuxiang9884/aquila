@@ -1,10 +1,15 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+SCRIPT_DIR = Path(__file__).resolve().parents[2] / "tardis"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import download_tardis_s3 as downloader
 

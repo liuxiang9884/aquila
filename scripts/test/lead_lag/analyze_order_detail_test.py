@@ -1,10 +1,15 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import csv
+import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parents[2] / "lead_lag"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import analyze_order_detail as orders
 

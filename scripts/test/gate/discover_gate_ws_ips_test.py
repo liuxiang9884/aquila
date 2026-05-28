@@ -2,9 +2,14 @@
 
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parents[2] / "gate"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import discover_gate_ws_ips as discovery
 import probe_gate_ws_connect_ip as probe

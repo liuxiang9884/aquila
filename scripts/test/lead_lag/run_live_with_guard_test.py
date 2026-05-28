@@ -1,10 +1,15 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
+
+SCRIPT_DIR = Path(__file__).resolve().parents[2] / "lead_lag"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_live_with_guard as guard
 

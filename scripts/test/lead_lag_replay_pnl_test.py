@@ -1,7 +1,13 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 from decimal import Decimal
+import sys
 import unittest
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import lead_lag_replay_pnl as pnl
 

@@ -167,10 +167,10 @@ close。
 1. Python unit tests
 
 ```bash
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/query_gate_account_test.py
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/place_futures_order_test.py
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/emergency_flatten_futures_test.py
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/lead_lag/run_live_with_guard_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/query_gate_account_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/place_futures_order_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/run_live_with_guard_test.py
 ```
 
 2. dry-run / plan-only
@@ -236,7 +236,7 @@ V2 可保留以下原则：
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
 | 文档 | `git diff --check` | 无 whitespace error |
-| Python helper | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/emergency_flatten_futures_test.py` | scope、dry-run、cancel、market close、verify、失败 exit code 覆盖 |
+| Python helper | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/emergency_flatten_futures_test.py` | scope、dry-run、cancel、market close、verify、失败 exit code 覆盖 |
 | Read-only REST | `scripts/gate/query_gate_account.py positions --contract BTC_USDT --no-pretty` | 返回当前 position，不产生交易副作用 |
 | Emergency dry-run | `scripts/gate/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --dry-run --no-pretty` | 输出 plan，不提交订单 |
 | Emergency live smoke | `scripts/gate/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --no-pretty` | 最终 open orders 为空、position size 为 0 |

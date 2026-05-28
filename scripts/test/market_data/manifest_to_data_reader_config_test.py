@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+MODULE_DIR = Path(__file__).resolve().parents[2] / "market_data"
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
 
 import manifest_to_data_reader_config as manifest_config  # noqa: E402
 
