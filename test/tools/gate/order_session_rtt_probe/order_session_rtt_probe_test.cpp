@@ -196,6 +196,58 @@ cycles_per_connection_generation = 2
             std::string::npos);
 }
 
+TEST(GateOrderSessionRttProbeTest, RejectsDisabledSafetyGuardrails) {
+  ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.feedback]
+enabled = false
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("feedback.enabled"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.safety]
+preflight_rest_check = false
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("preflight_rest_check"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.safety]
+run_end_rest_check = false
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("run_end_rest_check"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.safety]
+stop_on_continuity_lost = false
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("stop_on_continuity_lost"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.safety]
+confirm_dedicated_account = false
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("confirm_dedicated_account"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsWrongTypedSections) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[probe]
+name = "gate_order_session_rtt_probe"
+sessions = "bad"
+
+[probe.inputs]
+candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+)toml");
+  const ProbeConfigResult result = ParseProbeConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("probe.sessions"), std::string::npos);
+}
+
 TEST(GateOrderSessionRttProbeTest,
      LoadsCandidateIpsSkippingHeadersAndDeduping) {
   const CandidateIpLoadResult result = LoadCandidateIpsFromText(

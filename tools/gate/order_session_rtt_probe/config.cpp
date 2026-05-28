@@ -34,6 +34,16 @@ namespace {
   return node.node() == nullptr;
 }
 
+[[nodiscard]] bool ReadTableOrMissing(toml::node_view<const toml::node> node,
+                                      std::string_view name,
+                                      std::string* error) {
+  if (Missing(node) || node.as_table() != nullptr) {
+    return true;
+  }
+  *error = fmt::format("{} must be table", name);
+  return false;
+}
+
 [[nodiscard]] bool ReadStringOr(toml::node_view<const toml::node> node,
                                 const std::string& fallback,
                                 std::string_view name, std::string* output,
@@ -246,6 +256,17 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
   const toml::node_view<const toml::node> output = root["probe"]["output"];
 
   std::string error;
+  if (!ReadTableOrMissing(probe, "probe", &error) ||
+      !ReadTableOrMissing(inputs, "probe.inputs", &error) ||
+      !ReadTableOrMissing(sessions, "probe.sessions", &error) ||
+      !ReadTableOrMissing(sampling, "probe.sampling", &error) ||
+      !ReadTableOrMissing(order, "probe.order", &error) ||
+      !ReadTableOrMissing(feedback, "probe.feedback", &error) ||
+      !ReadTableOrMissing(safety, "probe.safety", &error) ||
+      !ReadTableOrMissing(output, "probe.output", &error)) {
+    return Failure(std::move(error));
+  }
+
   if (!ReadStringOr(probe["name"], config.name, "probe.name", &config.name,
                     &error)) {
     return Failure(std::move(error));
@@ -393,6 +414,9 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                   "probe.feedback.enabled", &config.feedback.enabled, &error)) {
     return Failure(std::move(error));
   }
+  if (!config.feedback.enabled) {
+    return Failure("probe.feedback.enabled must be true in V1a");
+  }
   if (!ReadPathOr(feedback["shm_config"], config.feedback.shm_config,
                   "probe.feedback.shm_config", &config.feedback.shm_config,
                   &error)) {
@@ -427,11 +451,17 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                   &config.safety.preflight_rest_check, &error)) {
     return Failure(std::move(error));
   }
+  if (!config.safety.preflight_rest_check) {
+    return Failure("probe.safety.preflight_rest_check must be true in V1a");
+  }
   if (!ReadBoolOr(safety["run_end_rest_check"],
                   config.safety.run_end_rest_check,
                   "probe.safety.run_end_rest_check",
                   &config.safety.run_end_rest_check, &error)) {
     return Failure(std::move(error));
+  }
+  if (!config.safety.run_end_rest_check) {
+    return Failure("probe.safety.run_end_rest_check must be true in V1a");
   }
   if (!ReadPositiveUInt32(safety["rest_timeout_ms"],
                           config.safety.rest_timeout_ms,
@@ -457,11 +487,18 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                   &config.safety.stop_on_continuity_lost, &error)) {
     return Failure(std::move(error));
   }
+  if (!config.safety.stop_on_continuity_lost) {
+    return Failure("probe.safety.stop_on_continuity_lost must be true in V1a");
+  }
   if (!ReadBoolOr(safety["confirm_dedicated_account"],
                   config.safety.confirm_dedicated_account,
                   "probe.safety.confirm_dedicated_account",
                   &config.safety.confirm_dedicated_account, &error)) {
     return Failure(std::move(error));
+  }
+  if (!config.safety.confirm_dedicated_account) {
+    return Failure(
+        "probe.safety.confirm_dedicated_account must be true in V1a");
   }
 
   if (!ReadPathOr(output["root_dir"], config.output.root_dir,

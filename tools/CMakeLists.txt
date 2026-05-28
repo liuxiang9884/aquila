@@ -85,6 +85,7 @@ add_executable(gate_order_session_rtt_probe
 target_link_libraries(gate_order_session_rtt_probe
     PRIVATE
         aquila_core
+        absl::flat_hash_map
         CLI11::CLI11
         fmt::fmt-header-only
         PkgConfig::tomlplusplus

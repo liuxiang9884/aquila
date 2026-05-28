@@ -223,8 +223,11 @@ RTT probe 读取时跳过 `#` 开头的 header。
 ```
 
 V1a 中 `probe.feedback.*`、`probe.safety.*` 和 `probe.output.*` 只做配置解析和边界校验，尚未执行 feedback reader、
-REST preflight / final flat 或 CSV 写入。`run_id` 为空时工具启动期会生成 `gate_order_session_rtt_probe_<ns>`。
-`--execute` 当前在读取 candidate 文件和生成 plan 前就显式失败，防止 dry-run scaffold 误触 live 副作用。
+REST preflight / final flat 或 CSV 写入。为避免下一步 live sample 误用不安全配置，parser 已要求
+`probe.feedback.enabled`、`probe.safety.preflight_rest_check`、`probe.safety.run_end_rest_check`、
+`probe.safety.stop_on_continuity_lost`、`probe.safety.confirm_dedicated_account` 和 `probe.order.reduce_only_close`
+在 V1a 都必须为 `true`。`run_id` 为空时工具启动期会生成 `gate_order_session_rtt_probe_<ns>`。`--execute` 当前在读取
+candidate 文件和生成 plan 前就显式失败，防止 dry-run scaffold 误触 live 副作用。
 
 默认配置先采用 single-session smoke：
 
