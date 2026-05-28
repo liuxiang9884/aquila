@@ -252,9 +252,10 @@ Gate `OrderSession` RTT probe V1a dry-run：
 ```
 
 当前 V1a 只解析配置、读取 login-verified candidate IP 并生成 run plan；pinned session config builder、sample flow、
-sample executor、`local_order_id` 分配和 sample CSV writer 已作为 live sample 前置逻辑落地。可用 `--live-preflight` 加载
-candidate IP 和 base order session config，构建 single-session live plan 并打印输出路径；该模式不连接 WebSocket、不下单。
-`--execute` 仍会显式失败。
+sample executor、`local_order_id` 分配和 sample CSV writer 已作为 live sample 前置逻辑落地。sample flow 已保存 Ack 接收
+时间和 stage status，并校验 Ack `local_order_id` 必须匹配当前 stage。可用 `--live-preflight` 加载 candidate IP 和 base
+order session config，构建 single-session live plan 并打印输出路径；该模式不连接 WebSocket、不下单。`--execute` 仍会显式
+失败；真实下单前还需要接入 cancel reject / fill / timeout 的 safety close 状态机、close terminal 确认和 REST guard。
 
 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
 `enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置

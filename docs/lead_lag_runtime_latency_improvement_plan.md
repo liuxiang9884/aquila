@@ -21,7 +21,7 @@
 - 2026-05-26 的 12-symbol guarded live-orders 30 分钟拆核运行正常退出 flat，`signals=10`、`orders=10`、`finished=10`、`filled=0`，最大 Ack RTT 为 `6.738ms`，没有复现 `219ms` 级别 Ack outlier。
 - 2026-05-26 run 中最大 send-to-finish 为 DASH_USDT 的 `45.977ms`；其中 Gate exchange timestamp 的 Ack-to-finish 为 `37.336ms`。这属于 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟，不是 Ack path outlier。
 - 2026-05-28 当前讨论结论：`219.023ms` Ack RTT outlier 和 terminal lifecycle latency 都先等待后续复现，不再基于单次样本继续推断或修改 order session 架构。terminal lifecycle latency 的候选假设按“Gate 交易所内部订单队列 / IOC terminal lifecycle 延迟”标记，但仍未证明。
-- 2026-05-28 已形成 Gate `OrderSession` RTT probe measurement-only 设计，见 `docs/gate_order_session_rtt_probe_design.md`。第一版目标是对多组 `connect_ip` 采集 `gtc_place_ack_rtt_ns`、`gtc_cancel_ack_rtt_ns` 和 `ioc_place_ack_rtt_ns`，暂不自动 score、暂不自动切换生产 `OrderSession`。多 resolver 1800s discovery 已得到 48 个候选 IP，随后 48/48 通过 `futures.login`；候选文件为 `/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt`。
+- 2026-05-28 已形成并开始落地 Gate `OrderSession` RTT probe measurement-only 工具，见 `docs/gate_order_session_rtt_probe_design.md`。第一版目标是对多组 `connect_ip` 采集 `gtc_place_ack_rtt_ns`、`gtc_cancel_ack_rtt_ns` 和 `ioc_place_ack_rtt_ns`，暂不自动 score、暂不自动切换生产 `OrderSession`。多 resolver 1800s discovery 已得到 48 个候选 IP，随后 48/48 通过 `futures.login`；候选文件为 `/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt`。当前 V1a 代码已有 dry-run plan、`--live-preflight`、pinned session config builder、sample flow / executor / id allocator 和 sample CSV writer；sample flow 已记录 Ack 接收时间 / stage status 并校验 Ack `local_order_id`。`--execute` 仍拒绝，live safety 状态机、close terminal 确认和 REST guard 尚未接入。
 - 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为本 latency 计划的 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 
 ## 已落地
@@ -175,8 +175,9 @@
    - probe 由 Gate `BookTicker` 行情事件触发，不固定只测一个 symbol；每个 cycle 选 8 个 IP，先串行跑 GTC place / Ack 后立即 cancel，再串行跑 IOC place；GTC / IOC 各自下单前都用该 symbol 最新 BBO 和 catalog `price_limit_down * 0.5` 计算不会成交的 passive buy price。完整 cycle 后 `cooldown_ms=500`。
    - safety path 优先走 WebSocket reduce-only market close：GTC cancel reject / terminal 不确定时立即补 close，IOC place Ack 后因没有 cancel 也立即补 close；无仓位导致的 reduce-only reject 视为 flat-safe，不作为 probe 失败。
    - REST 不做逐 cycle final flat；只做 run start preflight、fatal / `ContinuityLost` 处理和 run end 整体账户检查 / 市价 reduce-only 兜底。意外成交样本标记 invalid。
-   - sample 统计使用 Nova/Quill CSV 异步写入，连接级 endpoint / owner CPU 继续用 Nova 结构化 log；不再把 JSONL 作为 RTT probe 主输出。CSV 字段需要支持 per-IP p50 / p90 / p99 / avg、过去 N 秒 rolling、不同 symbol 分组、同 IP 时间稳定性和 reconnect generation 对比。
+   - sample 统计使用 Nova/Quill CSV 异步写入，连接级 endpoint / owner CPU 后续用 Nova 结构化 log；不再把 JSONL 作为 RTT probe 主输出。CSV 字段需要支持 per-IP p50 / p90 / p99 / avg、过去 N 秒 rolling、不同 symbol 分组、同 IP 时间稳定性和 reconnect generation 对比。当前 sample CSV schema / writer 已实现，connection log 仍是 planned。
    - 第一版推荐每个活跃 `OrderSession` 一个 owner thread，由 coordinator 轮转下发 probe；rotating worker 和 coroutine multi-session scout 作为未来资源优化方向。
+   - live 前 blocker：cancel reject / timeout / fill 必须进入 reduce-only close；close Ack 后必须继续等待 terminal feedback 或 REST / position-known-flat，不能只凭 close Ack 结束 sample。
    - 详细方案、线程模型取舍和安全边界见 `docs/gate_order_session_rtt_probe_design.md`。
 
 ## 下一轮验证要求
