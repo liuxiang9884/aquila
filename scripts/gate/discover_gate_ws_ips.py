@@ -105,6 +105,20 @@ def empty_websocket_summary() -> dict:
     }
 
 
+def empty_login_summary() -> dict:
+    return {
+        "attempted": False,
+        "ok": False,
+        "latency_ns": 0,
+        "status": "",
+        "uid": "",
+        "request_id": "",
+        "conn_id": "",
+        "conn_trace_id": "",
+        "error": "",
+    }
+
+
 def ensure_record(
     records: dict[str, dict],
     *,
@@ -131,6 +145,7 @@ def ensure_record(
         "dns": empty_dns_summary(),
         "history": empty_history_summary(),
         "websocket_verify": empty_websocket_summary(),
+        "login_verify": empty_login_summary(),
         "selected_for_rtt_probe": False,
         "rejection_reason": "",
     }
@@ -514,7 +529,38 @@ def merge_history_logs(
                     history["last_seen_text"] = timestamp
 
 
-def apply_websocket_result(record: dict, result: probe.ProbeResult) -> None:
+def merge_candidate_ip_files(
+    records: dict[str, dict],
+    *,
+    run_id: str,
+    host: str,
+    target: str,
+    port: str,
+    paths: list[str],
+) -> None:
+    for path_text in expand_history_paths(paths):
+        path = Path(path_text)
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                ip_text = line.strip()
+                if not ip_text or ip_text.startswith("#"):
+                    continue
+                record = ensure_record(
+                    records,
+                    run_id=run_id,
+                    host=host,
+                    target=target,
+                    port=port,
+                    ip=ip_text,
+                )
+                add_source(record, "candidate_file")
+
+
+def apply_websocket_result(
+    record: dict, result: probe.ProbeResult, *, require_login: bool = False
+) -> None:
     remote_ip, remote_port = split_endpoint(result.remote_endpoint)
     local_ip, local_port = split_endpoint(result.local_endpoint)
     record["websocket_verify"] = {
@@ -531,22 +577,40 @@ def apply_websocket_result(record: dict, result: probe.ProbeResult) -> None:
         "http_status": parse_http_status(result.websocket_status),
         "error": result.error,
     }
+    http_status = record["websocket_verify"]["http_status"]
+    login_attempted = require_login and http_status == 101
+    record["login_verify"] = {
+        "attempted": login_attempted,
+        "ok": bool(result.login_ok),
+        "latency_ns": ms_to_ns(result.login_ms),
+        "status": result.login_status,
+        "uid": result.login_uid,
+        "request_id": result.login_request_id,
+        "conn_id": result.conn_id,
+        "conn_trace_id": result.conn_trace_id,
+        "error": result.error if login_attempted and not result.login_ok else "",
+    }
     if result.ok:
-        record["status"] = "ws_verified"
+        record["status"] = "login_verified" if require_login else "ws_verified"
         record["selected_for_rtt_probe"] = True
         record["rejection_reason"] = ""
         return
     record["status"] = "rejected"
     record["selected_for_rtt_probe"] = False
-    record["rejection_reason"] = "websocket_verify_failed"
+    if require_login and login_attempted:
+        record["rejection_reason"] = "login_verify_failed"
+    else:
+        record["rejection_reason"] = "websocket_verify_failed"
 
 
 def verify_websocket_candidates(
     records: dict[str, dict],
     verifier: Callable[[str], probe.ProbeResult],
+    *,
+    require_login: bool = False,
 ) -> None:
     for ip in list(records.keys()):
-        apply_websocket_result(records[ip], verifier(ip))
+        apply_websocket_result(records[ip], verifier(ip), require_login=require_login)
 
 
 def ordered_records(records: dict[str, dict]) -> list[dict]:
@@ -596,6 +660,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--interval-sec", type=float, default=5.0)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument(
+        "--no-dns",
+        action="store_true",
+        help="Skip DNS sampling; useful when verifying an existing candidate file.",
+    )
+    parser.add_argument(
         "--resolver",
         action="append",
         default=["system"],
@@ -618,10 +687,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Historical log path or glob to scan for gate_order_session_connected remote_ip.",
     )
     parser.add_argument(
+        "--candidate-ip-file",
+        action="append",
+        default=[],
+        help="candidate_ips.txt path or glob to merge before verification.",
+    )
+    parser.add_argument(
         "--no-verify-websocket",
         action="store_true",
         help="Skip pinned WebSocket handshake verification.",
     )
+    parser.add_argument(
+        "--verify-login",
+        action="store_true",
+        help="After WebSocket handshake, send futures.login and select only successful logins. Never sends orders.",
+    )
+    parser.add_argument("--api-key", default=probe.DEFAULT_API_KEY_ENV)
+    parser.add_argument("--api-secret", default=probe.DEFAULT_API_SECRET_ENV)
     parser.add_argument("--plain", action="store_true", help="Disable TLS.")
     parser.add_argument("--output", required=True, help="JSONL output path.")
     parser.add_argument(
@@ -647,10 +729,14 @@ def validate_args(args: argparse.Namespace) -> str:
         parse_resolver_specs(args.resolver)
     except ValueError as exc:
         return f"--resolver invalid: {exc}"
+    if args.no_verify_websocket and args.verify_login:
+        return "--verify-login requires WebSocket verification"
     return ""
 
 
-def make_probe_verifier(args: argparse.Namespace) -> Callable[[str], probe.ProbeResult]:
+def make_probe_verifier(
+    args: argparse.Namespace, api_key: str | None, api_secret: str | None
+) -> Callable[[str], probe.ProbeResult]:
     def verifier(ip: str) -> probe.ProbeResult:
         return probe.probe_connect_ip(
             connect_ip=ip,
@@ -659,9 +745,9 @@ def make_probe_verifier(args: argparse.Namespace) -> Callable[[str], probe.Probe
             target=args.target,
             timeout=args.timeout,
             use_tls=not args.plain,
-            login=False,
-            api_key=None,
-            api_secret=None,
+            login=args.verify_login,
+            api_key=api_key,
+            api_secret=api_secret,
             size_decimal_header=True,
         )
 
@@ -674,21 +760,33 @@ def main() -> int:
     if error:
         print(f"[FAIL] {error}", file=sys.stderr)
         return 2
+    api_key = None
+    api_secret = None
+    if args.verify_login:
+        api_key = probe.get_env_value(args.api_key)
+        if api_key is None:
+            print(f"[FAIL] missing env var {args.api_key}", file=sys.stderr)
+            return 2
+        api_secret = probe.get_env_value(args.api_secret)
+        if api_secret is None:
+            print(f"[FAIL] missing env var {args.api_secret}", file=sys.stderr)
+            return 2
 
     run_id = args.run_id or make_run_id()
     records: dict[str, dict] = {}
     resolver_specs = parse_resolver_specs(args.resolver)
-    collect_dns_samples(
-        records,
-        run_id=run_id,
-        host=args.host,
-        target=args.target,
-        port=args.port,
-        duration_sec=args.duration_sec,
-        interval_sec=args.interval_sec,
-        resolver_specs=resolver_specs,
-        resolver_timeout=args.resolver_timeout,
-    )
+    if not args.no_dns:
+        collect_dns_samples(
+            records,
+            run_id=run_id,
+            host=args.host,
+            target=args.target,
+            port=args.port,
+            duration_sec=args.duration_sec,
+            interval_sec=args.interval_sec,
+            resolver_specs=resolver_specs,
+            resolver_timeout=args.resolver_timeout,
+        )
     merge_history_logs(
         records,
         run_id=run_id,
@@ -697,8 +795,20 @@ def main() -> int:
         port=args.port,
         paths=args.history_log,
     )
+    merge_candidate_ip_files(
+        records,
+        run_id=run_id,
+        host=args.host,
+        target=args.target,
+        port=args.port,
+        paths=args.candidate_ip_file,
+    )
     if not args.no_verify_websocket:
-        verify_websocket_candidates(records, make_probe_verifier(args))
+        verify_websocket_candidates(
+            records,
+            make_probe_verifier(args, api_key, api_secret),
+            require_login=args.verify_login,
+        )
 
     output_path = Path(args.output)
     text_output_path = Path(args.text_output)
@@ -722,6 +832,7 @@ def main() -> int:
         "run_id": run_id,
         "records": len(records),
         "resolvers": [spec.label for spec in resolver_specs],
+        "verify_login": args.verify_login,
         "selected_for_rtt_probe": selected,
         "output": str(output_path),
         "text_output": str(text_output_path),

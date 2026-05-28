@@ -54,9 +54,11 @@
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `sources` | `candidate_ips.jsonl` | experiment | `dns_system`、`dns_udp_<ip>_<port>`、`history_log` 等 | 记录候选 IP 来自 system resolver、explicit UDP resolver 或历史连接日志。 | IP discovery schema 升级并迁移消费者后删除或重命名。 |
+| `sources` | `candidate_ips.jsonl` | experiment | `dns_system`、`dns_udp_<ip>_<port>`、`history_log`、`candidate_file` 等 | 记录候选 IP 来自 system resolver、explicit UDP resolver、历史连接日志或既有候选文件。 | IP discovery schema 升级并迁移消费者后删除或重命名。 |
 | `dns.resolvers` | `candidate_ips.jsonl` | experiment | resolver label 列表，例如 `system`、`1.1.1.1:53` | 记录该 IP 被哪些 resolver 返回。 | 同上。 |
 | `dns.resolver_details` | `candidate_ips.jsonl` | experiment | `{kind,address,port,label}` 对象列表 | 区分 system resolver 与 explicit UDP resolver，便于比较不同 DNS 来源的候选集。 | 同上。 |
+| `websocket_verify` | `candidate_ips.jsonl` | experiment | `{attempted,ok,remote_ip,local_port,tcp_connect_ns,tls_handshake_ns,websocket_handshake_ns,total_ns,http_status,error}` | 记录 pinned TCP / TLS / WebSocket handshake 验证结果；不代表 private login 成功。 | 同上。 |
+| `login_verify` | `candidate_ips.jsonl` | experiment | `{attempted,ok,latency_ns,status,uid,request_id,conn_id,conn_trace_id,error}` | 启用 `--verify-login` 时记录 `futures.login` 验证结果；只有 login 成功的 IP 会写入 `candidate_ips.txt`。 | 同上。 |
 
 ### 请求与 Ack 字段
 

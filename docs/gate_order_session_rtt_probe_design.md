@@ -100,12 +100,14 @@ invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
   --text-output /home/liuxiang/tmp/<run_id>/candidate_ips.txt
 ```
 
-脚本负责前三步：
+脚本负责前置筛选：
 
 1. 使用 system resolver 和可选 explicit UDP resolver 对 `host` 做多轮 DNS A / AAAA 采样。
 2. 从历史 log 中解析 `gate_order_session_connected remote_ip=...`。
 3. 对候选 IP 做 pinned WebSocket handshake：TCP 直连 `connect_ip:port`，TLS SNI / 证书校验和 WebSocket Host 仍使用
    `host`。
+4. 可选 `--verify-login`：在 WebSocket handshake 成功后发送 `futures.login`，只把 login 成功的 IP 标为
+   `selected_for_rtt_probe=true`。该步骤仍不下单，只验证 private WebSocket login 是否可用。
 
 完整审计输出为 `candidate_ips.jsonl`，每个 IP 一行，schema 为
 `aquila.gate.order_session.ip_discovery.v1`。后续 RTT probe 默认只消费 `candidate_ips.txt`，该文件只包含
@@ -125,7 +127,21 @@ invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
 `--resolver` 可重复传入，支持 `system` 或 `IP[:port]`；默认包含 `system`，显式 resolver 会作为额外 DNS 来源采样。JSONL
 中 `sources` 会区分 `dns_system` / `dns_udp_<ip>_<port>`，`dns.resolvers` 和 `dns.resolver_details` 记录每个 IP
 来自哪些 resolver。当前 explicit resolver 使用 UDP DNS，不修改本机 `/etc/resolv.conf` 或 `systemd-resolved` 配置。
-Discovery 输出不代表 RTT 优劣，只表示该 IP 当前能用 logical host 模式完成 WebSocket handshake。
+Discovery 输出不代表 RTT 优劣；未启用 `--verify-login` 时只表示该 IP 当前能用 logical host 模式完成 WebSocket
+handshake，启用后表示该 IP 当前也能完成 `futures.login`。
+
+已有候选文件可复用：
+
+```bash
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/discover_gate_ws_ips.py \
+  --host fx-ws.gateio.ws \
+  --target /v4/ws/usdt \
+  --no-dns \
+  --candidate-ip-file /home/liuxiang/tmp/<previous_run>/candidate_ips.txt \
+  --verify-login \
+  --output /home/liuxiang/tmp/<run_id>/candidate_ips_login.jsonl \
+  --text-output /home/liuxiang/tmp/<run_id>/candidate_ips_login.txt
+```
 
 ### RTT Probe
 

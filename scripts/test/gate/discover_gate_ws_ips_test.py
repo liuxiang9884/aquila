@@ -195,6 +195,116 @@ class DiscoverGateWsIpsTest(unittest.TestCase):
         self.assertFalse(rejected["selected_for_rtt_probe"])
         self.assertEqual(rejected["rejection_reason"], "websocket_verify_failed")
 
+    def test_login_verification_selects_only_successful_logins(self):
+        records = {}
+        for ip in ("52.198.250.74", "52.199.212.24", "1.2.3.4"):
+            discovery.ensure_record(
+                records,
+                run_id="run-1",
+                host="fx-ws.gateio.ws",
+                target="/v4/ws/usdt",
+                port="443",
+                ip=ip,
+            )
+
+        def fake_verifier(ip):
+            if ip == "52.198.250.74":
+                return probe.ProbeResult(
+                    connect_ip=ip,
+                    host="fx-ws.gateio.ws",
+                    port="443",
+                    target="/v4/ws/usdt",
+                    tls=True,
+                    ok=True,
+                    websocket_status="HTTP/1.1 101 Switching Protocols",
+                    local_endpoint="10.0.0.12:34222",
+                    remote_endpoint=f"{ip}:443",
+                    login_ms=8.25,
+                    login_ok=True,
+                    login_status="success",
+                    login_uid="123",
+                    login_request_id="ip-probe-login-1",
+                    conn_id="conn-1",
+                    conn_trace_id="trace-1",
+                )
+            if ip == "52.199.212.24":
+                return probe.ProbeResult(
+                    connect_ip=ip,
+                    host="fx-ws.gateio.ws",
+                    port="443",
+                    target="/v4/ws/usdt",
+                    tls=True,
+                    ok=False,
+                    websocket_status="HTTP/1.1 101 Switching Protocols",
+                    local_endpoint="10.0.0.12:34224",
+                    remote_endpoint=f"{ip}:443",
+                    login_ms=7.5,
+                    login_ok=False,
+                    login_status="fail",
+                    error="login rejected",
+                )
+            return probe.ProbeResult(
+                connect_ip=ip,
+                host="fx-ws.gateio.ws",
+                port="443",
+                target="/v4/ws/usdt",
+                tls=True,
+                ok=False,
+                error="TimeoutError: timed out",
+            )
+
+        discovery.verify_websocket_candidates(records, fake_verifier, require_login=True)
+
+        ok_record = records["52.198.250.74"]
+        self.assertEqual(ok_record["status"], "login_verified")
+        self.assertTrue(ok_record["selected_for_rtt_probe"])
+        self.assertTrue(ok_record["login_verify"]["attempted"])
+        self.assertTrue(ok_record["login_verify"]["ok"])
+        self.assertEqual(ok_record["login_verify"]["latency_ns"], 8250000)
+        self.assertEqual(ok_record["login_verify"]["status"], "success")
+        self.assertEqual(ok_record["login_verify"]["uid"], "123")
+        self.assertEqual(ok_record["login_verify"]["conn_id"], "conn-1")
+
+        rejected_login = records["52.199.212.24"]
+        self.assertEqual(rejected_login["status"], "rejected")
+        self.assertFalse(rejected_login["selected_for_rtt_probe"])
+        self.assertEqual(rejected_login["rejection_reason"], "login_verify_failed")
+        self.assertTrue(rejected_login["login_verify"]["attempted"])
+        self.assertFalse(rejected_login["login_verify"]["ok"])
+        self.assertEqual(rejected_login["login_verify"]["error"], "login rejected")
+
+        rejected_ws = records["1.2.3.4"]
+        self.assertEqual(rejected_ws["status"], "rejected")
+        self.assertEqual(rejected_ws["rejection_reason"], "websocket_verify_failed")
+        self.assertFalse(rejected_ws["login_verify"]["attempted"])
+
+    def test_candidate_ip_file_skips_headers_and_deduplicates(self):
+        records = {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "candidate_ips.txt"
+            path.write_text(
+                "# schema=aquila.gate.order_session.candidate_ips.v1\n"
+                "# host=fx-ws.gateio.ws\n"
+                "52.198.250.74\n"
+                "\n"
+                "52.198.250.74\n"
+                "52.199.212.24\n",
+                encoding="utf-8",
+            )
+
+            discovery.merge_candidate_ip_files(
+                records,
+                run_id="run-1",
+                host="fx-ws.gateio.ws",
+                target="/v4/ws/usdt",
+                port="443",
+                paths=[str(path)],
+            )
+
+        self.assertEqual(list(records.keys()), ["52.198.250.74", "52.199.212.24"])
+        self.assertEqual(records["52.198.250.74"]["sources"], ["candidate_file"])
+        self.assertEqual(records["52.199.212.24"]["sources"], ["candidate_file"])
+
     def test_writes_jsonl_and_text_outputs(self):
         records = {}
         discovery.ensure_record(
