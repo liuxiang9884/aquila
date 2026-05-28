@@ -10,7 +10,9 @@
 #include <CLI/CLI.hpp>
 #include <fmt/core.h>
 
+#include "exchange/gate/trading/order_session_config.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
+#include "tools/gate/order_session_rtt_probe/live_run_plan.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
 
 namespace {
@@ -25,6 +27,7 @@ struct CliOptions {
   std::optional<std::uint32_t> samples_per_ip_override;
   std::optional<std::size_t> active_session_count_override;
   bool execute{false};
+  bool live_preflight{false};
 };
 
 [[nodiscard]] aquila::Result<std::string> ReadTextFile(
@@ -109,6 +112,26 @@ void PrintPlan(const probe::ProbeConfig& config,
   }
 }
 
+void PrintLivePreflightPlan(const probe::ProbeConfig& config,
+                            const probe::SingleSessionLiveRunPlan& live_plan) {
+  fmt::print(
+      "gate_order_session_rtt_probe live_preflight=true execute=false "
+      "name={} run_id={} connect_ip={} sample_count={} run_dir={} "
+      "sample_csv_path={} rest_guard_csv_path={} raw_rest_dir={} "
+      "order_session_host={} order_session_target={} "
+      "order_session_worker_cpu={} enable_tcp_info={}\n",
+      config.name, config.run_id, live_plan.connect_ip, live_plan.sample_count,
+      live_plan.paths.run_dir.string(),
+      live_plan.paths.sample_csv_path.string(),
+      live_plan.paths.rest_guard_csv_path.string(),
+      live_plan.paths.raw_rest_dir.string(),
+      live_plan.order_session_config.connection.host,
+      live_plan.order_session_config.connection.target,
+      live_plan.order_session_config.connection.runtime_policy.io_cpu_id,
+      live_plan.order_session_config.enable_tcp_info_diagnostics ? "true"
+                                                                 : "false");
+}
+
 int Run(const CliOptions& options) {
   probe::ProbeConfigResult config_result =
       probe::LoadProbeConfigFile(options.config_path);
@@ -145,6 +168,26 @@ int Run(const CliOptions& options) {
     return 1;
   }
 
+  if (options.live_preflight) {
+    aquila::gate::OrderSessionConfigResult order_session_config =
+        aquila::gate::LoadOrderSessionConfigFile(
+            config.inputs.order_session_config);
+    if (!order_session_config.ok) {
+      fmt::print(stderr, "[FAIL] order_session_config_error={}\n",
+                 order_session_config.error);
+      return 1;
+    }
+    probe::SingleSessionLiveRunPlanResult live_plan =
+        probe::BuildSingleSessionLiveRunPlan(config, plan_result.value,
+                                             order_session_config.value);
+    if (!live_plan.ok) {
+      fmt::print(stderr, "[FAIL] live_preflight_error={}\n", live_plan.error);
+      return 1;
+    }
+    PrintLivePreflightPlan(config, live_plan.value);
+    return 0;
+  }
+
   PrintPlan(config, plan_result.value);
   return 0;
 }
@@ -167,6 +210,8 @@ int main(int argc, char** argv) {
                  "Override probe.sessions.active_session_count");
   app.add_flag("--execute", options.execute,
                "Enable live execution. Currently rejected by this scaffold");
+  app.add_flag("--live-preflight", options.live_preflight,
+               "Build single-session live prerequisites without connecting");
   CLI11_PARSE(app, argc, argv);
 
   try {

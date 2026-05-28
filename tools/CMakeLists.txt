@@ -86,6 +86,7 @@ add_executable(gate_order_session_rtt_probe
 target_link_libraries(gate_order_session_rtt_probe
     PRIVATE
         aquila_core
+        aquila_gate
         absl::flat_hash_set
         CLI11::CLI11
         fmt::fmt-header-only

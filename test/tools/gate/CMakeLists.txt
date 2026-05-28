@@ -121,3 +121,20 @@ add_test(NAME gate_order_session_rtt_probe_max_candidates_zero_unlimited
 set_tests_properties(gate_order_session_rtt_probe_max_candidates_zero_unlimited
     PROPERTIES
     PASS_REGULAR_EXPRESSION "candidate_ips=2")
+
+add_test(NAME gate_order_session_rtt_probe_live_preflight
+         COMMAND bash -c [=[
+output="$("$1" --config "$2" --candidate-ip-file "$3" --max-candidates 1 --samples-per-ip 2 --live-preflight 2>&1)"
+code=$?
+printf '%s\n' "$output"
+[[ "$code" -eq 0 ]] &&
+  [[ "$output" == *"live_preflight=true"* ]] &&
+  [[ "$output" == *"connect_ip=52.198.250.74"* ]] &&
+  [[ "$output" == *"sample_count=2"* ]] &&
+  [[ "$output" == *"order_session_rtt_samples.csv"* ]]
+]=] _ $<TARGET_FILE:gate_order_session_rtt_probe>
+                 ${GATE_ORDER_SESSION_RTT_PROBE_CONFIG}
+                 ${GATE_ORDER_SESSION_RTT_PROBE_CANDIDATES})
+set_tests_properties(gate_order_session_rtt_probe_live_preflight
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
