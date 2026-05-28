@@ -8,6 +8,7 @@
 
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/types.h"
+#include "core/trading/order_id.h"
 #include "exchange/gate/trading/order_types.h"
 #include "nova/utils/log.h"
 #include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
@@ -17,6 +18,7 @@
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
 #include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
 #include "tools/gate/order_session_rtt_probe/sample_flow.h"
+#include "tools/gate/order_session_rtt_probe/sample_id_allocator.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
@@ -433,6 +435,29 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
   EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     AllocatesSampleLocalOrderIdsInFeedbackStrategyLane) {
+  ProbeSampleIdAllocator allocator(/*strategy_id=*/7);
+
+  const ProbeSampleLocalIds first = allocator.Next();
+  EXPECT_EQ(LocalOrderIdCodec::StrategyId(first.gtc_local_order_id), 7U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first.gtc_local_order_id), 1U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first.ioc_local_order_id), 2U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first.gtc_close_local_order_id),
+            3U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first.ioc_close_local_order_id),
+            4U);
+
+  const ProbeSampleLocalIds second = allocator.Next();
+  EXPECT_EQ(LocalOrderIdCodec::StrategyId(second.gtc_local_order_id), 7U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second.gtc_local_order_id), 5U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second.ioc_local_order_id), 6U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second.gtc_close_local_order_id),
+            7U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second.ioc_close_local_order_id),
+            8U);
 }
 
 TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
