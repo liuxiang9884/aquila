@@ -7,6 +7,7 @@
 相关事实源：
 
 - `docs/lead_lag_ack_latency_outlier_analysis.md`
+- `docs/gate_order_session_rtt_probe_design.md`
 - `docs/lead_lag_live_operations_pipeline.md`
 - `docs/lead_lag_live_report_csv_schema.md`
 - `reports/20260525_133511_12pair_live_2ticks/`
@@ -20,6 +21,7 @@
 - 2026-05-26 的 12-symbol guarded live-orders 30 分钟拆核运行正常退出 flat，`signals=10`、`orders=10`、`finished=10`、`filled=0`，最大 Ack RTT 为 `6.738ms`，没有复现 `219ms` 级别 Ack outlier。
 - 2026-05-26 run 中最大 send-to-finish 为 DASH_USDT 的 `45.977ms`；其中 Gate exchange timestamp 的 Ack-to-finish 为 `37.336ms`。这属于 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟，不是 Ack path outlier。
 - 2026-05-28 当前讨论结论：`219.023ms` Ack RTT outlier 和 terminal lifecycle latency 都先等待后续复现，不再基于单次样本继续推断或修改 order session 架构。terminal lifecycle latency 的候选假设按“Gate 交易所内部订单队列 / IOC terminal lifecycle 延迟”标记，但仍未证明。
+- 2026-05-28 已形成 Gate `OrderSession` RTT probe measurement-only 设计，见 `docs/gate_order_session_rtt_probe_design.md`。第一版目标是对多组 `connect_ip` 采集 `gtc_place_ack_rtt_ns`、`gtc_cancel_ack_rtt_ns` 和 `ioc_place_ack_rtt_ns`，暂不自动 score、暂不自动切换生产 `OrderSession`。
 - 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为本 latency 计划的 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 
 ## 已落地
@@ -166,6 +168,13 @@
    - 慢连接是否有更高 `TCP_INFO` RTT 或 retrans。
    - 慢连接的 `send_to_first_drive_read_ns` 是否偏大，说明本地 owner thread 没及时进入 read。
    - `ack_exchange_ns` 到本地 receive 是否只在某条连接上异常偏大。
+
+4. **OrderSession RTT probe 先做 measurement-only**
+   - 第一版不接入 LeadLag runtime，不做自动 score，也不写回生产配置。
+   - 主采样指标是三类真实订单 Ack RTT：GTC place、GTC cancel、IOC place。
+   - GTC / IOC 使用从 Gate latest BBO 推导的同一 passive price 和 instrument catalog 最小 quantity；意外成交时立刻 reduce-only market close，并将样本标记 invalid。
+   - 第一版推荐每个活跃 `OrderSession` 一个 owner thread，由 coordinator 轮转下发 probe；rotating worker 和 coroutine multi-session scout 作为未来资源优化方向。
+   - 详细方案、线程模型取舍和安全边界见 `docs/gate_order_session_rtt_probe_design.md`。
 
 ## 下一轮验证要求
 
