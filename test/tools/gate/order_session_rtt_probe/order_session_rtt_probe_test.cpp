@@ -14,6 +14,7 @@
 #include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
+#include "tools/gate/order_session_rtt_probe/live_run_plan.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
 #include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
@@ -485,6 +486,86 @@ TEST(GateOrderSessionRttProbeTest, BuildsPinnedOrderSessionConfig) {
   EXPECT_EQ(pinned.connection.target, "/v4/ws/usdt");
   EXPECT_EQ(pinned.connection.runtime_policy.io_cpu_id, 6);
   EXPECT_TRUE(pinned.enable_tcp_info_diagnostics);
+}
+
+TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
+  ProbeConfig config;
+  config.run_id = "run_1";
+  config.output.root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe";
+  config.sessions.active_session_count = 1;
+  config.sessions.enable_tcp_info = true;
+  config.sessions.worker_cpu_ids = {6};
+
+  const ProbeRunPlan run_plan{
+      .candidate_ip_count = 1,
+      .duplicate_candidate_ip_count = 0,
+      .cycles =
+          {
+              ProbeCycle{
+                  .cycle_index = 0,
+                  .group_index = 0,
+                  .connect_ips = {"52.198.250.74"},
+              },
+              ProbeCycle{
+                  .cycle_index = 1,
+                  .group_index = 0,
+                  .connect_ips = {"52.198.250.74"},
+              },
+          },
+  };
+  gate::OrderSessionConfig base;
+  base.connection.host = "fx-ws.gateio.ws";
+  base.connection.connect_ip = "";
+  base.connection.port = "443";
+  base.connection.target = "/v4/ws/usdt";
+  base.connection.runtime_policy.io_cpu_id = 3;
+
+  const SingleSessionLiveRunPlanResult result =
+      BuildSingleSessionLiveRunPlan(config, run_plan, base);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.connect_ip, "52.198.250.74");
+  EXPECT_EQ(result.value.sample_count, 2U);
+  EXPECT_EQ(result.value.order_session_config.connection.host,
+            "fx-ws.gateio.ws");
+  EXPECT_EQ(result.value.order_session_config.connection.connect_ip,
+            "52.198.250.74");
+  EXPECT_EQ(
+      result.value.order_session_config.connection.runtime_policy.io_cpu_id, 6);
+  EXPECT_TRUE(result.value.order_session_config.enable_tcp_info_diagnostics);
+  EXPECT_EQ(result.value.paths.run_dir,
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1");
+  EXPECT_EQ(result.value.paths.sample_csv_path,
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1/"
+            "order_session_rtt_samples.csv");
+  EXPECT_EQ(result.value.paths.rest_guard_csv_path,
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1/"
+            "order_session_rtt_rest_guard.csv");
+  EXPECT_EQ(result.value.paths.raw_rest_dir,
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1/raw_rest");
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsMultiSessionLiveRunPlan) {
+  ProbeConfig config;
+  config.run_id = "run_1";
+  config.sessions.active_session_count = 2;
+  const ProbeRunPlan run_plan{
+      .candidate_ip_count = 2,
+      .cycles =
+          {
+              ProbeCycle{
+                  .cycle_index = 0,
+                  .group_index = 0,
+                  .connect_ips = {"52.198.250.74", "52.199.212.24"},
+              },
+          },
+  };
+
+  const SingleSessionLiveRunPlanResult result = BuildSingleSessionLiveRunPlan(
+      config, run_plan, gate::OrderSessionConfig{});
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("single-session"), std::string::npos);
 }
 
 TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
