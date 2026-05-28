@@ -82,6 +82,48 @@ invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
 
 ## 工具形态
 
+### IP Discovery
+
+第一版先用 Python 脚本完成 RTT probe 前置的 IP discovery，不下单、不读取账户、不修改账户状态。脚本入口：
+
+```bash
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/gate/discover_gate_ws_ips.py \
+  --host fx-ws.gateio.ws \
+  --target /v4/ws/usdt \
+  --duration-sec 180 \
+  --interval-sec 5 \
+  --history-log /home/liuxiang/log/lead_lag_strategy*.log \
+  --output /home/liuxiang/tmp/<run_id>/candidate_ips.jsonl \
+  --text-output /home/liuxiang/tmp/<run_id>/candidate_ips.txt
+```
+
+脚本负责前三步：
+
+1. 使用 system resolver 对 `host` 做多轮 DNS A / AAAA 采样。
+2. 从历史 log 中解析 `gate_order_session_connected remote_ip=...`。
+3. 对候选 IP 做 pinned WebSocket handshake：TCP 直连 `connect_ip:port`，TLS SNI / 证书校验和 WebSocket Host 仍使用
+   `host`。
+
+完整审计输出为 `candidate_ips.jsonl`，每个 IP 一行，schema 为
+`aquila.gate.order_session.ip_discovery.v1`。后续 RTT probe 默认只消费 `candidate_ips.txt`，该文件只包含
+`selected_for_rtt_probe=true` 的 IP：
+
+```text
+# schema=aquila.gate.order_session.candidate_ips.v1
+# run_id=20260528_120000_gate_ip_discovery
+# host=fx-ws.gateio.ws
+# target=/v4/ws/usdt
+# generated_at_ns=1770000185000000000
+52.198.250.74
+52.199.212.24
+57.181.9.46
+```
+
+第一版 discovery 只支持 system resolver；其它 resolver 可通过外部脚本生成候选文件后合并，或作为后续增强。
+Discovery 输出不代表 RTT 优劣，只表示该 IP 当前能用 logical host 模式完成 WebSocket handshake。
+
+### RTT Probe
+
 建议第一版命令形态：
 
 ```bash
