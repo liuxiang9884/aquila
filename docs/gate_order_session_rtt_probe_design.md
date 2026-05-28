@@ -14,8 +14,9 @@
 - 第一版新增独立 C++ tool `gate_order_session_rtt_probe`；不改 LeadLag live runtime，不接入生产策略下单路径。
 - 当前已落地 V1a dry-run scaffold 和 live sample 前置纯逻辑：`tools/gate/order_session_rtt_probe/`、
   `config/order_session_rtt_probe/gate_order_session_rtt_probe.toml` 和 `gate_order_session_rtt_probe_test`。已覆盖配置解析、
-  login-verified candidate IP 读取、single-session run plan、passive order 构造、GTC place -> cancel -> IOC place 的 Ack
-  状态流转、sample `local_order_id` lane 分配和 sample CSV schema / writer；`--execute` 仍会被显式拒绝，尚不提交真实订单。
+  login-verified candidate IP 读取、single-session run plan、pinned `connect_ip` order session config 派生、passive order 构造、
+  GTC place -> cancel -> IOC place 的 Ack 状态流转、sample `local_order_id` lane 分配和 sample CSV schema / writer；
+  `--execute` 仍会被显式拒绝，尚不提交真实订单。
 - 第一版只采集数据，不输出自动 score，不选择最优连接，不写回生产配置。
 - RTT 主指标来自真实 Gate order session order Ack：`request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`。
 - 不使用 WebSocket handshake RTT、login RTT 或 no-order probe RTT 作为第一版主指标；这些路径不等价于 `futures.order_place`。
@@ -261,8 +262,10 @@ candidate_ip_file = /home/liuxiang/tmp/login_verified_candidates_20260528_072242
   --execute
 ```
 
-第一版可以沿用 base order session config 中的 `host`、`port`、TLS、credentials、decimal-size header 和 log 设置；每个
-candidate 只覆盖 `connection.connect_ip`。建议默认打开 `order_session.diagnostics.enable_tcp_info=true` 的临时副本，
+第一版可以沿用 base order session config 中的 `host`、`port`、TLS、credentials、decimal-size header 和 log 设置；
+`tools/gate/order_session_rtt_probe/session_config_builder.h` 已提供 pinned config builder，每个 candidate 只覆盖
+`connection.connect_ip`，可选覆盖 worker CPU 和 TCP_INFO 开关。建议默认打开
+`order_session.diagnostics.enable_tcp_info=true` 的临时副本，
 但不要修改仓库默认配置。如需手工缩小候选池，可以用重复 `--connect-ip` 替代 `--candidate-ip-file`；probe 的 contract
 仍由最新 Gate `BookTicker` 行情事件决定，不通过命令行固定为单个 symbol。
 
