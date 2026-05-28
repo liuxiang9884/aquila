@@ -401,6 +401,17 @@ ctest --test-dir build/debug -R '(core_order_pool|strategy|gate_order|gate_submi
 
 真实 Gate live smoke 需要 `TEST_KEY` / `TEST_SECRET`、外网和显式 `--execute`；执行后必须用 REST 查询确认无残留 open orders / position。
 
+### Gate OrderSession RTT probe
+
+```bash
+cmake --build build/debug --target gate_order_session_rtt_probe gate_order_session_rtt_probe_test
+ctest --test-dir build/debug -R gate_order_session_rtt_probe --output-on-failure
+./build/debug/tools/gate_order_session_rtt_probe --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
+./build/debug/tools/gate_order_session_rtt_probe --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml --live-preflight
+```
+
+当前 `--execute` 仍应在读取 candidate file、连接网络或访问账户前拒绝；真实下单前必须先补 feedback fill / timeout、close terminal 确认和 REST guard。
+
 ### LeadLag
 
 ```bash
