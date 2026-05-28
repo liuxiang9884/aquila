@@ -92,6 +92,9 @@ invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
   --target /v4/ws/usdt \
   --duration-sec 180 \
   --interval-sec 5 \
+  --resolver 1.1.1.1 \
+  --resolver 8.8.8.8 \
+  --resolver 9.9.9.9 \
   --history-log /home/liuxiang/log/lead_lag_strategy*.log \
   --output /home/liuxiang/tmp/<run_id>/candidate_ips.jsonl \
   --text-output /home/liuxiang/tmp/<run_id>/candidate_ips.txt
@@ -99,7 +102,7 @@ invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
 
 脚本负责前三步：
 
-1. 使用 system resolver 对 `host` 做多轮 DNS A / AAAA 采样。
+1. 使用 system resolver 和可选 explicit UDP resolver 对 `host` 做多轮 DNS A / AAAA 采样。
 2. 从历史 log 中解析 `gate_order_session_connected remote_ip=...`。
 3. 对候选 IP 做 pinned WebSocket handshake：TCP 直连 `connect_ip:port`，TLS SNI / 证书校验和 WebSocket Host 仍使用
    `host`。
@@ -119,7 +122,9 @@ invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
 57.181.9.46
 ```
 
-第一版 discovery 只支持 system resolver；其它 resolver 可通过外部脚本生成候选文件后合并，或作为后续增强。
+`--resolver` 可重复传入，支持 `system` 或 `IP[:port]`；默认包含 `system`，显式 resolver 会作为额外 DNS 来源采样。JSONL
+中 `sources` 会区分 `dns_system` / `dns_udp_<ip>_<port>`，`dns.resolvers` 和 `dns.resolver_details` 记录每个 IP
+来自哪些 resolver。当前 explicit resolver 使用 UDP DNS，不修改本机 `/etc/resolv.conf` 或 `systemd-resolved` 配置。
 Discovery 输出不代表 RTT 优劣，只表示该 IP 当前能用 logical host 模式完成 WebSocket handshake。
 
 ### RTT Probe

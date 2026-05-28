@@ -47,6 +47,17 @@
 | `owner_thread_cpu` | `gate_order_session_connected` | experiment | Linux CPU id，失败为 `-1` | 确认 session 进入 active 时 owner thread 实际运行 CPU。 | 被更完整 thread affinity / sched snapshot 取代。 |
 | `resolved_ips` | `gate_order_session_connected` | planned | DNS 结果列表 | 区分 hostname 相同但 DNS / connect 目标不同的情况。 | WebSocket 层无法稳定提供时可留空；若无消费者可删除。 |
 
+### IP discovery JSONL 字段
+
+这些字段由 `scripts/gate/discover_gate_ws_ips.py` 写入 `candidate_ips.jsonl`，用于为后续 OrderSession RTT probe
+准备候选 `connect_ip`。脚本不登录、不下单，也不修改本机 resolver 配置。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `sources` | `candidate_ips.jsonl` | experiment | `dns_system`、`dns_udp_<ip>_<port>`、`history_log` 等 | 记录候选 IP 来自 system resolver、explicit UDP resolver 或历史连接日志。 | IP discovery schema 升级并迁移消费者后删除或重命名。 |
+| `dns.resolvers` | `candidate_ips.jsonl` | experiment | resolver label 列表，例如 `system`、`1.1.1.1:53` | 记录该 IP 被哪些 resolver 返回。 | 同上。 |
+| `dns.resolver_details` | `candidate_ips.jsonl` | experiment | `{kind,address,port,label}` 对象列表 | 区分 system resolver 与 explicit UDP resolver，便于比较不同 DNS 来源的候选集。 | 同上。 |
+
 ### 请求与 Ack 字段
 
 这些字段已经在 Gate order submit / cancel 路径中使用，主要来自 `gate_order_send_ok`、

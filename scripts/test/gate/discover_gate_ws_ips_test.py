@@ -16,6 +16,62 @@ import probe_gate_ws_connect_ip as probe
 
 
 class DiscoverGateWsIpsTest(unittest.TestCase):
+    def test_parse_resolver_specs_keeps_system_and_explicit_udp_resolvers(self):
+        specs = discovery.parse_resolver_specs(["system", "1.1.1.1", "8.8.8.8:5353"])
+
+        self.assertEqual([spec.kind for spec in specs], ["system", "udp", "udp"])
+        self.assertEqual([spec.label for spec in specs], ["system", "1.1.1.1:53", "8.8.8.8:5353"])
+        self.assertEqual(specs[1].address, "1.1.1.1")
+        self.assertEqual(specs[1].port, 53)
+        self.assertEqual(specs[2].address, "8.8.8.8")
+        self.assertEqual(specs[2].port, 5353)
+
+    def test_collect_dns_samples_uses_each_configured_resolver(self):
+        records = {}
+        specs = discovery.parse_resolver_specs(["system", "1.1.1.1"])
+        calls = []
+
+        def fake_resolver(host, port, resolver_spec, timeout):
+            calls.append((host, port, resolver_spec.label, timeout))
+            if resolver_spec.kind == "system":
+                return ["52.198.250.74"]
+            return ["52.198.250.74", "52.199.212.24"]
+
+        discovery.collect_dns_samples(
+            records,
+            run_id="run-1",
+            host="fx-ws.gateio.ws",
+            target="/v4/ws/usdt/sbe?sbe_schema_id=1",
+            port="443",
+            duration_sec=0.0,
+            interval_sec=5.0,
+            resolver_specs=specs,
+            resolver=fake_resolver,
+            resolver_timeout=1.25,
+            now_ns=lambda: 100,
+            monotonic=lambda: 10.0,
+            sleep=lambda _: None,
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                ("fx-ws.gateio.ws", "443", "system", 1.25),
+                ("fx-ws.gateio.ws", "443", "1.1.1.1:53", 1.25),
+            ],
+        )
+        first = records["52.198.250.74"]
+        self.assertEqual(first["sources"], ["dns_system", "dns_udp_1.1.1.1_53"])
+        self.assertEqual(first["dns"]["seen_count"], 2)
+        self.assertEqual(first["dns"]["resolvers"], ["system", "1.1.1.1:53"])
+        self.assertEqual(
+            first["dns"]["resolver_details"],
+            [
+                {"kind": "system", "address": "", "port": 0, "label": "system"},
+                {"kind": "udp", "address": "1.1.1.1", "port": 53, "label": "1.1.1.1:53"},
+            ],
+        )
+
     def test_dns_samples_are_aggregated_by_ip(self):
         records = {}
 

@@ -1,11 +1,13 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import argparse
+from dataclasses import dataclass
 import glob
 import ipaddress
 import json
 import re
 import socket
+import struct
 import sys
 import time
 from pathlib import Path
@@ -18,7 +20,19 @@ SCHEMA = "aquila.gate.order_session.ip_discovery.v1"
 TXT_SCHEMA = "aquila.gate.order_session.candidate_ips.v1"
 DEFAULT_TARGET = probe.DEFAULT_TARGET
 DEFAULT_TIMEOUT = probe.DEFAULT_TIMEOUT
+DEFAULT_RESOLVER_TIMEOUT = 2.0
 CONNECTED_TAG = "gate_order_session_connected"
+DNS_TYPE_A = 1
+DNS_TYPE_AAAA = 28
+DNS_CLASS_IN = 1
+
+
+@dataclass(frozen=True)
+class DnsResolverSpec:
+    kind: str
+    address: str
+    port: int
+    label: str
 
 
 def make_run_id(now: float | None = None) -> str:
@@ -61,6 +75,7 @@ def empty_dns_summary() -> dict:
         "first_seen_ns": 0,
         "last_seen_ns": 0,
         "resolvers": [],
+        "resolver_details": [],
     }
 
 
@@ -136,15 +151,17 @@ def add_dns_sample(
     target: str,
     port: str,
     resolver: str,
+    resolver_detail: dict | None = None,
+    source: str | None = None,
     observed_ns: int,
     ips: list[str],
 ) -> None:
-    source = f"dns_{resolver}"
+    source_name = source or f"dns_{resolver}"
     for ip in ips:
         record = ensure_record(
             records, run_id=run_id, host=host, target=target, port=port, ip=ip
         )
-        add_source(record, source)
+        add_source(record, source_name)
         dns = record["dns"]
         dns["seen_count"] += 1
         if dns["first_seen_ns"] == 0:
@@ -152,6 +169,96 @@ def add_dns_sample(
         dns["last_seen_ns"] = observed_ns
         if resolver not in dns["resolvers"]:
             dns["resolvers"].append(resolver)
+        if (
+            resolver_detail is not None
+            and resolver_detail not in dns["resolver_details"]
+        ):
+            dns["resolver_details"].append(resolver_detail)
+
+
+def format_resolver_label(address: str, port: int) -> str:
+    parsed = ipaddress.ip_address(address)
+    if parsed.version == 6:
+        return f"[{parsed}]:{port}"
+    return f"{parsed}:{port}"
+
+
+def parse_resolver_port(port_text: str) -> int:
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise ValueError("resolver port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("resolver port must be in [1, 65535]")
+    return port
+
+
+def parse_udp_resolver_spec(value: str) -> DnsResolverSpec:
+    if value.startswith("["):
+        end = value.find("]")
+        if end < 0:
+            raise ValueError(f"invalid resolver endpoint: {value}")
+        address = value[1:end]
+        rest = value[end + 1 :]
+        resolver_port = 53
+        if rest:
+            if not rest.startswith(":"):
+                raise ValueError(f"invalid resolver endpoint: {value}")
+            resolver_port = parse_resolver_port(rest[1:])
+    else:
+        try:
+            address = str(ipaddress.ip_address(value))
+            resolver_port = 53
+        except ValueError:
+            address_text, sep, port_text = value.rpartition(":")
+            if sep == "":
+                raise ValueError(f"resolver must be 'system' or an IP[:port]: {value}")
+            address = str(ipaddress.ip_address(address_text))
+            resolver_port = parse_resolver_port(port_text)
+
+    normalized = str(ipaddress.ip_address(address))
+    return DnsResolverSpec(
+        kind="udp",
+        address=normalized,
+        port=resolver_port,
+        label=format_resolver_label(normalized, resolver_port),
+    )
+
+
+def parse_resolver_specs(values: list[str]) -> list[DnsResolverSpec]:
+    specs: list[DnsResolverSpec] = []
+    seen: set[str] = set()
+    for raw_value in values or ["system"]:
+        value = raw_value.strip()
+        if not value:
+            continue
+        if value.lower() == "system":
+            spec = DnsResolverSpec(kind="system", address="", port=0, label="system")
+        else:
+            spec = parse_udp_resolver_spec(value)
+        if spec.label in seen:
+            continue
+        seen.add(spec.label)
+        specs.append(spec)
+    if not specs:
+        specs.append(DnsResolverSpec(kind="system", address="", port=0, label="system"))
+    return specs
+
+
+def resolver_source_name(spec: DnsResolverSpec) -> str:
+    if spec.kind == "system":
+        return "dns_system"
+    address = spec.address.replace(":", "_")
+    return f"dns_udp_{address}_{spec.port}"
+
+
+def resolver_detail(spec: DnsResolverSpec) -> dict:
+    return {
+        "kind": spec.kind,
+        "address": spec.address,
+        "port": spec.port,
+        "label": spec.label,
+    }
 
 
 def resolve_system_ips(host: str, port: str) -> list[str]:
@@ -172,6 +279,127 @@ def resolve_system_ips(host: str, port: str) -> list[str]:
     return ips
 
 
+def encode_dns_name(host: str) -> bytes:
+    labels = host.rstrip(".").split(".")
+    encoded = bytearray()
+    for label in labels:
+        if not label:
+            raise ValueError(f"invalid DNS host: {host}")
+        raw_label = label.encode("ascii")
+        if len(raw_label) > 63:
+            raise ValueError(f"DNS label is too long: {label}")
+        encoded.append(len(raw_label))
+        encoded.extend(raw_label)
+    encoded.append(0)
+    return bytes(encoded)
+
+
+def build_dns_query(host: str, query_type: int, query_id: int) -> bytes:
+    header = struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0)
+    question = encode_dns_name(host)
+    question += struct.pack("!HH", query_type, DNS_CLASS_IN)
+    return header + question
+
+
+def skip_dns_name(message: bytes, offset: int) -> int:
+    while True:
+        if offset >= len(message):
+            raise ValueError("truncated DNS name")
+        length = message[offset]
+        if length & 0xC0 == 0xC0:
+            if offset + 1 >= len(message):
+                raise ValueError("truncated DNS compression pointer")
+            return offset + 2
+        if length & 0xC0:
+            raise ValueError("unsupported DNS label format")
+        offset += 1
+        if length == 0:
+            return offset
+        offset += length
+        if offset > len(message):
+            raise ValueError("truncated DNS label")
+
+
+def parse_dns_response_ips(message: bytes, expected_query_id: int) -> list[str]:
+    if len(message) < 12:
+        raise ValueError("truncated DNS header")
+    query_id, flags, question_count, answer_count, _, _ = struct.unpack(
+        "!HHHHHH", message[:12]
+    )
+    if query_id != expected_query_id:
+        return []
+    if not flags & 0x8000:
+        return []
+    if flags & 0x000F:
+        return []
+
+    offset = 12
+    for _ in range(question_count):
+        offset = skip_dns_name(message, offset)
+        if offset + 4 > len(message):
+            raise ValueError("truncated DNS question")
+        offset += 4
+
+    ips: list[str] = []
+    seen: set[str] = set()
+    for _ in range(answer_count):
+        offset = skip_dns_name(message, offset)
+        if offset + 10 > len(message):
+            raise ValueError("truncated DNS answer")
+        answer_type, answer_class, _, rdlength = struct.unpack(
+            "!HHIH", message[offset : offset + 10]
+        )
+        offset += 10
+        if offset + rdlength > len(message):
+            raise ValueError("truncated DNS rdata")
+        rdata = message[offset : offset + rdlength]
+        offset += rdlength
+        ip = ""
+        if answer_class == DNS_CLASS_IN and answer_type == DNS_TYPE_A and rdlength == 4:
+            ip = normalize_ip(socket.inet_ntop(socket.AF_INET, rdata))
+        elif (
+            answer_class == DNS_CLASS_IN
+            and answer_type == DNS_TYPE_AAAA
+            and rdlength == 16
+        ):
+            ip = normalize_ip(socket.inet_ntop(socket.AF_INET6, rdata))
+        if ip and ip not in seen:
+            seen.add(ip)
+            ips.append(ip)
+    return ips
+
+
+def resolve_dns_udp_ips(
+    host: str, resolver_address: str, resolver_port: int, timeout: float
+) -> list[str]:
+    parsed_address = ipaddress.ip_address(resolver_address)
+    family = socket.AF_INET6 if parsed_address.version == 6 else socket.AF_INET
+    ips: list[str] = []
+    seen: set[str] = set()
+    for query_type in (DNS_TYPE_A, DNS_TYPE_AAAA):
+        query_id = (time.time_ns() ^ query_type) & 0xFFFF
+        query = build_dns_query(host, query_type, query_id)
+        with socket.socket(family, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(query, (resolver_address, resolver_port))
+            response, _ = sock.recvfrom(4096)
+        for ip in parse_dns_response_ips(response, query_id):
+            if ip not in seen:
+                seen.add(ip)
+                ips.append(ip)
+    return ips
+
+
+def resolve_ips_with_spec(
+    host: str, port: str, spec: DnsResolverSpec, timeout: float
+) -> list[str]:
+    if spec.kind == "system":
+        return resolve_system_ips(host, port)
+    if spec.kind == "udp":
+        return resolve_dns_udp_ips(host, spec.address, spec.port, timeout)
+    raise ValueError(f"unsupported resolver kind: {spec.kind}")
+
+
 def collect_dns_samples(
     records: dict[str, dict],
     *,
@@ -181,24 +409,40 @@ def collect_dns_samples(
     port: str,
     duration_sec: float,
     interval_sec: float,
-    resolver: Callable[[str, str], list[str]] = resolve_system_ips,
+    resolver_specs: list[DnsResolverSpec] | None = None,
+    resolver: Callable[
+        [str, str, DnsResolverSpec, float], list[str]
+    ] = resolve_ips_with_spec,
+    resolver_timeout: float = DEFAULT_RESOLVER_TIMEOUT,
     now_ns: Callable[[], int] = time.time_ns,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
+    specs = resolver_specs or parse_resolver_specs(["system"])
     deadline = monotonic() + max(0.0, duration_sec)
     while True:
         observed_ns = now_ns()
-        add_dns_sample(
-            records,
-            run_id=run_id,
-            host=host,
-            target=target,
-            port=port,
-            resolver="system",
-            observed_ns=observed_ns,
-            ips=resolver(host, port),
-        )
+        for spec in specs:
+            try:
+                ips = resolver(host, port, spec, resolver_timeout)
+            except Exception as exc:
+                print(
+                    f"[WARN] DNS resolver failed resolver={spec.label}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+            add_dns_sample(
+                records,
+                run_id=run_id,
+                host=host,
+                target=target,
+                port=port,
+                resolver=spec.label,
+                resolver_detail=resolver_detail(spec),
+                source=resolver_source_name(spec),
+                observed_ns=observed_ns,
+                ips=ips,
+            )
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
@@ -351,6 +595,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--duration-sec", type=float, default=180.0)
     parser.add_argument("--interval-sec", type=float, default=5.0)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
+    parser.add_argument(
+        "--resolver",
+        action="append",
+        default=["system"],
+        help=(
+            "DNS resolver to sample. Use 'system' or IP[:port]. Repeat to sample "
+            "multiple resolvers; defaults to system."
+        ),
+    )
+    parser.add_argument(
+        "--resolver-timeout",
+        type=float,
+        default=DEFAULT_RESOLVER_TIMEOUT,
+        help="Timeout in seconds for each explicit UDP DNS query.",
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument(
         "--history-log",
@@ -378,10 +637,16 @@ def validate_args(args: argparse.Namespace) -> str:
         return "--interval-sec must be positive"
     if args.timeout <= 0:
         return "--timeout must be positive"
+    if args.resolver_timeout <= 0:
+        return "--resolver-timeout must be positive"
     try:
         int(args.port)
     except ValueError:
         return "--port must be an integer"
+    try:
+        parse_resolver_specs(args.resolver)
+    except ValueError as exc:
+        return f"--resolver invalid: {exc}"
     return ""
 
 
@@ -412,6 +677,7 @@ def main() -> int:
 
     run_id = args.run_id or make_run_id()
     records: dict[str, dict] = {}
+    resolver_specs = parse_resolver_specs(args.resolver)
     collect_dns_samples(
         records,
         run_id=run_id,
@@ -420,6 +686,8 @@ def main() -> int:
         port=args.port,
         duration_sec=args.duration_sec,
         interval_sec=args.interval_sec,
+        resolver_specs=resolver_specs,
+        resolver_timeout=args.resolver_timeout,
     )
     merge_history_logs(
         records,
@@ -453,6 +721,7 @@ def main() -> int:
     summary = {
         "run_id": run_id,
         "records": len(records),
+        "resolvers": [spec.label for spec in resolver_specs],
         "selected_for_rtt_probe": selected,
         "output": str(output_path),
         "text_output": str(text_output_path),
