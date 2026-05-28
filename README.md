@@ -251,7 +251,8 @@ Gate `OrderSession` RTT probe V1a dry-run：
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
 ```
 
-当前 V1a 只解析配置、读取 login-verified candidate IP 并生成 run plan；`--execute` 会显式失败，不连接 WebSocket、不下单。
+当前 V1a 只解析配置、读取 login-verified candidate IP 并生成 run plan；sample flow、`local_order_id` 分配和 sample CSV writer
+已作为 live sample 前置逻辑落地，但 `--execute` 仍会显式失败，不连接 WebSocket、不下单。
 
 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
 `enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置

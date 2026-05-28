@@ -12,9 +12,10 @@
 ## 当前结论
 
 - 第一版新增独立 C++ tool `gate_order_session_rtt_probe`；不改 LeadLag live runtime，不接入生产策略下单路径。
-- 当前已落地 V1a dry-run scaffold：`tools/gate/order_session_rtt_probe/`、`config/order_session_rtt_probe/gate_order_session_rtt_probe.toml`
-  和 `gate_order_session_rtt_probe_test`。该阶段只解析配置、读取 login-verified candidate IP、生成 single-session run plan；
-  `--execute` 会被显式拒绝，尚不提交真实订单。
+- 当前已落地 V1a dry-run scaffold 和 live sample 前置纯逻辑：`tools/gate/order_session_rtt_probe/`、
+  `config/order_session_rtt_probe/gate_order_session_rtt_probe.toml` 和 `gate_order_session_rtt_probe_test`。已覆盖配置解析、
+  login-verified candidate IP 读取、single-session run plan、passive order 构造、GTC place -> cancel -> IOC place 的 Ack
+  状态流转、sample `local_order_id` lane 分配和 sample CSV schema / writer；`--execute` 仍会被显式拒绝，尚不提交真实订单。
 - 第一版只采集数据，不输出自动 score，不选择最优连接，不写回生产配置。
 - RTT 主指标来自真实 Gate order session order Ack：`request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`。
 - 不使用 WebSocket handshake RTT、login RTT 或 no-order probe RTT 作为第一版主指标；这些路径不等价于 `futures.order_place`。
@@ -222,8 +223,9 @@ RTT probe 读取时跳过 `#` 开头的 header。
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
 ```
 
-V1a 中 `probe.feedback.*`、`probe.safety.*` 和 `probe.output.*` 只做配置解析和边界校验，尚未执行 feedback reader、
-REST preflight / final flat 或 CSV 写入。为避免下一步 live sample 误用不安全配置，parser 已要求
+V1a 中 `probe.feedback.*`、`probe.safety.*` 只做配置解析和边界校验，尚未执行 feedback reader、REST preflight / final flat。
+`probe.output.*` 的 sample CSV schema / writer 已落地并有本地测试，但还未被 live executor 调用。为避免下一步 live sample
+误用不安全配置，parser 已要求
 `probe.feedback.enabled`、`probe.safety.preflight_rest_check`、`probe.safety.run_end_rest_check`、
 `probe.safety.stop_on_continuity_lost`、`probe.safety.confirm_dedicated_account` 和 `probe.order.reduce_only_close`
 在 V1a 都必须为 `true`。`run_id` 为空时工具启动期会生成 `gate_order_session_rtt_probe_<ns>`。`--execute` 当前在读取
@@ -289,8 +291,9 @@ candidate 只覆盖 `connection.connect_ip`。建议默认打开 `order_session.
    unexpected_fill,invalid_for_rtt_distribution,invalid_reason
    ```
 
-`CsvWriter::append_row()` 只在 sample 完成后调用，不在单个 order send -> Ack 计时窗口内调用。普通 Nova log 仍保留用于
-运行排障；CSV 是 RTT 分布分析的主产物。第一版不输出 JSONL。
+`tools/gate/order_session_rtt_probe/sample_csv_writer.*` 已按上面 schema 使用 Quill `CsvWriter` 落地；后续 live executor 只在
+sample 完成后调用 `CsvWriter::append_row()`，不在单个 order send -> Ack 计时窗口内调用。普通 Nova log 仍保留用于运行排障；
+CSV 是 RTT 分布分析的主产物。第一版不输出 JSONL。
 
 3. REST guard 使用独立 CSV 和 raw JSON，不写入 sample 行：
 
