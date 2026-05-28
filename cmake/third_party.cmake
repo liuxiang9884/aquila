@@ -29,10 +29,11 @@ find_package(benchmark CONFIG REQUIRED)
 find_package(ftxui CONFIG REQUIRED)
 
 # absl
-find_package(absl CONFIG REQUIRED COMPONENTS btree flat_hash_map)
+find_package(absl CONFIG REQUIRED COMPONENTS btree flat_hash_map flat_hash_set)
 find_package(OpenSSL REQUIRED)
 set(ABSL_LIBS
         absl::flat_hash_map
+        absl::flat_hash_set
         absl::btree)
 
 

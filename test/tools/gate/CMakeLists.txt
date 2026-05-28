@@ -63,7 +63,7 @@ target_link_libraries(gate_order_session_rtt_probe_test
         aquila_core
         aquila_config
         aquila_gate
-        absl::flat_hash_map
+        absl::flat_hash_set
         GTest::gtest_main
 )
 
