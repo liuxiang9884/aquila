@@ -172,7 +172,8 @@
 4. **OrderSession RTT probe 先做 measurement-only**
    - 第一版不接入 LeadLag runtime，不做自动 score，也不写回生产配置。
    - 主采样指标是三类真实订单 Ack RTT：GTC place、GTC cancel、IOC place。
-   - GTC / IOC 使用从 Gate latest BBO 推导的同一 passive price 和 instrument catalog 最小 quantity；意外成交时立刻 reduce-only market close，并将样本标记 invalid。
+   - probe 由 Gate `BookTicker` 行情事件触发，不固定只测一个 symbol；每个 cycle 选 8 个 IP，先串行跑 GTC place / Ack 后立即 cancel，再串行跑 IOC place；GTC / IOC 各自下单前都用该 symbol 最新 BBO 和 catalog `price_limit_down * 0.5` 计算不会成交的 passive buy price。完整 cycle 后 `cooldown_ms=500`。
+   - 意外成交时立刻 reduce-only market close，并将样本标记 invalid。
    - sample 统计使用 Nova/Quill CSV 异步写入，连接级 endpoint / owner CPU 继续用 Nova 结构化 log；不再把 JSONL 作为 RTT probe 主输出。CSV 字段需要支持 per-IP p50 / p90 / p99 / avg、过去 N 秒 rolling、不同 symbol 分组、同 IP 时间稳定性和 reconnect generation 对比。
    - 第一版推荐每个活跃 `OrderSession` 一个 owner thread，由 coordinator 轮转下发 probe；rotating worker 和 coroutine multi-session scout 作为未来资源优化方向。
    - 详细方案、线程模型取舍和安全边界见 `docs/gate_order_session_rtt_probe_design.md`。

@@ -61,30 +61,47 @@ cancel 和 IOC path 的差异。
 
 ## Probe 订单形态
 
-第一版使用目标 contract 的最新 Gate BBO 计算 passive buy price：
+第一版不是固定只测 `ZEC_USDT`；probe 由 Gate `BookTicker` 行情事件触发。收到行情后，以该行情对应的 symbol 作为本轮
+cycle 的 contract。若当前已有 cycle 在运行，新到行情只更新 latest BBO，不排队新的 cycle，避免行情频率高于下单节奏时积压。
+
+每次实际发 place 前都读取该 symbol 的最新 Gate BBO，并按 instrument catalog 计算不会成交的 passive buy price：
 
 ```text
-price = floor_to_tick(best_bid - passive_offset_ticks * tick_size)
+max_deviation = price_limit_down * passive_price_limit_fraction
+raw_price = best_bid * (1 - max_deviation)
+price = floor_to_tick(raw_price)
 quantity = instrument catalog 中最小下单量，按 quantity_step / decimal places 对齐
 ```
 
-GTC place 和 IOC place 使用同一个 `price_text` 和 `quantity_text`。默认使用 buy side，原因是意外成交时仓位方向明确，
-可以用 reduce-only sell market close 处理。`passive_offset_ticks` 必须可配置；如果价格过远导致 Gate price band /
-invalid price reject，样本应标记为 reject，不纳入正常 RTT 分布。
+`passive_price_limit_fraction` 第一版默认 `0.5`，即使用 catalog 中 `price_limit_down` 的 50% 作为最大下行偏离。
+默认使用 buy side，原因是意外成交时仓位方向明确，可以用 reduce-only sell market close 处理。如果某个 symbol 缺少有效
+`price_limit_down`、`price_tick` 或 BBO，跳过该行情触发并记录 skip reason。
 
-每个样本建议流程：
+第一版每个 cycle 使用当前 active group 的 `N=8` 个指定 IP / `OrderSession`，按两轮执行：
 
 ```text
-1. 从 Gate BookTicker SHM 读取当前 latest BBO。
-2. 按 instrument catalog 生成 quantity_text 和 passive price_text。
-3. 发送 GTC place，记录 gtc_place_ack_rtt_ns。
-4. 等 accepted feedback 或 REST open order 可见。
-5. 发送 cancel，记录 gtc_cancel_ack_rtt_ns。
-6. 等 cancelled feedback 或 REST open order 消失。
-7. 使用同一个 price_text / quantity_text 发送 IOC place，记录 ioc_place_ack_rtt_ns。
-8. 等 IOC terminal feedback 或 REST 证明无 open order。
-9. REST final check：目标 contract open orders 为空、position `size=0`，且 `value` / `margin` residual 符合现有 flat 判断。
+GTC round:
+  对 group 内 8 个 OrderSession 依次执行：
+    1. 读取该 symbol 最新 BBO。
+    2. 计算 gtc_price_text / quantity_text。
+    3. 发送 GTC place，记录 gtc_place_ack_rtt_ns。
+    4. 收到 GTC place Ack 后立即 cancel，不等待额外 cooldown。
+    5. 记录 gtc_cancel_ack_rtt_ns，并确认 cancelled / open order 消失。
+
+IOC round:
+  对同一 group 内 8 个 OrderSession 依次执行：
+    1. 重新读取该 symbol 最新 BBO。
+    2. 计算 ioc_price_text / quantity_text。
+    3. 发送 IOC place，记录 ioc_place_ack_rtt_ns。
+    4. 等 IOC terminal feedback 或 REST 证明无 open order。
+
+cycle 完成：
+  REST final check：目标 contract open orders 为空、position `size=0`，且 `value` / `margin` residual 符合现有 flat 判断。
+  然后进入 cycle-level cooldown，第一版默认 cooldown_ms=500。
 ```
+
+cooldown 只作用于完整 cycle 之后，不作用于单个 order 之间。一个 `N=8` 的 cycle 包含 8 个 GTC place、8 个 GTC cancel 和
+8 个 IOC place 请求；按用户口径是 8 个 GTC place + 8 个 IOC place 共 16 个 place order 后 cooldown `500ms`。
 
 若任何阶段出现 fill / partial fill：
 
@@ -178,18 +195,18 @@ RTT probe 读取时跳过 `#` 开头的 header。
 ./build/release/tools/gate_order_session_rtt_probe \
   --config config/order_sessions/gate_order_session.toml \
   --data-reader-config config/data_readers/strategy_data_reader_requested_20260521.toml \
-  --contract ZEC_USDT \
-  --connect-ip 52.198.250.74 \
-  --connect-ip 52.199.212.24 \
-  --connect-ip 57.181.9.46 \
+  --candidate-ip-file /home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt \
   --samples-per-ip 20 \
-  --passive-offset-ticks 100 \
+  --active-session-count 8 \
+  --passive-price-limit-fraction 0.5 \
+  --cycle-cooldown-ms 500 \
   --samples-output /home/liuxiang/tmp/<run_id>/order_session_rtt_samples.csv
 ```
 
 第一版可以沿用 base order session config 中的 `host`、`port`、TLS、credentials、decimal-size header 和 log 设置；每个
 candidate 只覆盖 `connection.connect_ip`。建议默认打开 `order_session.diagnostics.enable_tcp_info=true` 的临时副本，
-但不要修改仓库默认配置。
+但不要修改仓库默认配置。如需手工缩小候选池，可以用重复 `--connect-ip` 替代 `--candidate-ip-file`；probe 的 contract
+仍由最新 Gate `BookTicker` 行情事件决定，不通过命令行固定为单个 symbol。
 
 输出分两类：
 
@@ -203,8 +220,10 @@ candidate 只覆盖 `connection.connect_ip`。建议默认打开 `order_session.
    一行，sample 定义为 GTC place -> GTC cancel -> IOC place -> final check：
 
    ```text
-   run_id,connect_ip,order_session_id,connection_generation,round_index,sample_index,contract,price_text,quantity_text,
+   run_id,connect_ip,order_session_id,connection_generation,round_index,sample_index,contract,quantity_text,
    sample_start_ns,sample_end_ns,
+   gtc_bbo_ticker_id,gtc_bbo_local_ns,gtc_price_text,
+   ioc_bbo_ticker_id,ioc_bbo_local_ns,ioc_price_text,
    gtc_place_ack_receive_local_ns,gtc_place_ack_rtt_ns,
    gtc_cancel_ack_receive_local_ns,gtc_cancel_ack_rtt_ns,
    ioc_place_ack_receive_local_ns,ioc_place_ack_rtt_ns,
@@ -239,17 +258,20 @@ reconnect_rtt_summary.csv    # connect_ip + connection_generation + stage
 
 ## 采样顺序
 
-为了减少时间窗口偏差，不建议按 IP 一次跑完所有样本。第一版应按 round-robin / rotate order 采样：
+为了减少时间窗口偏差，不建议按 IP 一次跑完所有样本。第一版按 group round-robin 采样：从候选 IP 中选取
+`active_session_count=8` 个作为当前 group，完成一个行情触发 cycle 后，下一个 cycle 切到下一组 IP。
 
 ```text
-round 1: IP_A, IP_B, IP_C
-round 2: IP_B, IP_C, IP_A
-round 3: IP_C, IP_A, IP_B
+cycle 1: IP[0..7]
+cycle 2: IP[8..15]
+...
+cycle 6: IP[40..47]
+cycle 7: IP[0..7]
 ...
 ```
 
-同一时刻只允许一个 candidate 执行真实 probe order 序列，避免多个 probe 同时向同一账户下单，也避免订单回报和 REST
-复核互相干扰。
+同一时刻只运行一个 cycle。cycle 内按 session 串行发送请求，不并发下单，避免多个 probe 同时向同一账户下单，也避免订单回报和
+REST 复核互相干扰。
 
 ## 线程模型选项
 

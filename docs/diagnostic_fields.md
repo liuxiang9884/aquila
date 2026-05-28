@@ -74,8 +74,11 @@
 | `connection_generation` | `order_session_rtt_samples.csv` / connection log | planned | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |
 | `connected_at_ns` | connection log | planned | 本机 Unix epoch ns | 记录该 generation 建连完成时间。 | 同上。 |
 | `round_index` / `sample_index` | `order_session_rtt_samples.csv` | planned | 0-based integer | 支持 round-robin 采样顺序分析，避免按 IP 连续采样造成时间窗口偏差。 | 同上。 |
-| `contract` | `order_session_rtt_samples.csv` / connection log | planned | Gate contract，例如 `ZEC_USDT` | 标记本次 probe 的交易合约。 | 同上。 |
-| `price_text` / `quantity_text` | `order_session_rtt_samples.csv` | planned | Gate wire 文本 | 复核 passive price 和最小下单量是否符合预期。 | 同上。 |
+| `contract` | `order_session_rtt_samples.csv` / connection log | planned | Gate contract，例如 `ZEC_USDT` | 标记本次行情触发 cycle 的交易合约；第一版由 Gate `BookTicker` 行情事件决定，不固定只测一个 symbol。 | 同上。 |
+| `quantity_text` | `order_session_rtt_samples.csv` | planned | Gate wire 文本 | 复核 instrument catalog 最小下单量是否符合预期。 | 同上。 |
+| `gtc_price_text` / `ioc_price_text` | `order_session_rtt_samples.csv` | planned | Gate wire 文本 | GTC round 和 IOC round 分别用各自下单前最新 BBO 计算 passive price。 | 同上。 |
+| `gtc_bbo_ticker_id` / `ioc_bbo_ticker_id` | `order_session_rtt_samples.csv` | planned | `BookTicker.id` | 记录 GTC / IOC 下单前使用的行情版本。 | 同上。 |
+| `gtc_bbo_local_ns` / `ioc_bbo_local_ns` | `order_session_rtt_samples.csv` | planned | 本机 Unix epoch ns | 记录 GTC / IOC 下单前使用行情的本地接收时间。 | 同上。 |
 | `sample_start_ns` / `sample_end_ns` | `order_session_rtt_samples.csv` | planned | 本机 Unix epoch ns | 支持按时间窗口分析同一 IP 的稳定性和 rolling stats。 | 同上。 |
 | `gtc_place_ack_receive_local_ns` / `gtc_cancel_ack_receive_local_ns` / `ioc_place_ack_receive_local_ns` | `order_session_rtt_samples.csv` | planned | 本机 Unix epoch ns | rolling 统计的时间锚点；也用于复核 RTT 计算。 | 同上。 |
 | `gtc_place_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | GTC place Ack RTT，第一版核心指标之一。 | 同上。 |
