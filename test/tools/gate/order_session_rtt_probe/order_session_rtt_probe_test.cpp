@@ -1,6 +1,8 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include <fmt/format.h>
 #include <gtest/gtest.h>
@@ -18,6 +20,7 @@
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
 #include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
+#include "tools/gate/order_session_rtt_probe/sample_executor.h"
 #include "tools/gate/order_session_rtt_probe/sample_flow.h"
 #include "tools/gate/order_session_rtt_probe/sample_id_allocator.h"
 #include "tools/gate/order_session_rtt_probe/session_config_builder.h"
@@ -50,6 +53,43 @@ std::string ReadTextFileForTest(const std::filesystem::path& path) {
   buffer << input.rdbuf();
   return buffer.str();
 }
+
+struct FakeProbeOrderSession {
+  struct SentOrder {
+    std::string action;
+    ProbeWireOrder order;
+    std::uint64_t request_sequence{0};
+    std::int64_t send_local_ns{0};
+  };
+
+  gate::OrderSendResult PlaceOrder(const ProbeWireOrder& order) {
+    return Record("place", order);
+  }
+
+  gate::OrderSendResult CancelOrder(const ProbeWireOrder& order) {
+    return Record("cancel", order);
+  }
+
+  gate::OrderSendResult Record(std::string action,
+                               const ProbeWireOrder& order) {
+    const std::uint64_t sequence = next_request_sequence++;
+    const std::int64_t send_ns = next_send_local_ns;
+    next_send_local_ns += 1000;
+    sent_orders.push_back(SentOrder{.action = std::move(action),
+                                    .order = order,
+                                    .request_sequence = sequence,
+                                    .send_local_ns = send_ns});
+    return gate::OrderSendResult{
+        .status = gate::OrderSendStatus::kOk,
+        .request_sequence = sequence,
+        .send_local_ns = send_ns,
+    };
+  }
+
+  std::uint64_t next_request_sequence{11};
+  std::int64_t next_send_local_ns{1000};
+  std::vector<SentOrder> sent_orders;
+};
 
 [[nodiscard]] ProbeConfigResult ParseMinimalProbeConfigWith(
     std::string_view toml_tail) {
@@ -437,6 +477,91 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
   EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     DispatchesSingleSampleOrdersFromAckResponses) {
+  const PassiveOrderBuildResult gtc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  const PassiveOrderBuildResult ioc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "74.9",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 3000,
+  };
+  ProbeSampleExecutor executor(
+      gtc_passive, ioc_passive,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      });
+  FakeProbeOrderSession session;
+
+  ProbeSampleTransition transition = executor.Start(session);
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 1U);
+  EXPECT_EQ(session.sent_orders[0].action, "place");
+  EXPECT_EQ(session.sent_orders[0].order.local_order_id, 0x0700000000000001ULL);
+  EXPECT_EQ(session.sent_orders[0].order.time_in_force,
+            TimeInForce::kGoodTillCancel);
+
+  transition = executor.OnOrderResponse(
+      session,
+      gate::OrderResponse{
+          .kind = gate::OrderResponseKind::kAck,
+          .local_order_id = 0x0700000000000001ULL,
+          .request_sequence = session.sent_orders[0].request_sequence,
+          .local_receive_ns = session.sent_orders[0].send_local_ns + 600,
+      });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 2U);
+  EXPECT_EQ(session.sent_orders[1].action, "cancel");
+  EXPECT_EQ(session.sent_orders[1].order.local_order_id, 0x0700000000000001ULL);
+  EXPECT_EQ(executor.stats().gtc_place_ack_rtt_ns, 600);
+
+  transition = executor.OnOrderResponse(
+      session,
+      gate::OrderResponse{
+          .kind = gate::OrderResponseKind::kAck,
+          .local_order_id = 0x0700000000000001ULL,
+          .request_sequence = session.sent_orders[1].request_sequence,
+          .local_receive_ns = session.sent_orders[1].send_local_ns + 700,
+      });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 3U);
+  EXPECT_EQ(session.sent_orders[2].action, "place");
+  EXPECT_EQ(session.sent_orders[2].order.local_order_id, 0x0700000000000002ULL);
+  EXPECT_EQ(session.sent_orders[2].order.time_in_force,
+            TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(session.sent_orders[2].order.price_text, "74.9");
+  EXPECT_EQ(executor.stats().gtc_cancel_ack_rtt_ns, 700);
+
+  transition = executor.OnOrderResponse(
+      session,
+      gate::OrderResponse{
+          .kind = gate::OrderResponseKind::kAck,
+          .local_order_id = 0x0700000000000002ULL,
+          .request_sequence = session.sent_orders[2].request_sequence,
+          .local_receive_ns = session.sent_orders[2].send_local_ns + 800,
+      });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 4U);
+  EXPECT_EQ(session.sent_orders[3].action, "place");
+  EXPECT_EQ(session.sent_orders[3].order.local_order_id, 0x0700000000000004ULL);
+  EXPECT_EQ(session.sent_orders[3].order.side, OrderSide::kSell);
+  EXPECT_EQ(session.sent_orders[3].order.price_text, "0");
+  EXPECT_TRUE(session.sent_orders[3].order.reduce_only);
+  EXPECT_EQ(executor.stats().ioc_place_ack_rtt_ns, 800);
 }
 
 TEST(GateOrderSessionRttProbeTest,
