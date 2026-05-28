@@ -1,7 +1,9 @@
+#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -19,9 +21,9 @@ struct CliOptions {
   std::filesystem::path config_path{
       "config/order_session_rtt_probe/gate_order_session_rtt_probe.toml"};
   std::filesystem::path candidate_ip_file_override;
-  std::size_t max_candidates_override{0};
-  std::uint32_t samples_per_ip_override{0};
-  std::size_t active_session_count_override{0};
+  std::optional<std::size_t> max_candidates_override;
+  std::optional<std::uint32_t> samples_per_ip_override;
+  std::optional<std::size_t> active_session_count_override;
   bool execute{false};
 };
 
@@ -39,23 +41,46 @@ struct CliOptions {
   return result;
 }
 
-void ApplyOverrides(const CliOptions& options, probe::ProbeConfig* config) {
+struct OverrideResult {
+  bool ok{false};
+  std::string error;
+};
+
+[[nodiscard]] OverrideResult ApplyOverrides(const CliOptions& options,
+                                            probe::ProbeConfig* config) {
   if (!options.candidate_ip_file_override.empty()) {
     config->inputs.candidate_ip_file = options.candidate_ip_file_override;
   }
-  if (options.max_candidates_override != 0) {
-    config->sessions.max_candidates = options.max_candidates_override;
+  if (options.max_candidates_override) {
+    config->sessions.max_candidates = *options.max_candidates_override;
   }
-  if (options.samples_per_ip_override != 0) {
-    config->sampling.samples_per_ip = options.samples_per_ip_override;
+  if (options.samples_per_ip_override) {
+    if (*options.samples_per_ip_override == 0) {
+      return {.error = "--samples-per-ip must be positive"};
+    }
+    config->sampling.samples_per_ip = *options.samples_per_ip_override;
   }
-  if (options.active_session_count_override != 0) {
+  if (options.active_session_count_override) {
+    if (*options.active_session_count_override == 0) {
+      return {.error = "--active-session-count must be positive"};
+    }
     config->sessions.active_session_count =
-        options.active_session_count_override;
+        *options.active_session_count_override;
   }
   if (options.execute) {
     config->execute = true;
   }
+  return {.ok = true};
+}
+
+void EnsureRunId(probe::ProbeConfig* config) {
+  if (!config->run_id.empty()) {
+    return;
+  }
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  const auto ns =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+  config->run_id = fmt::format("gate_order_session_rtt_probe_{}", ns);
 }
 
 void PrintPlan(const probe::ProbeConfig& config,
@@ -93,7 +118,18 @@ int Run(const CliOptions& options) {
   }
 
   probe::ProbeConfig config = std::move(config_result.value);
-  ApplyOverrides(options, &config);
+  const OverrideResult override_result = ApplyOverrides(options, &config);
+  if (!override_result.ok) {
+    fmt::print(stderr, "[FAIL] option_error={}\n", override_result.error);
+    return 2;
+  }
+  EnsureRunId(&config);
+  if (config.execute) {
+    fmt::print(stderr,
+               "[FAIL] live execution is not implemented in this V1a "
+               "dry-run scaffold\n");
+    return 2;
+  }
 
   aquila::Result<std::string> candidate_text =
       ReadTextFile(config.inputs.candidate_ip_file);
@@ -110,12 +146,6 @@ int Run(const CliOptions& options) {
   }
 
   PrintPlan(config, plan_result.value);
-  if (config.execute) {
-    fmt::print(stderr,
-               "[FAIL] live execution is not implemented in this V1a "
-               "dry-run scaffold\n");
-    return 2;
-  }
   return 0;
 }
 

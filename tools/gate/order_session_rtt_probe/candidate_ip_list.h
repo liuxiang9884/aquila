@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <absl/container/flat_hash_set.h>
+#include <arpa/inet.h>
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 
@@ -37,6 +38,13 @@ namespace candidate_ip_list_detail {
   return text;
 }
 
+[[nodiscard]] inline bool IsNumericIpAddress(std::string_view text) {
+  std::string value{text};
+  unsigned char buffer[sizeof(in6_addr)]{};
+  return ::inet_pton(AF_INET, value.c_str(), buffer) == 1 ||
+         ::inet_pton(AF_INET6, value.c_str(), buffer) == 1;
+}
+
 }  // namespace candidate_ip_list_detail
 
 [[nodiscard]] inline CandidateIpLoadResult LoadCandidateIpsFromText(
@@ -53,6 +61,10 @@ namespace candidate_ip_list_detail {
     line = candidate_ip_list_detail::TrimAsciiWhitespace(line);
     if (line.empty() || line.front() == '#') {
       continue;
+    }
+    if (!candidate_ip_list_detail::IsNumericIpAddress(line)) {
+      result.error = "invalid candidate ip line";
+      return result;
     }
 
     std::string ip{line};

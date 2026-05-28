@@ -1,3 +1,4 @@
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
@@ -13,6 +14,23 @@
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 namespace {
+
+[[nodiscard]] ProbeConfigResult ParseMinimalProbeConfigWith(
+    std::string_view toml_tail) {
+  const std::string text = fmt::format(
+      R"toml(
+[probe]
+name = "gate_order_session_rtt_probe"
+
+[probe.inputs]
+candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+
+{}
+)toml",
+      toml_tail);
+  const toml::parse_result parsed = toml::parse(text);
+  return ParseProbeConfig(parsed);
+}
 
 TEST(GateOrderSessionRttProbeTest, ParsesSingleSessionProbeConfig) {
   const toml::parse_result parsed = toml::parse(R"toml(
@@ -108,6 +126,76 @@ active_session_count = 0
   EXPECT_NE(result.error.find("active_session_count"), std::string::npos);
 }
 
+TEST(GateOrderSessionRttProbeTest, RejectsWrongTypedConfigValues) {
+  const ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.sessions]
+active_session_count = "1"
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("active_session_count"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, ValidatesFeedbackStrategyIdLane) {
+  ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.feedback]
+strategy_id = 0
+)toml");
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.feedback.strategy_id, 0U);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.feedback]
+strategy_id = 8
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("strategy_id"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsUnsafeOrderConfig) {
+  ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+passive_price_limit_fraction = 0.0
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("passive_price_limit_fraction"),
+            std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+reduce_only_close = false
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("reduce_only_close"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsInvalidCpuConfig) {
+  ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.sampling]
+coordinator_cpu = 9223372036854775807
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("coordinator_cpu"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.sessions]
+worker_cpu_ids = [0, "bad"]
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("worker_cpu_ids"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsUnsupportedConnectionGeneration) {
+  const ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.sampling]
+cycles_per_connection_generation = 2
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("cycles_per_connection_generation"),
+            std::string::npos);
+}
+
 TEST(GateOrderSessionRttProbeTest,
      LoadsCandidateIpsSkippingHeadersAndDeduping) {
   const CandidateIpLoadResult result = LoadCandidateIpsFromText(
@@ -125,6 +213,16 @@ TEST(GateOrderSessionRttProbeTest,
   EXPECT_EQ(result.ips[0], "52.198.250.74");
   EXPECT_EQ(result.ips[1], "52.199.212.24");
   EXPECT_EQ(result.duplicate_count, 1U);
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsInvalidCandidateIpLine) {
+  const CandidateIpLoadResult result = LoadCandidateIpsFromText(
+      "# schema=aquila.gate.order_session.candidate_ips.v1\n"
+      R"json({"ip":"52.198.250.74"})json"
+      "\n");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("invalid candidate ip"), std::string::npos);
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionDryRunPlan) {

@@ -87,6 +87,7 @@ target_link_libraries(gate_order_session_rtt_probe
         aquila_core
         CLI11::CLI11
         fmt::fmt-header-only
+        PkgConfig::tomlplusplus
 )
 
 add_executable(gate_demo_strategy

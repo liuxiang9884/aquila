@@ -222,6 +222,10 @@ RTT probe 读取时跳过 `#` 开头的 header。
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
 ```
 
+V1a 中 `probe.feedback.*`、`probe.safety.*` 和 `probe.output.*` 只做配置解析和边界校验，尚未执行 feedback reader、
+REST preflight / final flat 或 CSV 写入。`run_id` 为空时工具启动期会生成 `gate_order_session_rtt_probe_<ns>`。
+`--execute` 当前在读取 candidate 文件和生成 plan 前就显式失败，防止 dry-run scaffold 误触 live 副作用。
+
 默认配置先采用 single-session smoke：
 
 ```text
@@ -436,9 +440,17 @@ ScoutOrderSession
 实现后建议先跑：
 
 ```bash
+cmake --build build/debug --target gate_order_session_rtt_probe gate_order_session_rtt_probe_test
+ctest --test-dir build/debug -R gate_order_session_rtt_probe_test --output-on-failure
+build/debug/tools/gate_order_session_rtt_probe \
+  --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
+build/debug/tools/gate_order_session_rtt_probe --execute \
+  --candidate-ip-file /home/liuxiang/tmp/does_not_exist_for_execute_guard.txt
 ctest --test-dir build/debug -R '(gate_order_session|order_session_config|gate_submit_response_parser)' --output-on-failure
 git diff --check
 ```
+
+其中 `--execute` smoke 期望 exit code `2`，且不能访问 candidate file、网络或账户。
 
 live 前先用单个 `connect_ip`、`samples-per-ip=1` 跑最小 smoke，确认：
 

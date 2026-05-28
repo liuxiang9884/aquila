@@ -244,6 +244,15 @@ Gate `OrderSession` failure response 诊断工具 dry-run：
 
 该工具只直接测试 Gate `OrderSession` 协议响应，默认不连接 WebSocket；必须显式传 `--execute` 才发送真实请求。
 
+Gate `OrderSession` RTT probe V1a dry-run：
+
+```bash
+./build/debug/tools/gate_order_session_rtt_probe \
+  --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
+```
+
+当前 V1a 只解析配置、读取 login-verified candidate IP 并生成 run plan；`--execute` 会显式失败，不连接 WebSocket、不下单。
+
 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
 `enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置
 `enable_tls = false`。
