@@ -19,6 +19,7 @@
 - 2026-05-25 run 所在 10 分钟 sysstat 窗口中 CPU4 满载，且 strategy / order session / feedback session 当时都绑 CPU4 并 active-spin；本地调度或同核竞争仍是强候选，但原始日志不能证明具体根因。
 - 2026-05-26 的 12-symbol guarded live-orders 30 分钟拆核运行正常退出 flat，`signals=10`、`orders=10`、`finished=10`、`filled=0`，最大 Ack RTT 为 `6.738ms`，没有复现 `219ms` 级别 Ack outlier。
 - 2026-05-26 run 中最大 send-to-finish 为 DASH_USDT 的 `45.977ms`；其中 Gate exchange timestamp 的 Ack-to-finish 为 `37.336ms`。这属于 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟，不是 Ack path outlier。
+- 2026-05-28 当前讨论结论：`219.023ms` Ack RTT outlier 和 terminal lifecycle latency 都先等待后续复现，不再基于单次样本继续推断或修改 order session 架构。terminal lifecycle latency 的候选假设按“Gate 交易所内部订单队列 / IOC terminal lifecycle 延迟”标记，但仍未证明。
 - 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为本 latency 计划的 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 
 ## 已落地
@@ -114,12 +115,14 @@
 
 1. **Ack outlier 根因仍未证明**
    - 2026-05-26 拆核 30 分钟 run 没有复现 Ack outlier，只能说明这轮条件下 Ack RTT 正常，不能证明 2026-05-25 的 `219.023ms` 根因。
+   - 当前状态是 inactive investigation：等待复现后再按新加 diagnostic / 调度采样分析，不继续凭单次样本推断根因。
    - 下一次如果复现 Ack RTT outlier，优先看 `send_to_first_drive_read_ns`、`drive_read_duration_ns` 和 `latency_diagnostic_inflight_at_send`，再结合 `pidstat` / `sar` / `perf sched` 判断是否为 deschedule、runtime hook 推迟 read、socket/TLS read 或 decode dispatch。
 
 2. **exchange Ack-to-finish 是独立诊断面**
    - `exchange_lifecycle_ns` 只使用 Gate exchange timestamp，不混用本地时钟。
    - 它适合观察 Gate submit Ack 到 private order terminal update 的相对间隔，不用于解释 Ack RTT，也不表示本地和交易所之间的单程网络延迟。
-   - 若后续 IOC terminal lifecycle tail 继续偏高，应单独分析 Gate private `futures.orders` update 路径，不要并入 Ack RTT 根因分析。
+   - 当前候选假设按“Gate 交易所内部订单队列 / IOC terminal lifecycle 延迟”标记；该假设仍需后续复现样本证明。
+   - 若后续 IOC terminal lifecycle tail 继续偏高，应单独分析 Gate private `futures.orders` update 路径，不要并入 Ack RTT 根因分析；复核时同时记录 `ack_rtt_ns`、`exchange_lifecycle_ns`、`ack_to_finish_local_ns`、`finish_as`、symbol、order role、remote endpoint、local port 和可选 `TCP_INFO`。
 
 3. **多 OrderSession / 多 WebSocket 连接的 Ack RTT 可能不同**
    - 同一个账号可以启动多个 Gate `OrderSession`，也就是多个 WebSocket 连接；即使 WebSocket URL 相同，各连接的 Ack RTT 分布也可能不同。

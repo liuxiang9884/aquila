@@ -260,9 +260,11 @@ ack_to_finish_local_ns  = 39.239 ms
 
 结论：这不是 Ack path outlier，而是 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟。由于 `exchange_lifecycle_ns` 只使用 Gate exchange timestamp，可用于观察 Gate 侧 Ack 到终态 update 的相对间隔；但它不说明本地和交易所之间的单程网络延迟，也不应和 `ack_rtt_ns` 混为一个指标。后续报告需要同时保留 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish，避免把交易所终态生命周期延迟误判成 Ack receive 延迟。
 
+截至 2026-05-28，`exchange_lifecycle_ns` / terminal lifecycle outlier 的当前候选假设是 Gate 交易所内部订单队列或 IOC terminal lifecycle 延迟；该判断仍未被复现样本证明，只作为后续分析标签。若后续 live run 再出现 Ack RTT 正常但 `exchange_lifecycle_ns` 或 `ack_to_finish_local_ns` 明显偏高，应优先按交易所侧 terminal lifecycle 方向分析，并记录 symbol、order type、`finish_as`、remote endpoint 和 session 维度信息。
+
 ## 后续验证建议
 
-拆 CPU、Gate `OrderSession` 专用 Ack latency diagnostic、affinity profile overlay、report diagnostic 字段和 exchange Ack-to-finish 字段已经落地。2026-05-26 的 30 分钟拆核 run 没有复现 Ack RTT outlier，因此下一步不是继续增加报告字段，而是等待更多 live 样本或在复现时结合调度证据归因。
+拆 CPU、Gate `OrderSession` 专用 Ack latency diagnostic、affinity profile overlay、report diagnostic 字段和 exchange Ack-to-finish 字段已经落地。2026-05-26 的 30 分钟拆核 run 没有复现 Ack RTT outlier，因此 2026-05-25 的 `219.023ms` Ack RTT 当前处于 inactive investigation 状态：不继续凭单次样本推断根因，等待后续复现后再结合新 diagnostic / 调度证据归因。
 
 后续 live run 如果继续复核 Ack latency，应并行采集：
 
@@ -297,4 +299,11 @@ sar -w 1
 3. `pidstat` / `perf sched` 是否显示 strategy owner thread 被 deschedule。
 4. `exchange_lifecycle_ns` 是否同步变大：若只是 exchange Ack-to-finish 变大，应归入 Gate terminal lifecycle，而不是 Ack RTT。
 
-当前仍未完成的是根因复现和归因；IOC partial-fill / decimal filled close live 复核仍是独立 blocker，不能因为 30 分钟 cancelled-only run 正常就视为通过。
+复现 terminal lifecycle outlier 时优先看：
+
+1. `ack_rtt_ns` 是否仍处于常态范围，避免把 Ack path 与 terminal lifecycle 混在一起。
+2. `exchange_lifecycle_ns`、`ack_to_finish_local_ns` 和 `send_to_finish_local_ns` 是否同步变大。
+3. `finish_as`、status、symbol、order role、IOC 参数和是否集中在特定合约或下单形态。
+4. remote endpoint、local port、`order_session_id` 和可选 `TCP_INFO`，判断是否存在连接维度聚集。
+
+当前仍未完成的是 Ack RTT outlier 和 terminal lifecycle outlier 的复现与归因。按 2026-05-27 当前接手决策，IOC partial-fill / decimal filled close 不再作为当前阶段 active blocker；后续若 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再恢复 targeted small smoke 复查。
