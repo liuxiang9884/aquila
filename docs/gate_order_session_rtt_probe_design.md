@@ -44,6 +44,21 @@
 后续分析时三组 Ack RTT 分开统计，例如 count、p50、p90、p99、max、timeout、reject、unexpected fill。第一版不定义
 score，也不按 score 输出“最优连接”结论。
 
+## 统计目标
+
+第一版数据采集要支持下面五类问题，但统计计算放在离线分析脚本或后续 report 中完成，不放入下单热路径：
+
+| 目标 | 分组维度 | 统计口径 |
+| --- | --- | --- |
+| 单个指定 IP 的 Ack RTT 分布 | `connect_ip + stage` | 对 valid sample 计算 count、avg、p50、p90、p99、max。 |
+| 过去 N 秒 rolling Ack RTT | `connect_ip + stage + rolling_window_sec` | 按 Ack 接收时间或 `sample_end_ns` 滚动聚合；默认建议先用 `300s`，分析脚本允许改成 `60s` / `600s`。 |
+| 同一指定 IP 在不同 symbol 上是否不同 | `connect_ip + contract + stage` | 同一 `connect_ip` 下按 contract 分组比较三类 Ack RTT。 |
+| 同一指定 IP 在不同时间是否稳定 | `connect_ip + stage + time_window` | 与 rolling 统计同一套数据口径；重点看 p90 / p99 / max 是否漂移。 |
+| 同一指定 IP 断开重连后是否变化 | `connect_ip + connection_generation + stage` | 同一 IP 每次重新建连递增 generation，比较不同 generation 的分布。 |
+
+这里的 stage 固定为 `gtc_place`、`gtc_cancel`、`ioc_place`。第一版不把三类 Ack RTT 混成一个总 RTT，以免掩盖 place、
+cancel 和 IOC path 的差异。
+
 ## Probe 订单形态
 
 第一版使用目标 contract 的最新 Gate BBO 计算 passive buy price：
@@ -188,14 +203,39 @@ candidate 只覆盖 `connection.connect_ip`。建议默认打开 `order_session.
    一行，sample 定义为 GTC place -> GTC cancel -> IOC place -> final check：
 
    ```text
-   run_id,connect_ip,order_session_id,round_index,sample_index,contract,price_text,quantity_text,
-   gtc_place_ack_rtt_ns,gtc_cancel_ack_rtt_ns,ioc_place_ack_rtt_ns,
+   run_id,connect_ip,order_session_id,connection_generation,round_index,sample_index,contract,price_text,quantity_text,
+   sample_start_ns,sample_end_ns,
+   gtc_place_ack_receive_local_ns,gtc_place_ack_rtt_ns,
+   gtc_cancel_ack_receive_local_ns,gtc_cancel_ack_rtt_ns,
+   ioc_place_ack_receive_local_ns,ioc_place_ack_rtt_ns,
    gtc_place_status,gtc_cancel_status,ioc_place_status,
    unexpected_fill,invalid_for_rtt_distribution,invalid_reason,final_flat
    ```
 
 `CsvWriter::append_row()` 只在 sample 完成后调用，不在单个 order send -> Ack 计时窗口内调用。普通 Nova log 仍保留用于
 运行排障；CSV 是 RTT 分布分析的主产物。第一版不输出 JSONL。
+
+连接级 log 必须同时记录 `connection_generation` 和 `connected_at_ns`：
+
+```text
+gate_order_session_rtt_probe_connection
+  run_id connect_ip order_session_id connection_generation connected_at_ns
+  remote_ip remote_port local_ip local_port owner_thread_cpu contract
+```
+
+`connection_generation` 按 `connect_ip` 从 0 开始递增。同一个指定 IP 关闭并重新连接后，新的 `OrderSession` 必须使用新的
+generation；离线统计用它判断“同一个 IP 重连前后 Ack RTT 是否显著变化”。
+
+建议第一版附带一个离线分析脚本，输入 `order_session_rtt_samples.csv`，输出：
+
+```text
+overall_rtt_summary.csv      # connect_ip + stage 的 count / avg / p50 / p90 / p99 / max
+rolling_rtt_summary.csv      # connect_ip + stage + rolling window 的 rolling stats
+symbol_rtt_summary.csv       # connect_ip + contract + stage
+reconnect_rtt_summary.csv    # connect_ip + connection_generation + stage
+```
+
+所有统计默认只使用 `invalid_for_rtt_distribution=false`、`final_flat=true` 且对应 stage status 为 acked 的样本。
 
 ## 采样顺序
 

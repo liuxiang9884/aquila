@@ -71,9 +71,13 @@
 | `run_id` | `order_session_rtt_samples.csv` / connection log | planned | 文本 | 关联同一次 RTT probe run 的连接 log 与 sample CSV。 | RTT probe schema 升级并迁移消费者后重审。 |
 | `connect_ip` | `order_session_rtt_samples.csv` / connection log | planned | IP 文本 | 被测 Gate TCP 直连 IP，是分组统计主 key。 | 同上。 |
 | `order_session_id` | `order_session_rtt_samples.csv` / connection log | planned | 本进程内单调 id | 关联 sample、连接 endpoint 和底层 order session log。 | 同上。 |
+| `connection_generation` | `order_session_rtt_samples.csv` / connection log | planned | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |
+| `connected_at_ns` | connection log | planned | 本机 Unix epoch ns | 记录该 generation 建连完成时间。 | 同上。 |
 | `round_index` / `sample_index` | `order_session_rtt_samples.csv` | planned | 0-based integer | 支持 round-robin 采样顺序分析，避免按 IP 连续采样造成时间窗口偏差。 | 同上。 |
 | `contract` | `order_session_rtt_samples.csv` / connection log | planned | Gate contract，例如 `ZEC_USDT` | 标记本次 probe 的交易合约。 | 同上。 |
 | `price_text` / `quantity_text` | `order_session_rtt_samples.csv` | planned | Gate wire 文本 | 复核 passive price 和最小下单量是否符合预期。 | 同上。 |
+| `sample_start_ns` / `sample_end_ns` | `order_session_rtt_samples.csv` | planned | 本机 Unix epoch ns | 支持按时间窗口分析同一 IP 的稳定性和 rolling stats。 | 同上。 |
+| `gtc_place_ack_receive_local_ns` / `gtc_cancel_ack_receive_local_ns` / `ioc_place_ack_receive_local_ns` | `order_session_rtt_samples.csv` | planned | 本机 Unix epoch ns | rolling 统计的时间锚点；也用于复核 RTT 计算。 | 同上。 |
 | `gtc_place_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | GTC place Ack RTT，第一版核心指标之一。 | 同上。 |
 | `gtc_cancel_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | GTC cancel Ack RTT，第一版核心指标之一。 | 同上。 |
 | `ioc_place_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | IOC place Ack RTT，第一版核心指标之一。 | 同上。 |
