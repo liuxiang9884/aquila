@@ -19,6 +19,7 @@
 #include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
 #include "tools/gate/order_session_rtt_probe/sample_flow.h"
 #include "tools/gate/order_session_rtt_probe/sample_id_allocator.h"
+#include "tools/gate/order_session_rtt_probe/session_config_builder.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
@@ -458,6 +459,32 @@ TEST(GateOrderSessionRttProbeTest,
             7U);
   EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second.ioc_close_local_order_id),
             8U);
+}
+
+TEST(GateOrderSessionRttProbeTest, BuildsPinnedOrderSessionConfig) {
+  gate::OrderSessionConfig base;
+  base.name = "base_gate_order_session";
+  base.connection.host = "fx-ws.gateio.ws";
+  base.connection.connect_ip = "";
+  base.connection.port = "443";
+  base.connection.target = "/v4/ws/usdt";
+  base.connection.runtime_policy.io_cpu_id = 3;
+  base.enable_tcp_info_diagnostics = false;
+
+  const gate::OrderSessionConfig pinned = BuildPinnedOrderSessionConfig(
+      base, PinnedOrderSessionOptions{
+                .connect_ip = "52.198.250.74",
+                .worker_cpu_id = 6,
+                .enable_tcp_info_diagnostics = true,
+            });
+
+  EXPECT_EQ(pinned.name, "base_gate_order_session");
+  EXPECT_EQ(pinned.connection.host, "fx-ws.gateio.ws");
+  EXPECT_EQ(pinned.connection.connect_ip, "52.198.250.74");
+  EXPECT_EQ(pinned.connection.port, "443");
+  EXPECT_EQ(pinned.connection.target, "/v4/ws/usdt");
+  EXPECT_EQ(pinned.connection.runtime_policy.io_cpu_id, 6);
+  EXPECT_TRUE(pinned.enable_tcp_info_diagnostics);
 }
 
 TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
