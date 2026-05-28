@@ -15,7 +15,8 @@
 - 当前已落地 V1a dry-run scaffold 和 live sample 前置纯逻辑：`tools/gate/order_session_rtt_probe/`、
   `config/order_session_rtt_probe/gate_order_session_rtt_probe.toml` 和 `gate_order_session_rtt_probe_test`。已覆盖配置解析、
   login-verified candidate IP 读取、single-session run plan、pinned `connect_ip` order session config 派生、passive order 构造、
-  GTC place -> cancel -> IOC place 的 Ack 状态流转、sample `local_order_id` lane 分配和 sample CSV schema / writer；
+  GTC place -> cancel -> IOC place 的 Ack 状态流转、sample executor 订单派发、sample `local_order_id` lane 分配和 sample
+  CSV schema / writer；
   `--execute` 仍会被显式拒绝，尚不提交真实订单。
 - 第一版只采集数据，不输出自动 score，不选择最优连接，不写回生产配置。
 - RTT 主指标来自真实 Gate order session order Ack：`request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`。
