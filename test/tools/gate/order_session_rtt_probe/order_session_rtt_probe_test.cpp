@@ -10,6 +10,7 @@
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
+#include "tools/gate/order_session_rtt_probe/sample_flow.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
@@ -297,6 +298,110 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionDryRunPlan) {
   EXPECT_EQ(result.value.cycles[0].cycle_index, 0U);
   EXPECT_EQ(result.value.cycles[0].connect_ips,
             (std::vector<std::string>{"52.198.250.74"}));
+}
+
+TEST(GateOrderSessionRttProbeTest, BuildsProbeSampleOrders) {
+  const PassiveOrderBuildResult passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  ProbeSampleLocalIds ids{
+      .gtc_local_order_id = 0x0700000000000001ULL,
+      .ioc_local_order_id = 0x0700000000000002ULL,
+      .gtc_close_local_order_id = 0x0700000000000003ULL,
+      .ioc_close_local_order_id = 0x0700000000000004ULL,
+  };
+
+  const ProbeWireOrder gtc = BuildGtcPlaceOrder(passive, ids);
+  const ProbeWireOrder cancel = BuildGtcCancelOrder(gtc);
+  const ProbeWireOrder ioc = BuildIocPlaceOrder(passive, ids);
+  const ProbeWireOrder close = BuildIocCloseOrder(passive, ids);
+
+  EXPECT_EQ(gtc.local_order_id, ids.gtc_local_order_id);
+  EXPECT_EQ(gtc.symbol, "ZEC_USDT");
+  EXPECT_EQ(gtc.side, OrderSide::kBuy);
+  EXPECT_EQ(gtc.time_in_force, TimeInForce::kGoodTillCancel);
+  EXPECT_EQ(gtc.price_text, "75.0");
+  EXPECT_FALSE(gtc.reduce_only);
+
+  EXPECT_EQ(cancel.local_order_id, ids.gtc_local_order_id);
+  EXPECT_EQ(cancel.symbol, "ZEC_USDT");
+
+  EXPECT_EQ(ioc.local_order_id, ids.ioc_local_order_id);
+  EXPECT_EQ(ioc.time_in_force, TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(ioc.price_text, "75.0");
+
+  EXPECT_EQ(close.local_order_id, ids.ioc_close_local_order_id);
+  EXPECT_EQ(close.side, OrderSide::kSell);
+  EXPECT_EQ(close.time_in_force, TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(close.price_text, "0");
+  EXPECT_TRUE(close.reduce_only);
+}
+
+TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
+  ProbeSampleFlow flow(ProbeSampleLocalIds{
+      .gtc_local_order_id = 0x0700000000000001ULL,
+      .ioc_local_order_id = 0x0700000000000002ULL,
+      .gtc_close_local_order_id = 0x0700000000000003ULL,
+      .ioc_close_local_order_id = 0x0700000000000004ULL,
+  });
+
+  EXPECT_EQ(flow.Start(), ProbeSampleAction::kSubmitGtcPlace);
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 11,
+                                   .send_local_ns = 1000,
+                               })
+                  .ok);
+
+  ProbeSampleTransition transition = flow.OnOrderResponse(gate::OrderResponse{
+      .kind = gate::OrderResponseKind::kAck,
+      .local_order_id = 0x0700000000000001ULL,
+      .request_sequence = 11,
+      .local_receive_ns = 1600,
+  });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitGtcCancel);
+  EXPECT_EQ(flow.stats().gtc_place_ack_rtt_ns, 600);
+
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcCancel,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 12,
+                                   .send_local_ns = 2000,
+                               })
+                  .ok);
+  transition = flow.OnOrderResponse(gate::OrderResponse{
+      .kind = gate::OrderResponseKind::kAck,
+      .local_order_id = 0x0700000000000001ULL,
+      .request_sequence = 12,
+      .local_receive_ns = 2900,
+  });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocPlace);
+  EXPECT_EQ(flow.stats().gtc_cancel_ack_rtt_ns, 900);
+
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kIocPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 13,
+                                   .send_local_ns = 3000,
+                               })
+                  .ok);
+  transition = flow.OnOrderResponse(gate::OrderResponse{
+      .kind = gate::OrderResponseKind::kAck,
+      .local_order_id = 0x0700000000000002ULL,
+      .request_sequence = 13,
+      .local_receive_ns = 3700,
+  });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
+  EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsPassiveBuyUsingHalfPriceLimitDown) {
