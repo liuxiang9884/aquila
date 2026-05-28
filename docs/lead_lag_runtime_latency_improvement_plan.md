@@ -173,7 +173,8 @@
    - 第一版不接入 LeadLag runtime，不做自动 score，也不写回生产配置。
    - 主采样指标是三类真实订单 Ack RTT：GTC place、GTC cancel、IOC place。
    - probe 由 Gate `BookTicker` 行情事件触发，不固定只测一个 symbol；每个 cycle 选 8 个 IP，先串行跑 GTC place / Ack 后立即 cancel，再串行跑 IOC place；GTC / IOC 各自下单前都用该 symbol 最新 BBO 和 catalog `price_limit_down * 0.5` 计算不会成交的 passive buy price。完整 cycle 后 `cooldown_ms=500`。
-   - 意外成交时立刻 reduce-only market close，并将样本标记 invalid。
+   - safety path 优先走 WebSocket reduce-only market close：GTC cancel reject / terminal 不确定时立即补 close，IOC place Ack 后因没有 cancel 也立即补 close；无仓位导致的 reduce-only reject 视为 flat-safe，不作为 probe 失败。
+   - REST 不做逐 cycle final flat；只做 run start preflight、fatal / `ContinuityLost` 处理和 run end 整体账户检查 / 市价 reduce-only 兜底。意外成交样本标记 invalid。
    - sample 统计使用 Nova/Quill CSV 异步写入，连接级 endpoint / owner CPU 继续用 Nova 结构化 log；不再把 JSONL 作为 RTT probe 主输出。CSV 字段需要支持 per-IP p50 / p90 / p99 / avg、过去 N 秒 rolling、不同 symbol 分组、同 IP 时间稳定性和 reconnect generation 对比。
    - 第一版推荐每个活跃 `OrderSession` 一个 owner thread，由 coordinator 轮转下发 probe；rotating worker 和 coroutine multi-session scout 作为未来资源优化方向。
    - 详细方案、线程模型取舍和安全边界见 `docs/gate_order_session_rtt_probe_design.md`。

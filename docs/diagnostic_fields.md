@@ -63,7 +63,7 @@
 ### OrderSession RTT probe CSV 字段
 
 这些字段计划由第一版 `gate_order_session_rtt_probe` 写入 sample CSV。每行对应一个完整 sample：GTC place -> GTC cancel
--> IOC place -> REST final check。连接级 endpoint / owner CPU 信息不重复写入每行 CSV，使用
+-> 可选 GTC safety close -> IOC place -> IOC safety close。连接级 endpoint / owner CPU 信息不重复写入每行 CSV，使用
 `gate_order_session_rtt_probe_connection` Nova 结构化 log 记录。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
@@ -85,9 +85,13 @@
 | `gtc_cancel_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | GTC cancel Ack RTT，第一版核心指标之一。 | 同上。 |
 | `ioc_place_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | IOC place Ack RTT，第一版核心指标之一。 | 同上。 |
 | `gtc_place_status` / `gtc_cancel_status` / `ioc_place_status` | `order_session_rtt_samples.csv` | planned | enum 文本 | 标记每一步是 acked、rejected、timeout 或 skipped。 | 同上。 |
+| `gtc_close_submitted` / `ioc_close_submitted` | `order_session_rtt_samples.csv` | planned | `true` / `false` | 标记是否提交 safety reduce-only market close；GTC 只在 cancel reject / terminal 不确定 / fill 场景提交，IOC place Ack 后总是提交。 | 同上。 |
+| `gtc_close_ack_receive_local_ns` / `ioc_close_ack_receive_local_ns` | `order_session_rtt_samples.csv` | planned | 本机 Unix epoch ns | safety close Ack 的接收时间；用于审计 close request 是否及时被 Gate Ack。 | 同上。 |
+| `gtc_close_ack_rtt_ns` / `ioc_close_ack_rtt_ns` | `order_session_rtt_samples.csv` | planned | ns | safety close Ack RTT；不参与 GTC / IOC 连接 RTT 主排名。 | 同上。 |
+| `gtc_close_status` / `ioc_close_status` | `order_session_rtt_samples.csv` | planned | enum 文本 | safety close 结果，例如 `not_submitted`、`acked`、`rejected_flat_safe`、`timeout`、`send_failed`。无仓位导致的 reduce-only reject 记为 `rejected_flat_safe`。 | 同上。 |
 | `unexpected_fill` | `order_session_rtt_samples.csv` | planned | `true` / `false` | 标记 passive probe 是否意外成交。 | 同上。 |
-| `invalid_for_rtt_distribution` / `invalid_reason` | `order_session_rtt_samples.csv` | planned | bool / 文本 | 排除 reject、timeout、unexpected fill 或 final check 失败样本。 | 同上。 |
-| `final_flat` | `order_session_rtt_samples.csv` | planned | `true` / `false` | REST final check 是否证明 open orders 为空且 position flat。 | 同上。 |
+| `invalid_for_rtt_distribution` / `invalid_reason` | `order_session_rtt_samples.csv` | planned | bool / 文本 | 排除 reject、timeout、unexpected fill、safety close timeout 或 run-end REST 需要人工复核的样本。 | 同上。 |
+| `rest_guard_phase` / `rest_guard_result` / `rest_guard_json_path` | `order_session_rtt_rest_guard.csv` | planned | enum / 文本 / 路径 | 记录 REST preflight、fatal flatten 和 run-end 整体账户检查结果；REST 不再作为 sample 级 `final_flat` 字段。 | 同上。 |
 
 ### 请求与 Ack 字段
 
