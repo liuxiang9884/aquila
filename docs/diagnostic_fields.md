@@ -63,18 +63,19 @@
 ### OrderSession RTT probe CSV 字段
 
 这些字段由第一版 `gate_order_session_rtt_probe` 的 sample CSV schema / writer 定义；live executor 尚未调用该 writer。每行对应
-一个完整 sample：GTC place -> GTC cancel -> 可选 GTC safety close -> IOC place -> IOC safety close。连接级 endpoint /
-owner CPU 信息不重复写入每行 CSV，后续使用 `gate_order_session_rtt_probe_connection` Nova 结构化 log 记录。
+一个完整 sample：GTC place -> GTC cancel -> 可选 GTC safety close -> IOC place -> IOC safety close。sample CSV
+schema / writer 已实现；连接级 endpoint / owner CPU 信息不重复写入每行 CSV，后续计划使用
+`gate_order_session_rtt_probe_connection` Nova 结构化 log 记录，当前 connection log 尚未落地。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `run_id` | `order_session_rtt_samples.csv` / connection log | experiment | 文本 | 关联同一次 RTT probe run 的连接 log 与 sample CSV。 | RTT probe schema 升级并迁移消费者后重审。 |
-| `connect_ip` | `order_session_rtt_samples.csv` / connection log | experiment | IP 文本 | 被测 Gate TCP 直连 IP，是分组统计主 key。 | 同上。 |
-| `order_session_id` | `order_session_rtt_samples.csv` / connection log | experiment | 本进程内单调 id | 关联 sample、连接 endpoint 和底层 order session log。 | 同上。 |
-| `connection_generation` | `order_session_rtt_samples.csv` / connection log | experiment | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |
-| `connected_at_ns` | connection log | planned | 本机 Unix epoch ns | 记录该 generation 建连完成时间。 | 同上。 |
+| `run_id` | `order_session_rtt_samples.csv`；planned connection log | experiment | 文本 | 关联同一次 RTT probe run 的连接 log 与 sample CSV。 | RTT probe schema 升级并迁移消费者后重审。 |
+| `connect_ip` | `order_session_rtt_samples.csv`；planned connection log | experiment | IP 文本 | 被测 Gate TCP 直连 IP，是分组统计主 key。 | 同上。 |
+| `order_session_id` | `order_session_rtt_samples.csv`；planned connection log | experiment | 本进程内单调 id | 关联 sample、连接 endpoint 和底层 order session log。 | 同上。 |
+| `connection_generation` | `order_session_rtt_samples.csv`；planned connection log | experiment | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |
+| `connected_at_ns` | planned connection log | planned | 本机 Unix epoch ns | 记录该 generation 建连完成时间。 | 同上。 |
 | `round_index` / `sample_index` | `order_session_rtt_samples.csv` | experiment | 0-based integer | 支持 round-robin 采样顺序分析，避免按 IP 连续采样造成时间窗口偏差。 | 同上。 |
-| `contract` | `order_session_rtt_samples.csv` / connection log | experiment | Gate contract，例如 `ZEC_USDT` | 标记本次行情触发 cycle 的交易合约；第一版由 Gate `BookTicker` 行情事件决定，不固定只测一个 symbol。 | 同上。 |
+| `contract` | `order_session_rtt_samples.csv`；planned connection log | experiment | Gate contract，例如 `ZEC_USDT` | 标记本次行情触发 cycle 的交易合约；第一版由 Gate `BookTicker` 行情事件决定，不固定只测一个 symbol。 | 同上。 |
 | `quantity_text` | `order_session_rtt_samples.csv` | experiment | Gate wire 文本 | 复核 instrument catalog 最小下单量是否符合预期。 | 同上。 |
 | `gtc_price_text` / `ioc_price_text` | `order_session_rtt_samples.csv` | experiment | Gate wire 文本 | GTC round 和 IOC round 分别用各自下单前最新 BBO 计算 passive price。 | 同上。 |
 | `gtc_bbo_ticker_id` / `ioc_bbo_ticker_id` | `order_session_rtt_samples.csv` | experiment | `BookTicker.id` | 记录 GTC / IOC 下单前使用的行情版本。 | 同上。 |

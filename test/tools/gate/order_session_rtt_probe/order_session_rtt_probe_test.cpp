@@ -433,6 +433,7 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
                                    .send_local_ns = 1000,
                                })
                   .ok);
+  EXPECT_EQ(flow.stats().gtc_place_status, ProbeStageStatus::kSent);
 
   ProbeSampleTransition transition = flow.OnOrderResponse(gate::OrderResponse{
       .kind = gate::OrderResponseKind::kAck,
@@ -442,7 +443,9 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitGtcCancel);
+  EXPECT_EQ(flow.stats().gtc_place_ack_receive_local_ns, 1600);
   EXPECT_EQ(flow.stats().gtc_place_ack_rtt_ns, 600);
+  EXPECT_EQ(flow.stats().gtc_place_status, ProbeStageStatus::kAcked);
 
   ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcCancel,
                                gate::OrderSendResult{
@@ -451,6 +454,7 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
                                    .send_local_ns = 2000,
                                })
                   .ok);
+  EXPECT_EQ(flow.stats().gtc_cancel_status, ProbeStageStatus::kSent);
   transition = flow.OnOrderResponse(gate::OrderResponse{
       .kind = gate::OrderResponseKind::kAck,
       .local_order_id = 0x0700000000000001ULL,
@@ -459,7 +463,9 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocPlace);
+  EXPECT_EQ(flow.stats().gtc_cancel_ack_receive_local_ns, 2900);
   EXPECT_EQ(flow.stats().gtc_cancel_ack_rtt_ns, 900);
+  EXPECT_EQ(flow.stats().gtc_cancel_status, ProbeStageStatus::kAcked);
 
   ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kIocPlace,
                                gate::OrderSendResult{
@@ -468,6 +474,7 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
                                    .send_local_ns = 3000,
                                })
                   .ok);
+  EXPECT_EQ(flow.stats().ioc_place_status, ProbeStageStatus::kSent);
   transition = flow.OnOrderResponse(gate::OrderResponse{
       .kind = gate::OrderResponseKind::kAck,
       .local_order_id = 0x0700000000000002ULL,
@@ -476,7 +483,39 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
+  EXPECT_EQ(flow.stats().ioc_place_ack_receive_local_ns, 3700);
   EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
+  EXPECT_EQ(flow.stats().ioc_place_status, ProbeStageStatus::kAcked);
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsAckWithMismatchedLocalOrderId) {
+  ProbeSampleFlow flow(ProbeSampleLocalIds{
+      .gtc_local_order_id = 0x0700000000000001ULL,
+      .ioc_local_order_id = 0x0700000000000002ULL,
+      .gtc_close_local_order_id = 0x0700000000000003ULL,
+      .ioc_close_local_order_id = 0x0700000000000004ULL,
+  });
+
+  ASSERT_EQ(flow.Start(), ProbeSampleAction::kSubmitGtcPlace);
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 11,
+                                   .send_local_ns = 1000,
+                               })
+                  .ok);
+
+  const ProbeSampleTransition transition =
+      flow.OnOrderResponse(gate::OrderResponse{
+          .kind = gate::OrderResponseKind::kAck,
+          .local_order_id = 0x0700000000000002ULL,
+          .request_sequence = 11,
+          .local_receive_ns = 1600,
+      });
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("local_order_id"), std::string::npos);
 }
 
 TEST(GateOrderSessionRttProbeTest,

@@ -104,12 +104,29 @@ struct ProbeSampleTransition {
   std::string error;
 };
 
+enum class ProbeStageStatus : std::uint8_t {
+  kNotSubmitted,
+  kSent,
+  kAcked,
+  kSendFailed,
+};
+
 struct ProbeSampleStats {
+  std::int64_t gtc_place_ack_receive_local_ns{0};
   std::int64_t gtc_place_ack_rtt_ns{-1};
+  ProbeStageStatus gtc_place_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t gtc_cancel_ack_receive_local_ns{0};
   std::int64_t gtc_cancel_ack_rtt_ns{-1};
+  ProbeStageStatus gtc_cancel_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t ioc_place_ack_receive_local_ns{0};
   std::int64_t ioc_place_ack_rtt_ns{-1};
+  ProbeStageStatus ioc_place_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t gtc_close_ack_receive_local_ns{0};
   std::int64_t gtc_close_ack_rtt_ns{-1};
+  ProbeStageStatus gtc_close_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t ioc_close_ack_receive_local_ns{0};
   std::int64_t ioc_close_ack_rtt_ns{-1};
+  ProbeStageStatus ioc_close_status{ProbeStageStatus::kNotSubmitted};
 };
 
 class ProbeSampleFlow {
@@ -123,16 +140,19 @@ class ProbeSampleFlow {
 
   [[nodiscard]] ProbeSampleTransition OnOrderSent(
       ProbeStage stage, const gate::OrderSendResult& sent) {
-    if (sent.status != gate::OrderSendStatus::kOk) {
-      return Fail("order send failed");
-    }
     ProbeStageSendState* state = MutableSendState(stage);
-    if (state == nullptr) {
+    ProbeStageStatus* status = MutableStatus(stage);
+    if (state == nullptr || status == nullptr) {
       return Fail("unsupported probe stage");
+    }
+    if (sent.status != gate::OrderSendStatus::kOk) {
+      *status = ProbeStageStatus::kSendFailed;
+      return Fail("order send failed");
     }
     *state = ProbeStageSendState{.sent = true,
                                  .request_sequence = sent.request_sequence,
                                  .send_local_ns = sent.send_local_ns};
+    *status = ProbeStageStatus::kSent;
     return ProbeSampleTransition{.ok = true};
   }
 
@@ -149,12 +169,15 @@ class ProbeSampleFlow {
     if (state == nullptr || !state->sent) {
       return Fail("ack received before order send");
     }
+    if (response.local_order_id != LocalOrderIdForStage(stage)) {
+      return Fail("ack local_order_id does not match sample stage");
+    }
     const std::int64_t rtt_ns =
         response.local_receive_ns - state->send_local_ns;
     if (rtt_ns < 0) {
       return Fail("negative ack rtt");
     }
-    return RecordAckRtt(stage, rtt_ns);
+    return RecordAckRtt(stage, response.local_receive_ns, rtt_ns);
   }
 
   [[nodiscard]] const ProbeSampleStats& stats() const noexcept {
@@ -201,6 +224,24 @@ class ProbeSampleFlow {
     return nullptr;
   }
 
+  [[nodiscard]] ProbeStageStatus* MutableStatus(ProbeStage stage) noexcept {
+    switch (stage) {
+      case ProbeStage::kGtcPlace:
+        return &stats_.gtc_place_status;
+      case ProbeStage::kGtcCancel:
+        return &stats_.gtc_cancel_status;
+      case ProbeStage::kGtcClose:
+        return &stats_.gtc_close_status;
+      case ProbeStage::kIocPlace:
+        return &stats_.ioc_place_status;
+      case ProbeStage::kIocClose:
+        return &stats_.ioc_close_status;
+      case ProbeStage::kIdle:
+        return nullptr;
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] const ProbeStageSendState* SendState(
       ProbeStage stage) const noexcept {
     switch (stage) {
@@ -218,6 +259,24 @@ class ProbeSampleFlow {
         return nullptr;
     }
     return nullptr;
+  }
+
+  [[nodiscard]] std::uint64_t LocalOrderIdForStage(
+      ProbeStage stage) const noexcept {
+    switch (stage) {
+      case ProbeStage::kGtcPlace:
+      case ProbeStage::kGtcCancel:
+        return ids_.gtc_local_order_id;
+      case ProbeStage::kGtcClose:
+        return ids_.gtc_close_local_order_id;
+      case ProbeStage::kIocPlace:
+        return ids_.ioc_local_order_id;
+      case ProbeStage::kIocClose:
+        return ids_.ioc_close_local_order_id;
+      case ProbeStage::kIdle:
+        return 0;
+    }
+    return 0;
   }
 
   [[nodiscard]] ProbeStage StageForRequestSequence(
@@ -240,27 +299,38 @@ class ProbeSampleFlow {
     return ProbeStage::kIdle;
   }
 
-  [[nodiscard]] ProbeSampleTransition RecordAckRtt(ProbeStage stage,
-                                                   std::int64_t rtt_ns) {
+  [[nodiscard]] ProbeSampleTransition RecordAckRtt(
+      ProbeStage stage, std::int64_t ack_receive_local_ns,
+      std::int64_t rtt_ns) {
     switch (stage) {
       case ProbeStage::kGtcPlace:
+        stats_.gtc_place_ack_receive_local_ns = ack_receive_local_ns;
         stats_.gtc_place_ack_rtt_ns = rtt_ns;
+        stats_.gtc_place_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitGtcCancel};
       case ProbeStage::kGtcCancel:
+        stats_.gtc_cancel_ack_receive_local_ns = ack_receive_local_ns;
         stats_.gtc_cancel_ack_rtt_ns = rtt_ns;
+        stats_.gtc_cancel_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitIocPlace};
       case ProbeStage::kIocPlace:
+        stats_.ioc_place_ack_receive_local_ns = ack_receive_local_ns;
         stats_.ioc_place_ack_rtt_ns = rtt_ns;
+        stats_.ioc_place_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitIocClose};
       case ProbeStage::kGtcClose:
+        stats_.gtc_close_ack_receive_local_ns = ack_receive_local_ns;
         stats_.gtc_close_ack_rtt_ns = rtt_ns;
+        stats_.gtc_close_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{.ok = true,
                                      .action = ProbeSampleAction::kFinish};
       case ProbeStage::kIocClose:
+        stats_.ioc_close_ack_receive_local_ns = ack_receive_local_ns;
         stats_.ioc_close_ack_rtt_ns = rtt_ns;
+        stats_.ioc_close_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{.ok = true,
                                      .action = ProbeSampleAction::kFinish};
       case ProbeStage::kIdle:
