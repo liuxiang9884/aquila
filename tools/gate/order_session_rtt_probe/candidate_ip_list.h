@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <absl/container/flat_hash_set.h>
@@ -25,14 +26,12 @@ namespace candidate_ip_list_detail {
 
 [[nodiscard]] inline std::string_view TrimAsciiWhitespace(
     std::string_view text) noexcept {
-  while (!text.empty() &&
-         (text.front() == ' ' || text.front() == '\t' ||
-          text.front() == '\r' || text.front() == '\n')) {
+  while (!text.empty() && (text.front() == ' ' || text.front() == '\t' ||
+                           text.front() == '\r' || text.front() == '\n')) {
     text.remove_prefix(1);
   }
-  while (!text.empty() &&
-         (text.back() == ' ' || text.back() == '\t' || text.back() == '\r' ||
-          text.back() == '\n')) {
+  while (!text.empty() && (text.back() == ' ' || text.back() == '\t' ||
+                           text.back() == '\r' || text.back() == '\n')) {
     text.remove_suffix(1);
   }
   return text;

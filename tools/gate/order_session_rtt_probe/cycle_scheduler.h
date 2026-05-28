@@ -1,9 +1,11 @@
 #ifndef AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_CYCLE_SCHEDULER_H_
 #define AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_CYCLE_SCHEDULER_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace aquila::tools::gate_order_session_rtt_probe {
@@ -48,17 +50,16 @@ class CycleScheduler {
   }
 
   [[nodiscard]] ProbeCycle NextCycle() {
-    ProbeCycle cycle{.cycle_index = next_cycle_index_++,
-                     .group_index =
-                         next_index_ / options_.active_session_count};
+    ProbeCycle cycle{
+        .cycle_index = next_cycle_index_++,
+        .group_index = next_index_ / options_.active_session_count};
     if (options_.candidate_ips.empty()) {
       return cycle;
     }
 
     const std::size_t begin = next_index_;
-    const std::size_t end =
-        std::min(begin + options_.active_session_count,
-                 options_.candidate_ips.size());
+    const std::size_t end = std::min(begin + options_.active_session_count,
+                                     options_.candidate_ips.size());
     cycle.connect_ips.reserve(end - begin);
     for (std::size_t i = begin; i < end; ++i) {
       cycle.connect_ips.push_back(options_.candidate_ips[i]);

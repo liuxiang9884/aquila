@@ -54,6 +54,7 @@ add_test(NAME gate_demo_strategy_test
          COMMAND gate_demo_strategy_test)
 
 add_executable(gate_order_session_rtt_probe_test
+    ../../../tools/gate/order_session_rtt_probe/config.cpp
     order_session_rtt_probe/order_session_rtt_probe_test.cpp
 )
 

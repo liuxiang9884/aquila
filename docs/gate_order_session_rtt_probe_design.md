@@ -11,7 +11,10 @@
 
 ## 当前结论
 
-- 第一版新增独立 C++ tool，建议命名为 `gate_order_session_rtt_probe`；不改 LeadLag live runtime，不接入生产策略下单路径。
+- 第一版新增独立 C++ tool `gate_order_session_rtt_probe`；不改 LeadLag live runtime，不接入生产策略下单路径。
+- 当前已落地 V1a dry-run scaffold：`tools/gate/order_session_rtt_probe/`、`config/order_session_rtt_probe/gate_order_session_rtt_probe.toml`
+  和 `gate_order_session_rtt_probe_test`。该阶段只解析配置、读取 login-verified candidate IP、生成 single-session run plan；
+  `--execute` 会被显式拒绝，尚不提交真实订单。
 - 第一版只采集数据，不输出自动 score，不选择最优连接，不写回生产配置。
 - RTT 主指标来自真实 Gate order session order Ack：`request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`。
 - 不使用 WebSocket handshake RTT、login RTT 或 no-order probe RTT 作为第一版主指标；这些路径不等价于 `futures.order_place`。
@@ -212,18 +215,41 @@ RTT probe 读取时跳过 `#` 开头的 header。
 
 ### RTT Probe
 
-建议第一版命令形态：
+当前 V1a dry-run 命令形态：
+
+```bash
+./build/debug/tools/gate_order_session_rtt_probe \
+  --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
+```
+
+默认配置先采用 single-session smoke：
+
+```text
+active_session_count = 1
+max_candidates = 1
+samples_per_ip = 1
+cycle_cooldown_ms = 500
+candidate_ip_file = /home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt
+```
+
+可用下面的 override 临时扩大 dry-run plan，但不会下单：
+
+```bash
+./build/debug/tools/gate_order_session_rtt_probe \
+  --max-candidates 8 \
+  --active-session-count 8 \
+  --samples-per-ip 20
+```
+
+后续 live measurement 命令形态预计扩展为：
 
 ```bash
 ./build/release/tools/gate_order_session_rtt_probe \
-  --config config/order_sessions/gate_order_session.toml \
-  --data-reader-config config/data_readers/strategy_data_reader_requested_20260521.toml \
+  --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml \
   --candidate-ip-file /home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt \
   --samples-per-ip 20 \
   --active-session-count 8 \
-  --passive-price-limit-fraction 0.5 \
-  --cycle-cooldown-ms 500 \
-  --samples-output /home/liuxiang/tmp/<run_id>/order_session_rtt_samples.csv
+  --execute
 ```
 
 第一版可以沿用 base order session config 中的 `host`、`port`、TLS、credentials、decimal-size header 和 log 设置；每个

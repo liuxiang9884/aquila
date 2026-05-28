@@ -77,6 +77,18 @@ target_link_libraries(gate_order_session_failure_probe
         nova
 )
 
+add_executable(gate_order_session_rtt_probe
+    gate/order_session_rtt_probe/config.cpp
+    gate/order_session_rtt_probe/main.cpp
+)
+
+target_link_libraries(gate_order_session_rtt_probe
+    PRIVATE
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+)
+
 add_executable(gate_demo_strategy
     gate/demo_strategy.cpp
 )

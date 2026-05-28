@@ -1,18 +1,115 @@
-#include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
-#include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
-#include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
-#include "tools/gate/order_session_rtt_probe/session_state.h"
-
 #include <gtest/gtest.h>
+#include <toml++/toml.hpp>
 
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/types.h"
 #include "exchange/gate/trading/order_types.h"
+#include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
+#include "tools/gate/order_session_rtt_probe/config.h"
+#include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
+#include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
+#include "tools/gate/order_session_rtt_probe/run_plan.h"
+#include "tools/gate/order_session_rtt_probe/session_state.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 namespace {
 
-TEST(GateOrderSessionRttProbeTest, LoadsCandidateIpsSkippingHeadersAndDeduping) {
+TEST(GateOrderSessionRttProbeTest, ParsesSingleSessionProbeConfig) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[probe]
+name = "gate_order_session_rtt_probe"
+execute = false
+run_id = "unit_run"
+
+[probe.inputs]
+order_session_config = "config/order_sessions/gate_order_session.toml"
+data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
+candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+
+[probe.sessions]
+active_session_count = 1
+max_candidates = 1
+enable_tcp_info = true
+wait_login_timeout_ms = 10000
+request_timeout_ms = 5000
+worker_cpu_ids = []
+
+[probe.sampling]
+samples_per_ip = 1
+cycle_cooldown_ms = 500
+max_events_per_drain = 128
+idle_policy = "spin"
+coordinator_cpu = -1
+
+[probe.order]
+side = "buy"
+passive_price_limit_fraction = 0.5
+quantity_mode = "min_quantity"
+reduce_only_close = true
+
+[probe.feedback]
+enabled = true
+shm_config = "config/order_feedback/gate_order_feedback_shm.toml"
+strategy_id = 7
+force_claim = false
+poll_budget = 64
+terminal_timeout_ms = 5000
+
+[probe.safety]
+preflight_rest_check = true
+run_end_rest_check = true
+rest_timeout_ms = 8000
+rest_poll_interval_ms = 500
+rest_poll_timeout_ms = 10000
+stop_on_continuity_lost = true
+confirm_dedicated_account = true
+
+[probe.output]
+root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
+)toml");
+
+  const ProbeConfigResult result = ParseProbeConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.name, "gate_order_session_rtt_probe");
+  EXPECT_FALSE(result.value.execute);
+  EXPECT_EQ(result.value.run_id, "unit_run");
+  EXPECT_EQ(result.value.inputs.order_session_config,
+            "config/order_sessions/gate_order_session.toml");
+  EXPECT_EQ(result.value.sessions.active_session_count, 1U);
+  EXPECT_EQ(result.value.sessions.max_candidates, 1U);
+  EXPECT_TRUE(result.value.sessions.enable_tcp_info);
+  EXPECT_EQ(result.value.sampling.cycle_cooldown_ms, 500U);
+  EXPECT_EQ(result.value.order.passive_price_limit_fraction, 0.5);
+  EXPECT_TRUE(result.value.order.reduce_only_close);
+  EXPECT_EQ(result.value.feedback.strategy_id, 7U);
+  EXPECT_TRUE(result.value.safety.run_end_rest_check);
+  EXPECT_EQ(result.value.output.root_dir,
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe");
+}
+
+TEST(GateOrderSessionRttProbeTest, RejectsZeroActiveSessionCount) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[probe]
+name = "gate_order_session_rtt_probe"
+
+[probe.inputs]
+order_session_config = "config/order_sessions/gate_order_session.toml"
+data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
+candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+
+[probe.sessions]
+active_session_count = 0
+)toml");
+
+  const ProbeConfigResult result = ParseProbeConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("active_session_count"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     LoadsCandidateIpsSkippingHeadersAndDeduping) {
   const CandidateIpLoadResult result = LoadCandidateIpsFromText(
       "# schema=aquila.gate.order_session.candidate_ips.v1\n"
       "# generated_at_ns=1\n"
@@ -28,6 +125,28 @@ TEST(GateOrderSessionRttProbeTest, LoadsCandidateIpsSkippingHeadersAndDeduping) 
   EXPECT_EQ(result.ips[0], "52.198.250.74");
   EXPECT_EQ(result.ips[1], "52.199.212.24");
   EXPECT_EQ(result.duplicate_count, 1U);
+}
+
+TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionDryRunPlan) {
+  ProbeConfig config;
+  config.inputs.candidate_ip_file = "/home/liuxiang/tmp/candidate_ips.txt";
+  config.sessions.active_session_count = 1;
+  config.sessions.max_candidates = 1;
+  config.sampling.samples_per_ip = 1;
+  config.sampling.cycles_per_connection_generation = 1;
+
+  const ProbeRunPlanResult result =
+      BuildProbeRunPlanFromCandidateText(config,
+                                         "# generated_by=test\n"
+                                         "52.198.250.74\n"
+                                         "52.199.212.24\n");
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.candidate_ip_count, 1U);
+  ASSERT_EQ(result.value.cycles.size(), 1U);
+  EXPECT_EQ(result.value.cycles[0].cycle_index, 0U);
+  EXPECT_EQ(result.value.cycles[0].connect_ips,
+            (std::vector<std::string>{"52.198.250.74"}));
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsPassiveBuyUsingHalfPriceLimitDown) {
@@ -78,21 +197,25 @@ TEST(GateOrderSessionRttProbeTest, RotatesCandidateGroupsByActiveSessionCount) {
   });
 
   ASSERT_TRUE(scheduler.HasNextCycle());
-  EXPECT_EQ(scheduler.NextCycle().connect_ips, (std::vector<std::string>{"ip0", "ip1"}));
-  EXPECT_EQ(scheduler.NextCycle().connect_ips, (std::vector<std::string>{"ip2", "ip3"}));
-  EXPECT_EQ(scheduler.NextCycle().connect_ips, (std::vector<std::string>{"ip4"}));
-  EXPECT_EQ(scheduler.NextCycle().connect_ips, (std::vector<std::string>{"ip0", "ip1"}));
+  EXPECT_EQ(scheduler.NextCycle().connect_ips,
+            (std::vector<std::string>{"ip0", "ip1"}));
+  EXPECT_EQ(scheduler.NextCycle().connect_ips,
+            (std::vector<std::string>{"ip2", "ip3"}));
+  EXPECT_EQ(scheduler.NextCycle().connect_ips,
+            (std::vector<std::string>{"ip4"}));
+  EXPECT_EQ(scheduler.NextCycle().connect_ips,
+            (std::vector<std::string>{"ip0", "ip1"}));
 }
 
-TEST(GateOrderSessionRttProbeTest, DecidesSafetyCloseForGtcCancelRejectAndIocAck) {
+TEST(GateOrderSessionRttProbeTest,
+     DecidesSafetyCloseForGtcCancelRejectAndIocAck) {
   EXPECT_FALSE(ShouldSubmitGtcSafetyClose(
       SafetyCloseInput{.stage = ProbeStage::kGtcCancel,
                        .response_kind = gate::OrderResponseKind::kAck}));
 
-  EXPECT_TRUE(ShouldSubmitGtcSafetyClose(
-      SafetyCloseInput{.stage = ProbeStage::kGtcCancel,
-                       .response_kind =
-                           gate::OrderResponseKind::kCancelRejected}));
+  EXPECT_TRUE(ShouldSubmitGtcSafetyClose(SafetyCloseInput{
+      .stage = ProbeStage::kGtcCancel,
+      .response_kind = gate::OrderResponseKind::kCancelRejected}));
 
   EXPECT_TRUE(ShouldSubmitIocSafetyCloseAfterAck(
       SafetyCloseInput{.stage = ProbeStage::kIocPlace,

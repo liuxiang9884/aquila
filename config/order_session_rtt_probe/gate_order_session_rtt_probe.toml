@@ -1,0 +1,51 @@
+[probe]
+name = "gate_order_session_rtt_probe"
+execute = false
+run_id = ""
+
+[probe.inputs]
+order_session_config = "config/order_sessions/gate_order_session.toml"
+data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
+candidate_ip_file = "/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt"
+
+[probe.sessions]
+active_session_count = 1
+max_candidates = 1
+enable_tcp_info = true
+wait_login_timeout_ms = 10000
+request_timeout_ms = 5000
+worker_cpu_ids = []
+
+[probe.sampling]
+samples_per_ip = 1
+cycle_cooldown_ms = 500
+max_events_per_drain = 128
+cycles_per_connection_generation = 1
+idle_policy = "spin"
+coordinator_cpu = -1
+
+[probe.order]
+side = "buy"
+passive_price_limit_fraction = 0.5
+quantity_mode = "min_quantity"
+reduce_only_close = true
+
+[probe.feedback]
+enabled = true
+shm_config = "config/order_feedback/gate_order_feedback_shm.toml"
+strategy_id = 7
+force_claim = false
+poll_budget = 64
+terminal_timeout_ms = 5000
+
+[probe.safety]
+preflight_rest_check = true
+run_end_rest_check = true
+rest_timeout_ms = 8000
+rest_poll_interval_ms = 500
+rest_poll_timeout_ms = 10000
+stop_on_continuity_lost = true
+confirm_dedicated_account = true
+
+[probe.output]
+root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
