@@ -52,3 +52,18 @@ target_link_libraries(gate_demo_strategy_test
 
 add_test(NAME gate_demo_strategy_test
          COMMAND gate_demo_strategy_test)
+
+add_executable(gate_order_session_rtt_probe_test
+    order_session_rtt_probe/order_session_rtt_probe_test.cpp
+)
+
+target_link_libraries(gate_order_session_rtt_probe_test
+    PRIVATE
+        aquila_core
+        aquila_config
+        aquila_gate
+        GTest::gtest_main
+)
+
+add_test(NAME gate_order_session_rtt_probe_test
+         COMMAND gate_order_session_rtt_probe_test)
