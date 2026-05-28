@@ -1,6 +1,7 @@
 #include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
 
 #include <exception>
+#include <filesystem>
 
 #include <fmt/core.h>
 
@@ -9,6 +10,10 @@ namespace aquila::tools::gate_order_session_rtt_probe {
 bool SampleCsvWriter::Open(const std::filesystem::path& path,
                            std::string* error) {
   try {
+    const std::filesystem::path parent = path.parent_path();
+    if (!parent.empty()) {
+      std::filesystem::create_directories(parent);
+    }
     writer_ = std::make_unique<Writer>(path.string());
   } catch (const std::exception& ex) {
     writer_.reset();

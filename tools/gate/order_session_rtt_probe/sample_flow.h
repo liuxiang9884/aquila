@@ -108,6 +108,7 @@ enum class ProbeStageStatus : std::uint8_t {
   kNotSubmitted,
   kSent,
   kAcked,
+  kRejected,
   kSendFailed,
 };
 
@@ -159,7 +160,7 @@ class ProbeSampleFlow {
   [[nodiscard]] ProbeSampleTransition OnOrderResponse(
       const gate::OrderResponse& response) {
     if (response.kind != gate::OrderResponseKind::kAck) {
-      return ProbeSampleTransition{.ok = true};
+      return RecordFinalResponse(response);
     }
     const ProbeStage stage = StageForRequestSequence(response.request_sequence);
     if (stage == ProbeStage::kIdle) {
@@ -337,6 +338,63 @@ class ProbeSampleFlow {
         break;
     }
     return ProbeSampleTransition{.ok = true};
+  }
+
+  [[nodiscard]] ProbeSampleTransition RecordFinalResponse(
+      const gate::OrderResponse& response) {
+    const ProbeStage stage = StageForRequestSequence(response.request_sequence);
+    if (stage == ProbeStage::kIdle) {
+      return ProbeSampleTransition{.ok = true};
+    }
+    const ProbeStageSendState* state = SendState(stage);
+    if (state == nullptr || !state->sent) {
+      return Fail("final response received before order send");
+    }
+    if (response.local_order_id != LocalOrderIdForStage(stage)) {
+      return Fail("final response local_order_id does not match sample stage");
+    }
+    switch (response.kind) {
+      case gate::OrderResponseKind::kAck:
+        break;
+      case gate::OrderResponseKind::kAccepted:
+      case gate::OrderResponseKind::kCancelAccepted:
+        return ProbeSampleTransition{.ok = true};
+      case gate::OrderResponseKind::kCancelRejected:
+        return RecordCancelRejected(stage);
+      case gate::OrderResponseKind::kRejected:
+        return RecordRejected(stage);
+    }
+    return ProbeSampleTransition{.ok = true};
+  }
+
+  [[nodiscard]] ProbeSampleTransition RecordCancelRejected(ProbeStage stage) {
+    if (ShouldSubmitGtcSafetyClose(SafetyCloseInput{
+            .stage = stage,
+            .response_kind = gate::OrderResponseKind::kCancelRejected,
+        })) {
+      stats_.gtc_cancel_status = ProbeStageStatus::kRejected;
+      if (!gtc_close_.sent) {
+        return ProbeSampleTransition{
+            .ok = true, .action = ProbeSampleAction::kSubmitGtcClose};
+      }
+      return ProbeSampleTransition{.ok = true};
+    }
+    ProbeStageStatus* status = MutableStatus(stage);
+    if (status != nullptr) {
+      *status = ProbeStageStatus::kRejected;
+    }
+    return Fail("unexpected cancel rejected");
+  }
+
+  [[nodiscard]] ProbeSampleTransition RecordRejected(ProbeStage stage) {
+    ProbeStageStatus* status = MutableStatus(stage);
+    if (status != nullptr) {
+      *status = ProbeStageStatus::kRejected;
+    }
+    if (stage == ProbeStage::kGtcClose || stage == ProbeStage::kIocClose) {
+      return Fail("safety close rejected without flat confirmation");
+    }
+    return Fail("order rejected");
   }
 
   ProbeSampleLocalIds ids_;
