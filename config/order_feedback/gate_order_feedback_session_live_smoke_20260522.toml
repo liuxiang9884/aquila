@@ -12,8 +12,8 @@ name = "gate_order_feedback_session_live_smoke"
 settle = "usdt"
 
 [order_feedback_session.credentials]
-api_key_env = "TEST_KEY"
-api_secret_env = "TEST_SECRET"
+api_key_env = "PROBE_KEY"
+api_secret_env = "PROBE_SECRET"
 
 [order_feedback_session.websocket]
 target = "/v4/ws/usdt/sbe?sbe_schema_id=1"

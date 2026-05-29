@@ -37,8 +37,8 @@ TEST(OrderFeedbackSessionConfigTest,
 
   const aquila::gate::OrderFeedbackSessionConfig& config = result.value;
   EXPECT_EQ(config.name, "gate_order_feedback_session");
-  EXPECT_EQ(config.credentials.api_key_env, "TEST_KEY");
-  EXPECT_EQ(config.credentials.api_secret_env, "TEST_SECRET");
+  EXPECT_EQ(config.credentials.api_key_env, "PROBE_KEY");
+  EXPECT_EQ(config.credentials.api_secret_env, "PROBE_SECRET");
 
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.connection.port, "443");

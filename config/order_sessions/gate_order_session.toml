@@ -15,8 +15,8 @@ settle = "usdt"
 enable_tcp_info = false
 
 [order_session.credentials]
-api_key_env = "TEST_KEY"
-api_secret_env = "TEST_SECRET"
+api_key_env = "PROBE_KEY"
+api_secret_env = "PROBE_SECRET"
 
 [order_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"

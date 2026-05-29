@@ -108,8 +108,8 @@ rest_snapshot_interval_sec = 10
 stale_after_sec = 30
 
 [monitor.credentials]
-api_key_env = "TEST_KEY"
-api_secret_env = "TEST_SECRET"
+api_key_env = "PROBE_KEY"
+api_secret_env = "PROBE_SECRET"
 
 [monitor.websocket]
 target = "/v4/ws/usdt/sbe?sbe_schema_id=1"

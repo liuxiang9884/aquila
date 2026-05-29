@@ -29,8 +29,8 @@ TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
 
   const aquila::gate::OrderSessionConfig& config = result.value;
   EXPECT_EQ(config.name, "gate_order_session");
-  EXPECT_EQ(config.credentials.api_key_env, "TEST_KEY");
-  EXPECT_EQ(config.credentials.api_secret_env, "TEST_SECRET");
+  EXPECT_EQ(config.credentials.api_key_env, "PROBE_KEY");
+  EXPECT_EQ(config.credentials.api_secret_env, "PROBE_SECRET");
   EXPECT_EQ(config.request_map_capacity,
             aquila::gate::kDefaultOrderRequestMapCapacity);
   EXPECT_FALSE(config.enable_tcp_info_diagnostics);

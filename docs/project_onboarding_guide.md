@@ -399,7 +399,7 @@ ctest --test-dir build/debug -R '(core_order_pool|strategy|gate_order|gate_submi
 ./build/debug/tools/gate_demo_strategy --config config/strategies/demo_strategy.toml
 ```
 
-真实 Gate live smoke 需要 `TEST_KEY` / `TEST_SECRET`、外网和显式 `--execute`；执行后必须用 REST 查询确认无残留 open orders / position。
+真实 Gate live smoke 需要 `PROBE_KEY` / `PROBE_SECRET`、外网和显式 `--execute`；执行后必须用 REST 查询确认无残留 open orders / position。
 
 ### Gate OrderSession RTT probe
 
