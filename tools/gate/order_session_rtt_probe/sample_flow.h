@@ -3,9 +3,11 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "core/common/types.h"
+#include "core/trading/order_feedback_event.h"
 #include "exchange/gate/trading/order_types.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
@@ -110,6 +112,8 @@ enum class ProbeStageStatus : std::uint8_t {
   kAcked,
   kRejected,
   kSendFailed,
+  kTimeout,
+  kTerminalConfirmed,
 };
 
 struct ProbeSampleStats {
@@ -128,6 +132,9 @@ struct ProbeSampleStats {
   std::int64_t ioc_close_ack_receive_local_ns{0};
   std::int64_t ioc_close_ack_rtt_ns{-1};
   ProbeStageStatus ioc_close_status{ProbeStageStatus::kNotSubmitted};
+  bool unexpected_fill{false};
+  bool invalid_for_rtt_distribution{false};
+  std::string invalid_reason;
 };
 
 class ProbeSampleFlow {
@@ -179,6 +186,52 @@ class ProbeSampleFlow {
       return Fail("negative ack rtt");
     }
     return RecordAckRtt(stage, response.local_receive_ns, rtt_ns);
+  }
+
+  [[nodiscard]] ProbeSampleTransition OnOrderFeedback(
+      const OrderFeedbackEvent& feedback) {
+    if (feedback.kind == OrderFeedbackKind::kContinuityLost) {
+      return Fail("feedback continuity lost");
+    }
+    const ProbeStage stage = StageForLocalOrderId(feedback.local_order_id);
+    if (stage == ProbeStage::kIdle) {
+      return ProbeSampleTransition{.ok = true};
+    }
+    if (IsSafetyCloseStage(stage)) {
+      return RecordSafetyCloseTerminalFeedback(stage, feedback);
+    }
+    if (IsFillFeedback(feedback)) {
+      return RecordUnexpectedFill(stage);
+    }
+    return ProbeSampleTransition{.ok = true};
+  }
+
+  [[nodiscard]] ProbeSampleTransition OnStageTimeout(ProbeStage stage) {
+    ProbeStageStatus* status = MutableStatus(stage);
+    if (status != nullptr) {
+      *status = ProbeStageStatus::kTimeout;
+    }
+    if (stage == ProbeStage::kGtcClose || stage == ProbeStage::kIocClose) {
+      MarkInvalid("safety close timeout", /*unexpected_fill=*/false);
+      return Fail("safety close timeout");
+    }
+    if (stage == ProbeStage::kGtcPlace || stage == ProbeStage::kGtcCancel) {
+      MarkInvalid("gtc timeout", /*unexpected_fill=*/false);
+      if (!gtc_close_.sent) {
+        return ProbeSampleTransition{
+            .ok = true, .action = ProbeSampleAction::kSubmitGtcClose};
+      }
+      return ProbeSampleTransition{.ok = true};
+    }
+    if (stage == ProbeStage::kIocPlace) {
+      MarkInvalid("ioc timeout", /*unexpected_fill=*/false);
+      if (!ioc_close_.sent) {
+        return ProbeSampleTransition{
+            .ok = true, .action = ProbeSampleAction::kSubmitIocClose};
+      }
+      return ProbeSampleTransition{.ok = true};
+    }
+    return Fail("unsupported timeout stage");
   }
 
   [[nodiscard]] const ProbeSampleStats& stats() const noexcept {
@@ -300,6 +353,23 @@ class ProbeSampleFlow {
     return ProbeStage::kIdle;
   }
 
+  [[nodiscard]] ProbeStage StageForLocalOrderId(
+      std::uint64_t local_order_id) const noexcept {
+    if (local_order_id == ids_.gtc_local_order_id) {
+      return ProbeStage::kGtcPlace;
+    }
+    if (local_order_id == ids_.gtc_close_local_order_id) {
+      return ProbeStage::kGtcClose;
+    }
+    if (local_order_id == ids_.ioc_local_order_id) {
+      return ProbeStage::kIocPlace;
+    }
+    if (local_order_id == ids_.ioc_close_local_order_id) {
+      return ProbeStage::kIocClose;
+    }
+    return ProbeStage::kIdle;
+  }
+
   [[nodiscard]] ProbeSampleTransition RecordAckRtt(
       ProbeStage stage, std::int64_t ack_receive_local_ns,
       std::int64_t rtt_ns) {
@@ -326,14 +396,12 @@ class ProbeSampleFlow {
         stats_.gtc_close_ack_receive_local_ns = ack_receive_local_ns;
         stats_.gtc_close_ack_rtt_ns = rtt_ns;
         stats_.gtc_close_status = ProbeStageStatus::kAcked;
-        return ProbeSampleTransition{.ok = true,
-                                     .action = ProbeSampleAction::kFinish};
+        return ProbeSampleTransition{.ok = true};
       case ProbeStage::kIocClose:
         stats_.ioc_close_ack_receive_local_ns = ack_receive_local_ns;
         stats_.ioc_close_ack_rtt_ns = rtt_ns;
         stats_.ioc_close_status = ProbeStageStatus::kAcked;
-        return ProbeSampleTransition{.ok = true,
-                                     .action = ProbeSampleAction::kFinish};
+        return ProbeSampleTransition{.ok = true};
       case ProbeStage::kIdle:
         break;
     }
@@ -373,6 +441,7 @@ class ProbeSampleFlow {
             .response_kind = gate::OrderResponseKind::kCancelRejected,
         })) {
       stats_.gtc_cancel_status = ProbeStageStatus::kRejected;
+      MarkInvalid("gtc cancel rejected", /*unexpected_fill=*/false);
       if (!gtc_close_.sent) {
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitGtcClose};
@@ -395,6 +464,61 @@ class ProbeSampleFlow {
       return Fail("safety close rejected without flat confirmation");
     }
     return Fail("order rejected");
+  }
+
+  [[nodiscard]] static bool IsSafetyCloseStage(ProbeStage stage) noexcept {
+    return stage == ProbeStage::kGtcClose || stage == ProbeStage::kIocClose;
+  }
+
+  [[nodiscard]] static bool IsFillFeedback(
+      const OrderFeedbackEvent& feedback) noexcept {
+    return feedback.kind == OrderFeedbackKind::kPartialFilled ||
+           feedback.kind == OrderFeedbackKind::kFilled ||
+           feedback.cumulative_filled_quantity > 0.0;
+  }
+
+  [[nodiscard]] ProbeSampleTransition RecordUnexpectedFill(ProbeStage stage) {
+    MarkInvalid("feedback fill", /*unexpected_fill=*/true);
+    if (stage == ProbeStage::kGtcPlace && !gtc_close_.sent) {
+      return ProbeSampleTransition{
+          .ok = true, .action = ProbeSampleAction::kSubmitGtcClose};
+    }
+    if (stage == ProbeStage::kIocPlace && !ioc_close_.sent) {
+      return ProbeSampleTransition{
+          .ok = true, .action = ProbeSampleAction::kSubmitIocClose};
+    }
+    return ProbeSampleTransition{.ok = true};
+  }
+
+  [[nodiscard]] ProbeSampleTransition RecordSafetyCloseTerminalFeedback(
+      ProbeStage stage, const OrderFeedbackEvent& feedback) {
+    ProbeStageStatus* status = MutableStatus(stage);
+    if (feedback.kind == OrderFeedbackKind::kFilled) {
+      if (status != nullptr) {
+        *status = ProbeStageStatus::kTerminalConfirmed;
+      }
+      return ProbeSampleTransition{.ok = true,
+                                   .action = ProbeSampleAction::kFinish};
+    }
+    if (feedback.kind == OrderFeedbackKind::kRejected ||
+        feedback.kind == OrderFeedbackKind::kCancelled) {
+      if (status != nullptr) {
+        *status = ProbeStageStatus::kRejected;
+      }
+      return Fail("safety close terminal feedback does not prove flat");
+    }
+    return ProbeSampleTransition{.ok = true};
+  }
+
+  void MarkInvalid(std::string_view reason, bool unexpected_fill) {
+    stats_.unexpected_fill = stats_.unexpected_fill || unexpected_fill;
+    stats_.invalid_for_rtt_distribution = true;
+    if (stats_.invalid_reason.empty()) {
+      stats_.invalid_reason.assign(reason.data(), reason.size());
+      return;
+    }
+    stats_.invalid_reason.append("; ");
+    stats_.invalid_reason.append(reason.data(), reason.size());
   }
 
   ProbeSampleLocalIds ids_;

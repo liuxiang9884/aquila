@@ -61,6 +61,34 @@ class ProbeSampleExecutor {
     return Dispatch(session, transition.action);
   }
 
+  template <typename Session>
+  [[nodiscard]] ProbeSampleTransition OnOrderFeedback(
+      Session& session, const OrderFeedbackEvent& feedback) {
+    ProbeSampleTransition transition = flow_.OnOrderFeedback(feedback);
+    if (!transition.ok) {
+      return transition;
+    }
+    if (transition.action == ProbeSampleAction::kNone ||
+        transition.action == ProbeSampleAction::kFinish) {
+      return transition;
+    }
+    return Dispatch(session, transition.action);
+  }
+
+  template <typename Session>
+  [[nodiscard]] ProbeSampleTransition OnStageTimeout(Session& session,
+                                                     ProbeStage stage) {
+    ProbeSampleTransition transition = flow_.OnStageTimeout(stage);
+    if (!transition.ok) {
+      return transition;
+    }
+    if (transition.action == ProbeSampleAction::kNone ||
+        transition.action == ProbeSampleAction::kFinish) {
+      return transition;
+    }
+    return Dispatch(session, transition.action);
+  }
+
   [[nodiscard]] const ProbeSampleStats& stats() const noexcept {
     return flow_.stats();
   }

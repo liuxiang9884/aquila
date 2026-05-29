@@ -21,7 +21,7 @@
 - 2026-05-26 的 12-symbol guarded live-orders 30 分钟拆核运行正常退出 flat，`signals=10`、`orders=10`、`finished=10`、`filled=0`，最大 Ack RTT 为 `6.738ms`，没有复现 `219ms` 级别 Ack outlier。
 - 2026-05-26 run 中最大 send-to-finish 为 DASH_USDT 的 `45.977ms`；其中 Gate exchange timestamp 的 Ack-to-finish 为 `37.336ms`。这属于 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle 延迟，不是 Ack path outlier。
 - 2026-05-28 当前讨论结论：`219.023ms` Ack RTT outlier 和 terminal lifecycle latency 都先等待后续复现，不再基于单次样本继续推断或修改 order session 架构。terminal lifecycle latency 的候选假设按“Gate 交易所内部订单队列 / IOC terminal lifecycle 延迟”标记，但仍未证明。
-- 2026-05-28 已形成并开始落地 Gate `OrderSession` RTT probe measurement-only 工具，见 `docs/gate_order_session_rtt_probe_design.md`。第一版目标是对多组 `connect_ip` 采集 `gtc_place_ack_rtt_ns`、`gtc_cancel_ack_rtt_ns` 和 `ioc_place_ack_rtt_ns`，暂不自动 score、暂不自动切换生产 `OrderSession`。多 resolver 1800s discovery 已得到 48 个候选 IP，随后 48/48 通过 `futures.login`；候选文件为 `/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt`。当前 V1a 代码已有 dry-run plan、`--live-preflight`、pinned session config builder、sample flow / executor / id allocator 和 sample CSV writer；sample flow 已记录 Ack 接收时间 / stage status，校验 Ack / final response `local_order_id`，并已覆盖 GTC cancel reject 后立即派发 reduce-only close 的纯状态流转。`--execute` 仍拒绝，feedback fill / timeout、close terminal 确认和 REST guard 尚未接入。
+- 2026-05-28 已形成并开始落地 Gate `OrderSession` RTT probe measurement-only 工具，见 `docs/gate_order_session_rtt_probe_design.md`。第一版目标是对多组 `connect_ip` 采集 `gtc_place_ack_rtt_ns`、`gtc_cancel_ack_rtt_ns` 和 `ioc_place_ack_rtt_ns`，暂不自动 score、暂不自动切换生产 `OrderSession`。多 resolver 1800s discovery 已得到 48 个候选 IP，随后 48/48 通过 `futures.login`；候选文件为 `/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt`。当前 V1a 代码已有 dry-run plan、`--live-preflight`、pinned session config builder、sample flow / executor / id allocator 和 sample CSV writer；sample flow 已记录 Ack 接收时间 / stage status，校验 Ack / final response `local_order_id`，并已覆盖 GTC cancel reject、feedback fill / timeout 后进入 reduce-only close、close Ack 后等待 terminal feedback 和 close terminal confirmation 的纯状态流转。`--execute` 仍拒绝，feedback reader、REST guard 和 single-session live order sample 尚未接入。
 - 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为本 latency 计划的 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 
 ## 已落地
@@ -177,7 +177,7 @@
    - REST 不做逐 cycle final flat；只做 run start preflight、fatal / `ContinuityLost` 处理和 run end 整体账户检查 / 市价 reduce-only 兜底。意外成交样本标记 invalid。
    - sample 统计使用 Nova/Quill CSV 异步写入，连接级 endpoint / owner CPU 后续用 Nova 结构化 log；不再把 JSONL 作为 RTT probe 主输出。CSV 字段需要支持 per-IP p50 / p90 / p99 / avg、过去 N 秒 rolling、不同 symbol 分组、同 IP 时间稳定性和 reconnect generation 对比。当前 sample CSV schema / writer 已实现，connection log 仍是 planned。
    - 第一版推荐每个活跃 `OrderSession` 一个 owner thread，由 coordinator 轮转下发 probe；rotating worker 和 coroutine multi-session scout 作为未来资源优化方向。
-   - live 前 blocker：当前只完成 GTC cancel reject 的 immediate close 纯状态流转；timeout / fill 仍必须进入 reduce-only close，close Ack 后必须继续等待 terminal feedback 或 REST / position-known-flat，不能只凭 close Ack 结束 sample。
+   - live 前 blocker：纯状态机已覆盖 GTC cancel reject、timeout / fill 进入 reduce-only close、close Ack 后等待 terminal feedback 和 close terminal confirmation；feedback reader、REST / position-known-flat 证明和 single-session live order sample 尚未接入 live executor，不能只凭 close Ack 结束 sample。
    - 详细方案、线程模型取舍和安全边界见 `docs/gate_order_session_rtt_probe_design.md`。
 
 ## 下一轮验证要求

@@ -848,6 +848,275 @@ TEST(GateOrderSessionRttProbeTest,
   EXPECT_EQ(executor.stats().gtc_close_status, ProbeStageStatus::kRejected);
 }
 
+TEST(GateOrderSessionRttProbeTest, DispatchesGtcSafetyCloseOnFeedbackFill) {
+  const PassiveOrderBuildResult gtc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  const PassiveOrderBuildResult ioc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "74.9",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 3000,
+  };
+  auto executor_result = ProbeSampleExecutor::Create(
+      gtc_passive, ioc_passive,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      });
+  ASSERT_TRUE(executor_result.ok) << executor_result.error;
+  ProbeSampleExecutor& executor = *executor_result.value;
+  FakeProbeOrderSession session;
+
+  ASSERT_TRUE(executor.Start(session).ok);
+  ASSERT_TRUE(
+      executor
+          .OnOrderResponse(
+              session,
+              gate::OrderResponse{
+                  .kind = gate::OrderResponseKind::kAck,
+                  .local_order_id = 0x0700000000000001ULL,
+                  .request_sequence = session.sent_orders[0].request_sequence,
+                  .local_receive_ns =
+                      session.sent_orders[0].send_local_ns + 600,
+              })
+          .ok);
+  ASSERT_EQ(session.sent_orders.size(), 2U);
+
+  const ProbeSampleTransition transition = executor.OnOrderFeedback(
+      session, OrderFeedbackEvent{
+                   .kind = OrderFeedbackKind::kPartialFilled,
+                   .local_order_id = 0x0700000000000001ULL,
+                   .cumulative_filled_quantity = 0.1,
+                   .left_quantity = 0.0,
+                   .fill_price = 75.0,
+               });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 3U);
+  EXPECT_EQ(session.sent_orders[2].action, "place");
+  EXPECT_EQ(session.sent_orders[2].order.local_order_id, 0x0700000000000003ULL);
+  EXPECT_EQ(session.sent_orders[2].order.side, OrderSide::kSell);
+  EXPECT_TRUE(session.sent_orders[2].order.reduce_only);
+  EXPECT_TRUE(executor.stats().unexpected_fill);
+  EXPECT_TRUE(executor.stats().invalid_for_rtt_distribution);
+  EXPECT_NE(executor.stats().invalid_reason.find("fill"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, WaitsForSafetyCloseTerminalAfterCloseAck) {
+  const PassiveOrderBuildResult gtc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  const PassiveOrderBuildResult ioc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "74.9",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 3000,
+  };
+  auto executor_result = ProbeSampleExecutor::Create(
+      gtc_passive, ioc_passive,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      });
+  ASSERT_TRUE(executor_result.ok) << executor_result.error;
+  ProbeSampleExecutor& executor = *executor_result.value;
+  FakeProbeOrderSession session;
+
+  ASSERT_TRUE(executor.Start(session).ok);
+  ASSERT_TRUE(
+      executor
+          .OnOrderResponse(
+              session,
+              gate::OrderResponse{
+                  .kind = gate::OrderResponseKind::kAck,
+                  .local_order_id = 0x0700000000000001ULL,
+                  .request_sequence = session.sent_orders[0].request_sequence,
+                  .local_receive_ns =
+                      session.sent_orders[0].send_local_ns + 600,
+              })
+          .ok);
+  ASSERT_TRUE(
+      executor
+          .OnOrderResponse(
+              session,
+              gate::OrderResponse{
+                  .kind = gate::OrderResponseKind::kCancelRejected,
+                  .local_order_id = 0x0700000000000001ULL,
+                  .request_sequence = session.sent_orders[1].request_sequence,
+                  .local_receive_ns =
+                      session.sent_orders[1].send_local_ns + 700,
+              })
+          .ok);
+  ASSERT_EQ(session.sent_orders.size(), 3U);
+
+  ProbeSampleTransition transition = executor.OnOrderResponse(
+      session,
+      gate::OrderResponse{
+          .kind = gate::OrderResponseKind::kAck,
+          .local_order_id = 0x0700000000000003ULL,
+          .request_sequence = session.sent_orders[2].request_sequence,
+          .local_receive_ns = session.sent_orders[2].send_local_ns + 800,
+      });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kNone);
+  EXPECT_EQ(executor.stats().gtc_close_status, ProbeStageStatus::kAcked);
+
+  transition = executor.OnOrderFeedback(
+      session, OrderFeedbackEvent{
+                   .kind = OrderFeedbackKind::kFilled,
+                   .local_order_id = 0x0700000000000003ULL,
+                   .cumulative_filled_quantity = 0.1,
+                   .left_quantity = 0.0,
+                   .fill_price = 75.0,
+               });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFinish);
+  EXPECT_EQ(executor.stats().gtc_close_status,
+            ProbeStageStatus::kTerminalConfirmed);
+}
+
+TEST(GateOrderSessionRttProbeTest, DispatchesSafetyCloseOnGtcCancelTimeout) {
+  const PassiveOrderBuildResult gtc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  const PassiveOrderBuildResult ioc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "74.9",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 3000,
+  };
+  auto executor_result = ProbeSampleExecutor::Create(
+      gtc_passive, ioc_passive,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      });
+  ASSERT_TRUE(executor_result.ok) << executor_result.error;
+  ProbeSampleExecutor& executor = *executor_result.value;
+  FakeProbeOrderSession session;
+
+  ASSERT_TRUE(executor.Start(session).ok);
+  ASSERT_TRUE(
+      executor
+          .OnOrderResponse(
+              session,
+              gate::OrderResponse{
+                  .kind = gate::OrderResponseKind::kAck,
+                  .local_order_id = 0x0700000000000001ULL,
+                  .request_sequence = session.sent_orders[0].request_sequence,
+                  .local_receive_ns =
+                      session.sent_orders[0].send_local_ns + 600,
+              })
+          .ok);
+  ASSERT_EQ(session.sent_orders.size(), 2U);
+
+  const ProbeSampleTransition transition =
+      executor.OnStageTimeout(session, ProbeStage::kGtcCancel);
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 3U);
+  EXPECT_EQ(session.sent_orders[2].action, "place");
+  EXPECT_EQ(session.sent_orders[2].order.local_order_id, 0x0700000000000003ULL);
+  EXPECT_TRUE(session.sent_orders[2].order.reduce_only);
+  EXPECT_EQ(executor.stats().gtc_cancel_status, ProbeStageStatus::kTimeout);
+  EXPECT_TRUE(executor.stats().invalid_for_rtt_distribution);
+  EXPECT_NE(executor.stats().invalid_reason.find("timeout"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, FailsSampleWhenSafetyCloseTimesOut) {
+  const PassiveOrderBuildResult gtc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  const PassiveOrderBuildResult ioc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "74.9",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 3000,
+  };
+  auto executor_result = ProbeSampleExecutor::Create(
+      gtc_passive, ioc_passive,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      });
+  ASSERT_TRUE(executor_result.ok) << executor_result.error;
+  ProbeSampleExecutor& executor = *executor_result.value;
+  FakeProbeOrderSession session;
+
+  ASSERT_TRUE(executor.Start(session).ok);
+  ASSERT_TRUE(
+      executor
+          .OnOrderResponse(
+              session,
+              gate::OrderResponse{
+                  .kind = gate::OrderResponseKind::kAck,
+                  .local_order_id = 0x0700000000000001ULL,
+                  .request_sequence = session.sent_orders[0].request_sequence,
+                  .local_receive_ns =
+                      session.sent_orders[0].send_local_ns + 600,
+              })
+          .ok);
+  ASSERT_TRUE(
+      executor
+          .OnOrderResponse(
+              session,
+              gate::OrderResponse{
+                  .kind = gate::OrderResponseKind::kCancelRejected,
+                  .local_order_id = 0x0700000000000001ULL,
+                  .request_sequence = session.sent_orders[1].request_sequence,
+                  .local_receive_ns =
+                      session.sent_orders[1].send_local_ns + 700,
+              })
+          .ok);
+  ASSERT_EQ(session.sent_orders.size(), 3U);
+
+  const ProbeSampleTransition transition =
+      executor.OnStageTimeout(session, ProbeStage::kGtcClose);
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("safety close timeout"), std::string::npos);
+  EXPECT_EQ(executor.stats().gtc_close_status, ProbeStageStatus::kTimeout);
+}
+
 TEST(GateOrderSessionRttProbeTest,
      AllocatesSampleLocalOrderIdsInFeedbackStrategyLane) {
   ProbeSampleIdAllocator allocator(/*strategy_id=*/7);
