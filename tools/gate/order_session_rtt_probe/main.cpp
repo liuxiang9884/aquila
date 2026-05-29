@@ -9,6 +9,7 @@
 
 #include <CLI/CLI.hpp>
 #include <fmt/core.h>
+#include <magic_enum/magic_enum.hpp>
 
 #include "exchange/gate/trading/order_session_config.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
@@ -92,12 +93,14 @@ void PrintPlan(const probe::ProbeConfig& config,
       "gate_order_session_rtt_probe dry_run={} execute={} name={} run_id={} "
       "candidate_ip_file={} candidate_ips={} duplicate_candidate_ips={} "
       "active_session_count={} samples_per_ip={} cycles={} "
-      "cycle_cooldown_ms={}\n",
+      "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={}\n",
       config.execute ? "false" : "true", config.execute ? "true" : "false",
       config.name, config.run_id, config.inputs.candidate_ip_file.string(),
       plan.candidate_ip_count, plan.duplicate_candidate_ip_count,
       config.sessions.active_session_count, config.sampling.samples_per_ip,
-      plan.cycles.size(), config.sampling.cycle_cooldown_ms);
+      plan.cycles.size(), config.sampling.cycle_cooldown_ms,
+      config.sampling.order_session_interval_ms,
+      magic_enum::enum_name(config.order.order_mode));
 
   for (const probe::ProbeCycle& cycle : plan.cycles) {
     fmt::print("cycle index={} group={} connect_ips=", cycle.cycle_index,
@@ -119,7 +122,8 @@ void PrintLivePreflightPlan(const probe::ProbeConfig& config,
       "name={} run_id={} connect_ip={} sample_count={} run_dir={} "
       "sample_csv_path={} rest_guard_csv_path={} raw_rest_dir={} "
       "order_session_host={} order_session_target={} "
-      "order_session_worker_cpu={} enable_tcp_info={}\n",
+      "order_session_worker_cpu={} enable_tcp_info={} "
+      "order_session_interval_ms={} order_mode={}\n",
       config.name, config.run_id, live_plan.connect_ip, live_plan.sample_count,
       live_plan.paths.run_dir.string(),
       live_plan.paths.sample_csv_path.string(),
@@ -129,7 +133,9 @@ void PrintLivePreflightPlan(const probe::ProbeConfig& config,
       live_plan.order_session_config.connection.target,
       live_plan.order_session_config.connection.runtime_policy.io_cpu_id,
       live_plan.order_session_config.enable_tcp_info_diagnostics ? "true"
-                                                                 : "false");
+                                                                 : "false",
+      config.sampling.order_session_interval_ms,
+      magic_enum::enum_name(config.order.order_mode));
 }
 
 int Run(const CliOptions& options) {

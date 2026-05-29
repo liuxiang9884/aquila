@@ -131,11 +131,13 @@ worker_cpu_ids = []
 [probe.sampling]
 samples_per_ip = 1
 cycle_cooldown_ms = 500
+order_session_interval_ms = 25
 max_events_per_drain = 128
 idle_policy = "spin"
 coordinator_cpu = -1
 
 [probe.order]
+order_mode = "ioc+gtc"
 side = "buy"
 passive_price_limit_fraction = 0.5
 quantity_mode = "min_quantity"
@@ -174,6 +176,8 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
   EXPECT_EQ(result.value.sessions.max_candidates, 1U);
   EXPECT_TRUE(result.value.sessions.enable_tcp_info);
   EXPECT_EQ(result.value.sampling.cycle_cooldown_ms, 500U);
+  EXPECT_EQ(result.value.sampling.order_session_interval_ms, 25U);
+  EXPECT_EQ(result.value.order.order_mode, ProbeOrderMode::kIocAndGtc);
   EXPECT_EQ(result.value.order.passive_price_limit_fraction, 0.5);
   EXPECT_TRUE(result.value.order.reduce_only_close);
   EXPECT_EQ(result.value.feedback.strategy_id, 7U);
@@ -230,6 +234,55 @@ strategy_id = 8
 
 TEST(GateOrderSessionRttProbeTest, RejectsUnsafeOrderConfig) {
   ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+order_mode = "bad"
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_mode"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+order_mode = 1
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_mode"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+order_mode = "ioc"
+)toml");
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.order.order_mode, ProbeOrderMode::kIoc);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+order_mode = "gtc"
+)toml");
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.order.order_mode, ProbeOrderMode::kGtc);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.order]
+order_mode = "gtc+ioc"
+)toml");
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.order.order_mode, ProbeOrderMode::kIocAndGtc);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.sampling]
+order_session_interval_ms = 0
+)toml");
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.sampling.order_session_interval_ms, 0U);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
+[probe.sampling]
+order_session_interval_ms = -1
+)toml");
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_session_interval_ms"), std::string::npos);
+
+  result = ParseMinimalProbeConfigWith(R"toml(
 [probe.order]
 passive_price_limit_fraction = 0.0
 )toml");
@@ -415,6 +468,86 @@ TEST(GateOrderSessionRttProbeTest, BuildsProbeSampleOrders) {
   EXPECT_EQ(close.time_in_force, TimeInForce::kImmediateOrCancel);
   EXPECT_EQ(close.price_text, "0");
   EXPECT_TRUE(close.reduce_only);
+}
+
+TEST(GateOrderSessionRttProbeTest, IocOnlySampleStartsWithIocPlace) {
+  ProbeSampleFlow flow(
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      },
+      ProbeOrderMode::kIoc);
+
+  EXPECT_EQ(flow.Start(), ProbeSampleAction::kSubmitIocPlace);
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kIocPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 21,
+                                   .send_local_ns = 1000,
+                               })
+                  .ok);
+  const ProbeSampleTransition transition =
+      flow.OnOrderResponse(gate::OrderResponse{
+          .kind = gate::OrderResponseKind::kAck,
+          .local_order_id = 0x0700000000000002ULL,
+          .request_sequence = 21,
+          .local_receive_ns = 1700,
+      });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
+  EXPECT_EQ(flow.stats().gtc_place_status, ProbeStageStatus::kNotSubmitted);
+  EXPECT_EQ(flow.stats().gtc_cancel_status, ProbeStageStatus::kNotSubmitted);
+  EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
+}
+
+TEST(GateOrderSessionRttProbeTest, GtcOnlySampleFinishesAfterCancelAck) {
+  ProbeSampleFlow flow(
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      },
+      ProbeOrderMode::kGtc);
+
+  EXPECT_EQ(flow.Start(), ProbeSampleAction::kSubmitGtcPlace);
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 31,
+                                   .send_local_ns = 1000,
+                               })
+                  .ok);
+  ProbeSampleTransition transition = flow.OnOrderResponse(gate::OrderResponse{
+      .kind = gate::OrderResponseKind::kAck,
+      .local_order_id = 0x0700000000000001ULL,
+      .request_sequence = 31,
+      .local_receive_ns = 1600,
+  });
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitGtcCancel);
+
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcCancel,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 32,
+                                   .send_local_ns = 2000,
+                               })
+                  .ok);
+  transition = flow.OnOrderResponse(gate::OrderResponse{
+      .kind = gate::OrderResponseKind::kAck,
+      .local_order_id = 0x0700000000000001ULL,
+      .request_sequence = 32,
+      .local_receive_ns = 2600,
+  });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFinish);
+  EXPECT_EQ(flow.stats().gtc_cancel_ack_rtt_ns, 600);
+  EXPECT_EQ(flow.stats().ioc_place_status, ProbeStageStatus::kNotSubmitted);
 }
 
 TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
@@ -633,6 +766,82 @@ TEST(GateOrderSessionRttProbeTest,
   EXPECT_FALSE(result.ok);
   EXPECT_EQ(result.value, nullptr);
   EXPECT_NE(result.error.find("gtc passive"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     IocOnlyExecutorDoesNotRequireValidGtcPassiveOrder) {
+  const PassiveOrderBuildResult invalid_gtc{
+      .ok = false,
+      .contract = "ZEC_USDT",
+      .error = "missing BBO",
+  };
+  const PassiveOrderBuildResult ioc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "74.9",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 3000,
+  };
+  auto result = ProbeSampleExecutor::Create(
+      invalid_gtc, ioc_passive,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      },
+      ProbeOrderMode::kIoc);
+  ASSERT_TRUE(result.ok) << result.error;
+  ProbeSampleExecutor& executor = *result.value;
+  FakeProbeOrderSession session;
+
+  const ProbeSampleTransition transition = executor.Start(session);
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 1U);
+  EXPECT_EQ(session.sent_orders[0].action, "place");
+  EXPECT_EQ(session.sent_orders[0].order.local_order_id, 0x0700000000000002ULL);
+  EXPECT_EQ(session.sent_orders[0].order.time_in_force,
+            TimeInForce::kImmediateOrCancel);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     GtcOnlyExecutorDoesNotRequireValidIocPassiveOrder) {
+  const PassiveOrderBuildResult gtc_passive{
+      .ok = true,
+      .contract = "ZEC_USDT",
+      .price_text = "75.0",
+      .quantity_text = "0.1",
+      .bbo_ticker_id = 42,
+      .bbo_local_ns = 2000,
+  };
+  const PassiveOrderBuildResult invalid_ioc{
+      .ok = false,
+      .contract = "ZEC_USDT",
+      .error = "missing BBO",
+  };
+  auto result = ProbeSampleExecutor::Create(
+      gtc_passive, invalid_ioc,
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      },
+      ProbeOrderMode::kGtc);
+  ASSERT_TRUE(result.ok) << result.error;
+  ProbeSampleExecutor& executor = *result.value;
+  FakeProbeOrderSession session;
+
+  const ProbeSampleTransition transition = executor.Start(session);
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  ASSERT_EQ(session.sent_orders.size(), 1U);
+  EXPECT_EQ(session.sent_orders[0].action, "place");
+  EXPECT_EQ(session.sent_orders[0].order.local_order_id, 0x0700000000000001ULL);
+  EXPECT_EQ(session.sent_orders[0].order.time_in_force,
+            TimeInForce::kGoodTillCancel);
 }
 
 TEST(GateOrderSessionRttProbeTest, DispatchesGtcSafetyCloseOnCancelRejected) {
@@ -1386,6 +1595,36 @@ TEST(GateOrderSessionRttProbeTest, RotatesCandidateGroupsByActiveSessionCount) {
             (std::vector<std::string>{"ip4"}));
   EXPECT_EQ(scheduler.NextCycle().connect_ips,
             (std::vector<std::string>{"ip0", "ip1"}));
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     ZeroOrderSessionIntervalWaitsForNextMarketEvent) {
+  OrderSessionDispatchPacer pacer(/*order_session_interval_ms=*/0);
+
+  EXPECT_TRUE(
+      pacer.CanDispatch(/*now_ns=*/1000, /*has_new_market_event=*/false));
+  pacer.MarkDispatched(/*now_ns=*/1000);
+  EXPECT_FALSE(
+      pacer.CanDispatch(/*now_ns=*/2000, /*has_new_market_event=*/false));
+  EXPECT_TRUE(
+      pacer.CanDispatch(/*now_ns=*/2000, /*has_new_market_event=*/true));
+  pacer.MarkDispatchConsumed();
+  EXPECT_TRUE(
+      pacer.CanDispatch(/*now_ns=*/2000, /*has_new_market_event=*/false));
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     PositiveOrderSessionIntervalUsesNonBlockingDeadline) {
+  OrderSessionDispatchPacer pacer(/*order_session_interval_ms=*/25);
+
+  pacer.MarkDispatched(/*now_ns=*/1'000'000);
+  EXPECT_FALSE(pacer.CanDispatch(/*now_ns=*/25'999'999,
+                                 /*has_new_market_event=*/true));
+  EXPECT_TRUE(pacer.CanDispatch(/*now_ns=*/26'000'000,
+                                /*has_new_market_event=*/false));
+  pacer.MarkDispatchConsumed();
+  EXPECT_TRUE(pacer.CanDispatch(/*now_ns=*/26'000'000,
+                                /*has_new_market_event=*/false));
 }
 
 TEST(GateOrderSessionRttProbeTest,

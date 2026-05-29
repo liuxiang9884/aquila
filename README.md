@@ -255,6 +255,9 @@ Gate `OrderSession` RTT probe V1a dry-run：
 sample executor、`local_order_id` 分配和 sample CSV writer 已作为 live sample 前置逻辑落地。sample flow 已保存 Ack 接收
 时间和 stage status，校验 Ack / final response `local_order_id` 必须匹配当前 stage，并已覆盖 GTC cancel reject 后立即派发
 reduce-only close、feedback fill / timeout 后进入 reduce-only close、close Ack 后等待 terminal feedback 的纯状态流转。可用
+`probe.order.order_mode` 选择 `ioc`、`gtc` 或默认 `ioc+gtc`；`probe.sampling.order_session_interval_ms=0` 表示同一
+cycle 内下一个 order session 等下一条行情触发，非 0 表示发完当前 order session 后设置非阻塞 deadline，到点后用当时最新
+BBO 下下一单，不额外等新行情、不 sleep / busy loop。可用
 `--live-preflight` 加载 candidate IP 和 base order session config，构建 single-session live plan 并打印输出路径；该模式
 不连接 WebSocket、不下单。`--execute` 仍会显式失败；真实下单前还需要接入 feedback reader、REST guard 和
 single-session live order sample。

@@ -242,6 +242,36 @@ namespace {
   return true;
 }
 
+[[nodiscard]] bool ReadProbeOrderModeOr(toml::node_view<const toml::node> node,
+                                        ProbeOrderMode fallback,
+                                        std::string_view name,
+                                        ProbeOrderMode* output,
+                                        std::string* error) {
+  if (Missing(node)) {
+    *output = fallback;
+    return true;
+  }
+  const std::optional<std::string> value = node.value<std::string>();
+  if (!value) {
+    *error = fmt::format("{} must be string", name);
+    return false;
+  }
+  if (*value == "ioc") {
+    *output = ProbeOrderMode::kIoc;
+    return true;
+  }
+  if (*value == "gtc") {
+    *output = ProbeOrderMode::kGtc;
+    return true;
+  }
+  if (*value == "ioc+gtc" || *value == "gtc+ioc") {
+    *output = ProbeOrderMode::kIocAndGtc;
+    return true;
+  }
+  *error = fmt::format("{} must be one of ioc, gtc, ioc+gtc", name);
+  return false;
+}
+
 }  // namespace
 
 ProbeConfigResult ParseProbeConfig(const toml::table& root) {
@@ -344,6 +374,13 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                           &config.sampling.cycle_cooldown_ms, &error)) {
     return Failure(std::move(error));
   }
+  if (!ReadUInt32InRange(sampling["order_session_interval_ms"],
+                         config.sampling.order_session_interval_ms,
+                         "probe.sampling.order_session_interval_ms", 0,
+                         std::numeric_limits<std::uint32_t>::max(),
+                         &config.sampling.order_session_interval_ms, &error)) {
+    return Failure(std::move(error));
+  }
   if (!ReadPositiveUInt32(sampling["max_events_per_drain"],
                           config.sampling.max_events_per_drain,
                           "probe.sampling.max_events_per_drain",
@@ -374,6 +411,11 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
     return Failure(std::move(error));
   }
 
+  if (!ReadProbeOrderModeOr(order["order_mode"], config.order.order_mode,
+                            "probe.order.order_mode", &config.order.order_mode,
+                            &error)) {
+    return Failure(std::move(error));
+  }
   if (!ReadStringOr(order["side"], config.order.side, "probe.order.side",
                     &config.order.side, &error)) {
     return Failure(std::move(error));

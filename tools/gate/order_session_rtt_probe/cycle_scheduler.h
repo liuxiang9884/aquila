@@ -77,6 +77,39 @@ class CycleScheduler {
   std::size_t next_index_{0};
 };
 
+class OrderSessionDispatchPacer {
+ public:
+  explicit OrderSessionDispatchPacer(std::uint32_t order_session_interval_ms)
+      : interval_ns_(static_cast<std::int64_t>(order_session_interval_ms) *
+                     1'000'000) {}
+
+  [[nodiscard]] bool CanDispatch(std::int64_t now_ns,
+                                 bool has_new_market_event) const noexcept {
+    if (!waiting_) {
+      return true;
+    }
+    if (interval_ns_ == 0) {
+      return has_new_market_event;
+    }
+    return now_ns >= next_dispatch_ns_;
+  }
+
+  void MarkDispatched(std::int64_t now_ns) noexcept {
+    waiting_ = true;
+    next_dispatch_ns_ = now_ns + interval_ns_;
+  }
+
+  void MarkDispatchConsumed() noexcept {
+    waiting_ = false;
+    next_dispatch_ns_ = 0;
+  }
+
+ private:
+  std::int64_t interval_ns_{0};
+  std::int64_t next_dispatch_ns_{0};
+  bool waiting_{false};
+};
+
 }  // namespace aquila::tools::gate_order_session_rtt_probe
 
 #endif  // AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_CYCLE_SCHEDULER_H_

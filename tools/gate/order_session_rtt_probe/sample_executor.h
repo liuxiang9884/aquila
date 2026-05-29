@@ -7,6 +7,7 @@
 
 #include "core/common/result.h"
 #include "exchange/gate/trading/order_types.h"
+#include "tools/gate/order_session_rtt_probe/order_mode.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/sample_flow.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
@@ -17,18 +18,19 @@ class ProbeSampleExecutor {
  public:
   using CreateResult = Result<std::unique_ptr<ProbeSampleExecutor>>;
 
-  [[nodiscard]] static CreateResult Create(PassiveOrderBuildResult gtc_passive,
-                                           PassiveOrderBuildResult ioc_passive,
-                                           ProbeSampleLocalIds ids) {
+  [[nodiscard]] static CreateResult Create(
+      PassiveOrderBuildResult gtc_passive, PassiveOrderBuildResult ioc_passive,
+      ProbeSampleLocalIds ids,
+      ProbeOrderMode order_mode = ProbeOrderMode::kIocAndGtc) {
     CreateResult result;
-    if (!gtc_passive.ok) {
+    if (ProbeOrderModeUsesGtc(order_mode) && !gtc_passive.ok) {
       result.error =
           gtc_passive.error.empty()
               ? "gtc passive order build failed"
               : "gtc passive order build failed: " + gtc_passive.error;
       return result;
     }
-    if (!ioc_passive.ok) {
+    if (ProbeOrderModeUsesIoc(order_mode) && !ioc_passive.ok) {
       result.error =
           ioc_passive.error.empty()
               ? "ioc passive order build failed"
@@ -36,8 +38,8 @@ class ProbeSampleExecutor {
       return result;
     }
     result.ok = true;
-    result.value.reset(new ProbeSampleExecutor(std::move(gtc_passive),
-                                               std::move(ioc_passive), ids));
+    result.value.reset(new ProbeSampleExecutor(
+        std::move(gtc_passive), std::move(ioc_passive), ids, order_mode));
     return result;
   }
 
@@ -96,13 +98,18 @@ class ProbeSampleExecutor {
  private:
   ProbeSampleExecutor(PassiveOrderBuildResult gtc_passive,
                       PassiveOrderBuildResult ioc_passive,
-                      ProbeSampleLocalIds ids)
-      : flow_(ids),
-        gtc_place_(BuildGtcPlaceOrder(gtc_passive, ids)),
-        gtc_cancel_(BuildGtcCancelOrder(gtc_place_)),
-        ioc_place_(BuildIocPlaceOrder(ioc_passive, ids)),
-        gtc_close_(BuildGtcCloseOrder(gtc_passive, ids)),
-        ioc_close_(BuildIocCloseOrder(ioc_passive, ids)) {}
+                      ProbeSampleLocalIds ids, ProbeOrderMode order_mode)
+      : flow_(ids, order_mode) {
+    if (ProbeOrderModeUsesGtc(order_mode)) {
+      gtc_place_ = BuildGtcPlaceOrder(gtc_passive, ids);
+      gtc_cancel_ = BuildGtcCancelOrder(gtc_place_);
+      gtc_close_ = BuildGtcCloseOrder(gtc_passive, ids);
+    }
+    if (ProbeOrderModeUsesIoc(order_mode)) {
+      ioc_place_ = BuildIocPlaceOrder(ioc_passive, ids);
+      ioc_close_ = BuildIocCloseOrder(ioc_passive, ids);
+    }
+  }
 
   template <typename Session>
   [[nodiscard]] ProbeSampleTransition Dispatch(Session& session,

@@ -9,6 +9,7 @@
 #include "core/common/types.h"
 #include "core/trading/order_feedback_event.h"
 #include "exchange/gate/trading/order_types.h"
+#include "tools/gate/order_session_rtt_probe/order_mode.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
 
@@ -139,11 +140,17 @@ struct ProbeSampleStats {
 
 class ProbeSampleFlow {
  public:
-  explicit ProbeSampleFlow(ProbeSampleLocalIds ids) : ids_(ids) {}
+  explicit ProbeSampleFlow(
+      ProbeSampleLocalIds ids,
+      ProbeOrderMode order_mode = ProbeOrderMode::kIocAndGtc)
+      : ids_(ids), order_mode_(order_mode) {}
 
   [[nodiscard]] ProbeSampleAction Start() noexcept {
     started_ = true;
-    return ProbeSampleAction::kSubmitGtcPlace;
+    if (ProbeOrderModeUsesGtc(order_mode_)) {
+      return ProbeSampleAction::kSubmitGtcPlace;
+    }
+    return ProbeSampleAction::kSubmitIocPlace;
   }
 
   [[nodiscard]] ProbeSampleTransition OnOrderSent(
@@ -384,6 +391,10 @@ class ProbeSampleFlow {
         stats_.gtc_cancel_ack_receive_local_ns = ack_receive_local_ns;
         stats_.gtc_cancel_ack_rtt_ns = rtt_ns;
         stats_.gtc_cancel_status = ProbeStageStatus::kAcked;
+        if (!ProbeOrderModeUsesIoc(order_mode_)) {
+          return ProbeSampleTransition{.ok = true,
+                                       .action = ProbeSampleAction::kFinish};
+        }
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitIocPlace};
       case ProbeStage::kIocPlace:
@@ -522,6 +533,7 @@ class ProbeSampleFlow {
   }
 
   ProbeSampleLocalIds ids_;
+  ProbeOrderMode order_mode_{ProbeOrderMode::kIocAndGtc};
   bool started_{false};
   ProbeSampleStats stats_;
   ProbeStageSendState gtc_place_;

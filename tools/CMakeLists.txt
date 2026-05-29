@@ -90,6 +90,7 @@ target_link_libraries(gate_order_session_rtt_probe
         absl::flat_hash_set
         CLI11::CLI11
         fmt::fmt-header-only
+        magic_enum::magic_enum
         nova
         PkgConfig::tomlplusplus
         quill::quill

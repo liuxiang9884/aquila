@@ -10,6 +10,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/result.h"
+#include "tools/gate/order_session_rtt_probe/order_mode.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 
@@ -33,6 +34,7 @@ struct ProbeSessionConfig {
 struct ProbeSamplingConfig {
   std::uint32_t samples_per_ip{1};
   std::uint32_t cycle_cooldown_ms{500};
+  std::uint32_t order_session_interval_ms{0};
   std::uint32_t max_events_per_drain{128};
   std::uint32_t cycles_per_connection_generation{1};
   std::string idle_policy{"spin"};
@@ -40,6 +42,7 @@ struct ProbeSamplingConfig {
 };
 
 struct ProbeOrderConfig {
+  ProbeOrderMode order_mode{ProbeOrderMode::kIocAndGtc};
   std::string side{"buy"};
   double passive_price_limit_fraction{0.5};
   std::string quantity_mode{"min_quantity"};
