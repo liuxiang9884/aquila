@@ -145,6 +145,64 @@ TEST(OrderLatencyDiagnosticsTest, AckDriveReadDurationCanEmitThresholdRecord) {
   EXPECT_TRUE(diagnostics.empty());
 }
 
+TEST(OrderLatencyDiagnosticsTest, AckRecordIncludesWriteAndSocketDiagnostics) {
+  OrderAckLatencyDiagnostics diagnostics(OrderLatencyDiagnosticConfig{
+      .ack_rtt_threshold_ns = 1'000,
+      .send_to_first_drive_read_threshold_ns = 100'000'000,
+      .drive_read_duration_threshold_ns = 100'000'000,
+      .diagnostic_window_timeout_ns = 250'000'000,
+      .max_logs_per_second = 10,
+  });
+  std::vector<OrderLatencyDiagnosticLogRecord> records;
+
+  OrderLatencyDiagnosticWindow window{
+      .local_order_id = 123,
+      .request_sequence = 40,
+      .request_send_local_ns = 1'000,
+      .inflight_at_send = 1,
+  };
+  window.owner_thread_tid = 2468;
+  window.write_path.order_encode_done_ns = 1'100;
+  window.write_path.ws_frame_encode_done_ns = 1'200;
+  window.write_path.write_enqueue_ns = 1'300;
+  window.write_path.drive_write_enter_ns = 1'350;
+  window.write_path.write_some_enter_ns = 1'400;
+  window.write_path.write_some_return_ns = 1'450;
+  window.write_path.write_complete_ns = 1'500;
+  window.write_path.write_some_bytes = 64;
+  window.write_path.write_complete_bytes = 64;
+  window.write_path.write_errno = 0;
+  window.write_path.write_eagain = false;
+  window.write_path.pending_write_count_after = 0;
+  window.socket_send_queue.available = true;
+  window.socket_send_queue.sendq_bytes = 8;
+  window.socket_send_queue.notsent_bytes = 4;
+  diagnostics.Arm(window);
+
+  EXPECT_TRUE(diagnostics.RecordAck(
+      40, 25'500'000, 5'000,
+      [&](const auto& record) { records.push_back(record); }));
+
+  ASSERT_EQ(records.size(), 1U);
+  const OrderLatencyDiagnosticLogRecord& record = records.back();
+  EXPECT_EQ(record.owner_thread_tid, 2468);
+  EXPECT_EQ(record.order_encode_done_ns, 1'100);
+  EXPECT_EQ(record.ws_frame_encode_done_ns, 1'200);
+  EXPECT_EQ(record.write_enqueue_ns, 1'300);
+  EXPECT_EQ(record.drive_write_enter_ns, 1'350);
+  EXPECT_EQ(record.write_some_enter_ns, 1'400);
+  EXPECT_EQ(record.write_some_return_ns, 1'450);
+  EXPECT_EQ(record.write_complete_ns, 1'500);
+  EXPECT_EQ(record.write_some_bytes, 64);
+  EXPECT_EQ(record.write_complete_bytes, 64);
+  EXPECT_EQ(record.write_errno, 0);
+  EXPECT_FALSE(record.write_eagain);
+  EXPECT_EQ(record.pending_write_count_after, 0U);
+  EXPECT_TRUE(record.socket_send_queue_available);
+  EXPECT_EQ(record.tcp_sendq_bytes, 8);
+  EXPECT_EQ(record.tcp_notsent_bytes, 4);
+}
+
 TEST(OrderLatencyDiagnosticsTest, ClearRemovesActiveDiagnosticWindows) {
   OrderAckLatencyDiagnostics diagnostics;
   diagnostics.Arm(OrderLatencyDiagnosticWindow{

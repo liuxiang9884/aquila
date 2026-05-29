@@ -16,6 +16,7 @@ struct PreparedWrite {
   std::uint32_t encoded_size{0};
   std::uint32_t write_offset{0};
   PayloadKind kind{PayloadKind::kBinary};
+  WritePathDiagnostics* diagnostics{nullptr};
   std::span<std::byte> storage{};
 };
 
@@ -34,6 +35,7 @@ class PreparedWriteArena {
     write.encoded_size = 0;
     write.write_offset = 0;
     write.kind = PayloadKind::kBinary;
+    write.diagnostics = nullptr;
     in_use_[slot_index] = true;
     return &write;
   }
@@ -54,6 +56,7 @@ class PreparedWriteArena {
     write->encoded_size = 0;
     write->write_offset = 0;
     write->kind = PayloadKind::kBinary;
+    write->diagnostics = nullptr;
     in_use_[slot_index] = false;
     free_list_[free_count_++] = static_cast<std::uint32_t>(slot_index);
   }
@@ -87,21 +90,23 @@ class PreparedWriteArena {
   explicit PreparedWriteArena(ArenaLayout layout)
       : slot_count_(layout.slot_count),
         bytes_per_slot_(layout.bytes_per_slot),
-        slots_(slot_count_ == 0 ? nullptr
-                                : std::make_unique<PreparedWrite[]>(slot_count_)),
+        slots_(slot_count_ == 0
+                   ? nullptr
+                   : std::make_unique<PreparedWrite[]>(slot_count_)),
         storage_(layout.storage_bytes == 0
                      ? nullptr
                      : std::make_unique<std::byte[]>(layout.storage_bytes)),
-        free_list_(slot_count_ == 0 ? nullptr
-                                    : std::make_unique<std::uint32_t[]>(
-                                          slot_count_)),
+        free_list_(slot_count_ == 0
+                       ? nullptr
+                       : std::make_unique<std::uint32_t[]>(slot_count_)),
         in_use_(slot_count_ == 0 ? nullptr
                                  : std::make_unique<bool[]>(slot_count_)),
         free_count_(slot_count_) {
     for (size_t i = 0; i < slot_count_; ++i) {
       slots_[i].slot_index = static_cast<std::uint32_t>(i);
       slots_[i].storage = std::span<std::byte>(
-          storage_.get() == nullptr ? nullptr : storage_.get() + i * bytes_per_slot_,
+          storage_.get() == nullptr ? nullptr
+                                    : storage_.get() + i * bytes_per_slot_,
           bytes_per_slot_);
       free_list_[i] = static_cast<std::uint32_t>(slot_count_ - 1 - i);
       in_use_[i] = false;

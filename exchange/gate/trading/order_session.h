@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -29,6 +30,9 @@
 #include <simdjson.h>
 
 #if defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <sched.h>
 #endif
 
@@ -148,10 +152,22 @@ namespace detail {
 #endif
 }
 
+[[nodiscard]] inline int CurrentTidForOrderSessionDiagnostics() noexcept {
+#if defined(__linux__)
+  const long tid = ::syscall(SYS_gettid);
+  return tid > 0 && tid <= static_cast<long>(std::numeric_limits<int>::max())
+             ? static_cast<int>(tid)
+             : -1;
+#else
+  return -1;
+#endif
+}
+
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
 struct OrderSessionConnectionLogRecordForTest {
   std::uint64_t order_session_id{0};
   int owner_thread_cpu{-1};
+  int owner_thread_tid{-1};
   bool endpoint_available{false};
   std::string local_ip;
   std::uint16_t local_port{0};
@@ -250,7 +266,7 @@ inline void SetOrderSessionLatencyDiagnosticLogObserverForTest(
 }
 
 inline void NotifyOrderSessionConnectionLogObserverForTest(
-    std::uint64_t order_session_id, int owner_thread_cpu,
+    std::uint64_t order_session_id, int owner_thread_cpu, int owner_thread_tid,
     const websocket::SocketEndpointDiagnostics& endpoints) noexcept {
   OrderSessionConnectionLogObserverForTest observer =
       OrderSessionConnectionLogObserverSlotForTest();
@@ -260,6 +276,7 @@ inline void NotifyOrderSessionConnectionLogObserverForTest(
   observer(OrderSessionConnectionLogRecordForTest{
       .order_session_id = order_session_id,
       .owner_thread_cpu = owner_thread_cpu,
+      .owner_thread_tid = owner_thread_tid,
       .endpoint_available = endpoints.available,
       .local_ip = endpoints.local_ip.data(),
       .local_port = endpoints.local_port,
@@ -402,6 +419,7 @@ class OrderSession {
       active_ = true;
       LogGateOrderSessionConnected(
           order_session_id_, detail::CurrentCpuForOrderSessionDiagnostics(),
+          detail::CurrentTidForOrderSessionDiagnostics(),
           SnapshotSocketEndpointDiagnostics());
       (void)SendLogin();
       return;
@@ -476,9 +494,14 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
 
+    websocket::WritePathDiagnostics write_path{};
+    write_path.order_encode_done_ns = RealtimeNowNsInt64();
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
-    const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
+    const OrderSendStatus status =
+        MapSendStatus(SendText(encoded.text, &write_path));
+    const websocket::SocketSendQueueDiagnostics socket_send_queue =
+        SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
       LogGateOrderSendFailed("place", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
@@ -486,7 +509,8 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
-    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns);
+    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
+                            write_path, socket_send_queue);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
@@ -538,9 +562,14 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
 
+    websocket::WritePathDiagnostics write_path{};
+    write_path.order_encode_done_ns = RealtimeNowNsInt64();
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
-    const OrderSendStatus status = MapSendStatus(SendText(encoded.text));
+    const OrderSendStatus status =
+        MapSendStatus(SendText(encoded.text, &write_path));
+    const websocket::SocketSendQueueDiagnostics socket_send_queue =
+        SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
       LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
@@ -548,7 +577,8 @@ class OrderSession {
       return SendFailure(status, sequence, encoded_request_id);
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
-    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns);
+    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
+                            write_path, socket_send_queue);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
@@ -687,11 +717,13 @@ class OrderSession {
   }
 
   [[nodiscard]] websocket::SendStatus SendText(
-      std::string_view payload_text) noexcept {
+      std::string_view payload_text,
+      websocket::WritePathDiagnostics* write_path = nullptr) noexcept {
     auto& core = client_.Core();
     const auto payload = std::as_bytes(
         std::span<const char>(payload_text.data(), payload_text.size()));
-    return core.SendText(payload, websocket::WriteFlushMode::kTryFlushOne);
+    return core.SendText(payload, websocket::WriteFlushMode::kTryFlushOne,
+                         write_path);
   }
 
   template <typename OrderT>
@@ -839,6 +871,15 @@ class OrderSession {
         "send_to_first_after_hook_ns={} send_to_first_drive_read_ns={} "
         "drive_read_duration_ns={} max_observed_drive_read_duration_ns={} "
         "inflight_at_send={} order_session_id={} diagnostic_cpu={} "
+        "max_runtime_loop_gap_ns={} runtime_loop_iterations_before_ack={} "
+        "owner_thread_tid={} order_encode_done_ns={} "
+        "ws_frame_encode_done_ns={} write_enqueue_ns={} "
+        "drive_write_enter_ns={} write_some_enter_ns={} "
+        "write_some_return_ns={} write_complete_ns={} "
+        "write_some_bytes={} write_complete_bytes={} write_errno={} "
+        "write_eagain={} pending_write_count_after={} "
+        "socket_send_queue_available={} tcp_sendq_bytes={} "
+        "tcp_notsent_bytes={} "
         "tcp_info_requested={} tcp_info_available={} tcp_info_rtt_us={} "
         "tcp_info_rttvar_us={} tcp_info_retrans={} "
         "tcp_info_total_retrans={} tcp_info_unacked={} tcp_info_snd_cwnd={}",
@@ -848,7 +889,18 @@ class OrderSession {
         record.send_to_first_after_hook_ns, record.send_to_first_drive_read_ns,
         record.drive_read_duration_ns,
         record.max_observed_drive_read_duration_ns, record.inflight_at_send,
-        order_session_id, diagnostic_cpu, tcp_info_requested ? "true" : "false",
+        order_session_id, diagnostic_cpu, record.max_runtime_loop_gap_ns,
+        record.runtime_loop_iterations_before_ack, record.owner_thread_tid,
+        record.order_encode_done_ns, record.ws_frame_encode_done_ns,
+        record.write_enqueue_ns, record.drive_write_enter_ns,
+        record.write_some_enter_ns, record.write_some_return_ns,
+        record.write_complete_ns, record.write_some_bytes,
+        record.write_complete_bytes, record.write_errno,
+        record.write_eagain ? "true" : "false",
+        record.pending_write_count_after,
+        record.socket_send_queue_available ? "true" : "false",
+        record.tcp_sendq_bytes, record.tcp_notsent_bytes,
+        tcp_info_requested ? "true" : "false",
         tcp_info.available ? "true" : "false", tcp_info.rtt_us,
         tcp_info.rttvar_us, tcp_info.retrans, tcp_info.total_retrans,
         tcp_info.unacked, tcp_info.snd_cwnd);
@@ -856,19 +908,20 @@ class OrderSession {
 
   static void LogGateOrderSessionConnected(
       std::uint64_t order_session_id, int owner_thread_cpu,
+      int owner_thread_tid,
       const websocket::SocketEndpointDiagnostics& endpoints) noexcept {
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
     detail::NotifyOrderSessionConnectionLogObserverForTest(
-        order_session_id, owner_thread_cpu, endpoints);
+        order_session_id, owner_thread_cpu, owner_thread_tid, endpoints);
 #endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
     NOVA_INFO(
         "gate_order_session_connected order_session_id={} "
-        "owner_thread_cpu={} endpoint_available={} local_ip={} local_port={} "
-        "remote_ip={} remote_port={}",
-        order_session_id, owner_thread_cpu,
+        "owner_thread_cpu={} owner_thread_tid={} endpoint_available={} "
+        "local_ip={} local_port={} remote_ip={} remote_port={}",
+        order_session_id, owner_thread_cpu, owner_thread_tid,
         endpoints.available ? "true" : "false", endpoints.local_ip.data(),
         endpoints.local_port, endpoints.remote_ip.data(),
         endpoints.remote_port);
@@ -938,14 +991,19 @@ class OrderSession {
             .encoded_request_id = encoded_request_id};
   }
 
-  void ArmAckLatencyDiagnostic(std::uint64_t local_order_id,
-                               std::uint64_t sequence,
-                               std::int64_t send_local_ns) noexcept {
+  void ArmAckLatencyDiagnostic(
+      std::uint64_t local_order_id, std::uint64_t sequence,
+      std::int64_t send_local_ns,
+      const websocket::WritePathDiagnostics& write_path,
+      const websocket::SocketSendQueueDiagnostics& socket_send_queue) noexcept {
     ack_latency_diagnostics_.Arm(OrderLatencyDiagnosticWindow{
         .local_order_id = local_order_id,
         .request_sequence = sequence,
         .request_send_local_ns = send_local_ns,
         .inflight_at_send = inflight_count(),
+        .owner_thread_tid = detail::CurrentTidForOrderSessionDiagnostics(),
+        .write_path = write_path,
+        .socket_send_queue = socket_send_queue,
     });
   }
 
@@ -981,6 +1039,12 @@ class OrderSession {
       return {};
     }
     return websocket::SnapshotTcpInfoDiagnostics(client_.Core().NativeFd());
+  }
+
+  [[nodiscard]] websocket::SocketSendQueueDiagnostics
+  SnapshotSocketSendQueueDiagnostics() noexcept {
+    return websocket::SnapshotSocketSendQueueDiagnostics(
+        client_.Core().NativeFd());
   }
 
   void OnRuntimeLoopProbe(websocket::RuntimeLoopProbePoint point) noexcept {

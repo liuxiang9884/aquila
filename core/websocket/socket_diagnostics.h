@@ -10,6 +10,11 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#if defined(__linux__)
+#include <sys/ioctl.h>
+
+#include <linux/sockios.h>
+#endif
 
 namespace aquila::websocket {
 
@@ -31,6 +36,12 @@ struct TcpInfoDiagnostics {
   std::uint32_t total_retrans{0};
   std::uint32_t unacked{0};
   std::uint32_t snd_cwnd{0};
+};
+
+struct SocketSendQueueDiagnostics {
+  bool available{false};
+  std::uint32_t sendq_bytes{0};
+  std::uint32_t notsent_bytes{0};
 };
 
 namespace detail {
@@ -111,6 +122,31 @@ SnapshotSocketEndpointDiagnostics(int fd) noexcept {
   snapshot.total_retrans = info.tcpi_total_retrans;
   snapshot.unacked = info.tcpi_unacked;
   snapshot.snd_cwnd = info.tcpi_snd_cwnd;
+#else
+  (void)fd;
+#endif
+  return snapshot;
+}
+
+[[nodiscard]] inline SocketSendQueueDiagnostics
+SnapshotSocketSendQueueDiagnostics(int fd) noexcept {
+  SocketSendQueueDiagnostics snapshot{};
+#if defined(__linux__)
+  if (fd < 0) {
+    return snapshot;
+  }
+  int sendq_bytes = 0;
+  if (::ioctl(fd, SIOCOUTQ, &sendq_bytes) == 0 && sendq_bytes >= 0) {
+    snapshot.available = true;
+    snapshot.sendq_bytes = static_cast<std::uint32_t>(sendq_bytes);
+  }
+#if defined(SIOCOUTQNSD)
+  int notsent_bytes = 0;
+  if (::ioctl(fd, SIOCOUTQNSD, &notsent_bytes) == 0 && notsent_bytes >= 0) {
+    snapshot.available = true;
+    snapshot.notsent_bytes = static_cast<std::uint32_t>(notsent_bytes);
+  }
+#endif
 #else
   (void)fd;
 #endif

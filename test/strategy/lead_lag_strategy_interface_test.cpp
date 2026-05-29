@@ -927,6 +927,10 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(signal.symbol, "BTC_USDT");
   EXPECT_EQ(signal.symbol_id, 3);
   EXPECT_EQ(signal.trigger_exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(signal.trigger_exchange_ns, 91);
+  EXPECT_EQ(signal.trigger_local_ns, 101);
+  EXPECT_GT(signal.on_book_ticker_entry_ns, 0);
+  EXPECT_GE(signal.signal_decision_ns, signal.on_book_ticker_entry_ns);
   EXPECT_EQ(signal.role, leadlag::PairRole::kLead);
   EXPECT_EQ(signal.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(signal.side, aquila::OrderSide::kBuy);
@@ -934,6 +938,10 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   const leadlag::detail::StrategyOrderIntentLogRecordForTest& record =
       g_order_intent_logs[0];
   EXPECT_EQ(record.trigger_ticker_id, signal.trigger_ticker_id);
+  EXPECT_EQ(record.trigger_exchange_ns, signal.trigger_exchange_ns);
+  EXPECT_EQ(record.trigger_local_ns, signal.trigger_local_ns);
+  EXPECT_EQ(record.on_book_ticker_entry_ns, signal.on_book_ticker_entry_ns);
+  EXPECT_EQ(record.signal_decision_ns, signal.signal_decision_ns);
   EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
   EXPECT_EQ(record.symbol_id, 3);
   EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);

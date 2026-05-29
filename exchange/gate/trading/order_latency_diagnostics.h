@@ -7,6 +7,9 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "core/websocket/socket_diagnostics.h"
+#include "core/websocket/types.h"
+
 namespace aquila::gate {
 
 enum class OrderLatencyDiagnosticReason : std::uint8_t {
@@ -29,6 +32,9 @@ struct OrderLatencyDiagnosticWindow {
   std::uint64_t request_sequence{0};
   std::int64_t request_send_local_ns{0};
   std::size_t inflight_at_send{0};
+  int owner_thread_tid{-1};
+  websocket::WritePathDiagnostics write_path{};
+  websocket::SocketSendQueueDiagnostics socket_send_queue{};
 };
 
 struct OrderLatencyDiagnosticLogRecord {
@@ -45,6 +51,24 @@ struct OrderLatencyDiagnosticLogRecord {
   std::int64_t drive_read_duration_ns{0};
   std::int64_t max_observed_drive_read_duration_ns{0};
   std::size_t inflight_at_send{0};
+  std::int64_t max_runtime_loop_gap_ns{0};
+  std::uint64_t runtime_loop_iterations_before_ack{0};
+  int owner_thread_tid{-1};
+  std::int64_t order_encode_done_ns{0};
+  std::int64_t ws_frame_encode_done_ns{0};
+  std::int64_t write_enqueue_ns{0};
+  std::int64_t drive_write_enter_ns{0};
+  std::int64_t write_some_enter_ns{0};
+  std::int64_t write_some_return_ns{0};
+  std::int64_t write_complete_ns{0};
+  std::int64_t write_some_bytes{0};
+  std::int64_t write_complete_bytes{0};
+  int write_errno{0};
+  bool write_eagain{false};
+  std::size_t pending_write_count_after{0};
+  bool socket_send_queue_available{false};
+  std::uint32_t tcp_sendq_bytes{0};
+  std::uint32_t tcp_notsent_bytes{0};
 };
 
 class OrderAckLatencyDiagnostics {
@@ -66,6 +90,9 @@ class OrderAckLatencyDiagnostics {
     state.request_sequence = window.request_sequence;
     state.request_send_local_ns = window.request_send_local_ns;
     state.inflight_at_send = window.inflight_at_send;
+    state.owner_thread_tid = window.owner_thread_tid;
+    state.write_path = window.write_path;
+    state.socket_send_queue = window.socket_send_queue;
     windows_[window.request_sequence] = state;
   }
 
@@ -93,6 +120,7 @@ class OrderAckLatencyDiagnostics {
     }
     std::size_t emitted = 0;
     for (auto& [_, window] : windows_) {
+      RecordRuntimeLoopIteration(now_ns, window);
       if (window.first_after_runtime_hook_ns == 0) {
         window.first_after_runtime_hook_ns = now_ns;
       }
@@ -214,6 +242,12 @@ class OrderAckLatencyDiagnostics {
     std::int64_t ack_local_receive_ns{0};
     std::int64_t ack_exchange_ns{0};
     std::size_t inflight_at_send{0};
+    std::int64_t last_runtime_loop_iteration_ns{0};
+    std::int64_t max_runtime_loop_gap_ns{0};
+    std::uint64_t runtime_loop_iterations_before_ack{0};
+    int owner_thread_tid{-1};
+    websocket::WritePathDiagnostics write_path{};
+    websocket::SocketSendQueueDiagnostics socket_send_queue{};
     bool logged_send_to_drive_read{false};
     bool logged_drive_read_duration{false};
     bool logged_timeout{false};
@@ -237,6 +271,20 @@ class OrderAckLatencyDiagnostics {
     if (duration_ns > window.max_observed_drive_read_duration_ns) {
       window.max_observed_drive_read_duration_ns = duration_ns;
     }
+  }
+
+  static void RecordRuntimeLoopIteration(std::int64_t now_ns,
+                                         WindowState& window) noexcept {
+    if (window.last_runtime_loop_iteration_ns > 0 &&
+        now_ns > window.last_runtime_loop_iteration_ns) {
+      const std::int64_t gap_ns =
+          now_ns - window.last_runtime_loop_iteration_ns;
+      if (gap_ns > window.max_runtime_loop_gap_ns) {
+        window.max_runtime_loop_gap_ns = gap_ns;
+      }
+    }
+    window.last_runtime_loop_iteration_ns = now_ns;
+    ++window.runtime_loop_iterations_before_ack;
   }
 
   template <typename Handler>
@@ -276,6 +324,26 @@ class OrderAckLatencyDiagnostics {
         .max_observed_drive_read_duration_ns =
             window.max_observed_drive_read_duration_ns,
         .inflight_at_send = window.inflight_at_send,
+        .max_runtime_loop_gap_ns = window.max_runtime_loop_gap_ns,
+        .runtime_loop_iterations_before_ack =
+            window.runtime_loop_iterations_before_ack,
+        .owner_thread_tid = window.owner_thread_tid,
+        .order_encode_done_ns = window.write_path.order_encode_done_ns,
+        .ws_frame_encode_done_ns = window.write_path.ws_frame_encode_done_ns,
+        .write_enqueue_ns = window.write_path.write_enqueue_ns,
+        .drive_write_enter_ns = window.write_path.drive_write_enter_ns,
+        .write_some_enter_ns = window.write_path.write_some_enter_ns,
+        .write_some_return_ns = window.write_path.write_some_return_ns,
+        .write_complete_ns = window.write_path.write_complete_ns,
+        .write_some_bytes = window.write_path.write_some_bytes,
+        .write_complete_bytes = window.write_path.write_complete_bytes,
+        .write_errno = window.write_path.write_errno,
+        .write_eagain = window.write_path.write_eagain,
+        .pending_write_count_after =
+            window.write_path.pending_write_count_after,
+        .socket_send_queue_available = window.socket_send_queue.available,
+        .tcp_sendq_bytes = window.socket_send_queue.sendq_bytes,
+        .tcp_notsent_bytes = window.socket_send_queue.notsent_bytes,
     };
   }
 

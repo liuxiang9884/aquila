@@ -17,6 +17,7 @@
 #include "core/websocket/message_view.h"
 #include "core/websocket/metrics.h"
 #include "core/websocket/prepared_write.h"
+#include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
 
 namespace aquila::websocket {
@@ -58,13 +59,17 @@ class CriticalSession {
   // helper out-of-line so exchange handlers keep their inlining budget.
   [[gnu::noinline]] SendStatus SendText(
       std::span<const std::byte> payload,
-      WriteFlushMode flush_mode = WriteFlushMode::kQueued) noexcept {
+      WriteFlushMode flush_mode = WriteFlushMode::kQueued,
+      WritePathDiagnostics* diagnostics = nullptr) noexcept {
     PreparedWrite* write = TryAcquirePreparedWrite();
     if (write == nullptr) {
       return SendStatus::kNoPreparedWriteSlot;
     }
 
     const EncodeResult encoded = codec_.EncodeText(payload, write->storage);
+    if (diagnostics != nullptr) {
+      diagnostics->ws_frame_encode_done_ns = RealtimeNowNsInt64();
+    }
     if (!encoded.ok) {
       prepared_write_arena_.Release(write);
       return SendStatus::kEncodeFailed;
@@ -73,9 +78,16 @@ class CriticalSession {
     write->encoded_size = static_cast<std::uint32_t>(encoded.bytes.size());
     write->write_offset = 0;
     write->kind = PayloadKind::kText;
+    write->diagnostics = diagnostics;
     const SendStatus status = CommitPreparedWrite(write, flush_mode);
+    if (diagnostics != nullptr) {
+      diagnostics->pending_write_count_after = pending_count_;
+    }
     if (status != SendStatus::kOk) {
       prepared_write_arena_.Release(write);
+    } else if (write->encoded_size != 0 &&
+               write->write_offset < write->encoded_size) {
+      write->diagnostics = nullptr;
     }
     return status;
   }
@@ -96,6 +108,10 @@ class CriticalSession {
     pending_writes_[(pending_head_ + pending_count_) % pending_capacity_] =
         write;
     ++pending_count_;
+    if (write->diagnostics != nullptr) {
+      write->diagnostics->write_enqueue_ns = RealtimeNowNsInt64();
+      write->diagnostics->pending_write_count_after = pending_count_;
+    }
     metrics_.prepared_write_high_watermark =
         std::max(metrics_.prepared_write_high_watermark,
                  static_cast<std::uint64_t>(pending_count_));
@@ -159,17 +175,24 @@ class CriticalSession {
       const size_t remaining_bytes =
           static_cast<size_t>(write->encoded_size - write->write_offset);
       if (remaining_bytes == 0) {
+        RecordWriteComplete(write,
+                            pending_count_ == 0 ? 0 : pending_count_ - 1);
         CompleteFrontWrite();
         continue;
       }
 
+      RecordDriveWriteEnter(write);
       const std::span<const std::byte> payload(
           write->storage.data() + write->write_offset, remaining_bytes);
+      RecordWriteSomeEnter(write);
       const ssize_t written = tls_socket_.WriteSome(payload);
+      RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
         if (write->write_offset == write->encoded_size) {
+          RecordWriteComplete(write,
+                              pending_count_ == 0 ? 0 : pending_count_ - 1);
           CompleteFrontWrite();
           ++completed_writes;
           if (max_completed_writes != 0 &&
@@ -307,6 +330,55 @@ class CriticalSession {
   }
 
  private:
+  [[nodiscard]] static std::int64_t RealtimeNowNsInt64() noexcept {
+    return static_cast<std::int64_t>(RealtimeClockNowNs());
+  }
+
+  static void RecordDriveWriteEnter(PreparedWrite* write) noexcept {
+    if (write == nullptr || write->diagnostics == nullptr ||
+        write->diagnostics->drive_write_enter_ns != 0) {
+      return;
+    }
+    write->diagnostics->drive_write_enter_ns = RealtimeNowNsInt64();
+  }
+
+  static void RecordWriteSomeEnter(PreparedWrite* write) noexcept {
+    if (write == nullptr || write->diagnostics == nullptr ||
+        write->diagnostics->write_some_enter_ns != 0) {
+      return;
+    }
+    write->diagnostics->write_some_enter_ns = RealtimeNowNsInt64();
+  }
+
+  static void RecordWriteSomeReturn(PreparedWrite* write, ssize_t written,
+                                    std::size_t pending_count) noexcept {
+    if (write == nullptr || write->diagnostics == nullptr) {
+      return;
+    }
+    WritePathDiagnostics& diagnostics = *write->diagnostics;
+    diagnostics.write_some_return_ns = RealtimeNowNsInt64();
+    diagnostics.pending_write_count_after = pending_count;
+    if (written > 0) {
+      diagnostics.write_some_bytes = written;
+      diagnostics.write_errno = 0;
+      return;
+    }
+    diagnostics.write_some_bytes = 0;
+    diagnostics.write_errno = errno;
+    diagnostics.write_eagain = errno == EAGAIN || errno == EWOULDBLOCK;
+  }
+
+  static void RecordWriteComplete(PreparedWrite* write,
+                                  std::size_t pending_count_after) noexcept {
+    if (write == nullptr || write->diagnostics == nullptr) {
+      return;
+    }
+    WritePathDiagnostics& diagnostics = *write->diagnostics;
+    diagnostics.write_complete_ns = RealtimeNowNsInt64();
+    diagnostics.write_complete_bytes = write->encoded_size;
+    diagnostics.pending_write_count_after = pending_count_after;
+  }
+
   void TriggerReconnect(ConnectionError error) noexcept {
     should_reconnect_ = true;
     last_error_ = error;
@@ -342,17 +414,24 @@ class CriticalSession {
       const size_t remaining_bytes =
           static_cast<size_t>(write->encoded_size - write->write_offset);
       if (remaining_bytes == 0) {
+        RecordWriteComplete(write,
+                            pending_count_ == 0 ? 0 : pending_count_ - 1);
         CompleteFrontWrite();
         continue;
       }
 
+      RecordDriveWriteEnter(write);
       const std::span<const std::byte> payload(
           write->storage.data() + write->write_offset, remaining_bytes);
+      RecordWriteSomeEnter(write);
       const ssize_t written = tls_socket_.WriteSome(payload);
+      RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
         if (write->write_offset == write->encoded_size) {
+          RecordWriteComplete(write,
+                              pending_count_ == 0 ? 0 : pending_count_ - 1);
           CompleteFrontWrite();
         }
         return;

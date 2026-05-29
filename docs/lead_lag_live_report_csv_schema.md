@@ -30,6 +30,10 @@
 | `trigger_ticker_id` | 触发 signal 的行情 ticker id。 | `lead_lag_signal_triggered.trigger_ticker_id`。 |
 | `trigger_exchange` | 触发行情来源交易所，例如 `kBinance`。 | `lead_lag_signal_triggered.trigger_exchange`。 |
 | `trigger_symbol_id` | 触发行情的 symbol id。 | `lead_lag_signal_triggered.trigger_symbol_id`。 |
+| `trigger_exchange_ns` | 触发 BBO 的交易所时间戳。 | `lead_lag_signal_triggered.trigger_exchange_ns`。 |
+| `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | `lead_lag_signal_triggered.trigger_local_ns`。 |
+| `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_signal_triggered.on_book_ticker_entry_ns`。 |
+| `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_signal_triggered.signal_decision_ns`。 |
 | `symbol` | 策略交易 symbol，例如 `PROVE_USDT`。 | signal log，并与 order detail 对齐。 |
 | `symbol_id` | 策略交易 symbol id。 | signal log，并与 order detail 对齐。 |
 | `signal_role` | signal 侧 pair role，例如 `kLead` 或 `kLag`。 | `lead_lag_signal_triggered.role` 或订单提交日志中的 `signal_role`。 |
@@ -40,6 +44,11 @@
 | `raw_price` | signal 触发时用于决策的原始价格。 | `lead_lag_signal_triggered.raw_price`。 |
 | `local_order_id` | 关联到的本地订单 id。 | 通过 `trigger_ticker_id` 和订单提交日志关联。 |
 | `request_sequence` | Gate order session 下发请求序号。 | 关联的 `order_detail.csv.request_sequence`。 |
+| `request_send_local_ns` | Gate order session 发送请求成功后的本机时间戳。 | 关联的 `order_detail.csv.request_send_local_ns`。 |
+| `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。 |
+| `strategy_to_signal_ns` | 策略入口到 signal decision 的耗时。 | `signal_decision_ns - on_book_ticker_entry_ns`。 |
+| `signal_to_request_send_ns` | signal decision 到订单发送成功的本机耗时。 | `request_send_local_ns - signal_decision_ns`。 |
+| `trigger_to_request_send_ns` | BBO data session 本机时间到订单发送成功的本机耗时。 | `request_send_local_ns - trigger_local_ns`。 |
 | `exchange_order_id` | 交易所返回的 order id。 | 关联的 `order_detail.csv.exchange_order_id`。 |
 | `order_role` | 订单角色，`entry` 或 `exit`。 | 关联的 `order_detail.csv.order_role`。 |
 | `order_position_id` | 订单提交后最终使用的 position id。 | 关联的 `order_detail.csv.position_id`。 |
@@ -74,6 +83,10 @@
 | `trigger_ticker_id` | 触发下单的行情 ticker id。 | `lead_lag_order_submitted.trigger_ticker_id`。 |
 | `trigger_exchange` | 触发行情来源交易所。 | `lead_lag_order_submitted.trigger_exchange`。 |
 | `trigger_symbol_id` | 触发行情的 symbol id。 | `lead_lag_order_submitted.trigger_symbol_id`。 |
+| `trigger_exchange_ns` | 触发 BBO 的交易所时间戳。 | `lead_lag_order_submitted.trigger_exchange_ns`。 |
+| `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | `lead_lag_order_submitted.trigger_local_ns`。 |
+| `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_order_submitted.on_book_ticker_entry_ns`。 |
+| `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_order_submitted.signal_decision_ns`。 |
 | `signal_role` | signal 侧 pair role。 | `lead_lag_order_submitted.signal_role`。 |
 | `order_role` | 订单角色，`entry` 或 `exit`。 | `lead_lag_order_submitted.order_role`，缺失时由 action / reduce-only 推导。 |
 | `position_id` | 策略 position id。 | `lead_lag_order_submitted.position_id` 或终态日志。 |
@@ -114,6 +127,7 @@
 | `fee_source` | fee 来源说明。当前估算值为 `config_estimated`。 | 分析脚本填充。 |
 | `order_session_id` | Gate `OrderSession` 本进程内 session id。 | `gate_order_send_ok` / `gate_order_response` / diagnostic log。 |
 | `owner_thread_cpu` | session active 时 owner thread 所在 CPU。 | `gate_order_session_connected.owner_thread_cpu`，按 `order_session_id` 合并。 |
+| `owner_thread_tid` | session owner thread 的 Linux thread id。 | `gate_order_session_connected.owner_thread_tid` 或 `gate_order_ack_latency_diagnostic.owner_thread_tid`。 |
 | `local_ip` / `local_port` | 本地 TCP endpoint。 | `gate_order_session_connected`，按 `order_session_id` 合并。 |
 | `remote_ip` / `remote_port` | 远端 TCP endpoint。 | `gate_order_session_connected`，按 `order_session_id` 合并。 |
 | `send_cpu` | 发送下单请求时 owner thread 所在 CPU。 | `gate_order_send_ok.send_cpu`。 |
@@ -134,6 +148,23 @@
 | `drive_read_duration_ns` | diagnostic 窗口内观察到的最大单次 `DriveRead()` 耗时。 | `gate_order_ack_latency_diagnostic.drive_read_duration_ns`。 |
 | `max_observed_drive_read_duration_ns` | diagnostic 窗口内记录的最大 `DriveRead()` 耗时。 | `gate_order_ack_latency_diagnostic.max_observed_drive_read_duration_ns`。 |
 | `latency_diagnostic_inflight_at_send` | 发送该订单后 Gate order session 中的 inflight 数量。 | `gate_order_ack_latency_diagnostic.inflight_at_send`。 |
+| `max_runtime_loop_gap_ns` | diagnostic 窗口内 owner runtime loop 两次迭代之间的最大间隔。 | `gate_order_ack_latency_diagnostic.max_runtime_loop_gap_ns`。 |
+| `runtime_loop_iterations_before_ack` | 从 diagnostic window armed 到 Ack 处理前经过的 runtime loop 迭代次数。 | `gate_order_ack_latency_diagnostic.runtime_loop_iterations_before_ack`。 |
+| `order_encode_done_ns` | Gate order JSON payload 编码完成后的本机时间戳。 | `gate_order_ack_latency_diagnostic.order_encode_done_ns`。 |
+| `ws_frame_encode_done_ns` | WebSocket text frame 编码完成后的本机时间戳。 | `gate_order_ack_latency_diagnostic.ws_frame_encode_done_ns`。 |
+| `write_enqueue_ns` | prepared write 进入 pending queue 的本机时间戳。 | `gate_order_ack_latency_diagnostic.write_enqueue_ns`。 |
+| `drive_write_enter_ns` | 首次进入 write pump / inline flush 的本机时间戳。 | `gate_order_ack_latency_diagnostic.drive_write_enter_ns`。 |
+| `write_some_enter_ns` | 调用 `send()` / `SSL_write()` 前的本机时间戳。 | `gate_order_ack_latency_diagnostic.write_some_enter_ns`。 |
+| `write_some_return_ns` | `send()` / `SSL_write()` 返回后的本机时间戳。 | `gate_order_ack_latency_diagnostic.write_some_return_ns`。 |
+| `write_complete_ns` | 当前 request frame 全部写入 transport 后的本机时间戳；partial write / EAGAIN 路径可能为空。 | `gate_order_ack_latency_diagnostic.write_complete_ns`。 |
+| `write_some_bytes` | 本次 `send()` / `SSL_write()` 返回的写入字节数。 | `gate_order_ack_latency_diagnostic.write_some_bytes`。 |
+| `write_complete_bytes` | 当前 request frame 完整写入的总字节数。 | `gate_order_ack_latency_diagnostic.write_complete_bytes`。 |
+| `write_errno` | write syscall / TLS write errno；成功为 `0`。 | `gate_order_ack_latency_diagnostic.write_errno`。 |
+| `write_eagain` | 写路径是否遇到 EAGAIN / would-block。 | `gate_order_ack_latency_diagnostic.write_eagain`。 |
+| `pending_write_count_after` | enqueue / write 后 pending business write 数量。 | `gate_order_ack_latency_diagnostic.pending_write_count_after`。 |
+| `socket_send_queue_available` | 是否成功采集 socket send queue snapshot。 | `gate_order_ack_latency_diagnostic.socket_send_queue_available`。 |
+| `tcp_sendq_bytes` | Linux socket send queue 中未被远端 ACK 的字节数。 | `gate_order_ack_latency_diagnostic.tcp_sendq_bytes`。 |
+| `tcp_notsent_bytes` | 已进入 TCP 发送队列但尚未发送到网络的字节数；平台不可用时配合 available 字段解读。 | `gate_order_ack_latency_diagnostic.tcp_notsent_bytes`。 |
 | `request_send_local_ns` | 调用 WebSocket send 并记录发送成功后的本地时间戳。 | `gate_order_send_ok.request_send_local_ns` 或终态日志。 |
 | `ack_local_receive_ns` | 本地收到 Gate Ack 的时间戳。 | `gate_order_response.kind=kAck.local_receive_ns` 或终态日志。 |
 | `order_finished_local_ns` | 策略层完成订单终态处理的本地时间戳。 | `lead_lag_order_finished.order_finished_local_ns`。 |
@@ -209,6 +240,10 @@
 | `reject_reason` | 拒单原因。 | order detail。 |
 | `request_sequence` | Gate order session 请求序号。 | order detail。 |
 | `encoded_request_id` | WebSocket payload 请求 id。 | order detail。 |
+| `trigger_exchange_ns` | 触发 BBO 的交易所时间戳。 | order detail。 |
+| `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | order detail。 |
+| `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | order detail。 |
+| `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | order detail。 |
 | `request_send_local_ns` | 本地发送请求成功后的时间戳。 | Gate send log 或终态日志。 |
 | `ack_local_receive_ns` | 本地收到 Ack 的时间戳。 | Gate Ack log 或终态日志。 |
 | `response_local_receive_ns` | 本地收到非 Ack response 的时间戳。 | 终态日志中的 response timing。 |
@@ -223,11 +258,16 @@
 | `send_to_response_local_ns` | 本地下单发送到收到 response 的本地闭环。 | `response_local_receive_ns - request_send_local_ns`。 |
 | `send_to_finish_local_ns` | 本地下单发送到订单终态处理完成的本地闭环。 | `order_finished_local_ns - request_send_local_ns`。 |
 | `ack_to_finish_local_ns` | 本地收到 Ack 到订单终态处理完成的时间。 | `order_finished_local_ns - ack_local_receive_ns`。 |
+| `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。 |
+| `strategy_to_signal_ns` | 策略入口到 signal decision 的耗时。 | `signal_decision_ns - on_book_ticker_entry_ns`。 |
+| `signal_to_request_send_ns` | signal decision 到订单发送成功的本机耗时。 | `request_send_local_ns - signal_decision_ns`。 |
+| `trigger_to_request_send_ns` | BBO data session 本机时间到订单发送成功的本机耗时。 | `request_send_local_ns - trigger_local_ns`。 |
 | `ack_exchange_to_local_ns` | Ack exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `response_exchange_to_local_ns` | response exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `exchange_lifecycle_ns` | 交易所侧 Ack 到订单终态 update 的生命周期诊断值。 | 优先由 `finish_exchange_ns - ack_exchange_ns` 计算，只使用 Gate exchange timestamp，不混用本地时钟；如果 exchange timestamp 缺失则为空。该值仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。 |
 | `order_session_id` | Gate `OrderSession` 本进程内 session id。 | order detail 中合并后的 session 字段。 |
 | `owner_thread_cpu` | session active 时 owner thread 所在 CPU。 | order detail 中合并后的 session 字段。 |
+| `owner_thread_tid` | session owner thread 的 Linux thread id。 | order detail 中合并后的 session / diagnostic 字段。 |
 | `local_ip` / `local_port` | 本地 TCP endpoint。 | order detail 中合并后的 session 字段。 |
 | `remote_ip` / `remote_port` | 远端 TCP endpoint。 | order detail 中合并后的 session 字段。 |
 | `send_cpu` | 发送下单请求时 owner thread 所在 CPU。 | order detail 中合并后的 send 字段。 |
@@ -247,6 +287,23 @@
 | `drive_read_duration_ns` | diagnostic 窗口内观察到的最大单次 `DriveRead()` 耗时。 | order detail 中合并后的 diagnostic 字段。 |
 | `max_observed_drive_read_duration_ns` | diagnostic 窗口内记录的最大 `DriveRead()` 耗时。 | order detail 中合并后的 diagnostic 字段。 |
 | `latency_diagnostic_inflight_at_send` | 发送该订单后 Gate order session 中的 inflight 数量。 | order detail 中合并后的 diagnostic 字段。 |
+| `max_runtime_loop_gap_ns` | diagnostic 窗口内 owner runtime loop 两次迭代之间的最大间隔。 | order detail 中合并后的 diagnostic 字段。 |
+| `runtime_loop_iterations_before_ack` | 从 diagnostic window armed 到 Ack 处理前经过的 runtime loop 迭代次数。 | order detail 中合并后的 diagnostic 字段。 |
+| `order_encode_done_ns` | Gate order JSON payload 编码完成后的本机时间戳。 | order detail 中合并后的 diagnostic 字段。 |
+| `ws_frame_encode_done_ns` | WebSocket text frame 编码完成后的本机时间戳。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_enqueue_ns` | prepared write 进入 pending queue 的本机时间戳。 | order detail 中合并后的 diagnostic 字段。 |
+| `drive_write_enter_ns` | 首次进入 write pump / inline flush 的本机时间戳。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_some_enter_ns` | 调用 `send()` / `SSL_write()` 前的本机时间戳。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_some_return_ns` | `send()` / `SSL_write()` 返回后的本机时间戳。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_complete_ns` | 当前 request frame 全部写入 transport 后的本机时间戳；partial write / EAGAIN 路径可能为空。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_some_bytes` | 本次 `send()` / `SSL_write()` 返回的写入字节数。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_complete_bytes` | 当前 request frame 完整写入的总字节数。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_errno` | write syscall / TLS write errno；成功为 `0`。 | order detail 中合并后的 diagnostic 字段。 |
+| `write_eagain` | 写路径是否遇到 EAGAIN / would-block。 | order detail 中合并后的 diagnostic 字段。 |
+| `pending_write_count_after` | enqueue / write 后 pending business write 数量。 | order detail 中合并后的 diagnostic 字段。 |
+| `socket_send_queue_available` | 是否成功采集 socket send queue snapshot。 | order detail 中合并后的 diagnostic 字段。 |
+| `tcp_sendq_bytes` | Linux socket send queue 中未被远端 ACK 的字节数。 | order detail 中合并后的 diagnostic 字段。 |
+| `tcp_notsent_bytes` | 已进入 TCP 发送队列但尚未发送到网络的字节数。 | order detail 中合并后的 diagnostic 字段。 |
 | `warnings` | latency 分析异常。 | 例如 `missing_request_send_local_ns`、`missing_ack_local_receive_ns`。 |
 
 ## 当前建议新增字段

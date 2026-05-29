@@ -276,6 +276,32 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(len(latency_rows), 1)
         self.assertEqual(latency_rows[0]["exchange_lifecycle_ns"], "")
 
+    def test_latency_detail_includes_signal_to_order_timing_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=42 trigger_ticker_id=100 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=900 trigger_local_ns=1000 on_book_ticker_entry_ns=1100 signal_decision_ns=1250 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=42 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=42 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1500
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path, run_id="run-latency")
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(latency_rows), 1)
+        row = latency_rows[0]
+        self.assertEqual(row["trigger_exchange_ns"], "900")
+        self.assertEqual(row["trigger_local_ns"], "1000")
+        self.assertEqual(row["on_book_ticker_entry_ns"], "1100")
+        self.assertEqual(row["signal_decision_ns"], "1250")
+        self.assertEqual(row["bbo_to_strategy_ns"], "100")
+        self.assertEqual(row["strategy_to_signal_ns"], "150")
+        self.assertEqual(row["signal_to_request_send_ns"], "250")
+        self.assertEqual(row["trigger_to_request_send_ns"], "500")
+
     def test_latency_detail_includes_gate_ack_diagnostic_outlier_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -309,6 +335,37 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["tcp_info_available"], "true")
         self.assertEqual(row["tcp_info_rtt_us"], "9000")
         self.assertEqual(row["tcp_info_total_retrans"], "2")
+
+    def test_latency_detail_includes_write_path_diagnostic_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105563683 1:1 order_session.h:LogGatePlaceOrderSent:466] gate_order_send_ok type=place local_order_id=42 request_sequence=6 encoded_request_id=144115188075855878 contract=PROVE_USDT side=kBuy quantity=36 price=0.2714 tif=kImmediateOrCancel reduce_only=false inflight=5 request_send_local_ns=1000
+                W2026-05-25 02:29:35.130000000 1:1 order_session.h:LogOrderLatencyDiagnostic:1] gate_order_ack_latency_diagnostic reason=kAckRttThreshold local_order_id=42 request_sequence=6 request_send_local_ns=1000 ack_local_receive_ns=25000000 ack_exchange_ns=5000 ack_rtt_ns=24999000 send_to_first_after_hook_ns=100 send_to_first_drive_read_ns=200 drive_read_duration_ns=300 max_observed_drive_read_duration_ns=400 inflight_at_send=1 order_session_id=9 diagnostic_cpu=5 max_runtime_loop_gap_ns=600 runtime_loop_iterations_before_ack=7 owner_thread_tid=2468 order_encode_done_ns=1100 ws_frame_encode_done_ns=1200 write_enqueue_ns=1300 drive_write_enter_ns=1350 write_some_enter_ns=1400 write_some_return_ns=1450 write_complete_ns=1500 write_some_bytes=64 write_complete_bytes=64 write_errno=0 write_eagain=false pending_write_count_after=0 socket_send_queue_available=true tcp_sendq_bytes=8 tcp_notsent_bytes=4 tcp_info_available=false
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path, run_id="run-latency")
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(latency_rows), 1)
+        row = latency_rows[0]
+        self.assertEqual(row["owner_thread_tid"], "2468")
+        self.assertEqual(row["max_runtime_loop_gap_ns"], "600")
+        self.assertEqual(row["runtime_loop_iterations_before_ack"], "7")
+        self.assertEqual(row["order_encode_done_ns"], "1100")
+        self.assertEqual(row["write_some_bytes"], "64")
+        self.assertEqual(row["write_complete_ns"], "1500")
+        self.assertEqual(row["write_complete_bytes"], "64")
+        self.assertEqual(row["write_errno"], "0")
+        self.assertEqual(row["write_eagain"], "false")
+        self.assertEqual(row["pending_write_count_after"], "0")
+        self.assertEqual(row["socket_send_queue_available"], "true")
+        self.assertEqual(row["tcp_sendq_bytes"], "8")
+        self.assertEqual(row["tcp_notsent_bytes"], "4")
 
     def test_latency_detail_includes_non_ack_submit_response_timing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

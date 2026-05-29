@@ -25,6 +25,10 @@ ORDER_DETAIL_FIELDS = [
     "trigger_ticker_id",
     "trigger_exchange",
     "trigger_symbol_id",
+    "trigger_exchange_ns",
+    "trigger_local_ns",
+    "on_book_ticker_entry_ns",
+    "signal_decision_ns",
     "signal_role",
     "order_role",
     "position_id",
@@ -65,6 +69,7 @@ ORDER_DETAIL_FIELDS = [
     "fee_source",
     "order_session_id",
     "owner_thread_cpu",
+    "owner_thread_tid",
     "local_ip",
     "local_port",
     "remote_ip",
@@ -87,6 +92,23 @@ ORDER_DETAIL_FIELDS = [
     "drive_read_duration_ns",
     "max_observed_drive_read_duration_ns",
     "latency_diagnostic_inflight_at_send",
+    "max_runtime_loop_gap_ns",
+    "runtime_loop_iterations_before_ack",
+    "order_encode_done_ns",
+    "ws_frame_encode_done_ns",
+    "write_enqueue_ns",
+    "drive_write_enter_ns",
+    "write_some_enter_ns",
+    "write_some_return_ns",
+    "write_complete_ns",
+    "write_some_bytes",
+    "write_complete_bytes",
+    "write_errno",
+    "write_eagain",
+    "pending_write_count_after",
+    "socket_send_queue_available",
+    "tcp_sendq_bytes",
+    "tcp_notsent_bytes",
     "request_send_local_ns",
     "ack_local_receive_ns",
     "order_finished_local_ns",
@@ -156,6 +178,10 @@ LATENCY_DETAIL_FIELDS = [
     "reject_reason",
     "request_sequence",
     "encoded_request_id",
+    "trigger_exchange_ns",
+    "trigger_local_ns",
+    "on_book_ticker_entry_ns",
+    "signal_decision_ns",
     "request_send_local_ns",
     "ack_local_receive_ns",
     "response_local_receive_ns",
@@ -170,11 +196,16 @@ LATENCY_DETAIL_FIELDS = [
     "send_to_response_local_ns",
     "send_to_finish_local_ns",
     "ack_to_finish_local_ns",
+    "bbo_to_strategy_ns",
+    "strategy_to_signal_ns",
+    "signal_to_request_send_ns",
+    "trigger_to_request_send_ns",
     "ack_exchange_to_local_ns",
     "response_exchange_to_local_ns",
     "exchange_lifecycle_ns",
     "order_session_id",
     "owner_thread_cpu",
+    "owner_thread_tid",
     "local_ip",
     "local_port",
     "remote_ip",
@@ -196,6 +227,23 @@ LATENCY_DETAIL_FIELDS = [
     "drive_read_duration_ns",
     "max_observed_drive_read_duration_ns",
     "latency_diagnostic_inflight_at_send",
+    "max_runtime_loop_gap_ns",
+    "runtime_loop_iterations_before_ack",
+    "order_encode_done_ns",
+    "ws_frame_encode_done_ns",
+    "write_enqueue_ns",
+    "drive_write_enter_ns",
+    "write_some_enter_ns",
+    "write_some_return_ns",
+    "write_complete_ns",
+    "write_some_bytes",
+    "write_complete_bytes",
+    "write_errno",
+    "write_eagain",
+    "pending_write_count_after",
+    "socket_send_queue_available",
+    "tcp_sendq_bytes",
+    "tcp_notsent_bytes",
     "warnings",
 ]
 
@@ -342,6 +390,14 @@ def choose_first_nonzero_text(existing: str | None, value: str | None) -> str:
     return existing or value or ""
 
 
+def choose_first_present_text(existing: str | None, value: str | None) -> str:
+    if existing not in (None, ""):
+        return existing
+    if value not in (None, ""):
+        return value
+    return existing or value or ""
+
+
 def max_int_text(existing: str | None, value: str | None) -> str:
     if value in (None, ""):
         return existing or ""
@@ -387,6 +443,10 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
         "trigger_ticker_id",
         "trigger_exchange",
         "trigger_symbol_id",
+        "trigger_exchange_ns",
+        "trigger_local_ns",
+        "on_book_ticker_entry_ns",
+        "signal_decision_ns",
         "symbol",
         "symbol_id",
         "signal_role",
@@ -438,6 +498,7 @@ def merge_session_connected(
     for key in (
         "order_session_id",
         "owner_thread_cpu",
+        "owner_thread_tid",
         "local_ip",
         "local_port",
         "remote_ip",
@@ -450,6 +511,7 @@ def merge_session_connected(
 def merge_session_snapshot(order: dict[str, str], session: dict[str, str]) -> None:
     for key in (
         "owner_thread_cpu",
+        "owner_thread_tid",
         "local_ip",
         "local_port",
         "remote_ip",
@@ -542,6 +604,35 @@ def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> N
         order.get("latency_diagnostic_inflight_at_send"),
         fields.get("inflight_at_send"),
     )
+    for key in (
+        "owner_thread_tid",
+        "order_encode_done_ns",
+        "ws_frame_encode_done_ns",
+        "write_enqueue_ns",
+        "drive_write_enter_ns",
+        "write_some_enter_ns",
+        "write_some_return_ns",
+        "write_complete_ns",
+        "write_some_bytes",
+        "write_complete_bytes",
+        "write_errno",
+        "pending_write_count_after",
+        "tcp_sendq_bytes",
+        "tcp_notsent_bytes",
+    ):
+        order[key] = choose_first_present_text(order.get(key), fields.get(key))
+    order["max_runtime_loop_gap_ns"] = max_int_text(
+        order.get("max_runtime_loop_gap_ns"), fields.get("max_runtime_loop_gap_ns")
+    )
+    order["runtime_loop_iterations_before_ack"] = max_int_text(
+        order.get("runtime_loop_iterations_before_ack"),
+        fields.get("runtime_loop_iterations_before_ack"),
+    )
+    for key in ("write_eagain", "socket_send_queue_available"):
+        if fields.get(key) == "true":
+            order[key] = "true"
+        elif order.get(key, "") == "":
+            order[key] = fields.get(key, "")
     if order.get("request_send_local_ns", "") == "":
         order["request_send_local_ns"] = fields.get("request_send_local_ns", "")
     if (
@@ -1300,6 +1391,10 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "reject_reason": order.get("reject_reason", ""),
             "request_sequence": order.get("request_sequence", ""),
             "encoded_request_id": order.get("encoded_request_id", ""),
+            "trigger_exchange_ns": order.get("trigger_exchange_ns", ""),
+            "trigger_local_ns": order.get("trigger_local_ns", ""),
+            "on_book_ticker_entry_ns": order.get("on_book_ticker_entry_ns", ""),
+            "signal_decision_ns": order.get("signal_decision_ns", ""),
             "request_send_local_ns": request_send_ns,
             "ack_local_receive_ns": ack_receive_ns,
             "response_local_receive_ns": response_receive_ns,
@@ -1316,6 +1411,20 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             ),
             "send_to_finish_local_ns": ns_delta_text(finished_ns, request_send_ns),
             "ack_to_finish_local_ns": ns_delta_text(finished_ns, ack_receive_ns),
+            "bbo_to_strategy_ns": ns_delta_text(
+                order.get("on_book_ticker_entry_ns", ""),
+                order.get("trigger_local_ns", ""),
+            ),
+            "strategy_to_signal_ns": ns_delta_text(
+                order.get("signal_decision_ns", ""),
+                order.get("on_book_ticker_entry_ns", ""),
+            ),
+            "signal_to_request_send_ns": ns_delta_text(
+                request_send_ns, order.get("signal_decision_ns", "")
+            ),
+            "trigger_to_request_send_ns": ns_delta_text(
+                request_send_ns, order.get("trigger_local_ns", "")
+            ),
             "ack_exchange_to_local_ns": order.get("ack_exchange_to_local_ns", ""),
             "response_exchange_to_local_ns": order.get(
                 "response_exchange_to_local_ns", ""
@@ -1323,6 +1432,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "exchange_lifecycle_ns": exchange_lifecycle_ns(order),
             "order_session_id": order.get("order_session_id", ""),
             "owner_thread_cpu": order.get("owner_thread_cpu", ""),
+            "owner_thread_tid": order.get("owner_thread_tid", ""),
             "local_ip": order.get("local_ip", ""),
             "local_port": order.get("local_port", ""),
             "remote_ip": order.get("remote_ip", ""),
@@ -1354,6 +1464,27 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "latency_diagnostic_inflight_at_send": order.get(
                 "latency_diagnostic_inflight_at_send", ""
             ),
+            "max_runtime_loop_gap_ns": order.get("max_runtime_loop_gap_ns", ""),
+            "runtime_loop_iterations_before_ack": order.get(
+                "runtime_loop_iterations_before_ack", ""
+            ),
+            "order_encode_done_ns": order.get("order_encode_done_ns", ""),
+            "ws_frame_encode_done_ns": order.get("ws_frame_encode_done_ns", ""),
+            "write_enqueue_ns": order.get("write_enqueue_ns", ""),
+            "drive_write_enter_ns": order.get("drive_write_enter_ns", ""),
+            "write_some_enter_ns": order.get("write_some_enter_ns", ""),
+            "write_some_return_ns": order.get("write_some_return_ns", ""),
+            "write_complete_ns": order.get("write_complete_ns", ""),
+            "write_some_bytes": order.get("write_some_bytes", ""),
+            "write_complete_bytes": order.get("write_complete_bytes", ""),
+            "write_errno": order.get("write_errno", ""),
+            "write_eagain": order.get("write_eagain", ""),
+            "pending_write_count_after": order.get("pending_write_count_after", ""),
+            "socket_send_queue_available": order.get(
+                "socket_send_queue_available", ""
+            ),
+            "tcp_sendq_bytes": order.get("tcp_sendq_bytes", ""),
+            "tcp_notsent_bytes": order.get("tcp_notsent_bytes", ""),
             "warnings": "",
         }
         if row["ack_rtt_ns"] == "":
