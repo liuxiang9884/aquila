@@ -169,3 +169,34 @@ printf '%s\n' "$output"
 set_tests_properties(gate_order_session_rtt_probe_live_preflight
     PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_test(NAME gate_order_session_rtt_probe_multi_live_preflight
+         COMMAND bash -c [=[
+run_dir="/home/liuxiang/tmp/aquila_rtt_probe_multi_preflight_ctest_$$"
+mkdir -p "$run_dir"
+candidates="$run_dir/candidate_ips.txt"
+cat > "$candidates" <<EOF
+52.198.250.74
+52.199.212.24
+57.181.9.46
+18.180.25.199
+3.112.197.248
+13.115.76.214
+35.73.90.116
+54.95.186.57
+EOF
+output="$("$1" --config "$2" --candidate-ip-file "$candidates" --max-candidates 8 --active-session-count 8 --samples-per-ip 2 --live-preflight 2>&1)"
+code=$?
+printf '%s\n' "$output"
+[[ "$code" -eq 0 ]] &&
+  [[ "$output" == *"live_preflight=true"* ]] &&
+  [[ "$output" == *"live_multi_session=true"* ]] &&
+  [[ "$output" == *"session_count=8"* ]] &&
+  [[ "$output" == *"total_sample_count=16"* ]] &&
+  [[ "$output" == *"connect_ip=52.198.250.74"* ]] &&
+  [[ "$output" == *"connect_ip=54.95.186.57"* ]]
+]=] _ $<TARGET_FILE:gate_order_session_rtt_probe>
+                 ${GATE_ORDER_SESSION_RTT_PROBE_CONFIG})
+set_tests_properties(gate_order_session_rtt_probe_multi_live_preflight
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

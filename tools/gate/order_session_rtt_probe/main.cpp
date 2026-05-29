@@ -1,6 +1,7 @@
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -9,7 +10,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include <CLI/CLI.hpp>
 #include <fmt/core.h>
@@ -24,7 +27,9 @@
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
+#include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 #include "tools/gate/order_session_rtt_probe/live_run_plan.h"
+#include "tools/gate/order_session_rtt_probe/local_feedback_queue.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
 #include "tools/gate/order_session_rtt_probe/session_watchdog.h"
 #include "tools/gate/order_session_rtt_probe/single_session_live_runner.h"
@@ -168,13 +173,25 @@ void ProbeOrderResponseCallback(
   static_cast<Runner*>(raw)->OnOrderResponse(response);
 }
 
+[[nodiscard]] std::string JoinConnectIps(
+    const std::vector<std::string>& connect_ips) {
+  std::string joined;
+  for (std::size_t i = 0; i < connect_ips.size(); ++i) {
+    if (i != 0) {
+      joined.push_back(',');
+    }
+    joined.append(connect_ips[i]);
+  }
+  return joined;
+}
+
 void PrintPlan(const probe::ProbeConfig& config,
                const probe::ProbeRunPlan& plan) {
-  fmt::print(
+  NOVA_INFO(
       "gate_order_session_rtt_probe dry_run={} execute={} name={} run_id={} "
       "candidate_ip_file={} candidate_ips={} duplicate_candidate_ips={} "
       "active_session_count={} samples_per_ip={} cycles={} "
-      "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={}\n",
+      "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={}",
       config.execute ? "false" : "true", config.execute ? "true" : "false",
       config.name, config.run_id, config.inputs.candidate_ip_file.string(),
       plan.candidate_ip_count, plan.duplicate_candidate_ip_count,
@@ -184,16 +201,70 @@ void PrintPlan(const probe::ProbeConfig& config,
       magic_enum::enum_name(config.order.order_mode));
 
   for (const probe::ProbeCycle& cycle : plan.cycles) {
-    fmt::print("cycle index={} group={} connect_ips=", cycle.cycle_index,
-               cycle.group_index);
-    for (std::size_t i = 0; i < cycle.connect_ips.size(); ++i) {
-      if (i != 0) {
-        fmt::print(",");
-      }
-      fmt::print("{}", cycle.connect_ips[i]);
-    }
-    fmt::print("\n");
+    NOVA_INFO("cycle index={} group={} connect_ips={}", cycle.cycle_index,
+              cycle.group_index, JoinConnectIps(cycle.connect_ips));
   }
+}
+
+[[nodiscard]] std::filesystem::path SessionSampleCsvPath(
+    const probe::MultiSessionLiveRunPlan& plan, std::size_t session_index) {
+  return plan.paths.run_dir /
+         fmt::format("order_session_rtt_samples_session_{}.csv", session_index);
+}
+
+[[nodiscard]] std::int64_t SteadyNowNs() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+[[nodiscard]] bool MergeSampleCsvFiles(
+    const std::vector<std::filesystem::path>& input_paths,
+    const std::filesystem::path& output_path, std::string* error) {
+  try {
+    const std::filesystem::path parent = output_path.parent_path();
+    if (!parent.empty()) {
+      std::filesystem::create_directories(parent);
+    }
+    std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+      if (error != nullptr) {
+        *error =
+            fmt::format("failed to open merged CSV '{}'", output_path.string());
+      }
+      return false;
+    }
+
+    bool wrote_header = false;
+    for (const std::filesystem::path& input_path : input_paths) {
+      std::ifstream input(input_path, std::ios::binary);
+      if (!input) {
+        if (error != nullptr) {
+          *error = fmt::format("failed to open session CSV '{}'",
+                               input_path.string());
+        }
+        return false;
+      }
+      std::string line;
+      bool first_line = true;
+      while (std::getline(input, line)) {
+        if (first_line) {
+          first_line = false;
+          if (wrote_header) {
+            continue;
+          }
+          wrote_header = true;
+        }
+        output << line << '\n';
+      }
+    }
+  } catch (const std::exception& exc) {
+    if (error != nullptr) {
+      *error = fmt::format("failed to merge session CSVs: {}", exc.what());
+    }
+    return false;
+  }
+  return true;
 }
 
 template <typename WebSocketPolicy>
@@ -202,9 +273,9 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
                             aquila::gate::LoginCredentials credentials,
                             double duration_sec) {
   if (config.order.order_mode != probe::ProbeOrderMode::kIoc) {
-    fmt::print(stderr,
-               "[FAIL] execute currently supports probe.order.order_mode=ioc "
-               "for the first single-session smoke\n");
+    NOVA_ERROR(
+        "execute currently supports probe.order.order_mode=ioc for the first "
+        "single-session smoke");
     return 2;
   }
 
@@ -212,8 +283,7 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
       aquila::config::LoadDataReaderConfigFile(
           config.inputs.data_reader_config);
   if (!data_reader_config.ok) {
-    fmt::print(stderr, "[FAIL] data_reader_config_error={}\n",
-               data_reader_config.error);
+    NOVA_ERROR("data_reader_config_error={}", data_reader_config.error);
     return 1;
   }
 
@@ -221,16 +291,14 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
       aquila::config::LoadOrderFeedbackShmConfigFile(
           config.feedback.shm_config);
   if (!feedback_shm_config.ok) {
-    fmt::print(stderr, "[FAIL] feedback_shm_config_error={}\n",
-               feedback_shm_config.error);
+    NOVA_ERROR("feedback_shm_config_error={}", feedback_shm_config.error);
     return 1;
   }
 
   auto feedback_manager = aquila::OrderFeedbackShmManager::Open(
       ToFeedbackShmConfig(feedback_shm_config.value));
   if (!feedback_manager.ok) {
-    fmt::print(stderr, "[FAIL] feedback_shm_open_error={}\n",
-               feedback_manager.error);
+    NOVA_ERROR("feedback_shm_open_error={}", feedback_manager.error);
     return 1;
   }
 
@@ -242,8 +310,7 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
       raw_consumer_run_id == 0 ? 1 : raw_consumer_run_id,
       config.feedback.force_claim);
   if (!feedback_reader.ok) {
-    fmt::print(stderr, "[FAIL] feedback_reader_error={}\n",
-               feedback_reader.error);
+    NOVA_ERROR("feedback_reader_error={}", feedback_reader.error);
     return 1;
   }
 
@@ -256,7 +323,7 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
   probe::SampleCsvWriter sample_writer;
   std::string csv_error;
   if (!sample_writer.Open(live_plan.paths.sample_csv_path, &csv_error)) {
-    fmt::print(stderr, "[FAIL] sample_csv_error={}\n", csv_error);
+    NOVA_ERROR("sample_csv_error={}", csv_error);
     return 1;
   }
 
@@ -281,18 +348,17 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
   handler.on_order_response = &ProbeOrderResponseCallback<Runner>;
   session.SetRuntimeHook(&runner, &Runner::RuntimeHookCallback);
 
-  fmt::print(
+  NOVA_INFO(
       "gate_order_session_rtt_probe execute=true live_single_session=true "
       "run_id={} connect_ip={} samples={} duration_sec={:.3f} "
       "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={} "
-      "sample_csv_path={}\n",
+      "sample_csv_path={}",
       config.run_id, live_plan.connect_ip, live_plan.sample_count, duration_sec,
       config.sampling.cycle_cooldown_ms,
       config.sampling.order_session_interval_ms,
       magic_enum::enum_name(config.order.order_mode),
       live_plan.paths.sample_csv_path.string());
 
-  std::fflush(stdout);
   const probe::SessionWatchdogResult watchdog_result =
       probe::RunSessionWithWatchdog(
           session, [&runner] { return runner.stopping(); }, duration_sec,
@@ -305,12 +371,12 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
     exit_code = 2;
     stop_reason = "duration_watchdog_fired";
   }
-  fmt::print(
+  NOVA_INFO(
       "gate_order_session_rtt_probe_summary start_result={} exit_code={} "
       "stop_reason={} samples_started={} samples_completed={} "
       "samples_failed={} data_reader_events={} feedback_events={} "
       "skipped_book_tickers={} runner_stop_observed={} "
-      "duration_watchdog_fired={} sample_csv_path={}\n",
+      "duration_watchdog_fired={} sample_csv_path={}",
       watchdog_result.start_result ? "true" : "false", exit_code, stop_reason,
       stats.samples_started, stats.samples_completed, stats.samples_failed,
       stats.data_reader_events, stats.feedback_events,
@@ -321,15 +387,315 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
   return exit_code;
 }
 
+template <typename WebSocketPolicy>
+int RunMultiSessionExecute(probe::ProbeConfig config,
+                           const probe::MultiSessionLiveRunPlan& live_plan,
+                           const aquila::gate::LoginCredentials& credentials,
+                           double duration_sec) {
+  if (config.order.order_mode != probe::ProbeOrderMode::kIoc) {
+    NOVA_ERROR(
+        "execute currently supports probe.order.order_mode=ioc for "
+        "multi-session live smoke");
+    return 2;
+  }
+
+  aquila::config::OrderFeedbackShmConfigResult feedback_shm_config =
+      aquila::config::LoadOrderFeedbackShmConfigFile(
+          config.feedback.shm_config);
+  if (!feedback_shm_config.ok) {
+    NOVA_ERROR("feedback_shm_config_error={}", feedback_shm_config.error);
+    return 1;
+  }
+
+  auto feedback_manager = aquila::OrderFeedbackShmManager::Open(
+      ToFeedbackShmConfig(feedback_shm_config.value));
+  if (!feedback_manager.ok) {
+    NOVA_ERROR("feedback_shm_open_error={}", feedback_manager.error);
+    return 1;
+  }
+
+  const std::uint64_t raw_consumer_run_id = static_cast<std::uint64_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  auto feedback_reader = aquila::OrderFeedbackShmReader::Claim(
+      feedback_manager.value.channel(),
+      static_cast<std::uint8_t>(config.feedback.strategy_id),
+      raw_consumer_run_id == 0 ? 1 : raw_consumer_run_id,
+      config.feedback.force_claim);
+  if (!feedback_reader.ok) {
+    NOVA_ERROR("feedback_reader_error={}", feedback_reader.error);
+    return 1;
+  }
+
+  using DataReader = aquila::market_data::RealtimeDataReader<
+      aquila::market_data::RealtimeDataReaderDiagnostics>;
+  using Session =
+      aquila::gate::OrderSession<ProbeRawResponseHandler, WebSocketPolicy,
+                                 aquila::gate::OrderSessionDiagnostics>;
+  using Runner = probe::SingleSessionLiveRunner<Session, DataReader,
+                                                probe::LocalFeedbackQueue>;
+
+  struct LiveSessionState {
+    LiveSessionState(const probe::ProbeConfig& config_ref,
+                     probe::SingleSessionLiveRunPlan plan_in,
+                     const aquila::gate::LoginCredentials& credentials_ref,
+                     aquila::config::DataReaderConfig data_reader_config,
+                     double duration_sec_in)
+        : plan(std::move(plan_in)),
+          instrument_catalog(data_reader_config.instrument_catalog),
+          data_reader(std::move(data_reader_config)),
+          session(
+              plan.order_session_config.connection,
+              aquila::gate::LoginCredentials(credentials_ref), handler,
+              plan.order_session_config.request_map_capacity,
+              aquila::gate::OrderSessionSocketDiagnosticsConfig{
+                  .enable_tcp_info =
+                      plan.order_session_config.enable_tcp_info_diagnostics}),
+          runner(config_ref, plan, instrument_catalog, data_reader,
+                 feedback_queue, sample_writer, duration_sec_in) {
+      runner.BindSession(session);
+      handler.context = &runner;
+      handler.on_login_ready = &ProbeLoginReadyCallback<Runner>;
+      handler.on_login_not_ready = &ProbeLoginNotReadyCallback<Runner>;
+      handler.on_order_response = &ProbeOrderResponseCallback<Runner>;
+      session.SetRuntimeHook(&runner, &Runner::RuntimeHookCallback);
+    }
+
+    probe::SingleSessionLiveRunPlan plan;
+    aquila::config::InstrumentCatalog instrument_catalog;
+    DataReader data_reader;
+    probe::LocalFeedbackQueue feedback_queue;
+    probe::SampleCsvWriter sample_writer;
+    ProbeRawResponseHandler handler;
+    Session session;
+    Runner runner;
+    std::atomic<bool> returned{false};
+    bool start_result{false};
+    std::thread thread;
+  };
+
+  std::vector<std::filesystem::path> session_csv_paths;
+  session_csv_paths.reserve(live_plan.sessions.size());
+  std::vector<std::unique_ptr<LiveSessionState>> sessions;
+  sessions.reserve(live_plan.sessions.size());
+
+  for (std::size_t i = 0; i < live_plan.sessions.size(); ++i) {
+    aquila::config::DataReaderConfigResult data_reader_config =
+        aquila::config::LoadDataReaderConfigFile(
+            config.inputs.data_reader_config);
+    if (!data_reader_config.ok) {
+      NOVA_ERROR("data_reader_config_error={}", data_reader_config.error);
+      return 1;
+    }
+
+    probe::SingleSessionLiveRunPlan session_plan = live_plan.sessions[i];
+    session_plan.paths.sample_csv_path = SessionSampleCsvPath(live_plan, i);
+    session_csv_paths.push_back(session_plan.paths.sample_csv_path);
+
+    auto state = std::make_unique<LiveSessionState>(
+        config, std::move(session_plan), credentials,
+        std::move(data_reader_config.value), duration_sec);
+    state->runner.EnableExternalDispatchGate();
+    std::string csv_error;
+    if (!state->sample_writer.Open(state->plan.paths.sample_csv_path,
+                                   &csv_error)) {
+      NOVA_ERROR("sample_csv_error={}", csv_error);
+      return 1;
+    }
+    sessions.push_back(std::move(state));
+  }
+
+  NOVA_INFO(
+      "gate_order_session_rtt_probe execute=true live_multi_session=true "
+      "run_id={} session_count={} samples_per_session={} total_samples={} "
+      "duration_sec={:.3f} cycle_cooldown_ms={} "
+      "order_session_interval_ms={} order_mode={} sample_csv_path={}",
+      config.run_id, sessions.size(),
+      sessions.empty() ? 0 : sessions.front()->plan.sample_count,
+      sessions.empty() ? 0
+                       : sessions.size() * sessions.front()->plan.sample_count,
+      duration_sec, config.sampling.cycle_cooldown_ms,
+      config.sampling.order_session_interval_ms,
+      magic_enum::enum_name(config.order.order_mode),
+      live_plan.paths.sample_csv_path.string());
+  for (const std::unique_ptr<LiveSessionState>& state : sessions) {
+    NOVA_INFO(
+        "gate_order_session_rtt_probe_session index={} connect_ip={} "
+        "samples={} order_session_worker_cpu={} session_sample_csv_path={}",
+        state->plan.order_session_id, state->plan.connect_ip,
+        state->plan.sample_count,
+        state->plan.order_session_config.connection.runtime_policy.io_cpu_id,
+        state->plan.paths.sample_csv_path.string());
+  }
+
+  for (std::unique_ptr<LiveSessionState>& state : sessions) {
+    LiveSessionState* raw_state = state.get();
+    raw_state->thread = std::thread([raw_state] {
+      raw_state->start_result = raw_state->session.Start();
+      raw_state->returned.store(true, std::memory_order_release);
+    });
+  }
+
+  auto all_returned = [&sessions] {
+    for (const std::unique_ptr<LiveSessionState>& state : sessions) {
+      if (!state->returned.load(std::memory_order_acquire)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto all_runners_stopping = [&sessions] {
+    for (const std::unique_ptr<LiveSessionState>& state : sessions) {
+      if (!state->runner.stopping()) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto stop_running_sessions = [&sessions] {
+    for (std::unique_ptr<LiveSessionState>& state : sessions) {
+      if (!state->returned.load(std::memory_order_acquire)) {
+        state->session.Stop();
+      }
+    }
+  };
+
+  const auto start = std::chrono::steady_clock::now();
+  const bool has_deadline = duration_sec > 0.0;
+  const auto deadline =
+      start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                  std::chrono::duration<double>(duration_sec) +
+                  std::chrono::duration<double>(30.0));
+  bool runner_stop_observed = false;
+  bool duration_watchdog_fired = false;
+  std::uint64_t feedback_events_consumed = 0;
+  std::uint64_t feedback_events_routed = 0;
+  std::uint64_t feedback_events_broadcast = 0;
+  std::uint64_t feedback_events_unrouted = 0;
+  probe::MultiSessionDispatchScheduler dispatch_scheduler(
+      probe::MultiSessionDispatchSchedulerOptions{
+          .session_count = sessions.size(),
+          .sample_count_per_session =
+              sessions.empty() ? 0 : sessions.front()->plan.sample_count,
+          .order_session_interval_ms =
+              config.sampling.order_session_interval_ms,
+          .cycle_cooldown_ms = config.sampling.cycle_cooldown_ms,
+      });
+  std::vector<std::uint64_t> samples_started_by_session(sessions.size(), 0);
+
+  while (!all_returned()) {
+    const std::size_t consumed = feedback_reader.value.Poll(
+        config.feedback.poll_budget,
+        [&](const aquila::OrderFeedbackEvent& event) {
+          if (event.kind == aquila::OrderFeedbackKind::kContinuityLost ||
+              event.local_order_id == 0) {
+            for (std::unique_ptr<LiveSessionState>& state : sessions) {
+              state->feedback_queue.Push(event);
+            }
+            ++feedback_events_broadcast;
+            return;
+          }
+          std::optional<std::size_t> session_index =
+              probe::SessionIndexForLocalOrderId(event.local_order_id,
+                                                 sessions.size());
+          if (!session_index || *session_index >= sessions.size()) {
+            ++feedback_events_unrouted;
+            return;
+          }
+          sessions[*session_index]->feedback_queue.Push(event);
+          ++feedback_events_routed;
+        });
+    feedback_events_consumed += consumed;
+
+    std::uint64_t total_market_events = 0;
+    for (std::size_t i = 0; i < sessions.size(); ++i) {
+      samples_started_by_session[i] = sessions[i]->runner.samples_started();
+      total_market_events += sessions[i]->runner.data_reader_events();
+    }
+    std::size_t dispatch_session_index = 0;
+    if (dispatch_scheduler.NextGrant(total_market_events,
+                                     samples_started_by_session, SteadyNowNs(),
+                                     &dispatch_session_index)) {
+      sessions[dispatch_session_index]->runner.GrantDispatch();
+    }
+
+    if (!runner_stop_observed && all_runners_stopping()) {
+      runner_stop_observed = true;
+      stop_running_sessions();
+    }
+    if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
+      duration_watchdog_fired = true;
+      stop_running_sessions();
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  for (std::unique_ptr<LiveSessionState>& state : sessions) {
+    if (!state->returned.load(std::memory_order_acquire)) {
+      state->session.Stop();
+    }
+    if (state->thread.joinable()) {
+      state->thread.join();
+    }
+    state->sample_writer.Close();
+  }
+
+  std::string merge_error;
+  const bool merge_ok = MergeSampleCsvFiles(
+      session_csv_paths, live_plan.paths.sample_csv_path, &merge_error);
+  if (!merge_ok) {
+    NOVA_ERROR("sample_csv_merge_error={}", merge_error);
+  }
+
+  int exit_code = merge_ok ? 0 : 1;
+  for (const std::unique_ptr<LiveSessionState>& state : sessions) {
+    const probe::SingleSessionLiveRunnerStats& stats = state->runner.stats();
+    int session_exit_code = state->start_result ? state->runner.exit_code() : 1;
+    if (duration_watchdog_fired && !state->runner.stopping()) {
+      session_exit_code = 2;
+    }
+    if (session_exit_code != 0) {
+      exit_code = session_exit_code;
+    }
+    NOVA_INFO(
+        "gate_order_session_rtt_probe_session_summary index={} "
+        "connect_ip={} start_result={} exit_code={} stop_reason={} "
+        "samples_started={} samples_completed={} samples_failed={} "
+        "data_reader_events={} feedback_events={} skipped_book_tickers={} "
+        "sample_csv_path={}",
+        state->plan.order_session_id, state->plan.connect_ip,
+        state->start_result ? "true" : "false", session_exit_code,
+        state->runner.stop_reason(), stats.samples_started,
+        stats.samples_completed, stats.samples_failed, stats.data_reader_events,
+        stats.feedback_events, stats.skipped_book_tickers,
+        state->plan.paths.sample_csv_path.string());
+  }
+  NOVA_INFO(
+      "gate_order_session_rtt_probe_summary start_result={} exit_code={} "
+      "stop_reason={} runner_stop_observed={} duration_watchdog_fired={} "
+      "feedback_events_consumed={} feedback_events_routed={} "
+      "feedback_events_broadcast={} feedback_events_unrouted={} "
+      "sample_csv_path={}",
+      exit_code == 0 ? "true" : "false", exit_code,
+      duration_watchdog_fired
+          ? "duration_watchdog_fired"
+          : (merge_ok ? "multi_session_complete" : "sample_csv_merge_failed"),
+      runner_stop_observed ? "true" : "false",
+      duration_watchdog_fired ? "true" : "false", feedback_events_consumed,
+      feedback_events_routed, feedback_events_broadcast,
+      feedback_events_unrouted, live_plan.paths.sample_csv_path.string());
+  return exit_code;
+}
+
 void PrintLivePreflightPlan(const probe::ProbeConfig& config,
                             const probe::SingleSessionLiveRunPlan& live_plan) {
-  fmt::print(
+  NOVA_INFO(
       "gate_order_session_rtt_probe live_preflight=true execute=false "
       "name={} run_id={} connect_ip={} sample_count={} run_dir={} "
       "sample_csv_path={} rest_guard_csv_path={} raw_rest_dir={} "
       "order_session_host={} order_session_target={} "
       "order_session_worker_cpu={} enable_tcp_info={} "
-      "order_session_interval_ms={} order_mode={}\n",
+      "order_session_interval_ms={} order_mode={}",
       config.name, config.run_id, live_plan.connect_ip, live_plan.sample_count,
       live_plan.paths.run_dir.string(),
       live_plan.paths.sample_csv_path.string(),
@@ -344,17 +710,52 @@ void PrintLivePreflightPlan(const probe::ProbeConfig& config,
       magic_enum::enum_name(config.order.order_mode));
 }
 
+void PrintMultiLivePreflightPlan(
+    const probe::ProbeConfig& config,
+    const probe::MultiSessionLiveRunPlan& live_plan) {
+  const std::size_t sample_count =
+      live_plan.sessions.empty() ? 0 : live_plan.sessions.front().sample_count;
+  NOVA_INFO(
+      "gate_order_session_rtt_probe live_preflight=true execute=false "
+      "live_multi_session=true name={} run_id={} session_count={} "
+      "sample_count_per_session={} total_sample_count={} run_dir={} "
+      "sample_csv_path={} rest_guard_csv_path={} raw_rest_dir={} "
+      "order_session_interval_ms={} order_mode={}",
+      config.name, config.run_id, live_plan.sessions.size(), sample_count,
+      sample_count * live_plan.sessions.size(),
+      live_plan.paths.run_dir.string(),
+      live_plan.paths.sample_csv_path.string(),
+      live_plan.paths.rest_guard_csv_path.string(),
+      live_plan.paths.raw_rest_dir.string(),
+      config.sampling.order_session_interval_ms,
+      magic_enum::enum_name(config.order.order_mode));
+  for (const probe::SingleSessionLiveRunPlan& session : live_plan.sessions) {
+    NOVA_INFO(
+        "gate_order_session_rtt_probe_session index={} connect_ip={} "
+        "sample_count={} order_session_host={} order_session_target={} "
+        "order_session_worker_cpu={} local_order_id_first={} "
+        "local_order_id_stride={} enable_tcp_info={}",
+        session.order_session_id, session.connect_ip, session.sample_count,
+        session.order_session_config.connection.host,
+        session.order_session_config.connection.target,
+        session.order_session_config.connection.runtime_policy.io_cpu_id,
+        session.local_order_id_first, session.local_order_id_stride,
+        session.order_session_config.enable_tcp_info_diagnostics ? "true"
+                                                                 : "false");
+  }
+}
+
 int Run(const CliOptions& options, const toml::table& toml) {
   probe::ProbeConfigResult config_result = probe::ParseProbeConfig(toml);
   if (!config_result.ok) {
-    fmt::print(stderr, "[FAIL] config_error={}\n", config_result.error);
+    NOVA_ERROR("config_error={}", config_result.error);
     return 1;
   }
 
   probe::ProbeConfig config = std::move(config_result.value);
   const OverrideResult override_result = ApplyOverrides(options, &config);
   if (!override_result.ok) {
-    fmt::print(stderr, "[FAIL] option_error={}\n", override_result.error);
+    NOVA_ERROR("option_error={}", override_result.error);
     return 2;
   }
   EnsureRunId(&config);
@@ -362,14 +763,14 @@ int Run(const CliOptions& options, const toml::table& toml) {
   aquila::Result<std::string> candidate_text =
       ReadTextFile(config.inputs.candidate_ip_file);
   if (!candidate_text.ok) {
-    fmt::print(stderr, "[FAIL] candidate_ip_error={}\n", candidate_text.error);
+    NOVA_ERROR("candidate_ip_error={}", candidate_text.error);
     return 1;
   }
 
   probe::ProbeRunPlanResult plan_result =
       probe::BuildProbeRunPlanFromCandidateText(config, candidate_text.value);
   if (!plan_result.ok) {
-    fmt::print(stderr, "[FAIL] run_plan_error={}\n", plan_result.error);
+    NOVA_ERROR("run_plan_error={}", plan_result.error);
     return 1;
   }
 
@@ -378,46 +779,83 @@ int Run(const CliOptions& options, const toml::table& toml) {
         aquila::gate::LoadOrderSessionConfigFile(
             config.inputs.order_session_config);
     if (!order_session_config.ok) {
-      fmt::print(stderr, "[FAIL] order_session_config_error={}\n",
-                 order_session_config.error);
-      return 1;
-    }
-    probe::SingleSessionLiveRunPlanResult live_plan =
-        probe::BuildSingleSessionLiveRunPlan(config, plan_result.value,
-                                             order_session_config.value);
-    if (!live_plan.ok) {
-      fmt::print(stderr, "[FAIL] live_preflight_error={}\n", live_plan.error);
+      NOVA_ERROR("order_session_config_error={}", order_session_config.error);
       return 1;
     }
     if (config.execute) {
       const char* api_key =
           EnvValue(order_session_config.value.credentials.api_key_env);
       if (api_key == nullptr) {
-        fmt::print(stderr, "[FAIL] missing env var {}\n",
+        NOVA_ERROR("missing env var {}",
                    order_session_config.value.credentials.api_key_env);
         return 2;
       }
       const char* api_secret =
           EnvValue(order_session_config.value.credentials.api_secret_env);
       if (api_secret == nullptr) {
-        fmt::print(stderr, "[FAIL] missing env var {}\n",
+        NOVA_ERROR("missing env var {}",
                    order_session_config.value.credentials.api_secret_env);
         return 2;
       }
       aquila::gate::LoginCredentials credentials{.api_key = api_key,
                                                  .api_secret = api_secret};
-      if (live_plan.value.order_session_config.connection.enable_tls) {
+      if (config.sessions.active_session_count == 1) {
+        probe::SingleSessionLiveRunPlanResult live_plan =
+            probe::BuildSingleSessionLiveRunPlan(config, plan_result.value,
+                                                 order_session_config.value);
+        if (!live_plan.ok) {
+          NOVA_ERROR("live_preflight_error={}", live_plan.error);
+          return 1;
+        }
+        if (live_plan.value.order_session_config.connection.enable_tls) {
+          return RunSingleSessionExecute<
+              aquila::gate::OrderSessionDefaultTlsWebSocketPolicy>(
+              std::move(config), live_plan.value, std::move(credentials),
+              options.duration_sec);
+        }
         return RunSingleSessionExecute<
-            aquila::gate::OrderSessionDefaultTlsWebSocketPolicy>(
+            aquila::gate::OrderSessionDefaultPlainWebSocketPolicy>(
             std::move(config), live_plan.value, std::move(credentials),
             options.duration_sec);
       }
-      return RunSingleSessionExecute<
+      probe::MultiSessionLiveRunPlanResult live_plan =
+          probe::BuildMultiSessionLiveRunPlan(config, plan_result.value,
+                                              order_session_config.value);
+      if (!live_plan.ok) {
+        NOVA_ERROR("live_preflight_error={}", live_plan.error);
+        return 1;
+      }
+      if (live_plan.value.sessions.front()
+              .order_session_config.connection.enable_tls) {
+        return RunMultiSessionExecute<
+            aquila::gate::OrderSessionDefaultTlsWebSocketPolicy>(
+            std::move(config), live_plan.value, credentials,
+            options.duration_sec);
+      }
+      return RunMultiSessionExecute<
           aquila::gate::OrderSessionDefaultPlainWebSocketPolicy>(
-          std::move(config), live_plan.value, std::move(credentials),
+          std::move(config), live_plan.value, credentials,
           options.duration_sec);
     }
-    PrintLivePreflightPlan(config, live_plan.value);
+    if (config.sessions.active_session_count == 1) {
+      probe::SingleSessionLiveRunPlanResult live_plan =
+          probe::BuildSingleSessionLiveRunPlan(config, plan_result.value,
+                                               order_session_config.value);
+      if (!live_plan.ok) {
+        NOVA_ERROR("live_preflight_error={}", live_plan.error);
+        return 1;
+      }
+      PrintLivePreflightPlan(config, live_plan.value);
+      return 0;
+    }
+    probe::MultiSessionLiveRunPlanResult live_plan =
+        probe::BuildMultiSessionLiveRunPlan(config, plan_result.value,
+                                            order_session_config.value);
+    if (!live_plan.ok) {
+      NOVA_ERROR("live_preflight_error={}", live_plan.error);
+      return 1;
+    }
+    PrintMultiLivePreflightPlan(config, live_plan.value);
     return 0;
   }
 
@@ -443,10 +881,9 @@ int main(int argc, char** argv) {
                  "Override probe.sessions.active_session_count");
   app.add_option("--duration-sec", options.duration_sec,
                  "Maximum live execute duration. 0 means sample-count bounded");
-  app.add_flag("--execute", options.execute,
-               "Enable single-session live execution");
+  app.add_flag("--execute", options.execute, "Enable live execution");
   app.add_flag("--live-preflight", options.live_preflight,
-               "Build single-session live prerequisites without connecting");
+               "Build live prerequisites without connecting");
   CLI11_PARSE(app, argc, argv);
 
   try {
@@ -460,7 +897,16 @@ int main(int argc, char** argv) {
         options.live_preflight ? "true" : "false", options.duration_sec);
     return Run(options, toml);
   } catch (const std::exception& exc) {
-    fmt::print(stderr, "[FAIL] config_error={}\n", exc.what());
+    try {
+      if (nova::kLogManager.logger() == nullptr) {
+        nova::LogConfig fallback_log_config;
+        fallback_log_config.set_file_sink_name(
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe_config_error.log");
+        nova::InitializeLogging(fallback_log_config);
+      }
+      NOVA_ERROR("config_error={}", exc.what());
+    } catch (...) {
+    }
     return 1;
   }
 }

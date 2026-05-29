@@ -110,6 +110,118 @@ class OrderSessionDispatchPacer {
   bool waiting_{false};
 };
 
+struct MultiSessionDispatchSchedulerOptions {
+  std::size_t session_count{1};
+  std::uint64_t sample_count_per_session{1};
+  std::uint32_t order_session_interval_ms{0};
+  std::uint32_t cycle_cooldown_ms{0};
+};
+
+class MultiSessionDispatchScheduler {
+ public:
+  explicit MultiSessionDispatchScheduler(
+      MultiSessionDispatchSchedulerOptions options) noexcept
+      : options_(options),
+        order_session_interval_ns_(
+            static_cast<std::int64_t>(options.order_session_interval_ms) *
+            1'000'000),
+        cycle_cooldown_ns_(
+            static_cast<std::int64_t>(options.cycle_cooldown_ms) * 1'000'000) {}
+
+  [[nodiscard]] bool NextGrant(
+      std::uint64_t total_market_events,
+      const std::vector<std::uint64_t>& samples_started_by_session,
+      std::int64_t now_ns, std::size_t* session_index) noexcept {
+    if (session_index == nullptr || options_.session_count == 0 ||
+        options_.sample_count_per_session == 0 ||
+        current_cycle_ >= options_.sample_count_per_session) {
+      return false;
+    }
+    if (samples_started_by_session.size() < options_.session_count) {
+      return false;
+    }
+
+    ObserveOutstandingGrant(samples_started_by_session, now_ns,
+                            total_market_events);
+    if (grant_outstanding_) {
+      return false;
+    }
+    if (waiting_for_cycle_cooldown_) {
+      if (now_ns < cycle_deadline_ns_) {
+        return false;
+      }
+      waiting_for_cycle_cooldown_ = false;
+    }
+    if (waiting_for_market_event_) {
+      if (total_market_events <= market_event_baseline_) {
+        return false;
+      }
+      waiting_for_market_event_ = false;
+    }
+    if (waiting_for_interval_) {
+      if (now_ns < interval_deadline_ns_) {
+        return false;
+      }
+      waiting_for_interval_ = false;
+    }
+
+    *session_index = next_session_index_;
+    grant_outstanding_ = true;
+    outstanding_session_index_ = next_session_index_;
+    outstanding_target_started_ = current_cycle_ + 1;
+    market_event_baseline_ = total_market_events;
+    return true;
+  }
+
+ private:
+  void ObserveOutstandingGrant(
+      const std::vector<std::uint64_t>& samples_started_by_session,
+      std::int64_t now_ns, std::uint64_t total_market_events) noexcept {
+    if (!grant_outstanding_) {
+      return;
+    }
+    if (samples_started_by_session[outstanding_session_index_] <
+        outstanding_target_started_) {
+      return;
+    }
+
+    grant_outstanding_ = false;
+    ++next_session_index_;
+    if (next_session_index_ < options_.session_count) {
+      if (order_session_interval_ns_ == 0) {
+        waiting_for_market_event_ = true;
+        market_event_baseline_ = total_market_events;
+      } else {
+        waiting_for_interval_ = true;
+        interval_deadline_ns_ = now_ns + order_session_interval_ns_;
+      }
+      return;
+    }
+
+    next_session_index_ = 0;
+    ++current_cycle_;
+    if (current_cycle_ < options_.sample_count_per_session) {
+      waiting_for_cycle_cooldown_ = true;
+      cycle_deadline_ns_ = now_ns + cycle_cooldown_ns_;
+    }
+  }
+
+  MultiSessionDispatchSchedulerOptions options_;
+  std::int64_t order_session_interval_ns_{0};
+  std::int64_t cycle_cooldown_ns_{0};
+  std::uint64_t current_cycle_{0};
+  std::size_t next_session_index_{0};
+  bool grant_outstanding_{false};
+  std::size_t outstanding_session_index_{0};
+  std::uint64_t outstanding_target_started_{0};
+  bool waiting_for_market_event_{false};
+  bool waiting_for_interval_{false};
+  bool waiting_for_cycle_cooldown_{false};
+  std::uint64_t market_event_baseline_{0};
+  std::int64_t interval_deadline_ns_{0};
+  std::int64_t cycle_deadline_ns_{0};
+};
+
 }  // namespace aquila::tools::gate_order_session_rtt_probe
 
 #endif  // AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_CYCLE_SCHEDULER_H_

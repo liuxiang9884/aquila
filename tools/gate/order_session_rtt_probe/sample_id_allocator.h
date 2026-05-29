@@ -11,11 +11,21 @@ namespace aquila::tools::gate_order_session_rtt_probe {
 class ProbeSampleIdAllocator {
  public:
   explicit ProbeSampleIdAllocator(std::uint8_t strategy_id) noexcept
-      : strategy_id_(strategy_id) {}
+      : ProbeSampleIdAllocator(strategy_id, /*first_strategy_order_id=*/1,
+                               /*strategy_order_id_stride=*/4) {}
+
+  ProbeSampleIdAllocator(std::uint8_t strategy_id,
+                         std::uint64_t first_strategy_order_id,
+                         std::uint64_t strategy_order_id_stride) noexcept
+      : strategy_id_(strategy_id),
+        next_strategy_order_id_(
+            first_strategy_order_id == 0 ? 1 : first_strategy_order_id),
+        strategy_order_id_stride_(
+            strategy_order_id_stride < 4 ? 4 : strategy_order_id_stride) {}
 
   [[nodiscard]] ProbeSampleLocalIds Next() noexcept {
     const std::uint64_t first = next_strategy_order_id_;
-    next_strategy_order_id_ += 4;
+    next_strategy_order_id_ += strategy_order_id_stride_;
     return ProbeSampleLocalIds{
         .gtc_local_order_id = LocalOrderIdCodec::Encode(strategy_id_, first),
         .ioc_local_order_id =
@@ -34,6 +44,7 @@ class ProbeSampleIdAllocator {
  private:
   std::uint8_t strategy_id_{0};
   std::uint64_t next_strategy_order_id_{1};
+  std::uint64_t strategy_order_id_stride_{4};
 };
 
 }  // namespace aquila::tools::gate_order_session_rtt_probe

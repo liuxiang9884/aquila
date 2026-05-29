@@ -34,14 +34,15 @@ struct SingleSessionLiveRunnerStats {
   std::uint64_t skipped_book_tickers{0};
 };
 
-template <typename SessionT, typename DataReaderT>
+template <typename SessionT, typename DataReaderT,
+          typename FeedbackReaderT = OrderFeedbackShmReader>
 class SingleSessionLiveRunner {
  public:
   SingleSessionLiveRunner(const ProbeConfig& config,
                           const SingleSessionLiveRunPlan& plan,
                           const config::InstrumentCatalog& instrument_catalog,
                           DataReaderT& data_reader,
-                          OrderFeedbackShmReader& feedback_reader,
+                          FeedbackReaderT& feedback_reader,
                           SampleCsvWriter& sample_writer,
                           double duration_sec) noexcept
       : config_(config),
@@ -50,11 +51,20 @@ class SingleSessionLiveRunner {
         data_reader_(data_reader),
         feedback_reader_(feedback_reader),
         sample_writer_(sample_writer),
-        id_allocator_(static_cast<std::uint8_t>(config.feedback.strategy_id)),
+        id_allocator_(static_cast<std::uint8_t>(config.feedback.strategy_id),
+                      plan.local_order_id_first, plan.local_order_id_stride),
         duration_ns_(DurationToNs(duration_sec)) {}
 
   void BindSession(SessionT& session) noexcept {
     session_ = &session;
+  }
+
+  void EnableExternalDispatchGate() noexcept {
+    external_dispatch_required_ = true;
+  }
+
+  void GrantDispatch() noexcept {
+    dispatch_grants_.fetch_add(1, std::memory_order_release);
   }
 
   static void RuntimeHookCallback(void* raw) noexcept {
@@ -80,6 +90,8 @@ class SingleSessionLiveRunner {
 
   void OnBookTicker(const BookTicker& ticker) noexcept {
     ++stats_.data_reader_events;
+    data_reader_events_.store(stats_.data_reader_events,
+                              std::memory_order_release);
     if (ticker.exchange != Exchange::kGate) {
       return;
     }
@@ -118,11 +130,24 @@ class SingleSessionLiveRunner {
     if (now_steady_ns < next_sample_steady_ns_) {
       return;
     }
-    StartNextSample(now_realtime_ns, now_steady_ns);
+    if (!HasDispatchGrant()) {
+      return;
+    }
+    if (StartNextSample(now_realtime_ns, now_steady_ns)) {
+      ConsumeDispatchGrant();
+    }
   }
 
   [[nodiscard]] const SingleSessionLiveRunnerStats& stats() const noexcept {
     return stats_;
+  }
+
+  [[nodiscard]] std::uint64_t samples_started() const noexcept {
+    return samples_started_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] std::uint64_t data_reader_events() const noexcept {
+    return data_reader_events_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]] int exit_code() const noexcept {
@@ -196,11 +221,11 @@ class SingleSessionLiveRunner {
                                 config_.order.passive_price_limit_fraction});
   }
 
-  void StartNextSample(std::int64_t now_realtime_ns,
-                       std::int64_t now_steady_ns) noexcept {
+  [[nodiscard]] bool StartNextSample(std::int64_t now_realtime_ns,
+                                     std::int64_t now_steady_ns) noexcept {
     PassiveOrderBuildResult ioc_passive = BuildIocPassive();
     if (!ioc_passive.ok) {
-      return;
+      return false;
     }
     PassiveOrderBuildResult gtc_passive;
     ProbeSampleLocalIds ids = id_allocator_.Next();
@@ -208,7 +233,7 @@ class SingleSessionLiveRunner {
         std::move(gtc_passive), ioc_passive, ids, ProbeOrderMode::kIoc);
     if (!executor_result.ok) {
       Stop(2, executor_result.error);
-      return;
+      return true;
     }
 
     active_executor_ = std::move(executor_result.value);
@@ -216,7 +241,7 @@ class SingleSessionLiveRunner {
     active_row_ = ProbeSampleCsvRow{
         .run_id = config_.run_id,
         .connect_ip = plan_.connect_ip,
-        .order_session_id = 0,
+        .order_session_id = plan_.order_session_id,
         .connection_generation = 0,
         .round_index = stats_.samples_started,
         .sample_index = stats_.samples_started,
@@ -228,6 +253,7 @@ class SingleSessionLiveRunner {
         .ioc_price_text = ioc_passive.price_text,
     };
     ++stats_.samples_started;
+    samples_started_.store(stats_.samples_started, std::memory_order_release);
     next_sample_steady_ns_ =
         now_steady_ns +
         static_cast<std::int64_t>(config_.sampling.cycle_cooldown_ms) *
@@ -236,6 +262,21 @@ class SingleSessionLiveRunner {
     ProbeSampleTransition transition = active_executor_->Start(*session_);
     HandleTransition(transition, now_realtime_ns);
     UpdateTimeoutWatch(now_realtime_ns);
+    return true;
+  }
+
+  [[nodiscard]] bool HasDispatchGrant() const noexcept {
+    if (!external_dispatch_required_) {
+      return true;
+    }
+    return consumed_dispatch_grants_ <
+           dispatch_grants_.load(std::memory_order_acquire);
+  }
+
+  void ConsumeDispatchGrant() noexcept {
+    if (external_dispatch_required_) {
+      ++consumed_dispatch_grants_;
+    }
   }
 
   void PollFeedback(std::int64_t now_realtime_ns) noexcept {
@@ -393,7 +434,7 @@ class SingleSessionLiveRunner {
   const SingleSessionLiveRunPlan& plan_;
   const config::InstrumentCatalog& instrument_catalog_;
   DataReaderT& data_reader_;
-  OrderFeedbackShmReader& feedback_reader_;
+  FeedbackReaderT& feedback_reader_;
   SampleCsvWriter& sample_writer_;
   ProbeSampleIdAllocator id_allocator_;
   SessionT* session_{nullptr};
@@ -403,10 +444,15 @@ class SingleSessionLiveRunner {
   ProbeSampleCsvRow active_row_;
   TimeoutWatch timeout_watch_;
   SingleSessionLiveRunnerStats stats_{};
+  std::atomic<std::uint64_t> samples_started_{0};
+  std::atomic<std::uint64_t> data_reader_events_{0};
+  std::atomic<std::uint64_t> dispatch_grants_{0};
+  std::uint64_t consumed_dispatch_grants_{0};
   std::int64_t run_start_steady_ns_{0};
   std::int64_t next_sample_steady_ns_{0};
   std::int64_t duration_ns_{0};
   bool login_ready_{false};
+  bool external_dispatch_required_{false};
   std::atomic<bool> stopping_{false};
   int exit_code_{1};
   std::string stop_reason_{"not_started"};

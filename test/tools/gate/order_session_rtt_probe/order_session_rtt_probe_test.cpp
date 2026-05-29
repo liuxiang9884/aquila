@@ -20,6 +20,7 @@
 #include "tools/gate/order_session_rtt_probe/config.h"
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 #include "tools/gate/order_session_rtt_probe/live_run_plan.h"
+#include "tools/gate/order_session_rtt_probe/local_feedback_queue.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/gate/order_session_rtt_probe/run_plan.h"
 #include "tools/gate/order_session_rtt_probe/sample_csv_writer.h"
@@ -1477,6 +1478,33 @@ TEST(GateOrderSessionRttProbeTest,
             8U);
 }
 
+TEST(GateOrderSessionRttProbeTest,
+     AllocatesShardedSampleLocalOrderIdsForParallelSessions) {
+  ProbeSampleIdAllocator first(/*strategy_id=*/7,
+                               /*first_strategy_order_id=*/1,
+                               /*strategy_order_id_stride=*/32);
+  ProbeSampleIdAllocator second(/*strategy_id=*/7,
+                                /*first_strategy_order_id=*/5,
+                                /*strategy_order_id_stride=*/32);
+
+  const ProbeSampleLocalIds first_ids = first.Next();
+  const ProbeSampleLocalIds second_ids = second.Next();
+  const ProbeSampleLocalIds first_next = first.Next();
+
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first_ids.gtc_local_order_id),
+            1U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first_ids.ioc_local_order_id),
+            2U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second_ids.gtc_local_order_id),
+            5U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(second_ids.ioc_local_order_id),
+            6U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first_next.gtc_local_order_id),
+            33U);
+  EXPECT_EQ(LocalOrderIdCodec::StrategyOrderId(first_next.ioc_local_order_id),
+            34U);
+}
+
 TEST(GateOrderSessionRttProbeTest, BuildsPinnedOrderSessionConfig) {
   gate::OrderSessionConfig base;
   base.name = "base_gate_order_session";
@@ -1558,6 +1586,127 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
             "order_session_rtt_rest_guard.csv");
   EXPECT_EQ(result.value.paths.raw_rest_dir,
             "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1/raw_rest");
+}
+
+TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
+  ProbeConfig config;
+  config.run_id = "run_8";
+  config.output.root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe";
+  config.sessions.active_session_count = 8;
+  config.sessions.enable_tcp_info = true;
+  config.sessions.worker_cpu_ids = {10, 11, 12, 13, 14, 15, 16, 17};
+
+  ProbeRunPlan run_plan;
+  run_plan.candidate_ip_count = 8;
+  for (std::uint64_t cycle_index = 0; cycle_index < 2; ++cycle_index) {
+    run_plan.cycles.push_back(ProbeCycle{
+        .cycle_index = cycle_index,
+        .group_index = 0,
+        .connect_ips =
+            {
+                "10.0.0.1",
+                "10.0.0.2",
+                "10.0.0.3",
+                "10.0.0.4",
+                "10.0.0.5",
+                "10.0.0.6",
+                "10.0.0.7",
+                "10.0.0.8",
+            },
+    });
+  }
+  gate::OrderSessionConfig base;
+  base.connection.host = "fx-ws.gateio.ws";
+  base.connection.port = "443";
+  base.connection.target = "/v4/ws/usdt";
+  base.connection.runtime_policy.io_cpu_id = 3;
+
+  const MultiSessionLiveRunPlanResult result =
+      BuildMultiSessionLiveRunPlan(config, run_plan, base);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.sessions.size(), 8U);
+  EXPECT_EQ(result.value.paths.sample_csv_path,
+            "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_8/"
+            "order_session_rtt_samples.csv");
+  EXPECT_EQ(result.value.sessions[0].connect_ip, "10.0.0.1");
+  EXPECT_EQ(result.value.sessions[0].sample_count, 2U);
+  EXPECT_EQ(result.value.sessions[0].order_session_id, 0U);
+  EXPECT_EQ(result.value.sessions[0].local_order_id_first, 1U);
+  EXPECT_EQ(result.value.sessions[0].local_order_id_stride, 32U);
+  EXPECT_EQ(result.value.sessions[0].order_session_config.connection.connect_ip,
+            "10.0.0.1");
+  EXPECT_EQ(result.value.sessions[0]
+                .order_session_config.connection.runtime_policy.io_cpu_id,
+            10);
+  EXPECT_EQ(result.value.sessions[7].connect_ip, "10.0.0.8");
+  EXPECT_EQ(result.value.sessions[7].order_session_id, 7U);
+  EXPECT_EQ(result.value.sessions[7].local_order_id_first, 29U);
+  EXPECT_EQ(result.value.sessions[7]
+                .order_session_config.connection.runtime_policy.io_cpu_id,
+            17);
+}
+
+TEST(GateOrderSessionRttProbeTest, MapsLocalOrderIdToParallelSessionIndex) {
+  EXPECT_EQ(SessionIndexForLocalOrderId(
+                LocalOrderIdCodec::Encode(/*strategy_id=*/7,
+                                          /*strategy_order_id=*/2),
+                /*session_count=*/8),
+            0U);
+  EXPECT_EQ(SessionIndexForLocalOrderId(
+                LocalOrderIdCodec::Encode(/*strategy_id=*/7,
+                                          /*strategy_order_id=*/6),
+                /*session_count=*/8),
+            1U);
+  EXPECT_EQ(SessionIndexForLocalOrderId(
+                LocalOrderIdCodec::Encode(/*strategy_id=*/7,
+                                          /*strategy_order_id=*/30),
+                /*session_count=*/8),
+            7U);
+  EXPECT_FALSE(SessionIndexForLocalOrderId(/*local_order_id=*/0,
+                                           /*session_count=*/8)
+                   .has_value());
+  EXPECT_FALSE(SessionIndexForLocalOrderId(
+                   LocalOrderIdCodec::Encode(/*strategy_id=*/7,
+                                             /*strategy_order_id=*/2),
+                   /*session_count=*/0)
+                   .has_value());
+}
+
+TEST(GateOrderSessionRttProbeTest, LocalFeedbackQueueDrainsPushedEvents) {
+  LocalFeedbackQueue queue;
+  OrderFeedbackEvent first{
+      .kind = OrderFeedbackKind::kCancelled,
+      .local_order_id = LocalOrderIdCodec::Encode(/*strategy_id=*/7,
+                                                  /*strategy_order_id=*/2),
+  };
+  OrderFeedbackEvent second{
+      .kind = OrderFeedbackKind::kFilled,
+      .local_order_id = LocalOrderIdCodec::Encode(/*strategy_id=*/7,
+                                                  /*strategy_order_id=*/6),
+  };
+  queue.Push(first);
+  queue.Push(second);
+
+  std::vector<std::uint64_t> local_order_ids;
+  EXPECT_EQ(queue.Poll(1,
+                       [&](const OrderFeedbackEvent& event) {
+                         local_order_ids.push_back(event.local_order_id);
+                       }),
+            1U);
+  EXPECT_EQ(queue.Poll(8,
+                       [&](const OrderFeedbackEvent& event) {
+                         local_order_ids.push_back(event.local_order_id);
+                       }),
+            1U);
+  EXPECT_EQ(queue.Poll(8,
+                       [&](const OrderFeedbackEvent& event) {
+                         local_order_ids.push_back(event.local_order_id);
+                       }),
+            0U);
+  ASSERT_EQ(local_order_ids.size(), 2U);
+  EXPECT_EQ(local_order_ids[0], first.local_order_id);
+  EXPECT_EQ(local_order_ids[1], second.local_order_id);
 }
 
 TEST(GateOrderSessionRttProbeTest, RejectsMultiSessionLiveRunPlan) {
@@ -1753,6 +1902,70 @@ TEST(GateOrderSessionRttProbeTest,
   pacer.MarkDispatchConsumed();
   EXPECT_TRUE(pacer.CanDispatch(/*now_ns=*/26'000'000,
                                 /*has_new_market_event=*/false));
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     MultiSessionDispatchSchedulerPacesSessionsWithinCycle) {
+  MultiSessionDispatchScheduler scheduler(MultiSessionDispatchSchedulerOptions{
+      .session_count = 3,
+      .sample_count_per_session = 2,
+      .order_session_interval_ms = 5,
+      .cycle_cooldown_ms = 10,
+  });
+  std::vector<std::uint64_t> samples_started = {0, 0, 0};
+  std::size_t session_index = 99;
+
+  ASSERT_TRUE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                  /*now_ns=*/1'000'000, &session_index));
+  EXPECT_EQ(session_index, 0U);
+
+  samples_started[0] = 1;
+  EXPECT_FALSE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                   /*now_ns=*/1'000'000, &session_index));
+  EXPECT_FALSE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                   /*now_ns=*/5'999'999, &session_index));
+  ASSERT_TRUE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                  /*now_ns=*/6'000'000, &session_index));
+  EXPECT_EQ(session_index, 1U);
+
+  samples_started[1] = 1;
+  EXPECT_FALSE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                   /*now_ns=*/6'000'000, &session_index));
+  ASSERT_TRUE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                  /*now_ns=*/11'000'000, &session_index));
+  EXPECT_EQ(session_index, 2U);
+
+  samples_started[2] = 1;
+  EXPECT_FALSE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                   /*now_ns=*/11'000'000, &session_index));
+  EXPECT_FALSE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                   /*now_ns=*/20'999'999, &session_index));
+  ASSERT_TRUE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                  /*now_ns=*/21'000'000, &session_index));
+  EXPECT_EQ(session_index, 0U);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     MultiSessionDispatchSchedulerWaitsForMarketEventAtZeroInterval) {
+  MultiSessionDispatchScheduler scheduler(MultiSessionDispatchSchedulerOptions{
+      .session_count = 2,
+      .sample_count_per_session = 1,
+      .order_session_interval_ms = 0,
+      .cycle_cooldown_ms = 10,
+  });
+  std::vector<std::uint64_t> samples_started = {0, 0};
+  std::size_t session_index = 99;
+
+  ASSERT_TRUE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                  /*now_ns=*/1'000'000, &session_index));
+  EXPECT_EQ(session_index, 0U);
+
+  samples_started[0] = 1;
+  EXPECT_FALSE(scheduler.NextGrant(/*total_market_events=*/10, samples_started,
+                                   /*now_ns=*/2'000'000, &session_index));
+  ASSERT_TRUE(scheduler.NextGrant(/*total_market_events=*/11, samples_started,
+                                  /*now_ns=*/2'000'000, &session_index));
+  EXPECT_EQ(session_index, 1U);
 }
 
 TEST(GateOrderSessionRttProbeTest,
