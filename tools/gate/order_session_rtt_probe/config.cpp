@@ -242,6 +242,109 @@ namespace {
   return true;
 }
 
+[[nodiscard]] bool ReadOptionalNonEmptyString(
+    toml::node_view<const toml::node> node, std::string_view name,
+    std::optional<std::string>* output, std::string* error) {
+  output->reset();
+  if (Missing(node)) {
+    return true;
+  }
+  const std::optional<std::string> value = node.value<std::string>();
+  if (!value) {
+    *error = fmt::format("{} must be string", name);
+    return false;
+  }
+  if (value->empty()) {
+    *error = fmt::format("{} must be non-empty", name);
+    return false;
+  }
+  *output = *value;
+  return true;
+}
+
+[[nodiscard]] bool ReadOptionalBool(toml::node_view<const toml::node> node,
+                                    std::string_view name,
+                                    std::optional<bool>* output,
+                                    std::string* error) {
+  output->reset();
+  if (Missing(node)) {
+    return true;
+  }
+  const std::optional<bool> value = node.value<bool>();
+  if (!value) {
+    *error = fmt::format("{} must be bool", name);
+    return false;
+  }
+  *output = *value;
+  return true;
+}
+
+[[nodiscard]] bool ReadSessionEndpointOverrides(
+    toml::node_view<const toml::node> node,
+    std::vector<ProbeSessionEndpointOverride>* output, std::string* error) {
+  output->clear();
+  if (Missing(node)) {
+    return true;
+  }
+  const toml::array* array = node.as_array();
+  if (array == nullptr) {
+    *error = "probe.sessions.endpoint_overrides must be array";
+    return false;
+  }
+
+  output->reserve(array->size());
+  std::size_t row = 0;
+  for (const toml::node& item : *array) {
+    const std::string prefix =
+        fmt::format("probe.sessions.endpoint_overrides[{}]", row);
+    const toml::table* table = item.as_table();
+    if (table == nullptr) {
+      *error = fmt::format("{} must be table", prefix);
+      return false;
+    }
+    const toml::node_view<const toml::node> index_node = (*table)["index"];
+    if (Missing(index_node)) {
+      *error = fmt::format("{}.index is required", prefix);
+      return false;
+    }
+    const std::optional<std::int64_t> index = index_node.value<std::int64_t>();
+    if (!index || *index < 0) {
+      *error = fmt::format("{}.index must be non-negative integer", prefix);
+      return false;
+    }
+    for (const ProbeSessionEndpointOverride& existing : *output) {
+      if (existing.index == static_cast<std::size_t>(*index)) {
+        *error = fmt::format("{}.index duplicates session {}", prefix, *index);
+        return false;
+      }
+    }
+
+    ProbeSessionEndpointOverride override_config;
+    override_config.index = static_cast<std::size_t>(*index);
+    if (!ReadOptionalNonEmptyString((*table)["host"], prefix + ".host",
+                                    &override_config.host, error) ||
+        !ReadOptionalNonEmptyString((*table)["connect_ip"],
+                                    prefix + ".connect_ip",
+                                    &override_config.connect_ip, error) ||
+        !ReadOptionalNonEmptyString((*table)["port"], prefix + ".port",
+                                    &override_config.port, error) ||
+        !ReadOptionalBool((*table)["enable_tls"], prefix + ".enable_tls",
+                          &override_config.enable_tls, error)) {
+      return false;
+    }
+    if (!override_config.host && !override_config.connect_ip &&
+        !override_config.port && !override_config.enable_tls) {
+      *error = fmt::format(
+          "{} must set at least one of host, connect_ip, port, enable_tls",
+          prefix);
+      return false;
+    }
+    output->push_back(std::move(override_config));
+    ++row;
+  }
+  return true;
+}
+
 [[nodiscard]] bool ReadProbeOrderModeOr(toml::node_view<const toml::node> node,
                                         ProbeOrderMode fallback,
                                         std::string_view name,
@@ -359,6 +462,11 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
   }
   if (!ReadWorkerCpuIds(sessions["worker_cpu_ids"],
                         &config.sessions.worker_cpu_ids, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadSessionEndpointOverrides(sessions["endpoint_overrides"],
+                                    &config.sessions.endpoint_overrides,
+                                    &error)) {
     return Failure(std::move(error));
   }
 

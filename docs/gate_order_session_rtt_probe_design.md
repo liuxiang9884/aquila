@@ -308,8 +308,20 @@ candidate_ip_file = /home/liuxiang/tmp/login_verified_candidates_20260528_072242
 ```
 
 第一版可以沿用 base order session config 中的 `host`、`port`、TLS、credentials、decimal-size header 和 log 设置；
-`tools/gate/order_session_rtt_probe/session_config_builder.h` 已提供 pinned config builder，每个 candidate 只覆盖
-`connection.connect_ip`，可选覆盖 worker CPU 和 TCP_INFO 开关。建议默认打开
+`tools/gate/order_session_rtt_probe/session_config_builder.h` 已提供 pinned config builder，默认每个 candidate 只覆盖
+`connection.connect_ip`，可选覆盖 worker CPU 和 TCP_INFO 开关。若要在同一次 multi-session probe 中混测 public TLS
+和 private plain link，可在配置里按 session index 覆盖 endpoint：
+
+```toml
+[[probe.sessions.endpoint_overrides]]
+index = 0
+host = "fxws-private.gateapi.io"
+connect_ip = "10.0.1.154"
+port = "80"
+enable_tls = false
+```
+
+未覆盖的 session 继续沿用 base order session config 和 candidate file 中对应位置的 `connect_ip`。建议默认打开
 `order_session.diagnostics.enable_tcp_info=true` 的临时副本，
 但不要修改仓库默认配置。如需手工缩小候选池，生成一个只包含目标 IP 的临时 candidate file，并通过
 `--candidate-ip-file` 指向它；当前 CLI 没有重复 `--connect-ip` 参数。probe 的 contract 仍由最新 Gate `BookTicker`

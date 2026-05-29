@@ -1661,6 +1661,68 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
             17);
 }
 
+TEST(GateOrderSessionRttProbeTest,
+     BuildsMultiSessionLiveRunPlanAppliesEndpointOverrideFromConfig) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[probe]
+run_id = "run_private0"
+
+[probe.inputs]
+candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+
+[probe.sessions]
+active_session_count = 2
+max_candidates = 2
+
+[[probe.sessions.endpoint_overrides]]
+index = 0
+host = "fxws-private.gateapi.io"
+connect_ip = "10.0.1.154"
+port = "80"
+enable_tls = false
+)toml");
+  const ProbeConfigResult config_result = ParseProbeConfig(parsed);
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  ProbeRunPlan run_plan;
+  run_plan.candidate_ip_count = 2;
+  run_plan.cycles.push_back(ProbeCycle{
+      .cycle_index = 0,
+      .group_index = 0,
+      .connect_ips = {"35.75.139.170", "13.159.186.99"},
+  });
+  gate::OrderSessionConfig base;
+  base.connection.host = "fx-ws.gateio.ws";
+  base.connection.port = "443";
+  base.connection.target = "/v4/ws/usdt";
+  base.connection.enable_tls = true;
+
+  const MultiSessionLiveRunPlanResult result =
+      BuildMultiSessionLiveRunPlan(config_result.value, run_plan, base);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.sessions.size(), 2U);
+  EXPECT_EQ(result.value.sessions[0].connect_ip, "10.0.1.154");
+  EXPECT_EQ(result.value.sessions[0].order_session_config.connection.host,
+            "fxws-private.gateapi.io");
+  EXPECT_EQ(result.value.sessions[0].order_session_config.connection.port,
+            "80");
+  EXPECT_FALSE(
+      result.value.sessions[0].order_session_config.connection.enable_tls);
+  EXPECT_EQ(result.value.sessions[0].order_session_config.connection.connect_ip,
+            "10.0.1.154");
+
+  EXPECT_EQ(result.value.sessions[1].connect_ip, "13.159.186.99");
+  EXPECT_EQ(result.value.sessions[1].order_session_config.connection.host,
+            "fx-ws.gateio.ws");
+  EXPECT_EQ(result.value.sessions[1].order_session_config.connection.port,
+            "443");
+  EXPECT_TRUE(
+      result.value.sessions[1].order_session_config.connection.enable_tls);
+  EXPECT_EQ(result.value.sessions[1].order_session_config.connection.connect_ip,
+            "13.159.186.99");
+}
+
 TEST(GateOrderSessionRttProbeTest, MapsLocalOrderIdToParallelSessionIndex) {
   EXPECT_EQ(SessionIndexForLocalOrderId(
                 LocalOrderIdCodec::Encode(/*strategy_id=*/7,

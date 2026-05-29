@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,14 @@ struct ProbeInputConfig {
   std::filesystem::path candidate_ip_file;
 };
 
+struct ProbeSessionEndpointOverride {
+  std::size_t index{0};
+  std::optional<std::string> host;
+  std::optional<std::string> connect_ip;
+  std::optional<std::string> port;
+  std::optional<bool> enable_tls;
+};
+
 struct ProbeSessionConfig {
   std::size_t active_session_count{1};
   std::size_t max_candidates{1};
@@ -29,6 +38,7 @@ struct ProbeSessionConfig {
   std::uint32_t wait_login_timeout_ms{10000};
   std::uint32_t request_timeout_ms{5000};
   std::vector<std::int32_t> worker_cpu_ids;
+  std::vector<ProbeSessionEndpointOverride> endpoint_overrides;
 };
 
 struct ProbeSamplingConfig {

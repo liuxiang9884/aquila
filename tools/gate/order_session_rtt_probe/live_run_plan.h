@@ -68,6 +68,41 @@ namespace live_run_plan_detail {
   return paths;
 }
 
+[[nodiscard]] inline const ProbeSessionEndpointOverride* FindEndpointOverride(
+    const ProbeSessionConfig& config, std::size_t index) noexcept {
+  for (const ProbeSessionEndpointOverride& endpoint :
+       config.endpoint_overrides) {
+    if (endpoint.index == index) {
+      return &endpoint;
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] inline std::optional<std::string> EndpointHost(
+    const ProbeSessionEndpointOverride* endpoint) {
+  if (endpoint == nullptr) {
+    return std::nullopt;
+  }
+  return endpoint->host;
+}
+
+[[nodiscard]] inline std::optional<std::string> EndpointPort(
+    const ProbeSessionEndpointOverride* endpoint) {
+  if (endpoint == nullptr) {
+    return std::nullopt;
+  }
+  return endpoint->port;
+}
+
+[[nodiscard]] inline std::optional<bool> EndpointEnableTls(
+    const ProbeSessionEndpointOverride* endpoint) {
+  if (endpoint == nullptr) {
+    return std::nullopt;
+  }
+  return endpoint->enable_tls;
+}
+
 }  // namespace live_run_plan_detail
 
 [[nodiscard]] inline std::optional<std::size_t> SessionIndexForLocalOrderId(
@@ -122,11 +157,23 @@ BuildSingleSessionLiveRunPlan(
   if (!config.sessions.worker_cpu_ids.empty()) {
     worker_cpu_id = config.sessions.worker_cpu_ids.front();
   }
+  for (const ProbeSessionEndpointOverride& endpoint :
+       config.sessions.endpoint_overrides) {
+    if (endpoint.index != 0) {
+      return live_run_plan_detail::Failure(
+          "single-session live run endpoint override index must be 0");
+    }
+  }
+  const ProbeSessionEndpointOverride* endpoint =
+      live_run_plan_detail::FindEndpointOverride(config.sessions, 0);
+  const std::string plan_connect_ip =
+      endpoint != nullptr && endpoint->connect_ip ? *endpoint->connect_ip
+                                                  : connect_ip;
 
   SingleSessionLiveRunPlanResult result;
   result.ok = true;
   result.value = SingleSessionLiveRunPlan{
-      .connect_ip = connect_ip,
+      .connect_ip = plan_connect_ip,
       .sample_count = run_plan.cycles.size(),
       .order_session_id = 0,
       .local_order_id_first = 1,
@@ -135,7 +182,10 @@ BuildSingleSessionLiveRunPlan(
       .order_session_config = BuildPinnedOrderSessionConfig(
           base_order_session_config,
           PinnedOrderSessionOptions{
-              .connect_ip = connect_ip,
+              .connect_ip = plan_connect_ip,
+              .host = live_run_plan_detail::EndpointHost(endpoint),
+              .port = live_run_plan_detail::EndpointPort(endpoint),
+              .enable_tls = live_run_plan_detail::EndpointEnableTls(endpoint),
               .worker_cpu_id = worker_cpu_id,
               .enable_tcp_info_diagnostics = config.sessions.enable_tcp_info,
           }),
@@ -183,14 +233,27 @@ BuildSingleSessionLiveRunPlan(
   MultiSessionLiveRunPlanResult result;
   result.ok = true;
   result.value.paths = live_run_plan_detail::BuildLiveRunPaths(config);
+  for (const ProbeSessionEndpointOverride& endpoint :
+       config.sessions.endpoint_overrides) {
+    if (endpoint.index >= session_count) {
+      return live_run_plan_detail::MultiFailure(
+          "multi-session live run endpoint override index is outside "
+          "active_session_count");
+    }
+  }
   result.value.sessions.reserve(session_count);
   for (std::size_t i = 0; i < session_count; ++i) {
     std::optional<std::int32_t> worker_cpu_id;
     if (i < config.sessions.worker_cpu_ids.size()) {
       worker_cpu_id = config.sessions.worker_cpu_ids[i];
     }
+    const ProbeSessionEndpointOverride* endpoint =
+        live_run_plan_detail::FindEndpointOverride(config.sessions, i);
+    const std::string plan_connect_ip =
+        endpoint != nullptr && endpoint->connect_ip ? *endpoint->connect_ip
+                                                    : first_connect_ips[i];
     result.value.sessions.push_back(SingleSessionLiveRunPlan{
-        .connect_ip = first_connect_ips[i],
+        .connect_ip = plan_connect_ip,
         .sample_count = run_plan.cycles.size(),
         .order_session_id = static_cast<std::uint64_t>(i),
         .local_order_id_first = 1 + static_cast<std::uint64_t>(i) * 4,
@@ -199,7 +262,10 @@ BuildSingleSessionLiveRunPlan(
         .order_session_config = BuildPinnedOrderSessionConfig(
             base_order_session_config,
             PinnedOrderSessionOptions{
-                .connect_ip = first_connect_ips[i],
+                .connect_ip = plan_connect_ip,
+                .host = live_run_plan_detail::EndpointHost(endpoint),
+                .port = live_run_plan_detail::EndpointPort(endpoint),
+                .enable_tls = live_run_plan_detail::EndpointEnableTls(endpoint),
                 .worker_cpu_id = worker_cpu_id,
                 .enable_tcp_info_diagnostics = config.sessions.enable_tcp_info,
             }),

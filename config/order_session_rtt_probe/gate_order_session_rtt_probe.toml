@@ -15,6 +15,13 @@ enable_tcp_info = true
 wait_login_timeout_ms = 10000
 request_timeout_ms = 5000
 worker_cpu_ids = []
+# Optional per-session endpoint override for mixed public/private probes.
+# [[probe.sessions.endpoint_overrides]]
+# index = 0
+# host = "fxws-private.gateapi.io"
+# connect_ip = "10.0.1.154"
+# port = "80"
+# enable_tls = false
 
 [probe.sampling]
 samples_per_ip = 1
