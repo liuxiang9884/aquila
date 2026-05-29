@@ -45,6 +45,7 @@
 | `remote_ip` | `gate_order_session_connected` / report CSV | experiment | IP 文本 | 判断慢 session 是否落到不同 remote IP / gateway。 | 被等价 endpoint snapshot 取代。 |
 | `remote_port` | `gate_order_session_connected` / report CSV | experiment | TCP port | 记录远端 TCP endpoint。 | 被等价 endpoint snapshot 取代。 |
 | `owner_thread_cpu` | `gate_order_session_connected` | experiment | Linux CPU id，失败为 `-1` | 确认 session 进入 active 时 owner thread 实际运行 CPU。 | 被更完整 thread affinity / sched snapshot 取代。 |
+| `owner_thread_tid` | `gate_order_session_connected` / `gate_order_ack_latency_diagnostic` | planned | Linux thread id，失败为 `-1` | 将 OrderSession owner thread 与 `pidstat -t`、`perf sched` 等外部调度采样直接对齐。 | 被等价 thread identity snapshot 取代。 |
 | `resolved_ips` | `gate_order_session_connected` | planned | DNS 结果列表 | 区分 hostname 相同但 DNS / connect 目标不同的情况。 | WebSocket 层无法稳定提供时可留空；若无消费者可删除。 |
 
 ### IP discovery JSONL 字段
@@ -124,6 +125,40 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 | `drive_read_duration_ns` | diagnostic / report CSV | experiment | ns | 记录触发时单次 `DriveRead()` 耗时。 | 若 read path tail 已通过其他 profile 覆盖可删除。 |
 | `max_observed_drive_read_duration_ns` | diagnostic / report CSV | experiment | ns | 诊断窗口内最大 `DriveRead()` 耗时。 | 同上。 |
 | `diagnostic_cpu` | `gate_order_ack_latency_diagnostic` / report CSV | experiment | Linux CPU id，失败为 `-1` | 记录触发 latency diagnostic log 时 owner thread 所在 CPU；Ack RTT 阈值触发时通常等价于 Ack 处理 CPU。 | 被完整 sched trace 或 thread sample 取代。 |
+| `max_runtime_loop_gap_ns` | diagnostic / report CSV | planned | ns | 诊断窗口内 owner runtime loop 两次迭代之间的最大间隔，用于判断是否存在本机 deschedule / 长时间离 CPU。 | 被可靠的外部 sched trace 或更低开销 loop telemetry 取代。 |
+| `runtime_loop_iterations_before_ack` | diagnostic / report CSV | planned | counter | 从请求诊断窗口 armed 到 Ack 处理前经过的 runtime loop 迭代次数，用于辅助区分 owner thread 是否持续运行。 | 同上。 |
+
+### 写路径 Ack latency diagnostic 字段
+
+这些字段计划挂在现有 `gate_order_ack_latency_diagnostic` 上，只在 Ack RTT 超阈值或 timeout 的诊断窗口内输出。
+目标是把 `request_send_local_ns -> ack_local_receive_ns` 拆成本机编码 / enqueue / write syscall / exchange Ack
+等待几个阶段；字段落地后应同步进 LeadLag report parser，并按实际实现把状态从 `planned` 改为 `experiment`。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `order_encode_done_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | Gate order JSON payload 编码完成时间；用于确认订单编码是否占用 Ack RTT 前段。 | 写路径诊断结束且无下游依赖后删除。 |
+| `ws_frame_encode_done_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | WebSocket text frame 编码完成时间；用于区分 exchange payload 编码和 WebSocket frame 编码。 | 同上。 |
+| `write_enqueue_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | prepared write 进入 pending queue 的时间；用于判断是否卡在 enqueue 前。 | 同上。 |
+| `drive_write_enter_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | 请求 armed 后首次进入 `DriveWrite()` 的时间；用于判断 runtime hook 返回后是否及时进入写泵。 | 同上。 |
+| `write_some_enter_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | 调用 `send()` / `SSL_write()` 前的时间。private-link 非 TLS 路径对应 `send()`。 | 同上。 |
+| `write_some_return_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | `send()` / `SSL_write()` 返回后的时间；与 `write_some_enter_ns` 共同衡量 syscall / TLS write 耗时。 | 同上。 |
+| `write_complete_ns` | diagnostic / report CSV | planned | 本机 Unix epoch ns | 当前 request 对应 WebSocket frame 全部写入 transport 后的时间；若 `request_send_local_ns -> write_complete_ns` 很小，可基本排除本机发送路径。 | 同上。 |
+| `write_some_bytes` | diagnostic / report CSV | planned | bytes | 本次 `send()` / `SSL_write()` 返回的写入字节数；用于识别 partial write。 | 同上。 |
+| `write_complete_bytes` | diagnostic / report CSV | planned | bytes | 当前 request frame 完整写入的总字节数；用于校验 write complete 是否覆盖完整请求。 | 同上。 |
+| `write_errno` | diagnostic / report CSV | planned | errno，成功为 0 | 记录 write syscall / TLS write 失败原因；EAGAIN 路径需保留原始 errno。 | 同上。 |
+| `write_eagain` | diagnostic / report CSV | planned | `true` / `false` | 标记写路径是否遇到 EAGAIN / would-block，用于解释本地 send queue 或 socket backpressure。 | 同上。 |
+| `pending_write_count_after` | diagnostic / report CSV | planned | count | enqueue / write 后 pending business write 数量，用于判断是否存在本地 write queue 积压。 | 同上。 |
+
+### Socket send queue 字段
+
+这些字段计划在 write complete 后或 Ack outlier diagnostic 输出前采集。Linux 下优先通过 `ioctl(SIOCOUTQ)` /
+`ioctl(SIOCOUTQNSD)` 读取，避免直接依赖不同 kernel header 中不稳定的 `tcp_info` 扩展字段。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `tcp_sendq_bytes` | diagnostic / report CSV | planned | bytes | 记录 socket send queue 中未被远端 ACK 的字节数，用于判断写完后是否仍在内核发送队列中堆积。 | 被更完整 socket queue telemetry 取代。 |
+| `tcp_notsent_bytes` | diagnostic / report CSV | planned | bytes | 记录已进入 TCP 发送队列但尚未发送到网络的字节数；不可用时填 0 并配套 available 字段或 warning。 | 同上。 |
+| `socket_send_queue_available` | diagnostic / report CSV | planned | `true` / `false` | 标记 send queue snapshot 是否成功，避免把平台不支持误判成 0 backlog。 | 同上。 |
 
 ### TCP_INFO 字段
 
@@ -212,11 +247,14 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 | --- | --- | --- | --- | --- | --- |
 | `order_session_id` | `order_detail.csv` / `latency.csv` | experiment | 本进程内单调 id | 将订单行关联回 Gate `OrderSession`。 | Gate OrderSession 多连接诊断删除后同步删除。 |
 | `owner_thread_cpu` | `order_detail.csv` / `latency.csv` | experiment | Linux CPU id，失败为 `-1` | 将 session active 时 owner CPU 合并进 report。 | 同上。 |
+| `owner_thread_tid` | `order_detail.csv` / `latency.csv` | planned | Linux thread id，失败为 `-1` | 将 report 行关联到外部 `pidstat -t` / `perf sched` 采样中的具体 owner thread。 | Gate OrderSession thread id 诊断删除后同步删除。 |
 | `local_ip` / `local_port` | `order_detail.csv` / `latency.csv` | experiment | TCP endpoint | 将本地 TCP endpoint 合并进 report。 | endpoint 诊断删除后同步删除。 |
 | `remote_ip` / `remote_port` | `order_detail.csv` / `latency.csv` | experiment | TCP endpoint | 将远端 TCP endpoint 合并进 report。 | endpoint 诊断删除后同步删除。 |
 | `send_cpu` / `ack_cpu` / `diagnostic_cpu` | `order_detail.csv` / `latency.csv` | experiment | Linux CPU id，失败为 `-1`；多 diagnostic CPU 用 `;` 合并 | 将下单发送、Ack 处理和 diagnostic 输出时的 owner CPU 合并进 report。 | CPU 诊断删除后同步删除。 |
 | `tcp_info_*` | `order_detail.csv` / `latency.csv` | experiment | 见 Gate OrderSession section | 将 `gate_order_response` / `gate_order_ack_latency_diagnostic` 的 TCP_INFO snapshot 合并进 report；数值字段多次出现取最大值。 | TCP_INFO 诊断删除后同步删除。 |
 | `latency_diagnostic_*` | `order_detail.csv` / `latency.csv` | experiment | 见 Gate OrderSession section | 将 `gate_order_ack_latency_diagnostic` 合并进 report。 | Gate OrderSession diagnostic 删除后同步删除。 |
+| `write_path_*` | `order_detail.csv` / `latency.csv` | planned | 见 Gate OrderSession 写路径 section | 将 Ack outlier 的 encode / enqueue / write syscall / write complete 阶段合并进 report。 | 写路径诊断删除后同步删除。 |
+| `socket_send_queue_*` | `order_detail.csv` / `latency.csv` | planned | 见 Gate OrderSession socket send queue section | 将 Ack outlier 时的 kernel send queue / notsent snapshot 合并进 report。 | socket send queue 诊断删除后同步删除。 |
 | `send_to_ack_local_ns` | `latency.csv` | stable | ns | 本地 send 到 Ack receive。 | 不能删除；等价于主 Ack RTT 校验字段。 |
 | `send_to_finish_local_ns` | `latency.csv` | stable | ns | 本地 send 到策略终态处理完成。 | 不能删除；用于区分 Ack path 与 terminal lifecycle。 |
 | `ack_to_finish_local_ns` | `latency.csv` | stable | ns | 本地 Ack receive 到策略终态处理完成。 | 不能删除。 |
