@@ -62,36 +62,33 @@
 
 ### OrderSession RTT probe CSV 字段
 
-这些字段由第一版 `gate_order_session_rtt_probe` 的 sample CSV schema / writer 定义；live executor 尚未调用该 writer。每行对应
-一个完整 sample：GTC place -> GTC cancel -> 可选 GTC safety close -> IOC place -> IOC safety close。sample CSV
-schema / writer 已实现；连接级 endpoint / owner CPU 信息不重复写入每行 CSV，后续计划使用
+这些字段由第一版 `gate_order_session_rtt_probe` 的 sample CSV schema / writer 定义。CSV 采用长表，每行对应一个已提交
+order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IOC safety close。当前字段集只保留 RTT
+分析必须字段和建议诊断字段，并使用短字段名降低 CSV 宽度；连接级 endpoint / owner CPU 信息不重复写入每行 CSV，后续计划使用
 `gate_order_session_rtt_probe_connection` Nova 结构化 log 记录，当前 connection log 尚未落地。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `run_id` | `order_session_rtt_samples.csv`；planned connection log | experiment | 文本 | 关联同一次 RTT probe run 的连接 log 与 sample CSV。 | RTT probe schema 升级并迁移消费者后重审。 |
-| `connect_ip` | `order_session_rtt_samples.csv`；planned connection log | experiment | IP 文本 | 被测 Gate TCP 直连 IP，是分组统计主 key。 | 同上。 |
-| `order_session_id` | `order_session_rtt_samples.csv`；planned connection log | experiment | 本进程内单调 id | 关联 sample、连接 endpoint 和底层 order session log。 | 同上。 |
-| `connection_generation` | `order_session_rtt_samples.csv`；planned connection log | experiment | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |
+| `run` | `order_session_rtt_samples.csv` | experiment | 文本 | 关联同一次 RTT probe run 的连接 log 与 sample CSV。 | RTT probe schema 升级并迁移消费者后重审。 |
+| `ip` | `order_session_rtt_samples.csv` | experiment | IP 文本 | 被测 Gate TCP 直连 IP，是分组统计主 key。 | 同上。 |
+| `sid` | `order_session_rtt_samples.csv` | experiment | 本进程内单调 id | 关联 sample、连接 endpoint 和底层 order session log。 | 同上。 |
+| `connection_generation` | planned connection log | planned | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |
 | `connected_at_ns` | planned connection log | planned | 本机 Unix epoch ns | 记录该 generation 建连完成时间。 | 同上。 |
-| `round_index` / `sample_index` | `order_session_rtt_samples.csv` | experiment | 0-based integer | 支持 round-robin 采样顺序分析，避免按 IP 连续采样造成时间窗口偏差。 | 同上。 |
-| `contract` | `order_session_rtt_samples.csv`；planned connection log | experiment | Gate contract，例如 `ZEC_USDT` | 标记本次行情触发 cycle 的交易合约；第一版由 Gate `BookTicker` 行情事件决定，不固定只测一个 symbol。 | 同上。 |
-| `quantity_text` | `order_session_rtt_samples.csv` | experiment | Gate wire 文本 | 复核 instrument catalog 最小下单量是否符合预期。 | 同上。 |
-| `gtc_price_text` / `ioc_price_text` | `order_session_rtt_samples.csv` | experiment | Gate wire 文本 | GTC round 和 IOC round 分别用各自下单前最新 BBO 计算 passive price。 | 同上。 |
-| `gtc_bbo_ticker_id` / `ioc_bbo_ticker_id` | `order_session_rtt_samples.csv` | experiment | `BookTicker.id` | 记录 GTC / IOC 下单前使用的行情版本。 | 同上。 |
-| `gtc_bbo_local_ns` / `ioc_bbo_local_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 记录 GTC / IOC 下单前使用行情的本地接收时间。 | 同上。 |
-| `sample_start_ns` / `sample_end_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 支持按时间窗口分析同一 IP 的稳定性和 rolling stats。 | 同上。 |
-| `gtc_place_ack_receive_local_ns` / `gtc_cancel_ack_receive_local_ns` / `ioc_place_ack_receive_local_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | rolling 统计的时间锚点；也用于复核 RTT 计算。 | 同上。 |
-| `gtc_place_ack_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns | GTC place Ack RTT，第一版核心指标之一。 | 同上。 |
-| `gtc_cancel_ack_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns | GTC cancel Ack RTT，第一版核心指标之一。 | 同上。 |
-| `ioc_place_ack_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns | IOC place Ack RTT，第一版核心指标之一。 | 同上。 |
-| `gtc_place_status` / `gtc_cancel_status` / `ioc_place_status` | `order_session_rtt_samples.csv` | experiment | enum 文本 | 标记每一步是 acked、rejected、timeout 或 skipped。 | 同上。 |
-| `gtc_close_submitted` / `ioc_close_submitted` | `order_session_rtt_samples.csv` | experiment | `true` / `false` | 标记是否提交 safety reduce-only market close；GTC 只在 cancel reject / terminal 不确定 / fill 场景提交，IOC place Ack 后总是提交。 | 同上。 |
-| `gtc_close_ack_receive_local_ns` / `ioc_close_ack_receive_local_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | safety close Ack 的接收时间；用于审计 close request 是否及时被 Gate Ack。 | 同上。 |
-| `gtc_close_ack_rtt_ns` / `ioc_close_ack_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns | safety close Ack RTT；不参与 GTC / IOC 连接 RTT 主排名。 | 同上。 |
-| `gtc_close_status` / `ioc_close_status` | `order_session_rtt_samples.csv` | experiment | enum 文本 | safety close 结果，例如 `not_submitted`、`acked`、`rejected_flat_safe`、`rejected`、`timeout`、`send_failed`。无仓位导致的 reduce-only reject 只有在 terminal feedback、REST 或 position-known-flat 证明 flat 后才记为 `rejected_flat_safe`，否则记为 `rejected` 并排除样本。 | 同上。 |
-| `unexpected_fill` | `order_session_rtt_samples.csv` | experiment | `true` / `false` | 标记 passive probe 是否意外成交。 | 同上。 |
-| `invalid_for_rtt_distribution` / `invalid_reason` | `order_session_rtt_samples.csv` | experiment | bool / 文本 | 排除 reject、timeout、unexpected fill、safety close timeout 或 run-end REST 需要人工复核的样本。 | 同上。 |
+| `round` / `sample` | `order_session_rtt_samples.csv` | experiment | 0-based integer | 支持 round-robin 采样顺序分析，避免按 IP 连续采样造成时间窗口偏差。 | 同上。 |
+| `contract` | `order_session_rtt_samples.csv` | experiment | Gate contract，例如 `ZEC_USDT` | 标记本次行情触发 cycle 的交易合约；第一版由 Gate `BookTicker` 行情事件决定，不固定只测一个 symbol。 | 同上。 |
+| `qty` | `order_session_rtt_samples.csv` | experiment | Gate wire 文本 | 复核 instrument catalog 最小下单量是否符合预期。 | 同上。 |
+| `price` | `order_session_rtt_samples.csv` | experiment | Gate wire 文本 | 当前 action 使用的价格；`open` / `cancel` 行使用对应 open price，`close` 行使用 close order price。 | 同上。 |
+| `type` | `order_session_rtt_samples.csv` | experiment | `gtc` / `ioc` | 标记该行归属的 probe leg；`gtc,close` 表示为 GTC leg 触发的 safety close，即使 wire TIF 为 IOC。 | 同上。 |
+| `action` | `order_session_rtt_samples.csv` | experiment | `open` / `cancel` / `close` | 将旧的 place/cancel/close 阶段规范成长表 action；place 统一写作 `open`。 | 同上。 |
+| `local_id` / `req_seq` | `order_session_rtt_samples.csv` | experiment | id / request sequence | 直接关联 sample CSV、`gate_order_send_ok`、`gate_order_response` 和 feedback log。 | 同上。 |
+| `bbo_id` / `bbo_ns` | `order_session_rtt_samples.csv` | experiment | `BookTicker.id` / 本机 Unix epoch ns | 记录当前 action 对应 open order 使用的行情版本；没有行情锚点的 action 填 0。 | 同上。 |
+| `send_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 当前 action 实际写 socket 前的本地发送时间，用于直接从 CSV 计算 Ack RTT 与近似上行时间。 | 同上。 |
+| `ack_recv_ns` / `ack_ex_ns` / `ack_ex2local_ns` / `ack_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns / 本机 Unix epoch ns / Gate timestamp ns | 当前 action Ack timing；`ack_ex2local_ns` 受时钟偏移影响，`ack_rtt_ns` 是本地 send 到本地 Ack receive。 | 同上。 |
+| `resp_recv_ns` / `resp_ex_ns` / `resp_ex2local_ns` / `resp_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns / 本机 Unix epoch ns / Gate timestamp ns | 当前 action final response timing；没有 final response 时填 0 / -1。 | 同上。 |
+| `status` | `order_session_rtt_samples.csv` | experiment | enum 文本 | 标记当前 action 是 sent、acked、terminal confirmed、rejected、timeout 或 send failed。 | 同上。 |
+| `term_fb` | `order_session_rtt_samples.csv` | experiment | enum 文本 | 记录使 action 进入 terminal/invalid 路径的 feedback kind；无 terminal feedback 时为空。 | 同上。 |
+| `fill` | `order_session_rtt_samples.csv` | experiment | `true` / `false` | 标记 passive probe 是否意外成交。 | 同上。 |
+| `invalid` / `inv_reason` | `order_session_rtt_samples.csv` | experiment | bool / 文本 | 排除 reject、timeout、unexpected fill、safety close timeout 或 run-end REST 需要人工复核的样本。 | 同上。 |
 | `rest_guard_phase` / `rest_guard_result` / `rest_guard_json_path` | `order_session_rtt_rest_guard.csv` | planned | enum / 文本 / 路径 | 记录 REST preflight、fatal flatten 和 run-end 整体账户检查结果；REST 不再作为 sample 级 `final_flat` 字段。 | 同上。 |
 
 ### 请求与 Ack 字段

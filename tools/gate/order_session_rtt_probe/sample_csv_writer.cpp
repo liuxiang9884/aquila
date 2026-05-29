@@ -31,19 +31,15 @@ void SampleCsvWriter::Write(const ProbeSampleCsvRow& row) noexcept {
     return;
   }
   writer_->append_row(
-      row.run_id, row.connect_ip, row.order_session_id,
-      row.connection_generation, row.round_index, row.sample_index,
-      row.contract, row.quantity_text, row.sample_start_ns, row.sample_end_ns,
-      row.gtc_bbo_ticker_id, row.gtc_bbo_local_ns, row.gtc_price_text,
-      row.ioc_bbo_ticker_id, row.ioc_bbo_local_ns, row.ioc_price_text,
-      row.gtc_place_ack_receive_local_ns, row.gtc_place_ack_rtt_ns,
-      row.gtc_cancel_ack_receive_local_ns, row.gtc_cancel_ack_rtt_ns,
-      row.ioc_place_ack_receive_local_ns, row.ioc_place_ack_rtt_ns,
-      row.gtc_close_submitted, row.gtc_close_ack_receive_local_ns,
-      row.gtc_close_ack_rtt_ns, row.gtc_close_status, row.ioc_close_submitted,
-      row.ioc_close_ack_receive_local_ns, row.ioc_close_ack_rtt_ns,
-      row.ioc_close_status, row.gtc_place_status, row.gtc_cancel_status,
-      row.ioc_place_status, row.unexpected_fill,
+      row.run_id, row.connect_ip, row.order_session_id, row.round_index,
+      row.sample_index, row.contract, row.quantity_text, row.price_text,
+      row.probe_order_type, row.order_action, row.local_order_id,
+      row.request_sequence, row.bbo_ticker_id, row.bbo_local_ns,
+      row.request_send_local_ns, row.ack_receive_local_ns, row.ack_exchange_ns,
+      row.ack_exchange_to_local_ns, row.ack_rtt_ns,
+      row.response_receive_local_ns, row.response_exchange_ns,
+      row.response_exchange_to_local_ns, row.response_rtt_ns, row.status,
+      row.terminal_feedback_kind, row.unexpected_fill,
       row.invalid_for_rtt_distribution, row.invalid_reason);
 }
 

@@ -242,16 +242,14 @@ class SingleSessionLiveRunner {
         .run_id = config_.run_id,
         .connect_ip = plan_.connect_ip,
         .order_session_id = plan_.order_session_id,
-        .connection_generation = 0,
         .round_index = stats_.samples_started,
         .sample_index = stats_.samples_started,
         .contract = ioc_passive.contract,
         .quantity_text = ioc_passive.quantity_text,
-        .sample_start_ns = now_realtime_ns,
-        .ioc_bbo_ticker_id = ioc_passive.bbo_ticker_id,
-        .ioc_bbo_local_ns = ioc_passive.bbo_local_ns,
-        .ioc_price_text = ioc_passive.price_text,
     };
+    active_ioc_price_text_ = ioc_passive.price_text;
+    active_ioc_bbo_ticker_id_ = ioc_passive.bbo_ticker_id;
+    active_ioc_bbo_local_ns_ = ioc_passive.bbo_local_ns;
     ++stats_.samples_started;
     samples_started_.store(stats_.samples_started, std::memory_order_release);
     next_sample_steady_ns_ =
@@ -351,12 +349,12 @@ class SingleSessionLiveRunner {
       return;
     }
     if (!transition.ok || transition.action == ProbeSampleAction::kFail) {
-      FinishActiveSample(now_realtime_ns, transition.error, false);
+      FinishActiveSample(transition.error, false);
       Stop(2, transition.error.empty() ? "sample_failed" : transition.error);
       return;
     }
     if (transition.action == ProbeSampleAction::kFinish) {
-      FinishActiveSample(now_realtime_ns, "", true);
+      FinishActiveSample("", true);
       return;
     }
     UpdateTimeoutWatch(now_realtime_ns);
@@ -366,37 +364,68 @@ class SingleSessionLiveRunner {
     return std::string(magic_enum::enum_name(status));
   }
 
-  void FinishActiveSample(std::int64_t now_realtime_ns, std::string_view error,
-                          bool completed) noexcept {
+  static std::string FeedbackKindName(const ProbeStageCsvStats& stats) {
+    if (!stats.has_terminal_feedback_kind) {
+      return {};
+    }
+    return std::string(magic_enum::enum_name(stats.terminal_feedback_kind));
+  }
+
+  void WriteOrderActionRow(const ProbeStageCsvStats& stats,
+                           ProbeStageStatus status,
+                           std::string_view probe_order_type,
+                           std::string_view order_action,
+                           std::string_view price_text,
+                           std::int64_t bbo_ticker_id,
+                           std::int64_t bbo_local_ns) noexcept {
+    if (status == ProbeStageStatus::kNotSubmitted &&
+        stats.local_order_id == 0) {
+      return;
+    }
+    ProbeSampleCsvRow row = active_row_;
+    row.price_text.assign(price_text.data(), price_text.size());
+    row.probe_order_type.assign(probe_order_type.data(),
+                                probe_order_type.size());
+    row.order_action.assign(order_action.data(), order_action.size());
+    row.local_order_id = stats.local_order_id;
+    row.request_sequence = stats.request_sequence;
+    row.bbo_ticker_id = bbo_ticker_id;
+    row.bbo_local_ns = bbo_local_ns;
+    row.request_send_local_ns = stats.request_send_local_ns;
+    row.ack_receive_local_ns = stats.ack_receive_local_ns;
+    row.ack_exchange_ns = stats.ack_exchange_ns;
+    row.ack_exchange_to_local_ns = stats.ack_exchange_to_local_ns;
+    row.ack_rtt_ns = stats.ack_rtt_ns;
+    row.response_receive_local_ns = stats.response_receive_local_ns;
+    row.response_exchange_ns = stats.response_exchange_ns;
+    row.response_exchange_to_local_ns = stats.response_exchange_to_local_ns;
+    row.response_rtt_ns = stats.response_rtt_ns;
+    row.status = StatusName(status);
+    row.terminal_feedback_kind = FeedbackKindName(stats);
+    sample_writer_.Write(row);
+  }
+
+  void WriteOrderActionRows(const ProbeSampleStats& stats) noexcept {
+    WriteOrderActionRow(stats.gtc_open_csv, stats.gtc_place_status, "gtc",
+                        "open", active_gtc_price_text_,
+                        active_gtc_bbo_ticker_id_, active_gtc_bbo_local_ns_);
+    WriteOrderActionRow(stats.gtc_cancel_csv, stats.gtc_cancel_status, "gtc",
+                        "cancel", active_gtc_price_text_,
+                        active_gtc_bbo_ticker_id_, active_gtc_bbo_local_ns_);
+    WriteOrderActionRow(stats.ioc_open_csv, stats.ioc_place_status, "ioc",
+                        "open", active_ioc_price_text_,
+                        active_ioc_bbo_ticker_id_, active_ioc_bbo_local_ns_);
+    WriteOrderActionRow(stats.gtc_close_csv, stats.gtc_close_status, "gtc",
+                        "close", "0", 0, 0);
+    WriteOrderActionRow(stats.ioc_close_csv, stats.ioc_close_status, "ioc",
+                        "close", "0", 0, 0);
+  }
+
+  void FinishActiveSample(std::string_view error, bool completed) noexcept {
     if (!active_executor_) {
       return;
     }
     const ProbeSampleStats& stats = active_executor_->stats();
-    active_row_.sample_end_ns = now_realtime_ns;
-    active_row_.gtc_place_ack_receive_local_ns =
-        stats.gtc_place_ack_receive_local_ns;
-    active_row_.gtc_place_ack_rtt_ns = stats.gtc_place_ack_rtt_ns;
-    active_row_.gtc_cancel_ack_receive_local_ns =
-        stats.gtc_cancel_ack_receive_local_ns;
-    active_row_.gtc_cancel_ack_rtt_ns = stats.gtc_cancel_ack_rtt_ns;
-    active_row_.ioc_place_ack_receive_local_ns =
-        stats.ioc_place_ack_receive_local_ns;
-    active_row_.ioc_place_ack_rtt_ns = stats.ioc_place_ack_rtt_ns;
-    active_row_.gtc_close_submitted =
-        stats.gtc_close_status != ProbeStageStatus::kNotSubmitted;
-    active_row_.gtc_close_ack_receive_local_ns =
-        stats.gtc_close_ack_receive_local_ns;
-    active_row_.gtc_close_ack_rtt_ns = stats.gtc_close_ack_rtt_ns;
-    active_row_.gtc_close_status = StatusName(stats.gtc_close_status);
-    active_row_.ioc_close_submitted =
-        stats.ioc_close_status != ProbeStageStatus::kNotSubmitted;
-    active_row_.ioc_close_ack_receive_local_ns =
-        stats.ioc_close_ack_receive_local_ns;
-    active_row_.ioc_close_ack_rtt_ns = stats.ioc_close_ack_rtt_ns;
-    active_row_.ioc_close_status = StatusName(stats.ioc_close_status);
-    active_row_.gtc_place_status = StatusName(stats.gtc_place_status);
-    active_row_.gtc_cancel_status = StatusName(stats.gtc_cancel_status);
-    active_row_.ioc_place_status = StatusName(stats.ioc_place_status);
     active_row_.unexpected_fill = stats.unexpected_fill;
     active_row_.invalid_for_rtt_distribution =
         stats.invalid_for_rtt_distribution || !completed;
@@ -404,10 +433,16 @@ class SingleSessionLiveRunner {
     if (!completed && active_row_.invalid_reason.empty()) {
       active_row_.invalid_reason.assign(error.data(), error.size());
     }
-    sample_writer_.Write(active_row_);
+    WriteOrderActionRows(stats);
     active_executor_.reset();
     active_ids_ = {};
     active_row_ = {};
+    active_gtc_price_text_.clear();
+    active_ioc_price_text_.clear();
+    active_gtc_bbo_ticker_id_ = 0;
+    active_gtc_bbo_local_ns_ = 0;
+    active_ioc_bbo_ticker_id_ = 0;
+    active_ioc_bbo_local_ns_ = 0;
     timeout_watch_ = {};
     if (completed) {
       ++stats_.samples_completed;
@@ -442,6 +477,12 @@ class SingleSessionLiveRunner {
   std::unique_ptr<ProbeSampleExecutor> active_executor_;
   ProbeSampleLocalIds active_ids_{};
   ProbeSampleCsvRow active_row_;
+  std::string active_gtc_price_text_;
+  std::string active_ioc_price_text_;
+  std::int64_t active_gtc_bbo_ticker_id_{0};
+  std::int64_t active_gtc_bbo_local_ns_{0};
+  std::int64_t active_ioc_bbo_ticker_id_{0};
+  std::int64_t active_ioc_bbo_local_ns_{0};
   TimeoutWatch timeout_watch_;
   SingleSessionLiveRunnerStats stats_{};
   std::atomic<std::uint64_t> samples_started_{0};

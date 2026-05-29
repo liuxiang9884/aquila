@@ -702,10 +702,15 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
       .local_order_id = 0x0700000000000001ULL,
       .request_sequence = 11,
       .local_receive_ns = 1600,
+      .exchange_ns = 1300,
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitGtcCancel);
+  EXPECT_EQ(flow.stats().gtc_local_order_id, 0x0700000000000001ULL);
+  EXPECT_EQ(flow.stats().gtc_place_request_send_local_ns, 1000);
   EXPECT_EQ(flow.stats().gtc_place_ack_receive_local_ns, 1600);
+  EXPECT_EQ(flow.stats().gtc_place_ack_exchange_ns, 1300);
+  EXPECT_EQ(flow.stats().gtc_place_ack_exchange_to_local_ns, 300);
   EXPECT_EQ(flow.stats().gtc_place_ack_rtt_ns, 600);
   EXPECT_EQ(flow.stats().gtc_place_status, ProbeStageStatus::kAcked);
 
@@ -722,10 +727,14 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
       .local_order_id = 0x0700000000000001ULL,
       .request_sequence = 12,
       .local_receive_ns = 2900,
+      .exchange_ns = 2500,
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocPlace);
+  EXPECT_EQ(flow.stats().gtc_cancel_request_send_local_ns, 2000);
   EXPECT_EQ(flow.stats().gtc_cancel_ack_receive_local_ns, 2900);
+  EXPECT_EQ(flow.stats().gtc_cancel_ack_exchange_ns, 2500);
+  EXPECT_EQ(flow.stats().gtc_cancel_ack_exchange_to_local_ns, 400);
   EXPECT_EQ(flow.stats().gtc_cancel_ack_rtt_ns, 900);
   EXPECT_EQ(flow.stats().gtc_cancel_status, ProbeStageStatus::kAcked);
 
@@ -742,10 +751,15 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
       .local_order_id = 0x0700000000000002ULL,
       .request_sequence = 13,
       .local_receive_ns = 3700,
+      .exchange_ns = 3200,
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
+  EXPECT_EQ(flow.stats().ioc_local_order_id, 0x0700000000000002ULL);
+  EXPECT_EQ(flow.stats().ioc_place_request_send_local_ns, 3000);
   EXPECT_EQ(flow.stats().ioc_place_ack_receive_local_ns, 3700);
+  EXPECT_EQ(flow.stats().ioc_place_ack_exchange_ns, 3200);
+  EXPECT_EQ(flow.stats().ioc_place_ack_exchange_to_local_ns, 500);
   EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
   EXPECT_EQ(flow.stats().ioc_place_status, ProbeStageStatus::kAcked);
 }
@@ -1745,60 +1759,43 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
       .run_id = "run_1",
       .connect_ip = "52.198.250.74",
       .order_session_id = 7,
-      .connection_generation = 0,
       .round_index = 2,
       .sample_index = 3,
       .contract = "ZEC_USDT",
       .quantity_text = "0.1",
-      .sample_start_ns = 1000,
-      .sample_end_ns = 2000,
-      .gtc_bbo_ticker_id = 42,
-      .gtc_bbo_local_ns = 900,
-      .gtc_price_text = "75.0",
-      .ioc_bbo_ticker_id = 43,
-      .ioc_bbo_local_ns = 1400,
-      .ioc_price_text = "74.9",
-      .gtc_place_ack_receive_local_ns = 1100,
-      .gtc_place_ack_rtt_ns = 100,
-      .gtc_cancel_ack_receive_local_ns = 1300,
-      .gtc_cancel_ack_rtt_ns = 200,
-      .ioc_place_ack_receive_local_ns = 1600,
-      .ioc_place_ack_rtt_ns = 300,
-      .gtc_close_submitted = false,
-      .gtc_close_ack_receive_local_ns = 0,
-      .gtc_close_ack_rtt_ns = -1,
-      .gtc_close_status = "not_submitted",
-      .ioc_close_submitted = true,
-      .ioc_close_ack_receive_local_ns = 1700,
-      .ioc_close_ack_rtt_ns = 100,
-      .ioc_close_status = "rejected_flat_safe",
-      .gtc_place_status = "acked",
-      .gtc_cancel_status = "acked",
-      .ioc_place_status = "acked",
+      .price_text = "74.9",
+      .probe_order_type = "ioc",
+      .order_action = "open",
+      .local_order_id = 102,
+      .request_sequence = 31,
+      .bbo_ticker_id = 43,
+      .bbo_local_ns = 1400,
+      .request_send_local_ns = 1500,
+      .ack_receive_local_ns = 1600,
+      .ack_exchange_ns = 1550,
+      .ack_exchange_to_local_ns = 50,
+      .ack_rtt_ns = 100,
+      .response_receive_local_ns = 1650,
+      .response_exchange_ns = 1610,
+      .response_exchange_to_local_ns = 40,
+      .response_rtt_ns = 150,
+      .status = "kTerminalConfirmed",
+      .terminal_feedback_kind = "kCancelled",
       .unexpected_fill = false,
       .invalid_for_rtt_distribution = false,
       .invalid_reason = "",
   });
   writer.Close();
 
-  EXPECT_EQ(
-      ReadTextFileForTest(output_path),
-      "run_id,connect_ip,order_session_id,connection_generation,round_index,"
-      "sample_index,contract,quantity_text,sample_start_ns,sample_end_ns,"
-      "gtc_bbo_ticker_id,gtc_bbo_local_ns,gtc_price_text,ioc_bbo_ticker_id,"
-      "ioc_bbo_local_ns,ioc_price_text,gtc_place_ack_receive_local_ns,"
-      "gtc_place_ack_rtt_ns,gtc_cancel_ack_receive_local_ns,"
-      "gtc_cancel_ack_rtt_ns,ioc_place_ack_receive_local_ns,"
-      "ioc_place_ack_rtt_ns,gtc_close_submitted,"
-      "gtc_close_ack_receive_local_ns,gtc_close_ack_rtt_ns,gtc_close_status,"
-      "ioc_close_submitted,ioc_close_ack_receive_local_ns,"
-      "ioc_close_ack_rtt_ns,ioc_close_status,gtc_place_status,"
-      "gtc_cancel_status,ioc_place_status,unexpected_fill,"
-      "invalid_for_rtt_distribution,invalid_reason\n"
-      "run_1,52.198.250.74,7,0,2,3,ZEC_USDT,0.1,1000,2000,42,900,"
-      "75.0,43,1400,74.9,1100,100,1300,200,1600,300,false,0,-1,"
-      "not_submitted,true,1700,100,rejected_flat_safe,acked,acked,acked,"
-      "false,false,\n");
+  EXPECT_EQ(ReadTextFileForTest(output_path),
+            "run,ip,sid,round,sample,contract,qty,price,type,action,local_id,"
+            "req_seq,bbo_id,bbo_ns,send_ns,ack_recv_ns,ack_ex_ns,"
+            "ack_ex2local_ns,ack_rtt_ns,resp_recv_ns,resp_ex_ns,"
+            "resp_ex2local_ns,resp_rtt_ns,status,term_fb,fill,invalid,"
+            "inv_reason\n"
+            "run_1,52.198.250.74,7,2,3,ZEC_USDT,0.1,74.9,ioc,open,102,31,"
+            "43,1400,1500,1600,1550,50,100,1650,1610,40,150,"
+            "kTerminalConfirmed,kCancelled,false,false,\n");
 }
 
 TEST(GateOrderSessionRttProbeTest, SampleCsvWriterCreatesParentDirectory) {

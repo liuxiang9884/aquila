@@ -8,6 +8,7 @@
 
 #include "core/common/types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_latency.h"
 #include "exchange/gate/trading/order_types.h"
 #include "tools/gate/order_session_rtt_probe/order_mode.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
@@ -117,20 +118,60 @@ enum class ProbeStageStatus : std::uint8_t {
   kTerminalConfirmed,
 };
 
+struct ProbeStageCsvStats {
+  std::uint64_t local_order_id{0};
+  std::uint64_t request_sequence{0};
+  std::int64_t request_send_local_ns{0};
+  std::int64_t ack_receive_local_ns{0};
+  std::int64_t ack_exchange_ns{0};
+  std::int64_t ack_exchange_to_local_ns{0};
+  std::int64_t ack_rtt_ns{-1};
+  std::int64_t response_receive_local_ns{0};
+  std::int64_t response_exchange_ns{0};
+  std::int64_t response_exchange_to_local_ns{0};
+  std::int64_t response_rtt_ns{-1};
+  bool has_terminal_feedback_kind{false};
+  OrderFeedbackKind terminal_feedback_kind{OrderFeedbackKind::kAccepted};
+};
+
 struct ProbeSampleStats {
+  ProbeStageCsvStats gtc_open_csv;
+  ProbeStageCsvStats gtc_cancel_csv;
+  ProbeStageCsvStats ioc_open_csv;
+  ProbeStageCsvStats gtc_close_csv;
+  ProbeStageCsvStats ioc_close_csv;
+  std::uint64_t gtc_local_order_id{0};
+  std::uint64_t ioc_local_order_id{0};
+  std::uint64_t gtc_close_local_order_id{0};
+  std::uint64_t ioc_close_local_order_id{0};
+  std::int64_t gtc_place_request_send_local_ns{0};
   std::int64_t gtc_place_ack_receive_local_ns{0};
+  std::int64_t gtc_place_ack_exchange_ns{0};
+  std::int64_t gtc_place_ack_exchange_to_local_ns{0};
   std::int64_t gtc_place_ack_rtt_ns{-1};
   ProbeStageStatus gtc_place_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t gtc_cancel_request_send_local_ns{0};
   std::int64_t gtc_cancel_ack_receive_local_ns{0};
+  std::int64_t gtc_cancel_ack_exchange_ns{0};
+  std::int64_t gtc_cancel_ack_exchange_to_local_ns{0};
   std::int64_t gtc_cancel_ack_rtt_ns{-1};
   ProbeStageStatus gtc_cancel_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t ioc_place_request_send_local_ns{0};
   std::int64_t ioc_place_ack_receive_local_ns{0};
+  std::int64_t ioc_place_ack_exchange_ns{0};
+  std::int64_t ioc_place_ack_exchange_to_local_ns{0};
   std::int64_t ioc_place_ack_rtt_ns{-1};
   ProbeStageStatus ioc_place_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t gtc_close_request_send_local_ns{0};
   std::int64_t gtc_close_ack_receive_local_ns{0};
+  std::int64_t gtc_close_ack_exchange_ns{0};
+  std::int64_t gtc_close_ack_exchange_to_local_ns{0};
   std::int64_t gtc_close_ack_rtt_ns{-1};
   ProbeStageStatus gtc_close_status{ProbeStageStatus::kNotSubmitted};
+  std::int64_t ioc_close_request_send_local_ns{0};
   std::int64_t ioc_close_ack_receive_local_ns{0};
+  std::int64_t ioc_close_ack_exchange_ns{0};
+  std::int64_t ioc_close_ack_exchange_to_local_ns{0};
   std::int64_t ioc_close_ack_rtt_ns{-1};
   ProbeStageStatus ioc_close_status{ProbeStageStatus::kNotSubmitted};
   bool unexpected_fill{false};
@@ -168,6 +209,20 @@ class ProbeSampleFlow {
                                  .request_sequence = sent.request_sequence,
                                  .send_local_ns = sent.send_local_ns};
     *status = ProbeStageStatus::kSent;
+    std::int64_t* request_send_local_ns = MutableRequestSendLocalNs(stage);
+    if (request_send_local_ns != nullptr) {
+      *request_send_local_ns = sent.send_local_ns;
+    }
+    std::uint64_t* local_order_id = MutableLocalOrderId(stage);
+    if (local_order_id != nullptr) {
+      *local_order_id = LocalOrderIdForStage(stage);
+    }
+    ProbeStageCsvStats* csv = MutableCsvStats(stage);
+    if (csv != nullptr) {
+      csv->local_order_id = LocalOrderIdForStage(stage);
+      csv->request_sequence = sent.request_sequence;
+      csv->request_send_local_ns = sent.send_local_ns;
+    }
     return ProbeSampleTransition{.ok = true};
   }
 
@@ -192,7 +247,10 @@ class ProbeSampleFlow {
     if (rtt_ns < 0) {
       return Fail("negative ack rtt");
     }
-    return RecordAckRtt(stage, response.local_receive_ns, rtt_ns);
+    return RecordAckRtt(
+        stage, response.local_receive_ns, response.exchange_ns,
+        core::LatencyDeltaNs(response.local_receive_ns, response.exchange_ns),
+        rtt_ns);
   }
 
   [[nodiscard]] ProbeSampleTransition OnOrderFeedback(
@@ -208,11 +266,11 @@ class ProbeSampleFlow {
       return RecordSafetyCloseTerminalFeedback(stage, feedback);
     }
     if (IsFillFeedback(feedback)) {
-      return RecordUnexpectedFill(stage);
+      return RecordUnexpectedFill(stage, feedback);
     }
     if (stage == ProbeStage::kIocPlace &&
         feedback.kind == OrderFeedbackKind::kCancelled) {
-      return RecordIocNoFillTerminalFeedback();
+      return RecordIocNoFillTerminalFeedback(feedback);
     }
     return ProbeSampleTransition{.ok = true};
   }
@@ -307,6 +365,60 @@ class ProbeSampleFlow {
     return nullptr;
   }
 
+  [[nodiscard]] ProbeStageCsvStats* MutableCsvStats(ProbeStage stage) noexcept {
+    switch (stage) {
+      case ProbeStage::kGtcPlace:
+        return &stats_.gtc_open_csv;
+      case ProbeStage::kGtcCancel:
+        return &stats_.gtc_cancel_csv;
+      case ProbeStage::kGtcClose:
+        return &stats_.gtc_close_csv;
+      case ProbeStage::kIocPlace:
+        return &stats_.ioc_open_csv;
+      case ProbeStage::kIocClose:
+        return &stats_.ioc_close_csv;
+      case ProbeStage::kIdle:
+        return nullptr;
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] std::uint64_t* MutableLocalOrderId(ProbeStage stage) noexcept {
+    switch (stage) {
+      case ProbeStage::kGtcPlace:
+      case ProbeStage::kGtcCancel:
+        return &stats_.gtc_local_order_id;
+      case ProbeStage::kGtcClose:
+        return &stats_.gtc_close_local_order_id;
+      case ProbeStage::kIocPlace:
+        return &stats_.ioc_local_order_id;
+      case ProbeStage::kIocClose:
+        return &stats_.ioc_close_local_order_id;
+      case ProbeStage::kIdle:
+        return nullptr;
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] std::int64_t* MutableRequestSendLocalNs(
+      ProbeStage stage) noexcept {
+    switch (stage) {
+      case ProbeStage::kGtcPlace:
+        return &stats_.gtc_place_request_send_local_ns;
+      case ProbeStage::kGtcCancel:
+        return &stats_.gtc_cancel_request_send_local_ns;
+      case ProbeStage::kGtcClose:
+        return &stats_.gtc_close_request_send_local_ns;
+      case ProbeStage::kIocPlace:
+        return &stats_.ioc_place_request_send_local_ns;
+      case ProbeStage::kIocClose:
+        return &stats_.ioc_close_request_send_local_ns;
+      case ProbeStage::kIdle:
+        return nullptr;
+    }
+    return nullptr;
+  }
+
   [[nodiscard]] const ProbeStageSendState* SendState(
       ProbeStage stage) const noexcept {
     switch (stage) {
@@ -383,16 +495,28 @@ class ProbeSampleFlow {
 
   [[nodiscard]] ProbeSampleTransition RecordAckRtt(
       ProbeStage stage, std::int64_t ack_receive_local_ns,
+      std::int64_t ack_exchange_ns, std::int64_t ack_exchange_to_local_ns,
       std::int64_t rtt_ns) {
+    ProbeStageCsvStats* csv = MutableCsvStats(stage);
+    if (csv != nullptr) {
+      csv->ack_receive_local_ns = ack_receive_local_ns;
+      csv->ack_exchange_ns = ack_exchange_ns;
+      csv->ack_exchange_to_local_ns = ack_exchange_to_local_ns;
+      csv->ack_rtt_ns = rtt_ns;
+    }
     switch (stage) {
       case ProbeStage::kGtcPlace:
         stats_.gtc_place_ack_receive_local_ns = ack_receive_local_ns;
+        stats_.gtc_place_ack_exchange_ns = ack_exchange_ns;
+        stats_.gtc_place_ack_exchange_to_local_ns = ack_exchange_to_local_ns;
         stats_.gtc_place_ack_rtt_ns = rtt_ns;
         stats_.gtc_place_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitGtcCancel};
       case ProbeStage::kGtcCancel:
         stats_.gtc_cancel_ack_receive_local_ns = ack_receive_local_ns;
+        stats_.gtc_cancel_ack_exchange_ns = ack_exchange_ns;
+        stats_.gtc_cancel_ack_exchange_to_local_ns = ack_exchange_to_local_ns;
         stats_.gtc_cancel_ack_rtt_ns = rtt_ns;
         stats_.gtc_cancel_status = ProbeStageStatus::kAcked;
         if (!ProbeOrderModeUsesIoc(order_mode_)) {
@@ -403,6 +527,8 @@ class ProbeSampleFlow {
             .ok = true, .action = ProbeSampleAction::kSubmitIocPlace};
       case ProbeStage::kIocPlace:
         stats_.ioc_place_ack_receive_local_ns = ack_receive_local_ns;
+        stats_.ioc_place_ack_exchange_ns = ack_exchange_ns;
+        stats_.ioc_place_ack_exchange_to_local_ns = ack_exchange_to_local_ns;
         stats_.ioc_place_ack_rtt_ns = rtt_ns;
         stats_.ioc_place_status = ProbeStageStatus::kAcked;
         if (order_mode_ == ProbeOrderMode::kIoc) {
@@ -417,11 +543,15 @@ class ProbeSampleFlow {
             .ok = true, .action = ProbeSampleAction::kSubmitIocClose};
       case ProbeStage::kGtcClose:
         stats_.gtc_close_ack_receive_local_ns = ack_receive_local_ns;
+        stats_.gtc_close_ack_exchange_ns = ack_exchange_ns;
+        stats_.gtc_close_ack_exchange_to_local_ns = ack_exchange_to_local_ns;
         stats_.gtc_close_ack_rtt_ns = rtt_ns;
         stats_.gtc_close_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{.ok = true};
       case ProbeStage::kIocClose:
         stats_.ioc_close_ack_receive_local_ns = ack_receive_local_ns;
+        stats_.ioc_close_ack_exchange_ns = ack_exchange_ns;
+        stats_.ioc_close_ack_exchange_to_local_ns = ack_exchange_to_local_ns;
         stats_.ioc_close_ack_rtt_ns = rtt_ns;
         stats_.ioc_close_status = ProbeStageStatus::kAcked;
         return ProbeSampleTransition{.ok = true};
@@ -444,6 +574,7 @@ class ProbeSampleFlow {
     if (response.local_order_id != LocalOrderIdForStage(stage)) {
       return Fail("final response local_order_id does not match sample stage");
     }
+    RecordFinalResponseTiming(stage, response, *state);
     switch (response.kind) {
       case gate::OrderResponseKind::kAck:
         break;
@@ -500,7 +631,34 @@ class ProbeSampleFlow {
            feedback.cumulative_filled_quantity > 0.0;
   }
 
-  [[nodiscard]] ProbeSampleTransition RecordUnexpectedFill(ProbeStage stage) {
+  void RecordFinalResponseTiming(ProbeStage stage,
+                                 const gate::OrderResponse& response,
+                                 const ProbeStageSendState& state) {
+    ProbeStageCsvStats* csv = MutableCsvStats(stage);
+    if (csv == nullptr) {
+      return;
+    }
+    csv->response_receive_local_ns = response.local_receive_ns;
+    csv->response_exchange_ns = response.exchange_ns;
+    csv->response_exchange_to_local_ns =
+        core::LatencyDeltaNs(response.local_receive_ns, response.exchange_ns);
+    csv->response_rtt_ns =
+        core::LatencyDeltaNs(response.local_receive_ns, state.send_local_ns);
+  }
+
+  void RecordTerminalFeedbackKind(ProbeStage stage,
+                                  const OrderFeedbackEvent& feedback) {
+    ProbeStageCsvStats* csv = MutableCsvStats(stage);
+    if (csv == nullptr) {
+      return;
+    }
+    csv->has_terminal_feedback_kind = true;
+    csv->terminal_feedback_kind = feedback.kind;
+  }
+
+  [[nodiscard]] ProbeSampleTransition RecordUnexpectedFill(
+      ProbeStage stage, const OrderFeedbackEvent& feedback) {
+    RecordTerminalFeedbackKind(stage, feedback);
     MarkInvalid("feedback fill", /*unexpected_fill=*/true);
     if (stage == ProbeStage::kGtcPlace && !gtc_close_.sent) {
       return ProbeSampleTransition{
@@ -513,7 +671,9 @@ class ProbeSampleFlow {
     return ProbeSampleTransition{.ok = true};
   }
 
-  [[nodiscard]] ProbeSampleTransition RecordIocNoFillTerminalFeedback() {
+  [[nodiscard]] ProbeSampleTransition RecordIocNoFillTerminalFeedback(
+      const OrderFeedbackEvent& feedback) {
+    RecordTerminalFeedbackKind(ProbeStage::kIocPlace, feedback);
     ioc_place_terminal_confirmed_ = true;
     if (stats_.ioc_place_ack_rtt_ns < 0) {
       return ProbeSampleTransition{.ok = true};
@@ -525,6 +685,7 @@ class ProbeSampleFlow {
 
   [[nodiscard]] ProbeSampleTransition RecordSafetyCloseTerminalFeedback(
       ProbeStage stage, const OrderFeedbackEvent& feedback) {
+    RecordTerminalFeedbackKind(stage, feedback);
     ProbeStageStatus* status = MutableStatus(stage);
     if (feedback.kind == OrderFeedbackKind::kFilled) {
       if (status != nullptr) {
