@@ -1,7 +1,10 @@
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <fmt/format.h>
@@ -25,6 +28,7 @@
 #include "tools/gate/order_session_rtt_probe/sample_id_allocator.h"
 #include "tools/gate/order_session_rtt_probe/session_config_builder.h"
 #include "tools/gate/order_session_rtt_probe/session_state.h"
+#include "tools/gate/order_session_rtt_probe/session_watchdog.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 namespace {
@@ -89,6 +93,24 @@ struct FakeProbeOrderSession {
   std::uint64_t next_request_sequence{11};
   std::int64_t next_send_local_ns{1000};
   std::vector<SentOrder> sent_orders;
+};
+
+struct FakeWatchdogSession {
+  bool Start() {
+    started = true;
+    while (!stop_requested.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return start_result;
+  }
+
+  void Stop() {
+    stop_requested.store(true);
+  }
+
+  std::atomic<bool> stop_requested{false};
+  bool started{false};
+  bool start_result{true};
 };
 
 [[nodiscard]] ProbeConfigResult ParseMinimalProbeConfigWith(
@@ -497,9 +519,115 @@ TEST(GateOrderSessionRttProbeTest, IocOnlySampleStartsWithIocPlace) {
       });
 
   ASSERT_TRUE(transition.ok) << transition.error;
-  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kNone);
   EXPECT_EQ(flow.stats().gtc_place_status, ProbeStageStatus::kNotSubmitted);
   EXPECT_EQ(flow.stats().gtc_cancel_status, ProbeStageStatus::kNotSubmitted);
+  EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
+
+  const ProbeSampleTransition terminal_transition =
+      flow.OnOrderFeedback(OrderFeedbackEvent{
+          .kind = OrderFeedbackKind::kCancelled,
+          .local_order_id = 0x0700000000000002ULL,
+          .cumulative_filled_quantity = 0.0,
+          .left_quantity = 0.1,
+          .cancelled_quantity = 0.1,
+          .finish_reason = OrderFinishReason::kImmediateOrCancel,
+      });
+
+  ASSERT_TRUE(terminal_transition.ok) << terminal_transition.error;
+  EXPECT_EQ(terminal_transition.action, ProbeSampleAction::kFinish);
+  EXPECT_EQ(flow.stats().ioc_place_status,
+            ProbeStageStatus::kTerminalConfirmed);
+  EXPECT_EQ(flow.stats().ioc_close_status, ProbeStageStatus::kNotSubmitted);
+}
+
+TEST(GateOrderSessionRttProbeTest, IocOnlySampleClosesOnTerminalFillFeedback) {
+  ProbeSampleFlow flow(
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      },
+      ProbeOrderMode::kIoc);
+
+  EXPECT_EQ(flow.Start(), ProbeSampleAction::kSubmitIocPlace);
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kIocPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 21,
+                                   .send_local_ns = 1000,
+                               })
+                  .ok);
+  ASSERT_TRUE(flow.OnOrderResponse(gate::OrderResponse{
+                                       .kind = gate::OrderResponseKind::kAck,
+                                       .local_order_id = 0x0700000000000002ULL,
+                                       .request_sequence = 21,
+                                       .local_receive_ns = 1700,
+                                   })
+                  .ok);
+
+  const ProbeSampleTransition transition =
+      flow.OnOrderFeedback(OrderFeedbackEvent{
+          .kind = OrderFeedbackKind::kCancelled,
+          .local_order_id = 0x0700000000000002ULL,
+          .cumulative_filled_quantity = 0.03,
+          .left_quantity = 0.07,
+          .cancelled_quantity = 0.07,
+          .finish_reason = OrderFinishReason::kImmediateOrCancel,
+      });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitIocClose);
+  EXPECT_TRUE(flow.stats().unexpected_fill);
+  EXPECT_TRUE(flow.stats().invalid_for_rtt_distribution);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     IocOnlySampleWaitsForAckWhenNoFillFeedbackArrivesFirst) {
+  ProbeSampleFlow flow(
+      ProbeSampleLocalIds{
+          .gtc_local_order_id = 0x0700000000000001ULL,
+          .ioc_local_order_id = 0x0700000000000002ULL,
+          .gtc_close_local_order_id = 0x0700000000000003ULL,
+          .ioc_close_local_order_id = 0x0700000000000004ULL,
+      },
+      ProbeOrderMode::kIoc);
+
+  EXPECT_EQ(flow.Start(), ProbeSampleAction::kSubmitIocPlace);
+  ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kIocPlace,
+                               gate::OrderSendResult{
+                                   .status = gate::OrderSendStatus::kOk,
+                                   .request_sequence = 21,
+                                   .send_local_ns = 1000,
+                               })
+                  .ok);
+
+  ProbeSampleTransition transition = flow.OnOrderFeedback(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kCancelled,
+      .local_order_id = 0x0700000000000002ULL,
+      .cumulative_filled_quantity = 0.0,
+      .left_quantity = 0.1,
+      .cancelled_quantity = 0.1,
+      .finish_reason = OrderFinishReason::kImmediateOrCancel,
+  });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kNone);
+  EXPECT_EQ(flow.stats().ioc_place_status, ProbeStageStatus::kSent);
+  EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, -1);
+
+  transition = flow.OnOrderResponse(gate::OrderResponse{
+      .kind = gate::OrderResponseKind::kAck,
+      .local_order_id = 0x0700000000000002ULL,
+      .request_sequence = 21,
+      .local_receive_ns = 1700,
+  });
+
+  ASSERT_TRUE(transition.ok) << transition.error;
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFinish);
+  EXPECT_EQ(flow.stats().ioc_place_status,
+            ProbeStageStatus::kTerminalConfirmed);
   EXPECT_EQ(flow.stats().ioc_place_ack_rtt_ns, 700);
 }
 
@@ -1643,6 +1771,29 @@ TEST(GateOrderSessionRttProbeTest,
 
   EXPECT_EQ(ClassifySafetyCloseRejected(/*position_known_flat=*/true),
             SafetyCloseStatus::kRejectedFlatSafe);
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     SessionWatchdogStopsSessionWhenRunnerRequestsStop) {
+  FakeWatchdogSession session;
+  std::atomic<bool> runner_stop_requested{false};
+  std::thread stop_thread([&] {
+    while (!session.started) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    runner_stop_requested.store(true);
+  });
+
+  const SessionWatchdogResult result = RunSessionWithWatchdog(
+      session, [&] { return runner_stop_requested.load(); },
+      /*duration_sec=*/30.0, /*watchdog_grace_sec=*/0.0,
+      std::chrono::milliseconds(1));
+  stop_thread.join();
+
+  EXPECT_TRUE(result.start_result);
+  EXPECT_TRUE(result.runner_stop_observed);
+  EXPECT_FALSE(result.duration_watchdog_fired);
+  EXPECT_TRUE(session.stop_requested.load());
 }
 
 }  // namespace

@@ -210,6 +210,10 @@ class ProbeSampleFlow {
     if (IsFillFeedback(feedback)) {
       return RecordUnexpectedFill(stage);
     }
+    if (stage == ProbeStage::kIocPlace &&
+        feedback.kind == OrderFeedbackKind::kCancelled) {
+      return RecordIocNoFillTerminalFeedback();
+    }
     return ProbeSampleTransition{.ok = true};
   }
 
@@ -401,6 +405,14 @@ class ProbeSampleFlow {
         stats_.ioc_place_ack_receive_local_ns = ack_receive_local_ns;
         stats_.ioc_place_ack_rtt_ns = rtt_ns;
         stats_.ioc_place_status = ProbeStageStatus::kAcked;
+        if (order_mode_ == ProbeOrderMode::kIoc) {
+          if (ioc_place_terminal_confirmed_) {
+            stats_.ioc_place_status = ProbeStageStatus::kTerminalConfirmed;
+            return ProbeSampleTransition{.ok = true,
+                                         .action = ProbeSampleAction::kFinish};
+          }
+          return ProbeSampleTransition{.ok = true};
+        }
         return ProbeSampleTransition{
             .ok = true, .action = ProbeSampleAction::kSubmitIocClose};
       case ProbeStage::kGtcClose:
@@ -501,6 +513,16 @@ class ProbeSampleFlow {
     return ProbeSampleTransition{.ok = true};
   }
 
+  [[nodiscard]] ProbeSampleTransition RecordIocNoFillTerminalFeedback() {
+    ioc_place_terminal_confirmed_ = true;
+    if (stats_.ioc_place_ack_rtt_ns < 0) {
+      return ProbeSampleTransition{.ok = true};
+    }
+    stats_.ioc_place_status = ProbeStageStatus::kTerminalConfirmed;
+    return ProbeSampleTransition{.ok = true,
+                                 .action = ProbeSampleAction::kFinish};
+  }
+
   [[nodiscard]] ProbeSampleTransition RecordSafetyCloseTerminalFeedback(
       ProbeStage stage, const OrderFeedbackEvent& feedback) {
     ProbeStageStatus* status = MutableStatus(stage);
@@ -541,6 +563,7 @@ class ProbeSampleFlow {
   ProbeStageSendState gtc_close_;
   ProbeStageSendState ioc_place_;
   ProbeStageSendState ioc_close_;
+  bool ioc_place_terminal_confirmed_{false};
 };
 
 }  // namespace aquila::tools::gate_order_session_rtt_probe

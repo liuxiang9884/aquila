@@ -81,15 +81,46 @@ set(GATE_ORDER_SESSION_RTT_PROBE_CONFIG
 set(GATE_ORDER_SESSION_RTT_PROBE_CANDIDATES
     ${CMAKE_CURRENT_SOURCE_DIR}/order_session_rtt_probe/candidate_ips.txt)
 
-add_test(NAME gate_order_session_rtt_probe_execute_reject
+add_test(NAME gate_order_session_rtt_probe_initializes_logging
+         COMMAND bash -c [=[
+run_dir="/home/liuxiang/tmp/aquila_rtt_probe_logging_ctest_$$"
+mkdir -p "$run_dir"
+config="$run_dir/probe.toml"
+log_file="$run_dir/probe.log"
+cat > "$config" <<EOF
+[log]
+log_level = "info"
+file_sink_name = "$log_file"
+console_sink_name = ""
+backend_thread_name = "rtt_probe_ctest_log"
+
+[probe]
+name = "gate_order_session_rtt_probe"
+execute = false
+run_id = "logging_ctest"
+
+[probe.inputs]
+candidate_ip_file = "$2"
+EOF
+output="$("$1" --config "$config" --max-candidates 1 2>&1)"
+code=$?
+printf '%s\n' "$output"
+shopt -s nullglob
+log_files=("$run_dir"/probe*.log)
+[[ "$code" -eq 0 ]] &&
+  [[ "${#log_files[@]}" -ge 1 ]] &&
+  [[ -s "${log_files[0]}" ]] &&
+  [[ "$(cat "${log_files[0]}")" == *"gate_order_session_rtt_probe_start"* ]]
+]=] _ $<TARGET_FILE:gate_order_session_rtt_probe>
+                 ${GATE_ORDER_SESSION_RTT_PROBE_CANDIDATES})
+
+add_test(NAME gate_order_session_rtt_probe_execute_missing_candidate_reject
          COMMAND bash -c [=[
 output="$("$1" --config "$2" --execute --candidate-ip-file /home/liuxiang/tmp/does_not_exist_for_execute_guard.txt 2>&1)"
 code=$?
 printf '%s\n' "$output"
-[[ "$code" -eq 2 ]] &&
-  [[ "$output" == *"live execution is not implemented"* ]] &&
-  [[ "$output" != *"candidate_ip_error"* ]] &&
-  [[ "$output" != *"run_plan_error"* ]]
+[[ "$code" -eq 1 ]] &&
+  [[ "$output" == *"candidate_ip_error"* ]]
 ]=] _ $<TARGET_FILE:gate_order_session_rtt_probe>
                  ${GATE_ORDER_SESSION_RTT_PROBE_CONFIG})
 
