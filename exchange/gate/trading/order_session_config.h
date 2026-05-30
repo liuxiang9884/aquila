@@ -9,6 +9,7 @@
 
 #include "core/common/result.h"
 #include "core/websocket/types.h"
+#include "exchange/gate/trading/order_latency_diagnostics.h"
 #include "exchange/gate/trading/order_types.h"
 
 namespace aquila::gate {
@@ -24,6 +25,7 @@ struct OrderSessionConfig {
   OrderSessionCredentialsConfig credentials;
   std::size_t request_map_capacity{kDefaultOrderRequestMapCapacity};
   bool enable_tcp_info_diagnostics{false};
+  OrderLatencyDiagnosticConfig ack_latency_diagnostics{};
 };
 
 using OrderSessionConfigResult = Result<OrderSessionConfig>;

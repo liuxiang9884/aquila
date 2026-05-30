@@ -34,6 +34,15 @@ TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
   EXPECT_EQ(config.request_map_capacity,
             aquila::gate::kDefaultOrderRequestMapCapacity);
   EXPECT_FALSE(config.enable_tcp_info_diagnostics);
+  EXPECT_EQ(config.ack_latency_diagnostics.ack_rtt_threshold_ns, 20'000'000);
+  EXPECT_EQ(
+      config.ack_latency_diagnostics.send_to_first_drive_read_threshold_ns,
+      3'000'000);
+  EXPECT_EQ(config.ack_latency_diagnostics.drive_read_duration_threshold_ns,
+            1'000'000);
+  EXPECT_EQ(config.ack_latency_diagnostics.diagnostic_window_timeout_ns,
+            250'000'000);
+  EXPECT_EQ(config.ack_latency_diagnostics.max_logs_per_second, 10U);
 
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.connection.port, "443");
@@ -71,6 +80,11 @@ request_map_capacity = 1024
 
 [order_session.diagnostics]
 enable_tcp_info = true
+ack_rtt_threshold_ns = 0
+send_to_first_drive_read_threshold_ns = 1000
+drive_read_duration_threshold_ns = 2000
+diagnostic_window_timeout_ns = 3000
+max_logs_per_second = 4
 
 [order_session.credentials]
 api_key_env = "GATE_KEY"
@@ -92,6 +106,16 @@ bind_cpu_id = 7
   EXPECT_EQ(result.value.credentials.api_secret_env, "GATE_SECRET");
   EXPECT_EQ(result.value.request_map_capacity, 1024u);
   EXPECT_TRUE(result.value.enable_tcp_info_diagnostics);
+  EXPECT_EQ(result.value.ack_latency_diagnostics.ack_rtt_threshold_ns, 0);
+  EXPECT_EQ(result.value.ack_latency_diagnostics
+                .send_to_first_drive_read_threshold_ns,
+            1000);
+  EXPECT_EQ(
+      result.value.ack_latency_diagnostics.drive_read_duration_threshold_ns,
+      2000);
+  EXPECT_EQ(result.value.ack_latency_diagnostics.diagnostic_window_timeout_ns,
+            3000);
+  EXPECT_EQ(result.value.ack_latency_diagnostics.max_logs_per_second, 4U);
   EXPECT_EQ(result.value.connection.host, "private-gate.example");
   EXPECT_FALSE(result.value.connection.enable_tls);
   EXPECT_EQ(result.value.connection.target, "/v4/ws/btc");
@@ -138,6 +162,31 @@ bind_cpu_id = 4
   const auto result = aquila::gate::ParseOrderSessionConfig(toml);
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("request_map_capacity"), std::string::npos);
+}
+
+TEST(OrderSessionConfigTest, RejectsNegativeAckLatencyThreshold) {
+  const toml::parse_result toml = toml::parse(R"toml(
+[order_session]
+name = "gate_order_session"
+settle = "usdt"
+
+[order_session.diagnostics]
+ack_rtt_threshold_ns = -1
+
+[order_session.credentials]
+api_key_env = "GATE_KEY"
+api_secret_env = "GATE_SECRET"
+
+[order_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[order_session.websocket.execution_policy]
+bind_cpu_id = 4
+)toml");
+
+  const auto result = aquila::gate::ParseOrderSessionConfig(toml);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("ack_rtt_threshold_ns"), std::string::npos);
 }
 
 }  // namespace

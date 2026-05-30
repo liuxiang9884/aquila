@@ -42,7 +42,9 @@
 - Gate `OrderSession` 多连接诊断已落地：每个 session 生成进程内 `order_session_id`；`gate_order_session_connected`
   输出 owner CPU 和 TCP endpoint；`gate_order_send_ok` 输出 send CPU；`gate_order_response` 输出 ack CPU 和可选
   `TCP_INFO`；`gate_order_ack_latency_diagnostic` 输出 diagnostic CPU 和可选 `TCP_INFO`。`TCP_INFO` 由
-  `order_session.diagnostics.enable_tcp_info` 打开，默认关闭；字段索引见 `docs/diagnostic_fields.md`。
+  `order_session.diagnostics.enable_tcp_info` 打开，默认关闭；Ack latency diagnostic 默认阈值为
+  `ack_rtt_threshold_ns=20000000`，测试需要每单采集 write path / socket queue / runtime loop 细节时可临时设为
+  `0`，并把 `max_logs_per_second` 设到高于该 session 的预期下单速率；字段索引见 `docs/diagnostic_fields.md`。
 - 2026-05-27 完成一次 3 条独立 Gate `OrderSession` 并发 smoke，run 目录为
   `/home/liuxiang/tmp/20260527_063410_3session_tcpinfo/`。本轮使用 3 个独立 `lead_lag_strategy
   --smoke-unfilled-cancel` 进程，分别用 `strategy_id=4/5/6`，每个进程各自打开一条 order session、发送

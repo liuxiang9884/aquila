@@ -1,8 +1,10 @@
 #include "exchange/gate/trading/order_session_config.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -22,6 +24,7 @@ struct RawOrderSessionConfig {
   config::WebSocketConfig websocket;
   std::size_t request_map_capacity{kDefaultOrderRequestMapCapacity};
   bool enable_tcp_info_diagnostics{false};
+  OrderLatencyDiagnosticConfig ack_latency_diagnostics{};
 };
 
 struct RawConfigFile {
@@ -108,6 +111,35 @@ class OrderSessionConfigParser {
     return static_cast<std::size_t>(*value);
   }
 
+  [[nodiscard]] std::int64_t NonNegativeInt64Or(
+      toml::node_view<const toml::node> value_node, std::int64_t fallback,
+      std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    if (*value < 0) {
+      Fail(name, " must be non-negative");
+      return fallback;
+    }
+    return *value;
+  }
+
+  [[nodiscard]] std::uint32_t NonNegativeUint32Or(
+      toml::node_view<const toml::node> value_node, std::uint32_t fallback,
+      std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    if (*value < 0 || *value > static_cast<std::int64_t>(
+                                   std::numeric_limits<std::uint32_t>::max())) {
+      Fail(name, " must fit uint32");
+      return fallback;
+    }
+    return static_cast<std::uint32_t>(*value);
+  }
+
   [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
                             bool fallback) const {
     const std::optional<bool> value = value_node.value<bool>();
@@ -135,9 +167,47 @@ class OrderSessionConfigParser {
     if (!ok_) {
       return;
     }
+    const toml::node_view<const toml::node> diagnostics =
+        order_session["diagnostics"];
     config_.order_session.enable_tcp_info_diagnostics =
-        BoolOr(order_session["diagnostics"]["enable_tcp_info"],
+        BoolOr(diagnostics["enable_tcp_info"],
                config_.order_session.enable_tcp_info_diagnostics);
+    OrderLatencyDiagnosticConfig& ack_latency =
+        config_.order_session.ack_latency_diagnostics;
+    ack_latency.ack_rtt_threshold_ns = NonNegativeInt64Or(
+        diagnostics["ack_rtt_threshold_ns"], ack_latency.ack_rtt_threshold_ns,
+        "order_session.diagnostics.ack_rtt_threshold_ns");
+    if (!ok_) {
+      return;
+    }
+    ack_latency.send_to_first_drive_read_threshold_ns =
+        NonNegativeInt64Or(diagnostics["send_to_first_drive_read_threshold_ns"],
+                           ack_latency.send_to_first_drive_read_threshold_ns,
+                           "order_session.diagnostics."
+                           "send_to_first_drive_read_threshold_ns");
+    if (!ok_) {
+      return;
+    }
+    ack_latency.drive_read_duration_threshold_ns = NonNegativeInt64Or(
+        diagnostics["drive_read_duration_threshold_ns"],
+        ack_latency.drive_read_duration_threshold_ns,
+        "order_session.diagnostics.drive_read_duration_threshold_ns");
+    if (!ok_) {
+      return;
+    }
+    ack_latency.diagnostic_window_timeout_ns = NonNegativeInt64Or(
+        diagnostics["diagnostic_window_timeout_ns"],
+        ack_latency.diagnostic_window_timeout_ns,
+        "order_session.diagnostics.diagnostic_window_timeout_ns");
+    if (!ok_) {
+      return;
+    }
+    ack_latency.max_logs_per_second = NonNegativeUint32Or(
+        diagnostics["max_logs_per_second"], ack_latency.max_logs_per_second,
+        "order_session.diagnostics.max_logs_per_second");
+    if (!ok_) {
+      return;
+    }
 
     const toml::node_view<const toml::node> credentials =
         order_session["credentials"];
@@ -170,6 +240,8 @@ class OrderSessionConfigParser {
         config_.order_session.request_map_capacity;
     order_session_config.enable_tcp_info_diagnostics =
         config_.order_session.enable_tcp_info_diagnostics;
+    order_session_config.ack_latency_diagnostics =
+        config_.order_session.ack_latency_diagnostics;
     return Success(std::move(order_session_config));
   }
 

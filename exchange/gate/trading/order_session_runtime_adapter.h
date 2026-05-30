@@ -197,7 +197,8 @@ class OrderSessionRuntimeAdapter {
             std::move(config.connection), std::move(credentials),
             config.request_map_capacity,
             OrderSessionSocketDiagnosticsConfig{
-                .enable_tcp_info = config.enable_tcp_info_diagnostics}) {}
+                .enable_tcp_info = config.enable_tcp_info_diagnostics,
+                .ack_latency = config.ack_latency_diagnostics}) {}
 
   ~OrderSessionRuntimeAdapter() {
     Stop();

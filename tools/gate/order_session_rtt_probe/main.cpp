@@ -338,7 +338,9 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
       handler, live_plan.order_session_config.request_map_capacity,
       aquila::gate::OrderSessionSocketDiagnosticsConfig{
           .enable_tcp_info =
-              live_plan.order_session_config.enable_tcp_info_diagnostics});
+              live_plan.order_session_config.enable_tcp_info_diagnostics,
+          .ack_latency =
+              live_plan.order_session_config.ack_latency_diagnostics});
   Runner runner(config, live_plan, instrument_catalog, data_reader,
                 feedback_reader.value, sample_writer, duration_sec);
   runner.BindSession(session);
@@ -436,13 +438,14 @@ class LiveSessionState final : public LiveSessionStateBase {
       : plan_(std::move(plan_in)),
         instrument_catalog_(data_reader_config.instrument_catalog),
         data_reader_(std::move(data_reader_config)),
-        session_(
-            plan_.order_session_config.connection,
-            aquila::gate::LoginCredentials(credentials_ref), handler_,
-            plan_.order_session_config.request_map_capacity,
-            aquila::gate::OrderSessionSocketDiagnosticsConfig{
-                .enable_tcp_info =
-                    plan_.order_session_config.enable_tcp_info_diagnostics}),
+        session_(plan_.order_session_config.connection,
+                 aquila::gate::LoginCredentials(credentials_ref), handler_,
+                 plan_.order_session_config.request_map_capacity,
+                 aquila::gate::OrderSessionSocketDiagnosticsConfig{
+                     .enable_tcp_info =
+                         plan_.order_session_config.enable_tcp_info_diagnostics,
+                     .ack_latency =
+                         plan_.order_session_config.ack_latency_diagnostics}),
         runner_(config_ref, plan_, instrument_catalog_, data_reader_,
                 feedback_queue_, sample_writer_, duration_sec) {
     runner_.BindSession(session_);

@@ -167,6 +167,14 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 `gate_order_ack_latency_diagnostic`，由 `order_session.diagnostics.enable_tcp_info` 显式打开；默认关闭时仍输出
 `tcp_info_requested=false` / `tcp_info_available=false`，但不调用 `getsockopt(TCP_INFO)`。
 
+Ack latency diagnostic 的触发阈值在 `[order_session.diagnostics]` 中配置。默认
+`ack_rtt_threshold_ns=20000000`，即单笔 Ack RTT 严格大于 `20ms` 才输出
+`gate_order_ack_latency_diagnostic`；测试需要每单采样时可把 `ack_rtt_threshold_ns` 设为 `0`，并把
+`max_logs_per_second` 设到高于该 order session 的预期下单速率。相关运行期探针阈值默认值为
+`send_to_first_drive_read_threshold_ns=3000000`、
+`drive_read_duration_threshold_ns=1000000`、`diagnostic_window_timeout_ns=250000000`，
+`max_logs_per_second=10`。
+
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `tcp_info_requested` | response / diagnostic | experiment | `true` / `false` | 标记本条 log 是否启用了 TCP_INFO 采集，区分“未请求”和“请求但不可用”。 | TCP_INFO 诊断删除时同步删除。 |

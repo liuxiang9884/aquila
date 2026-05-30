@@ -134,6 +134,7 @@ struct OrderSessionDefaultPlainWebSocketPolicy
 
 struct OrderSessionSocketDiagnosticsConfig {
   bool enable_tcp_info{false};
+  OrderLatencyDiagnosticConfig ack_latency{};
 };
 
 namespace detail {
@@ -377,6 +378,7 @@ class OrderSession {
         quote_order_size_(HasGateSizeDecimalHeader(connection_)),
         credentials_(std::move(credentials)),
         socket_diagnostics_config_(socket_diagnostics_config),
+        ack_latency_diagnostics_(socket_diagnostics_config_.ack_latency),
         response_handler_(response_handler),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_),
@@ -1333,6 +1335,7 @@ class OrderSession {
   bool quote_order_size_{false};
   LoginCredentials credentials_;
   OrderSessionSocketDiagnosticsConfig socket_diagnostics_config_{};
+  OrderAckLatencyDiagnostics ack_latency_diagnostics_;
   ResponseHandler& response_handler_;
   MessageHandler message_handler_;
   Client client_;
@@ -1342,7 +1345,6 @@ class OrderSession {
       request_id_to_local_order_id_;
   absl::flat_hash_map<std::uint64_t, std::uint64_t>
       local_order_id_to_exchange_order_id_;
-  OrderAckLatencyDiagnostics ack_latency_diagnostics_;
   std::int64_t current_drive_read_start_ns_{0};
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   const std::uint64_t order_session_id_{
