@@ -20,6 +20,7 @@
    - 真实订单默认 strategy config 使用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`；不要误用 signal-only config 搭配 `--execute`。
    - `run_id` 默认用启动时间和标签生成，例如 `YYYYMMDD_HHMMSS_12pair_live`；临时运行目录写入 `/home/liuxiang/tmp/<run_id>/`。
    - 本轮 Ack RTT 复核默认使用 affinity profile `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml`；核心链路目标绑核为 Gate MD CPU2、Binance MD CPU3、strategy / Gate order owner CPU4、Gate order feedback CPU6、log backend CPU5。
+   - 如果用户明确要求“全部重新开”、“不与现存的放在一起”或等价表达，本轮必须使用隔离 SHM name 和 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时配置重新启动 Gate data、Binance data、Gate order feedback 和策略；不要复用正在服务其它 run 的 data / feedback SHM。若用户同时指定 Gate private non-TLS，则 Gate data、Gate order session 和 Gate order feedback 都使用 `fxws-private.gateapi.io:80`、`enable_tls=false`；Binance data session 仍按 Binance public TLS 配置。
 3. 如果本轮刚修改过代码或交易配置，先完成相应 build / test / commit，再启动 live run；不要用过期 binary 或未验证配置下真实订单。只修改报告或文档时不需要重编译。
 4. 生成本轮 affinity overlay：
    - 在启动或重启核心链路组件前，先生成 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时 TOML；该步骤不连接交易所、不读账户、不启动策略。
