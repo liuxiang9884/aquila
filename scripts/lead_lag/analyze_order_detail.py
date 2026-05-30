@@ -247,6 +247,8 @@ LATENCY_DETAIL_FIELDS = [
     "warnings",
 ]
 
+MAX_PLAUSIBLE_LOCAL_PIPELINE_DELTA_NS = 60_000_000_000
+
 
 LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_|feedback_event).*$")
 RAW_MESSAGE_PREFIXES = (
@@ -1351,6 +1353,19 @@ def ns_delta_text(lhs: str, rhs: str) -> str:
     return int_delta_text(lhs, rhs)
 
 
+def plausible_local_pipeline_delta_text(lhs: str, rhs: str) -> tuple[str, bool]:
+    delta_text = ns_delta_text(lhs, rhs)
+    if delta_text == "":
+        return "", False
+    try:
+        delta = int(delta_text)
+    except ValueError:
+        return "", False
+    if abs(delta) > MAX_PLAUSIBLE_LOCAL_PIPELINE_DELTA_NS:
+        return "", True
+    return delta_text, False
+
+
 def nonzero_ns_delta_text(lhs: str, rhs: str) -> str:
     if lhs in ("", "0") or rhs in ("", "0"):
         return ""
@@ -1373,6 +1388,15 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
         ack_receive_ns = order.get("ack_local_receive_ns", "")
         response_receive_ns = order.get("response_local_receive_ns", "")
         finished_ns = order_finished_ns(order)
+        bbo_to_strategy_ns, bbo_cross_clock = plausible_local_pipeline_delta_text(
+            order.get("on_book_ticker_entry_ns", ""),
+            order.get("trigger_local_ns", ""),
+        )
+        trigger_to_request_send_ns, trigger_cross_clock = (
+            plausible_local_pipeline_delta_text(
+                request_send_ns, order.get("trigger_local_ns", "")
+            )
+        )
         row = {
             "run_id": order.get("run_id", ""),
             "latency_key": f"{order.get('run_id', '')}:{local_order_id}",
@@ -1411,10 +1435,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             ),
             "send_to_finish_local_ns": ns_delta_text(finished_ns, request_send_ns),
             "ack_to_finish_local_ns": ns_delta_text(finished_ns, ack_receive_ns),
-            "bbo_to_strategy_ns": ns_delta_text(
-                order.get("on_book_ticker_entry_ns", ""),
-                order.get("trigger_local_ns", ""),
-            ),
+            "bbo_to_strategy_ns": bbo_to_strategy_ns,
             "strategy_to_signal_ns": ns_delta_text(
                 order.get("signal_decision_ns", ""),
                 order.get("on_book_ticker_entry_ns", ""),
@@ -1422,9 +1443,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "signal_to_request_send_ns": ns_delta_text(
                 request_send_ns, order.get("signal_decision_ns", "")
             ),
-            "trigger_to_request_send_ns": ns_delta_text(
-                request_send_ns, order.get("trigger_local_ns", "")
-            ),
+            "trigger_to_request_send_ns": trigger_to_request_send_ns,
             "ack_exchange_to_local_ns": order.get("ack_exchange_to_local_ns", ""),
             "response_exchange_to_local_ns": order.get(
                 "response_exchange_to_local_ns", ""
@@ -1493,6 +1512,10 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             append_row_warning(row, "missing_request_send_local_ns")
         if ack_receive_ns == "":
             append_row_warning(row, "missing_ack_local_receive_ns")
+        if bbo_cross_clock:
+            append_row_warning(row, "cross_clock_bbo_to_strategy_ns")
+        if trigger_cross_clock:
+            append_row_warning(row, "cross_clock_trigger_to_request_send_ns")
         rows.append(row)
     return [
         {field: row.get(field, "") for field in LATENCY_DETAIL_FIELDS}

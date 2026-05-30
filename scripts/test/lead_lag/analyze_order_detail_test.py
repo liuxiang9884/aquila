@@ -302,6 +302,29 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["signal_to_request_send_ns"], "250")
         self.assertEqual(row["trigger_to_request_send_ns"], "500")
 
+    def test_latency_detail_blanks_cross_clock_data_session_timing(self):
+        latency_rows = orders.build_latency_detail_rows(
+            [
+                {
+                    "run_id": "run-latency",
+                    "local_order_id": "42",
+                    "trigger_local_ns": "7324723301524054",
+                    "on_book_ticker_entry_ns": "1780125669161059481",
+                    "signal_decision_ns": "1780125669161060485",
+                    "request_send_local_ns": "1780125669161072654",
+                }
+            ]
+        )
+
+        self.assertEqual(len(latency_rows), 1)
+        row = latency_rows[0]
+        self.assertEqual(row["bbo_to_strategy_ns"], "")
+        self.assertEqual(row["strategy_to_signal_ns"], "1004")
+        self.assertEqual(row["signal_to_request_send_ns"], "12169")
+        self.assertEqual(row["trigger_to_request_send_ns"], "")
+        self.assertIn("cross_clock_bbo_to_strategy_ns", row["warnings"])
+        self.assertIn("cross_clock_trigger_to_request_send_ns", row["warnings"])
+
     def test_latency_detail_includes_gate_ack_diagnostic_outlier_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
