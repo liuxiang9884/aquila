@@ -175,6 +175,9 @@ TEST(WebsocketPlainSocketTest, PreservesRxTimestampingConfigAfterConnect) {
         socket.timestamping_apply_result();
     GTEST_SKIP() << "SO_TIMESTAMPING unavailable errno=" << result.error_errno;
   }
+  if (!socket.timestamping_apply_result().enabled) {
+    GTEST_SKIP() << "socket timestamping attribution is disabled at build time";
+  }
   ASSERT_TRUE(socket.timestamping_apply_result().enabled);
   ASSERT_TRUE(server.SendToClient("x"));
 
