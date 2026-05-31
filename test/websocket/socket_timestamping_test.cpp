@@ -32,5 +32,29 @@ TEST(WebsocketSocketTimestampingTest, ComputesLocalStageDurations) {
   EXPECT_EQ(stages.rx_software_to_ack_receive_ns, 30);
 }
 
+TEST(WebsocketSocketTimestampingTest, ApplyDisabledConfigSucceedsOnInvalidFd) {
+  SocketTimestampingConfig config;
+
+  const SocketTimestampingApplyResult result =
+      ApplySocketTimestampingConfig(-1, config);
+
+  EXPECT_TRUE(result.ok);
+  EXPECT_FALSE(result.enabled);
+}
+
+TEST(WebsocketSocketTimestampingTest, ApplyEnabledConfigReportsFailureOnInvalidFd) {
+  SocketTimestampingConfig config;
+  config.enabled = true;
+  config.tx_software = true;
+  config.rx_software = true;
+
+  const SocketTimestampingApplyResult result =
+      ApplySocketTimestampingConfig(-1, config);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_FALSE(result.enabled);
+  EXPECT_NE(result.error_errno, 0);
+}
+
 }  // namespace
 }  // namespace aquila::websocket

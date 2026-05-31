@@ -47,6 +47,7 @@ class PlainSocket {
     wants_read_ = false;
     wants_write_ = false;
     connect_pending_ = false;
+    timestamping_apply_result_ = {};
     return true;
   }
 
@@ -93,12 +94,28 @@ class PlainSocket {
 
       const int result = ::connect(fd, current->ai_addr, current->ai_addrlen);
       if (result == 0) {
+        const SocketTimestampingApplyResult timestamping =
+            ApplySocketTimestampingConfig(fd, config.socket_timestamping);
+        if (!timestamping.ok) {
+          timestamping_apply_result_ = timestamping;
+          ::close(fd);
+          continue;
+        }
+        timestamping_apply_result_ = timestamping;
         fd_ = fd;
         connected = true;
         break;
       }
 
       if (result < 0 && errno == EINPROGRESS) {
+        const SocketTimestampingApplyResult timestamping =
+            ApplySocketTimestampingConfig(fd, config.socket_timestamping);
+        if (!timestamping.ok) {
+          timestamping_apply_result_ = timestamping;
+          ::close(fd);
+          continue;
+        }
+        timestamping_apply_result_ = timestamping;
         fd_ = fd;
         connected = true;
         connect_pending_ = true;
@@ -182,10 +199,16 @@ class PlainSocket {
     return fd_;
   }
 
+  [[nodiscard]] SocketTimestampingApplyResult timestamping_apply_result()
+      const noexcept {
+    return timestamping_apply_result_;
+  }
+
   void Close() noexcept {
     wants_read_ = false;
     wants_write_ = false;
     connect_pending_ = false;
+    timestamping_apply_result_ = {};
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
@@ -214,17 +237,20 @@ class PlainSocket {
     wants_read_ = other.wants_read_;
     wants_write_ = other.wants_write_;
     connect_pending_ = other.connect_pending_;
+    timestamping_apply_result_ = other.timestamping_apply_result_;
 
     other.fd_ = -1;
     other.wants_read_ = false;
     other.wants_write_ = false;
     other.connect_pending_ = false;
+    other.timestamping_apply_result_ = {};
   }
 
   int fd_{-1};
   bool wants_read_{false};
   bool wants_write_{false};
   bool connect_pending_{false};
+  SocketTimestampingApplyResult timestamping_apply_result_{};
 };
 
 }  // namespace aquila::websocket
