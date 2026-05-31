@@ -492,6 +492,31 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
   EXPECT_EQ(session.inflight_count(), 1U);
 }
 
+TEST(OrderSessionTest,
+     DropsSocketTimestampingProbeWhenRequestWriteDoesNotCompleteImmediately) {
+  RecordingHandler handler;
+  websocket::ConnectionConfig config =
+      TestOrderSession<RecordingHandler>::MakeConfig();
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.tx_software = true;
+  config.socket_timestamping.tx_ack = true;
+  config.socket_timestamping.rx_software = true;
+  TestOrderSession<RecordingHandler> session(std::move(config), handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(PlaceAckResponse()));
+
+  ASSERT_EQ(handler.responses.size(), 1U);
+  EXPECT_FALSE(handler.responses[0].socket_timestamps.available);
+  EXPECT_EQ(handler.responses[0].socket_timestamps.write_complete_ns, 0);
+  EXPECT_EQ(handler.responses[0].socket_timestamps.tx_software_ns, 0);
+  EXPECT_EQ(handler.responses[0].socket_timestamps.tx_ack_ns, 0);
+  EXPECT_EQ(handler.responses[0].socket_timestamps.rx_software_ns, 0);
+}
+
 TEST(OrderSessionTest, RequestMapCapacityRejectsAdditionalInflightRequests) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler, 1);

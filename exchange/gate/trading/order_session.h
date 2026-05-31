@@ -529,12 +529,11 @@ class OrderSession {
     client_.Core().StartSocketTimestampingProbe(sequence);
     const OrderSendStatus status =
         MapSendStatus(SendText(encoded.text, &write_path));
-    client_.Core().SetSocketTimestampingProbeWriteComplete(
-        sequence, write_path.write_complete_ns);
+    const bool socket_timestamping_probe_active =
+        UpdateSocketTimestampingProbeAfterSend(sequence, status, write_path);
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
-      (void)client_.Core().FinishSocketTimestampingProbe(sequence, 0);
       LogGateOrderSendFailed("place", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
@@ -543,7 +542,8 @@ class OrderSession {
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
-                            MakeSocketTimestampingSendSnapshot(write_path));
+                            MakeSocketTimestampingSendSnapshot(
+                                write_path, socket_timestamping_probe_active));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
@@ -602,12 +602,11 @@ class OrderSession {
     client_.Core().StartSocketTimestampingProbe(sequence);
     const OrderSendStatus status =
         MapSendStatus(SendText(encoded.text, &write_path));
-    client_.Core().SetSocketTimestampingProbeWriteComplete(
-        sequence, write_path.write_complete_ns);
+    const bool socket_timestamping_probe_active =
+        UpdateSocketTimestampingProbeAfterSend(sequence, status, write_path);
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
-      (void)client_.Core().FinishSocketTimestampingProbe(sequence, 0);
       LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
@@ -616,7 +615,8 @@ class OrderSession {
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
-                            MakeSocketTimestampingSendSnapshot(write_path));
+                            MakeSocketTimestampingSendSnapshot(
+                                write_path, socket_timestamping_probe_active));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
@@ -1068,14 +1068,30 @@ class OrderSession {
 
   [[nodiscard]] websocket::SocketTimestampingSnapshot
   MakeSocketTimestampingSendSnapshot(
-      const websocket::WritePathDiagnostics& write_path) const noexcept {
+      const websocket::WritePathDiagnostics& write_path,
+      bool socket_timestamping_probe_active) const noexcept {
     websocket::SocketTimestampingSnapshot snapshot{};
-    if (!connection_.socket_timestamping.enabled) {
+    if (!socket_timestamping_probe_active) {
       return snapshot;
     }
     snapshot.available = true;
     snapshot.write_complete_ns = write_path.write_complete_ns;
     return snapshot;
+  }
+
+  [[nodiscard]] bool UpdateSocketTimestampingProbeAfterSend(
+      std::uint64_t sequence, OrderSendStatus status,
+      const websocket::WritePathDiagnostics& write_path) noexcept {
+    client_.Core().SetSocketTimestampingProbeWriteComplete(
+        sequence, write_path.write_complete_ns);
+    if (!connection_.socket_timestamping.enabled) {
+      return false;
+    }
+    if (status == OrderSendStatus::kOk && write_path.write_complete_ns > 0) {
+      return true;
+    }
+    (void)client_.Core().FinishSocketTimestampingProbe(sequence, 0);
+    return false;
   }
 
   void RecordAckLatencyDiagnostic(

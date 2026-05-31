@@ -1,21 +1,21 @@
 #ifndef AQUILA_CORE_WEBSOCKET_PLAIN_SOCKET_H_
 #define AQUILA_CORE_WEBSOCKET_PLAIN_SOCKET_H_
 
-#include <cerrno>
-#include <csignal>
-#include <cstddef>
-#include <array>
-#include <span>
-#include <string>
-#include <cstdint>
-
-#include <fcntl.h>
-#include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <array>
+#include <cerrno>
+#include <csignal>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string>
+
 #include "core/websocket/types.h"
+#include <fcntl.h>
+#include <netdb.h>
 
 namespace aquila::websocket {
 
@@ -59,13 +59,13 @@ class PlainSocket {
     wants_read_ = false;
     wants_write_ = false;
     connect_pending_ = false;
-    socket_timestamping_config_ = config.socket_timestamping;
 
     if (!Init()) {
       return false;
     }
 
     Close();
+    socket_timestamping_config_ = config.socket_timestamping;
 
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
