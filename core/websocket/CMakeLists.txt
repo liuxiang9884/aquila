@@ -16,6 +16,7 @@ target_sources(aquila_core
         reconnect_classifier.h
         runtime_clock.h
         runtime_policy.h
+        socket_timestamping.h
         state_machine.h
         tls_socket.h
         types.h

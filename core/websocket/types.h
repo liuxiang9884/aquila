@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/websocket/runtime_policy.h"
+#include "core/websocket/socket_timestamping.h"
 
 namespace aquila::websocket {
 
@@ -160,6 +161,7 @@ struct ConnectionConfig {
   ReconnectPolicy reconnect{};
   DegradedThresholds degraded{};
   RuntimePolicy runtime_policy{};
+  SocketTimestampingConfig socket_timestamping{};
 };
 
 template <typename OptionsT = DefaultWebSocketOptions>
