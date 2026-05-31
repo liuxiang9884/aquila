@@ -16,14 +16,14 @@ request_timeout_ms = 5000
 [probe.sampling]
 samples_per_session = 1
 cycle_cooldown_ms = 500
-order_session_interval_ms = 0
+order_session_interval_ms = 500
 max_events_per_drain = 128
 cycles_per_connection_generation = 1
 idle_policy = "spin"
 coordinator_cpu = -1
 
 [probe.order]
-order_mode = "ioc+gtc"
+order_mode = "ioc"
 side = "buy"
 passive_price_limit_fraction = 0.5
 quantity_mode = "min_quantity"
