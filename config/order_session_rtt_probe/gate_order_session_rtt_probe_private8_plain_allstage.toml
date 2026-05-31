@@ -24,8 +24,8 @@ max_errqueue_events_per_drain = 32
 
 [probe.sampling]
 samples_per_session = 1
-cycle_cooldown_us = 1000
-order_session_interval_us = 1000
+cycle_cooldown_us = 1000000
+order_session_interval_us = 1000000
 max_events_per_drain = 128
 cycles_per_connection_generation = 1
 idle_policy = "spin"
