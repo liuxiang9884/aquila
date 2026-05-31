@@ -136,6 +136,26 @@ TEST(WebsocketPlainSocketTest, ConnectIpOverridesTcpConnectHost) {
   EXPECT_TRUE(FinishConnect(socket));
 }
 
+TEST(WebsocketPlainSocketTest, DefersTimestampingUntilAfterColdHandshake) {
+  LoopbackTcpServer server;
+  ASSERT_TRUE(server.Start());
+
+  ConnectionConfig config{};
+  config.host = "logical.invalid";
+  config.connect_ip = "127.0.0.1";
+  config.port = std::to_string(server.port());
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.rx_software = true;
+
+  PlainSocket socket;
+  ASSERT_TRUE(socket.OpenAndConnect(config));
+  const SocketTimestampingApplyResult open_result =
+      socket.timestamping_apply_result();
+  ASSERT_TRUE(open_result.ok);
+  EXPECT_FALSE(open_result.enabled);
+  ASSERT_TRUE(FinishConnect(socket));
+}
+
 TEST(WebsocketPlainSocketTest, PreservesRxTimestampingConfigAfterConnect) {
   LoopbackTcpServer server;
   ASSERT_TRUE(server.Start());
@@ -148,12 +168,13 @@ TEST(WebsocketPlainSocketTest, PreservesRxTimestampingConfigAfterConnect) {
   config.socket_timestamping.rx_software = true;
 
   PlainSocket socket;
-  if (!socket.OpenAndConnect(config)) {
+  ASSERT_TRUE(socket.OpenAndConnect(config));
+  ASSERT_TRUE(FinishConnect(socket));
+  if (!socket.ApplySocketTimestamping(config.socket_timestamping)) {
     const SocketTimestampingApplyResult result =
         socket.timestamping_apply_result();
     GTEST_SKIP() << "SO_TIMESTAMPING unavailable errno=" << result.error_errno;
   }
-  ASSERT_TRUE(FinishConnect(socket));
   ASSERT_TRUE(socket.timestamping_apply_result().enabled);
   ASSERT_TRUE(server.SendToClient("x"));
 

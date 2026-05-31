@@ -170,6 +170,16 @@ class ColdPathLoop {
                              ConnectionPhase::kWsHandshaking);
           return false;
         }
+        if constexpr (requires(TransportSocketT& transport) {
+                        transport.ApplySocketTimestamping(
+                            config.socket_timestamping);
+                      }) {
+          if (!socket.ApplySocketTimestamping(config.socket_timestamping)) {
+            state_machine.Fail(ConnectionError::kSocketError,
+                               ConnectionPhase::kWsHandshaking);
+            return false;
+          }
+        }
         handshake_leftover_offset_ = header_end + 4U;
         handshake_leftover_size_ = response_bytes - handshake_leftover_offset_;
         state_machine.Enter(ConnectionPhase::kActive);

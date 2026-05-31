@@ -66,6 +66,8 @@ class PlainSocket {
 
     Close();
     socket_timestamping_config_ = config.socket_timestamping;
+    timestamping_apply_result_ = SocketTimestampingApplyResult{
+        .ok = true, .enabled = false, .error_errno = 0};
 
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -99,28 +101,12 @@ class PlainSocket {
 
       const int result = ::connect(fd, current->ai_addr, current->ai_addrlen);
       if (result == 0) {
-        const SocketTimestampingApplyResult timestamping =
-            ApplySocketTimestampingConfig(fd, config.socket_timestamping);
-        if (!timestamping.ok) {
-          timestamping_apply_result_ = timestamping;
-          ::close(fd);
-          continue;
-        }
-        timestamping_apply_result_ = timestamping;
         fd_ = fd;
         connected = true;
         break;
       }
 
       if (result < 0 && errno == EINPROGRESS) {
-        const SocketTimestampingApplyResult timestamping =
-            ApplySocketTimestampingConfig(fd, config.socket_timestamping);
-        if (!timestamping.ok) {
-          timestamping_apply_result_ = timestamping;
-          ::close(fd);
-          continue;
-        }
-        timestamping_apply_result_ = timestamping;
         fd_ = fd;
         connected = true;
         connect_pending_ = true;
@@ -132,6 +118,16 @@ class PlainSocket {
     }
     freeaddrinfo(addresses);
     return connected;
+  }
+
+  bool ApplySocketTimestamping(
+      const SocketTimestampingConfig& config) noexcept {
+    socket_timestamping_config_ = config;
+    timestamping_apply_result_ = ApplySocketTimestampingConfig(fd_, config);
+    if (!timestamping_apply_result_.ok) {
+      socket_timestamping_config_ = {};
+    }
+    return timestamping_apply_result_.ok;
   }
 
   bool FinishHandshake() noexcept {
