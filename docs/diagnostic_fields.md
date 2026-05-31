@@ -181,7 +181,8 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 probe，TLS 路径只保留 fd 级配置入口，不作为当前验收目标。所有阶段归因只使用本机同一时钟域；Gate
 `exchange_ns` 只能作为远端上下文，不能用于确认本机 / NIC 边界。TX 方向时间戳按 Linux
 `SOF_TIMESTAMPING_OPT_ID_TCP` 返回的 `ee_data` byte-stream id 匹配当前 request 写入范围；晚到的旧写入事件或不在当前
-request 范围内的事件会被忽略。字段缺失时原始时间戳为 0，阶段耗时为 `-1`。
+request 范围内的事件会被忽略；同一 request 出现多条同类 TX 事件时保留当前 request 范围内最远 byte id 的时间戳。
+字段缺失时原始时间戳为 0，阶段耗时为 `-1`。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |

@@ -339,7 +339,6 @@ class CriticalSession {
       return;
     }
     ResetSocketTimestampingProbe();
-    DrainSocketTimestampingEvents();
     socket_timestamping_sequence_ = sequence;
     socket_timestamping_snapshot_.available = true;
   }
@@ -420,6 +419,10 @@ class CriticalSession {
     socket_timestamping_probe_has_tx_id_range_ = false;
     socket_timestamping_probe_first_tx_id_ = 0;
     socket_timestamping_probe_last_tx_id_ = 0;
+    socket_timestamping_probe_has_tx_sched_id_ = false;
+    socket_timestamping_probe_tx_sched_id_ = 0;
+    socket_timestamping_probe_has_tx_software_id_ = false;
+    socket_timestamping_probe_tx_software_id_ = 0;
     socket_timestamping_probe_has_tx_ack_id_ = false;
     socket_timestamping_probe_tx_ack_id_ = 0;
   }
@@ -476,15 +479,16 @@ class CriticalSession {
                                        socket_timestamping_probe_last_tx_id_);
   }
 
-  [[nodiscard]] bool ShouldRecordSocketTimestampingTxAck(
-      std::uint32_t id) const noexcept {
-    if (!socket_timestamping_probe_has_tx_ack_id_) {
+  [[nodiscard]] bool ShouldRecordSocketTimestampingTxEvent(
+      std::uint32_t id, bool has_recorded_id,
+      std::uint32_t recorded_id) const noexcept {
+    if (!has_recorded_id) {
       return true;
     }
     return SocketTimestampingIdDistance(socket_timestamping_probe_first_tx_id_,
                                         id) >
            SocketTimestampingIdDistance(socket_timestamping_probe_first_tx_id_,
-                                        socket_timestamping_probe_tx_ack_id_);
+                                        recorded_id);
   }
 
   void TriggerReconnect(ConnectionError error) noexcept {
@@ -520,17 +524,27 @@ class CriticalSession {
     socket_timestamping_snapshot_.available = true;
     switch (event.kind) {
       case SocketTimestampingEventKind::kTxSched:
-        if (socket_timestamping_snapshot_.tx_sched_ns == 0) {
+        if (ShouldRecordSocketTimestampingTxEvent(
+                event.id, socket_timestamping_probe_has_tx_sched_id_,
+                socket_timestamping_probe_tx_sched_id_)) {
           socket_timestamping_snapshot_.tx_sched_ns = event.timestamp_ns;
+          socket_timestamping_probe_tx_sched_id_ = event.id;
+          socket_timestamping_probe_has_tx_sched_id_ = true;
         }
         return;
       case SocketTimestampingEventKind::kTxSoftware:
-        if (socket_timestamping_snapshot_.tx_software_ns == 0) {
+        if (ShouldRecordSocketTimestampingTxEvent(
+                event.id, socket_timestamping_probe_has_tx_software_id_,
+                socket_timestamping_probe_tx_software_id_)) {
           socket_timestamping_snapshot_.tx_software_ns = event.timestamp_ns;
+          socket_timestamping_probe_tx_software_id_ = event.id;
+          socket_timestamping_probe_has_tx_software_id_ = true;
         }
         return;
       case SocketTimestampingEventKind::kTxAck:
-        if (ShouldRecordSocketTimestampingTxAck(event.id)) {
+        if (ShouldRecordSocketTimestampingTxEvent(
+                event.id, socket_timestamping_probe_has_tx_ack_id_,
+                socket_timestamping_probe_tx_ack_id_)) {
           socket_timestamping_snapshot_.tx_ack_ns = event.timestamp_ns;
           socket_timestamping_probe_tx_ack_id_ = event.id;
           socket_timestamping_probe_has_tx_ack_id_ = true;
@@ -809,6 +823,10 @@ class CriticalSession {
   bool socket_timestamping_probe_has_tx_id_range_{false};
   std::uint32_t socket_timestamping_probe_first_tx_id_{0};
   std::uint32_t socket_timestamping_probe_last_tx_id_{0};
+  bool socket_timestamping_probe_has_tx_sched_id_{false};
+  std::uint32_t socket_timestamping_probe_tx_sched_id_{0};
+  bool socket_timestamping_probe_has_tx_software_id_{false};
+  std::uint32_t socket_timestamping_probe_tx_software_id_{0};
   bool socket_timestamping_probe_has_tx_ack_id_{false};
   std::uint32_t socket_timestamping_probe_tx_ack_id_{0};
 };
