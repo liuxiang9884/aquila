@@ -72,7 +72,8 @@ docs/evaluation_support.md
 - 8 条 private plain 全阶段配置：`config/order_session_rtt_probe/gate_order_session_rtt_probe_private8_plain_allstage.toml`，连接列表为 `config/order_session_rtt_probe/gate_order_session_rtt_private8_plain_connections.csv`，base order session config 为 `config/order_sessions/gate_order_session_rtt_probe_allstage.toml`。
 - `cycle_cooldown_us` / `order_session_interval_us` 已支持微秒粒度 pacing；旧 `*_ms` 字段仍按毫秒解析。
 - sample CSV 可写 Ack diagnostic window 快照：runtime hook / DriveRead、write path、socket send queue、`TCP_INFO`、socket timestamping 分段字段。`ack_rtt_threshold_ns=0` 时每 Ack 写入 sample CSV，不依赖 diagnostic log 是否被 `max_logs_per_second` 限流。
-- 下一步：接入 feedback reader、REST guard 和 single-session live order sample，再扩展到多 `connect_ip` 采集 GTC place、GTC cancel、IOC place Ack RTT。
+- `--execute` 当前支持 `order_mode="ioc"` 的 single-session / multi-session live sample，并已接 feedback SHM reader；REST preflight / run-end guard 仍未在工具内真正执行，真实测试前后需要外部 REST / 人工确认 flat。
+- 下一步：补工具内 REST guard，复核 IOC execute 的 failure / invalid 语义，然后再启用 `gtc` / `ioc+gtc` live execute 和离线分布分析脚本。
 
 ### DataReader / Recorder
 
@@ -210,7 +211,7 @@ rg 'aquila_evaluation' core exchange tools
 2. 若要复现 Ack RTT outlier，使用 private plain all-stage config，并临时设 `ack_rtt_threshold_ns=0`、合适的 `max_logs_per_second`；同时记录 endpoint、owner CPU、send CPU、ack CPU、diagnostic CPU、TCP_INFO 和 socket timestamping 字段。
 3. 分析时区分 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish；terminal lifecycle tail 不并入 Ack path。
 4. 若要确认是否发生在本机 NIC，需要补 hardware timestamp 或对 TCP flow 做 pcap；software timestamping 只能做大段归因。
-5. RTT probe 下一步实现 feedback reader、REST guard 和 single-session live order sample；仍不做自动 score / 切换。
+5. RTT probe 当前只做 measurement，不自动 score / 切换；下一步先补工具内 REST guard 和离线分布分析脚本，再考虑 `gtc` / `ioc+gtc` live execute。
 
 ### LeadLag
 
