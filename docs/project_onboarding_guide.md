@@ -42,6 +42,7 @@ docs/evaluation_support.md
 - LeadLag strategy 层生产订单闭环已完成；`lead_lag_strategy --execute` 已接真实 live-orders runtime，并在 `ContinuityLost` 后停止、返回 handoff exit code。外围 `run_live_with_guard.py` 负责 preflight、final REST check 和异常 stop-and-flat。
 - 当前不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 作为 V2 可选能力。
 - IOC partial-fill / decimal filled close 按 2026-05-27 决策不再作为当前阶段 active blocker；若 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
+- 2026-05-31 已完成 onboarding 和主要专题文档精简；`docs/project_onboarding_guide.md` 只保留事实源、入口、验证命令和下一步，细节继续放在各专题文档。
 
 ## 近期重要事实
 
@@ -235,7 +236,7 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的 onboarding 提示
 
-请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、`docs/project_onboarding_guide.md`、`docs/evaluation_support.md`。当前 branch / ahead / dirty 状态只信 `git status`；公共 order / runtime contract 在 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h`。
+请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、`docs/project_onboarding_guide.md`、`docs/evaluation_support.md`。当前 branch / ahead / dirty 状态只信 `git status`；公共 order / runtime contract 在 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h`。2026-05-31 已提交 onboarding 和主要专题文档精简，优先把本文件当作入口索引，细节再读对应专题文档。
 
 DataReader / data session：先读 `docs/data_reader_config.md`、`docs/data_session_config.md` 和 `docs/data_session_shm_communication_design.md`。`data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config；完整 dump 使用临时 `drain` 配置并观察 `overruns` / `skipped` / CPU 抢占。比较 Gate data session 不同 private IP 行情延迟时，`local_ns` 是 data session 接入时刻，需要按连接记录 endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间和 `skipped` / `overruns` 分组统计。
 
