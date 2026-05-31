@@ -31,12 +31,12 @@ void SampleCsvWriter::Write(const ProbeSampleCsvRow& row) noexcept {
     return;
   }
   writer_->append_row(
-      row.run_id, row.connect_ip, row.order_session_id, row.round_index,
-      row.sample_index, row.contract, row.quantity_text, row.price_text,
-      row.probe_order_type, row.order_action, row.local_order_id,
-      row.request_sequence, row.bbo_ticker_id, row.bbo_local_ns,
-      row.request_send_local_ns, row.ack_receive_local_ns, row.ack_exchange_ns,
-      row.ack_exchange_to_local_ns, row.ack_rtt_ns,
+      row.run_id, row.session_name, row.group, row.connect_ip,
+      row.order_session_id, row.round_index, row.sample_index, row.contract,
+      row.quantity_text, row.price_text, row.probe_order_type, row.order_action,
+      row.local_order_id, row.request_sequence, row.bbo_ticker_id,
+      row.bbo_local_ns, row.request_send_local_ns, row.ack_receive_local_ns,
+      row.ack_exchange_ns, row.ack_exchange_to_local_ns, row.ack_rtt_ns,
       row.response_receive_local_ns, row.response_exchange_ns,
       row.response_exchange_to_local_ns, row.response_rtt_ns, row.status,
       row.terminal_feedback_kind, row.unexpected_fill,

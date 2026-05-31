@@ -5,6 +5,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
@@ -16,8 +17,8 @@
 #include "core/trading/order_id.h"
 #include "exchange/gate/trading/order_types.h"
 #include "nova/utils/log.h"
-#include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
+#include "tools/gate/order_session_rtt_probe/connection_plan.h"
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 #include "tools/gate/order_session_rtt_probe/live_run_plan.h"
 #include "tools/gate/order_session_rtt_probe/local_feedback_queue.h"
@@ -57,6 +58,20 @@ std::string ReadTextFileForTest(const std::filesystem::path& path) {
   std::ostringstream buffer;
   buffer << input.rdbuf();
   return buffer.str();
+}
+
+ProbeConnectionConfig MakeProbeConnection(std::string name,
+                                          std::string connect_ip,
+                                          std::int32_t worker_cpu_id) {
+  return ProbeConnectionConfig{
+      .name = std::move(name),
+      .group = "public",
+      .host = "fx-ws.gateio.ws",
+      .connect_ip = std::move(connect_ip),
+      .port = "443",
+      .enable_tls = true,
+      .worker_cpu_id = worker_cpu_id,
+  };
 }
 
 struct FakeProbeOrderSession {
@@ -122,7 +137,7 @@ struct FakeWatchdogSession {
 name = "gate_order_session_rtt_probe"
 
 [probe.inputs]
-candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+connections_file = "/home/liuxiang/tmp/connections.csv"
 
 {}
 )toml",
@@ -141,18 +156,15 @@ run_id = "unit_run"
 [probe.inputs]
 order_session_config = "config/order_sessions/gate_order_session.toml"
 data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
-candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+connections_file = "/home/liuxiang/tmp/connections.csv"
 
 [probe.sessions]
-active_session_count = 1
-max_candidates = 1
 enable_tcp_info = true
 wait_login_timeout_ms = 10000
 request_timeout_ms = 5000
-worker_cpu_ids = []
 
 [probe.sampling]
-samples_per_ip = 1
+samples_per_session = 1
 cycle_cooldown_ms = 500
 order_session_interval_ms = 25
 max_events_per_drain = 128
@@ -195,9 +207,10 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
   EXPECT_EQ(result.value.run_id, "unit_run");
   EXPECT_EQ(result.value.inputs.order_session_config,
             "config/order_sessions/gate_order_session.toml");
-  EXPECT_EQ(result.value.sessions.active_session_count, 1U);
-  EXPECT_EQ(result.value.sessions.max_candidates, 1U);
+  EXPECT_EQ(result.value.inputs.connections_file,
+            "/home/liuxiang/tmp/connections.csv");
   EXPECT_TRUE(result.value.sessions.enable_tcp_info);
+  EXPECT_EQ(result.value.sampling.samples_per_session, 1U);
   EXPECT_EQ(result.value.sampling.cycle_cooldown_ms, 500U);
   EXPECT_EQ(result.value.sampling.order_session_interval_ms, 25U);
   EXPECT_EQ(result.value.order.order_mode, ProbeOrderMode::kIocAndGtc);
@@ -209,7 +222,7 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
             "/home/liuxiang/tmp/gate_order_session_rtt_probe");
 }
 
-TEST(GateOrderSessionRttProbeTest, RejectsZeroActiveSessionCount) {
+TEST(GateOrderSessionRttProbeTest, RejectsZeroSamplesPerSession) {
   const toml::parse_result parsed = toml::parse(R"toml(
 [probe]
 name = "gate_order_session_rtt_probe"
@@ -217,26 +230,26 @@ name = "gate_order_session_rtt_probe"
 [probe.inputs]
 order_session_config = "config/order_sessions/gate_order_session.toml"
 data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
-candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+connections_file = "/home/liuxiang/tmp/connections.csv"
 
-[probe.sessions]
-active_session_count = 0
+[probe.sampling]
+samples_per_session = 0
 )toml");
 
   const ProbeConfigResult result = ParseProbeConfig(parsed);
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("active_session_count"), std::string::npos);
+  EXPECT_NE(result.error.find("samples_per_session"), std::string::npos);
 }
 
 TEST(GateOrderSessionRttProbeTest, RejectsWrongTypedConfigValues) {
   const ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
-[probe.sessions]
-active_session_count = "1"
+[probe.sampling]
+samples_per_session = "1"
 )toml");
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("active_session_count"), std::string::npos);
+  EXPECT_NE(result.error.find("samples_per_session"), std::string::npos);
 }
 
 TEST(GateOrderSessionRttProbeTest, ValidatesFeedbackStrategyIdLane) {
@@ -322,19 +335,12 @@ reduce_only_close = false
 }
 
 TEST(GateOrderSessionRttProbeTest, RejectsInvalidCpuConfig) {
-  ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
+  const ProbeConfigResult result = ParseMinimalProbeConfigWith(R"toml(
 [probe.sampling]
 coordinator_cpu = 9223372036854775807
 )toml");
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("coordinator_cpu"), std::string::npos);
-
-  result = ParseMinimalProbeConfigWith(R"toml(
-[probe.sessions]
-worker_cpu_ids = [0, "bad"]
-)toml");
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("worker_cpu_ids"), std::string::npos);
 }
 
 TEST(GateOrderSessionRttProbeTest, RejectsUnsupportedConnectionGeneration) {
@@ -392,7 +398,7 @@ name = "gate_order_session_rtt_probe"
 sessions = "bad"
 
 [probe.inputs]
-candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
+connections_file = "/home/liuxiang/tmp/connections.csv"
 )toml");
   const ProbeConfigResult result = ParseProbeConfig(parsed);
 
@@ -401,54 +407,97 @@ candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
 }
 
 TEST(GateOrderSessionRttProbeTest,
-     LoadsCandidateIpsSkippingHeadersAndDeduping) {
-  const CandidateIpLoadResult result = LoadCandidateIpsFromText(
-      "# schema=aquila.gate.order_session.candidate_ips.v1\n"
-      "# generated_at_ns=1\n"
-      "52.198.250.74\n"
-      "52.199.212.24\n"
-      "52.198.250.74\n"
-      "\n"
-      "57.181.9.46\n",
-      CandidateIpLoadOptions{.max_candidates = 2});
+     LoadsConnectionCsvPreservingDuplicateConnectIps) {
+  const std::filesystem::path path =
+      TestTmpDir() / "aquila_rtt_probe_connections.csv";
+  {
+    std::ofstream output(path);
+    output << "name,group,host,connect_ip,port,enable_tls,worker_cpu_id\n"
+           << "private-0,private-10.0.1.154,fxws-private.gateapi.io,"
+              "10.0.1.154,80,false,6\n"
+           << "public-1,public-13.159.186.99,fx-ws.gateio.ws,"
+              "13.159.186.99,443,true,7\n"
+           << "private-2,private-10.0.1.154,fxws-private.gateapi.io,"
+              "10.0.1.154,80,false,8\n";
+  }
+
+  const ProbeConnectionsCsvResult result = LoadProbeConnectionsCsvFile(path);
 
   ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.ips.size(), 2U);
-  EXPECT_EQ(result.ips[0], "52.198.250.74");
-  EXPECT_EQ(result.ips[1], "52.199.212.24");
-  EXPECT_EQ(result.duplicate_count, 1U);
+  ASSERT_EQ(result.connections.size(), 3U);
+  EXPECT_EQ(result.connections[0].name, "private-0");
+  EXPECT_EQ(result.connections[0].group, "private-10.0.1.154");
+  EXPECT_EQ(result.connections[0].host, "fxws-private.gateapi.io");
+  EXPECT_EQ(result.connections[0].connect_ip, "10.0.1.154");
+  EXPECT_EQ(result.connections[0].port, "80");
+  EXPECT_FALSE(result.connections[0].enable_tls);
+  EXPECT_EQ(result.connections[0].worker_cpu_id, 6);
+  EXPECT_EQ(result.connections[2].connect_ip, "10.0.1.154");
+  EXPECT_EQ(result.connections[2].worker_cpu_id, 8);
 }
 
-TEST(GateOrderSessionRttProbeTest, RejectsInvalidCandidateIpLine) {
-  const CandidateIpLoadResult result = LoadCandidateIpsFromText(
-      "# schema=aquila.gate.order_session.candidate_ips.v1\n"
-      R"json({"ip":"52.198.250.74"})json"
-      "\n");
+TEST(GateOrderSessionRttProbeTest, RejectsInvalidConnectionCsvWorkerCpu) {
+  const std::filesystem::path path =
+      TestTmpDir() / "aquila_rtt_probe_bad_connections.csv";
+  {
+    std::ofstream output(path);
+    output << "name,group,host,connect_ip,port,enable_tls,worker_cpu_id\n"
+           << "private-0,private,fxws-private.gateapi.io,10.0.1.154,80,"
+              "false,bad\n";
+  }
+
+  const ProbeConnectionsCsvResult result = LoadProbeConnectionsCsvFile(path);
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("invalid candidate ip"), std::string::npos);
+  EXPECT_NE(result.error.find("worker_cpu_id"), std::string::npos);
+}
+
+TEST(GateOrderSessionRttProbeTest, ParsesConnectionsFileProbeConfig) {
+  const toml::parse_result parsed = toml::parse(R"toml(
+[probe]
+name = "gate_order_session_rtt_probe"
+
+[probe.inputs]
+connections_file = "/home/liuxiang/tmp/connections.csv"
+
+[probe.sessions]
+enable_tcp_info = true
+
+[probe.sampling]
+samples_per_session = 25
+)toml");
+
+  const ProbeConfigResult result = ParseProbeConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.inputs.connections_file,
+            "/home/liuxiang/tmp/connections.csv");
+  EXPECT_EQ(result.value.sampling.samples_per_session, 25U);
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionDryRunPlan) {
   ProbeConfig config;
-  config.inputs.candidate_ip_file = "/home/liuxiang/tmp/candidate_ips.txt";
-  config.sessions.active_session_count = 1;
-  config.sessions.max_candidates = 1;
-  config.sampling.samples_per_ip = 1;
+  config.inputs.connections_file = "/home/liuxiang/tmp/connections.csv";
+  config.sampling.samples_per_session = 1;
   config.sampling.cycles_per_connection_generation = 1;
 
   const ProbeRunPlanResult result =
-      BuildProbeRunPlanFromCandidateText(config,
-                                         "# generated_by=test\n"
-                                         "52.198.250.74\n"
-                                         "52.199.212.24\n");
+      BuildProbeRunPlan(config, {ProbeConnectionConfig{
+                                    .name = "public-0",
+                                    .group = "public",
+                                    .host = "fx-ws.gateio.ws",
+                                    .connect_ip = "52.198.250.74",
+                                    .port = "443",
+                                    .enable_tls = true,
+                                    .worker_cpu_id = 6,
+                                }});
 
   ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.value.candidate_ip_count, 1U);
+  EXPECT_EQ(result.value.connection_count, 1U);
   ASSERT_EQ(result.value.cycles.size(), 1U);
   EXPECT_EQ(result.value.cycles[0].cycle_index, 0U);
-  EXPECT_EQ(result.value.cycles[0].connect_ips,
-            (std::vector<std::string>{"52.198.250.74"}));
+  ASSERT_EQ(result.value.cycles[0].connections.size(), 1U);
+  EXPECT_EQ(result.value.cycles[0].connections[0].connect_ip, "52.198.250.74");
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsProbeSampleOrders) {
@@ -1549,24 +1598,23 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
   ProbeConfig config;
   config.run_id = "run_1";
   config.output.root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe";
-  config.sessions.active_session_count = 1;
   config.sessions.enable_tcp_info = true;
-  config.sessions.worker_cpu_ids = {6};
 
   const ProbeRunPlan run_plan{
-      .candidate_ip_count = 1,
-      .duplicate_candidate_ip_count = 0,
+      .connection_count = 1,
       .cycles =
           {
               ProbeCycle{
                   .cycle_index = 0,
                   .group_index = 0,
-                  .connect_ips = {"52.198.250.74"},
+                  .connections = {MakeProbeConnection("public-0",
+                                                      "52.198.250.74", 6)},
               },
               ProbeCycle{
                   .cycle_index = 1,
                   .group_index = 0,
-                  .connect_ips = {"52.198.250.74"},
+                  .connections = {MakeProbeConnection("public-0",
+                                                      "52.198.250.74", 6)},
               },
           },
   };
@@ -1581,6 +1629,8 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
       BuildSingleSessionLiveRunPlan(config, run_plan, base);
 
   ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.session_name, "public-0");
+  EXPECT_EQ(result.value.group, "public");
   EXPECT_EQ(result.value.connect_ip, "52.198.250.74");
   EXPECT_EQ(result.value.sample_count, 2U);
   EXPECT_EQ(result.value.order_session_config.connection.host,
@@ -1606,26 +1656,24 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
   ProbeConfig config;
   config.run_id = "run_8";
   config.output.root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe";
-  config.sessions.active_session_count = 8;
   config.sessions.enable_tcp_info = true;
-  config.sessions.worker_cpu_ids = {10, 11, 12, 13, 14, 15, 16, 17};
 
   ProbeRunPlan run_plan;
-  run_plan.candidate_ip_count = 8;
+  run_plan.connection_count = 8;
   for (std::uint64_t cycle_index = 0; cycle_index < 2; ++cycle_index) {
     run_plan.cycles.push_back(ProbeCycle{
         .cycle_index = cycle_index,
         .group_index = 0,
-        .connect_ips =
+        .connections =
             {
-                "10.0.0.1",
-                "10.0.0.2",
-                "10.0.0.3",
-                "10.0.0.4",
-                "10.0.0.5",
-                "10.0.0.6",
-                "10.0.0.7",
-                "10.0.0.8",
+                MakeProbeConnection("s0", "10.0.0.1", 10),
+                MakeProbeConnection("s1", "10.0.0.2", 11),
+                MakeProbeConnection("s2", "10.0.0.3", 12),
+                MakeProbeConnection("s3", "10.0.0.4", 13),
+                MakeProbeConnection("s4", "10.0.0.5", 14),
+                MakeProbeConnection("s5", "10.0.0.6", 15),
+                MakeProbeConnection("s6", "10.0.0.7", 16),
+                MakeProbeConnection("s7", "10.0.0.8", 17),
             },
     });
   }
@@ -1643,6 +1691,8 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
   EXPECT_EQ(result.value.paths.sample_csv_path,
             "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_8/"
             "order_session_rtt_samples.csv");
+  EXPECT_EQ(result.value.sessions[0].session_name, "s0");
+  EXPECT_EQ(result.value.sessions[0].group, "public");
   EXPECT_EQ(result.value.sessions[0].connect_ip, "10.0.0.1");
   EXPECT_EQ(result.value.sessions[0].sample_count, 2U);
   EXPECT_EQ(result.value.sessions[0].order_session_id, 0U);
@@ -1662,34 +1712,27 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
 }
 
 TEST(GateOrderSessionRttProbeTest,
-     BuildsMultiSessionLiveRunPlanAppliesEndpointOverrideFromConfig) {
-  const toml::parse_result parsed = toml::parse(R"toml(
-[probe]
-run_id = "run_private0"
-
-[probe.inputs]
-candidate_ip_file = "/home/liuxiang/tmp/candidate_ips_login.txt"
-
-[probe.sessions]
-active_session_count = 2
-max_candidates = 2
-
-[[probe.sessions.endpoint_overrides]]
-index = 0
-host = "fxws-private.gateapi.io"
-connect_ip = "10.0.1.154"
-port = "80"
-enable_tls = false
-)toml");
-  const ProbeConfigResult config_result = ParseProbeConfig(parsed);
-  ASSERT_TRUE(config_result.ok) << config_result.error;
-
+     BuildsMultiSessionLiveRunPlanUsesConnectionEndpointFields) {
+  ProbeConfig config;
+  config.run_id = "run_private0";
   ProbeRunPlan run_plan;
-  run_plan.candidate_ip_count = 2;
+  run_plan.connection_count = 2;
   run_plan.cycles.push_back(ProbeCycle{
       .cycle_index = 0,
       .group_index = 0,
-      .connect_ips = {"35.75.139.170", "13.159.186.99"},
+      .connections =
+          {
+              ProbeConnectionConfig{
+                  .name = "private-0",
+                  .group = "private-10.0.1.154",
+                  .host = "fxws-private.gateapi.io",
+                  .connect_ip = "10.0.1.154",
+                  .port = "80",
+                  .enable_tls = false,
+                  .worker_cpu_id = -1,
+              },
+              MakeProbeConnection("public-1", "13.159.186.99", -1),
+          },
   });
   gate::OrderSessionConfig base;
   base.connection.host = "fx-ws.gateio.ws";
@@ -1698,7 +1741,7 @@ enable_tls = false
   base.connection.enable_tls = true;
 
   const MultiSessionLiveRunPlanResult result =
-      BuildMultiSessionLiveRunPlan(config_result.value, run_plan, base);
+      BuildMultiSessionLiveRunPlan(config, run_plan, base);
 
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(result.value.sessions.size(), 2U);
@@ -1788,15 +1831,18 @@ TEST(GateOrderSessionRttProbeTest, LocalFeedbackQueueDrainsPushedEvents) {
 TEST(GateOrderSessionRttProbeTest, RejectsMultiSessionLiveRunPlan) {
   ProbeConfig config;
   config.run_id = "run_1";
-  config.sessions.active_session_count = 2;
   const ProbeRunPlan run_plan{
-      .candidate_ip_count = 2,
+      .connection_count = 2,
       .cycles =
           {
               ProbeCycle{
                   .cycle_index = 0,
                   .group_index = 0,
-                  .connect_ips = {"52.198.250.74", "52.199.212.24"},
+                  .connections =
+                      {
+                          MakeProbeConnection("public-0", "52.198.250.74", 6),
+                          MakeProbeConnection("public-1", "52.199.212.24", 7),
+                      },
               },
           },
   };
@@ -1819,6 +1865,8 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
   ASSERT_TRUE(writer.Open(output_path, &error)) << error;
   writer.Write(ProbeSampleCsvRow{
       .run_id = "run_1",
+      .session_name = "public-7",
+      .group = "public",
       .connect_ip = "52.198.250.74",
       .order_session_id = 7,
       .round_index = 2,
@@ -1850,13 +1898,14 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
   writer.Close();
 
   EXPECT_EQ(ReadTextFileForTest(output_path),
-            "run,ip,sid,round,sample,contract,qty,price,type,action,local_id,"
+            "run,session,group,ip,sid,round,sample,contract,qty,price,type,"
+            "action,local_id,"
             "req_seq,bbo_id,bbo_ns,send_ns,ack_recv_ns,ack_ex_ns,"
             "ack_ex2local_ns,ack_rtt_ns,resp_recv_ns,resp_ex_ns,"
             "resp_ex2local_ns,resp_rtt_ns,status,term_fb,fill,invalid,"
             "inv_reason\n"
-            "run_1,52.198.250.74,7,2,3,ZEC_USDT,0.1,74.9,ioc,open,102,31,"
-            "43,1400,1500,1600,1550,50,100,1650,1610,40,150,"
+            "run_1,public-7,public,52.198.250.74,7,2,3,ZEC_USDT,0.1,74.9,"
+            "ioc,open,102,31,43,1400,1500,1600,1550,50,100,1650,1610,40,150,"
             "kTerminalConfirmed,kCancelled,false,false,\n");
 }
 
@@ -1914,23 +1963,27 @@ TEST(GateOrderSessionRttProbeTest, BuildsPassiveBuyUsingHalfPriceLimitDown) {
   EXPECT_EQ(result.bbo_local_ns, 2000);
 }
 
-TEST(GateOrderSessionRttProbeTest, RotatesCandidateGroupsByActiveSessionCount) {
+TEST(GateOrderSessionRttProbeTest, RepeatsConnectionSetForSamplesPerSession) {
   CycleScheduler scheduler(CycleSchedulerOptions{
-      .candidate_ips = {"ip0", "ip1", "ip2", "ip3", "ip4"},
-      .active_session_count = 2,
-      .samples_per_ip = 2,
+      .connections =
+          {
+              MakeProbeConnection("s0", "10.0.0.1", 6),
+              MakeProbeConnection("s1", "10.0.0.2", 7),
+          },
+      .samples_per_session = 2,
       .cycles_per_connection_generation = 1,
   });
 
   ASSERT_TRUE(scheduler.HasNextCycle());
-  EXPECT_EQ(scheduler.NextCycle().connect_ips,
-            (std::vector<std::string>{"ip0", "ip1"}));
-  EXPECT_EQ(scheduler.NextCycle().connect_ips,
-            (std::vector<std::string>{"ip2", "ip3"}));
-  EXPECT_EQ(scheduler.NextCycle().connect_ips,
-            (std::vector<std::string>{"ip4"}));
-  EXPECT_EQ(scheduler.NextCycle().connect_ips,
-            (std::vector<std::string>{"ip0", "ip1"}));
+  ProbeCycle first = scheduler.NextCycle();
+  ASSERT_EQ(first.connections.size(), 2U);
+  EXPECT_EQ(first.connections[0].name, "s0");
+  EXPECT_EQ(first.connections[1].name, "s1");
+  ProbeCycle second = scheduler.NextCycle();
+  ASSERT_EQ(second.connections.size(), 2U);
+  EXPECT_EQ(second.connections[0].name, "s0");
+  EXPECT_EQ(second.connections[1].name, "s1");
+  EXPECT_FALSE(scheduler.HasNextCycle());
 }
 
 TEST(GateOrderSessionRttProbeTest,

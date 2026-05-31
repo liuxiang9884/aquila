@@ -6,7 +6,6 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,6 +26,7 @@
 #include "exchange/gate/trading/order_session_config.h"
 #include "nova/utils/log.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
+#include "tools/gate/order_session_rtt_probe/connection_plan.h"
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 #include "tools/gate/order_session_rtt_probe/live_run_plan.h"
 #include "tools/gate/order_session_rtt_probe/local_feedback_queue.h"
@@ -41,28 +41,12 @@ namespace probe = aquila::tools::gate_order_session_rtt_probe;
 struct CliOptions {
   std::filesystem::path config_path{
       "config/order_session_rtt_probe/gate_order_session_rtt_probe.toml"};
-  std::filesystem::path candidate_ip_file_override;
-  std::optional<std::size_t> max_candidates_override;
-  std::optional<std::uint32_t> samples_per_ip_override;
-  std::optional<std::size_t> active_session_count_override;
+  std::filesystem::path connections_file_override;
+  std::optional<std::uint32_t> samples_per_session_override;
   double duration_sec{0.0};
   bool execute{false};
   bool live_preflight{false};
 };
-
-[[nodiscard]] aquila::Result<std::string> ReadTextFile(
-    const std::filesystem::path& path) {
-  aquila::Result<std::string> result;
-  std::ifstream file(path, std::ios::binary);
-  if (!file) {
-    result.error = fmt::format("failed to open '{}'", path.string());
-    return result;
-  }
-  result.value.assign(std::istreambuf_iterator<char>{file},
-                      std::istreambuf_iterator<char>{});
-  result.ok = true;
-  return result;
-}
 
 const char* EnvValue(const std::string& name) {
   if (name.empty()) {
@@ -82,24 +66,15 @@ struct OverrideResult {
 
 [[nodiscard]] OverrideResult ApplyOverrides(const CliOptions& options,
                                             probe::ProbeConfig* config) {
-  if (!options.candidate_ip_file_override.empty()) {
-    config->inputs.candidate_ip_file = options.candidate_ip_file_override;
+  if (!options.connections_file_override.empty()) {
+    config->inputs.connections_file = options.connections_file_override;
   }
-  if (options.max_candidates_override) {
-    config->sessions.max_candidates = *options.max_candidates_override;
-  }
-  if (options.samples_per_ip_override) {
-    if (*options.samples_per_ip_override == 0) {
-      return {.error = "--samples-per-ip must be positive"};
+  if (options.samples_per_session_override) {
+    if (*options.samples_per_session_override == 0) {
+      return {.error = "--samples-per-session must be positive"};
     }
-    config->sampling.samples_per_ip = *options.samples_per_ip_override;
-  }
-  if (options.active_session_count_override) {
-    if (*options.active_session_count_override == 0) {
-      return {.error = "--active-session-count must be positive"};
-    }
-    config->sessions.active_session_count =
-        *options.active_session_count_override;
+    config->sampling.samples_per_session =
+        *options.samples_per_session_override;
   }
   if (options.execute) {
     config->execute = true;
@@ -173,14 +148,16 @@ void ProbeOrderResponseCallback(
   static_cast<Runner*>(raw)->OnOrderResponse(response);
 }
 
-[[nodiscard]] std::string JoinConnectIps(
-    const std::vector<std::string>& connect_ips) {
+[[nodiscard]] std::string JoinConnections(
+    const std::vector<probe::ProbeConnectionConfig>& connections) {
   std::string joined;
-  for (std::size_t i = 0; i < connect_ips.size(); ++i) {
+  for (std::size_t i = 0; i < connections.size(); ++i) {
     if (i != 0) {
       joined.push_back(',');
     }
-    joined.append(connect_ips[i]);
+    joined.append(connections[i].name);
+    joined.push_back('=');
+    joined.append(connections[i].connect_ip);
   }
   return joined;
 }
@@ -189,20 +166,18 @@ void PrintPlan(const probe::ProbeConfig& config,
                const probe::ProbeRunPlan& plan) {
   NOVA_INFO(
       "gate_order_session_rtt_probe dry_run={} execute={} name={} run_id={} "
-      "candidate_ip_file={} candidate_ips={} duplicate_candidate_ips={} "
-      "active_session_count={} samples_per_ip={} cycles={} "
+      "connections_file={} connections={} samples_per_session={} cycles={} "
       "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={}",
       config.execute ? "false" : "true", config.execute ? "true" : "false",
-      config.name, config.run_id, config.inputs.candidate_ip_file.string(),
-      plan.candidate_ip_count, plan.duplicate_candidate_ip_count,
-      config.sessions.active_session_count, config.sampling.samples_per_ip,
+      config.name, config.run_id, config.inputs.connections_file.string(),
+      plan.connection_count, config.sampling.samples_per_session,
       plan.cycles.size(), config.sampling.cycle_cooldown_ms,
       config.sampling.order_session_interval_ms,
       magic_enum::enum_name(config.order.order_mode));
 
   for (const probe::ProbeCycle& cycle : plan.cycles) {
-    NOVA_INFO("cycle index={} group={} connect_ips={}", cycle.cycle_index,
-              cycle.group_index, JoinConnectIps(cycle.connect_ips));
+    NOVA_INFO("cycle index={} group={} connections={}", cycle.cycle_index,
+              cycle.group_index, JoinConnections(cycle.connections));
   }
 }
 
@@ -352,12 +327,13 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
 
   NOVA_INFO(
       "gate_order_session_rtt_probe execute=true live_single_session=true "
-      "run_id={} connect_ip={} order_session_host={} order_session_port={} "
-      "order_session_tls={} samples={} duration_sec={:.3f} "
+      "run_id={} session={} group={} connect_ip={} order_session_host={} "
+      "order_session_port={} order_session_tls={} samples={} "
+      "duration_sec={:.3f} "
       "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={} "
       "sample_csv_path={}",
-      config.run_id, live_plan.connect_ip,
-      live_plan.order_session_config.connection.host,
+      config.run_id, live_plan.session_name, live_plan.group,
+      live_plan.connect_ip, live_plan.order_session_config.connection.host,
       live_plan.order_session_config.connection.port,
       live_plan.order_session_config.connection.enable_tls ? "true" : "false",
       live_plan.sample_count, duration_sec, config.sampling.cycle_cooldown_ms,
@@ -646,11 +622,12 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
       live_plan.paths.sample_csv_path.string());
   for (const std::unique_ptr<LiveSessionStateBase>& state : sessions) {
     NOVA_INFO(
-        "gate_order_session_rtt_probe_session index={} connect_ip={} "
-        "samples={} order_session_host={} order_session_port={} "
+        "gate_order_session_rtt_probe_session index={} session={} group={} "
+        "connect_ip={} samples={} order_session_host={} order_session_port={} "
         "order_session_tls={} order_session_worker_cpu={} "
         "session_sample_csv_path={}",
-        state->plan().order_session_id, state->plan().connect_ip,
+        state->plan().order_session_id, state->plan().session_name,
+        state->plan().group, state->plan().connect_ip,
         state->plan().sample_count,
         state->plan().order_session_config.connection.host,
         state->plan().order_session_config.connection.port,
@@ -782,11 +759,13 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
     }
     NOVA_INFO(
         "gate_order_session_rtt_probe_session_summary index={} "
-        "connect_ip={} start_result={} exit_code={} stop_reason={} "
+        "session={} group={} connect_ip={} start_result={} exit_code={} "
+        "stop_reason={} "
         "samples_started={} samples_completed={} samples_failed={} "
         "data_reader_events={} feedback_events={} skipped_book_tickers={} "
         "sample_csv_path={}",
-        state->plan().order_session_id, state->plan().connect_ip,
+        state->plan().order_session_id, state->plan().session_name,
+        state->plan().group, state->plan().connect_ip,
         state->start_result() ? "true" : "false", session_exit_code,
         state->stop_reason(), stats.samples_started, stats.samples_completed,
         stats.samples_failed, stats.data_reader_events, stats.feedback_events,
@@ -814,13 +793,15 @@ void PrintLivePreflightPlan(const probe::ProbeConfig& config,
                             const probe::SingleSessionLiveRunPlan& live_plan) {
   NOVA_INFO(
       "gate_order_session_rtt_probe live_preflight=true execute=false "
-      "name={} run_id={} connect_ip={} sample_count={} run_dir={} "
+      "name={} run_id={} session={} group={} connect_ip={} sample_count={} "
+      "run_dir={} "
       "sample_csv_path={} rest_guard_csv_path={} raw_rest_dir={} "
       "order_session_host={} order_session_port={} order_session_target={} "
       "order_session_tls={} "
       "order_session_worker_cpu={} enable_tcp_info={} "
       "order_session_interval_ms={} order_mode={}",
-      config.name, config.run_id, live_plan.connect_ip, live_plan.sample_count,
+      config.name, config.run_id, live_plan.session_name, live_plan.group,
+      live_plan.connect_ip, live_plan.sample_count,
       live_plan.paths.run_dir.string(),
       live_plan.paths.sample_csv_path.string(),
       live_plan.paths.rest_guard_csv_path.string(),
@@ -857,12 +838,14 @@ void PrintMultiLivePreflightPlan(
       magic_enum::enum_name(config.order.order_mode));
   for (const probe::SingleSessionLiveRunPlan& session : live_plan.sessions) {
     NOVA_INFO(
-        "gate_order_session_rtt_probe_session index={} connect_ip={} "
-        "sample_count={} order_session_host={} order_session_port={} "
+        "gate_order_session_rtt_probe_session index={} session={} group={} "
+        "connect_ip={} sample_count={} order_session_host={} "
+        "order_session_port={} "
         "order_session_target={} order_session_tls={} "
         "order_session_worker_cpu={} local_order_id_first={} "
         "local_order_id_stride={} enable_tcp_info={}",
-        session.order_session_id, session.connect_ip, session.sample_count,
+        session.order_session_id, session.session_name, session.group,
+        session.connect_ip, session.sample_count,
         session.order_session_config.connection.host,
         session.order_session_config.connection.port,
         session.order_session_config.connection.target,
@@ -889,15 +872,15 @@ int Run(const CliOptions& options, const toml::table& toml) {
   }
   EnsureRunId(&config);
 
-  aquila::Result<std::string> candidate_text =
-      ReadTextFile(config.inputs.candidate_ip_file);
-  if (!candidate_text.ok) {
-    NOVA_ERROR("candidate_ip_error={}", candidate_text.error);
+  probe::ProbeConnectionsCsvResult connections_result =
+      probe::LoadProbeConnectionsCsvFile(config.inputs.connections_file);
+  if (!connections_result.ok) {
+    NOVA_ERROR("connections_csv_error={}", connections_result.error);
     return 1;
   }
 
-  probe::ProbeRunPlanResult plan_result =
-      probe::BuildProbeRunPlanFromCandidateText(config, candidate_text.value);
+  probe::ProbeRunPlanResult plan_result = probe::BuildProbeRunPlan(
+      config, std::move(connections_result.connections));
   if (!plan_result.ok) {
     NOVA_ERROR("run_plan_error={}", plan_result.error);
     return 1;
@@ -928,7 +911,7 @@ int Run(const CliOptions& options, const toml::table& toml) {
       }
       aquila::gate::LoginCredentials credentials{.api_key = api_key,
                                                  .api_secret = api_secret};
-      if (config.sessions.active_session_count == 1) {
+      if (plan_result.value.connection_count == 1) {
         probe::SingleSessionLiveRunPlanResult live_plan =
             probe::BuildSingleSessionLiveRunPlan(config, plan_result.value,
                                                  order_session_config.value);
@@ -957,7 +940,7 @@ int Run(const CliOptions& options, const toml::table& toml) {
       return RunMultiSessionExecute(std::move(config), live_plan.value,
                                     credentials, options.duration_sec);
     }
-    if (config.sessions.active_session_count == 1) {
+    if (plan_result.value.connection_count == 1) {
       probe::SingleSessionLiveRunPlanResult live_plan =
           probe::BuildSingleSessionLiveRunPlan(config, plan_result.value,
                                                order_session_config.value);
@@ -990,15 +973,10 @@ int main(int argc, char** argv) {
 
   CLI::App app{"Build a Gate order session RTT probe run plan"};
   app.add_option("--config", options.config_path, "Probe TOML path");
-  app.add_option("--candidate-ip-file", options.candidate_ip_file_override,
-                 "Override probe.inputs.candidate_ip_file");
-  app.add_option("--max-candidates", options.max_candidates_override,
-                 "Override probe.sessions.max_candidates");
-  app.add_option("--samples-per-ip", options.samples_per_ip_override,
-                 "Override probe.sampling.samples_per_ip");
-  app.add_option("--active-session-count",
-                 options.active_session_count_override,
-                 "Override probe.sessions.active_session_count");
+  app.add_option("--connections-file", options.connections_file_override,
+                 "Override probe.inputs.connections_file");
+  app.add_option("--samples-per-session", options.samples_per_session_override,
+                 "Override probe.sampling.samples_per_session");
   app.add_option("--duration-sec", options.duration_sec,
                  "Maximum live execute duration. 0 means sample-count bounded");
   app.add_flag("--execute", options.execute, "Enable live execution");

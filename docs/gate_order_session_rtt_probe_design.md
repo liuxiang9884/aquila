@@ -14,15 +14,16 @@
 - 第一版新增独立 C++ tool `gate_order_session_rtt_probe`；不改 LeadLag live runtime，不接入生产策略下单路径。
 - 当前已落地 V1a dry-run scaffold 和 live sample 前置纯逻辑：`tools/gate/order_session_rtt_probe/`、
   `config/order_session_rtt_probe/gate_order_session_rtt_probe.toml` 和 `gate_order_session_rtt_probe_test`。已覆盖配置解析、
-  login-verified candidate IP 读取、single-session run plan、pinned `connect_ip` order session config 派生、passive order 构造、
+  connections CSV 读取、重复 `connect_ip` 保留、single-session / multi-session run plan、pinned `connect_ip` order session
+  config 派生、passive order 构造、
   GTC place -> cancel -> IOC place 的 Ack 状态流转、GTC cancel reject 后立即派发 reduce-only close、sample executor
   订单派发、sample `local_order_id` lane 分配和 sample CSV schema / writer；sample flow 已保存每个 Ack 的
   `*_ack_receive_local_ns` 和 stage status，并校验 Ack / final response 的 `local_order_id` 必须匹配当前 stage 的
   expected id；纯状态机已覆盖 GTC cancel reject、feedback fill / timeout 后进入 reduce-only close、close Ack 后等待
   terminal feedback、close timeout fail 和 close filled terminal confirmation；配置已支持 `probe.order.order_mode =
   "ioc" | "gtc" | "ioc+gtc"`，以及同一 cycle 内 order session 之间的 `probe.sampling.order_session_interval_ms`
-  非阻塞 pacing；
-  `--execute` 仍会被显式拒绝，尚不提交真实订单。
+  非阻塞 pacing。连接维度已从 TOML `candidate_ip_file` / `endpoint_overrides` 迁到
+  `config/order_session_rtt_probe/gate_order_session_rtt_connections.csv`。
 - 第一版只采集数据，不输出自动 score，不选择最优连接，不写回生产配置。
 - RTT 主指标来自真实 Gate order session order Ack：`request_send_local_ns -> gate_order_response kind=kAck.local_receive_ns`。
 - 不使用 WebSocket handshake RTT、login RTT 或 no-order probe RTT 作为第一版主指标；这些路径不等价于 `futures.order_place`。
@@ -194,8 +195,9 @@ run end:
    `selected_for_rtt_probe=true`。该步骤仍不下单，只验证 private WebSocket login 是否可用。
 
 完整审计输出为 `candidate_ips.jsonl`，每个 IP 一行，schema 为
-`aquila.gate.order_session.ip_discovery.v1`。后续 RTT probe 默认只消费 `candidate_ips.txt`，该文件只包含
-`selected_for_rtt_probe=true` 的 IP：
+`aquila.gate.order_session.ip_discovery.v1`。脚本仍可输出只包含
+`selected_for_rtt_probe=true` IP 的 `candidate_ips.txt`，但 RTT probe 当前不直接消费该文件；需要把目标连接整理成
+connections CSV 后再运行 probe：
 
 ```text
 # schema=aquila.gate.order_session.candidate_ips.v1
@@ -235,9 +237,11 @@ handshake，启用后表示该 IP 当前也能完成 `futures.login`。
 | 1800s 多 resolver discovery | `/home/liuxiang/tmp/multi_resolver_1800s_20260528_055058/` | `records=48`，`selected_for_rtt_probe=48`；`system`、Cloudflare、Google、Quad9 主备 resolver 均覆盖 48 个 IP。 |
 | 48 IP login verify | `/home/liuxiang/tmp/login_verified_candidates_20260528_072242/` | `records=48`，`login_ok=48`，`selected_for_rtt_probe=48`；`login_latency_ns` min `11703225`、p50 `16820493`、max `31351150`。 |
 
-当前给 RTT probe 使用的候选文件为
-`/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt`。该文件 5 行 header 后是 48 行 IP；
-RTT probe 读取时跳过 `#` 开头的 header。
+当前仓库默认 RTT probe 连接文件为
+`config/order_session_rtt_probe/gate_order_session_rtt_connections.csv`。该 CSV 的每一行是一条独立
+`OrderSession` 连接，字段为 `name,group,host,connect_ip,port,enable_tls,worker_cpu_id`；行顺序就是 session
+顺序，`name` 必须唯一，`connect_ip` 允许重复。重复 `connect_ip` 表示对同一目标 IP 建立多条独立连接，用于比较相同
+remote endpoint 下不同连接 / owner CPU 的 Ack RTT 分布。
 
 ### RTT Probe
 
@@ -249,12 +253,11 @@ RTT probe 读取时跳过 `#` 开头的 header。
 ```
 
 V1a 中 `probe.feedback.*`、`probe.safety.*` 只做配置解析和边界校验，尚未执行 feedback reader、REST preflight / final flat。
-`probe.output.*` 的 sample CSV schema / writer 已落地并有本地测试，但还未被 live executor 调用。为避免下一步 live sample
+`probe.output.*` 的 sample CSV schema / writer 已落地并有本地测试。为避免下一步 live sample
 误用不安全配置，parser 已要求
 `probe.feedback.enabled`、`probe.safety.preflight_rest_check`、`probe.safety.run_end_rest_check`、
 `probe.safety.stop_on_continuity_lost`、`probe.safety.confirm_dedicated_account` 和 `probe.order.reduce_only_close`
-在 V1a 都必须为 `true`。`run_id` 为空时工具启动期会生成 `gate_order_session_rtt_probe_<ns>`。`--execute` 当前在读取
-candidate 文件和生成 plan 前就显式失败，防止 dry-run scaffold 误触 live 副作用。
+在 V1a 都必须为 `true`。`run_id` 为空时工具启动期会生成 `gate_order_session_rtt_probe_<ns>`。
 `probe.order.order_mode` 支持 `ioc`、`gtc`、`ioc+gtc`；`probe.sampling.order_session_interval_ms` 为非负 `uint32`，
 默认 `0`。dry-run / live-preflight 输出会打印当前 `order_mode` 和 `order_session_interval_ms`。
 
@@ -269,62 +272,44 @@ position-known-flat 证明尚未接入，不能只凭 close Ack 结束 sample。
 ```bash
 ./build/debug/tools/gate_order_session_rtt_probe \
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml \
-  --candidate-ip-file /home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt \
   --live-preflight
 ```
 
-`--live-preflight` 会读取 candidate IP、生成 run plan、加载 base Gate order session config，并构造 pinned `connect_ip`
+`--live-preflight` 会读取 connections CSV、生成 run plan、加载 base Gate order session config，并构造 pinned `connect_ip`
 session config、run output dir、sample CSV 和 REST guard 路径；它不连接 WebSocket、不启动 feedback reader、不执行 REST、
-不下单。当前该模式只支持 `active_session_count=1` 且所有 cycle 使用同一个 `connect_ip`。
+不下单。单行 CSV 生成 single-session 预检，多行 CSV 生成 multi-session 预检。
 
-默认配置先采用 single-session smoke：
+默认配置把连接维度放在 CSV 中，TOML 只保留运行参数：
 
 ```text
-active_session_count = 1
-max_candidates = 1
-samples_per_ip = 1
+connections_file = config/order_session_rtt_probe/gate_order_session_rtt_connections.csv
+samples_per_session = 1
 cycle_cooldown_ms = 500
-candidate_ip_file = /home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt
 ```
 
-可用下面的 override 临时扩大 dry-run plan，但不会下单：
+可用下面的 override 临时切换连接列表或样本数：
 
 ```bash
 ./build/debug/tools/gate_order_session_rtt_probe \
-  --max-candidates 8 \
-  --active-session-count 8 \
-  --samples-per-ip 20
+  --connections-file /home/liuxiang/tmp/rtt_probe_connections.csv \
+  --samples-per-session 20
 ```
 
-后续 live measurement 命令形态预计扩展为：
+live measurement 命令形态：
 
 ```bash
 ./build/release/tools/gate_order_session_rtt_probe \
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml \
-  --candidate-ip-file /home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt \
-  --samples-per-ip 20 \
-  --active-session-count 8 \
+  --connections-file /home/liuxiang/tmp/rtt_probe_connections.csv \
+  --samples-per-session 20 \
   --execute
 ```
 
 第一版可以沿用 base order session config 中的 `host`、`port`、TLS、credentials、decimal-size header 和 log 设置；
-`tools/gate/order_session_rtt_probe/session_config_builder.h` 已提供 pinned config builder，默认每个 candidate 只覆盖
-`connection.connect_ip`，可选覆盖 worker CPU 和 TCP_INFO 开关。若要在同一次 multi-session probe 中混测 public TLS
-和 private plain link，可在配置里按 session index 覆盖 endpoint：
-
-```toml
-[[probe.sessions.endpoint_overrides]]
-index = 0
-host = "fxws-private.gateapi.io"
-connect_ip = "10.0.1.154"
-port = "80"
-enable_tls = false
-```
-
-未覆盖的 session 继续沿用 base order session config 和 candidate file 中对应位置的 `connect_ip`。建议默认打开
-`order_session.diagnostics.enable_tcp_info=true` 的临时副本，
-但不要修改仓库默认配置。如需手工缩小候选池，生成一个只包含目标 IP 的临时 candidate file，并通过
-`--candidate-ip-file` 指向它；当前 CLI 没有重复 `--connect-ip` 参数。probe 的 contract 仍由最新 Gate `BookTicker`
+`tools/gate/order_session_rtt_probe/session_config_builder.h` 已提供 pinned config builder。当前每行 connection CSV 会覆盖
+`host`、`connect_ip`、`port`、`enable_tls` 和 `worker_cpu_id`；`worker_cpu_id=-1` 表示沿用 base order session config。
+若要在同一次 multi-session probe 中混测 public TLS 和 private plain link，直接在 CSV 中写不同行即可。建议默认打开
+`order_session.diagnostics.enable_tcp_info=true` 的临时副本，但不要修改仓库默认配置。probe 的 contract 仍由最新 Gate `BookTicker`
 行情事件决定，不通过命令行固定为单个 symbol。
 
 输出最终分两类；当前仅 sample CSV schema / writer 已落地，connection log 仍是 live executor 待实现项：
@@ -391,15 +376,12 @@ reconnect_rtt_summary.csv    # planned connection log + ip + type + action
 
 ## 采样顺序
 
-为了减少时间窗口偏差，不建议按 IP 一次跑完所有样本。第一版按 group round-robin 采样：从候选 IP 中选取
-`active_session_count=8` 个作为当前 group，完成一个行情触发 cycle 后，下一个 cycle 切到下一组 IP。
+为了减少时间窗口偏差，不建议按 IP 一次跑完所有样本。当前实现按 connections CSV 的完整连接集合执行每个 cycle：
+每条连接各提交一个 sample，完成一个行情触发 cycle 后进入 cooldown，再重复到 `samples_per_session` 次。
 
 ```text
-cycle 1: IP[0..7]
-cycle 2: IP[8..15]
-...
-cycle 6: IP[40..47]
-cycle 7: IP[0..7]
+cycle 1: connections.csv row[0..N-1]
+cycle 2: connections.csv row[0..N-1]
 ...
 ```
 
@@ -410,7 +392,7 @@ REST 复核互相干扰。
 
 ### 方案 A：每个活跃 OrderSession 一个 owner thread
 
-这是第一版 measurement tool 的推荐默认方案。每个 candidate `connect_ip` 启动一条 `OrderSession`，由自己的 owner
+这是第一版 measurement tool 的推荐默认方案。connections CSV 的每一行启动一条 `OrderSession`，由自己的 owner
 thread 运行现有 `BasicWebSocketClient::Start()` active loop。coordinator 通过每个 worker 的 command queue 串行下发
 probe command；place / cancel 实际在该 session owner thread 的 runtime hook 中执行。
 
@@ -424,7 +406,7 @@ probe command；place / cancel 实际在该 session owner thread 的 runtime hoo
 限制：
 
 - 每个 active-spin session 占用一个线程和 CPU 时间。
-- 第一版应限制 candidate 数量或允许配置 `max_active_sessions`，避免抢占 strategy / market data / feedback 的关键 CPU。
+- 第一版应限制 CSV 行数，避免抢占 strategy / market data / feedback 的关键 CPU。
 - coordinator 同一时刻只下发一个真实 probe order 序列，降低账户风险。
 
 ### 方案 B：Rotating worker
@@ -509,15 +491,16 @@ build/debug/tools/gate_order_session_rtt_probe \
 build/debug/tools/gate_order_session_rtt_probe \
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml \
   --live-preflight
-build/debug/tools/gate_order_session_rtt_probe --execute \
-  --candidate-ip-file /home/liuxiang/tmp/does_not_exist_for_execute_guard.txt
+build/debug/tools/gate_order_session_rtt_probe \
+  --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml \
+  --connections-file /home/liuxiang/tmp/does_not_exist_for_execute_guard.csv
 ctest --test-dir build/debug -R '(gate_order_session|order_session_config|gate_submit_response_parser)' --output-on-failure
 git diff --check
 ```
 
-其中 `--execute` smoke 期望 exit code `2`，且不能访问 candidate file、网络或账户。
+其中缺失 connections CSV smoke 期望 exit code `1`，且不能访问网络或账户。
 
-live 前先用单个 `connect_ip`、`samples-per-ip=1` 跑最小 smoke，确认：
+live 前先用单行 connections CSV、`samples-per-session=1` 跑最小 smoke，确认：
 
 - 能连到指定 remote endpoint。
 - GTC place Ack / cancel Ack / IOC place Ack 都能记录。

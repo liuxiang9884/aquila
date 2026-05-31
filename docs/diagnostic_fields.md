@@ -63,7 +63,9 @@
 
 ### OrderSession RTT probe CSV 字段
 
-这些字段由第一版 `gate_order_session_rtt_probe` 的 sample CSV schema / writer 定义。CSV 采用长表，每行对应一个已提交
+这些字段由第一版 `gate_order_session_rtt_probe` 的 sample CSV schema / writer 定义。连接集合由
+`probe.inputs.connections_file` 指向的 CSV 定义，字段为 `name,group,host,connect_ip,port,enable_tls,worker_cpu_id`；
+其中 `connect_ip` 允许重复，重复行代表不同 `OrderSession` 连接。sample CSV 采用长表，每行对应一个已提交
 order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IOC safety close。当前字段集只保留 RTT
 分析必须字段和建议诊断字段，并使用短字段名降低 CSV 宽度；连接级 endpoint / owner CPU 信息不重复写入每行 CSV，后续计划使用
 `gate_order_session_rtt_probe_connection` Nova 结构化 log 记录，当前 connection log 尚未落地。
@@ -71,6 +73,8 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `run` | `order_session_rtt_samples.csv` | experiment | 文本 | 关联同一次 RTT probe run 的连接 log 与 sample CSV。 | RTT probe schema 升级并迁移消费者后重审。 |
+| `session` | `order_session_rtt_samples.csv` | experiment | connections CSV 中唯一 `name` | 稳定区分同一个 `connect_ip` 的多条独立连接，是重复 IP 实验的主 join key。 | 同上。 |
+| `group` | `order_session_rtt_samples.csv` | experiment | connections CSV 中 `group` | 按连接类别聚合，例如 `public-<ip>`、`private-10.0.1.154` 或同一实验分组。 | 同上。 |
 | `ip` | `order_session_rtt_samples.csv` | experiment | IP 文本 | 被测 Gate TCP 直连 IP，是分组统计主 key。 | 同上。 |
 | `sid` | `order_session_rtt_samples.csv` | experiment | 本进程内单调 id | 关联 sample、连接 endpoint 和底层 order session log。 | 同上。 |
 | `connection_generation` | planned connection log | planned | 同一 `connect_ip` 内从 0 递增 | 区分同一个指定 IP 断开重连前后的 `OrderSession`，用于 reconnect RTT 对比。 | 同上。 |

@@ -251,16 +251,16 @@ Gate `OrderSession` RTT probe V1a dry-run：
   --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
 ```
 
-当前 V1a 只解析配置、读取 login-verified candidate IP 并生成 run plan；pinned session config builder、sample flow、
-sample executor、`local_order_id` 分配和 sample CSV writer 已作为 live sample 前置逻辑落地。sample flow 已保存 Ack 接收
+当前 V1a 解析 TOML 和 `probe.inputs.connections_file` 指向的 connections CSV 并生成 run plan；CSV 每行定义一条
+`OrderSession` 连接，`connect_ip` 允许重复。pinned session config builder、sample flow、sample executor、
+`local_order_id` 分配和 sample CSV writer 已作为 live sample 前置逻辑落地。sample flow 已保存 Ack 接收
 时间和 stage status，校验 Ack / final response `local_order_id` 必须匹配当前 stage，并已覆盖 GTC cancel reject 后立即派发
 reduce-only close、feedback fill / timeout 后进入 reduce-only close、close Ack 后等待 terminal feedback 的纯状态流转。可用
 `probe.order.order_mode` 选择 `ioc`、`gtc` 或默认 `ioc+gtc`；`probe.sampling.order_session_interval_ms=0` 表示同一
 cycle 内下一个 order session 等下一条行情触发，非 0 表示发完当前 order session 后设置非阻塞 deadline，到点后用当时最新
 BBO 下下一单，不额外等新行情、不 sleep / busy loop。可用
-`--live-preflight` 加载 candidate IP 和 base order session config，构建 single-session live plan 并打印输出路径；该模式
-不连接 WebSocket、不下单。`--execute` 仍会显式失败；真实下单前还需要接入 feedback reader、REST guard 和
-single-session live order sample。
+`--connections-file` 临时覆盖连接列表；可用 `--live-preflight` 加载 connections CSV 和 base order session config，构建
+single-session 或 multi-session live plan 并打印输出路径；该模式不连接 WebSocket、不下单。
 
 仓库内 Gate data session 示例配置使用公网 `wss://fx-ws.gateio.ws:443`，因此
 `enable_tls = true`。如果部署 private link / plain WS，需要使用对应 private endpoint 并显式设置

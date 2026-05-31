@@ -78,6 +78,7 @@ target_link_libraries(gate_order_session_failure_probe
 )
 
 add_executable(gate_order_session_rtt_probe
+    gate/order_session_rtt_probe/connection_plan.cpp
     gate/order_session_rtt_probe/config.cpp
     gate/order_session_rtt_probe/sample_csv_writer.cpp
     gate/order_session_rtt_probe/main.cpp
@@ -95,6 +96,7 @@ target_link_libraries(gate_order_session_rtt_probe
         nova
         PkgConfig::tomlplusplus
         quill::quill
+        unofficial::vincentlaucsb-csv-parser::csv
 )
 
 add_executable(gate_demo_strategy

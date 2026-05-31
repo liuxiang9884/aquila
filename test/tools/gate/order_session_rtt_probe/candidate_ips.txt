@@ -1,4 +1,0 @@
-# schema=aquila.gate.order_session.candidate_ips.v1
-# generated_by=gate_order_session_rtt_probe_ctest
-52.198.250.74
-52.199.212.24

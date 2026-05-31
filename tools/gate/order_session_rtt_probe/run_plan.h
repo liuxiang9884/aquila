@@ -2,45 +2,31 @@
 #define AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_RUN_PLAN_H_
 
 #include <cstddef>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "core/common/result.h"
-#include "tools/gate/order_session_rtt_probe/candidate_ip_list.h"
 #include "tools/gate/order_session_rtt_probe/config.h"
+#include "tools/gate/order_session_rtt_probe/connection_plan.h"
 #include "tools/gate/order_session_rtt_probe/cycle_scheduler.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
 
 struct ProbeRunPlan {
-  std::size_t candidate_ip_count{0};
-  std::size_t duplicate_candidate_ip_count{0};
+  std::size_t connection_count{0};
   std::vector<ProbeCycle> cycles;
 };
 
 using ProbeRunPlanResult = Result<ProbeRunPlan>;
 
-[[nodiscard]] inline ProbeRunPlanResult BuildProbeRunPlanFromCandidateText(
-    const ProbeConfig& config, std::string_view candidate_ip_text) {
-  ProbeRunPlanResult result;
-  CandidateIpLoadResult candidates = LoadCandidateIpsFromText(
-      candidate_ip_text,
-      CandidateIpLoadOptions{.max_candidates = config.sessions.max_candidates});
-  if (!candidates.ok) {
-    result.error = std::move(candidates.error);
-    return result;
-  }
-
+[[nodiscard]] inline ProbeRunPlanResult BuildProbeRunPlan(
+    const ProbeConfig& config, std::vector<ProbeConnectionConfig> connections) {
   ProbeRunPlan plan;
-  plan.candidate_ip_count = candidates.ips.size();
-  plan.duplicate_candidate_ip_count = candidates.duplicate_count;
+  plan.connection_count = connections.size();
 
   CycleScheduler scheduler(CycleSchedulerOptions{
-      .candidate_ips = std::move(candidates.ips),
-      .active_session_count = config.sessions.active_session_count,
-      .samples_per_ip = config.sampling.samples_per_ip,
+      .connections = std::move(connections),
+      .samples_per_session = config.sampling.samples_per_session,
       .cycles_per_connection_generation =
           config.sampling.cycles_per_connection_generation,
   });
@@ -48,6 +34,7 @@ using ProbeRunPlanResult = Result<ProbeRunPlan>;
     plan.cycles.push_back(scheduler.NextCycle());
   }
 
+  ProbeRunPlanResult result;
   result.ok = true;
   result.value = std::move(plan);
   return result;

@@ -26,6 +26,8 @@ struct LiveRunPaths {
 };
 
 struct SingleSessionLiveRunPlan {
+  std::string session_name;
+  std::string group;
   std::string connect_ip;
   std::size_t sample_count{0};
   std::uint64_t order_session_id{0};
@@ -68,39 +70,24 @@ namespace live_run_plan_detail {
   return paths;
 }
 
-[[nodiscard]] inline const ProbeSessionEndpointOverride* FindEndpointOverride(
-    const ProbeSessionConfig& config, std::size_t index) noexcept {
-  for (const ProbeSessionEndpointOverride& endpoint :
-       config.endpoint_overrides) {
-    if (endpoint.index == index) {
-      return &endpoint;
-    }
-  }
-  return nullptr;
-}
-
-[[nodiscard]] inline std::optional<std::string> EndpointHost(
-    const ProbeSessionEndpointOverride* endpoint) {
-  if (endpoint == nullptr) {
+[[nodiscard]] inline std::optional<std::int32_t> ConnectionWorkerCpuId(
+    const ProbeConnectionConfig& connection) {
+  if (connection.worker_cpu_id < 0) {
     return std::nullopt;
   }
-  return endpoint->host;
+  return connection.worker_cpu_id;
 }
 
-[[nodiscard]] inline std::optional<std::string> EndpointPort(
-    const ProbeSessionEndpointOverride* endpoint) {
-  if (endpoint == nullptr) {
-    return std::nullopt;
-  }
-  return endpoint->port;
-}
-
-[[nodiscard]] inline std::optional<bool> EndpointEnableTls(
-    const ProbeSessionEndpointOverride* endpoint) {
-  if (endpoint == nullptr) {
-    return std::nullopt;
-  }
-  return endpoint->enable_tls;
+[[nodiscard]] inline PinnedOrderSessionOptions BuildPinnedOptions(
+    const ProbeConnectionConfig& connection, bool enable_tcp_info) {
+  return PinnedOrderSessionOptions{
+      .connect_ip = connection.connect_ip,
+      .host = std::optional<std::string>{connection.host},
+      .port = std::optional<std::string>{connection.port},
+      .enable_tls = connection.enable_tls,
+      .worker_cpu_id = ConnectionWorkerCpuId(connection),
+      .enable_tcp_info_diagnostics = enable_tcp_info,
+  };
 }
 
 }  // namespace live_run_plan_detail
@@ -128,52 +115,33 @@ BuildSingleSessionLiveRunPlan(
   if (config.run_id.empty()) {
     return live_run_plan_detail::Failure("run_id must be non-empty");
   }
-  if (config.sessions.active_session_count != 1) {
-    return live_run_plan_detail::Failure(
-        "single-session live run requires active_session_count=1");
-  }
   if (run_plan.cycles.empty()) {
     return live_run_plan_detail::Failure(
         "single-session live run has no cycles");
   }
 
-  const std::vector<std::string>& first_connect_ips =
-      run_plan.cycles.front().connect_ips;
-  if (first_connect_ips.size() != 1 || first_connect_ips.front().empty()) {
+  const std::vector<ProbeConnectionConfig>& first_connections =
+      run_plan.cycles.front().connections;
+  if (first_connections.size() != 1 || first_connections.front().name.empty()) {
     return live_run_plan_detail::Failure(
-        "single-session live run requires exactly one connect_ip per cycle");
+        "single-session live run requires exactly one connection per cycle");
   }
-  const std::string connect_ip = first_connect_ips.front();
+  const ProbeConnectionConfig connection = first_connections.front();
   for (const ProbeCycle& cycle : run_plan.cycles) {
-    if (cycle.connect_ips.size() != 1 ||
-        cycle.connect_ips.front() != connect_ip) {
+    if (cycle.connections.size() != 1 ||
+        cycle.connections.front().name != connection.name) {
       return live_run_plan_detail::Failure(
           "single-session live run requires all cycles to use the same "
-          "connect_ip");
+          "connection");
     }
   }
-
-  std::optional<std::int32_t> worker_cpu_id;
-  if (!config.sessions.worker_cpu_ids.empty()) {
-    worker_cpu_id = config.sessions.worker_cpu_ids.front();
-  }
-  for (const ProbeSessionEndpointOverride& endpoint :
-       config.sessions.endpoint_overrides) {
-    if (endpoint.index != 0) {
-      return live_run_plan_detail::Failure(
-          "single-session live run endpoint override index must be 0");
-    }
-  }
-  const ProbeSessionEndpointOverride* endpoint =
-      live_run_plan_detail::FindEndpointOverride(config.sessions, 0);
-  const std::string plan_connect_ip =
-      endpoint != nullptr && endpoint->connect_ip ? *endpoint->connect_ip
-                                                  : connect_ip;
 
   SingleSessionLiveRunPlanResult result;
   result.ok = true;
   result.value = SingleSessionLiveRunPlan{
-      .connect_ip = plan_connect_ip,
+      .session_name = connection.name,
+      .group = connection.group,
+      .connect_ip = connection.connect_ip,
       .sample_count = run_plan.cycles.size(),
       .order_session_id = 0,
       .local_order_id_first = 1,
@@ -181,14 +149,8 @@ BuildSingleSessionLiveRunPlan(
       .paths = live_run_plan_detail::BuildLiveRunPaths(config),
       .order_session_config = BuildPinnedOrderSessionConfig(
           base_order_session_config,
-          PinnedOrderSessionOptions{
-              .connect_ip = plan_connect_ip,
-              .host = live_run_plan_detail::EndpointHost(endpoint),
-              .port = live_run_plan_detail::EndpointPort(endpoint),
-              .enable_tls = live_run_plan_detail::EndpointEnableTls(endpoint),
-              .worker_cpu_id = worker_cpu_id,
-              .enable_tcp_info_diagnostics = config.sessions.enable_tcp_info,
-          }),
+          live_run_plan_detail::BuildPinnedOptions(
+              connection, config.sessions.enable_tcp_info)),
   };
   return result;
 }
@@ -199,61 +161,49 @@ BuildSingleSessionLiveRunPlan(
   if (config.run_id.empty()) {
     return live_run_plan_detail::MultiFailure("run_id must be non-empty");
   }
-  const std::size_t session_count = config.sessions.active_session_count;
-  if (session_count <= 1) {
-    return live_run_plan_detail::MultiFailure(
-        "multi-session live run requires active_session_count > 1");
-  }
   if (run_plan.cycles.empty()) {
     return live_run_plan_detail::MultiFailure(
         "multi-session live run has no cycles");
   }
-
-  const std::vector<std::string>& first_connect_ips =
-      run_plan.cycles.front().connect_ips;
-  if (first_connect_ips.size() != session_count) {
+  const std::vector<ProbeConnectionConfig>& first_connections =
+      run_plan.cycles.front().connections;
+  const std::size_t session_count = first_connections.size();
+  if (session_count <= 1) {
     return live_run_plan_detail::MultiFailure(
-        "multi-session live run requires every cycle to have "
-        "active_session_count connect_ips");
+        "multi-session live run requires more than one connection");
   }
-  for (const std::string& connect_ip : first_connect_ips) {
-    if (connect_ip.empty()) {
+  for (const ProbeConnectionConfig& connection : first_connections) {
+    if (connection.name.empty() || connection.connect_ip.empty()) {
       return live_run_plan_detail::MultiFailure(
-          "multi-session live run requires non-empty connect_ip values");
+          "multi-session live run requires non-empty connection names and "
+          "connect_ip values");
     }
   }
   for (const ProbeCycle& cycle : run_plan.cycles) {
-    if (cycle.connect_ips != first_connect_ips) {
+    if (cycle.connections.size() != first_connections.size()) {
       return live_run_plan_detail::MultiFailure(
           "multi-session live run requires every cycle to reuse the same "
-          "connect_ip order");
+          "connection order");
+    }
+    for (std::size_t i = 0; i < first_connections.size(); ++i) {
+      if (cycle.connections[i].name != first_connections[i].name) {
+        return live_run_plan_detail::MultiFailure(
+            "multi-session live run requires every cycle to reuse the same "
+            "connection order");
+      }
     }
   }
 
   MultiSessionLiveRunPlanResult result;
   result.ok = true;
   result.value.paths = live_run_plan_detail::BuildLiveRunPaths(config);
-  for (const ProbeSessionEndpointOverride& endpoint :
-       config.sessions.endpoint_overrides) {
-    if (endpoint.index >= session_count) {
-      return live_run_plan_detail::MultiFailure(
-          "multi-session live run endpoint override index is outside "
-          "active_session_count");
-    }
-  }
   result.value.sessions.reserve(session_count);
   for (std::size_t i = 0; i < session_count; ++i) {
-    std::optional<std::int32_t> worker_cpu_id;
-    if (i < config.sessions.worker_cpu_ids.size()) {
-      worker_cpu_id = config.sessions.worker_cpu_ids[i];
-    }
-    const ProbeSessionEndpointOverride* endpoint =
-        live_run_plan_detail::FindEndpointOverride(config.sessions, i);
-    const std::string plan_connect_ip =
-        endpoint != nullptr && endpoint->connect_ip ? *endpoint->connect_ip
-                                                    : first_connect_ips[i];
+    const ProbeConnectionConfig& connection = first_connections[i];
     result.value.sessions.push_back(SingleSessionLiveRunPlan{
-        .connect_ip = plan_connect_ip,
+        .session_name = connection.name,
+        .group = connection.group,
+        .connect_ip = connection.connect_ip,
         .sample_count = run_plan.cycles.size(),
         .order_session_id = static_cast<std::uint64_t>(i),
         .local_order_id_first = 1 + static_cast<std::uint64_t>(i) * 4,
@@ -261,14 +211,8 @@ BuildSingleSessionLiveRunPlan(
         .paths = result.value.paths,
         .order_session_config = BuildPinnedOrderSessionConfig(
             base_order_session_config,
-            PinnedOrderSessionOptions{
-                .connect_ip = plan_connect_ip,
-                .host = live_run_plan_detail::EndpointHost(endpoint),
-                .port = live_run_plan_detail::EndpointPort(endpoint),
-                .enable_tls = live_run_plan_detail::EndpointEnableTls(endpoint),
-                .worker_cpu_id = worker_cpu_id,
-                .enable_tcp_info_diagnostics = config.sessions.enable_tcp_info,
-            }),
+            live_run_plan_detail::BuildPinnedOptions(
+                connection, config.sessions.enable_tcp_info)),
     });
   }
   return result;

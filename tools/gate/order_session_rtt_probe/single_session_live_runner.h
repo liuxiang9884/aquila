@@ -240,6 +240,8 @@ class SingleSessionLiveRunner {
     active_ids_ = ids;
     active_row_ = ProbeSampleCsvRow{
         .run_id = config_.run_id,
+        .session_name = plan_.session_name,
+        .group = plan_.group,
         .connect_ip = plan_.connect_ip,
         .order_session_id = plan_.order_session_id,
         .round_index = stats_.samples_started,

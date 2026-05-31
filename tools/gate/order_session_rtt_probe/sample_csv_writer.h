@@ -14,18 +14,21 @@ namespace aquila::tools::gate_order_session_rtt_probe {
 
 struct OrderSessionRttSampleCsvSchema {
   static constexpr char const* header =
-      "run,ip,sid,round,sample,contract,qty,price,type,action,local_id,"
+      "run,session,group,ip,sid,round,sample,contract,qty,price,type,action,"
+      "local_id,"
       "req_seq,bbo_id,bbo_ns,send_ns,ack_recv_ns,ack_ex_ns,"
       "ack_ex2local_ns,ack_rtt_ns,resp_recv_ns,resp_ex_ns,"
       "resp_ex2local_ns,resp_rtt_ns,status,term_fb,fill,invalid,"
       "inv_reason";
   static constexpr char const* format =
       "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
-      "{},{},{},{},{}";
+      "{},{},{},{},{},{},{}";
 };
 
 struct ProbeSampleCsvRow {
   std::string run_id;
+  std::string session_name;
+  std::string group;
   std::string connect_ip;
   std::uint64_t order_session_id{0};
   std::uint64_t round_index{0};

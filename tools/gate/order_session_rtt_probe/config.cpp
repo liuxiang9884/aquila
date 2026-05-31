@@ -122,41 +122,6 @@ namespace {
   return true;
 }
 
-[[nodiscard]] bool ReadNonNegativeSize(toml::node_view<const toml::node> node,
-                                       std::size_t fallback,
-                                       std::string_view name,
-                                       std::size_t* output,
-                                       std::string* error) {
-  const std::optional<std::int64_t> value = node.value<std::int64_t>();
-  if (Missing(node)) {
-    *output = fallback;
-    return true;
-  }
-  if (!value) {
-    *error = fmt::format("{} must be integer", name);
-    return false;
-  }
-  if (*value < 0) {
-    *error = fmt::format("{} must be non-negative", name);
-    return false;
-  }
-  *output = static_cast<std::size_t>(*value);
-  return true;
-}
-
-[[nodiscard]] bool ReadPositiveSize(toml::node_view<const toml::node> node,
-                                    std::size_t fallback, std::string_view name,
-                                    std::size_t* output, std::string* error) {
-  if (!ReadNonNegativeSize(node, fallback, name, output, error)) {
-    return false;
-  }
-  if (*output == 0) {
-    *error = fmt::format("{} must be positive", name);
-    return false;
-  }
-  return true;
-}
-
 [[nodiscard]] bool ReadInt32InRange(toml::node_view<const toml::node> node,
                                     std::int32_t fallback,
                                     std::string_view name,
@@ -214,134 +179,6 @@ namespace {
     return false;
   }
   *output = std::filesystem::path{*value};
-  return true;
-}
-
-[[nodiscard]] bool ReadWorkerCpuIds(toml::node_view<const toml::node> node,
-                                    std::vector<std::int32_t>* output,
-                                    std::string* error) {
-  output->clear();
-  if (Missing(node)) {
-    return true;
-  }
-  const toml::array* array = node.as_array();
-  if (array == nullptr) {
-    *error = "probe.sessions.worker_cpu_ids must be array";
-    return false;
-  }
-  output->reserve(array->size());
-  for (const toml::node& item : *array) {
-    const std::optional<std::int64_t> value = item.value<std::int64_t>();
-    if (!value || *value < 0 ||
-        *value > std::numeric_limits<std::int32_t>::max()) {
-      *error = "probe.sessions.worker_cpu_ids must contain non-negative int32";
-      return false;
-    }
-    output->push_back(static_cast<std::int32_t>(*value));
-  }
-  return true;
-}
-
-[[nodiscard]] bool ReadOptionalNonEmptyString(
-    toml::node_view<const toml::node> node, std::string_view name,
-    std::optional<std::string>* output, std::string* error) {
-  output->reset();
-  if (Missing(node)) {
-    return true;
-  }
-  const std::optional<std::string> value = node.value<std::string>();
-  if (!value) {
-    *error = fmt::format("{} must be string", name);
-    return false;
-  }
-  if (value->empty()) {
-    *error = fmt::format("{} must be non-empty", name);
-    return false;
-  }
-  *output = *value;
-  return true;
-}
-
-[[nodiscard]] bool ReadOptionalBool(toml::node_view<const toml::node> node,
-                                    std::string_view name,
-                                    std::optional<bool>* output,
-                                    std::string* error) {
-  output->reset();
-  if (Missing(node)) {
-    return true;
-  }
-  const std::optional<bool> value = node.value<bool>();
-  if (!value) {
-    *error = fmt::format("{} must be bool", name);
-    return false;
-  }
-  *output = *value;
-  return true;
-}
-
-[[nodiscard]] bool ReadSessionEndpointOverrides(
-    toml::node_view<const toml::node> node,
-    std::vector<ProbeSessionEndpointOverride>* output, std::string* error) {
-  output->clear();
-  if (Missing(node)) {
-    return true;
-  }
-  const toml::array* array = node.as_array();
-  if (array == nullptr) {
-    *error = "probe.sessions.endpoint_overrides must be array";
-    return false;
-  }
-
-  output->reserve(array->size());
-  std::size_t row = 0;
-  for (const toml::node& item : *array) {
-    const std::string prefix =
-        fmt::format("probe.sessions.endpoint_overrides[{}]", row);
-    const toml::table* table = item.as_table();
-    if (table == nullptr) {
-      *error = fmt::format("{} must be table", prefix);
-      return false;
-    }
-    const toml::node_view<const toml::node> index_node = (*table)["index"];
-    if (Missing(index_node)) {
-      *error = fmt::format("{}.index is required", prefix);
-      return false;
-    }
-    const std::optional<std::int64_t> index = index_node.value<std::int64_t>();
-    if (!index || *index < 0) {
-      *error = fmt::format("{}.index must be non-negative integer", prefix);
-      return false;
-    }
-    for (const ProbeSessionEndpointOverride& existing : *output) {
-      if (existing.index == static_cast<std::size_t>(*index)) {
-        *error = fmt::format("{}.index duplicates session {}", prefix, *index);
-        return false;
-      }
-    }
-
-    ProbeSessionEndpointOverride override_config;
-    override_config.index = static_cast<std::size_t>(*index);
-    if (!ReadOptionalNonEmptyString((*table)["host"], prefix + ".host",
-                                    &override_config.host, error) ||
-        !ReadOptionalNonEmptyString((*table)["connect_ip"],
-                                    prefix + ".connect_ip",
-                                    &override_config.connect_ip, error) ||
-        !ReadOptionalNonEmptyString((*table)["port"], prefix + ".port",
-                                    &override_config.port, error) ||
-        !ReadOptionalBool((*table)["enable_tls"], prefix + ".enable_tls",
-                          &override_config.enable_tls, error)) {
-      return false;
-    }
-    if (!override_config.host && !override_config.connect_ip &&
-        !override_config.port && !override_config.enable_tls) {
-      *error = fmt::format(
-          "{} must set at least one of host, connect_ip, port, enable_tls",
-          prefix);
-      return false;
-    }
-    output->push_back(std::move(override_config));
-    ++row;
-  }
   return true;
 }
 
@@ -425,22 +262,9 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                   &config.inputs.data_reader_config, &error)) {
     return Failure(std::move(error));
   }
-  if (!ReadPathOr(inputs["candidate_ip_file"], config.inputs.candidate_ip_file,
-                  "probe.inputs.candidate_ip_file",
-                  &config.inputs.candidate_ip_file, &error)) {
-    return Failure(std::move(error));
-  }
-
-  if (!ReadPositiveSize(sessions["active_session_count"],
-                        config.sessions.active_session_count,
-                        "probe.sessions.active_session_count",
-                        &config.sessions.active_session_count, &error)) {
-    return Failure(std::move(error));
-  }
-  if (!ReadNonNegativeSize(sessions["max_candidates"],
-                           config.sessions.max_candidates,
-                           "probe.sessions.max_candidates",
-                           &config.sessions.max_candidates, &error)) {
+  if (!ReadPathOr(inputs["connections_file"], config.inputs.connections_file,
+                  "probe.inputs.connections_file",
+                  &config.inputs.connections_file, &error)) {
     return Failure(std::move(error));
   }
   if (!ReadBoolOr(sessions["enable_tcp_info"], config.sessions.enable_tcp_info,
@@ -460,20 +284,11 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                           &config.sessions.request_timeout_ms, &error)) {
     return Failure(std::move(error));
   }
-  if (!ReadWorkerCpuIds(sessions["worker_cpu_ids"],
-                        &config.sessions.worker_cpu_ids, &error)) {
-    return Failure(std::move(error));
-  }
-  if (!ReadSessionEndpointOverrides(sessions["endpoint_overrides"],
-                                    &config.sessions.endpoint_overrides,
-                                    &error)) {
-    return Failure(std::move(error));
-  }
 
-  if (!ReadPositiveUInt32(sampling["samples_per_ip"],
-                          config.sampling.samples_per_ip,
-                          "probe.sampling.samples_per_ip",
-                          &config.sampling.samples_per_ip, &error)) {
+  if (!ReadPositiveUInt32(sampling["samples_per_session"],
+                          config.sampling.samples_per_session,
+                          "probe.sampling.samples_per_session",
+                          &config.sampling.samples_per_session, &error)) {
     return Failure(std::move(error));
   }
   if (!ReadPositiveUInt32(sampling["cycle_cooldown_ms"],
@@ -656,8 +471,8 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
     return Failure(std::move(error));
   }
 
-  if (config.inputs.candidate_ip_file.empty()) {
-    return Failure("probe.inputs.candidate_ip_file is required");
+  if (config.inputs.connections_file.empty()) {
+    return Failure("probe.inputs.connections_file is required");
   }
   return Success(std::move(config));
 }

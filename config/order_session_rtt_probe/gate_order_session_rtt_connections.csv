@@ -1,0 +1,13 @@
+name,group,host,connect_ip,port,enable_tls,worker_cpu_id
+private-00,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,6
+public-01,public-54.64.28.217,fx-ws.gateio.ws,54.64.28.217,443,true,7
+public-02,public-18.179.126.103,fx-ws.gateio.ws,18.179.126.103,443,true,8
+public-03,public-54.95.101.133,fx-ws.gateio.ws,54.95.101.133,443,true,9
+public-04,public-54.238.61.178,fx-ws.gateio.ws,54.238.61.178,443,true,10
+public-05,public-35.74.180.239,fx-ws.gateio.ws,35.74.180.239,443,true,11
+public-06,public-54.95.233.218,fx-ws.gateio.ws,54.95.233.218,443,true,12
+public-07,public-54.65.246.145,fx-ws.gateio.ws,54.65.246.145,443,true,13
+private-08,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,14
+private-09,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,15
+private-10,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,16
+private-11,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,17

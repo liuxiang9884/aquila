@@ -6,25 +6,15 @@ run_id = ""
 [probe.inputs]
 order_session_config = "config/order_sessions/gate_order_session.toml"
 data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
-candidate_ip_file = "/home/liuxiang/tmp/login_verified_candidates_20260528_072242/candidate_ips_login.txt"
+connections_file = "config/order_session_rtt_probe/gate_order_session_rtt_connections.csv"
 
 [probe.sessions]
-active_session_count = 1
-max_candidates = 1
 enable_tcp_info = true
 wait_login_timeout_ms = 10000
 request_timeout_ms = 5000
-worker_cpu_ids = []
-# Optional per-session endpoint override for mixed public/private probes.
-# [[probe.sessions.endpoint_overrides]]
-# index = 0
-# host = "fxws-private.gateapi.io"
-# connect_ip = "10.0.1.154"
-# port = "80"
-# enable_tls = false
 
 [probe.sampling]
-samples_per_ip = 1
+samples_per_session = 1
 cycle_cooldown_ms = 500
 order_session_interval_ms = 0
 max_events_per_drain = 128
