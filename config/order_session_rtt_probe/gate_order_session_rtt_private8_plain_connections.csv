@@ -1,0 +1,9 @@
+name,group,host,connect_ip,port,enable_tls,worker_cpu_id
+private-00,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,6
+private-01,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,7
+private-02,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,8
+private-03,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,9
+private-04,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,10
+private-05,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,11
+private-06,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,12
+private-07,private-10.0.1.154,fxws-private.gateapi.io,10.0.1.154,80,false,13

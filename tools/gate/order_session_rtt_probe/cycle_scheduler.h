@@ -53,9 +53,9 @@ class CycleScheduler {
 
 class OrderSessionDispatchPacer {
  public:
-  explicit OrderSessionDispatchPacer(std::uint32_t order_session_interval_ms)
-      : interval_ns_(static_cast<std::int64_t>(order_session_interval_ms) *
-                     1'000'000) {}
+  explicit OrderSessionDispatchPacer(std::uint64_t order_session_interval_us)
+      : interval_ns_(static_cast<std::int64_t>(order_session_interval_us) *
+                     1'000) {}
 
   [[nodiscard]] bool CanDispatch(std::int64_t now_ns,
                                  bool has_new_market_event) const noexcept {
@@ -87,8 +87,8 @@ class OrderSessionDispatchPacer {
 struct MultiSessionDispatchSchedulerOptions {
   std::size_t session_count{1};
   std::uint64_t sample_count_per_session{1};
-  std::uint32_t order_session_interval_ms{0};
-  std::uint32_t cycle_cooldown_ms{0};
+  std::uint64_t order_session_interval_us{0};
+  std::uint64_t cycle_cooldown_us{0};
 };
 
 class MultiSessionDispatchScheduler {
@@ -97,10 +97,10 @@ class MultiSessionDispatchScheduler {
       MultiSessionDispatchSchedulerOptions options) noexcept
       : options_(options),
         order_session_interval_ns_(
-            static_cast<std::int64_t>(options.order_session_interval_ms) *
-            1'000'000),
+            static_cast<std::int64_t>(options.order_session_interval_us) *
+            1'000),
         cycle_cooldown_ns_(
-            static_cast<std::int64_t>(options.cycle_cooldown_ms) * 1'000'000) {}
+            static_cast<std::int64_t>(options.cycle_cooldown_us) * 1'000) {}
 
   [[nodiscard]] bool NextGrant(
       std::uint64_t total_market_events,

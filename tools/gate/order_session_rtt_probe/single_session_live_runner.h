@@ -256,8 +256,7 @@ class SingleSessionLiveRunner {
     samples_started_.store(stats_.samples_started, std::memory_order_release);
     next_sample_steady_ns_ =
         now_steady_ns +
-        static_cast<std::int64_t>(config_.sampling.cycle_cooldown_ms) *
-            1'000'000;
+        static_cast<std::int64_t>(config_.sampling.cycle_cooldown_us) * 1'000;
 
     ProbeSampleTransition transition = active_executor_->Start(*session_);
     HandleTransition(transition, now_realtime_ns);
@@ -398,6 +397,44 @@ class SingleSessionLiveRunner {
     row.ack_exchange_ns = stats.ack_exchange_ns;
     row.ack_exchange_to_local_ns = stats.ack_exchange_to_local_ns;
     row.ack_rtt_ns = stats.ack_rtt_ns;
+    row.ack_diagnostic_available = stats.ack_diagnostic_available;
+    row.ack_diagnostic_reason =
+        stats.ack_diagnostic_available
+            ? std::string(magic_enum::enum_name(stats.ack_diagnostic_reason))
+            : std::string{};
+    row.send_to_first_after_hook_ns = stats.send_to_first_after_hook_ns;
+    row.send_to_first_drive_read_ns = stats.send_to_first_drive_read_ns;
+    row.drive_read_duration_ns = stats.drive_read_duration_ns;
+    row.max_observed_drive_read_duration_ns =
+        stats.max_observed_drive_read_duration_ns;
+    row.inflight_at_send = stats.inflight_at_send;
+    row.max_runtime_loop_gap_ns = stats.max_runtime_loop_gap_ns;
+    row.runtime_loop_iterations_before_ack =
+        stats.runtime_loop_iterations_before_ack;
+    row.owner_thread_tid = stats.owner_thread_tid;
+    row.order_encode_done_ns = stats.order_encode_done_ns;
+    row.ws_frame_encode_done_ns = stats.ws_frame_encode_done_ns;
+    row.write_enqueue_ns = stats.write_enqueue_ns;
+    row.drive_write_enter_ns = stats.drive_write_enter_ns;
+    row.write_some_enter_ns = stats.write_some_enter_ns;
+    row.write_some_return_ns = stats.write_some_return_ns;
+    row.write_complete_ns = stats.write_complete_ns;
+    row.write_some_bytes = stats.write_some_bytes;
+    row.write_complete_bytes = stats.write_complete_bytes;
+    row.write_errno = stats.write_errno;
+    row.write_eagain = stats.write_eagain;
+    row.pending_write_count_after = stats.pending_write_count_after;
+    row.socket_send_queue_available = stats.socket_send_queue_available;
+    row.tcp_sendq_bytes = stats.tcp_sendq_bytes;
+    row.tcp_notsent_bytes = stats.tcp_notsent_bytes;
+    row.tcp_info_requested = stats.tcp_info_requested;
+    row.tcp_info_available = stats.tcp_info_available;
+    row.tcp_info_rtt_us = stats.tcp_info_rtt_us;
+    row.tcp_info_rttvar_us = stats.tcp_info_rttvar_us;
+    row.tcp_info_retrans = stats.tcp_info_retrans;
+    row.tcp_info_total_retrans = stats.tcp_info_total_retrans;
+    row.tcp_info_unacked = stats.tcp_info_unacked;
+    row.tcp_info_snd_cwnd = stats.tcp_info_snd_cwnd;
     row.ts_write_complete_ns = stats.ts_write_complete_ns;
     row.ts_tx_sched_ns = stats.ts_tx_sched_ns;
     row.ts_tx_software_ns = stats.ts_tx_software_ns;

@@ -5,7 +5,9 @@
 #include <cstdint>
 
 #include "core/common/types.h"
+#include "core/websocket/socket_diagnostics.h"
 #include "core/websocket/socket_timestamping.h"
+#include "exchange/gate/trading/order_latency_diagnostics.h"
 
 namespace aquila::gate {
 
@@ -69,6 +71,10 @@ struct OrderResponse {
   std::int64_t exchange_ns{0};
   websocket::SocketTimestampingSnapshot socket_timestamps{};
   websocket::SocketTimestampingStages socket_timestamp_stages{};
+  bool ack_latency_diagnostic_available{false};
+  OrderLatencyDiagnosticLogRecord ack_latency_diagnostic{};
+  bool tcp_info_requested{false};
+  websocket::TcpInfoDiagnostics tcp_info{};
 };
 
 struct OrderSessionStats {

@@ -30,8 +30,8 @@ struct ProbeSessionConfig {
 
 struct ProbeSamplingConfig {
   std::uint32_t samples_per_session{1};
-  std::uint32_t cycle_cooldown_ms{500};
-  std::uint32_t order_session_interval_ms{0};
+  std::uint64_t cycle_cooldown_us{500000};
+  std::uint64_t order_session_interval_us{0};
   std::uint32_t max_events_per_drain{128};
   std::uint32_t cycles_per_connection_generation{1};
   std::string idle_policy{"spin"};

@@ -4,19 +4,28 @@ execute = false
 run_id = ""
 
 [probe.inputs]
-order_session_config = "config/order_sessions/gate_order_session.toml"
+order_session_config = "config/order_sessions/gate_order_session_rtt_probe_allstage.toml"
 data_reader_config = "config/data_readers/strategy_data_reader_requested_20260521.toml"
-connections_file = "config/order_session_rtt_probe/gate_order_session_rtt_connections.csv"
+connections_file = "config/order_session_rtt_probe/gate_order_session_rtt_private8_plain_connections.csv"
 
 [probe.sessions]
 enable_tcp_info = true
 wait_login_timeout_ms = 10000
 request_timeout_ms = 5000
 
+[probe.sessions.timestamping]
+enabled = true
+tx_sched = true
+tx_software = true
+tx_ack = true
+rx_software = true
+hardware = false
+max_errqueue_events_per_drain = 32
+
 [probe.sampling]
 samples_per_session = 1
-cycle_cooldown_us = 500000
-order_session_interval_us = 500000
+cycle_cooldown_us = 1000
+order_session_interval_us = 1000
 max_events_per_drain = 128
 cycles_per_connection_generation = 1
 idle_policy = "spin"
@@ -33,7 +42,7 @@ reduce_only_close = true
 enabled = true
 shm_config = "config/order_feedback/gate_order_feedback_shm.toml"
 strategy_id = 7
-force_claim = false
+force_claim = true
 poll_budget = 64
 terminal_timeout_ms = 5000
 

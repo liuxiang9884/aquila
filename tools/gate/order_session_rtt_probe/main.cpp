@@ -167,12 +167,12 @@ void PrintPlan(const probe::ProbeConfig& config,
   NOVA_INFO(
       "gate_order_session_rtt_probe dry_run={} execute={} name={} run_id={} "
       "connections_file={} connections={} samples_per_session={} cycles={} "
-      "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={}",
+      "cycle_cooldown_us={} order_session_interval_us={} order_mode={}",
       config.execute ? "false" : "true", config.execute ? "true" : "false",
       config.name, config.run_id, config.inputs.connections_file.string(),
       plan.connection_count, config.sampling.samples_per_session,
-      plan.cycles.size(), config.sampling.cycle_cooldown_ms,
-      config.sampling.order_session_interval_ms,
+      plan.cycles.size(), config.sampling.cycle_cooldown_us,
+      config.sampling.order_session_interval_us,
       magic_enum::enum_name(config.order.order_mode));
 
   for (const probe::ProbeCycle& cycle : plan.cycles) {
@@ -330,14 +330,14 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
       "run_id={} session={} group={} connect_ip={} order_session_host={} "
       "order_session_port={} order_session_tls={} samples={} "
       "duration_sec={:.3f} "
-      "cycle_cooldown_ms={} order_session_interval_ms={} order_mode={} "
+      "cycle_cooldown_us={} order_session_interval_us={} order_mode={} "
       "sample_csv_path={}",
       config.run_id, live_plan.session_name, live_plan.group,
       live_plan.connect_ip, live_plan.order_session_config.connection.host,
       live_plan.order_session_config.connection.port,
       live_plan.order_session_config.connection.enable_tls ? "true" : "false",
-      live_plan.sample_count, duration_sec, config.sampling.cycle_cooldown_ms,
-      config.sampling.order_session_interval_ms,
+      live_plan.sample_count, duration_sec, config.sampling.cycle_cooldown_us,
+      config.sampling.order_session_interval_us,
       magic_enum::enum_name(config.order.order_mode),
       live_plan.paths.sample_csv_path.string());
 
@@ -609,15 +609,15 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
   NOVA_INFO(
       "gate_order_session_rtt_probe execute=true live_multi_session=true "
       "run_id={} session_count={} samples_per_session={} total_samples={} "
-      "duration_sec={:.3f} cycle_cooldown_ms={} "
-      "order_session_interval_ms={} order_mode={} sample_csv_path={}",
+      "duration_sec={:.3f} cycle_cooldown_us={} "
+      "order_session_interval_us={} order_mode={} sample_csv_path={}",
       config.run_id, sessions.size(),
       sessions.empty() ? 0 : sessions.front()->plan().sample_count,
       sessions.empty()
           ? 0
           : sessions.size() * sessions.front()->plan().sample_count,
-      duration_sec, config.sampling.cycle_cooldown_ms,
-      config.sampling.order_session_interval_ms,
+      duration_sec, config.sampling.cycle_cooldown_us,
+      config.sampling.order_session_interval_us,
       magic_enum::enum_name(config.order.order_mode),
       live_plan.paths.sample_csv_path.string());
   for (const std::unique_ptr<LiveSessionStateBase>& state : sessions) {
@@ -682,9 +682,9 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
           .session_count = sessions.size(),
           .sample_count_per_session =
               sessions.empty() ? 0 : sessions.front()->plan().sample_count,
-          .order_session_interval_ms =
-              config.sampling.order_session_interval_ms,
-          .cycle_cooldown_ms = config.sampling.cycle_cooldown_ms,
+          .order_session_interval_us =
+              config.sampling.order_session_interval_us,
+          .cycle_cooldown_us = config.sampling.cycle_cooldown_us,
       });
   std::vector<std::uint64_t> samples_started_by_session(sessions.size(), 0);
 
@@ -799,7 +799,7 @@ void PrintLivePreflightPlan(const probe::ProbeConfig& config,
       "order_session_host={} order_session_port={} order_session_target={} "
       "order_session_tls={} "
       "order_session_worker_cpu={} enable_tcp_info={} "
-      "order_session_interval_ms={} order_mode={}",
+      "order_session_interval_us={} order_mode={}",
       config.name, config.run_id, live_plan.session_name, live_plan.group,
       live_plan.connect_ip, live_plan.sample_count,
       live_plan.paths.run_dir.string(),
@@ -813,7 +813,7 @@ void PrintLivePreflightPlan(const probe::ProbeConfig& config,
       live_plan.order_session_config.connection.runtime_policy.io_cpu_id,
       live_plan.order_session_config.enable_tcp_info_diagnostics ? "true"
                                                                  : "false",
-      config.sampling.order_session_interval_ms,
+      config.sampling.order_session_interval_us,
       magic_enum::enum_name(config.order.order_mode));
 }
 
@@ -827,14 +827,14 @@ void PrintMultiLivePreflightPlan(
       "live_multi_session=true name={} run_id={} session_count={} "
       "sample_count_per_session={} total_sample_count={} run_dir={} "
       "sample_csv_path={} rest_guard_csv_path={} raw_rest_dir={} "
-      "order_session_interval_ms={} order_mode={}",
+      "order_session_interval_us={} order_mode={}",
       config.name, config.run_id, live_plan.sessions.size(), sample_count,
       sample_count * live_plan.sessions.size(),
       live_plan.paths.run_dir.string(),
       live_plan.paths.sample_csv_path.string(),
       live_plan.paths.rest_guard_csv_path.string(),
       live_plan.paths.raw_rest_dir.string(),
-      config.sampling.order_session_interval_ms,
+      config.sampling.order_session_interval_us,
       magic_enum::enum_name(config.order.order_mode));
   for (const probe::SingleSessionLiveRunPlan& session : live_plan.sessions) {
     NOVA_INFO(

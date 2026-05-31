@@ -172,8 +172,8 @@ max_errqueue_events_per_drain = 16
 
 [probe.sampling]
 samples_per_session = 1
-cycle_cooldown_ms = 500
-order_session_interval_ms = 25
+cycle_cooldown_us = 500000
+order_session_interval_us = 25000
 max_events_per_drain = 128
 idle_policy = "spin"
 coordinator_cpu = -1
@@ -224,8 +224,8 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
   EXPECT_EQ(result.value.sessions.timestamping.max_errqueue_events_per_drain,
             16U);
   EXPECT_EQ(result.value.sampling.samples_per_session, 1U);
-  EXPECT_EQ(result.value.sampling.cycle_cooldown_ms, 500U);
-  EXPECT_EQ(result.value.sampling.order_session_interval_ms, 25U);
+  EXPECT_EQ(result.value.sampling.cycle_cooldown_us, 500000U);
+  EXPECT_EQ(result.value.sampling.order_session_interval_us, 25000U);
   EXPECT_EQ(result.value.order.order_mode, ProbeOrderMode::kIocAndGtc);
   EXPECT_EQ(result.value.order.passive_price_limit_fraction, 0.5);
   EXPECT_TRUE(result.value.order.reduce_only_close);
@@ -319,17 +319,17 @@ order_mode = "gtc+ioc"
 
   result = ParseMinimalProbeConfigWith(R"toml(
 [probe.sampling]
-order_session_interval_ms = 0
+order_session_interval_us = 0
 )toml");
   ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.value.sampling.order_session_interval_ms, 0U);
+  EXPECT_EQ(result.value.sampling.order_session_interval_us, 0U);
 
   result = ParseMinimalProbeConfigWith(R"toml(
 [probe.sampling]
-order_session_interval_ms = -1
+order_session_interval_us = -1
 )toml");
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("order_session_interval_ms"), std::string::npos);
+  EXPECT_NE(result.error.find("order_session_interval_us"), std::string::npos);
 
   result = ParseMinimalProbeConfigWith(R"toml(
 [probe.order]
@@ -782,6 +782,51 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
               .tx_ack_to_rx_software_ns = 180,
               .rx_software_to_ack_receive_ns = 20,
           },
+      .ack_latency_diagnostic_available = true,
+      .ack_latency_diagnostic =
+          gate::OrderLatencyDiagnosticLogRecord{
+              .reason = gate::OrderLatencyDiagnosticReason::kAckRttThreshold,
+              .local_order_id = 0x0700000000000001ULL,
+              .request_sequence = 11,
+              .request_send_local_ns = 1000,
+              .ack_local_receive_ns = 1600,
+              .ack_exchange_ns = 1300,
+              .ack_rtt_ns = 600,
+              .send_to_first_after_hook_ns = 7,
+              .send_to_first_drive_read_ns = 11,
+              .drive_read_duration_ns = 13,
+              .max_observed_drive_read_duration_ns = 17,
+              .inflight_at_send = 1,
+              .max_runtime_loop_gap_ns = 19,
+              .runtime_loop_iterations_before_ack = 23,
+              .owner_thread_tid = 29,
+              .order_encode_done_ns = 1001,
+              .ws_frame_encode_done_ns = 1002,
+              .write_enqueue_ns = 1003,
+              .drive_write_enter_ns = 1004,
+              .write_some_enter_ns = 1005,
+              .write_some_return_ns = 1006,
+              .write_complete_ns = 1007,
+              .write_some_bytes = 241,
+              .write_complete_bytes = 241,
+              .write_errno = 0,
+              .write_eagain = false,
+              .pending_write_count_after = 0,
+              .socket_send_queue_available = true,
+              .tcp_sendq_bytes = 270,
+              .tcp_notsent_bytes = 0,
+          },
+      .tcp_info_requested = true,
+      .tcp_info =
+          websocket::TcpInfoDiagnostics{
+              .available = true,
+              .rtt_us = 456,
+              .rttvar_us = 78,
+              .retrans = 0,
+              .total_retrans = 1,
+              .unacked = 2,
+              .snd_cwnd = 10,
+          },
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitGtcCancel);
@@ -801,6 +846,40 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_software_to_tx_ack_ns, 380);
   EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_ack_to_rx_software_ns, 180);
   EXPECT_EQ(flow.stats().gtc_open_csv.ts_rx_software_to_ack_receive_ns, 20);
+  EXPECT_TRUE(flow.stats().gtc_open_csv.ack_diagnostic_available);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ack_diagnostic_reason,
+            gate::OrderLatencyDiagnosticReason::kAckRttThreshold);
+  EXPECT_EQ(flow.stats().gtc_open_csv.send_to_first_after_hook_ns, 7);
+  EXPECT_EQ(flow.stats().gtc_open_csv.send_to_first_drive_read_ns, 11);
+  EXPECT_EQ(flow.stats().gtc_open_csv.drive_read_duration_ns, 13);
+  EXPECT_EQ(flow.stats().gtc_open_csv.max_observed_drive_read_duration_ns, 17);
+  EXPECT_EQ(flow.stats().gtc_open_csv.inflight_at_send, 1U);
+  EXPECT_EQ(flow.stats().gtc_open_csv.max_runtime_loop_gap_ns, 19);
+  EXPECT_EQ(flow.stats().gtc_open_csv.runtime_loop_iterations_before_ack, 23U);
+  EXPECT_EQ(flow.stats().gtc_open_csv.owner_thread_tid, 29);
+  EXPECT_EQ(flow.stats().gtc_open_csv.order_encode_done_ns, 1001);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ws_frame_encode_done_ns, 1002);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_enqueue_ns, 1003);
+  EXPECT_EQ(flow.stats().gtc_open_csv.drive_write_enter_ns, 1004);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_some_enter_ns, 1005);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_some_return_ns, 1006);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_complete_ns, 1007);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_some_bytes, 241);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_complete_bytes, 241);
+  EXPECT_EQ(flow.stats().gtc_open_csv.write_errno, 0);
+  EXPECT_FALSE(flow.stats().gtc_open_csv.write_eagain);
+  EXPECT_EQ(flow.stats().gtc_open_csv.pending_write_count_after, 0U);
+  EXPECT_TRUE(flow.stats().gtc_open_csv.socket_send_queue_available);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_sendq_bytes, 270U);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_notsent_bytes, 0U);
+  EXPECT_TRUE(flow.stats().gtc_open_csv.tcp_info_requested);
+  EXPECT_TRUE(flow.stats().gtc_open_csv.tcp_info_available);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_info_rtt_us, 456);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_info_rttvar_us, 78);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_info_retrans, 0U);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_info_total_retrans, 1U);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_info_unacked, 2U);
+  EXPECT_EQ(flow.stats().gtc_open_csv.tcp_info_snd_cwnd, 10U);
 
   ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcCancel,
                                gate::OrderSendResult{
@@ -1944,6 +2023,39 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
       .ack_exchange_ns = 1550,
       .ack_exchange_to_local_ns = 50,
       .ack_rtt_ns = 100,
+      .ack_diagnostic_available = true,
+      .ack_diagnostic_reason = "kAckRttThreshold",
+      .send_to_first_after_hook_ns = 4,
+      .send_to_first_drive_read_ns = 5,
+      .drive_read_duration_ns = 6,
+      .max_observed_drive_read_duration_ns = 7,
+      .inflight_at_send = 1,
+      .max_runtime_loop_gap_ns = 8,
+      .runtime_loop_iterations_before_ack = 9,
+      .owner_thread_tid = 10,
+      .order_encode_done_ns = 1501,
+      .ws_frame_encode_done_ns = 1502,
+      .write_enqueue_ns = 1503,
+      .drive_write_enter_ns = 1504,
+      .write_some_enter_ns = 1505,
+      .write_some_return_ns = 1506,
+      .write_complete_ns = 1507,
+      .write_some_bytes = 241,
+      .write_complete_bytes = 241,
+      .write_errno = 0,
+      .write_eagain = false,
+      .pending_write_count_after = 0,
+      .socket_send_queue_available = true,
+      .tcp_sendq_bytes = 270,
+      .tcp_notsent_bytes = 0,
+      .tcp_info_requested = true,
+      .tcp_info_available = true,
+      .tcp_info_rtt_us = 456,
+      .tcp_info_rttvar_us = 78,
+      .tcp_info_retrans = 0,
+      .tcp_info_total_retrans = 1,
+      .tcp_info_unacked = 2,
+      .tcp_info_snd_cwnd = 10,
       .ts_write_complete_ns = 1505,
       .ts_tx_sched_ns = 1508,
       .ts_tx_software_ns = 1510,
@@ -1969,7 +2081,18 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
             "run,session,group,ip,sid,round,sample,contract,qty,price,type,"
             "action,local_id,"
             "req_seq,bbo_id,bbo_ns,send_ns,ack_recv_ns,ack_ex_ns,"
-            "ack_ex2local_ns,ack_rtt_ns,ts_write_complete_ns,"
+            "ack_ex2local_ns,ack_rtt_ns,diag,diag_reason,"
+            "send_to_after_hook_ns,send_to_drive_read_ns,drive_read_ns,"
+            "max_drive_read_ns,inflight_at_send,max_loop_gap_ns,"
+            "loop_iters_before_ack,owner_tid,order_encode_done_ns,"
+            "ws_frame_encode_done_ns,write_enqueue_ns,drive_write_enter_ns,"
+            "write_some_enter_ns,write_some_return_ns,write_complete_ns,"
+            "write_some_bytes,write_complete_bytes,write_errno,write_eagain,"
+            "pending_write_count_after,socket_sendq_available,"
+            "tcp_sendq_bytes,tcp_notsent_bytes,tcp_info_requested,"
+            "tcp_info_available,tcp_info_rtt_us,tcp_info_rttvar_us,"
+            "tcp_info_retrans,tcp_info_total_retrans,tcp_info_unacked,"
+            "tcp_info_snd_cwnd,ts_write_complete_ns,"
             "ts_tx_sched_ns,ts_tx_software_ns,ts_tx_ack_ns,"
             "ts_rx_software_ns,ts_write_to_tx_software_ns,"
             "ts_tx_software_to_tx_ack_ns,ts_tx_ack_to_rx_software_ns,"
@@ -1977,7 +2100,10 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
             "resp_ex2local_ns,resp_rtt_ns,status,term_fb,fill,invalid,"
             "inv_reason\n"
             "run_1,public-7,public,52.198.250.74,7,2,3,ZEC_USDT,0.1,74.9,"
-            "ioc,open,102,31,43,1400,1500,1600,1550,50,100,1505,1508,1510,"
+            "ioc,open,102,31,43,1400,1500,1600,1550,50,100,true,"
+            "kAckRttThreshold,4,5,6,7,1,8,9,10,1501,1502,1503,1504,1505,"
+            "1506,1507,241,241,0,false,0,true,270,0,true,true,456,78,0,1,2,"
+            "10,1505,1508,1510,"
             "1575,1585,5,65,10,15,1650,1610,40,150,"
             "kTerminalConfirmed,kCancelled,false,false,\n");
 }
@@ -2061,7 +2187,7 @@ TEST(GateOrderSessionRttProbeTest, RepeatsConnectionSetForSamplesPerSession) {
 
 TEST(GateOrderSessionRttProbeTest,
      ZeroOrderSessionIntervalWaitsForNextMarketEvent) {
-  OrderSessionDispatchPacer pacer(/*order_session_interval_ms=*/0);
+  OrderSessionDispatchPacer pacer(/*order_session_interval_us=*/0);
 
   EXPECT_TRUE(
       pacer.CanDispatch(/*now_ns=*/1000, /*has_new_market_event=*/false));
@@ -2077,7 +2203,7 @@ TEST(GateOrderSessionRttProbeTest,
 
 TEST(GateOrderSessionRttProbeTest,
      PositiveOrderSessionIntervalUsesNonBlockingDeadline) {
-  OrderSessionDispatchPacer pacer(/*order_session_interval_ms=*/25);
+  OrderSessionDispatchPacer pacer(/*order_session_interval_us=*/25000);
 
   pacer.MarkDispatched(/*now_ns=*/1'000'000);
   EXPECT_FALSE(pacer.CanDispatch(/*now_ns=*/25'999'999,
@@ -2094,8 +2220,8 @@ TEST(GateOrderSessionRttProbeTest,
   MultiSessionDispatchScheduler scheduler(MultiSessionDispatchSchedulerOptions{
       .session_count = 3,
       .sample_count_per_session = 2,
-      .order_session_interval_ms = 5,
-      .cycle_cooldown_ms = 10,
+      .order_session_interval_us = 5000,
+      .cycle_cooldown_us = 10000,
   });
   std::vector<std::uint64_t> samples_started = {0, 0, 0};
   std::size_t session_index = 99;
@@ -2135,8 +2261,8 @@ TEST(GateOrderSessionRttProbeTest,
   MultiSessionDispatchScheduler scheduler(MultiSessionDispatchSchedulerOptions{
       .session_count = 2,
       .sample_count_per_session = 1,
-      .order_session_interval_ms = 0,
-      .cycle_cooldown_ms = 10,
+      .order_session_interval_us = 0,
+      .cycle_cooldown_us = 10000,
   });
   std::vector<std::uint64_t> samples_started = {0, 0};
   std::size_t session_index = 99;

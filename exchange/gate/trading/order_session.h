@@ -1094,14 +1094,14 @@ class OrderSession {
     return false;
   }
 
-  void RecordAckLatencyDiagnostic(
+  [[nodiscard]] OrderLatencyDiagnosticAckResult RecordAckLatencyDiagnostic(
       std::uint64_t sequence, std::int64_t ack_local_receive_ns,
       std::int64_t ack_exchange_ns, int diagnostic_cpu,
       const websocket::SocketTimestampingSnapshot& socket_timestamps,
       const websocket::TcpInfoDiagnostics& tcp_info) noexcept {
     const std::uint64_t order_session_id = order_session_id_;
     const bool tcp_info_requested = TcpInfoDiagnosticsEnabled();
-    (void)ack_latency_diagnostics_.RecordAck(
+    return ack_latency_diagnostics_.RecordAckWithRecord(
         sequence, ack_local_receive_ns, ack_exchange_ns,
         current_drive_read_start_ns_, socket_timestamps,
         [order_session_id, diagnostic_cpu, tcp_info_requested,
@@ -1263,23 +1263,28 @@ class OrderSession {
               parsed.request_id.sequence, local_receive_ns);
       const websocket::SocketTimestampingStages socket_timestamp_stages =
           websocket::ComputeSocketTimestampingStages(socket_timestamps);
-      RecordAckLatencyDiagnostic(parsed.request_id.sequence, local_receive_ns,
-                                 parsed.exchange_ns, ack_cpu, socket_timestamps,
-                                 tcp_info);
+      const OrderLatencyDiagnosticAckResult ack_latency_diagnostic =
+          RecordAckLatencyDiagnostic(parsed.request_id.sequence,
+                                     local_receive_ns, parsed.exchange_ns,
+                                     ack_cpu, socket_timestamps, tcp_info);
       LogGateOrderResponse(parsed, local_order_id, 0, local_receive_ns,
                            order_session_id_, ack_cpu,
                            TcpInfoDiagnosticsEnabled(), tcp_info);
-      response_handler_.OnOrderResponse(
-          OrderResponse{.kind = OrderResponseKind::kAck,
-                        .local_order_id = local_order_id,
-                        .exchange_order_id = 0,
-                        .request_sequence = parsed.request_id.sequence,
-                        .http_status = parsed.http_status,
-                        .error_label_hash = 0,
-                        .local_receive_ns = local_receive_ns,
-                        .exchange_ns = parsed.exchange_ns,
-                        .socket_timestamps = socket_timestamps,
-                        .socket_timestamp_stages = socket_timestamp_stages});
+      response_handler_.OnOrderResponse(OrderResponse{
+          .kind = OrderResponseKind::kAck,
+          .local_order_id = local_order_id,
+          .exchange_order_id = 0,
+          .request_sequence = parsed.request_id.sequence,
+          .http_status = parsed.http_status,
+          .error_label_hash = 0,
+          .local_receive_ns = local_receive_ns,
+          .exchange_ns = parsed.exchange_ns,
+          .socket_timestamps = socket_timestamps,
+          .socket_timestamp_stages = socket_timestamp_stages,
+          .ack_latency_diagnostic_available = ack_latency_diagnostic.found,
+          .ack_latency_diagnostic = ack_latency_diagnostic.record,
+          .tcp_info_requested = TcpInfoDiagnosticsEnabled(),
+          .tcp_info = tcp_info});
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordResponse();
       }

@@ -76,6 +76,12 @@ struct OrderLatencyDiagnosticLogRecord {
   websocket::SocketTimestampingStages socket_timestamp_stages{};
 };
 
+struct OrderLatencyDiagnosticAckResult {
+  bool found{false};
+  bool emitted{false};
+  OrderLatencyDiagnosticLogRecord record{};
+};
+
 class OrderAckLatencyDiagnostics {
  public:
   explicit OrderAckLatencyDiagnostics(
@@ -221,9 +227,22 @@ class OrderAckLatencyDiagnostics {
                  std::int64_t current_drive_read_start_ns,
                  const websocket::SocketTimestampingSnapshot& socket_timestamps,
                  Handler&& handler) noexcept {
+    return RecordAckWithRecord(request_sequence, ack_local_receive_ns,
+                               ack_exchange_ns, current_drive_read_start_ns,
+                               socket_timestamps,
+                               std::forward<Handler>(handler))
+        .emitted;
+  }
+
+  template <typename Handler>
+  OrderLatencyDiagnosticAckResult RecordAckWithRecord(
+      std::uint64_t request_sequence, std::int64_t ack_local_receive_ns,
+      std::int64_t ack_exchange_ns, std::int64_t current_drive_read_start_ns,
+      const websocket::SocketTimestampingSnapshot& socket_timestamps,
+      Handler&& handler) noexcept {
     auto it = windows_.find(request_sequence);
     if (it == windows_.end()) {
-      return false;
+      return {};
     }
     WindowState window = it->second;
     window.ack_local_receive_ns = ack_local_receive_ns;
@@ -246,19 +265,33 @@ class OrderAckLatencyDiagnostics {
     }
     const std::int64_t ack_rtt_ns =
         ack_local_receive_ns - window.request_send_local_ns;
-    const bool should_log = ack_rtt_ns > config_.ack_rtt_threshold_ns &&
-                            AllowLog(ack_local_receive_ns);
+    const bool ack_rtt_exceeds_threshold =
+        ack_rtt_ns > config_.ack_rtt_threshold_ns;
+    const bool should_capture_record =
+        ack_rtt_exceeds_threshold || should_emit_drive_read_duration;
+    OrderLatencyDiagnosticAckResult result{
+        .found = should_capture_record,
+        .emitted = false,
+        .record =
+            should_capture_record
+                ? MakeRecord(OrderLatencyDiagnosticReason::kAckRttThreshold,
+                             window)
+                : OrderLatencyDiagnosticLogRecord{},
+    };
+    const bool should_log =
+        ack_rtt_exceeds_threshold && AllowLog(ack_local_receive_ns);
     if (should_log) {
-      handler(
-          MakeRecord(OrderLatencyDiagnosticReason::kAckRttThreshold, window));
+      handler(result.record);
+      result.emitted = true;
     } else if (should_emit_drive_read_duration) {
       should_emit_drive_read_duration =
           Emit(ack_local_receive_ns,
                OrderLatencyDiagnosticReason::kDriveReadDurationThreshold,
                window, handler) != 0;
+      result.emitted = should_emit_drive_read_duration;
     }
     windows_.erase(it);
-    return should_log || should_emit_drive_read_duration;
+    return result;
   }
 
  private:

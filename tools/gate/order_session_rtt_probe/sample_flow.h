@@ -1,6 +1,7 @@
 #ifndef AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_SAMPLE_FLOW_H_
 #define AQUILA_TOOLS_GATE_ORDER_SESSION_RTT_PROBE_SAMPLE_FLOW_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -126,6 +127,40 @@ struct ProbeStageCsvStats {
   std::int64_t ack_exchange_ns{0};
   std::int64_t ack_exchange_to_local_ns{0};
   std::int64_t ack_rtt_ns{-1};
+  bool ack_diagnostic_available{false};
+  gate::OrderLatencyDiagnosticReason ack_diagnostic_reason{
+      gate::OrderLatencyDiagnosticReason::kAckRttThreshold};
+  std::int64_t send_to_first_after_hook_ns{0};
+  std::int64_t send_to_first_drive_read_ns{0};
+  std::int64_t drive_read_duration_ns{0};
+  std::int64_t max_observed_drive_read_duration_ns{0};
+  std::size_t inflight_at_send{0};
+  std::int64_t max_runtime_loop_gap_ns{0};
+  std::uint64_t runtime_loop_iterations_before_ack{0};
+  int owner_thread_tid{-1};
+  std::int64_t order_encode_done_ns{0};
+  std::int64_t ws_frame_encode_done_ns{0};
+  std::int64_t write_enqueue_ns{0};
+  std::int64_t drive_write_enter_ns{0};
+  std::int64_t write_some_enter_ns{0};
+  std::int64_t write_some_return_ns{0};
+  std::int64_t write_complete_ns{0};
+  std::int64_t write_some_bytes{0};
+  std::int64_t write_complete_bytes{0};
+  int write_errno{0};
+  bool write_eagain{false};
+  std::size_t pending_write_count_after{0};
+  bool socket_send_queue_available{false};
+  std::uint32_t tcp_sendq_bytes{0};
+  std::uint32_t tcp_notsent_bytes{0};
+  bool tcp_info_requested{false};
+  bool tcp_info_available{false};
+  std::uint32_t tcp_info_rtt_us{0};
+  std::uint32_t tcp_info_rttvar_us{0};
+  std::uint32_t tcp_info_retrans{0};
+  std::uint32_t tcp_info_total_retrans{0};
+  std::uint32_t tcp_info_unacked{0};
+  std::uint32_t tcp_info_snd_cwnd{0};
   std::int64_t ts_write_complete_ns{0};
   std::int64_t ts_tx_sched_ns{0};
   std::int64_t ts_tx_software_ns{0};
@@ -259,7 +294,8 @@ class ProbeSampleFlow {
     return RecordAckRtt(
         stage, response.local_receive_ns, response.exchange_ns,
         core::LatencyDeltaNs(response.local_receive_ns, response.exchange_ns),
-        rtt_ns, response.socket_timestamps, response.socket_timestamp_stages);
+        rtt_ns, response.socket_timestamps, response.socket_timestamp_stages,
+        response);
   }
 
   [[nodiscard]] ProbeSampleTransition OnOrderFeedback(
@@ -507,13 +543,56 @@ class ProbeSampleFlow {
       std::int64_t ack_exchange_ns, std::int64_t ack_exchange_to_local_ns,
       std::int64_t rtt_ns,
       const websocket::SocketTimestampingSnapshot& socket_timestamps,
-      const websocket::SocketTimestampingStages& socket_timestamp_stages) {
+      const websocket::SocketTimestampingStages& socket_timestamp_stages,
+      const gate::OrderResponse& response) {
     ProbeStageCsvStats* csv = MutableCsvStats(stage);
     if (csv != nullptr) {
       csv->ack_receive_local_ns = ack_receive_local_ns;
       csv->ack_exchange_ns = ack_exchange_ns;
       csv->ack_exchange_to_local_ns = ack_exchange_to_local_ns;
       csv->ack_rtt_ns = rtt_ns;
+      if (response.ack_latency_diagnostic_available) {
+        const gate::OrderLatencyDiagnosticLogRecord& diagnostic =
+            response.ack_latency_diagnostic;
+        csv->ack_diagnostic_available = true;
+        csv->ack_diagnostic_reason = diagnostic.reason;
+        csv->send_to_first_after_hook_ns =
+            diagnostic.send_to_first_after_hook_ns;
+        csv->send_to_first_drive_read_ns =
+            diagnostic.send_to_first_drive_read_ns;
+        csv->drive_read_duration_ns = diagnostic.drive_read_duration_ns;
+        csv->max_observed_drive_read_duration_ns =
+            diagnostic.max_observed_drive_read_duration_ns;
+        csv->inflight_at_send = diagnostic.inflight_at_send;
+        csv->max_runtime_loop_gap_ns = diagnostic.max_runtime_loop_gap_ns;
+        csv->runtime_loop_iterations_before_ack =
+            diagnostic.runtime_loop_iterations_before_ack;
+        csv->owner_thread_tid = diagnostic.owner_thread_tid;
+        csv->order_encode_done_ns = diagnostic.order_encode_done_ns;
+        csv->ws_frame_encode_done_ns = diagnostic.ws_frame_encode_done_ns;
+        csv->write_enqueue_ns = diagnostic.write_enqueue_ns;
+        csv->drive_write_enter_ns = diagnostic.drive_write_enter_ns;
+        csv->write_some_enter_ns = diagnostic.write_some_enter_ns;
+        csv->write_some_return_ns = diagnostic.write_some_return_ns;
+        csv->write_complete_ns = diagnostic.write_complete_ns;
+        csv->write_some_bytes = diagnostic.write_some_bytes;
+        csv->write_complete_bytes = diagnostic.write_complete_bytes;
+        csv->write_errno = diagnostic.write_errno;
+        csv->write_eagain = diagnostic.write_eagain;
+        csv->pending_write_count_after = diagnostic.pending_write_count_after;
+        csv->socket_send_queue_available =
+            diagnostic.socket_send_queue_available;
+        csv->tcp_sendq_bytes = diagnostic.tcp_sendq_bytes;
+        csv->tcp_notsent_bytes = diagnostic.tcp_notsent_bytes;
+      }
+      csv->tcp_info_requested = response.tcp_info_requested;
+      csv->tcp_info_available = response.tcp_info.available;
+      csv->tcp_info_rtt_us = response.tcp_info.rtt_us;
+      csv->tcp_info_rttvar_us = response.tcp_info.rttvar_us;
+      csv->tcp_info_retrans = response.tcp_info.retrans;
+      csv->tcp_info_total_retrans = response.tcp_info.total_retrans;
+      csv->tcp_info_unacked = response.tcp_info.unacked;
+      csv->tcp_info_snd_cwnd = response.tcp_info.snd_cwnd;
       csv->ts_write_complete_ns = socket_timestamps.write_complete_ns;
       csv->ts_tx_sched_ns = socket_timestamps.tx_sched_ns;
       csv->ts_tx_software_ns = socket_timestamps.tx_software_ns;

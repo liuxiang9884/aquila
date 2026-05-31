@@ -122,6 +122,54 @@ namespace {
   return true;
 }
 
+[[nodiscard]] bool ReadUInt64InRange(
+    toml::node_view<const toml::node> node, std::uint64_t fallback,
+    std::string_view name, std::uint64_t min_value, std::uint64_t max_value,
+    std::uint64_t* output, std::string* error) {
+  if (Missing(node)) {
+    *output = fallback;
+    return true;
+  }
+  const std::optional<std::int64_t> value = node.value<std::int64_t>();
+  if (!value) {
+    *error = fmt::format("{} must be integer", name);
+    return false;
+  }
+  if (*value < 0 || static_cast<std::uint64_t>(*value) < min_value ||
+      static_cast<std::uint64_t>(*value) > max_value) {
+    *error = fmt::format("{} must be in [{}, {}]", name, min_value, max_value);
+    return false;
+  }
+  *output = static_cast<std::uint64_t>(*value);
+  return true;
+}
+
+[[nodiscard]] bool ReadDurationUsWithMsFallback(
+    toml::node_view<const toml::node> us_node,
+    toml::node_view<const toml::node> ms_node, std::uint64_t fallback_us,
+    std::string_view us_name, std::string_view ms_name, std::uint64_t min_us,
+    std::uint64_t* output, std::string* error) {
+  constexpr std::uint64_t kMaxDurationUs =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) /
+      1000;
+  if (!Missing(us_node) && !Missing(ms_node)) {
+    *error = fmt::format("{} and {} cannot both be set", us_name, ms_name);
+    return false;
+  }
+  if (!Missing(us_node)) {
+    return ReadUInt64InRange(us_node, fallback_us, us_name, min_us,
+                             kMaxDurationUs, output, error);
+  }
+  std::uint64_t value_ms = 0;
+  if (!ReadUInt64InRange(ms_node, fallback_us / 1000, ms_name,
+                         min_us == 0 ? 0 : 1, kMaxDurationUs / 1000, &value_ms,
+                         error)) {
+    return false;
+  }
+  *output = value_ms * 1000;
+  return true;
+}
+
 [[nodiscard]] bool ReadInt32InRange(toml::node_view<const toml::node> node,
                                     std::int32_t fallback,
                                     std::string_view name,
@@ -338,17 +386,20 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                           &config.sampling.samples_per_session, &error)) {
     return Failure(std::move(error));
   }
-  if (!ReadPositiveUInt32(sampling["cycle_cooldown_ms"],
-                          config.sampling.cycle_cooldown_ms,
-                          "probe.sampling.cycle_cooldown_ms",
-                          &config.sampling.cycle_cooldown_ms, &error)) {
+  if (!ReadDurationUsWithMsFallback(
+          sampling["cycle_cooldown_us"], sampling["cycle_cooldown_ms"],
+          config.sampling.cycle_cooldown_us, "probe.sampling.cycle_cooldown_us",
+          "probe.sampling.cycle_cooldown_ms", 1,
+          &config.sampling.cycle_cooldown_us, &error)) {
     return Failure(std::move(error));
   }
-  if (!ReadUInt32InRange(sampling["order_session_interval_ms"],
-                         config.sampling.order_session_interval_ms,
-                         "probe.sampling.order_session_interval_ms", 0,
-                         std::numeric_limits<std::uint32_t>::max(),
-                         &config.sampling.order_session_interval_ms, &error)) {
+  if (!ReadDurationUsWithMsFallback(
+          sampling["order_session_interval_us"],
+          sampling["order_session_interval_ms"],
+          config.sampling.order_session_interval_us,
+          "probe.sampling.order_session_interval_us",
+          "probe.sampling.order_session_interval_ms", 0,
+          &config.sampling.order_session_interval_us, &error)) {
     return Failure(std::move(error));
   }
   if (!ReadPositiveUInt32(sampling["max_events_per_drain"],
