@@ -188,6 +188,7 @@ class CriticalSession {
       const ssize_t written = tls_socket_.WriteSome(payload);
       RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
+        DrainSocketTimestampingEvents();
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
         if (write->write_offset == write->encoded_size) {
@@ -222,6 +223,7 @@ class CriticalSession {
 
       const ssize_t received = tls_socket_.ReadSome(read_buffer);
       if (received > 0) {
+        RecordSocketRxTimestampingEvent();
         ++reads_done;
         codec_.CommitWritten(static_cast<size_t>(received));
         metrics_.rx_bytes += static_cast<std::uint64_t>(received);
@@ -329,6 +331,36 @@ class CriticalSession {
     return tls_socket_.NativeFd();
   }
 
+  void StartSocketTimestampingProbe(std::uint64_t sequence) noexcept {
+    if (!config_.socket_timestamping.enabled || sequence == 0) {
+      return;
+    }
+    socket_timestamping_sequence_ = sequence;
+    socket_timestamping_snapshot_ = SocketTimestampingSnapshot{};
+    socket_timestamping_snapshot_.available = true;
+  }
+
+  void SetSocketTimestampingProbeWriteComplete(
+      std::uint64_t sequence, std::int64_t write_complete_ns) noexcept {
+    if (socket_timestamping_sequence_ != sequence) {
+      return;
+    }
+    socket_timestamping_snapshot_.write_complete_ns = write_complete_ns;
+  }
+
+  [[nodiscard]] SocketTimestampingSnapshot FinishSocketTimestampingProbe(
+      std::uint64_t sequence, std::int64_t ack_receive_local_ns) noexcept {
+    DrainSocketTimestampingEvents();
+    if (socket_timestamping_sequence_ != sequence) {
+      return {};
+    }
+    socket_timestamping_snapshot_.ack_receive_local_ns = ack_receive_local_ns;
+    SocketTimestampingSnapshot snapshot = socket_timestamping_snapshot_;
+    socket_timestamping_sequence_ = 0;
+    socket_timestamping_snapshot_ = {};
+    return snapshot;
+  }
+
  private:
   [[nodiscard]] static std::int64_t RealtimeNowNsInt64() noexcept {
     return static_cast<std::int64_t>(RealtimeClockNowNs());
@@ -384,6 +416,69 @@ class CriticalSession {
     last_error_ = error;
   }
 
+  void DrainSocketTimestampingEvents() noexcept {
+    if (!config_.socket_timestamping.enabled) {
+      return;
+    }
+    if constexpr (requires(TlsSocketT& socket) {
+                    socket.DrainTimestampingErrorQueue(std::uint32_t{0});
+                  }) {
+      const SocketTimestampingEventDrain drain =
+          tls_socket_.DrainTimestampingErrorQueue(
+              config_.socket_timestamping.max_errqueue_events_per_drain);
+      if (!drain.ok) {
+        return;
+      }
+      for (std::uint32_t i = 0; i < drain.events_seen; ++i) {
+        RecordSocketTimestampingEvent(drain.events[i]);
+      }
+    }
+  }
+
+  void RecordSocketTimestampingEvent(
+      const SocketTimestampingEvent& event) noexcept {
+    if (socket_timestamping_sequence_ == 0 || event.timestamp_ns <= 0) {
+      return;
+    }
+    socket_timestamping_snapshot_.available = true;
+    switch (event.kind) {
+      case SocketTimestampingEventKind::kTxSched:
+        if (socket_timestamping_snapshot_.tx_sched_ns == 0) {
+          socket_timestamping_snapshot_.tx_sched_ns = event.timestamp_ns;
+        }
+        return;
+      case SocketTimestampingEventKind::kTxSoftware:
+        if (socket_timestamping_snapshot_.tx_software_ns == 0) {
+          socket_timestamping_snapshot_.tx_software_ns = event.timestamp_ns;
+        }
+        return;
+      case SocketTimestampingEventKind::kTxAck:
+        if (socket_timestamping_snapshot_.tx_ack_ns == 0) {
+          socket_timestamping_snapshot_.tx_ack_ns = event.timestamp_ns;
+        }
+        return;
+      case SocketTimestampingEventKind::kRxSoftware:
+      case SocketTimestampingEventKind::kUnknown:
+        return;
+    }
+  }
+
+  void RecordSocketRxTimestampingEvent() noexcept {
+    if (!config_.socket_timestamping.enabled ||
+        socket_timestamping_sequence_ == 0) {
+      return;
+    }
+    if constexpr (requires(TlsSocketT& socket) {
+                    socket.TakeLastRxSoftwareTimestampNs();
+                  }) {
+      const std::int64_t rx_ns = tls_socket_.TakeLastRxSoftwareTimestampNs();
+      if (rx_ns > 0 && socket_timestamping_snapshot_.rx_software_ns == 0) {
+        socket_timestamping_snapshot_.available = true;
+        socket_timestamping_snapshot_.rx_software_ns = rx_ns;
+      }
+    }
+  }
+
   void CompleteFrontWrite() noexcept {
     PreparedWrite* write = pending_writes_[pending_head_];
     pending_writes_[pending_head_] = nullptr;
@@ -427,6 +522,7 @@ class CriticalSession {
       const ssize_t written = tls_socket_.WriteSome(payload);
       RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
+        DrainSocketTimestampingEvents();
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
         if (write->write_offset == write->encoded_size) {
@@ -465,6 +561,7 @@ class CriticalSession {
           remaining_bytes);
       const ssize_t written = tls_socket_.WriteSome(payload);
       if (written > 0) {
+        DrainSocketTimestampingEvents();
         if (first_write && control_write_.kind == PayloadKind::kPing &&
             control_queued_ns_ != 0) {
           RecordHeartbeatPingSendDelay();
@@ -625,6 +722,8 @@ class CriticalSession {
   ConnectionError last_error_{ConnectionError::kNone};
   bool awaiting_pong_{false};
   std::uint64_t last_ping_ns_{0};
+  std::uint64_t socket_timestamping_sequence_{0};
+  SocketTimestampingSnapshot socket_timestamping_snapshot_{};
 };
 
 }  // namespace aquila::websocket

@@ -4,8 +4,10 @@
 #include <cerrno>
 #include <csignal>
 #include <cstddef>
+#include <array>
 #include <span>
 #include <string>
+#include <cstdint>
 
 #include <fcntl.h>
 #include <netdb.h>
@@ -48,6 +50,8 @@ class PlainSocket {
     wants_write_ = false;
     connect_pending_ = false;
     timestamping_apply_result_ = {};
+    socket_timestamping_config_ = {};
+    last_rx_software_timestamp_ns_ = 0;
     return true;
   }
 
@@ -55,6 +59,7 @@ class PlainSocket {
     wants_read_ = false;
     wants_write_ = false;
     connect_pending_ = false;
+    socket_timestamping_config_ = config.socket_timestamping;
 
     if (!Init()) {
       return false;
@@ -159,8 +164,13 @@ class PlainSocket {
   ssize_t ReadSome(std::span<std::byte> buffer) noexcept {
     wants_read_ = false;
     wants_write_ = false;
+    last_rx_software_timestamp_ns_ = 0;
     if (fd_ < 0 || buffer.empty()) {
       return -1;
+    }
+    if (timestamping_apply_result_.enabled &&
+        socket_timestamping_config_.rx_software) {
+      return ReadSomeWithTimestamp(buffer);
     }
     const ssize_t result = ::recv(fd_, buffer.data(), buffer.size(), 0);
     if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -199,6 +209,17 @@ class PlainSocket {
     return fd_;
   }
 
+  [[nodiscard]] SocketTimestampingEventDrain DrainTimestampingErrorQueue(
+      std::uint32_t max_events) noexcept {
+    return DrainSocketTimestampingErrorQueue(fd_, max_events);
+  }
+
+  [[nodiscard]] std::int64_t TakeLastRxSoftwareTimestampNs() noexcept {
+    const std::int64_t value = last_rx_software_timestamp_ns_;
+    last_rx_software_timestamp_ns_ = 0;
+    return value;
+  }
+
   [[nodiscard]] SocketTimestampingApplyResult timestamping_apply_result()
       const noexcept {
     return timestamping_apply_result_;
@@ -209,6 +230,8 @@ class PlainSocket {
     wants_write_ = false;
     connect_pending_ = false;
     timestamping_apply_result_ = {};
+    socket_timestamping_config_ = {};
+    last_rx_software_timestamp_ns_ = 0;
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
@@ -232,18 +255,42 @@ class PlainSocket {
     (void)ignored;
   }
 
+  ssize_t ReadSomeWithTimestamp(std::span<std::byte> buffer) noexcept {
+    std::array<char, 256> control{};
+    iovec iov{.iov_base = buffer.data(), .iov_len = buffer.size()};
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.data();
+    msg.msg_controllen = control.size();
+
+    const ssize_t result = ::recvmsg(fd_, &msg, 0);
+    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      wants_read_ = true;
+      return result;
+    }
+    if (result > 0) {
+      last_rx_software_timestamp_ns_ = ExtractRxSoftwareTimestampNs(msg);
+    }
+    return result;
+  }
+
   void MoveFrom(PlainSocket& other) noexcept {
     fd_ = other.fd_;
     wants_read_ = other.wants_read_;
     wants_write_ = other.wants_write_;
     connect_pending_ = other.connect_pending_;
     timestamping_apply_result_ = other.timestamping_apply_result_;
+    socket_timestamping_config_ = other.socket_timestamping_config_;
+    last_rx_software_timestamp_ns_ = other.last_rx_software_timestamp_ns_;
 
     other.fd_ = -1;
     other.wants_read_ = false;
     other.wants_write_ = false;
     other.connect_pending_ = false;
     other.timestamping_apply_result_ = {};
+    other.socket_timestamping_config_ = {};
+    other.last_rx_software_timestamp_ns_ = 0;
   }
 
   int fd_{-1};
@@ -251,6 +298,8 @@ class PlainSocket {
   bool wants_write_{false};
   bool connect_pending_{false};
   SocketTimestampingApplyResult timestamping_apply_result_{};
+  SocketTimestampingConfig socket_timestamping_config_{};
+  std::int64_t last_rx_software_timestamp_ns_{0};
 };
 
 }  // namespace aquila::websocket
