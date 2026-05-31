@@ -8,6 +8,7 @@
 #include <absl/container/flat_hash_map.h>
 
 #include "core/websocket/socket_diagnostics.h"
+#include "core/websocket/socket_timestamping.h"
 #include "core/websocket/types.h"
 
 namespace aquila::gate {
@@ -35,6 +36,8 @@ struct OrderLatencyDiagnosticWindow {
   int owner_thread_tid{-1};
   websocket::WritePathDiagnostics write_path{};
   websocket::SocketSendQueueDiagnostics socket_send_queue{};
+  websocket::SocketTimestampingSnapshot socket_timestamps{};
+  websocket::SocketTimestampingStages socket_timestamp_stages{};
 };
 
 struct OrderLatencyDiagnosticLogRecord {
@@ -69,6 +72,8 @@ struct OrderLatencyDiagnosticLogRecord {
   bool socket_send_queue_available{false};
   std::uint32_t tcp_sendq_bytes{0};
   std::uint32_t tcp_notsent_bytes{0};
+  websocket::SocketTimestampingSnapshot socket_timestamps{};
+  websocket::SocketTimestampingStages socket_timestamp_stages{};
 };
 
 class OrderAckLatencyDiagnostics {
@@ -93,6 +98,8 @@ class OrderAckLatencyDiagnostics {
     state.owner_thread_tid = window.owner_thread_tid;
     state.write_path = window.write_path;
     state.socket_send_queue = window.socket_send_queue;
+    state.socket_timestamps = window.socket_timestamps;
+    state.socket_timestamp_stages = window.socket_timestamp_stages;
     windows_[window.request_sequence] = state;
   }
 
@@ -183,7 +190,7 @@ class OrderAckLatencyDiagnostics {
                  std::int64_t ack_local_receive_ns,
                  std::int64_t ack_exchange_ns, Handler&& handler) noexcept {
     return RecordAck(request_sequence, ack_local_receive_ns, ack_exchange_ns, 0,
-                     handler);
+                     websocket::SocketTimestampingSnapshot{}, handler);
   }
 
   template <typename Handler>
@@ -192,6 +199,28 @@ class OrderAckLatencyDiagnostics {
                  std::int64_t ack_exchange_ns,
                  std::int64_t current_drive_read_start_ns,
                  Handler&& handler) noexcept {
+    return RecordAck(request_sequence, ack_local_receive_ns, ack_exchange_ns,
+                     current_drive_read_start_ns,
+                     websocket::SocketTimestampingSnapshot{}, handler);
+  }
+
+  template <typename Handler>
+  bool RecordAck(std::uint64_t request_sequence,
+                 std::int64_t ack_local_receive_ns,
+                 std::int64_t ack_exchange_ns,
+                 const websocket::SocketTimestampingSnapshot& socket_timestamps,
+                 Handler&& handler) noexcept {
+    return RecordAck(request_sequence, ack_local_receive_ns, ack_exchange_ns, 0,
+                     socket_timestamps, handler);
+  }
+
+  template <typename Handler>
+  bool RecordAck(std::uint64_t request_sequence,
+                 std::int64_t ack_local_receive_ns,
+                 std::int64_t ack_exchange_ns,
+                 std::int64_t current_drive_read_start_ns,
+                 const websocket::SocketTimestampingSnapshot& socket_timestamps,
+                 Handler&& handler) noexcept {
     auto it = windows_.find(request_sequence);
     if (it == windows_.end()) {
       return false;
@@ -199,6 +228,9 @@ class OrderAckLatencyDiagnostics {
     WindowState window = it->second;
     window.ack_local_receive_ns = ack_local_receive_ns;
     window.ack_exchange_ns = ack_exchange_ns;
+    window.socket_timestamps = socket_timestamps;
+    window.socket_timestamp_stages =
+        websocket::ComputeSocketTimestampingStages(window.socket_timestamps);
     bool should_emit_drive_read_duration = false;
     if (current_drive_read_start_ns > 0 &&
         ack_local_receive_ns > current_drive_read_start_ns) {
@@ -248,6 +280,8 @@ class OrderAckLatencyDiagnostics {
     int owner_thread_tid{-1};
     websocket::WritePathDiagnostics write_path{};
     websocket::SocketSendQueueDiagnostics socket_send_queue{};
+    websocket::SocketTimestampingSnapshot socket_timestamps{};
+    websocket::SocketTimestampingStages socket_timestamp_stages{};
     bool logged_send_to_drive_read{false};
     bool logged_drive_read_duration{false};
     bool logged_timeout{false};
@@ -344,6 +378,8 @@ class OrderAckLatencyDiagnostics {
         .socket_send_queue_available = window.socket_send_queue.available,
         .tcp_sendq_bytes = window.socket_send_queue.sendq_bytes,
         .tcp_notsent_bytes = window.socket_send_queue.notsent_bytes,
+        .socket_timestamps = window.socket_timestamps,
+        .socket_timestamp_stages = window.socket_timestamp_stages,
     };
   }
 

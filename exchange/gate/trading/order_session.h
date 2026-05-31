@@ -211,6 +211,17 @@ struct OrderSessionLatencyDiagnosticLogRecordForTest {
   std::uint32_t tcp_info_total_retrans{0};
   std::uint32_t tcp_info_unacked{0};
   std::uint32_t tcp_info_snd_cwnd{0};
+  bool ts_available{false};
+  std::int64_t ts_write_complete_ns{0};
+  std::int64_t ts_tx_sched_ns{0};
+  std::int64_t ts_tx_software_ns{0};
+  std::int64_t ts_tx_ack_ns{0};
+  std::int64_t ts_rx_software_ns{0};
+  std::int64_t ts_ack_receive_local_ns{0};
+  std::int64_t ts_write_to_tx_software_ns{-1};
+  std::int64_t ts_tx_software_to_tx_ack_ns{-1};
+  std::int64_t ts_tx_ack_to_rx_software_ns{-1};
+  std::int64_t ts_rx_software_to_ack_receive_ns{-1};
 };
 
 using OrderSessionConnectionLogObserverForTest =
@@ -350,6 +361,21 @@ inline void NotifyOrderSessionLatencyDiagnosticLogObserverForTest(
       .tcp_info_total_retrans = tcp_info.total_retrans,
       .tcp_info_unacked = tcp_info.unacked,
       .tcp_info_snd_cwnd = tcp_info.snd_cwnd,
+      .ts_available = record.socket_timestamps.available,
+      .ts_write_complete_ns = record.socket_timestamps.write_complete_ns,
+      .ts_tx_sched_ns = record.socket_timestamps.tx_sched_ns,
+      .ts_tx_software_ns = record.socket_timestamps.tx_software_ns,
+      .ts_tx_ack_ns = record.socket_timestamps.tx_ack_ns,
+      .ts_rx_software_ns = record.socket_timestamps.rx_software_ns,
+      .ts_ack_receive_local_ns = record.socket_timestamps.ack_receive_local_ns,
+      .ts_write_to_tx_software_ns =
+          record.socket_timestamp_stages.write_complete_to_tx_software_ns,
+      .ts_tx_software_to_tx_ack_ns =
+          record.socket_timestamp_stages.tx_software_to_tx_ack_ns,
+      .ts_tx_ack_to_rx_software_ns =
+          record.socket_timestamp_stages.tx_ack_to_rx_software_ns,
+      .ts_rx_software_to_ack_receive_ns =
+          record.socket_timestamp_stages.rx_software_to_ack_receive_ns,
   });
 }
 #endif
@@ -500,11 +526,15 @@ class OrderSession {
     write_path.order_encode_done_ns = RealtimeNowNsInt64();
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
+    client_.Core().StartSocketTimestampingProbe(sequence);
     const OrderSendStatus status =
         MapSendStatus(SendText(encoded.text, &write_path));
+    client_.Core().SetSocketTimestampingProbeWriteComplete(
+        sequence, write_path.write_complete_ns);
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
+      (void)client_.Core().FinishSocketTimestampingProbe(sequence, 0);
       LogGateOrderSendFailed("place", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
@@ -512,7 +542,8 @@ class OrderSession {
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
-                            write_path, socket_send_queue);
+                            write_path, socket_send_queue,
+                            MakeSocketTimestampingSendSnapshot(write_path));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
@@ -568,11 +599,15 @@ class OrderSession {
     write_path.order_encode_done_ns = RealtimeNowNsInt64();
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
+    client_.Core().StartSocketTimestampingProbe(sequence);
     const OrderSendStatus status =
         MapSendStatus(SendText(encoded.text, &write_path));
+    client_.Core().SetSocketTimestampingProbeWriteComplete(
+        sequence, write_path.write_complete_ns);
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
+      (void)client_.Core().FinishSocketTimestampingProbe(sequence, 0);
       LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
@@ -580,7 +615,8 @@ class OrderSession {
     }
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
-                            write_path, socket_send_queue);
+                            write_path, socket_send_queue,
+                            MakeSocketTimestampingSendSnapshot(write_path));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
@@ -882,6 +918,12 @@ class OrderSession {
         "write_eagain={} pending_write_count_after={} "
         "socket_send_queue_available={} tcp_sendq_bytes={} "
         "tcp_notsent_bytes={} "
+        "ts_available={} ts_write_complete_ns={} ts_tx_sched_ns={} "
+        "ts_tx_software_ns={} ts_tx_ack_ns={} ts_rx_software_ns={} "
+        "ts_ack_receive_local_ns={} ts_write_to_tx_software_ns={} "
+        "ts_tx_software_to_tx_ack_ns={} "
+        "ts_tx_ack_to_rx_software_ns={} "
+        "ts_rx_software_to_ack_receive_ns={} "
         "tcp_info_requested={} tcp_info_available={} tcp_info_rtt_us={} "
         "tcp_info_rttvar_us={} tcp_info_retrans={} "
         "tcp_info_total_retrans={} tcp_info_unacked={} tcp_info_snd_cwnd={}",
@@ -902,6 +944,17 @@ class OrderSession {
         record.pending_write_count_after,
         record.socket_send_queue_available ? "true" : "false",
         record.tcp_sendq_bytes, record.tcp_notsent_bytes,
+        record.socket_timestamps.available ? "true" : "false",
+        record.socket_timestamps.write_complete_ns,
+        record.socket_timestamps.tx_sched_ns,
+        record.socket_timestamps.tx_software_ns,
+        record.socket_timestamps.tx_ack_ns,
+        record.socket_timestamps.rx_software_ns,
+        record.socket_timestamps.ack_receive_local_ns,
+        record.socket_timestamp_stages.write_complete_to_tx_software_ns,
+        record.socket_timestamp_stages.tx_software_to_tx_ack_ns,
+        record.socket_timestamp_stages.tx_ack_to_rx_software_ns,
+        record.socket_timestamp_stages.rx_software_to_ack_receive_ns,
         tcp_info_requested ? "true" : "false",
         tcp_info.available ? "true" : "false", tcp_info.rtt_us,
         tcp_info.rttvar_us, tcp_info.retrans, tcp_info.total_retrans,
@@ -997,7 +1050,8 @@ class OrderSession {
       std::uint64_t local_order_id, std::uint64_t sequence,
       std::int64_t send_local_ns,
       const websocket::WritePathDiagnostics& write_path,
-      const websocket::SocketSendQueueDiagnostics& socket_send_queue) noexcept {
+      const websocket::SocketSendQueueDiagnostics& socket_send_queue,
+      const websocket::SocketTimestampingSnapshot& socket_timestamps) noexcept {
     ack_latency_diagnostics_.Arm(OrderLatencyDiagnosticWindow{
         .local_order_id = local_order_id,
         .request_sequence = sequence,
@@ -1006,18 +1060,34 @@ class OrderSession {
         .owner_thread_tid = detail::CurrentTidForOrderSessionDiagnostics(),
         .write_path = write_path,
         .socket_send_queue = socket_send_queue,
+        .socket_timestamps = socket_timestamps,
+        .socket_timestamp_stages =
+            websocket::ComputeSocketTimestampingStages(socket_timestamps),
     });
+  }
+
+  [[nodiscard]] websocket::SocketTimestampingSnapshot
+  MakeSocketTimestampingSendSnapshot(
+      const websocket::WritePathDiagnostics& write_path) const noexcept {
+    websocket::SocketTimestampingSnapshot snapshot{};
+    if (!connection_.socket_timestamping.enabled) {
+      return snapshot;
+    }
+    snapshot.available = true;
+    snapshot.write_complete_ns = write_path.write_complete_ns;
+    return snapshot;
   }
 
   void RecordAckLatencyDiagnostic(
       std::uint64_t sequence, std::int64_t ack_local_receive_ns,
       std::int64_t ack_exchange_ns, int diagnostic_cpu,
+      const websocket::SocketTimestampingSnapshot& socket_timestamps,
       const websocket::TcpInfoDiagnostics& tcp_info) noexcept {
     const std::uint64_t order_session_id = order_session_id_;
     const bool tcp_info_requested = TcpInfoDiagnosticsEnabled();
     (void)ack_latency_diagnostics_.RecordAck(
         sequence, ack_local_receive_ns, ack_exchange_ns,
-        current_drive_read_start_ns_,
+        current_drive_read_start_ns_, socket_timestamps,
         [order_session_id, diagnostic_cpu, tcp_info_requested,
          tcp_info](const OrderLatencyDiagnosticLogRecord& record) noexcept {
           LogOrderLatencyDiagnostic(record, order_session_id, diagnostic_cpu,
@@ -1172,8 +1242,14 @@ class OrderSession {
       const int ack_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
       const websocket::TcpInfoDiagnostics tcp_info =
           SnapshotTcpInfoDiagnostics();
+      const websocket::SocketTimestampingSnapshot socket_timestamps =
+          client_.Core().FinishSocketTimestampingProbe(
+              parsed.request_id.sequence, local_receive_ns);
+      const websocket::SocketTimestampingStages socket_timestamp_stages =
+          websocket::ComputeSocketTimestampingStages(socket_timestamps);
       RecordAckLatencyDiagnostic(parsed.request_id.sequence, local_receive_ns,
-                                 parsed.exchange_ns, ack_cpu, tcp_info);
+                                 parsed.exchange_ns, ack_cpu, socket_timestamps,
+                                 tcp_info);
       LogGateOrderResponse(parsed, local_order_id, 0, local_receive_ns,
                            order_session_id_, ack_cpu,
                            TcpInfoDiagnosticsEnabled(), tcp_info);
@@ -1185,7 +1261,9 @@ class OrderSession {
                         .http_status = parsed.http_status,
                         .error_label_hash = 0,
                         .local_receive_ns = local_receive_ns,
-                        .exchange_ns = parsed.exchange_ns});
+                        .exchange_ns = parsed.exchange_ns,
+                        .socket_timestamps = socket_timestamps,
+                        .socket_timestamp_stages = socket_timestamp_stages});
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordResponse();
       }

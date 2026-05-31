@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "core/common/types.h"
+#include "core/websocket/socket_timestamping.h"
 
 namespace aquila::gate {
 
@@ -66,6 +67,8 @@ struct OrderResponse {
   std::uint64_t error_label_hash{0};
   std::int64_t local_receive_ns{0};
   std::int64_t exchange_ns{0};
+  websocket::SocketTimestampingSnapshot socket_timestamps{};
+  websocket::SocketTimestampingStages socket_timestamp_stages{};
 };
 
 struct OrderSessionStats {
