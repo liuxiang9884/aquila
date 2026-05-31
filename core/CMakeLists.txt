@@ -6,6 +6,12 @@ target_include_directories(aquila_core
     PUBLIC ${PROJECT_SOURCE_DIR}
 )
 
+target_compile_definitions(aquila_core
+    PUBLIC
+        $<$<BOOL:${AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION}>:AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION=1>
+        $<$<NOT:$<BOOL:${AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION}>>:AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION=0>
+)
+
 target_link_libraries(aquila_core
     PUBLIC
         Threads::Threads

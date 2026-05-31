@@ -379,6 +379,14 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
           &error)) {
     return Failure(std::move(error));
   }
+  if (!ReadUInt32InRange(timestamping["max_active_probes"],
+                         config.sessions.timestamping.max_active_probes,
+                         "probe.sessions.timestamping.max_active_probes", 0,
+                         std::numeric_limits<std::uint32_t>::max(),
+                         &config.sessions.timestamping.max_active_probes,
+                         &error)) {
+    return Failure(std::move(error));
+  }
 
   if (!ReadPositiveUInt32(sampling["samples_per_session"],
                           config.sampling.samples_per_session,

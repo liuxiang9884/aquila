@@ -270,6 +270,9 @@ class OrderSessionConfigParser {
         node["max_errqueue_events_per_drain"],
         timestamping->max_errqueue_events_per_drain,
         std::string{name}.append(".max_errqueue_events_per_drain"));
+    timestamping->max_active_probes = NonNegativeUint32Or(
+        node["max_active_probes"], timestamping->max_active_probes,
+        std::string{name}.append(".max_active_probes"));
   }
 
   void Fail(std::string_view name, std::string_view message) {

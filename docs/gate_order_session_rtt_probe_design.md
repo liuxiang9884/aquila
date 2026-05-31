@@ -312,7 +312,9 @@ live measurement 命令形态：
 `host`、`connect_ip`、`port`、`enable_tls` 和 `worker_cpu_id`；`worker_cpu_id=-1` 表示沿用 base order session config。
 若要在同一次 multi-session probe 中混测 public TLS 和 private plain link，直接在 CSV 中写不同行即可。建议默认打开
 `order_session.diagnostics.enable_tcp_info=true` 的临时副本，但不要修改仓库默认配置。probe 的 contract 仍由最新 Gate `BookTicker`
-行情事件决定，不通过命令行固定为单个 symbol。
+行情事件决定，不通过命令行固定为单个 symbol。`[probe.sessions.timestamping]` 支持 `max_active_probes`；默认
+`16384`，用于保留多个未完成 request 的 socket timestamping 归因状态。构建时若设置
+`AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION=OFF`，这些 runtime timestamping 配置仍会解析，但不会实际启用归因。
 
 输出最终分两类；当前仅 sample CSV schema / writer 已落地，connection log 仍是 live executor 待实现项：
 

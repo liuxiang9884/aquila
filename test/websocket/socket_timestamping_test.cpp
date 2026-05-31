@@ -1,16 +1,32 @@
 #include "core/websocket/socket_timestamping.h"
 
-#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <thread>
+#include <utility>
+#include <vector>
+
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 
-#include <utility>
+#include <fcntl.h>
 
 namespace aquila::websocket {
 namespace {
+
+#if !AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+#define AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST() \
+  GTEST_SKIP() << "socket timestamping attribution is disabled at build time"
+#else
+#define AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST() \
+  do {                                                     \
+  } while (false)
+#endif
 
 class Fd {
  public:
@@ -91,6 +107,18 @@ LoopbackTcpPair CreateLoopbackTcpPairForTest() {
                          .server = std::move(server)};
 }
 
+void RecvExactForTest(int fd, size_t bytes) {
+  std::array<char, 64> buffer{};
+  size_t received_bytes = 0;
+  while (received_bytes < bytes) {
+    const size_t remaining = bytes - received_bytes;
+    const ssize_t received =
+        ::recv(fd, buffer.data(), std::min(buffer.size(), remaining), 0);
+    ASSERT_GT(received, 0);
+    received_bytes += static_cast<size_t>(received);
+  }
+}
+
 TEST(WebsocketSocketTimestampingTest, DefaultConfigIsDisabled) {
   SocketTimestampingConfig config;
 
@@ -128,7 +156,8 @@ TEST(WebsocketSocketTimestampingTest, ApplyDisabledConfigSucceedsOnInvalidFd) {
   EXPECT_FALSE(result.enabled);
 }
 
-TEST(WebsocketSocketTimestampingTest, ApplyEnabledConfigReportsFailureOnInvalidFd) {
+TEST(WebsocketSocketTimestampingTest,
+     ApplyEnabledConfigReportsFailureOnInvalidFd) {
   SocketTimestampingConfig config;
   config.enabled = true;
   config.tx_software = true;
@@ -137,21 +166,34 @@ TEST(WebsocketSocketTimestampingTest, ApplyEnabledConfigReportsFailureOnInvalidF
   const SocketTimestampingApplyResult result =
       ApplySocketTimestampingConfig(-1, config);
 
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
   EXPECT_FALSE(result.ok);
   EXPECT_FALSE(result.enabled);
   EXPECT_NE(result.error_errno, 0);
+#else
+  EXPECT_TRUE(result.ok);
+  EXPECT_FALSE(result.enabled);
+  EXPECT_EQ(result.error_errno, 0);
+#endif
 }
 
 TEST(WebsocketSocketTimestampingTest, DrainInvalidFdReportsFailure) {
   const SocketTimestampingEventDrain drain =
       DrainSocketTimestampingErrorQueue(-1, 16);
 
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
   EXPECT_FALSE(drain.ok);
   EXPECT_NE(drain.error_errno, 0);
   EXPECT_EQ(drain.events_seen, 0U);
+#else
+  EXPECT_TRUE(drain.ok);
+  EXPECT_EQ(drain.error_errno, 0);
+  EXPECT_EQ(drain.events_seen, 0U);
+#endif
 }
 
 TEST(WebsocketSocketTimestampingTest, LoopbackTxTimestampDrainIsNonBlocking) {
+  AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
   SocketTimestampingConfig config;
   config.enabled = true;
   config.tx_software = true;
@@ -174,6 +216,71 @@ TEST(WebsocketSocketTimestampingTest, LoopbackTxTimestampDrainIsNonBlocking) {
 
   EXPECT_TRUE(drain.ok);
   EXPECT_LE(drain.events_seen, 16U);
+}
+
+TEST(WebsocketSocketTimestampingTest, LoopbackTcpOptIdReportsLastByteIds) {
+  AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
+#if defined(__linux__) && defined(SOF_TIMESTAMPING_OPT_ID_TCP)
+  SocketTimestampingConfig config;
+  config.enabled = true;
+  config.tx_software = true;
+  config.tx_ack = true;
+  config.max_errqueue_events_per_drain = 32;
+
+  LoopbackTcpPair pair = CreateLoopbackTcpPairForTest();
+  int one = 1;
+  EXPECT_EQ(::setsockopt(pair.client.get(), IPPROTO_TCP, TCP_NODELAY, &one,
+                         sizeof(one)),
+            0);
+
+  const SocketTimestampingApplyResult apply =
+      ApplySocketTimestampingConfig(pair.client.get(), config);
+  if (!apply.ok) {
+    GTEST_SKIP() << "SO_TIMESTAMPING unavailable errno=" << apply.error_errno;
+  }
+
+  ASSERT_EQ(::send(pair.client.get(), "abc", 3, MSG_NOSIGNAL), 3);
+  RecvExactForTest(pair.server.get(), 3);
+  ASSERT_EQ(::send(pair.client.get(), "defgh", 5, MSG_NOSIGNAL), 5);
+  RecvExactForTest(pair.server.get(), 5);
+
+  std::vector<SocketTimestampingEvent> events;
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    const SocketTimestampingEventDrain drain =
+        DrainSocketTimestampingErrorQueue(pair.client.get(), 32);
+    ASSERT_TRUE(drain.ok) << "errno=" << drain.error_errno;
+    for (std::uint32_t i = 0; i < drain.events_seen; ++i) {
+      events.push_back(drain.events[i]);
+    }
+    const auto has_last_byte_id = [&events](std::uint32_t id) {
+      return std::any_of(
+          events.begin(), events.end(),
+          [id](const SocketTimestampingEvent& event) {
+            return (event.kind == SocketTimestampingEventKind::kTxSoftware ||
+                    event.kind == SocketTimestampingEventKind::kTxAck) &&
+                   event.id == id;
+          });
+    };
+    if (has_last_byte_id(2) && has_last_byte_id(7)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  const auto has_last_byte_id = [&events](std::uint32_t id) {
+    return std::any_of(
+        events.begin(), events.end(),
+        [id](const SocketTimestampingEvent& event) {
+          return (event.kind == SocketTimestampingEventKind::kTxSoftware ||
+                  event.kind == SocketTimestampingEventKind::kTxAck) &&
+                 event.id == id;
+        });
+  };
+  EXPECT_TRUE(has_last_byte_id(2));
+  EXPECT_TRUE(has_last_byte_id(7));
+#else
+  GTEST_SKIP() << "SOF_TIMESTAMPING_OPT_ID_TCP is unavailable";
+#endif
 }
 
 }  // namespace

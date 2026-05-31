@@ -526,11 +526,13 @@ class OrderSession {
     write_path.order_encode_done_ns = RealtimeNowNsInt64();
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
-    client_.Core().StartSocketTimestampingProbe(sequence);
+    const bool socket_timestamping_probe_started =
+        client_.Core().StartSocketTimestampingProbe(sequence);
     const OrderSendStatus status =
         MapSendStatus(SendText(encoded.text, &write_path));
     const bool socket_timestamping_probe_active =
-        UpdateSocketTimestampingProbeAfterSend(sequence, status, write_path);
+        UpdateSocketTimestampingProbeAfterSend(
+            sequence, status, write_path, socket_timestamping_probe_started);
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
@@ -599,11 +601,13 @@ class OrderSession {
     write_path.order_encode_done_ns = RealtimeNowNsInt64();
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
-    client_.Core().StartSocketTimestampingProbe(sequence);
+    const bool socket_timestamping_probe_started =
+        client_.Core().StartSocketTimestampingProbe(sequence);
     const OrderSendStatus status =
         MapSendStatus(SendText(encoded.text, &write_path));
     const bool socket_timestamping_probe_active =
-        UpdateSocketTimestampingProbeAfterSend(sequence, status, write_path);
+        UpdateSocketTimestampingProbeAfterSend(
+            sequence, status, write_path, socket_timestamping_probe_started);
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
@@ -1081,7 +1085,11 @@ class OrderSession {
 
   [[nodiscard]] bool UpdateSocketTimestampingProbeAfterSend(
       std::uint64_t sequence, OrderSendStatus status,
-      const websocket::WritePathDiagnostics& write_path) noexcept {
+      const websocket::WritePathDiagnostics& write_path,
+      bool socket_timestamping_probe_started) noexcept {
+    if (!socket_timestamping_probe_started) {
+      return false;
+    }
     client_.Core().SetSocketTimestampingProbeWriteComplete(
         sequence, write_path.write_complete_ns);
     if (!connection_.socket_timestamping.enabled) {

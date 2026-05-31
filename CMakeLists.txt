@@ -9,6 +9,9 @@ include(cmake/compile_options.cmake)
 include(cmake/third_party.cmake)
 include(cmake/packages.cmake)
 
+option(AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+       "Build Linux socket timestamping attribution support" ON)
+
 enable_testing()
 
 add_subdirectory(core)

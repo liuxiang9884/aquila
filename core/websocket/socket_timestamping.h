@@ -1,19 +1,24 @@
 #ifndef AQUILA_CORE_WEBSOCKET_SOCKET_TIMESTAMPING_H_
 #define AQUILA_CORE_WEBSOCKET_SOCKET_TIMESTAMPING_H_
 
-#include <cerrno>
+#include <sys/socket.h>
+
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <type_traits>
-#include <sys/socket.h>
 
 #if defined(__linux__)
 #include <linux/errqueue.h>
 #include <linux/net_tstamp.h>
 #include <netinet/in.h>
+#endif
+
+#ifndef AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+#define AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION 1
 #endif
 
 namespace aquila::websocket {
@@ -26,6 +31,7 @@ struct SocketTimestampingConfig {
   bool rx_software{false};
   bool hardware{false};
   std::uint32_t max_errqueue_events_per_drain{16};
+  std::uint32_t max_active_probes{16'384};
 };
 
 struct SocketTimestampingSnapshot {
@@ -90,15 +96,19 @@ struct SocketTimestampingApplyResult {
           DiffOrMinusOne(snapshot.tx_ack_ns, snapshot.tx_software_ns),
       .tx_ack_to_rx_software_ns =
           DiffOrMinusOne(snapshot.rx_software_ns, snapshot.tx_ack_ns),
-      .rx_software_to_ack_receive_ns =
-          DiffOrMinusOne(snapshot.ack_receive_local_ns,
-                         snapshot.rx_software_ns),
+      .rx_software_to_ack_receive_ns = DiffOrMinusOne(
+          snapshot.ack_receive_local_ns, snapshot.rx_software_ns),
   };
 }
 
 [[nodiscard]] inline SocketTimestampingApplyResult
 ApplySocketTimestampingConfig(int fd,
                               const SocketTimestampingConfig& config) noexcept {
+#if !AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  (void)fd;
+  (void)config;
+  return SocketTimestampingApplyResult{.ok = true, .enabled = false};
+#else
   if (!config.enabled) {
     return SocketTimestampingApplyResult{.ok = true, .enabled = false};
   }
@@ -139,6 +149,7 @@ ApplySocketTimestampingConfig(int fd,
   (void)fd;
   return SocketTimestampingApplyResult{
       .ok = false, .enabled = false, .error_errno = ENOTSUP};
+#endif
 #endif
 }
 
@@ -183,10 +194,13 @@ template <typename TimestampingT>
 }  // namespace detail
 
 [[nodiscard]] inline SocketTimestampingEventDrain
-DrainSocketTimestampingErrorQueue(int fd,
-                                  std::uint32_t max_events) noexcept {
+DrainSocketTimestampingErrorQueue(int fd, std::uint32_t max_events) noexcept {
   SocketTimestampingEventDrain drain{};
-#if defined(__linux__)
+#if !AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  (void)fd;
+  (void)max_events;
+  return drain;
+#elif defined(__linux__)
   if (fd < 0) {
     return SocketTimestampingEventDrain{
         .ok = false, .error_errno = EBADF, .events_seen = 0};
@@ -263,11 +277,12 @@ DrainSocketTimestampingErrorQueue(int fd,
 
 [[nodiscard]] inline std::int64_t ExtractRxSoftwareTimestampNs(
     const msghdr& msg) noexcept {
-#if defined(__linux__)
+#if !AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  (void)msg;
+#elif defined(__linux__)
   for (cmsghdr* cmsg = CMSG_FIRSTHDR(const_cast<msghdr*>(&msg));
        cmsg != nullptr; cmsg = CMSG_NXTHDR(const_cast<msghdr*>(&msg), cmsg)) {
-    if (cmsg->cmsg_level == SOL_SOCKET &&
-        cmsg->cmsg_type == SCM_TIMESTAMPING) {
+    if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_TIMESTAMPING) {
       const auto* timestamps =
           reinterpret_cast<const scm_timestamping*>(CMSG_DATA(cmsg));
       return detail::TimespecToNs(timestamps->ts[0]);

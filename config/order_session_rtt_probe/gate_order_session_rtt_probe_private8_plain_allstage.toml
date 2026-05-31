@@ -21,6 +21,7 @@ tx_ack = true
 rx_software = true
 hardware = false
 max_errqueue_events_per_drain = 32
+max_active_probes = 16384
 
 [probe.sampling]
 samples_per_session = 1

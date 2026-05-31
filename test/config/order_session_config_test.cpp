@@ -92,6 +92,7 @@ tx_software = true
 tx_ack = true
 rx_software = true
 max_errqueue_events_per_drain = 16
+max_active_probes = 8192
 
 [order_session.credentials]
 api_key_env = "GATE_KEY"
@@ -130,6 +131,8 @@ bind_cpu_id = 7
   EXPECT_EQ(
       result.value.connection.socket_timestamping.max_errqueue_events_per_drain,
       16U);
+  EXPECT_EQ(result.value.connection.socket_timestamping.max_active_probes,
+            8192U);
   EXPECT_EQ(result.value.connection.host, "private-gate.example");
   EXPECT_FALSE(result.value.connection.enable_tls);
   EXPECT_EQ(result.value.connection.target, "/v4/ws/btc");

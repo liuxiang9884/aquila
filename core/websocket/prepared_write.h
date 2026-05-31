@@ -9,12 +9,24 @@
 
 #include "core/websocket/types.h"
 
+#ifndef AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+#define AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION 1
+#endif
+
 namespace aquila::websocket {
+
+inline constexpr std::uint32_t kInvalidSocketTimestampingProbeSlot =
+    std::numeric_limits<std::uint32_t>::max();
 
 struct PreparedWrite {
   std::uint32_t slot_index{0};
   std::uint32_t encoded_size{0};
   std::uint32_t write_offset{0};
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  std::uint64_t socket_timestamping_sequence{0};
+  std::uint32_t socket_timestamping_probe_slot{
+      kInvalidSocketTimestampingProbeSlot};
+#endif
   PayloadKind kind{PayloadKind::kBinary};
   WritePathDiagnostics* diagnostics{nullptr};
   std::span<std::byte> storage{};
@@ -34,6 +46,10 @@ class PreparedWriteArena {
     PreparedWrite& write = slots_[slot_index];
     write.encoded_size = 0;
     write.write_offset = 0;
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+    write.socket_timestamping_sequence = 0;
+    write.socket_timestamping_probe_slot = kInvalidSocketTimestampingProbeSlot;
+#endif
     write.kind = PayloadKind::kBinary;
     write.diagnostics = nullptr;
     in_use_[slot_index] = true;
@@ -55,6 +71,10 @@ class PreparedWriteArena {
 
     write->encoded_size = 0;
     write->write_offset = 0;
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+    write->socket_timestamping_sequence = 0;
+    write->socket_timestamping_probe_slot = kInvalidSocketTimestampingProbeSlot;
+#endif
     write->kind = PayloadKind::kBinary;
     write->diagnostics = nullptr;
     in_use_[slot_index] = false;

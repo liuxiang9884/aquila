@@ -169,6 +169,7 @@ tx_software = true
 tx_ack = true
 rx_software = true
 max_errqueue_events_per_drain = 16
+max_active_probes = 8192
 
 [probe.sampling]
 samples_per_session = 1
@@ -223,6 +224,7 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
   EXPECT_TRUE(result.value.sessions.timestamping.rx_software);
   EXPECT_EQ(result.value.sessions.timestamping.max_errqueue_events_per_drain,
             16U);
+  EXPECT_EQ(result.value.sessions.timestamping.max_active_probes, 8192U);
   EXPECT_EQ(result.value.sampling.samples_per_session, 1U);
   EXPECT_EQ(result.value.sampling.cycle_cooldown_us, 500000U);
   EXPECT_EQ(result.value.sampling.order_session_interval_us, 25000U);

@@ -13,6 +13,7 @@
 #include <span>
 #include <type_traits>
 
+#include "absl/container/flat_hash_map.h"
 #include "core/websocket/frame_codec.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/metrics.h"
@@ -24,6 +25,25 @@ namespace aquila::websocket {
 
 template <typename TlsSocketT, typename MessageHandlerT = MessageCallback>
 class CriticalSession {
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  struct SocketTimestampingProbeState {
+    bool active{false};
+    std::uint32_t slot_index{kInvalidSocketTimestampingProbeSlot};
+    std::uint32_t active_index{kInvalidSocketTimestampingProbeSlot};
+    std::uint64_t sequence{0};
+    SocketTimestampingSnapshot snapshot{};
+    bool has_tx_id_range{false};
+    std::uint32_t first_tx_id{0};
+    std::uint32_t last_tx_id{0};
+    bool has_tx_sched_id{false};
+    std::uint32_t tx_sched_id{0};
+    bool has_tx_software_id{false};
+    std::uint32_t tx_software_id{0};
+    bool has_tx_ack_id{false};
+    std::uint32_t tx_ack_id{0};
+  };
+#endif
+
  public:
   CriticalSession(const ConnectionConfig& config, TlsSocketT& tls_socket,
                   PreparedWriteArena& prepared_write_arena,
@@ -39,6 +59,9 @@ class CriticalSession {
                                   config.prepared_write_slots)),
         pending_capacity_(config.prepared_write_slots) {
     control_write_.storage = std::span<std::byte>(control_write_storage_);
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+    InitializeSocketTimestampingProbes();
+#endif
   }
 
   void SetMessageHandler(MessageHandlerT message_handler) noexcept {
@@ -105,6 +128,7 @@ class CriticalSession {
       return SendStatus::kWriteUnavailable;
     }
 
+    AttachPendingSocketTimestampingProbe(write);
     pending_writes_[(pending_head_ + pending_count_) % pending_capacity_] =
         write;
     ++pending_count_;
@@ -188,7 +212,7 @@ class CriticalSession {
       const ssize_t written = tls_socket_.WriteSome(payload);
       RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
-        RecordSocketTimestampingWrite(written);
+        RecordSocketTimestampingWrite(written, write);
         DrainSocketTimestampingEvents();
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
@@ -285,6 +309,11 @@ class CriticalSession {
     pending_head_ = 0;
     control_write_.encoded_size = 0;
     control_write_.write_offset = 0;
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+    control_write_.socket_timestamping_sequence = 0;
+    control_write_.socket_timestamping_probe_slot =
+        kInvalidSocketTimestampingProbeSlot;
+#endif
     control_write_.kind = PayloadKind::kBinary;
     control_write_pending_ = false;
     control_queued_ns_ = 0;
@@ -293,8 +322,9 @@ class CriticalSession {
     last_error_ = ConnectionError::kNone;
     awaiting_pong_ = false;
     last_ping_ns_ = 0;
-    ResetSocketTimestampingProbe();
-    socket_timestamping_next_tx_id_ = 0;
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+    ResetSocketTimestampingProbes();
+#endif
   }
 
   void AdvanceHeartbeat(std::uint64_t now_ns) noexcept {
@@ -334,33 +364,54 @@ class CriticalSession {
     return tls_socket_.NativeFd();
   }
 
-  void StartSocketTimestampingProbe(std::uint64_t sequence) noexcept {
+  bool StartSocketTimestampingProbe(std::uint64_t sequence) noexcept {
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
     if (!config_.socket_timestamping.enabled || sequence == 0) {
-      return;
+      return false;
     }
-    ResetSocketTimestampingProbe();
-    socket_timestamping_sequence_ = sequence;
-    socket_timestamping_snapshot_.available = true;
+    return AllocateSocketTimestampingProbe(sequence);
+#else
+    (void)sequence;
+    return false;
+#endif
   }
 
   void SetSocketTimestampingProbeWriteComplete(
       std::uint64_t sequence, std::int64_t write_complete_ns) noexcept {
-    if (socket_timestamping_sequence_ != sequence) {
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+    SocketTimestampingProbeState* probe = FindSocketTimestampingProbe(sequence);
+    if (probe == nullptr) {
       return;
     }
-    socket_timestamping_snapshot_.write_complete_ns = write_complete_ns;
+    probe->snapshot.write_complete_ns = write_complete_ns;
+#else
+    (void)sequence;
+    (void)write_complete_ns;
+#endif
   }
 
   [[nodiscard]] SocketTimestampingSnapshot FinishSocketTimestampingProbe(
       std::uint64_t sequence, std::int64_t ack_receive_local_ns) noexcept {
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
     DrainSocketTimestampingEvents();
-    if (socket_timestamping_sequence_ != sequence) {
+    SocketTimestampingProbeState* probe = FindSocketTimestampingProbe(sequence);
+    if (probe == nullptr) {
       return {};
     }
-    socket_timestamping_snapshot_.ack_receive_local_ns = ack_receive_local_ns;
-    SocketTimestampingSnapshot snapshot = socket_timestamping_snapshot_;
-    ResetSocketTimestampingProbe();
+    if (last_socket_rx_software_timestamp_ns_ > 0 &&
+        probe->snapshot.rx_software_ns == 0) {
+      probe->snapshot.available = true;
+      probe->snapshot.rx_software_ns = last_socket_rx_software_timestamp_ns_;
+    }
+    probe->snapshot.ack_receive_local_ns = ack_receive_local_ns;
+    SocketTimestampingSnapshot snapshot = probe->snapshot;
+    ReleaseSocketTimestampingProbe(probe->slot_index);
     return snapshot;
+#else
+    (void)sequence;
+    (void)ack_receive_local_ns;
+    return {};
+#endif
   }
 
  private:
@@ -413,21 +464,202 @@ class CriticalSession {
     diagnostics.pending_write_count_after = pending_count_after;
   }
 
-  void ResetSocketTimestampingProbe() noexcept {
-    socket_timestamping_sequence_ = 0;
-    socket_timestamping_snapshot_ = {};
-    socket_timestamping_probe_has_tx_id_range_ = false;
-    socket_timestamping_probe_first_tx_id_ = 0;
-    socket_timestamping_probe_last_tx_id_ = 0;
-    socket_timestamping_probe_has_tx_sched_id_ = false;
-    socket_timestamping_probe_tx_sched_id_ = 0;
-    socket_timestamping_probe_has_tx_software_id_ = false;
-    socket_timestamping_probe_tx_software_id_ = 0;
-    socket_timestamping_probe_has_tx_ack_id_ = false;
-    socket_timestamping_probe_tx_ack_id_ = 0;
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  void InitializeSocketTimestampingProbes() noexcept {
+    if (!config_.socket_timestamping.enabled ||
+        config_.socket_timestamping.max_active_probes == 0) {
+      return;
+    }
+    socket_timestamping_probe_capacity_ =
+        config_.socket_timestamping.max_active_probes;
+    socket_timestamping_probes_ =
+        std::make_unique<SocketTimestampingProbeState[]>(
+            socket_timestamping_probe_capacity_);
+    socket_timestamping_free_slots_ =
+        std::make_unique<std::uint32_t[]>(socket_timestamping_probe_capacity_);
+    socket_timestamping_active_slots_ =
+        std::make_unique<std::uint32_t[]>(socket_timestamping_probe_capacity_);
+    socket_timestamping_sequence_to_slot_.reserve(
+        socket_timestamping_probe_capacity_);
+    ResetSocketTimestampingProbes();
   }
 
-  void RecordSocketTimestampingWrite(ssize_t written) noexcept {
+  void ResetSocketTimestampingProbeState(std::uint32_t slot_index) noexcept {
+    SocketTimestampingProbeState& probe =
+        socket_timestamping_probes_[slot_index];
+    probe = SocketTimestampingProbeState{};
+    probe.slot_index = slot_index;
+  }
+
+  void ResetSocketTimestampingProbes() noexcept {
+    socket_timestamping_sequence_to_slot_.clear();
+    pending_socket_timestamping_sequence_ = 0;
+    pending_socket_timestamping_probe_slot_ =
+        kInvalidSocketTimestampingProbeSlot;
+    socket_timestamping_active_count_ = 0;
+    socket_timestamping_free_count_ = socket_timestamping_probe_capacity_;
+    socket_timestamping_next_tx_id_ = 0;
+    last_socket_rx_software_timestamp_ns_ = 0;
+    for (std::uint32_t i = 0; i < socket_timestamping_probe_capacity_; ++i) {
+      ResetSocketTimestampingProbeState(i);
+      socket_timestamping_free_slots_[i] =
+          socket_timestamping_probe_capacity_ - 1U - i;
+      socket_timestamping_active_slots_[i] =
+          kInvalidSocketTimestampingProbeSlot;
+    }
+  }
+
+  [[nodiscard]] SocketTimestampingProbeState* FindSocketTimestampingProbe(
+      std::uint64_t sequence) noexcept {
+    if (sequence == 0) {
+      return nullptr;
+    }
+    const auto it = socket_timestamping_sequence_to_slot_.find(sequence);
+    if (it == socket_timestamping_sequence_to_slot_.end()) {
+      return nullptr;
+    }
+    return FindSocketTimestampingProbeBySlot(it->second, sequence);
+  }
+
+  [[nodiscard]] const SocketTimestampingProbeState* FindSocketTimestampingProbe(
+      std::uint64_t sequence) const noexcept {
+    if (sequence == 0) {
+      return nullptr;
+    }
+    const auto it = socket_timestamping_sequence_to_slot_.find(sequence);
+    if (it == socket_timestamping_sequence_to_slot_.end()) {
+      return nullptr;
+    }
+    return FindSocketTimestampingProbeBySlot(it->second, sequence);
+  }
+
+  [[nodiscard]] SocketTimestampingProbeState* FindSocketTimestampingProbeBySlot(
+      std::uint32_t slot_index, std::uint64_t sequence) noexcept {
+    if (slot_index == kInvalidSocketTimestampingProbeSlot ||
+        slot_index >= socket_timestamping_probe_capacity_) {
+      return nullptr;
+    }
+    SocketTimestampingProbeState& probe =
+        socket_timestamping_probes_[slot_index];
+    if (!probe.active || probe.sequence != sequence) {
+      return nullptr;
+    }
+    return &probe;
+  }
+
+  [[nodiscard]] const SocketTimestampingProbeState*
+  FindSocketTimestampingProbeBySlot(std::uint32_t slot_index,
+                                    std::uint64_t sequence) const noexcept {
+    if (slot_index == kInvalidSocketTimestampingProbeSlot ||
+        slot_index >= socket_timestamping_probe_capacity_) {
+      return nullptr;
+    }
+    const SocketTimestampingProbeState& probe =
+        socket_timestamping_probes_[slot_index];
+    if (!probe.active || probe.sequence != sequence) {
+      return nullptr;
+    }
+    return &probe;
+  }
+
+  void ReleaseSocketTimestampingProbe(std::uint32_t slot_index) noexcept {
+    if (slot_index == kInvalidSocketTimestampingProbeSlot ||
+        slot_index >= socket_timestamping_probe_capacity_) {
+      return;
+    }
+    SocketTimestampingProbeState& probe =
+        socket_timestamping_probes_[slot_index];
+    if (!probe.active) {
+      return;
+    }
+    if (pending_socket_timestamping_probe_slot_ == slot_index) {
+      pending_socket_timestamping_sequence_ = 0;
+      pending_socket_timestamping_probe_slot_ =
+          kInvalidSocketTimestampingProbeSlot;
+    }
+    socket_timestamping_sequence_to_slot_.erase(probe.sequence);
+    const std::uint32_t active_index = probe.active_index;
+    if (active_index < socket_timestamping_active_count_) {
+      const std::uint32_t last_active_index =
+          socket_timestamping_active_count_ - 1U;
+      const std::uint32_t last_slot =
+          socket_timestamping_active_slots_[last_active_index];
+      socket_timestamping_active_slots_[active_index] = last_slot;
+      if (last_slot != kInvalidSocketTimestampingProbeSlot &&
+          last_slot < socket_timestamping_probe_capacity_) {
+        socket_timestamping_probes_[last_slot].active_index = active_index;
+      }
+      socket_timestamping_active_slots_[last_active_index] =
+          kInvalidSocketTimestampingProbeSlot;
+      --socket_timestamping_active_count_;
+    }
+    ResetSocketTimestampingProbeState(slot_index);
+    if (socket_timestamping_free_count_ < socket_timestamping_probe_capacity_) {
+      socket_timestamping_free_slots_[socket_timestamping_free_count_++] =
+          slot_index;
+    }
+  }
+
+  [[nodiscard]] bool AllocateSocketTimestampingProbe(
+      std::uint64_t sequence) noexcept {
+    if (socket_timestamping_probe_capacity_ == 0 || sequence == 0) {
+      return false;
+    }
+    if (pending_socket_timestamping_probe_slot_ !=
+        kInvalidSocketTimestampingProbeSlot) {
+      ReleaseSocketTimestampingProbe(pending_socket_timestamping_probe_slot_);
+    }
+    if (const SocketTimestampingProbeState* existing =
+            FindSocketTimestampingProbe(sequence);
+        existing != nullptr) {
+      ReleaseSocketTimestampingProbe(existing->slot_index);
+    }
+    if (socket_timestamping_free_count_ == 0 ||
+        socket_timestamping_active_count_ >=
+            socket_timestamping_probe_capacity_) {
+      return false;
+    }
+
+    const std::uint32_t slot_index =
+        socket_timestamping_free_slots_[--socket_timestamping_free_count_];
+    SocketTimestampingProbeState& probe =
+        socket_timestamping_probes_[slot_index];
+    ResetSocketTimestampingProbeState(slot_index);
+    probe.active = true;
+    probe.active_index = socket_timestamping_active_count_;
+    probe.sequence = sequence;
+    probe.snapshot.available = true;
+    socket_timestamping_active_slots_[socket_timestamping_active_count_++] =
+        slot_index;
+    socket_timestamping_sequence_to_slot_[sequence] = slot_index;
+    pending_socket_timestamping_sequence_ = sequence;
+    pending_socket_timestamping_probe_slot_ = slot_index;
+    return true;
+  }
+
+  void AttachPendingSocketTimestampingProbe(PreparedWrite* write) noexcept {
+    if (write == nullptr || pending_socket_timestamping_probe_slot_ ==
+                                kInvalidSocketTimestampingProbeSlot) {
+      return;
+    }
+    SocketTimestampingProbeState* probe = FindSocketTimestampingProbeBySlot(
+        pending_socket_timestamping_probe_slot_,
+        pending_socket_timestamping_sequence_);
+    if (probe == nullptr) {
+      pending_socket_timestamping_sequence_ = 0;
+      pending_socket_timestamping_probe_slot_ =
+          kInvalidSocketTimestampingProbeSlot;
+      return;
+    }
+    write->socket_timestamping_sequence = probe->sequence;
+    write->socket_timestamping_probe_slot = probe->slot_index;
+    pending_socket_timestamping_sequence_ = 0;
+    pending_socket_timestamping_probe_slot_ =
+        kInvalidSocketTimestampingProbeSlot;
+  }
+
+  void RecordSocketTimestampingWrite(
+      ssize_t written, const PreparedWrite* write = nullptr) noexcept {
     if (!config_.socket_timestamping.enabled || written <= 0) {
       return;
     }
@@ -438,14 +670,20 @@ class CriticalSession {
     const std::uint32_t first_tx_id = socket_timestamping_next_tx_id_;
     const std::uint32_t last_tx_id = first_tx_id + bytes - 1U;
     socket_timestamping_next_tx_id_ = last_tx_id + 1U;
-    if (socket_timestamping_sequence_ == 0) {
+    if (write == nullptr) {
       return;
     }
-    if (!socket_timestamping_probe_has_tx_id_range_) {
-      socket_timestamping_probe_first_tx_id_ = first_tx_id;
-      socket_timestamping_probe_has_tx_id_range_ = true;
+    SocketTimestampingProbeState* probe =
+        FindSocketTimestampingProbeBySlot(write->socket_timestamping_probe_slot,
+                                          write->socket_timestamping_sequence);
+    if (probe == nullptr) {
+      return;
     }
-    socket_timestamping_probe_last_tx_id_ = last_tx_id;
+    if (!probe->has_tx_id_range) {
+      probe->first_tx_id = first_tx_id;
+      probe->has_tx_id_range = true;
+    }
+    probe->last_tx_id = last_tx_id;
   }
 
   [[nodiscard]] static bool IsSocketTimestampingTxEvent(
@@ -468,34 +706,56 @@ class CriticalSession {
     return id - first;
   }
 
-  [[nodiscard]] bool SocketTimestampingEventMatchesProbeWrite(
-      const SocketTimestampingEvent& event) const noexcept {
+  [[nodiscard]] SocketTimestampingProbeState*
+  FindSocketTimestampingProbeForTxEvent(
+      const SocketTimestampingEvent& event) noexcept {
     if (!IsSocketTimestampingTxEvent(event.kind)) {
-      return true;
+      return nullptr;
     }
-    return socket_timestamping_probe_has_tx_id_range_ &&
-           SocketTimestampingIdInRange(event.id,
-                                       socket_timestamping_probe_first_tx_id_,
-                                       socket_timestamping_probe_last_tx_id_);
+    for (std::uint32_t i = 0; i < socket_timestamping_active_count_; ++i) {
+      const std::uint32_t slot_index = socket_timestamping_active_slots_[i];
+      if (slot_index == kInvalidSocketTimestampingProbeSlot ||
+          slot_index >= socket_timestamping_probe_capacity_) {
+        continue;
+      }
+      SocketTimestampingProbeState& probe =
+          socket_timestamping_probes_[slot_index];
+      if (probe.active && probe.has_tx_id_range &&
+          SocketTimestampingIdInRange(event.id, probe.first_tx_id,
+                                      probe.last_tx_id)) {
+        return &probe;
+      }
+    }
+    return nullptr;
   }
 
-  [[nodiscard]] bool ShouldRecordSocketTimestampingTxEvent(
-      std::uint32_t id, bool has_recorded_id,
-      std::uint32_t recorded_id) const noexcept {
+  [[nodiscard]] static bool ShouldRecordSocketTimestampingTxEvent(
+      const SocketTimestampingProbeState& probe, std::uint32_t id,
+      bool has_recorded_id, std::uint32_t recorded_id) noexcept {
     if (!has_recorded_id) {
       return true;
     }
-    return SocketTimestampingIdDistance(socket_timestamping_probe_first_tx_id_,
-                                        id) >
-           SocketTimestampingIdDistance(socket_timestamping_probe_first_tx_id_,
-                                        recorded_id);
+    return SocketTimestampingIdDistance(probe.first_tx_id, id) >
+           SocketTimestampingIdDistance(probe.first_tx_id, recorded_id);
   }
+#else
+  void AttachPendingSocketTimestampingProbe(PreparedWrite* write) noexcept {
+    (void)write;
+  }
+
+  void RecordSocketTimestampingWrite(
+      ssize_t written, const PreparedWrite* write = nullptr) noexcept {
+    (void)written;
+    (void)write;
+  }
+#endif
 
   void TriggerReconnect(ConnectionError error) noexcept {
     should_reconnect_ = true;
     last_error_ = error;
   }
 
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
   void DrainSocketTimestampingEvents() noexcept {
     if (!config_.socket_timestamping.enabled) {
       return;
@@ -517,37 +777,39 @@ class CriticalSession {
 
   void RecordSocketTimestampingEvent(
       const SocketTimestampingEvent& event) noexcept {
-    if (socket_timestamping_sequence_ == 0 || event.timestamp_ns <= 0 ||
-        !SocketTimestampingEventMatchesProbeWrite(event)) {
+    if (event.timestamp_ns <= 0) {
       return;
     }
-    socket_timestamping_snapshot_.available = true;
+    SocketTimestampingProbeState* probe =
+        FindSocketTimestampingProbeForTxEvent(event);
+    if (probe == nullptr) {
+      return;
+    }
+    probe->snapshot.available = true;
     switch (event.kind) {
       case SocketTimestampingEventKind::kTxSched:
         if (ShouldRecordSocketTimestampingTxEvent(
-                event.id, socket_timestamping_probe_has_tx_sched_id_,
-                socket_timestamping_probe_tx_sched_id_)) {
-          socket_timestamping_snapshot_.tx_sched_ns = event.timestamp_ns;
-          socket_timestamping_probe_tx_sched_id_ = event.id;
-          socket_timestamping_probe_has_tx_sched_id_ = true;
+                *probe, event.id, probe->has_tx_sched_id, probe->tx_sched_id)) {
+          probe->snapshot.tx_sched_ns = event.timestamp_ns;
+          probe->tx_sched_id = event.id;
+          probe->has_tx_sched_id = true;
         }
         return;
       case SocketTimestampingEventKind::kTxSoftware:
-        if (ShouldRecordSocketTimestampingTxEvent(
-                event.id, socket_timestamping_probe_has_tx_software_id_,
-                socket_timestamping_probe_tx_software_id_)) {
-          socket_timestamping_snapshot_.tx_software_ns = event.timestamp_ns;
-          socket_timestamping_probe_tx_software_id_ = event.id;
-          socket_timestamping_probe_has_tx_software_id_ = true;
+        if (ShouldRecordSocketTimestampingTxEvent(*probe, event.id,
+                                                  probe->has_tx_software_id,
+                                                  probe->tx_software_id)) {
+          probe->snapshot.tx_software_ns = event.timestamp_ns;
+          probe->tx_software_id = event.id;
+          probe->has_tx_software_id = true;
         }
         return;
       case SocketTimestampingEventKind::kTxAck:
         if (ShouldRecordSocketTimestampingTxEvent(
-                event.id, socket_timestamping_probe_has_tx_ack_id_,
-                socket_timestamping_probe_tx_ack_id_)) {
-          socket_timestamping_snapshot_.tx_ack_ns = event.timestamp_ns;
-          socket_timestamping_probe_tx_ack_id_ = event.id;
-          socket_timestamping_probe_has_tx_ack_id_ = true;
+                *probe, event.id, probe->has_tx_ack_id, probe->tx_ack_id)) {
+          probe->snapshot.tx_ack_ns = event.timestamp_ns;
+          probe->tx_ack_id = event.id;
+          probe->has_tx_ack_id = true;
         }
         return;
       case SocketTimestampingEventKind::kRxSoftware:
@@ -557,20 +819,21 @@ class CriticalSession {
   }
 
   void RecordSocketRxTimestampingEvent() noexcept {
-    if (!config_.socket_timestamping.enabled ||
-        socket_timestamping_sequence_ == 0) {
+    if (!config_.socket_timestamping.enabled) {
       return;
     }
     if constexpr (requires(TlsSocketT& socket) {
                     socket.TakeLastRxSoftwareTimestampNs();
                   }) {
-      const std::int64_t rx_ns = tls_socket_.TakeLastRxSoftwareTimestampNs();
-      if (rx_ns > 0 && socket_timestamping_snapshot_.rx_software_ns == 0) {
-        socket_timestamping_snapshot_.available = true;
-        socket_timestamping_snapshot_.rx_software_ns = rx_ns;
-      }
+      last_socket_rx_software_timestamp_ns_ =
+          tls_socket_.TakeLastRxSoftwareTimestampNs();
     }
   }
+#else
+  void DrainSocketTimestampingEvents() noexcept {}
+
+  void RecordSocketRxTimestampingEvent() noexcept {}
+#endif
 
   void CompleteFrontWrite() noexcept {
     PreparedWrite* write = pending_writes_[pending_head_];
@@ -615,7 +878,7 @@ class CriticalSession {
       const ssize_t written = tls_socket_.WriteSome(payload);
       RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
-        RecordSocketTimestampingWrite(written);
+        RecordSocketTimestampingWrite(written, write);
         DrainSocketTimestampingEvents();
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
@@ -655,7 +918,7 @@ class CriticalSession {
           remaining_bytes);
       const ssize_t written = tls_socket_.WriteSome(payload);
       if (written > 0) {
-        RecordSocketTimestampingWrite(written);
+        RecordSocketTimestampingWrite(written, nullptr);
         DrainSocketTimestampingEvents();
         if (first_write && control_write_.kind == PayloadKind::kPing &&
             control_queued_ns_ != 0) {
@@ -817,18 +1080,21 @@ class CriticalSession {
   ConnectionError last_error_{ConnectionError::kNone};
   bool awaiting_pong_{false};
   std::uint64_t last_ping_ns_{0};
-  std::uint64_t socket_timestamping_sequence_{0};
-  SocketTimestampingSnapshot socket_timestamping_snapshot_{};
+#if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  std::unique_ptr<SocketTimestampingProbeState[]> socket_timestamping_probes_{};
+  std::unique_ptr<std::uint32_t[]> socket_timestamping_free_slots_{};
+  std::unique_ptr<std::uint32_t[]> socket_timestamping_active_slots_{};
+  absl::flat_hash_map<std::uint64_t, std::uint32_t>
+      socket_timestamping_sequence_to_slot_{};
+  std::uint32_t socket_timestamping_probe_capacity_{0};
+  std::uint32_t socket_timestamping_free_count_{0};
+  std::uint32_t socket_timestamping_active_count_{0};
+  std::uint64_t pending_socket_timestamping_sequence_{0};
+  std::uint32_t pending_socket_timestamping_probe_slot_{
+      kInvalidSocketTimestampingProbeSlot};
   std::uint32_t socket_timestamping_next_tx_id_{0};
-  bool socket_timestamping_probe_has_tx_id_range_{false};
-  std::uint32_t socket_timestamping_probe_first_tx_id_{0};
-  std::uint32_t socket_timestamping_probe_last_tx_id_{0};
-  bool socket_timestamping_probe_has_tx_sched_id_{false};
-  std::uint32_t socket_timestamping_probe_tx_sched_id_{0};
-  bool socket_timestamping_probe_has_tx_software_id_{false};
-  std::uint32_t socket_timestamping_probe_tx_software_id_{0};
-  bool socket_timestamping_probe_has_tx_ack_id_{false};
-  std::uint32_t socket_timestamping_probe_tx_ack_id_{0};
+  std::int64_t last_socket_rx_software_timestamp_ns_{0};
+#endif
 };
 
 }  // namespace aquila::websocket
