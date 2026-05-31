@@ -188,6 +188,7 @@ class CriticalSession {
       const ssize_t written = tls_socket_.WriteSome(payload);
       RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
+        RecordSocketTimestampingWrite(written);
         DrainSocketTimestampingEvents();
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
@@ -292,6 +293,8 @@ class CriticalSession {
     last_error_ = ConnectionError::kNone;
     awaiting_pong_ = false;
     last_ping_ns_ = 0;
+    ResetSocketTimestampingProbe();
+    socket_timestamping_next_tx_id_ = 0;
   }
 
   void AdvanceHeartbeat(std::uint64_t now_ns) noexcept {
@@ -335,8 +338,9 @@ class CriticalSession {
     if (!config_.socket_timestamping.enabled || sequence == 0) {
       return;
     }
+    ResetSocketTimestampingProbe();
+    DrainSocketTimestampingEvents();
     socket_timestamping_sequence_ = sequence;
-    socket_timestamping_snapshot_ = SocketTimestampingSnapshot{};
     socket_timestamping_snapshot_.available = true;
   }
 
@@ -356,8 +360,7 @@ class CriticalSession {
     }
     socket_timestamping_snapshot_.ack_receive_local_ns = ack_receive_local_ns;
     SocketTimestampingSnapshot snapshot = socket_timestamping_snapshot_;
-    socket_timestamping_sequence_ = 0;
-    socket_timestamping_snapshot_ = {};
+    ResetSocketTimestampingProbe();
     return snapshot;
   }
 
@@ -411,6 +414,79 @@ class CriticalSession {
     diagnostics.pending_write_count_after = pending_count_after;
   }
 
+  void ResetSocketTimestampingProbe() noexcept {
+    socket_timestamping_sequence_ = 0;
+    socket_timestamping_snapshot_ = {};
+    socket_timestamping_probe_has_tx_id_range_ = false;
+    socket_timestamping_probe_first_tx_id_ = 0;
+    socket_timestamping_probe_last_tx_id_ = 0;
+    socket_timestamping_probe_has_tx_ack_id_ = false;
+    socket_timestamping_probe_tx_ack_id_ = 0;
+  }
+
+  void RecordSocketTimestampingWrite(ssize_t written) noexcept {
+    if (!config_.socket_timestamping.enabled || written <= 0) {
+      return;
+    }
+    const std::uint32_t bytes = static_cast<std::uint32_t>(written);
+    if (bytes == 0) {
+      return;
+    }
+    const std::uint32_t first_tx_id = socket_timestamping_next_tx_id_;
+    const std::uint32_t last_tx_id = first_tx_id + bytes - 1U;
+    socket_timestamping_next_tx_id_ = last_tx_id + 1U;
+    if (socket_timestamping_sequence_ == 0) {
+      return;
+    }
+    if (!socket_timestamping_probe_has_tx_id_range_) {
+      socket_timestamping_probe_first_tx_id_ = first_tx_id;
+      socket_timestamping_probe_has_tx_id_range_ = true;
+    }
+    socket_timestamping_probe_last_tx_id_ = last_tx_id;
+  }
+
+  [[nodiscard]] static bool IsSocketTimestampingTxEvent(
+      SocketTimestampingEventKind kind) noexcept {
+    return kind == SocketTimestampingEventKind::kTxSched ||
+           kind == SocketTimestampingEventKind::kTxSoftware ||
+           kind == SocketTimestampingEventKind::kTxAck;
+  }
+
+  [[nodiscard]] static bool SocketTimestampingIdInRange(
+      std::uint32_t id, std::uint32_t first, std::uint32_t last) noexcept {
+    if (first <= last) {
+      return id >= first && id <= last;
+    }
+    return id >= first || id <= last;
+  }
+
+  [[nodiscard]] static std::uint32_t SocketTimestampingIdDistance(
+      std::uint32_t first, std::uint32_t id) noexcept {
+    return id - first;
+  }
+
+  [[nodiscard]] bool SocketTimestampingEventMatchesProbeWrite(
+      const SocketTimestampingEvent& event) const noexcept {
+    if (!IsSocketTimestampingTxEvent(event.kind)) {
+      return true;
+    }
+    return socket_timestamping_probe_has_tx_id_range_ &&
+           SocketTimestampingIdInRange(event.id,
+                                       socket_timestamping_probe_first_tx_id_,
+                                       socket_timestamping_probe_last_tx_id_);
+  }
+
+  [[nodiscard]] bool ShouldRecordSocketTimestampingTxAck(
+      std::uint32_t id) const noexcept {
+    if (!socket_timestamping_probe_has_tx_ack_id_) {
+      return true;
+    }
+    return SocketTimestampingIdDistance(socket_timestamping_probe_first_tx_id_,
+                                        id) >
+           SocketTimestampingIdDistance(socket_timestamping_probe_first_tx_id_,
+                                        socket_timestamping_probe_tx_ack_id_);
+  }
+
   void TriggerReconnect(ConnectionError error) noexcept {
     should_reconnect_ = true;
     last_error_ = error;
@@ -437,7 +513,8 @@ class CriticalSession {
 
   void RecordSocketTimestampingEvent(
       const SocketTimestampingEvent& event) noexcept {
-    if (socket_timestamping_sequence_ == 0 || event.timestamp_ns <= 0) {
+    if (socket_timestamping_sequence_ == 0 || event.timestamp_ns <= 0 ||
+        !SocketTimestampingEventMatchesProbeWrite(event)) {
       return;
     }
     socket_timestamping_snapshot_.available = true;
@@ -453,8 +530,10 @@ class CriticalSession {
         }
         return;
       case SocketTimestampingEventKind::kTxAck:
-        if (socket_timestamping_snapshot_.tx_ack_ns == 0) {
+        if (ShouldRecordSocketTimestampingTxAck(event.id)) {
           socket_timestamping_snapshot_.tx_ack_ns = event.timestamp_ns;
+          socket_timestamping_probe_tx_ack_id_ = event.id;
+          socket_timestamping_probe_has_tx_ack_id_ = true;
         }
         return;
       case SocketTimestampingEventKind::kRxSoftware:
@@ -522,6 +601,7 @@ class CriticalSession {
       const ssize_t written = tls_socket_.WriteSome(payload);
       RecordWriteSomeReturn(write, written, pending_count_);
       if (written > 0) {
+        RecordSocketTimestampingWrite(written);
         DrainSocketTimestampingEvents();
         write->write_offset += static_cast<std::uint32_t>(written);
         metrics_.tx_bytes += static_cast<std::uint64_t>(written);
@@ -561,6 +641,7 @@ class CriticalSession {
           remaining_bytes);
       const ssize_t written = tls_socket_.WriteSome(payload);
       if (written > 0) {
+        RecordSocketTimestampingWrite(written);
         DrainSocketTimestampingEvents();
         if (first_write && control_write_.kind == PayloadKind::kPing &&
             control_queued_ns_ != 0) {
@@ -724,6 +805,12 @@ class CriticalSession {
   std::uint64_t last_ping_ns_{0};
   std::uint64_t socket_timestamping_sequence_{0};
   SocketTimestampingSnapshot socket_timestamping_snapshot_{};
+  std::uint32_t socket_timestamping_next_tx_id_{0};
+  bool socket_timestamping_probe_has_tx_id_range_{false};
+  std::uint32_t socket_timestamping_probe_first_tx_id_{0};
+  std::uint32_t socket_timestamping_probe_last_tx_id_{0};
+  bool socket_timestamping_probe_has_tx_ack_id_{false};
+  std::uint32_t socket_timestamping_probe_tx_ack_id_{0};
 };
 
 }  // namespace aquila::websocket

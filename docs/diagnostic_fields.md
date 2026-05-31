@@ -179,7 +179,9 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 这些字段由 Linux `SO_TIMESTAMPING` 提供，在 `[order_session.diagnostics.timestamping]` 或
 `[probe.sessions.timestamping]` 显式开启时采集；默认关闭。首轮用于 private non-TLS Gate order session RTT
 probe，TLS 路径只保留 fd 级配置入口，不作为当前验收目标。所有阶段归因只使用本机同一时钟域；Gate
-`exchange_ns` 只能作为远端上下文，不能用于确认本机 / NIC 边界。字段缺失时原始时间戳为 0，阶段耗时为 `-1`。
+`exchange_ns` 只能作为远端上下文，不能用于确认本机 / NIC 边界。TX 方向时间戳按 Linux
+`SOF_TIMESTAMPING_OPT_ID_TCP` 返回的 `ee_data` byte-stream id 匹配当前 request 写入范围；晚到的旧写入事件或不在当前
+request 范围内的事件会被忽略。字段缺失时原始时间戳为 0，阶段耗时为 `-1`。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |

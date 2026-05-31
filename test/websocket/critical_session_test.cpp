@@ -123,6 +123,21 @@ class FakeTlsSocket final {
     return static_cast<ssize_t>(chunk);
   }
 
+  [[nodiscard]] SocketTimestampingEventDrain DrainTimestampingErrorQueue(
+      std::uint32_t max_events) noexcept {
+    SocketTimestampingEventDrain drain{};
+    const std::uint32_t event_limit =
+        max_events < kSocketTimestampingMaxDrainEvents
+            ? max_events
+            : static_cast<std::uint32_t>(kSocketTimestampingMaxDrainEvents);
+    while (!timestamping_events_.empty() && drain.events_seen < event_limit) {
+      drain.events[drain.events_seen] = timestamping_events_.front();
+      timestamping_events_.erase(timestamping_events_.begin());
+      ++drain.events_seen;
+    }
+    return drain;
+  }
+
   size_t read_calls_{0};
   bool pending_readable_{false};
   size_t max_write_bytes_per_call_{0};
@@ -131,6 +146,7 @@ class FakeTlsSocket final {
   bool eof_on_empty_{false};
   std::vector<std::vector<std::byte>> read_chunks_{};
   std::vector<std::byte> written_{};
+  std::vector<SocketTimestampingEvent> timestamping_events_{};
 };
 
 struct CallbackWriteContext {
@@ -490,6 +506,56 @@ TEST(WebsocketCriticalSessionTest, SendTextEncodesMaskedFrameThroughCoreCodec) {
   EXPECT_TRUE(std::equal(decoded.begin(), decoded.end(), payload.begin()));
   EXPECT_EQ(metrics.tx_messages, 1U);
   EXPECT_EQ(session.PendingWriteCount(), 0U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     SocketTimestampingProbeIgnoresStaleTxAckByKernelId) {
+  auto config = BuildSmallConfig(2);
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.tx_ack = true;
+  config.socket_timestamping.max_errqueue_events_per_drain = 4;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  auto* previous = session.TryAcquirePreparedWrite();
+  ASSERT_NE(previous, nullptr);
+  std::copy_n(std::as_bytes(std::span{"xy", 2}).begin(), 2,
+              previous->storage.begin());
+  previous->encoded_size = 2;
+  previous->kind = PayloadKind::kBinary;
+  ASSERT_EQ(session.CommitPreparedWrite(previous, WriteFlushMode::kTryFlushOne),
+            SendStatus::kOk);
+
+  constexpr std::uint64_t kSequence = 77;
+  session.StartSocketTimestampingProbe(kSequence);
+  const std::int64_t base_ns = static_cast<std::int64_t>(RealtimeClockNowNs());
+  socket.timestamping_events_.push_back(
+      SocketTimestampingEvent{.kind = SocketTimestampingEventKind::kTxAck,
+                              .timestamp_ns = base_ns + 1'000,
+                              .id = 1});
+  socket.timestamping_events_.push_back(
+      SocketTimestampingEvent{.kind = SocketTimestampingEventKind::kTxAck,
+                              .timestamp_ns = base_ns + 2'000,
+                              .id = 5});
+
+  auto* current = session.TryAcquirePreparedWrite();
+  ASSERT_NE(current, nullptr);
+  std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+              current->storage.begin());
+  current->encoded_size = 4;
+  current->kind = PayloadKind::kBinary;
+  ASSERT_EQ(session.CommitPreparedWrite(current, WriteFlushMode::kTryFlushOne),
+            SendStatus::kOk);
+
+  session.SetSocketTimestampingProbeWriteComplete(kSequence, base_ns + 500);
+  const SocketTimestampingSnapshot snapshot =
+      session.FinishSocketTimestampingProbe(kSequence, base_ns + 3'000);
+
+  EXPECT_TRUE(snapshot.available);
+  EXPECT_EQ(snapshot.tx_ack_ns, base_ns + 2'000);
 }
 
 TEST(WebsocketCriticalSessionTest, SendTextReleasesSlotAfterEncodeFailure) {
