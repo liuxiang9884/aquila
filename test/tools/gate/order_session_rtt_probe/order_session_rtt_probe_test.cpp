@@ -163,6 +163,13 @@ enable_tcp_info = true
 wait_login_timeout_ms = 10000
 request_timeout_ms = 5000
 
+[probe.sessions.timestamping]
+enabled = true
+tx_software = true
+tx_ack = true
+rx_software = true
+max_errqueue_events_per_drain = 16
+
 [probe.sampling]
 samples_per_session = 1
 cycle_cooldown_ms = 500
@@ -210,6 +217,12 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
   EXPECT_EQ(result.value.inputs.connections_file,
             "/home/liuxiang/tmp/connections.csv");
   EXPECT_TRUE(result.value.sessions.enable_tcp_info);
+  EXPECT_TRUE(result.value.sessions.timestamping.enabled);
+  EXPECT_TRUE(result.value.sessions.timestamping.tx_software);
+  EXPECT_TRUE(result.value.sessions.timestamping.tx_ack);
+  EXPECT_TRUE(result.value.sessions.timestamping.rx_software);
+  EXPECT_EQ(result.value.sessions.timestamping.max_errqueue_events_per_drain,
+            16U);
   EXPECT_EQ(result.value.sampling.samples_per_session, 1U);
   EXPECT_EQ(result.value.sampling.cycle_cooldown_ms, 500U);
   EXPECT_EQ(result.value.sampling.order_session_interval_ms, 25U);
@@ -1577,12 +1590,17 @@ TEST(GateOrderSessionRttProbeTest, BuildsPinnedOrderSessionConfig) {
   base.connection.target = "/v4/ws/usdt";
   base.connection.runtime_policy.io_cpu_id = 3;
   base.enable_tcp_info_diagnostics = false;
+  websocket::SocketTimestampingConfig timestamping;
+  timestamping.enabled = true;
+  timestamping.tx_software = true;
+  timestamping.tx_ack = true;
 
   const gate::OrderSessionConfig pinned = BuildPinnedOrderSessionConfig(
       base, PinnedOrderSessionOptions{
                 .connect_ip = "52.198.250.74",
                 .worker_cpu_id = 6,
                 .enable_tcp_info_diagnostics = true,
+                .timestamping = timestamping,
             });
 
   EXPECT_EQ(pinned.name, "base_gate_order_session");
@@ -1592,6 +1610,9 @@ TEST(GateOrderSessionRttProbeTest, BuildsPinnedOrderSessionConfig) {
   EXPECT_EQ(pinned.connection.target, "/v4/ws/usdt");
   EXPECT_EQ(pinned.connection.runtime_policy.io_cpu_id, 6);
   EXPECT_TRUE(pinned.enable_tcp_info_diagnostics);
+  EXPECT_TRUE(pinned.connection.socket_timestamping.enabled);
+  EXPECT_TRUE(pinned.connection.socket_timestamping.tx_software);
+  EXPECT_TRUE(pinned.connection.socket_timestamping.tx_ack);
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
@@ -1599,6 +1620,8 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
   config.run_id = "run_1";
   config.output.root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe";
   config.sessions.enable_tcp_info = true;
+  config.sessions.timestamping.enabled = true;
+  config.sessions.timestamping.tx_software = true;
 
   const ProbeRunPlan run_plan{
       .connection_count = 1,
@@ -1640,6 +1663,10 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
   EXPECT_EQ(
       result.value.order_session_config.connection.runtime_policy.io_cpu_id, 6);
   EXPECT_TRUE(result.value.order_session_config.enable_tcp_info_diagnostics);
+  EXPECT_TRUE(
+      result.value.order_session_config.connection.socket_timestamping.enabled);
+  EXPECT_TRUE(result.value.order_session_config.connection.socket_timestamping
+                  .tx_software);
   EXPECT_EQ(result.value.paths.run_dir,
             "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1");
   EXPECT_EQ(result.value.paths.sample_csv_path,
@@ -1657,6 +1684,8 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
   config.run_id = "run_8";
   config.output.root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe";
   config.sessions.enable_tcp_info = true;
+  config.sessions.timestamping.enabled = true;
+  config.sessions.timestamping.tx_ack = true;
 
   ProbeRunPlan run_plan;
   run_plan.connection_count = 8;
@@ -1703,6 +1732,10 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
   EXPECT_EQ(result.value.sessions[0]
                 .order_session_config.connection.runtime_policy.io_cpu_id,
             10);
+  EXPECT_TRUE(result.value.sessions[0]
+                  .order_session_config.connection.socket_timestamping.enabled);
+  EXPECT_TRUE(result.value.sessions[0]
+                  .order_session_config.connection.socket_timestamping.tx_ack);
   EXPECT_EQ(result.value.sessions[7].connect_ip, "10.0.0.8");
   EXPECT_EQ(result.value.sessions[7].order_session_id, 7U);
   EXPECT_EQ(result.value.sessions[7].local_order_id_first, 29U);

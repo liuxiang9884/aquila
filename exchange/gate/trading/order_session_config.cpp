@@ -25,6 +25,7 @@ struct RawOrderSessionConfig {
   std::size_t request_map_capacity{kDefaultOrderRequestMapCapacity};
   bool enable_tcp_info_diagnostics{false};
   OrderLatencyDiagnosticConfig ack_latency_diagnostics{};
+  websocket::SocketTimestampingConfig socket_timestamping{};
 };
 
 struct RawConfigFile {
@@ -208,6 +209,12 @@ class OrderSessionConfigParser {
     if (!ok_) {
       return;
     }
+    ParseSocketTimestampingConfig(diagnostics["timestamping"],
+                                  &config_.order_session.socket_timestamping,
+                                  "order_session.diagnostics.timestamping");
+    if (!ok_) {
+      return;
+    }
 
     const toml::node_view<const toml::node> credentials =
         order_session["credentials"];
@@ -233,6 +240,8 @@ class OrderSessionConfigParser {
     OrderSessionConfig order_session_config;
     order_session_config.name = std::move(config_.order_session.name);
     order_session_config.connection = std::move(connection_result.value);
+    order_session_config.connection.socket_timestamping =
+        config_.order_session.socket_timestamping;
     AddGateSizeDecimalHeader(order_session_config.connection);
     order_session_config.credentials =
         std::move(config_.order_session.credentials);
@@ -243,6 +252,24 @@ class OrderSessionConfigParser {
     order_session_config.ack_latency_diagnostics =
         config_.order_session.ack_latency_diagnostics;
     return Success(std::move(order_session_config));
+  }
+
+  void ParseSocketTimestampingConfig(
+      toml::node_view<const toml::node> node,
+      websocket::SocketTimestampingConfig* timestamping,
+      std::string_view name) {
+    timestamping->enabled = BoolOr(node["enabled"], timestamping->enabled);
+    timestamping->tx_sched = BoolOr(node["tx_sched"], timestamping->tx_sched);
+    timestamping->tx_software =
+        BoolOr(node["tx_software"], timestamping->tx_software);
+    timestamping->tx_ack = BoolOr(node["tx_ack"], timestamping->tx_ack);
+    timestamping->rx_software =
+        BoolOr(node["rx_software"], timestamping->rx_software);
+    timestamping->hardware = BoolOr(node["hardware"], timestamping->hardware);
+    timestamping->max_errqueue_events_per_drain = NonNegativeUint32Or(
+        node["max_errqueue_events_per_drain"],
+        timestamping->max_errqueue_events_per_drain,
+        std::string{name}.append(".max_errqueue_events_per_drain"));
   }
 
   void Fail(std::string_view name, std::string_view message) {

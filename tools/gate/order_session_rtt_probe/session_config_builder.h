@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "core/websocket/socket_timestamping.h"
 #include "exchange/gate/trading/order_session_config.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
@@ -17,6 +18,7 @@ struct PinnedOrderSessionOptions {
   std::optional<bool> enable_tls;
   std::optional<std::int32_t> worker_cpu_id;
   bool enable_tcp_info_diagnostics{false};
+  websocket::SocketTimestampingConfig timestamping{};
 };
 
 [[nodiscard]] inline gate::OrderSessionConfig BuildPinnedOrderSessionConfig(
@@ -35,6 +37,7 @@ struct PinnedOrderSessionOptions {
     base.connection.runtime_policy.io_cpu_id = *options.worker_cpu_id;
   }
   base.enable_tcp_info_diagnostics = options.enable_tcp_info_diagnostics;
+  base.connection.socket_timestamping = options.timestamping;
   return base;
 }
 

@@ -86,6 +86,13 @@ drive_read_duration_threshold_ns = 2000
 diagnostic_window_timeout_ns = 3000
 max_logs_per_second = 4
 
+[order_session.diagnostics.timestamping]
+enabled = true
+tx_software = true
+tx_ack = true
+rx_software = true
+max_errqueue_events_per_drain = 16
+
 [order_session.credentials]
 api_key_env = "GATE_KEY"
 api_secret_env = "GATE_SECRET"
@@ -116,6 +123,13 @@ bind_cpu_id = 7
   EXPECT_EQ(result.value.ack_latency_diagnostics.diagnostic_window_timeout_ns,
             3000);
   EXPECT_EQ(result.value.ack_latency_diagnostics.max_logs_per_second, 4U);
+  EXPECT_TRUE(result.value.connection.socket_timestamping.enabled);
+  EXPECT_TRUE(result.value.connection.socket_timestamping.tx_software);
+  EXPECT_TRUE(result.value.connection.socket_timestamping.tx_ack);
+  EXPECT_TRUE(result.value.connection.socket_timestamping.rx_software);
+  EXPECT_EQ(
+      result.value.connection.socket_timestamping.max_errqueue_events_per_drain,
+      16U);
   EXPECT_EQ(result.value.connection.host, "private-gate.example");
   EXPECT_FALSE(result.value.connection.enable_tls);
   EXPECT_EQ(result.value.connection.target, "/v4/ws/btc");

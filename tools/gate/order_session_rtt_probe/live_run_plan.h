@@ -79,7 +79,8 @@ namespace live_run_plan_detail {
 }
 
 [[nodiscard]] inline PinnedOrderSessionOptions BuildPinnedOptions(
-    const ProbeConnectionConfig& connection, bool enable_tcp_info) {
+    const ProbeConnectionConfig& connection, bool enable_tcp_info,
+    const websocket::SocketTimestampingConfig& timestamping) {
   return PinnedOrderSessionOptions{
       .connect_ip = connection.connect_ip,
       .host = std::optional<std::string>{connection.host},
@@ -87,6 +88,7 @@ namespace live_run_plan_detail {
       .enable_tls = connection.enable_tls,
       .worker_cpu_id = ConnectionWorkerCpuId(connection),
       .enable_tcp_info_diagnostics = enable_tcp_info,
+      .timestamping = timestamping,
   };
 }
 
@@ -150,7 +152,8 @@ BuildSingleSessionLiveRunPlan(
       .order_session_config = BuildPinnedOrderSessionConfig(
           base_order_session_config,
           live_run_plan_detail::BuildPinnedOptions(
-              connection, config.sessions.enable_tcp_info)),
+              connection, config.sessions.enable_tcp_info,
+              config.sessions.timestamping)),
   };
   return result;
 }
@@ -212,7 +215,8 @@ BuildSingleSessionLiveRunPlan(
         .order_session_config = BuildPinnedOrderSessionConfig(
             base_order_session_config,
             live_run_plan_detail::BuildPinnedOptions(
-                connection, config.sessions.enable_tcp_info)),
+                connection, config.sessions.enable_tcp_info,
+                config.sessions.timestamping)),
     });
   }
   return result;

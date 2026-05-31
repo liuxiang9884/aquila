@@ -219,6 +219,8 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
   const toml::node_view<const toml::node> probe = root["probe"];
   const toml::node_view<const toml::node> inputs = root["probe"]["inputs"];
   const toml::node_view<const toml::node> sessions = root["probe"]["sessions"];
+  const toml::node_view<const toml::node> timestamping =
+      root["probe"]["sessions"]["timestamping"];
   const toml::node_view<const toml::node> sampling = root["probe"]["sampling"];
   const toml::node_view<const toml::node> order = root["probe"]["order"];
   const toml::node_view<const toml::node> feedback = root["probe"]["feedback"];
@@ -229,6 +231,8 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
   if (!ReadTableOrMissing(probe, "probe", &error) ||
       !ReadTableOrMissing(inputs, "probe.inputs", &error) ||
       !ReadTableOrMissing(sessions, "probe.sessions", &error) ||
+      !ReadTableOrMissing(timestamping, "probe.sessions.timestamping",
+                          &error) ||
       !ReadTableOrMissing(sampling, "probe.sampling", &error) ||
       !ReadTableOrMissing(order, "probe.order", &error) ||
       !ReadTableOrMissing(feedback, "probe.feedback", &error) ||
@@ -282,6 +286,49 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                           config.sessions.request_timeout_ms,
                           "probe.sessions.request_timeout_ms",
                           &config.sessions.request_timeout_ms, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadBoolOr(timestamping["enabled"], config.sessions.timestamping.enabled,
+                  "probe.sessions.timestamping.enabled",
+                  &config.sessions.timestamping.enabled, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadBoolOr(timestamping["tx_sched"],
+                  config.sessions.timestamping.tx_sched,
+                  "probe.sessions.timestamping.tx_sched",
+                  &config.sessions.timestamping.tx_sched, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadBoolOr(timestamping["tx_software"],
+                  config.sessions.timestamping.tx_software,
+                  "probe.sessions.timestamping.tx_software",
+                  &config.sessions.timestamping.tx_software, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadBoolOr(timestamping["tx_ack"], config.sessions.timestamping.tx_ack,
+                  "probe.sessions.timestamping.tx_ack",
+                  &config.sessions.timestamping.tx_ack, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadBoolOr(timestamping["rx_software"],
+                  config.sessions.timestamping.rx_software,
+                  "probe.sessions.timestamping.rx_software",
+                  &config.sessions.timestamping.rx_software, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadBoolOr(timestamping["hardware"],
+                  config.sessions.timestamping.hardware,
+                  "probe.sessions.timestamping.hardware",
+                  &config.sessions.timestamping.hardware, &error)) {
+    return Failure(std::move(error));
+  }
+  if (!ReadUInt32InRange(
+          timestamping["max_errqueue_events_per_drain"],
+          config.sessions.timestamping.max_errqueue_events_per_drain,
+          "probe.sessions.timestamping.max_errqueue_events_per_drain", 0,
+          std::numeric_limits<std::uint32_t>::max(),
+          &config.sessions.timestamping.max_errqueue_events_per_drain,
+          &error)) {
     return Failure(std::move(error));
   }
 
