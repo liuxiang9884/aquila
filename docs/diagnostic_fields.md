@@ -89,6 +89,8 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 | `bbo_id` / `bbo_ns` | `order_session_rtt_samples.csv` | experiment | `BookTicker.id` / 本机 Unix epoch ns | 记录当前 action 对应 open order 使用的行情版本；没有行情锚点的 action 填 0。 | 同上。 |
 | `send_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 当前 action 实际写 socket 前的本地发送时间，用于直接从 CSV 计算 Ack RTT 与近似上行时间。 | 同上。 |
 | `ack_recv_ns` / `ack_ex_ns` / `ack_ex2local_ns` / `ack_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns / 本机 Unix epoch ns / Gate timestamp ns | 当前 action Ack timing；`ack_ex2local_ns` 受时钟偏移影响，`ack_rtt_ns` 是本地 send 到本地 Ack receive。 | 同上。 |
+| `ts_write_complete_ns` / `ts_tx_sched_ns` / `ts_tx_software_ns` / `ts_tx_ack_ns` / `ts_rx_software_ns` | `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | Socket timestamping 原始本地时间戳；默认关闭或未采到时为 0。`ts_tx_ack_ns` 是 request bytes 被 TCP ACK 的本地时间，不是 Gate 业务 Ack。 | 同上。 |
+| `ts_write_to_tx_software_ns` / `ts_tx_software_to_tx_ack_ns` / `ts_tx_ack_to_rx_software_ns` / `ts_rx_software_to_ack_receive_ns` | `order_session_rtt_samples.csv` | experiment | ns，缺失为 `-1` | RTT probe 中用于把 Ack RTT outlier 分到本机写后出站、TCP/network ACK、远端业务处理/回程、本机 RX/read/parse 几段；只使用本机同一时钟域字段。 | 同上。 |
 | `resp_recv_ns` / `resp_ex_ns` / `resp_ex2local_ns` / `resp_rtt_ns` | `order_session_rtt_samples.csv` | experiment | ns / 本机 Unix epoch ns / Gate timestamp ns | 当前 action final response timing；没有 final response 时填 0 / -1。 | 同上。 |
 | `status` | `order_session_rtt_samples.csv` | experiment | enum 文本 | 标记当前 action 是 sent、acked、terminal confirmed、rejected、timeout 或 send failed。 | 同上。 |
 | `term_fb` | `order_session_rtt_samples.csv` | experiment | enum 文本 | 记录使 action 进入 terminal/invalid 路径的 feedback kind；无 terminal feedback 时为空。 | 同上。 |
@@ -164,6 +166,27 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 | `tcp_sendq_bytes` | diagnostic / report CSV | experiment | bytes | 记录 socket send queue 中未被远端 ACK 的字节数，用于判断写完后是否仍在内核发送队列中堆积。 | 被更完整 socket queue telemetry 取代。 |
 | `tcp_notsent_bytes` | diagnostic / report CSV | experiment | bytes | 记录已进入 TCP 发送队列但尚未发送到网络的字节数；不可用时填 0 并配套 available 字段或 warning。 | 同上。 |
 | `socket_send_queue_available` | diagnostic / report CSV | experiment | `true` / `false` | 标记 send queue snapshot 是否成功，避免把平台不支持误判成 0 backlog。 | 同上。 |
+
+### Socket timestamping Ack diagnostic 字段
+
+这些字段由 Linux `SO_TIMESTAMPING` 提供，在 `[order_session.diagnostics.timestamping]` 或
+`[probe.sessions.timestamping]` 显式开启时采集；默认关闭。首轮用于 private non-TLS Gate order session RTT
+probe，TLS 路径只保留 fd 级配置入口，不作为当前验收目标。所有阶段归因只使用本机同一时钟域；Gate
+`exchange_ns` 只能作为远端上下文，不能用于确认本机 / NIC 边界。字段缺失时原始时间戳为 0，阶段耗时为 `-1`。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `ts_available` | `gate_order_ack_latency_diagnostic` | experiment | `true` / `false` | 标记该 Ack diagnostic 是否启用了并匹配到 socket timestamping probe。 | Socket timestamping 诊断删除或字段改名后同步删除。 |
+| `ts_write_complete_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 当前 request WebSocket frame 全部写入 transport 后的时间；作为 socket timestamping 阶段的本机起点。 | 同上。 |
+| `ts_tx_sched_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | Linux TX scheduler timestamp；用于观察 qdisc / driver / NIC 出站前排队。 | 同上。 |
+| `ts_tx_software_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | request bytes 的 kernel software TX timestamp；近似本机 kernel 发送路径完成点。 | 同上。 |
+| `ts_tx_ack_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 本机 TCP 报告 request bytes 已被远端 ACK 的时间；不是 Gate 业务 Ack 时间。 | 同上。 |
+| `ts_rx_software_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | 本机 Unix epoch ns | 业务 Ack packet 到达本机 kernel 的 software RX timestamp。 | 同上。 |
+| `ts_ack_receive_local_ns` | `gate_order_ack_latency_diagnostic` | experiment | 本机 Unix epoch ns | OrderSession 用户态读到并处理 Ack 的本地时间；RTT probe CSV 中对应既有 `ack_recv_ns`。 | 同上。 |
+| `ts_write_to_tx_software_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | ns，缺失为 `-1` | `ts_write_complete_ns -> ts_tx_software_ns`；变大时本机 kernel / qdisc / driver / NIC 出站前排队嫌疑上升。 | 同上。 |
+| `ts_tx_software_to_tx_ack_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | ns，缺失为 `-1` | `ts_tx_software_ns -> ts_tx_ack_ns`；变大时偏 private link / network / 远端 TCP ACK 路径。 | 同上。 |
+| `ts_tx_ack_to_rx_software_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | ns，缺失为 `-1` | `ts_tx_ack_ns -> ts_rx_software_ns`；远端 TCP 已确认 request bytes 后，业务 Ack packet 到达本机 kernel 之前的阶段，偏 Gate 应用处理、远端发送路径或回程网络。 | 同上。 |
+| `ts_rx_software_to_ack_receive_ns` | `gate_order_ack_latency_diagnostic` / `order_session_rtt_samples.csv` | experiment | ns，缺失为 `-1` | `ts_rx_software_ns -> ts_ack_receive_local_ns`；变大时偏本机 RX 路径、owner thread 调度、WebSocket frame decode 或 parser。 | 同上。 |
 
 ### TCP_INFO 字段
 
