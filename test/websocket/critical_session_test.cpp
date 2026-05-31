@@ -157,6 +157,11 @@ class FakeTlsSocket final {
     return rx_ns;
   }
 
+  [[nodiscard]] SocketTimestampingApplyResult timestamping_apply_result()
+      const noexcept {
+    return timestamping_apply_result_;
+  }
+
   size_t read_calls_{0};
   bool pending_readable_{false};
   size_t max_write_bytes_per_call_{0};
@@ -168,6 +173,8 @@ class FakeTlsSocket final {
   std::vector<SocketTimestampingEvent> timestamping_events_{};
   std::vector<std::int64_t> rx_timestamp_ns_{};
   size_t timestamping_drain_calls_{0};
+  SocketTimestampingApplyResult timestamping_apply_result_{.ok = true,
+                                                           .enabled = true};
 };
 
 struct CallbackWriteContext {
@@ -787,6 +794,99 @@ TEST(WebsocketCriticalSessionTest,
   EXPECT_TRUE(
       session.FinishSocketTimestampingProbe(kFirstSequence, 0).available);
   EXPECT_TRUE(session.StartSocketTimestampingProbe(92));
+}
+
+TEST(WebsocketCriticalSessionTest,
+     SocketTimestampingProbeCancelReleasesAttachedProbe) {
+  AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
+  auto config = BuildSmallConfig(2);
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.tx_ack = true;
+  config.socket_timestamping.max_active_probes = 1;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  constexpr std::uint64_t kFirstSequence = 95;
+  ASSERT_TRUE(session.StartSocketTimestampingProbe(kFirstSequence));
+  auto* write = session.TryAcquirePreparedWrite();
+  ASSERT_NE(write, nullptr);
+  std::copy_n(std::as_bytes(std::span{"a", 1}).begin(), 1,
+              write->storage.begin());
+  write->encoded_size = 1;
+  write->kind = PayloadKind::kBinary;
+  ASSERT_EQ(session.CommitPreparedWrite(write), SendStatus::kOk);
+
+  session.CancelPreparedWrite(write);
+
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_TRUE(session.StartSocketTimestampingProbe(96));
+  (void)session.FinishSocketTimestampingProbe(96, 0);
+  EXPECT_TRUE(session.StartSocketTimestampingProbe(97));
+}
+
+TEST(WebsocketCriticalSessionTest,
+     SocketTimestampingProbeDoesNotStartWhenTransportApplyDisabled) {
+  AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
+  auto config = BuildSmallConfig(2);
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.tx_ack = true;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  socket.timestamping_apply_result_ =
+      SocketTimestampingApplyResult{.ok = true, .enabled = false};
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  EXPECT_FALSE(session.StartSocketTimestampingProbe(97));
+}
+
+TEST(WebsocketCriticalSessionTest,
+     SocketTimestampingProbeSendTextFailureReleasesPendingProbe) {
+  AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
+  auto config = BuildSmallConfig(1);
+  config.prepared_write_bytes = 6;
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.tx_ack = true;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  constexpr std::uint64_t kSequence = 98;
+  ASSERT_TRUE(session.StartSocketTimestampingProbe(kSequence));
+  EXPECT_EQ(session.SendText(std::as_bytes(std::span{"x", 1})),
+            SendStatus::kEncodeFailed);
+
+  EXPECT_FALSE(session.FinishSocketTimestampingProbe(kSequence, 0).available);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     SocketTimestampingProbeCommitFailureReleasesPendingProbe) {
+  AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
+  auto config = BuildSmallConfig(1);
+  config.socket_timestamping.enabled = true;
+  config.socket_timestamping.tx_ack = true;
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+
+  constexpr std::uint64_t kSequence = 99;
+  ASSERT_TRUE(session.StartSocketTimestampingProbe(kSequence));
+  auto* write = session.TryAcquirePreparedWrite();
+  ASSERT_NE(write, nullptr);
+  write->encoded_size = static_cast<std::uint32_t>(write->storage.size() + 1);
+  write->kind = PayloadKind::kBinary;
+  EXPECT_EQ(session.CommitPreparedWrite(write), SendStatus::kPayloadTooLarge);
+  session.CancelPreparedWrite(write);
+
+  EXPECT_FALSE(session.FinishSocketTimestampingProbe(kSequence, 0).available);
 }
 
 TEST(WebsocketCriticalSessionTest,

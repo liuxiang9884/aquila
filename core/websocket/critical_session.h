@@ -86,6 +86,7 @@ class CriticalSession {
       WritePathDiagnostics* diagnostics = nullptr) noexcept {
     PreparedWrite* write = TryAcquirePreparedWrite();
     if (write == nullptr) {
+      ReleasePendingSocketTimestampingProbe();
       return SendStatus::kNoPreparedWriteSlot;
     }
 
@@ -94,6 +95,7 @@ class CriticalSession {
       diagnostics->ws_frame_encode_done_ns = RealtimeNowNsInt64();
     }
     if (!encoded.ok) {
+      ReleasePendingSocketTimestampingProbe();
       prepared_write_arena_.Release(write);
       return SendStatus::kEncodeFailed;
     }
@@ -107,6 +109,7 @@ class CriticalSession {
       diagnostics->pending_write_count_after = pending_count_;
     }
     if (status != SendStatus::kOk) {
+      ReleasePendingSocketTimestampingProbe();
       prepared_write_arena_.Release(write);
     } else if (write->encoded_size != 0 &&
                write->write_offset < write->encoded_size) {
@@ -119,12 +122,15 @@ class CriticalSession {
       PreparedWrite* write,
       WriteFlushMode flush_mode = WriteFlushMode::kQueued) noexcept {
     if (write == nullptr) {
+      ReleasePendingSocketTimestampingProbe();
       return SendStatus::kNoPreparedWriteSlot;
     }
     if (write->encoded_size > write->storage.size()) {
+      ReleasePendingSocketTimestampingProbe();
       return SendStatus::kPayloadTooLarge;
     }
     if (pending_capacity_ == 0 || pending_count_ == pending_capacity_) {
+      ReleasePendingSocketTimestampingProbe();
       return SendStatus::kWriteUnavailable;
     }
 
@@ -163,9 +169,11 @@ class CriticalSession {
       pending_writes_[(pending_head_ + pending_count_ - 1) %
                       pending_capacity_] = nullptr;
       --pending_count_;
+      ReleaseSocketTimestampingProbeForWrite(write);
       prepared_write_arena_.Release(write);
       return;
     }
+    ReleaseSocketTimestampingProbeForWrite(write);
     prepared_write_arena_.Release(write);
   }
 
@@ -366,7 +374,7 @@ class CriticalSession {
 
   bool StartSocketTimestampingProbe(std::uint64_t sequence) noexcept {
 #if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
-    if (!config_.socket_timestamping.enabled || sequence == 0) {
+    if (!SocketTimestampingAttributionEnabled() || sequence == 0) {
       return false;
     }
     return AllocateSocketTimestampingProbe(sequence);
@@ -465,6 +473,20 @@ class CriticalSession {
   }
 
 #if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+  [[nodiscard]] bool SocketTimestampingAttributionEnabled() const noexcept {
+    if (!config_.socket_timestamping.enabled) {
+      return false;
+    }
+    if constexpr (requires(const TlsSocketT& socket) {
+                    socket.timestamping_apply_result();
+                  }) {
+      const SocketTimestampingApplyResult result =
+          tls_socket_.timestamping_apply_result();
+      return result.ok && result.enabled;
+    }
+    return false;
+  }
+
   void InitializeSocketTimestampingProbes() noexcept {
     if (!config_.socket_timestamping.enabled ||
         config_.socket_timestamping.max_active_probes == 0) {
@@ -598,6 +620,27 @@ class CriticalSession {
       socket_timestamping_free_slots_[socket_timestamping_free_count_++] =
           slot_index;
     }
+  }
+
+  void ReleaseSocketTimestampingProbeForWrite(PreparedWrite* write) noexcept {
+    if (write == nullptr) {
+      return;
+    }
+    SocketTimestampingProbeState* probe =
+        FindSocketTimestampingProbeBySlot(write->socket_timestamping_probe_slot,
+                                          write->socket_timestamping_sequence);
+    if (probe == nullptr) {
+      return;
+    }
+    ReleaseSocketTimestampingProbe(probe->slot_index);
+  }
+
+  void ReleasePendingSocketTimestampingProbe() noexcept {
+    if (pending_socket_timestamping_probe_slot_ ==
+        kInvalidSocketTimestampingProbeSlot) {
+      return;
+    }
+    ReleaseSocketTimestampingProbe(pending_socket_timestamping_probe_slot_);
   }
 
   [[nodiscard]] bool AllocateSocketTimestampingProbe(
@@ -739,6 +782,12 @@ class CriticalSession {
            SocketTimestampingIdDistance(probe.first_tx_id, recorded_id);
   }
 #else
+  void ReleaseSocketTimestampingProbeForWrite(PreparedWrite* write) noexcept {
+    (void)write;
+  }
+
+  void ReleasePendingSocketTimestampingProbe() noexcept {}
+
   void AttachPendingSocketTimestampingProbe(PreparedWrite* write) noexcept {
     (void)write;
   }

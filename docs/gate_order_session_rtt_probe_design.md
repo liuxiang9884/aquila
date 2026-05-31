@@ -315,6 +315,8 @@ live measurement 命令形态：
 行情事件决定，不通过命令行固定为单个 symbol。`[probe.sessions.timestamping]` 支持 `max_active_probes`；默认
 `16384`，用于保留多个未完成 request 的 socket timestamping 归因状态。构建时若设置
 `AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION=OFF`，这些 runtime timestamping 配置仍会解析，但不会实际启用归因。
+runtime 开启时，probe 还会检查 transport 的 `SO_TIMESTAMPING` apply result；未成功 apply 或 TLS transport 不会启动
+socket timestamping probe，样本中的 `ts_available` 保持 `false`。
 
 输出最终分两类；当前仅 sample CSV schema / writer 已落地，connection log 仍是 live executor 待实现项：
 
