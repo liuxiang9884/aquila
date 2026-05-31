@@ -126,6 +126,15 @@ struct ProbeStageCsvStats {
   std::int64_t ack_exchange_ns{0};
   std::int64_t ack_exchange_to_local_ns{0};
   std::int64_t ack_rtt_ns{-1};
+  std::int64_t ts_write_complete_ns{0};
+  std::int64_t ts_tx_sched_ns{0};
+  std::int64_t ts_tx_software_ns{0};
+  std::int64_t ts_tx_ack_ns{0};
+  std::int64_t ts_rx_software_ns{0};
+  std::int64_t ts_write_to_tx_software_ns{-1};
+  std::int64_t ts_tx_software_to_tx_ack_ns{-1};
+  std::int64_t ts_tx_ack_to_rx_software_ns{-1};
+  std::int64_t ts_rx_software_to_ack_receive_ns{-1};
   std::int64_t response_receive_local_ns{0};
   std::int64_t response_exchange_ns{0};
   std::int64_t response_exchange_to_local_ns{0};
@@ -250,7 +259,7 @@ class ProbeSampleFlow {
     return RecordAckRtt(
         stage, response.local_receive_ns, response.exchange_ns,
         core::LatencyDeltaNs(response.local_receive_ns, response.exchange_ns),
-        rtt_ns);
+        rtt_ns, response.socket_timestamps, response.socket_timestamp_stages);
   }
 
   [[nodiscard]] ProbeSampleTransition OnOrderFeedback(
@@ -496,13 +505,28 @@ class ProbeSampleFlow {
   [[nodiscard]] ProbeSampleTransition RecordAckRtt(
       ProbeStage stage, std::int64_t ack_receive_local_ns,
       std::int64_t ack_exchange_ns, std::int64_t ack_exchange_to_local_ns,
-      std::int64_t rtt_ns) {
+      std::int64_t rtt_ns,
+      const websocket::SocketTimestampingSnapshot& socket_timestamps,
+      const websocket::SocketTimestampingStages& socket_timestamp_stages) {
     ProbeStageCsvStats* csv = MutableCsvStats(stage);
     if (csv != nullptr) {
       csv->ack_receive_local_ns = ack_receive_local_ns;
       csv->ack_exchange_ns = ack_exchange_ns;
       csv->ack_exchange_to_local_ns = ack_exchange_to_local_ns;
       csv->ack_rtt_ns = rtt_ns;
+      csv->ts_write_complete_ns = socket_timestamps.write_complete_ns;
+      csv->ts_tx_sched_ns = socket_timestamps.tx_sched_ns;
+      csv->ts_tx_software_ns = socket_timestamps.tx_software_ns;
+      csv->ts_tx_ack_ns = socket_timestamps.tx_ack_ns;
+      csv->ts_rx_software_ns = socket_timestamps.rx_software_ns;
+      csv->ts_write_to_tx_software_ns =
+          socket_timestamp_stages.write_complete_to_tx_software_ns;
+      csv->ts_tx_software_to_tx_ack_ns =
+          socket_timestamp_stages.tx_software_to_tx_ack_ns;
+      csv->ts_tx_ack_to_rx_software_ns =
+          socket_timestamp_stages.tx_ack_to_rx_software_ns;
+      csv->ts_rx_software_to_ack_receive_ns =
+          socket_timestamp_stages.rx_software_to_ack_receive_ns;
     }
     switch (stage) {
       case ProbeStage::kGtcPlace:

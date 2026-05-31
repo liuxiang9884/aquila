@@ -17,12 +17,16 @@ struct OrderSessionRttSampleCsvSchema {
       "run,session,group,ip,sid,round,sample,contract,qty,price,type,action,"
       "local_id,"
       "req_seq,bbo_id,bbo_ns,send_ns,ack_recv_ns,ack_ex_ns,"
-      "ack_ex2local_ns,ack_rtt_ns,resp_recv_ns,resp_ex_ns,"
+      "ack_ex2local_ns,ack_rtt_ns,ts_write_complete_ns,ts_tx_sched_ns,"
+      "ts_tx_software_ns,ts_tx_ack_ns,ts_rx_software_ns,"
+      "ts_write_to_tx_software_ns,ts_tx_software_to_tx_ack_ns,"
+      "ts_tx_ack_to_rx_software_ns,ts_rx_software_to_ack_receive_ns,"
+      "resp_recv_ns,resp_ex_ns,"
       "resp_ex2local_ns,resp_rtt_ns,status,term_fb,fill,invalid,"
       "inv_reason";
   static constexpr char const* format =
       "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
-      "{},{},{},{},{},{},{}";
+      "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}";
 };
 
 struct ProbeSampleCsvRow {
@@ -47,6 +51,15 @@ struct ProbeSampleCsvRow {
   std::int64_t ack_exchange_ns{0};
   std::int64_t ack_exchange_to_local_ns{0};
   std::int64_t ack_rtt_ns{-1};
+  std::int64_t ts_write_complete_ns{0};
+  std::int64_t ts_tx_sched_ns{0};
+  std::int64_t ts_tx_software_ns{0};
+  std::int64_t ts_tx_ack_ns{0};
+  std::int64_t ts_rx_software_ns{0};
+  std::int64_t ts_write_to_tx_software_ns{-1};
+  std::int64_t ts_tx_software_to_tx_ack_ns{-1};
+  std::int64_t ts_tx_ack_to_rx_software_ns{-1};
+  std::int64_t ts_rx_software_to_ack_receive_ns{-1};
   std::int64_t response_receive_local_ns{0};
   std::int64_t response_exchange_ns{0};
   std::int64_t response_exchange_to_local_ns{0};

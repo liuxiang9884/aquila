@@ -37,10 +37,14 @@ void SampleCsvWriter::Write(const ProbeSampleCsvRow& row) noexcept {
       row.local_order_id, row.request_sequence, row.bbo_ticker_id,
       row.bbo_local_ns, row.request_send_local_ns, row.ack_receive_local_ns,
       row.ack_exchange_ns, row.ack_exchange_to_local_ns, row.ack_rtt_ns,
-      row.response_receive_local_ns, row.response_exchange_ns,
-      row.response_exchange_to_local_ns, row.response_rtt_ns, row.status,
-      row.terminal_feedback_kind, row.unexpected_fill,
-      row.invalid_for_rtt_distribution, row.invalid_reason);
+      row.ts_write_complete_ns, row.ts_tx_sched_ns, row.ts_tx_software_ns,
+      row.ts_tx_ack_ns, row.ts_rx_software_ns, row.ts_write_to_tx_software_ns,
+      row.ts_tx_software_to_tx_ack_ns, row.ts_tx_ack_to_rx_software_ns,
+      row.ts_rx_software_to_ack_receive_ns, row.response_receive_local_ns,
+      row.response_exchange_ns, row.response_exchange_to_local_ns,
+      row.response_rtt_ns, row.status, row.terminal_feedback_kind,
+      row.unexpected_fill, row.invalid_for_rtt_distribution,
+      row.invalid_reason);
 }
 
 void SampleCsvWriter::Close() {

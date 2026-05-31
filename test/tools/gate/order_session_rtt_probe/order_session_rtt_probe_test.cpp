@@ -765,6 +765,23 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
       .request_sequence = 11,
       .local_receive_ns = 1600,
       .exchange_ns = 1300,
+      .socket_timestamps =
+          websocket::SocketTimestampingSnapshot{
+              .available = true,
+              .write_complete_ns = 1010,
+              .tx_sched_ns = 1012,
+              .tx_software_ns = 1020,
+              .tx_ack_ns = 1400,
+              .rx_software_ns = 1580,
+              .ack_receive_local_ns = 1600,
+          },
+      .socket_timestamp_stages =
+          websocket::SocketTimestampingStages{
+              .write_complete_to_tx_software_ns = 10,
+              .tx_software_to_tx_ack_ns = 380,
+              .tx_ack_to_rx_software_ns = 180,
+              .rx_software_to_ack_receive_ns = 20,
+          },
   });
   ASSERT_TRUE(transition.ok) << transition.error;
   EXPECT_EQ(transition.action, ProbeSampleAction::kSubmitGtcCancel);
@@ -775,6 +792,15 @@ TEST(GateOrderSessionRttProbeTest, AdvancesSampleFlowOnAckResponses) {
   EXPECT_EQ(flow.stats().gtc_place_ack_exchange_to_local_ns, 300);
   EXPECT_EQ(flow.stats().gtc_place_ack_rtt_ns, 600);
   EXPECT_EQ(flow.stats().gtc_place_status, ProbeStageStatus::kAcked);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_write_complete_ns, 1010);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_sched_ns, 1012);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_software_ns, 1020);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_ack_ns, 1400);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_rx_software_ns, 1580);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_write_to_tx_software_ns, 10);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_software_to_tx_ack_ns, 380);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_tx_ack_to_rx_software_ns, 180);
+  EXPECT_EQ(flow.stats().gtc_open_csv.ts_rx_software_to_ack_receive_ns, 20);
 
   ASSERT_TRUE(flow.OnOrderSent(ProbeStage::kGtcCancel,
                                gate::OrderSendResult{
@@ -1918,6 +1944,15 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
       .ack_exchange_ns = 1550,
       .ack_exchange_to_local_ns = 50,
       .ack_rtt_ns = 100,
+      .ts_write_complete_ns = 1505,
+      .ts_tx_sched_ns = 1508,
+      .ts_tx_software_ns = 1510,
+      .ts_tx_ack_ns = 1575,
+      .ts_rx_software_ns = 1585,
+      .ts_write_to_tx_software_ns = 5,
+      .ts_tx_software_to_tx_ack_ns = 65,
+      .ts_tx_ack_to_rx_software_ns = 10,
+      .ts_rx_software_to_ack_receive_ns = 15,
       .response_receive_local_ns = 1650,
       .response_exchange_ns = 1610,
       .response_exchange_to_local_ns = 40,
@@ -1934,11 +1969,16 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
             "run,session,group,ip,sid,round,sample,contract,qty,price,type,"
             "action,local_id,"
             "req_seq,bbo_id,bbo_ns,send_ns,ack_recv_ns,ack_ex_ns,"
-            "ack_ex2local_ns,ack_rtt_ns,resp_recv_ns,resp_ex_ns,"
+            "ack_ex2local_ns,ack_rtt_ns,ts_write_complete_ns,"
+            "ts_tx_sched_ns,ts_tx_software_ns,ts_tx_ack_ns,"
+            "ts_rx_software_ns,ts_write_to_tx_software_ns,"
+            "ts_tx_software_to_tx_ack_ns,ts_tx_ack_to_rx_software_ns,"
+            "ts_rx_software_to_ack_receive_ns,resp_recv_ns,resp_ex_ns,"
             "resp_ex2local_ns,resp_rtt_ns,status,term_fb,fill,invalid,"
             "inv_reason\n"
             "run_1,public-7,public,52.198.250.74,7,2,3,ZEC_USDT,0.1,74.9,"
-            "ioc,open,102,31,43,1400,1500,1600,1550,50,100,1650,1610,40,150,"
+            "ioc,open,102,31,43,1400,1500,1600,1550,50,100,1505,1508,1510,"
+            "1575,1585,5,65,10,15,1650,1610,40,150,"
             "kTerminalConfirmed,kCancelled,false,false,\n");
 }
 

@@ -398,6 +398,16 @@ class SingleSessionLiveRunner {
     row.ack_exchange_ns = stats.ack_exchange_ns;
     row.ack_exchange_to_local_ns = stats.ack_exchange_to_local_ns;
     row.ack_rtt_ns = stats.ack_rtt_ns;
+    row.ts_write_complete_ns = stats.ts_write_complete_ns;
+    row.ts_tx_sched_ns = stats.ts_tx_sched_ns;
+    row.ts_tx_software_ns = stats.ts_tx_software_ns;
+    row.ts_tx_ack_ns = stats.ts_tx_ack_ns;
+    row.ts_rx_software_ns = stats.ts_rx_software_ns;
+    row.ts_write_to_tx_software_ns = stats.ts_write_to_tx_software_ns;
+    row.ts_tx_software_to_tx_ack_ns = stats.ts_tx_software_to_tx_ack_ns;
+    row.ts_tx_ack_to_rx_software_ns = stats.ts_tx_ack_to_rx_software_ns;
+    row.ts_rx_software_to_ack_receive_ns =
+        stats.ts_rx_software_to_ack_receive_ns;
     row.response_receive_local_ns = stats.response_receive_local_ns;
     row.response_exchange_ns = stats.response_exchange_ns;
     row.response_exchange_to_local_ns = stats.response_exchange_to_local_ns;
