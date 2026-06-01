@@ -44,6 +44,7 @@ class SingleSessionLiveRunner {
                           DataReaderT& data_reader,
                           FeedbackReaderT& feedback_reader,
                           SampleCsvWriter& sample_writer,
+                          ConnectionObservedCsvWriter* connection_writer,
                           double duration_sec) noexcept
       : config_(config),
         plan_(plan),
@@ -51,6 +52,7 @@ class SingleSessionLiveRunner {
         data_reader_(data_reader),
         feedback_reader_(feedback_reader),
         sample_writer_(sample_writer),
+        connection_writer_(connection_writer),
         id_allocator_(static_cast<std::uint8_t>(config.feedback.strategy_id),
                       plan.local_order_id_first, plan.local_order_id_stride),
         duration_ns_(DurationToNs(duration_sec)) {}
@@ -77,6 +79,28 @@ class SingleSessionLiveRunner {
 
   void OnLoginNotReady() noexcept {
     login_ready_ = false;
+  }
+
+  void OnOrderSessionConnected(
+      const gate::OrderSessionConnectionInfo& info) noexcept {
+    if (connection_writer_ == nullptr) {
+      return;
+    }
+    connection_writer_->Write(ProbeConnectionObservedCsvRow{
+        .run_id = config_.run_id,
+        .session_name = plan_.session_name,
+        .group = plan_.group,
+        .connect_ip = plan_.connect_ip,
+        .order_session_id = info.order_session_id,
+        .connected_at_ns = NowRealtimeNs(),
+        .endpoint_available = info.endpoint_available,
+        .local_ip = info.local_ip,
+        .local_port = info.local_port,
+        .remote_ip = info.remote_ip,
+        .remote_port = info.remote_port,
+        .owner_thread_cpu = info.owner_thread_cpu,
+        .owner_thread_tid = info.owner_thread_tid,
+    });
   }
 
   void OnOrderResponse(const gate::OrderResponse& response) noexcept {
@@ -435,6 +459,7 @@ class SingleSessionLiveRunner {
     row.tcp_info_total_retrans = stats.tcp_info_total_retrans;
     row.tcp_info_unacked = stats.tcp_info_unacked;
     row.tcp_info_snd_cwnd = stats.tcp_info_snd_cwnd;
+    row.ts_available = stats.ts_available;
     row.ts_write_complete_ns = stats.ts_write_complete_ns;
     row.ts_tx_sched_ns = stats.ts_tx_sched_ns;
     row.ts_tx_software_ns = stats.ts_tx_software_ns;
@@ -520,6 +545,7 @@ class SingleSessionLiveRunner {
   DataReaderT& data_reader_;
   FeedbackReaderT& feedback_reader_;
   SampleCsvWriter& sample_writer_;
+  ConnectionObservedCsvWriter* connection_writer_{nullptr};
   ProbeSampleIdAllocator id_allocator_;
   SessionT* session_{nullptr};
   std::optional<BookTicker> latest_gate_ticker_;

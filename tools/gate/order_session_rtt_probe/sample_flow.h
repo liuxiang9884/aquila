@@ -161,6 +161,7 @@ struct ProbeStageCsvStats {
   std::uint32_t tcp_info_total_retrans{0};
   std::uint32_t tcp_info_unacked{0};
   std::uint32_t tcp_info_snd_cwnd{0};
+  bool ts_available{false};
   std::int64_t ts_write_complete_ns{0};
   std::int64_t ts_tx_sched_ns{0};
   std::int64_t ts_tx_software_ns{0};
@@ -593,6 +594,7 @@ class ProbeSampleFlow {
       csv->tcp_info_total_retrans = response.tcp_info.total_retrans;
       csv->tcp_info_unacked = response.tcp_info.unacked;
       csv->tcp_info_snd_cwnd = response.tcp_info.snd_cwnd;
+      csv->ts_available = socket_timestamps.available;
       csv->ts_write_complete_ns = socket_timestamps.write_complete_ns;
       csv->ts_tx_sched_ns = socket_timestamps.tx_sched_ns;
       csv->ts_tx_software_ns = socket_timestamps.tx_software_ns;

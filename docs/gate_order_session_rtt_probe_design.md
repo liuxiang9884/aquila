@@ -257,10 +257,18 @@ CSV 中需要分开分析：
 | `order_encode_done_ns ... write_complete_ns` | Gate order write path 分段。 |
 | `socket_sendq_available,tcp_sendq_bytes,tcp_notsent_bytes` | socket send queue 辅助诊断。 |
 | `tcp_info_*` | Linux `TCP_INFO` 辅助诊断，不作为主排名。 |
-| `ts_*` | socket timestamping software-level 分段。 |
+| `ts_available,ts_*` | socket timestamping software-level 分段；`ts_available=false` 时不要解释 `ts_*` 默认值。 |
 | `status,term_fb,fill,invalid,inv_reason` | 样本有效性和安全审计。 |
 
 完整字段说明见 `docs/diagnostic_fields.md`。
+
+run 级和连接级信息不重复写入每行 sample：
+
+- `order_session_rtt_run_metadata.json`：记录 `sample_csv_schema_version`、`AQUILA_ORDER_ACK_DIAG_LEVEL`
+  编译期上限、编译期 capability，以及运行期是否请求 `TCP_INFO` / socket timestamping。
+- `order_session_rtt_connections_observed.csv`：每条 session active 时写一行 endpoint / owner CPU / tid，
+  sample CSV 通过 `run + session + sid` 关联。
+- sample CSV 保持固定 superset schema；不同 `L0..L5` build 不动态裁剪 header，避免跨 run merge 复杂化。
 
 ## 编译期诊断层级
 

@@ -14,6 +14,7 @@
 namespace aquila::tools::gate_order_session_rtt_probe {
 
 struct OrderSessionRttSampleCsvSchema {
+  static constexpr std::uint32_t kVersion = 2;
   static constexpr char const* header =
       "run,session,group,ip,sid,round,sample,contract,qty,price,type,action,"
       "local_id,"
@@ -29,7 +30,7 @@ struct OrderSessionRttSampleCsvSchema {
       "tcp_notsent_bytes,tcp_info_requested,tcp_info_available,"
       "tcp_info_rtt_us,tcp_info_rttvar_us,tcp_info_retrans,"
       "tcp_info_total_retrans,tcp_info_unacked,tcp_info_snd_cwnd,"
-      "ts_write_complete_ns,ts_tx_sched_ns,"
+      "ts_available,ts_write_complete_ns,ts_tx_sched_ns,"
       "ts_tx_software_ns,ts_tx_ack_ns,ts_rx_software_ns,"
       "ts_write_to_tx_software_ns,ts_tx_software_to_tx_ack_ns,"
       "ts_tx_ack_to_rx_software_ns,ts_rx_software_to_ack_receive_ns,"
@@ -40,7 +41,16 @@ struct OrderSessionRttSampleCsvSchema {
       "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
       "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
       "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
-      "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}";
+      "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}";
+};
+
+struct OrderSessionRttConnectionObservedCsvSchema {
+  static constexpr char const* header =
+      "run,session,group,ip,sid,connected_at_ns,endpoint_available,"
+      "local_ip,local_port,remote_ip,remote_port,owner_thread_cpu,"
+      "owner_thread_tid";
+  static constexpr char const* format =
+      "{},{},{},{},{},{},{},{},{},{},{},{},{}";
 };
 
 struct ProbeSampleCsvRow {
@@ -98,6 +108,7 @@ struct ProbeSampleCsvRow {
   std::uint32_t tcp_info_total_retrans{0};
   std::uint32_t tcp_info_unacked{0};
   std::uint32_t tcp_info_snd_cwnd{0};
+  bool ts_available{false};
   std::int64_t ts_write_complete_ns{0};
   std::int64_t ts_tx_sched_ns{0};
   std::int64_t ts_tx_software_ns{0};
@@ -118,6 +129,34 @@ struct ProbeSampleCsvRow {
   std::string invalid_reason;
 };
 
+struct ProbeRunMetadata {
+  std::string run_id;
+  std::string sample_csv_path;
+  std::string connection_observed_csv_path;
+  bool tcp_info_runtime_requested{false};
+  bool socket_timestamping_runtime_requested{false};
+};
+
+struct ProbeConnectionObservedCsvRow {
+  std::string run_id;
+  std::string session_name;
+  std::string group;
+  std::string connect_ip;
+  std::uint64_t order_session_id{0};
+  std::int64_t connected_at_ns{0};
+  bool endpoint_available{false};
+  std::string local_ip;
+  std::uint16_t local_port{0};
+  std::string remote_ip;
+  std::uint16_t remote_port{0};
+  int owner_thread_cpu{-1};
+  int owner_thread_tid{-1};
+};
+
+[[nodiscard]] bool WriteRunMetadataJson(const std::filesystem::path& path,
+                                        const ProbeRunMetadata& metadata,
+                                        std::string* error);
+
 class SampleCsvWriter {
  public:
   using Writer = quill::CsvWriter<OrderSessionRttSampleCsvSchema,
@@ -132,6 +171,27 @@ class SampleCsvWriter {
   [[nodiscard]] bool Open(const std::filesystem::path& path,
                           std::string* error);
   void Write(const ProbeSampleCsvRow& row) noexcept;
+  void Close();
+
+ private:
+  std::unique_ptr<Writer> writer_;
+};
+
+class ConnectionObservedCsvWriter {
+ public:
+  using Writer = quill::CsvWriter<OrderSessionRttConnectionObservedCsvSchema,
+                                  nova::LogManager::NovaFrontendOptions>;
+
+  ConnectionObservedCsvWriter() = default;
+  ~ConnectionObservedCsvWriter() = default;
+
+  ConnectionObservedCsvWriter(const ConnectionObservedCsvWriter&) = delete;
+  ConnectionObservedCsvWriter& operator=(const ConnectionObservedCsvWriter&) =
+      delete;
+
+  [[nodiscard]] bool Open(const std::filesystem::path& path,
+                          std::string* error);
+  void Write(const ProbeConnectionObservedCsvRow& row) noexcept;
   void Close();
 
  private:

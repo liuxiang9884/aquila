@@ -446,10 +446,16 @@ class OrderSession {
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
     if (phase == websocket::ConnectionPhase::kActive) {
       active_ = true;
-      LogGateOrderSessionConnected(
-          order_session_id_, detail::CurrentCpuForOrderSessionDiagnostics(),
-          detail::CurrentTidForOrderSessionDiagnostics(),
-          SnapshotSocketEndpointDiagnostics());
+      const int owner_thread_cpu =
+          detail::CurrentCpuForOrderSessionDiagnostics();
+      const int owner_thread_tid =
+          detail::CurrentTidForOrderSessionDiagnostics();
+      const websocket::SocketEndpointDiagnostics endpoints =
+          SnapshotSocketEndpointDiagnostics();
+      LogGateOrderSessionConnected(order_session_id_, owner_thread_cpu,
+                                   owner_thread_tid, endpoints);
+      NotifyOrderSessionConnected(owner_thread_cpu, owner_thread_tid,
+                                  endpoints);
       (void)SendLogin();
       return;
     }
@@ -1478,6 +1484,26 @@ class OrderSession {
                     response_handler_.OnOrderSessionLoginNotReady();
                   }) {
       response_handler_.OnOrderSessionLoginNotReady();
+    }
+  }
+
+  void NotifyOrderSessionConnected(
+      int owner_thread_cpu, int owner_thread_tid,
+      const websocket::SocketEndpointDiagnostics& endpoints) noexcept {
+    if constexpr (requires(ResponseHandler& handler,
+                           const OrderSessionConnectionInfo& info) {
+                    handler.OnOrderSessionConnected(info);
+                  }) {
+      response_handler_.OnOrderSessionConnected(OrderSessionConnectionInfo{
+          .order_session_id = order_session_id_,
+          .owner_thread_cpu = owner_thread_cpu,
+          .owner_thread_tid = owner_thread_tid,
+          .endpoint_available = endpoints.available,
+          .local_ip = endpoints.local_ip.data(),
+          .local_port = endpoints.local_port,
+          .remote_ip = endpoints.remote_ip.data(),
+          .remote_port = endpoints.remote_port,
+      });
     }
   }
 

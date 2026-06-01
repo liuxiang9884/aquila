@@ -2,17 +2,129 @@
 
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <string_view>
 
 #include <fmt/core.h>
 
-namespace aquila::tools::gate_order_session_rtt_probe {
+#include "core/common/order_ack_diagnostic_level.h"
 
-bool SampleCsvWriter::Open(const std::filesystem::path& path,
-                           std::string* error) {
+namespace aquila::tools::gate_order_session_rtt_probe {
+namespace {
+
+[[nodiscard]] const char* BoolText(bool value) noexcept {
+  return value ? "true" : "false";
+}
+
+[[nodiscard]] std::string JsonEscape(std::string_view input) {
+  std::string escaped;
+  escaped.reserve(input.size());
+  for (const char ch : input) {
+    switch (ch) {
+      case '\\':
+        escaped.append("\\\\");
+        break;
+      case '"':
+        escaped.append("\\\"");
+        break;
+      case '\b':
+        escaped.append("\\b");
+        break;
+      case '\f':
+        escaped.append("\\f");
+        break;
+      case '\n':
+        escaped.append("\\n");
+        break;
+      case '\r':
+        escaped.append("\\r");
+        break;
+      case '\t':
+        escaped.append("\\t");
+        break;
+      default:
+        escaped.push_back(ch);
+        break;
+    }
+  }
+  return escaped;
+}
+
+[[nodiscard]] bool EnsureParentDirectory(const std::filesystem::path& path,
+                                         std::string_view description,
+                                         std::string* error) {
   try {
     const std::filesystem::path parent = path.parent_path();
     if (!parent.empty()) {
       std::filesystem::create_directories(parent);
+    }
+  } catch (const std::exception& ex) {
+    if (error != nullptr) {
+      *error = fmt::format("failed to create {} parent for '{}': {}",
+                           description, path.string(), ex.what());
+    }
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+bool WriteRunMetadataJson(const std::filesystem::path& path,
+                          const ProbeRunMetadata& metadata,
+                          std::string* error) {
+  if (!EnsureParentDirectory(path, "RTT run metadata", error)) {
+    return false;
+  }
+  try {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+      if (error != nullptr) {
+        *error =
+            fmt::format("failed to open RTT run metadata '{}'", path.string());
+      }
+      return false;
+    }
+    output << fmt::format(
+        "{{\n"
+        "  \"sample_csv_schema_version\": {},\n"
+        "  \"run_id\": \"{}\",\n"
+        "  \"order_ack_diag_level\": {},\n"
+        "  \"order_ack_diag_level_name\": \"{}\",\n"
+        "  \"tcp_info_compiled\": {},\n"
+        "  \"socket_timestamping_compiled\": {},\n"
+        "  \"pcap_gate_header_compiled\": {},\n"
+        "  \"tcp_info_runtime_requested\": {},\n"
+        "  \"socket_timestamping_runtime_requested\": {},\n"
+        "  \"sample_csv_path\": \"{}\",\n"
+        "  \"connection_observed_csv_path\": \"{}\"\n"
+        "}}\n",
+        OrderSessionRttSampleCsvSchema::kVersion, JsonEscape(metadata.run_id),
+        core::kOrderAckDiagnosticLevel,
+        core::OrderAckDiagnosticLevelName(core::kOrderAckDiagnosticLevel),
+        BoolText(core::kOrderAckDiagnosticTcpInfoEnabled),
+        BoolText(core::kOrderAckDiagnosticSocketTimestampingEnabled),
+        BoolText(core::kOrderAckDiagnosticPcapGateHeaderEnabled),
+        BoolText(metadata.tcp_info_runtime_requested),
+        BoolText(metadata.socket_timestamping_runtime_requested),
+        JsonEscape(metadata.sample_csv_path),
+        JsonEscape(metadata.connection_observed_csv_path));
+  } catch (const std::exception& ex) {
+    if (error != nullptr) {
+      *error = fmt::format("failed to write RTT run metadata '{}': {}",
+                           path.string(), ex.what());
+    }
+    return false;
+  }
+  return true;
+}
+
+bool SampleCsvWriter::Open(const std::filesystem::path& path,
+                           std::string* error) {
+  try {
+    if (!EnsureParentDirectory(path, "RTT sample CSV", error)) {
+      writer_.reset();
+      return false;
     }
     writer_ = std::make_unique<Writer>(path.string());
   } catch (const std::exception& ex) {
@@ -50,17 +162,57 @@ void SampleCsvWriter::Write(const ProbeSampleCsvRow& row) noexcept {
       row.tcp_sendq_bytes, row.tcp_notsent_bytes, row.tcp_info_requested,
       row.tcp_info_available, row.tcp_info_rtt_us, row.tcp_info_rttvar_us,
       row.tcp_info_retrans, row.tcp_info_total_retrans, row.tcp_info_unacked,
-      row.tcp_info_snd_cwnd, row.ts_write_complete_ns, row.ts_tx_sched_ns,
-      row.ts_tx_software_ns, row.ts_tx_ack_ns, row.ts_rx_software_ns,
-      row.ts_write_to_tx_software_ns, row.ts_tx_software_to_tx_ack_ns,
-      row.ts_tx_ack_to_rx_software_ns, row.ts_rx_software_to_ack_receive_ns,
-      row.response_receive_local_ns, row.response_exchange_ns,
-      row.response_exchange_to_local_ns, row.response_rtt_ns, row.status,
-      row.terminal_feedback_kind, row.unexpected_fill,
-      row.invalid_for_rtt_distribution, row.invalid_reason);
+      row.tcp_info_snd_cwnd, row.ts_available, row.ts_write_complete_ns,
+      row.ts_tx_sched_ns, row.ts_tx_software_ns, row.ts_tx_ack_ns,
+      row.ts_rx_software_ns, row.ts_write_to_tx_software_ns,
+      row.ts_tx_software_to_tx_ack_ns, row.ts_tx_ack_to_rx_software_ns,
+      row.ts_rx_software_to_ack_receive_ns, row.response_receive_local_ns,
+      row.response_exchange_ns, row.response_exchange_to_local_ns,
+      row.response_rtt_ns, row.status, row.terminal_feedback_kind,
+      row.unexpected_fill, row.invalid_for_rtt_distribution,
+      row.invalid_reason);
 }
 
 void SampleCsvWriter::Close() {
+  if (writer_ != nullptr) {
+    writer_->flush();
+  }
+  writer_.reset();
+}
+
+bool ConnectionObservedCsvWriter::Open(const std::filesystem::path& path,
+                                       std::string* error) {
+  try {
+    if (!EnsureParentDirectory(path, "RTT connection observed CSV", error)) {
+      writer_.reset();
+      return false;
+    }
+    writer_ = std::make_unique<Writer>(path.string());
+  } catch (const std::exception& ex) {
+    writer_.reset();
+    if (error != nullptr) {
+      *error =
+          fmt::format("failed to open RTT connection observed CSV '{}': {}",
+                      path.string(), ex.what());
+    }
+    return false;
+  }
+  return true;
+}
+
+void ConnectionObservedCsvWriter::Write(
+    const ProbeConnectionObservedCsvRow& row) noexcept {
+  if (writer_ == nullptr) {
+    return;
+  }
+  writer_->append_row(row.run_id, row.session_name, row.group, row.connect_ip,
+                      row.order_session_id, row.connected_at_ns,
+                      row.endpoint_available, row.local_ip, row.local_port,
+                      row.remote_ip, row.remote_port, row.owner_thread_cpu,
+                      row.owner_thread_tid);
+}
+
+void ConnectionObservedCsvWriter::Close() {
   if (writer_ != nullptr) {
     writer_->flush();
   }

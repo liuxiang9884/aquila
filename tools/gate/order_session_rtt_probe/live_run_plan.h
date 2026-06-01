@@ -21,6 +21,8 @@ namespace aquila::tools::gate_order_session_rtt_probe {
 struct LiveRunPaths {
   std::filesystem::path run_dir;
   std::filesystem::path sample_csv_path;
+  std::filesystem::path run_metadata_path;
+  std::filesystem::path connection_observed_csv_path;
   std::filesystem::path rest_guard_csv_path;
   std::filesystem::path raw_rest_dir;
 };
@@ -64,6 +66,10 @@ namespace live_run_plan_detail {
   LiveRunPaths paths;
   paths.run_dir = config.output.root_dir / config.run_id;
   paths.sample_csv_path = paths.run_dir / "order_session_rtt_samples.csv";
+  paths.run_metadata_path =
+      paths.run_dir / "order_session_rtt_run_metadata.json";
+  paths.connection_observed_csv_path =
+      paths.run_dir / "order_session_rtt_connections_observed.csv";
   paths.rest_guard_csv_path =
       paths.run_dir / "order_session_rtt_rest_guard.csv";
   paths.raw_rest_dir = paths.run_dir / "raw_rest";

@@ -112,6 +112,9 @@ struct ProbeRawResponseHandler {
   void (*on_order_response)(void*,
                             const aquila::gate::OrderResponse&) noexcept {
       nullptr};
+  void (*on_order_session_connected)(
+      void*,
+      const aquila::gate::OrderSessionConnectionInfo&) noexcept {nullptr};
 
   void OnOrderSessionLoginReady() noexcept {
     if (on_login_ready != nullptr) {
@@ -130,6 +133,13 @@ struct ProbeRawResponseHandler {
       on_order_response(context, response);
     }
   }
+
+  void OnOrderSessionConnected(
+      const aquila::gate::OrderSessionConnectionInfo& info) noexcept {
+    if (on_order_session_connected != nullptr) {
+      on_order_session_connected(context, info);
+    }
+  }
 };
 
 template <typename Runner>
@@ -146,6 +156,12 @@ template <typename Runner>
 void ProbeOrderResponseCallback(
     void* raw, const aquila::gate::OrderResponse& response) noexcept {
   static_cast<Runner*>(raw)->OnOrderResponse(response);
+}
+
+template <typename Runner>
+void ProbeOrderSessionConnectedCallback(
+    void* raw, const aquila::gate::OrderSessionConnectionInfo& info) noexcept {
+  static_cast<Runner*>(raw)->OnOrderSessionConnected(info);
 }
 
 [[nodiscard]] std::string JoinConnections(
@@ -187,13 +203,37 @@ void PrintPlan(const probe::ProbeConfig& config,
          fmt::format("order_session_rtt_samples_session_{}.csv", session_index);
 }
 
+[[nodiscard]] std::filesystem::path SessionConnectionObservedCsvPath(
+    const probe::MultiSessionLiveRunPlan& plan, std::size_t session_index) {
+  return plan.paths.run_dir /
+         fmt::format("order_session_rtt_connections_observed_session_{}.csv",
+                     session_index);
+}
+
+[[nodiscard]] bool WriteRunMetadataForPlan(const probe::ProbeConfig& config,
+                                           const probe::LiveRunPaths& paths,
+                                           std::string* error) {
+  return probe::WriteRunMetadataJson(
+      paths.run_metadata_path,
+      probe::ProbeRunMetadata{
+          .run_id = config.run_id,
+          .sample_csv_path = paths.sample_csv_path.string(),
+          .connection_observed_csv_path =
+              paths.connection_observed_csv_path.string(),
+          .tcp_info_runtime_requested = config.sessions.enable_tcp_info,
+          .socket_timestamping_runtime_requested =
+              config.sessions.timestamping.enabled,
+      },
+      error);
+}
+
 [[nodiscard]] std::int64_t SteadyNowNs() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
 
-[[nodiscard]] bool MergeSampleCsvFiles(
+[[nodiscard]] bool MergeCsvFiles(
     const std::vector<std::filesystem::path>& input_paths,
     const std::filesystem::path& output_path, std::string* error) {
   try {
@@ -295,10 +335,23 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
       data_reader_config.value.instrument_catalog;
   DataReader data_reader(std::move(data_reader_config.value));
 
+  std::string metadata_error;
+  if (!WriteRunMetadataForPlan(config, live_plan.paths, &metadata_error)) {
+    NOVA_ERROR("run_metadata_error={}", metadata_error);
+    return 1;
+  }
+
   probe::SampleCsvWriter sample_writer;
   std::string csv_error;
   if (!sample_writer.Open(live_plan.paths.sample_csv_path, &csv_error)) {
     NOVA_ERROR("sample_csv_error={}", csv_error);
+    return 1;
+  }
+
+  probe::ConnectionObservedCsvWriter connection_writer;
+  if (!connection_writer.Open(live_plan.paths.connection_observed_csv_path,
+                              &csv_error)) {
+    NOVA_ERROR("connection_observed_csv_error={}", csv_error);
     return 1;
   }
 
@@ -317,12 +370,15 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
           .ack_latency =
               live_plan.order_session_config.ack_latency_diagnostics});
   Runner runner(config, live_plan, instrument_catalog, data_reader,
-                feedback_reader.value, sample_writer, duration_sec);
+                feedback_reader.value, sample_writer, &connection_writer,
+                duration_sec);
   runner.BindSession(session);
   handler.context = &runner;
   handler.on_login_ready = &ProbeLoginReadyCallback<Runner>;
   handler.on_login_not_ready = &ProbeLoginNotReadyCallback<Runner>;
   handler.on_order_response = &ProbeOrderResponseCallback<Runner>;
+  handler.on_order_session_connected =
+      &ProbeOrderSessionConnectedCallback<Runner>;
   session.SetRuntimeHook(&runner, &Runner::RuntimeHookCallback);
 
   NOVA_INFO(
@@ -346,6 +402,7 @@ int RunSingleSessionExecute(probe::ProbeConfig config,
           session, [&runner] { return runner.stopping(); }, duration_sec,
           /*watchdog_grace_sec=*/30.0);
   sample_writer.Close();
+  connection_writer.Close();
   const probe::SingleSessionLiveRunnerStats& stats = runner.stats();
   int exit_code = watchdog_result.start_result ? runner.exit_code() : 1;
   std::string stop_reason{runner.stop_reason()};
@@ -388,7 +445,7 @@ class LiveSessionStateBase {
   [[nodiscard]] virtual const probe::SingleSessionLiveRunnerStats& stats()
       const noexcept = 0;
 
-  virtual bool OpenSampleWriter(std::string* error) = 0;
+  virtual bool OpenWriters(std::string* error) = 0;
   virtual void EnableExternalDispatchGate() noexcept = 0;
   virtual void StartThread() = 0;
   virtual void Stop() noexcept = 0;
@@ -423,12 +480,15 @@ class LiveSessionState final : public LiveSessionStateBase {
                      .ack_latency =
                          plan_.order_session_config.ack_latency_diagnostics}),
         runner_(config_ref, plan_, instrument_catalog_, data_reader_,
-                feedback_queue_, sample_writer_, duration_sec) {
+                feedback_queue_, sample_writer_, &connection_writer_,
+                duration_sec) {
     runner_.BindSession(session_);
     handler_.context = &runner_;
     handler_.on_login_ready = &ProbeLoginReadyCallback<Runner>;
     handler_.on_login_not_ready = &ProbeLoginNotReadyCallback<Runner>;
     handler_.on_order_response = &ProbeOrderResponseCallback<Runner>;
+    handler_.on_order_session_connected =
+        &ProbeOrderSessionConnectedCallback<Runner>;
     session_.SetRuntimeHook(&runner_, &Runner::RuntimeHookCallback);
   }
 
@@ -470,8 +530,10 @@ class LiveSessionState final : public LiveSessionStateBase {
     return runner_.stats();
   }
 
-  bool OpenSampleWriter(std::string* error) override {
-    return sample_writer_.Open(plan_.paths.sample_csv_path, error);
+  bool OpenWriters(std::string* error) override {
+    return sample_writer_.Open(plan_.paths.sample_csv_path, error) &&
+           connection_writer_.Open(plan_.paths.connection_observed_csv_path,
+                                   error);
   }
 
   void EnableExternalDispatchGate() noexcept override {
@@ -497,6 +559,7 @@ class LiveSessionState final : public LiveSessionStateBase {
       thread_.join();
     }
     sample_writer_.Close();
+    connection_writer_.Close();
   }
 
   void PushFeedback(const aquila::OrderFeedbackEvent& event) override {
@@ -513,6 +576,7 @@ class LiveSessionState final : public LiveSessionStateBase {
   ProbeDataReader data_reader_;
   probe::LocalFeedbackQueue feedback_queue_;
   probe::SampleCsvWriter sample_writer_;
+  probe::ConnectionObservedCsvWriter connection_writer_;
   ProbeRawResponseHandler handler_;
   Session session_;
   Runner runner_;
@@ -576,8 +640,16 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
     return 1;
   }
 
+  std::string metadata_error;
+  if (!WriteRunMetadataForPlan(config, live_plan.paths, &metadata_error)) {
+    NOVA_ERROR("run_metadata_error={}", metadata_error);
+    return 1;
+  }
+
   std::vector<std::filesystem::path> session_csv_paths;
   session_csv_paths.reserve(live_plan.sessions.size());
+  std::vector<std::filesystem::path> connection_csv_paths;
+  connection_csv_paths.reserve(live_plan.sessions.size());
   std::vector<std::unique_ptr<LiveSessionStateBase>> sessions;
   sessions.reserve(live_plan.sessions.size());
 
@@ -592,15 +664,19 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
 
     probe::SingleSessionLiveRunPlan session_plan = live_plan.sessions[i];
     session_plan.paths.sample_csv_path = SessionSampleCsvPath(live_plan, i);
+    session_plan.paths.connection_observed_csv_path =
+        SessionConnectionObservedCsvPath(live_plan, i);
     session_csv_paths.push_back(session_plan.paths.sample_csv_path);
+    connection_csv_paths.push_back(
+        session_plan.paths.connection_observed_csv_path);
 
     std::unique_ptr<LiveSessionStateBase> state =
         MakeLiveSessionState(config, std::move(session_plan), credentials,
                              std::move(data_reader_config.value), duration_sec);
     state->EnableExternalDispatchGate();
     std::string csv_error;
-    if (!state->OpenSampleWriter(&csv_error)) {
-      NOVA_ERROR("sample_csv_error={}", csv_error);
+    if (!state->OpenWriters(&csv_error)) {
+      NOVA_ERROR("session_csv_error={}", csv_error);
       return 1;
     }
     sessions.push_back(std::move(state));
@@ -741,13 +817,21 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
   }
 
   std::string merge_error;
-  const bool merge_ok = MergeSampleCsvFiles(
+  const bool merge_ok = MergeCsvFiles(
       session_csv_paths, live_plan.paths.sample_csv_path, &merge_error);
   if (!merge_ok) {
     NOVA_ERROR("sample_csv_merge_error={}", merge_error);
   }
+  std::string connection_merge_error;
+  const bool connection_merge_ok = MergeCsvFiles(
+      connection_csv_paths, live_plan.paths.connection_observed_csv_path,
+      &connection_merge_error);
+  if (!connection_merge_ok) {
+    NOVA_ERROR("connection_observed_csv_merge_error={}",
+               connection_merge_error);
+  }
 
-  int exit_code = merge_ok ? 0 : 1;
+  int exit_code = merge_ok && connection_merge_ok ? 0 : 1;
   for (const std::unique_ptr<LiveSessionStateBase>& state : sessions) {
     const probe::SingleSessionLiveRunnerStats& stats = state->stats();
     int session_exit_code = state->start_result() ? state->exit_code() : 1;
@@ -781,7 +865,8 @@ int RunMultiSessionExecute(probe::ProbeConfig config,
       exit_code == 0 ? "true" : "false", exit_code,
       duration_watchdog_fired
           ? "duration_watchdog_fired"
-          : (merge_ok ? "multi_session_complete" : "sample_csv_merge_failed"),
+          : (merge_ok && connection_merge_ok ? "multi_session_complete"
+                                             : "session_csv_merge_failed"),
       runner_stop_observed ? "true" : "false",
       duration_watchdog_fired ? "true" : "false", feedback_events_consumed,
       feedback_events_routed, feedback_events_broadcast,

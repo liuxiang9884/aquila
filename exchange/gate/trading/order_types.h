@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "core/common/types.h"
 #include "core/websocket/socket_diagnostics.h"
@@ -50,6 +51,17 @@ struct OrderSendResult {
   std::uint64_t request_sequence{0};
   std::uint64_t encoded_request_id{0};
   std::int64_t send_local_ns{0};
+};
+
+struct OrderSessionConnectionInfo {
+  std::uint64_t order_session_id{0};
+  int owner_thread_cpu{-1};
+  int owner_thread_tid{-1};
+  bool endpoint_available{false};
+  std::string local_ip;
+  std::uint16_t local_port{0};
+  std::string remote_ip;
+  std::uint16_t remote_port{0};
 };
 
 enum class OrderResponseKind : std::uint8_t {

@@ -73,6 +73,7 @@ docs/evaluation_support.md
 
 - `gate_order_session_rtt_probe` 是 measurement-only 工具，不自动 score / 切换连接。
 - 连接维度已迁到 CSV：`name,group,host,connect_ip,port,enable_tls,worker_cpu_id`。行顺序就是 session 顺序；`name` 唯一；`connect_ip` 可重复，表示多条独立连接。
+- RTT probe sample CSV 保持固定 superset schema；run 级 `AQUILA_ORDER_ACK_DIAG_LEVEL` / capability 写入 `order_session_rtt_run_metadata.json`，连接级 endpoint / owner CPU / tid 写入 `order_session_rtt_connections_observed.csv`，sample 行只新增 per-Ack 必需的 `ts_available` 以避免把缺失 socket timestamping 误读为真实 0。
 - 默认 12 行连接列表：`config/order_session_rtt_probe/gate_order_session_rtt_connections.csv`。可用 `--connections-file` 覆盖。
 - 8 条 private plain 全阶段配置：`config/order_session_rtt_probe/gate_order_session_rtt_probe_private8_plain_allstage.toml`，连接列表为 `config/order_session_rtt_probe/gate_order_session_rtt_private8_plain_connections.csv`，base order session config 为 `config/order_sessions/gate_order_session_rtt_probe_allstage.toml`。
 - `cycle_cooldown_us` / `order_session_interval_us` 已支持微秒粒度 pacing；旧 `*_ms` 字段仍按毫秒解析。

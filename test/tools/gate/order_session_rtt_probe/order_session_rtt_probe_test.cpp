@@ -2085,6 +2085,7 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
       .tcp_info_total_retrans = 1,
       .tcp_info_unacked = 2,
       .tcp_info_snd_cwnd = 10,
+      .ts_available = true,
       .ts_write_complete_ns = 1505,
       .ts_tx_sched_ns = 1508,
       .ts_tx_software_ns = 1510,
@@ -2121,7 +2122,7 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
             "tcp_sendq_bytes,tcp_notsent_bytes,tcp_info_requested,"
             "tcp_info_available,tcp_info_rtt_us,tcp_info_rttvar_us,"
             "tcp_info_retrans,tcp_info_total_retrans,tcp_info_unacked,"
-            "tcp_info_snd_cwnd,ts_write_complete_ns,"
+            "tcp_info_snd_cwnd,ts_available,ts_write_complete_ns,"
             "ts_tx_sched_ns,ts_tx_software_ns,ts_tx_ack_ns,"
             "ts_rx_software_ns,ts_write_to_tx_software_ns,"
             "ts_tx_software_to_tx_ack_ns,ts_tx_ack_to_rx_software_ns,"
@@ -2132,9 +2133,88 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
             "ioc,open,102,31,43,1400,1500,1600,1550,50,100,true,"
             "kAckRttThreshold,4,5,6,7,1,8,9,10,1501,1502,1503,1504,1505,"
             "1506,1507,241,241,0,false,0,true,270,0,true,true,456,78,0,1,2,"
-            "10,1505,1508,1510,"
+            "10,true,1505,1508,1510,"
             "1575,1585,5,65,10,15,1650,1610,40,150,"
             "kTerminalConfirmed,kCancelled,false,false,\n");
+}
+
+TEST(GateOrderSessionRttProbeTest, WritesRunMetadataJson) {
+  const std::filesystem::path output_path = UniqueTestTmpPath(
+      "aquila_order_session_rtt_probe_metadata_test", ".json");
+  std::filesystem::remove(output_path);
+
+  std::string error;
+  ASSERT_TRUE(WriteRunMetadataJson(
+      output_path,
+      ProbeRunMetadata{
+          .run_id = "run_1",
+          .sample_csv_path = "/tmp/order_session_rtt_samples.csv",
+          .connection_observed_csv_path =
+              "/tmp/order_session_rtt_connections_observed.csv",
+          .tcp_info_runtime_requested = true,
+          .socket_timestamping_runtime_requested = false,
+      },
+      &error))
+      << error;
+
+  EXPECT_EQ(
+      ReadTextFileForTest(output_path),
+      fmt::format(
+          "{{\n"
+          "  \"sample_csv_schema_version\": 2,\n"
+          "  \"run_id\": \"run_1\",\n"
+          "  \"order_ack_diag_level\": {},\n"
+          "  \"order_ack_diag_level_name\": \"{}\",\n"
+          "  \"tcp_info_compiled\": {},\n"
+          "  \"socket_timestamping_compiled\": {},\n"
+          "  \"pcap_gate_header_compiled\": {},\n"
+          "  \"tcp_info_runtime_requested\": true,\n"
+          "  \"socket_timestamping_runtime_requested\": false,\n"
+          "  \"sample_csv_path\": \"/tmp/order_session_rtt_samples.csv\",\n"
+          "  \"connection_observed_csv_path\": "
+          "\"/tmp/order_session_rtt_connections_observed.csv\"\n"
+          "}}\n",
+          core::kOrderAckDiagnosticLevel,
+          core::OrderAckDiagnosticLevelName(core::kOrderAckDiagnosticLevel),
+          core::kOrderAckDiagnosticTcpInfoEnabled ? "true" : "false",
+          core::kOrderAckDiagnosticSocketTimestampingEnabled ? "true" : "false",
+          core::kOrderAckDiagnosticPcapGateHeaderEnabled ? "true" : "false"));
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     WritesConnectionObservedCsvRowsThroughQuillCsvWriter) {
+  EnsureRttProbeLoggingStarted();
+  const std::filesystem::path output_path = UniqueTestTmpPath(
+      "aquila_order_session_rtt_probe_connections_test", ".csv");
+  std::filesystem::remove(output_path);
+
+  ConnectionObservedCsvWriter writer;
+  std::string error;
+  ASSERT_TRUE(writer.Open(output_path, &error)) << error;
+  writer.Write(ProbeConnectionObservedCsvRow{
+      .run_id = "run_1",
+      .session_name = "private-03",
+      .group = "private-10.0.1.154",
+      .connect_ip = "10.0.1.154",
+      .order_session_id = 3,
+      .connected_at_ns = 1780284809488784000,
+      .endpoint_available = true,
+      .local_ip = "10.0.1.103",
+      .local_port = 57842,
+      .remote_ip = "10.0.1.154",
+      .remote_port = 80,
+      .owner_thread_cpu = 9,
+      .owner_thread_tid = 123456,
+  });
+  writer.Close();
+
+  EXPECT_EQ(ReadTextFileForTest(output_path),
+            "run,session,group,ip,sid,connected_at_ns,endpoint_available,"
+            "local_ip,local_port,remote_ip,remote_port,owner_thread_cpu,"
+            "owner_thread_tid\n"
+            "run_1,private-03,private-10.0.1.154,10.0.1.154,3,"
+            "1780284809488784000,true,10.0.1.103,57842,10.0.1.154,80,9,"
+            "123456\n");
 }
 
 TEST(GateOrderSessionRttProbeTest, SampleCsvWriterCreatesParentDirectory) {

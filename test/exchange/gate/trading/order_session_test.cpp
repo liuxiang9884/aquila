@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -55,6 +56,10 @@ websocket::MessageView PingView(std::string_view payload) noexcept {
 struct RecordingHandler {
   std::vector<OrderResponse> responses;
   int login_ready_calls{0};
+  int connection_calls{0};
+  OrderSessionConnectionInfo last_connection;
+  std::string last_local_ip;
+  std::string last_remote_ip;
 
   void OnOrderResponse(const OrderResponse& response) noexcept {
     responses.push_back(response);
@@ -62,6 +67,14 @@ struct RecordingHandler {
 
   void OnOrderSessionLoginReady() noexcept {
     ++login_ready_calls;
+  }
+
+  void OnOrderSessionConnected(
+      const OrderSessionConnectionInfo& info) noexcept {
+    ++connection_calls;
+    last_connection = info;
+    last_local_ip = info.local_ip;
+    last_remote_ip = info.remote_ip;
   }
 };
 
@@ -346,6 +359,17 @@ TEST(OrderSessionTest, LogsConnectionWithSessionIdAndOwnerCpu) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  ASSERT_EQ(handler.connection_calls, 1);
+  EXPECT_EQ(handler.last_connection.order_session_id,
+            session.order_session_id());
+  EXPECT_GE(handler.last_connection.owner_thread_cpu, -1);
+  EXPECT_GE(handler.last_connection.owner_thread_tid, -1);
+  EXPECT_FALSE(handler.last_connection.endpoint_available);
+  EXPECT_EQ(handler.last_local_ip, "");
+  EXPECT_EQ(handler.last_connection.local_port, 0U);
+  EXPECT_EQ(handler.last_remote_ip, "");
+  EXPECT_EQ(handler.last_connection.remote_port, 0U);
 
   ASSERT_EQ(g_connection_log_record_count, 1U);
   const detail::OrderSessionConnectionLogRecordForTest& record =
