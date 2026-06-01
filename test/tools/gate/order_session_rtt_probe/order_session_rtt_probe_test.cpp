@@ -1,5 +1,6 @@
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -40,6 +41,15 @@ std::filesystem::path TestTmpDir() {
   const std::filesystem::path path{"/home/liuxiang/tmp"};
   std::filesystem::create_directories(path);
   return path;
+}
+
+std::filesystem::path UniqueTestTmpPath(const char* stem, const char* suffix) {
+  static std::atomic<std::uint64_t> counter{0};
+  const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  return TestTmpDir() /
+         fmt::format("{}_l{}_{}_{}{}", stem, core::kOrderAckDiagnosticLevel,
+                     now, counter.fetch_add(1, std::memory_order_relaxed),
+                     suffix);
 }
 
 void EnsureRttProbeLoggingStarted() {
@@ -2014,9 +2024,7 @@ TEST(GateOrderSessionRttProbeTest, RejectsMultiSessionLiveRunPlan) {
 TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
   EnsureRttProbeLoggingStarted();
   const std::filesystem::path output_path =
-      TestTmpDir() /
-      fmt::format("aquila_order_session_rtt_probe_samples_test_l{}.csv",
-                  core::kOrderAckDiagnosticLevel);
+      UniqueTestTmpPath("aquila_order_session_rtt_probe_samples_test", ".csv");
   std::filesystem::remove(output_path);
 
   SampleCsvWriter writer;
@@ -2132,9 +2140,7 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
 TEST(GateOrderSessionRttProbeTest, SampleCsvWriterCreatesParentDirectory) {
   EnsureRttProbeLoggingStarted();
   const std::filesystem::path output_path =
-      TestTmpDir() /
-      fmt::format("rtt_probe_nested_l{}", core::kOrderAckDiagnosticLevel) /
-      "samples" / "samples.csv";
+      UniqueTestTmpPath("rtt_probe_nested", "") / "samples" / "samples.csv";
   std::filesystem::remove_all(output_path.parent_path().parent_path());
 
   SampleCsvWriter writer;

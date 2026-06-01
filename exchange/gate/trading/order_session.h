@@ -1170,6 +1170,9 @@ class OrderSession {
     if constexpr (!core::kOrderAckDiagnosticTcpInfoEnabled) {
       return {};
     }
+    if (!TcpInfoDiagnosticsEnabled()) {
+      return {};
+    }
     return websocket::SnapshotSocketSendQueueDiagnostics(
         client_.Core().NativeFd());
   }
