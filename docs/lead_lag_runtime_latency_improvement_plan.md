@@ -49,7 +49,8 @@ Runtime loop：
 
 Socket timestamping：
 
-- 编译开关：`AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION`，默认 ON。
+- 编译期上限：`AQUILA_ORDER_ACK_DIAG_LEVEL>=4`；默认 build 为 `L4`，旧
+  `AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION=OFF` 兼容映射为 `L3`。
 - runtime config 开启且 private plain transport 成功 apply `SO_TIMESTAMPING` 后才启动 probe。
 - 字段可拆到 `write_complete -> tx_software -> tx_ack -> rx_software -> ack_receive` software-level 大段。
 - TLS 或 apply 失败时 `ts_available=false`；不要把 0 当真实时间。

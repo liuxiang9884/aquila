@@ -7,10 +7,15 @@
 #include <memory>
 #include <span>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/websocket/types.h"
 
 #ifndef AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+#if AQUILA_ORDER_ACK_DIAG_LEVEL >= 4
 #define AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION 1
+#else
+#define AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION 0
+#endif
 #endif
 
 namespace aquila::websocket {

@@ -7,6 +7,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/common/result.h"
 #include "core/websocket/socket_timestamping.h"
 #include "tools/gate/order_session_rtt_probe/order_mode.h"
@@ -22,7 +23,7 @@ struct ProbeInputConfig {
 };
 
 struct ProbeSessionConfig {
-  bool enable_tcp_info{true};
+  bool enable_tcp_info{core::kOrderAckDiagnosticTcpInfoEnabled};
   std::uint32_t wait_login_timeout_ms{10000};
   std::uint32_t request_timeout_ms{5000};
   websocket::SocketTimestampingConfig timestamping{};

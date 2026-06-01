@@ -262,6 +262,24 @@ CSV 中需要分开分析：
 
 完整字段说明见 `docs/diagnostic_fields.md`。
 
+## 编译期诊断层级
+
+RTT probe 的字段采集受 `AQUILA_ORDER_ACK_DIAG_LEVEL` 编译期上限控制；`Ln` 表示 `L1..Ln` 全部可用。
+默认 build 为 `L4`，即保留现有 runtime / write path、socket queue、`TCP_INFO` 和 socket timestamping 能力。
+
+| Level | probe 可用能力 |
+| --- | --- |
+| `L0` | 不启用 Ack outlier 阶段归因；sample 只保留业务正确性和主 Ack RTT 需要的字段。 |
+| `L1` | 可按 `session` / `group` / `ip` / endpoint / CPU / `ack_rtt_ns` 做分组和主指标统计。 |
+| `L2` | 可输出 Ack diagnostic window、runtime loop、`DriveRead()` 和 write path 字段。 |
+| `L3` | 可请求 `probe.sessions.enable_tcp_info=true`，并输出 socket send queue / `TCP_INFO` 字段。 |
+| `L4` | 可请求 `probe.sessions.timestamping.enabled=true`，并输出 `ts_*` software timestamping 阶段字段。 |
+| `L5` | 可结合 no TLS pcap 和 Gate `x_in_time` / `x_out_time` 做离线对齐分析。 |
+
+运行期 TOML 不能越过编译期 level。比如 build 为 `L3` 时，`probe.sessions.timestamping.enabled=true`
+应启动失败；build 为 `L2` 时，`probe.sessions.enable_tcp_info=true` 也应启动失败。这样可以避免测试报告中
+字段被静默置 0 后误判为“链路无异常”。
+
 ## Socket Timestamping 归因
 
 private plain transport 成功 apply `SO_TIMESTAMPING` 后，sample 可记录：

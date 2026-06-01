@@ -16,6 +16,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <magic_enum/magic_enum.hpp>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/trading/order_latency.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
@@ -523,13 +524,19 @@ class OrderSession {
     }
 
     websocket::WritePathDiagnostics write_path{};
-    write_path.order_encode_done_ns = RealtimeNowNsInt64();
+    if constexpr (core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      write_path.order_encode_done_ns = RealtimeNowNsInt64();
+    }
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
     const bool socket_timestamping_probe_started =
-        client_.Core().StartSocketTimestampingProbe(sequence);
-    const OrderSendStatus status =
-        MapSendStatus(SendText(encoded.text, &write_path));
+        core::kOrderAckDiagnosticSocketTimestampingEnabled
+            ? client_.Core().StartSocketTimestampingProbe(sequence)
+            : false;
+    const OrderSendStatus status = MapSendStatus(SendText(
+        encoded.text, core::kOrderAckDiagnosticRuntimeWritePathEnabled
+                          ? &write_path
+                          : nullptr));
     const bool socket_timestamping_probe_active =
         UpdateSocketTimestampingProbeAfterSend(
             sequence, status, write_path, socket_timestamping_probe_started);
@@ -598,13 +605,19 @@ class OrderSession {
     }
 
     websocket::WritePathDiagnostics write_path{};
-    write_path.order_encode_done_ns = RealtimeNowNsInt64();
+    if constexpr (core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      write_path.order_encode_done_ns = RealtimeNowNsInt64();
+    }
     const int send_cpu = detail::CurrentCpuForOrderSessionDiagnostics();
     const std::int64_t send_local_ns = RealtimeNowNsInt64();
     const bool socket_timestamping_probe_started =
-        client_.Core().StartSocketTimestampingProbe(sequence);
-    const OrderSendStatus status =
-        MapSendStatus(SendText(encoded.text, &write_path));
+        core::kOrderAckDiagnosticSocketTimestampingEnabled
+            ? client_.Core().StartSocketTimestampingProbe(sequence)
+            : false;
+    const OrderSendStatus status = MapSendStatus(SendText(
+        encoded.text, core::kOrderAckDiagnosticRuntimeWritePathEnabled
+                          ? &write_path
+                          : nullptr));
     const bool socket_timestamping_probe_active =
         UpdateSocketTimestampingProbeAfterSend(
             sequence, status, write_path, socket_timestamping_probe_started);
@@ -1075,6 +1088,11 @@ class OrderSession {
       const websocket::WritePathDiagnostics& write_path,
       bool socket_timestamping_probe_active) const noexcept {
     websocket::SocketTimestampingSnapshot snapshot{};
+    if constexpr (!core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+      (void)write_path;
+      (void)socket_timestamping_probe_active;
+      return snapshot;
+    }
     if (!socket_timestamping_probe_active) {
       return snapshot;
     }
@@ -1087,6 +1105,13 @@ class OrderSession {
       std::uint64_t sequence, OrderSendStatus status,
       const websocket::WritePathDiagnostics& write_path,
       bool socket_timestamping_probe_started) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+      (void)sequence;
+      (void)status;
+      (void)write_path;
+      (void)socket_timestamping_probe_started;
+      return false;
+    }
     if (!socket_timestamping_probe_started) {
       return false;
     }
@@ -1120,6 +1145,9 @@ class OrderSession {
   }
 
   [[nodiscard]] bool TcpInfoDiagnosticsEnabled() const noexcept {
+    if constexpr (!core::kOrderAckDiagnosticTcpInfoEnabled) {
+      return false;
+    }
     return socket_diagnostics_config_.enable_tcp_info;
   }
 
@@ -1144,6 +1172,13 @@ class OrderSession {
   }
 
   void OnRuntimeLoopProbe(websocket::RuntimeLoopProbePoint point) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      if (point == websocket::RuntimeLoopProbePoint::kAfterDriveRead ||
+          point == websocket::RuntimeLoopProbePoint::kBeforeDriveRead) {
+        current_drive_read_start_ns_ = 0;
+      }
+      return;
+    }
     if (ack_latency_diagnostics_.empty()) {
       if (point == websocket::RuntimeLoopProbePoint::kAfterDriveRead ||
           point == websocket::RuntimeLoopProbePoint::kBeforeDriveRead) {
@@ -1267,8 +1302,10 @@ class OrderSession {
       const websocket::TcpInfoDiagnostics tcp_info =
           SnapshotTcpInfoDiagnostics();
       const websocket::SocketTimestampingSnapshot socket_timestamps =
-          client_.Core().FinishSocketTimestampingProbe(
-              parsed.request_id.sequence, local_receive_ns);
+          core::kOrderAckDiagnosticSocketTimestampingEnabled
+              ? client_.Core().FinishSocketTimestampingProbe(
+                    parsed.request_id.sequence, local_receive_ns)
+              : websocket::SocketTimestampingSnapshot{};
       const websocket::SocketTimestampingStages socket_timestamp_stages =
           websocket::ComputeSocketTimestampingStages(socket_timestamps);
       const OrderLatencyDiagnosticAckResult ack_latency_diagnostic =

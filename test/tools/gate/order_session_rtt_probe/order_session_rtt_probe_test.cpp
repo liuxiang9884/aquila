@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/types.h"
 #include "core/trading/order_id.h"
@@ -209,6 +210,16 @@ root_dir = "/home/liuxiang/tmp/gate_order_session_rtt_probe"
 
   const ProbeConfigResult result = ParseProbeConfig(parsed);
 
+  if constexpr (!::aquila::core::kOrderAckDiagnosticTcpInfoEnabled) {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("enable_tcp_info"), std::string::npos);
+    return;
+  }
+  if constexpr (!::aquila::core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("timestamping.enabled"), std::string::npos);
+    return;
+  }
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.value.name, "gate_order_session_rtt_probe");
   EXPECT_FALSE(result.value.execute);

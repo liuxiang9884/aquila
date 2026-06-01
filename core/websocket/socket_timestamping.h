@@ -11,6 +11,8 @@
 #include <ctime>
 #include <type_traits>
 
+#include "core/common/order_ack_diagnostic_level.h"
+
 #if defined(__linux__)
 #include <linux/errqueue.h>
 #include <linux/net_tstamp.h>
@@ -18,7 +20,11 @@
 #endif
 
 #ifndef AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
+#if AQUILA_ORDER_ACK_DIAG_LEVEL >= 4
 #define AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION 1
+#else
+#define AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION 0
+#endif
 #endif
 
 namespace aquila::websocket {

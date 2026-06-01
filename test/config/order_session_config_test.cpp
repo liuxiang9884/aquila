@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "nova/utils/log.h"
 
 namespace {
@@ -107,6 +108,16 @@ bind_cpu_id = 7
 )toml");
 
   const auto result = aquila::gate::ParseOrderSessionConfig(toml);
+  if constexpr (!aquila::core::kOrderAckDiagnosticTcpInfoEnabled) {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("enable_tcp_info"), std::string::npos);
+    return;
+  }
+  if constexpr (!aquila::core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("timestamping.enabled"), std::string::npos);
+    return;
+  }
   ASSERT_TRUE(result.ok) << result.error;
 
   EXPECT_EQ(result.value.name, "gate_order_session");

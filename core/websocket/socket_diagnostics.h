@@ -16,6 +16,8 @@
 #include <linux/sockios.h>
 #endif
 
+#include "core/common/order_ack_diagnostic_level.h"
+
 namespace aquila::websocket {
 
 inline constexpr std::size_t kSocketIpTextCapacity = INET6_ADDRSTRLEN;
@@ -106,51 +108,62 @@ SnapshotSocketEndpointDiagnostics(int fd) noexcept {
 [[nodiscard]] inline TcpInfoDiagnostics SnapshotTcpInfoDiagnostics(
     int fd) noexcept {
   TcpInfoDiagnostics snapshot{};
+  if constexpr (!::aquila::core::kOrderAckDiagnosticTcpInfoEnabled) {
+    (void)fd;
+    return snapshot;
+  } else {
 #if defined(__linux__)
-  if (fd < 0) {
-    return snapshot;
-  }
-  tcp_info info{};
-  socklen_t info_len = sizeof(info);
-  if (::getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &info_len) != 0) {
-    return snapshot;
-  }
-  snapshot.available = true;
-  snapshot.rtt_us = info.tcpi_rtt;
-  snapshot.rttvar_us = info.tcpi_rttvar;
-  snapshot.retrans = info.tcpi_retrans;
-  snapshot.total_retrans = info.tcpi_total_retrans;
-  snapshot.unacked = info.tcpi_unacked;
-  snapshot.snd_cwnd = info.tcpi_snd_cwnd;
+    if (fd < 0) {
+      return snapshot;
+    }
+    tcp_info info{};
+    socklen_t info_len = sizeof(info);
+    if (::getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &info_len) != 0) {
+      return snapshot;
+    }
+    snapshot.available = true;
+    snapshot.rtt_us = info.tcpi_rtt;
+    snapshot.rttvar_us = info.tcpi_rttvar;
+    snapshot.retrans = info.tcpi_retrans;
+    snapshot.total_retrans = info.tcpi_total_retrans;
+    snapshot.unacked = info.tcpi_unacked;
+    snapshot.snd_cwnd = info.tcpi_snd_cwnd;
 #else
-  (void)fd;
+    (void)fd;
 #endif
-  return snapshot;
+    return snapshot;
+  }
 }
 
 [[nodiscard]] inline SocketSendQueueDiagnostics
 SnapshotSocketSendQueueDiagnostics(int fd) noexcept {
   SocketSendQueueDiagnostics snapshot{};
-#if defined(__linux__)
-  if (fd < 0) {
+  if constexpr (!::aquila::core::kOrderAckDiagnosticTcpInfoEnabled) {
+    (void)fd;
     return snapshot;
-  }
-  int sendq_bytes = 0;
-  if (::ioctl(fd, SIOCOUTQ, &sendq_bytes) == 0 && sendq_bytes >= 0) {
-    snapshot.available = true;
-    snapshot.sendq_bytes = static_cast<std::uint32_t>(sendq_bytes);
-  }
+  } else {
+#if defined(__linux__)
+    if (fd < 0) {
+      return snapshot;
+    }
+    int sendq_bytes = 0;
+    if (::ioctl(fd, SIOCOUTQ, &sendq_bytes) == 0 && sendq_bytes >= 0) {
+      snapshot.available = true;
+      snapshot.sendq_bytes = static_cast<std::uint32_t>(sendq_bytes);
+    }
 #if defined(SIOCOUTQNSD)
-  int notsent_bytes = 0;
-  if (::ioctl(fd, SIOCOUTQNSD, &notsent_bytes) == 0 && notsent_bytes >= 0) {
-    snapshot.available = true;
-    snapshot.notsent_bytes = static_cast<std::uint32_t>(notsent_bytes);
-  }
+    int notsent_bytes = 0;
+    if (::ioctl(fd, SIOCOUTQNSD, &notsent_bytes) == 0 &&
+        notsent_bytes >= 0) {
+      snapshot.available = true;
+      snapshot.notsent_bytes = static_cast<std::uint32_t>(notsent_bytes);
+    }
 #endif
 #else
-  (void)fd;
+    (void)fd;
 #endif
-  return snapshot;
+    return snapshot;
+  }
 }
 
 }  // namespace aquila::websocket

@@ -12,6 +12,7 @@
 
 #include <fmt/format.h>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/config/order_feedback_shm_config.h"
 
 namespace aquila::tools::gate_order_session_rtt_probe {
@@ -386,6 +387,16 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
                          &config.sessions.timestamping.max_active_probes,
                          &error)) {
     return Failure(std::move(error));
+  }
+  if (config.sessions.enable_tcp_info &&
+      !core::kOrderAckDiagnosticTcpInfoEnabled) {
+    return Failure("probe.sessions.enable_tcp_info requires "
+                   "AQUILA_ORDER_ACK_DIAG_LEVEL >= 3");
+  }
+  if (config.sessions.timestamping.enabled &&
+      !core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+    return Failure("probe.sessions.timestamping.enabled requires "
+                   "AQUILA_ORDER_ACK_DIAG_LEVEL >= 4");
   }
 
   if (!ReadPositiveUInt32(sampling["samples_per_session"],

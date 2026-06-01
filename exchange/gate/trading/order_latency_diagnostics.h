@@ -7,6 +7,7 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/websocket/socket_diagnostics.h"
 #include "core/websocket/socket_timestamping.h"
 #include "core/websocket/types.h"
@@ -89,10 +90,18 @@ class OrderAckLatencyDiagnostics {
       : config_(config) {}
 
   void reserve(std::size_t capacity) {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)capacity;
+      return;
+    }
     windows_.reserve(capacity);
   }
 
   void Arm(OrderLatencyDiagnosticWindow window) {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)window;
+      return;
+    }
     if (window.request_sequence == 0 || window.request_send_local_ns <= 0) {
       return;
     }
@@ -110,6 +119,10 @@ class OrderAckLatencyDiagnostics {
   }
 
   void Erase(std::uint64_t request_sequence) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)request_sequence;
+      return;
+    }
     windows_.erase(request_sequence);
   }
 
@@ -118,16 +131,27 @@ class OrderAckLatencyDiagnostics {
   }
 
   [[nodiscard]] std::size_t active_count() const noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      return 0;
+    }
     return windows_.size();
   }
 
   [[nodiscard]] bool empty() const noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      return true;
+    }
     return windows_.empty();
   }
 
   template <typename Handler>
   std::size_t RecordAfterRuntimeHook(std::int64_t now_ns,
                                      Handler&& handler) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)now_ns;
+      (void)handler;
+      return 0;
+    }
     if (now_ns <= 0) {
       return 0;
     }
@@ -145,6 +169,11 @@ class OrderAckLatencyDiagnostics {
   template <typename Handler>
   std::size_t RecordBeforeDriveRead(std::int64_t now_ns,
                                     Handler&& handler) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)now_ns;
+      (void)handler;
+      return 0;
+    }
     if (now_ns <= 0) {
       return 0;
     }
@@ -170,6 +199,11 @@ class OrderAckLatencyDiagnostics {
   template <typename Handler>
   std::size_t RecordAfterDriveRead(std::int64_t now_ns,
                                    Handler&& handler) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)now_ns;
+      (void)handler;
+      return 0;
+    }
     if (now_ns <= 0) {
       return 0;
     }
@@ -240,6 +274,15 @@ class OrderAckLatencyDiagnostics {
       std::int64_t ack_exchange_ns, std::int64_t current_drive_read_start_ns,
       const websocket::SocketTimestampingSnapshot& socket_timestamps,
       Handler&& handler) noexcept {
+    if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+      (void)request_sequence;
+      (void)ack_local_receive_ns;
+      (void)ack_exchange_ns;
+      (void)current_drive_read_start_ns;
+      (void)socket_timestamps;
+      (void)handler;
+      return {};
+    }
     auto it = windows_.find(request_sequence);
     if (it == windows_.end()) {
       return {};

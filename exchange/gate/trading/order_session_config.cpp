@@ -10,6 +10,7 @@
 #include <string_view>
 #include <utility>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/config/websocket_config.h"
 #include "exchange/gate/trading/decimal_size_header.h"
 #include "nova/utils/log.h"
@@ -215,6 +216,10 @@ class OrderSessionConfigParser {
     if (!ok_) {
       return;
     }
+    ValidateDiagnosticLevel();
+    if (!ok_) {
+      return;
+    }
 
     const toml::node_view<const toml::node> credentials =
         order_session["credentials"];
@@ -273,6 +278,20 @@ class OrderSessionConfigParser {
     timestamping->max_active_probes = NonNegativeUint32Or(
         node["max_active_probes"], timestamping->max_active_probes,
         std::string{name}.append(".max_active_probes"));
+  }
+
+  void ValidateDiagnosticLevel() {
+    if (config_.order_session.enable_tcp_info_diagnostics &&
+        !core::kOrderAckDiagnosticTcpInfoEnabled) {
+      Fail("order_session.diagnostics.enable_tcp_info",
+           " requires AQUILA_ORDER_ACK_DIAG_LEVEL >= 3");
+      return;
+    }
+    if (config_.order_session.socket_timestamping.enabled &&
+        !core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+      Fail("order_session.diagnostics.timestamping.enabled",
+           " requires AQUILA_ORDER_ACK_DIAG_LEVEL >= 4");
+    }
   }
 
   void Fail(std::string_view name, std::string_view message) {
