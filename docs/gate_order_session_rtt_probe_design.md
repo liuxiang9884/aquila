@@ -36,6 +36,51 @@
 - `probe.safety.preflight_rest_check`、`run_end_rest_check` 和 REST 输出路径已解析并保留为安全意图，但工具内 REST preflight / run-end guard 尚未真正执行。真实测试前后仍需外部 REST / 人工确认 flat，直到该 guard 落地。
 - 工具不输出自动 score，也不写回生产配置。
 
+## 最新实测结论
+
+2026-06-01 跑过 8 条 private plain / no TLS 半小时测试：
+
+- Run 目录：`/home/liuxiang/tmp/gate_order_session_rtt_probe/20260601_011001_gate_rtt_private8_plain_30m_alllogs/`
+- 临时配置：`/home/liuxiang/tmp/20260601_011001_gate_rtt_private8_plain_30m_alllogs/configs/`
+- 连接：8 条 `fxws-private.gateapi.io:80`，`connect_ip=10.0.1.154`，`enable_tls=false`，worker CPU `6-13`。
+- 节奏：`order_session_interval_us=1000000`，`cycle_cooldown_us=1000000`，`duration_sec=1800`。
+- 诊断：`ack_rtt_threshold_ns=0`，`TCP_INFO` 和 software socket timestamping 全开。
+- 结果：`1798` 个 Ack，`invalid=0`，`fill=0`，所有 session `stop_reason=duration_reached`，feedback routed `1798/1798`。
+- Run 后 REST 检查：12 个目标合约 open orders 为空，全账户 futures positions `size != 0` 为 0，`pending_orders` 为 0。
+
+Ack RTT 分布：
+
+| metric | value |
+| --- | ---: |
+| p50 | `0.613ms` |
+| p95 | `0.842ms` |
+| p99 | `2.632ms` |
+| max | `18.709ms` |
+
+最大样本：
+
+| 字段 | 值 |
+| --- | --- |
+| session | `private-03` |
+| contract | `PROVE_USDT` |
+| ack_rtt_ns | `18708540` |
+| send_to_drive_read_ns | `29417` |
+| drive_read_ns | `21433` |
+| max_loop_gap_ns | `51248` |
+| write_complete_to_rx_software_ns | `18669441` |
+| rx_software_to_ack_receive_ns | `26948` |
+| tcp_info_rtt_us / rttvar_us | `2687 / 4648` |
+| tcp_info_retrans / total_retrans / unacked | `0 / 0 / 0` |
+| tcp_notsent_bytes | `0` |
+
+阶段结论：
+
+- Top tail 主要集中在 `write_complete_ns -> ts_rx_software_ns`，即请求完整写入本机 socket 后，到业务 Ack packet 进入本机 kernel 前。
+- `send_to_drive_read_ns`、`drive_read_ns`、`max_loop_gap_ns`、`rx_software_to_ack_receive_ns` 都是几十微秒级，不支持本机 owner thread 调度、read / parse 或 Ack callback 作为主要原因。
+- `tcp_notsent_bytes=0`、`tcp_info_retrans=0`、`tcp_info_unacked=0`，未看到本机 send queue backlog 或明显 TCP retrans 证据。
+- 这轮未复现 `219ms` Ack RTT outlier；观察到的 `10ms-20ms` tail 只能定位到 software-level 的 kernel RX 前大段。
+- 当前没有 hardware timestamp 或 pcap，不能继续把 tail 严格拆成本机 NIC、private link、Gate edge、Gate 应用处理或回程路径。
+
 ## 配置模型
 
 TOML 保存运行参数，CSV 保存连接列表，避免 IP 过多时 TOML 膨胀。
@@ -200,6 +245,10 @@ status=acked 或 sample completed
 6. `ts_tx_ack_to_rx_software_ns` 是否大：远端已 TCP ACK request，但业务 Ack 回来慢。
 7. `ts_rx_software_to_ack_receive_ns` 是否大：包到 kernel 后用户态读取 / parse / 调度慢。
 
+注意：software timestamping 下 `ts_tx_ack_ns` 与 `ts_rx_software_ns` 可能出现几微秒级顺序反转，此时
+`ts_tx_ack_to_rx_software_ns=-1` 不代表缺少 tail。遇到这种样本时，优先用同一时钟域的
+`write_complete_ns -> ts_rx_software_ns` 作为大段定位口径，再结合 `rx_software -> ack_receive` 判断本机用户态是否慢。
+
 不要把 terminal lifecycle tail 并入 Ack RTT。Gate private `futures.orders` terminal feedback 是另一个诊断面。
 
 ## 安全边界
@@ -215,7 +264,7 @@ status=acked 或 sample completed
 1. 在工具内补 REST preflight / run-end flat guard，并把 `order_session_rtt_rest_guard.csv` 与 `raw_rest/` 真正写出。
 2. 复核 IOC execute 的 unexpected fill / terminal timeout 处理，确认失败时退出码和 sample invalid 语义稳定。
 3. 在 REST guard 完成后再启用 `gtc` / `ioc+gtc` live execute。
-4. 增加离线分析脚本，输出按 session / group / ip / symbol / rolling window 的分布。
+4. 增加离线分析脚本，输出按 session / group / ip / symbol / rolling window 的分布，并对 top Ack tail 自动生成阶段拆解表。
 5. 拿到足够 live 样本后再设计 score；score 不进入当前热路径。
 
 ## 验证命令

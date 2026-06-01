@@ -6,7 +6,8 @@
 
 当前证据只能说明 CPU4 同期满载、且 strategy / order session / feedback session 当时都绑 CPU4 并 active-spin，因此本地调度或同核竞争是强候选；但原始日志不能证明具体卡在 OS deschedule、runtime hook、socket read / parse、网络路径还是 Gate 侧。
 
-该问题当前是 inactive investigation：等待复现后，用新增 write path、runtime loop、`TCP_INFO` 和 socket timestamping 字段归因。
+该问题当前仍未复现到 `219ms` 量级。2026-06-01 的 8 条 private plain RTT probe 已能把 `10ms+` Ack tail
+定位到 `write_complete -> rx_software` 大段，未支持本机 owner thread 调度、读解析或本机写队列积压作为主要原因。
 
 ## 触发样本
 
@@ -122,6 +123,74 @@ ack_local_receive_ns
 
 这轮没有复现 `219ms` Ack RTT outlier。最大 send-to-finish 属于 IOC submit Ack 后到 Gate private order terminal update 的 lifecycle tail，不是 Ack path outlier。
 
+2026-06-01 8 条 private plain RTT probe：
+
+- Run 目录：`/home/liuxiang/tmp/gate_order_session_rtt_probe/20260601_011001_gate_rtt_private8_plain_30m_alllogs/`
+- 临时配置：`/home/liuxiang/tmp/20260601_011001_gate_rtt_private8_plain_30m_alllogs/configs/`
+- 连接：8 条 `fxws-private.gateapi.io:80` / `connect_ip=10.0.1.154` / `enable_tls=false`，worker CPU `6-13`。
+- 节奏：`order_session_interval_us=1000000`，`cycle_cooldown_us=1000000`，`duration_sec=1800`。
+- 诊断：`ack_rtt_threshold_ns=0`，每 Ack 写 sample CSV；`TCP_INFO` 与 software socket timestamping 全开。
+- 样本：`1798` Ack，`diag_rows=1798`，`ts_stage_rows=1798`，`invalid=0`，`fill=0`，feedback routed `1798/1798`。
+- 安全检查：run 后 12 个目标合约 open orders 为空；全账户 futures positions `size != 0` 为 0，`pending_orders` 为 0。
+
+Ack RTT 分布：
+
+| metric | value |
+| --- | ---: |
+| p50 | `0.613ms` |
+| p95 | `0.842ms` |
+| p99 | `2.632ms` |
+| max | `18.709ms` |
+
+最大样本：
+
+| 字段 | 值 |
+| --- | --- |
+| session | `private-03` |
+| contract | `PROVE_USDT` |
+| local_order_id | `504403158265502382` |
+| request_sequence | `215` |
+| ack_rtt_ns | `18708540` |
+| send_to_drive_read_ns | `29417` |
+| drive_read_duration_ns | `21433` |
+| max_runtime_loop_gap_ns | `51248` |
+| write_complete_to_rx_software_ns | `18669441` |
+| rx_software_to_ack_receive_ns | `26948` |
+| tcp_info_rtt_us | `2687` |
+| tcp_info_rttvar_us | `4648` |
+| tcp_info_retrans / total_retrans / unacked | `0 / 0 / 0` |
+| tcp_notsent_bytes | `0` |
+
+最大样本的阶段拆解图：
+
+```text
+request_send_local_ns
+  |
+  | submit / encode / enqueue / send() / write_complete
+  | 几微秒到十几微秒；未见本机写队列积压
+  v
+write_complete_ns
+  |
+  | 18.669ms  <-- 本轮最大样本的主要 tail
+  | 覆盖本机 kernel / NIC、private link、Gate edge / app、回程到本机 kernel 的 software-level 大段
+  v
+ts_rx_software_ns
+  |
+  | 0.027ms
+  | kernel 已拿到 Ack packet 后，用户态 `recvmsg()` / parse / ack callback
+  v
+ack_local_receive_ns
+```
+
+Top tail 样本均呈现同一形态：encode / enqueue / send / write complete 是微秒级，
+`write_complete -> rx_software` 是 `12ms-18ms` 级，`rx_software -> ack_receive` 是十几到几十微秒。
+
+因此这轮证据支持：
+
+- 排除：本机 owner thread 长时间 deschedule、`DriveRead()` / Ack parse 慢、本机 write queue 积压、`tcp_notsent` backlog、明显 TCP retrans。
+- 指向：请求完整写入本机 socket 后，到业务 Ack packet 进入本机 kernel 前的大段，可能覆盖本机内核 / NIC、private link、Gate edge、Gate 应用处理和回程路径。
+- 限制：当前是 software timestamping，不能严格证明 packet leaves / returns NIC，也不能把剩余大段拆成 Gate 应用处理或网络单向延迟。若需要确认 NIC 边界，需要 hardware timestamp 或 pcap。
+
 ## 复现时怎么分析
 
 优先看同一时钟域字段：
@@ -163,6 +232,8 @@ perf sched latency
 
 ## 当前下一步
 
-- 等待 Ack RTT outlier 复现，不再基于单次样本改 order session 架构。
-- 复现后按 `docs/diagnostic_fields.md` 中的 order write path、runtime loop、`TCP_INFO` 和 socket timestamping 字段归因。
+- `219ms` Ack RTT outlier 仍未复现，不基于 2026-05-25 单次样本改 order session 架构。
+- 后续复现 Ack tail 时，继续按 `docs/diagnostic_fields.md` 中的 order write path、runtime loop、`TCP_INFO` 和 socket timestamping 字段归因。
+- 对 `10ms-20ms` 级 private plain tail，优先检查 `write_complete -> rx_software` 大段；若本机 write / runtime / RX 后处理仍是几十微秒，则不要把原因归到 owner thread。
+- 若要确认 tail 是否发生在本机 NIC 或网络路径，补 hardware timestamp 或 pcap；software timestamping 只能做大段归因。
 - 多连接 / 多 IP 对照用 `docs/gate_order_session_rtt_probe_design.md` 的 probe，不把 URL 相同当作路径相同的证据。
