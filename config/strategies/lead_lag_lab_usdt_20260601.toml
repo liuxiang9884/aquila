@@ -10,7 +10,7 @@ symbol = "LAB_USDT"
 symbol_id = 15
 lead_exchange = "binance"
 lag_exchange = "gate"
-lag_taker_fee = 0.00016
+lag_taker_fee = 0.00020
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -31,11 +31,11 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 200.0
+open_notional = 1000.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 10
-close_slippage = 10
+open_slippage = 150
+close_slippage = 150
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
