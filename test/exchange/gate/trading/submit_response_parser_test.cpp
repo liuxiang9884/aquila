@@ -92,6 +92,9 @@ TEST(GateSubmitResponseParserTest, ParsesOrderPlaceAckEcho) {
   EXPECT_EQ(parsed.http_status, 200);
   EXPECT_TRUE(parsed.channel_is_order_place);
   EXPECT_EQ(parsed.exchange_ns, 1681985856667598000LL);
+  EXPECT_EQ(parsed.exchange_x_in_ns, 1681985856667508000LL);
+  EXPECT_EQ(parsed.exchange_x_out_ns, 1681985856667598000LL);
+  EXPECT_EQ(parsed.exchange_x_in_to_x_out_ns, 90000LL);
   EXPECT_EQ(parsed.request_id_hash, HashGateSubmitString("request-id-1"));
   EXPECT_EQ(parsed.req_id_hash, HashGateSubmitString("request-id-1"));
   EXPECT_EQ(parsed.exchange_order_id, 0U);

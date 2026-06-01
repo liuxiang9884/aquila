@@ -177,7 +177,7 @@ std::string_view LoginSuccessResponseWithoutAck() noexcept {
 }
 
 std::string_view PlaceAckResponse() noexcept {
-  return R"({"request_id":"144115188075855874","ack":true,"header":{"response_time":"1681195484268","status":"200","channel":"futures.order_place","event":"api","x_out_time":1681985856667598},"data":{"result":{"req_id":"144115188075855874"}}})";
+  return R"({"request_id":"144115188075855874","ack":true,"header":{"response_time":"1681195484268","status":"200","channel":"futures.order_place","event":"api","x_in_time":1681985856667508,"x_out_time":1681985856667598},"data":{"result":{"req_id":"144115188075855874"}}})";
 }
 
 std::string_view PlaceResultResponse() noexcept {
@@ -413,6 +413,9 @@ TEST(OrderSessionTest, SendAndAckLogsExposeSessionIdAndCpu) {
   EXPECT_EQ(response_record.local_order_id, 123U);
   EXPECT_EQ(response_record.request_sequence, 2U);
   EXPECT_GE(response_record.ack_cpu, -1);
+  EXPECT_EQ(response_record.exchange_x_in_ns, 1681985856667508000LL);
+  EXPECT_EQ(response_record.exchange_x_out_ns, 1681985856667598000LL);
+  EXPECT_EQ(response_record.exchange_x_in_to_x_out_ns, 90000LL);
   EXPECT_FALSE(response_record.tcp_info_available);
   EXPECT_EQ(response_record.tcp_info_rtt_us, 0U);
   EXPECT_EQ(response_record.tcp_info_total_retrans, 0U);
@@ -508,6 +511,9 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
   EXPECT_GE(handler.responses[0].local_receive_ns, sent.send_local_ns);
   EXPECT_GT(handler.responses[0].local_receive_ns, kReasonableUnixEpochNs);
   EXPECT_EQ(handler.responses[0].exchange_ns, 1681985856667598000LL);
+  EXPECT_EQ(handler.responses[0].exchange_x_in_ns, 1681985856667508000LL);
+  EXPECT_EQ(handler.responses[0].exchange_x_out_ns, 1681985856667598000LL);
+  EXPECT_EQ(handler.responses[0].exchange_x_in_to_x_out_ns, 90000LL);
   EXPECT_FALSE(handler.responses[0].socket_timestamps.available);
   EXPECT_EQ(handler.responses[0]
                 .socket_timestamp_stages.write_complete_to_tx_software_ns,

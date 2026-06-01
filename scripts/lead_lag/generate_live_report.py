@@ -394,6 +394,9 @@ def write_markdown_report(
     ack_values = ns_values(latency_rows, "ack_rtt_ns")
     finish_values = ns_values(latency_rows, "send_to_finish_local_ns")
     exchange_lifecycle_values = ns_values(latency_rows, "exchange_lifecycle_ns")
+    gate_ack_x_duration_values = ns_values(
+        latency_rows, "ack_exchange_x_in_to_x_out_ns"
+    )
     gross_pnl = sum_decimal(position_rows, "gross_pnl")
     net_pnl = sum_decimal(position_rows, "net_pnl")
     any_fill_count = count_positive(order_rows, "cumulative_filled_quantity")
@@ -488,6 +491,22 @@ def write_markdown_report(
         ]
     else:
         lines.append("- ack RTT: 无可用数据")
+    if gate_ack_x_duration_values:
+        avg_gate_ack_x = sum(gate_ack_x_duration_values) // len(
+            gate_ack_x_duration_values
+        )
+        lines += [
+            "- Gate Ack x_in-to-x_out min: "
+            f"`{format_ms(min(gate_ack_x_duration_values))} ms`",
+            "- Gate Ack x_in-to-x_out median: "
+            f"`{format_ms(percentile_nearest(gate_ack_x_duration_values, 1, 2))} ms`",
+            "- Gate Ack x_in-to-x_out avg: "
+            f"`{format_ms(avg_gate_ack_x)} ms`",
+            "- Gate Ack x_in-to-x_out p95: "
+            f"`{format_ms(percentile_nearest(gate_ack_x_duration_values, 95, 100))} ms`",
+            "- Gate Ack x_in-to-x_out max: "
+            f"`{format_ms(max(gate_ack_x_duration_values))} ms`",
+        ]
     diagnostic_rows = [
         row for row in latency_rows if row.get("latency_diagnostic_reason", "")
     ]

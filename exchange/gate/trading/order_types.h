@@ -81,6 +81,9 @@ struct OrderResponse {
   std::uint64_t error_label_hash{0};
   std::int64_t local_receive_ns{0};
   std::int64_t exchange_ns{0};
+  std::int64_t exchange_x_in_ns{0};
+  std::int64_t exchange_x_out_ns{0};
+  std::int64_t exchange_x_in_to_x_out_ns{0};
   websocket::SocketTimestampingSnapshot socket_timestamps{};
   websocket::SocketTimestampingStages socket_timestamp_stages{};
   bool ack_latency_diagnostic_available{false};

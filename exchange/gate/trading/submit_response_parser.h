@@ -66,6 +66,9 @@ struct GateSubmitResponse {
   std::string_view error_label{};
   std::string_view error_message{};
   std::int64_t exchange_ns{0};
+  std::int64_t exchange_x_in_ns{0};
+  std::int64_t exchange_x_out_ns{0};
+  std::int64_t exchange_x_in_to_x_out_ns{0};
 };
 
 inline constexpr std::uint64_t HashGateSubmitString(
@@ -239,13 +242,26 @@ inline GateSubmitResponse ParseSimdjsonDocument(
             response.channel == kFuturesOrderPlace;
       }
     }
+    if (FindSimdjsonField(header, "x_in_time", &value)) {
+      std::uint64_t in_time_us = 0;
+      std::int64_t in_time_ns = 0;
+      if (ReadSimdjsonUint64(value, &in_time_us) &&
+          TryScaleUint64ToInt64(in_time_us, 1000, &in_time_ns)) {
+        response.exchange_x_in_ns = in_time_ns;
+      }
+    }
     if (FindSimdjsonField(header, "x_out_time", &value)) {
       std::uint64_t out_time_us = 0;
       std::int64_t out_time_ns = 0;
       if (ReadSimdjsonUint64(value, &out_time_us) &&
           TryScaleUint64ToInt64(out_time_us, 1000, &out_time_ns)) {
+        response.exchange_x_out_ns = out_time_ns;
         response.exchange_ns = out_time_ns;
       }
+    }
+    if (response.exchange_x_in_ns != 0 && response.exchange_x_out_ns != 0) {
+      response.exchange_x_in_to_x_out_ns =
+          response.exchange_x_out_ns - response.exchange_x_in_ns;
     }
   }
 
