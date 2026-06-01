@@ -60,6 +60,7 @@ docs/evaluation_support.md
 - 2026-05-25 `219.023ms` Ack RTT outlier 仍等待复现；单次样本不能证明根因。复现后需要结合 write path diagnostic、runtime loop / 调度证据、endpoint / CPU / TCP_INFO 和多连接对照分析。
 - Ack latency diagnostic 已配置化：默认 `ack_rtt_threshold_ns=20000000`；短期诊断可设 `0` 做每 Ack 采样并调高 `max_logs_per_second`，但会把限流判断、日志和可选 `TCP_INFO` 采样带入 Ack 热路径，不作为长期生产默认。
 - 2026-06-01 Order Ack outlier 诊断分层已落地：`AQUILA_ORDER_ACK_DIAG_LEVEL=0..5` 为编译期上限，`Ln` 表示 `L1..Ln` 能力都编译进来；默认 `L4` 保留现有 socket timestamping attribution，旧 `AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION=OFF` 兼容映射为 `L3`。
+- 2026-06-01 分层性能 benchmark 已整理到 `docs/diagnostic_fields.md`：`L0` / `L1` 基本贴近；`L2+` 会让 OrderSession `PlaceOrder` 发送路径增加约 `0.36..0.42us`，Ack 处理路径增量约 `7..9ns`；WebSocket write path 未看到可确认的显著回归。该 benchmark 默认未开启运行期 `TCP_INFO` / socket timestamping syscall 和 errqueue 采样成本。
 - `CriticalSession` 按 `request_sequence` 维护 active probe，用 Linux `SOF_TIMESTAMPING_OPT_ID_TCP` byte-stream id 把 TX event 匹配到 request 写入范围；control frame 只推进全局 kernel id，不扩展订单范围。
 - 只有 runtime config 开启且 private plain transport 成功 apply `SO_TIMESTAMPING` 后才启动 probe；TLS、apply 失败、取消写、encode failure、commit failure、partial / 未完整 write complete 都会让 `ts_available=false` 或释放 probe，避免错配。
 - Socket timestamping 可把 Ack RTT 拆到 `write_complete -> tx_software -> tx_ack -> rx_software -> ack_receive` software-level 大段。`ts_available=false` 表示缺归因，不要把 0 当真实时间。

@@ -40,6 +40,45 @@
 `-DAQUILA_ORDER_ACK_DIAG_LEVEL=0`。旧的 `AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION` 只作为兼容入口：
 未显式设置 `AQUILA_ORDER_ACK_DIAG_LEVEL` 时，旧开关 `OFF` 等价于最高 `L3`，旧开关 `ON` 等价于默认 `L4`。
 
+### 性能验证摘要（2026-06-01）
+
+为评估编译期诊断层级对 OrderSession / WebSocket 热路径的影响，使用 Release build 分别编译
+`AQUILA_ORDER_ACK_DIAG_LEVEL=0..5`，并运行：
+
+```bash
+cmake -S . -B /home/liuxiang/tmp/aquila-bench-order-ack-l<N> \
+  -DAQUILA_ORDER_ACK_DIAG_LEVEL=<N> -DCMAKE_BUILD_TYPE=Release
+cmake --build /home/liuxiang/tmp/aquila-bench-order-ack-l<N> \
+  --target gate_order_session_benchmark session_write_path_benchmark
+```
+
+结果文件保存在 `/home/liuxiang/tmp/aquila_bench2_order_session_l{0..5}.json` 和
+`/home/liuxiang/tmp/aquila_bench2_websocket_write_l{0..5}.json`。测试机器为
+`ip-10-0-1-103`，32 CPU，CPU scaling disabled，run 时 load average 约 `2.1..3.1`；未做 CPU pinning，因此
+个位数 ns 级差异只能作为噪声范围参考。
+
+| Level | `HandlePlaceAck` mean | `PlaceOrder -> socketpair` mean | `PlaceOrder -> counting transport` mean | `websocket write` mean | `websocket write + encode` mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `L0` | `280ns` | `931ns` | `540ns` | `442ns` | `438ns` |
+| `L1` | `280ns` | `944ns` | `540ns` | `430ns` | `442ns` |
+| `L2` | `288ns` | `1328ns` | `904ns` | `432ns` | `432ns` |
+| `L3` | `287ns` | `1350ns` | `898ns` | `441ns` | `434ns` |
+| `L4` | `289ns` | `1343ns` | `917ns` | `443ns` | `449ns` |
+| `L5` | `288ns` | `1346ns` | `924ns` | `442ns` | `449ns` |
+
+结论：
+
+- `L0` / `L1` 基本贴近；最低延迟运行应优先用 `L0` 或 `L1`。
+- `L2` 开始，`PlaceOrder` 发送路径明显变慢：`counting transport` 从约 `540ns` 增至 `904..924ns`，
+  `socketpair` 从约 `931ns` 增至 `1328..1350ns`。主要成本来自每笔订单维护 Ack diagnostic window /
+  in-flight 诊断字段。
+- Ack 处理路径增量较小，`HandlePlaceAck` 约从 `280ns` 增至 `287..289ns`。
+- WebSocket 普通 write path 在 `L0..L5` 间主要是个位到十几 ns 的波动；本次证据未显示可确认的显著回归。
+- 这组 benchmark 默认未开启运行期 `enable_tcp_info` 或 socket timestamping，因此不覆盖 `L3` 的
+  `getsockopt(TCP_INFO)` / send queue 采样成本，也不覆盖 `L4` 的 errqueue drain / TX-RX probe 运行期开销。
+  `L3..L5` 与 `L2` 接近，只能说明“编译进能力但 runtime heavy path 默认关闭”时没有额外可见成本。
+- `L5` 的 pcap / Gate header 对齐是离线分析面，不应在 OrderSession / WebSocket 热路径引入额外 runtime 成本。
+
 ## Gate OrderSession
 
 组件入口：

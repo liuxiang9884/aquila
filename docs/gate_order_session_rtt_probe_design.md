@@ -280,6 +280,20 @@ RTT probe 的字段采集受 `AQUILA_ORDER_ACK_DIAG_LEVEL` 编译期上限控制
 应启动失败；build 为 `L2` 时，`probe.sessions.enable_tcp_info=true` 也应启动失败。这样可以避免测试报告中
 字段被静默置 0 后误判为“链路无异常”。
 
+### 性能影响与选择建议
+
+2026-06-01 对 `AQUILA_ORDER_ACK_DIAG_LEVEL=0..5` 做过 Release benchmark，详细表见
+`docs/diagnostic_fields.md`。摘要：
+
+- `L0` / `L1` 基本贴近，适合最低延迟优先、只需要主 Ack RTT / correlation key 的运行。
+- `L2+` 会让 OrderSession `PlaceOrder` 发送路径增加约 `0.36..0.42us`，主要来自 Ack diagnostic window /
+  in-flight 诊断字段维护；Ack 处理路径增量约 `7..9ns`。
+- WebSocket write path 在本次 benchmark 中没有可确认的显著回归，`L4` / `L5` 与 `L0` 差异约为噪声到十几 ns。
+- benchmark 默认没有打开运行期 `probe.sessions.enable_tcp_info` 或 `probe.sessions.timestamping.enabled`，
+  因此不能代表每单采集 `TCP_INFO`、send queue 或 socket timestamping errqueue 时的 syscall / drain 成本。
+- RTT probe 是 measurement-only 工具；在 1s interval / 1s cooldown 的 private link 排障测试中，可以使用
+  `L4` 或 `L5` 全阶段采样换取阶段归因。生产策略若不在排障，应避免长期使用每 Ack 全采样配置。
+
 ## Socket Timestamping 归因
 
 private plain transport 成功 apply `SO_TIMESTAMPING` 后，sample 可记录：
