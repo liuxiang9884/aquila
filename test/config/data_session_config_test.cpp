@@ -75,6 +75,31 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   ExpectOptionalIntEq(gate_rave->quantity_decimal_places, 1);
   EXPECT_DOUBLE_EQ(gate_rave->min_quantity, 0.1);
 
+  const aquila::config::InstrumentInfo* gate_lab =
+      catalog.Find(aquila::Exchange::kGate, "LAB_USDT");
+  ASSERT_NE(gate_lab, nullptr);
+  EXPECT_EQ(gate_lab->symbol_id, 15);
+  EXPECT_EQ(gate_lab->symbol, "LAB_USDT");
+  EXPECT_EQ(gate_lab->exchange_symbol, "LAB_USDT");
+  EXPECT_EQ(gate_lab->base_asset, "LAB");
+  EXPECT_EQ(gate_lab->quote_asset, "USDT");
+  EXPECT_EQ(gate_lab->settle_asset, "USDT");
+  EXPECT_EQ(gate_lab->product_type, "linear_perpetual");
+  EXPECT_EQ(gate_lab->status, "TRADING");
+  EXPECT_EQ(gate_lab->contract_type, "direct");
+  EXPECT_DOUBLE_EQ(gate_lab->price_tick, 1e-05);
+  EXPECT_EQ(gate_lab->price_decimal_places, 5);
+  ExpectOptionalDoubleEq(gate_lab->quantity_step, 0.1);
+  ExpectOptionalIntEq(gate_lab->quantity_decimal_places, 1);
+  EXPECT_DOUBLE_EQ(gate_lab->min_quantity, 0.1);
+  EXPECT_DOUBLE_EQ(gate_lab->max_quantity, 1200.0);
+  ExpectOptionalDoubleEq(gate_lab->max_market_quantity, 800.0);
+  EXPECT_FALSE(gate_lab->min_notional.has_value());
+  EXPECT_DOUBLE_EQ(gate_lab->notional_multiplier, 100.0);
+  ExpectOptionalDoubleEq(gate_lab->price_limit_up, 0.2);
+  ExpectOptionalDoubleEq(gate_lab->price_limit_down, 0.2);
+  ExpectOptionalDoubleEq(gate_lab->market_price_bound, 0.05);
+
   const aquila::config::InstrumentInfo* binance_btc =
       catalog.Find(aquila::Exchange::kBinance, "BTC_USDT");
   ASSERT_NE(binance_btc, nullptr);
@@ -99,6 +124,31 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   ExpectOptionalDoubleEq(binance_btc->price_limit_up, 0.05);
   ExpectOptionalDoubleEq(binance_btc->price_limit_down, 0.05);
   ExpectOptionalDoubleEq(binance_btc->market_price_bound, 0.05);
+
+  const aquila::config::InstrumentInfo* binance_lab =
+      catalog.Find(aquila::Exchange::kBinance, "LAB_USDT");
+  ASSERT_NE(binance_lab, nullptr);
+  EXPECT_EQ(binance_lab->symbol_id, 15);
+  EXPECT_EQ(binance_lab->symbol, "LAB_USDT");
+  EXPECT_EQ(binance_lab->exchange_symbol, "LABUSDT");
+  EXPECT_EQ(binance_lab->base_asset, "LAB");
+  EXPECT_EQ(binance_lab->quote_asset, "USDT");
+  EXPECT_EQ(binance_lab->settle_asset, "USDT");
+  EXPECT_EQ(binance_lab->product_type, "linear_perpetual");
+  EXPECT_EQ(binance_lab->status, "TRADING");
+  EXPECT_EQ(binance_lab->contract_type, "PERPETUAL");
+  EXPECT_DOUBLE_EQ(binance_lab->price_tick, 0.0001);
+  EXPECT_EQ(binance_lab->price_decimal_places, 4);
+  ExpectOptionalDoubleEq(binance_lab->quantity_step, 1.0);
+  ExpectOptionalIntEq(binance_lab->quantity_decimal_places, 0);
+  EXPECT_DOUBLE_EQ(binance_lab->min_quantity, 1.0);
+  EXPECT_DOUBLE_EQ(binance_lab->max_quantity, 6000000.0);
+  ExpectOptionalDoubleEq(binance_lab->max_market_quantity, 600000.0);
+  ExpectOptionalDoubleEq(binance_lab->min_notional, 5.0);
+  EXPECT_DOUBLE_EQ(binance_lab->notional_multiplier, 1.0);
+  ExpectOptionalDoubleEq(binance_lab->price_limit_up, 0.15);
+  ExpectOptionalDoubleEq(binance_lab->price_limit_down, 0.15);
+  ExpectOptionalDoubleEq(binance_lab->market_price_bound, 0.15);
 }
 
 TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
