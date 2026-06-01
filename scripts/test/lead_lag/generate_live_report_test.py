@@ -243,6 +243,96 @@ class GenerateLiveReportTest(unittest.TestCase):
         self.assertIn("- generated strategy config:", report_text)
         self.assertTrue(copied_config_exists)
 
+    def test_markdown_report_includes_ack_split_slippage_raw_pnl_and_win_rates(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.md"
+            report.write_markdown_report(
+                output_path=output_path,
+                run_id="run-1",
+                log_path=Path("/tmp/run.log"),
+                config_path=Path("/tmp/strategy.toml"),
+                guard_stdout_path=None,
+                signal_rows=[],
+                order_rows=[
+                    {
+                        "local_order_id": "1",
+                        "order_role": "entry",
+                        "status": "kFilled",
+                        "cumulative_filled_quantity": "1",
+                        "exec_slippage_ticks": "2",
+                        "limit_improvement_ticks": "8",
+                    },
+                    {
+                        "local_order_id": "2",
+                        "order_role": "exit",
+                        "status": "kFilled",
+                        "cumulative_filled_quantity": "1",
+                        "exec_slippage_ticks": "-1",
+                        "limit_improvement_ticks": "11",
+                    },
+                ],
+                position_rows=[
+                    {
+                        "symbol": "PROVE_USDT",
+                        "position_direction": "kLong",
+                        "matched_volume": "1",
+                        "contract_multiplier": "1",
+                        "entry_raw_price": "100",
+                        "exit_raw_price": "108",
+                        "gross_pnl": "10",
+                        "total_fee_quote_estimated": "1",
+                        "net_pnl": "9",
+                    },
+                    {
+                        "symbol": "PROVE_USDT",
+                        "position_direction": "kShort",
+                        "matched_volume": "1",
+                        "contract_multiplier": "1",
+                        "entry_raw_price": "50",
+                        "exit_raw_price": "55",
+                        "gross_pnl": "-4",
+                        "total_fee_quote_estimated": "1",
+                        "net_pnl": "-5",
+                    },
+                ],
+                latency_rows=[
+                    {
+                        "local_order_id": "1",
+                        "request_send_local_ns": "1000",
+                        "ack_exchange_request_ingress_ns": "2000",
+                        "ack_exchange_response_egress_ns": "3000",
+                        "ack_exchange_process_ns": "1000",
+                        "ack_local_receive_ns": "5000",
+                        "ack_rtt_ns": "4000",
+                    },
+                    {
+                        "local_order_id": "2",
+                        "request_send_local_ns": "10000",
+                        "ack_exchange_request_ingress_ns": "10500",
+                        "ack_exchange_response_egress_ns": "22000",
+                        "ack_exchange_process_ns": "11500",
+                        "ack_local_receive_ns": "22500",
+                        "ack_rtt_ns": "12500",
+                    },
+                ],
+            )
+
+            report_text = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("### Ack RTT 三段拆解", report_text)
+        self.assertIn("| 上行 send->Gate x_in | 2 |", report_text)
+        self.assertIn("| Gate x_in->x_out | 2 |", report_text)
+        self.assertIn("| 下行 Gate x_out->local | 2 |", report_text)
+        self.assertIn("### 滑点分析", report_text)
+        self.assertIn("| all filled | 2 | 0.5 |", report_text)
+        self.assertIn("| entry | 1 | 2 |", report_text)
+        self.assertIn("| exit | 1 | -1 |", report_text)
+        self.assertIn("### Raw PnL 和胜率", report_text)
+        self.assertIn("- actual win rate: `50.00%`", report_text)
+        self.assertIn("- raw win rate: `50.00%`", report_text)
+        self.assertIn("- raw gross PnL: `3`", report_text)
+        self.assertIn("- raw net PnL: `1`", report_text)
+
 
 if __name__ == "__main__":
     unittest.main()

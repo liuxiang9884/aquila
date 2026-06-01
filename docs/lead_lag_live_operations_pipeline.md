@@ -144,6 +144,8 @@ runtime_configs/  # 如果 guard stdout 中有 affinity.generated_configs 且源
    - `signal.csv`、`order_detail.csv`、`position.csv`、`latency.csv` 都存在且有 header。
    - `lead_lag_live_report_csv_schema.md` 与 `docs/lead_lag_live_report_csv_schema.md` 一致。
    - 如果 report 包含 `Runtime Profile`，确认 `runtime_configs/` 中已归档存在的 generated TOML / profile。
+   - `report.md` 必须包含 Ack RTT 三段拆解：上行 `request_send_local_ns -> ack_exchange_request_ingress_ns`、Gate `x_in -> x_out`、下行 `ack_exchange_response_egress_ns -> ack_local_receive_ns`，并列出 `>5ms` Ack tail 的主导阶段。
+   - `report.md` 必须包含滑点分析、raw PnL 分析，以及 actual / raw 两套胜率。Raw PnL 使用 entry / exit `raw_price` 计算，fee 仍使用报告 CSV 中的配置费率估算值；如果本轮另行查询到交易所实际合约费率，应在报告中补充实际费率复算说明。
    - 用 report schema 检查四个 CSV 的所有 header 字段都有说明。
    - 运行 `git diff --check`。
 6. “打包”默认表示在 `reports/` 目录中，把本次 `reports/<run_id>/` report folder 压缩成 zip 文件，输出为 `reports/<run_id>.zip`。推荐命令：
@@ -154,6 +156,6 @@ cd reports
 ```
 
 zip 文件中应包含 `<run_id>/report.md`、四个 CSV 和 `lead_lag_live_report_csv_schema.md`；生成后用 `python -m zipfile -l reports/<run_id>.zip` 或等价命令确认内容。除非用户明确要求其他格式，不生成 tar/zst。
-7. 最终回复必须概述 report 目录、zip 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；latency 摘要至少区分 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish 交易所侧 lifecycle，不要只说“已生成”。
+7. 最终回复必须概述 report 目录、zip 路径、signal/order/position/latency 行数、关键 PnL / latency 摘要和退出原因；latency 摘要至少区分 Ack RTT、Ack 上行、Gate `x_in -> x_out`、Ack 下行、send-to-finish 本地闭环和 exchange Ack-to-finish 交易所侧 lifecycle；交易摘要必须说明滑点、raw PnL 和 actual / raw 胜率，不要只说“已生成”。
 8. 将 `reports/<run_id>/` 和 `reports/<run_id>.zip` 作为一个原子 git commit；commit message 使用英文，例如 `Add LeadLag live report <run_id>`。
 9. 只有用户明确说“push”、“上传到 git”或等价表达时，才在 commit 后执行 `git push`；否则只提交并说明当前 ahead 状态。

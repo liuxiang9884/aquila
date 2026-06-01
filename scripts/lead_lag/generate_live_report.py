@@ -241,6 +241,67 @@ def ns_values(rows: list[dict[str, str]], field: str) -> list[int]:
     return values
 
 
+def int_value(text: str | None) -> int | None:
+    if text in (None, ""):
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def ns_delta_value(lhs: str | None, rhs: str | None) -> int | None:
+    lhs_value = int_value(lhs)
+    rhs_value = int_value(rhs)
+    if lhs_value is None or rhs_value is None:
+        return None
+    return lhs_value - rhs_value
+
+
+def non_negative_ns_delta_value(lhs: str | None, rhs: str | None) -> int | None:
+    value = ns_delta_value(lhs, rhs)
+    if value is None or value < 0:
+        return None
+    return value
+
+
+def positive_decimal_rows(
+    rows: list[dict[str, str]], field: str
+) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    for row in rows:
+        value = parse_decimal(row.get(field))
+        if value is not None and value > 0:
+            result.append(row)
+    return result
+
+
+def decimal_values(rows: list[dict[str, str]], field: str) -> list[Decimal]:
+    values: list[Decimal] = []
+    for row in rows:
+        value = parse_decimal(row.get(field))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def decimal_percentile_nearest(
+    values: list[Decimal], numerator: int, denominator: int
+) -> Decimal:
+    if not values:
+        return Decimal(0)
+    ordered = sorted(values)
+    index = (len(ordered) * numerator + denominator - 1) // denominator - 1
+    index = max(0, min(index, len(ordered) - 1))
+    return ordered[index]
+
+
+def format_decimal_rounded(value: Decimal | None, places: str = "0.001") -> str:
+    if value is None:
+        return ""
+    return format_decimal(value.quantize(Decimal(places)))
+
+
 def format_ms(ns: int | Decimal) -> str:
     value = Decimal(ns) / Decimal("1000000")
     return format_decimal(value.quantize(Decimal("0.001")))
@@ -262,6 +323,13 @@ def percentile_nearest(values: list[int], numerator: int, denominator: int) -> i
     index = (len(ordered) * numerator + denominator - 1) // denominator - 1
     index = max(0, min(index, len(ordered) - 1))
     return ordered[index]
+
+
+def format_percent(wins: int, total: int) -> str:
+    if total <= 0:
+        return ""
+    value = (Decimal(wins) * Decimal("100")) / Decimal(total)
+    return f"{value.quantize(Decimal('0.01'))}%"
 
 
 def markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
@@ -290,6 +358,115 @@ def latency_rows_by_descending_ns(
         key=row_value,
         reverse=True,
     )
+
+
+@dataclass(frozen=True)
+class AckSplitSample:
+    local_order_id: str
+    total_ns: int | None
+    upstream_ns: int | None
+    exchange_process_ns: int | None
+    downstream_ns: int | None
+
+
+def build_ack_split_samples(
+    latency_rows: list[dict[str, str]]
+) -> list[AckSplitSample]:
+    samples: list[AckSplitSample] = []
+    for row in latency_rows:
+        total_ns = int_value(row.get("ack_rtt_ns"))
+        if total_ns is None:
+            total_ns = non_negative_ns_delta_value(
+                row.get("ack_local_receive_ns"), row.get("request_send_local_ns")
+            )
+        samples.append(
+            AckSplitSample(
+                local_order_id=row.get("local_order_id", ""),
+                total_ns=total_ns,
+                upstream_ns=non_negative_ns_delta_value(
+                    row.get("ack_exchange_request_ingress_ns"),
+                    row.get("request_send_local_ns"),
+                ),
+                exchange_process_ns=int_value(row.get("ack_exchange_process_ns")),
+                downstream_ns=non_negative_ns_delta_value(
+                    row.get("ack_local_receive_ns"),
+                    row.get("ack_exchange_response_egress_ns"),
+                ),
+            )
+        )
+    return samples
+
+
+def ns_stat_table_row(label: str, values: list[int]) -> list[str]:
+    if not values:
+        return [label, "0", "", "", "", "", "", "", "0", "0", "0"]
+    return [
+        label,
+        str(len(values)),
+        format_ms(min(values)),
+        format_ms(percentile_nearest(values, 1, 2)),
+        format_ms(sum(values) // len(values)),
+        format_ms(percentile_nearest(values, 95, 100)),
+        format_ms(percentile_nearest(values, 99, 100)),
+        format_ms(max(values)),
+        str(sum(1 for value in values if value > 1_000_000)),
+        str(sum(1 for value in values if value > 5_000_000)),
+        str(sum(1 for value in values if value > 10_000_000)),
+    ]
+
+
+def dominant_ack_stage(sample: AckSplitSample) -> str:
+    candidates = [
+        ("上行", sample.upstream_ns),
+        ("Gate in->out", sample.exchange_process_ns),
+        ("下行", sample.downstream_ns),
+    ]
+    present = [(label, value) for label, value in candidates if value is not None]
+    if not present:
+        return ""
+    return max(present, key=lambda item: item[1])[0]
+
+
+def raw_position_gross_pnl(row: dict[str, str]) -> Decimal | None:
+    entry_raw = parse_decimal(row.get("entry_raw_price"))
+    exit_raw = parse_decimal(row.get("exit_raw_price"))
+    matched_volume = parse_decimal(row.get("matched_volume"))
+    multiplier = parse_decimal(row.get("contract_multiplier"))
+    if (
+        entry_raw is None
+        or exit_raw is None
+        or matched_volume is None
+        or multiplier is None
+    ):
+        return None
+    direction = row.get("position_direction", "")
+    if direction == "kLong":
+        return (exit_raw - entry_raw) * matched_volume * multiplier
+    if direction == "kShort":
+        return (entry_raw - exit_raw) * matched_volume * multiplier
+    return None
+
+
+def slippage_summary_row(label: str, rows: list[dict[str, str]]) -> list[str]:
+    values = decimal_values(rows, "exec_slippage_ticks")
+    improvements = decimal_values(rows, "limit_improvement_ticks")
+    if not values:
+        return [label, "0", "", "", "", "", "0", "0", ""]
+    avg = sum(values) / Decimal(len(values))
+    avg_improvement = (
+        sum(improvements) / Decimal(len(improvements)) if improvements else None
+    )
+    return [
+        label,
+        str(len(values)),
+        format_decimal_rounded(avg),
+        format_decimal_rounded(decimal_percentile_nearest(values, 1, 2)),
+        format_decimal_rounded(min(values)),
+        format_decimal_rounded(max(values)),
+        str(sum(1 for value in values if value > 0)),
+        str(sum(1 for value in values if value < 0)),
+        format_decimal_rounded(avg_improvement),
+    ]
 
 
 def load_guard_summary(path: Path | None) -> dict | None:
@@ -397,7 +574,32 @@ def write_markdown_report(
     gate_ack_process_values = ns_values(latency_rows, "ack_exchange_process_ns")
     gross_pnl = sum_decimal(position_rows, "gross_pnl")
     net_pnl = sum_decimal(position_rows, "net_pnl")
+    raw_position_rows: list[tuple[dict[str, str], Decimal, Decimal]] = []
+    raw_gross_pnl = Decimal(0)
+    raw_net_pnl = Decimal(0)
+    for row in position_rows:
+        raw_gross = raw_position_gross_pnl(row)
+        if raw_gross is None:
+            continue
+        fee = parse_decimal(row.get("total_fee_quote_estimated")) or Decimal(0)
+        raw_net = raw_gross - fee
+        raw_gross_pnl += raw_gross
+        raw_net_pnl += raw_net
+        raw_position_rows.append((row, raw_gross, raw_net))
+    actual_win_rows = [
+        row
+        for row in position_rows
+        if parse_decimal(row.get("matched_volume")) not in (None, Decimal(0))
+        and parse_decimal(row.get("net_pnl")) is not None
+    ]
+    actual_wins = sum(
+        1
+        for row in actual_win_rows
+        if (parse_decimal(row.get("net_pnl")) or Decimal(0)) > 0
+    )
+    raw_wins = sum(1 for _, _, raw_net in raw_position_rows if raw_net > 0)
     any_fill_count = count_positive(order_rows, "cumulative_filled_quantity")
+    filled_order_rows = positive_decimal_rows(order_rows, "cumulative_filled_quantity")
     finished_count = sum(1 for row in order_rows if row.get("order_finished_local_ns", ""))
     ack_count = sum(
         1
@@ -453,6 +655,38 @@ def write_markdown_report(
     )
     if status_counts:
         lines.append("")
+    if filled_order_rows:
+        entry_filled_rows = [
+            row for row in filled_order_rows if row.get("order_role", "") == "entry"
+        ]
+        exit_filled_rows = [
+            row for row in filled_order_rows if row.get("order_role", "") == "exit"
+        ]
+        lines += [
+            "### 滑点分析",
+            "",
+            "`exec_slippage_ticks` 以 raw price 为基准，正数表示成交比 raw 更差，负数表示成交优于 raw；`limit_improvement_ticks` 表示相对 aggressive limit 的改善 tick。",
+            "",
+        ]
+        lines += markdown_table(
+            [
+                "scope",
+                "filled_orders",
+                "avg_exec_slippage_ticks",
+                "median",
+                "min",
+                "max",
+                "adverse",
+                "favorable",
+                "avg_limit_improvement_ticks",
+            ],
+            [
+                slippage_summary_row("all filled", filled_order_rows),
+                slippage_summary_row("entry", entry_filled_rows),
+                slippage_summary_row("exit", exit_filled_rows),
+            ],
+        )
+        lines.append("")
     lines += [
         "## PnL",
         "",
@@ -460,6 +694,51 @@ def write_markdown_report(
         f"- net PnL: `{format_decimal(net_pnl)}`",
         "",
     ]
+    if raw_position_rows or actual_win_rows:
+        lines += [
+            "### Raw PnL 和胜率",
+            "",
+            "Raw PnL 使用 entry / exit 的 `raw_price` 计算，fee 仍使用 report CSV 中的配置费率估算值；胜率按 net PnL > 0 计算。",
+            "",
+            f"- actual gross PnL: `{format_decimal(gross_pnl)}`",
+            f"- actual net PnL: `{format_decimal(net_pnl)}`",
+            f"- actual win rate: `{format_percent(actual_wins, len(actual_win_rows))}` "
+            f"({actual_wins}/{len(actual_win_rows)})",
+            f"- raw gross PnL: `{format_decimal(raw_gross_pnl)}`",
+            f"- raw net PnL: `{format_decimal(raw_net_pnl)}`",
+            f"- raw win rate: `{format_percent(raw_wins, len(raw_position_rows))}` "
+            f"({raw_wins}/{len(raw_position_rows)})",
+            "",
+        ]
+        lines += markdown_table(
+            [
+                "symbol",
+                "direction",
+                "matched",
+                "actual_gross",
+                "raw_gross",
+                "actual_net",
+                "raw_net",
+                "actual_minus_raw_gross",
+            ],
+            [
+                [
+                    row.get("symbol", ""),
+                    row.get("position_direction", ""),
+                    row.get("matched_volume", ""),
+                    row.get("gross_pnl", ""),
+                    format_decimal(raw_gross),
+                    row.get("net_pnl", ""),
+                    format_decimal(raw_net),
+                    format_decimal(
+                        (parse_decimal(row.get("gross_pnl")) or Decimal(0))
+                        - raw_gross
+                    ),
+                ]
+                for row, raw_gross, raw_net in raw_position_rows
+            ],
+        )
+        lines.append("")
     lines += markdown_table(
         ["symbol", "direction", "matched", "gross_pnl", "net_pnl"],
         [
@@ -505,6 +784,104 @@ def write_markdown_report(
             "- Gate Ack process max: "
             f"`{format_ms(max(gate_ack_process_values))} ms`",
         ]
+    ack_split_samples = build_ack_split_samples(latency_rows)
+    if ack_split_samples:
+        total_values = [
+            sample.total_ns for sample in ack_split_samples if sample.total_ns is not None
+        ]
+        upstream_values = [
+            sample.upstream_ns
+            for sample in ack_split_samples
+            if sample.upstream_ns is not None
+        ]
+        exchange_process_split_values = [
+            sample.exchange_process_ns
+            for sample in ack_split_samples
+            if sample.exchange_process_ns is not None
+        ]
+        downstream_values = [
+            sample.downstream_ns
+            for sample in ack_split_samples
+            if sample.downstream_ns is not None
+        ]
+        lines += [
+            "",
+            "### Ack RTT 三段拆解",
+            "",
+            "Ack RTT 拆为上行 `request_send_local_ns -> ack_exchange_request_ingress_ns`、Gate `x_in -> x_out`、下行 `ack_exchange_response_egress_ns -> ack_local_receive_ns`。上行和下行跨本机 / Gate 时钟，只用于同机时钟同步后的诊断。",
+            "",
+        ]
+        lines += markdown_table(
+            [
+                "stage",
+                "samples",
+                "min_ms",
+                "median_ms",
+                "avg_ms",
+                "p95_ms",
+                "p99_ms",
+                "max_ms",
+                ">1ms",
+                ">5ms",
+                ">10ms",
+            ],
+            [
+                ns_stat_table_row("Ack RTT total", total_values),
+                ns_stat_table_row("上行 send->Gate x_in", upstream_values),
+                ns_stat_table_row(
+                    "Gate x_in->x_out", exchange_process_split_values
+                ),
+                ns_stat_table_row("下行 Gate x_out->local", downstream_values),
+            ],
+        )
+        tail_samples = [
+            sample
+            for sample in ack_split_samples
+            if sample.total_ns is not None and sample.total_ns > 5_000_000
+        ]
+        if tail_samples:
+            dominant_counts = Counter(
+                dominant_ack_stage(sample) or "unknown" for sample in tail_samples
+            )
+            lines += [
+                "",
+                "- `>5ms` Ack tail dominant stage: "
+                + ", ".join(
+                    f"{stage}={count}"
+                    for stage, count in sorted(dominant_counts.items())
+                ),
+            ]
+            lines += markdown_table(
+                [
+                    "local_order_id",
+                    "ack_rtt_ms",
+                    "upstream_ms",
+                    "gate_in_to_out_ms",
+                    "downstream_ms",
+                    "dominant_stage",
+                ],
+                [
+                    [
+                        sample.local_order_id,
+                        format_ms(sample.total_ns or 0),
+                        format_ms(sample.upstream_ns)
+                        if sample.upstream_ns is not None
+                        else "",
+                        format_ms(sample.exchange_process_ns)
+                        if sample.exchange_process_ns is not None
+                        else "",
+                        format_ms(sample.downstream_ns)
+                        if sample.downstream_ns is not None
+                        else "",
+                        dominant_ack_stage(sample),
+                    ]
+                    for sample in sorted(
+                        tail_samples,
+                        key=lambda sample: sample.total_ns or 0,
+                        reverse=True,
+                    )[:10]
+                ],
+            )
     diagnostic_rows = [
         row for row in latency_rows if row.get("latency_diagnostic_reason", "")
     ]
