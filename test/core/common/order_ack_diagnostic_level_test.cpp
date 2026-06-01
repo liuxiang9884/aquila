@@ -21,6 +21,12 @@ TEST(OrderAckDiagnosticLevelTest, ExposesCompileTimeLevelAndCapabilities) {
             AQUILA_ORDER_ACK_DIAG_LEVEL >= 4);
   EXPECT_EQ(kOrderAckDiagnosticPcapGateHeaderEnabled,
             AQUILA_ORDER_ACK_DIAG_LEVEL >= 5);
+
+#ifdef AQUILA_TEST_EXPECT_LEGACY_SOCKET_TIMESTAMPING_OFF_MAPS_TO_L3
+  EXPECT_EQ(kOrderAckDiagnosticLevel, 3);
+  EXPECT_TRUE(kOrderAckDiagnosticTcpInfoEnabled);
+  EXPECT_FALSE(kOrderAckDiagnosticSocketTimestampingEnabled);
+#endif
 }
 
 TEST(OrderAckDiagnosticLevelTest, ReportsMissingRuntimeCapabilities) {
