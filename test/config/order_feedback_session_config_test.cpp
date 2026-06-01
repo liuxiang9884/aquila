@@ -58,6 +58,39 @@ TEST(OrderFeedbackSessionConfigTest,
 }
 
 TEST(OrderFeedbackSessionConfigTest,
+     LoadsCheckedInLabUsdtPrivatePlainOrderFeedbackSessionConfig) {
+  const auto result = aquila::gate::LoadOrderFeedbackSessionConfigFile(
+      SourcePath("config/order_feedback/"
+                 "gate_order_feedback_session_lab_usdt_private_plain_20260601"
+                 ".toml"));
+  ASSERT_TRUE(result.ok) << result.error;
+
+  const aquila::gate::OrderFeedbackSessionConfig& config = result.value;
+  EXPECT_EQ(config.name,
+            "gate_order_feedback_session_lab_usdt_private_plain_20260601");
+  EXPECT_EQ(config.credentials.api_key_env, "PROBE_KEY");
+  EXPECT_EQ(config.credentials.api_secret_env, "PROBE_SECRET");
+
+  EXPECT_EQ(config.connection.host, "fxws-private.gateapi.io");
+  EXPECT_EQ(config.connection.connect_ip, "10.0.1.154");
+  EXPECT_EQ(config.connection.port, "80");
+  EXPECT_FALSE(config.connection.enable_tls);
+  EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 6);
+  ExpectSingleGateSizeDecimalHeader(config.connection);
+
+  EXPECT_EQ(config.shm.shm_name,
+            "aquila_gate_order_feedback_lab_usdt_20260601");
+  EXPECT_EQ(config.shm.channel_name, "orders");
+  EXPECT_EQ(config.shm.max_strategy_count,
+            aquila::config::kOrderFeedbackShmMaxStrategyCount);
+  EXPECT_EQ(config.shm.queue_capacity,
+            aquila::config::kOrderFeedbackShmQueueCapacity);
+  EXPECT_TRUE(config.shm.create);
+  EXPECT_TRUE(config.shm.remove_existing);
+}
+
+TEST(OrderFeedbackSessionConfigTest,
      LoadsGateOrderFeedbackSessionLogConfigFromToml) {
   const toml::table toml = toml::parse_file(
       SourcePath("config/order_feedback/gate_order_feedback_session.toml")

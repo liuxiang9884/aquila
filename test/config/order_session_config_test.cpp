@@ -53,6 +53,53 @@ TEST(OrderSessionConfigTest, LoadsCheckedInGateOrderSessionConfig) {
   ExpectSingleGateSizeDecimalHeader(config.connection);
 }
 
+TEST(OrderSessionConfigTest,
+     LoadsCheckedInLabUsdtPrivatePlainOrderSessionConfig) {
+  const auto result = aquila::gate::LoadOrderSessionConfigFile(SourcePath(
+      "config/order_sessions/"
+      "gate_order_session_lab_usdt_private_plain_20260601.toml"));
+  if constexpr (!aquila::core::kOrderAckDiagnosticTcpInfoEnabled) {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("enable_tcp_info"), std::string::npos);
+    return;
+  }
+  if constexpr (!aquila::core::kOrderAckDiagnosticSocketTimestampingEnabled) {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("timestamping.enabled"), std::string::npos);
+    return;
+  }
+  ASSERT_TRUE(result.ok) << result.error;
+
+  const aquila::gate::OrderSessionConfig& config = result.value;
+  EXPECT_EQ(config.name, "gate_order_session_lab_usdt_private_plain_20260601");
+  EXPECT_EQ(config.credentials.api_key_env, "PROBE_KEY");
+  EXPECT_EQ(config.credentials.api_secret_env, "PROBE_SECRET");
+  EXPECT_TRUE(config.enable_tcp_info_diagnostics);
+  EXPECT_EQ(config.ack_latency_diagnostics.ack_rtt_threshold_ns, 5'000'000);
+  EXPECT_EQ(
+      config.ack_latency_diagnostics.send_to_first_drive_read_threshold_ns,
+      3'000'000);
+  EXPECT_EQ(config.ack_latency_diagnostics.drive_read_duration_threshold_ns,
+            1'000'000);
+  EXPECT_EQ(config.ack_latency_diagnostics.diagnostic_window_timeout_ns,
+            250'000'000);
+  EXPECT_EQ(config.ack_latency_diagnostics.max_logs_per_second, 100U);
+
+  EXPECT_EQ(config.connection.host, "fxws-private.gateapi.io");
+  EXPECT_EQ(config.connection.connect_ip, "10.0.1.154");
+  EXPECT_EQ(config.connection.port, "80");
+  EXPECT_FALSE(config.connection.enable_tls);
+  EXPECT_EQ(config.connection.target, "/v4/ws/usdt");
+  EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 4);
+  EXPECT_TRUE(config.connection.socket_timestamping.enabled);
+  EXPECT_TRUE(config.connection.socket_timestamping.tx_sched);
+  EXPECT_TRUE(config.connection.socket_timestamping.tx_software);
+  EXPECT_TRUE(config.connection.socket_timestamping.tx_ack);
+  EXPECT_TRUE(config.connection.socket_timestamping.rx_software);
+  EXPECT_FALSE(config.connection.socket_timestamping.hardware);
+  ExpectSingleGateSizeDecimalHeader(config.connection);
+}
+
 TEST(OrderSessionConfigTest, LoadsGateOrderSessionLogConfigFromToml) {
   const toml::table toml = toml::parse_file(
       SourcePath("config/order_sessions/gate_order_session.toml").string());

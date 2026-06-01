@@ -273,6 +273,36 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   }
 }
 
+TEST(LeadLagConfigTest, LoadsCheckedInLabUsdtLiveRiskLimits) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = leadlag::LoadConfigFile(
+      SourcePath("config/strategies/lead_lag_lab_usdt_20260601.toml"),
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const leadlag::Config& config = result.value;
+  EXPECT_DOUBLE_EQ(config.risk.max_gross_notional, 2000.0);
+  EXPECT_EQ(config.risk.max_holding_position, 0);
+  ASSERT_EQ(config.pairs.size(), 1U);
+
+  const leadlag::PairConfig& pair = config.pairs[0];
+  EXPECT_EQ(pair.symbol, "LAB_USDT");
+  EXPECT_EQ(pair.symbol_id, 15);
+  EXPECT_EQ(pair.lead_exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(pair.lag_exchange, aquila::Exchange::kGate);
+  EXPECT_DOUBLE_EQ(pair.execute.open_notional, 100.0);
+  EXPECT_DOUBLE_EQ(pair.execute.trailing_stop, 0.01);
+  EXPECT_DOUBLE_EQ(pair.execute.max_entry_spread, 0.01);
+  EXPECT_EQ(pair.execute.open_slippage, 10U);
+  EXPECT_EQ(pair.execute.close_slippage, 10U);
+  EXPECT_EQ(pair.execute.parallel, 1U);
+  EXPECT_DOUBLE_EQ(pair.lag_instrument.price_tick, 1e-05);
+  EXPECT_EQ(pair.lag_instrument.price_decimal_places, 5);
+  EXPECT_DOUBLE_EQ(pair.lag_instrument.quantity_step, 0.1);
+  EXPECT_EQ(pair.lag_instrument.quantity_decimal_places, 1);
+}
+
 TEST(LeadLagConfigTest, ParsesRiskWithOnlyGrossNotionalLimit) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 

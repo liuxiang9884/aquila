@@ -1,0 +1,31 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/binance_data_session_lab_usdt_20260601.log"
+console_sink_name = "binance_data_session_lab_usdt_console"
+backend_thread_name = "binance_data_session_lab_usdt_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_session]
+name = "binance_data_session_lab_usdt_20260601"
+subscribe_symbols = ["LAB_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_binance_market_data_lab_usdt_20260601"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = true

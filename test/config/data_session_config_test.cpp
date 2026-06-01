@@ -258,6 +258,33 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedGateDataSessionConfig) {
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
 }
 
+TEST(DataSessionConfigTest,
+     LoadsReadyLabUsdtPrivatePlainGateDataSessionConfig) {
+  const auto config_result = aquila::gate::LoadDataSessionConfigFile(SourcePath(
+      "config/data_sessions/"
+      "gate_data_session_lab_usdt_private_plain_20260601.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  const aquila::gate::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "gate_data_session_lab_usdt_private_plain_20260601");
+  EXPECT_EQ(config.connection.host, "fxws-private.gateapi.io");
+  EXPECT_EQ(config.connection.connect_ip, "10.0.1.154");
+  EXPECT_EQ(config.connection.port, "80");
+  EXPECT_FALSE(config.connection.enable_tls);
+  EXPECT_EQ(config.connection.target, "/v4/ws/usdt/sbe?sbe_schema_id=1");
+  EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 2);
+
+  ASSERT_EQ(config.exchange_symbols.size(), 1u);
+  EXPECT_EQ(config.exchange_symbols[0], "LAB_USDT");
+  ASSERT_EQ(config.symbol_ids.size(), 1u);
+  EXPECT_EQ(config.symbol_ids[0], 15);
+  EXPECT_TRUE(config.book_ticker_shm.enabled);
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_gate_market_data_lab_usdt_20260601");
+  EXPECT_TRUE(config.book_ticker_shm.create);
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+}
+
 TEST(DataSessionConfigTest, LoadsGateLogConfigFromToml) {
   const toml::table toml = toml::parse_file(
       SourcePath("config/data_sessions/gate_data_session.toml").string());
@@ -617,6 +644,31 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedBinanceDataSessionConfig) {
   EXPECT_EQ(config.symbol_ids[11], 1);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_binance_market_data_requested_20260521");
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+}
+
+TEST(DataSessionConfigTest, LoadsReadyLabUsdtBinanceDataSessionConfig) {
+  const auto config_result = aquila::binance::LoadDataSessionConfigFile(
+      SourcePath(
+          "config/data_sessions/binance_data_session_lab_usdt_20260601.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+
+  const aquila::binance::DataSessionConfig& config = config_result.value;
+  EXPECT_EQ(config.name, "binance_data_session_lab_usdt_20260601");
+  EXPECT_EQ(config.connection.host, "fstream.binance.com");
+  EXPECT_EQ(config.connection.port, "443");
+  EXPECT_TRUE(config.connection.enable_tls);
+  EXPECT_EQ(config.connection.target, "/public/ws/labusdt@bookTicker");
+  EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 3);
+
+  ASSERT_EQ(config.exchange_symbols.size(), 1u);
+  EXPECT_EQ(config.exchange_symbols[0], "LABUSDT");
+  ASSERT_EQ(config.symbol_ids.size(), 1u);
+  EXPECT_EQ(config.symbol_ids[0], 15);
+  EXPECT_TRUE(config.book_ticker_shm.enabled);
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_binance_market_data_lab_usdt_20260601");
+  EXPECT_TRUE(config.book_ticker_shm.create);
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
 }
 

@@ -94,6 +94,36 @@ TEST(DataReaderConfigTest, LoadsReadyRequestedStrategyDataReaderConfig) {
             "aquila_binance_market_data_requested_20260521");
 }
 
+TEST(DataReaderConfigTest, LoadsReadyLabUsdtStrategyDataReaderConfig) {
+  const auto result = aquila::config::LoadDataReaderConfigFile(SourcePath(
+      "config/data_readers/strategy_data_reader_lab_usdt_20260601.toml"));
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const aquila::config::DataReaderConfig& config = result.value;
+
+  EXPECT_EQ(config.name, "strategy_data_reader_lab_usdt_20260601");
+  EXPECT_EQ(config.max_events_per_drain, 128U);
+  EXPECT_EQ(config.execution_policy.bind_cpu_id, 4);
+  EXPECT_EQ(config.execution_policy.idle_policy, "spin");
+
+  ASSERT_EQ(config.sources.size(), 2U);
+  EXPECT_EQ(config.sources[0].name, "gate_book_ticker_lab_usdt_20260601");
+  EXPECT_EQ(config.sources[0].exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(config.sources[0].shm_name,
+            "aquila_gate_market_data_lab_usdt_20260601");
+  EXPECT_EQ(config.sources[0].read_mode,
+            aquila::config::DataReaderReadMode::kLatest);
+  EXPECT_TRUE(config.sources[0].required);
+
+  EXPECT_EQ(config.sources[1].name, "binance_book_ticker_lab_usdt_20260601");
+  EXPECT_EQ(config.sources[1].exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(config.sources[1].shm_name,
+            "aquila_binance_market_data_lab_usdt_20260601");
+  EXPECT_EQ(config.sources[1].read_mode,
+            aquila::config::DataReaderReadMode::kLatest);
+  EXPECT_TRUE(config.sources[1].required);
+}
+
 TEST(DataReaderConfigTest, RejectsDuplicateSourceNames) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]

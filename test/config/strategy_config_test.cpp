@@ -165,6 +165,35 @@ TEST(StrategyConfigTest,
   EXPECT_EQ(config.feedback.poll_budget, 32U);
 }
 
+TEST(StrategyConfigTest, LoadsCheckedInLeadLagLabUsdtLiveRuntimeConfig) {
+  const auto result = aquila::config::LoadStrategyConfigFile(SourcePath(
+      "config/strategies/lead_lag_lab_usdt_live_strategy_20260601.toml"));
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const aquila::config::StrategyConfig& config = result.value;
+
+  EXPECT_EQ(config.name, "lead_lag");
+  EXPECT_EQ(config.strategy_id, 4);
+  EXPECT_EQ(config.mode, aquila::config::StrategyMode::kLive);
+  EXPECT_EQ(config.order_capacity, 8U);
+  EXPECT_EQ(config.user_config_path,
+            SourcePath("config/strategies/lead_lag_lab_usdt_20260601.toml"));
+  EXPECT_EQ(
+      config.data_reader.config_path,
+      SourcePath(
+          "config/data_readers/strategy_data_reader_lab_usdt_20260601.toml"));
+  EXPECT_EQ(config.order_session.config_path,
+            SourcePath("config/order_sessions/"
+                       "gate_order_session_lab_usdt_private_plain_20260601"
+                       ".toml"));
+  EXPECT_TRUE(config.feedback.enabled);
+  EXPECT_EQ(config.feedback.shm_name,
+            "aquila_gate_order_feedback_lab_usdt_20260601");
+  EXPECT_EQ(config.feedback.channel_name, "orders");
+  EXPECT_EQ(config.feedback.poll_budget, 32U);
+  EXPECT_FALSE(config.feedback.force_claim);
+}
+
 TEST(StrategyConfigTest, RejectsStrategyIdOutsideFeedbackLaneRange) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]
