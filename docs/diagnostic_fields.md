@@ -105,6 +105,25 @@ order action：GTC open、GTC cancel、可选 GTC safety close、IOC open 或 IO
 | `invalid` / `inv_reason` | `order_session_rtt_samples.csv` | experiment | bool / 文本 | 排除 reject、timeout、unexpected fill、safety close timeout 或 run-end REST 需要人工复核的样本。 | 同上。 |
 | `rest_guard_phase` / `rest_guard_result` / `rest_guard_json_path` | `order_session_rtt_rest_guard.csv` | planned | enum / 文本 / 路径 | 记录 REST preflight、fatal flatten 和 run-end 整体账户检查结果；REST 不再作为 sample 级 `final_flat` 字段。 | 同上。 |
 
+### OrderSession RTT pcap 对齐 CSV 字段
+
+这些字段由 `scripts/gate/analyze_order_session_rtt_pcap.py` 从 `order_session_rtt_samples.csv`、no TLS pcap
+和 Gate Ack response JSON header 对齐生成。它们不在交易热路径中产生，只用于离线定位 Ack tail。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `session` / `group` / `ip` / `contract` | `gate_x_time_alignment.csv` | experiment | 文本 | 从 `order_session_rtt_samples.csv` 继承，用于按 private link、session 和合约分组看 tail。 | pcap 对齐脚本废弃或字段改名后删除。 |
+| `pcap_request_to_ack_ms` | `gate_x_time_alignment.csv` | experiment | ms | 本机 pcap 看到 request WebSocket frame 到看到 Gate Ack response frame 的时间。 | pcap 对齐脚本废弃或字段改名后删除。 |
+| `gate_x_in_to_x_out_ms` | `gate_x_time_alignment.csv` | experiment | ms | Gate Ack response header 中 `x_out_time - x_in_time`，同一 Gate 时钟域内的处理段。 | Gate 不再提供 `x_in_time` / `x_out_time` 或脚本废弃后删除。 |
+| `residual_ms` | `gate_x_time_alignment.csv` | experiment | ms | `pcap_request_to_ack_ms - gate_x_in_to_x_out_ms`，近似 pcap 可见链路剩余段；受 pcap 时间精度和抓包点影响。 | 同上。 |
+| `gate_share` | `gate_x_time_alignment.csv` | experiment | ratio | `gate_x_in_to_x_out_ms / pcap_request_to_ack_ms`，判断 tail 是否主要由 Gate header duration 解释。 | 同上。 |
+| `ack_response_to_ack_receive_us` | `gate_x_time_alignment.csv` | experiment | us | 本机 pcap 看到 Ack response 到 OrderSession `ack_recv_ns` 的时间；用于排除本机 RX / read / parse tail。 | 同上。 |
+| `tcp_ack_to_response_us` | `gate_x_time_alignment.csv` | experiment | us | 第一个 ACK request bytes 的远端 TCP packet 到业务 Ack response packet 的间隔。为 0 时表示 TCP ACK 与业务 Ack response 同包或同 pcap 时间戳。 | 同上。 |
+| `tcp_ack_same_as_response` | `gate_x_time_alignment.csv` | experiment | `true` / `false` | 标记第一个 ACK request bytes 的远端 TCP packet 是否就是业务 Ack response packet。 | 同上。 |
+| `pcap_request_ns` / `tcp_ack_ns` / `pcap_ack_response_ns` | `gate_x_time_alignment.csv` | experiment | pcap timestamp ns | pcap 对齐原始时间戳；pcap 通常只有微秒精度，不等价于 hardware timestamp。 | 同上。 |
+| `x_in_time` / `x_out_time` | `gate_x_time_alignment.csv` | experiment | Gate header timestamp | Gate Ack response 原始 header timestamp，用于复核 `gate_x_in_to_x_out_ms`。 | 同上。 |
+| `conn_id` / `conn_trace_id` / `trace_id` | `gate_x_time_alignment.csv` | experiment | Gate header 文本 | 按 Gate connection / trace 分组，判断 tail 是否集中在特定连接或 Gate trace。 | 同上。 |
+
 ### 请求与 Ack 字段
 
 这些字段已经在 Gate order submit / cancel 路径中使用，主要来自 `gate_order_send_ok`、
