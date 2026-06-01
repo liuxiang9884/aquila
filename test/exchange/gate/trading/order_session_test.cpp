@@ -413,9 +413,9 @@ TEST(OrderSessionTest, SendAndAckLogsExposeSessionIdAndCpu) {
   EXPECT_EQ(response_record.local_order_id, 123U);
   EXPECT_EQ(response_record.request_sequence, 2U);
   EXPECT_GE(response_record.ack_cpu, -1);
-  EXPECT_EQ(response_record.exchange_x_in_ns, 1681985856667508000LL);
-  EXPECT_EQ(response_record.exchange_x_out_ns, 1681985856667598000LL);
-  EXPECT_EQ(response_record.exchange_x_in_to_x_out_ns, 90000LL);
+  EXPECT_EQ(response_record.exchange_request_ingress_ns, 1681985856667508000LL);
+  EXPECT_EQ(response_record.exchange_response_egress_ns, 1681985856667598000LL);
+  EXPECT_EQ(response_record.exchange_process_ns, 90000LL);
   EXPECT_FALSE(response_record.tcp_info_available);
   EXPECT_EQ(response_record.tcp_info_rtt_us, 0U);
   EXPECT_EQ(response_record.tcp_info_total_retrans, 0U);
@@ -511,9 +511,11 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
   EXPECT_GE(handler.responses[0].local_receive_ns, sent.send_local_ns);
   EXPECT_GT(handler.responses[0].local_receive_ns, kReasonableUnixEpochNs);
   EXPECT_EQ(handler.responses[0].exchange_ns, 1681985856667598000LL);
-  EXPECT_EQ(handler.responses[0].exchange_x_in_ns, 1681985856667508000LL);
-  EXPECT_EQ(handler.responses[0].exchange_x_out_ns, 1681985856667598000LL);
-  EXPECT_EQ(handler.responses[0].exchange_x_in_to_x_out_ns, 90000LL);
+  EXPECT_EQ(handler.responses[0].exchange_request_ingress_ns,
+            1681985856667508000LL);
+  EXPECT_EQ(handler.responses[0].exchange_response_egress_ns,
+            1681985856667598000LL);
+  EXPECT_EQ(handler.responses[0].exchange_process_ns, 90000LL);
   EXPECT_FALSE(handler.responses[0].socket_timestamps.available);
   EXPECT_EQ(handler.responses[0]
                 .socket_timestamp_stages.write_complete_to_tx_software_ns,

@@ -141,7 +141,7 @@ Gate 收到 request 后、发出 submit Ack response 前的 Gate edge / app / or
 tail 需要单独看：这档里有少数样本 Gate duration 很小而 residual 较大，不能统一按 Gate duration 解释。
 
 2026-06-01 后，Gate Ack JSON header 中的 `x_in_time` / `x_out_time` 已下沉到 runtime `gate_order_response`
-日志，输出为 ns 字段 `exchange_x_in_ns`、`exchange_x_out_ns`、`exchange_x_in_to_x_out_ns`，并进入
+日志，输出为 ns 字段 `exchange_request_ingress_ns`、`exchange_response_egress_ns`、`exchange_process_ns`，并进入
 LeadLag report 的 `order_detail.csv` / `latency.csv`。这些字段在 `L0` build 也输出；pcap 仍用于计算
 `pcap_request_to_ack_ms`、`residual_ms` 和 `gate_share`。
 
@@ -383,7 +383,7 @@ python3 scripts/gate/analyze_order_session_rtt_pcap.py \
 
 脚本 summary 已输出按 session / group / ip / Gate `conn_id` 的 tail 分布；输出字段见
 `docs/diagnostic_fields.md` 的 “OrderSession RTT pcap 对齐 CSV 字段”。`x_in_time` / `x_out_time` 也会在
-runtime `gate_order_response` 中以 `exchange_x_in_ns` / `exchange_x_out_ns` 输出；pcap 对齐的核心判断：
+runtime `gate_order_response` 中以 `exchange_request_ingress_ns` / `exchange_response_egress_ns` 输出；pcap 对齐的核心判断：
 
 - `gate_x_in_to_x_out_ms` 接近 `pcap_request_to_ack_ms`：tail 主要在 Gate header duration 内。
 - `residual_ms` 大：再看 private link / pcap / hardware timestamp / 多端抓包。

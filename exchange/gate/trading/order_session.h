@@ -189,9 +189,9 @@ struct OrderSessionResponseLogRecordForTest {
   std::uint64_t local_order_id{0};
   std::uint64_t request_sequence{0};
   int ack_cpu{-1};
-  std::int64_t exchange_x_in_ns{0};
-  std::int64_t exchange_x_out_ns{0};
-  std::int64_t exchange_x_in_to_x_out_ns{0};
+  std::int64_t exchange_request_ingress_ns{0};
+  std::int64_t exchange_response_egress_ns{0};
+  std::int64_t exchange_process_ns{0};
   bool tcp_info_requested{false};
   bool tcp_info_available{false};
   std::uint32_t tcp_info_rtt_us{0};
@@ -319,8 +319,9 @@ inline void NotifyOrderSessionSendLogObserverForTest(
 
 inline void NotifyOrderSessionResponseLogObserverForTest(
     std::uint64_t order_session_id, std::uint64_t local_order_id,
-    std::uint64_t request_sequence, int ack_cpu, std::int64_t exchange_x_in_ns,
-    std::int64_t exchange_x_out_ns, std::int64_t exchange_x_in_to_x_out_ns,
+    std::uint64_t request_sequence, int ack_cpu,
+    std::int64_t exchange_request_ingress_ns,
+    std::int64_t exchange_response_egress_ns, std::int64_t exchange_process_ns,
     bool tcp_info_requested,
     const websocket::TcpInfoDiagnostics& tcp_info) noexcept {
   OrderSessionResponseLogObserverForTest observer =
@@ -333,9 +334,9 @@ inline void NotifyOrderSessionResponseLogObserverForTest(
       .local_order_id = local_order_id,
       .request_sequence = request_sequence,
       .ack_cpu = ack_cpu,
-      .exchange_x_in_ns = exchange_x_in_ns,
-      .exchange_x_out_ns = exchange_x_out_ns,
-      .exchange_x_in_to_x_out_ns = exchange_x_in_to_x_out_ns,
+      .exchange_request_ingress_ns = exchange_request_ingress_ns,
+      .exchange_response_egress_ns = exchange_response_egress_ns,
+      .exchange_process_ns = exchange_process_ns,
       .tcp_info_requested = tcp_info_requested,
       .tcp_info_available = tcp_info.available,
       .tcp_info_rtt_us = tcp_info.rtt_us,
@@ -867,8 +868,8 @@ class OrderSession {
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
     detail::NotifyOrderSessionResponseLogObserverForTest(
         order_session_id, local_order_id, parsed.request_id.sequence, ack_cpu,
-        parsed.exchange_x_in_ns, parsed.exchange_x_out_ns,
-        parsed.exchange_x_in_to_x_out_ns, tcp_info_requested, tcp_info);
+        parsed.exchange_request_ingress_ns, parsed.exchange_response_egress_ns,
+        parsed.exchange_process_ns, tcp_info_requested, tcp_info);
 #endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
@@ -879,8 +880,8 @@ class OrderSession {
         "gate_order_response kind={} local_order_id={} exchange_order_id={} "
         "request_sequence={} channel={} http_status={} error_label_hash={} "
         "error_label={} error_message={} local_receive_ns={} exchange_ns={} "
-        "exchange_x_in_ns={} exchange_x_out_ns={} "
-        "exchange_x_in_to_x_out_ns={} exchange_to_local_ns={} "
+        "exchange_request_ingress_ns={} exchange_response_egress_ns={} "
+        "exchange_process_ns={} exchange_to_local_ns={} "
         "order_session_id={} ack_cpu={} "
         "tcp_info_requested={} tcp_info_available={} tcp_info_rtt_us={} "
         "tcp_info_rttvar_us={} tcp_info_retrans={} "
@@ -889,9 +890,9 @@ class OrderSession {
         parsed.request_id.sequence, static_cast<int>(parsed.channel),
         parsed.http_status, parsed.error_label_hash, parsed.error_label,
         parsed.error_message, local_receive_ns, parsed.exchange_ns,
-        parsed.exchange_x_in_ns, parsed.exchange_x_out_ns,
-        parsed.exchange_x_in_to_x_out_ns, exchange_to_local_ns,
-        order_session_id, ack_cpu, tcp_info_requested ? "true" : "false",
+        parsed.exchange_request_ingress_ns, parsed.exchange_response_egress_ns,
+        parsed.exchange_process_ns, exchange_to_local_ns, order_session_id,
+        ack_cpu, tcp_info_requested ? "true" : "false",
         tcp_info.available ? "true" : "false", tcp_info.rtt_us,
         tcp_info.rttvar_us, tcp_info.retrans, tcp_info.total_retrans,
         tcp_info.unacked, tcp_info.snd_cwnd);
@@ -1348,9 +1349,9 @@ class OrderSession {
           .error_label_hash = 0,
           .local_receive_ns = local_receive_ns,
           .exchange_ns = parsed.exchange_ns,
-          .exchange_x_in_ns = parsed.exchange_x_in_ns,
-          .exchange_x_out_ns = parsed.exchange_x_out_ns,
-          .exchange_x_in_to_x_out_ns = parsed.exchange_x_in_to_x_out_ns,
+          .exchange_request_ingress_ns = parsed.exchange_request_ingress_ns,
+          .exchange_response_egress_ns = parsed.exchange_response_egress_ns,
+          .exchange_process_ns = parsed.exchange_process_ns,
           .socket_timestamps = socket_timestamps,
           .socket_timestamp_stages = socket_timestamp_stages,
           .ack_latency_diagnostic_available = ack_latency_diagnostic.found,
@@ -1401,9 +1402,9 @@ class OrderSession {
         .error_label_hash = parsed.error_label_hash,
         .local_receive_ns = local_receive_ns,
         .exchange_ns = parsed.exchange_ns,
-        .exchange_x_in_ns = parsed.exchange_x_in_ns,
-        .exchange_x_out_ns = parsed.exchange_x_out_ns,
-        .exchange_x_in_to_x_out_ns = parsed.exchange_x_in_to_x_out_ns});
+        .exchange_request_ingress_ns = parsed.exchange_request_ingress_ns,
+        .exchange_response_egress_ns = parsed.exchange_response_egress_ns,
+        .exchange_process_ns = parsed.exchange_process_ns});
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();
     }

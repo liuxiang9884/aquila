@@ -15,7 +15,7 @@
 - `*_ns` 字段单位都是纳秒。
 - `request_send_local_ns`、`ack_local_receive_ns`、`response_local_receive_ns`、`order_finished_local_ns` 是本机时钟时间戳，可以互相相减。
 - `ack_exchange_ns`、`response_exchange_ns`、`accepted_exchange_ns`、`finish_exchange_ns` 是交易所侧时间戳。交易所时钟和本地时钟不同步，不能直接把 exchange 到 local 的差值当作真实单程网络延迟。
-- `ack_exchange_x_in_ns`、`ack_exchange_x_out_ns` 和 `ack_exchange_x_in_to_x_out_ns` 来自 Gate Ack response JSON header 中的 `x_in_time` / `x_out_time`，已转换为 ns；它们只能在 Gate 同一时钟域内互相相减，不能和本地时间直接相减。
+- `ack_exchange_request_ingress_ns`、`ack_exchange_response_egress_ns` 和 `ack_exchange_process_ns` 来自 Gate Ack response JSON header 中的 `x_in_time` / `x_out_time`，已转换为 ns；它们只能在 Gate 同一时钟域内互相相减，不能和本地时间直接相减。
 - 价格字段使用合约价格单位；notional、fee、PnL 字段使用 quote currency，当前 USDT futures report 中可理解为 USDT。
 - `trigger_exchange` 表示触发信号的行情来源交易所，不表示实际下单交易所。当前 CSV 还没有显式 `order_exchange` 字段；本轮 Gate live run 的实际下单交易所由 `gate_*` 日志隐含为 Gate。
 
@@ -142,9 +142,9 @@
 | `tcp_info_unacked` | Linux `tcp_info.tcpi_unacked`；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
 | `tcp_info_snd_cwnd` | Linux `tcp_info.tcpi_snd_cwnd`；多次出现取最大值。 | `gate_order_response` / diagnostic log。 |
 | `ack_rtt_ns` | 本地下单发送到收到 Ack 的 RTT。 | `ack_local_receive_ns - request_send_local_ns`，或终态日志中的 `ack_rtt_ns`。 |
-| `ack_exchange_x_in_ns` | Gate Ack response header 的 `x_in_time` 转 ns。 | `gate_order_response.exchange_x_in_ns`；header 缺失时为空。 |
-| `ack_exchange_x_out_ns` | Gate Ack response header 的 `x_out_time` 转 ns。 | `gate_order_response.exchange_x_out_ns`；header 缺失时为空。 |
-| `ack_exchange_x_in_to_x_out_ns` | Gate 同一时钟域内 Ack response 的 `x_out_time - x_in_time`，单位 ns。 | `gate_order_response.exchange_x_in_to_x_out_ns`；只有 `x_in_time` 和 `x_out_time` 都可用时输出。 |
+| `ack_exchange_request_ingress_ns` | Gate Ack response header 的 `x_in_time` 转 ns。 | `gate_order_response.exchange_request_ingress_ns`；header 缺失时为空。 |
+| `ack_exchange_response_egress_ns` | Gate Ack response header 的 `x_out_time` 转 ns。 | `gate_order_response.exchange_response_egress_ns`；header 缺失时为空。 |
+| `ack_exchange_process_ns` | Gate 同一时钟域内 Ack response 的 `x_out_time - x_in_time`，单位 ns。 | `gate_order_response.exchange_process_ns`；只有 `x_in_time` 和 `x_out_time` 都可用时输出。 |
 | `latency_diagnostic_reason` | Gate order session 分阶段 Ack latency diagnostic 触发原因；同一订单多次触发时用 `;` 合并。 | `gate_order_ack_latency_diagnostic.reason`。 |
 | `latency_diagnostic_ack_rtt_ns` | diagnostic 日志中记录的最大 Ack RTT。 | `gate_order_ack_latency_diagnostic.ack_rtt_ns`。 |
 | `send_to_first_after_hook_ns` | 下单发送到下一次 runtime hook 完成探针的本地耗时。 | `gate_order_ack_latency_diagnostic.send_to_first_after_hook_ns`。 |
@@ -253,9 +253,9 @@
 | `response_local_receive_ns` | 本地收到非 Ack response 的时间戳。 | 终态日志中的 response timing。 |
 | `order_finished_local_ns` | 本地订单终态处理完成时间戳。 | order detail。 |
 | `ack_exchange_ns` | 交易所 Ack 时间戳。 | Gate Ack 或终态日志。 |
-| `ack_exchange_x_in_ns` | Gate Ack response header 的 `x_in_time` 转 ns。 | `gate_order_response.exchange_x_in_ns`。 |
-| `ack_exchange_x_out_ns` | Gate Ack response header 的 `x_out_time` 转 ns。 | `gate_order_response.exchange_x_out_ns`。 |
-| `ack_exchange_x_in_to_x_out_ns` | Gate Ack header 中 `x_out_time - x_in_time` 的同钟域 duration。 | `gate_order_response.exchange_x_in_to_x_out_ns`；可直接用于 Gate 内部 Ack processing tail 统计。 |
+| `ack_exchange_request_ingress_ns` | Gate Ack response header 的 `x_in_time` 转 ns。 | `gate_order_response.exchange_request_ingress_ns`。 |
+| `ack_exchange_response_egress_ns` | Gate Ack response header 的 `x_out_time` 转 ns。 | `gate_order_response.exchange_response_egress_ns`。 |
+| `ack_exchange_process_ns` | Gate Ack header 中 `x_out_time - x_in_time` 的同钟域 duration。 | `gate_order_response.exchange_process_ns`；可直接用于 Gate 内部 Ack processing tail 统计。 |
 | `response_exchange_ns` | 交易所 response 时间戳。 | 终态日志。 |
 | `accepted_exchange_ns` | 交易所接受订单时间戳。 | 终态日志。 |
 | `finish_exchange_ns` | 交易所订单终态时间戳。 | 终态日志。 |

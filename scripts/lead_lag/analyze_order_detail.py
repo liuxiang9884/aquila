@@ -85,9 +85,9 @@ ORDER_DETAIL_FIELDS = [
     "tcp_info_unacked",
     "tcp_info_snd_cwnd",
     "ack_rtt_ns",
-    "ack_exchange_x_in_ns",
-    "ack_exchange_x_out_ns",
-    "ack_exchange_x_in_to_x_out_ns",
+    "ack_exchange_request_ingress_ns",
+    "ack_exchange_response_egress_ns",
+    "ack_exchange_process_ns",
     "latency_diagnostic_reason",
     "latency_diagnostic_ack_rtt_ns",
     "send_to_first_after_hook_ns",
@@ -190,9 +190,9 @@ LATENCY_DETAIL_FIELDS = [
     "response_local_receive_ns",
     "order_finished_local_ns",
     "ack_exchange_ns",
-    "ack_exchange_x_in_ns",
-    "ack_exchange_x_out_ns",
-    "ack_exchange_x_in_to_x_out_ns",
+    "ack_exchange_request_ingress_ns",
+    "ack_exchange_response_egress_ns",
+    "ack_exchange_process_ns",
     "response_exchange_ns",
     "accepted_exchange_ns",
     "finish_exchange_ns",
@@ -398,6 +398,12 @@ def choose_first_nonzero_text(existing: str | None, value: str | None) -> str:
     return existing or value or ""
 
 
+def nonzero_ns_text(value: str | None) -> str:
+    if value in (None, "", "0"):
+        return ""
+    return value
+
+
 def choose_first_present_text(existing: str | None, value: str | None) -> str:
     if existing not in (None, ""):
         return existing
@@ -552,10 +558,16 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
     merge_tcp_info(order, fields)
     order["ack_local_receive_ns"] = fields.get("local_receive_ns", "")
     order["ack_exchange_ns"] = fields.get("exchange_ns", "")
-    order["ack_exchange_x_in_ns"] = fields.get("exchange_x_in_ns", "")
-    order["ack_exchange_x_out_ns"] = fields.get("exchange_x_out_ns", "")
-    order["ack_exchange_x_in_to_x_out_ns"] = fields.get(
-        "exchange_x_in_to_x_out_ns", ""
+    request_ingress_ns = nonzero_ns_text(fields.get("exchange_request_ingress_ns"))
+    response_egress_ns = nonzero_ns_text(
+        fields.get("exchange_response_egress_ns")
+    )
+    order["ack_exchange_request_ingress_ns"] = request_ingress_ns
+    order["ack_exchange_response_egress_ns"] = response_egress_ns
+    order["ack_exchange_process_ns"] = (
+        fields.get("exchange_process_ns", "")
+        if request_ingress_ns and response_egress_ns
+        else ""
     )
     order["ack_exchange_to_local_ns"] = fields.get("exchange_to_local_ns", "")
     if fields.get("exchange_order_id") not in (None, "", "0"):
@@ -1435,11 +1447,13 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "response_local_receive_ns": response_receive_ns,
             "order_finished_local_ns": finished_ns,
             "ack_exchange_ns": order.get("ack_exchange_ns", ""),
-            "ack_exchange_x_in_ns": order.get("ack_exchange_x_in_ns", ""),
-            "ack_exchange_x_out_ns": order.get("ack_exchange_x_out_ns", ""),
-            "ack_exchange_x_in_to_x_out_ns": order.get(
-                "ack_exchange_x_in_to_x_out_ns", ""
+            "ack_exchange_request_ingress_ns": order.get(
+                "ack_exchange_request_ingress_ns", ""
             ),
+            "ack_exchange_response_egress_ns": order.get(
+                "ack_exchange_response_egress_ns", ""
+            ),
+            "ack_exchange_process_ns": order.get("ack_exchange_process_ns", ""),
             "response_exchange_ns": order.get("response_exchange_ns", ""),
             "accepted_exchange_ns": order.get("accepted_exchange_ns", ""),
             "finish_exchange_ns": order.get("finish_exchange_ns", ""),
