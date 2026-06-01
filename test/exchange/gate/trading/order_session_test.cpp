@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/common/types.h"
 #include "core/websocket/message_view.h"
 #include "exchange/gate/trading/submit_response_parser.h"
@@ -411,7 +412,8 @@ TEST(OrderSessionTest, TcpInfoDiagnosticsCanBeEnabledWithoutSocketSnapshot) {
   ASSERT_EQ(g_response_log_record_count, 1U);
   const detail::OrderSessionResponseLogRecordForTest& response_record =
       g_response_log_records[0];
-  EXPECT_TRUE(response_record.tcp_info_requested);
+  EXPECT_EQ(response_record.tcp_info_requested,
+            core::kOrderAckDiagnosticTcpInfoEnabled);
   EXPECT_FALSE(response_record.tcp_info_available);
   EXPECT_EQ(response_record.tcp_info_rtt_us, 0U);
 
@@ -432,6 +434,12 @@ TEST(OrderSessionTest, AckLatencyDiagnosticLogExposeSessionIdAndCpu) {
   std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
   session.Handle(TextView(PlaceAckResponse()));
+
+  if constexpr (!core::kOrderAckDiagnosticRuntimeWritePathEnabled) {
+    EXPECT_EQ(g_latency_diagnostic_log_record_count, 0U);
+    ResetOrderSessionLogObservers();
+    return;
+  }
 
   ASSERT_EQ(g_latency_diagnostic_log_record_count, 1U);
   const detail::OrderSessionLatencyDiagnosticLogRecordForTest& record =

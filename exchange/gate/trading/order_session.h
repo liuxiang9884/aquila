@@ -533,21 +533,21 @@ class OrderSession {
         core::kOrderAckDiagnosticSocketTimestampingEnabled
             ? client_.Core().StartSocketTimestampingProbe(sequence)
             : false;
-    const OrderSendStatus status = MapSendStatus(SendText(
-        encoded.text, core::kOrderAckDiagnosticRuntimeWritePathEnabled
-                          ? &write_path
-                          : nullptr));
+    const OrderSendStatus status = MapSendStatus(
+        SendText(encoded.text, core::kOrderAckDiagnosticRuntimeWritePathEnabled
+                                   ? &write_path
+                                   : nullptr));
     const bool socket_timestamping_probe_active =
         UpdateSocketTimestampingProbeAfterSend(
             sequence, status, write_path, socket_timestamping_probe_started);
-    const websocket::SocketSendQueueDiagnostics socket_send_queue =
-        SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
       LogGateOrderSendFailed("place", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
     }
+    const websocket::SocketSendQueueDiagnostics socket_send_queue =
+        SnapshotSocketSendQueueDiagnostics();
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
@@ -614,21 +614,21 @@ class OrderSession {
         core::kOrderAckDiagnosticSocketTimestampingEnabled
             ? client_.Core().StartSocketTimestampingProbe(sequence)
             : false;
-    const OrderSendStatus status = MapSendStatus(SendText(
-        encoded.text, core::kOrderAckDiagnosticRuntimeWritePathEnabled
-                          ? &write_path
-                          : nullptr));
+    const OrderSendStatus status = MapSendStatus(
+        SendText(encoded.text, core::kOrderAckDiagnosticRuntimeWritePathEnabled
+                                   ? &write_path
+                                   : nullptr));
     const bool socket_timestamping_probe_active =
         UpdateSocketTimestampingProbeAfterSend(
             sequence, status, write_path, socket_timestamping_probe_started);
-    const websocket::SocketSendQueueDiagnostics socket_send_queue =
-        SnapshotSocketSendQueueDiagnostics();
     if (status != OrderSendStatus::kOk) {
       LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
     }
+    const websocket::SocketSendQueueDiagnostics socket_send_queue =
+        SnapshotSocketSendQueueDiagnostics();
     request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
@@ -1167,6 +1167,9 @@ class OrderSession {
 
   [[nodiscard]] websocket::SocketSendQueueDiagnostics
   SnapshotSocketSendQueueDiagnostics() noexcept {
+    if constexpr (!core::kOrderAckDiagnosticTcpInfoEnabled) {
+      return {};
+    }
     return websocket::SnapshotSocketSendQueueDiagnostics(
         client_.Core().NativeFd());
   }

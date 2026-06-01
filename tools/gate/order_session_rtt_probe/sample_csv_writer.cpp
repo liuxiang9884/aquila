@@ -61,6 +61,9 @@ void SampleCsvWriter::Write(const ProbeSampleCsvRow& row) noexcept {
 }
 
 void SampleCsvWriter::Close() {
+  if (writer_ != nullptr) {
+    writer_->flush();
+  }
   writer_.reset();
 }
 

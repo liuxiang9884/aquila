@@ -24,8 +24,8 @@ inline constexpr bool kOrderAckDiagnosticSocketTimestampingEnabled =
 inline constexpr bool kOrderAckDiagnosticPcapGateHeaderEnabled =
     kOrderAckDiagnosticLevel >= 5;
 
-[[nodiscard]] inline constexpr int RequiredOrderAckDiagnosticLevelForTcpInfo()
-    noexcept {
+[[nodiscard]] inline constexpr int
+RequiredOrderAckDiagnosticLevelForTcpInfo() noexcept {
   return 3;
 }
 
@@ -36,7 +36,7 @@ RequiredOrderAckDiagnosticLevelForSocketTimestamping() noexcept {
 
 [[nodiscard]] inline constexpr bool OrderAckDiagnosticLevelSupports(
     int required_level) noexcept {
-  return required_level <= kOrderAckDiagnosticLevel;
+  return required_level >= 0 && required_level <= kOrderAckDiagnosticLevel;
 }
 
 [[nodiscard]] inline constexpr const char* OrderAckDiagnosticLevelName(

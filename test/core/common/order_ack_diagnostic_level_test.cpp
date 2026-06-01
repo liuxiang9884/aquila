@@ -26,6 +26,7 @@ TEST(OrderAckDiagnosticLevelTest, ExposesCompileTimeLevelAndCapabilities) {
 TEST(OrderAckDiagnosticLevelTest, ReportsMissingRuntimeCapabilities) {
   EXPECT_EQ(RequiredOrderAckDiagnosticLevelForTcpInfo(), 3);
   EXPECT_EQ(RequiredOrderAckDiagnosticLevelForSocketTimestamping(), 4);
+  EXPECT_FALSE(OrderAckDiagnosticLevelSupports(-1));
   EXPECT_TRUE(OrderAckDiagnosticLevelSupports(0));
   EXPECT_TRUE(OrderAckDiagnosticLevelSupports(kOrderAckDiagnosticLevel));
   EXPECT_FALSE(OrderAckDiagnosticLevelSupports(kOrderAckDiagnosticLevel + 1));

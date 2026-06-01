@@ -486,9 +486,6 @@ name = "gate_order_session_rtt_probe"
 [probe.inputs]
 connections_file = "/home/liuxiang/tmp/connections.csv"
 
-[probe.sessions]
-enable_tcp_info = true
-
 [probe.sampling]
 samples_per_session = 25
 )toml");
@@ -1727,10 +1724,14 @@ TEST(GateOrderSessionRttProbeTest, BuildsPinnedOrderSessionConfig) {
   EXPECT_EQ(pinned.connection.port, "443");
   EXPECT_EQ(pinned.connection.target, "/v4/ws/usdt");
   EXPECT_EQ(pinned.connection.runtime_policy.io_cpu_id, 6);
-  EXPECT_TRUE(pinned.enable_tcp_info_diagnostics);
-  EXPECT_TRUE(pinned.connection.socket_timestamping.enabled);
-  EXPECT_TRUE(pinned.connection.socket_timestamping.tx_software);
-  EXPECT_TRUE(pinned.connection.socket_timestamping.tx_ack);
+  EXPECT_EQ(pinned.enable_tcp_info_diagnostics,
+            core::kOrderAckDiagnosticTcpInfoEnabled);
+  EXPECT_EQ(pinned.connection.socket_timestamping.enabled,
+            core::kOrderAckDiagnosticSocketTimestampingEnabled);
+  EXPECT_EQ(pinned.connection.socket_timestamping.tx_software,
+            core::kOrderAckDiagnosticSocketTimestampingEnabled);
+  EXPECT_EQ(pinned.connection.socket_timestamping.tx_ack,
+            core::kOrderAckDiagnosticSocketTimestampingEnabled);
 }
 
 TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
@@ -1780,11 +1781,14 @@ TEST(GateOrderSessionRttProbeTest, BuildsSingleSessionLiveRunPlan) {
             "52.198.250.74");
   EXPECT_EQ(
       result.value.order_session_config.connection.runtime_policy.io_cpu_id, 6);
-  EXPECT_TRUE(result.value.order_session_config.enable_tcp_info_diagnostics);
-  EXPECT_TRUE(
-      result.value.order_session_config.connection.socket_timestamping.enabled);
-  EXPECT_TRUE(result.value.order_session_config.connection.socket_timestamping
-                  .tx_software);
+  EXPECT_EQ(result.value.order_session_config.enable_tcp_info_diagnostics,
+            core::kOrderAckDiagnosticTcpInfoEnabled);
+  EXPECT_EQ(
+      result.value.order_session_config.connection.socket_timestamping.enabled,
+      core::kOrderAckDiagnosticSocketTimestampingEnabled);
+  EXPECT_EQ(result.value.order_session_config.connection.socket_timestamping
+                .tx_software,
+            core::kOrderAckDiagnosticSocketTimestampingEnabled);
   EXPECT_EQ(result.value.paths.run_dir,
             "/home/liuxiang/tmp/gate_order_session_rtt_probe/run_1");
   EXPECT_EQ(result.value.paths.sample_csv_path,
@@ -1850,10 +1854,12 @@ TEST(GateOrderSessionRttProbeTest, BuildsMultiSessionLiveRunPlan) {
   EXPECT_EQ(result.value.sessions[0]
                 .order_session_config.connection.runtime_policy.io_cpu_id,
             10);
-  EXPECT_TRUE(result.value.sessions[0]
-                  .order_session_config.connection.socket_timestamping.enabled);
-  EXPECT_TRUE(result.value.sessions[0]
-                  .order_session_config.connection.socket_timestamping.tx_ack);
+  EXPECT_EQ(result.value.sessions[0]
+                .order_session_config.connection.socket_timestamping.enabled,
+            core::kOrderAckDiagnosticSocketTimestampingEnabled);
+  EXPECT_EQ(result.value.sessions[0]
+                .order_session_config.connection.socket_timestamping.tx_ack,
+            core::kOrderAckDiagnosticSocketTimestampingEnabled);
   EXPECT_EQ(result.value.sessions[7].connect_ip, "10.0.0.8");
   EXPECT_EQ(result.value.sessions[7].order_session_id, 7U);
   EXPECT_EQ(result.value.sessions[7].local_order_id_first, 29U);
@@ -2008,7 +2014,9 @@ TEST(GateOrderSessionRttProbeTest, RejectsMultiSessionLiveRunPlan) {
 TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
   EnsureRttProbeLoggingStarted();
   const std::filesystem::path output_path =
-      TestTmpDir() / "aquila_order_session_rtt_probe_samples_test.csv";
+      TestTmpDir() /
+      fmt::format("aquila_order_session_rtt_probe_samples_test_l{}.csv",
+                  core::kOrderAckDiagnosticLevel);
   std::filesystem::remove(output_path);
 
   SampleCsvWriter writer;
@@ -2124,7 +2132,9 @@ TEST(GateOrderSessionRttProbeTest, WritesSampleCsvRowsThroughQuillCsvWriter) {
 TEST(GateOrderSessionRttProbeTest, SampleCsvWriterCreatesParentDirectory) {
   EnsureRttProbeLoggingStarted();
   const std::filesystem::path output_path =
-      TestTmpDir() / "rtt_probe_nested" / "samples" / "samples.csv";
+      TestTmpDir() /
+      fmt::format("rtt_probe_nested_l{}", core::kOrderAckDiagnosticLevel) /
+      "samples" / "samples.csv";
   std::filesystem::remove_all(output_path.parent_path().parent_path());
 
   SampleCsvWriter writer;

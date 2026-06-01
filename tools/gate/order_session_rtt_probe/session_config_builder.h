@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "core/common/order_ack_diagnostic_level.h"
 #include "core/websocket/socket_timestamping.h"
 #include "exchange/gate/trading/order_session_config.h"
 
@@ -36,8 +37,12 @@ struct PinnedOrderSessionOptions {
   if (options.worker_cpu_id) {
     base.connection.runtime_policy.io_cpu_id = *options.worker_cpu_id;
   }
-  base.enable_tcp_info_diagnostics = options.enable_tcp_info_diagnostics;
-  base.connection.socket_timestamping = options.timestamping;
+  base.enable_tcp_info_diagnostics = core::kOrderAckDiagnosticTcpInfoEnabled &&
+                                     options.enable_tcp_info_diagnostics;
+  base.connection.socket_timestamping =
+      core::kOrderAckDiagnosticSocketTimestampingEnabled
+          ? options.timestamping
+          : websocket::SocketTimestampingConfig{};
   return base;
 }
 
