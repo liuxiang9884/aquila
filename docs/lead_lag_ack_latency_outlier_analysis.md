@@ -6,8 +6,9 @@
 
 当前证据只能说明 CPU4 同期满载、且 strategy / order session / feedback session 当时都绑 CPU4 并 active-spin，因此本地调度或同核竞争是强候选；但原始日志不能证明具体卡在 OS deschedule、runtime hook、socket read / parse、网络路径还是 Gate 侧。
 
-该问题当前仍未复现到 `219ms` 量级。2026-06-01 的 8 条 private plain RTT probe 已能把 `10ms+` Ack tail
-定位到 `write_complete -> rx_software` 大段，未支持本机 owner thread 调度、读解析或本机写队列积压作为主要原因。
+该问题当前仍未复现到 `219ms` 量级。2026-06-01 的 8 条 private plain RTT probe 与 no TLS pcap
+已能把 `10ms+` Ack tail 定位到 request 出现在本机 pcap 后、Gate submit Ack response 回到本机 pcap 前；
+未支持本机 owner thread 调度、读解析、本机写队列积压或本机发送侧 TCP retrans 作为主要原因。
 
 ## 触发样本
 
@@ -191,6 +192,91 @@ Top tail 样本均呈现同一形态：encode / enqueue / send / write complete 
 - 指向：请求完整写入本机 socket 后，到业务 Ack packet 进入本机 kernel 前的大段，可能覆盖本机内核 / NIC、private link、Gate edge、Gate 应用处理和回程路径。
 - 限制：当前是 software timestamping，不能严格证明 packet leaves / returns NIC，也不能把剩余大段拆成 Gate 应用处理或网络单向延迟。若需要确认 NIC 边界，需要 hardware timestamp 或 pcap。
 
+2026-06-01 8 条 private plain RTT probe + no TLS pcap：
+
+- Run 目录：`/home/liuxiang/tmp/gate_order_session_rtt_probe/20260601_021256_gate_rtt_private8_plain_30m_pcap/`
+- 临时配置：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/configs/`
+- pcap：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/pcap/gate_private_plain_10.0.1.154_tcp80.pcap`
+- pcap 对齐输出：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/pcap_alignment_top25.csv`
+- 路由：`10.0.1.154 dev enp55s0 src 10.0.1.103`。
+- NIC timestamp 能力：`enp55s0` 只有 software TX/RX/system clock，`PTP Hardware Clock: none`，无 hardware TX/RX timestamp。
+- tcpdump：`22409` packets captured / received by filter，`0` packets dropped by kernel。
+- 样本：`1798` Ack，feedback routed `1798/1798`，`invalid=0`，`fill=0`。
+- 安全检查：run 前后 12 个目标合约 open orders 为空；全账户 futures positions `size != 0` 为 0，`pending_orders` 为 0。
+
+Ack RTT 分布：
+
+| metric | value |
+| --- | ---: |
+| p50 | `0.632ms` |
+| p95 | `0.879ms` |
+| p99 | `4.465ms` |
+| max | `25.921ms` |
+| `>5ms` | `16 / 1798` |
+| `>10ms` | `12 / 1798` |
+
+`>5ms` tail 按 session 分布：
+
+| session | count |
+| --- | ---: |
+| `private-00` | `1` |
+| `private-01` | `6` |
+| `private-02` | `2` |
+| `private-03` | `1` |
+| `private-04` | `1` |
+| `private-05` | `4` |
+| `private-06` | `1` |
+| `private-07` | `0` |
+
+最大样本：
+
+| 字段 | 值 |
+| --- | --- |
+| session | `private-02` |
+| contract | `SUI_USDT` |
+| local_order_id | `504403158265495818` |
+| request_sequence | `10` |
+| ack_rtt_ns | `25921194` |
+| tcp_info_rtt_us | `3755` |
+| tcp_info_rttvar_us | `6570` |
+| tcp_info_retrans / total_retrans / unacked | `0 / 0 / 0` |
+| tcp_notsent_bytes | `0` |
+| pcap request source port | `57842` |
+
+最大样本的 pcap 阶段拆解：
+
+```text
+write_complete_ns
+  |
+  | -5.572us
+  | 本机 pcap 已看到 request packet；负值来自 pcap 微秒精度 / 抓包点与软件时间戳误差
+  v
+pcap request packet
+  |
+  | 25.895ms  <-- 本轮最大样本的主要 tail
+  | 覆盖去程网络、Gate edge TCP stack、Gate app / order path、回程网络
+  v
+pcap remote TCP ACK + WebSocket Ack response
+  |
+  | 0.095us 到 ts_rx_software，23.191us 到 ack_receive
+  | Ack packet 回到本机 pcap 后，本机 RX / 用户态读取 / parse / callback 是微秒级
+  v
+ack_local_receive_ns
+```
+
+Top tail 的 pcap 形态一致：
+
+- `write_complete -> pcap request` 是同一时刻附近，差值在几微秒内，pcap 微秒精度下可出现小负值。
+- `pcap request -> remote TCP ACK` 与 `pcap request -> WebSocket Ack response` 相等；第一个 ACK request 的远端包就是携带业务 Ack response 的包，说明 peer 没有先单独 ACK request，而是等业务响应一起 piggyback。
+- `Ack response pcap -> ts_rx_software / ack_receive` 是微秒级，不支持本机 RX 后处理作为 tail。
+- top tail 的 `tcp_info_retrans=0`、`tcp_info_total_retrans=0`、`tcp_info_unacked=0`、`tcp_notsent_bytes=0`；pcap 中也没有支持 top tail 的 payload 重传证据。
+
+因此这轮 pcap 证据把归因进一步收窄为：
+
+- 排除：本机用户态 write / read / parse / callback、本机 TCP socket send queue、本机发送侧重传。
+- 指向：request 已经出现在本机抓包点之后，到 Gate submit Ack response 回到本机抓包点之前的链路大段。
+- 限制：由于 `enp55s0` 不支持 hardware timestamp，pcap 仍不能严格证明 packet 已经离开 / 返回物理 NIC，也不能把剩余大段拆成 private link 去程、Gate edge / app 处理或回程。
+
 ## 复现时怎么分析
 
 优先看同一时钟域字段：
@@ -234,6 +320,6 @@ perf sched latency
 
 - `219ms` Ack RTT outlier 仍未复现，不基于 2026-05-25 单次样本改 order session 架构。
 - 后续复现 Ack tail 时，继续按 `docs/diagnostic_fields.md` 中的 order write path、runtime loop、`TCP_INFO` 和 socket timestamping 字段归因。
-- 对 `10ms-20ms` 级 private plain tail，优先检查 `write_complete -> rx_software` 大段；若本机 write / runtime / RX 后处理仍是几十微秒，则不要把原因归到 owner thread。
-- 若要确认 tail 是否发生在本机 NIC 或网络路径，补 hardware timestamp 或 pcap；software timestamping 只能做大段归因。
+- 对 `10ms-30ms` 级 private plain tail，若 no TLS pcap 显示 `pcap request -> WebSocket Ack response` 占主导，且 `Ack response pcap -> ack_receive` 为微秒级，则不要把原因归到本机 owner thread、read parse 或本机 TCP socket 路径。
+- 若要继续拆 private link 去程、Gate edge / app 处理和回程，需要 hardware timestamp、链路侧 / Gate 侧证据或多端抓包；当前 `enp55s0` 不支持 hardware timestamp。
 - 多连接 / 多 IP 对照用 `docs/gate_order_session_rtt_probe_design.md` 的 probe，不把 URL 相同当作路径相同的证据。

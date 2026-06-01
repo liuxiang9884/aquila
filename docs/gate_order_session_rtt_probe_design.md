@@ -81,6 +81,46 @@ Ack RTT 分布：
 - 这轮未复现 `219ms` Ack RTT outlier；观察到的 `10ms-20ms` tail 只能定位到 software-level 的 kernel RX 前大段。
 - 当前没有 hardware timestamp 或 pcap，不能继续把 tail 严格拆成本机 NIC、private link、Gate edge、Gate 应用处理或回程路径。
 
+随后同日跑过 no TLS pcap 对齐测试：
+
+- Run 目录：`/home/liuxiang/tmp/gate_order_session_rtt_probe/20260601_021256_gate_rtt_private8_plain_30m_pcap/`
+- 临时配置：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/configs/`
+- pcap：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/pcap/gate_private_plain_10.0.1.154_tcp80.pcap`
+- 对齐输出：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/pcap_alignment_top25.csv`
+- 路由：`10.0.1.154 dev enp55s0 src 10.0.1.103`。
+- NIC 能力：`enp55s0` 无 hardware timestamp，只有 software timestamp；pcap 不能替代物理 NIC TX/RX 时间戳。
+- tcpdump：`22409` packets captured / received by filter，`0` packets dropped by kernel。
+- 结果：`1798` 个 Ack，feedback routed `1798/1798`，`invalid=0`，`fill=0`，run 前后 REST flat / no open orders。
+
+Ack RTT 分布：
+
+| metric | value |
+| --- | ---: |
+| p50 | `0.632ms` |
+| p95 | `0.879ms` |
+| p99 | `4.465ms` |
+| max | `25.921ms` |
+| `>5ms` | `16 / 1798` |
+| `>10ms` | `12 / 1798` |
+
+最大样本 pcap 对齐：
+
+| 阶段 | 值 |
+| --- | ---: |
+| `ack_rtt` | `25.921ms` |
+| `write_complete -> pcap request` | `-5.572us` |
+| `pcap request -> remote TCP ACK` | `25.895ms` |
+| `pcap request -> WebSocket Ack response` | `25.895ms` |
+| `Ack response pcap -> ts_rx_software` | `0.095us` |
+| `Ack response pcap -> ack_receive` | `23.191us` |
+
+pcap 结论：
+
+- Top tail 的远端 TCP ACK 和 WebSocket Ack response 是同一 pcap 时间戳；第一个 ACK request 的远端 packet 就携带业务 Ack response。
+- Tail 主体不是本机用户态 write / read / parse / callback，也不是本机 TCP socket send queue 或本机发送侧 retrans。
+- 当前证据把 tail 定位到 request 出现在本机 pcap 后、Gate submit Ack response 回到本机 pcap 前的大段；这段仍覆盖 private link 去程、Gate edge / app 处理和回程。
+- 若要继续拆到物理 NIC 或网络单向阶段，需要 hardware timestamp、链路侧 / Gate 侧证据或多端抓包。
+
 ## 配置模型
 
 TOML 保存运行参数，CSV 保存连接列表，避免 IP 过多时 TOML 膨胀。
@@ -251,6 +291,19 @@ status=acked 或 sample completed
 
 不要把 terminal lifecycle tail 并入 Ack RTT。Gate private `futures.orders` terminal feedback 是另一个诊断面。
 
+no TLS pcap 对齐时，建议按 `local_order_id` / `text=t-<local_order_id>` 将 request / Ack response 与 sample CSV 关联：
+
+```text
+write_complete -> pcap request
+pcap request -> first remote packet ACKing request bytes
+pcap request -> WebSocket Ack response
+Ack response pcap -> ts_rx_software / ack_receive
+```
+
+若 `first remote packet ACKing request bytes` 与 `WebSocket Ack response` 是同一 packet 或同一 pcap 时间戳，
+说明 peer 没有先单独 TCP ACK request；tail 不能解释为本机 write 或本机 RX 后处理。pcap 时间戳是抓包点时间，
+没有 hardware timestamp 时仍不能证明 packet 离开 / 返回物理 NIC 的精确时刻。
+
 ## 安全边界
 
 - 必须显式 `--execute` 才允许下单。
@@ -264,7 +317,7 @@ status=acked 或 sample completed
 1. 在工具内补 REST preflight / run-end flat guard，并把 `order_session_rtt_rest_guard.csv` 与 `raw_rest/` 真正写出。
 2. 复核 IOC execute 的 unexpected fill / terminal timeout 处理，确认失败时退出码和 sample invalid 语义稳定。
 3. 在 REST guard 完成后再启用 `gtc` / `ioc+gtc` live execute。
-4. 增加离线分析脚本，输出按 session / group / ip / symbol / rolling window 的分布，并对 top Ack tail 自动生成阶段拆解表。
+4. 增加离线分析脚本，输出按 session / group / ip / symbol / rolling window 的分布，并对 top Ack tail 自动生成 socket timestamping / pcap 阶段拆解表。
 5. 拿到足够 live 样本后再设计 score；score 不进入当前热路径。
 
 ## 验证命令
