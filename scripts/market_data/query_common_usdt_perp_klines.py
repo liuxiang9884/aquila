@@ -74,7 +74,6 @@ def exchange_result_columns(windows: Iterable[int]) -> list[str]:
             "close_count",
             "latest_closed_open_time_ms",
             "reference_price",
-            "latest_close",
         ]
     )
     return columns
@@ -399,9 +398,10 @@ def build_exchange_result_rows(
         row["latest_closed_open_time_ms"] = (
             latest_row.open_time_ms if latest_row is not None else ""
         )
-        latest_close = _format_float(latest_row.close if latest_row is not None else None)
-        row["reference_price"] = latest_close
-        row["latest_close"] = latest_close
+        reference_price = _format_float(
+            latest_row.close if latest_row is not None else None
+        )
+        row["reference_price"] = reference_price
         result_rows.append(row)
     return result_rows
 
