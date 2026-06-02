@@ -69,7 +69,14 @@ def exchange_result_columns(windows: Iterable[int]) -> list[str]:
     columns.extend([f"quote_volume_{window}m" for window in normalized])
     columns.extend([f"volume_{window}m" for window in normalized])
     columns.extend([f"valid_{window}m" for window in normalized])
-    columns.extend(["close_count", "latest_closed_open_time_ms", "latest_close"])
+    columns.extend(
+        [
+            "close_count",
+            "latest_closed_open_time_ms",
+            "reference_price",
+            "latest_close",
+        ]
+    )
     return columns
 
 
@@ -392,7 +399,9 @@ def build_exchange_result_rows(
         row["latest_closed_open_time_ms"] = (
             latest_row.open_time_ms if latest_row is not None else ""
         )
-        row["latest_close"] = _format_float(latest_row.close if latest_row is not None else None)
+        latest_close = _format_float(latest_row.close if latest_row is not None else None)
+        row["reference_price"] = latest_close
+        row["latest_close"] = latest_close
         result_rows.append(row)
     return result_rows
 

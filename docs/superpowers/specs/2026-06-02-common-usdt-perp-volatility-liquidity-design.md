@@ -32,14 +32,15 @@ vol_30m_bps,vol_60m_bps,
 quote_volume_30m,quote_volume_60m,
 volume_30m,volume_60m,
 valid_30m,valid_60m,
-close_count,latest_closed_open_time_ms,latest_close
+close_count,latest_closed_open_time_ms,reference_price,latest_close
 ```
 
 - `vol_*m_bps`：最近 N 分钟 close-to-close realized volatility，单位 bps；N 分钟需要最近 `N + 1` 根已完成 1m close。
 - `quote_volume_*m`：最近 N 根已完成 1m K 线的 `quote_volume` 求和。Binance 为 USDT quote asset volume；Gate 为 `sum`，USDT futures 下作为 USDT 成交额使用。
 - `volume_*m`：最近 N 根已完成 1m K 线的原始 `volume` 求和，仅作为交易所内参考，不作为跨交易所主流动性指标。
 - `valid_*m`：对应窗口是否同时有足够 close 和 K 线数据。
-- `latest_closed_open_time_ms` / `latest_close`：该 symbol 最近一根已完成 1m K 线的时间和 close。
+- `reference_price`：参考价，取该交易所最近一根已完成 1m K 线的 close。
+- `latest_closed_open_time_ms` / `latest_close`：该 symbol 最近一根已完成 1m K 线的时间和 close；`latest_close` 与 `reference_price` 值相同，保留用于兼容已有输出。
 
 ## 计算边界
 

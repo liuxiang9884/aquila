@@ -185,6 +185,7 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
         self.assertEqual(row["valid_60m"], "false")
         self.assertEqual(row["close_count"], 31)
         self.assertEqual(row["latest_closed_open_time_ms"], 30 * klines.INTERVAL_MS)
+        self.assertEqual(row["reference_price"], "130.000000")
         self.assertEqual(row["latest_close"], "130.000000")
 
     def test_write_exchange_result_csv(self):
@@ -205,6 +206,7 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
                     "valid_60m": "false",
                     "close_count": 31,
                     "latest_closed_open_time_ms": 1800000,
+                    "reference_price": "130.000000",
                     "latest_close": "130.000000",
                 }
             ]
@@ -215,6 +217,7 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
                 loaded_rows = list(csv.DictReader(handle))
 
         self.assertEqual(loaded_rows[0]["quote_volume_30m"], "4800.000000")
+        self.assertEqual(loaded_rows[0]["reference_price"], "130.000000")
         self.assertEqual(loaded_rows[0]["valid_60m"], "false")
 
 
