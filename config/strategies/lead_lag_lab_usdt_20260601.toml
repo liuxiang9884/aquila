@@ -34,8 +34,8 @@ precision = 0.000001
 open_notional = 2000.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 300
-close_slippage = 300
+open_slippage = 500
+close_slippage = 500
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
