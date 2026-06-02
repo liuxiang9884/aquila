@@ -57,6 +57,7 @@ docs/evaluation_support.md
 - 2026-06-02 LeadLag live report / CSV 已加入 Ack RTT 三段拆解、滑点、actual / raw PnL 和 actual / raw 胜率分析；字段说明同步在 `docs/lead_lag_live_report_csv_schema.md`，生成报告时会复制到 report 目录。
 - 2026-06-01 / 2026-06-02 单币 `LAB_USDT` 8 小时实盘 run `20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h` 已正常 flat 结束并生成 report：`reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`。配置为 `open_notional=1000.0`、`max_gross_notional=2000.0`、`open_slippage=150`、`close_slippage=150`、`lag_taker_fee=0.00020`；Gate data / order / feedback 都走 private plain `fxws-private.gateapi.io:80` / `connect_ip=10.0.1.154`，Binance data 走 public bookTicker。
 - 该 `LAB_USDT` run 结果：`signals=223`、orders `223`、filled orders `20`，guard `normal_exit_flat`，`needs_reconcile=false`，`manual_intervention=false`，策略期 `feedback_continuity_lost_events=0`。actual net PnL `24.9078195424`、raw net PnL `16.2176315424`；actual win rate `75.00%`，raw win rate `66.67%`。Ack RTT p50 `0.615ms`、p95 `7.313ms`、max `243.996ms`；`>5ms` Ack tail 共 `23` 个，dominant stage 为 Gate `x_in->x_out` `21` 个、上行 `1` 个、下行 `1` 个。
+- 2026-06-02 stop loss 设计建议已整理到 `docs/lead_lag_live_runtime_plan.md`：当前 trailing stop 更适合作为灾难兜底；后续建议新增更近的策略退出层，并把 stoploss trigger 与 execution slippage 拆开配置。
 
 ### Ack Latency / Socket Timestamping
 
@@ -242,7 +243,7 @@ rg 'aquila_evaluation' core exchange tools
 1. 先读 `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_operations_pipeline.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_reconcile_design.md` 和 `strategy/lead_lag/README.md`。
 2. signal-only 用 `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml`；真实订单 `--execute` 用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`。
 3. 如果用户说 `lead_lag_live_replay_signal_parity <duration>`，按 `docs/lead_lag_live_replay_testing.md` 执行 live signal、DataReader binary record、replay 和 signal CSV 对比，产物写入 `/home/liuxiang/tmp/<run_id>`。
-4. 如果用户继续 `LAB_USDT` 单币实盘，先对照最近 run 的临时配置和 report：`reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`，确认 `open_notional` / `max_gross_notional` / slippage / fee 是否需要沿用或调整。
+4. 如果用户继续 `LAB_USDT` 单币实盘，先对照最近 run 的临时配置和 report：`reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`，确认 `open_notional` / `max_gross_notional` / slippage / fee 是否需要沿用或调整；stop loss / risk close 设计建议见 `docs/lead_lag_live_runtime_plan.md`。
 5. IOC partial-fill / decimal filled close 当前不是 active blocker；后续如再次异常，再做 targeted small smoke。
 6. account / position realtime feedback 作为 V2 可选能力；V1 继续依赖当前 guardrails 和 REST final check。
 
