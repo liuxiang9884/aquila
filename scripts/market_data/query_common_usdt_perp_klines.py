@@ -20,6 +20,7 @@ DEFAULT_GATE_BASE_URL = "https://api.gateio.ws/api/v4"
 DEFAULT_BINANCE_BASE_URL = "https://fapi.binance.com"
 USER_AGENT = "aquila-common-usdt-perp-kline-volatility/1.0"
 INTERVAL_MS = 60_000
+DEFAULT_VOL_WINDOWS = (30, 60)
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,20 @@ KLINE_COLUMNS = [
     "quote_volume",
     "closed",
 ]
+
+
+def exchange_result_columns(windows: Iterable[int]) -> list[str]:
+    normalized = sorted({int(window) for window in windows})
+    columns = ["exchange", "symbol", "exchange_symbol"]
+    columns.extend([f"vol_{window}m_bps" for window in normalized])
+    columns.extend([f"quote_volume_{window}m" for window in normalized])
+    columns.extend([f"volume_{window}m" for window in normalized])
+    columns.extend([f"valid_{window}m" for window in normalized])
+    columns.extend(["close_count", "latest_closed_open_time_ms", "latest_close"])
+    return columns
+
+
+EXCHANGE_RESULT_COLUMNS = exchange_result_columns(DEFAULT_VOL_WINDOWS)
 
 
 def summary_columns(windows: Iterable[int]) -> list[str]:
@@ -268,10 +283,36 @@ def closed_closes(rows: Iterable[KlineRow]) -> list[float]:
     return [row.close for row in sorted_rows]
 
 
+def closed_rows(rows: Iterable[KlineRow]) -> list[KlineRow]:
+    return sorted(
+        (row for row in rows if row.closed),
+        key=lambda row: row.open_time_ms,
+    )
+
+
 def _format_float(value: float | None) -> str:
     if value is None:
         return ""
     return f"{value:.6f}"
+
+
+def _exchange_symbol(common_symbol: CommonSymbol, exchange: str) -> str:
+    if exchange == "gate":
+        return common_symbol.gate_symbol
+    if exchange == "binance":
+        return common_symbol.binance_symbol
+    raise ValueError(f"unsupported exchange: {exchange}")
+
+
+def _latest_sum(rows: list[KlineRow], window: int, field: str) -> float | None:
+    if len(rows) < window:
+        return None
+    selected_rows = rows[-window:]
+    if field == "volume":
+        return sum(row.volume for row in selected_rows)
+    if field == "quote_volume":
+        return sum(row.quote_volume for row in selected_rows)
+    raise ValueError(f"unsupported sum field: {field}")
 
 
 def build_summary_rows(
@@ -314,6 +355,48 @@ def build_summary_rows(
     return rows
 
 
+def build_exchange_result_rows(
+    exchange: str,
+    symbols: Iterable[CommonSymbol],
+    rows_by_symbol: dict[str, list[KlineRow]],
+    windows: list[int],
+) -> list[dict[str, Any]]:
+    normalized_windows = sorted({int(window) for window in windows})
+    result_rows: list[dict[str, Any]] = []
+    for common_symbol in symbols:
+        rows = closed_rows(rows_by_symbol.get(common_symbol.symbol, []))
+        closes = [row.close for row in rows]
+        latest_row = rows[-1] if rows else None
+        row: dict[str, Any] = {
+            "exchange": exchange,
+            "symbol": common_symbol.symbol,
+            "exchange_symbol": _exchange_symbol(common_symbol, exchange),
+        }
+
+        vol_by_window: dict[int, float | None] = {}
+        for window in normalized_windows:
+            vol_by_window[window] = realized_vol_bps(closes, window)
+            row[f"vol_{window}m_bps"] = _format_float(vol_by_window[window])
+        for window in normalized_windows:
+            row[f"quote_volume_{window}m"] = _format_float(
+                _latest_sum(rows, window, "quote_volume")
+            )
+        for window in normalized_windows:
+            row[f"volume_{window}m"] = _format_float(
+                _latest_sum(rows, window, "volume")
+            )
+        for window in normalized_windows:
+            row[f"valid_{window}m"] = _bool_text(vol_by_window[window] is not None)
+
+        row["close_count"] = len(closes)
+        row["latest_closed_open_time_ms"] = (
+            latest_row.open_time_ms if latest_row is not None else ""
+        )
+        row["latest_close"] = _format_float(latest_row.close if latest_row is not None else None)
+        result_rows.append(row)
+    return result_rows
+
+
 def write_kline_csv(output_path: Path, rows: Iterable[KlineRow]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as handle:
@@ -328,6 +411,15 @@ def write_kline_csv(output_path: Path, rows: Iterable[KlineRow]) -> None:
 def write_summary_csv(output_path: Path, rows: list[dict[str, Any]]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(rows[0].keys()) if rows else summary_columns([30, 60])
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_exchange_result_csv(output_path: Path, rows: list[dict[str, Any]]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0].keys()) if rows else EXCHANGE_RESULT_COLUMNS
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
@@ -409,7 +501,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def run(args: argparse.Namespace) -> Path:
-    windows = sorted(set(args.vol_window or [30, 60]))
+    windows = sorted(set(args.vol_window or DEFAULT_VOL_WINDOWS))
     limit = max(args.lookback_minutes + 1, max(windows) + 1)
     requested_symbols = parse_symbols_arg(args.symbols)
     symbols = load_common_symbols(args.catalog, requested_symbols=requested_symbols)
@@ -451,10 +543,27 @@ def run(args: argparse.Namespace) -> Path:
         binance_rows_by_symbol=binance_rows_by_symbol,
         windows=windows,
     )
+    gate_result_rows = build_exchange_result_rows(
+        "gate",
+        symbols,
+        gate_rows_by_symbol,
+        windows,
+    )
+    binance_result_rows = build_exchange_result_rows(
+        "binance",
+        symbols,
+        binance_rows_by_symbol,
+        windows,
+    )
 
     write_kline_csv(run_dir / "gate_1m_klines.csv", all_gate_rows)
     write_kline_csv(run_dir / "binance_1m_klines.csv", all_binance_rows)
     write_summary_csv(run_dir / "volatility_summary.csv", summary_rows)
+    write_exchange_result_csv(run_dir / "gate_volatility_liquidity.csv", gate_result_rows)
+    write_exchange_result_csv(
+        run_dir / "binance_volatility_liquidity.csv",
+        binance_result_rows,
+    )
     write_metadata_json(
         run_dir / "run_metadata.json",
         {
@@ -466,6 +575,10 @@ def run(args: argparse.Namespace) -> Path:
             "vol_windows": windows,
             "gate_rows": len(all_gate_rows),
             "binance_rows": len(all_binance_rows),
+            "gate_result_rows": len(gate_result_rows),
+            "binance_result_rows": len(binance_result_rows),
+            "gate_result_csv": str(run_dir / "gate_volatility_liquidity.csv"),
+            "binance_result_csv": str(run_dir / "binance_volatility_liquidity.csv"),
             "failures": failures,
         },
     )
@@ -484,6 +597,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"gate_klines={run_dir / 'gate_1m_klines.csv'}")
     print(f"binance_klines={run_dir / 'binance_1m_klines.csv'}")
     print(f"summary={run_dir / 'volatility_summary.csv'}")
+    print(f"gate_result={run_dir / 'gate_volatility_liquidity.csv'}")
+    print(f"binance_result={run_dir / 'binance_volatility_liquidity.csv'}")
     return 0
 
 

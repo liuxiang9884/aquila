@@ -140,6 +140,83 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
         self.assertEqual(loaded_kline[0]["symbol"], "BTC_USDT")
         self.assertEqual(loaded_summary[0]["gate_valid_30m"], "true")
 
+    def test_build_exchange_result_rows_sums_latest_closed_quote_volume(self):
+        symbols = [
+            klines.CommonSymbol(
+                symbol="BTC_USDT",
+                gate_symbol="BTC_USDT",
+                binance_symbol="BTCUSDT",
+            )
+        ]
+        rows = [
+            klines.KlineRow(
+                exchange="gate",
+                symbol="BTC_USDT",
+                exchange_symbol="BTC_USDT",
+                open_time_ms=index * klines.INTERVAL_MS,
+                close_time_ms=(index + 1) * klines.INTERVAL_MS - 1,
+                open=100.0 + index,
+                high=101.0 + index,
+                low=99.0 + index,
+                close=100.0 + index,
+                volume=float(index + 1),
+                quote_volume=float((index + 1) * 10),
+                closed=True,
+            )
+            for index in range(31)
+        ]
+
+        result_rows = klines.build_exchange_result_rows(
+            "gate",
+            symbols,
+            {"BTC_USDT": rows},
+            [30, 60],
+        )
+
+        self.assertEqual(len(result_rows), 1)
+        row = result_rows[0]
+        self.assertEqual(row["exchange"], "gate")
+        self.assertEqual(row["symbol"], "BTC_USDT")
+        self.assertEqual(row["exchange_symbol"], "BTC_USDT")
+        self.assertNotEqual(row["vol_30m_bps"], "")
+        self.assertEqual(row["quote_volume_30m"], "4950.000000")
+        self.assertEqual(row["volume_30m"], "495.000000")
+        self.assertEqual(row["valid_30m"], "true")
+        self.assertEqual(row["valid_60m"], "false")
+        self.assertEqual(row["close_count"], 31)
+        self.assertEqual(row["latest_closed_open_time_ms"], 30 * klines.INTERVAL_MS)
+        self.assertEqual(row["latest_close"], "130.000000")
+
+    def test_write_exchange_result_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "gate_volatility_liquidity.csv"
+            rows = [
+                {
+                    "exchange": "gate",
+                    "symbol": "BTC_USDT",
+                    "exchange_symbol": "BTC_USDT",
+                    "vol_30m_bps": "123.000000",
+                    "vol_60m_bps": "",
+                    "quote_volume_30m": "4800.000000",
+                    "quote_volume_60m": "",
+                    "volume_30m": "480.000000",
+                    "volume_60m": "",
+                    "valid_30m": "true",
+                    "valid_60m": "false",
+                    "close_count": 31,
+                    "latest_closed_open_time_ms": 1800000,
+                    "latest_close": "130.000000",
+                }
+            ]
+
+            klines.write_exchange_result_csv(output_path, rows)
+
+            with output_path.open(newline="", encoding="utf-8") as handle:
+                loaded_rows = list(csv.DictReader(handle))
+
+        self.assertEqual(loaded_rows[0]["quote_volume_30m"], "4800.000000")
+        self.assertEqual(loaded_rows[0]["valid_60m"], "false")
+
 
 if __name__ == "__main__":
     unittest.main()
