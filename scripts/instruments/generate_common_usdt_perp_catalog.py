@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-GATE_SCRIPT_DIR = SCRIPT_ROOT / "gate"
-BINANCE_SCRIPT_DIR = SCRIPT_ROOT / "binance"
+GATE_SCRIPT_DIR = SCRIPT_ROOT / "gate" / "market_data"
+BINANCE_SCRIPT_DIR = SCRIPT_ROOT / "binance" / "market_data"
 for script_dir in (GATE_SCRIPT_DIR, BINANCE_SCRIPT_DIR):
     if str(script_dir) not in sys.path:
         sys.path.insert(0, str(script_dir))

@@ -70,7 +70,7 @@ docs/evaluation_support.md
 - 当前主要是 software timestamping，不能严格证明 packet leaves / returns NIC；RX software timestamp 是 `recvmsg()` 粒度，多 Ack 合并时可能共享同一个 RX 时间戳。若要确认 NIC / 网络 / Gate 侧边界，需要硬件 timestamp 字段或 pcap。
 - 2026-06-01 8 条 private plain / no TLS RTT probe 半小时测试未复现 `219ms` outlier；`1798` 个 Ack 中 p50 `0.613ms`、p95 `0.842ms`、p99 `2.632ms`、max `18.709ms`，`invalid=0`、`fill=0`、结束 REST flat / no open orders。Top tail 集中在 `write_complete_ns -> ts_rx_software_ns`，本机 write、runtime loop、DriveRead、RX 后处理和 TCP retrans / notsent backlog 未显示异常。
 - 2026-06-01 追加 no TLS pcap 对齐测试：run `20260601_021256_gate_rtt_private8_plain_30m_pcap`，`1798` 个 Ack 中 p50 `0.632ms`、p95 `0.879ms`、p99 `4.465ms`、max `25.921ms`，`>5ms` 为 `16`，`>10ms` 为 `12`，`invalid=0`、`fill=0`，pcap `22409` packets / `0` kernel drops，run 前后 REST flat。Top tail 的主要耗时在 `pcap request -> remote TCP ACK / WebSocket Ack response`；`Ack response pcap -> ack_receive` 是微秒级，不支持本机用户态、read parse、本机 TCP socket send queue 或本机发送侧 retrans 作为主要原因。当前 `enp55s0` 无 hardware timestamp，仍不能拆分 private link 去程、Gate edge / app 处理和回程。
-- `scripts/gate/analyze_order_session_rtt_pcap.py` 已可将 `order_session_rtt_samples.csv`、no TLS pcap 和 Gate Ack response header `x_in_time` / `x_out_time` 对齐。上述 pcap run 中 `>10ms` tail 的 `pcap_request_to_ack_ms` 总和 `200.750ms`，`gate_x_in_to_x_out_ms` 总和 `193.369ms`，Gate duration share `96.32%`，residual p50 / p95 / max 为 `0.604ms / 0.790ms / 0.799ms`，并分布在多个 session / Gate `conn_id` 上。因此本轮 `>10ms` tail 主要收窄到 Gate 收到 request 后、发出 submit Ack response 前的 Gate edge / app / order path 内部阶段；`5ms-10ms` tail 仍需分开看 residual。
+- `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 已可将 `order_session_rtt_samples.csv`、no TLS pcap 和 Gate Ack response header `x_in_time` / `x_out_time` 对齐。上述 pcap run 中 `>10ms` tail 的 `pcap_request_to_ack_ms` 总和 `200.750ms`，`gate_x_in_to_x_out_ms` 总和 `193.369ms`，Gate duration share `96.32%`，residual p50 / p95 / max 为 `0.604ms / 0.790ms / 0.799ms`，并分布在多个 session / Gate `conn_id` 上。因此本轮 `>10ms` tail 主要收窄到 Gate 收到 request 后、发出 submit Ack response 前的 Gate edge / app / order path 内部阶段；`5ms-10ms` tail 仍需分开看 residual。
 
 ### Gate OrderSession RTT Probe
 
@@ -82,7 +82,7 @@ docs/evaluation_support.md
 - `cycle_cooldown_us` / `order_session_interval_us` 已支持微秒粒度 pacing；旧 `*_ms` 字段仍按毫秒解析。
 - sample CSV 可写 Ack diagnostic window 快照：runtime hook / DriveRead、write path、socket send queue、`TCP_INFO`、socket timestamping 分段字段。`ack_rtt_threshold_ns=0` 时每 Ack 写入 sample CSV，不依赖 diagnostic log 是否被 `max_logs_per_second` 限流。
 - `--execute` 当前支持 `order_mode="ioc"` 的 single-session / multi-session live sample，并已接 feedback SHM reader；REST preflight / run-end guard 仍未在工具内真正执行，真实测试前后需要外部 REST / 人工确认 flat。
-- 下一步：补工具内 REST guard，复核 IOC execute 的 failure / invalid 语义，然后再启用 `gtc` / `ioc+gtc` live execute；继续增强 `scripts/gate/analyze_order_session_rtt_pcap.py` 的 rolling window / top tail 阶段表。
+- 下一步：补工具内 REST guard，复核 IOC execute 的 failure / invalid 语义，然后再启用 `gtc` / `ioc+gtc` live execute；继续增强 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 的 rolling window / top tail 阶段表。
 
 ### DataReader / Recorder
 
@@ -159,6 +159,18 @@ docs/evaluation_support.md
 | `monitor/tui/gate_account_tui.cpp` | TUI 入口 |
 | `monitor/market_data/market_data_thread.*` | monitor 专用 market data reader thread 和 one-shot snapshot |
 
+### Scripts
+
+| 目录 | 职责 |
+| --- | --- |
+| `scripts/gate/market_data/` | Gate futures 合约元数据等行情侧辅助脚本 |
+| `scripts/gate/account/` | Gate REST account / orders / positions read-only 查询 |
+| `scripts/gate/trading/` | Gate REST 下单、撤单、应急 flatten 和 reconcile 辅助脚本 |
+| `scripts/gate/diagnostics/` | Gate WebSocket IP 探测、RTT pcap 对齐和诊断脚本 |
+| `scripts/binance/market_data/` | Binance USD-M futures 合约元数据等行情侧辅助脚本 |
+| `scripts/instruments/` | 跨交易所 instrument catalog 生成 |
+| `scripts/market_data/` | 跨交易所 market data 抓取、kline 和波动率分析 |
+
 ## 常用验证命令
 
 ### 基础
@@ -220,7 +232,7 @@ rg 'aquila_evaluation' core exchange tools
 1. 先读 `docs/gate_order_session_rtt_probe_design.md` 和 `docs/diagnostic_fields.md`。
 2. 若要复现 Ack RTT outlier，使用 private plain all-stage config，并临时设 `ack_rtt_threshold_ns=0`、合适的 `max_logs_per_second`；同时记录 endpoint、owner CPU、send CPU、ack CPU、diagnostic CPU、TCP_INFO 和 socket timestamping 字段。
 3. 分析时区分 Ack RTT、send-to-finish 本地闭环和 exchange Ack-to-finish；terminal lifecycle tail 不并入 Ack path。
-4. 对 `>10ms` private plain tail，优先用 `scripts/gate/analyze_order_session_rtt_pcap.py` 看 `gate_x_in_to_x_out_ms` 和 `residual_ms`；若 Gate duration share 接近 1 且 residual 小于 1ms，不要归因到 owner thread、read parse、本机 TCP socket 或 private link 往返。
+4. 对 `>10ms` private plain tail，优先用 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 看 `gate_x_in_to_x_out_ms` 和 `residual_ms`；若 Gate duration share 接近 1 且 residual 小于 1ms，不要归因到 owner thread、read parse、本机 TCP socket 或 private link 往返。
 5. 对 `5ms-10ms` tail 分开看 Gate duration 与 residual；若 residual 大，再考虑 private link / pcap / hardware timestamp / 多端抓包。
 6. 若要继续拆 Gate edge / app / order path 内部阶段，需要 Gate 侧 trace / support；当前 `enp55s0` 不支持 hardware timestamp。
 7. RTT probe 当前只做 measurement，不自动 score / 切换；下一步先补工具内 REST guard 和离线 rolling window / top tail socket timestamping + pcap + Gate `x_in_time` 阶段拆解表，再考虑 `gtc` / `ioc+gtc` live execute。
@@ -254,4 +266,4 @@ DataReader / data session：先读 `docs/data_reader_config.md`、`docs/data_ses
 
 TUI：先读 `docs/tui_onboarding_guide.md` 和 `docs/tui_gate_account_monitor_design.md`。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM；订单、仓位、PnL 和 health 还未接真实账户数据，下一步是 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。
 
-LeadLag / Gate Ack latency：先读 `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_operations_pipeline.md`、`docs/lead_lag_ack_latency_outlier_analysis.md`、`docs/lead_lag_runtime_latency_improvement_plan.md`、`docs/gate_order_session_rtt_probe_design.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_reconcile_design.md` 和 `docs/diagnostic_fields.md`。真实订单 `--execute` 默认用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`；仓库默认 12-symbol live 配置仍是 `open_slippage=2` / `close_slippage=2` ticks。Order Ack outlier attribution 由 `AQUILA_ORDER_ACK_DIAG_LEVEL=0..5` 控制，默认 `L4`；只有 private plain transport 成功 apply `SO_TIMESTAMPING` 后才启动 probe，取消 / 失败发送 / 未完整 write complete 会释放或丢弃 probe。Socket timestamping 字段可把 Ack RTT 拆到 `write_complete -> tx_software -> tx_ack -> rx_software -> ack_receive` software-level 大段；`ts_available=false` 表示缺归因，不要把 0 当真实时间。2026-06-01 8 条 private plain / no TLS RTT probe 半小时测试未复现 `219ms` outlier；追加 no TLS pcap run `20260601_021256_gate_rtt_private8_plain_30m_pcap` 中 `1798` 个 Ack max `25.921ms`，top tail 主要在 `pcap request -> remote TCP ACK / WebSocket Ack response`，`Ack response pcap -> ack_receive` 为微秒级，不支持本机 owner thread / read parse / write queue / 本机发送侧 retrans 作为主要原因。`scripts/gate/analyze_order_session_rtt_pcap.py` 进一步显示 `>10ms` tail 的 Gate `x_in_time -> x_out_time` duration share 为 `96.32%`，residual max `0.799ms`，因此本轮 `>10ms` tail 主要收窄到 Gate edge / app / order path 内部阶段；`5ms-10ms` tail 仍需分开看 residual。2026-06-01 / 2026-06-02 单币 `LAB_USDT` 8 小时实盘 report 在 `reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`，配置为 `open_notional=1000`、`max_gross_notional=2000`、open/close slippage `150` ticks、`lag_taker_fee=0.00020`；结果 flat，actual net PnL `24.9078195424`、raw net PnL `16.2176315424`，Ack RTT p95 `7.313ms`、max `243.996ms`，`>5ms` Ack tail `23` 个中 Gate `x_in->x_out` dominant `21` 个。当前 `enp55s0` 无 hardware timestamp；若要继续拆 Gate 内部，需要 Gate 侧 trace / support，若 residual 变大再考虑 hardware timestamp、链路侧证据或多端抓包。`gate_order_session_rtt_probe` 连接列表在 CSV，默认 12 行配置是 `config/order_session_rtt_probe/gate_order_session_rtt_connections.csv`，8 条 private plain 全阶段配置是 `config/order_session_rtt_probe/gate_order_session_rtt_probe_private8_plain_allstage.toml`，可用 `--connections-file` 覆盖并允许重复 `connect_ip`，不自动 score / 切换。
+LeadLag / Gate Ack latency：先读 `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_operations_pipeline.md`、`docs/lead_lag_ack_latency_outlier_analysis.md`、`docs/lead_lag_runtime_latency_improvement_plan.md`、`docs/gate_order_session_rtt_probe_design.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_reconcile_design.md` 和 `docs/diagnostic_fields.md`。真实订单 `--execute` 默认用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`；仓库默认 12-symbol live 配置仍是 `open_slippage=2` / `close_slippage=2` ticks。Order Ack outlier attribution 由 `AQUILA_ORDER_ACK_DIAG_LEVEL=0..5` 控制，默认 `L4`；只有 private plain transport 成功 apply `SO_TIMESTAMPING` 后才启动 probe，取消 / 失败发送 / 未完整 write complete 会释放或丢弃 probe。Socket timestamping 字段可把 Ack RTT 拆到 `write_complete -> tx_software -> tx_ack -> rx_software -> ack_receive` software-level 大段；`ts_available=false` 表示缺归因，不要把 0 当真实时间。2026-06-01 8 条 private plain / no TLS RTT probe 半小时测试未复现 `219ms` outlier；追加 no TLS pcap run `20260601_021256_gate_rtt_private8_plain_30m_pcap` 中 `1798` 个 Ack max `25.921ms`，top tail 主要在 `pcap request -> remote TCP ACK / WebSocket Ack response`，`Ack response pcap -> ack_receive` 为微秒级，不支持本机 owner thread / read parse / write queue / 本机发送侧 retrans 作为主要原因。`scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 进一步显示 `>10ms` tail 的 Gate `x_in_time -> x_out_time` duration share 为 `96.32%`，residual max `0.799ms`，因此本轮 `>10ms` tail 主要收窄到 Gate edge / app / order path 内部阶段；`5ms-10ms` tail 仍需分开看 residual。2026-06-01 / 2026-06-02 单币 `LAB_USDT` 8 小时实盘 report 在 `reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`，配置为 `open_notional=1000`、`max_gross_notional=2000`、open/close slippage `150` ticks、`lag_taker_fee=0.00020`；结果 flat，actual net PnL `24.9078195424`、raw net PnL `16.2176315424`，Ack RTT p95 `7.313ms`、max `243.996ms`，`>5ms` Ack tail `23` 个中 Gate `x_in->x_out` dominant `21` 个。当前 `enp55s0` 无 hardware timestamp；若要继续拆 Gate 内部，需要 Gate 侧 trace / support，若 residual 变大再考虑 hardware timestamp、链路侧证据或多端抓包。`gate_order_session_rtt_probe` 连接列表在 CSV，默认 12 行配置是 `config/order_session_rtt_probe/gate_order_session_rtt_connections.csv`，8 条 private plain 全阶段配置是 `config/order_session_rtt_probe/gate_order_session_rtt_probe_private8_plain_allstage.toml`，可用 `--connections-file` 覆盖并允许重复 `connect_ip`，不自动 score / 切换。

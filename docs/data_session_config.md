@@ -25,7 +25,7 @@ order management 和 order execution 归属于 `Strategy` 模块。
 | TOML 解析 | `toml++` / `PkgConfig::tomlplusplus` | C++ 配置 loader 使用；当前入口是 `core/config/websocket_config.h` / `core/config/websocket_config.cpp`。 |
 | 日志输出 | `nova/utils/log.h` | 项目代码通过 Nova 封装输出，例如解析失败时使用 `NOVA_ERROR`；不在业务代码中直接依赖底层 log 库。 |
 | instrument CSV | `vincentlaucsb-csv-parser` | C++ instrument catalog loader 使用该 vcpkg 依赖；`InstrumentInfo` 加载 CSV 的完整字段，data session 当前只消费 `symbol_id`、`exchange`、`symbol`、`exchange_symbol`。 |
-| 合约查询脚本输出 | `pandas.DataFrame` | `scripts/gate/query_futures_contracts.py` 和 `scripts/binance/query_um_futures_contracts.py` 使用 Python pandas 生成统一字段表和 CSV。 |
+| 合约查询脚本输出 | `pandas.DataFrame` | `scripts/gate/market_data/query_futures_contracts.py` 和 `scripts/binance/market_data/query_um_futures_contracts.py` 使用 Python pandas 生成统一字段表和 CSV。 |
 
 ## 进程拆分
 

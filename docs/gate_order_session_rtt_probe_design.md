@@ -121,7 +121,7 @@ pcap 结论：
 - 当前证据把 tail 定位到 request 出现在本机 pcap 后、Gate submit Ack response 回到本机 pcap 前的大段；这段仍覆盖 private link 去程、Gate edge / app 处理和回程。
 - 若要继续拆到物理 NIC 或网络单向阶段，需要 hardware timestamp、链路侧 / Gate 侧证据或多端抓包。
 
-用 `scripts/gate/analyze_order_session_rtt_pcap.py` 对齐 Gate Ack response header 的 `x_in_time` / `x_out_time` 后：
+用 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 对齐 Gate Ack response header 的 `x_in_time` / `x_out_time` 后：
 
 - 对齐 CSV：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/gate_x_time_alignment_repo.csv`
 - Summary：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/gate_x_time_summary_repo.txt`
@@ -372,7 +372,7 @@ Ack response pcap -> ts_rx_software / ack_receive
 仓库内离线脚本：
 
 ```bash
-python3 scripts/gate/analyze_order_session_rtt_pcap.py \
+python3 scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py \
   --samples /home/liuxiang/tmp/gate_order_session_rtt_probe/<run_id>/order_session_rtt_samples.csv \
   --pcap /home/liuxiang/tmp/<run_id>/pcap/<capture>.pcap \
   --local-ip <local_ip> \
@@ -402,7 +402,7 @@ runtime `gate_order_response` 中以 `exchange_request_ingress_ns` / `exchange_r
 1. 在工具内补 REST preflight / run-end flat guard，并把 `order_session_rtt_rest_guard.csv` 与 `raw_rest/` 真正写出。
 2. 复核 IOC execute 的 unexpected fill / terminal timeout 处理，确认失败时退出码和 sample invalid 语义稳定。
 3. 在 REST guard 完成后再启用 `gtc` / `ioc+gtc` live execute。
-4. 增强 `scripts/gate/analyze_order_session_rtt_pcap.py`，输出按 contract / rolling window 的分布，并对 top Ack tail 自动生成 socket timestamping / pcap / Gate `x_in_time` 阶段拆解表。
+4. 增强 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py`，输出按 contract / rolling window 的分布，并对 top Ack tail 自动生成 socket timestamping / pcap / Gate `x_in_time` 阶段拆解表。
 5. 拿到足够 live 样本后再设计 score；score 不进入当前热路径。
 
 ## 验证命令
@@ -410,7 +410,7 @@ runtime `gate_order_response` 中以 `exchange_request_ingress_ns` / `exchange_r
 ```bash
 cmake --build build/debug --target gate_order_session_rtt_probe gate_order_session_rtt_probe_test order_session_config_test
 ctest --test-dir build/debug -R 'gate_order_session_rtt_probe_test|order_session_config_test' --output-on-failure
-python3 scripts/test/gate/analyze_order_session_rtt_pcap_test.py
+python3 scripts/test/gate/diagnostics/analyze_order_session_rtt_pcap_test.py
 ./build/debug/tools/gate_order_session_rtt_probe --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml
 ./build/debug/tools/gate_order_session_rtt_probe --config config/order_session_rtt_probe/gate_order_session_rtt_probe.toml --live-preflight
 git diff --check

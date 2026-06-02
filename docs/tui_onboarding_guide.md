@@ -77,7 +77,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT
 - `exchange/gate/sbe/message_dispatcher.h` 和 `exchange/gate/sbe/generated/`：Gate SBE schema dispatch 和生成代码。
 - `exchange/gate/trading/order_feedback_parser.h`：交易系统窄 feedback parser 的字段位置和 decimal 转换参考。
 - `exchange/gate/trading/order_codecs.h`：`OrderTextCodec::Parse()` 用于识别 Aquila `t-<local_order_id>`。
-- `scripts/gate/query_gate_account.py`：REST account / order / position read-only 查询语义参考；第一版 TUI 可以先在 C++ 中实现等价查询或通过后续 REST helper 复用其签名规则。
+- `scripts/gate/account/query_gate_account.py`：REST account / order / position read-only 查询语义参考；第一版 TUI 可以先在 C++ 中实现等价查询或通过后续 REST helper 复用其签名规则。
 - `core/config/*` 和已有 TOML parser：TUI config 应沿用 TOML + CLI override 风格。
 
 ## 当前验证命令

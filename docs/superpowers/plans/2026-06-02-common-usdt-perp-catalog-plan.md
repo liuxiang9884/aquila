@@ -206,7 +206,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'generate_common_usdt_
 Create `scripts/instruments/generate_common_usdt_perp_catalog.py` with:
 
 - `CATALOG_COLUMNS` matching `config/instruments/usdt_futures.csv`.
-- Import path setup for existing `scripts/gate/query_futures_contracts.py` and `scripts/binance/query_um_futures_contracts.py`.
+- Import path setup for existing `scripts/gate/market_data/query_futures_contracts.py` and `scripts/binance/market_data/query_um_futures_contracts.py`.
 - `fetch_gate_contracts()` calling `GET /futures/usdt/contracts` with `X-Gate-Size-Decimal: 1`.
 - `fetch_binance_exchange_info()` delegating to existing Binance helper.
 - `select_binance_usdt_perpetuals(payload)`.

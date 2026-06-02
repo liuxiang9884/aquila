@@ -63,8 +63,8 @@ scripts/instruments/generate_common_usdt_perp_catalog.py
 
 脚本复用现有 metadata 映射：
 
-- `scripts/gate/query_futures_contracts.py`
-- `scripts/binance/query_um_futures_contracts.py`
+- `scripts/gate/market_data/query_futures_contracts.py`
+- `scripts/binance/market_data/query_um_futures_contracts.py`
 
 若现有脚本缺少全量列表 helper，只在本次需要的范围内补充小型函数，不改变现有 CLI 行为。
 

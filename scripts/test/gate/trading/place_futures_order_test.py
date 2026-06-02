@@ -5,9 +5,13 @@ import sys
 import unittest
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parents[2] / "gate"
+SCRIPTS_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "trading"
+ACCOUNT_SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "account"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(ACCOUNT_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(ACCOUNT_SCRIPT_DIR))
 
 import place_futures_order as orders
 

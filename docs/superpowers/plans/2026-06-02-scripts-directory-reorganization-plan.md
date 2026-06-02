@@ -20,9 +20,9 @@
 
 Steps:
 
-- [ ] Create target directories with `mkdir -p`.
-- [ ] Use `git mv` for every mapped file.
-- [ ] Remove untracked `__pycache__` directories with `rm -rf`.
+- [x] Create target directories with `mkdir -p`.
+- [x] Use `git mv` for every mapped file.
+- [x] Remove untracked `__pycache__` directories with `rm -rf`.
 
 ## Task 2: Fix Python Imports
 
@@ -36,11 +36,11 @@ Steps:
 
 Steps:
 
-- [ ] Add local `sys.path` setup for moved Gate trading scripts so `account` and sibling trading modules resolve when executed directly.
-- [ ] Add local `sys.path` setup for `discover_gate_ws_ips.py` so it can import `probe_gate_ws_connect_ip.py`.
-- [ ] Update `run_live_with_guard.py` to import Gate trading/account modules from new directories.
-- [ ] Update `generate_common_usdt_perp_catalog.py` to import metadata mappers from `scripts/gate/market_data` and `scripts/binance/market_data`.
-- [ ] Update all moved test `SCRIPT_DIR` calculations to point at new source directories.
+- [x] Add local `sys.path` setup for moved Gate trading scripts so `account` and sibling trading modules resolve when executed directly.
+- [x] Add local `sys.path` setup for `discover_gate_ws_ips.py` so it can import `probe_gate_ws_connect_ip.py`.
+- [x] Update `run_live_with_guard.py` to import Gate trading/account modules from new directories.
+- [x] Update `generate_common_usdt_perp_catalog.py` to import metadata mappers from `scripts/gate/market_data` and `scripts/binance/market_data`.
+- [x] Update all moved test `SCRIPT_DIR` calculations to point at new source directories.
 
 ## Task 3: Update Documentation Paths
 
@@ -62,9 +62,9 @@ Steps:
 
 Steps:
 
-- [ ] Replace old script paths with new paths.
-- [ ] Keep paths to cross-exchange scripts unchanged.
-- [ ] Run `rg 'scripts/(gate|binance)/[^/]+\\.py|scripts/test/(gate|binance)/[^/]+\\.py' docs README.md scripts` and review remaining root-level Gate/Binance script paths.
+- [x] Replace old script paths with new paths.
+- [x] Keep paths to cross-exchange scripts unchanged.
+- [x] Run `rg 'scripts/(gate|binance)/[^/]+\\.py|scripts/test/(gate|binance)/[^/]+\\.py' docs README.md scripts` and review remaining root-level Gate/Binance script paths.
 
 ## Task 4: Verification
 

@@ -108,8 +108,8 @@ scripts/lead_lag/run_live_with_guard.py \
 账户复核：
 
 ```bash
-scripts/gate/query_gate_account.py orders --contract <SYMBOL> --status open --no-pretty
-scripts/gate/query_gate_account.py positions --contract <SYMBOL> --no-pretty
+scripts/gate/account/query_gate_account.py orders --contract <SYMBOL> --status open --no-pretty
+scripts/gate/account/query_gate_account.py positions --contract <SYMBOL> --no-pretty
 ```
 
 ## 通过判定

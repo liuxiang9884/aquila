@@ -9,7 +9,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
+
+GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
 
 from query_gate_account import (
     DEFAULT_API_KEY_ENV,

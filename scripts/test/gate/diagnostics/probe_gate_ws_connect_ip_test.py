@@ -4,7 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parents[2] / "gate"
+SCRIPT_DIR = Path(__file__).resolve().parents[3] / "gate" / "diagnostics"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 

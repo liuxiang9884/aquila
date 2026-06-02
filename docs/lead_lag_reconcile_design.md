@@ -28,7 +28,7 @@
   - global continuity lost fanout 时 lane 满，publisher 会保留 pending event 后续重试。
 - 枚举中还保留了 `kReconnectUnknownWindow`、`kDecodeUnrecoverable`、`kProducerRestart`，这些应作为后续增强场景处理。
 - `OrderManager` 和 LeadLag `ExecutionState` 仍是内存状态；进程退出后不能靠它们自动恢复交易。
-- 当前已有 `scripts/gate/query_gate_account.py`、read-only `scripts/gate/reconcile_futures_orders.py`、V1 可下单应急工具 `scripts/gate/emergency_flatten_futures.py` 和外围 guard wrapper `scripts/lead_lag/run_live_with_guard.py`。
+- 当前已有 `scripts/gate/account/query_gate_account.py`、read-only `scripts/gate/trading/reconcile_futures_orders.py`、V1 可下单应急工具 `scripts/gate/trading/emergency_flatten_futures.py` 和外围 guard wrapper `scripts/lead_lag/run_live_with_guard.py`。
 
 ## V1 应急流程
 
@@ -77,13 +77,13 @@
 建议新增独立脚本：
 
 ```text
-scripts/gate/emergency_flatten_futures.py
+scripts/gate/trading/emergency_flatten_futures.py
 ```
 
 建议 CLI：
 
 ```bash
-scripts/gate/emergency_flatten_futures.py \
+scripts/gate/trading/emergency_flatten_futures.py \
   --settle usdt \
   --scope dedicated-account \
   --confirm-dedicated-account \
@@ -95,7 +95,7 @@ scripts/gate/emergency_flatten_futures.py \
 共享账户模式必须显式传合约：
 
 ```bash
-scripts/gate/emergency_flatten_futures.py \
+scripts/gate/trading/emergency_flatten_futures.py \
   --settle usdt \
   --scope allowlist \
   --contract BTC_USDT \
@@ -167,24 +167,24 @@ close。
 1. Python unit tests
 
 ```bash
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/query_gate_account_test.py
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/place_futures_order_test.py
-/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/account/query_gate_account_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/trading/place_futures_order_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/trading/emergency_flatten_futures_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/run_live_with_guard_test.py
 ```
 
 2. dry-run / plan-only
 
 ```bash
-scripts/gate/emergency_flatten_futures.py --settle usdt --scope allowlist --contract BTC_USDT --dry-run --no-pretty
+scripts/gate/trading/emergency_flatten_futures.py --settle usdt --scope allowlist --contract BTC_USDT --dry-run --no-pretty
 ```
 
 3. 空账户或 flat account smoke
 
 ```bash
-scripts/gate/emergency_flatten_futures.py --settle usdt --scope allowlist --contract BTC_USDT --no-pretty
-scripts/gate/query_gate_account.py orders --contract BTC_USDT --status open --no-pretty
-scripts/gate/query_gate_account.py positions --contract BTC_USDT --no-pretty
+scripts/gate/trading/emergency_flatten_futures.py --settle usdt --scope allowlist --contract BTC_USDT --no-pretty
+scripts/gate/account/query_gate_account.py orders --contract BTC_USDT --status open --no-pretty
+scripts/gate/account/query_gate_account.py positions --contract BTC_USDT --no-pretty
 ```
 
 期望：无下单需求或仅执行必要撤单；最终 open orders 为空、position size 为 0。
@@ -216,7 +216,7 @@ V2 可保留以下原则：
 
 ## 当前实现状态
 
-- `scripts/gate/emergency_flatten_futures.py` 已实现 allowlist / dedicated-account scope、dry-run、open order cancel、reduce-only market close、poll verify 和失败 exit code。
+- `scripts/gate/trading/emergency_flatten_futures.py` 已实现 allowlist / dedicated-account scope、dry-run、open order cancel、reduce-only market close、poll verify 和失败 exit code。
 - `scripts/lead_lag/run_live_with_guard.py` 已实现启动前 REST preflight、runner 退出后 final REST check、异常退出 flatten、final 非 flat flatten 和 flatten failure 映射。
 - `lead_lag_strategy --execute` 已接入真实 live-orders runtime；`ContinuityLost` 在 live orders 模式下会请求 runtime stop，并返回 exit code `10`。缺少凭据时返回 exit code `2`，不会进入 runtime create。
 - signal-only 模式不提交订单；`ContinuityLost` 只作为 diagnostics / degraded 状态记录。
@@ -236,14 +236,14 @@ V2 可保留以下原则：
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
 | 文档 | `git diff --check` | 无 whitespace error |
-| Python helper | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/emergency_flatten_futures_test.py` | scope、dry-run、cancel、market close、verify、失败 exit code 覆盖 |
-| Read-only REST | `scripts/gate/query_gate_account.py positions --contract BTC_USDT --no-pretty` | 返回当前 position，不产生交易副作用 |
-| Emergency dry-run | `scripts/gate/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --dry-run --no-pretty` | 输出 plan，不提交订单 |
-| Emergency live smoke | `scripts/gate/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --no-pretty` | 最终 open orders 为空、position size 为 0 |
+| Python helper | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/trading/emergency_flatten_futures_test.py` | scope、dry-run、cancel、market close、verify、失败 exit code 覆盖 |
+| Read-only REST | `scripts/gate/account/query_gate_account.py positions --contract BTC_USDT --no-pretty` | 返回当前 position，不产生交易副作用 |
+| Emergency dry-run | `scripts/gate/trading/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --dry-run --no-pretty` | 输出 plan，不提交订单 |
+| Emergency live smoke | `scripts/gate/trading/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --no-pretty` | 最终 open orders 为空、position size 为 0 |
 | Runner smoke | `ctest --test-dir build/debug -R lead_lag_live_strategy --output-on-failure` | `ContinuityLost` live 模式停止，signal-only 模式不提交订单 |
 
 ## 后续边界
 
 - V2 read-only reconcile / resume 是后续优化，不是当前应急方案。
-- 已有 `scripts/gate/reconcile_futures_orders.py`、LeadLag recovery state API 和 runner recovery diagnostics 可作为 V2 基础。
+- 已有 `scripts/gate/trading/reconcile_futures_orders.py`、LeadLag recovery state API 和 runner recovery diagnostics 可作为 V2 基础。
 - V2 不应阻塞 V1 stop-and-flat，也不应在任意 REST 缺失、冲突、歧义或失败时自动恢复交易。

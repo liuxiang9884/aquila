@@ -13,9 +13,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-GATE_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "gate"
-if str(GATE_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(GATE_SCRIPT_DIR))
+SCRIPTS_ROOT = Path(__file__).resolve().parents[1]
+GATE_ACCOUNT_SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "account"
+GATE_TRADING_SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "trading"
+for script_dir in (GATE_ACCOUNT_SCRIPT_DIR, GATE_TRADING_SCRIPT_DIR):
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
 
 import emergency_flatten_futures as flatten  # noqa: E402
 import query_gate_account as account  # noqa: E402

@@ -7,7 +7,12 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
+from pathlib import Path
 from typing import Any, Callable
+
+GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
 
 from place_futures_order import (
     ApiRequest,

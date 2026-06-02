@@ -2,8 +2,8 @@
 
 ## 目的
 
-`scripts/gate/query_futures_contracts.py` 和
-`scripts/binance/query_um_futures_contracts.py` 用于在启动前查询交易所合约基础信息，并输出同一组
+`scripts/gate/market_data/query_futures_contracts.py` 和
+`scripts/binance/market_data/query_um_futures_contracts.py` 用于在启动前查询交易所合约基础信息，并输出同一组
 `pandas.DataFrame` 字段。当前范围只覆盖下单前最少需要的交易约束字段，不覆盖完整风控、费率、杠杆和风险限额配置。
 
 这组字段的目标是让策略和下单模块先基于统一 schema 做价格格式化、数量格式化、基础上下限检查和交易所适配。更细的交易所特有规则应在后续 adapter 中保留原始字段或单独扩展。
@@ -13,13 +13,13 @@
 Gate USDT futures：
 
 ```bash
-scripts/gate/query_futures_contracts.py BTC_USDT ETH_USDT --format csv
+scripts/gate/market_data/query_futures_contracts.py BTC_USDT ETH_USDT --format csv
 ```
 
 Binance USD-M futures：
 
 ```bash
-scripts/binance/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
+scripts/binance/market_data/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 ```
 
 两个脚本都支持：

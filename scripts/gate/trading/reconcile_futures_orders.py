@@ -8,6 +8,10 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
+GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
+
 import query_gate_account as account
 
 

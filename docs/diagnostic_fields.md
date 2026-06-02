@@ -110,7 +110,7 @@ cmake --build /home/liuxiang/tmp/aquila-bench-order-ack-l<N> \
 
 ### IP discovery JSONL 字段
 
-这些字段由 `scripts/gate/discover_gate_ws_ips.py` 写入 `candidate_ips.jsonl`，用于为后续 OrderSession RTT probe
+这些字段由 `scripts/gate/diagnostics/discover_gate_ws_ips.py` 写入 `candidate_ips.jsonl`，用于为后续 OrderSession RTT probe
 准备候选 `connect_ip`。脚本不登录、不下单，也不修改本机 resolver 配置。
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
@@ -195,7 +195,7 @@ CSV contract：
 
 ### OrderSession RTT pcap 对齐 CSV 字段
 
-这些字段由 `scripts/gate/analyze_order_session_rtt_pcap.py` 从 `order_session_rtt_samples.csv`、no TLS pcap
+这些字段由 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 从 `order_session_rtt_samples.csv`、no TLS pcap
 和 Gate Ack response JSON header 对齐生成。当前 runtime 已直接输出 Gate Ack header 的 `x_in_time` / `x_out_time`
 等价 ns 字段；pcap 对齐仍用于获得 `pcap request -> Ack response`、`residual_ms` 和 `gate_share`。
 

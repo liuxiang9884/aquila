@@ -277,7 +277,7 @@ Top tail 的 pcap 形态一致：
 - 指向：request 已经出现在本机抓包点之后，到 Gate submit Ack response 回到本机抓包点之前的链路大段。
 - 限制：由于 `enp55s0` 不支持 hardware timestamp，pcap 仍不能严格证明 packet 已经离开 / 返回物理 NIC，也不能把剩余大段拆成 private link 去程、Gate edge / app 处理或回程。
 
-随后用 `scripts/gate/analyze_order_session_rtt_pcap.py` 将 pcap 与 Gate Ack response header 中的 `x_in_time` /
+随后用 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 将 pcap 与 Gate Ack response header 中的 `x_in_time` /
 `x_out_time` 对齐，输出：
 
 - 对齐 CSV：`/home/liuxiang/tmp/20260601_021256_gate_rtt_private8_plain_30m_pcap/gate_x_time_alignment_repo.csv`
@@ -362,7 +362,7 @@ perf sched latency
 
 - `219ms` Ack RTT outlier 仍未复现，不基于 2026-05-25 单次样本改 order session 架构。
 - 后续复现 Ack tail 时，继续按 `docs/diagnostic_fields.md` 中的 order write path、runtime loop、`TCP_INFO` 和 socket timestamping 字段归因。
-- 对 `>10ms` private plain tail，优先用 `scripts/gate/analyze_order_session_rtt_pcap.py` 检查 `gate_x_in_to_x_out_ms` 和 `residual_ms`。若 Gate duration share 接近 1 且 residual 小于 1ms，不要归因到本机 owner thread、read parse、本机 TCP socket 或 private link 往返。
+- 对 `>10ms` private plain tail，优先用 `scripts/gate/diagnostics/analyze_order_session_rtt_pcap.py` 检查 `gate_x_in_to_x_out_ms` 和 `residual_ms`。若 Gate duration share 接近 1 且 residual 小于 1ms，不要归因到本机 owner thread、read parse、本机 TCP socket 或 private link 往返。
 - 对 `5ms-10ms` tail 仍需分别看 Gate duration 与 residual；这档可能混有 Gate 内部处理和链路剩余段。
 - 若要继续拆 Gate edge / app / order path 内部阶段，需要 Gate 侧 trace / support；若 residual 变大，则再考虑 hardware timestamp、链路侧证据或多端抓包。当前 `enp55s0` 不支持 hardware timestamp。
 - 多连接 / 多 IP 对照用 `docs/gate_order_session_rtt_probe_design.md` 的 probe，不把 URL 相同当作路径相同的证据。
