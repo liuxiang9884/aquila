@@ -69,7 +69,7 @@ using CoarseClockSession =
 static_assert(!DefaultNoStatsSession::SessionDiagnosticsEnabled);
 static_assert(Session::SessionDiagnosticsEnabled);
 static_assert(Session::kClockSource ==
-              aquila::websocket::DefaultWebSocketOptions::kClockSource);
+              aquila::websocket::ClockSource::kRealtime);
 static_assert(CoarseClockSession::kClockSource ==
               aquila::websocket::ClockSource::kMonotonicCoarse);
 static_assert(!std::is_constructible_v<

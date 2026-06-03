@@ -7,8 +7,9 @@
 
 #if defined(__linux__)
 #include <pthread.h>
-#include <sched.h>
 #include <sys/mman.h>
+
+#include <sched.h>
 #endif
 
 namespace aquila::websocket {
@@ -29,6 +30,7 @@ enum class ClockSource : std::uint8_t {
   kSteady,
   kMonotonic,
   kMonotonicCoarse,
+  kRealtime,
 };
 
 struct RuntimePolicy {
@@ -49,8 +51,8 @@ namespace detail {
 struct RuntimePolicySyscallHooks {
   int (*mlockall)(int) = &::mlockall;
   int (*munlockall)() = &::munlockall;
-  int (*pthread_setaffinity_np)(pthread_t, size_t, const cpu_set_t*) =
-      &::pthread_setaffinity_np;
+  int (*pthread_setaffinity_np)(pthread_t, size_t,
+                                const cpu_set_t*) = &::pthread_setaffinity_np;
 };
 
 inline RuntimePolicySyscallHooks& RuntimePolicySyscallHooksForTest() noexcept {

@@ -48,6 +48,7 @@ static_assert(kEnumValueExists<ws::ConnectionPhase::kDegraded>);
 static_assert(kEnumValueExists<ws::ClockSource::kSteady>);
 static_assert(kEnumValueExists<ws::ClockSource::kMonotonic>);
 static_assert(kEnumValueExists<ws::ClockSource::kMonotonicCoarse>);
+static_assert(kEnumValueExists<ws::ClockSource::kRealtime>);
 static_assert(kEnumValueExists<ws::SchedulingPolicy::kFifo>);
 static_assert(
     std::is_same_v<std::underlying_type_t<ws::ConnectionPhase>, std::uint8_t>);

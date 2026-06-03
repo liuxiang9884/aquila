@@ -70,10 +70,14 @@ class DataSessionDiagnostics {
 
 struct DefaultTlsWebSocketPolicy : websocket::DefaultWebSocketOptions {
   using TransportSocket = websocket::TlsSocket;
+  static constexpr websocket::ClockSource kClockSource =
+      websocket::ClockSource::kRealtime;
 };
 
 struct DefaultPlainWebSocketPolicy : websocket::DefaultWebSocketOptions {
   using TransportSocket = websocket::PlainSocket;
+  static constexpr websocket::ClockSource kClockSource =
+      websocket::ClockSource::kRealtime;
 };
 
 struct NoopDataSessionDiagnosticsPolicy {

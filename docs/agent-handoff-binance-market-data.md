@@ -87,7 +87,7 @@ log thread；Nova file sink 会在实际文件名上追加启动时间。
 
 ```text
 DataSession::Handle(text MessageView)
-  -> capture local_ns
+  -> capture local_ns with CLOCK_REALTIME
   -> FuturesMarketDataClient::OnTextPayload
   -> simdjson parse JSON
   -> fast_float parse string prices / quantities
@@ -103,7 +103,7 @@ DataSession::Handle(text MessageView)
 | `u` | `id` |
 | `s` | symbol lookup 后的 `symbol_id` |
 | `E` 毫秒 | `exchange_ns = E * 1'000'000` |
-| local receive clock | `local_ns` |
+| `CLOCK_REALTIME` local receive clock | `local_ns` |
 | `b` / `B` | `bid_price` / `bid_volume` |
 | `a` / `A` | `ask_price` / `ask_volume` |
 

@@ -14,6 +14,7 @@
 - 空字段表示对应日志、配置或 catalog 中没有可用值，或该行语义下不适用。
 - `*_ns` 字段单位都是纳秒。
 - `request_send_local_ns`、`ack_local_receive_ns`、`response_local_receive_ns`、`order_finished_local_ns` 是本机时钟时间戳，可以互相相减。
+- 新 live Gate / Binance data session 的 `trigger_local_ns` 来自 `BookTicker.local_ns`，默认也是 `CLOCK_REALTIME` / Unix epoch ns；历史 replay 或旧录制文件可能仍带旧 steady-clock `local_ns`，report 会继续保留 cross-clock 保护。
 - `ack_exchange_ns`、`response_exchange_ns`、`accepted_exchange_ns`、`finish_exchange_ns` 是交易所侧时间戳。交易所时钟和本地时钟不同步，不能直接把 exchange 到 local 的差值当作真实单程网络延迟。
 - `ack_exchange_request_ingress_ns`、`ack_exchange_response_egress_ns` 和 `ack_exchange_process_ns` 来自 Gate Ack response JSON header 中的 `x_in_time` / `x_out_time`，已转换为 ns；它们只能在 Gate 同一时钟域内互相相减，不能和本地时间直接相减。
 - 价格字段使用合约价格单位；notional、fee、PnL 字段使用 quote currency，当前 USDT futures report 中可理解为 USDT。
@@ -46,10 +47,10 @@
 | `local_order_id` | 关联到的本地订单 id。 | 通过 `trigger_ticker_id` 和订单提交日志关联。 |
 | `request_sequence` | Gate order session 下发请求序号。 | 关联的 `order_detail.csv.request_sequence`。 |
 | `request_send_local_ns` | Gate order session 发送请求成功后的本机时间戳。 | 关联的 `order_detail.csv.request_send_local_ns`。 |
-| `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。只有两个输入看起来处于同一时钟域且差值在本地 pipeline 合理窗口内时才输出；跨时钟域时留空，`latency.csv.warnings` 写 `cross_clock_bbo_to_strategy_ns`。 |
+| `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。新 live data session 默认同属 `CLOCK_REALTIME`；历史 replay / 旧录制若看起来跨时钟域则留空，`latency.csv.warnings` 写 `cross_clock_bbo_to_strategy_ns`。 |
 | `strategy_to_signal_ns` | 策略入口到 signal decision 的耗时。 | `signal_decision_ns - on_book_ticker_entry_ns`。 |
 | `signal_to_request_send_ns` | signal decision 到订单发送成功的本机耗时。 | `request_send_local_ns - signal_decision_ns`。 |
-| `trigger_to_request_send_ns` | BBO data session 本机时间到订单发送成功的本机耗时。 | `request_send_local_ns - trigger_local_ns`。只有两个输入看起来处于同一时钟域且差值在本地 pipeline 合理窗口内时才输出；跨时钟域时留空，`latency.csv.warnings` 写 `cross_clock_trigger_to_request_send_ns`。 |
+| `trigger_to_request_send_ns` | BBO data session 本机时间到订单发送成功的本机耗时。 | `request_send_local_ns - trigger_local_ns`。新 live data session 默认同属 `CLOCK_REALTIME`；历史 replay / 旧录制若看起来跨时钟域则留空，`latency.csv.warnings` 写 `cross_clock_trigger_to_request_send_ns`。 |
 | `exchange_order_id` | 交易所返回的 order id。 | 关联的 `order_detail.csv.exchange_order_id`。 |
 | `order_role` | 订单角色，`entry` 或 `exit`。 | 关联的 `order_detail.csv.order_role`。 |
 | `order_position_id` | 订单提交后最终使用的 position id。 | 关联的 `order_detail.csv.position_id`。 |
@@ -267,10 +268,10 @@
 | `send_to_response_local_ns` | 本地下单发送到收到 response 的本地闭环。 | `response_local_receive_ns - request_send_local_ns`。 |
 | `send_to_finish_local_ns` | 本地下单发送到订单终态处理完成的本地闭环。 | `order_finished_local_ns - request_send_local_ns`。 |
 | `ack_to_finish_local_ns` | 本地收到 Ack 到订单终态处理完成的时间。 | `order_finished_local_ns - ack_local_receive_ns`。 |
-| `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。只有两个输入看起来处于同一时钟域且差值在本地 pipeline 合理窗口内时才输出；跨时钟域时留空并在 `warnings` 记录 `cross_clock_bbo_to_strategy_ns`。 |
+| `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。新 live data session 默认同属 `CLOCK_REALTIME`；历史 replay / 旧录制若看起来跨时钟域则留空并在 `warnings` 记录 `cross_clock_bbo_to_strategy_ns`。 |
 | `strategy_to_signal_ns` | 策略入口到 signal decision 的耗时。 | `signal_decision_ns - on_book_ticker_entry_ns`。 |
 | `signal_to_request_send_ns` | signal decision 到订单发送成功的本机耗时。 | `request_send_local_ns - signal_decision_ns`。 |
-| `trigger_to_request_send_ns` | BBO data session 本机时间到订单发送成功的本机耗时。 | `request_send_local_ns - trigger_local_ns`。只有两个输入看起来处于同一时钟域且差值在本地 pipeline 合理窗口内时才输出；跨时钟域时留空并在 `warnings` 记录 `cross_clock_trigger_to_request_send_ns`。 |
+| `trigger_to_request_send_ns` | BBO data session 本机时间到订单发送成功的本机耗时。 | `request_send_local_ns - trigger_local_ns`。新 live data session 默认同属 `CLOCK_REALTIME`；历史 replay / 旧录制若看起来跨时钟域则留空并在 `warnings` 记录 `cross_clock_trigger_to_request_send_ns`。 |
 | `ack_exchange_to_local_ns` | Ack exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `response_exchange_to_local_ns` | response exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `exchange_lifecycle_ns` | 交易所侧 Ack 到订单终态 update 的生命周期诊断值。 | 优先由 `finish_exchange_ns - ack_exchange_ns` 计算，只使用 Gate exchange timestamp，不混用本地时钟；如果 exchange timestamp 缺失则为空。该值仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。 |

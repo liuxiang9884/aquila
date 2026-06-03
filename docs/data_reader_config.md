@@ -285,6 +285,7 @@ scripts/market_data/manifest_to_data_reader_config.py \
 
 - Gate 在 `exchange/gate/market_data/data_session.h` 的 binary frame path 调用 `websocket::NowNs(kClockSource)`，随后传给 `DecodeBookTickerWithHeader()` 写入 `BookTicker.local_ns`。
 - Binance 在 `exchange/binance/market_data/data_session.h` 的 text frame path 调用 `websocket::NowNs(kClockSource)`，随后由 `AssignBookTickerFromUpdate()` 写入 `BookTicker.local_ns`。
+- Gate / Binance data session 默认 `kClockSource = ClockSource::kRealtime`，`local_ns` 使用 `CLOCK_REALTIME` / Unix epoch ns；测试仍可通过自定义 WebSocket policy 覆盖为 monotonic / coarse clock。
 
 当前 `BookTicker.exchange_ns` 表示交易所侧行情时间戳，但不同交易所字段语义不同：
 
@@ -393,6 +394,10 @@ exchange_stats exchange=kGate records=1825
 source_stats index=0 name=gate_book_ticker exchange=kGate book_ticker_count=1825 skipped=0 overruns=0 last_book_ticker_id=113244034670
 source_stats index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=13860 skipped=0 overruns=0 last_book_ticker_id=10617499964819
 ```
+
+这组 2026-05-24 样例生成于 data session `local_ns` 改为 `CLOCK_REALTIME` 之前，因此示例里的
+`first_local_ns` / `last_local_ns` 是旧 steady-clock 数值。新录制的 Gate / Binance live data session
+`local_ns` 应为 Unix epoch ns。
 
 随后使用临时 `binary_file` data reader 配置验证 replay 可读性：
 

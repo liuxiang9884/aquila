@@ -35,6 +35,9 @@ inline std::uint64_t NowNs(ClockSource source) noexcept {
   if (source == ClockSource::kSteady) {
     return SteadyClockNowNs();
   }
+  if (source == ClockSource::kRealtime) {
+    return RealtimeClockNowNs();
+  }
 #if defined(__linux__)
   const clockid_t clock_id = source == ClockSource::kMonotonicCoarse
                                  ? CLOCK_MONOTONIC_COARSE

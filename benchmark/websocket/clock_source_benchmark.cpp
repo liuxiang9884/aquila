@@ -45,6 +45,11 @@ BENCHMARK_CAPTURE(BenchmarkClockSource, monotonic_coarse,
     ->Iterations(8192)
     ->Unit(benchmark::kNanosecond);
 
+BENCHMARK_CAPTURE(BenchmarkClockSource, realtime, ClockSource::kRealtime)
+    ->Name("clock_source_realtime")
+    ->Iterations(8192)
+    ->Unit(benchmark::kNanosecond);
+
 void BM_TimeNull(benchmark::State& state) {
   for (auto _ : state) {
     std::time_t now = std::time(nullptr);

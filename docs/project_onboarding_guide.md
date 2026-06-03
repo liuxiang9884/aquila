@@ -91,7 +91,7 @@ docs/evaluation_support.md
 - `HistoricalDataReader` mmap 非空 binary 文件，额外提供 `finished()`。
 - `data_reader_recorder` 可从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config。
 - recorder 是只读 SHM consumer，可和 LeadLag / demo 实盘并行；完整 dump 使用临时 `drain` 配置，观察 `overruns` / `skipped` 和 CPU 抢占，不要把仓库默认 reader config 改成 drain。
-- 若比较 Gate data session 不同 private IP 的行情延迟，不能只看 recorder/replay `local_ns`。`local_ns` 是 data session 接入时刻；Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，不是同消息里的 engine update `t`；需要按 data session 连接记录 `host` / `connect_ip` / remote endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns` 分组统计。
+- 若比较 Gate data session 不同 private IP 的行情延迟，不能只看 recorder/replay `local_ns`。Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`，语义是 data session 接入 WebSocket frame 后、进入 parser / decoder 前的本机 Unix epoch ns；Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，不是同消息里的 engine update `t`。需要按 data session 连接记录 `host` / `connect_ip` / remote endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns` 分组统计。
 
 ### Gate 交易
 
@@ -263,7 +263,7 @@ rg 'aquila_evaluation' core exchange tools
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、`docs/project_onboarding_guide.md`、`docs/evaluation_support.md`。当前 branch / ahead / dirty 状态只信 `git status`；公共 order / runtime contract 在 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h`。2026-05-31 已提交 onboarding 和主要专题文档精简，优先把本文件当作入口索引，细节再读对应专题文档。
 
-DataReader / data session：先读 `docs/data_reader_config.md`、`docs/data_session_config.md` 和 `docs/data_session_shm_communication_design.md`。`data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config；完整 dump 使用临时 `drain` 配置并观察 `overruns` / `skipped` / CPU 抢占。比较 Gate data session 不同 private IP 行情延迟时，`local_ns` 是 data session 接入时刻，Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，需要按连接记录 endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间和 `skipped` / `overruns` 分组统计。
+DataReader / data session：先读 `docs/data_reader_config.md`、`docs/data_session_config.md` 和 `docs/data_session_shm_communication_design.md`。`data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config；完整 dump 使用临时 `drain` 配置并观察 `overruns` / `skipped` / CPU 抢占。Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`；比较 Gate data session 不同 private IP 行情延迟时，Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，需要按连接记录 endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间和 `skipped` / `overruns` 分组统计。
 
 TUI：先读 `docs/tui_onboarding_guide.md` 和 `docs/tui_gate_account_monitor_design.md`。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM；订单、仓位、PnL 和 health 还未接真实账户数据，下一步是 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。
 

@@ -168,7 +168,7 @@ taskset -c 2 ./build/release/benchmark/websocket/runtime_loopback_benchmark
 - `session_read_path_benchmark`：本地 socketpair 写入 frame 到 consumer 收到 `MessageView` 的路径。
 - `session_mixed_path_benchmark`：read/write 混合、write budget 和 callback flush 对 read latency 的影响。
 - `message_handler_dispatch_benchmark`：`MessageCallback` 与 typed message handler dispatch 对照。
-- `clock_source_benchmark`：`ClockSource` 三种取时方式成本。
+- `clock_source_benchmark`：`ClockSource` 四种取时方式成本。
 - `runtime_loopback_benchmark`：`ActiveSpinLoop + CriticalSession` 本地 socketpair loopback 延迟。
 - `affinity_policy_comparison_benchmark`：不同 affinity / prefault / memory-lock 策略对比。
 - `cold_path_handshake_benchmark`：本地 TCP + TLS + WebSocket handshake 冷路径耗时。
