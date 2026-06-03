@@ -31,7 +31,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 2000.0
+open_notional = 200.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage = 500
