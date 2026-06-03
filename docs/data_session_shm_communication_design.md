@@ -161,7 +161,7 @@ reader 配置见 `docs/data_reader_config.md`：
 - 多 reader 可以并行 attach 同一 channel。
 - recorder 是只读 SHM consumer，可以和 LeadLag / demo / TUI 并行。
 - 完整 replay dump 使用临时 `drain` reader config，不要把仓库默认 strategy reader 改成 drain。
-- 比较不同 Gate private IP 行情延迟时，`local_ns` 是 data session 接入时刻；需要按 data session 连接记录 endpoint / owner CPU，再统计 `exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns`。
+- 比较不同 Gate private IP 行情延迟时，`local_ns` 是 data session 接入时刻，Gate `exchange_ns` 是 SBE `bbo.time` 的 WebSocket server send timestamp；需要按 data session 连接记录 endpoint / owner CPU，再统计 `exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns`。
 
 ## 验证
 

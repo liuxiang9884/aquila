@@ -286,6 +286,11 @@ scripts/market_data/manifest_to_data_reader_config.py \
 - Gate 在 `exchange/gate/market_data/data_session.h` 的 binary frame path 调用 `websocket::NowNs(kClockSource)`，随后传给 `DecodeBookTickerWithHeader()` 写入 `BookTicker.local_ns`。
 - Binance 在 `exchange/binance/market_data/data_session.h` 的 text frame path 调用 `websocket::NowNs(kClockSource)`，随后由 `AssignBookTickerFromUpdate()` 写入 `BookTicker.local_ns`。
 
+当前 `BookTicker.exchange_ns` 表示交易所侧行情时间戳，但不同交易所字段语义不同：
+
+- Gate SBE `bbo` 使用 `time * 1000`，即 Gate WebSocket server send timestamp；同一消息里的 `t` 是 orderbook engine update timestamp，目前不写入 `BookTicker`。
+- Binance book ticker 使用 `E * 1'000'000`，即 Binance event time。
+
 ## Diagnostics
 
 `RealtimeDataReader` 的统计通过编译期 diagnostics policy 开关：
