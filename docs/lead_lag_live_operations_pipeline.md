@@ -19,7 +19,8 @@
    - `contracts` 优先使用用户指定列表；用户只说“12 pair”时使用当前 requested 12-symbol 列表：`PROVE_USDT`、`RAVE_USDT`、`ZEC_USDT`、`SIREN_USDT`、`ETC_USDT`、`DASH_USDT`、`RIVER_USDT`、`SUI_USDT`、`INJ_USDT`、`ENA_USDT`、`BRETT_USDT`、`ETH_USDT`。
    - 真实订单默认 strategy config 使用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`；不要误用 signal-only config 搭配 `--execute`。
    - `run_id` 默认用启动时间和标签生成，例如 `YYYYMMDD_HHMMSS_12pair_live`；临时运行目录写入 `/home/liuxiang/tmp/<run_id>/`。
-   - 本轮 Ack RTT 复核默认使用 affinity profile `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml`；核心链路目标绑核为 Gate MD CPU2、Binance MD CPU3、strategy / Gate order owner CPU4、Gate order feedback CPU6、log backend CPU5。
+   - 运行 CPU 分区必须遵守 `docs/runtime_cpu_allocation.md`：当前 `0-15` 是实盘保留区，`16-31` 是测试 / diagnostics / benchmark 区；启动或重启任何测试任务时不要占用实盘 hot path core。
+   - 本轮 Ack RTT 复核默认使用 affinity profile `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml`；核心链路目标绑核为 Gate MD CPU2、Binance MD CPU3、strategy / Gate order owner CPU4、Gate order feedback CPU6、log backend CPU5，均位于实盘保留区。
    - 如果用户明确要求“全部重新开”、“不与现存的放在一起”或等价表达，本轮必须使用隔离 SHM name 和 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时配置重新启动 Gate data、Binance data、Gate order feedback 和策略；不要复用正在服务其它 run 的 data / feedback SHM。若用户同时指定 Gate private non-TLS，则 Gate data、Gate order session 和 Gate order feedback 都使用 `fxws-private.gateapi.io:80`、`enable_tls=false`；Binance data session 仍按 Binance public TLS 配置。
 3. 如果本轮刚修改过代码或交易配置，先完成相应 build / test / commit，再启动 live run；不要用过期 binary 或未验证配置下真实订单。只修改报告或文档时不需要重编译。
 4. 生成本轮 affinity overlay：
@@ -46,6 +47,7 @@ scripts/lead_lag/run_live_with_guard.py \
 
 5. 检查行情端：
    - 通过 `ps`、日志或 SHM probe 确认 `gate_data_session` 和 `binance_data_session` 正在运行并写入预期 SHM。
+   - 确认 live data session 实际 owner CPU 位于 `0-15`；如果同机有测试 data session / recorder，确认它们位于 `16-31`，或在最终回复中明确本轮例外。
    - 如果行情端缺失，优先使用上一步生成的 `gate_market_data` / `binance_market_data` 临时 TOML；否则按 `config/data_sessions/gate_data_session_requested_20260521.toml` 和 `config/data_sessions/binance_data_session_requested_20260521.toml` 启动并在最终回复中说明未应用 affinity split。启动 stdout / stderr 写入本次 `/home/liuxiang/tmp/<run_id>/`。
    - 如果 recorder 已按用户要求长期运行，保持运行；如需新 recorder，按 recorder runbook 单独启动，不把 recorder 和交易端生命周期绑死。
 6. 启动 Gate order feedback session：

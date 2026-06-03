@@ -15,6 +15,7 @@
 - 真实订单模式不写 per-signal CSV；信号与下单意图通过日志中的 `trigger_ticker_id`、`lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 对齐；成功提交后的订单主事实源是 `lead_lag_order_submitted`，其中包含 `local_order_id`、最终 `position_id`、`position_event`、`position_direction`、`entry_local_order_id`、`signal_role`、`order_role`、`quantity_text` 和 `price_text`；终态日志 `lead_lag_order_finished` 同步输出 `position_id`、`position_direction`、`order_role`、`entry_local_order_id` 和 `order_finished_local_ns`。`scripts/lead_lag/analyze_order_detail.py --positions-output <path> --latency-output <path>` 可在生成 `order_detail.csv` 的同时生成 `position.csv` 和 `latency.csv`：`position.csv` 按 `run_id + symbol_id + position_id` 配对 entry / exit，每个有成交 exit 输出一行 closed / partial_closed slice，未平 entry 输出 open 行；`gross_pnl` 用 average fill price、matched volume 和 `contract_multiplier` 计算，`net_pnl` 再扣除 config 估算 fee。`latency.csv` 一行对应一个本地订单，输出 send / ack / finish 本地时间、ack RTT、send-to-finish、ack-to-finish、exchange timestamp 和 exchange-to-local 诊断字段；延迟判断优先看本地 RTT，不把本地和交易所时钟直接相减当作单程网络延迟。
 - `scripts/lead_lag/generate_live_report.py` 是真实订单运行结束后的报告生成入口，给定 `--run-id`、策略日志、策略配置和可选 guard stdout 后，生成 `reports/<run_id>/report.md`、`signal.csv`、`order_detail.csv`、`position.csv`、`latency.csv` 和同目录字段说明副本；生成后再由 agent 检查、commit，并在用户要求时 push。
 - Agent 触发词、实盘启动巡检和 report 打包提交流程见 `docs/lead_lag_live_operations_pipeline.md`。
+- 运行 CPU 分区必须遵守 `docs/runtime_cpu_allocation.md`：当前 32 物理 core 机器上 `0-15` 为实盘保留区，`16-31` 为测试 / diagnostics / benchmark 区；测试任务不得占用实盘 hot path core，除非用户明确授权本轮例外。
 - 2026-05-25 live run 中出现一笔 `219.023ms` Ack RTT outlier；分析见 `docs/lead_lag_ack_latency_outlier_analysis.md`。后续已落地 Gate `OrderSession` Ack latency diagnostic、affinity profile overlay 和 report diagnostic 字段；2026-05-26 拆核 30 分钟 run 没有复现 Ack outlier，最大 Ack RTT `6.738ms`，但仍未证明 2026-05-25 outlier 根因。
 - 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为当前阶段 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
 - `signal.csv`、`order_detail.csv`、`position.csv` 和 `latency.csv` 字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
@@ -32,6 +33,8 @@
 | `config/data_readers/strategy_data_reader_requested_20260521.toml` | LeadLag requested symbols realtime reader。 |
 | `config/order_feedback/gate_order_feedback_session.toml` | Gate private order feedback session。 |
 | `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml` | live-orders 核心链路 affinity profile；目标为 Gate MD CPU2、Binance MD CPU3、strategy / order owner CPU4、feedback CPU6、log CPU5。 |
+
+该 affinity profile 位于 `docs/runtime_cpu_allocation.md` 定义的 `0-15` 实盘保留区内。后续调整 profile 时，必须同步确认没有把测试 / benchmark core 混入实盘 hot path，也不要把测试 data session / recorder 放到 `0-15`。
 
 requested 配置当前覆盖：
 

@@ -29,6 +29,7 @@ docs/evaluation_support.md
 | Gate Ack latency / RTT probe | `docs/lead_lag_ack_latency_outlier_analysis.md`、`docs/lead_lag_runtime_latency_improvement_plan.md`、`docs/gate_order_session_rtt_probe_design.md`、`docs/diagnostic_fields.md` |
 | LeadLag live / replay | `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_operations_pipeline.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_reconcile_design.md`、`strategy/lead_lag/README.md` |
 | DataReader / data session | `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` |
+| Runtime CPU 分配 | `docs/runtime_cpu_allocation.md` |
 | TUI / account monitor | `docs/tui_onboarding_guide.md`、`docs/tui_gate_account_monitor_design.md` |
 | Binance 行情 | `docs/agent-handoff-binance-market-data.md` |
 | Evaluation 边界 | `docs/evaluation_support.md` |
@@ -42,6 +43,7 @@ docs/evaluation_support.md
 - LeadLag strategy 层生产订单闭环已完成；`lead_lag_strategy --execute` 已接真实 live-orders runtime，并在 `ContinuityLost` 后停止、返回 handoff exit code。外围 `run_live_with_guard.py` 负责 preflight、final REST check 和异常 stop-and-flat。
 - 当前不新增独立 `AccountPositionFeedbackSession`；account / position realtime feedback 作为 V2 可选能力。
 - IOC partial-fill / decimal filled close 按 2026-05-27 决策不再作为当前阶段 active blocker；若 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
+- 当前 32 物理 core 机器必须遵守 `docs/runtime_cpu_allocation.md`：`0-15` 为实盘保留区，`16-31` 为测试 / diagnostics / benchmark 区；测试 data session、recorder、RTT probe、benchmark、build、replay 或 Python 分析默认不得占用 `0-15`，除非用户明确授权本轮例外。
 - 2026-05-31 已完成 onboarding 和主要专题文档精简；`docs/project_onboarding_guide.md` 只保留事实源、入口、验证命令和下一步，细节继续放在各专题文档。
 
 ## 近期重要事实
@@ -93,6 +95,7 @@ docs/evaluation_support.md
 - recorder 是只读 SHM consumer，可和 LeadLag / demo 实盘并行；完整 dump 使用临时 `drain` 配置，观察 `overruns` / `skipped` 和 CPU 抢占，不要把仓库默认 reader config 改成 drain。
 - 若比较 Gate data session 不同 private IP 的行情延迟，不能只看 recorder/replay `local_ns`。Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`，语义是 data session 接入 WebSocket frame 后、进入 parser / decoder 前的本机 Unix epoch ns；Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，不是同消息里的 engine update `t`。需要按 data session 连接记录 `host` / `connect_ip` / remote endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns` 分组统计。
 - 2026-06-03 BTC_USDT Gate private plain data session + recorder partial sample 中，`exchange_ns -> local_ns` 主体在百微秒级，但曾出现约 `211ms` max；上下文显示更像 data session receive / processing gap 或 TCP head-of-line backlog，不能仅凭 recorder binary 判定为 SHM / reader 问题。后续建议按 `docs/data_session_shm_communication_design.md` 的 data session 延迟诊断分层补 `L1/L2`，再按需要补 RX software timestamping / pcap。
+- 后续做多路 Gate private plain BTC_USDT 行情对比时，按 `docs/runtime_cpu_allocation.md` 放到测试区；推荐 data session 使用 `16/18/20/22`，recorder 使用 `17/19/21/23`，analysis 使用 `28/29`。当前 `data_reader.execution_policy.bind_cpu_id` 只保留配置值，`data_reader_recorder` 不会自动绑核，需用外层 `taskset` 或脚本证明实际 CPU。
 
 ### Gate 交易
 
@@ -243,15 +246,16 @@ rg 'aquila_evaluation' core exchange tools
 ### LeadLag
 
 1. 先读 `docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_operations_pipeline.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_reconcile_design.md` 和 `strategy/lead_lag/README.md`。
-2. signal-only 用 `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml`；真实订单 `--execute` 用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`。
-3. 如果用户说 `lead_lag_live_replay_signal_parity <duration>`，按 `docs/lead_lag_live_replay_testing.md` 执行 live signal、DataReader binary record、replay 和 signal CSV 对比，产物写入 `/home/liuxiang/tmp/<run_id>`。
-4. 如果用户继续 `LAB_USDT` 单币实盘，先对照最近 run 的临时配置和 report：`reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`，确认 `open_notional` / `max_gross_notional` / slippage / fee 是否需要沿用或调整；stop loss / risk close 设计建议见 `docs/lead_lag_live_runtime_plan.md`。
-5. IOC partial-fill / decimal filled close 当前不是 active blocker；后续如再次异常，再做 targeted small smoke。
-6. account / position realtime feedback 作为 V2 可选能力；V1 继续依赖当前 guardrails 和 REST final check。
+2. 启动真实订单或同机测试前，先读 `docs/runtime_cpu_allocation.md` 并遵守 `0-15` 实盘、`16-31` 测试的分区；不要把测试 data session / recorder / benchmark 放进实盘 hot path core。
+3. signal-only 用 `config/strategies/lead_lag_requested_11symbols_strategy_20260522.toml`；真实订单 `--execute` 用 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`。
+4. 如果用户说 `lead_lag_live_replay_signal_parity <duration>`，按 `docs/lead_lag_live_replay_testing.md` 执行 live signal、DataReader binary record、replay 和 signal CSV 对比，产物写入 `/home/liuxiang/tmp/<run_id>`。
+5. 如果用户继续 `LAB_USDT` 单币实盘，先对照最近 run 的临时配置和 report：`reports/20260601_161653_lab_usdt_2000gross_1000notional_150ticks_private_8h/report.md`，确认 `open_notional` / `max_gross_notional` / slippage / fee 是否需要沿用或调整；stop loss / risk close 设计建议见 `docs/lead_lag_live_runtime_plan.md`。
+6. IOC partial-fill / decimal filled close 当前不是 active blocker；后续如再次异常，再做 targeted small smoke。
+7. account / position realtime feedback 作为 V2 可选能力；V1 继续依赖当前 guardrails 和 REST final check。
 
 ### DataReader / Data Session
 
-1. 先读 `docs/data_reader_config.md`、`docs/data_session_config.md` 和 `docs/data_session_shm_communication_design.md`。
+1. 先读 `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` 和 `docs/runtime_cpu_allocation.md`。
 2. 长时间 recorder 或实盘并行录制使用临时 `drain` 配置，输出到 `/home/liuxiang/tmp`，观察 `overruns` / `skipped` 和 CPU 抢占。
 3. 比较不同 private IP 行情延迟时，必须按 data session 连接记录 endpoint / owner CPU，并按 exchange timestamp、data session ingress、SHM publish / reader 时间分组统计。
 4. 若继续分析 `exchange_ns -> local_ns` outlier，先实现 data session diagnostic `L1/L2`：记录 Gate `bbo.t`、`bbo.time`、runtime loop / `DriveRead` / dispatch / handler ingress 时间和 outlier sample CSV；不要改 `BookTicker` 64-byte ABI。若仍无法定位，再补 RX software timestamping、`TCP_INFO`、pcap 或硬件 timestamp。
@@ -266,7 +270,7 @@ rg 'aquila_evaluation' core exchange tools
 
 请先在 `/home/liuxiang/dev/aquila` 运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、`docs/project_onboarding_guide.md`、`docs/evaluation_support.md`。当前 branch / ahead / dirty 状态只信 `git status`；公共 order / runtime contract 在 `core/trading/*` + `aquila::core`，Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h`。2026-05-31 已提交 onboarding 和主要专题文档精简，优先把本文件当作入口索引，细节再读对应专题文档。
 
-DataReader / data session：先读 `docs/data_reader_config.md`、`docs/data_session_config.md` 和 `docs/data_session_shm_communication_design.md`。`data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config；完整 dump 使用临时 `drain` 配置并观察 `overruns` / `skipped` / CPU 抢占。Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`；比较 Gate data session 不同 private IP 行情延迟时，Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，需要按连接记录 endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间和 `skipped` / `overruns` 分组统计。
+DataReader / data session：先读 `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` 和 `docs/runtime_cpu_allocation.md`。当前 32 物理 core 机器必须遵守 `0-15` 实盘、`16-31` 测试的 CPU 分区；测试 data session、recorder、RTT probe、benchmark、build、replay 或 Python 分析默认不得占用 `0-15`，除非用户明确授权本轮例外。`data_reader_recorder` 已能用 `RealtimeDataReader::Drain()` 从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config；完整 dump 使用临时 `drain` 配置并观察 `overruns` / `skipped` / CPU 抢占。Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`；比较 Gate data session 不同 private IP 行情延迟时，Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，需要按连接记录 endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间和 `skipped` / `overruns` 分组统计。4 路 Gate BTC_USDT private plain 行情对比推荐放到测试区：data session `16/18/20/22`、recorder `17/19/21/23`、analysis `28/29`；当前 `data_reader.execution_policy.bind_cpu_id` 只保留配置值，recorder 严格绑核需外层 `taskset` 或脚本证明。
 
 TUI：先读 `docs/tui_onboarding_guide.md` 和 `docs/tui_gate_account_monitor_design.md`。当前 `gate_account_tui --live-market-data` 只读现有 Gate / Binance `BookTicker` SHM；订单、仓位、PnL 和 health 还未接真实账户数据，下一步是 monitor 专用 Gate orders raw parser、REST snapshot 和 account model。
 
