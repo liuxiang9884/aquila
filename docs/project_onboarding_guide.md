@@ -92,6 +92,7 @@ docs/evaluation_support.md
 - `data_reader_recorder` 可从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config。
 - recorder 是只读 SHM consumer，可和 LeadLag / demo 实盘并行；完整 dump 使用临时 `drain` 配置，观察 `overruns` / `skipped` 和 CPU 抢占，不要把仓库默认 reader config 改成 drain。
 - 若比较 Gate data session 不同 private IP 的行情延迟，不能只看 recorder/replay `local_ns`。Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`，语义是 data session 接入 WebSocket frame 后、进入 parser / decoder 前的本机 Unix epoch ns；Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，不是同消息里的 engine update `t`。需要按 data session 连接记录 `host` / `connect_ip` / remote endpoint / owner CPU，并按 `BookTicker.exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns` 分组统计。
+- 2026-06-03 BTC_USDT Gate private plain data session + recorder partial sample 中，`exchange_ns -> local_ns` 主体在百微秒级，但曾出现约 `211ms` max；上下文显示更像 data session receive / processing gap 或 TCP head-of-line backlog，不能仅凭 recorder binary 判定为 SHM / reader 问题。后续建议按 `docs/data_session_shm_communication_design.md` 的 data session 延迟诊断分层补 `L1/L2`，再按需要补 RX software timestamping / pcap。
 
 ### Gate 交易
 
@@ -148,6 +149,7 @@ docs/evaluation_support.md
 | `tools/market_data/data_reader_recorder.*` | SHM 到 replay binary recorder |
 | `exchange/gate/market_data/*` | Gate SBE BBO client / session / config |
 | `exchange/binance/market_data/*` | Binance bookTicker stream / parser / client / session / config |
+| `scripts/market_data/analyze_book_ticker_latency.py` | 读取 `BookTicker` binary，统计 `exchange_ns -> local_ns` 延迟和 top outliers |
 
 ### LeadLag / Monitor
 
@@ -252,6 +254,7 @@ rg 'aquila_evaluation' core exchange tools
 1. 先读 `docs/data_reader_config.md`、`docs/data_session_config.md` 和 `docs/data_session_shm_communication_design.md`。
 2. 长时间 recorder 或实盘并行录制使用临时 `drain` 配置，输出到 `/home/liuxiang/tmp`，观察 `overruns` / `skipped` 和 CPU 抢占。
 3. 比较不同 private IP 行情延迟时，必须按 data session 连接记录 endpoint / owner CPU，并按 exchange timestamp、data session ingress、SHM publish / reader 时间分组统计。
+4. 若继续分析 `exchange_ns -> local_ns` outlier，先实现 data session diagnostic `L1/L2`：记录 Gate `bbo.t`、`bbo.time`、runtime loop / `DriveRead` / dispatch / handler ingress 时间和 outlier sample CSV；不要改 `BookTicker` 64-byte ABI。若仍无法定位，再补 RX software timestamping、`TCP_INFO`、pcap 或硬件 timestamp。
 
 ### Gate Trading / TUI
 
