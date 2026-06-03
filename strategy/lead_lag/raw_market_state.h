@@ -34,10 +34,12 @@ struct ActiveSeed {
 struct MarketSideState {
   QuoteSnapshot latest_quote;
   QuoteSnapshot previous_quote;
+  std::int64_t last_ticker_id{0};
   bool has_quote{false};
   bool has_previous_quote{false};
 
   [[nodiscard]] bool Update(const BookTicker& ticker) noexcept {
+    last_ticker_id = ticker.id;
     const QuoteSnapshot next{
         .event_ns = BookTickerEventTimeNs(ticker),
         .bid_price = ticker.bid_price,

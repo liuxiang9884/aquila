@@ -164,6 +164,13 @@ struct StrategyOrderFinishedLogRecordForTest {
   std::int64_t order_finished_local_ns{0};
 };
 
+struct StrategyOrderResponseLogRecordForTest {
+  core::OrderResponseKind kind{core::OrderResponseKind::kAck};
+  std::uint64_t local_order_id{0};
+  std::int64_t lead_id{0};
+  std::int64_t lag_id{0};
+};
+
 using StrategySignalTriggeredLogObserverForTest =
     void (*)(const StrategySignalTriggeredLogRecordForTest& record) noexcept;
 
@@ -175,6 +182,9 @@ using StrategyOrderSubmittedLogObserverForTest =
 
 using StrategyOrderFinishedLogObserverForTest =
     void (*)(const StrategyOrderFinishedLogRecordForTest& record) noexcept;
+
+using StrategyOrderResponseLogObserverForTest =
+    void (*)(const StrategyOrderResponseLogRecordForTest& record) noexcept;
 
 [[nodiscard]] inline StrategySignalTriggeredLogObserverForTest&
 StrategySignalTriggeredLogObserverSlotForTest() noexcept {
@@ -200,6 +210,12 @@ StrategyOrderFinishedLogObserverSlotForTest() noexcept {
   return observer;
 }
 
+[[nodiscard]] inline StrategyOrderResponseLogObserverForTest&
+StrategyOrderResponseLogObserverSlotForTest() noexcept {
+  static StrategyOrderResponseLogObserverForTest observer = nullptr;
+  return observer;
+}
+
 inline void SetStrategySignalTriggeredLogObserverForTest(
     StrategySignalTriggeredLogObserverForTest observer) noexcept {
   StrategySignalTriggeredLogObserverSlotForTest() = observer;
@@ -218,6 +234,11 @@ inline void SetStrategyOrderSubmittedLogObserverForTest(
 inline void SetStrategyOrderFinishedLogObserverForTest(
     StrategyOrderFinishedLogObserverForTest observer) noexcept {
   StrategyOrderFinishedLogObserverSlotForTest() = observer;
+}
+
+inline void SetStrategyOrderResponseLogObserverForTest(
+    StrategyOrderResponseLogObserverForTest observer) noexcept {
+  StrategyOrderResponseLogObserverSlotForTest() = observer;
 }
 
 inline void NotifyStrategySignalTriggeredLogObserverForTest(
@@ -254,6 +275,16 @@ inline void NotifyStrategyOrderFinishedLogObserverForTest(
     const StrategyOrderFinishedLogRecordForTest& record) noexcept {
   StrategyOrderFinishedLogObserverForTest observer =
       StrategyOrderFinishedLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+
+inline void NotifyStrategyOrderResponseLogObserverForTest(
+    const StrategyOrderResponseLogRecordForTest& record) noexcept {
+  StrategyOrderResponseLogObserverForTest observer =
+      StrategyOrderResponseLogObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }
@@ -474,22 +505,33 @@ inline void LogStrategyOrderIntentRejected(
 
 inline void LogStrategyOrderResponse(
     const core::OrderResponseEvent& event,
-    const core::StrategyOrder* order) noexcept {
-  if (::nova::kLogManager.logger() == nullptr) {
-    return;
-  }
+    const core::StrategyOrder* order, std::int64_t lead_id,
+    std::int64_t lag_id) noexcept {
   const core::StrategyOrderTimingSnapshot timing =
       order == nullptr ? core::StrategyOrderTimingSnapshot{}
                        : core::MakeStrategyOrderTimingSnapshot(*order);
   const std::int64_t exchange_to_local_ns =
       core::LatencyDeltaNs(event.local_receive_ns, event.exchange_ns);
-  NOVA_INFO(
-      "lead_lag_order_response kind={} local_order_id={} "
-      "exchange_order_id={} local_receive_ns={} exchange_ns={} "
-      "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={}",
-      magic_enum::enum_name(event.kind), event.local_order_id,
-      event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
-      exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns);
+  if (::nova::kLogManager.logger() != nullptr) {
+    NOVA_INFO(
+        "lead_lag_order_response kind={} local_order_id={} "
+        "exchange_order_id={} local_receive_ns={} exchange_ns={} "
+        "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
+        "lead_id={} lag_id={}",
+        magic_enum::enum_name(event.kind), event.local_order_id,
+        event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
+        exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
+        lead_id, lag_id);
+  }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  NotifyStrategyOrderResponseLogObserverForTest(
+      StrategyOrderResponseLogRecordForTest{
+          .kind = event.kind,
+          .local_order_id = event.local_order_id,
+          .lead_id = lead_id,
+          .lag_id = lag_id,
+      });
+#endif
 }
 
 inline void LogStrategyOrderFeedback(const OrderFeedbackEvent& event) noexcept {
@@ -692,11 +734,12 @@ class Strategy {
   template <typename ContextT>
   void OnOrderResponse(const core::OrderResponseEvent& event,
                        ContextT& context) noexcept {
-    const core::StrategyOrder* order_for_log = nullptr;
-    if (::nova::kLogManager.logger() != nullptr) {
-      order_for_log = context.FindOrder(event.local_order_id);
-    }
-    detail::LogStrategyOrderResponse(event, order_for_log);
+    const core::StrategyOrder* order_for_log =
+        context.FindOrder(event.local_order_id);
+    const OrderResponseMarketIds market_ids =
+        MarketIdsForOrder(order_for_log);
+    detail::LogStrategyOrderResponse(event, order_for_log, market_ids.lead_id,
+                                     market_ids.lag_id);
     ApplyFinishedOrder(event.local_order_id, context);
   }
 
@@ -882,6 +925,11 @@ class Strategy {
     PairRuntimeState* runtime{nullptr};
   };
 
+  struct OrderResponseMarketIds {
+    std::int64_t lead_id{0};
+    std::int64_t lag_id{0};
+  };
+
   struct OrderPriceTextStorage {
     std::uint64_t local_order_id{0};
     std::array<char, kOrderPriceTextCapacity> price_text{};
@@ -1039,6 +1087,21 @@ class Strategy {
     const PairRoute& route =
         routes_by_symbol_id_[static_cast<std::size_t>(symbol_id)];
     return route.initialized ? &route : nullptr;
+  }
+
+  [[nodiscard]] OrderResponseMarketIds MarketIdsForOrder(
+      const core::StrategyOrder* order) const noexcept {
+    if (order == nullptr) {
+      return {};
+    }
+    const PairRoute* route = Route(order->symbol_id);
+    if (route == nullptr || route->market == nullptr) {
+      return {};
+    }
+    return OrderResponseMarketIds{
+        .lead_id = route->market->lead.last_ticker_id,
+        .lag_id = route->market->lag.last_ticker_id,
+    };
   }
 
   [[nodiscard]] bool AllInitializedRuntimesReconciling() const noexcept {
