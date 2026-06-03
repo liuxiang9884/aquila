@@ -153,6 +153,7 @@ docs/evaluation_support.md
 | `exchange/gate/market_data/*` | Gate SBE BBO client / session / config |
 | `exchange/binance/market_data/*` | Binance bookTicker stream / parser / client / session / config |
 | `scripts/market_data/analyze_book_ticker_latency.py` | 读取 `BookTicker` binary，统计 `exchange_ns -> local_ns` 延迟和 top outliers |
+| `scripts/market_data/analyze_book_ticker_fusion_latency.py` | 分析 4 路 `BookTicker` recorder 数据的多路融合 latency；四路 `id` 区间取交集，组合内按参与路并集取每个 `id` 的最小 latency |
 
 ### LeadLag / Monitor
 
