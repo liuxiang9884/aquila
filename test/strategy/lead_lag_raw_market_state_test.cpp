@@ -77,6 +77,18 @@ TEST(LeadLagRawMarketStateTest, RoutesBySymbolIdAndExchange) {
   EXPECT_EQ(pair->last_event_ns, 94);
 }
 
+TEST(LeadLagRawMarketStateTest, MutablePairReturnsInitializedPairOnly) {
+  leadlag::RawMarketState state;
+  state.Reset(OnePairConfig());
+
+  leadlag::PairMarketState* pair = state.MutablePair(3);
+  ASSERT_NE(pair, nullptr);
+  EXPECT_EQ(pair, state.FindPair(3));
+  EXPECT_EQ(state.MutablePair(-1), nullptr);
+  EXPECT_EQ(state.MutablePair(2), nullptr);
+  EXPECT_EQ(state.MutablePair(4), nullptr);
+}
+
 TEST(LeadLagRawMarketStateTest, SamePriceTickDoesNotReplaceLatestQuote) {
   leadlag::RawMarketState state;
   state.Reset(OnePairConfig());

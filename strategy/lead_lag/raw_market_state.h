@@ -161,6 +161,15 @@ class RawMarketState {
     return &slot->market;
   }
 
+  [[nodiscard]] PairMarketState* MutablePair(
+      std::int32_t symbol_id) noexcept {
+    PairMarketSlot* slot = MutableSlot(symbol_id);
+    if (slot == nullptr || !slot->initialized) {
+      return nullptr;
+    }
+    return &slot->market;
+  }
+
  private:
   [[nodiscard]] PairMarketSlot* MutableSlot(std::int32_t symbol_id) noexcept {
     if (symbol_id < 0 ||

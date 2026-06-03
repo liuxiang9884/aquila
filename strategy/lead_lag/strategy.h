@@ -619,15 +619,25 @@ class Strategy {
         detail::StrategyLogRealtimeNowNs();
     last_signal_decision_ = {};
     last_signal_diagnostics_valid_ = false;
-    last_market_update_ = raw_market_state_.OnBookTicker(ticker);
-    if (!last_market_update_.tracked) {
+    last_market_update_ = MarketUpdate{.symbol_id = ticker.symbol_id};
+    PairRoute* route = Route(ticker.symbol_id);
+    if (route == nullptr) {
+      return;
+    }
+    PairRole role = PairRole::kNone;
+    if (ticker.exchange == route->lead_exchange) {
+      role = PairRole::kLead;
+    } else if (ticker.exchange == route->lag_exchange) {
+      role = PairRole::kLag;
+    } else {
       return;
     }
 
-    PairRuntimeState* runtime = MutableRuntime(last_market_update_.symbol_id);
-    const PairMarketState* market =
-        raw_market_state_.FindPair(last_market_update_.symbol_id);
-    if (runtime == nullptr || market == nullptr) {
+    PairMarketState* market = route->market;
+    PairRuntimeState* runtime = route->runtime;
+    assert(market != nullptr);
+    last_market_update_ = market->Update(role, ticker);
+    if (runtime == nullptr) {
       return;
     }
 
@@ -864,6 +874,14 @@ class Strategy {
     } order_decimal;
   };
 
+  struct PairRoute {
+    bool initialized{false};
+    Exchange lead_exchange{Exchange::kBinance};
+    Exchange lag_exchange{Exchange::kGate};
+    PairMarketState* market{nullptr};
+    PairRuntimeState* runtime{nullptr};
+  };
+
   struct OrderPriceTextStorage {
     std::uint64_t local_order_id{0};
     std::array<char, kOrderPriceTextCapacity> price_text{};
@@ -900,9 +918,28 @@ class Strategy {
     }
 
     pair_runtime_by_symbol_id_.clear();
+    routes_by_symbol_id_.clear();
     order_price_texts_.clear();
     pair_runtime_by_symbol_id_.resize(
         static_cast<std::size_t>(max_symbol_id + 1));
+    routes_by_symbol_id_.resize(static_cast<std::size_t>(max_symbol_id + 1));
+    for (const PairConfig& pair : config_.pairs) {
+      if (pair.symbol_id < 0) {
+        continue;
+      }
+      PairMarketState* market = raw_market_state_.MutablePair(pair.symbol_id);
+      if (market == nullptr) {
+        continue;
+      }
+      routes_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)] =
+          PairRoute{
+              .initialized = true,
+              .lead_exchange = pair.lead_exchange,
+              .lag_exchange = pair.lag_exchange,
+              .market = market,
+              .runtime = nullptr,
+          };
+    }
     std::size_t price_text_slot_count = 0;
     for (const PairConfig& pair : config_.pairs) {
       if (!RuntimeConfigReady(pair)) {
@@ -925,6 +962,10 @@ class Strategy {
             pair.lag_instrument.notional_multiplier);
         continue;
       }
+      PairRoute* route = Route(pair.symbol_id);
+      if (route == nullptr || route->market == nullptr) {
+        continue;
+      }
       price_text_slot_count += pair.execute.parallel;
       PairRuntimeState& runtime =
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
@@ -941,6 +982,7 @@ class Strategy {
       runtime.recorder.Init(pair);
       runtime.threshold.Init(pair);
       runtime.execution.Init(pair.execute.parallel);
+      route->runtime = &runtime;
     }
     order_price_texts_.resize(price_text_slot_count);
   }
@@ -977,6 +1019,26 @@ class Strategy {
     PairRuntimeState& runtime =
         pair_runtime_by_symbol_id_[static_cast<std::size_t>(symbol_id)];
     return runtime.initialized ? &runtime : nullptr;
+  }
+
+  [[nodiscard]] PairRoute* Route(std::int32_t symbol_id) noexcept {
+    if (symbol_id < 0 ||
+        static_cast<std::size_t>(symbol_id) >= routes_by_symbol_id_.size()) {
+      return nullptr;
+    }
+    PairRoute& route =
+        routes_by_symbol_id_[static_cast<std::size_t>(symbol_id)];
+    return route.initialized ? &route : nullptr;
+  }
+
+  [[nodiscard]] const PairRoute* Route(std::int32_t symbol_id) const noexcept {
+    if (symbol_id < 0 ||
+        static_cast<std::size_t>(symbol_id) >= routes_by_symbol_id_.size()) {
+      return nullptr;
+    }
+    const PairRoute& route =
+        routes_by_symbol_id_[static_cast<std::size_t>(symbol_id)];
+    return route.initialized ? &route : nullptr;
   }
 
   [[nodiscard]] bool AllInitializedRuntimesReconciling() const noexcept {
@@ -1849,6 +1911,7 @@ class Strategy {
   StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
+  std::vector<PairRoute> routes_by_symbol_id_;
   std::vector<OrderPriceTextStorage> order_price_texts_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
