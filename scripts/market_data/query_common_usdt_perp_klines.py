@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -28,6 +29,8 @@ class CommonSymbol:
     symbol: str
     gate_symbol: str
     binance_symbol: str
+    gate_tick_size: str
+    binance_tick_size: str
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,7 @@ KLINE_COLUMNS = [
 
 def exchange_result_columns(windows: Iterable[int]) -> list[str]:
     normalized = sorted({int(window) for window in windows})
-    columns = ["exchange", "symbol", "exchange_symbol"]
+    columns = ["exchange", "symbol", "exchange_symbol", "tick_size"]
     columns.extend([f"vol_{window}m_bps" for window in normalized])
     columns.extend([f"quote_volume_{window}m" for window in normalized])
     columns.extend([f"volume_{window}m" for window in normalized])
@@ -114,6 +117,20 @@ def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
 
+def normalize_decimal_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        decimal_value = Decimal(text)
+    except InvalidOperation:
+        return text
+    normalized = format(decimal_value.normalize(), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
 def load_common_symbols(
     catalog_path: Path, requested_symbols: set[str] | None = None
 ) -> list[CommonSymbol]:
@@ -129,18 +146,23 @@ def load_common_symbols(
                 continue
             entry = by_symbol.setdefault(symbol, {})
             entry[exchange] = exchange_symbol
+            entry[f"{exchange}_tick_size"] = normalize_decimal_text(row.get("price_tick", ""))
 
     result: list[CommonSymbol] = []
     for symbol in sorted(by_symbol):
         entry = by_symbol[symbol]
         gate_symbol = entry.get("gate")
         binance_symbol = entry.get("binance")
-        if gate_symbol and binance_symbol:
+        gate_tick_size = entry.get("gate_tick_size")
+        binance_tick_size = entry.get("binance_tick_size")
+        if gate_symbol and binance_symbol and gate_tick_size and binance_tick_size:
             result.append(
                 CommonSymbol(
                     symbol=symbol,
                     gate_symbol=gate_symbol,
                     binance_symbol=binance_symbol,
+                    gate_tick_size=gate_tick_size,
+                    binance_tick_size=binance_tick_size,
                 )
             )
     return result
@@ -310,6 +332,14 @@ def _exchange_symbol(common_symbol: CommonSymbol, exchange: str) -> str:
     raise ValueError(f"unsupported exchange: {exchange}")
 
 
+def _tick_size(common_symbol: CommonSymbol, exchange: str) -> str:
+    if exchange == "gate":
+        return common_symbol.gate_tick_size
+    if exchange == "binance":
+        return common_symbol.binance_tick_size
+    raise ValueError(f"unsupported exchange: {exchange}")
+
+
 def _latest_sum(rows: list[KlineRow], window: int, field: str) -> float | None:
     if len(rows) < window:
         return None
@@ -377,6 +407,7 @@ def build_exchange_result_rows(
             "exchange": exchange,
             "symbol": common_symbol.symbol,
             "exchange_symbol": _exchange_symbol(common_symbol, exchange),
+            "tick_size": _tick_size(common_symbol, exchange),
         }
 
         vol_by_window: dict[int, float | None] = {}

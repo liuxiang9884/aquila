@@ -20,8 +20,8 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
             catalog_path = Path(tmp) / "catalog.csv"
             catalog_path.write_text(
                 "symbol_id,symbol,exchange,exchange_symbol,base_asset,quote_asset,settle_asset,product_type,status,contract_type,price_tick,price_decimal_places,quantity_step,quantity_decimal_places,min_quantity,max_quantity,max_market_quantity,min_notional,notional_multiplier,price_limit_up,price_limit_down,market_price_bound\n"
-                "0,BTC_USDT,gate,BTC_USDT,BTC,USDT,USDT,linear_perpetual,TRADING,direct,0.1,1,1,0,1,1000,,,0.0001,0.5,0.5,\n"
-                "0,BTC_USDT,binance,BTCUSDT,BTC,USDT,USDT,linear_perpetual,TRADING,PERPETUAL,0.1,1,0.001,3,0.001,1000,120,100,1,0.05,0.05,0.05\n"
+                "0,BTC_USDT,gate,BTC_USDT,BTC,USDT,USDT,linear_perpetual,TRADING,direct,1e-05,5,1,0,1,1000,,,0.0001,0.5,0.5,\n"
+                "0,BTC_USDT,binance,BTCUSDT,BTC,USDT,USDT,linear_perpetual,TRADING,PERPETUAL,0.001,3,0.001,3,0.001,1000,120,100,1,0.05,0.05,0.05\n"
                 "1,ONLY_GATE,gate,ONLY_GATE,ONLY,USDT,USDT,linear_perpetual,TRADING,direct,0.1,1,1,0,1,1000,,,0.0001,0.5,0.5,\n",
                 encoding="utf-8",
             )
@@ -32,6 +32,8 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
         self.assertEqual(symbols[0].symbol, "BTC_USDT")
         self.assertEqual(symbols[0].gate_symbol, "BTC_USDT")
         self.assertEqual(symbols[0].binance_symbol, "BTCUSDT")
+        self.assertEqual(symbols[0].gate_tick_size, "0.00001")
+        self.assertEqual(symbols[0].binance_tick_size, "0.001")
 
     def test_parse_binance_kline_array(self):
         row = klines.parse_binance_kline(
@@ -146,6 +148,8 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
                 symbol="BTC_USDT",
                 gate_symbol="BTC_USDT",
                 binance_symbol="BTCUSDT",
+                gate_tick_size="0.00001",
+                binance_tick_size="0.001",
             )
         ]
         rows = [
@@ -178,6 +182,7 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
         self.assertEqual(row["exchange"], "gate")
         self.assertEqual(row["symbol"], "BTC_USDT")
         self.assertEqual(row["exchange_symbol"], "BTC_USDT")
+        self.assertEqual(row["tick_size"], "0.00001")
         self.assertNotEqual(row["vol_30m_bps"], "")
         self.assertEqual(row["quote_volume_30m"], "4950.000000")
         self.assertEqual(row["volume_30m"], "495.000000")
@@ -196,6 +201,7 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
                     "exchange": "gate",
                     "symbol": "BTC_USDT",
                     "exchange_symbol": "BTC_USDT",
+                    "tick_size": "0.00001",
                     "vol_30m_bps": "123.000000",
                     "vol_60m_bps": "",
                     "quote_volume_30m": "4800.000000",
@@ -216,6 +222,7 @@ class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
                 loaded_rows = list(csv.DictReader(handle))
 
         self.assertEqual(loaded_rows[0]["quote_volume_30m"], "4800.000000")
+        self.assertEqual(loaded_rows[0]["tick_size"], "0.00001")
         self.assertEqual(loaded_rows[0]["reference_price"], "130.000000")
         self.assertNotIn("latest_close", loaded_rows[0])
         self.assertEqual(loaded_rows[0]["valid_60m"], "false")

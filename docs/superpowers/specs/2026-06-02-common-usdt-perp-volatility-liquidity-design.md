@@ -27,7 +27,7 @@ binance_volatility_liquidity.csv
 每个交易所一个 CSV，每行一个内部 symbol：
 
 ```text
-exchange,symbol,exchange_symbol,
+exchange,symbol,exchange_symbol,tick_size,
 vol_30m_bps,vol_60m_bps,
 quote_volume_30m,quote_volume_60m,
 volume_30m,volume_60m,
@@ -36,6 +36,7 @@ close_count,latest_closed_open_time_ms,reference_price
 ```
 
 - `vol_*m_bps`：最近 N 分钟 close-to-close realized volatility，单位 bps；N 分钟需要最近 `N + 1` 根已完成 1m close。
+- `tick_size`：该交易所对应合约的 `price_tick`，来自 instrument catalog，并规范为普通十进制文本。
 - `quote_volume_*m`：最近 N 根已完成 1m K 线的 `quote_volume` 求和。Binance 为 USDT quote asset volume；Gate 为 `sum`，USDT futures 下作为 USDT 成交额使用。
 - `volume_*m`：最近 N 根已完成 1m K 线的原始 `volume` 求和，仅作为交易所内参考，不作为跨交易所主流动性指标。
 - `valid_*m`：对应窗口是否同时有足够 close 和 K 线数据。
