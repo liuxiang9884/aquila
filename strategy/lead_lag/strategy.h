@@ -167,10 +167,19 @@ struct StrategyOrderFinishedLogRecordForTest {
   std::string_view order_role;
   std::uint64_t entry_local_order_id{0};
   std::int64_t order_finished_local_ns{0};
+  std::int64_t lead_exchange_ns{0};
+  std::int64_t lag_exchange_ns{0};
 };
 
 struct StrategyOrderResponseLogRecordForTest {
   core::OrderResponseKind kind{core::OrderResponseKind::kAck};
+  std::uint64_t local_order_id{0};
+  std::int64_t lead_exchange_ns{0};
+  std::int64_t lag_exchange_ns{0};
+};
+
+struct StrategyOrderFeedbackLogRecordForTest {
+  OrderFeedbackKind kind{OrderFeedbackKind::kAccepted};
   std::uint64_t local_order_id{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};
@@ -190,6 +199,9 @@ using StrategyOrderFinishedLogObserverForTest =
 
 using StrategyOrderResponseLogObserverForTest =
     void (*)(const StrategyOrderResponseLogRecordForTest& record) noexcept;
+
+using StrategyOrderFeedbackLogObserverForTest =
+    void (*)(const StrategyOrderFeedbackLogRecordForTest& record) noexcept;
 
 [[nodiscard]] inline StrategySignalTriggeredLogObserverForTest&
 StrategySignalTriggeredLogObserverSlotForTest() noexcept {
@@ -221,6 +233,12 @@ StrategyOrderResponseLogObserverSlotForTest() noexcept {
   return observer;
 }
 
+[[nodiscard]] inline StrategyOrderFeedbackLogObserverForTest&
+StrategyOrderFeedbackLogObserverSlotForTest() noexcept {
+  static StrategyOrderFeedbackLogObserverForTest observer = nullptr;
+  return observer;
+}
+
 inline void SetStrategySignalTriggeredLogObserverForTest(
     StrategySignalTriggeredLogObserverForTest observer) noexcept {
   StrategySignalTriggeredLogObserverSlotForTest() = observer;
@@ -244,6 +262,11 @@ inline void SetStrategyOrderFinishedLogObserverForTest(
 inline void SetStrategyOrderResponseLogObserverForTest(
     StrategyOrderResponseLogObserverForTest observer) noexcept {
   StrategyOrderResponseLogObserverSlotForTest() = observer;
+}
+
+inline void SetStrategyOrderFeedbackLogObserverForTest(
+    StrategyOrderFeedbackLogObserverForTest observer) noexcept {
+  StrategyOrderFeedbackLogObserverSlotForTest() = observer;
 }
 
 inline void NotifyStrategySignalTriggeredLogObserverForTest(
@@ -290,6 +313,16 @@ inline void NotifyStrategyOrderResponseLogObserverForTest(
     const StrategyOrderResponseLogRecordForTest& record) noexcept {
   StrategyOrderResponseLogObserverForTest observer =
       StrategyOrderResponseLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+
+inline void NotifyStrategyOrderFeedbackLogObserverForTest(
+    const StrategyOrderFeedbackLogRecordForTest& record) noexcept {
+  StrategyOrderFeedbackLogObserverForTest observer =
+      StrategyOrderFeedbackLogObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }
@@ -551,21 +584,35 @@ inline void LogStrategyOrderResponse(
 #endif
 }
 
-inline void LogStrategyOrderFeedback(const OrderFeedbackEvent& event) noexcept {
-  if (::nova::kLogManager.logger() == nullptr) {
-    return;
+inline void LogStrategyOrderFeedback(
+    const OrderFeedbackEvent& event,
+    const SignalTiming& market_timing) noexcept {
+  if (::nova::kLogManager.logger() != nullptr) {
+    NOVA_INFO(
+        "lead_lag_order_feedback kind={} local_order_id={} "
+        "exchange_order_id={} "
+        "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
+        "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
+        "finish_reason={} reject_reason={} exchange_update_ns={} "
+        "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={}",
+        magic_enum::enum_name(event.kind), event.local_order_id,
+        event.exchange_order_id, event.cumulative_filled_quantity,
+        event.left_quantity, event.cancelled_quantity, event.fill_price,
+        magic_enum::enum_name(event.role),
+        magic_enum::enum_name(event.finish_reason),
+        magic_enum::enum_name(event.reject_reason), event.exchange_update_ns,
+        event.local_receive_ns, market_timing.lead_exchange_ns,
+        market_timing.lag_exchange_ns);
   }
-  NOVA_INFO(
-      "lead_lag_order_feedback kind={} local_order_id={} exchange_order_id={} "
-      "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
-      "cancelled_quantity={:.12g} "
-      "fill_price={:.12g} role={} finish_reason={} reject_reason={}",
-      magic_enum::enum_name(event.kind), event.local_order_id,
-      event.exchange_order_id, event.cumulative_filled_quantity,
-      event.left_quantity, event.cancelled_quantity, event.fill_price,
-      magic_enum::enum_name(event.role),
-      magic_enum::enum_name(event.finish_reason),
-      magic_enum::enum_name(event.reject_reason));
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  NotifyStrategyOrderFeedbackLogObserverForTest(
+      StrategyOrderFeedbackLogRecordForTest{
+          .kind = event.kind,
+          .local_order_id = event.local_order_id,
+          .lead_exchange_ns = market_timing.lead_exchange_ns,
+          .lag_exchange_ns = market_timing.lag_exchange_ns,
+      });
+#endif
 }
 
 inline void LogStrategyFeedbackContinuityLost(
@@ -611,9 +658,9 @@ inline void LogStrategyPairDisabledForOrderMetadata(
       notional_multiplier);
 }
 
-inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
-                                     StrategyOrderPositionLogFields position,
-                                     std::size_t active_groups) noexcept {
+inline void LogStrategyOrderFinished(
+    const core::StrategyOrder& order, StrategyOrderPositionLogFields position,
+    std::size_t active_groups, const SignalTiming& market_timing) noexcept {
   position.order_finished_local_ns = detail::StrategyLogRealtimeNowNs();
   const core::StrategyOrderTimingSnapshot timing =
       core::MakeStrategyOrderTimingSnapshot(order);
@@ -629,7 +676,7 @@ inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
         "ack_exchange_ns={} response_exchange_ns={} accepted_exchange_ns={} "
         "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
         "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
-        "exchange_lifecycle_ns={}",
+        "exchange_lifecycle_ns={} lead_exchange_ns={} lag_exchange_ns={}",
         order.local_order_id, order.symbol_id, order.symbol,
         magic_enum::enum_name(order.status),
         order.reduce_only ? "true" : "false", position.position_id,
@@ -643,7 +690,8 @@ inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
         timing.accepted_exchange_ns, timing.finish_exchange_ns,
         timing.ack_rtt_ns, timing.response_rtt_ns,
         timing.ack_exchange_to_local_ns, timing.response_exchange_to_local_ns,
-        timing.exchange_lifecycle_ns);
+        timing.exchange_lifecycle_ns, market_timing.lead_exchange_ns,
+        market_timing.lag_exchange_ns);
   }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderFinishedLogObserverForTest(
@@ -653,7 +701,9 @@ inline void LogStrategyOrderFinished(const core::StrategyOrder& order,
           .position_direction = position.position_direction,
           .order_role = position.order_role,
           .entry_local_order_id = position.entry_local_order_id,
-          .order_finished_local_ns = position.order_finished_local_ns});
+          .order_finished_local_ns = position.order_finished_local_ns,
+          .lead_exchange_ns = market_timing.lead_exchange_ns,
+          .lag_exchange_ns = market_timing.lag_exchange_ns});
 #endif
 }
 
@@ -753,9 +803,9 @@ class Strategy {
                        ContextT& context) noexcept {
     const core::StrategyOrder* order_for_log =
         context.FindOrder(event.local_order_id);
-    detail::LogStrategyOrderResponse(event, order_for_log,
-                                     MarketTimingForOrder(order_for_log));
-    ApplyFinishedOrder(event.local_order_id, context);
+    const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
+    detail::LogStrategyOrderResponse(event, order_for_log, market_timing);
+    ApplyFinishedOrder(event.local_order_id, context, market_timing);
   }
 
   template <typename ContextT>
@@ -773,8 +823,11 @@ class Strategy {
       }
       return;
     }
-    detail::LogStrategyOrderFeedback(event);
-    ApplyFinishedOrder(event.local_order_id, context);
+    const core::StrategyOrder* order_for_log =
+        context.FindOrder(event.local_order_id);
+    const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
+    detail::LogStrategyOrderFeedback(event, market_timing);
+    ApplyFinishedOrder(event.local_order_id, context, market_timing);
   }
 
   [[nodiscard]] bool ShouldStop() const noexcept {
@@ -1540,8 +1593,8 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void ApplyFinishedOrder(std::uint64_t local_order_id,
-                          ContextT& context) noexcept {
+  void ApplyFinishedOrder(std::uint64_t local_order_id, ContextT& context,
+                          const SignalTiming& market_timing) noexcept {
     if (local_order_id == 0) {
       return;
     }
@@ -1557,10 +1610,12 @@ class Strategy {
           runtime->execution.ApplyTerminalOrder(*order,
                                                 runtime->pair.lag_instrument);
       detail::LogStrategyOrderFinished(*order, position_log,
-                                       runtime->execution.active_group_count());
+                                       runtime->execution.active_group_count(),
+                                       market_timing);
     } else {
       detail::LogStrategyOrderFinished(
-          *order, BuildFinishedOrderPositionLogFields(nullptr, *order), 0);
+          *order, BuildFinishedOrderPositionLogFields(nullptr, *order), 0,
+          market_timing);
     }
     if (context.RetireFinishedOrder(local_order_id)) {
       EraseOrderPriceText(local_order_id);

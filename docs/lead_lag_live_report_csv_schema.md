@@ -266,8 +266,8 @@
 | `ack_exchange_response_egress_ns` | Gate Ack response header 的 `x_out_time` 转 ns。 | `gate_order_response.exchange_response_egress_ns`。 |
 | `ack_exchange_process_ns` | Gate Ack header 中 `x_out_time - x_in_time` 的同钟域 duration。 | `gate_order_response.exchange_process_ns`；可直接用于 Gate 内部 Ack processing tail 统计。 |
 | `response_exchange_ns` | 交易所 response 时间戳。 | 终态日志。 |
-| `accepted_exchange_ns` | 交易所接受订单时间戳。 | 终态日志。 |
-| `finish_exchange_ns` | 交易所订单终态时间戳。 | 终态日志。 |
+| `accepted_exchange_ns` | 交易所接受订单时间戳。 | feedback `exchange_update_ns` 或终态日志。 |
+| `finish_exchange_ns` | 交易所订单终态时间戳。 | feedback `exchange_update_ns` 或终态日志。 |
 | `ack_rtt_ns` | 本地下单发送到收到 Ack 的 RTT。 | 优先取 order detail；缺失时用 `ack_local_receive_ns - request_send_local_ns`。 |
 | `response_rtt_ns` | 本地下单发送到收到 response 的 RTT。 | order detail。 |
 | `send_to_ack_local_ns` | 本地下单发送到收到 Ack 的本地闭环。 | `ack_local_receive_ns - request_send_local_ns`。 |

@@ -204,6 +204,9 @@ std::size_t g_order_submitted_log_count{0};
 std::array<leadlag::detail::StrategyOrderResponseLogRecordForTest, 4>
     g_order_response_logs{};
 std::size_t g_order_response_log_count{0};
+std::array<leadlag::detail::StrategyOrderFeedbackLogRecordForTest, 4>
+    g_order_feedback_logs{};
+std::size_t g_order_feedback_log_count{0};
 std::array<leadlag::detail::StrategyOrderFinishedLogRecordForTest, 4>
     g_order_finished_logs{};
 std::size_t g_order_finished_log_count{0};
@@ -257,6 +260,22 @@ void ResetStrategyOrderResponseLogCapture() noexcept {
   g_order_response_logs = {};
   g_order_response_log_count = 0;
   leadlag::detail::SetStrategyOrderResponseLogObserverForTest(nullptr);
+}
+
+void CaptureStrategyOrderFeedbackLogForTest(
+    const leadlag::detail::StrategyOrderFeedbackLogRecordForTest&
+        record) noexcept {
+  if (g_order_feedback_log_count >= g_order_feedback_logs.size()) {
+    return;
+  }
+  g_order_feedback_logs[g_order_feedback_log_count] = record;
+  ++g_order_feedback_log_count;
+}
+
+void ResetStrategyOrderFeedbackLogCapture() noexcept {
+  g_order_feedback_logs = {};
+  g_order_feedback_log_count = 0;
+  leadlag::detail::SetStrategyOrderFeedbackLogObserverForTest(nullptr);
 }
 
 void CaptureStrategyOrderFinishedLogForTest(
@@ -361,6 +380,24 @@ class StrategyOrderResponseLogCaptureGuard {
       const StrategyOrderResponseLogCaptureGuard&) = delete;
   StrategyOrderResponseLogCaptureGuard& operator=(
       const StrategyOrderResponseLogCaptureGuard&) = delete;
+};
+
+class StrategyOrderFeedbackLogCaptureGuard {
+ public:
+  StrategyOrderFeedbackLogCaptureGuard() noexcept {
+    ResetStrategyOrderFeedbackLogCapture();
+    leadlag::detail::SetStrategyOrderFeedbackLogObserverForTest(
+        CaptureStrategyOrderFeedbackLogForTest);
+  }
+
+  ~StrategyOrderFeedbackLogCaptureGuard() noexcept {
+    ResetStrategyOrderFeedbackLogCapture();
+  }
+
+  StrategyOrderFeedbackLogCaptureGuard(
+      const StrategyOrderFeedbackLogCaptureGuard&) = delete;
+  StrategyOrderFeedbackLogCaptureGuard& operator=(
+      const StrategyOrderFeedbackLogCaptureGuard&) = delete;
 };
 
 class StrategySignalTriggeredLogCaptureGuard {
@@ -1072,6 +1109,41 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagExchangeNs) {
   EXPECT_EQ(log.local_order_id, local_order_id);
   EXPECT_EQ(log.lead_exchange_ns, 191);
   EXPECT_EQ(log.lag_exchange_ns, 192);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     OrderFeedbackAndFinishedLogsCurrentLeadLagExchangeNs) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategyOrderFeedbackLogCaptureGuard feedback_log_capture;
+  StrategyOrderFinishedLogCaptureGuard finished_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t local_order_id =
+      order_session.placed_orders[0].local_order_id;
+  ASSERT_NE(local_order_id, 0U);
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 201, 112.0, 113.0), context);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 202, 101.57, 102.02),
+                        context);
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(local_order_id, 7, 102.1));
+
+  ASSERT_EQ(g_order_feedback_log_count, 1U);
+  const auto& feedback_log = g_order_feedback_logs[0];
+  EXPECT_EQ(feedback_log.local_order_id, local_order_id);
+  EXPECT_EQ(feedback_log.lead_exchange_ns, 191);
+  EXPECT_EQ(feedback_log.lag_exchange_ns, 192);
+
+  ASSERT_EQ(g_order_finished_log_count, 1U);
+  const auto& finished_log = g_order_finished_logs[0];
+  EXPECT_EQ(finished_log.local_order_id, local_order_id);
+  EXPECT_EQ(finished_log.lead_exchange_ns, 191);
+  EXPECT_EQ(finished_log.lag_exchange_ns, 192);
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsCloseOrderSubmittedWithPositionId) {
