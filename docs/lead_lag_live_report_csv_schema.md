@@ -130,7 +130,7 @@
 | `fill_rate` | 成交比例，`cumulative_filled_quantity / quantity`。 | 分析脚本计算。 |
 | `average_fill_price` | 平均成交价。 | `lead_lag_order_finished.average_fill_price`。 |
 | `last_fill_price` | 最近一次成交价。 | feedback `fill_price` 或终态日志。 |
-| `contract_multiplier` | 合约乘数。 | instrument catalog 的 Gate 合约 metadata。 |
+| `contract_multiplier` | 合约乘数。 | instrument catalog 的 Gate `contract_multiplier`；旧 catalog 回退 `notional_multiplier`。 |
 | `filled_notional` | 成交 notional。 | `fill_price * cumulative_filled_quantity * contract_multiplier`。 |
 | `fill_role` | 回报中的成交角色字段。 | `lead_lag_order_feedback.role`。 |
 | `exec_slippage_price` | 实际成交价相对 raw price 的价格滑点。买单为 `fill_price - raw_price`，卖单为 `raw_price - fill_price`。 | 分析脚本计算。 |
@@ -236,7 +236,7 @@
 | `exit_volume` | exit 订单实际成交量。 | exit order 的 cumulative filled quantity。 |
 | `matched_volume` | 本行用于 PnL 的 entry / exit 匹配量。 | `min(exit_volume, remaining_entry_volume)`。 |
 | `remaining_entry_volume` | 本行处理后剩余未平 entry 成交量。 | 分析脚本计算。 |
-| `contract_multiplier` | 合约乘数。 | entry 或 exit order。 |
+| `contract_multiplier` | 合约乘数。 | entry 或 exit order 的 `contract_multiplier`。 |
 | `entry_notional` | 本行 entry notional。 | `entry_price * matched_or_remaining_volume * contract_multiplier`。 |
 | `exit_notional` | 本行 exit notional。 | `exit_price * matched_volume * contract_multiplier`。 |
 | `gross_pnl` | 未扣费 PnL。多头为 `(exit_price - entry_price) * matched_volume * multiplier`，空头为 `(entry_price - exit_price) * matched_volume * multiplier`。 | 分析脚本计算。 |

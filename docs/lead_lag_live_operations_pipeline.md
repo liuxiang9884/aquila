@@ -125,6 +125,7 @@ guard REST preflight / final check / emergency flatten 的凭据默认从 strate
    - 策略配置优先使用 guard / runner 启动命令里的 config；无法从上下文确定时，使用当前 12-symbol live 默认配置 `config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`，并在最终回复中说明该假设。
    - 如果策略 stdout / guard stdout 与 `gate_order_feedback_session.stdout` 分离，先在 `/home/liuxiang/tmp/<run_id>/` 生成一个 merged log，顺序拼接 strategy / guard stdout 和 feedback stdout；report 的 `--log` 使用 merged log，`--guard-stdout` 仍使用原始 guard stdout。这样 `feedback_event`、guard summary 和 runtime affinity 都能被同一份报告解析。
    - 如果 guard stdout 包含 `affinity` summary，report 会在 `report.md` 中记录 profile、split、core_path 和 generated config 路径；`latency.csv` 会包含 `gate_order_ack_latency_diagnostic` outlier 字段。
+   - 如果本次 run 使用的合约集合不是默认 12-symbol catalog，必须显式传 `--instrument-catalog`；例如 30-symbol run 使用 `config/instruments/usdt_futures_common_gate_binance_20260602.csv`，否则 report 可能缺少 `contract_multiplier` 并导致 PnL 不完整。
    - `run_id` 优先使用用户给定值；否则从日志文件名或启动时间推导为 `YYYYMMDD_HHMMSS_<label>`，推导不唯一时先确认。
 3. 使用固定脚本生成报告目录：
 
@@ -133,6 +134,7 @@ guard REST preflight / final check / emergency flatten 的凭据默认从 strate
   --run-id <run_id> \
   --log <lead_lag_strategy.log> \
   --config <strategy_config.toml> \
+  --instrument-catalog <instrument_catalog.csv> \
   --guard-stdout <guard_stdout> \
   --output-root reports
 ```
