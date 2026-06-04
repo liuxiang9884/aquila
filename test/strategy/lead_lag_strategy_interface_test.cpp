@@ -508,6 +508,8 @@ leadlag::Config OnePairConfig() {
       .symbol_id = 3,
       .lead_exchange = aquila::Exchange::kBinance,
       .lag_exchange = aquila::Exchange::kGate,
+      .max_lead_freshness_ms = 5,
+      .max_lag_freshness_ms = 20,
   });
   return config;
 }
