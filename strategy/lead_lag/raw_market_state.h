@@ -51,6 +51,8 @@ struct MarketSideState {
     }
     if (ticker.bid_price == latest_quote.bid_price &&
         ticker.ask_price == latest_quote.ask_price) {
+      latest_quote.event_ns = next.event_ns;
+      latest_quote.exchange_ns = next.exchange_ns;
       return false;
     }
     previous_quote = latest_quote;

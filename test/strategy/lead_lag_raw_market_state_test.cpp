@@ -89,7 +89,7 @@ TEST(LeadLagRawMarketStateTest, MutablePairReturnsInitializedPairOnly) {
   EXPECT_EQ(state.MutablePair(4), nullptr);
 }
 
-TEST(LeadLagRawMarketStateTest, SamePriceTickDoesNotReplaceLatestQuote) {
+TEST(LeadLagRawMarketStateTest, SamePriceTickRefreshesTimestampOnly) {
   leadlag::RawMarketState state;
   state.Reset(OnePairConfig());
 
@@ -107,7 +107,8 @@ TEST(LeadLagRawMarketStateTest, SamePriceTickDoesNotReplaceLatestQuote) {
 
   const leadlag::PairMarketState* pair = state.FindPair(3);
   ASSERT_NE(pair, nullptr);
-  EXPECT_EQ(pair->lead.latest_quote.event_ns, 90);
+  EXPECT_EQ(pair->lead.latest_quote.event_ns, 110);
+  EXPECT_EQ(pair->lead.latest_quote.exchange_ns, 110);
   EXPECT_DOUBLE_EQ(pair->lead.latest_quote.bid_price, 100.0);
   EXPECT_DOUBLE_EQ(pair->lead.latest_quote.ask_price, 101.0);
   EXPECT_FALSE(pair->lead.has_previous_quote);

@@ -172,6 +172,8 @@ struct StrategyOrderFinishedLogRecordForTest {
 struct StrategyOrderResponseLogRecordForTest {
   core::OrderResponseKind kind{core::OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
+  std::int64_t lead_exchange_ns{0};
+  std::int64_t lag_exchange_ns{0};
 };
 
 using StrategySignalTriggeredLogObserverForTest =
@@ -519,8 +521,9 @@ inline void LogStrategyOrderIntentRejected(
       local_order_id, place_status);
 }
 
-inline void LogStrategyOrderResponse(const core::OrderResponseEvent& event,
-                                     const core::StrategyOrder* order) noexcept {
+inline void LogStrategyOrderResponse(
+    const core::OrderResponseEvent& event, const core::StrategyOrder* order,
+    const SignalTiming& market_timing) noexcept {
   const core::StrategyOrderTimingSnapshot timing =
       order == nullptr ? core::StrategyOrderTimingSnapshot{}
                        : core::MakeStrategyOrderTimingSnapshot(*order);
@@ -530,16 +533,20 @@ inline void LogStrategyOrderResponse(const core::OrderResponseEvent& event,
     NOVA_INFO(
         "lead_lag_order_response kind={} local_order_id={} "
         "exchange_order_id={} local_receive_ns={} exchange_ns={} "
-        "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={}",
+        "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
+        "lead_exchange_ns={} lag_exchange_ns={}",
         magic_enum::enum_name(event.kind), event.local_order_id,
         event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
-        exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns);
+        exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
+        market_timing.lead_exchange_ns, market_timing.lag_exchange_ns);
   }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderResponseLogObserverForTest(
       StrategyOrderResponseLogRecordForTest{
           .kind = event.kind,
           .local_order_id = event.local_order_id,
+          .lead_exchange_ns = market_timing.lead_exchange_ns,
+          .lag_exchange_ns = market_timing.lag_exchange_ns,
       });
 #endif
 }
@@ -746,7 +753,8 @@ class Strategy {
                        ContextT& context) noexcept {
     const core::StrategyOrder* order_for_log =
         context.FindOrder(event.local_order_id);
-    detail::LogStrategyOrderResponse(event, order_for_log);
+    detail::LogStrategyOrderResponse(event, order_for_log,
+                                     MarketTimingForOrder(order_for_log));
     ApplyFinishedOrder(event.local_order_id, context);
   }
 
@@ -931,6 +939,21 @@ class Strategy {
     PairMarketState* market{nullptr};
     PairRuntimeState* runtime{nullptr};
   };
+
+  [[nodiscard]] SignalTiming MarketTimingForOrder(
+      const core::StrategyOrder* order) const noexcept {
+    if (order == nullptr) {
+      return {};
+    }
+    const PairRoute* route = Route(order->symbol_id);
+    if (route == nullptr || route->market == nullptr) {
+      return {};
+    }
+    return SignalTiming{
+        .lead_exchange_ns = route->market->lead.latest_quote.exchange_ns,
+        .lag_exchange_ns = route->market->lag.latest_quote.exchange_ns,
+    };
+  }
 
   struct OrderPriceTextStorage {
     std::uint64_t local_order_id{0};

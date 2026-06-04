@@ -1041,7 +1041,7 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.place_status, aquila::core::OrderPlaceStatus::kOk);
 }
 
-TEST(LeadLagStrategyInterfaceTest, OrderResponseLogOmitsMarketDataIds) {
+TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagExchangeNs) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1070,6 +1070,8 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogOmitsMarketDataIds) {
   ASSERT_EQ(g_order_response_log_count, 1U);
   const auto& log = g_order_response_logs[0];
   EXPECT_EQ(log.local_order_id, local_order_id);
+  EXPECT_EQ(log.lead_exchange_ns, 191);
+  EXPECT_EQ(log.lag_exchange_ns, 192);
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsCloseOrderSubmittedWithPositionId) {
