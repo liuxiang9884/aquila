@@ -132,6 +132,12 @@ scripts/gate/trading/emergency_flatten_futures.py \
 
 `scripts/lead_lag/run_live_with_guard.py` 是 V1 推荐入口，用于把 preflight、live runner、final REST check 和 emergency flatten 串成一个外围安全壳。它不改变 `TradingRuntime` 热路径，也不让 C++ runner 直接执行 REST 平仓。
 
+guard REST 凭据默认从 strategy command 的 `--config` 读取：先解析 strategy TOML 的
+`[strategy.order_session].config`，再读取 order session TOML 的
+`[order_session.credentials] api_key_env` / `api_secret_env`。`--api-key` / `--api-secret`
+只作为显式覆盖入口，必须成对传入，并且在可解析 order session config 时必须和其 env 名称一致；
+否则 wrapper 以 `config_error` 拒绝启动，避免 preflight / final check 查错账户。
+
 典型 allowlist 用法：
 
 ```bash

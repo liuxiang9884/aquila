@@ -80,12 +80,20 @@ scripts/lead_lag/run_live_with_guard.py \
     --duration-sec <duration_sec>
 ```
 
+guard REST preflight / final check / emergency flatten 的凭据默认从 strategy config 的
+`[strategy.order_session].config` 继续读取 order session TOML，并使用其中
+`[order_session.credentials] api_key_env` / `api_secret_env`。通常不要手工传
+`--api-key` / `--api-secret`；如果显式传入，必须和 order session config 的 env 名称一致，
+否则 guard 会以 `config_error` 拒绝启动。guard stdout 的 `credentials` 只记录 env 名称和来源，
+不会输出 secret 值。
+
 如果 Gate / Binance data session 或 Gate order feedback session 没有使用本轮生成的临时 TOML，去掉 `--affinity-external-configs-applied`；此时 guard summary 会保留 generated config 路径，但 `affinity_split=false`。
 
 8. 启动后必须做一次即时检查：
    - guard / strategy / feedback PIDs 是否存在。
    - strategy log 是否出现 `lead_lag_live_orders_runtime_started`。
    - guard preflight 是否通过，账户初始 open orders 为空、目标 contracts flat。
+   - guard stdout 中的 `credentials.api_key_env` / `credentials.api_secret_env` 是否和 strategy order session 使用的 env 名称一致。
    - guard stdout 中的 `affinity.generated_configs` 是否存在，并确认实际 strategy command 使用 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时 strategy TOML。
    - 是否出现 `ERROR`、`FATAL`、`ContinuityLost`、`feedback_global_continuity_lost` 或 `needs_reconcile=true`。
 9. 对持续时间超过 10 分钟的真实订单 run，默认每 10 分钟做一次健康检查，除非用户明确说“不需要监控”。每次检查至少统计：

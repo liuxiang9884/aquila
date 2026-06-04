@@ -63,6 +63,9 @@ class GuardConfig:
     affinity_binance_market_config: Path | None = None
     affinity_order_feedback_config: Path | None = None
     affinity_external_configs_applied: bool = False
+    api_key_env: str | None = None
+    api_secret_env: str | None = None
+    credential_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,13 @@ class ProcessResult:
             "exit_code": self.exit_code,
             "signal_number": self.signal_number,
         }
+
+
+@dataclass(frozen=True)
+class GuardCredentialEnvNames:
+    api_key_env: str
+    api_secret_env: str
+    source: str
 
 
 class SystemClock(flatten.SystemClock):
@@ -271,6 +281,88 @@ def find_strategy_config_arg(command: list[str]) -> tuple[int, Path, bool] | Non
         if arg.startswith("--config="):
             return index, Path(arg.split("=", 1)[1]), True
     return None
+
+
+def order_session_credential_env_names(
+    order_session_config_path: Path,
+) -> tuple[str, str]:
+    data = load_toml(order_session_config_path)
+    order_session = data.get("order_session")
+    if not isinstance(order_session, dict):
+        raise ValueError(f"{order_session_config_path} missing [order_session]")
+    credentials = order_session.get("credentials")
+    if not isinstance(credentials, dict):
+        raise ValueError(
+            f"{order_session_config_path} missing [order_session.credentials]"
+        )
+    api_key_env = credentials.get("api_key_env")
+    if not isinstance(api_key_env, str) or not api_key_env:
+        raise ValueError(
+            f"{order_session_config_path} missing "
+            "order_session.credentials.api_key_env"
+        )
+    api_secret_env = credentials.get("api_secret_env")
+    if not isinstance(api_secret_env, str) or not api_secret_env:
+        raise ValueError(
+            f"{order_session_config_path} missing "
+            "order_session.credentials.api_secret_env"
+        )
+    return api_key_env, api_secret_env
+
+
+def strategy_order_session_credential_env_names(
+    strategy_command: list[str],
+) -> GuardCredentialEnvNames | None:
+    config_arg = find_strategy_config_arg(strategy_command)
+    if config_arg is None:
+        return None
+    _, strategy_config_path, _ = config_arg
+    strategy_data = load_toml(strategy_config_path)
+    order_session_config_path = nested_config_path(
+        strategy_data, ("strategy", "order_session")
+    )
+    api_key_env, api_secret_env = order_session_credential_env_names(
+        order_session_config_path
+    )
+    return GuardCredentialEnvNames(
+        api_key_env=api_key_env,
+        api_secret_env=api_secret_env,
+        source="order_session_config",
+    )
+
+
+def resolve_guard_credential_env_names(
+    explicit_api_key: str | None,
+    explicit_api_secret: str | None,
+    strategy_command: list[str],
+) -> GuardCredentialEnvNames:
+    if bool(explicit_api_key) != bool(explicit_api_secret):
+        raise ValueError("--api-key and --api-secret must be provided together")
+
+    inferred = strategy_order_session_credential_env_names(strategy_command)
+    if explicit_api_key is not None and explicit_api_secret is not None:
+        if inferred is not None and (
+            explicit_api_key != inferred.api_key_env
+            or explicit_api_secret != inferred.api_secret_env
+        ):
+            raise ValueError(
+                "guard REST credentials must match strategy order session "
+                f"credentials: explicit {explicit_api_key}/{explicit_api_secret}, "
+                f"order session {inferred.api_key_env}/{inferred.api_secret_env}"
+            )
+        return GuardCredentialEnvNames(
+            api_key_env=explicit_api_key,
+            api_secret_env=explicit_api_secret,
+            source="explicit",
+        )
+
+    if inferred is not None:
+        return inferred
+
+    raise ValueError(
+        "guard REST credentials require --api-key/--api-secret or a strategy "
+        "--config with [strategy.order_session].config credentials"
+    )
 
 
 def replace_strategy_config_arg(
@@ -514,6 +606,11 @@ def initial_summary(config: GuardConfig) -> dict[str, Any]:
         "settle": flatten.normalize_settle(config.settle),
         "contracts": list(config.contracts),
         "strategy_command": list(config.strategy_command),
+        "credentials": {
+            "api_key_env": config.api_key_env or "",
+            "api_secret_env": config.api_secret_env or "",
+            "source": config.credential_source or "",
+        },
         "affinity": None,
         "preflight": None,
         "strategy": None,
@@ -593,6 +690,9 @@ def run_guarded_live(
         affinity_binance_market_config=config.affinity_binance_market_config,
         affinity_order_feedback_config=config.affinity_order_feedback_config,
         affinity_external_configs_applied=config.affinity_external_configs_applied,
+        api_key_env=config.api_key_env,
+        api_secret_env=config.api_secret_env,
+        credential_source=config.credential_source,
     )
     summary = initial_summary(config)
     try:
@@ -670,8 +770,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run LeadLag live orders behind REST preflight and stop-and-flat guardrails."
     )
-    parser.add_argument("--api-key", default=account.DEFAULT_API_KEY_ENV)
-    parser.add_argument("--api-secret", default=account.DEFAULT_API_SECRET_ENV)
+    parser.add_argument("--api-key")
+    parser.add_argument("--api-secret")
     parser.add_argument("--base-url", default=account.DEFAULT_BASE_URL)
     parser.add_argument("--timeout", type=float, default=account.DEFAULT_TIMEOUT)
     parser.add_argument("--settle", default="usdt")
@@ -762,14 +862,37 @@ def main(argv: list[str] | None = None) -> int:
         print_summary(summary, args.pretty)
         return exit_code
 
-    api_key = account.get_env_value(args.api_key)
-    if api_key is None:
-        summary = missing_env_summary(config, args.api_key)
+    try:
+        credential_env_names = resolve_guard_credential_env_names(
+            explicit_api_key=args.api_key,
+            explicit_api_secret=args.api_secret,
+            strategy_command=config.strategy_command,
+        )
+    except Exception as exc:
+        summary = initial_summary(config)
+        summary["result"] = "config_error"
+        summary["exit_code"] = EXIT_CONFIG_ERROR
+        summary["errors"].append(
+            f"credential resolution failed: {type(exc).__name__}: {exc}"
+        )
         print_summary(summary, args.pretty)
         return EXIT_CONFIG_ERROR
-    api_secret = account.get_env_value(args.api_secret)
+
+    config = replace(
+        config,
+        api_key_env=credential_env_names.api_key_env,
+        api_secret_env=credential_env_names.api_secret_env,
+        credential_source=credential_env_names.source,
+    )
+
+    api_key = account.get_env_value(credential_env_names.api_key_env)
+    if api_key is None:
+        summary = missing_env_summary(config, credential_env_names.api_key_env)
+        print_summary(summary, args.pretty)
+        return EXIT_CONFIG_ERROR
+    api_secret = account.get_env_value(credential_env_names.api_secret_env)
     if api_secret is None:
-        summary = missing_env_summary(config, args.api_secret)
+        summary = missing_env_summary(config, credential_env_names.api_secret_env)
         print_summary(summary, args.pretty)
         return EXIT_CONFIG_ERROR
 

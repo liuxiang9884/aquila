@@ -342,6 +342,117 @@ class RunLiveWithGuardTest(unittest.TestCase):
             ],
         )
 
+    def test_resolves_guard_credentials_from_strategy_order_session_config(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            strategy_path = base / "strategy.toml"
+            order_session_path = base / "order_session.toml"
+            write_text(
+                strategy_path,
+                f"""
+                [strategy.order_session]
+                config = "{order_session_path}"
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [order_session.credentials]
+                api_key_env = "PROBE_KEY"
+                api_secret_env = "PROBE_SECRET"
+                """,
+            )
+
+            credentials = guard.resolve_guard_credential_env_names(
+                explicit_api_key=None,
+                explicit_api_secret=None,
+                strategy_command=[
+                    "./build/debug/tools/lead_lag_strategy",
+                    "--config",
+                    str(strategy_path),
+                    "--execute",
+                ],
+            )
+
+            self.assertEqual(credentials.api_key_env, "PROBE_KEY")
+            self.assertEqual(credentials.api_secret_env, "PROBE_SECRET")
+            self.assertEqual(credentials.source, "order_session_config")
+
+    def test_explicit_guard_credentials_must_match_order_session_config(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            strategy_path = base / "strategy.toml"
+            order_session_path = base / "order_session.toml"
+            write_text(
+                strategy_path,
+                f"""
+                [strategy.order_session]
+                config = "{order_session_path}"
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [order_session.credentials]
+                api_key_env = "PROBE_KEY"
+                api_secret_env = "PROBE_SECRET"
+                """,
+            )
+
+            with self.assertRaisesRegex(ValueError, "guard REST credentials"):
+                guard.resolve_guard_credential_env_names(
+                    explicit_api_key="TEST_KEY",
+                    explicit_api_secret="TEST_SECRET",
+                    strategy_command=[
+                        "./build/debug/tools/lead_lag_strategy",
+                        "--config",
+                        str(strategy_path),
+                    ],
+                )
+
+    def test_matching_explicit_guard_credentials_are_allowed(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            strategy_path = base / "strategy.toml"
+            order_session_path = base / "order_session.toml"
+            write_text(
+                strategy_path,
+                f"""
+                [strategy.order_session]
+                config = "{order_session_path}"
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [order_session.credentials]
+                api_key_env = "PROBE_KEY"
+                api_secret_env = "PROBE_SECRET"
+                """,
+            )
+
+            credentials = guard.resolve_guard_credential_env_names(
+                explicit_api_key="PROBE_KEY",
+                explicit_api_secret="PROBE_SECRET",
+                strategy_command=[
+                    "./build/debug/tools/lead_lag_strategy",
+                    "--config",
+                    str(strategy_path),
+                ],
+            )
+
+            self.assertEqual(credentials.api_key_env, "PROBE_KEY")
+            self.assertEqual(credentials.api_secret_env, "PROBE_SECRET")
+            self.assertEqual(credentials.source, "explicit")
+
+    def test_partial_explicit_guard_credentials_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "must be provided together"):
+            guard.resolve_guard_credential_env_names(
+                explicit_api_key="PROBE_KEY",
+                explicit_api_secret=None,
+                strategy_command=["./build/debug/tools/lead_lag_strategy"],
+            )
+
     def test_affinity_profile_rewrites_strategy_command_to_temp_overlays(self):
         with TemporaryDirectory() as tmp:
             base = Path(tmp)

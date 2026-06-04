@@ -51,6 +51,7 @@ docs/evaluation_support.md
 ### LeadLag Live
 
 - 真实订单默认配置：`config/strategies/lead_lag_requested_11symbols_live_strategy_20260522.toml`。
+- `scripts/lead_lag/run_live_with_guard.py` 的 REST guard 凭据默认从 strategy config 的 `[strategy.order_session].config` 继续读取 order session TOML；显式 `--api-key` / `--api-secret` 必须和 order session credentials env 名称一致，否则以 `config_error` 拒绝启动。
 - 仓库默认 12-symbol live 配置仍是 `open_slippage=2` / `close_slippage=2` ticks；2026-05-29 的 3-tick / 0-tick run 只通过 `/home/liuxiang/tmp/<run_id>/configs` 临时覆盖。
 - 2026-05-29 / 2026-05-30 live run 中 Gate data / order / feedback 使用 private non-TLS `fxws-private.gateapi.io:80`，Binance data 仍使用 public TLS。
 - 2026-05-30 4 小时 2-tick run `20260530_071328_12pair_live_2ticks_private_4h` 正常 flat：`signals=62`、entry submitted `58`、closed positions `4`，net PnL `-0.1383270504`，no-slip net `-0.0475420504`。
