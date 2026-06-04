@@ -50,6 +50,8 @@ docs/evaluation_support.md
 - `scripts/lead_lag/generate_live_report.py` 生成 `signal.csv`、`order_detail.csv`、`position.csv`、`latency.csv` 和 schema 副本。报告支持 Ack RTT 三段拆解、滑点、actual / raw PnL 和胜率。
 - 30-symbol report 必须显式传 `--instrument-catalog config/instruments/usdt_futures_common_gate_binance_20260602.csv`，否则默认 12-symbol catalog 可能导致 multiplier / PnL 不完整。
 - `config/instruments/usdt_futures_common_gate_binance_20260602.csv` 是 Gate / Binance USDT 永续交集合约 catalog；`contract_multiplier` 是 report / PnL 使用的显式字段，当前与 `notional_multiplier` 保持一致。
+- 2026-06-04 30-symbol 30 天实盘 run `20260604_0646_30symbols_30d_private` 仍在运行，scratch dir 为 `/home/liuxiang/tmp/20260604_0646_30symbols_30d_private`。该进程在 freshness guard 相关 commits 前启动，不会热更新到新 guard；若要让 `max_lead_freshness_ms` / `max_lag_freshness_ms` 生效，必须停止并用最新 release binary 重启。
+- 当前 run 的临时 PnL / slippage snapshot 不写入 `reports/`，最近快照在 `/home/liuxiang/tmp/lead_lag_live_snapshots/20260604_0646_30symbols_30d_private_pnl_snapshot_144008`；最终结论以正式 report 为准。
 - 历史 live report 保留在 `reports/`；onboarding 不再复制完整 PnL、slippage 或 latency 数值。
 
 ## Ack Latency / RTT Probe
@@ -129,4 +131,4 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的提示
 
-先运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、本文件和 `docs/evaluation_support.md`。当前 branch / ahead / dirty 只信 `git status`。LeadLag 真实订单按 `docs/lead_lag_live_operations_pipeline.md`；30-symbol report 记得传 `--instrument-catalog config/instruments/usdt_futures_common_gate_binance_20260602.csv`。Data session / recorder / RTT probe / benchmark 默认放 `16-31` 测试 core，实盘 hot path 保留 `0-15`。
+先运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、本文件和 `docs/evaluation_support.md`。当前 branch / ahead / dirty 只信 `git status`。LeadLag 真实订单按 `docs/lead_lag_live_operations_pipeline.md`；30-symbol run `20260604_0646_30symbols_30d_private` 如仍在跑，先确认它是 freshness guard 前启动的旧进程，再决定是否停掉重启。30-symbol report 记得传 `--instrument-catalog config/instruments/usdt_futures_common_gate_binance_20260602.csv`。Data session / recorder / RTT probe / benchmark 默认放 `16-31` 测试 core，实盘 hot path 保留 `0-15`。
