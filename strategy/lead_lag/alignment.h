@@ -123,6 +123,7 @@ class AlignmentState {
     return QuoteSnapshot{
         .event_ns = raw_lead.event_ns,
         .exchange_ns = raw_lead.exchange_ns,
+        .local_ns = raw_lead.local_ns,
         .bid_price = raw_lead.bid_price * drift,
         .ask_price = raw_lead.ask_price * drift,
     };

@@ -39,6 +39,7 @@ enum class SignalRejectReason : std::uint8_t {
   kPendingOrder,
   kDegraded,
   kRiskLimit,
+  kMarketFreshness,
 };
 
 struct OrderIntent {
@@ -253,10 +254,9 @@ class SignalEngine {
     if (lag_diff >= threshold.up_exit) {
       return {};
     }
-    return AttachGroup(
-        Trigger(SignalAction::kCloseLong, pair, OrderSide::kSell,
-                market.lag.bid_price, /*reduce_only=*/true),
-        group);
+    return AttachGroup(Trigger(SignalAction::kCloseLong, pair, OrderSide::kSell,
+                               market.lag.bid_price, /*reduce_only=*/true),
+                       group);
   }
 
   [[nodiscard]] static SignalDecision TryCloseShort(
@@ -269,10 +269,9 @@ class SignalEngine {
     if (lag_diff <= threshold.down_exit) {
       return {};
     }
-    return AttachGroup(
-        Trigger(SignalAction::kCloseShort, pair, OrderSide::kBuy,
-                market.lag.ask_price, /*reduce_only=*/true),
-        group);
+    return AttachGroup(Trigger(SignalAction::kCloseShort, pair, OrderSide::kBuy,
+                               market.lag.ask_price, /*reduce_only=*/true),
+                       group);
   }
 
   [[nodiscard]] static SignalDecision TryStoplossLong(

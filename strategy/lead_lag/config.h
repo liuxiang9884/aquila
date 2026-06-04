@@ -17,6 +17,8 @@ namespace aquila::strategy::leadlag {
 
 inline constexpr std::size_t kDefaultWindowCapacity = 16 * 1024;
 inline constexpr std::size_t kDefaultQuantileBinCount = 4096;
+inline constexpr std::uint64_t kDefaultMaxLeadFreshnessNs = 5'000'000ULL;
+inline constexpr std::uint64_t kDefaultMaxLagFreshnessNs = 20'000'000ULL;
 
 struct QuantileConfig {
   double move{0.0};
@@ -58,6 +60,11 @@ struct RiskConfig {
 
   [[nodiscard]] bool GrossNotionalLimitEnabled() const noexcept;
   [[nodiscard]] bool HoldingPositionLimitEnabled() const noexcept;
+};
+
+struct FreshnessConfig {
+  std::uint64_t max_lead_freshness_ns{kDefaultMaxLeadFreshnessNs};
+  std::uint64_t max_lag_freshness_ns{kDefaultMaxLagFreshnessNs};
 };
 
 struct BboRecordConfig {
@@ -102,6 +109,7 @@ struct PairConfig {
 struct Config {
   std::string name;
   std::string version;
+  FreshnessConfig freshness;
   RiskConfig risk;
   std::vector<PairConfig> pairs;
 };

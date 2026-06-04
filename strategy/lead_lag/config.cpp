@@ -84,6 +84,14 @@ class Parser {
       return Failure("lead_lag.version must be 1.0");
     }
 
+    if (const toml::table* freshness = (*lead_lag)["freshness"].as_table();
+        freshness != nullptr) {
+      config_.freshness = ParseFreshness(*freshness);
+      if (!ok_) {
+        return Failure(std::move(error_));
+      }
+    }
+
     if (const toml::table* risk = (*lead_lag)["risk"].as_table();
         risk != nullptr) {
       config_.risk = ParseRisk(*risk);
@@ -301,6 +309,17 @@ class Parser {
     return execute;
   }
 
+  [[nodiscard]] FreshnessConfig ParseFreshness(const toml::table& table) {
+    FreshnessConfig freshness;
+    freshness.max_lead_freshness_ns =
+        DurationOr(table, "max_lead_freshness", freshness.max_lead_freshness_ns,
+                   "lead_lag.freshness.max_lead_freshness");
+    freshness.max_lag_freshness_ns =
+        DurationOr(table, "max_lag_freshness", freshness.max_lag_freshness_ns,
+                   "lead_lag.freshness.max_lag_freshness");
+    return freshness;
+  }
+
   [[nodiscard]] RiskConfig ParseRisk(const toml::table& table) {
     RiskConfig risk;
     risk.max_gross_notional = RequiredDouble(
@@ -376,8 +395,7 @@ class Parser {
       return false;
     }
     if (lag->price_tick <= 0.0 || *lag->quantity_step <= 0.0 ||
-        *lag->quantity_decimal_places < 0 ||
-        lag->notional_multiplier <= 0.0) {
+        *lag->quantity_decimal_places < 0 || lag->notional_multiplier <= 0.0) {
       Fail(prefix + ".symbol", " lag instrument trading metadata is invalid");
       return false;
     }
@@ -476,6 +494,16 @@ class Parser {
       return fallback;
     }
     return RequiredUInt32(table, key, name);
+  }
+
+  [[nodiscard]] std::uint64_t DurationOr(const toml::table& table,
+                                         std::string_view key,
+                                         std::uint64_t fallback,
+                                         std::string_view name) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    return RequiredDurationNs(table, key, name);
   }
 
   [[nodiscard]] std::size_t SizeOr(const toml::table& table,

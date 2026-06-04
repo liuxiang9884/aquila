@@ -195,6 +195,8 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
+constexpr std::uint64_t kWideFreshnessGuardNs = 9'000'000'000'000'000'000ULL;
+
 std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
     g_order_intent_logs{};
 std::size_t g_order_intent_log_count{0};
@@ -486,6 +488,8 @@ leadlag::Config SignalOnlyConfig() {
   leadlag::Config config;
   config.name = "lead_lag";
   config.version = "1.0";
+  config.freshness.max_lead_freshness_ns = kWideFreshnessGuardNs;
+  config.freshness.max_lag_freshness_ns = kWideFreshnessGuardNs;
   config.pairs.push_back(leadlag::PairConfig{
       .symbol = "BTC_USDT",
       .symbol_id = 3,
@@ -897,6 +901,42 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeRejectsOpenWhenLeadFreshnessExceedsLimit) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.freshness.max_lead_freshness_ns = 1;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kMarketFreshness);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeRejectsOpenWhenLagFreshnessExceedsLimit) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.freshness.max_lag_freshness_ns = 1;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kMarketFreshness);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      InitializationSkipsPairWhenOrderDecimalPlacesExceedBounds) {
   struct DecimalPlacesCase {
     std::int32_t price_decimal_places{0};
@@ -1003,9 +1043,15 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(signal.trigger_exchange_ns, 91);
   EXPECT_EQ(signal.lead_exchange_ns, 91);
   EXPECT_EQ(signal.lag_exchange_ns, 90);
+  EXPECT_EQ(signal.lead_local_ns, 101);
+  EXPECT_EQ(signal.lag_local_ns, 100);
   EXPECT_EQ(signal.trigger_local_ns, 101);
   EXPECT_GT(signal.on_book_ticker_entry_ns, 0);
   EXPECT_GE(signal.signal_decision_ns, signal.on_book_ticker_entry_ns);
+  EXPECT_EQ(signal.lead_freshness_ns,
+            signal.signal_decision_ns - signal.lead_exchange_ns);
+  EXPECT_EQ(signal.lag_freshness_ns,
+            signal.signal_decision_ns - signal.lag_exchange_ns);
   EXPECT_EQ(signal.role, leadlag::PairRole::kLead);
   EXPECT_EQ(signal.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(signal.side, aquila::OrderSide::kBuy);
@@ -1015,6 +1061,14 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(record.trigger_exchange_ns, signal.trigger_exchange_ns);
   EXPECT_EQ(record.lead_exchange_ns, signal.lead_exchange_ns);
   EXPECT_EQ(record.lag_exchange_ns, signal.lag_exchange_ns);
+  EXPECT_EQ(record.lead_local_ns, signal.lead_local_ns);
+  EXPECT_EQ(record.lag_local_ns, signal.lag_local_ns);
+  EXPECT_EQ(record.lead_freshness_ns, signal.lead_freshness_ns);
+  EXPECT_EQ(record.lag_freshness_ns, signal.lag_freshness_ns);
+  EXPECT_EQ(record.max_lead_freshness_ns, kWideFreshnessGuardNs);
+  EXPECT_EQ(record.max_lag_freshness_ns, kWideFreshnessGuardNs);
+  EXPECT_TRUE(record.freshness_guard_pass);
+  EXPECT_EQ(record.freshness_reject_reason, "-");
   EXPECT_EQ(record.trigger_local_ns, signal.trigger_local_ns);
   EXPECT_EQ(record.on_book_ticker_entry_ns, signal.on_book_ticker_entry_ns);
   EXPECT_EQ(record.signal_decision_ns, signal.signal_decision_ns);
@@ -1054,6 +1108,16 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.trigger_exchange_ns, 91);
   EXPECT_EQ(record.lead_exchange_ns, 91);
   EXPECT_EQ(record.lag_exchange_ns, 90);
+  EXPECT_EQ(record.lead_local_ns, 101);
+  EXPECT_EQ(record.lag_local_ns, 100);
+  EXPECT_EQ(record.lead_freshness_ns,
+            record.signal_decision_ns - record.lead_exchange_ns);
+  EXPECT_EQ(record.lag_freshness_ns,
+            record.signal_decision_ns - record.lag_exchange_ns);
+  EXPECT_EQ(record.max_lead_freshness_ns, kWideFreshnessGuardNs);
+  EXPECT_EQ(record.max_lag_freshness_ns, kWideFreshnessGuardNs);
+  EXPECT_TRUE(record.freshness_guard_pass);
+  EXPECT_EQ(record.freshness_reject_reason, "-");
   EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
   EXPECT_EQ(record.symbol_id, 3);
   EXPECT_EQ(record.signal_role, leadlag::PairRole::kLead);

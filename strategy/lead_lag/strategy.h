@@ -70,7 +70,13 @@ struct SignalTiming {
   std::int64_t on_book_ticker_entry_ns{0};
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
+  std::int64_t lead_local_ns{0};
+  std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::int64_t lag_local_ns{0};
+  std::int64_t lag_freshness_ns{0};
+  std::uint64_t max_lead_freshness_ns{0};
+  std::uint64_t max_lag_freshness_ns{0};
 };
 
 namespace detail {
@@ -93,7 +99,11 @@ struct StrategySignalTriggeredLogRecordForTest {
   std::int64_t on_book_ticker_entry_ns{0};
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
+  std::int64_t lead_local_ns{0};
+  std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::int64_t lag_local_ns{0};
+  std::int64_t lag_freshness_ns{0};
   std::string_view symbol;
   std::int32_t symbol_id{0};
   PairRole role{PairRole::kNone};
@@ -110,7 +120,15 @@ struct StrategyOrderIntentLogRecordForTest {
   std::int64_t on_book_ticker_entry_ns{0};
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
+  std::int64_t lead_local_ns{0};
+  std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::int64_t lag_local_ns{0};
+  std::int64_t lag_freshness_ns{0};
+  std::uint64_t max_lead_freshness_ns{0};
+  std::uint64_t max_lag_freshness_ns{0};
+  bool freshness_guard_pass{true};
+  std::string_view freshness_reject_reason;
   std::string_view symbol;
   std::int32_t symbol_id{0};
   SignalAction action{SignalAction::kNone};
@@ -135,7 +153,15 @@ struct StrategyOrderSubmittedLogRecordForTest {
   std::int64_t on_book_ticker_entry_ns{0};
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
+  std::int64_t lead_local_ns{0};
+  std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::int64_t lag_local_ns{0};
+  std::int64_t lag_freshness_ns{0};
+  std::uint64_t max_lead_freshness_ns{0};
+  std::uint64_t max_lag_freshness_ns{0};
+  bool freshness_guard_pass{true};
+  std::string_view freshness_reject_reason;
   std::string_view symbol;
   std::int32_t symbol_id{0};
   PairRole signal_role{PairRole::kNone};
@@ -352,25 +378,26 @@ inline void NotifyStrategyOrderFeedbackLogObserverForTest(
 
 inline void LogStrategySignalTriggered(
     Exchange trigger_exchange, std::int32_t trigger_symbol_id,
-    const SignalTiming& timing,
-    std::string_view symbol, std::int32_t symbol_id, PairRole role,
-    SignalAction action, OrderSide side, bool reduce_only,
+    const SignalTiming& timing, std::string_view symbol, std::int32_t symbol_id,
+    PairRole role, SignalAction action, OrderSide side, bool reduce_only,
     std::uint64_t position_id, double raw_price) noexcept {
   if (::nova::kLogManager.logger() != nullptr) {
     NOVA_INFO(
         "lead_lag_signal_triggered trigger_exchange={} trigger_symbol_id={} "
         "trigger_exchange_ns={} trigger_local_ns={} "
         "on_book_ticker_entry_ns={} signal_decision_ns={} "
-        "lead_exchange_ns={} lag_exchange_ns={} symbol={} symbol_id={} "
-        "role={} action={} side={} reduce_only={} position_id={} "
-        "raw_price={:.12g}",
-        magic_enum::enum_name(trigger_exchange),
-        trigger_symbol_id, timing.trigger_exchange_ns, timing.trigger_local_ns,
+        "lead_exchange_ns={} lead_local_ns={} lead_freshness_ns={} "
+        "lag_exchange_ns={} lag_local_ns={} lag_freshness_ns={} "
+        "symbol={} symbol_id={} role={} action={} side={} reduce_only={} "
+        "position_id={} raw_price={:.12g}",
+        magic_enum::enum_name(trigger_exchange), trigger_symbol_id,
+        timing.trigger_exchange_ns, timing.trigger_local_ns,
         timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-        timing.lead_exchange_ns, timing.lag_exchange_ns, symbol, symbol_id,
-        magic_enum::enum_name(role), magic_enum::enum_name(action),
-        magic_enum::enum_name(side), reduce_only ? "true" : "false",
-        position_id, raw_price);
+        timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+        timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+        symbol, symbol_id, magic_enum::enum_name(role),
+        magic_enum::enum_name(action), magic_enum::enum_name(side),
+        reduce_only ? "true" : "false", position_id, raw_price);
   }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategySignalTriggeredLogObserverForTest(
@@ -382,7 +409,11 @@ inline void LogStrategySignalTriggered(
           .on_book_ticker_entry_ns = timing.on_book_ticker_entry_ns,
           .signal_decision_ns = timing.signal_decision_ns,
           .lead_exchange_ns = timing.lead_exchange_ns,
+          .lead_local_ns = timing.lead_local_ns,
+          .lead_freshness_ns = timing.lead_freshness_ns,
           .lag_exchange_ns = timing.lag_exchange_ns,
+          .lag_local_ns = timing.lag_local_ns,
+          .lag_freshness_ns = timing.lag_freshness_ns,
           .symbol = symbol,
           .symbol_id = symbol_id,
           .role = role,
@@ -395,30 +426,37 @@ inline void LogStrategySignalTriggered(
 }
 
 inline void LogStrategyOrderIntent(
-    const SignalTiming& timing, std::string_view symbol,
-    std::int32_t symbol_id, SignalAction action,
-    OrderSide side, bool reduce_only, std::uint64_t position_id,
-    double quantity, double raw_price, double order_price,
-    std::uint32_t slippage_ticks, double price_tick,
+    const SignalTiming& timing, std::string_view symbol, std::int32_t symbol_id,
+    SignalAction action, OrderSide side, bool reduce_only,
+    std::uint64_t position_id, double quantity, double raw_price,
+    double order_price, std::uint32_t slippage_ticks, double price_tick,
     double target_open_notional, double estimated_notional,
-    std::size_t active_groups) noexcept {
+    std::size_t active_groups, bool freshness_guard_pass = true,
+    std::string_view freshness_reject_reason = "-") noexcept {
   if (::nova::kLogManager.logger() != nullptr) {
     NOVA_INFO(
         "lead_lag_order_intent trigger_exchange_ns={} "
         "trigger_local_ns={} on_book_ticker_entry_ns={} "
-        "signal_decision_ns={} lead_exchange_ns={} lag_exchange_ns={} "
-        "symbol={} symbol_id={} action={} side={} reduce_only={} "
-        "position_id={} quantity={:.12g} "
+        "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
+        "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
+        "lag_freshness_ns={} max_lead_freshness_ns={} "
+        "max_lag_freshness_ns={} freshness_guard_pass={} "
+        "freshness_reject_reason={} symbol={} symbol_id={} action={} side={} "
+        "reduce_only={} position_id={} quantity={:.12g} "
         "price={:.12g} raw_price={:.12g} order_price={:.12g} "
         "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
         "estimated_notional={:.12g} active_groups={}",
         timing.trigger_exchange_ns, timing.trigger_local_ns,
         timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-        timing.lead_exchange_ns, timing.lag_exchange_ns, symbol, symbol_id,
-        magic_enum::enum_name(action), magic_enum::enum_name(side),
-        reduce_only ? "true" : "false", position_id, quantity, order_price,
-        raw_price, order_price, slippage_ticks, price_tick,
-        target_open_notional, estimated_notional, active_groups);
+        timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+        timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+        timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
+        freshness_guard_pass ? "true" : "false", freshness_reject_reason,
+        symbol, symbol_id, magic_enum::enum_name(action),
+        magic_enum::enum_name(side), reduce_only ? "true" : "false",
+        position_id, quantity, order_price, raw_price, order_price,
+        slippage_ticks, price_tick, target_open_notional, estimated_notional,
+        active_groups);
   }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderIntentLogObserverForTest(
@@ -428,7 +466,15 @@ inline void LogStrategyOrderIntent(
           .on_book_ticker_entry_ns = timing.on_book_ticker_entry_ns,
           .signal_decision_ns = timing.signal_decision_ns,
           .lead_exchange_ns = timing.lead_exchange_ns,
+          .lead_local_ns = timing.lead_local_ns,
+          .lead_freshness_ns = timing.lead_freshness_ns,
           .lag_exchange_ns = timing.lag_exchange_ns,
+          .lag_local_ns = timing.lag_local_ns,
+          .lag_freshness_ns = timing.lag_freshness_ns,
+          .max_lead_freshness_ns = timing.max_lead_freshness_ns,
+          .max_lag_freshness_ns = timing.max_lag_freshness_ns,
+          .freshness_guard_pass = freshness_guard_pass,
+          .freshness_reject_reason = freshness_reject_reason,
           .symbol = symbol,
           .symbol_id = symbol_id,
           .action = action,
@@ -447,34 +493,41 @@ inline void LogStrategyOrderIntent(
 
 inline void LogStrategyOrderSubmitted(
     std::uint64_t local_order_id, Exchange trigger_exchange,
-    std::int32_t trigger_symbol_id,
-    const SignalTiming& timing, std::string_view symbol, std::int32_t symbol_id,
-    PairRole signal_role, std::string_view order_role, SignalAction action,
-    OrderSide side, bool reduce_only,
-    const StrategyOrderPositionLogFields& position, double quantity,
-    std::string_view quantity_text, double raw_price, double order_price,
-    std::string_view price_text, std::uint32_t slippage_ticks,
-    double price_tick, double target_open_notional, double estimated_notional,
-    std::size_t active_groups, core::OrderPlaceStatus place_status) noexcept {
+    std::int32_t trigger_symbol_id, const SignalTiming& timing,
+    std::string_view symbol, std::int32_t symbol_id, PairRole signal_role,
+    std::string_view order_role, SignalAction action, OrderSide side,
+    bool reduce_only, const StrategyOrderPositionLogFields& position,
+    double quantity, std::string_view quantity_text, double raw_price,
+    double order_price, std::string_view price_text,
+    std::uint32_t slippage_ticks, double price_tick,
+    double target_open_notional, double estimated_notional,
+    std::size_t active_groups, core::OrderPlaceStatus place_status,
+    bool freshness_guard_pass = true,
+    std::string_view freshness_reject_reason = "-") noexcept {
   if (::nova::kLogManager.logger() != nullptr) {
     NOVA_INFO(
         "lead_lag_order_submitted local_order_id={} trigger_exchange={} "
         "trigger_symbol_id={} trigger_exchange_ns={} "
         "trigger_local_ns={} on_book_ticker_entry_ns={} "
-        "signal_decision_ns={} lead_exchange_ns={} lag_exchange_ns={} "
-        "symbol={} symbol_id={} signal_role={} order_role={} action={} "
-        "side={} reduce_only={} "
+        "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
+        "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
+        "lag_freshness_ns={} max_lead_freshness_ns={} "
+        "max_lag_freshness_ns={} freshness_guard_pass={} "
+        "freshness_reject_reason={} symbol={} symbol_id={} signal_role={} "
+        "order_role={} action={} side={} reduce_only={} "
         "position_id={} position_event={} position_direction={} "
         "entry_local_order_id={} quantity={:.12g} quantity_text={} "
         "raw_price={:.12g} order_price={:.12g} price_text={} "
         "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
         "estimated_notional={:.12g} active_groups={} place_status={}",
         local_order_id, magic_enum::enum_name(trigger_exchange),
-        trigger_symbol_id,
-        timing.trigger_exchange_ns, timing.trigger_local_ns,
+        trigger_symbol_id, timing.trigger_exchange_ns, timing.trigger_local_ns,
         timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-        timing.lead_exchange_ns, timing.lag_exchange_ns, symbol, symbol_id,
-        magic_enum::enum_name(signal_role), order_role,
+        timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+        timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+        timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
+        freshness_guard_pass ? "true" : "false", freshness_reject_reason,
+        symbol, symbol_id, magic_enum::enum_name(signal_role), order_role,
         magic_enum::enum_name(action), magic_enum::enum_name(side),
         reduce_only ? "true" : "false", position.position_id,
         position.position_event,
@@ -495,7 +548,15 @@ inline void LogStrategyOrderSubmitted(
           .on_book_ticker_entry_ns = timing.on_book_ticker_entry_ns,
           .signal_decision_ns = timing.signal_decision_ns,
           .lead_exchange_ns = timing.lead_exchange_ns,
+          .lead_local_ns = timing.lead_local_ns,
+          .lead_freshness_ns = timing.lead_freshness_ns,
           .lag_exchange_ns = timing.lag_exchange_ns,
+          .lag_local_ns = timing.lag_local_ns,
+          .lag_freshness_ns = timing.lag_freshness_ns,
+          .max_lead_freshness_ns = timing.max_lead_freshness_ns,
+          .max_lag_freshness_ns = timing.max_lag_freshness_ns,
+          .freshness_guard_pass = freshness_guard_pass,
+          .freshness_reject_reason = freshness_reject_reason,
           .symbol = symbol,
           .symbol_id = symbol_id,
           .signal_role = signal_role,
@@ -522,23 +583,28 @@ inline void LogStrategyOrderSubmitted(
 }
 
 inline void LogStrategyOrderIntentRejected(
-    std::string_view reason, const SignalTiming& timing, std::string_view symbol,
-    std::int32_t symbol_id, SignalAction action, OrderSide side,
-    bool reduce_only, std::uint64_t position_id, double quantity,
-    double raw_price, double order_price,
+    std::string_view reason, const SignalTiming& timing,
+    std::string_view symbol, std::int32_t symbol_id, SignalAction action,
+    OrderSide side, bool reduce_only, std::uint64_t position_id,
+    double quantity, double raw_price, double order_price,
     std::uint32_t slippage_ticks, double price_tick,
     double target_open_notional, double estimated_notional,
     double gross_before = 0.0, double gross_after = 0.0,
     double max_gross_notional = 0.0, std::uint64_t local_order_id = 0,
-    std::string_view place_status = "-") noexcept {
+    std::string_view place_status = "-", bool freshness_guard_pass = true,
+    std::string_view freshness_reject_reason = "-") noexcept {
   if (::nova::kLogManager.logger() == nullptr) {
     return;
   }
   NOVA_WARNING(
       "lead_lag_order_intent_rejected reason={} trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} signal_decision_ns={} "
-      "lead_exchange_ns={} lag_exchange_ns={} symbol={} symbol_id={} "
-      "action={} side={} reduce_only={} position_id={} quantity={:.12g} "
+      "lead_exchange_ns={} lead_local_ns={} lead_freshness_ns={} "
+      "lag_exchange_ns={} lag_local_ns={} lag_freshness_ns={} "
+      "max_lead_freshness_ns={} max_lag_freshness_ns={} "
+      "freshness_guard_pass={} freshness_reject_reason={} symbol={} "
+      "symbol_id={} action={} side={} reduce_only={} position_id={} "
+      "quantity={:.12g} "
       "price={:.12g} raw_price={:.12g} "
       "order_price={:.12g} slippage_ticks={} price_tick={:.12g} "
       "target_open_notional={:.12g} estimated_notional={:.12g} "
@@ -546,8 +612,11 @@ inline void LogStrategyOrderIntentRejected(
       "local_order_id={} place_status={}",
       reason, timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-      timing.lead_exchange_ns, timing.lag_exchange_ns, symbol, symbol_id,
-      magic_enum::enum_name(action), magic_enum::enum_name(side),
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
+      freshness_guard_pass ? "true" : "false", freshness_reject_reason, symbol,
+      symbol_id, magic_enum::enum_name(action), magic_enum::enum_name(side),
       reduce_only ? "true" : "false", position_id, quantity, order_price,
       raw_price, order_price, slippage_ticks, price_tick, target_open_notional,
       estimated_notional, gross_before, gross_after, max_gross_notional,
@@ -993,6 +1062,29 @@ class Strategy {
     PairRuntimeState* runtime{nullptr};
   };
 
+  enum class FreshnessRejectReason : std::uint8_t {
+    kNone,
+    kStaleLeadQuote,
+    kStaleLagQuote,
+  };
+
+  struct PreparedOrderPrice {
+    bool valid{false};
+    std::string_view reject_reason;
+    double raw_order_price{0.0};
+    double rounded_order_price{0.0};
+    double order_price{0.0};
+    std::int64_t price_units{0};
+    std::uint32_t slippage_ticks{0};
+  };
+
+  struct PreparedOrderQuantity {
+    bool valid{false};
+    double quantity{0.0};
+    std::int64_t quantity_units{0};
+    ExecutionGroup* close_group{nullptr};
+  };
+
   [[nodiscard]] SignalTiming MarketTimingForOrder(
       const core::StrategyOrder* order) const noexcept {
     if (order == nullptr) {
@@ -1004,8 +1096,68 @@ class Strategy {
     }
     return SignalTiming{
         .lead_exchange_ns = route->market->lead.latest_quote.exchange_ns,
+        .lead_local_ns = route->market->lead.latest_quote.local_ns,
         .lag_exchange_ns = route->market->lag.latest_quote.exchange_ns,
+        .lag_local_ns = route->market->lag.latest_quote.local_ns,
     };
+  }
+
+  [[nodiscard]] static SignalTiming BuildSignalTiming(
+      const BookTicker& trigger_ticker, const PairMarketState& market,
+      std::int64_t on_book_ticker_entry_ns, std::int64_t signal_decision_ns,
+      const FreshnessConfig& freshness) noexcept {
+    return SignalTiming{
+        .trigger_exchange_ns = trigger_ticker.exchange_ns,
+        .trigger_local_ns = trigger_ticker.local_ns,
+        .on_book_ticker_entry_ns = on_book_ticker_entry_ns,
+        .signal_decision_ns = signal_decision_ns,
+        .lead_exchange_ns = market.lead.latest_quote.exchange_ns,
+        .lead_local_ns = market.lead.latest_quote.local_ns,
+        .lead_freshness_ns =
+            signal_decision_ns - market.lead.latest_quote.exchange_ns,
+        .lag_exchange_ns = market.lag.latest_quote.exchange_ns,
+        .lag_local_ns = market.lag.latest_quote.local_ns,
+        .lag_freshness_ns =
+            signal_decision_ns - market.lag.latest_quote.exchange_ns,
+        .max_lead_freshness_ns = freshness.max_lead_freshness_ns,
+        .max_lag_freshness_ns = freshness.max_lag_freshness_ns,
+    };
+  }
+
+  [[nodiscard]] static bool OpenAction(SignalAction action) noexcept {
+    return action == SignalAction::kOpenLong ||
+           action == SignalAction::kOpenShort;
+  }
+
+  [[nodiscard]] static bool AppliesOpenFreshnessGuard(
+      const SignalDecision& decision) noexcept {
+    return OpenAction(decision.action) && !decision.intent.reduce_only;
+  }
+
+  [[nodiscard]] static FreshnessRejectReason OpenFreshnessRejectReason(
+      const SignalTiming& timing) noexcept {
+    if (timing.lead_freshness_ns >
+        static_cast<std::int64_t>(timing.max_lead_freshness_ns)) {
+      return FreshnessRejectReason::kStaleLeadQuote;
+    }
+    if (timing.lag_freshness_ns >
+        static_cast<std::int64_t>(timing.max_lag_freshness_ns)) {
+      return FreshnessRejectReason::kStaleLagQuote;
+    }
+    return FreshnessRejectReason::kNone;
+  }
+
+  [[nodiscard]] static std::string_view FreshnessRejectReasonText(
+      FreshnessRejectReason reason) noexcept {
+    switch (reason) {
+      case FreshnessRejectReason::kStaleLeadQuote:
+        return "stale_lead_quote";
+      case FreshnessRejectReason::kStaleLagQuote:
+        return "stale_lag_quote";
+      case FreshnessRejectReason::kNone:
+        return "-";
+    }
+    return "-";
   }
 
   struct OrderPriceTextStorage {
@@ -1210,20 +1362,16 @@ class Strategy {
                                  },
                                  threshold, alignment);
     if (last_signal_decision_.triggered) {
-      last_signal_timing_ = SignalTiming{
-          .trigger_exchange_ns = trigger_ticker.exchange_ns,
-          .trigger_local_ns = trigger_ticker.local_ns,
-          .on_book_ticker_entry_ns = on_book_ticker_entry_ns,
-          .signal_decision_ns = detail::StrategyLogRealtimeNowNs(),
-          .lead_exchange_ns = market.lead.latest_quote.exchange_ns,
-          .lag_exchange_ns = market.lag.latest_quote.exchange_ns};
+      last_signal_timing_ = BuildSignalTiming(
+          trigger_ticker, market, on_book_ticker_entry_ns,
+          detail::StrategyLogRealtimeNowNs(), config_.freshness);
       last_signal_diagnostics_ = BuildSignalDiagnostics(
           *runtime, market, drifted_lead, recorder, alignment, threshold);
       last_signal_diagnostics_valid_ = true;
       detail::LogStrategySignalTriggered(
-          trigger_ticker.exchange, trigger_ticker.symbol_id, last_signal_timing_,
-          runtime->pair.symbol, runtime->pair.symbol_id, PairRole::kLead,
-          last_signal_decision_.action,
+          trigger_ticker.exchange, trigger_ticker.symbol_id,
+          last_signal_timing_, runtime->pair.symbol, runtime->pair.symbol_id,
+          PairRole::kLead, last_signal_decision_.action,
           last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, last_signal_decision_.intent.price);
@@ -1260,21 +1408,17 @@ class Strategy {
                                 threshold);
     if (last_signal_decision_.triggered) {
       const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
-      last_signal_timing_ = SignalTiming{
-          .trigger_exchange_ns = trigger_ticker.exchange_ns,
-          .trigger_local_ns = trigger_ticker.local_ns,
-          .on_book_ticker_entry_ns = on_book_ticker_entry_ns,
-          .signal_decision_ns = detail::StrategyLogRealtimeNowNs(),
-          .lead_exchange_ns = market.lead.latest_quote.exchange_ns,
-          .lag_exchange_ns = market.lag.latest_quote.exchange_ns};
+      last_signal_timing_ = BuildSignalTiming(
+          trigger_ticker, market, on_book_ticker_entry_ns,
+          detail::StrategyLogRealtimeNowNs(), config_.freshness);
       last_signal_diagnostics_ =
           BuildSignalDiagnostics(*runtime, market, runtime->drifted_lead,
                                  recorder, alignment, threshold);
       last_signal_diagnostics_valid_ = true;
       detail::LogStrategySignalTriggered(
-          trigger_ticker.exchange, trigger_ticker.symbol_id, last_signal_timing_,
-          runtime->pair.symbol, runtime->pair.symbol_id, PairRole::kLag,
-          last_signal_decision_.action,
+          trigger_ticker.exchange, trigger_ticker.symbol_id,
+          last_signal_timing_, runtime->pair.symbol, runtime->pair.symbol_id,
+          PairRole::kLag, last_signal_decision_.action,
           last_signal_decision_.intent.side,
           last_signal_decision_.intent.reduce_only,
           last_signal_decision_.group_id, last_signal_decision_.intent.price);
@@ -1336,131 +1480,149 @@ class Strategy {
     }
   }
 
-  template <typename ContextT>
-  void SubmitExternalSignal(PairRuntimeState* runtime,
-                            const BookTicker& trigger_ticker,
-                            PairRole signal_role, ContextT& context) noexcept {
-    if (runtime == nullptr || !last_signal_decision_.triggered) {
-      return;
+  [[nodiscard]] static std::string_view LagOrderSymbol(
+      const PairConfig& pair, const InstrumentMetadata& instrument) noexcept {
+    if (instrument.exchange_symbol.empty()) {
+      return std::string_view(pair.symbol);
     }
+    return std::string_view(instrument.exchange_symbol);
+  }
 
-    const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
-    const double raw_order_price = last_signal_decision_.intent.price;
-    const std::uint32_t slippage_ticks = SlippageTicksForAction(
-        runtime->pair.execute, last_signal_decision_.action);
-    const double rounded_order_price = SlippedRoundedOrderPrice(
-        raw_order_price, instrument, last_signal_decision_.intent.side,
-        slippage_ticks);
-    const std::string_view symbol =
-        instrument.exchange_symbol.empty()
-            ? std::string_view(runtime->pair.symbol)
-            : std::string_view(instrument.exchange_symbol);
-    if (rounded_order_price <= 0.0) {
-      detail::LogStrategyOrderIntentRejected(
-          "invalid_price", last_signal_timing_, symbol,
-          runtime->pair.symbol_id, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, 0, raw_order_price,
-          rounded_order_price, slippage_ticks, instrument.price_tick,
-          runtime->pair.execute.open_notional, 0.0);
-      return;
+  void LogOrderIntentRejectedForSignal(
+      std::string_view reason, PairRuntimeState* runtime,
+      std::string_view symbol, double quantity, double raw_order_price,
+      double order_price, std::uint32_t slippage_ticks, double price_tick,
+      double estimated_notional, double gross_before = 0.0,
+      double gross_after = 0.0, double max_gross_notional = 0.0,
+      std::uint64_t local_order_id = 0, std::string_view place_status = "-",
+      bool freshness_guard_pass = true,
+      std::string_view freshness_reject_reason = "-") noexcept {
+    detail::LogStrategyOrderIntentRejected(
+        reason, last_signal_timing_, symbol, runtime->pair.symbol_id,
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only,
+        last_signal_decision_.group_id, quantity, raw_order_price, order_price,
+        slippage_ticks, price_tick, runtime->pair.execute.open_notional,
+        estimated_notional, gross_before, gross_after, max_gross_notional,
+        local_order_id, place_status, freshness_guard_pass,
+        freshness_reject_reason);
+  }
+
+  [[nodiscard]] PreparedOrderPrice PrepareOrderPrice(
+      const PairRuntimeState& runtime,
+      const InstrumentMetadata& instrument) noexcept {
+    PreparedOrderPrice price;
+    price.raw_order_price = last_signal_decision_.intent.price;
+    price.slippage_ticks = SlippageTicksForAction(runtime.pair.execute,
+                                                  last_signal_decision_.action);
+    price.rounded_order_price = SlippedRoundedOrderPrice(
+        price.raw_order_price, instrument, last_signal_decision_.intent.side,
+        price.slippage_ticks);
+    if (price.rounded_order_price <= 0.0) {
+      price.reject_reason = "invalid_price";
+      return price;
     }
-
-    std::int64_t price_units = 0;
-    if (!DecimalUnitsFromValue(rounded_order_price,
-                               instrument.price_decimal_places, &price_units)) {
-      detail::LogStrategyOrderIntentRejected(
-          "order_text_slot_full", last_signal_timing_, symbol,
-          runtime->pair.symbol_id, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, 0, raw_order_price,
-          rounded_order_price, slippage_ticks, instrument.price_tick,
-          runtime->pair.execute.open_notional, 0.0);
-      return;
+    if (!DecimalUnitsFromValue(price.rounded_order_price,
+                               instrument.price_decimal_places,
+                               &price.price_units)) {
+      price.reject_reason = "order_text_slot_full";
+      return price;
     }
-    const double order_price =
-        DecimalUnitsToValue(price_units, instrument.price_decimal_places);
+    price.order_price =
+        DecimalUnitsToValue(price.price_units, instrument.price_decimal_places);
+    price.valid = true;
+    return price;
+  }
 
-    double quantity = 0.0;
-    std::int64_t quantity_units = 0;
-    ExecutionGroup* close_group = nullptr;
+  [[nodiscard]] PreparedOrderQuantity PrepareOrderQuantity(
+      PairRuntimeState* runtime, const InstrumentMetadata& instrument,
+      std::int64_t price_units) noexcept {
+    PreparedOrderQuantity result;
     if (last_signal_decision_.intent.reduce_only) {
-      close_group =
+      result.close_group =
           runtime->execution.FindGroupById(last_signal_decision_.group_id);
-      if (close_group == nullptr) {
-        return;
+      if (result.close_group == nullptr) {
+        return result;
       }
-      quantity = AbsolutePositionQuantity(*close_group);
-      if (!DecimalUnitsFromValue(quantity, instrument.quantity_decimal_places,
-                                 &quantity_units)) {
-        quantity = 0.0;
-      } else {
-        quantity = DecimalUnitsToValue(quantity_units,
-                                       instrument.quantity_decimal_places);
+      result.quantity = AbsolutePositionQuantity(*result.close_group);
+      if (!DecimalUnitsFromValue(result.quantity,
+                                 instrument.quantity_decimal_places,
+                                 &result.quantity_units)) {
+        result.quantity = 0.0;
+        return result;
       }
+      result.quantity = DecimalUnitsToValue(result.quantity_units,
+                                            instrument.quantity_decimal_places);
     } else {
       const OpenOrderQuantity open_quantity =
           CalculateOpenOrderQuantity(*runtime, price_units);
-      quantity = open_quantity.quantity;
-      quantity_units = open_quantity.quantity_units;
+      result.quantity = open_quantity.quantity;
+      result.quantity_units = open_quantity.quantity_units;
     }
-    if (quantity <= kQuantityEpsilon) {
-      detail::LogStrategyOrderIntentRejected(
-          "zero_quantity", last_signal_timing_, symbol,
-          runtime->pair.symbol_id, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, quantity, raw_order_price,
-          order_price, slippage_ticks, instrument.price_tick,
-          runtime->pair.execute.open_notional, 0.0);
-      return;
-    }
+    result.valid = result.quantity > kQuantityEpsilon;
+    return result;
+  }
 
-    const double order_notional =
-        OrderNotional(quantity, order_price, instrument);
-    if (!last_signal_decision_.intent.reduce_only &&
-        !GlobalRiskAllowsOpen(quantity, order_notional)) {
-      const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
-      detail::LogStrategyOrderIntentRejected(
-          "risk_limit", last_signal_timing_, symbol, runtime->pair.symbol_id,
-          last_signal_decision_.action, last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, quantity, raw_order_price,
-          order_price, slippage_ticks, instrument.price_tick,
-          runtime->pair.execute.open_notional, order_notional,
-          totals.gross_notional, totals.gross_notional + order_notional,
-          config_.risk.max_gross_notional);
-      RejectSignal(SignalRejectReason::kRiskLimit);
-      return;
+  [[nodiscard]] bool RejectOpenForFreshness(
+      PairRuntimeState* runtime, std::string_view symbol,
+      const PreparedOrderPrice& price,
+      const InstrumentMetadata& instrument) noexcept {
+    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      return false;
     }
+    const FreshnessRejectReason reason =
+        OpenFreshnessRejectReason(last_signal_timing_);
+    if (reason == FreshnessRejectReason::kNone) {
+      return false;
+    }
+    const std::string_view reason_text = FreshnessRejectReasonText(reason);
+    LogOrderIntentRejectedForSignal(
+        reason_text, runtime, symbol, 0.0, price.raw_order_price,
+        price.order_price, price.slippage_ticks, instrument.price_tick, 0.0,
+        0.0, 0.0, 0.0, 0, "-", false, reason_text);
+    RejectSignal(SignalRejectReason::kMarketFreshness);
+    return true;
+  }
 
-    OrderPriceTextStorage* order_text_storage =
-        AcquireOrderText(price_units, instrument.price_decimal_places,
-                         quantity_units, instrument.quantity_decimal_places);
-    if (order_text_storage == nullptr) {
-      detail::LogStrategyOrderIntentRejected(
-          "order_text_slot_full", last_signal_timing_, symbol,
-          runtime->pair.symbol_id, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, quantity, raw_order_price,
-          order_price, slippage_ticks, instrument.price_tick,
-          runtime->pair.execute.open_notional, order_notional);
-      return;
+  [[nodiscard]] bool RejectOpenForRisk(PairRuntimeState* runtime,
+                                       std::string_view symbol,
+                                       const PreparedOrderPrice& price,
+                                       const InstrumentMetadata& instrument,
+                                       double quantity,
+                                       double order_notional) noexcept {
+    if (last_signal_decision_.intent.reduce_only ||
+        GlobalRiskAllowsOpen(quantity, order_notional)) {
+      return false;
     }
+    const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
+    LogOrderIntentRejectedForSignal("risk_limit", runtime, symbol, quantity,
+                                    price.raw_order_price, price.order_price,
+                                    price.slippage_ticks, instrument.price_tick,
+                                    order_notional, totals.gross_notional,
+                                    totals.gross_notional + order_notional,
+                                    config_.risk.max_gross_notional);
+    RejectSignal(SignalRejectReason::kRiskLimit);
+    return true;
+  }
+
+  template <typename ContextT>
+  void SubmitPreparedExternalOrder(
+      PairRuntimeState* runtime, const BookTicker& trigger_ticker,
+      PairRole signal_role, ContextT& context,
+      const InstrumentMetadata& instrument, std::string_view symbol,
+      const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
+      double order_notional,
+      OrderPriceTextStorage* order_text_storage) noexcept {
     const std::string_view quantity_text = order_text_storage->quantity_view();
     const std::string_view price_text = order_text_storage->price_view();
-
     detail::LogStrategyOrderIntent(
         last_signal_timing_, symbol, runtime->pair.symbol_id,
         last_signal_decision_.action, last_signal_decision_.intent.side,
         last_signal_decision_.intent.reduce_only,
-        last_signal_decision_.group_id, quantity, raw_order_price, order_price,
-        slippage_ticks, instrument.price_tick,
-        runtime->pair.execute.open_notional, order_notional,
-        runtime->execution.active_group_count());
+        last_signal_decision_.group_id, quantity.quantity,
+        price.raw_order_price, price.order_price, price.slippage_ticks,
+        instrument.price_tick, runtime->pair.execute.open_notional,
+        order_notional, runtime->execution.active_group_count());
 
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
@@ -1470,29 +1632,37 @@ class Strategy {
             .side = last_signal_decision_.intent.side,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity,
+            .quantity = quantity.quantity,
             .quantity_text = quantity_text,
             .price_text = price_text,
             .reduce_only = last_signal_decision_.intent.reduce_only,
         });
     if (placed.local_order_id == 0) {
-      detail::LogStrategyOrderIntentRejected(
-          "place_local_rejected", last_signal_timing_, symbol,
-          runtime->pair.symbol_id, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, quantity, raw_order_price,
-          order_price, slippage_ticks, instrument.price_tick,
-          runtime->pair.execute.open_notional, order_notional, 0.0, 0.0, 0.0,
+      LogOrderIntentRejectedForSignal(
+          "place_local_rejected", runtime, symbol, quantity.quantity,
+          price.raw_order_price, price.order_price, price.slippage_ticks,
+          instrument.price_tick, order_notional, 0.0, 0.0, 0.0,
           placed.local_order_id, magic_enum::enum_name(placed.status));
       ReleaseOrderPriceText(order_text_storage);
       return;
     }
     order_text_storage->local_order_id = placed.local_order_id;
+    HandleExternalOrderPlaceResult(runtime, trigger_ticker, signal_role,
+                                   context, instrument, symbol, price, quantity,
+                                   order_notional, order_text_storage, placed);
+  }
 
+  template <typename ContextT>
+  void HandleExternalOrderPlaceResult(
+      PairRuntimeState* runtime, const BookTicker& trigger_ticker,
+      PairRole signal_role, ContextT& context,
+      const InstrumentMetadata& instrument, std::string_view symbol,
+      const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
+      double order_notional, OrderPriceTextStorage* order_text_storage,
+      const core::OrderPlaceResult& placed) noexcept {
     if (placed.status == core::OrderPlaceStatus::kOk) {
-      const bool tracked =
-          OnExternalOrderAccepted(runtime, close_group, placed.local_order_id);
+      const bool tracked = OnExternalOrderAccepted(
+          runtime, quantity.close_group, placed.local_order_id);
       if (tracked) {
         const ExecutionGroup* submitted_group =
             runtime->execution.FindPendingOrderByLocalOrderId(
@@ -1511,29 +1681,83 @@ class Strategy {
                 last_signal_decision_.action,
                 last_signal_decision_.intent.reduce_only),
             last_signal_decision_.action, last_signal_decision_.intent.side,
-            last_signal_decision_.intent.reduce_only, position_log, quantity,
-            quantity_text, raw_order_price, order_price, price_text,
-            slippage_ticks, instrument.price_tick,
-            runtime->pair.execute.open_notional, order_notional,
-            runtime->execution.active_group_count(), placed.status);
+            last_signal_decision_.intent.reduce_only, position_log,
+            quantity.quantity, order_text_storage->quantity_view(),
+            price.raw_order_price, price.order_price,
+            order_text_storage->price_view(), price.slippage_ticks,
+            instrument.price_tick, runtime->pair.execute.open_notional,
+            order_notional, runtime->execution.active_group_count(),
+            placed.status);
       }
       if (tracked && !last_signal_decision_.intent.reduce_only) {
-        ReserveOpenRisk(order_text_storage, quantity, order_notional);
+        ReserveOpenRisk(order_text_storage, quantity.quantity, order_notional);
       }
       return;
     }
 
-    detail::LogStrategyOrderIntentRejected(
-        "place_local_rejected", last_signal_timing_, symbol,
-        runtime->pair.symbol_id, last_signal_decision_.action,
-        last_signal_decision_.intent.side,
-        last_signal_decision_.intent.reduce_only,
-        last_signal_decision_.group_id, quantity, raw_order_price, order_price,
-        slippage_ticks, instrument.price_tick,
-        runtime->pair.execute.open_notional, order_notional, 0.0, 0.0, 0.0,
+    LogOrderIntentRejectedForSignal(
+        "place_local_rejected", runtime, symbol, quantity.quantity,
+        price.raw_order_price, price.order_price, price.slippage_ticks,
+        instrument.price_tick, order_notional, 0.0, 0.0, 0.0,
         placed.local_order_id, magic_enum::enum_name(placed.status));
-    RollbackRejectedSubmit(runtime, close_group, placed.local_order_id,
+    RollbackRejectedSubmit(runtime, quantity.close_group, placed.local_order_id,
                            context);
+  }
+
+  template <typename ContextT>
+  void SubmitExternalSignal(PairRuntimeState* runtime,
+                            const BookTicker& trigger_ticker,
+                            PairRole signal_role, ContextT& context) noexcept {
+    if (runtime == nullptr || !last_signal_decision_.triggered) {
+      return;
+    }
+
+    const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
+    const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
+    const PreparedOrderPrice price = PrepareOrderPrice(*runtime, instrument);
+    if (!price.valid) {
+      LogOrderIntentRejectedForSignal(
+          price.reject_reason, runtime, symbol, 0.0, price.raw_order_price,
+          price.rounded_order_price, price.slippage_ticks,
+          instrument.price_tick, 0.0);
+      return;
+    }
+
+    if (RejectOpenForFreshness(runtime, symbol, price, instrument)) {
+      return;
+    }
+
+    const PreparedOrderQuantity quantity =
+        PrepareOrderQuantity(runtime, instrument, price.price_units);
+    if (!quantity.valid) {
+      LogOrderIntentRejectedForSignal("zero_quantity", runtime, symbol,
+                                      quantity.quantity, price.raw_order_price,
+                                      price.order_price, price.slippage_ticks,
+                                      instrument.price_tick, 0.0);
+      return;
+    }
+
+    const double order_notional =
+        OrderNotional(quantity.quantity, price.order_price, instrument);
+    if (RejectOpenForRisk(runtime, symbol, price, instrument, quantity.quantity,
+                          order_notional)) {
+      return;
+    }
+
+    OrderPriceTextStorage* order_text_storage = AcquireOrderText(
+        price.price_units, instrument.price_decimal_places,
+        quantity.quantity_units, instrument.quantity_decimal_places);
+    if (order_text_storage == nullptr) {
+      LogOrderIntentRejectedForSignal("order_text_slot_full", runtime, symbol,
+                                      quantity.quantity, price.raw_order_price,
+                                      price.order_price, price.slippage_ticks,
+                                      instrument.price_tick, order_notional);
+      return;
+    }
+
+    SubmitPreparedExternalOrder(runtime, trigger_ticker, signal_role, context,
+                                instrument, symbol, price, quantity,
+                                order_notional, order_text_storage);
   }
 
   [[nodiscard]] bool OnExternalOrderAccepted(

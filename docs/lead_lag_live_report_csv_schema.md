@@ -36,7 +36,11 @@
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_signal_triggered.on_book_ticker_entry_ns`。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_signal_triggered.signal_decision_ns`。 |
 | `lead_exchange_ns` | signal 触发时 lead 侧最新 BBO 的 `BookTicker.exchange_ns`。 | `lead_lag_signal_triggered.lead_exchange_ns`。 |
+| `lead_local_ns` | signal 触发时 lead 侧最新 BBO 的 `BookTicker.local_ns`，用于检测 data session ingress 到策略之间的本地链路。 | `lead_lag_signal_triggered.lead_local_ns`。 |
+| `lead_freshness_ns` | signal decision 时 lead 最新 BBO 的 freshness，定义为 `signal_decision_ns - lead_exchange_ns`。 | `lead_lag_signal_triggered.lead_freshness_ns`。 |
 | `lag_exchange_ns` | signal 触发时 lag 侧最新 BBO 的 `BookTicker.exchange_ns`。 | `lead_lag_signal_triggered.lag_exchange_ns`。 |
+| `lag_local_ns` | signal 触发时 lag 侧最新 BBO 的 `BookTicker.local_ns`，用于检测 data session ingress 到策略之间的本地链路。 | `lead_lag_signal_triggered.lag_local_ns`。 |
+| `lag_freshness_ns` | signal decision 时 lag 最新 BBO 的 freshness，定义为 `signal_decision_ns - lag_exchange_ns`。 | `lead_lag_signal_triggered.lag_freshness_ns`。 |
 | `symbol` | 策略交易 symbol，例如 `PROVE_USDT`。 | signal log，并与 order detail 对齐。 |
 | `symbol_id` | 策略交易 symbol id。 | signal log，并与 order detail 对齐。 |
 | `signal_role` | signal 侧 pair role，例如 `kLead` 或 `kLag`。 | `lead_lag_signal_triggered.role` 或订单提交日志中的 `signal_role`。 |
@@ -90,7 +94,15 @@
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_order_submitted.on_book_ticker_entry_ns`。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_order_submitted.signal_decision_ns`。 |
 | `lead_exchange_ns` | 下单信号对应的 lead 侧最新 BBO `BookTicker.exchange_ns`。 | `lead_lag_order_submitted.lead_exchange_ns`。 |
+| `lead_local_ns` | 下单信号对应的 lead 侧最新 BBO `BookTicker.local_ns`。 | `lead_lag_order_submitted.lead_local_ns`。 |
+| `lead_freshness_ns` | 下单信号对应 lead 最新 BBO 的 freshness，定义为 `signal_decision_ns - lead_exchange_ns`。 | `lead_lag_order_submitted.lead_freshness_ns`。 |
 | `lag_exchange_ns` | 下单信号对应的 lag 侧最新 BBO `BookTicker.exchange_ns`。 | `lead_lag_order_submitted.lag_exchange_ns`。 |
+| `lag_local_ns` | 下单信号对应的 lag 侧最新 BBO `BookTicker.local_ns`。 | `lead_lag_order_submitted.lag_local_ns`。 |
+| `lag_freshness_ns` | 下单信号对应 lag 最新 BBO 的 freshness，定义为 `signal_decision_ns - lag_exchange_ns`。 | `lead_lag_order_submitted.lag_freshness_ns`。 |
+| `max_lead_freshness_ns` | 开仓 freshness guard 的 lead 阈值；当前配置默认 `5ms`。 | `lead_lag_order_submitted.max_lead_freshness_ns`。 |
+| `max_lag_freshness_ns` | 开仓 freshness guard 的 lag 阈值；当前配置默认 `20ms`。 | `lead_lag_order_submitted.max_lag_freshness_ns`。 |
+| `freshness_guard_pass` | open order 是否通过 freshness guard；close / stoploss 不应用该 guard，提交日志中为 `true`。 | `lead_lag_order_submitted.freshness_guard_pass`。 |
+| `freshness_reject_reason` | freshness guard 拒单原因；成功提交或非 freshness 拒单为 `-`，当前拒单值为 `stale_lead_quote` 或 `stale_lag_quote`。 | 策略订单日志。 |
 | `signal_role` | signal 侧 pair role。 | `lead_lag_order_submitted.signal_role`。 |
 | `order_role` | 订单角色，`entry` 或 `exit`。 | `lead_lag_order_submitted.order_role`，缺失时由 action / reduce-only 推导。 |
 | `position_id` | 策略 position id。 | `lead_lag_order_submitted.position_id` 或终态日志。 |
@@ -198,9 +210,17 @@
 | `entry_exchange_order_id` | 开仓订单交易所 id。 | entry order。 |
 | `exit_exchange_order_id` | 平仓订单交易所 id。 | exit order。 |
 | `entry_lead_exchange_ns` | entry signal 对应 lead 侧最新 BBO `BookTicker.exchange_ns`。 | entry order。 |
+| `entry_lead_local_ns` | entry signal 对应 lead 侧最新 BBO `BookTicker.local_ns`。 | entry order。 |
+| `entry_lead_freshness_ns` | entry signal 的 lead freshness，定义为 `signal_decision_ns - lead_exchange_ns`。 | entry order。 |
 | `entry_lag_exchange_ns` | entry signal 对应 lag 侧最新 BBO `BookTicker.exchange_ns`。 | entry order。 |
+| `entry_lag_local_ns` | entry signal 对应 lag 侧最新 BBO `BookTicker.local_ns`。 | entry order。 |
+| `entry_lag_freshness_ns` | entry signal 的 lag freshness，定义为 `signal_decision_ns - lag_exchange_ns`。 | entry order。 |
 | `exit_lead_exchange_ns` | exit signal 对应 lead 侧最新 BBO `BookTicker.exchange_ns`。 | exit order。 |
+| `exit_lead_local_ns` | exit signal 对应 lead 侧最新 BBO `BookTicker.local_ns`。 | exit order。 |
+| `exit_lead_freshness_ns` | exit signal 的 lead freshness，定义为 `signal_decision_ns - lead_exchange_ns`。 | exit order。 |
 | `exit_lag_exchange_ns` | exit signal 对应 lag 侧最新 BBO `BookTicker.exchange_ns`。 | exit order。 |
+| `exit_lag_local_ns` | exit signal 对应 lag 侧最新 BBO `BookTicker.local_ns`。 | exit order。 |
+| `exit_lag_freshness_ns` | exit signal 的 lag freshness，定义为 `signal_decision_ns - lag_exchange_ns`。 | exit order。 |
 | `entry_ns` | entry 时间戳。 | 优先用 entry `order_finished_local_ns`，缺失时回退到 ack 或 send 时间。 |
 | `exit_ns` | exit 时间戳。 | 优先用 exit `order_finished_local_ns`，缺失时回退到 ack 或 send 时间。 |
 | `holding_ns` | 持仓时间。 | `exit_ns - entry_ns`。 |
@@ -257,6 +277,11 @@
 | `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | order detail。 |
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | order detail。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | order detail。 |
+| `lead_exchange_ns` / `lag_exchange_ns` | 下单信号对应 lead / lag 侧最新 BBO `BookTicker.exchange_ns`。 | order detail。 |
+| `lead_local_ns` / `lag_local_ns` | 下单信号对应 lead / lag 侧最新 BBO `BookTicker.local_ns`。 | order detail。 |
+| `lead_freshness_ns` / `lag_freshness_ns` | 下单信号对应 lead / lag 最新 BBO 的 freshness，定义为 `signal_decision_ns - *_exchange_ns`。 | order detail。 |
+| `max_lead_freshness_ns` / `max_lag_freshness_ns` | 开仓 freshness guard 阈值。 | order detail。 |
+| `freshness_guard_pass` / `freshness_reject_reason` | freshness guard 结果和原因；submitted order 通常为 `true` / `-`。 | order detail。 |
 | `request_send_local_ns` | 本地发送请求成功后的时间戳。 | Gate send log 或终态日志。 |
 | `ack_local_receive_ns` | 本地收到 Ack 的时间戳。 | Gate Ack log 或终态日志。 |
 | `response_local_receive_ns` | 本地收到非 Ack response 的时间戳。 | 终态日志中的 response timing。 |

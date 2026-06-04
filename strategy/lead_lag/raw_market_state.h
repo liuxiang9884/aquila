@@ -41,6 +41,7 @@ struct MarketSideState {
     const QuoteSnapshot next{
         .event_ns = BookTickerEventTimeNs(ticker),
         .exchange_ns = ticker.exchange_ns,
+        .local_ns = ticker.local_ns,
         .bid_price = ticker.bid_price,
         .ask_price = ticker.ask_price,
     };
@@ -53,6 +54,7 @@ struct MarketSideState {
         ticker.ask_price == latest_quote.ask_price) {
       latest_quote.event_ns = next.event_ns;
       latest_quote.exchange_ns = next.exchange_ns;
+      latest_quote.local_ns = next.local_ns;
       return false;
     }
     previous_quote = latest_quote;
@@ -164,8 +166,7 @@ class RawMarketState {
     return &slot->market;
   }
 
-  [[nodiscard]] PairMarketState* MutablePair(
-      std::int32_t symbol_id) noexcept {
+  [[nodiscard]] PairMarketState* MutablePair(std::int32_t symbol_id) noexcept {
     PairMarketSlot* slot = MutableSlot(symbol_id);
     if (slot == nullptr || !slot->initialized) {
       return nullptr;

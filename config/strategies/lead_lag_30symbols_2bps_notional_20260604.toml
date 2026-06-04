@@ -2,6 +2,10 @@
 name = "lead_lag"
 version = "1.0"
 
+[lead_lag.freshness]
+max_lead_freshness = "5ms"
+max_lag_freshness = "20ms"
+
 [lead_lag.risk]
 max_gross_notional = 2500.0
 

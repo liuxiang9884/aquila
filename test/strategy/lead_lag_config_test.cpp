@@ -277,8 +277,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInLabUsdtLiveRiskLimits) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = leadlag::LoadConfigFile(
-      SourcePath("config/strategies/lead_lag_lab_usdt_20260601.toml"),
-      catalog);
+      SourcePath("config/strategies/lead_lag_lab_usdt_20260601.toml"), catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   const leadlag::Config& config = result.value;
@@ -291,11 +290,11 @@ TEST(LeadLagConfigTest, LoadsCheckedInLabUsdtLiveRiskLimits) {
   EXPECT_EQ(pair.symbol_id, 15);
   EXPECT_EQ(pair.lead_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(pair.lag_exchange, aquila::Exchange::kGate);
-  EXPECT_DOUBLE_EQ(pair.execute.open_notional, 100.0);
+  EXPECT_DOUBLE_EQ(pair.execute.open_notional, 200.0);
   EXPECT_DOUBLE_EQ(pair.execute.trailing_stop, 0.01);
   EXPECT_DOUBLE_EQ(pair.execute.max_entry_spread, 0.01);
-  EXPECT_EQ(pair.execute.open_slippage, 10U);
-  EXPECT_EQ(pair.execute.close_slippage, 10U);
+  EXPECT_EQ(pair.execute.open_slippage, 500U);
+  EXPECT_EQ(pair.execute.close_slippage, 500U);
   EXPECT_EQ(pair.execute.parallel, 1U);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.price_tick, 1e-05);
   EXPECT_EQ(pair.lag_instrument.price_decimal_places, 5);
@@ -334,6 +333,31 @@ max_holding_position = 0
   EXPECT_EQ(result.value.risk.max_holding_position, 0);
   EXPECT_TRUE(result.value.risk.GrossNotionalLimitEnabled());
   EXPECT_FALSE(result.value.risk.HoldingPositionLimitEnabled());
+}
+
+TEST(LeadLagConfigTest, DefaultsFreshnessGuardDurations) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk(""), catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.freshness.max_lead_freshness_ns, 5'000'000ULL);
+  EXPECT_EQ(result.value.freshness.max_lag_freshness_ns, 20'000'000ULL);
+}
+
+TEST(LeadLagConfigTest, ParsesFreshnessGuardDurations) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk(R"toml(
+[lead_lag.freshness]
+max_lead_freshness = "7ms"
+max_lag_freshness = "31ms"
+)toml"),
+                                      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.freshness.max_lead_freshness_ns, 7'000'000ULL);
+  EXPECT_EQ(result.value.freshness.max_lag_freshness_ns, 31'000'000ULL);
 }
 
 TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {

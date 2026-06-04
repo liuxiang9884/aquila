@@ -25,7 +25,11 @@ SIGNAL_DETAIL_FIELDS = [
     "on_book_ticker_entry_ns",
     "signal_decision_ns",
     "lead_exchange_ns",
+    "lead_local_ns",
+    "lead_freshness_ns",
     "lag_exchange_ns",
+    "lag_local_ns",
+    "lag_freshness_ns",
     "symbol",
     "symbol_id",
     "signal_role",
@@ -172,9 +176,24 @@ def build_signal_detail_rows(
                     fields.get("lead_exchange_ns", "")
                     or order.get("lead_exchange_ns", "")
                 ),
+                "lead_local_ns": (
+                    fields.get("lead_local_ns", "")
+                    or order.get("lead_local_ns", "")
+                ),
+                "lead_freshness_ns": (
+                    fields.get("lead_freshness_ns", "")
+                    or order.get("lead_freshness_ns", "")
+                ),
                 "lag_exchange_ns": (
                     fields.get("lag_exchange_ns", "")
                     or order.get("lag_exchange_ns", "")
+                ),
+                "lag_local_ns": (
+                    fields.get("lag_local_ns", "") or order.get("lag_local_ns", "")
+                ),
+                "lag_freshness_ns": (
+                    fields.get("lag_freshness_ns", "")
+                    or order.get("lag_freshness_ns", "")
                 ),
                 "symbol": fields.get("symbol", ""),
                 "symbol_id": fields.get("symbol_id", ""),
