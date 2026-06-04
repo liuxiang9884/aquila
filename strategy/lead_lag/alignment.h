@@ -122,6 +122,7 @@ class AlignmentState {
     const double drift = drift_ready_ ? drift_window_.mean() : 1.0;
     return QuoteSnapshot{
         .event_ns = raw_lead.event_ns,
+        .exchange_ns = raw_lead.exchange_ns,
         .bid_price = raw_lead.bid_price * drift,
         .ask_price = raw_lead.ask_price * drift,
     };

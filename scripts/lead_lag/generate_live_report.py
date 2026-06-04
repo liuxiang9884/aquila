@@ -18,13 +18,14 @@ SIGNAL_DETAIL_FIELDS = [
     "run_id",
     "signal_index",
     "log_time",
-    "trigger_ticker_id",
     "trigger_exchange",
     "trigger_symbol_id",
     "trigger_exchange_ns",
     "trigger_local_ns",
     "on_book_ticker_entry_ns",
     "signal_decision_ns",
+    "lead_exchange_ns",
+    "lag_exchange_ns",
     "symbol",
     "symbol_id",
     "signal_role",
@@ -110,13 +111,31 @@ def append_warning(existing: str, warning: str) -> str:
     return existing + ";" + warning
 
 
+def signal_join_key(fields: dict[str, str]) -> str:
+    signal_decision_ns = fields.get("signal_decision_ns", "")
+    if signal_decision_ns == "":
+        return ""
+    return "|".join(
+        [
+            signal_decision_ns,
+            fields.get("symbol_id", ""),
+            fields.get("action", ""),
+            fields.get("side", ""),
+            fields.get("reduce_only", ""),
+            fields.get("raw_price", ""),
+            fields.get("lead_exchange_ns", ""),
+            fields.get("lag_exchange_ns", ""),
+        ]
+    )
+
+
 def build_order_index(order_rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     result: dict[str, dict[str, str]] = {}
     for order in order_rows:
-        trigger_ticker_id = order.get("trigger_ticker_id", "")
-        if trigger_ticker_id == "":
+        key = signal_join_key(order)
+        if key == "":
             continue
-        result[trigger_ticker_id] = order
+        result[key] = order
     return result
 
 
@@ -133,8 +152,7 @@ def build_signal_detail_rows(
             tag, fields = orders.parse_message(message)
             if tag != "lead_lag_signal_triggered":
                 continue
-            trigger_ticker_id = fields.get("trigger_ticker_id", "")
-            order = orders_by_trigger.get(trigger_ticker_id, {})
+            order = orders_by_trigger.get(signal_join_key(fields), {})
             warnings = order.get("warnings", "")
             if not order:
                 warnings = append_warning(warnings, "missing_order")
@@ -142,7 +160,6 @@ def build_signal_detail_rows(
                 "run_id": run_id,
                 "signal_index": str(len(rows) + 1),
                 "log_time": log_time_from_line(line),
-                "trigger_ticker_id": trigger_ticker_id,
                 "trigger_exchange": fields.get("trigger_exchange", ""),
                 "trigger_symbol_id": fields.get("trigger_symbol_id", ""),
                 "trigger_exchange_ns": fields.get("trigger_exchange_ns", ""),
@@ -151,6 +168,14 @@ def build_signal_detail_rows(
                     "on_book_ticker_entry_ns", ""
                 ),
                 "signal_decision_ns": fields.get("signal_decision_ns", ""),
+                "lead_exchange_ns": (
+                    fields.get("lead_exchange_ns", "")
+                    or order.get("lead_exchange_ns", "")
+                ),
+                "lag_exchange_ns": (
+                    fields.get("lag_exchange_ns", "")
+                    or order.get("lag_exchange_ns", "")
+                ),
                 "symbol": fields.get("symbol", ""),
                 "symbol_id": fields.get("symbol_id", ""),
                 "signal_role": fields.get("role", ""),

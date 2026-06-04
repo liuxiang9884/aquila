@@ -32,22 +32,22 @@ CLOSE_ACTIONS = {
 
 @dataclass(frozen=True)
 class SignalRow:
-    ticker_id: str
     symbol_id: str
     exchange_ns: str
     local_ns: str
+    event_ns: str
     action: str
     side: str
-    price: Decimal
+    raw_price: Decimal
     reduce_only: str
 
 
 @dataclass(frozen=True)
 class OpenPosition:
-    ticker_id: str
     symbol_id: str
     exchange_ns: str
     local_ns: str
+    event_ns: str
     direction: str
     action: str
     side: str
@@ -61,12 +61,12 @@ class OpenPosition:
 class ClosedTrade:
     symbol_id: str
     direction: str
-    open_ticker_id: str
-    close_ticker_id: str
     open_exchange_ns: str
     close_exchange_ns: str
     open_local_ns: str
     close_local_ns: str
+    open_event_ns: str
+    close_event_ns: str
     open_action: str
     close_action: str
     open_side: str
@@ -121,26 +121,26 @@ def parse_non_negative_decimal(value: str, field: str) -> Decimal:
 
 def parse_signal_row(raw: dict[str, str], row_number: int) -> SignalRow:
     required = [
-        "ticker_id",
         "symbol_id",
         "exchange_ns",
         "local_ns",
+        "event_ns",
         "action",
         "side",
-        "price",
+        "raw_price",
         "reduce_only",
     ]
     for field in required:
         if field not in raw or raw[field] == "":
             raise ValueError(f"row {row_number}: missing {field}")
     return SignalRow(
-        ticker_id=raw["ticker_id"],
         symbol_id=raw["symbol_id"],
         exchange_ns=raw["exchange_ns"],
         local_ns=raw["local_ns"],
+        event_ns=raw["event_ns"],
         action=raw["action"],
         side=raw["side"],
-        price=parse_decimal(raw["price"], f"row {row_number} price"),
+        raw_price=parse_decimal(raw["raw_price"], f"row {row_number} raw_price"),
         reduce_only=raw["reduce_only"],
     )
 
@@ -178,12 +178,12 @@ def close_position(
     return ClosedTrade(
         symbol_id=open_position.symbol_id,
         direction=open_position.direction,
-        open_ticker_id=open_position.ticker_id,
-        close_ticker_id=close_signal.ticker_id,
         open_exchange_ns=open_position.exchange_ns,
         close_exchange_ns=close_signal.exchange_ns,
         open_local_ns=open_position.local_ns,
         close_local_ns=close_signal.local_ns,
+        open_event_ns=open_position.event_ns,
+        close_event_ns=close_signal.event_ns,
         open_action=open_position.action,
         close_action=close_signal.action,
         open_side=open_position.side,
@@ -228,10 +228,10 @@ def calculate_pnl(
             open_price = slippage_price(signal, tick_size, slippage_ticks)
             positions[(signal.symbol_id, direction)].append(
                 OpenPosition(
-                    ticker_id=signal.ticker_id,
                     symbol_id=signal.symbol_id,
                     exchange_ns=signal.exchange_ns,
                     local_ns=signal.local_ns,
+                    event_ns=signal.event_ns,
                     direction=direction,
                     action=signal.action,
                     side=signal.side,
@@ -249,8 +249,8 @@ def calculate_pnl(
             key = (signal.symbol_id, direction)
             if not positions[key]:
                 raise ValueError(
-                    f"close without open: ticker_id={signal.ticker_id} "
-                    f"action={signal.action} symbol_id={signal.symbol_id}"
+                    f"close without open: symbol_id={signal.symbol_id} "
+                    f"exchange_ns={signal.exchange_ns} action={signal.action}"
                 )
             close_price = slippage_price(signal, tick_size, slippage_ticks)
             trades.append(
@@ -285,15 +285,16 @@ def slippage_price(
 ) -> Decimal:
     slippage = tick_size * Decimal(slippage_ticks)
     if signal.side == "kBuy":
-        price = signal.price + slippage
+        price = signal.raw_price + slippage
     elif signal.side == "kSell":
-        price = signal.price - slippage
+        price = signal.raw_price - slippage
     else:
         raise ValueError(f"unsupported side: {signal.side}")
     if price <= 0:
         raise ValueError(
-            f"slipped price must be positive: ticker_id={signal.ticker_id} "
-            f"side={signal.side} price={signal.price} slippage={slippage}"
+            f"slipped price must be positive: symbol_id={signal.symbol_id} "
+            f"exchange_ns={signal.exchange_ns} side={signal.side} "
+            f"raw_price={signal.raw_price} slippage={slippage}"
         )
     return price
 
@@ -307,10 +308,12 @@ def write_trades_csv(path: Path, trades: list[ClosedTrade]) -> None:
     fields = [
         "symbol_id",
         "direction",
-        "open_ticker_id",
-        "close_ticker_id",
         "open_exchange_ns",
         "close_exchange_ns",
+        "open_local_ns",
+        "close_local_ns",
+        "open_event_ns",
+        "close_event_ns",
         "open_action",
         "close_action",
         "open_price",
@@ -330,10 +333,12 @@ def write_trades_csv(path: Path, trades: list[ClosedTrade]) -> None:
                 {
                     "symbol_id": trade.symbol_id,
                     "direction": trade.direction,
-                    "open_ticker_id": trade.open_ticker_id,
-                    "close_ticker_id": trade.close_ticker_id,
                     "open_exchange_ns": trade.open_exchange_ns,
                     "close_exchange_ns": trade.close_exchange_ns,
+                    "open_local_ns": trade.open_local_ns,
+                    "close_local_ns": trade.close_local_ns,
+                    "open_event_ns": trade.open_event_ns,
+                    "close_event_ns": trade.close_event_ns,
                     "open_action": trade.open_action,
                     "close_action": trade.close_action,
                     "open_price": decimal_text(trade.open_price),

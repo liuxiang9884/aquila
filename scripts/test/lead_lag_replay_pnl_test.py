@@ -16,43 +16,43 @@ class LeadLagReplayPnlTest(unittest.TestCase):
     def test_calculates_long_and_short_net_pnl(self):
         rows = [
             {
-                "ticker_id": "1",
                 "symbol_id": "3",
                 "exchange_ns": "100",
                 "local_ns": "100",
+                "event_ns": "100",
                 "action": "kOpenLong",
                 "side": "kBuy",
-                "price": "100",
+                "raw_price": "100",
                 "reduce_only": "false",
             },
             {
-                "ticker_id": "2",
                 "symbol_id": "3",
                 "exchange_ns": "110",
                 "local_ns": "110",
+                "event_ns": "110",
                 "action": "kCloseLong",
                 "side": "kSell",
-                "price": "110",
+                "raw_price": "110",
                 "reduce_only": "true",
             },
             {
-                "ticker_id": "3",
                 "symbol_id": "3",
                 "exchange_ns": "120",
                 "local_ns": "120",
+                "event_ns": "120",
                 "action": "kOpenShort",
                 "side": "kSell",
-                "price": "200",
+                "raw_price": "200",
                 "reduce_only": "false",
             },
             {
-                "ticker_id": "4",
                 "symbol_id": "3",
                 "exchange_ns": "130",
                 "local_ns": "130",
+                "event_ns": "130",
                 "action": "kStoplossShort",
                 "side": "kBuy",
-                "price": "180",
+                "raw_price": "180",
                 "reduce_only": "true",
             },
         ]
@@ -76,13 +76,13 @@ class LeadLagReplayPnlTest(unittest.TestCase):
     def test_rejects_close_without_open(self):
         rows = [
             {
-                "ticker_id": "1",
                 "symbol_id": "3",
                 "exchange_ns": "100",
                 "local_ns": "100",
+                "event_ns": "100",
                 "action": "kCloseLong",
                 "side": "kSell",
-                "price": "110",
+                "raw_price": "110",
                 "reduce_only": "true",
             }
         ]
@@ -95,23 +95,23 @@ class LeadLagReplayPnlTest(unittest.TestCase):
     def test_applies_slippage_against_signal_side(self):
         rows = [
             {
-                "ticker_id": "1",
                 "symbol_id": "3",
                 "exchange_ns": "100",
                 "local_ns": "100",
+                "event_ns": "100",
                 "action": "kOpenLong",
                 "side": "kBuy",
-                "price": "10",
+                "raw_price": "10",
                 "reduce_only": "false",
             },
             {
-                "ticker_id": "2",
                 "symbol_id": "3",
                 "exchange_ns": "110",
                 "local_ns": "110",
+                "event_ns": "110",
                 "action": "kCloseLong",
                 "side": "kSell",
-                "price": "13",
+                "raw_price": "13",
                 "reduce_only": "true",
             },
         ]

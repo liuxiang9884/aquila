@@ -11,27 +11,28 @@ from typing import Any
 
 
 DEFAULT_KEY_FIELDS = [
-    "ticker_id",
     "symbol_id",
     "exchange",
     "role",
+    "exchange_ns",
+    "event_ns",
 ]
 
 DEFAULT_COMPARE_FIELDS = [
     "action",
     "side",
-    "price",
+    "raw_price",
     "reduce_only",
     "exchange_ns",
     "local_ns",
     "event_ns",
-    "lead_raw_event_ns",
+    "lead_exchange_ns",
     "lead_raw_bid",
     "lead_raw_ask",
     "lead_drifted_event_ns",
     "lead_drifted_bid",
     "lead_drifted_ask",
-    "lag_event_ns",
+    "lag_exchange_ns",
     "lag_bid",
     "lag_ask",
     "drift_mean",
@@ -51,19 +52,18 @@ DEFAULT_COMPARE_FIELDS = [
 ]
 
 DEFAULT_NUMERIC_FIELDS = {
-    "ticker_id",
     "symbol_id",
     "exchange_ns",
     "local_ns",
     "event_ns",
-    "price",
-    "lead_raw_event_ns",
+    "raw_price",
+    "lead_exchange_ns",
     "lead_raw_bid",
     "lead_raw_ask",
     "lead_drifted_event_ns",
     "lead_drifted_bid",
     "lead_drifted_ask",
-    "lag_event_ns",
+    "lag_exchange_ns",
     "lag_bid",
     "lag_ask",
     "drift_mean",
@@ -84,17 +84,17 @@ DEFAULT_NUMERIC_TOLERANCE = Decimal("0.00000001")
 DEFAULT_SAMPLE_LIMIT = 10
 
 ROW_EXCERPT_FIELDS = [
-    "ticker_id",
     "symbol_id",
     "exchange",
     "role",
+    "exchange_ns",
     "event_ns",
     "action",
     "side",
-    "price",
+    "raw_price",
     "reduce_only",
     "lead_drifted_event_ns",
-    "lag_event_ns",
+    "lag_exchange_ns",
     "position_direction",
 ]
 

@@ -78,18 +78,21 @@ strategy::leadlag::SignalDiagnostics Diagnostics() {
       .lead_raw =
           strategy::leadlag::QuoteSnapshot{
               .event_ns = 1776211199999999000LL,
+              .exchange_ns = 1776211199999999000LL,
               .bid_price = 2.1,
               .ask_price = 2.2,
           },
       .lead_drifted =
           strategy::leadlag::QuoteSnapshot{
               .event_ns = 1776211199999999000LL,
+              .exchange_ns = 1776211199999999000LL,
               .bid_price = 2.11,
               .ask_price = 2.21,
           },
       .lag =
           strategy::leadlag::QuoteSnapshot{
               .event_ns = 1776211200000000000LL,
+              .exchange_ns = 1776211200000000000LL,
               .bid_price = 2.0,
               .ask_price = 2.01,
           },
@@ -146,19 +149,19 @@ TEST(SignalCsvWriterTest, WritesHeaderAndRowsThroughQuillCsvWriter) {
 
   EXPECT_EQ(
       ReadFile(output_path),
-      "ticker_id,symbol_id,exchange,role,exchange_ns,local_ns,event_ns,"
-      "price_changed,action,side,price,reduce_only,lead_raw_event_ns,"
+      "symbol_id,exchange,role,exchange_ns,local_ns,event_ns,"
+      "price_changed,action,side,raw_price,reduce_only,lead_exchange_ns,"
       "lead_raw_bid,lead_raw_ask,lead_drifted_event_ns,lead_drifted_bid,"
-      "lead_drifted_ask,lag_event_ns,lag_bid,lag_ask,drift_mean,"
+      "lead_drifted_ask,lag_exchange_ns,lag_bid,lag_ask,drift_mean,"
       "drift_ready,drift_deviation,up_entry,down_entry,up_exit,down_exit,"
       "lag_spread_mean,lead_noise,lag_noise,active_group_count,"
       "group_id,position_direction,trailing_price\n"
-      "7,3,kGate,kLead,1776211200000000000,1776211200000001000,"
+      "3,kGate,kLead,1776211200000000000,1776211200000001000,"
       "1776211200000000000,true,kOpenLong,kBuy,2.12345678901,false,"
       "1776211199999999000,2.1,2.2,1776211199999999000,2.11,2.21,"
       "1776211200000000000,2,2.01,1.00476190476,true,0.0003,0.004,"
       "-0.004,0.001,-0.001,0.01,0.00011,0.00022,1,42,kLong,2.05\n"
-      "8,3,kGate,kLead,1776211200000002000,1776211200000003000,"
+      "3,kGate,kLead,1776211200000002000,1776211200000003000,"
       "1776211200000000000,true,kCloseLong,kSell,2.2,true,"
       "1776211199999999000,2.1,2.2,1776211199999999000,2.11,2.21,"
       "1776211200000000000,2,2.01,1.00476190476,true,0.0003,0.004,"

@@ -960,11 +960,12 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   ASSERT_EQ(g_signal_triggered_log_count, 1U);
   const leadlag::detail::StrategySignalTriggeredLogRecordForTest& signal =
       g_signal_triggered_logs[0];
-  EXPECT_EQ(signal.trigger_ticker_id, 101);
   EXPECT_EQ(signal.symbol, "BTC_USDT");
   EXPECT_EQ(signal.symbol_id, 3);
   EXPECT_EQ(signal.trigger_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(signal.trigger_exchange_ns, 91);
+  EXPECT_EQ(signal.lead_exchange_ns, 91);
+  EXPECT_EQ(signal.lag_exchange_ns, 90);
   EXPECT_EQ(signal.trigger_local_ns, 101);
   EXPECT_GT(signal.on_book_ticker_entry_ns, 0);
   EXPECT_GE(signal.signal_decision_ns, signal.on_book_ticker_entry_ns);
@@ -974,8 +975,9 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   ASSERT_EQ(g_order_intent_log_count, 1U);
   const leadlag::detail::StrategyOrderIntentLogRecordForTest& record =
       g_order_intent_logs[0];
-  EXPECT_EQ(record.trigger_ticker_id, signal.trigger_ticker_id);
   EXPECT_EQ(record.trigger_exchange_ns, signal.trigger_exchange_ns);
+  EXPECT_EQ(record.lead_exchange_ns, signal.lead_exchange_ns);
+  EXPECT_EQ(record.lag_exchange_ns, signal.lag_exchange_ns);
   EXPECT_EQ(record.trigger_local_ns, signal.trigger_local_ns);
   EXPECT_EQ(record.on_book_ticker_entry_ns, signal.on_book_ticker_entry_ns);
   EXPECT_EQ(record.signal_decision_ns, signal.signal_decision_ns);
@@ -1010,9 +1012,11 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   const leadlag::detail::StrategyOrderSubmittedLogRecordForTest& record =
       g_order_submitted_logs[0];
   EXPECT_EQ(record.local_order_id, order.local_order_id);
-  EXPECT_EQ(record.trigger_ticker_id, 101);
   EXPECT_EQ(record.trigger_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(record.trigger_symbol_id, 3);
+  EXPECT_EQ(record.trigger_exchange_ns, 91);
+  EXPECT_EQ(record.lead_exchange_ns, 91);
+  EXPECT_EQ(record.lag_exchange_ns, 90);
   EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
   EXPECT_EQ(record.symbol_id, 3);
   EXPECT_EQ(record.signal_role, leadlag::PairRole::kLead);
@@ -1037,7 +1041,7 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.place_status, aquila::core::OrderPlaceStatus::kOk);
 }
 
-TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagIds) {
+TEST(LeadLagStrategyInterfaceTest, OrderResponseLogOmitsMarketDataIds) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1066,8 +1070,6 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagIds) {
   ASSERT_EQ(g_order_response_log_count, 1U);
   const auto& log = g_order_response_logs[0];
   EXPECT_EQ(log.local_order_id, local_order_id);
-  EXPECT_EQ(log.lead_id, 201);
-  EXPECT_EQ(log.lag_id, 202);
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsCloseOrderSubmittedWithPositionId) {

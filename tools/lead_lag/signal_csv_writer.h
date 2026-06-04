@@ -16,15 +16,15 @@ namespace aquila::tools::lead_lag {
 
 struct SignalCsvSchema {
   static constexpr char const* header =
-      "ticker_id,symbol_id,exchange,role,exchange_ns,local_ns,event_ns,"
-      "price_changed,action,side,price,reduce_only,lead_raw_event_ns,"
+      "symbol_id,exchange,role,exchange_ns,local_ns,event_ns,"
+      "price_changed,action,side,raw_price,reduce_only,lead_exchange_ns,"
       "lead_raw_bid,lead_raw_ask,lead_drifted_event_ns,lead_drifted_bid,"
-      "lead_drifted_ask,lag_event_ns,lag_bid,lag_ask,drift_mean,"
+      "lead_drifted_ask,lag_exchange_ns,lag_bid,lag_ask,drift_mean,"
       "drift_ready,drift_deviation,up_entry,down_entry,up_exit,down_exit,"
       "lag_spread_mean,lead_noise,lag_noise,active_group_count,"
       "group_id,position_direction,trailing_price";
   static constexpr char const* format =
-      "{},{},{},{},{},{},{},{},{},{},{:.12g},{},{},{:.12g},{:.12g},{},"
+      "{},{},{},{},{},{},{},{},{},{:.12g},{},{},{:.12g},{:.12g},{},"
       "{:.12g},{:.12g},{},{:.12g},{:.12g},{:.12g},{},{:.12g},{:.12g},"
       "{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{},{},{},{:.12g}";
 };

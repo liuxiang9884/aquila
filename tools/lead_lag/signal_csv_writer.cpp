@@ -30,15 +30,15 @@ void SignalCsvWriter::Write(
     return;
   }
   writer_->append_row(
-      ticker.id, ticker.symbol_id, magic_enum::enum_name(ticker.exchange),
+      ticker.symbol_id, magic_enum::enum_name(ticker.exchange),
       magic_enum::enum_name(diagnostics.role), ticker.exchange_ns,
       ticker.local_ns, diagnostics.event_ns, diagnostics.price_changed,
       magic_enum::enum_name(decision.action),
       magic_enum::enum_name(decision.intent.side), decision.intent.price,
-      decision.intent.reduce_only, diagnostics.lead_raw.event_ns,
+      decision.intent.reduce_only, diagnostics.lead_raw.exchange_ns,
       diagnostics.lead_raw.bid_price, diagnostics.lead_raw.ask_price,
       diagnostics.lead_drifted.event_ns, diagnostics.lead_drifted.bid_price,
-      diagnostics.lead_drifted.ask_price, diagnostics.lag.event_ns,
+      diagnostics.lead_drifted.ask_price, diagnostics.lag.exchange_ns,
       diagnostics.lag.bid_price, diagnostics.lag.ask_price,
       diagnostics.alignment.drift_mean, diagnostics.alignment.drift_ready,
       diagnostics.alignment.drift_deviation, diagnostics.threshold.up_entry,

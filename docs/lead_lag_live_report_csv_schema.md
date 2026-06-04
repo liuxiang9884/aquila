@@ -29,13 +29,14 @@
 | `run_id` | 本次运行或 report 的标识。 | 分析时传入或由 run 目录名推导。 |
 | `signal_index` | signal 在该 CSV 中的顺序号。 | 生成 `signal.csv` 时按日志顺序编号。 |
 | `log_time` | signal 日志行的 wall-clock 时间文本。 | `lead_lag_signal_triggered` 日志前缀。 |
-| `trigger_ticker_id` | 触发 signal 的行情 ticker id。 | `lead_lag_signal_triggered.trigger_ticker_id`。 |
 | `trigger_exchange` | 触发行情来源交易所，例如 `kBinance`。 | `lead_lag_signal_triggered.trigger_exchange`。 |
 | `trigger_symbol_id` | 触发行情的 symbol id。 | `lead_lag_signal_triggered.trigger_symbol_id`。 |
 | `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo` 为 WebSocket server send timestamp，Binance 为 event time。 | `lead_lag_signal_triggered.trigger_exchange_ns`。 |
 | `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | `lead_lag_signal_triggered.trigger_local_ns`。 |
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_signal_triggered.on_book_ticker_entry_ns`。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_signal_triggered.signal_decision_ns`。 |
+| `lead_exchange_ns` | signal 触发时 lead 侧最新 BBO 的 `BookTicker.exchange_ns`。 | `lead_lag_signal_triggered.lead_exchange_ns`。 |
+| `lag_exchange_ns` | signal 触发时 lag 侧最新 BBO 的 `BookTicker.exchange_ns`。 | `lead_lag_signal_triggered.lag_exchange_ns`。 |
 | `symbol` | 策略交易 symbol，例如 `PROVE_USDT`。 | signal log，并与 order detail 对齐。 |
 | `symbol_id` | 策略交易 symbol id。 | signal log，并与 order detail 对齐。 |
 | `signal_role` | signal 侧 pair role，例如 `kLead` 或 `kLag`。 | `lead_lag_signal_triggered.role` 或订单提交日志中的 `signal_role`。 |
@@ -43,8 +44,8 @@
 | `side` | 下单方向，例如 `kBuy`、`kSell`。 | signal log 或订单提交日志。 |
 | `reduce_only` | 是否为 reduce-only 订单。 | signal log 或订单提交日志。 |
 | `signal_position_id` | signal log 中记录的 position id。 | `lead_lag_signal_triggered.position_id`。新开仓信号中可能是 `0`。 |
-| `raw_price` | signal 触发时用于决策的原始价格。 | `lead_lag_signal_triggered.raw_price`。 |
-| `local_order_id` | 关联到的本地订单 id。 | 通过 `trigger_ticker_id` 和订单提交日志关联。 |
+| `raw_price` | signal 触发时用于决策和计算下单价格的原始价格；普通 open / close 买单为 lag ask、卖单为 lag bid，stoploss action 保留当前策略的保护价模型。 | `lead_lag_signal_triggered.raw_price`。 |
+| `local_order_id` | 关联到的本地订单 id。 | 通过 `signal_decision_ns`、`symbol_id`、`action`、`side`、`reduce_only`、`raw_price`、`lead_exchange_ns` 和 `lag_exchange_ns` 与订单提交日志关联。 |
 | `request_sequence` | Gate order session 下发请求序号。 | 关联的 `order_detail.csv.request_sequence`。 |
 | `request_send_local_ns` | Gate order session 发送请求成功后的本机时间戳。 | 关联的 `order_detail.csv.request_send_local_ns`。 |
 | `bbo_to_strategy_ns` | BBO data session 本机时间到策略入口的耗时。 | `on_book_ticker_entry_ns - trigger_local_ns`。新 live data session 默认同属 `CLOCK_REALTIME`；历史 replay / 旧录制若看起来跨时钟域则留空，`latency.csv.warnings` 写 `cross_clock_bbo_to_strategy_ns`。 |
@@ -82,13 +83,14 @@
 | `exchange_order_id` | 交易所返回的 order id。 | Gate Ack、feedback 或 `lead_lag_order_finished`。 |
 | `symbol` | 交易 symbol。 | 策略提交日志或 Gate send log。 |
 | `symbol_id` | 策略内部 symbol id。 | 策略提交或终态日志。 |
-| `trigger_ticker_id` | 触发下单的行情 ticker id。 | `lead_lag_order_submitted.trigger_ticker_id`。 |
 | `trigger_exchange` | 触发行情来源交易所。 | `lead_lag_order_submitted.trigger_exchange`。 |
 | `trigger_symbol_id` | 触发行情的 symbol id。 | `lead_lag_order_submitted.trigger_symbol_id`。 |
 | `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo` 为 WebSocket server send timestamp，Binance 为 event time。 | `lead_lag_order_submitted.trigger_exchange_ns`。 |
 | `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | `lead_lag_order_submitted.trigger_local_ns`。 |
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_order_submitted.on_book_ticker_entry_ns`。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_order_submitted.signal_decision_ns`。 |
+| `lead_exchange_ns` | 下单信号对应的 lead 侧最新 BBO `BookTicker.exchange_ns`。 | `lead_lag_order_submitted.lead_exchange_ns`。 |
+| `lag_exchange_ns` | 下单信号对应的 lag 侧最新 BBO `BookTicker.exchange_ns`。 | `lead_lag_order_submitted.lag_exchange_ns`。 |
 | `signal_role` | signal 侧 pair role。 | `lead_lag_order_submitted.signal_role`。 |
 | `order_role` | 订单角色，`entry` 或 `exit`。 | `lead_lag_order_submitted.order_role`，缺失时由 action / reduce-only 推导。 |
 | `position_id` | 策略 position id。 | `lead_lag_order_submitted.position_id` 或终态日志。 |
@@ -102,7 +104,7 @@
 | `status` | 订单终态。 | `lead_lag_order_finished.status` 或 feedback kind。 |
 | `finish_reason` | 订单结束原因。 | `lead_lag_order_feedback.finish_reason`。 |
 | `reject_reason` | 拒单原因。 | `lead_lag_order_feedback.reject_reason`。 |
-| `raw_price` | signal 触发时用于计算下单价格的原始价格。 | `lead_lag_order_submitted.raw_price`。 |
+| `raw_price` | signal 触发时用于计算下单价格的原始价格；普通 open / close 买单为 lag ask、卖单为 lag bid，stoploss action 保留当前策略的保护价模型。 | `lead_lag_order_submitted.raw_price`。 |
 | `order_price` | 实际提交到交易所的 limit price。 | `lead_lag_order_submitted.order_price` 或 Gate send price。 |
 | `price_text` | 实际编码下发的价格文本。 | `lead_lag_order_submitted.price_text` 或 Gate send price。 |
 | `price_tick` | 合约 price tick。 | 订单提交日志或 instrument catalog。 |
@@ -195,13 +197,17 @@
 | `exit_local_order_id` | 平仓订单本地 id。 | exit order；open 行为空。 |
 | `entry_exchange_order_id` | 开仓订单交易所 id。 | entry order。 |
 | `exit_exchange_order_id` | 平仓订单交易所 id。 | exit order。 |
+| `entry_lead_exchange_ns` | entry signal 对应 lead 侧最新 BBO `BookTicker.exchange_ns`。 | entry order。 |
+| `entry_lag_exchange_ns` | entry signal 对应 lag 侧最新 BBO `BookTicker.exchange_ns`。 | entry order。 |
+| `exit_lead_exchange_ns` | exit signal 对应 lead 侧最新 BBO `BookTicker.exchange_ns`。 | exit order。 |
+| `exit_lag_exchange_ns` | exit signal 对应 lag 侧最新 BBO `BookTicker.exchange_ns`。 | exit order。 |
 | `entry_ns` | entry 时间戳。 | 优先用 entry `order_finished_local_ns`，缺失时回退到 ack 或 send 时间。 |
 | `exit_ns` | exit 时间戳。 | 优先用 exit `order_finished_local_ns`，缺失时回退到 ack 或 send 时间。 |
 | `holding_ns` | 持仓时间。 | `exit_ns - entry_ns`。 |
 | `entry_side` | 开仓订单 side。 | entry order。 |
 | `exit_side` | 平仓订单 side。 | exit order。 |
-| `entry_raw_price` | entry signal raw price。 | entry order。 |
-| `exit_raw_price` | exit signal raw price。 | exit order。 |
+| `entry_raw_price` | entry signal 的原始价格；普通 open 买单为 lag ask、卖单为 lag bid。 | entry order。 |
+| `exit_raw_price` | exit signal 的原始价格；普通 close 买单为 lag ask、卖单为 lag bid；stoploss action 保留当前策略的保护价模型。 | exit order。 |
 | `entry_order_price` | entry 实际 limit price。 | entry order。 |
 | `exit_order_price` | exit 实际 limit price。 | exit order。 |
 | `entry_price` | entry 成交价。 | entry average fill price，缺失时回退 last fill price。 |

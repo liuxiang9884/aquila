@@ -181,7 +181,7 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
   <run_dir>/live_signals.csv \
   <run_dir>/replay_signals.csv \
-  --compare-fields action,side,price,reduce_only,exchange_ns,local_ns,event_ns,lead_raw_event_ns,lead_raw_bid,lead_raw_ask,lag_event_ns,lag_bid,lag_ask,group_id,position_direction,trailing_price \
+  --compare-fields action,side,raw_price,reduce_only,exchange_ns,local_ns,event_ns,lead_exchange_ns,lead_raw_bid,lead_raw_ask,lag_exchange_ns,lag_bid,lag_ask,group_id,position_direction,trailing_price \
   --json-output <run_dir>/compare_intent_summary.json \
   --markdown-output <run_dir>/compare_intent_summary.md
 ```
@@ -214,7 +214,7 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 ### 差异分析优先级
 
 1. 先看 `live_only` / `replay_only`，确认是否有信号 key 缺失。
-2. 再看核心交易意图字段：`action`、`side`、`price`、`reduce_only`、事件时间、raw BBO、`group_id`、`position_direction`、`trailing_price`。
+2. 再看核心交易意图字段：`action`、`side`、`raw_price`、`reduce_only`、事件时间、lead / lag `exchange_ns`、raw BBO、`group_id`、`position_direction`、`trailing_price`。
 3. 最后看 diagnostics 字段：drift、threshold、noise、drifted lead BBO。此类字段差异通常需要结合 live `latest` 与 replay `drain` 的输入差异解释。
 4. 如果 recorder 记录数大于 live strategy 处理数，优先检查 recorder 是否早于 live strategy 启动或晚于 live strategy 停止。
 5. 如果 replay-only 信号集中在开头或末尾，优先按启动 / 收尾窗口偏移解释；如果分布在中间，再检查 live `latest` 是否跳过关键中间 tick。
@@ -235,7 +235,7 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 8. 读取 `<run_dir>/compare_intent_summary.md`，优先判断核心交易意图是否一致；这是本测试的主要 pass / fail 依据。
 9. 读取 `<run_dir>/compare_summary.md`，分析完整 diagnostics 字段差异；这部分用于解释滚动状态、threshold、noise 和 drifted BBO 的差异。
 10. 如果存在 `live_only` 或 `replay_only`，先按时间窗口偏移、live `latest` 跳过中间 tick、recorder `drain` 多处理 tick、SHM overrun / skipped 这几个方向排查。
-11. 如果只有 diagnostics mismatch，先确认 `action`、`side`、`price`、`reduce_only` 和事件时间是否一致；若一致，再结合 recorder / live 处理条数差异解释。
+11. 如果只有 diagnostics mismatch，先确认 `action`、`side`、`raw_price`、`reduce_only`、事件时间和 lead / lag `exchange_ns` 是否一致；若一致，再结合 recorder / live 处理条数差异解释。
 
 最终回复中应包含：
 
