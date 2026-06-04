@@ -1,0 +1,43 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_order_session_30symbols_private_plain_20260604.log"
+console_sink_name = "gate_order_session_30symbols_private_plain_console"
+backend_thread_name = "gate_order_session_30symbols_private_plain_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[order_session]
+name = "gate_order_session_30symbols_private_plain_20260604"
+settle = "usdt"
+
+[order_session.diagnostics]
+enable_tcp_info = true
+ack_rtt_threshold_ns = 5000000
+send_to_first_drive_read_threshold_ns = 3000000
+drive_read_duration_threshold_ns = 1000000
+diagnostic_window_timeout_ns = 250000000
+max_logs_per_second = 100
+
+[order_session.diagnostics.timestamping]
+enabled = true
+tx_sched = true
+tx_software = true
+tx_ack = true
+rx_software = true
+hardware = false
+max_errqueue_events_per_drain = 32
+max_active_probes = 16384
+
+[order_session.credentials]
+api_key_env = "PROBE_KEY"
+api_secret_env = "PROBE_SECRET"
+
+[order_session.websocket.endpoint]
+host = "fxws-private.gateapi.io"
+connect_ip = "10.0.1.154"
+port = "80"
+enable_tls = false
+
+[order_session.websocket.execution_policy]
+bind_cpu_id = 4
