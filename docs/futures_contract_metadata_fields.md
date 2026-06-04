@@ -53,6 +53,7 @@ scripts/binance/market_data/query_um_futures_contracts.py BTCUSDT ETHUSDT --form
 | `max_market_quantity` | 最大市价单数量。 | `market_order_size_max`。 | `MARKET_LOT_SIZE.maxQty`。 |
 | `min_notional` | 最小名义金额。 | 当前为空，Gate contract endpoint 没有直接同义字段。 | `MIN_NOTIONAL.notional` 或 `NOTIONAL.minNotional`。 |
 | `notional_multiplier` | 名义金额乘数，用于把交易所原生下单数量转换成名义金额；现货或 base-asset 数量合约通常为 `1.0`。 | `quanto_multiplier`。 | 固定 `1.0`。 |
+| `contract_multiplier` | 面向 report / PnL 计算的显式合约乘数字段，当前与 `notional_multiplier` 保持一致。 | `quanto_multiplier`。 | 固定 `1.0`。 |
 | `price_limit_up` | 委托价允许向上偏离比例。 | `order_price_deviate`。 | `PERCENT_PRICE.multiplierUp - 1`。 |
 | `price_limit_down` | 委托价允许向下偏离比例。 | `order_price_deviate`。 | `1 - PERCENT_PRICE.multiplierDown`。 |
 | `market_price_bound` | 市价单可接受的价格偏离边界。 | `market_order_slip_ratio`。 | `marketTakeBound`。 |

@@ -58,6 +58,27 @@ def write_catalog(path: Path) -> None:
 
 
 class AnalyzeOrderDetailTest(unittest.TestCase):
+    def test_catalog_contract_multiplier_overrides_notional_multiplier(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            catalog_path = base / "catalog.csv"
+            catalog_path.write_text(
+                "symbol_id,symbol,exchange,exchange_symbol,base_asset,quote_asset,"
+                "settle_asset,product_type,status,contract_type,price_tick,"
+                "price_decimal_places,quantity_step,quantity_decimal_places,"
+                "min_quantity,max_quantity,max_market_quantity,min_notional,"
+                "notional_multiplier,contract_multiplier,price_limit_up,"
+                "price_limit_down,market_price_bound\n"
+                "4,PROVE_USDT,gate,PROVE_USDT,PROVE,USDT,USDT,"
+                "linear_perpetual,TRADING,direct,0.0001,4,1.0,0,"
+                "1.0,68000.0,45000.0,,10.0,12.5,0.1,0.1,0.035\n",
+                encoding="utf-8",
+            )
+
+            instruments = orders.load_instrument_catalog(catalog_path)
+
+        self.assertEqual(instruments["PROVE_USDT"]["contract_multiplier"], "12.5")
+
     def test_parses_submitted_order_and_calculates_fill_quality(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)

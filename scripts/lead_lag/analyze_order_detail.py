@@ -395,9 +395,12 @@ def load_instrument_catalog(path: Path | None) -> dict[str, dict[str, str]]:
             symbol = row.get("symbol", "")
             if symbol == "":
                 continue
+            contract_multiplier = (
+                row.get("contract_multiplier", "") or row.get("notional_multiplier", "")
+            )
             result[symbol] = {
                 "symbol_id": row.get("symbol_id", ""),
-                "contract_multiplier": row.get("notional_multiplier", ""),
+                "contract_multiplier": contract_multiplier,
                 "price_tick": row.get("price_tick", ""),
             }
     return result

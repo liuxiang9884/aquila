@@ -124,6 +124,10 @@ class GenerateCommonUsdtPerpCatalogTest(unittest.TestCase):
         self.assertEqual([row["product_type"] for row in rows],
                          ["linear_perpetual", "linear_perpetual"])
         self.assertEqual(rows[1]["exchange_symbol"], "BTCUSDT")
+        self.assertEqual(rows[0]["contract_multiplier"], 0.0001)
+        self.assertEqual(rows[1]["contract_multiplier"], 1.0)
+        self.assertEqual(rows[0]["contract_multiplier"], rows[0]["notional_multiplier"])
+        self.assertEqual(rows[1]["contract_multiplier"], rows[1]["notional_multiplier"])
 
     def test_write_catalog_refuses_to_overwrite_by_default(self):
         rows = [{column: "" for column in catalog.CATALOG_COLUMNS}]
