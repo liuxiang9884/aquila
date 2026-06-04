@@ -12,6 +12,7 @@
 
 namespace aquila::strategy::leadlag {
 
+enum class FreshnessRejectReason : std::uint8_t;
 enum class PositionDirection : std::uint8_t;
 
 namespace detail {
@@ -53,7 +54,7 @@ struct StrategyOrderIntentLogRecordForTest {
   std::uint64_t max_lead_freshness_ns{0};
   std::uint64_t max_lag_freshness_ns{0};
   bool freshness_guard_pass{true};
-  std::string_view freshness_reject_reason;
+  FreshnessRejectReason freshness_reject_reason{};
   std::string_view symbol;
   std::int32_t symbol_id{0};
   SignalAction action{SignalAction::kNone};
@@ -86,7 +87,7 @@ struct StrategyOrderSubmittedLogRecordForTest {
   std::uint64_t max_lead_freshness_ns{0};
   std::uint64_t max_lag_freshness_ns{0};
   bool freshness_guard_pass{true};
-  std::string_view freshness_reject_reason;
+  FreshnessRejectReason freshness_reject_reason{};
   std::string_view symbol;
   std::int32_t symbol_id{0};
   PairRole signal_role{PairRole::kNone};

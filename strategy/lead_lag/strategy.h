@@ -82,6 +82,12 @@ struct SignalTiming {
   std::uint64_t max_lag_freshness_ns{0};
 };
 
+enum class FreshnessRejectReason : std::uint8_t {
+  kNone,
+  kStaleLeadQuote,
+  kStaleLagQuote,
+};
+
 namespace detail {
 
 struct StrategyOrderPositionLogFields {
@@ -107,6 +113,19 @@ struct StrategyOrderPositionLogFields {
   return "unknown";
 }
 
+[[nodiscard]] inline std::string_view FreshnessRejectReasonText(
+    FreshnessRejectReason reason) noexcept {
+  switch (reason) {
+    case FreshnessRejectReason::kStaleLeadQuote:
+      return "stale_lead_quote";
+    case FreshnessRejectReason::kStaleLagQuote:
+      return "stale_lag_quote";
+    case FreshnessRejectReason::kNone:
+      return "-";
+  }
+  return "-";
+}
+
 [[nodiscard]] inline std::int64_t StrategyLogRealtimeNowNs() noexcept {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::system_clock::now().time_since_epoch())
@@ -118,24 +137,22 @@ inline void LogStrategySignalTriggered(
     const SignalTiming& timing, std::string_view symbol, std::int32_t symbol_id,
     PairRole role, SignalAction action, OrderSide side, bool reduce_only,
     std::uint64_t position_id, double raw_price) noexcept {
-  if (::nova::kLogManager.logger() != nullptr) {
-    NOVA_INFO(
-        "lead_lag_signal_triggered trigger_exchange={} trigger_symbol_id={} "
-        "trigger_exchange_ns={} trigger_local_ns={} "
-        "on_book_ticker_entry_ns={} signal_decision_ns={} "
-        "lead_exchange_ns={} lead_local_ns={} lead_freshness_ns={} "
-        "lag_exchange_ns={} lag_local_ns={} lag_freshness_ns={} "
-        "symbol={} symbol_id={} role={} action={} side={} reduce_only={} "
-        "position_id={} raw_price={:.12g}",
-        magic_enum::enum_name(trigger_exchange), trigger_symbol_id,
-        timing.trigger_exchange_ns, timing.trigger_local_ns,
-        timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-        timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-        timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
-        symbol, symbol_id, magic_enum::enum_name(role),
-        magic_enum::enum_name(action), magic_enum::enum_name(side),
-        reduce_only ? "true" : "false", position_id, raw_price);
-  }
+  NOVA_INFO(
+      "lead_lag_signal_triggered trigger_exchange={} trigger_symbol_id={} "
+      "trigger_exchange_ns={} trigger_local_ns={} "
+      "on_book_ticker_entry_ns={} signal_decision_ns={} "
+      "lead_exchange_ns={} lead_local_ns={} lead_freshness_ns={} "
+      "lag_exchange_ns={} lag_local_ns={} lag_freshness_ns={} "
+      "symbol={} symbol_id={} role={} action={} side={} reduce_only={} "
+      "position_id={} raw_price={:.12g}",
+      magic_enum::enum_name(trigger_exchange), trigger_symbol_id,
+      timing.trigger_exchange_ns, timing.trigger_local_ns,
+      timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      symbol, symbol_id, magic_enum::enum_name(role),
+      magic_enum::enum_name(action), magic_enum::enum_name(side),
+      reduce_only ? "true" : "false", position_id, raw_price);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategySignalTriggeredLogObserverForTest(
       StrategySignalTriggeredLogRecordForTest{
@@ -169,32 +186,31 @@ inline void LogStrategyOrderIntent(
     double order_price, std::uint32_t slippage_ticks, double price_tick,
     double target_open_notional, double estimated_notional,
     std::size_t active_groups, bool freshness_guard_pass = true,
-    std::string_view freshness_reject_reason = "-") noexcept {
-  if (::nova::kLogManager.logger() != nullptr) {
-    NOVA_INFO(
-        "lead_lag_order_intent trigger_exchange_ns={} "
-        "trigger_local_ns={} on_book_ticker_entry_ns={} "
-        "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
-        "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
-        "lag_freshness_ns={} max_lead_freshness_ns={} "
-        "max_lag_freshness_ns={} freshness_guard_pass={} "
-        "freshness_reject_reason={} symbol={} symbol_id={} action={} side={} "
-        "reduce_only={} position_id={} quantity={:.12g} "
-        "price={:.12g} raw_price={:.12g} order_price={:.12g} "
-        "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
-        "estimated_notional={:.12g} active_groups={}",
-        timing.trigger_exchange_ns, timing.trigger_local_ns,
-        timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-        timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-        timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
-        timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
-        freshness_guard_pass ? "true" : "false", freshness_reject_reason,
-        symbol, symbol_id, magic_enum::enum_name(action),
-        magic_enum::enum_name(side), reduce_only ? "true" : "false",
-        position_id, quantity, order_price, raw_price, order_price,
-        slippage_ticks, price_tick, target_open_notional, estimated_notional,
-        active_groups);
-  }
+    FreshnessRejectReason freshness_reject_reason =
+        FreshnessRejectReason::kNone) noexcept {
+  NOVA_INFO(
+      "lead_lag_order_intent trigger_exchange_ns={} "
+      "trigger_local_ns={} on_book_ticker_entry_ns={} "
+      "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
+      "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
+      "lag_freshness_ns={} max_lead_freshness_ns={} "
+      "max_lag_freshness_ns={} freshness_guard_pass={} "
+      "freshness_reject_reason={} symbol={} symbol_id={} action={} side={} "
+      "reduce_only={} position_id={} quantity={:.12g} "
+      "price={:.12g} raw_price={:.12g} order_price={:.12g} "
+      "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
+      "estimated_notional={:.12g} active_groups={}",
+      timing.trigger_exchange_ns, timing.trigger_local_ns,
+      timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
+      freshness_guard_pass ? "true" : "false",
+      FreshnessRejectReasonText(freshness_reject_reason), symbol, symbol_id,
+      magic_enum::enum_name(action), magic_enum::enum_name(side),
+      reduce_only ? "true" : "false", position_id, quantity, order_price,
+      raw_price, order_price, slippage_ticks, price_tick, target_open_notional,
+      estimated_notional, active_groups);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderIntentLogObserverForTest(
       StrategyOrderIntentLogRecordForTest{
@@ -240,40 +256,39 @@ inline void LogStrategyOrderSubmitted(
     double target_open_notional, double estimated_notional,
     std::size_t active_groups, core::OrderPlaceStatus place_status,
     bool freshness_guard_pass = true,
-    std::string_view freshness_reject_reason = "-") noexcept {
-  if (::nova::kLogManager.logger() != nullptr) {
-    NOVA_INFO(
-        "lead_lag_order_submitted local_order_id={} trigger_exchange={} "
-        "trigger_symbol_id={} trigger_exchange_ns={} "
-        "trigger_local_ns={} on_book_ticker_entry_ns={} "
-        "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
-        "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
-        "lag_freshness_ns={} max_lead_freshness_ns={} "
-        "max_lag_freshness_ns={} freshness_guard_pass={} "
-        "freshness_reject_reason={} symbol={} symbol_id={} signal_role={} "
-        "order_role={} action={} side={} reduce_only={} "
-        "position_id={} position_event={} position_direction={} "
-        "entry_local_order_id={} quantity={:.12g} quantity_text={} "
-        "raw_price={:.12g} order_price={:.12g} price_text={} "
-        "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
-        "estimated_notional={:.12g} active_groups={} place_status={}",
-        local_order_id, magic_enum::enum_name(trigger_exchange),
-        trigger_symbol_id, timing.trigger_exchange_ns, timing.trigger_local_ns,
-        timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-        timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-        timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
-        timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
-        freshness_guard_pass ? "true" : "false", freshness_reject_reason,
-        symbol, symbol_id, magic_enum::enum_name(signal_role), order_role,
-        magic_enum::enum_name(action), magic_enum::enum_name(side),
-        reduce_only ? "true" : "false", position.position_id,
-        position.position_event,
-        magic_enum::enum_name(position.position_direction),
-        position.entry_local_order_id, quantity, quantity_text, raw_price,
-        order_price, price_text, slippage_ticks, price_tick,
-        target_open_notional, estimated_notional, active_groups,
-        magic_enum::enum_name(place_status));
-  }
+    FreshnessRejectReason freshness_reject_reason =
+        FreshnessRejectReason::kNone) noexcept {
+  NOVA_INFO(
+      "lead_lag_order_submitted local_order_id={} trigger_exchange={} "
+      "trigger_symbol_id={} trigger_exchange_ns={} "
+      "trigger_local_ns={} on_book_ticker_entry_ns={} "
+      "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
+      "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
+      "lag_freshness_ns={} max_lead_freshness_ns={} "
+      "max_lag_freshness_ns={} freshness_guard_pass={} "
+      "freshness_reject_reason={} symbol={} symbol_id={} signal_role={} "
+      "order_role={} action={} side={} reduce_only={} "
+      "position_id={} position_event={} position_direction={} "
+      "entry_local_order_id={} quantity={:.12g} quantity_text={} "
+      "raw_price={:.12g} order_price={:.12g} price_text={} "
+      "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
+      "estimated_notional={:.12g} active_groups={} place_status={}",
+      local_order_id, magic_enum::enum_name(trigger_exchange),
+      trigger_symbol_id, timing.trigger_exchange_ns, timing.trigger_local_ns,
+      timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
+      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
+      freshness_guard_pass ? "true" : "false",
+      FreshnessRejectReasonText(freshness_reject_reason), symbol, symbol_id,
+      magic_enum::enum_name(signal_role), order_role,
+      magic_enum::enum_name(action), magic_enum::enum_name(side),
+      reduce_only ? "true" : "false", position.position_id,
+      position.position_event,
+      magic_enum::enum_name(position.position_direction),
+      position.entry_local_order_id, quantity, quantity_text, raw_price,
+      order_price, price_text, slippage_ticks, price_tick, target_open_notional,
+      estimated_notional, active_groups, magic_enum::enum_name(place_status));
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderSubmittedLogObserverForTest(
       StrategyOrderSubmittedLogRecordForTest{
@@ -329,10 +344,8 @@ inline void LogStrategyOrderIntentRejected(
     double gross_before = 0.0, double gross_after = 0.0,
     double max_gross_notional = 0.0, std::uint64_t local_order_id = 0,
     std::string_view place_status = "-", bool freshness_guard_pass = true,
-    std::string_view freshness_reject_reason = "-") noexcept {
-  if (::nova::kLogManager.logger() == nullptr) {
-    return;
-  }
+    FreshnessRejectReason freshness_reject_reason =
+        FreshnessRejectReason::kNone) noexcept {
   NOVA_WARNING(
       "lead_lag_order_intent_rejected reason={} trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} signal_decision_ns={} "
@@ -352,8 +365,9 @@ inline void LogStrategyOrderIntentRejected(
       timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
       timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
       timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
-      freshness_guard_pass ? "true" : "false", freshness_reject_reason, symbol,
-      symbol_id, magic_enum::enum_name(action), magic_enum::enum_name(side),
+      freshness_guard_pass ? "true" : "false",
+      FreshnessRejectReasonText(freshness_reject_reason), symbol, symbol_id,
+      magic_enum::enum_name(action), magic_enum::enum_name(side),
       reduce_only ? "true" : "false", position_id, quantity, order_price,
       raw_price, order_price, slippage_ticks, price_tick, target_open_notional,
       estimated_notional, gross_before, gross_after, max_gross_notional,
@@ -368,17 +382,15 @@ inline void LogStrategyOrderResponse(
                        : core::MakeStrategyOrderTimingSnapshot(*order);
   const std::int64_t exchange_to_local_ns =
       core::LatencyDeltaNs(event.local_receive_ns, event.exchange_ns);
-  if (::nova::kLogManager.logger() != nullptr) {
-    NOVA_INFO(
-        "lead_lag_order_response kind={} local_order_id={} "
-        "exchange_order_id={} local_receive_ns={} exchange_ns={} "
-        "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
-        "lead_exchange_ns={} lag_exchange_ns={}",
-        magic_enum::enum_name(event.kind), event.local_order_id,
-        event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
-        exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
-        market_timing.lead_exchange_ns, market_timing.lag_exchange_ns);
-  }
+  NOVA_INFO(
+      "lead_lag_order_response kind={} local_order_id={} "
+      "exchange_order_id={} local_receive_ns={} exchange_ns={} "
+      "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
+      "lead_exchange_ns={} lag_exchange_ns={}",
+      magic_enum::enum_name(event.kind), event.local_order_id,
+      event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
+      exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
+      market_timing.lead_exchange_ns, market_timing.lag_exchange_ns);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderResponseLogObserverForTest(
       StrategyOrderResponseLogRecordForTest{
@@ -393,23 +405,21 @@ inline void LogStrategyOrderResponse(
 inline void LogStrategyOrderFeedback(
     const OrderFeedbackEvent& event,
     const SignalTiming& market_timing) noexcept {
-  if (::nova::kLogManager.logger() != nullptr) {
-    NOVA_INFO(
-        "lead_lag_order_feedback kind={} local_order_id={} "
-        "exchange_order_id={} "
-        "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
-        "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
-        "finish_reason={} reject_reason={} exchange_update_ns={} "
-        "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={}",
-        magic_enum::enum_name(event.kind), event.local_order_id,
-        event.exchange_order_id, event.cumulative_filled_quantity,
-        event.left_quantity, event.cancelled_quantity, event.fill_price,
-        magic_enum::enum_name(event.role),
-        magic_enum::enum_name(event.finish_reason),
-        magic_enum::enum_name(event.reject_reason), event.exchange_update_ns,
-        event.local_receive_ns, market_timing.lead_exchange_ns,
-        market_timing.lag_exchange_ns);
-  }
+  NOVA_INFO(
+      "lead_lag_order_feedback kind={} local_order_id={} "
+      "exchange_order_id={} "
+      "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
+      "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
+      "finish_reason={} reject_reason={} exchange_update_ns={} "
+      "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={}",
+      magic_enum::enum_name(event.kind), event.local_order_id,
+      event.exchange_order_id, event.cumulative_filled_quantity,
+      event.left_quantity, event.cancelled_quantity, event.fill_price,
+      magic_enum::enum_name(event.role),
+      magic_enum::enum_name(event.finish_reason),
+      magic_enum::enum_name(event.reject_reason), event.exchange_update_ns,
+      event.local_receive_ns, market_timing.lead_exchange_ns,
+      market_timing.lag_exchange_ns);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderFeedbackLogObserverForTest(
       StrategyOrderFeedbackLogRecordForTest{
@@ -423,9 +433,6 @@ inline void LogStrategyOrderFeedback(
 
 inline void LogStrategyFeedbackContinuityLost(
     const OrderFeedbackEvent& event) noexcept {
-  if (::nova::kLogManager.logger() == nullptr) {
-    return;
-  }
   NOVA_ERROR(
       "lead_lag_feedback_continuity_lost scope={} reason={} sequence={} "
       "local_receive_ns={} new_entries_paused=true needs_reconcile=true",
@@ -438,9 +445,6 @@ inline void LogStrategyPairDisabledForOrderDecimalPlaces(
     std::string_view symbol, std::int32_t symbol_id,
     std::int32_t price_decimal_places, std::int32_t quantity_decimal_places,
     std::int32_t decimal_place_limit) noexcept {
-  if (::nova::kLogManager.logger() == nullptr) {
-    return;
-  }
   NOVA_ERROR(
       "lead_lag_pair_disabled reason=order_decimal_places_out_of_bounds "
       "symbol={} symbol_id={} price_decimal_places={} "
@@ -453,9 +457,6 @@ inline void LogStrategyPairDisabledForOrderMetadata(
     std::string_view symbol, std::int32_t symbol_id, double price_tick,
     double open_notional, double quantity_step,
     double notional_multiplier) noexcept {
-  if (::nova::kLogManager.logger() == nullptr) {
-    return;
-  }
   NOVA_ERROR(
       "lead_lag_pair_disabled reason=order_metadata_invalid "
       "symbol={} symbol_id={} price_tick={:.12g} open_notional={:.12g} "
@@ -470,35 +471,32 @@ inline void LogStrategyOrderFinished(
   position.order_finished_local_ns = detail::StrategyLogRealtimeNowNs();
   const core::StrategyOrderTimingSnapshot timing =
       core::MakeStrategyOrderTimingSnapshot(order);
-  if (::nova::kLogManager.logger() != nullptr) {
-    NOVA_INFO(
-        "lead_lag_order_finished local_order_id={} symbol_id={} symbol={} "
-        "status={} reduce_only={} position_id={} position_direction={} "
-        "order_role={} entry_local_order_id={} order_finished_local_ns={} "
-        "quantity={:.12g} cumulative_filled_quantity={:.12g} "
-        "average_fill_price={:.12g} last_fill_price={:.12g} "
-        "exchange_order_id={} active_groups={} request_send_local_ns={} "
-        "ack_local_receive_ns={} response_local_receive_ns={} "
-        "ack_exchange_ns={} response_exchange_ns={} accepted_exchange_ns={} "
-        "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
-        "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
-        "exchange_lifecycle_ns={} lead_exchange_ns={} lag_exchange_ns={}",
-        order.local_order_id, order.symbol_id, order.symbol,
-        magic_enum::enum_name(order.status),
-        order.reduce_only ? "true" : "false", position.position_id,
-        magic_enum::enum_name(position.position_direction), position.order_role,
-        position.entry_local_order_id, position.order_finished_local_ns,
-        order.quantity, order.cumulative_filled_quantity,
-        order.AverageFillPrice(), order.last_fill_price,
-        order.exchange_order_id, active_groups, timing.request_send_local_ns,
-        timing.ack_local_receive_ns, timing.response_local_receive_ns,
-        timing.ack_exchange_ns, timing.response_exchange_ns,
-        timing.accepted_exchange_ns, timing.finish_exchange_ns,
-        timing.ack_rtt_ns, timing.response_rtt_ns,
-        timing.ack_exchange_to_local_ns, timing.response_exchange_to_local_ns,
-        timing.exchange_lifecycle_ns, market_timing.lead_exchange_ns,
-        market_timing.lag_exchange_ns);
-  }
+  NOVA_INFO(
+      "lead_lag_order_finished local_order_id={} symbol_id={} symbol={} "
+      "status={} reduce_only={} position_id={} position_direction={} "
+      "order_role={} entry_local_order_id={} order_finished_local_ns={} "
+      "quantity={:.12g} cumulative_filled_quantity={:.12g} "
+      "average_fill_price={:.12g} last_fill_price={:.12g} "
+      "exchange_order_id={} active_groups={} request_send_local_ns={} "
+      "ack_local_receive_ns={} response_local_receive_ns={} "
+      "ack_exchange_ns={} response_exchange_ns={} accepted_exchange_ns={} "
+      "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
+      "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
+      "exchange_lifecycle_ns={} lead_exchange_ns={} lag_exchange_ns={}",
+      order.local_order_id, order.symbol_id, order.symbol,
+      magic_enum::enum_name(order.status), order.reduce_only ? "true" : "false",
+      position.position_id, magic_enum::enum_name(position.position_direction),
+      position.order_role, position.entry_local_order_id,
+      position.order_finished_local_ns, order.quantity,
+      order.cumulative_filled_quantity, order.AverageFillPrice(),
+      order.last_fill_price, order.exchange_order_id, active_groups,
+      timing.request_send_local_ns, timing.ack_local_receive_ns,
+      timing.response_local_receive_ns, timing.ack_exchange_ns,
+      timing.response_exchange_ns, timing.accepted_exchange_ns,
+      timing.finish_exchange_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
+      timing.ack_exchange_to_local_ns, timing.response_exchange_to_local_ns,
+      timing.exchange_lifecycle_ns, market_timing.lead_exchange_ns,
+      market_timing.lag_exchange_ns);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderFinishedLogObserverForTest(
       StrategyOrderFinishedLogRecordForTest{
@@ -799,12 +797,6 @@ class Strategy {
     PairRuntimeState* runtime{nullptr};
   };
 
-  enum class FreshnessRejectReason : std::uint8_t {
-    kNone,
-    kStaleLeadQuote,
-    kStaleLagQuote,
-  };
-
   struct PreparedOrderPrice {
     bool valid{false};
     std::string_view reject_reason;
@@ -882,19 +874,6 @@ class Strategy {
       return FreshnessRejectReason::kStaleLagQuote;
     }
     return FreshnessRejectReason::kNone;
-  }
-
-  [[nodiscard]] static std::string_view FreshnessRejectReasonText(
-      FreshnessRejectReason reason) noexcept {
-    switch (reason) {
-      case FreshnessRejectReason::kStaleLeadQuote:
-        return "stale_lead_quote";
-      case FreshnessRejectReason::kStaleLagQuote:
-        return "stale_lag_quote";
-      case FreshnessRejectReason::kNone:
-        return "-";
-    }
-    return "-";
   }
 
   struct OrderPriceTextStorage {
@@ -1233,7 +1212,8 @@ class Strategy {
       double gross_after = 0.0, double max_gross_notional = 0.0,
       std::uint64_t local_order_id = 0, std::string_view place_status = "-",
       bool freshness_guard_pass = true,
-      std::string_view freshness_reject_reason = "-") noexcept {
+      FreshnessRejectReason freshness_reject_reason =
+          FreshnessRejectReason::kNone) noexcept {
     detail::LogStrategyOrderIntentRejected(
         reason, last_signal_timing_, symbol, runtime->pair.symbol_id,
         last_signal_decision_.action, last_signal_decision_.intent.side,
@@ -1312,11 +1292,12 @@ class Strategy {
     if (reason == FreshnessRejectReason::kNone) {
       return false;
     }
-    const std::string_view reason_text = FreshnessRejectReasonText(reason);
-    LogOrderIntentRejectedForSignal(
-        reason_text, runtime, symbol, 0.0, price.raw_order_price,
-        price.order_price, price.slippage_ticks, instrument.price_tick, 0.0,
-        0.0, 0.0, 0.0, 0, "-", false, reason_text);
+    const std::string_view reason_text =
+        detail::FreshnessRejectReasonText(reason);
+    LogOrderIntentRejectedForSignal(reason_text, runtime, symbol, 0.0,
+                                    price.raw_order_price, price.order_price,
+                                    price.slippage_ticks, instrument.price_tick,
+                                    0.0, 0.0, 0.0, 0.0, 0, "-", false, reason);
     RejectSignal(SignalRejectReason::kMarketFreshness);
     return true;
   }

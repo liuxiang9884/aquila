@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <new>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_types.h"
 #include "core/trading/trading_runtime.h"
+#include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/signal.h"
 #include "strategy/lead_lag/strategy.h"
@@ -196,6 +198,29 @@ namespace {
 namespace leadlag = aquila::strategy::leadlag;
 
 constexpr std::uint64_t kWideFreshnessGuardNs = 9'000'000'000'000'000'000ULL;
+
+void EnsureLoggingStarted() {
+  static const bool started = [] {
+    nova::LogConfig config;
+    config.set_console_sink_name("");
+    config.set_file_sink_name((std::filesystem::temp_directory_path() /
+                               "aquila_lead_lag_strategy_interface_test.log")
+                                  .string());
+    nova::InitializeLogging(config);
+    return true;
+  }();
+  (void)started;
+}
+
+class StrategyLoggingEnvironment final : public ::testing::Environment {
+ public:
+  void SetUp() override {
+    EnsureLoggingStarted();
+  }
+};
+
+[[maybe_unused]] const ::testing::Environment* g_strategy_logging_environment =
+    ::testing::AddGlobalTestEnvironment(new StrategyLoggingEnvironment);
 
 std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
     g_order_intent_logs{};
@@ -1068,7 +1093,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(record.max_lead_freshness_ns, kWideFreshnessGuardNs);
   EXPECT_EQ(record.max_lag_freshness_ns, kWideFreshnessGuardNs);
   EXPECT_TRUE(record.freshness_guard_pass);
-  EXPECT_EQ(record.freshness_reject_reason, "-");
+  EXPECT_EQ(record.freshness_reject_reason,
+            leadlag::FreshnessRejectReason::kNone);
   EXPECT_EQ(record.trigger_local_ns, signal.trigger_local_ns);
   EXPECT_EQ(record.on_book_ticker_entry_ns, signal.on_book_ticker_entry_ns);
   EXPECT_EQ(record.signal_decision_ns, signal.signal_decision_ns);
@@ -1117,7 +1143,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.max_lead_freshness_ns, kWideFreshnessGuardNs);
   EXPECT_EQ(record.max_lag_freshness_ns, kWideFreshnessGuardNs);
   EXPECT_TRUE(record.freshness_guard_pass);
-  EXPECT_EQ(record.freshness_reject_reason, "-");
+  EXPECT_EQ(record.freshness_reject_reason,
+            leadlag::FreshnessRejectReason::kNone);
   EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
   EXPECT_EQ(record.symbol_id, 3);
   EXPECT_EQ(record.signal_role, leadlag::PairRole::kLead);
