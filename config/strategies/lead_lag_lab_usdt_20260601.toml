@@ -2,10 +2,6 @@
 name = "lead_lag"
 version = "1.0"
 
-[lead_lag.freshness]
-max_lead_freshness = "5ms"
-max_lag_freshness = "20ms"
-
 [lead_lag.risk]
 max_gross_notional = 2000.0
 
@@ -15,6 +11,8 @@ symbol_id = 15
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025

@@ -834,7 +834,7 @@ class Strategy {
   [[nodiscard]] static SignalTiming BuildSignalTiming(
       const BookTicker& trigger_ticker, const PairMarketState& market,
       std::int64_t on_book_ticker_entry_ns, std::int64_t signal_decision_ns,
-      const FreshnessConfig& freshness) noexcept {
+      const PairConfig& pair) noexcept {
     return SignalTiming{
         .trigger_exchange_ns = trigger_ticker.exchange_ns,
         .trigger_local_ns = trigger_ticker.local_ns,
@@ -848,8 +848,12 @@ class Strategy {
         .lag_local_ns = market.lag.latest_quote.local_ns,
         .lag_freshness_ns =
             signal_decision_ns - market.lag.latest_quote.exchange_ns,
-        .max_lead_freshness_ns = freshness.max_lead_freshness_ns,
-        .max_lag_freshness_ns = freshness.max_lag_freshness_ns,
+        .max_lead_freshness_ns =
+            static_cast<std::uint64_t>(pair.max_lead_freshness_ms) *
+            1'000'000ULL,
+        .max_lag_freshness_ns =
+            static_cast<std::uint64_t>(pair.max_lag_freshness_ms) *
+            1'000'000ULL,
     };
   }
 
@@ -1078,9 +1082,9 @@ class Strategy {
                                  },
                                  threshold, alignment);
     if (last_signal_decision_.triggered) {
-      last_signal_timing_ = BuildSignalTiming(
-          trigger_ticker, market, on_book_ticker_entry_ns,
-          detail::StrategyLogRealtimeNowNs(), config_.freshness);
+      last_signal_timing_ =
+          BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
+                            detail::StrategyLogRealtimeNowNs(), runtime->pair);
       last_signal_diagnostics_ = BuildSignalDiagnostics(
           *runtime, market, drifted_lead, recorder, alignment, threshold);
       last_signal_diagnostics_valid_ = true;
@@ -1124,9 +1128,9 @@ class Strategy {
                                 threshold);
     if (last_signal_decision_.triggered) {
       const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
-      last_signal_timing_ = BuildSignalTiming(
-          trigger_ticker, market, on_book_ticker_entry_ns,
-          detail::StrategyLogRealtimeNowNs(), config_.freshness);
+      last_signal_timing_ =
+          BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
+                            detail::StrategyLogRealtimeNowNs(), runtime->pair);
       last_signal_diagnostics_ =
           BuildSignalDiagnostics(*runtime, market, runtime->drifted_lead,
                                  recorder, alignment, threshold);

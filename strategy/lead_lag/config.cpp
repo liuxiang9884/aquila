@@ -84,12 +84,11 @@ class Parser {
       return Failure("lead_lag.version must be 1.0");
     }
 
-    if (const toml::table* freshness = (*lead_lag)["freshness"].as_table();
-        freshness != nullptr) {
-      config_.freshness = ParseFreshness(*freshness);
-      if (!ok_) {
-        return Failure(std::move(error_));
-      }
+    if (lead_lag->contains("freshness")) {
+      return Failure(
+          "lead_lag.freshness is not supported; set "
+          "max_lead_freshness_ms and max_lag_freshness_ms in each "
+          "lead_lag.pairs entry");
     }
 
     if (const toml::table* risk = (*lead_lag)["risk"].as_table();
@@ -146,6 +145,10 @@ class Parser {
         RequiredExchange(table, "lag_exchange", prefix + ".lag_exchange");
     pair.lag_taker_fee =
         RequiredDouble(table, "lag_taker_fee", prefix + ".lag_taker_fee");
+    pair.max_lead_freshness_ms = RequiredInt32(
+        table, "max_lead_freshness_ms", prefix + ".max_lead_freshness_ms");
+    pair.max_lag_freshness_ms = RequiredInt32(table, "max_lag_freshness_ms",
+                                              prefix + ".max_lag_freshness_ms");
     if (!ok_) {
       return pair;
     }
@@ -159,6 +162,14 @@ class Parser {
     }
     if (pair.lag_taker_fee < 0.0) {
       Fail(prefix + ".lag_taker_fee", " must be non-negative");
+      return pair;
+    }
+    if (pair.max_lead_freshness_ms <= 0) {
+      Fail(prefix + ".max_lead_freshness_ms", " must be positive");
+      return pair;
+    }
+    if (pair.max_lag_freshness_ms <= 0) {
+      Fail(prefix + ".max_lag_freshness_ms", " must be positive");
       return pair;
     }
 
@@ -307,17 +318,6 @@ class Parser {
       Fail(prefix + ".parallel", " must be positive");
     }
     return execute;
-  }
-
-  [[nodiscard]] FreshnessConfig ParseFreshness(const toml::table& table) {
-    FreshnessConfig freshness;
-    freshness.max_lead_freshness_ns =
-        DurationOr(table, "max_lead_freshness", freshness.max_lead_freshness_ns,
-                   "lead_lag.freshness.max_lead_freshness");
-    freshness.max_lag_freshness_ns =
-        DurationOr(table, "max_lag_freshness", freshness.max_lag_freshness_ns,
-                   "lead_lag.freshness.max_lag_freshness");
-    return freshness;
   }
 
   [[nodiscard]] RiskConfig ParseRisk(const toml::table& table) {
@@ -494,16 +494,6 @@ class Parser {
       return fallback;
     }
     return RequiredUInt32(table, key, name);
-  }
-
-  [[nodiscard]] std::uint64_t DurationOr(const toml::table& table,
-                                         std::string_view key,
-                                         std::uint64_t fallback,
-                                         std::string_view name) {
-    if (!table.contains(key)) {
-      return fallback;
-    }
-    return RequiredDurationNs(table, key, name);
   }
 
   [[nodiscard]] std::size_t SizeOr(const toml::table& table,

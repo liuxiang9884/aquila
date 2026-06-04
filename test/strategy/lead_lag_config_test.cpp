@@ -78,7 +78,11 @@ aquila::config::InstrumentCatalog CatalogWithLagQuantityMetadata(
 }
 
 std::string MinimalConfigTomlWithRisk(std::string_view risk_section,
-                                      std::string_view execute_extra = {}) {
+                                      std::string_view execute_extra = {},
+                                      std::string_view freshness_lines =
+                                          R"toml(max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
+)toml") {
   return std::string{R"toml(
 [lead_lag]
 name = "lead_lag"
@@ -93,6 +97,8 @@ symbol_id = 0
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
+)toml"} + std::string{freshness_lines} +
+         std::string{R"toml(
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -146,6 +152,8 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_EQ(pair.lead_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(pair.lag_exchange, aquila::Exchange::kGate);
   EXPECT_DOUBLE_EQ(pair.lag_taker_fee, 0.00016);
+  EXPECT_EQ(pair.max_lead_freshness_ms, 5);
+  EXPECT_EQ(pair.max_lag_freshness_ms, 20);
 
   EXPECT_DOUBLE_EQ(pair.trigger.lead, 0.0025);
   EXPECT_DOUBLE_EQ(pair.trigger.close, 0.0005);
@@ -335,29 +343,58 @@ max_holding_position = 0
   EXPECT_FALSE(result.value.risk.HoldingPositionLimitEnabled());
 }
 
-TEST(LeadLagConfigTest, DefaultsFreshnessGuardDurations) {
+TEST(LeadLagConfigTest, ParsesRequiredPairFreshnessGuardDurations) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk(""), catalog);
+  const auto result =
+      ParseConfigToml(MinimalConfigTomlWithRisk("", "",
+                                                R"toml(max_lead_freshness_ms = 7
+max_lag_freshness_ms = 31
+)toml"),
+                      catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.value.freshness.max_lead_freshness_ns, 5'000'000ULL);
-  EXPECT_EQ(result.value.freshness.max_lag_freshness_ns, 20'000'000ULL);
+  ASSERT_EQ(result.value.pairs.size(), 1U);
+  EXPECT_EQ(result.value.pairs[0].max_lead_freshness_ms, 7);
+  EXPECT_EQ(result.value.pairs[0].max_lag_freshness_ms, 31);
 }
 
-TEST(LeadLagConfigTest, ParsesFreshnessGuardDurations) {
+TEST(LeadLagConfigTest, RejectsPairWithoutLeadFreshnessGuardMs) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "", "max_lag_freshness_ms = 20\n"),
+      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("lead_lag.pairs[0].max_lead_freshness_ms"),
+            std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsPairWithoutLagFreshnessGuardMs) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "", "max_lead_freshness_ms = 5\n"),
+      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("lead_lag.pairs[0].max_lag_freshness_ms"),
+            std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsGlobalFreshnessGuardDurations) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = ParseConfigToml(MinimalConfigTomlWithRisk(R"toml(
 [lead_lag.freshness]
-max_lead_freshness = "7ms"
-max_lag_freshness = "31ms"
+max_lead_freshness_ms = 7
+max_lag_freshness_ms = 31
 )toml"),
                                       catalog);
 
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.value.freshness.max_lead_freshness_ns, 7'000'000ULL);
-  EXPECT_EQ(result.value.freshness.max_lag_freshness_ns, 31'000'000ULL);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("lead_lag.freshness"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {
@@ -423,6 +460,8 @@ symbol_id = 0
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -458,6 +497,8 @@ symbol_id = 0
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -508,6 +549,8 @@ symbol_id = 1
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -558,6 +601,8 @@ symbol_id = 0
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025

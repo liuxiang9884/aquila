@@ -2,10 +2,6 @@
 name = "lead_lag"
 version = "1.0"
 
-[lead_lag.freshness]
-max_lead_freshness = "5ms"
-max_lag_freshness = "20ms"
-
 [lead_lag.risk]
 max_gross_notional = 2500.0
 
@@ -15,6 +11,8 @@ symbol_id = 113
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -58,6 +56,8 @@ symbol_id = 381
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -101,6 +101,8 @@ symbol_id = 14
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -144,6 +146,8 @@ symbol_id = 461
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -187,6 +191,8 @@ symbol_id = 325
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -230,6 +236,8 @@ symbol_id = 314
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -273,6 +281,8 @@ symbol_id = 256
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -316,6 +326,8 @@ symbol_id = 292
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -359,6 +371,8 @@ symbol_id = 151
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -402,6 +416,8 @@ symbol_id = 401
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -445,6 +461,8 @@ symbol_id = 213
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -488,6 +506,8 @@ symbol_id = 439
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -531,6 +551,8 @@ symbol_id = 71
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -574,6 +596,8 @@ symbol_id = 472
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -617,6 +641,8 @@ symbol_id = 165
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -660,6 +686,8 @@ symbol_id = 481
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -703,6 +731,8 @@ symbol_id = 378
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -746,6 +776,8 @@ symbol_id = 453
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -789,6 +821,8 @@ symbol_id = 155
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -832,6 +866,8 @@ symbol_id = 220
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -875,6 +911,8 @@ symbol_id = 322
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -918,6 +956,8 @@ symbol_id = 211
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -961,6 +1001,8 @@ symbol_id = 295
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1004,6 +1046,8 @@ symbol_id = 468
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1047,6 +1091,8 @@ symbol_id = 171
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1090,6 +1136,8 @@ symbol_id = 422
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1133,6 +1181,8 @@ symbol_id = 307
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1176,6 +1226,8 @@ symbol_id = 404
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1219,6 +1271,8 @@ symbol_id = 460
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1262,6 +1316,8 @@ symbol_id = 166
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 20
 
 [lead_lag.pairs.trigger]
 lead = 0.0025

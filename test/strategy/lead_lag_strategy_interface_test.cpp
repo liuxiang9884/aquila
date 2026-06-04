@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -197,7 +198,9 @@ namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
 
-constexpr std::uint64_t kWideFreshnessGuardNs = 9'000'000'000'000'000'000ULL;
+constexpr std::int32_t kWideFreshnessGuardMs = 2'000'000'000;
+constexpr std::uint64_t kWideFreshnessGuardNs =
+    static_cast<std::uint64_t>(kWideFreshnessGuardMs) * 1'000'000ULL;
 
 void EnsureLoggingStarted() {
   static const bool started = [] {
@@ -513,14 +516,14 @@ leadlag::Config SignalOnlyConfig() {
   leadlag::Config config;
   config.name = "lead_lag";
   config.version = "1.0";
-  config.freshness.max_lead_freshness_ns = kWideFreshnessGuardNs;
-  config.freshness.max_lag_freshness_ns = kWideFreshnessGuardNs;
   config.pairs.push_back(leadlag::PairConfig{
       .symbol = "BTC_USDT",
       .symbol_id = 3,
       .lead_exchange = aquila::Exchange::kBinance,
       .lag_exchange = aquila::Exchange::kGate,
       .lag_taker_fee = 0.0,
+      .max_lead_freshness_ms = kWideFreshnessGuardMs,
+      .max_lag_freshness_ms = kWideFreshnessGuardMs,
       .trigger =
           leadlag::TriggerConfig{
               .lead = 0.02,
@@ -617,6 +620,25 @@ aquila::config::StrategyConfig RuntimeConfig() {
   return config;
 }
 
+std::int64_t TestRealtimeNowNs() noexcept {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+std::int64_t TickerEpochNs() noexcept {
+  static const std::int64_t epoch_ns = TestRealtimeNowNs() - 10'000'000;
+  return epoch_ns;
+}
+
+std::int64_t TickerLocalNs(std::int64_t local_ns) noexcept {
+  return TickerEpochNs() + local_ns;
+}
+
+std::int64_t TickerExchangeNs(std::int64_t local_ns) noexcept {
+  return TickerLocalNs(local_ns) - 10;
+}
+
 aquila::BookTicker Ticker(std::int32_t symbol_id, aquila::Exchange exchange,
                           std::int64_t local_ns, double bid_price,
                           double ask_price) {
@@ -624,8 +646,8 @@ aquila::BookTicker Ticker(std::int32_t symbol_id, aquila::Exchange exchange,
       .id = local_ns,
       .symbol_id = symbol_id,
       .exchange = exchange,
-      .exchange_ns = local_ns - 10,
-      .local_ns = local_ns,
+      .exchange_ns = TickerExchangeNs(local_ns),
+      .local_ns = TickerLocalNs(local_ns),
       .bid_price = bid_price,
       .bid_volume = 1.0,
       .ask_price = ask_price,
@@ -836,11 +858,11 @@ TEST(LeadLagStrategyInterfaceTest, LeadTickEmitsOpenSignalAfterAlignment) {
       strategy.last_signal_diagnostics();
   EXPECT_EQ(diagnostics.role, leadlag::PairRole::kLead);
   EXPECT_TRUE(diagnostics.price_changed);
-  EXPECT_EQ(diagnostics.event_ns, 91);
-  EXPECT_EQ(diagnostics.lead_raw.event_ns, 91);
+  EXPECT_EQ(diagnostics.event_ns, TickerExchangeNs(101));
+  EXPECT_EQ(diagnostics.lead_raw.event_ns, TickerExchangeNs(101));
   EXPECT_DOUBLE_EQ(diagnostics.lead_raw.bid_price, 112.0);
   EXPECT_DOUBLE_EQ(diagnostics.lead_raw.ask_price, 113.0);
-  EXPECT_EQ(diagnostics.lag.event_ns, 90);
+  EXPECT_EQ(diagnostics.lag.event_ns, TickerExchangeNs(100));
   EXPECT_DOUBLE_EQ(diagnostics.lag.bid_price, 101.5);
   EXPECT_DOUBLE_EQ(diagnostics.lag.ask_price, 102.0);
   EXPECT_EQ(diagnostics.position_direction, leadlag::PositionDirection::kLong);
@@ -928,7 +950,7 @@ TEST(LeadLagStrategyInterfaceTest,
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRejectsOpenWhenLeadFreshnessExceedsLimit) {
   leadlag::Config config = SignalOnlyConfig();
-  config.freshness.max_lead_freshness_ns = 1;
+  config.pairs[0].max_lead_freshness_ms = 1;
   leadlag::Strategy strategy{config};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -946,7 +968,7 @@ TEST(LeadLagStrategyInterfaceTest,
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRejectsOpenWhenLagFreshnessExceedsLimit) {
   leadlag::Config config = SignalOnlyConfig();
-  config.freshness.max_lag_freshness_ns = 1;
+  config.pairs[0].max_lag_freshness_ms = 1;
   leadlag::Strategy strategy{config};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1065,12 +1087,12 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(signal.symbol, "BTC_USDT");
   EXPECT_EQ(signal.symbol_id, 3);
   EXPECT_EQ(signal.trigger_exchange, aquila::Exchange::kBinance);
-  EXPECT_EQ(signal.trigger_exchange_ns, 91);
-  EXPECT_EQ(signal.lead_exchange_ns, 91);
-  EXPECT_EQ(signal.lag_exchange_ns, 90);
-  EXPECT_EQ(signal.lead_local_ns, 101);
-  EXPECT_EQ(signal.lag_local_ns, 100);
-  EXPECT_EQ(signal.trigger_local_ns, 101);
+  EXPECT_EQ(signal.trigger_exchange_ns, TickerExchangeNs(101));
+  EXPECT_EQ(signal.lead_exchange_ns, TickerExchangeNs(101));
+  EXPECT_EQ(signal.lag_exchange_ns, TickerExchangeNs(100));
+  EXPECT_EQ(signal.lead_local_ns, TickerLocalNs(101));
+  EXPECT_EQ(signal.lag_local_ns, TickerLocalNs(100));
+  EXPECT_EQ(signal.trigger_local_ns, TickerLocalNs(101));
   EXPECT_GT(signal.on_book_ticker_entry_ns, 0);
   EXPECT_GE(signal.signal_decision_ns, signal.on_book_ticker_entry_ns);
   EXPECT_EQ(signal.lead_freshness_ns,
@@ -1131,11 +1153,11 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.local_order_id, order.local_order_id);
   EXPECT_EQ(record.trigger_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(record.trigger_symbol_id, 3);
-  EXPECT_EQ(record.trigger_exchange_ns, 91);
-  EXPECT_EQ(record.lead_exchange_ns, 91);
-  EXPECT_EQ(record.lag_exchange_ns, 90);
-  EXPECT_EQ(record.lead_local_ns, 101);
-  EXPECT_EQ(record.lag_local_ns, 100);
+  EXPECT_EQ(record.trigger_exchange_ns, TickerExchangeNs(101));
+  EXPECT_EQ(record.lead_exchange_ns, TickerExchangeNs(101));
+  EXPECT_EQ(record.lag_exchange_ns, TickerExchangeNs(100));
+  EXPECT_EQ(record.lead_local_ns, TickerLocalNs(101));
+  EXPECT_EQ(record.lag_local_ns, TickerLocalNs(100));
   EXPECT_EQ(record.lead_freshness_ns,
             record.signal_decision_ns - record.lead_exchange_ns);
   EXPECT_EQ(record.lag_freshness_ns,
@@ -1198,8 +1220,8 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagExchangeNs) {
   ASSERT_EQ(g_order_response_log_count, 1U);
   const auto& log = g_order_response_logs[0];
   EXPECT_EQ(log.local_order_id, local_order_id);
-  EXPECT_EQ(log.lead_exchange_ns, 191);
-  EXPECT_EQ(log.lag_exchange_ns, 192);
+  EXPECT_EQ(log.lead_exchange_ns, TickerExchangeNs(201));
+  EXPECT_EQ(log.lag_exchange_ns, TickerExchangeNs(202));
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -1227,14 +1249,14 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(g_order_feedback_log_count, 1U);
   const auto& feedback_log = g_order_feedback_logs[0];
   EXPECT_EQ(feedback_log.local_order_id, local_order_id);
-  EXPECT_EQ(feedback_log.lead_exchange_ns, 191);
-  EXPECT_EQ(feedback_log.lag_exchange_ns, 192);
+  EXPECT_EQ(feedback_log.lead_exchange_ns, TickerExchangeNs(201));
+  EXPECT_EQ(feedback_log.lag_exchange_ns, TickerExchangeNs(202));
 
   ASSERT_EQ(g_order_finished_log_count, 1U);
   const auto& finished_log = g_order_finished_logs[0];
   EXPECT_EQ(finished_log.local_order_id, local_order_id);
-  EXPECT_EQ(finished_log.lead_exchange_ns, 191);
-  EXPECT_EQ(finished_log.lag_exchange_ns, 192);
+  EXPECT_EQ(finished_log.lead_exchange_ns, TickerExchangeNs(201));
+  EXPECT_EQ(finished_log.lag_exchange_ns, TickerExchangeNs(202));
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsCloseOrderSubmittedWithPositionId) {

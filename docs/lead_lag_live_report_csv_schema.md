@@ -99,8 +99,8 @@
 | `lag_exchange_ns` | 下单信号对应的 lag 侧最新 BBO `BookTicker.exchange_ns`。 | `lead_lag_order_submitted.lag_exchange_ns`。 |
 | `lag_local_ns` | 下单信号对应的 lag 侧最新 BBO `BookTicker.local_ns`。 | `lead_lag_order_submitted.lag_local_ns`。 |
 | `lag_freshness_ns` | 下单信号对应 lag 最新 BBO 的 freshness，定义为 `signal_decision_ns - lag_exchange_ns`。 | `lead_lag_order_submitted.lag_freshness_ns`。 |
-| `max_lead_freshness_ns` | 开仓 freshness guard 的 lead 阈值；当前配置默认 `5ms`。 | `lead_lag_order_submitted.max_lead_freshness_ns`。 |
-| `max_lag_freshness_ns` | 开仓 freshness guard 的 lag 阈值；当前配置默认 `20ms`。 | `lead_lag_order_submitted.max_lag_freshness_ns`。 |
+| `max_lead_freshness_ns` | 开仓 freshness guard 的 lead 阈值，由 pair 级 `max_lead_freshness_ms` 转换为 ns。 | `lead_lag_order_submitted.max_lead_freshness_ns`。 |
+| `max_lag_freshness_ns` | 开仓 freshness guard 的 lag 阈值，由 pair 级 `max_lag_freshness_ms` 转换为 ns。 | `lead_lag_order_submitted.max_lag_freshness_ns`。 |
 | `freshness_guard_pass` | open order 是否通过 freshness guard；close / stoploss 不应用该 guard，提交日志中为 `true`。 | `lead_lag_order_submitted.freshness_guard_pass`。 |
 | `freshness_reject_reason` | freshness guard 拒单原因；成功提交或非 freshness 拒单为 `-`，当前拒单值为 `stale_lead_quote` 或 `stale_lag_quote`。 | 策略订单日志。 |
 | `signal_role` | signal 侧 pair role。 | `lead_lag_order_submitted.signal_role`。 |
