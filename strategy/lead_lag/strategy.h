@@ -594,8 +594,7 @@ class Strategy {
           now_ns, seed, last_market_update_.role);
       if (!transition.valid) {
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
-        EmitCurrentMarketCalcRow(ticker, runtime, *market,
-                                 last_market_update_);
+        EmitCurrentMarketCalcRow(ticker, runtime, *market, last_market_update_);
 #endif
         return;
       }
@@ -1116,8 +1115,8 @@ class Strategy {
     return row;
   }
 
-  static void FillMarketCalcQuoteFields(MarketCalcRow& row,
-                                        const PairMarketState& market) noexcept {
+  static void FillMarketCalcQuoteFields(
+      MarketCalcRow& row, const PairMarketState& market) noexcept {
     if (market.lead.has_quote) {
       row.lead_bid = market.lead.latest_quote.bid_price;
       row.lead_ask = market.lead.latest_quote.ask_price;
@@ -1131,13 +1130,11 @@ class Strategy {
     }
   }
 
-  static void FillMarketCalcStateFields(MarketCalcRow& row,
-                                        const PairMarketState& market,
-                                        const AlignmentSnapshot& alignment,
-                                        const RecorderSnapshot& recorder,
-                                        const ThresholdSnapshot& threshold,
-                                        const QuoteSnapshot* drifted_lead)
-      noexcept {
+  static void FillMarketCalcStateFields(
+      MarketCalcRow& row, const PairMarketState& market,
+      const AlignmentSnapshot& alignment, const RecorderSnapshot& recorder,
+      const ThresholdSnapshot& threshold,
+      const QuoteSnapshot* drifted_lead) noexcept {
     if (alignment.drift_ready) {
       row.drift_mean = alignment.drift_mean;
       row.drift_std_ema = alignment.drift_std_ema;
@@ -1163,13 +1160,11 @@ class Strategy {
     }
   }
 
-  static void FillMarketCalcOpenMetrics(MarketCalcRow& row,
-                                        const PairRuntimeState& runtime,
-                                        const PairMarketState& market,
-                                        const RecorderSnapshot& recorder,
-                                        const ThresholdSnapshot& threshold,
-                                        const QuoteSnapshot& drifted_lead)
-      noexcept {
+  static void FillMarketCalcOpenMetrics(
+      MarketCalcRow& row, const PairRuntimeState& runtime,
+      const PairMarketState& market, const RecorderSnapshot& recorder,
+      const ThresholdSnapshot& threshold,
+      const QuoteSnapshot& drifted_lead) noexcept {
     if (!market.lag.has_quote || !recorder.lead_extrema.valid ||
         !recorder.lag_extrema.valid) {
       return;
@@ -1189,9 +1184,8 @@ class Strategy {
       row.long_required_edge = long_metrics.required_edge;
       row.lag_spread_pct = long_metrics.lag_spread_pct;
     }
-    const OpenSignalMetrics short_metrics =
-        SignalEngine::BuildOpenShortMetrics(runtime.pair, signal_market,
-                                            threshold);
+    const OpenSignalMetrics short_metrics = SignalEngine::BuildOpenShortMetrics(
+        runtime.pair, signal_market, threshold);
     if (short_metrics.valid) {
       row.short_lead_move = short_metrics.lead_move;
       row.short_price_diff = short_metrics.price_diff;
@@ -1211,11 +1205,10 @@ class Strategy {
                         RecorderSnapshot{}, ThresholdSnapshot{}, nullptr);
       return;
     }
-    EmitMarketCalcRow(ticker, runtime, market, update,
-                      runtime->alignment.Snapshot(),
-                      runtime->recorder.snapshot(),
-                      runtime->threshold.snapshot(),
-                      MarketCalcDriftedLead(runtime));
+    EmitMarketCalcRow(
+        ticker, runtime, market, update, runtime->alignment.Snapshot(),
+        runtime->recorder.snapshot(), runtime->threshold.snapshot(),
+        MarketCalcDriftedLead(runtime));
   }
 
   void EmitMarketCalcRow(const BookTicker& ticker,
@@ -1277,26 +1270,9 @@ class Strategy {
 
     last_signal_decision_ = SignalEngine::OnLeadTick(
         runtime->pair, runtime->execution, signal_market, threshold, alignment);
-    if (last_signal_decision_.triggered) {
-      last_signal_timing_ =
-          BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
-                            detail::StrategyLogRealtimeNowNs(), *runtime);
-      last_signal_diagnostics_ = BuildSignalDiagnostics(
-          *runtime, market, drifted_lead, recorder, alignment, threshold);
-      last_signal_diagnostics_valid_ = true;
-      detail::LogStrategySignalTriggered(
-          trigger_ticker.exchange, trigger_ticker.symbol_id,
-          last_signal_timing_, runtime->pair.symbol, runtime->pair.symbol_id,
-          PairRole::kLead, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, last_signal_decision_.intent.price);
-    }
-    if (SyntheticPositionAccounting()) {
-      ApplySyntheticSignal(runtime, last_signal_decision_);
-    } else {
-      SubmitExternalSignal(runtime, trigger_ticker, PairRole::kLead, context);
-    }
+    FinalizeActiveSignal(runtime, market, drifted_lead, recorder, alignment,
+                         threshold, trigger_ticker, PairRole::kLead,
+                         on_book_ticker_entry_ns, context);
   }
 
   template <typename ContextT>
@@ -1330,26 +1306,48 @@ class Strategy {
 
     last_signal_decision_ = SignalEngine::OnLagTick(
         runtime->pair, runtime->execution, signal_market, threshold);
-    if (last_signal_decision_.triggered) {
-      last_signal_timing_ =
-          BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
-                            detail::StrategyLogRealtimeNowNs(), *runtime);
-      last_signal_diagnostics_ =
-          BuildSignalDiagnostics(*runtime, market, runtime->drifted_lead,
-                                 recorder, alignment, threshold);
-      last_signal_diagnostics_valid_ = true;
-      detail::LogStrategySignalTriggered(
-          trigger_ticker.exchange, trigger_ticker.symbol_id,
-          last_signal_timing_, runtime->pair.symbol, runtime->pair.symbol_id,
-          PairRole::kLag, last_signal_decision_.action,
-          last_signal_decision_.intent.side,
-          last_signal_decision_.intent.reduce_only,
-          last_signal_decision_.group_id, last_signal_decision_.intent.price);
+    FinalizeActiveSignal(runtime, market, runtime->drifted_lead, recorder,
+                         alignment, threshold, trigger_ticker, PairRole::kLag,
+                         on_book_ticker_entry_ns, context);
+  }
+
+  void RecordTriggeredSignal(
+      PairRuntimeState* runtime, const PairMarketState& market,
+      const QuoteSnapshot& drifted_lead, const RecorderSnapshot& recorder,
+      const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
+      const BookTicker& trigger_ticker, PairRole signal_role,
+      std::int64_t on_book_ticker_entry_ns) noexcept {
+    if (!last_signal_decision_.triggered) {
+      return;
     }
+    last_signal_timing_ =
+        BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
+                          detail::StrategyLogRealtimeNowNs(), *runtime);
+    last_signal_diagnostics_ = BuildSignalDiagnostics(
+        *runtime, market, drifted_lead, recorder, alignment, threshold);
+    last_signal_diagnostics_valid_ = true;
+    detail::LogStrategySignalTriggered(
+        trigger_ticker.exchange, trigger_ticker.symbol_id, last_signal_timing_,
+        runtime->pair.symbol, runtime->pair.symbol_id, signal_role,
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only,
+        last_signal_decision_.group_id, last_signal_decision_.intent.price);
+  }
+
+  template <typename ContextT>
+  void FinalizeActiveSignal(
+      PairRuntimeState* runtime, const PairMarketState& market,
+      const QuoteSnapshot& drifted_lead, const RecorderSnapshot& recorder,
+      const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
+      const BookTicker& trigger_ticker, PairRole signal_role,
+      std::int64_t on_book_ticker_entry_ns, ContextT& context) noexcept {
+    RecordTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
+                          threshold, trigger_ticker, signal_role,
+                          on_book_ticker_entry_ns);
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
     } else {
-      SubmitExternalSignal(runtime, trigger_ticker, PairRole::kLag, context);
+      SubmitExternalSignal(runtime, trigger_ticker, signal_role, context);
     }
   }
 
