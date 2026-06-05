@@ -1317,9 +1317,6 @@ class Strategy {
       const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
       const BookTicker& trigger_ticker, PairRole signal_role,
       std::int64_t on_book_ticker_entry_ns) noexcept {
-    if (!last_signal_decision_.triggered) {
-      return;
-    }
     last_signal_timing_ =
         BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
                           detail::StrategyLogRealtimeNowNs(), *runtime);
@@ -1341,6 +1338,9 @@ class Strategy {
       const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
       const BookTicker& trigger_ticker, PairRole signal_role,
       std::int64_t on_book_ticker_entry_ns, ContextT& context) noexcept {
+    if (!last_signal_decision_.triggered) {
+      return;
+    }
     RecordTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
                           threshold, trigger_ticker, signal_role,
                           on_book_ticker_entry_ns);
@@ -1358,9 +1358,7 @@ class Strategy {
 
   static void ApplySyntheticSignal(PairRuntimeState* runtime,
                                    const SignalDecision& decision) noexcept {
-    if (!decision.triggered) {
-      return;
-    }
+    assert(decision.triggered);
     switch (decision.action) {
       case SignalAction::kOpenLong: {
         [[maybe_unused]] ExecutionGroup* long_group =
@@ -1631,10 +1629,8 @@ class Strategy {
   void SubmitExternalSignal(PairRuntimeState* runtime,
                             const BookTicker& trigger_ticker,
                             PairRole signal_role, ContextT& context) noexcept {
-    if (runtime == nullptr || !last_signal_decision_.triggered) {
-      return;
-    }
-
+    assert(runtime != nullptr);
+    assert(last_signal_decision_.triggered);
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
     const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
     const PreparedOrderPrice price = PrepareOrderPrice(*runtime, instrument);
