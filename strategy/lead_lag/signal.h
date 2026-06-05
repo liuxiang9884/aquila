@@ -1,6 +1,7 @@
 #ifndef AQUILA_STRATEGY_LEAD_LAG_SIGNAL_H_
 #define AQUILA_STRATEGY_LEAD_LAG_SIGNAL_H_
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -83,156 +84,25 @@ class SignalEngine {
   [[nodiscard]] static OpenSignalMetrics BuildOpenLongMetrics(
       const PairConfig& pair, const SignalMarket& market,
       const ThresholdSnapshot& threshold) noexcept {
-    if (!market.recorder.lead_extrema.valid ||
-        !market.recorder.lag_extrema.valid) {
-      return {};
-    }
-
-    const BboExtremaSnapshot& lead_extrema = market.recorder.lead_extrema;
-    const BboExtremaSnapshot& lag_extrema = market.recorder.lag_extrema;
-    const double trigger_price = market.lag.ask_price;
-    const double lead_move = market.lead.bid_price / lead_extrema.bid_min - 1.0;
-    const double lead_side_move =
-        market.lead.ask_price / lead_extrema.ask_min - 1.0;
-    const double price_diff = market.lead.bid_price / trigger_price - 1.0;
-    const double base_price =
-        std::min(lead_extrema.bid_min, lag_extrema.bid_min);
-    const double lag_move = market.lag.bid_price / base_price - 1.0;
-    const double move_space = lead_move - lag_move;
-    const double lag_part_ratio =
-        lead_move == 0.0 ? 0.0 : move_space / lead_move;
-    const double lag_spread_buffer =
-        LagSpreadBuffer(market.lag, market.recorder.lag_spread_mean);
-    const double target_price = market.lead.bid_price -
-                                market.lead.bid_price * threshold.up_exit -
-                                lag_spread_buffer;
-    const double target_space = target_price / trigger_price - 1.0;
-    const double lag_spread_pct = SpreadPct(market.lag);
-    const EntryCostBreakdown entry_cost = BuildEntryCostBreakdown(
-        pair, threshold, trigger_price, lag_spread_buffer, lag_spread_pct);
-    return OpenSignalMetrics{
-        .valid = true,
-        .lead_move = lead_move,
-        .lead_side_move = lead_side_move,
-        .price_diff = price_diff,
-        .lag_part_ratio = lag_part_ratio,
-        .target_space = target_space,
-        .required_edge = entry_cost.RequiredEdgeWithTargetProfit(
-            pair.trigger.target_profit_rate),
-        .lag_spread_pct = lag_spread_pct,
-        .lag_spread_buffer = lag_spread_buffer,
-    };
+    return BuildOpenMetrics</*kLong=*/true>(pair, market, threshold);
   }
 
   [[nodiscard]] static OpenSignalMetrics BuildOpenShortMetrics(
       const PairConfig& pair, const SignalMarket& market,
       const ThresholdSnapshot& threshold) noexcept {
-    if (!market.recorder.lead_extrema.valid ||
-        !market.recorder.lag_extrema.valid) {
-      return {};
-    }
-
-    const BboExtremaSnapshot& lead_extrema = market.recorder.lead_extrema;
-    const BboExtremaSnapshot& lag_extrema = market.recorder.lag_extrema;
-    const double trigger_price = market.lag.bid_price;
-    const double lead_move = market.lead.ask_price / lead_extrema.ask_max - 1.0;
-    const double lead_side_move =
-        market.lead.bid_price / lead_extrema.bid_max - 1.0;
-    const double price_diff = market.lead.ask_price / trigger_price - 1.0;
-    const double base_price =
-        std::max(lead_extrema.ask_max, lag_extrema.ask_max);
-    const double lag_move = market.lag.ask_price / base_price - 1.0;
-    const double move_space = lead_move - lag_move;
-    const double lag_part_ratio =
-        lead_move == 0.0 ? 0.0 : move_space / lead_move;
-    const double lag_spread_buffer =
-        LagSpreadBuffer(market.lag, market.recorder.lag_spread_mean);
-    const double target_price = market.lead.ask_price -
-                                lead_extrema.ask_max * threshold.down_exit +
-                                lag_spread_buffer;
-    const double target_space = target_price / trigger_price - 1.0;
-    const double lag_spread_pct = SpreadPct(market.lag);
-    const EntryCostBreakdown entry_cost = BuildEntryCostBreakdown(
-        pair, threshold, trigger_price, lag_spread_buffer, lag_spread_pct);
-    return OpenSignalMetrics{
-        .valid = true,
-        .lead_move = lead_move,
-        .lead_side_move = lead_side_move,
-        .price_diff = price_diff,
-        .lag_part_ratio = lag_part_ratio,
-        .target_space = target_space,
-        .required_edge = entry_cost.RequiredEdgeWithTargetProfit(
-            pair.trigger.target_profit_rate),
-        .lag_spread_pct = lag_spread_pct,
-        .lag_spread_buffer = lag_spread_buffer,
-    };
+    return BuildOpenMetrics</*kLong=*/false>(pair, market, threshold);
   }
 
   [[nodiscard]] static SignalDecision TryOpenLong(
       const PairConfig& pair, const SignalMarket& market,
       const ThresholdSnapshot& threshold) noexcept {
-    const OpenSignalMetrics metrics =
-        BuildOpenLongMetrics(pair, market, threshold);
-    if (!metrics.valid) {
-      return Reject(SignalRejectReason::kInvalidState);
-    }
-
-    const double trigger_price = market.lag.ask_price;
-    if (metrics.price_diff <= 0.0) {
-      return Reject(SignalRejectReason::kPriceDiff);
-    }
-    if (metrics.lead_move < threshold.up_entry ||
-        metrics.lead_side_move < threshold.up_entry) {
-      return Reject(SignalRejectReason::kThreshold);
-    }
-    if (metrics.lead_move == 0.0 ||
-        metrics.lag_part_ratio <= pair.trigger.lag_part) {
-      return Reject(SignalRejectReason::kLagPart);
-    }
-
-    if (metrics.target_space < metrics.required_edge) {
-      return Reject(SignalRejectReason::kEntryCost);
-    }
-    if (metrics.lag_spread_pct > pair.execute.EntrySpreadLimit()) {
-      return Reject(SignalRejectReason::kEntrySpread);
-    }
-
-    return Trigger(SignalAction::kOpenLong, pair, OrderSide::kBuy,
-                   trigger_price, /*reduce_only=*/false);
+    return TryOpen</*kLong=*/true>(pair, market, threshold);
   }
 
   [[nodiscard]] static SignalDecision TryOpenShort(
       const PairConfig& pair, const SignalMarket& market,
       const ThresholdSnapshot& threshold) noexcept {
-    const OpenSignalMetrics metrics =
-        BuildOpenShortMetrics(pair, market, threshold);
-    if (!metrics.valid) {
-      return Reject(SignalRejectReason::kInvalidState);
-    }
-
-    const double trigger_price = market.lag.bid_price;
-    if (metrics.price_diff >= 0.0) {
-      return Reject(SignalRejectReason::kPriceDiff);
-    }
-
-    if (metrics.lead_move > threshold.down_entry ||
-        metrics.lead_side_move > threshold.down_entry) {
-      return Reject(SignalRejectReason::kThreshold);
-    }
-    if (metrics.lead_move == 0.0 ||
-        metrics.lag_part_ratio < pair.trigger.lag_part) {
-      return Reject(SignalRejectReason::kLagPart);
-    }
-
-    if (-metrics.target_space < metrics.required_edge) {
-      return Reject(SignalRejectReason::kEntryCost);
-    }
-    if (metrics.lag_spread_pct > pair.execute.EntrySpreadLimit()) {
-      return Reject(SignalRejectReason::kEntrySpread);
-    }
-
-    return Trigger(SignalAction::kOpenShort, pair, OrderSide::kSell,
-                   trigger_price, /*reduce_only=*/false);
+    return TryOpen</*kLong=*/false>(pair, market, threshold);
   }
 
   [[nodiscard]] static SignalDecision OnLeadTick(
@@ -291,6 +161,15 @@ class SignalEngine {
   }
 
  private:
+  struct OpenMetricComponents {
+    double trigger_price{0.0};
+    double lead_move{0.0};
+    double lead_side_move{0.0};
+    double price_diff{0.0};
+    double lag_move{0.0};
+    double target_space{0.0};
+  };
+
   [[nodiscard]] static EntryCostBreakdown BuildEntryCostBreakdown(
       const PairConfig& pair, const ThresholdSnapshot& threshold,
       double trigger_price, double lag_spread_buffer,
@@ -306,6 +185,129 @@ class SignalEngine {
         .lead_noise = threshold.lead_noise,
         .lag_noise = threshold.lag_noise,
     };
+  }
+
+  template <bool kLong>
+  [[nodiscard]] static OpenMetricComponents BuildOpenMetricComponents(
+      const SignalMarket& market, const ThresholdSnapshot& threshold,
+      double lag_spread_buffer) noexcept {
+    const BboExtremaSnapshot& lead_extrema = market.recorder.lead_extrema;
+    const BboExtremaSnapshot& lag_extrema = market.recorder.lag_extrema;
+    const double trigger_price =
+        kLong ? market.lag.ask_price : market.lag.bid_price;
+    const double lead_move =
+        kLong ? market.lead.bid_price / lead_extrema.bid_min - 1.0
+              : market.lead.ask_price / lead_extrema.ask_max - 1.0;
+    const double lead_side_move =
+        kLong ? market.lead.ask_price / lead_extrema.ask_min - 1.0
+              : market.lead.bid_price / lead_extrema.bid_max - 1.0;
+    const double price_diff =
+        (kLong ? market.lead.bid_price : market.lead.ask_price) /
+            trigger_price -
+        1.0;
+    const double base_price =
+        kLong ? std::min(lead_extrema.bid_min, lag_extrema.bid_min)
+              : std::max(lead_extrema.ask_max, lag_extrema.ask_max);
+    const double lag_move =
+        (kLong ? market.lag.bid_price : market.lag.ask_price) / base_price -
+        1.0;
+    const double target_price =
+        kLong
+            ? market.lead.bid_price -
+                  market.lead.bid_price * threshold.up_exit - lag_spread_buffer
+            : market.lead.ask_price -
+                  lead_extrema.ask_max * threshold.down_exit +
+                  lag_spread_buffer;
+    return OpenMetricComponents{
+        .trigger_price = trigger_price,
+        .lead_move = lead_move,
+        .lead_side_move = lead_side_move,
+        .price_diff = price_diff,
+        .lag_move = lag_move,
+        .target_space = target_price / trigger_price - 1.0,
+    };
+  }
+
+  template <bool kLong>
+  [[nodiscard]] static OpenSignalMetrics BuildOpenMetrics(
+      const PairConfig& pair, const SignalMarket& market,
+      const ThresholdSnapshot& threshold) noexcept {
+    if (!market.recorder.lead_extrema.valid ||
+        !market.recorder.lag_extrema.valid) {
+      return {};
+    }
+    const double lag_spread_buffer =
+        LagSpreadBuffer(market.lag, market.recorder.lag_spread_mean);
+    const OpenMetricComponents components =
+        BuildOpenMetricComponents<kLong>(market, threshold, lag_spread_buffer);
+    const double move_space = components.lead_move - components.lag_move;
+    const double lag_part_ratio =
+        components.lead_move == 0.0 ? 0.0 : move_space / components.lead_move;
+    const double lag_spread_pct = SpreadPct(market.lag);
+    const EntryCostBreakdown entry_cost =
+        BuildEntryCostBreakdown(pair, threshold, components.trigger_price,
+                                lag_spread_buffer, lag_spread_pct);
+    return OpenSignalMetrics{
+        .valid = true,
+        .lead_move = components.lead_move,
+        .lead_side_move = components.lead_side_move,
+        .price_diff = components.price_diff,
+        .lag_part_ratio = lag_part_ratio,
+        .target_space = components.target_space,
+        .required_edge = entry_cost.RequiredEdgeWithTargetProfit(
+            pair.trigger.target_profit_rate),
+        .lag_spread_pct = lag_spread_pct,
+        .lag_spread_buffer = lag_spread_buffer,
+    };
+  }
+
+  template <bool kLong>
+  [[nodiscard]] static SignalRejectReason OpenRejectReason(
+      const PairConfig& pair, const ThresholdSnapshot& threshold,
+      const OpenSignalMetrics& metrics) noexcept {
+    if (!metrics.valid) {
+      return SignalRejectReason::kInvalidState;
+    }
+    if ((kLong && metrics.price_diff <= 0.0) ||
+        (!kLong && metrics.price_diff >= 0.0)) {
+      return SignalRejectReason::kPriceDiff;
+    }
+    if ((kLong && (metrics.lead_move < threshold.up_entry ||
+                   metrics.lead_side_move < threshold.up_entry)) ||
+        (!kLong && (metrics.lead_move > threshold.down_entry ||
+                    metrics.lead_side_move > threshold.down_entry))) {
+      return SignalRejectReason::kThreshold;
+    }
+    if (metrics.lead_move == 0.0 ||
+        (kLong ? metrics.lag_part_ratio <= pair.trigger.lag_part
+               : metrics.lag_part_ratio < pair.trigger.lag_part)) {
+      return SignalRejectReason::kLagPart;
+    }
+    if ((kLong ? metrics.target_space : -metrics.target_space) <
+        metrics.required_edge) {
+      return SignalRejectReason::kEntryCost;
+    }
+    if (metrics.lag_spread_pct > pair.execute.EntrySpreadLimit()) {
+      return SignalRejectReason::kEntrySpread;
+    }
+    return SignalRejectReason::kNone;
+  }
+
+  template <bool kLong>
+  [[nodiscard]] static SignalDecision TryOpen(
+      const PairConfig& pair, const SignalMarket& market,
+      const ThresholdSnapshot& threshold) noexcept {
+    const OpenSignalMetrics metrics =
+        BuildOpenMetrics<kLong>(pair, market, threshold);
+    const SignalRejectReason reject =
+        OpenRejectReason<kLong>(pair, threshold, metrics);
+    if (reject != SignalRejectReason::kNone) {
+      return Reject(reject);
+    }
+    return Trigger(kLong ? SignalAction::kOpenLong : SignalAction::kOpenShort,
+                   pair, kLong ? OrderSide::kBuy : OrderSide::kSell,
+                   kLong ? market.lag.ask_price : market.lag.bid_price,
+                   /*reduce_only=*/false);
   }
 
   [[nodiscard]] static SignalDecision TryCloseLong(
