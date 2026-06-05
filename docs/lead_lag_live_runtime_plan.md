@@ -18,6 +18,7 @@
 - 运行 CPU 分区必须遵守 `docs/runtime_cpu_allocation.md`：当前 32 物理 core 机器上 `0-15` 为实盘保留区，`16-31` 为测试 / diagnostics / benchmark 区；测试任务不得占用实盘 hot path core，除非用户明确授权本轮例外。
 - 2026-05-25 live run 中出现一笔 `219.023ms` Ack RTT outlier；分析见 `docs/lead_lag_ack_latency_outlier_analysis.md`。后续已落地 Gate `OrderSession` Ack latency diagnostic、affinity profile overlay 和 report diagnostic 字段；2026-05-26 拆核 30 分钟 run 没有复现 Ack outlier，最大 Ack RTT `6.738ms`，但仍未证明 2026-05-25 outlier 根因。
 - 2026-05-27 当前接手决策：IOC partial-fill / decimal filled close 不再作为当前阶段 active blocker；后续如果 live run 再出现 terminal feedback、filled close 或 REST residual 异常，再按具体问题复查。
+- 2026-06-05 复盘 30-symbol run `20260604_0646_30symbols_30d_private` 时，使用 `signal_decision_ns - lag_exchange_ns` 统计 signal 下单时使用的 latest lag 对手价 freshness；该 run 在 freshness guard 代码生效前启动，因此这些数值是事后分析，不是当时的拦截结果。全量 `7017` 个 signal 的 lag freshness median `30.896ms`、p95 `789.799ms`、p99 `2478.972ms`、max `15371.972ms`；开仓 `6837` 单 median `32.205ms`、p95 `791.429ms`，其中 `3921/6837` 大于 `20ms`，事后估算会被当前 `max_lag_freshness_ms=20` 拦截。触发来源分组显示 `kBinance` 触发 `6954` 单，lag freshness p95 `793.368ms`；`kGate` 触发 `63` 单，p95 `0.857ms`。这说明旧 run 中 Binance 触发、用 latest lag 对手价下单时，经常使用明显 stale 的 lag quote；后续评估 30-symbol live 必须用新 binary 重启并让 per-pair freshness guard 生效。
 - `signal.csv`、`order_detail.csv`、`position.csv` 和 `latency.csv` 字段说明见 `docs/lead_lag_live_report_csv_schema.md`。
 - replay / signal-only live 只有显式 `--signals-output` 才写 signal CSV。
 
