@@ -566,9 +566,7 @@ class Strategy {
     last_market_update_ = market->Update(role, ticker);
     if (runtime == nullptr) {
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
-      EmitMarketCalcRow(ticker, nullptr, *market, last_market_update_,
-                        AlignmentSnapshot{}, RecorderSnapshot{},
-                        ThresholdSnapshot{}, nullptr);
+      EmitCurrentMarketCalcRow(ticker, nullptr, *market, last_market_update_);
 #endif
       return;
     }
@@ -584,11 +582,7 @@ class Strategy {
         now_ns, market->lead.has_quote, market->lag.has_quote);
     if (phase != AlignmentPhase::kActive) {
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
-      EmitMarketCalcRow(
-          ticker, runtime, *market, last_market_update_,
-          runtime->alignment.Snapshot(), runtime->recorder.snapshot(),
-          runtime->threshold.snapshot(),
-          runtime->has_drifted_lead ? &runtime->drifted_lead : nullptr);
+      EmitCurrentMarketCalcRow(ticker, runtime, *market, last_market_update_);
 #endif
       return;
     }
@@ -600,11 +594,8 @@ class Strategy {
           now_ns, seed, last_market_update_.role);
       if (!transition.valid) {
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
-        EmitMarketCalcRow(
-            ticker, runtime, *market, last_market_update_,
-            runtime->alignment.Snapshot(), runtime->recorder.snapshot(),
-            runtime->threshold.snapshot(),
-            runtime->has_drifted_lead ? &runtime->drifted_lead : nullptr);
+        EmitCurrentMarketCalcRow(ticker, runtime, *market,
+                                 last_market_update_);
 #endif
         return;
       }
@@ -619,11 +610,7 @@ class Strategy {
     if (!last_market_update_.price_changed &&
         previous_phase == AlignmentPhase::kActive && !allow_resume_lead) {
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
-      EmitMarketCalcRow(
-          ticker, runtime, *market, last_market_update_,
-          runtime->alignment.Snapshot(), runtime->recorder.snapshot(),
-          runtime->threshold.snapshot(),
-          runtime->has_drifted_lead ? &runtime->drifted_lead : nullptr);
+      EmitCurrentMarketCalcRow(ticker, runtime, *market, last_market_update_);
 #endif
       return;
     }
@@ -1102,20 +1089,19 @@ class Strategy {
     return options_.market_calc_diagnostics_only;
   }
 
-  void EmitMarketCalcRow(const BookTicker& ticker,
-                         const PairRuntimeState* runtime,
-                         const PairMarketState& market,
-                         const MarketUpdate& update,
-                         const AlignmentSnapshot& alignment,
-                         const RecorderSnapshot& recorder,
-                         const ThresholdSnapshot& threshold,
-                         const QuoteSnapshot* drifted_lead) noexcept {
-    if (market_calc_observer_ == nullptr) {
-      return;
-    }
+  [[nodiscard]] static const QuoteSnapshot* MarketCalcDriftedLead(
+      const PairRuntimeState* runtime) noexcept {
+    return runtime != nullptr && runtime->has_drifted_lead
+               ? &runtime->drifted_lead
+               : nullptr;
+  }
 
+  [[nodiscard]] static MarketCalcRow BuildMarketCalcBaseRow(
+      const BookTicker& ticker, const PairRuntimeState* runtime,
+      const MarketUpdate& update, const AlignmentSnapshot& alignment,
+      std::uint64_t row_index) noexcept {
     MarketCalcRow row;
-    row.row_index = ++market_calc_row_index_;
+    row.row_index = row_index;
     row.role = update.role;
     row.symbol = runtime == nullptr ? std::string_view{} : runtime->pair.symbol;
     row.symbol_id = ticker.symbol_id;
@@ -1127,6 +1113,11 @@ class Strategy {
     row.price_changed = update.price_changed;
     row.both_sides_valid = update.both_sides_valid;
     row.active = alignment.active;
+    return row;
+  }
+
+  static void FillMarketCalcQuoteFields(MarketCalcRow& row,
+                                        const PairMarketState& market) noexcept {
     if (market.lead.has_quote) {
       row.lead_bid = market.lead.latest_quote.bid_price;
       row.lead_ask = market.lead.latest_quote.ask_price;
@@ -1138,6 +1129,15 @@ class Strategy {
           market.lag.latest_quote.ask_price - market.lag.latest_quote.bid_price;
       row.lag_spread_pct = SpreadPct(market.lag.latest_quote);
     }
+  }
+
+  static void FillMarketCalcStateFields(MarketCalcRow& row,
+                                        const PairMarketState& market,
+                                        const AlignmentSnapshot& alignment,
+                                        const RecorderSnapshot& recorder,
+                                        const ThresholdSnapshot& threshold,
+                                        const QuoteSnapshot* drifted_lead)
+      noexcept {
     if (alignment.drift_ready) {
       row.drift_mean = alignment.drift_mean;
       row.drift_std_ema = alignment.drift_std_ema;
@@ -1161,34 +1161,83 @@ class Strategy {
             LagSpreadBuffer(market.lag.latest_quote, recorder.lag_spread_mean);
       }
     }
-    if (runtime != nullptr && drifted_lead != nullptr && market.lag.has_quote &&
-        recorder.lead_extrema.valid && recorder.lag_extrema.valid) {
-      const SignalMarket signal_market{
-          .lead = *drifted_lead,
-          .lag = market.lag.latest_quote,
-          .recorder = recorder,
-      };
-      const OpenSignalMetrics long_metrics = SignalEngine::BuildOpenLongMetrics(
-          runtime->pair, signal_market, threshold);
-      if (long_metrics.valid) {
-        row.long_lead_move = long_metrics.lead_move;
-        row.long_price_diff = long_metrics.price_diff;
-        row.long_lag_part_ratio = long_metrics.lag_part_ratio;
-        row.long_target_space = long_metrics.target_space;
-        row.long_required_edge = long_metrics.required_edge;
-        row.lag_spread_pct = long_metrics.lag_spread_pct;
-      }
-      const OpenSignalMetrics short_metrics =
-          SignalEngine::BuildOpenShortMetrics(runtime->pair, signal_market,
-                                              threshold);
-      if (short_metrics.valid) {
-        row.short_lead_move = short_metrics.lead_move;
-        row.short_price_diff = short_metrics.price_diff;
-        row.short_lag_part_ratio = short_metrics.lag_part_ratio;
-        row.short_target_space = short_metrics.target_space;
-        row.short_required_edge = short_metrics.required_edge;
-        row.lag_spread_pct = short_metrics.lag_spread_pct;
-      }
+  }
+
+  static void FillMarketCalcOpenMetrics(MarketCalcRow& row,
+                                        const PairRuntimeState& runtime,
+                                        const PairMarketState& market,
+                                        const RecorderSnapshot& recorder,
+                                        const ThresholdSnapshot& threshold,
+                                        const QuoteSnapshot& drifted_lead)
+      noexcept {
+    if (!market.lag.has_quote || !recorder.lead_extrema.valid ||
+        !recorder.lag_extrema.valid) {
+      return;
+    }
+    const SignalMarket signal_market{
+        .lead = drifted_lead,
+        .lag = market.lag.latest_quote,
+        .recorder = recorder,
+    };
+    const OpenSignalMetrics long_metrics = SignalEngine::BuildOpenLongMetrics(
+        runtime.pair, signal_market, threshold);
+    if (long_metrics.valid) {
+      row.long_lead_move = long_metrics.lead_move;
+      row.long_price_diff = long_metrics.price_diff;
+      row.long_lag_part_ratio = long_metrics.lag_part_ratio;
+      row.long_target_space = long_metrics.target_space;
+      row.long_required_edge = long_metrics.required_edge;
+      row.lag_spread_pct = long_metrics.lag_spread_pct;
+    }
+    const OpenSignalMetrics short_metrics =
+        SignalEngine::BuildOpenShortMetrics(runtime.pair, signal_market,
+                                            threshold);
+    if (short_metrics.valid) {
+      row.short_lead_move = short_metrics.lead_move;
+      row.short_price_diff = short_metrics.price_diff;
+      row.short_lag_part_ratio = short_metrics.lag_part_ratio;
+      row.short_target_space = short_metrics.target_space;
+      row.short_required_edge = short_metrics.required_edge;
+      row.lag_spread_pct = short_metrics.lag_spread_pct;
+    }
+  }
+
+  void EmitCurrentMarketCalcRow(const BookTicker& ticker,
+                                const PairRuntimeState* runtime,
+                                const PairMarketState& market,
+                                const MarketUpdate& update) noexcept {
+    if (runtime == nullptr) {
+      EmitMarketCalcRow(ticker, nullptr, market, update, AlignmentSnapshot{},
+                        RecorderSnapshot{}, ThresholdSnapshot{}, nullptr);
+      return;
+    }
+    EmitMarketCalcRow(ticker, runtime, market, update,
+                      runtime->alignment.Snapshot(),
+                      runtime->recorder.snapshot(),
+                      runtime->threshold.snapshot(),
+                      MarketCalcDriftedLead(runtime));
+  }
+
+  void EmitMarketCalcRow(const BookTicker& ticker,
+                         const PairRuntimeState* runtime,
+                         const PairMarketState& market,
+                         const MarketUpdate& update,
+                         const AlignmentSnapshot& alignment,
+                         const RecorderSnapshot& recorder,
+                         const ThresholdSnapshot& threshold,
+                         const QuoteSnapshot* drifted_lead) noexcept {
+    if (market_calc_observer_ == nullptr) {
+      return;
+    }
+
+    MarketCalcRow row = BuildMarketCalcBaseRow(
+        ticker, runtime, update, alignment, ++market_calc_row_index_);
+    FillMarketCalcQuoteFields(row, market);
+    FillMarketCalcStateFields(row, market, alignment, recorder, threshold,
+                              drifted_lead);
+    if (runtime != nullptr && drifted_lead != nullptr) {
+      FillMarketCalcOpenMetrics(row, *runtime, market, recorder, threshold,
+                                *drifted_lead);
     }
 
     market_calc_observer_(market_calc_observer_context_, row);
