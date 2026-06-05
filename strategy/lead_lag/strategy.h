@@ -1526,6 +1526,83 @@ class Strategy {
     return true;
   }
 
+  void LogPreparedOrderIntent(const PairRuntimeState& runtime,
+                              std::string_view symbol,
+                              const InstrumentMetadata& instrument,
+                              const PreparedOrderPrice& price,
+                              const PreparedOrderQuantity& quantity,
+                              double order_notional) noexcept {
+    detail::LogStrategyOrderIntent(
+        last_signal_timing_, symbol, runtime.pair.symbol_id,
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only,
+        last_signal_decision_.group_id, quantity.quantity,
+        price.raw_order_price, price.order_price, price.slippage_ticks,
+        instrument.price_tick, runtime.pair.execute.open_notional,
+        order_notional, runtime.execution.active_group_count());
+  }
+
+  template <typename ContextT>
+  [[nodiscard]] core::OrderPlaceResult PlacePreparedExternalOrder(
+      ContextT& context, std::string_view symbol,
+      const PreparedOrderQuantity& quantity,
+      const OrderPriceTextStorage& order_text_storage) noexcept {
+    return context.PlaceOrder(core::OrderCreateRequest{
+        .exchange = last_signal_decision_.intent.exchange,
+        .symbol_id = last_signal_decision_.intent.symbol_id,
+        .symbol = symbol,
+        .side = last_signal_decision_.intent.side,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .quantity = quantity.quantity,
+        .quantity_text = order_text_storage.quantity_view(),
+        .price_text = order_text_storage.price_view(),
+        .reduce_only = last_signal_decision_.intent.reduce_only,
+    });
+  }
+
+  void LogExternalOrderPlaceRejected(
+      PairRuntimeState* runtime, std::string_view symbol,
+      const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
+      const PreparedOrderQuantity& quantity, double order_notional,
+      const core::OrderPlaceResult& placed) noexcept {
+    LogOrderIntentRejectedForSignal(
+        "place_local_rejected", runtime, symbol, quantity.quantity,
+        price.raw_order_price, price.order_price, price.slippage_ticks,
+        instrument.price_tick, order_notional, 0.0, 0.0, 0.0,
+        placed.local_order_id, magic_enum::enum_name(placed.status));
+  }
+
+  void LogExternalOrderSubmitted(
+      PairRuntimeState* runtime, const BookTicker& trigger_ticker,
+      PairRole signal_role, const InstrumentMetadata& instrument,
+      std::string_view symbol, const PreparedOrderPrice& price,
+      const PreparedOrderQuantity& quantity, double order_notional,
+      const OrderPriceTextStorage& order_text_storage,
+      const core::OrderPlaceResult& placed) noexcept {
+    const ExecutionGroup* submitted_group =
+        runtime->execution.FindPendingOrderByLocalOrderId(
+            placed.local_order_id);
+    const detail::StrategyOrderPositionLogFields position_log =
+        BuildSubmittedOrderPositionLogFields(
+            submitted_group, last_signal_decision_.action,
+            last_signal_decision_.intent.side,
+            last_signal_decision_.intent.reduce_only, placed.local_order_id);
+    detail::LogStrategyOrderSubmitted(
+        placed.local_order_id, trigger_ticker.exchange,
+        trigger_ticker.symbol_id, last_signal_timing_, symbol,
+        runtime->pair.symbol_id, signal_role,
+        detail::StrategyOrderRoleText(last_signal_decision_.action,
+                                      last_signal_decision_.intent.reduce_only),
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only, position_log,
+        quantity.quantity, order_text_storage.quantity_view(),
+        price.raw_order_price, price.order_price,
+        order_text_storage.price_view(), price.slippage_ticks,
+        instrument.price_tick, runtime->pair.execute.open_notional,
+        order_notional, runtime->execution.active_group_count(), placed.status);
+  }
+
   template <typename ContextT>
   void SubmitPreparedExternalOrder(
       PairRuntimeState* runtime, const BookTicker& trigger_ticker,
@@ -1534,36 +1611,14 @@ class Strategy {
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional,
       OrderPriceTextStorage* order_text_storage) noexcept {
-    const std::string_view quantity_text = order_text_storage->quantity_view();
-    const std::string_view price_text = order_text_storage->price_view();
-    detail::LogStrategyOrderIntent(
-        last_signal_timing_, symbol, runtime->pair.symbol_id,
-        last_signal_decision_.action, last_signal_decision_.intent.side,
-        last_signal_decision_.intent.reduce_only,
-        last_signal_decision_.group_id, quantity.quantity,
-        price.raw_order_price, price.order_price, price.slippage_ticks,
-        instrument.price_tick, runtime->pair.execute.open_notional,
-        order_notional, runtime->execution.active_group_count());
+    LogPreparedOrderIntent(*runtime, symbol, instrument, price, quantity,
+                           order_notional);
 
-    const core::OrderPlaceResult placed =
-        context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = last_signal_decision_.intent.exchange,
-            .symbol_id = last_signal_decision_.intent.symbol_id,
-            .symbol = symbol,
-            .side = last_signal_decision_.intent.side,
-            .order_type = OrderType::kLimit,
-            .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity.quantity,
-            .quantity_text = quantity_text,
-            .price_text = price_text,
-            .reduce_only = last_signal_decision_.intent.reduce_only,
-        });
+    const core::OrderPlaceResult placed = PlacePreparedExternalOrder(
+        context, symbol, quantity, *order_text_storage);
     if (placed.local_order_id == 0) {
-      LogOrderIntentRejectedForSignal(
-          "place_local_rejected", runtime, symbol, quantity.quantity,
-          price.raw_order_price, price.order_price, price.slippage_ticks,
-          instrument.price_tick, order_notional, 0.0, 0.0, 0.0,
-          placed.local_order_id, magic_enum::enum_name(placed.status));
+      LogExternalOrderPlaceRejected(runtime, symbol, instrument, price,
+                                    quantity, order_notional, placed);
       ReleaseOrderPriceText(order_text_storage);
       return;
     }
@@ -1584,43 +1639,20 @@ class Strategy {
     if (placed.status == core::OrderPlaceStatus::kOk) {
       const bool tracked = OnExternalOrderAccepted(
           runtime, quantity.close_group, placed.local_order_id);
-      if (tracked) {
-        const ExecutionGroup* submitted_group =
-            runtime->execution.FindPendingOrderByLocalOrderId(
-                placed.local_order_id);
-        const detail::StrategyOrderPositionLogFields position_log =
-            BuildSubmittedOrderPositionLogFields(
-                submitted_group, last_signal_decision_.action,
-                last_signal_decision_.intent.side,
-                last_signal_decision_.intent.reduce_only,
-                placed.local_order_id);
-        detail::LogStrategyOrderSubmitted(
-            placed.local_order_id, trigger_ticker.exchange,
-            trigger_ticker.symbol_id, last_signal_timing_, symbol,
-            runtime->pair.symbol_id, signal_role,
-            detail::StrategyOrderRoleText(
-                last_signal_decision_.action,
-                last_signal_decision_.intent.reduce_only),
-            last_signal_decision_.action, last_signal_decision_.intent.side,
-            last_signal_decision_.intent.reduce_only, position_log,
-            quantity.quantity, order_text_storage->quantity_view(),
-            price.raw_order_price, price.order_price,
-            order_text_storage->price_view(), price.slippage_ticks,
-            instrument.price_tick, runtime->pair.execute.open_notional,
-            order_notional, runtime->execution.active_group_count(),
-            placed.status);
+      if (!tracked) {
+        return;
       }
-      if (tracked && !last_signal_decision_.intent.reduce_only) {
+      LogExternalOrderSubmitted(runtime, trigger_ticker, signal_role,
+                                instrument, symbol, price, quantity,
+                                order_notional, *order_text_storage, placed);
+      if (!last_signal_decision_.intent.reduce_only) {
         ReserveOpenRisk(order_text_storage, quantity.quantity, order_notional);
       }
       return;
     }
 
-    LogOrderIntentRejectedForSignal(
-        "place_local_rejected", runtime, symbol, quantity.quantity,
-        price.raw_order_price, price.order_price, price.slippage_ticks,
-        instrument.price_tick, order_notional, 0.0, 0.0, 0.0,
-        placed.local_order_id, magic_enum::enum_name(placed.status));
+    LogExternalOrderPlaceRejected(runtime, symbol, instrument, price, quantity,
+                                  order_notional, placed);
     RollbackRejectedSubmit(runtime, quantity.close_group, placed.local_order_id,
                            context);
   }
