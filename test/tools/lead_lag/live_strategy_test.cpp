@@ -1,6 +1,7 @@
 #include "tools/lead_lag/live_strategy.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "core/config/strategy_config.h"
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_types.h"
+#include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/execution_state.h"
 
@@ -17,6 +19,32 @@ namespace aquila::tools::lead_lag {
 namespace {
 
 namespace leadlag = aquila::strategy::leadlag;
+
+void EnsureLoggingStarted() {
+  static const bool started = [] {
+    nova::LogConfig config;
+    config.set_console_sink_name("");
+    config.set_file_sink_name((std::filesystem::temp_directory_path() /
+                               "aquila_lead_lag_live_strategy_test.log")
+                                  .string());
+    nova::InitializeLogging(config);
+    return true;
+  }();
+  (void)started;
+}
+
+class LeadLagLiveStrategyLoggingEnvironment final
+    : public ::testing::Environment {
+ public:
+  void SetUp() override {
+    EnsureLoggingStarted();
+  }
+};
+
+[[maybe_unused]] const ::testing::Environment*
+    g_lead_lag_live_strategy_logging_environment =
+        ::testing::AddGlobalTestEnvironment(
+            new LeadLagLiveStrategyLoggingEnvironment);
 
 struct TestStrategyContext {
   [[nodiscard]] const aquila::core::StrategyOrder* FindOrder(

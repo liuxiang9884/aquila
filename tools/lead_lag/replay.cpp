@@ -17,9 +17,12 @@
 #include "core/trading/trading_runtime.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+#include "strategy/lead_lag/market_calc_csv_writer.h"
+#endif
 #include "strategy/lead_lag/signal.h"
+#include "strategy/lead_lag/signal_csv_writer.h"
 #include "strategy/lead_lag/strategy.h"
-#include "tools/lead_lag/signal_csv_writer.h"
 
 namespace {
 
@@ -27,13 +30,16 @@ namespace config = aquila::config;
 namespace leadlag = aquila::strategy::leadlag;
 namespace market_data = aquila::market_data;
 namespace core = aquila::core;
-namespace tools_lead_lag = aquila::tools::lead_lag;
 
 struct CliOptions {
   std::filesystem::path config_path{
       "config/strategies/lead_lag_ordi_replay.toml"};
   std::filesystem::path data_reader_config_path;
   std::filesystem::path signals_output_path;
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  std::string diagnostic_mode;
+  std::filesystem::path market_calc_output_dir;
+#endif
 };
 
 struct ReplayStats {
@@ -83,14 +89,29 @@ struct NullOrderSession {
   }
 };
 
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+void WriteMarketCalcRow(void* context,
+                        const leadlag::MarketCalcRow& row) noexcept;
+#endif
+
 class ReplayStrategy {
  public:
   ReplayStrategy(leadlag::Config config, leadlag::StrategyOptions options,
-                 ReplayStats* stats,
-                 tools_lead_lag::SignalCsvWriter* signal_writer)
+                 ReplayStats* stats, leadlag::SignalCsvWriter* signal_writer
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+                 ,
+                 leadlag::MarketCalcCsvWriter* market_calc_writer
+#endif
+                 )
       : inner_(std::move(config), options),
         stats_(stats),
-        signal_writer_(signal_writer) {}
+        signal_writer_(signal_writer) {
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+    if (market_calc_writer != nullptr) {
+      inner_.SetMarketCalcObserver(market_calc_writer, WriteMarketCalcRow);
+    }
+#endif
+  }
 
   ReplayStrategy(const ReplayStrategy&) = delete;
   ReplayStrategy& operator=(const ReplayStrategy&) = delete;
@@ -164,9 +185,23 @@ class ReplayStrategy {
 
   leadlag::Strategy inner_;
   ReplayStats* stats_{};
-  tools_lead_lag::SignalCsvWriter* signal_writer_{};
+  leadlag::SignalCsvWriter* signal_writer_{};
   bool stop_requested_{false};
 };
+
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+void WriteMarketCalcRow(void* context,
+                        const leadlag::MarketCalcRow& row) noexcept {
+  auto* writer = static_cast<leadlag::MarketCalcCsvWriter*>(context);
+  if (writer != nullptr) {
+    writer->Write(row);
+  }
+}
+
+bool MarketCalcDiagnosticMode(const CliOptions& options) noexcept {
+  return options.diagnostic_mode == "market_calc";
+}
+#endif
 
 std::string_view ModeText(config::StrategyMode mode) noexcept {
   switch (mode) {
@@ -245,13 +280,24 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
                               const CliOptions& options) {
   fmt::print(
       "lead_lag_replay config={} data_reader_config={} "
-      "signals_output={} strategy_name={} mode={} strategy_id={} "
+      "signals_output={}"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      " diagnostic_mode={} market_calc_output_dir={}"
+#endif
+      " strategy_name={} mode={} strategy_id={} "
       "order_capacity={} reader_name={} sources={} files={} pairs={}\n",
       options.config_path.string(),
       loaded.strategy_config.data_reader.config_path.string(),
-      options.signals_output_path.empty()
+      options.signals_output_path.empty() ? "-"
+                                          : options.signals_output_path.string()
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+          ,
+      options.diagnostic_mode.empty() ? "-" : options.diagnostic_mode,
+      options.market_calc_output_dir.empty()
           ? "-"
-          : options.signals_output_path.string(),
+          : options.market_calc_output_dir.string()
+#endif
+          ,
       loaded.strategy_config.name, ModeText(loaded.strategy_config.mode),
       loaded.strategy_config.strategy_id, loaded.strategy_config.order_capacity,
       loaded.data_reader_config.name, loaded.data_reader_config.sources.size(),
@@ -265,9 +311,30 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
   using Runtime =
       core::TradingRuntime<ReplayStrategy, NullOrderSession, HistoricalReader>;
 
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  const bool market_calc_mode = MarketCalcDiagnosticMode(options);
+  if (!options.diagnostic_mode.empty() && !market_calc_mode) {
+    fmt::print(stderr, "[FAIL] unsupported diagnostic_mode={}\n",
+               options.diagnostic_mode);
+    return 1;
+  }
+  if (market_calc_mode && options.market_calc_output_dir.empty()) {
+    fmt::print(stderr,
+               "[FAIL] --market-calc-output-dir is required for "
+               "--diagnostic-mode market_calc\n");
+    return 1;
+  }
+  if (market_calc_mode && !options.signals_output_path.empty()) {
+    fmt::print(stderr,
+               "[FAIL] --signals-output is not used in market_calc "
+               "diagnostic mode\n");
+    return 1;
+  }
+#endif
+
   ReplayStats stats;
-  tools_lead_lag::SignalCsvWriter signal_writer;
-  tools_lead_lag::SignalCsvWriter* signal_writer_ptr = nullptr;
+  leadlag::SignalCsvWriter signal_writer;
+  leadlag::SignalCsvWriter* signal_writer_ptr = nullptr;
   if (!options.signals_output_path.empty()) {
     std::string error;
     if (!signal_writer.Open(options.signals_output_path, &error)) {
@@ -276,16 +343,35 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
     }
     signal_writer_ptr = &signal_writer;
   }
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  leadlag::MarketCalcCsvWriter market_calc_writer;
+  leadlag::MarketCalcCsvWriter* market_calc_writer_ptr = nullptr;
+  if (market_calc_mode) {
+    std::string error;
+    if (!market_calc_writer.Open(options.market_calc_output_dir, &error)) {
+      fmt::print(stderr, "[FAIL] market_calc_output_error={}\n", error);
+      return 1;
+    }
+    market_calc_writer_ptr = &market_calc_writer;
+  }
+#endif
 
   leadlag::Config lead_lag_config = std::move(loaded.lead_lag_config);
+  leadlag::StrategyOptions strategy_options{
+      .position_accounting = leadlag::PositionAccountingMode::kSyntheticSignals,
+  };
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  strategy_options.market_calc_diagnostics_only = market_calc_mode;
+#endif
   auto runtime_result = Runtime::Create(
       std::move(loaded.strategy_config), std::move(loaded.data_reader_config),
       [] { return NullOrderSession{}; }, std::move(lead_lag_config),
-      leadlag::StrategyOptions{
-          .position_accounting =
-              leadlag::PositionAccountingMode::kSyntheticSignals,
-      },
-      &stats, signal_writer_ptr);
+      strategy_options, &stats, signal_writer_ptr
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      ,
+      market_calc_writer_ptr
+#endif
+  );
   if (!runtime_result.ok) {
     fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
                runtime_result.error);
@@ -294,14 +380,28 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
 
   const int exit_code = runtime_result.value->Run();
   signal_writer.Close();
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  market_calc_writer.Close();
+#endif
   fmt::print(
       "lead_lag_replay_summary exit_code={} book_tickers={} signals={} "
-      "open={} close={} stoploss={} signals_output={}\n",
+      "open={} close={} stoploss={} signals_output={}"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      " diagnostic_mode={} market_calc_output_dir={}"
+#endif
+      "\n",
       exit_code, stats.book_tickers, stats.signals, stats.open_signals,
       stats.close_signals, stats.stoploss_signals,
-      options.signals_output_path.empty()
+      options.signals_output_path.empty() ? "-"
+                                          : options.signals_output_path.string()
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+          ,
+      options.diagnostic_mode.empty() ? "-" : options.diagnostic_mode,
+      options.market_calc_output_dir.empty()
           ? "-"
-          : options.signals_output_path.string());
+          : options.market_calc_output_dir.string()
+#endif
+  );
   return exit_code;
 }
 
@@ -326,6 +426,13 @@ int main(int argc, char** argv) {
                  "Override strategy.data_reader.config path");
   app.add_option("--signals-output", options.signals_output_path,
                  "Optional CSV path for triggered replay signals");
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  app.add_option("--diagnostic-mode", options.diagnostic_mode,
+                 "Optional diagnostic mode; supported value: market_calc");
+  app.add_option("--market-calc-output-dir", options.market_calc_output_dir,
+                 "Output directory for market_calc lead_calc.csv and "
+                 "lag_calc.csv");
+#endif
   CLI11_PARSE(app, argc, argv);
 
   try {

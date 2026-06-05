@@ -27,3 +27,35 @@ target_link_libraries(aquila_strategy
         magic_enum::magic_enum
         nova
 )
+if(AQUILA_ENABLE_LEAD_LAG_MARKET_CALC_CSV)
+    target_compile_definitions(aquila_strategy
+        PUBLIC
+            AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV
+    )
+endif()
+
+set(AQUILA_LEAD_LAG_DIAGNOSTIC_SOURCES
+    lead_lag/signal_csv_writer.cpp
+)
+if(AQUILA_ENABLE_LEAD_LAG_MARKET_CALC_CSV)
+    list(APPEND AQUILA_LEAD_LAG_DIAGNOSTIC_SOURCES
+        lead_lag/market_calc_csv_writer.cpp
+    )
+endif()
+
+add_library(aquila_lead_lag_diagnostics STATIC
+    ${AQUILA_LEAD_LAG_DIAGNOSTIC_SOURCES}
+)
+
+target_include_directories(aquila_lead_lag_diagnostics
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}
+)
+
+target_link_libraries(aquila_lead_lag_diagnostics
+    PUBLIC
+        aquila_strategy
+        magic_enum::magic_enum
+        nova
+        quill::quill
+)

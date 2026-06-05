@@ -1,11 +1,11 @@
-#include "tools/lead_lag/signal_csv_writer.h"
+#include "strategy/lead_lag/signal_csv_writer.h"
 
 #include <exception>
 
 #include <fmt/core.h>
 #include <magic_enum/magic_enum.hpp>
 
-namespace aquila::tools::lead_lag {
+namespace aquila::strategy::leadlag {
 
 bool SignalCsvWriter::Open(const std::filesystem::path& path,
                            std::string* error) {
@@ -22,10 +22,9 @@ bool SignalCsvWriter::Open(const std::filesystem::path& path,
   return true;
 }
 
-void SignalCsvWriter::Write(
-    const BookTicker& ticker,
-    const strategy::leadlag::SignalDecision& decision,
-    const strategy::leadlag::SignalDiagnostics& diagnostics) noexcept {
+void SignalCsvWriter::Write(const BookTicker& ticker,
+                            const SignalDecision& decision,
+                            const SignalDiagnostics& diagnostics) noexcept {
   if (writer_ == nullptr) {
     return;
   }
@@ -54,4 +53,4 @@ void SignalCsvWriter::Close() {
   writer_.reset();
 }
 
-}  // namespace aquila::tools::lead_lag
+}  // namespace aquila::strategy::leadlag

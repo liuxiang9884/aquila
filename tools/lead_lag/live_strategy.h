@@ -24,6 +24,9 @@ inline constexpr int kContinuityLostEmergencyHandoffExitCode = 10;
 enum class RunMode : std::uint8_t {
   kValidateOnly,
   kSignalOnly,
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  kMarketCalc,
+#endif
   kLiveOrders,
   kLiveOpenCloseSmoke,
   kLiveUnfilledCancelSmoke,
@@ -1259,6 +1262,10 @@ class LiveSubmitRejectSmokeStrategy {
       return "validate_only";
     case RunMode::kSignalOnly:
       return "signal_only";
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+    case RunMode::kMarketCalc:
+      return "market_calc";
+#endif
     case RunMode::kLiveOrders:
       return "live_orders";
     case RunMode::kLiveOpenCloseSmoke:

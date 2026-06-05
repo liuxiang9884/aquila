@@ -24,9 +24,12 @@
 #include "exchange/gate/trading/order_session_runtime_adapter.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+#include "strategy/lead_lag/market_calc_csv_writer.h"
+#endif
 #include "strategy/lead_lag/signal.h"
+#include "strategy/lead_lag/signal_csv_writer.h"
 #include "strategy/lead_lag/strategy.h"
-#include "tools/lead_lag/signal_csv_writer.h"
 
 namespace {
 
@@ -41,6 +44,10 @@ struct CliOptions {
   std::filesystem::path config_path{
       "config/strategies/lead_lag_btc_strategy.toml"};
   std::filesystem::path signals_output_path;
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  std::string diagnostic_mode;
+  std::filesystem::path market_calc_output_dir;
+#endif
   std::string api_key_env;
   std::string api_secret_env;
   std::uint64_t duration_sec{0};
@@ -122,17 +129,45 @@ struct NullOrderSession {
   bool running{false};
 };
 
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+void WriteMarketCalcRow(void* context,
+                        const leadlag::MarketCalcRow& row) noexcept {
+  auto* writer = static_cast<leadlag::MarketCalcCsvWriter*>(context);
+  if (writer != nullptr) {
+    writer->Write(row);
+  }
+}
+
+bool MarketCalcDiagnosticMode(const CliOptions& options) noexcept {
+  return options.diagnostic_mode == "market_calc";
+}
+#endif
+
 class SignalOnlyStrategy {
  public:
   SignalOnlyStrategy(leadlag::Config config, SignalOnlyStats* stats,
-                     aquila::tools::lead_lag::SignalCsvWriter* signal_writer)
+                     leadlag::SignalCsvWriter* signal_writer
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+                     ,
+                     leadlag::MarketCalcCsvWriter* market_calc_writer = nullptr,
+                     bool market_calc_diagnostics_only = false
+#endif
+                     )
       : inner_(std::move(config),
                leadlag::StrategyOptions{
                    .position_accounting =
                        leadlag::PositionAccountingMode::kSyntheticSignals,
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+                   .market_calc_diagnostics_only = market_calc_diagnostics_only,
+#endif
                }),
         stats_(stats),
         signal_writer_(signal_writer) {
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+    if (market_calc_writer != nullptr) {
+      inner_.SetMarketCalcObserver(market_calc_writer, WriteMarketCalcRow);
+    }
+#endif
     RefreshRecoveryDiagnostics();
   }
 
@@ -216,7 +251,7 @@ class SignalOnlyStrategy {
 
   leadlag::Strategy inner_;
   SignalOnlyStats* stats_{};
-  aquila::tools::lead_lag::SignalCsvWriter* signal_writer_{};
+  leadlag::SignalCsvWriter* signal_writer_{};
 };
 
 std::string_view StrategyModeText(config::StrategyMode mode) noexcept {
@@ -326,7 +361,11 @@ void PrintLoadedConfigSummary(const CliOptions& options,
                               const LoadedConfig& loaded, live::RunMode mode) {
   fmt::print(
       "lead_lag_strategy run_mode={} execute={} connect_data={} config={} "
-      "signals_output={} strategy_name={} mode={} strategy_id={} "
+      "signals_output={}"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      " diagnostic_mode={} market_calc_output_dir={}"
+#endif
+      " strategy_name={} mode={} strategy_id={} "
       "order_capacity={} max_loop_seconds={} reader_name={} sources={} "
       "order_session={} size_decimal_header={} feedback_enabled={} "
       "feedback_shm={} "
@@ -336,9 +375,16 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       "smoke_passive_price_bps={} smoke_max_notional={}\n",
       live::RunModeName(mode), options.execute ? "true" : "false",
       options.connect_data ? "true" : "false", options.config_path.string(),
-      options.signals_output_path.empty()
+      options.signals_output_path.empty() ? "-"
+                                          : options.signals_output_path.string()
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+          ,
+      options.diagnostic_mode.empty() ? "-" : options.diagnostic_mode,
+      options.market_calc_output_dir.empty()
           ? "-"
-          : options.signals_output_path.string(),
+          : options.market_calc_output_dir.string()
+#endif
+          ,
       loaded.strategy.name, StrategyModeText(loaded.strategy.mode),
       loaded.strategy.strategy_id, loaded.strategy.order_capacity,
       loaded.strategy.loop.max_loop_seconds, loaded.data_reader.name,
@@ -376,8 +422,8 @@ int RunSignalOnly(LoadedConfig loaded, const CliOptions& options) {
   loaded.strategy.feedback.enabled = false;
 
   SignalOnlyStats stats;
-  aquila::tools::lead_lag::SignalCsvWriter signal_writer;
-  aquila::tools::lead_lag::SignalCsvWriter* signal_writer_ptr = nullptr;
+  leadlag::SignalCsvWriter signal_writer;
+  leadlag::SignalCsvWriter* signal_writer_ptr = nullptr;
   if (!options.signals_output_path.empty()) {
     std::string error;
     if (!signal_writer.Open(options.signals_output_path, &error)) {
@@ -421,6 +467,60 @@ int RunSignalOnly(LoadedConfig loaded, const CliOptions& options) {
           : options.signals_output_path.string());
   return exit_code;
 }
+
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+int RunMarketCalcOnly(LoadedConfig loaded, const CliOptions& options) {
+  using DataReader = market_data::RealtimeDataReader<
+      market_data::RealtimeDataReaderDiagnostics>;
+  using Runtime =
+      core::TradingRuntime<SignalOnlyStrategy, NullOrderSession, DataReader,
+                           core::TradingRuntimeDiagnostics>;
+
+  loaded.strategy.feedback.enabled = false;
+
+  SignalOnlyStats stats;
+  leadlag::MarketCalcCsvWriter market_calc_writer;
+  std::string error;
+  if (!market_calc_writer.Open(options.market_calc_output_dir, &error)) {
+    fmt::print(stderr, "[FAIL] market_calc_output_error={}\n", error);
+    NOVA_ERROR("market_calc_output_error={}", error);
+    return 1;
+  }
+
+  auto runtime_result = Runtime::Create(
+      std::move(loaded.strategy), std::move(loaded.data_reader),
+      [] { return NullOrderSession{}; }, std::move(loaded.lead_lag), &stats,
+      nullptr, &market_calc_writer, /*market_calc_diagnostics_only=*/true);
+  if (!runtime_result.ok) {
+    market_calc_writer.Close();
+    fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
+               runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
+    return 1;
+  }
+
+  const int exit_code = runtime_result.value->Run();
+  const core::TradingRuntimeLoopStats& loop_stats =
+      runtime_result.value->diagnostics().stats();
+  const std::string recovery_fields =
+      live::FormatRecoveryDiagnosticsFields(stats.recovery);
+  market_calc_writer.Close();
+
+  fmt::print(
+      "lead_lag_strategy_market_calc_summary exit_code={} book_tickers={} "
+      "signals={} open={} close={} stoploss={} order_responses={} "
+      "order_feedbacks={} {} loop_iterations={} idle_iterations={} "
+      "data_reader_polls={} data_reader_empty_polls={} data_reader_events={} "
+      "market_calc_output_dir={}\n",
+      exit_code, stats.book_tickers, stats.signals, stats.open_signals,
+      stats.close_signals, stats.stoploss_signals, stats.order_responses,
+      stats.order_feedbacks, recovery_fields, loop_stats.loop_iterations,
+      loop_stats.idle_iterations, loop_stats.data_reader_poll_calls,
+      loop_stats.data_reader_empty_polls, loop_stats.data_reader_events,
+      options.market_calc_output_dir.string());
+  return exit_code;
+}
+#endif
 
 template <typename WebSocketPolicy>
 int RunLiveOrdersRuntime(LoadedConfig loaded,
@@ -840,6 +940,53 @@ int Run(const CliOptions& options) {
   }
   ApplyDurationOverride(options, &loaded);
 
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  const bool market_calc_mode = MarketCalcDiagnosticMode(options);
+  if (!options.diagnostic_mode.empty()) {
+    if (!market_calc_mode) {
+      fmt::print(stderr, "[FAIL] unsupported diagnostic_mode={}\n",
+                 options.diagnostic_mode);
+      NOVA_ERROR("unsupported diagnostic_mode={}", options.diagnostic_mode);
+      return 2;
+    }
+    if (!options.connect_data) {
+      fmt::print(stderr,
+                 "[FAIL] --diagnostic-mode market_calc requires "
+                 "--connect-data\n");
+      NOVA_ERROR("--diagnostic-mode market_calc requires --connect-data");
+      return 2;
+    }
+    if (options.execute || options.smoke_open_close ||
+        options.smoke_unfilled_cancel || options.smoke_submit_reject) {
+      fmt::print(stderr,
+                 "[FAIL] market_calc diagnostic mode cannot be combined with "
+                 "live order or smoke modes\n");
+      NOVA_ERROR(
+          "market_calc diagnostic mode cannot be combined with live order or "
+          "smoke modes");
+      return 2;
+    }
+    if (!options.signals_output_path.empty()) {
+      fmt::print(stderr,
+                 "[FAIL] --signals-output is not used in market_calc "
+                 "diagnostic mode\n");
+      NOVA_ERROR("--signals-output is not used in market_calc diagnostic mode");
+      return 2;
+    }
+    if (options.market_calc_output_dir.empty()) {
+      fmt::print(stderr,
+                 "[FAIL] --market-calc-output-dir is required for "
+                 "--diagnostic-mode market_calc\n");
+      NOVA_ERROR(
+          "--market-calc-output-dir is required for --diagnostic-mode "
+          "market_calc");
+      return 2;
+    }
+    PrintLoadedConfigSummary(options, loaded, live::RunMode::kMarketCalc);
+    return RunMarketCalcOnly(std::move(loaded), options);
+  }
+#endif
+
   const live::RunModeResult mode_result = live::ResolveRunMode(
       loaded.strategy.mode, options.connect_data, options.execute,
       live::SmokeModeSelection{
@@ -883,6 +1030,13 @@ int main(int argc, char** argv) {
                  "Override strategy.loop.max_loop_seconds; 0 uses config");
   app.add_option("--signals-output", options.signals_output_path,
                  "Optional CSV path for triggered signal-only signals");
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  app.add_option("--diagnostic-mode", options.diagnostic_mode,
+                 "Optional diagnostic mode; supported value: market_calc");
+  app.add_option("--market-calc-output-dir", options.market_calc_output_dir,
+                 "Output directory for market_calc lead_calc.csv and "
+                 "lag_calc.csv");
+#endif
   app.add_option("--api-key", options.api_key_env,
                  "Live order mode API key env override");
   app.add_option("--api-secret", options.api_secret_env,

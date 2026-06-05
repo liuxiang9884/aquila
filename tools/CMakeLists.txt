@@ -116,13 +116,13 @@ target_link_libraries(gate_demo_strategy
 
 add_executable(lead_lag_replay
     lead_lag/replay.cpp
-    lead_lag/signal_csv_writer.cpp
 )
 
 target_link_libraries(lead_lag_replay
     PRIVATE
         aquila_config
         aquila_core
+        aquila_lead_lag_diagnostics
         aquila_strategy
         CLI11::CLI11
         fmt::fmt-header-only
@@ -133,7 +133,6 @@ target_link_libraries(lead_lag_replay
 
 add_executable(lead_lag_strategy
     lead_lag/live_strategy.cpp
-    lead_lag/signal_csv_writer.cpp
 )
 
 target_link_libraries(lead_lag_strategy
@@ -141,6 +140,7 @@ target_link_libraries(lead_lag_strategy
         aquila_config
         aquila_core
         aquila_gate
+        aquila_lead_lag_diagnostics
         aquila_strategy
         CLI11::CLI11
         fmt::fmt-header-only

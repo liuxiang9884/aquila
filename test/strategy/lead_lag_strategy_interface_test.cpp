@@ -1,9 +1,11 @@
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <new>
 #include <string>
 #include <vector>
@@ -2121,6 +2123,92 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(close.action, leadlag::SignalAction::kCloseLong);
   EXPECT_NE(close.group_id, stopped_group_id);
 }
+
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+
+std::vector<leadlag::MarketCalcRow> g_market_calc_rows;
+
+void CaptureMarketCalcRow(void*, const leadlag::MarketCalcRow& row) noexcept {
+  g_market_calc_rows.push_back(row);
+}
+
+class MarketCalcRowCaptureGuard {
+ public:
+  explicit MarketCalcRowCaptureGuard(leadlag::Strategy* strategy) noexcept
+      : strategy_(strategy) {
+    g_market_calc_rows.clear();
+    strategy_->SetMarketCalcObserver(nullptr, CaptureMarketCalcRow);
+  }
+
+  ~MarketCalcRowCaptureGuard() noexcept {
+    if (strategy_ != nullptr) {
+      strategy_->SetMarketCalcObserver(nullptr, nullptr);
+    }
+    g_market_calc_rows.clear();
+  }
+
+  MarketCalcRowCaptureGuard(const MarketCalcRowCaptureGuard&) = delete;
+  MarketCalcRowCaptureGuard& operator=(const MarketCalcRowCaptureGuard&) =
+      delete;
+
+ private:
+  leadlag::Strategy* strategy_{nullptr};
+};
+
+TEST(LeadLagStrategyInterfaceTest,
+     MarketCalcDiagnosticModeEmitsRowsWithoutSignalsOrOrders) {
+  leadlag::Strategy strategy{
+      SignalOnlyConfig(),
+      leadlag::StrategyOptions{
+          .position_accounting =
+              leadlag::PositionAccountingMode::kSyntheticSignals,
+          .market_calc_diagnostics_only = true,
+      }};
+  MarketCalcRowCaptureGuard capture{&strategy};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(g_market_calc_rows.size(), 3U);
+  EXPECT_EQ(g_market_calc_rows[0].row_index, 1U);
+  EXPECT_EQ(g_market_calc_rows[0].role, leadlag::PairRole::kLag);
+  EXPECT_EQ(g_market_calc_rows[0].symbol_id, 3);
+  EXPECT_EQ(g_market_calc_rows[0].book_ticker_id, 100);
+  EXPECT_FALSE(g_market_calc_rows[0].both_sides_valid);
+  EXPECT_FALSE(g_market_calc_rows[0].active);
+  EXPECT_TRUE(std::isnan(g_market_calc_rows[0].lead_bid));
+  EXPECT_DOUBLE_EQ(g_market_calc_rows[0].lag_bid, 101.57);
+  EXPECT_TRUE(std::isnan(g_market_calc_rows[0].drift_mean));
+
+  const leadlag::MarketCalcRow& active_lead = g_market_calc_rows.back();
+  EXPECT_EQ(active_lead.row_index, 3U);
+  EXPECT_EQ(active_lead.role, leadlag::PairRole::kLead);
+  EXPECT_TRUE(active_lead.both_sides_valid);
+  EXPECT_TRUE(active_lead.active);
+  EXPECT_TRUE(active_lead.price_changed);
+  EXPECT_DOUBLE_EQ(active_lead.lead_bid, 112.0);
+  EXPECT_DOUBLE_EQ(active_lead.lag_ask, 102.02);
+  EXPECT_FALSE(std::isnan(active_lead.drift_mean));
+  EXPECT_FALSE(std::isnan(active_lead.drifted_lead_bid));
+  EXPECT_FALSE(std::isnan(active_lead.long_lead_move));
+  EXPECT_FALSE(std::isnan(active_lead.long_required_edge));
+
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
+  EXPECT_TRUE(order_session.placed_orders.empty());
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  ASSERT_EQ(g_market_calc_rows.size(), 4U);
+  EXPECT_EQ(g_market_calc_rows.back().role, leadlag::PairRole::kLead);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_TRUE(order_session.placed_orders.empty());
+}
+
+#endif
 
 TEST(LeadLagStrategyInterfaceTest, FeedbackContinuityLostPausesNewOpenSignals) {
   leadlag::Strategy strategy{SignalOnlyConfig()};

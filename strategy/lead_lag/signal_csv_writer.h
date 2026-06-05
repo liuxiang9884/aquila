@@ -1,5 +1,5 @@
-#ifndef AQUILA_TOOLS_LEAD_LAG_SIGNAL_CSV_WRITER_H_
-#define AQUILA_TOOLS_LEAD_LAG_SIGNAL_CSV_WRITER_H_
+#ifndef AQUILA_STRATEGY_LEAD_LAG_SIGNAL_CSV_WRITER_H_
+#define AQUILA_STRATEGY_LEAD_LAG_SIGNAL_CSV_WRITER_H_
 
 #include <filesystem>
 #include <memory>
@@ -12,7 +12,7 @@
 #include "strategy/lead_lag/signal.h"
 #include "strategy/lead_lag/strategy.h"
 
-namespace aquila::tools::lead_lag {
+namespace aquila::strategy::leadlag {
 
 struct SignalCsvSchema {
   static constexpr char const* header =
@@ -32,8 +32,7 @@ struct SignalCsvSchema {
 class SignalCsvWriter {
  public:
   using Writer =
-      quill::CsvWriter<SignalCsvSchema,
-                       nova::LogManager::NovaFrontendOptions>;
+      quill::CsvWriter<SignalCsvSchema, nova::LogManager::NovaFrontendOptions>;
 
   SignalCsvWriter() = default;
   ~SignalCsvWriter() = default;
@@ -43,15 +42,14 @@ class SignalCsvWriter {
 
   [[nodiscard]] bool Open(const std::filesystem::path& path,
                           std::string* error);
-  void Write(const BookTicker& ticker,
-             const strategy::leadlag::SignalDecision& decision,
-             const strategy::leadlag::SignalDiagnostics& diagnostics) noexcept;
+  void Write(const BookTicker& ticker, const SignalDecision& decision,
+             const SignalDiagnostics& diagnostics) noexcept;
   void Close();
 
  private:
   std::unique_ptr<Writer> writer_;
 };
 
-}  // namespace aquila::tools::lead_lag
+}  // namespace aquila::strategy::leadlag
 
-#endif  // AQUILA_TOOLS_LEAD_LAG_SIGNAL_CSV_WRITER_H_
+#endif  // AQUILA_STRATEGY_LEAD_LAG_SIGNAL_CSV_WRITER_H_

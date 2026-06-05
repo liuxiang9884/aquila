@@ -1,10 +1,10 @@
 add_executable(signal_csv_writer_test
     signal_csv_writer_test.cpp
-    ${PROJECT_SOURCE_DIR}/tools/lead_lag/signal_csv_writer.cpp
 )
 
 target_link_libraries(signal_csv_writer_test
     PRIVATE
+        aquila_lead_lag_diagnostics
         aquila_core
         aquila_strategy
         GTest::gtest_main

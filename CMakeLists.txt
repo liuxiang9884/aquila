@@ -9,6 +9,9 @@ include(cmake/compile_options.cmake)
 include(cmake/third_party.cmake)
 include(cmake/packages.cmake)
 
+option(AQUILA_ENABLE_LEAD_LAG_MARKET_CALC_CSV
+       "Enable LeadLag market calculation diagnostic CSV output" OFF)
+
 set(AQUILA_ORDER_ACK_DIAG_LEVEL_DEFAULT 4)
 if(DEFINED AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
    AND NOT DEFINED AQUILA_ORDER_ACK_DIAG_LEVEL)

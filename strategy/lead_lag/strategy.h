@@ -25,6 +25,9 @@
 #include "strategy/lead_lag/alignment.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/execution_state.h"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+#include "strategy/lead_lag/market_calc_diagnostics.h"
+#endif
 #include "strategy/lead_lag/raw_market_state.h"
 #include "strategy/lead_lag/recorders.h"
 #include "strategy/lead_lag/signal.h"
@@ -43,6 +46,9 @@ enum class PositionAccountingMode : std::uint8_t {
 struct StrategyOptions {
   PositionAccountingMode position_accounting{
       PositionAccountingMode::kExternalOrders};
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  bool market_calc_diagnostics_only{false};
+#endif
 };
 
 enum class PositionDirection : std::uint8_t {
@@ -526,6 +532,14 @@ class Strategy {
   Strategy(Strategy&&) noexcept = default;
   Strategy& operator=(Strategy&&) noexcept = default;
 
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  void SetMarketCalcObserver(void* context,
+                             MarketCalcObserver observer) noexcept {
+    market_calc_observer_context_ = context;
+    market_calc_observer_ = observer;
+  }
+#endif
+
   template <typename ContextT>
   void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
     const std::int64_t on_book_ticker_entry_ns =
@@ -551,6 +565,11 @@ class Strategy {
     assert(market != nullptr);
     last_market_update_ = market->Update(role, ticker);
     if (runtime == nullptr) {
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      EmitMarketCalcRow(ticker, nullptr, *market, last_market_update_,
+                        AlignmentSnapshot{}, RecorderSnapshot{},
+                        ThresholdSnapshot{}, nullptr);
+#endif
       return;
     }
 
@@ -564,6 +583,13 @@ class Strategy {
     const AlignmentPhase phase = runtime->alignment.UpdatePhase(
         now_ns, market->lead.has_quote, market->lag.has_quote);
     if (phase != AlignmentPhase::kActive) {
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      EmitMarketCalcRow(
+          ticker, runtime, *market, last_market_update_,
+          runtime->alignment.Snapshot(), runtime->recorder.snapshot(),
+          runtime->threshold.snapshot(),
+          runtime->has_drifted_lead ? &runtime->drifted_lead : nullptr);
+#endif
       return;
     }
 
@@ -573,6 +599,13 @@ class Strategy {
       const ActiveTransition transition = runtime->alignment.EnterActive(
           now_ns, seed, last_market_update_.role);
       if (!transition.valid) {
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+        EmitMarketCalcRow(
+            ticker, runtime, *market, last_market_update_,
+            runtime->alignment.Snapshot(), runtime->recorder.snapshot(),
+            runtime->threshold.snapshot(),
+            runtime->has_drifted_lead ? &runtime->drifted_lead : nullptr);
+#endif
         return;
       }
       runtime->recorder.SeedActive(transition.lead_seed_drifted,
@@ -585,6 +618,13 @@ class Strategy {
         runtime->alignment.ConsumeResumeLeadTick(last_market_update_.role);
     if (!last_market_update_.price_changed &&
         previous_phase == AlignmentPhase::kActive && !allow_resume_lead) {
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      EmitMarketCalcRow(
+          ticker, runtime, *market, last_market_update_,
+          runtime->alignment.Snapshot(), runtime->recorder.snapshot(),
+          runtime->threshold.snapshot(),
+          runtime->has_drifted_lead ? &runtime->drifted_lead : nullptr);
+#endif
       return;
     }
 
@@ -1057,6 +1097,104 @@ class Strategy {
     }
   }
 
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  [[nodiscard]] bool MarketCalcDiagnosticsOnly() const noexcept {
+    return options_.market_calc_diagnostics_only;
+  }
+
+  void EmitMarketCalcRow(const BookTicker& ticker,
+                         const PairRuntimeState* runtime,
+                         const PairMarketState& market,
+                         const MarketUpdate& update,
+                         const AlignmentSnapshot& alignment,
+                         const RecorderSnapshot& recorder,
+                         const ThresholdSnapshot& threshold,
+                         const QuoteSnapshot* drifted_lead) noexcept {
+    if (market_calc_observer_ == nullptr) {
+      return;
+    }
+
+    MarketCalcRow row;
+    row.row_index = ++market_calc_row_index_;
+    row.role = update.role;
+    row.symbol = runtime == nullptr ? std::string_view{} : runtime->pair.symbol;
+    row.symbol_id = ticker.symbol_id;
+    row.book_ticker_id = ticker.id;
+    row.exchange = ticker.exchange;
+    row.exchange_ns = ticker.exchange_ns;
+    row.local_ns = ticker.local_ns;
+    row.event_ns = BookTickerEventTimeNs(ticker);
+    row.price_changed = update.price_changed;
+    row.both_sides_valid = update.both_sides_valid;
+    row.active = alignment.active;
+    if (market.lead.has_quote) {
+      row.lead_bid = market.lead.latest_quote.bid_price;
+      row.lead_ask = market.lead.latest_quote.ask_price;
+    }
+    if (market.lag.has_quote) {
+      row.lag_bid = market.lag.latest_quote.bid_price;
+      row.lag_ask = market.lag.latest_quote.ask_price;
+      row.lag_spread =
+          market.lag.latest_quote.ask_price - market.lag.latest_quote.bid_price;
+      row.lag_spread_pct = SpreadPct(market.lag.latest_quote);
+    }
+    if (alignment.drift_ready) {
+      row.drift_mean = alignment.drift_mean;
+      row.drift_std_ema = alignment.drift_std_ema;
+    }
+    if (drifted_lead != nullptr) {
+      row.drifted_lead_bid = drifted_lead->bid_price;
+      row.drifted_lead_ask = drifted_lead->ask_price;
+    }
+    if (threshold.initialized) {
+      row.up_entry = threshold.up_entry;
+      row.down_entry = threshold.down_entry;
+      row.up_exit = threshold.up_exit;
+      row.down_exit = threshold.down_exit;
+    }
+    if (alignment.active) {
+      row.lead_noise = recorder.lead_noise;
+      row.lag_noise = recorder.lag_noise;
+      row.lag_spread_mean = recorder.lag_spread_mean;
+      if (market.lag.has_quote) {
+        row.lag_spread_buffer =
+            LagSpreadBuffer(market.lag.latest_quote, recorder.lag_spread_mean);
+      }
+    }
+    if (runtime != nullptr && drifted_lead != nullptr && market.lag.has_quote &&
+        recorder.lead_extrema.valid && recorder.lag_extrema.valid) {
+      const SignalMarket signal_market{
+          .lead = *drifted_lead,
+          .lag = market.lag.latest_quote,
+          .recorder = recorder,
+      };
+      const OpenSignalMetrics long_metrics = SignalEngine::BuildOpenLongMetrics(
+          runtime->pair, signal_market, threshold);
+      if (long_metrics.valid) {
+        row.long_lead_move = long_metrics.lead_move;
+        row.long_price_diff = long_metrics.price_diff;
+        row.long_lag_part_ratio = long_metrics.lag_part_ratio;
+        row.long_target_space = long_metrics.target_space;
+        row.long_required_edge = long_metrics.required_edge;
+        row.lag_spread_pct = long_metrics.lag_spread_pct;
+      }
+      const OpenSignalMetrics short_metrics =
+          SignalEngine::BuildOpenShortMetrics(runtime->pair, signal_market,
+                                              threshold);
+      if (short_metrics.valid) {
+        row.short_lead_move = short_metrics.lead_move;
+        row.short_price_diff = short_metrics.price_diff;
+        row.short_lag_part_ratio = short_metrics.lag_part_ratio;
+        row.short_target_space = short_metrics.target_space;
+        row.short_required_edge = short_metrics.required_edge;
+        row.lag_spread_pct = short_metrics.lag_spread_pct;
+      }
+    }
+
+    market_calc_observer_(market_calc_observer_context_, row);
+  }
+#endif
+
   template <typename ContextT>
   void OnActiveLeadTick(PairRuntimeState* runtime,
                         const PairMarketState& market,
@@ -1074,15 +1212,22 @@ class Strategy {
     const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
     const ThresholdSnapshot threshold =
         runtime->threshold.OnMoveRoll(roll, recorder, alignment);
+    const SignalMarket signal_market{
+        .lead = drifted_lead,
+        .lag = market.lag.latest_quote,
+        .recorder = recorder,
+    };
 
-    last_signal_decision_ =
-        SignalEngine::OnLeadTick(runtime->pair, runtime->execution,
-                                 SignalMarket{
-                                     .lead = drifted_lead,
-                                     .lag = market.lag.latest_quote,
-                                     .recorder = recorder,
-                                 },
-                                 threshold, alignment);
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+    EmitMarketCalcRow(trigger_ticker, runtime, market, last_market_update_,
+                      alignment, recorder, threshold, &drifted_lead);
+    if (MarketCalcDiagnosticsOnly()) {
+      return;
+    }
+#endif
+
+    last_signal_decision_ = SignalEngine::OnLeadTick(
+        runtime->pair, runtime->execution, signal_market, threshold, alignment);
     if (last_signal_decision_.triggered) {
       last_signal_timing_ =
           BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
@@ -1119,17 +1264,24 @@ class Strategy {
 
     const RecorderSnapshot recorder = runtime->recorder.snapshot();
     const ThresholdSnapshot threshold = runtime->threshold.snapshot();
+    const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
+    const SignalMarket signal_market{
+        .lead = runtime->drifted_lead,
+        .lag = market.lag.latest_quote,
+        .recorder = recorder,
+    };
 
-    last_signal_decision_ =
-        SignalEngine::OnLagTick(runtime->pair, runtime->execution,
-                                SignalMarket{
-                                    .lead = runtime->drifted_lead,
-                                    .lag = market.lag.latest_quote,
-                                    .recorder = recorder,
-                                },
-                                threshold);
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+    EmitMarketCalcRow(trigger_ticker, runtime, market, last_market_update_,
+                      alignment, recorder, threshold, &runtime->drifted_lead);
+    if (MarketCalcDiagnosticsOnly()) {
+      return;
+    }
+#endif
+
+    last_signal_decision_ = SignalEngine::OnLagTick(
+        runtime->pair, runtime->execution, signal_market, threshold);
     if (last_signal_decision_.triggered) {
-      const AlignmentSnapshot alignment = runtime->alignment.Snapshot();
       last_signal_timing_ =
           BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
                             detail::StrategyLogRealtimeNowNs(), *runtime);
@@ -2000,6 +2152,11 @@ class Strategy {
   SignalTiming last_signal_timing_;
   SignalDiagnostics last_signal_diagnostics_;
   bool last_signal_diagnostics_valid_{false};
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+  void* market_calc_observer_context_{nullptr};
+  MarketCalcObserver market_calc_observer_{nullptr};
+  std::uint64_t market_calc_row_index_{0};
+#endif
   RecoveryState recovery_state_{RecoveryState::kNormal};
   bool stop_requested_{false};
   static constexpr double kPriceEpsilon = 1e-12;
