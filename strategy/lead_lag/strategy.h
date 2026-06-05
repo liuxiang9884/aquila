@@ -1603,6 +1603,50 @@ class Strategy {
         order_notional, runtime->execution.active_group_count(), placed.status);
   }
 
+  [[nodiscard]] bool RejectInvalidOrderPrice(
+      PairRuntimeState* runtime, std::string_view symbol,
+      const InstrumentMetadata& instrument,
+      const PreparedOrderPrice& price) noexcept {
+    if (price.valid) {
+      return false;
+    }
+    LogOrderIntentRejectedForSignal(
+        price.reject_reason, runtime, symbol, 0.0, price.raw_order_price,
+        price.rounded_order_price, price.slippage_ticks, instrument.price_tick,
+        0.0);
+    return true;
+  }
+
+  [[nodiscard]] bool RejectInvalidOrderQuantity(
+      PairRuntimeState* runtime, std::string_view symbol,
+      const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
+      const PreparedOrderQuantity& quantity) noexcept {
+    if (quantity.valid) {
+      return false;
+    }
+    LogOrderIntentRejectedForSignal("zero_quantity", runtime, symbol,
+                                    quantity.quantity, price.raw_order_price,
+                                    price.order_price, price.slippage_ticks,
+                                    instrument.price_tick, 0.0);
+    return true;
+  }
+
+  [[nodiscard]] OrderPriceTextStorage* AcquirePreparedOrderText(
+      PairRuntimeState* runtime, std::string_view symbol,
+      const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
+      const PreparedOrderQuantity& quantity, double order_notional) noexcept {
+    OrderPriceTextStorage* order_text_storage = AcquireOrderText(
+        price.price_units, instrument.price_decimal_places,
+        quantity.quantity_units, instrument.quantity_decimal_places);
+    if (order_text_storage == nullptr) {
+      LogOrderIntentRejectedForSignal("order_text_slot_full", runtime, symbol,
+                                      quantity.quantity, price.raw_order_price,
+                                      price.order_price, price.slippage_ticks,
+                                      instrument.price_tick, order_notional);
+    }
+    return order_text_storage;
+  }
+
   template <typename ContextT>
   void SubmitPreparedExternalOrder(
       PairRuntimeState* runtime, const BookTicker& trigger_ticker,
@@ -1666,11 +1710,7 @@ class Strategy {
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
     const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
     const PreparedOrderPrice price = PrepareOrderPrice(*runtime, instrument);
-    if (!price.valid) {
-      LogOrderIntentRejectedForSignal(
-          price.reject_reason, runtime, symbol, 0.0, price.raw_order_price,
-          price.rounded_order_price, price.slippage_ticks,
-          instrument.price_tick, 0.0);
+    if (RejectInvalidOrderPrice(runtime, symbol, instrument, price)) {
       return;
     }
 
@@ -1680,11 +1720,8 @@ class Strategy {
 
     const PreparedOrderQuantity quantity =
         PrepareOrderQuantity(runtime, instrument, price.price_units);
-    if (!quantity.valid) {
-      LogOrderIntentRejectedForSignal("zero_quantity", runtime, symbol,
-                                      quantity.quantity, price.raw_order_price,
-                                      price.order_price, price.slippage_ticks,
-                                      instrument.price_tick, 0.0);
+    if (RejectInvalidOrderQuantity(runtime, symbol, instrument, price,
+                                   quantity)) {
       return;
     }
 
@@ -1695,14 +1732,9 @@ class Strategy {
       return;
     }
 
-    OrderPriceTextStorage* order_text_storage = AcquireOrderText(
-        price.price_units, instrument.price_decimal_places,
-        quantity.quantity_units, instrument.quantity_decimal_places);
+    OrderPriceTextStorage* order_text_storage = AcquirePreparedOrderText(
+        runtime, symbol, instrument, price, quantity, order_notional);
     if (order_text_storage == nullptr) {
-      LogOrderIntentRejectedForSignal("order_text_slot_full", runtime, symbol,
-                                      quantity.quantity, price.raw_order_price,
-                                      price.order_price, price.slippage_ticks,
-                                      instrument.price_tick, order_notional);
       return;
     }
 
