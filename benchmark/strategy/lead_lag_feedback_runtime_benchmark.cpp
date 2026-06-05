@@ -8,6 +8,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include "benchmark/strategy/lead_lag_benchmark_support.h"
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
 #include "core/config/strategy_config.h"
@@ -100,6 +101,8 @@ using Runtime =
       .lead_exchange = Exchange::kBinance,
       .lag_exchange = Exchange::kGate,
       .lag_taker_fee = 0.0,
+      .max_lead_freshness_ms = benchmarking::kWideFreshnessGuardMs,
+      .max_lag_freshness_ms = benchmarking::kWideFreshnessGuardMs,
       .trigger =
           TriggerConfig{
               .lead = 0.02,
@@ -168,12 +171,14 @@ using Runtime =
 
 [[nodiscard]] bool SeedPendingOpenOrder(Runtime& runtime,
                                         SharedOrderSessionState& state) {
+  const auto base_ns =
+      benchmarking::RealtimeNowNs();
   runtime.HandleBookTickerForTest(
-      Ticker(Exchange::kGate, 100, 101.57, 102.02));
+      Ticker(Exchange::kGate, base_ns, 101.57, 102.02));
   runtime.HandleBookTickerForTest(
-      Ticker(Exchange::kBinance, 100, 100.0, 101.0));
+      Ticker(Exchange::kBinance, base_ns + 1'000, 100.0, 101.0));
   runtime.HandleBookTickerForTest(
-      Ticker(Exchange::kBinance, 101, 112.0, 113.0));
+      Ticker(Exchange::kBinance, base_ns + 2'000, 112.0, 113.0));
   return state.place_calls == 1 && state.last_place_local_order_id != 0;
 }
 
@@ -203,6 +208,7 @@ using Runtime =
 
 void BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency(
     benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kLatencyIterations);
 

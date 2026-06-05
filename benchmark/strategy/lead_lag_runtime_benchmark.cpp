@@ -1,10 +1,12 @@
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
 
+#include "benchmark/strategy/lead_lag_benchmark_support.h"
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
 #include "core/config/strategy_config.h"
@@ -26,7 +28,7 @@ struct SharedOrderSessionState {
   std::uint64_t place_calls{0};
   std::uint64_t cancel_calls{0};
   std::uint64_t last_place_local_order_id{0};
-  std::int64_t last_quantity{0};
+  double last_quantity{0.0};
   OrderSide last_side{OrderSide::kBuy};
   bool last_reduce_only{false};
 };
@@ -100,6 +102,8 @@ using Runtime =
       .lead_exchange = Exchange::kBinance,
       .lag_exchange = Exchange::kGate,
       .lag_taker_fee = 0.0,
+      .max_lead_freshness_ms = benchmarking::kWideFreshnessGuardMs,
+      .max_lag_freshness_ms = benchmarking::kWideFreshnessGuardMs,
       .trigger =
           TriggerConfig{
               .lead = 0.02,
@@ -166,18 +170,23 @@ using Runtime =
   };
 }
 
-void SeedBeforeOpenSignal(Runtime& runtime) noexcept {
+[[nodiscard]] std::int64_t SeedBeforeOpenSignal(Runtime& runtime) noexcept {
+  const auto base_ns =
+      benchmarking::RealtimeNowNs();
   runtime.HandleBookTickerForTest(
-      Ticker(Exchange::kGate, 100, 101.57, 102.02));
+      Ticker(Exchange::kGate, base_ns, 101.57, 102.02));
   runtime.HandleBookTickerForTest(
-      Ticker(Exchange::kBinance, 100, 100.0, 101.0));
+      Ticker(Exchange::kBinance, base_ns + 1'000, 100.0, 101.0));
+  return base_ns + 2'000;
 }
 
-[[nodiscard]] BookTicker OpenLongTriggerTicker() noexcept {
-  return Ticker(Exchange::kBinance, 101, 112.0, 113.0);
+[[nodiscard]] BookTicker OpenLongTriggerTicker(
+    std::int64_t event_ns) noexcept {
+  return Ticker(Exchange::kBinance, event_ns, 112.0, 113.0);
 }
 
 void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
   std::vector<std::uint64_t> samples_ns;
   samples_ns.reserve(kLatencyIterations);
 
@@ -196,16 +205,19 @@ void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
     }
 
     Runtime& runtime = *runtime_result.value;
-    SeedBeforeOpenSignal(runtime);
+    const std::int64_t trigger_event_ns = SeedBeforeOpenSignal(runtime);
 
+    const BookTicker trigger_ticker = OpenLongTriggerTicker(trigger_event_ns);
     state.ResumeTiming();
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
-    runtime.HandleBookTickerForTest(OpenLongTriggerTicker());
+    runtime.HandleBookTickerForTest(trigger_ticker);
     const std::uint64_t elapsed_ns =
         websocket::benchmarking::NowNs() - start_ns;
     state.PauseTiming();
 
-    if (session_state.place_calls != 1 || session_state.last_quantity <= 0 ||
+    if (session_state.place_calls != 1 ||
+        !std::isfinite(session_state.last_quantity) ||
+        session_state.last_quantity <= 0.0 ||
         session_state.last_reduce_only) {
       state.ResumeTiming();
       state.SkipWithError("lead lag submit path did not place one open order");

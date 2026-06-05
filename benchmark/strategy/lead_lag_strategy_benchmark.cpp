@@ -7,6 +7,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include "benchmark/strategy/lead_lag_benchmark_support.h"
 #include "core/common/types.h"
 #include "core/market_data/types.h"
 #include "core/trading/order_types.h"
@@ -47,6 +48,8 @@ struct NoopContext {
       .lead_exchange = Exchange::kBinance,
       .lag_exchange = Exchange::kGate,
       .lag_taker_fee = 0.00016,
+      .max_lead_freshness_ms = benchmarking::kWideFreshnessGuardMs,
+      .max_lag_freshness_ms = benchmarking::kWideFreshnessGuardMs,
       .trigger =
           TriggerConfig{
               .lead = 0.0025,
@@ -85,6 +88,20 @@ struct NoopContext {
               .move_queue_capacity = 16'384,
               .noise_window_capacity = 16'384,
               .spread_window_capacity = 16'384,
+          },
+      .lag_instrument =
+          InstrumentMetadata{
+              .symbol_id = 3,
+              .exchange = Exchange::kGate,
+              .exchange_symbol = "ORDI_USDT",
+              .price_tick = 0.001,
+              .price_decimal_places = 3,
+              .quantity_step = 1.0,
+              .quantity_decimal_places = 0,
+              .min_quantity = 1.0,
+              .max_quantity = 1'000'000.0,
+              .notional_multiplier = 1.0,
+              .lag_taker_fee = 0.00016,
           },
   });
   return config;
@@ -160,6 +177,7 @@ void WarmActive(Strategy* strategy, NoopContext* context) noexcept {
 }
 
 void BM_LeadLagStrategyOnBookTickerRealTrace(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
   const std::vector<BookTicker>& trace = OrdiTrace();
   if (trace.empty()) {
     state.SkipWithError("failed to load ORDI BookTicker trace");
@@ -193,6 +211,7 @@ void BM_LeadLagStrategyOnBookTickerRealTrace(benchmark::State& state) {
 }
 
 void BM_LeadLagStrategyActiveLeadTickNoSignal(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
   Strategy strategy{MakeOrdiConfig(), SyntheticReplayOptions()};
   NoopContext context;
   WarmActive(&strategy, &context);
@@ -217,6 +236,7 @@ void BM_LeadLagStrategyActiveLeadTickNoSignal(benchmark::State& state) {
 }
 
 void BM_LeadLagStrategyActiveLagTickNoSignal(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
   Strategy strategy{MakeOrdiConfig(), SyntheticReplayOptions()};
   NoopContext context;
   WarmActive(&strategy, &context);
