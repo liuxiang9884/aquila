@@ -141,6 +141,9 @@ ctest --test-dir build/debug -R lead_lag --output-on-failure
 ./build/release/benchmark/strategy/lead_lag_strategy_benchmark
 ```
 
+`OpenSignalSubmitPath` 等 runtime benchmark 的 tail 解释和当前本机 benchmark 环境限制见
+`docs/lead_lag_benchmark_environment_tail_analysis.md`。
+
 性能结论应以 benchmark 或 replay 实测为准，不从代码结构直接推断。
 
 ## 当前边界
