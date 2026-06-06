@@ -42,6 +42,7 @@ docs/evaluation_support.md
 - 临时 log、scratch config、live snapshot、benchmark 临时产物默认写入 `/home/liuxiang/tmp`。
 - 2026-06-06 已完成 LeadLag 策略多轮结构 review / refactor，并逐轮跑 LeadLag tests 和 strategy / runtime / feedback benchmark 后提交。最终重点改动包括 market-calc 诊断拆分、open signal 公共计算、active signal finalization、external order submission / preparation 拆分和 benchmark fixture 修正。
 - LeadLag `OpenSignalSubmitPath` benchmark tail 已归档到 `docs/lead_lag_benchmark_environment_tail_analysis.md`：当前本机是 KVM / AWS 环境，未做 CPU isolation / `nohz_full`，CPU16 有 timer / RCU / softirq / IRQ 干扰证据；`p50` / median 更接近代码路径，`p99` / max 不应在当前环境下直接归因到策略代码。
+- 2026-06-06 当前仍有 30-symbol 30 天实盘 run `20260606_052542_30symbols_30d_private_lagref_forceclaim` 在后台运行；除非用户明确要求停止，不要结束该进程。运行目录是 `/home/liuxiang/tmp/20260606_052542_30symbols_30d_private_lagref_forceclaim/`，health monitor 每 10 分钟写 `health_checks.log`。
 
 ## LeadLag Live
 
@@ -54,6 +55,7 @@ docs/evaluation_support.md
 - 30-symbol report 必须显式传 `--instrument-catalog config/instruments/usdt_futures_common_gate_binance_20260602.csv`，否则默认 12-symbol catalog 可能导致 multiplier / PnL 不完整。
 - `config/instruments/usdt_futures_common_gate_binance_20260602.csv` 是 Gate / Binance USDT 永续交集合约 catalog；`contract_multiplier` 是 report / PnL 使用的显式字段，当前与 `notional_multiplier` 保持一致。
 - 2026-06-05 已停止 30-symbol run `20260604_0646_30symbols_30d_private` 并生成正式 report：`reports/20260604_0646_30symbols_30d_private/`。该进程在 freshness guard 相关 commits 前启动，未运行新 guard；事后用 `signal_decision_ns - lag_exchange_ns` 统计开仓 lag freshness，`6837` 个 open signal 的 p50 `32.205ms`、p95 `791.429ms`，其中 `3921/6837` 大于 `20ms`，说明当前 `max_lag_freshness_ms=20` 会强过滤旧 run 中大量 stale lag quote 下单。详细结论见 `docs/lead_lag_live_runtime_plan.md`。
+- 当前 30-symbol run 使用最新 per-pair freshness guard：lead 统一 `5ms`，lag 按 symbol 单独配置；Gate data / order / feedback 均为 private plain，Binance data session 为 public TLS。2026-06-06 12:27 UTC 快照显示 signal `4387`、submitted `1706`、freshness rejected `2681`、matched position `75`、net PnL `-1.1187 USDT`；12:36 UTC freshness 拆解显示 lag freshness 主要来自 lag quote 本身未更新，而不是 `exchange_ns -> local_ns` 网络接收慢。详细数据见 `docs/lead_lag_live_runtime_plan.md`。
 - 历史 live report 保留在 `reports/`；onboarding 不再复制完整 PnL、slippage 或 latency 数值。
 
 ## Ack Latency / RTT Probe
@@ -125,8 +127,8 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 下一步建议
 
-1. LeadLag live：长跑或复盘先按 `docs/lead_lag_live_operations_pipeline.md`；report 使用正确 instrument catalog，重点看 actual / raw PnL、slippage、Ack RTT、send-to-finish 和 exchange lifecycle。
-2. Freshness guard：后续 30-symbol live 必须用最新 release binary 重启；优先检查 `signal.csv` / `order_detail.csv` 中 `lead_freshness_ns`、`lag_freshness_ns`、`freshness_guard_pass` 和 `freshness_reject_reason`，确认 stale lag quote 不再进入开仓下单。
+1. LeadLag live：如果接手当前 30-symbol 长跑，先检查 `ps`、`health_checks.log` 和 `guarded_live.stdout.log`；不要生成正式 report，除非 run 已停止或用户要求快照分析。结束后 report 使用正确 instrument catalog，重点看 actual / raw PnL、slippage、Ack RTT、send-to-finish 和 exchange lifecycle。
+2. Freshness guard：当前 active run 已启用 per-pair freshness guard。继续分析时优先检查 `lead_freshness_ns`、`lag_freshness_ns`、`freshness_guard_pass`、`freshness_reject_reason`，并把 lag freshness 拆成 `lag_exchange_ns -> lag_local_ns` 与 `lag_local_ns -> signal_decision_ns`。
 3. Ack latency：复现 outlier 时用 private plain all-stage config，分开看 Ack RTT、Gate `x_in -> x_out`、上行 / 下行、socket timestamping 和 pcap residual。
 4. Data session latency：先补 data session 分层诊断，再考虑 RX software timestamping、`TCP_INFO`、pcap 或 hardware timestamp；不要只凭 recorder binary 判断 SHM / reader 问题。
 5. Gate trading：后续优先补 REST reconcile、feedback 断线恢复和更完整的 stop-and-flat 语义。
@@ -134,4 +136,4 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 给下一个对话的提示
 
-先运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、本文件和 `docs/evaluation_support.md`。当前 branch / ahead / dirty 只信 `git status`。LeadLag 真实订单按 `docs/lead_lag_live_operations_pipeline.md`；30-symbol run `20260604_0646_30symbols_30d_private` 已停止，report 在 `reports/20260604_0646_30symbols_30d_private/`。该 run 是 freshness guard 前启动的旧进程，事后分析显示 open signal lag freshness p95 `791.429ms`，按 `max_lag_freshness_ms=20` 会过滤 `3921/6837` 个 open signal；下一轮 30-symbol live 必须用最新 release binary 重启并确认 freshness guard 字段。30-symbol report 记得传 `--instrument-catalog config/instruments/usdt_futures_common_gate_binance_20260602.csv`。LeadLag 策略结构 review / refactor 已完成并验证；若继续讨论 benchmark tail，先读 `docs/lead_lag_benchmark_environment_tail_analysis.md`，当前 KVM 环境下不要把 `OpenSignalSubmitPath` p99 直接归因到策略代码。Data session / recorder / RTT probe / benchmark 默认放 `16-31` 测试 core，实盘 hot path 保留 `0-15`。
+先运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、本文件和 `docs/evaluation_support.md`。当前 branch / ahead / dirty 只信 `git status`。LeadLag 真实订单按 `docs/lead_lag_live_operations_pipeline.md`；当前后台仍在跑 30-symbol 30 天实盘 `20260606_052542_30symbols_30d_private_lagref_forceclaim`，运行目录 `/home/liuxiang/tmp/20260606_052542_30symbols_30d_private_lagref_forceclaim/`，不要在用户未要求时停止。该 run 使用最新 per-pair freshness guard，lead `5ms`，lag 按 symbol 配置；Gate data / order / feedback 为 private plain，Binance 为 public TLS。2026-06-06 快照显示 lag freshness 主要来自 Gate lag quote 未更新，而不是网络接收慢；继续分析先读 `docs/lead_lag_live_runtime_plan.md` 的当前 run 摘要。30-symbol report 记得传 `--instrument-catalog config/instruments/usdt_futures_common_gate_binance_20260602.csv`。LeadLag 策略结构 review / refactor 已完成并验证；若继续讨论 benchmark tail，先读 `docs/lead_lag_benchmark_environment_tail_analysis.md`，当前 KVM 环境下不要把 `OpenSignalSubmitPath` p99 直接归因到策略代码。Data session / recorder / RTT probe / benchmark 默认放 `16-31` 测试 core，实盘 hot path 保留 `0-15`。
