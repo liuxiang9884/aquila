@@ -130,7 +130,7 @@ rg 'aquila_evaluation' core exchange tools
 1. LeadLag live：如果接手当前 30-symbol 长跑，先检查 `ps`、`health_checks.log` 和 `guarded_live.stdout.log`；不要生成正式 report，除非 run 已停止或用户要求快照分析。结束后 report 使用正确 instrument catalog，重点看 actual / raw PnL、slippage、Ack RTT、send-to-finish 和 exchange lifecycle。
 2. Freshness guard：当前 active run 已启用 per-pair freshness guard。继续分析时优先检查 `lead_freshness_ns`、`lag_freshness_ns`、`freshness_guard_pass`、`freshness_reject_reason`，并把 lag freshness 拆成 `lag_exchange_ns -> lag_local_ns` 与 `lag_local_ns -> signal_decision_ns`。
 3. Ack latency：复现 outlier 时用 private plain all-stage config，分开看 Ack RTT、Gate `x_in -> x_out`、上行 / 下行、socket timestamping 和 pcap residual。
-4. Data session latency：先补 data session 分层诊断，再考虑 RX software timestamping、`TCP_INFO`、pcap 或 hardware timestamp；不要只凭 recorder binary 判断 SHM / reader 问题。
+4. Gate 多路行情 / data session latency：继续讨论降低 Gate lag freshness P99 时，先读 `docs/websocket_client_future_optimizations.md` 的 `Live Feed Selection`。Gate 多路只读评估已做过，下一步优先设计 2 路 primary / standby canonical fusion；策略仍只消费一条 Gate canonical SHM。验收要看 `lag_freshness_ns` p95 / p99、`stale_lag_quote` reject、source switch、duplicate / out-of-order 和 fusion hop 延迟；不要重复把只读 best-of-N 作为主线，也不要让策略直接消费多路 WebSocket。
 5. Gate trading：后续优先补 REST reconcile、feedback 断线恢复和更完整的 stop-and-flat 语义。
 6. TUI：下一步做 monitor 专用 Gate orders raw parser、REST snapshot、account model 和 health sampler。
 
