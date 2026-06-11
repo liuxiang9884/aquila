@@ -301,6 +301,9 @@ class OrderFeedbackSession {
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
     const websocket::ConnectionError last_error = client_.last_error();
+    const websocket::ReconnectTrigger reconnect_trigger =
+        client_.last_reconnect_trigger();
+    const int reconnect_errno = client_.last_reconnect_errno();
     const bool active_before = active_;
     const bool login_ready_before = login_ready_;
     const bool subscribed_before = subscribed_;
@@ -310,9 +313,10 @@ class OrderFeedbackSession {
     if (::nova::kLogManager.logger() != nullptr) {
       NOVA_INFO(
           "order_feedback_session_phase phase={} last_error={} "
-          "active_before={} login_ready_before={} subscribed_before={} "
-          "ready_before={}",
+          "reconnect_trigger={} reconnect_errno={} active_before={} "
+          "login_ready_before={} subscribed_before={} ready_before={}",
           magic_enum::enum_name(phase), magic_enum::enum_name(last_error),
+          magic_enum::enum_name(reconnect_trigger), reconnect_errno,
           active_before ? "true" : "false",
           login_ready_before ? "true" : "false",
           subscribed_before ? "true" : "false",
@@ -344,9 +348,11 @@ class OrderFeedbackSession {
         if (::nova::kLogManager.logger() != nullptr) {
           NOVA_WARNING(
               "order_feedback_session_disconnect_continuity_lost phase={} "
-              "last_error={} active_before={} login_ready_before={} "
-              "subscribed_before={} reason={}",
+              "last_error={} reconnect_trigger={} reconnect_errno={} "
+              "active_before={} login_ready_before={} subscribed_before={} "
+              "reason={}",
               magic_enum::enum_name(phase), magic_enum::enum_name(last_error),
+              magic_enum::enum_name(reconnect_trigger), reconnect_errno,
               active_before ? "true" : "false",
               login_ready_before ? "true" : "false",
               subscribed_before ? "true" : "false",

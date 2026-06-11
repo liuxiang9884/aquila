@@ -375,12 +375,54 @@ TEST(OrderSessionTest, LogsConnectionWithSessionIdAndOwnerCpu) {
   const detail::OrderSessionConnectionLogRecordForTest& record =
       g_connection_log_records[0];
   EXPECT_EQ(record.order_session_id, session.order_session_id());
+  EXPECT_EQ(record.phase, websocket::ConnectionPhase::kActive);
+  EXPECT_EQ(record.last_error, websocket::ConnectionError::kNone);
+  EXPECT_EQ(record.reconnect_trigger, websocket::ReconnectTrigger::kNone);
+  EXPECT_EQ(record.reconnect_errno, 0);
+  EXPECT_FALSE(record.active_before);
+  EXPECT_FALSE(record.login_ready_before);
+  EXPECT_EQ(record.inflight_before, 0U);
+  EXPECT_EQ(record.request_map_capacity, session.request_map_capacity());
   EXPECT_GE(record.owner_thread_cpu, -1);
   EXPECT_FALSE(record.endpoint_available);
   EXPECT_EQ(record.local_ip, "");
   EXPECT_EQ(record.local_port, 0U);
   EXPECT_EQ(record.remote_ip, "");
   EXPECT_EQ(record.remote_port, 0U);
+
+  ResetOrderSessionLogObservers();
+}
+
+TEST(OrderSessionTest, LogsDisconnectPhaseBeforeClearingInflight) {
+  ResetOrderSessionLogObservers();
+  detail::SetOrderSessionConnectionLogObserverForTest(&CaptureConnectionLog);
+
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(session);
+
+  const OrderSendResult sent = session.CancelOrder(MakeCancelOrder(123, 0));
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kReconnectBackoff);
+
+  ASSERT_EQ(g_connection_log_record_count, 2U);
+  const detail::OrderSessionConnectionLogRecordForTest& record =
+      g_connection_log_records[1];
+  EXPECT_EQ(record.order_session_id, session.order_session_id());
+  EXPECT_EQ(record.phase, websocket::ConnectionPhase::kReconnectBackoff);
+  EXPECT_EQ(record.last_error, websocket::ConnectionError::kNone);
+  EXPECT_EQ(record.reconnect_trigger, websocket::ReconnectTrigger::kNone);
+  EXPECT_EQ(record.reconnect_errno, 0);
+  EXPECT_TRUE(record.active_before);
+  EXPECT_TRUE(record.login_ready_before);
+  EXPECT_EQ(record.inflight_before, 1U);
+  EXPECT_EQ(record.request_map_capacity, session.request_map_capacity());
+  EXPECT_FALSE(record.endpoint_available);
+
+  EXPECT_FALSE(session.login_ready());
+  EXPECT_EQ(session.inflight_count(), 0U);
+  EXPECT_TRUE(handler.responses.empty());
 
   ResetOrderSessionLogObservers();
 }

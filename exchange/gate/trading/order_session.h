@@ -168,6 +168,15 @@ namespace detail {
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
 struct OrderSessionConnectionLogRecordForTest {
   std::uint64_t order_session_id{0};
+  websocket::ConnectionPhase phase{websocket::ConnectionPhase::kDisconnected};
+  websocket::ConnectionError last_error{websocket::ConnectionError::kNone};
+  websocket::ReconnectTrigger reconnect_trigger{
+      websocket::ReconnectTrigger::kNone};
+  int reconnect_errno{0};
+  bool active_before{false};
+  bool login_ready_before{false};
+  std::size_t inflight_before{0};
+  std::size_t request_map_capacity{0};
   int owner_thread_cpu{-1};
   int owner_thread_tid{-1};
   bool endpoint_available{false};
@@ -282,7 +291,12 @@ inline void SetOrderSessionLatencyDiagnosticLogObserverForTest(
 }
 
 inline void NotifyOrderSessionConnectionLogObserverForTest(
-    std::uint64_t order_session_id, int owner_thread_cpu, int owner_thread_tid,
+    std::uint64_t order_session_id, websocket::ConnectionPhase phase,
+    websocket::ConnectionError last_error,
+    websocket::ReconnectTrigger reconnect_trigger, int reconnect_errno,
+    bool active_before, bool login_ready_before, std::size_t inflight_before,
+    std::size_t request_map_capacity, int owner_thread_cpu,
+    int owner_thread_tid,
     const websocket::SocketEndpointDiagnostics& endpoints) noexcept {
   OrderSessionConnectionLogObserverForTest observer =
       OrderSessionConnectionLogObserverSlotForTest();
@@ -291,6 +305,14 @@ inline void NotifyOrderSessionConnectionLogObserverForTest(
   }
   observer(OrderSessionConnectionLogRecordForTest{
       .order_session_id = order_session_id,
+      .phase = phase,
+      .last_error = last_error,
+      .reconnect_trigger = reconnect_trigger,
+      .reconnect_errno = reconnect_errno,
+      .active_before = active_before,
+      .login_ready_before = login_ready_before,
+      .inflight_before = inflight_before,
+      .request_map_capacity = request_map_capacity,
       .owner_thread_cpu = owner_thread_cpu,
       .owner_thread_tid = owner_thread_tid,
       .endpoint_available = endpoints.available,
@@ -453,6 +475,13 @@ class OrderSession {
   }
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
+    const websocket::ConnectionError last_error = client_.last_error();
+    const websocket::ReconnectTrigger reconnect_trigger =
+        client_.last_reconnect_trigger();
+    const int reconnect_errno = client_.last_reconnect_errno();
+    const bool active_before = active_;
+    const bool login_ready_before = login_ready_;
+    const std::size_t inflight_before = inflight_count();
     if (phase == websocket::ConnectionPhase::kActive) {
       active_ = true;
       const int owner_thread_cpu =
@@ -462,7 +491,9 @@ class OrderSession {
       const websocket::SocketEndpointDiagnostics endpoints =
           SnapshotSocketEndpointDiagnostics();
       LogGateOrderSessionConnected(order_session_id_, owner_thread_cpu,
-                                   owner_thread_tid, endpoints);
+                                   owner_thread_tid, endpoints, active_before,
+                                   login_ready_before, inflight_before,
+                                   request_map_capacity_);
       NotifyOrderSessionConnected(owner_thread_cpu, owner_thread_tid,
                                   endpoints);
       (void)SendLogin();
@@ -472,6 +503,16 @@ class OrderSession {
         phase == websocket::ConnectionPhase::kReconnectBackoff ||
         phase == websocket::ConnectionPhase::kClosing ||
         phase == websocket::ConnectionPhase::kClosed) {
+      const int owner_thread_cpu =
+          detail::CurrentCpuForOrderSessionDiagnostics();
+      const int owner_thread_tid =
+          detail::CurrentTidForOrderSessionDiagnostics();
+      const websocket::SocketEndpointDiagnostics endpoints =
+          SnapshotSocketEndpointDiagnostics();
+      LogGateOrderSessionPhase(phase, last_error, reconnect_trigger,
+                               reconnect_errno, active_before,
+                               login_ready_before, inflight_before,
+                               owner_thread_cpu, owner_thread_tid, endpoints);
       active_ = false;
       login_ready_ = false;
       login_request_sequence_ = 0;
@@ -1000,10 +1041,15 @@ class OrderSession {
   static void LogGateOrderSessionConnected(
       std::uint64_t order_session_id, int owner_thread_cpu,
       int owner_thread_tid,
-      const websocket::SocketEndpointDiagnostics& endpoints) noexcept {
+      const websocket::SocketEndpointDiagnostics& endpoints, bool active_before,
+      bool login_ready_before, std::size_t inflight_before,
+      std::size_t request_map_capacity) noexcept {
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
     detail::NotifyOrderSessionConnectionLogObserverForTest(
-        order_session_id, owner_thread_cpu, owner_thread_tid, endpoints);
+        order_session_id, websocket::ConnectionPhase::kActive,
+        websocket::ConnectionError::kNone, websocket::ReconnectTrigger::kNone,
+        0, active_before, login_ready_before, inflight_before,
+        request_map_capacity, owner_thread_cpu, owner_thread_tid, endpoints);
 #endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
@@ -1016,6 +1062,38 @@ class OrderSession {
         endpoints.available ? "true" : "false", endpoints.local_ip.data(),
         endpoints.local_port, endpoints.remote_ip.data(),
         endpoints.remote_port);
+  }
+
+  void LogGateOrderSessionPhase(
+      websocket::ConnectionPhase phase, websocket::ConnectionError last_error,
+      websocket::ReconnectTrigger reconnect_trigger, int reconnect_errno,
+      bool active_before, bool login_ready_before, std::size_t inflight_before,
+      int owner_thread_cpu, int owner_thread_tid,
+      const websocket::SocketEndpointDiagnostics& endpoints) noexcept {
+#if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    detail::NotifyOrderSessionConnectionLogObserverForTest(
+        order_session_id_, phase, last_error, reconnect_trigger,
+        reconnect_errno, active_before, login_ready_before, inflight_before,
+        request_map_capacity_, owner_thread_cpu, owner_thread_tid, endpoints);
+#endif
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "gate_order_session_phase order_session_id={} phase={} "
+        "last_error={} reconnect_trigger={} reconnect_errno={} "
+        "active_before={} login_ready_before={} inflight_before={} "
+        "request_map_capacity={} owner_thread_cpu={} owner_thread_tid={} "
+        "endpoint_available={} local_ip={} local_port={} remote_ip={} "
+        "remote_port={}",
+        order_session_id_, magic_enum::enum_name(phase),
+        magic_enum::enum_name(last_error),
+        magic_enum::enum_name(reconnect_trigger), reconnect_errno,
+        active_before ? "true" : "false", login_ready_before ? "true" : "false",
+        inflight_before, request_map_capacity_, owner_thread_cpu,
+        owner_thread_tid, endpoints.available ? "true" : "false",
+        endpoints.local_ip.data(), endpoints.local_port,
+        endpoints.remote_ip.data(), endpoints.remote_port);
   }
 
   template <typename OrderT>

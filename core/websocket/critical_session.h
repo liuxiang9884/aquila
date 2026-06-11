@@ -200,7 +200,8 @@ class CriticalSession {
     while (pending_count_ != 0) {
       PreparedWrite* write = pending_writes_[pending_head_];
       if (write == nullptr || write->write_offset > write->encoded_size) {
-        TriggerReconnect(ConnectionError::kSocketError);
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kBusinessWriteInvalidState);
         return;
       }
 
@@ -239,8 +240,13 @@ class CriticalSession {
       if (written < 0 && errno == EAGAIN) {
         return;
       }
-      TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
-                                    : ConnectionError::kSocketError);
+      if (written < 0) {
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kBusinessWriteError, errno);
+        return;
+      }
+      TriggerReconnect(ConnectionError::kPeerClosed,
+                       ReconnectTrigger::kBusinessWriteEof);
       return;
     }
   }
@@ -269,8 +275,13 @@ class CriticalSession {
       if (received < 0 && errno == EAGAIN) {
         return;
       }
-      TriggerReconnect(received == 0 ? ConnectionError::kPeerClosed
-                                     : ConnectionError::kSocketError);
+      if (received < 0) {
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kReadError, errno);
+        return;
+      }
+      TriggerReconnect(ConnectionError::kPeerClosed,
+                       ReconnectTrigger::kReadEof);
       return;
     }
   }
@@ -328,6 +339,8 @@ class CriticalSession {
     codec_.Reset();
     should_reconnect_ = false;
     last_error_ = ConnectionError::kNone;
+    reconnect_trigger_ = ReconnectTrigger::kNone;
+    reconnect_errno_ = 0;
     awaiting_pong_ = false;
     last_ping_ns_ = 0;
 #if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
@@ -357,7 +370,8 @@ class CriticalSession {
     }
 
     if (now_ns - last_ping_ns_ >= timeout_ns) {
-      TriggerReconnect(ConnectionError::kHeartbeatTimeout);
+      TriggerReconnect(ConnectionError::kHeartbeatTimeout,
+                       ReconnectTrigger::kHeartbeatTimeout);
       ++metrics_.heartbeat_timeouts;
     }
   }
@@ -367,6 +381,12 @@ class CriticalSession {
   }
   ConnectionError LastError() const noexcept {
     return last_error_;
+  }
+  ReconnectTrigger LastReconnectTrigger() const noexcept {
+    return reconnect_trigger_;
+  }
+  int LastReconnectErrno() const noexcept {
+    return reconnect_errno_;
   }
   int NativeFd() const noexcept {
     return tls_socket_.NativeFd();
@@ -799,9 +819,12 @@ class CriticalSession {
   }
 #endif
 
-  void TriggerReconnect(ConnectionError error) noexcept {
+  void TriggerReconnect(ConnectionError error, ReconnectTrigger trigger,
+                        int error_number = 0) noexcept {
     should_reconnect_ = true;
     last_error_ = error;
+    reconnect_trigger_ = trigger;
+    reconnect_errno_ = error_number;
   }
 
 #if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
@@ -907,7 +930,8 @@ class CriticalSession {
     while (pending_count_ != 0) {
       PreparedWrite* write = pending_writes_[pending_head_];
       if (write == nullptr || write->write_offset > write->encoded_size) {
-        TriggerReconnect(ConnectionError::kSocketError);
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kBusinessWriteInvalidState);
         return;
       }
 
@@ -941,8 +965,13 @@ class CriticalSession {
       if (written < 0 && errno == EAGAIN) {
         return;
       }
-      TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
-                                    : ConnectionError::kSocketError);
+      if (written < 0) {
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kBusinessWriteError, errno);
+        return;
+      }
+      TriggerReconnect(ConnectionError::kPeerClosed,
+                       ReconnectTrigger::kBusinessWriteEof);
       return;
     }
   }
@@ -950,7 +979,8 @@ class CriticalSession {
   void DriveControlWrite() noexcept {
     while (control_write_pending_) {
       if (control_write_.write_offset > control_write_.encoded_size) {
-        TriggerReconnect(ConnectionError::kSocketError);
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kControlWriteInvalidState);
         return;
       }
 
@@ -983,8 +1013,13 @@ class CriticalSession {
       if (written < 0 && errno == EAGAIN) {
         return;
       }
-      TriggerReconnect(written == 0 ? ConnectionError::kPeerClosed
-                                    : ConnectionError::kSocketError);
+      if (written < 0) {
+        TriggerReconnect(ConnectionError::kSocketError,
+                         ReconnectTrigger::kControlWriteError, errno);
+        return;
+      }
+      TriggerReconnect(ConnectionError::kPeerClosed,
+                       ReconnectTrigger::kControlWriteEof);
       return;
     }
   }
@@ -1017,7 +1052,8 @@ class CriticalSession {
       return;
     }
     if (decoded.status == DecodeStatus::kProtocolError) {
-      TriggerReconnect(ConnectionError::kProtocolError);
+      TriggerReconnect(ConnectionError::kProtocolError,
+                       ReconnectTrigger::kProtocolError);
       return;
     }
     if (decoded.status != DecodeStatus::kMessageReady) {
@@ -1029,7 +1065,8 @@ class CriticalSession {
       case PayloadKind::kBinary: {
         const DeliveryResult result = message_handler_.Handle(decoded.view);
         if (result == DeliveryResult::kFatal) {
-          TriggerReconnect(ConnectionError::kConsumerFatal);
+          TriggerReconnect(ConnectionError::kConsumerFatal,
+                           ReconnectTrigger::kConsumerFatal);
           return;
         }
         if (result == DeliveryResult::kBackpressured) {
@@ -1045,7 +1082,8 @@ class CriticalSession {
         awaiting_pong_ = false;
         return;
       case PayloadKind::kClose:
-        TriggerReconnect(ConnectionError::kPeerClosed);
+        TriggerReconnect(ConnectionError::kPeerClosed,
+                         ReconnectTrigger::kWebSocketCloseFrame);
         return;
       case PayloadKind::kPing:
         if (!EnqueueControlFrame(PayloadKind::kPong, decoded.view.payload)) {
@@ -1127,6 +1165,8 @@ class CriticalSession {
   size_t pending_count_{0};
   bool should_reconnect_{false};
   ConnectionError last_error_{ConnectionError::kNone};
+  ReconnectTrigger reconnect_trigger_{ReconnectTrigger::kNone};
+  int reconnect_errno_{0};
   bool awaiting_pong_{false};
   std::uint64_t last_ping_ns_{0};
 #if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION

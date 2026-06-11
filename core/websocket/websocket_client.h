@@ -128,6 +128,15 @@ class BasicWebSocketClient {
         observable_error_.load(std::memory_order_acquire));
   }
 
+  [[nodiscard]] ReconnectTrigger last_reconnect_trigger() const noexcept {
+    return static_cast<ReconnectTrigger>(
+        observable_reconnect_trigger_.load(std::memory_order_acquire));
+  }
+
+  [[nodiscard]] int last_reconnect_errno() const noexcept {
+    return observable_reconnect_errno_.load(std::memory_order_acquire);
+  }
+
   bool Start() noexcept {
     if (!runtime_prepared_ && !PrepareRuntimeOnly()) {
       state_machine_.Fail(prepare_error_, ConnectionPhase::kDisconnected);
@@ -151,9 +160,9 @@ class BasicWebSocketClient {
           transport_socket_.Close();
           return true;
         }
-        if (!HandleReconnectFailure(state_machine_.last_error(),
-                                    transient_failures,
-                                    reconnect_in_progress)) {
+        if (!HandleReconnectFailure(
+                state_machine_.last_error(), ReconnectTrigger::kNone, 0,
+                transient_failures, reconnect_in_progress)) {
           return false;
         }
         continue;
@@ -173,8 +182,10 @@ class BasicWebSocketClient {
         core_.FeedReadBytes(handshake_leftover);
         if (core_.ShouldReconnect()) {
           MarkDegradedInactive();
-          if (!HandleReconnectFailure(core_.LastError(), transient_failures,
-                                      reconnect_in_progress)) {
+          if (!HandleReconnectFailure(
+                  core_.LastError(), core_.LastReconnectTrigger(),
+                  core_.LastReconnectErrno(), transient_failures,
+                  reconnect_in_progress)) {
             return false;
           }
           continue;
@@ -198,8 +209,10 @@ class BasicWebSocketClient {
       }
       if (core_.ShouldReconnect()) {
         MarkDegradedInactive();
-        if (!HandleReconnectFailure(core_.LastError(), transient_failures,
-                                    reconnect_in_progress)) {
+        if (!HandleReconnectFailure(
+                core_.LastError(), core_.LastReconnectTrigger(),
+                core_.LastReconnectErrno(), transient_failures,
+                reconnect_in_progress)) {
           return false;
         }
         continue;
@@ -408,9 +421,12 @@ class BasicWebSocketClient {
   }
 
   bool HandleReconnectFailure(ConnectionError error,
+                              ReconnectTrigger reconnect_trigger,
+                              int reconnect_errno,
                               std::uint32_t& transient_failures,
                               bool& reconnect_in_progress) noexcept {
     transport_socket_.Close();
+    StoreReconnectDiagnostics(reconnect_trigger, reconnect_errno);
     if (!config_.reconnect.enabled || Classify(error) == FailureClass::kFatal) {
       state_machine_.Fail(error, ConnectionPhase::kClosed);
       NotifyError(state_machine_.last_error());
@@ -438,6 +454,7 @@ class BasicWebSocketClient {
         NotifyState(state_machine_.phase());
         return true;
       }
+      StoreReconnectDiagnostics(ReconnectTrigger::kNone, 0);
       state_machine_.Fail(ConnectionError::kSocketError,
                           ConnectionPhase::kClosed);
       NotifyError(state_machine_.last_error());
@@ -457,6 +474,7 @@ class BasicWebSocketClient {
     if (phase == ConnectionPhase::kActive) {
       observable_error_.store(static_cast<std::uint8_t>(ConnectionError::kNone),
                               std::memory_order_release);
+      StoreReconnectDiagnostics(ReconnectTrigger::kNone, 0);
     }
     if (state_hook_handler_ != nullptr) {
       state_hook_handler_(state_hook_context_, phase);
@@ -492,6 +510,15 @@ class BasicWebSocketClient {
     }
   }
 
+  void StoreReconnectDiagnostics(ReconnectTrigger reconnect_trigger,
+                                 int reconnect_errno) noexcept {
+    observable_reconnect_trigger_.store(
+        static_cast<std::uint8_t>(reconnect_trigger),
+        std::memory_order_release);
+    observable_reconnect_errno_.store(reconnect_errno,
+                                      std::memory_order_release);
+  }
+
   void RunRuntimeHook() noexcept {
     if (runtime_hook_handler_ != nullptr) {
       runtime_hook_handler_(runtime_hook_context_);
@@ -524,6 +551,9 @@ class BasicWebSocketClient {
       static_cast<std::uint8_t>(ConnectionPhase::kDisconnected)};
   std::atomic<std::uint8_t> observable_error_{
       static_cast<std::uint8_t>(ConnectionError::kNone)};
+  std::atomic<std::uint8_t> observable_reconnect_trigger_{
+      static_cast<std::uint8_t>(ReconnectTrigger::kNone)};
+  std::atomic<int> observable_reconnect_errno_{0};
   void* state_hook_context_{nullptr};
   StateHandler state_hook_handler_{nullptr};
   void* state_context_{nullptr};

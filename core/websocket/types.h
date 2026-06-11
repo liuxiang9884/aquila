@@ -37,6 +37,22 @@ enum class ConnectionError : std::uint8_t {
   kConsumerFatal,
 };
 
+enum class ReconnectTrigger : std::uint8_t {
+  kNone,
+  kBusinessWriteInvalidState,
+  kBusinessWriteEof,
+  kBusinessWriteError,
+  kControlWriteInvalidState,
+  kControlWriteEof,
+  kControlWriteError,
+  kReadEof,
+  kReadError,
+  kWebSocketCloseFrame,
+  kProtocolError,
+  kHeartbeatTimeout,
+  kConsumerFatal,
+};
+
 enum class PayloadKind : std::uint8_t {
   kText,
   kBinary,

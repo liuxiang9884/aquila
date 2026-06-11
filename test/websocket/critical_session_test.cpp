@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <limits>
 #include <span>
@@ -60,6 +61,10 @@ std::vector<std::byte> BuildServerPingFrame(std::string_view payload) {
   return frame;
 }
 
+std::vector<std::byte> BuildServerCloseFrame() {
+  return {std::byte{0x88}, std::byte{0x00}};
+}
+
 std::vector<std::byte> DecodeMaskedClientPayload(
     std::span<const std::byte> frame) {
   if (frame.size() < 6) {
@@ -115,6 +120,15 @@ class FakeTlsSocket final {
   }
 
   ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
+    if (write_eof_once_) {
+      write_eof_once_ = false;
+      return 0;
+    }
+    if (write_errno_once_ != 0) {
+      errno = write_errno_once_;
+      write_errno_once_ = 0;
+      return -1;
+    }
     if (pending_write_eagain_) {
       pending_write_eagain_ = false;
       errno = EAGAIN;
@@ -167,6 +181,8 @@ class FakeTlsSocket final {
   size_t max_write_bytes_per_call_{0};
   bool eagain_after_partial_write_{true};
   bool pending_write_eagain_{false};
+  bool write_eof_once_{false};
+  int write_errno_once_{0};
   bool eof_on_empty_{false};
   std::vector<std::vector<std::byte>> read_chunks_{};
   std::vector<std::byte> written_{};
@@ -279,6 +295,9 @@ TEST(WebsocketCriticalSessionTest,
   peer_closed_session.DriveRead();
   EXPECT_TRUE(peer_closed_session.ShouldReconnect());
   EXPECT_EQ(peer_closed_session.LastError(), ConnectionError::kPeerClosed);
+  EXPECT_EQ(peer_closed_session.LastReconnectTrigger(),
+            ReconnectTrigger::kReadEof);
+  EXPECT_EQ(peer_closed_session.LastReconnectErrno(), 0);
 
   ConnectionConfig heartbeat_config = config;
   heartbeat_config.prepared_write_slots = 1;
@@ -293,7 +312,89 @@ TEST(WebsocketCriticalSessionTest,
   heartbeat_session.AdvanceHeartbeat(40'000'000'000ULL);
   EXPECT_TRUE(heartbeat_session.ShouldReconnect());
   EXPECT_EQ(heartbeat_session.LastError(), ConnectionError::kHeartbeatTimeout);
+  EXPECT_EQ(heartbeat_session.LastReconnectTrigger(),
+            ReconnectTrigger::kHeartbeatTimeout);
+  EXPECT_EQ(heartbeat_session.LastReconnectErrno(), 0);
   EXPECT_EQ(heartbeat_metrics.heartbeat_timeouts, 1U);
+}
+
+TEST(WebsocketCriticalSessionTest,
+     ReconnectTriggerDistinguishesCloseFrameAndWriteFailures) {
+  ConnectionConfig config{};
+  config.prepared_write_slots = 4;
+  config.prepared_write_bytes = 128;
+  config.read_buffer_bytes = 256;
+  config.frame_buffer_bytes = 256;
+
+  {
+    PreparedWriteArena arena(config.prepared_write_slots,
+                             config.prepared_write_bytes);
+    Metrics metrics{};
+    size_t bytes = 0;
+    MessageCallback consumer{&bytes, &RecordMessage};
+    FakeTlsSocket socket;
+    socket.read_chunks_.push_back(BuildServerCloseFrame());
+
+    CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+    session.SetMessageCallback(consumer);
+    session.DriveRead();
+
+    EXPECT_TRUE(session.ShouldReconnect());
+    EXPECT_EQ(session.LastError(), ConnectionError::kPeerClosed);
+    EXPECT_EQ(session.LastReconnectTrigger(),
+              ReconnectTrigger::kWebSocketCloseFrame);
+    EXPECT_EQ(session.LastReconnectErrno(), 0);
+  }
+
+  {
+    PreparedWriteArena arena(config.prepared_write_slots,
+                             config.prepared_write_bytes);
+    Metrics metrics{};
+    FakeTlsSocket socket;
+    socket.write_eof_once_ = true;
+
+    CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+    auto* write = session.TryAcquirePreparedWrite();
+    ASSERT_NE(write, nullptr);
+    std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+                write->storage.begin());
+    write->encoded_size = 4;
+    write->kind = PayloadKind::kText;
+    ASSERT_EQ(session.CommitPreparedWrite(write), SendStatus::kOk);
+
+    session.DriveWrite();
+
+    EXPECT_TRUE(session.ShouldReconnect());
+    EXPECT_EQ(session.LastError(), ConnectionError::kPeerClosed);
+    EXPECT_EQ(session.LastReconnectTrigger(),
+              ReconnectTrigger::kBusinessWriteEof);
+    EXPECT_EQ(session.LastReconnectErrno(), 0);
+  }
+
+  {
+    PreparedWriteArena arena(config.prepared_write_slots,
+                             config.prepared_write_bytes);
+    Metrics metrics{};
+    FakeTlsSocket socket;
+    socket.write_errno_once_ = EPIPE;
+
+    CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+    auto* write = session.TryAcquirePreparedWrite();
+    ASSERT_NE(write, nullptr);
+    std::copy_n(std::as_bytes(std::span{"abcd", 4}).begin(), 4,
+                write->storage.begin());
+    write->encoded_size = 4;
+    write->kind = PayloadKind::kText;
+    ASSERT_EQ(session.CommitPreparedWrite(write), SendStatus::kOk);
+
+    session.DriveWrite();
+
+    EXPECT_TRUE(session.ShouldReconnect());
+    EXPECT_EQ(session.LastError(), ConnectionError::kSocketError);
+    EXPECT_EQ(session.LastReconnectTrigger(),
+              ReconnectTrigger::kBusinessWriteError);
+    EXPECT_EQ(session.LastReconnectErrno(), EPIPE);
+  }
 }
 
 TEST(WebsocketCriticalSessionTest, SupportsTypedMessageHandler) {
