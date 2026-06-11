@@ -115,6 +115,8 @@ cmake --build /home/liuxiang/tmp/aquila-bench-order-ack-l<N> \
 | `active_before` / `login_ready_before` | `gate_order_session_phase` | experiment | `true` / `false` | 记录清理前 OrderSession 是否 active / login ready，用于判断是否影响实盘下单状态。 | reconnect 状态机诊断结束后删除。 |
 | `inflight_before` / `request_map_capacity` | `gate_order_session_phase` | experiment | count | 记录断开前 submit inflight 数和容量，判断是否存在未完成 request 被清理。 | submit continuity 诊断不再需要时删除。 |
 
+`gate_order_session_phase` 会优先使用当前 fd 的 endpoint snapshot；如果进入 state hook 前 fd 已关闭，则回退到最近一次 active 时缓存的 endpoint。
+
 热路径边界：`gate_order_session_phase` 只在连接 state hook 的非 active phase 输出；正常 send / ack 热路径不执行日志格式化，也不采集 endpoint snapshot。WebSocket core 仅在已经进入 reconnect 的错误分支保存 `ReconnectTrigger` / `errno`，正常读写成功分支不写日志。
 
 ### IP discovery JSONL 字段

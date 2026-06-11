@@ -1,6 +1,10 @@
 #include "exchange/gate/trading/order_session.h"
 
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <span>
@@ -10,7 +14,9 @@
 #include <utility>
 #include <vector>
 
+#include <arpa/inet.h>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 
 #include "core/common/order_ack_diagnostic_level.h"
 #include "core/common/types.h"
@@ -52,6 +58,121 @@ websocket::MessageView PingView(std::string_view payload) noexcept {
       .readable_tail_bytes = 0,
   };
 }
+
+class TcpLoopbackPair {
+ public:
+  TcpLoopbackPair() noexcept {
+    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+      return;
+    }
+
+    const int one = 1;
+    (void)::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (::bind(listen_fd, reinterpret_cast<sockaddr*>(&address),
+               sizeof(address)) != 0 ||
+        ::listen(listen_fd, 1) != 0) {
+      ::close(listen_fd);
+      return;
+    }
+
+    socklen_t address_len = sizeof(address);
+    if (::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&address),
+                      &address_len) != 0) {
+      ::close(listen_fd);
+      return;
+    }
+
+    client_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (client_fd_ < 0) {
+      ::close(listen_fd);
+      return;
+    }
+
+    if (::connect(client_fd_, reinterpret_cast<const sockaddr*>(&address),
+                  sizeof(address)) != 0) {
+      CloseClient();
+      ::close(listen_fd);
+      return;
+    }
+
+    server_fd_ = ::accept(listen_fd, nullptr, nullptr);
+    ::close(listen_fd);
+    if (server_fd_ < 0) {
+      CloseClient();
+    }
+  }
+
+  ~TcpLoopbackPair() noexcept {
+    CloseClient();
+    if (server_fd_ >= 0) {
+      ::close(server_fd_);
+    }
+  }
+
+  TcpLoopbackPair(const TcpLoopbackPair&) = delete;
+  TcpLoopbackPair& operator=(const TcpLoopbackPair&) = delete;
+
+  [[nodiscard]] bool ok() const noexcept {
+    return client_fd_ >= 0 && server_fd_ >= 0;
+  }
+
+  [[nodiscard]] int client_fd() const noexcept {
+    return client_fd_;
+  }
+
+  void CloseClient() noexcept {
+    if (client_fd_ >= 0) {
+      ::close(client_fd_);
+      client_fd_ = -1;
+    }
+  }
+
+ private:
+  int client_fd_{-1};
+  int server_fd_{-1};
+};
+
+class EndpointTestSocket final {
+ public:
+  static constexpr bool kUsesTls = false;
+
+  bool Init() noexcept {
+    return true;
+  }
+
+  ssize_t ReadSome(std::span<std::byte>) noexcept {
+    errno = EAGAIN;
+    return -1;
+  }
+
+  ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
+    return static_cast<ssize_t>(buffer.size());
+  }
+
+  size_t PendingReadableBytes() const noexcept {
+    return 0;
+  }
+
+  int NativeFd() const noexcept {
+    return native_fd;
+  }
+
+  void Close() noexcept {
+    native_fd = -1;
+  }
+
+  inline static int native_fd{-1};
+};
+
+struct EndpointTestWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = EndpointTestSocket;
+};
 
 struct RecordingHandler {
   std::vector<OrderResponse> responses;
@@ -122,6 +243,19 @@ class TestOrderSession
     config.prepared_write_bytes = 4096;
     return config;
   }
+};
+
+template <typename Handler>
+class TestEndpointOrderSession
+    : public OrderSession<Handler, EndpointTestWebSocketPolicy,
+                          OrderSessionDiagnostics> {
+ public:
+  explicit TestEndpointOrderSession(Handler& handler)
+      : OrderSession<Handler, EndpointTestWebSocketPolicy,
+                     OrderSessionDiagnostics>(
+            TestOrderSession<Handler>::MakeConfig(),
+            LoginCredentials{.api_key = "key", .api_secret = "secret"},
+            handler) {}
 };
 
 struct TestOrder {
@@ -424,6 +558,41 @@ TEST(OrderSessionTest, LogsDisconnectPhaseBeforeClearingInflight) {
   EXPECT_EQ(session.inflight_count(), 0U);
   EXPECT_TRUE(handler.responses.empty());
 
+  ResetOrderSessionLogObservers();
+}
+
+TEST(OrderSessionTest, DisconnectPhaseFallsBackToLastActiveEndpoint) {
+  ResetOrderSessionLogObservers();
+  detail::SetOrderSessionConnectionLogObserverForTest(&CaptureConnectionLog);
+
+  TcpLoopbackPair pair;
+  ASSERT_TRUE(pair.ok());
+  EndpointTestSocket::native_fd = pair.client_fd();
+
+  RecordingHandler handler;
+  TestEndpointOrderSession<RecordingHandler> session(handler);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  ASSERT_EQ(g_connection_log_record_count, 1U);
+  const detail::OrderSessionConnectionLogRecordForTest active_record =
+      g_connection_log_records[0];
+  ASSERT_TRUE(active_record.endpoint_available);
+
+  pair.CloseClient();
+  EndpointTestSocket::native_fd = -1;
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kReconnectBackoff);
+
+  ASSERT_EQ(g_connection_log_record_count, 2U);
+  const detail::OrderSessionConnectionLogRecordForTest& disconnect_record =
+      g_connection_log_records[1];
+  EXPECT_TRUE(disconnect_record.endpoint_available);
+  EXPECT_EQ(disconnect_record.local_ip, active_record.local_ip);
+  EXPECT_EQ(disconnect_record.local_port, active_record.local_port);
+  EXPECT_EQ(disconnect_record.remote_ip, active_record.remote_ip);
+  EXPECT_EQ(disconnect_record.remote_port, active_record.remote_port);
+
+  EndpointTestSocket::native_fd = -1;
   ResetOrderSessionLogObservers();
 }
 

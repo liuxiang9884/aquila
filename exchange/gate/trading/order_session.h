@@ -490,6 +490,7 @@ class OrderSession {
           detail::CurrentTidForOrderSessionDiagnostics();
       const websocket::SocketEndpointDiagnostics endpoints =
           SnapshotSocketEndpointDiagnostics();
+      last_active_endpoint_ = endpoints;
       LogGateOrderSessionConnected(order_session_id_, owner_thread_cpu,
                                    owner_thread_tid, endpoints, active_before,
                                    login_ready_before, inflight_before,
@@ -507,8 +508,11 @@ class OrderSession {
           detail::CurrentCpuForOrderSessionDiagnostics();
       const int owner_thread_tid =
           detail::CurrentTidForOrderSessionDiagnostics();
-      const websocket::SocketEndpointDiagnostics endpoints =
+      websocket::SocketEndpointDiagnostics endpoints =
           SnapshotSocketEndpointDiagnostics();
+      if (!endpoints.available) {
+        endpoints = last_active_endpoint_;
+      }
       LogGateOrderSessionPhase(phase, last_error, reconnect_trigger,
                                reconnect_errno, active_before,
                                login_ready_before, inflight_before,
@@ -1618,6 +1622,7 @@ class OrderSession {
       request_id_to_local_order_id_;
   absl::flat_hash_map<std::uint64_t, std::uint64_t>
       local_order_id_to_exchange_order_id_;
+  websocket::SocketEndpointDiagnostics last_active_endpoint_{};
   std::int64_t current_drive_read_start_ns_{0};
   std::size_t request_map_capacity_{kDefaultOrderRequestMapCapacity};
   const std::uint64_t order_session_id_{

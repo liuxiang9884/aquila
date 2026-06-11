@@ -219,7 +219,8 @@ class CriticalSession {
           write->storage.data() + write->write_offset, remaining_bytes);
       RecordWriteSomeEnter(write);
       const ssize_t written = tls_socket_.WriteSome(payload);
-      RecordWriteSomeReturn(write, written, pending_count_);
+      const int write_errno = written < 0 ? errno : 0;
+      RecordWriteSomeReturn(write, written, write_errno, pending_count_);
       if (written > 0) {
         RecordSocketTimestampingWrite(written, write);
         DrainSocketTimestampingEvents();
@@ -237,12 +238,12 @@ class CriticalSession {
         }
         continue;
       }
-      if (written < 0 && errno == EAGAIN) {
+      if (written < 0 && write_errno == EAGAIN) {
         return;
       }
       if (written < 0) {
         TriggerReconnect(ConnectionError::kSocketError,
-                         ReconnectTrigger::kBusinessWriteError, errno);
+                         ReconnectTrigger::kBusinessWriteError, write_errno);
         return;
       }
       TriggerReconnect(ConnectionError::kPeerClosed,
@@ -261,6 +262,7 @@ class CriticalSession {
       }
 
       const ssize_t received = tls_socket_.ReadSome(read_buffer);
+      const int read_errno = received < 0 ? errno : 0;
       if (received > 0) {
         RecordSocketRxTimestampingEvent();
         ++reads_done;
@@ -272,12 +274,12 @@ class CriticalSession {
         }
         continue;
       }
-      if (received < 0 && errno == EAGAIN) {
+      if (received < 0 && read_errno == EAGAIN) {
         return;
       }
       if (received < 0) {
         TriggerReconnect(ConnectionError::kSocketError,
-                         ReconnectTrigger::kReadError, errno);
+                         ReconnectTrigger::kReadError, read_errno);
         return;
       }
       TriggerReconnect(ConnectionError::kPeerClosed,
@@ -464,6 +466,7 @@ class CriticalSession {
   }
 
   static void RecordWriteSomeReturn(PreparedWrite* write, ssize_t written,
+                                    int write_errno,
                                     std::size_t pending_count) noexcept {
     if (write == nullptr || write->diagnostics == nullptr) {
       return;
@@ -477,8 +480,9 @@ class CriticalSession {
       return;
     }
     diagnostics.write_some_bytes = 0;
-    diagnostics.write_errno = errno;
-    diagnostics.write_eagain = errno == EAGAIN || errno == EWOULDBLOCK;
+    diagnostics.write_errno = write_errno;
+    diagnostics.write_eagain =
+        write_errno == EAGAIN || write_errno == EWOULDBLOCK;
   }
 
   static void RecordWriteComplete(PreparedWrite* write,
@@ -949,7 +953,8 @@ class CriticalSession {
           write->storage.data() + write->write_offset, remaining_bytes);
       RecordWriteSomeEnter(write);
       const ssize_t written = tls_socket_.WriteSome(payload);
-      RecordWriteSomeReturn(write, written, pending_count_);
+      const int write_errno = written < 0 ? errno : 0;
+      RecordWriteSomeReturn(write, written, write_errno, pending_count_);
       if (written > 0) {
         RecordSocketTimestampingWrite(written, write);
         DrainSocketTimestampingEvents();
@@ -962,12 +967,12 @@ class CriticalSession {
         }
         return;
       }
-      if (written < 0 && errno == EAGAIN) {
+      if (written < 0 && write_errno == EAGAIN) {
         return;
       }
       if (written < 0) {
         TriggerReconnect(ConnectionError::kSocketError,
-                         ReconnectTrigger::kBusinessWriteError, errno);
+                         ReconnectTrigger::kBusinessWriteError, write_errno);
         return;
       }
       TriggerReconnect(ConnectionError::kPeerClosed,
@@ -996,6 +1001,7 @@ class CriticalSession {
           control_write_.storage.data() + control_write_.write_offset,
           remaining_bytes);
       const ssize_t written = tls_socket_.WriteSome(payload);
+      const int write_errno = written < 0 ? errno : 0;
       if (written > 0) {
         RecordSocketTimestampingWrite(written, nullptr);
         DrainSocketTimestampingEvents();
@@ -1010,12 +1016,12 @@ class CriticalSession {
         }
         continue;
       }
-      if (written < 0 && errno == EAGAIN) {
+      if (written < 0 && write_errno == EAGAIN) {
         return;
       }
       if (written < 0) {
         TriggerReconnect(ConnectionError::kSocketError,
-                         ReconnectTrigger::kControlWriteError, errno);
+                         ReconnectTrigger::kControlWriteError, write_errno);
         return;
       }
       TriggerReconnect(ConnectionError::kPeerClosed,
