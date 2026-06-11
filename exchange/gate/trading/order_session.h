@@ -510,7 +510,7 @@ class OrderSession {
           detail::CurrentTidForOrderSessionDiagnostics();
       websocket::SocketEndpointDiagnostics endpoints =
           SnapshotSocketEndpointDiagnostics();
-      if (!endpoints.available) {
+      if (!endpoints.available && active_before) {
         endpoints = last_active_endpoint_;
       }
       LogGateOrderSessionPhase(phase, last_error, reconnect_trigger,

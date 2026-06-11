@@ -592,6 +592,18 @@ TEST(OrderSessionTest, DisconnectPhaseFallsBackToLastActiveEndpoint) {
   EXPECT_EQ(disconnect_record.remote_ip, active_record.remote_ip);
   EXPECT_EQ(disconnect_record.remote_port, active_record.remote_port);
 
+  session.OnConnectionPhase(websocket::ConnectionPhase::kReconnectBackoff);
+
+  ASSERT_EQ(g_connection_log_record_count, 3U);
+  const detail::OrderSessionConnectionLogRecordForTest& reconnect_record =
+      g_connection_log_records[2];
+  EXPECT_FALSE(reconnect_record.active_before);
+  EXPECT_FALSE(reconnect_record.endpoint_available);
+  EXPECT_EQ(reconnect_record.local_ip, "");
+  EXPECT_EQ(reconnect_record.local_port, 0U);
+  EXPECT_EQ(reconnect_record.remote_ip, "");
+  EXPECT_EQ(reconnect_record.remote_port, 0U);
+
   EndpointTestSocket::native_fd = -1;
   ResetOrderSessionLogObservers();
 }
