@@ -54,6 +54,11 @@ NIC / kernel TCP receive queue
 
 双 private WS 的毫秒级到达差不能简单归因到 codec、TLS 或 owner thread 绑核。生产形态应先选出一条 canonical stream，而不是让策略直接消费多路行情。
 
+如果目标是 N 路同时参与并按每个 exchange update 选择最快 source，见
+`docs/gate_fastest_route_fusion_design.md`。该讨论已明确排除 primary / standby 和 stale 后切换作为主方案，
+推荐以 `(symbol_id, BookTicker.id)` 的 first arrival 作为 Gate live fastest-route identity，并先 shadow 验证
+跨 source 对齐、duplicate、out-of-order、same-id conflict 和 fusion hop latency。
+
 2026-06 当前 Gate / LeadLag 证据边界：
 
 1. Gate 多路只读评估已经做过，后续不要重复把“再做只读 best-of-N”作为主线；只读工具继续作为回归和扩路前验证入口。
