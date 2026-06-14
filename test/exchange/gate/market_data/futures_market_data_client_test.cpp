@@ -124,7 +124,7 @@ TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(consumer.last.id, 42);
-  EXPECT_EQ(consumer.last.exchange_ns, 1'770'000'000'000'900'000);
+  EXPECT_EQ(consumer.last.exchange_ns, 1'770'000'000'001'000'000);
   EXPECT_EQ(consumer.last.local_ns, 999'000);
   EXPECT_DOUBLE_EQ(consumer.last.bid_price, 65'012.0);
   EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 21.0);
@@ -150,7 +150,7 @@ TEST(GateFuturesMarketDataClientTest,
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(consumer.last.id, 42);
-  EXPECT_EQ(consumer.last.exchange_ns, 1'770'000'000'000'900'000);
+  EXPECT_EQ(consumer.last.exchange_ns, 1'770'000'000'001'000'000);
   EXPECT_EQ(consumer.last.local_ns, 999'000);
   EXPECT_DOUBLE_EQ(consumer.last.bid_price, 65'012.0);
   EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 21.0);

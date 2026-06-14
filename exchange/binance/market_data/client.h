@@ -10,6 +10,8 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include "core/common/data_session_diagnostic_level.h"
+#include "core/market_data/data_session_diagnostics.h"
 #include "core/market_data/types.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
@@ -86,16 +88,28 @@ class FuturesMarketDataClient {
   static constexpr websocket::ClockSource kClockSource = OptionsT::kClockSource;
 
   FuturesMarketDataClient(std::span<const SymbolBinding> symbols,
-                          DataSink& data_sink)
-      : data_sink_(data_sink) {
+                          DataSink& data_sink,
+                          ::aquila::market_data::DataSessionLatencyOutlierConfig
+                              latency_outlier_config = {})
+      : data_sink_(data_sink)
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1
+        ,
+        latency_outlier_logger_(latency_outlier_config)
+#endif
+  {
+#if AQUILA_DATA_SESSION_DIAG_LEVEL < 1
+    (void)latency_outlier_config;
+#endif
     BuildSymbolLookup(symbols);
   }
 
   template <size_t N>
   FuturesMarketDataClient(const std::array<SymbolBinding, N>& symbols,
-                          DataSink& data_sink)
+                          DataSink& data_sink,
+                          ::aquila::market_data::DataSessionLatencyOutlierConfig
+                              latency_outlier_config = {})
       : FuturesMarketDataClient(std::span<const SymbolBinding>(symbols),
-                                data_sink) {}
+                                data_sink, latency_outlier_config) {}
 
   websocket::MessageCallback AsMessageCallback() noexcept {
     return {.context = this, .handler = &HandleWebSocketMessage};
@@ -128,7 +142,13 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnTextPayload(
       std::string_view payload, std::uint32_t readable_tail_bytes,
-      std::int64_t local_ns, bool* decoded_book_ticker = nullptr) noexcept {
+      std::int64_t local_ns, bool* decoded_book_ticker = nullptr
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+      ,
+      const ::aquila::market_data::DataSessionMessageTiming* message_timing =
+          nullptr
+#endif
+      ) noexcept {
     if (decoded_book_ticker != nullptr) {
       *decoded_book_ticker = false;
     }
@@ -152,6 +172,38 @@ class FuturesMarketDataClient {
 
     const std::int32_t symbol_id = FindSymbolId(update.symbol);
 
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1
+    BookTicker book_ticker;
+    detail::AssignBookTickerFromUpdate(update, symbol_id, local_ns,
+                                       book_ticker);
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+    const std::int64_t parse_done_ns =
+        static_cast<std::int64_t>(websocket::NowNs(kClockSource));
+#endif
+    PublishDecodedBookTicker(book_ticker);
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+    const std::int64_t shm_publish_done_ns =
+        static_cast<std::int64_t>(websocket::NowNs(kClockSource));
+#endif
+    ::aquila::market_data::DataSessionBookTickerTiming timing{
+        .exchange = Exchange::kBinance,
+        .source_id = latency_outlier_logger_.config().source_id,
+        .symbol_id = book_ticker.symbol_id,
+        .book_ticker_id = book_ticker.id,
+        .exchange_ns = book_ticker.exchange_ns,
+        .book_ticker_local_ns = book_ticker.local_ns,
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+        .parse_done_ns = parse_done_ns,
+        .shm_publish_done_ns = shm_publish_done_ns,
+#endif
+    };
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+    if (message_timing != nullptr) {
+      timing.message = *message_timing;
+    }
+#endif
+    latency_outlier_logger_.MaybeLog(timing);
+#else
     if constexpr (requires(DataSink& data_sink,
                            detail::NoopBookTickerSlotWriter writer) {
                     data_sink.EmplaceBookTickerWith(writer);
@@ -165,6 +217,7 @@ class FuturesMarketDataClient {
                                          book_ticker);
       data_sink_.OnBookTicker(book_ticker);
     }
+#endif
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordBookTickerMessage();
     }
@@ -184,6 +237,20 @@ class FuturesMarketDataClient {
     assert(context != nullptr);
     return static_cast<FuturesMarketDataClient*>(context)->OnMessage(view);
   }
+
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1
+  void PublishDecodedBookTicker(const BookTicker& book_ticker) noexcept {
+    if constexpr (requires(DataSink& data_sink,
+                           detail::NoopBookTickerSlotWriter writer) {
+                    data_sink.EmplaceBookTickerWith(writer);
+                  }) {
+      data_sink_.EmplaceBookTickerWith(
+          [&](BookTicker& out) noexcept { out = book_ticker; });
+    } else {
+      data_sink_.OnBookTicker(book_ticker);
+    }
+  }
+#endif
 
   std::int32_t FindSymbolId(std::string_view symbol) const noexcept {
     const auto found = symbol_ids_.find(symbol);
@@ -205,6 +272,10 @@ class FuturesMarketDataClient {
   DataSink& data_sink_;
   simdjson::ondemand::parser parser_;
   [[no_unique_address]] DiagnosticsT diagnostics_{};
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1
+  ::aquila::market_data::DataSessionLatencyOutlierLogger
+      latency_outlier_logger_{};
+#endif
 };
 
 }  // namespace aquila::binance

@@ -39,6 +39,20 @@ target_link_libraries(core_market_data_book_ticker_fusion_test
 add_test(NAME core_market_data_book_ticker_fusion_test
          COMMAND core_market_data_book_ticker_fusion_test)
 
+add_executable(core_market_data_data_session_diagnostics_test
+    data_session_diagnostics_test.cpp
+)
+
+target_link_libraries(core_market_data_data_session_diagnostics_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+        nova
+)
+
+add_test(NAME core_market_data_data_session_diagnostics_test
+         COMMAND core_market_data_data_session_diagnostics_test)
+
 add_executable(core_market_data_realtime_data_reader_test
     realtime_data_reader_test.cpp
 )

@@ -9,6 +9,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/result.h"
+#include "core/market_data/data_session_diagnostics.h"
 #include "core/market_data/data_shm_config.h"
 #include "core/websocket/types.h"
 
@@ -20,6 +21,7 @@ struct DataSessionConfig {
   std::vector<std::string> exchange_symbols;
   std::vector<std::int32_t> symbol_ids;
   ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
+  ::aquila::market_data::DataSessionDiagnosticsConfig diagnostics;
 };
 
 using DataSessionConfigResult = Result<DataSessionConfig>;

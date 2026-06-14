@@ -14,6 +14,7 @@
 #include <type_traits>
 
 #include "absl/container/flat_hash_map.h"
+#include "core/common/data_session_diagnostic_level.h"
 #include "core/websocket/frame_codec.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/metrics.h"
@@ -261,10 +262,23 @@ class CriticalSession {
         return;
       }
 
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+      const std::int64_t data_session_drive_read_enter_ns =
+          RealtimeNowNsInt64();
+#endif
       const ssize_t received = tls_socket_.ReadSome(read_buffer);
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+      const std::int64_t data_session_read_return_ns = RealtimeNowNsInt64();
+#endif
       const int read_errno = received < 0 ? errno : 0;
       if (received > 0) {
         RecordSocketRxTimestampingEvent();
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+        last_data_session_drive_read_enter_ns_ =
+            data_session_drive_read_enter_ns;
+        last_data_session_read_return_ns_ = data_session_read_return_ns;
+        last_data_session_read_bytes_ = static_cast<std::int32_t>(received);
+#endif
         ++reads_done;
         codec_.CommitWritten(static_cast<size_t>(received));
         metrics_.rx_bytes += static_cast<std::uint64_t>(received);
@@ -1069,7 +1083,20 @@ class CriticalSession {
     switch (decoded.view.kind) {
       case PayloadKind::kText:
       case PayloadKind::kBinary: {
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+        MessageView view = decoded.view;
+        view.drive_read_enter_ns = last_data_session_drive_read_enter_ns_;
+        view.read_return_ns = last_data_session_read_return_ns_;
+        view.handler_entry_ns = RealtimeNowNsInt64();
+        view.read_bytes = last_data_session_read_bytes_;
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 4
+        view.kernel_rx_ns = last_socket_rx_software_timestamp_ns_;
+        view.kernel_rx_available = last_socket_rx_software_timestamp_ns_ > 0;
+#endif
+        const DeliveryResult result = message_handler_.Handle(view);
+#else
         const DeliveryResult result = message_handler_.Handle(decoded.view);
+#endif
         if (result == DeliveryResult::kFatal) {
           TriggerReconnect(ConnectionError::kConsumerFatal,
                            ReconnectTrigger::kConsumerFatal);
@@ -1175,6 +1202,11 @@ class CriticalSession {
   int reconnect_errno_{0};
   bool awaiting_pong_{false};
   std::uint64_t last_ping_ns_{0};
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+  std::int64_t last_data_session_drive_read_enter_ns_{0};
+  std::int64_t last_data_session_read_return_ns_{0};
+  std::int32_t last_data_session_read_bytes_{0};
+#endif
 #if AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
   std::unique_ptr<SocketTimestampingProbeState[]> socket_timestamping_probes_{};
   std::unique_ptr<std::uint32_t[]> socket_timestamping_free_slots_{};

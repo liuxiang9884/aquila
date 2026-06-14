@@ -5,15 +5,18 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include "core/common/data_session_diagnostic_level.h"
 #include "core/common/types.h"
 #include "core/config/instrument_catalog.h"
 #include "core/config/websocket_config.h"
+#include "core/market_data/data_session_diagnostics.h"
 #include "core/market_data/data_shm_config.h"
 #include "nova/utils/log.h"
 
@@ -34,6 +37,7 @@ struct RawConfigFile {
   config::InstrumentCatalogConfig instrument_catalog;
   RawDataSessionConfig data_session;
   ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
+  ::aquila::market_data::DataSessionDiagnosticsConfig diagnostics;
 };
 
 void MaybeLogError(std::string_view message) {
@@ -93,6 +97,11 @@ class DataSessionConfigParser {
       return Failure(std::move(error_));
     }
 
+    ParseDiagnostics();
+    if (!ok_) {
+      return Failure(std::move(error_));
+    }
+
     config::WebSocketConfigResult websocket_result =
         config::ParseWebSocketConfig(node_["data_session"]["websocket"]);
     if (!websocket_result.ok) {
@@ -115,6 +124,48 @@ class DataSessionConfigParser {
       std::uint32_t fallback) const {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      return fallback;
+    }
+    return static_cast<std::uint32_t>(*value);
+  }
+
+  [[nodiscard]] std::int32_t Int32Or(
+      toml::node_view<const toml::node> value_node, std::int32_t fallback,
+      std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    if (*value < 0 || *value > std::numeric_limits<std::int32_t>::max()) {
+      Fail(name, " must be a non-negative int32");
+      return fallback;
+    }
+    return static_cast<std::int32_t>(*value);
+  }
+
+  [[nodiscard]] std::int64_t NonNegativeInt64Or(
+      toml::node_view<const toml::node> value_node, std::int64_t fallback,
+      std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    if (*value < 0) {
+      Fail(name, " must be non-negative");
+      return fallback;
+    }
+    return *value;
+  }
+
+  [[nodiscard]] std::uint32_t NonNegativeUint32Or(
+      toml::node_view<const toml::node> value_node, std::uint32_t fallback,
+      std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      return fallback;
+    }
+    if (*value < 0 || *value > std::numeric_limits<std::uint32_t>::max()) {
+      Fail(name, " must be a non-negative uint32");
       return fallback;
     }
     return static_cast<std::uint32_t>(*value);
@@ -233,6 +284,82 @@ class DataSessionConfigParser {
     }
   }
 
+  void ParseDiagnostics() {
+    const toml::node_view<const toml::node> diagnostics =
+        node_["data_session"]["diagnostics"];
+    const toml::node_view<const toml::node> latency =
+        diagnostics["latency_outlier"];
+    auto& latency_config = config_.diagnostics.latency_outlier;
+    latency_config.enabled = BoolOr(latency["enabled"], latency_config.enabled);
+    latency_config.source_id =
+        Int32Or(latency["source_id"], latency_config.source_id,
+                "data_session.diagnostics.latency_outlier.source_id");
+    if (!ok_) {
+      return;
+    }
+    latency_config.threshold_ns =
+        NonNegativeInt64Or(latency["threshold_ns"], latency_config.threshold_ns,
+                           "data_session.diagnostics.latency_outlier."
+                           "threshold_ns");
+    if (!ok_) {
+      return;
+    }
+    latency_config.max_logs_per_second = NonNegativeUint32Or(
+        latency["max_logs_per_second"], latency_config.max_logs_per_second,
+        "data_session.diagnostics.latency_outlier."
+        "max_logs_per_second");
+    if (!ok_) {
+      return;
+    }
+
+    ParseSocketTimestampingConfig(diagnostics["timestamping"],
+                                  &config_.diagnostics.socket_timestamping,
+                                  "data_session.diagnostics.timestamping");
+    if (!ok_) {
+      return;
+    }
+    ValidateDiagnostics();
+  }
+
+  void ParseSocketTimestampingConfig(
+      toml::node_view<const toml::node> node,
+      websocket::SocketTimestampingConfig* timestamping,
+      std::string_view name) {
+    timestamping->enabled = BoolOr(node["enabled"], timestamping->enabled);
+    timestamping->tx_sched = BoolOr(node["tx_sched"], timestamping->tx_sched);
+    timestamping->tx_software =
+        BoolOr(node["tx_software"], timestamping->tx_software);
+    timestamping->tx_ack = BoolOr(node["tx_ack"], timestamping->tx_ack);
+    timestamping->rx_software =
+        BoolOr(node["rx_software"], timestamping->rx_software);
+    timestamping->hardware = BoolOr(node["hardware"], timestamping->hardware);
+    timestamping->max_errqueue_events_per_drain = NonNegativeUint32Or(
+        node["max_errqueue_events_per_drain"],
+        timestamping->max_errqueue_events_per_drain,
+        std::string{name} + ".max_errqueue_events_per_drain");
+    if (!ok_) {
+      return;
+    }
+    timestamping->max_active_probes = NonNegativeUint32Or(
+        node["max_active_probes"], timestamping->max_active_probes,
+        std::string{name} + ".max_active_probes");
+  }
+
+  void ValidateDiagnostics() {
+    if (config_.diagnostics.latency_outlier.enabled &&
+        !core::DataSessionDiagnosticLevelSupports(1)) {
+      Fail("data_session.diagnostics.latency_outlier.enabled",
+           " requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 1");
+      return;
+    }
+    if (config_.diagnostics.socket_timestamping.enabled &&
+        !core::DataSessionDiagnosticLevelSupports(
+            core::RequiredDataSessionDiagnosticLevelForSocketTimestamping())) {
+      Fail("data_session.diagnostics.timestamping.enabled",
+           " requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 4");
+    }
+  }
+
   [[nodiscard]] DataSessionConfigResult BuildConfig() {
     if (config_.data_session.feed != "book_ticker" ||
         config_.data_session.wire_format != "sbe") {
@@ -256,7 +383,10 @@ class DataSessionConfigParser {
     DataSessionConfig data_session_config;
     data_session_config.name = std::move(config_.data_session.name);
     data_session_config.connection = std::move(connection_result.value);
+    data_session_config.connection.socket_timestamping =
+        config_.diagnostics.socket_timestamping;
     data_session_config.book_ticker_shm = std::move(config_.book_ticker_shm);
+    data_session_config.diagnostics = config_.diagnostics;
     data_session_config.exchange_symbols.reserve(
         config_.data_session.subscribe_symbols.size());
     data_session_config.symbol_ids.reserve(

@@ -46,3 +46,16 @@ target_link_libraries(core_order_ack_diagnostic_level_legacy_off_test
 
 add_test(NAME core_order_ack_diagnostic_level_legacy_off_test
          COMMAND core_order_ack_diagnostic_level_legacy_off_test)
+
+add_executable(core_data_session_diagnostic_level_test
+    data_session_diagnostic_level_test.cpp
+)
+
+target_link_libraries(core_data_session_diagnostic_level_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_data_session_diagnostic_level_test
+         COMMAND core_data_session_diagnostic_level_test)

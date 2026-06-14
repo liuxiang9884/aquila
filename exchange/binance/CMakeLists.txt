@@ -15,6 +15,5 @@ target_link_libraries(aquila_binance
         simdjson::simdjson
         FastFloat::fast_float
         absl::flat_hash_map
-    PRIVATE
         nova
 )

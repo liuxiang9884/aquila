@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
+#include "core/common/data_session_diagnostic_level.h"
 #include "core/common/types.h"
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/data_shm_config.h"
@@ -260,9 +261,9 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedGateDataSessionConfig) {
 
 TEST(DataSessionConfigTest,
      LoadsReadyLabUsdtPrivatePlainGateDataSessionConfig) {
-  const auto config_result = aquila::gate::LoadDataSessionConfigFile(SourcePath(
-      "config/data_sessions/"
-      "gate_data_session_lab_usdt_private_plain_20260601.toml"));
+  const auto config_result = aquila::gate::LoadDataSessionConfigFile(
+      SourcePath("config/data_sessions/"
+                 "gate_data_session_lab_usdt_private_plain_20260601.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 
   const aquila::gate::DataSessionConfig& config = config_result.value;
@@ -364,6 +365,91 @@ remove_existing = false
   EXPECT_FALSE(shm.remove_existing);
 }
 
+TEST(DataSessionConfigTest, ParsesGateLatencyOutlierDiagnosticsConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_session.diagnostics.latency_outlier]
+enabled = true
+source_id = 7
+threshold_ns = 5000000
+max_logs_per_second = 1000
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  if constexpr (aquila::core::kDataSessionDiagnosticCorrelationEnabled) {
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_TRUE(result.value.diagnostics.latency_outlier.enabled);
+    EXPECT_EQ(result.value.diagnostics.latency_outlier.source_id, 7);
+    EXPECT_EQ(result.value.diagnostics.latency_outlier.threshold_ns, 5'000'000);
+    EXPECT_EQ(result.value.diagnostics.latency_outlier.max_logs_per_second,
+              1000u);
+  } else {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 1"),
+              std::string::npos);
+  }
+}
+
+TEST(DataSessionConfigTest, RejectsGateSocketTimestampingBelowL4) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_session.diagnostics.timestamping]
+enabled = true
+rx_software = true
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  if constexpr (aquila::core::kDataSessionDiagnosticSocketTimestampingEnabled) {
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_TRUE(result.value.connection.socket_timestamping.enabled);
+    EXPECT_TRUE(result.value.connection.socket_timestamping.rx_software);
+  } else {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 4"),
+              std::string::npos);
+  }
+}
+
 TEST(DataSessionConfigTest, LoadsBinanceLogConfigFromToml) {
   const toml::table toml = toml::parse_file(
       SourcePath("config/data_sessions/binance_data_session.toml").string());
@@ -440,6 +526,48 @@ remove_existing = true
   EXPECT_EQ(shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(shm.create);
   EXPECT_TRUE(shm.remove_existing);
+}
+
+TEST(DataSessionConfigTest, ParsesBinanceLatencyOutlierDiagnosticsConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[data_session.diagnostics.latency_outlier]
+enabled = true
+source_id = 3
+threshold_ns = 5000000
+max_logs_per_second = 1000
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+  if constexpr (aquila::core::kDataSessionDiagnosticCorrelationEnabled) {
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_TRUE(result.value.diagnostics.latency_outlier.enabled);
+    EXPECT_EQ(result.value.diagnostics.latency_outlier.source_id, 3);
+    EXPECT_EQ(result.value.diagnostics.latency_outlier.threshold_ns, 5'000'000);
+    EXPECT_EQ(result.value.diagnostics.latency_outlier.max_logs_per_second,
+              1000u);
+  } else {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 1"),
+              std::string::npos);
+  }
 }
 
 TEST(DataSessionConfigTest, RejectsRuntimeBookTickerShmCapacity) {
@@ -648,8 +776,8 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedBinanceDataSessionConfig) {
 }
 
 TEST(DataSessionConfigTest, LoadsReadyLabUsdtBinanceDataSessionConfig) {
-  const auto config_result = aquila::binance::LoadDataSessionConfigFile(
-      SourcePath(
+  const auto config_result =
+      aquila::binance::LoadDataSessionConfigFile(SourcePath(
           "config/data_sessions/binance_data_session_lab_usdt_20260601.toml"));
   ASSERT_TRUE(config_result.ok) << config_result.error;
 

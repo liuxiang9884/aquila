@@ -181,6 +181,52 @@ data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_s
 `type`、`exchange`、`thread` 不放在配置里：具体 binary 已经决定 session 类型、交易所和线程角色。
 例如 `gate_data_session` binary 只会启动 `GateDataSession`。
 
+## Data Session Diagnostics
+
+Gate / Binance data session config 支持可选的 `[data_session.diagnostics.*]` section。该 section
+只在启动冷路径解析；默认不启用，且默认 build 使用 `AQUILA_DATA_SESSION_DIAG_LEVEL=0`，保持现有
+data session 热路径行为。运行期配置不能超过编译期 level：
+
+- `latency_outlier.enabled = true` 要求 `AQUILA_DATA_SESSION_DIAG_LEVEL >= 1`。
+- `timestamping.enabled = true` 要求 `AQUILA_DATA_SESSION_DIAG_LEVEL >= 4`。
+
+第一版 latency outlier 诊断不写 sidecar binary / CSV，只在超过阈值时写当前 data session 的 Nova log，
+log key 为 `data_session_book_ticker_latency_outlier`。详细字段见 `docs/diagnostic_fields.md`。
+
+示例：
+
+```toml
+[data_session.diagnostics.latency_outlier]
+enabled = true
+source_id = 0
+threshold_ns = 5000000
+max_logs_per_second = 1000
+
+[data_session.diagnostics.timestamping]
+enabled = true
+rx_software = true
+```
+
+字段：
+
+| 字段 | 默认值 | 编译期要求 | 含义 |
+| --- | --- | --- | --- |
+| `data_session.diagnostics.latency_outlier.enabled` | `false` | `L1+` | 开启 BookTicker latency outlier log。 |
+| `data_session.diagnostics.latency_outlier.source_id` | `0` | `L1+` | 当前 source 的编号，用于 n 路 source / fusion 对齐。 |
+| `data_session.diagnostics.latency_outlier.threshold_ns` | `5000000` | `L1+` | 当 `BookTicker.local_ns - BookTicker.exchange_ns` 大于该阈值时触发 log。 |
+| `data_session.diagnostics.latency_outlier.max_logs_per_second` | `1000` | `L1+` | 每个 data session client 独立 1 秒窗口限流；`0` 表示禁止 outlier log。 |
+| `data_session.diagnostics.timestamping.enabled` | `false` | `L4+` | 请求 WebSocket socket timestamping 能力。当前 data session 只消费 RX software timestamp。 |
+| `data_session.diagnostics.timestamping.rx_software` | `false` | `L4+` | plain transport 可用时填充 `kernel_rx_ns` / `kernel_rx_available`。 |
+
+边界：
+
+- `L0` 不改变 `MessageView` 布局，不采集 read / parse / publish 时间戳，也不会输出 outlier log。
+- `L1` 只做 correlation 和阈值 log；`parse_done_ns`、`shm_publish_done_ns` 以及分段字段缺失时为 `0` 或 `-1`。
+- `L2` 增加 userspace 分段：read enter / return、handler entry、parse done、SHM publish done。
+- `L3` 当前保留 level 名称，尚未实现 data session `TCP_INFO` / recv queue 采样。
+- `L4` 复用 WebSocket socket timestamping；当前只有实现 `TakeLastRxSoftwareTimestampNs()` 的 plain socket 会提供
+  RX software timestamp，TLS transport 不提供 `kernel_rx_ns`。
+
 ## Symbol Pool 生成
 
 `subscribe_symbols` 只表示订阅意图，不直接进入行情热路径。启动期 data session config parser 按

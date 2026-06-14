@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/market_data/data_session_diagnostics.h"
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
@@ -195,13 +196,15 @@ class DataSession {
       SessionDiagnostics::kEnabled;
 
   DataSession(websocket::ConnectionConfig config,
-              std::span<const SymbolBinding> symbols, DataSink& data_sink)
+              std::span<const SymbolBinding> symbols, DataSink& data_sink,
+              ::aquila::market_data::DataSessionLatencyOutlierConfig
+                  latency_outlier_config = {})
       : connection_(ApplyOptions(std::move(config))),
         symbol_bindings_(symbols.begin(), symbols.end()),
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
-            data_sink),
+            data_sink, latency_outlier_config),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_) {
     detail::BuildSymbolViews(
@@ -213,18 +216,23 @@ class DataSession {
 
   template <size_t N>
   DataSession(websocket::ConnectionConfig config,
-              const std::array<SymbolBinding, N>& symbols, DataSink& data_sink)
+              const std::array<SymbolBinding, N>& symbols, DataSink& data_sink,
+              ::aquila::market_data::DataSessionLatencyOutlierConfig
+                  latency_outlier_config = {})
       : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
-                    data_sink) {}
+                    data_sink, latency_outlier_config) {}
 
   DataSession(DataSessionConfig config, DataSink& data_sink)
       : DataSession(std::move(config.name), std::move(config.connection),
                     std::move(config.exchange_symbols),
-                    std::move(config.symbol_ids), data_sink) {}
+                    std::move(config.symbol_ids), data_sink,
+                    config.diagnostics.latency_outlier) {}
 
   DataSession(std::string name, websocket::ConnectionConfig config,
               std::vector<std::string> exchange_symbols,
-              std::vector<std::int32_t> symbol_ids, DataSink& data_sink)
+              std::vector<std::int32_t> symbol_ids, DataSink& data_sink,
+              ::aquila::market_data::DataSessionLatencyOutlierConfig
+                  latency_outlier_config = {})
       : name_(std::move(name)),
         connection_(ApplyOptions(std::move(config))),
         exchange_symbols_(std::move(exchange_symbols)),
@@ -233,7 +241,7 @@ class DataSession {
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
-            data_sink),
+            data_sink, latency_outlier_config),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_) {
     detail::BuildSymbolViews(
@@ -264,7 +272,15 @@ class DataSession {
       }
       const std::int64_t local_ns =
           static_cast<std::int64_t>(websocket::NowNs(kClockSource));
+#if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
+      const ::aquila::market_data::DataSessionMessageTiming message_timing =
+          ::aquila::market_data::MakeDataSessionMessageTiming(view,
+                                                              TransportUsesTls);
+      return market_data_client_.OnBinaryPayload(view.payload, local_ns,
+                                                 &message_timing);
+#else
       return market_data_client_.OnBinaryPayload(view.payload, local_ns);
+#endif
     }
 
     if (view.kind == websocket::PayloadKind::kText) {
