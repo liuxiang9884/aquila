@@ -243,6 +243,21 @@ fusion sidecar metadata             -> fusion_metadata.bin
 4. 按 source / symbol 统计 winner ratio。
 5. 对比 canonical 与单 source 的 latency p50 / p95 / p99 / max。
 
+当前 analyzer 入口是 `scripts/market_data/analyze_book_ticker_fusion_latency.py` 的 published fusion 模式。示例：
+
+```bash
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/market_data/analyze_book_ticker_fusion_latency.py \
+  --source-bin 0=/home/liuxiang/tmp/<run_id>/source_0.bin \
+  --source-bin 1=/home/liuxiang/tmp/<run_id>/source_1.bin \
+  --source-bin 2=/home/liuxiang/tmp/<run_id>/source_2.bin \
+  --source-bin 3=/home/liuxiang/tmp/<run_id>/source_3.bin \
+  --fusion-bin /home/liuxiang/tmp/<run_id>/fusion.bin \
+  --metadata-bin /home/liuxiang/tmp/<run_id>/fusion_metadata.bin \
+  --output-dir /home/liuxiang/tmp/<run_id>/fusion_analysis
+```
+
+该模式输出 `sources`、`fusion`、`metadata`、`fusion_metadata_alignment`、`source_metadata_alignment` 和 `top_fusion_hop_outliers`。旧的 `--input LABEL=PATH` 4 路 combination 模式仍保留，用于离线模拟不同 source 组合的 latency 上界。
+
 只有当 shadow 证据显示 canonical stream 明确改善 Gate BBO freshness，且 fusion hop latency 可接受，才应让策略切到 canonical Gate SHM。
 
 ## 当前推荐结论

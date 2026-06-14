@@ -10,6 +10,12 @@
 
 第一版采用独立进程架构：N 个 `gate_data_session` process 分别写 source SHM，`gate_book_ticker_fusion` process 单 hot thread round-robin 读取 source SHM，输出 canonical SHM。canonical SHM 的 ABI 与现有 data session SHM 完全一致，`BookTicker.local_ns` 在 fusion 输出中表示 `fusion_publish_ns`。winner attribution 不写进 SHM，而写入 sidecar metadata binary。
 
+## 当前实现状态
+
+截至 2026-06-14，Task 1-5 已分提交落地：fusion core、metadata writer、TOML config parser、`gate_book_ticker_fusion` tool、4-source fusion 示例配置和 5 个 recorder 配置均已实现。Task 6 实际复用并扩展仓库已有 `scripts/market_data/analyze_book_ticker_fusion_latency.py`，没有新增重名 analyzer；该脚本保留旧的 4 路 combination 模式，并新增读取 source / fusion `BookTicker` bin 与 sidecar metadata bin 的 published fusion 模式。
+
+Task 7 仍用于最终综合验证和 onboarding 同步。
+
 ## Tech Stack
 
 - C++20 / CMake
@@ -36,8 +42,8 @@
 | `test/core/market_data/CMakeLists.txt` | 修改 | 增加 core fusion test target |
 | `test/tools/market_data/CMakeLists.txt` | 修改 | 增加 config / metadata test target |
 | `config/market_data_fusion/gate_book_ticker_fusion_4sources.toml` | 新增 | 4-source 示例配置 |
-| `scripts/market_data/analyze_gate_book_ticker_fusion.py` | 新增 | 离线读取 source / fusion BookTicker bin 和 metadata bin，输出 latency summary |
-| `scripts/test/market_data/analyze_gate_book_ticker_fusion_test.py` | 新增 | Python analyzer 单元测试 |
+| `scripts/market_data/analyze_book_ticker_fusion_latency.py` | 修改 | 离线读取 source / fusion BookTicker bin 和 metadata bin，输出 latency summary；同时保留旧 4 路 combination 模式 |
+| `scripts/test/market_data/analyze_book_ticker_fusion_latency_test.py` | 修改 | Python analyzer 单元测试 |
 | `docs/gate_fastest_route_fusion_design.md` | 修改 | 同步最终第一版设计和验证方式 |
 
 ## Task 1: Fusion Core
@@ -252,8 +258,8 @@
 ## Task 6: 离线 Analyzer
 
 **Files:**
-- Create: `scripts/market_data/analyze_gate_book_ticker_fusion.py`
-- Create: `scripts/test/market_data/analyze_gate_book_ticker_fusion_test.py`
+- Modify: `scripts/market_data/analyze_book_ticker_fusion_latency.py`
+- Modify: `scripts/test/market_data/analyze_book_ticker_fusion_latency_test.py`
 
 - [ ] Step 1: 写 Python 测试
   - 用 `struct.pack` 写小型 source bin、fusion bin、metadata bin。
@@ -269,11 +275,17 @@
   - 读取 `BookTicker` binary record，格式必须和 C++ `BookTicker` layout 一致。
   - 读取 metadata binary record。
   - 按 source_id 聚合 p50 / p95 / p99 / max。
-  - 输出 markdown 或 CSV summary，第一版默认 stdout。
+  - published mode 参数：
+    ```text
+    --source-bin SOURCE_ID=PATH
+    --fusion-bin PATH
+    --metadata-bin PATH
+    ```
+  - 输出 JSON summary，支持 `--summary-output` 写 CSV summary、`--top-output` 写 fusion hop outlier CSV。
 
 - [ ] Step 3: 跑 Python 测试
   ```bash
-  /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/market_data/analyze_gate_book_ticker_fusion_test.py
+  /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/market_data/analyze_book_ticker_fusion_latency_test.py
   ```
 
 ## Task 7: 文档和验证
@@ -287,13 +299,13 @@
   ```bash
   ./build.sh debug
   ctest --test-dir build/debug -R '(book_ticker_fusion|core_market_data|data_reader_recorder)' --output-on-failure
-  /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/market_data/analyze_gate_book_ticker_fusion_test.py
+  /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/market_data/analyze_book_ticker_fusion_latency_test.py
   git diff --check
   ```
-- [ ] Step 3: 提交实现：
+- [ ] Step 3: 提交剩余 analyzer / 文档同步：
   ```bash
-  git add core tools test config scripts docs
-  git commit -m "Add Gate book ticker fusion"
+  git add scripts docs
+  git commit -m "Update Gate fusion analyzer"
   ```
 
 ## Shadow Run Checklist
@@ -305,12 +317,13 @@
 3. 启动 5 个 `data_reader_recorder`，分别录 `source_0.bin` 到 `source_3.bin` 和 `fusion.bin`。
 4. 运行 analyzer：
    ```bash
-   /home/liuxiang/dev/pyenv/lx/bin/python scripts/market_data/analyze_gate_book_ticker_fusion.py \
-     --source-bin 0:/home/liuxiang/tmp/<run_id>/source_0.bin \
-     --source-bin 1:/home/liuxiang/tmp/<run_id>/source_1.bin \
-     --source-bin 2:/home/liuxiang/tmp/<run_id>/source_2.bin \
-     --source-bin 3:/home/liuxiang/tmp/<run_id>/source_3.bin \
+   /home/liuxiang/dev/pyenv/lx/bin/python scripts/market_data/analyze_book_ticker_fusion_latency.py \
+     --source-bin 0=/home/liuxiang/tmp/<run_id>/source_0.bin \
+     --source-bin 1=/home/liuxiang/tmp/<run_id>/source_1.bin \
+     --source-bin 2=/home/liuxiang/tmp/<run_id>/source_2.bin \
+     --source-bin 3=/home/liuxiang/tmp/<run_id>/source_3.bin \
      --fusion-bin /home/liuxiang/tmp/<run_id>/fusion.bin \
-     --metadata-bin /home/liuxiang/tmp/<run_id>/fusion_metadata.bin
+     --metadata-bin /home/liuxiang/tmp/<run_id>/fusion_metadata.bin \
+     --output-dir /home/liuxiang/tmp/<run_id>/fusion_analysis
    ```
 5. 只在 shadow 证据显示 canonical latency 改善且 fusion hop 可接受后，再讨论策略切换。

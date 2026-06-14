@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -35,6 +36,121 @@ class AnalyzeBookTickerFusionLatencyTest(unittest.TestCase):
             records[index]["bid_price"] = 100.0 + index
             records[index]["ask_price"] = 101.0 + index
         return records
+
+    def make_source_records(self, rows, source_offset=0):
+        records = np.zeros(len(rows), dtype=self.dtype)
+        for index, (record_id, latency_ns) in enumerate(rows):
+            records[index]["id"] = record_id
+            records[index]["symbol_id"] = 92
+            records[index]["exchange"] = 2
+            records[index]["exchange_ns"] = record_id * 1_000
+            records[index]["local_ns"] = records[index]["exchange_ns"] + latency_ns
+            records[index]["bid_price"] = 100.0 + source_offset + index
+            records[index]["bid_volume"] = 1.0 + index
+            records[index]["ask_price"] = 101.0 + source_offset + index
+            records[index]["ask_volume"] = 2.0 + index
+        return records
+
+    def test_fusion_metadata_dtype_matches_sidecar_record_abi(self):
+        dtype = self.module.fusion_metadata_dtype()
+
+        self.assertEqual(dtype.itemsize, 40)
+        self.assertEqual(
+            dtype.names,
+            (
+                "source_id",
+                "symbol_id",
+                "book_ticker_id",
+                "exchange_ns",
+                "source_local_ns",
+                "fusion_publish_ns",
+            ),
+        )
+        self.assertEqual(dtype.fields["book_ticker_id"][1], 8)
+        self.assertEqual(dtype.fields["fusion_publish_ns"][1], 32)
+
+    def test_analyze_published_fusion_latency_uses_fusion_and_metadata_bins(self):
+        source_records_by_id = {
+            0: self.make_source_records([(100, 120), (101, 150)], source_offset=0),
+            1: self.make_source_records([(100, 80), (102, 200)], source_offset=10),
+        }
+        fusion_records = self.make_source_records([(100, 90), (101, 155)], source_offset=100)
+
+        metadata_dtype = self.module.fusion_metadata_dtype()
+        metadata_records = np.zeros(2, dtype=metadata_dtype)
+        metadata_records[0]["source_id"] = 1
+        metadata_records[0]["symbol_id"] = 92
+        metadata_records[0]["book_ticker_id"] = 100
+        metadata_records[0]["exchange_ns"] = 100_000
+        metadata_records[0]["source_local_ns"] = 100_080
+        metadata_records[0]["fusion_publish_ns"] = 100_090
+        metadata_records[1]["source_id"] = 0
+        metadata_records[1]["symbol_id"] = 92
+        metadata_records[1]["book_ticker_id"] = 101
+        metadata_records[1]["exchange_ns"] = 101_000
+        metadata_records[1]["source_local_ns"] = 101_150
+        metadata_records[1]["fusion_publish_ns"] = 101_155
+
+        summary = self.module.analyze_published_fusion_latency(
+            source_records_by_id,
+            fusion_records,
+            metadata_records,
+            top_n=1,
+        )
+
+        self.assertEqual(summary["source_ids"], [0, 1])
+        self.assertEqual(summary["sources"]["0"]["count"], 2)
+        self.assertEqual(summary["sources"]["0"]["latency_ns"]["max"], 150)
+        self.assertEqual(summary["sources"]["1"]["latency_ns"]["min"], 80)
+
+        self.assertEqual(summary["fusion"]["count"], 2)
+        self.assertEqual(summary["fusion"]["latency_ns"]["min"], 90)
+        self.assertEqual(summary["fusion"]["latency_ns"]["max"], 155)
+
+        metadata = summary["metadata"]
+        self.assertEqual(metadata["count"], 2)
+        self.assertEqual(metadata["winner_counts"], {"0": 1, "1": 1})
+        self.assertEqual(metadata["winner_ratio"], {"0": 0.5, "1": 0.5})
+        self.assertEqual(metadata["source_latency_ns"]["min"], 80)
+        self.assertEqual(metadata["source_latency_ns"]["max"], 150)
+        self.assertEqual(metadata["fusion_hop_ns"]["min"], 5)
+        self.assertEqual(metadata["fusion_hop_ns"]["max"], 10)
+
+        self.assertEqual(
+            summary["fusion_metadata_alignment"],
+            {
+                "fusion_count": 2,
+                "metadata_count": 2,
+                "compared_count": 2,
+                "mismatch_count": 0,
+                "fusion_without_metadata_count": 0,
+                "metadata_without_fusion_count": 0,
+            },
+        )
+        self.assertEqual(summary["source_metadata_alignment"]["matched_count"], 2)
+        self.assertEqual(summary["source_metadata_alignment"]["missing_count"], 0)
+        self.assertEqual(summary["top_fusion_hop_outliers"][0]["id"], 100)
+
+    def test_load_fusion_metadata_reads_fixed_size_records(self):
+        dtype = self.module.fusion_metadata_dtype()
+        records = np.zeros(2, dtype=dtype)
+        records["source_id"] = [0, 1]
+        records["symbol_id"] = [92, 93]
+        records["book_ticker_id"] = [100, 200]
+        records["exchange_ns"] = [1_000, 2_000]
+        records["source_local_ns"] = [1_100, 2_100]
+        records["fusion_publish_ns"] = [1_120, 2_130]
+
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            path = Path(temp_dir) / "fusion_metadata.bin"
+            records.tofile(path)
+
+            loaded = self.module.load_fusion_metadata(path)
+
+        np.testing.assert_array_equal(loaded["source_id"], records["source_id"])
+        np.testing.assert_array_equal(
+            loaded["fusion_publish_ns"], records["fusion_publish_ns"]
+        )
 
     def test_analyze_uses_four_feed_id_interval_and_union_within_combo(self):
         records_by_label = {
