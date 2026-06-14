@@ -54,6 +54,11 @@ target_link_libraries(book_ticker_fusion_config_test
         PkgConfig::tomlplusplus
 )
 
+target_compile_definitions(book_ticker_fusion_config_test
+    PRIVATE
+        AQUILA_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
 add_test(NAME book_ticker_fusion_config_test
          COMMAND book_ticker_fusion_config_test)
 
