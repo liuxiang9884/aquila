@@ -22,9 +22,11 @@ Gate source C
 同一个 (symbol_id, BookTicker.id) 中，哪一路最先到达 fusion，哪一路就是该 update 的 winner。
 ```
 
-winner 对应的完整 `BookTicker` 立即输出到 canonical Gate SHM；其他 source 后续到达同一个 `(symbol_id, id)` 时作为 duplicate / conflict / late sample 计数，不再输出。
+winner 对应的完整 `BookTicker` 立即输出到 canonical Gate SHM；其他 source 后续到达同一个 `(symbol_id, id)` 时直接丢弃，不比较、不计数、不再输出。
 
-第一版 hot path 里的“到达 fusion”指 fusion 进程实际读到并处理该 `BookTicker` 的顺序 / 时间。独立 fusion process 通过 SHM 轮询多 source 时，这个顺序可能受 fusion reader 调度影响；因此必须同时记录 `source_local_ns` 和 `fusion_receive_ns`。如果后续目标改为“最早到达本机 data session 的 source 获胜”，就需要改用 `source_local_ns` 或更靠近 socket 的 RX timestamp，但这可能要求等待或改变输出规则。
+第一版 hot path 里的“到达 fusion”指 fusion 进程实际读到并处理该 `BookTicker` 的顺序 / 时间。独立 fusion process 通过 SHM 轮询多 source 时，这个顺序可能受 fusion reader 调度影响；因此 sidecar metadata 记录 winner 的 `source_local_ns` 和 `fusion_publish_ns`，用于离线拆分 source ingress latency 与 fusion hop latency。如果后续目标改为“最早到达本机 data session 的 source 获胜”，就需要改用 `source_local_ns` 或更靠近 socket 的 RX timestamp，但这可能要求等待或改变输出规则。
+
+2026-06-14 更新：第一版进一步收敛为 **不等待、不回看、不补洞、不比较 payload、不在 hot path 统计 duplicate / conflict**。fusion 只按 `(symbol_id, BookTicker.id)` 做 per-symbol 单调推进；latency 和 winner attribution 通过 canonical `BookTicker` bin、各 source `BookTicker` bin 和 sidecar metadata bin 离线分析。
 
 ## 已排除方向
 
@@ -50,38 +52,40 @@ winner 对应的完整 `BookTicker` 立即输出到 canonical Gate SHM；其他 
 - Tardis / historical converter 当前会把 `BookTicker.id` 写成输入行序号；这不是交易所 update id，不能直接用于 live fastest-route 语义验证。
 - 如果后续某种 historical / replay 数据要用于 fusion 算法回归，必须确认它保留了 Gate exchange orderbook id，或显式写清该 replay 只验证算法流程，不验证跨 source update identity。
 
-## 主算法
+## 第一版主算法
 
-第一版推荐使用 per-symbol first-arrival-by-id：
+第一版使用 per-symbol first-arrival-by-id，但 hot path 只做单调推进：
 
 ```text
 state[symbol_id]:
   last_published_id
-  last_published_quote
   last_published_source
 
 on BookTicker(ticker, source_id):
-  key = (ticker.symbol_id, ticker.id)
-
   if ticker.id > state.last_published_id:
-      publish ticker immediately
-      update state
-      count source_win[source_id]
-      if id jumps forward: count id_jump
-
-  else if ticker.id == state.last_published_id:
-      if quote/time matches last_published_quote:
-          drop duplicate_late
-      else:
-          drop same_id_conflict
-
+      ticker.local_ns = fusion_publish_ns
+      publish ticker immediately to canonical Gate SHM
+      state.last_published_id = ticker.id
+      state.last_published_source = source_id
+      write one sidecar metadata record
   else:
-      drop out_of_order_late
+      drop
 ```
 
 这里的 publish 必须保持完整 `BookTicker` 原子性，不能把不同 source 的 bid / ask、price / size 或 timestamp 做字段级混合。
 
-同一个 `(symbol_id, id)` 的 first arrival winner 是低延迟主事实；后到 source 的同 id 数据只用于诊断和一致性校验。若同 id 后到数据与 winner 的 quote 或 exchange timestamp 不一致，应计 `same_id_conflict`，默认不覆盖 canonical 输出。
+同一个 `(symbol_id, id)` 的 first arrival winner 是低延迟主事实。后到 source 的同 id 数据不比较、不修正、不写 metadata。`id` 跳变、缺失、乱序也不阻塞发布；只要 `ticker.id > last_published_id`，就立即推进 canonical stream。
+
+`state` 是 fusion process 内部 per-symbol 本地状态，不写入 SHM，也不暴露给策略。最小结构是：
+
+```cpp
+struct SymbolFusionState {
+  std::int64_t last_published_id;
+  std::int32_t last_published_source;
+};
+```
+
+这意味着 canonical stream 是 fusion 观察到的最快可发布 BBO stream，不是完整、连续、可回放修复的 order book stream。LeadLag 策略只需要 latest BBO，不用这条 stream 重建深度。
 
 ## 与 freshness merge 的关系
 
@@ -93,8 +97,7 @@ on BookTicker(ticker, source_id):
 当前结论是以 A 为主，B 只作为安全边界表达：
 
 - `id > last_published_id` 表示该 symbol 的 canonical quote 被推进，立即输出。
-- `id == last_published_id` 表示同一个 update 的后到样本，只用于 duplicate / conflict 统计。
-- `id < last_published_id` 表示 late / out-of-order，不输出。
+- `id <= last_published_id` 表示这个 source 的样本已经不能推进 canonical stream，直接丢弃。
 
 也就是说，fusion 不按 primary freshness threshold 切换 source，也不等待短窗口比较多个 source；它按 exchange update id 单调推进 canonical stream。
 
@@ -103,11 +106,10 @@ on BookTicker(ticker, source_id):
 推荐第一版采用独立 fusion process：
 
 ```text
-gate_data_session_A -> source A BookTicker SHM
-gate_data_session_B -> source B BookTicker SHM
-gate_data_session_C -> source C BookTicker SHM
-fusion_process      -> canonical Gate BookTicker SHM
-strategy            -> canonical Gate BookTicker SHM
+gate_data_session_0 -> source_0 BookTicker SHM ┐
+gate_data_session_1 -> source_1 BookTicker SHM ├-> gate_book_ticker_fusion -> canonical Gate BookTicker SHM -> strategy
+...                 -> ...                     │
+gate_data_session_N -> source_N BookTicker SHM ┘
 ```
 
 理由：
@@ -117,40 +119,131 @@ strategy            -> canonical Gate BookTicker SHM
 3. fusion 可以先 shadow 运行，不改变实盘策略输入。
 4. 若后续 benchmark 证明 source SHM -> fusion -> canonical SHM 的 hop latency 对 tail 不可接受，再评估同进程 N 路 WebSocket 直接融合。
 
-## 必要诊断
+首轮落地时 `N` 是配置项，运行配置先设为 `4`。第一版不把 N 路 WS connection 合并进 fusion 进程；每一路 source 仍是独立 `gate_data_session` process，fusion process 不连接 Gate，只读 SHM 并输出 canonical SHM。
 
-fusion 输出和 report 至少需要支持以下观测：
+4 路首版架构图：
 
-- `source_id`
-- `source_endpoint` / `connect_ip` / TLS 或 plain
-- `source_owner_cpu`
-- `source_local_ns`
-- `fusion_receive_ns`
-- `fusion_publish_ns`
-- `symbol_id`
-- `book_ticker_id`
-- `selection_reason`
-- `source_win_count`
-- `duplicate_late_count`
-- `out_of_order_late_count`
-- `same_id_conflict_count`
-- `id_jump_count`
-- `fusion_hop_latency_ns = fusion_publish_ns - source_local_ns`
+```text
+                    ┌──────────────────────────────────────────────┐
+                    │                 Gate Exchange                 │
+                    │          futures.book_ticker / SBE BBO         │
+                    └──────────────┬────────────┬────────────┬──────┘
+                                   │            │            │
+                                   ▼            ▼            ▼
 
-其中 `fusion_receive_ns` 用于定义“到达 fusion”的先后；`source_local_ns` 用于拆分 data session ingress 到 fusion publish 的本地链路。
-`id_jump_count` 只表示相邻已发布 `BookTicker.id` 非连续，不默认代表丢包；BBO stream 可能只在 best bid / ask 变化时发布，因此 orderbook id 自然跳变需要单独用 live 证据解释。
+┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
+│ gate_data_session_0   │  │ gate_data_session_1   │  │ gate_data_session_2   │  │ gate_data_session_3   │
+│ process               │  │ process               │  │ process               │  │ process               │
+│ WS source_id=0        │  │ WS source_id=1        │  │ WS source_id=2        │  │ WS source_id=3        │
+│ owner thread CPU A    │  │ owner thread CPU B    │  │ owner thread CPU C    │  │ owner thread CPU D    │
+│ decode SBE BBO        │  │ decode SBE BBO        │  │ decode SBE BBO        │  │ decode SBE BBO        │
+└──────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘
+           │                         │                         │                         │
+           ▼                         ▼                         ▼                         ▼
+┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
+│ source_0 BookTicker  │  │ source_1 BookTicker  │  │ source_2 BookTicker  │  │ source_3 BookTicker  │
+│ SHM                  │  │ SHM                  │  │ SHM                  │  │ SHM                  │
+└──────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘  └──────────┬───────────┘
+           │                         │                         │                         │
+           └─────────────────────────┴────────────┬────────────┴─────────────────────────┘
+                                                  ▼
+                              ┌──────────────────────────────────┐
+                              │ gate_book_ticker_fusion process  │
+                              │ one hot owner thread CPU F        │
+                              │ fixed round-robin source polling  │
+                              │ per-symbol last_published_id      │
+                              └────────────────┬─────────────────┘
+                                               │
+                                               ▼
+                              ┌──────────────────────────────────┐
+                              │ canonical Gate BookTicker SHM     │
+                              │ same BookTicker ABI               │
+                              │ local_ns = fusion_publish_ns      │
+                              └────────────────┬─────────────────┘
+                                               │
+                                               ▼
+                              ┌──────────────────────────────────┐
+                              │ LeadLag strategy / recorder       │
+                              │ reads canonical Gate source only  │
+                              └──────────────────────────────────┘
+```
+
+fusion 内部第一版只使用一个 hot owner thread，按固定 round-robin 读取 N 个 source SHM。`max_events_per_source` 建议首轮设为 `1`，避免单 source burst 饿死其它 source；后续用 benchmark 或 shadow 证据调整。
+
+## SHM 和时间戳语义
+
+fusion 输出的 canonical SHM 仍使用现有 `BookTicker` ABI：
+
+```text
+BookTicker.id          = Gate BookTicker.id
+BookTicker.symbol_id   = 原始 symbol_id
+BookTicker.exchange    = Gate
+BookTicker.exchange_ns = 原始 Gate BBO timestamp
+BookTicker.local_ns    = fusion_publish_ns
+bid / ask fields       = winner source 的完整原始 BBO
+```
+
+因此 source bin 和 fusion bin 的 latency 口径分别是：
+
+```text
+source_latency_ns = source.local_ns - source.exchange_ns
+fusion_latency_ns = fusion.local_ns - fusion.exchange_ns
+```
+
+fusion SHM 不额外加字段，避免影响现有 `DataReader`、recorder 和策略。
+
+## Sidecar Metadata
+
+为了离线 attribution，fusion 在每次发布 winner 时额外写一条 sidecar metadata binary record。该文件不参与策略热路径，不改变 canonical SHM ABI。
+
+建议 record 字段：
+
+```cpp
+struct FusionMetadataRecord {
+  std::int32_t source_id;
+  std::int32_t symbol_id;
+  std::int64_t book_ticker_id;
+  std::int64_t exchange_ns;
+  std::int64_t source_local_ns;
+  std::int64_t fusion_publish_ns;
+};
+```
+
+核心离线指标：
+
+```text
+source_latency_ns   = source_local_ns - exchange_ns
+fusion_latency_ns   = fusion_publish_ns - exchange_ns
+fusion_hop_ns       = fusion_publish_ns - source_local_ns
+winner_ratio        = published_by_source / total_published
+```
+
+不在 hot path 中比较同 `(symbol_id, id)` 的 quote，也不写 dropped ticker metadata。
 
 ## Shadow 验证
 
-在接入策略前，应先 shadow 跑多路 fusion，并生成对账报告：
+在接入策略前，应先 shadow 跑多路 fusion。shadow 的含义是：fusion 真实读取 N 路 Gate source 并输出 canonical SHM，但策略暂时仍读原来的 Gate source，不使用 canonical SHM 下单。
 
-1. 对每个 `(symbol_id, id)`，统计各 source 是否都出现、谁 first arrival、到达时间差分布。
-2. 校验同 `(symbol_id, id)` 的 quote、`exchange_ns` 是否一致。
-3. 统计 missing、duplicate、out-of-order、same-id conflict 和 id jump。
-4. 对比单 source 与 canonical 的 `lag_freshness_ns` p50 / p95 / p99，以及 `stale_lag_quote` reject。
-5. 统计 fusion hop latency p50 / p95 / p99 / max。
+推荐 shadow 数据采集：
 
-只有当 shadow 证据显示 `(symbol_id, id)` 在多路 Gate source 间可稳定对齐，且 canonical stream 明确改善 freshness 或 stale reject，才应让策略切到 canonical Gate SHM。
+```text
+source_0 SHM -> data_reader_recorder -> source_0.bin
+source_1 SHM -> data_reader_recorder -> source_1.bin
+source_2 SHM -> data_reader_recorder -> source_2.bin
+source_3 SHM -> data_reader_recorder -> source_3.bin
+fusion SHM   -> data_reader_recorder -> fusion.bin
+fusion sidecar metadata             -> fusion_metadata.bin
+```
+
+离线分析读取各 source bin、fusion bin 和 metadata bin，输出：
+
+1. 每一路 source 的 `source.local_ns - source.exchange_ns` 分布。
+2. canonical fusion 的 `fusion.local_ns - fusion.exchange_ns` 分布。
+3. metadata 中的 `fusion_publish_ns - source_local_ns` hop latency 分布。
+4. 按 source / symbol 统计 winner ratio。
+5. 对比 canonical 与单 source 的 latency p50 / p95 / p99 / max。
+
+只有当 shadow 证据显示 canonical stream 明确改善 Gate BBO freshness，且 fusion hop latency 可接受，才应让策略切到 canonical Gate SHM。
 
 ## 当前推荐结论
 
@@ -160,7 +253,10 @@ fusion 输出和 report 至少需要支持以下观测：
 独立 fusion process
 + N 路 Gate source SHM
 + per-symbol first-arrival-by-(symbol_id,id)
++ 不等待、不回看、不补洞、不比较 payload
 + canonical Gate BookTicker SHM
++ sidecar metadata bin
++ recorder bin 离线 latency 分析
 ```
 
-这是真正的多路融合选最快，不是 primary / standby，也不是 stale 后 fallback。核心正确性依赖 live Gate `BookTicker.id` 在同 symbol 多 source 间表示同一个 exchange orderbook update；该前提需要先用 shadow report 验证。
+这是真正的多路融合选最快，不是 primary / standby，也不是 stale 后 fallback。核心正确性依赖 live Gate `BookTicker.id` 在同 symbol 多 source 间表示同一个 exchange orderbook update；Gate 文档支持 `u` 是 order book update id，但未明确写出跨 connection 保证，因此第一版先用 shadow latency 和 attribution 证据确认收益，再接入策略。
