@@ -49,7 +49,7 @@ if(AQUILA_ORDER_ACK_DIAG_LEVEL GREATER_EQUAL 4
 endif()
 set(AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION
     "${AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION}" CACHE BOOL
-    "Deprecated compatibility cache value derived from AQUILA_ORDER_ACK_DIAG_LEVEL >= 4"
+    "Deprecated compatibility cache value derived from Order Ack/Data Session diagnostic levels"
     FORCE)
 
 enable_testing()

@@ -410,7 +410,7 @@ max_logs_per_second = 1000
   }
 }
 
-TEST(DataSessionConfigTest, RejectsGateSocketTimestampingBelowL4) {
+TEST(DataSessionConfigTest, ParsesGateSocketTimestampingAtL4Only) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
@@ -566,6 +566,43 @@ max_logs_per_second = 1000
   } else {
     ASSERT_FALSE(result.ok);
     EXPECT_NE(result.error.find("requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 1"),
+              std::string::npos);
+  }
+}
+
+TEST(DataSessionConfigTest, ParsesBinanceSocketTimestampingAtL4Only) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[data_session.diagnostics.timestamping]
+enabled = true
+rx_software = true
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+  if constexpr (aquila::core::kDataSessionDiagnosticSocketTimestampingEnabled) {
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_TRUE(result.value.connection.socket_timestamping.enabled);
+    EXPECT_TRUE(result.value.connection.socket_timestamping.rx_software);
+  } else {
+    ASSERT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("requires AQUILA_DATA_SESSION_DIAG_LEVEL >= 4"),
               std::string::npos);
   }
 }

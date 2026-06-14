@@ -40,39 +40,6 @@
 `-DAQUILA_ORDER_ACK_DIAG_LEVEL=0`。旧的 `AQUILA_ENABLE_SOCKET_TIMESTAMPING_ATTRIBUTION` 只作为兼容入口：
 未显式设置 `AQUILA_ORDER_ACK_DIAG_LEVEL` 时，旧开关 `OFF` 等价于最高 `L3`，旧开关 `ON` 等价于默认 `L4`。
 
-## Data Session BookTicker latency outlier
-
-`AQUILA_DATA_SESSION_DIAG_LEVEL` 是 data session 接收路径的编译期诊断上限，取值范围为 `0..4`，默认
-`L0`。`L0` 不改变 `MessageView` 布局，不在 data session / client 热路径采集额外时间戳，也不会输出
-BookTicker latency outlier log。运行期配置只能在编译期上限内开启诊断；越级开启时 parser fail fast。
-
-| Level | 名称 | 能力边界 | 代表字段 |
-| --- | --- | --- | --- |
-| `L0` | Off | 默认路径；Gate / Binance data session 行为与未开启诊断一致。 | 不输出 `data_session_book_ticker_latency_outlier`。 |
-| `L1` | Correlation | 只在 `BookTicker.local_ns - BookTicker.exchange_ns > threshold_ns` 时按限流写 Nova warning，用于定位 exchange / source / symbol / ticker id。 | `exchange`、`source_id`、`symbol_id`、`book_ticker_id`、`latency_ns`、`threshold_ns`、`exchange_ns`、`book_ticker_local_ns`。 |
-| `L2` | Userspace path | 在 L1 基础上从 WebSocket read / dispatch 到交易所 parser / SHM publish 增加本机 userspace 分段时间。 | `drive_read_enter_ns`、`read_return_ns`、`handler_entry_ns`、`parse_done_ns`、`shm_publish_done_ns`、`read_syscall_or_tls_ns`、`ws_dispatch_ns`、`parse_ns`、`shm_publish_ns`、`user_after_read_ns`。 |
-| `L3` | Reserved TCP state | 当前只保留 level 名称和配置边界；尚未实现 data session `TCP_INFO` / recv queue 采样。 | 暂无新增字段。 |
-| `L4` | RX socket timestamping | 在 L2 基础上复用 WebSocket socket timestamping，plain transport 且内核返回 RX software timestamp 时记录 `kernel_rx_ns`。TLS transport 当前没有 RX software timestamp 提取路径。 | `kernel_rx_available`、`kernel_rx_ns`、`network_or_exchange_ns`、`kernel_queue_ns`。 |
-
-运行期配置位于 `[data_session.diagnostics.latency_outlier]` 和
-`[data_session.diagnostics.timestamping]`，详见 `docs/data_session_config.md`。第一版不写 sidecar binary /
-CSV；outlier 样本直接写入当前 data session 的 Nova log，log key 为
-`data_session_book_ticker_latency_outlier`。默认阈值为 `threshold_ns=5_000_000`，默认限流为
-`max_logs_per_second=1000`；`max_logs_per_second=0` 表示完全禁止该 log。
-
-| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
-| --- | --- | --- | --- | --- | --- |
-| `data_session_book_ticker_latency_outlier` | Nova log key | experiment | warning log | BookTicker source latency 超过阈值时输出一条结构化诊断。 | 诊断方案改为稳定 CSV / binary schema 后重审。 |
-| `exchange` / `source_id` / `symbol_id` / `book_ticker_id` | `data_session_book_ticker_latency_outlier` | experiment | enum / integer | 关联交易所、n 路 source、symbol 和交易所 update id。 | 同上。 |
-| `latency_ns` / `threshold_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns | 主判定口径；当前 `latency_ns = book_ticker_local_ns - exchange_ns`。 | 同上。 |
-| `exchange_ns` / `book_ticker_local_ns` | `data_session_book_ticker_latency_outlier` | experiment | 本机 / 交易所时间戳 ns | 复核原始 latency 计算输入；Gate 当前 `exchange_ns` 使用 SBE `bbo.time` WebSocket server send timestamp。 | 同上。 |
-| `kernel_rx_available` / `kernel_rx_ns` | `data_session_book_ticker_latency_outlier` | experiment | bool / 本机 Unix epoch ns | L4 RX software timestamp 是否可用及其原始时间；不可用时不要把 `kernel_rx_ns=0` 当真实时间。 | socket timestamping 方案替换或删除后同步更新。 |
-| `drive_read_enter_ns` / `read_return_ns` / `handler_entry_ns` | `data_session_book_ticker_latency_outlier` | experiment | 本机 Unix epoch ns | L2 本机 read / WebSocket dispatch 分段输入。 | userspace 分段诊断不再使用时删除。 |
-| `parse_done_ns` / `shm_publish_done_ns` | `data_session_book_ticker_latency_outlier` | experiment | 本机 Unix epoch ns | L2 交易所 parser / decoder 完成和 SHM publish 完成时间。 | 同上。 |
-| `network_or_exchange_ns` / `kernel_queue_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns，缺失为 `-1` | L4 可用时把 `exchange_ns -> kernel_rx_ns -> drive_read_enter_ns` 拆开；仍受交易所 timestamp 语义和时钟偏移影响。 | 同上。 |
-| `read_syscall_or_tls_ns` / `ws_dispatch_ns` / `parse_ns` / `shm_publish_ns` / `user_after_read_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns，缺失为 `-1` | 判断主要延迟是否出在 read/TLS、WebSocket dispatch、交易所 parser、SHM publish 或 read 后 userspace。 | 同上。 |
-| `read_bytes` / `transport` | `data_session_book_ticker_latency_outlier` | experiment | bytes / `plain` 或 `tls` | 记录触发 outlier 的 read 批次大小和 transport 类型。 | 同上。 |
-
 ### 性能验证摘要（2026-06-01）
 
 为评估编译期诊断层级对 OrderSession / WebSocket 热路径的影响，使用 Release build 分别编译
@@ -113,6 +80,39 @@ cmake --build /home/liuxiang/tmp/aquila-bench-order-ack-l<N> \
 - `exchange_request_ingress_ns` / `exchange_response_egress_ns` / `exchange_process_ns` 是 L0 普通 response 字段，
   来源于 Gate Ack JSON header；解析成本与既有 `exchange_ns` header 解析同阶，不依赖 diagnostic window。
 - `L5` 的 pcap 对齐是离线分析面，不应在 OrderSession / WebSocket 热路径引入额外 runtime 成本。
+
+## Data Session BookTicker latency outlier
+
+`AQUILA_DATA_SESSION_DIAG_LEVEL` 是 data session 接收路径的编译期诊断上限，取值范围为 `0..4`，默认
+`L0`。`L0` 不改变 `MessageView` 布局，不在 data session / client 热路径采集额外时间戳，也不会输出
+BookTicker latency outlier log。运行期配置只能在编译期上限内开启诊断；越级开启时 parser fail fast。
+
+| Level | 名称 | 能力边界 | 代表字段 |
+| --- | --- | --- | --- |
+| `L0` | Off | 默认路径；Gate / Binance data session 行为与未开启诊断一致。 | 不输出 `data_session_book_ticker_latency_outlier`。 |
+| `L1` | Correlation | 只在 `BookTicker.local_ns - BookTicker.exchange_ns > threshold_ns` 时按限流写 Nova warning，用于定位 exchange / source / symbol / ticker id。 | `exchange`、`source_id`、`symbol_id`、`book_ticker_id`、`latency_ns`、`threshold_ns`、`exchange_ns`、`book_ticker_local_ns`。 |
+| `L2` | Userspace path | 在 L1 基础上从 WebSocket read / dispatch 到交易所 parser / SHM publish 增加本机 userspace 分段时间。 | `drive_read_enter_ns`、`read_return_ns`、`handler_entry_ns`、`parse_done_ns`、`shm_publish_done_ns`、`read_syscall_or_tls_ns`、`ws_dispatch_ns`、`parse_ns`、`shm_publish_ns`、`user_after_read_ns`。 |
+| `L3` | Reserved TCP state | 当前只保留 level 名称和配置边界；尚未实现 data session `TCP_INFO` / recv queue 采样。 | 暂无新增字段。 |
+| `L4` | RX socket timestamping | 在 L2 基础上复用 WebSocket socket timestamping，plain transport 且内核返回 RX software timestamp 时记录 `kernel_rx_ns`。TLS transport 当前没有 RX software timestamp 提取路径。 | `kernel_rx_available`、`kernel_rx_ns`、`network_or_exchange_ns`、`kernel_queue_ns`。 |
+
+运行期配置位于 `[data_session.diagnostics.latency_outlier]` 和
+`[data_session.diagnostics.timestamping]`，详见 `docs/data_session_config.md`。第一版不写 sidecar binary /
+CSV；outlier 样本直接写入当前 data session 的 Nova log，log key 为
+`data_session_book_ticker_latency_outlier`。默认阈值为 `threshold_ns=5_000_000`，默认限流为
+`max_logs_per_second=1000`；`max_logs_per_second=0` 表示完全禁止该 log。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `data_session_book_ticker_latency_outlier` | Nova log key | experiment | warning log | BookTicker source latency 超过阈值时输出一条结构化诊断。 | 诊断方案改为稳定 CSV / binary schema 后重审。 |
+| `exchange` / `source_id` / `symbol_id` / `book_ticker_id` | `data_session_book_ticker_latency_outlier` | experiment | enum / integer | 关联交易所、n 路 source、symbol 和交易所 update id。 | 同上。 |
+| `latency_ns` / `threshold_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns | 主判定口径；当前 `latency_ns = book_ticker_local_ns - exchange_ns`。 | 同上。 |
+| `exchange_ns` / `book_ticker_local_ns` | `data_session_book_ticker_latency_outlier` | experiment | 本机 / 交易所时间戳 ns | 复核原始 latency 计算输入；Gate 当前 `exchange_ns` 使用 SBE `bbo.time` WebSocket server send timestamp。 | 同上。 |
+| `kernel_rx_available` / `kernel_rx_ns` | `data_session_book_ticker_latency_outlier` | experiment | bool / 本机 Unix epoch ns | L4 RX software timestamp 是否可用及其原始时间；不可用时不要把 `kernel_rx_ns=0` 当真实时间。 | socket timestamping 方案替换或删除后同步更新。 |
+| `drive_read_enter_ns` / `read_return_ns` / `handler_entry_ns` | `data_session_book_ticker_latency_outlier` | experiment | 本机 Unix epoch ns | L2 本机 read / WebSocket dispatch 分段输入。 | userspace 分段诊断不再使用时删除。 |
+| `parse_done_ns` / `shm_publish_done_ns` | `data_session_book_ticker_latency_outlier` | experiment | 本机 Unix epoch ns | L2 交易所 parser / decoder 完成和 SHM publish 完成时间。 | 同上。 |
+| `network_or_exchange_ns` / `kernel_queue_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns，缺失为 `-1` | L4 可用时把 `exchange_ns -> kernel_rx_ns -> drive_read_enter_ns` 拆开；仍受交易所 timestamp 语义和时钟偏移影响。 | 同上。 |
+| `read_syscall_or_tls_ns` / `ws_dispatch_ns` / `parse_ns` / `shm_publish_ns` / `user_after_read_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns，缺失为 `-1` | 判断主要延迟是否出在 read/TLS、WebSocket dispatch、交易所 parser、SHM publish 或 read 后 userspace。 | 同上。 |
+| `read_bytes` / `transport` | `data_session_book_ticker_latency_outlier` | experiment | bytes / `plain` 或 `tls` | 记录触发 outlier 的 read 批次大小和 transport 类型。 | 同上。 |
 
 ## Gate OrderSession
 
