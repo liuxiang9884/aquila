@@ -1,8 +1,157 @@
-# Gate 多路最快行情融合 Shadow 结果
+# Gate / Binance 多路最快行情融合 Shadow 结果
 
-本文记录 Gate `BookTicker` fastest-route fusion 的 shadow 实测结果。设计背景和算法语义见
+本文记录 Gate / Binance `BookTicker` fastest-route fusion 的 shadow 实测结果。设计背景和算法语义见
 `docs/gate_fastest_route_fusion_design.md`，实现计划见
 `docs/gate_fastest_route_fusion_implementation_plan.md`。
+
+## 2026-06-14 30-symbol Gate / Binance 4-source 30m L4
+
+### 运行条件
+
+- Gate run directory: `/home/liuxiang/tmp/20260614_133704_gate_fusion_30symbols_4src_30m_l4_outlier_release/`
+- Binance run directory: `/home/liuxiang/tmp/20260614_133704_binance_fusion_30symbols_4src_30m_l4_outlier_release/`
+- time: `2026-06-14T13:37:17Z` 到 `2026-06-14T14:07:17Z`
+- duration: `1800s`
+- binary: `build/release/tools`
+- build diagnostics: `AQUILA_DATA_SESSION_DIAG_LEVEL=4`
+- latency outlier threshold: `5ms`
+- outlier log rate limit: `max_logs_per_second=1000`
+- symbols: `config/instruments/usdt_futures_common_gate_binance_20260602.csv` 对应的 30 个实盘测试 symbol
+- source count: `N=4`
+- Gate source connection: 4 条独立 Gate private plain WebSocket connection
+- Binance source connection: 4 条独立 Binance public TLS WebSocket connection
+- Gate CPU: sources `16-19`，fusion `20`，recorders `21-25`，log backend `31`
+- Binance CPU: sources `0-3`，fusion `4`，recorders `5-9`，log backend `15`
+
+运行边界：
+
+- Gate / Binance data session、fusion 和 recorder 日志均显示本次记录窗口 `result=ok`。
+- 启动脚本的最终 process wait / exit 记录不作为证据源：记录窗口结束后部分 source 进程没有按脚本预期退出，
+  后续只清理了本次 shadow run 的残留 pid。结论以 data session / fusion / recorder 的 `result=ok` 和 bin 文件为准。
+- Gate private plain 开启了 RX software timestamping，因此 L4 能把 `exchange_ns -> kernel_rx_ns` 与本机
+  kernel / read / user path 拆开。
+- Binance public TLS 当前拿不到 socket RX timestamp，因此 L4 只能说明 parser / publish 不是主因，
+  不能把 TLS 前的延迟进一步严格拆成网络或本机 kernel。
+- Binance `source_3` 的 `>5ms` outlier 非常密集，outlier log 受 `max_logs_per_second=1000`
+  rate limit 影响；`>5ms` 数量以 recorder bin 统计为准，log 数量只作为分段样本。
+- 这是 shadow 运行；策略没有消费 canonical fusion SHM。
+
+分析输出目录：
+
+```text
+/home/liuxiang/tmp/20260614_133704_gate_fusion_30symbols_4src_30m_l4_outlier_release/analysis/published_fusion_l4/
+/home/liuxiang/tmp/20260614_133704_binance_fusion_30symbols_4src_30m_l4_outlier_release/analysis/published_fusion_l4/
+```
+
+### Gate Latency
+
+下表单位为 `ms`。source latency 是 `source.local_ns - source.exchange_ns`；
+canonical fusion latency 是 `fusion.local_ns - fusion.exchange_ns`；
+fusion hop 是 `fusion_publish_ns - source_local_ns`。
+
+| stream | count | p50 | p95 | p99 | p99.9 | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| source_0 | 1,072,720 | 0.211 | 0.289 | 0.438 | 5.521 | 133.787 |
+| source_1 | 1,072,640 | 0.278 | 0.354 | 0.505 | 6.217 | 156.249 |
+| source_2 | 1,072,914 | 0.144 | 0.261 | 0.380 | 3.751 | 206.863 |
+| source_3 | 1,072,638 | 0.249 | 0.322 | 0.482 | 5.616 | 156.272 |
+| fusion | 1,075,552 | 0.144 | 0.234 | 0.259 | 0.301 | 17.099 |
+| fusion_hop | 1,076,803 | 0.000544 | 0.000686 | 0.000794 | 0.003790 | 0.494518 |
+
+Gate fusion 相对每个 percentile 上的最佳单路 source：
+
+| percentile | best single source | best single | fusion | improvement |
+| --- | --- | ---: | ---: | ---: |
+| p50 | source_2 | 0.144 | 0.144 | -0.001 / -0.58% |
+| p95 | source_2 | 0.261 | 0.234 | 0.028 / 10.57% |
+| p99 | source_2 | 0.380 | 0.259 | 0.120 / 31.71% |
+| p99.9 | source_2 | 3.751 | 0.301 | 3.450 / 91.97% |
+
+Gate winner ratio：
+
+| source | winner count | ratio |
+| --- | ---: | ---: |
+| 0 | 215,587 | 20.02% |
+| 1 | 58,857 | 5.47% |
+| 2 | 736,685 | 68.41% |
+| 3 | 65,674 | 6.10% |
+
+Gate `>5ms` recorder bin 统计：
+
+| stream | count | total | ratio |
+| --- | ---: | ---: | ---: |
+| source_0 | 1,136 | 1,072,720 | 0.105899% |
+| source_1 | 1,132 | 1,072,640 | 0.105534% |
+| source_2 | 971 | 1,072,914 | 0.090501% |
+| source_3 | 1,125 | 1,072,638 | 0.104882% |
+| fusion | 3 | 1,075,552 | 0.000279% |
+| fusion_hop | 0 | 1,076,803 | 0.000000% |
+
+Gate L4 outlier log 显示所有 `>5ms` source 样本都有 `kernel_rx_ns`。这些样本的主导阶段是
+`exchange_ns -> kernel_rx_ns`，也就是 `network_or_exchange_ns`；本机 `kernel_rx_ns -> read_return_ns`、
+read callback、parser 和 SHM publish 基本是 us 级，不是 `>5ms` outlier 的主要来源。这个结论不能继续
+把 `network_or_exchange_ns` 严格拆成公网网络、Gate server send timestamp 误差或交易所侧排队；它只能排除
+本机 kernel queue / 用户态 parser / SHM publish 是主要原因。
+
+### Binance Latency
+
+下表单位为 `ms`。
+
+| stream | count | p50 | p95 | p99 | p99.9 | max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| source_0 | 3,367,135 | 1.266 | 1.813 | 1.974 | 3.196 | 28.051 |
+| source_1 | 3,364,800 | 1.179 | 1.731 | 1.902 | 4.172 | 28.033 |
+| source_2 | 3,365,385 | 1.215 | 1.782 | 2.125 | 26.283 | 99.431 |
+| source_3 | 3,367,135 | 10.697 | 29.581 | 33.563 | 45.589 | 131.551 |
+| fusion | 3,367,135 | 1.109 | 1.641 | 1.754 | 1.926 | 3.544 |
+| fusion_hop | 3,370,074 | 0.000920 | 0.001178 | 0.001395 | 0.009458 | 1.377708 |
+
+Binance fusion 相对每个 percentile 上的最佳单路 source：
+
+| percentile | best single source | best single | fusion | improvement |
+| --- | --- | ---: | ---: | ---: |
+| p50 | source_1 | 1.179 | 1.109 | 0.069 / 5.88% |
+| p95 | source_1 | 1.731 | 1.641 | 0.090 / 5.18% |
+| p99 | source_1 | 1.902 | 1.754 | 0.148 / 7.79% |
+| p99.9 | source_0 | 3.196 | 1.926 | 1.271 / 39.75% |
+
+Binance winner ratio：
+
+| source | winner count | ratio |
+| --- | ---: | ---: |
+| 0 | 314,382 | 9.33% |
+| 1 | 1,850,383 | 54.91% |
+| 2 | 1,193,458 | 35.41% |
+| 3 | 11,851 | 0.35% |
+
+Binance `>5ms` recorder bin 统计：
+
+| stream | count | total | ratio |
+| --- | ---: | ---: | ---: |
+| source_0 | 1,381 | 3,367,135 | 0.041014% |
+| source_1 | 2,510 | 3,364,800 | 0.074596% |
+| source_2 | 17,237 | 3,365,385 | 0.512185% |
+| source_3 | 2,562,688 | 3,367,135 | 76.108858% |
+| fusion | 0 | 3,367,135 | 0.000000% |
+| fusion_hop | 0 | 3,370,074 | 0.000000% |
+
+Binance L4 outlier log 中 `kernel_rx_available=false`，因为当前 Binance source 走 TLS。L4 结果可以说明
+parser / SHM publish 不是主要来源，但不能严格判断 TLS 前的主导延迟属于网络还是本机 kernel。
+`source_3` 明显异常：单路 `>5ms` 比例超过 `76%`，但它在 fusion winner 中只占 `0.35%`，
+canonical fusion 在本次 30 分钟窗口内没有 `>5ms` 记录。
+
+### 当前结论
+
+1. 30-symbol / 30m / N=4 shadow 显示 fastest-route fusion 对 tail 非常有效。Gate p99 比最佳单路降低
+   `31.71%`，p99.9 降低 `91.97%`；Binance p99 比最佳单路降低 `7.79%`，p99.9 降低 `39.75%`。
+2. fusion hop 常态很小：Gate hop p99 `0.794us`，Binance hop p99 `1.395us`。本次 Gate / Binance
+   `fusion_hop > 5ms` 均为 `0`。
+3. Gate `>5ms` source outlier 的主导阶段是 `exchange_ns -> kernel_rx_ns`；本机 kernel queue、
+   read callback、parser 和 SHM publish 不是主要来源。
+4. Binance 因 TLS 暂时不能确认网络 / kernel 细分，但可以排除 parser / SHM publish 是主因。
+5. 本次结果支持继续推进 canonical fusion shadow 和接策略方案设计，但还不是策略切换证据。策略接入前需要
+   多轮重复 shadow、确认 source 异常是否稳定、评估 L4 outlier log 对热路径的扰动，并把 canonical stream
+   与 LeadLag `lag_freshness_ns` / `stale_lag_quote` reject 对齐。
 
 ## 2026-06-14 BTC / ETH 4-source 30m
 

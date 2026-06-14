@@ -30,6 +30,9 @@ exchange/binance/market_data/data_session_config.h
 exchange/binance/market_data/data_session_config.cpp
 tools/binance/data_session.cpp
 tools/binance/futures_book_ticker_probe.cpp
+tools/market_data/binance_book_ticker_fusion.cpp
+tools/market_data/book_ticker_fusion_runner.h
+config/market_data_fusion/binance_book_ticker_fusion_4sources.toml
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
 scripts/binance/market_data/query_um_futures_contracts.py
 scripts/test/binance/market_data/query_um_futures_contracts_test.py
@@ -67,6 +70,17 @@ SIGINT / SIGTERM stop handler。
 `nova::LogConfig::FromToml(toml["log"])` 和 data session config 生成。仓库示例 log 文件默认写到
 `/home/liuxiang/log/`，并用 `binance_data_session` 名称区分 file sink、console sink 和 backend
 log thread；Nova file sink 会在实际文件名上追加启动时间。
+
+Binance fastest-route fusion 已复用通用 `BookTicker` fusion runner，入口是
+`binance_book_ticker_fusion`，示例配置是
+`config/market_data_fusion/binance_book_ticker_fusion_4sources.toml`。它读取 N 路 Binance source
+`BookTicker` SHM，按 `(symbol_id, BookTicker.id)` first arrival 输出 canonical Binance
+`BookTicker` SHM，并写 sidecar metadata bin；设计和 shadow 结果统一记录在
+`docs/gate_fastest_route_fusion_design.md` 和 `docs/gate_fastest_route_fusion_shadow_results.md`。
+2026-06-14 的 30-symbol、`N=4`、30 分钟 release L4 shadow 中，Binance fusion p99 / p99.9
+相对最佳单路分别改善 `7.79%` / `39.75%`，fusion hop p99 为 `1.395us`，canonical fusion
+没有 `>5ms` 记录。由于 Binance source 走 TLS，当前 L4 不能拆出 `kernel_rx_ns`，只能排除 parser /
+SHM publish 是主要 outlier 来源。
 
 ## Binance 合约元数据脚本
 

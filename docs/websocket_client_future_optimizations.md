@@ -19,7 +19,9 @@
 1. 不应继续只抠 `FrameCodec` p50；除非真实 profile 指向 frame decode，否则后续优化应转向 TLS read/write、真实行情 parser、订单 payload 和 runtime loop。
 2. 不应直接把默认 clock source 改成 coarse / TSC；active loop 当前每 4096 次 spin 才检查一次时钟，coarse 的单次取时收益不足以抵消粒度风险。
 3. 不应让策略直接消费多条 WebSocket 并自行选择最快数据；多路行情应先收敛成一条 canonical market data stream。
-4. 不应未经 live 证据就增加大量 WebSocket 连接；当前 Gate 多路只读评估和 LeadLag live freshness 拆解已足以支持先做 2 路 primary / standby canonical fusion，扩到 N=3 / N=4 必须再拿 source-level 证据。
+4. 不应未经 live 证据就继续增加大量 WebSocket 连接；当前 Gate / Binance 已有 `N=4`
+   fastest-route fusion shadow 证据，后续扩到更大 N 或接入策略前仍必须拿 source-level
+   重复 shadow 证据。
 5. 通用 WebSocket write encode 近期不再作为主要瓶颈；真实下单链路应优先测 JSON serialization、签名、timestamp、TLS/socket write 和 exchange ack。
 
 ## Read Path
@@ -64,49 +66,43 @@ NIC / kernel TCP receive queue
 1. Gate 多路只读评估已经做过，后续不要重复把“再做只读 best-of-N”作为主线；只读工具继续作为回归和扩路前验证入口。
 2. LeadLag 30-symbol live freshness 拆解显示，Gate lag quote tail 主要不是 `exchange_ns -> local_ns` 网络接收慢，而是策略触发时本地最新 Gate quote 已经很久没有更新；当前应优先降低 `lag_freshness_ns` p95 / p99 和 `stale_lag_quote` reject，而不是继续只优化 `FrameCodec` 或单路 parser p50。
 3. 多路行情的生产目标是输出一条 canonical Gate `BookTicker` stream。策略、risk 和 order path 默认仍只消费一条 Gate market data SHM；多路选择、去重、source health 和 fallback 不进入策略热路径。
+4. 2026-06-14 Gate / Binance 已各完成一次 30-symbol、`N=4`、30 分钟 release L4 shadow。
+   Gate fusion p99 / p99.9 相对最佳单路 source 改善 `31.71%` / `91.97%`；
+   Binance fusion p99 / p99.9 改善 `7.79%` / `39.75%`。Gate `>5ms`
+   source outlier 主导阶段是 `exchange_ns -> kernel_rx_ns`；Binance 因 TLS 暂时不能拆出
+   `kernel_rx_ns`，但 parser / SHM publish 不是主要来源。详细结果见
+   `docs/gate_fastest_route_fusion_shadow_results.md`。
 
-推荐第一阶段形态：
+当前推荐第一阶段形态：
 
 ```text
-WSA + WSB warmup
--> selected primary
--> primary canonical stream
--> secondary standby monitor
+N x exchange data_session process
+-> N x source BookTicker SHM
+-> exchange_book_ticker_fusion process
+-> canonical exchange BookTicker SHM
 -> strategy fanout
 ```
 
-其中 WSA / WSB 典型组合是 Gate private plain 主路加一条 standby，例如 Gate public TLS、
-Gate public TLS + `connect_ip` pinning，或另一条 private plain 连接。实际组合必须记录
-endpoint、`connect_ip`、TLS/plain、owner CPU 和连接限额；不要只用逻辑 host 名称描述。
+其中 `exchange_book_ticker_fusion` 当前对应 `gate_book_ticker_fusion` 或
+`binance_book_ticker_fusion`。实际组合必须记录 endpoint、`connect_ip`、TLS/plain、owner CPU、
+source id、SHM name、log backend CPU 和连接限额；不要只用逻辑 host 名称描述。
 
 验收标准：
 
-1. warmup 输出 `selected`、`reason`、health、gap、p50、p99、`SO_INCOMING_CPU`。
-2. 交易中策略只消费一条 canonical stream。
-3. secondary 持续 monitor，不直接进入策略。
-4. 切换必须有 hysteresis，避免 feed flapping。
-5. source switch 后的 canonical output 必须保留整条 `BookTicker` 原子性，不能把不同 source 的 bid / ask 混合。
-6. 同一 update 只输出一次；旧 `exchange_ns`、旧 update 或乱序消息默认丢弃并计数。
-7. report 至少对比单路与 canonical 的 `lag_freshness_ns` p50 / p95 / p99、`stale_lag_quote` reject、duplicate、out-of-order、source switch 次数和 fusion hop 延迟。
+1. 交易中策略只消费一条 canonical stream。
+2. canonical output 必须保留整条 `BookTicker` 原子性，不能把不同 source 的 bid / ask 混合。
+3. 同一 `(symbol_id, BookTicker.id)` 只输出一次；旧 id 或乱序消息默认丢弃。第一版 hot path
+   不等待、不回看、不补洞、不比较 payload。
+4. source-level shadow 必须记录每一路 source latency、canonical fusion latency、fusion hop、
+   winner ratio、`>5ms` outlier 和 L4 attribution 边界。
+5. report 至少对比单路与 canonical 的 `lag_freshness_ns` p50 / p95 / p99、
+   `stale_lag_quote` reject、winner ratio 和 fusion hop 延迟。
 
 生产观测至少记录 remote peer、local port、NIC、IRQ/RSS/RPS/XPS、owner CPU、NUMA、socket buffer、OpenSSL、kernel、交易所 endpoint 和连接限额。
 
-推荐第二阶段形态是在第一阶段稳定后增加 per-symbol best freshness selection：
-
-```text
-Gate source A latest BookTicker[symbol]
-Gate source B latest BookTicker[symbol]
--> per-symbol source health / freshness selector
--> canonical Gate BookTicker stream
-```
-
-选择规则应保守：
-
-1. 每个 symbol 按完整 `BookTicker` 替换，不做字段级 merge。
-2. 如果 primary freshness 未超过阈值，默认不切；只有 primary stale 且 standby 有更新 quote 时才切换。
-3. 切换阈值需要按 symbol 配置或由 live 证据推导，避免低流动性 symbol 因正常低频更新被误判。
-4. canonical 输出应附带或旁路输出 `source_id`、`source_switch_reason`、`source_exchange_ns`、`source_local_ns` 和 `fusion_publish_ns`，供 live report 分层统计。
-5. 若两路都 stale，fusion 不伪造新鲜度；仍输出最新 quote 或显式保持 stale 状态，由 freshness guard 继续拦截。
+如果后续需要 source health / fallback，它应作为 fusion 层的旁路诊断和保护逻辑设计，
+不要回到 primary / standby stale 后切换作为主方案。第一版 canonical SHM 不额外加字段；
+winner attribution 通过 sidecar metadata bin 离线分析。
 
 不推荐第一版采用“策略内多源 `DataReader`”。该方案少一个 fusion SHM hop，但会把去重、乱序、
 source health、fallback 和诊断放入策略热路径，不符合当前 canonical stream 边界。除非后续 benchmark
