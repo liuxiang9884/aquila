@@ -14,7 +14,9 @@
 
 截至 2026-06-14，Task 1-5 已分提交落地：fusion core、metadata writer、TOML config parser、`gate_book_ticker_fusion` tool、4-source fusion 示例配置和 5 个 recorder 配置均已实现。Task 6 实际复用并扩展仓库已有 `scripts/market_data/analyze_book_ticker_fusion_latency.py`，没有新增重名 analyzer；该脚本保留旧的 4 路 combination 模式，并新增读取 source / fusion `BookTicker` bin 与 sidecar metadata bin 的 published fusion 模式。
 
-Task 7 仍用于最终综合验证和 onboarding 同步。
+2026-06-14 已完成一次 `BTC_USDT` / `ETH_USDT`、`N=4`、30 分钟 release shadow，运行目录为 `/home/liuxiang/tmp/20260614_051319_gate_fusion_btc_eth_4src_30m_release/`。结果显示 canonical fusion latency p99 `379.303us`、p99.9 `686.858us`，fusion hop p99 `1.029us`、p99.9 `1.312us`；fusion winner 与离线 source-bin fastest 差异 `65 / 57656`，约 `0.1127%`。详细结果见 `docs/gate_fastest_route_fusion_shadow_results.md`。
+
+Task 7 已完成文档和 onboarding 同步；后续工作是扩大 shadow 范围，而不是继续补第一版实现。
 
 ## Tech Stack
 

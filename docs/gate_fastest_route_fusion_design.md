@@ -260,6 +260,73 @@ fusion sidecar metadata             -> fusion_metadata.bin
 
 只有当 shadow 证据显示 canonical stream 明确改善 Gate BBO freshness，且 fusion hop latency 可接受，才应让策略切到 canonical Gate SHM。
 
+## Shadow 结果
+
+详细结果归档在 `docs/gate_fastest_route_fusion_shadow_results.md`。
+
+2026-06-14 已完成一次 `BTC_USDT` / `ETH_USDT`、`N=4`、30 分钟 release shadow：
+
+- 运行目录：`/home/liuxiang/tmp/20260614_051319_gate_fusion_btc_eth_4src_30m_release/`
+- 时间：`2026-06-14T05:16:02Z` 到 `2026-06-14T05:46:02Z`
+- endpoint：4 条 Gate private plain connection，`fxws-private.gateapi.io:80`，`connect_ip=10.0.1.154`
+- source CPU：`16-19`，fusion CPU：`20`，recorder CPU 手动修正到 `21-25`
+- 所有 process exit status 为 `0`，stderr 为空，5 个 recorder `skipped=0` / `overruns=0`
+
+本次 recorder config 的 affinity 没有实际生效，启动后约 1 分钟用 `taskset` 手动修正；
+因此该 run 不用于证明 recorder affinity config 行为。
+
+核心结果：
+
+| metric | result |
+| --- | ---: |
+| fusion process published | 57,803 |
+| fusion recorder records | 57,656 |
+| fusion records matched metadata by identity | 57,656 / 57,656 |
+| metadata without fusion recorder record | 147 |
+| canonical fusion latency p50 | 190,598ns |
+| canonical fusion latency p95 | 296,827ns |
+| canonical fusion latency p99 | 379,303ns |
+| canonical fusion latency p99.9 | 686,858ns |
+| fusion hop p50 | 484ns |
+| fusion hop p95 | 785ns |
+| fusion hop p99 | 1,029ns |
+| fusion hop p99.9 | 1,312ns |
+
+单路 source 的 `source.local_ns - source.exchange_ns`：
+
+| source | p50 | p95 | p99 | p99.9 |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 234,970ns | 465,719ns | 2,045,999ns | 14,853,771ns |
+| 1 | 341,552ns | 763,578ns | 5,047,139ns | 27,463,312ns |
+| 2 | 409,613ns | 890,819ns | 4,183,991ns | 11,446,142ns |
+| 3 | 209,570ns | 370,879ns | 1,497,621ns | 10,656,569ns |
+
+winner ratio：
+
+| source | ratio |
+| --- | ---: |
+| 0 | 45.6879% |
+| 1 | 3.2922% |
+| 2 | 1.4619% |
+| 3 | 49.5580% |
+
+离线用 source bin 按同一 `(symbol_id, BookTicker.id)` 查 `source.local_ns` 最小 source，
+再和 fusion metadata 的 winner 对比：
+
+| scope | same | different | difference ratio |
+| --- | ---: | ---: | ---: |
+| at least one source available | 57,591 | 65 | 0.1127% |
+| all four sources available | 56,267 | 64 | 0.1136% |
+
+差异幅度 `fusion_winner_source_local_ns - source_bin_fastest_local_ns` 的 p50 为 `93ns`、
+p99 为 `745ns`、max 为 `1,353ns`。这说明 fusion winner 与离线 source-bin fastest 基本一致，
+少量差异符合 V1 语义：fusion 不等待四路都到齐，而是发布 fusion process 实际先处理到且能推进
+`last_published_id` 的 source。
+
+本次结果支持继续沿用独立 fusion process + sidecar metadata 的 V1 路线，并继续扩大 shadow；
+但它只是 2-symbol / 30 分钟结果，不能单独作为策略切换依据。策略接入前仍需更多 symbol、更长时间、
+明确 recorder affinity 行为，并结合 LeadLag `lag_freshness_ns` / `stale_lag_quote` reject 验证。
+
 ## 当前推荐结论
 
 第一版设计应采用：
