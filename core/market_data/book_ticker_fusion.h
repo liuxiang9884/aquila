@@ -17,7 +17,6 @@ struct BookTickerFusionDecision {
   std::int64_t book_ticker_id{0};
   std::int64_t source_local_ns{0};
   std::int64_t fusion_publish_ns{0};
-  BookTicker ticker{};
 };
 
 class BookTickerFusionCore {
@@ -48,18 +47,14 @@ class BookTickerFusionCore {
     }
 
     state.last_published_id = ticker.id;
-    state.last_published_source = source_id;
 
     decision.publish = true;
-    decision.ticker = ticker;
-    decision.ticker.local_ns = fusion_publish_ns;
     return decision;
   }
 
  private:
   struct SymbolFusionState {
     std::int64_t last_published_id{std::numeric_limits<std::int64_t>::min()};
-    std::int32_t last_published_source{-1};
   };
 
   std::vector<SymbolFusionState> states_;

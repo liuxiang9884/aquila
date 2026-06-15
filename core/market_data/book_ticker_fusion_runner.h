@@ -54,7 +54,8 @@ class BookTickerFusionRunner {
           continue;
         }
 
-        publisher_.OnBookTicker(decision.ticker);
+        ticker.local_ns = fusion_publish_ns;
+        publisher_.OnBookTicker(ticker);
         ++stats.published_count;
 
         const FusionMetadataRecord record{
