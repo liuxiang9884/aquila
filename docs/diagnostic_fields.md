@@ -114,6 +114,19 @@ CSV；outlier 样本直接写入当前 data session 的 Nova log，log key 为
 | `read_syscall_or_tls_ns` / `ws_dispatch_ns` / `parse_ns` / `shm_publish_ns` / `user_after_read_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns，缺失为 `-1` | 判断主要延迟是否出在 read/TLS、WebSocket dispatch、交易所 parser、SHM publish 或 read 后 userspace。 | 同上。 |
 | `read_bytes` / `transport` | `data_session_book_ticker_latency_outlier` | experiment | bytes / `plain` 或 `tls` | 记录触发 outlier 的 read 批次大小和 transport 类型。 | 同上。 |
 
+## Market Data Fusion
+
+BookTicker fusion 当前通过 `AQUILA_BOOK_TICKER_FUSION_METADATA_MODE=file|off` 在编译期决定是否启用
+sidecar metadata。`file` 模式写 `fusion_metadata.bin`；`off` 模式不打开 metadata 文件，不构造
+`FusionMetadataRecord`，但仍保留基础 read / publish 运行统计。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `metadata_enabled` | `book_ticker_fusion` CLI stdout / stderr、data fusion Nova log | stable | `true` / `false` | 表示当前 build 是否编译启用 fusion sidecar metadata，避免把空 `metadata_output` 误读为写入失败。 | metadata policy 被其他稳定 build metadata 取代后重审。 |
+| `metadata_output` | `book_ticker_fusion` CLI stdout / stderr、data fusion dry-run log | stable | path 或 `disabled` | metadata enabled 时记录 sidecar binary 路径；disabled 时固定为 `disabled`。 | 同上。 |
+| `fusion_metadata_write_errors` / `metadata_write_errors` | data fusion Nova log / `book_ticker_fusion` CLI stdout | stable | count | metadata enabled 时记录 sidecar write failure 计数；metadata disabled build 中固定为 `0`。 | 同上。 |
+| `fusion_total_read_count` / `fusion_total_published_count` | data fusion Nova log | stable | count | fusion thread 停止时汇总 source SHM read 数和 canonical SHM publish 数。 | fusion summary schema 被替换后同步更新。 |
+
 ## Gate OrderSession
 
 组件入口：

@@ -9,7 +9,7 @@
 
 #include "core/market_data/book_ticker_fusion.h"
 #include "core/market_data/book_ticker_fusion_config.h"
-#include "core/market_data/book_ticker_fusion_metadata.h"
+#include "core/market_data/book_ticker_fusion_metadata_policy.h"
 #include "core/market_data/data_shm.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/runtime_policy.h"
@@ -22,13 +22,14 @@ struct BookTickerFusionPollStats {
   std::uint64_t metadata_write_errors{0};
 };
 
-class BookTickerFusionRunner {
+template <typename MetadataPolicy>
+class BasicBookTickerFusionRunner {
  public:
-  explicit BookTickerFusionRunner(const BookTickerFusionConfig& config)
+  explicit BasicBookTickerFusionRunner(const BookTickerFusionConfig& config)
       : max_events_per_source_(config.max_events_per_source),
         fusion_(config.max_symbol_id),
         publisher_(MakeOutputShmConfig(config.output)),
-        metadata_writer_(config.output.metadata_bin) {
+        metadata_policy_(config) {
     sources_.reserve(config.sources.size());
     for (const BookTickerFusionSourceConfig& source_config : config.sources) {
       sources_.push_back(std::make_unique<Source>(
@@ -58,16 +59,10 @@ class BookTickerFusionRunner {
         publisher_.OnBookTicker(ticker);
         ++stats.published_count;
 
-        const FusionMetadataRecord record{
-            .source_id = decision.source_id,
-            .symbol_id = decision.symbol_id,
-            .book_ticker_id = decision.book_ticker_id,
-            .exchange_ns = ticker.exchange_ns,
-            .source_local_ns = decision.source_local_ns,
-            .fusion_publish_ns = decision.fusion_publish_ns,
-        };
-        if (!metadata_writer_.Write(record)) {
-          ++stats.metadata_write_errors;
+        if constexpr (MetadataPolicy::kEnabled) {
+          if (!metadata_policy_.Write(decision, ticker)) {
+            ++stats.metadata_write_errors;
+          }
         }
       }
     }
@@ -79,7 +74,7 @@ class BookTickerFusionRunner {
 
   [[nodiscard]] bool Flush() noexcept {
     publisher_.FlushPublishedCount();
-    return metadata_writer_.Flush();
+    return metadata_policy_.Flush();
   }
 
   [[nodiscard]] std::uint64_t total_read_count() const noexcept {
@@ -129,12 +124,15 @@ class BookTickerFusionRunner {
   std::uint32_t max_events_per_source_{0};
   BookTickerFusionCore fusion_;
   DataShmPublisher publisher_;
-  FusionMetadataWriter metadata_writer_;
+  MetadataPolicy metadata_policy_;
   std::vector<std::unique_ptr<Source>> sources_;
   std::uint64_t total_read_count_{0};
   std::uint64_t total_published_count_{0};
   std::uint64_t total_metadata_write_errors_{0};
 };
+
+using BookTickerFusionRunner =
+    BasicBookTickerFusionRunner<DefaultBookTickerFusionMetadataPolicy>;
 
 }  // namespace aquila::market_data
 

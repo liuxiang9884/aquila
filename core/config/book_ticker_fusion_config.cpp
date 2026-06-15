@@ -9,6 +9,8 @@
 #include <string_view>
 #include <utility>
 
+#include "core/common/book_ticker_fusion_metadata_mode.h"
+
 namespace aquila::config {
 namespace {
 
@@ -132,12 +134,17 @@ class Parser {
     }
     config_.output.remove_existing =
         BoolOr(output["remove_existing"], config_.output.remove_existing);
-    const std::string metadata_bin =
-        RequiredString(output["metadata_bin"], "fusion.output.metadata_bin");
-    if (!ok_) {
-      return;
+    if constexpr (aquila::kBookTickerFusionMetadataEnabled) {
+      const std::string metadata_bin =
+          RequiredString(output["metadata_bin"], "fusion.output.metadata_bin");
+      if (!ok_) {
+        return;
+      }
+      config_.output.metadata_bin = metadata_bin;
+    } else {
+      config_.output.metadata_bin =
+          OptionalString(output["metadata_bin"], std::string{});
     }
-    config_.output.metadata_bin = metadata_bin;
   }
 
   void ParseSources() {

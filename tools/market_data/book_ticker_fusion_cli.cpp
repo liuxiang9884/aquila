@@ -6,12 +6,14 @@
 #include <cstdio>
 #include <exception>
 #include <filesystem>
+#include <string>
 #include <thread>
 #include <utility>
 
 #include <CLI/CLI.hpp>
 #include <fmt/core.h>
 
+#include "core/common/book_ticker_fusion_metadata_mode.h"
 #include "core/config/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_runner.h"
 #include "core/websocket/runtime_policy.h"
@@ -39,6 +41,18 @@ bool ApplyAffinity(
   policy.prefault_stack = true;
   policy.active_spin = true;
   return aquila::websocket::ApplyRuntimePolicy(policy);
+}
+
+[[nodiscard]] const char* FusionMetadataEnabledText() noexcept {
+  return aquila::kBookTickerFusionMetadataEnabled ? "true" : "false";
+}
+
+[[nodiscard]] std::string FusionMetadataOutputText(
+    const aquila::market_data::BookTickerFusionConfig& config) {
+  if constexpr (aquila::kBookTickerFusionMetadataEnabled) {
+    return config.output.metadata_bin.string();
+  }
+  return "disabled";
 }
 
 }  // namespace
@@ -92,17 +106,17 @@ int RunBookTickerFusionCli(int argc, char** argv,
     }
 
     if (!runner.Flush()) {
-      fmt::print(stderr, "flush_error metadata_output={}\n",
-                 config.output.metadata_bin.string());
+      fmt::print(stderr, "flush_error metadata_enabled={} metadata_output={}\n",
+                 FusionMetadataEnabledText(), FusionMetadataOutputText(config));
       return 1;
     }
 
     fmt::print(
         "result=ok polls={} total_read_count={} total_published_count={} "
-        "metadata_write_errors={} metadata_output={}\n",
+        "metadata_enabled={} metadata_write_errors={} metadata_output={}\n",
         polls, runner.total_read_count(), runner.total_published_count(),
-        runner.total_metadata_write_errors(),
-        config.output.metadata_bin.string());
+        FusionMetadataEnabledText(), runner.total_metadata_write_errors(),
+        FusionMetadataOutputText(config));
     return 0;
   } catch (const std::exception& exc) {
     fmt::print(stderr, "{}_error={}\n", error_key, exc.what());

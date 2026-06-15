@@ -14,6 +14,7 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include "core/common/book_ticker_fusion_metadata_mode.h"
 #include "core/market_data/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_metadata.h"
 #include "core/market_data/data_shm.h"
@@ -95,15 +96,19 @@ std::vector<tool::FusionMetadataRecord> ReadMetadata(
   return records;
 }
 
-TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndMetadata) {
+TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndOptionalMetadata) {
   const md::BookTickerShmConfig source0 = MakeCreateConfig("source0");
   const md::BookTickerShmConfig source1 = MakeCreateConfig("source1");
   const md::BookTickerShmConfig output = MakeCreateConfig("output");
   ShmCleanup cleanup0(source0.shm_name);
   ShmCleanup cleanup1(source1.shm_name);
   ShmCleanup cleanup_output(output.shm_name);
+#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
   const std::filesystem::path metadata_path = UniqueMetadataPath();
   std::filesystem::remove(metadata_path);
+#else
+  const std::filesystem::path metadata_path;
+#endif
 
   md::DataShmPublisher source0_publisher(source0);
   md::DataShmPublisher source1_publisher(source1);
@@ -153,7 +158,9 @@ TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndMetadata) {
 
   EXPECT_EQ(stats.read_count, 3U);
   EXPECT_EQ(stats.published_count, 2U);
+  EXPECT_EQ(stats.metadata_write_errors, 0U);
   ASSERT_TRUE(runner.Flush());
+  EXPECT_EQ(runner.total_metadata_write_errors(), 0U);
 
   aquila::BookTicker first{};
   aquila::BookTicker second{};
@@ -169,6 +176,7 @@ TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndMetadata) {
   EXPECT_EQ(second.exchange_ns, source1_next.exchange_ns);
   EXPECT_GE(second.local_ns, source1_next.local_ns);
 
+#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
   const std::vector<tool::FusionMetadataRecord> metadata =
       ReadMetadata(metadata_path);
   ASSERT_EQ(metadata.size(), 2U);
@@ -184,6 +192,9 @@ TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndMetadata) {
   EXPECT_EQ(metadata[1].fusion_publish_ns, second.local_ns);
 
   std::filesystem::remove(metadata_path);
+#else
+  EXPECT_TRUE(metadata_path.empty());
+#endif
 }
 
 }  // namespace

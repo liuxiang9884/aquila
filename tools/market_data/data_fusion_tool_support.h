@@ -8,11 +8,24 @@
 
 #include <fmt/core.h>
 
+#include "core/common/book_ticker_fusion_metadata_mode.h"
 #include "core/market_data/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_thread.h"
 #include "nova/utils/log.h"
 
 namespace aquila::tools::market_data {
+
+[[nodiscard]] inline const char* FusionMetadataEnabledText() noexcept {
+  return aquila::kBookTickerFusionMetadataEnabled ? "true" : "false";
+}
+
+[[nodiscard]] inline std::string FormatFusionMetadataOutput(
+    const aquila::market_data::BookTickerFusionConfig& fusion_config) {
+  if constexpr (aquila::kBookTickerFusionMetadataEnabled) {
+    return fusion_config.output.metadata_bin.string();
+  }
+  return "disabled";
+}
 
 [[nodiscard]] inline const aquila::market_data::BookTickerFusionSourceConfig*
 FindFusionSource(
@@ -100,10 +113,10 @@ void LogBookTickerDataFusionDryRun(
     const PreparedSources& sources) {
   NOVA_INFO(
       "result=ok connect=false launch={} source_count={} fusion={} "
-      "output_shm={} metadata_output={}",
+      "output_shm={} metadata_enabled={} metadata_output={}",
       launch_config.name, sources.size(), fusion_config.name,
-      fusion_config.output.shm_name,
-      fusion_config.output.metadata_bin.string());
+      fusion_config.output.shm_name, FusionMetadataEnabledText(),
+      FormatFusionMetadataOutput(fusion_config));
   for (const auto& source : sources) {
     const auto& connection = source.data_session_config.connection;
     NOVA_INFO(
@@ -127,19 +140,21 @@ inline void LogBookTickerDataFusionRunSummary(
     NOVA_INFO(
         "result={} launch={} source_count={} source_published_count={} "
         "fusion_total_read_count={} fusion_total_published_count={} "
-        "fusion_metadata_write_errors={} fusion_flush_ok={} error={}",
+        "metadata_enabled={} fusion_metadata_write_errors={} "
+        "fusion_flush_ok={} error={}",
         result, launch_name, source_count, source_published_count,
         fusion_stats.total_read_count, fusion_stats.total_published_count,
-        fusion_stats.total_metadata_write_errors,
+        FusionMetadataEnabledText(), fusion_stats.total_metadata_write_errors,
         fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
   } else {
     NOVA_ERROR(
         "result={} launch={} source_count={} source_published_count={} "
         "fusion_total_read_count={} fusion_total_published_count={} "
-        "fusion_metadata_write_errors={} fusion_flush_ok={} error={}",
+        "metadata_enabled={} fusion_metadata_write_errors={} "
+        "fusion_flush_ok={} error={}",
         result, launch_name, source_count, source_published_count,
         fusion_stats.total_read_count, fusion_stats.total_published_count,
-        fusion_stats.total_metadata_write_errors,
+        FusionMetadataEnabledText(), fusion_stats.total_metadata_write_errors,
         fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
   }
 }

@@ -6,6 +6,8 @@
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
+#include "core/common/book_ticker_fusion_metadata_mode.h"
+
 namespace {
 
 toml::parse_result ParseToml(const std::string& text) {
@@ -144,7 +146,7 @@ metadata_bin = "/home/liuxiang/tmp/gate_fusion/fusion_metadata.bin"
   EXPECT_NE(result.error.find("sources"), std::string::npos);
 }
 
-TEST(BookTickerFusionConfigTest, RejectsMissingMetadataBin) {
+TEST(BookTickerFusionConfigTest, HandlesMissingMetadataBinForBuildMode) {
   const toml::parse_result parsed = ParseToml(R"toml(
 [fusion]
 name = "gate_bbo_fusion"
@@ -162,8 +164,13 @@ channel_name = "book_ticker_channel"
 
   const auto result = aquila::config::ParseBookTickerFusionConfig(parsed);
 
+#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("metadata_bin"), std::string::npos);
+#else
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.value.output.metadata_bin.empty());
+#endif
 }
 
 }  // namespace

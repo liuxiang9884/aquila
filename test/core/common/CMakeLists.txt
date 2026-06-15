@@ -59,3 +59,16 @@ target_link_libraries(core_data_session_diagnostic_level_test
 
 add_test(NAME core_data_session_diagnostic_level_test
          COMMAND core_data_session_diagnostic_level_test)
+
+add_executable(core_book_ticker_fusion_metadata_mode_test
+    book_ticker_fusion_metadata_mode_test.cpp
+)
+
+target_link_libraries(core_book_ticker_fusion_metadata_mode_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_book_ticker_fusion_metadata_mode_test
+         COMMAND core_book_ticker_fusion_metadata_mode_test)
