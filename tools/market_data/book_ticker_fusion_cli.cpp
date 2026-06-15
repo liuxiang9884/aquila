@@ -3,7 +3,6 @@
 #include <atomic>
 #include <csignal>
 #include <cstdint>
-#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <string>
@@ -11,12 +10,13 @@
 #include <utility>
 
 #include <CLI/CLI.hpp>
-#include <fmt/core.h>
+#include <toml++/toml.hpp>
 
 #include "core/common/book_ticker_fusion_metadata_mode.h"
 #include "core/config/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_runner.h"
 #include "core/websocket/runtime_policy.h"
+#include "nova/utils/log.h"
 
 namespace aquila::tools::market_data {
 namespace {
@@ -71,55 +71,64 @@ int RunBookTickerFusionCli(int argc, char** argv,
   signal_stop_requested.store(false, std::memory_order_relaxed);
 
   try {
-    auto config_result =
-        aquila::config::LoadBookTickerFusionConfigFile(config_path);
-    if (!config_result.ok) {
-      fmt::print(stderr, "config_error={}\n", config_result.error);
-      return 1;
-    }
+    const toml::parse_result toml = toml::parse_file(config_path.string());
+    nova::LoggingGuard logging_guard{toml};
 
-    const aquila::market_data::BookTickerFusionConfig& config =
-        config_result.value;
-    if (!ApplyAffinity(config)) {
-      fmt::print(stderr, "affinity_warning bind_cpu_id={}\n",
-                 config.bind_cpu_id);
-    }
-
-    aquila::market_data::BookTickerFusionRunner runner(config);
-    std::signal(SIGINT, HandleSignal);
-    std::signal(SIGTERM, HandleSignal);
-
-    std::uint64_t polls{0};
-    while (!signal_stop_requested.load(std::memory_order_relaxed) &&
-           (max_polls == 0 || polls < max_polls)) {
-      const aquila::market_data::BookTickerFusionPollStats stats =
-          runner.PollOnce();
-      ++polls;
-      if (stats.metadata_write_errors != 0) {
-        fmt::print(stderr, "metadata_write_error count={}\n",
-                   stats.metadata_write_errors);
+    try {
+      auto config_result = aquila::config::ParseBookTickerFusionConfig(toml);
+      if (!config_result.ok) {
+        NOVA_ERROR("config_error={}", config_result.error);
         return 1;
       }
-      if (stats.read_count == 0) {
-        std::this_thread::yield();
-      }
-    }
 
-    if (!runner.Flush()) {
-      fmt::print(stderr, "flush_error metadata_enabled={} metadata_output={}\n",
-                 FusionMetadataEnabledText(), FusionMetadataOutputText(config));
+      const aquila::market_data::BookTickerFusionConfig& config =
+          config_result.value;
+      if (!ApplyAffinity(config)) {
+        NOVA_WARNING("affinity_warning bind_cpu_id={}", config.bind_cpu_id);
+      }
+
+      aquila::market_data::BookTickerFusionRunner runner(config);
+      std::signal(SIGINT, HandleSignal);
+      std::signal(SIGTERM, HandleSignal);
+
+      std::uint64_t polls{0};
+      while (!signal_stop_requested.load(std::memory_order_relaxed) &&
+             (max_polls == 0 || polls < max_polls)) {
+        const aquila::market_data::BookTickerFusionPollStats stats =
+            runner.PollOnce();
+        ++polls;
+        if (stats.metadata_write_errors != 0) {
+          NOVA_ERROR("metadata_write_error count={}",
+                     stats.metadata_write_errors);
+          return 1;
+        }
+        if (stats.read_count == 0) {
+          std::this_thread::yield();
+        }
+      }
+
+      if (!runner.Flush()) {
+        NOVA_ERROR("flush_error metadata_enabled={} metadata_output={}",
+                   FusionMetadataEnabledText(),
+                   FusionMetadataOutputText(config));
+        return 1;
+      }
+
+      NOVA_INFO(
+          "result=ok polls={} total_read_count={} total_published_count={} "
+          "metadata_enabled={} metadata_write_errors={} metadata_output={}",
+          polls, runner.total_read_count(), runner.total_published_count(),
+          FusionMetadataEnabledText(), runner.total_metadata_write_errors(),
+          FusionMetadataOutputText(config));
+      return 0;
+    } catch (const std::exception& exc) {
+      NOVA_ERROR("{}_error={}", error_key, exc.what());
       return 1;
     }
-
-    fmt::print(
-        "result=ok polls={} total_read_count={} total_published_count={} "
-        "metadata_enabled={} metadata_write_errors={} metadata_output={}\n",
-        polls, runner.total_read_count(), runner.total_published_count(),
-        FusionMetadataEnabledText(), runner.total_metadata_write_errors(),
-        FusionMetadataOutputText(config));
-    return 0;
   } catch (const std::exception& exc) {
-    fmt::print(stderr, "{}_error={}\n", error_key, exc.what());
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_ERROR("{}_error={}", error_key, exc.what());
+    }
     return 1;
   }
 }

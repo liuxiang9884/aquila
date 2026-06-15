@@ -1,71 +1,31 @@
-# BookTicker Fusion Metadata Policy Implementation Plan
+# BookTicker Fusion Metadata Policy 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给 agentic worker:** 实施本计划时按任务逐项执行；每个任务完成后运行对应验证，再进入下一项。
 
-**Goal:** Add a compile-time policy that can remove fusion sidecar metadata recording while keeping canonical SHM publish and basic fusion run stats.
+**目标:** 增加编译期 metadata policy，使 fusion 可以在不改变 canonical SHM 输出的前提下移除 sidecar metadata 记录路径。
 
-**Architecture:** Add a CMake cache mode and a small compile-time mode header. Parse `metadata_bin` only when metadata is enabled. Keep `BookTickerFusionRunner` as the public runner type, but make metadata handling policy-based so the `off` build does not construct `FusionMetadataRecord` or open a writer.
+**架构:** 新增 CMake cache mode 和编译期 mode header。`BookTickerFusionRunner` 保持原 public 类型名，但内部使用 template policy；`file` build 写 `FusionMetadataRecord`，`off` build 不打开 writer，也不构造 metadata record。
 
-**Tech Stack:** CMake, C++20, GoogleTest, existing `BookTickerFusionRunner`, `FusionMetadataWriter`, TOML config parser.
+**技术栈:** CMake、C++20、GoogleTest、现有 `BookTickerFusionRunner`、`FusionMetadataWriter`、TOML config parser。
 
 ---
 
-### Task 1: Compile-Time Mode
+### Task 1: 编译期开关
 
-**Files:**
-- Modify: `CMakeLists.txt`
-- Modify: `core/CMakeLists.txt`
-- Create: `core/common/book_ticker_fusion_metadata_mode.h`
-- Test: `test/core/common/book_ticker_fusion_metadata_mode_test.cpp`
-- Modify: `test/core/common/CMakeLists.txt`
+**文件:**
 
-- [ ] **Step 1: Write the failing mode test**
+- 修改：`CMakeLists.txt`
+- 修改：`core/CMakeLists.txt`
+- 新增：`core/common/book_ticker_fusion_metadata_mode.h`
+- 新增测试：`test/core/common/book_ticker_fusion_metadata_mode_test.cpp`
+- 修改：`test/core/common/CMakeLists.txt`
 
-Add `test/core/common/book_ticker_fusion_metadata_mode_test.cpp`:
+步骤：
 
-```cpp
-#include "core/common/book_ticker_fusion_metadata_mode.h"
-
-#include <gtest/gtest.h>
-
-TEST(BookTickerFusionMetadataModeTest, ExposesCompileTimeMode) {
-  EXPECT_TRUE(aquila::kBookTickerFusionMetadataEnabled ||
-              !aquila::kBookTickerFusionMetadataEnabled);
-  EXPECT_GE(AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED, 0);
-  EXPECT_LE(AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED, 1);
-}
-```
-
-- [ ] **Step 2: Register the test target**
-
-Add the target to `test/core/common/CMakeLists.txt` using the existing `aquila_core` link pattern:
-
-```cmake
-add_executable(core_book_ticker_fusion_metadata_mode_test
-    book_ticker_fusion_metadata_mode_test.cpp
-)
-target_link_libraries(core_book_ticker_fusion_metadata_mode_test
-    PRIVATE
-        aquila_core
-        GTest::gtest_main
-)
-add_test(NAME core_book_ticker_fusion_metadata_mode_test
-         COMMAND core_book_ticker_fusion_metadata_mode_test)
-```
-
-- [ ] **Step 3: Run the failing test**
-
-Run:
-
-```bash
-cmake --build build/debug --target core_book_ticker_fusion_metadata_mode_test -j8
-```
-
-Expected: compile fails because `core/common/book_ticker_fusion_metadata_mode.h` does not exist.
-
-- [ ] **Step 4: Implement the CMake mode**
-
-Add to root `CMakeLists.txt` near the existing diagnostic cache variables:
+1. 新增 mode 测试，验证 `AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED` 只可能为 `0` 或 `1`，并暴露
+   `aquila::kBookTickerFusionMetadataEnabled`。
+2. 运行目标，确认缺少 header 时失败。
+3. 在根 `CMakeLists.txt` 增加：
 
 ```cmake
 set(AQUILA_BOOK_TICKER_FUSION_METADATA_MODE "file"
@@ -73,105 +33,36 @@ set(AQUILA_BOOK_TICKER_FUSION_METADATA_MODE "file"
     "Build BookTicker fusion sidecar metadata mode: file or off")
 set_property(CACHE AQUILA_BOOK_TICKER_FUSION_METADATA_MODE PROPERTY STRINGS
              file off)
-if(NOT AQUILA_BOOK_TICKER_FUSION_METADATA_MODE MATCHES "^(file|off)$")
-    message(FATAL_ERROR
-            "AQUILA_BOOK_TICKER_FUSION_METADATA_MODE must be file or off")
-endif()
-if(AQUILA_BOOK_TICKER_FUSION_METADATA_MODE STREQUAL "file")
-    set(AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED 1)
-else()
-    set(AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED 0)
-endif()
 ```
 
-Add to `core/CMakeLists.txt` public compile definitions:
+4. 将 mode 映射为 public compile definition：
 
 ```cmake
 AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED=${AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED}
 ```
 
-- [ ] **Step 5: Implement the mode header**
-
-Create `core/common/book_ticker_fusion_metadata_mode.h`:
-
-```cpp
-#ifndef AQUILA_CORE_COMMON_BOOK_TICKER_FUSION_METADATA_MODE_H_
-#define AQUILA_CORE_COMMON_BOOK_TICKER_FUSION_METADATA_MODE_H_
-
-#ifndef AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
-#define AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED 1
-#endif
-
-#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED < 0 || \
-    AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED > 1
-#error "AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED must be 0 or 1"
-#endif
-
-namespace aquila {
-
-inline constexpr bool kBookTickerFusionMetadataEnabled =
-    AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED != 0;
-
-}  // namespace aquila
-
-#endif  // AQUILA_CORE_COMMON_BOOK_TICKER_FUSION_METADATA_MODE_H_
-```
-
-- [ ] **Step 6: Run the mode test**
-
-Run:
+5. 新增 `core/common/book_ticker_fusion_metadata_mode.h`，提供编译期布尔常量。
+6. 构建并运行：
 
 ```bash
 cmake --build build/debug --target core_book_ticker_fusion_metadata_mode_test -j8
 ./build/debug/test/core/common/core_book_ticker_fusion_metadata_mode_test
 ```
 
-Expected: test passes.
+### Task 2: Config Parser 行为
 
-### Task 2: Config Parser Behavior
+**文件:**
 
-**Files:**
-- Modify: `core/config/book_ticker_fusion_config.cpp`
-- Modify: `test/config/book_ticker_fusion_config_test.cpp`
-- Modify: `test/config/CMakeLists.txt`
+- 修改：`core/config/book_ticker_fusion_config.cpp`
+- 修改：`test/config/book_ticker_fusion_config_test.cpp`
 
-- [ ] **Step 1: Write the failing off-mode config test**
+步骤：
 
-Add a new test source or compile variant that defines `AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED=0` and verifies this TOML parses:
-
-```cpp
-TEST(BookTickerFusionConfigTest, AllowsMissingMetadataBinWhenMetadataDisabled) {
-  const toml::parse_result parsed = ParseToml(R"toml(
-[fusion]
-name = "gate_bbo_fusion"
-
-[fusion.output]
-shm_name = "aquila_gate_book_ticker_fusion"
-channel_name = "book_ticker_channel"
-
-[[fusion.sources]]
-source_id = 0
-name = "gate_src_0"
-shm_name = "aquila_gate_book_ticker_src_0"
-channel_name = "book_ticker_channel"
-)toml");
-
-  const auto result = aquila::config::ParseBookTickerFusionConfig(parsed);
-
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_TRUE(result.value.output.metadata_bin.empty());
-}
-```
-
-- [ ] **Step 2: Run the failing off-mode config test**
-
-Run the off-mode config target.
-
-Expected: fails because parser still requires `fusion.output.metadata_bin`.
-
-- [ ] **Step 3: Implement parser gating**
-
-In `ParseOutput()`, include the mode header and branch with `if constexpr`:
+1. 在 config 测试中增加按编译模式分支的 missing `metadata_bin` case。
+2. 在 `AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED=1` 时，缺少 `fusion.output.metadata_bin` 必须失败。
+3. 在 `AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED=0` 时，缺少 `fusion.output.metadata_bin` 必须成功，且
+   `config.output.metadata_bin.empty()`。
+4. 修改 parser：
 
 ```cpp
 if constexpr (aquila::kBookTickerFusionMetadataEnabled) {
@@ -187,110 +78,94 @@ if constexpr (aquila::kBookTickerFusionMetadataEnabled) {
 }
 ```
 
-- [ ] **Step 4: Run config tests**
+5. 分别运行默认 build 和 metadata-off build 的 `book_ticker_fusion_config_test`。
 
-Run:
+### Task 3: Metadata Policy 和 Runner
 
-```bash
-cmake --build build/debug --target book_ticker_fusion_config_test -j8
-./build/debug/test/config/book_ticker_fusion_config_test
+**文件:**
+
+- 新增：`core/market_data/book_ticker_fusion_metadata_policy.h`
+- 修改：`core/market_data/book_ticker_fusion_runner.h`
+- 修改：`test/core/market_data/book_ticker_fusion_runner_test.cpp`
+- 修改：`test/core/market_data/book_ticker_fusion_thread_test.cpp`
+
+步骤：
+
+1. 在 runner/thread 测试中增加按编译模式分支：
+   - `file` build：继续校验 metadata 文件存在且大小正确。
+   - `off` build：使用空 `metadata_bin`，canonical SHM 仍发布，metadata error count 为 `0`。
+2. 运行 metadata-off build，确认当前实现会因空 metadata path 失败。
+3. 新增两个 policy：
+   - `FileBookTickerFusionMetadataPolicy`：持有 `FusionMetadataWriter`，写 `FusionMetadataRecord`。
+   - `NoopBookTickerFusionMetadataPolicy`：不持有 writer，`Flush()` 返回 `true`。
+4. 将 runner 改为：
+
+```cpp
+template <typename MetadataPolicy>
+class BasicBookTickerFusionRunner { ... };
+
+using BookTickerFusionRunner =
+    BasicBookTickerFusionRunner<DefaultBookTickerFusionMetadataPolicy>;
 ```
 
-Expected: default metadata-enabled behavior still rejects missing `metadata_bin`.
+5. 在 publish 分支使用 `if constexpr (MetadataPolicy::kEnabled)`，确保 off build 不构造
+   `FusionMetadataRecord`。
+6. 分别运行默认 build 和 metadata-off build 的 runner/thread 测试。
 
-Run the off-mode config target.
+### Task 4: Tool Log 和文档
 
-Expected: missing `metadata_bin` parses successfully.
+**文件:**
 
-### Task 3: Metadata Policy and Runner
+- 修改：`tools/market_data/data_fusion_tool_support.h`
+- 修改：`tools/market_data/book_ticker_fusion_cli.cpp`
+- 修改：`docs/diagnostic_fields.md`
 
-**Files:**
-- Create: `core/market_data/book_ticker_fusion_metadata_policy.h`
-- Modify: `core/market_data/book_ticker_fusion_runner.h`
-- Modify: `core/market_data/book_ticker_fusion_thread.h`
-- Modify: `test/core/market_data/book_ticker_fusion_runner_test.cpp`
-- Modify: `test/core/market_data/book_ticker_fusion_thread_test.cpp`
-- Modify: `test/core/market_data/CMakeLists.txt`
+步骤：
 
-- [ ] **Step 1: Write failing off-mode runner/thread tests**
+1. 在 dry-run / summary log 中增加 `metadata_enabled=true|false`。
+2. metadata-off build 中输出 `metadata_output=disabled`，避免把空路径误读为文件写入失败。
+3. 将 `book_ticker_fusion_cli.cpp` 的输出统一改为 Nova log。
+4. 在 `docs/diagnostic_fields.md` 登记 `metadata_enabled`、`metadata_output` 和 metadata write error 字段。
+5. 构建默认 build 和 metadata-off build 的 Gate/Binance fusion CLI 目标。
 
-Add off-mode compile variants of the runner and thread tests. The runner off test should use an empty `metadata_bin`, publish one source ticker, call `PollOnce()` and `Flush()`, verify canonical SHM has the ticker, and verify `stats.metadata_write_errors == 0` and `runner.total_metadata_write_errors() == 0`.
+### 最终验证
 
-The thread off test should use an empty `metadata_bin`, start/stop the thread, verify canonical SHM publishes, and verify `stats.total_metadata_write_errors == 0`.
-
-- [ ] **Step 2: Run failing off-mode tests**
-
-Run:
-
-```bash
-cmake --build build/debug --target core_market_data_book_ticker_fusion_runner_metadata_off_test -j8
-cmake --build build/debug --target core_market_data_book_ticker_fusion_thread_metadata_off_test -j8
-```
-
-Expected: compile or runtime failure because runner still constructs `FusionMetadataWriter` with an empty path.
-
-- [ ] **Step 3: Add metadata policy**
-
-Create `core/market_data/book_ticker_fusion_metadata_policy.h` with file and noop policies. `NoopBookTickerFusionMetadataPolicy::Write(...)` returns true without touching the record data; `Flush()` returns true; `enabled()` returns false.
-
-- [ ] **Step 4: Update runner**
-
-Make `BookTickerFusionRunner` use the default metadata policy selected from `aquila::kBookTickerFusionMetadataEnabled`. In the publish branch, call a helper that only constructs `FusionMetadataRecord` under the file policy. Keep read/publish stats unchanged.
-
-- [ ] **Step 5: Update thread stats**
-
-Keep `BookTickerFusionThreadStats::total_metadata_write_errors` for ABI/log compatibility, but ensure it is always zero in metadata-off builds and `ok` only depends on metadata errors when metadata is enabled.
-
-- [ ] **Step 6: Run runner and thread tests**
-
-Run:
-
-```bash
-cmake --build build/debug --target core_market_data_book_ticker_fusion_runner_test -j8
-./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_runner_test
-cmake --build build/debug --target core_market_data_book_ticker_fusion_thread_test -j8
-./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_thread_test
-cmake --build build/debug --target core_market_data_book_ticker_fusion_runner_metadata_off_test -j8
-./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_runner_metadata_off_test
-cmake --build build/debug --target core_market_data_book_ticker_fusion_thread_metadata_off_test -j8
-./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_thread_metadata_off_test
-```
-
-Expected: all tests pass.
-
-### Task 4: Tool Logs and Final Verification
-
-**Files:**
-- Modify: `tools/market_data/data_fusion_tool_support.h`
-- Modify: `tools/market_data/book_ticker_fusion_cli.cpp`
-- Test: existing fusion support and CLI build targets.
-
-- [ ] **Step 1: Update logs**
-
-Include `metadata_enabled=true|false` in dry-run and summary logs. In metadata-off builds, avoid printing a misleading `metadata_output` path when the path is empty.
-
-- [ ] **Step 2: Run support tests**
-
-Run:
-
-```bash
-cmake --build build/debug --target data_fusion_tool_support_test -j8
-./build/debug/test/tools/market_data/data_fusion_tool_support_test
-```
-
-Expected: support tests pass after expected log string updates.
-
-- [ ] **Step 3: Run final checks**
-
-Run:
+默认 build：
 
 ```bash
 git diff --check
-cmake --build build/debug --target book_ticker_fusion_config_test core_market_data_book_ticker_fusion_runner_test core_market_data_book_ticker_fusion_thread_test data_fusion_tool_support_test -j8
+cmake --build build/debug --target \
+  core_book_ticker_fusion_metadata_mode_test \
+  book_ticker_fusion_config_test \
+  core_market_data_book_ticker_fusion_runner_test \
+  core_market_data_book_ticker_fusion_thread_test \
+  data_fusion_tool_support_test \
+  gate_book_ticker_fusion \
+  binance_book_ticker_fusion -j8
+./build/debug/test/core/common/core_book_ticker_fusion_metadata_mode_test
 ./build/debug/test/config/book_ticker_fusion_config_test
 ./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_runner_test
 ./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_thread_test
 ./build/debug/test/tools/market_data/data_fusion_tool_support_test
 ```
 
-Expected: all checks pass.
+metadata-off build：
+
+```bash
+cmake -S . -B /home/liuxiang/tmp/aquila_build_fusion_metadata_off \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DAQUILA_BOOK_TICKER_FUSION_METADATA_MODE=off
+cmake --build /home/liuxiang/tmp/aquila_build_fusion_metadata_off --target \
+  core_book_ticker_fusion_metadata_mode_test \
+  book_ticker_fusion_config_test \
+  core_market_data_book_ticker_fusion_runner_test \
+  core_market_data_book_ticker_fusion_thread_test \
+  data_fusion_tool_support_test \
+  gate_book_ticker_fusion \
+  binance_book_ticker_fusion -j8
+/home/liuxiang/tmp/aquila_build_fusion_metadata_off/test/core/common/core_book_ticker_fusion_metadata_mode_test
+/home/liuxiang/tmp/aquila_build_fusion_metadata_off/test/config/book_ticker_fusion_config_test
+/home/liuxiang/tmp/aquila_build_fusion_metadata_off/test/core/market_data/core_market_data_book_ticker_fusion_runner_test
+/home/liuxiang/tmp/aquila_build_fusion_metadata_off/test/core/market_data/core_market_data_book_ticker_fusion_thread_test
+/home/liuxiang/tmp/aquila_build_fusion_metadata_off/test/tools/market_data/data_fusion_tool_support_test
+```
