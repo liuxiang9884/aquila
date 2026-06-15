@@ -70,7 +70,7 @@ add_test(NAME core_market_data_book_ticker_fusion_runner_test
 
 add_test(NAME core_market_data_book_ticker_fusion_static_review
          COMMAND bash -c [=[
-if rg -n 'BookTickerFusionConfig config_|config_\.max_events_per_source' "$1"; then
+if rg -n 'BookTickerFusionConfig config_|config_\.max_events_per_source|BookTicker ticker\{\};' "$1"; then
   exit 1
 fi
 ]=] _

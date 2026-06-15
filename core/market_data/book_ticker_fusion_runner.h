@@ -40,7 +40,7 @@ class BookTickerFusionRunner {
     BookTickerFusionPollStats stats;
     for (std::unique_ptr<Source>& source : sources_) {
       for (std::uint32_t i = 0; i < max_events_per_source_; ++i) {
-        BookTicker ticker{};
+        BookTicker ticker;
         if (!source->reader.TryReadOne(&ticker)) {
           break;
         }
