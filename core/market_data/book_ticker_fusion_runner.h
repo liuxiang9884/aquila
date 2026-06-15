@@ -25,7 +25,7 @@ struct BookTickerFusionPollStats {
 class BookTickerFusionRunner {
  public:
   explicit BookTickerFusionRunner(const BookTickerFusionConfig& config)
-      : config_(config),
+      : max_events_per_source_(config.max_events_per_source),
         fusion_(config.max_symbol_id),
         publisher_(MakeOutputShmConfig(config.output)),
         metadata_writer_(config.output.metadata_bin) {
@@ -39,7 +39,7 @@ class BookTickerFusionRunner {
   [[nodiscard]] BookTickerFusionPollStats PollOnce() noexcept {
     BookTickerFusionPollStats stats;
     for (std::unique_ptr<Source>& source : sources_) {
-      for (std::uint32_t i = 0; i < config_.max_events_per_source; ++i) {
+      for (std::uint32_t i = 0; i < max_events_per_source_; ++i) {
         BookTicker ticker{};
         if (!source->reader.TryReadOne(&ticker)) {
           break;
@@ -126,7 +126,7 @@ class BookTickerFusionRunner {
     };
   }
 
-  BookTickerFusionConfig config_;
+  std::uint32_t max_events_per_source_{0};
   BookTickerFusionCore fusion_;
   DataShmPublisher publisher_;
   FusionMetadataWriter metadata_writer_;
