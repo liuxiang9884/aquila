@@ -32,6 +32,8 @@ def write_config(path: Path) -> None:
         lead_exchange = "binance"
         lag_exchange = "gate"
         lag_taker_fee = 0.00016
+        max_lead_freshness_ms = 5
+        max_lag_freshness_ms = 20
 
         [lead_lag.pairs.execute]
         open_notional = 100.0
@@ -131,6 +133,11 @@ class GenerateLiveReportTest(unittest.TestCase):
         self.assertEqual(latency_row["exchange_lifecycle_ns"], "5917000")
         self.assertIn("- signal: `1`", report_text)
         self.assertIn("- submitted order: `1`", report_text)
+        self.assertIn("## Pair Freshness 参数", report_text)
+        self.assertIn(
+            "| PROVE_USDT | 4 | binance | gate | 5 | 20 |",
+            report_text,
+        )
         self.assertIn("- latency diagnostic outliers: `1`", report_text)
         self.assertIn("- exchange Ack-to-finish min: `5.917 ms`", report_text)
         self.assertIn("- exchange Ack-to-finish median: `5.917 ms`", report_text)
@@ -335,6 +342,38 @@ class GenerateLiveReportTest(unittest.TestCase):
         self.assertIn("- raw win rate: `50.00%`", report_text)
         self.assertIn("- raw gross PnL: `3`", report_text)
         self.assertIn("- raw net PnL: `1`", report_text)
+
+    def test_loads_pair_freshness_from_live_wrapper_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            nested_config_path = base / "configs" / "lead_lag.toml"
+            nested_config_path.parent.mkdir(parents=True)
+            write_config(nested_config_path)
+            wrapper_config_path = base / "strategy.toml"
+            write_file(
+                wrapper_config_path,
+                """
+                [strategy]
+                name = "lead_lag"
+                config = "configs/lead_lag.toml"
+                """,
+            )
+
+            rows = report.load_pair_freshness_rows(wrapper_config_path)
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "lead_exchange": "binance",
+                    "lag_exchange": "gate",
+                    "max_lead_freshness_ms": "5",
+                    "max_lag_freshness_ms": "20",
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":

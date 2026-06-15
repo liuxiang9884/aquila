@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import sys
+import tomllib
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -388,6 +389,90 @@ def markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return lines
 
 
+def format_int_like(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        decimal_value = Decimal(str(value))
+        if decimal_value == decimal_value.to_integral_value():
+            return str(int(decimal_value))
+        return format_decimal(decimal_value)
+    if isinstance(value, str):
+        decimal_value = parse_decimal(value)
+        if decimal_value is None:
+            return value
+        if decimal_value == decimal_value.to_integral_value():
+            return str(int(decimal_value))
+        return format_decimal(decimal_value)
+    return str(value)
+
+
+def load_toml_dict(path: Path) -> dict:
+    with path.open("rb") as input_file:
+        value = tomllib.load(input_file)
+    return value if isinstance(value, dict) else {}
+
+
+def resolve_lead_lag_config(config_path: Path) -> dict:
+    if not config_path.exists():
+        return {}
+    config = load_toml_dict(config_path)
+    lead_lag = config.get("lead_lag")
+    if isinstance(lead_lag, dict) and isinstance(lead_lag.get("pairs"), list):
+        return config
+
+    strategy = config.get("strategy")
+    if not isinstance(strategy, dict):
+        return config
+    nested_text = strategy.get("config")
+    if not isinstance(nested_text, str) or not nested_text:
+        return config
+
+    nested_path = Path(nested_text)
+    candidates = [nested_path] if nested_path.is_absolute() else [
+        config_path.parent / nested_path,
+        nested_path,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return load_toml_dict(candidate)
+    return config
+
+
+def load_pair_freshness_rows(config_path: Path) -> list[dict[str, str]]:
+    config = resolve_lead_lag_config(config_path)
+    lead_lag = config.get("lead_lag")
+    if not isinstance(lead_lag, dict):
+        return []
+    pairs = lead_lag.get("pairs")
+    if not isinstance(pairs, list):
+        return []
+
+    rows: list[dict[str, str]] = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        rows.append(
+            {
+                "symbol": str(pair.get("symbol", "")),
+                "symbol_id": format_int_like(pair.get("symbol_id")),
+                "lead_exchange": str(pair.get("lead_exchange", "")),
+                "lag_exchange": str(pair.get("lag_exchange", "")),
+                "max_lead_freshness_ms": format_int_like(
+                    pair.get("max_lead_freshness_ms")
+                ),
+                "max_lag_freshness_ms": format_int_like(
+                    pair.get("max_lag_freshness_ms")
+                ),
+            }
+        )
+    return rows
+
+
 def latency_rows_by_descending_ns(
     rows: list[dict[str, str]], field: str
 ) -> list[dict[str, str]]:
@@ -609,6 +694,7 @@ def write_markdown_report(
     position_rows: list[dict[str, str]],
     latency_rows: list[dict[str, str]],
     guard_summary: dict | None = None,
+    pair_freshness_rows: list[dict[str, str]] | None = None,
 ) -> None:
     status_counts = Counter(row.get("status", "") or "unknown" for row in order_rows)
     symbol_counts = Counter(row.get("symbol", "") or "unknown" for row in signal_rows)
@@ -667,6 +753,35 @@ def write_markdown_report(
         lines.append(f"- 首个 signal 时间: `{signal_rows[0].get('log_time', '')}`")
         lines.append(f"- 最后 signal 时间: `{signal_rows[-1].get('log_time', '')}`")
     append_affinity_summary(lines, guard_summary)
+    if pair_freshness_rows:
+        lines += [
+            "",
+            "## Pair Freshness 参数",
+            "",
+            "单位为 `ms`，来自策略配置的 `max_lead_freshness_ms` / `max_lag_freshness_ms`。",
+            "",
+        ]
+        lines += markdown_table(
+            [
+                "symbol",
+                "symbol_id",
+                "lead_exchange",
+                "lag_exchange",
+                "max_lead_freshness_ms",
+                "max_lag_freshness_ms",
+            ],
+            [
+                [
+                    row.get("symbol", ""),
+                    row.get("symbol_id", ""),
+                    row.get("lead_exchange", ""),
+                    row.get("lag_exchange", ""),
+                    row.get("max_lead_freshness_ms", ""),
+                    row.get("max_lag_freshness_ms", ""),
+                ]
+                for row in pair_freshness_rows
+            ],
+        )
     lines += [
         "",
         "## 同目录 CSV",
@@ -1031,6 +1146,9 @@ def generate_live_report(
     latency_rows = orders.build_latency_detail_rows(order_rows)
     signal_rows = build_signal_detail_rows(log_path, order_rows, run_id)
     guard_summary = load_guard_summary(guard_stdout_path)
+    pair_freshness_rows = (
+        load_pair_freshness_rows(config_path) if config_path is not None else []
+    )
     copy_runtime_configs(report_dir, guard_summary)
 
     write_signal_detail_csv(signal_rows, report_dir / "signal.csv")
@@ -1049,6 +1167,7 @@ def generate_live_report(
         position_rows=position_rows,
         latency_rows=latency_rows,
         guard_summary=guard_summary,
+        pair_freshness_rows=pair_freshness_rows,
     )
     return LiveReportResult(
         report_dir=report_dir,
