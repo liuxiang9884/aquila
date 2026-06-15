@@ -1,5 +1,5 @@
-#ifndef AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_METADATA_H_
-#define AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_METADATA_H_
+#ifndef AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_METADATA_H_
+#define AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_METADATA_H_
 
 #include <cstdint>
 #include <filesystem>
@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <type_traits>
 
-namespace aquila::tools::market_data {
+namespace aquila::market_data {
 
 struct FusionMetadataRecord {
   std::int32_t source_id{0};
@@ -66,7 +66,9 @@ class FusionMetadataWriter {
     return true;
   }
 
-  [[nodiscard]] bool write_error() const noexcept { return write_error_; }
+  [[nodiscard]] bool write_error() const noexcept {
+    return write_error_;
+  }
 
   [[nodiscard]] std::uint64_t records_written() const noexcept {
     return records_written_;
@@ -83,6 +85,6 @@ class FusionMetadataWriter {
   bool write_error_{false};
 };
 
-}  // namespace aquila::tools::market_data
+}  // namespace aquila::market_data
 
-#endif  // AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_METADATA_H_
+#endif  // AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_METADATA_H_

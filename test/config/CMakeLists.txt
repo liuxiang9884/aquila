@@ -53,6 +53,25 @@ target_compile_definitions(data_reader_config_test
 add_test(NAME data_reader_config_test
          COMMAND data_reader_config_test)
 
+add_executable(book_ticker_fusion_config_test
+    book_ticker_fusion_config_test.cpp
+)
+
+target_link_libraries(book_ticker_fusion_config_test
+    PRIVATE
+        aquila_config
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+)
+
+target_compile_definitions(book_ticker_fusion_config_test
+    PRIVATE
+        AQUILA_PROJECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME book_ticker_fusion_config_test
+         COMMAND book_ticker_fusion_config_test)
+
 add_executable(order_session_config_test
     order_session_config_test.cpp
 )

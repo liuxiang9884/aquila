@@ -1,16 +1,12 @@
-#ifndef AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_CONFIG_H_
-#define AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_CONFIG_H_
+#ifndef AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_CONFIG_H_
+#define AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_CONFIG_H_
 
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
 
-#include <toml++/toml.hpp>
-
-#include "core/common/result.h"
-
-namespace aquila::tools::market_data {
+namespace aquila::market_data {
 
 struct BookTickerFusionSourceConfig {
   std::int32_t source_id{-1};
@@ -35,14 +31,6 @@ struct BookTickerFusionConfig {
   std::vector<BookTickerFusionSourceConfig> sources;
 };
 
-using BookTickerFusionConfigResult = Result<BookTickerFusionConfig>;
+}  // namespace aquila::market_data
 
-[[nodiscard]] BookTickerFusionConfigResult ParseBookTickerFusionConfig(
-    const toml::table& node);
-
-[[nodiscard]] BookTickerFusionConfigResult LoadBookTickerFusionConfigFile(
-    const std::filesystem::path& path);
-
-}  // namespace aquila::tools::market_data
-
-#endif  // AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_CONFIG_H_
+#endif  // AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_CONFIG_H_

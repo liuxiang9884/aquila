@@ -12,9 +12,9 @@
 #include <CLI/CLI.hpp>
 #include <fmt/core.h>
 
+#include "core/config/book_ticker_fusion_config.h"
+#include "core/market_data/book_ticker_fusion_runner.h"
 #include "core/websocket/runtime_policy.h"
-#include "tools/market_data/book_ticker_fusion_config.h"
-#include "tools/market_data/book_ticker_fusion_runner.h"
 
 namespace aquila::tools::market_data {
 namespace {
@@ -27,7 +27,8 @@ void HandleSignal(int signal) {
   signal_stop_requested.store(true, std::memory_order_relaxed);
 }
 
-bool ApplyAffinity(const BookTickerFusionConfig& config) noexcept {
+bool ApplyAffinity(
+    const aquila::market_data::BookTickerFusionConfig& config) noexcept {
   if (config.bind_cpu_id < 0) {
     return true;
   }
@@ -56,26 +57,29 @@ int RunBookTickerFusionCli(int argc, char** argv,
   signal_stop_requested.store(false, std::memory_order_relaxed);
 
   try {
-    auto config_result = LoadBookTickerFusionConfigFile(config_path);
+    auto config_result =
+        aquila::config::LoadBookTickerFusionConfigFile(config_path);
     if (!config_result.ok) {
       fmt::print(stderr, "config_error={}\n", config_result.error);
       return 1;
     }
 
-    const BookTickerFusionConfig& config = config_result.value;
+    const aquila::market_data::BookTickerFusionConfig& config =
+        config_result.value;
     if (!ApplyAffinity(config)) {
       fmt::print(stderr, "affinity_warning bind_cpu_id={}\n",
                  config.bind_cpu_id);
     }
 
-    BookTickerFusionRunner runner(config);
+    aquila::market_data::BookTickerFusionRunner runner(config);
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
 
     std::uint64_t polls{0};
     while (!signal_stop_requested.load(std::memory_order_relaxed) &&
            (max_polls == 0 || polls < max_polls)) {
-      const BookTickerFusionPollStats stats = runner.PollOnce();
+      const aquila::market_data::BookTickerFusionPollStats stats =
+          runner.PollOnce();
       ++polls;
       if (stats.metadata_write_errors != 0) {
         fmt::print(stderr, "metadata_write_error count={}\n",

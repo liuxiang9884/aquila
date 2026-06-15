@@ -62,11 +62,11 @@ SPSC ring 建议见 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。
 | --- | --- | --- |
 | `core/market_data/book_ticker_fusion.h` | 新增 | Header-only fusion core：per-symbol state、accept/drop 决策、canonical ticker 生成 |
 | `test/core/market_data/book_ticker_fusion_test.cpp` | 新增 | 验证 `id` 单调推进、drop 旧 id、`local_ns` 改写、不同 symbol 独立 |
-| `tools/market_data/book_ticker_fusion_metadata.h` | 新增 | sidecar metadata record 和 binary writer |
-| `test/tools/market_data/book_ticker_fusion_metadata_test.cpp` | 新增 | 验证 metadata 二进制写入和 flush |
-| `tools/market_data/book_ticker_fusion_config.h` | 新增 | fusion TOML config 结构 |
-| `tools/market_data/book_ticker_fusion_config.cpp` | 新增 | fusion TOML parser |
-| `test/tools/market_data/book_ticker_fusion_config_test.cpp` | 新增 | 验证 4 source config、重复 source id、缺 output、空 source |
+| `core/market_data/book_ticker_fusion_metadata.h` | 已迁入 | sidecar metadata record 和 binary writer |
+| `test/core/market_data/book_ticker_fusion_metadata_test.cpp` | 已迁入 | 验证 metadata 二进制写入和 flush |
+| `core/market_data/book_ticker_fusion_config.h` | 已迁入 | fusion config 纯结构 |
+| `core/config/book_ticker_fusion_config.*` | 已迁入 | fusion TOML parser，返回 core `BookTickerFusionConfig` |
+| `test/config/book_ticker_fusion_config_test.cpp` | 已迁入 | 验证 4 source config、重复 source id、缺 output、空 source |
 | `tools/market_data/book_ticker_fusion.cpp` | 新增 | CLI tool：打开 N 路 reader、canonical publisher、metadata writer，运行 fusion loop |
 | `tools/market_data/binance_book_ticker_fusion.cpp` | 新增 | Binance CLI tool：复用通用 fusion runner，默认加载 Binance 4-source 示例配置 |
 | `tools/CMakeLists.txt` | 修改 | 增加 `gate_book_ticker_fusion` / `binance_book_ticker_fusion` target |
@@ -139,9 +139,9 @@ SPSC ring 建议见 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。
 ## Task 2: Sidecar Metadata Writer
 
 **Files:**
-- Create: `tools/market_data/book_ticker_fusion_metadata.h`
-- Create: `test/tools/market_data/book_ticker_fusion_metadata_test.cpp`
-- Modify: `test/tools/market_data/CMakeLists.txt`
+- Create: `core/market_data/book_ticker_fusion_metadata.h`
+- Create: `test/core/market_data/book_ticker_fusion_metadata_test.cpp`
+- Modify: `test/core/market_data/CMakeLists.txt`
 
 - [ ] Step 1: 写失败测试 `WritesFixedSizeMetadataRecords`
   - 创建临时文件 `/home/liuxiang/tmp/aquila_fusion_metadata_test_<pid>.bin`。
@@ -166,17 +166,19 @@ SPSC ring 建议见 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。
 
 - [ ] Step 3: 跑 metadata 测试
   ```bash
-  cmake --build build/debug --target book_ticker_fusion_metadata_test -j8
-  ./build/debug/test/tools/market_data/book_ticker_fusion_metadata_test
+  cmake --build build/debug --target core_market_data_book_ticker_fusion_metadata_test -j8
+  ./build/debug/test/core/market_data/core_market_data_book_ticker_fusion_metadata_test
   ```
 
 ## Task 3: Fusion Config Parser
 
 **Files:**
-- Create: `tools/market_data/book_ticker_fusion_config.h`
-- Create: `tools/market_data/book_ticker_fusion_config.cpp`
-- Create: `test/tools/market_data/book_ticker_fusion_config_test.cpp`
-- Modify: `test/tools/market_data/CMakeLists.txt`
+- Create: `core/market_data/book_ticker_fusion_config.h`
+- Create: `core/config/book_ticker_fusion_config.h`
+- Create: `core/config/book_ticker_fusion_config.cpp`
+- Create: `test/config/book_ticker_fusion_config_test.cpp`
+- Modify: `core/config/CMakeLists.txt`
+- Modify: `test/config/CMakeLists.txt`
 
 - [ ] Step 1: 写失败测试 `ParsesFourSources`
   - TOML 包含 `[fusion]`、`[fusion.output]` 和 4 个 `[[fusion.sources]]`。
@@ -217,7 +219,7 @@ SPSC ring 建议见 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。
 - [ ] Step 4: 跑 config 测试
   ```bash
   cmake --build build/debug --target book_ticker_fusion_config_test -j8
-  ./build/debug/test/tools/market_data/book_ticker_fusion_config_test
+  ./build/debug/test/config/book_ticker_fusion_config_test
   ```
 
 ## Task 4: Fusion Tool

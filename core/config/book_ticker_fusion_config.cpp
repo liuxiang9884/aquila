@@ -1,4 +1,4 @@
-#include "tools/market_data/book_ticker_fusion_config.h"
+#include "core/config/book_ticker_fusion_config.h"
 
 #include <cstdint>
 #include <exception>
@@ -9,8 +9,10 @@
 #include <string_view>
 #include <utility>
 
-namespace aquila::tools::market_data {
+namespace aquila::config {
 namespace {
+
+namespace md = aquila::market_data;
 
 [[nodiscard]] BookTickerFusionConfigResult Failure(std::string error) {
   BookTickerFusionConfigResult result;
@@ -19,7 +21,7 @@ namespace {
 }
 
 [[nodiscard]] BookTickerFusionConfigResult Success(
-    BookTickerFusionConfig config) {
+    md::BookTickerFusionConfig config) {
   BookTickerFusionConfigResult result;
   result.value = std::move(config);
   result.ok = true;
@@ -111,16 +113,13 @@ class Parser {
     if (!ok_) {
       return;
     }
-    config_.bind_cpu_id =
-        Int32Or(fusion["bind_cpu_id"], config_.bind_cpu_id);
+    config_.bind_cpu_id = Int32Or(fusion["bind_cpu_id"], config_.bind_cpu_id);
     config_.max_symbol_id = PositiveUInt32Or(
-        fusion["max_symbol_id"], config_.max_symbol_id,
-        "fusion.max_symbol_id");
+        fusion["max_symbol_id"], config_.max_symbol_id, "fusion.max_symbol_id");
   }
 
   void ParseOutput() {
-    const toml::node_view<const toml::node> output =
-        node_["fusion"]["output"];
+    const toml::node_view<const toml::node> output = node_["fusion"]["output"];
     config_.output.shm_name =
         RequiredString(output["shm_name"], "fusion.output.shm_name");
     if (!ok_) {
@@ -156,7 +155,7 @@ class Parser {
         return;
       }
 
-      BookTickerFusionSourceConfig source;
+      md::BookTickerFusionSourceConfig source;
       source.source_id =
           Int32Or((*source_table)["source_id"], source.source_id);
       if (source.source_id < 0) {
@@ -178,8 +177,8 @@ class Parser {
       if (!ok_) {
         return;
       }
-      source.channel_name =
-          OptionalString((*source_table)["channel_name"], "book_ticker_channel");
+      source.channel_name = OptionalString((*source_table)["channel_name"],
+                                           "book_ticker_channel");
       if (source.channel_name.empty()) {
         Fail("fusion.sources.channel_name", " must not be empty");
         return;
@@ -189,7 +188,7 @@ class Parser {
   }
 
   [[nodiscard]] bool HasSourceId(std::int32_t source_id) const noexcept {
-    for (const BookTickerFusionSourceConfig& source : config_.sources) {
+    for (const md::BookTickerFusionSourceConfig& source : config_.sources) {
       if (source.source_id == source_id) {
         return true;
       }
@@ -204,7 +203,7 @@ class Parser {
   }
 
   const toml::table& node_;
-  BookTickerFusionConfig config_;
+  md::BookTickerFusionConfig config_;
   std::string error_;
   bool ok_{true};
 };
@@ -226,4 +225,4 @@ BookTickerFusionConfigResult LoadBookTickerFusionConfigFile(
   }
 }
 
-}  // namespace aquila::tools::market_data
+}  // namespace aquila::config

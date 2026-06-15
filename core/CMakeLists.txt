@@ -25,4 +25,5 @@ target_link_libraries(aquila_core
 )
 
 add_subdirectory(config)
+add_subdirectory(market_data)
 add_subdirectory(websocket)

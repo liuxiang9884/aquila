@@ -1,4 +1,4 @@
-#include "tools/market_data/book_ticker_fusion_config.h"
+#include "core/config/book_ticker_fusion_config.h"
 
 #include <filesystem>
 #include <string>
@@ -51,8 +51,7 @@ shm_name = "aquila_gate_book_ticker_src_3"
 channel_name = "book_ticker_channel"
 )toml");
 
-  const auto result =
-      aquila::tools::market_data::ParseBookTickerFusionConfig(parsed);
+  const auto result = aquila::config::ParseBookTickerFusionConfig(parsed);
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.value.name, "gate_bbo_fusion_4src");
@@ -79,7 +78,7 @@ TEST(BookTickerFusionConfigTest, LoadsCommittedBinanceFourSourceConfig) {
       "config/market_data_fusion/binance_book_ticker_fusion_4sources.toml";
 
   const auto result =
-      aquila::tools::market_data::LoadBookTickerFusionConfigFile(config_path);
+      aquila::config::LoadBookTickerFusionConfigFile(config_path);
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.value.name, "binance_book_ticker_fusion_4sources");
@@ -122,8 +121,7 @@ shm_name = "aquila_gate_book_ticker_src_1b"
 channel_name = "book_ticker_channel"
 )toml");
 
-  const auto result =
-      aquila::tools::market_data::ParseBookTickerFusionConfig(parsed);
+  const auto result = aquila::config::ParseBookTickerFusionConfig(parsed);
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("source_id"), std::string::npos);
@@ -140,8 +138,7 @@ channel_name = "book_ticker_channel"
 metadata_bin = "/home/liuxiang/tmp/gate_fusion/fusion_metadata.bin"
 )toml");
 
-  const auto result =
-      aquila::tools::market_data::ParseBookTickerFusionConfig(parsed);
+  const auto result = aquila::config::ParseBookTickerFusionConfig(parsed);
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("sources"), std::string::npos);
@@ -163,8 +160,7 @@ shm_name = "aquila_gate_book_ticker_src_0"
 channel_name = "book_ticker_channel"
 )toml");
 
-  const auto result =
-      aquila::tools::market_data::ParseBookTickerFusionConfig(parsed);
+  const auto result = aquila::config::ParseBookTickerFusionConfig(parsed);
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("metadata_bin"), std::string::npos);

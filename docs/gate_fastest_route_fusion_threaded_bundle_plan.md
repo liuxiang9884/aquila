@@ -10,6 +10,26 @@
 
 ---
 
+## 当前实现状态
+
+截至 2026-06-15，V1 threaded bundle 已按“fusion 归 core、交易所启动归 tools”的边界落地：
+
+- `BookTickerFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/`；TOML parser 位于 `core/config/book_ticker_fusion_config.*`。
+- `tools/market_data/book_ticker_fusion.cpp` 和 `tools/market_data/binance_book_ticker_fusion.cpp` 仍保留为独立 fusion process 入口。
+- 新增 `gate_book_ticker_fusion_bundle` / `binance_book_ticker_fusion_bundle`，一个进程内运行 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend。
+- tools 层的启动配置命名为 `BookTickerFusionLaunchConfig`，不是 `BookTickerFusionBundleConfig`；它只描述 data session config 引用和 source SHM override。
+- 示例配置为 `config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml` 和 `config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml`。当前示例保留 fusion thread 在 fusion config 的 `bind_cpu_id = 16`，source threads 绑定 `17-20`，log backend 绑定 `31`。
+- dry-run 验证入口：
+
+```bash
+./build/debug/tools/gate_book_ticker_fusion_bundle \
+  --config config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml
+./build/debug/tools/binance_book_ticker_fusion_bundle \
+  --config config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml
+```
+
+本文件后续 task 列表保留为实现历史参考；当前事实源以上述实现状态和代码入口为准。
+
 ## 背景
 
 当前 fastest-route fusion 已落地为多进程 V1：
@@ -36,69 +56,74 @@ V1 threaded bundle 必须满足：
 
 | 文件 | 动作 | 责任 |
 | --- | --- | --- |
-| `tools/market_data/book_ticker_fusion_bundle_config.h` | 新增 | exchange-neutral bundle config 结构，保存 bundle 名称、fusion config 路径和 N 个 source override |
-| `tools/market_data/book_ticker_fusion_bundle_config.cpp` | 新增 | 解析 bundle TOML，校验 source id 唯一、source SHM 名称非空、fusion config 路径非空 |
-| `test/tools/market_data/book_ticker_fusion_bundle_config_test.cpp` | 新增 | 覆盖 config parser 成功路径、重复 source id、空 sources、缺 fusion config |
-| `tools/market_data/book_ticker_fusion_thread.h` | 新增 | 封装 fusion runner thread：构造 `BookTickerFusionRunner`，循环 `PollOnce()`，stop 后 `Flush()` |
-| `test/tools/market_data/book_ticker_fusion_thread_test.cpp` | 新增 | 用临时 SHM 验证 fusion thread 可发布、可 stop、metadata 可 flush |
+| `core/market_data/book_ticker_fusion_config.h` | 已新增 | exchange-neutral `BookTickerFusionConfig` 纯结构，不依赖 `toml++` |
+| `core/config/book_ticker_fusion_config.*` | 已新增 | 解析 fusion TOML，返回 `aquila::market_data::BookTickerFusionConfig` |
+| `core/market_data/book_ticker_fusion_metadata.h` | 已迁入 | sidecar metadata record 和 binary writer |
+| `core/market_data/book_ticker_fusion_runner.h` | 已迁入 | 从 N 路 source SHM 读，写 canonical SHM 和 metadata |
+| `core/market_data/book_ticker_fusion_thread.h` | 已新增 | 封装 fusion runner thread：构造 `BookTickerFusionRunner`，循环 `PollOnce()`，stop 后 `Flush()` |
+| `tools/market_data/book_ticker_fusion_launch_config.*` | 已新增 | tools-only launch config，保存 fusion config 路径和 N 个 data session source override |
 | `tools/market_data/gate_book_ticker_fusion_bundle.cpp` | 新增 | Gate bundle CLI：加载 bundle config、加载 Gate data session config、应用 source override、启动 workers |
 | `tools/market_data/binance_book_ticker_fusion_bundle.cpp` | 新增 | Binance bundle CLI：加载 bundle config、加载 Binance data session config、应用 source override、启动 workers |
 | `tools/CMakeLists.txt` | 修改 | 增加 `gate_book_ticker_fusion_bundle` 和 `binance_book_ticker_fusion_bundle` target |
-| `test/tools/market_data/CMakeLists.txt` | 修改 | 增加 bundle config / fusion thread tests |
-| `config/market_data_fusion/gate_book_ticker_fusion_bundle_4sources.toml` | 新增 | Gate 4-source bundle 示例配置 |
-| `config/market_data_fusion/binance_book_ticker_fusion_bundle_4sources.toml` | 新增 | Binance 4-source bundle 示例配置 |
+| `test/config/book_ticker_fusion_config_test.cpp` | 已迁入 | 覆盖 fusion config parser |
+| `test/core/market_data/book_ticker_fusion_metadata_test.cpp` | 已迁入 | 覆盖 metadata writer |
+| `test/core/market_data/book_ticker_fusion_runner_test.cpp` | 已迁入 | 覆盖 runner 发布 canonical SHM 和 metadata |
+| `test/core/market_data/book_ticker_fusion_thread_test.cpp` | 已新增 | 用临时 SHM 验证 fusion thread 可发布、可 stop、metadata 可 flush |
+| `test/tools/market_data/book_ticker_fusion_launch_config_test.cpp` | 已新增 | 覆盖 launch config parser |
+| `config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml` | 已新增 | Gate 4-source threaded launch 示例配置 |
+| `config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml` | 已新增 | Binance 4-source threaded launch 示例配置 |
 | `docs/gate_fastest_route_fusion_threaded_bundle_plan.md` | 修改 | 实现后同步入口、验证命令和 shadow 结果索引 |
 
 ## V1 Config 形状
 
-bundle config 不把多个 `[data_session]` 写进现有 data session TOML。它引用一个或多个现有 data session config，并显式覆盖 source 差异：
+launch config 不把多个 `[data_session]` 写进现有 data session TOML。它引用一个或多个现有 data session config，并显式覆盖 source 差异：
 
 ```toml
-[bundle]
-name = "gate_book_ticker_fusion_bundle_4sources"
+[launch]
+name = "gate_book_ticker_fusion_launch_4sources"
 fusion_config = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
 
-[[bundle.sources]]
+[[launch.sources]]
 source_id = 0
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_0"
 book_ticker_shm_name = "aquila_gate_book_ticker_src_0"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
-bind_cpu_id = 16
+bind_cpu_id = 17
 
-[[bundle.sources]]
+[[launch.sources]]
 source_id = 1
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_1"
 book_ticker_shm_name = "aquila_gate_book_ticker_src_1"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
-bind_cpu_id = 17
+bind_cpu_id = 18
 
-[[bundle.sources]]
+[[launch.sources]]
 source_id = 2
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_2"
 book_ticker_shm_name = "aquila_gate_book_ticker_src_2"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
-bind_cpu_id = 18
+bind_cpu_id = 19
 
-[[bundle.sources]]
+[[launch.sources]]
 source_id = 3
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_3"
 book_ticker_shm_name = "aquila_gate_book_ticker_src_3"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
-bind_cpu_id = 19
+bind_cpu_id = 20
 ```
 
 parser 输出结构：
 
 ```cpp
-struct BookTickerFusionBundleSourceConfig {
+struct BookTickerFusionLaunchSourceConfig {
   std::int32_t source_id{-1};
   std::filesystem::path data_session_config;
   std::string data_session_name;
@@ -108,10 +133,10 @@ struct BookTickerFusionBundleSourceConfig {
   std::int32_t bind_cpu_id{-1};
 };
 
-struct BookTickerFusionBundleConfig {
+struct BookTickerFusionLaunchConfig {
   std::string name;
   std::filesystem::path fusion_config;
-  std::vector<BookTickerFusionBundleSourceConfig> sources;
+  std::vector<BookTickerFusionLaunchSourceConfig> sources;
 };
 ```
 

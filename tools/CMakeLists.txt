@@ -219,31 +219,66 @@ target_link_libraries(book_ticker_shm_reader
 add_executable(gate_book_ticker_fusion
     market_data/book_ticker_fusion.cpp
     market_data/book_ticker_fusion_cli.cpp
-    market_data/book_ticker_fusion_config.cpp
 )
 
 target_link_libraries(gate_book_ticker_fusion
     PRIVATE
+        aquila_config
         aquila_core
         CLI11::CLI11
         fmt::fmt-header-only
         nova
-        PkgConfig::tomlplusplus
 )
 
 add_executable(binance_book_ticker_fusion
     market_data/binance_book_ticker_fusion.cpp
     market_data/book_ticker_fusion_cli.cpp
-    market_data/book_ticker_fusion_config.cpp
 )
 
 target_link_libraries(binance_book_ticker_fusion
     PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+)
+
+add_executable(gate_book_ticker_fusion_bundle
+    market_data/gate_book_ticker_fusion_bundle.cpp
+    market_data/book_ticker_fusion_launch_config.cpp
+)
+
+target_link_libraries(gate_book_ticker_fusion_bundle
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_gate
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+        PkgConfig::tomlplusplus
+)
+
+add_executable(binance_book_ticker_fusion_bundle
+    market_data/binance_book_ticker_fusion_bundle.cpp
+    market_data/book_ticker_fusion_launch_config.cpp
+)
+
+target_link_libraries(binance_book_ticker_fusion_bundle
+    PRIVATE
+        aquila_binance
+        aquila_config
         aquila_core
         CLI11::CLI11
         fmt::fmt-header-only
         nova
         PkgConfig::tomlplusplus
+)
+
+target_compile_options(binance_book_ticker_fusion_bundle
+    PRIVATE
+        $<$<CXX_COMPILER_ID:GNU>:-Wno-stringop-overflow>
 )
 
 add_executable(data_reader_probe

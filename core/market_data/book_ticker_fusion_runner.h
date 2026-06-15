@@ -1,5 +1,5 @@
-#ifndef AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_RUNNER_H_
-#define AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_RUNNER_H_
+#ifndef AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_RUNNER_H_
+#define AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_RUNNER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -8,13 +8,13 @@
 #include <vector>
 
 #include "core/market_data/book_ticker_fusion.h"
+#include "core/market_data/book_ticker_fusion_config.h"
+#include "core/market_data/book_ticker_fusion_metadata.h"
 #include "core/market_data/data_shm.h"
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/runtime_policy.h"
-#include "tools/market_data/book_ticker_fusion_config.h"
-#include "tools/market_data/book_ticker_fusion_metadata.h"
 
-namespace aquila::tools::market_data {
+namespace aquila::market_data {
 
 struct BookTickerFusionPollStats {
   std::uint64_t read_count{0};
@@ -48,7 +48,7 @@ class BookTickerFusionRunner {
 
         const std::int64_t fusion_publish_ns =
             static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
-        const aquila::market_data::BookTickerFusionDecision decision =
+        const BookTickerFusionDecision decision =
             fusion_.OnBookTicker(source->source_id, ticker, fusion_publish_ns);
         if (!decision.publish) {
           continue;
@@ -103,9 +103,9 @@ class BookTickerFusionRunner {
     aquila::market_data::BookTickerShmReader reader;
   };
 
-  [[nodiscard]] static aquila::market_data::BookTickerShmConfig
-  MakeSourceShmConfig(const BookTickerFusionSourceConfig& source) {
-    return aquila::market_data::BookTickerShmConfig{
+  [[nodiscard]] static BookTickerShmConfig MakeSourceShmConfig(
+      const BookTickerFusionSourceConfig& source) {
+    return BookTickerShmConfig{
         .enabled = true,
         .shm_name = source.shm_name,
         .channel_name = source.channel_name,
@@ -114,9 +114,9 @@ class BookTickerFusionRunner {
     };
   }
 
-  [[nodiscard]] static aquila::market_data::BookTickerShmConfig
-  MakeOutputShmConfig(const BookTickerFusionOutputConfig& output) {
-    return aquila::market_data::BookTickerShmConfig{
+  [[nodiscard]] static BookTickerShmConfig MakeOutputShmConfig(
+      const BookTickerFusionOutputConfig& output) {
+    return BookTickerShmConfig{
         .enabled = true,
         .shm_name = output.shm_name,
         .channel_name = output.channel_name,
@@ -126,8 +126,8 @@ class BookTickerFusionRunner {
   }
 
   BookTickerFusionConfig config_;
-  aquila::market_data::BookTickerFusionCore fusion_;
-  aquila::market_data::DataShmPublisher publisher_;
+  BookTickerFusionCore fusion_;
+  DataShmPublisher publisher_;
   FusionMetadataWriter metadata_writer_;
   std::vector<std::unique_ptr<Source>> sources_;
   std::uint64_t total_read_count_{0};
@@ -135,6 +135,6 @@ class BookTickerFusionRunner {
   std::uint64_t total_metadata_write_errors_{0};
 };
 
-}  // namespace aquila::tools::market_data
+}  // namespace aquila::market_data
 
-#endif  // AQUILA_TOOLS_MARKET_DATA_BOOK_TICKER_FUSION_RUNNER_H_
+#endif  // AQUILA_CORE_MARKET_DATA_BOOK_TICKER_FUSION_RUNNER_H_

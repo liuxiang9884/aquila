@@ -31,8 +31,12 @@ exchange/binance/market_data/data_session_config.cpp
 tools/binance/data_session.cpp
 tools/binance/futures_book_ticker_probe.cpp
 tools/market_data/binance_book_ticker_fusion.cpp
-tools/market_data/book_ticker_fusion_runner.h
+tools/market_data/binance_book_ticker_fusion_bundle.cpp
+core/market_data/book_ticker_fusion_runner.h
+core/market_data/book_ticker_fusion_thread.h
+core/config/book_ticker_fusion_config.h
 config/market_data_fusion/binance_book_ticker_fusion_4sources.toml
+config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml
 benchmark/exchange/binance/market_data/futures_market_data_benchmark.cpp
 scripts/binance/market_data/query_um_futures_contracts.py
 scripts/test/binance/market_data/query_um_futures_contracts_test.py

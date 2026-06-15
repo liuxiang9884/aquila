@@ -1,0 +1,48 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_book_ticker_fusion_launch_4sources.log"
+console_sink_name = "gate_book_ticker_fusion_launch_4sources_console"
+backend_thread_name = "gate_book_ticker_fusion_launch_log"
+backend_cpu_affinity = 31
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[launch]
+name = "gate_book_ticker_fusion_launch_4sources"
+fusion_config = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
+data_session_name = "gate_source_0"
+book_ticker_shm_name = "aquila_gate_book_ticker_src_0"
+book_ticker_channel_name = "book_ticker_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 17
+
+[[launch.sources]]
+source_id = 1
+data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
+data_session_name = "gate_source_1"
+book_ticker_shm_name = "aquila_gate_book_ticker_src_1"
+book_ticker_channel_name = "book_ticker_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 18
+
+[[launch.sources]]
+source_id = 2
+data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
+data_session_name = "gate_source_2"
+book_ticker_shm_name = "aquila_gate_book_ticker_src_2"
+book_ticker_channel_name = "book_ticker_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 19
+
+[[launch.sources]]
+source_id = 3
+data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
+data_session_name = "gate_source_3"
+book_ticker_shm_name = "aquila_gate_book_ticker_src_3"
+book_ticker_channel_name = "book_ticker_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 20

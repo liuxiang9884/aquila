@@ -1,4 +1,4 @@
-#include "tools/market_data/book_ticker_fusion_runner.h"
+#include "core/market_data/book_ticker_fusion_runner.h"
 
 #include <sys/mman.h>
 #include <unistd.h>
@@ -14,27 +14,29 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include "core/market_data/book_ticker_fusion_config.h"
+#include "core/market_data/book_ticker_fusion_metadata.h"
 #include "core/market_data/data_shm.h"
-#include "tools/market_data/book_ticker_fusion_config.h"
-#include "tools/market_data/book_ticker_fusion_metadata.h"
 
 namespace {
 
 namespace md = aquila::market_data;
-namespace tool = aquila::tools::market_data;
+namespace tool = aquila::market_data;
 
 struct ShmCleanup {
   explicit ShmCleanup(std::string shm_name_in)
       : shm_name(std::move(shm_name_in)) {}
 
-  ~ShmCleanup() { ::shm_unlink(shm_name.c_str()); }
+  ~ShmCleanup() {
+    ::shm_unlink(shm_name.c_str());
+  }
 
   std::string shm_name;
 };
 
 std::string UniqueShmName(std::string_view suffix) {
-  return fmt::format("/aquila_book_ticker_fusion_runner_test_{}_{}",
-                     ::getpid(), suffix);
+  return fmt::format("/aquila_book_ticker_fusion_runner_test_{}_{}", ::getpid(),
+                     suffix);
 }
 
 md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
@@ -62,8 +64,7 @@ std::filesystem::path UniqueMetadataPath() {
 }
 
 aquila::BookTicker MakeTicker(std::int32_t symbol_id, std::int64_t id,
-                              std::int64_t exchange_ns,
-                              std::int64_t local_ns) {
+                              std::int64_t exchange_ns, std::int64_t local_ns) {
   return aquila::BookTicker{
       .id = id,
       .symbol_id = symbol_id,
@@ -87,8 +88,8 @@ std::vector<tool::FusionMetadataRecord> ReadMetadata(
   EXPECT_TRUE(input.is_open());
   if (!records.empty()) {
     input.read(reinterpret_cast<char*>(records.data()),
-               static_cast<std::streamsize>(records.size() *
-                                            sizeof(tool::FusionMetadataRecord)));
+               static_cast<std::streamsize>(
+                   records.size() * sizeof(tool::FusionMetadataRecord)));
     EXPECT_TRUE(input.good());
   }
   return records;
@@ -140,12 +141,10 @@ TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndMetadata) {
   md::BookTickerShmReader output_reader(MakeAttachConfig(output));
   output_reader.SeekLatest();
 
-  const aquila::BookTicker source0_first =
-      MakeTicker(42, 100, 1'000, 2'000);
+  const aquila::BookTicker source0_first = MakeTicker(42, 100, 1'000, 2'000);
   const aquila::BookTicker source1_duplicate =
       MakeTicker(42, 100, 1'000, 1'900);
-  const aquila::BookTicker source1_next =
-      MakeTicker(42, 101, 1'010, 2'100);
+  const aquila::BookTicker source1_next = MakeTicker(42, 101, 1'010, 2'100);
   source0_publisher.OnBookTicker(source0_first);
   source1_publisher.OnBookTicker(source1_duplicate);
   source1_publisher.OnBookTicker(source1_next);
