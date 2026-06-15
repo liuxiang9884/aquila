@@ -1,4 +1,4 @@
-#include "tools/market_data/book_ticker_fusion_launch_config.h"
+#include "tools/gate/gate_data_fusion_config.h"
 
 #include <cstdint>
 #include <exception>
@@ -8,18 +8,17 @@
 #include <string_view>
 #include <utility>
 
-namespace aquila::tools::market_data {
+namespace aquila::tools::gate {
 namespace {
 
-[[nodiscard]] BookTickerFusionLaunchConfigResult Failure(std::string error) {
-  BookTickerFusionLaunchConfigResult result;
+[[nodiscard]] GateDataFusionConfigResult Failure(std::string error) {
+  GateDataFusionConfigResult result;
   result.error = std::move(error);
   return result;
 }
 
-[[nodiscard]] BookTickerFusionLaunchConfigResult Success(
-    BookTickerFusionLaunchConfig config) {
-  BookTickerFusionLaunchConfigResult result;
+[[nodiscard]] GateDataFusionConfigResult Success(GateDataFusionConfig config) {
+  GateDataFusionConfigResult result;
   result.value = std::move(config);
   result.ok = true;
   return result;
@@ -29,7 +28,7 @@ class Parser {
  public:
   explicit Parser(const toml::table& node) : node_(node) {}
 
-  [[nodiscard]] BookTickerFusionLaunchConfigResult Parse() {
+  [[nodiscard]] GateDataFusionConfigResult Parse() {
     ParseLaunch();
     if (!ok_) {
       return Failure(std::move(error_));
@@ -100,7 +99,7 @@ class Parser {
         return;
       }
 
-      BookTickerFusionLaunchSourceConfig source;
+      GateDataFusionSourceConfig source;
       source.source_id =
           Int32Or((*source_table)["source_id"], source.source_id);
       if (source.source_id < 0) {
@@ -146,7 +145,7 @@ class Parser {
   }
 
   [[nodiscard]] bool HasSourceId(std::int32_t source_id) const noexcept {
-    for (const BookTickerFusionLaunchSourceConfig& source : config_.sources) {
+    for (const GateDataFusionSourceConfig& source : config_.sources) {
       if (source.source_id == source_id) {
         return true;
       }
@@ -161,27 +160,26 @@ class Parser {
   }
 
   const toml::table& node_;
-  BookTickerFusionLaunchConfig config_;
+  GateDataFusionConfig config_;
   std::string error_;
   bool ok_{true};
 };
 
 }  // namespace
 
-BookTickerFusionLaunchConfigResult ParseBookTickerFusionLaunchConfig(
-    const toml::table& node) {
+GateDataFusionConfigResult ParseGateDataFusionConfig(const toml::table& node) {
   return Parser{node}.Parse();
 }
 
-BookTickerFusionLaunchConfigResult LoadBookTickerFusionLaunchConfigFile(
+GateDataFusionConfigResult LoadGateDataFusionConfigFile(
     const std::filesystem::path& path) {
   try {
     const toml::parse_result parsed = toml::parse_file(path.string());
-    return ParseBookTickerFusionLaunchConfig(parsed);
+    return ParseGateDataFusionConfig(parsed);
   } catch (const std::exception& exc) {
-    return Failure(std::string{"failed to load fusion launch config: "} +
+    return Failure(std::string{"failed to load Gate data fusion config: "} +
                    exc.what());
   }
 }
 
-}  // namespace aquila::tools::market_data
+}  // namespace aquila::tools::gate

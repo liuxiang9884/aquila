@@ -244,12 +244,12 @@ target_link_libraries(binance_book_ticker_fusion
         nova
 )
 
-add_executable(gate_book_ticker_fusion_bundle
-    market_data/gate_book_ticker_fusion_bundle.cpp
-    market_data/book_ticker_fusion_launch_config.cpp
+add_executable(gate_data_fusion
+    gate/gate_data_fusion.cpp
+    gate/gate_data_fusion_config.cpp
 )
 
-target_link_libraries(gate_book_ticker_fusion_bundle
+target_link_libraries(gate_data_fusion
     PRIVATE
         aquila_config
         aquila_core
@@ -260,12 +260,12 @@ target_link_libraries(gate_book_ticker_fusion_bundle
         PkgConfig::tomlplusplus
 )
 
-add_executable(binance_book_ticker_fusion_bundle
-    market_data/binance_book_ticker_fusion_bundle.cpp
-    market_data/book_ticker_fusion_launch_config.cpp
+add_executable(binance_data_fusion
+    binance/binance_data_fusion.cpp
+    binance/binance_data_fusion_config.cpp
 )
 
-target_link_libraries(binance_book_ticker_fusion_bundle
+target_link_libraries(binance_data_fusion
     PRIVATE
         aquila_binance
         aquila_config
@@ -276,7 +276,7 @@ target_link_libraries(binance_book_ticker_fusion_bundle
         PkgConfig::tomlplusplus
 )
 
-target_compile_options(binance_book_ticker_fusion_bundle
+target_compile_options(binance_data_fusion
     PRIVATE
         $<$<CXX_COMPILER_ID:GNU>:-Wno-stringop-overflow>
 )

@@ -16,16 +16,16 @@
 
 - `BookTickerFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/`；TOML parser 位于 `core/config/book_ticker_fusion_config.*`。
 - `tools/market_data/book_ticker_fusion.cpp` 和 `tools/market_data/binance_book_ticker_fusion.cpp` 仍保留为独立 fusion process 入口。
-- 新增 `gate_book_ticker_fusion_bundle` / `binance_book_ticker_fusion_bundle`，一个进程内运行 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend。
-- tools 层的启动配置命名为 `BookTickerFusionLaunchConfig`，不是 `BookTickerFusionBundleConfig`；它只描述 data session config 引用和 source SHM override。
-- 示例配置为 `config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml` 和 `config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml`。当前示例保留 fusion thread 在 fusion config 的 `bind_cpu_id = 16`，source threads 绑定 `17-20`，log backend 绑定 `31`。
+- 新增 `gate_data_fusion` / `binance_data_fusion`，一个进程内运行 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend。
+- tools 层的启动配置按交易所命名为 `GateDataFusionConfig` / `BinanceDataFusionConfig`；它只描述 data session config 引用和 source SHM override，后续可继续承载其他 data fusion type。
+- 示例配置为 `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml` 和 `config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml`。当前示例保留 fusion thread 在 fusion config 的 `bind_cpu_id = 16`，source threads 绑定 `17-20`，log backend 绑定 `31`。
 - dry-run 验证入口：
 
 ```bash
-./build/debug/tools/gate_book_ticker_fusion_bundle \
-  --config config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml
-./build/debug/tools/binance_book_ticker_fusion_bundle \
-  --config config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml
+./build/debug/tools/gate_data_fusion \
+  --config config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml
+./build/debug/tools/binance_data_fusion \
+  --config config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
 ```
 
 本文件后续 task 列表保留为实现历史参考；当前事实源以上述实现状态和代码入口为准。
@@ -61,17 +61,19 @@ V1 threaded bundle 必须满足：
 | `core/market_data/book_ticker_fusion_metadata.h` | 已迁入 | sidecar metadata record 和 binary writer |
 | `core/market_data/book_ticker_fusion_runner.h` | 已迁入 | 从 N 路 source SHM 读，写 canonical SHM 和 metadata |
 | `core/market_data/book_ticker_fusion_thread.h` | 已新增 | 封装 fusion runner thread：构造 `BookTickerFusionRunner`，循环 `PollOnce()`，stop 后 `Flush()` |
-| `tools/market_data/book_ticker_fusion_launch_config.*` | 已新增 | tools-only launch config，保存 fusion config 路径和 N 个 data session source override |
-| `tools/market_data/gate_book_ticker_fusion_bundle.cpp` | 新增 | Gate bundle CLI：加载 bundle config、加载 Gate data session config、应用 source override、启动 workers |
-| `tools/market_data/binance_book_ticker_fusion_bundle.cpp` | 新增 | Binance bundle CLI：加载 bundle config、加载 Binance data session config、应用 source override、启动 workers |
-| `tools/CMakeLists.txt` | 修改 | 增加 `gate_book_ticker_fusion_bundle` 和 `binance_book_ticker_fusion_bundle` target |
+| `tools/gate/gate_data_fusion_config.*` | 已新增 | Gate data fusion 启动配置，保存 fusion config 路径和 N 个 data session source override |
+| `tools/binance/binance_data_fusion_config.*` | 已新增 | Binance data fusion 启动配置，保存 fusion config 路径和 N 个 data session source override |
+| `tools/gate/gate_data_fusion.cpp` | 新增 | Gate data fusion CLI：加载 config、加载 Gate data session config、应用 source override、启动 workers |
+| `tools/binance/binance_data_fusion.cpp` | 新增 | Binance data fusion CLI：加载 config、加载 Binance data session config、应用 source override、启动 workers |
+| `tools/CMakeLists.txt` | 修改 | 增加 `gate_data_fusion` 和 `binance_data_fusion` target |
 | `test/config/book_ticker_fusion_config_test.cpp` | 已迁入 | 覆盖 fusion config parser |
 | `test/core/market_data/book_ticker_fusion_metadata_test.cpp` | 已迁入 | 覆盖 metadata writer |
 | `test/core/market_data/book_ticker_fusion_runner_test.cpp` | 已迁入 | 覆盖 runner 发布 canonical SHM 和 metadata |
 | `test/core/market_data/book_ticker_fusion_thread_test.cpp` | 已新增 | 用临时 SHM 验证 fusion thread 可发布、可 stop、metadata 可 flush |
-| `test/tools/market_data/book_ticker_fusion_launch_config_test.cpp` | 已新增 | 覆盖 launch config parser |
-| `config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml` | 已新增 | Gate 4-source threaded launch 示例配置 |
-| `config/market_data_fusion/binance_book_ticker_fusion_launch_4sources.toml` | 已新增 | Binance 4-source threaded launch 示例配置 |
+| `test/tools/gate/gate_data_fusion_config_test.cpp` | 已新增 | 覆盖 Gate data fusion config parser |
+| `test/tools/binance/binance_data_fusion_config_test.cpp` | 已新增 | 覆盖 Binance data fusion config parser |
+| `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml` | 已新增 | Gate 4-source threaded launch 示例配置 |
+| `config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml` | 已新增 | Binance 4-source threaded launch 示例配置 |
 | `docs/gate_fastest_route_fusion_threaded_bundle_plan.md` | 修改 | 实现后同步入口、验证命令和 shadow 结果索引 |
 
 ## V1 Config 形状
@@ -80,7 +82,7 @@ launch config 不把多个 `[data_session]` 写进现有 data session TOML。它
 
 ```toml
 [launch]
-name = "gate_book_ticker_fusion_launch_4sources"
+name = "gate_data_fusion_book_ticker_4sources"
 fusion_config = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
 
 [[launch.sources]]
@@ -120,10 +122,10 @@ remove_existing_source_shm = true
 bind_cpu_id = 20
 ```
 
-parser 输出结构：
+Gate parser 输出结构；Binance 使用同形状的 `BinanceDataFusionSourceConfig` / `BinanceDataFusionConfig`：
 
 ```cpp
-struct BookTickerFusionLaunchSourceConfig {
+struct GateDataFusionSourceConfig {
   std::int32_t source_id{-1};
   std::filesystem::path data_session_config;
   std::string data_session_name;
@@ -133,10 +135,10 @@ struct BookTickerFusionLaunchSourceConfig {
   std::int32_t bind_cpu_id{-1};
 };
 
-struct BookTickerFusionLaunchConfig {
+struct GateDataFusionConfig {
   std::string name;
   std::filesystem::path fusion_config;
-  std::vector<BookTickerFusionLaunchSourceConfig> sources;
+  std::vector<GateDataFusionSourceConfig> sources;
 };
 ```
 
@@ -175,37 +177,46 @@ metadata_output=<path>
 
 ## V1 实施任务
 
-### Task 1: Bundle Config Parser
+### Task 1: Data Fusion Config Parser
 
 **Files:**
-- Create: `tools/market_data/book_ticker_fusion_bundle_config.h`
-- Create: `tools/market_data/book_ticker_fusion_bundle_config.cpp`
-- Create: `test/tools/market_data/book_ticker_fusion_bundle_config_test.cpp`
-- Modify: `test/tools/market_data/CMakeLists.txt`
+- Create: `tools/gate/gate_data_fusion_config.h`
+- Create: `tools/gate/gate_data_fusion_config.cpp`
+- Create: `tools/binance/binance_data_fusion_config.h`
+- Create: `tools/binance/binance_data_fusion_config.cpp`
+- Create: `test/tools/gate/gate_data_fusion_config_test.cpp`
+- Create: `test/tools/binance/binance_data_fusion_config_test.cpp`
+- Modify: `test/tools/gate/CMakeLists.txt`
+- Modify: `test/tools/binance/CMakeLists.txt`
 
 - [ ] Step 1: 写失败测试 `ParsesFourSourceBundle`
-  - 构造包含 `[bundle]` 和四个 `[[bundle.sources]]` 的 TOML。
+  - 构造包含 `[launch]` 和四个 `[[launch.sources]]` 的 TOML。
   - 验证 `fusion_config`、`source_id`、`data_session_config`、`book_ticker_shm_name` 和 `bind_cpu_id`。
   - 运行：
     ```bash
-    cmake --build build/debug --target book_ticker_fusion_bundle_config_test -j8
-    ./build/debug/test/tools/market_data/book_ticker_fusion_bundle_config_test
+    cmake --build build/debug --target gate_data_fusion_config_test binance_data_fusion_config_test -j8
+    ./build/debug/test/tools/gate/gate_data_fusion_config_test
+    ./build/debug/test/tools/binance/binance_data_fusion_config_test
     ```
   - 预期：新增实现前编译失败或测试失败。
 
 - [ ] Step 2: 实现 parser 和校验
-  - 空 `bundle.name`、空 `bundle.fusion_config`、空 sources、重复 `source_id`、负数 `source_id`、空 `data_session_config`、空 `book_ticker_shm_name` 都返回 `ok=false`。
+  - 空 `launch.name`、空 `launch.fusion_config`、空 sources、重复 `source_id`、负数 `source_id`、空 `data_session_config`、空 `book_ticker_shm_name` 都返回 `ok=false`。
   - `book_ticker_channel_name` 缺省为 `book_ticker_channel`。
 
 - [ ] Step 3: 跑 parser 测试并提交
   ```bash
-  cmake --build build/debug --target book_ticker_fusion_bundle_config_test -j8
-  ./build/debug/test/tools/market_data/book_ticker_fusion_bundle_config_test
+  cmake --build build/debug --target gate_data_fusion_config_test binance_data_fusion_config_test -j8
+  ./build/debug/test/tools/gate/gate_data_fusion_config_test
+  ./build/debug/test/tools/binance/binance_data_fusion_config_test
   git diff --check
-  git add tools/market_data/book_ticker_fusion_bundle_config.* \
-      test/tools/market_data/book_ticker_fusion_bundle_config_test.cpp \
-      test/tools/market_data/CMakeLists.txt
-  git commit -m "Add fusion bundle config parser"
+  git add tools/gate/gate_data_fusion_config.* \
+      tools/binance/binance_data_fusion_config.* \
+      test/tools/gate/gate_data_fusion_config_test.cpp \
+      test/tools/binance/binance_data_fusion_config_test.cpp \
+      test/tools/gate/CMakeLists.txt \
+      test/tools/binance/CMakeLists.txt
+  git commit -m "Add data fusion config parser"
   ```
 
 ### Task 2: Fusion Thread Wrapper
@@ -242,9 +253,9 @@ metadata_output=<path>
 ### Task 3: Gate Bundle Tool
 
 **Files:**
-- Create: `tools/market_data/gate_book_ticker_fusion_bundle.cpp`
+- Create: `tools/gate/gate_data_fusion.cpp`
 - Modify: `tools/CMakeLists.txt`
-- Create: `config/market_data_fusion/gate_book_ticker_fusion_bundle_4sources.toml`
+- Create: `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml`
 
 - [ ] Step 1: 写 dry-run 行为
   - CLI 支持：
@@ -263,27 +274,27 @@ metadata_output=<path>
 
 - [ ] Step 3: 增加 CMake target 并验证 dry-run
   ```bash
-  cmake --build build/debug --target gate_book_ticker_fusion_bundle -j8
-  ./build/debug/tools/gate_book_ticker_fusion_bundle \
-    --config config/market_data_fusion/gate_book_ticker_fusion_bundle_4sources.toml
+  cmake --build build/debug --target gate_data_fusion -j8
+  ./build/debug/tools/gate_data_fusion \
+    --config config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml
   ```
   - 预期：不连接网络，输出 `result=ok connect=false source_count=4`。
 
 - [ ] Step 4: 提交 Gate bundle tool
   ```bash
   git diff --check
-  git add tools/market_data/gate_book_ticker_fusion_bundle.cpp \
+  git add tools/gate/gate_data_fusion.cpp \
       tools/CMakeLists.txt \
-      config/market_data_fusion/gate_book_ticker_fusion_bundle_4sources.toml
+      config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml
   git commit -m "Add Gate fusion bundle tool"
   ```
 
 ### Task 4: Binance Bundle Tool
 
 **Files:**
-- Create: `tools/market_data/binance_book_ticker_fusion_bundle.cpp`
+- Create: `tools/binance/binance_data_fusion.cpp`
 - Modify: `tools/CMakeLists.txt`
-- Create: `config/market_data_fusion/binance_book_ticker_fusion_bundle_4sources.toml`
+- Create: `config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml`
 
 - [ ] Step 1: 复用 Gate bundle 的 supervisor 形状
   - 复用 shared bundle config parser 和 fusion thread wrapper。
@@ -292,18 +303,18 @@ metadata_output=<path>
 
 - [ ] Step 2: 增加 CMake target 并验证 dry-run
   ```bash
-  cmake --build build/debug --target binance_book_ticker_fusion_bundle -j8
-  ./build/debug/tools/binance_book_ticker_fusion_bundle \
-    --config config/market_data_fusion/binance_book_ticker_fusion_bundle_4sources.toml
+  cmake --build build/debug --target binance_data_fusion -j8
+  ./build/debug/tools/binance_data_fusion \
+    --config config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
   ```
   - 预期：不连接网络，输出 `result=ok connect=false source_count=4`。
 
 - [ ] Step 3: 提交 Binance bundle tool
   ```bash
   git diff --check
-  git add tools/market_data/binance_book_ticker_fusion_bundle.cpp \
+  git add tools/binance/binance_data_fusion.cpp \
       tools/CMakeLists.txt \
-      config/market_data_fusion/binance_book_ticker_fusion_bundle_4sources.toml
+      config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
   git commit -m "Add Binance fusion bundle tool"
   ```
 
@@ -343,8 +354,8 @@ V1 threaded bundle 做 shadow 时，不接策略。运行目录写入 `/home/liu
 
 ```bash
 timeout --kill-after=10s 1860s \
-  ./build/release/tools/gate_book_ticker_fusion_bundle \
-  --config config/market_data_fusion/gate_book_ticker_fusion_bundle_4sources.toml \
+  ./build/release/tools/gate_data_fusion \
+  --config config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml \
   --connect \
   --max-runtime-ms 1800000
 ```

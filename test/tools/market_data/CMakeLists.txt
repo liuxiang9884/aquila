@@ -28,21 +28,6 @@ target_link_libraries(data_reader_tool_logging_test
 add_test(NAME data_reader_tool_logging_test
          COMMAND data_reader_tool_logging_test)
 
-add_executable(book_ticker_fusion_launch_config_test
-    book_ticker_fusion_launch_config_test.cpp
-    ${PROJECT_SOURCE_DIR}/tools/market_data/book_ticker_fusion_launch_config.cpp
-)
-
-target_link_libraries(book_ticker_fusion_launch_config_test
-    PRIVATE
-        aquila_core
-        GTest::gtest_main
-        PkgConfig::tomlplusplus
-)
-
-add_test(NAME book_ticker_fusion_launch_config_test
-         COMMAND book_ticker_fusion_launch_config_test)
-
 add_executable(data_reader_probe_mode_test
     data_reader_probe_mode_test.cpp
 )

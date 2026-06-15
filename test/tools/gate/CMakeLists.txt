@@ -209,3 +209,18 @@ printf '%s\n' "$output"
 set_tests_properties(gate_order_session_rtt_probe_multi_live_preflight
     PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(gate_data_fusion_config_test
+    gate_data_fusion_config_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/gate/gate_data_fusion_config.cpp
+)
+
+target_link_libraries(gate_data_fusion_config_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+)
+
+add_test(NAME gate_data_fusion_config_test
+         COMMAND gate_data_fusion_config_test)

@@ -1,14 +1,14 @@
 [log]
 log_level = "info"
-file_sink_name = "/home/liuxiang/log/gate_book_ticker_fusion_launch_4sources.log"
-console_sink_name = "gate_book_ticker_fusion_launch_4sources_console"
-backend_thread_name = "gate_book_ticker_fusion_launch_log"
+file_sink_name = "/home/liuxiang/log/gate_data_fusion_book_ticker_4sources.log"
+console_sink_name = "gate_data_fusion_book_ticker_4sources_console"
+backend_thread_name = "gate_data_fusion_book_ticker_log"
 backend_cpu_affinity = 31
 format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
 [launch]
-name = "gate_book_ticker_fusion_launch_4sources"
+name = "gate_data_fusion_book_ticker_4sources"
 fusion_config = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
 
 [[launch.sources]]

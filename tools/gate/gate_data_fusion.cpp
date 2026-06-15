@@ -23,13 +23,13 @@
 #include "exchange/gate/market_data/data_session.h"
 #include "exchange/gate/market_data/data_session_config.h"
 #include "nova/utils/log.h"
-#include "tools/market_data/book_ticker_fusion_launch_config.h"
+#include "tools/gate/gate_data_fusion_config.h"
 
 namespace {
 
 namespace aq_gate = aquila::gate;
 namespace aq_md = aquila::market_data;
-namespace aq_tool = aquila::tools::market_data;
+namespace aq_tool = aquila::tools::gate;
 
 std::atomic<bool> signal_stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
@@ -39,7 +39,7 @@ void HandleSignal(int) {
 }
 
 struct PreparedGateSource {
-  aq_tool::BookTickerFusionLaunchSourceConfig launch_source;
+  aq_tool::GateDataFusionSourceConfig launch_source;
   aq_gate::DataSessionConfig data_session_config;
 };
 
@@ -56,9 +56,9 @@ struct PreparedGateSource {
 }
 
 [[nodiscard]] bool ValidateFusionAlignment(
-    const aq_tool::BookTickerFusionLaunchConfig& launch_config,
+    const aq_tool::GateDataFusionConfig& launch_config,
     const aq_md::BookTickerFusionConfig& fusion_config, std::string* error) {
-  for (const aq_tool::BookTickerFusionLaunchSourceConfig& launch_source :
+  for (const aq_tool::GateDataFusionSourceConfig& launch_source :
        launch_config.sources) {
     const aq_md::BookTickerFusionSourceConfig* fusion_source =
         FindFusionSource(fusion_config, launch_source.source_id);
@@ -83,9 +83,8 @@ struct PreparedGateSource {
   return true;
 }
 
-void ApplySourceOverride(
-    const aq_tool::BookTickerFusionLaunchSourceConfig& source,
-    aq_gate::DataSessionConfig* data_session_config) {
+void ApplySourceOverride(const aq_tool::GateDataFusionSourceConfig& source,
+                         aq_gate::DataSessionConfig* data_session_config) {
   data_session_config->name = source.data_session_name;
   data_session_config->book_ticker_shm.enabled = true;
   data_session_config->book_ticker_shm.shm_name = source.book_ticker_shm_name;
@@ -102,11 +101,11 @@ void ApplySourceOverride(
 }
 
 [[nodiscard]] bool LoadPreparedSources(
-    const aq_tool::BookTickerFusionLaunchConfig& launch_config,
+    const aq_tool::GateDataFusionConfig& launch_config,
     std::vector<PreparedGateSource>* sources, std::string* error) {
   sources->clear();
   sources->reserve(launch_config.sources.size());
-  for (const aq_tool::BookTickerFusionLaunchSourceConfig& launch_source :
+  for (const aq_tool::GateDataFusionSourceConfig& launch_source :
        launch_config.sources) {
     aq_gate::DataSessionConfigResult data_session_result =
         aq_gate::LoadDataSessionConfigFile(launch_source.data_session_config);
@@ -133,14 +132,14 @@ void ApplySourceOverride(
       sources.front().data_session_config.connection.enable_tls;
   for (const PreparedGateSource& source : sources) {
     if (source.data_session_config.connection.enable_tls != enable_tls) {
-      *error = "all Gate bundle sources must use the same TLS setting";
+      *error = "all Gate data fusion sources must use the same TLS setting";
       return false;
     }
   }
   return true;
 }
 
-void PrintDryRun(const aq_tool::BookTickerFusionLaunchConfig& launch_config,
+void PrintDryRun(const aq_tool::GateDataFusionConfig& launch_config,
                  const aq_md::BookTickerFusionConfig& fusion_config,
                  const std::vector<PreparedGateSource>& sources) {
   fmt::print(
@@ -201,7 +200,7 @@ class GateSourceWorker {
 };
 
 template <typename WebSocketPolicy>
-int RunConnected(const aq_tool::BookTickerFusionLaunchConfig& launch_config,
+int RunConnected(const aq_tool::GateDataFusionConfig& launch_config,
                  aq_md::BookTickerFusionConfig fusion_config,
                  std::vector<PreparedGateSource> sources,
                  std::uint64_t max_runtime_ms) {
@@ -267,12 +266,12 @@ int RunConnected(const aq_tool::BookTickerFusionLaunchConfig& launch_config,
 
 int main(int argc, char** argv) {
   std::filesystem::path config_path{
-      "config/market_data_fusion/gate_book_ticker_fusion_launch_4sources.toml"};
+      "config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml"};
   bool connect{false};
   std::uint64_t max_runtime_ms{0};
 
-  CLI::App app{"Gate BookTicker fusion threaded bundle"};
-  app.add_option("--config", config_path, "fusion launch TOML path");
+  CLI::App app{"Gate data fusion"};
+  app.add_option("--config", config_path, "data fusion TOML path");
   app.add_flag("--connect", connect, "connect data sessions");
   app.add_option("--max-runtime-ms", max_runtime_ms, "0 means unlimited");
   CLI11_PARSE(app, argc, argv);
@@ -282,14 +281,13 @@ int main(int argc, char** argv) {
         toml::parse_file(config_path.string());
     nova::LoggingGuard logging_guard{launch_toml};
 
-    const aq_tool::BookTickerFusionLaunchConfigResult launch_result =
-        aq_tool::ParseBookTickerFusionLaunchConfig(launch_toml);
+    const aq_tool::GateDataFusionConfigResult launch_result =
+        aq_tool::ParseGateDataFusionConfig(launch_toml);
     if (!launch_result.ok) {
       fmt::print(stderr, "config_error={}\n", launch_result.error);
       return 1;
     }
-    const aq_tool::BookTickerFusionLaunchConfig& launch_config =
-        launch_result.value;
+    const aq_tool::GateDataFusionConfig& launch_config = launch_result.value;
 
     const aquila::config::BookTickerFusionConfigResult fusion_result =
         aquila::config::LoadBookTickerFusionConfigFile(
@@ -330,7 +328,7 @@ int main(int argc, char** argv) {
         launch_config, std::move(fusion_config), std::move(sources),
         max_runtime_ms);
   } catch (const std::exception& exc) {
-    fmt::print(stderr, "gate_fusion_bundle_error={}\n", exc.what());
+    fmt::print(stderr, "gate_data_fusion_error={}\n", exc.what());
     return 1;
   }
 }
