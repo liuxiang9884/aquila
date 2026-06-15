@@ -63,6 +63,7 @@ V1 threaded bundle 必须满足：
 | `core/market_data/book_ticker_fusion_thread.h` | 已新增 | 封装 fusion runner thread：构造 `BookTickerFusionRunner`，循环 `PollOnce()`，stop 后 `Flush()` |
 | `tools/gate/gate_data_fusion_config.*` | 已新增 | Gate data fusion 启动配置，保存 fusion config 路径和 N 个 data session source override |
 | `tools/binance/binance_data_fusion_config.*` | 已新增 | Binance data fusion 启动配置，保存 fusion config 路径和 N 个 data session source override |
+| `tools/market_data/data_fusion_tool_support.h` | 已新增 | Gate / Binance data fusion CLI 共享启动期校验、source override 和 summary log helper |
 | `tools/gate/gate_data_fusion.cpp` | 新增 | Gate data fusion CLI：加载 config、加载 Gate data session config、应用 source override、启动 workers |
 | `tools/binance/binance_data_fusion.cpp` | 新增 | Binance data fusion CLI：加载 config、加载 Binance data session config、应用 source override、启动 workers |
 | `tools/CMakeLists.txt` | 修改 | 增加 `gate_data_fusion` 和 `binance_data_fusion` target |

@@ -28,6 +28,21 @@ target_link_libraries(data_reader_tool_logging_test
 add_test(NAME data_reader_tool_logging_test
          COMMAND data_reader_tool_logging_test)
 
+add_executable(data_fusion_tool_support_test
+    data_fusion_tool_support_test.cpp
+)
+
+target_link_libraries(data_fusion_tool_support_test
+    PRIVATE
+        aquila_core
+        aquila_gate
+        GTest::gtest_main
+        nova
+)
+
+add_test(NAME data_fusion_tool_support_test
+         COMMAND data_fusion_tool_support_test)
+
 add_executable(data_reader_probe_mode_test
     data_reader_probe_mode_test.cpp
 )

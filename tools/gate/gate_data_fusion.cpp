@@ -6,13 +6,11 @@
 #include <filesystem>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include <CLI/CLI.hpp>
-#include <fmt/core.h>
 #include <toml++/toml.hpp>
 
 #include "core/config/book_ticker_fusion_config.h"
@@ -23,12 +21,14 @@
 #include "exchange/gate/market_data/data_session_config.h"
 #include "nova/utils/log.h"
 #include "tools/gate/gate_data_fusion_config.h"
+#include "tools/market_data/data_fusion_tool_support.h"
 
 namespace {
 
 namespace aq_gate = aquila::gate;
 namespace aq_md = aquila::market_data;
 namespace aq_tool = aquila::tools::gate;
+namespace aq_tool_md = aquila::tools::market_data;
 
 std::atomic<bool> signal_stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
@@ -41,63 +41,6 @@ struct PreparedGateSource {
   aq_tool::GateDataFusionSourceConfig launch_source;
   aq_gate::DataSessionConfig data_session_config;
 };
-
-[[nodiscard]] const aq_md::BookTickerFusionSourceConfig* FindFusionSource(
-    const aq_md::BookTickerFusionConfig& fusion_config,
-    std::int32_t source_id) {
-  for (const aq_md::BookTickerFusionSourceConfig& source :
-       fusion_config.sources) {
-    if (source.source_id == source_id) {
-      return &source;
-    }
-  }
-  return nullptr;
-}
-
-[[nodiscard]] bool ValidateFusionAlignment(
-    const aq_tool::GateDataFusionConfig& launch_config,
-    const aq_md::BookTickerFusionConfig& fusion_config, std::string* error) {
-  for (const aq_tool::GateDataFusionSourceConfig& launch_source :
-       launch_config.sources) {
-    const aq_md::BookTickerFusionSourceConfig* fusion_source =
-        FindFusionSource(fusion_config, launch_source.source_id);
-    if (fusion_source == nullptr) {
-      *error =
-          fmt::format("missing fusion source_id={}", launch_source.source_id);
-      return false;
-    }
-    if (fusion_source->shm_name != launch_source.book_ticker_shm_name) {
-      *error = fmt::format("source_id={} shm mismatch fusion={} launch={}",
-                           launch_source.source_id, fusion_source->shm_name,
-                           launch_source.book_ticker_shm_name);
-      return false;
-    }
-    if (fusion_source->channel_name != launch_source.book_ticker_channel_name) {
-      *error = fmt::format("source_id={} channel mismatch fusion={} launch={}",
-                           launch_source.source_id, fusion_source->channel_name,
-                           launch_source.book_ticker_channel_name);
-      return false;
-    }
-  }
-  return true;
-}
-
-void ApplySourceOverride(const aq_tool::GateDataFusionSourceConfig& source,
-                         aq_gate::DataSessionConfig* data_session_config) {
-  data_session_config->name = source.data_session_name;
-  data_session_config->book_ticker_shm.enabled = true;
-  data_session_config->book_ticker_shm.shm_name = source.book_ticker_shm_name;
-  data_session_config->book_ticker_shm.channel_name =
-      source.book_ticker_channel_name;
-  data_session_config->book_ticker_shm.create = true;
-  data_session_config->book_ticker_shm.remove_existing =
-      source.remove_existing_source_shm;
-  if (source.bind_cpu_id >= 0) {
-    data_session_config->connection.runtime_policy.io_cpu_id =
-        source.bind_cpu_id;
-  }
-  data_session_config->diagnostics.latency_outlier.source_id = source.source_id;
-}
 
 [[nodiscard]] bool LoadPreparedSources(
     const aq_tool::GateDataFusionConfig& launch_config,
@@ -112,53 +55,14 @@ void ApplySourceOverride(const aq_tool::GateDataFusionSourceConfig& source,
       *error = data_session_result.error;
       return false;
     }
-    ApplySourceOverride(launch_source, &data_session_result.value);
+    aq_tool_md::ApplyBookTickerSourceOverride(launch_source,
+                                              &data_session_result.value);
     sources->push_back(PreparedGateSource{
         .launch_source = launch_source,
         .data_session_config = std::move(data_session_result.value),
     });
   }
   return true;
-}
-
-[[nodiscard]] bool ValidateHomogeneousTransport(
-    const std::vector<PreparedGateSource>& sources, std::string* error) {
-  if (sources.empty()) {
-    *error = "launch sources must not be empty";
-    return false;
-  }
-  const bool enable_tls =
-      sources.front().data_session_config.connection.enable_tls;
-  for (const PreparedGateSource& source : sources) {
-    if (source.data_session_config.connection.enable_tls != enable_tls) {
-      *error = "all Gate data fusion sources must use the same TLS setting";
-      return false;
-    }
-  }
-  return true;
-}
-
-void LogDryRun(const aq_tool::GateDataFusionConfig& launch_config,
-               const aq_md::BookTickerFusionConfig& fusion_config,
-               const std::vector<PreparedGateSource>& sources) {
-  NOVA_INFO(
-      "result=ok connect=false launch={} source_count={} fusion={} "
-      "output_shm={} metadata_output={}",
-      launch_config.name, sources.size(), fusion_config.name,
-      fusion_config.output.shm_name,
-      fusion_config.output.metadata_bin.string());
-  for (const PreparedGateSource& source : sources) {
-    const auto& connection = source.data_session_config.connection;
-    NOVA_INFO(
-        "source_id={} name={} data_session_config={} shm={} channel={} "
-        "tls={} bind_cpu_id={}",
-        source.launch_source.source_id, source.data_session_config.name,
-        source.launch_source.data_session_config.string(),
-        source.data_session_config.book_ticker_shm.shm_name,
-        source.data_session_config.book_ticker_shm.channel_name,
-        connection.enable_tls ? "true" : "false",
-        connection.runtime_policy.io_cpu_id);
-  }
 }
 
 template <typename WebSocketPolicy>
@@ -249,26 +153,8 @@ int RunConnected(const aq_tool::GateDataFusionConfig& launch_config,
     source_published_count += worker->published_count();
   }
 
-  const char* result = fusion_stats.ok ? "ok" : "failed";
-  if (fusion_stats.ok) {
-    NOVA_INFO(
-        "result={} launch={} source_count={} source_published_count={} "
-        "fusion_total_read_count={} fusion_total_published_count={} "
-        "fusion_metadata_write_errors={} fusion_flush_ok={} error={}",
-        result, launch_config.name, workers.size(), source_published_count,
-        fusion_stats.total_read_count, fusion_stats.total_published_count,
-        fusion_stats.total_metadata_write_errors,
-        fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
-  } else {
-    NOVA_ERROR(
-        "result={} launch={} source_count={} source_published_count={} "
-        "fusion_total_read_count={} fusion_total_published_count={} "
-        "fusion_metadata_write_errors={} fusion_flush_ok={} error={}",
-        result, launch_config.name, workers.size(), source_published_count,
-        fusion_stats.total_read_count, fusion_stats.total_published_count,
-        fusion_stats.total_metadata_write_errors,
-        fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
-  }
+  aq_tool_md::LogBookTickerDataFusionRunSummary(
+      launch_config.name, workers.size(), source_published_count, fusion_stats);
   return fusion_stats.ok ? 0 : 1;
 }
 
@@ -308,7 +194,8 @@ int main(int argc, char** argv) {
     aq_md::BookTickerFusionConfig fusion_config = fusion_result.value;
 
     std::string error;
-    if (!ValidateFusionAlignment(launch_config, fusion_config, &error)) {
+    if (!aq_tool_md::ValidateBookTickerFusionAlignment(launch_config,
+                                                       fusion_config, &error)) {
       NOVA_ERROR("fusion_alignment_error={}", error);
       return 1;
     }
@@ -318,13 +205,14 @@ int main(int argc, char** argv) {
       NOVA_ERROR("data_session_config_error={}", error);
       return 1;
     }
-    if (!ValidateHomogeneousTransport(sources, &error)) {
+    if (!aq_tool_md::SourcesUseSameTls(sources, "Gate", &error)) {
       NOVA_ERROR("transport_error={}", error);
       return 1;
     }
 
     if (!connect) {
-      LogDryRun(launch_config, fusion_config, sources);
+      aq_tool_md::LogBookTickerDataFusionDryRun(launch_config, fusion_config,
+                                                sources);
       return 0;
     }
 
@@ -337,10 +225,8 @@ int main(int argc, char** argv) {
         launch_config, std::move(fusion_config), std::move(sources),
         max_runtime_ms);
   } catch (const std::exception& exc) {
-    nova::LogConfig fallback_log_config;
-    fallback_log_config.set_console_sink_name(
+    nova::LogConfig fallback_log_config = aq_tool_md::MakeConsoleOnlyLogConfig(
         "gate_data_fusion_startup_console");
-    fallback_log_config.set_file_sink_name("");
     nova::InitializeLogging(fallback_log_config);
     NOVA_ERROR("gate_data_fusion_error={}", exc.what());
     nova::StopLogging();
