@@ -35,6 +35,12 @@ winner 对应的完整 `BookTicker` 立即输出到 canonical SHM；其他 sourc
 30-symbol / N=4 / 30 分钟 L4 shadow 已分别跑过 Gate private plain 和 Binance public TLS。最新结果见
 `docs/gate_fastest_route_fusion_shadow_results.md`。
 
+2026-06-15 后续方向：计划增加同进程多线程 bundle 作为多进程 V1 的 A/B 对照。bundle 内运行 N 个
+data session thread、1 个 fusion thread 和 1 个统一 log backend thread；V1 bundle 仍使用 source
+SHM 连接 data session 和 fusion，保留 recorder / `DataReader` 监控边界。direct in-process SPSC
+ring 只作为 V2 建议，进入条件是 threaded bundle 的 shadow / benchmark 证明 source SHM hop 或 tail
+已经成为可见瓶颈。详细实施计划见 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。
+
 ## 已排除方向
 
 本轮讨论明确排除以下方向作为主方案：
@@ -132,6 +138,22 @@ gate_data_session_N -> source_N BookTicker SHM ┘
 
 首轮落地时 `N` 是配置项，运行配置先设为 `4`。第一版不把 N 路 WS connection 合并进 fusion 进程；
 每一路 source 仍是独立 data session process，fusion process 不连接交易所，只读 SHM 并输出 canonical SHM。
+
+后续 threaded bundle 不改变这一段的 fusion 算法和 SHM ABI，只改变进程 / 线程部署形态：
+
+```text
+one bundle process
+  source_0 data session thread -> source_0 BookTicker SHM
+  source_1 data session thread -> source_1 BookTicker SHM
+  ...
+  fusion thread                -> canonical BookTicker SHM
+  one log backend thread
+```
+
+这个形态的第一目标是减少 N 个 data session process 带来的 N 个 log backend thread 和进程管理成本。
+它仍保留 source SHM，因此 `data_reader_recorder`、monitor 和 published fusion analyzer 可以继续复用。
+是否把策略切到 bundle 输出的 canonical SHM，必须由 threaded bundle shadow 与多进程 shadow 的 p50 / p99 /
+p99.9 / max、source latency、fusion hop、winner ratio 和 recorder overrun 对比结果决定。
 
 4 路首版架构图：
 
