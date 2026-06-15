@@ -43,6 +43,25 @@ target_link_libraries(data_fusion_tool_support_test
 add_test(NAME data_fusion_tool_support_test
          COMMAND data_fusion_tool_support_test)
 
+add_executable(book_ticker_fusion_cli_test
+    book_ticker_fusion_cli_test.cpp
+)
+
+target_link_libraries(book_ticker_fusion_cli_test
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(book_ticker_fusion_cli_test
+    PRIVATE
+        AQUILA_GATE_BOOK_TICKER_FUSION_BINARY="$<TARGET_FILE:gate_book_ticker_fusion>"
+        AQUILA_MISSING_BOOK_TICKER_FUSION_CONFIG="${PROJECT_BINARY_DIR}/missing_book_ticker_fusion_config.toml"
+)
+add_dependencies(book_ticker_fusion_cli_test gate_book_ticker_fusion)
+
+add_test(NAME book_ticker_fusion_cli_test
+         COMMAND book_ticker_fusion_cli_test)
+
 add_executable(data_reader_probe_mode_test
     data_reader_probe_mode_test.cpp
 )

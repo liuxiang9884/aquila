@@ -6,6 +6,7 @@
 #include <exception>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -55,6 +56,19 @@ bool ApplyAffinity(
   return "disabled";
 }
 
+void LogEarlyConfigError(std::string_view error) noexcept {
+  try {
+    nova::LogConfig log_config;
+    log_config.set_file_sink_name("");
+    log_config.set_json_file_sink_name("");
+    nova::InitializeLogging(log_config);
+    NOVA_ERROR("config_error={}", error);
+    nova::StopLogging();
+  } catch (...) {
+    nova::StopLogging();
+  }
+}
+
 }  // namespace
 
 int RunBookTickerFusionCli(int argc, char** argv,
@@ -72,10 +86,22 @@ int RunBookTickerFusionCli(int argc, char** argv,
 
   try {
     const toml::parse_result toml = toml::parse_file(config_path.string());
-    nova::LoggingGuard logging_guard{toml};
+#if !TOML_EXCEPTIONS
+    if (!toml) {
+      LogEarlyConfigError(toml.error().description());
+      return 1;
+    }
+#endif
+#if TOML_EXCEPTIONS
+    const toml::table& config_toml = toml;
+#else
+    const toml::table& config_toml = toml.table();
+#endif
+    nova::LoggingGuard logging_guard{config_toml};
 
     try {
-      auto config_result = aquila::config::ParseBookTickerFusionConfig(toml);
+      auto config_result =
+          aquila::config::ParseBookTickerFusionConfig(config_toml);
       if (!config_result.ok) {
         NOVA_ERROR("config_error={}", config_result.error);
         return 1;
@@ -126,9 +152,7 @@ int RunBookTickerFusionCli(int argc, char** argv,
       return 1;
     }
   } catch (const std::exception& exc) {
-    if (::nova::kLogManager.logger() != nullptr) {
-      NOVA_ERROR("{}_error={}", error_key, exc.what());
-    }
+    LogEarlyConfigError(exc.what());
     return 1;
   }
 }
