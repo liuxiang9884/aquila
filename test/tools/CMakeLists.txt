@@ -5,9 +5,9 @@ add_subdirectory(tardis)
 add_subdirectory(lead_lag)
 add_subdirectory(market_data)
 
-add_test(NAME data_fusion_tools_do_not_use_fmt_print
+add_test(NAME data_fusion_tools_static_review
          COMMAND bash -c [=[
-if rg -n 'fmt::print' "$1" "$2"; then
+if rg -n 'fmt::print|start_result_' "$1" "$2"; then
   exit 1
 fi
 ]=] _

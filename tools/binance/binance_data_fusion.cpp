@@ -74,7 +74,7 @@ class BinanceSourceWorker {
         session_(std::move(config), publisher_) {}
 
   void Start() {
-    thread_ = std::thread([this] { start_result_ = session_.Start(); });
+    thread_ = std::thread([this] { (void)session_.Start(); });
   }
 
   void Stop() noexcept {
@@ -101,7 +101,6 @@ class BinanceSourceWorker {
   aq_md::DataShmPublisher publisher_;
   Session session_;
   std::thread thread_;
-  bool start_result_{false};
 };
 
 template <typename WebSocketPolicy>
