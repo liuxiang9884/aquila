@@ -22,3 +22,17 @@ target_link_libraries(data_reader_benchmark
         fmt::fmt-header-only
         nova
 )
+
+add_executable(book_ticker_queue_replay_benchmark
+    book_ticker_queue_replay_benchmark.cpp
+)
+
+target_link_libraries(book_ticker_queue_replay_benchmark
+    PRIVATE
+        aquila_core
+        aquila_evaluation
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+        Threads::Threads
+)

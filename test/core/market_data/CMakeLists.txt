@@ -39,6 +39,19 @@ target_link_libraries(core_market_data_book_ticker_fusion_test
 add_test(NAME core_market_data_book_ticker_fusion_test
          COMMAND core_market_data_book_ticker_fusion_test)
 
+add_executable(core_market_data_book_ticker_replay_benchmark_support_test
+    book_ticker_replay_benchmark_support_test.cpp
+)
+
+target_link_libraries(core_market_data_book_ticker_replay_benchmark_support_test
+    PRIVATE
+        aquila_evaluation
+        GTest::gtest_main
+)
+
+add_test(NAME core_market_data_book_ticker_replay_benchmark_support_test
+         COMMAND core_market_data_book_ticker_replay_benchmark_support_test)
+
 add_executable(core_market_data_data_session_diagnostics_test
     data_session_diagnostics_test.cpp
 )
