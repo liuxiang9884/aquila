@@ -100,4 +100,33 @@ TEST(BookTickerFusionCoreTest, DropsOutOfRangeSymbolId) {
                    .publish);
 }
 
+TEST(BookTickerFusionCoreTest, DropDecisionsKeepMetadataUnset) {
+  aquila::market_data::BookTickerFusionCore fusion(/*max_symbol_id=*/8);
+
+  const aquila::BookTicker first = MakeTicker(2, 10, 7'000);
+  ExpectPublishedDecision(
+      fusion.OnBookTicker(/*source_id=*/0, first, /*fusion_publish_ns=*/8'000),
+      first, 8'000, 0);
+
+  const aquila::market_data::BookTickerFusionDecision stale_decision =
+      fusion.OnBookTicker(/*source_id=*/1, MakeTicker(2, 10, 7'100),
+                          /*fusion_publish_ns=*/8'100);
+  EXPECT_FALSE(stale_decision.publish);
+  EXPECT_EQ(stale_decision.source_id, -1);
+  EXPECT_EQ(stale_decision.symbol_id, -1);
+  EXPECT_EQ(stale_decision.book_ticker_id, 0);
+  EXPECT_EQ(stale_decision.source_local_ns, 0);
+  EXPECT_EQ(stale_decision.fusion_publish_ns, 0);
+
+  const aquila::market_data::BookTickerFusionDecision invalid_decision =
+      fusion.OnBookTicker(/*source_id=*/2, MakeTicker(9, 11, 7'200),
+                          /*fusion_publish_ns=*/8'200);
+  EXPECT_FALSE(invalid_decision.publish);
+  EXPECT_EQ(invalid_decision.source_id, -1);
+  EXPECT_EQ(invalid_decision.symbol_id, -1);
+  EXPECT_EQ(invalid_decision.book_ticker_id, 0);
+  EXPECT_EQ(invalid_decision.source_local_ns, 0);
+  EXPECT_EQ(invalid_decision.fusion_publish_ns, 0);
+}
+
 }  // namespace

@@ -12,6 +12,7 @@ namespace aquila::market_data {
 
 struct BookTickerFusionDecision {
   bool publish{false};
+  // Metadata fields are valid only when publish is true.
   std::int32_t source_id{-1};
   std::int32_t symbol_id{-1};
   std::int64_t book_ticker_id{0};
@@ -27,29 +28,26 @@ class BookTickerFusionCore {
   [[nodiscard]] BookTickerFusionDecision OnBookTicker(
       std::int32_t source_id, const BookTicker& ticker,
       std::int64_t fusion_publish_ns) noexcept {
-    BookTickerFusionDecision decision{
+    if (ticker.symbol_id < 0 ||
+        static_cast<std::size_t>(ticker.symbol_id) >= states_.size()) {
+      return {};
+    }
+
+    SymbolFusionState& state =
+        states_[static_cast<std::size_t>(ticker.symbol_id)];
+    if (ticker.id <= state.last_published_id) {
+      return {};
+    }
+
+    state.last_published_id = ticker.id;
+    return BookTickerFusionDecision{
+        .publish = true,
         .source_id = source_id,
         .symbol_id = ticker.symbol_id,
         .book_ticker_id = ticker.id,
         .source_local_ns = ticker.local_ns,
         .fusion_publish_ns = fusion_publish_ns,
     };
-
-    if (ticker.symbol_id < 0 ||
-        static_cast<std::size_t>(ticker.symbol_id) >= states_.size()) {
-      return decision;
-    }
-
-    SymbolFusionState& state =
-        states_[static_cast<std::size_t>(ticker.symbol_id)];
-    if (ticker.id <= state.last_published_id) {
-      return decision;
-    }
-
-    state.last_published_id = ticker.id;
-
-    decision.publish = true;
-    return decision;
   }
 
  private:
