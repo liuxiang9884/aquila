@@ -1,0 +1,36 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures_common_gate_binance_20260602.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_data_session_31symbols_no_ton_private_plain_20260616.log"
+console_sink_name = "gate_data_session_31symbols_no_ton_private_plain_console"
+backend_thread_name = "gate_data_session_31symbols_no_ton_private_plain_log"
+backend_cpu_affinity = 1
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_session]
+name = "gate_data_session_31symbols_no_ton_private_plain_20260616"
+subscribe_symbols = ["CLO_USDT", "SLX_USDT", "AIA_USDT", "WLD_USDT", "PIEVERSE_USDT", "OPN_USDT", "LIT_USDT", "MYX_USDT", "ENA_USDT", "STO_USDT", "ICP_USDT", "UB_USDT", "BEAT_USDT", "XPL_USDT", "FARTCOIN_USDT", "ZEC_USDT", "SKYAI_USDT", "VIRTUAL_USDT", "EPIC_USDT", "INJ_USDT", "PENGU_USDT", "H_USDT", "NEAR_USDT", "XLM_USDT", "FIL_USDT", "ONDO_USDT", "SUI_USDT", "WIF_USDT", "FET_USDT", "BTC_USDT", "ETH_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fxws-private.gateapi.io"
+connect_ip = "10.0.1.154"
+port = "80"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 8
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_gate_market_data_31symbols_no_ton_20260616"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = true

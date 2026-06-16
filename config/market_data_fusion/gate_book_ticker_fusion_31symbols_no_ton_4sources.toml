@@ -1,0 +1,35 @@
+[fusion]
+name = "gate_book_ticker_fusion_31symbols_no_ton_4sources_20260616"
+max_events_per_source = 1
+bind_cpu_id = 2
+max_symbol_id = 4096
+
+[fusion.output]
+shm_name = "aquila_gate_book_ticker_fusion_31symbols_no_ton_20260616"
+channel_name = "book_ticker_channel"
+remove_existing = true
+metadata_bin = "/home/liuxiang/tmp/lead_lag_fusion_live_31symbols_no_ton_20260616/gate/fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 0
+name = "gate_source_0_31symbols_no_ton_20260616"
+shm_name = "aquila_gate_btf_31n_20260616_src_0"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 1
+name = "gate_source_1_31symbols_no_ton_20260616"
+shm_name = "aquila_gate_btf_31n_20260616_src_1"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 2
+name = "gate_source_2_31symbols_no_ton_20260616"
+shm_name = "aquila_gate_btf_31n_20260616_src_2"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 3
+name = "gate_source_3_31symbols_no_ton_20260616"
+shm_name = "aquila_gate_btf_31n_20260616_src_3"
+channel_name = "book_ticker_channel"

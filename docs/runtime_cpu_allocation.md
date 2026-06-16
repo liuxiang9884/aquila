@@ -31,6 +31,22 @@
 
 当前 LeadLag live affinity profile `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml` 仍是实盘事实源之一，目标为 Gate MD CPU2、Binance MD CPU3、strategy / Gate order owner CPU4、Gate order feedback CPU6、log CPU5。该 profile 位于 `0-15` 实盘区内；如果后续改 profile，必须继续遵守本文分区，或在文档和 onboarding 中同步说明例外。
 
+31-symbol no-TON fusion live smoke 配置族使用独立 `gate_data_fusion` / `binance_data_fusion` launch config，不由 `config/runtime_affinity/lead_lag_requested_12symbols_node0.toml` 自动覆盖。已纳入仓库的配置当前分配如下：
+
+| 组件 | Core |
+| --- | --- |
+| Gate fusion thread | `2` |
+| Gate source data session threads | `8-11` |
+| Gate fusion log backend | `1` |
+| Binance fusion thread | `3` |
+| Binance source data session threads | `12-15` |
+| Binance fusion log backend | `7` |
+| LeadLag strategy / Gate order owner | `4` |
+| LeadLag log backend | `5` |
+| Gate order feedback session | `6` |
+
+该 profile 会占用实盘备用 core `8-15`，不应与另一套 live market-data profile 或重型测试任务并发运行，除非本轮明确记录这是有意例外。使用 fusion 行情生成 report 时，按实际启动的 fusion TOML、`ps` / log 证据记录 CPU 分配；不要把单路 data session affinity split 套用到 fusion bundle。
+
 ## 测试区 `16-31`
 
 | Core | 默认用途 |
@@ -59,7 +75,7 @@ test logs:    30
 1. 启动任何实盘或测试前，先检查是否已有同类进程正在运行：
 
 ```bash
-ps -eo pid,psr,comm,args | rg 'gate_data_session|binance_data_session|data_reader_recorder|lead_lag_strategy|gate_order_session|order_session_rtt_probe'
+ps -eo pid,psr,comm,args | rg 'gate_data_session|binance_data_session|gate_data_fusion|binance_data_fusion|data_reader_recorder|lead_lag_strategy|gate_order_session|order_session_rtt_probe'
 ```
 
 2. 实盘 hot path 默认使用 `0-15`，测试默认使用 `16-31`；测试任务不得占用 `0-15`，除非用户明确要求本轮例外。
