@@ -39,6 +39,7 @@ struct MarketSideState {
 
   [[nodiscard]] bool Update(const BookTicker& ticker) noexcept {
     const QuoteSnapshot next{
+        .id = ticker.id,
         .event_ns = BookTickerEventTimeNs(ticker),
         .exchange_ns = ticker.exchange_ns,
         .local_ns = ticker.local_ns,
@@ -55,6 +56,7 @@ struct MarketSideState {
       latest_quote.event_ns = next.event_ns;
       latest_quote.exchange_ns = next.exchange_ns;
       latest_quote.local_ns = next.local_ns;
+      latest_quote.id = next.id;
       return false;
     }
     previous_quote = latest_quote;

@@ -128,6 +128,8 @@ struct StrategyOrderResponseLogRecordForTest {
   std::uint64_t local_order_id{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::int64_t lead_book_ticker_id{0};
+  std::int64_t lag_book_ticker_id{0};
 };
 
 struct StrategyOrderFeedbackLogRecordForTest {
@@ -135,6 +137,8 @@ struct StrategyOrderFeedbackLogRecordForTest {
   std::uint64_t local_order_id{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::int64_t lead_book_ticker_id{0};
+  std::int64_t lag_book_ticker_id{0};
 };
 
 using StrategySignalTriggeredLogObserverForTest =

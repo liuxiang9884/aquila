@@ -121,6 +121,7 @@ class AlignmentState {
       const QuoteSnapshot& raw_lead) const noexcept {
     const double drift = drift_ready_ ? drift_window_.mean() : 1.0;
     return QuoteSnapshot{
+        .id = raw_lead.id,
         .event_ns = raw_lead.event_ns,
         .exchange_ns = raw_lead.exchange_ns,
         .local_ns = raw_lead.local_ns,

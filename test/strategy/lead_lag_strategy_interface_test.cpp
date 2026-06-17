@@ -1195,7 +1195,7 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.place_status, aquila::core::OrderPlaceStatus::kOk);
 }
 
-TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagExchangeNs) {
+TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagBboTiming) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1226,10 +1226,12 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagExchangeNs) {
   EXPECT_EQ(log.local_order_id, local_order_id);
   EXPECT_EQ(log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(log.lag_exchange_ns, TickerExchangeNs(202));
+  EXPECT_EQ(log.lead_book_ticker_id, 201);
+  EXPECT_EQ(log.lag_book_ticker_id, 202);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     OrderFeedbackAndFinishedLogsCurrentLeadLagExchangeNs) {
+     OrderFeedbackAndFinishedLogsCurrentLeadLagBboTiming) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1255,6 +1257,8 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(feedback_log.local_order_id, local_order_id);
   EXPECT_EQ(feedback_log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(feedback_log.lag_exchange_ns, TickerExchangeNs(202));
+  EXPECT_EQ(feedback_log.lead_book_ticker_id, 201);
+  EXPECT_EQ(feedback_log.lag_book_ticker_id, 202);
 
   ASSERT_EQ(g_order_finished_log_count, 1U);
   const auto& finished_log = g_order_finished_logs[0];

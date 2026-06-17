@@ -97,6 +97,10 @@ ORDER_DETAIL_FIELDS = [
     "ack_exchange_request_ingress_ns",
     "ack_exchange_response_egress_ns",
     "ack_exchange_process_ns",
+    "ack_lead_book_ticker_id",
+    "ack_lag_book_ticker_id",
+    "feedback_lead_book_ticker_id",
+    "feedback_lag_book_ticker_id",
     "latency_diagnostic_reason",
     "latency_diagnostic_ack_rtt_ns",
     "send_to_first_after_hook_ns",
@@ -224,6 +228,10 @@ LATENCY_DETAIL_FIELDS = [
     "ack_exchange_request_ingress_ns",
     "ack_exchange_response_egress_ns",
     "ack_exchange_process_ns",
+    "ack_lead_book_ticker_id",
+    "ack_lag_book_ticker_id",
+    "feedback_lead_book_ticker_id",
+    "feedback_lag_book_ticker_id",
     "response_exchange_ns",
     "accepted_exchange_ns",
     "finish_exchange_ns",
@@ -624,6 +632,20 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
             pass
 
 
+def merge_strategy_ack_response_context(
+    order: dict[str, str], fields: dict[str, str]
+) -> None:
+    if fields.get("kind") != "kAck":
+        return
+    for target_key, source_key in (
+        ("ack_lead_book_ticker_id", "lead_book_ticker_id"),
+        ("ack_lag_book_ticker_id", "lag_book_ticker_id"),
+    ):
+        value = fields.get(source_key, "")
+        if value not in ("", "0"):
+            order[target_key] = value
+
+
 def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None:
     for key in ("order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
@@ -749,6 +771,13 @@ def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
         )
     if "kind" in fields and "status" not in order:
         order["status"] = fields["kind"]
+    for target_key, source_key in (
+        ("feedback_lead_book_ticker_id", "lead_book_ticker_id"),
+        ("feedback_lag_book_ticker_id", "lag_book_ticker_id"),
+    ):
+        value = fields.get(source_key, "")
+        if value not in ("", "0"):
+            order[target_key] = value
 
 
 def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
@@ -984,6 +1013,12 @@ def analyze_order_detail(
                     merge_ack(order, fields)
                 else:
                     merge_submit_response(order, fields)
+            elif tag == "lead_lag_order_response":
+                local_order_id = fields.get("local_order_id", "")
+                if local_order_id == "":
+                    continue
+                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+                merge_strategy_ack_response_context(order, fields)
             elif tag == "gate_order_ack_latency_diagnostic":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
@@ -1543,6 +1578,14 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
                 "ack_exchange_response_egress_ns", ""
             ),
             "ack_exchange_process_ns": order.get("ack_exchange_process_ns", ""),
+            "ack_lead_book_ticker_id": order.get("ack_lead_book_ticker_id", ""),
+            "ack_lag_book_ticker_id": order.get("ack_lag_book_ticker_id", ""),
+            "feedback_lead_book_ticker_id": order.get(
+                "feedback_lead_book_ticker_id", ""
+            ),
+            "feedback_lag_book_ticker_id": order.get(
+                "feedback_lag_book_ticker_id", ""
+            ),
             "response_exchange_ns": order.get("response_exchange_ns", ""),
             "accepted_exchange_ns": order.get("accepted_exchange_ns", ""),
             "finish_exchange_ns": order.get("finish_exchange_ns", ""),

@@ -80,9 +80,11 @@ struct SignalTiming {
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lead_local_ns{0};
+  std::int64_t lead_book_ticker_id{0};
   std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
   std::int64_t lag_local_ns{0};
+  std::int64_t lag_book_ticker_id{0};
   std::int64_t lag_freshness_ns{0};
   std::uint64_t max_lead_freshness_ns{0};
   std::uint64_t max_lag_freshness_ns{0};
@@ -392,11 +394,13 @@ inline void LogStrategyOrderResponse(
       "lead_lag_order_response kind={} local_order_id={} "
       "exchange_order_id={} local_receive_ns={} exchange_ns={} "
       "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
-      "lead_exchange_ns={} lag_exchange_ns={}",
+      "lead_exchange_ns={} lag_exchange_ns={} lead_book_ticker_id={} "
+      "lag_book_ticker_id={}",
       magic_enum::enum_name(event.kind), event.local_order_id,
       event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
       exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
-      market_timing.lead_exchange_ns, market_timing.lag_exchange_ns);
+      market_timing.lead_exchange_ns, market_timing.lag_exchange_ns,
+      market_timing.lead_book_ticker_id, market_timing.lag_book_ticker_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderResponseLogObserverForTest(
       StrategyOrderResponseLogRecordForTest{
@@ -404,6 +408,8 @@ inline void LogStrategyOrderResponse(
           .local_order_id = event.local_order_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
+          .lead_book_ticker_id = market_timing.lead_book_ticker_id,
+          .lag_book_ticker_id = market_timing.lag_book_ticker_id,
       });
 #endif
 }
@@ -417,7 +423,8 @@ inline void LogStrategyOrderFeedback(
       "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
       "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
       "finish_reason={} reject_reason={} exchange_update_ns={} "
-      "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={}",
+      "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={} "
+      "lead_book_ticker_id={} lag_book_ticker_id={}",
       magic_enum::enum_name(event.kind), event.local_order_id,
       event.exchange_order_id, event.cumulative_filled_quantity,
       event.left_quantity, event.cancelled_quantity, event.fill_price,
@@ -425,7 +432,8 @@ inline void LogStrategyOrderFeedback(
       magic_enum::enum_name(event.finish_reason),
       magic_enum::enum_name(event.reject_reason), event.exchange_update_ns,
       event.local_receive_ns, market_timing.lead_exchange_ns,
-      market_timing.lag_exchange_ns);
+      market_timing.lag_exchange_ns, market_timing.lead_book_ticker_id,
+      market_timing.lag_book_ticker_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderFeedbackLogObserverForTest(
       StrategyOrderFeedbackLogRecordForTest{
@@ -433,6 +441,8 @@ inline void LogStrategyOrderFeedback(
           .local_order_id = event.local_order_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
+          .lead_book_ticker_id = market_timing.lead_book_ticker_id,
+          .lag_book_ticker_id = market_timing.lag_book_ticker_id,
       });
 #endif
 }
@@ -854,8 +864,10 @@ class Strategy {
     return SignalTiming{
         .lead_exchange_ns = route->market->lead.latest_quote.exchange_ns,
         .lead_local_ns = route->market->lead.latest_quote.local_ns,
+        .lead_book_ticker_id = route->market->lead.latest_quote.id,
         .lag_exchange_ns = route->market->lag.latest_quote.exchange_ns,
         .lag_local_ns = route->market->lag.latest_quote.local_ns,
+        .lag_book_ticker_id = route->market->lag.latest_quote.id,
     };
   }
 
@@ -870,10 +882,12 @@ class Strategy {
         .signal_decision_ns = signal_decision_ns,
         .lead_exchange_ns = market.lead.latest_quote.exchange_ns,
         .lead_local_ns = market.lead.latest_quote.local_ns,
+        .lead_book_ticker_id = market.lead.latest_quote.id,
         .lead_freshness_ns =
             signal_decision_ns - market.lead.latest_quote.exchange_ns,
         .lag_exchange_ns = market.lag.latest_quote.exchange_ns,
         .lag_local_ns = market.lag.latest_quote.local_ns,
+        .lag_book_ticker_id = market.lag.latest_quote.id,
         .lag_freshness_ns =
             signal_decision_ns - market.lag.latest_quote.exchange_ns,
         .max_lead_freshness_ns = runtime.max_lead_freshness_ns,
