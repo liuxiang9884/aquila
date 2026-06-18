@@ -666,6 +666,8 @@ class LiveUnfilledCancelSmokeStrategy {
       case core::OrderResponseKind::kRejected:
         SetError("smoke unfilled order rejected by order session");
         return;
+      case core::OrderResponseKind::kUnknownResult:
+        return;
       case core::OrderResponseKind::kCancelRejected:
         SetError("smoke unfilled cancel rejected by order session");
         return;
@@ -964,6 +966,8 @@ class LiveSubmitRejectSmokeStrategy {
         return;
       case core::OrderResponseKind::kRejected:
         CompleteRejected();
+        return;
+      case core::OrderResponseKind::kUnknownResult:
         return;
       case core::OrderResponseKind::kAccepted:
         SetError("submit reject smoke order accepted unexpectedly");

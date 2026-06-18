@@ -645,6 +645,9 @@ class Strategy {
         context.FindOrder(event.local_order_id);
     const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
     detail::LogStrategyOrderResponse(event, order_for_log, market_timing);
+    if (event.kind == core::OrderResponseKind::kUnknownResult) {
+      MarkOrderUnknownResultNeedsReconcile(order_for_log);
+    }
     ApplyFinishedOrder(event.local_order_id, context, market_timing);
   }
 
@@ -1095,6 +1098,20 @@ class Strategy {
     if (recovery_state_ != RecoveryState::kManualIntervention) {
       recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
     }
+  }
+
+  void MarkOrderUnknownResultNeedsReconcile(
+      const core::StrategyOrder* order) noexcept {
+    if (order == nullptr) {
+      MarkNeedsReconcile();
+      return;
+    }
+    PairRuntimeState* runtime = MutableRuntime(order->symbol_id);
+    if (runtime == nullptr) {
+      MarkNeedsReconcile();
+      return;
+    }
+    runtime->execution.MarkNeedsReconcile();
   }
 
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)

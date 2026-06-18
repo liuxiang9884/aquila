@@ -23,10 +23,27 @@ namespace aquila::tools::gate_strategy_order {
   return core::OrderResponseKind::kRejected;
 }
 
+[[nodiscard]] inline bool IsUnknownResultResponse(
+    const gate::OrderResponse& response) noexcept {
+  if (response.http_status < 500) {
+    return false;
+  }
+  return response.kind == gate::OrderResponseKind::kRejected ||
+         response.kind == gate::OrderResponseKind::kCancelRejected;
+}
+
+[[nodiscard]] inline core::OrderResponseKind ToCoreKind(
+    const gate::OrderResponse& response) noexcept {
+  if (IsUnknownResultResponse(response)) {
+    return core::OrderResponseKind::kUnknownResult;
+  }
+  return ToCoreKind(response.kind);
+}
+
 [[nodiscard]] inline core::OrderResponseEvent ToCoreEvent(
     const gate::OrderResponse& response) noexcept {
   return core::OrderResponseEvent{
-      .kind = ToCoreKind(response.kind),
+      .kind = ToCoreKind(response),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
       .local_receive_ns = response.local_receive_ns,

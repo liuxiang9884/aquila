@@ -1812,6 +1812,52 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeUnknownOpenResultWaitsForLateFillFeedback) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+
+  ApplyResponse(&strategy, &order_manager, &context,
+                aquila::core::OrderResponseEvent{
+                    .kind = aquila::core::OrderResponseKind::kUnknownResult,
+                    .local_order_id = open_order_id,
+                    .local_receive_ns = 1234,
+                    .exchange_ns = 1200,
+                });
+
+  const aquila::core::StrategyOrder* pending_order =
+      context.FindOrder(open_order_id);
+  ASSERT_NE(pending_order, nullptr);
+  EXPECT_EQ(pending_order->status, aquila::core::OrderStatus::kSent);
+  EXPECT_FALSE(pending_order->is_finished);
+  EXPECT_EQ(order_manager.order_count(), 1U);
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  EXPECT_EQ(context.FindOrder(open_order_id), nullptr);
+  EXPECT_EQ(order_manager.order_count(), 0U);
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder& close_order =
+      order_session.placed_orders.back();
+  EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
+  EXPECT_TRUE(close_order.reduce_only);
+  EXPECT_EQ(close_order.quantity, 7);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRejectedCloseReturnsHoldAndCanRetry) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;

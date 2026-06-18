@@ -179,6 +179,26 @@ TEST(OrderSessionRuntimeAdapterTest, ConvertsGateResponsesToCoreEvents) {
   EXPECT_EQ(event.exchange_ns, accepted.exchange_ns);
 }
 
+TEST(OrderSessionRuntimeAdapterTest,
+     ConvertsGateServerErrorResponseToUnknownResult) {
+  const gate::OrderResponse timeout{
+      .kind = gate::OrderResponseKind::kRejected,
+      .local_order_id = 0x0400000000000008ULL,
+      .request_sequence = 43,
+      .http_status = 500,
+      .error_label_hash = gate::HashGateSubmitString("INTERNAL"),
+      .local_receive_ns = 123456790,
+      .exchange_ns = 1681985856667599000LL,
+  };
+
+  const core::OrderResponseEvent event = ToCoreOrderResponseEvent(timeout);
+
+  EXPECT_EQ(event.kind, core::OrderResponseKind::kUnknownResult);
+  EXPECT_EQ(event.local_order_id, timeout.local_order_id);
+  EXPECT_EQ(event.local_receive_ns, timeout.local_receive_ns);
+  EXPECT_EQ(event.exchange_ns, timeout.exchange_ns);
+}
+
 TEST(OrderSessionRuntimeAdapterTest, ConvertsEveryGateResponseKind) {
   EXPECT_EQ(ToCoreOrderResponseKind(gate::OrderResponseKind::kAck),
             core::OrderResponseKind::kAck);

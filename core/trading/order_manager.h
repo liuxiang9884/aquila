@@ -91,6 +91,9 @@ class OrderManager {
       case OrderResponseKind::kRejected:
         OnRejected(*order, event);
         break;
+      case OrderResponseKind::kUnknownResult:
+        OnUnknownResult(*order, event);
+        break;
       case OrderResponseKind::kCancelAccepted:
         OnCancelAccepted(*order, event);
         break;
@@ -256,6 +259,10 @@ class OrderManager {
       order.status = OrderStatus::kRejected;
       order.is_finished = true;
     }
+  }
+
+  void OnUnknownResult(Order& order, const OrderResponseEvent& event) noexcept {
+    RecordResponseTiming(order, event);
   }
 
   void OnCancelAccepted(Order& order, const OrderResponseEvent&) noexcept {

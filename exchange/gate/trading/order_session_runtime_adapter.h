@@ -35,10 +35,27 @@ namespace aquila::gate {
   return core::OrderResponseKind::kRejected;
 }
 
+[[nodiscard]] inline bool IsGateUnknownResultResponse(
+    const gate::OrderResponse& response) noexcept {
+  if (response.http_status < 500) {
+    return false;
+  }
+  return response.kind == gate::OrderResponseKind::kRejected ||
+         response.kind == gate::OrderResponseKind::kCancelRejected;
+}
+
+[[nodiscard]] inline core::OrderResponseKind ToCoreOrderResponseKind(
+    const gate::OrderResponse& response) noexcept {
+  if (IsGateUnknownResultResponse(response)) {
+    return core::OrderResponseKind::kUnknownResult;
+  }
+  return ToCoreOrderResponseKind(response.kind);
+}
+
 [[nodiscard]] inline core::OrderResponseEvent ToCoreOrderResponseEvent(
     const gate::OrderResponse& response) noexcept {
   return core::OrderResponseEvent{
-      .kind = ToCoreOrderResponseKind(response.kind),
+      .kind = ToCoreOrderResponseKind(response),
       .local_order_id = response.local_order_id,
       .exchange_order_id = response.exchange_order_id,
       .local_receive_ns = response.local_receive_ns,

@@ -23,5 +23,23 @@ TEST(GateStrategyOrderResponseConversionTest, CopiesLatencyTimestamps) {
   EXPECT_EQ(event.exchange_ns, 1770000000000000000LL);
 }
 
+TEST(GateStrategyOrderResponseConversionTest,
+     ConvertsServerErrorToUnknownResult) {
+  const gate::OrderResponse response{
+      .kind = gate::OrderResponseKind::kRejected,
+      .local_order_id = 789,
+      .http_status = 500,
+      .local_receive_ns = 1770000000000000456LL,
+      .exchange_ns = 1770000000000000400LL,
+  };
+
+  const core::OrderResponseEvent event = ToCoreEvent(response);
+
+  EXPECT_EQ(event.kind, core::OrderResponseKind::kUnknownResult);
+  EXPECT_EQ(event.local_order_id, 789U);
+  EXPECT_EQ(event.local_receive_ns, 1770000000000000456LL);
+  EXPECT_EQ(event.exchange_ns, 1770000000000000400LL);
+}
+
 }  // namespace
 }  // namespace aquila::tools::gate_strategy_order

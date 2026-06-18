@@ -39,6 +39,7 @@ enum class OrderResponseKind : std::uint8_t {
   kAck,
   kAccepted,
   kRejected,
+  kUnknownResult,
   kCancelAccepted,
   kCancelRejected,
 };
