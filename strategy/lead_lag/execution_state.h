@@ -116,6 +116,7 @@ struct ExecutionGroup {
   double signed_position_quantity{0.0};
   double trailing_price{0.0};
   std::uint64_t group_id{0};
+  bool unknown_result_pending{false};
 
   [[nodiscard]] bool active() const noexcept {
     return stage != ExecutionStage::kIdle;
@@ -146,6 +147,9 @@ class ExecutionState {
     next_group_id_ = 1;
     recovery_state_ = RecoveryState::kNormal;
     needs_reconcile_ = false;
+    unknown_result_pending_count_ = 0;
+    unknown_result_reconcile_active_ = false;
+    last_unknown_result_auto_recovered_ = false;
   }
 
   [[nodiscard]] ExecutionGroup* StartOpenOrder(
@@ -203,12 +207,14 @@ class ExecutionState {
     }
 
     const ExecutionStage previous_stage = group->stage;
+    const bool resolved_unknown_result = ClearUnknownResultPending(*group);
     group->local_order_id = 0;
     group->signed_position_quantity += SignedFilledQuantity(order, instrument);
 
     if (std::abs(group->signed_position_quantity) <=
         kExecutionQuantityEpsilon) {
       ClearGroup(*group);
+      MaybeAutoRecoverUnknownResult(resolved_unknown_result);
       return ExecutionApplyResult::kAppliedDeleted;
     }
 
@@ -217,6 +223,7 @@ class ExecutionState {
       group->trailing_price = order.AverageFillPrice();
     }
     group->stage = ExecutionStage::kHold;
+    MaybeAutoRecoverUnknownResult(resolved_unknown_result);
     return ExecutionApplyResult::kAppliedHold;
   }
 
@@ -245,6 +252,27 @@ class ExecutionState {
       recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
     }
     needs_reconcile_ = true;
+    unknown_result_reconcile_active_ = false;
+  }
+
+  [[nodiscard]] bool MarkUnknownResult(std::uint64_t local_order_id) noexcept {
+    ExecutionGroup* group = FindPendingOrderByLocalOrderId(local_order_id);
+    if (group == nullptr) {
+      return false;
+    }
+    const bool can_auto_recover =
+        !needs_reconcile_ || unknown_result_reconcile_active_;
+    const bool newly_marked = !group->unknown_result_pending;
+    if (newly_marked) {
+      group->unknown_result_pending = true;
+      ++unknown_result_pending_count_;
+    }
+    if (recovery_state_ != RecoveryState::kManualIntervention) {
+      recovery_state_ = RecoveryState::kDegradedNeedsReconcile;
+      unknown_result_reconcile_active_ = can_auto_recover;
+    }
+    needs_reconcile_ = true;
+    return newly_marked;
   }
 
   [[nodiscard]] bool BeginReconcile() noexcept {
@@ -256,6 +284,7 @@ class ExecutionState {
     }
     recovery_state_ = RecoveryState::kReconciling;
     needs_reconcile_ = true;
+    unknown_result_reconcile_active_ = false;
     return true;
   }
 
@@ -264,6 +293,7 @@ class ExecutionState {
     if (!RecoveryApplySucceeded(result)) {
       recovery_state_ = RecoveryState::kManualIntervention;
       needs_reconcile_ = true;
+      unknown_result_reconcile_active_ = false;
       return false;
     }
     if (recovery_state_ != RecoveryState::kReconciling) {
@@ -272,7 +302,14 @@ class ExecutionState {
     }
     recovery_state_ = RecoveryState::kNormal;
     needs_reconcile_ = false;
+    ClearUnknownResultTracking();
     return true;
+  }
+
+  [[nodiscard]] bool ConsumeUnknownResultAutoRecovered() noexcept {
+    const bool recovered = last_unknown_result_auto_recovered_;
+    last_unknown_result_auto_recovered_ = false;
+    return recovered;
   }
 
   [[nodiscard]] const ExecutionGroup* FindGroupById(
@@ -393,10 +430,45 @@ class ExecutionState {
   }
 
   void ClearGroup(ExecutionGroup& group) noexcept {
+    [[maybe_unused]] const bool unknown_cleared =
+        ClearUnknownResultPending(group);
     if (group.active() && active_group_count_ > 0) {
       --active_group_count_;
     }
     group = ExecutionGroup{};
+  }
+
+  [[nodiscard]] bool ClearUnknownResultPending(ExecutionGroup& group) noexcept {
+    if (!group.unknown_result_pending) {
+      return false;
+    }
+    group.unknown_result_pending = false;
+    assert(unknown_result_pending_count_ > 0);
+    if (unknown_result_pending_count_ > 0) {
+      --unknown_result_pending_count_;
+    }
+    return true;
+  }
+
+  void MaybeAutoRecoverUnknownResult(bool resolved_unknown_result) noexcept {
+    if (!resolved_unknown_result || unknown_result_pending_count_ != 0 ||
+        !unknown_result_reconcile_active_ ||
+        recovery_state_ != RecoveryState::kDegradedNeedsReconcile) {
+      return;
+    }
+    recovery_state_ = RecoveryState::kNormal;
+    needs_reconcile_ = false;
+    unknown_result_reconcile_active_ = false;
+    last_unknown_result_auto_recovered_ = true;
+  }
+
+  void ClearUnknownResultTracking() noexcept {
+    for (ExecutionGroup& group : groups_) {
+      group.unknown_result_pending = false;
+    }
+    unknown_result_pending_count_ = 0;
+    unknown_result_reconcile_active_ = false;
+    last_unknown_result_auto_recovered_ = false;
   }
 
   [[nodiscard]] std::vector<ExecutionGroup>& mutable_groups() noexcept {
@@ -408,6 +480,9 @@ class ExecutionState {
   std::uint64_t next_group_id_{1};
   RecoveryState recovery_state_{RecoveryState::kNormal};
   bool needs_reconcile_{false};
+  std::size_t unknown_result_pending_count_{0};
+  bool unknown_result_reconcile_active_{false};
+  bool last_unknown_result_auto_recovered_{false};
 };
 
 }  // namespace aquila::strategy::leadlag

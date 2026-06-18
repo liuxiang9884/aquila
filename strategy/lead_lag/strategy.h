@@ -447,6 +447,30 @@ inline void LogStrategyOrderFeedback(
 #endif
 }
 
+inline void LogStrategyUnknownResultPause(
+    const core::OrderResponseEvent& event,
+    const core::StrategyOrder* order) noexcept {
+  NOVA_WARNING(
+      "lead_lag_unknown_result_pause symbol={} symbol_id={} "
+      "local_order_id={} kind={} new_entries_paused=true "
+      "needs_reconcile=true reason=order_response_unknown_result",
+      order == nullptr ? std::string_view{} : order->symbol,
+      order == nullptr ? 0 : order->symbol_id, event.local_order_id,
+      magic_enum::enum_name(event.kind));
+}
+
+inline void LogStrategyUnknownResultResume(
+    const core::StrategyOrder& order,
+    std::optional<OrderFeedbackKind> feedback_kind) noexcept {
+  NOVA_WARNING(
+      "lead_lag_unknown_result_resume symbol={} symbol_id={} "
+      "local_order_id={} feedback_kind={} new_entries_paused=false "
+      "needs_reconcile=false reason=terminal_feedback_resolved_unknown_result",
+      order.symbol, order.symbol_id, order.local_order_id,
+      feedback_kind.has_value() ? magic_enum::enum_name(*feedback_kind)
+                                : std::string_view{"none"});
+}
+
 inline void LogStrategyFeedbackContinuityLost(
     const OrderFeedbackEvent& event) noexcept {
   NOVA_ERROR(
@@ -646,7 +670,9 @@ class Strategy {
     const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
     detail::LogStrategyOrderResponse(event, order_for_log, market_timing);
     if (event.kind == core::OrderResponseKind::kUnknownResult) {
-      MarkOrderUnknownResultNeedsReconcile(order_for_log);
+      if (MarkOrderUnknownResultNeedsReconcile(order_for_log)) {
+        detail::LogStrategyUnknownResultPause(event, order_for_log);
+      }
     }
     ApplyFinishedOrder(event.local_order_id, context, market_timing);
   }
@@ -670,7 +696,8 @@ class Strategy {
         context.FindOrder(event.local_order_id);
     const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
     detail::LogStrategyOrderFeedback(event, market_timing);
-    ApplyFinishedOrder(event.local_order_id, context, market_timing);
+    ApplyFinishedOrder(event.local_order_id, context, market_timing,
+                       event.kind);
   }
 
   [[nodiscard]] bool ShouldStop() const noexcept {
@@ -1100,18 +1127,23 @@ class Strategy {
     }
   }
 
-  void MarkOrderUnknownResultNeedsReconcile(
+  [[nodiscard]] bool MarkOrderUnknownResultNeedsReconcile(
       const core::StrategyOrder* order) noexcept {
     if (order == nullptr) {
       MarkNeedsReconcile();
-      return;
+      return true;
     }
     PairRuntimeState* runtime = MutableRuntime(order->symbol_id);
     if (runtime == nullptr) {
       MarkNeedsReconcile();
-      return;
+      return true;
     }
-    runtime->execution.MarkNeedsReconcile();
+    if (runtime->execution.FindPendingOrderByLocalOrderId(
+            order->local_order_id) == nullptr) {
+      runtime->execution.MarkNeedsReconcile();
+      return true;
+    }
+    return runtime->execution.MarkUnknownResult(order->local_order_id);
   }
 
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
@@ -1831,8 +1863,10 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void ApplyFinishedOrder(std::uint64_t local_order_id, ContextT& context,
-                          const SignalTiming& market_timing) noexcept {
+  void ApplyFinishedOrder(
+      std::uint64_t local_order_id, ContextT& context,
+      const SignalTiming& market_timing,
+      std::optional<OrderFeedbackKind> feedback_kind = std::nullopt) noexcept {
     if (local_order_id == 0) {
       return;
     }
@@ -1847,6 +1881,9 @@ class Strategy {
       [[maybe_unused]] const ExecutionApplyResult applied =
           runtime->execution.ApplyTerminalOrder(*order,
                                                 runtime->pair.lag_instrument);
+      if (runtime->execution.ConsumeUnknownResultAutoRecovered()) {
+        detail::LogStrategyUnknownResultResume(*order, feedback_kind);
+      }
       detail::LogStrategyOrderFinished(*order, position_log,
                                        runtime->execution.active_group_count(),
                                        market_timing);

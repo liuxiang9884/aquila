@@ -79,7 +79,7 @@ strategy-process
 - 每个 strategy process 只 claim 自己的 lane；queue full、producer restart 或 feedback WS 断线通过 `OrderFeedbackKind::kContinuityLost` 通知 strategy。
 - `OrderSession::Ready() == false` 是上行交易能力边界；runtime 仍会继续 drain order response / feedback。
 - 断线时 `OrderSession` 清空 correlation，不伪造 rejected / cancelled；未知订单状态交给 REST reconcile 或 emergency stop-and-flat。
-- Gate `5xx` submit / cancel error 通过 adapter 映射为 core `OrderResponseKind::kUnknownResult`，不是确定 reject；`OrderManager` 保留订单等待 private feedback，LeadLag 标记对应 symbol `needs_reconcile` 并暂停新开仓。
+- Gate `5xx` submit / cancel error 通过 adapter 映射为 core `OrderResponseKind::kUnknownResult`，不是确定 reject；`OrderManager` 保留订单等待 private feedback，LeadLag 标记对应 symbol `needs_reconcile` 并暂停新开仓。若对应 terminal feedback 精确解决该 symbol 的所有 pending unknown order，且没有 global continuity lost / manual intervention 等更高等级 degraded 状态，LeadLag 会自动恢复该 symbol 新开仓。
 
 ## 组件职责
 

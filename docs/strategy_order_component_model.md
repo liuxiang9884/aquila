@@ -212,7 +212,7 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 Ack / response 语义：
 
 - `ack` 只表示 Gate WS API 收到请求，不代表订单进入订单簿。
-- Gate `5xx` submit / cancel error 只表示请求结果未知，adapter 转成 `OrderResponseKind::kUnknownResult`；`OrderManager` 记录 response timing 但不把订单标记为 terminal，策略进入 `needs_reconcile` 并暂停新开仓，等待 private feedback 或 REST reconcile。
+- Gate `5xx` submit / cancel error 只表示请求结果未知，adapter 转成 `OrderResponseKind::kUnknownResult`；`OrderManager` 记录 response timing 但不把订单标记为 terminal，策略进入 `needs_reconcile` 并暂停新开仓，等待 private feedback 或 REST reconcile。若对应 terminal feedback 精确解决该 symbol 的所有 pending unknown order，且没有 global continuity lost / manual intervention 等更高等级 degraded 状态，策略会自动清除该 symbol 的 unknown-result pause 并恢复新开仓。
 - 明确业务拒单仍按 `OrderResponseKind::kRejected` / `kCancelRejected` 推进；原始错误信息留在 Gate/tool 日志。
 - 最终生命周期以 private order feedback 为更高可信事实源。
 

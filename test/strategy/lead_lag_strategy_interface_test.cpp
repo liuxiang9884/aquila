@@ -1858,6 +1858,55 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeUnknownOpenResultLateTerminalFeedbackResumesNewEntries) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t open_order_id =
+      order_session.placed_orders.back().local_order_id;
+
+  ApplyResponse(&strategy, &order_manager, &context,
+                aquila::core::OrderResponseEvent{
+                    .kind = aquila::core::OrderResponseKind::kUnknownResult,
+                    .local_order_id = open_order_id,
+                    .local_receive_ns = 1234,
+                    .exchange_ns = 1200,
+                });
+
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(open_order_id, 7, 102.1));
+
+  EXPECT_FALSE(strategy.needs_reconcile());
+  EXPECT_FALSE(strategy.new_entries_paused());
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const std::uint64_t close_order_id =
+      order_session.placed_orders.back().local_order_id;
+  EXPECT_TRUE(order_session.placed_orders.back().reduce_only);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(close_order_id, 7, 101.5));
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 200, 101.57, 102.02),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 200, 100.0, 101.0), context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 201, 112.0, 113.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 3U);
+  EXPECT_FALSE(order_session.placed_orders.back().reduce_only);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRejectedCloseReturnsHoldAndCanRetry) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
