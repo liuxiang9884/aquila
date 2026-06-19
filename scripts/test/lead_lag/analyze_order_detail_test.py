@@ -174,6 +174,30 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["source_schema"], "submitted_v1")
         self.assertEqual(row["warnings"], "")
 
+    def test_maps_cancelled_feedback_stage_book_ticker_ids(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            write_file(
+                log_path,
+                """
+                I2026-05-25 02:29:35.105566021 1:1 strategy.h:LogStrategyOrderSubmitted:1] lead_lag_order_submitted local_order_id=288230376151711750 trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1779676175125510000 trigger_local_ns=1779676175125520000 on_book_ticker_entry_ns=1779676175125530000 signal_decision_ns=1779676175125540000 lead_exchange_ns=1779676175125510000 lead_local_ns=1779676175125520000 signal_lead_id=5101 lead_freshness_ns=30000 lag_exchange_ns=1779676175125500000 lag_local_ns=1779676175125510000 signal_lag_id=5102 lag_freshness_ns=40000 symbol=PROVE_USDT symbol_id=4 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=288230376151711750 quantity=36 quantity_text=36 raw_price=0.2711 order_price=0.2714 price_text=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 active_groups=1 place_status=kOk
+                I2026-05-25 02:29:35.117544030 1:1 strategy.h:LogStrategyOrderFeedback:272] lead_lag_order_feedback kind=kCancelled local_order_id=288230376151711750 exchange_order_id=260082878984634645 cumulative_filled_quantity=0 left_quantity=36 cancelled_quantity=36 fill_price=0 role=kTaker finish_reason=kImmediateOrCancel reject_reason=kUnknown exchange_update_ns=1779676175129000000 local_receive_ns=1779676175130000000 lead_exchange_ns=1779676175128000000 lag_exchange_ns=1779676175127900000 cancelled_lead_id=8101 cancelled_lag_id=8102
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path)
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(result.rows), 1)
+        row = result.rows[0]
+        self.assertEqual(row["signal_lead_id"], "5101")
+        self.assertEqual(row["signal_lag_id"], "5102")
+        self.assertEqual(row["cancelled_lead_id"], "8101")
+        self.assertEqual(row["cancelled_lag_id"], "8102")
+        self.assertEqual(latency_rows[0]["cancelled_lead_id"], "8101")
+        self.assertEqual(latency_rows[0]["cancelled_lag_id"], "8102")
+
     def test_prefers_submitted_log_for_final_group_and_quantity_text(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
