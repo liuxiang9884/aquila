@@ -27,9 +27,11 @@ SIGNAL_DETAIL_FIELDS = [
     "signal_decision_ns",
     "lead_exchange_ns",
     "lead_local_ns",
+    "signal_lead_id",
     "lead_freshness_ns",
     "lag_exchange_ns",
     "lag_local_ns",
+    "signal_lag_id",
     "lag_freshness_ns",
     "symbol",
     "symbol_id",
@@ -181,6 +183,10 @@ def build_signal_detail_rows(
                     fields.get("lead_local_ns", "")
                     or order.get("lead_local_ns", "")
                 ),
+                "signal_lead_id": (
+                    fields.get("signal_lead_id", "")
+                    or order.get("signal_lead_id", "")
+                ),
                 "lead_freshness_ns": (
                     fields.get("lead_freshness_ns", "")
                     or order.get("lead_freshness_ns", "")
@@ -191,6 +197,10 @@ def build_signal_detail_rows(
                 ),
                 "lag_local_ns": (
                     fields.get("lag_local_ns", "") or order.get("lag_local_ns", "")
+                ),
+                "signal_lag_id": (
+                    fields.get("signal_lag_id", "")
+                    or order.get("signal_lag_id", "")
                 ),
                 "lag_freshness_ns": (
                     fields.get("lag_freshness_ns", "")

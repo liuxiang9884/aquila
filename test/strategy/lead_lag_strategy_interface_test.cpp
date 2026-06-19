@@ -1096,6 +1096,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(signal.lag_exchange_ns, TickerExchangeNs(100));
   EXPECT_EQ(signal.lead_local_ns, TickerLocalNs(101));
   EXPECT_EQ(signal.lag_local_ns, TickerLocalNs(100));
+  EXPECT_EQ(signal.signal_lead_id, 101);
+  EXPECT_EQ(signal.signal_lag_id, 100);
   EXPECT_EQ(signal.trigger_local_ns, TickerLocalNs(101));
   EXPECT_GT(signal.on_book_ticker_entry_ns, 0);
   EXPECT_GE(signal.signal_decision_ns, signal.on_book_ticker_entry_ns);
@@ -1114,6 +1116,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(record.lag_exchange_ns, signal.lag_exchange_ns);
   EXPECT_EQ(record.lead_local_ns, signal.lead_local_ns);
   EXPECT_EQ(record.lag_local_ns, signal.lag_local_ns);
+  EXPECT_EQ(record.signal_lead_id, signal.signal_lead_id);
+  EXPECT_EQ(record.signal_lag_id, signal.signal_lag_id);
   EXPECT_EQ(record.lead_freshness_ns, signal.lead_freshness_ns);
   EXPECT_EQ(record.lag_freshness_ns, signal.lag_freshness_ns);
   EXPECT_EQ(record.max_lead_freshness_ns, kWideFreshnessGuardNs);
@@ -1162,6 +1166,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.lag_exchange_ns, TickerExchangeNs(100));
   EXPECT_EQ(record.lead_local_ns, TickerLocalNs(101));
   EXPECT_EQ(record.lag_local_ns, TickerLocalNs(100));
+  EXPECT_EQ(record.signal_lead_id, 101);
+  EXPECT_EQ(record.signal_lag_id, 100);
   EXPECT_EQ(record.lead_freshness_ns,
             record.signal_decision_ns - record.lead_exchange_ns);
   EXPECT_EQ(record.lag_freshness_ns,
@@ -1226,6 +1232,7 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagBboTiming) {
   EXPECT_EQ(log.local_order_id, local_order_id);
   EXPECT_EQ(log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(log.lag_exchange_ns, TickerExchangeNs(202));
+  EXPECT_EQ(log.book_ticker_id_prefix, "ack");
   EXPECT_EQ(log.lead_book_ticker_id, 201);
   EXPECT_EQ(log.lag_book_ticker_id, 202);
 }
@@ -1257,6 +1264,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(feedback_log.local_order_id, local_order_id);
   EXPECT_EQ(feedback_log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(feedback_log.lag_exchange_ns, TickerExchangeNs(202));
+  EXPECT_EQ(feedback_log.book_ticker_id_prefix, "filled");
   EXPECT_EQ(feedback_log.lead_book_ticker_id, 201);
   EXPECT_EQ(feedback_log.lag_book_ticker_id, 202);
 
@@ -1330,6 +1338,27 @@ TEST(LeadLagStrategyInterfaceTest, LogsOrderFinishedWithPositionId) {
   EXPECT_EQ(record.order_role, "entry");
   EXPECT_EQ(record.entry_local_order_id, open_order_id);
   EXPECT_GT(record.order_finished_local_ns, 0);
+}
+
+TEST(LeadLagStrategyInterfaceTest, StageBookTickerIdPrefixesMatchEventKinds) {
+  EXPECT_EQ(leadlag::detail::OrderResponseBookTickerIdPrefix(
+                aquila::core::OrderResponseKind::kAck),
+            "ack");
+  EXPECT_EQ(leadlag::detail::OrderResponseBookTickerIdPrefix(
+                aquila::core::OrderResponseKind::kRejected),
+            "rejected");
+  EXPECT_EQ(leadlag::detail::OrderResponseBookTickerIdPrefix(
+                aquila::core::OrderResponseKind::kUnknownResult),
+            "unknown_result");
+  EXPECT_EQ(leadlag::detail::OrderFeedbackBookTickerIdPrefix(
+                aquila::OrderFeedbackKind::kCancelled),
+            "cancelled");
+  EXPECT_EQ(leadlag::detail::OrderFeedbackBookTickerIdPrefix(
+                aquila::OrderFeedbackKind::kFilled),
+            "filled");
+  EXPECT_EQ(leadlag::detail::OrderFeedbackBookTickerIdPrefix(
+                aquila::OrderFeedbackKind::kRejected),
+            "rejected");
 }
 
 TEST(LeadLagStrategyInterfaceTest,

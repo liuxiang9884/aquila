@@ -140,6 +140,44 @@ struct StrategyOrderPositionLogFields {
       .count();
 }
 
+[[nodiscard]] inline std::string_view OrderResponseBookTickerIdPrefix(
+    core::OrderResponseKind kind) noexcept {
+  switch (kind) {
+    case core::OrderResponseKind::kAck:
+      return "ack";
+    case core::OrderResponseKind::kAccepted:
+      return "accepted";
+    case core::OrderResponseKind::kRejected:
+      return "rejected";
+    case core::OrderResponseKind::kUnknownResult:
+      return "unknown_result";
+    case core::OrderResponseKind::kCancelAccepted:
+      return "cancel_accepted";
+    case core::OrderResponseKind::kCancelRejected:
+      return "cancel_rejected";
+  }
+  return "response";
+}
+
+[[nodiscard]] inline std::string_view OrderFeedbackBookTickerIdPrefix(
+    OrderFeedbackKind kind) noexcept {
+  switch (kind) {
+    case OrderFeedbackKind::kAccepted:
+      return "accepted";
+    case OrderFeedbackKind::kPartialFilled:
+      return "partial_filled";
+    case OrderFeedbackKind::kFilled:
+      return "filled";
+    case OrderFeedbackKind::kCancelled:
+      return "cancelled";
+    case OrderFeedbackKind::kRejected:
+      return "rejected";
+    case OrderFeedbackKind::kContinuityLost:
+      return "continuity_lost";
+  }
+  return "feedback";
+}
+
 inline void LogStrategySignalTriggered(
     Exchange trigger_exchange, std::int32_t trigger_symbol_id,
     const SignalTiming& timing, std::string_view symbol, std::int32_t symbol_id,
@@ -149,18 +187,20 @@ inline void LogStrategySignalTriggered(
       "lead_lag_signal_triggered trigger_exchange={} trigger_symbol_id={} "
       "trigger_exchange_ns={} trigger_local_ns={} "
       "on_book_ticker_entry_ns={} signal_decision_ns={} "
-      "lead_exchange_ns={} lead_local_ns={} lead_freshness_ns={} "
-      "lag_exchange_ns={} lag_local_ns={} lag_freshness_ns={} "
+      "lead_exchange_ns={} lead_local_ns={} signal_lead_id={} "
+      "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
+      "signal_lag_id={} lag_freshness_ns={} "
       "symbol={} symbol_id={} role={} action={} side={} reduce_only={} "
       "position_id={} raw_price={:.12g}",
       magic_enum::enum_name(trigger_exchange), trigger_symbol_id,
       timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
-      symbol, symbol_id, magic_enum::enum_name(role),
-      magic_enum::enum_name(action), magic_enum::enum_name(side),
-      reduce_only ? "true" : "false", position_id, raw_price);
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_book_ticker_id,
+      timing.lead_freshness_ns, timing.lag_exchange_ns, timing.lag_local_ns,
+      timing.lag_book_ticker_id, timing.lag_freshness_ns, symbol, symbol_id,
+      magic_enum::enum_name(role), magic_enum::enum_name(action),
+      magic_enum::enum_name(side), reduce_only ? "true" : "false", position_id,
+      raw_price);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategySignalTriggeredLogObserverForTest(
       StrategySignalTriggeredLogRecordForTest{
@@ -172,9 +212,11 @@ inline void LogStrategySignalTriggered(
           .signal_decision_ns = timing.signal_decision_ns,
           .lead_exchange_ns = timing.lead_exchange_ns,
           .lead_local_ns = timing.lead_local_ns,
+          .signal_lead_id = timing.lead_book_ticker_id,
           .lead_freshness_ns = timing.lead_freshness_ns,
           .lag_exchange_ns = timing.lag_exchange_ns,
           .lag_local_ns = timing.lag_local_ns,
+          .signal_lag_id = timing.lag_book_ticker_id,
           .lag_freshness_ns = timing.lag_freshness_ns,
           .symbol = symbol,
           .symbol_id = symbol_id,
@@ -200,8 +242,9 @@ inline void LogStrategyOrderIntent(
       "lead_lag_order_intent trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} "
       "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
-      "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
-      "lag_freshness_ns={} max_lead_freshness_ns={} "
+      "signal_lead_id={} lead_freshness_ns={} lag_exchange_ns={} "
+      "lag_local_ns={} signal_lag_id={} lag_freshness_ns={} "
+      "max_lead_freshness_ns={} "
       "max_lag_freshness_ns={} freshness_guard_pass={} "
       "freshness_reject_reason={} symbol={} symbol_id={} action={} side={} "
       "reduce_only={} position_id={} quantity={:.12g} "
@@ -210,8 +253,9 @@ inline void LogStrategyOrderIntent(
       "estimated_notional={:.12g} active_groups={}",
       timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_book_ticker_id,
+      timing.lead_freshness_ns, timing.lag_exchange_ns, timing.lag_local_ns,
+      timing.lag_book_ticker_id, timing.lag_freshness_ns,
       timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
       freshness_guard_pass ? "true" : "false",
       FreshnessRejectReasonText(freshness_reject_reason), symbol, symbol_id,
@@ -228,9 +272,11 @@ inline void LogStrategyOrderIntent(
           .signal_decision_ns = timing.signal_decision_ns,
           .lead_exchange_ns = timing.lead_exchange_ns,
           .lead_local_ns = timing.lead_local_ns,
+          .signal_lead_id = timing.lead_book_ticker_id,
           .lead_freshness_ns = timing.lead_freshness_ns,
           .lag_exchange_ns = timing.lag_exchange_ns,
           .lag_local_ns = timing.lag_local_ns,
+          .signal_lag_id = timing.lag_book_ticker_id,
           .lag_freshness_ns = timing.lag_freshness_ns,
           .max_lead_freshness_ns = timing.max_lead_freshness_ns,
           .max_lag_freshness_ns = timing.max_lag_freshness_ns,
@@ -271,8 +317,9 @@ inline void LogStrategyOrderSubmitted(
       "trigger_symbol_id={} trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} "
       "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
-      "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
-      "lag_freshness_ns={} max_lead_freshness_ns={} "
+      "signal_lead_id={} lead_freshness_ns={} lag_exchange_ns={} "
+      "lag_local_ns={} signal_lag_id={} lag_freshness_ns={} "
+      "max_lead_freshness_ns={} "
       "max_lag_freshness_ns={} freshness_guard_pass={} "
       "freshness_reject_reason={} symbol={} symbol_id={} signal_role={} "
       "order_role={} action={} side={} reduce_only={} "
@@ -284,8 +331,9 @@ inline void LogStrategyOrderSubmitted(
       local_order_id, magic_enum::enum_name(trigger_exchange),
       trigger_symbol_id, timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_book_ticker_id,
+      timing.lead_freshness_ns, timing.lag_exchange_ns, timing.lag_local_ns,
+      timing.lag_book_ticker_id, timing.lag_freshness_ns,
       timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
       freshness_guard_pass ? "true" : "false",
       FreshnessRejectReasonText(freshness_reject_reason), symbol, symbol_id,
@@ -309,9 +357,11 @@ inline void LogStrategyOrderSubmitted(
           .signal_decision_ns = timing.signal_decision_ns,
           .lead_exchange_ns = timing.lead_exchange_ns,
           .lead_local_ns = timing.lead_local_ns,
+          .signal_lead_id = timing.lead_book_ticker_id,
           .lead_freshness_ns = timing.lead_freshness_ns,
           .lag_exchange_ns = timing.lag_exchange_ns,
           .lag_local_ns = timing.lag_local_ns,
+          .signal_lag_id = timing.lag_book_ticker_id,
           .lag_freshness_ns = timing.lag_freshness_ns,
           .max_lead_freshness_ns = timing.max_lead_freshness_ns,
           .max_lag_freshness_ns = timing.max_lag_freshness_ns,
@@ -357,9 +407,10 @@ inline void LogStrategyOrderIntentRejected(
   NOVA_WARNING(
       "lead_lag_order_intent_rejected reason={} trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} signal_decision_ns={} "
-      "lead_exchange_ns={} lead_local_ns={} lead_freshness_ns={} "
-      "lag_exchange_ns={} lag_local_ns={} lag_freshness_ns={} "
-      "max_lead_freshness_ns={} max_lag_freshness_ns={} "
+      "lead_exchange_ns={} lead_local_ns={} signal_lead_id={} "
+      "lead_freshness_ns={} lag_exchange_ns={} lag_local_ns={} "
+      "signal_lag_id={} lag_freshness_ns={} max_lead_freshness_ns={} "
+      "max_lag_freshness_ns={} "
       "freshness_guard_pass={} freshness_reject_reason={} symbol={} "
       "symbol_id={} action={} side={} reduce_only={} position_id={} "
       "quantity={:.12g} "
@@ -370,8 +421,9 @@ inline void LogStrategyOrderIntentRejected(
       "local_order_id={} place_status={}",
       reason, timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
-      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_freshness_ns,
-      timing.lag_exchange_ns, timing.lag_local_ns, timing.lag_freshness_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_book_ticker_id,
+      timing.lead_freshness_ns, timing.lag_exchange_ns, timing.lag_local_ns,
+      timing.lag_book_ticker_id, timing.lag_freshness_ns,
       timing.max_lead_freshness_ns, timing.max_lag_freshness_ns,
       freshness_guard_pass ? "true" : "false",
       FreshnessRejectReasonText(freshness_reject_reason), symbol, symbol_id,
@@ -390,17 +442,19 @@ inline void LogStrategyOrderResponse(
                        : core::MakeStrategyOrderTimingSnapshot(*order);
   const std::int64_t exchange_to_local_ns =
       core::LatencyDeltaNs(event.local_receive_ns, event.exchange_ns);
+  const std::string_view book_ticker_id_prefix =
+      OrderResponseBookTickerIdPrefix(event.kind);
   NOVA_INFO(
       "lead_lag_order_response kind={} local_order_id={} "
       "exchange_order_id={} local_receive_ns={} exchange_ns={} "
       "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
-      "lead_exchange_ns={} lag_exchange_ns={} lead_book_ticker_id={} "
-      "lag_book_ticker_id={}",
+      "lead_exchange_ns={} lag_exchange_ns={} {}_lead_id={} {}_lag_id={}",
       magic_enum::enum_name(event.kind), event.local_order_id,
       event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
       exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
       market_timing.lead_exchange_ns, market_timing.lag_exchange_ns,
-      market_timing.lead_book_ticker_id, market_timing.lag_book_ticker_id);
+      book_ticker_id_prefix, market_timing.lead_book_ticker_id,
+      book_ticker_id_prefix, market_timing.lag_book_ticker_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderResponseLogObserverForTest(
       StrategyOrderResponseLogRecordForTest{
@@ -408,6 +462,7 @@ inline void LogStrategyOrderResponse(
           .local_order_id = event.local_order_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
+          .book_ticker_id_prefix = book_ticker_id_prefix,
           .lead_book_ticker_id = market_timing.lead_book_ticker_id,
           .lag_book_ticker_id = market_timing.lag_book_ticker_id,
       });
@@ -417,6 +472,8 @@ inline void LogStrategyOrderResponse(
 inline void LogStrategyOrderFeedback(
     const OrderFeedbackEvent& event,
     const SignalTiming& market_timing) noexcept {
+  const std::string_view book_ticker_id_prefix =
+      OrderFeedbackBookTickerIdPrefix(event.kind);
   NOVA_INFO(
       "lead_lag_order_feedback kind={} local_order_id={} "
       "exchange_order_id={} "
@@ -424,7 +481,7 @@ inline void LogStrategyOrderFeedback(
       "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
       "finish_reason={} reject_reason={} exchange_update_ns={} "
       "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={} "
-      "lead_book_ticker_id={} lag_book_ticker_id={}",
+      "{}_lead_id={} {}_lag_id={}",
       magic_enum::enum_name(event.kind), event.local_order_id,
       event.exchange_order_id, event.cumulative_filled_quantity,
       event.left_quantity, event.cancelled_quantity, event.fill_price,
@@ -432,7 +489,8 @@ inline void LogStrategyOrderFeedback(
       magic_enum::enum_name(event.finish_reason),
       magic_enum::enum_name(event.reject_reason), event.exchange_update_ns,
       event.local_receive_ns, market_timing.lead_exchange_ns,
-      market_timing.lag_exchange_ns, market_timing.lead_book_ticker_id,
+      market_timing.lag_exchange_ns, book_ticker_id_prefix,
+      market_timing.lead_book_ticker_id, book_ticker_id_prefix,
       market_timing.lag_book_ticker_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderFeedbackLogObserverForTest(
@@ -441,6 +499,7 @@ inline void LogStrategyOrderFeedback(
           .local_order_id = event.local_order_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
+          .book_ticker_id_prefix = book_ticker_id_prefix,
           .lead_book_ticker_id = market_timing.lead_book_ticker_id,
           .lag_book_ticker_id = market_timing.lag_book_ticker_id,
       });

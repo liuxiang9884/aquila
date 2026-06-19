@@ -13,6 +13,50 @@ from pathlib import Path
 getcontext().prec = 34
 
 
+ORDER_STAGE_BOOK_TICKER_ID_FIELDS = [
+    "ack_lead_id",
+    "ack_lag_id",
+    "accepted_lead_id",
+    "accepted_lag_id",
+    "partial_filled_lead_id",
+    "partial_filled_lag_id",
+    "filled_lead_id",
+    "filled_lag_id",
+    "cancelled_lead_id",
+    "cancelled_lag_id",
+    "rejected_lead_id",
+    "rejected_lag_id",
+    "unknown_result_lead_id",
+    "unknown_result_lag_id",
+    "cancel_accepted_lead_id",
+    "cancel_accepted_lag_id",
+    "cancel_rejected_lead_id",
+    "cancel_rejected_lag_id",
+    "continuity_lost_lead_id",
+    "continuity_lost_lag_id",
+]
+
+
+ORDER_RESPONSE_ID_PREFIX_BY_KIND = {
+    "kAck": "ack",
+    "kAccepted": "accepted",
+    "kRejected": "rejected",
+    "kUnknownResult": "unknown_result",
+    "kCancelAccepted": "cancel_accepted",
+    "kCancelRejected": "cancel_rejected",
+}
+
+
+ORDER_FEEDBACK_ID_PREFIX_BY_KIND = {
+    "kAccepted": "accepted",
+    "kPartialFilled": "partial_filled",
+    "kFilled": "filled",
+    "kCancelled": "cancelled",
+    "kRejected": "rejected",
+    "kContinuityLost": "continuity_lost",
+}
+
+
 ORDER_DETAIL_FIELDS = [
     "run_id",
     "local_order_id",
@@ -30,9 +74,11 @@ ORDER_DETAIL_FIELDS = [
     "signal_decision_ns",
     "lead_exchange_ns",
     "lead_local_ns",
+    "signal_lead_id",
     "lead_freshness_ns",
     "lag_exchange_ns",
     "lag_local_ns",
+    "signal_lag_id",
     "lag_freshness_ns",
     "max_lead_freshness_ns",
     "max_lag_freshness_ns",
@@ -97,10 +143,7 @@ ORDER_DETAIL_FIELDS = [
     "ack_exchange_request_ingress_ns",
     "ack_exchange_response_egress_ns",
     "ack_exchange_process_ns",
-    "ack_lead_book_ticker_id",
-    "ack_lag_book_ticker_id",
-    "feedback_lead_book_ticker_id",
-    "feedback_lag_book_ticker_id",
+    *ORDER_STAGE_BOOK_TICKER_ID_FIELDS,
     "latency_diagnostic_reason",
     "latency_diagnostic_ack_rtt_ns",
     "send_to_first_after_hook_ns",
@@ -212,9 +255,11 @@ LATENCY_DETAIL_FIELDS = [
     "signal_decision_ns",
     "lead_exchange_ns",
     "lead_local_ns",
+    "signal_lead_id",
     "lead_freshness_ns",
     "lag_exchange_ns",
     "lag_local_ns",
+    "signal_lag_id",
     "lag_freshness_ns",
     "max_lead_freshness_ns",
     "max_lag_freshness_ns",
@@ -228,10 +273,7 @@ LATENCY_DETAIL_FIELDS = [
     "ack_exchange_request_ingress_ns",
     "ack_exchange_response_egress_ns",
     "ack_exchange_process_ns",
-    "ack_lead_book_ticker_id",
-    "ack_lag_book_ticker_id",
-    "feedback_lead_book_ticker_id",
-    "feedback_lag_book_ticker_id",
+    *ORDER_STAGE_BOOK_TICKER_ID_FIELDS,
     "response_exchange_ns",
     "accepted_exchange_ns",
     "finish_exchange_ns",
@@ -504,9 +546,11 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
         "signal_decision_ns",
         "lead_exchange_ns",
         "lead_local_ns",
+        "signal_lead_id",
         "lead_freshness_ns",
         "lag_exchange_ns",
         "lag_local_ns",
+        "signal_lag_id",
         "lag_freshness_ns",
         "max_lead_freshness_ns",
         "max_lag_freshness_ns",
@@ -632,16 +676,23 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
             pass
 
 
-def merge_strategy_ack_response_context(
+def merge_strategy_order_response_context(
     order: dict[str, str], fields: dict[str, str]
 ) -> None:
-    if fields.get("kind") != "kAck":
+    prefix = ORDER_RESPONSE_ID_PREFIX_BY_KIND.get(fields.get("kind", ""))
+    if prefix is None:
         return
-    for target_key, source_key in (
-        ("ack_lead_book_ticker_id", "lead_book_ticker_id"),
-        ("ack_lag_book_ticker_id", "lag_book_ticker_id"),
-    ):
-        value = fields.get(source_key, "")
+    merge_stage_book_ticker_ids(order, fields, prefix)
+
+
+def merge_stage_book_ticker_ids(
+    order: dict[str, str], fields: dict[str, str], prefix: str
+) -> None:
+    for side in ("lead", "lag"):
+        target_key = f"{prefix}_{side}_id"
+        value = fields.get(target_key, "")
+        if value in ("", "0"):
+            value = fields.get(f"{side}_book_ticker_id", "")
         if value not in ("", "0"):
             order[target_key] = value
 
@@ -771,13 +822,9 @@ def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
         )
     if "kind" in fields and "status" not in order:
         order["status"] = fields["kind"]
-    for target_key, source_key in (
-        ("feedback_lead_book_ticker_id", "lead_book_ticker_id"),
-        ("feedback_lag_book_ticker_id", "lag_book_ticker_id"),
-    ):
-        value = fields.get(source_key, "")
-        if value not in ("", "0"):
-            order[target_key] = value
+    prefix = ORDER_FEEDBACK_ID_PREFIX_BY_KIND.get(kind)
+    if prefix is not None:
+        merge_stage_book_ticker_ids(order, fields, prefix)
 
 
 def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
@@ -1018,7 +1065,7 @@ def analyze_order_detail(
                 if local_order_id == "":
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_strategy_ack_response_context(order, fields)
+                merge_strategy_order_response_context(order, fields)
             elif tag == "gate_order_ack_latency_diagnostic":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
@@ -1558,9 +1605,11 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "signal_decision_ns": order.get("signal_decision_ns", ""),
             "lead_exchange_ns": order.get("lead_exchange_ns", ""),
             "lead_local_ns": order.get("lead_local_ns", ""),
+            "signal_lead_id": order.get("signal_lead_id", ""),
             "lead_freshness_ns": order.get("lead_freshness_ns", ""),
             "lag_exchange_ns": order.get("lag_exchange_ns", ""),
             "lag_local_ns": order.get("lag_local_ns", ""),
+            "signal_lag_id": order.get("signal_lag_id", ""),
             "lag_freshness_ns": order.get("lag_freshness_ns", ""),
             "max_lead_freshness_ns": order.get("max_lead_freshness_ns", ""),
             "max_lag_freshness_ns": order.get("max_lag_freshness_ns", ""),
@@ -1578,14 +1627,10 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
                 "ack_exchange_response_egress_ns", ""
             ),
             "ack_exchange_process_ns": order.get("ack_exchange_process_ns", ""),
-            "ack_lead_book_ticker_id": order.get("ack_lead_book_ticker_id", ""),
-            "ack_lag_book_ticker_id": order.get("ack_lag_book_ticker_id", ""),
-            "feedback_lead_book_ticker_id": order.get(
-                "feedback_lead_book_ticker_id", ""
-            ),
-            "feedback_lag_book_ticker_id": order.get(
-                "feedback_lag_book_ticker_id", ""
-            ),
+            **{
+                field: order.get(field, "")
+                for field in ORDER_STAGE_BOOK_TICKER_ID_FIELDS
+            },
             "response_exchange_ns": order.get("response_exchange_ns", ""),
             "accepted_exchange_ns": order.get("accepted_exchange_ns", ""),
             "finish_exchange_ns": order.get("finish_exchange_ns", ""),

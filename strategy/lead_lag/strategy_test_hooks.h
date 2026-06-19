@@ -26,9 +26,11 @@ struct StrategySignalTriggeredLogRecordForTest {
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lead_local_ns{0};
+  std::int64_t signal_lead_id{0};
   std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
   std::int64_t lag_local_ns{0};
+  std::int64_t signal_lag_id{0};
   std::int64_t lag_freshness_ns{0};
   std::string_view symbol;
   std::int32_t symbol_id{0};
@@ -47,9 +49,11 @@ struct StrategyOrderIntentLogRecordForTest {
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lead_local_ns{0};
+  std::int64_t signal_lead_id{0};
   std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
   std::int64_t lag_local_ns{0};
+  std::int64_t signal_lag_id{0};
   std::int64_t lag_freshness_ns{0};
   std::uint64_t max_lead_freshness_ns{0};
   std::uint64_t max_lag_freshness_ns{0};
@@ -80,9 +84,11 @@ struct StrategyOrderSubmittedLogRecordForTest {
   std::int64_t signal_decision_ns{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lead_local_ns{0};
+  std::int64_t signal_lead_id{0};
   std::int64_t lead_freshness_ns{0};
   std::int64_t lag_exchange_ns{0};
   std::int64_t lag_local_ns{0};
+  std::int64_t signal_lag_id{0};
   std::int64_t lag_freshness_ns{0};
   std::uint64_t max_lead_freshness_ns{0};
   std::uint64_t max_lag_freshness_ns{0};
@@ -128,6 +134,7 @@ struct StrategyOrderResponseLogRecordForTest {
   std::uint64_t local_order_id{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::string_view book_ticker_id_prefix;
   std::int64_t lead_book_ticker_id{0};
   std::int64_t lag_book_ticker_id{0};
 };
@@ -137,6 +144,7 @@ struct StrategyOrderFeedbackLogRecordForTest {
   std::uint64_t local_order_id{0};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};
+  std::string_view book_ticker_id_prefix;
   std::int64_t lead_book_ticker_id{0};
   std::int64_t lag_book_ticker_id{0};
 };
