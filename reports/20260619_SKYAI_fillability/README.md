@@ -11,9 +11,23 @@
 - 对照样本：filled 或 partially-filled 订单，共 `17` 笔
 - `accepted_lag_id` 覆盖：`67/93`；另外 `26/93` 的事件顺序是 `Ack -> Cancelled -> Finished -> late Accepted(accepted_lag_id=0)`，因此 accepted 相关口径只作为辅助。
 
+## 快速使用
+
+仓库中的压缩包为 `reports/20260619_SKYAI_fillability.zip`，解压后目录名仍为 `20260619_SKYAI_fillability/`。
+
+建议阅读顺序：
+
+1. 先看本文档的“核心结果”和“结论”。
+2. 需要逐笔复核时，看 `analysis/ack_full_candidates.csv` 和 `analysis/cancel_point_candidates.csv`。
+3. 需要理解 CSV 字段时，看 `FIELD_SCHEMA.md`。
+4. 需要追溯原始来源时，看 `context/source_paths.txt` 和 `logs/extraction_notes.md`。
+5. 需要验证归档完整性时，在本目录执行 `sha256sum -c checksums.sha256`。
+
 ## 文件说明
 
 - `FIELD_SCHEMA.md`：本归档内 CSV、JSON summary、BookTicker bin 和日志的字段级说明。
+- `manifest.json`：归档文件清单，包含每个文件的大小、sha256，CSV 文件还包含行数。
+- `checksums.sha256`：归档完整性校验文件；不包含压缩包本身。
 
 ### `inputs/`
 

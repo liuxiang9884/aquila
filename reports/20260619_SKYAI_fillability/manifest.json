@@ -1,4 +1,5 @@
 {
+  "archive_zip": "reports/20260619_SKYAI_fillability.zip",
   "description": "SKYAI_USDT IOC cancel fillability archive with symbol-filtered inputs, logs, market data, analysis outputs, field schema, and conclusions.",
   "files": [
     {
@@ -8,10 +9,10 @@
       "size_bytes": 77257
     },
     {
-      "line_count": 104,
+      "line_count": 118,
       "path": "README.md",
-      "sha256": "cc53c5b7fc232e578584416307753e6bf44254342c8b51cb84c42a555c9c0fc0",
-      "size_bytes": 5861
+      "sha256": "c3640c3d924ea27a29fc2ead81a892c254892aee07f98b458599ebdfa23f3ed0",
+      "size_bytes": 6634
     },
     {
       "csv_rows": 5,
