@@ -1,0 +1,121 @@
+{
+  "by_side": {
+    "kBuy": 48,
+    "kSell": 45
+  },
+  "by_side_counts": {
+    "after_ack_to_cancel_any": {
+      "kBuy": {
+        "hits": 6,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 6,
+        "total": 45
+      }
+    },
+    "after_ack_to_cancel_full": {
+      "kBuy": {
+        "hits": 1,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 4,
+        "total": 45
+      }
+    },
+    "cancel_point_any": {
+      "kBuy": {
+        "hits": 2,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 1,
+        "total": 45
+      }
+    },
+    "cancel_point_full": {
+      "kBuy": {
+        "hits": 1,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 0,
+        "total": 45
+      }
+    },
+    "send_to_finish_stateful_any": {
+      "kBuy": {
+        "hits": 47,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 45,
+        "total": 45
+      }
+    },
+    "send_to_finish_stateful_full": {
+      "kBuy": {
+        "hits": 13,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 11,
+        "total": 45
+      }
+    },
+    "send_to_finish_update_only_any": {
+      "kBuy": {
+        "hits": 10,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 10,
+        "total": 45
+      }
+    },
+    "send_to_finish_update_only_full": {
+      "kBuy": {
+        "hits": 3,
+        "total": 48
+      },
+      "kSell": {
+        "hits": 7,
+        "total": 45
+      }
+    }
+  },
+  "count": 93,
+  "counts": {
+    "after_ack_to_cancel_any": 12,
+    "after_ack_to_cancel_full": 5,
+    "cancel_point_any": 3,
+    "cancel_point_full": 1,
+    "send_to_finish_stateful_any": 92,
+    "send_to_finish_stateful_full": 24,
+    "send_to_finish_update_only_any": 20,
+    "send_to_finish_update_only_full": 10
+  },
+  "definitions": {
+    "after_ack_to_cancel": "BookTicker records with id in (ack_lag_id, cancelled_lag_id], excluding ack_lag_id and including cancelled_lag_id",
+    "any": "price crosses and opposite BBO volume > 0",
+    "cancel_point": "BookTicker at cancelled_lag_id",
+    "full": "any plus opposite BBO volume >= order quantity",
+    "send_to_finish_stateful": "latest BBO state at request_send_local_ns plus BookTicker updates with local_ns in (request_send_local_ns, order_finished_local_ns]",
+    "send_to_finish_update_only": "only BookTicker updates with local_ns in (request_send_local_ns, order_finished_local_ns]"
+  },
+  "inputs": {
+    "book_ticker_bin": "/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/SKYAI_USDT.bin",
+    "book_ticker_records": 1041851,
+    "order_detail_csv": "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/status_reports_20260620_012105/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/order_detail.csv"
+  },
+  "outputs": {
+    "csv": "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/fillability/SKYAI_USDT/SKYAI_USDT_cancel_final_windows.csv",
+    "summary_json": "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/fillability/SKYAI_USDT/SKYAI_USDT_cancel_final_windows_summary.json"
+  },
+  "run_id": "20260619_095317_28symbols_no_h_30d_fusion_off_l0_live",
+  "selection": "entry kCancelled cumulative_filled_quantity == 0",
+  "symbol": "SKYAI_USDT",
+  "with_accepted_lag_id": 67,
+  "without_accepted_lag_id": 26
+}

@@ -1,0 +1,33 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/logs/lead_lag_strategy_28symbols_no_h_fusion_live.log"
+console_sink_name = "lead_lag_strategy_28symbols_no_h_fusion_live_console"
+backend_thread_name = "lead_lag_strategy_28symbols_no_h_fusion_live_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[strategy]
+name = "lead_lag"
+strategy_id = 4
+mode = "live"
+order_capacity = 128
+config = "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/configs/lead_lag_28symbols_no_h_2bps_notional.toml"
+
+[strategy.loop]
+idle_policy = "spin"
+bind_cpu_id = 4
+max_loop_seconds = 0
+
+[strategy.data_reader]
+config = "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/configs/strategy_data_reader_28symbols_no_h_no_ton_fusion.toml"
+
+[strategy.order_session]
+config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260604.toml"
+
+[strategy.feedback]
+enabled = true
+shm_name = "aquila_gate_order_feedback_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+channel_name = "orders"
+poll_budget = 128
+force_claim = false

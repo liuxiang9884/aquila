@@ -1,0 +1,34 @@
+# Source Paths
+
+Run id: `20260619_095317_28symbols_no_h_30d_fusion_off_l0_live`
+Symbol: `SKYAI_USDT`
+
+## Report Inputs
+
+- Full report dir: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/status_reports_20260620_012105/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live`
+- Source `order_detail.csv`: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/status_reports_20260620_012105/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/order_detail.csv`
+- Source `signal.csv`: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/status_reports_20260620_012105/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/signal.csv`
+- Source `position.csv`: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/status_reports_20260620_012105/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/position.csv`
+- Source `latency.csv`: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/status_reports_20260620_012105/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/latency.csv`
+- Instrument catalog: `/home/liuxiang/dev/aquila/config/instruments/usdt_futures_common_gate_binance_20260602.csv`
+
+## Logs
+
+- Strategy log: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/logs/lead_lag_strategy_28symbols_no_h_fusion_live_20260619_095558.log`
+- Gate feedback log: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/logs/gate_order_feedback_session_28symbols_no_h_no_ton_private_plain_20260619_095457.log`
+
+## Symbol BookTicker Splits
+
+- Canonical: `/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/SKYAI_USDT.bin`
+- Source0: `/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source0/SKYAI_USDT.bin`
+- Source1: `/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source1/SKYAI_USDT.bin`
+- Source2: `/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source2/SKYAI_USDT.bin`
+- Source3: `/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source3/SKYAI_USDT.bin`
+
+## Original Analysis Scratch
+
+- Scratch analysis dir: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/fillability/SKYAI_USDT`
+
+## Runtime Config Source Dir
+
+- Runtime config dir: `/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/configs`

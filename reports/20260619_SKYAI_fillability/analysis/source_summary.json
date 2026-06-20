@@ -1,0 +1,512 @@
+{
+  "all_unfilled_orders": {
+    "canonical_categories": {
+      "marketable_after_ack_before_cancelled": 9,
+      "marketable_at_accepted_stage_only": 3,
+      "marketable_at_ack_stage_only": 32,
+      "marketable_at_cancelled_stage": 3,
+      "marketable_signal_to_ack_only": 46
+    },
+    "count": 93,
+    "per_feed": {
+      "canonical": {
+        "orders": 93,
+        "stage_found": {
+          "accepted": 67,
+          "ack": 93,
+          "cancelled": 93,
+          "signal": 93
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 47,
+          "cancelled": 3,
+          "signal": 93
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 93
+        }
+      },
+      "source0": {
+        "orders": 93,
+        "stage_found": {
+          "accepted": 67,
+          "ack": 93,
+          "cancelled": 93,
+          "signal": 93
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 47,
+          "cancelled": 3,
+          "signal": 93
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 93
+        }
+      },
+      "source1": {
+        "orders": 93,
+        "stage_found": {
+          "accepted": 67,
+          "ack": 93,
+          "cancelled": 93,
+          "signal": 93
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 47,
+          "cancelled": 3,
+          "signal": 93
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 93
+        }
+      },
+      "source2": {
+        "orders": 93,
+        "stage_found": {
+          "accepted": 67,
+          "ack": 93,
+          "cancelled": 93,
+          "signal": 93
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 47,
+          "cancelled": 3,
+          "signal": 93
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 93
+        }
+      },
+      "source3": {
+        "orders": 93,
+        "stage_found": {
+          "accepted": 66,
+          "ack": 91,
+          "cancelled": 92,
+          "signal": 91
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 45,
+          "cancelled": 3,
+          "signal": 91
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 11,
+          "signal_to_ack": 91
+        }
+      }
+    }
+  },
+  "canonical_interesting_orders": {
+    "categories": {
+      "marketable_after_ack_before_cancelled": 9,
+      "marketable_at_accepted_stage_only": 3,
+      "marketable_at_cancelled_stage": 3
+    },
+    "count": 15,
+    "orders": [
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151711997",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 2,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712112",
+        "side": "kSell",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 0,
+        "canonical_cancelled_marketable": "true",
+        "category": "marketable_at_cancelled_stage",
+        "local_order_id": "288230376151712142",
+        "side": "kSell",
+        "source_accepted_marketable_count": 4,
+        "source_after_ack_marketable_count": 0,
+        "source_cancelled_marketable_count": 4,
+        "source_names_after_ack_marketable": [],
+        "source_names_cancelled_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ]
+      },
+      {
+        "canonical_after_ack_market_records": 16,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712152",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "true",
+        "category": "marketable_at_cancelled_stage",
+        "local_order_id": "288230376151712176",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 4,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 4,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ]
+      },
+      {
+        "canonical_after_ack_market_records": 2,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712212",
+        "side": "kSell",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712220",
+        "side": "kSell",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 0,
+        "canonical_cancelled_marketable": "true",
+        "category": "marketable_at_cancelled_stage",
+        "local_order_id": "288230376151712227",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 0,
+        "source_cancelled_marketable_count": 4,
+        "source_names_after_ack_marketable": [],
+        "source_names_cancelled_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ]
+      },
+      {
+        "canonical_after_ack_market_records": 0,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_at_accepted_stage_only",
+        "local_order_id": "288230376151712251",
+        "side": "kSell",
+        "source_accepted_marketable_count": 4,
+        "source_after_ack_marketable_count": 0,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712322",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 2,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712360",
+        "side": "kSell",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712571",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 3,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_at_accepted_stage_only",
+        "local_order_id": "288230376151712605",
+        "side": "kBuy",
+        "source_accepted_marketable_count": 4,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_at_accepted_stage_only",
+        "local_order_id": "288230376151712625",
+        "side": "kSell",
+        "source_accepted_marketable_count": 4,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      },
+      {
+        "canonical_after_ack_market_records": 1,
+        "canonical_cancelled_marketable": "false",
+        "category": "marketable_after_ack_before_cancelled",
+        "local_order_id": "288230376151712725",
+        "side": "kSell",
+        "source_accepted_marketable_count": 0,
+        "source_after_ack_marketable_count": 4,
+        "source_cancelled_marketable_count": 0,
+        "source_names_after_ack_marketable": [
+          "source0",
+          "source1",
+          "source2",
+          "source3"
+        ],
+        "source_names_cancelled_marketable": []
+      }
+    ],
+    "per_feed": {
+      "canonical": {
+        "orders": 15,
+        "stage_found": {
+          "accepted": 11,
+          "ack": 15,
+          "cancelled": 15,
+          "signal": 15
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 15,
+          "cancelled": 3,
+          "signal": 15
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 15
+        }
+      },
+      "source0": {
+        "orders": 15,
+        "stage_found": {
+          "accepted": 11,
+          "ack": 15,
+          "cancelled": 15,
+          "signal": 15
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 15,
+          "cancelled": 3,
+          "signal": 15
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 15
+        }
+      },
+      "source1": {
+        "orders": 15,
+        "stage_found": {
+          "accepted": 11,
+          "ack": 15,
+          "cancelled": 15,
+          "signal": 15
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 15,
+          "cancelled": 3,
+          "signal": 15
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 15
+        }
+      },
+      "source2": {
+        "orders": 15,
+        "stage_found": {
+          "accepted": 11,
+          "ack": 15,
+          "cancelled": 15,
+          "signal": 15
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 15,
+          "cancelled": 3,
+          "signal": 15
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 12,
+          "signal_to_ack": 15
+        }
+      },
+      "source3": {
+        "orders": 15,
+        "stage_found": {
+          "accepted": 11,
+          "ack": 14,
+          "cancelled": 15,
+          "signal": 14
+        },
+        "stage_marketable": {
+          "accepted": 5,
+          "ack": 14,
+          "cancelled": 3,
+          "signal": 14
+        },
+        "window_marketable_order_counts": {
+          "accepted_to_cancelled": 5,
+          "after_accepted_to_cancelled": 0,
+          "after_ack_to_cancelled": 11,
+          "signal_to_ack": 14
+        }
+      }
+    },
+    "source_agreement_counts": {
+      "all_4_sources_accepted_marketable": 5,
+      "all_4_sources_after_ack_marketable": 11,
+      "all_4_sources_cancelled_marketable": 3,
+      "any_source_accepted_marketable": 5,
+      "any_source_after_ack_marketable": 12,
+      "any_source_cancelled_marketable": 3
+    }
+  },
+  "inputs": {
+    "canonical": "/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/SKYAI_USDT.bin",
+    "source0": "/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source0/SKYAI_USDT.bin",
+    "source1": "/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source1/SKYAI_USDT.bin",
+    "source2": "/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source2/SKYAI_USDT.bin",
+    "source3": "/home/liuxiang/tmp/book_ticker_symbol_splits/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_source3/SKYAI_USDT.bin"
+  },
+  "outputs": {
+    "by_order_csv": "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/fillability/SKYAI_USDT/SKYAI_USDT_source_crosscheck_by_order.csv",
+    "long_csv": "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/fillability/SKYAI_USDT/SKYAI_USDT_source_crosscheck_long.csv",
+    "summary_json": "/home/liuxiang/tmp/20260619_095317_28symbols_no_h_30d_fusion_off_l0_live/fillability/SKYAI_USDT/SKYAI_USDT_source_crosscheck_summary.json"
+  },
+  "run_id": "20260619_095317_28symbols_no_h_30d_fusion_off_l0_live",
+  "symbol": "SKYAI_USDT"
+}

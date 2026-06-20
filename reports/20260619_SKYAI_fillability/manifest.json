@@ -1,0 +1,247 @@
+{
+  "description": "SKYAI_USDT IOC cancel fillability archive with symbol-filtered inputs, logs, market data, analysis outputs, and conclusions.",
+  "files": [
+    {
+      "line_count": 102,
+      "path": "README.md",
+      "sha256": "0d34d8271d5c52eb03925f40b7cff31bccc73e3c19736a78cf3b51c5f7bc3a85",
+      "size_bytes": 5758
+    },
+    {
+      "csv_rows": 5,
+      "path": "analysis/ack_full_candidates.csv",
+      "sha256": "d58fef35a996ca4ae4e3fce4cd47c297b25851ddf7afdcc04d09a1f05c5c2509",
+      "size_bytes": 4129
+    },
+    {
+      "csv_rows": 93,
+      "path": "analysis/cancel_fillability.csv",
+      "sha256": "f15c754c10b0a5e2754f135f49bd8c2e60ba792131d1cdb2f913757df5a29b8f",
+      "size_bytes": 128020
+    },
+    {
+      "path": "analysis/cancel_fillability_summary.json",
+      "sha256": "7a3fe66a1d41e4df4dcd99482c78ad6ff2aa332b1ad72e86d4ccbaa74ff37f3a",
+      "size_bytes": 5917
+    },
+    {
+      "csv_rows": 3,
+      "path": "analysis/cancel_point_candidates.csv",
+      "sha256": "a142f8c9b90c4fe51999787c9da5bfe01782e880f4ddeb982dbaa85f00646282",
+      "size_bytes": 2731
+    },
+    {
+      "csv_rows": 93,
+      "path": "analysis/cancel_windows.csv",
+      "sha256": "2944e071c2e9620c97f8ae1047a13da850bd1c25c89d4f1e105cc66587864329",
+      "size_bytes": 38933
+    },
+    {
+      "path": "analysis/cancel_windows_summary.json",
+      "sha256": "687cf22bcc2522a5721bd058c10d0713a7e402c13834cabd9bb9515a8667a86a",
+      "size_bytes": 3347
+    },
+    {
+      "csv_rows": 17,
+      "path": "analysis/filled_control.csv",
+      "sha256": "ab30c0d627d0dbe0a3bd81cd4fa85f5e5571257b5fe305ff8365c5482c52dcdc",
+      "size_bytes": 30293
+    },
+    {
+      "csv_rows": 93,
+      "path": "analysis/source_by_order.csv",
+      "sha256": "7c87ed1fd9c3d0534b67d4dbc857e66972aa2c893d6fc260eb0ee758fc52c3dc",
+      "size_bytes": 25231
+    },
+    {
+      "csv_rows": 465,
+      "path": "analysis/source_long.csv",
+      "sha256": "8c871a85a65031bf1830620b50ddee211419a9d778b7c95d6645ea132a6876e6",
+      "size_bytes": 199611
+    },
+    {
+      "path": "analysis/source_summary.json",
+      "sha256": "076e8d09da2d5fbfa451346e6449157fdaccb8cef1c0bf642c59722f792768cb",
+      "size_bytes": 16147
+    },
+    {
+      "csv_rows": 110,
+      "path": "analysis/volume_by_order.csv",
+      "sha256": "3493ce817043ee8172fb3657149481e41f498b7903754598cc043dbf0d80ad4b",
+      "size_bytes": 42444
+    },
+    {
+      "path": "analysis/volume_summary.json",
+      "sha256": "83dce4fcc93a7fcb830820495e81006acf949ab2d28d1e7720719683b482fe0d",
+      "size_bytes": 2206
+    },
+    {
+      "path": "context/configs/gate_data_fusion.toml",
+      "sha256": "c12bd2f7e90b002952ac366d5a8ab867855332e41ce3648b861db8216a9e5cf0",
+      "size_bytes": 2945
+    },
+    {
+      "path": "context/configs/gate_feedback.toml",
+      "sha256": "00c9e38db7356f6c835d24d5cc31cf16972d156f43a830ddd715016749c2e154",
+      "size_bytes": 1345
+    },
+    {
+      "path": "context/configs/gate_fusion.toml",
+      "sha256": "12e69dbbca853eeaff129e56f09bb60fd8778f878782e12ba73440ce562adb70",
+      "size_bytes": 1424
+    },
+    {
+      "path": "context/configs/profile.toml",
+      "sha256": "9693c7d6397f95a321fe67b7606bba9d1ee40c3f29a1125e0d1f55a265ca059f",
+      "size_bytes": 23624
+    },
+    {
+      "path": "context/configs/recorder_canonical.toml",
+      "sha256": "3f1da3b386666c7466acba25c1c8f954cf13fa153c0c57836873c903db65f9a6",
+      "size_bytes": 1206
+    },
+    {
+      "path": "context/configs/recorder_source0.toml",
+      "sha256": "9b689c969529e94df7914a992b972585256d220372285c8db2efd73e05e7a471",
+      "size_bytes": 1157
+    },
+    {
+      "path": "context/configs/recorder_source1.toml",
+      "sha256": "522a49af213b1d7e73ded4d118d399e5471dc5ab896c137e9ad022f49fec58c7",
+      "size_bytes": 1157
+    },
+    {
+      "path": "context/configs/recorder_source2.toml",
+      "sha256": "f2bb5eff78bb8dfb600d8277851590d9f0f2aad70f86ec3118217b1fd96ef427",
+      "size_bytes": 1157
+    },
+    {
+      "path": "context/configs/recorder_source3.toml",
+      "sha256": "8a6a0cd18a32d15af8b9a990d9919cdcd6f5ae23a0b687998af3b3ccee49a99d",
+      "size_bytes": 1157
+    },
+    {
+      "path": "context/configs/strategy.toml",
+      "sha256": "b7fbf238c3dcaaddc0fa65c34182855137b7bb7339cd067f668eb6bb86840238",
+      "size_bytes": 1295
+    },
+    {
+      "path": "context/configs/strategy_data_reader.toml",
+      "sha256": "94470cd0f1ac249e5793f51f3067d58274779cdd2c11aa214fb0ad92b1e4a119",
+      "size_bytes": 1713
+    },
+    {
+      "line_count": 40,
+      "path": "context/generation_commands.sh",
+      "sha256": "7f5e1e22cd49948e7c540d1ad0b827ca0c4f845dd19f1b9cf4373df14c1c12d5",
+      "size_bytes": 1805
+    },
+    {
+      "line_count": 34,
+      "path": "context/source_paths.txt",
+      "sha256": "4fdb167e106305b00aab97de92d8814866b6d7fd9373f19a15a8e35ca368051b",
+      "size_bytes": 2552
+    },
+    {
+      "csv_rows": 2,
+      "path": "inputs/instrument.csv",
+      "sha256": "48da5b0af0ece213ce26895fe8443c04aab487601c34f6085395bd44a46ff149",
+      "size_bytes": 619
+    },
+    {
+      "csv_rows": 113,
+      "path": "inputs/latency.csv",
+      "sha256": "dc8ff0e105456befba647febdf59b437560bdab174f509220eafbba4eb92b672",
+      "size_bytes": 111529
+    },
+    {
+      "csv_rows": 113,
+      "path": "inputs/orders.csv",
+      "sha256": "894efe6fb7df830e241899a7073c2b9ebcd857693977ce897b49d32bc2d0825c",
+      "size_bytes": 107075
+    },
+    {
+      "csv_rows": 9,
+      "path": "inputs/positions.csv",
+      "sha256": "8d0ea6e25c8f5546c91815d2181798e4efa471dd90f1d86ae354babba822c477",
+      "size_bytes": 6883
+    },
+    {
+      "csv_rows": 237,
+      "path": "inputs/signals.csv",
+      "sha256": "65c34839fb412db8a4714328a9c06bbe2fc3dccf48cafa2b7ceb554887d4a8ec",
+      "size_bytes": 110185
+    },
+    {
+      "line_count": 27,
+      "path": "logs/extraction_notes.md",
+      "sha256": "62e3a73fb2dead6306359cd7772dd929b048591f87dfc56d4435374f9f3fdc4d",
+      "size_bytes": 1251
+    },
+    {
+      "line_count": 113,
+      "path": "logs/feedback.log",
+      "sha256": "5bed558096796cb9e4c046afbd3751f37ef65966fe501d5dd86354315abd10c8",
+      "size_bytes": 55967
+    },
+    {
+      "line_count": 1382,
+      "path": "logs/strategy.log",
+      "sha256": "be11cb43161f77e4a94b9220486dd470ac5dfff48057d7deca7c9adc8113b8c9",
+      "size_bytes": 992953
+    },
+    {
+      "path": "market_data/canonical.bin.zst",
+      "sha256": "38019f90d24ce6802c5d1999edbfeea585d6b65d01b9f2c5d25214c2a8d1ea4b",
+      "size_bytes": 16155134
+    },
+    {
+      "path": "market_data/source0.bin.zst",
+      "sha256": "3110427576966f6cdf7a2c5ff6ab3808cfe7f3b5ddd55140af65eb6f8bf61888",
+      "size_bytes": 16122708
+    },
+    {
+      "path": "market_data/source1.bin.zst",
+      "sha256": "2694a494b02e4b7978facf6f8d6080b2e2e7ecafa0b8fa6f7bc23891733b96ef",
+      "size_bytes": 16125274
+    },
+    {
+      "path": "market_data/source2.bin.zst",
+      "sha256": "c7de5d9df189c3e412f1d5c52755e89dbd996e07deb711e1b7bd16392cfc2242",
+      "size_bytes": 16120522
+    },
+    {
+      "path": "market_data/source3.bin.zst",
+      "sha256": "2fa73955f0672d5d10a4200427946b2846454d0cc17fa46c11047c2e00239f07",
+      "size_bytes": 16126404
+    },
+    {
+      "path": "market_data/split_summaries/canonical.json",
+      "sha256": "767701ead5b2b30d33079ef34269bcc9f3e0ac3eb8999582fd47e7f6aa8c4c71",
+      "size_bytes": 308
+    },
+    {
+      "path": "market_data/split_summaries/source0.json",
+      "sha256": "883ae106d4bdb8db31b04c364520ffe156aa478c4ee535f9eff9164264e81e77",
+      "size_bytes": 316
+    },
+    {
+      "path": "market_data/split_summaries/source1.json",
+      "sha256": "ea4c5cb30f1bdefbd050811be8f6993d76e93d92cd8ef5859b391b4c8ea30c91",
+      "size_bytes": 316
+    },
+    {
+      "path": "market_data/split_summaries/source2.json",
+      "sha256": "8e2b0d0619433e59b1a7b93e371cc2357b40af7bcf54c56de955fbb90af12f22",
+      "size_bytes": 316
+    },
+    {
+      "path": "market_data/split_summaries/source3.json",
+      "sha256": "45552b6ad311d94d35cbc484eaec5034e8e54f7c90d501b35f562660b8b8edb0",
+      "size_bytes": 316
+    }
+  ],
+  "report_dir": "reports/20260619_SKYAI_fillability",
+  "run_id": "20260619_095317_28symbols_no_h_30d_fusion_off_l0_live",
+  "symbol": "SKYAI_USDT"
+}

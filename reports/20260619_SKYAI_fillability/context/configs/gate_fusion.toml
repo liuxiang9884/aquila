@@ -1,0 +1,31 @@
+[fusion]
+name = "gate_book_ticker_fusion_28symbols_no_h_no_ton_4sources_off_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+max_events_per_source = 1
+bind_cpu_id = 2
+max_symbol_id = 4096
+
+[fusion.output]
+shm_name = "aquila_gate_book_ticker_fusion_28symbols_no_h_no_ton_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+channel_name = "book_ticker_channel"
+remove_existing = true
+
+[[fusion.sources]]
+source_id = 0
+name = "gate_source_0_28symbols_no_h_no_ton_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+shm_name = "aquila_gate_btf_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_src_0"
+channel_name = "book_ticker_channel"
+[[fusion.sources]]
+source_id = 1
+name = "gate_source_1_28symbols_no_h_no_ton_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+shm_name = "aquila_gate_btf_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_src_1"
+channel_name = "book_ticker_channel"
+[[fusion.sources]]
+source_id = 2
+name = "gate_source_2_28symbols_no_h_no_ton_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+shm_name = "aquila_gate_btf_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_src_2"
+channel_name = "book_ticker_channel"
+[[fusion.sources]]
+source_id = 3
+name = "gate_source_3_28symbols_no_h_no_ton_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live"
+shm_name = "aquila_gate_btf_20260619_095317_28symbols_no_h_30d_fusion_off_l0_live_src_3"
+channel_name = "book_ticker_channel"
