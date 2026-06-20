@@ -13,6 +13,8 @@
 
 ## 文件说明
 
+- `FIELD_SCHEMA.md`：本归档内 CSV、JSON summary、BookTicker bin 和日志的字段级说明。
+
 ### `inputs/`
 
 - `orders.csv`：从 `order_detail.csv` 过滤出的全部 `SKYAI_USDT` 订单，`113` 行。
