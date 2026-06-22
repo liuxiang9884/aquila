@@ -18,14 +18,16 @@
 建议阅读顺序：
 
 1. 先看本文档的“核心结果”和“结论”。
-2. 需要逐笔复核时，看 `analysis/ack_full_candidates.csv` 和 `analysis/cancel_point_candidates.csv`。
-3. 需要理解 CSV 字段时，看 `FIELD_SCHEMA.md`。
-4. 需要追溯原始来源时，看 `context/source_paths.txt` 和 `logs/extraction_notes.md`。
-5. 需要验证归档完整性时，在本目录执行 `sha256sum -c checksums.sha256`。
+2. 需要理解 signal 到 `x_in_time` / `x_out_time` 的追加分析时，看 `SIGNAL_XTIME_ANALYSIS.md`。
+3. 需要逐笔复核时，看 `analysis/ack_full_candidates.csv` 和 `analysis/cancel_point_candidates.csv`。
+4. 需要理解 CSV 字段时，看 `FIELD_SCHEMA.md`。
+5. 需要追溯原始来源时，看 `context/source_paths.txt` 和 `logs/extraction_notes.md`。
+6. 需要验证归档完整性时，在本目录执行 `sha256sum -c checksums.sha256`。
 
 ## 文件说明
 
 - `FIELD_SCHEMA.md`：本归档内 CSV、JSON summary、BookTicker bin 和日志的字段级说明。
+- `SIGNAL_XTIME_ANALYSIS.md`：signal 后 raw/order price 可成交窗口、Gate `x_in_time` / `x_out_time` 假设分析、open 成交订单延迟对比和未成交原因判断。
 - `manifest.json`：归档文件清单，包含每个文件的大小、sha256，CSV 文件还包含行数。
 - `checksums.sha256`：归档完整性校验文件；不包含压缩包本身。
 

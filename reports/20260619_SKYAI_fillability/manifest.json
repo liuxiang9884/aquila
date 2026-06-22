@@ -1,30 +1,36 @@
 {
   "archive_zip": "reports/20260619_SKYAI_fillability.zip",
-  "description": "SKYAI_USDT IOC cancel fillability archive with symbol-filtered inputs, logs, market data, analysis outputs, field schema, and conclusions.",
+  "description": "SKYAI_USDT IOC cancel fillability archive with symbol-filtered inputs, logs, market data, analysis outputs, field schema, signal x-time follow-up, and conclusions.",
   "files": [
     {
-      "line_count": 984,
       "path": "FIELD_SCHEMA.md",
       "sha256": "2804435d545ba798c1f9f871218787556e268554085f635e3fe70e2b013fe167",
-      "size_bytes": 77257
+      "size_bytes": 77257,
+      "line_count": 984
     },
     {
-      "line_count": 118,
       "path": "README.md",
-      "sha256": "c3640c3d924ea27a29fc2ead81a892c254892aee07f98b458599ebdfa23f3ed0",
-      "size_bytes": 6634
+      "sha256": "4a5ae524b11bd70fa02cb0484cd7dce94626a6868372772ef6222520faadb19d",
+      "size_bytes": 6923,
+      "line_count": 120
     },
     {
-      "csv_rows": 5,
+      "path": "SIGNAL_XTIME_ANALYSIS.md",
+      "sha256": "7c4d2c99883fa6b9bac3edfaf24f44cce3713c72c7fd7da5d10ede6ceed0fb9d",
+      "size_bytes": 11219,
+      "line_count": 239
+    },
+    {
       "path": "analysis/ack_full_candidates.csv",
       "sha256": "d58fef35a996ca4ae4e3fce4cd47c297b25851ddf7afdcc04d09a1f05c5c2509",
-      "size_bytes": 4129
+      "size_bytes": 4129,
+      "csv_rows": 5
     },
     {
-      "csv_rows": 93,
       "path": "analysis/cancel_fillability.csv",
       "sha256": "f15c754c10b0a5e2754f135f49bd8c2e60ba792131d1cdb2f913757df5a29b8f",
-      "size_bytes": 128020
+      "size_bytes": 128020,
+      "csv_rows": 93
     },
     {
       "path": "analysis/cancel_fillability_summary.json",
@@ -32,16 +38,16 @@
       "size_bytes": 5917
     },
     {
-      "csv_rows": 3,
       "path": "analysis/cancel_point_candidates.csv",
       "sha256": "a142f8c9b90c4fe51999787c9da5bfe01782e880f4ddeb982dbaa85f00646282",
-      "size_bytes": 2731
+      "size_bytes": 2731,
+      "csv_rows": 3
     },
     {
-      "csv_rows": 93,
       "path": "analysis/cancel_windows.csv",
       "sha256": "2944e071c2e9620c97f8ae1047a13da850bd1c25c89d4f1e105cc66587864329",
-      "size_bytes": 38933
+      "size_bytes": 38933,
+      "csv_rows": 93
     },
     {
       "path": "analysis/cancel_windows_summary.json",
@@ -49,22 +55,22 @@
       "size_bytes": 3347
     },
     {
-      "csv_rows": 17,
       "path": "analysis/filled_control.csv",
       "sha256": "ab30c0d627d0dbe0a3bd81cd4fa85f5e5571257b5fe305ff8365c5482c52dcdc",
-      "size_bytes": 30293
+      "size_bytes": 30293,
+      "csv_rows": 17
     },
     {
-      "csv_rows": 93,
       "path": "analysis/source_by_order.csv",
       "sha256": "7c87ed1fd9c3d0534b67d4dbc857e66972aa2c893d6fc260eb0ee758fc52c3dc",
-      "size_bytes": 25231
+      "size_bytes": 25231,
+      "csv_rows": 93
     },
     {
-      "csv_rows": 465,
       "path": "analysis/source_long.csv",
       "sha256": "8c871a85a65031bf1830620b50ddee211419a9d778b7c95d6645ea132a6876e6",
-      "size_bytes": 199611
+      "size_bytes": 199611,
+      "csv_rows": 465
     },
     {
       "path": "analysis/source_summary.json",
@@ -72,10 +78,10 @@
       "size_bytes": 16147
     },
     {
-      "csv_rows": 110,
       "path": "analysis/volume_by_order.csv",
       "sha256": "3493ce817043ee8172fb3657149481e41f498b7903754598cc043dbf0d80ad4b",
-      "size_bytes": 42444
+      "size_bytes": 42444,
+      "csv_rows": 110
     },
     {
       "path": "analysis/volume_summary.json",
@@ -138,64 +144,62 @@
       "size_bytes": 1713
     },
     {
-      "line_count": 40,
       "path": "context/generation_commands.sh",
       "sha256": "7f5e1e22cd49948e7c540d1ad0b827ca0c4f845dd19f1b9cf4373df14c1c12d5",
       "size_bytes": 1805
     },
     {
-      "line_count": 34,
       "path": "context/source_paths.txt",
       "sha256": "4fdb167e106305b00aab97de92d8814866b6d7fd9373f19a15a8e35ca368051b",
       "size_bytes": 2552
     },
     {
-      "csv_rows": 2,
       "path": "inputs/instrument.csv",
       "sha256": "48da5b0af0ece213ce26895fe8443c04aab487601c34f6085395bd44a46ff149",
-      "size_bytes": 619
+      "size_bytes": 619,
+      "csv_rows": 2
     },
     {
-      "csv_rows": 113,
       "path": "inputs/latency.csv",
       "sha256": "dc8ff0e105456befba647febdf59b437560bdab174f509220eafbba4eb92b672",
-      "size_bytes": 111529
+      "size_bytes": 111529,
+      "csv_rows": 113
     },
     {
-      "csv_rows": 113,
       "path": "inputs/orders.csv",
       "sha256": "894efe6fb7df830e241899a7073c2b9ebcd857693977ce897b49d32bc2d0825c",
-      "size_bytes": 107075
+      "size_bytes": 107075,
+      "csv_rows": 113
     },
     {
-      "csv_rows": 9,
       "path": "inputs/positions.csv",
       "sha256": "8d0ea6e25c8f5546c91815d2181798e4efa471dd90f1d86ae354babba822c477",
-      "size_bytes": 6883
+      "size_bytes": 6883,
+      "csv_rows": 9
     },
     {
-      "csv_rows": 237,
       "path": "inputs/signals.csv",
       "sha256": "65c34839fb412db8a4714328a9c06bbe2fc3dccf48cafa2b7ceb554887d4a8ec",
-      "size_bytes": 110185
+      "size_bytes": 110185,
+      "csv_rows": 237
     },
     {
-      "line_count": 27,
       "path": "logs/extraction_notes.md",
       "sha256": "62e3a73fb2dead6306359cd7772dd929b048591f87dfc56d4435374f9f3fdc4d",
-      "size_bytes": 1251
+      "size_bytes": 1251,
+      "line_count": 27
     },
     {
-      "line_count": 113,
       "path": "logs/feedback.log",
       "sha256": "5bed558096796cb9e4c046afbd3751f37ef65966fe501d5dd86354315abd10c8",
-      "size_bytes": 55967
+      "size_bytes": 55967,
+      "line_count": 113
     },
     {
-      "line_count": 1382,
       "path": "logs/strategy.log",
       "sha256": "be11cb43161f77e4a94b9220486dd470ac5dfff48057d7deca7c9adc8113b8c9",
-      "size_bytes": 992953
+      "size_bytes": 992953,
+      "line_count": 1382
     },
     {
       "path": "market_data/canonical.bin.zst",
