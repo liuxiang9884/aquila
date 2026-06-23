@@ -145,7 +145,7 @@ def _freshness_summary(records: np.ndarray, label: str) -> dict:
         "negative_latency_count": negative_count,
         "mean_ms": mean_ms,
         "std_ms": std_ms,
-        "threshold_ms": max(1, int(math.ceil(mean_ms + 3.0 * std_ms))),
+        "threshold_ms": int(math.ceil(mean_ms + 3.0 * std_ms)),
     }
 
 

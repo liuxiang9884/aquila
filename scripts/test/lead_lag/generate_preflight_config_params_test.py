@@ -80,7 +80,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertEqual(result["taker_buffer"]["source"], "generated")
         self.assertEqual(result["taker_buffer"]["sample_count"], 3)
 
-    def test_normalizes_exchange_names_and_clamps_freshness_threshold(self):
+    def test_normalizes_exchange_names_and_keeps_zero_freshness_threshold(self):
         records = self.make_records()
         records["local_ns"] = records["exchange_ns"]
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
@@ -97,8 +97,8 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
 
         self.assertEqual(result["lead_exchange"], "binance")
         self.assertEqual(result["lag_exchange"], "gate")
-        self.assertEqual(result["freshness"]["lead_threshold_ms"], 1)
-        self.assertEqual(result["freshness"]["lag_threshold_ms"], 1)
+        self.assertEqual(result["freshness"]["lead_threshold_ms"], 0)
+        self.assertEqual(result["freshness"]["lag_threshold_ms"], 0)
 
     def test_keeps_large_taker_buffer_proxy(self):
         records = self.make_records()

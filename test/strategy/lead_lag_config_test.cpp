@@ -549,6 +549,27 @@ source = "generated"
   EXPECT_NE(result.error.find("freshness_shadow.mode"), std::string::npos);
 }
 
+TEST(LeadLagConfigTest, AllowsZeroFreshnessShadowThresholds) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.execute.freshness_shadow]
+mode = "shadow"
+lead_threshold_ms = 0
+lag_threshold_ms = 0
+source = "generated"
+)toml",
+                                      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.pairs.size(), 1U);
+  const leadlag::FreshnessShadowConfig& freshness =
+      result.value.pairs[0].execute.freshness_shadow;
+  EXPECT_EQ(freshness.lead_threshold_ms, 0);
+  EXPECT_EQ(freshness.lag_threshold_ms, 0);
+}
+
 TEST(LeadLagConfigTest, RejectsUnimplementedTakerBufferEnforceMode) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 

@@ -444,13 +444,6 @@ class Parser {
     if (!ok_) {
       return freshness;
     }
-    if (freshness.lead_threshold_ms <= 0) {
-      Fail(prefix + ".lead_threshold_ms", " must be positive");
-      return freshness;
-    }
-    if (freshness.lag_threshold_ms <= 0) {
-      Fail(prefix + ".lag_threshold_ms", " must be positive");
-    }
     return freshness;
   }
 

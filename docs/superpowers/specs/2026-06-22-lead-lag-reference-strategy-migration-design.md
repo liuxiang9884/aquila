@@ -261,7 +261,7 @@ Reference auto freshness 依赖 BBO `LocalTimeMS - ServerTimeMS`，并在 warmup
 
 1. 配置生成工具读取指定历史窗口或启动前采样窗口的 lead / lag BBO。
 2. 对每个 exchange 计算 `local_ms - exchange_ms` 的样本分布。
-3. 生成固定阈值：`threshold_ms = max(1, ceil(mean + 3 * std))`，保证 shadow 配置通过正阈值校验。
+3. 生成固定阈值：`threshold_ms = ceil(mean + 3 * std)`；`0ms` 保留为合法 shadow 结果，表示该侧不触发 freshness threshold。
 4. 输出到候选配置或 patch 文件。
 5. 实时策略加载固定阈值并用当前 signal freshness 做比较。
 
