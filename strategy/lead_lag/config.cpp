@@ -276,35 +276,12 @@ class Parser {
     LagVolGuardConfig guard;
     guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
                                /*allow_enforce=*/false);
-    if (!ok_ || guard.mode == FeatureMode::kOff) {
-      return guard;
-    }
-
-    guard.jump_threshold =
-        RequiredDouble(table, "jump_threshold", prefix + ".jump_threshold");
-    guard.jump_count =
-        RequiredUInt32(table, "jump_count", prefix + ".jump_count");
-    guard.jump_window_ns =
-        RequiredDurationNs(table, "jump_window", prefix + ".jump_window");
-    guard.amplitude_threshold = RequiredDouble(table, "amplitude_threshold",
-                                               prefix + ".amplitude_threshold");
-    guard.amplitude_window_ns = RequiredDurationNs(
-        table, "amplitude_window", prefix + ".amplitude_window");
-    guard.cooldown_ns =
-        RequiredDurationNs(table, "cooldown", prefix + ".cooldown");
     if (!ok_) {
       return guard;
     }
-    if (guard.jump_threshold <= 0.0) {
-      Fail(prefix + ".jump_threshold", " must be positive");
+    if (guard.mode != FeatureMode::kOff) {
+      Fail(prefix + ".mode", " is not implemented yet");
       return guard;
-    }
-    if (guard.jump_count == 0) {
-      Fail(prefix + ".jump_count", " must be positive");
-      return guard;
-    }
-    if (guard.amplitude_threshold <= 0.0) {
-      Fail(prefix + ".amplitude_threshold", " must be positive");
     }
     return guard;
   }
@@ -314,32 +291,12 @@ class Parser {
     DriftGuardConfig guard;
     guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
                                /*allow_enforce=*/false);
-    if (!ok_ || guard.mode == FeatureMode::kOff) {
-      return guard;
-    }
-
-    guard.drift_instant =
-        RequiredDouble(table, "drift_instant", prefix + ".drift_instant");
-    guard.ratio_std = RequiredDouble(table, "ratio_std", prefix + ".ratio_std");
-    guard.ratio_std_window_ns = RequiredDurationNs(
-        table, "ratio_std_window", prefix + ".ratio_std_window");
-    guard.drift_mean =
-        RequiredDouble(table, "drift_mean", prefix + ".drift_mean");
-    guard.drift_mean_window_ns = RequiredDurationNs(
-        table, "drift_mean_window", prefix + ".drift_mean_window");
     if (!ok_) {
       return guard;
     }
-    if (guard.drift_instant <= 0.0) {
-      Fail(prefix + ".drift_instant", " must be positive");
+    if (guard.mode != FeatureMode::kOff) {
+      Fail(prefix + ".mode", " is not implemented yet");
       return guard;
-    }
-    if (guard.ratio_std <= 0.0) {
-      Fail(prefix + ".ratio_std", " must be positive");
-      return guard;
-    }
-    if (guard.drift_mean <= 0.0) {
-      Fail(prefix + ".drift_mean", " must be positive");
     }
     return guard;
   }

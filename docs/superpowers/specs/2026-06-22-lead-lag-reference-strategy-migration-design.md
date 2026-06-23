@@ -123,7 +123,7 @@ Go reference 的主要新增能力：
 symbol = "EXAMPLE_USDT"
 
 [lead_lag.pairs.trigger.lag_vol_guard]
-mode = "off" # off | shadow
+mode = "off" # off; shadow 待 attribution 实现后开放
 jump_threshold = 0.005
 jump_count = 3
 jump_window = "5m"
@@ -132,7 +132,7 @@ amplitude_window = "1s"
 cooldown = "15m"
 
 [lead_lag.pairs.trigger.drift_guard]
-mode = "off" # off | shadow
+mode = "off" # off; shadow 待 attribution 实现后开放
 drift_instant = 0.015
 ratio_std = 0.008
 ratio_std_window = "1m"
@@ -159,7 +159,8 @@ normal_close_retry_aggressive = false
 设计约束：
 
 - 新字段缺省必须保持现有 live 行为。
-- guard 的 `mode=shadow`、taker buffer 的 `mode=shadow` 和 freshness shadow 只记录，不拦截，不改下单价，不改成本模型。
+- taker buffer 的 `mode=shadow` 和 freshness shadow 只记录，不拦截，不改下单价，不改成本模型。
+- `lag_vol_guard` / `drift_guard` 的 shadow attribution 尚未实现，Phase 1 配置层只接受 `off`。
 - Phase 1 配置只接受 `off` / `shadow`；`FeatureMode::kEnforce` 作为后续实现预留，执行路径和 report 统计落地后再开放配置。
 - `entry_fixed_pct` / `normal_close_fixed_pct` 是 ratio，取值必须在 `[0, 1)`。
 - `normal_close_retry_aggressive` 在 Phase 5 执行路径落地前必须保持 `false`。
@@ -385,12 +386,12 @@ BookTicker
 - Cost model：
   - buffer disabled 时 required edge 与现有测试一致。
   - shadow buffer 不改变 required edge。
-  - enforce buffer 且不 exclude 时纳入 required edge。
+  - enforce buffer 且不 exclude 时纳入 required edge 属于后续阶段。
 - Signal / guard：
   - pre-signal drift limit 保持 legacy。
-  - shadow post-signal guard 输出 would-block，但不改变 `SignalDecision`。
-  - lag vol guard jump/amplitude/cooldown。
-  - drift guard instant/std/mean。
+  - generated freshness shadow 输出 would-block，但不改变 `SignalDecision`。
+  - lag vol guard jump/amplitude/cooldown 属于后续阶段。
+  - drift guard instant/std/mean 属于后续阶段。
   - fixed freshness 与 generated freshness shadow 并存。
 - Order price：
   - current tick slippage 行为保持。

@@ -457,23 +457,6 @@ mode = "shadow"
 lead_threshold_ms = 8
 lag_threshold_ms = 23
 source = "generated"
-
-[lead_lag.pairs.trigger.lag_vol_guard]
-mode = "shadow"
-jump_threshold = 0.005
-jump_count = 3
-jump_window = "5m"
-amplitude_threshold = 0.025
-amplitude_window = "1s"
-cooldown = "15m"
-
-[lead_lag.pairs.trigger.drift_guard]
-mode = "shadow"
-drift_instant = 0.015
-ratio_std = 0.008
-ratio_std_window = "1m"
-drift_mean = 0.02
-drift_mean_window = "2m"
 )toml",
                                       catalog);
 
@@ -481,21 +464,8 @@ drift_mean_window = "2m"
   ASSERT_EQ(result.value.pairs.size(), 1U);
   const leadlag::PairConfig& pair = result.value.pairs[0];
 
-  EXPECT_EQ(pair.trigger.lag_vol_guard.mode, leadlag::FeatureMode::kShadow);
-  EXPECT_DOUBLE_EQ(pair.trigger.lag_vol_guard.jump_threshold, 0.005);
-  EXPECT_EQ(pair.trigger.lag_vol_guard.jump_count, 3U);
-  EXPECT_EQ(pair.trigger.lag_vol_guard.jump_window_ns, 300'000'000'000ULL);
-  EXPECT_DOUBLE_EQ(pair.trigger.lag_vol_guard.amplitude_threshold, 0.025);
-  EXPECT_EQ(pair.trigger.lag_vol_guard.amplitude_window_ns, 1'000'000'000ULL);
-  EXPECT_EQ(pair.trigger.lag_vol_guard.cooldown_ns, 900'000'000'000ULL);
-
-  EXPECT_EQ(pair.trigger.drift_guard.mode, leadlag::FeatureMode::kShadow);
-  EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.drift_instant, 0.015);
-  EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.ratio_std, 0.008);
-  EXPECT_EQ(pair.trigger.drift_guard.ratio_std_window_ns, 60'000'000'000ULL);
-  EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.drift_mean, 0.02);
-  EXPECT_EQ(pair.trigger.drift_guard.drift_mean_window_ns, 120'000'000'000ULL);
-
+  EXPECT_EQ(pair.trigger.lag_vol_guard.mode, leadlag::FeatureMode::kOff);
+  EXPECT_EQ(pair.trigger.drift_guard.mode, leadlag::FeatureMode::kOff);
   EXPECT_FALSE(pair.execute.normal_close_retry_aggressive);
   EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kShadow);
   EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.entry_fixed_pct, 0.0002);
@@ -629,6 +599,26 @@ cooldown = "15m"
   EXPECT_NE(result.error.find("lag_vol_guard.mode"), std::string::npos);
 }
 
+TEST(LeadLagConfigTest, RejectsUnimplementedLagVolGuardShadowMode) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.trigger.lag_vol_guard]
+mode = "shadow"
+jump_threshold = 0.005
+jump_count = 3
+jump_window = "5m"
+amplitude_threshold = 0.025
+amplitude_window = "1s"
+cooldown = "15m"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("lag_vol_guard.mode"), std::string::npos);
+}
+
 TEST(LeadLagConfigTest, RejectsUnimplementedDriftGuardEnforceMode) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
@@ -636,6 +626,25 @@ TEST(LeadLagConfigTest, RejectsUnimplementedDriftGuardEnforceMode) {
 
 [lead_lag.pairs.trigger.drift_guard]
 mode = "enforce"
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "2m"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("drift_guard.mode"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsUnimplementedDriftGuardShadowMode) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.trigger.drift_guard]
+mode = "shadow"
 drift_instant = 0.015
 ratio_std = 0.008
 ratio_std_window = "1m"
