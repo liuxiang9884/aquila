@@ -169,10 +169,6 @@ def _lag_bbo_spread_summary(records: np.ndarray, percentile: float) -> dict:
         raise ValueError("no valid lag BBO spread samples")
     spread_pct = (ask[mask] - bid[mask]) / mid[mask]
     value = float(np.percentile(spread_pct, percentile))
-    if not math.isfinite(value) or value < 0.0 or value >= 1.0:
-        raise ValueError(
-            f"generated taker buffer pct {value:.12g} is outside [0, 1)"
-        )
     return {
         "sample_count": int(len(spread_pct)),
         "method": f"lag_bbo_spread_pct_p{percentile:g}",

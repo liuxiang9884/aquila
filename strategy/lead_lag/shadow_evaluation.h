@@ -54,8 +54,7 @@ inline constexpr double kShadowOrderPriceEpsilon = 1e-12;
     const InstrumentMetadata& instrument,
     const TakerBufferConfig& buffer) noexcept {
   const double buffer_pct = ReferenceBufferPctForAction(action, buffer);
-  if (buffer.mode == FeatureMode::kOff || !std::isfinite(buffer_pct) ||
-      buffer_pct < 0.0) {
+  if (buffer.mode == FeatureMode::kOff) {
     return 0.0;
   }
 

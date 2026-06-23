@@ -511,38 +511,25 @@ TEST(LeadLagConfigTest, RejectsUnimplementedNormalCloseRetryAggressive) {
             std::string::npos);
 }
 
-TEST(LeadLagConfigTest, RejectsTakerBufferPctAtOrAboveOne) {
+TEST(LeadLagConfigTest, ParsesTakerBufferPctWithoutRangeValidation) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
 
 [lead_lag.pairs.execute.taker_buffer]
 mode = "shadow"
-entry_fixed_pct = 1.0
-normal_close_fixed_pct = 0.0003
+entry_fixed_pct = -0.25
+normal_close_fixed_pct = 1.5
 source = "generated"
 )toml",
                                       catalog);
 
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("entry_fixed_pct"), std::string::npos);
-}
-
-TEST(LeadLagConfigTest, RejectsNormalCloseTakerBufferPctAtOrAboveOne) {
-  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
-
-  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
-
-[lead_lag.pairs.execute.taker_buffer]
-mode = "shadow"
-entry_fixed_pct = 0.0002
-normal_close_fixed_pct = 1.0
-source = "generated"
-)toml",
-                                      catalog);
-
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("normal_close_fixed_pct"), std::string::npos);
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.pairs.size(), 1U);
+  const leadlag::TakerBufferConfig& buffer =
+      result.value.pairs[0].execute.taker_buffer;
+  EXPECT_DOUBLE_EQ(buffer.entry_fixed_pct, -0.25);
+  EXPECT_DOUBLE_EQ(buffer.normal_close_fixed_pct, 1.5);
 }
 
 TEST(LeadLagConfigTest, RejectsFreshnessShadowEnforceMode) {
