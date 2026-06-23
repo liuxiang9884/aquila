@@ -80,6 +80,26 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertEqual(result["taker_buffer"]["source"], "generated")
         self.assertEqual(result["taker_buffer"]["sample_count"], 3)
 
+    def test_normalizes_exchange_names_and_clamps_freshness_threshold(self):
+        records = self.make_records()
+        records["local_ns"] = records["exchange_ns"]
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            binary_path = Path(temp_dir) / "book_ticker.bin"
+            records.tofile(binary_path)
+
+            result = self.module.generate_params(
+                input_paths=[binary_path],
+                symbol_id=4,
+                lead_exchange="kBinance",
+                lag_exchange="kGate",
+                buffer_percentile=100.0,
+            )
+
+        self.assertEqual(result["lead_exchange"], "binance")
+        self.assertEqual(result["lag_exchange"], "gate")
+        self.assertEqual(result["freshness"]["lead_threshold_ms"], 1)
+        self.assertEqual(result["freshness"]["lag_threshold_ms"], 1)
+
     def test_renders_generated_toml_patch(self):
         params = {
             "taker_buffer": {

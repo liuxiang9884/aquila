@@ -31,10 +31,15 @@ EXCHANGE_IDS = {
 }
 
 
-def _exchange_id(exchange: str) -> int:
+def _normalize_exchange(exchange: str) -> str:
     normalized = exchange.strip().lower()
     if normalized.startswith("k"):
         normalized = normalized[1:]
+    return normalized
+
+
+def _exchange_id(exchange: str) -> int:
+    normalized = _normalize_exchange(exchange)
     if normalized not in EXCHANGE_IDS:
         raise ValueError(f"unsupported exchange: {exchange}")
     return EXCHANGE_IDS[normalized]
@@ -140,7 +145,7 @@ def _freshness_summary(records: np.ndarray, label: str) -> dict:
         "negative_latency_count": negative_count,
         "mean_ms": mean_ms,
         "std_ms": std_ms,
-        "threshold_ms": int(math.ceil(mean_ms + 3.0 * std_ms)),
+        "threshold_ms": max(1, int(math.ceil(mean_ms + 3.0 * std_ms))),
     }
 
 
@@ -207,8 +212,8 @@ def generate_params(
 
     return {
         "symbol_id": int(symbol_id),
-        "lead_exchange": lead_exchange.strip().lower(),
-        "lag_exchange": lag_exchange.strip().lower(),
+        "lead_exchange": _normalize_exchange(lead_exchange),
+        "lag_exchange": _normalize_exchange(lag_exchange),
         "taker_buffer": {
             "entry_fixed_pct": spread["value"],
             "normal_close_fixed_pct": spread["value"],
