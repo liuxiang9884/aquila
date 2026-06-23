@@ -531,6 +531,40 @@ source = "generated"
   EXPECT_NE(result.error.find("auto_warmup"), std::string::npos);
 }
 
+TEST(LeadLagConfigTest, RejectsTakerBufferPctAtOrAboveOne) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.execute.taker_buffer]
+mode = "shadow"
+entry_fixed_pct = 1.0
+normal_close_fixed_pct = 0.0003
+source = "generated"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("entry_fixed_pct"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsNormalCloseTakerBufferPctAtOrAboveOne) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.execute.taker_buffer]
+mode = "shadow"
+entry_fixed_pct = 0.0002
+normal_close_fixed_pct = 1.0
+source = "generated"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("normal_close_fixed_pct"), std::string::npos);
+}
+
 TEST(LeadLagConfigTest, RejectsFreshnessShadowEnforceMode) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 

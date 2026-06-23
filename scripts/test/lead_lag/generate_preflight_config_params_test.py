@@ -100,6 +100,23 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertEqual(result["freshness"]["lead_threshold_ms"], 1)
         self.assertEqual(result["freshness"]["lag_threshold_ms"], 1)
 
+    def test_rejects_unbounded_taker_buffer_proxy(self):
+        records = self.make_records()
+        records["bid_price"][3:] = 1.0
+        records["ask_price"][3:] = 100.0
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            binary_path = Path(temp_dir) / "book_ticker.bin"
+            records.tofile(binary_path)
+
+            with self.assertRaisesRegex(ValueError, "taker buffer"):
+                self.module.generate_params(
+                    input_paths=[binary_path],
+                    symbol_id=4,
+                    lead_exchange="binance",
+                    lag_exchange="gate",
+                    buffer_percentile=100.0,
+                )
+
     def test_renders_generated_toml_patch(self):
         params = {
             "taker_buffer": {

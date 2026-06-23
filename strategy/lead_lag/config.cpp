@@ -456,12 +456,15 @@ class Parser {
     if (!ok_) {
       return buffer;
     }
-    if (buffer.entry_fixed_pct < 0.0) {
-      Fail(prefix + ".entry_fixed_pct", " must be non-negative");
+    if (!std::isfinite(buffer.entry_fixed_pct) ||
+        buffer.entry_fixed_pct < 0.0 || buffer.entry_fixed_pct >= 1.0) {
+      Fail(prefix + ".entry_fixed_pct", " must be finite and in [0, 1)");
       return buffer;
     }
-    if (buffer.normal_close_fixed_pct < 0.0) {
-      Fail(prefix + ".normal_close_fixed_pct", " must be non-negative");
+    if (!std::isfinite(buffer.normal_close_fixed_pct) ||
+        buffer.normal_close_fixed_pct < 0.0 ||
+        buffer.normal_close_fixed_pct >= 1.0) {
+      Fail(prefix + ".normal_close_fixed_pct", " must be finite and in [0, 1)");
     }
     return buffer;
   }
