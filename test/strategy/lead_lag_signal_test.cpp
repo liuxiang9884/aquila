@@ -7,6 +7,7 @@
 #include "strategy/lead_lag/cost_model.h"
 #include "strategy/lead_lag/execution_state.h"
 #include "strategy/lead_lag/recorders.h"
+#include "strategy/lead_lag/shadow_evaluation.h"
 #include "strategy/lead_lag/signal.h"
 #include "strategy/lead_lag/threshold.h"
 #include "strategy/lead_lag/types.h"
@@ -114,6 +115,34 @@ TEST(LeadLagSignalTest, OpenLongPassesAllGates) {
   EXPECT_EQ(decision.intent.side, aquila::OrderSide::kBuy);
   EXPECT_FALSE(decision.intent.reduce_only);
   EXPECT_DOUBLE_EQ(decision.intent.price, 102.0);
+}
+
+TEST(LeadLagSignalTest, ReferenceShadowPriceAppliesPercentBufferAndRounding) {
+  const leadlag::InstrumentMetadata instrument{
+      .price_tick = 0.01,
+  };
+  const leadlag::TakerBufferConfig buffer{
+      .mode = leadlag::FeatureMode::kShadow,
+      .entry_fixed_pct = 0.001,
+      .normal_close_fixed_pct = 0.002,
+  };
+
+  EXPECT_DOUBLE_EQ(leadlag::ReferenceShadowOrderPrice(
+                       leadlag::SignalAction::kOpenLong,
+                       aquila::OrderSide::kBuy, 100.01, instrument, buffer),
+                   100.12);
+  EXPECT_DOUBLE_EQ(leadlag::ReferenceShadowOrderPrice(
+                       leadlag::SignalAction::kOpenShort,
+                       aquila::OrderSide::kSell, 100.01, instrument, buffer),
+                   99.90);
+  EXPECT_DOUBLE_EQ(leadlag::ReferenceShadowOrderPrice(
+                       leadlag::SignalAction::kCloseLong,
+                       aquila::OrderSide::kSell, 100.01, instrument, buffer),
+                   99.80);
+  EXPECT_DOUBLE_EQ(leadlag::ReferenceShadowOrderPrice(
+                       leadlag::SignalAction::kCloseShort,
+                       aquila::OrderSide::kBuy, 100.01, instrument, buffer),
+                   100.22);
 }
 
 TEST(LeadLagSignalTest, OpenLongRejectsEachGate) {

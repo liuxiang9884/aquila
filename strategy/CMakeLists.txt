@@ -6,6 +6,7 @@ add_library(aquila_strategy STATIC
     lead_lag/execution_state.h
     lead_lag/recorders.h
     lead_lag/raw_market_state.h
+    lead_lag/shadow_evaluation.h
     lead_lag/signal.h
     lead_lag/strategy.h
     lead_lag/threshold.h
