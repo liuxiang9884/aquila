@@ -18,6 +18,17 @@ namespace aquila::strategy::leadlag {
 inline constexpr std::size_t kDefaultWindowCapacity = 16 * 1024;
 inline constexpr std::size_t kDefaultQuantileBinCount = 4096;
 
+enum class FeatureMode : std::uint8_t {
+  kOff,
+  kShadow,
+  kEnforce,
+};
+
+enum class GeneratedParamSource : std::uint8_t {
+  kManual,
+  kGenerated,
+};
+
 struct QuantileConfig {
   double move{0.0};
   double up_min{0.0};
@@ -27,6 +38,25 @@ struct QuantileConfig {
   double precision{0.0};
   std::size_t up_bins{kDefaultQuantileBinCount};
   std::size_t down_bins{kDefaultQuantileBinCount};
+};
+
+struct LagVolGuardConfig {
+  FeatureMode mode{FeatureMode::kOff};
+  double jump_threshold{0.0};
+  std::uint32_t jump_count{0};
+  std::uint64_t jump_window_ns{0};
+  double amplitude_threshold{0.0};
+  std::uint64_t amplitude_window_ns{0};
+  std::uint64_t cooldown_ns{0};
+};
+
+struct DriftGuardConfig {
+  FeatureMode mode{FeatureMode::kOff};
+  double drift_instant{0.0};
+  double ratio_std{0.0};
+  std::uint64_t ratio_std_window_ns{0};
+  double drift_mean{0.0};
+  std::uint64_t drift_mean_window_ns{0};
 };
 
 struct TriggerConfig {
@@ -39,6 +69,23 @@ struct TriggerConfig {
   std::uint32_t drift_min_samples{0};
   std::uint64_t drift_warmup_ns{0};
   QuantileConfig quantile;
+  LagVolGuardConfig lag_vol_guard;
+  DriftGuardConfig drift_guard;
+};
+
+struct TakerBufferConfig {
+  FeatureMode mode{FeatureMode::kOff};
+  double entry_fixed_pct{0.0};
+  double normal_close_fixed_pct{0.0};
+  bool exclude_from_cost_model{false};
+  GeneratedParamSource source{GeneratedParamSource::kManual};
+};
+
+struct FreshnessShadowConfig {
+  FeatureMode mode{FeatureMode::kOff};
+  std::int32_t lead_threshold_ms{0};
+  std::int32_t lag_threshold_ms{0};
+  GeneratedParamSource source{GeneratedParamSource::kManual};
 };
 
 struct ExecuteConfig {
@@ -48,6 +95,9 @@ struct ExecuteConfig {
   std::uint32_t open_slippage{0};
   std::uint32_t close_slippage{0};
   std::uint32_t parallel{1};
+  bool normal_close_retry_aggressive{false};
+  TakerBufferConfig taker_buffer;
+  FreshnessShadowConfig freshness_shadow;
 
   [[nodiscard]] double EntrySpreadLimit() const noexcept;
 };

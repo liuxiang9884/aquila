@@ -421,6 +421,133 @@ close_slippage = 11
   EXPECT_EQ(result.value.pairs[0].execute.close_slippage, 11U);
 }
 
+TEST(LeadLagConfigTest, ReferenceMigrationDefaultsStayDisabled) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk(""), catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.pairs.size(), 1U);
+  const leadlag::PairConfig& pair = result.value.pairs[0];
+  EXPECT_EQ(pair.trigger.lag_vol_guard.mode, leadlag::FeatureMode::kOff);
+  EXPECT_EQ(pair.trigger.drift_guard.mode, leadlag::FeatureMode::kOff);
+  EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kOff);
+  EXPECT_EQ(pair.execute.taker_buffer.source,
+            leadlag::GeneratedParamSource::kManual);
+  EXPECT_EQ(pair.execute.freshness_shadow.mode, leadlag::FeatureMode::kOff);
+  EXPECT_EQ(pair.execute.freshness_shadow.source,
+            leadlag::GeneratedParamSource::kManual);
+  EXPECT_FALSE(pair.execute.normal_close_retry_aggressive);
+}
+
+TEST(LeadLagConfigTest, ParsesReferenceMigrationShadowConfig) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "normal_close_retry_aggressive = true\n") +
+          R"toml(
+
+[lead_lag.pairs.execute.taker_buffer]
+mode = "shadow"
+entry_fixed_pct = 0.0002
+normal_close_fixed_pct = 0.0003
+exclude_from_cost_model = true
+source = "generated"
+
+[lead_lag.pairs.execute.freshness_shadow]
+mode = "shadow"
+lead_threshold_ms = 8
+lag_threshold_ms = 23
+source = "generated"
+
+[lead_lag.pairs.trigger.lag_vol_guard]
+mode = "shadow"
+jump_threshold = 0.005
+jump_count = 3
+jump_window = "5m"
+amplitude_threshold = 0.025
+amplitude_window = "1s"
+cooldown = "15m"
+
+[lead_lag.pairs.trigger.drift_guard]
+mode = "shadow"
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "2m"
+)toml",
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.pairs.size(), 1U);
+  const leadlag::PairConfig& pair = result.value.pairs[0];
+
+  EXPECT_EQ(pair.trigger.lag_vol_guard.mode, leadlag::FeatureMode::kShadow);
+  EXPECT_DOUBLE_EQ(pair.trigger.lag_vol_guard.jump_threshold, 0.005);
+  EXPECT_EQ(pair.trigger.lag_vol_guard.jump_count, 3U);
+  EXPECT_EQ(pair.trigger.lag_vol_guard.jump_window_ns, 300'000'000'000ULL);
+  EXPECT_DOUBLE_EQ(pair.trigger.lag_vol_guard.amplitude_threshold, 0.025);
+  EXPECT_EQ(pair.trigger.lag_vol_guard.amplitude_window_ns, 1'000'000'000ULL);
+  EXPECT_EQ(pair.trigger.lag_vol_guard.cooldown_ns, 900'000'000'000ULL);
+
+  EXPECT_EQ(pair.trigger.drift_guard.mode, leadlag::FeatureMode::kShadow);
+  EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.drift_instant, 0.015);
+  EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.ratio_std, 0.008);
+  EXPECT_EQ(pair.trigger.drift_guard.ratio_std_window_ns, 60'000'000'000ULL);
+  EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.drift_mean, 0.02);
+  EXPECT_EQ(pair.trigger.drift_guard.drift_mean_window_ns, 120'000'000'000ULL);
+
+  EXPECT_TRUE(pair.execute.normal_close_retry_aggressive);
+  EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kShadow);
+  EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.entry_fixed_pct, 0.0002);
+  EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.normal_close_fixed_pct, 0.0003);
+  EXPECT_TRUE(pair.execute.taker_buffer.exclude_from_cost_model);
+  EXPECT_EQ(pair.execute.taker_buffer.source,
+            leadlag::GeneratedParamSource::kGenerated);
+
+  EXPECT_EQ(pair.execute.freshness_shadow.mode, leadlag::FeatureMode::kShadow);
+  EXPECT_EQ(pair.execute.freshness_shadow.lead_threshold_ms, 8);
+  EXPECT_EQ(pair.execute.freshness_shadow.lag_threshold_ms, 23);
+  EXPECT_EQ(pair.execute.freshness_shadow.source,
+            leadlag::GeneratedParamSource::kGenerated);
+}
+
+TEST(LeadLagConfigTest, RejectsRuntimeAutoTakerBufferFields) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.execute.taker_buffer]
+mode = "shadow"
+entry_fixed_pct = 0.0002
+normal_close_fixed_pct = 0.0003
+auto_warmup = "1m"
+source = "generated"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("auto_warmup"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsFreshnessShadowEnforceMode) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.execute.freshness_shadow]
+mode = "enforce"
+lead_threshold_ms = 8
+lag_threshold_ms = 23
+source = "generated"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("freshness_shadow.mode"), std::string::npos);
+}
+
 TEST(LeadLagConfigTest, RejectsNegativeLagQuantityDecimalPlaces) {
   const aquila::config::InstrumentCatalog catalog =
       CatalogWithLagQuantityMetadata(/*quantity_step=*/0.1,

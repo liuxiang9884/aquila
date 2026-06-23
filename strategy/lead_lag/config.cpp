@@ -252,7 +252,96 @@ class Parser {
       return trigger;
     }
     trigger.quantile = ParseQuantile(*quantile, prefix + ".quantile");
+    if (!ok_) {
+      return trigger;
+    }
+    if (const toml::table* lag_vol_guard = table["lag_vol_guard"].as_table();
+        lag_vol_guard != nullptr) {
+      trigger.lag_vol_guard =
+          ParseLagVolGuard(*lag_vol_guard, prefix + ".lag_vol_guard");
+      if (!ok_) {
+        return trigger;
+      }
+    }
+    if (const toml::table* drift_guard = table["drift_guard"].as_table();
+        drift_guard != nullptr) {
+      trigger.drift_guard =
+          ParseDriftGuard(*drift_guard, prefix + ".drift_guard");
+    }
     return trigger;
+  }
+
+  [[nodiscard]] LagVolGuardConfig ParseLagVolGuard(const toml::table& table,
+                                                   const std::string& prefix) {
+    LagVolGuardConfig guard;
+    guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
+                               /*allow_enforce=*/true);
+    if (!ok_ || guard.mode == FeatureMode::kOff) {
+      return guard;
+    }
+
+    guard.jump_threshold =
+        RequiredDouble(table, "jump_threshold", prefix + ".jump_threshold");
+    guard.jump_count =
+        RequiredUInt32(table, "jump_count", prefix + ".jump_count");
+    guard.jump_window_ns =
+        RequiredDurationNs(table, "jump_window", prefix + ".jump_window");
+    guard.amplitude_threshold = RequiredDouble(table, "amplitude_threshold",
+                                               prefix + ".amplitude_threshold");
+    guard.amplitude_window_ns = RequiredDurationNs(
+        table, "amplitude_window", prefix + ".amplitude_window");
+    guard.cooldown_ns =
+        RequiredDurationNs(table, "cooldown", prefix + ".cooldown");
+    if (!ok_) {
+      return guard;
+    }
+    if (guard.jump_threshold <= 0.0) {
+      Fail(prefix + ".jump_threshold", " must be positive");
+      return guard;
+    }
+    if (guard.jump_count == 0) {
+      Fail(prefix + ".jump_count", " must be positive");
+      return guard;
+    }
+    if (guard.amplitude_threshold <= 0.0) {
+      Fail(prefix + ".amplitude_threshold", " must be positive");
+    }
+    return guard;
+  }
+
+  [[nodiscard]] DriftGuardConfig ParseDriftGuard(const toml::table& table,
+                                                 const std::string& prefix) {
+    DriftGuardConfig guard;
+    guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
+                               /*allow_enforce=*/true);
+    if (!ok_ || guard.mode == FeatureMode::kOff) {
+      return guard;
+    }
+
+    guard.drift_instant =
+        RequiredDouble(table, "drift_instant", prefix + ".drift_instant");
+    guard.ratio_std = RequiredDouble(table, "ratio_std", prefix + ".ratio_std");
+    guard.ratio_std_window_ns = RequiredDurationNs(
+        table, "ratio_std_window", prefix + ".ratio_std_window");
+    guard.drift_mean =
+        RequiredDouble(table, "drift_mean", prefix + ".drift_mean");
+    guard.drift_mean_window_ns = RequiredDurationNs(
+        table, "drift_mean_window", prefix + ".drift_mean_window");
+    if (!ok_) {
+      return guard;
+    }
+    if (guard.drift_instant <= 0.0) {
+      Fail(prefix + ".drift_instant", " must be positive");
+      return guard;
+    }
+    if (guard.ratio_std <= 0.0) {
+      Fail(prefix + ".ratio_std", " must be positive");
+      return guard;
+    }
+    if (guard.drift_mean <= 0.0) {
+      Fail(prefix + ".drift_mean", " must be positive");
+    }
+    return guard;
   }
 
   [[nodiscard]] QuantileConfig ParseQuantile(const toml::table& table,
@@ -307,6 +396,10 @@ class Parser {
         UInt32Or(table, "close_slippage", execute.close_slippage,
                  prefix + ".close_slippage");
     execute.parallel = RequiredUInt32(table, "parallel", prefix + ".parallel");
+    execute.normal_close_retry_aggressive =
+        BoolOr(table, "normal_close_retry_aggressive",
+               execute.normal_close_retry_aggressive,
+               prefix + ".normal_close_retry_aggressive");
     if (!ok_) {
       return execute;
     }
@@ -316,8 +409,94 @@ class Parser {
     }
     if (execute.parallel == 0) {
       Fail(prefix + ".parallel", " must be positive");
+      return execute;
+    }
+
+    if (const toml::table* taker_buffer = table["taker_buffer"].as_table();
+        taker_buffer != nullptr) {
+      execute.taker_buffer =
+          ParseTakerBuffer(*taker_buffer, prefix + ".taker_buffer");
+      if (!ok_) {
+        return execute;
+      }
+    }
+    if (const toml::table* freshness_shadow =
+            table["freshness_shadow"].as_table();
+        freshness_shadow != nullptr) {
+      execute.freshness_shadow =
+          ParseFreshnessShadow(*freshness_shadow, prefix + ".freshness_shadow");
     }
     return execute;
+  }
+
+  [[nodiscard]] TakerBufferConfig ParseTakerBuffer(const toml::table& table,
+                                                   const std::string& prefix) {
+    TakerBufferConfig buffer;
+    RejectRuntimeAutoField(table, "auto_warmup", prefix);
+    RejectRuntimeAutoField(table, "auto_fallback_pct", prefix);
+    if (!ok_) {
+      return buffer;
+    }
+
+    buffer.mode = FeatureModeOr(table, "mode", buffer.mode, prefix + ".mode",
+                                /*allow_enforce=*/true);
+    buffer.exclude_from_cost_model =
+        BoolOr(table, "exclude_from_cost_model", buffer.exclude_from_cost_model,
+               prefix + ".exclude_from_cost_model");
+    buffer.source = GeneratedParamSourceOr(table, "source", buffer.source,
+                                           prefix + ".source");
+    if (!ok_ || buffer.mode == FeatureMode::kOff) {
+      return buffer;
+    }
+
+    buffer.entry_fixed_pct =
+        RequiredDouble(table, "entry_fixed_pct", prefix + ".entry_fixed_pct");
+    buffer.normal_close_fixed_pct = RequiredDouble(
+        table, "normal_close_fixed_pct", prefix + ".normal_close_fixed_pct");
+    if (!ok_) {
+      return buffer;
+    }
+    if (buffer.entry_fixed_pct < 0.0) {
+      Fail(prefix + ".entry_fixed_pct", " must be non-negative");
+      return buffer;
+    }
+    if (buffer.normal_close_fixed_pct < 0.0) {
+      Fail(prefix + ".normal_close_fixed_pct", " must be non-negative");
+    }
+    return buffer;
+  }
+
+  [[nodiscard]] FreshnessShadowConfig ParseFreshnessShadow(
+      const toml::table& table, const std::string& prefix) {
+    FreshnessShadowConfig freshness;
+    RejectRuntimeAutoField(table, "auto_warmup", prefix);
+    if (!ok_) {
+      return freshness;
+    }
+
+    freshness.mode = FeatureModeOr(table, "mode", freshness.mode,
+                                   prefix + ".mode", /*allow_enforce=*/false);
+    freshness.source = GeneratedParamSourceOr(table, "source", freshness.source,
+                                              prefix + ".source");
+    if (!ok_ || freshness.mode == FeatureMode::kOff) {
+      return freshness;
+    }
+
+    freshness.lead_threshold_ms = RequiredInt32(table, "lead_threshold_ms",
+                                                prefix + ".lead_threshold_ms");
+    freshness.lag_threshold_ms =
+        RequiredInt32(table, "lag_threshold_ms", prefix + ".lag_threshold_ms");
+    if (!ok_) {
+      return freshness;
+    }
+    if (freshness.lead_threshold_ms <= 0) {
+      Fail(prefix + ".lead_threshold_ms", " must be positive");
+      return freshness;
+    }
+    if (freshness.lag_threshold_ms <= 0) {
+      Fail(prefix + ".lag_threshold_ms", " must be positive");
+    }
+    return freshness;
   }
 
   [[nodiscard]] RiskConfig ParseRisk(const toml::table& table) {
@@ -494,6 +673,76 @@ class Parser {
       return fallback;
     }
     return RequiredUInt32(table, key, name);
+  }
+
+  [[nodiscard]] bool BoolOr(const toml::table& table, std::string_view key,
+                            bool fallback, std::string_view name) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    const std::optional<bool> value = table[key].value<bool>();
+    if (!value) {
+      Fail(name, " must be a boolean");
+      return fallback;
+    }
+    return *value;
+  }
+
+  [[nodiscard]] FeatureMode FeatureModeOr(const toml::table& table,
+                                          std::string_view key,
+                                          FeatureMode fallback,
+                                          std::string_view name,
+                                          bool allow_enforce) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    const std::optional<std::string> value = table[key].value<std::string>();
+    if (!value) {
+      Fail(name, " must be off, shadow, or enforce");
+      return fallback;
+    }
+    if (*value == "off") {
+      return FeatureMode::kOff;
+    }
+    if (*value == "shadow") {
+      return FeatureMode::kShadow;
+    }
+    if (*value == "enforce" && allow_enforce) {
+      return FeatureMode::kEnforce;
+    }
+    Fail(name, allow_enforce ? " must be off, shadow, or enforce"
+                             : " must be off or shadow");
+    return fallback;
+  }
+
+  [[nodiscard]] GeneratedParamSource GeneratedParamSourceOr(
+      const toml::table& table, std::string_view key,
+      GeneratedParamSource fallback, std::string_view name) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    const std::optional<std::string> value = table[key].value<std::string>();
+    if (!value) {
+      Fail(name, " must be manual or generated");
+      return fallback;
+    }
+    if (*value == "manual") {
+      return GeneratedParamSource::kManual;
+    }
+    if (*value == "generated") {
+      return GeneratedParamSource::kGenerated;
+    }
+    Fail(name, " must be manual or generated");
+    return fallback;
+  }
+
+  void RejectRuntimeAutoField(const toml::table& table, std::string_view key,
+                              const std::string& prefix) {
+    if (table.contains(key)) {
+      Fail(fmt::format("{}.{}", prefix, key),
+           " is not supported in live strategy config; generate fixed "
+           "parameters before startup");
+    }
   }
 
   [[nodiscard]] std::size_t SizeOr(const toml::table& table,
