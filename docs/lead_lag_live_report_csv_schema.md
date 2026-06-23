@@ -9,6 +9,8 @@
 
 当前字段以 `reports/20260525_091251_12pair_live/` 生成的 CSV 表头和 `scripts/lead_lag/analyze_order_detail.py` 为准。真实订单模式不会直接写 per-signal CSV，`signal.csv` 是从 live log 中的 `lead_lag_signal_triggered` 与订单明细关联后生成的分析产物。
 
+`lead_lag_signal_decision` 是 live log 诊断面，当前还没有并入上述 CSV。它位于 `lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 之间，记录实际准备提交的 `current_order_price`、启动前生成参数计算出的 `reference_order_price`，以及 `execute.freshness_shadow` 在 shadow 口径下是否会阻断本次开仓。`decision=shadow_blocked` 只表示 shadow 规则会阻断，不表示真实订单被阻断；`decision=sent` 只表示该日志点 shadow 不阻断，最终真实订单是否提交仍以订单提交或拒绝日志为准。
+
 ## 通用约定
 
 - 空字段表示对应日志、配置或 catalog 中没有可用值，或该行语义下不适用。

@@ -42,6 +42,37 @@ struct StrategySignalTriggeredLogRecordForTest {
   double raw_price{0.0};
 };
 
+struct StrategySignalDecisionLogRecordForTest {
+  std::int64_t trigger_exchange_ns{0};
+  std::int64_t trigger_local_ns{0};
+  std::int64_t on_book_ticker_entry_ns{0};
+  std::int64_t signal_decision_ns{0};
+  std::int64_t lead_exchange_ns{0};
+  std::int64_t lead_local_ns{0};
+  std::int64_t signal_lead_id{0};
+  std::int64_t lead_freshness_ns{0};
+  std::int64_t lag_exchange_ns{0};
+  std::int64_t lag_local_ns{0};
+  std::int64_t signal_lag_id{0};
+  std::int64_t lag_freshness_ns{0};
+  std::string_view symbol;
+  std::int32_t symbol_id{0};
+  SignalAction action{SignalAction::kNone};
+  OrderSide side{OrderSide::kBuy};
+  bool reduce_only{false};
+  std::string_view decision;
+  std::string_view shadow_block_reason;
+  double raw_price{0.0};
+  double current_order_price{0.0};
+  double reference_order_price{0.0};
+  double entry_buffer_pct{0.0};
+  double close_buffer_pct{0.0};
+  bool generated_freshness_enabled{false};
+  bool generated_freshness_would_block{false};
+  std::int32_t generated_lead_threshold_ms{0};
+  std::int32_t generated_lag_threshold_ms{0};
+};
+
 struct StrategyOrderIntentLogRecordForTest {
   std::int64_t trigger_exchange_ns{0};
   std::int64_t trigger_local_ns{0};
@@ -152,6 +183,9 @@ struct StrategyOrderFeedbackLogRecordForTest {
 using StrategySignalTriggeredLogObserverForTest =
     void (*)(const StrategySignalTriggeredLogRecordForTest& record) noexcept;
 
+using StrategySignalDecisionLogObserverForTest =
+    void (*)(const StrategySignalDecisionLogRecordForTest& record) noexcept;
+
 using StrategyOrderIntentLogObserverForTest =
     void (*)(const StrategyOrderIntentLogRecordForTest& record) noexcept;
 
@@ -170,6 +204,12 @@ using StrategyOrderFeedbackLogObserverForTest =
 [[nodiscard]] inline StrategySignalTriggeredLogObserverForTest&
 StrategySignalTriggeredLogObserverSlotForTest() noexcept {
   static StrategySignalTriggeredLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+[[nodiscard]] inline StrategySignalDecisionLogObserverForTest&
+StrategySignalDecisionLogObserverSlotForTest() noexcept {
+  static StrategySignalDecisionLogObserverForTest observer = nullptr;
   return observer;
 }
 
@@ -208,6 +248,11 @@ inline void SetStrategySignalTriggeredLogObserverForTest(
   StrategySignalTriggeredLogObserverSlotForTest() = observer;
 }
 
+inline void SetStrategySignalDecisionLogObserverForTest(
+    StrategySignalDecisionLogObserverForTest observer) noexcept {
+  StrategySignalDecisionLogObserverSlotForTest() = observer;
+}
+
 inline void SetStrategyOrderIntentLogObserverForTest(
     StrategyOrderIntentLogObserverForTest observer) noexcept {
   StrategyOrderIntentLogObserverSlotForTest() = observer;
@@ -237,6 +282,16 @@ inline void NotifyStrategySignalTriggeredLogObserverForTest(
     const StrategySignalTriggeredLogRecordForTest& record) noexcept {
   StrategySignalTriggeredLogObserverForTest observer =
       StrategySignalTriggeredLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+
+inline void NotifyStrategySignalDecisionLogObserverForTest(
+    const StrategySignalDecisionLogRecordForTest& record) noexcept {
+  StrategySignalDecisionLogObserverForTest observer =
+      StrategySignalDecisionLogObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }

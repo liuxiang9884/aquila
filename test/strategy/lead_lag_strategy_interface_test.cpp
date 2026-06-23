@@ -245,6 +245,9 @@ std::size_t g_order_finished_log_count{0};
 std::array<leadlag::detail::StrategySignalTriggeredLogRecordForTest, 4>
     g_signal_triggered_logs{};
 std::size_t g_signal_triggered_log_count{0};
+std::array<leadlag::detail::StrategySignalDecisionLogRecordForTest, 4>
+    g_signal_decision_logs{};
+std::size_t g_signal_decision_log_count{0};
 
 void CaptureStrategyOrderIntentLogForTest(
     const leadlag::detail::StrategyOrderIntentLogRecordForTest&
@@ -340,6 +343,22 @@ void ResetStrategySignalTriggeredLogCapture() noexcept {
   g_signal_triggered_logs = {};
   g_signal_triggered_log_count = 0;
   leadlag::detail::SetStrategySignalTriggeredLogObserverForTest(nullptr);
+}
+
+void CaptureStrategySignalDecisionLogForTest(
+    const leadlag::detail::StrategySignalDecisionLogRecordForTest&
+        record) noexcept {
+  if (g_signal_decision_log_count >= g_signal_decision_logs.size()) {
+    return;
+  }
+  g_signal_decision_logs[g_signal_decision_log_count] = record;
+  ++g_signal_decision_log_count;
+}
+
+void ResetStrategySignalDecisionLogCapture() noexcept {
+  g_signal_decision_logs = {};
+  g_signal_decision_log_count = 0;
+  leadlag::detail::SetStrategySignalDecisionLogObserverForTest(nullptr);
 }
 
 class StrategyOrderIntentLogCaptureGuard {
@@ -448,6 +467,24 @@ class StrategySignalTriggeredLogCaptureGuard {
       const StrategySignalTriggeredLogCaptureGuard&) = delete;
   StrategySignalTriggeredLogCaptureGuard& operator=(
       const StrategySignalTriggeredLogCaptureGuard&) = delete;
+};
+
+class StrategySignalDecisionLogCaptureGuard {
+ public:
+  StrategySignalDecisionLogCaptureGuard() noexcept {
+    ResetStrategySignalDecisionLogCapture();
+    leadlag::detail::SetStrategySignalDecisionLogObserverForTest(
+        CaptureStrategySignalDecisionLogForTest);
+  }
+
+  ~StrategySignalDecisionLogCaptureGuard() noexcept {
+    ResetStrategySignalDecisionLogCapture();
+  }
+
+  StrategySignalDecisionLogCaptureGuard(
+      const StrategySignalDecisionLogCaptureGuard&) = delete;
+  StrategySignalDecisionLogCaptureGuard& operator=(
+      const StrategySignalDecisionLogCaptureGuard&) = delete;
 };
 
 struct FakeOrderSession {
@@ -582,6 +619,24 @@ leadlag::Config SignalOnlyConfigWithSlippage(std::uint32_t open_slippage,
   leadlag::Config config = SignalOnlyConfig();
   config.pairs[0].execute.open_slippage = open_slippage;
   config.pairs[0].execute.close_slippage = close_slippage;
+  return config;
+}
+
+leadlag::Config SignalOnlyConfigWithReferenceShadow() {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.taker_buffer = leadlag::TakerBufferConfig{
+      .mode = leadlag::FeatureMode::kShadow,
+      .entry_fixed_pct = 0.001,
+      .normal_close_fixed_pct = 0.002,
+      .exclude_from_cost_model = false,
+      .source = leadlag::GeneratedParamSource::kGenerated,
+  };
+  config.pairs[0].execute.freshness_shadow = leadlag::FreshnessShadowConfig{
+      .mode = leadlag::FeatureMode::kShadow,
+      .lead_threshold_ms = 1,
+      .lag_threshold_ms = 1,
+      .source = leadlag::GeneratedParamSource::kGenerated,
+  };
   return config;
 }
 
@@ -1141,6 +1196,45 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
   EXPECT_DOUBLE_EQ(record.estimated_notional, 918.9);
   EXPECT_EQ(record.active_groups, 0U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     LogsSignalDecisionWithReferenceShadowPriceAndFreshness) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithReferenceShadow()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategySignalDecisionLogCaptureGuard signal_decision_log_capture;
+  StrategyOrderIntentLogCaptureGuard order_intent_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  ASSERT_EQ(g_order_intent_log_count, 1U);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].raw_price, 102.02);
+  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].order_price, 102.1);
+
+  ASSERT_EQ(g_signal_decision_log_count, 1U);
+  const leadlag::detail::StrategySignalDecisionLogRecordForTest& record =
+      g_signal_decision_logs[0];
+  EXPECT_EQ(record.symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(record.symbol_id, 3);
+  EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
+  EXPECT_EQ(record.decision, "shadow_blocked");
+  EXPECT_EQ(record.shadow_block_reason, "freshness_lead");
+  EXPECT_FALSE(record.reduce_only);
+  EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
+  EXPECT_DOUBLE_EQ(record.current_order_price, 102.1);
+  EXPECT_DOUBLE_EQ(record.reference_order_price, 102.2);
+  EXPECT_DOUBLE_EQ(record.entry_buffer_pct, 0.001);
+  EXPECT_DOUBLE_EQ(record.close_buffer_pct, 0.002);
+  EXPECT_TRUE(record.generated_freshness_enabled);
+  EXPECT_TRUE(record.generated_freshness_would_block);
+  EXPECT_EQ(record.generated_lead_threshold_ms, 1);
+  EXPECT_EQ(record.generated_lag_threshold_ms, 1);
+  EXPECT_GT(record.lead_freshness_ns, 1'000'000);
+  EXPECT_GT(record.lag_freshness_ns, 1'000'000);
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {

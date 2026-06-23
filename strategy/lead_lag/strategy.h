@@ -30,6 +30,7 @@
 #endif
 #include "strategy/lead_lag/raw_market_state.h"
 #include "strategy/lead_lag/recorders.h"
+#include "strategy/lead_lag/shadow_evaluation.h"
 #include "strategy/lead_lag/signal.h"
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 #include "strategy/lead_lag/strategy_test_hooks.h"
@@ -94,6 +95,12 @@ enum class FreshnessRejectReason : std::uint8_t {
   kNone,
   kStaleLeadQuote,
   kStaleLagQuote,
+};
+
+struct GeneratedFreshnessShadowEvaluation {
+  bool enabled{false};
+  bool would_block{false};
+  std::string_view block_reason{"-"};
 };
 
 namespace detail {
@@ -226,6 +233,74 @@ inline void LogStrategySignalTriggered(
           .reduce_only = reduce_only,
           .position_id = position_id,
           .raw_price = raw_price});
+#endif
+}
+
+inline void LogStrategySignalDecision(
+    const SignalTiming& timing, std::string_view symbol, std::int32_t symbol_id,
+    SignalAction action, OrderSide side, bool reduce_only, double raw_price,
+    double current_order_price, double reference_order_price,
+    const TakerBufferConfig& taker_buffer,
+    const FreshnessShadowConfig& freshness_shadow,
+    const GeneratedFreshnessShadowEvaluation& generated_freshness) noexcept {
+  const std::string_view decision =
+      generated_freshness.would_block ? "shadow_blocked" : "sent";
+  NOVA_INFO(
+      "lead_lag_signal_decision trigger_exchange_ns={} "
+      "trigger_local_ns={} on_book_ticker_entry_ns={} "
+      "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
+      "signal_lead_id={} lead_freshness_ns={} lag_exchange_ns={} "
+      "lag_local_ns={} signal_lag_id={} lag_freshness_ns={} "
+      "symbol={} symbol_id={} action={} side={} reduce_only={} "
+      "decision={} shadow_block_reason={} raw_price={:.12g} "
+      "current_order_price={:.12g} reference_order_price={:.12g} "
+      "entry_buffer_pct={:.12g} close_buffer_pct={:.12g} "
+      "generated_freshness_enabled={} generated_freshness_would_block={} "
+      "generated_lead_threshold_ms={} generated_lag_threshold_ms={}",
+      timing.trigger_exchange_ns, timing.trigger_local_ns,
+      timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
+      timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_book_ticker_id,
+      timing.lead_freshness_ns, timing.lag_exchange_ns, timing.lag_local_ns,
+      timing.lag_book_ticker_id, timing.lag_freshness_ns, symbol, symbol_id,
+      magic_enum::enum_name(action), magic_enum::enum_name(side),
+      reduce_only ? "true" : "false", decision,
+      generated_freshness.block_reason, raw_price, current_order_price,
+      reference_order_price, taker_buffer.entry_fixed_pct,
+      taker_buffer.normal_close_fixed_pct,
+      generated_freshness.enabled ? "true" : "false",
+      generated_freshness.would_block ? "true" : "false",
+      freshness_shadow.lead_threshold_ms, freshness_shadow.lag_threshold_ms);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  NotifyStrategySignalDecisionLogObserverForTest(
+      StrategySignalDecisionLogRecordForTest{
+          .trigger_exchange_ns = timing.trigger_exchange_ns,
+          .trigger_local_ns = timing.trigger_local_ns,
+          .on_book_ticker_entry_ns = timing.on_book_ticker_entry_ns,
+          .signal_decision_ns = timing.signal_decision_ns,
+          .lead_exchange_ns = timing.lead_exchange_ns,
+          .lead_local_ns = timing.lead_local_ns,
+          .signal_lead_id = timing.lead_book_ticker_id,
+          .lead_freshness_ns = timing.lead_freshness_ns,
+          .lag_exchange_ns = timing.lag_exchange_ns,
+          .lag_local_ns = timing.lag_local_ns,
+          .signal_lag_id = timing.lag_book_ticker_id,
+          .lag_freshness_ns = timing.lag_freshness_ns,
+          .symbol = symbol,
+          .symbol_id = symbol_id,
+          .action = action,
+          .side = side,
+          .reduce_only = reduce_only,
+          .decision = decision,
+          .shadow_block_reason = generated_freshness.block_reason,
+          .raw_price = raw_price,
+          .current_order_price = current_order_price,
+          .reference_order_price = reference_order_price,
+          .entry_buffer_pct = taker_buffer.entry_fixed_pct,
+          .close_buffer_pct = taker_buffer.normal_close_fixed_pct,
+          .generated_freshness_enabled = generated_freshness.enabled,
+          .generated_freshness_would_block = generated_freshness.would_block,
+          .generated_lead_threshold_ms = freshness_shadow.lead_threshold_ms,
+          .generated_lag_threshold_ms = freshness_shadow.lag_threshold_ms});
 #endif
 }
 
@@ -994,6 +1069,39 @@ class Strategy {
     return OpenAction(decision.action) && !decision.intent.reduce_only;
   }
 
+  [[nodiscard]] static GeneratedFreshnessShadowEvaluation
+  EvaluateGeneratedFreshnessShadow(const FreshnessShadowConfig& config,
+                                   const SignalTiming& timing,
+                                   const SignalDecision& decision) noexcept {
+    if (config.mode != FeatureMode::kShadow ||
+        !AppliesOpenFreshnessGuard(decision)) {
+      return {};
+    }
+    const std::int64_t lead_threshold_ns =
+        static_cast<std::int64_t>(config.lead_threshold_ms) * 1'000'000LL;
+    const std::int64_t lag_threshold_ns =
+        static_cast<std::int64_t>(config.lag_threshold_ms) * 1'000'000LL;
+    if (lead_threshold_ns > 0 && timing.lead_freshness_ns > lead_threshold_ns) {
+      return GeneratedFreshnessShadowEvaluation{
+          .enabled = true,
+          .would_block = true,
+          .block_reason = "freshness_lead",
+      };
+    }
+    if (lag_threshold_ns > 0 && timing.lag_freshness_ns > lag_threshold_ns) {
+      return GeneratedFreshnessShadowEvaluation{
+          .enabled = true,
+          .would_block = true,
+          .block_reason = "freshness_lag",
+      };
+    }
+    return GeneratedFreshnessShadowEvaluation{
+        .enabled = true,
+        .would_block = false,
+        .block_reason = "-",
+    };
+  }
+
   [[nodiscard]] static FreshnessRejectReason OpenFreshnessRejectReason(
       const SignalTiming& timing) noexcept {
     if (timing.lead_freshness_ns >
@@ -1627,6 +1735,26 @@ class Strategy {
     return true;
   }
 
+  void LogSignalDecisionForPreparedPrice(
+      const PairRuntimeState& runtime, std::string_view symbol,
+      const InstrumentMetadata& instrument,
+      const PreparedOrderPrice& price) noexcept {
+    const GeneratedFreshnessShadowEvaluation generated_freshness =
+        EvaluateGeneratedFreshnessShadow(runtime.pair.execute.freshness_shadow,
+                                         last_signal_timing_,
+                                         last_signal_decision_);
+    const double reference_order_price = ReferenceShadowOrderPrice(
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        price.raw_order_price, instrument, runtime.pair.execute.taker_buffer);
+    detail::LogStrategySignalDecision(
+        last_signal_timing_, symbol, runtime.pair.symbol_id,
+        last_signal_decision_.action, last_signal_decision_.intent.side,
+        last_signal_decision_.intent.reduce_only, price.raw_order_price,
+        price.order_price, reference_order_price,
+        runtime.pair.execute.taker_buffer,
+        runtime.pair.execute.freshness_shadow, generated_freshness);
+  }
+
   [[nodiscard]] bool RejectOpenForRisk(PairRuntimeState* runtime,
                                        std::string_view symbol,
                                        const PreparedOrderPrice& price,
@@ -1835,6 +1963,8 @@ class Strategy {
     if (RejectInvalidOrderPrice(runtime, symbol, instrument, price)) {
       return;
     }
+
+    LogSignalDecisionForPreparedPrice(*runtime, symbol, instrument, price);
 
     if (RejectOpenForFreshness(runtime, symbol, price, instrument)) {
       return;
