@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import math
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+from typing import Iterator, Sequence
+
+import numpy as np
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+MARKET_DATA_SCRIPT_DIR = SCRIPT_DIR.parent / "market_data"
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
+
+from analyze_book_ticker_latency import book_ticker_dtype  # noqa: E402
+
+
+EXCHANGE_IDS = {
+    "binance": 0,
+    "okx": 1,
+    "gate": 2,
+    "gateio": 2,
+    "bybit": 3,
+    "bitget": 4,
+    "coinbase": 5,
+}
+
+
+def _exchange_id(exchange: str) -> int:
+    normalized = exchange.strip().lower()
+    if normalized.startswith("k"):
+        normalized = normalized[1:]
+    if normalized not in EXCHANGE_IDS:
+        raise ValueError(f"unsupported exchange: {exchange}")
+    return EXCHANGE_IDS[normalized]
+
+
+def _iter_raw_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
+    chunk_bytes = chunk_records * dtype.itemsize
+    with path.open("rb") as handle:
+        pending = b""
+        while True:
+            data = handle.read(chunk_bytes)
+            if not data:
+                break
+            data = pending + data
+            complete_size = (len(data) // dtype.itemsize) * dtype.itemsize
+            if complete_size:
+                yield np.frombuffer(data[:complete_size], dtype=dtype).copy()
+            pending = data[complete_size:]
+        if pending:
+            raise ValueError(
+                f"{path} has {len(pending)} trailing bytes after BookTicker records"
+            )
+
+
+def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
+    chunk_bytes = chunk_records * dtype.itemsize
+    process = subprocess.Popen(
+        ["zstd", "-dc", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None
+    pending = b""
+    try:
+        while True:
+            data = process.stdout.read(chunk_bytes)
+            if not data:
+                break
+            data = pending + data
+            complete_size = (len(data) // dtype.itemsize) * dtype.itemsize
+            if complete_size:
+                yield np.frombuffer(data[:complete_size], dtype=dtype).copy()
+            pending = data[complete_size:]
+    finally:
+        process.stdout.close()
+    stderr = process.stderr.read().decode("utf-8", errors="replace")
+    return_code = process.wait()
+    if return_code != 0:
+        raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
+    if pending:
+        raise ValueError(
+            f"{path} has {len(pending)} trailing bytes after BookTicker records"
+        )
+
+
+def iter_book_ticker_chunks(
+    path: Path, *, dtype: np.dtype, chunk_records: int
+) -> Iterator[np.ndarray]:
+    if chunk_records <= 0:
+        raise ValueError("chunk_records must be positive")
+    if path.name.endswith(".zst"):
+        yield from _iter_zstd_chunks(path, dtype=dtype, chunk_records=chunk_records)
+    else:
+        yield from _iter_raw_chunks(path, dtype=dtype, chunk_records=chunk_records)
+
+
+def _collect_records(
+    input_paths: Sequence[Path],
+    *,
+    symbol_id: int,
+    exchange_id: int,
+    chunk_records: int,
+) -> np.ndarray:
+    dtype = book_ticker_dtype()
+    chunks: list[np.ndarray] = []
+    for path in input_paths:
+        for records in iter_book_ticker_chunks(path, dtype=dtype, chunk_records=chunk_records):
+            mask = (records["symbol_id"] == symbol_id) & (
+                records["exchange"] == exchange_id
+            )
+            if np.any(mask):
+                chunks.append(records[mask].copy())
+    if not chunks:
+        return np.zeros(0, dtype=dtype)
+    return np.concatenate(chunks)
+
+
+def _freshness_summary(records: np.ndarray, label: str) -> dict:
+    if len(records) == 0:
+        raise ValueError(f"no {label} BookTicker records")
+    latency_ns = records["local_ns"].astype(np.int64) - records["exchange_ns"].astype(
+        np.int64
+    )
+    negative_count = int(np.count_nonzero(latency_ns < 0))
+    non_negative = latency_ns[latency_ns >= 0]
+    if len(non_negative) == 0:
+        raise ValueError(f"no non-negative {label} BookTicker latency samples")
+    latency_ms = non_negative.astype(np.float64) / 1_000_000.0
+    mean_ms = float(np.mean(latency_ms))
+    std_ms = float(np.std(latency_ms))
+    return {
+        "sample_count": int(len(non_negative)),
+        "negative_latency_count": negative_count,
+        "mean_ms": mean_ms,
+        "std_ms": std_ms,
+        "threshold_ms": int(math.ceil(mean_ms + 3.0 * std_ms)),
+    }
+
+
+def _lag_bbo_spread_summary(records: np.ndarray, percentile: float) -> dict:
+    if len(records) == 0:
+        raise ValueError("no lag BookTicker records")
+    bid = records["bid_price"].astype(np.float64)
+    ask = records["ask_price"].astype(np.float64)
+    mid = (bid + ask) / 2.0
+    latency_ns = records["local_ns"].astype(np.int64) - records["exchange_ns"].astype(
+        np.int64
+    )
+    mask = (
+        (latency_ns >= 0)
+        & (bid > 0.0)
+        & (ask > 0.0)
+        & (ask >= bid)
+        & (mid > 0.0)
+    )
+    if not np.any(mask):
+        raise ValueError("no valid lag BBO spread samples")
+    spread_pct = (ask[mask] - bid[mask]) / mid[mask]
+    value = float(np.percentile(spread_pct, percentile))
+    return {
+        "sample_count": int(len(spread_pct)),
+        "method": f"lag_bbo_spread_pct_p{percentile:g}",
+        "percentile": float(percentile),
+        "value": value,
+        "max": float(np.max(spread_pct)),
+        "mean": float(np.mean(spread_pct)),
+    }
+
+
+def generate_params(
+    *,
+    input_paths: Sequence[Path],
+    symbol_id: int,
+    lead_exchange: str,
+    lag_exchange: str,
+    buffer_percentile: float = 100.0,
+    chunk_records: int = 1_000_000,
+) -> dict:
+    if not input_paths:
+        raise ValueError("input_paths must not be empty")
+    if buffer_percentile < 0.0 or buffer_percentile > 100.0:
+        raise ValueError("buffer_percentile must be between 0 and 100")
+
+    lead_records = _collect_records(
+        input_paths,
+        symbol_id=symbol_id,
+        exchange_id=_exchange_id(lead_exchange),
+        chunk_records=chunk_records,
+    )
+    lag_records = _collect_records(
+        input_paths,
+        symbol_id=symbol_id,
+        exchange_id=_exchange_id(lag_exchange),
+        chunk_records=chunk_records,
+    )
+
+    lead_freshness = _freshness_summary(lead_records, "lead")
+    lag_freshness = _freshness_summary(lag_records, "lag")
+    spread = _lag_bbo_spread_summary(lag_records, buffer_percentile)
+
+    return {
+        "symbol_id": int(symbol_id),
+        "lead_exchange": lead_exchange.strip().lower(),
+        "lag_exchange": lag_exchange.strip().lower(),
+        "taker_buffer": {
+            "entry_fixed_pct": spread["value"],
+            "normal_close_fixed_pct": spread["value"],
+            "source": "generated",
+            "sample_count": spread["sample_count"],
+            "method": spread["method"],
+            "max": spread["max"],
+            "mean": spread["mean"],
+        },
+        "freshness": {
+            "lead_threshold_ms": lead_freshness["threshold_ms"],
+            "lag_threshold_ms": lag_freshness["threshold_ms"],
+            "lead_sample_count": lead_freshness["sample_count"],
+            "lag_sample_count": lag_freshness["sample_count"],
+            "lead_negative_latency_count": lead_freshness["negative_latency_count"],
+            "lag_negative_latency_count": lag_freshness["negative_latency_count"],
+            "lead_mean_ms": lead_freshness["mean_ms"],
+            "lead_std_ms": lead_freshness["std_ms"],
+            "lag_mean_ms": lag_freshness["mean_ms"],
+            "lag_std_ms": lag_freshness["std_ms"],
+        },
+    }
+
+
+def render_toml_patch(params: dict) -> str:
+    taker = params["taker_buffer"]
+    freshness = params["freshness"]
+    return (
+        textwrap.dedent(
+            f"""
+            [lead_lag.pairs.execute.taker_buffer]
+            mode = "shadow"
+            entry_fixed_pct = {taker["entry_fixed_pct"]:.12g}
+            normal_close_fixed_pct = {taker["normal_close_fixed_pct"]:.12g}
+            exclude_from_cost_model = false
+            source = "generated"
+
+            [lead_lag.pairs.execute.freshness_shadow]
+            mode = "shadow"
+            lead_threshold_ms = {freshness["lead_threshold_ms"]}
+            lag_threshold_ms = {freshness["lag_threshold_ms"]}
+            source = "generated"
+            """
+        ).strip()
+        + "\n"
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate fixed LeadLag taker buffer and freshness shadow config "
+            "from startup or historical BookTicker binaries."
+        )
+    )
+    parser.add_argument(
+        "--input",
+        action="append",
+        required=True,
+        type=Path,
+        help="BookTicker .bin or .bin.zst input; pass multiple times for adjacent files",
+    )
+    parser.add_argument("--symbol-id", required=True, type=int)
+    parser.add_argument("--lead-exchange", required=True)
+    parser.add_argument("--lag-exchange", required=True)
+    parser.add_argument("--buffer-percentile", type=float, default=100.0)
+    parser.add_argument("--chunk-records", type=int, default=1_000_000)
+    parser.add_argument("--json-output", type=Path)
+    parser.add_argument("--toml-output", type=Path)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    params = generate_params(
+        input_paths=args.input,
+        symbol_id=args.symbol_id,
+        lead_exchange=args.lead_exchange,
+        lag_exchange=args.lag_exchange,
+        buffer_percentile=args.buffer_percentile,
+        chunk_records=args.chunk_records,
+    )
+    json_text = json.dumps(params, indent=2, sort_keys=True)
+    if args.json_output is not None:
+        args.json_output.write_text(json_text + "\n", encoding="utf-8")
+    else:
+        print(json_text)
+    if args.toml_output is not None:
+        args.toml_output.write_text(render_toml_patch(params), encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
