@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdint>
 
 #include <gtest/gtest.h>
@@ -143,6 +144,28 @@ TEST(LeadLagSignalTest, ReferenceShadowPriceAppliesPercentBufferAndRounding) {
                        leadlag::SignalAction::kCloseShort,
                        aquila::OrderSide::kBuy, 100.01, instrument, buffer),
                    100.22);
+}
+
+TEST(LeadLagSignalTest, ReferenceShadowPriceUsesOrderPriceRoundingEpsilon) {
+  const leadlag::InstrumentMetadata instrument{
+      .price_tick = 0.1,
+  };
+  const leadlag::TakerBufferConfig buffer{
+      .mode = leadlag::FeatureMode::kShadow,
+      .entry_fixed_pct = 0.0,
+      .normal_close_fixed_pct = 0.0,
+  };
+
+  EXPECT_DOUBLE_EQ(
+      leadlag::ReferenceShadowOrderPrice(
+          leadlag::SignalAction::kOpenLong, aquila::OrderSide::kBuy,
+          std::nextafter(100.0, 101.0), instrument, buffer),
+      100.0);
+  EXPECT_DOUBLE_EQ(
+      leadlag::ReferenceShadowOrderPrice(
+          leadlag::SignalAction::kOpenShort, aquila::OrderSide::kSell,
+          std::nextafter(100.0, 99.0), instrument, buffer),
+      100.0);
 }
 
 TEST(LeadLagSignalTest, OpenLongRejectsEachGate) {

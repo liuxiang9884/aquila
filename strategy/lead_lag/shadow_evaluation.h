@@ -9,6 +9,8 @@
 
 namespace aquila::strategy::leadlag {
 
+inline constexpr double kShadowOrderPriceEpsilon = 1e-12;
+
 [[nodiscard]] inline double ReferenceBufferPctForAction(
     SignalAction action, const TakerBufferConfig& buffer) noexcept {
   if (buffer.mode == FeatureMode::kOff) {
@@ -37,10 +39,14 @@ namespace aquila::strategy::leadlag {
     return 0.0;
   }
   const double scaled = price / instrument.price_tick;
-  const double units =
-      side == OrderSide::kBuy ? std::ceil(scaled) : std::floor(scaled);
+  if (!std::isfinite(scaled)) {
+    return 0.0;
+  }
+  const double units = side == OrderSide::kBuy
+                           ? std::ceil(scaled - kShadowOrderPriceEpsilon)
+                           : std::floor(scaled + kShadowOrderPriceEpsilon);
   const double rounded = units * instrument.price_tick;
-  return rounded > 0.0 ? rounded : 0.0;
+  return std::isfinite(rounded) && rounded > 0.0 ? rounded : 0.0;
 }
 
 [[nodiscard]] inline double ReferenceShadowOrderPrice(
