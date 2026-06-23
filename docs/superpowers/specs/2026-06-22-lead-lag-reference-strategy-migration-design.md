@@ -123,7 +123,7 @@ Go reference 的主要新增能力：
 symbol = "EXAMPLE_USDT"
 
 [lead_lag.pairs.trigger.lag_vol_guard]
-mode = "off" # off | shadow | enforce
+mode = "off" # off | shadow
 jump_threshold = 0.005
 jump_count = 3
 jump_window = "5m"
@@ -132,7 +132,7 @@ amplitude_window = "1s"
 cooldown = "15m"
 
 [lead_lag.pairs.trigger.drift_guard]
-mode = "off" # off | shadow | enforce
+mode = "off" # off | shadow
 drift_instant = 0.015
 ratio_std = 0.008
 ratio_std_window = "1m"
@@ -140,7 +140,7 @@ drift_mean = 0.02
 drift_mean_window = "1m"
 
 [lead_lag.pairs.execute.taker_buffer]
-mode = "off" # off | shadow | enforce
+mode = "off" # off | shadow
 entry_fixed_pct = 0.0
 normal_close_fixed_pct = 0.0
 exclude_from_cost_model = false
@@ -160,8 +160,8 @@ normal_close_retry_aggressive = false
 
 - 新字段缺省必须保持现有 live 行为。
 - guard 的 `mode=shadow`、taker buffer 的 `mode=shadow` 和 freshness shadow 只记录，不拦截，不改下单价，不改成本模型。
-- `mode=enforce` 才改变策略行为。
-- `trigger.drift_limit` 暂时保留；当 `drift_guard.mode=enforce` 时，后续实现计划需明确两者互斥或执行顺序。
+- Phase 1 配置只接受 `off` / `shadow`；`FeatureMode::kEnforce` 作为后续实现预留，执行路径和 report 统计落地后再开放配置。
+- `trigger.drift_limit` 暂时保留；后续实现 `drift_guard.mode=enforce` 前，必须明确两者互斥或执行顺序。
 - 实时策略不接受 `auto_warmup`、`auto_fallback_pct` 这类 runtime learning 配置。自动估计只存在于启动前配置生成流程，输出进入固定字段。
 - C++ 配置仍使用 TOML，不引入 JSON 配置读取。
 
@@ -242,7 +242,7 @@ rounded_order_price = side-aware round(effective_price)
 成本模型：
 
 - `EntryCostBreakdown` 新增 `entry_taker_buffer` 和 `normal_close_taker_buffer`。
-- 只有 taker buffer enforce 且 `exclude_from_cost_model=false` 时纳入 `RequiredEdge()`。
+- 后续只有 taker buffer enforce 且 `exclude_from_cost_model=false` 时纳入 `RequiredEdge()`；Phase 1 不接受 `taker_buffer.mode=enforce`。
 - shadow 模式只输出 shadow required edge，不改变 signal filter。
 
 ## Freshness 设计
@@ -294,7 +294,7 @@ historical or pre-start BookTicker/Depth samples
 - 不计算 rolling mean/std 用于更新 threshold。
 - 不计算 max spread 用于更新 buffer。
 - 不因为 warmup 未完成改变交易行为。
-- 配置中缺少 generated 参数时，shadow/enforce 对应功能 fail fast 或 disabled，不能退回 runtime auto。
+- 配置中缺少 generated 参数时，shadow 对应功能 fail fast 或 disabled，不能退回 runtime auto；enforce 对应功能在执行路径落地前由配置层拒绝。
 
 ## Attribution 和 Report 设计
 
@@ -368,7 +368,7 @@ BookTicker
   - drift guard ratio 不可用：默认 allow。
   - freshness threshold 启用但 latency 不可用：block。
 - normal close retry aggressive 不影响 stoploss close。
-- live mode 默认必须仍是 legacy 行为，除非配置显式开启 shadow/enforce。
+- live mode 默认必须仍是 legacy 行为，除非配置显式开启 shadow；enforce 执行路径落地前配置层拒绝 enforce。
 - 新增日志不能在热路径中引入无界分配或高频字符串拼接；默认 bounded 输出，full 输出只用于 replay / diagnostic run。
 
 ## 验证策略
@@ -377,7 +377,8 @@ BookTicker
 
 - Config parser：
   - 缺省字段保持 legacy。
-  - `mode=shadow` / `mode=enforce` 解析。
+  - `mode=shadow` 解析。
+  - 执行路径未实现的 `mode=enforce` fail fast。
   - 非法 mode、负阈值、无效 duration 拒绝。
 - Cost model：
   - buffer disabled 时 required edge 与现有测试一致。
@@ -421,7 +422,7 @@ git diff --check
 
 交付：
 
-- C++ config 新增 optional shadow/enforce config 结构，默认 legacy。
+- C++ config 新增 optional shadow config 结构，保留 enforce 枚举但配置层暂不开放，默认 legacy。
 - 启动前配置生成流程输出 fixed taker buffer 和 generated freshness 候选值。
 - Guard state 和 evaluation helper。
 - signal decision log。
@@ -473,7 +474,7 @@ git diff --check
 
 ## 开放问题
 
-1. `drift_limit` 与 `drift_guard` enforce 同时配置时，应 fail fast 还是定义顺序。建议 fail fast。
+1. 后续开放 `drift_guard.mode=enforce` 时，`drift_limit` 与 `drift_guard` enforce 同时配置应 fail fast 还是定义顺序。建议 fail fast。
 2. percent taker buffer 与 tick slippage 是否允许叠加。建议不允许叠加，配置二选一。
 3. 配置生成流程使用多长历史窗口。建议先用与目标 live session 同一 symbol 的近 30 天样本生成候选，再用最近 live run 做 sanity check。
 4. Depth L1/L2 是否能在当前 C++ live 数据路径稳定获得。若不能，第一阶段 attribution 只记录 BBO L1，taker buffer 先从 BBO spread 或已有 depth 产物生成。

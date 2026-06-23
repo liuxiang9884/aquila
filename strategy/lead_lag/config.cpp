@@ -275,7 +275,7 @@ class Parser {
                                                    const std::string& prefix) {
     LagVolGuardConfig guard;
     guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
-                               /*allow_enforce=*/true);
+                               /*allow_enforce=*/false);
     if (!ok_ || guard.mode == FeatureMode::kOff) {
       return guard;
     }
@@ -313,7 +313,7 @@ class Parser {
                                                  const std::string& prefix) {
     DriftGuardConfig guard;
     guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
-                               /*allow_enforce=*/true);
+                               /*allow_enforce=*/false);
     if (!ok_ || guard.mode == FeatureMode::kOff) {
       return guard;
     }
@@ -439,7 +439,7 @@ class Parser {
     }
 
     buffer.mode = FeatureModeOr(table, "mode", buffer.mode, prefix + ".mode",
-                                /*allow_enforce=*/true);
+                                /*allow_enforce=*/false);
     buffer.exclude_from_cost_model =
         BoolOr(table, "exclude_from_cost_model", buffer.exclude_from_cost_model,
                prefix + ".exclude_from_cost_model");

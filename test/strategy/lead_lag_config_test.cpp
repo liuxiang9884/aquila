@@ -548,6 +548,62 @@ source = "generated"
   EXPECT_NE(result.error.find("freshness_shadow.mode"), std::string::npos);
 }
 
+TEST(LeadLagConfigTest, RejectsUnimplementedTakerBufferEnforceMode) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.execute.taker_buffer]
+mode = "enforce"
+entry_fixed_pct = 0.0002
+normal_close_fixed_pct = 0.0003
+source = "generated"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("taker_buffer.mode"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsUnimplementedLagVolGuardEnforceMode) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.trigger.lag_vol_guard]
+mode = "enforce"
+jump_threshold = 0.005
+jump_count = 3
+jump_window = "5m"
+amplitude_threshold = 0.025
+amplitude_window = "1s"
+cooldown = "15m"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("lag_vol_guard.mode"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsUnimplementedDriftGuardEnforceMode) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.trigger.drift_guard]
+mode = "enforce"
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "2m"
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("drift_guard.mode"), std::string::npos);
+}
+
 TEST(LeadLagConfigTest, RejectsNegativeLagQuantityDecimalPlaces) {
   const aquila::config::InstrumentCatalog catalog =
       CatalogWithLagQuantityMetadata(/*quantity_step=*/0.1,
