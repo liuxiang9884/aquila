@@ -27,7 +27,7 @@ Gate canonical 有效 BBO spread 样本为 `1,041,851` 条。spread ratio 分布
 | p99 | `0.001502607892` | `15.03` |
 | p100 | `0.009791176877` | `97.91` |
 
-当前 `generate_preflight_config_params.py` 默认 percentile 是 p100，因此本轮主 TOML 使用：
+为复现上限诊断口径，本轮主 TOML 显式使用 p100：
 
 ```toml
 [lead_lag.pairs.execute.taker_buffer]
@@ -111,7 +111,7 @@ filled control 在这四个 buffer 下都是 `8/8` x_in/x_out any 可成交。
 
 ## 结论
 
-1. 当前启动前生成 taker buffer 的方向是有用的，但默认 p100 spread 会给 SKYAI 生成约 `98 bps` 的 buffer，明显过大，只适合证明“足够激进的价格会保持 BBO any 可成交”，不适合直接进入实盘 enforce。
+1. 当前启动前生成 taker buffer 的方向是有用的，但本轮 p100 spread 会给 SKYAI 生成约 `98 bps` 的 buffer，明显过大，只适合证明“足够激进的价格会保持 BBO any 可成交”，不适合直接进入实盘 enforce。
 2. 更合理的下一轮是用 p95 或 p99 作为 shadow 参数，结合成交质量、overpay 和 full-volume 口径继续评估，而不是直接用 p100。
 3. freshness auto 暂时不应 enforce。当前生成口径和策略比较口径不一致，且两种 proxy 在本样本上都没有区分 fill/cancel 的能力。
 4. 在修改策略前，应该先决定 freshness shadow 到底比较 `quote.local_ns - quote.exchange_ns`，还是比较 `signal_decision_ns - quote.exchange_ns`；配置生成和策略比较必须统一。

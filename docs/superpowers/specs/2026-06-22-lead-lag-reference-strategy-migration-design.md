@@ -290,6 +290,7 @@ historical or pre-start BookTicker/Depth samples
 - `freshness_shadow.lead_threshold_ms`
 - `freshness_shadow.lag_threshold_ms`
 - 可选审计元数据：样本窗口、样本数、mean、std、max、percentile、生成时间、输入 run_id。
+- taker buffer 的 percentile 必须由启动前命令显式指定；生成器不应隐式采用 p100，JSON 输出应保留 p50/p95/p99/p100 spread 分布和 p95/p99 候选值。
 
 实时策略边界：
 

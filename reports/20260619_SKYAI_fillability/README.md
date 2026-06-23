@@ -109,7 +109,7 @@
 | cancel `93` | p100 reference price | `93/93` | `93/93` | `93/93` |
 | filled control `8` | order price | `8/8` | `8/8` | `8/8` |
 
-Gate canonical BBO spread proxy 的 p50/p95/p99/p100 分别为 `4.67/10.56/15.03/97.91 bps`。默认 p100 buffer 能让 reference price 在 cancel 样本上 `x_in/x_out` 都保持 `93/93` any 可成交，但 median offset 约 `348 ticks`，明显只适合作为上限诊断，不适合直接 enforce。
+Gate canonical BBO spread proxy 的 p50/p95/p99/p100 分别为 `4.67/10.56/15.03/97.91 bps`。本轮显式使用的 p100 buffer 能让 reference price 在 cancel 样本上 `x_in/x_out` 都保持 `93/93` any 可成交，但 median offset 约 `348 ticks`，明显只适合作为上限诊断，不适合直接 enforce。
 
 ## 结论
 

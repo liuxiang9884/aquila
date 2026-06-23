@@ -30,6 +30,8 @@ EXCHANGE_IDS = {
     "coinbase": 5,
 }
 
+SPREAD_PERCENTILES = (50.0, 95.0, 99.0, 100.0)
+
 
 def _normalize_exchange(exchange: str) -> str:
     normalized = exchange.strip().lower()
@@ -168,12 +170,21 @@ def _lag_bbo_spread_summary(records: np.ndarray, percentile: float) -> dict:
     if not np.any(mask):
         raise ValueError("no valid lag BBO spread samples")
     spread_pct = (ask[mask] - bid[mask]) / mid[mask]
-    value = float(np.percentile(spread_pct, percentile))
+    percentiles = {
+        f"p{value:g}": float(np.percentile(spread_pct, value))
+        for value in SPREAD_PERCENTILES
+    }
+    selected = float(np.percentile(spread_pct, percentile))
     return {
         "sample_count": int(len(spread_pct)),
         "method": f"lag_bbo_spread_pct_p{percentile:g}",
         "percentile": float(percentile),
-        "value": value,
+        "value": selected,
+        "spread_percentiles": percentiles,
+        "candidate_percentiles": {
+            "p95": percentiles["p95"],
+            "p99": percentiles["p99"],
+        },
         "max": float(np.max(spread_pct)),
         "mean": float(np.mean(spread_pct)),
     }
@@ -185,7 +196,7 @@ def generate_params(
     symbol_id: int,
     lead_exchange: str,
     lag_exchange: str,
-    buffer_percentile: float = 100.0,
+    buffer_percentile: float,
     chunk_records: int = 1_000_000,
 ) -> dict:
     if not input_paths:
@@ -220,6 +231,9 @@ def generate_params(
             "source": "generated",
             "sample_count": spread["sample_count"],
             "method": spread["method"],
+            "selected_percentile": spread["percentile"],
+            "spread_percentiles": spread["spread_percentiles"],
+            "candidate_percentiles": spread["candidate_percentiles"],
             "max": spread["max"],
             "mean": spread["mean"],
         },
@@ -279,7 +293,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbol-id", required=True, type=int)
     parser.add_argument("--lead-exchange", required=True)
     parser.add_argument("--lag-exchange", required=True)
-    parser.add_argument("--buffer-percentile", type=float, default=100.0)
+    parser.add_argument("--buffer-percentile", required=True, type=float)
     parser.add_argument("--chunk-records", type=int, default=1_000_000)
     parser.add_argument("--json-output", type=Path)
     parser.add_argument("--toml-output", type=Path)

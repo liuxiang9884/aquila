@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import io
+import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -79,6 +82,36 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         )
         self.assertEqual(result["taker_buffer"]["source"], "generated")
         self.assertEqual(result["taker_buffer"]["sample_count"], 3)
+        self.assertEqual(result["taker_buffer"]["selected_percentile"], 100.0)
+        self.assertIn("spread_percentiles", result["taker_buffer"])
+        self.assertEqual(
+            sorted(result["taker_buffer"]["spread_percentiles"].keys()),
+            ["p100", "p50", "p95", "p99"],
+        )
+        self.assertAlmostEqual(
+            result["taker_buffer"]["spread_percentiles"]["p100"], expected_spread
+        )
+
+    def test_cli_requires_explicit_buffer_percentile(self):
+        argv = [
+            str(SCRIPT_PATH),
+            "--input",
+            "/home/liuxiang/tmp/book_ticker.bin",
+            "--symbol-id",
+            "4",
+            "--lead-exchange",
+            "binance",
+            "--lag-exchange",
+            "gate",
+        ]
+
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            sys, "stderr", io.StringIO()
+        ):
+            with self.assertRaises(SystemExit) as context:
+                self.module.parse_args()
+
+        self.assertNotEqual(context.exception.code, 0)
 
     def test_normalizes_exchange_names_and_keeps_zero_freshness_threshold(self):
         records = self.make_records()
