@@ -1237,6 +1237,22 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_GT(record.lag_freshness_ns, 1'000'000);
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     SkipsSignalDecisionLogWhenReferenceShadowDisabled) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategySignalDecisionLogCaptureGuard signal_decision_log_capture;
+  StrategyOrderIntentLogCaptureGuard order_intent_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  EXPECT_EQ(g_order_intent_log_count, 1U);
+  EXPECT_EQ(g_signal_decision_log_count, 0U);
+}
+
 TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(3, 0)};
   FakeOrderSession order_session;

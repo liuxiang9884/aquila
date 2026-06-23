@@ -1069,6 +1069,12 @@ class Strategy {
     return OpenAction(decision.action) && !decision.intent.reduce_only;
   }
 
+  [[nodiscard]] static bool SignalDecisionDiagnosticsEnabled(
+      const ExecuteConfig& execute) noexcept {
+    return execute.taker_buffer.mode != FeatureMode::kOff ||
+           execute.freshness_shadow.mode != FeatureMode::kOff;
+  }
+
   [[nodiscard]] static GeneratedFreshnessShadowEvaluation
   EvaluateGeneratedFreshnessShadow(const FreshnessShadowConfig& config,
                                    const SignalTiming& timing,
@@ -1739,6 +1745,9 @@ class Strategy {
       const PairRuntimeState& runtime, std::string_view symbol,
       const InstrumentMetadata& instrument,
       const PreparedOrderPrice& price) noexcept {
+    if (!SignalDecisionDiagnosticsEnabled(runtime.pair.execute)) {
+      return;
+    }
     const GeneratedFreshnessShadowEvaluation generated_freshness =
         EvaluateGeneratedFreshnessShadow(runtime.pair.execute.freshness_shadow,
                                          last_signal_timing_,
