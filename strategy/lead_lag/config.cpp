@@ -403,6 +403,11 @@ class Parser {
     if (!ok_) {
       return execute;
     }
+    if (execute.normal_close_retry_aggressive) {
+      Fail(prefix + ".normal_close_retry_aggressive",
+           " is not implemented yet");
+      return execute;
+    }
     if (execute.open_notional <= 0.0) {
       Fail(prefix + ".open_notional", " must be positive");
       return execute;

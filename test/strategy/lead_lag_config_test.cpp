@@ -443,9 +443,7 @@ TEST(LeadLagConfigTest, ReferenceMigrationDefaultsStayDisabled) {
 TEST(LeadLagConfigTest, ParsesReferenceMigrationShadowConfig) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = ParseConfigToml(
-      MinimalConfigTomlWithRisk("", "normal_close_retry_aggressive = true\n") +
-          R"toml(
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
 
 [lead_lag.pairs.execute.taker_buffer]
 mode = "shadow"
@@ -477,7 +475,7 @@ ratio_std_window = "1m"
 drift_mean = 0.02
 drift_mean_window = "2m"
 )toml",
-      catalog);
+                                      catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(result.value.pairs.size(), 1U);
@@ -498,7 +496,7 @@ drift_mean_window = "2m"
   EXPECT_DOUBLE_EQ(pair.trigger.drift_guard.drift_mean, 0.02);
   EXPECT_EQ(pair.trigger.drift_guard.drift_mean_window_ns, 120'000'000'000ULL);
 
-  EXPECT_TRUE(pair.execute.normal_close_retry_aggressive);
+  EXPECT_FALSE(pair.execute.normal_close_retry_aggressive);
   EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kShadow);
   EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.entry_fixed_pct, 0.0002);
   EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.normal_close_fixed_pct, 0.0003);
@@ -529,6 +527,18 @@ source = "generated"
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("auto_warmup"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsUnimplementedNormalCloseRetryAggressive) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "normal_close_retry_aggressive = true\n"),
+      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("normal_close_retry_aggressive"),
+            std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsTakerBufferPctAtOrAboveOne) {

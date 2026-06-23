@@ -162,6 +162,7 @@ normal_close_retry_aggressive = false
 - guard 的 `mode=shadow`、taker buffer 的 `mode=shadow` 和 freshness shadow 只记录，不拦截，不改下单价，不改成本模型。
 - Phase 1 配置只接受 `off` / `shadow`；`FeatureMode::kEnforce` 作为后续实现预留，执行路径和 report 统计落地后再开放配置。
 - `entry_fixed_pct` / `normal_close_fixed_pct` 是 ratio，取值必须在 `[0, 1)`。
+- `normal_close_retry_aggressive` 在 Phase 5 执行路径落地前必须保持 `false`。
 - `trigger.drift_limit` 暂时保留；后续实现 `drift_guard.mode=enforce` 前，必须明确两者互斥或执行顺序。
 - 实时策略不接受 `auto_warmup`、`auto_fallback_pct` 这类 runtime learning 配置。自动估计只存在于启动前配置生成流程，输出进入固定字段。
 - C++ 配置仍使用 TOML，不引入 JSON 配置读取。
