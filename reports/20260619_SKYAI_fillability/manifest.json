@@ -1,18 +1,24 @@
 {
   "archive_zip": "reports/20260619_SKYAI_fillability.zip",
-  "description": "SKYAI_USDT IOC cancel fillability archive with symbol-filtered inputs, logs, market data, analysis outputs, field schema, signal x-time follow-up, and conclusions.",
+  "description": "SKYAI_USDT IOC cancel fillability archive with symbol-filtered inputs, logs, market data, analysis outputs, field schema, signal x-time follow-up, preflight shadow closure, and conclusions.",
   "files": [
     {
       "path": "FIELD_SCHEMA.md",
-      "sha256": "2804435d545ba798c1f9f871218787556e268554085f635e3fe70e2b013fe167",
-      "size_bytes": 77257,
-      "line_count": 984
+      "sha256": "8a6528171e899676aac184067a5d10d43ca54f7dc49f73fd8e485c8364a8bb48",
+      "size_bytes": 83811,
+      "line_count": 1064
+    },
+    {
+      "path": "PREFLIGHT_SHADOW.md",
+      "sha256": "c68a2486fdace76ce8f2ff58a917d75216016dcdf088fc8d243d0197e2d2650f",
+      "size_bytes": 6303,
+      "line_count": 117
     },
     {
       "path": "README.md",
-      "sha256": "4a5ae524b11bd70fa02cb0484cd7dce94626a6868372772ef6222520faadb19d",
-      "size_bytes": 6923,
-      "line_count": 120
+      "sha256": "0726d39ac152fcbc656326be8e04f3a177ebbc0b477ddf434297ec23f03ee489",
+      "size_bytes": 9519,
+      "line_count": 147
     },
     {
       "path": "SIGNAL_XTIME_ANALYSIS.md",
@@ -59,6 +65,38 @@
       "sha256": "ab30c0d627d0dbe0a3bd81cd4fa85f5e5571257b5fe305ff8365c5482c52dcdc",
       "size_bytes": 30293,
       "csv_rows": 17
+    },
+    {
+      "path": "analysis/preflight_shadow_orders.csv",
+      "sha256": "c5f938cc926767eb56886dee02ee8ef7380f4e35de74208ee92db67ee06b6282",
+      "size_bytes": 63592,
+      "csv_rows": 101
+    },
+    {
+      "path": "analysis/preflight_shadow_params.json",
+      "sha256": "8510e6c6a460d9acd016331efccce41688686d353d4c00142690b2982fc576c9",
+      "size_bytes": 2087
+    },
+    {
+      "path": "analysis/preflight_shadow_quote_latency.toml",
+      "sha256": "c680bf557e7de3b780e35f6f0a50e21433186c469a5d8631463e2a633f1f2b4f",
+      "size_bytes": 382
+    },
+    {
+      "path": "analysis/preflight_shadow_runtime_freshness.toml",
+      "sha256": "aad6463a4a34e7fc9f6249a71b10bad0cdda884e53e887187794c209e644ee2d",
+      "size_bytes": 385
+    },
+    {
+      "path": "analysis/preflight_shadow_sensitivity.csv",
+      "sha256": "18e5c909fd34c936355f895a3d27db7796e420072c3629b5194fb3dc52d87a64",
+      "size_bytes": 1095,
+      "csv_rows": 8
+    },
+    {
+      "path": "analysis/preflight_shadow_summary.json",
+      "sha256": "e469f5b3e1ea2b2ebb504a57ed824cbf5f3cb9703bfe61a61ea5f2498aa6bcc8",
+      "size_bytes": 11538
     },
     {
       "path": "analysis/source_by_order.csv",
@@ -145,8 +183,9 @@
     },
     {
       "path": "context/generation_commands.sh",
-      "sha256": "7f5e1e22cd49948e7c540d1ad0b827ca0c4f845dd19f1b9cf4373df14c1c12d5",
-      "size_bytes": 1805
+      "sha256": "415a04de7bd79ea3e26e4ac25e353e9dcb935cb67f445849bdd4b777445a8cbd",
+      "size_bytes": 2518,
+      "line_count": 54
     },
     {
       "path": "context/source_paths.txt",
@@ -192,14 +231,12 @@
     {
       "path": "logs/feedback.log",
       "sha256": "5bed558096796cb9e4c046afbd3751f37ef65966fe501d5dd86354315abd10c8",
-      "size_bytes": 55967,
-      "line_count": 113
+      "size_bytes": 55967
     },
     {
       "path": "logs/strategy.log",
       "sha256": "be11cb43161f77e4a94b9220486dd470ac5dfff48057d7deca7c9adc8113b8c9",
-      "size_bytes": 992953,
-      "line_count": 1382
+      "size_bytes": 992953
     },
     {
       "path": "market_data/canonical.bin.zst",
@@ -251,8 +288,5 @@
       "sha256": "45552b6ad311d94d35cbc484eaec5034e8e54f7c90d501b35f562660b8b8edb0",
       "size_bytes": 316
     }
-  ],
-  "report_dir": "reports/20260619_SKYAI_fillability",
-  "run_id": "20260619_095317_28symbols_no_h_30d_fusion_off_l0_live",
-  "symbol": "SKYAI_USDT"
+  ]
 }

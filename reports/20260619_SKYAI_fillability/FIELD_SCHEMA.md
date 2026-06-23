@@ -922,11 +922,91 @@
 | `signal_to_terminal_first_any_id` | `signal_to_terminal` 窗口内第一条满足 `any` 的 BookTicker id。 |
 | `signal_to_terminal_first_full_id` | `signal_to_terminal` 窗口内第一条满足 `full` 的 BookTicker id。 |
 
+## Preflight shadow 闭环表
+
+适用文件：
+- `analysis/preflight_shadow_orders.csv`
+
+该表覆盖 `93` 笔 open no-fill cancel 和 `8` 笔 open filled control，用启动前生成的固定 taker buffer / freshness threshold proxy 复算 shadow 诊断结果。
+
+| 字段 | 含义 |
+|---|---|
+| `sample_type` | 样本类型：`cancel_open_no_fill` 或 `filled_open_control`。 |
+| `local_order_id` | 策略本地订单 id。 |
+| `request_sequence` | Gate order session 请求序号。 |
+| `action` | 策略动作，例如 `kOpenLong` / `kOpenShort`。 |
+| `side` | 订单方向，`kBuy` 或 `kSell`。 |
+| `status` | 订单终态。 |
+| `raw_price` | signal 原始 lag price。 |
+| `order_price` | 实际提交给 Gate 的 limit price。 |
+| `reference_order_price` | 使用 `entry_buffer_pct` 重新计算并按 tick 取整后的 shadow reference price。 |
+| `entry_buffer_pct` | 本行使用的 taker buffer ratio；主表为 Gate canonical p100 BBO spread proxy。 |
+| `price_tick` | Gate 合约价格 tick。 |
+| `quantity` | 订单数量。 |
+| `cumulative_filled_quantity` | 累计成交数量。 |
+| `signal_lag_id` | signal 时策略看到的 lag BookTicker id。 |
+| `terminal_lag_id` | 本分析选取的订单终态 BookTicker id，优先使用 `filled_lag_id`，否则使用 `cancelled_lag_id`。 |
+| `x_in_ns` | Gate Ack response header 中的 request ingress timestamp，report 中已转为 ns。 |
+| `x_out_ns` | Gate Ack response header 中的 response egress timestamp，report 中已转为 ns。 |
+| `signal_to_x_in_us` | `x_in_ns - signal_lag_id 对应 canonical.exchange_ns`，单位 us。 |
+| `signal_to_x_out_us` | `x_out_ns - signal_lag_id 对应 canonical.exchange_ns`，单位 us。 |
+| `lead_quote_latency_ns` | `lead_local_ns - lead_exchange_ns`，用于 quote latency proxy。 |
+| `lag_quote_latency_ns` | `lag_local_ns - lag_exchange_ns`，用于 quote latency proxy。 |
+| `lead_freshness_ns` | 策略 runtime 记录的 lead freshness，当前为 `signal_decision_ns - lead_exchange_ns`。 |
+| `lag_freshness_ns` | 策略 runtime 记录的 lag freshness，当前为 `signal_decision_ns - lag_exchange_ns`。 |
+| `quote_latency_threshold_would_block` | 如果用 quote latency proxy threshold 配置当前策略，是否会 shadow block。 |
+| `quote_latency_threshold_block_reason` | quote latency proxy 的 block 原因：`freshness_lead`、`freshness_lag` 或 `-`。 |
+| `runtime_freshness_threshold_would_block` | 如果用 runtime signal freshness proxy threshold 配置当前策略，是否会 shadow block。 |
+| `runtime_freshness_threshold_block_reason` | runtime signal freshness proxy 的 block 原因。 |
+| `signal_book_ticker_id` | signal 点对应的 canonical BookTicker id。 |
+| `signal_exchange_ns` | signal 点对应的 canonical `exchange_ns`。 |
+| `signal_contra_price` / `signal_contra_volume` | signal 点订单对手一档价格和数量；买单取 ask，卖单取 bid。 |
+| `signal_raw_any` / `signal_order_any` / `signal_reference_any` | signal 点 raw/order/reference price 是否满足 BBO `any`。 |
+| `signal_raw_margin_ticks` / `signal_order_margin_ticks` / `signal_reference_margin_ticks` | signal 点 raw/order/reference price 的价格穿越 tick 余量。 |
+| `x_in_book_ticker_id` / `x_in_exchange_ns` | `exchange_ns <= x_in_ns` 的最新 canonical BookTicker id 和时间。 |
+| `x_in_contra_price` / `x_in_contra_volume` | `x_in` 口径订单对手一档价格和数量。 |
+| `x_in_raw_any` / `x_in_order_any` / `x_in_reference_any` | `x_in` 口径 raw/order/reference price 是否满足 BBO `any`。 |
+| `x_in_raw_margin_ticks` / `x_in_order_margin_ticks` / `x_in_reference_margin_ticks` | `x_in` 口径 raw/order/reference price 的价格穿越 tick 余量。 |
+| `x_out_book_ticker_id` / `x_out_exchange_ns` | `exchange_ns <= x_out_ns` 的最新 canonical BookTicker id 和时间。 |
+| `x_out_contra_price` / `x_out_contra_volume` | `x_out` 口径订单对手一档价格和数量。 |
+| `x_out_raw_any` / `x_out_order_any` / `x_out_reference_any` | `x_out` 口径 raw/order/reference price 是否满足 BBO `any`。 |
+| `x_out_raw_margin_ticks` / `x_out_order_margin_ticks` / `x_out_reference_margin_ticks` | `x_out` 口径 raw/order/reference price 的价格穿越 tick 余量。 |
+| `{raw,order,reference}_lifetime_valid` | 从 `signal_lag_id` 到 `terminal_lag_id` 的 id 区间是否可分析。 |
+| `{raw,order,reference}_lifetime_any` | 对应 price 在该 id 区间内是否出现过 BBO `any`。 |
+| `{raw,order,reference}_lifetime_records` | 对应 id 区间内 BookTicker 记录数。 |
+| `{raw,order,reference}_lifetime_marketable_records` | 对应 id 区间内满足 BBO `any` 的记录数。 |
+| `{raw,order,reference}_last_marketable_id` | 对应 price 最后一条满足 BBO `any` 的 BookTicker id。 |
+| `{raw,order,reference}_last_marketable_exchange_ns` | 对应 price 最后一条满足 BBO `any` 的 `exchange_ns`。 |
+| `{raw,order,reference}_lifetime_us` | `last_marketable_exchange_ns - signal canonical exchange_ns`，单位 us；无 marketable 记录时为空。 |
+
+## Preflight shadow sensitivity 表
+
+适用文件：
+- `analysis/preflight_shadow_sensitivity.csv`
+
+| 字段 | 含义 |
+|---|---|
+| `buffer_percentile` | Gate canonical BBO spread percentile，当前为 p50/p95/p99/p100。 |
+| `buffer_pct` | 对应 percentile 的 spread ratio。 |
+| `sample_type` | 样本类型：`cancel_open_no_fill` 或 `filled_open_control`。 |
+| `count` | 该样本类型订单数。 |
+| `reference_offset_ticks_p50` | reference price 相对 raw price 的绝对 tick 偏移 p50。 |
+| `reference_offset_ticks_p95` | reference price 相对 raw price 的绝对 tick 偏移 p95。 |
+| `signal_reference_any` / `signal_reference_any_denom` | signal 点 reference price BBO `any` 计数和分母。 |
+| `x_in_reference_any` / `x_in_reference_any_denom` | `x_in` 口径 reference price BBO `any` 计数和分母。 |
+| `x_out_reference_any` / `x_out_reference_any_denom` | `x_out` 口径 reference price BBO `any` 计数和分母。 |
+| `reference_lifetime_any` / `reference_lifetime_any_denom` | signal 到 terminal id 区间内 reference price 出现过 BBO `any` 的计数和分母。 |
+| `reference_lifetime_us_p50` | reference price 可成交窗口 lifetime p50，单位 us。 |
+| `reference_lifetime_us_p95` | reference price 可成交窗口 lifetime p95，单位 us。 |
+| `reference_lifetime_us_max` | reference price 可成交窗口 lifetime 最大值，单位 us。 |
+
 ## JSON 汇总文件
 
 适用文件：
 - `analysis/cancel_windows_summary.json`
 - `analysis/cancel_fillability_summary.json`
+- `analysis/preflight_shadow_params.json`
+- `analysis/preflight_shadow_summary.json`
 - `analysis/source_summary.json`
 - `analysis/volume_summary.json`
 - `manifest.json`

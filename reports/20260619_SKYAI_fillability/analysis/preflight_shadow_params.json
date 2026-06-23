@@ -1,0 +1,72 @@
+{
+  "freshness_quote_latency_proxy": {
+    "lag": {
+      "max_ms": 0.661504,
+      "mean_ms": 0.20927513924050634,
+      "p50_ms": 0.196864,
+      "p95_ms": 0.35968,
+      "p99_ms": 0.661504,
+      "sample_count": 237,
+      "std_ms": 0.10624959636455283,
+      "threshold_ms": 1
+    },
+    "lead": {
+      "max_ms": 2.198272,
+      "mean_ms": 1.1963376877637129,
+      "p50_ms": 1.147904,
+      "p95_ms": 1.6321535999999999,
+      "p99_ms": 1.8099814399999996,
+      "sample_count": 237,
+      "std_ms": 0.32217421637408683,
+      "threshold_ms": 3
+    },
+    "method": "signals_quote_local_ns_minus_exchange_ns_proxy"
+  },
+  "freshness_runtime_signal_proxy": {
+    "lag": {
+      "max_ms": 1240.088839,
+      "mean_ms": 104.67000843037975,
+      "p50_ms": 31.170378,
+      "p95_ms": 504.0856903999999,
+      "p99_ms": 1004.7861129999998,
+      "sample_count": 237,
+      "std_ms": 205.17296131636297,
+      "threshold_ms": 721
+    },
+    "lead": {
+      "max_ms": 2.199604,
+      "mean_ms": 1.2007426075949368,
+      "p50_ms": 1.149324,
+      "p95_ms": 1.6425272,
+      "p99_ms": 1.8967456799999984,
+      "sample_count": 237,
+      "std_ms": 0.3264147342089418,
+      "threshold_ms": 3
+    },
+    "method": "signals_signal_decision_ns_minus_quote_exchange_ns_runtime_proxy"
+  },
+  "taker_buffer": {
+    "entry_fixed_pct": 0.009791176877333666,
+    "mean": 0.0005283706500206566,
+    "method": "lag_canonical_bbo_spread_pct_p100",
+    "normal_close_fixed_pct": 0.009791176877333666,
+    "p100": 0.009791176877333666,
+    "p50": 0.0004669351543804163,
+    "p95": 0.0010557461765967413,
+    "p99": 0.001502607891894738,
+    "source": "market_data/canonical.bin.zst",
+    "valid_sample_count": 1041851
+  },
+  "toml_quote_latency_proxy": {
+    "entry_fixed_pct": 0.009791176877333666,
+    "lag_threshold_ms": 1,
+    "lead_threshold_ms": 3,
+    "normal_close_fixed_pct": 0.009791176877333666
+  },
+  "toml_runtime_signal_proxy": {
+    "entry_fixed_pct": 0.009791176877333666,
+    "lag_threshold_ms": 721,
+    "lead_threshold_ms": 3,
+    "normal_close_fixed_pct": 0.009791176877333666
+  }
+}

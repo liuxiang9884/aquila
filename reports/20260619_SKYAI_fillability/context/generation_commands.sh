@@ -35,6 +35,20 @@ zstd -q -f "${SPLIT_ROOT}/${RUN_ID}_source3/${SYMBOL}.bin" -o "${ROOT}/market_da
 # - ack_full_candidates.csv: after_ack_to_cancel_full_records > 0
 # - cancel_point_candidates.csv: cancel_point_any=true or cancel_point_full=true
 
+# Derive preflight shadow closure outputs from symbol-local report inputs:
+# - analysis/preflight_shadow_params.json
+# - analysis/preflight_shadow_quote_latency.toml
+# - analysis/preflight_shadow_runtime_freshness.toml
+# - analysis/preflight_shadow_orders.csv
+# - analysis/preflight_shadow_sensitivity.csv
+# - analysis/preflight_shadow_summary.json
+#
+# Inputs are ${ROOT}/inputs/orders.csv, ${ROOT}/inputs/signals.csv and
+# ${ROOT}/market_data/canonical.bin.zst. This run archive contains Gate lag
+# canonical/source BookTicker bins only; Binance lead raw BookTicker is not
+# available in the report, so freshness quote-latency generation is documented
+# as a signals.csv timestamp proxy in PREFLIGHT_SHADOW.md.
+
 # Verify compressed market data and checksums.
 zstd -t ${ROOT}/market_data/*.zst
 sha256sum -c ${ROOT}/checksums.sha256
