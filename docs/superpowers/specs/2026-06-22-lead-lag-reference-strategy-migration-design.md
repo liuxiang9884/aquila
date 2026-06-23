@@ -242,9 +242,9 @@ rounded_order_price = side-aware round(effective_price)
 
 成本模型：
 
-- `EntryCostBreakdown` 新增 `entry_taker_buffer` 和 `normal_close_taker_buffer`。
+- Phase 1 不改 `EntryCostBreakdown` 和 `RequiredEdge()`。
+- 后续实现 taker buffer enforce 时，再新增 `entry_taker_buffer` / `normal_close_taker_buffer` 或等价字段。
 - 后续只有 taker buffer enforce 且 `exclude_from_cost_model=false` 时纳入 `RequiredEdge()`；Phase 1 不接受 `taker_buffer.mode=enforce`。
-- shadow 模式只输出 shadow required edge，不改变 signal filter。
 
 ## Freshness 设计
 
