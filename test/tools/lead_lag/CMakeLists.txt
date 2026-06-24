@@ -40,3 +40,40 @@ add_test(NAME lead_lag_live_strategy_orders_missing_credentials_smoke
 set_tests_properties(lead_lag_live_strategy_orders_missing_credentials_smoke
                      PROPERTIES
                          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(lead_lag_freshness_preflight_test
+    freshness_preflight_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/lead_lag/freshness_preflight.cpp
+)
+
+target_link_libraries(lead_lag_freshness_preflight_test
+    PRIVATE
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+        magic_enum::magic_enum
+        PkgConfig::tomlplusplus
+)
+
+add_test(NAME lead_lag_freshness_preflight_test
+         COMMAND lead_lag_freshness_preflight_test)
+
+add_executable(lead_lag_freshness_preflight_cli_test
+    freshness_preflight_cli_test.cpp
+)
+
+target_link_libraries(lead_lag_freshness_preflight_cli_test
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(lead_lag_freshness_preflight_cli_test
+    PRIVATE
+        AQUILA_LEAD_LAG_FRESHNESS_PREFLIGHT_BINARY="$<TARGET_FILE:lead_lag_freshness_preflight>"
+        AQUILA_MISSING_FRESHNESS_PREFLIGHT_CONFIG="${PROJECT_BINARY_DIR}/missing_freshness_preflight_data_reader.toml"
+)
+add_dependencies(lead_lag_freshness_preflight_cli_test
+                 lead_lag_freshness_preflight)
+
+add_test(NAME lead_lag_freshness_preflight_cli_test
+         COMMAND lead_lag_freshness_preflight_cli_test)

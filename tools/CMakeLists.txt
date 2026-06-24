@@ -149,6 +149,22 @@ target_link_libraries(lead_lag_strategy
         quill::quill
 )
 
+add_executable(lead_lag_freshness_preflight
+    lead_lag/freshness_preflight_main.cpp
+    lead_lag/freshness_preflight.cpp
+)
+
+target_link_libraries(lead_lag_freshness_preflight
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(gate_order_feedback_session
     gate/order_feedback_session.cpp
 )
