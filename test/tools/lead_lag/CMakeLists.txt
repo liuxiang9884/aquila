@@ -86,12 +86,7 @@ add_executable(lead_lag_lag_vol_guard_audit_test
 target_link_libraries(lead_lag_lag_vol_guard_audit_test
     PRIVATE
         aquila_core
-        aquila_strategy
-        fmt::fmt-header-only
         GTest::gtest_main
-        magic_enum::magic_enum
-        nova
-        quill::quill
 )
 
 add_test(NAME lead_lag_lag_vol_guard_audit_test

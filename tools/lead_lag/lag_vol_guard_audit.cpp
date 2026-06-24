@@ -23,6 +23,34 @@ void SetError(std::string* error, std::string_view message) {
   }
 }
 
+[[nodiscard]] std::int64_t SaturatingWindowLowerBound(
+    std::int64_t now_ns, std::uint64_t window_ns) noexcept {
+  constexpr std::int64_t kMin = std::numeric_limits<std::int64_t>::min();
+  constexpr std::uint64_t kNegativeRange =
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) +
+      1ULL;
+  const std::uint64_t distance_from_min =
+      static_cast<std::uint64_t>(now_ns) - static_cast<std::uint64_t>(kMin);
+  if (window_ns >= distance_from_min) {
+    return kMin;
+  }
+
+  const std::uint64_t offset_from_min = distance_from_min - window_ns;
+  if (offset_from_min < kNegativeRange) {
+    return kMin + static_cast<std::int64_t>(offset_from_min);
+  }
+  return static_cast<std::int64_t>(offset_from_min - kNegativeRange);
+}
+
+[[nodiscard]] std::uint64_t SaturatingAdd(std::uint64_t lhs,
+                                          std::uint64_t rhs) noexcept {
+  constexpr std::uint64_t kMax = std::numeric_limits<std::uint64_t>::max();
+  if (lhs > kMax - rhs) {
+    return kMax;
+  }
+  return lhs + rhs;
+}
+
 }  // namespace
 
 void LagVolGuardAuditState::Init(const LagVolGuardAuditConfig& config) {
@@ -72,13 +100,16 @@ LagVolGuardEvaluation LagVolGuardAuditState::EvaluateAndAdvanceOpenSignal(
   Trim(signal_time_ns);
 
   LagVolGuardEvaluation eval;
+  eval.cooldown_until_ns = cooldown_until_ns_;
+  if (signal_time_ns <= 0) {
+    return eval;
+  }
+
   eval.jump_count = CurrentJumpCount(signal_time_ns);
   eval.amplitude = CurrentAmplitude(signal_time_ns);
   eval.hot = eval.jump_count >= config_.jump_count ||
              eval.amplitude > config_.amplitude_threshold;
-  eval.cooldown_until_ns = cooldown_until_ns_;
   eval.cooldown_active =
-      signal_time_ns > 0 &&
       static_cast<std::uint64_t>(signal_time_ns) < cooldown_until_ns_;
   if (eval.cooldown_active) {
     eval.would_block = true;
@@ -88,9 +119,8 @@ LagVolGuardEvaluation LagVolGuardAuditState::EvaluateAndAdvanceOpenSignal(
   if (eval.hot) {
     eval.would_block = true;
     eval.reason = LagVolGuardBlockReason::kTrigger;
-    cooldown_until_ns_ =
-        static_cast<std::uint64_t>(std::max<std::int64_t>(signal_time_ns, 0)) +
-        config_.cooldown_ns;
+    cooldown_until_ns_ = SaturatingAdd(
+        static_cast<std::uint64_t>(signal_time_ns), config_.cooldown_ns);
     eval.cooldown_until_ns = cooldown_until_ns_;
     return eval;
   }
@@ -107,14 +137,17 @@ std::uint64_t LagVolGuardAuditState::non_monotonic_event_time_count()
 }
 
 void LagVolGuardAuditState::Trim(std::int64_t now_ns) {
+  // Keep Go reference semantics: arrival-ordered replay state is trimmed only
+  // by the front lower bound, without excluding future ticks or older
+  // out-of-order entries behind them.
   const std::int64_t jump_cutoff =
-      now_ns - static_cast<std::int64_t>(config_.jump_window_ns);
+      SaturatingWindowLowerBound(now_ns, config_.jump_window_ns);
   while (!jumps_.empty() && jumps_.front().event_ns < jump_cutoff) {
     jumps_.pop_front();
   }
 
   const std::int64_t amplitude_cutoff =
-      now_ns - static_cast<std::int64_t>(config_.amplitude_window_ns);
+      SaturatingWindowLowerBound(now_ns, config_.amplitude_window_ns);
   while (!mids_.empty() && mids_.front().event_ns < amplitude_cutoff) {
     mids_.pop_front();
   }

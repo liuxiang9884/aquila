@@ -1,6 +1,7 @@
 #include "tools/lead_lag/lag_vol_guard_audit.h"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -105,6 +106,80 @@ TEST(LeadLagLagVolGuardAuditTest, SkipsInvalidAndUnchangedMidUpdates) {
   EXPECT_EQ(eval.jump_count, 0U);
   EXPECT_DOUBLE_EQ(eval.amplitude, 0.0);
   EXPECT_EQ(state.skipped_update_count(), 1U);
+}
+
+TEST(LeadLagLagVolGuardAuditTest,
+     PreservesGoLikeArrivalStateForFutureNonMonotonicTicks) {
+  LagVolGuardAuditConfig config;
+  config.jump_threshold = 0.001;
+  config.jump_count = 2;
+  config.jump_window_ns = 10'000'000'000ULL;
+  config.amplitude_threshold = 1.0;
+  LagVolGuardAuditState state;
+  state.Init(config);
+  state.OnLagBookTicker(Ticker(1, 10'000'000'000, 100.0, 100.2));
+  state.OnLagBookTicker(Ticker(2, 60'000'000'000, 101.0, 101.2));
+  state.OnLagBookTicker(Ticker(3, 20'000'000'000, 102.0, 102.2));
+
+  const LagVolGuardEvaluation eval =
+      state.EvaluateAndAdvanceOpenSignal(50'000'000'000);
+
+  EXPECT_TRUE(eval.would_block);
+  EXPECT_EQ(eval.reason, LagVolGuardBlockReason::kTrigger);
+  EXPECT_EQ(eval.jump_count, 2U);
+  EXPECT_EQ(state.non_monotonic_event_time_count(), 1U);
+}
+
+TEST(LeadLagLagVolGuardAuditTest,
+     HugeWindowsAndCooldownUseSaturatingArithmetic) {
+  LagVolGuardAuditConfig config;
+  config.jump_threshold = 0.001;
+  config.jump_count = 1;
+  config.jump_window_ns = std::numeric_limits<std::uint64_t>::max();
+  config.amplitude_window_ns = std::numeric_limits<std::uint64_t>::max();
+  config.cooldown_ns = std::numeric_limits<std::uint64_t>::max() - 10;
+  LagVolGuardAuditState state;
+  state.Init(config);
+  state.OnLagBookTicker(Ticker(1, 1'000'000'000, 100.0, 100.2));
+  state.OnLagBookTicker(Ticker(2, 2'000'000'000, 101.0, 101.2));
+
+  const LagVolGuardEvaluation eval =
+      state.EvaluateAndAdvanceOpenSignal(20'000'000'000);
+
+  EXPECT_TRUE(eval.would_block);
+  EXPECT_EQ(eval.reason, LagVolGuardBlockReason::kTrigger);
+  EXPECT_EQ(eval.jump_count, 1U);
+  EXPECT_EQ(eval.cooldown_until_ns, std::numeric_limits<std::uint64_t>::max());
+}
+
+TEST(LeadLagLagVolGuardAuditTest,
+     NonPositiveSignalTimeDoesNotTriggerOrAdvanceCooldown) {
+  LagVolGuardAuditConfig config;
+  config.jump_threshold = 0.001;
+  config.jump_count = 1;
+  LagVolGuardAuditState state;
+  state.Init(config);
+  state.OnLagBookTicker(Ticker(1, 1'000'000'000, 100.0, 100.2));
+  state.OnLagBookTicker(Ticker(2, 2'000'000'000, 101.0, 101.2));
+
+  const LagVolGuardEvaluation zero_eval = state.EvaluateAndAdvanceOpenSignal(0);
+  const LagVolGuardEvaluation negative_eval =
+      state.EvaluateAndAdvanceOpenSignal(-1);
+
+  EXPECT_FALSE(zero_eval.would_block);
+  EXPECT_EQ(zero_eval.reason, LagVolGuardBlockReason::kNone);
+  EXPECT_FALSE(zero_eval.hot);
+  EXPECT_EQ(zero_eval.cooldown_until_ns, 0U);
+  EXPECT_FALSE(negative_eval.would_block);
+  EXPECT_EQ(negative_eval.reason, LagVolGuardBlockReason::kNone);
+  EXPECT_FALSE(negative_eval.hot);
+  EXPECT_EQ(negative_eval.cooldown_until_ns, 0U);
+
+  const LagVolGuardEvaluation positive_eval =
+      state.EvaluateAndAdvanceOpenSignal(3'000'000'000);
+  EXPECT_TRUE(positive_eval.would_block);
+  EXPECT_EQ(positive_eval.reason, LagVolGuardBlockReason::kTrigger);
+  EXPECT_EQ(positive_eval.cooldown_until_ns, 903'000'000'000ULL);
 }
 
 TEST(LeadLagLagVolGuardAuditTest, ParsesDurationTextToNanoseconds) {
