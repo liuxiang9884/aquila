@@ -254,7 +254,6 @@ def generate_params(
 
 def render_toml_patch(params: dict) -> str:
     taker = params["taker_buffer"]
-    freshness = params["freshness"]
     return (
         textwrap.dedent(
             f"""
@@ -263,12 +262,6 @@ def render_toml_patch(params: dict) -> str:
             entry_fixed_pct = {taker["entry_fixed_pct"]:.12g}
             normal_close_fixed_pct = {taker["normal_close_fixed_pct"]:.12g}
             exclude_from_cost_model = false
-            source = "generated"
-
-            [lead_lag.pairs.execute.freshness_shadow]
-            mode = "shadow"
-            lead_threshold_ms = {freshness["lead_threshold_ms"]}
-            lag_threshold_ms = {freshness["lag_threshold_ms"]}
             source = "generated"
             """
         ).strip()
@@ -279,7 +272,7 @@ def render_toml_patch(params: dict) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate fixed LeadLag taker buffer and freshness shadow config "
+            "Generate fixed LeadLag taker buffer config "
             "from startup or historical BookTicker binaries."
         )
     )

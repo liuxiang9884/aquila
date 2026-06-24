@@ -622,19 +622,13 @@ leadlag::Config SignalOnlyConfigWithSlippage(std::uint32_t open_slippage,
   return config;
 }
 
-leadlag::Config SignalOnlyConfigWithReferenceShadow() {
+leadlag::Config SignalOnlyConfigWithTakerBufferShadow() {
   leadlag::Config config = SignalOnlyConfig();
   config.pairs[0].execute.taker_buffer = leadlag::TakerBufferConfig{
       .mode = leadlag::FeatureMode::kShadow,
       .entry_fixed_pct = 0.001,
       .normal_close_fixed_pct = 0.002,
       .exclude_from_cost_model = false,
-      .source = leadlag::GeneratedParamSource::kGenerated,
-  };
-  config.pairs[0].execute.freshness_shadow = leadlag::FreshnessShadowConfig{
-      .mode = leadlag::FeatureMode::kShadow,
-      .lead_threshold_ms = 1,
-      .lag_threshold_ms = 1,
       .source = leadlag::GeneratedParamSource::kGenerated,
   };
   return config;
@@ -1198,9 +1192,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(record.active_groups, 0U);
 }
 
-TEST(LeadLagStrategyInterfaceTest,
-     LogsSignalDecisionWithReferenceShadowPriceAndFreshness) {
-  leadlag::Strategy strategy{SignalOnlyConfigWithReferenceShadow()};
+TEST(LeadLagStrategyInterfaceTest, LogsSignalDecisionWithReferenceShadowPrice) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithTakerBufferShadow()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -1221,18 +1214,13 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(record.symbol_id, 3);
   EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
-  EXPECT_EQ(record.decision, "shadow_blocked");
-  EXPECT_EQ(record.shadow_block_reason, "freshness_lead");
+  EXPECT_EQ(record.decision, "sent");
   EXPECT_FALSE(record.reduce_only);
   EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
   EXPECT_DOUBLE_EQ(record.current_order_price, 102.1);
   EXPECT_DOUBLE_EQ(record.reference_order_price, 102.2);
   EXPECT_DOUBLE_EQ(record.entry_buffer_pct, 0.001);
   EXPECT_DOUBLE_EQ(record.close_buffer_pct, 0.002);
-  EXPECT_TRUE(record.generated_freshness_enabled);
-  EXPECT_TRUE(record.generated_freshness_would_block);
-  EXPECT_EQ(record.generated_lead_threshold_ms, 1);
-  EXPECT_EQ(record.generated_lag_threshold_ms, 1);
   EXPECT_GT(record.lead_freshness_ns, 1'000'000);
   EXPECT_GT(record.lag_freshness_ns, 1'000'000);
 }

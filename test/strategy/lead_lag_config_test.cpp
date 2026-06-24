@@ -434,13 +434,10 @@ TEST(LeadLagConfigTest, ReferenceMigrationDefaultsStayDisabled) {
   EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kOff);
   EXPECT_EQ(pair.execute.taker_buffer.source,
             leadlag::GeneratedParamSource::kManual);
-  EXPECT_EQ(pair.execute.freshness_shadow.mode, leadlag::FeatureMode::kOff);
-  EXPECT_EQ(pair.execute.freshness_shadow.source,
-            leadlag::GeneratedParamSource::kManual);
   EXPECT_FALSE(pair.execute.normal_close_retry_aggressive);
 }
 
-TEST(LeadLagConfigTest, ParsesReferenceMigrationShadowConfig) {
+TEST(LeadLagConfigTest, ParsesReferenceMigrationTakerBufferShadowConfig) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
@@ -450,12 +447,6 @@ mode = "shadow"
 entry_fixed_pct = 0.0002
 normal_close_fixed_pct = 0.0003
 exclude_from_cost_model = true
-source = "generated"
-
-[lead_lag.pairs.execute.freshness_shadow]
-mode = "shadow"
-lead_threshold_ms = 8
-lag_threshold_ms = 23
 source = "generated"
 )toml",
                                       catalog);
@@ -472,12 +463,6 @@ source = "generated"
   EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.normal_close_fixed_pct, 0.0003);
   EXPECT_TRUE(pair.execute.taker_buffer.exclude_from_cost_model);
   EXPECT_EQ(pair.execute.taker_buffer.source,
-            leadlag::GeneratedParamSource::kGenerated);
-
-  EXPECT_EQ(pair.execute.freshness_shadow.mode, leadlag::FeatureMode::kShadow);
-  EXPECT_EQ(pair.execute.freshness_shadow.lead_threshold_ms, 8);
-  EXPECT_EQ(pair.execute.freshness_shadow.lag_threshold_ms, 23);
-  EXPECT_EQ(pair.execute.freshness_shadow.source,
             leadlag::GeneratedParamSource::kGenerated);
 }
 
@@ -532,13 +517,13 @@ source = "generated"
   EXPECT_DOUBLE_EQ(buffer.normal_close_fixed_pct, 1.5);
 }
 
-TEST(LeadLagConfigTest, RejectsFreshnessShadowEnforceMode) {
+TEST(LeadLagConfigTest, RejectsFreshnessShadowConfig) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
 
 [lead_lag.pairs.execute.freshness_shadow]
-mode = "enforce"
+mode = "shadow"
 lead_threshold_ms = 8
 lag_threshold_ms = 23
 source = "generated"
@@ -546,28 +531,8 @@ source = "generated"
                                       catalog);
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("freshness_shadow.mode"), std::string::npos);
-}
-
-TEST(LeadLagConfigTest, AllowsZeroFreshnessShadowThresholds) {
-  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
-
-  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
-
-[lead_lag.pairs.execute.freshness_shadow]
-mode = "shadow"
-lead_threshold_ms = 0
-lag_threshold_ms = 0
-source = "generated"
-)toml",
-                                      catalog);
-
-  ASSERT_TRUE(result.ok) << result.error;
-  ASSERT_EQ(result.value.pairs.size(), 1U);
-  const leadlag::FreshnessShadowConfig& freshness =
-      result.value.pairs[0].execute.freshness_shadow;
-  EXPECT_EQ(freshness.lead_threshold_ms, 0);
-  EXPECT_EQ(freshness.lag_threshold_ms, 0);
+  EXPECT_NE(result.error.find("freshness_shadow is not supported"),
+            std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsUnimplementedTakerBufferEnforceMode) {

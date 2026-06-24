@@ -146,12 +146,6 @@ normal_close_fixed_pct = 0.0
 exclude_from_cost_model = false
 source = "manual" # manual | generated
 
-[lead_lag.pairs.execute.freshness_shadow]
-mode = "off" # off | shadow
-lead_threshold_ms = 0
-lag_threshold_ms = 0
-source = "manual" # manual | generated
-
 [lead_lag.pairs.execute]
 normal_close_retry_aggressive = false
 ```
@@ -159,7 +153,7 @@ normal_close_retry_aggressive = false
 设计约束：
 
 - 新字段缺省必须保持现有 live 行为。
-- taker buffer 的 `mode=shadow` 和 freshness shadow 只记录，不拦截，不改下单价，不改成本模型。
+- taker buffer 的 `mode=shadow` 只记录参考价，不拦截，不改下单价，不改成本模型。
 - `lag_vol_guard` / `drift_guard` 的 shadow attribution 尚未实现，Phase 1 配置层只接受 `off`。
 - Phase 1 配置只接受 `off` / `shadow`；`FeatureMode::kEnforce` 作为后续实现预留，执行路径和 report 统计落地后再开放配置。
 - `entry_fixed_pct` / `normal_close_fixed_pct` 是 ratio，配置层只要求字段可解析为数值。
@@ -206,10 +200,10 @@ Phase 1 不应直接重排真实下单路径。实现上应保留当前 legacy d
 3. `parallel` / degraded pause。
 4. `lag_vol_guard`。
 5. `drift_guard`。
-6. fixed 或 generated freshness threshold。
+6. fixed freshness threshold。
 7. risk / sizing / order text / order submit。
 
-第一阶段 shadow 模式下，reference evaluator 的步骤 3-6 只输出 would-block，不改变现有下单；当前已有的 parallel、degraded pause、`drift_limit` 和 fixed freshness 仍按 legacy 路径真实生效。
+第一阶段 shadow 模式下，reference evaluator 的步骤 3-5 只输出 would-block，不改变现有下单；当前已有的 parallel、degraded pause、`drift_limit` 和 fixed freshness 仍按 legacy 路径真实生效。freshness 对照不再放在同一策略进程中，改由独立 signal-only strategy / replay 进程加载候选 `max_lag_freshness_ms` 配置完成。
 
 ## Taker Buffer 和价格设计
 
@@ -269,9 +263,8 @@ Reference auto freshness 依赖 BBO `LocalTimeMS - ServerTimeMS`，并在 warmup
 迁移建议：
 
 - 保留 fixed freshness 作为生产事实源。
-- 第一阶段新增 generated freshness shadow stats：当前 freshness、generated threshold、would-block。
 - 不允许实时策略在运行中更新 freshness threshold。
-- 若未来 enforce generated freshness，应由启动前生成的配置写入 `max_lead_freshness_ms` / `max_lag_freshness_ms`，并在 report 中输出 `source=generated`。
+- generated freshness 应由启动前生成的配置写入 `max_lead_freshness_ms` / `max_lag_freshness_ms`；对照实验使用另一份 signal-only strategy / replay 运行候选配置，不在生产策略进程内保留 freshness shadow。
 
 ## 启动前配置生成设计
 
@@ -289,8 +282,6 @@ historical or pre-start BookTicker/Depth samples
 - `entry_fixed_pct`
 - `normal_close_fixed_pct`
 - `max_lag_freshness_ms`：由启动前 freshness preflight 的 lag `p50_ms` 按 bucket 规则生成。
-- `freshness_shadow.lead_threshold_ms`
-- `freshness_shadow.lag_threshold_ms`
 - 可选审计元数据：样本窗口、样本数、mean、std、max、percentile、生成时间、输入 run_id。
 - taker buffer 的 percentile 必须由启动前命令显式指定；生成器不应隐式采用 p100，JSON 输出应保留 p50/p95/p99/p100 spread 分布和 p95/p99 候选值。
 
@@ -300,7 +291,7 @@ historical or pre-start BookTicker/Depth samples
 - 不计算 rolling mean/std 用于更新 threshold。
 - 不计算 max spread 用于更新 buffer。
 - 不因为 warmup 未完成改变交易行为。
-- 配置中缺少 generated 参数时，shadow 对应功能 fail fast 或 disabled，不能退回 runtime auto；enforce 对应功能在执行路径落地前由配置层拒绝。
+- 配置中缺少 generated 参数时，taker buffer shadow fail fast 或 disabled，不能退回 runtime auto；enforce 对应功能在执行路径落地前由配置层拒绝。freshness 不再提供策略内 shadow；需要对比候选 freshness 阈值时，启动另一份 signal-only strategy / replay 进程加载候选 `max_lag_freshness_ms` 配置。
 
 ## Attribution 和 Report 设计
 
@@ -325,13 +316,12 @@ historical or pre-start BookTicker/Depth samples
 - `symbol_id`
 - `action`
 - `side`
-- `decision`：`sent`、`blocked`、`shadow_blocked`、`no_trigger`
-- `block_reason`
+- `decision`：当前 taker buffer 诊断固定为 `sent`
 - signal timing：复用现有 `SignalTiming`
 - open metrics：`lead_move`、`lag_move`、`target_space`、`required_edge`
 - current price：`raw_price`、`current_order_price`
 - reference shadow price：`reference_order_price`
-- guard snapshot：parallel、lag vol、drift、freshness fixed/generated
+- guard snapshot：parallel、lag vol、drift、fixed freshness
 - BBO depth snapshot：初期只记录 BBO L1；Depth L1/L2 等 C++ 有稳定 depth 数据路径后再加
 
 Report 侧新增统计：
@@ -392,10 +382,10 @@ BookTicker
   - enforce buffer 且不 exclude 时纳入 required edge 属于后续阶段。
 - Signal / guard：
   - pre-signal drift limit 保持 legacy。
-  - generated freshness shadow 输出 would-block，但不改变 `SignalDecision`。
+- generated freshness shadow 已删除；freshness 候选对照通过独立 signal-only strategy / replay 进程完成。
   - lag vol guard jump/amplitude/cooldown 属于后续阶段。
   - drift guard instant/std/mean 属于后续阶段。
-  - fixed freshness 与 generated freshness shadow 并存。
+- fixed freshness 是策略内唯一 freshness guard。
 - Order price：
   - current tick slippage 行为保持。
   - reference shadow price side-aware rounding。
@@ -424,12 +414,12 @@ git diff --check
 
 ### Phase 1：Shadow attribution
 
-目标：不改变交易行为，只增加 `lead_lag_signal_decision` 和 shadow guard/price 字段。
+目标：不改变交易行为，只增加 `lead_lag_signal_decision` 和 taker buffer reference price 字段。
 
 交付：
 
-- C++ config 新增 optional shadow config 结构，保留 enforce 枚举但配置层暂不开放，默认 legacy。
-- 启动前配置生成流程输出 fixed taker buffer 和 generated freshness 候选值。
+- C++ config 新增 optional taker buffer shadow config，保留 enforce 枚举但配置层暂不开放，默认 legacy。
+- 启动前配置生成流程输出 fixed taker buffer；freshness live 参数由 preflight summary 直接生成 `max_lag_freshness_ms`。
 - Guard state 和 evaluation helper。
 - signal decision log。
 - report parser / schema 文档更新。
@@ -459,7 +449,7 @@ git diff --check
 
 ### Phase 4：Guard enforce
 
-目标：将已经验证有效的 lag vol / drift / generated freshness guard 开启到 live。
+目标：将已经验证有效的 lag vol / drift guard 开启到 live；freshness 继续作为启动前生成的 fixed guard 配置进入 live。
 
 交付：
 
@@ -492,7 +482,7 @@ git diff --check
 Phase 1 完成后，应满足：
 
 - 默认配置下，现有 signal、order price、freshness、risk 和 order lifecycle 行为不变。
-- 打开 shadow 后，report 能回答每个 open signal 是否会被 lag vol / drift / generated freshness 拦截。
-- 对未成交 IOC，report 能按 shadow guard 和 reference shadow price 分组比较 x_in/x_out 可成交性。
+- 打开 taker buffer shadow 后，report 能回答 reference price 与当前 order price 的差异；lag vol / drift guard 对照在对应 shadow attribution 落地后再进入 report。
+- 对未成交 IOC，report 能按 reference shadow price 分组比较 x_in/x_out 可成交性；freshness 候选阈值比较通过独立 signal-only strategy / replay 产物完成。
 - 所有新增字段有 schema 文档，且 `analyze_order_detail.py` / `generate_live_report.py` 能稳定解析。
 - 核心 lead_lag / strategy 测试通过，且 evaluation 边界检查无命中。

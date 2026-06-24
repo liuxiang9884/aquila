@@ -81,13 +81,6 @@ struct TakerBufferConfig {
   GeneratedParamSource source{GeneratedParamSource::kManual};
 };
 
-struct FreshnessShadowConfig {
-  FeatureMode mode{FeatureMode::kOff};
-  std::int32_t lead_threshold_ms{0};
-  std::int32_t lag_threshold_ms{0};
-  GeneratedParamSource source{GeneratedParamSource::kManual};
-};
-
 struct ExecuteConfig {
   double open_notional{0.0};
   double trailing_stop{0.0};
@@ -97,7 +90,6 @@ struct ExecuteConfig {
   std::uint32_t parallel{1};
   bool normal_close_retry_aggressive{false};
   TakerBufferConfig taker_buffer;
-  FreshnessShadowConfig freshness_shadow;
 
   [[nodiscard]] double EntrySpreadLimit() const noexcept;
 };

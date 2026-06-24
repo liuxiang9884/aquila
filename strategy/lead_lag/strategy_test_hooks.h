@@ -61,16 +61,11 @@ struct StrategySignalDecisionLogRecordForTest {
   OrderSide side{OrderSide::kBuy};
   bool reduce_only{false};
   std::string_view decision;
-  std::string_view shadow_block_reason;
   double raw_price{0.0};
   double current_order_price{0.0};
   double reference_order_price{0.0};
   double entry_buffer_pct{0.0};
   double close_buffer_pct{0.0};
-  bool generated_freshness_enabled{false};
-  bool generated_freshness_would_block{false};
-  std::int32_t generated_lead_threshold_ms{0};
-  std::int32_t generated_lag_threshold_ms{0};
 };
 
 struct StrategyOrderIntentLogRecordForTest {

@@ -382,11 +382,9 @@ class Parser {
         return execute;
       }
     }
-    if (const toml::table* freshness_shadow =
-            table["freshness_shadow"].as_table();
-        freshness_shadow != nullptr) {
-      execute.freshness_shadow =
-          ParseFreshnessShadow(*freshness_shadow, prefix + ".freshness_shadow");
+    if (table["freshness_shadow"].as_table() != nullptr) {
+      Fail(prefix + ".freshness_shadow", " is not supported");
+      return execute;
     }
     return execute;
   }
@@ -419,32 +417,6 @@ class Parser {
       return buffer;
     }
     return buffer;
-  }
-
-  [[nodiscard]] FreshnessShadowConfig ParseFreshnessShadow(
-      const toml::table& table, const std::string& prefix) {
-    FreshnessShadowConfig freshness;
-    RejectRuntimeAutoField(table, "auto_warmup", prefix);
-    if (!ok_) {
-      return freshness;
-    }
-
-    freshness.mode = FeatureModeOr(table, "mode", freshness.mode,
-                                   prefix + ".mode", /*allow_enforce=*/false);
-    freshness.source = GeneratedParamSourceOr(table, "source", freshness.source,
-                                              prefix + ".source");
-    if (!ok_ || freshness.mode == FeatureMode::kOff) {
-      return freshness;
-    }
-
-    freshness.lead_threshold_ms = RequiredInt32(table, "lead_threshold_ms",
-                                                prefix + ".lead_threshold_ms");
-    freshness.lag_threshold_ms =
-        RequiredInt32(table, "lag_threshold_ms", prefix + ".lag_threshold_ms");
-    if (!ok_) {
-      return freshness;
-    }
-    return freshness;
   }
 
   [[nodiscard]] RiskConfig ParseRisk(const toml::table& table) {

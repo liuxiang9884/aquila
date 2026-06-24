@@ -176,9 +176,9 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertIn("entry_fixed_pct = 0.0002", text)
         self.assertIn("normal_close_fixed_pct = 0.0003", text)
         self.assertIn('source = "generated"', text)
-        self.assertIn("[lead_lag.pairs.execute.freshness_shadow]", text)
-        self.assertIn("lead_threshold_ms = 5", text)
-        self.assertIn("lag_threshold_ms = 20", text)
+        self.assertNotIn("freshness_shadow", text)
+        self.assertNotIn("lead_threshold_ms", text)
+        self.assertNotIn("lag_threshold_ms", text)
 
 
 if __name__ == "__main__":
