@@ -262,9 +262,9 @@ Reference auto freshness 依赖 BBO `LocalTimeMS - ServerTimeMS`，并在 warmup
 1. 配置生成工具读取指定历史窗口或启动前采样窗口的 lead / lag BBO，并从 `[[lead_lag.pairs]]` 读取每个 symbol 的 lead / lag exchange。
 2. 对每个 pair 维护最新 lead / lag BBO；每次 lead BBO 被 DataReader 处理时，以当前本机 realtime `decision_ns` 模拟 signal decision。
 3. 仅当该 pair 已有 lag snapshot 时记录样本：`lead_freshness = decision_ns - latest_lead.exchange_ns`，`lag_freshness = decision_ns - latest_lag.exchange_ns`。
-4. 对 lead / lag 两侧分别生成固定阈值：`threshold_ms = ceil(mean + 3 * std)`；`0ms` 保留为合法 shadow 结果，表示该侧不触发 freshness threshold。
-5. 输出到候选配置或 patch 文件。
-6. 实时策略加载固定阈值并用当前 signal freshness 做比较。
+4. 对 lag 侧统计 `p50_ms`、`p95_ms` 和 `mean_ms`；live enforce 使用 lag `p50_ms` 生成固定阈值，映射规则为 `p50 <= 20ms -> 20ms`、`20ms < p50 <= 50ms -> 50ms`、`50ms < p50 <= 100ms -> 100ms`、`p50 > 100ms -> 200ms`。`p95_ms` 和 `mean_ms` 只作为审计信息输出。
+5. `scripts/lead_lag/apply_freshness_preflight_summary.py` 读取 preflight `freshness_summary.json` 和输入 pair TOML，只更新 `max_lag_freshness_ms` 并输出 generated TOML / CSV。lead freshness 继续使用输入配置中的固定值，除非后续另行定义 lead 侧生成规则。
+6. 实时策略加载固定阈值并用当前 signal freshness 做比较。preflight 工具 JSON 中的 `threshold_ms = ceil(mean + 3 * std)` 仅保留为诊断字段，不作为当前 live lag freshness 配置来源。
 
 迁移建议：
 
@@ -288,6 +288,7 @@ historical or pre-start BookTicker/Depth samples
 
 - `entry_fixed_pct`
 - `normal_close_fixed_pct`
+- `max_lag_freshness_ms`：由启动前 freshness preflight 的 lag `p50_ms` 按 bucket 规则生成。
 - `freshness_shadow.lead_threshold_ms`
 - `freshness_shadow.lag_threshold_ms`
 - 可选审计元数据：样本窗口、样本数、mean、std、max、percentile、生成时间、输入 run_id。
