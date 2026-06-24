@@ -131,15 +131,16 @@ freshness live 参数由 `lead_lag_freshness_preflight` 加 `scripts/lead_lag/ap
 - `freshness_auto` 不在策略内 warmup 或实时滚动更新。启动前用 `lead_lag_freshness_preflight` 采样 fusion / data reader BBO，再用 `apply_freshness_preflight_summary.py` 把 lag p50 bucket 生成的 `max_lag_freshness_ms` 写入策略配置；策略只按固定配置执行 open freshness guard。
 - `freshness_shadow` 已从策略内删除。需要做 freshness 对照实验时，应另起 signal-only strategy / replay 进程运行候选配置，不在同一实盘策略进程里保留 shadow 逻辑。
 - `taker_buffer` 不作为实时策略的动态 order price 模型。启动前用 `generate_preflight_config_params.py --lag-price-tick` 把 BBO spread pct 转成 `open_slippage` / `close_slippage` ticks，再用 `apply_taker_buffer_slippage.py` 写入策略配置。`execute.taker_buffer` 仅保留为 `lead_lag_signal_decision` 的参考价诊断，不改变真实下单路径。
+- `lag_vol_guard` 第一版只落地 replay-only audit：`lead_lag_replay --lag-vol-guard-audit-output` 在同一份回放行情中维护独立 Go-like guard 状态，只对 open signal 写 `lag_vol_guard_audit.csv` 的 `would_block` / snapshot，不改变 replay signal、synthetic accounting 或 live hot path。
 
 仍需评估或修改：
 
-1. `lag_vol_guard`：Go reference 会根据 lag 侧 jump / amplitude / cooldown 阻断 open；C++ 当前只接受 `mode=off`，未实现运行期 guard。下一步应先做独立 replay / signal-only 对照统计，确认它挡掉的 open signal 是否主要对应坏单，再决定是否迁移到 C++ 热路径。
+1. `lag_vol_guard`：Go reference 会根据 lag 侧 jump / amplitude / cooldown 阻断 open；C++ 实时配置当前仍只接受 `mode=off`，未实现运行期 guard。下一步应使用 replay audit 跑目标历史 / live report，对比被挡 open signal 的 submit、fill、zero-fill cancel 和 PnL，再决定是否设计 live shadow 或 enforce。
 2. `drift_guard` 与现有 `drift_limit`：Go 的 `drift_guard` 使用 instant ratio、ratio std 和 drift mean 窗口；C++ 当前旧逻辑是 `alignment.drift_deviation > trigger.drift_limit`，而且发生在 open signal 前。迁移前要先决定是替代 `drift_limit`，还是只作为离线 / 对照 guard。
 3. `normal_close_retry_aggressive`：Go 在普通 close 多次失败后提高 close buffer；C++ 当前不实现该功能，配置为 true 会拒绝。因为 C++ 只有一个 `close_slippage`，直接迁移会同时影响 normal close 和 stoploss，暂不建议直接加入策略。
 4. normal close 与 stoploss slippage 拆分：如果后续要严格复刻 Go 的 normal close retry 或单独调 close aggressiveness，应新增独立配置，例如 `normal_close_slippage` 和 `stoploss_slippage`，避免把 normal close 参数传导到 stoploss。
-5. Go-like guard 对照工具：建议先做独立 audit CSV，读取同一份 fusion data / signal，输出 `symbol`、`signal_id`、`would_block_reason`、`lag_vol_jump_count`、`lag_vol_amplitude`、`drift_instant`、`ratio_std`、`drift_mean`，再与 `order_detail.csv` / `position.csv` 的成交、cancel 和 PnL 对齐。
-6. 诊断字段和 report 集成：如果 guard 对照实验进入正式流程，应同步登记字段到 `docs/diagnostic_fields.md`，并决定留在单独 audit CSV 还是进入 live report。
+5. `drift_guard` 对照工具：当前 `lag_vol_guard_audit.csv` 预留 `drift_instant`、`ratio_std`、`drift_mean` 和 `drift_guard_outcome` 字段，第一版固定为 `nan` / `not_evaluated`。迁移前应单独定义 drift guard 与现有 `drift_limit` 的执行顺序和对照口径。
+6. 诊断字段和 report 集成：`lag_vol_guard_audit.csv` 字段已登记到 `docs/diagnostic_fields.md`。如果 guard 进入正式 live shadow / enforce，需要重新登记 live log 或 report 字段，并说明与 freshness guard、`drift_limit` 的执行顺序。
 
 ## 回放与输出
 
@@ -161,6 +162,31 @@ freshness live 参数由 `lead_lag_freshness_preflight` 加 `scripts/lead_lag/ap
 ```
 
 signal CSV 由 `strategy/lead_lag/signal_csv_writer.*` 输出，包含触发信号、`raw_price`、reduce_only、lead / lag `exchange_ns`、lead / lag quote、drift、threshold、noise、active group 等诊断字段，主要用于策略研发对账。`lead_lag_replay` 和 live runner 的 signal-only 模式只有在显式传入 `--signals-output` 时才写 per-signal CSV；未配置时只输出 summary。
+
+Go-like `lag_vol_guard` 评估只通过 replay audit 完成，不进入 live 策略热路径。示例：
+
+```bash
+./build/debug/tools/lead_lag_replay \
+  --config config/strategies/lead_lag_ordi_replay.toml \
+  --data-reader-config config/data_readers/lead_lag_ordi_binary_replay.toml \
+  --signals-output /home/liuxiang/tmp/lead_lag_guard_audit/signals.csv \
+  --lag-vol-guard-audit-output /home/liuxiang/tmp/lead_lag_guard_audit/lag_vol_guard_audit.csv
+```
+
+可选参数包括 `--lag-vol-guard-jump-threshold`、`--lag-vol-guard-jump-count`、`--lag-vol-guard-jump-window`、`--lag-vol-guard-amplitude-threshold`、`--lag-vol-guard-amplitude-window` 和 `--lag-vol-guard-cooldown`；duration 支持 `ns`、`us`、`ms`、`s`、`m`、`h`，默认值分别对应 Go reference 第一版口径：jump `0.005` / `3` / `5m`，amplitude `0.025` / `1s`，cooldown `15m`。该 CSV 每行对应一个 replay open signal，字段包括 signal id、lead / lag exchange timestamp、`would_block`、`would_block_reason`、jump / amplitude / cooldown snapshot 和当前 guard 参数；`drift_guard` 字段第一版固定为 `not_evaluated`。
+
+与真实订单 report 对齐时，先生成 `order_detail.csv` / `position.csv`，再汇总：
+
+```bash
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/lead_lag/summarize_guard_audit.py \
+  --guard-audit /home/liuxiang/tmp/lead_lag_guard_audit/lag_vol_guard_audit.csv \
+  --order-detail reports/<run>/order_detail.csv \
+  --position reports/<run>/position.csv \
+  --summary-json /home/liuxiang/tmp/lead_lag_guard_audit/guard_audit_summary.json \
+  --summary-md /home/liuxiang/tmp/lead_lag_guard_audit/guard_audit_summary.md
+```
+
+汇总脚本按 `symbol_id + signal_lag_id + action` 把 audit row 对齐 entry order，再按 `symbol_id + position_id` 汇总 position PnL；未传 `--position` 时仍可输出订单侧 blocked / allowed 对比。
 
 market calculation CSV 是 compile-time 策略诊断能力，默认不编译；开启方式：
 
