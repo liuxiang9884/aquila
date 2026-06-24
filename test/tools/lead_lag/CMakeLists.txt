@@ -77,3 +77,22 @@ add_dependencies(lead_lag_freshness_preflight_cli_test
 
 add_test(NAME lead_lag_freshness_preflight_cli_test
          COMMAND lead_lag_freshness_preflight_cli_test)
+
+add_executable(lead_lag_lag_vol_guard_audit_test
+    lag_vol_guard_audit_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/lead_lag/lag_vol_guard_audit.cpp
+)
+
+target_link_libraries(lead_lag_lag_vol_guard_audit_test
+    PRIVATE
+        aquila_core
+        aquila_strategy
+        fmt::fmt-header-only
+        GTest::gtest_main
+        magic_enum::magic_enum
+        nova
+        quill::quill
+)
+
+add_test(NAME lead_lag_lag_vol_guard_audit_test
+         COMMAND lead_lag_lag_vol_guard_audit_test)
