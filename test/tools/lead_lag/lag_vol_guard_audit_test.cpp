@@ -1,13 +1,19 @@
 #include "tools/lead_lag/lag_vol_guard_audit.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "core/common/types.h"
 #include "core/market_data/types.h"
+#include "nova/utils/log.h"
+#include "strategy/lead_lag/strategy.h"
 
 namespace aquila::tools::leadlag {
 namespace {
@@ -24,6 +30,83 @@ BookTicker Ticker(std::int64_t id, std::int64_t exchange_ns, double bid,
       .bid_volume = 1.0,
       .ask_price = ask,
       .ask_volume = 1.0,
+  };
+}
+
+void EnsureLoggingStarted() {
+  static const bool started = [] {
+    nova::LogConfig config;
+    config.set_console_sink_name("");
+    config.set_file_sink_name((std::filesystem::temp_directory_path() /
+                               "aquila_lag_vol_guard_audit_test.log")
+                                  .string());
+    nova::InitializeLogging(config);
+    return true;
+  }();
+  (void)started;
+}
+
+std::string ReadFile(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
+
+strategy::leadlag::SignalDiagnostics Diagnostics() {
+  return strategy::leadlag::SignalDiagnostics{
+      .event_ns = 5'000'000'000,
+      .role = strategy::leadlag::PairRole::kLead,
+      .lead_raw =
+          strategy::leadlag::QuoteSnapshot{
+              .id = 7001,
+              .event_ns = 5'000'000'000,
+              .exchange_ns = 5'000'000'000,
+              .local_ns = 5'000'001'000,
+              .bid_price = 10.0,
+              .ask_price = 10.1,
+          },
+      .lag =
+          strategy::leadlag::QuoteSnapshot{
+              .id = 8002,
+              .event_ns = 4'999'000'000,
+              .exchange_ns = 4'999'000'000,
+              .local_ns = 4'999'001'000,
+              .bid_price = 9.9,
+              .ask_price = 10.0,
+          },
+  };
+}
+
+strategy::leadlag::SignalDecision OpenLongDecision() {
+  return strategy::leadlag::SignalDecision{
+      .triggered = true,
+      .action = strategy::leadlag::SignalAction::kOpenLong,
+      .intent =
+          strategy::leadlag::OrderIntent{
+              .action = strategy::leadlag::SignalAction::kOpenLong,
+              .exchange = Exchange::kGate,
+              .symbol_id = 4,
+              .side = OrderSide::kBuy,
+              .price = 10.0,
+              .reduce_only = false,
+          },
+  };
+}
+
+strategy::leadlag::SignalDecision CloseLongDecision() {
+  return strategy::leadlag::SignalDecision{
+      .triggered = true,
+      .action = strategy::leadlag::SignalAction::kCloseLong,
+      .intent =
+          strategy::leadlag::OrderIntent{
+              .action = strategy::leadlag::SignalAction::kCloseLong,
+              .exchange = Exchange::kGate,
+              .symbol_id = 4,
+              .side = OrderSide::kSell,
+              .price = 10.0,
+              .reduce_only = true,
+          },
   };
 }
 
@@ -193,6 +276,119 @@ TEST(LeadLagLagVolGuardAuditTest, ParsesDurationTextToNanoseconds) {
   EXPECT_FALSE(ParseLagVolGuardAuditDurationNs("1d", &value, &error));
   EXPECT_NE(error.find("unit must be ns, us, ms, s, m, or h"),
             std::string::npos);
+}
+
+TEST(LeadLagLagVolGuardAuditTest, WriterOutputsHeaderAndOpenSignalRow) {
+  EnsureLoggingStarted();
+  const std::filesystem::path output_path =
+      std::filesystem::temp_directory_path() /
+      "aquila_lag_vol_guard_audit.csv";
+  std::filesystem::remove(output_path);
+
+  LagVolGuardAuditCsvWriter writer;
+  std::string error;
+  ASSERT_TRUE(writer.Open(output_path, &error)) << error;
+  writer.Write(LagVolGuardAuditRow{
+      .open_signal_index = 0,
+      .symbol = "PROVE_USDT",
+      .symbol_id = 4,
+      .action = "kOpenLong",
+      .side = "kBuy",
+      .trigger_exchange_ns = 5'000'000'000,
+      .lead_exchange_ns = 5'000'000'000,
+      .lag_exchange_ns = 4'999'000'000,
+      .signal_lead_id = 7001,
+      .signal_lag_id = 8002,
+      .raw_price = 10.0,
+      .would_block = true,
+      .would_block_reason = "lag-vol-guard-trigger",
+      .lag_vol_jump_count = 3,
+      .lag_vol_amplitude = 0.031,
+      .lag_vol_hot = true,
+      .lag_vol_cooldown_active = false,
+      .lag_vol_cooldown_until_ns = 905'000'000'000ULL,
+      .config = LagVolGuardAuditConfig{},
+      .drift_guard_outcome = "not_evaluated",
+  });
+  writer.Close();
+
+  EXPECT_EQ(ReadFile(output_path),
+            "open_signal_index,symbol,symbol_id,action,side,"
+            "trigger_exchange_ns,lead_exchange_ns,lag_exchange_ns,"
+            "signal_lead_id,signal_lag_id,raw_price,would_block,"
+            "would_block_reason,lag_vol_jump_count,lag_vol_amplitude,"
+            "lag_vol_hot,lag_vol_cooldown_active,lag_vol_cooldown_until_ns,"
+            "jump_threshold,jump_count_threshold,jump_window_ns,"
+            "amplitude_threshold,amplitude_window_ns,cooldown_ns,"
+            "drift_instant,ratio_std,drift_mean,drift_guard_outcome\n"
+            "0,PROVE_USDT,4,kOpenLong,kBuy,5000000000,5000000000,"
+            "4999000000,7001,8002,10,true,lag-vol-guard-trigger,3,"
+            "0.031,true,false,905000000000,0.005,3,300000000000,"
+            "0.025,1000000000,900000000000,nan,nan,nan,"
+            "not_evaluated\n");
+}
+
+TEST(LeadLagLagVolGuardAuditTest, CollectorRoutesOnlyConfiguredLagExchange) {
+  LagVolGuardAuditCollector collector(
+      {LagVolGuardAuditPairConfig{.symbol = "PROVE_USDT",
+                                  .symbol_id = 4,
+                                  .lag_exchange = Exchange::kGate}},
+      LagVolGuardAuditConfig{.jump_threshold = 0.001, .jump_count = 2});
+  collector.OnBookTicker(Ticker(1, 1'000'000'000, 100.0, 100.2));
+  BookTicker binance = Ticker(2, 2'000'000'000, 101.0, 101.2);
+  binance.exchange = Exchange::kBinance;
+  collector.OnBookTicker(binance);
+  collector.OnBookTicker(Ticker(3, 3'000'000'000, 101.0, 101.2));
+  collector.OnBookTicker(Ticker(4, 4'000'000'000, 102.0, 102.2));
+
+  LagVolGuardAuditRow row;
+  ASSERT_TRUE(collector.BuildOpenSignalRow(Ticker(5, 5'000'000'000, 0, 0),
+                                           OpenLongDecision(), Diagnostics(),
+                                           &row));
+
+  EXPECT_EQ(row.symbol, "PROVE_USDT");
+  EXPECT_EQ(row.symbol_id, 4);
+  EXPECT_EQ(row.signal_lag_id, 8002);
+  EXPECT_TRUE(row.would_block);
+  EXPECT_EQ(row.would_block_reason, "lag-vol-guard-trigger");
+}
+
+TEST(LeadLagLagVolGuardAuditTest, CollectorIgnoresNonOpenSignals) {
+  LagVolGuardAuditCollector collector(
+      {LagVolGuardAuditPairConfig{.symbol = "PROVE_USDT",
+                                  .symbol_id = 4,
+                                  .lag_exchange = Exchange::kGate}},
+      LagVolGuardAuditConfig{});
+
+  LagVolGuardAuditRow row;
+  EXPECT_FALSE(collector.BuildOpenSignalRow(Ticker(5, 5'000'000'000, 0, 0),
+                                            CloseLongDecision(), Diagnostics(),
+                                            &row));
+}
+
+TEST(LeadLagLagVolGuardAuditTest, BuildsPairsFromLeadLagConfig) {
+  strategy::leadlag::Config config;
+  config.pairs.push_back(strategy::leadlag::PairConfig{
+      .symbol = "PROVE_USDT",
+      .symbol_id = 4,
+      .lag_exchange = Exchange::kGate,
+  });
+  config.pairs.push_back(strategy::leadlag::PairConfig{
+      .symbol = "ORDI_USDT",
+      .symbol_id = 7,
+      .lag_exchange = Exchange::kBinance,
+  });
+
+  const std::vector<LagVolGuardAuditPairConfig> pairs =
+      BuildLagVolGuardAuditPairs(config);
+
+  ASSERT_EQ(pairs.size(), 2U);
+  EXPECT_EQ(pairs[0].symbol, "PROVE_USDT");
+  EXPECT_EQ(pairs[0].symbol_id, 4);
+  EXPECT_EQ(pairs[0].lag_exchange, Exchange::kGate);
+  EXPECT_EQ(pairs[1].symbol, "ORDI_USDT");
+  EXPECT_EQ(pairs[1].symbol_id, 7);
+  EXPECT_EQ(pairs[1].lag_exchange, Exchange::kBinance);
 }
 
 }  // namespace

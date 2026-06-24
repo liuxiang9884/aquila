@@ -4,11 +4,18 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
+
+#include <fmt/core.h>
+#include <magic_enum/magic_enum.hpp>
 
 #include "strategy/lead_lag/raw_market_state.h"
+#include "strategy/lead_lag/strategy.h"
 
 namespace aquila::tools::leadlag {
 namespace {
@@ -234,6 +241,132 @@ std::string LagVolGuardBlockReasonText(LagVolGuardBlockReason reason) {
       return "lag-vol-guard-trigger";
   }
   return "none";
+}
+
+bool LagVolGuardAuditCsvWriter::Open(const std::filesystem::path& path,
+                                     std::string* error) {
+  try {
+    writer_ = std::make_unique<Writer>(path.string());
+  } catch (const std::exception& ex) {
+    writer_.reset();
+    if (error != nullptr) {
+      *error = fmt::format("failed to open lag vol guard audit '{}': {}",
+                           path.string(), ex.what());
+    }
+    return false;
+  }
+  return true;
+}
+
+void LagVolGuardAuditCsvWriter::Write(
+    const LagVolGuardAuditRow& row) noexcept {
+  if (writer_ == nullptr) {
+    return;
+  }
+  writer_->append_row(
+      row.open_signal_index, row.symbol, row.symbol_id, row.action, row.side,
+      row.trigger_exchange_ns, row.lead_exchange_ns, row.lag_exchange_ns,
+      row.signal_lead_id, row.signal_lag_id, row.raw_price,
+      row.would_block ? "true" : "false", row.would_block_reason,
+      row.lag_vol_jump_count, row.lag_vol_amplitude,
+      row.lag_vol_hot ? "true" : "false",
+      row.lag_vol_cooldown_active ? "true" : "false",
+      row.lag_vol_cooldown_until_ns, row.config.jump_threshold,
+      row.config.jump_count, row.config.jump_window_ns,
+      row.config.amplitude_threshold, row.config.amplitude_window_ns,
+      row.config.cooldown_ns, row.drift_guard_outcome);
+}
+
+void LagVolGuardAuditCsvWriter::Close() {
+  writer_.reset();
+}
+
+LagVolGuardAuditCollector::LagVolGuardAuditCollector(
+    std::vector<LagVolGuardAuditPairConfig> pairs,
+    LagVolGuardAuditConfig config)
+    : config_(config) {
+  pairs_.reserve(pairs.size());
+  for (LagVolGuardAuditPairConfig& pair : pairs) {
+    PairState state;
+    state.pair = std::move(pair);
+    state.state.Init(config_);
+    pairs_.push_back(std::move(state));
+  }
+}
+
+void LagVolGuardAuditCollector::OnBookTicker(const BookTicker& ticker) {
+  PairState* pair = FindPair(ticker.symbol_id);
+  if (pair == nullptr || ticker.exchange != pair->pair.lag_exchange) {
+    return;
+  }
+  pair->state.OnLagBookTicker(ticker);
+}
+
+bool LagVolGuardAuditCollector::BuildOpenSignalRow(
+    const BookTicker& trigger_ticker,
+    const strategy::leadlag::SignalDecision& decision,
+    const strategy::leadlag::SignalDiagnostics& diagnostics,
+    LagVolGuardAuditRow* row) {
+  if (row == nullptr || !decision.triggered || decision.intent.reduce_only ||
+      (decision.action != strategy::leadlag::SignalAction::kOpenLong &&
+       decision.action != strategy::leadlag::SignalAction::kOpenShort)) {
+    return false;
+  }
+
+  PairState* pair = FindPair(decision.intent.symbol_id);
+  if (pair == nullptr) {
+    return false;
+  }
+
+  const LagVolGuardEvaluation eval =
+      pair->state.EvaluateAndAdvanceOpenSignal(diagnostics.event_ns);
+  *row = LagVolGuardAuditRow{
+      .open_signal_index = next_open_signal_index_++,
+      .symbol = pair->pair.symbol,
+      .symbol_id = pair->pair.symbol_id,
+      .action = std::string(magic_enum::enum_name(decision.action)),
+      .side = std::string(magic_enum::enum_name(decision.intent.side)),
+      .trigger_exchange_ns = trigger_ticker.exchange_ns,
+      .lead_exchange_ns = diagnostics.lead_raw.exchange_ns,
+      .lag_exchange_ns = diagnostics.lag.exchange_ns,
+      .signal_lead_id = diagnostics.lead_raw.id,
+      .signal_lag_id = diagnostics.lag.id,
+      .raw_price = decision.intent.price,
+      .would_block = eval.would_block,
+      .would_block_reason = LagVolGuardBlockReasonText(eval.reason),
+      .lag_vol_jump_count = eval.jump_count,
+      .lag_vol_amplitude = eval.amplitude,
+      .lag_vol_hot = eval.hot,
+      .lag_vol_cooldown_active = eval.cooldown_active,
+      .lag_vol_cooldown_until_ns = eval.cooldown_until_ns,
+      .config = config_,
+      .drift_guard_outcome = "not_evaluated",
+  };
+  return true;
+}
+
+LagVolGuardAuditCollector::PairState* LagVolGuardAuditCollector::FindPair(
+    std::int32_t symbol_id) noexcept {
+  for (PairState& pair : pairs_) {
+    if (pair.pair.symbol_id == symbol_id) {
+      return &pair;
+    }
+  }
+  return nullptr;
+}
+
+std::vector<LagVolGuardAuditPairConfig> BuildLagVolGuardAuditPairs(
+    const strategy::leadlag::Config& config) {
+  std::vector<LagVolGuardAuditPairConfig> pairs;
+  pairs.reserve(config.pairs.size());
+  for (const strategy::leadlag::PairConfig& pair : config.pairs) {
+    pairs.push_back(LagVolGuardAuditPairConfig{
+        .symbol = pair.symbol,
+        .symbol_id = pair.symbol_id,
+        .lag_exchange = pair.lag_exchange,
+    });
+  }
+  return pairs;
 }
 
 }  // namespace aquila::tools::leadlag

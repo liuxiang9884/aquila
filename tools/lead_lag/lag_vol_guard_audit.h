@@ -3,10 +3,30 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#include "core/market_data/types.h"
+#include <quill/CsvWriter.h>
+
+#include "core/common/types.h"
+#include "nova/utils/log.h"
+
+namespace aquila {
+
+struct BookTicker;
+
+namespace strategy::leadlag {
+
+struct Config;
+struct SignalDecision;
+struct SignalDiagnostics;
+
+}  // namespace strategy::leadlag
+
+}  // namespace aquila
 
 namespace aquila::tools::leadlag {
 
@@ -76,6 +96,98 @@ class LagVolGuardAuditState {
 
 [[nodiscard]] std::string LagVolGuardBlockReasonText(
     LagVolGuardBlockReason reason);
+
+struct LagVolGuardAuditRow {
+  std::uint64_t open_signal_index{0};
+  std::string symbol;
+  std::int32_t symbol_id{0};
+  std::string action;
+  std::string side;
+  std::int64_t trigger_exchange_ns{0};
+  std::int64_t lead_exchange_ns{0};
+  std::int64_t lag_exchange_ns{0};
+  std::int64_t signal_lead_id{0};
+  std::int64_t signal_lag_id{0};
+  double raw_price{0.0};
+  bool would_block{false};
+  std::string would_block_reason{"none"};
+  std::uint32_t lag_vol_jump_count{0};
+  double lag_vol_amplitude{0.0};
+  bool lag_vol_hot{false};
+  bool lag_vol_cooldown_active{false};
+  std::uint64_t lag_vol_cooldown_until_ns{0};
+  LagVolGuardAuditConfig config;
+  std::string drift_guard_outcome{"not_evaluated"};
+};
+
+struct LagVolGuardAuditPairConfig {
+  std::string symbol;
+  std::int32_t symbol_id{0};
+  Exchange lag_exchange{Exchange::kGate};
+};
+
+struct LagVolGuardAuditCsvSchema {
+  static constexpr char const* header =
+      "open_signal_index,symbol,symbol_id,action,side,trigger_exchange_ns,"
+      "lead_exchange_ns,lag_exchange_ns,signal_lead_id,signal_lag_id,"
+      "raw_price,would_block,would_block_reason,lag_vol_jump_count,"
+      "lag_vol_amplitude,lag_vol_hot,lag_vol_cooldown_active,"
+      "lag_vol_cooldown_until_ns,jump_threshold,jump_count_threshold,"
+      "jump_window_ns,amplitude_threshold,amplitude_window_ns,cooldown_ns,"
+      "drift_instant,ratio_std,drift_mean,drift_guard_outcome";
+  static constexpr char const* format =
+      "{},{},{},{},{},{},{},{},{},{},{:.12g},{},{},{},{:.12g},{},{},{},"
+      "{:.12g},{},{},{:.12g},{},{},nan,nan,nan,{}";
+};
+
+class LagVolGuardAuditCsvWriter {
+ public:
+  using Writer = quill::CsvWriter<LagVolGuardAuditCsvSchema,
+                                  nova::LogManager::NovaFrontendOptions>;
+
+  LagVolGuardAuditCsvWriter() = default;
+  ~LagVolGuardAuditCsvWriter() = default;
+
+  LagVolGuardAuditCsvWriter(const LagVolGuardAuditCsvWriter&) = delete;
+  LagVolGuardAuditCsvWriter& operator=(const LagVolGuardAuditCsvWriter&) =
+      delete;
+
+  [[nodiscard]] bool Open(const std::filesystem::path& path,
+                          std::string* error);
+  void Write(const LagVolGuardAuditRow& row) noexcept;
+  void Close();
+
+ private:
+  std::unique_ptr<Writer> writer_;
+};
+
+class LagVolGuardAuditCollector {
+ public:
+  LagVolGuardAuditCollector(std::vector<LagVolGuardAuditPairConfig> pairs,
+                            LagVolGuardAuditConfig config);
+
+  void OnBookTicker(const BookTicker& ticker);
+  [[nodiscard]] bool BuildOpenSignalRow(
+      const BookTicker& trigger_ticker,
+      const strategy::leadlag::SignalDecision& decision,
+      const strategy::leadlag::SignalDiagnostics& diagnostics,
+      LagVolGuardAuditRow* row);
+
+ private:
+  struct PairState {
+    LagVolGuardAuditPairConfig pair;
+    LagVolGuardAuditState state;
+  };
+
+  [[nodiscard]] PairState* FindPair(std::int32_t symbol_id) noexcept;
+
+  LagVolGuardAuditConfig config_;
+  std::vector<PairState> pairs_;
+  std::uint64_t next_open_signal_index_{0};
+};
+
+[[nodiscard]] std::vector<LagVolGuardAuditPairConfig>
+BuildLagVolGuardAuditPairs(const strategy::leadlag::Config& config);
 
 }  // namespace aquila::tools::leadlag
 
