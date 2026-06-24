@@ -9,6 +9,7 @@ build*
 !.vscode/extensions.json
 .codex/
 .superpowers/
+.worktrees/
 .agents/
 .claude/
 .DS_Store
