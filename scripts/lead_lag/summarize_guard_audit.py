@@ -35,9 +35,20 @@ POSITION_REQUIRED_FIELDS = {
 }
 
 
+class CsvTable:
+    def __init__(self, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
+        self.fieldnames = fieldnames
+        self.rows = rows
+
+
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    return read_csv_table(path).rows
+
+
+def read_csv_table(path: Path) -> CsvTable:
     with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        return CsvTable(reader.fieldnames or [], list(reader))
 
 
 def truthy(text: str) -> bool:
@@ -63,10 +74,8 @@ def ratio_to_json(numerator: int, denominator: int) -> str:
     return decimal_to_json(Decimal(numerator) / Decimal(denominator))
 
 
-def missing_fields(rows: list[dict[str, str]], required: set[str]) -> list[str]:
-    if not rows:
-        return []
-    available = set(rows[0].keys())
+def missing_fields(fieldnames: list[str], required: set[str]) -> list[str]:
+    available = set(fieldnames)
     return sorted(required - available)
 
 
@@ -210,26 +219,32 @@ def build_position_index(
 def summarize_guard_audit(
     guard_audit: Path, order_detail: Path, position: Path | None
 ) -> dict[str, object]:
-    audit_rows = read_csv_rows(guard_audit)
-    order_rows = read_csv_rows(order_detail)
-    position_rows = read_csv_rows(position) if position is not None else []
+    audit_table = read_csv_table(guard_audit)
+    order_table = read_csv_table(order_detail)
+    position_table = read_csv_table(position) if position is not None else None
+    audit_rows = audit_table.rows
+    order_rows = order_table.rows
+    position_rows = position_table.rows if position_table is not None else []
     warnings = []
 
-    guard_missing = missing_fields(audit_rows, GUARD_REQUIRED_FIELDS)
+    guard_missing = missing_fields(audit_table.fieldnames, GUARD_REQUIRED_FIELDS)
     if guard_missing:
         warnings.append(
             "guard_audit missing required fields: " + ", ".join(guard_missing)
         )
-    order_missing = missing_fields(order_rows, ORDER_REQUIRED_FIELDS)
+    order_missing = missing_fields(order_table.fieldnames, ORDER_REQUIRED_FIELDS)
     if order_missing:
         warnings.append(
             "order_detail missing required fields: " + ", ".join(order_missing)
         )
-    position_missing = missing_fields(position_rows, POSITION_REQUIRED_FIELDS)
-    if position_missing:
-        warnings.append(
-            "position missing required fields: " + ", ".join(position_missing)
+    if position_table is not None:
+        position_missing = missing_fields(
+            position_table.fieldnames, POSITION_REQUIRED_FIELDS
         )
+        if position_missing:
+            warnings.append(
+                "position missing required fields: " + ", ".join(position_missing)
+            )
 
     order_index, entry_orders = build_order_index(order_rows)
     position_index = build_position_index(position_rows)

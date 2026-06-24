@@ -247,6 +247,34 @@ class SummarizeGuardAuditTest(unittest.TestCase):
             summary["warnings"],
         )
 
+    def test_header_only_missing_fields_still_warns(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            guard_path = base / "guard.csv"
+            order_path = base / "orders.csv"
+            position_path = base / "positions.csv"
+            write_file(guard_path, "would_block")
+            write_file(order_path, "order_role")
+            write_file(position_path, "status")
+
+            summary = audit.summarize_guard_audit(
+                guard_path, order_path, position_path
+            )
+
+        self.assertEqual(summary["totals"]["open_signal_count"], 0)
+        self.assertIn(
+            "guard_audit missing required fields: action, signal_lag_id, symbol, symbol_id",
+            summary["warnings"],
+        )
+        self.assertIn(
+            "order_detail missing required fields: action, cumulative_filled_quantity, position_id, signal_lag_id, status, symbol_id",
+            summary["warnings"],
+        )
+        self.assertIn(
+            "position missing required fields: gross_pnl, net_pnl, position_id, symbol_id",
+            summary["warnings"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
