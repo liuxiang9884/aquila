@@ -200,6 +200,53 @@ class SummarizeGuardAuditTest(unittest.TestCase):
         self.assertIn("Warnings", markdown)
         self.assertIn("PROVE_USDT", markdown)
 
+    def test_missing_quantity_or_position_key_does_not_pollute_metrics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            guard_path = base / "guard.csv"
+            order_path = base / "orders.csv"
+            position_path = base / "positions.csv"
+            write_file(
+                guard_path,
+                """
+                open_signal_index,symbol,symbol_id,action,side,trigger_exchange_ns,lead_exchange_ns,lag_exchange_ns,signal_lead_id,signal_lag_id,raw_price,would_block,would_block_reason,lag_vol_jump_count,lag_vol_amplitude,lag_vol_hot,lag_vol_cooldown_active,lag_vol_cooldown_until_ns,jump_threshold,jump_count_threshold,jump_window_ns,amplitude_threshold,amplitude_window_ns,cooldown_ns,drift_instant,ratio_std,drift_mean,drift_guard_outcome
+                0,PROVE_USDT,4,kOpenLong,kBuy,100,100,90,5001,6001,10,true,lag-vol-guard-trigger,3,0.031,true,false,900,0.005,3,300000000000,0.025,1000000000,900000000000,nan,nan,nan,not_evaluated
+                """,
+            )
+            write_file(
+                order_path,
+                """
+                local_order_id,symbol,symbol_id,order_role,action,signal_lag_id,status
+                10,PROVE_USDT,4,entry,kOpenLong,6001,kCancelled
+                """,
+            )
+            write_file(
+                position_path,
+                """
+                symbol,symbol_id,status,gross_pnl,net_pnl
+                PROVE_USDT,4,closed,12.0,11.7
+                """,
+            )
+
+            summary = audit.summarize_guard_audit(
+                guard_path, order_path, position_path
+            )
+
+        self.assertEqual(summary["groups"]["blocked"]["order_count"], 1)
+        self.assertEqual(summary["groups"]["blocked"]["cancelled"], 1)
+        self.assertEqual(summary["groups"]["blocked"]["zero_fill_cancelled"], 0)
+        self.assertEqual(summary["groups"]["blocked"]["position_count"], 0)
+        self.assertEqual(summary["groups"]["blocked"]["gross_pnl"], "0")
+        self.assertEqual(summary["groups"]["blocked"]["net_pnl"], "0")
+        self.assertIn(
+            "order_detail missing required fields: cumulative_filled_quantity, position_id",
+            summary["warnings"],
+        )
+        self.assertIn(
+            "position missing required fields: position_id",
+            summary["warnings"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

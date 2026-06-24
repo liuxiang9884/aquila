@@ -26,7 +26,13 @@ ORDER_REQUIRED_FIELDS = {
     "cumulative_filled_quantity",
     "position_id",
 }
-POSITION_REQUIRED_FIELDS = {"symbol_id", "position_id", "status", "gross_pnl", "net_pnl"}
+POSITION_REQUIRED_FIELDS = {
+    "symbol_id",
+    "position_id",
+    "status",
+    "gross_pnl",
+    "net_pnl",
+}
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -134,11 +140,18 @@ def count_order(group: dict[str, object], order: dict[str, str]) -> None:
     group["order_count"] = int(group["order_count"]) + 1
     group["submitted"] = int(group["submitted"]) + 1
     status = order.get("status", "")
-    filled_quantity = decimal_or_zero(order.get("cumulative_filled_quantity"))
+    has_filled_quantity = "cumulative_filled_quantity" in order
+    filled_quantity = (
+        decimal_or_zero(order.get("cumulative_filled_quantity"))
+        if has_filled_quantity
+        else None
+    )
     if status == "kFilled":
         group["filled"] = int(group["filled"]) + 1
     elif status == "kPartiallyCancelled" or (
-        status == "kCancelled" and filled_quantity > 0
+        status == "kCancelled"
+        and filled_quantity is not None
+        and filled_quantity > 0
     ):
         group["partially_filled"] = int(group["partially_filled"]) + 1
     elif status == "kCancelled":
@@ -257,9 +270,14 @@ def summarize_guard_audit(
         matched_order_ids.add(id(order))
         count_order(group, order)
 
+        order_position_key = position_key(order)
+        if "" in order_position_key:
+            continue
         for index, position_row in enumerate(
-            position_index.get(position_key(order), [])
+            position_index.get(order_position_key, [])
         ):
+            if "" in position_key(position_row):
+                continue
             match_key = (*position_key(position_row), index)
             if match_key in matched_position_keys:
                 continue
