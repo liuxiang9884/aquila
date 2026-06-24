@@ -45,7 +45,7 @@ Go reference 的主要新增能力：
 - `signal_decision` attribution：记录 signal sent/blocked、guard snapshot、raw BBO price、effective order price、depth L1/L2 和 stable linkage。
 - order lifecycle 价格语义拆分：`avg_fill_price`、`raw_price`、`limit_price`、`order_price`。
 
-迁移到 C++ 时不照搬 reference 的 runtime auto warmup。`entry_buffer` / `normal_close_buffer` 和 freshness threshold 的自动估计应在 live 启动前由配置生成流程完成；实时策略只加载固定参数并做判断。
+迁移到 C++ 时不照搬 reference 的 runtime auto warmup。`entry_buffer` / `normal_close_buffer` 和 freshness threshold 的自动估计应在 live 启动前由配置生成流程完成；实时策略只加载固定参数并做判断。freshness threshold 的生成口径必须贴近 C++ 策略 guard 使用的 `signal_decision_ns - *_exchange_ns`，不能只统计单条 BBO 自身的 `local_ns - exchange_ns` 到达延迟。
 
 ## 方案取舍
 
@@ -257,13 +257,14 @@ rounded_order_price = side-aware round(effective_price)
 - 只对 open 生效
 - freshness = `signal_decision_ns - *_exchange_ns`
 
-Reference auto freshness 依赖 BBO `LocalTimeMS - ServerTimeMS`，并在 warmup 结束后 freeze `mean + 3 * std`。C++ 迁移不在实时策略中做这个 warmup，而是在启动前生成配置时完成：
+Reference auto freshness 依赖 BBO `LocalTimeMS - ServerTimeMS`，并在 warmup 结束后 freeze `mean + 3 * std`。C++ 迁移不在实时策略中做这个 warmup，而是在启动前生成配置时完成；生成工具按策略触发视角采样，而不是按每条 BBO 自身到达延迟采样：
 
-1. 配置生成工具读取指定历史窗口或启动前采样窗口的 lead / lag BBO。
-2. 对每个 exchange 计算 `local_ms - exchange_ms` 的样本分布。
-3. 生成固定阈值：`threshold_ms = ceil(mean + 3 * std)`；`0ms` 保留为合法 shadow 结果，表示该侧不触发 freshness threshold。
-4. 输出到候选配置或 patch 文件。
-5. 实时策略加载固定阈值并用当前 signal freshness 做比较。
+1. 配置生成工具读取指定历史窗口或启动前采样窗口的 lead / lag BBO，并从 `[[lead_lag.pairs]]` 读取每个 symbol 的 lead / lag exchange。
+2. 对每个 pair 维护最新 lead / lag BBO；每次 lead BBO 被 DataReader 处理时，以当前本机 realtime `decision_ns` 模拟 signal decision。
+3. 仅当该 pair 已有 lag snapshot 时记录样本：`lead_freshness = decision_ns - latest_lead.exchange_ns`，`lag_freshness = decision_ns - latest_lag.exchange_ns`。
+4. 对 lead / lag 两侧分别生成固定阈值：`threshold_ms = ceil(mean + 3 * std)`；`0ms` 保留为合法 shadow 结果，表示该侧不触发 freshness threshold。
+5. 输出到候选配置或 patch 文件。
+6. 实时策略加载固定阈值并用当前 signal freshness 做比较。
 
 迁移建议：
 

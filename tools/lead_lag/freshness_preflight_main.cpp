@@ -82,15 +82,13 @@ void PrepareRealtimePreflightConfig(config::DataReaderConfig* data_reader) {
 [[nodiscard]] bool MaybeWriteLeadLagConfig(
     const CliOptions& options,
     const std::vector<preflight::FreshnessGroupSummary>& summaries) {
-  if (options.lead_lag_config_in.empty() &&
-      options.lead_lag_config_out.empty()) {
+  if (options.lead_lag_config_out.empty()) {
     return true;
   }
-  if (options.lead_lag_config_in.empty() ||
-      options.lead_lag_config_out.empty()) {
+  if (options.lead_lag_config_in.empty()) {
     fmt::print(stderr,
-               "config_error=--lead-lag-config-in and --lead-lag-config-out "
-               "must be set together\n");
+               "config_error=--lead-lag-config-in is required when "
+               "--lead-lag-config-out is set\n");
     return false;
   }
 
@@ -142,10 +140,27 @@ void PrepareRealtimePreflightConfig(config::DataReaderConfig* data_reader) {
     const std::uint64_t drain_budget =
         EffectiveDrainBudget(options, data_reader_config);
 
+    if (options.lead_lag_config_in.empty()) {
+      fmt::print(stderr,
+                 "config_error=--lead-lag-config-in is required for "
+                 "lead/lag freshness sampling\n");
+      return 1;
+    }
+    const toml::table lead_lag_config =
+        toml::parse_file(options.lead_lag_config_in.string());
+    std::string pair_config_error;
+    std::optional<std::vector<preflight::FreshnessPairConfig>> pair_configs =
+        preflight::BuildFreshnessPairConfigsFromLeadLagConfig(
+            lead_lag_config, &pair_config_error);
+    if (!pair_configs.has_value()) {
+      fmt::print(stderr, "config_error={}\n", pair_config_error);
+      return 1;
+    }
+
     using Reader = market_data::RealtimeDataReader<
         market_data::RealtimeDataReaderDiagnostics>;
     Reader reader(std::move(data_reader_config));
-    preflight::FreshnessPreflightCollector collector;
+    preflight::FreshnessPreflightCollector collector(std::move(*pair_configs));
 
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
@@ -214,7 +229,7 @@ int main(int argc, char** argv) {
                  "data reader TOML path for lead/lag fusion canonical SHM")
       ->required();
   app.add_option("--lead-lag-config-in", options.lead_lag_config_in,
-                 "input lead_lag strategy TOML to copy and update");
+                 "input lead_lag strategy TOML containing pair definitions");
   app.add_option("--lead-lag-config-out", options.lead_lag_config_out,
                  "output lead_lag strategy TOML with generated freshness");
   app.add_option(

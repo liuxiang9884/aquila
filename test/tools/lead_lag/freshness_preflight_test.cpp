@@ -52,28 +52,121 @@ TEST(LeadLagFreshnessPreflightTest,
   EXPECT_DOUBLE_EQ(stats->max_ms, 3.0);
 }
 
-TEST(LeadLagFreshnessPreflightTest, GroupsSamplesBySymbolAndExchange) {
-  preflight::FreshnessPreflightCollector collector;
-  collector.OnBookTicker(
-      Ticker(aquila::Exchange::kBinance, 4, 1'000'000'000, 1'000'000));
-  collector.OnBookTicker(
-      Ticker(aquila::Exchange::kGate, 4, 2'000'000'000, 2'000'000));
-  collector.OnBookTicker(
-      Ticker(aquila::Exchange::kGate, 7, 3'000'000'000, 3'000'000));
+TEST(LeadLagFreshnessPreflightTest,
+     ExtractsLeadLagPairsFromStrategyConfigToml) {
+  const toml::table config = toml::parse(R"toml(
+[lead_lag]
+name = "lead_lag"
+version = "1.0"
+
+[[lead_lag.pairs]]
+symbol = "SKYAI_USDT"
+symbol_id = 4
+lead_exchange = "binance"
+lag_exchange = "gate"
+
+[[lead_lag.pairs]]
+symbol = "PROVE_USDT"
+symbol_id = 7
+lead_exchange = "kBinance"
+lag_exchange = "gate_io"
+)toml");
+
+  std::string error;
+  const std::optional<std::vector<preflight::FreshnessPairConfig>> pairs =
+      preflight::BuildFreshnessPairConfigsFromLeadLagConfig(config, &error);
+
+  ASSERT_TRUE(pairs.has_value()) << error;
+  ASSERT_EQ(pairs->size(), 2U);
+  EXPECT_EQ((*pairs)[0].symbol_id, 4);
+  EXPECT_EQ((*pairs)[0].lead_exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ((*pairs)[0].lag_exchange, aquila::Exchange::kGate);
+  EXPECT_EQ((*pairs)[1].symbol_id, 7);
+  EXPECT_EQ((*pairs)[1].lead_exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ((*pairs)[1].lag_exchange, aquila::Exchange::kGate);
+}
+
+TEST(LeadLagFreshnessPreflightTest, IgnoresUnconfiguredSymbols) {
+  preflight::FreshnessPreflightCollector collector({
+      preflight::FreshnessPairConfig{
+          .symbol_id = 4,
+          .lead_exchange = aquila::Exchange::kBinance,
+          .lag_exchange = aquila::Exchange::kGate,
+      },
+  });
+
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kGate, 7, 100'000'000, 100'000), 100'100'000);
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kBinance, 7, 110'000'000, 1'000'000),
+      112'000'000);
+
+  EXPECT_TRUE(collector.BuildSummaries().empty());
+}
+
+TEST(LeadLagFreshnessPreflightTest,
+     SamplesLeadAndLagFreshnessAtLeadDecisionTime) {
+  preflight::FreshnessPreflightCollector collector({
+      preflight::FreshnessPairConfig{
+          .symbol_id = 4,
+          .lead_exchange = aquila::Exchange::kBinance,
+          .lag_exchange = aquila::Exchange::kGate,
+      },
+  });
+
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kGate, 4, 100'000'000, 100'000), 100'100'000);
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kBinance, 4, 110'000'000, 1'000'000),
+      112'000'000);
 
   const std::vector<preflight::FreshnessGroupSummary> summaries =
       collector.BuildSummaries();
 
-  ASSERT_EQ(summaries.size(), 3U);
-  const preflight::FreshnessLatencyStats* binance_symbol4 =
+  ASSERT_EQ(summaries.size(), 2U);
+  const preflight::FreshnessLatencyStats* lead_stats =
       preflight::FindStats(summaries, 4, aquila::Exchange::kBinance);
-  ASSERT_NE(binance_symbol4, nullptr);
-  EXPECT_EQ(binance_symbol4->threshold_ms, 1);
+  ASSERT_NE(lead_stats, nullptr);
+  EXPECT_EQ(lead_stats->sample_count, 1U);
+  EXPECT_DOUBLE_EQ(lead_stats->mean_ms, 2.0);
 
-  const preflight::FreshnessLatencyStats* gate_symbol4 =
+  const preflight::FreshnessLatencyStats* lag_stats =
       preflight::FindStats(summaries, 4, aquila::Exchange::kGate);
-  ASSERT_NE(gate_symbol4, nullptr);
-  EXPECT_EQ(gate_symbol4->threshold_ms, 2);
+  ASSERT_NE(lag_stats, nullptr);
+  EXPECT_EQ(lag_stats->sample_count, 1U);
+  EXPECT_DOUBLE_EQ(lag_stats->mean_ms, 12.0);
+}
+
+TEST(LeadLagFreshnessPreflightTest, SkipsLeadSampleUntilLagSnapshotExists) {
+  preflight::FreshnessPreflightCollector collector({
+      preflight::FreshnessPairConfig{
+          .symbol_id = 4,
+          .lead_exchange = aquila::Exchange::kBinance,
+          .lag_exchange = aquila::Exchange::kGate,
+      },
+  });
+
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kBinance, 4, 110'000'000, 1'000'000),
+      112'000'000);
+  EXPECT_TRUE(collector.BuildSummaries().empty());
+
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kGate, 4, 111'000'000, 100'000), 111'100'000);
+  EXPECT_TRUE(collector.BuildSummaries().empty());
+
+  collector.OnBookTickerAt(
+      Ticker(aquila::Exchange::kBinance, 4, 120'000'000, 1'000'000),
+      123'000'000);
+
+  const std::vector<preflight::FreshnessGroupSummary> summaries =
+      collector.BuildSummaries();
+  ASSERT_EQ(summaries.size(), 2U);
+  const preflight::FreshnessLatencyStats* lag_stats =
+      preflight::FindStats(summaries, 4, aquila::Exchange::kGate);
+  ASSERT_NE(lag_stats, nullptr);
+  EXPECT_EQ(lag_stats->sample_count, 1U);
+  EXPECT_DOUBLE_EQ(lag_stats->mean_ms, 12.0);
 }
 
 TEST(LeadLagFreshnessPreflightTest, AppliesThresholdsToLeadLagConfigToml) {

@@ -26,8 +26,15 @@ struct FreshnessLatencyStats {
   std::int32_t threshold_ms{0};
 };
 
+struct FreshnessPairConfig {
+  std::int32_t symbol_id{0};
+  Exchange lead_exchange{Exchange::kBinance};
+  Exchange lag_exchange{Exchange::kGate};
+};
+
 class FreshnessLatencyAccumulator {
  public:
+  void ObserveLatencyNs(std::int64_t latency_ns);
   void Observe(const BookTicker& ticker);
 
   [[nodiscard]] std::optional<FreshnessLatencyStats> Build() const;
@@ -50,19 +57,31 @@ struct FreshnessGroupSummary {
 
 class FreshnessPreflightCollector {
  public:
+  explicit FreshnessPreflightCollector(std::vector<FreshnessPairConfig> pairs);
+
   void OnBookTicker(const BookTicker& ticker);
+  void OnBookTickerAt(const BookTicker& ticker, std::int64_t decision_ns);
 
   [[nodiscard]] std::vector<FreshnessGroupSummary> BuildSummaries() const;
 
  private:
   struct Group {
     std::int32_t symbol_id{0};
-    Exchange exchange{Exchange::kBinance};
-    FreshnessLatencyAccumulator accumulator;
+    Exchange lead_exchange{Exchange::kBinance};
+    Exchange lag_exchange{Exchange::kGate};
+    BookTicker latest_lead{};
+    BookTicker latest_lag{};
+    bool has_lag{false};
+    FreshnessLatencyAccumulator lead_accumulator;
+    FreshnessLatencyAccumulator lag_accumulator;
   };
 
   std::vector<Group> groups_;
 };
+
+[[nodiscard]] std::optional<std::vector<FreshnessPairConfig>>
+BuildFreshnessPairConfigsFromLeadLagConfig(const toml::table& config,
+                                           std::string* error);
 
 [[nodiscard]] const FreshnessLatencyStats* FindStats(
     const std::vector<FreshnessGroupSummary>& summaries, std::int32_t symbol_id,

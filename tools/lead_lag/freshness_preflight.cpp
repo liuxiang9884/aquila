@@ -13,6 +13,8 @@
 #include <fmt/format.h>
 #include <magic_enum/magic_enum.hpp>
 
+#include "core/websocket/runtime_clock.h"
+
 namespace aquila::tools::leadlag {
 namespace {
 
@@ -107,8 +109,7 @@ void AppendStatsJson(std::ostringstream& out,
 
 }  // namespace
 
-void FreshnessLatencyAccumulator::Observe(const BookTicker& ticker) {
-  const std::int64_t latency_ns = ticker.local_ns - ticker.exchange_ns;
+void FreshnessLatencyAccumulator::ObserveLatencyNs(std::int64_t latency_ns) {
   if (latency_ns < 0) {
     ++negative_latency_count_;
     return;
@@ -158,34 +159,74 @@ std::optional<FreshnessLatencyStats> FreshnessLatencyAccumulator::Build()
   };
 }
 
+void FreshnessLatencyAccumulator::Observe(const BookTicker& ticker) {
+  ObserveLatencyNs(ticker.local_ns - ticker.exchange_ns);
+}
+
+FreshnessPreflightCollector::FreshnessPreflightCollector(
+    std::vector<FreshnessPairConfig> pairs) {
+  groups_.reserve(pairs.size());
+  for (const FreshnessPairConfig& pair : pairs) {
+    groups_.push_back(Group{
+        .symbol_id = pair.symbol_id,
+        .lead_exchange = pair.lead_exchange,
+        .lag_exchange = pair.lag_exchange,
+    });
+  }
+}
+
 void FreshnessPreflightCollector::OnBookTicker(const BookTicker& ticker) {
+  OnBookTickerAt(ticker,
+                 static_cast<std::int64_t>(websocket::RealtimeClockNowNs()));
+}
+
+void FreshnessPreflightCollector::OnBookTickerAt(const BookTicker& ticker,
+                                                 std::int64_t decision_ns) {
   for (Group& group : groups_) {
-    if (group.symbol_id == ticker.symbol_id &&
-        group.exchange == ticker.exchange) {
-      group.accumulator.Observe(ticker);
+    if (group.symbol_id != ticker.symbol_id) {
+      continue;
+    }
+    if (ticker.exchange == group.lead_exchange) {
+      group.latest_lead = ticker;
+      if (group.has_lag) {
+        group.lead_accumulator.ObserveLatencyNs(decision_ns -
+                                                ticker.exchange_ns);
+        group.lag_accumulator.ObserveLatencyNs(decision_ns -
+                                               group.latest_lag.exchange_ns);
+      }
+      return;
+    }
+    if (ticker.exchange == group.lag_exchange) {
+      group.latest_lag = ticker;
+      group.has_lag = true;
       return;
     }
   }
-  Group group{.symbol_id = ticker.symbol_id, .exchange = ticker.exchange};
-  group.accumulator.Observe(ticker);
-  groups_.push_back(std::move(group));
 }
 
 std::vector<FreshnessGroupSummary> FreshnessPreflightCollector::BuildSummaries()
     const {
   std::vector<FreshnessGroupSummary> summaries;
-  summaries.reserve(groups_.size());
+  summaries.reserve(groups_.size() * 2);
   for (const Group& group : groups_) {
-    const std::optional<FreshnessLatencyStats> stats =
-        group.accumulator.Build();
-    if (!stats.has_value()) {
-      continue;
+    if (const std::optional<FreshnessLatencyStats> stats =
+            group.lead_accumulator.Build();
+        stats.has_value()) {
+      summaries.push_back(FreshnessGroupSummary{
+          .symbol_id = group.symbol_id,
+          .exchange = group.lead_exchange,
+          .stats = *stats,
+      });
     }
-    summaries.push_back(FreshnessGroupSummary{
-        .symbol_id = group.symbol_id,
-        .exchange = group.exchange,
-        .stats = *stats,
-    });
+    if (const std::optional<FreshnessLatencyStats> stats =
+            group.lag_accumulator.Build();
+        stats.has_value()) {
+      summaries.push_back(FreshnessGroupSummary{
+          .symbol_id = group.symbol_id,
+          .exchange = group.lag_exchange,
+          .stats = *stats,
+      });
+    }
   }
   std::sort(
       summaries.begin(), summaries.end(),
@@ -197,6 +238,60 @@ std::vector<FreshnessGroupSummary> FreshnessPreflightCollector::BuildSummaries()
                static_cast<std::uint8_t>(rhs.exchange);
       });
   return summaries;
+}
+
+std::optional<std::vector<FreshnessPairConfig>>
+BuildFreshnessPairConfigsFromLeadLagConfig(const toml::table& config,
+                                           std::string* error) {
+  const toml::table* lead_lag = config["lead_lag"].as_table();
+  if (lead_lag == nullptr) {
+    SetError(error, "missing [lead_lag] table");
+    return std::nullopt;
+  }
+  const toml::array* pairs = (*lead_lag)["pairs"].as_array();
+  if (pairs == nullptr) {
+    SetError(error, "missing [[lead_lag.pairs]] array");
+    return std::nullopt;
+  }
+
+  std::vector<FreshnessPairConfig> result;
+  result.reserve(pairs->size());
+  for (const toml::node& pair_node : *pairs) {
+    const toml::table* pair = pair_node.as_table();
+    if (pair == nullptr) {
+      SetError(error, "lead_lag.pairs contains a non-table entry");
+      return std::nullopt;
+    }
+    const std::optional<std::int64_t> symbol_id_value =
+        (*pair)["symbol_id"].value<std::int64_t>();
+    const std::optional<std::string> symbol_value =
+        (*pair)["symbol"].value<std::string>();
+    const std::optional<std::string> lead_exchange_value =
+        (*pair)["lead_exchange"].value<std::string>();
+    const std::optional<std::string> lag_exchange_value =
+        (*pair)["lag_exchange"].value<std::string>();
+    if (!symbol_id_value.has_value() || !lead_exchange_value.has_value() ||
+        !lag_exchange_value.has_value()) {
+      SetError(error,
+               "each lead_lag pair must define symbol_id, lead_exchange, and "
+               "lag_exchange");
+      return std::nullopt;
+    }
+
+    const auto lead_exchange = ParseExchange(*lead_exchange_value);
+    const auto lag_exchange = ParseExchange(*lag_exchange_value);
+    if (!lead_exchange.has_value() || !lag_exchange.has_value()) {
+      SetError(error, fmt::format("unsupported exchange in pair symbol={}",
+                                  symbol_value.value_or("-")));
+      return std::nullopt;
+    }
+    result.push_back(FreshnessPairConfig{
+        .symbol_id = static_cast<std::int32_t>(*symbol_id_value),
+        .lead_exchange = *lead_exchange,
+        .lag_exchange = *lag_exchange,
+    });
+  }
+  return result;
 }
 
 const FreshnessLatencyStats* FindStats(
@@ -282,7 +377,8 @@ bool ApplyFreshnessThresholdsToLeadLagConfig(
 std::string RenderSummaryJson(
     const std::vector<FreshnessGroupSummary>& summaries) {
   std::ostringstream out;
-  out << "{\n  \"method\":\"local_ns_minus_exchange_ns_mean_plus_3std\","
+  out << "{\n  \"method\":\"lead_decision_ns_minus_exchange_ns_mean_plus_"
+         "3std\","
       << "\n  \"groups\":[";
   for (std::size_t i = 0; i < summaries.size(); ++i) {
     const FreshnessGroupSummary& summary = summaries[i];
