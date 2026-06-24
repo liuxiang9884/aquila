@@ -190,6 +190,57 @@ def _lag_bbo_spread_summary(records: np.ndarray, percentile: float) -> dict:
     }
 
 
+def _lag_bbo_slippage_summary(
+    records: np.ndarray,
+    *,
+    entry_buffer_pct: float,
+    normal_close_buffer_pct: float,
+    price_tick: float,
+) -> dict:
+    if not math.isfinite(price_tick) or price_tick <= 0.0:
+        raise ValueError("lag_price_tick must be positive")
+    bid = records["bid_price"].astype(np.float64)
+    ask = records["ask_price"].astype(np.float64)
+    latency_ns = records["local_ns"].astype(np.int64) - records["exchange_ns"].astype(
+        np.int64
+    )
+    mask = (
+        (latency_ns >= 0)
+        & (bid > 0.0)
+        & (ask > 0.0)
+        & (ask >= bid)
+    )
+    if not np.any(mask):
+        raise ValueError("no valid lag BBO price samples")
+    max_bid_price = float(np.max(bid[mask]))
+    max_ask_price = float(np.max(ask[mask]))
+
+    def ticks_for(price: float, buffer_pct: float) -> int:
+        if buffer_pct <= 0.0:
+            return 0
+        return int(math.ceil(price * buffer_pct / price_tick))
+
+    open_long_slippage = ticks_for(max_ask_price, entry_buffer_pct)
+    open_short_slippage = ticks_for(max_bid_price, entry_buffer_pct)
+    close_long_slippage = ticks_for(max_bid_price, normal_close_buffer_pct)
+    close_short_slippage = ticks_for(max_ask_price, normal_close_buffer_pct)
+    return {
+        "price_tick": float(price_tick),
+        "reference_price_method": "lag_bbo_max",
+        "reference_price": max(max_bid_price, max_ask_price),
+        "max_bid_price": max_bid_price,
+        "max_ask_price": max_ask_price,
+        "entry_buffer_pct": float(entry_buffer_pct),
+        "normal_close_buffer_pct": float(normal_close_buffer_pct),
+        "open_long_slippage": open_long_slippage,
+        "open_short_slippage": open_short_slippage,
+        "close_long_slippage": close_long_slippage,
+        "close_short_slippage": close_short_slippage,
+        "open_slippage": max(open_long_slippage, open_short_slippage),
+        "close_slippage": max(close_long_slippage, close_short_slippage),
+    }
+
+
 def generate_params(
     *,
     input_paths: Sequence[Path],
@@ -197,6 +248,7 @@ def generate_params(
     lead_exchange: str,
     lag_exchange: str,
     buffer_percentile: float,
+    lag_price_tick: float | None = None,
     chunk_records: int = 1_000_000,
 ) -> dict:
     if not input_paths:
@@ -221,7 +273,7 @@ def generate_params(
     lag_freshness = _freshness_summary(lag_records, "lag")
     spread = _lag_bbo_spread_summary(lag_records, buffer_percentile)
 
-    return {
+    params = {
         "symbol_id": int(symbol_id),
         "lead_exchange": _normalize_exchange(lead_exchange),
         "lag_exchange": _normalize_exchange(lag_exchange),
@@ -250,11 +302,31 @@ def generate_params(
             "lag_std_ms": lag_freshness["std_ms"],
         },
     }
+    if lag_price_tick is not None:
+        params["slippage"] = _lag_bbo_slippage_summary(
+            lag_records,
+            entry_buffer_pct=spread["value"],
+            normal_close_buffer_pct=spread["value"],
+            price_tick=lag_price_tick,
+        )
+    return params
 
 
 def render_toml_patch(params: dict) -> str:
     taker = params["taker_buffer"]
-    return (
+    blocks = []
+    if "slippage" in params:
+        slippage = params["slippage"]
+        blocks.append(
+            textwrap.dedent(
+                f"""
+                [lead_lag.pairs.execute]
+                open_slippage = {slippage["open_slippage"]}
+                close_slippage = {slippage["close_slippage"]}
+                """
+            ).strip()
+        )
+    blocks.append(
         textwrap.dedent(
             f"""
             [lead_lag.pairs.execute.taker_buffer]
@@ -265,6 +337,9 @@ def render_toml_patch(params: dict) -> str:
             source = "generated"
             """
         ).strip()
+    )
+    return (
+        "\n\n".join(blocks)
         + "\n"
     )
 
@@ -287,6 +362,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lead-exchange", required=True)
     parser.add_argument("--lag-exchange", required=True)
     parser.add_argument("--buffer-percentile", required=True, type=float)
+    parser.add_argument(
+        "--lag-price-tick",
+        type=float,
+        help="Lag exchange price tick; when set, generate open/close slippage ticks",
+    )
     parser.add_argument("--chunk-records", type=int, default=1_000_000)
     parser.add_argument("--json-output", type=Path)
     parser.add_argument("--toml-output", type=Path)
@@ -301,6 +381,7 @@ def main() -> int:
         lead_exchange=args.lead_exchange,
         lag_exchange=args.lag_exchange,
         buffer_percentile=args.buffer_percentile,
+        lag_price_tick=args.lag_price_tick,
         chunk_records=args.chunk_records,
     )
     json_text = json.dumps(params, indent=2, sort_keys=True)

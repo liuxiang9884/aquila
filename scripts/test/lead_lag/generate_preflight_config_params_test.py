@@ -91,6 +91,32 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertAlmostEqual(
             result["taker_buffer"]["spread_percentiles"]["p100"], expected_spread
         )
+        self.assertNotIn("slippage", result)
+
+    def test_generates_slippage_ticks_from_buffer_pct_and_price_tick(self):
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            binary_path = Path(temp_dir) / "book_ticker.bin"
+            self.make_records().tofile(binary_path)
+
+            result = self.module.generate_params(
+                input_paths=[binary_path],
+                symbol_id=4,
+                lead_exchange="binance",
+                lag_exchange="gate",
+                buffer_percentile=100.0,
+                lag_price_tick=0.05,
+            )
+
+        expected_spread = (100.4 - 100.0) / ((100.4 + 100.0) / 2.0)
+        self.assertAlmostEqual(result["slippage"]["entry_buffer_pct"], expected_spread)
+        self.assertAlmostEqual(
+            result["slippage"]["normal_close_buffer_pct"], expected_spread
+        )
+        self.assertEqual(result["slippage"]["price_tick"], 0.05)
+        self.assertEqual(result["slippage"]["reference_price_method"], "lag_bbo_max")
+        self.assertEqual(result["slippage"]["reference_price"], 100.4)
+        self.assertEqual(result["slippage"]["open_slippage"], 9)
+        self.assertEqual(result["slippage"]["close_slippage"], 9)
 
     def test_cli_requires_explicit_buffer_percentile(self):
         argv = [
@@ -159,6 +185,10 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
 
     def test_renders_generated_toml_patch(self):
         params = {
+            "slippage": {
+                "open_slippage": 5,
+                "close_slippage": 6,
+            },
             "taker_buffer": {
                 "entry_fixed_pct": 0.0002,
                 "normal_close_fixed_pct": 0.0003,
@@ -171,6 +201,9 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
 
         text = self.module.render_toml_patch(params)
 
+        self.assertIn("[lead_lag.pairs.execute]", text)
+        self.assertIn("open_slippage = 5", text)
+        self.assertIn("close_slippage = 6", text)
         self.assertIn("[lead_lag.pairs.execute.taker_buffer]", text)
         self.assertIn('mode = "shadow"', text)
         self.assertIn("entry_fixed_pct = 0.0002", text)
