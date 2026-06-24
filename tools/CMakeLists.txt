@@ -116,6 +116,7 @@ target_link_libraries(gate_demo_strategy
 
 add_executable(lead_lag_replay
     lead_lag/replay.cpp
+    lead_lag/lag_vol_guard_audit.cpp
 )
 
 target_link_libraries(lead_lag_replay
