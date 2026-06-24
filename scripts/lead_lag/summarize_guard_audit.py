@@ -10,13 +10,21 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable
 
-GUARD_REQUIRED_FIELDS = {"symbol_id", "signal_lag_id", "action", "would_block"}
+GUARD_REQUIRED_FIELDS = {
+    "symbol",
+    "symbol_id",
+    "signal_lag_id",
+    "action",
+    "would_block",
+}
 ORDER_REQUIRED_FIELDS = {
     "symbol_id",
     "signal_lag_id",
     "action",
     "order_role",
     "status",
+    "cumulative_filled_quantity",
+    "position_id",
 }
 POSITION_REQUIRED_FIELDS = {"symbol_id", "position_id", "status", "gross_pnl", "net_pnl"}
 

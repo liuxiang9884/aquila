@@ -127,8 +127,8 @@ class SummarizeGuardAuditTest(unittest.TestCase):
             write_file(
                 guard_path,
                 """
-                would_block
-                true
+                would_block,symbol_id
+                true,4
                 """,
             )
             write_file(
@@ -144,11 +144,11 @@ class SummarizeGuardAuditTest(unittest.TestCase):
         self.assertEqual(summary["totals"]["unmatched_audit_rows"], 1)
         self.assertEqual(summary["totals"]["unmatched_order_rows"], 1)
         self.assertIn(
-            "guard_audit missing required fields: action, signal_lag_id, symbol_id",
+            "guard_audit missing required fields: action, signal_lag_id, symbol",
             summary["warnings"],
         )
         self.assertIn(
-            "order_detail missing required fields: action, signal_lag_id, status, symbol_id",
+            "order_detail missing required fields: action, cumulative_filled_quantity, position_id, signal_lag_id, status, symbol_id",
             summary["warnings"],
         )
 
