@@ -77,3 +77,31 @@ add_dependencies(lead_lag_freshness_preflight_cli_test
 
 add_test(NAME lead_lag_freshness_preflight_cli_test
          COMMAND lead_lag_freshness_preflight_cli_test)
+
+add_executable(lead_lag_lag_vol_guard_audit_test
+    lag_vol_guard_audit_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/lead_lag/lag_vol_guard_audit.cpp
+)
+
+target_link_libraries(lead_lag_lag_vol_guard_audit_test
+    PRIVATE
+        aquila_core
+        aquila_strategy
+        fmt::fmt-header-only
+        GTest::gtest_main
+        magic_enum::magic_enum
+        nova
+        quill::quill
+)
+
+add_test(NAME lead_lag_lag_vol_guard_audit_test
+         COMMAND lead_lag_lag_vol_guard_audit_test)
+
+add_test(NAME lead_lag_replay_lag_vol_guard_invalid_cli_test
+         COMMAND ${CMAKE_COMMAND}
+                 -DLEAD_LAG_REPLAY=$<TARGET_FILE:lead_lag_replay>
+                 -DLEAD_LAG_CONFIG=${PROJECT_SOURCE_DIR}/config/strategies/lead_lag_ordi_replay.toml
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_replay_lag_vol_guard_invalid_cli_test.cmake)
+set_tests_properties(lead_lag_replay_lag_vol_guard_invalid_cli_test
+                     PROPERTIES
+                         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
