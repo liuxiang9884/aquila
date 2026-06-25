@@ -131,11 +131,11 @@ freshness live 参数由 `lead_lag_freshness_preflight` 加 `scripts/lead_lag/ap
 - `freshness_auto` 不在策略内 warmup 或实时滚动更新。启动前用 `lead_lag_freshness_preflight` 采样 fusion / data reader BBO，再用 `apply_freshness_preflight_summary.py` 把 lag p50 bucket 生成的 `max_lag_freshness_ms` 写入策略配置；策略只按固定配置执行 open freshness guard。
 - `freshness_shadow` 已从策略内删除。需要做 freshness 对照实验时，应另起 signal-only strategy / replay 进程运行候选配置，不在同一实盘策略进程里保留 shadow 逻辑。
 - `taker_buffer` 不作为实时策略的动态 order price 模型。启动前用 `generate_preflight_config_params.py --lag-price-tick` 把 BBO spread pct 转成 `open_slippage` / `close_slippage` ticks，再用 `apply_taker_buffer_slippage.py` 写入策略配置。`execute.taker_buffer` 仅保留为 `lead_lag_signal_decision` 的参考价诊断，不改变真实下单路径。
-- `lag_vol_guard` 第一版只落地 replay-only audit：`lead_lag_replay --lag-vol-guard-audit-output` 在同一份回放行情中维护独立 Go-like guard 状态，只对 open signal 写 `lag_vol_guard_audit.csv` 的 `would_block` / snapshot，不改变 replay signal、synthetic accounting 或 live hot path。
+- `lag_vol_guard` 第一版只落地 replay-only audit：`lead_lag_replay --lag-vol-guard-audit-output` 在同一份回放行情中维护独立 Go-like guard 状态，只对 open signal 写 `lag_vol_guard_audit.csv` 的 `would_block` / snapshot，不改变 replay signal、synthetic accounting 或 live hot path。2026-06-25 ORDI_USDT 三天 Tardis replay sweep 显示 `cooldown=3m/5m/10m/15m` 均降低 signal-only PnL，当前不推进 live shadow 或 enforce。
 
 仍需评估或修改：
 
-1. `lag_vol_guard`：Go reference 会根据 lag 侧 jump / amplitude / cooldown 阻断 open；C++ 实时配置当前仍只接受 `mode=off`，未实现运行期 guard。下一步应使用 replay audit 跑目标历史 / live report，对比被挡 open signal 的 submit、fill、zero-fill cancel 和 PnL，再决定是否设计 live shadow 或 enforce。
+1. `lag_vol_guard`：Go reference 会根据 lag 侧 jump / amplitude / cooldown 阻断 open；C++ 实时配置当前仍只接受 `mode=off`，未实现运行期 guard。当前 ORDI_USDT sweep 结论为负，除非更宽 symbol / 更长区间给出反证，否则不要设计 live shadow 或 enforce。
 2. `drift_guard` 与现有 `drift_limit`：Go 的 `drift_guard` 使用 instant ratio、ratio std 和 drift mean 窗口；C++ 当前旧逻辑是 `alignment.drift_deviation > trigger.drift_limit`，而且发生在 open signal 前。迁移前要先决定是替代 `drift_limit`，还是只作为离线 / 对照 guard。
 3. `normal_close_retry_aggressive`：Go 在普通 close 多次失败后提高 close buffer；C++ 当前不实现该功能，配置为 true 会拒绝。因为 C++ 只有一个 `close_slippage`，直接迁移会同时影响 normal close 和 stoploss，暂不建议直接加入策略。
 4. normal close 与 stoploss slippage 拆分：如果后续要严格复刻 Go 的 normal close retry 或单独调 close aggressiveness，应新增独立配置，例如 `normal_close_slippage` 和 `stoploss_slippage`，避免把 normal close 参数传导到 stoploss。
@@ -187,6 +187,8 @@ Go-like `lag_vol_guard` 评估只通过 replay audit 完成，不进入 live 策
 ```
 
 汇总脚本按 `symbol_id + signal_lag_id + action` 把 audit row 对齐 entry order，再按 `symbol_id + position_id` 汇总 position PnL；未传 `--position` 时仍可输出订单侧 blocked / allowed 对比。
+
+当前 ORDI_USDT 三天 Tardis replay 结论：`cooldown=3m/5m/10m/15m` 都降低 signal-only net PnL；默认 `15m` 过滤 `62/1175` 个 open signal，主要由 cooldown 扩大，且被过滤 trade 在 0 tick 和 5 ticks 滑点口径下整体仍为正贡献。因此 `lag_vol_guard` 当前只作为离线评估工具保留，不进入真实订单 hot path。
 
 market calculation CSV 是 compile-time 策略诊断能力，默认不编译；开启方式：
 
