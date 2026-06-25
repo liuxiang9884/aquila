@@ -14,8 +14,9 @@ EXECUTE_HEADER_RE = re.compile(r"^\s*\[lead_lag\.pairs\.execute\]\s*$")
 SYMBOL_RE = re.compile(r'^(\s*symbol\s*=\s*)"([^"]+)"(\s*)$')
 SYMBOL_ID_RE = re.compile(r"^(\s*symbol_id\s*=\s*)(\d+)(\s*)$")
 EXCHANGE_RE = re.compile(r'^(\s*(lead|lag)_exchange\s*=\s*)"([^"]+)"(\s*)$')
-OPEN_SLIPPAGE_RE = re.compile(r"^(\s*open_slippage\s*=\s*)\d+(\s*)$")
-CLOSE_SLIPPAGE_RE = re.compile(r"^(\s*close_slippage\s*=\s*)\d+(\s*)$")
+OPEN_SLIPPAGE_RE = re.compile(r"^(\s*open_slippage_ticks\s*=\s*)[\d_]+(.*)$")
+CLOSE_SLIPPAGE_RE = re.compile(r"^(\s*close_slippage_ticks\s*=\s*)[\d_]+(.*)$")
+DEPRECATED_SLIPPAGE_RE = re.compile(r"^\s*(open_slippage|close_slippage)\s*=")
 
 
 @dataclass(frozen=True)
@@ -41,12 +42,12 @@ class PairSlippageRow:
     reference_price: float
     max_bid_price: float
     max_ask_price: float
-    open_long_slippage: int
-    open_short_slippage: int
-    close_long_slippage: int
-    close_short_slippage: int
-    generated_open_slippage: int
-    generated_close_slippage: int
+    open_long_slippage_ticks: int
+    open_short_slippage_ticks: int
+    close_long_slippage_ticks: int
+    close_short_slippage_ticks: int
+    generated_open_slippage_ticks: int
+    generated_close_slippage_ticks: int
 
 
 @dataclass(frozen=True)
@@ -169,12 +170,22 @@ def build_rows(
                 reference_price=float(slippage["reference_price"]),
                 max_bid_price=float(slippage["max_bid_price"]),
                 max_ask_price=float(slippage["max_ask_price"]),
-                open_long_slippage=int(slippage["open_long_slippage"]),
-                open_short_slippage=int(slippage["open_short_slippage"]),
-                close_long_slippage=int(slippage["close_long_slippage"]),
-                close_short_slippage=int(slippage["close_short_slippage"]),
-                generated_open_slippage=int(slippage["open_slippage"]),
-                generated_close_slippage=int(slippage["close_slippage"]),
+                open_long_slippage_ticks=int(
+                    slippage["open_long_slippage_ticks"]
+                ),
+                open_short_slippage_ticks=int(
+                    slippage["open_short_slippage_ticks"]
+                ),
+                close_long_slippage_ticks=int(
+                    slippage["close_long_slippage_ticks"]
+                ),
+                close_short_slippage_ticks=int(
+                    slippage["close_short_slippage_ticks"]
+                ),
+                generated_open_slippage_ticks=int(slippage["open_slippage_ticks"]),
+                generated_close_slippage_ticks=int(
+                    slippage["close_slippage_ticks"]
+                ),
             )
         )
     return rows
@@ -190,18 +201,23 @@ def render_updated_config(
         close_replaced = False
         for index in range(pair.block_start, pair.block_end):
             line = updated[index]
+            if DEPRECATED_SLIPPAGE_RE.match(line):
+                raise ValueError(
+                    "deprecated slippage field in input config; use "
+                    "open_slippage_ticks and close_slippage_ticks"
+                )
             if EXECUTE_HEADER_RE.match(line):
                 execute_start = index
                 continue
             if OPEN_SLIPPAGE_RE.match(line):
                 updated[index] = OPEN_SLIPPAGE_RE.sub(
-                    rf"\g<1>{row.generated_open_slippage}\g<2>", line
+                    rf"\g<1>{row.generated_open_slippage_ticks}\g<2>", line
                 )
                 open_replaced = True
                 continue
             if CLOSE_SLIPPAGE_RE.match(line):
                 updated[index] = CLOSE_SLIPPAGE_RE.sub(
-                    rf"\g<1>{row.generated_close_slippage}\g<2>", line
+                    rf"\g<1>{row.generated_close_slippage_ticks}\g<2>", line
                 )
                 close_replaced = True
         if execute_start is None:
@@ -209,9 +225,13 @@ def render_updated_config(
         insert_at = execute_start + 1
         missing_lines = []
         if not open_replaced:
-            missing_lines.append(f"open_slippage = {row.generated_open_slippage}\n")
+            missing_lines.append(
+                f"open_slippage_ticks = {row.generated_open_slippage_ticks}\n"
+            )
         if not close_replaced:
-            missing_lines.append(f"close_slippage = {row.generated_close_slippage}\n")
+            missing_lines.append(
+                f"close_slippage_ticks = {row.generated_close_slippage_ticks}\n"
+            )
         if missing_lines:
             updated[insert_at:insert_at] = missing_lines
     return "".join(updated)
@@ -230,12 +250,12 @@ def write_csv(path: Path, rows: Sequence[PairSlippageRow]) -> None:
         "reference_price",
         "max_bid_price",
         "max_ask_price",
-        "open_long_slippage",
-        "open_short_slippage",
-        "close_long_slippage",
-        "close_short_slippage",
-        "generated_open_slippage",
-        "generated_close_slippage",
+        "open_long_slippage_ticks",
+        "open_short_slippage_ticks",
+        "close_long_slippage_ticks",
+        "close_short_slippage_ticks",
+        "generated_open_slippage_ticks",
+        "generated_close_slippage_ticks",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -254,12 +274,16 @@ def write_csv(path: Path, rows: Sequence[PairSlippageRow]) -> None:
                     "reference_price": f"{row.reference_price:.12g}",
                     "max_bid_price": f"{row.max_bid_price:.12g}",
                     "max_ask_price": f"{row.max_ask_price:.12g}",
-                    "open_long_slippage": row.open_long_slippage,
-                    "open_short_slippage": row.open_short_slippage,
-                    "close_long_slippage": row.close_long_slippage,
-                    "close_short_slippage": row.close_short_slippage,
-                    "generated_open_slippage": row.generated_open_slippage,
-                    "generated_close_slippage": row.generated_close_slippage,
+                    "open_long_slippage_ticks": row.open_long_slippage_ticks,
+                    "open_short_slippage_ticks": row.open_short_slippage_ticks,
+                    "close_long_slippage_ticks": row.close_long_slippage_ticks,
+                    "close_short_slippage_ticks": row.close_short_slippage_ticks,
+                    "generated_open_slippage_ticks": (
+                        row.generated_open_slippage_ticks
+                    ),
+                    "generated_close_slippage_ticks": (
+                        row.generated_close_slippage_ticks
+                    ),
                 }
             )
 

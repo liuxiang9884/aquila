@@ -25,7 +25,9 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(textwrap.dedent(text).strip() + "\n", encoding="utf-8")
 
 
-def write_params(path: Path, symbol_id: int, open_slippage: int, close_slippage: int):
+def write_params(
+    path: Path, symbol_id: int, open_slippage_ticks: int, close_slippage_ticks: int
+):
     path.write_text(
         json.dumps(
             {
@@ -42,12 +44,12 @@ def write_params(path: Path, symbol_id: int, open_slippage: int, close_slippage:
                     "reference_price": 100.4,
                     "max_bid_price": 100.0,
                     "max_ask_price": 100.4,
-                    "open_long_slippage": open_slippage - 1,
-                    "open_short_slippage": open_slippage,
-                    "close_long_slippage": close_slippage - 1,
-                    "close_short_slippage": close_slippage,
-                    "open_slippage": open_slippage,
-                    "close_slippage": close_slippage,
+                    "open_long_slippage_ticks": open_slippage_ticks - 1,
+                    "open_short_slippage_ticks": open_slippage_ticks,
+                    "close_long_slippage_ticks": close_slippage_ticks - 1,
+                    "close_short_slippage_ticks": close_slippage_ticks,
+                    "open_slippage_ticks": open_slippage_ticks,
+                    "close_slippage_ticks": close_slippage_ticks,
                 },
             }
         ),
@@ -75,8 +77,11 @@ class ApplyTakerBufferSlippageTest(unittest.TestCase):
 
             [lead_lag.pairs.execute]
             open_notional = 100.0
-            open_slippage = 3
-            close_slippage = 3
+            open_slippage_ticks = 3 # generated at startup
+            close_slippage_ticks = 3 # generated at startup
+            stoploss_slippage_ticks = 11
+            close_retry_times = 1
+            close_retry_slippage_step_ticks = 2
             parallel = 1
 
             [[lead_lag.pairs]]
@@ -87,8 +92,11 @@ class ApplyTakerBufferSlippageTest(unittest.TestCase):
 
             [lead_lag.pairs.execute]
             open_notional = 100.0
-            open_slippage = 2
-            close_slippage = 2
+            open_slippage_ticks = 2
+            close_slippage_ticks = 2
+            stoploss_slippage_ticks = 12
+            close_retry_times = 0
+            close_retry_slippage_step_ticks = 0
             parallel = 1
             """,
         )
@@ -101,8 +109,18 @@ class ApplyTakerBufferSlippageTest(unittest.TestCase):
             config_in = base / "strategy.toml"
             config_out = base / "strategy.generated.toml"
             csv_out = base / "slippage.csv"
-            write_params(params_4, symbol_id=4, open_slippage=5, close_slippage=6)
-            write_params(params_7, symbol_id=7, open_slippage=7, close_slippage=8)
+            write_params(
+                params_4,
+                symbol_id=4,
+                open_slippage_ticks=5,
+                close_slippage_ticks=6,
+            )
+            write_params(
+                params_7,
+                symbol_id=7,
+                open_slippage_ticks=7,
+                close_slippage_ticks=8,
+            )
             self.write_config(config_in)
 
             result = self.module.apply_slippage_to_config(
@@ -118,17 +136,20 @@ class ApplyTakerBufferSlippageTest(unittest.TestCase):
 
         self.assertEqual(result.updated_pair_count, 2)
         self.assertIn("symbol = \"PROVE_USDT\"", output)
-        self.assertIn("open_slippage = 5", output)
-        self.assertIn("close_slippage = 6", output)
+        self.assertIn("open_slippage_ticks = 5 # generated at startup", output)
+        self.assertIn("close_slippage_ticks = 6 # generated at startup", output)
+        self.assertIn("stoploss_slippage_ticks = 11", output)
+        self.assertIn("close_retry_times = 1", output)
         self.assertIn("symbol = \"TEST_USDT\"", output)
-        self.assertIn("open_slippage = 7", output)
-        self.assertIn("close_slippage = 8", output)
+        self.assertIn("open_slippage_ticks = 7", output)
+        self.assertIn("close_slippage_ticks = 8", output)
+        self.assertIn("stoploss_slippage_ticks = 12", output)
         self.assertEqual(rows[0]["symbol"], "PROVE_USDT")
-        self.assertEqual(rows[0]["generated_open_slippage"], "5")
-        self.assertEqual(rows[0]["generated_close_slippage"], "6")
+        self.assertEqual(rows[0]["generated_open_slippage_ticks"], "5")
+        self.assertEqual(rows[0]["generated_close_slippage_ticks"], "6")
         self.assertEqual(rows[1]["symbol"], "TEST_USDT")
-        self.assertEqual(rows[1]["generated_open_slippage"], "7")
-        self.assertEqual(rows[1]["generated_close_slippage"], "8")
+        self.assertEqual(rows[1]["generated_open_slippage_ticks"], "7")
+        self.assertEqual(rows[1]["generated_close_slippage_ticks"], "8")
 
 
 if __name__ == "__main__":

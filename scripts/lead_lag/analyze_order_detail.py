@@ -428,8 +428,15 @@ def load_pair_config(path: Path | None) -> dict[str, dict[str, str]]:
         execute = pair.get("execute", {})
         result[symbol] = {
             "fee_rate_config": str(pair.get("lag_taker_fee", "")),
-            "open_slippage": str(execute.get("open_slippage", "")),
-            "close_slippage": str(execute.get("close_slippage", "")),
+            "open_slippage_ticks": str(execute.get("open_slippage_ticks", "")),
+            "close_slippage_ticks": str(execute.get("close_slippage_ticks", "")),
+            "stoploss_slippage_ticks": str(
+                execute.get("stoploss_slippage_ticks", "")
+            ),
+            "close_retry_times": str(execute.get("close_retry_times", "")),
+            "close_retry_slippage_step_ticks": str(
+                execute.get("close_retry_slippage_step_ticks", "")
+            ),
         }
     return result
 

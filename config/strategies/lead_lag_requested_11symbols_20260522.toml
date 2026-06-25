@@ -36,8 +36,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -81,8 +84,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -126,8 +132,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -171,8 +180,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -216,8 +228,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -261,8 +276,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -306,8 +324,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -351,8 +372,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -396,8 +420,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -441,8 +468,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -486,8 +516,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]
@@ -531,8 +564,11 @@ precision = 0.000001
 open_notional = 100.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
-open_slippage = 2
-close_slippage = 2
+open_slippage_ticks = 2
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 2
+close_retry_times = 0
+close_retry_slippage_step_ticks = 0
 parallel = 1
 
 [lead_lag.pairs.bbo_record]

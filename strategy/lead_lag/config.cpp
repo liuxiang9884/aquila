@@ -346,23 +346,47 @@ class Parser {
         RequiredDouble(table, "trailing_stop", prefix + ".trailing_stop");
     execute.max_entry_spread =
         RequiredDouble(table, "max_entry_spread", prefix + ".max_entry_spread");
-    execute.open_slippage =
-        UInt32Or(table, "open_slippage", execute.open_slippage,
-                 prefix + ".open_slippage");
-    execute.close_slippage =
-        UInt32Or(table, "close_slippage", execute.close_slippage,
-                 prefix + ".close_slippage");
+    if (table.contains("open_slippage")) {
+      Fail(prefix + ".open_slippage",
+           " is no longer supported; use open_slippage_ticks");
+      return execute;
+    }
+    if (table.contains("close_slippage")) {
+      Fail(prefix + ".close_slippage",
+           " is no longer supported; use close_slippage_ticks and "
+           "stoploss_slippage_ticks");
+      return execute;
+    }
+    if (table.contains("normal_close_retry_aggressive")) {
+      Fail(prefix + ".normal_close_retry_aggressive",
+           " is no longer supported; use close_retry_times and "
+           "close_retry_slippage_step_ticks");
+      return execute;
+    }
+    execute.open_slippage_ticks =
+        UInt32Or(table, "open_slippage_ticks", execute.open_slippage_ticks,
+                 prefix + ".open_slippage_ticks");
+    execute.close_slippage_ticks =
+        UInt32Or(table, "close_slippage_ticks", execute.close_slippage_ticks,
+                 prefix + ".close_slippage_ticks");
+    execute.stoploss_slippage_ticks = UInt32Or(
+        table, "stoploss_slippage_ticks", execute.stoploss_slippage_ticks,
+        prefix + ".stoploss_slippage_ticks");
+    execute.close_retry_times =
+        UInt32Or(table, "close_retry_times", execute.close_retry_times,
+                 prefix + ".close_retry_times");
+    execute.close_retry_slippage_step_ticks =
+        UInt32Or(table, "close_retry_slippage_step_ticks",
+                 execute.close_retry_slippage_step_ticks,
+                 prefix + ".close_retry_slippage_step_ticks");
     execute.parallel = RequiredUInt32(table, "parallel", prefix + ".parallel");
-    execute.normal_close_retry_aggressive =
-        BoolOr(table, "normal_close_retry_aggressive",
-               execute.normal_close_retry_aggressive,
-               prefix + ".normal_close_retry_aggressive");
     if (!ok_) {
       return execute;
     }
-    if (execute.normal_close_retry_aggressive) {
-      Fail(prefix + ".normal_close_retry_aggressive",
-           " is not implemented yet");
+    if (execute.close_retry_times > 0 &&
+        execute.close_retry_slippage_step_ticks == 0) {
+      Fail(prefix + ".close_retry_slippage_step_ticks",
+           " must be positive when close_retry_times is positive");
       return execute;
     }
     if (execute.open_notional <= 0.0) {

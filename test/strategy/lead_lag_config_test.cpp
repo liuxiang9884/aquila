@@ -176,8 +176,11 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_DOUBLE_EQ(pair.execute.trailing_stop, 0.01);
   EXPECT_DOUBLE_EQ(pair.execute.max_entry_spread, 0.01);
   EXPECT_DOUBLE_EQ(pair.execute.EntrySpreadLimit(), 0.01);
-  EXPECT_EQ(pair.execute.open_slippage, 0U);
-  EXPECT_EQ(pair.execute.close_slippage, 0U);
+  EXPECT_EQ(pair.execute.open_slippage_ticks, 0U);
+  EXPECT_EQ(pair.execute.close_slippage_ticks, 0U);
+  EXPECT_EQ(pair.execute.stoploss_slippage_ticks, 0U);
+  EXPECT_EQ(pair.execute.close_retry_times, 0U);
+  EXPECT_EQ(pair.execute.close_retry_slippage_step_ticks, 0U);
   EXPECT_EQ(pair.execute.parallel, 1U);
 
   EXPECT_EQ(pair.bbo_record.window_ns, 1'000'000'000ULL);
@@ -274,9 +277,11 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.quantity_step, 1.0);
   EXPECT_EQ(config.pairs[11].lag_instrument.quantity_decimal_places, 0);
   for (std::size_t index = 0; index < config.pairs.size(); ++index) {
-    EXPECT_EQ(config.pairs[index].execute.open_slippage, 2U)
+    EXPECT_EQ(config.pairs[index].execute.open_slippage_ticks, 2U)
         << config.pairs[index].symbol;
-    EXPECT_EQ(config.pairs[index].execute.close_slippage, 2U)
+    EXPECT_EQ(config.pairs[index].execute.close_slippage_ticks, 2U)
+        << config.pairs[index].symbol;
+    EXPECT_EQ(config.pairs[index].execute.stoploss_slippage_ticks, 2U)
         << config.pairs[index].symbol;
   }
 }
@@ -301,8 +306,9 @@ TEST(LeadLagConfigTest, LoadsCheckedInLabUsdtLiveRiskLimits) {
   EXPECT_DOUBLE_EQ(pair.execute.open_notional, 200.0);
   EXPECT_DOUBLE_EQ(pair.execute.trailing_stop, 0.01);
   EXPECT_DOUBLE_EQ(pair.execute.max_entry_spread, 0.01);
-  EXPECT_EQ(pair.execute.open_slippage, 500U);
-  EXPECT_EQ(pair.execute.close_slippage, 500U);
+  EXPECT_EQ(pair.execute.open_slippage_ticks, 500U);
+  EXPECT_EQ(pair.execute.close_slippage_ticks, 500U);
+  EXPECT_EQ(pair.execute.stoploss_slippage_ticks, 500U);
   EXPECT_EQ(pair.execute.parallel, 1U);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.price_tick, 1e-05);
   EXPECT_EQ(pair.lag_instrument.price_decimal_places, 5);
@@ -409,16 +415,22 @@ TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {
 TEST(LeadLagConfigTest, ParsesExecutionSlippageTicks) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result =
-      ParseConfigToml(MinimalConfigTomlWithRisk("", R"toml(open_slippage = 7
-close_slippage = 11
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", R"toml(open_slippage_ticks = 7
+close_slippage_ticks = 11
+stoploss_slippage_ticks = 17
+close_retry_times = 2
+close_retry_slippage_step_ticks = 3
 )toml"),
-                      catalog);
+      catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   ASSERT_EQ(result.value.pairs.size(), 1U);
-  EXPECT_EQ(result.value.pairs[0].execute.open_slippage, 7U);
-  EXPECT_EQ(result.value.pairs[0].execute.close_slippage, 11U);
+  EXPECT_EQ(result.value.pairs[0].execute.open_slippage_ticks, 7U);
+  EXPECT_EQ(result.value.pairs[0].execute.close_slippage_ticks, 11U);
+  EXPECT_EQ(result.value.pairs[0].execute.stoploss_slippage_ticks, 17U);
+  EXPECT_EQ(result.value.pairs[0].execute.close_retry_times, 2U);
+  EXPECT_EQ(result.value.pairs[0].execute.close_retry_slippage_step_ticks, 3U);
 }
 
 TEST(LeadLagConfigTest, ReferenceMigrationDefaultsStayDisabled) {
@@ -434,7 +446,8 @@ TEST(LeadLagConfigTest, ReferenceMigrationDefaultsStayDisabled) {
   EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kOff);
   EXPECT_EQ(pair.execute.taker_buffer.source,
             leadlag::GeneratedParamSource::kManual);
-  EXPECT_FALSE(pair.execute.normal_close_retry_aggressive);
+  EXPECT_EQ(pair.execute.close_retry_times, 0U);
+  EXPECT_EQ(pair.execute.close_retry_slippage_step_ticks, 0U);
 }
 
 TEST(LeadLagConfigTest, ParsesReferenceMigrationTakerBufferShadowConfig) {
@@ -457,7 +470,7 @@ source = "generated"
 
   EXPECT_EQ(pair.trigger.lag_vol_guard.mode, leadlag::FeatureMode::kOff);
   EXPECT_EQ(pair.trigger.drift_guard.mode, leadlag::FeatureMode::kOff);
-  EXPECT_FALSE(pair.execute.normal_close_retry_aggressive);
+  EXPECT_EQ(pair.execute.close_retry_times, 0U);
   EXPECT_EQ(pair.execute.taker_buffer.mode, leadlag::FeatureMode::kShadow);
   EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.entry_fixed_pct, 0.0002);
   EXPECT_DOUBLE_EQ(pair.execute.taker_buffer.normal_close_fixed_pct, 0.0003);
@@ -484,7 +497,7 @@ source = "generated"
   EXPECT_NE(result.error.find("auto_warmup"), std::string::npos);
 }
 
-TEST(LeadLagConfigTest, RejectsUnimplementedNormalCloseRetryAggressive) {
+TEST(LeadLagConfigTest, RejectsDeprecatedNormalCloseRetryAggressive) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = ParseConfigToml(
@@ -494,6 +507,19 @@ TEST(LeadLagConfigTest, RejectsUnimplementedNormalCloseRetryAggressive) {
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("normal_close_retry_aggressive"),
             std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsDeprecatedExecutionSlippageFields) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result =
+      ParseConfigToml(MinimalConfigTomlWithRisk("", R"toml(open_slippage = 7
+close_slippage = 11
+)toml"),
+                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("open_slippage"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, ParsesTakerBufferPctWithoutRangeValidation) {
@@ -644,14 +670,15 @@ TEST(LeadLagConfigTest, RejectsNegativeLagQuantityDecimalPlaces) {
 TEST(LeadLagConfigTest, RejectsNegativeExecutionSlippageTicks) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result =
-      ParseConfigToml(MinimalConfigTomlWithRisk("", R"toml(open_slippage = -1
-close_slippage = 0
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", R"toml(open_slippage_ticks = -1
+close_slippage_ticks = 0
+stoploss_slippage_ticks = 0
 )toml"),
-                      catalog);
+      catalog);
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("open_slippage"), std::string::npos);
+  EXPECT_NE(result.error.find("open_slippage_ticks"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsDuplicateSymbolId) {

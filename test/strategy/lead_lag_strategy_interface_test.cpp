@@ -590,8 +590,11 @@ leadlag::Config SignalOnlyConfig() {
               .open_notional = 1000.0,
               .trailing_stop = 0.05,
               .max_entry_spread = 0.02,
-              .open_slippage = 0,
-              .close_slippage = 0,
+              .open_slippage_ticks = 0,
+              .close_slippage_ticks = 0,
+              .stoploss_slippage_ticks = 0,
+              .close_retry_times = 0,
+              .close_retry_slippage_step_ticks = 0,
               .parallel = 1,
           },
       .bbo_record =
@@ -614,11 +617,31 @@ leadlag::Config SignalOnlyConfig() {
   return config;
 }
 
-leadlag::Config SignalOnlyConfigWithSlippage(std::uint32_t open_slippage,
-                                             std::uint32_t close_slippage) {
+leadlag::Config SignalOnlyConfigWithSlippage(
+    std::uint32_t open_slippage_ticks, std::uint32_t close_slippage_ticks,
+    std::uint32_t stoploss_slippage_ticks) {
   leadlag::Config config = SignalOnlyConfig();
-  config.pairs[0].execute.open_slippage = open_slippage;
-  config.pairs[0].execute.close_slippage = close_slippage;
+  config.pairs[0].execute.open_slippage_ticks = open_slippage_ticks;
+  config.pairs[0].execute.close_slippage_ticks = close_slippage_ticks;
+  config.pairs[0].execute.stoploss_slippage_ticks = stoploss_slippage_ticks;
+  return config;
+}
+
+leadlag::Config SignalOnlyConfigWithSlippage(
+    std::uint32_t open_slippage_ticks, std::uint32_t close_slippage_ticks) {
+  return SignalOnlyConfigWithSlippage(open_slippage_ticks, close_slippage_ticks,
+                                      close_slippage_ticks);
+}
+
+leadlag::Config SignalOnlyConfigWithCloseRetry(
+    std::uint32_t close_slippage_ticks, std::uint32_t stoploss_slippage_ticks,
+    std::uint32_t close_retry_times,
+    std::uint32_t close_retry_slippage_step_ticks) {
+  leadlag::Config config = SignalOnlyConfigWithSlippage(
+      /*open_slippage_ticks=*/0, close_slippage_ticks, stoploss_slippage_ticks);
+  config.pairs[0].execute.close_retry_times = close_retry_times;
+  config.pairs[0].execute.close_retry_slippage_step_ticks =
+      close_retry_slippage_step_ticks;
   return config;
 }
 
@@ -1705,7 +1728,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeRetiresTerminalCloseFeedback) {
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     ExternalModeRetriesCloseAfterTerminalCancelledWithoutFill) {
+     ExternalModeDoesNotRetryCloseWhenCloseRetryTimesZero) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1733,18 +1756,16 @@ TEST(LeadLagStrategyInterfaceTest,
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
                         context);
 
-  ASSERT_EQ(order_session.placed_orders.size(), 3U);
-  const FakeOrderSession::CapturedOrder& retry_close =
-      order_session.placed_orders.back();
-  EXPECT_NE(retry_close.local_order_id, cancelled_close_order_id);
-  EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
-  EXPECT_TRUE(retry_close.reduce_only);
-  EXPECT_EQ(retry_close.quantity, 7);
+  EXPECT_EQ(order_session.placed_orders.size(), 2U);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRetriesCloseRemainingAfterPartialTerminalCancelled) {
-  leadlag::Strategy strategy{SignalOnlyConfig()};
+  leadlag::Strategy strategy{
+      SignalOnlyConfigWithCloseRetry(/*close_slippage_ticks=*/3,
+                                     /*stoploss_slippage_ticks=*/2,
+                                     /*close_retry_times=*/1,
+                                     /*close_retry_slippage_step_ticks=*/2)};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -1777,7 +1798,14 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(retry_close.local_order_id, partial_close_order_id);
   EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(retry_close.reduce_only);
+  EXPECT_EQ(retry_close.price_text, "101.0");
   EXPECT_EQ(retry_close.quantity, 4);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(retry_close.local_order_id, 0, 4, 0.0));
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 104, 98.0, 99.0),
+                        context);
+  EXPECT_EQ(order_session.placed_orders.size(), 3U);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -1843,7 +1871,11 @@ TEST(LeadLagStrategyInterfaceTest,
 
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRetriesStoplossAfterTerminalCancelledWithoutFill) {
-  leadlag::Strategy strategy{SignalOnlyConfig()};
+  leadlag::Strategy strategy{
+      SignalOnlyConfigWithCloseRetry(/*close_slippage_ticks=*/3,
+                                     /*stoploss_slippage_ticks=*/2,
+                                     /*close_retry_times=*/1,
+                                     /*close_retry_slippage_step_ticks=*/2)};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -1876,6 +1908,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(retry_stoploss.local_order_id, cancelled_stoploss_order_id);
   EXPECT_EQ(retry_stoploss.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(retry_stoploss.reduce_only);
+  EXPECT_EQ(retry_stoploss.price_text, "89.3");
   EXPECT_EQ(retry_stoploss.quantity, 11);
 }
 
@@ -2035,7 +2068,11 @@ TEST(LeadLagStrategyInterfaceTest,
 
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRejectedCloseReturnsHoldAndCanRetry) {
-  leadlag::Strategy strategy{SignalOnlyConfig()};
+  leadlag::Strategy strategy{
+      SignalOnlyConfigWithCloseRetry(/*close_slippage_ticks=*/3,
+                                     /*stoploss_slippage_ticks=*/2,
+                                     /*close_retry_times=*/1,
+                                     /*close_retry_slippage_step_ticks=*/2)};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -2071,6 +2108,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(retry_close.local_order_id, rejected_close_order_id);
   EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(retry_close.reduce_only);
+  EXPECT_EQ(retry_close.price_text, "101.0");
   EXPECT_EQ(retry_close.quantity, 7);
 }
 

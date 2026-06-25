@@ -22,6 +22,12 @@ enum class ExecutionStage : std::uint8_t {
   kClose,
 };
 
+enum class CloseOrderKind : std::uint8_t {
+  kNone,
+  kNormal,
+  kStoploss,
+};
+
 enum class ExecutionApplyResult : std::uint8_t {
   kIgnoredUnknownOrder,
   kIgnoredNonTerminal,
@@ -117,6 +123,8 @@ struct ExecutionGroup {
   double trailing_price{0.0};
   std::uint64_t group_id{0};
   bool unknown_result_pending{false};
+  CloseOrderKind close_order_kind{CloseOrderKind::kNone};
+  std::uint32_t normal_close_retry_count{0};
 
   [[nodiscard]] bool active() const noexcept {
     return stage != ExecutionStage::kIdle;
@@ -136,6 +144,11 @@ struct ExecutionGroup {
 
   [[nodiscard]] bool short_position() const noexcept {
     return signed_position_quantity < -kExecutionQuantityEpsilon;
+  }
+
+  [[nodiscard]] bool CanSubmitNormalClose(
+      std::uint32_t close_retry_times) const noexcept {
+    return normal_close_retry_count <= close_retry_times;
   }
 };
 
@@ -168,13 +181,18 @@ class ExecutionState {
     return group;
   }
 
-  [[nodiscard]] bool StartCloseOrder(ExecutionGroup& group,
-                                     std::uint64_t local_order_id) noexcept {
+  [[nodiscard]] bool StartCloseOrder(
+      ExecutionGroup& group, std::uint64_t local_order_id,
+      CloseOrderKind close_order_kind = CloseOrderKind::kNormal) noexcept {
     if (!group.hold() || group.pending_order()) {
+      return false;
+    }
+    if (close_order_kind == CloseOrderKind::kNone) {
       return false;
     }
     group.stage = ExecutionStage::kClose;
     group.local_order_id = local_order_id;
+    group.close_order_kind = close_order_kind;
     return true;
   }
 
@@ -207,8 +225,10 @@ class ExecutionState {
     }
 
     const ExecutionStage previous_stage = group->stage;
+    const CloseOrderKind previous_close_order_kind = group->close_order_kind;
     const bool resolved_unknown_result = ClearUnknownResultPending(*group);
     group->local_order_id = 0;
+    group->close_order_kind = CloseOrderKind::kNone;
     group->signed_position_quantity += SignedFilledQuantity(order, instrument);
 
     if (std::abs(group->signed_position_quantity) <=
@@ -222,6 +242,10 @@ class ExecutionState {
         order.AverageFillPrice() > 0.0) {
       group->trailing_price = order.AverageFillPrice();
     }
+    if (previous_stage == ExecutionStage::kClose &&
+        previous_close_order_kind == CloseOrderKind::kNormal) {
+      IncrementNormalCloseRetryCount(*group);
+    }
     group->stage = ExecutionStage::kHold;
     MaybeAutoRecoverUnknownResult(resolved_unknown_result);
     return ExecutionApplyResult::kAppliedHold;
@@ -233,11 +257,17 @@ class ExecutionState {
     if (group == nullptr) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
+    const CloseOrderKind previous_close_order_kind = group->close_order_kind;
     group->local_order_id = 0;
+    group->close_order_kind = CloseOrderKind::kNone;
     if (std::abs(group->signed_position_quantity) <=
         kExecutionQuantityEpsilon) {
       ClearGroup(*group);
       return ExecutionApplyResult::kAppliedDeleted;
+    }
+    if (group->stage == ExecutionStage::kClose &&
+        previous_close_order_kind == CloseOrderKind::kNormal) {
+      IncrementNormalCloseRetryCount(*group);
     }
     group->stage = ExecutionStage::kHold;
     return ExecutionApplyResult::kAppliedHold;
@@ -460,6 +490,13 @@ class ExecutionState {
     needs_reconcile_ = false;
     unknown_result_reconcile_active_ = false;
     last_unknown_result_auto_recovered_ = true;
+  }
+
+  static void IncrementNormalCloseRetryCount(ExecutionGroup& group) noexcept {
+    if (group.normal_close_retry_count <
+        std::numeric_limits<std::uint32_t>::max()) {
+      ++group.normal_close_retry_count;
+    }
   }
 
   void ClearUnknownResultTracking() noexcept {

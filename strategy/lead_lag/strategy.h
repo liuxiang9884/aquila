@@ -1611,12 +1611,12 @@ class Strategy {
   }
 
   [[nodiscard]] PreparedOrderPrice PrepareOrderPrice(
-      const PairRuntimeState& runtime,
+      const PairRuntimeState& runtime, const ExecutionGroup* close_group,
       const InstrumentMetadata& instrument) noexcept {
     PreparedOrderPrice price;
     price.raw_order_price = last_signal_decision_.intent.price;
-    price.slippage_ticks = SlippageTicksForAction(runtime.pair.execute,
-                                                  last_signal_decision_.action);
+    price.slippage_ticks = SlippageTicksForAction(
+        runtime.pair.execute, last_signal_decision_.action, close_group);
     price.rounded_order_price = SlippedRoundedOrderPrice(
         price.raw_order_price, instrument, last_signal_decision_.intent.side,
         price.slippage_ticks);
@@ -1909,7 +1909,13 @@ class Strategy {
     assert(last_signal_decision_.triggered);
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
     const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
-    const PreparedOrderPrice price = PrepareOrderPrice(*runtime, instrument);
+    ExecutionGroup* close_group = nullptr;
+    if (last_signal_decision_.intent.reduce_only) {
+      close_group =
+          runtime->execution.FindGroupById(last_signal_decision_.group_id);
+    }
+    const PreparedOrderPrice price =
+        PrepareOrderPrice(*runtime, close_group, instrument);
     if (RejectInvalidOrderPrice(runtime, symbol, instrument, price)) {
       return;
     }
@@ -1951,7 +1957,9 @@ class Strategy {
     ExecutionGroup* group = close_group;
     if (last_signal_decision_.intent.reduce_only) {
       if (group == nullptr ||
-          !runtime->execution.StartCloseOrder(*group, local_order_id)) {
+          !runtime->execution.StartCloseOrder(
+              *group, local_order_id,
+              CloseOrderKindForAction(last_signal_decision_.action))) {
         return false;
       }
     } else {
@@ -1973,7 +1981,9 @@ class Strategy {
     if (last_signal_decision_.intent.reduce_only) {
       if (close_group != nullptr) {
         [[maybe_unused]] const bool started =
-            runtime->execution.StartCloseOrder(*close_group, local_order_id);
+            runtime->execution.StartCloseOrder(
+                *close_group, local_order_id,
+                CloseOrderKindForAction(last_signal_decision_.action));
       }
     } else {
       [[maybe_unused]] ExecutionGroup* group =
@@ -2239,20 +2249,55 @@ class Strategy {
   }
 
   [[nodiscard]] static std::uint32_t SlippageTicksForAction(
-      const ExecuteConfig& execute, SignalAction action) noexcept {
+      const ExecuteConfig& execute, SignalAction action,
+      const ExecutionGroup* close_group) noexcept {
     switch (action) {
       case SignalAction::kOpenLong:
       case SignalAction::kOpenShort:
-        return execute.open_slippage;
+        return execute.open_slippage_ticks;
       case SignalAction::kCloseLong:
       case SignalAction::kCloseShort:
+        return NormalCloseSlippageTicks(execute, close_group);
       case SignalAction::kStoplossLong:
       case SignalAction::kStoplossShort:
-        return execute.close_slippage;
+        return execute.stoploss_slippage_ticks;
       case SignalAction::kNone:
         return 0;
     }
     return 0;
+  }
+
+  [[nodiscard]] static CloseOrderKind CloseOrderKindForAction(
+      SignalAction action) noexcept {
+    switch (action) {
+      case SignalAction::kCloseLong:
+      case SignalAction::kCloseShort:
+        return CloseOrderKind::kNormal;
+      case SignalAction::kStoplossLong:
+      case SignalAction::kStoplossShort:
+        return CloseOrderKind::kStoploss;
+      case SignalAction::kOpenLong:
+      case SignalAction::kOpenShort:
+      case SignalAction::kNone:
+        return CloseOrderKind::kNone;
+    }
+    return CloseOrderKind::kNone;
+  }
+
+  [[nodiscard]] static std::uint32_t NormalCloseSlippageTicks(
+      const ExecuteConfig& execute,
+      const ExecutionGroup* close_group) noexcept {
+    if (close_group == nullptr || close_group->normal_close_retry_count == 0) {
+      return execute.close_slippage_ticks;
+    }
+    const std::uint64_t retry_ticks =
+        static_cast<std::uint64_t>(close_group->normal_close_retry_count) *
+        static_cast<std::uint64_t>(execute.close_retry_slippage_step_ticks);
+    const std::uint64_t total =
+        static_cast<std::uint64_t>(execute.close_slippage_ticks) + retry_ticks;
+    return total > std::numeric_limits<std::uint32_t>::max()
+               ? std::numeric_limits<std::uint32_t>::max()
+               : static_cast<std::uint32_t>(total);
   }
 
   [[nodiscard]] static bool DecimalUnitsFromValue(

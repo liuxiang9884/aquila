@@ -226,6 +226,68 @@ TEST(LeadLagFeedbackStateTest, RejectedCloseReturnsExistingPositionToHold) {
   EXPECT_EQ(updated->local_order_id, 0U);
 }
 
+TEST(LeadLagFeedbackStateTest, NormalCloseTerminalFailureIncrementsRetryCount) {
+  leadlag::ExecutionState state;
+  state.Init(/*parallel=*/1);
+  leadlag::ExecutionGroup* group =
+      state.AddHoldGroup(/*signed_position_quantity=*/3,
+                         /*trailing_price=*/102.0);
+  ASSERT_NE(group, nullptr);
+  ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13,
+                                    leadlag::CloseOrderKind::kNormal));
+
+  const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
+      Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
+            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0),
+      Instrument());
+
+  EXPECT_EQ(result, leadlag::ExecutionApplyResult::kAppliedHold);
+  const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
+  ASSERT_NE(updated, nullptr);
+  EXPECT_EQ(updated->normal_close_retry_count, 1U);
+  EXPECT_TRUE(updated->CanSubmitNormalClose(/*close_retry_times=*/1));
+  EXPECT_FALSE(updated->CanSubmitNormalClose(/*close_retry_times=*/0));
+}
+
+TEST(LeadLagFeedbackStateTest,
+     StoplossTerminalFailureDoesNotIncrementRetryCount) {
+  leadlag::ExecutionState state;
+  state.Init(/*parallel=*/1);
+  leadlag::ExecutionGroup* group =
+      state.AddHoldGroup(/*signed_position_quantity=*/3,
+                         /*trailing_price=*/102.0);
+  ASSERT_NE(group, nullptr);
+  ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13,
+                                    leadlag::CloseOrderKind::kStoploss));
+
+  const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
+      Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
+            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0),
+      Instrument());
+
+  EXPECT_EQ(result, leadlag::ExecutionApplyResult::kAppliedHold);
+  const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
+  ASSERT_NE(updated, nullptr);
+  EXPECT_EQ(updated->normal_close_retry_count, 0U);
+}
+
+TEST(LeadLagFeedbackStateTest, RejectedNormalCloseSubmitIncrementsRetryCount) {
+  leadlag::ExecutionState state;
+  state.Init(/*parallel=*/1);
+  leadlag::ExecutionGroup* group =
+      state.AddHoldGroup(/*signed_position_quantity=*/3,
+                         /*trailing_price=*/102.0);
+  ASSERT_NE(group, nullptr);
+  ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13,
+                                    leadlag::CloseOrderKind::kNormal));
+
+  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/13),
+            leadlag::ExecutionApplyResult::kAppliedHold);
+  const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
+  ASSERT_NE(updated, nullptr);
+  EXPECT_EQ(updated->normal_close_retry_count, 1U);
+}
+
 TEST(LeadLagFeedbackStateTest, ClearGroupByIdRemovesActiveGroup) {
   leadlag::ExecutionState state;
   state.Init(/*parallel=*/2);

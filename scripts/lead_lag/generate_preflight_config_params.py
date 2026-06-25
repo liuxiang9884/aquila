@@ -220,10 +220,10 @@ def _lag_bbo_slippage_summary(
             return 0
         return int(math.ceil(price * buffer_pct / price_tick))
 
-    open_long_slippage = ticks_for(max_ask_price, entry_buffer_pct)
-    open_short_slippage = ticks_for(max_bid_price, entry_buffer_pct)
-    close_long_slippage = ticks_for(max_bid_price, normal_close_buffer_pct)
-    close_short_slippage = ticks_for(max_ask_price, normal_close_buffer_pct)
+    open_long_slippage_ticks = ticks_for(max_ask_price, entry_buffer_pct)
+    open_short_slippage_ticks = ticks_for(max_bid_price, entry_buffer_pct)
+    close_long_slippage_ticks = ticks_for(max_bid_price, normal_close_buffer_pct)
+    close_short_slippage_ticks = ticks_for(max_ask_price, normal_close_buffer_pct)
     return {
         "price_tick": float(price_tick),
         "reference_price_method": "lag_bbo_max",
@@ -232,12 +232,16 @@ def _lag_bbo_slippage_summary(
         "max_ask_price": max_ask_price,
         "entry_buffer_pct": float(entry_buffer_pct),
         "normal_close_buffer_pct": float(normal_close_buffer_pct),
-        "open_long_slippage": open_long_slippage,
-        "open_short_slippage": open_short_slippage,
-        "close_long_slippage": close_long_slippage,
-        "close_short_slippage": close_short_slippage,
-        "open_slippage": max(open_long_slippage, open_short_slippage),
-        "close_slippage": max(close_long_slippage, close_short_slippage),
+        "open_long_slippage_ticks": open_long_slippage_ticks,
+        "open_short_slippage_ticks": open_short_slippage_ticks,
+        "close_long_slippage_ticks": close_long_slippage_ticks,
+        "close_short_slippage_ticks": close_short_slippage_ticks,
+        "open_slippage_ticks": max(
+            open_long_slippage_ticks, open_short_slippage_ticks
+        ),
+        "close_slippage_ticks": max(
+            close_long_slippage_ticks, close_short_slippage_ticks
+        ),
     }
 
 
@@ -321,8 +325,8 @@ def render_toml_patch(params: dict) -> str:
             textwrap.dedent(
                 f"""
                 [lead_lag.pairs.execute]
-                open_slippage = {slippage["open_slippage"]}
-                close_slippage = {slippage["close_slippage"]}
+                open_slippage_ticks = {slippage["open_slippage_ticks"]}
+                close_slippage_ticks = {slippage["close_slippage_ticks"]}
                 """
             ).strip()
         )

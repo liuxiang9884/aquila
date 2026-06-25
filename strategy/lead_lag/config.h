@@ -85,10 +85,12 @@ struct ExecuteConfig {
   double open_notional{0.0};
   double trailing_stop{0.0};
   double max_entry_spread{-1.0};
-  std::uint32_t open_slippage{0};
-  std::uint32_t close_slippage{0};
+  std::uint32_t open_slippage_ticks{0};
+  std::uint32_t close_slippage_ticks{0};
+  std::uint32_t stoploss_slippage_ticks{0};
+  std::uint32_t close_retry_times{0};
+  std::uint32_t close_retry_slippage_step_ticks{0};
   std::uint32_t parallel{1};
-  bool normal_close_retry_aggressive{false};
   TakerBufferConfig taker_buffer;
 
   [[nodiscard]] double EntrySpreadLimit() const noexcept;

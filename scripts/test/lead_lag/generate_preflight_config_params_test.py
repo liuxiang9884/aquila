@@ -115,8 +115,8 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertEqual(result["slippage"]["price_tick"], 0.05)
         self.assertEqual(result["slippage"]["reference_price_method"], "lag_bbo_max")
         self.assertEqual(result["slippage"]["reference_price"], 100.4)
-        self.assertEqual(result["slippage"]["open_slippage"], 9)
-        self.assertEqual(result["slippage"]["close_slippage"], 9)
+        self.assertEqual(result["slippage"]["open_slippage_ticks"], 9)
+        self.assertEqual(result["slippage"]["close_slippage_ticks"], 9)
 
     def test_cli_requires_explicit_buffer_percentile(self):
         argv = [
@@ -186,8 +186,8 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
     def test_renders_generated_toml_patch(self):
         params = {
             "slippage": {
-                "open_slippage": 5,
-                "close_slippage": 6,
+                "open_slippage_ticks": 5,
+                "close_slippage_ticks": 6,
             },
             "taker_buffer": {
                 "entry_fixed_pct": 0.0002,
@@ -202,8 +202,8 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         text = self.module.render_toml_patch(params)
 
         self.assertIn("[lead_lag.pairs.execute]", text)
-        self.assertIn("open_slippage = 5", text)
-        self.assertIn("close_slippage = 6", text)
+        self.assertIn("open_slippage_ticks = 5", text)
+        self.assertIn("close_slippage_ticks = 6", text)
         self.assertIn("[lead_lag.pairs.execute.taker_buffer]", text)
         self.assertIn('mode = "shadow"', text)
         self.assertIn("entry_fixed_pct = 0.0002", text)

@@ -316,6 +316,9 @@ class SignalEngine {
     if (group.pending_order()) {
       return Reject(SignalRejectReason::kPendingOrder);
     }
+    if (!group.CanSubmitNormalClose(pair.execute.close_retry_times)) {
+      return {};
+    }
     const double lag_diff = market.lead.bid_price / market.lag.bid_price - 1.0;
     if (lag_diff >= threshold.up_exit) {
       return {};
@@ -330,6 +333,9 @@ class SignalEngine {
       const SignalMarket& market, const ThresholdSnapshot& threshold) noexcept {
     if (group.pending_order()) {
       return Reject(SignalRejectReason::kPendingOrder);
+    }
+    if (!group.CanSubmitNormalClose(pair.execute.close_retry_times)) {
+      return {};
     }
     const double lag_diff = market.lead.ask_price / market.lag.ask_price - 1.0;
     if (lag_diff <= threshold.down_exit) {

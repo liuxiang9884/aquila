@@ -57,7 +57,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 12-symbol 策略当前启用：
 
 - `lead_lag.risk.max_gross_notional = 2000.0`：限制 strategy 全局持仓和 pending open reservation 的总 notional；只拒绝新开仓，不阻止 reduce-only close。
-- `execute.open_slippage = 2`、`execute.close_slippage = 2`：12 个 symbol 均按 `price_tick` 调整 IOC limit 价格；slippage 只影响实际下单价，不改变 signal 触发条件。
+- `execute.open_slippage_ticks = 2`、`execute.close_slippage_ticks = 2`、`execute.stoploss_slippage_ticks = 2`：12 个 symbol 均按 `price_tick` 调整 IOC limit 价格；slippage 只影响实际下单价，不改变 signal 触发条件。`close_retry_times = 0` 表示普通 close 失败后不做 normal close retry。
 
 ## Stop Loss 设计建议
 
@@ -67,7 +67,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 - 开仓订单 terminal 且有成交均价后，`trailing_price` 初始化为 `AverageFillPrice()`。
 - long 持仓用 lag bid 单向上移 `trailing_price`，当 `lag_bid / trailing_price - 1.0 <= -execute.trailing_stop` 时触发 `kStoplossLong`。
 - short 持仓用 lag ask 单向下移 `trailing_price`，当 `-(lag_ask / trailing_price - 1.0) <= -execute.trailing_stop` 时触发 `kStoplossShort`。
-- stoploss order 是 reduce-only IOC limit；long raw price 为 `lag_bid * 0.995`，short raw price 为 `lag_ask * 1.005`，实际下单价还会继续叠加 `execute.close_slippage`。
+- stoploss order 是 reduce-only IOC limit；long raw price 为 `lag_bid * 0.995`，short raw price 为 `lag_ask * 1.005`，实际下单价还会继续叠加 `execute.stoploss_slippage_ticks`。
 
 2026-06-02 对 `LAB_USDT` 实盘亏损样本复盘后，当前判断是：现有 stop loss 更适合作为灾难兜底，不适合作为主要亏损控制层。`execute.trailing_stop = 0.01` 等价于 100bps trailing 触发，对 LAB 这类高波动短周期 signal 偏宽；触发后的 `0.995` / `1.005` 保护价再叠加 close slippage，也会让成交优先级和最差可接受价格耦合在一起。
 
@@ -75,7 +75,7 @@ RIVER_USDT, SUI_USDT, INJ_USDT, ENA_USDT, BRETT_USDT, ETH_USDT
 
 1. 保留当前 trailing stop 作为灾难兜底，默认仍可放在约 100bps 级别，避免行情快速反向时持仓无限暴露。
 2. 增加更近的策略退出层，命名上与 stoploss 区分，例如 `protective_close` / `risk_close`；初始实验可按 20-50bps 或基于实时 volatility 的动态阈值触发，用于处理普通反向波动，而不是等到灾难 stop。
-3. 把 stoploss 触发阈值和执行保护价拆开配置，例如 `stoploss_trigger_bps`、`stoploss_execution_slippage_ticks` 或 `stoploss_execution_slippage_bps`；不要继续把 `0.995` / `1.005` 硬编码和 `close_slippage` 叠加作为唯一执行模型。
+3. 把 stoploss 触发阈值和执行保护价拆开配置，例如 `stoploss_trigger_bps`、`stoploss_execution_slippage_ticks` 或 `stoploss_execution_slippage_bps`；不要继续把 `0.995` / `1.005` 硬编码和 `stoploss_slippage_ticks` 叠加作为唯一执行模型。
 4. report 分析中继续按 `action` 区分 `kClose*` 与 `kStoploss*`，并单独统计 stoploss 触发前的 trailing fallback、执行滑点、实际 / raw PnL，避免把策略 close 亏损和灾难 stop 亏损混在一起。
 
 ## 已完成证据摘要

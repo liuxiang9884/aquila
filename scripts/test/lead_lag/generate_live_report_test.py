@@ -38,8 +38,11 @@ def write_config(path: Path) -> None:
         [lead_lag.pairs.execute]
         open_notional = 100.0
         trailing_stop = 0.01
-        open_slippage = 3
-        close_slippage = 3
+        open_slippage_ticks = 3
+        close_slippage_ticks = 3
+        stoploss_slippage_ticks = 3
+        close_retry_times = 0
+        close_retry_slippage_step_ticks = 0
         """,
     )
 
