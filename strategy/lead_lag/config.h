@@ -16,6 +16,7 @@
 namespace aquila::strategy::leadlag {
 
 inline constexpr std::size_t kDefaultWindowCapacity = 16 * 1024;
+inline constexpr std::size_t kDefaultDriftGuardWindowCapacity = 128 * 1024;
 inline constexpr std::size_t kDefaultQuantileBinCount = 4096;
 
 enum class FeatureMode : std::uint8_t {
@@ -113,6 +114,7 @@ struct CapacityConfig {
   std::size_t move_queue_capacity{kDefaultWindowCapacity};
   std::size_t noise_window_capacity{kDefaultWindowCapacity};
   std::size_t spread_window_capacity{kDefaultWindowCapacity};
+  std::size_t drift_guard_window_capacity{kDefaultDriftGuardWindowCapacity};
 };
 
 struct InstrumentMetadata {

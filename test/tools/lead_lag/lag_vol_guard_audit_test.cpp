@@ -513,6 +513,7 @@ TEST(LeadLagLagVolGuardAuditTest, BuildsPairsFromLeadLagConfig) {
       .capacity =
           strategy::leadlag::CapacityConfig{
               .spread_window_capacity = 1234,
+              .drift_guard_window_capacity = 5678,
           },
   });
   config.pairs.push_back(strategy::leadlag::PairConfig{
@@ -532,7 +533,7 @@ TEST(LeadLagLagVolGuardAuditTest, BuildsPairsFromLeadLagConfig) {
   EXPECT_EQ(pairs[0].lag_exchange, Exchange::kGate);
   EXPECT_TRUE(pairs[0].drift_guard.enabled);
   EXPECT_DOUBLE_EQ(pairs[0].drift_guard.drift_instant, 0.001);
-  EXPECT_EQ(pairs[0].drift_guard_initial_capacity, 1234U);
+  EXPECT_EQ(pairs[0].drift_guard_initial_capacity, 5678U);
   EXPECT_EQ(pairs[1].symbol, "ORDI_USDT");
   EXPECT_EQ(pairs[1].symbol_id, 7);
   EXPECT_EQ(pairs[1].lead_exchange, Exchange::kGate);

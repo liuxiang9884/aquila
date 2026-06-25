@@ -51,6 +51,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "RAVE_USDT"
@@ -101,6 +102,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ZEC_USDT"
@@ -151,6 +153,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SIREN_USDT"
@@ -201,6 +204,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ETC_USDT"
@@ -251,3 +255,4 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072

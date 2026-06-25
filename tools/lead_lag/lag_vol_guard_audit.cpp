@@ -438,7 +438,8 @@ std::vector<LagVolGuardAuditPairConfig> BuildLagVolGuardAuditPairs(
         .lead_exchange = pair.lead_exchange,
         .lag_exchange = pair.lag_exchange,
         .drift_guard = pair.trigger.drift_guard,
-        .drift_guard_initial_capacity = pair.capacity.spread_window_capacity,
+        .drift_guard_initial_capacity =
+            pair.capacity.drift_guard_window_capacity,
     });
   }
   return pairs;

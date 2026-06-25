@@ -59,6 +59,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SLX_USDT"
@@ -114,6 +115,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "AIA_USDT"
@@ -169,6 +171,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "WLD_USDT"
@@ -224,6 +227,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "PIEVERSE_USDT"
@@ -279,6 +283,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "OPN_USDT"
@@ -334,6 +339,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "LIT_USDT"
@@ -389,6 +395,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "MYX_USDT"
@@ -444,6 +451,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ENA_USDT"
@@ -499,6 +507,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "STO_USDT"
@@ -554,6 +563,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ICP_USDT"
@@ -609,6 +619,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "UB_USDT"
@@ -664,6 +675,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "BEAT_USDT"
@@ -719,6 +731,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "XPL_USDT"
@@ -774,6 +787,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "FARTCOIN_USDT"
@@ -829,6 +843,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ZEC_USDT"
@@ -884,6 +899,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SKYAI_USDT"
@@ -939,6 +955,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "VIRTUAL_USDT"
@@ -994,6 +1011,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "EPIC_USDT"
@@ -1049,6 +1067,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "INJ_USDT"
@@ -1104,6 +1123,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "PENGU_USDT"
@@ -1159,6 +1179,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "H_USDT"
@@ -1214,6 +1235,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "NEAR_USDT"
@@ -1269,6 +1291,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "XLM_USDT"
@@ -1324,6 +1347,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "FIL_USDT"
@@ -1379,6 +1403,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "TON_USDT"
@@ -1434,6 +1459,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ONDO_USDT"
@@ -1489,6 +1515,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SUI_USDT"
@@ -1544,6 +1571,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "WIF_USDT"
@@ -1599,6 +1627,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "FET_USDT"
@@ -1654,3 +1683,4 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072

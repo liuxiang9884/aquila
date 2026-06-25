@@ -200,6 +200,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_EQ(pair.capacity.move_queue_capacity, 16'384U);
   EXPECT_EQ(pair.capacity.noise_window_capacity, 16'384U);
   EXPECT_EQ(pair.capacity.spread_window_capacity, 16'384U);
+  EXPECT_EQ(pair.capacity.drift_guard_window_capacity, 131'072U);
 
   EXPECT_EQ(pair.lag_instrument.symbol_id, 0);
   EXPECT_EQ(pair.lag_instrument.exchange, aquila::Exchange::kGate);
@@ -530,6 +531,23 @@ TEST(LeadLagConfigTest, RejectsEnabledDriftGuardNonPositiveThresholdFirst) {
 enabled = true
 drift_instant = 0
 ratio_std = 0
+)toml",
+                                      catalog);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("drift_guard.drift_instant"),
+            std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsEnabledDriftGuardNonFiniteThresholdFirst) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+
+  const auto result = ParseConfigToml(MinimalConfigTomlWithRisk("") + R"toml(
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = nan
+ratio_std = inf
 )toml",
                                       catalog);
 

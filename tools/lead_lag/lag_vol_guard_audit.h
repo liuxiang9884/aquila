@@ -133,7 +133,7 @@ struct LagVolGuardAuditPairConfig {
   Exchange lag_exchange{Exchange::kGate};
   strategy::leadlag::DriftGuardConfig drift_guard;
   std::size_t drift_guard_initial_capacity{
-      strategy::leadlag::kDefaultWindowCapacity};
+      strategy::leadlag::kDefaultDriftGuardWindowCapacity};
 };
 
 struct LagVolGuardAuditCsvSchema {

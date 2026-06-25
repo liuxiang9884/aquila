@@ -36,7 +36,6 @@ enum class SignalRejectReason : std::uint8_t {
   kEntryCost,
   kEntrySpread,
   kParallelLimit,
-  kDriftLimit,
   kPendingOrder,
   kDegraded,
   kRiskLimit,

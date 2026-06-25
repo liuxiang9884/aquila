@@ -27,8 +27,9 @@ class DriftGuardState {
  public:
   void Init(const DriftGuardConfig& config, std::size_t initial_capacity) {
     enabled_ = config.enabled;
-    ratio_std_.Init(config.ratio_std_window_ns, initial_capacity);
-    ratio_mean_.Init(config.drift_mean_window_ns, initial_capacity);
+    const std::size_t capacity = enabled_ ? initial_capacity : 0;
+    ratio_std_.Init(config.ratio_std_window_ns, capacity);
+    ratio_mean_.Init(config.drift_mean_window_ns, capacity);
     Reset();
   }
 

@@ -90,7 +90,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
                 log_path,
                 """
                 I2026-06-25 09:00:00.000000100 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2711
-                W2026-06-25 09:00:00.000000200 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=drift_guard trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=36 price=0.2714 raw_price=0.2711 order_price=0.2714 slippage_ticks=3 price_tick=0.0001 target_open_notional=100 estimated_notional=97.704 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
+                W2026-06-25 09:00:00.000000200 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=drift_guard trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=0 price=0.2711 raw_price=0.2711 order_price=0.2711 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=0 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
                 """,
             )
 
@@ -108,13 +108,13 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["side"], "kBuy")
         self.assertEqual(row["reduce_only"], "false")
         self.assertEqual(row["raw_price"], "0.2711")
-        self.assertEqual(row["order_price"], "0.2714")
-        self.assertEqual(row["price_text"], "0.2714")
+        self.assertEqual(row["order_price"], "0.2711")
+        self.assertEqual(row["price_text"], "0.2711")
         self.assertEqual(row["price_tick"], "0.0001")
-        self.assertEqual(row["slippage_ticks"], "3")
-        self.assertEqual(row["quantity"], "36")
-        self.assertEqual(row["quantity_text"], "36")
-        self.assertEqual(row["estimated_notional"], "97.704")
+        self.assertEqual(row["slippage_ticks"], "0")
+        self.assertEqual(row["quantity"], "0")
+        self.assertEqual(row["quantity_text"], "0")
+        self.assertEqual(row["estimated_notional"], "0")
         self.assertEqual(row["signal_decision_ns"], "1782360000000020000")
         self.assertEqual(row["lead_exchange_ns"], "1782360000000000000")
         self.assertEqual(row["lag_exchange_ns"], "1782359999999990000")

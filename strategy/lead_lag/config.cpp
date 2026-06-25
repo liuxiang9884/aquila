@@ -320,20 +320,21 @@ class Parser {
       return guard;
     }
     if (guard.enabled) {
-      if (guard.drift_instant <= 0.0) {
-        Fail(prefix + ".drift_instant", " must be positive");
+      if (!std::isfinite(guard.drift_instant) ||
+          guard.drift_instant <= 0.0) {
+        Fail(prefix + ".drift_instant", " must be finite and positive");
         return guard;
       }
-      if (guard.ratio_std <= 0.0) {
-        Fail(prefix + ".ratio_std", " must be positive");
+      if (!std::isfinite(guard.ratio_std) || guard.ratio_std <= 0.0) {
+        Fail(prefix + ".ratio_std", " must be finite and positive");
         return guard;
       }
       if (guard.ratio_std_window_ns == 0) {
         Fail(prefix + ".ratio_std_window", " must be positive");
         return guard;
       }
-      if (guard.drift_mean <= 0.0) {
-        Fail(prefix + ".drift_mean", " must be positive");
+      if (!std::isfinite(guard.drift_mean) || guard.drift_mean <= 0.0) {
+        Fail(prefix + ".drift_mean", " must be finite and positive");
         return guard;
       }
       if (guard.drift_mean_window_ns == 0) {
@@ -533,6 +534,10 @@ class Parser {
     capacity.spread_window_capacity =
         SizeOr(table, "spread_window_capacity", capacity.spread_window_capacity,
                prefix + ".spread_window_capacity");
+    capacity.drift_guard_window_capacity =
+        SizeOr(table, "drift_guard_window_capacity",
+               capacity.drift_guard_window_capacity,
+               prefix + ".drift_guard_window_capacity");
     return capacity;
   }
 

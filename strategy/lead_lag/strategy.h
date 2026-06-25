@@ -685,6 +685,7 @@ inline void LogStrategyOrderFinished(
 
 class Strategy {
  public:
+  // Callback references are only valid until the callback returns.
   using TriggeredSignalObserver =
       void (*)(void* context, const BookTicker& trigger_ticker,
                const SignalDecision& decision,
@@ -1199,7 +1200,7 @@ class Strategy {
           .initial_capacity = pair.capacity.spread_window_capacity,
       });
       runtime.drift_guard.Init(pair.trigger.drift_guard,
-                               pair.capacity.spread_window_capacity);
+                               pair.capacity.drift_guard_window_capacity);
       runtime.recorder.Init(pair);
       runtime.threshold.Init(pair);
       runtime.execution.Init(pair.execute.parallel);

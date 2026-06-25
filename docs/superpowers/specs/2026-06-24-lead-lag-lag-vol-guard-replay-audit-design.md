@@ -1,5 +1,11 @@
 # LeadLag Lag Vol Guard Replay Audit 设计
 
+> Superseded note（2026-06-25）：本文件保留为历史设计记录。当前事实源见
+> `strategy/lead_lag/README.md`、`docs/project_onboarding_guide.md` 和
+> `docs/diagnostic_fields.md`；`drift_guard` 已替代旧 `drift_limit` 并作为
+> open-only emergency sanity guard 实盘化，audit CSV 的 drift 字段不再是
+> `not_evaluated` 占位。
+
 ## 背景
 
 当前 LeadLag Go reference 迁移边界已经明确：`freshness_auto` 和 `taker_buffer`

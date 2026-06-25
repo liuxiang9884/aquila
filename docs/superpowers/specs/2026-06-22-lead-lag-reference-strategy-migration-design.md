@@ -1,5 +1,11 @@
 # LeadLag Reference Strategy 迁移设计
 
+> Superseded note（2026-06-25）：本文件保留为历史设计记录。当前迁移边界和
+> 操作事实源见 `strategy/lead_lag/README.md`、
+> `docs/project_onboarding_guide.md` 和 `docs/diagnostic_fields.md`；旧
+> `drift_limit` 已被 Go-like `drift_guard` 替代，`freshness_auto` /
+> `taker_buffer` 仍只通过启动前 preflight 生成固定配置。
+
 ## 背景
 
 `reference/leadlag-current-strategy-package.zip` 打包了一份 Go 版 LeadLag 当前策略实现，来源说明如下：
