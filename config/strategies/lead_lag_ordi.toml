@@ -16,10 +16,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75

@@ -1,6 +1,5 @@
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -134,86 +133,16 @@ stats_window = "30s"
 )toml"};
 }
 
-void ExpectDeprecatedDriftLimitConfigRejected(
+leadlag::ConfigResult LoadCheckedInConfig(
     std::string_view path, const aquila::config::InstrumentCatalog& catalog) {
-  const auto result = leadlag::LoadConfigFile(SourcePath(path), catalog);
-
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("drift_limit"), std::string::npos);
-  EXPECT_NE(result.error.find("drift_guard.drift_mean"), std::string::npos);
+  return leadlag::LoadConfigFile(SourcePath(path), catalog);
 }
 
-std::string ReadSourceFile(std::string_view path) {
-  std::ifstream input{SourcePath(path)};
-  EXPECT_TRUE(input.is_open()) << path;
-  std::string text;
-  std::string line;
-  while (std::getline(input, line)) {
-    text.append(line);
-    text.push_back('\n');
-  }
-  return text;
-}
-
-std::string MigrateDeprecatedDriftLimitToml(std::string_view text) {
-  constexpr std::string_view kDriftLimitPrefix = "drift_limit = ";
-  std::string migrated;
-  std::optional<std::string> pending_drift_mean;
-
-  std::size_t offset = 0;
-  while (offset < text.size()) {
-    const std::size_t newline = text.find('\n', offset);
-    const bool has_newline = newline != std::string_view::npos;
-    const std::size_t line_end = has_newline ? newline : text.size();
-    const std::string_view line = text.substr(offset, line_end - offset);
-
-    if (line.starts_with(kDriftLimitPrefix)) {
-      pending_drift_mean = std::string{line.substr(kDriftLimitPrefix.size())};
-    } else {
-      if (line == "[lead_lag.pairs.trigger.quantile]" &&
-          pending_drift_mean.has_value()) {
-        migrated.append("[lead_lag.pairs.trigger.drift_guard]\n");
-        migrated.append("enabled = true\n");
-        migrated.append("drift_instant = 0.015\n");
-        migrated.append("ratio_std = 0.008\n");
-        migrated.append("ratio_std_window = \"1m\"\n");
-        migrated.append("drift_mean = ");
-        migrated.append(*pending_drift_mean);
-        migrated.push_back('\n');
-        migrated.append("drift_mean_window = \"1m\"\n\n");
-        pending_drift_mean.reset();
-      }
-      migrated.append(line);
-      if (has_newline) {
-        migrated.push_back('\n');
-      }
-    }
-    offset = has_newline ? newline + 1 : text.size();
-  }
-
-  EXPECT_FALSE(pending_drift_mean.has_value())
-      << "drift_limit line without following trigger.quantile section";
-  return migrated;
-}
-
-leadlag::ConfigResult LoadMigratedCheckedInConfig(
-    std::string_view path, const aquila::config::InstrumentCatalog& catalog) {
-  return ParseConfigToml(
-      MigrateDeprecatedDriftLimitToml(ReadSourceFile(path)), catalog);
-}
-
-TEST(LeadLagConfigTest, RejectsCheckedInConfigWithDeprecatedDriftLimit) {
-  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
-
-  ExpectDeprecatedDriftLimitConfigRejected("config/strategies/lead_lag.toml",
-                                           catalog);
-}
-
-TEST(LeadLagConfigTest, LoadsMigratedCheckedInConfigWithCatalogMetadata) {
+TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result =
-      LoadMigratedCheckedInConfig("config/strategies/lead_lag.toml", catalog);
+      LoadCheckedInConfig("config/strategies/lead_lag.toml", catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   const leadlag::Config& config = result.value;
@@ -285,11 +214,11 @@ TEST(LeadLagConfigTest, LoadsMigratedCheckedInConfigWithCatalogMetadata) {
   EXPECT_DOUBLE_EQ(pair.lag_instrument.lag_taker_fee, 0.00016);
 }
 
-TEST(LeadLagConfigTest, LoadsMigratedCheckedInFirst5ConfigWithCatalogMetadata) {
+TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
   const aquila::config::InstrumentCatalog catalog =
       LoadCatalog("config/instruments/usdt_futures_first5_20260521.csv");
 
-  const auto result = LoadMigratedCheckedInConfig(
+  const auto result = LoadCheckedInConfig(
       "config/strategies/lead_lag_first5_20260521.toml", catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
@@ -309,10 +238,10 @@ TEST(LeadLagConfigTest, LoadsMigratedCheckedInFirst5ConfigWithCatalogMetadata) {
 }
 
 TEST(LeadLagConfigTest,
-     LoadsMigratedCheckedInRequestedConfigWithCatalogMetadata) {
+     LoadsCheckedInRequestedConfigWithCatalogMetadata) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = LoadMigratedCheckedInConfig(
+  const auto result = LoadCheckedInConfig(
       "config/strategies/lead_lag_requested_20260521.toml", catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
@@ -337,11 +266,10 @@ TEST(LeadLagConfigTest,
   EXPECT_EQ(config.pairs[7].symbol_id, 14);
 }
 
-TEST(LeadLagConfigTest,
-     LoadsMigratedCheckedInRequested12SymbolsRiskLimits) {
+TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = LoadMigratedCheckedInConfig(
+  const auto result = LoadCheckedInConfig(
       "config/strategies/lead_lag_requested_11symbols_20260522.toml",
       catalog);
 
@@ -368,10 +296,10 @@ TEST(LeadLagConfigTest,
   }
 }
 
-TEST(LeadLagConfigTest, LoadsMigratedCheckedInLabUsdtLiveRiskLimits) {
+TEST(LeadLagConfigTest, LoadsCheckedInLabUsdtLiveRiskLimits) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
-  const auto result = LoadMigratedCheckedInConfig(
+  const auto result = LoadCheckedInConfig(
       "config/strategies/lead_lag_lab_usdt_20260601.toml", catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
