@@ -24,6 +24,18 @@ namespace {
   return (ticker.bid_price + ticker.ask_price) * 0.5;
 }
 
+[[nodiscard]] strategy::leadlag::QuoteSnapshot QuoteFromBookTicker(
+    const BookTicker& ticker) noexcept {
+  return strategy::leadlag::QuoteSnapshot{
+      .id = ticker.id,
+      .event_ns = strategy::leadlag::BookTickerEventTimeNs(ticker),
+      .exchange_ns = ticker.exchange_ns,
+      .local_ns = ticker.local_ns,
+      .bid_price = ticker.bid_price,
+      .ask_price = ticker.ask_price,
+  };
+}
+
 void SetError(std::string* error, std::string_view message) {
   if (error != nullptr) {
     *error = std::string(message);
@@ -56,6 +68,26 @@ void SetError(std::string* error, std::string_view message) {
     return kMax;
   }
   return lhs + rhs;
+}
+
+[[nodiscard]] std::string DriftGuardOutcomeText(
+    const strategy::leadlag::DriftGuardSnapshot& snapshot) {
+  if (!snapshot.ready) {
+    return "not_ready";
+  }
+  if (!snapshot.blocked) {
+    return "pass";
+  }
+  if (snapshot.instant_hit) {
+    return "blocked:instant";
+  }
+  if (snapshot.ratio_std_hit) {
+    return "blocked:ratio_std";
+  }
+  if (snapshot.drift_mean_hit) {
+    return "blocked:drift_mean";
+  }
+  return "blocked";
 }
 
 }  // namespace
@@ -258,8 +290,7 @@ bool LagVolGuardAuditCsvWriter::Open(const std::filesystem::path& path,
   return true;
 }
 
-void LagVolGuardAuditCsvWriter::Write(
-    const LagVolGuardAuditRow& row) noexcept {
+void LagVolGuardAuditCsvWriter::Write(const LagVolGuardAuditRow& row) noexcept {
   if (writer_ == nullptr) {
     return;
   }
@@ -274,7 +305,8 @@ void LagVolGuardAuditCsvWriter::Write(
       row.lag_vol_cooldown_until_ns, row.config.jump_threshold,
       row.config.jump_count, row.config.jump_window_ns,
       row.config.amplitude_threshold, row.config.amplitude_window_ns,
-      row.config.cooldown_ns, row.drift_guard_outcome);
+      row.config.cooldown_ns, row.drift_instant, row.ratio_std, row.drift_mean,
+      row.drift_guard_outcome);
 }
 
 void LagVolGuardAuditCsvWriter::Close() {
@@ -290,16 +322,38 @@ LagVolGuardAuditCollector::LagVolGuardAuditCollector(
     PairState state;
     state.pair = std::move(pair);
     state.state.Init(config_);
+    state.drift_guard.Init(state.pair.drift_guard,
+                           state.pair.drift_guard_initial_capacity);
     pairs_.push_back(std::move(state));
   }
 }
 
 void LagVolGuardAuditCollector::OnBookTicker(const BookTicker& ticker) {
   PairState* pair = FindPair(ticker.symbol_id);
-  if (pair == nullptr || ticker.exchange != pair->pair.lag_exchange) {
+  if (pair == nullptr) {
     return;
   }
-  pair->state.OnLagBookTicker(ticker);
+  bool matched = false;
+  if (ticker.exchange == pair->pair.lead_exchange) {
+    pair->latest_lead = QuoteFromBookTicker(ticker);
+    pair->has_latest_lead = true;
+    matched = true;
+  }
+  if (ticker.exchange == pair->pair.lag_exchange) {
+    pair->latest_lag = QuoteFromBookTicker(ticker);
+    pair->has_latest_lag = true;
+    pair->state.OnLagBookTicker(ticker);
+    matched = true;
+  }
+  if (!matched) {
+    return;
+  }
+
+  if (pair->has_latest_lead && pair->has_latest_lag) {
+    pair->drift_guard.OnPairedRawBbo(
+        strategy::leadlag::BookTickerEventTimeNs(ticker), pair->latest_lead,
+        pair->latest_lag);
+  }
 }
 
 bool LagVolGuardAuditCollector::BuildOpenSignalRow(
@@ -320,6 +374,21 @@ bool LagVolGuardAuditCollector::BuildOpenSignalRow(
 
   const LagVolGuardEvaluation eval =
       pair->state.EvaluateAndAdvanceOpenSignal(diagnostics.event_ns);
+  double drift_instant = std::numeric_limits<double>::quiet_NaN();
+  double ratio_std = std::numeric_limits<double>::quiet_NaN();
+  double drift_mean = std::numeric_limits<double>::quiet_NaN();
+  std::string drift_guard_outcome = "disabled";
+  if (pair->pair.drift_guard.enabled) {
+    const strategy::leadlag::DriftGuardSnapshot drift_snapshot =
+        pair->drift_guard.Evaluate(pair->pair.drift_guard, diagnostics.lead_raw,
+                                   diagnostics.lag);
+    if (drift_snapshot.ready) {
+      drift_instant = drift_snapshot.instant_ratio;
+      ratio_std = drift_snapshot.ratio_std;
+      drift_mean = drift_snapshot.drift_mean;
+    }
+    drift_guard_outcome = DriftGuardOutcomeText(drift_snapshot);
+  }
   *row = LagVolGuardAuditRow{
       .open_signal_index = next_open_signal_index_++,
       .symbol = pair->pair.symbol,
@@ -340,7 +409,10 @@ bool LagVolGuardAuditCollector::BuildOpenSignalRow(
       .lag_vol_cooldown_active = eval.cooldown_active,
       .lag_vol_cooldown_until_ns = eval.cooldown_until_ns,
       .config = config_,
-      .drift_guard_outcome = "not_evaluated",
+      .drift_instant = drift_instant,
+      .ratio_std = ratio_std,
+      .drift_mean = drift_mean,
+      .drift_guard_outcome = std::move(drift_guard_outcome),
   };
   return true;
 }
@@ -363,7 +435,10 @@ std::vector<LagVolGuardAuditPairConfig> BuildLagVolGuardAuditPairs(
     pairs.push_back(LagVolGuardAuditPairConfig{
         .symbol = pair.symbol,
         .symbol_id = pair.symbol_id,
+        .lead_exchange = pair.lead_exchange,
         .lag_exchange = pair.lag_exchange,
+        .drift_guard = pair.trigger.drift_guard,
+        .drift_guard_initial_capacity = pair.capacity.spread_window_capacity,
     });
   }
   return pairs;

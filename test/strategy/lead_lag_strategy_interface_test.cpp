@@ -673,6 +673,24 @@ leadlag::Config SignalOnlyConfigWithDriftGuard(double drift_instant) {
   return config;
 }
 
+struct TriggeredSignalCapture {
+  std::uint32_t count{0};
+  aquila::BookTicker trigger_ticker;
+  leadlag::SignalDecision decision;
+  leadlag::SignalDiagnostics diagnostics;
+};
+
+void CaptureTriggeredSignal(
+    void* context, const aquila::BookTicker& trigger_ticker,
+    const leadlag::SignalDecision& decision,
+    const leadlag::SignalDiagnostics& diagnostics) noexcept {
+  auto* capture = static_cast<TriggeredSignalCapture*>(context);
+  ++capture->count;
+  capture->trigger_ticker = trigger_ticker;
+  capture->decision = decision;
+  capture->diagnostics = diagnostics;
+}
+
 leadlag::Config SignalOnlyConfigWithSlippage(
     std::uint32_t open_slippage_ticks, std::uint32_t close_slippage_ticks,
     std::uint32_t stoploss_slippage_ticks) {
@@ -1142,6 +1160,33 @@ TEST(LeadLagStrategyInterfaceTest, DriftGuardBlocksOpenAfterSignalTriggered) {
   EXPECT_EQ(reject.symbol_id, 3);
   EXPECT_EQ(reject.action, leadlag::SignalAction::kOpenLong);
   EXPECT_FALSE(reject.reduce_only);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     TriggeredSignalObserverSeesDriftGuardBlockedOpenBeforeReject) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithDriftGuard(0.001)};
+  TriggeredSignalCapture capture;
+  strategy.SetTriggeredSignalObserver(&capture, CaptureTriggeredSignal);
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(capture.count, 1U);
+  EXPECT_EQ(capture.trigger_ticker.symbol_id, 3);
+  EXPECT_TRUE(capture.decision.triggered);
+  EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(capture.decision.reject_reason, leadlag::SignalRejectReason::kNone);
+  EXPECT_GT(capture.diagnostics.event_ns, 0);
+  EXPECT_EQ(capture.diagnostics.lead_raw.id, 101);
+  EXPECT_EQ(capture.diagnostics.lag.id, 100);
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kDriftGuard);
+  EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
 }
 
 TEST(LeadLagStrategyInterfaceTest, DisabledDriftGuardKeepsOpenPathUnchanged) {

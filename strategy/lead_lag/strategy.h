@@ -685,6 +685,11 @@ inline void LogStrategyOrderFinished(
 
 class Strategy {
  public:
+  using TriggeredSignalObserver =
+      void (*)(void* context, const BookTicker& trigger_ticker,
+               const SignalDecision& decision,
+               const SignalDiagnostics& diagnostics) noexcept;
+
   explicit Strategy(Config config, StrategyOptions options = {})
       : config_(std::move(config)), options_(options) {
     raw_market_state_.Reset(config_);
@@ -703,6 +708,12 @@ class Strategy {
     market_calc_observer_ = observer;
   }
 #endif
+
+  void SetTriggeredSignalObserver(void* context,
+                                  TriggeredSignalObserver observer) noexcept {
+    triggered_signal_observer_context_ = context;
+    triggered_signal_observer_ = observer;
+  }
 
   template <typename ContextT>
   void OnBookTicker(const BookTicker& ticker, ContextT& context) noexcept {
@@ -1532,6 +1543,11 @@ class Strategy {
         last_signal_decision_.action, last_signal_decision_.intent.side,
         last_signal_decision_.intent.reduce_only,
         last_signal_decision_.group_id, last_signal_decision_.intent.price);
+    if (triggered_signal_observer_ != nullptr) {
+      triggered_signal_observer_(triggered_signal_observer_context_,
+                                 trigger_ticker, last_signal_decision_,
+                                 last_signal_diagnostics_);
+    }
   }
 
   template <typename ContextT>
@@ -2555,6 +2571,8 @@ class Strategy {
   SignalTiming last_signal_timing_;
   SignalDiagnostics last_signal_diagnostics_;
   bool last_signal_diagnostics_valid_{false};
+  void* triggered_signal_observer_context_{nullptr};
+  TriggeredSignalObserver triggered_signal_observer_{nullptr};
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
   void* market_calc_observer_context_{nullptr};
   MarketCalcObserver market_calc_observer_{nullptr};

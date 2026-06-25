@@ -1,5 +1,6 @@
 #include "tools/lead_lag/lag_vol_guard_audit.h"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -19,17 +20,29 @@ namespace aquila::tools::leadlag {
 namespace {
 
 BookTicker Ticker(std::int64_t id, std::int64_t exchange_ns, double bid,
-                  double ask) {
+                  double ask, Exchange exchange = Exchange::kGate) {
   return BookTicker{
       .id = id,
       .symbol_id = 4,
-      .exchange = Exchange::kGate,
+      .exchange = exchange,
       .exchange_ns = exchange_ns,
       .local_ns = exchange_ns + 1000,
       .bid_price = bid,
       .bid_volume = 1.0,
       .ask_price = ask,
       .ask_volume = 1.0,
+  };
+}
+
+strategy::leadlag::QuoteSnapshot Quote(std::int64_t id, std::int64_t event_ns,
+                                       double mid) {
+  return strategy::leadlag::QuoteSnapshot{
+      .id = id,
+      .event_ns = event_ns,
+      .exchange_ns = event_ns,
+      .local_ns = event_ns + 1000,
+      .bid_price = mid - 0.1,
+      .ask_price = mid + 0.1,
   };
 }
 
@@ -76,6 +89,14 @@ strategy::leadlag::SignalDiagnostics Diagnostics() {
               .ask_price = 10.0,
           },
   };
+}
+
+strategy::leadlag::SignalDiagnostics DiagnosticsWithRawMids(double lead_mid,
+                                                            double lag_mid) {
+  strategy::leadlag::SignalDiagnostics diagnostics = Diagnostics();
+  diagnostics.lead_raw = Quote(7001, 5'000'000'000, lead_mid);
+  diagnostics.lag = Quote(8002, 4'999'000'000, lag_mid);
+  return diagnostics;
 }
 
 strategy::leadlag::SignalDecision OpenLongDecision() {
@@ -281,8 +302,7 @@ TEST(LeadLagLagVolGuardAuditTest, ParsesDurationTextToNanoseconds) {
 TEST(LeadLagLagVolGuardAuditTest, WriterOutputsHeaderAndOpenSignalRow) {
   EnsureLoggingStarted();
   const std::filesystem::path output_path =
-      std::filesystem::temp_directory_path() /
-      "aquila_lag_vol_guard_audit.csv";
+      std::filesystem::temp_directory_path() / "aquila_lag_vol_guard_audit.csv";
   std::filesystem::remove(output_path);
 
   LagVolGuardAuditCsvWriter writer;
@@ -308,7 +328,32 @@ TEST(LeadLagLagVolGuardAuditTest, WriterOutputsHeaderAndOpenSignalRow) {
       .lag_vol_cooldown_active = false,
       .lag_vol_cooldown_until_ns = 905'000'000'000ULL,
       .config = LagVolGuardAuditConfig{},
-      .drift_guard_outcome = "not_evaluated",
+      .drift_instant = 1.01,
+      .ratio_std = 0.002,
+      .drift_mean = 1.004,
+      .drift_guard_outcome = "blocked:instant",
+  });
+  writer.Write(LagVolGuardAuditRow{
+      .open_signal_index = 1,
+      .symbol = "PROVE_USDT",
+      .symbol_id = 4,
+      .action = "kOpenShort",
+      .side = "kSell",
+      .trigger_exchange_ns = 6'000'000'000,
+      .lead_exchange_ns = 6'000'000'000,
+      .lag_exchange_ns = 5'999'000'000,
+      .signal_lead_id = 7003,
+      .signal_lag_id = 8004,
+      .raw_price = 11.0,
+      .would_block = false,
+      .would_block_reason = "none",
+      .lag_vol_jump_count = 0,
+      .lag_vol_amplitude = 0.0,
+      .lag_vol_hot = false,
+      .lag_vol_cooldown_active = false,
+      .lag_vol_cooldown_until_ns = 0,
+      .config = LagVolGuardAuditConfig{},
+      .drift_guard_outcome = "disabled",
   });
   writer.Close();
 
@@ -324,8 +369,12 @@ TEST(LeadLagLagVolGuardAuditTest, WriterOutputsHeaderAndOpenSignalRow) {
             "0,PROVE_USDT,4,kOpenLong,kBuy,5000000000,5000000000,"
             "4999000000,7001,8002,10,true,lag-vol-guard-trigger,3,"
             "0.031,true,false,905000000000,0.005,3,300000000000,"
-            "0.025,1000000000,900000000000,nan,nan,nan,"
-            "not_evaluated\n");
+            "0.025,1000000000,900000000000,1.01,0.002,1.004,"
+            "blocked:instant\n"
+            "1,PROVE_USDT,4,kOpenShort,kSell,6000000000,6000000000,"
+            "5999000000,7003,8004,11,false,none,0,0,false,false,0,"
+            "0.005,3,300000000000,0.025,1000000000,900000000000,"
+            "nan,nan,nan,disabled\n");
 }
 
 TEST(LeadLagLagVolGuardAuditTest, CollectorRoutesOnlyConfiguredLagExchange) {
@@ -342,15 +391,95 @@ TEST(LeadLagLagVolGuardAuditTest, CollectorRoutesOnlyConfiguredLagExchange) {
   collector.OnBookTicker(Ticker(4, 4'000'000'000, 102.0, 102.2));
 
   LagVolGuardAuditRow row;
-  ASSERT_TRUE(collector.BuildOpenSignalRow(Ticker(5, 5'000'000'000, 0, 0),
-                                           OpenLongDecision(), Diagnostics(),
-                                           &row));
+  ASSERT_TRUE(collector.BuildOpenSignalRow(
+      Ticker(5, 5'000'000'000, 0, 0), OpenLongDecision(), Diagnostics(), &row));
 
   EXPECT_EQ(row.symbol, "PROVE_USDT");
   EXPECT_EQ(row.symbol_id, 4);
   EXPECT_EQ(row.signal_lag_id, 8002);
   EXPECT_TRUE(row.would_block);
   EXPECT_EQ(row.would_block_reason, "lag-vol-guard-trigger");
+}
+
+TEST(LeadLagLagVolGuardAuditTest, CollectorWritesBlockedDriftGuardSnapshot) {
+  const strategy::leadlag::DriftGuardConfig drift_guard{
+      .enabled = true,
+      .drift_instant = 0.001,
+      .ratio_std = 100.0,
+      .ratio_std_window_ns = 60'000'000'000ULL,
+      .drift_mean = 100.0,
+      .drift_mean_window_ns = 60'000'000'000ULL,
+  };
+  LagVolGuardAuditCollector collector(
+      {LagVolGuardAuditPairConfig{.symbol = "PROVE_USDT",
+                                  .symbol_id = 4,
+                                  .lead_exchange = Exchange::kBinance,
+                                  .lag_exchange = Exchange::kGate,
+                                  .drift_guard = drift_guard}},
+      LagVolGuardAuditConfig{});
+  collector.OnBookTicker(
+      Ticker(1, 1'000'000'000, 99.9, 100.1, Exchange::kBinance));
+  collector.OnBookTicker(Ticker(2, 2'000'000'000, 100.9, 101.1));
+
+  LagVolGuardAuditRow row;
+  ASSERT_TRUE(collector.BuildOpenSignalRow(
+      Ticker(3, 5'000'000'000, 0, 0), OpenLongDecision(),
+      DiagnosticsWithRawMids(100.0, 101.0), &row));
+
+  EXPECT_EQ(row.drift_guard_outcome, "blocked:instant");
+  EXPECT_NEAR(row.drift_instant, 1.01, 1e-12);
+  EXPECT_NEAR(row.ratio_std, 0.0, 1e-12);
+  EXPECT_NEAR(row.drift_mean, 1.01, 1e-12);
+}
+
+TEST(LeadLagLagVolGuardAuditTest, CollectorMarksEnabledDriftGuardNotReady) {
+  LagVolGuardAuditCollector collector(
+      {LagVolGuardAuditPairConfig{.symbol = "PROVE_USDT",
+                                  .symbol_id = 4,
+                                  .lead_exchange = Exchange::kBinance,
+                                  .lag_exchange = Exchange::kGate,
+                                  .drift_guard =
+                                      strategy::leadlag::DriftGuardConfig{
+                                          .enabled = true,
+                                          .drift_instant = 0.001,
+                                          .ratio_std = 100.0,
+                                          .drift_mean = 100.0,
+                                      }}},
+      LagVolGuardAuditConfig{});
+
+  LagVolGuardAuditRow row;
+  ASSERT_TRUE(collector.BuildOpenSignalRow(
+      Ticker(3, 5'000'000'000, 0, 0), OpenLongDecision(),
+      DiagnosticsWithRawMids(100.0, 101.0), &row));
+
+  EXPECT_EQ(row.drift_guard_outcome, "not_ready");
+  EXPECT_TRUE(std::isnan(row.drift_instant));
+  EXPECT_TRUE(std::isnan(row.ratio_std));
+  EXPECT_TRUE(std::isnan(row.drift_mean));
+}
+
+TEST(LeadLagLagVolGuardAuditTest, CollectorMarksDisabledDriftGuard) {
+  LagVolGuardAuditCollector collector(
+      {LagVolGuardAuditPairConfig{
+          .symbol = "PROVE_USDT",
+          .symbol_id = 4,
+          .lead_exchange = Exchange::kBinance,
+          .lag_exchange = Exchange::kGate,
+          .drift_guard = strategy::leadlag::DriftGuardConfig{}}},
+      LagVolGuardAuditConfig{});
+  collector.OnBookTicker(
+      Ticker(1, 1'000'000'000, 99.9, 100.1, Exchange::kBinance));
+  collector.OnBookTicker(Ticker(2, 2'000'000'000, 100.9, 101.1));
+
+  LagVolGuardAuditRow row;
+  ASSERT_TRUE(collector.BuildOpenSignalRow(
+      Ticker(3, 5'000'000'000, 0, 0), OpenLongDecision(),
+      DiagnosticsWithRawMids(100.0, 101.0), &row));
+
+  EXPECT_EQ(row.drift_guard_outcome, "disabled");
+  EXPECT_TRUE(std::isnan(row.drift_instant));
+  EXPECT_TRUE(std::isnan(row.ratio_std));
+  EXPECT_TRUE(std::isnan(row.drift_mean));
 }
 
 TEST(LeadLagLagVolGuardAuditTest, CollectorIgnoresNonOpenSignals) {
@@ -371,11 +500,25 @@ TEST(LeadLagLagVolGuardAuditTest, BuildsPairsFromLeadLagConfig) {
   config.pairs.push_back(strategy::leadlag::PairConfig{
       .symbol = "PROVE_USDT",
       .symbol_id = 4,
+      .lead_exchange = Exchange::kBinance,
       .lag_exchange = Exchange::kGate,
+      .trigger =
+          strategy::leadlag::TriggerConfig{
+              .drift_guard =
+                  strategy::leadlag::DriftGuardConfig{
+                      .enabled = true,
+                      .drift_instant = 0.001,
+                  },
+          },
+      .capacity =
+          strategy::leadlag::CapacityConfig{
+              .spread_window_capacity = 1234,
+          },
   });
   config.pairs.push_back(strategy::leadlag::PairConfig{
       .symbol = "ORDI_USDT",
       .symbol_id = 7,
+      .lead_exchange = Exchange::kGate,
       .lag_exchange = Exchange::kBinance,
   });
 
@@ -385,10 +528,16 @@ TEST(LeadLagLagVolGuardAuditTest, BuildsPairsFromLeadLagConfig) {
   ASSERT_EQ(pairs.size(), 2U);
   EXPECT_EQ(pairs[0].symbol, "PROVE_USDT");
   EXPECT_EQ(pairs[0].symbol_id, 4);
+  EXPECT_EQ(pairs[0].lead_exchange, Exchange::kBinance);
   EXPECT_EQ(pairs[0].lag_exchange, Exchange::kGate);
+  EXPECT_TRUE(pairs[0].drift_guard.enabled);
+  EXPECT_DOUBLE_EQ(pairs[0].drift_guard.drift_instant, 0.001);
+  EXPECT_EQ(pairs[0].drift_guard_initial_capacity, 1234U);
   EXPECT_EQ(pairs[1].symbol, "ORDI_USDT");
   EXPECT_EQ(pairs[1].symbol_id, 7);
+  EXPECT_EQ(pairs[1].lead_exchange, Exchange::kGate);
   EXPECT_EQ(pairs[1].lag_exchange, Exchange::kBinance);
+  EXPECT_FALSE(pairs[1].drift_guard.enabled);
 }
 
 }  // namespace

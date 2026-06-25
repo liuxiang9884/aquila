@@ -1,9 +1,11 @@
 #ifndef AQUILA_TOOLS_LEAD_LAG_LAG_VOL_GUARD_AUDIT_H_
 #define AQUILA_TOOLS_LEAD_LAG_LAG_VOL_GUARD_AUDIT_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -13,6 +15,7 @@
 
 #include "core/common/types.h"
 #include "nova/utils/log.h"
+#include "strategy/lead_lag/drift_guard.h"
 
 namespace aquila {
 
@@ -117,13 +120,20 @@ struct LagVolGuardAuditRow {
   bool lag_vol_cooldown_active{false};
   std::uint64_t lag_vol_cooldown_until_ns{0};
   LagVolGuardAuditConfig config;
+  double drift_instant{std::numeric_limits<double>::quiet_NaN()};
+  double ratio_std{std::numeric_limits<double>::quiet_NaN()};
+  double drift_mean{std::numeric_limits<double>::quiet_NaN()};
   std::string drift_guard_outcome{"not_evaluated"};
 };
 
 struct LagVolGuardAuditPairConfig {
   std::string symbol;
   std::int32_t symbol_id{0};
+  Exchange lead_exchange{Exchange::kBinance};
   Exchange lag_exchange{Exchange::kGate};
+  strategy::leadlag::DriftGuardConfig drift_guard;
+  std::size_t drift_guard_initial_capacity{
+      strategy::leadlag::kDefaultWindowCapacity};
 };
 
 struct LagVolGuardAuditCsvSchema {
@@ -137,7 +147,7 @@ struct LagVolGuardAuditCsvSchema {
       "drift_instant,ratio_std,drift_mean,drift_guard_outcome";
   static constexpr char const* format =
       "{},{},{},{},{},{},{},{},{},{},{:.12g},{},{},{},{:.12g},{},{},{},"
-      "{:.12g},{},{},{:.12g},{},{},nan,nan,nan,{}";
+      "{:.12g},{},{},{:.12g},{},{},{:.12g},{:.12g},{:.12g},{}";
 };
 
 class LagVolGuardAuditCsvWriter {
@@ -177,6 +187,11 @@ class LagVolGuardAuditCollector {
   struct PairState {
     LagVolGuardAuditPairConfig pair;
     LagVolGuardAuditState state;
+    strategy::leadlag::DriftGuardState drift_guard;
+    strategy::leadlag::QuoteSnapshot latest_lead;
+    strategy::leadlag::QuoteSnapshot latest_lag;
+    bool has_latest_lead{false};
+    bool has_latest_lag{false};
   };
 
   [[nodiscard]] PairState* FindPair(std::int32_t symbol_id) noexcept;

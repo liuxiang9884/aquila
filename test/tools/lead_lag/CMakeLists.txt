@@ -97,6 +97,25 @@ target_link_libraries(lead_lag_lag_vol_guard_audit_test
 add_test(NAME lead_lag_lag_vol_guard_audit_test
          COMMAND lead_lag_lag_vol_guard_audit_test)
 
+add_executable(lead_lag_replay_guard_audit_cli_test
+    lead_lag_replay_guard_audit_cli_test.cpp
+)
+
+target_link_libraries(lead_lag_replay_guard_audit_cli_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+target_compile_definitions(lead_lag_replay_guard_audit_cli_test
+    PRIVATE
+        AQUILA_LEAD_LAG_REPLAY_BINARY="$<TARGET_FILE:lead_lag_replay>"
+)
+add_dependencies(lead_lag_replay_guard_audit_cli_test lead_lag_replay)
+
+add_test(NAME lead_lag_replay_guard_audit_cli_test
+         COMMAND lead_lag_replay_guard_audit_cli_test)
+
 add_test(NAME lead_lag_replay_lag_vol_guard_invalid_cli_test
          COMMAND ${CMAKE_COMMAND}
                  -DLEAD_LAG_REPLAY=$<TARGET_FILE:lead_lag_replay>
