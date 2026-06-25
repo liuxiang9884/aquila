@@ -26,6 +26,7 @@
    - `run_live_with_guard.py` 当前的 `--affinity-*` overlay 面向单路 data session / order feedback config，不会自动重写 `gate_data_fusion` / `binance_data_fusion` launch config。使用 fusion 行情时，report 中只能按实际启动的 fusion TOML 和 `ps` / log 证据记录 CPU 分配；除非确实应用了对应外部配置，不要声明旧的 data-session affinity split。
    - 如果用户明确要求“全部重新开”、“不与现存的放在一起”或等价表达，本轮必须使用隔离 SHM name 和 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时配置重新启动 Gate data、Binance data、Gate order feedback 和策略；不要复用正在服务其它 run 的 data / feedback SHM。若用户同时指定 Gate private non-TLS，则 Gate data、Gate order session 和 Gate order feedback 都使用 `fxws-private.gateapi.io:80`、`enable_tls=false`；Binance data session 仍按 Binance public TLS 配置。
 3. 如果本轮刚修改过代码或交易配置，先完成相应 build / test / commit，再启动 live run；不要用过期 binary 或未验证配置下真实订单。只修改报告或文档时不需要重编译。
+   - 当前 LeadLag 策略配置必须使用 `[lead_lag.pairs.trigger.drift_guard]`；旧 `trigger.drift_limit` 和 `trigger.drift_guard.mode` 会被 parser 拒绝。`drift_guard` 是 signal 后、订单 intent 前执行的 open-only emergency sanity guard，close / stoploss 不受影响。
 4. 生成本轮 affinity overlay：
    - 在启动或重启核心链路组件前，先生成 `/home/liuxiang/tmp/<run_id>/configs/` 下的临时 TOML；该步骤不连接交易所、不读账户、不启动策略。
    - 后续如果确实用这些临时 TOML 启动 Gate / Binance data session 和 Gate order feedback session，guard 启动时才可以带 `--affinity-external-configs-applied`，report 中的 `affinity_split` 才可视为 true。
