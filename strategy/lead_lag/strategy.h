@@ -24,6 +24,7 @@
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/alignment.h"
 #include "strategy/lead_lag/config.h"
+#include "strategy/lead_lag/drift_guard.h"
 #include "strategy/lead_lag/execution_state.h"
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
 #include "strategy/lead_lag/market_calc_diagnostics.h"
@@ -487,6 +488,21 @@ inline void LogStrategyOrderIntentRejected(
       raw_price, order_price, slippage_ticks, price_tick, target_open_notional,
       estimated_notional, gross_before, gross_after, max_gross_notional,
       local_order_id, place_status);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  NotifyStrategyOrderIntentRejectedLogObserverForTest(
+      StrategyOrderIntentRejectedLogRecordForTest{
+          .reason = reason,
+          .symbol = symbol,
+          .symbol_id = symbol_id,
+          .action = action,
+          .side = side,
+          .reduce_only = reduce_only,
+          .quantity = quantity,
+          .raw_price = raw_price,
+          .order_price = order_price,
+          .price_tick = price_tick,
+          .estimated_notional = estimated_notional});
+#endif
 }
 
 inline void LogStrategyOrderResponse(
@@ -723,6 +739,8 @@ class Strategy {
     if (last_market_update_.both_sides_valid) {
       runtime->alignment.OnPairedRawBbo(now_ns, market->lead.latest_quote,
                                         market->lag.latest_quote);
+      runtime->drift_guard.OnPairedRawBbo(now_ns, market->lead.latest_quote,
+                                          market->lag.latest_quote);
     }
 
     const AlignmentPhase previous_phase = runtime->alignment.phase();
@@ -955,6 +973,7 @@ class Strategy {
     std::uint64_t max_lead_freshness_ns{0};
     std::uint64_t max_lag_freshness_ns{0};
     AlignmentState alignment;
+    DriftGuardState drift_guard;
     RecorderState recorder;
     ThresholdState threshold;
     ExecutionState execution;
@@ -1168,6 +1187,8 @@ class Strategy {
           .drift_min_samples = pair.trigger.drift_min_samples,
           .initial_capacity = pair.capacity.spread_window_capacity,
       });
+      runtime.drift_guard.Init(pair.trigger.drift_guard,
+                               pair.capacity.spread_window_capacity);
       runtime.recorder.Init(pair);
       runtime.threshold.Init(pair);
       runtime.execution.Init(pair.execute.parallel);
@@ -1526,6 +1547,9 @@ class Strategy {
     RecordTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
                           threshold, trigger_ticker, signal_role,
                           on_book_ticker_entry_ns);
+    if (RejectOpenForDriftGuard(runtime, market)) {
+      return;
+    }
     if (SyntheticPositionAccounting()) {
       ApplySyntheticSignal(runtime, last_signal_decision_);
     } else {
@@ -1684,6 +1708,26 @@ class Strategy {
                                     price.slippage_ticks, instrument.price_tick,
                                     0.0, 0.0, 0.0, 0.0, 0, "-", false, reason);
     RejectSignal(SignalRejectReason::kMarketFreshness);
+    return true;
+  }
+
+  [[nodiscard]] bool RejectOpenForDriftGuard(
+      PairRuntimeState* runtime, const PairMarketState& market) noexcept {
+    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      return false;
+    }
+    const DriftGuardSnapshot guard = runtime->drift_guard.Evaluate(
+        runtime->pair.trigger.drift_guard, market.lead.latest_quote,
+        market.lag.latest_quote);
+    if (!guard.blocked) {
+      return false;
+    }
+    const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
+    const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
+    LogOrderIntentRejectedForSignal(
+        "drift_guard", runtime, symbol, 0.0, last_signal_decision_.intent.price,
+        last_signal_decision_.intent.price, 0, instrument.price_tick, 0.0);
+    RejectSignal(SignalRejectReason::kDriftGuard);
     return true;
   }
 

@@ -146,6 +146,14 @@ def build_order_index(order_rows: list[dict[str, str]]) -> dict[str, dict[str, s
     return result
 
 
+def submitted_order_count(order_rows: list[dict[str, str]]) -> int:
+    return sum(
+        1
+        for row in order_rows
+        if row.get("source_schema", "") != "intent_rejected_v1"
+    )
+
+
 def build_signal_detail_rows(
     log_path: Path, order_rows: list[dict[str, str]], run_id: str
 ) -> list[dict[str, str]]:
@@ -805,7 +813,7 @@ def write_markdown_report(
         "## Signal 和 Order",
         "",
         f"- signal: `{len(signal_rows)}`",
-        f"- submitted order: `{len(order_rows)}`",
+        f"- submitted order: `{submitted_order_count(order_rows)}`",
         f"- Gate send ok: `{send_count}`",
         f"- ack: `{ack_count}`",
         f"- order finished: `{finished_count}`",

@@ -110,7 +110,6 @@ using Runtime =
               .close = 0.005,
               .lag_part = 0.5,
               .target_profit_rate = 0.0,
-              .drift_limit = 1.0,
               .drift_period_ns = 1'000'000'000ULL,
               .drift_min_samples = 1,
               .drift_warmup_ns = 1,

@@ -217,6 +217,12 @@ void EnsureLoggingStarted() {
   (void)started;
 }
 
+void FlushStrategyLogging() {
+  if (nova::kLogManager.logger() != nullptr) {
+    nova::kLogManager.logger()->flush_log();
+  }
+}
+
 class StrategyLoggingEnvironment final : public ::testing::Environment {
  public:
   void SetUp() override {
@@ -230,6 +236,9 @@ class StrategyLoggingEnvironment final : public ::testing::Environment {
 std::array<leadlag::detail::StrategyOrderIntentLogRecordForTest, 4>
     g_order_intent_logs{};
 std::size_t g_order_intent_log_count{0};
+std::array<leadlag::detail::StrategyOrderIntentRejectedLogRecordForTest, 4>
+    g_order_intent_rejected_logs{};
+std::size_t g_order_intent_rejected_log_count{0};
 std::array<leadlag::detail::StrategyOrderSubmittedLogRecordForTest, 4>
     g_order_submitted_logs{};
 std::size_t g_order_submitted_log_count{0};
@@ -263,6 +272,23 @@ void ResetStrategyOrderIntentLogCapture() noexcept {
   g_order_intent_logs = {};
   g_order_intent_log_count = 0;
   leadlag::detail::SetStrategyOrderIntentLogObserverForTest(nullptr);
+}
+
+void CaptureStrategyOrderIntentRejectedLogForTest(
+    const leadlag::detail::StrategyOrderIntentRejectedLogRecordForTest&
+        record) noexcept {
+  if (g_order_intent_rejected_log_count >=
+      g_order_intent_rejected_logs.size()) {
+    return;
+  }
+  g_order_intent_rejected_logs[g_order_intent_rejected_log_count] = record;
+  ++g_order_intent_rejected_log_count;
+}
+
+void ResetStrategyOrderIntentRejectedLogCapture() noexcept {
+  g_order_intent_rejected_logs = {};
+  g_order_intent_rejected_log_count = 0;
+  leadlag::detail::SetStrategyOrderIntentRejectedLogObserverForTest(nullptr);
 }
 
 void CaptureStrategyOrderSubmittedLogForTest(
@@ -377,6 +403,24 @@ class StrategyOrderIntentLogCaptureGuard {
       const StrategyOrderIntentLogCaptureGuard&) = delete;
   StrategyOrderIntentLogCaptureGuard& operator=(
       const StrategyOrderIntentLogCaptureGuard&) = delete;
+};
+
+class StrategyOrderIntentRejectedLogCaptureGuard {
+ public:
+  StrategyOrderIntentRejectedLogCaptureGuard() noexcept {
+    ResetStrategyOrderIntentRejectedLogCapture();
+    leadlag::detail::SetStrategyOrderIntentRejectedLogObserverForTest(
+        CaptureStrategyOrderIntentRejectedLogForTest);
+  }
+
+  ~StrategyOrderIntentRejectedLogCaptureGuard() noexcept {
+    ResetStrategyOrderIntentRejectedLogCapture();
+  }
+
+  StrategyOrderIntentRejectedLogCaptureGuard(
+      const StrategyOrderIntentRejectedLogCaptureGuard&) = delete;
+  StrategyOrderIntentRejectedLogCaptureGuard& operator=(
+      const StrategyOrderIntentRejectedLogCaptureGuard&) = delete;
 };
 
 class StrategyOrderSubmittedLogCaptureGuard {
@@ -571,7 +615,6 @@ leadlag::Config SignalOnlyConfig() {
               .close = 0.005,
               .lag_part = 0.5,
               .target_profit_rate = 0.0,
-              .drift_limit = 1.0,
               .drift_period_ns = 1'000'000'000,
               .drift_min_samples = 1,
               .drift_warmup_ns = 1,
@@ -614,6 +657,19 @@ leadlag::Config SignalOnlyConfig() {
               .notional_multiplier = 1.0,
           },
   });
+  return config;
+}
+
+leadlag::Config SignalOnlyConfigWithDriftGuard(double drift_instant) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].trigger.drift_guard = leadlag::DriftGuardConfig{
+      .enabled = true,
+      .drift_instant = drift_instant,
+      .ratio_std = 10.0,
+      .ratio_std_window_ns = 60'000'000'000ULL,
+      .drift_mean = 10.0,
+      .drift_mean_window_ns = 60'000'000'000ULL,
+  };
   return config;
 }
 
@@ -1057,6 +1113,51 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_FALSE(strategy.last_signal_decision().triggered);
   EXPECT_EQ(strategy.last_signal_decision().reject_reason,
             leadlag::SignalRejectReason::kMarketFreshness);
+}
+
+TEST(LeadLagStrategyInterfaceTest, DriftGuardBlocksOpenAfterSignalTriggered) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithDriftGuard(0.001)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategySignalTriggeredLogCaptureGuard signal_log_capture;
+  StrategyOrderIntentRejectedLogCaptureGuard rejected_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kDriftGuard);
+  ASSERT_EQ(g_signal_triggered_log_count, 1U);
+  EXPECT_EQ(g_signal_triggered_logs[0].action,
+            leadlag::SignalAction::kOpenLong);
+  EXPECT_FALSE(g_signal_triggered_logs[0].reduce_only);
+  ASSERT_EQ(g_order_intent_rejected_log_count, 1U);
+  const leadlag::detail::StrategyOrderIntentRejectedLogRecordForTest& reject =
+      g_order_intent_rejected_logs[0];
+  EXPECT_EQ(reject.reason, "drift_guard");
+  EXPECT_EQ(reject.symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(reject.symbol_id, 3);
+  EXPECT_EQ(reject.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_FALSE(reject.reduce_only);
+}
+
+TEST(LeadLagStrategyInterfaceTest, DisabledDriftGuardKeepsOpenPathUnchanged) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  EXPECT_EQ(order_manager.order_count(), 1U);
+  const leadlag::SignalDecision& decision = strategy.last_signal_decision();
+  ASSERT_TRUE(decision.triggered);
+  EXPECT_EQ(decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kNone);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -2115,6 +2216,29 @@ TEST(LeadLagStrategyInterfaceTest,
 TEST(LeadLagStrategyInterfaceTest,
      RetiredRejectedOrdersDoNotAllocatePriceTextStorageInOrderPath) {
   leadlag::Config config = SignalOnlyConfig();
+  {
+    // Warm lazy logging/formatting state before measuring the order path.
+    leadlag::Strategy warm_strategy{config};
+    FakeOrderSession warm_session;
+    warm_session.next_place_status = FakeOrderSession::SendStatus::kRejected;
+    warm_session.capture_price_text = false;
+    warm_session.placed_orders.reserve(1);
+    OrderManagerT warm_manager{warm_session, 8, 4};
+    ContextT warm_context{warm_manager};
+
+    warm_strategy.OnBookTicker(
+        Ticker(3, aquila::Exchange::kGate, 100, 101.57, 102.02),
+        warm_context);
+    warm_strategy.OnBookTicker(
+        Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0),
+        warm_context);
+    warm_strategy.OnBookTicker(
+        Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0),
+        warm_context);
+    ASSERT_EQ(warm_session.placed_orders.size(), 1U);
+  }
+  FlushStrategyLogging();
+
   leadlag::Strategy strategy{config};
   FakeOrderSession order_session;
   order_session.next_place_status = FakeOrderSession::SendStatus::kRejected;
@@ -2127,6 +2251,7 @@ TEST(LeadLagStrategyInterfaceTest,
                         context);
   strategy.OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  FlushStrategyLogging();
 
   AllocationCountingGuard allocations;
   for (int i = 0; i < 64; ++i) {
@@ -2337,6 +2462,70 @@ TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
       Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
 
   EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
+}
+
+TEST(LeadLagStrategyInterfaceTest, DriftGuardDoesNotBlockNormalClose) {
+  leadlag::Strategy strategy{
+      SignalOnlyConfigWithDriftGuard(0.10),
+      leadlag::StrategyOptions{
+          .position_accounting =
+              leadlag::PositionAccountingMode::kSyntheticSignals,
+      }};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
+  ASSERT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenLong);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 102, 80.0, 81.0),
+                        context);
+
+  const leadlag::SignalDecision& close = strategy.last_signal_decision();
+  ASSERT_TRUE(close.triggered) << static_cast<int>(close.reject_reason);
+  EXPECT_EQ(close.action, leadlag::SignalAction::kCloseLong);
+  EXPECT_EQ(close.reject_reason, leadlag::SignalRejectReason::kNone);
+  EXPECT_TRUE(close.intent.reduce_only);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 103, 70.0, 71.0),
+                        context);
+
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+}
+
+TEST(LeadLagStrategyInterfaceTest, DriftGuardDoesNotBlockStoploss) {
+  leadlag::Strategy strategy{
+      SignalOnlyConfigWithDriftGuard(0.10),
+      leadlag::StrategyOptions{
+          .position_accounting =
+              leadlag::PositionAccountingMode::kSyntheticSignals,
+      }};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_TRUE(strategy.last_signal_decision().triggered)
+      << static_cast<int>(strategy.last_signal_decision().reject_reason);
+  ASSERT_EQ(strategy.last_signal_decision().action,
+            leadlag::SignalAction::kOpenLong);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 95.0, 96.0),
+                        context);
+
+  const leadlag::SignalDecision& stoploss = strategy.last_signal_decision();
+  ASSERT_TRUE(stoploss.triggered) << static_cast<int>(stoploss.reject_reason);
+  EXPECT_EQ(stoploss.action, leadlag::SignalAction::kStoplossLong);
+  EXPECT_EQ(stoploss.reject_reason, leadlag::SignalRejectReason::kNone);
+  EXPECT_TRUE(stoploss.intent.reduce_only);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 103, 94.0, 95.0),
+                        context);
+
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
