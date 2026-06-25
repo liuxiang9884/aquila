@@ -225,13 +225,16 @@ class Parser {
   [[nodiscard]] TriggerConfig ParseTrigger(const toml::table& table,
                                            const std::string& prefix) {
     TriggerConfig trigger;
+    if (table.contains("drift_limit")) {
+      Fail(prefix + ".drift_limit",
+           " is no longer supported; use drift_guard.drift_mean");
+      return trigger;
+    }
     trigger.lead = RequiredDouble(table, "lead", prefix + ".lead");
     trigger.close = RequiredDouble(table, "close", prefix + ".close");
     trigger.lag_part = RequiredDouble(table, "lag_part", prefix + ".lag_part");
     trigger.target_profit_rate = RequiredDouble(table, "target_profit_rate",
                                                 prefix + ".target_profit_rate");
-    trigger.drift_limit =
-        RequiredDouble(table, "drift_limit", prefix + ".drift_limit");
     trigger.drift_period_ns =
         RequiredDurationNs(table, "drift_period", prefix + ".drift_period");
     trigger.drift_min_samples = RequiredUInt32(table, "drift_min_samples",
@@ -267,6 +270,9 @@ class Parser {
         drift_guard != nullptr) {
       trigger.drift_guard =
           ParseDriftGuard(*drift_guard, prefix + ".drift_guard");
+      if (!ok_) {
+        return trigger;
+      }
     }
     return trigger;
   }
@@ -289,14 +295,52 @@ class Parser {
   [[nodiscard]] DriftGuardConfig ParseDriftGuard(const toml::table& table,
                                                  const std::string& prefix) {
     DriftGuardConfig guard;
-    guard.mode = FeatureModeOr(table, "mode", guard.mode, prefix + ".mode",
-                               /*allow_enforce=*/false);
+    if (table.contains("mode")) {
+      Fail(prefix + ".mode", " is no longer supported; use enabled");
+      return guard;
+    }
+    guard.enabled = RequiredBool(table, "enabled", prefix + ".enabled");
     if (!ok_) {
       return guard;
     }
-    if (guard.mode != FeatureMode::kOff) {
-      Fail(prefix + ".mode", " is not implemented yet");
+    guard.drift_instant =
+        DoubleOr(table, "drift_instant", guard.drift_instant,
+                 prefix + ".drift_instant");
+    guard.ratio_std =
+        DoubleOr(table, "ratio_std", guard.ratio_std, prefix + ".ratio_std");
+    guard.ratio_std_window_ns =
+        DurationNsOr(table, "ratio_std_window", guard.ratio_std_window_ns,
+                     prefix + ".ratio_std_window");
+    guard.drift_mean =
+        DoubleOr(table, "drift_mean", guard.drift_mean, prefix + ".drift_mean");
+    guard.drift_mean_window_ns =
+        DurationNsOr(table, "drift_mean_window", guard.drift_mean_window_ns,
+                     prefix + ".drift_mean_window");
+    if (!ok_) {
       return guard;
+    }
+    if (guard.enabled) {
+      if (!std::isfinite(guard.drift_instant) ||
+          guard.drift_instant <= 0.0) {
+        Fail(prefix + ".drift_instant", " must be finite and positive");
+        return guard;
+      }
+      if (!std::isfinite(guard.ratio_std) || guard.ratio_std <= 0.0) {
+        Fail(prefix + ".ratio_std", " must be finite and positive");
+        return guard;
+      }
+      if (guard.ratio_std_window_ns == 0) {
+        Fail(prefix + ".ratio_std_window", " must be positive");
+        return guard;
+      }
+      if (!std::isfinite(guard.drift_mean) || guard.drift_mean <= 0.0) {
+        Fail(prefix + ".drift_mean", " must be finite and positive");
+        return guard;
+      }
+      if (guard.drift_mean_window_ns == 0) {
+        Fail(prefix + ".drift_mean_window", " must be positive");
+        return guard;
+      }
     }
     return guard;
   }
@@ -490,6 +534,10 @@ class Parser {
     capacity.spread_window_capacity =
         SizeOr(table, "spread_window_capacity", capacity.spread_window_capacity,
                prefix + ".spread_window_capacity");
+    capacity.drift_guard_window_capacity =
+        SizeOr(table, "drift_guard_window_capacity",
+               capacity.drift_guard_window_capacity,
+               prefix + ".drift_guard_window_capacity");
     return capacity;
   }
 
@@ -619,6 +667,24 @@ class Parser {
     return RequiredUInt32(table, key, name);
   }
 
+  [[nodiscard]] double DoubleOr(const toml::table& table, std::string_view key,
+                                double fallback, std::string_view name) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    const std::optional<double> double_value = table[key].value<double>();
+    if (double_value) {
+      return *double_value;
+    }
+    const std::optional<std::int64_t> int_value =
+        table[key].value<std::int64_t>();
+    if (int_value) {
+      return static_cast<double>(*int_value);
+    }
+    Fail(name, " must be a number");
+    return fallback;
+  }
+
   [[nodiscard]] bool BoolOr(const toml::table& table, std::string_view key,
                             bool fallback, std::string_view name) {
     if (!table.contains(key)) {
@@ -630,6 +696,27 @@ class Parser {
       return fallback;
     }
     return *value;
+  }
+
+  [[nodiscard]] bool RequiredBool(const toml::table& table,
+                                  std::string_view key,
+                                  std::string_view name) {
+    const std::optional<bool> value = table[key].value<bool>();
+    if (!value) {
+      Fail(name, " is required and must be a boolean");
+      return false;
+    }
+    return *value;
+  }
+
+  [[nodiscard]] std::uint64_t DurationNsOr(const toml::table& table,
+                                           std::string_view key,
+                                           std::uint64_t fallback,
+                                           std::string_view name) {
+    if (!table.contains(key)) {
+      return fallback;
+    }
+    return RequiredDurationNs(table, key, name);
   }
 
   [[nodiscard]] FeatureMode FeatureModeOr(const toml::table& table,

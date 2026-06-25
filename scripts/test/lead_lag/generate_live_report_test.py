@@ -63,6 +63,71 @@ def write_catalog(path: Path) -> None:
 
 
 class GenerateLiveReportTest(unittest.TestCase):
+    def test_drift_guard_rejected_intent_joins_signal_without_missing_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            config_path = base / "strategy.toml"
+            catalog_path = base / "catalog.csv"
+            schema_path = base / "schema.md"
+            output_root = base / "reports"
+            write_config(config_path)
+            write_catalog(catalog_path)
+            schema_path.write_text("# schema\n", encoding="utf-8")
+            write_file(
+                log_path,
+                """
+                I2026-06-25 09:00:00.000000100 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2711
+                W2026-06-25 09:00:00.000000200 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=drift_guard trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=0 price=0.2711 raw_price=0.2711 order_price=0.2711 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=0 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
+                """,
+            )
+
+            result = report.generate_live_report(
+                log_path=log_path,
+                config_path=config_path,
+                instrument_catalog_path=catalog_path,
+                run_id="run-1",
+                output_root=output_root,
+                schema_path=schema_path,
+            )
+
+            report_dir = output_root / "run-1"
+            with (report_dir / "signal.csv").open(newline="", encoding="utf-8") as input_file:
+                signal_rows = list(csv.DictReader(input_file))
+            with (report_dir / "order_detail.csv").open(newline="", encoding="utf-8") as input_file:
+                order_rows = list(csv.DictReader(input_file))
+            with (report_dir / "latency.csv").open(newline="", encoding="utf-8") as input_file:
+                latency_rows = list(csv.DictReader(input_file))
+            report_text = (report_dir / "report.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result.latency_rows, 0)
+        self.assertEqual(latency_rows, [])
+        self.assertEqual(len(signal_rows), 1)
+        signal_row = signal_rows[0]
+        self.assertNotIn("missing_order", signal_row["warnings"])
+        self.assertEqual(signal_row["status"], "kRejected")
+        self.assertEqual(signal_row["local_order_id"], "0")
+        self.assertEqual(signal_row["order_price"], "0.2711")
+        self.assertEqual(signal_row["quantity"], "0")
+
+        self.assertEqual(len(order_rows), 1)
+        order_row = order_rows[0]
+        self.assertEqual(order_row["source_schema"], "intent_rejected_v1")
+        self.assertEqual(order_row["status"], "kRejected")
+        self.assertEqual(order_row["reject_reason"], "drift_guard")
+        self.assertEqual(order_row["local_order_id"], "0")
+        self.assertEqual(order_row["symbol"], "PROVE_USDT")
+        self.assertEqual(order_row["symbol_id"], "4")
+        self.assertEqual(order_row["action"], "kOpenLong")
+        self.assertEqual(order_row["side"], "kBuy")
+        self.assertEqual(order_row["reduce_only"], "false")
+        self.assertEqual(order_row["raw_price"], "0.2711")
+        self.assertEqual(order_row["order_price"], "0.2711")
+        self.assertEqual(order_row["price_tick"], "0.0001")
+        self.assertEqual(order_row["slippage_ticks"], "0")
+        self.assertEqual(order_row["quantity"], "0")
+        self.assertIn("- submitted order: `0`", report_text)
+
     def test_generates_report_directory_from_live_log(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)

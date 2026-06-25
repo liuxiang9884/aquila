@@ -100,6 +100,20 @@ struct StrategyOrderIntentLogRecordForTest {
   std::size_t active_groups{0};
 };
 
+struct StrategyOrderIntentRejectedLogRecordForTest {
+  std::string_view reason;
+  std::string_view symbol;
+  std::int32_t symbol_id{0};
+  SignalAction action{SignalAction::kNone};
+  OrderSide side{OrderSide::kBuy};
+  bool reduce_only{false};
+  double quantity{0.0};
+  double raw_price{0.0};
+  double order_price{0.0};
+  double price_tick{0.0};
+  double estimated_notional{0.0};
+};
+
 struct StrategyOrderSubmittedLogRecordForTest {
   std::uint64_t local_order_id{0};
   Exchange trigger_exchange{Exchange::kGate};
@@ -184,6 +198,10 @@ using StrategySignalDecisionLogObserverForTest =
 using StrategyOrderIntentLogObserverForTest =
     void (*)(const StrategyOrderIntentLogRecordForTest& record) noexcept;
 
+using StrategyOrderIntentRejectedLogObserverForTest =
+    void (*)(const StrategyOrderIntentRejectedLogRecordForTest&
+                 record) noexcept;
+
 using StrategyOrderSubmittedLogObserverForTest =
     void (*)(const StrategyOrderSubmittedLogRecordForTest& record) noexcept;
 
@@ -211,6 +229,12 @@ StrategySignalDecisionLogObserverSlotForTest() noexcept {
 [[nodiscard]] inline StrategyOrderIntentLogObserverForTest&
 StrategyOrderIntentLogObserverSlotForTest() noexcept {
   static StrategyOrderIntentLogObserverForTest observer = nullptr;
+  return observer;
+}
+
+[[nodiscard]] inline StrategyOrderIntentRejectedLogObserverForTest&
+StrategyOrderIntentRejectedLogObserverSlotForTest() noexcept {
+  static StrategyOrderIntentRejectedLogObserverForTest observer = nullptr;
   return observer;
 }
 
@@ -251,6 +275,11 @@ inline void SetStrategySignalDecisionLogObserverForTest(
 inline void SetStrategyOrderIntentLogObserverForTest(
     StrategyOrderIntentLogObserverForTest observer) noexcept {
   StrategyOrderIntentLogObserverSlotForTest() = observer;
+}
+
+inline void SetStrategyOrderIntentRejectedLogObserverForTest(
+    StrategyOrderIntentRejectedLogObserverForTest observer) noexcept {
+  StrategyOrderIntentRejectedLogObserverSlotForTest() = observer;
 }
 
 inline void SetStrategyOrderSubmittedLogObserverForTest(
@@ -297,6 +326,16 @@ inline void NotifyStrategyOrderIntentLogObserverForTest(
     const StrategyOrderIntentLogRecordForTest& record) noexcept {
   StrategyOrderIntentLogObserverForTest observer =
       StrategyOrderIntentLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+
+inline void NotifyStrategyOrderIntentRejectedLogObserverForTest(
+    const StrategyOrderIntentRejectedLogRecordForTest& record) noexcept {
+  StrategyOrderIntentRejectedLogObserverForTest observer =
+      StrategyOrderIntentRejectedLogObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }

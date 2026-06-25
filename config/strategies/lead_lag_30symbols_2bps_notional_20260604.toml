@@ -19,10 +19,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -52,6 +59,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SLX_USDT"
@@ -67,10 +75,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -100,6 +115,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "AIA_USDT"
@@ -115,10 +131,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -148,6 +171,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "WLD_USDT"
@@ -163,10 +187,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -196,6 +227,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "PIEVERSE_USDT"
@@ -211,10 +243,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -244,6 +283,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "OPN_USDT"
@@ -259,10 +299,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -292,6 +339,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "LIT_USDT"
@@ -307,10 +355,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -340,6 +395,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "MYX_USDT"
@@ -355,10 +411,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -388,6 +451,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ENA_USDT"
@@ -403,10 +467,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -436,6 +507,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "STO_USDT"
@@ -451,10 +523,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -484,6 +563,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ICP_USDT"
@@ -499,10 +579,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -532,6 +619,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "UB_USDT"
@@ -547,10 +635,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -580,6 +675,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "BEAT_USDT"
@@ -595,10 +691,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -628,6 +731,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "XPL_USDT"
@@ -643,10 +747,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -676,6 +787,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "FARTCOIN_USDT"
@@ -691,10 +803,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -724,6 +843,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ZEC_USDT"
@@ -739,10 +859,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -772,6 +899,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SKYAI_USDT"
@@ -787,10 +915,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -820,6 +955,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "VIRTUAL_USDT"
@@ -835,10 +971,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -868,6 +1011,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "EPIC_USDT"
@@ -883,10 +1027,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -916,6 +1067,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "INJ_USDT"
@@ -931,10 +1083,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -964,6 +1123,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "PENGU_USDT"
@@ -979,10 +1139,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1012,6 +1179,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "H_USDT"
@@ -1027,10 +1195,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1060,6 +1235,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "NEAR_USDT"
@@ -1075,10 +1251,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1108,6 +1291,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "XLM_USDT"
@@ -1123,10 +1307,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1156,6 +1347,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "FIL_USDT"
@@ -1171,10 +1363,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1204,6 +1403,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "TON_USDT"
@@ -1219,10 +1419,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1252,6 +1459,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ONDO_USDT"
@@ -1267,10 +1475,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1300,6 +1515,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SUI_USDT"
@@ -1315,10 +1531,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1348,6 +1571,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "WIF_USDT"
@@ -1363,10 +1587,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1396,6 +1627,7 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "FET_USDT"
@@ -1411,10 +1643,17 @@ lead = 0.0025
 close = 0.0005
 lag_part = 0.5
 target_profit_rate = 0.0
-drift_limit = 0.02
 drift_period = "1m"
 drift_min_samples = 20
 drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
 
 [lead_lag.pairs.trigger.quantile]
 move = 0.75
@@ -1444,3 +1683,4 @@ extrema_window_capacity = 16384
 move_queue_capacity = 16384
 noise_window_capacity = 16384
 spread_window_capacity = 16384
+drift_guard_window_capacity = 131072

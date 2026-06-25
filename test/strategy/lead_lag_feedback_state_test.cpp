@@ -66,7 +66,6 @@ leadlag::PairConfig PairConfigForFeedback() {
       .lead = 0.02,
       .close = 0.005,
       .lag_part = 0.5,
-      .drift_limit = 0.02,
   };
   pair.execute = leadlag::ExecuteConfig{
       .trailing_stop = 0.05,

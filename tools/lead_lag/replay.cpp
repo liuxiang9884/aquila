@@ -121,6 +121,7 @@ class ReplayStrategy {
         signal_writer_(signal_writer),
         lag_vol_audit_(lag_vol_audit),
         lag_vol_audit_writer_(lag_vol_audit_writer) {
+    BindTriggeredSignalObserver();
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
     if (market_calc_writer != nullptr) {
       inner_.SetMarketCalcObserver(market_calc_writer, WriteMarketCalcRow);
@@ -130,8 +131,27 @@ class ReplayStrategy {
 
   ReplayStrategy(const ReplayStrategy&) = delete;
   ReplayStrategy& operator=(const ReplayStrategy&) = delete;
-  ReplayStrategy(ReplayStrategy&&) noexcept = default;
-  ReplayStrategy& operator=(ReplayStrategy&&) noexcept = default;
+  ReplayStrategy(ReplayStrategy&& other) noexcept
+      : inner_(std::move(other.inner_)),
+        stats_(other.stats_),
+        signal_writer_(other.signal_writer_),
+        lag_vol_audit_(other.lag_vol_audit_),
+        lag_vol_audit_writer_(other.lag_vol_audit_writer_),
+        stop_requested_(other.stop_requested_) {
+    BindTriggeredSignalObserver();
+  }
+  ReplayStrategy& operator=(ReplayStrategy&& other) noexcept {
+    if (this != &other) {
+      inner_ = std::move(other.inner_);
+      stats_ = other.stats_;
+      signal_writer_ = other.signal_writer_;
+      lag_vol_audit_ = other.lag_vol_audit_;
+      lag_vol_audit_writer_ = other.lag_vol_audit_writer_;
+      stop_requested_ = other.stop_requested_;
+      BindTriggeredSignalObserver();
+    }
+    return *this;
+  }
 
   template <typename ContextT>
   void OnBookTicker(const aquila::BookTicker& ticker,
@@ -144,23 +164,6 @@ class ReplayStrategy {
       lag_vol_audit_->OnBookTicker(ticker);
     }
     inner_.OnBookTicker(ticker, context);
-    const leadlag::SignalDecision& decision = inner_.last_signal_decision();
-    if (!decision.triggered) {
-      return;
-    }
-
-    RecordSignal(decision);
-    if (signal_writer_ != nullptr && inner_.last_signal_diagnostics_valid()) {
-      signal_writer_->Write(ticker, decision, inner_.last_signal_diagnostics());
-    }
-    if (lag_vol_audit_ != nullptr && lag_vol_audit_writer_ != nullptr &&
-        inner_.last_signal_diagnostics_valid()) {
-      leadlag_tools::LagVolGuardAuditRow row;
-      if (lag_vol_audit_->BuildOpenSignalRow(
-              ticker, decision, inner_.last_signal_diagnostics(), &row)) {
-        lag_vol_audit_writer_->Write(row);
-      }
-    }
   }
 
   template <typename ContextT>
@@ -186,6 +189,37 @@ class ReplayStrategy {
   }
 
  private:
+  void BindTriggeredSignalObserver() noexcept {
+    inner_.SetTriggeredSignalObserver(this, RecordTriggeredSignalCallback);
+  }
+
+  static void RecordTriggeredSignalCallback(
+      void* context, const aquila::BookTicker& trigger_ticker,
+      const leadlag::SignalDecision& decision,
+      const leadlag::SignalDiagnostics& diagnostics) noexcept {
+    auto* replay = static_cast<ReplayStrategy*>(context);
+    if (replay != nullptr) {
+      replay->RecordTriggeredSignal(trigger_ticker, decision, diagnostics);
+    }
+  }
+
+  void RecordTriggeredSignal(
+      const aquila::BookTicker& trigger_ticker,
+      const leadlag::SignalDecision& decision,
+      const leadlag::SignalDiagnostics& diagnostics) noexcept {
+    RecordSignal(decision);
+    if (signal_writer_ != nullptr) {
+      signal_writer_->Write(trigger_ticker, decision, diagnostics);
+    }
+    if (lag_vol_audit_ != nullptr && lag_vol_audit_writer_ != nullptr) {
+      leadlag_tools::LagVolGuardAuditRow row;
+      if (lag_vol_audit_->BuildOpenSignalRow(trigger_ticker, decision,
+                                             diagnostics, &row)) {
+        lag_vol_audit_writer_->Write(row);
+      }
+    }
+  }
+
   void RecordSignal(const leadlag::SignalDecision& decision) noexcept {
     if (stats_ == nullptr) {
       return;
@@ -599,6 +633,13 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
 }
 
 int Run(const CliOptions& options) {
+  if (!options.lag_vol_guard_audit_output_path.empty()) {
+    leadlag_tools::LagVolGuardAuditConfig audit_config;
+    if (!BuildLagVolGuardAuditConfig(options, &audit_config)) {
+      return 1;
+    }
+  }
+
   LoadedConfig loaded;
   if (!LoadConfig(options, &loaded)) {
     return 1;

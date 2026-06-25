@@ -36,11 +36,11 @@ enum class SignalRejectReason : std::uint8_t {
   kEntryCost,
   kEntrySpread,
   kParallelLimit,
-  kDriftLimit,
   kPendingOrder,
   kDegraded,
   kRiskLimit,
   kMarketFreshness,
+  kDriftGuard,
 };
 
 struct OrderIntent {
@@ -108,7 +108,7 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision OnLeadTick(
       const PairConfig& pair, const ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold,
-      const AlignmentSnapshot& alignment) noexcept {
+      const AlignmentSnapshot& /*alignment*/) noexcept {
     for (const ExecutionGroup& group : execution.groups()) {
       if (!group.hold()) {
         continue;
@@ -125,10 +125,6 @@ class SignalEngine {
     }
     if (execution.new_entries_paused()) {
       return Reject(SignalRejectReason::kDegraded);
-    }
-    if (alignment.drift_ready &&
-        alignment.drift_deviation > pair.trigger.drift_limit) {
-      return Reject(SignalRejectReason::kDriftLimit);
     }
     SignalDecision open_long = TryOpenLong(pair, market, threshold);
     if (open_long.triggered) {

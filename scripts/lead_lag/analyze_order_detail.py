@@ -590,6 +590,56 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     order["source_schema"] = "submitted_v1"
 
 
+def merge_intent_rejected(order: dict[str, str], fields: dict[str, str]) -> None:
+    copy_fields = {
+        "local_order_id",
+        "trigger_exchange",
+        "trigger_symbol_id",
+        "trigger_exchange_ns",
+        "trigger_local_ns",
+        "on_book_ticker_entry_ns",
+        "signal_decision_ns",
+        "lead_exchange_ns",
+        "lead_local_ns",
+        "signal_lead_id",
+        "lead_freshness_ns",
+        "lag_exchange_ns",
+        "lag_local_ns",
+        "signal_lag_id",
+        "lag_freshness_ns",
+        "max_lead_freshness_ns",
+        "max_lag_freshness_ns",
+        "freshness_guard_pass",
+        "freshness_reject_reason",
+        "symbol",
+        "symbol_id",
+        "signal_role",
+        "position_id",
+        "action",
+        "side",
+        "reduce_only",
+        "quantity",
+        "raw_price",
+        "order_price",
+        "slippage_ticks",
+        "price_tick",
+        "target_open_notional",
+        "estimated_notional",
+    }
+    for key in copy_fields:
+        if key in fields:
+            order[key] = fields[key]
+    if order.get("quantity_text", "") == "":
+        order["quantity_text"] = fields.get("quantity", "")
+    if order.get("price_text", "") == "":
+        order["price_text"] = fields.get(
+            "price", fields.get("order_price", "")
+        )
+    order["status"] = "kRejected"
+    order["reject_reason"] = fields.get("reason", "")
+    order["source_schema"] = "intent_rejected_v1"
+
+
 def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order["local_order_id"] = fields.get("local_order_id", order.get("local_order_id", ""))
     order["request_sequence"] = fields.get("request_sequence", "")
@@ -925,7 +975,12 @@ def enrich_order(
     instrument: dict[str, str],
 ) -> None:
     symbol = order.get("symbol", "")
-    if order.get("text_order_id", "") == "" and order.get("local_order_id", ""):
+    is_intent_rejected = order.get("source_schema", "") == "intent_rejected_v1"
+    if (
+        order.get("text_order_id", "") == ""
+        and order.get("local_order_id", "")
+        and not (is_intent_rejected and order.get("local_order_id", "") == "0")
+    ):
         order["text_order_id"] = "t-" + order["local_order_id"]
     if order.get("order_role", "") == "":
         order["order_role"] = order_role_for(
@@ -1013,13 +1068,46 @@ def enrich_order(
     elif order.get("fee_source", "") == "":
         order["fee_source"] = ""
 
-    if order.get("exchange_order_id", "") in ("", "0") and order.get("status", ""):
+    if (
+        order.get("exchange_order_id", "") in ("", "0")
+        and order.get("status", "")
+        and not is_intent_rejected
+    ):
         append_warning(order, "missing_exchange_order_id")
     if order.get("source_schema", "") == "":
         order["source_schema"] = "unknown"
         append_warning(order, "missing_submitted_log")
     if symbol == "":
         append_warning(order, "missing_symbol")
+
+
+def rejected_intent_key(fields: dict[str, str]) -> str:
+    return "rejected:" + "|".join(
+        [
+            fields.get("signal_decision_ns", ""),
+            fields.get("symbol_id", ""),
+            fields.get("action", ""),
+            fields.get("side", ""),
+            fields.get("reduce_only", ""),
+            fields.get("raw_price", ""),
+            fields.get("lead_exchange_ns", ""),
+            fields.get("lag_exchange_ns", ""),
+        ]
+    )
+
+
+def order_storage_sort_key(item: tuple[str, dict[str, str]]) -> tuple[int, int, str]:
+    key, order = item
+    try:
+        return 0, int(key), ""
+    except ValueError:
+        pass
+    ns = order_sort_ns(order)
+    try:
+        ns_sort = int(ns)
+    except ValueError:
+        ns_sort = 0
+    return 1, ns_sort, key
 
 
 def analyze_order_detail(
@@ -1052,6 +1140,10 @@ def analyze_order_detail(
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
                 merge_submitted(order, fields)
+            elif tag == "lead_lag_order_intent_rejected":
+                order_key = rejected_intent_key(fields)
+                order = orders.setdefault(order_key, {"run_id": run, "warnings": ""})
+                merge_intent_rejected(order, fields)
             elif tag == "gate_order_send_ok" and fields.get("type") == "place":
                 local_order_id = fields.get("local_order_id", "")
                 if local_order_id == "":
@@ -1101,8 +1193,7 @@ def analyze_order_detail(
                 mark_open_close_smoke_position(orders, run, fields)
 
     rows: list[dict[str, str]] = []
-    for local_order_id in sorted(orders, key=lambda value: int(value)):
-        order = orders[local_order_id]
+    for _, order in sorted(orders.items(), key=order_storage_sort_key):
         order_session_id = order.get("order_session_id", "")
         if order_session_id != "":
             merge_session_snapshot(
@@ -1572,6 +1663,8 @@ def exchange_lifecycle_ns(order: dict[str, str]) -> str:
 def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for order in order_rows:
+        if order.get("source_schema", "") == "intent_rejected_v1":
+            continue
         local_order_id = order.get("local_order_id", "")
         if local_order_id == "":
             continue

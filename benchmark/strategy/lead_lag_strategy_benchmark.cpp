@@ -56,7 +56,6 @@ struct NoopContext {
               .close = 0.0005,
               .lag_part = 0.5,
               .target_profit_rate = 0.0,
-              .drift_limit = 0.02,
               .drift_period_ns = 60'000'000'000ULL,
               .drift_min_samples = 20,
               .drift_warmup_ns = 30'000'000'000ULL,

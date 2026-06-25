@@ -37,7 +37,6 @@ leadlag::PairConfig PairConfigForSignal() {
       .close = 0.005,
       .lag_part = 0.5,
       .target_profit_rate = 0.001,
-      .drift_limit = 0.02,
   };
   pair.execute = leadlag::ExecuteConfig{
       .open_notional = 100.0,
@@ -330,6 +329,23 @@ TEST(LeadLagSignalTest, LeadTickClosesHoldBeforeOpeningNewGroup) {
   EXPECT_EQ(decision.action, leadlag::SignalAction::kCloseLong);
   EXPECT_TRUE(decision.intent.reduce_only);
   EXPECT_EQ(execution.active_group_count(), 1U);
+}
+
+TEST(LeadLagSignalTest, LeadTickAllowsOpenWhenAlignmentDriftIsHigh) {
+  const leadlag::PairConfig pair = PairConfigForSignal();
+  leadlag::ExecutionState execution;
+  execution.Init(pair.execute.parallel);
+
+  const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLeadTick(
+      pair, execution, OpenLongMarket(), ThresholdForSignal(),
+      leadlag::AlignmentSnapshot{
+          .drift_ready = true,
+          .drift_deviation = 0.5,
+      });
+
+  ASSERT_TRUE(decision.triggered);
+  EXPECT_EQ(decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kNone);
 }
 
 TEST(LeadLagSignalTest, LagTickRunsStoplossBeforeSignalClose) {
