@@ -96,3 +96,12 @@ target_link_libraries(lead_lag_lag_vol_guard_audit_test
 
 add_test(NAME lead_lag_lag_vol_guard_audit_test
          COMMAND lead_lag_lag_vol_guard_audit_test)
+
+add_test(NAME lead_lag_replay_lag_vol_guard_invalid_cli_test
+         COMMAND ${CMAKE_COMMAND}
+                 -DLEAD_LAG_REPLAY=$<TARGET_FILE:lead_lag_replay>
+                 -DLEAD_LAG_CONFIG=${PROJECT_SOURCE_DIR}/config/strategies/lead_lag_ordi_replay.toml
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_replay_lag_vol_guard_invalid_cli_test.cmake)
+set_tests_properties(lead_lag_replay_lag_vol_guard_invalid_cli_test
+                     PROPERTIES
+                         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

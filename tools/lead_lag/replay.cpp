@@ -253,16 +253,20 @@ bool ValidateLoadedConfig(const LoadedConfig& loaded) {
   if (loaded.strategy_config.name != "lead_lag") {
     fmt::print(stderr,
                "[FAIL] strategy.name must be lead_lag for replay tool\n");
+    NOVA_ERROR("strategy.name must be lead_lag actual={}",
+               loaded.strategy_config.name);
     return false;
   }
   if (loaded.strategy_config.feedback.enabled) {
     fmt::print(stderr,
                "[FAIL] strategy.feedback.enabled must be false for replay\n");
+    NOVA_ERROR("strategy.feedback.enabled must be false for replay");
     return false;
   }
   if (loaded.lead_lag_config.pairs.empty()) {
     fmt::print(stderr,
                "[FAIL] lead_lag config must contain at least one pair\n");
+    NOVA_ERROR("lead_lag config must contain at least one pair");
     return false;
   }
   return true;
@@ -273,6 +277,7 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
   if (!strategy_result.ok) {
     fmt::print(stderr, "[FAIL] strategy_config_error={}\n",
                strategy_result.error);
+    NOVA_ERROR("strategy_config_error={}", strategy_result.error);
     return false;
   }
   loaded->strategy_config = std::move(strategy_result.value);
@@ -287,6 +292,7 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
   if (!data_reader_result.ok) {
     fmt::print(stderr, "[FAIL] data_reader_config_error={}\n",
                data_reader_result.error);
+    NOVA_ERROR("data_reader_config_error={}", data_reader_result.error);
     return false;
   }
   loaded->data_reader_config = std::move(data_reader_result.value);
@@ -297,6 +303,7 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
   if (!lead_lag_result.ok) {
     fmt::print(stderr, "[FAIL] lead_lag_config_error={}\n",
                lead_lag_result.error);
+    NOVA_ERROR("lead_lag_config_error={}", lead_lag_result.error);
     return false;
   }
   loaded->lead_lag_config = std::move(lead_lag_result.value);
@@ -313,15 +320,21 @@ bool BuildLagVolGuardAuditConfig(
   if (options.lag_vol_guard_jump_threshold <= 0.0) {
     fmt::print(stderr,
                "[FAIL] --lag-vol-guard-jump-threshold must be positive\n");
+    NOVA_ERROR("lag_vol_guard_jump_threshold_error value={}",
+               options.lag_vol_guard_jump_threshold);
     return false;
   }
   if (options.lag_vol_guard_jump_count == 0) {
     fmt::print(stderr, "[FAIL] --lag-vol-guard-jump-count must be positive\n");
+    NOVA_ERROR("lag_vol_guard_jump_count_error value={}",
+               options.lag_vol_guard_jump_count);
     return false;
   }
   if (options.lag_vol_guard_amplitude_threshold <= 0.0) {
     fmt::print(stderr,
                "[FAIL] --lag-vol-guard-amplitude-threshold must be positive\n");
+    NOVA_ERROR("lag_vol_guard_amplitude_threshold_error value={}",
+               options.lag_vol_guard_amplitude_threshold);
     return false;
   }
 
@@ -330,6 +343,8 @@ bool BuildLagVolGuardAuditConfig(
   if (!leadlag_tools::ParseLagVolGuardAuditDurationNs(
           options.lag_vol_guard_jump_window, &jump_window_ns, &error)) {
     fmt::print(stderr, "[FAIL] --lag-vol-guard-jump-window {}\n", error);
+    NOVA_ERROR("lag_vol_guard_jump_window_error value={} error={}",
+               options.lag_vol_guard_jump_window, error);
     return false;
   }
 
@@ -338,6 +353,8 @@ bool BuildLagVolGuardAuditConfig(
           options.lag_vol_guard_amplitude_window, &amplitude_window_ns,
           &error)) {
     fmt::print(stderr, "[FAIL] --lag-vol-guard-amplitude-window {}\n", error);
+    NOVA_ERROR("lag_vol_guard_amplitude_window_error value={} error={}",
+               options.lag_vol_guard_amplitude_window, error);
     return false;
   }
 
@@ -345,6 +362,8 @@ bool BuildLagVolGuardAuditConfig(
   if (!leadlag_tools::ParseLagVolGuardAuditDurationNs(
           options.lag_vol_guard_cooldown, &cooldown_ns, &error)) {
     fmt::print(stderr, "[FAIL] --lag-vol-guard-cooldown {}\n", error);
+    NOVA_ERROR("lag_vol_guard_cooldown_error value={} error={}",
+               options.lag_vol_guard_cooldown, error);
     return false;
   }
 
@@ -389,6 +408,34 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
       loaded.data_reader_config.name, loaded.data_reader_config.sources.size(),
       CountInputFiles(loaded.data_reader_config),
       loaded.lead_lag_config.pairs.size());
+  NOVA_INFO(
+      "lead_lag_replay config={} data_reader_config={} signals_output={} "
+      "lag_vol_guard_audit_output={}"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      " diagnostic_mode={} market_calc_output_dir={}"
+#endif
+      " strategy_name={} mode={} strategy_id={} order_capacity={} "
+      "reader_name={} sources={} files={} pairs={}",
+      options.config_path.string(),
+      loaded.strategy_config.data_reader.config_path.string(),
+      options.signals_output_path.empty() ? "-"
+                                          : options.signals_output_path.string(),
+      options.lag_vol_guard_audit_output_path.empty()
+          ? "-"
+          : options.lag_vol_guard_audit_output_path.string()
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+          ,
+      options.diagnostic_mode.empty() ? "-" : options.diagnostic_mode,
+      options.market_calc_output_dir.empty()
+          ? "-"
+          : options.market_calc_output_dir.string()
+#endif
+          ,
+      loaded.strategy_config.name, ModeText(loaded.strategy_config.mode),
+      loaded.strategy_config.strategy_id, loaded.strategy_config.order_capacity,
+      loaded.data_reader_config.name, loaded.data_reader_config.sources.size(),
+      CountInputFiles(loaded.data_reader_config),
+      loaded.lead_lag_config.pairs.size());
 }
 
 int RunReplay(LoadedConfig loaded, const CliOptions& options) {
@@ -402,18 +449,22 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
   if (!options.diagnostic_mode.empty() && !market_calc_mode) {
     fmt::print(stderr, "[FAIL] unsupported diagnostic_mode={}\n",
                options.diagnostic_mode);
+    NOVA_ERROR("unsupported diagnostic_mode={}", options.diagnostic_mode);
     return 1;
   }
   if (market_calc_mode && options.market_calc_output_dir.empty()) {
     fmt::print(stderr,
                "[FAIL] --market-calc-output-dir is required for "
                "--diagnostic-mode market_calc\n");
+    NOVA_ERROR("--market-calc-output-dir is required for "
+               "--diagnostic-mode market_calc");
     return 1;
   }
   if (market_calc_mode && !options.signals_output_path.empty()) {
     fmt::print(stderr,
                "[FAIL] --signals-output is not used in market_calc "
                "diagnostic mode\n");
+    NOVA_ERROR("--signals-output is not used in market_calc diagnostic mode");
     return 1;
   }
 #endif
@@ -425,6 +476,7 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
     std::string error;
     if (!signal_writer.Open(options.signals_output_path, &error)) {
       fmt::print(stderr, "[FAIL] signals_output_error={}\n", error);
+      NOVA_ERROR("signals_output_error={}", error);
       return 1;
     }
     signal_writer_ptr = &signal_writer;
@@ -436,6 +488,7 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
     std::string error;
     if (!market_calc_writer.Open(options.market_calc_output_dir, &error)) {
       fmt::print(stderr, "[FAIL] market_calc_output_error={}\n", error);
+      NOVA_ERROR("market_calc_output_error={}", error);
       return 1;
     }
     market_calc_writer_ptr = &market_calc_writer;
@@ -457,6 +510,7 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
     if (!lag_vol_audit_writer.Open(options.lag_vol_guard_audit_output_path,
                                    &error)) {
       fmt::print(stderr, "[FAIL] lag_vol_guard_audit_error={}\n", error);
+      NOVA_ERROR("lag_vol_guard_audit_error={}", error);
       return 1;
     }
     lag_vol_audit_writer_ptr = &lag_vol_audit_writer;
@@ -485,6 +539,7 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
   if (!runtime_result.ok) {
     fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
                runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
     return 1;
   }
 
@@ -502,6 +557,29 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
       " diagnostic_mode={} market_calc_output_dir={}"
 #endif
       "\n",
+      exit_code, stats.book_tickers, stats.signals, stats.open_signals,
+      stats.close_signals, stats.stoploss_signals,
+      options.signals_output_path.empty() ? "-"
+                                          : options.signals_output_path.string(),
+      options.lag_vol_guard_audit_output_path.empty()
+          ? "-"
+          : options.lag_vol_guard_audit_output_path.string()
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+          ,
+      options.diagnostic_mode.empty() ? "-" : options.diagnostic_mode,
+      options.market_calc_output_dir.empty()
+          ? "-"
+          : options.market_calc_output_dir.string()
+#endif
+  );
+  NOVA_INFO(
+      "lead_lag_replay_summary exit_code={} book_tickers={} signals={} "
+      "open={} close={} stoploss={} signals_output={} "
+      "lag_vol_guard_audit_output={}"
+#if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
+      " diagnostic_mode={} market_calc_output_dir={}"
+#endif
+      ,
       exit_code, stats.book_tickers, stats.signals, stats.open_signals,
       stats.close_signals, stats.stoploss_signals,
       options.signals_output_path.empty() ? "-"
