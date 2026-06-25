@@ -51,12 +51,12 @@ struct LagVolGuardConfig {
 };
 
 struct DriftGuardConfig {
-  FeatureMode mode{FeatureMode::kOff};
-  double drift_instant{0.0};
-  double ratio_std{0.0};
-  std::uint64_t ratio_std_window_ns{0};
-  double drift_mean{0.0};
-  std::uint64_t drift_mean_window_ns{0};
+  bool enabled{false};
+  double drift_instant{0.015};
+  double ratio_std{0.008};
+  std::uint64_t ratio_std_window_ns{60'000'000'000ULL};
+  double drift_mean{0.02};
+  std::uint64_t drift_mean_window_ns{60'000'000'000ULL};
 };
 
 struct TriggerConfig {
@@ -64,7 +64,6 @@ struct TriggerConfig {
   double close{0.0};
   double lag_part{0.0};
   double target_profit_rate{0.0};
-  double drift_limit{0.0};
   std::uint64_t drift_period_ns{0};
   std::uint32_t drift_min_samples{0};
   std::uint64_t drift_warmup_ns{0};
