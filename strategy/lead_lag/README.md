@@ -126,6 +126,27 @@ freshness live 参数由 `lead_lag_freshness_preflight` 加 `scripts/lead_lag/ap
 
 当前迁移原则是：会影响热路径但可在启动前完成的参数生成，不进入 C++ 实时策略；需要实盘化的 guard 必须有明确执行职责和边界，不在同一策略进程中做 shadow A/B。
 
+### 当前 Go / C++ 对照
+
+事实源：Go reference 为 `reference/leadlag-current-strategy-package.zip`，C++ 当前实现以本文件、`strategy/lead_lag/*`、`tools/lead_lag/*` 和 checked-in 策略 TOML 为准。
+
+| 主题 | Go current | C++ current | 当前结论 |
+| --- | --- | --- | --- |
+| 策略配置形态 | 单 symbol JSON，`trigger` / `execute` / `cost` / `analysis` 分区。 | 多 pair TOML，绑定 instrument catalog，显式配置 exchange、symbol metadata、capacity 和 per-pair execution 参数。 | 配置载体不同是架构差异；不追求字段逐字同形。 |
+| signal 主流程 | lead tick 上先处理已有持仓 close，再评估 open；lag tick 上处理 stoploss / close；open signal 后进入 guard。 | 同样 close 优先、open 后置；lag tick 处理 stoploss / close；open freshness / drift guard 在 signal triggered 后、订单 intent / synthetic accounting 前执行。 | 核心 signal 顺序已基本对齐。 |
+| alignment drift | `drift_period` / `drift_min_samples` / `drift_warmup` 负责 drift readiness 和 drifted lead。 | 同样保留这些字段，继续服务 alignment readiness 和 drifted lead；不再作为旧 `drift_limit` 的唯一 guard 配置。 | 对齐。 |
+| `drift_guard` | `enabled` 缺省等价启用；字段为 `drift_instant`、`ratio_std`、`ratio_std_window`、`drift_mean`、`drift_mean_window`；post-signal open-only。 | 字段和判断口径对齐，但 TOML 必须显式写 `enabled`；checked-in 配置已启用。窗口容量通过 `capacity.drift_guard_window_capacity` 预分配。 | 行为已进入 live hot path；C++ 的显式 `enabled` 和容量字段是安全 / 性能边界差异。 |
+| 旧 `drift_limit` | Go current 没有独立 `drift_limit`。 | 旧 pre-signal `trigger.drift_limit` 已删除并被 parser 拒绝；回退方法见下方历史说明。 | 已按 Go current 收敛，不保留双 guard enforce。 |
+| `lag_vol_guard` | `enabled` 缺省等价启用；按 lag mid jump、amplitude 和 cooldown post-signal 阻断 open。 | 不进入 live hot path；只在 `lead_lag_replay --lag-vol-guard-audit-output` 中离线评估 would-block。ORDI_USDT sweep 当前为负向结果。 | 刻意不同。除非更宽 replay / live smoke 给出反证，否则不 live enforce。 |
+| freshness | 支持 `mode=auto`，策略内 warmup 后得到 lead / lag freshness threshold；也支持 fixed threshold。 | 不在实时策略内 auto warmup；启动前用 `lead_lag_freshness_preflight` 和 `apply_freshness_preflight_summary.py` 生成固定 `max_*_freshness_ms`，live 只执行固定 open guard。 | 刻意不同。C++ 把 auto 迁到启动前，避免热路径动态阈值。 |
+| taker buffer | `cost.taker_buffer` 支持 `fixed` / `auto`，可影响 entry / normal close order price，并可按配置进入成本模型；auto 可基于 lag Depth L2 warmup。 | 不作为实时动态 order price 模型；启动前用 BBO spread pct 转成 `open_slippage_ticks` / `close_slippage_ticks` 写入 TOML。`execute.taker_buffer` 仅输出 `lead_lag_signal_decision` 参考价诊断，不改变真实下单。 | 刻意不同。C++ 当前用 fixed ticks 承担真实执行，Go-style pct buffer 只做 preflight / diagnostics。 |
+| Depth L2 | 可读取 lag depth，参与 taker buffer auto warmup、entry opportunity / closeability attribution。 | 当前 LeadLag live 策略主路径只消费 `BookTicker`；taker buffer preflight 暂用 lag BBO spread percentile proxy，未接稳定 Depth L2 输入。 | 仍未对齐；后续若接 Depth，应先替换 preflight 生成方法，不直接把 Depth warmup 放进 live hot path。 |
+| normal close retry | `normal_close_retry_aggressive` 为 bool；普通 close 多次失败后把 normal close buffer 提高到 pct floor。 | 旧 bool 已废弃并被 parser 拒绝；当前用 `close_retry_times` 控制 retry 次数，用 `close_retry_slippage_step_ticks` 按 retry 次数递增 ticks。 | 已实现同类目的，但设计不同且更显式。 |
+| close / stoploss slippage | Go normal close buffer 与 stoploss 价格模型分离。 | 已拆为 `close_slippage_ticks` 和 `stoploss_slippage_ticks`；normal close retry 不影响 stoploss。 | 对齐到“normal close 与 stoploss 分离”的语义。 |
+| attribution / `signal_decision` | 有 `leadlag_attribution.v1`、stable linkage、`signal_decision`、entry opportunity、order lifecycle、Depth / guard snapshot 等完整 attribution 面。 | 有 live log、`order_detail.csv` / `position.csv` / `latency.csv`、stage BBO id、`intent_rejected_v1` 和有限 `lead_lag_signal_decision` 参考价诊断；没有完整 Go stable linkage schema。 | 部分对齐。C++ 当前优先保证订单 / report 可对账，未迁入完整 attribution schema。 |
+| order lifecycle price semantics | attribution 中显式区分 `avg_fill_price`、`raw_price`、`limit_price`、`order_price`。 | report / live log 已区分 `raw_price`、`order_price`、`fill_price` / average fill 相关字段；字段语义见 `docs/lead_lag_live_report_csv_schema.md` 和 `docs/diagnostic_fields.md`。 | 大体对齐，但 schema 不同。 |
+| A/B / shadow 方式 | Go reference 可在策略内输出丰富 attribution / guard snapshot。 | 项目约定不在既有 live 策略进程内新增 shadow 双路逻辑；候选实现用独立 replay、signal-only 或 live 进程评估。 | 明确不同，这是项目级热路径边界。 |
+
 已完成：
 
 - `freshness_auto` 不在策略内 warmup 或实时滚动更新。启动前用 `lead_lag_freshness_preflight` 采样 fusion / data reader BBO，再用 `apply_freshness_preflight_summary.py` 把 lag p50 bucket 生成的 `max_lag_freshness_ms` 写入策略配置；策略只按固定配置执行 open freshness guard。
