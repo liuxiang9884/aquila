@@ -136,10 +136,43 @@ freshness live 参数由 `lead_lag_freshness_preflight` 加 `scripts/lead_lag/ap
 - `drift_guard` 已按 Go reference 口径替代旧 `trigger.drift_limit`，定位为 open-only emergency sanity guard。配置为 `[lead_lag.pairs.trigger.drift_guard]`，字段是 `enabled`、`drift_instant`、`ratio_std`、`ratio_std_window`、`drift_mean` 和 `drift_mean_window`；parser 会直接拒绝旧 `drift_limit` 和旧 `drift_guard.mode`。guard 使用 `lag_mid / lead_mid` 的 instant ratio、ratio std 和 drift mean 窗口，在 signal 触发后、真实订单 intent / synthetic accounting 前执行；只拦截 `kOpenLong` / `kOpenShort`，close / stoploss 不受影响。命中时输出 `lead_lag_order_intent_rejected reason=drift_guard`，live report 将其作为 `source_schema=intent_rejected_v1` 的拒绝意图行，而不是 `missing_order`。两个 drift guard 窗口的预分配容量由 `capacity.drift_guard_window_capacity` 控制，默认和 checked-in 策略配置为 `131072`，用于降低 1 分钟 live 窗口复用 spread 容量带来的 hot path 扩容风险；若要声明某次 live 不扩容，需要基于 tick-rate 实测或继续上调该容量。
 - `lead_lag_replay --lag-vol-guard-audit-output` 同时记录生产 `DriftGuardState` 的 replay audit 字段：`drift_instant` 为原始 `lag_mid / lead_mid` ratio，`ratio_std` 为窗口标准差，`drift_mean` 为窗口均值，`drift_guard_outcome` 为 `disabled`、`not_ready`、`pass` 或 `blocked:*`。replay 通过 signal observer 在 post-signal guard 执行前写出 triggered signal，因此被 live drift guard 阻断的 open signal 也会出现在 `signals.csv` 和 audit CSV 中。
 
+### `drift_limit` 历史实现与回退说明
+
+旧 `drift_limit` 和当前 `drift_guard` 都是 lead / lag 价格比例异常保护，阈值单位都是 ratio 偏离度，例如 `0.02` 表示约 `2%`。二者都只影响新开仓，normal close 和 stoploss 不受影响；并且二者都依赖 paired raw BBO 样本，而不是订单回报或成交数据。
+
+关键差异如下：
+
+| 维度 | 旧 `trigger.drift_limit` | 当前 `[trigger.drift_guard]` |
+| --- | --- | --- |
+| 配置字段 | `trigger.drift_limit`，配合既有 `drift_period` / `drift_min_samples` / `drift_warmup` 的 alignment readiness。 | `trigger.drift_guard.enabled`、`drift_instant`、`ratio_std`、`ratio_std_window`、`drift_mean`、`drift_mean_window`；无独立 `cooldown`、`min_samples` 或 `warmup`。 |
+| 度量来源 | `AlignmentState` 的 rolling mean：`lag_sum / lead_sum`，等价于 `lag_mid / lead_mid`，再计算 `abs(mean - 1.0)` 得到 `AlignmentSnapshot::drift_deviation`。 | 独立 `DriftGuardState`：当前 instant ratio、ratio rolling std 和 ratio rolling mean，判断 `abs(instant - 1.0)`、`std`、`abs(mean - 1.0)`。 |
+| 窗口 | 单一 `drift_period` 窗口，同时服务 lead drift adjustment 和旧 guard；readiness 来自 alignment active 条件。 | `ratio_std_window` 和 `drift_mean_window` 两个窗口；窗口容量由 `capacity.drift_guard_window_capacity` 预分配。 |
+| 执行点 | `SignalEngine::OnLeadTick()` 中 close 检查之后、open long / open short 计算之前；`alignment.drift_ready && alignment.drift_deviation > drift_limit` 时直接返回 `kDriftLimit`。 | signal 已经 triggered 后，在 `Strategy::FinalizeActiveSignal()` 中先记录 triggered signal，再于真实订单 intent / synthetic accounting 前执行 `RejectOpenForDriftGuard()`。 |
+| 诊断表面 | 因为 open signal 尚未 triggered，通常不会输出 `lead_lag_signal_triggered` 或 `lead_lag_order_intent_rejected`；只体现在内存里的 `SignalDecision.reject_reason=kDriftLimit` 和相关单测。 | 输出 `lead_lag_signal_triggered`，命中时再输出 `lead_lag_order_intent_rejected reason=drift_guard`；report 生成 `source_schema=intent_rejected_v1` 行，避免误判为 `missing_order`。 |
+| Go reference 对齐 | 这是 C++ legacy 保护，不是 Go current 的 drift guard。 | 与 Go current 的 post-signal drift guard 字段和判断口径对齐。 |
+
+如果要回到旧 `drift_limit`，建议按“替代当前 `drift_guard`”实现，不要让两套 guard 同时 enforce，否则 open signal 前后会有两次 ratio gate，且诊断语义会混淆。可直接按下面清单改：
+
+1. `strategy/lead_lag/config.h`：在 `TriggerConfig` 恢复 `double drift_limit{0.0};`。如果完全复原旧行为，`DriftGuardConfig`、`CapacityConfig::drift_guard_window_capacity` 和 `PairRuntimeState::drift_guard` 可删除；如果只是短期保留 replay 对照，需要确保 live 配置中 `drift_guard.enabled=false` 且文档写清楚它不 enforce。
+2. `strategy/lead_lag/config.cpp`：删除 `ParseTrigger()` 中对 `drift_limit` 的 fail-fast，恢复 `RequiredDouble(table, "drift_limit", prefix + ".drift_limit")`。如果选择严格化配置，可在恢复时新增 finite / positive 校验，但这不是旧行为的逐字复原。
+3. `strategy/lead_lag/signal.h`：恢复 `SignalRejectReason::kDriftLimit`，并把 `OnLeadTick()` 的 `AlignmentSnapshot` 参数重新命名为 `alignment`。在 `execution.new_entries_paused()` 检查之后、`TryOpenLong()` 之前加入：
+
+```cpp
+if (alignment.drift_ready &&
+    alignment.drift_deviation > pair.trigger.drift_limit) {
+  return Reject(SignalRejectReason::kDriftLimit);
+}
+```
+
+4. `strategy/lead_lag/strategy.h`：如果是严格回退，移除 `DriftGuardState` include、runtime member、`runtime.drift_guard.Init()`、`runtime->drift_guard.OnPairedRawBbo()` 和 `RejectOpenForDriftGuard()` 调用。这样 replay synthetic accounting 与 live 都会在 signal 前被旧 `drift_limit` 拦截。
+5. `config/strategies/*.toml`：在每个 `[lead_lag.pairs.trigger]` 下恢复 `drift_limit = <threshold>`，通常先用当前迁移前的 `0.02`；删除 `[lead_lag.pairs.trigger.drift_guard]` 和 `capacity.drift_guard_window_capacity`，除非明确保留 disabled audit。
+6. 测试需要同步恢复或新增：`lead_lag_config_test` 覆盖 `drift_limit` 必填 / 可解析；`lead_lag_signal_test` 覆盖 alignment ready 且 `drift_deviation > drift_limit` 时阻断 open、但不阻断已有持仓 close；`lead_lag_strategy_interface_test` 覆盖不会生成 `lead_lag_order_intent_rejected reason=drift_guard`；如果删除 drift guard audit 字段，还要更新 `lead_lag_drift_guard_test`、replay guard audit CLI 测试和 Python report fixture。
+7. 文档需要同步更新 `docs/project_onboarding_guide.md`、`docs/lead_lag_live_operations_pipeline.md` 和 `docs/diagnostic_fields.md`。尤其是 live report：旧 `drift_limit` 默认没有 rejected intent 行；如果希望保留当前 report 的 rejected-intent 可观测性，就不应称为“回到旧 drift_limit”，而应实现一个 post-signal drift-limit metric guard。
+
 仍需评估或修改：
 
 1. `lag_vol_guard`：Go reference 会根据 lag 侧 jump / amplitude / cooldown 阻断 open；C++ 实时配置当前仍只接受 `mode=off`，未实现运行期 guard。当前 ORDI_USDT sweep 结论为负，除非更宽 symbol / 更长区间给出反证，否则不要设计 live shadow 或 enforce。
-2. `drift_guard` 阈值复核：当前 checked-in 策略配置已启用 Go-like `drift_guard`，并沿用旧阈值数值 `0.02` 作为 `drift_mean=0.02`；后续如果有更长实盘或 replay 证据，可以只调阈值，不再恢复旧 pre-signal `drift_limit`。
+2. `drift_guard` 阈值复核：当前 checked-in 策略配置已启用 Go-like `drift_guard`，并沿用旧阈值数值 `0.02` 作为 `drift_mean=0.02`；后续如果有更长实盘或 replay 证据，可以只调阈值。若确实要恢复旧 pre-signal `drift_limit`，按上面的回退清单做一次完整替换，不要和当前 `drift_guard` 同时 enforce。
 
 ## 回放与输出
 
