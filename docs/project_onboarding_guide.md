@@ -29,7 +29,7 @@ docs/evaluation_support.md
 | LeadLag benchmark / tail | `docs/lead_lag_benchmark_environment_tail_analysis.md`、`strategy/lead_lag/README.md` |
 | Gate Ack latency / RTT probe | `docs/lead_lag_ack_latency_outlier_analysis.md`、`docs/lead_lag_runtime_latency_improvement_plan.md`、`docs/gate_order_session_rtt_probe_design.md`、`docs/diagnostic_fields.md` |
 | DataReader / data session | `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` |
-| Gate / Binance fastest-route fusion | `docs/gate_fastest_route_fusion_design.md`、`docs/gate_fastest_route_fusion_implementation_plan.md`、`docs/gate_fastest_route_fusion_shadow_results.md`、`docs/gate_fastest_route_fusion_threaded_bundle_plan.md` |
+| Gate / Binance fastest-route fusion | `docs/gate_fastest_route_fusion_design.md`、`docs/gate_fastest_route_fusion_shadow_results.md`、`docs/gate_fastest_route_fusion_threaded_bundle_guide.md` |
 | Runtime CPU 分配 | `docs/runtime_cpu_allocation.md` |
 | Gate 交易架构 | `docs/agent-handoff-gate-trade-architecture.md`、`docs/strategy_order_component_model.md` |
 | TUI / account monitor | `docs/tui_onboarding_guide.md`、`docs/tui_gate_account_monitor_design.md` |
@@ -153,7 +153,7 @@ rg 'aquila_evaluation' core exchange tools
 2. Cancelled order fillability：如果继续订单成交复查，先读 `docs/lead_lag_cancelled_order_fillability_analysis.md`，再确认 `20260619_095317_28symbols_no_h_30d_fusion_off_l0_live` 是否仍在运行；如果仍运行，先做只读 REST dry-run、生成最新 status report，并把 `gate_live_fusion_canonical.bin` 按目标 symbol 拆分。
 3. LeadLag live：新实盘启动仍按 `docs/lead_lag_live_operations_pipeline.md`，并先 rebuild release binary。启动前应串联 freshness preflight 和 taker-buffer pct->slippage-ticks preflight，生成最终策略 TOML 和 audit CSV。
 4. Ack latency：复现 outlier 时用 private plain all-stage config，分开看 Ack RTT、Gate `x_in -> x_out`、上行 / 下行、socket timestamping 和 pcap residual。
-5. Gate / Binance 多路行情 / data session latency：继续讨论 N 路最快行情融合时，先读 `docs/websocket_client_future_optimizations.md` 的 `Live Feed Selection`、`docs/gate_fastest_route_fusion_design.md`、`docs/gate_fastest_route_fusion_shadow_results.md` 和 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。真实订单切换 fusion 行情前必须按 live pipeline 做 preflight。
+5. Gate / Binance 多路行情 / data session latency：继续讨论 N 路最快行情融合时，先读 `docs/websocket_client_future_optimizations.md` 的 `Live Feed Selection`、`docs/gate_fastest_route_fusion_design.md`、`docs/gate_fastest_route_fusion_shadow_results.md` 和 `docs/gate_fastest_route_fusion_threaded_bundle_guide.md`。真实订单切换 fusion 行情前必须按 live pipeline 做 preflight。
 6. Gate trading：后续优先补 REST reconcile、feedback 断线恢复和更完整的 stop-and-flat 语义；继续围绕 `kUnknownResult` 增加低频 REST drift guard，避免策略状态与 Gate single-mode 净仓长期分叉。
 
 ## 给下一个对话的提示

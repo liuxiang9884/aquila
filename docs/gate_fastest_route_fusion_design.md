@@ -39,7 +39,8 @@ winner 对应的完整 `BookTicker` 立即输出到 canonical SHM；其他 sourc
 data session thread、1 个 fusion thread 和 1 个统一 log backend thread；V1 bundle 仍使用 source
 SHM 连接 data session 和 fusion，保留 recorder / `DataReader` 监控边界。direct in-process SPSC
 ring 只作为 V2 建议，进入条件是 threaded bundle 的 shadow / benchmark 证明 source SHM hop 或 tail
-已经成为可见瓶颈。详细实施计划见 `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`。
+已经成为可见瓶颈。Threaded bundle 当前入口、配置和验证方式见
+`docs/gate_fastest_route_fusion_threaded_bundle_guide.md`。
 
 ## 已排除方向
 

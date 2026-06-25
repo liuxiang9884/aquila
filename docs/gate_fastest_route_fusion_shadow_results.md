@@ -1,8 +1,7 @@
 # Gate / Binance 多路最快行情融合 Shadow 结果
 
-本文记录 Gate / Binance `BookTicker` fastest-route fusion 的 shadow 实测结果。设计背景和算法语义见
-`docs/gate_fastest_route_fusion_design.md`，实现计划见
-`docs/gate_fastest_route_fusion_implementation_plan.md`。
+本文记录 Gate / Binance `BookTicker` fastest-route fusion 的 shadow 实测结果。设计背景、算法语义和当前入口见
+`docs/gate_fastest_route_fusion_design.md`。
 
 ## 2026-06-14 30-symbol Gate / Binance 4-source 30m L4
 

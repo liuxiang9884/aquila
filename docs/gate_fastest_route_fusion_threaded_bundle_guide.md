@@ -1,6 +1,4 @@
-# Gate / Binance Fastest-Route Fusion Threaded Bundle Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+# Gate / Binance Fastest-Route Fusion Threaded Bundle Guide
 
 **Goal:** 增加一个同进程多线程 fusion bundle，使 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend thread 在同一进程中运行，同时保留 source SHM 和 canonical SHM 监控边界。
 
@@ -28,7 +26,7 @@
   --config config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
 ```
 
-本文件后续 task 列表保留为实现历史参考；当前事实源以上述实现状态和代码入口为准。
+当前事实源以上述实现状态、代码入口和下方验证方式为准；已完成的逐任务实施清单已删除。
 
 ## 背景
 
@@ -75,7 +73,7 @@ V1 threaded bundle 必须满足：
 | `test/tools/binance/binance_data_fusion_config_test.cpp` | 已新增 | 覆盖 Binance data fusion config parser |
 | `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml` | 已新增 | Gate 4-source threaded launch 示例配置 |
 | `config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml` | 已新增 | Binance 4-source threaded launch 示例配置 |
-| `docs/gate_fastest_route_fusion_threaded_bundle_plan.md` | 修改 | 实现后同步入口、验证命令和 shadow 结果索引 |
+| `docs/gate_fastest_route_fusion_threaded_bundle_guide.md` | 维护 | 当前 threaded bundle 入口、验证命令和 V2 条件索引 |
 
 ## V1 Config 形状
 
@@ -175,177 +173,6 @@ fusion_total_published_count=<count>
 fusion_metadata_write_errors=<count>
 metadata_output=<path>
 ```
-
-## V1 实施任务
-
-### Task 1: Data Fusion Config Parser
-
-**Files:**
-- Create: `tools/gate/gate_data_fusion_config.h`
-- Create: `tools/gate/gate_data_fusion_config.cpp`
-- Create: `tools/binance/binance_data_fusion_config.h`
-- Create: `tools/binance/binance_data_fusion_config.cpp`
-- Create: `test/tools/gate/gate_data_fusion_config_test.cpp`
-- Create: `test/tools/binance/binance_data_fusion_config_test.cpp`
-- Modify: `test/tools/gate/CMakeLists.txt`
-- Modify: `test/tools/binance/CMakeLists.txt`
-
-- [ ] Step 1: 写失败测试 `ParsesFourSourceBundle`
-  - 构造包含 `[launch]` 和四个 `[[launch.sources]]` 的 TOML。
-  - 验证 `fusion_config`、`source_id`、`data_session_config`、`book_ticker_shm_name` 和 `bind_cpu_id`。
-  - 运行：
-    ```bash
-    cmake --build build/debug --target gate_data_fusion_config_test binance_data_fusion_config_test -j8
-    ./build/debug/test/tools/gate/gate_data_fusion_config_test
-    ./build/debug/test/tools/binance/binance_data_fusion_config_test
-    ```
-  - 预期：新增实现前编译失败或测试失败。
-
-- [ ] Step 2: 实现 parser 和校验
-  - 空 `launch.name`、空 `launch.fusion_config`、空 sources、重复 `source_id`、负数 `source_id`、空 `data_session_config`、空 `book_ticker_shm_name` 都返回 `ok=false`。
-  - `book_ticker_channel_name` 缺省为 `book_ticker_channel`。
-
-- [ ] Step 3: 跑 parser 测试并提交
-  ```bash
-  cmake --build build/debug --target gate_data_fusion_config_test binance_data_fusion_config_test -j8
-  ./build/debug/test/tools/gate/gate_data_fusion_config_test
-  ./build/debug/test/tools/binance/binance_data_fusion_config_test
-  git diff --check
-  git add tools/gate/gate_data_fusion_config.* \
-      tools/binance/binance_data_fusion_config.* \
-      test/tools/gate/gate_data_fusion_config_test.cpp \
-      test/tools/binance/binance_data_fusion_config_test.cpp \
-      test/tools/gate/CMakeLists.txt \
-      test/tools/binance/CMakeLists.txt
-  git commit -m "Add data fusion config parser"
-  ```
-
-### Task 2: Fusion Thread Wrapper
-
-**Files:**
-- Create: `tools/market_data/book_ticker_fusion_thread.h`
-- Create: `test/tools/market_data/book_ticker_fusion_thread_test.cpp`
-- Modify: `test/tools/market_data/CMakeLists.txt`
-
-- [ ] Step 1: 写失败测试 `FusionThreadPublishesAndStops`
-  - 用 `/home/liuxiang/tmp` 下的唯一 SHM name 创建一个 source publisher。
-  - source 写入 `BookTicker{id=100, symbol_id=1}`。
-  - fusion thread 读取 source SHM，输出 canonical SHM 和 metadata bin。
-  - stop 后验证 canonical reader 能读到 id `100`，metadata 文件大小等于 `sizeof(FusionMetadataRecord)`。
-
-- [ ] Step 2: 实现 `BookTickerFusionThread`
-  - 构造时接收 `BookTickerFusionConfig`。
-  - `Start()` 创建线程，线程内构造 `BookTickerFusionRunner` 并循环 `PollOnce()`。
-  - `Stop()` 设置 atomic stop flag。
-  - `Join()` join thread，并返回 final stats。
-  - loop 在 `read_count == 0` 时调用 `std::this_thread::yield()`。
-
-- [ ] Step 3: 跑 fusion thread 测试并提交
-  ```bash
-  cmake --build build/debug --target book_ticker_fusion_thread_test -j8
-  ./build/debug/test/tools/market_data/book_ticker_fusion_thread_test
-  git diff --check
-  git add tools/market_data/book_ticker_fusion_thread.h \
-      test/tools/market_data/book_ticker_fusion_thread_test.cpp \
-      test/tools/market_data/CMakeLists.txt
-  git commit -m "Add fusion thread runner"
-  ```
-
-### Task 3: Gate Bundle Tool
-
-**Files:**
-- Create: `tools/gate/gate_data_fusion.cpp`
-- Modify: `tools/CMakeLists.txt`
-- Create: `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml`
-
-- [ ] Step 1: 写 dry-run 行为
-  - CLI 支持：
-    ```text
-    --config <path>
-    --connect
-    --max-runtime-ms <0 means unlimited>
-    ```
-  - 不传 `--connect` 时只解析 bundle config、Gate data session configs 和 fusion config，打印 source / fusion 摘要后退出。
-
-- [ ] Step 2: 实现 Gate source override
-  - 复用 `aquila::gate::ParseDataSessionConfig()`。
-  - 所有 source 的 `connection.enable_tls` 必须一致；不一致时返回配置错误。
-  - 根据一致的 `enable_tls` 选择 `DefaultPlainWebSocketPolicy` 或 `DefaultTlsWebSocketPolicy`。
-  - worker thread 调用 `session.Start()`，不调用 `session.Run()`。
-
-- [ ] Step 3: 增加 CMake target 并验证 dry-run
-  ```bash
-  cmake --build build/debug --target gate_data_fusion -j8
-  ./build/debug/tools/gate_data_fusion \
-    --config config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml
-  ```
-  - 预期：不连接网络，输出 `result=ok connect=false source_count=4`。
-
-- [ ] Step 4: 提交 Gate bundle tool
-  ```bash
-  git diff --check
-  git add tools/gate/gate_data_fusion.cpp \
-      tools/CMakeLists.txt \
-      config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml
-  git commit -m "Add Gate fusion bundle tool"
-  ```
-
-### Task 4: Binance Bundle Tool
-
-**Files:**
-- Create: `tools/binance/binance_data_fusion.cpp`
-- Modify: `tools/CMakeLists.txt`
-- Create: `config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml`
-
-- [ ] Step 1: 复用 Gate bundle 的 supervisor 形状
-  - 复用 shared bundle config parser 和 fusion thread wrapper。
-  - 使用 `aquila::binance::ParseDataSessionConfig()`。
-  - 所有 source 的 `connection.enable_tls` 必须一致；Binance 示例配置应为 TLS。
-
-- [ ] Step 2: 增加 CMake target 并验证 dry-run
-  ```bash
-  cmake --build build/debug --target binance_data_fusion -j8
-  ./build/debug/tools/binance_data_fusion \
-    --config config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
-  ```
-  - 预期：不连接网络，输出 `result=ok connect=false source_count=4`。
-
-- [ ] Step 3: 提交 Binance bundle tool
-  ```bash
-  git diff --check
-  git add tools/binance/binance_data_fusion.cpp \
-      tools/CMakeLists.txt \
-      config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
-  git commit -m "Add Binance fusion bundle tool"
-  ```
-
-### Task 5: Focused Verification
-
-**Files:**
-- Modify: `docs/gate_fastest_route_fusion_threaded_bundle_plan.md`
-- Modify: `docs/project_onboarding_guide.md`
-
-- [ ] Step 1: 跑 focused C++ tests
-  ```bash
-  ctest --test-dir build/debug -R '(book_ticker_fusion|core_market_data_book_ticker_fusion)' --output-on-failure
-  ```
-
-- [ ] Step 2: 跑 Python analyzer test
-  ```bash
-  /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/market_data/analyze_book_ticker_fusion_latency_test.py
-  ```
-
-- [ ] Step 3: 跑文档和 diff 检查
-  ```bash
-  git diff --check
-  ```
-
-- [ ] Step 4: 提交文档同步
-  ```bash
-  git add docs/gate_fastest_route_fusion_threaded_bundle_plan.md \
-      docs/project_onboarding_guide.md
-  git commit -m "Document threaded fusion bundle"
-  ```
 
 ## V1 Shadow 验证计划
 
