@@ -115,3 +115,64 @@ SignalDecision open_long = TryOpenLong(pair, market, threshold);
    - 运行 focused strategy / report 测试，至少覆盖 `lead_lag`、`signal_csv_writer`、`analyze_order_detail_test.py` 和
      `generate_live_report_test.py`。
    - 如果实现触碰热路径，需要补跑对应 LeadLag strategy benchmark；性能结论必须以 benchmark 输出为准。
+
+## 2. `lag_vol_guard` 的实现口径与实盘边界
+
+### Go current
+
+Go current 的 `lag_vol_guard` 是 open signal 之后的 guard，放在 `parallel-limit` 之后、`drift_guard` 之前。它不看成交、不看 PnL，也不看 lead / lag
+ratio，只看 lag 交易所自身 BBO mid 的短时波动：
+
+- 每个 lag BBO 计算 `lag_mid = (bid + ask) / 2`。
+- 保存上一笔有效 lag mid，计算 `abs_return = abs(current_mid / previous_mid - 1)`。
+- 在 `jump_window` 内统计 `abs_return >= jump_threshold` 的次数，默认参数为 `jump_threshold=0.005`、`jump_count=3`、`jump_window=5m`。
+- 在 `amplitude_window` 内计算 `amplitude = max_mid / min_mid - 1`，默认参数为 `amplitude_threshold=0.025`、`amplitude_window=1s`。
+- 若 `jump_count` 达标或 `amplitude` 超阈值，则认为 `lag_vol_hot=true`。
+- open signal 时如果仍在 cooldown 内，返回 `lag-vol-guard-cooldown`；如果当前 hot，则返回 `lag-vol-guard-trigger` 并把
+  `cooldown_until` 推进到 `signal_time + cooldown`，默认 `cooldown=15m`。
+
+设计意图是避免 lag 侧 BBO 自身剧烈跳动时继续用该 quote 新开仓。它更像微观结构 emergency guard，而不是收益优化器：它可以降低极端 lag side
+抖动时的开仓概率，但也可能错杀真实 lead-lag 传导行情。
+
+### C++ current
+
+C++ 当前没有把 `lag_vol_guard` 放入 live hot path。现有实现只在
+`lead_lag_replay --lag-vol-guard-audit-output <path>` 下运行 replay-only audit：
+
+- `tools/lead_lag/lag_vol_guard_audit.*` 维护独立 Go-like 状态。
+- audit 只在 replay open signal 后输出 `would_block`、`would_block_reason`、jump / amplitude / cooldown snapshot。
+- audit 不改变 replay synthetic accounting，也不改变 live 策略行为。
+- `strategy/lead_lag/config.cpp` 当前仍只接受 `lag_vol_guard.mode=off`，非 off 会被拒绝。
+
+因此当前 C++ live 策略不会因为 `lag_vol_guard` 阻断真实 open order；若 report 看到 open 被阻断，原因只会来自已实装的 post-signal guard，例如
+`parallel_limit`、`drift_guard`、freshness 或 risk / order preparation。
+
+### 计算复杂度
+
+若直接按 replay audit / Go-like 简单实现，open signal 时需要扫描窗口：
+
+| 计算量 | 朴素复杂度 | live 推荐复杂度 |
+| --- | ---: | ---: |
+| `lag_mid` | `O(1)` | `O(1)` |
+| `abs_return` | `O(1)` | `O(1)` |
+| 裁剪过期窗口样本 | 单次 `O(k)` | 摊还 `O(1)` / tick |
+| `lag_vol_jump_count` | `O(J)` | 维护 rolling count，`O(1)` |
+| `lag_vol_amplitude` | `O(A)` | 维护 min / max 单调队列，`O(1)` 读取 |
+| cooldown 判断 / 更新 | `O(1)` | `O(1)` |
+| open signal guard 判断 | `O(J + A)` | `O(1)` |
+
+其中 `J` 是 `jump_window` 内 jump 样本数，`A` 是 `amplitude_window` 内 mid 样本数，`k` 是本次裁掉的过期样本数。若未来进入 live hot path，不能直接把
+`std::deque + 扫描窗口` 的 audit 写法搬进策略；应使用预分配 ring/window、rolling count 和单调队列，避免 open signal 路径出现窗口扫描或容器扩容。
+
+### 当前决策
+
+当前决策：**现在实盘策略不加入 `lag_vol_guard`，继续只保留 replay-only audit。**
+
+原因是现有 replay 证据不支持 live enforce。2026-06-25 ORDI_USDT 三天 Tardis replay sweep 显示：
+
+- `cooldown=3m/5m/10m/15m` 都降低 signal-only PnL。
+- 默认 `15m` 过滤 `62/1175` 个 open signal，主要由 cooldown 扩大过滤范围。
+- 被过滤 trade 在 0 tick 和 5 ticks 滑点口径下整体仍为正贡献。
+
+这说明 `lag_vol_guard` 在该样本上确实有机械过滤动作，但没有带来预期保护收益，反而错杀了正贡献 open signal。除非后续更宽 symbol / 更长区间 replay 或小额
+live smoke 给出反证，否则 C++ 不把 `lag_vol_guard` 加入实盘策略 hot path；Go / C++ 在这一点保持刻意不同。
