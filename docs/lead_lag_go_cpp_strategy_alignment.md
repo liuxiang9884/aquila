@@ -6,7 +6,15 @@
 `leadlag-current-strategy-package/go/leadlag/algo/guards.go`；C++ 当前实现以
 `strategy/lead_lag/*` 和 checked-in 策略 TOML 为准。
 
-本文关注实盘策略行为。若某个 Go 口径更适合回测归因或离线 audit，但会增加 C++ live hot path 成本，默认不直接搬入实盘路径。
+本文关注实盘策略行为。讨论和修改按下面 5 项逐项推进：
+
+1. 把 `parallel-limit` 从 pre-signal 挪到 post-signal guard。
+2. 把 `lag_vol_guard` 从 replay-only audit 变成 live hot path open-only guard。
+3. 保持 `drift_guard` post-signal open-only，但补齐 Go 风格的 guard snapshot / outcome 语义。
+4. freshness 仍是 post-signal open-only；若严格按 Go，需要支持策略内 auto warmup；若按本项目边界，则只保留 fixed / preflight。
+5. 调整 report / log，让被 guard 拦截的 open signal 都显示为“signal triggered + intent rejected”，而不是 pre-signal reject 或 missing order。
+
+每一项都会单独记录 Go / C++ 当前差异、迁移方案，以及修改前后的优缺点。
 
 ## 1. `parallel-limit` 的执行位置
 
@@ -61,14 +69,49 @@ SignalDecision open_long = TryOpenLong(pair, market, threshold);
 这个差异不会改变实盘硬风险结果：两边达到 `parallel` 上限后都不会继续开仓。真正不同的是统计语义。Go 会把被 `parallel-limit` 挡住的 tick 记为
 “有机会但被 guard 拦截”；C++ 当前会把它提前作为 `kParallelLimit` reject，避免继续计算 open 条件。
 
-### 当前 C++ 取舍
+### 修改前后的优缺点
 
-实盘路径建议保留 C++ 当前 pre-signal `parallel-limit`，不直接按 Go 改成 post-signal guard。原因：
+修改前，即 C++ 当前 pre-signal `parallel-limit`：
 
 - `parallel` 是硬风险边界，不是策略质量过滤器；实盘达到并发持仓上限后，继续计算 open signal 不会改变交易行为。
 - pre-signal reject 少走 open signal 计算、诊断构造和日志链路，hot path 更短。
 - C++ 的 `new_entries_paused()` / `needs_reconcile` 也属于真实交易状态保护，和 `parallel` 一样适合放在新开仓评估之前。
-- 高频实盘路径应优先保持确定性、低延迟和低诊断成本；Go 的 post-signal 口径更适合回测归因。
+- 缺点是满仓时不会形成 `lead_lag_signal_triggered`，因此无法从 live log / report 直接看到“本来会开仓，但被 parallel 挡住”的 signal。
 
-如果后续需要 Go-like 机会统计，建议在 replay / signal-only / audit 层新增离线归因：当 `parallel` 已满时仍可评估 open opportunity 并记录
-would-block 结果，但不要改变 live hot path 的 pre-signal 风控顺序。
+修改后，即对齐 Go 的 post-signal `parallel-limit`：
+
+- 优点是满仓时仍会先评估 open signal；如果本 tick 确实触发开仓，会输出 `lead_lag_signal_triggered`，再输出
+  `lead_lag_order_intent_rejected reason=parallel_limit`。
+- 优点是 report 可以把该行作为 `source_schema=intent_rejected_v1` 关联到 signal，避免把这类机会误判为 missing order。
+- 优点是 live / replay / Go reference 的 signal 归因口径更接近，便于查看 signal 和复盘 `parallel` 参数是否过紧。
+- 缺点是达到 `parallel` 上限后仍会多走 open signal 计算和一段日志路径，hot path 成本略高。
+- 缺点是需要谨慎保证不会因为后置检查而绕过真实下单前的容量限制；synthetic accounting 和 external order 两条路径都必须在
+  `parallel_limit` guard 后才能继续。
+
+当前决策：为了方便查看 signal 和对齐 Go reference，C++ 第 1 项按 post-signal `parallel-limit` 迁移。`new_entries_paused()` /
+`needs_reconcile` 仍保留为 C++ 真实交易状态保护，继续在 open signal 评估前拦截，不纳入本项迁移。
+
+### 修改方案
+
+1. 调整 `strategy/lead_lag/signal.h` 的 `SignalEngine::OnLeadTick()`：
+   - 保留 close-first 行为。
+   - 移除 open signal 前的 `execution.active_group_count() >= execution.capacity()` 直接 `kParallelLimit` 返回。
+   - 保留 `execution.new_entries_paused()` 的 pre-signal `kDegraded` 返回，因为它表示 unknown-result reconcile / manual intervention 等真实交易状态，不是 Go 的普通 `parallel-limit` guard。
+   - 然后继续调用 `TryOpenLong()` / `TryOpenShort()` 形成 open signal。
+2. 在 `strategy/lead_lag/strategy.h` 增加 post-signal open-only guard，例如 `RejectOpenForParallelLimit()`：
+   - 判断条件为 `OpenAction(last_signal_decision_.action)`、非 reduce-only，且 `runtime->execution.active_group_count() >= runtime->execution.capacity()`。
+   - 放在 `FinalizeActiveSignal()` 中 `RecordTriggeredSignal()` 之后、`RejectOpenForDriftGuard()` 之前。
+   - 命中时调用 `LogOrderIntentRejectedForSignal("parallel_limit", ...)`，再 `RejectSignal(SignalRejectReason::kParallelLimit)`。
+   - 该 guard 必须同时覆盖 `PositionAccountingMode::kSyntheticSignals` 和真实 external order 路径，确保不会进入 `ApplySyntheticSignal()` 或 `SubmitExternalSignal()`。
+3. 更新测试：
+   - `lead_lag_signal_test` 或等价 signal 单测：满 `parallel` 时不再在 signal engine pre-signal 返回 `kParallelLimit`，而是允许 open signal 形成。
+   - `lead_lag_strategy_interface_test`：构造 active group 已满且出现新 open signal 的场景，验证先有 triggered signal，再有
+     `lead_lag_order_intent_rejected reason=parallel_limit`，且没有外部订单提交。
+   - 如果 replay / signal-only 测试依赖旧 `kParallelLimit` 计数，需要同步改为 post-signal rejected intent 口径。
+4. 更新 report / schema 文档：
+   - `scripts/lead_lag/analyze_order_detail.py` 已支持通用 `lead_lag_order_intent_rejected`，通常只需新增测试覆盖 `reject_reason=parallel_limit`。
+   - `docs/lead_lag_live_report_csv_schema.md` 和 `docs/diagnostic_fields.md` 需要把 `parallel_limit` 列入 open intent rejected reason。
+5. 验证：
+   - 运行 focused strategy / report 测试，至少覆盖 `lead_lag`、`signal_csv_writer`、`analyze_order_detail_test.py` 和
+     `generate_live_report_test.py`。
+   - 如果实现触碰热路径，需要补跑对应 LeadLag strategy benchmark；性能结论必须以 benchmark 输出为准。
