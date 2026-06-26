@@ -92,6 +92,33 @@ leadlag::SignalMarket OpenLongMarket() {
   };
 }
 
+leadlag::SignalMarket OpenShortMarket() {
+  return leadlag::SignalMarket{
+      .lead = Quote(/*event_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
+      .lag = Quote(/*event_ns=*/10, /*bid_price=*/98.0, /*ask_price=*/98.5),
+      .recorder =
+          leadlag::RecorderSnapshot{
+              .lead_extrema =
+                  leadlag::BboExtremaSnapshot{
+                      .valid = true,
+                      .bid_min = 96.0,
+                      .bid_max = 99.0,
+                      .ask_min = 97.0,
+                      .ask_max = 100.0,
+                  },
+              .lag_extrema =
+                  leadlag::BboExtremaSnapshot{
+                      .valid = true,
+                      .bid_min = 98.0,
+                      .bid_max = 98.5,
+                      .ask_min = 98.5,
+                      .ask_max = 99.0,
+                  },
+              .lag_spread_mean = 0.4,
+          },
+  };
+}
+
 TEST(LeadLagSignalTest, CostModelKeepsEmbeddedFrictionOutOfRequiredEdge) {
   const leadlag::EntryCostBreakdown cost{
       .fee = 0.02,
@@ -238,33 +265,8 @@ TEST(LeadLagSignalTest, OpenLongRejectsEachGate) {
 }
 
 TEST(LeadLagSignalTest, OpenShortPassesMirrorGates) {
-  const leadlag::SignalMarket market{
-      .lead = Quote(/*event_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
-      .lag = Quote(/*event_ns=*/10, /*bid_price=*/98.0, /*ask_price=*/98.5),
-      .recorder =
-          leadlag::RecorderSnapshot{
-              .lead_extrema =
-                  leadlag::BboExtremaSnapshot{
-                      .valid = true,
-                      .bid_min = 96.0,
-                      .bid_max = 99.0,
-                      .ask_min = 97.0,
-                      .ask_max = 100.0,
-                  },
-              .lag_extrema =
-                  leadlag::BboExtremaSnapshot{
-                      .valid = true,
-                      .bid_min = 98.0,
-                      .bid_max = 98.5,
-                      .ask_min = 98.5,
-                      .ask_max = 99.0,
-                  },
-              .lag_spread_mean = 0.4,
-          },
-  };
-
   const leadlag::SignalDecision decision = leadlag::SignalEngine::TryOpenShort(
-      PairConfigForSignal(), market, ThresholdForSignal());
+      PairConfigForSignal(), OpenShortMarket(), ThresholdForSignal());
 
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kOpenShort);
@@ -273,34 +275,42 @@ TEST(LeadLagSignalTest, OpenShortPassesMirrorGates) {
   EXPECT_DOUBLE_EQ(decision.intent.price, 98.0);
 }
 
+TEST(LeadLagSignalTest,
+     OpenShortMetricsIncludeConfiguredSlippageTicksInRequiredEdge) {
+  leadlag::PairConfig pair = PairConfigForSignal();
+  pair.lag_instrument.price_tick = 0.1;
+  pair.execute.open_slippage_ticks = 3;
+  pair.execute.close_slippage_ticks = 2;
+
+  const leadlag::OpenSignalMetrics metrics =
+      leadlag::SignalEngine::BuildOpenShortMetrics(pair, OpenShortMarket(),
+                                                   ThresholdForSignal());
+
+  ASSERT_TRUE(metrics.valid);
+  const double expected_slippage_buffer = 5.0 * 0.1 / 98.0;
+  EXPECT_NEAR(metrics.required_edge,
+              2.0 * pair.lag_taker_fee + expected_slippage_buffer +
+                  pair.trigger.target_profit_rate,
+              1e-15);
+}
+
+TEST(LeadLagSignalTest, OpenShortRejectsWhenSlippageTicksExceedTargetSpace) {
+  leadlag::PairConfig pair = PairConfigForSignal();
+  pair.lag_instrument.price_tick = 0.1;
+  pair.execute.open_slippage_ticks = 8;
+  pair.execute.close_slippage_ticks = 5;
+
+  const leadlag::SignalDecision decision = leadlag::SignalEngine::TryOpenShort(
+      pair, OpenShortMarket(), ThresholdForSignal());
+
+  EXPECT_FALSE(decision.triggered);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kEntryCost);
+}
+
 TEST(LeadLagSignalTest, OpenShortRejectsEachGate) {
   const leadlag::PairConfig pair = PairConfigForSignal();
   const leadlag::ThresholdSnapshot threshold = ThresholdForSignal();
-  const leadlag::SignalMarket base{
-      .lead = Quote(/*event_ns=*/10, /*bid_price=*/96.0, /*ask_price=*/97.0),
-      .lag = Quote(/*event_ns=*/10, /*bid_price=*/98.0,
-                   /*ask_price=*/98.5),
-      .recorder =
-          leadlag::RecorderSnapshot{
-              .lead_extrema =
-                  leadlag::BboExtremaSnapshot{
-                      .valid = true,
-                      .bid_min = 96.0,
-                      .bid_max = 99.0,
-                      .ask_min = 97.0,
-                      .ask_max = 100.0,
-                  },
-              .lag_extrema =
-                  leadlag::BboExtremaSnapshot{
-                      .valid = true,
-                      .bid_min = 98.0,
-                      .bid_max = 98.5,
-                      .ask_min = 98.5,
-                      .ask_max = 99.0,
-                  },
-              .lag_spread_mean = 0.4,
-          },
-  };
+  const leadlag::SignalMarket base = OpenShortMarket();
 
   leadlag::SignalMarket price_diff = base;
   price_diff.lag.bid_price = 96.0;
