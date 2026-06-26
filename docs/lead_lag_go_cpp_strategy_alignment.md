@@ -40,9 +40,9 @@ if guard.ParallelUsed >= guard.ParallelLimit {
 - 可以统计如果放宽 `parallel`，可能多出多少 open opportunity。
 - full attribution / `signal_decision` 可以记录 blocked signal 的方向、价格、guard snapshot 和 block reason。
 
-### C++ current
+### C++ 修改前
 
-C++ 当前实现把 `parallel-limit` 放在 open signal 评估之前。`SignalEngine::OnLeadTick()` 会先处理已有持仓的 close；如果没有 close signal，再检查
+C++ 修改前把 `parallel-limit` 放在 open signal 评估之前。`SignalEngine::OnLeadTick()` 会先处理已有持仓的 close；如果没有 close signal，再检查
 `ExecutionState` 是否已经达到容量：
 
 ```cpp
@@ -55,26 +55,37 @@ if (execution.new_entries_paused()) {
 SignalDecision open_long = TryOpenLong(pair, market, threshold);
 ```
 
-达到 `parallel` 上限时，C++ 不再调用 `TryOpenLong()` / `TryOpenShort()`，因此不会形成 `lead_lag_signal_triggered`，也不知道当前 tick 如果没有
+达到 `parallel` 上限时，旧 C++ 不再调用 `TryOpenLong()` / `TryOpenShort()`，因此不会形成 `lead_lag_signal_triggered`，也不知道当前 tick 如果没有
 `parallel` 限制会触发开多还是开空。
+
+### C++ 当前实现
+
+C++ 当前已经迁移为 post-signal open guard：
+
+- `SignalEngine::OnLeadTick()` 仍先 close existing group，并保留 `new_entries_paused()` 的 pre-signal `kDegraded` 保护。
+- 如果没有 close / degraded，`SignalEngine` 会继续评估 `TryOpenLong()` / `TryOpenShort()`；即使 `active_group_count >= execute.parallel`，也允许形成 open signal。
+- `Strategy::FinalizeActiveSignal()` 会先记录 `lead_lag_signal_triggered`，再执行 `RejectOpenForParallelLimit()`。
+- `RejectOpenForParallelLimit()` 只作用于非 reduce-only 的 `kOpenLong` / `kOpenShort`，命中时输出 `lead_lag_order_intent_rejected reason=parallel_limit`，再清掉本次 `last_signal_decision_`，阻止 synthetic accounting 和 external order 继续执行。
+- report 会把该 rejected intent 作为 `source_schema=intent_rejected_v1` 关联回同一个 signal，不再显示为 `missing_order`。
 
 ### 差异影响
 
-| 维度 | Go current | C++ current |
-| --- | --- | --- |
-| `parallel-limit` 位置 | open signal 之后的 post-signal guard | open signal 之前的 pre-signal reject |
-| 是否先形成 open signal | 是 | 否 |
-| 是否知道被挡 signal 的方向和价格 | 知道 | 不知道 |
-| 是否会记录 triggered signal / blocked signal attribution | 可以 | 不会进入 triggered open signal |
-| 是否会越过 `parallel` 真实下单 | 不会 | 不会 |
-| 主要差异性质 | 归因和统计口径 | 归因和统计口径 |
+| 维度 | Go current | C++ 修改前 | C++ 当前实现 |
+| --- | --- | --- | --- |
+| `parallel-limit` 位置 | open signal 之后的 post-signal guard | open signal 之前的 pre-signal reject | open signal 之后的 post-signal guard |
+| 是否先形成 open signal | 是 | 否 | 是 |
+| 是否知道被挡 signal 的方向和价格 | 知道 | 不知道 | 知道 |
+| 是否会记录 triggered signal / blocked signal attribution | 可以 | 不会进入 triggered open signal | 记录 `lead_lag_signal_triggered` + `intent_rejected_v1` |
+| 是否会越过 `parallel` 真实下单 | 不会 | 不会 | 不会 |
+| 主要差异性质 | 归因和统计口径 | 归因和统计口径 | 与 Go 的 signal 归因口径基本对齐 |
 
-这个差异不会改变实盘硬风险结果：两边达到 `parallel` 上限后都不会继续开仓。真正不同的是统计语义。Go 会把被 `parallel-limit` 挡住的 tick 记为
-“有机会但被 guard 拦截”；C++ 当前会把它提前作为 `kParallelLimit` reject，避免继续计算 open 条件。
+修改前差异不会改变实盘硬风险结果：两边达到 `parallel` 上限后都不会继续开仓。真正不同的是统计语义。Go 会把被 `parallel-limit` 挡住的 tick 记为
+“有机会但被 guard 拦截”；旧 C++ 会把它提前作为 `kParallelLimit` reject，避免继续计算 open 条件。当前 C++ 已按 Go 口径改为 post-signal
+`parallel_limit` rejected intent，因此满仓时也能看到被挡住的 open opportunity。
 
 ### 修改前后的优缺点
 
-修改前，即 C++ 当前 pre-signal `parallel-limit`：
+修改前，即旧 C++ pre-signal `parallel-limit`：
 
 - `parallel` 是硬风险边界，不是策略质量过滤器；实盘达到并发持仓上限后，继续计算 open signal 不会改变交易行为。
 - pre-signal reject 少走 open signal 计算、诊断构造和日志链路，hot path 更短。
@@ -91,33 +102,21 @@ SignalDecision open_long = TryOpenLong(pair, market, threshold);
 - 缺点是需要谨慎保证不会因为后置检查而绕过真实下单前的容量限制；synthetic accounting 和 external order 两条路径都必须在
   `parallel_limit` guard 后才能继续。
 
-当前决策：为了方便查看 signal 和对齐 Go reference，C++ 第 1 项按 post-signal `parallel-limit` 迁移。`new_entries_paused()` /
+当前决策：为了方便查看 signal 和对齐 Go reference，C++ 第 1 项已按 post-signal `parallel-limit` 迁移。`new_entries_paused()` /
 `needs_reconcile` 仍保留为 C++ 真实交易状态保护，继续在 open signal 评估前拦截，不纳入本项迁移。
 
-### 修改方案
+### 已执行修改
 
-1. 调整 `strategy/lead_lag/signal.h` 的 `SignalEngine::OnLeadTick()`：
-   - 保留 close-first 行为。
-   - 移除 open signal 前的 `execution.active_group_count() >= execution.capacity()` 直接 `kParallelLimit` 返回。
-   - 保留 `execution.new_entries_paused()` 的 pre-signal `kDegraded` 返回，因为它表示 unknown-result reconcile / manual intervention 等真实交易状态，不是 Go 的普通 `parallel-limit` guard。
-   - 然后继续调用 `TryOpenLong()` / `TryOpenShort()` 形成 open signal。
-2. 在 `strategy/lead_lag/strategy.h` 增加 post-signal open-only guard，例如 `RejectOpenForParallelLimit()`：
-   - 判断条件为 `OpenAction(last_signal_decision_.action)`、非 reduce-only，且 `runtime->execution.active_group_count() >= runtime->execution.capacity()`。
-   - 放在 `FinalizeActiveSignal()` 中 `RecordTriggeredSignal()` 之后、`RejectOpenForDriftGuard()` 之前。
-   - 命中时调用 `LogOrderIntentRejectedForSignal("parallel_limit", ...)`，再 `RejectSignal(SignalRejectReason::kParallelLimit)`。
-   - 该 guard 必须同时覆盖 `PositionAccountingMode::kSyntheticSignals` 和真实 external order 路径，确保不会进入 `ApplySyntheticSignal()` 或 `SubmitExternalSignal()`。
-3. 更新测试：
-   - `lead_lag_signal_test` 或等价 signal 单测：满 `parallel` 时不再在 signal engine pre-signal 返回 `kParallelLimit`，而是允许 open signal 形成。
-   - `lead_lag_strategy_interface_test`：构造 active group 已满且出现新 open signal 的场景，验证先有 triggered signal，再有
-     `lead_lag_order_intent_rejected reason=parallel_limit`，且没有外部订单提交。
-   - 如果 replay / signal-only 测试依赖旧 `kParallelLimit` 计数，需要同步改为 post-signal rejected intent 口径。
-4. 更新 report / schema 文档：
-   - `scripts/lead_lag/analyze_order_detail.py` 已支持通用 `lead_lag_order_intent_rejected`，通常只需新增测试覆盖 `reject_reason=parallel_limit`。
-   - `docs/lead_lag_live_report_csv_schema.md` 和 `docs/diagnostic_fields.md` 需要把 `parallel_limit` 列入 open intent rejected reason。
-5. 验证：
-   - 运行 focused strategy / report 测试，至少覆盖 `lead_lag`、`signal_csv_writer`、`analyze_order_detail_test.py` 和
-     `generate_live_report_test.py`。
-   - 如果实现触碰热路径，需要补跑对应 LeadLag strategy benchmark；性能结论必须以 benchmark 输出为准。
+1. `strategy/lead_lag/signal.h` 的 `SignalEngine::OnLeadTick()` 已移除 open signal 前的 `execution.active_group_count() >= execution.capacity()` 直接
+   `kParallelLimit` 返回；close-first 和 `new_entries_paused()` 的 pre-signal `kDegraded` 保护保留。
+2. `strategy/lead_lag/strategy.h` 已增加 `RejectOpenForParallelLimit()`，并放在 `FinalizeActiveSignal()` 的 `RecordTriggeredSignal()` 之后、
+   `RejectOpenForDriftGuard()` 之前。该 guard 命中后调用 `LogOrderIntentRejectedForSignal("parallel_limit", ...)`，再
+   `RejectSignal(SignalRejectReason::kParallelLimit)`，覆盖 synthetic accounting 和 external order 两条路径。
+3. `test/strategy/lead_lag_signal_test.cpp` 已覆盖满 `parallel` 时 signal engine 仍能形成 open signal；`test/strategy/lead_lag_strategy_interface_test.cpp`
+   已覆盖满 `parallel` 时先有 triggered signal，再有 `lead_lag_order_intent_rejected reason=parallel_limit`，且不会提交外部订单。
+4. `scripts/test/lead_lag/analyze_order_detail_test.py` 和 `scripts/test/lead_lag/generate_live_report_test.py` 已覆盖 `parallel_limit` rejected intent
+   能 join 回 signal，且 signal 不出现 `missing_order` warning。
+5. `docs/lead_lag_live_report_csv_schema.md` 和 `docs/diagnostic_fields.md` 已把 `parallel_limit` 列入 `intent_rejected_v1` / `reject_reason` 说明。
 
 ## 2. `lag_vol_guard` 的实现口径与实盘边界
 
