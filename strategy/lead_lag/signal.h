@@ -163,6 +163,18 @@ class SignalEngine {
     double target_space{0.0};
   };
 
+  [[nodiscard]] static double SlippageBufferPct(std::uint32_t ticks,
+                                                double price_tick,
+                                                double trigger_price) noexcept {
+    if (ticks == 0 || !std::isfinite(price_tick) || price_tick <= 0.0 ||
+        !std::isfinite(trigger_price) || trigger_price <= 0.0) {
+      return 0.0;
+    }
+    const double buffer =
+        static_cast<double>(ticks) * price_tick / trigger_price;
+    return std::isfinite(buffer) && buffer > 0.0 ? buffer : 0.0;
+  }
+
   [[nodiscard]] static EntryCostBreakdown BuildEntryCostBreakdown(
       const PairConfig& pair, const ThresholdSnapshot& threshold,
       double trigger_price, double lag_spread_buffer,
@@ -175,6 +187,12 @@ class SignalEngine {
         .fee = pair.lag_taker_fee * 2.0,
         .spread = lag_spread_pct,
         .lag_spread_buffer = normalized_lag_spread_buffer,
+        .entry_slippage_buffer =
+            SlippageBufferPct(pair.execute.open_slippage_ticks,
+                              pair.lag_instrument.price_tick, trigger_price),
+        .normal_close_slippage_buffer =
+            SlippageBufferPct(pair.execute.close_slippage_ticks,
+                              pair.lag_instrument.price_tick, trigger_price),
         .lead_noise = threshold.lead_noise,
         .lag_noise = threshold.lag_noise,
     };

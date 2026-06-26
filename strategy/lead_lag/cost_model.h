@@ -11,11 +11,14 @@ struct EntryCostBreakdown {
   double fee{0.0};
   double spread{0.0};
   double lag_spread_buffer{0.0};
+  double entry_slippage_buffer{0.0};
+  double normal_close_slippage_buffer{0.0};
   double lead_noise{0.0};
   double lag_noise{0.0};
 
   [[nodiscard]] double RequiredEdge() const noexcept {
-    return fee + lead_noise + lag_noise;
+    return fee + entry_slippage_buffer + normal_close_slippage_buffer +
+           lead_noise + lag_noise;
   }
 
   [[nodiscard]] double RequiredEdgeWithTargetProfit(

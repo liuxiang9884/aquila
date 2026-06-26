@@ -6,13 +6,16 @@
 `leadlag-current-strategy-package/go/leadlag/algo/guards.go`；C++ 当前实现以
 `strategy/lead_lag/*` 和 checked-in 策略 TOML 为准。
 
-本文关注实盘策略行为。讨论和修改按下面 5 项逐项推进：
+本文关注实盘策略行为。讨论和修改先按下面 5 项逐项推进：
 
 1. 把 `parallel-limit` 从 pre-signal 挪到 post-signal guard。
 2. 把 `lag_vol_guard` 从 replay-only audit 变成 live hot path open-only guard。
 3. 保持 `drift_guard` post-signal open-only，但补齐 Go 风格的 guard snapshot / outcome 语义。
 4. freshness 仍是 post-signal open-only；若严格按 Go，需要支持策略内 auto warmup；若按本项目边界，则只保留 fixed / preflight。
 5. 调整 report / log，让被 guard 拦截的 open signal 都显示为“signal triggered + intent rejected”，而不是 pre-signal reject 或 missing order。
+
+之后补充第 6 项：不把 Go 的 `taker_buffer` auto warmup 放入 C++ live hot path，但用 C++ 已固化的 `open_slippage_ticks` /
+`close_slippage_ticks` 进入 open signal 的成本筛选。
 
 每一项都会单独记录 Go / C++ 当前差异、迁移方案，以及修改前后的优缺点。
 
@@ -347,3 +350,58 @@ C++ 当前已按这个目标处理 post-signal open 拦截：
 
 因此第 5 项按测试和文档收敛：C++ 当前 report / log 语义保留，后续新增 post-signal open guard 时应复用
 `lead_lag_order_intent_rejected`，并同步补 report/parser 回归。
+
+## 6. slippage ticks 进入 open cost model / signal 筛选
+
+### Go current
+
+Go current 的 `cost.taker_buffer` 可以进入 open cost model。`EntryCostBreakdown.RequiredEdge()` 包含 fee、entry taker buffer、normal close taker
+buffer、lead noise 和 lag noise；`exclude_from_cost_model=true` 时才把 taker buffer 从成本模型中排除。Go 还支持 `auto` 模式，通过 lag Depth
+L2 warmup 生成有效 buffer，并可同时影响 order price 和 open threshold。
+
+### C++ current
+
+C++ 不把 Go 的 `taker_buffer` auto warmup 放入 live 策略热路径，也不在 signal 阶段读取 `execute.taker_buffer.entry_fixed_pct` /
+`normal_close_fixed_pct` 做动态 pct 成本模型。C++ 的实盘执行成本来源是启动前已经写入策略 TOML 的 fixed ticks：
+
+- `open_slippage_ticks`：open order 的基础 aggressive ticks。
+- `close_slippage_ticks`：normal close order 的基础 aggressive ticks。
+- `stoploss_slippage_ticks`：stoploss 专用，不进入普通 open signal 筛选。
+- `close_retry_slippage_step_ticks`：normal close retry 专用，不进入普通 open signal 筛选。
+
+当前 C++ 已把基础 open / normal close ticks 折算为当前 open signal 触发价上的比例成本：
+
+```text
+entry_slippage_buffer = open_slippage_ticks * lag_price_tick / trigger_price
+normal_close_slippage_buffer = close_slippage_ticks * lag_price_tick / trigger_price
+required_edge = fee + entry_slippage_buffer + normal_close_slippage_buffer + lead_noise + lag_noise + target_profit_rate
+```
+
+其中 `trigger_price` 是 open long 的 lag ask 或 open short 的 lag bid。若 `price_tick <= 0`、`trigger_price <= 0` 或对应 ticks 为 0，则该侧
+slippage buffer 记为 0，保持 legacy / 无效元数据下的旧行为。
+
+### 当前差异
+
+| 维度 | Go current | C++ current |
+| --- | --- | --- |
+| open 成本来源 | `cost.taker_buffer` pct，可 fixed / auto | `open_slippage_ticks` / `close_slippage_ticks` 固定 ticks |
+| 是否策略内 auto warmup | 是，可基于 lag Depth L2 | 否，启动前 preflight 固化配置 |
+| 是否进入 open threshold / signal 筛选 | 是，除非 `exclude_from_cost_model=true` | 是，但只使用 fixed slippage ticks 折算 pct |
+| 是否影响真实下单价 | pct buffer 可影响 order price | 真实下单价仍使用 slippage ticks |
+| stoploss / retry 是否进入普通 open cost | 不作为普通 open buffer | 不进入，只建模 open + normal close 基础 ticks |
+| `execute.taker_buffer` 在 C++ 的角色 | 不适用 | 仅 `lead_lag_signal_decision` 参考价诊断和 preflight trace，不直接筛 signal |
+
+### 当前决策
+
+当前决策：**C++ 用实际执行的 slippage ticks 对齐 Go 的“执行摩擦进入 open cost model”语义，但不迁入 Go 的 `taker_buffer` auto warmup。**
+
+理由：
+
+- open signal 筛选应该覆盖基础 open + normal close 执行摩擦，否则 configured slippage 越大，信号门槛却不变，会低估开仓所需 edge。
+- C++ live 策略的真实下单路径已经以 ticks 为唯一执行 aggressiveness 来源；用同一组 ticks 做 signal cost model，避免同时维护 pct buffer 与 ticks buffer。
+- `open_slippage_ticks` / `close_slippage_ticks` 是启动前 preflight 或人工配置后的固定值，进入 signal hot path 只增加常数次乘除法，不引入 warmup 状态、
+  Depth L2 依赖或动态 fallback。
+- stoploss slippage 和 normal close retry step 是异常 / 补救路径，若进入普通 open threshold 会过度抬高门槛；当前只建模基础 open 和基础 normal close。
+
+因此第 6 项按“fixed ticks cost model”收敛：C++ 不直接按 Go `taker_buffer` pct 迁移，但把已固化的执行 ticks 纳入 open signal 的
+`required_edge`，用于横截面信号筛选。

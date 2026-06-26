@@ -117,6 +117,38 @@ TEST(LeadLagSignalTest, OpenLongPassesAllGates) {
   EXPECT_DOUBLE_EQ(decision.intent.price, 102.0);
 }
 
+TEST(LeadLagSignalTest,
+     OpenMetricsIncludeConfiguredSlippageTicksInRequiredEdge) {
+  leadlag::PairConfig pair = PairConfigForSignal();
+  pair.lag_instrument.price_tick = 0.1;
+  pair.execute.open_slippage_ticks = 3;
+  pair.execute.close_slippage_ticks = 2;
+
+  const leadlag::OpenSignalMetrics metrics =
+      leadlag::SignalEngine::BuildOpenLongMetrics(pair, OpenLongMarket(),
+                                                  ThresholdForSignal());
+
+  ASSERT_TRUE(metrics.valid);
+  const double expected_slippage_buffer = 5.0 * 0.1 / 102.0;
+  EXPECT_NEAR(metrics.required_edge,
+              2.0 * pair.lag_taker_fee + expected_slippage_buffer +
+                  pair.trigger.target_profit_rate,
+              1e-15);
+}
+
+TEST(LeadLagSignalTest, OpenLongRejectsWhenSlippageTicksExceedTargetSpace) {
+  leadlag::PairConfig pair = PairConfigForSignal();
+  pair.lag_instrument.price_tick = 0.1;
+  pair.execute.open_slippage_ticks = 8;
+  pair.execute.close_slippage_ticks = 5;
+
+  const leadlag::SignalDecision decision = leadlag::SignalEngine::TryOpenLong(
+      pair, OpenLongMarket(), ThresholdForSignal());
+
+  EXPECT_FALSE(decision.triggered);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kEntryCost);
+}
+
 TEST(LeadLagSignalTest, ReferenceShadowPriceAppliesPercentBufferAndRounding) {
   const leadlag::InstrumentMetadata instrument{
       .price_tick = 0.01,
