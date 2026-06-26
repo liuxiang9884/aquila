@@ -348,6 +348,28 @@ TEST(LeadLagSignalTest, LeadTickAllowsOpenWhenAlignmentDriftIsHigh) {
   EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kNone);
 }
 
+TEST(LeadLagSignalTest, LeadTickFormsOpenSignalWhenParallelCapacityFull) {
+  const leadlag::PairConfig pair = PairConfigForSignal();
+  leadlag::ExecutionState execution;
+  execution.Init(pair.execute.parallel);
+  ASSERT_NE(execution.AddHoldGroup(/*signed_position_quantity=*/1,
+                                   /*trailing_price=*/100.0),
+            nullptr);
+  ASSERT_EQ(execution.active_group_count(), execution.capacity());
+
+  const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLeadTick(
+      pair, execution, OpenLongMarket(), ThresholdForSignal(),
+      leadlag::AlignmentSnapshot{
+          .drift_ready = true,
+          .drift_deviation = 0.0,
+      });
+
+  ASSERT_TRUE(decision.triggered);
+  EXPECT_EQ(decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_FALSE(decision.intent.reduce_only);
+  EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kNone);
+}
+
 TEST(LeadLagSignalTest, LagTickRunsStoplossBeforeSignalClose) {
   const leadlag::PairConfig pair = PairConfigForSignal();
   leadlag::ExecutionState execution;

@@ -120,9 +120,6 @@ class SignalEngine {
         return close;
       }
     }
-    if (execution.active_group_count() >= execution.capacity()) {
-      return Reject(SignalRejectReason::kParallelLimit);
-    }
     if (execution.new_entries_paused()) {
       return Reject(SignalRejectReason::kDegraded);
     }
