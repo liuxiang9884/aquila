@@ -176,3 +176,60 @@ C++ 当前没有把 `lag_vol_guard` 放入 live hot path。现有实现只在
 
 这说明 `lag_vol_guard` 在该样本上确实有机械过滤动作，但没有带来预期保护收益，反而错杀了正贡献 open signal。除非后续更宽 symbol / 更长区间 replay 或小额
 live smoke 给出反证，否则 C++ 不把 `lag_vol_guard` 加入实盘策略 hot path；Go / C++ 在这一点保持刻意不同。
+
+## 3. `drift_guard` 的 live enforce 与 snapshot 边界
+
+### Go current
+
+Go current 的 `drift_guard` 是 post-signal open guard，位于 `lag_vol_guard` 之后、freshness 之前。它维护独立的 lag / lead ratio 状态，并在 open signal
+触发后检查三类异常：
+
+- `drift_instant_ratio = lag_mid / lead_mid`，判断 `abs(drift_instant_ratio - 1) > drift_instant`。
+- `ratio_std`，判断 ratio 窗口标准差是否超过 `ratio_std`。
+- `drift_mean`，判断 ratio 窗口均值是否满足 `abs(drift_mean - 1) > drift_mean_threshold`。
+
+Go 的 full attribution / signal decision 语义会携带一组 guard snapshot 字段，例如 `drift_guard_enabled`、`drift_guard_ready`、
+`drift_instant_ratio`、`drift_instant_threshold`、`drift_instant_hit`、`ratio_std`、`ratio_std_threshold`、`ratio_std_hit`、
+`drift_mean`、`drift_mean_threshold`、`drift_mean_hit` 和 `drift_guard_outcome`。这些字段用于解释某个 open signal 为什么被
+`drift-guard` 阻断，或正常通过时距离阈值还有多远。
+
+### C++ current
+
+C++ 当前已经把 `drift_guard` 加入实盘策略，并按 Go reference 口径 enforce：
+
+- checked-in 策略 TOML 使用 `[lead_lag.pairs.trigger.drift_guard] enabled / drift_instant / ratio_std / ratio_std_window / drift_mean /
+  drift_mean_window`。
+- parser 拒绝旧 `trigger.drift_limit` 和旧 `drift_guard.mode`，避免旧 pre-signal drift limit 与当前 guard 同时 enforce。
+- `Strategy::FinalizeActiveSignal()` 会先记录 `lead_lag_signal_triggered`，再执行 `RejectOpenForDriftGuard()`。
+- guard 只作用于 `kOpenLong` / `kOpenShort`，close / stoploss 不受影响。
+- 命中时输出 `lead_lag_order_intent_rejected reason=drift_guard`，report 以 `source_schema=intent_rejected_v1` 关联到 signal，不把它当作
+  missing order。
+- replay audit 已输出 raw `drift_instant` / `ratio_std` / `drift_mean` 和 `drift_guard_outcome`，用于离线解释具体命中维度。
+
+因此第 3 项的行为层面已经完成：C++ 与 Go 一样在 signal 之后、订单 intent / synthetic accounting 之前拦截异常 drift 的 open signal。
+
+### 当前差异
+
+当前剩余差异只在 live 诊断粒度：
+
+| 维度 | Go current | C++ current |
+| --- | --- | --- |
+| 是否 live enforce | 是 | 是 |
+| 执行位置 | post-signal open guard | post-signal open guard |
+| 是否影响 close / stoploss | 否 | 否 |
+| 拦截原因 | `drift-guard` | `drift_guard` |
+| live rejected intent 是否携带 snapshot | 是，full attribution 字段包含 guard snapshot | 否，只输出 `reason=drift_guard` |
+| 离线 snapshot / outcome | full attribution / signal decision | replay audit 输出 `drift_instant` / `ratio_std` / `drift_mean` / `drift_guard_outcome` |
+
+### 当前决策
+
+当前决策：**不把 Go 风格 drift guard snapshot / outcome 扩进 live hot path 的 `lead_lag_order_intent_rejected` 或 report schema。**
+
+理由：
+
+- `drift_guard` 已经是 emergency sanity guard，实盘最关键的信息是 open signal 被 `drift_guard` 拦截；这一点当前日志和 report 已具备。
+- live rejected intent 加入 `drift_instant_ratio`、阈值、hit bool 和 outcome 会扩大日志字段、parser、report CSV 和测试维护面。
+- rejected path 虽然不是每个 tick 都走，但仍在实盘策略进程内；当前没有必要为了少量解释性字段增加 hot path 诊断负担。
+- 具体命中维度可通过 `lead_lag_replay --lag-vol-guard-audit-output` 的 drift guard audit 字段离线解释；需要专项排查时再使用 replay / audit，而不是默认污染实盘日志。
+
+因此第 3 项按文档收敛：C++ 保持当前 live enforce 行为，不新增代码。若未来需要完整 Go attribution，再单独评估日志字段、report schema 和热路径成本。
