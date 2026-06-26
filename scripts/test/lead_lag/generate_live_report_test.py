@@ -177,6 +177,65 @@ class GenerateLiveReportTest(unittest.TestCase):
         self.assertEqual(order_rows[0]["reject_reason"], "parallel_limit")
         self.assertIn("- submitted order: `0`", report_text)
 
+    def test_additional_rejected_intents_join_signals_without_missing_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            config_path = base / "strategy.toml"
+            catalog_path = base / "catalog.csv"
+            schema_path = base / "schema.md"
+            output_root = base / "reports"
+            write_config(config_path)
+            write_catalog(catalog_path)
+            schema_path.write_text("# schema\n", encoding="utf-8")
+            write_file(
+                log_path,
+                """
+                I2026-06-25 09:00:00.000000100 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000000 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2711
+                W2026-06-25 09:00:00.000000200 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=stale_lag_quote trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000000 max_lead_freshness_ns=5000000 max_lag_freshness_ns=20000000 freshness_guard_pass=false freshness_reject_reason=stale_lag_quote symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=0 price=0.2711 raw_price=0.2711 order_price=0.2711 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=0 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
+                I2026-06-25 09:00:00.000000300 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1782360000000100000 trigger_local_ns=1782360000000110000 on_book_ticker_entry_ns=1782360000000115000 signal_decision_ns=1782360000000120000 lead_exchange_ns=1782360000000100000 lead_local_ns=1782360000000110000 signal_lead_id=7011 lead_freshness_ns=20000 lag_exchange_ns=1782360000000090000 lag_local_ns=1782360000000105000 signal_lag_id=7012 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2722
+                W2026-06-25 09:00:00.000000400 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=risk_limit trigger_exchange_ns=1782360000000100000 trigger_local_ns=1782360000000110000 on_book_ticker_entry_ns=1782360000000115000 signal_decision_ns=1782360000000120000 lead_exchange_ns=1782360000000100000 lead_local_ns=1782360000000110000 signal_lead_id=7011 lead_freshness_ns=20000 lag_exchange_ns=1782360000000090000 lag_local_ns=1782360000000105000 signal_lag_id=7012 lag_freshness_ns=30000 max_lead_freshness_ns=5000000 max_lag_freshness_ns=20000000 freshness_guard_pass=true freshness_reject_reason=none symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=36 price=0.2722 raw_price=0.2722 order_price=0.2722 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=97.992 gross_before=990 gross_after=1087.992 max_gross_notional=1000 local_order_id=0 place_status=-
+                I2026-06-25 09:00:00.000000500 1:1 strategy.h:LogStrategySignalTriggered:155] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=4 trigger_exchange_ns=1782360000000200000 trigger_local_ns=1782360000000210000 on_book_ticker_entry_ns=1782360000000215000 signal_decision_ns=1782360000000220000 lead_exchange_ns=1782360000000200000 lead_local_ns=1782360000000210000 signal_lead_id=7021 lead_freshness_ns=20000 lag_exchange_ns=1782360000000190000 lag_local_ns=1782360000000205000 signal_lag_id=7022 lag_freshness_ns=30000 symbol=PROVE_USDT symbol_id=4 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=0.2733
+                W2026-06-25 09:00:00.000000600 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=zero_quantity trigger_exchange_ns=1782360000000200000 trigger_local_ns=1782360000000210000 on_book_ticker_entry_ns=1782360000000215000 signal_decision_ns=1782360000000220000 lead_exchange_ns=1782360000000200000 lead_local_ns=1782360000000210000 signal_lead_id=7021 lead_freshness_ns=20000 lag_exchange_ns=1782360000000190000 lag_local_ns=1782360000000205000 signal_lag_id=7022 lag_freshness_ns=30000 max_lead_freshness_ns=5000000 max_lag_freshness_ns=20000000 freshness_guard_pass=true freshness_reject_reason=none symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=0 price=0.2733 raw_price=0.2733 order_price=0.2733 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=0 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
+                """,
+            )
+
+            result = report.generate_live_report(
+                log_path=log_path,
+                config_path=config_path,
+                instrument_catalog_path=catalog_path,
+                run_id="run-1",
+                output_root=output_root,
+                schema_path=schema_path,
+            )
+
+            report_dir = output_root / "run-1"
+            with (report_dir / "signal.csv").open(
+                newline="", encoding="utf-8"
+            ) as input_file:
+                signal_rows = list(csv.DictReader(input_file))
+            with (report_dir / "order_detail.csv").open(
+                newline="", encoding="utf-8"
+            ) as input_file:
+                order_rows = list(csv.DictReader(input_file))
+            report_text = (report_dir / "report.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result.latency_rows, 0)
+        self.assertEqual(len(signal_rows), 3)
+        self.assertEqual(len(order_rows), 3)
+        reasons = {row["reject_reason"] for row in order_rows}
+        self.assertEqual(reasons, {"stale_lag_quote", "risk_limit", "zero_quantity"})
+        for signal_row in signal_rows:
+            self.assertNotIn("missing_order", signal_row["warnings"])
+            self.assertEqual(signal_row["status"], "kRejected")
+            self.assertEqual(signal_row["local_order_id"], "0")
+        for order_row in order_rows:
+            self.assertEqual(order_row["source_schema"], "intent_rejected_v1")
+            self.assertEqual(order_row["status"], "kRejected")
+            self.assertEqual(order_row["local_order_id"], "0")
+        self.assertIn("- signal: `3`", report_text)
+        self.assertIn("- submitted order: `0`", report_text)
+
     def test_generates_report_directory_from_live_log(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)

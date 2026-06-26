@@ -288,3 +288,62 @@ C++ 当前不在 live 策略内实现 `freshness_auto`，只执行固定阈值 f
 - 需要评估候选 freshness 参数时，应另起 replay / signal-only 或独立 live 进程做对照，不恢复已删除的 `freshness_shadow`。
 
 因此第 4 项按文档收敛：C++ 保持当前 fixed / preflight 边界，不新增代码。若未来要严格按 Go 恢复策略内 auto warmup，需要重新评估热路径状态、配置 schema、report 字段和实盘启动流程。
+
+## 5. guard 拦截后的 log / report 语义
+
+### 目标语义
+
+第 5 项的目标是让被 guard 或本地下单准备阶段拦截的 open signal 都呈现为：
+
+1. 先输出 `lead_lag_signal_triggered`，保留 signal 方向、价格、lead / lag BBO id 和 freshness。
+2. 再输出 `lead_lag_order_intent_rejected`，说明该 open signal 没有进入真实订单提交，并给出 `reason`。
+3. report 把 rejected intent 当作 `source_schema=intent_rejected_v1` 的伪订单行关联到 signal，而不是把该 signal 标成 `missing_order`。
+
+这个语义的重点不是“所有 reject 都要伪装成真实订单”，而是区分两类情况：
+
+- 没有形成 open signal：不应生成订单行。
+- 已形成 open signal，但被 guard / 本地准备阶段挡住：应生成 rejected intent 行，便于统计 open opportunity 和拦截原因。
+
+### C++ current
+
+C++ 当前已按这个目标处理 post-signal open 拦截：
+
+- `parallel_limit`：第 1 项已从 pre-signal reject 改为 post-signal guard，命中时输出 `reason=parallel_limit`。
+- `drift_guard`：命中时输出 `reason=drift_guard`。
+- freshness：命中时输出 `reason=stale_lead_quote` 或 `reason=stale_lag_quote`，并携带 `freshness_guard_pass=false` 与
+  `freshness_reject_reason`。
+- risk：命中时输出 `reason=risk_limit`。
+- 本地下单准备失败：`invalid_price`、`zero_quantity`、`order_text_slot_full`、`place_local_rejected` 等也走
+  `lead_lag_order_intent_rejected`。
+
+`scripts/lead_lag/analyze_order_detail.py` 会把 `lead_lag_order_intent_rejected` 合并为 `intent_rejected_v1` 行，`local_order_id=0` 不会触发
+`missing_submitted_log`。`scripts/lead_lag/generate_live_report.py` 用 signal timing / symbol / action / side / raw price 等字段把该 rejected intent
+关联回 `signal.csv`，因此对应 signal 不会被标记为 `missing_order`。
+
+### 当前边界
+
+仍保留为 pre-signal reject 的路径不纳入第 5 项：
+
+- `new_entries_paused()` / `needs_reconcile` 属于真实交易状态保护，当前仍在 open signal 评估前返回 `kDegraded`。
+- 未满足 threshold、price diff、lag part 等条件时，本来就没有 open signal，不生成 rejected intent。
+- `lag_vol_guard` 当前不进入 live hot path，因此不会产生 live rejected intent；需要分析其 would-block 结果时使用 replay-only audit。
+
+### 当前决策
+
+当前决策：**不再改策略代码，只补 report / parser 回归测试和文档。**
+
+理由：
+
+- 关键 live 路径已经满足“signal triggered + intent rejected”语义。
+- 继续扩展 live log schema 或 reason 命名会增加 report / parser 维护面，当前收益有限。
+- 第 5 项真正需要补强的是回归保护：避免未来改 report/parser 时把 rejected intent 重新误判成 `missing_order`。
+
+新增回归覆盖：
+
+- `scripts/test/lead_lag/analyze_order_detail_test.py` 覆盖 `stale_lag_quote`、`risk_limit`、`zero_quantity` 三类 rejected intent，确认它们生成
+  `intent_rejected_v1` 且不会出现 `missing_submitted_log`。
+- `scripts/test/lead_lag/generate_live_report_test.py` 覆盖同三类 reason 与 `lead_lag_signal_triggered` 的 join，确认 `signal.csv` 不出现
+  `missing_order`，`order_detail.csv` 保留 `status=kRejected` / `source_schema=intent_rejected_v1`。
+
+因此第 5 项按测试和文档收敛：C++ 当前 report / log 语义保留，后续新增 post-signal open guard 时应复用
+`lead_lag_order_intent_rejected`，并同步补 report/parser 回归。

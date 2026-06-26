@@ -149,6 +149,46 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertNotIn("missing_submitted_log", row["warnings"])
         self.assertNotIn("missing_symbol", row["warnings"])
 
+    def test_parses_additional_rejected_order_intent_reasons(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            log_path = base / "run.log"
+            write_file(
+                log_path,
+                """
+                W2026-06-25 09:00:00.000000200 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=stale_lag_quote trigger_exchange_ns=1782360000000000000 trigger_local_ns=1782360000000010000 on_book_ticker_entry_ns=1782360000000015000 signal_decision_ns=1782360000000020000 lead_exchange_ns=1782360000000000000 lead_local_ns=1782360000000010000 signal_lead_id=7001 lead_freshness_ns=20000 lag_exchange_ns=1782359999999990000 lag_local_ns=1782360000000005000 signal_lag_id=7002 lag_freshness_ns=30000000 max_lead_freshness_ns=5000000 max_lag_freshness_ns=20000000 freshness_guard_pass=false freshness_reject_reason=stale_lag_quote symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=0 price=0.2711 raw_price=0.2711 order_price=0.2711 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=0 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
+                W2026-06-25 09:00:00.000000300 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=risk_limit trigger_exchange_ns=1782360000000100000 trigger_local_ns=1782360000000110000 on_book_ticker_entry_ns=1782360000000115000 signal_decision_ns=1782360000000120000 lead_exchange_ns=1782360000000100000 lead_local_ns=1782360000000110000 signal_lead_id=7011 lead_freshness_ns=20000 lag_exchange_ns=1782360000000090000 lag_local_ns=1782360000000105000 signal_lag_id=7012 lag_freshness_ns=30000 max_lead_freshness_ns=5000000 max_lag_freshness_ns=20000000 freshness_guard_pass=true freshness_reject_reason=none symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=36 price=0.2722 raw_price=0.2722 order_price=0.2722 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=97.992 gross_before=990 gross_after=1087.992 max_gross_notional=1000 local_order_id=0 place_status=-
+                W2026-06-25 09:00:00.000000400 1:1 strategy.h:LogStrategyOrderIntentRejected:407] lead_lag_order_intent_rejected reason=zero_quantity trigger_exchange_ns=1782360000000200000 trigger_local_ns=1782360000000210000 on_book_ticker_entry_ns=1782360000000215000 signal_decision_ns=1782360000000220000 lead_exchange_ns=1782360000000200000 lead_local_ns=1782360000000210000 signal_lead_id=7021 lead_freshness_ns=20000 lag_exchange_ns=1782360000000190000 lag_local_ns=1782360000000205000 signal_lag_id=7022 lag_freshness_ns=30000 max_lead_freshness_ns=5000000 max_lag_freshness_ns=20000000 freshness_guard_pass=true freshness_reject_reason=none symbol=PROVE_USDT symbol_id=4 action=kOpenLong side=kBuy reduce_only=false position_id=0 quantity=0 price=0.2733 raw_price=0.2733 order_price=0.2733 slippage_ticks=0 price_tick=0.0001 target_open_notional=100 estimated_notional=0 gross_before=0 gross_after=0 max_gross_notional=0 local_order_id=0 place_status=-
+                """,
+            )
+
+            result = orders.analyze_order_detail(log_path)
+
+        self.assertEqual(len(result.rows), 3)
+        rows = {row["reject_reason"]: row for row in result.rows}
+        self.assertEqual(
+            set(rows), {"stale_lag_quote", "risk_limit", "zero_quantity"}
+        )
+        freshness = rows["stale_lag_quote"]
+        self.assertEqual(freshness["source_schema"], "intent_rejected_v1")
+        self.assertEqual(freshness["status"], "kRejected")
+        self.assertEqual(freshness["freshness_guard_pass"], "false")
+        self.assertEqual(freshness["freshness_reject_reason"], "stale_lag_quote")
+        self.assertEqual(freshness["max_lag_freshness_ns"], "20000000")
+        self.assertNotIn("missing_submitted_log", freshness["warnings"])
+
+        risk = rows["risk_limit"]
+        self.assertEqual(risk["quantity"], "36")
+        self.assertEqual(risk["estimated_notional"], "97.992")
+        self.assertEqual(risk["local_order_id"], "0")
+        self.assertNotIn("missing_submitted_log", risk["warnings"])
+
+        zero_quantity = rows["zero_quantity"]
+        self.assertEqual(zero_quantity["quantity"], "0")
+        self.assertEqual(zero_quantity["quantity_text"], "0")
+        self.assertEqual(zero_quantity["price_text"], "0.2733")
+        self.assertNotIn("missing_submitted_log", zero_quantity["warnings"])
+
     def test_parses_submitted_order_and_calculates_fill_quality(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
