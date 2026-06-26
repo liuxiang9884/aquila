@@ -1133,6 +1133,44 @@ TEST(LeadLagStrategyInterfaceTest,
             leadlag::SignalRejectReason::kMarketFreshness);
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     ParallelLimitBlocksOpenAfterSignalTriggered) {
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+  StrategySignalTriggeredLogCaptureGuard signal_log_capture;
+  StrategyOrderIntentRejectedLogCaptureGuard rejected_log_capture;
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  ASSERT_EQ(order_manager.order_count(), 1U);
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 201, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 202, 170.0,
+                               171.0),
+                        context);
+
+  EXPECT_EQ(order_session.placed_orders.size(), 1U);
+  EXPECT_EQ(order_manager.order_count(), 1U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kParallelLimit);
+  ASSERT_GE(g_signal_triggered_log_count, 2U);
+  EXPECT_EQ(g_signal_triggered_logs[1].action,
+            leadlag::SignalAction::kOpenLong);
+  EXPECT_FALSE(g_signal_triggered_logs[1].reduce_only);
+  ASSERT_EQ(g_order_intent_rejected_log_count, 1U);
+  const leadlag::detail::StrategyOrderIntentRejectedLogRecordForTest& reject =
+      g_order_intent_rejected_logs[0];
+  EXPECT_EQ(reject.reason, "parallel_limit");
+  EXPECT_EQ(reject.symbol, "BTC_USDT_GATE");
+  EXPECT_EQ(reject.symbol_id, 3);
+  EXPECT_EQ(reject.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_FALSE(reject.reduce_only);
+}
+
 TEST(LeadLagStrategyInterfaceTest, DriftGuardBlocksOpenAfterSignalTriggered) {
   leadlag::Strategy strategy{SignalOnlyConfigWithDriftGuard(0.001)};
   FakeOrderSession order_session;

@@ -1564,6 +1564,9 @@ class Strategy {
     RecordTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
                           threshold, trigger_ticker, signal_role,
                           on_book_ticker_entry_ns);
+    if (RejectOpenForParallelLimit(runtime)) {
+      return;
+    }
     if (RejectOpenForDriftGuard(runtime, market)) {
       return;
     }
@@ -1704,6 +1707,25 @@ class Strategy {
     }
     result.valid = result.quantity > kQuantityEpsilon;
     return result;
+  }
+
+  [[nodiscard]] bool RejectOpenForParallelLimit(
+      PairRuntimeState* runtime) noexcept {
+    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      return false;
+    }
+    if (runtime->execution.active_group_count() <
+        runtime->execution.capacity()) {
+      return false;
+    }
+    const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
+    const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
+    LogOrderIntentRejectedForSignal(
+        "parallel_limit", runtime, symbol, 0.0,
+        last_signal_decision_.intent.price,
+        last_signal_decision_.intent.price, 0, instrument.price_tick, 0.0);
+    RejectSignal(SignalRejectReason::kParallelLimit);
+    return true;
   }
 
   [[nodiscard]] bool RejectOpenForFreshness(
