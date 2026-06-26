@@ -405,3 +405,36 @@ slippage buffer 记为 0，保持 legacy / 无效元数据下的旧行为。
 
 因此第 6 项按“fixed ticks cost model”收敛：C++ 不直接按 Go `taker_buffer` pct 迁移，但把已固化的执行 ticks 纳入 open signal 的
 `required_edge`，用于横截面信号筛选。
+
+### Replay 证据
+
+2026-06-26 使用当前 debug `lead_lag_replay` 对 ORDI_USDT 三天 Tardis binary replay 做了 zero ticks 与 5 ticks 的隔离对比：
+
+```text
+data_reader = config/data_readers/lead_lag_ordi_binary_replay.toml
+base_strategy = config/strategies/lead_lag_ordi.toml
+zero_ticks_output = /home/liuxiang/tmp/lead_lag_slippage_cost_review_20260626/head_signals.csv
+five_ticks_output = /home/liuxiang/tmp/lead_lag_slippage_cost_review_20260626/head_5ticks_signals.csv
+```
+
+两组均处理 `94,799,061` 条 `BookTicker`，summary 均为：
+
+```text
+signals=2376 open=1205 close=1170 stoploss=1
+```
+
+action 分布均为：
+
+```text
+kOpenLong=562
+kOpenShort=643
+kCloseLong=552
+kCloseShort=618
+kStoplossShort=1
+```
+
+两个 `signal.csv` 的 `sha256` 均为
+`a98f9a4fe83339f102b0f618534641144624b7cab34003037bbb00f9d96a7889`，`cmp` 结果一致。这说明 ORDI_USDT
+三天样本上 `5` ticks 的 fixed open / normal close slippage cost 没有改变 signal 集合；它只能作为该单 symbol / 该参数的 smoke 证据，不代表
+30-symbol live universe。新 live 配置上线前仍应对目标 universe 跑 replay / signal-only delta，重点看 open signal 数、`kEntryCost` 增量和
+signal-only PnL。
