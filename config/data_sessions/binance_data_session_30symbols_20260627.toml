@@ -1,0 +1,31 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures_common_gate_binance_20260627.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/binance_data_session_30symbols_20260627.log"
+console_sink_name = "binance_data_session_30symbols_20260627_console"
+backend_thread_name = "binance_data_session_30symbols_20260627_log"
+backend_cpu_affinity = 7
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_session]
+name = "binance_data_session_30symbols_20260627"
+subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "DOGE_USDT", "XRP_USDT", "LAB_USDT", "HYPE_USDT", "XAUT_USDT", "BEAT_USDT", "ZEC_USDT", "H_USDT", "SLX_USDT", "WLD_USDT", "BTW_USDT", "AAVE_USDT", "SUI_USDT", "AVAX_USDT", "M_USDT", "PAXG_USDT", "LINK_USDT", "UB_USDT", "BCH_USDT", "BAS_USDT", "UNI_USDT", "ENA_USDT", "ESPORTS_USDT", "ONDO_USDT", "NEAR_USDT", "HEI_USDT", "SAHARA_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 12
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_binance_market_data_30symbols_20260627"
+channel_name = "book_ticker_channel"
+create = true
+remove_existing = true
