@@ -114,6 +114,13 @@ HDF 三天比 Tardis 少 `512,137` 条 `BookTicker`，差异主要来自 Gate；
 Tardis replay 的逐 tick 对账结果。详细记录数、signal 和 PnL 对比见
 `docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md`。
 
+live Gate / Binance canonical fusion recorder 与 Tardis `book_ticker` CSV 的离线对账入口是
+`scripts/market_data/compare_fusion_tardis_book_ticker.py`。该脚本按 `BookTicker` binary ABI 读取
+fusion 落盘文件，使用 instrument catalog 的 `price_tick` / `quantity_step` 将 price / quantity
+转成整数 units，再与 Tardis `timestamp` 毫秒口径做 multiset 对账；Gate timestamp 语义差异需结合
+`--near-ms` 分类解释。20260627 30-symbol 对账结果和命令见
+`docs/fusion_tardis_bbo_comparison.md`。
+
 ## 字段
 
 | 字段 | 默认值 | 含义 |
