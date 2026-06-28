@@ -30,6 +30,7 @@ docs/strategy_order_component_model.md
 - Trading runtime production loop 已落地：Gate order WS active spin loop 同线程调用 runtime hook，runtime drain feedback SHM，并在 `OrderSession::Ready()` 后 poll data reader。
 - `gate_demo_strategy` 已完成 3 轮 BTC_USDT live smoke；LeadLag 已完成 ZEC_USDT 小额 filled open / close 和 unfilled-cancel smoke。
 - Decimal-size order contract 已落地：C++ 使用 `double quantity` + `quantity_text`，Gate WS 带 `X-Gate-Size-Decimal: 1` 时把 JSON `size` quote 为 string；REST final check / emergency flatten 也已支持 decimal position residual。
+- 多路 `OrderSession` / `MultiOrderSessionGateway` 仍是架构讨论结论，尚未实现；当前推荐 V1 边界见本文“多路 OrderSession 讨论结论”。
 
 ## Gate 协议事实
 
@@ -80,6 +81,51 @@ strategy-process
 - `OrderSession::Ready() == false` 是上行交易能力边界；runtime 仍会继续 drain order response / feedback。
 - 断线时 `OrderSession` 清空 correlation，不伪造 rejected / cancelled；未知订单状态交给 REST reconcile 或 emergency stop-and-flat。
 - Gate `5xx` submit / cancel error 通过 adapter 映射为 core `OrderResponseKind::kUnknownResult`，不是确定 reject；`OrderManager` 保留订单等待 private feedback，LeadLag 标记对应 symbol `needs_reconcile` 并暂停新开仓。若对应 terminal feedback 精确解决该 symbol 的所有 pending unknown order，且没有 global continuity lost / manual intervention 等更高等级 degraded 状态，LeadLag 会自动恢复该 symbol 新开仓。
+
+### 多路 OrderSession 讨论结论
+
+目标是允许策略或后续 `OrderManager` 上层把一个策略意图拆成多个独立 child order，并路由到 N 条 Gate trading
+WebSocket `OrderSession`，尝试提高成交率；拆单算法不在本文范围内。
+
+推荐 V1 形态是 `MultiOrderSessionGateway` 作为 `OrderManager` 后面的 composite gateway：
+
+```text
+OrderManager
+  -> MultiOrderSessionGateway
+       RoutePolicy
+       RouteTable(local_order_id -> session_index)
+       per-session health / ready state
+       account-level submit / cancel / pending budget
+       OrderSession[0..N-1]
+```
+
+关键边界：
+
+- `OrderManager` 仍是唯一订单状态 owner；`MultiOrderSessionGateway` 只实现现有 gateway contract，不拥有订单生命周期。
+- 每个 child order 必须有独立 `local_order_id`；不要把同一个 `local_order_id` 同时发到多条 session。
+- `MultiOrderSessionGateway` 必须记录显式 route table；不要依赖 `local_order_id % N` 作为生产路由事实。
+- cancel 默认回到原始下单 session，因为 `OrderSession` 的 request correlation 和 cancel exchange id cache 都是 per-session 状态；跨 session failover cancel 只有在已有 `exchange_order_id` 且经过 Gate live 验证后才考虑。
+- `OrderFeedbackSession` 仍保持单条账号级事实源，不按 order session 拆分；private `futures.orders` feedback 继续经 SHM lane 回到 strategy process。
+- `Ready()` V1 可定义为至少一条 session ready，也可配置 `min_ready_sessions` 作为 live 前置检查；无论 N 多大，都必须有账号级限流 / pending cap，不能把多连接视为 N 倍账户容量。
+
+推荐生产线程 / 进程模型：
+
+```text
+strategy-process
+  StrategyOrderOwnerThread
+    TradingRuntime
+    OrderManager
+    MultiOrderSessionGateway
+      OrderSession[0..N-1]
+    OrderFeedbackShmReader
+
+gate-feedback-process
+  OrderFeedbackSession -> OrderFeedback SHM
+```
+
+即 `OrderManager`、route table、`MultiOrderSessionGateway` 和 N 条 `OrderSession` 由同一个 order owner thread 访问，避免下单主路径引入 IPC、锁或跨线程 command queue。每条 `OrderSession` 一个 worker thread 的模型只适合实验 / fanout 验证；独立 order-gateway process 只有在需要强隔离或多策略统一网关时才考虑，不作为当前 LeadLag V1 推荐路径。
+
+验证顺序建议先复用 `gate_order_session_rtt_probe` 的多连接能力确认不同 `connect_ip` / session / owner CPU 的 Ack RTT、outlier 和 terminal feedback 路由稳定性，再实现生产 gateway。任何“提高成交率 / 降低延迟”的结论都需要 live smoke、benchmark 或 replay/report 证据支撑。
 
 ## 组件职责
 
