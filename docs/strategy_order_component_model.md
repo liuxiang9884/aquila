@@ -186,17 +186,23 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 ### 多路 OrderSession 扩展边界（未实现）
 
 如果后续实现多路 Gate trading WebSocket，下层应优先做成 `OrderManager` 后面的 composite gateway，例如
-`MultiOrderSessionGateway`，而不是让 `Strategy` 或 `StrategyContext` 直接感知 N 条 session。
+`MultiOrderSessionGateway`，而不是让 `Strategy` 或 `StrategyContext` 直接感知 N 条 session。当前 fanout 目标是让
+策略 / OMS 生成的多个 child order 低 skew 地写入多条 connection；duplicate / split、winner、overfill 和 cancel
+触发点都属于策略 / OMS 语义，不属于多路 `OrderSession` 层。
 
 设计边界：
 
 - `OrderManager` 仍通过同一组 gateway contract 调用 place / cancel / cache / forget。
 - `MultiOrderSessionGateway` 内部负责 route policy、`local_order_id -> session_index` route table、per-session ready / health 和账号级 submit / cancel / pending budget。
-- 每个 child order 必须有独立 `local_order_id`；拆单算法属于 strategy 或后续更高层执行模块，不属于 `OrderSession`。
+- 每个 child order 必须有独立 `local_order_id`；full duplicate 也必须表现为多个独立 child order。拆单算法属于 strategy 或后续更高层执行模块，不属于 `OrderSession`。
 - cancel 默认回原下单 session；跨 session cancel failover 不能作为 V1 默认行为。
 - private `futures.orders` 仍由单个账号级 `OrderFeedbackSession` 接收并发布到 SHM；order feedback 不按 order session 拆分。
+- `MultiOrderSessionGateway` 不解释 parent signal、child group、winner、fillability 或 overfill；它只负责 route、send、cancel 和 session health / budget。
 
-推荐生产线程模型是单 strategy process / 单 order owner thread 驱动 N 条 `OrderSession`，保持 `OrderManager` 和 route table 单 owner。每 session worker thread 只作为实验模型，必须显式评估 queue / wakeup / 同步等待对主路径和尾延迟的影响。
+推荐 fanout 目标线程模型是单 strategy process 内 `StrategyOrderOwnerThread` 拥有 `OrderManager`、route table 和
+`MultiOrderSessionGateway`，同时由 `OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。
+`1 thread : N OrderSession` 保留为 baseline / fallback；若 worker queue / wakeup / 同步回传的尾延迟实测差于顺序
+fanout，应回退。threaded gateway 下 `PlaceOrder()` 语义是进入对应 worker 的发送路径，不等价于已经写到 socket。
 
 ## OrderSession
 

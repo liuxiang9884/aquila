@@ -84,8 +84,10 @@ strategy-process
 
 ### 多路 OrderSession 讨论结论
 
-目标是允许策略或后续 `OrderManager` 上层把一个策略意图拆成多个独立 child order，并路由到 N 条 Gate trading
-WebSocket `OrderSession`，尝试提高成交率；拆单算法不在本文范围内。
+目标是允许策略或上层 OMS / execution 模块把一个策略意图拆成多个独立 child order，并尽可能低 skew 地
+fanout 到 N 条 Gate trading WebSocket `OrderSession`，对冲同 IP 不同 connection 的延迟波动和交易所内部排队不确定性，
+尝试提高成交率。full-size duplicate、split-size child order、winner 判定、overfill 处理和非赢家 cancel 触发点都属于
+策略 / OMS 语义，不属于多路 `OrderSession` 层。
 
 推荐 V1 形态是 `MultiOrderSessionGateway` 作为 `OrderManager` 后面的 composite gateway：
 
@@ -102,30 +104,53 @@ OrderManager
 关键边界：
 
 - `OrderManager` 仍是唯一订单状态 owner；`MultiOrderSessionGateway` 只实现现有 gateway contract，不拥有订单生命周期。
-- 每个 child order 必须有独立 `local_order_id`；不要把同一个 `local_order_id` 同时发到多条 session。
+- 每个 child order 必须有独立 `local_order_id`；full duplicate 也必须表现为多个独立 child order，不要把同一个 `local_order_id` 同时发到多条 session。
 - `MultiOrderSessionGateway` 必须记录显式 route table；不要依赖 `local_order_id % N` 作为生产路由事实。
 - cancel 默认回到原始下单 session，因为 `OrderSession` 的 request correlation 和 cancel exchange id cache 都是 per-session 状态；跨 session failover cancel 只有在已有 `exchange_order_id` 且经过 Gate live 验证后才考虑。
 - `OrderFeedbackSession` 仍保持单条账号级事实源，不按 order session 拆分；private `futures.orders` feedback 继续经 SHM lane 回到 strategy process。
 - `Ready()` V1 可定义为至少一条 session ready，也可配置 `min_ready_sessions` 作为 live 前置检查；无论 N 多大，都必须有账号级限流 / pending cap，不能把多连接视为 N 倍账户容量。
+- 多路 `OrderSession` 层不解释 parent signal、child group、winner、fillability 或 overfill；这些信息只由策略 / OMS 和 `OrderManager` 的订单事实组合处理。
 
-推荐生产线程 / 进程模型：
+推荐 fanout 目标线程 / 进程模型：
 
 ```text
 strategy-process
   StrategyOrderOwnerThread
     TradingRuntime
+    Strategy / OMS
     OrderManager
     MultiOrderSessionGateway
-      OrderSession[0..N-1]
+      RouteTable(local_order_id -> session_index)
     OrderFeedbackShmReader
+
+  OrderSessionWorker[0]
+    OrderSession[0]
+
+  OrderSessionWorker[1]
+    OrderSession[1]
+
+  ...
+
+  OrderSessionWorker[N-1]
+    OrderSession[N-1]
 
 gate-feedback-process
   OrderFeedbackSession -> OrderFeedback SHM
 ```
 
-即 `OrderManager`、route table、`MultiOrderSessionGateway` 和 N 条 `OrderSession` 由同一个 order owner thread 访问，避免下单主路径引入 IPC、锁或跨线程 command queue。每条 `OrderSession` 一个 worker thread 的模型只适合实验 / fanout 验证；独立 order-gateway process 只有在需要强隔离或多策略统一网关时才考虑，不作为当前 LeadLag V1 推荐路径。
+即 `OrderManager` 和 route table 仍由 strategy order owner thread 统一拥有；每条 `OrderSessionWorker[i]`
+独占一条 `OrderSession[i]` 和对应 trading WebSocket connection。`MultiOrderSessionGateway` 负责把已生成 child order
+路由到对应 worker，并把 cancel 按 route table 发回原 session。threaded gateway 下 `PlaceOrder()` 不能假装订单已经写到
+socket，只能表示请求已被对应 worker 接收或进入发送路径；真实 write / Ack / final response 必须经诊断字段和 response 事件回传。
 
-验证顺序建议先复用 `gate_order_session_rtt_probe` 的多连接能力确认不同 `connect_ip` / session / owner CPU 的 Ack RTT、outlier 和 terminal feedback 路由稳定性，再实现生产 gateway。任何“提高成交率 / 降低延迟”的结论都需要 live smoke、benchmark 或 replay/report 证据支撑。
+`1 thread : N OrderSession` 仍保留为 baseline / fallback，用于对照顺序 fanout 的成本。当前架构判断是：因为目标是同一信号
+尽量同时写入多条 connection，应先按 per-session worker capability 设计 ownership 和接口；若后续实测显示 worker queue /
+wakeup tail 抹掉收益，再回退到单 owner thread backend。独立 order-gateway process 只有在需要强隔离或多策略统一网关时才考虑。
+
+验证顺序建议先复用或扩展 `gate_order_session_rtt_probe` 的多连接能力，记录同一 fanout batch 内各 session 的
+`fanout_intent_ns`、`gateway_enqueue_ns`、`worker_dequeue_ns`、`write_start_ns`、`write_complete_ns`、
+`ack_receive_ns`、Ack RTT、outlier 和 terminal feedback 路由稳定性。任何“提高成交率 / 降低延迟”的结论都需要
+live smoke、benchmark 或 replay/report 证据支撑；没有实测前只能称为更匹配 fanout 目标的架构假设。
 
 ## 组件职责
 
