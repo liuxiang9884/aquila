@@ -50,6 +50,19 @@ target_link_libraries(core_order_latency_test
 add_test(NAME core_order_latency_test
          COMMAND core_order_latency_test)
 
+add_executable(core_order_gateway_shm_types_test
+    order_gateway_shm_types_test.cpp
+)
+
+target_link_libraries(core_order_gateway_shm_types_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_order_gateway_shm_types_test
+         COMMAND core_order_gateway_shm_types_test)
+
 add_executable(core_order_feedback_shm_test
     order_feedback_shm_test.cpp
 )
