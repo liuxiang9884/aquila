@@ -1,0 +1,374 @@
+#ifndef AQUILA_EXCHANGE_GATE_TRADING_ORDER_GATEWAY_WORKER_H_
+#define AQUILA_EXCHANGE_GATE_TRADING_ORDER_GATEWAY_WORKER_H_
+
+#include <cstdint>
+#include <string_view>
+
+#include "absl/container/flat_hash_map.h"
+#include "core/trading/order_gateway_shm.h"
+#include "core/trading/order_types.h"
+#include "core/websocket/runtime_clock.h"
+#include "exchange/gate/trading/order_session_runtime_adapter.h"
+#include "exchange/gate/trading/order_types.h"
+
+namespace aquila::gate {
+
+struct OrderGatewayRequestMetadata {
+  std::uint64_t command_seq{0};
+  std::uint64_t parent_id{0};
+  std::int64_t worker_dequeue_ns{0};
+  std::int64_t request_send_local_ns{0};
+};
+
+[[nodiscard]] inline core::OrderGatewayCommandRejectReason
+ToOrderGatewayRejectReason(OrderSendStatus status) noexcept {
+  using Reason = core::OrderGatewayCommandRejectReason;
+  switch (status) {
+    case OrderSendStatus::kOk:
+      return Reason::kNone;
+    case OrderSendStatus::kNotLoggedIn:
+      return Reason::kSessionNotReady;
+    case OrderSendStatus::kNotActive:
+      return Reason::kSessionNotActive;
+    case OrderSendStatus::kInflightFull:
+      return Reason::kInflightFull;
+    case OrderSendStatus::kEncodeBufferTooSmall:
+    case OrderSendStatus::kInvalidLocalOrderId:
+    case OrderSendStatus::kInvalidQuantityText:
+    case OrderSendStatus::kSignatureFailed:
+      return Reason::kEncodeFailed;
+    case OrderSendStatus::kInvalidRoute:
+      return Reason::kInvalidCommand;
+    case OrderSendStatus::kUnsupportedOrderType:
+      return Reason::kUnsupportedOrderType;
+    case OrderSendStatus::kNoPreparedWriteSlot:
+      return Reason::kNoPreparedWriteSlot;
+    case OrderSendStatus::kWriteUnavailable:
+      return Reason::kWriteUnavailable;
+  }
+  return Reason::kInvalidCommand;
+}
+
+class OrderGatewayWorkerPublisher {
+ public:
+  OrderGatewayWorkerPublisher() noexcept = default;
+  OrderGatewayWorkerPublisher(std::uint16_t route_id,
+                              core::OrderGatewayEventQueue event_queue)
+      : route_id_(route_id), event_queue_(event_queue) {}
+
+  [[nodiscard]] bool PublishCommandRejected(
+      const core::OrderGatewayCommand& command,
+      core::OrderGatewayCommandRejectReason reject_reason,
+      std::uint64_t request_sequence = 0, std::uint64_t encoded_request_id = 0,
+      std::int64_t request_send_local_ns = 0,
+      std::int64_t worker_dequeue_ns = 0) noexcept {
+    core::OrderGatewayEvent event{};
+    event.event_seq = NextEventSeq();
+    event.command_seq = command.command_seq;
+    event.parent_id = command.parent_id;
+    event.local_order_id = command.local_order_id;
+    event.exchange_order_id = command.exchange_order_id;
+    event.request_sequence = request_sequence;
+    event.encoded_request_id = encoded_request_id;
+    event.worker_dequeue_ns = worker_dequeue_ns;
+    event.request_send_local_ns = request_send_local_ns;
+    event.worker_event_enqueue_ns = NowNs();
+    event.route_id = route_id_;
+    event.kind = core::OrderGatewayEventKind::kCommandRejected;
+    event.command_kind = command.kind;
+    event.response_kind = core::OrderResponseKind::kRejected;
+    event.reject_reason = reject_reason;
+    return Publish(event);
+  }
+
+  [[nodiscard]] bool PublishStopped() noexcept {
+    core::OrderGatewayEvent event{};
+    event.event_seq = NextEventSeq();
+    event.route_id = route_id_;
+    event.kind = core::OrderGatewayEventKind::kStopped;
+    event.worker_event_enqueue_ns = NowNs();
+    return Publish(event);
+  }
+
+  void OnOrderSessionLoginReady() noexcept {
+    core::OrderGatewayEvent event{};
+    event.event_seq = NextEventSeq();
+    event.route_id = route_id_;
+    event.kind = core::OrderGatewayEventKind::kReady;
+    event.ready = 1;
+    event.worker_event_enqueue_ns = NowNs();
+    (void)Publish(event);
+  }
+
+  void OnOrderSessionLoginNotReady() noexcept {
+    core::OrderGatewayEvent event{};
+    event.event_seq = NextEventSeq();
+    event.route_id = route_id_;
+    event.kind = core::OrderGatewayEventKind::kNotReady;
+    event.ready = 0;
+    event.worker_event_enqueue_ns = NowNs();
+    (void)Publish(event);
+  }
+
+  void OnOrderResponse(const gate::OrderResponse& response) noexcept {
+    core::OrderGatewayEvent event{};
+    event.event_seq = NextEventSeq();
+    const auto metadata = request_metadata_.find(response.request_sequence);
+    if (metadata != request_metadata_.end()) {
+      event.command_seq = metadata->second.command_seq;
+      event.parent_id = metadata->second.parent_id;
+      event.worker_dequeue_ns = metadata->second.worker_dequeue_ns;
+      event.request_send_local_ns = metadata->second.request_send_local_ns;
+      if (response.kind != gate::OrderResponseKind::kAck) {
+        request_metadata_.erase(metadata);
+      }
+    }
+    event.local_order_id = response.local_order_id;
+    event.exchange_order_id = response.exchange_order_id;
+    event.request_sequence = response.request_sequence;
+    event.local_receive_ns = response.local_receive_ns;
+    event.exchange_ns = response.exchange_ns;
+    event.exchange_request_ingress_ns = response.exchange_request_ingress_ns;
+    event.exchange_response_egress_ns = response.exchange_response_egress_ns;
+    event.exchange_process_ns = response.exchange_process_ns;
+    event.route_id = route_id_;
+    event.http_status = response.http_status;
+    event.kind = core::OrderGatewayEventKind::kOrderResponse;
+    event.response_kind = gate::ToCoreOrderResponseKind(response);
+    event.worker_event_enqueue_ns = NowNs();
+    (void)Publish(event);
+  }
+
+  void TrackSentCommand(const core::OrderGatewayCommand& command,
+                        const gate::OrderSendResult& sent,
+                        std::int64_t worker_dequeue_ns) {
+    if (sent.request_sequence == 0) {
+      return;
+    }
+    request_metadata_[sent.request_sequence] = OrderGatewayRequestMetadata{
+        .command_seq = command.command_seq,
+        .parent_id = command.parent_id,
+        .worker_dequeue_ns = worker_dequeue_ns,
+        .request_send_local_ns = sent.send_local_ns,
+    };
+  }
+
+  [[nodiscard]] bool event_queue_failed() const noexcept {
+    return event_queue_failed_;
+  }
+
+ private:
+  [[nodiscard]] std::uint64_t NextEventSeq() noexcept {
+    return ++event_seq_;
+  }
+
+  [[nodiscard]] static std::int64_t NowNs() noexcept {
+    return static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+  }
+
+  [[nodiscard]] bool Publish(const core::OrderGatewayEvent& event) noexcept {
+    if (!event_queue_.TryPush(event)) {
+      event_queue_failed_ = true;
+      return false;
+    }
+    return true;
+  }
+
+  std::uint16_t route_id_{0};
+  core::OrderGatewayEventQueue event_queue_{};
+  std::uint64_t event_seq_{0};
+  bool event_queue_failed_{false};
+  absl::flat_hash_map<std::uint64_t, OrderGatewayRequestMetadata>
+      request_metadata_;
+};
+
+class OrderGatewaySessionEventHandler {
+ public:
+  explicit OrderGatewaySessionEventHandler(
+      OrderGatewayWorkerPublisher& publisher) noexcept
+      : publisher_(&publisher) {}
+
+  void OnOrderSessionLoginReady() noexcept {
+    publisher_->OnOrderSessionLoginReady();
+  }
+
+  void OnOrderSessionLoginNotReady() noexcept {
+    publisher_->OnOrderSessionLoginNotReady();
+  }
+
+  void OnOrderResponse(const gate::OrderResponse& response) noexcept {
+    publisher_->OnOrderResponse(response);
+  }
+
+ private:
+  OrderGatewayWorkerPublisher* publisher_{nullptr};
+};
+
+template <typename SessionT>
+class OrderGatewayCommandWorker {
+ public:
+  OrderGatewayCommandWorker(std::uint16_t route_id,
+                            core::OrderGatewayCommandQueue command_queue,
+                            SessionT& session,
+                            OrderGatewayWorkerPublisher& publisher) noexcept
+      : route_id_(route_id),
+        command_queue_(command_queue),
+        session_(&session),
+        publisher_(&publisher) {}
+
+  [[nodiscard]] bool PollOnce() noexcept {
+    if (stopped_ || publisher_->event_queue_failed()) {
+      stopped_ = true;
+      return false;
+    }
+    core::OrderGatewayCommand command{};
+    if (!command_queue_.TryPop(&command)) {
+      return false;
+    }
+    Dispatch(command, NowNs());
+    return true;
+  }
+
+  [[nodiscard]] std::uint64_t Drain(std::uint64_t max_commands) noexcept {
+    std::uint64_t drained = 0;
+    while (drained < max_commands && PollOnce()) {
+      ++drained;
+    }
+    return drained;
+  }
+
+  [[nodiscard]] bool stopped() const noexcept {
+    return stopped_;
+  }
+
+ private:
+  void Dispatch(const core::OrderGatewayCommand& command,
+                std::int64_t worker_dequeue_ns) noexcept {
+    if (command.kind == core::OrderGatewayCommandKind::kStop) {
+      stopped_ = true;
+      (void)publisher_->PublishStopped();
+      return;
+    }
+    if (command.route_id != route_id_) {
+      (void)publisher_->PublishCommandRejected(
+          command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
+          0, worker_dequeue_ns);
+      StopIfPublisherFailed();
+      return;
+    }
+
+    switch (command.kind) {
+      case core::OrderGatewayCommandKind::kPlace:
+        Place(command, worker_dequeue_ns);
+        return;
+      case core::OrderGatewayCommandKind::kCancel:
+        Cancel(command, worker_dequeue_ns);
+        return;
+      case core::OrderGatewayCommandKind::kCacheExchangeOrderId:
+        session_->CacheExchangeOrderId(command.local_order_id,
+                                       command.exchange_order_id);
+        return;
+      case core::OrderGatewayCommandKind::kForgetExchangeOrderId:
+        session_->ForgetExchangeOrderId(command.local_order_id);
+        return;
+      case core::OrderGatewayCommandKind::kNone:
+        break;
+    }
+    (void)publisher_->PublishCommandRejected(
+        command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
+        0, worker_dequeue_ns);
+    StopIfPublisherFailed();
+  }
+
+  void Place(const core::OrderGatewayCommand& command,
+             std::int64_t worker_dequeue_ns) noexcept {
+    if (!TextFieldsInBounds(command)) {
+      (void)publisher_->PublishCommandRejected(
+          command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
+          0, worker_dequeue_ns);
+      StopIfPublisherFailed();
+      return;
+    }
+    const core::StrategyOrder order = ToStrategyOrder(command);
+    const gate::OrderSendResult sent = session_->PlaceOrder(order);
+    if (sent.status != gate::OrderSendStatus::kOk) {
+      (void)publisher_->PublishCommandRejected(
+          command, ToOrderGatewayRejectReason(sent.status),
+          sent.request_sequence, sent.encoded_request_id, sent.send_local_ns,
+          worker_dequeue_ns);
+      StopIfPublisherFailed();
+      return;
+    }
+    publisher_->TrackSentCommand(command, sent, worker_dequeue_ns);
+  }
+
+  void Cancel(const core::OrderGatewayCommand& command,
+              std::int64_t worker_dequeue_ns) noexcept {
+    if (!TextFieldsInBounds(command)) {
+      (void)publisher_->PublishCommandRejected(
+          command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
+          0, worker_dequeue_ns);
+      StopIfPublisherFailed();
+      return;
+    }
+    const core::StrategyOrder order = ToStrategyOrder(command);
+    const gate::OrderSendResult sent = session_->CancelOrder(order);
+    if (sent.status != gate::OrderSendStatus::kOk) {
+      (void)publisher_->PublishCommandRejected(
+          command, ToOrderGatewayRejectReason(sent.status),
+          sent.request_sequence, sent.encoded_request_id, sent.send_local_ns,
+          worker_dequeue_ns);
+      StopIfPublisherFailed();
+      return;
+    }
+    publisher_->TrackSentCommand(command, sent, worker_dequeue_ns);
+  }
+
+  void StopIfPublisherFailed() noexcept {
+    if (publisher_->event_queue_failed()) {
+      stopped_ = true;
+    }
+  }
+
+  [[nodiscard]] static bool TextFieldsInBounds(
+      const core::OrderGatewayCommand& command) noexcept {
+    return command.symbol_size <= core::kOrderGatewaySymbolBytes &&
+           command.quantity_text_size <= core::kOrderGatewayQuantityTextBytes &&
+           command.price_text_size <= core::kOrderGatewayPriceTextBytes;
+  }
+
+  [[nodiscard]] static std::int64_t NowNs() noexcept {
+    return static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+  }
+
+  [[nodiscard]] static core::StrategyOrder ToStrategyOrder(
+      const core::OrderGatewayCommand& command) noexcept {
+    core::StrategyOrder order{};
+    order.local_order_id = command.local_order_id;
+    order.exchange_order_id = command.exchange_order_id;
+    order.exchange = command.exchange;
+    order.symbol_id = command.symbol_id;
+    order.symbol = std::string_view(command.symbol, command.symbol_size);
+    order.side = command.side;
+    order.type = command.order_type;
+    order.time_in_force = command.time_in_force;
+    order.quantity = command.quantity;
+    order.quantity_text =
+        std::string_view(command.quantity_text, command.quantity_text_size);
+    order.price_text =
+        std::string_view(command.price_text, command.price_text_size);
+    order.reduce_only = command.reduce_only != 0;
+    order.gateway_route_id = command.route_id;
+    return order;
+  }
+
+  std::uint16_t route_id_{0};
+  core::OrderGatewayCommandQueue command_queue_{};
+  SessionT* session_{nullptr};
+  OrderGatewayWorkerPublisher* publisher_{nullptr};
+  bool stopped_{false};
+};
+
+}  // namespace aquila::gate
+
+#endif  // AQUILA_EXCHANGE_GATE_TRADING_ORDER_GATEWAY_WORKER_H_

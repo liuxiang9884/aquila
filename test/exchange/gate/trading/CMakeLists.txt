@@ -92,6 +92,20 @@ target_link_libraries(gate_multi_order_session_gateway_test
 add_test(NAME gate_multi_order_session_gateway_test
          COMMAND gate_multi_order_session_gateway_test)
 
+add_executable(gate_order_gateway_worker_test
+    order_gateway_worker_test.cpp
+)
+
+target_link_libraries(gate_order_gateway_worker_test
+    PRIVATE
+        aquila_gate
+        fmt::fmt-header-only
+        GTest::gtest_main
+)
+
+add_test(NAME gate_order_gateway_worker_test
+         COMMAND gate_order_gateway_worker_test)
+
 add_executable(gate_order_session_test
     order_session_test.cpp
 )
