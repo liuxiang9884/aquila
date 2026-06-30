@@ -18,10 +18,9 @@ namespace aquila::config {
 namespace {
 
 static_assert(kOrderFeedbackShmMaxStrategyCount > 0);
-static_assert(kOrderFeedbackShmMaxStrategyCount <=
-              static_cast<std::uint32_t>(
-                  std::numeric_limits<std::uint8_t>::max()) +
-                  1U);
+static_assert(
+    kOrderFeedbackShmMaxStrategyCount <=
+    static_cast<std::uint32_t>(std::numeric_limits<std::uint8_t>::max()) + 1U);
 
 void MaybeLogError(std::string_view message) {
   if (::nova::kLogManager.logger() != nullptr) {
@@ -96,7 +95,7 @@ class StrategyConfigParser {
       return Failure(std::move(error_));
     }
 
-    ParseOrderSession((*strategy)["order_session"]);
+    ParseOrderExecutionConfig(*strategy);
     if (!ok_) {
       return Failure(std::move(error_));
     }
@@ -261,9 +260,26 @@ class StrategyConfigParser {
         RequiredString(data_reader["config"], "strategy.data_reader.config"));
   }
 
-  void ParseOrderSession(toml::node_view<const toml::node> order_session) {
-    config_.order_session.config_path = ResolveConfigPath(RequiredString(
-        order_session["config"], "strategy.order_session.config"));
+  void ParseOrderExecutionConfig(const toml::table& strategy) {
+    const toml::table* order_session = strategy["order_session"].as_table();
+    const toml::table* order_gateway = strategy["order_gateway"].as_table();
+    if (order_session != nullptr && order_gateway != nullptr) {
+      Fail("strategy.order_session / strategy.order_gateway",
+           " are mutually exclusive");
+      return;
+    }
+    if (order_session == nullptr && order_gateway == nullptr) {
+      Fail("strategy.order_session / strategy.order_gateway",
+           " one section is required");
+      return;
+    }
+    if (order_session != nullptr) {
+      config_.order_session.config_path = ResolveConfigPath(RequiredString(
+          (*order_session)["config"], "strategy.order_session.config"));
+      return;
+    }
+    config_.order_gateway.config_path = ResolveConfigPath(RequiredString(
+        (*order_gateway)["config"], "strategy.order_gateway.config"));
   }
 
   void ParseFeedback(toml::node_view<const toml::node> feedback) {

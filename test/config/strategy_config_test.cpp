@@ -322,6 +322,83 @@ poll_budget = 0
             std::string::npos);
 }
 
+TEST(StrategyConfigTest, ParsesOrderGatewayConfigPath) {
+  const auto result = ParseConfigToml(R"toml(
+[strategy]
+name = "lead_lag"
+strategy_id = 4
+mode = "live"
+order_capacity = 8
+config = "config/strategies/lead_lag.toml"
+
+[strategy.data_reader]
+config = "config/data_readers/strategy_data_reader.toml"
+
+[strategy.order_gateway]
+config = "config/order_gateways/gate_order_gateway.toml"
+
+[strategy.feedback]
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+)toml");
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.value.order_session.config_path.empty());
+  EXPECT_EQ(result.value.order_gateway.config_path,
+            std::filesystem::path("config/order_gateways/"
+                                  "gate_order_gateway.toml"));
+}
+
+TEST(StrategyConfigTest, RejectsBothOrderSessionAndOrderGateway) {
+  const auto result = ParseConfigToml(R"toml(
+[strategy]
+name = "lead_lag"
+strategy_id = 4
+mode = "live"
+order_capacity = 8
+config = "config/strategies/lead_lag.toml"
+
+[strategy.data_reader]
+config = "config/data_readers/strategy_data_reader.toml"
+
+[strategy.order_session]
+config = "config/order_sessions/gate_order_session.toml"
+
+[strategy.order_gateway]
+config = "config/order_gateways/gate_order_gateway.toml"
+
+[strategy.feedback]
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_session"), std::string::npos);
+  EXPECT_NE(result.error.find("order_gateway"), std::string::npos);
+}
+
+TEST(StrategyConfigTest, RejectsMissingOrderExecutionConfig) {
+  const auto result = ParseConfigToml(R"toml(
+[strategy]
+name = "lead_lag"
+strategy_id = 4
+mode = "live"
+order_capacity = 8
+config = "config/strategies/lead_lag.toml"
+
+[strategy.data_reader]
+config = "config/data_readers/strategy_data_reader.toml"
+
+[strategy.feedback]
+shm_name = "aquila_gate_order_feedback"
+channel_name = "orders"
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_session"), std::string::npos);
+  EXPECT_NE(result.error.find("order_gateway"), std::string::npos);
+}
+
 TEST(StrategyConfigTest, AcceptsFeedbackDisabledWithoutShmFields) {
   const auto result = ParseConfigToml(R"toml(
 [strategy]

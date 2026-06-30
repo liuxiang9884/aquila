@@ -36,6 +36,10 @@ struct StrategyOrderSessionConfig {
   std::filesystem::path config_path;
 };
 
+struct StrategyOrderGatewayConfig {
+  std::filesystem::path config_path;
+};
+
 struct StrategyFeedbackConfig {
   bool enabled{true};
   std::string shm_name;
@@ -53,6 +57,7 @@ struct StrategyConfig {
   StrategyLoopConfig loop;
   StrategyDataReaderConfig data_reader;
   StrategyOrderSessionConfig order_session;
+  StrategyOrderGatewayConfig order_gateway;
   StrategyFeedbackConfig feedback;
 };
 

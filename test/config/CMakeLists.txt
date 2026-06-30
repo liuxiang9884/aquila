@@ -90,6 +90,23 @@ target_compile_definitions(order_session_config_test
 add_test(NAME order_session_config_test
          COMMAND order_session_config_test)
 
+add_executable(order_gateway_config_test
+    order_gateway_config_test.cpp
+)
+
+target_link_libraries(order_gateway_config_test
+    PRIVATE
+        aquila_config
+        GTest::gtest_main
+)
+
+target_compile_definitions(order_gateway_config_test
+    PRIVATE AQUILA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME order_gateway_config_test
+         COMMAND order_gateway_config_test)
+
 add_executable(order_feedback_shm_config_test
     order_feedback_shm_config_test.cpp
 )
