@@ -1,0 +1,42 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures_common_gate_binance_20260627.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/strategy_data_reader_30symbols_fusion_20260627.log"
+console_sink_name = "strategy_data_reader_30symbols_fusion_20260627_console"
+backend_thread_name = "strategy_data_reader_30symbols_fusion_20260627_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_reader]
+name = "strategy_data_reader_30symbols_fusion_20260627"
+max_events_per_drain = 128
+
+[data_reader.execution_policy]
+bind_cpu_id = 4
+idle_policy = "spin"
+
+[[data_reader.sources]]
+name = "gate_book_ticker_fusion_30symbols_20260627"
+type = "shm"
+exchange = "gate"
+feed = "book_ticker"
+shm_name = "aquila_gate_book_ticker_fusion_30symbols_20260627"
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "latest"
+required = true
+
+[[data_reader.sources]]
+name = "binance_book_ticker_fusion_30symbols_20260627"
+type = "shm"
+exchange = "binance"
+feed = "book_ticker"
+shm_name = "aquila_binance_book_ticker_fusion_30symbols_20260627"
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "latest"
+required = true
