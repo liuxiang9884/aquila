@@ -77,6 +77,20 @@ target_link_libraries(core_order_gateway_shm_test
 add_test(NAME core_order_gateway_shm_test
          COMMAND core_order_gateway_shm_test)
 
+add_executable(core_order_gateway_client_test
+    order_gateway_client_test.cpp
+)
+
+target_link_libraries(core_order_gateway_client_test
+    PRIVATE
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+)
+
+add_test(NAME core_order_gateway_client_test
+         COMMAND core_order_gateway_client_test)
+
 add_executable(core_order_feedback_shm_test
     order_feedback_shm_test.cpp
 )

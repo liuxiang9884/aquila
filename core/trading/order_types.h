@@ -48,6 +48,7 @@ inline constexpr std::uint16_t kAutoGatewayRoute =
     static_cast<std::uint16_t>(0xFFFF);
 
 struct OrderCreateRequest {
+  std::uint64_t parent_id{0};
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
   std::string_view symbol{};
@@ -63,6 +64,7 @@ struct OrderCreateRequest {
 
 struct StrategyOrder {
   std::uint64_t local_order_id{0};
+  std::uint64_t parent_id{0};
   std::uint64_t exchange_order_id{0};
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};

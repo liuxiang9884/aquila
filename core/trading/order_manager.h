@@ -189,6 +189,7 @@ class OrderManager {
     if (order == nullptr) {
       return nullptr;
     }
+    order->parent_id = request.parent_id;
     order->exchange = request.exchange;
     order->symbol_id = request.symbol_id;
     order->symbol = request.symbol;
