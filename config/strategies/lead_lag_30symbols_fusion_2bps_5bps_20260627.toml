@@ -320,7 +320,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 300.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 260
@@ -488,7 +488,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 60.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 6
@@ -1160,7 +1160,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 30.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 3
