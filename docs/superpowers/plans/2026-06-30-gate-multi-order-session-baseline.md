@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 实现 Gate `n=4` 多路 `OrderSession` 的最小 baseline backend：单线程拥有 4 条 session，按 route hint / auto policy 路由 place、cancel、cache 和 forget。
+**Goal:** 实现 Gate 多路 `OrderSession` 的最小 baseline backend：单线程拥有运行时配置的 `n` 条 session，首个实验和测试使用 `n=4`，按 route hint / auto policy 路由 place、cancel、cache 和 forget。
 
-**Architecture:** `Strategy` / OMS 仍负责 duplicate / split、winner、overfill 和 cancel trigger；本计划只实现 gateway 基础设施。`core::OrderCreateRequest` 和 `core::StrategyOrder` 增加通用 `gateway_route_id`，Gate 侧新增 header-only `MultiOrderSessionGateway<SessionT>`，内部固定支持 4 条 session、显式 `RouteTable(local_order_id -> session_index)`、auto round-robin 和 `min_ready_sessions`。不引入 worker thread、配置解析、live smoke 或策略 fanout 行为。
+**Architecture:** `Strategy` / OMS 仍负责 duplicate / split、winner、overfill 和 cancel trigger；本计划只实现 gateway 基础设施。`core::OrderCreateRequest` 和 `core::StrategyOrder` 增加通用 `gateway_route_id`，Gate 侧新增 header-only `MultiOrderSessionGateway<SessionT>`，内部管理运行时传入的 session 列表、显式 `RouteTable(local_order_id -> session_index)`、auto round-robin 和 `min_ready_sessions`。Ack / final response 仍由各 `OrderSession` 按 `local_order_id` fan-in 到 `TradingRuntime -> OrderManager -> Strategy`；gateway 不解释 Ack。不引入 worker thread、配置解析、live smoke 或策略 fanout 行为。
 
 **Tech Stack:** C++20、CMake、GTest、Abseil `absl::flat_hash_map`、现有 `core::OrderManager` gateway contract、Gate `OrderSendResult`。
 
@@ -14,9 +14,9 @@
 
 本计划只做：
 
-- `n=4` 固定 session count。
-- `1 thread : 4 OrderSession` baseline backend。
-- 显式 route hint：策略 / OMS 可以指定 child order 发往 session `0..3`。
+- session count `n` 是运行时参数，首个测试和示例使用 `n=4`。
+- `1 thread : n OrderSession` baseline backend。
+- 显式 route hint：策略 / OMS 可以指定 child order 发往 session `0..n-1`。
 - auto route：未指定 route 时按 ready session round-robin。
 - cancel / cache / forget 回原 session。
 - 单元测试覆盖 route semantics。
@@ -36,7 +36,7 @@
 - Modify: `core/trading/order_manager.h`
   - `CreateOrder()` 复制 route hint。
 - Create: `exchange/gate/trading/multi_order_session_gateway.h`
-  - Gate baseline multi-session gateway，固定 `kGateMultiOrderSessionCount = 4`。
+  - Gate baseline multi-session gateway，运行时接收 session 列表，测试使用 4 条 session。
 - Modify: `exchange/gate/trading/order_types.h`
   - 增加 `OrderSendStatus::kInvalidRoute`，用于 route 越界或 route table 缺失。
 - Modify: `exchange/gate/CMakeLists.txt`
@@ -46,13 +46,13 @@
 - Modify: `test/core/trading/CMakeLists.txt`
   - 增加 `core_order_manager_route_test`。
 - Create: `test/exchange/gate/trading/multi_order_session_gateway_test.cpp`
-  - 验证 4 session gateway 的 route/cancel/cache/forget/ready 行为。
+  - 验证参数化 session gateway 在 `n=4` 下的 route/cancel/cache/forget/ready 行为。
 - Modify: `test/exchange/gate/trading/CMakeLists.txt`
   - 增加 `gate_multi_order_session_gateway_test`。
 - Modify: `docs/agent-handoff-gate-trade-architecture.md`
   - 记录最小实现入口和 baseline 边界。
 - Modify: `docs/strategy_order_component_model.md`
-  - 记录 `gateway_route_id` 和 `n=4` baseline。
+  - 记录 `gateway_route_id`、`n` 参数化 baseline 和 Ack fan-in 语义。
 - Modify: `docs/project_onboarding_guide.md`
   - 更新当前事实和验证命令。
 
@@ -310,7 +310,6 @@ Create `test/exchange/gate/trading/multi_order_session_gateway_test.cpp`:
 ```cpp
 #include "exchange/gate/trading/multi_order_session_gateway.h"
 
-#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -378,14 +377,22 @@ core::StrategyOrder MakeOrder(std::uint64_t local_order_id,
 
 using Gateway = MultiOrderSessionGateway<FakeSession>;
 
-Gateway MakeGateway(std::array<FakeSession, kGateMultiOrderSessionCount>&
-                        sessions) {
-  return Gateway({&sessions[0], &sessions[1], &sessions[2], &sessions[3]});
+std::vector<FakeSession*> MakeSessionPointers(
+    std::vector<FakeSession>& sessions) {
+  std::vector<FakeSession*> result;
+  result.reserve(sessions.size());
+  for (FakeSession& session : sessions) {
+    result.push_back(&session);
+  }
+  return result;
+}
+
+Gateway MakeGateway(std::vector<FakeSession>& sessions) {
+  return Gateway(MakeSessionPointers(sessions));
 }
 
 TEST(MultiOrderSessionGatewayTest, ExplicitRouteSendsToSelectedSession) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{}, FakeSession{}, FakeSession{}};
+  std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
   const OrderSendResult sent = gateway.PlaceOrder(MakeOrder(101, 2));
@@ -399,8 +406,7 @@ TEST(MultiOrderSessionGatewayTest, ExplicitRouteSendsToSelectedSession) {
 }
 
 TEST(MultiOrderSessionGatewayTest, AutoRouteRoundRobinsAcrossReadySessions) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{}, FakeSession{}, FakeSession{}};
+  std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
   EXPECT_EQ(gateway.PlaceOrder(MakeOrder(101, core::kAutoGatewayRoute)).status,
@@ -419,8 +425,7 @@ TEST(MultiOrderSessionGatewayTest, AutoRouteRoundRobinsAcrossReadySessions) {
 }
 
 TEST(MultiOrderSessionGatewayTest, CancelReturnsToOriginalRoute) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{}, FakeSession{}, FakeSession{}};
+  std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
   ASSERT_EQ(gateway.PlaceOrder(MakeOrder(201, 3)).status,
@@ -435,8 +440,7 @@ TEST(MultiOrderSessionGatewayTest, CancelReturnsToOriginalRoute) {
 }
 
 TEST(MultiOrderSessionGatewayTest, CacheAndForgetUseOriginalRoute) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{}, FakeSession{}, FakeSession{}};
+  std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
   ASSERT_EQ(gateway.PlaceOrder(MakeOrder(301, 1)).status,
@@ -452,8 +456,7 @@ TEST(MultiOrderSessionGatewayTest, CacheAndForgetUseOriginalRoute) {
 }
 
 TEST(MultiOrderSessionGatewayTest, InvalidRouteRejectsWithoutSending) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{}, FakeSession{}, FakeSession{}};
+  std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
   const OrderSendResult sent = gateway.PlaceOrder(MakeOrder(401, 4));
@@ -465,12 +468,11 @@ TEST(MultiOrderSessionGatewayTest, InvalidRouteRejectsWithoutSending) {
 }
 
 TEST(MultiOrderSessionGatewayTest, ReadyRequiresConfiguredMinimum) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{}, FakeSession{false}, FakeSession{false}};
+  std::vector<FakeSession> sessions{FakeSession{}, FakeSession{},
+                                    FakeSession{false}, FakeSession{false}};
   Gateway::Config config;
   config.min_ready_sessions = 3;
-  Gateway gateway({&sessions[0], &sessions[1], &sessions[2], &sessions[3]},
-                  config);
+  Gateway gateway(MakeSessionPointers(sessions), config);
 
   EXPECT_FALSE(gateway.Ready());
   sessions[2].set_ready(true);
@@ -478,8 +480,8 @@ TEST(MultiOrderSessionGatewayTest, ReadyRequiresConfiguredMinimum) {
 }
 
 TEST(MultiOrderSessionGatewayTest, AutoRouteSkipsNotReadySessions) {
-  std::array<FakeSession, kGateMultiOrderSessionCount> sessions{
-      FakeSession{}, FakeSession{false}, FakeSession{}, FakeSession{false}};
+  std::vector<FakeSession> sessions{FakeSession{}, FakeSession{false},
+                                    FakeSession{}, FakeSession{false}};
   Gateway gateway = MakeGateway(sessions);
 
   EXPECT_EQ(gateway.PlaceOrder(MakeOrder(501, core::kAutoGatewayRoute)).status,
@@ -525,7 +527,7 @@ Run:
 cmake --build build/debug --target gate_multi_order_session_gateway_test -j8
 ```
 
-Expected: compile failure because `exchange/gate/trading/multi_order_session_gateway.h`, `kGateMultiOrderSessionCount`, `MultiOrderSessionGateway`, and `OrderSendStatus::kInvalidRoute` do not exist.
+Expected: compile failure because `exchange/gate/trading/multi_order_session_gateway.h`, `MultiOrderSessionGateway`, and `OrderSendStatus::kInvalidRoute` do not exist.
 
 - [ ] **Step 4: Add `kInvalidRoute`**
 
@@ -556,17 +558,16 @@ Create `exchange/gate/trading/multi_order_session_gateway.h`:
 #ifndef AQUILA_EXCHANGE_GATE_TRADING_MULTI_ORDER_SESSION_GATEWAY_H_
 #define AQUILA_EXCHANGE_GATE_TRADING_MULTI_ORDER_SESSION_GATEWAY_H_
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "core/trading/order_types.h"
 #include "exchange/gate/trading/order_types.h"
 
 namespace aquila::gate {
-
-inline constexpr std::size_t kGateMultiOrderSessionCount = 4;
 
 template <typename SessionT>
 class MultiOrderSessionGateway {
@@ -577,9 +578,8 @@ class MultiOrderSessionGateway {
   };
 
   explicit MultiOrderSessionGateway(
-      std::array<SessionT*, kGateMultiOrderSessionCount> sessions,
-      Config config = {})
-      : sessions_(sessions), config_(config) {
+      std::vector<SessionT*> sessions, Config config = {})
+      : sessions_(std::move(sessions)), config_(config) {
     route_table_.reserve(config_.route_table_capacity);
   }
 
@@ -596,14 +596,14 @@ class MultiOrderSessionGateway {
   template <typename OrderT>
   [[nodiscard]] OrderSendResult PlaceOrder(const OrderT& order) noexcept {
     const std::size_t route = ResolvePlaceRoute(order.gateway_route_id);
-    if (route >= kGateMultiOrderSessionCount || sessions_[route] == nullptr ||
+    if (route >= sessions_.size() || sessions_[route] == nullptr ||
         !SessionReady(route)) {
       return Failure(OrderSendStatus::kInvalidRoute);
     }
 
     OrderSendResult sent = sessions_[route]->PlaceOrder(order);
     if (sent.status == OrderSendStatus::kOk) {
-      route_table_[order.local_order_id] = static_cast<std::uint8_t>(route);
+      route_table_[order.local_order_id] = static_cast<std::uint16_t>(route);
     }
     return sent;
   }
@@ -647,7 +647,7 @@ class MultiOrderSessionGateway {
 
   [[nodiscard]] std::size_t ReadySessionCount() const noexcept {
     std::size_t count = 0;
-    for (std::size_t i = 0; i < kGateMultiOrderSessionCount; ++i) {
+    for (std::size_t i = 0; i < sessions_.size(); ++i) {
       if (sessions_[i] != nullptr && SessionReady(i)) {
         ++count;
       }
@@ -657,7 +657,7 @@ class MultiOrderSessionGateway {
 
  private:
   [[nodiscard]] bool SessionReady(std::size_t index) const noexcept {
-    if (index >= kGateMultiOrderSessionCount || sessions_[index] == nullptr) {
+    if (index >= sessions_.size() || sessions_[index] == nullptr) {
       return false;
     }
     if constexpr (requires(const SessionT& session) { session.Ready(); }) {
@@ -671,16 +671,18 @@ class MultiOrderSessionGateway {
     if (route_id != core::kAutoGatewayRoute) {
       return route_id;
     }
-    for (std::size_t attempt = 0; attempt < kGateMultiOrderSessionCount;
-         ++attempt) {
+    if (sessions_.empty()) {
+      return sessions_.size();
+    }
+    for (std::size_t attempt = 0; attempt < sessions_.size(); ++attempt) {
       const std::size_t candidate =
-          (next_auto_route_ + attempt) % kGateMultiOrderSessionCount;
+          (next_auto_route_ + attempt) % sessions_.size();
       if (sessions_[candidate] != nullptr && SessionReady(candidate)) {
-        next_auto_route_ = (candidate + 1) % kGateMultiOrderSessionCount;
+        next_auto_route_ = (candidate + 1) % sessions_.size();
         return candidate;
       }
     }
-    return kGateMultiOrderSessionCount;
+    return sessions_.size();
   }
 
   [[nodiscard]] static OrderSendResult Failure(
@@ -691,10 +693,10 @@ class MultiOrderSessionGateway {
             .send_local_ns = 0};
   }
 
-  std::array<SessionT*, kGateMultiOrderSessionCount> sessions_{};
+  std::vector<SessionT*> sessions_;
   Config config_{};
   std::size_t next_auto_route_{0};
-  absl::flat_hash_map<std::uint64_t, std::uint8_t> route_table_;
+  absl::flat_hash_map<std::uint64_t, std::uint16_t> route_table_;
 };
 
 }  // namespace aquila::gate
@@ -747,9 +749,12 @@ git commit -m "feat: add gate multi order session gateway"
 In `docs/agent-handoff-gate-trade-architecture.md`, add a short implementation note under “多路 OrderSession 讨论结论”:
 
 ```markdown
-当前最小实现先落地 `1 thread : 4 OrderSession` baseline：`exchange/gate/trading/multi_order_session_gateway.h`
-固定管理 4 条 session，使用 `core::StrategyOrder::gateway_route_id` 做显式 route hint，未指定时按 ready session round-robin。
+当前最小实现先落地 `1 thread : n OrderSession` baseline：`exchange/gate/trading/multi_order_session_gateway.h`
+运行时接收 session 列表，首个测试和实验配置使用 `n=4`。gateway 使用
+`core::StrategyOrder::gateway_route_id` 做显式 route hint，未指定时按 ready session round-robin。
 该 baseline 只验证 route / cancel / cache / forget 语义，不代表 per-session worker fanout 或 fillability 收益。
+Ack / final response 仍由各 `OrderSession` 按 `local_order_id` fan-in 到 `TradingRuntime -> OrderManager -> Strategy`；
+gateway 不解释 Ack，也不判定 winner。
 ```
 
 - [ ] **Step 2: Update component model**
@@ -757,8 +762,9 @@ In `docs/agent-handoff-gate-trade-architecture.md`, add a short implementation n
 In `docs/strategy_order_component_model.md`, add:
 
 ```markdown
-最小 baseline 使用 `core::kAutoGatewayRoute` 表示 gateway 自选 route；显式 `gateway_route_id=0..3`
-表示发往固定 Gate order session。`OrderManager` 只复制该字段，不解释策略 fanout 语义。
+最小 baseline 使用 `core::kAutoGatewayRoute` 表示 gateway 自选 route；显式 `gateway_route_id=0..n-1`
+表示发往运行时配置的某条 Gate order session。`OrderManager` 只复制该字段，不解释策略 fanout 语义。
+Ack response 的业务入口仍是 `OrderManager::OnOrderResponse()`，route table 只服务 cancel / cache / forget 回原 session。
 ```
 
 - [ ] **Step 3: Update onboarding**
@@ -766,8 +772,8 @@ In `docs/strategy_order_component_model.md`, add:
 In `docs/project_onboarding_guide.md`, update the Gate Trading / TUI bullet to mention:
 
 ```markdown
-`1 thread : 4 OrderSession` baseline gateway 已落地后，下一步才是 `gate_order_session_rtt_probe`
-fanout timing 和 per-session worker 对照；baseline 不宣称 fillability 改善。
+`1 thread : n OrderSession` baseline gateway 已落地后，先用 `n=4` 做测试 / probe 配置；下一步才是
+`gate_order_session_rtt_probe` fanout timing 和 per-session worker 对照。baseline 不宣称 fillability 改善。
 ```
 
 - [ ] **Step 4: Run documentation check**
@@ -849,6 +855,6 @@ Expected: current branch contains the task commits; no unrelated dirty files.
 
 ## Self-Review
 
-- Spec coverage: `n=4` baseline, route hint, explicit route, auto route, cancel original session, single account feedback boundary and no threaded backend are covered by Tasks 1-4.
+- Spec coverage: parameterized `n` baseline with `n=4` tests, route hint, explicit route, auto route, cancel original session, Ack fan-in boundary, single account feedback boundary and no threaded backend are covered by Tasks 1-4.
 - Placeholder scan: no placeholder or vague implementation step is required for the baseline.
-- Type consistency: `gateway_route_id`, `kAutoGatewayRoute`, `kGateMultiOrderSessionCount`, `MultiOrderSessionGateway`, and `OrderSendStatus::kInvalidRoute` are defined before use.
+- Type consistency: `gateway_route_id`, `kAutoGatewayRoute`, `MultiOrderSessionGateway`, and `OrderSendStatus::kInvalidRoute` are defined before use.
