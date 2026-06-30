@@ -29,10 +29,14 @@
 - feedback SHM reader 已接入，用 `strategy_id` claim feedback lane，并按 `local_order_id` 路由到对应 session。
 - sample CSV 已包含 runtime hook、DriveRead、write path、socket send queue、`TCP_INFO` 和 socket timestamping 字段。
 - `cycle_cooldown_us` / `order_session_interval_us` 已支持微秒级 pacing；旧 `*_ms` 只作为兼容入口。
+- `FanoutBatchDispatchScheduler` 已在纯逻辑层落地：同一 batch 一次授予全部 session，下一个 batch 等全部 session 的
+  `samples_started` 都推进后再按 `cycle_cooldown_us` 冷却。
 
 仍是边界：
 
 - `--execute` 当前只支持 `probe.order.order_mode="ioc"`；`gtc` / `ioc+gtc` 的状态流转和配置解析已在纯逻辑层覆盖，但 live execute 会拒绝。
+- live execute 当前仍使用普通 multi-session 顺序调度；fanout batch scheduler 尚未接入真实下单循环，也不记录 fanout batch 的
+  enqueue / dispatch / write complete / Ack skew。
 - `probe.safety.preflight_rest_check`、`run_end_rest_check` 和 REST 输出路径已解析并保留为安全意图，但工具内 REST preflight / run-end guard 尚未真正执行。真实测试前后仍需外部 REST / 人工确认 flat，直到该 guard 落地。
 - 工具不输出自动 score，也不写回生产配置。
 
@@ -239,10 +243,18 @@ Gate BookTicker event
 multi-session 调度：
 
 - 所有 session 常驻并 logged-in。
-- coordinator 按 CSV 行顺序授予 dispatch。
+- 普通 scheduler 下，coordinator 按 CSV 行顺序授予 dispatch。
 - `order_session_interval_us` 控制同一 cycle 内相邻 session 的下单间隔。
 - `cycle_cooldown_us` 控制完整 cycle 结束后的冷却。
 - 同一时刻只 dispatch 一个普通 probe order，避免同账户风险叠加。
+
+fanout batch 调度模型：
+
+- `FanoutBatchDispatchScheduler` 接收运行时 `session_count`，测试覆盖 `n=4` 和非 4 路。
+- 每个 batch 把全部 session index 一次性授予调用方，用于后续测量同一信号 fanout 到 N 条 connection 的 dispatch skew。
+- scheduler 不拆单、不判定 winner、不处理 overfill，也不解释 Ack；这些仍属于策略 / OMS 或 probe executor。
+- 下一个 batch 只有在上一批全部 session 的 `samples_started` 都达到目标计数后才可能发出，然后再等待 `cycle_cooldown_us`。
+- 这目前只是 dry-run / unit-test 层模型；live `--execute` 尚未按 batch 同时 fanout 真实订单。
 
 ## 指标口径
 
