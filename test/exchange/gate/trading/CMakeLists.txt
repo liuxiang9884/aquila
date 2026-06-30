@@ -78,6 +78,20 @@ target_link_libraries(gate_order_latency_diagnostics_test
 add_test(NAME gate_order_latency_diagnostics_test
          COMMAND gate_order_latency_diagnostics_test)
 
+add_executable(gate_multi_order_session_gateway_test
+    multi_order_session_gateway_test.cpp
+)
+
+target_link_libraries(gate_multi_order_session_gateway_test
+    PRIVATE
+        aquila_gate
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME gate_multi_order_session_gateway_test
+         COMMAND gate_multi_order_session_gateway_test)
+
 add_executable(gate_order_session_test
     order_session_test.cpp
 )
