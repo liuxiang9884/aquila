@@ -8,6 +8,20 @@ fanout 到 N 条 Gate trading WebSocket connection，以降低单连接延迟波
 
 本文只锁定架构、状态语义、queue payload 和实现边界；不宣称成交率或延迟收益。收益必须由 live smoke、probe 或 report 证据验证。
 
+## 当前实现状态
+
+2026-06-30 已落地本文的 V1 实现入口：
+
+- SHM POD types / queue runtime：`core/trading/order_gateway_shm_types.h`、`core/trading/order_gateway_shm.h`。
+- strategy-side gateway：`core/trading/order_gateway_client.h`，供 `OrderManager` 作为 gateway contract 使用。
+- worker / process：`exchange/gate/trading/order_gateway_worker.h`、`tools/gate/gate_order_gateway.cpp`。
+- config parser：`core/config/order_gateway_config.*`、`core/config/strategy_config.*` 的 `[strategy.order_gateway]`。
+- LeadLag fanout：`strategy/lead_lag/config.*`、`strategy/lead_lag/execution_state.h`、`strategy/lead_lag/strategy.h`。
+- live strategy 接入：`tools/lead_lag/live_strategy.cpp` 可在 live-orders 模式选择 `OrderGatewayClient`。
+- 30-symbol validate-only 配置：`config/order_gateways/gate_order_gateway_30symbols_private_plain_20260627.toml` 和 `config/strategies/lead_lag_30symbols_fusion_order_gateway_live_strategy_20260627.toml`。
+
+上述实现已通过单元 / smoke / validate-only 测试，但尚未做真实 `order-gateway-process` + strategy live smoke；不能据此宣称成交率或延迟收益。
+
 ## 已锁定决策
 
 - 进程模型：2 个进程，`strategy-process` 和 `order-gateway-process`。
@@ -273,7 +287,7 @@ ready_count == N 后进入 trading
 ```
 
 `ready_count` 必须由 flag transition 更新，不能对重复 `kReady` / `kNotReady` 无条件加减。下单时逐 route 检查
-`route_ready[i]`；false route 跳过并限频 warning。`ready_count == 0` 时本次 signal 本地 reject。
+`route_ready[i]`；false route 跳过并通过 gateway stats 计数。`ready_count == 0` 时本次 signal 本地 reject。
 
 `order-gateway-process` 启动后即创建 / 初始化 SHM，并启动 N 个 worker。某路连接失败不导致 gateway 整体退出；
 worker 持续重连，并在 ready / not-ready 变化时写 event。strategy 使用 `startup_ready_timeout_s` 决定是否等待成功。
@@ -299,7 +313,7 @@ for route in 0..route_count-1:
   if sent == target:
     break
   if !route_ready[route]:
-    rate_limited_warning(route_not_ready)
+    record_route_not_ready(route)
     continue
   send child order to command_queue[route]
   ++sent
@@ -372,6 +386,13 @@ enqueue ok, worker send ok
 新增 order gateway config：
 
 ```toml
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_order_gateway_30symbols_private_plain_20260627.log"
+console_sink_name = "gate_order_gateway_30symbols_private_plain_20260627_console"
+backend_thread_name = "gate_order_gateway_30symbols_private_plain_20260627_log"
+backend_cpu_affinity = 0
+
 [order_gateway]
 name = "gate_order_gateway_30symbols_private_plain_20260627"
 route_count = 4
@@ -382,13 +403,19 @@ startup_ready_timeout_s = 30
 [[order_gateway.routes]]
 name = "route0"
 order_session_config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260627.toml"
-worker_cpu_id = 4
+worker_cpu_id = 16
 
 [[order_gateway.routes]]
 name = "route1"
 order_session_config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260627.toml"
-worker_cpu_id = 5
+worker_cpu_id = 17
 ```
+
+`worker_cpu_id` 是该 route 的 worker thread / WebSocket runtime CPU；gateway 加载 route 时会用它覆盖
+`order_session_config` 中的 websocket `bind_cpu_id`，因此 4 条 route 可以暂时复用同一个 order session TOML。
+当前 30-symbol fusion + order gateway smoke / validate 配置把 4 条 order route 放在 `16-19`，避免与已有 fusion /
+strategy / feedback 的 `0-15` profile 同核；真实 live 前必须按 `docs/runtime_cpu_allocation.md` 记录实际 CPU 分配，
+并确认 `16-19` 没有测试负载。
 
 strategy live config 支持可选：
 
@@ -396,6 +423,15 @@ strategy live config 支持可选：
 [strategy.order_gateway]
 config = "config/order_gateways/gate_order_gateway_30symbols_private_plain_20260627.toml"
 ```
+
+30-symbol order-gateway strategy config 使用独立 pair 参数文件：
+
+```text
+config/strategies/lead_lag_30symbols_fusion_2bps_5bps_order_gateway_20260627.toml
+```
+
+该文件在每个 pair 的 `[lead_lag.pairs.execute]` 中设置 `order_session_fanout = 4`。legacy single-session live config
+仍指向不带 fanout 的原文件，避免单 session 路径把 duplicate child 发到同一连接。
 
 兼容规则：
 
@@ -432,3 +468,13 @@ config = "config/order_gateways/gate_order_gateway_30symbols_private_plain_20260
 - LeadLag fanout 测试：一个 signal 生成 m 个 child、共享 `parent_id`、不同 `local_order_id` / `route_id`，只占一个 parallel slot。
 - close / stoploss / close retry fanout 测试：按 position 总成交量生成 reduce-only child。
 - live 前 dry-run / smoke：先跑 order gateway + strategy validate-only，再做小额 guarded live smoke。
+
+当前 validate-only 命令：
+
+```bash
+./build/debug/tools/lead_lag_strategy \
+  --config config/strategies/lead_lag_30symbols_fusion_order_gateway_live_strategy_20260627.toml
+```
+
+未传 `--execute` / `--connect-data` 时，该命令只验证 config / parser / mode selection，不打开 websocket 或
+order gateway SHM。

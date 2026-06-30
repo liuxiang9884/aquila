@@ -153,6 +153,69 @@ set_tests_properties(gate_order_session_rtt_probe_preserves_duplicate_connection
     PROPERTIES
     PASS_REGULAR_EXPRESSION "connections=2")
 
+add_test(NAME gate_order_gateway_worker_cpu_overrides_session_cpu
+         COMMAND bash -c [=[
+run_dir="/home/liuxiang/tmp/aquila_order_gateway_cpu_override_ctest_$$"
+mkdir -p "$run_dir"
+session="$run_dir/order_session.toml"
+gateway="$run_dir/order_gateway.toml"
+cat > "$session" <<EOF
+[order_session]
+name = "gate_order_gateway_cpu_override_session"
+settle = "usdt"
+
+[order_session.credentials]
+api_key_env = "TEST_KEY"
+api_secret_env = "TEST_SECRET"
+
+[order_session.websocket.endpoint]
+host = "fxws-private.gateapi.io"
+connect_ip = "10.0.1.154"
+port = "80"
+enable_tls = false
+
+[order_session.websocket.execution_policy]
+bind_cpu_id = 4
+EOF
+cat > "$gateway" <<EOF
+[log]
+log_level = "info"
+file_sink_name = "$run_dir/gateway.log"
+console_sink_name = "gate_order_gateway_cpu_override_console"
+backend_thread_name = "gate_order_gateway_cpu_override_log"
+
+[order_gateway]
+name = "gate_order_gateway_cpu_override"
+route_count = 2
+command_queue_capacity = 64
+event_queue_capacity = 64
+startup_ready_timeout_s = 30
+
+[[order_gateway.routes]]
+name = "route0"
+order_session_config = "$session"
+worker_cpu_id = 21
+
+[[order_gateway.routes]]
+name = "route1"
+order_session_config = "$session"
+worker_cpu_id = 22
+EOF
+output="$("$1" --config "$gateway" 2>&1)"
+code=$?
+printf '%s\n' "$output"
+[[ "$code" -eq 0 ]] &&
+  [[ "$output" == *"route_id=0"* ]] &&
+  [[ "$output" == *"worker_cpu_id=21"* ]] &&
+  [[ "$output" == *"order_session_cpu_id=21"* ]] &&
+  [[ "$output" == *"route_id=1"* ]] &&
+  [[ "$output" == *"worker_cpu_id=22"* ]] &&
+  [[ "$output" == *"order_session_cpu_id=22"* ]]
+]=] _ $<TARGET_FILE:gate_order_gateway>)
+set_tests_properties(gate_order_gateway_worker_cpu_overrides_session_cpu
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
 add_test(NAME gate_order_session_rtt_probe_live_preflight
          COMMAND bash -c [=[
 run_dir="/home/liuxiang/tmp/aquila_rtt_probe_single_preflight_ctest_$$"

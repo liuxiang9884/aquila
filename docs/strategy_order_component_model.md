@@ -183,12 +183,18 @@ void CacheExchangeOrderId(std::uint64_t local_order_id,
 void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 ```
 
-### 多路 OrderSession 扩展边界（未实现）
+### 多路 OrderSession 扩展边界
 
 如果后续实现多路 Gate trading WebSocket，下层应优先做成 `OrderManager` 后面的 composite gateway，例如
 `MultiOrderSessionGateway`，而不是让 `Strategy` 或 `StrategyContext` 直接感知 N 条 session。当前 fanout 目标是让
 策略 / OMS 生成的多个 child order 低 skew 地写入多条 connection；duplicate / split、winner、overfill 和 cancel
 触发点都属于策略 / OMS 语义，不属于多路 `OrderSession` 层。
+
+2026-06-30 已落地两种 gateway 形态：`exchange/gate/trading/multi_order_session_gateway.h` 是单进程
+`1 thread : n OrderSession` baseline；`core/trading/order_gateway_client.h` + `tools/gate/gate_order_gateway.cpp`
+是独立 `order-gateway-process` / SHM V1。LeadLag live-orders 已能通过 `[strategy.order_gateway]` 选择
+`OrderGatewayClient`，并通过 `order_session_fanout` 生成多个 child order。当前仍未完成真实 order gateway live smoke，
+不宣称成交率或延迟收益。
 
 设计边界：
 
@@ -203,7 +209,7 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 表示发往运行时配置的某条 Gate order session。`OrderManager` 只复制该字段，不解释策略 fanout 语义。Ack response
 的业务入口仍是 `OrderManager::OnOrderResponse()`，route table 只服务 cancel / cache / forget 回原 session。
 
-下一版生产设计见 `docs/gate_order_gateway_shm_design.md`：strategy 与 order gateway 拆成 2 个进程，strategy 进程的
+生产 SHM gateway 设计见 `docs/gate_order_gateway_shm_design.md`：strategy 与 order gateway 拆成 2 个进程，strategy 进程的
 `StrategyOrderOwnerThread` 拥有 `OrderManager`、route table 和 ready flags；`order-gateway-process` 内
 `OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。跨进程使用一个 SHM 对象承载 N 路
 `command_queue` 和 N 路 `event_queue`，`N` 是运行时参数且最大为 `16`。`PlaceOrder()` 的 `kOk` 只表示 command
@@ -311,7 +317,7 @@ finish_exchange_ns
 - REST reconcile / resume。
 - account / position realtime feedback。
 - 多交易所 common order gateway 收敛。
-- 多路 `OrderSession` / `MultiOrderSessionGateway`。
+- 多路 `OrderSession` 的真实 live smoke / fillability 验证。
 - batch / amend / cancel-all。
 
 ## 验证命令

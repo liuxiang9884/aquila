@@ -100,6 +100,10 @@ struct PreparedRoute {
         return false;
       }
     }
+    if (route_config.worker_cpu_id >= 0) {
+      order_session_result.value.connection.runtime_policy.io_cpu_id =
+          route_config.worker_cpu_id;
+    }
     routes->push_back(PreparedRoute{
         .route_config = route_config,
         .order_session_config = std::move(order_session_result.value),
@@ -173,8 +177,10 @@ void LogDryRun(const aq_config::OrderGatewayConfig& gateway_config,
     const PreparedRoute& route = routes[i];
     NOVA_INFO(
         "gate_order_gateway_route route_id={} name={} worker_cpu_id={} "
-        "order_session_config={} host={} connect_ip={} tls={}",
+        "order_session_cpu_id={} order_session_config={} host={} "
+        "connect_ip={} tls={}",
         i, route.route_config.name, route.route_config.worker_cpu_id,
+        route.order_session_config.connection.runtime_policy.io_cpu_id,
         route.route_config.order_session_config_path.string(),
         route.order_session_config.connection.host,
         route.order_session_config.connection.connect_ip,

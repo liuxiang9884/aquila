@@ -30,7 +30,7 @@ docs/strategy_order_component_model.md
 - Trading runtime production loop 已落地：Gate order WS active spin loop 同线程调用 runtime hook，runtime drain feedback SHM，并在 `OrderSession::Ready()` 后 poll data reader。
 - `gate_demo_strategy` 已完成 3 轮 BTC_USDT live smoke；LeadLag 已完成 ZEC_USDT 小额 filled open / close 和 unfilled-cancel smoke。
 - Decimal-size order contract 已落地：C++ 使用 `double quantity` + `quantity_text`，Gate WS 带 `X-Gate-Size-Decimal: 1` 时把 JSON `size` quote 为 string；REST final check / emergency flatten 也已支持 decimal position residual。
-- 多路 `OrderSession` / `MultiOrderSessionGateway` 仍是架构讨论结论，尚未实现；当前推荐 V1 边界见本文“多路 OrderSession 讨论结论”。
+- 多路 `OrderSession` 已有两层实现：`1 thread : n OrderSession` baseline gateway 已用于 route / cancel / cache / forget 验证；独立 `order-gateway-process` + SHM `command_queue` / `event_queue` V1 已落地并接入 LeadLag live-orders config。当前仍未做真实 order gateway live smoke，不宣称 fillability 或 latency 收益；当前边界见本文“多路 OrderSession 讨论结论”和 `docs/gate_order_gateway_shm_design.md`。
 
 ## Gate 协议事实
 
@@ -111,11 +111,11 @@ OrderManager
 - `Ready()` V1 可定义为至少一条 session ready，也可配置 `min_ready_sessions` 作为 live 前置检查；无论 N 多大，都必须有账号级限流 / pending cap，不能把多连接视为 N 倍账户容量。
 - 多路 `OrderSession` 层不解释 parent signal、child group、winner、fillability 或 overfill；这些信息只由策略 / OMS 和 `OrderManager` 的订单事实组合处理。
 
-2026-06-30 已进一步锁定下一版生产 `order-gateway-process` 设计，详见 `docs/gate_order_gateway_shm_design.md`。
+2026-06-30 已进一步落地生产 `order-gateway-process` V1，详见 `docs/gate_order_gateway_shm_design.md`。
 核心结论是：strategy 与 order gateway 拆成 2 个进程；strategy 进程 1 个 owner thread，gateway 进程 N 个
 `OrderSessionWorker` thread；跨进程用一个 SHM 对象承载 N 路 `command_queue` 和 N 路 `event_queue`；`N` 是运行时参数，
 编译期最大值 `16`；启动阶段 strategy 等全部 N 路 `kReady`，`startup_ready_timeout_s` 默认 `30`；运行时 `kNotReady`
-对应 route 跳过并限频 warning，重连后 `kReady` 重新参与 fanout。每个 child 仍有唯一 `local_order_id`，同一 fanout batch
+对应 route 跳过并通过 gateway stats 计数，重连后 `kReady` 重新参与 fanout。每个 child 仍有唯一 `local_order_id`，同一 fanout batch
 共享 `parent_id`，因此不修改 `LocalOrderIdCodec`。
 
 当前最小实现已先落地 `1 thread : n OrderSession` baseline：`exchange/gate/trading/multi_order_session_gateway.h`
@@ -124,7 +124,7 @@ OrderManager
 route / cancel / cache / forget 语义，不代表 per-session worker fanout 或 fillability 收益。Ack / final response 仍由各
 `OrderSession` 按 `local_order_id` fan-in 到 `TradingRuntime -> OrderManager -> Strategy`；gateway 不解释 Ack，也不判定 winner。
 
-下一版 fanout 目标线程 / 进程模型：
+已落地的 fanout 目标线程 / 进程模型：
 
 ```text
 strategy-process
@@ -164,9 +164,11 @@ gate-feedback-process
 `PlaceOrder()` 的 `kOk` 只表示 command 已进入 gateway queue，不表示已经写到 socket；真实 Ack / final response
 必须经 `event_queue[i]` 回到 `TradingRuntime -> OrderManager -> Strategy`。
 
-`1 thread : N OrderSession` 仍保留为 baseline / fallback，用于对照顺序 fanout 的成本。当前架构判断是：因为目标是同一信号
-尽量同时写入多条 connection，应先按独立 `order-gateway-process` + per-session worker capability 设计 ownership 和接口；
-若后续实测显示 worker queue / wakeup tail 抹掉收益，再回退到单 owner thread backend。
+`1 thread : N OrderSession` 仍保留为 baseline / fallback，用于对照顺序 fanout 的成本。当前已新增 30-symbol validate-only
+配置 `config/strategies/lead_lag_30symbols_fusion_order_gateway_live_strategy_20260627.toml` 和
+`config/order_gateways/gate_order_gateway_30symbols_private_plain_20260627.toml`；其 pair 参数文件为
+`config/strategies/lead_lag_30symbols_fusion_2bps_5bps_order_gateway_20260627.toml`，每个 pair 设置
+`order_session_fanout = 4`。这些配置已通过 validate-only，不代表真实订单 smoke 已完成。
 
 验证顺序建议先复用或扩展 `gate_order_session_rtt_probe` 的多连接能力，记录同一 fanout batch 内各 session 的
 `fanout_intent_ns`、`gateway_enqueue_ns`、`worker_dequeue_ns`、`write_start_ns`、`write_complete_ns`、
