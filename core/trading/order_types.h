@@ -44,6 +44,9 @@ enum class OrderResponseKind : std::uint8_t {
   kCancelRejected,
 };
 
+inline constexpr std::uint16_t kAutoGatewayRoute =
+    static_cast<std::uint16_t>(0xFFFF);
+
 struct OrderCreateRequest {
   Exchange exchange{Exchange::kGate};
   std::int32_t symbol_id{0};
@@ -55,6 +58,7 @@ struct OrderCreateRequest {
   std::string_view quantity_text{};
   std::string_view price_text{};
   bool reduce_only{false};
+  std::uint16_t gateway_route_id{kAutoGatewayRoute};
 };
 
 struct StrategyOrder {
@@ -70,6 +74,7 @@ struct StrategyOrder {
   std::string_view quantity_text{};
   std::string_view price_text{};
   bool reduce_only{false};
+  std::uint16_t gateway_route_id{kAutoGatewayRoute};
   OrderStatus status{OrderStatus::kCreated};
   double cumulative_filled_quantity{0.0};
   double cumulative_filled_value{0.0};

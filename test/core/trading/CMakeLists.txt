@@ -78,6 +78,19 @@ target_link_libraries(core_trading_strategy_context_test
 add_test(NAME core_trading_strategy_context_test
          COMMAND core_trading_strategy_context_test)
 
+add_executable(core_order_manager_route_test
+    order_manager_route_test.cpp
+)
+
+target_link_libraries(core_order_manager_route_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_order_manager_route_test
+         COMMAND core_order_manager_route_test)
+
 add_executable(core_trading_runtime_test
     trading_runtime_test.cpp
 )

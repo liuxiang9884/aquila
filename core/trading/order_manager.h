@@ -199,6 +199,7 @@ class OrderManager {
     order->quantity_text = request.quantity_text;
     order->price_text = request.price_text;
     order->reduce_only = request.reduce_only;
+    order->gateway_route_id = request.gateway_route_id;
     order->status = OrderStatus::kCreated;
     return order;
   }
