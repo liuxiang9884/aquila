@@ -40,7 +40,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 119
@@ -96,7 +96,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 32
@@ -152,7 +152,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -208,7 +208,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -264,7 +264,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 3
@@ -376,7 +376,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 14
@@ -432,7 +432,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 9
@@ -544,7 +544,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 8
@@ -600,7 +600,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -656,7 +656,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 11
@@ -712,7 +712,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 1
@@ -768,7 +768,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 15
@@ -824,7 +824,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -880,7 +880,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -936,7 +936,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -992,7 +992,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -1048,7 +1048,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 9
@@ -1104,7 +1104,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 20.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -1216,7 +1216,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 5
@@ -1272,7 +1272,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 9
@@ -1328,7 +1328,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 1
@@ -1384,7 +1384,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 2
@@ -1440,7 +1440,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 1
@@ -1496,7 +1496,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 1
@@ -1552,7 +1552,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 4
@@ -1608,7 +1608,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 4
@@ -1664,7 +1664,7 @@ down_max = 0.0
 precision = 0.000001
 
 [lead_lag.pairs.execute]
-open_notional = 100.0
+open_notional = 10.0
 trailing_stop = 0.01
 max_entry_spread = 0.01
 open_slippage_ticks = 1
