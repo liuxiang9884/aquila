@@ -203,10 +203,12 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 表示发往运行时配置的某条 Gate order session。`OrderManager` 只复制该字段，不解释策略 fanout 语义。Ack response
 的业务入口仍是 `OrderManager::OnOrderResponse()`，route table 只服务 cancel / cache / forget 回原 session。
 
-推荐 fanout 目标线程模型是单 strategy process 内 `StrategyOrderOwnerThread` 拥有 `OrderManager`、route table 和
-`MultiOrderSessionGateway`，同时由 `OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。
-`1 thread : N OrderSession` 保留为 baseline / fallback；若 worker queue / wakeup / 同步回传的尾延迟实测差于顺序
-fanout，应回退。threaded gateway 下 `PlaceOrder()` 语义是进入对应 worker 的发送路径，不等价于已经写到 socket。
+下一版生产设计见 `docs/gate_order_gateway_shm_design.md`：strategy 与 order gateway 拆成 2 个进程，strategy 进程的
+`StrategyOrderOwnerThread` 拥有 `OrderManager`、route table 和 ready flags；`order-gateway-process` 内
+`OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。跨进程使用一个 SHM 对象承载 N 路
+`command_queue` 和 N 路 `event_queue`，`N` 是运行时参数且最大为 `16`。`PlaceOrder()` 的 `kOk` 只表示 command
+已进入 gateway queue，不等价于已经写到 socket；真实 Ack / final response 仍先进入 `OrderManager`，再通知 `Strategy`。
+同一 fanout batch 使用共享 `parent_id` 聚合，child order 仍保留唯一 `local_order_id`，不修改 `LocalOrderIdCodec`。
 
 ## OrderSession
 

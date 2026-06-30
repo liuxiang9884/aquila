@@ -111,13 +111,20 @@ OrderManager
 - `Ready()` V1 可定义为至少一条 session ready，也可配置 `min_ready_sessions` 作为 live 前置检查；无论 N 多大，都必须有账号级限流 / pending cap，不能把多连接视为 N 倍账户容量。
 - 多路 `OrderSession` 层不解释 parent signal、child group、winner、fillability 或 overfill；这些信息只由策略 / OMS 和 `OrderManager` 的订单事实组合处理。
 
+2026-06-30 已进一步锁定下一版生产 `order-gateway-process` 设计，详见 `docs/gate_order_gateway_shm_design.md`。
+核心结论是：strategy 与 order gateway 拆成 2 个进程；strategy 进程 1 个 owner thread，gateway 进程 N 个
+`OrderSessionWorker` thread；跨进程用一个 SHM 对象承载 N 路 `command_queue` 和 N 路 `event_queue`；`N` 是运行时参数，
+编译期最大值 `16`；启动阶段 strategy 等全部 N 路 `kReady`，`startup_ready_timeout_s` 默认 `30`；运行时 `kNotReady`
+对应 route 跳过并限频 warning，重连后 `kReady` 重新参与 fanout。每个 child 仍有唯一 `local_order_id`，同一 fanout batch
+共享 `parent_id`，因此不修改 `LocalOrderIdCodec`。
+
 当前最小实现已先落地 `1 thread : n OrderSession` baseline：`exchange/gate/trading/multi_order_session_gateway.h`
 运行时接收 session 列表，首个测试和实验配置使用 `n=4`。gateway 使用
 `core::StrategyOrder::gateway_route_id` 做显式 route hint，未指定时按 ready session round-robin；该 baseline 只验证
 route / cancel / cache / forget 语义，不代表 per-session worker fanout 或 fillability 收益。Ack / final response 仍由各
 `OrderSession` 按 `local_order_id` fan-in 到 `TradingRuntime -> OrderManager -> Strategy`；gateway 不解释 Ack，也不判定 winner。
 
-推荐 fanout 目标线程 / 进程模型：
+下一版 fanout 目标线程 / 进程模型：
 
 ```text
 strategy-process
@@ -129,15 +136,22 @@ strategy-process
       RouteTable(local_order_id -> session_index)
     OrderFeedbackShmReader
 
+order-gateway-process
   OrderSessionWorker[0]
+    command_queue[0] consumer
+    event_queue[0] producer
     OrderSession[0]
 
   OrderSessionWorker[1]
+    command_queue[1] consumer
+    event_queue[1] producer
     OrderSession[1]
 
   ...
 
   OrderSessionWorker[N-1]
+    command_queue[N-1] consumer
+    event_queue[N-1] producer
     OrderSession[N-1]
 
 gate-feedback-process
@@ -145,13 +159,14 @@ gate-feedback-process
 ```
 
 即 `OrderManager` 和 route table 仍由 strategy order owner thread 统一拥有；每条 `OrderSessionWorker[i]`
-独占一条 `OrderSession[i]` 和对应 trading WebSocket connection。`MultiOrderSessionGateway` 负责把已生成 child order
-路由到对应 worker，并把 cancel 按 route table 发回原 session。threaded gateway 下 `PlaceOrder()` 不能假装订单已经写到
-socket，只能表示请求已被对应 worker 接收或进入发送路径；真实 write / Ack / final response 必须经诊断字段和 response 事件回传。
+独占一条 `OrderSession[i]` 和对应 trading WebSocket connection。`OrderGatewayClient` 负责把已生成 child order
+路由到对应 `command_queue[i]`，并把 cancel / cache / forget 按 route table 发回原 session worker。该模型下
+`PlaceOrder()` 的 `kOk` 只表示 command 已进入 gateway queue，不表示已经写到 socket；真实 Ack / final response
+必须经 `event_queue[i]` 回到 `TradingRuntime -> OrderManager -> Strategy`。
 
 `1 thread : N OrderSession` 仍保留为 baseline / fallback，用于对照顺序 fanout 的成本。当前架构判断是：因为目标是同一信号
-尽量同时写入多条 connection，应先按 per-session worker capability 设计 ownership 和接口；若后续实测显示 worker queue /
-wakeup tail 抹掉收益，再回退到单 owner thread backend。独立 order-gateway process 只有在需要强隔离或多策略统一网关时才考虑。
+尽量同时写入多条 connection，应先按独立 `order-gateway-process` + per-session worker capability 设计 ownership 和接口；
+若后续实测显示 worker queue / wakeup tail 抹掉收益，再回退到单 owner thread backend。
 
 验证顺序建议先复用或扩展 `gate_order_session_rtt_probe` 的多连接能力，记录同一 fanout batch 内各 session 的
 `fanout_intent_ns`、`gateway_enqueue_ns`、`worker_dequeue_ns`、`write_start_ns`、`write_complete_ns`、
