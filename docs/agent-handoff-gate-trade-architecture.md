@@ -111,6 +111,12 @@ OrderManager
 - `Ready()` V1 可定义为至少一条 session ready，也可配置 `min_ready_sessions` 作为 live 前置检查；无论 N 多大，都必须有账号级限流 / pending cap，不能把多连接视为 N 倍账户容量。
 - 多路 `OrderSession` 层不解释 parent signal、child group、winner、fillability 或 overfill；这些信息只由策略 / OMS 和 `OrderManager` 的订单事实组合处理。
 
+当前最小实现已先落地 `1 thread : n OrderSession` baseline：`exchange/gate/trading/multi_order_session_gateway.h`
+运行时接收 session 列表，首个测试和实验配置使用 `n=4`。gateway 使用
+`core::StrategyOrder::gateway_route_id` 做显式 route hint，未指定时按 ready session round-robin；该 baseline 只验证
+route / cancel / cache / forget 语义，不代表 per-session worker fanout 或 fillability 收益。Ack / final response 仍由各
+`OrderSession` 按 `local_order_id` fan-in 到 `TradingRuntime -> OrderManager -> Strategy`；gateway 不解释 Ack，也不判定 winner。
+
 推荐 fanout 目标线程 / 进程模型：
 
 ```text

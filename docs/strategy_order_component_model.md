@@ -199,6 +199,10 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 - private `futures.orders` 仍由单个账号级 `OrderFeedbackSession` 接收并发布到 SHM；order feedback 不按 order session 拆分。
 - `MultiOrderSessionGateway` 不解释 parent signal、child group、winner、fillability 或 overfill；它只负责 route、send、cancel 和 session health / budget。
 
+最小 baseline 使用 `core::kAutoGatewayRoute` 表示 gateway 自选 route；显式 `gateway_route_id=0..n-1`
+表示发往运行时配置的某条 Gate order session。`OrderManager` 只复制该字段，不解释策略 fanout 语义。Ack response
+的业务入口仍是 `OrderManager::OnOrderResponse()`，route table 只服务 cancel / cache / forget 回原 session。
+
 推荐 fanout 目标线程模型是单 strategy process 内 `StrategyOrderOwnerThread` 拥有 `OrderManager`、route table 和
 `MultiOrderSessionGateway`，同时由 `OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。
 `1 thread : N OrderSession` 保留为 baseline / fallback；若 worker queue / wakeup / 同步回传的尾延迟实测差于顺序
