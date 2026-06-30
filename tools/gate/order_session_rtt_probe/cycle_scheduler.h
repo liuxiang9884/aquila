@@ -91,6 +91,18 @@ struct MultiSessionDispatchSchedulerOptions {
   std::uint64_t cycle_cooldown_us{0};
 };
 
+struct FanoutBatchDispatchSchedulerOptions {
+  std::size_t session_count{1};
+  std::uint64_t sample_count_per_session{1};
+  std::uint64_t cycle_cooldown_us{0};
+};
+
+struct FanoutBatchGrant {
+  std::uint64_t batch_index{0};
+  std::int64_t grant_ns{0};
+  std::vector<std::size_t> session_indices;
+};
+
 class MultiSessionDispatchScheduler {
  public:
   explicit MultiSessionDispatchScheduler(
@@ -193,6 +205,83 @@ class MultiSessionDispatchScheduler {
   bool waiting_for_cycle_cooldown_{false};
   std::uint64_t market_event_baseline_{0};
   std::int64_t interval_deadline_ns_{0};
+  std::int64_t cycle_deadline_ns_{0};
+};
+
+class FanoutBatchDispatchScheduler {
+ public:
+  explicit FanoutBatchDispatchScheduler(
+      FanoutBatchDispatchSchedulerOptions options)
+      : options_(options),
+        cycle_cooldown_ns_(
+            static_cast<std::int64_t>(options.cycle_cooldown_us) * 1'000) {}
+
+  [[nodiscard]] bool NextGrant(
+      const std::vector<std::uint64_t>& samples_started_by_session,
+      std::int64_t now_ns, FanoutBatchGrant* grant) {
+    if (grant == nullptr || options_.session_count == 0 ||
+        options_.sample_count_per_session == 0 ||
+        current_batch_ >= options_.sample_count_per_session) {
+      return false;
+    }
+    if (samples_started_by_session.size() < options_.session_count) {
+      return false;
+    }
+
+    ObserveOutstandingGrant(samples_started_by_session, now_ns);
+    if (current_batch_ >= options_.sample_count_per_session) {
+      return false;
+    }
+    if (grant_outstanding_) {
+      return false;
+    }
+    if (waiting_for_cycle_cooldown_) {
+      if (now_ns < cycle_deadline_ns_) {
+        return false;
+      }
+      waiting_for_cycle_cooldown_ = false;
+    }
+
+    grant->batch_index = current_batch_;
+    grant->grant_ns = now_ns;
+    grant->session_indices.clear();
+    grant->session_indices.reserve(options_.session_count);
+    for (std::size_t i = 0; i < options_.session_count; ++i) {
+      grant->session_indices.push_back(i);
+    }
+
+    grant_outstanding_ = true;
+    outstanding_target_started_ = current_batch_ + 1;
+    return true;
+  }
+
+ private:
+  void ObserveOutstandingGrant(
+      const std::vector<std::uint64_t>& samples_started_by_session,
+      std::int64_t now_ns) noexcept {
+    if (!grant_outstanding_) {
+      return;
+    }
+    for (std::size_t i = 0; i < options_.session_count; ++i) {
+      if (samples_started_by_session[i] < outstanding_target_started_) {
+        return;
+      }
+    }
+
+    grant_outstanding_ = false;
+    ++current_batch_;
+    if (current_batch_ < options_.sample_count_per_session) {
+      waiting_for_cycle_cooldown_ = true;
+      cycle_deadline_ns_ = now_ns + cycle_cooldown_ns_;
+    }
+  }
+
+  FanoutBatchDispatchSchedulerOptions options_;
+  std::int64_t cycle_cooldown_ns_{0};
+  std::uint64_t current_batch_{0};
+  bool grant_outstanding_{false};
+  std::uint64_t outstanding_target_started_{0};
+  bool waiting_for_cycle_cooldown_{false};
   std::int64_t cycle_deadline_ns_{0};
 };
 

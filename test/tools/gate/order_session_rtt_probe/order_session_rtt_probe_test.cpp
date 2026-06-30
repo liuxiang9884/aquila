@@ -2389,6 +2389,63 @@ TEST(GateOrderSessionRttProbeTest,
 }
 
 TEST(GateOrderSessionRttProbeTest,
+     FanoutBatchDispatchSchedulerGrantsAllSessionsTogether) {
+  FanoutBatchDispatchScheduler scheduler(FanoutBatchDispatchSchedulerOptions{
+      .session_count = 4,
+      .sample_count_per_session = 2,
+      .cycle_cooldown_us = 10000,
+  });
+  std::vector<std::uint64_t> samples_started = {0, 0, 0, 0};
+  FanoutBatchGrant grant;
+
+  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'000,
+                                  &grant));
+  EXPECT_EQ(grant.batch_index, 0U);
+  EXPECT_EQ(grant.grant_ns, 1'000'000);
+  EXPECT_EQ(grant.session_indices, std::vector<std::size_t>({0, 1, 2, 3}));
+
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'001,
+                                   &grant));
+  samples_started = {1, 1, 1, 0};
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'002,
+                                   &grant));
+  samples_started[3] = 1;
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'003,
+                                   &grant));
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/11'000'002,
+                                   &grant));
+
+  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/11'000'003,
+                                  &grant));
+  EXPECT_EQ(grant.batch_index, 1U);
+  EXPECT_EQ(grant.grant_ns, 11'000'003);
+  EXPECT_EQ(grant.session_indices, std::vector<std::size_t>({0, 1, 2, 3}));
+
+  samples_started = {2, 2, 2, 2};
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/21'000'003,
+                                   &grant));
+}
+
+TEST(GateOrderSessionRttProbeTest,
+     FanoutBatchDispatchSchedulerUsesRuntimeSessionCount) {
+  FanoutBatchDispatchScheduler scheduler(FanoutBatchDispatchSchedulerOptions{
+      .session_count = 2,
+      .sample_count_per_session = 1,
+      .cycle_cooldown_us = 10000,
+  });
+  std::vector<std::uint64_t> samples_started = {0, 0};
+  FanoutBatchGrant grant;
+
+  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/10'000,
+                                  &grant));
+  EXPECT_EQ(grant.session_indices, std::vector<std::size_t>({0, 1}));
+
+  samples_started = {1, 1};
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/20'000,
+                                   &grant));
+}
+
+TEST(GateOrderSessionRttProbeTest,
      DecidesSafetyCloseForGtcCancelRejectAndIocAck) {
   EXPECT_FALSE(ShouldSubmitGtcSafetyClose(
       SafetyCloseInput{.stage = ProbeStage::kGtcCancel,
