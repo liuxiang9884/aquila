@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -13,10 +14,12 @@
 #include <toml++/toml.hpp>
 
 #include "core/config/data_reader_config.h"
+#include "core/config/order_gateway_config.h"
 #include "core/config/strategy_config.h"
 #include "core/market_data/realtime_data_reader.h"
 #include "core/market_data/types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_gateway_client.h"
 #include "core/trading/order_types.h"
 #include "core/trading/trading_runtime.h"
 #include "exchange/gate/trading/decimal_size_header.h"
@@ -66,7 +69,10 @@ struct LoadedConfig {
   config::StrategyConfig strategy;
   config::DataReaderConfig data_reader;
   gate::OrderSessionConfig order_session;
+  config::OrderGatewayConfig order_gateway;
   leadlag::Config lead_lag;
+  live::LiveOrderExecutionBackend order_execution_backend{
+      live::LiveOrderExecutionBackend::kOrderSession};
 };
 
 struct SignalOnlyStats {
@@ -300,15 +306,38 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
   }
   loaded->data_reader = std::move(data_reader_result.value);
 
-  auto order_session_result = gate::LoadOrderSessionConfigFile(
-      loaded->strategy.order_session.config_path);
-  if (!order_session_result.ok) {
-    fmt::print(stderr, "[FAIL] order_session_config_error={}\n",
-               order_session_result.error);
-    NOVA_ERROR("order_session_config_error={}", order_session_result.error);
+  const live::LiveOrderExecutionBackendResult order_backend_result =
+      live::ResolveLiveOrderExecutionBackend(loaded->strategy);
+  if (!order_backend_result.ok) {
+    fmt::print(stderr, "[FAIL] order_backend_config_error={}\n",
+               order_backend_result.error);
+    NOVA_ERROR("order_backend_config_error={}", order_backend_result.error);
     return false;
   }
-  loaded->order_session = std::move(order_session_result.value);
+  loaded->order_execution_backend = order_backend_result.backend;
+
+  if (loaded->order_execution_backend ==
+      live::LiveOrderExecutionBackend::kOrderSession) {
+    auto order_session_result = gate::LoadOrderSessionConfigFile(
+        loaded->strategy.order_session.config_path);
+    if (!order_session_result.ok) {
+      fmt::print(stderr, "[FAIL] order_session_config_error={}\n",
+                 order_session_result.error);
+      NOVA_ERROR("order_session_config_error={}", order_session_result.error);
+      return false;
+    }
+    loaded->order_session = std::move(order_session_result.value);
+  } else {
+    auto order_gateway_result = config::LoadOrderGatewayConfigFile(
+        loaded->strategy.order_gateway.config_path);
+    if (!order_gateway_result.ok) {
+      fmt::print(stderr, "[FAIL] order_gateway_config_error={}\n",
+                 order_gateway_result.error);
+      NOVA_ERROR("order_gateway_config_error={}", order_gateway_result.error);
+      return false;
+    }
+    loaded->order_gateway = std::move(order_gateway_result.value);
+  }
 
   auto lead_lag_result =
       leadlag::LoadConfigFile(loaded->strategy.user_config_path,
@@ -359,6 +388,18 @@ void ApplyDurationOverride(const CliOptions& options, LoadedConfig* loaded) {
 
 void PrintLoadedConfigSummary(const CliOptions& options,
                               const LoadedConfig& loaded, live::RunMode mode) {
+  const bool uses_order_gateway =
+      loaded.order_execution_backend ==
+      live::LiveOrderExecutionBackend::kOrderGateway;
+  const std::string order_session_name =
+      uses_order_gateway ? "-" : loaded.order_session.name;
+  const std::string order_gateway_name =
+      uses_order_gateway ? loaded.order_gateway.name : "-";
+  const char* size_decimal_header =
+      !uses_order_gateway &&
+              gate::HasGateSizeDecimalHeader(loaded.order_session.connection)
+          ? "true"
+          : "false";
   fmt::print(
       "lead_lag_strategy run_mode={} execute={} connect_data={} config={} "
       "signals_output={}"
@@ -367,7 +408,8 @@ void PrintLoadedConfigSummary(const CliOptions& options,
 #endif
       " strategy_name={} mode={} strategy_id={} "
       "order_capacity={} max_loop_seconds={} reader_name={} sources={} "
-      "order_session={} size_decimal_header={} feedback_enabled={} "
+      "order_backend={} order_session={} order_gateway={} "
+      "size_decimal_header={} feedback_enabled={} "
       "feedback_shm={} "
       "feedback_channel={} feedback_poll_budget={} pairs={} "
       "smoke_open_close={} smoke_unfilled_cancel={} "
@@ -388,9 +430,9 @@ void PrintLoadedConfigSummary(const CliOptions& options,
       loaded.strategy.name, StrategyModeText(loaded.strategy.mode),
       loaded.strategy.strategy_id, loaded.strategy.order_capacity,
       loaded.strategy.loop.max_loop_seconds, loaded.data_reader.name,
-      loaded.data_reader.sources.size(), loaded.order_session.name,
-      gate::HasGateSizeDecimalHeader(loaded.order_session.connection) ? "true"
-                                                                      : "false",
+      loaded.data_reader.sources.size(),
+      live::LiveOrderExecutionBackendName(loaded.order_execution_backend),
+      order_session_name, order_gateway_name, size_decimal_header,
       loaded.strategy.feedback.enabled ? "true" : "false",
       loaded.strategy.feedback.shm_name, loaded.strategy.feedback.channel_name,
       loaded.strategy.feedback.poll_budget, loaded.lead_lag.pairs.size(),
@@ -612,7 +654,118 @@ int RunLiveOrdersRuntime(LoadedConfig loaded,
   return exit_code;
 }
 
+[[nodiscard]] core::OrderGatewayClientConfig ToOrderGatewayClientConfig(
+    const config::OrderGatewayConfig& gateway_config) {
+  return core::OrderGatewayClientConfig{
+      .shm_name = gateway_config.shm_name,
+      .route_count = gateway_config.route_count,
+      .command_queue_capacity = gateway_config.command_queue_capacity,
+      .event_queue_capacity = gateway_config.event_queue_capacity,
+      .startup_ready_timeout_s = gateway_config.startup_ready_timeout_s,
+  };
+}
+
+[[nodiscard]] core::OrderGatewayClient OpenOrderGatewayClientOrThrow(
+    const core::OrderGatewayClientConfig& client_config) {
+  auto client_result = core::OrderGatewayClient::Open(client_config);
+  if (!client_result.ok) {
+    throw std::runtime_error(client_result.error);
+  }
+  return std::move(client_result.value);
+}
+
+int RunLiveOrdersOrderGatewayRuntime(LoadedConfig loaded) {
+  using DataReader = market_data::RealtimeDataReader<
+      market_data::RealtimeDataReaderDiagnostics>;
+  using OrderGateway = core::OrderGatewayClient;
+  using Runtime =
+      core::TradingRuntime<live::LiveOrdersStrategy, OrderGateway, DataReader,
+                           core::TradingRuntimeDiagnostics>;
+
+  live::LiveOrdersStrategyStats stats;
+  const int strategy_id = loaded.strategy.strategy_id;
+  const std::size_t pair_count = loaded.lead_lag.pairs.size();
+  const std::uint64_t max_loop_seconds = loaded.strategy.loop.max_loop_seconds;
+  const bool feedback_enabled = loaded.strategy.feedback.enabled;
+  const std::string feedback_shm = loaded.strategy.feedback.shm_name;
+  const std::string feedback_channel = loaded.strategy.feedback.channel_name;
+  const std::string data_reader_name = loaded.data_reader.name;
+  const std::size_t data_reader_sources = loaded.data_reader.sources.size();
+  const std::string order_gateway_name = loaded.order_gateway.name;
+  const std::uint16_t route_count = loaded.order_gateway.route_count;
+  const core::OrderGatewayClientConfig client_config =
+      ToOrderGatewayClientConfig(loaded.order_gateway);
+  auto runtime_result = Runtime::Create(
+      std::move(loaded.strategy), std::move(loaded.data_reader),
+      [client_config] {
+        return OpenOrderGatewayClientOrThrow(client_config);
+      },
+      std::move(loaded.lead_lag), &stats);
+  if (!runtime_result.ok) {
+    fmt::print(stderr, "[FAIL] runtime_create_error={}\n",
+               runtime_result.error);
+    NOVA_ERROR("runtime_create_error={}", runtime_result.error);
+    return 1;
+  }
+
+  NOVA_INFO(
+      "lead_lag_live_orders_runtime_started strategy_id={} pairs={} "
+      "max_loop_seconds={} feedback_enabled={} feedback_shm={} "
+      "feedback_channel={} order_backend=order_gateway order_gateway={} "
+      "routes={} data_reader={} sources={}",
+      strategy_id, pair_count, max_loop_seconds,
+      feedback_enabled ? "true" : "false", feedback_shm, feedback_channel,
+      order_gateway_name, route_count, data_reader_name, data_reader_sources);
+
+  const int runtime_exit_code = runtime_result.value->Run();
+  const int exit_code =
+      live::ResolveLiveOrdersExitCode(runtime_exit_code, stats);
+  const core::TradingRuntimeLoopStats& loop_stats =
+      runtime_result.value->diagnostics().stats();
+  const core::StrategyFeedbackStats& feedback_stats =
+      runtime_result.value->order_manager().feedback_stats();
+  const std::string recovery_fields =
+      live::FormatRecoveryDiagnosticsFields(stats.recovery);
+
+  if (stats.continuity_lost_stop_requested) {
+    fmt::print(stderr,
+               "[FAIL] lead_lag live order feedback continuity lost; "
+               "runtime stopped; run emergency flatten before restart\n");
+    NOVA_ERROR(
+        "lead_lag live order feedback continuity lost; runtime stopped; "
+        "run emergency flatten before restart");
+  }
+
+  fmt::print(
+      "lead_lag_strategy_live_orders_summary exit_code={} "
+      "runtime_exit_code={} emergency_handoff={} book_tickers={} "
+      "order_responses={} order_feedbacks={} {} loop_iterations={} "
+      "idle_iterations={} order_response_polls={} order_response_events={} "
+      "order_feedback_polls={} order_feedback_events={} data_reader_polls={} "
+      "data_reader_empty_polls={} data_reader_events={} "
+      "unknown_local_order_feedbacks={} duplicate_or_stale_feedbacks={} "
+      "terminal_feedbacks_ignored={} feedback_continuity_lost_events={}\n",
+      exit_code, runtime_exit_code,
+      stats.continuity_lost_stop_requested ? "true" : "false",
+      stats.book_tickers, stats.order_responses, stats.order_feedbacks,
+      recovery_fields, loop_stats.loop_iterations, loop_stats.idle_iterations,
+      loop_stats.order_response_poll_calls, loop_stats.order_response_events,
+      loop_stats.order_feedback_poll_calls, loop_stats.order_feedback_events,
+      loop_stats.data_reader_poll_calls, loop_stats.data_reader_empty_polls,
+      loop_stats.data_reader_events,
+      feedback_stats.unknown_local_order_feedbacks,
+      feedback_stats.duplicate_or_stale_feedbacks,
+      feedback_stats.terminal_feedbacks_ignored,
+      feedback_stats.feedback_continuity_lost_events);
+  return exit_code;
+}
+
 int RunLiveOrders(LoadedConfig loaded, const CliOptions& options) {
+  if (loaded.order_execution_backend ==
+      live::LiveOrderExecutionBackend::kOrderGateway) {
+    return RunLiveOrdersOrderGatewayRuntime(std::move(loaded));
+  }
+
   bool credentials_ok = false;
   gate::LoginCredentials credentials =
       LoadCredentials(options, loaded.order_session, &credentials_ok);
@@ -626,6 +779,23 @@ int RunLiveOrders(LoadedConfig loaded, const CliOptions& options) {
   }
   return RunLiveOrdersRuntime<gate::OrderSessionDefaultPlainWebSocketPolicy>(
       std::move(loaded), std::move(credentials));
+}
+
+bool RequireSingleOrderSessionBackend(const LoadedConfig& loaded,
+                                      std::string_view mode_name) {
+  if (loaded.order_execution_backend ==
+      live::LiveOrderExecutionBackend::kOrderSession) {
+    return true;
+  }
+  fmt::print(stderr,
+             "[FAIL] {} currently requires strategy.order_session; "
+             "strategy.order_gateway is only wired for live_orders\n",
+             mode_name);
+  NOVA_ERROR(
+      "{} currently requires strategy.order_session; strategy.order_gateway is "
+      "only wired for live_orders",
+      mode_name);
+  return false;
 }
 
 template <typename WebSocketPolicy>
@@ -713,6 +883,10 @@ int RunLiveOpenCloseSmokeRuntime(LoadedConfig loaded,
 }
 
 int RunLiveOpenCloseSmoke(LoadedConfig loaded, const CliOptions& options) {
+  if (!RequireSingleOrderSessionBackend(loaded, "live_open_close_smoke")) {
+    return 2;
+  }
+
   bool credentials_ok = false;
   gate::LoginCredentials credentials =
       LoadCredentials(options, loaded.order_session, &credentials_ok);
@@ -815,6 +989,10 @@ int RunLiveUnfilledCancelSmokeRuntime(LoadedConfig loaded,
 }
 
 int RunLiveUnfilledCancelSmoke(LoadedConfig loaded, const CliOptions& options) {
+  if (!RequireSingleOrderSessionBackend(loaded, "live_unfilled_cancel_smoke")) {
+    return 2;
+  }
+
   bool credentials_ok = false;
   gate::LoginCredentials credentials =
       LoadCredentials(options, loaded.order_session, &credentials_ok);
@@ -916,6 +1094,10 @@ int RunLiveSubmitRejectSmokeRuntime(LoadedConfig loaded,
 }
 
 int RunLiveSubmitRejectSmoke(LoadedConfig loaded, const CliOptions& options) {
+  if (!RequireSingleOrderSessionBackend(loaded, "live_submit_reject_smoke")) {
+    return 2;
+  }
+
   bool credentials_ok = false;
   gate::LoginCredentials credentials =
       LoadCredentials(options, loaded.order_session, &credentials_ok);

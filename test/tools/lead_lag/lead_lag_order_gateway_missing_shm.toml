@@ -1,0 +1,12 @@
+[order_gateway]
+name = "lead_lag_test_order_gateway"
+shm_name = "aquila_test_missing_order_gateway_shm"
+route_count = 1
+command_queue_capacity = 8
+event_queue_capacity = 8
+startup_ready_timeout_s = 1
+
+[[order_gateway.routes]]
+name = "route0"
+order_session_config = "config/order_sessions/gate_order_session.toml"
+worker_cpu_id = -1

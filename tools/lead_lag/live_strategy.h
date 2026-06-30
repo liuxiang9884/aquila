@@ -45,6 +45,17 @@ struct RunModeResult {
   std::string error;
 };
 
+enum class LiveOrderExecutionBackend : std::uint8_t {
+  kOrderSession,
+  kOrderGateway,
+};
+
+struct LiveOrderExecutionBackendResult {
+  bool ok{false};
+  LiveOrderExecutionBackend backend{LiveOrderExecutionBackend::kOrderSession};
+  std::string error;
+};
+
 struct RecoveryDiagnostics {
   strategy::leadlag::RecoveryState recovery_state{
       strategy::leadlag::RecoveryState::kNormal};
@@ -1202,6 +1213,39 @@ class LiveSubmitRejectSmokeStrategy {
   return static_cast<std::uint8_t>(selection.open_close) +
          static_cast<std::uint8_t>(selection.unfilled_cancel) +
          static_cast<std::uint8_t>(selection.submit_reject);
+}
+
+[[nodiscard]] inline const char* LiveOrderExecutionBackendName(
+    LiveOrderExecutionBackend backend) noexcept {
+  switch (backend) {
+    case LiveOrderExecutionBackend::kOrderSession:
+      return "order_session";
+    case LiveOrderExecutionBackend::kOrderGateway:
+      return "order_gateway";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] inline LiveOrderExecutionBackendResult
+ResolveLiveOrderExecutionBackend(const config::StrategyConfig& config) {
+  const bool has_order_session = !config.order_session.config_path.empty();
+  const bool has_order_gateway = !config.order_gateway.config_path.empty();
+  if (has_order_session && has_order_gateway) {
+    return {.ok = false,
+            .backend = LiveOrderExecutionBackend::kOrderSession,
+            .error = "strategy.order_session / strategy.order_gateway are "
+                     "mutually exclusive"};
+  }
+  if (!has_order_session && !has_order_gateway) {
+    return {.ok = false,
+            .backend = LiveOrderExecutionBackend::kOrderSession,
+            .error = "strategy.order_session / strategy.order_gateway one "
+                     "section is required"};
+  }
+  return {.ok = true,
+          .backend = has_order_gateway
+                         ? LiveOrderExecutionBackend::kOrderGateway
+                         : LiveOrderExecutionBackend::kOrderSession};
 }
 
 [[nodiscard]] inline RunModeResult ResolveRunMode(

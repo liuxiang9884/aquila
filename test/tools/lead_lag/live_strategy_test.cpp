@@ -1,3 +1,5 @@
+#include <sys/mman.h>
+
 #include "tools/lead_lag/live_strategy.h"
 
 #include <cstdint>
@@ -10,7 +12,10 @@
 
 #include "core/config/strategy_config.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_gateway_client.h"
+#include "core/trading/order_gateway_shm.h"
 #include "core/trading/order_types.h"
+#include "core/trading/trading_runtime.h"
 #include "nova/utils/log.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/execution_state.h"
@@ -294,6 +299,90 @@ TEST(LeadLagLiveStrategyTest, ExecuteTakesPriorityOverConnectDataWithLiveMode) {
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.mode, RunMode::kLiveOrders);
+}
+
+TEST(LeadLagLiveStrategyTest, LiveOrdersBackendSelectsSingleOrderSession) {
+  aquila::config::StrategyConfig config;
+  config.order_session.config_path = "session.toml";
+
+  const LiveOrderExecutionBackendResult result =
+      ResolveLiveOrderExecutionBackend(config);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.backend, LiveOrderExecutionBackend::kOrderSession);
+  EXPECT_STREQ(LiveOrderExecutionBackendName(result.backend), "order_session");
+}
+
+TEST(LeadLagLiveStrategyTest, LiveOrdersBackendSelectsOrderGateway) {
+  aquila::config::StrategyConfig config;
+  config.order_gateway.config_path = "gateway.toml";
+
+  const LiveOrderExecutionBackendResult result =
+      ResolveLiveOrderExecutionBackend(config);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.backend, LiveOrderExecutionBackend::kOrderGateway);
+  EXPECT_STREQ(LiveOrderExecutionBackendName(result.backend), "order_gateway");
+}
+
+TEST(LeadLagLiveStrategyTest,
+     LiveOrdersBackendRejectsBothSingleSessionAndOrderGateway) {
+  aquila::config::StrategyConfig config;
+  config.order_session.config_path = "session.toml";
+  config.order_gateway.config_path = "gateway.toml";
+
+  const LiveOrderExecutionBackendResult result =
+      ResolveLiveOrderExecutionBackend(config);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("mutually exclusive"), std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest, LiveOrdersBackendRejectsMissingOrderBackend) {
+  const aquila::config::StrategyConfig config;
+
+  const LiveOrderExecutionBackendResult result =
+      ResolveLiveOrderExecutionBackend(config);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("one section is required"), std::string::npos);
+}
+
+TEST(LeadLagLiveStrategyTest,
+     LiveOrdersOrderGatewayStartupTimeoutReturnsRuntimeFailure) {
+  aquila::core::OrderGatewayShmConfig shm_config{
+      .shm_name = "aquila_live_strategy_gateway_timeout_test",
+      .create = true,
+      .remove_existing = true,
+      .route_count = 1,
+      .command_queue_capacity = 8,
+      .event_queue_capacity = 8,
+      .startup_ready_timeout_s = 1,
+  };
+  auto shm_result = aquila::core::OrderGatewayShmManager::Create(shm_config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  auto client_result =
+      aquila::core::OrderGatewayClient::Attach(std::move(shm_result.value));
+  ASSERT_TRUE(client_result.ok) << client_result.error;
+
+  aquila::config::StrategyConfig strategy_config;
+  strategy_config.strategy_id = 4;
+  strategy_config.order_capacity = 8;
+  strategy_config.feedback.enabled = false;
+
+  using Runtime =
+      aquila::core::TradingRuntime<LiveOrdersStrategy,
+                                   aquila::core::OrderGatewayClient>;
+  auto runtime_result = Runtime::CreateForTest(
+      std::move(strategy_config),
+      [client = std::move(client_result.value)]() mutable {
+        return std::move(client);
+      },
+      MakeLeadLagConfig());
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+
+  EXPECT_EQ(runtime_result.value->Run(), 1);
+  ::shm_unlink("/aquila_live_strategy_gateway_timeout_test");
 }
 
 TEST(LeadLagLiveStrategyTest, RunModeNameReturnsStableSummaryText) {

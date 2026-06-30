@@ -41,6 +41,15 @@ set_tests_properties(lead_lag_live_strategy_orders_missing_credentials_smoke
                      PROPERTIES
                          WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+add_test(NAME lead_lag_live_strategy_order_gateway_missing_shm_smoke
+         COMMAND ${CMAKE_COMMAND}
+                 -DLEAD_LAG_STRATEGY=$<TARGET_FILE:lead_lag_strategy>
+                 -DLEAD_LAG_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_gateway_strategy.toml
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_gateway_missing_shm_smoke.cmake)
+set_tests_properties(lead_lag_live_strategy_order_gateway_missing_shm_smoke
+                     PROPERTIES
+                         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
 add_executable(lead_lag_freshness_preflight_test
     freshness_preflight_test.cpp
     ${PROJECT_SOURCE_DIR}/tools/lead_lag/freshness_preflight.cpp
