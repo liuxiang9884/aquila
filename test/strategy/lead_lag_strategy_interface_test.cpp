@@ -540,6 +540,7 @@ struct FakeOrderSession {
 
   struct CapturedOrder {
     std::uint64_t local_order_id{0};
+    std::uint64_t parent_id{0};
     aquila::Exchange exchange{aquila::Exchange::kGate};
     std::int32_t symbol_id{0};
     std::string symbol;
@@ -550,11 +551,13 @@ struct FakeOrderSession {
     std::string quantity_text;
     std::string price_text;
     bool reduce_only{false};
+    std::uint16_t gateway_route_id{aquila::core::kAutoGatewayRoute};
   };
 
   SendResult PlaceOrder(aquila::core::StrategyOrder& order) noexcept {
     placed_orders.push_back(CapturedOrder{
         .local_order_id = order.local_order_id,
+        .parent_id = order.parent_id,
         .exchange = order.exchange,
         .symbol_id = order.symbol_id,
         .symbol = std::string(order.symbol),
@@ -566,7 +569,12 @@ struct FakeOrderSession {
         .price_text =
             capture_price_text ? std::string(order.price_text) : std::string{},
         .reduce_only = order.reduce_only,
+        .gateway_route_id = order.gateway_route_id,
     });
+    if (reject_next_place_count > 0) {
+      --reject_next_place_count;
+      return {.status = SendStatus::kRejected};
+    }
     return {.status = next_place_status};
   }
 
@@ -575,6 +583,7 @@ struct FakeOrderSession {
   }
 
   SendStatus next_place_status{SendStatus::kOk};
+  std::uint32_t reject_next_place_count{0};
   bool capture_price_text{true};
   std::vector<CapturedOrder> placed_orders;
 };
@@ -716,6 +725,23 @@ leadlag::Config SignalOnlyConfigWithCloseRetry(
   config.pairs[0].execute.close_retry_times = close_retry_times;
   config.pairs[0].execute.close_retry_slippage_step_ticks =
       close_retry_slippage_step_ticks;
+  return config;
+}
+
+leadlag::Config SignalOnlyConfigWithFanout(std::uint32_t fanout) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.order_session_fanout = fanout;
+  return config;
+}
+
+leadlag::Config SignalOnlyConfigWithCloseRetryAndFanout(
+    std::uint32_t close_slippage_ticks, std::uint32_t stoploss_slippage_ticks,
+    std::uint32_t close_retry_times,
+    std::uint32_t close_retry_slippage_step_ticks, std::uint32_t fanout) {
+  leadlag::Config config = SignalOnlyConfigWithCloseRetry(
+      close_slippage_ticks, stoploss_slippage_ticks, close_retry_times,
+      close_retry_slippage_step_ticks);
+  config.pairs[0].execute.order_session_fanout = fanout;
   return config;
 }
 
@@ -1074,6 +1100,81 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_TRUE(strategy.last_signal_diagnostics_valid());
   EXPECT_EQ(strategy.last_signal_diagnostics().group_id, decision.group_id);
   EXPECT_EQ(strategy.last_signal_diagnostics().active_group_count, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeFanoutOpenPlacesOneFullOrderPerRoute) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithFanout(4)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
+  ASSERT_NE(parent_id, 0U);
+  EXPECT_EQ(parent_id, strategy.last_signal_decision().group_id);
+  std::vector<std::uint64_t> local_order_ids;
+  for (std::size_t i = 0; i < order_session.placed_orders.size(); ++i) {
+    const FakeOrderSession::CapturedOrder& order =
+        order_session.placed_orders[i];
+    local_order_ids.push_back(order.local_order_id);
+    EXPECT_EQ(order.parent_id, parent_id);
+    EXPECT_EQ(order.gateway_route_id, i);
+    EXPECT_EQ(order.side, aquila::OrderSide::kBuy);
+    EXPECT_FALSE(order.reduce_only);
+    EXPECT_EQ(order.quantity, 9);
+    EXPECT_EQ(order.price_text, "102.1");
+  }
+  EXPECT_NE(local_order_ids[0], local_order_ids[1]);
+  EXPECT_NE(local_order_ids[1], local_order_ids[2]);
+  EXPECT_NE(local_order_ids[2], local_order_ids[3]);
+  EXPECT_EQ(strategy.last_signal_diagnostics().active_group_count, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest, FanoutOpenRiskChecksTotalSubmittedNotional) {
+  leadlag::Config config = SignalOnlyConfigWithFanout(4);
+  config.risk.max_gross_notional = 2000.0;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kRiskLimit);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutPartialTerminalOpenCountsFilledChildForGrossRisk) {
+  leadlag::Config config = TwoPairSignalOnlyConfig();
+  for (leadlag::PairConfig& pair : config.pairs) {
+    pair.execute.order_session_fanout = 4;
+  }
+  config.risk.max_gross_notional = 6600.0;
+  config.risk.max_holding_position = 1'000.0;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 3);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(order_session.placed_orders[0].local_order_id, 3, 102.1));
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 7);
+
+  EXPECT_EQ(order_session.placed_orders.size(), 4U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kRiskLimit);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -1744,6 +1845,52 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeFanoutCloseUsesAggregatedFilledQuantity) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithFanout(4)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
+  const std::uint64_t first_open_order_id =
+      order_session.placed_orders[0].local_order_id;
+  const std::uint64_t second_open_order_id =
+      order_session.placed_orders[1].local_order_id;
+  const std::uint64_t third_open_order_id =
+      order_session.placed_orders[2].local_order_id;
+  const std::uint64_t fourth_open_order_id =
+      order_session.placed_orders[3].local_order_id;
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(first_open_order_id, 3, 101.0));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(second_open_order_id, 4, 104.0));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(third_open_order_id, 0, 9, 0.0));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(fourth_open_order_id, 0, 9, 0.0));
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 8U);
+  for (std::size_t i = 4; i < 8; ++i) {
+    const FakeOrderSession::CapturedOrder& close_order =
+        order_session.placed_orders[i];
+    EXPECT_EQ(close_order.parent_id, parent_id);
+    EXPECT_EQ(close_order.gateway_route_id, i - 4);
+    EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
+    EXPECT_TRUE(close_order.reduce_only);
+    EXPECT_EQ(close_order.quantity, 7);
+    EXPECT_EQ(close_order.price_text, "101.5");
+  }
+  EXPECT_NEAR(strategy.last_signal_decision().trailing_price,
+              ((3.0 * 101.0) + (4.0 * 104.0)) / 7.0, 1e-12);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      ExternalModeAppliesCloseSlippageToCloseLongOrder) {
   leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(0, 3)};
   FakeOrderSession order_session;
@@ -1992,6 +2139,56 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(order_session.placed_orders.size(), 3U);
 }
 
+TEST(LeadLagStrategyInterfaceTest, ExternalModeFanoutRetriesCloseRemaining) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithCloseRetryAndFanout(
+      /*close_slippage_ticks=*/3, /*stoploss_slippage_ticks=*/2,
+      /*close_retry_times=*/1, /*close_retry_slippage_step_ticks=*/2,
+      /*fanout=*/4)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 24, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  const std::uint64_t open_parent_id = order_session.placed_orders[0].parent_id;
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(order_session.placed_orders[0].local_order_id, 7, 102.1));
+  for (std::size_t i = 1; i < 4; ++i) {
+    ApplyFeedback(
+        &strategy, &order_manager, &context,
+        CancelledFeedback(order_session.placed_orders[i].local_order_id, 0, 9,
+                          0.0));
+  }
+
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 8U);
+  for (std::size_t i = 4; i < 8; ++i) {
+    const double filled = i == 4 ? 3.0 : 0.0;
+    const double cancelled = i == 4 ? 4.0 : 7.0;
+    ApplyFeedback(
+        &strategy, &order_manager, &context,
+        CancelledFeedback(order_session.placed_orders[i].local_order_id, filled,
+                          cancelled, 101.5));
+  }
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
+                        context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 12U);
+  for (std::size_t i = 8; i < 12; ++i) {
+    const FakeOrderSession::CapturedOrder& retry_close =
+        order_session.placed_orders[i];
+    EXPECT_EQ(retry_close.parent_id, open_parent_id);
+    EXPECT_EQ(retry_close.gateway_route_id, i - 8);
+    EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
+    EXPECT_TRUE(retry_close.reduce_only);
+    EXPECT_EQ(retry_close.price_text, "101.0");
+    EXPECT_EQ(retry_close.quantity, 4);
+  }
+}
+
 TEST(LeadLagStrategyInterfaceTest,
      ExternalModeUsesFilledPositionQuantityForStoplossOrder) {
   leadlag::Strategy strategy{SignalOnlyConfigWithSlippage(0, 2)};
@@ -2020,6 +2217,47 @@ TEST(LeadLagStrategyInterfaceTest,
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
   ASSERT_TRUE(decision.triggered);
   EXPECT_EQ(decision.action, leadlag::SignalAction::kStoplossLong);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeFanoutStoplossUsesAggregatedFilledQuantity) {
+  leadlag::Config config = SignalOnlyConfigWithSlippage(0, 2);
+  config.pairs[0].execute.order_session_fanout = 4;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(order_session.placed_orders[0].local_order_id, 3, 102.1));
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(order_session.placed_orders[1].local_order_id, 4, 102.1));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(order_session.placed_orders[2].local_order_id,
+                                  0, 9, 0.0));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(order_session.placed_orders[3].local_order_id,
+                                  0, 9, 0.0));
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 95.0, 96.0),
+                        context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 8U);
+  for (std::size_t i = 4; i < 8; ++i) {
+    const FakeOrderSession::CapturedOrder& stoploss_order =
+        order_session.placed_orders[i];
+    EXPECT_EQ(stoploss_order.parent_id, parent_id);
+    EXPECT_EQ(stoploss_order.gateway_route_id, i - 4);
+    EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
+    EXPECT_TRUE(stoploss_order.reduce_only);
+    EXPECT_EQ(stoploss_order.price_text, "94.3");
+    EXPECT_EQ(stoploss_order.quantity, 7);
+  }
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -2251,6 +2489,56 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     FanoutUnknownOpenResultWaitsForEveryUnknownChild) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithFanout(4)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  const std::uint64_t first_unknown_id =
+      order_session.placed_orders[0].local_order_id;
+  const std::uint64_t second_unknown_id =
+      order_session.placed_orders[1].local_order_id;
+
+  ApplyResponse(&strategy, &order_manager, &context,
+                aquila::core::OrderResponseEvent{
+                    .kind = aquila::core::OrderResponseKind::kUnknownResult,
+                    .local_order_id = first_unknown_id,
+                    .local_receive_ns = 1234,
+                    .exchange_ns = 1200,
+                });
+  ApplyResponse(&strategy, &order_manager, &context,
+                aquila::core::OrderResponseEvent{
+                    .kind = aquila::core::OrderResponseKind::kUnknownResult,
+                    .local_order_id = second_unknown_id,
+                    .local_receive_ns = 1235,
+                    .exchange_ns = 1201,
+                });
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(first_unknown_id, 3, 102.1));
+
+  EXPECT_TRUE(strategy.needs_reconcile());
+  EXPECT_TRUE(strategy.new_entries_paused());
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(second_unknown_id, 4, 102.1));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(order_session.placed_orders[2].local_order_id,
+                                  0, 9, 0.0));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(order_session.placed_orders[3].local_order_id,
+                                  0, 9, 0.0));
+
+  EXPECT_FALSE(strategy.needs_reconcile());
+  EXPECT_FALSE(strategy.new_entries_paused());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      ExternalModeRejectedCloseReturnsHoldAndCanRetry) {
   leadlag::Strategy strategy{
       SignalOnlyConfigWithCloseRetry(/*close_slippage_ticks=*/3,
@@ -2294,6 +2582,98 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_TRUE(retry_close.reduce_only);
   EXPECT_EQ(retry_close.price_text, "101.0");
   EXPECT_EQ(retry_close.quantity, 7);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutSyncRejectedCloseAdvancesRetrySlippage) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithCloseRetryAndFanout(
+      /*close_slippage_ticks=*/3, /*stoploss_slippage_ticks=*/2,
+      /*close_retry_times=*/1, /*close_retry_slippage_step_ticks=*/2,
+      /*fanout=*/4)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 24, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(order_session.placed_orders[0].local_order_id, 7, 102.1));
+  for (std::size_t i = 1; i < 4; ++i) {
+    ApplyFeedback(
+        &strategy, &order_manager, &context,
+        CancelledFeedback(order_session.placed_orders[i].local_order_id, 0, 9,
+                          0.0));
+  }
+
+  order_session.next_place_status = FakeOrderSession::SendStatus::kRejected;
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 8U);
+  EXPECT_EQ(order_manager.order_count(), 0U);
+
+  order_session.next_place_status = FakeOrderSession::SendStatus::kOk;
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
+                        context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 12U);
+  for (std::size_t i = 8; i < 12; ++i) {
+    const FakeOrderSession::CapturedOrder& retry_close =
+        order_session.placed_orders[i];
+    EXPECT_TRUE(retry_close.reduce_only);
+    EXPECT_EQ(retry_close.price_text, "101.0");
+    EXPECT_EQ(retry_close.quantity, 7);
+  }
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutMixedSyncRejectedCloseRetriesRemainingOnce) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithCloseRetryAndFanout(
+      /*close_slippage_ticks=*/3, /*stoploss_slippage_ticks=*/2,
+      /*close_retry_times=*/1, /*close_retry_slippage_step_ticks=*/2,
+      /*fanout=*/4)};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 24, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(order_session.placed_orders[0].local_order_id, 7, 102.1));
+  for (std::size_t i = 1; i < 4; ++i) {
+    ApplyFeedback(
+        &strategy, &order_manager, &context,
+        CancelledFeedback(order_session.placed_orders[i].local_order_id, 0, 9,
+                          0.0));
+  }
+
+  order_session.reject_next_place_count = 2;
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 8U);
+  EXPECT_EQ(order_manager.order_count(), 2U);
+
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      CancelledFeedback(order_session.placed_orders[6].local_order_id, 3, 4,
+                        101.5));
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      CancelledFeedback(order_session.placed_orders[7].local_order_id, 0, 7,
+                        0.0));
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
+                        context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 12U);
+  for (std::size_t i = 8; i < 12; ++i) {
+    const FakeOrderSession::CapturedOrder& retry_close =
+        order_session.placed_orders[i];
+    EXPECT_TRUE(retry_close.reduce_only);
+    EXPECT_EQ(retry_close.price_text, "101.0");
+    EXPECT_EQ(retry_close.quantity, 4);
+  }
 }
 
 TEST(LeadLagStrategyInterfaceTest,

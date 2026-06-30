@@ -1027,6 +1027,12 @@ class Strategy {
     ExecutionGroup* close_group{nullptr};
   };
 
+  struct ExternalOrderSubmitResult {
+    std::uint64_t local_order_id{0};
+    bool accepted{false};
+    bool rejected_tracked{false};
+  };
+
   [[nodiscard]] SignalTiming MarketTimingForOrder(
       const core::StrategyOrder* order) const noexcept {
     if (order == nullptr) {
@@ -1182,7 +1188,8 @@ class Strategy {
       if (route == nullptr || route->market == nullptr) {
         continue;
       }
-      price_text_slot_count += pair.execute.parallel;
+      price_text_slot_count += static_cast<std::size_t>(pair.execute.parallel) *
+                               EffectiveOrderSessionFanout(pair.execute);
       PairRuntimeState& runtime =
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
       runtime.initialized = true;
@@ -1216,6 +1223,14 @@ class Strategy {
            pair.bbo_record.stats_window_ns > 0 &&
            pair.trigger.quantile.up_max > pair.trigger.quantile.up_min &&
            pair.trigger.quantile.down_max > pair.trigger.quantile.down_min;
+  }
+
+  [[nodiscard]] static std::uint32_t EffectiveOrderSessionFanout(
+      const ExecuteConfig& execute) noexcept {
+    if (execute.order_session_fanout == 0) {
+      return 1;
+    }
+    return std::min(execute.order_session_fanout, kMaxOrderSessionFanout);
   }
 
   [[nodiscard]] static bool OrderDecimalPlacesWithinRuntimeBounds(
@@ -1829,8 +1844,10 @@ class Strategy {
   [[nodiscard]] core::OrderPlaceResult PlacePreparedExternalOrder(
       ContextT& context, std::string_view symbol,
       const PreparedOrderQuantity& quantity,
-      const OrderPriceTextStorage& order_text_storage) noexcept {
+      const OrderPriceTextStorage& order_text_storage, std::uint64_t parent_id,
+      std::uint16_t route_id) noexcept {
     return context.PlaceOrder(core::OrderCreateRequest{
+        .parent_id = parent_id,
         .exchange = last_signal_decision_.intent.exchange,
         .symbol_id = last_signal_decision_.intent.symbol_id,
         .symbol = symbol,
@@ -1841,6 +1858,7 @@ class Strategy {
         .quantity_text = order_text_storage.quantity_view(),
         .price_text = order_text_storage.price_view(),
         .reduce_only = last_signal_decision_.intent.reduce_only,
+        .gateway_route_id = route_id,
     });
   }
 
@@ -1931,43 +1949,40 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void SubmitPreparedExternalOrder(
+  [[nodiscard]] ExternalOrderSubmitResult SubmitPreparedExternalOrder(
       PairRuntimeState* runtime, const BookTicker& trigger_ticker,
-      PairRole signal_role, ContextT& context,
+      PairRole signal_role, ContextT& context, ExecutionGroup* submit_group,
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
-      double order_notional,
-      OrderPriceTextStorage* order_text_storage) noexcept {
-    LogPreparedOrderIntent(*runtime, symbol, instrument, price, quantity,
-                           order_notional);
-
+      double order_notional, OrderPriceTextStorage* order_text_storage,
+      std::uint64_t parent_id, std::uint16_t route_id) noexcept {
     const core::OrderPlaceResult placed = PlacePreparedExternalOrder(
-        context, symbol, quantity, *order_text_storage);
+        context, symbol, quantity, *order_text_storage, parent_id, route_id);
     if (placed.local_order_id == 0) {
       LogExternalOrderPlaceRejected(runtime, symbol, instrument, price,
                                     quantity, order_notional, placed);
       ReleaseOrderPriceText(order_text_storage);
-      return;
+      return {};
     }
     order_text_storage->local_order_id = placed.local_order_id;
-    HandleExternalOrderPlaceResult(runtime, trigger_ticker, signal_role,
-                                   context, instrument, symbol, price, quantity,
-                                   order_notional, order_text_storage, placed);
+    return HandleExternalOrderPlaceResult(
+        runtime, trigger_ticker, signal_role, context, submit_group, instrument,
+        symbol, price, quantity, order_notional, order_text_storage, placed);
   }
 
   template <typename ContextT>
-  void HandleExternalOrderPlaceResult(
+  [[nodiscard]] ExternalOrderSubmitResult HandleExternalOrderPlaceResult(
       PairRuntimeState* runtime, const BookTicker& trigger_ticker,
-      PairRole signal_role, ContextT& context,
+      PairRole signal_role, ContextT& context, ExecutionGroup* submit_group,
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OrderPriceTextStorage* order_text_storage,
       const core::OrderPlaceResult& placed) noexcept {
     if (placed.status == core::OrderPlaceStatus::kOk) {
-      const bool tracked = OnExternalOrderAccepted(
-          runtime, quantity.close_group, placed.local_order_id);
+      const bool tracked =
+          OnExternalOrderAccepted(runtime, submit_group, placed.local_order_id);
       if (!tracked) {
-        return;
+        return {.local_order_id = placed.local_order_id};
       }
       LogExternalOrderSubmitted(runtime, trigger_ticker, signal_role,
                                 instrument, symbol, price, quantity,
@@ -1975,13 +1990,19 @@ class Strategy {
       if (!last_signal_decision_.intent.reduce_only) {
         ReserveOpenRisk(order_text_storage, quantity.quantity, order_notional);
       }
-      return;
+      return {.local_order_id = placed.local_order_id, .accepted = true};
     }
 
     LogExternalOrderPlaceRejected(runtime, symbol, instrument, price, quantity,
                                   order_notional, placed);
-    RollbackRejectedSubmit(runtime, quantity.close_group, placed.local_order_id,
-                           context);
+    if (TrackRejectedSubmit(runtime, submit_group, placed.local_order_id)) {
+      return {.local_order_id = placed.local_order_id,
+              .rejected_tracked = true};
+    }
+    if (context.RetireFinishedOrder(placed.local_order_id)) {
+      EraseOrderPriceText(placed.local_order_id);
+    }
+    return {.local_order_id = placed.local_order_id};
   }
 
   template <typename ContextT>
@@ -2016,28 +2037,81 @@ class Strategy {
       return;
     }
 
+    const std::uint32_t order_session_fanout =
+        EffectiveOrderSessionFanout(runtime->pair.execute);
     const double order_notional =
         OrderNotional(quantity.quantity, price.order_price, instrument);
-    if (RejectOpenForRisk(runtime, symbol, price, instrument, quantity.quantity,
-                          order_notional)) {
+    const double risk_quantity = last_signal_decision_.intent.reduce_only
+                                     ? quantity.quantity
+                                     : quantity.quantity * order_session_fanout;
+    const double risk_order_notional =
+        last_signal_decision_.intent.reduce_only
+            ? order_notional
+            : order_notional * order_session_fanout;
+    if (RejectOpenForRisk(runtime, symbol, price, instrument, risk_quantity,
+                          risk_order_notional)) {
       return;
     }
 
-    OrderPriceTextStorage* order_text_storage = AcquirePreparedOrderText(
-        runtime, symbol, instrument, price, quantity, order_notional);
-    if (order_text_storage == nullptr) {
+    LogPreparedOrderIntent(*runtime, symbol, instrument, price, quantity,
+                           order_notional);
+
+    ExecutionGroup* submit_group = close_group;
+    if (!last_signal_decision_.intent.reduce_only) {
+      submit_group = runtime->execution.StartOpenGroup();
+      if (submit_group == nullptr) {
+        LogOrderIntentRejectedForSignal(
+            "parallel_limit", runtime, symbol, quantity.quantity,
+            price.raw_order_price, price.order_price, price.slippage_ticks,
+            instrument.price_tick, order_notional);
+        RejectSignal(SignalRejectReason::kParallelLimit);
+        return;
+      }
+      last_signal_decision_.group_id = submit_group->group_id;
+    }
+    if (submit_group == nullptr) {
       return;
     }
+    const std::uint64_t parent_id = submit_group->group_id;
 
-    SubmitPreparedExternalOrder(runtime, trigger_ticker, signal_role, context,
-                                instrument, symbol, price, quantity,
-                                order_notional, order_text_storage);
+    std::uint32_t accepted_orders = 0;
+    std::array<std::uint64_t, kMaxOrderSessionFanout>
+        rejected_submit_local_order_ids{};
+    std::uint8_t rejected_submit_count = 0;
+    for (std::uint32_t route = 0; route < order_session_fanout; ++route) {
+      OrderPriceTextStorage* order_text_storage = AcquirePreparedOrderText(
+          runtime, symbol, instrument, price, quantity, order_notional);
+      if (order_text_storage == nullptr) {
+        continue;
+      }
+      const ExternalOrderSubmitResult submit_result =
+          SubmitPreparedExternalOrder(
+              runtime, trigger_ticker, signal_role, context, submit_group,
+              instrument, symbol, price, quantity, order_notional,
+              order_text_storage, parent_id, static_cast<std::uint16_t>(route));
+      if (submit_result.accepted) {
+        ++accepted_orders;
+      }
+      if (submit_result.rejected_tracked &&
+          rejected_submit_count < rejected_submit_local_order_ids.size()) {
+        rejected_submit_local_order_ids[rejected_submit_count++] =
+            submit_result.local_order_id;
+      }
+    }
+    for (std::uint8_t index = 0; index < rejected_submit_count; ++index) {
+      ApplyTrackedRejectedSubmit(
+          runtime, rejected_submit_local_order_ids[index], context);
+    }
+    if (!last_signal_decision_.intent.reduce_only && accepted_orders == 0) {
+      [[maybe_unused]] const bool cleared =
+          runtime->execution.ClearGroupById(parent_id);
+    }
   }
 
   [[nodiscard]] bool OnExternalOrderAccepted(
-      PairRuntimeState* runtime, ExecutionGroup* close_group,
+      PairRuntimeState* runtime, ExecutionGroup* submit_group,
       std::uint64_t local_order_id) noexcept {
-    ExecutionGroup* group = close_group;
+    ExecutionGroup* group = submit_group;
     if (last_signal_decision_.intent.reduce_only) {
       if (group == nullptr ||
           !runtime->execution.StartCloseOrder(
@@ -2046,8 +2120,8 @@ class Strategy {
         return false;
       }
     } else {
-      group = runtime->execution.StartOpenOrder(local_order_id);
-      if (group == nullptr) {
+      if (group == nullptr ||
+          !runtime->execution.AddOpenOrder(*group, local_order_id)) {
         return false;
       }
       last_signal_decision_.group_id = group->group_id;
@@ -2057,26 +2131,25 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void RollbackRejectedSubmit(PairRuntimeState* runtime,
-                              ExecutionGroup* close_group,
-                              std::uint64_t local_order_id,
-                              ContextT& context) noexcept {
-    if (last_signal_decision_.intent.reduce_only) {
-      if (close_group != nullptr) {
-        [[maybe_unused]] const bool started =
-            runtime->execution.StartCloseOrder(
-                *close_group, local_order_id,
-                CloseOrderKindForAction(last_signal_decision_.action));
-      }
-    } else {
-      [[maybe_unused]] ExecutionGroup* group =
-          runtime->execution.StartOpenOrder(local_order_id);
-    }
+  void ApplyTrackedRejectedSubmit(PairRuntimeState* runtime,
+                                  std::uint64_t local_order_id,
+                                  ContextT& context) noexcept {
     [[maybe_unused]] const ExecutionApplyResult applied =
         runtime->execution.ApplySubmitRejected(local_order_id);
     if (context.RetireFinishedOrder(local_order_id)) {
       EraseOrderPriceText(local_order_id);
     }
+  }
+
+  [[nodiscard]] bool TrackRejectedSubmit(
+      PairRuntimeState* runtime, ExecutionGroup* submit_group,
+      std::uint64_t local_order_id) noexcept {
+    if (!last_signal_decision_.intent.reduce_only || submit_group == nullptr) {
+      return false;
+    }
+    return runtime->execution.StartCloseOrder(
+        *submit_group, local_order_id,
+        CloseOrderKindForAction(last_signal_decision_.action));
   }
 
   void UpdateSubmittedSignalDiagnostics(const PairRuntimeState* runtime,

@@ -18,6 +18,7 @@ namespace aquila::strategy::leadlag {
 inline constexpr std::size_t kDefaultWindowCapacity = 16 * 1024;
 inline constexpr std::size_t kDefaultDriftGuardWindowCapacity = 128 * 1024;
 inline constexpr std::size_t kDefaultQuantileBinCount = 4096;
+inline constexpr std::uint32_t kMaxOrderSessionFanout = 16;
 
 enum class FeatureMode : std::uint8_t {
   kOff,
@@ -91,6 +92,7 @@ struct ExecuteConfig {
   std::uint32_t close_retry_times{0};
   std::uint32_t close_retry_slippage_step_ticks{0};
   std::uint32_t parallel{1};
+  std::uint32_t order_session_fanout{1};
   TakerBufferConfig taker_buffer;
 
   [[nodiscard]] double EntrySpreadLimit() const noexcept;

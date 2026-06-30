@@ -1,10 +1,12 @@
 #ifndef AQUILA_STRATEGY_LEAD_LAG_EXECUTION_STATE_H_
 #define AQUILA_STRATEGY_LEAD_LAG_EXECUTION_STATE_H_
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "core/trading/order_feedback_event.h"
@@ -119,10 +121,15 @@ struct ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
   std::uint64_t entry_local_order_id{0};
+  std::array<std::uint64_t, kMaxOrderSessionFanout> pending_local_order_ids{};
+  std::array<std::uint64_t, kMaxOrderSessionFanout>
+      unknown_result_local_order_ids{};
   double signed_position_quantity{0.0};
+  double absolute_entry_value{0.0};
   double trailing_price{0.0};
   std::uint64_t group_id{0};
-  bool unknown_result_pending{false};
+  std::uint8_t pending_order_count{0};
+  std::uint8_t unknown_result_pending_count{0};
   CloseOrderKind close_order_kind{CloseOrderKind::kNone};
   std::uint32_t normal_close_retry_count{0};
 
@@ -135,7 +142,7 @@ struct ExecutionGroup {
   }
 
   [[nodiscard]] bool pending_order() const noexcept {
-    return local_order_id != 0;
+    return pending_order_count != 0;
   }
 
   [[nodiscard]] bool long_position() const noexcept {
@@ -167,33 +174,63 @@ class ExecutionState {
 
   [[nodiscard]] ExecutionGroup* StartOpenOrder(
       std::uint64_t local_order_id) noexcept {
+    ExecutionGroup* group = StartOpenGroup();
+    if (group == nullptr) {
+      return nullptr;
+    }
+    if (!AddOpenOrder(*group, local_order_id)) {
+      ClearGroup(*group);
+      return nullptr;
+    }
+    return group;
+  }
+
+  [[nodiscard]] ExecutionGroup* StartOpenGroup() noexcept {
     ExecutionGroup* group = FindIdleGroup();
     if (group == nullptr) {
       return nullptr;
     }
     *group = ExecutionGroup{
         .stage = ExecutionStage::kOpen,
-        .local_order_id = local_order_id,
-        .entry_local_order_id = local_order_id,
         .group_id = next_group_id_++,
     };
     ++active_group_count_;
     return group;
   }
 
+  [[nodiscard]] bool AddOpenOrder(ExecutionGroup& group,
+                                  std::uint64_t local_order_id) noexcept {
+    if (group.stage != ExecutionStage::kOpen || local_order_id == 0) {
+      return false;
+    }
+    if (!AddPendingOrder(group, local_order_id)) {
+      return false;
+    }
+    if (group.entry_local_order_id == 0) {
+      group.entry_local_order_id = local_order_id;
+    }
+    return true;
+  }
+
   [[nodiscard]] bool StartCloseOrder(
       ExecutionGroup& group, std::uint64_t local_order_id,
       CloseOrderKind close_order_kind = CloseOrderKind::kNormal) noexcept {
-    if (!group.hold() || group.pending_order()) {
+    if (local_order_id == 0) {
       return false;
     }
     if (close_order_kind == CloseOrderKind::kNone) {
       return false;
     }
-    group.stage = ExecutionStage::kClose;
-    group.local_order_id = local_order_id;
-    group.close_order_kind = close_order_kind;
-    return true;
+    if (group.hold() && !group.pending_order()) {
+      group.stage = ExecutionStage::kClose;
+      group.close_order_kind = close_order_kind;
+      return AddPendingOrder(group, local_order_id);
+    }
+    if (group.stage == ExecutionStage::kClose &&
+        group.close_order_kind == close_order_kind) {
+      return AddPendingOrder(group, local_order_id);
+    }
+    return false;
   }
 
   [[nodiscard]] ExecutionGroup* AddHoldGroup(double signed_position_quantity,
@@ -226,10 +263,34 @@ class ExecutionState {
 
     const ExecutionStage previous_stage = group->stage;
     const CloseOrderKind previous_close_order_kind = group->close_order_kind;
-    const bool resolved_unknown_result = ClearUnknownResultPending(*group);
-    group->local_order_id = 0;
+    const bool resolved_unknown_result =
+        ClearUnknownResultPending(*group, order.local_order_id);
+    [[maybe_unused]] const bool removed =
+        RemovePendingOrder(*group, order.local_order_id);
+    const double signed_filled_quantity =
+        SignedFilledQuantity(order, instrument);
+    if (previous_stage == ExecutionStage::kOpen &&
+        order.AverageFillPrice() > 0.0 &&
+        std::abs(signed_filled_quantity) > kExecutionQuantityEpsilon) {
+      group->absolute_entry_value +=
+          std::abs(signed_filled_quantity) * order.AverageFillPrice();
+    }
+    group->signed_position_quantity += signed_filled_quantity;
+
+    if (previous_stage == ExecutionStage::kOpen) {
+      const double absolute_position_quantity =
+          std::abs(group->signed_position_quantity);
+      if (absolute_position_quantity > kExecutionQuantityEpsilon &&
+          group->absolute_entry_value > 0.0) {
+        group->trailing_price =
+            group->absolute_entry_value / absolute_position_quantity;
+      }
+    }
+    if (group->pending_order()) {
+      MaybeAutoRecoverUnknownResult(resolved_unknown_result);
+      return ExecutionApplyResult::kAppliedHold;
+    }
     group->close_order_kind = CloseOrderKind::kNone;
-    group->signed_position_quantity += SignedFilledQuantity(order, instrument);
 
     if (std::abs(group->signed_position_quantity) <=
         kExecutionQuantityEpsilon) {
@@ -238,10 +299,6 @@ class ExecutionState {
       return ExecutionApplyResult::kAppliedDeleted;
     }
 
-    if (previous_stage == ExecutionStage::kOpen &&
-        order.AverageFillPrice() > 0.0) {
-      group->trailing_price = order.AverageFillPrice();
-    }
     if (previous_stage == ExecutionStage::kClose &&
         previous_close_order_kind == CloseOrderKind::kNormal) {
       IncrementNormalCloseRetryCount(*group);
@@ -258,7 +315,11 @@ class ExecutionState {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
     const CloseOrderKind previous_close_order_kind = group->close_order_kind;
-    group->local_order_id = 0;
+    [[maybe_unused]] const bool removed =
+        RemovePendingOrder(*group, local_order_id);
+    if (group->pending_order()) {
+      return ExecutionApplyResult::kAppliedHold;
+    }
     group->close_order_kind = CloseOrderKind::kNone;
     if (std::abs(group->signed_position_quantity) <=
         kExecutionQuantityEpsilon) {
@@ -292,9 +353,8 @@ class ExecutionState {
     }
     const bool can_auto_recover =
         !needs_reconcile_ || unknown_result_reconcile_active_;
-    const bool newly_marked = !group->unknown_result_pending;
+    const bool newly_marked = MarkGroupUnknownResult(*group, local_order_id);
     if (newly_marked) {
-      group->unknown_result_pending = true;
       ++unknown_result_pending_count_;
     }
     if (recovery_state_ != RecoveryState::kManualIntervention) {
@@ -375,7 +435,7 @@ class ExecutionState {
     // execute.parallel is a small bounded risk limit, so scanning contiguous
     // groups avoids maintaining a second order index.
     for (const ExecutionGroup& group : groups_) {
-      if (group.pending_order() && group.local_order_id == local_order_id) {
+      if (ContainsPendingOrder(group, local_order_id)) {
         return &group;
       }
     }
@@ -385,7 +445,7 @@ class ExecutionState {
   [[nodiscard]] ExecutionGroup* FindPendingOrderByLocalOrderId(
       std::uint64_t local_order_id) noexcept {
     for (ExecutionGroup& group : groups_) {
-      if (group.pending_order() && group.local_order_id == local_order_id) {
+      if (ContainsPendingOrder(group, local_order_id)) {
         return &group;
       }
     }
@@ -460,24 +520,124 @@ class ExecutionState {
   }
 
   void ClearGroup(ExecutionGroup& group) noexcept {
-    [[maybe_unused]] const bool unknown_cleared =
-        ClearUnknownResultPending(group);
+    ClearUnknownResultsForGroup(group);
     if (group.active() && active_group_count_ > 0) {
       --active_group_count_;
     }
     group = ExecutionGroup{};
   }
 
-  [[nodiscard]] bool ClearUnknownResultPending(ExecutionGroup& group) noexcept {
-    if (!group.unknown_result_pending) {
+  [[nodiscard]] static bool AddPendingOrder(
+      ExecutionGroup& group, std::uint64_t local_order_id) noexcept {
+    if (group.pending_order_count >= group.pending_local_order_ids.size()) {
       return false;
     }
-    group.unknown_result_pending = false;
-    assert(unknown_result_pending_count_ > 0);
-    if (unknown_result_pending_count_ > 0) {
-      --unknown_result_pending_count_;
-    }
+    group.pending_local_order_ids[group.pending_order_count++] = local_order_id;
+    RefreshPrimaryPendingOrder(group);
     return true;
+  }
+
+  [[nodiscard]] static bool RemovePendingOrder(
+      ExecutionGroup& group, std::uint64_t local_order_id) noexcept {
+    for (std::uint8_t index = 0; index < group.pending_order_count; ++index) {
+      if (group.pending_local_order_ids[index] != local_order_id) {
+        continue;
+      }
+      const std::uint8_t last_index =
+          static_cast<std::uint8_t>(group.pending_order_count - 1U);
+      group.pending_local_order_ids[index] =
+          group.pending_local_order_ids[last_index];
+      group.pending_local_order_ids[last_index] = 0;
+      --group.pending_order_count;
+      RefreshPrimaryPendingOrder(group);
+      return true;
+    }
+    return false;
+  }
+
+  [[nodiscard]] static bool ContainsPendingOrder(
+      const ExecutionGroup& group, std::uint64_t local_order_id) noexcept {
+    if (local_order_id == 0) {
+      return false;
+    }
+    for (std::uint8_t index = 0; index < group.pending_order_count; ++index) {
+      if (group.pending_local_order_ids[index] == local_order_id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static void RefreshPrimaryPendingOrder(ExecutionGroup& group) noexcept {
+    group.local_order_id =
+        group.pending_order_count == 0 ? 0 : group.pending_local_order_ids[0];
+  }
+
+  [[nodiscard]] static bool ContainsUnknownResult(
+      const ExecutionGroup& group, std::uint64_t local_order_id) noexcept {
+    if (local_order_id == 0) {
+      return false;
+    }
+    for (std::uint8_t index = 0; index < group.unknown_result_pending_count;
+         ++index) {
+      if (group.unknown_result_local_order_ids[index] == local_order_id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] static bool MarkGroupUnknownResult(
+      ExecutionGroup& group, std::uint64_t local_order_id) noexcept {
+    if (ContainsUnknownResult(group, local_order_id)) {
+      return false;
+    }
+    if (group.unknown_result_pending_count >=
+        group.unknown_result_local_order_ids.size()) {
+      return false;
+    }
+    group.unknown_result_local_order_ids[group.unknown_result_pending_count++] =
+        local_order_id;
+    return true;
+  }
+
+  [[nodiscard]] bool ClearUnknownResultPending(
+      ExecutionGroup& group, std::uint64_t local_order_id) noexcept {
+    for (std::uint8_t index = 0; index < group.unknown_result_pending_count;
+         ++index) {
+      if (group.unknown_result_local_order_ids[index] != local_order_id) {
+        continue;
+      }
+      const std::uint8_t last_index =
+          static_cast<std::uint8_t>(group.unknown_result_pending_count - 1U);
+      group.unknown_result_local_order_ids[index] =
+          group.unknown_result_local_order_ids[last_index];
+      group.unknown_result_local_order_ids[last_index] = 0;
+      --group.unknown_result_pending_count;
+      assert(unknown_result_pending_count_ > 0);
+      if (unknown_result_pending_count_ > 0) {
+        --unknown_result_pending_count_;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  void ClearUnknownResultsForGroup(ExecutionGroup& group) noexcept {
+    if (group.unknown_result_pending_count == 0) {
+      return;
+    }
+    assert(unknown_result_pending_count_ > 0);
+    if (unknown_result_pending_count_ >= group.unknown_result_pending_count) {
+      unknown_result_pending_count_ -= group.unknown_result_pending_count;
+    } else {
+      unknown_result_pending_count_ = 0;
+    }
+    for (std::uint8_t index = 0; index < group.unknown_result_pending_count;
+         ++index) {
+      group.unknown_result_local_order_ids[index] = 0;
+    }
+    group.unknown_result_pending_count = 0;
   }
 
   void MaybeAutoRecoverUnknownResult(bool resolved_unknown_result) noexcept {
@@ -501,7 +661,11 @@ class ExecutionState {
 
   void ClearUnknownResultTracking() noexcept {
     for (ExecutionGroup& group : groups_) {
-      group.unknown_result_pending = false;
+      for (std::uint64_t& local_order_id :
+           group.unknown_result_local_order_ids) {
+        local_order_id = 0;
+      }
+      group.unknown_result_pending_count = 0;
     }
     unknown_result_pending_count_ = 0;
     unknown_result_reconcile_active_ = false;

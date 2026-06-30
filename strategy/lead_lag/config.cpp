@@ -423,6 +423,9 @@ class Parser {
         UInt32Or(table, "close_retry_slippage_step_ticks",
                  execute.close_retry_slippage_step_ticks,
                  prefix + ".close_retry_slippage_step_ticks");
+    execute.order_session_fanout =
+        UInt32Or(table, "order_session_fanout", execute.order_session_fanout,
+                 prefix + ".order_session_fanout");
     execute.parallel = RequiredUInt32(table, "parallel", prefix + ".parallel");
     if (!ok_) {
       return execute;
@@ -439,6 +442,14 @@ class Parser {
     }
     if (execute.parallel == 0) {
       Fail(prefix + ".parallel", " must be positive");
+      return execute;
+    }
+    if (execute.order_session_fanout == 0) {
+      Fail(prefix + ".order_session_fanout", " must be positive");
+      return execute;
+    }
+    if (execute.order_session_fanout > kMaxOrderSessionFanout) {
+      Fail(prefix + ".order_session_fanout", " exceeds max fanout");
       return execute;
     }
 

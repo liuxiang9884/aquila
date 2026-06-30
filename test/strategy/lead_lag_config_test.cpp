@@ -193,6 +193,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_EQ(pair.execute.close_retry_times, 0U);
   EXPECT_EQ(pair.execute.close_retry_slippage_step_ticks, 0U);
   EXPECT_EQ(pair.execute.parallel, 1U);
+  EXPECT_EQ(pair.execute.order_session_fanout, 1U);
 
   EXPECT_EQ(pair.bbo_record.window_ns, 1'000'000'000ULL);
   EXPECT_EQ(pair.bbo_record.stats_window_ns, 30'000'000'000ULL);
@@ -238,8 +239,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[3].lag_instrument.quantity_decimal_places, 1);
 }
 
-TEST(LeadLagConfigTest,
-     LoadsCheckedInRequestedConfigWithCatalogMetadata) {
+TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = LoadCheckedInConfig(
@@ -271,8 +271,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
   const auto result = LoadCheckedInConfig(
-      "config/strategies/lead_lag_requested_11symbols_20260522.toml",
-      catalog);
+      "config/strategies/lead_lag_requested_11symbols_20260522.toml", catalog);
 
   ASSERT_TRUE(result.ok) << result.error;
   const leadlag::Config& config = result.value;
@@ -423,6 +422,39 @@ TEST(LeadLagConfigTest, EntrySpreadLimitFallsBackToTrailingStop) {
   EXPECT_DOUBLE_EQ(config.EntrySpreadLimit(), 0.0125);
 }
 
+TEST(LeadLagConfigTest, ParsesOrderSessionFanout) {
+  const aquila::config::InstrumentCatalog catalog =
+      CatalogWithLagQuantityMetadata(1.0, 0);
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "order_session_fanout = 4\n"), catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.pairs[0].execute.order_session_fanout, 4U);
+}
+
+TEST(LeadLagConfigTest, RejectsZeroOrderSessionFanout) {
+  const aquila::config::InstrumentCatalog catalog =
+      CatalogWithLagQuantityMetadata(1.0, 0);
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "order_session_fanout = 0\n"), catalog);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_session_fanout"), std::string::npos);
+}
+
+TEST(LeadLagConfigTest, RejectsOrderSessionFanoutAboveMax) {
+  const aquila::config::InstrumentCatalog catalog =
+      CatalogWithLagQuantityMetadata(1.0, 0);
+
+  const auto result = ParseConfigToml(
+      MinimalConfigTomlWithRisk("", "order_session_fanout = 17\n"), catalog);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("order_session_fanout"), std::string::npos);
+}
+
 TEST(LeadLagConfigTest, ParsesExecutionSlippageTicks) {
   const aquila::config::InstrumentCatalog catalog = LoadCatalog();
 
@@ -535,8 +567,7 @@ ratio_std = 0
                                       catalog);
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("drift_guard.drift_instant"),
-            std::string::npos);
+  EXPECT_NE(result.error.find("drift_guard.drift_instant"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsEnabledDriftGuardNonFiniteThresholdFirst) {
@@ -552,8 +583,7 @@ ratio_std = inf
                                       catalog);
 
   ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("drift_guard.drift_instant"),
-            std::string::npos);
+  EXPECT_NE(result.error.find("drift_guard.drift_instant"), std::string::npos);
 }
 
 TEST(LeadLagConfigTest, RejectsEnabledDriftGuardZeroWindow) {
