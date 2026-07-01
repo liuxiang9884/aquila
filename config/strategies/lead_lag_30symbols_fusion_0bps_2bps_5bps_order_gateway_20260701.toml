@@ -1,0 +1,1716 @@
+[lead_lag]
+name = "lead_lag"
+version = "1.0"
+
+[lead_lag.risk]
+max_gross_notional = 1000.0
+
+[[lead_lag.pairs]]
+symbol = "BTC_USDT"
+symbol_id = 93
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 118
+stoploss_slippage_ticks = 295
+close_retry_times = 2
+close_retry_slippage_step_ticks = 118
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "SOL_USDT"
+symbol_id = 384
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "DOGE_USDT"
+symbol_id = 137
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "XRP_USDT"
+symbol_id = 472
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 3
+stoploss_slippage_ticks = 6
+close_retry_times = 2
+close_retry_slippage_step_ticks = 3
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "HYPE_USDT"
+symbol_id = 210
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 14
+stoploss_slippage_ticks = 33
+close_retry_times = 2
+close_retry_slippage_step_ticks = 14
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "TAC_USDT"
+symbol_id = 411
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 13
+stoploss_slippage_ticks = 31
+close_retry_times = 2
+close_retry_slippage_step_ticks = 13
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "ZEC_USDT"
+symbol_id = 480
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 8
+stoploss_slippage_ticks = 20
+close_retry_times = 2
+close_retry_slippage_step_ticks = 8
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "ORDI_USDT"
+symbol_id = 316
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 1
+stoploss_slippage_ticks = 2
+close_retry_times = 2
+close_retry_slippage_step_ticks = 1
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "AIGENSYN_USDT"
+symbol_id = 15
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 1
+stoploss_slippage_ticks = 2
+close_retry_times = 2
+close_retry_slippage_step_ticks = 1
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "WLD_USDT"
+symbol_id = 460
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 1
+stoploss_slippage_ticks = 3
+close_retry_times = 2
+close_retry_slippage_step_ticks = 1
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "SLX_USDT"
+symbol_id = 381
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 10
+stoploss_slippage_ticks = 23
+close_retry_times = 2
+close_retry_slippage_step_ticks = 10
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "UB_USDT"
+symbol_id = 438
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 5
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "VELVET_USDT"
+symbol_id = 449
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 400.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 32
+stoploss_slippage_ticks = 80
+close_retry_times = 2
+close_retry_slippage_step_ticks = 32
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "BTW_USDT"
+symbol_id = 95
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 14
+stoploss_slippage_ticks = 34
+close_retry_times = 2
+close_retry_slippage_step_ticks = 14
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "RAVE_USDT"
+symbol_id = 347
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 1
+stoploss_slippage_ticks = 2
+close_retry_times = 2
+close_retry_slippage_step_ticks = 1
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "SUI_USDT"
+symbol_id = 404
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "AVAX_USDT"
+symbol_id = 51
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "ENA_USDT"
+symbol_id = 152
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "BAS_USDT"
+symbol_id = 67
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 10
+stoploss_slippage_ticks = 24
+close_retry_times = 2
+close_retry_slippage_step_ticks = 10
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "H_USDT"
+symbol_id = 211
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 5
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "LINK_USDT"
+symbol_id = 253
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "RE_USDT"
+symbol_id = 353
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 14
+stoploss_slippage_ticks = 34
+close_retry_times = 2
+close_retry_slippage_step_ticks = 14
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "IN_USDT"
+symbol_id = 222
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 20.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 4
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "AAVE_USDT"
+symbol_id = 4
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 2
+stoploss_slippage_ticks = 5
+close_retry_times = 2
+close_retry_slippage_step_ticks = 2
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "XLM_USDT"
+symbol_id = 467
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 5
+stoploss_slippage_ticks = 11
+close_retry_times = 2
+close_retry_slippage_step_ticks = 5
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "GWEI_USDT"
+symbol_id = 196
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 30.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 24
+stoploss_slippage_ticks = 60
+close_retry_times = 2
+close_retry_slippage_step_ticks = 24
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "NEAR_USDT"
+symbol_id = 293
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 4
+stoploss_slippage_ticks = 10
+close_retry_times = 2
+close_retry_slippage_step_ticks = 4
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "AGLD_USDT"
+symbol_id = 12
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 1
+stoploss_slippage_ticks = 1
+close_retry_times = 2
+close_retry_slippage_step_ticks = 1
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "UNI_USDT"
+symbol_id = 440
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 1
+stoploss_slippage_ticks = 2
+close_retry_times = 2
+close_retry_slippage_step_ticks = 1
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072
+
+[[lead_lag.pairs]]
+symbol = "BCH_USDT"
+symbol_id = 70
+lead_exchange = "binance"
+lag_exchange = "gate"
+lag_taker_fee = 0.00020
+max_lead_freshness_ms = 5
+max_lag_freshness_ms = 50
+
+[lead_lag.pairs.trigger]
+lead = 0.0025
+close = 0.0005
+lag_part = 0.5
+target_profit_rate = 0.0
+drift_period = "1m"
+drift_min_samples = 20
+drift_warmup = "30s"
+
+[lead_lag.pairs.trigger.drift_guard]
+enabled = true
+drift_instant = 0.015
+ratio_std = 0.008
+ratio_std_window = "1m"
+drift_mean = 0.02
+drift_mean_window = "1m"
+
+[lead_lag.pairs.trigger.quantile]
+move = 0.75
+up_min = 0.0
+up_max = 0.02
+down_min = -0.02
+down_max = 0.0
+precision = 0.000001
+
+[lead_lag.pairs.execute]
+open_notional = 10.0
+trailing_stop = 0.01
+max_entry_spread = 0.01
+open_slippage_ticks = 0
+close_slippage_ticks = 5
+stoploss_slippage_ticks = 11
+close_retry_times = 2
+close_retry_slippage_step_ticks = 5
+parallel = 1
+order_session_fanout = 4
+
+[lead_lag.pairs.bbo_record]
+window = "1s"
+stats_window = "30s"
+
+[lead_lag.pairs.capacity]
+extrema_window_capacity = 16384
+move_queue_capacity = 16384
+noise_window_capacity = 16384
+spread_window_capacity = 16384
+drift_guard_window_capacity = 131072

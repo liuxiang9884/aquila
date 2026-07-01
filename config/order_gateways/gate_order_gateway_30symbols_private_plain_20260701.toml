@@ -1,0 +1,36 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_order_gateway_30symbols_private_plain_20260701.log"
+console_sink_name = "gate_order_gateway_30symbols_private_plain_20260701_console"
+backend_thread_name = "gate_order_gateway_30symbols_private_plain_20260701_log"
+backend_cpu_affinity = 0
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[order_gateway]
+name = "gate_order_gateway_30symbols_private_plain_20260701"
+shm_name = "aquila_gate_order_gateway_30symbols_private_plain_20260701"
+route_count = 4
+command_queue_capacity = 4096
+event_queue_capacity = 8192
+startup_ready_timeout_s = 30
+
+[[order_gateway.routes]]
+name = "route0"
+order_session_config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260701.toml"
+worker_cpu_id = 16
+
+[[order_gateway.routes]]
+name = "route1"
+order_session_config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260701.toml"
+worker_cpu_id = 17
+
+[[order_gateway.routes]]
+name = "route2"
+order_session_config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260701.toml"
+worker_cpu_id = 18
+
+[[order_gateway.routes]]
+name = "route3"
+order_session_config = "config/order_sessions/gate_order_session_30symbols_private_plain_20260701.toml"
+worker_cpu_id = 19
