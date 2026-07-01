@@ -535,7 +535,7 @@ class OrderGatewayClient {
         return;
       case OrderGatewayEventKind::kOrderResponse:
         ++stats_.order_response_events;
-        if (event.response_kind == OrderResponseKind::kRejected) {
+        if (OrderResponseClearsRoute(event.response_kind)) {
           route_table_.erase(event.local_order_id);
         }
         runtime.OnOrderResponse(ToOrderResponseEvent(event));
@@ -543,6 +543,12 @@ class OrderGatewayClient {
       case OrderGatewayEventKind::kNone:
         return;
     }
+  }
+
+  [[nodiscard]] static bool OrderResponseClearsRoute(
+      OrderResponseKind kind) noexcept {
+    return kind == OrderResponseKind::kRejected ||
+           kind == OrderResponseKind::kUnknownResult;
   }
 
   struct DrainRouteResult {

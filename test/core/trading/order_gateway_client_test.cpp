@@ -430,6 +430,82 @@ TEST(OrderGatewayClientTest,
   EXPECT_FALSE(client.RouteReady(2));
 }
 
+TEST(OrderGatewayClientTest,
+     StoppedRouteQueuedUnknownBeyondNormalPollBudgetSuppressesSynthetic) {
+  const OrderGatewayShmConfig config =
+      MakeCreateConfig("stopped_drain_unknown_budget");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  StoreOrderGatewayRouteState(shm.header(), 2, OrderGatewayRouteState::kReady);
+
+  OrderGatewayClient client = CreateClient(
+      config, OrderGatewayClientOptions{.max_events_per_poll_per_route = 1});
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+  ASSERT_EQ(client.PlaceOrder(MakeOrder(1019, 2)).status,
+            OrderGatewaySendStatus::kOk);
+  ASSERT_TRUE(client.HasRouteForLocalOrderForTest(1019));
+
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(MakeReadyEvent(2)));
+  OrderGatewayEvent unknown{};
+  unknown.kind = OrderGatewayEventKind::kOrderResponse;
+  unknown.response_kind = OrderResponseKind::kUnknownResult;
+  unknown.local_order_id = 1019;
+  unknown.worker_event_enqueue_ns = 9019;
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(unknown));
+  StoreOrderGatewayRouteState(shm.header(), 2,
+                              OrderGatewayRouteState::kStopped);
+
+  EXPECT_EQ(client.PollOrderResponses(runtime), 2U);
+
+  ASSERT_EQ(runtime.responses.size(), 1U);
+  EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kUnknownResult);
+  EXPECT_EQ(runtime.responses[0].local_order_id, 1019U);
+  EXPECT_FALSE(client.HasRouteForLocalOrderForTest(1019));
+  EXPECT_FALSE(client.RouteReady(2));
+}
+
+TEST(OrderGatewayClientTest,
+     StoppedRouteQueuedAcceptedBeyondNormalPollBudgetStillSynthesizesUnknown) {
+  const OrderGatewayShmConfig config =
+      MakeCreateConfig("stopped_drain_accepted_budget");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  StoreOrderGatewayRouteState(shm.header(), 2, OrderGatewayRouteState::kReady);
+
+  OrderGatewayClient client = CreateClient(
+      config, OrderGatewayClientOptions{.max_events_per_poll_per_route = 1});
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+  ASSERT_EQ(client.PlaceOrder(MakeOrder(1020, 2)).status,
+            OrderGatewaySendStatus::kOk);
+  ASSERT_TRUE(client.HasRouteForLocalOrderForTest(1020));
+
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(MakeReadyEvent(2)));
+  OrderGatewayEvent accepted{};
+  accepted.kind = OrderGatewayEventKind::kOrderResponse;
+  accepted.response_kind = OrderResponseKind::kAccepted;
+  accepted.local_order_id = 1020;
+  accepted.worker_event_enqueue_ns = 9020;
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(accepted));
+  StoreOrderGatewayRouteState(shm.header(), 2,
+                              OrderGatewayRouteState::kStopped);
+
+  EXPECT_EQ(client.PollOrderResponses(runtime), 3U);
+
+  ASSERT_EQ(runtime.responses.size(), 2U);
+  EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kAccepted);
+  EXPECT_EQ(runtime.responses[0].local_order_id, 1020U);
+  EXPECT_EQ(runtime.responses[1].kind, OrderResponseKind::kUnknownResult);
+  EXPECT_EQ(runtime.responses[1].local_order_id, 1020U);
+  EXPECT_FALSE(client.HasRouteForLocalOrderForTest(1020));
+  EXPECT_FALSE(client.RouteReady(2));
+}
+
 TEST(OrderGatewayClientTest, PollDoesNotLeaveStaleReadyOverStoppedHeader) {
   const OrderGatewayShmConfig config = MakeCreateConfig("poll_stale_ready");
   ShmCleanup cleanup(config.shm_name);

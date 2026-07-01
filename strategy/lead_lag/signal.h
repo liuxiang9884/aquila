@@ -325,7 +325,7 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision TryCloseLong(
       const PairConfig& pair, const ExecutionGroup& group,
       const SignalMarket& market, const ThresholdSnapshot& threshold) noexcept {
-    if (group.stage == ExecutionStage::kClose && group.pending_order()) {
+    if (group.pending_close_order()) {
       return Reject(SignalRejectReason::kPendingOrder);
     }
     if (!group.CanSubmitNormalClose(pair.execute.close_retry_times)) {
@@ -343,7 +343,7 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision TryCloseShort(
       const PairConfig& pair, const ExecutionGroup& group,
       const SignalMarket& market, const ThresholdSnapshot& threshold) noexcept {
-    if (group.stage == ExecutionStage::kClose && group.pending_order()) {
+    if (group.pending_close_order()) {
       return Reject(SignalRejectReason::kPendingOrder);
     }
     if (!group.CanSubmitNormalClose(pair.execute.close_retry_times)) {
@@ -361,7 +361,7 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision TryStoplossLong(
       const PairConfig& pair, ExecutionGroup* group,
       const SignalMarket& market) noexcept {
-    if (group->stage == ExecutionStage::kClose && group->pending_order()) {
+    if (group->pending_close_order()) {
       return Reject(SignalRejectReason::kPendingOrder);
     }
     if (market.lag.bid_price > group->trailing_price) {
@@ -380,7 +380,7 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision TryStoplossShort(
       const PairConfig& pair, ExecutionGroup* group,
       const SignalMarket& market) noexcept {
-    if (group->stage == ExecutionStage::kClose && group->pending_order()) {
+    if (group->pending_close_order()) {
       return Reject(SignalRejectReason::kPendingOrder);
     }
     if (market.lag.ask_price < group->trailing_price) {
