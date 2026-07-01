@@ -801,6 +801,108 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(open_row["entry_notional"], "20")
         self.assertEqual(open_row["net_pnl"], "")
 
+    def test_builds_position_detail_with_multiple_entry_orders(self):
+        rows = orders.build_position_detail_rows(
+            [
+                {
+                    "run_id": "run-multi",
+                    "local_order_id": "10",
+                    "exchange_order_id": "110",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "entry",
+                    "position_id": "9",
+                    "position_direction": "kLong",
+                    "side": "kBuy",
+                    "average_fill_price": "100",
+                    "cumulative_filled_quantity": "3",
+                    "contract_multiplier": "1",
+                    "fee_quote_estimated": "0.3",
+                    "fee_source": "config_estimated",
+                    "order_finished_local_ns": "100",
+                },
+                {
+                    "run_id": "run-multi",
+                    "local_order_id": "11",
+                    "exchange_order_id": "111",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "entry",
+                    "position_id": "9",
+                    "position_direction": "kLong",
+                    "side": "kBuy",
+                    "average_fill_price": "101",
+                    "cumulative_filled_quantity": "3",
+                    "contract_multiplier": "1",
+                    "fee_quote_estimated": "0.3",
+                    "fee_source": "config_estimated",
+                    "order_finished_local_ns": "110",
+                },
+                {
+                    "run_id": "run-multi",
+                    "local_order_id": "20",
+                    "exchange_order_id": "120",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "exit",
+                    "position_id": "9",
+                    "position_direction": "kLong",
+                    "side": "kSell",
+                    "average_fill_price": "102",
+                    "cumulative_filled_quantity": "4",
+                    "contract_multiplier": "1",
+                    "fee_quote_estimated": "0.4",
+                    "fee_source": "config_estimated",
+                    "order_finished_local_ns": "120",
+                },
+                {
+                    "run_id": "run-multi",
+                    "local_order_id": "21",
+                    "exchange_order_id": "121",
+                    "symbol": "PROVE_USDT",
+                    "symbol_id": "4",
+                    "order_role": "exit",
+                    "position_id": "9",
+                    "position_direction": "kLong",
+                    "side": "kSell",
+                    "average_fill_price": "103",
+                    "cumulative_filled_quantity": "2",
+                    "contract_multiplier": "1",
+                    "fee_quote_estimated": "0.2",
+                    "fee_source": "config_estimated",
+                    "order_finished_local_ns": "130",
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row["status"] for row in rows], ["partial_closed", "partial_closed", "closed"])
+        self.assertNotIn("over_closed", {row["status"] for row in rows})
+        self.assertEqual(
+            [row["position_key"] for row in rows],
+            [
+                "run-multi:4:9:10:20",
+                "run-multi:4:9:11:20",
+                "run-multi:4:9:11:21",
+            ],
+        )
+        self.assertEqual([row["entry_volume"] for row in rows], ["3", "1", "2"])
+        self.assertEqual([row["matched_volume"] for row in rows], ["3", "1", "2"])
+        self.assertEqual([row["remaining_entry_volume"] for row in rows], ["3", "2", "0"])
+        self.assertEqual([row["gross_pnl"] for row in rows], ["6", "1", "4"])
+        self.assertEqual(
+            [row["entry_fee_quote_estimated"] for row in rows],
+            ["0.3", "0.1", "0.2"],
+        )
+        self.assertEqual(
+            [row["exit_fee_quote_estimated"] for row in rows],
+            ["0.3", "0.1", "0.2"],
+        )
+        self.assertEqual([row["net_pnl"] for row in rows], ["5.4", "0.8", "3.6"])
+        self.assertTrue(
+            all(row["warnings"] == "multiple_entry_orders" for row in rows)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

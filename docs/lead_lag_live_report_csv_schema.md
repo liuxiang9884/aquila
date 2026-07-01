@@ -208,12 +208,12 @@
 | 字段 | 含义 | 来源或计算 |
 |---|---|---|
 | `run_id` | 本次运行或 report 的标识。 | 来自 entry 或 exit order。 |
-| `position_key` | position 分析行唯一键。 | `run_id:symbol_id:position_id:<exit_local_order_id>`，open 行后缀为 `open`。 |
+| `position_key` | position 分析行唯一键。 | 单 entry position 为 `run_id:symbol_id:position_id:<exit_local_order_id>`，open 行后缀为 `open`；多 entry position 会拆成 FIFO slice，key 追加 entry id，例如 `run_id:symbol_id:position_id:<entry_local_order_id>:<exit_local_order_id>`，多 entry open 行为 `run_id:symbol_id:position_id:<entry_local_order_id>:open`。 |
 | `symbol` | 交易 symbol。 | entry 或 exit order。 |
 | `symbol_id` | 策略内部 symbol id。 | entry 或 exit order。 |
 | `position_id` | 策略 position id。 | entry 或 exit order。 |
 | `position_direction` | position 方向，`kLong` 或 `kShort`。 | entry 或 exit order。 |
-| `status` | position 行状态。 | `closed`、`partial_closed`、`open`、`missing_entry` 或 `over_closed`。 |
+| `status` | position 行状态。 | `closed`、`partial_closed`、`open`、`missing_entry` 或 `over_closed`；`over_closed` 只表示 exit 成交量超过本 report 可匹配 entry 成交量的剩余部分。 |
 | `entry_local_order_id` | 开仓订单本地 id。 | entry order。 |
 | `exit_local_order_id` | 平仓订单本地 id。 | exit order；open 行为空。 |
 | `entry_exchange_order_id` | 开仓订单交易所 id。 | entry order。 |

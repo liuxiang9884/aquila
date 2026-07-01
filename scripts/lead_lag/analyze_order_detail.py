@@ -352,6 +352,14 @@ class AnalysisResult:
     rows: list[dict[str, str]]
 
 
+@dataclass
+class PositionEntryLot:
+    order: dict[str, str]
+    remaining: Decimal
+    initial: Decimal
+    fee: Decimal | None
+
+
 def parse_decimal(value: str | None) -> Decimal | None:
     if value is None or value == "":
         return None
@@ -1337,6 +1345,7 @@ def build_closed_position_row(
     exit_fee: Decimal | None,
     status: str,
     warnings: list[str],
+    position_key: str | None = None,
 ) -> dict[str, str]:
     entry_price = order_fill_price(entry)
     exit_price = order_fill_price(exit_order)
@@ -1358,14 +1367,15 @@ def build_closed_position_row(
         net_pnl = gross_pnl - (total_fee or Decimal(0))
     entry_ns = order_finished_ns(entry)
     exit_ns = order_finished_ns(exit_order)
+    default_position_key = (
+        f"{entry.get('run_id', exit_order.get('run_id', ''))}:"
+        f"{entry.get('symbol_id', exit_order.get('symbol_id', ''))}:"
+        f"{entry.get('position_id', exit_order.get('position_id', ''))}:"
+        f"{exit_order.get('local_order_id', '')}"
+    )
     row = {
         "run_id": entry.get("run_id", exit_order.get("run_id", "")),
-        "position_key": (
-            f"{entry.get('run_id', exit_order.get('run_id', ''))}:"
-            f"{entry.get('symbol_id', exit_order.get('symbol_id', ''))}:"
-            f"{entry.get('position_id', exit_order.get('position_id', ''))}:"
-            f"{exit_order.get('local_order_id', '')}"
-        ),
+        "position_key": position_key or default_position_key,
         "symbol": entry.get("symbol") or exit_order.get("symbol", ""),
         "symbol_id": entry.get("symbol_id") or exit_order.get("symbol_id", ""),
         "position_id": entry.get("position_id") or exit_order.get("position_id", ""),
@@ -1430,16 +1440,18 @@ def build_open_position_row(
     remaining_entry_volume: Decimal,
     entry_fee: Decimal | None,
     warnings: list[str],
+    position_key: str | None = None,
 ) -> dict[str, str]:
     entry_price = order_fill_price(entry)
     multiplier = parse_decimal(entry.get("contract_multiplier"))
     entry_ns = order_finished_ns(entry)
+    default_position_key = (
+        f"{entry.get('run_id', '')}:{entry.get('symbol_id', '')}:"
+        f"{entry.get('position_id', '')}:open"
+    )
     row = {
         "run_id": entry.get("run_id", ""),
-        "position_key": (
-            f"{entry.get('run_id', '')}:{entry.get('symbol_id', '')}:"
-            f"{entry.get('position_id', '')}:open"
-        ),
+        "position_key": position_key or default_position_key,
         "symbol": entry.get("symbol", ""),
         "symbol_id": entry.get("symbol_id", ""),
         "position_id": entry.get("position_id", ""),
@@ -1586,52 +1598,126 @@ def build_position_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[st
             for exit_order in exits:
                 rows.append(build_missing_entry_position_row(exit_order))
             continue
-        entry = entries[0]
-        entry_volume = order_filled_quantity(entry)
-        remaining_entry_volume = entry_volume
-        entry_fee_total = parse_decimal(entry.get("fee_quote_estimated"))
         common_warnings: list[str] = []
         if len(entries) > 1:
             common_warnings.append("multiple_entry_orders")
-
-        for exit_order in exits:
-            exit_volume = order_filled_quantity(exit_order)
-            matched_volume = min(exit_volume, remaining_entry_volume)
-            row_warnings = list(common_warnings)
-            status = "closed" if remaining_entry_volume == 0 else "partial_closed"
-            if matched_volume <= 0:
-                row_warnings.append("exit_volume_exceeds_entry")
-                status = "over_closed"
-            elif exit_volume > remaining_entry_volume:
-                row_warnings.append("exit_volume_exceeds_entry")
-            entry_fee = decimal_ratio(entry_fee_total, matched_volume, entry_volume)
-            exit_fee = parse_decimal(exit_order.get("fee_quote_estimated"))
-            remaining_entry_volume -= min(exit_volume, remaining_entry_volume)
-            if matched_volume > 0:
-                status = "closed" if remaining_entry_volume == 0 else "partial_closed"
-            rows.append(
-                build_closed_position_row(
-                    entry,
-                    exit_order,
-                    matched_volume,
-                    remaining_entry_volume,
-                    entry_fee,
-                    exit_fee,
-                    status,
-                    row_warnings,
+        use_entry_key_segment = len(entries) > 1
+        lots: list[PositionEntryLot] = []
+        total_remaining_entry_volume = Decimal(0)
+        for entry in entries:
+            entry_volume = order_filled_quantity(entry)
+            lots.append(
+                PositionEntryLot(
+                    order=entry,
+                    remaining=entry_volume,
+                    initial=entry_volume,
+                    fee=parse_decimal(entry.get("fee_quote_estimated")),
                 )
             )
+            total_remaining_entry_volume += entry_volume
 
-        if remaining_entry_volume > 0:
+        lot_index = 0
+        for exit_order in exits:
+            exit_volume = order_filled_quantity(exit_order)
+            exit_remaining_volume = exit_volume
+            exit_fee_total = parse_decimal(exit_order.get("fee_quote_estimated"))
+            while exit_remaining_volume > 0 and lot_index < len(lots):
+                lot = lots[lot_index]
+                if lot.remaining <= 0:
+                    lot_index += 1
+                    continue
+
+                matched_volume = min(exit_remaining_volume, lot.remaining)
+                entry = lot.order
+                entry_fee = decimal_ratio(lot.fee, matched_volume, lot.initial)
+                exit_fee = decimal_ratio(exit_fee_total, matched_volume, exit_volume)
+                lot.remaining -= matched_volume
+                exit_remaining_volume -= matched_volume
+                total_remaining_entry_volume -= matched_volume
+                if lot.remaining <= 0:
+                    lot_index += 1
+
+                status = (
+                    "closed"
+                    if total_remaining_entry_volume == 0
+                    else "partial_closed"
+                )
+                position_key = None
+                if use_entry_key_segment:
+                    position_key = (
+                        f"{entry.get('run_id', exit_order.get('run_id', ''))}:"
+                        f"{entry.get('symbol_id', exit_order.get('symbol_id', ''))}:"
+                        f"{entry.get('position_id', exit_order.get('position_id', ''))}:"
+                        f"{entry.get('local_order_id', '')}:"
+                        f"{exit_order.get('local_order_id', '')}"
+                    )
+                rows.append(
+                    build_closed_position_row(
+                        entry,
+                        exit_order,
+                        matched_volume,
+                        total_remaining_entry_volume,
+                        entry_fee,
+                        exit_fee,
+                        status,
+                        list(common_warnings),
+                        position_key,
+                    )
+                )
+
+            if exit_remaining_volume > 0:
+                entry = entries[-1]
+                row_warnings = list(common_warnings)
+                row_warnings.append("exit_volume_exceeds_entry")
+                exit_fee = decimal_ratio(
+                    exit_fee_total, exit_remaining_volume, exit_volume
+                )
+                position_key = None
+                if use_entry_key_segment:
+                    position_key = (
+                        f"{entry.get('run_id', exit_order.get('run_id', ''))}:"
+                        f"{entry.get('symbol_id', exit_order.get('symbol_id', ''))}:"
+                        f"{entry.get('position_id', exit_order.get('position_id', ''))}:"
+                        f"over_closed:{exit_order.get('local_order_id', '')}"
+                    )
+                rows.append(
+                    build_closed_position_row(
+                        entry,
+                        exit_order,
+                        Decimal(0),
+                        Decimal(0),
+                        Decimal(0),
+                        exit_fee,
+                        "over_closed",
+                        row_warnings,
+                        position_key,
+                    )
+                )
+
+        for lot in lots:
+            remaining_entry_volume = lot.remaining
+            if remaining_entry_volume <= 0:
+                continue
+            entry = lot.order
             entry_fee = decimal_ratio(
-                entry_fee_total, remaining_entry_volume, entry_volume
+                lot.fee,
+                remaining_entry_volume,
+                lot.initial,
             )
+            position_key = None
+            if use_entry_key_segment:
+                position_key = (
+                    f"{entry.get('run_id', '')}:{entry.get('symbol_id', '')}:"
+                    f"{entry.get('position_id', '')}:"
+                    f"{entry.get('local_order_id', '')}:open"
+                )
             rows.append(
                 build_open_position_row(
                     entry,
                     remaining_entry_volume,
                     entry_fee,
                     common_warnings,
+                    position_key,
                 )
             )
     return [
