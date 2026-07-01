@@ -1,6 +1,7 @@
 #ifndef AQUILA_CORE_TRADING_ORDER_GATEWAY_SHM_TYPES_H_
 #define AQUILA_CORE_TRADING_ORDER_GATEWAY_SHM_TYPES_H_
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -10,7 +11,7 @@
 namespace aquila::core {
 
 inline constexpr std::uint32_t kOrderGatewayShmMagic = 0x41514F47U;
-inline constexpr std::uint16_t kOrderGatewayShmVersion = 1;
+inline constexpr std::uint16_t kOrderGatewayShmVersion = 2;
 inline constexpr std::size_t kMaxOrderGatewayRoutes = 16;
 inline constexpr std::size_t kOrderGatewaySymbolBytes = 32;
 inline constexpr std::size_t kOrderGatewayQuantityTextBytes = 32;
@@ -32,6 +33,13 @@ enum class OrderGatewayEventKind : std::uint8_t {
   kReady = 3,
   kNotReady = 4,
   kStopped = 5,
+};
+
+enum class OrderGatewayRouteState : std::uint32_t {
+  kUnknown = 0,
+  kNotReady = 1,
+  kReady = 2,
+  kStopped = 3,
 };
 
 enum class OrderGatewayCommandRejectReason : std::uint8_t {
@@ -63,10 +71,32 @@ struct OrderGatewayShmHeader {
   std::uint32_t event_queue_capacity{0};
   std::uint32_t startup_ready_timeout_s{30};
   std::uint32_t reserved1{0};
+  std::uint32_t route_states[kMaxOrderGatewayRoutes]{};
   OrderGatewayQueueDescriptor
       command_queue_descriptors[kMaxOrderGatewayRoutes]{};
   OrderGatewayQueueDescriptor event_queue_descriptors[kMaxOrderGatewayRoutes]{};
 };
+
+inline void StoreOrderGatewayRouteState(
+    OrderGatewayShmHeader& header, std::uint16_t route_id,
+    OrderGatewayRouteState state) noexcept {
+  if (route_id >= kMaxOrderGatewayRoutes) {
+    return;
+  }
+  std::atomic_ref<std::uint32_t> route_state(header.route_states[route_id]);
+  route_state.store(static_cast<std::uint32_t>(state),
+                    std::memory_order_release);
+}
+
+[[nodiscard]] inline OrderGatewayRouteState LoadOrderGatewayRouteState(
+    OrderGatewayShmHeader& header, std::uint16_t route_id) noexcept {
+  if (route_id >= kMaxOrderGatewayRoutes) {
+    return OrderGatewayRouteState::kUnknown;
+  }
+  std::atomic_ref<std::uint32_t> route_state(header.route_states[route_id]);
+  return static_cast<OrderGatewayRouteState>(
+      route_state.load(std::memory_order_acquire));
+}
 
 struct OrderGatewayCommand {
   std::uint64_t command_seq{0};

@@ -37,6 +37,14 @@ class StrategyContext {
     return order_manager_.RetireFinishedOrder(local_order_id);
   }
 
+  [[nodiscard]] std::uint16_t MaxOrderSessionFanout() const noexcept {
+    return order_manager_.MaxOrderSessionFanout();
+  }
+
+  [[nodiscard]] bool OrderRouteReady(std::uint16_t route_id) const noexcept {
+    return order_manager_.OrderRouteReady(route_id);
+  }
+
  private:
   OrderManagerT& order_manager_;
 };

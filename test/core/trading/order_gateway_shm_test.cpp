@@ -90,6 +90,8 @@ TEST(OrderGatewayShmTest, CreateInitializesHeaderAndQueueDescriptors) {
   EXPECT_EQ(header.startup_ready_timeout_s, 30U);
 
   for (std::uint16_t route = 0; route < header.route_count; ++route) {
+    EXPECT_EQ(LoadOrderGatewayRouteState(create_result.value.header(), route),
+              OrderGatewayRouteState::kUnknown);
     EXPECT_EQ(header.command_queue_descriptors[route].capacity, 4096U);
     EXPECT_EQ(header.command_queue_descriptors[route].slot_size,
               sizeof(OrderGatewayCommand));

@@ -71,6 +71,7 @@ class OrderManager {
               .local_order_id = local_order_id};
     }
 
+    order->pre_cancel_status = order->status;
     order->status = OrderStatus::kCancelSent;
     return {.status = OrderCancelStatus::kOk, .local_order_id = local_order_id};
   }
@@ -175,6 +176,30 @@ class OrderManager {
     return feedback_stats_;
   }
 
+  [[nodiscard]] std::uint16_t MaxOrderSessionFanout() const noexcept {
+    if constexpr (requires(const GatewayT& gateway) {
+                    gateway.MaxOrderSessionFanout();
+                  }) {
+      return order_session_.MaxOrderSessionFanout();
+    } else if constexpr (requires(const GatewayT& gateway) {
+                           gateway.route_count();
+                         }) {
+      return order_session_.route_count();
+    } else {
+      return 1;
+    }
+  }
+
+  [[nodiscard]] bool OrderRouteReady(std::uint16_t route_id) const noexcept {
+    if constexpr (requires(const GatewayT& gateway, std::uint16_t route) {
+                    gateway.RouteReady(route);
+                  }) {
+      return order_session_.RouteReady(route_id);
+    } else {
+      return route_id == 0;
+    }
+  }
+
  private:
   static constexpr double kQuantityEpsilon = 1e-12;
 
@@ -272,11 +297,15 @@ class OrderManager {
       return;
     }
     order.status = OrderStatus::kCancelled;
+    order.pre_cancel_status = OrderStatus::kCreated;
   }
 
   void OnCancelRejected(Order& order) noexcept {
     if (order.status == OrderStatus::kCancelSent) {
-      order.status = OrderStatus::kRejected;
+      order.status = CanSubmitCancel(order.pre_cancel_status)
+                         ? order.pre_cancel_status
+                         : OrderStatus::kAccepted;
+      order.pre_cancel_status = OrderStatus::kCreated;
     }
   }
 
@@ -376,6 +405,7 @@ class OrderManager {
 
   void FinishOrder(Order& order) noexcept {
     order.is_finished = true;
+    order.pre_cancel_status = OrderStatus::kCreated;
     NotifyForgetExchangeOrderId(order.local_order_id);
   }
 

@@ -131,6 +131,7 @@ class OrderGatewayClient {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(startup_ready_timeout_s_);
     while (!AllRoutesReady()) {
+      SyncRouteStatesFromHeader();
       (void)PollOrderResponses(runtime);
       if (AllRoutesReady()) {
         break;
@@ -173,6 +174,10 @@ class OrderGatewayClient {
     return route_count_;
   }
 
+  [[nodiscard]] std::uint16_t MaxOrderSessionFanout() const noexcept {
+    return route_count_;
+  }
+
   [[nodiscard]] std::uint16_t ready_route_count() const noexcept {
     return ready_route_count_;
   }
@@ -197,6 +202,7 @@ class OrderGatewayClient {
 
   [[nodiscard]] OrderGatewaySendResult PlaceOrder(
       const StrategyOrder& order) noexcept {
+    SyncRouteStatesFromHeader();
     if (!running_) {
       return Failure(OrderGatewaySendStatus::kNotRunning);
     }
@@ -226,6 +232,7 @@ class OrderGatewayClient {
 
   [[nodiscard]] OrderGatewaySendResult CancelOrder(
       const StrategyOrder& order) noexcept {
+    SyncRouteStatesFromHeader();
     if (!running_) {
       return Failure(OrderGatewaySendStatus::kNotRunning);
     }
@@ -251,6 +258,7 @@ class OrderGatewayClient {
 
   void CacheExchangeOrderId(std::uint64_t local_order_id,
                             std::uint64_t exchange_order_id) noexcept {
+    SyncRouteStatesFromHeader();
     const auto route_it = route_table_.find(local_order_id);
     if (route_it == route_table_.end() || route_it->second >= route_count_) {
       return;
@@ -276,6 +284,7 @@ class OrderGatewayClient {
   }
 
   void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept {
+    SyncRouteStatesFromHeader();
     const auto route_it = route_table_.find(local_order_id);
     if (route_it == route_table_.end() || route_it->second >= route_count_) {
       return;
@@ -302,6 +311,7 @@ class OrderGatewayClient {
 
   template <typename RuntimeT>
   [[nodiscard]] std::uint64_t PollOrderResponses(RuntimeT& runtime) noexcept {
+    SyncRouteStatesFromHeader();
     std::uint64_t handled = 0;
     for (std::uint16_t route = 0; route < route_count_; ++route) {
       std::uint64_t route_events = 0;
@@ -355,6 +365,36 @@ class OrderGatewayClient {
       ++ready_route_count_;
     } else if (ready_route_count_ > 0) {
       --ready_route_count_;
+    }
+  }
+
+  void ApplyRouteState(std::uint16_t route,
+                       OrderGatewayRouteState state) noexcept {
+    switch (state) {
+      case OrderGatewayRouteState::kReady:
+        route_stopped_[route] = false;
+        SetRouteReady(route, true);
+        running_ = !AllRoutesStopped();
+        return;
+      case OrderGatewayRouteState::kNotReady:
+        route_stopped_[route] = false;
+        SetRouteReady(route, false);
+        running_ = !AllRoutesStopped();
+        return;
+      case OrderGatewayRouteState::kStopped:
+        SetRouteReady(route, false);
+        route_stopped_[route] = true;
+        running_ = !AllRoutesStopped();
+        return;
+      case OrderGatewayRouteState::kUnknown:
+        return;
+    }
+  }
+
+  void SyncRouteStatesFromHeader() noexcept {
+    OrderGatewayShmHeader& header = shm_.header();
+    for (std::uint16_t route = 0; route < route_count_; ++route) {
+      ApplyRouteState(route, LoadOrderGatewayRouteState(header, route));
     }
   }
 
@@ -453,17 +493,15 @@ class OrderGatewayClient {
     switch (event.kind) {
       case OrderGatewayEventKind::kReady:
         ++stats_.ready_events;
-        SetRouteReady(route, true);
+        ApplyRouteState(route, OrderGatewayRouteState::kReady);
         return;
       case OrderGatewayEventKind::kNotReady:
         ++stats_.not_ready_events;
-        SetRouteReady(route, false);
+        ApplyRouteState(route, OrderGatewayRouteState::kNotReady);
         return;
       case OrderGatewayEventKind::kStopped:
         ++stats_.stopped_events;
-        SetRouteReady(route, false);
-        route_stopped_[route] = true;
-        running_ = !AllRoutesStopped();
+        ApplyRouteState(route, OrderGatewayRouteState::kStopped);
         return;
       case OrderGatewayEventKind::kCommandRejected:
         ++stats_.command_rejected_events;

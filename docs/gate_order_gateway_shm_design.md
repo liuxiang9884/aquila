@@ -93,6 +93,7 @@ OrderGatewayShmHeader
   command_queue_capacity
   event_queue_capacity
   startup_ready_timeout_s
+  route_states[16]
   command_queue_descriptors[16]
   event_queue_descriptors[16]
   data offsets / sizes
@@ -250,9 +251,12 @@ worker_event_enqueue_ns != 0
 request_sequence / encoded_request_id 可选填，用于关联 worker log
 ```
 
-## Ready 状态
+## Route 状态
 
-不使用额外 ready snapshot。strategy 通过 drain `event_queue[0..N-1]` 维护 route flag：
+SHM V2 在 header 中增加 `route_states[16]`，枚举值为 `kUnknown` / `kNotReady` / `kReady` / `kStopped`。它不是替代
+`event_queue` 的主控制流，而是 ready / not-ready / stopped 事件丢失、`event_queue` full 或 worker fatal 时的可见兜底。
+
+strategy 仍通过 drain `event_queue[0..N-1]` 维护 route flag，并在 `Start()` / poll / 下单前同步 header route state：
 
 ```text
 route_ready[0..N-1] = false
@@ -263,7 +267,7 @@ ready_count = 0
 
 ```text
 strategy attach gateway SHM
-只 drain event_queue，不产生策略信号
+同步 route_states，并 drain event_queue，不产生策略信号
 收到 kReady(route=i):
   如果 route_ready[i] == false:
     route_ready[i] = true
@@ -275,6 +279,10 @@ ready_count == N 后进入 trading
 运行阶段：
 
 ```text
+route_states[i] == kStopped:
+  route_ready[i] = false
+  route_stopped[i] = true
+
 收到 kNotReady(route=i):
   如果 route_ready[i] == true:
     route_ready[i] = false
@@ -378,7 +386,8 @@ enqueue ok, worker send ok
 
 - worker 不能静默丢 `OrderResponseEvent`。
 - worker 进入 fatal / degraded，停止对应 `OrderSession`。
-- strategy 侧应通过可用控制路径观察到 `kStopped` 或进程异常，然后暂停新开仓并进入 reconcile / emergency handling。
+- worker 将 `route_states[i]` 写为 `kStopped`；如果还能写 event queue，也发布 `kStopped`。
+- strategy 侧通过 event 或 header route state 观察到 stopped route，暂停该 route 新下单；后续是否进入 reconcile / emergency handling 取决于订单事实状态。
 - 不阻塞等待。
 
 ## 配置模型
@@ -463,6 +472,7 @@ config/strategies/lead_lag_30symbols_fusion_2bps_5bps_order_gateway_20260627.tom
 - SHM header / queue ABI 单元测试，包括 `route_count <= 16`、capacity、POD struct size 和 overflow reject。
 - `command_queue` place / cancel / cache / forget enqueue / dequeue 测试。
 - `event_queue` response / ready / not-ready / command-rejected drain 测试。
+- `route_states` 测试：header 初始为 `kUnknown`，worker ready / not-ready / stopped 写入状态，client 可在无 event 时同步 ready/stopped。
 - `OrderGatewayClient` route table 测试：place 写 route table，cancel / cache / forget 回原 route。
 - strategy ready gate 测试：启动等全 N ready、重复 ready 不重复计数、not-ready 降级、30s 超时 fail fast。
 - LeadLag fanout 测试：一个 signal 生成 m 个 child、共享 `parent_id`、不同 `local_order_id` / `route_id`，只占一个 parallel slot。

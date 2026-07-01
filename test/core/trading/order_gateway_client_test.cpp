@@ -180,6 +180,25 @@ TEST(OrderGatewayClientTest, StartWaitsUntilAllRoutesAreReady) {
   EXPECT_EQ(client.ready_route_count(), 4U);
 }
 
+TEST(OrderGatewayClientTest, StartAcceptsHeaderReadyStatesWithoutEvents) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("start_header_ready");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  for (std::uint16_t route = 0; route < config.route_count; ++route) {
+    StoreOrderGatewayRouteState(shm.header(), route,
+                                OrderGatewayRouteState::kReady);
+  }
+
+  OrderGatewayClient client = CreateClient(config);
+
+  EXPECT_TRUE(client.Start());
+  EXPECT_TRUE(client.Running());
+  EXPECT_TRUE(client.Ready());
+  EXPECT_EQ(client.ready_route_count(), 4U);
+}
+
 TEST(OrderGatewayClientTest, StartFailsAfterConfiguredTimeout) {
   const OrderGatewayShmConfig config = MakeCreateConfig("start_timeout");
   ShmCleanup cleanup(config.shm_name);
@@ -266,6 +285,57 @@ TEST(OrderGatewayClientTest, PlaceNotReadyRouteSkipsCommand) {
   EXPECT_EQ(client.stats().commands_skipped_route_not_ready, 1U);
   OrderGatewayCommand command{};
   EXPECT_FALSE(shm.CommandQueue(3).TryPop(&command));
+}
+
+TEST(OrderGatewayClientTest, HeaderStoppedRouteInvalidatesReadyBeforePlace) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("header_stopped");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  StoreOrderGatewayRouteState(shm.header(), 2, OrderGatewayRouteState::kReady);
+
+  OrderGatewayClient client = CreateClient(config);
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+  ASSERT_TRUE(client.RouteReady(2));
+  StoreOrderGatewayRouteState(shm.header(), 2,
+                              OrderGatewayRouteState::kStopped);
+
+  const OrderGatewaySendResult sent = client.PlaceOrder(MakeOrder(1014, 2));
+
+  EXPECT_EQ(sent.status, OrderGatewaySendStatus::kRouteNotReady);
+  EXPECT_FALSE(client.RouteReady(2));
+  EXPECT_FALSE(client.HasRouteForLocalOrderForTest(1014));
+  OrderGatewayCommand command{};
+  EXPECT_FALSE(shm.CommandQueue(2).TryPop(&command));
+}
+
+TEST(OrderGatewayClientTest, HeaderReadyAfterAllStoppedRestoresRunning) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("header_restarted");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  for (std::uint16_t route = 0; route < config.route_count; ++route) {
+    StoreOrderGatewayRouteState(shm.header(), route,
+                                OrderGatewayRouteState::kStopped);
+  }
+
+  OrderGatewayClient client = CreateClient(config);
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+  EXPECT_FALSE(client.Running());
+
+  StoreOrderGatewayRouteState(shm.header(), 0, OrderGatewayRouteState::kReady);
+  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+
+  EXPECT_TRUE(client.Running());
+  ASSERT_TRUE(client.RouteReady(0));
+  EXPECT_EQ(client.PlaceOrder(MakeOrder(1015, 0)).status,
+            OrderGatewaySendStatus::kOk);
+  OrderGatewayCommand command{};
+  EXPECT_TRUE(shm.CommandQueue(0).TryPop(&command));
 }
 
 TEST(OrderGatewayClientTest, AutoRouteWithNoReadyRouteReportsNotReady) {

@@ -137,6 +137,15 @@ TEST(OrderManagerTest, EncodesStrategyIdIntoCreatedLocalOrderId) {
   EXPECT_NE(order_manager.FindOrder(placed.local_order_id), nullptr);
 }
 
+TEST(OrderManagerTest, DefaultsToSingleReadyRouteWithoutGatewayCapabilities) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+
+  EXPECT_EQ(order_manager.MaxOrderSessionFanout(), 1U);
+  EXPECT_TRUE(order_manager.OrderRouteReady(0));
+  EXPECT_FALSE(order_manager.OrderRouteReady(1));
+}
+
 TEST(OrderManagerTest, AckResponseKeepsSentOrderUntilFinalResult) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);
@@ -505,7 +514,7 @@ TEST(OrderManagerTest, SessionCancelRejectedDoesNotEnterCancelSent) {
   EXPECT_EQ(order->status, OrderStatus::kAccepted);
 }
 
-TEST(OrderManagerTest, CancelRejectedResponseMarksOrderRejected) {
+TEST(OrderManagerTest, CancelRejectedResponseRestoresPreviousActiveStatus) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);
   const OrderPlaceResult placed =
@@ -526,7 +535,12 @@ TEST(OrderManagerTest, CancelRejectedResponseMarksOrderRejected) {
 
   const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->status, OrderStatus::kRejected);
+  EXPECT_EQ(order->status, OrderStatus::kAccepted);
+
+  const OrderCancelResult retry_cancel =
+      order_manager.CancelOrder(placed.local_order_id);
+  EXPECT_EQ(retry_cancel.status, OrderCancelStatus::kOk);
+  EXPECT_EQ(order->status, OrderStatus::kCancelSent);
 }
 
 TEST(OrderManagerTest, DuplicateCancelIsRejectedByInvalidStatus) {

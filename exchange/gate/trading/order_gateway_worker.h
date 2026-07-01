@@ -53,8 +53,9 @@ class OrderGatewayWorkerPublisher {
  public:
   OrderGatewayWorkerPublisher() noexcept = default;
   OrderGatewayWorkerPublisher(std::uint16_t route_id,
-                              core::OrderGatewayEventQueue event_queue)
-      : route_id_(route_id), event_queue_(event_queue) {}
+                              core::OrderGatewayEventQueue event_queue,
+                              core::OrderGatewayShmHeader* header = nullptr)
+      : route_id_(route_id), event_queue_(event_queue), header_(header) {}
 
   [[nodiscard]] bool PublishCommandRejected(
       const core::OrderGatewayCommand& command,
@@ -87,6 +88,7 @@ class OrderGatewayWorkerPublisher {
     event.route_id = route_id_;
     event.kind = core::OrderGatewayEventKind::kStopped;
     event.worker_event_enqueue_ns = NowNs();
+    StoreRouteState(core::OrderGatewayRouteState::kStopped);
     return Publish(event);
   }
 
@@ -97,6 +99,7 @@ class OrderGatewayWorkerPublisher {
     event.kind = core::OrderGatewayEventKind::kReady;
     event.ready = 1;
     event.worker_event_enqueue_ns = NowNs();
+    StoreRouteState(core::OrderGatewayRouteState::kReady);
     (void)Publish(event);
   }
 
@@ -107,6 +110,7 @@ class OrderGatewayWorkerPublisher {
     event.kind = core::OrderGatewayEventKind::kNotReady;
     event.ready = 0;
     event.worker_event_enqueue_ns = NowNs();
+    StoreRouteState(core::OrderGatewayRouteState::kNotReady);
     (void)Publish(event);
   }
 
@@ -139,18 +143,28 @@ class OrderGatewayWorkerPublisher {
     (void)Publish(event);
   }
 
-  void TrackSentCommand(const core::OrderGatewayCommand& command,
-                        const gate::OrderSendResult& sent,
-                        std::int64_t worker_dequeue_ns) {
+  [[nodiscard]] bool TrackSentCommand(
+      const core::OrderGatewayCommand& command,
+      const gate::OrderSendResult& sent,
+      std::int64_t worker_dequeue_ns) noexcept {
     if (sent.request_sequence == 0) {
-      return;
+      return true;
     }
-    request_metadata_[sent.request_sequence] = OrderGatewayRequestMetadata{
-        .command_seq = command.command_seq,
-        .parent_id = command.parent_id,
-        .worker_dequeue_ns = worker_dequeue_ns,
-        .request_send_local_ns = sent.send_local_ns,
-    };
+    try {
+      request_metadata_.insert_or_assign(
+          sent.request_sequence,
+          OrderGatewayRequestMetadata{
+              .command_seq = command.command_seq,
+              .parent_id = command.parent_id,
+              .worker_dequeue_ns = worker_dequeue_ns,
+              .request_send_local_ns = sent.send_local_ns,
+          });
+    } catch (...) {
+      event_queue_failed_ = true;
+      StoreRouteState(core::OrderGatewayRouteState::kStopped);
+      return false;
+    }
+    return true;
   }
 
   [[nodiscard]] bool event_queue_failed() const noexcept {
@@ -169,13 +183,22 @@ class OrderGatewayWorkerPublisher {
   [[nodiscard]] bool Publish(const core::OrderGatewayEvent& event) noexcept {
     if (!event_queue_.TryPush(event)) {
       event_queue_failed_ = true;
+      StoreRouteState(core::OrderGatewayRouteState::kStopped);
       return false;
     }
     return true;
   }
 
+  void StoreRouteState(core::OrderGatewayRouteState state) noexcept {
+    if (header_ == nullptr) {
+      return;
+    }
+    core::StoreOrderGatewayRouteState(*header_, route_id_, state);
+  }
+
   std::uint16_t route_id_{0};
   core::OrderGatewayEventQueue event_queue_{};
+  core::OrderGatewayShmHeader* header_{nullptr};
   std::uint64_t event_seq_{0};
   bool event_queue_failed_{false};
   absl::flat_hash_map<std::uint64_t, OrderGatewayRequestMetadata>
@@ -299,7 +322,9 @@ class OrderGatewayCommandWorker {
       StopIfPublisherFailed();
       return;
     }
-    publisher_->TrackSentCommand(command, sent, worker_dequeue_ns);
+    if (!publisher_->TrackSentCommand(command, sent, worker_dequeue_ns)) {
+      StopIfPublisherFailed();
+    }
   }
 
   void Cancel(const core::OrderGatewayCommand& command,
@@ -321,7 +346,9 @@ class OrderGatewayCommandWorker {
       StopIfPublisherFailed();
       return;
     }
-    publisher_->TrackSentCommand(command, sent, worker_dequeue_ns);
+    if (!publisher_->TrackSentCommand(command, sent, worker_dequeue_ns)) {
+      StopIfPublisherFailed();
+    }
   }
 
   void StopIfPublisherFailed() noexcept {
@@ -359,6 +386,7 @@ class OrderGatewayCommandWorker {
         std::string_view(command.price_text, command.price_text_size);
     order.reduce_only = command.reduce_only != 0;
     order.gateway_route_id = command.route_id;
+    order.parent_id = command.parent_id;
     return order;
   }
 

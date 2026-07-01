@@ -78,6 +78,7 @@ struct StrategyOrder {
   bool reduce_only{false};
   std::uint16_t gateway_route_id{kAutoGatewayRoute};
   OrderStatus status{OrderStatus::kCreated};
+  OrderStatus pre_cancel_status{OrderStatus::kCreated};
   double cumulative_filled_quantity{0.0};
   double cumulative_filled_value{0.0};
   double last_fill_price{0.0};

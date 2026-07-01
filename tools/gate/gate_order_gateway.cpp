@@ -119,6 +119,12 @@ void BindCurrentThreadToCpu(int cpu_id) noexcept {
   }
 #if defined(__linux__)
   cpu_set_t cpuset;
+  if (cpu_id >= CPU_SETSIZE) {
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_WARNING("gate_order_gateway_bind_cpu_invalid cpu_id={}", cpu_id);
+    }
+    return;
+  }
   CPU_ZERO(&cpuset);
   CPU_SET(cpu_id, &cpuset);
   const int rc =
@@ -200,10 +206,11 @@ class GateOrderGatewayRouteWorker {
   GateOrderGatewayRouteWorker(std::uint16_t route_id, int worker_cpu_id,
                               aq_core::OrderGatewayCommandQueue command_queue,
                               aq_core::OrderGatewayEventQueue event_queue,
+                              aq_core::OrderGatewayShmHeader* shm_header,
                               aq_gate::OrderSessionConfig config,
                               aq_gate::LoginCredentials credentials)
       : worker_cpu_id_(worker_cpu_id),
-        publisher_(route_id, event_queue),
+        publisher_(route_id, event_queue, shm_header),
         handler_(publisher_),
         session_(std::move(config.connection), std::move(credentials), handler_,
                  config.request_map_capacity,
@@ -222,6 +229,7 @@ class GateOrderGatewayRouteWorker {
     thread_ = std::thread([this] {
       BindCurrentThreadToCpu(worker_cpu_id_);
       start_result_ = session_.Start();
+      done_.store(true, std::memory_order_release);
     });
   }
 
@@ -237,6 +245,10 @@ class GateOrderGatewayRouteWorker {
 
   [[nodiscard]] bool start_result() const noexcept {
     return start_result_;
+  }
+
+  [[nodiscard]] bool done() const noexcept {
+    return done_.load(std::memory_order_acquire);
   }
 
  private:
@@ -256,6 +268,7 @@ class GateOrderGatewayRouteWorker {
   CommandWorker command_worker_;
   std::thread thread_;
   int worker_cpu_id_{-1};
+  std::atomic<bool> done_{false};
   bool start_result_{false};
 };
 
@@ -280,7 +293,7 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
     workers.push_back(
         std::make_unique<GateOrderGatewayRouteWorker<WebSocketPolicy>>(
             static_cast<std::uint16_t>(i), routes[i].route_config.worker_cpu_id,
-            shm.CommandQueue(i), shm.EventQueue(i),
+            shm.CommandQueue(i), shm.EventQueue(i), &shm.header(),
             std::move(routes[i].order_session_config),
             std::move(routes[i].credentials)));
   }
@@ -304,6 +317,17 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
       if (elapsed_ms >= static_cast<std::int64_t>(max_runtime_ms)) {
         break;
       }
+    }
+    bool all_workers_done = !workers.empty();
+    for (const std::unique_ptr<GateOrderGatewayRouteWorker<WebSocketPolicy>>&
+             worker : workers) {
+      if (!worker->done()) {
+        all_workers_done = false;
+        break;
+      }
+    }
+    if (all_workers_done) {
+      break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }

@@ -1,4 +1,5 @@
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -582,9 +583,21 @@ struct FakeOrderSession {
     return {};
   }
 
+  [[nodiscard]] std::uint16_t MaxOrderSessionFanout() const noexcept {
+    return max_order_session_fanout;
+  }
+
+  [[nodiscard]] bool RouteReady(std::uint16_t route_id) const noexcept {
+    return route_id < route_ready.size() && route_ready[route_id];
+  }
+
   SendStatus next_place_status{SendStatus::kOk};
   std::uint32_t reject_next_place_count{0};
   bool capture_price_text{true};
+  std::uint16_t max_order_session_fanout{leadlag::kMaxOrderSessionFanout};
+  std::array<bool, leadlag::kMaxOrderSessionFanout> route_ready{
+      true, true, true, true, true, true, true, true,
+      true, true, true, true, true, true, true, true};
   std::vector<CapturedOrder> placed_orders;
 };
 
@@ -1114,7 +1127,6 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
   const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
   ASSERT_NE(parent_id, 0U);
-  EXPECT_EQ(parent_id, strategy.last_signal_decision().group_id);
   std::vector<std::uint64_t> local_order_ids;
   for (std::size_t i = 0; i < order_session.placed_orders.size(); ++i) {
     const FakeOrderSession::CapturedOrder& order =
@@ -1131,6 +1143,61 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(local_order_ids[1], local_order_ids[2]);
   EXPECT_NE(local_order_ids[2], local_order_ids[3]);
   EXPECT_EQ(strategy.last_signal_diagnostics().active_group_count, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ExternalModeParentIdIsGloballyUniqueAcrossSymbols) {
+  leadlag::Strategy strategy{TwoPairSignalOnlyConfig()};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 3);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const std::uint64_t first_parent_id =
+      order_session.placed_orders.back().parent_id;
+  ASSERT_NE(first_parent_id, 0U);
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 7);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const std::uint64_t second_parent_id =
+      order_session.placed_orders.back().parent_id;
+  ASSERT_NE(second_parent_id, 0U);
+  EXPECT_NE(first_parent_id, second_parent_id);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutOpenCapsOrdersAtAvailableOrderSessionRoutes) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithFanout(4)};
+  FakeOrderSession order_session;
+  order_session.max_order_session_fanout = 2;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  EXPECT_EQ(order_session.placed_orders[0].gateway_route_id, 0U);
+  EXPECT_EQ(order_session.placed_orders[1].gateway_route_id, 1U);
+  EXPECT_EQ(order_session.placed_orders[0].quantity, 9);
+  EXPECT_EQ(order_session.placed_orders[1].quantity, 9);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutOpenScansPastNotReadyRoutes) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithFanout(2)};
+  FakeOrderSession order_session;
+  order_session.max_order_session_fanout = 4;
+  order_session.route_ready[0] = false;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  EXPECT_EQ(order_session.placed_orders[0].gateway_route_id, 1U);
+  EXPECT_EQ(order_session.placed_orders[1].gateway_route_id, 2U);
 }
 
 TEST(LeadLagStrategyInterfaceTest, FanoutOpenRiskChecksTotalSubmittedNotional) {

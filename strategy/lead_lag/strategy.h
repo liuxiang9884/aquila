@@ -1233,6 +1233,28 @@ class Strategy {
     return std::min(execute.order_session_fanout, kMaxOrderSessionFanout);
   }
 
+  template <typename ContextT>
+  [[nodiscard]] static std::uint32_t ContextOrderSessionFanoutLimit(
+      const ContextT& context) noexcept {
+    std::uint32_t fanout_limit = 1;
+    if constexpr (requires { context.MaxOrderSessionFanout(); }) {
+      fanout_limit = context.MaxOrderSessionFanout();
+    }
+    if (fanout_limit == 0) {
+      return 1;
+    }
+    return std::min(fanout_limit, kMaxOrderSessionFanout);
+  }
+
+  template <typename ContextT>
+  [[nodiscard]] static bool ContextOrderRouteReady(
+      const ContextT& context, std::uint16_t route_id) noexcept {
+    if constexpr (requires { context.OrderRouteReady(route_id); }) {
+      return context.OrderRouteReady(route_id);
+    }
+    return route_id == 0;
+  }
+
   [[nodiscard]] static bool OrderDecimalPlacesWithinRuntimeBounds(
       const PairConfig& pair) noexcept {
     const InstrumentMetadata& instrument = pair.lag_instrument;
@@ -1840,6 +1862,31 @@ class Strategy {
         order_notional, runtime.execution.active_group_count());
   }
 
+  void LogOrderSessionFanoutCapped(std::string_view symbol,
+                                   const PairRuntimeState& runtime,
+                                   std::uint32_t requested_fanout,
+                                   std::uint32_t available_fanout) noexcept {
+    NOVA_WARNING(
+        "lead_lag_order_session_fanout_capped symbol={} symbol_id={} "
+        "action={} reduce_only={} requested_fanout={} available_fanout={}",
+        symbol, runtime.pair.symbol_id,
+        magic_enum::enum_name(last_signal_decision_.action),
+        last_signal_decision_.intent.reduce_only ? "true" : "false",
+        requested_fanout, available_fanout);
+  }
+
+  void LogOrderSessionRouteNotReady(std::string_view symbol,
+                                    const PairRuntimeState& runtime,
+                                    std::uint16_t route_id) noexcept {
+    NOVA_WARNING(
+        "lead_lag_order_session_route_not_ready symbol={} symbol_id={} "
+        "action={} reduce_only={} route_id={}",
+        symbol, runtime.pair.symbol_id,
+        magic_enum::enum_name(last_signal_decision_.action),
+        last_signal_decision_.intent.reduce_only ? "true" : "false",
+        route_id);
+  }
+
   template <typename ContextT>
   [[nodiscard]] core::OrderPlaceResult PlacePreparedExternalOrder(
       ContextT& context, std::string_view symbol,
@@ -2005,6 +2052,25 @@ class Strategy {
     return {.local_order_id = placed.local_order_id};
   }
 
+  [[nodiscard]] std::uint64_t AllocateExecutionParentId() noexcept {
+    std::uint64_t parent_id = next_execution_parent_id_++;
+    if (next_execution_parent_id_ == 0) {
+      next_execution_parent_id_ = 1;
+    }
+    if (parent_id == 0) {
+      parent_id = next_execution_parent_id_++;
+    }
+    return parent_id;
+  }
+
+  [[nodiscard]] std::uint64_t EnsureExecutionParentId(
+      ExecutionGroup& group) noexcept {
+    if (group.parent_id == 0) {
+      group.parent_id = AllocateExecutionParentId();
+    }
+    return group.parent_id;
+  }
+
   template <typename ContextT>
   void SubmitExternalSignal(PairRuntimeState* runtime,
                             const BookTicker& trigger_ticker,
@@ -2037,17 +2103,41 @@ class Strategy {
       return;
     }
 
-    const std::uint32_t order_session_fanout =
+    const std::uint32_t requested_order_session_fanout =
         EffectiveOrderSessionFanout(runtime->pair.execute);
+    const std::uint32_t available_order_session_fanout =
+        ContextOrderSessionFanoutLimit(context);
+    if (requested_order_session_fanout > available_order_session_fanout) {
+      LogOrderSessionFanoutCapped(symbol, *runtime,
+                                  requested_order_session_fanout,
+                                  available_order_session_fanout);
+    }
+    const std::uint32_t target_order_session_fanout =
+        std::min(requested_order_session_fanout,
+                 available_order_session_fanout);
+    std::array<std::uint16_t, kMaxOrderSessionFanout> submission_routes{};
+    std::uint32_t submission_route_count = 0;
+    for (std::uint32_t route = 0;
+         route < available_order_session_fanout &&
+         submission_route_count < target_order_session_fanout;
+         ++route) {
+      const std::uint16_t route_id = static_cast<std::uint16_t>(route);
+      if (!ContextOrderRouteReady(context, route_id)) {
+        LogOrderSessionRouteNotReady(symbol, *runtime, route_id);
+        continue;
+      }
+      submission_routes[submission_route_count++] = route_id;
+    }
+
     const double order_notional =
         OrderNotional(quantity.quantity, price.order_price, instrument);
     const double risk_quantity = last_signal_decision_.intent.reduce_only
                                      ? quantity.quantity
-                                     : quantity.quantity * order_session_fanout;
+                                     : quantity.quantity * submission_route_count;
     const double risk_order_notional =
         last_signal_decision_.intent.reduce_only
             ? order_notional
-            : order_notional * order_session_fanout;
+            : order_notional * submission_route_count;
     if (RejectOpenForRisk(runtime, symbol, price, instrument, risk_quantity,
                           risk_order_notional)) {
       return;
@@ -2072,13 +2162,15 @@ class Strategy {
     if (submit_group == nullptr) {
       return;
     }
-    const std::uint64_t parent_id = submit_group->group_id;
+    const std::uint64_t submit_group_id = submit_group->group_id;
+    const std::uint64_t parent_id = EnsureExecutionParentId(*submit_group);
 
     std::uint32_t accepted_orders = 0;
     std::array<std::uint64_t, kMaxOrderSessionFanout>
         rejected_submit_local_order_ids{};
     std::uint8_t rejected_submit_count = 0;
-    for (std::uint32_t route = 0; route < order_session_fanout; ++route) {
+    for (std::uint32_t route_index = 0; route_index < submission_route_count;
+         ++route_index) {
       OrderPriceTextStorage* order_text_storage = AcquirePreparedOrderText(
           runtime, symbol, instrument, price, quantity, order_notional);
       if (order_text_storage == nullptr) {
@@ -2088,7 +2180,7 @@ class Strategy {
           SubmitPreparedExternalOrder(
               runtime, trigger_ticker, signal_role, context, submit_group,
               instrument, symbol, price, quantity, order_notional,
-              order_text_storage, parent_id, static_cast<std::uint16_t>(route));
+              order_text_storage, parent_id, submission_routes[route_index]);
       if (submit_result.accepted) {
         ++accepted_orders;
       }
@@ -2104,7 +2196,7 @@ class Strategy {
     }
     if (!last_signal_decision_.intent.reduce_only && accepted_orders == 0) {
       [[maybe_unused]] const bool cleared =
-          runtime->execution.ClearGroupById(parent_id);
+          runtime->execution.ClearGroupById(submit_group_id);
     }
   }
 
@@ -2675,6 +2767,7 @@ class Strategy {
   std::uint64_t market_calc_row_index_{0};
 #endif
   RecoveryState recovery_state_{RecoveryState::kNormal};
+  std::uint64_t next_execution_parent_id_{1};
   bool stop_requested_{false};
   static constexpr double kPriceEpsilon = 1e-12;
   static constexpr double kQuantityEpsilon = 1e-12;

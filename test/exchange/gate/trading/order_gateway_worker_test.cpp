@@ -217,13 +217,15 @@ TEST(OrderGatewayWorkerTest, EventQueueFullStopsWorkerBeforeNextDispatch) {
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(MakePlaceCommand(0, 1102)));
 
   FakeSession session;
-  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0), &shm.header());
   OrderGatewayCommandWorker<FakeSession> worker(0, shm.CommandQueue(0), session,
                                                 publisher);
 
   EXPECT_TRUE(worker.PollOnce());
   EXPECT_TRUE(worker.stopped());
   EXPECT_TRUE(publisher.event_queue_failed());
+  EXPECT_EQ(core::LoadOrderGatewayRouteState(shm.header(), 0),
+            core::OrderGatewayRouteState::kStopped);
   EXPECT_FALSE(worker.PollOnce());
   EXPECT_TRUE(session.placed.empty());
 }
@@ -371,9 +373,13 @@ TEST(OrderGatewayWorkerTest, ReadyAndNotReadyCallbacksEmitEvents) {
   ASSERT_TRUE(shm_result.ok) << shm_result.error;
   core::OrderGatewayShmManager& shm = shm_result.value;
 
-  OrderGatewayWorkerPublisher publisher(1, shm.EventQueue(1));
+  OrderGatewayWorkerPublisher publisher(1, shm.EventQueue(1), &shm.header());
   publisher.OnOrderSessionLoginReady();
+  EXPECT_EQ(core::LoadOrderGatewayRouteState(shm.header(), 1),
+            core::OrderGatewayRouteState::kReady);
   publisher.OnOrderSessionLoginNotReady();
+  EXPECT_EQ(core::LoadOrderGatewayRouteState(shm.header(), 1),
+            core::OrderGatewayRouteState::kNotReady);
 
   core::OrderGatewayEvent ready{};
   ASSERT_TRUE(shm.EventQueue(1).TryPop(&ready));
@@ -386,6 +392,29 @@ TEST(OrderGatewayWorkerTest, ReadyAndNotReadyCallbacksEmitEvents) {
   EXPECT_EQ(not_ready.kind, core::OrderGatewayEventKind::kNotReady);
   EXPECT_EQ(not_ready.route_id, 1U);
   EXPECT_EQ(not_ready.ready, 0U);
+}
+
+TEST(OrderGatewayWorkerTest, FullEventQueueMarksRouteStoppedForLostResponse) {
+  core::OrderGatewayShmConfig config = MakeShmConfig("response_event_full");
+  config.event_queue_capacity = 1;
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  core::OrderGatewayShmManager& shm = shm_result.value;
+  ASSERT_TRUE(shm.EventQueue(0).TryPush(core::OrderGatewayEvent{}));
+
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0), &shm.header());
+  publisher.OnOrderResponse(OrderResponse{.kind = OrderResponseKind::kRejected,
+                                          .local_order_id = 1006,
+                                          .exchange_order_id = 7006,
+                                          .request_sequence = 56,
+                                          .http_status = 503,
+                                          .local_receive_ns = 800,
+                                          .exchange_ns = 700});
+
+  EXPECT_TRUE(publisher.event_queue_failed());
+  EXPECT_EQ(core::LoadOrderGatewayRouteState(shm.header(), 0),
+            core::OrderGatewayRouteState::kStopped);
 }
 
 TEST(OrderGatewayWorkerTest, GateResponseEmitsOrderResponseEvent) {
