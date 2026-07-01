@@ -60,6 +60,8 @@ ORDER_FEEDBACK_ID_PREFIX_BY_KIND = {
 ORDER_DETAIL_FIELDS = [
     "run_id",
     "local_order_id",
+    "parent_id",
+    "route_id",
     "text_order_id",
     "request_sequence",
     "encoded_request_id",
@@ -235,6 +237,8 @@ LATENCY_DETAIL_FIELDS = [
     "run_id",
     "latency_key",
     "local_order_id",
+    "parent_id",
+    "route_id",
     "exchange_order_id",
     "symbol",
     "symbol_id",
@@ -545,6 +549,8 @@ def choose_nonzero(*values: str | None) -> str:
 def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     copy_fields = {
         "local_order_id",
+        "parent_id",
+        "route_id",
         "trigger_exchange",
         "trigger_symbol_id",
         "trigger_exchange_ns",
@@ -642,6 +648,9 @@ def merge_intent_rejected(order: dict[str, str], fields: dict[str, str]) -> None
 
 def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order["local_order_id"] = fields.get("local_order_id", order.get("local_order_id", ""))
+    for key in ("parent_id", "route_id"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
     order["request_sequence"] = fields.get("request_sequence", "")
     order["encoded_request_id"] = fields.get("encoded_request_id", "")
     for key in ("order_session_id", "send_cpu"):
@@ -704,7 +713,7 @@ def merge_tcp_info(order: dict[str, str], fields: dict[str, str]) -> None:
 
 
 def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("order_session_id", "ack_cpu"):
+    for key in ("parent_id", "route_id", "order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     merge_tcp_info(order, fields)
@@ -736,6 +745,9 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
 def merge_strategy_order_response_context(
     order: dict[str, str], fields: dict[str, str]
 ) -> None:
+    for key in ("parent_id", "route_id"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
     prefix = ORDER_RESPONSE_ID_PREFIX_BY_KIND.get(fields.get("kind", ""))
     if prefix is None:
         return
@@ -755,7 +767,7 @@ def merge_stage_book_ticker_ids(
 
 
 def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("order_session_id", "ack_cpu"):
+    for key in ("parent_id", "route_id", "order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     merge_tcp_info(order, fields)
@@ -775,8 +787,9 @@ def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None
 
 
 def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> None:
-    if fields.get("order_session_id") not in (None, ""):
-        order["order_session_id"] = fields["order_session_id"]
+    for key in ("parent_id", "route_id", "order_session_id"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
     append_unique_text(order, "diagnostic_cpu", fields.get("diagnostic_cpu"))
     merge_tcp_info(order, fields)
     append_unique_text(order, "latency_diagnostic_reason", fields.get("reason"))
@@ -852,6 +865,9 @@ def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> N
 
 
 def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
+    for key in ("parent_id", "route_id"):
+        if fields.get(key) not in (None, ""):
+            order[key] = fields[key]
     order["exchange_order_id"] = choose_nonzero(
         fields.get("exchange_order_id"), order.get("exchange_order_id")
     )
@@ -888,6 +904,8 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
     for key in (
         "symbol_id",
         "symbol",
+        "parent_id",
+        "route_id",
         "status",
         "reduce_only",
         "quantity",
@@ -1685,6 +1703,8 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "run_id": order.get("run_id", ""),
             "latency_key": f"{order.get('run_id', '')}:{local_order_id}",
             "local_order_id": local_order_id,
+            "parent_id": order.get("parent_id", ""),
+            "route_id": order.get("route_id", ""),
             "exchange_order_id": order.get("exchange_order_id", ""),
             "symbol": order.get("symbol", ""),
             "symbol_id": order.get("symbol_id", ""),

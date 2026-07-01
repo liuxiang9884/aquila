@@ -319,9 +319,9 @@ class OrderGatewayClient {
     SyncRouteStatesFromHeader();
     std::uint64_t handled = 0;
     for (std::uint16_t route = 0; route < route_count_; ++route) {
-      const DrainRouteResult drained = DrainRouteEvents(
-          route, options_.max_events_per_poll_per_route,
-          /*defer_stopped_unknown=*/true, runtime);
+      const DrainRouteResult drained =
+          DrainRouteEvents(route, options_.max_events_per_poll_per_route,
+                           /*defer_stopped_unknown=*/true, runtime);
       handled += drained.handled;
       if (drained.stopped_seen) {
         handled += DrainAndHandleStoppedRoute(route, runtime);
@@ -560,9 +560,10 @@ class OrderGatewayClient {
   };
 
   template <typename RuntimeT>
-  [[nodiscard]] DrainRouteResult DrainRouteEvents(
-      std::uint16_t route, std::uint64_t max_events, bool defer_stopped_unknown,
-      RuntimeT& runtime) noexcept {
+  [[nodiscard]] DrainRouteResult DrainRouteEvents(std::uint16_t route,
+                                                  std::uint64_t max_events,
+                                                  bool defer_stopped_unknown,
+                                                  RuntimeT& runtime) noexcept {
     DrainRouteResult result;
     OrderGatewayEvent event{};
     bool clear_unknown_result_route =
@@ -587,9 +588,9 @@ class OrderGatewayClient {
       std::uint16_t route, RuntimeT& runtime) noexcept {
     std::uint64_t handled = 0;
     ApplyRouteState(route, OrderGatewayRouteState::kStopped);
-    DrainRouteResult drained = DrainRouteEvents(
-        route, event_queues_[route].capacity(), /*defer_stopped_unknown=*/true,
-        runtime);
+    DrainRouteResult drained =
+        DrainRouteEvents(route, event_queues_[route].capacity(),
+                         /*defer_stopped_unknown=*/true, runtime);
     handled += drained.handled;
     handled += HandleRouteStopped(route, runtime);
     return handled;
@@ -626,6 +627,7 @@ class OrderGatewayClient {
       runtime.OnOrderResponse(OrderResponseEvent{
           .kind = OrderResponseKind::kUnknownResult,
           .local_order_id = local_order_id,
+          .route_id = route,
           .local_receive_ns = NowNs(),
       });
     }
@@ -640,7 +642,9 @@ class OrderGatewayClient {
     return OrderResponseEvent{
         .kind = kind,
         .local_order_id = event.local_order_id,
+        .parent_id = event.parent_id,
         .exchange_order_id = event.exchange_order_id,
+        .route_id = event.route_id,
         .local_receive_ns = event.local_receive_ns != 0
                                 ? event.local_receive_ns
                                 : event.worker_event_enqueue_ns,

@@ -85,6 +85,8 @@
 |---|---|---|
 | `run_id` | 本次运行或 report 的标识。 | 分析时传入或由 log 父目录推导。 |
 | `local_order_id` | 本地订单 id。 | `lead_lag_order_submitted`、`gate_order_send_ok` 或后续回报日志。 |
+| `parent_id` | strategy execution parent id。 | `lead_lag_order_submitted`、`lead_lag_order_response`、`lead_lag_order_feedback`、`lead_lag_order_finished` 或 Gate send / response / diagnostic log。 |
+| `route_id` | order gateway route id。 | `lead_lag_order_submitted`、Gate send / response / diagnostic log；feedback 行由策略按 `local_order_id` 从本地订单表补出。 |
 | `text_order_id` | Gate text order id。 | 当前分析脚本按 `t-<local_order_id>` 推导。 |
 | `request_sequence` | Gate order session 内部请求序号。 | `gate_order_send_ok.request_sequence`。 |
 | `encoded_request_id` | WebSocket payload 中编码后的请求 id。 | `gate_order_send_ok.encoded_request_id`。 |
@@ -266,6 +268,8 @@
 | `run_id` | 本次运行或 report 的标识。 | 来自 order detail。 |
 | `latency_key` | latency 行唯一键。 | `run_id:local_order_id`。 |
 | `local_order_id` | 本地订单 id。 | order detail。 |
+| `parent_id` | strategy execution parent id。 | order detail。 |
+| `route_id` | order gateway route id。 | order detail。 |
 | `exchange_order_id` | 交易所 order id。 | order detail。 |
 | `symbol` | 交易 symbol。 | order detail。 |
 | `symbol_id` | 策略内部 symbol id。 | order detail。 |

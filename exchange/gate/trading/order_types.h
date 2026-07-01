@@ -76,8 +76,10 @@ enum class OrderResponseKind : std::uint8_t {
 struct OrderResponse {
   OrderResponseKind kind{OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
+  std::uint64_t parent_id{0};
   std::uint64_t exchange_order_id{0};
   std::uint64_t request_sequence{0};
+  std::uint16_t route_id{static_cast<std::uint16_t>(0xFFFF)};
   std::uint16_t http_status{0};
   std::uint64_t error_label_hash{0};
   std::int64_t local_receive_ns{0};

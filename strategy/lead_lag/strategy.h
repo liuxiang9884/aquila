@@ -355,7 +355,8 @@ inline void LogStrategyOrderIntent(
 }
 
 inline void LogStrategyOrderSubmitted(
-    std::uint64_t local_order_id, Exchange trigger_exchange,
+    std::uint64_t local_order_id, std::uint64_t parent_id,
+    std::uint16_t route_id, Exchange trigger_exchange,
     std::int32_t trigger_symbol_id, const SignalTiming& timing,
     std::string_view symbol, std::int32_t symbol_id, PairRole signal_role,
     std::string_view order_role, SignalAction action, OrderSide side,
@@ -369,7 +370,8 @@ inline void LogStrategyOrderSubmitted(
     FreshnessRejectReason freshness_reject_reason =
         FreshnessRejectReason::kNone) noexcept {
   NOVA_INFO(
-      "lead_lag_order_submitted local_order_id={} trigger_exchange={} "
+      "lead_lag_order_submitted local_order_id={} parent_id={} route_id={} "
+      "trigger_exchange={} "
       "trigger_symbol_id={} trigger_exchange_ns={} "
       "trigger_local_ns={} on_book_ticker_entry_ns={} "
       "signal_decision_ns={} lead_exchange_ns={} lead_local_ns={} "
@@ -384,8 +386,9 @@ inline void LogStrategyOrderSubmitted(
       "raw_price={:.12g} order_price={:.12g} price_text={} "
       "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
       "estimated_notional={:.12g} active_groups={} place_status={}",
-      local_order_id, magic_enum::enum_name(trigger_exchange),
-      trigger_symbol_id, timing.trigger_exchange_ns, timing.trigger_local_ns,
+      local_order_id, parent_id, route_id,
+      magic_enum::enum_name(trigger_exchange), trigger_symbol_id,
+      timing.trigger_exchange_ns, timing.trigger_local_ns,
       timing.on_book_ticker_entry_ns, timing.signal_decision_ns,
       timing.lead_exchange_ns, timing.lead_local_ns, timing.lead_book_ticker_id,
       timing.lead_freshness_ns, timing.lag_exchange_ns, timing.lag_local_ns,
@@ -405,6 +408,8 @@ inline void LogStrategyOrderSubmitted(
   NotifyStrategyOrderSubmittedLogObserverForTest(
       StrategyOrderSubmittedLogRecordForTest{
           .local_order_id = local_order_id,
+          .parent_id = parent_id,
+          .route_id = route_id,
           .trigger_exchange = trigger_exchange,
           .trigger_symbol_id = trigger_symbol_id,
           .trigger_exchange_ns = timing.trigger_exchange_ns,
@@ -511,26 +516,34 @@ inline void LogStrategyOrderResponse(
   const core::StrategyOrderTimingSnapshot timing =
       order == nullptr ? core::StrategyOrderTimingSnapshot{}
                        : core::MakeStrategyOrderTimingSnapshot(*order);
+  const std::uint64_t parent_id =
+      order == nullptr ? event.parent_id : order->parent_id;
+  const std::uint16_t route_id =
+      order == nullptr ? event.route_id : order->gateway_route_id;
   const std::int64_t exchange_to_local_ns =
       core::LatencyDeltaNs(event.local_receive_ns, event.exchange_ns);
   const std::string_view book_ticker_id_prefix =
       OrderResponseBookTickerIdPrefix(event.kind);
   NOVA_INFO(
-      "lead_lag_order_response kind={} local_order_id={} "
+      "lead_lag_order_response kind={} local_order_id={} parent_id={} "
+      "route_id={} "
       "exchange_order_id={} local_receive_ns={} exchange_ns={} "
       "exchange_to_local_ns={} ack_rtt_ns={} response_rtt_ns={} "
       "lead_exchange_ns={} lag_exchange_ns={} {}_lead_id={} {}_lag_id={}",
-      magic_enum::enum_name(event.kind), event.local_order_id,
-      event.exchange_order_id, event.local_receive_ns, event.exchange_ns,
-      exchange_to_local_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
-      market_timing.lead_exchange_ns, market_timing.lag_exchange_ns,
-      book_ticker_id_prefix, market_timing.lead_book_ticker_id,
-      book_ticker_id_prefix, market_timing.lag_book_ticker_id);
+      magic_enum::enum_name(event.kind), event.local_order_id, parent_id,
+      route_id, event.exchange_order_id, event.local_receive_ns,
+      event.exchange_ns, exchange_to_local_ns, timing.ack_rtt_ns,
+      timing.response_rtt_ns, market_timing.lead_exchange_ns,
+      market_timing.lag_exchange_ns, book_ticker_id_prefix,
+      market_timing.lead_book_ticker_id, book_ticker_id_prefix,
+      market_timing.lag_book_ticker_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderResponseLogObserverForTest(
       StrategyOrderResponseLogRecordForTest{
           .kind = event.kind,
           .local_order_id = event.local_order_id,
+          .parent_id = parent_id,
+          .route_id = route_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
           .book_ticker_id_prefix = book_ticker_id_prefix,
@@ -541,20 +554,23 @@ inline void LogStrategyOrderResponse(
 }
 
 inline void LogStrategyOrderFeedback(
-    const OrderFeedbackEvent& event,
+    const OrderFeedbackEvent& event, const core::StrategyOrder* order,
     const SignalTiming& market_timing) noexcept {
+  const std::uint64_t parent_id = order == nullptr ? 0 : order->parent_id;
+  const std::uint16_t route_id =
+      order == nullptr ? core::kAutoGatewayRoute : order->gateway_route_id;
   const std::string_view book_ticker_id_prefix =
       OrderFeedbackBookTickerIdPrefix(event.kind);
   NOVA_INFO(
       "lead_lag_order_feedback kind={} local_order_id={} "
-      "exchange_order_id={} "
+      "parent_id={} route_id={} exchange_order_id={} "
       "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
       "cancelled_quantity={:.12g} fill_price={:.12g} role={} "
       "finish_reason={} reject_reason={} exchange_update_ns={} "
       "local_receive_ns={} lead_exchange_ns={} lag_exchange_ns={} "
       "{}_lead_id={} {}_lag_id={}",
-      magic_enum::enum_name(event.kind), event.local_order_id,
-      event.exchange_order_id, event.cumulative_filled_quantity,
+      magic_enum::enum_name(event.kind), event.local_order_id, parent_id,
+      route_id, event.exchange_order_id, event.cumulative_filled_quantity,
       event.left_quantity, event.cancelled_quantity, event.fill_price,
       magic_enum::enum_name(event.role),
       magic_enum::enum_name(event.finish_reason),
@@ -568,6 +584,8 @@ inline void LogStrategyOrderFeedback(
       StrategyOrderFeedbackLogRecordForTest{
           .kind = event.kind,
           .local_order_id = event.local_order_id,
+          .parent_id = parent_id,
+          .route_id = route_id,
           .lead_exchange_ns = market_timing.lead_exchange_ns,
           .lag_exchange_ns = market_timing.lag_exchange_ns,
           .book_ticker_id_prefix = book_ticker_id_prefix,
@@ -642,7 +660,8 @@ inline void LogStrategyOrderFinished(
   const core::StrategyOrderTimingSnapshot timing =
       core::MakeStrategyOrderTimingSnapshot(order);
   NOVA_INFO(
-      "lead_lag_order_finished local_order_id={} symbol_id={} symbol={} "
+      "lead_lag_order_finished local_order_id={} parent_id={} route_id={} "
+      "symbol_id={} symbol={} "
       "status={} reduce_only={} position_id={} position_direction={} "
       "order_role={} entry_local_order_id={} order_finished_local_ns={} "
       "quantity={:.12g} cumulative_filled_quantity={:.12g} "
@@ -653,14 +672,14 @@ inline void LogStrategyOrderFinished(
       "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
       "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
       "exchange_lifecycle_ns={} lead_exchange_ns={} lag_exchange_ns={}",
-      order.local_order_id, order.symbol_id, order.symbol,
-      magic_enum::enum_name(order.status), order.reduce_only ? "true" : "false",
-      position.position_id, magic_enum::enum_name(position.position_direction),
-      position.order_role, position.entry_local_order_id,
-      position.order_finished_local_ns, order.quantity,
-      order.cumulative_filled_quantity, order.AverageFillPrice(),
-      order.last_fill_price, order.exchange_order_id, active_groups,
-      timing.request_send_local_ns, timing.ack_local_receive_ns,
+      order.local_order_id, order.parent_id, order.gateway_route_id,
+      order.symbol_id, order.symbol, magic_enum::enum_name(order.status),
+      order.reduce_only ? "true" : "false", position.position_id,
+      magic_enum::enum_name(position.position_direction), position.order_role,
+      position.entry_local_order_id, position.order_finished_local_ns,
+      order.quantity, order.cumulative_filled_quantity,
+      order.AverageFillPrice(), order.last_fill_price, order.exchange_order_id,
+      active_groups, timing.request_send_local_ns, timing.ack_local_receive_ns,
       timing.response_local_receive_ns, timing.ack_exchange_ns,
       timing.response_exchange_ns, timing.accepted_exchange_ns,
       timing.finish_exchange_ns, timing.ack_rtt_ns, timing.response_rtt_ns,
@@ -671,6 +690,8 @@ inline void LogStrategyOrderFinished(
   NotifyStrategyOrderFinishedLogObserverForTest(
       StrategyOrderFinishedLogRecordForTest{
           .local_order_id = order.local_order_id,
+          .parent_id = order.parent_id,
+          .route_id = order.gateway_route_id,
           .position_id = position.position_id,
           .position_direction = position.position_direction,
           .order_role = position.order_role,
@@ -839,7 +860,7 @@ class Strategy {
     const core::StrategyOrder* order_for_log =
         context.FindOrder(event.local_order_id);
     const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
-    detail::LogStrategyOrderFeedback(event, market_timing);
+    detail::LogStrategyOrderFeedback(event, order_for_log, market_timing);
     ApplyFinishedOrder(event.local_order_id, context, market_timing,
                        event.kind);
   }
@@ -1786,10 +1807,10 @@ class Strategy {
     }
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
     const std::string_view symbol = LagOrderSymbol(runtime->pair, instrument);
-    LogOrderIntentRejectedForSignal(
-        "parallel_limit", runtime, symbol, 0.0,
-        last_signal_decision_.intent.price,
-        last_signal_decision_.intent.price, 0, instrument.price_tick, 0.0);
+    LogOrderIntentRejectedForSignal("parallel_limit", runtime, symbol, 0.0,
+                                    last_signal_decision_.intent.price,
+                                    last_signal_decision_.intent.price, 0,
+                                    instrument.price_tick, 0.0);
     RejectSignal(SignalRejectReason::kParallelLimit);
     return true;
   }
@@ -1912,8 +1933,7 @@ class Strategy {
         "action={} reduce_only={} route_id={}",
         symbol, runtime.pair.symbol_id,
         magic_enum::enum_name(last_signal_decision_.action),
-        last_signal_decision_.intent.reduce_only ? "true" : "false",
-        route_id);
+        last_signal_decision_.intent.reduce_only ? "true" : "false", route_id);
   }
 
   template <typename ContextT>
@@ -1956,7 +1976,8 @@ class Strategy {
       std::string_view symbol, const PreparedOrderPrice& price,
       const PreparedOrderQuantity& quantity, double order_notional,
       const OrderPriceTextStorage& order_text_storage,
-      const core::OrderPlaceResult& placed) noexcept {
+      const core::OrderPlaceResult& placed, std::uint64_t parent_id,
+      std::uint16_t route_id) noexcept {
     const ExecutionGroup* submitted_group =
         runtime->execution.FindPendingOrderByLocalOrderId(
             placed.local_order_id);
@@ -1966,7 +1987,7 @@ class Strategy {
             last_signal_decision_.intent.side,
             last_signal_decision_.intent.reduce_only, placed.local_order_id);
     detail::LogStrategyOrderSubmitted(
-        placed.local_order_id, trigger_ticker.exchange,
+        placed.local_order_id, parent_id, route_id, trigger_ticker.exchange,
         trigger_ticker.symbol_id, last_signal_timing_, symbol,
         runtime->pair.symbol_id, signal_role,
         detail::StrategyOrderRoleText(last_signal_decision_.action,
@@ -2043,7 +2064,8 @@ class Strategy {
     order_text_storage->local_order_id = placed.local_order_id;
     return HandleExternalOrderPlaceResult(
         runtime, trigger_ticker, signal_role, context, submit_group, instrument,
-        symbol, price, quantity, order_notional, order_text_storage, placed);
+        symbol, price, quantity, order_notional, order_text_storage, placed,
+        parent_id, route_id);
   }
 
   template <typename ContextT>
@@ -2053,7 +2075,8 @@ class Strategy {
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OrderPriceTextStorage* order_text_storage,
-      const core::OrderPlaceResult& placed) noexcept {
+      const core::OrderPlaceResult& placed, std::uint64_t parent_id,
+      std::uint16_t route_id) noexcept {
     if (placed.status == core::OrderPlaceStatus::kOk) {
       const bool tracked =
           OnExternalOrderAccepted(runtime, submit_group, placed.local_order_id);
@@ -2062,7 +2085,8 @@ class Strategy {
       }
       LogExternalOrderSubmitted(runtime, trigger_ticker, signal_role,
                                 instrument, symbol, price, quantity,
-                                order_notional, *order_text_storage, placed);
+                                order_notional, *order_text_storage, placed,
+                                parent_id, route_id);
       if (!last_signal_decision_.intent.reduce_only) {
         ReserveOpenRisk(order_text_storage, quantity.quantity, order_notional);
       }
@@ -2142,9 +2166,8 @@ class Strategy {
                                   available_order_session_fanout);
     }
     RefreshContextOrderRoutes(context);
-    const std::uint32_t target_order_session_fanout =
-        std::min(requested_order_session_fanout,
-                 available_order_session_fanout);
+    const std::uint32_t target_order_session_fanout = std::min(
+        requested_order_session_fanout, available_order_session_fanout);
     std::array<std::uint16_t, kMaxOrderSessionFanout> submission_routes{};
     std::uint32_t submission_route_count = 0;
     for (std::uint32_t route = 0;
@@ -2162,16 +2185,17 @@ class Strategy {
     const double order_notional =
         OrderNotional(quantity.quantity, price.order_price, instrument);
     if (submission_route_count == 0) {
-      LogOrderIntentRejectedForSignal(
-          "order_route_not_ready", runtime, symbol, quantity.quantity,
-          price.raw_order_price, price.order_price, price.slippage_ticks,
-          instrument.price_tick, order_notional);
+      LogOrderIntentRejectedForSignal("order_route_not_ready", runtime, symbol,
+                                      quantity.quantity, price.raw_order_price,
+                                      price.order_price, price.slippage_ticks,
+                                      instrument.price_tick, order_notional);
       RejectSignal(SignalRejectReason::kOrderRouteNotReady);
       return;
     }
-    const double risk_quantity = last_signal_decision_.intent.reduce_only
-                                     ? quantity.quantity
-                                     : quantity.quantity * submission_route_count;
+    const double risk_quantity =
+        last_signal_decision_.intent.reduce_only
+            ? quantity.quantity
+            : quantity.quantity * submission_route_count;
     const double risk_order_notional =
         last_signal_decision_.intent.reduce_only
             ? order_notional

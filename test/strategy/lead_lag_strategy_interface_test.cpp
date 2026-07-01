@@ -1,5 +1,5 @@
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -1193,8 +1193,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(order_session.placed_orders[1].quantity, 9);
 }
 
-TEST(LeadLagStrategyInterfaceTest,
-     FanoutOpenScansPastNotReadyRoutes) {
+TEST(LeadLagStrategyInterfaceTest, FanoutOpenScansPastNotReadyRoutes) {
   leadlag::Strategy strategy{SignalOnlyConfigWithFanout(2)};
   FakeOrderSession order_session;
   order_session.max_order_session_fanout = 4;
@@ -1225,8 +1224,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(order_session.placed_orders[0].gateway_route_id, 1U);
 }
 
-TEST(LeadLagStrategyInterfaceTest,
-     FanoutOpenRejectsWhenNoOrderRouteReady) {
+TEST(LeadLagStrategyInterfaceTest, FanoutOpenRejectsWhenNoOrderRouteReady) {
   leadlag::Strategy strategy{SignalOnlyConfigWithFanout(4)};
   FakeOrderSession order_session;
   order_session.max_order_session_fanout = 4;
@@ -1359,9 +1357,8 @@ TEST(LeadLagStrategyInterfaceTest,
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 201, 105.0, 106.0),
                         context);
-  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 202, 170.0,
-                               171.0),
-                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 202, 170.0, 171.0), context);
 
   EXPECT_EQ(order_session.placed_orders.size(), 1U);
   EXPECT_EQ(order_manager.order_count(), 1U);
@@ -1675,6 +1672,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   const leadlag::detail::StrategyOrderSubmittedLogRecordForTest& record =
       g_order_submitted_logs[0];
   EXPECT_EQ(record.local_order_id, order.local_order_id);
+  EXPECT_EQ(record.parent_id, order.parent_id);
+  EXPECT_EQ(record.route_id, order.gateway_route_id);
   EXPECT_EQ(record.trigger_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(record.trigger_symbol_id, 3);
   EXPECT_EQ(record.trigger_exchange_ns, TickerExchangeNs(101));
@@ -1746,6 +1745,8 @@ TEST(LeadLagStrategyInterfaceTest, OrderResponseLogsCurrentLeadLagBboTiming) {
   ASSERT_EQ(g_order_response_log_count, 1U);
   const auto& log = g_order_response_logs[0];
   EXPECT_EQ(log.local_order_id, local_order_id);
+  EXPECT_EQ(log.parent_id, order_session.placed_orders[0].parent_id);
+  EXPECT_EQ(log.route_id, order_session.placed_orders[0].gateway_route_id);
   EXPECT_EQ(log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(log.lag_exchange_ns, TickerExchangeNs(202));
   EXPECT_EQ(log.book_ticker_id_prefix, "ack");
@@ -1778,6 +1779,9 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(g_order_feedback_log_count, 1U);
   const auto& feedback_log = g_order_feedback_logs[0];
   EXPECT_EQ(feedback_log.local_order_id, local_order_id);
+  EXPECT_EQ(feedback_log.parent_id, order_session.placed_orders[0].parent_id);
+  EXPECT_EQ(feedback_log.route_id,
+            order_session.placed_orders[0].gateway_route_id);
   EXPECT_EQ(feedback_log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(feedback_log.lag_exchange_ns, TickerExchangeNs(202));
   EXPECT_EQ(feedback_log.book_ticker_id_prefix, "filled");
@@ -1787,6 +1791,9 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(g_order_finished_log_count, 1U);
   const auto& finished_log = g_order_finished_logs[0];
   EXPECT_EQ(finished_log.local_order_id, local_order_id);
+  EXPECT_EQ(finished_log.parent_id, order_session.placed_orders[0].parent_id);
+  EXPECT_EQ(finished_log.route_id,
+            order_session.placed_orders[0].gateway_route_id);
   EXPECT_EQ(finished_log.lead_exchange_ns, TickerExchangeNs(201));
   EXPECT_EQ(finished_log.lag_exchange_ns, TickerExchangeNs(202));
 }
@@ -1954,7 +1961,8 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(decision.group_id, 0U);
 }
 
-TEST(LeadLagStrategyInterfaceTest, CloseRejectsWhenNoOrderRouteReadyAndRetries) {
+TEST(LeadLagStrategyInterfaceTest,
+     CloseRejectsWhenNoOrderRouteReadyAndRetries) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
@@ -1977,8 +1985,8 @@ TEST(LeadLagStrategyInterfaceTest, CloseRejectsWhenNoOrderRouteReadyAndRetries) 
             leadlag::SignalRejectReason::kOrderRouteNotReady);
 
   order_session.route_ready.fill(true);
-  strategy.OnBookTicker(
-      Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0), context);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
+                        context);
 
   ASSERT_EQ(order_session.placed_orders.size(), 2U);
   const FakeOrderSession::CapturedOrder& close_order =
@@ -3066,14 +3074,12 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(order_session.placed_orders.size(), 8U);
   EXPECT_EQ(order_manager.order_count(), 2U);
 
-  ApplyFeedback(
-      &strategy, &order_manager, &context,
-      CancelledFeedback(order_session.placed_orders[6].local_order_id, 3, 4,
-                        101.5));
-  ApplyFeedback(
-      &strategy, &order_manager, &context,
-      CancelledFeedback(order_session.placed_orders[7].local_order_id, 0, 7,
-                        0.0));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(order_session.placed_orders[6].local_order_id,
+                                  3, 4, 101.5));
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(order_session.placed_orders[7].local_order_id,
+                                  0, 7, 0.0));
 
   strategy.OnBookTicker(Ticker(3, aquila::Exchange::kBinance, 103, 99.0, 100.0),
                         context);
@@ -3102,14 +3108,11 @@ TEST(LeadLagStrategyInterfaceTest,
     ContextT warm_context{warm_manager};
 
     warm_strategy.OnBookTicker(
-        Ticker(3, aquila::Exchange::kGate, 100, 101.57, 102.02),
-        warm_context);
+        Ticker(3, aquila::Exchange::kGate, 100, 101.57, 102.02), warm_context);
     warm_strategy.OnBookTicker(
-        Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0),
-        warm_context);
+        Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), warm_context);
     warm_strategy.OnBookTicker(
-        Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0),
-        warm_context);
+        Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), warm_context);
     ASSERT_EQ(warm_session.placed_orders.size(), 1U);
   }
   FlushStrategyLogging();
