@@ -115,8 +115,9 @@ OrderManager
 核心结论是：strategy 与 order gateway 拆成 2 个进程；strategy 进程 1 个 owner thread，gateway 进程 N 个
 `OrderSessionWorker` thread；跨进程用一个 SHM 对象承载 N 路 `command_queue` 和 N 路 `event_queue`；`N` 是运行时参数，
 编译期最大值 `16`；启动阶段 strategy 等全部 N 路 `kReady`，`startup_ready_timeout_s` 默认 `30`；运行时 `kNotReady`
-对应 route 跳过并通过 gateway stats 计数，重连后 `kReady` 重新参与 fanout。每个 child 仍有唯一 `local_order_id`，同一 fanout batch
-共享 `parent_id`，因此不修改 `LocalOrderIdCodec`。
+对应 route 跳过并通过 gateway stats 计数，重连后 `kReady` 重新参与 fanout。每个 child 仍有唯一 `local_order_id`，同一
+execution group / position lifecycle 下的 open、close、stoploss 和 retry child 可共享 `parent_id`，因此不修改
+`LocalOrderIdCodec`；如需 fanout batch 级诊断，应新增独立 batch id。
 
 当前最小实现已先落地 `1 thread : n OrderSession` baseline：`exchange/gate/trading/multi_order_session_gateway.h`
 运行时接收 session 列表，首个测试和实验配置使用 `n=4`。gateway 使用

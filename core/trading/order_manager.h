@@ -190,6 +190,12 @@ class OrderManager {
     }
   }
 
+  void RefreshOrderRoutes() noexcept {
+    if constexpr (requires(GatewayT& gateway) { gateway.RefreshRouteStates(); }) {
+      order_session_.RefreshRouteStates();
+    }
+  }
+
   [[nodiscard]] bool OrderRouteReady(std::uint16_t route_id) const noexcept {
     if constexpr (requires(const GatewayT& gateway, std::uint16_t route) {
                     gateway.RouteReady(route);

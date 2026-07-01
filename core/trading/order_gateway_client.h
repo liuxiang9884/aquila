@@ -179,6 +179,10 @@ class OrderGatewayClient {
     return route_count_;
   }
 
+  void RefreshRouteStates() noexcept {
+    SyncRouteStatesFromHeader();
+  }
+
   [[nodiscard]] std::uint16_t ready_route_count() const noexcept {
     return ready_route_count_;
   }
@@ -315,16 +319,15 @@ class OrderGatewayClient {
     SyncRouteStatesFromHeader();
     std::uint64_t handled = 0;
     for (std::uint16_t route = 0; route < route_count_; ++route) {
-      std::uint64_t route_events = 0;
-      OrderGatewayEvent event{};
-      while (route_events < options_.max_events_per_poll_per_route &&
-             event_queues_[route].TryPop(&event)) {
-        ++handled;
-        ++route_events;
-        HandleEvent(route, event, runtime);
+      const DrainRouteResult drained = DrainRouteEvents(
+          route, options_.max_events_per_poll_per_route,
+          /*defer_stopped_unknown=*/true, runtime);
+      handled += drained.handled;
+      if (drained.stopped_seen) {
+        handled += DrainAndHandleStoppedRoute(route, runtime);
       }
     }
-    SyncRouteStatesFromHeader(runtime);
+    handled += SyncRouteStatesFromHeader(runtime);
     return handled;
   }
 
@@ -401,17 +404,20 @@ class OrderGatewayClient {
   }
 
   template <typename RuntimeT>
-  void SyncRouteStatesFromHeader(RuntimeT& runtime) noexcept {
+  [[nodiscard]] std::uint64_t SyncRouteStatesFromHeader(
+      RuntimeT& runtime) noexcept {
+    std::uint64_t handled = 0;
     OrderGatewayShmHeader& header = shm_.header();
     for (std::uint16_t route = 0; route < route_count_; ++route) {
       const OrderGatewayRouteState state =
           LoadOrderGatewayRouteState(header, route);
       if (state == OrderGatewayRouteState::kStopped) {
-        HandleRouteStopped(route, runtime);
+        handled += DrainAndHandleStoppedRoute(route, runtime);
       } else {
         ApplyRouteState(route, state);
       }
     }
+    return handled;
   }
 
   [[nodiscard]] std::uint16_t ResolvePlaceRoute(
@@ -517,7 +523,7 @@ class OrderGatewayClient {
         return;
       case OrderGatewayEventKind::kStopped:
         ++stats_.stopped_events;
-        HandleRouteStopped(route, runtime);
+        (void)HandleRouteStopped(route, runtime);
         return;
       case OrderGatewayEventKind::kCommandRejected:
         ++stats_.command_rejected_events;
@@ -539,6 +545,43 @@ class OrderGatewayClient {
     }
   }
 
+  struct DrainRouteResult {
+    std::uint64_t handled{0};
+    bool stopped_seen{false};
+  };
+
+  template <typename RuntimeT>
+  [[nodiscard]] DrainRouteResult DrainRouteEvents(
+      std::uint16_t route, std::uint64_t max_events, bool defer_stopped_unknown,
+      RuntimeT& runtime) noexcept {
+    DrainRouteResult result;
+    OrderGatewayEvent event{};
+    while (result.handled < max_events && event_queues_[route].TryPop(&event)) {
+      ++result.handled;
+      if (defer_stopped_unknown &&
+          event.kind == OrderGatewayEventKind::kStopped) {
+        ++stats_.stopped_events;
+        ApplyRouteState(route, OrderGatewayRouteState::kStopped);
+        result.stopped_seen = true;
+        continue;
+      }
+      HandleEvent(route, event, runtime);
+    }
+    return result;
+  }
+
+  template <typename RuntimeT>
+  [[nodiscard]] std::uint64_t DrainAndHandleStoppedRoute(
+      std::uint16_t route, RuntimeT& runtime) noexcept {
+    std::uint64_t handled = 0;
+    DrainRouteResult drained = DrainRouteEvents(
+        route, event_queues_[route].capacity(), /*defer_stopped_unknown=*/true,
+        runtime);
+    handled += drained.handled;
+    handled += HandleRouteStopped(route, runtime);
+    return handled;
+  }
+
   [[nodiscard]] bool AllRoutesStopped() const noexcept {
     for (std::uint16_t route = 0; route < route_count_; ++route) {
       if (!route_stopped_[route]) {
@@ -549,8 +592,10 @@ class OrderGatewayClient {
   }
 
   template <typename RuntimeT>
-  void HandleRouteStopped(std::uint16_t route, RuntimeT& runtime) noexcept {
+  [[nodiscard]] std::uint64_t HandleRouteStopped(std::uint16_t route,
+                                                 RuntimeT& runtime) noexcept {
     ApplyRouteState(route, OrderGatewayRouteState::kStopped);
+    std::uint64_t synthetic_count = 0;
     while (true) {
       auto route_order = route_table_.end();
       for (auto it = route_table_.begin(); it != route_table_.end(); ++it) {
@@ -560,10 +605,11 @@ class OrderGatewayClient {
         }
       }
       if (route_order == route_table_.end()) {
-        return;
+        return synthetic_count;
       }
       const std::uint64_t local_order_id = route_order->first;
       route_table_.erase(route_order);
+      ++synthetic_count;
       runtime.OnOrderResponse(OrderResponseEvent{
           .kind = OrderResponseKind::kUnknownResult,
           .local_order_id = local_order_id,

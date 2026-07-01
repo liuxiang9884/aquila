@@ -257,14 +257,13 @@ class TradingRuntime {
       if (ShouldStop() || MaxLoopSecondsElapsed(loop_started_at)) {
         break;
       }
+      std::uint64_t handled = 0;
+      diagnostics_.RecordLoopIteration();
+      handled += PollOrderResponses();
       if (!OrderSessionRunning()) {
         exit_code = 1;
         break;
       }
-
-      std::uint64_t handled = 0;
-      diagnostics_.RecordLoopIteration();
-      handled += PollOrderResponses();
       handled += PollOrderFeedback();
       if (OrderSessionReady()) {
         handled += PollDataReader();
@@ -387,15 +386,14 @@ class TradingRuntime {
       RequestOrderSessionStop();
       return;
     }
+    std::uint64_t handled = 0;
+    diagnostics_.RecordLoopIteration();
+    handled += PollOrderResponses();
     if (!OrderSessionRunning()) {
       hook_exit_code_ = 1;
       RequestOrderSessionStop();
       return;
     }
-
-    std::uint64_t handled = 0;
-    diagnostics_.RecordLoopIteration();
-    handled += PollOrderResponses();
     handled += PollOrderFeedback();
     if (OrderSessionReady()) {
       handled += PollDataReader();

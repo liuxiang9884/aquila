@@ -1207,5 +1207,32 @@ TEST(TradingRuntimeTest, ProductionRunFailsWhenOrderSessionStopsRunning) {
   EXPECT_EQ(state.book_ticker_calls, 0);
 }
 
+TEST(TradingRuntimeTest, ProductionRunPollsOrderResponsesBeforeStoppedExit) {
+  RuntimeLoopState state;
+  state.order_running = false;
+  state.order_responses.push_back(OrderResponseEvent{
+      .kind = OrderResponseKind::kUnknownResult,
+      .local_order_id = 77,
+      .local_receive_ns = 7007,
+  });
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = LoopRuntime::Create(
+      std::move(config), MakeDataReaderConfig(),
+      [&state] { return FakeOrderSession(&state); }, &state);
+  ASSERT_TRUE(runtime_result.ok) << runtime_result.error;
+  ASSERT_NE(runtime_result.value, nullptr);
+
+  EXPECT_EQ(runtime_result.value->Run(), 1);
+
+  EXPECT_EQ(state.order_response_poll_calls, 1);
+  EXPECT_EQ(state.response_calls, 1);
+  EXPECT_EQ(state.next_order_response_index, 1U);
+  EXPECT_EQ(state.data_poll_calls, 0);
+  EXPECT_EQ(state.book_ticker_calls, 0);
+}
+
 }  // namespace
 }  // namespace aquila::core

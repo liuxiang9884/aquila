@@ -16,6 +16,8 @@
 namespace aquila::strategy::leadlag {
 
 inline constexpr double kExecutionQuantityEpsilon = 1e-12;
+inline constexpr std::uint32_t kMaxExecutionGroupPendingOrders =
+    kMaxOrderSessionFanout * 2U;
 
 enum class ExecutionStage : std::uint8_t {
   kIdle,
@@ -121,8 +123,9 @@ struct ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
   std::uint64_t entry_local_order_id{0};
-  std::array<std::uint64_t, kMaxOrderSessionFanout> pending_local_order_ids{};
-  std::array<std::uint64_t, kMaxOrderSessionFanout>
+  std::array<std::uint64_t, kMaxExecutionGroupPendingOrders>
+      pending_local_order_ids{};
+  std::array<std::uint64_t, kMaxExecutionGroupPendingOrders>
       unknown_result_local_order_ids{};
   double signed_position_quantity{0.0};
   double absolute_entry_value{0.0};
@@ -140,6 +143,14 @@ struct ExecutionGroup {
 
   [[nodiscard]] bool hold() const noexcept {
     return stage == ExecutionStage::kHold;
+  }
+
+  [[nodiscard]] bool has_position() const noexcept {
+    return std::abs(signed_position_quantity) > kExecutionQuantityEpsilon;
+  }
+
+  [[nodiscard]] bool can_submit_exit() const noexcept {
+    return hold() || (stage == ExecutionStage::kOpen && has_position());
   }
 
   [[nodiscard]] bool pending_order() const noexcept {
@@ -222,7 +233,8 @@ class ExecutionState {
     if (close_order_kind == CloseOrderKind::kNone) {
       return false;
     }
-    if (group.hold() && !group.pending_order()) {
+    if ((group.hold() && !group.pending_order()) ||
+        (group.stage == ExecutionStage::kOpen && group.has_position())) {
       group.stage = ExecutionStage::kClose;
       group.close_order_kind = close_order_kind;
       return AddPendingOrder(group, local_order_id);

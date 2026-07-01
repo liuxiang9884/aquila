@@ -351,7 +351,7 @@ TEST(OrderGatewayClientTest, HeaderStoppedRouteEmitsUnknownForRouteOrders) {
   StoreOrderGatewayRouteState(shm.header(), 2,
                               OrderGatewayRouteState::kStopped);
 
-  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+  EXPECT_EQ(client.PollOrderResponses(runtime), 1U);
 
   ASSERT_EQ(runtime.responses.size(), 1U);
   EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kUnknownResult);
@@ -391,6 +391,42 @@ TEST(OrderGatewayClientTest, QueuedFinalResponseBeatsStoppedHeaderUnknown) {
   EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kRejected);
   EXPECT_EQ(runtime.responses[0].local_order_id, 1017U);
   EXPECT_FALSE(client.HasRouteForLocalOrderForTest(1017));
+  EXPECT_FALSE(client.RouteReady(2));
+}
+
+TEST(OrderGatewayClientTest,
+     StoppedRouteDrainsQueuedFinalBeyondNormalPollBudget) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("stopped_drain_budget");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  StoreOrderGatewayRouteState(shm.header(), 2, OrderGatewayRouteState::kReady);
+
+  OrderGatewayClient client = CreateClient(
+      config, OrderGatewayClientOptions{.max_events_per_poll_per_route = 1});
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 0U);
+  ASSERT_EQ(client.PlaceOrder(MakeOrder(1018, 2)).status,
+            OrderGatewaySendStatus::kOk);
+  ASSERT_TRUE(client.HasRouteForLocalOrderForTest(1018));
+
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(MakeReadyEvent(2)));
+  OrderGatewayEvent reject{};
+  reject.kind = OrderGatewayEventKind::kOrderResponse;
+  reject.response_kind = OrderResponseKind::kRejected;
+  reject.local_order_id = 1018;
+  reject.worker_event_enqueue_ns = 9018;
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(reject));
+  StoreOrderGatewayRouteState(shm.header(), 2,
+                              OrderGatewayRouteState::kStopped);
+
+  EXPECT_EQ(client.PollOrderResponses(runtime), 2U);
+
+  ASSERT_EQ(runtime.responses.size(), 1U);
+  EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kRejected);
+  EXPECT_EQ(runtime.responses[0].local_order_id, 1018U);
+  EXPECT_FALSE(client.HasRouteForLocalOrderForTest(1018));
   EXPECT_FALSE(client.RouteReady(2));
 }
 

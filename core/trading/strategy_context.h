@@ -41,6 +41,10 @@ class StrategyContext {
     return order_manager_.MaxOrderSessionFanout();
   }
 
+  void RefreshOrderRoutes() noexcept {
+    order_manager_.RefreshOrderRoutes();
+  }
+
   [[nodiscard]] bool OrderRouteReady(std::uint16_t route_id) const noexcept {
     return order_manager_.OrderRouteReady(route_id);
   }

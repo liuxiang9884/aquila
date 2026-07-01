@@ -31,7 +31,8 @@ fanout 到 N 条 Gate trading WebSocket connection，以降低单连接延迟波
 - `command_queue[i]` 是 `strategy -> OrderSessionWorker[i]`；`event_queue[i]` 是 `OrderSessionWorker[i] -> strategy`。
 - queue payload 是固定大小 POD struct，不包含 `std::string`、`std::string_view`、指针、虚函数或动态分配。
 - field 命名使用 `parent_id`，不修改 `LocalOrderIdCodec`。
-- 每个 child order 必须有唯一 `local_order_id`；同一个策略意图 / fanout batch 的 child 共享同一个 `parent_id`。
+- 每个 child order 必须有唯一 `local_order_id`；同一个 execution group / position lifecycle 下的 child
+  共享同一个 `parent_id`。当前 V1 的 `parent_id` 不是单次 fanout batch id。
 - feedback 路径保持不变：单账户级 `OrderFeedbackSession -> OrderFeedback SHM -> strategy-process`。
 - write-path、TCP_INFO、socket timestamping 等详细诊断留在 `order-gateway-process` / `OrderSession` 日志中，不放进主 `event_queue`。
 
@@ -166,7 +167,8 @@ struct OrderGatewayCommand {
 字段语义：
 
 - `command_seq`：每条 command 唯一，用于 command / event 对账。
-- `parent_id`：同一个策略意图、fanout batch、close batch 共享的 parent id。
+- `parent_id`：strategy execution group / position lifecycle id；open、close、stoploss 和 retry 的
+  fanout child 可共享同一个 `parent_id`。
 - `local_order_id`：每个 child order 唯一，Gate `text=t-<local_order_id>` 使用它。
 - `exchange_order_id`：cancel / cache 使用；place 时为 0。
 - `route_id`：目标 order session index，等于 queue index。worker 必须校验 `route_id == own_route_id`。
@@ -342,12 +344,15 @@ if sent == 0:
 - `route_id` 不同。
 - 一个 signal 只占用一个 `parallel` slot。
 
-`parent_id` 由 strategy owner 在 fanout batch 开始时分配，推荐使用 batch 内第一个预分配 child
-`local_order_id`。即使某条 route 在 enqueue 前本地 reject，同一 batch 的其它 child 仍沿用该 `parent_id`；
-不能把 `parent_id` 绑定到“第一条成功进入交易所”的订单。
+当前 V1 的 `parent_id` 由 strategy owner 在 open execution group 创建后分配，并在该 execution group 的
+open、close、stoploss 和 retry child 中复用。它用于把一个 position lifecycle 下的 child order 聚合起来，
+不是每次 fanout submit batch 的唯一 id；如果后续需要 batch 级 skew / dispatch 诊断，应新增独立
+`batch_id` / diagnostic 字段，不复用 `parent_id`。
 
 open 成交后，同一个 `parent_id` / execution group 下所有 child 的实际累计成交量合并成一个 position。close、stoploss 和 close retry
 按该 position 总成交量，对 ready route 发同量 reduce-only close child。reduce-only close 中任一 child 成交后，其它 child 被交易所拒单或取消是可接受结果。
+如果 fanout open 中部分 child 已成交，而其它 child 仍 pending 或处于 `UnknownResult`，策略可以按已知成交量先发
+reduce-only close / stoploss；未决 open child 继续留在同一个 execution group 中等待后续 feedback / reconcile。
 
 ## PlaceOrder 语义
 
@@ -482,7 +487,7 @@ config/strategies/lead_lag_30symbols_fusion_2bps_5bps_order_gateway_20260627.tom
 - `route_states` 测试：header 初始为 `kUnknown`，worker ready / not-ready / stopped 写入状态，client 可在无 event 时同步 ready/stopped。
 - `OrderGatewayClient` route table 测试：place 写 route table，cancel / cache / forget 回原 route。
 - strategy ready gate 测试：启动等全 N ready、重复 ready 不重复计数、not-ready 降级、30s 超时 fail fast。
-- LeadLag fanout 测试：一个 signal 生成 m 个 child、共享 `parent_id`、不同 `local_order_id` / `route_id`，只占一个 parallel slot。
+- LeadLag fanout 测试：一个 signal 生成 m 个 child、共享 execution-group `parent_id`、不同 `local_order_id` / `route_id`，只占一个 parallel slot。
 - close / stoploss / close retry fanout 测试：按 position 总成交量生成 reduce-only child。
 - live 前 dry-run / smoke：先跑 order gateway + strategy validate-only，再做小额 guarded live smoke。
 

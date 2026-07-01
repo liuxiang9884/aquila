@@ -214,7 +214,9 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 `OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。跨进程使用一个 SHM 对象承载 N 路
 `command_queue` 和 N 路 `event_queue`，`N` 是运行时参数且最大为 `16`。`PlaceOrder()` 的 `kOk` 只表示 command
 已进入 gateway queue，不等价于已经写到 socket；真实 Ack / final response 仍先进入 `OrderManager`，再通知 `Strategy`。
-同一 fanout batch 使用共享 `parent_id` 聚合，child order 仍保留唯一 `local_order_id`，不修改 `LocalOrderIdCodec`。
+当前 LeadLag V1 使用 execution group / position lifecycle 级 `parent_id` 聚合，open、close、stoploss 和 retry
+child 可共享同一个 `parent_id`；child order 仍保留唯一 `local_order_id`，不修改 `LocalOrderIdCodec`。如需 fanout
+batch 级诊断，应新增独立 batch id。
 
 ## OrderSession
 

@@ -937,11 +937,17 @@ class Strategy {
       return false;
     }
 
-    if (recovery_state_ != RecoveryState::kReconciling ||
-        !AllInitializedRuntimesReconciling()) {
+    if (recovery_state_ == RecoveryState::kManualIntervention) {
+      return false;
+    }
+
+    const bool global_reconciling =
+        recovery_state_ == RecoveryState::kReconciling;
+    const bool runtime_reconciling = AnyInitializedRuntimeReconciling();
+    if (!global_reconciling && !runtime_reconciling) {
       MarkNeedsReconcile();
       for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
-        if (runtime.initialized) {
+        if (runtime.initialized && runtime.execution.needs_reconcile()) {
           runtime.execution.MarkNeedsReconcile();
         }
       }
@@ -950,9 +956,14 @@ class Strategy {
 
     bool all_recovered = true;
     for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
-      if (runtime.initialized) {
+      if (!runtime.initialized) {
+        continue;
+      }
+      if (runtime.execution.recovery_state() == RecoveryState::kReconciling) {
         all_recovered =
             runtime.execution.ApplyRecoveryResult(result) && all_recovered;
+      } else if (runtime.execution.needs_reconcile()) {
+        all_recovered = false;
       }
     }
     recovery_state_ = all_recovered ? RecoveryState::kNormal
@@ -1188,8 +1199,9 @@ class Strategy {
       if (route == nullptr || route->market == nullptr) {
         continue;
       }
-      price_text_slot_count += static_cast<std::size_t>(pair.execute.parallel) *
-                               EffectiveOrderSessionFanout(pair.execute);
+      price_text_slot_count +=
+          static_cast<std::size_t>(pair.execute.parallel) *
+          static_cast<std::size_t>(kMaxExecutionGroupPendingOrders);
       PairRuntimeState& runtime =
           pair_runtime_by_symbol_id_[static_cast<std::size_t>(pair.symbol_id)];
       runtime.initialized = true;
@@ -1244,6 +1256,13 @@ class Strategy {
       return 1;
     }
     return std::min(fanout_limit, kMaxOrderSessionFanout);
+  }
+
+  template <typename ContextT>
+  static void RefreshContextOrderRoutes(ContextT& context) noexcept {
+    if constexpr (requires { context.RefreshOrderRoutes(); }) {
+      context.RefreshOrderRoutes();
+    }
   }
 
   template <typename ContextT>
@@ -1308,6 +1327,16 @@ class Strategy {
       }
     }
     return true;
+  }
+
+  [[nodiscard]] bool AnyInitializedRuntimeReconciling() const noexcept {
+    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized &&
+          runtime.execution.recovery_state() == RecoveryState::kReconciling) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void MarkNeedsReconcile() noexcept {
@@ -2112,6 +2141,7 @@ class Strategy {
                                   requested_order_session_fanout,
                                   available_order_session_fanout);
     }
+    RefreshContextOrderRoutes(context);
     const std::uint32_t target_order_session_fanout =
         std::min(requested_order_session_fanout,
                  available_order_session_fanout);
@@ -2136,9 +2166,7 @@ class Strategy {
           "order_route_not_ready", runtime, symbol, quantity.quantity,
           price.raw_order_price, price.order_price, price.slippage_ticks,
           instrument.price_tick, order_notional);
-      if (!last_signal_decision_.intent.reduce_only) {
-        RejectSignal(SignalRejectReason::kOrderRouteNotReady);
-      }
+      RejectSignal(SignalRejectReason::kOrderRouteNotReady);
       return;
     }
     const double risk_quantity = last_signal_decision_.intent.reduce_only
