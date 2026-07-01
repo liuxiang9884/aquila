@@ -568,6 +568,34 @@ TEST(OrderManagerTest,
   EXPECT_EQ(order->status, OrderStatus::kAccepted);
 }
 
+TEST(OrderManagerTest, PlaceRejectedDuringCancelMarksOrderRejected) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  ASSERT_EQ(order_manager.CancelOrder(placed.local_order_id).status,
+            OrderCancelStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kRejected,
+      .local_order_id = placed.local_order_id,
+      .local_receive_ns = 111,
+      .exchange_ns = 222,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kCancelRejected,
+      .local_order_id = placed.local_order_id,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kRejected);
+  EXPECT_TRUE(order->is_finished);
+  EXPECT_EQ(order->response_local_receive_ns, 111);
+  EXPECT_EQ(order->response_exchange_ns, 222);
+}
+
 TEST(OrderManagerTest, DuplicateCancelIsRejectedByInvalidStatus) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);

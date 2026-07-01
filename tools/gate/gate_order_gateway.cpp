@@ -299,9 +299,9 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
             std::move(routes[i].credentials)));
   }
 
+  signal_stop_requested.store(false, std::memory_order_relaxed);
   std::signal(SIGINT, HandleSignal);
   std::signal(SIGTERM, HandleSignal);
-  signal_stop_requested.store(false, std::memory_order_relaxed);
 
   for (std::unique_ptr<GateOrderGatewayRouteWorker<WebSocketPolicy>>& worker :
        workers) {

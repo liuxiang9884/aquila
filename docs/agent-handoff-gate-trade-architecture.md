@@ -30,7 +30,7 @@ docs/strategy_order_component_model.md
 - Trading runtime production loop 已落地：Gate order WS active spin loop 同线程调用 runtime hook，runtime drain feedback SHM，并在 `OrderSession::Ready()` 后 poll data reader。
 - `gate_demo_strategy` 已完成 3 轮 BTC_USDT live smoke；LeadLag 已完成 ZEC_USDT 小额 filled open / close 和 unfilled-cancel smoke。
 - Decimal-size order contract 已落地：C++ 使用 `double quantity` + `quantity_text`，Gate WS 带 `X-Gate-Size-Decimal: 1` 时把 JSON `size` quote 为 string；REST final check / emergency flatten 也已支持 decimal position residual。
-- 多路 `OrderSession` 已有两层实现：`1 thread : n OrderSession` baseline gateway 已用于 route / cancel / cache / forget 验证；独立 `order-gateway-process` + SHM `command_queue` / `event_queue` V2 已落地并接入 LeadLag live-orders config，header `route_states[16]` 用于 ready / stopped 丢事件兜底。当前仍未做真实 order gateway live smoke，不宣称 fillability 或 latency 收益；当前边界见本文“多路 OrderSession 讨论结论”和 `docs/gate_order_gateway_shm_design.md`。
+- 多路 `OrderSession` 已有两层实现：`1 thread : n OrderSession` baseline gateway 已用于 route / cancel / cache / forget 验证；独立 `order-gateway-process` + SHM `command_queue` / `event_queue` V2 已落地并接入 LeadLag live-orders config，header `route_states[16]` 用于 ready / stopped 丢事件兜底，但不覆盖 `SIGKILL` / crash 后旧 ready 滞留。当前仍未做真实 order gateway live smoke，不宣称 fillability 或 latency 收益；当前边界见本文“多路 OrderSession 讨论结论”和 `docs/gate_order_gateway_shm_design.md`。
 
 ## Gate 协议事实
 

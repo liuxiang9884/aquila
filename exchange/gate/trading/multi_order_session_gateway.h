@@ -55,9 +55,19 @@ class MultiOrderSessionGateway {
       return Failure(OrderSendStatus::kInvalidRoute);
     }
 
+    bool route_recorded = false;
+    bool had_previous_route = false;
+    std::uint16_t previous_route = 0;
+    if (!RecordRouteBeforeSend(order.local_order_id,
+                               static_cast<std::uint16_t>(route),
+                               &route_recorded, &had_previous_route,
+                               &previous_route)) {
+      return Failure(OrderSendStatus::kInflightFull);
+    }
     OrderSendResult sent = sessions_[route]->PlaceOrder(order);
-    if (sent.status == OrderSendStatus::kOk) {
-      route_table_[order.local_order_id] = static_cast<std::uint16_t>(route);
+    if (sent.status != OrderSendStatus::kOk && route_recorded) {
+      RollbackRecordedRoute(order.local_order_id, had_previous_route,
+                            previous_route);
     }
     return sent;
   }
@@ -110,6 +120,48 @@ class MultiOrderSessionGateway {
   }
 
  private:
+  [[nodiscard]] bool RecordRouteBeforeSend(
+      std::uint64_t local_order_id, std::uint16_t route, bool* route_recorded,
+      bool* had_previous_route, std::uint16_t* previous_route) noexcept {
+    auto existing = route_table_.find(local_order_id);
+    if (existing != route_table_.end()) {
+      *route_recorded = true;
+      *had_previous_route = true;
+      *previous_route = existing->second;
+      existing->second = route;
+      return true;
+    }
+    if (route_table_.size() >= config_.route_table_capacity) {
+      return false;
+    }
+    try {
+      const auto insert_result = route_table_.try_emplace(local_order_id, route);
+      if (!insert_result.second) {
+        return false;
+      }
+    } catch (...) {
+      return false;
+    }
+    *route_recorded = true;
+    *had_previous_route = false;
+    *previous_route = 0;
+    return true;
+  }
+
+  void RollbackRecordedRoute(std::uint64_t local_order_id,
+                             bool had_previous_route,
+                             std::uint16_t previous_route) noexcept {
+    auto existing = route_table_.find(local_order_id);
+    if (existing == route_table_.end()) {
+      return;
+    }
+    if (had_previous_route) {
+      existing->second = previous_route;
+      return;
+    }
+    route_table_.erase(existing);
+  }
+
   [[nodiscard]] bool SessionReady(std::size_t index) const noexcept {
     if (index >= sessions_.size() || sessions_[index] == nullptr) {
       return false;

@@ -170,6 +170,21 @@ TEST(MultiOrderSessionGatewayTest, RouteValidationUsesRuntimeSessionCount) {
   EXPECT_EQ(sessions[1].placed, std::vector<std::uint64_t>({501}));
 }
 
+TEST(MultiOrderSessionGatewayTest, RouteTableCapacityRejectsBeforeSending) {
+  std::vector<FakeSession> sessions(2);
+  Gateway::Config config;
+  config.route_table_capacity = 1;
+  Gateway gateway(MakeSessionPointers(sessions), config);
+
+  EXPECT_EQ(gateway.PlaceOrder(MakeOrder(701, 0)).status,
+            OrderSendStatus::kOk);
+  const OrderSendResult rejected = gateway.PlaceOrder(MakeOrder(702, 1));
+
+  EXPECT_EQ(rejected.status, OrderSendStatus::kInflightFull);
+  EXPECT_EQ(sessions[0].placed, std::vector<std::uint64_t>({701}));
+  EXPECT_TRUE(sessions[1].placed.empty());
+}
+
 TEST(MultiOrderSessionGatewayTest, ReadyRequiresConfiguredMinimum) {
   std::vector<FakeSession> sessions{FakeSession{}, FakeSession{},
                                     FakeSession{false}, FakeSession{false}};

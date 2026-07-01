@@ -390,6 +390,10 @@ enqueue ok, worker send ok
 - strategy 侧通过 event 或 header route state 观察到 stopped route，暂停该 route 新下单；后续是否进入 reconcile / emergency handling 取决于订单事实状态。
 - 不阻塞等待。
 
+当前 V2 不包含 heartbeat / owner-death 协议。如果 `order-gateway-process` 被 `SIGKILL`、崩溃或宿主异常终止，SHM header 可能保留旧的
+`kReady` 状态；strategy 仅靠当前 SHM 无法立即识别无人消费的 command queue。真实生产需要外部 supervisor 监控 gateway 进程，并在后续
+V3 设计中增加 route heartbeat 或等价 liveness 机制。
+
 ## 配置模型
 
 新增 order gateway config：

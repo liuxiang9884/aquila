@@ -334,6 +334,22 @@ TEST(OrderGatewayClientTest, HeaderStoppedRouteInvalidatesReadyBeforePlace) {
   EXPECT_FALSE(shm.CommandQueue(2).TryPop(&command));
 }
 
+TEST(OrderGatewayClientTest, PollDoesNotLeaveStaleReadyOverStoppedHeader) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("poll_stale_ready");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(MakeReadyEvent(2)));
+  StoreOrderGatewayRouteState(shm.header(), 2, OrderGatewayRouteState::kStopped);
+
+  OrderGatewayClient client = CreateClient(config);
+  CapturingRuntime runtime;
+
+  EXPECT_EQ(client.PollOrderResponses(runtime), 1U);
+  EXPECT_FALSE(client.RouteReady(2));
+}
+
 TEST(OrderGatewayClientTest, HeaderReadyAfterAllStoppedRestoresRunning) {
   const OrderGatewayShmConfig config = MakeCreateConfig("header_restarted");
   ShmCleanup cleanup(config.shm_name);

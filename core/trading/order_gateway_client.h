@@ -324,6 +324,7 @@ class OrderGatewayClient {
         HandleEvent(route, event, runtime);
       }
     }
+    SyncRouteStatesFromHeader();
     return handled;
   }
 

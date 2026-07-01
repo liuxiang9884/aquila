@@ -285,9 +285,12 @@ class OrderManager {
 
   void OnRejected(Order& order, const OrderResponseEvent& event) noexcept {
     RecordResponseTiming(order, event);
-    if (order.status == OrderStatus::kSent) {
+    if (order.status == OrderStatus::kSent ||
+        (order.status == OrderStatus::kCancelSent &&
+         order.pre_cancel_status == OrderStatus::kSent)) {
       order.status = OrderStatus::kRejected;
       order.is_finished = true;
+      order.pre_cancel_status = OrderStatus::kCreated;
     }
   }
 
