@@ -239,8 +239,10 @@ OrderManager::OnOrderResponse()
 Strategy::OnOrderResponse()
 ```
 
-`kCommandRejected` 统一转换为 `core::OrderResponseKind::kRejected`。这是确定性本地拒绝，表示请求没有进入交易所不确定状态。
-只有 Gate 5xx、timeout 或 ambiguous final response 才使用 `kUnknownResult`。
+`kCommandRejected` 是确定性本地拒绝，表示请求没有进入交易所不确定状态。place command rejected
+映射为 `core::OrderResponseKind::kRejected`，cancel command rejected 映射为
+`core::OrderResponseKind::kCancelRejected`，让 `OrderManager` 恢复 cancel 前的 active 状态。只有 Gate
+5xx、timeout、ambiguous final response，或 stopped route 下订单事实已经丢失时，才使用 `kUnknownResult`。
 
 `kCommandRejected` timing 口径：
 

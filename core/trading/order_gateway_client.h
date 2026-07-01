@@ -312,7 +312,7 @@ class OrderGatewayClient {
 
   template <typename RuntimeT>
   [[nodiscard]] std::uint64_t PollOrderResponses(RuntimeT& runtime) noexcept {
-    SyncRouteStatesFromHeader(runtime);
+    SyncRouteStatesFromHeader();
     std::uint64_t handled = 0;
     for (std::uint16_t route = 0; route < route_count_; ++route) {
       std::uint64_t route_events = 0;

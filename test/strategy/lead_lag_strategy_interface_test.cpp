@@ -1200,6 +1200,24 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(order_session.placed_orders[1].gateway_route_id, 2U);
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutOpenRejectsWhenNoOrderRouteReady) {
+  leadlag::Strategy strategy{SignalOnlyConfigWithFanout(4)};
+  FakeOrderSession order_session;
+  order_session.max_order_session_fanout = 4;
+  order_session.route_ready.fill(false);
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kOrderRouteNotReady);
+}
+
 TEST(LeadLagStrategyInterfaceTest, FanoutOpenRiskChecksTotalSubmittedNotional) {
   leadlag::Config config = SignalOnlyConfigWithFanout(4);
   config.risk.max_gross_notional = 2000.0;

@@ -41,6 +41,7 @@ enum class SignalRejectReason : std::uint8_t {
   kRiskLimit,
   kMarketFreshness,
   kDriftGuard,
+  kOrderRouteNotReady,
 };
 
 struct OrderIntent {

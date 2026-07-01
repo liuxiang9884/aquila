@@ -2131,6 +2131,16 @@ class Strategy {
 
     const double order_notional =
         OrderNotional(quantity.quantity, price.order_price, instrument);
+    if (submission_route_count == 0) {
+      LogOrderIntentRejectedForSignal(
+          "order_route_not_ready", runtime, symbol, quantity.quantity,
+          price.raw_order_price, price.order_price, price.slippage_ticks,
+          instrument.price_tick, order_notional);
+      if (!last_signal_decision_.intent.reduce_only) {
+        RejectSignal(SignalRejectReason::kOrderRouteNotReady);
+      }
+      return;
+    }
     const double risk_quantity = last_signal_decision_.intent.reduce_only
                                      ? quantity.quantity
                                      : quantity.quantity * submission_route_count;
