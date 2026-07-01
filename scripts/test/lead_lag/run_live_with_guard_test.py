@@ -378,6 +378,55 @@ class RunLiveWithGuardTest(unittest.TestCase):
             self.assertEqual(credentials.api_secret_env, "PROBE_SECRET")
             self.assertEqual(credentials.source, "order_session_config")
 
+    def test_resolves_guard_credentials_from_strategy_order_gateway_config(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            strategy_path = base / "strategy.toml"
+            order_gateway_path = base / "order_gateway.toml"
+            order_session_path = base / "order_session.toml"
+            write_text(
+                strategy_path,
+                f"""
+                [strategy.order_gateway]
+                config = "{order_gateway_path}"
+                """,
+            )
+            write_text(
+                order_gateway_path,
+                f"""
+                [order_gateway]
+                route_count = 1
+
+                [[order_gateway.routes]]
+                name = "route0"
+                order_session_config = "{order_session_path}"
+                worker_cpu_id = 16
+                """,
+            )
+            write_text(
+                order_session_path,
+                """
+                [order_session.credentials]
+                api_key_env = "PROBE_KEY"
+                api_secret_env = "PROBE_SECRET"
+                """,
+            )
+
+            credentials = guard.resolve_guard_credential_env_names(
+                explicit_api_key=None,
+                explicit_api_secret=None,
+                strategy_command=[
+                    "./build/debug/tools/lead_lag_strategy",
+                    "--config",
+                    str(strategy_path),
+                    "--execute",
+                ],
+            )
+
+            self.assertEqual(credentials.api_key_env, "PROBE_KEY")
+            self.assertEqual(credentials.api_secret_env, "PROBE_SECRET")
+            self.assertEqual(credentials.source, "order_gateway_config")
+
     def test_explicit_guard_credentials_must_match_order_session_config(self):
         with TemporaryDirectory() as tmp:
             base = Path(tmp)

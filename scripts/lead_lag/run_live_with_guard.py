@@ -310,7 +310,43 @@ def order_session_credential_env_names(
     return api_key_env, api_secret_env
 
 
-def strategy_order_session_credential_env_names(
+def order_gateway_credential_env_names(
+    order_gateway_config_path: Path,
+) -> tuple[str, str]:
+    data = load_toml(order_gateway_config_path)
+    order_gateway = data.get("order_gateway")
+    if not isinstance(order_gateway, dict):
+        raise ValueError(f"{order_gateway_config_path} missing [order_gateway]")
+    routes = order_gateway.get("routes")
+    if not isinstance(routes, list) or not routes:
+        raise ValueError(f"{order_gateway_config_path} missing [[order_gateway.routes]]")
+    first_credentials: tuple[str, str] | None = None
+    for route_index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            raise ValueError(
+                f"{order_gateway_config_path} route {route_index} must be a table"
+            )
+        order_session_config = route.get("order_session_config")
+        if not isinstance(order_session_config, str) or not order_session_config:
+            raise ValueError(
+                f"{order_gateway_config_path} route {route_index} missing "
+                "order_session_config"
+            )
+        credentials = order_session_credential_env_names(
+            resolve_repo_path(order_session_config)
+        )
+        if first_credentials is None:
+            first_credentials = credentials
+        elif credentials != first_credentials:
+            raise ValueError(
+                f"{order_gateway_config_path} route {route_index} credentials "
+                "do not match route 0"
+            )
+    assert first_credentials is not None
+    return first_credentials
+
+
+def strategy_order_credential_env_names(
     strategy_command: list[str],
 ) -> GuardCredentialEnvNames | None:
     config_arg = find_strategy_config_arg(strategy_command)
@@ -318,17 +354,41 @@ def strategy_order_session_credential_env_names(
         return None
     _, strategy_config_path, _ = config_arg
     strategy_data = load_toml(strategy_config_path)
-    order_session_config_path = nested_config_path(
-        strategy_data, ("strategy", "order_session")
-    )
-    api_key_env, api_secret_env = order_session_credential_env_names(
-        order_session_config_path
-    )
-    return GuardCredentialEnvNames(
-        api_key_env=api_key_env,
-        api_secret_env=api_secret_env,
-        source="order_session_config",
-    )
+    strategy = strategy_data.get("strategy")
+    if not isinstance(strategy, dict):
+        raise ValueError(f"{strategy_config_path} missing [strategy]")
+    has_order_session = isinstance(strategy.get("order_session"), dict)
+    has_order_gateway = isinstance(strategy.get("order_gateway"), dict)
+    if has_order_session and has_order_gateway:
+        raise ValueError(
+            "strategy config must not set both [strategy.order_session] "
+            "and [strategy.order_gateway]"
+        )
+    if has_order_session:
+        order_session_config_path = nested_config_path(
+            strategy_data, ("strategy", "order_session")
+        )
+        api_key_env, api_secret_env = order_session_credential_env_names(
+            order_session_config_path
+        )
+        return GuardCredentialEnvNames(
+            api_key_env=api_key_env,
+            api_secret_env=api_secret_env,
+            source="order_session_config",
+        )
+    if has_order_gateway:
+        order_gateway_config_path = nested_config_path(
+            strategy_data, ("strategy", "order_gateway")
+        )
+        api_key_env, api_secret_env = order_gateway_credential_env_names(
+            order_gateway_config_path
+        )
+        return GuardCredentialEnvNames(
+            api_key_env=api_key_env,
+            api_secret_env=api_secret_env,
+            source="order_gateway_config",
+        )
+    return None
 
 
 def resolve_guard_credential_env_names(
@@ -339,7 +399,7 @@ def resolve_guard_credential_env_names(
     if bool(explicit_api_key) != bool(explicit_api_secret):
         raise ValueError("--api-key and --api-secret must be provided together")
 
-    inferred = strategy_order_session_credential_env_names(strategy_command)
+    inferred = strategy_order_credential_env_names(strategy_command)
     if explicit_api_key is not None and explicit_api_secret is not None:
         if inferred is not None and (
             explicit_api_key != inferred.api_key_env
@@ -361,7 +421,8 @@ def resolve_guard_credential_env_names(
 
     raise ValueError(
         "guard REST credentials require --api-key/--api-secret or a strategy "
-        "--config with [strategy.order_session].config credentials"
+        "--config with [strategy.order_session].config or "
+        "[strategy.order_gateway].config credentials"
     )
 
 
