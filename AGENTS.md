@@ -92,6 +92,18 @@ LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag
 - 主会话负责统一派发 subagent，默认不让 subagent 再派生下级 subagent；如确需允许下级派生，必须在提示中明确要求继续显式设置 `reasoning_effort = "xhigh"`，并说明原因。
 - 如果当前工具或环境不支持设置 subagent 推理强度，代理必须在继续前向用户说明限制和替代验证方案。
 
+## 多轮 Review 触发词
+
+当用户输入“多轮review”“多轮 review”“multi-round review”或等价表达时，默认先询问用户本次 review 的目标，不自行假设目标。
+用户给出目标后，按下面流程执行：
+
+1. 明确 review 范围、目标和停止条件；如果目标是“代码逻辑没有问题”，重点检查控制流、状态机、错误处理、并发边界、资源所有权、数据一致性和恢复语义，不把单纯风格偏好作为阻断问题。
+2. 每一轮至少派一个 subagent 做只读 review；subagent 默认遵守上面的 `reasoning_effort = "xhigh"` 规则，不覆盖 `model`。如果当前工具不支持 subagent 或推理强度设置，先说明限制，再用主会话执行等价的只读 review。
+3. 每轮 review 结束后，先向用户输出本轮发现的问题，按 Critical / Important / Minor 分组，并尽量给出文件路径、行号和影响说明。
+4. 根据 review 结果执行修复：Critical 必须修，Important 默认修；Minor 只有在影响既定目标、风险低或用户要求时修。修复时保持改动最小，不引入无关重构。
+5. 修复后运行与本轮修改对应的最小验证；验证通过后提交本轮修复，commit message 使用英文，且不要裹带无关改动。
+6. 提交后进入下一轮 review。直到某一轮在既定目标范围内找不出需要处理的问题为止；最后输出最终验证、最后提交和仍未覆盖的风险边界。
+
 ## 高频系统设计和实现原则
 
 - 默认把最低延迟作为最高优先级，其次才是吞吐量、资源利用率和其他性能指标。
