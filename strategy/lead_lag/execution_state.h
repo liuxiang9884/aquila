@@ -606,8 +606,17 @@ class ExecutionState {
         group.absolute_entry_value <= 0.0) {
       return;
     }
-    group.trailing_price =
+    const double average_entry_price =
         group.absolute_entry_value / absolute_position_quantity;
+    if (group.trailing_price <= kExecutionQuantityEpsilon) {
+      group.trailing_price = average_entry_price;
+      return;
+    }
+    if (group.long_position()) {
+      group.trailing_price = std::max(group.trailing_price, average_entry_price);
+    } else if (group.short_position()) {
+      group.trailing_price = std::min(group.trailing_price, average_entry_price);
+    }
   }
 
   static void FinalizeCompletedCloseBatch(

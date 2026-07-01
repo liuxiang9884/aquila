@@ -753,6 +753,60 @@ TEST(OrderGatewayClientTest, RejectedOrderResponseClearsRouteTable) {
   EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kRejected);
 }
 
+TEST(OrderGatewayClientTest,
+     UnknownOrderResponseKeepsRouteForCancelCacheAndForget) {
+  const OrderGatewayShmConfig config = MakeCreateConfig("unknown_keeps_route");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(MakeReadyEvent(2)));
+
+  OrderGatewayClient client = CreateClient(config);
+  CapturingRuntime runtime;
+  ASSERT_EQ(client.PollOrderResponses(runtime), 1U);
+  StrategyOrder order = MakeOrder(1021, 2);
+  ASSERT_EQ(client.PlaceOrder(order).status, OrderGatewaySendStatus::kOk);
+  OrderGatewayCommand command{};
+  ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
+  ASSERT_EQ(command.kind, OrderGatewayCommandKind::kPlace);
+
+  OrderGatewayEvent unknown{};
+  unknown.kind = OrderGatewayEventKind::kOrderResponse;
+  unknown.response_kind = OrderResponseKind::kUnknownResult;
+  unknown.local_order_id = order.local_order_id;
+  unknown.worker_event_enqueue_ns = 9021;
+  ASSERT_TRUE(shm.EventQueue(2).TryPush(unknown));
+
+  EXPECT_EQ(client.PollOrderResponses(runtime), 1U);
+
+  ASSERT_EQ(runtime.responses.size(), 1U);
+  EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kUnknownResult);
+  EXPECT_TRUE(client.HasRouteForLocalOrderForTest(order.local_order_id));
+  EXPECT_EQ(client.RouteForLocalOrderForTest(order.local_order_id), 2U);
+
+  order.gateway_route_id = 0;
+  order.exchange_order_id = 7021;
+  ASSERT_EQ(client.CancelOrder(order).status, OrderGatewaySendStatus::kOk);
+  client.CacheExchangeOrderId(order.local_order_id, order.exchange_order_id);
+  client.ForgetExchangeOrderId(order.local_order_id);
+
+  ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
+  EXPECT_EQ(command.kind, OrderGatewayCommandKind::kCancel);
+  EXPECT_EQ(command.local_order_id, order.local_order_id);
+  EXPECT_EQ(command.route_id, 2U);
+  ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
+  EXPECT_EQ(command.kind, OrderGatewayCommandKind::kCacheExchangeOrderId);
+  EXPECT_EQ(command.local_order_id, order.local_order_id);
+  EXPECT_EQ(command.exchange_order_id, order.exchange_order_id);
+  EXPECT_EQ(command.route_id, 2U);
+  ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
+  EXPECT_EQ(command.kind, OrderGatewayCommandKind::kForgetExchangeOrderId);
+  EXPECT_EQ(command.local_order_id, order.local_order_id);
+  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_FALSE(client.HasRouteForLocalOrderForTest(order.local_order_id));
+}
+
 TEST(OrderGatewayClientTest, CancelCacheAndForgetUseOriginalRoute) {
   const OrderGatewayShmConfig config = MakeCreateConfig("cancel_cache_forget");
   ShmCleanup cleanup(config.shm_name);

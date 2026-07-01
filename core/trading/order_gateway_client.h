@@ -511,6 +511,7 @@ class OrderGatewayClient {
 
   template <typename RuntimeT>
   void HandleEvent(std::uint16_t route, const OrderGatewayEvent& event,
+                   bool clear_unknown_result_route,
                    RuntimeT& runtime) noexcept {
     switch (event.kind) {
       case OrderGatewayEventKind::kReady:
@@ -535,7 +536,8 @@ class OrderGatewayClient {
         return;
       case OrderGatewayEventKind::kOrderResponse:
         ++stats_.order_response_events;
-        if (OrderResponseClearsRoute(event.response_kind)) {
+        if (OrderResponseClearsRoute(event.response_kind,
+                                     clear_unknown_result_route)) {
           route_table_.erase(event.local_order_id);
         }
         runtime.OnOrderResponse(ToOrderResponseEvent(event));
@@ -546,9 +548,10 @@ class OrderGatewayClient {
   }
 
   [[nodiscard]] static bool OrderResponseClearsRoute(
-      OrderResponseKind kind) noexcept {
+      OrderResponseKind kind, bool clear_unknown_result_route) noexcept {
     return kind == OrderResponseKind::kRejected ||
-           kind == OrderResponseKind::kUnknownResult;
+           (clear_unknown_result_route &&
+            kind == OrderResponseKind::kUnknownResult);
   }
 
   struct DrainRouteResult {
@@ -562,6 +565,8 @@ class OrderGatewayClient {
       RuntimeT& runtime) noexcept {
     DrainRouteResult result;
     OrderGatewayEvent event{};
+    bool clear_unknown_result_route =
+        defer_stopped_unknown && route_stopped_[route];
     while (result.handled < max_events && event_queues_[route].TryPop(&event)) {
       ++result.handled;
       if (defer_stopped_unknown &&
@@ -569,9 +574,10 @@ class OrderGatewayClient {
         ++stats_.stopped_events;
         ApplyRouteState(route, OrderGatewayRouteState::kStopped);
         result.stopped_seen = true;
+        clear_unknown_result_route = true;
         continue;
       }
-      HandleEvent(route, event, runtime);
+      HandleEvent(route, event, clear_unknown_result_route, runtime);
     }
     return result;
   }
@@ -580,6 +586,7 @@ class OrderGatewayClient {
   [[nodiscard]] std::uint64_t DrainAndHandleStoppedRoute(
       std::uint16_t route, RuntimeT& runtime) noexcept {
     std::uint64_t handled = 0;
+    ApplyRouteState(route, OrderGatewayRouteState::kStopped);
     DrainRouteResult drained = DrainRouteEvents(
         route, event_queues_[route].capacity(), /*defer_stopped_unknown=*/true,
         runtime);
