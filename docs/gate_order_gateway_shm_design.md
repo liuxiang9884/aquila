@@ -387,7 +387,8 @@ enqueue ok, worker send ok
 - worker 不能静默丢 `OrderResponseEvent`。
 - worker 进入 fatal / degraded，停止对应 `OrderSession`。
 - worker 将 `route_states[i]` 写为 `kStopped`；如果还能写 event queue，也发布 `kStopped`。
-- strategy 侧通过 event 或 header route state 观察到 stopped route，暂停该 route 新下单；后续是否进入 reconcile / emergency handling 取决于订单事实状态。
+- strategy 侧通过 event 或 header route state 观察到 stopped route，暂停该 route 新下单。
+- `OrderGatewayClient` 会对该 route 仍在 route table 的订单合成 `kUnknownResult` 并移除 route table 记录，触发策略 reconcile / pause，而不是静默保留 pending。
 - 不阻塞等待。
 
 当前 V2 不包含 heartbeat / owner-death 协议。如果 `order-gateway-process` 被 `SIGKILL`、崩溃或宿主异常终止，SHM header 可能保留旧的

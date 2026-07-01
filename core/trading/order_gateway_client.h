@@ -312,7 +312,7 @@ class OrderGatewayClient {
 
   template <typename RuntimeT>
   [[nodiscard]] std::uint64_t PollOrderResponses(RuntimeT& runtime) noexcept {
-    SyncRouteStatesFromHeader();
+    SyncRouteStatesFromHeader(runtime);
     std::uint64_t handled = 0;
     for (std::uint16_t route = 0; route < route_count_; ++route) {
       std::uint64_t route_events = 0;
@@ -324,7 +324,7 @@ class OrderGatewayClient {
         HandleEvent(route, event, runtime);
       }
     }
-    SyncRouteStatesFromHeader();
+    SyncRouteStatesFromHeader(runtime);
     return handled;
   }
 
@@ -397,6 +397,20 @@ class OrderGatewayClient {
     OrderGatewayShmHeader& header = shm_.header();
     for (std::uint16_t route = 0; route < route_count_; ++route) {
       ApplyRouteState(route, LoadOrderGatewayRouteState(header, route));
+    }
+  }
+
+  template <typename RuntimeT>
+  void SyncRouteStatesFromHeader(RuntimeT& runtime) noexcept {
+    OrderGatewayShmHeader& header = shm_.header();
+    for (std::uint16_t route = 0; route < route_count_; ++route) {
+      const OrderGatewayRouteState state =
+          LoadOrderGatewayRouteState(header, route);
+      if (state == OrderGatewayRouteState::kStopped) {
+        HandleRouteStopped(route, runtime);
+      } else {
+        ApplyRouteState(route, state);
+      }
     }
   }
 
@@ -503,7 +517,7 @@ class OrderGatewayClient {
         return;
       case OrderGatewayEventKind::kStopped:
         ++stats_.stopped_events;
-        ApplyRouteState(route, OrderGatewayRouteState::kStopped);
+        HandleRouteStopped(route, runtime);
         return;
       case OrderGatewayEventKind::kCommandRejected:
         ++stats_.command_rejected_events;
@@ -532,6 +546,30 @@ class OrderGatewayClient {
       }
     }
     return route_count_ != 0;
+  }
+
+  template <typename RuntimeT>
+  void HandleRouteStopped(std::uint16_t route, RuntimeT& runtime) noexcept {
+    ApplyRouteState(route, OrderGatewayRouteState::kStopped);
+    while (true) {
+      auto route_order = route_table_.end();
+      for (auto it = route_table_.begin(); it != route_table_.end(); ++it) {
+        if (it->second == route) {
+          route_order = it;
+          break;
+        }
+      }
+      if (route_order == route_table_.end()) {
+        return;
+      }
+      const std::uint64_t local_order_id = route_order->first;
+      route_table_.erase(route_order);
+      runtime.OnOrderResponse(OrderResponseEvent{
+          .kind = OrderResponseKind::kUnknownResult,
+          .local_order_id = local_order_id,
+          .local_receive_ns = NowNs(),
+      });
+    }
   }
 
   [[nodiscard]] static OrderResponseEvent ToOrderResponseEvent(
