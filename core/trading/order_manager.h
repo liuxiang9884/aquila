@@ -277,6 +277,9 @@ class OrderManager {
     RecordResponseTiming(order, event);
     if (order.status == OrderStatus::kSent) {
       order.status = OrderStatus::kAccepted;
+    } else if (order.status == OrderStatus::kCancelSent &&
+               order.pre_cancel_status == OrderStatus::kSent) {
+      order.pre_cancel_status = OrderStatus::kAccepted;
     }
   }
 
@@ -313,6 +316,9 @@ class OrderManager {
                           const OrderFeedbackEvent& event) noexcept {
     if (order.status == OrderStatus::kSent) {
       order.status = OrderStatus::kAccepted;
+    } else if (order.status == OrderStatus::kCancelSent &&
+               order.pre_cancel_status == OrderStatus::kSent) {
+      order.pre_cancel_status = OrderStatus::kAccepted;
     }
     RecordFeedbackExchangeOrderId(order, event);
     order.exchange_update_ns = event.exchange_update_ns;
@@ -331,6 +337,8 @@ class OrderManager {
     }
     if (order.status != OrderStatus::kCancelSent) {
       order.status = OrderStatus::kPartialFilled;
+    } else {
+      order.pre_cancel_status = OrderStatus::kPartialFilled;
     }
     order.exchange_update_ns = event.exchange_update_ns;
   }

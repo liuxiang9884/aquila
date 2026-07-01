@@ -543,6 +543,31 @@ TEST(OrderManagerTest, CancelRejectedResponseRestoresPreviousActiveStatus) {
   EXPECT_EQ(order->status, OrderStatus::kCancelSent);
 }
 
+TEST(OrderManagerTest,
+     CancelRejectedAfterDelayedAcceptedResponseRestoresAcceptedStatus) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  const OrderPlaceResult placed =
+      order_manager.PlaceLimitOrder(MakeLimitRequest());
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  ASSERT_EQ(order_manager.CancelOrder(placed.local_order_id).status,
+            OrderCancelStatus::kOk);
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+  });
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kCancelRejected,
+      .local_order_id = placed.local_order_id,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kAccepted);
+}
+
 TEST(OrderManagerTest, DuplicateCancelIsRejectedByInvalidStatus) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);
@@ -732,6 +757,43 @@ TEST(OrderManagerFeedbackTest, PartialFillAfterCancelSentKeepsCancelPending) {
   EXPECT_EQ(order->cumulative_filled_quantity, 2);
   EXPECT_DOUBLE_EQ(order->AverageFillPrice(), 81010.0);
   EXPECT_EQ(order->exchange_update_ns, 2000);
+}
+
+TEST(OrderManagerFeedbackTest,
+     CancelRejectedAfterPartialFillRestoresPartialFilledStatus) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  OrderCreateRequest request = MakeLimitRequest();
+  request.quantity = 5;
+  const OrderPlaceResult placed = order_manager.PlaceLimitOrder(request);
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  order_manager.OnOrderFeedback(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kAccepted,
+      .local_order_id = placed.local_order_id,
+      .exchange_order_id = 36028827892199865U,
+      .exchange_update_ns = 1000,
+  });
+  ASSERT_EQ(order_manager.CancelOrder(placed.local_order_id).status,
+            OrderCancelStatus::kOk);
+  order_manager.OnOrderFeedback(OrderFeedbackEvent{
+      .kind = OrderFeedbackKind::kPartialFilled,
+      .local_order_id = placed.local_order_id,
+      .cumulative_filled_quantity = 2,
+      .left_quantity = 3,
+      .fill_price = 81010.0,
+      .exchange_update_ns = 2000,
+  });
+
+  order_manager.OnOrderResponse(OrderResponseEvent{
+      .kind = OrderResponseKind::kCancelRejected,
+      .local_order_id = placed.local_order_id,
+  });
+
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->status, OrderStatus::kPartialFilled);
+  EXPECT_EQ(order->cumulative_filled_quantity, 2);
+  EXPECT_DOUBLE_EQ(order->AverageFillPrice(), 81010.0);
 }
 
 TEST(OrderManagerFeedbackTest,

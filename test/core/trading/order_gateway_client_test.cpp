@@ -199,6 +199,29 @@ TEST(OrderGatewayClientTest, StartAcceptsHeaderReadyStatesWithoutEvents) {
   EXPECT_EQ(client.ready_route_count(), 4U);
 }
 
+TEST(OrderGatewayClientTest, StartDoesNotLetStaleReadyEventOverrideStopped) {
+  OrderGatewayShmConfig config = MakeCreateConfig("stale_ready_stopped");
+  config.startup_ready_timeout_s = 1;
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+  for (std::uint16_t route = 0; route < config.route_count; ++route) {
+    ASSERT_TRUE(shm.EventQueue(route).TryPush(MakeReadyEvent(route)));
+    StoreOrderGatewayRouteState(shm.header(), route,
+                                OrderGatewayRouteState::kStopped);
+  }
+
+  OrderGatewayClient client = CreateClient(config);
+
+  EXPECT_FALSE(client.Start());
+  EXPECT_FALSE(client.Running());
+  EXPECT_EQ(client.ready_route_count(), 0U);
+  for (std::uint16_t route = 0; route < config.route_count; ++route) {
+    EXPECT_FALSE(client.RouteReady(route));
+  }
+}
+
 TEST(OrderGatewayClientTest, StartFailsAfterConfiguredTimeout) {
   const OrderGatewayShmConfig config = MakeCreateConfig("start_timeout");
   ShmCleanup cleanup(config.shm_name);

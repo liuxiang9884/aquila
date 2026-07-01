@@ -329,6 +329,42 @@ TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   EXPECT_EQ(event.request_send_local_ns, 301);
 }
 
+TEST(OrderGatewayWorkerTest, NotReadyClearsPendingResponseMetadata) {
+  const core::OrderGatewayShmConfig config =
+      MakeShmConfig("not_ready_clears_metadata");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  core::OrderGatewayShmManager& shm = shm_result.value;
+  core::OrderGatewayCommand command = MakePlaceCommand(0, 1105);
+  command.command_seq = 45;
+  command.parent_id = 34;
+  ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
+
+  FakeSession session;
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0), &shm.header());
+  OrderGatewayCommandWorker<FakeSession> worker(0, shm.CommandQueue(0), session,
+                                                publisher);
+  ASSERT_TRUE(worker.PollOnce());
+
+  publisher.OnOrderSessionLoginNotReady();
+  publisher.OnOrderResponse(OrderResponse{.kind = OrderResponseKind::kRejected,
+                                          .local_order_id = 1105,
+                                          .request_sequence = 101,
+                                          .local_receive_ns = 900,
+                                          .exchange_ns = 800});
+
+  core::OrderGatewayEvent event{};
+  ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
+  ASSERT_EQ(event.kind, core::OrderGatewayEventKind::kNotReady);
+  ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
+  EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kOrderResponse);
+  EXPECT_EQ(event.command_seq, 0U);
+  EXPECT_EQ(event.parent_id, 0U);
+  EXPECT_EQ(event.worker_dequeue_ns, 0);
+  EXPECT_EQ(event.request_send_local_ns, 0);
+}
+
 TEST(OrderGatewayWorkerTest, CancelCacheAndForgetDispatchToSession) {
   const core::OrderGatewayShmConfig config = MakeShmConfig("cancel_cache");
   ShmCleanup cleanup(config.shm_name);

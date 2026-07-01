@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -34,6 +35,16 @@ class MultiOrderSessionGateway {
 
   [[nodiscard]] bool Ready() const noexcept {
     return ReadySessionCount() >= config_.min_ready_sessions;
+  }
+
+  [[nodiscard]] std::uint16_t MaxOrderSessionFanout() const noexcept {
+    return sessions_.size() > std::numeric_limits<std::uint16_t>::max()
+               ? std::numeric_limits<std::uint16_t>::max()
+               : static_cast<std::uint16_t>(sessions_.size());
+  }
+
+  [[nodiscard]] bool RouteReady(std::uint16_t route_id) const noexcept {
+    return route_id < sessions_.size() && SessionReady(route_id);
   }
 
   template <typename OrderT>

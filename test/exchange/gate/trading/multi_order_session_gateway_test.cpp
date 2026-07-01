@@ -182,6 +182,22 @@ TEST(MultiOrderSessionGatewayTest, ReadyRequiresConfiguredMinimum) {
   EXPECT_TRUE(gateway.Ready());
 }
 
+TEST(MultiOrderSessionGatewayTest, ExposesFanoutLimitAndRouteReadiness) {
+  std::vector<FakeSession> sessions{FakeSession{}, FakeSession{false},
+                                    FakeSession{}, FakeSession{false}};
+  Gateway gateway = MakeGateway(sessions);
+
+  EXPECT_EQ(gateway.MaxOrderSessionFanout(), 4U);
+  EXPECT_TRUE(gateway.RouteReady(0));
+  EXPECT_FALSE(gateway.RouteReady(1));
+  EXPECT_TRUE(gateway.RouteReady(2));
+  EXPECT_FALSE(gateway.RouteReady(3));
+  EXPECT_FALSE(gateway.RouteReady(4));
+
+  sessions[1].set_ready(true);
+  EXPECT_TRUE(gateway.RouteReady(1));
+}
+
 TEST(MultiOrderSessionGatewayTest, AutoRouteSkipsNotReadySessions) {
   std::vector<FakeSession> sessions{FakeSession{}, FakeSession{false},
                                     FakeSession{}, FakeSession{false}};

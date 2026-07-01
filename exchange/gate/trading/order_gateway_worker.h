@@ -88,6 +88,7 @@ class OrderGatewayWorkerPublisher {
     event.route_id = route_id_;
     event.kind = core::OrderGatewayEventKind::kStopped;
     event.worker_event_enqueue_ns = NowNs();
+    request_metadata_.clear();
     StoreRouteState(core::OrderGatewayRouteState::kStopped);
     return Publish(event);
   }
@@ -110,6 +111,7 @@ class OrderGatewayWorkerPublisher {
     event.kind = core::OrderGatewayEventKind::kNotReady;
     event.ready = 0;
     event.worker_event_enqueue_ns = NowNs();
+    request_metadata_.clear();
     StoreRouteState(core::OrderGatewayRouteState::kNotReady);
     (void)Publish(event);
   }

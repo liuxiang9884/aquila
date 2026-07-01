@@ -229,6 +229,7 @@ class GateOrderGatewayRouteWorker {
     thread_ = std::thread([this] {
       BindCurrentThreadToCpu(worker_cpu_id_);
       start_result_ = session_.Start();
+      (void)publisher_.PublishStopped();
       done_.store(true, std::memory_order_release);
     });
   }
@@ -339,6 +340,12 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
   for (std::unique_ptr<GateOrderGatewayRouteWorker<WebSocketPolicy>>& worker :
        workers) {
     worker->Join();
+  }
+  for (const std::unique_ptr<GateOrderGatewayRouteWorker<WebSocketPolicy>>&
+           worker : workers) {
+    if (!worker->start_result()) {
+      return 1;
+    }
   }
   return 0;
 }

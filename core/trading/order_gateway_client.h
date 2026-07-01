@@ -133,6 +133,7 @@ class OrderGatewayClient {
     while (!AllRoutesReady()) {
       SyncRouteStatesFromHeader();
       (void)PollOrderResponses(runtime);
+      SyncRouteStatesFromHeader();
       if (AllRoutesReady()) {
         break;
       }
