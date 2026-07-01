@@ -142,6 +142,24 @@ struct StrategyOrderPositionLogFields {
       .count();
 }
 
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+inline void NotifySubmitStageForTest(
+    StrategySubmitStageForTest stage, std::uint64_t parent_id = 0,
+    std::uint64_t local_order_id = 0,
+    std::uint16_t route_id = core::kAutoGatewayRoute,
+    std::uint32_t route_index = 0,
+    std::uint32_t submission_route_count = 0) noexcept {
+  NotifyStrategySubmitStageObserverForTest(StrategySubmitStageRecordForTest{
+      .stage = stage,
+      .parent_id = parent_id,
+      .local_order_id = local_order_id,
+      .route_id = route_id,
+      .route_index = route_index,
+      .submission_route_count = submission_route_count,
+  });
+}
+#endif
+
 [[nodiscard]] inline std::string_view OrderResponseBookTickerIdPrefix(
     core::OrderResponseKind kind) noexcept {
   switch (kind) {
@@ -2053,8 +2071,17 @@ class Strategy {
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OrderPriceTextStorage* order_text_storage,
       std::uint64_t parent_id, std::uint16_t route_id) noexcept {
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kBeforePlaceOrder, parent_id, 0, route_id);
+#endif
     const core::OrderPlaceResult placed = PlacePreparedExternalOrder(
         context, symbol, quantity, *order_text_storage, parent_id, route_id);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kAfterPlaceOrder, parent_id,
+        placed.local_order_id, route_id);
+#endif
     if (placed.local_order_id == 0) {
       LogExternalOrderPlaceRejected(runtime, symbol, instrument, price,
                                     quantity, order_notional, placed);
@@ -2142,12 +2169,24 @@ class Strategy {
     if (RejectInvalidOrderPrice(runtime, symbol, instrument, price)) {
       return;
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kPricePrepared);
+#endif
 
     LogSignalDecisionForPreparedPrice(*runtime, symbol, instrument, price);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kSignalDecisionLogged);
+#endif
 
     if (RejectOpenForFreshness(runtime, symbol, price, instrument)) {
       return;
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kFreshnessChecked);
+#endif
 
     const PreparedOrderQuantity quantity =
         PrepareOrderQuantity(runtime, instrument, price.price_units);
@@ -2155,6 +2194,10 @@ class Strategy {
                                    quantity)) {
       return;
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kQuantityPrepared);
+#endif
 
     const std::uint32_t requested_order_session_fanout =
         EffectiveOrderSessionFanout(runtime->pair.execute);
@@ -2166,6 +2209,10 @@ class Strategy {
                                   available_order_session_fanout);
     }
     RefreshContextOrderRoutes(context);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kRoutesRefreshed);
+#endif
     const std::uint32_t target_order_session_fanout = std::min(
         requested_order_session_fanout, available_order_session_fanout);
     std::array<std::uint16_t, kMaxOrderSessionFanout> submission_routes{};
@@ -2181,6 +2228,11 @@ class Strategy {
       }
       submission_routes[submission_route_count++] = route_id;
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kRoutesSelected, 0, 0,
+        core::kAutoGatewayRoute, 0, submission_route_count);
+#endif
 
     const double order_notional =
         OrderNotional(quantity.quantity, price.order_price, instrument);
@@ -2204,9 +2256,16 @@ class Strategy {
                           risk_order_notional)) {
       return;
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(StrategySubmitStageForTest::kRiskChecked);
+#endif
 
     LogPreparedOrderIntent(*runtime, symbol, instrument, price, quantity,
                            order_notional);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kOrderIntentLogged);
+#endif
 
     ExecutionGroup* submit_group = close_group;
     if (!last_signal_decision_.intent.reduce_only) {
@@ -2226,6 +2285,11 @@ class Strategy {
     }
     const std::uint64_t submit_group_id = submit_group->group_id;
     const std::uint64_t parent_id = EnsureExecutionParentId(*submit_group);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kExecutionGroupReady, parent_id, 0,
+        core::kAutoGatewayRoute, 0, submission_route_count);
+#endif
 
     std::uint32_t accepted_orders = 0;
     std::array<std::uint64_t, kMaxOrderSessionFanout>
@@ -2233,16 +2297,33 @@ class Strategy {
     std::uint8_t rejected_submit_count = 0;
     for (std::uint32_t route_index = 0; route_index < submission_route_count;
          ++route_index) {
+      const std::uint16_t route_id = submission_routes[route_index];
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+      detail::NotifySubmitStageForTest(
+          StrategySubmitStageForTest::kBeforeAcquireText, parent_id, 0,
+          route_id, route_index, submission_route_count);
+#endif
       OrderPriceTextStorage* order_text_storage = AcquirePreparedOrderText(
           runtime, symbol, instrument, price, quantity, order_notional);
       if (order_text_storage == nullptr) {
         continue;
       }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+      detail::NotifySubmitStageForTest(
+          StrategySubmitStageForTest::kAfterAcquireText, parent_id, 0, route_id,
+          route_index, submission_route_count);
+#endif
       const ExternalOrderSubmitResult submit_result =
-          SubmitPreparedExternalOrder(
-              runtime, trigger_ticker, signal_role, context, submit_group,
-              instrument, symbol, price, quantity, order_notional,
-              order_text_storage, parent_id, submission_routes[route_index]);
+          SubmitPreparedExternalOrder(runtime, trigger_ticker, signal_role,
+                                      context, submit_group, instrument, symbol,
+                                      price, quantity, order_notional,
+                                      order_text_storage, parent_id, route_id);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+      detail::NotifySubmitStageForTest(
+          StrategySubmitStageForTest::kAfterSubmitResult, parent_id,
+          submit_result.local_order_id, route_id, route_index,
+          submission_route_count);
+#endif
       if (submit_result.accepted) {
         ++accepted_orders;
       }
@@ -2260,6 +2341,11 @@ class Strategy {
       [[maybe_unused]] const bool cleared =
           runtime->execution.ClearGroupById(submit_group_id);
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifySubmitStageForTest(StrategySubmitStageForTest::kSubmitDone,
+                                     parent_id, 0, core::kAutoGatewayRoute, 0,
+                                     submission_route_count);
+#endif
   }
 
   [[nodiscard]] bool OnExternalOrderAccepted(

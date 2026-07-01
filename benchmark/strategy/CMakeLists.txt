@@ -29,6 +29,23 @@ target_link_libraries(lead_lag_runtime_benchmark
         nova
 )
 
+add_executable(lead_lag_submit_breakdown_benchmark
+    lead_lag_submit_breakdown_benchmark.cpp
+)
+
+target_link_libraries(lead_lag_submit_breakdown_benchmark
+    PRIVATE
+        aquila_core
+        aquila_strategy
+        benchmark::benchmark_main
+        nova
+)
+
+target_compile_definitions(lead_lag_submit_breakdown_benchmark
+    PRIVATE
+        AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS
+)
+
 add_executable(lead_lag_feedback_runtime_benchmark
     lead_lag_feedback_runtime_benchmark.cpp
 )

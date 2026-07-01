@@ -15,6 +15,25 @@ namespace aquila::strategy::leadlag {
 enum class FreshnessRejectReason : std::uint8_t;
 enum class PositionDirection : std::uint8_t;
 
+enum class StrategySubmitStageForTest : std::uint8_t {
+  kPricePrepared,
+  kSignalDecisionLogged,
+  kFreshnessChecked,
+  kQuantityPrepared,
+  kRoutesRefreshed,
+  kRoutesSelected,
+  kRiskChecked,
+  kOrderIntentLogged,
+  kExecutionGroupReady,
+  kBeforeAcquireText,
+  kAfterAcquireText,
+  kBeforePlaceOrder,
+  kAfterPlaceOrder,
+  kAfterSubmitResult,
+  kSubmitDone,
+  kCount,
+};
+
 namespace detail {
 
 struct StrategySignalTriggeredLogRecordForTest {
@@ -197,6 +216,15 @@ struct StrategyOrderFeedbackLogRecordForTest {
   std::int64_t lag_book_ticker_id{0};
 };
 
+struct StrategySubmitStageRecordForTest {
+  StrategySubmitStageForTest stage{StrategySubmitStageForTest::kPricePrepared};
+  std::uint64_t parent_id{0};
+  std::uint64_t local_order_id{0};
+  std::uint16_t route_id{core::kAutoGatewayRoute};
+  std::uint32_t route_index{0};
+  std::uint32_t submission_route_count{0};
+};
+
 using StrategySignalTriggeredLogObserverForTest =
     void (*)(const StrategySignalTriggeredLogRecordForTest& record) noexcept;
 
@@ -220,6 +248,9 @@ using StrategyOrderResponseLogObserverForTest =
 
 using StrategyOrderFeedbackLogObserverForTest =
     void (*)(const StrategyOrderFeedbackLogRecordForTest& record) noexcept;
+
+using StrategySubmitStageObserverForTest =
+    void (*)(const StrategySubmitStageRecordForTest& record) noexcept;
 
 [[nodiscard]] inline StrategySignalTriggeredLogObserverForTest&
 StrategySignalTriggeredLogObserverSlotForTest() noexcept {
@@ -269,6 +300,12 @@ StrategyOrderFeedbackLogObserverSlotForTest() noexcept {
   return observer;
 }
 
+[[nodiscard]] inline StrategySubmitStageObserverForTest&
+StrategySubmitStageObserverSlotForTest() noexcept {
+  static StrategySubmitStageObserverForTest observer = nullptr;
+  return observer;
+}
+
 inline void SetStrategySignalTriggeredLogObserverForTest(
     StrategySignalTriggeredLogObserverForTest observer) noexcept {
   StrategySignalTriggeredLogObserverSlotForTest() = observer;
@@ -307,6 +344,11 @@ inline void SetStrategyOrderResponseLogObserverForTest(
 inline void SetStrategyOrderFeedbackLogObserverForTest(
     StrategyOrderFeedbackLogObserverForTest observer) noexcept {
   StrategyOrderFeedbackLogObserverSlotForTest() = observer;
+}
+
+inline void SetStrategySubmitStageObserverForTest(
+    StrategySubmitStageObserverForTest observer) noexcept {
+  StrategySubmitStageObserverSlotForTest() = observer;
 }
 
 inline void NotifyStrategySignalTriggeredLogObserverForTest(
@@ -383,6 +425,16 @@ inline void NotifyStrategyOrderFeedbackLogObserverForTest(
     const StrategyOrderFeedbackLogRecordForTest& record) noexcept {
   StrategyOrderFeedbackLogObserverForTest observer =
       StrategyOrderFeedbackLogObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+
+inline void NotifyStrategySubmitStageObserverForTest(
+    const StrategySubmitStageRecordForTest& record) noexcept {
+  StrategySubmitStageObserverForTest observer =
+      StrategySubmitStageObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }
