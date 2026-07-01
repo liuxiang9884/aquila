@@ -502,7 +502,10 @@ class OrderFeedbackSession {
     const OrderFeedbackParseResult parsed = ParseGateOrderFeedbackMessage(
         payload, NowNsInt64(), parser_stats_,
         [this](const OrderFeedbackEvent& event) noexcept {
-          PublishEvent(event);
+          return PublishEvent(event);
+        },
+        [this](const OrderFeedbackRawUpdateDiagnostic& diagnostic) noexcept {
+          LogRawUpdateDiagnostic(diagnostic);
         });
     if (parsed.status != OrderFeedbackParseStatus::kOk) {
       if constexpr (DiagnosticsEnabled) {
@@ -689,16 +692,47 @@ class OrderFeedbackSession {
     return core.SendText(payload, websocket::WriteFlushMode::kTryFlushOne);
   }
 
-  void PublishEvent(const OrderFeedbackEvent& event) noexcept {
+  bool PublishEvent(const OrderFeedbackEvent& event) noexcept {
     if (publisher_.Publish(event)) {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordEventPublished();
       }
-      return;
+      return true;
     }
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPublishFailure();
     }
+    return false;
+  }
+
+  void LogRawUpdateDiagnostic(
+      const OrderFeedbackRawUpdateDiagnostic& diagnostic) const noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    const std::string_view emit_kind =
+        diagnostic.event_emitted ? magic_enum::enum_name(diagnostic.emit_kind)
+                                 : std::string_view{"none"};
+    NOVA_INFO(
+        "order_feedback_raw_sbe_update update_index={} result_count={} "
+        "exchange_order_id={} text={} local_order_id_valid={} "
+        "local_order_id={} finish_as={} role={} size_mantissa={} "
+        "left_mantissa={} size_exponent={} size_quantity={} left_quantity={} "
+        "price_exponent={} fill_price_mantissa={} fill_price={} "
+        "update_time_us={} exchange_update_ns={} outcome={} "
+        "event_emitted={} emit_kind={} publish_ok={}",
+        diagnostic.update_index, diagnostic.result_count,
+        diagnostic.exchange_order_id, diagnostic.text,
+        diagnostic.local_order_id_valid ? "true" : "false",
+        diagnostic.local_order_id, diagnostic.finish_as, diagnostic.role,
+        diagnostic.size_mantissa, diagnostic.left_mantissa,
+        static_cast<int>(diagnostic.size_exponent), diagnostic.size_quantity,
+        diagnostic.left_quantity, static_cast<int>(diagnostic.price_exponent),
+        diagnostic.fill_price_mantissa, diagnostic.fill_price,
+        diagnostic.update_time_us, diagnostic.exchange_update_ns,
+        magic_enum::enum_name(diagnostic.outcome),
+        diagnostic.event_emitted ? "true" : "false", emit_kind,
+        diagnostic.publish_ok ? "true" : "false");
   }
 
   void PublishGlobalContinuityLost(OrderFeedbackContinuityReason reason,

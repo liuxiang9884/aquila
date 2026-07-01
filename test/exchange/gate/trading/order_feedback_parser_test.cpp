@@ -37,6 +37,27 @@ struct EventCollector {
   }
 };
 
+template <std::size_t N = 1>
+struct RawDiagnosticCollector {
+  std::array<OrderFeedbackRawUpdateDiagnostic, N> updates{};
+  std::size_t count{0};
+
+  void operator()(const OrderFeedbackRawUpdateDiagnostic& update) noexcept {
+    if (count < updates.size()) {
+      updates[count++] = update;
+    }
+  }
+};
+
+struct RejectingEventSink {
+  std::size_t count{0};
+
+  bool operator()(const OrderFeedbackEvent&) noexcept {
+    ++count;
+    return false;
+  }
+};
+
 OrderFeedbackPayloadFields MakeFields(std::string_view finish_as) noexcept {
   OrderFeedbackPayloadFields fields{};
   fields.finish_as = finish_as;
@@ -276,6 +297,99 @@ TEST(GateOrderFeedbackParserTest, ParsesMultipleOrdersAfterPayloadValidation) {
   EXPECT_EQ(collector.events[1].role, OrderRole::kMaker);
   EXPECT_EQ(stats.orders_seen, 2U);
   EXPECT_EQ(stats.events_emitted, 2U);
+}
+
+TEST(GateOrderFeedbackParserTest, ReportsRawDecodedUpdateDiagnostic) {
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  RawDiagnosticCollector raw_collector{};
+  OrderFeedbackPayloadFields fields = MakeFields("ioc");
+  fields.size_exponent = -1;
+  fields.size_mantissa = 33;
+  fields.left_mantissa = 33;
+  fields.price_exponent = -4;
+  fields.fill_price_mantissa = 12345;
+
+  std::array<char, 512> buffer{};
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, fields);
+  const OrderFeedbackParseResult result = ParseGateOrderFeedbackMessage(
+      payload, kLocalReceiveNs, stats, collector, raw_collector);
+
+  ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  ASSERT_EQ(raw_collector.count, 1U);
+  const OrderFeedbackRawUpdateDiagnostic& raw = raw_collector.updates[0];
+  EXPECT_EQ(raw.update_index, 0);
+  EXPECT_EQ(raw.result_count, 1);
+  EXPECT_EQ(raw.exchange_order_id, kExchangeOrderId);
+  EXPECT_EQ(raw.text, fields.text);
+  EXPECT_TRUE(raw.local_order_id_valid);
+  EXPECT_EQ(raw.local_order_id, kLocalOrderId);
+  EXPECT_EQ(raw.finish_as, fields.finish_as);
+  EXPECT_EQ(raw.size_mantissa, fields.size_mantissa);
+  EXPECT_EQ(raw.left_mantissa, fields.left_mantissa);
+  EXPECT_EQ(raw.size_exponent, fields.size_exponent);
+  EXPECT_DOUBLE_EQ(raw.size_quantity, 3.3);
+  EXPECT_DOUBLE_EQ(raw.left_quantity, 3.3);
+  EXPECT_EQ(raw.price_exponent, fields.price_exponent);
+  EXPECT_EQ(raw.fill_price_mantissa, fields.fill_price_mantissa);
+  EXPECT_DOUBLE_EQ(raw.fill_price, 1.2345);
+  EXPECT_EQ(raw.update_time_us, fields.update_time_us);
+  EXPECT_EQ(raw.exchange_update_ns, kUpdateTimeNs);
+  EXPECT_EQ(raw.outcome, OrderFeedbackRawUpdateOutcome::kEmitted);
+  EXPECT_TRUE(raw.event_emitted);
+  EXPECT_EQ(raw.emit_kind, OrderFeedbackKind::kCancelled);
+  EXPECT_TRUE(raw.publish_ok);
+}
+
+TEST(GateOrderFeedbackParserTest, ReportsDropReasonInRawDiagnostic) {
+  OrderFeedbackParserStats stats{};
+  EventCollector collector{};
+  RawDiagnosticCollector raw_collector{};
+  OrderFeedbackPayloadFields fields = MakeFields("_new");
+  fields.text = "client-order-42";
+
+  std::array<char, 512> buffer{};
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, fields);
+  const OrderFeedbackParseResult result = ParseGateOrderFeedbackMessage(
+      payload, kLocalReceiveNs, stats, collector, raw_collector);
+
+  ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_EQ(result.events_emitted, 0);
+  EXPECT_EQ(collector.count, 0U);
+  ASSERT_EQ(raw_collector.count, 1U);
+  const OrderFeedbackRawUpdateDiagnostic& raw = raw_collector.updates[0];
+  EXPECT_EQ(raw.text, fields.text);
+  EXPECT_FALSE(raw.local_order_id_valid);
+  EXPECT_EQ(raw.outcome, OrderFeedbackRawUpdateOutcome::kDroppedInvalidText);
+  EXPECT_FALSE(raw.event_emitted);
+  EXPECT_FALSE(raw.publish_ok);
+  EXPECT_EQ(stats.invalid_text_count, 1U);
+  EXPECT_EQ(stats.dropped_events, 1U);
+}
+
+TEST(GateOrderFeedbackParserTest, ReportsPublishFailureInRawDiagnostic) {
+  OrderFeedbackParserStats stats{};
+  RejectingEventSink sink{};
+  RawDiagnosticCollector raw_collector{};
+  OrderFeedbackPayloadFields fields = MakeFields("_new");
+
+  std::array<char, 512> buffer{};
+  const std::string_view payload =
+      BuildOrderFeedbackOrdersPayload(&buffer, fields);
+  const OrderFeedbackParseResult result = ParseGateOrderFeedbackMessage(
+      payload, kLocalReceiveNs, stats, sink, raw_collector);
+
+  ASSERT_EQ(result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_EQ(result.events_emitted, 1);
+  EXPECT_EQ(sink.count, 1U);
+  ASSERT_EQ(raw_collector.count, 1U);
+  EXPECT_EQ(raw_collector.updates[0].outcome,
+            OrderFeedbackRawUpdateOutcome::kEmitted);
+  EXPECT_TRUE(raw_collector.updates[0].event_emitted);
+  EXPECT_EQ(raw_collector.updates[0].emit_kind, OrderFeedbackKind::kAccepted);
+  EXPECT_FALSE(raw_collector.updates[0].publish_ok);
 }
 
 TEST(GateOrderFeedbackParserTest, MultipleOrdersUnexpectedChannelDoesNotEmit) {

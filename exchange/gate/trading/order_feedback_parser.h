@@ -9,6 +9,7 @@
 #include <limits>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 #include <sbepp/sbepp.hpp>
 
@@ -62,6 +63,45 @@ struct OrderFeedbackParseResult {
   OrderFeedbackParseStatus status{OrderFeedbackParseStatus::kOk};
   std::uint16_t orders_seen{0};
   std::uint16_t events_emitted{0};
+};
+
+enum class OrderFeedbackRawUpdateOutcome : std::uint8_t {
+  kEmitted = 0,
+  kDroppedInvalidText,
+  kDroppedInvalidRoute,
+  kDroppedUnsupportedSizeExponent,
+  kDroppedInvalidQuantity,
+  kDroppedMalformedUpdateTime,
+  kDroppedUnsupportedPriceExponent,
+  kDroppedUnsupportedUpdateFinishAs,
+  kDroppedUnsupportedFilledLeft,
+  kDroppedUnsupportedFinishAs,
+};
+
+struct OrderFeedbackRawUpdateDiagnostic {
+  std::uint16_t update_index{0};
+  std::uint16_t result_count{0};
+  std::uint64_t exchange_order_id{0};
+  std::int8_t size_exponent{0};
+  std::int64_t left_mantissa{0};
+  std::int64_t size_mantissa{0};
+  std::int64_t update_time_us{0};
+  std::int8_t price_exponent{0};
+  std::int64_t fill_price_mantissa{0};
+  std::string_view role{};
+  std::string_view text{};
+  std::string_view finish_as{};
+  bool local_order_id_valid{false};
+  std::uint64_t local_order_id{0};
+  double size_quantity{0.0};
+  double left_quantity{0.0};
+  double fill_price{0.0};
+  std::int64_t exchange_update_ns{0};
+  OrderFeedbackRawUpdateOutcome outcome{
+      OrderFeedbackRawUpdateOutcome::kDroppedUnsupportedFinishAs};
+  bool event_emitted{false};
+  OrderFeedbackKind emit_kind{OrderFeedbackKind::kContinuityLost};
+  bool publish_ok{false};
 };
 
 namespace detail {
@@ -253,6 +293,29 @@ struct RawOrderFeedbackUpdate {
   std::string_view finish_as{};
 };
 
+struct NoopOrderFeedbackRawUpdateObserver {
+  void operator()(const OrderFeedbackRawUpdateDiagnostic&) const noexcept {}
+};
+
+inline OrderFeedbackRawUpdateDiagnostic MakeRawUpdateDiagnostic(
+    const RawOrderFeedbackUpdate& raw, std::uint16_t update_index,
+    std::uint16_t result_count) noexcept {
+  return OrderFeedbackRawUpdateDiagnostic{
+      .update_index = update_index,
+      .result_count = result_count,
+      .exchange_order_id = raw.exchange_order_id,
+      .size_exponent = raw.size_exponent,
+      .left_mantissa = raw.left_mantissa,
+      .size_mantissa = raw.size_mantissa,
+      .update_time_us = raw.update_time_us,
+      .price_exponent = raw.price_exponent,
+      .fill_price_mantissa = raw.fill_price_mantissa,
+      .role = raw.role,
+      .text = raw.text,
+      .finish_as = raw.finish_as,
+  };
+}
+
 inline bool ReadRawOrderFeedbackUpdate(std::string_view payload,
                                        std::size_t* offset,
                                        RawOrderFeedbackUpdate* out) noexcept {
@@ -323,43 +386,69 @@ inline bool SkipRawOrderFeedbackUpdate(std::string_view payload,
          ReadVarString8(payload, offset, &ignored);
 }
 
-inline void CountDroppedEvent(OrderFeedbackParserStats& stats) noexcept {
-  ++stats.dropped_events;
-}
-
 template <typename EventSink>
-inline void EmitOrderFeedbackEvent(OrderFeedbackEvent& event,
+inline bool EmitOrderFeedbackEvent(OrderFeedbackEvent& event,
                                    OrderFeedbackParserStats& stats,
                                    OrderFeedbackParseResult& result,
                                    EventSink& sink) noexcept {
-  sink(event);
+  bool publish_ok = true;
+  using SinkResult =
+      std::invoke_result_t<EventSink&, const OrderFeedbackEvent&>;
+  if constexpr (std::is_void_v<SinkResult>) {
+    sink(event);
+  } else {
+    publish_ok = static_cast<bool>(sink(event));
+  }
   ++stats.events_emitted;
   ++result.events_emitted;
+  return publish_ok;
 }
 
-template <typename EventSink>
-inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
-                                          std::int64_t local_receive_ns,
-                                          OrderFeedbackParserStats& stats,
-                                          OrderFeedbackParseResult& result,
-                                          EventSink& sink) noexcept {
+template <typename RawUpdateSink>
+inline void NotifyDroppedRawUpdate(OrderFeedbackRawUpdateDiagnostic& diagnostic,
+                                   OrderFeedbackRawUpdateOutcome outcome,
+                                   OrderFeedbackParserStats& stats,
+                                   RawUpdateSink& raw_update_sink) noexcept {
+  ++stats.dropped_events;
+  diagnostic.outcome = outcome;
+  raw_update_sink(diagnostic);
+}
+
+template <typename EventSink, typename RawUpdateSink>
+inline void ConvertRawOrderFeedbackUpdate(
+    const RawOrderFeedbackUpdate& raw, std::uint16_t update_index,
+    std::uint16_t result_count, std::int64_t local_receive_ns,
+    OrderFeedbackParserStats& stats, OrderFeedbackParseResult& result,
+    EventSink& sink, RawUpdateSink& raw_update_sink) noexcept {
+  OrderFeedbackRawUpdateDiagnostic diagnostic =
+      MakeRawUpdateDiagnostic(raw, update_index, result_count);
+
   const ParsedOrderText parsed_text = OrderTextCodec::Parse(raw.text);
   if (!parsed_text.ok) {
     ++stats.invalid_text_count;
-    CountDroppedEvent(stats);
+    NotifyDroppedRawUpdate(diagnostic,
+                           OrderFeedbackRawUpdateOutcome::kDroppedInvalidText,
+                           stats, raw_update_sink);
     return;
   }
+  diagnostic.local_order_id_valid = true;
+  diagnostic.local_order_id = parsed_text.local_order_id;
 
   if (LocalOrderIdCodec::StrategyId(parsed_text.local_order_id) >=
       kOrderFeedbackMaxStrategyCount) {
     ++stats.invalid_route_count;
-    CountDroppedEvent(stats);
+    NotifyDroppedRawUpdate(diagnostic,
+                           OrderFeedbackRawUpdateOutcome::kDroppedInvalidRoute,
+                           stats, raw_update_sink);
     return;
   }
 
   if (!IsSupportedDecimalExponent(raw.size_exponent)) {
     ++stats.unsupported_size_exponent_count;
-    CountDroppedEvent(stats);
+    NotifyDroppedRawUpdate(
+        diagnostic,
+        OrderFeedbackRawUpdateOutcome::kDroppedUnsupportedSizeExponent, stats,
+        raw_update_sink);
     return;
   }
 
@@ -371,26 +460,37 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
                                     &left_quantity) ||
       left_quantity > size_quantity + 1e-12) {
     ++stats.invalid_quantity_count;
-    CountDroppedEvent(stats);
+    NotifyDroppedRawUpdate(
+        diagnostic, OrderFeedbackRawUpdateOutcome::kDroppedInvalidQuantity,
+        stats, raw_update_sink);
     return;
   }
+  diagnostic.size_quantity = size_quantity;
+  diagnostic.left_quantity = left_quantity;
 
   std::int64_t exchange_update_ns = 0;
   if (!TryMicrosToNanos(raw.update_time_us, &exchange_update_ns)) {
     ++stats.malformed_payload_count;
-    CountDroppedEvent(stats);
+    NotifyDroppedRawUpdate(
+        diagnostic, OrderFeedbackRawUpdateOutcome::kDroppedMalformedUpdateTime,
+        stats, raw_update_sink);
     return;
   }
+  diagnostic.exchange_update_ns = exchange_update_ns;
 
   if (!IsSupportedDecimalExponent(raw.price_exponent)) {
     ++stats.unsupported_price_exponent_count;
-    CountDroppedEvent(stats);
+    NotifyDroppedRawUpdate(
+        diagnostic,
+        OrderFeedbackRawUpdateOutcome::kDroppedUnsupportedPriceExponent, stats,
+        raw_update_sink);
     return;
   }
 
   const double cumulative_filled_quantity = size_quantity - left_quantity;
   const double fill_price = static_cast<double>(raw.fill_price_mantissa) *
                             DecimalExponentScale(raw.price_exponent);
+  diagnostic.fill_price = fill_price;
 
   OrderFeedbackEvent event{};
   event.local_order_id = parsed_text.local_order_id;
@@ -401,46 +501,59 @@ inline void ConvertRawOrderFeedbackUpdate(const RawOrderFeedbackUpdate& raw,
   event.left_quantity = left_quantity;
   event.fill_price = fill_price;
 
+  const auto emit_event = [&](OrderFeedbackKind kind) noexcept {
+    event.kind = kind;
+    diagnostic.outcome = OrderFeedbackRawUpdateOutcome::kEmitted;
+    diagnostic.event_emitted = true;
+    diagnostic.emit_kind = kind;
+    diagnostic.publish_ok = EmitOrderFeedbackEvent(event, stats, result, sink);
+    raw_update_sink(diagnostic);
+  };
+
   if (raw.finish_as == std::string_view("_new")) {
-    event.kind = OrderFeedbackKind::kAccepted;
-    EmitOrderFeedbackEvent(event, stats, result, sink);
+    emit_event(OrderFeedbackKind::kAccepted);
     return;
   }
 
   if (raw.finish_as == std::string_view("_update")) {
     if (left_quantity <= 0.0) {
       ++stats.unsupported_finish_as_count;
-      CountDroppedEvent(stats);
+      NotifyDroppedRawUpdate(
+          diagnostic,
+          OrderFeedbackRawUpdateOutcome::kDroppedUnsupportedUpdateFinishAs,
+          stats, raw_update_sink);
       return;
     }
-    event.kind = OrderFeedbackKind::kPartialFilled;
-    EmitOrderFeedbackEvent(event, stats, result, sink);
+    emit_event(OrderFeedbackKind::kPartialFilled);
     return;
   }
 
   if (raw.finish_as == std::string_view("filled")) {
     if (std::abs(left_quantity) > 1e-12) {
       ++stats.unsupported_filled_left_count;
-      CountDroppedEvent(stats);
+      NotifyDroppedRawUpdate(
+          diagnostic,
+          OrderFeedbackRawUpdateOutcome::kDroppedUnsupportedFilledLeft, stats,
+          raw_update_sink);
       return;
     }
-    event.kind = OrderFeedbackKind::kFilled;
     event.role = ParseOrderRole(raw.role);
-    EmitOrderFeedbackEvent(event, stats, result, sink);
+    emit_event(OrderFeedbackKind::kFilled);
     return;
   }
 
   OrderFinishReason reason = OrderFinishReason::kUnknown;
   if (ParseTerminalFinishReason(raw.finish_as, &reason)) {
-    event.kind = OrderFeedbackKind::kCancelled;
     event.cancelled_quantity = left_quantity;
     event.finish_reason = reason;
-    EmitOrderFeedbackEvent(event, stats, result, sink);
+    emit_event(OrderFeedbackKind::kCancelled);
     return;
   }
 
   ++stats.unsupported_finish_as_count;
-  CountDroppedEvent(stats);
+  NotifyDroppedRawUpdate(
+      diagnostic, OrderFeedbackRawUpdateOutcome::kDroppedUnsupportedFinishAs,
+      stats, raw_update_sink);
 }
 
 inline OrderFeedbackParseStatus MapDispatchStatus(
@@ -558,10 +671,11 @@ inline OrderFeedbackParseStatus ValidateOrdersPayloadTail(
 
 }  // namespace detail
 
-template <typename EventSink>
+template <typename EventSink, typename RawUpdateSink>
 inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
     std::string_view payload, std::int64_t local_receive_ns,
-    OrderFeedbackParserStats& stats, EventSink&& sink) noexcept {
+    OrderFeedbackParserStats& stats, EventSink&& sink,
+    RawUpdateSink&& raw_update_sink) noexcept {
   ++stats.messages_seen;
 
   OrderFeedbackParseResult result{};
@@ -597,8 +711,9 @@ inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
 
     ++stats.orders_seen;
     ++result.orders_seen;
-    detail::ConvertRawOrderFeedbackUpdate(raw, local_receive_ns, stats, result,
-                                          sink);
+    detail::ConvertRawOrderFeedbackUpdate(raw, /*update_index=*/0,
+                                          frame.result_count, local_receive_ns,
+                                          stats, result, sink, raw_update_sink);
     ++stats.messages_parsed;
     return result;
   }
@@ -628,12 +743,23 @@ inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
 
     ++stats.orders_seen;
     ++result.orders_seen;
-    detail::ConvertRawOrderFeedbackUpdate(raw, local_receive_ns, stats, result,
-                                          sink);
+    detail::ConvertRawOrderFeedbackUpdate(raw, i, frame.result_count,
+                                          local_receive_ns, stats, result, sink,
+                                          raw_update_sink);
   }
 
   ++stats.messages_parsed;
   return result;
+}
+
+template <typename EventSink>
+inline OrderFeedbackParseResult ParseGateOrderFeedbackMessage(
+    std::string_view payload, std::int64_t local_receive_ns,
+    OrderFeedbackParserStats& stats, EventSink&& sink) noexcept {
+  detail::NoopOrderFeedbackRawUpdateObserver raw_update_sink{};
+  return ParseGateOrderFeedbackMessage(payload, local_receive_ns, stats,
+                                       std::forward<EventSink>(sink),
+                                       raw_update_sink);
 }
 
 }  // namespace aquila::gate
