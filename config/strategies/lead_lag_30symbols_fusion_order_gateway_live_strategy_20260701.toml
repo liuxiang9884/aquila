@@ -12,7 +12,7 @@ name = "lead_lag"
 strategy_id = 6
 mode = "live"
 order_capacity = 128
-config = "config/strategies/lead_lag_30symbols_fusion_0bps_2bps_5bps_order_gateway_20260701.toml"
+config = "config/strategies/lead_lag_30symbols_fusion_2bps_2bps_5bps_lag200_order_gateway_20260701.toml"
 
 [strategy.loop]
 idle_policy = "spin"
