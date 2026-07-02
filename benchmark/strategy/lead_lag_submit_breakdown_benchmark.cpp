@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -28,6 +29,7 @@
 #include "core/trading/order_manager.h"
 #include "core/trading/order_types.h"
 #include "core/trading/trading_runtime.h"
+#include "core/websocket/runtime_clock.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/strategy.h"
 #include "strategy/lead_lag/strategy_test_hooks.h"
@@ -187,6 +189,16 @@ SyntheticPositionLog() noexcept {
       .reduce_only = false,
       .gateway_route_id = route_id,
   };
+}
+
+[[nodiscard]] std::array<core::StrategyOrder, kFanout> SyntheticFanoutOrders(
+    std::uint64_t first_local_order_id, std::uint64_t parent_id) noexcept {
+  std::array<core::StrategyOrder, kFanout> orders{};
+  for (std::uint16_t route = 0; route < kFanout; ++route) {
+    orders[route] =
+        SyntheticStrategyOrder(first_local_order_id + route, parent_id, route);
+  }
+  return orders;
 }
 
 struct SubmitTrace {
@@ -1438,6 +1450,207 @@ class GatewayClientBenchmarkState {
   bool ok_{false};
 };
 
+struct FanoutSubmitTiming {
+  std::array<std::int64_t, kFanout> route_send_ns{};
+  std::uint64_t command_seq_accumulator{0};
+  std::uint64_t commands_enqueued{0};
+};
+
+struct FanoutSubmitSamples {
+  std::vector<std::uint64_t> total_ns;
+  std::vector<std::uint64_t> first_route_ns;
+  std::vector<std::uint64_t> last_route_ns;
+  std::vector<std::uint64_t> route_spread_ns;
+
+  void Reserve(std::size_t size) {
+    total_ns.reserve(size);
+    first_route_ns.reserve(size);
+    last_route_ns.reserve(size);
+    route_spread_ns.reserve(size);
+  }
+
+  void Push(std::uint64_t elapsed_ns, std::int64_t route_start_ns,
+            const FanoutSubmitTiming& timing) {
+    total_ns.push_back(elapsed_ns);
+    first_route_ns.push_back(DeltaNs(route_start_ns, timing.route_send_ns[0]));
+    last_route_ns.push_back(
+        DeltaNs(route_start_ns, timing.route_send_ns[kFanout - 1]));
+    route_spread_ns.push_back(
+        DeltaNs(timing.route_send_ns[0], timing.route_send_ns[kFanout - 1]));
+  }
+
+  void SetCounters(benchmark::State& state) {
+    websocket::benchmarking::SetLatencyCounters(state, std::move(total_ns),
+                                                "parents", state.iterations());
+    SetPrefixedLatencyCounters(state, "first_route", first_route_ns);
+    SetPrefixedLatencyCounters(state, "last_route", last_route_ns);
+    SetPrefixedLatencyCounters(state, "route_spread", route_spread_ns);
+    state.counters["fanout_routes"] = static_cast<double>(kFanout);
+  }
+};
+
+[[nodiscard]] bool CopyGatewayCommandText(std::string_view source, char* target,
+                                          std::size_t capacity,
+                                          std::uint16_t* size) noexcept {
+  if (source.size() > capacity) {
+    return false;
+  }
+  if (!source.empty()) {
+    std::memcpy(target, source.data(), source.size());
+  }
+  *size = static_cast<std::uint16_t>(source.size());
+  return true;
+}
+
+enum class FanoutBatchModelStatus : std::uint8_t {
+  kOk,
+  kNotRunning,
+  kInvalidRoute,
+  kRouteNotReady,
+  kInvalidTextField,
+  kCommandQueueFull,
+};
+
+struct FanoutBatchModelResult {
+  FanoutBatchModelStatus status{FanoutBatchModelStatus::kNotRunning};
+  FanoutSubmitTiming timing{};
+};
+
+class FanoutBatchModelGatewayState {
+ public:
+  FanoutBatchModelGatewayState() {
+    shm_name_ = std::string{"aquila_submit_batch_model_"} +
+                std::to_string(static_cast<unsigned long long>(::getpid())) +
+                "_" + std::to_string(++next_instance_id_);
+    core::OrderGatewayShmConfig shm_config{
+        .shm_name = shm_name_,
+        .create = true,
+        .remove_existing = true,
+        .route_count = kFanout,
+        .command_queue_capacity = kGatewayQueueCapacity,
+        .event_queue_capacity = 64,
+        .startup_ready_timeout_s = 1,
+    };
+    auto manager_result = core::OrderGatewayShmManager::Create(shm_config);
+    if (!manager_result.ok) {
+      error_ = std::move(manager_result.error);
+      return;
+    }
+    manager_ = std::move(manager_result.value);
+    for (std::uint16_t route = 0; route < kFanout; ++route) {
+      core::StoreOrderGatewayRouteState(manager_.header(), route,
+                                        core::OrderGatewayRouteState::kReady);
+      command_queues_[route] = manager_.CommandQueue(route);
+      route_ready_[route] = true;
+    }
+    const std::string normalized_name = "/" + shm_name_;
+    ::shm_unlink(normalized_name.c_str());
+    ok_ = true;
+  }
+
+  [[nodiscard]] bool ok() const noexcept {
+    return ok_;
+  }
+  [[nodiscard]] const std::string& error() const noexcept {
+    return error_;
+  }
+
+  [[nodiscard]] FanoutBatchModelResult EnqueueFanoutBatch4(
+      const std::array<core::StrategyOrder, kFanout>& orders) noexcept {
+    // Benchmark-only lower-bound model; this is not a production batch API.
+    FanoutBatchModelResult result;
+    if (!ok_ || !running_) {
+      result.status = FanoutBatchModelStatus::kNotRunning;
+      return result;
+    }
+    RefreshRouteStatesOnce();
+
+    core::OrderGatewayCommand prototype{};
+    prototype.kind = core::OrderGatewayCommandKind::kPlace;
+    prototype.exchange = orders[0].exchange;
+    prototype.side = orders[0].side;
+    prototype.order_type = orders[0].type;
+    prototype.time_in_force = orders[0].time_in_force;
+    prototype.reduce_only = orders[0].reduce_only ? 1U : 0U;
+    prototype.quantity = orders[0].quantity;
+    prototype.symbol_id = orders[0].symbol_id;
+    if (!CopyGatewayCommandText(orders[0].symbol, prototype.symbol,
+                                core::kOrderGatewaySymbolBytes,
+                                &prototype.symbol_size) ||
+        !CopyGatewayCommandText(orders[0].quantity_text,
+                                prototype.quantity_text,
+                                core::kOrderGatewayQuantityTextBytes,
+                                &prototype.quantity_text_size) ||
+        !CopyGatewayCommandText(orders[0].price_text, prototype.price_text,
+                                core::kOrderGatewayPriceTextBytes,
+                                &prototype.price_text_size)) {
+      result.status = FanoutBatchModelStatus::kInvalidTextField;
+      return result;
+    }
+
+    for (const core::StrategyOrder& order : orders) {
+      if (order.gateway_route_id >= kFanout) {
+        result.status = FanoutBatchModelStatus::kInvalidRoute;
+        return result;
+      }
+      if (!route_ready_[order.gateway_route_id]) {
+        result.status = FanoutBatchModelStatus::kRouteNotReady;
+        return result;
+      }
+    }
+
+    for (const core::StrategyOrder& order : orders) {
+      const std::uint16_t route = order.gateway_route_id;
+      core::OrderGatewayCommand command = prototype;
+      command.command_seq = ++command_seq_;
+      // parent_id keeps the existing parent semantics; this is not a batch id.
+      command.parent_id =
+          order.parent_id == 0 ? order.local_order_id : order.parent_id;
+      command.local_order_id = order.local_order_id;
+      command.exchange_order_id = order.exchange_order_id;
+      command.owner_enqueue_ns =
+          static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+      command.route_id = route;
+      if (!command_queues_[route].TryPush(command)) {
+        result.status = FanoutBatchModelStatus::kCommandQueueFull;
+        return result;
+      }
+      ++commands_enqueued_;
+      result.timing.route_send_ns[route] = command.owner_enqueue_ns;
+      result.timing.command_seq_accumulator += command.command_seq;
+      ++result.timing.commands_enqueued;
+    }
+
+    result.status = FanoutBatchModelStatus::kOk;
+    return result;
+  }
+
+  [[nodiscard]] std::uint64_t commands_enqueued() const noexcept {
+    return commands_enqueued_;
+  }
+
+ private:
+  void RefreshRouteStatesOnce() noexcept {
+    for (std::uint16_t route = 0; route < kFanout; ++route) {
+      route_ready_[route] =
+          core::LoadOrderGatewayRouteState(manager_.header(), route) ==
+          core::OrderGatewayRouteState::kReady;
+    }
+  }
+
+  static inline std::uint64_t next_instance_id_{0};
+
+  std::string shm_name_;
+  std::string error_;
+  core::OrderGatewayShmManager manager_;
+  std::array<core::OrderGatewayCommandQueue, kFanout> command_queues_{};
+  std::array<bool, kFanout> route_ready_{};
+  std::uint64_t command_seq_{0};
+  std::uint64_t commands_enqueued_{0};
+  bool running_{true};
+  bool ok_{false};
+};
+
 void BM_OrderGatewayClientPlaceCommandSynthetic(benchmark::State& state) {
   GatewayClientBenchmarkState gateway{kLatencyIterations + 16};
   if (!gateway.ok()) {
@@ -1486,6 +1699,90 @@ void BM_OrderGatewayClientPlaceFanout4Synthetic(benchmark::State& state) {
         ++parent_id;
       },
       "parents", state.iterations());
+}
+
+void BM_OrderGatewayFanoutCurrentPlaceOrder4Routes(benchmark::State& state) {
+  GatewayClientBenchmarkState gateway{kLatencyIterations * kFanout + 16};
+  if (!gateway.ok()) {
+    state.SkipWithError(gateway.error().c_str());
+    return;
+  }
+  FanoutSubmitSamples samples;
+  samples.Reserve(kLatencyIterations);
+  std::uint64_t local_order_id = 1;
+  std::uint64_t parent_id = 1;
+
+  for (auto _ : state) {
+    const std::array<core::StrategyOrder, kFanout> orders =
+        SyntheticFanoutOrders(local_order_id, parent_id);
+    FanoutSubmitTiming timing;
+    const std::int64_t route_start_ns =
+        static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    for (std::uint16_t route = 0; route < kFanout; ++route) {
+      const core::OrderGatewaySendResult sent =
+          gateway.client().PlaceOrder(orders[route]);
+      if (sent.status != core::OrderGatewaySendStatus::kOk) {
+        state.SkipWithError("current PlaceOrder fanout failed");
+        return;
+      }
+      timing.route_send_ns[route] = sent.send_local_ns;
+      timing.command_seq_accumulator += sent.command_seq;
+      ++timing.commands_enqueued;
+    }
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples.Push(elapsed_ns, route_start_ns, timing);
+    local_order_id += kFanout;
+    ++parent_id;
+    benchmark::DoNotOptimize(timing.command_seq_accumulator);
+    benchmark::DoNotOptimize(timing.commands_enqueued);
+  }
+
+  samples.SetCounters(state);
+  state.counters["benchmark_only_batch_model"] = 0.0;
+  state.counters["commands_enqueued"] =
+      static_cast<double>(gateway.client().stats().commands_enqueued);
+}
+
+void BM_OrderGatewayFanoutBatchModel4Routes(benchmark::State& state) {
+  FanoutBatchModelGatewayState gateway;
+  if (!gateway.ok()) {
+    state.SkipWithError(gateway.error().c_str());
+    return;
+  }
+  FanoutSubmitSamples samples;
+  samples.Reserve(kLatencyIterations);
+  std::uint64_t local_order_id = 1;
+  std::uint64_t parent_id = 1;
+
+  for (auto _ : state) {
+    const std::array<core::StrategyOrder, kFanout> orders =
+        SyntheticFanoutOrders(local_order_id, parent_id);
+    const std::int64_t route_start_ns =
+        static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    FanoutBatchModelResult result = gateway.EnqueueFanoutBatch4(orders);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    if (result.status != FanoutBatchModelStatus::kOk ||
+        result.timing.commands_enqueued != kFanout) {
+      state.SkipWithError("benchmark-only batch model fanout failed");
+      return;
+    }
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples.Push(elapsed_ns, route_start_ns, result.timing);
+    local_order_id += kFanout;
+    ++parent_id;
+    benchmark::DoNotOptimize(result.timing.command_seq_accumulator);
+    benchmark::DoNotOptimize(result.timing.commands_enqueued);
+  }
+
+  samples.SetCounters(state);
+  state.counters["benchmark_only_batch_model"] = 1.0;
+  state.counters["commands_enqueued"] =
+      static_cast<double>(gateway.commands_enqueued());
 }
 
 BENCHMARK(BM_LeadLagSubmitPathBreakdownSyntheticFanout4)
@@ -1538,6 +1835,14 @@ BENCHMARK(BM_OrderGatewayClientPlaceCommandSynthetic)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_OrderGatewayClientPlaceFanout4Synthetic)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_OrderGatewayFanoutCurrentPlaceOrder4Routes)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_OrderGatewayFanoutBatchModel4Routes)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
