@@ -307,3 +307,162 @@ feedback 中主要有：
 - A 组 17:00 附近存在 `kUnknownResult` / `needs_reconcile` 现场，其中 `parent_id=265 route1` 有 feedback 成交但 gateway terminal response 为 `kError 504 Request Timeout`。
 - `finish latency` 和 terminal response 不能作为成交前的因果指标。
 - 若要进一步证明 fanout 对成交率的贡献，需要更长窗口、更多成交样本，并结合盘口深度、order price 与当时 best bid/ask、IOC result、private feedback 和 raw response header 做联合分析。
+
+## 14. 停止后最终交集复算
+
+本节为 2026-07-02 03:23 UTC 停止 A/B 实盘测试后的最终复算，优先级高于前文 01:06 partial 快照中的交集数字。
+
+停止和账户状态：
+
+- 已停止 A 组 trading 组件：`lead_lag_strategy`、`run_live_with_guard.py`、`gate_order_gateway`、`gate_order_feedback_session`、`health_monitor`。
+- 已停止 B 组 trading 组件：`lead_lag_strategy`、`run_live_with_guard.py`、`gate_order_feedback_session`、`health_monitor`。
+- A 组行情 fusion 未停止：`gate_data_fusion`、`binance_data_fusion`、Gate/Binance canonical recorder 均仍 alive。
+- REST read-only 检查：A/B `open_orders=0`，非零 positions 均为 0。
+
+最终 stopped report：
+
+- A 组：`/home/liuxiang/tmp/aquila_partial_reports/20260701_102201_30symbols_ogw_24h_stopped_20260702_032345/`
+- B 组：`/home/liuxiang/tmp/aquila_partial_reports/20260701_143803_30symbols_single_thread_probe_ab_stopped_20260702_032345/`
+- A/B 交集窗口：`2026-07-01 15:12:47.233349080` 到 `2026-07-02 03:21:36.184302354` UTC。
+
+### 14.1 交集窗口基础统计
+
+| 组别 | signal 数量 | 开仓 order 数 | 开仓成交 order 数 | 开仓成交量 | order 口径成交率 |
+|---|---:|---:|---:|---:|---:|
+| A 组 | 3,130 | 1,885 | 21 | 267.0 | 1.11% |
+| B 组 | 2,857 | 498 | 7 | 70.0 | 1.41% |
+
+Signal 口径使用 `开仓有成交的 signal 数 / 实际下开仓单的 signal 数`：
+
+| 组别 | 实际下开仓单的 signal 数 | 开仓有成交的 signal 数 | signal 口径成交率 |
+|---|---:|---:|---:|
+| A 组 | 472 | 9 | 1.91% |
+| B 组 | 498 | 7 | 1.41% |
+
+完整 stopped report 的 PnL 摘要：
+
+| 组别 | actual gross PnL | actual net PnL | raw gross PnL | raw net PnL | actual win rate |
+|---|---:|---:|---:|---:|---:|
+| A 组 | -0.16436 | -0.273004392 | -0.25876 | -0.367404392 | 32.00% |
+| B 组 | 0.34582 | 0.208469232 | -1.53528 | -1.672630768 | 50.00% |
+
+### 14.2 A 组开仓成交 signal
+
+A 组交集窗口内 1,885 个开仓 order 对应 472 个 `parent_id`：471 个 `parent_id` 各 4 路 order，1 个 `parent_id` 只有 1 路 order。开仓有成交的 `parent_id` 共 9 个。
+
+| parent_id | symbol | action | 成交 route | 成交 order 数 | 成交量 | send_spread_us | ack_spread_ms | finish_spread_ms |
+|---:|---|---|---|---:|---:|---:|---:|---:|
+| 189 | BAS_USDT | `kOpenShort` | r0/r1/r2/r3 | 4 | 4.0 | 5.216 | 0.212 | 0.007 |
+| 212 | TAC_USDT | `kOpenLong` | r2 | 1 | 19.0 | 4.748 | 3.338 | 7.595 |
+| 265 | TAC_USDT | `kOpenShort` | r0/r1/r3 | 3 | 60.0 | 4.260 | 0.236 | 1338.592 |
+| 308 | ENA_USDT | `kOpenShort` | r2 | 1 | 10.0 | 5.582 | 0.112 | 0.109 |
+| 418 | ORDI_USDT | `kOpenShort` | r0/r3 | 2 | 56.0 | 4.811 | 5.271 | 537.938 |
+| 420 | BTC_USDT | `kOpenShort` | r0/r3 | 2 | 6.0 | 5.300 | 49.181 | 960.376 |
+| 433 | IN_USDT | `kOpenShort` | r1 | 1 | 3.0 | 4.881 | 0.223 | 0.325 |
+| 545 | BTW_USDT | `kOpenShort` | r0/r1/r3 | 3 | 9.0 | 6.459 | 0.305 | 0.697 |
+| 635 | TAC_USDT | `kOpenShort` | r0/r1/r2/r3 | 4 | 100.0 | 12.235 | 0.307 | 0.400 |
+
+最终窗口比 01:06 partial 多出 `parent_id=635`，这是 A/B 都成交的 `TAC_USDT kOpenShort` signal。
+
+### 14.3 A/B 成交 signal 一致性
+
+严格匹配 key 仍为 `symbol + action + trigger_exchange_ns + signal_lead_id + signal_lag_id`。
+
+| 指标 | 数值 |
+|---|---:|
+| A 组成交 signal 数 | 9 |
+| B 组成交 signal 数 | 7 |
+| 严格一致的成交 signal 数 | 3 |
+| 仅 A 成交 | 6 |
+| 仅 B 成交 | 4 |
+
+严格一致的成交 signal：
+
+| symbol | action | trigger_exchange_time UTC | A parent_id | A 成交 order 数 | A 成交量 | B 成交量 |
+|---|---|---|---:|---:|---:|---:|
+| BAS_USDT | `kOpenShort` | `2026-07-01 15:20:07.705000000` | 189 | 4 | 4.0 | 1.0 |
+| BTW_USDT | `kOpenShort` | `2026-07-02 00:43:29.404000000` | 545 | 3 | 9.0 | 1.0 |
+| TAC_USDT | `kOpenShort` | `2026-07-02 03:03:31.242000000` | 635 | 4 | 100.0 | 25.0 |
+
+### 14.4 成交 route 和非成交 route latency
+
+A 组 9 个开仓成交 signal 共 36 路 order，其中 21 路成交、15 路未成交。
+
+| 指标 | 成交 route | 非成交 route | 结论 |
+|---|---:|---:|---|
+| send offset 平均 | 3.739 us | 3.176 us | 差异仍很小 |
+| send offset 中位数 | 3.804 us | 3.530 us | 差异仍很小 |
+| Ack RTT 平均 | 1.959 ms | 5.471 ms | 成交更低，但受非成交 outlier 影响 |
+| Ack RTT 中位数 | 0.669 ms | 0.785 ms | 成交略低 |
+| finish latency 平均 | 2281.876 ms | 2801.832 ms | 不适合作成交前因果判断 |
+| finish latency 中位数 | 5.037 ms | 15.876 ms | 不适合作成交前因果判断 |
+
+最快 Ack route 成交计数：
+
+- 含 4 路全成交 signal：`4 / 9`。
+- 排除 4 路全成交的 `parent_id=189` 和 `parent_id=635` 后：`2 / 7`。
+
+结论不变：本样本不能证明 `latency 越小的 route 越容易成交`。
+
+### 14.5 Gate Ack `x_in/x_out`
+
+以下使用原始 A 组 `gate_order_gateway` log 的 `gate_order_response kind=kAck` 字段。
+
+| 指标 | 成交 route | 非成交 route | 说明 |
+|---|---:|---:|---|
+| Ack x_in offset 中位数 | 28 us | 32 us | 差异很小 |
+| Ack x_out offset 中位数 | 56 us | 96 us | 成交略早 |
+| Ack `x_out - x_in` 中位数 | 157 us | 209 us | 成交略低 |
+| 最早 x_in 是成交 | 6 / 9 | - | 排除两组 4 路全成交后为 4 / 7 |
+| 最早 x_out 是成交 | 5 / 9 | - | 排除两组 4 路全成交后为 3 / 7 |
+
+结论仍然是：`x_in/x_out` 在总体中位数上对成交 route 略有利，但逐个 signal 不稳定，不能推出 `x_in/x_out 越早越容易成交`。
+
+### 14.6 Feedback `exchange_update_ns`
+
+最终窗口新增的 `parent_id=635` 是 4 路全成交，且 4 路 `exchange_update_ns` 相同，因此不能提供新的成交/非成交区分信息。最终 9 个 A 组成交 signal 中，最早 `exchange_update_ns` 是成交 route 的计数为 `4 / 9`；排除 4 路全成交的 `parent_id=189` 和 `parent_id=635` 后为 `2 / 7`。
+
+结论不变：feedback 的 `exchange_update_ns` 是订单事件时间，不是 request 到达交易所时间；它不能证明更早 route 更容易成交。
+
+### 14.7 成交价和滑点
+
+A 组多路成交中，成交价是否一致：
+
+| parent_id | symbol | 成交 route | 成交价是否一致 | 成交价 |
+|---:|---|---|---|---|
+| 189 | BAS_USDT | r0/r1/r2/r3 | 是 | `0.050409` |
+| 265 | TAC_USDT | r0/r1/r3 | 否 | r0/r3 `0.047725`，r1 `0.047690` |
+| 418 | ORDI_USDT | r0/r3 | 是 | `3.526` |
+| 420 | BTC_USDT | r0/r3 | 否 | r0 `61228.8`，r3 `61226.3` |
+| 545 | BTW_USDT | r0/r1/r3 | 是 | `0.065778` |
+| 635 | TAC_USDT | r0/r1/r2/r3 | 否 | `0.039469/0.039371/0.03943876/0.039433` |
+
+Signal 级加权执行滑点：
+
+| parent_id | symbol | 成交 route | 成交量 | 加权 exec_slippage_ticks | 加权 exec_slippage_bps | limit_improvement_min |
+|---:|---|---|---:|---:|---:|---:|
+| 189 | BAS_USDT | r0/r1/r2/r3 | 4.0 | -62.00 | -12.31 | 73 |
+| 212 | TAC_USDT | r2 | 19.0 | -84.00 | -16.21 | 97 |
+| 265 | TAC_USDT | r0/r1/r3 | 60.0 | -18.33 | -3.84 | 8 |
+| 308 | ENA_USDT | r2 | 10.0 | 2.00 | 2.77 | 0 |
+| 418 | ORDI_USDT | r0/r3 | 56.0 | 0.00 | 0.00 | 1 |
+| 420 | BTC_USDT | r0/r3 | 6.0 | 93.50 | 1.53 | 12 |
+| 433 | IN_USDT | r1 | 3.0 | 2.00 | 3.14 | 0 |
+| 545 | BTW_USDT | r0/r1/r3 | 9.0 | -145.00 | -22.09 | 159 |
+| 635 | TAC_USDT | r0/r1/r2/r3 | 100.0 | -64.94 | -16.50 | 21 |
+
+滑点结论：
+
+- A 组 9 个开仓成交 signal 中，5 个 signal 加权滑点优于 raw，1 个持平，3 个差于 raw。
+- 所有成交路相对实际 IOC limit 都没有更差，`limit_improvement_min >= 0`。
+- `BTW_USDT parent_id=545` 在 stopped report 中缺少 `contract_multiplier`，因此 `exec_slippage_quote` 为空；其 tick/bps 滑点仍可用。
+- 已有 quote 字段的 A 组开仓成交净滑点为 `-0.10309` quote，实际更偏保守，因为上述 BTW 的有利滑点未计入 quote 汇总。
+
+### 14.8 最终判断
+
+停止后的最终交集口径下：
+
+- A 组 signal 口径开仓成交率为 `9 / 472 = 1.91%`。
+- B 组 signal 口径开仓成交率为 `7 / 498 = 1.41%`。
+- A 组多路 fanout 在 signal-level fillability 上仍高于 B 组 single-order baseline。
+- 但成交样本仍然很小，且 latency / Ack `x_in/x_out` / feedback `exchange_update_ns` 都不能单独解释成交与否。更可靠的后续分析需要结合当时盘口深度、limit price 可达性、IOC matching 结果和 private feedback 序列。
