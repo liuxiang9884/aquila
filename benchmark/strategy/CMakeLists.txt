@@ -58,3 +58,13 @@ target_link_libraries(lead_lag_feedback_runtime_benchmark
         benchmark::benchmark_main
         nova
 )
+
+add_executable(lead_lag_group_container_benchmark
+    lead_lag_group_container_benchmark.cpp
+)
+
+target_link_libraries(lead_lag_group_container_benchmark
+    PRIVATE
+        aquila_strategy
+        benchmark::benchmark_main
+)
