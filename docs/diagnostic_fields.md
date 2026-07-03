@@ -475,6 +475,19 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 | `lifecycle.csv` schema | `lifecycle.csv` | experiment | CSV fields | 每个 node 的 GTC / IOC entry 与 close 生命周期：local order id、route、TIF、price、quantity、submit/finish timestamp、entry result、filled qty、avg fill price、close attempts、close attribution、PnL / fee 预留字段。 | 同上。 |
 | `order_event.csv` schema | `order_event.csv` | experiment | CSV fields | gateway response / feedback 明细：`local_order_id`、`parent_id`、`route_id`、event/response/feedback kind、exchange order id、exchange/local timestamp、price、quantity、fill / left quantity、finish / reject reason。 | 同上。 |
 
+### Gate BTC Fill Probe Cross-Exchange Node CSV
+
+| Field | Source | Stability | Unit / Values | Meaning | Removal condition |
+| --- | --- | --- | --- | --- | --- |
+| `trigger_mode` | `node.csv` | experiment | `gate_direct` / `binance_trigger_gate_quote` | Node 的触发模式。 | Fill probe CSV schema 删除后同步删除。 |
+| `binance_bbo_id` | `node.csv` | experiment | Binance fusion BBO id | 触发 node 的 Binance BTC_USDT BBO id。 | 同上。 |
+| `gate_bbo_id` | `node.csv` | experiment | Gate fusion BBO id | 下单 quote 使用的 Gate BTC_USDT BBO id。 | 同上。 |
+| `binance_freshness_ns` | `node.csv` | experiment | ns | `decision_ns - binance_local_ns`。 | 同上。 |
+| `gate_freshness_ns` | `node.csv` | experiment | ns | `decision_ns - gate_local_ns`。 | 同上。 |
+| `gate_exchange_delta_ns` | `node.csv` | experiment | ns | `gate_exchange_ns - binance_exchange_ns`。 | 同上。 |
+| `gate_local_delta_ns` | `node.csv` | experiment | ns | `gate_local_ns - binance_local_ns`。 | 同上。 |
+| `trigger_to_send_ns` | `node.csv` | experiment | ns | `submit_ns - decision_ns`，用于解释 trigger 到 entry submit 的策略端延迟。 | 同上。 |
+
 热路径边界：`fill_probe_order_submitted` 和 `fill_probe_order_event` 会在真实 probe 的订单链路中执行 stdout
 格式化；该工具只用于短时探针，不应把这些字段作为低延迟生产策略的默认热路径观测面。
 

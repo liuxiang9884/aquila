@@ -14,6 +14,13 @@ struct NodeCsvRow {
   std::string run_id;
   std::uint64_t node_id{0};
   std::string side;
+  std::string trigger_mode;
+  std::uint64_t binance_bbo_id{0};
+  std::int64_t binance_exchange_ns{0};
+  std::int64_t binance_local_ns{0};
+  std::uint64_t gate_bbo_id{0};
+  std::int64_t gate_exchange_ns{0};
+  std::int64_t gate_local_ns{0};
   std::uint64_t bbo_id{0};
   std::int64_t bbo_exchange_ns{0};
   std::int64_t bbo_local_ns{0};
@@ -22,6 +29,11 @@ struct NodeCsvRow {
   std::int64_t finish_ns{0};
   std::int64_t local_freshness_ns{0};
   std::int64_t exchange_freshness_ns{0};
+  std::int64_t binance_freshness_ns{0};
+  std::int64_t gate_freshness_ns{0};
+  std::int64_t gate_exchange_delta_ns{0};
+  std::int64_t gate_local_delta_ns{0};
+  std::int64_t trigger_to_send_ns{0};
   double bid_price{0.0};
   double bid_volume{0.0};
   double ask_price{0.0};

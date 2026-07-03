@@ -93,11 +93,15 @@ CsvOpenResult CsvWriters::Open() {
   }
 
   fmt::print(node_file_,
-             "run_id,node_id,side,bbo_id,bbo_exchange_ns,bbo_local_ns,"
-             "decision_ns,submit_ns,finish_ns,local_freshness_ns,"
-             "exchange_freshness_ns,bid_price,bid_volume,ask_price,"
-             "ask_volume,entry_quantity,entry_notional_usdt,status,"
-             "skip_reason,unresolved_reason\n");
+             "run_id,node_id,side,trigger_mode,binance_bbo_id,"
+             "binance_exchange_ns,binance_local_ns,gate_bbo_id,"
+             "gate_exchange_ns,gate_local_ns,bbo_id,bbo_exchange_ns,"
+             "bbo_local_ns,decision_ns,submit_ns,finish_ns,"
+             "local_freshness_ns,exchange_freshness_ns,"
+             "binance_freshness_ns,gate_freshness_ns,"
+             "gate_exchange_delta_ns,gate_local_delta_ns,trigger_to_send_ns,"
+             "bid_price,bid_volume,ask_price,ask_volume,entry_quantity,"
+             "entry_notional_usdt,status,skip_reason,unresolved_reason\n");
   fmt::print(lifecycle_file_,
              "run_id,node_id,entry_kind,entry_route_id,"
              "entry_local_order_id,entry_side,entry_tif,entry_price,"
@@ -125,13 +129,19 @@ void CsvWriters::WriteNode(const NodeCsvRow& row) {
     return;
   }
   fmt::print(node_file_,
-             "{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},{:.12g},"
-             "{:.12g},{:.12g},{:.12g},{},{},{}\n",
+             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
+             "{},{},{},{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},{:.12g},"
+             "{},{},{}\n",
              EscapeCsv(row.run_id), row.node_id, EscapeCsv(row.side),
-             row.bbo_id, row.bbo_exchange_ns, row.bbo_local_ns, row.decision_ns,
+             EscapeCsv(row.trigger_mode), row.binance_bbo_id,
+             row.binance_exchange_ns, row.binance_local_ns, row.gate_bbo_id,
+             row.gate_exchange_ns, row.gate_local_ns, row.bbo_id,
+             row.bbo_exchange_ns, row.bbo_local_ns, row.decision_ns,
              row.submit_ns, row.finish_ns, row.local_freshness_ns,
-             row.exchange_freshness_ns, row.bid_price, row.bid_volume,
-             row.ask_price, row.ask_volume, row.entry_quantity,
+             row.exchange_freshness_ns, row.binance_freshness_ns,
+             row.gate_freshness_ns, row.gate_exchange_delta_ns,
+             row.gate_local_delta_ns, row.trigger_to_send_ns, row.bid_price,
+             row.bid_volume, row.ask_price, row.ask_volume, row.entry_quantity,
              row.entry_notional_usdt, EscapeCsv(row.status),
              EscapeCsv(row.skip_reason), EscapeCsv(row.unresolved_reason));
   std::fflush(node_file_);

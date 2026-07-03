@@ -444,7 +444,22 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
       .run_id = "run-a",
       .node_id = 7,
       .side = "buy",
+      .trigger_mode = "binance_trigger_gate_quote",
+      .binance_bbo_id = 321,
+      .binance_exchange_ns = 1000,
+      .binance_local_ns = 1100,
+      .gate_bbo_id = 123,
+      .gate_exchange_ns = 900,
+      .gate_local_ns = 1050,
       .bbo_id = 123,
+      .decision_ns = 1200,
+      .submit_ns = 1300,
+      .finish_ns = 1400,
+      .binance_freshness_ns = 100,
+      .gate_freshness_ns = 150,
+      .gate_exchange_delta_ns = -100,
+      .gate_local_delta_ns = -50,
+      .trigger_to_send_ns = 100,
       .bid_price = 61513.0,
       .ask_price = 61513.1,
       .status = "completed_no_fill",
@@ -466,8 +481,10 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
   });
 
   const std::string node_csv = ReadWholeFileForTest(dir / "node.csv");
-  EXPECT_NE(node_csv.find("run_id,node_id,side,bbo_id"), std::string::npos);
-  EXPECT_NE(node_csv.find("run-a,7,buy,123"), std::string::npos);
+  EXPECT_NE(node_csv.find("run_id,node_id,side,trigger_mode,binance_bbo_id"),
+            std::string::npos);
+  EXPECT_NE(node_csv.find("run-a,7,buy,binance_trigger_gate_quote,321"),
+            std::string::npos);
 }
 
 }  // namespace
