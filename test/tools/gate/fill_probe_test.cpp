@@ -4,11 +4,13 @@
 #include <gtest/gtest.h>
 
 #include "core/config/instrument_catalog.h"
+#include "tools/gate/fill_probe/bbo_cache.h"
 #include "tools/gate/fill_probe/config.h"
 #include "tools/gate/fill_probe/csv_writer.h"
 #include "tools/gate/fill_probe/node_budget.h"
 #include "tools/gate/fill_probe/order_math.h"
 #include "tools/gate/fill_probe/state_machine.h"
+#include "tools/gate/fill_probe/trigger_quote.h"
 
 namespace {
 
@@ -246,6 +248,107 @@ TEST(GateFillProbeOrderMathTest, ComputesStrictEntryAndAggressiveClosePrices) {
       aquila::OrderSide::kBuy, bbo, 100);
   EXPECT_EQ(close_sell.price_text, "60897.9");
   EXPECT_EQ(close_buy.price_text, "62128.3");
+}
+
+TEST(GateFillProbeBboCacheTest, KeepsLatestSaneTargetSymbolOnly) {
+  using aquila::tools::gate::fill_probe::BboCache;
+  BboCache cache(/*symbol_id=*/93, /*price_tick=*/0.1);
+
+  aquila::BookTicker other{};
+  other.id = 1;
+  other.symbol_id = 384;
+  other.exchange_ns = 1000;
+  other.local_ns = 1100;
+  other.bid_price = 10.0;
+  other.ask_price = 10.1;
+  cache.OnBookTicker(other);
+  EXPECT_FALSE(cache.latest().has_value());
+
+  aquila::BookTicker bad{};
+  bad.id = 2;
+  bad.symbol_id = 93;
+  bad.exchange_ns = 1200;
+  bad.local_ns = 1300;
+  bad.bid_price = 10.2;
+  bad.ask_price = 10.1;
+  cache.OnBookTicker(bad);
+  EXPECT_FALSE(cache.latest().has_value());
+
+  aquila::BookTicker btc{};
+  btc.id = 3;
+  btc.symbol_id = 93;
+  btc.exchange_ns = 1400;
+  btc.local_ns = 1500;
+  btc.bid_price = 61513.0;
+  btc.bid_volume = 4.0;
+  btc.ask_price = 61513.1;
+  btc.ask_volume = 5.0;
+  cache.OnBookTicker(btc);
+
+  ASSERT_TRUE(cache.latest().has_value());
+  EXPECT_EQ(cache.latest()->id, 3);
+  EXPECT_EQ(cache.latest()->symbol_id, 93);
+  EXPECT_DOUBLE_EQ(cache.latest()->price_tick, 0.1);
+}
+
+TEST(GateFillProbeTriggerQuoteTest, AcceptsFreshBinanceAndGateSnapshots) {
+  using namespace aquila::tools::gate::fill_probe;
+  const BboSnapshot binance{
+      .id = 10,
+      .symbol_id = 93,
+      .exchange_ns = 1'000'000,
+      .local_ns = 2'000'000,
+      .bid_price = 61513.0,
+      .ask_price = 61513.1,
+      .price_tick = 0.1,
+  };
+  const BboSnapshot gate{
+      .id = 20,
+      .symbol_id = 93,
+      .exchange_ns = 900'000,
+      .local_ns = 1'900'000,
+      .bid_price = 61512.9,
+      .ask_price = 61513.0,
+      .price_tick = 0.1,
+  };
+  const auto result = EvaluateTriggerQuote(
+      binance, gate, /*decision_ns=*/3'000'000,
+      FreshnessLimits{.max_binance_freshness_ns = 2'000'000,
+                      .max_gate_freshness_ns = 50'000'000});
+  ASSERT_TRUE(result.accepted);
+  EXPECT_EQ(result.binance_freshness_ns, 1'000'000);
+  EXPECT_EQ(result.gate_freshness_ns, 1'100'000);
+  EXPECT_EQ(result.gate_exchange_delta_ns, -100'000);
+  EXPECT_EQ(result.gate_local_delta_ns, -100'000);
+  EXPECT_TRUE(result.skip_reason.empty());
+}
+
+TEST(GateFillProbeTriggerQuoteTest, RejectsStaleGateQuote) {
+  using namespace aquila::tools::gate::fill_probe;
+  const BboSnapshot binance{
+      .id = 10,
+      .symbol_id = 93,
+      .exchange_ns = 100'000'000,
+      .local_ns = 100'000'000,
+      .bid_price = 61513.0,
+      .ask_price = 61513.1,
+      .price_tick = 0.1,
+  };
+  const BboSnapshot gate{
+      .id = 20,
+      .symbol_id = 93,
+      .exchange_ns = 40'000'000,
+      .local_ns = 40'000'000,
+      .bid_price = 61512.9,
+      .ask_price = 61513.0,
+      .price_tick = 0.1,
+  };
+  const auto result = EvaluateTriggerQuote(
+      binance, gate, /*decision_ns=*/100'000'000,
+      FreshnessLimits{.max_binance_freshness_ns = 2'000'000,
+                      .max_gate_freshness_ns = 50'000'000});
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.skip_reason, "stale_gate_quote");
 }
 
 TEST(GateFillProbeStateMachineTest, NodeEndsAfterIocCancelledAndGtcCancelled) {
