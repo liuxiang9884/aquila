@@ -2,6 +2,7 @@
 
 #include "core/config/instrument_catalog.h"
 #include "tools/gate/fill_probe/order_math.h"
+#include "tools/gate/fill_probe/state_machine.h"
 
 #include <filesystem>
 #include <fstream>
@@ -107,6 +108,68 @@ TEST(GateFillProbeOrderMathTest,
       aquila::OrderSide::kBuy, bbo, 100);
   EXPECT_EQ(close_sell.price_text, "60897.9");
   EXPECT_EQ(close_buy.price_text, "62128.3");
+}
+
+TEST(GateFillProbeStateMachineTest, NodeEndsAfterIocCancelledAndGtcCancelled) {
+  using namespace aquila::tools::gate::fill_probe;
+  ProbeNode node = ProbeNode::Start(/*node_id=*/1, NodeSide::kBuy,
+                                    /*decision_ns=*/1000);
+  node.MarkEntrySubmitted(EntryKind::kGtc, /*local_order_id=*/11, 0, 1000);
+  node.MarkEntrySubmitted(EntryKind::kIoc, /*local_order_id=*/12, 1, 1000);
+
+  node.OnEntryTerminal(12, EntryResult::kCancelled, /*filled_qty=*/0.0,
+                       /*fill_price=*/0.0, /*event_ns=*/1200);
+  EXPECT_FALSE(node.Done());
+
+  EXPECT_TRUE(node.GtcCancelDue(/*now_ns=*/1000 + 1000000001LL));
+  node.MarkGtcCancelSubmitted(/*event_ns=*/1000 + 1000000001LL);
+  node.OnEntryTerminal(11, EntryResult::kCancelled, /*filled_qty=*/0.0,
+                       /*fill_price=*/0.0, /*event_ns=*/1000 + 1000100000LL);
+
+  EXPECT_TRUE(node.Done());
+  EXPECT_EQ(node.status(), NodeStatus::kCompletedNoFill);
+}
+
+TEST(GateFillProbeStateMachineTest, NodeUsesNetFlatForCompletion) {
+  using namespace aquila::tools::gate::fill_probe;
+  ProbeNode node = ProbeNode::Start(2, NodeSide::kSell, 2000);
+  node.MarkEntrySubmitted(EntryKind::kGtc, 21, 0, 2000);
+  node.MarkEntrySubmitted(EntryKind::kIoc, 22, 1, 2000);
+
+  node.OnEntryTerminal(21, EntryResult::kFilled, 1.0, 61513.0, 2100);
+  node.OnEntryTerminal(22, EntryResult::kFilled, 1.0, 61513.0, 2200);
+  EXPECT_DOUBLE_EQ(node.net_position(), -2.0);
+  EXPECT_FALSE(node.Done());
+
+  node.MarkCloseSubmitted(EntryKind::kGtc, 31, 0, 2300);
+  node.OnCloseFill(31, 1.0, 62128.3, 2400);
+  EXPECT_FALSE(node.Done());
+
+  node.MarkCloseSubmitted(EntryKind::kIoc, 32, 1, 2500);
+  node.OnCloseFill(32, 1.0, 62128.3, 2600);
+  EXPECT_TRUE(node.Done());
+  EXPECT_EQ(node.status(), NodeStatus::kCompletedClosed);
+}
+
+TEST(GateFillProbeStateMachineTest, CloseRetryLimitLeavesNodeUnresolved) {
+  using namespace aquila::tools::gate::fill_probe;
+  ProbeNode node = ProbeNode::Start(3, NodeSide::kBuy, 3000);
+  node.MarkEntrySubmitted(EntryKind::kIoc, 42, 1, 3000);
+  node.OnEntryTerminal(42, EntryResult::kFilled, 1.0, 61513.1, 3100);
+
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    ASSERT_TRUE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
+    node.MarkCloseSubmitted(EntryKind::kIoc, 50 + attempt, 1,
+                            3200 + attempt);
+    node.OnCloseTerminal(50 + attempt, CloseResult::kCancelled,
+                         3300 + attempt);
+  }
+
+  EXPECT_FALSE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
+  EXPECT_FALSE(node.Done());
+  EXPECT_TRUE(node.UnresolvedDue(3000 + 30000000001LL));
+  node.MarkUnresolved(3000 + 30000000001LL);
+  EXPECT_EQ(node.status(), NodeStatus::kUnresolved);
 }
 
 }  // namespace

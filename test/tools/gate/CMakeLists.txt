@@ -55,6 +55,7 @@ add_test(NAME gate_demo_strategy_test
 
 add_executable(gate_fill_probe_test
     ../../../tools/gate/fill_probe/config.cpp
+    ../../../tools/gate/fill_probe/state_machine.cpp
     fill_probe_test.cpp
 )
 
