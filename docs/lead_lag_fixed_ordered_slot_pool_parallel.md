@@ -1,6 +1,6 @@
 # LeadLag FixedOrderedSlotPool 与 parallel=n 迁移说明
 
-本文记录截至 2026-07-03 的当前事实、相关文档入口和后续建议。它只整理 `FixedOrderedSlotPool<T, kCapacity>` 作为 LeadLag multi-group 容器的迁移边界；不是已批准的实现计划，也不表示生产 `ExecutionState` 已经切换。
+本文记录截至 2026-07-03 的当前事实、相关文档入口和已锁定迁移边界。它整理 `FixedOrderedSlotPool<T, kCapacity>` 作为 LeadLag multi-group 容器的迁移方案；不表示生产 `ExecutionState` 已经切换。
 
 ## 当前事实
 
@@ -10,7 +10,8 @@
 - 当前 `strategy/lead_lag/execution_state.h` 仍使用 `std::vector<ExecutionGroup>`，`ExecutionState::Init(parallel)` 通过 `groups_.assign(parallel, ExecutionGroup{})` 建立运行时容量；不要假定已经切到 `FixedOrderedSlotPool`。
 - 当前 `ExecutionGroup` 已支持多 child order：`pending_local_order_ids`、`pending_order_roles`、`unknown_result_local_order_ids`、`pending_open_order_count` 和 `pending_close_order_count` 等字段承载同一 execution group 下的 fanout / retry / unknown-result 子订单。
 - `order_session_fanout=m` 与 `parallel=n` 是两层概念：fanout 表示一个 signal 向多条 order route 发送多个 child order；`parallel` 表示同一个 pair 同时允许多少个 active execution group。一个 fanout signal 仍只占一个 `parallel` slot。
-- 2026-07-03 Grill Me 讨论后，当前 LeadLag 直接迁移的候选上限锁定为 `kMaxLeadLagExecutionGroups = 16`；`parallel > 16` 不应由 `FixedOrderedSlotPool::Initialize()` 静默 clamp，生产配置应 fail fast。
+- 2026-07-03 Grill Me 讨论后，LeadLag 直接迁移上限锁定为 `kMaxLeadLagExecutionGroups = 16`；`parallel > 16` 不应由 `FixedOrderedSlotPool::Initialize()` 静默 clamp，生产配置应 fail fast。
+- 同次讨论锁定：本次迁移同时删除 `parent_id`，改用 core order API / SHM / logs / report CSV 中的 `group_id` 和 `group_index`；不做历史日志兼容，旧 live log 需要使用旧版本脚本分析。
 
 ## 相关入口
 
@@ -20,7 +21,7 @@
 - `strategy/lead_lag/execution_state.h`：当前生产状态机和 `std::vector<ExecutionGroup>` 容器。
 - `test/strategy/lead_lag_feedback_state_test.cpp`：feedback / unknown-result / multi child 状态测试，其中已有 `parallel=2` 场景。
 - `test/strategy/lead_lag_strategy_interface_test.cpp`：strategy 层 `parallel_limit`、fanout child、rejected intent 等行为测试。
-- `docs/gate_order_gateway_shm_design.md` 的 “Strategy Fanout 语义”：说明 fanout child 共享 `parent_id`，但一个 signal 只占一个 `parallel` slot。
+- `docs/gate_order_gateway_shm_design.md` 的 “Strategy Fanout 语义”：当前文档仍以 `parent_id` 描述 fanout child 归组；本次迁移需要同步改成 `group_id` / `group_index`。
 - `docs/strategy_order_component_model.md` 的 “多路 OrderSession 扩展边界”：说明 gateway 不解释 parent signal / child group / winner / overfill。
 - `docs/superpowers/plans/2026-06-30-gate-order-gateway-shm.md`：历史实现 plan 中的 fanout strategy tests 和 `execute.parallel * order_session_fanout` bounded scan 要求。
 
@@ -29,31 +30,32 @@
 如果把 `ExecutionState` 从 `std::vector<ExecutionGroup>` 迁移到 `FixedOrderedSlotPool<ExecutionGroup, 16>`，应保持交易语义不变，但不需要保持旧 `std::vector` 容器 API 兼容：
 
 - `parallel` 仍是每个 pair 的最大 active execution group 数，不是 child order 数。
-- `order_session_fanout` 生成的多个 child order 必须落在同一个 execution group 下，共享 execution group / position lifecycle 级 `parent_id`。
+- `order_session_fanout` 生成的多个 child order 必须落在同一个 execution group 下，共享同一个 per-symbol `group_id`，但各自拥有唯一 `local_order_id` 和 route-level `route_id`。
 - 旧的 `groups()` / `mutable_groups()` 不应继续暴露为 vector-like API。调用方应改用 active FIFO 遍历 helper 或明确的 `FindGroupById()` / slot lookup helper，避免把 inactive slot 当成 active group。
-- slot index 只能作为容器内部地址，不应替代 `group_id`、`parent_id` 或 `local_order_id`。slot 被 erase 后会复用；如果未来把 slot index 写入订单元数据，回查时必须同时校验 `group_id`，防止旧订单命中新复用 slot。
-- 当前直接迁移阶段可以保留既有 `parent_id` 日志 / report 语义，不把 `parent_id` 去留和容器替换绑在同一个改动里；`group_id` 和 `parent_id` 继续是策略级 identity。
-- pending order lookup 在直接迁移阶段可保持 bounded scan：`active_group_count <= 16`，每组 pending child 数由当前 fixed arrays 限制。不要为了当前 LeadLag 单点迁移新增一套 LeadLag-only pending hash index；更好的低延迟目标见下方 “Future 改进”。
+- `group_id` 是 `symbol_id` 内单调递增的 execution group identity；跨 symbol 唯一归因必须使用 `(symbol_id, group_id)`，不能只用 `group_id`。
+- `group_index` 是 `FixedOrderedSlotPool` slot 地址，只用于本进程 O(1) 定位和诊断。它可以进入 order / response / feedback log，但不是稳定 join key。slot 被 erase 后会复用，回报路径必须同时校验订单里的 `group_id` 与当前 slot 的 `ExecutionGroup::group_id` 一致。
+- `OrderCreateRequest`、`StrategyOrder`、`OrderResponseEvent`、order gateway SHM command / event、Gate gateway log、LeadLag order log 和 report CSV 都使用 `group_id` / `group_index`。本次迁移彻底删除 `parent_id` 字段，不保留新脚本对旧 `parent_id` 日志的兼容解析。
+- pending order lookup 的目标路径是：response / feedback 先通过 `local_order_id` 找到 `StrategyOrder`，再用 `order.group_index` O(1) 定位 `ExecutionGroup`，并校验 `order.group_id`。只有 `group_index` 无效或校验失败时才进入 reconcile / unknown 分支，不回退到全量扫描作为正常路径。
 - 行情扫描或 active group 遍历期间不要直接 erase 当前容器。`FixedOrderedSlotPool::Erase()` 会更新 `active_indices()` 顺序；若遍历中需要清理 group，先收集 `group_id` / slot index，再在遍历结束后统一 erase。
 - `parallel > 16` 不能静默改变实盘语义。生产配置解析应直接拒绝；测试 / benchmark 如果需要探索更大 `n`，使用独立 benchmark fixture，不复用 live config 语义。
 
-## Future 改进：Core multi-group infra
+## Core multi-group metadata
 
-更长期、更低延迟的方向，是把 multi-group 执行容器和订单归属元数据下沉到 `core/trading` infra，而不是让 LeadLag 独自维护一套策略私有索引：
+本次迁移把 multi-group 归属元数据下沉到 `core/trading`，避免 LeadLag 私有 side table：
 
-- 在 core 层提供通用 execution group container / handle 模型，底层可用 `FixedOrderedSlotPool`，策略只持有 group handle 或 stable group id，不直接依赖具体容器布局。
-- `OrderCreateRequest` / `StrategyOrder` 增加 group 元数据，例如 `execution_group_id` 和 `execution_group_index`。下单创建订单时把当前 group id 与 slot index 写入订单；response / feedback 先通过 `local_order_id` 找到 `StrategyOrder`，再用 `execution_group_index` O(1) 定位 group，并校验 `execution_group_id` 是否仍匹配当前 slot。
-- `group_index` 是运行时 slot 地址，只能用于本进程快速定位；`group_id` 是 symbol 内的 execution group identity。slot 复用后，`group_index` 单独不能作为安全 key。
-- 由于 signal、pair 和下单当前都按 `symbol_id` 分区，未来可以重新评估 `parent_id` 是否仍有必要。若改为用 `(symbol_id, execution_group_id, local_order_id, route_id)` 作为 report / diagnostics 归因键，必须同步迁移 `docs/diagnostic_fields.md`、`docs/lead_lag_live_report_csv_schema.md`、report 脚本和 Gate order gateway 日志字段，不能只改策略内语义。
-- 在 core infra 化完成前，不建议新增 LeadLag 专用的 `local_order_id -> slot` hash cache；否则未来还要把同一套生命周期清理、slot 复用校验和测试迁移到 core。
+- `group_id` 和 `group_index` 放在 `core::OrderCreateRequest` / `core::StrategyOrder`，默认值为 `0` / invalid。非 multi-group 策略可以继续不设置。
+- `group_id` 和 `group_index` 需要透传到 `core::OrderResponseEvent`、order gateway SHM command / event、Gate `OrderResponse` / log fields。这样跨进程 gateway send / response 诊断和 LeadLag strategy log 不再依赖 `parent_id`。
+- `group_index` 只在 runtime 内做快速定位；report 主归因键使用 `symbol_id + group_id + local_order_id + route_id`。`group_index` 可作为 diagnostic column 输出，但不能作为 position / latency / order detail 的唯一关联键。
+- 新脚本只解析新字段。旧 live log 不再保证可由新脚本分析。
 
 ## 建议实现顺序
 
-1. 先加 focused tests，不改实现：覆盖 `parallel=2/4/16` 下的 open group FIFO 顺序、head / middle / tail group close、slot 复用后 `group_id` 单调递增、pending child feedback 命中正确 group、unknown-result resolve 后不影响新复用 slot。
+1. 先更新 core order contract 和 order gateway SHM：删除 `parent_id`，新增 `group_id` / `group_index`，并更新 Gate order gateway send / response / diagnostic logs。
 2. 增加 `kMaxLeadLagExecutionGroups = 16`，并在 LeadLag config parse / runtime init 处拒绝 `parallel > 16`；不要依赖 `FixedOrderedSlotPool::Initialize()` clamp。
-3. 直接把 `ExecutionState` 的 storage 替换为 `FixedOrderedSlotPool<ExecutionGroup, kMaxLeadLagExecutionGroups>`，删除 vector-like `groups()` / `mutable_groups()` 对外暴露，改成 active FIFO 遍历 helper 和明确的 group lookup helper。
-4. 保持当前 `parent_id`、fanout、parallel-limit、close retry、recover 和 report 字段语义不变；不要在同一个改动中引入 core group metadata 或 `parent_id` 退场。
-5. 重新跑 group-container benchmark、LeadLag strategy / feedback focused tests 和 submit-path benchmark；性能结论只基于这些新结果表述。
+3. 直接把 `ExecutionState` 的 storage 替换为 `FixedOrderedSlotPool<ExecutionGroup, kMaxLeadLagExecutionGroups>`，删除 vector-like `groups()` / `mutable_groups()` 对外暴露，改成 active FIFO 遍历 helper 和明确的 `GroupAt(group_index, group_id)` lookup helper。
+4. 下单时把当前 group 的 `group_id` / `group_index` 写入 `OrderCreateRequest`，再进入 `StrategyOrder` 和 SHM。response / feedback 处理时通过 `StrategyOrder.group_index` O(1) 定位 group，并校验 `group_id`；校验失败进入 reconcile / ignored-stale 分支。
+5. 同步迁移 LeadLag logs、test hooks、`scripts/lead_lag/analyze_order_detail.py`、`scripts/lead_lag/generate_live_report.py`、脚本测试、`docs/diagnostic_fields.md` 和 `docs/lead_lag_live_report_csv_schema.md`。新脚本只支持 `group_id` / `group_index`，不兼容旧 `parent_id`。
+6. 重新跑 group-container benchmark、LeadLag strategy / feedback focused tests、order gateway focused tests、report script tests 和 submit-path benchmark；性能结论只基于这些新结果表述。
 
 ## 建议验证
 
@@ -67,4 +69,4 @@ taskset -c 16 ./build/release/benchmark/strategy/lead_lag_submit_breakdown_bench
 
 ## 当前建议
 
-短期如果继续这条线，建议按 `kMaxLeadLagExecutionGroups = 16` 直接替换 LeadLag `ExecutionState` storage，并先用 focused tests 锁住 `parallel=n`、fanout child 聚合、terminal erase 和 slot reuse 行为。更大的结构性优化是把 group container / order group metadata 下沉到 `core/trading`，让 `StrategyOrder` 自带 `execution_group_id` 和 `execution_group_index`；这应作为后续独立 infra 改动推进，不和当前 LeadLag 容器替换混在一起。
+当前建议按一个不可中断 implementation plan 完成端到端迁移，但允许拆多个原子提交：先 core / SHM contract，再 LeadLag `FixedOrderedSlotPool<ExecutionGroup, 16>` 与 order group metadata，再 report scripts / docs / tests。最终分支不能停在半迁移状态，因为 `parent_id` 删除会同时影响生产下单、gateway 诊断和 report 生成。
