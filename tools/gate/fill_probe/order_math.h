@@ -109,7 +109,8 @@ namespace order_math_detail {
   }
   if (!std::isfinite(instrument.min_quantity) ||
       instrument.min_quantity <= 0.0) {
-    return order_math_detail::Failure("instrument min_quantity must be positive");
+    return order_math_detail::Failure(
+        "instrument min_quantity must be positive");
   }
   if (!std::isfinite(instrument.notional_multiplier) ||
       instrument.notional_multiplier <= 0.0) {
@@ -147,8 +148,7 @@ namespace order_math_detail {
 [[nodiscard]] inline PriceText ClosePrice(OrderSide close_side,
                                           const BboSnapshot& bbo,
                                           std::uint32_t slippage_bps) {
-  const double slippage_fraction =
-      static_cast<double>(slippage_bps) / 10000.0;
+  const double slippage_fraction = static_cast<double>(slippage_bps) / 10000.0;
   if (close_side == OrderSide::kBuy) {
     return order_math_detail::MakePriceText(
         order_math_detail::CeilToTick(bbo.ask_price * (1.0 + slippage_fraction),

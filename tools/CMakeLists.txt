@@ -92,6 +92,25 @@ target_link_libraries(gate_order_gateway
         PkgConfig::tomlplusplus
 )
 
+add_executable(fill_probe_strategy
+    gate/fill_probe/config.cpp
+    gate/fill_probe/csv_writer.cpp
+    gate/fill_probe/state_machine.cpp
+    gate/fill_probe/main.cpp
+)
+
+target_link_libraries(fill_probe_strategy
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_gate
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(gate_order_session_rtt_probe
     gate/order_session_rtt_probe/connection_plan.cpp
     gate/order_session_rtt_probe/config.cpp

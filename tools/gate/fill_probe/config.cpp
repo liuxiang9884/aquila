@@ -44,9 +44,9 @@ template <typename T>
   return true;
 }
 
-[[nodiscard]] bool AssignSignedInteger(
-    toml::node_view<const toml::node> node, std::string_view name,
-    std::int64_t* out, std::string* error) {
+[[nodiscard]] bool AssignSignedInteger(toml::node_view<const toml::node> node,
+                                       std::string_view name, std::int64_t* out,
+                                       std::string* error) {
   const auto value = node.value<std::int64_t>();
   if (!value.has_value()) {
     *error = std::string{name} + " is required";
@@ -174,8 +174,8 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
   const toml::node_view<const toml::node> probe = root["fill_probe"];
   if (!AssignString(probe["name"], "fill_probe.name", &config.probe.name,
                     &error) ||
-      !AssignString(probe["symbol"], "fill_probe.symbol",
-                    &config.probe.symbol, &error) ||
+      !AssignString(probe["symbol"], "fill_probe.symbol", &config.probe.symbol,
+                    &error) ||
       !AssignString(probe["exchange_symbol"], "fill_probe.exchange_symbol",
                     &config.probe.exchange_symbol, &error) ||
       !AssignInteger(probe["symbol_id"], "fill_probe.symbol_id",
@@ -197,8 +197,7 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
       !AssignDouble(probe["max_entry_notional_usdt"],
                     "fill_probe.max_entry_notional_usdt",
                     &config.probe.max_entry_notional_usdt, &error) ||
-      !AssignInteger(probe["max_close_retries"],
-                     "fill_probe.max_close_retries",
+      !AssignInteger(probe["max_close_retries"], "fill_probe.max_close_retries",
                      &config.probe.max_close_retries, &error) ||
       !AssignInteger(probe["close_slippage_bps"],
                      "fill_probe.close_slippage_bps",
@@ -227,12 +226,10 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
   config.market_data.channel_name =
       market_data["channel_name"].value_or(config.market_data.channel_name);
 
-  const toml::node_view<const toml::node> order_gateway =
-      root["order_gateway"];
+  const toml::node_view<const toml::node> order_gateway = root["order_gateway"];
   if (!AssignString(order_gateway["shm_name"], "order_gateway.shm_name",
                     &config.order_gateway.shm_name, &error) ||
-      !AssignInteger(order_gateway["route_count"],
-                     "order_gateway.route_count",
+      !AssignInteger(order_gateway["route_count"], "order_gateway.route_count",
                      &config.order_gateway.route_count, &error) ||
       !AssignInteger(order_gateway["command_queue_capacity"],
                      "order_gateway.command_queue_capacity",

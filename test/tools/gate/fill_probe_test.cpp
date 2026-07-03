@@ -1,14 +1,13 @@
-#include "tools/gate/fill_probe/config.h"
-
-#include "core/config/instrument_catalog.h"
-#include "tools/gate/fill_probe/csv_writer.h"
-#include "tools/gate/fill_probe/order_math.h"
-#include "tools/gate/fill_probe/state_machine.h"
-
 #include <filesystem>
 #include <fstream>
 
 #include <gtest/gtest.h>
+
+#include "core/config/instrument_catalog.h"
+#include "tools/gate/fill_probe/config.h"
+#include "tools/gate/fill_probe/csv_writer.h"
+#include "tools/gate/fill_probe/order_math.h"
+#include "tools/gate/fill_probe/state_machine.h"
 
 namespace {
 
@@ -92,8 +91,7 @@ TEST(GateFillProbeOrderMathTest, ComputesBtcMinimumNotional) {
   EXPECT_NEAR(sizing.value.notional_usdt, 6.15131, 0.00001);
 }
 
-TEST(GateFillProbeOrderMathTest,
-     ComputesStrictEntryAndAggressiveClosePrices) {
+TEST(GateFillProbeOrderMathTest, ComputesStrictEntryAndAggressiveClosePrices) {
   const aquila::tools::gate::fill_probe::BboSnapshot bbo{
       .bid_price = 61513.0,
       .ask_price = 61513.1,
@@ -101,11 +99,9 @@ TEST(GateFillProbeOrderMathTest,
   };
 
   const auto buy_entry =
-      aquila::tools::gate::fill_probe::EntryPrice(aquila::OrderSide::kBuy,
-                                                  bbo);
-  const auto sell_entry =
-      aquila::tools::gate::fill_probe::EntryPrice(aquila::OrderSide::kSell,
-                                                  bbo);
+      aquila::tools::gate::fill_probe::EntryPrice(aquila::OrderSide::kBuy, bbo);
+  const auto sell_entry = aquila::tools::gate::fill_probe::EntryPrice(
+      aquila::OrderSide::kSell, bbo);
   EXPECT_EQ(buy_entry.price_text, "61513.1");
   EXPECT_EQ(sell_entry.price_text, "61513");
 
@@ -166,10 +162,8 @@ TEST(GateFillProbeStateMachineTest, CloseRetryLimitLeavesNodeUnresolved) {
 
   for (int attempt = 0; attempt < 3; ++attempt) {
     ASSERT_TRUE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
-    node.MarkCloseSubmitted(EntryKind::kIoc, 50 + attempt, 1,
-                            3200 + attempt);
-    node.OnCloseTerminal(50 + attempt, CloseResult::kCancelled,
-                         3300 + attempt);
+    node.MarkCloseSubmitted(EntryKind::kIoc, 50 + attempt, 1, 3200 + attempt);
+    node.OnCloseTerminal(50 + attempt, CloseResult::kCancelled, 3300 + attempt);
   }
 
   EXPECT_FALSE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
@@ -182,8 +176,7 @@ TEST(GateFillProbeStateMachineTest, CloseRetryLimitLeavesNodeUnresolved) {
 TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
   namespace fp = aquila::tools::gate::fill_probe;
   const std::filesystem::path dir =
-      std::filesystem::path{"/home/liuxiang/tmp"} /
-      "gate_fill_probe_csv_test";
+      std::filesystem::path{"/home/liuxiang/tmp"} / "gate_fill_probe_csv_test";
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
 

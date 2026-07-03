@@ -63,7 +63,9 @@ void CloseFile(std::FILE** file) {
 CsvWriters::CsvWriters(std::filesystem::path run_dir)
     : run_dir_(std::move(run_dir)) {}
 
-CsvWriters::~CsvWriters() { Close(); }
+CsvWriters::~CsvWriters() {
+  Close();
+}
 
 CsvOpenResult CsvWriters::Open() {
   Close();
@@ -126,10 +128,10 @@ void CsvWriters::WriteNode(const NodeCsvRow& row) {
              "{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},{:.12g},"
              "{:.12g},{:.12g},{:.12g},{},{},{}\n",
              EscapeCsv(row.run_id), row.node_id, EscapeCsv(row.side),
-             row.bbo_id, row.bbo_exchange_ns, row.bbo_local_ns,
-             row.decision_ns, row.submit_ns, row.finish_ns,
-             row.local_freshness_ns, row.exchange_freshness_ns, row.bid_price,
-             row.bid_volume, row.ask_price, row.ask_volume, row.entry_quantity,
+             row.bbo_id, row.bbo_exchange_ns, row.bbo_local_ns, row.decision_ns,
+             row.submit_ns, row.finish_ns, row.local_freshness_ns,
+             row.exchange_freshness_ns, row.bid_price, row.bid_volume,
+             row.ask_price, row.ask_volume, row.entry_quantity,
              row.entry_notional_usdt, EscapeCsv(row.status),
              EscapeCsv(row.skip_reason), EscapeCsv(row.unresolved_reason));
   std::fflush(node_file_);
@@ -161,14 +163,14 @@ void CsvWriters::WriteOrderEvent(const OrderEventCsvRow& row) {
   fmt::print(order_event_file_,
              "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},"
              "{:.12g},{},{}\n",
-             EscapeCsv(row.run_id), row.node_id,
-             EscapeCsv(row.lifecycle_kind), EscapeCsv(row.order_role),
-             row.local_order_id, row.parent_id, row.route_id,
-             EscapeCsv(row.event_kind), EscapeCsv(row.response_kind),
-             EscapeCsv(row.feedback_kind), row.exchange_order_id,
-             row.exchange_ns, row.local_ns, EscapeCsv(row.price), row.quantity,
-             row.cumulative_filled_quantity, row.left_quantity,
-             EscapeCsv(row.finish_reason), EscapeCsv(row.reject_reason));
+             EscapeCsv(row.run_id), row.node_id, EscapeCsv(row.lifecycle_kind),
+             EscapeCsv(row.order_role), row.local_order_id, row.parent_id,
+             row.route_id, EscapeCsv(row.event_kind),
+             EscapeCsv(row.response_kind), EscapeCsv(row.feedback_kind),
+             row.exchange_order_id, row.exchange_ns, row.local_ns,
+             EscapeCsv(row.price), row.quantity, row.cumulative_filled_quantity,
+             row.left_quantity, EscapeCsv(row.finish_reason),
+             EscapeCsv(row.reject_reason));
   std::fflush(order_event_file_);
 }
 

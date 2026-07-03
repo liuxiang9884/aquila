@@ -84,16 +84,30 @@ class ProbeNode {
     return status_ != NodeStatus::kRunning;
   }
 
-  [[nodiscard]] NodeStatus status() const noexcept { return status_; }
-  [[nodiscard]] double net_position() const noexcept { return net_position_; }
-  [[nodiscard]] std::uint64_t node_id() const noexcept { return node_id_; }
-  [[nodiscard]] NodeSide side() const noexcept { return side_; }
+  [[nodiscard]] NodeStatus status() const noexcept {
+    return status_;
+  }
+  [[nodiscard]] double net_position() const noexcept {
+    return net_position_;
+  }
+  [[nodiscard]] std::uint64_t node_id() const noexcept {
+    return node_id_;
+  }
+  [[nodiscard]] NodeSide side() const noexcept {
+    return side_;
+  }
   [[nodiscard]] std::int64_t decision_ns() const noexcept {
     return decision_ns_;
   }
-  [[nodiscard]] std::int64_t finish_ns() const noexcept { return finish_ns_; }
-  [[nodiscard]] const LifecycleState& gtc() const noexcept { return gtc_; }
-  [[nodiscard]] const LifecycleState& ioc() const noexcept { return ioc_; }
+  [[nodiscard]] std::int64_t finish_ns() const noexcept {
+    return finish_ns_;
+  }
+  [[nodiscard]] const LifecycleState& gtc() const noexcept {
+    return gtc_;
+  }
+  [[nodiscard]] const LifecycleState& ioc() const noexcept {
+    return ioc_;
+  }
 
  private:
   [[nodiscard]] LifecycleState& Lifecycle(EntryKind kind) noexcept;

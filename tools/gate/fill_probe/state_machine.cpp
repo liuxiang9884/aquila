@@ -32,8 +32,7 @@ ProbeNode ProbeNode::Start(std::uint64_t node_id, NodeSide side,
   return node;
 }
 
-void ProbeNode::MarkEntrySubmitted(EntryKind kind,
-                                   std::uint64_t local_order_id,
+void ProbeNode::MarkEntrySubmitted(EntryKind kind, std::uint64_t local_order_id,
                                    std::uint16_t route_id,
                                    std::int64_t event_ns) {
   LifecycleState& lifecycle = Lifecycle(kind);
@@ -87,8 +86,7 @@ bool ProbeNode::CloseRetryAllowed(EntryKind kind,
          !lifecycle.close_pending && lifecycle.close_attempts < max_retries;
 }
 
-void ProbeNode::MarkCloseSubmitted(EntryKind kind,
-                                   std::uint64_t local_order_id,
+void ProbeNode::MarkCloseSubmitted(EntryKind kind, std::uint64_t local_order_id,
                                    std::uint16_t route_id,
                                    std::int64_t event_ns) {
   LifecycleState& lifecycle = Lifecycle(kind);
