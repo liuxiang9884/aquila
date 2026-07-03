@@ -61,6 +61,7 @@ struct OrderRecord {
 };
 
 [[nodiscard]] std::string EntryKindText(fp::EntryKind kind);
+[[nodiscard]] std::string LowerEnumName(std::string_view name);
 
 struct RuntimeContext {
   fp::CsvWriters* writers{nullptr};
@@ -79,6 +80,8 @@ struct RuntimeContext {
         found == orders->end()
             ? ""
             : (found->second.close_order ? "close" : "entry");
+    const std::string response_kind =
+        LowerEnumName(magic_enum::enum_name(event.kind));
     writers->WriteOrderEvent(fp::OrderEventCsvRow{
         .run_id = run_id,
         .node_id = current_node_id,
@@ -88,11 +91,19 @@ struct RuntimeContext {
         .parent_id = event.parent_id,
         .route_id = event.route_id,
         .event_kind = "gateway_response",
-        .response_kind = std::string(magic_enum::enum_name(event.kind)),
+        .response_kind = response_kind,
         .exchange_order_id = event.exchange_order_id,
         .exchange_ns = event.exchange_ns,
         .local_ns = event.local_receive_ns,
     });
+    fmt::print(
+        "fill_probe_order_event run_id={} node_id={} lifecycle_kind={} "
+        "order_role={} local_order_id={} parent_id={} route_id={} "
+        "event_kind=gateway_response response_kind={} exchange_order_id={} "
+        "exchange_ns={} local_ns={}\n",
+        run_id, current_node_id, lifecycle_kind, order_role,
+        event.local_order_id, event.parent_id, event.route_id, response_kind,
+        event.exchange_order_id, event.exchange_ns, event.local_receive_ns);
     if (found == orders->end() || current_node == nullptr) {
       return;
     }
@@ -333,39 +344,63 @@ void WriteSendEvent(fp::CsvWriters& writers, std::string_view run_id,
                     std::string_view event_kind,
                     core::OrderGatewaySendStatus status,
                     std::int64_t local_ns) {
+  const std::string lifecycle_kind = EntryKindText(record.lifecycle_kind);
+  const std::string order_role = record.close_order ? "close" : "entry";
+  const std::string response_kind =
+      LowerEnumName(magic_enum::enum_name(status));
   writers.WriteOrderEvent(fp::OrderEventCsvRow{
       .run_id = std::string(run_id),
       .node_id = node_id,
-      .lifecycle_kind = EntryKindText(record.lifecycle_kind),
-      .order_role = record.close_order ? "close" : "entry",
+      .lifecycle_kind = std::string(lifecycle_kind),
+      .order_role = std::string(order_role),
       .local_order_id = record.order.local_order_id,
       .parent_id = record.order.parent_id,
       .route_id = record.order.gateway_route_id,
       .event_kind = std::string(event_kind),
-      .response_kind = LowerEnumName(magic_enum::enum_name(status)),
+      .response_kind = std::string(response_kind),
       .exchange_order_id = record.order.exchange_order_id,
       .local_ns = local_ns,
       .price = record.price_text,
       .quantity = record.order.quantity,
   });
+  fmt::print(
+      "fill_probe_order_submitted run_id={} node_id={} lifecycle_kind={} "
+      "order_role={} local_order_id={} parent_id={} route_id={} event_kind={} "
+      "response_kind={} local_ns={} price={} quantity={:.12g}\n",
+      run_id, node_id, lifecycle_kind, order_role, record.order.local_order_id,
+      record.order.parent_id, record.order.gateway_route_id, event_kind,
+      response_kind, local_ns, record.price_text, record.order.quantity);
 }
 
 void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
                         std::uint64_t node_id, const OrderRecord* record,
                         const aquila::OrderFeedbackEvent& event) {
+  const std::string lifecycle_kind =
+      record == nullptr ? ""
+                        : std::string(EntryKindText(record->lifecycle_kind));
+  const std::string order_role =
+      record == nullptr ? "" : (record->close_order ? "close" : "entry");
+  const std::string feedback_kind =
+      std::string(LowerEnumName(magic_enum::enum_name(event.kind)));
+  const std::string finish_reason =
+      std::string(LowerEnumName(magic_enum::enum_name(event.finish_reason)));
+  const std::string reject_reason =
+      std::string(LowerEnumName(magic_enum::enum_name(event.reject_reason)));
+  const std::uint64_t parent_id =
+      record == nullptr ? 0 : record->order.parent_id;
+  const std::uint16_t route_id = record == nullptr
+                                     ? core::kAutoGatewayRoute
+                                     : record->order.gateway_route_id;
   writers.WriteOrderEvent(fp::OrderEventCsvRow{
       .run_id = std::string(run_id),
       .node_id = node_id,
-      .lifecycle_kind =
-          record == nullptr ? "" : EntryKindText(record->lifecycle_kind),
-      .order_role =
-          record == nullptr ? "" : (record->close_order ? "close" : "entry"),
+      .lifecycle_kind = lifecycle_kind,
+      .order_role = order_role,
       .local_order_id = event.local_order_id,
-      .parent_id = record == nullptr ? 0 : record->order.parent_id,
-      .route_id = record == nullptr ? core::kAutoGatewayRoute
-                                    : record->order.gateway_route_id,
+      .parent_id = parent_id,
+      .route_id = route_id,
       .event_kind = "feedback",
-      .feedback_kind = LowerEnumName(magic_enum::enum_name(event.kind)),
+      .feedback_kind = feedback_kind,
       .exchange_order_id = event.exchange_order_id,
       .exchange_ns = event.exchange_update_ns,
       .local_ns = event.local_receive_ns,
@@ -373,11 +408,20 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
       .quantity = record == nullptr ? 0.0 : record->order.quantity,
       .cumulative_filled_quantity = event.cumulative_filled_quantity,
       .left_quantity = event.left_quantity,
-      .finish_reason =
-          LowerEnumName(magic_enum::enum_name(event.finish_reason)),
-      .reject_reason =
-          LowerEnumName(magic_enum::enum_name(event.reject_reason)),
+      .finish_reason = finish_reason,
+      .reject_reason = reject_reason,
   });
+  fmt::print(
+      "fill_probe_order_event run_id={} node_id={} lifecycle_kind={} "
+      "order_role={} local_order_id={} parent_id={} route_id={} "
+      "feedback_kind={} finish_reason={} reject_reason={} "
+      "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
+      "exchange_order_id={} exchange_ns={} local_ns={}\n",
+      run_id, node_id, lifecycle_kind, order_role, event.local_order_id,
+      parent_id, route_id, feedback_kind, finish_reason, reject_reason,
+      event.cumulative_filled_quantity, event.left_quantity,
+      event.exchange_order_id, event.exchange_update_ns,
+      event.local_receive_ns);
 }
 
 [[nodiscard]] fp::EntryResult EntryResultFromFeedback(
@@ -564,6 +608,22 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
   });
   WriteLifecycleRow(writers, run_id, node, node.gtc());
   WriteLifecycleRow(writers, run_id, node, node.ioc());
+  const std::string status =
+      LowerEnumName(magic_enum::enum_name(node.status()));
+  if (node.status() == fp::NodeStatus::kUnresolved ||
+      !unresolved_reason.empty()) {
+    fmt::print(stderr,
+               "fill_probe_node_unresolved run_id={} node_id={} side={} "
+               "status={} reason={} finish_ns={} net_position={:.12g}\n",
+               run_id, node.node_id(), NodeSideText(node.side()), status,
+               unresolved_reason, node.finish_ns(), node.net_position());
+    return;
+  }
+  fmt::print(
+      "fill_probe_node_done run_id={} node_id={} side={} status={} "
+      "skip_reason={} finish_ns={} net_position={:.12g}\n",
+      run_id, node.node_id(), NodeSideText(node.side()), status, skip_reason,
+      node.finish_ns(), node.net_position());
 }
 
 [[nodiscard]] int ValidateOnly(const LoadedContext& context) {
@@ -638,11 +698,19 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
   }
   aquila::OrderFeedbackShmReader feedback_reader =
       std::move(feedback_reader_result.value);
+  const std::string run_id =
+      fmt::format("{}_{}", context.config.probe.name, run_id_numeric);
 
   fmt::print(
-      "fill_probe_preflight_ok symbol={} bbo_id={} bid={:.12g} ask={:.12g} "
-      "quantity={} notional_usdt={:.12g}\n",
-      context.config.probe.symbol, bbo.id, bbo.bid_price, bbo.ask_price,
+      "fill_probe_start run_id={} name={} symbol={} symbol_id={} max_nodes={} "
+      "duration_ms={} preflight_only={}\n",
+      run_id, context.config.probe.name, context.config.probe.symbol,
+      context.config.probe.symbol_id, context.config.probe.max_nodes,
+      context.config.probe.duration_ms, preflight_only);
+  fmt::print(
+      "fill_probe_preflight_ok run_id={} symbol={} bbo_id={} bid={:.12g} "
+      "ask={:.12g} quantity={} notional_usdt={:.12g}\n",
+      run_id, context.config.probe.symbol, bbo.id, bbo.bid_price, bbo.ask_price,
       sizing_result.value.quantity_text, sizing_result.value.notional_usdt);
   if (preflight_only) {
     return 0;
@@ -659,8 +727,6 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
   std::signal(SIGTERM, HandleSignal);
   stop_requested.store(false, std::memory_order_relaxed);
 
-  const std::string run_id =
-      fmt::format("{}_{}", context.config.probe.name, run_id_numeric);
   absl::flat_hash_map<std::uint64_t, OrderRecord> orders;
   RuntimeContext runtime{
       .writers = &writers, .orders = &orders, .run_id = run_id};
@@ -693,6 +759,11 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
         (node_id % 2 == 1) ? fp::NodeSide::kBuy : fp::NodeSide::kSell;
     fp::ProbeNode node =
         fp::ProbeNode::Start(node_id, node_side, SystemNowNs());
+    fmt::print(
+        "fill_probe_node_start run_id={} node_id={} side={} bbo_id={} "
+        "bid={:.12g} ask={:.12g} decision_ns={}\n",
+        run_id, node_id, NodeSideText(node_side), bbo.id, bbo.bid_price,
+        bbo.ask_price, node.decision_ns());
     runtime.current_node_id = node_id;
     runtime.current_node = &node;
     std::int64_t local_freshness_ns = 0;
@@ -782,7 +853,6 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
         WriteNodeRows(writers, run_id, node, bbo, sizing_result.value,
                       first_submit_ns, local_freshness_ns,
                       exchange_freshness_ns, "", "node_unresolved");
-        fmt::print(stderr, "node_unresolved node_id={}\n", node.node_id());
         return 10;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
