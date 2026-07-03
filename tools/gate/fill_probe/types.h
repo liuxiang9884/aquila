@@ -7,12 +7,28 @@
 
 namespace aquila::tools::gate::fill_probe {
 
+enum class TriggerMode : std::uint8_t {
+  kGateDirect,
+  kBinanceTriggerGateQuote,
+};
+
+struct ExchangeMarketDataConfig {
+  std::string shm_name;
+  std::string channel_name{"book_ticker_channel"};
+};
+
+struct MarketDataConfig {
+  ExchangeMarketDataConfig gate;
+  ExchangeMarketDataConfig binance;
+};
+
 struct ProbeConfig {
   std::string name;
   std::string symbol;
   std::string exchange_symbol;
   std::int32_t symbol_id{0};
   std::uint8_t strategy_id{0};
+  TriggerMode trigger_mode{TriggerMode::kGateDirect};
   std::uint64_t max_nodes{1000};
   std::uint64_t duration_ms{1800000};
   std::uint64_t node_pause_ms{1000};
@@ -23,11 +39,8 @@ struct ProbeConfig {
   std::uint32_t close_slippage_bps{100};
   std::int64_t max_local_freshness_ns{1000000};
   std::int64_t max_exchange_freshness_ns{2000000};
-};
-
-struct MarketDataConfig {
-  std::string shm_name;
-  std::string channel_name{"book_ticker_channel"};
+  std::int64_t max_binance_freshness_ns{2000000};
+  std::int64_t max_gate_freshness_ns{50000000};
 };
 
 struct ProbeOrderGatewayConfig {

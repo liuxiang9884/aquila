@@ -85,6 +85,33 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
   *out = node.value<bool>().value_or(fallback);
 }
 
+[[nodiscard]] bool AssignTriggerMode(toml::node_view<const toml::node> node,
+                                     TriggerMode* out, std::string* error) {
+  const std::string value = node.value<std::string>().value_or("gate_direct");
+  if (value == "gate_direct") {
+    *out = TriggerMode::kGateDirect;
+    return true;
+  }
+  if (value == "binance_trigger_gate_quote") {
+    *out = TriggerMode::kBinanceTriggerGateQuote;
+    return true;
+  }
+  *error = "fill_probe.trigger_mode must be gate_direct or "
+           "binance_trigger_gate_quote";
+  return false;
+}
+
+[[nodiscard]] bool AssignMarketDataSection(
+    toml::node_view<const toml::node> section, std::string_view prefix,
+    ExchangeMarketDataConfig* out, std::string* error) {
+  if (!AssignString(section["shm_name"], std::string{prefix} + ".shm_name",
+                    &out->shm_name, error)) {
+    return false;
+  }
+  out->channel_name = section["channel_name"].value_or(out->channel_name);
+  return true;
+}
+
 [[nodiscard]] bool ValidateConfig(const FillProbeConfig& config,
                                   std::string* error) {
   if (config.probe.symbol.empty()) {
@@ -95,8 +122,13 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
     *error = "fill_probe.exchange_symbol is required";
     return false;
   }
-  if (config.market_data.shm_name.empty()) {
-    *error = "market_data.shm_name is required";
+  if (config.market_data.gate.shm_name.empty()) {
+    *error = "market_data.gate.shm_name is required";
+    return false;
+  }
+  if (config.probe.trigger_mode == TriggerMode::kBinanceTriggerGateQuote &&
+      config.market_data.binance.shm_name.empty()) {
+    *error = "market_data.binance.shm_name is required";
     return false;
   }
   if (config.order_gateway.shm_name.empty()) {
@@ -164,6 +196,14 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
     *error = "fill_probe.max_exchange_freshness_ns must be positive";
     return false;
   }
+  if (config.probe.max_binance_freshness_ns <= 0) {
+    *error = "fill_probe.max_binance_freshness_ns must be positive";
+    return false;
+  }
+  if (config.probe.max_gate_freshness_ns <= 0) {
+    *error = "fill_probe.max_gate_freshness_ns must be positive";
+    return false;
+  }
   return true;
 }
 
@@ -182,6 +222,8 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
                      &config.probe.symbol_id, &error) ||
       !AssignInteger(probe["strategy_id"], "fill_probe.strategy_id",
                      &config.probe.strategy_id, &error) ||
+      !AssignTriggerMode(probe["trigger_mode"], &config.probe.trigger_mode,
+                         &error) ||
       !AssignInteger(probe["max_nodes"], "fill_probe.max_nodes",
                      &config.probe.max_nodes, &error) ||
       !AssignInteger(probe["duration_ms"], "fill_probe.duration_ms",
@@ -207,7 +249,13 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
                            &config.probe.max_local_freshness_ns, &error) ||
       !AssignSignedInteger(probe["max_exchange_freshness_ns"],
                            "fill_probe.max_exchange_freshness_ns",
-                           &config.probe.max_exchange_freshness_ns, &error)) {
+                           &config.probe.max_exchange_freshness_ns, &error) ||
+      !AssignSignedInteger(probe["max_binance_freshness_ns"],
+                           "fill_probe.max_binance_freshness_ns",
+                           &config.probe.max_binance_freshness_ns, &error) ||
+      !AssignSignedInteger(probe["max_gate_freshness_ns"],
+                           "fill_probe.max_gate_freshness_ns",
+                           &config.probe.max_gate_freshness_ns, &error)) {
     return Failure(std::move(error));
   }
 
@@ -219,12 +267,15 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
   config.instrument_catalog_file = catalog_file;
 
   const toml::node_view<const toml::node> market_data = root["market_data"];
-  if (!AssignString(market_data["shm_name"], "market_data.shm_name",
-                    &config.market_data.shm_name, &error)) {
+  if (!AssignMarketDataSection(market_data["gate"], "market_data.gate",
+                               &config.market_data.gate, &error)) {
     return Failure(std::move(error));
   }
-  config.market_data.channel_name =
-      market_data["channel_name"].value_or(config.market_data.channel_name);
+  if (config.probe.trigger_mode == TriggerMode::kBinanceTriggerGateQuote &&
+      !AssignMarketDataSection(market_data["binance"], "market_data.binance",
+                               &config.market_data.binance, &error)) {
+    return Failure(std::move(error));
+  }
 
   const toml::node_view<const toml::node> order_gateway = root["order_gateway"];
   if (!AssignString(order_gateway["shm_name"], "order_gateway.shm_name",
