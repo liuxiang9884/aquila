@@ -53,6 +53,22 @@ target_link_libraries(gate_demo_strategy_test
 add_test(NAME gate_demo_strategy_test
          COMMAND gate_demo_strategy_test)
 
+add_executable(gate_fill_probe_test
+    ../../../tools/gate/fill_probe/config.cpp
+    fill_probe_test.cpp
+)
+
+target_link_libraries(gate_fill_probe_test
+    PRIVATE
+        aquila_core
+        aquila_config
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+)
+
+add_test(NAME gate_fill_probe_test
+         COMMAND gate_fill_probe_test)
+
 add_executable(gate_order_session_rtt_probe_test
     ../../../tools/gate/order_session_rtt_probe/connection_plan.cpp
     ../../../tools/gate/order_session_rtt_probe/config.cpp
