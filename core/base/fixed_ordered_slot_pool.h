@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_BASE_FIXED_ACTIVE_SLOTS_H_
-#define AQUILA_CORE_BASE_FIXED_ACTIVE_SLOTS_H_
+#ifndef AQUILA_CORE_BASE_FIXED_ORDERED_SLOT_POOL_H_
+#define AQUILA_CORE_BASE_FIXED_ORDERED_SLOT_POOL_H_
 
 #include <array>
 #include <bit>
@@ -16,7 +16,7 @@ namespace aquila {
 template <typename T, std::size_t kCapacity,
           typename Index = std::conditional_t<(kCapacity <= 255U), std::uint8_t,
                                               std::uint16_t>>
-class FixedActiveSlots {
+class FixedOrderedSlotPool {
   static_assert(kCapacity > 0U);
   static_assert(kCapacity <= 64U);
   static_assert(std::is_unsigned_v<Index>);
@@ -28,7 +28,7 @@ class FixedActiveSlots {
  public:
   static constexpr Index kInvalidIndex = std::numeric_limits<Index>::max();
 
-  FixedActiveSlots() noexcept {
+  FixedOrderedSlotPool() noexcept {
     ResetInactiveIndices();
     [[maybe_unused]] const std::size_t initialized = Initialize(kCapacity);
   }
@@ -186,4 +186,4 @@ class FixedActiveSlots {
 
 }  // namespace aquila
 
-#endif  // AQUILA_CORE_BASE_FIXED_ACTIVE_SLOTS_H_
+#endif  // AQUILA_CORE_BASE_FIXED_ORDERED_SLOT_POOL_H_

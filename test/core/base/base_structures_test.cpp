@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "core/base/double_heap.h"
-#include "core/base/fixed_active_slots.h"
+#include "core/base/fixed_ordered_slot_pool.h"
 #include "core/base/heap_buffer.h"
 #include "core/base/histogram_quantile.h"
 #include "core/base/monotonic_deque.h"
@@ -15,50 +15,56 @@
 
 namespace {
 
-struct FixedActiveSlotTestValue {
+struct FixedOrderedSlotPoolTestValue {
   std::uint64_t id{0};
   int payload{0};
 };
 
-TEST(FixedActiveSlotsTest, InitializesWithClampedCapacityAndRejectsWhenFull) {
-  aquila::FixedActiveSlots<FixedActiveSlotTestValue, 4> slots;
+TEST(FixedOrderedSlotPoolTest,
+     InitializesWithClampedCapacityAndRejectsWhenFull) {
+  aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 4> slots;
 
   EXPECT_EQ(slots.Initialize(10), 4U);
   EXPECT_EQ(slots.capacity(), 4U);
   EXPECT_TRUE(slots.empty());
 
-  EXPECT_NE(slots.EmplaceBack(FixedActiveSlotTestValue{.id = 1, .payload = 10}),
-            decltype(slots)::kInvalidIndex);
-  EXPECT_NE(slots.EmplaceBack(FixedActiveSlotTestValue{.id = 2, .payload = 20}),
-            decltype(slots)::kInvalidIndex);
-  EXPECT_NE(slots.EmplaceBack(FixedActiveSlotTestValue{.id = 3, .payload = 30}),
-            decltype(slots)::kInvalidIndex);
-  EXPECT_NE(slots.EmplaceBack(FixedActiveSlotTestValue{.id = 4, .payload = 40}),
-            decltype(slots)::kInvalidIndex);
+  EXPECT_NE(
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 1, .payload = 10}),
+      decltype(slots)::kInvalidIndex);
+  EXPECT_NE(
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 2, .payload = 20}),
+      decltype(slots)::kInvalidIndex);
+  EXPECT_NE(
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 3, .payload = 30}),
+      decltype(slots)::kInvalidIndex);
+  EXPECT_NE(
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 4, .payload = 40}),
+      decltype(slots)::kInvalidIndex);
 
   EXPECT_TRUE(slots.full());
-  EXPECT_EQ(slots.EmplaceBack(FixedActiveSlotTestValue{.id = 5, .payload = 50}),
-            decltype(slots)::kInvalidIndex);
+  EXPECT_EQ(
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 5, .payload = 50}),
+      decltype(slots)::kInvalidIndex);
   EXPECT_EQ(slots.active_count(), 4U);
 }
 
-TEST(FixedActiveSlotsTest, ReusesLowSlotWithoutChangingFifoOrder) {
-  aquila::FixedActiveSlots<FixedActiveSlotTestValue, 4> slots;
+TEST(FixedOrderedSlotPoolTest, ReusesLowSlotWithoutChangingFifoOrder) {
+  aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 4> slots;
   EXPECT_EQ(slots.Initialize(4), 4U);
 
   const auto first =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 101, .payload = 1});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 101, .payload = 1});
   const auto second =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 102, .payload = 2});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 102, .payload = 2});
   const auto third =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 103, .payload = 3});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 103, .payload = 3});
   ASSERT_NE(first, decltype(slots)::kInvalidIndex);
   ASSERT_NE(second, decltype(slots)::kInvalidIndex);
   ASSERT_NE(third, decltype(slots)::kInvalidIndex);
 
   EXPECT_TRUE(slots.Erase(second));
   const auto reused =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 104, .payload = 4});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 104, .payload = 4});
   EXPECT_EQ(reused, second);
 
   const auto active = slots.active_indices();
@@ -71,18 +77,18 @@ TEST(FixedActiveSlotsTest, ReusesLowSlotWithoutChangingFifoOrder) {
   EXPECT_EQ(slots.At(active[2]).id, 104U);
 }
 
-TEST(FixedActiveSlotsTest, EraseHandlesHeadMiddleTailAndInvalidIndex) {
-  aquila::FixedActiveSlots<FixedActiveSlotTestValue, 5> slots;
+TEST(FixedOrderedSlotPoolTest, EraseHandlesHeadMiddleTailAndInvalidIndex) {
+  aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 5> slots;
   EXPECT_EQ(slots.Initialize(5), 5U);
 
   const auto first =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 1, .payload = 1});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 1, .payload = 1});
   const auto second =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 2, .payload = 2});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 2, .payload = 2});
   const auto third =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 3, .payload = 3});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 3, .payload = 3});
   const auto fourth =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 4, .payload = 4});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 4, .payload = 4});
 
   EXPECT_TRUE(slots.Erase(first));
   EXPECT_TRUE(slots.Erase(third));
@@ -98,23 +104,23 @@ TEST(FixedActiveSlotsTest, EraseHandlesHeadMiddleTailAndInvalidIndex) {
   EXPECT_TRUE(slots.occupied(second));
 }
 
-TEST(FixedActiveSlotsTest, FindIndexIfScansOnlyActiveSlotsInFifoOrder) {
-  aquila::FixedActiveSlots<FixedActiveSlotTestValue, 4> slots;
+TEST(FixedOrderedSlotPoolTest, FindIndexIfScansOnlyActiveSlotsInFifoOrder) {
+  aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 4> slots;
   EXPECT_EQ(slots.Initialize(4), 4U);
 
   const auto first =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 10, .payload = 1});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 10, .payload = 1});
   const auto second =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 20, .payload = 2});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 20, .payload = 2});
   const auto third =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 30, .payload = 3});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 30, .payload = 3});
   ASSERT_TRUE(slots.Erase(second));
   const auto fourth =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 40, .payload = 4});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 40, .payload = 4});
 
   std::vector<std::uint64_t> visited_ids;
   const auto found =
-      slots.FindIndexIf([&](const FixedActiveSlotTestValue& value) {
+      slots.FindIndexIf([&](const FixedOrderedSlotPoolTestValue& value) {
         visited_ids.push_back(value.id);
         return value.id == 40;
       });
@@ -125,14 +131,14 @@ TEST(FixedActiveSlotsTest, FindIndexIfScansOnlyActiveSlotsInFifoOrder) {
   EXPECT_EQ(third, 2);
 }
 
-TEST(FixedActiveSlotsTest, ClearKeepsCapacityAndAllowsReuse) {
-  aquila::FixedActiveSlots<FixedActiveSlotTestValue, 4> slots;
+TEST(FixedOrderedSlotPoolTest, ClearKeepsCapacityAndAllowsReuse) {
+  aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 4> slots;
   EXPECT_EQ(slots.Initialize(2), 2U);
 
   const auto first =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 7, .payload = 70});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 7, .payload = 70});
   const auto second =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 8, .payload = 80});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 8, .payload = 80});
   ASSERT_NE(first, decltype(slots)::kInvalidIndex);
   ASSERT_NE(second, decltype(slots)::kInvalidIndex);
 
@@ -142,7 +148,7 @@ TEST(FixedActiveSlotsTest, ClearKeepsCapacityAndAllowsReuse) {
   EXPECT_EQ(slots.capacity(), 2U);
   EXPECT_FALSE(slots.occupied(first));
   const auto reused =
-      slots.EmplaceBack(FixedActiveSlotTestValue{.id = 9, .payload = 90});
+      slots.EmplaceBack(FixedOrderedSlotPoolTestValue{.id = 9, .payload = 90});
   EXPECT_EQ(reused, first);
   EXPECT_EQ(slots.At(reused).payload, 90);
 }

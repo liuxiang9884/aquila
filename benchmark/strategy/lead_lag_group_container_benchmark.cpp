@@ -10,7 +10,7 @@
 
 #include <benchmark/benchmark.h>
 
-#include "core/base/fixed_active_slots.h"
+#include "core/base/fixed_ordered_slot_pool.h"
 #include "strategy/lead_lag/execution_state.h"
 
 namespace {
@@ -570,11 +570,11 @@ class LinkedListGroupContainer {
 };
 
 template <std::uint16_t kCapacity>
-class FixedActiveSlotsGroupContainer {
+class FixedOrderedSlotPoolGroupContainer {
  public:
   static constexpr std::uint16_t kCapacityValue = kCapacity;
   using Slots =
-      ::aquila::FixedActiveSlots<ExecutionGroup, kCapacity, std::uint16_t>;
+      ::aquila::FixedOrderedSlotPool<ExecutionGroup, kCapacity, std::uint16_t>;
 
   void Reset(std::uint16_t active_count,
              ScanScenario scenario = ScanScenario::kNoTrigger) noexcept {
@@ -918,25 +918,24 @@ void RegisterContainerBenchmarks(
                        &BM_MixedLivePattern<Container>, active_counts);
 }
 
+template <std::uint16_t kCapacity>
+void RegisterFullActiveContainerBenchmarks(const char* capacity_name) {
+  const std::initializer_list<std::int64_t> active_counts{kCapacity};
+  RegisterContainerBenchmarks<ActiveIndexGroupContainer<kCapacity>>(
+      "ActiveIndex", capacity_name, active_counts);
+  RegisterContainerBenchmarks<FixedOrderedSlotPoolGroupContainer<kCapacity>>(
+      "FixedOrderedSlotPool", capacity_name, active_counts);
+  RegisterContainerBenchmarks<LinkedListGroupContainer<kCapacity>>(
+      "LinkedList", capacity_name, active_counts);
+}
+
 void RegisterAllBenchmarks() {
-  RegisterContainerBenchmarks<ActiveIndexGroupContainer<8>>("ActiveIndex", "8",
-                                                            {2, 4, 8});
-  RegisterContainerBenchmarks<FixedActiveSlotsGroupContainer<8>>(
-      "FixedActiveSlots", "8", {2, 4, 8});
-  RegisterContainerBenchmarks<LinkedListGroupContainer<8>>("LinkedList", "8",
-                                                           {2, 4, 8});
-  RegisterContainerBenchmarks<ActiveIndexGroupContainer<16>>("ActiveIndex",
-                                                             "16", {4, 8, 16});
-  RegisterContainerBenchmarks<FixedActiveSlotsGroupContainer<16>>(
-      "FixedActiveSlots", "16", {4, 8, 16});
-  RegisterContainerBenchmarks<LinkedListGroupContainer<16>>("LinkedList", "16",
-                                                            {4, 8, 16});
-  RegisterContainerBenchmarks<ActiveIndexGroupContainer<32>>("ActiveIndex",
-                                                             "32", {8, 16, 32});
-  RegisterContainerBenchmarks<FixedActiveSlotsGroupContainer<32>>(
-      "FixedActiveSlots", "32", {8, 16, 32});
-  RegisterContainerBenchmarks<LinkedListGroupContainer<32>>("LinkedList", "32",
-                                                            {8, 16, 32});
+  RegisterFullActiveContainerBenchmarks<2>("2");
+  RegisterFullActiveContainerBenchmarks<4>("4");
+  RegisterFullActiveContainerBenchmarks<8>("8");
+  RegisterFullActiveContainerBenchmarks<16>("16");
+  RegisterFullActiveContainerBenchmarks<32>("32");
+  RegisterFullActiveContainerBenchmarks<64>("64");
 }
 
 const bool kBenchmarksRegistered = [] {
