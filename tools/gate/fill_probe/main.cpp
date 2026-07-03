@@ -21,11 +21,13 @@
 #include "core/trading/order_feedback_shm.h"
 #include "core/trading/order_gateway_client.h"
 #include "core/trading/order_id.h"
+#include "tools/gate/fill_probe/bbo_cache.h"
 #include "tools/gate/fill_probe/config.h"
 #include "tools/gate/fill_probe/csv_writer.h"
 #include "tools/gate/fill_probe/node_budget.h"
 #include "tools/gate/fill_probe/order_math.h"
 #include "tools/gate/fill_probe/state_machine.h"
+#include "tools/gate/fill_probe/trigger_quote.h"
 
 namespace {
 
@@ -59,6 +61,16 @@ struct OrderRecord {
   std::string symbol_text;
   std::string quantity_text;
   std::string price_text;
+};
+
+struct NodeCsvContext {
+  fp::TriggerMode trigger_mode{fp::TriggerMode::kGateDirect};
+  fp::BboSnapshot trigger_bbo;
+  fp::BboSnapshot quote_bbo;
+  fp::TriggerQuoteDecision trigger_quote;
+  std::int64_t local_freshness_ns{0};
+  std::int64_t exchange_freshness_ns{0};
+  std::int64_t submit_ns{0};
 };
 
 [[nodiscard]] std::string EntryKindText(fp::EntryKind kind);
@@ -151,6 +163,12 @@ struct RuntimeContext {
   return side == fp::NodeSide::kBuy ? "buy" : "sell";
 }
 
+[[nodiscard]] std::string TriggerModeText(fp::TriggerMode mode) {
+  return mode == fp::TriggerMode::kBinanceTriggerGateQuote
+             ? "binance_trigger_gate_quote"
+             : "gate_direct";
+}
+
 [[nodiscard]] aquila::OrderSide ToOrderSide(fp::NodeSide side) {
   return side == fp::NodeSide::kBuy ? aquila::OrderSide::kBuy
                                     : aquila::OrderSide::kSell;
@@ -210,39 +228,25 @@ struct RuntimeContext {
   return result;
 }
 
-[[nodiscard]] fp::BboSnapshot ToSnapshot(const aquila::BookTicker& ticker,
-                                         double price_tick) {
-  return fp::BboSnapshot{
-      .id = static_cast<std::uint64_t>(ticker.id),
-      .symbol_id = ticker.symbol_id,
-      .exchange_ns = ticker.exchange_ns,
-      .local_ns = ticker.local_ns,
-      .bid_price = ticker.bid_price,
-      .bid_volume = ticker.bid_volume,
-      .ask_price = ticker.ask_price,
-      .ask_volume = ticker.ask_volume,
-      .price_tick = price_tick,
-  };
+void DrainBboReader(md::BookTickerShmReader& reader, fp::BboCache* cache,
+                    std::uint64_t max_events) {
+  for (std::uint64_t i = 0; i < max_events; ++i) {
+    aquila::BookTicker ticker{};
+    if (!reader.TryReadOne(&ticker)) {
+      return;
+    }
+    cache->OnBookTicker(ticker);
+  }
 }
 
-[[nodiscard]] bool SaneBbo(const aquila::BookTicker& ticker) {
-  return std::isfinite(ticker.bid_price) && ticker.bid_price > 0.0 &&
-         std::isfinite(ticker.ask_price) && ticker.ask_price > 0.0 &&
-         ticker.bid_price <= ticker.ask_price;
-}
-
-[[nodiscard]] bool ReadBboWithin(md::BookTickerShmReader& reader,
-                                 std::int32_t symbol_id, double price_tick,
-                                 std::chrono::milliseconds timeout,
-                                 fp::BboSnapshot* out) {
+[[nodiscard]] bool WaitForBbo(md::BookTickerShmReader& reader,
+                              fp::BboCache* cache,
+                              std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline &&
          !stop_requested.load(std::memory_order_relaxed)) {
-    aquila::BookTicker ticker{};
-    std::uint64_t skipped = 0;
-    if (reader.TryReadLatest(&ticker, &skipped) &&
-        ticker.symbol_id == symbol_id && SaneBbo(ticker)) {
-      *out = ToSnapshot(ticker, price_tick);
+    DrainBboReader(reader, cache, /*max_events=*/256);
+    if (cache->latest().has_value()) {
       return true;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -264,11 +268,11 @@ struct RuntimeContext {
 }
 
 [[nodiscard]] md::BookTickerShmConfig ToMarketShmConfig(
-    const fp::FillProbeConfig& config) {
+    const fp::ExchangeMarketDataConfig& config) {
   return md::BookTickerShmConfig{
       .enabled = true,
-      .shm_name = config.market_data.shm_name,
-      .channel_name = config.market_data.channel_name,
+      .shm_name = config.shm_name,
+      .channel_name = config.channel_name,
       .create = false,
       .remove_existing = false,
   };
@@ -501,10 +505,10 @@ void ApplyFeedback(fp::ProbeNode& node,
 }
 
 [[nodiscard]] bool SubmitCloseIfNeeded(
-    const fp::FillProbeConfig& config, md::BookTickerShmReader& market_reader,
+    const fp::FillProbeConfig& config,
+    const std::optional<fp::BboSnapshot>& close_bbo,
     core::OrderGatewayClient& gateway, fp::ProbeNode& node, fp::EntryKind kind,
-    std::uint64_t parent_id, double price_tick, fp::OrderSizing sizing,
-    fp::CsvWriters& writers,
+    std::uint64_t parent_id, fp::OrderSizing sizing, fp::CsvWriters& writers,
     absl::flat_hash_map<std::uint64_t, OrderRecord>& orders,
     std::uint64_t* next_order_id, std::string_view run_id) {
   const fp::LifecycleState& lifecycle =
@@ -513,15 +517,13 @@ void ApplyFeedback(fp::ProbeNode& node,
     return false;
   }
 
-  fp::BboSnapshot bbo;
-  if (!ReadBboWithin(market_reader, config.probe.symbol_id, price_tick,
-                     std::chrono::milliseconds(1), &bbo)) {
+  if (!close_bbo.has_value()) {
     return false;
   }
   const aquila::OrderSide entry_side = ToOrderSide(node.side());
   const aquila::OrderSide close_side = Opposite(entry_side);
   const fp::PriceText close_price =
-      fp::ClosePrice(close_side, bbo, config.probe.close_slippage_bps);
+      fp::ClosePrice(close_side, *close_bbo, config.probe.close_slippage_bps);
   const std::uint64_t local_order_id =
       NextLocalOrderId(config.probe.strategy_id, next_order_id);
   const std::uint16_t route_id = lifecycle.entry_route_id;
@@ -579,28 +581,46 @@ void WriteLifecycleRow(fp::CsvWriters& writers, std::string_view run_id,
 }
 
 void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
-                   const fp::ProbeNode& node, const fp::BboSnapshot& bbo,
-                   const fp::OrderSizing& sizing, std::int64_t submit_ns,
-                   std::int64_t local_freshness_ns,
-                   std::int64_t exchange_freshness_ns,
-                   std::string_view skip_reason,
+                   const fp::ProbeNode& node, const NodeCsvContext& context,
+                   const fp::OrderSizing& sizing, std::string_view skip_reason,
                    std::string_view unresolved_reason) {
+  const bool cross_exchange =
+      context.trigger_mode == fp::TriggerMode::kBinanceTriggerGateQuote;
   writers.WriteNode(fp::NodeCsvRow{
       .run_id = std::string(run_id),
       .node_id = node.node_id(),
       .side = NodeSideText(node.side()),
-      .bbo_id = bbo.id,
-      .bbo_exchange_ns = bbo.exchange_ns,
-      .bbo_local_ns = bbo.local_ns,
+      .trigger_mode = TriggerModeText(context.trigger_mode),
+      .binance_bbo_id = cross_exchange ? context.trigger_bbo.id : 0,
+      .binance_exchange_ns =
+          cross_exchange ? context.trigger_bbo.exchange_ns : 0,
+      .binance_local_ns = cross_exchange ? context.trigger_bbo.local_ns : 0,
+      .gate_bbo_id = context.quote_bbo.id,
+      .gate_exchange_ns = context.quote_bbo.exchange_ns,
+      .gate_local_ns = context.quote_bbo.local_ns,
+      .bbo_id = context.quote_bbo.id,
+      .bbo_exchange_ns = context.quote_bbo.exchange_ns,
+      .bbo_local_ns = context.quote_bbo.local_ns,
       .decision_ns = node.decision_ns(),
-      .submit_ns = submit_ns,
+      .submit_ns = context.submit_ns,
       .finish_ns = node.finish_ns(),
-      .local_freshness_ns = local_freshness_ns,
-      .exchange_freshness_ns = exchange_freshness_ns,
-      .bid_price = bbo.bid_price,
-      .bid_volume = bbo.bid_volume,
-      .ask_price = bbo.ask_price,
-      .ask_volume = bbo.ask_volume,
+      .local_freshness_ns = context.local_freshness_ns,
+      .exchange_freshness_ns = context.exchange_freshness_ns,
+      .binance_freshness_ns =
+          cross_exchange ? context.trigger_quote.binance_freshness_ns : 0,
+      .gate_freshness_ns = cross_exchange
+                               ? context.trigger_quote.gate_freshness_ns
+                               : context.local_freshness_ns,
+      .gate_exchange_delta_ns =
+          cross_exchange ? context.trigger_quote.gate_exchange_delta_ns : 0,
+      .gate_local_delta_ns =
+          cross_exchange ? context.trigger_quote.gate_local_delta_ns : 0,
+      .trigger_to_send_ns =
+          context.submit_ns == 0 ? 0 : context.submit_ns - node.decision_ns(),
+      .bid_price = context.quote_bbo.bid_price,
+      .bid_volume = context.quote_bbo.bid_volume,
+      .ask_price = context.quote_bbo.ask_price,
+      .ask_volume = context.quote_bbo.ask_volume,
       .entry_quantity = sizing.quantity,
       .entry_notional_usdt = sizing.notional_usdt,
       .status = LowerEnumName(magic_enum::enum_name(node.status())),
@@ -627,6 +647,76 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
       node.finish_ns(), node.net_position());
 }
 
+void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
+                      std::uint64_t node_id, fp::NodeSide side,
+                      fp::TriggerMode trigger_mode,
+                      const std::optional<fp::BboSnapshot>& trigger_bbo,
+                      const std::optional<fp::BboSnapshot>& quote_bbo,
+                      std::int64_t decision_ns,
+                      fp::TriggerQuoteDecision trigger_quote,
+                      std::string_view skip_reason) {
+  const bool cross_exchange =
+      trigger_mode == fp::TriggerMode::kBinanceTriggerGateQuote;
+  std::int64_t local_freshness_ns = 0;
+  std::int64_t exchange_freshness_ns = 0;
+  if (quote_bbo.has_value()) {
+    local_freshness_ns = decision_ns - quote_bbo->local_ns;
+    exchange_freshness_ns = decision_ns - quote_bbo->exchange_ns;
+  }
+  if (cross_exchange && trigger_bbo.has_value() &&
+      trigger_quote.binance_freshness_ns == 0) {
+    trigger_quote.binance_freshness_ns = decision_ns - trigger_bbo->local_ns;
+  }
+  if (cross_exchange && quote_bbo.has_value() &&
+      trigger_quote.gate_freshness_ns == 0) {
+    trigger_quote.gate_freshness_ns = local_freshness_ns;
+    trigger_quote.gate_exchange_delta_ns =
+        quote_bbo->exchange_ns - trigger_bbo.value_or(*quote_bbo).exchange_ns;
+    trigger_quote.gate_local_delta_ns =
+        quote_bbo->local_ns - trigger_bbo.value_or(*quote_bbo).local_ns;
+  }
+  writers.WriteNode(fp::NodeCsvRow{
+      .run_id = std::string(run_id),
+      .node_id = node_id,
+      .side = NodeSideText(side),
+      .trigger_mode = TriggerModeText(trigger_mode),
+      .binance_bbo_id =
+          cross_exchange && trigger_bbo.has_value() ? trigger_bbo->id : 0,
+      .binance_exchange_ns = cross_exchange && trigger_bbo.has_value()
+                                 ? trigger_bbo->exchange_ns
+                                 : 0,
+      .binance_local_ns =
+          cross_exchange && trigger_bbo.has_value() ? trigger_bbo->local_ns : 0,
+      .gate_bbo_id = quote_bbo.has_value() ? quote_bbo->id : 0,
+      .gate_exchange_ns = quote_bbo.has_value() ? quote_bbo->exchange_ns : 0,
+      .gate_local_ns = quote_bbo.has_value() ? quote_bbo->local_ns : 0,
+      .bbo_id = quote_bbo.has_value() ? quote_bbo->id : 0,
+      .bbo_exchange_ns = quote_bbo.has_value() ? quote_bbo->exchange_ns : 0,
+      .bbo_local_ns = quote_bbo.has_value() ? quote_bbo->local_ns : 0,
+      .decision_ns = decision_ns,
+      .local_freshness_ns = local_freshness_ns,
+      .exchange_freshness_ns = exchange_freshness_ns,
+      .binance_freshness_ns =
+          cross_exchange ? trigger_quote.binance_freshness_ns : 0,
+      .gate_freshness_ns =
+          cross_exchange ? trigger_quote.gate_freshness_ns : local_freshness_ns,
+      .gate_exchange_delta_ns =
+          cross_exchange ? trigger_quote.gate_exchange_delta_ns : 0,
+      .gate_local_delta_ns =
+          cross_exchange ? trigger_quote.gate_local_delta_ns : 0,
+      .bid_price = quote_bbo.has_value() ? quote_bbo->bid_price : 0.0,
+      .bid_volume = quote_bbo.has_value() ? quote_bbo->bid_volume : 0.0,
+      .ask_price = quote_bbo.has_value() ? quote_bbo->ask_price : 0.0,
+      .ask_volume = quote_bbo.has_value() ? quote_bbo->ask_volume : 0.0,
+      .status = "skipped",
+      .skip_reason = std::string(skip_reason),
+  });
+  fmt::print(
+      "fill_probe_node_done run_id={} node_id={} side={} status=skipped "
+      "skip_reason={} decision_ns={}\n",
+      run_id, node_id, NodeSideText(side), skip_reason, decision_ns);
+}
+
 [[nodiscard]] int ValidateOnly(const LoadedContext& context) {
   if (context.instrument == nullptr) {
     fmt::print(stderr, "instrument missing\n");
@@ -640,18 +730,35 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
 }
 
 [[nodiscard]] int RunProbe(const LoadedContext& context, bool preflight_only) {
-  md::BookTickerShmReader market_reader(ToMarketShmConfig(context.config));
-  fp::BboSnapshot bbo;
-  if (!ReadBboWithin(market_reader, context.config.probe.symbol_id,
-                     context.instrument->price_tick, std::chrono::seconds(5),
-                     &bbo)) {
-    fmt::print(stderr, "market_data_bbo_timeout symbol_id={}\n",
+  md::BookTickerShmReader gate_reader(
+      ToMarketShmConfig(context.config.market_data.gate));
+  std::optional<md::BookTickerShmReader> binance_reader;
+  if (context.config.probe.trigger_mode ==
+      fp::TriggerMode::kBinanceTriggerGateQuote) {
+    binance_reader.emplace(
+        ToMarketShmConfig(context.config.market_data.binance));
+  }
+
+  fp::BboCache gate_cache(context.config.probe.symbol_id,
+                          context.instrument->price_tick);
+  fp::BboCache binance_cache(context.config.probe.symbol_id,
+                             context.instrument->price_tick);
+  if (!WaitForBbo(gate_reader, &gate_cache, std::chrono::seconds(5))) {
+    fmt::print(stderr, "market_data_bbo_timeout exchange=gate symbol_id={}\n",
                context.config.probe.symbol_id);
     return 1;
   }
+  if (binance_reader.has_value() &&
+      !WaitForBbo(*binance_reader, &binance_cache, std::chrono::seconds(5))) {
+    fmt::print(stderr,
+               "market_data_bbo_timeout exchange=binance symbol_id={}\n",
+               context.config.probe.symbol_id);
+    return 1;
+  }
+  const fp::BboSnapshot preflight_quote = *gate_cache.latest();
 
   const fp::OrderSizingResult sizing_result =
-      fp::BuildOrderSizing(*context.instrument, bbo.ask_price);
+      fp::BuildOrderSizing(*context.instrument, preflight_quote.ask_price);
   if (!sizing_result.ok) {
     fmt::print(stderr, "order_sizing_failed error={}\n", sizing_result.error);
     return 1;
@@ -703,15 +810,18 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
       fmt::format("{}_{}", context.config.probe.name, run_id_numeric);
 
   fmt::print(
-      "fill_probe_start run_id={} name={} symbol={} symbol_id={} max_nodes={} "
-      "duration_ms={} preflight_only={}\n",
+      "fill_probe_start run_id={} name={} symbol={} symbol_id={} "
+      "trigger_mode={} max_nodes={} duration_ms={} preflight_only={}\n",
       run_id, context.config.probe.name, context.config.probe.symbol,
-      context.config.probe.symbol_id, context.config.probe.max_nodes,
-      context.config.probe.duration_ms, preflight_only);
+      context.config.probe.symbol_id,
+      TriggerModeText(context.config.probe.trigger_mode),
+      context.config.probe.max_nodes, context.config.probe.duration_ms,
+      preflight_only);
   fmt::print(
       "fill_probe_preflight_ok run_id={} symbol={} bbo_id={} bid={:.12g} "
       "ask={:.12g} quantity={} notional_usdt={:.12g}\n",
-      run_id, context.config.probe.symbol, bbo.id, bbo.bid_price, bbo.ask_price,
+      run_id, context.config.probe.symbol, preflight_quote.id,
+      preflight_quote.bid_price, preflight_quote.ask_price,
       sizing_result.value.quantity_text, sizing_result.value.notional_usdt);
   if (preflight_only) {
     return 0;
@@ -734,6 +844,9 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
   std::uint64_t next_order_id = 1;
   fp::SubmittedNodeBudget node_budget(context.config.probe.max_nodes);
   const auto run_start = std::chrono::steady_clock::now();
+  std::uint64_t last_gate_trigger_id = gate_cache.latest()->id;
+  std::uint64_t last_binance_trigger_id =
+      binance_cache.latest().has_value() ? binance_cache.latest()->id : 0;
 
   while (node_budget.CanSubmitNode()) {
     if (stop_requested.load(std::memory_order_relaxed)) {
@@ -748,22 +861,95 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
       break;
     }
 
-    if (!ReadBboWithin(market_reader, context.config.probe.symbol_id,
-                       context.instrument->price_tick,
-                       std::chrono::milliseconds(5), &bbo)) {
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(context.config.probe.node_pause_ms));
-      continue;
+    DrainBboReader(gate_reader, &gate_cache, /*max_events=*/256);
+    if (binance_reader.has_value()) {
+      DrainBboReader(*binance_reader, &binance_cache, /*max_events=*/256);
     }
 
     const std::int64_t decision_ns = SystemNowNs();
+    const std::uint64_t candidate_node_id = node_budget.submitted_nodes() + 1;
+    const fp::NodeSide candidate_side =
+        (candidate_node_id % 2 == 1) ? fp::NodeSide::kBuy : fp::NodeSide::kSell;
+    std::optional<fp::BboSnapshot> trigger_bbo;
+    std::optional<fp::BboSnapshot> quote_bbo;
+    fp::TriggerQuoteDecision trigger_quote;
     std::int64_t local_freshness_ns = 0;
     std::int64_t exchange_freshness_ns = 0;
-    if (!FreshEnough(context.config, bbo, decision_ns, &local_freshness_ns,
-                     &exchange_freshness_ns)) {
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(context.config.probe.node_pause_ms));
-      continue;
+
+    if (context.config.probe.trigger_mode == fp::TriggerMode::kGateDirect) {
+      if (!gate_cache.latest().has_value()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      if (gate_cache.latest()->id == last_gate_trigger_id) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      trigger_bbo = *gate_cache.latest();
+      quote_bbo = *gate_cache.latest();
+      last_gate_trigger_id = trigger_bbo->id;
+      if (!FreshEnough(context.config, *quote_bbo, decision_ns,
+                       &local_freshness_ns, &exchange_freshness_ns)) {
+        WriteSkippedNode(writers, run_id, candidate_node_id, candidate_side,
+                         context.config.probe.trigger_mode, trigger_bbo,
+                         quote_bbo, decision_ns, trigger_quote,
+                         "stale_gate_direct_quote");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+    } else {
+      if (!binance_cache.latest().has_value()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      if (binance_cache.latest()->id == last_binance_trigger_id) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      trigger_bbo = *binance_cache.latest();
+      last_binance_trigger_id = trigger_bbo->id;
+      if (!gate_cache.latest().has_value()) {
+        WriteSkippedNode(writers, run_id, candidate_node_id, candidate_side,
+                         context.config.probe.trigger_mode, trigger_bbo,
+                         std::nullopt, decision_ns, trigger_quote,
+                         "missing_gate_quote");
+        continue;
+      }
+      quote_bbo = *gate_cache.latest();
+      trigger_quote = fp::EvaluateTriggerQuote(
+          *trigger_bbo, *quote_bbo, decision_ns,
+          fp::FreshnessLimits{
+              .max_binance_freshness_ns =
+                  context.config.probe.max_binance_freshness_ns,
+              .max_gate_freshness_ns =
+                  context.config.probe.max_gate_freshness_ns,
+          });
+      local_freshness_ns = trigger_quote.gate_freshness_ns;
+      exchange_freshness_ns = decision_ns - quote_bbo->exchange_ns;
+      if (!trigger_quote.accepted) {
+        WriteSkippedNode(writers, run_id, candidate_node_id, candidate_side,
+                         context.config.probe.trigger_mode, trigger_bbo,
+                         quote_bbo, decision_ns, trigger_quote,
+                         trigger_quote.skip_reason);
+        continue;
+      }
+    }
+
+    const fp::OrderSizingResult entry_sizing_result =
+        fp::BuildOrderSizing(*context.instrument, quote_bbo->ask_price);
+    if (!entry_sizing_result.ok) {
+      fmt::print(stderr, "order_sizing_failed error={}\n",
+                 entry_sizing_result.error);
+      return 1;
+    }
+    if (entry_sizing_result.value.notional_usdt >
+        context.config.probe.max_entry_notional_usdt) {
+      fmt::print(
+          stderr,
+          "entry_notional_too_large notional_usdt={:.12g} limit={:.12g}\n",
+          entry_sizing_result.value.notional_usdt,
+          context.config.probe.max_entry_notional_usdt);
+      return 1;
     }
 
     const std::uint64_t node_id = node_budget.ReserveSubmittedNode();
@@ -771,15 +957,18 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
         (node_id % 2 == 1) ? fp::NodeSide::kBuy : fp::NodeSide::kSell;
     fp::ProbeNode node = fp::ProbeNode::Start(node_id, node_side, decision_ns);
     fmt::print(
-        "fill_probe_node_start run_id={} node_id={} side={} bbo_id={} "
-        "bid={:.12g} ask={:.12g} decision_ns={}\n",
-        run_id, node_id, NodeSideText(node_side), bbo.id, bbo.bid_price,
-        bbo.ask_price, node.decision_ns());
+        "fill_probe_node_start run_id={} node_id={} side={} trigger_mode={} "
+        "trigger_bbo_id={} gate_bbo_id={} bid={:.12g} ask={:.12g} "
+        "decision_ns={}\n",
+        run_id, node_id, NodeSideText(node_side),
+        TriggerModeText(context.config.probe.trigger_mode), trigger_bbo->id,
+        quote_bbo->id, quote_bbo->bid_price, quote_bbo->ask_price,
+        node.decision_ns());
     runtime.current_node_id = node_id;
     runtime.current_node = &node;
 
     const aquila::OrderSide entry_side = ToOrderSide(node_side);
-    const fp::PriceText entry_price = fp::EntryPrice(entry_side, bbo);
+    const fp::PriceText entry_price = fp::EntryPrice(entry_side, *quote_bbo);
     const std::uint64_t parent_id = node_id;
     std::int64_t first_submit_ns = 0;
     for (const fp::EntryKind kind :
@@ -795,11 +984,12 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
           NextLocalOrderId(context.config.probe.strategy_id, &next_order_id);
       core::StrategyOrder order = MakeOrder(
           context.config, local_order_id, parent_id, entry_side, tif,
-          sizing_result.value.quantity, sizing_result.value.quantity_text,
-          entry_price.price_text, /*reduce_only=*/false, route_id);
+          entry_sizing_result.value.quantity,
+          entry_sizing_result.value.quantity_text, entry_price.price_text,
+          /*reduce_only=*/false, route_id);
       OrderRecord record{.order = order, .lifecycle_kind = kind};
       SetOrderTextStorage(&record, context.config.probe.exchange_symbol,
-                          sizing_result.value.quantity_text,
+                          entry_sizing_result.value.quantity_text,
                           entry_price.price_text);
       const core::OrderGatewaySendResult send =
           gateway.PlaceOrder(OrderForGateway(record));
@@ -820,7 +1010,17 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
                      send.status, send.send_local_ns);
     }
 
+    NodeCsvContext node_csv_context{
+        .trigger_mode = context.config.probe.trigger_mode,
+        .trigger_bbo = *trigger_bbo,
+        .quote_bbo = *quote_bbo,
+        .trigger_quote = trigger_quote,
+        .local_freshness_ns = local_freshness_ns,
+        .exchange_freshness_ns = exchange_freshness_ns,
+    };
+
     while (!node.Done() && !stop_requested.load(std::memory_order_relaxed)) {
+      DrainBboReader(gate_reader, &gate_cache, /*max_events=*/256);
       (void)gateway.PollOrderResponses(runtime);
       (void)feedback_reader.Poll(
           64, [&](const aquila::OrderFeedbackEvent& event) {
@@ -839,28 +1039,28 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
         }
       }
 
-      (void)SubmitCloseIfNeeded(
-          context.config, market_reader, gateway, node, fp::EntryKind::kGtc,
-          parent_id, context.instrument->price_tick, sizing_result.value,
-          writers, orders, &next_order_id, run_id);
-      (void)SubmitCloseIfNeeded(
-          context.config, market_reader, gateway, node, fp::EntryKind::kIoc,
-          parent_id, context.instrument->price_tick, sizing_result.value,
-          writers, orders, &next_order_id, run_id);
+      (void)SubmitCloseIfNeeded(context.config, gate_cache.latest(), gateway,
+                                node, fp::EntryKind::kGtc, parent_id,
+                                entry_sizing_result.value, writers, orders,
+                                &next_order_id, run_id);
+      (void)SubmitCloseIfNeeded(context.config, gate_cache.latest(), gateway,
+                                node, fp::EntryKind::kIoc, parent_id,
+                                entry_sizing_result.value, writers, orders,
+                                &next_order_id, run_id);
 
       if (node.UnresolvedDue(SystemNowNs())) {
         node.MarkUnresolved(SystemNowNs());
-        WriteNodeRows(writers, run_id, node, bbo, sizing_result.value,
-                      first_submit_ns, local_freshness_ns,
-                      exchange_freshness_ns, "", "node_unresolved");
+        node_csv_context.submit_ns = first_submit_ns;
+        WriteNodeRows(writers, run_id, node, node_csv_context,
+                      entry_sizing_result.value, "", "node_unresolved");
         return 10;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    WriteNodeRows(writers, run_id, node, bbo, sizing_result.value,
-                  first_submit_ns, local_freshness_ns, exchange_freshness_ns,
-                  "", "");
+    node_csv_context.submit_ns = first_submit_ns;
+    WriteNodeRows(writers, run_id, node, node_csv_context,
+                  entry_sizing_result.value, "", "");
     runtime.current_node = nullptr;
     std::this_thread::sleep_for(
         std::chrono::milliseconds(context.config.probe.node_pause_ms));
