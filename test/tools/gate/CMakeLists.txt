@@ -68,6 +68,9 @@ target_link_libraries(gate_fill_probe_test
 
 add_test(NAME gate_fill_probe_test
          COMMAND gate_fill_probe_test)
+set_tests_properties(gate_fill_probe_test
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
 add_executable(gate_order_session_rtt_probe_test
     ../../../tools/gate/order_session_rtt_probe/connection_plan.cpp
