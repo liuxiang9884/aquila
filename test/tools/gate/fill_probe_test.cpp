@@ -6,6 +6,7 @@
 #include "core/config/instrument_catalog.h"
 #include "tools/gate/fill_probe/config.h"
 #include "tools/gate/fill_probe/csv_writer.h"
+#include "tools/gate/fill_probe/node_budget.h"
 #include "tools/gate/fill_probe/order_math.h"
 #include "tools/gate/fill_probe/state_machine.h"
 
@@ -171,6 +172,26 @@ TEST(GateFillProbeStateMachineTest, CloseRetryLimitLeavesNodeUnresolved) {
   EXPECT_TRUE(node.UnresolvedDue(3000 + 30000000001LL));
   node.MarkUnresolved(3000 + 30000000001LL);
   EXPECT_EQ(node.status(), NodeStatus::kUnresolved);
+}
+
+TEST(GateFillProbeNodeBudgetTest,
+     CountsOnlyNodesThatSubmitEntryOrdersAgainstMaxNodes) {
+  using aquila::tools::gate::fill_probe::SubmittedNodeBudget;
+
+  SubmittedNodeBudget budget(/*max_submitted_nodes=*/2);
+  EXPECT_TRUE(budget.CanSubmitNode());
+  EXPECT_EQ(budget.submitted_nodes(), 0);
+
+  // Missing BBO and freshness-gate skips do not consume max_nodes. The caller
+  // simply does not reserve a submitted node for those cases.
+  EXPECT_TRUE(budget.CanSubmitNode());
+  EXPECT_EQ(budget.ReserveSubmittedNode(), 1);
+  EXPECT_EQ(budget.submitted_nodes(), 1);
+  EXPECT_TRUE(budget.CanSubmitNode());
+
+  EXPECT_EQ(budget.ReserveSubmittedNode(), 2);
+  EXPECT_EQ(budget.submitted_nodes(), 2);
+  EXPECT_FALSE(budget.CanSubmitNode());
 }
 
 TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {

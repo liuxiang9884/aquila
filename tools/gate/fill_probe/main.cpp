@@ -23,6 +23,7 @@
 #include "core/trading/order_id.h"
 #include "tools/gate/fill_probe/config.h"
 #include "tools/gate/fill_probe/csv_writer.h"
+#include "tools/gate/fill_probe/node_budget.h"
 #include "tools/gate/fill_probe/order_math.h"
 #include "tools/gate/fill_probe/state_machine.h"
 
@@ -731,10 +732,10 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
   RuntimeContext runtime{
       .writers = &writers, .orders = &orders, .run_id = run_id};
   std::uint64_t next_order_id = 1;
+  fp::SubmittedNodeBudget node_budget(context.config.probe.max_nodes);
   const auto run_start = std::chrono::steady_clock::now();
 
-  for (std::uint64_t node_id = 1; node_id <= context.config.probe.max_nodes;
-       ++node_id) {
+  while (node_budget.CanSubmitNode()) {
     if (stop_requested.load(std::memory_order_relaxed)) {
       break;
     }
@@ -755,10 +756,20 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
       continue;
     }
 
+    const std::int64_t decision_ns = SystemNowNs();
+    std::int64_t local_freshness_ns = 0;
+    std::int64_t exchange_freshness_ns = 0;
+    if (!FreshEnough(context.config, bbo, decision_ns, &local_freshness_ns,
+                     &exchange_freshness_ns)) {
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(context.config.probe.node_pause_ms));
+      continue;
+    }
+
+    const std::uint64_t node_id = node_budget.ReserveSubmittedNode();
     const fp::NodeSide node_side =
         (node_id % 2 == 1) ? fp::NodeSide::kBuy : fp::NodeSide::kSell;
-    fp::ProbeNode node =
-        fp::ProbeNode::Start(node_id, node_side, SystemNowNs());
+    fp::ProbeNode node = fp::ProbeNode::Start(node_id, node_side, decision_ns);
     fmt::print(
         "fill_probe_node_start run_id={} node_id={} side={} bbo_id={} "
         "bid={:.12g} ask={:.12g} decision_ns={}\n",
@@ -766,17 +777,6 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
         bbo.ask_price, node.decision_ns());
     runtime.current_node_id = node_id;
     runtime.current_node = &node;
-    std::int64_t local_freshness_ns = 0;
-    std::int64_t exchange_freshness_ns = 0;
-    if (!FreshEnough(context.config, bbo, node.decision_ns(),
-                     &local_freshness_ns, &exchange_freshness_ns)) {
-      WriteNodeRows(writers, run_id, node, bbo, sizing_result.value, 0,
-                    local_freshness_ns, exchange_freshness_ns, "freshness_gate",
-                    "");
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(context.config.probe.node_pause_ms));
-      continue;
-    }
 
     const aquila::OrderSide entry_side = ToOrderSide(node_side);
     const fp::PriceText entry_price = fp::EntryPrice(entry_side, bbo);

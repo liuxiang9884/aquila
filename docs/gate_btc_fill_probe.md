@@ -10,6 +10,9 @@
 - 凭据只使用 `TEST_KEY` / `TEST_SECRET` 环境变量，不在配置或日志中写入 secret。
 - 单个 entry order 的名义金额由 instrument catalog 的 `notional_multiplier`、当前 entry price 和
   `min_quantity` 计算，配置上限为 `max_entry_notional_usdt=10`。
+- `max_nodes` 表示最多提交多少个开仓 node。每个开仓 node 固定同时提交 1 个 GTC entry 和 1 个 IOC
+  entry，分别走不同 order session；close order、close retry、cancel command 不计入该上限。
+- 没有读到可用 BBO 或 freshness gate 未通过时，不创建开仓 node，也不消耗 `max_nodes` 配额。
 - 一个 node 会同时发 route 0 GTC 和 route 1 IOC。若两路都成交，临时 exposure 可能接近单笔上限的
   2 倍。
 - 当前 Gate encoder 只支持 limit order；close 使用 reduce-only IOC aggressive limit，不是 native
