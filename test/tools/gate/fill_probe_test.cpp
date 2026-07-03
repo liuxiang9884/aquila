@@ -1,6 +1,7 @@
 #include "tools/gate/fill_probe/config.h"
 
 #include "core/config/instrument_catalog.h"
+#include "tools/gate/fill_probe/csv_writer.h"
 #include "tools/gate/fill_probe/order_math.h"
 #include "tools/gate/fill_probe/state_machine.h"
 
@@ -10,6 +11,12 @@
 #include <gtest/gtest.h>
 
 namespace {
+
+std::string ReadWholeFileForTest(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  return std::string(std::istreambuf_iterator<char>(input),
+                     std::istreambuf_iterator<char>());
+}
 
 TEST(GateFillProbeConfigTest, LoadsMinimalConfig) {
   const std::filesystem::path path =
@@ -170,6 +177,46 @@ TEST(GateFillProbeStateMachineTest, CloseRetryLimitLeavesNodeUnresolved) {
   EXPECT_TRUE(node.UnresolvedDue(3000 + 30000000001LL));
   node.MarkUnresolved(3000 + 30000000001LL);
   EXPECT_EQ(node.status(), NodeStatus::kUnresolved);
+}
+
+TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
+  namespace fp = aquila::tools::gate::fill_probe;
+  const std::filesystem::path dir =
+      std::filesystem::path{"/home/liuxiang/tmp"} /
+      "gate_fill_probe_csv_test";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  fp::CsvWriters writers(dir);
+  ASSERT_TRUE(writers.Open().ok);
+  writers.WriteNode(fp::NodeCsvRow{
+      .run_id = "run-a",
+      .node_id = 7,
+      .side = "buy",
+      .bbo_id = 123,
+      .bid_price = 61513.0,
+      .ask_price = 61513.1,
+      .status = "completed_no_fill",
+  });
+  writers.WriteLifecycle(fp::LifecycleCsvRow{
+      .run_id = "run-a",
+      .node_id = 7,
+      .entry_kind = "ioc",
+      .entry_local_order_id = 70,
+      .entry_result = "cancelled",
+      .close_attribution = "none",
+  });
+  writers.WriteOrderEvent(fp::OrderEventCsvRow{
+      .run_id = "run-a",
+      .node_id = 7,
+      .local_order_id = 70,
+      .route_id = 1,
+      .event_kind = "feedback_cancelled",
+  });
+
+  const std::string node_csv = ReadWholeFileForTest(dir / "node.csv");
+  EXPECT_NE(node_csv.find("run_id,node_id,side,bbo_id"), std::string::npos);
+  EXPECT_NE(node_csv.find("run-a,7,buy,123"), std::string::npos);
 }
 
 }  // namespace

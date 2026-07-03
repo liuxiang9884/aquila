@@ -55,6 +55,7 @@ add_test(NAME gate_demo_strategy_test
 
 add_executable(gate_fill_probe_test
     ../../../tools/gate/fill_probe/config.cpp
+    ../../../tools/gate/fill_probe/csv_writer.cpp
     ../../../tools/gate/fill_probe/state_machine.cpp
     fill_probe_test.cpp
 )
@@ -63,6 +64,7 @@ target_link_libraries(gate_fill_probe_test
     PRIVATE
         aquila_core
         aquila_config
+        fmt::fmt-header-only
         GTest::gtest_main
         PkgConfig::tomlplusplus
 )
