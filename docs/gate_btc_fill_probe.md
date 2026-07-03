@@ -32,6 +32,57 @@
 - Order gateway SHM：`aquila_ogw_btc_fill_probe_20260703`
 - Order feedback SHM：`aquila_ofb_btc_fill_probe_20260703`
 
+## Binance Trigger / Gate Quote 模式
+
+`trigger_mode = "binance_trigger_gate_quote"` 用 Binance fusion `BTC_USDT` BBO 触发 node，并使用触发时本机
+已可见的最新 Gate fusion `BTC_USDT` BBO 作为下单 quote。entry 严格使用 Gate 对手价：buy 用 Gate ask，
+sell 用 Gate bid，不增加 slippage。GTC route 0 + IOC route 1、close retry、unresolved 停止条件和名义金额
+上限沿用 Gate-direct probe。
+
+运行前置条件：
+
+- Binance fusion canonical SHM 可读：`aquila_bfusion_20260701_102201_30s_ogw24h` / `book_ticker_channel`
+- Gate fusion canonical SHM 可读：`aquila_gfusion_20260701_102201_30s_ogw24h` / `book_ticker_channel`
+- `binance_freshness_ns < 2_000_000`
+- `gate_freshness_ns < 50_000_000`
+- `BTC_USDT` min quantity notional `<= 10 USDT`
+
+该模式的主指标是 entry fillability。Latency 字段用于解释 fill / no-fill，不作为本轮实验的主成败指标。
+
+### 30 分钟 / 300 node 实验命令
+
+下面命令是授权后的 runbook。实现验证阶段只允许 build、unit test 和 `--validate-config`，不要自动启动真实
+feedback、gateway 或 probe 进程。
+
+```bash
+TMPDIR=/home/liuxiang/tmp ./build.sh release
+
+./build/release/tools/gate_order_feedback_session \
+  --config config/order_feedback/gate_order_feedback_session_btc_fill_probe_20260703.toml
+
+./build/release/tools/gate_order_gateway \
+  --config config/order_gateways/gate_order_gateway_btc_fill_probe_20260703.toml
+
+./build/release/tools/fill_probe_strategy \
+  --config config/fill_probe/gate_btc_binance_trigger_gate_quote_probe_20260703.toml \
+  --preflight-only
+
+./build/release/tools/fill_probe_strategy \
+  --config config/fill_probe/gate_btc_binance_trigger_gate_quote_probe_20260703.toml
+```
+
+### Cross-exchange 归因口径
+
+- `binance_freshness_ns = decision_ns - binance_local_ns`
+- `gate_freshness_ns = decision_ns - gate_local_ns`
+- `gate_exchange_delta_ns = gate_exchange_ns - binance_exchange_ns`
+- `gate_local_delta_ns = gate_local_ns - binance_local_ns`
+- `trigger_to_send_ns = submit_ns - decision_ns`
+
+`skip_reason = stale_binance_trigger` 表示 Binance trigger 过期；`skip_reason = stale_gate_quote` 表示 Gate quote
+过期；`skip_reason = missing_gate_quote` 表示 Binance 触发时本机还没有可用 Gate BTC quote。这些 skipped
+row 不计入 `max_nodes`。
+
 ## 可安全执行的校验
 
 下面命令只做构建、配置解析或 SHM 预检，不会发单：
@@ -83,7 +134,10 @@ build/release/tools/fill_probe_strategy \
 - `node.csv`：node 级决策和结果。核心字段包括 `run_id`、`node_id`、`side`、`bbo_id`、
   `bbo_exchange_ns`、`bbo_local_ns`、`decision_ns`、`submit_ns`、`finish_ns`、
   `local_freshness_ns`、`exchange_freshness_ns`、`bid_price`、`ask_price`、
-  `entry_quantity`、`entry_notional_usdt`、`status`、`skip_reason`、`unresolved_reason`。
+  `entry_quantity`、`entry_notional_usdt`、`status`、`skip_reason`、`unresolved_reason`。Cross-exchange
+  模式额外写出 `trigger_mode`、`binance_bbo_id`、`binance_exchange_ns`、`binance_local_ns`、
+  `gate_bbo_id`、`gate_exchange_ns`、`gate_local_ns`、`binance_freshness_ns`、`gate_freshness_ns`、
+  `gate_exchange_delta_ns`、`gate_local_delta_ns` 和 `trigger_to_send_ns`。
 - `lifecycle.csv`：每个 node 的 GTC / IOC entry 与 close 生命周期。核心字段包括
   `lifecycle_kind`、`entry_local_order_id`、`entry_route_id`、`entry_tif`、`entry_price`、
   `entry_quantity`、`entry_submit_ns`、`entry_finish_ns`、`entry_result`、

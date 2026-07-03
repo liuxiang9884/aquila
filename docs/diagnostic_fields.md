@@ -487,6 +487,7 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 | `gate_exchange_delta_ns` | `node.csv` | experiment | ns | `gate_exchange_ns - binance_exchange_ns`。 | 同上。 |
 | `gate_local_delta_ns` | `node.csv` | experiment | ns | `gate_local_ns - binance_local_ns`。 | 同上。 |
 | `trigger_to_send_ns` | `node.csv` | experiment | ns | `submit_ns - decision_ns`，用于解释 trigger 到 entry submit 的策略端延迟。 | 同上。 |
+| `skip_reason` | `node.csv` | experiment | `stale_binance_trigger` / `stale_gate_quote` / `missing_gate_quote` / `stale_gate_direct_quote` | 记录未提交 entry 的跳过原因；这些 row 不消耗 `max_nodes`。 | 同上。 |
 
 热路径边界：`fill_probe_order_submitted` 和 `fill_probe_order_event` 会在真实 probe 的订单链路中执行 stdout
 格式化；该工具只用于短时探针，不应把这些字段作为低延迟生产策略的默认热路径观测面。
