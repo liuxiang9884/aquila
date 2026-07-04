@@ -23,6 +23,8 @@
 
 ## 专用配置
 
+Gate-direct baseline 使用一组独立配置：
+
 - Probe config：`config/fill_probe/gate_btc_fill_probe_20260703.toml`
 - Order gateway config：`config/order_gateways/gate_order_gateway_btc_fill_probe_20260703.toml`
 - Order session config：`config/order_sessions/gate_order_session_btc_fill_probe_private_plain_20260703.toml`
@@ -31,6 +33,19 @@
 - 行情 channel：`book_ticker_channel`
 - Order gateway SHM：`aquila_ogw_btc_fill_probe_20260703`
 - Order feedback SHM：`aquila_ofb_btc_fill_probe_20260703`
+
+Binance-trigger / Gate-quote 实验使用另一组独立配置，避免和 baseline 的 SHM、feedback lane、log 和 run dir
+混用：
+
+- Probe config：`config/fill_probe/gate_btc_binance_trigger_gate_quote_probe_20260703.toml`
+- Order gateway config：`config/order_gateways/gate_order_gateway_btc_binance_trigger_gate_quote_probe_20260703.toml`
+- Order session config：`config/order_sessions/gate_order_session_btc_binance_trigger_gate_quote_probe_private_plain_20260703.toml`
+- Order feedback config：`config/order_feedback/gate_order_feedback_session_btc_binance_trigger_gate_quote_probe_20260703.toml`
+- Binance 行情输入 SHM：`aquila_bfusion_20260701_102201_30s_ogw24h`
+- Gate 行情输入 SHM：`aquila_gfusion_20260701_102201_30s_ogw24h`
+- 行情 channel：`book_ticker_channel`
+- Order gateway SHM：`aquila_ogw_btc_binance_trigger_probe_20260703`
+- Order feedback SHM：`aquila_ofb_btc_binance_trigger_probe_20260703`
 
 ## Binance Trigger / Gate Quote 模式
 
@@ -58,10 +73,10 @@ feedback、gateway 或 probe 进程。
 TMPDIR=/home/liuxiang/tmp ./build.sh release
 
 ./build/release/tools/gate_order_feedback_session \
-  --config config/order_feedback/gate_order_feedback_session_btc_fill_probe_20260703.toml
+  --config config/order_feedback/gate_order_feedback_session_btc_binance_trigger_gate_quote_probe_20260703.toml
 
 ./build/release/tools/gate_order_gateway \
-  --config config/order_gateways/gate_order_gateway_btc_fill_probe_20260703.toml
+  --config config/order_gateways/gate_order_gateway_btc_binance_trigger_gate_quote_probe_20260703.toml
 
 ./build/release/tools/fill_probe_strategy \
   --config config/fill_probe/gate_btc_binance_trigger_gate_quote_probe_20260703.toml \
@@ -100,6 +115,18 @@ build/release/tools/gate_order_feedback_session \
 
 build/release/tools/fill_probe_strategy \
   --config config/fill_probe/gate_btc_fill_probe_20260703.toml \
+  --validate-config
+
+build/release/tools/gate_order_gateway \
+  --config config/order_gateways/gate_order_gateway_btc_binance_trigger_gate_quote_probe_20260703.toml \
+  --validate-only
+
+build/release/tools/gate_order_feedback_session \
+  --config config/order_feedback/gate_order_feedback_session_btc_binance_trigger_gate_quote_probe_20260703.toml \
+  --validate-only
+
+build/release/tools/fill_probe_strategy \
+  --config config/fill_probe/gate_btc_binance_trigger_gate_quote_probe_20260703.toml \
   --validate-config
 ```
 
