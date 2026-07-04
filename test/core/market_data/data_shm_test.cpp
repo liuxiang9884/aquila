@@ -50,6 +50,24 @@ md::BookTickerShmConfig MakeAttachConfig(
   return config;
 }
 
+md::TradeShmConfig MakeTradeCreateConfig(std::string_view suffix) {
+  return md::TradeShmConfig{
+      .enabled = true,
+      .shm_name = UniqueShmName(suffix),
+      .channel_name = "trade_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+}
+
+md::TradeShmConfig MakeTradeAttachConfig(
+    const md::TradeShmConfig& create_config) {
+  md::TradeShmConfig config = create_config;
+  config.create = false;
+  config.remove_existing = false;
+  return config;
+}
+
 aquila::BookTicker MakeBookTicker(std::int64_t id) {
   return aquila::BookTicker{
       .id = id,
@@ -64,6 +82,24 @@ aquila::BookTicker MakeBookTicker(std::int64_t id) {
   };
 }
 
+aquila::Trade MakeTrade(std::int64_t id) {
+  return aquila::Trade{
+      .id = id,
+      .symbol_id = 42,
+      .exchange = aquila::Exchange::kGate,
+      .side = id % 2 == 0 ? aquila::OrderSide::kBuy
+                          : aquila::OrderSide::kSell,
+      .reserved = 0,
+      .exchange_ns = 1'770'000'000'000'000'000 + id,
+      .trade_ns = 1'770'000'000'000'010'000 + id,
+      .local_ns = 1'770'000'000'000'100'000 + id,
+      .price = 65'000.0 + static_cast<double>(id),
+      .volume = 10.0 + static_cast<double>(id),
+      .batch_index = static_cast<std::uint32_t>(id % 3),
+      .batch_count = 3,
+  };
+}
+
 void ExpectBookTickerEq(const aquila::BookTicker& actual,
                         const aquila::BookTicker& expected) {
   EXPECT_EQ(actual.id, expected.id);
@@ -75,6 +111,22 @@ void ExpectBookTickerEq(const aquila::BookTicker& actual,
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
   EXPECT_DOUBLE_EQ(actual.ask_price, expected.ask_price);
   EXPECT_DOUBLE_EQ(actual.ask_volume, expected.ask_volume);
+}
+
+void ExpectTradeEq(const aquila::Trade& actual,
+                   const aquila::Trade& expected) {
+  EXPECT_EQ(actual.id, expected.id);
+  EXPECT_EQ(actual.symbol_id, expected.symbol_id);
+  EXPECT_EQ(actual.exchange, expected.exchange);
+  EXPECT_EQ(actual.side, expected.side);
+  EXPECT_EQ(actual.reserved, expected.reserved);
+  EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.trade_ns, expected.trade_ns);
+  EXPECT_EQ(actual.local_ns, expected.local_ns);
+  EXPECT_DOUBLE_EQ(actual.price, expected.price);
+  EXPECT_DOUBLE_EQ(actual.volume, expected.volume);
+  EXPECT_EQ(actual.batch_index, expected.batch_index);
+  EXPECT_EQ(actual.batch_count, expected.batch_count);
 }
 
 TEST(DataShmTest, PublisherWritesAndReaderReadsBookTicker) {
@@ -95,6 +147,24 @@ TEST(DataShmTest, PublisherWritesAndReaderReadsBookTicker) {
   EXPECT_EQ(publisher.published_count(), 1U);
 }
 
+TEST(DataShmTest, PublisherWritesAndReaderReadsTrade) {
+  const md::TradeShmConfig config = MakeTradeCreateConfig("trade_publish_read");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::TradeShmReader reader(MakeTradeAttachConfig(config));
+  reader.SeekLatest();
+
+  const aquila::Trade expected = MakeTrade(7);
+  publisher.OnTrade(expected);
+
+  aquila::Trade actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  ExpectTradeEq(actual, expected);
+  EXPECT_FALSE(reader.TryReadOne(&actual));
+  EXPECT_EQ(publisher.published_trades(), 1U);
+}
+
 TEST(DataShmTest, PublisherEmplaceWithWritesAndReaderReadsBookTicker) {
   const md::BookTickerShmConfig config = MakeCreateConfig("emplace_read");
   ShmCleanup cleanup(config.shm_name);
@@ -112,6 +182,58 @@ TEST(DataShmTest, PublisherEmplaceWithWritesAndReaderReadsBookTicker) {
   ExpectBookTickerEq(actual, expected);
   EXPECT_FALSE(reader.TryReadOne(&actual));
   EXPECT_EQ(publisher.published_count(), 1U);
+}
+
+TEST(DataShmTest, PublisherEmplaceWithWritesAndReaderReadsTrade) {
+  const md::TradeShmConfig config = MakeTradeCreateConfig("trade_emplace_read");
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::TradeShmReader reader(MakeTradeAttachConfig(config));
+  reader.SeekLatest();
+
+  const aquila::Trade expected = MakeTrade(8);
+  publisher.EmplaceTradeWith(
+      [&expected](aquila::Trade& out) noexcept { out = expected; });
+
+  aquila::Trade actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  ExpectTradeEq(actual, expected);
+  EXPECT_FALSE(reader.TryReadOne(&actual));
+  EXPECT_EQ(publisher.published_trades(), 1U);
+}
+
+TEST(DataShmTest, TradeOverrunDoesNotMoveBookTickerReader) {
+  md::DataShmConfig config{
+      .enabled = true,
+      .shm_name = UniqueShmName("dual_channel"),
+      .book_ticker_channel_name = "book_ticker_channel",
+      .trade_channel_name = "trade_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  md::BookTickerShmReader book_reader(config.BookTickerConfigForAttach());
+  md::TradeShmReader trade_reader(config.TradeConfigForAttach());
+  book_reader.SeekLatest();
+  trade_reader.SeekLatest();
+
+  publisher.OnBookTicker(MakeBookTicker(1));
+  for (std::uint64_t id = 0; id < md::kTradeShmCapacity + 2; ++id) {
+    publisher.OnTrade(MakeTrade(static_cast<std::int64_t>(id)));
+  }
+
+  aquila::BookTicker book{};
+  ASSERT_TRUE(book_reader.TryReadOne(&book));
+  EXPECT_EQ(book.id, 1);
+  EXPECT_EQ(book_reader.overrun_count(), 0U);
+
+  aquila::Trade trade{};
+  ASSERT_TRUE(trade_reader.TryReadOne(&trade));
+  EXPECT_EQ(trade.id, 2);
+  EXPECT_EQ(trade_reader.overrun_count(), 1U);
 }
 
 TEST(DataShmTest, ReaderStartsAtLatestWhenRequested) {
