@@ -22,6 +22,7 @@ namespace ws = aquila::websocket;
 
 struct CountingDataSink {
   std::uint64_t book_tickers{0};
+  std::uint64_t trades{0};
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     ++book_tickers;
@@ -37,14 +38,39 @@ struct CountingDataSink {
         book_ticker.local_ns, book_ticker.bid_price, book_ticker.bid_volume,
         book_ticker.ask_price, book_ticker.ask_volume);
   }
+
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++trades;
+    if (trades % 1000 != 0) {
+      return;
+    }
+    NOVA_INFO(
+        "trade count={} id={} symbol_id={} exchange={} side={} "
+        "exchange_ns={} trade_ns={} local_ns={} price={:.12g} volume={:.12g} "
+        "batch_index={} batch_count={}",
+        trades, trade.id, trade.symbol_id,
+        magic_enum::enum_name(trade.exchange),
+        magic_enum::enum_name(trade.side), trade.exchange_ns, trade.trade_ns,
+        trade.local_ns, trade.price, trade.volume, trade.batch_index,
+        trade.batch_count);
+  }
 };
 
 template <typename DataSink>
 std::uint64_t PublishedBookTickers(const DataSink& data_sink) {
-  if constexpr (requires { data_sink.published_count(); }) {
-    return data_sink.published_count();
+  if constexpr (requires { data_sink.published_book_tickers(); }) {
+    return data_sink.published_book_tickers();
   } else {
     return data_sink.book_tickers;
+  }
+}
+
+template <typename DataSink>
+std::uint64_t PublishedTrades(const DataSink& data_sink) {
+  if constexpr (requires { data_sink.published_trades(); }) {
+    return data_sink.published_trades();
+  } else {
+    return data_sink.trades;
   }
 }
 
@@ -80,20 +106,21 @@ int RunDataSessionWithSink(aq_gate::DataSessionConfig data_session_config,
   const ws::ConnectionError error = session.last_error();
   const bool active = session.ever_active();
   const std::uint64_t book_tickers = PublishedBookTickers(data_sink);
+  const std::uint64_t trades = PublishedTrades(data_sink);
   if (started_ok && active) {
     NOVA_INFO(
-        "result=ok active=true phase={} error={} book_tickers={} "
+        "result=ok active=true phase={} error={} book_tickers={} trades={} "
         "rx_messages={} tx_messages={}",
         magic_enum::enum_name(phase), magic_enum::enum_name(error),
-        book_tickers, metrics.rx_messages, metrics.tx_messages);
+        book_tickers, trades, metrics.rx_messages, metrics.tx_messages);
     return 0;
   }
 
   NOVA_WARNING(
-      "result=failed active={} phase={} error={} book_tickers={} "
+      "result=failed active={} phase={} error={} book_tickers={} trades={} "
       "rx_messages={} tx_messages={}",
       active ? "true" : "false", magic_enum::enum_name(phase),
-      magic_enum::enum_name(error), book_tickers, metrics.rx_messages,
+      magic_enum::enum_name(error), book_tickers, trades, metrics.rx_messages,
       metrics.tx_messages);
   return 1;
 }
@@ -101,8 +128,8 @@ int RunDataSessionWithSink(aq_gate::DataSessionConfig data_session_config,
 template <typename WebSocketPolicy>
 int RunDataSession(aq_gate::DataSessionConfig data_session_config,
                    bool connect) {
-  if (data_session_config.book_ticker_shm.enabled) {
-    aq_md::DataShmPublisher data_sink{data_session_config.book_ticker_shm};
+  if (data_session_config.data_shm.enabled) {
+    aq_md::DataShmPublisher data_sink{data_session_config.data_shm};
     return RunDataSessionWithSink<WebSocketPolicy>(
         std::move(data_session_config), data_sink, connect);
   }

@@ -178,7 +178,7 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.book_ticker_shm.shm_name, "aquila_gate_market_data");
   EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(config.book_ticker_shm.create);
-  EXPECT_FALSE(config.book_ticker_shm.remove_existing);
+  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
   EXPECT_TRUE(config.feeds.book_ticker);
   EXPECT_FALSE(config.feeds.trade);
   EXPECT_TRUE(config.data_shm.enabled);

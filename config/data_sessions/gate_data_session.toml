@@ -17,7 +17,7 @@ subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 settle = "usdt"
 wire_format = "sbe"
 sbe_schema_id = 1
-feed = "book_ticker"
+feeds = ["book_ticker"]
 
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
@@ -29,6 +29,7 @@ bind_cpu_id = 2
 [data_shm_sink]
 enabled = true
 shm_name = "aquila_gate_market_data"
-channel_name = "book_ticker_channel"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
 create = true
-remove_existing = false
+remove_existing = true
