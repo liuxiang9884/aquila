@@ -41,11 +41,18 @@ aquila::websocket::MessageView TextView(std::string_view payload) noexcept {
 
 struct RecordingDataSink {
   int calls{0};
+  int trade_calls{0};
   aquila::BookTicker last{};
+  aquila::Trade last_trade{};
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     ++calls;
     last = book_ticker;
+  }
+
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++trade_calls;
+    last_trade = trade;
   }
 };
 

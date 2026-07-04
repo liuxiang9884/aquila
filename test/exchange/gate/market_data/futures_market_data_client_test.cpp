@@ -11,6 +11,7 @@
 #include "core/websocket/message_view.h"
 #include "core/websocket/websocket_client.h"
 #include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
+#include "evaluation/exchange/gate/sbe/trade_payload_builder.h"
 #include "exchange/gate/market_data/client.h"
 #include "exchange/gate/market_data/subscription.h"
 
@@ -39,25 +40,41 @@ aquila::websocket::MessageView TextView(std::string_view payload) noexcept {
 }
 
 struct RecordingConsumer {
-  int calls{0};
+  int book_ticker_calls{0};
+  int trade_calls{0};
   aquila::BookTicker last{};
+  aquila::Trade last_trade{};
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
-    ++calls;
+    ++book_ticker_calls;
     last = book_ticker;
+  }
+
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++trade_calls;
+    last_trade = trade;
   }
 };
 
 struct EmplaceOnlyConsumer {
   int emplace_calls{0};
+  int trade_emplace_calls{0};
   aquila::BookTicker last{};
+  aquila::Trade last_trade{};
 
   void OnBookTicker(const aquila::BookTicker&) noexcept = delete;
+  void OnTrade(const aquila::Trade&) noexcept = delete;
 
   template <typename Writer>
   void EmplaceBookTickerWith(Writer&& writer) noexcept {
     ++emplace_calls;
     writer(last);
+  }
+
+  template <typename Writer>
+  void EmplaceTradeWith(Writer&& writer) noexcept {
+    ++trade_emplace_calls;
+    writer(last_trade);
   }
 };
 
@@ -120,7 +137,7 @@ TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   const auto result = client.OnMessage(BinaryView(payload), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(consumer.last.id, 42);
@@ -130,6 +147,67 @@ TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 21.0);
   EXPECT_DOUBLE_EQ(consumer.last.ask_price, 65'012.5);
   EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 17.5);
+}
+
+TEST(GateFuturesMarketDataClientTest, EmitsTradesFromBinaryPublicTradePayload) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DefaultClient client(symbols, consumer);
+
+  std::array<char, 256> buffer{};
+  const aquila::gate::evaluation::PublicTradePayloadEntry entry{
+      .t = 1'770'000'000'000'990,
+      .id = 123456789,
+      .size = -21'000,
+      .price = 650'120'000,
+  };
+  const std::string_view payload =
+      aquila::gate::evaluation::BuildPublicTradePayload(
+          &buffer, "BTC_USDT", std::span<const decltype(entry)>(&entry, 1));
+
+  const auto result = client.OnMessage(BinaryView(payload), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
+  ASSERT_EQ(consumer.trade_calls, 1);
+  EXPECT_EQ(consumer.last_trade.symbol_id, 11);
+  EXPECT_EQ(consumer.last_trade.exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(consumer.last_trade.id, 123456789);
+  EXPECT_EQ(consumer.last_trade.side, aquila::OrderSide::kSell);
+  EXPECT_EQ(consumer.last_trade.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last_trade.price, 65'012.0);
+  EXPECT_DOUBLE_EQ(consumer.last_trade.volume, 21.0);
+}
+
+TEST(GateFuturesMarketDataClientTest,
+     EmplacesTradesWhenConsumerSupportsSlotWriter) {
+  const std::array<aquila::gate::SymbolBinding, 1> symbols{
+      aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
+                                  .symbol_id = 11}};
+  EmplaceOnlyConsumer consumer;
+  aquila::gate::FuturesMarketDataClient client(symbols, consumer);
+
+  std::array<char, 256> buffer{};
+  const aquila::gate::evaluation::PublicTradePayloadEntry entry{
+      .t = 1'770'000'000'000'990,
+      .id = 123456789,
+      .size = 21'000,
+      .price = 650'120'000,
+  };
+  const std::string_view payload =
+      aquila::gate::evaluation::BuildPublicTradePayload(
+          &buffer, "BTC_USDT", std::span<const decltype(entry)>(&entry, 1));
+
+  const auto result = client.OnMessage(BinaryView(payload), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.emplace_calls, 0);
+  ASSERT_EQ(consumer.trade_emplace_calls, 1);
+  EXPECT_EQ(consumer.last_trade.id, 123456789);
+  EXPECT_EQ(consumer.last_trade.symbol_id, 11);
+  EXPECT_EQ(consumer.last_trade.side, aquila::OrderSide::kBuy);
 }
 
 TEST(GateFuturesMarketDataClientTest,
@@ -173,7 +251,7 @@ TEST(GateFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
   const auto result = message_callback.Handle(BinaryView(payload));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_GT(consumer.last.local_ns, 0);
 }
@@ -191,7 +269,7 @@ TEST(GateFuturesMarketDataClientTest, HandlesWebSocketMessageDirectly) {
   const auto result = client.Handle(BinaryView(payload));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_GT(consumer.last.local_ns, 0);
 }
@@ -210,7 +288,7 @@ TEST(GateFuturesMarketDataClientTest, HandlesBinaryPayloadDirectly) {
       std::as_bytes(std::span(payload.data(), payload.size())), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 11);
   EXPECT_EQ(consumer.last.local_ns, 999'000);
 }
@@ -232,7 +310,7 @@ TEST(GateFuturesMarketDataClientTest, MapsMultipleSymbolsByExchangeSymbol) {
   const auto result = client.OnMessage(BinaryView(payload), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(consumer.last.symbol_id, 13);
 }
 
@@ -253,7 +331,7 @@ TEST(GateFuturesMarketDataClientTest, BindsAsTypedWebSocketHandler) {
   EXPECT_FALSE(Client::TransportUsesTls);
   EXPECT_EQ(handler.Handle(TextView("ignored")),
             aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
 }
 
 TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
@@ -270,7 +348,7 @@ TEST(GateFuturesMarketDataClientTest, IgnoresUnknownTemplate) {
   const auto result = client.OnMessage(BinaryView(payload), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
   EXPECT_EQ(client.diagnostics().stats().unsupported_sbe_templates, 1U);
 }
 
@@ -341,5 +419,5 @@ TEST(GateFuturesMarketDataClientTest, AcceptsTextControlMessages) {
       999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
 }

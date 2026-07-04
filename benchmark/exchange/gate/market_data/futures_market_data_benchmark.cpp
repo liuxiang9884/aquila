@@ -83,11 +83,17 @@ ws::MessageView TextView(std::string_view payload,
 
 struct CountingConsumer {
   std::uint64_t calls{0};
+  std::uint64_t trades{0};
   std::uint64_t id_xor{0};
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     ++calls;
     id_xor ^= static_cast<std::uint64_t>(book_ticker.id);
+  }
+
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++trades;
+    id_xor ^= static_cast<std::uint64_t>(trade.id);
   }
 };
 

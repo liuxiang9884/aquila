@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <utility>
 
 #include <absl/container/flat_hash_map.h>
 
@@ -17,6 +18,7 @@
 #include "core/websocket/runtime_clock.h"
 #include "exchange/gate/sbe/book_ticker_decoder.h"
 #include "exchange/gate/sbe/message_dispatcher.h"
+#include "exchange/gate/sbe/trade_decoder.h"
 
 namespace aquila::gate {
 
@@ -31,6 +33,7 @@ struct FuturesMarketDataClientStats {
   std::uint64_t unsupported_sbe_schema_versions{0};
   std::uint64_t unsupported_sbe_templates{0};
   std::uint64_t unsupported_sbe_messages{0};
+  std::uint64_t public_trades{0};
 };
 
 struct NoopFuturesMarketDataDiagnostics {
@@ -41,6 +44,10 @@ namespace detail {
 
 struct NoopBookTickerSlotWriter {
   void operator()(BookTicker&) const noexcept {}
+};
+
+struct NoopTradeSlotWriter {
+  void operator()(Trade&) const noexcept {}
 };
 
 }  // namespace detail
@@ -70,6 +77,10 @@ class FuturesMarketDataDiagnostics {
 
   void RecordUnsupportedSbeMessage() noexcept {
     ++stats_.unsupported_sbe_messages;
+  }
+
+  void RecordPublicTrade() noexcept {
+    ++stats_.public_trades;
   }
 
   [[nodiscard]] const FuturesMarketDataClientStats& stats() const noexcept {
@@ -162,6 +173,8 @@ class FuturesMarketDataClient {
                                    message_timing
 #endif
         );
+      case GateSbeMessageType::kPublicTrade:
+        return OnPublicTradePayload(payload_view, dispatch.header, local_ns);
       default:
         if constexpr (DiagnosticsEnabled) {
           diagnostics_.RecordUnsupportedSbeMessage();
@@ -239,6 +252,37 @@ class FuturesMarketDataClient {
       data_sink_.OnBookTicker(book_ticker);
     }
 #endif
+    return websocket::DeliveryResult::kAccepted;
+  }
+
+  websocket::DeliveryResult OnPublicTradePayload(
+      std::string_view payload, const SbeMessageHeader& header,
+      std::int64_t local_ns) noexcept {
+    const std::string_view exchange_symbol =
+        ExtractTrustedTradeSymbol(payload, header);
+    const std::int32_t symbol_id = FindSymbolId(exchange_symbol);
+
+    if constexpr (requires(DataSink& data_sink,
+                           detail::NoopTradeSlotWriter writer) {
+                    data_sink.EmplaceTradeWith(writer);
+                  }) {
+      DecodeTradesWithHeaderToSlots(
+          payload, header, local_ns, symbol_id, [&](auto&& fill_slot) noexcept {
+            data_sink_.EmplaceTradeWith(
+                std::forward<decltype(fill_slot)>(fill_slot));
+            if constexpr (DiagnosticsEnabled) {
+              diagnostics_.RecordPublicTrade();
+            }
+          });
+    } else {
+      DecodeTradesWithHeader(payload, header, local_ns, symbol_id,
+                             [&](const Trade& trade) noexcept {
+                               data_sink_.OnTrade(trade);
+                               if constexpr (DiagnosticsEnabled) {
+                                 diagnostics_.RecordPublicTrade();
+                               }
+                             });
+    }
     return websocket::DeliveryResult::kAccepted;
   }
 

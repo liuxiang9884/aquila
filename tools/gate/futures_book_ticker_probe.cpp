@@ -80,6 +80,8 @@ struct ProbeConsumer {
     ++stats->decoded_book_tickers;
     stats->last_book_ticker = book_ticker;
   }
+
+  void OnTrade(const aquila::Trade&) noexcept {}
 };
 
 struct ProbeConfig {
