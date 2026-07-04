@@ -141,8 +141,8 @@ build/release/tools/fill_probe_strategy \
 - `lifecycle.csv`：每个 node 的 GTC / IOC entry 与 close 生命周期。核心字段包括
   `lifecycle_kind`、`entry_local_order_id`、`entry_route_id`、`entry_tif`、`entry_price`、
   `entry_quantity`、`entry_submit_ns`、`entry_finish_ns`、`entry_result`、
-  `entry_filled_qty`、`entry_avg_fill_price`、`close_local_order_id`、`close_route_id`、
-  `close_price`、`close_attempts`、`close_filled_qty`、`close_avg_fill_price`、
+  `entry_filled_qty`、`entry_avg_fill_price`、`close_route_id`、
+  `close_attempts`、`close_filled_qty`、`close_avg_fill_price`、
   `close_attribution`、`pnl_usdt`、`fee_usdt`。
 - `order_event.csv`：order gateway response 和 private feedback 明细。核心字段包括
   `local_order_id`、`parent_id`、`route_id`、`event_kind`、`response_kind`、

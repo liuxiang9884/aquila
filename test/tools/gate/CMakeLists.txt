@@ -96,6 +96,7 @@ symbol = "BTC_USDT"
 exchange_symbol = "BTC_USDT"
 symbol_id = 93
 strategy_id = 3
+trigger_mode = "gate_direct"
 max_nodes = 1
 duration_ms = 1000
 node_pause_ms = 1000
@@ -106,9 +107,11 @@ max_close_retries = 3
 close_slippage_bps = 100
 max_local_freshness_ns = 1000000
 max_exchange_freshness_ns = 2000000
+max_binance_freshness_ns = 2000000
+max_gate_freshness_ns = 50000000
 [instrument_catalog]
 file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
-[market_data]
+[market_data.gate]
 shm_name = "aquila_missing_gate_fill_probe_market_shm"
 channel_name = "book_ticker_channel"
 [order_gateway]

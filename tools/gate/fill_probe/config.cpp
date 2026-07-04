@@ -87,7 +87,16 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
 
 [[nodiscard]] bool AssignTriggerMode(toml::node_view<const toml::node> node,
                                      TriggerMode* out, std::string* error) {
-  const std::string value = node.value<std::string>().value_or("gate_direct");
+  if (!node) {
+    *out = TriggerMode::kGateDirect;
+    return true;
+  }
+  const auto parsed = node.value<std::string>();
+  if (!parsed.has_value()) {
+    *error = "fill_probe.trigger_mode must be a string";
+    return false;
+  }
+  const std::string& value = *parsed;
   if (value == "gate_direct") {
     *out = TriggerMode::kGateDirect;
     return true;
@@ -96,8 +105,9 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
     *out = TriggerMode::kBinanceTriggerGateQuote;
     return true;
   }
-  *error = "fill_probe.trigger_mode must be gate_direct or "
-           "binance_trigger_gate_quote";
+  *error =
+      "fill_probe.trigger_mode must be gate_direct or "
+      "binance_trigger_gate_quote";
   return false;
 }
 
@@ -165,6 +175,10 @@ void AssignBool(toml::node_view<const toml::node> node, bool fallback,
   }
   if (config.probe.duration_ms == 0) {
     *error = "fill_probe.duration_ms must be positive";
+    return false;
+  }
+  if (config.probe.unresolved_timeout_ms == 0) {
+    *error = "fill_probe.unresolved_timeout_ms must be positive";
     return false;
   }
   if (config.probe.gtc_cancel_after_ms != 1000) {

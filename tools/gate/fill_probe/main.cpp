@@ -4,6 +4,7 @@
 #include <csignal>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -37,6 +38,7 @@ namespace core = aquila::core;
 
 std::atomic<bool> stop_requested{false};
 static_assert(std::atomic<bool>::is_always_lock_free);
+inline constexpr std::uint64_t kMarketDataDrainCap = md::kBookTickerShmCapacity;
 
 void HandleSignal(int) {
   stop_requested.store(true, std::memory_order_relaxed);
@@ -124,7 +126,7 @@ struct RuntimeContext {
         event.kind == core::OrderResponseKind::kUnknownResult) {
       if (found->second.close_order) {
         current_node->OnCloseTerminal(
-            event.local_order_id,
+            found->second.lifecycle_kind,
             event.kind == core::OrderResponseKind::kRejected
                 ? fp::CloseResult::kRejected
                 : fp::CloseResult::kUnknown,
@@ -229,7 +231,7 @@ struct RuntimeContext {
 }
 
 void DrainBboReader(md::BookTickerShmReader& reader, fp::BboCache* cache,
-                    std::uint64_t max_events) {
+                    std::uint64_t max_events = kMarketDataDrainCap) {
   for (std::uint64_t i = 0; i < max_events; ++i) {
     aquila::BookTicker ticker{};
     if (!reader.TryReadOne(&ticker)) {
@@ -245,7 +247,7 @@ void DrainBboReader(md::BookTickerShmReader& reader, fp::BboCache* cache,
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline &&
          !stop_requested.load(std::memory_order_relaxed)) {
-    DrainBboReader(reader, cache, /*max_events=*/256);
+    DrainBboReader(reader, cache);
     if (cache->latest().has_value()) {
       return true;
     }
@@ -265,6 +267,16 @@ void DrainBboReader(md::BookTickerShmReader& reader, fp::BboCache* cache,
          *local_freshness_ns <= config.probe.max_local_freshness_ns &&
          *exchange_freshness_ns >= 0 &&
          *exchange_freshness_ns <= config.probe.max_exchange_freshness_ns;
+}
+
+[[nodiscard]] std::int64_t TimeoutMsToNs(std::uint64_t timeout_ms) {
+  constexpr std::uint64_t kNsPerMs = 1'000'000;
+  if (timeout_ms >
+      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) /
+          kNsPerMs) {
+    return std::numeric_limits<std::int64_t>::max();
+  }
+  return static_cast<std::int64_t>(timeout_ms * kNsPerMs);
 }
 
 [[nodiscard]] md::BookTickerShmConfig ToMarketShmConfig(
@@ -331,6 +343,12 @@ void SetOrderTextStorage(OrderRecord* record, std::string symbol,
   record->symbol_text = std::move(symbol);
   record->quantity_text = std::move(quantity_text);
   record->price_text = std::move(price_text);
+  record->order.symbol = record->symbol_text;
+  record->order.quantity_text = record->quantity_text;
+  record->order.price_text = record->price_text;
+}
+
+void RebindOrderTextViews(OrderRecord* record) {
   record->order.symbol = record->symbol_text;
   record->order.quantity_text = record->quantity_text;
   record->order.price_text = record->price_text;
@@ -497,10 +515,11 @@ void ApplyFeedback(fp::ProbeNode& node,
     return;
   }
   if (event.cumulative_filled_quantity > 0.0) {
-    node.OnCloseFill(event.local_order_id, event.cumulative_filled_quantity,
+    node.OnCloseFill(record->lifecycle_kind, event.cumulative_filled_quantity,
                      event.fill_price, event.local_receive_ns);
   } else {
-    node.OnCloseTerminal(event.local_order_id, result, event.local_receive_ns);
+    node.OnCloseTerminal(record->lifecycle_kind, result,
+                         event.local_receive_ns);
   }
 }
 
@@ -549,13 +568,17 @@ void ApplyFeedback(fp::ProbeNode& node,
                          SystemNowNs());
     return false;
   }
-  orders.emplace(local_order_id, std::move(record));
+  auto [stored, inserted] = orders.emplace(local_order_id, std::move(record));
+  if (inserted) {
+    RebindOrderTextViews(&stored->second);
+  }
   return true;
 }
 
 void WriteLifecycleRow(fp::CsvWriters& writers, std::string_view run_id,
                        const fp::ProbeNode& node,
-                       const fp::LifecycleState& lifecycle) {
+                       const fp::LifecycleState& lifecycle,
+                       const OrderRecord* entry_record) {
   writers.WriteLifecycle(fp::LifecycleCsvRow{
       .run_id = std::string(run_id),
       .node_id = node.node_id(),
@@ -564,6 +587,9 @@ void WriteLifecycleRow(fp::CsvWriters& writers, std::string_view run_id,
       .entry_local_order_id = lifecycle.entry_local_order_id,
       .entry_side = NodeSideText(node.side()),
       .entry_tif = lifecycle.kind == fp::EntryKind::kGtc ? "gtc" : "ioc",
+      .entry_price = entry_record == nullptr ? "" : entry_record->price_text,
+      .entry_quantity =
+          entry_record == nullptr ? "" : entry_record->quantity_text,
       .entry_submit_ns = lifecycle.entry_submit_ns,
       .entry_finish_ns = lifecycle.entry_finish_ns,
       .entry_result =
@@ -580,10 +606,11 @@ void WriteLifecycleRow(fp::CsvWriters& writers, std::string_view run_id,
   });
 }
 
-void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
-                   const fp::ProbeNode& node, const NodeCsvContext& context,
-                   const fp::OrderSizing& sizing, std::string_view skip_reason,
-                   std::string_view unresolved_reason) {
+void WriteNodeRows(
+    fp::CsvWriters& writers, std::string_view run_id, const fp::ProbeNode& node,
+    const NodeCsvContext& context, const fp::OrderSizing& sizing,
+    const absl::flat_hash_map<std::uint64_t, OrderRecord>& orders,
+    std::string_view skip_reason, std::string_view unresolved_reason) {
   const bool cross_exchange =
       context.trigger_mode == fp::TriggerMode::kBinanceTriggerGateQuote;
   writers.WriteNode(fp::NodeCsvRow{
@@ -627,8 +654,12 @@ void WriteNodeRows(fp::CsvWriters& writers, std::string_view run_id,
       .skip_reason = std::string(skip_reason),
       .unresolved_reason = std::string(unresolved_reason),
   });
-  WriteLifecycleRow(writers, run_id, node, node.gtc());
-  WriteLifecycleRow(writers, run_id, node, node.ioc());
+  const auto gtc_record = orders.find(node.gtc().entry_local_order_id);
+  const auto ioc_record = orders.find(node.ioc().entry_local_order_id);
+  WriteLifecycleRow(writers, run_id, node, node.gtc(),
+                    gtc_record == orders.end() ? nullptr : &gtc_record->second);
+  WriteLifecycleRow(writers, run_id, node, node.ioc(),
+                    ioc_record == orders.end() ? nullptr : &ioc_record->second);
   const std::string status =
       LowerEnumName(magic_enum::enum_name(node.status()));
   if (node.status() == fp::NodeStatus::kUnresolved ||
@@ -844,6 +875,9 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
   std::uint64_t next_order_id = 1;
   fp::SubmittedNodeBudget node_budget(context.config.probe.max_nodes);
   const auto run_start = std::chrono::steady_clock::now();
+  const std::int64_t unresolved_timeout_ns =
+      TimeoutMsToNs(context.config.probe.unresolved_timeout_ms);
+  std::uint64_t next_skipped_node_id = context.config.probe.max_nodes + 1;
   std::uint64_t last_gate_trigger_id = gate_cache.latest()->id;
   std::uint64_t last_binance_trigger_id =
       binance_cache.latest().has_value() ? binance_cache.latest()->id : 0;
@@ -861,15 +895,12 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
       break;
     }
 
-    DrainBboReader(gate_reader, &gate_cache, /*max_events=*/256);
+    DrainBboReader(gate_reader, &gate_cache);
     if (binance_reader.has_value()) {
-      DrainBboReader(*binance_reader, &binance_cache, /*max_events=*/256);
+      DrainBboReader(*binance_reader, &binance_cache);
     }
 
     const std::int64_t decision_ns = SystemNowNs();
-    const std::uint64_t candidate_node_id = node_budget.submitted_nodes() + 1;
-    const fp::NodeSide candidate_side =
-        (candidate_node_id % 2 == 1) ? fp::NodeSide::kBuy : fp::NodeSide::kSell;
     std::optional<fp::BboSnapshot> trigger_bbo;
     std::optional<fp::BboSnapshot> quote_bbo;
     fp::TriggerQuoteDecision trigger_quote;
@@ -890,7 +921,11 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
       last_gate_trigger_id = trigger_bbo->id;
       if (!FreshEnough(context.config, *quote_bbo, decision_ns,
                        &local_freshness_ns, &exchange_freshness_ns)) {
-        WriteSkippedNode(writers, run_id, candidate_node_id, candidate_side,
+        const std::uint64_t skipped_node_id = next_skipped_node_id++;
+        const fp::NodeSide skipped_side = (skipped_node_id % 2 == 1)
+                                              ? fp::NodeSide::kBuy
+                                              : fp::NodeSide::kSell;
+        WriteSkippedNode(writers, run_id, skipped_node_id, skipped_side,
                          context.config.probe.trigger_mode, trigger_bbo,
                          quote_bbo, decision_ns, trigger_quote,
                          "stale_gate_direct_quote");
@@ -909,7 +944,11 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
       trigger_bbo = *binance_cache.latest();
       last_binance_trigger_id = trigger_bbo->id;
       if (!gate_cache.latest().has_value()) {
-        WriteSkippedNode(writers, run_id, candidate_node_id, candidate_side,
+        const std::uint64_t skipped_node_id = next_skipped_node_id++;
+        const fp::NodeSide skipped_side = (skipped_node_id % 2 == 1)
+                                              ? fp::NodeSide::kBuy
+                                              : fp::NodeSide::kSell;
+        WriteSkippedNode(writers, run_id, skipped_node_id, skipped_side,
                          context.config.probe.trigger_mode, trigger_bbo,
                          std::nullopt, decision_ns, trigger_quote,
                          "missing_gate_quote");
@@ -927,7 +966,11 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
       local_freshness_ns = trigger_quote.gate_freshness_ns;
       exchange_freshness_ns = decision_ns - quote_bbo->exchange_ns;
       if (!trigger_quote.accepted) {
-        WriteSkippedNode(writers, run_id, candidate_node_id, candidate_side,
+        const std::uint64_t skipped_node_id = next_skipped_node_id++;
+        const fp::NodeSide skipped_side = (skipped_node_id % 2 == 1)
+                                              ? fp::NodeSide::kBuy
+                                              : fp::NodeSide::kSell;
+        WriteSkippedNode(writers, run_id, skipped_node_id, skipped_side,
                          context.config.probe.trigger_mode, trigger_bbo,
                          quote_bbo, decision_ns, trigger_quote,
                          trigger_quote.skip_reason);
@@ -997,8 +1040,14 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
         first_submit_ns =
             send.send_local_ns == 0 ? SystemNowNs() : send.send_local_ns;
       }
+      WriteSendEvent(writers, run_id, node_id, record, "entry_submitted",
+                     send.status, send.send_local_ns);
       if (send.status == core::OrderGatewaySendStatus::kOk) {
-        orders.emplace(local_order_id, record);
+        auto [stored, inserted] =
+            orders.emplace(local_order_id, std::move(record));
+        if (inserted) {
+          RebindOrderTextViews(&stored->second);
+        }
         node.MarkEntrySubmitted(kind, local_order_id, route_id,
                                 first_submit_ns);
       } else {
@@ -1006,8 +1055,6 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
         node.OnEntryTerminal(local_order_id, fp::EntryResult::kRejected, 0.0,
                              0.0, SystemNowNs());
       }
-      WriteSendEvent(writers, run_id, node_id, record, "entry_submitted",
-                     send.status, send.send_local_ns);
     }
 
     NodeCsvContext node_csv_context{
@@ -1020,7 +1067,10 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
     };
 
     while (!node.Done() && !stop_requested.load(std::memory_order_relaxed)) {
-      DrainBboReader(gate_reader, &gate_cache, /*max_events=*/256);
+      DrainBboReader(gate_reader, &gate_cache);
+      if (binance_reader.has_value()) {
+        DrainBboReader(*binance_reader, &binance_cache);
+      }
       (void)gateway.PollOrderResponses(runtime);
       (void)feedback_reader.Poll(
           64, [&](const aquila::OrderFeedbackEvent& event) {
@@ -1032,10 +1082,12 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
         if (found != orders.end()) {
           const core::OrderGatewaySendResult cancel =
               gateway.CancelOrder(OrderForGateway(found->second));
-          node.MarkGtcCancelSubmitted(SystemNowNs());
           WriteSendEvent(writers, run_id, node_id, found->second,
                          "gtc_cancel_submitted", cancel.status,
                          cancel.send_local_ns);
+          if (cancel.status == core::OrderGatewaySendStatus::kOk) {
+            node.MarkGtcCancelSubmitted(SystemNowNs());
+          }
         }
       }
 
@@ -1048,11 +1100,11 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
                                 entry_sizing_result.value, writers, orders,
                                 &next_order_id, run_id);
 
-      if (node.UnresolvedDue(SystemNowNs())) {
+      if (node.UnresolvedDue(SystemNowNs(), unresolved_timeout_ns)) {
         node.MarkUnresolved(SystemNowNs());
         node_csv_context.submit_ns = first_submit_ns;
         WriteNodeRows(writers, run_id, node, node_csv_context,
-                      entry_sizing_result.value, "", "node_unresolved");
+                      entry_sizing_result.value, orders, "", "node_unresolved");
         return 10;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1060,7 +1112,7 @@ void WriteSkippedNode(fp::CsvWriters& writers, std::string_view run_id,
 
     node_csv_context.submit_ns = first_submit_ns;
     WriteNodeRows(writers, run_id, node, node_csv_context,
-                  entry_sizing_result.value, "", "");
+                  entry_sizing_result.value, orders, "", "");
     runtime.current_node = nullptr;
     std::this_thread::sleep_for(
         std::chrono::milliseconds(context.config.probe.node_pause_ms));

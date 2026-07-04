@@ -74,10 +74,15 @@ class ProbeNode {
                           std::uint16_t route_id, std::int64_t event_ns);
   void OnCloseFill(std::uint64_t local_order_id, double filled_qty,
                    double fill_price, std::int64_t event_ns);
+  void OnCloseFill(EntryKind kind, double filled_qty, double fill_price,
+                   std::int64_t event_ns);
   void OnCloseTerminal(std::uint64_t local_order_id, CloseResult result,
                        std::int64_t event_ns);
+  void OnCloseTerminal(EntryKind kind, CloseResult result,
+                       std::int64_t event_ns);
 
-  [[nodiscard]] bool UnresolvedDue(std::int64_t now_ns) const;
+  [[nodiscard]] bool UnresolvedDue(std::int64_t now_ns,
+                                   std::int64_t timeout_ns) const;
   void MarkUnresolved(std::int64_t event_ns);
 
   [[nodiscard]] bool Done() const noexcept {
@@ -115,6 +120,10 @@ class ProbeNode {
   [[nodiscard]] LifecycleState* FindEntry(std::uint64_t local_order_id);
   [[nodiscard]] LifecycleState* FindClose(std::uint64_t local_order_id);
   [[nodiscard]] double EntrySign() const noexcept;
+  void ApplyCloseFill(LifecycleState* lifecycle, double filled_qty,
+                      double fill_price, std::int64_t event_ns);
+  void ApplyCloseTerminal(LifecycleState* lifecycle, CloseResult result,
+                          std::int64_t event_ns);
   void EvaluateCompletion(std::int64_t event_ns);
 
   std::uint64_t node_id_{0};

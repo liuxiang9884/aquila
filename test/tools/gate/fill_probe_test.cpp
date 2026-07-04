@@ -143,9 +143,9 @@ run_dir = "/home/liuxiang/tmp/gate_btc_binance_trigger_probe_test"
 
   const auto result = aquila::tools::gate::fill_probe::LoadConfig(path);
   ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.value.probe.trigger_mode,
-            aquila::tools::gate::fill_probe::TriggerMode::
-                kBinanceTriggerGateQuote);
+  EXPECT_EQ(
+      result.value.probe.trigger_mode,
+      aquila::tools::gate::fill_probe::TriggerMode::kBinanceTriggerGateQuote);
   EXPECT_EQ(result.value.probe.max_binance_freshness_ns, 2000000);
   EXPECT_EQ(result.value.probe.max_gate_freshness_ns, 50000000);
   EXPECT_EQ(result.value.market_data.gate.shm_name,
@@ -209,6 +209,123 @@ run_dir = "/home/liuxiang/tmp/gate_btc_binance_trigger_probe_test"
   const auto result = aquila::tools::gate::fill_probe::LoadConfig(path);
   EXPECT_FALSE(result.ok);
   EXPECT_NE(result.error.find("market_data.binance.shm_name is required"),
+            std::string::npos);
+}
+
+TEST(GateFillProbeConfigTest, RejectsNonStringTriggerMode) {
+  const std::filesystem::path path =
+      std::filesystem::path{"/home/liuxiang/tmp"} /
+      "gate_fill_probe_non_string_trigger_mode.toml";
+  std::ofstream out(path);
+  out << R"toml(
+[fill_probe]
+name = "gate_btc_fill_probe"
+symbol = "BTC_USDT"
+exchange_symbol = "BTC_USDT"
+symbol_id = 93
+strategy_id = 3
+trigger_mode = 1
+max_nodes = 1000
+duration_ms = 1800000
+node_pause_ms = 1000
+gtc_cancel_after_ms = 1000
+unresolved_timeout_ms = 30000
+max_entry_notional_usdt = 10.0
+max_close_retries = 3
+close_slippage_bps = 100
+max_local_freshness_ns = 1000000
+max_exchange_freshness_ns = 2000000
+max_binance_freshness_ns = 2000000
+max_gate_freshness_ns = 50000000
+
+[instrument_catalog]
+file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+
+[market_data.gate]
+shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
+channel_name = "book_ticker_channel"
+
+[order_gateway]
+shm_name = "aquila_ogw_btc_fill_probe_20260703"
+route_count = 2
+command_queue_capacity = 4096
+event_queue_capacity = 8192
+startup_ready_timeout_s = 30
+gtc_route_id = 0
+ioc_route_id = 1
+
+[feedback]
+shm_name = "aquila_ofb_btc_fill_probe_20260703"
+channel_name = "orders"
+force_claim = true
+
+[output]
+run_dir = "/home/liuxiang/tmp/gate_btc_fill_probe_test"
+)toml";
+  out.close();
+
+  const auto result = aquila::tools::gate::fill_probe::LoadConfig(path);
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("fill_probe.trigger_mode must be a string"),
+            std::string::npos);
+}
+
+TEST(GateFillProbeConfigTest, RejectsNonPositiveUnresolvedTimeout) {
+  const std::filesystem::path path =
+      std::filesystem::path{"/home/liuxiang/tmp"} /
+      "gate_fill_probe_bad_unresolved_timeout.toml";
+  std::ofstream out(path);
+  out << R"toml(
+[fill_probe]
+name = "gate_btc_fill_probe"
+symbol = "BTC_USDT"
+exchange_symbol = "BTC_USDT"
+symbol_id = 93
+strategy_id = 3
+trigger_mode = "gate_direct"
+max_nodes = 1000
+duration_ms = 1800000
+node_pause_ms = 1000
+gtc_cancel_after_ms = 1000
+unresolved_timeout_ms = 0
+max_entry_notional_usdt = 10.0
+max_close_retries = 3
+close_slippage_bps = 100
+max_local_freshness_ns = 1000000
+max_exchange_freshness_ns = 2000000
+max_binance_freshness_ns = 2000000
+max_gate_freshness_ns = 50000000
+
+[instrument_catalog]
+file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+
+[market_data.gate]
+shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
+channel_name = "book_ticker_channel"
+
+[order_gateway]
+shm_name = "aquila_ogw_btc_fill_probe_20260703"
+route_count = 2
+command_queue_capacity = 4096
+event_queue_capacity = 8192
+startup_ready_timeout_s = 30
+gtc_route_id = 0
+ioc_route_id = 1
+
+[feedback]
+shm_name = "aquila_ofb_btc_fill_probe_20260703"
+channel_name = "orders"
+force_claim = true
+
+[output]
+run_dir = "/home/liuxiang/tmp/gate_btc_fill_probe_test"
+)toml";
+  out.close();
+
+  const auto result = aquila::tools::gate::fill_probe::LoadConfig(path);
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("fill_probe.unresolved_timeout_ms must be "
+                              "positive"),
             std::string::npos);
 }
 
@@ -406,9 +523,32 @@ TEST(GateFillProbeStateMachineTest, CloseRetryLimitLeavesNodeUnresolved) {
 
   EXPECT_FALSE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
   EXPECT_FALSE(node.Done());
-  EXPECT_TRUE(node.UnresolvedDue(3000 + 30000000001LL));
+  EXPECT_FALSE(node.UnresolvedDue(3000 + 1000000001LL, 2'000'000'000LL));
+  EXPECT_TRUE(node.UnresolvedDue(3000 + 2000000001LL, 2'000'000'000LL));
   node.MarkUnresolved(3000 + 30000000001LL);
   EXPECT_EQ(node.status(), NodeStatus::kUnresolved);
+}
+
+TEST(GateFillProbeStateMachineTest,
+     LateCloseFillFromPreviousAttemptCanCompleteNode) {
+  using namespace aquila::tools::gate::fill_probe;
+  ProbeNode node = ProbeNode::Start(4, NodeSide::kBuy, 4000);
+  node.MarkEntrySubmitted(EntryKind::kGtc, 41, 0, 4000);
+  node.MarkEntrySubmitted(EntryKind::kIoc, 42, 1, 4000);
+  node.OnEntryTerminal(41, EntryResult::kCancelled, 0.0, 0.0, 4050);
+  node.OnEntryTerminal(42, EntryResult::kFilled, 1.0, 61513.1, 4100);
+
+  ASSERT_TRUE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
+  node.MarkCloseSubmitted(EntryKind::kIoc, 50, 1, 4200);
+  node.OnCloseTerminal(EntryKind::kIoc, CloseResult::kCancelled, 4300);
+
+  ASSERT_TRUE(node.CloseRetryAllowed(EntryKind::kIoc, 3));
+  node.MarkCloseSubmitted(EntryKind::kIoc, 51, 1, 4400);
+  node.OnCloseFill(EntryKind::kIoc, 1.0, 61513.0, 4500);
+
+  EXPECT_TRUE(node.Done());
+  EXPECT_EQ(node.status(), NodeStatus::kCompletedClosed);
+  EXPECT_DOUBLE_EQ(node.net_position(), 0.0);
 }
 
 TEST(GateFillProbeNodeBudgetTest,
@@ -469,6 +609,8 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
       .node_id = 7,
       .entry_kind = "ioc",
       .entry_local_order_id = 70,
+      .entry_price = "61513.1",
+      .entry_quantity = "1",
       .entry_result = "cancelled",
       .close_attribution = "none",
   });
@@ -484,6 +626,10 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
   EXPECT_NE(node_csv.find("run_id,node_id,side,trigger_mode,binance_bbo_id"),
             std::string::npos);
   EXPECT_NE(node_csv.find("run-a,7,buy,binance_trigger_gate_quote,321"),
+            std::string::npos);
+
+  const std::string lifecycle_csv = ReadWholeFileForTest(dir / "lifecycle.csv");
+  EXPECT_NE(lifecycle_csv.find("run-a,7,ioc,0,70,,,61513.1,1,"),
             std::string::npos);
 }
 

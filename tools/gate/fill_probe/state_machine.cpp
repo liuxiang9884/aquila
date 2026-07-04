@@ -6,7 +6,6 @@ namespace aquila::tools::gate::fill_probe {
 namespace {
 
 inline constexpr std::int64_t kGtcCancelAfterNs = 1'000'000'000;
-inline constexpr std::int64_t kUnresolvedAfterNs = 30'000'000'000;
 inline constexpr double kFlatEpsilon = 1e-9;
 
 [[nodiscard]] bool IsFlat(double quantity) noexcept {
@@ -101,37 +100,29 @@ void ProbeNode::MarkCloseSubmitted(EntryKind kind, std::uint64_t local_order_id,
 void ProbeNode::OnCloseFill(std::uint64_t local_order_id, double filled_qty,
                             double fill_price, std::int64_t event_ns) {
   LifecycleState* lifecycle = FindClose(local_order_id);
-  if (lifecycle == nullptr) {
-    return;
-  }
-  lifecycle->close_pending = false;
-  lifecycle->close_result = CloseResult::kFilled;
-  lifecycle->close_finish_ns = event_ns;
-  lifecycle->close_filled_qty += filled_qty;
-  lifecycle->close_avg_fill_price = fill_price;
-  if (filled_qty > 0.0) {
-    net_position_ -= EntrySign() * filled_qty;
-  }
-  EvaluateCompletion(event_ns);
+  ApplyCloseFill(lifecycle, filled_qty, fill_price, event_ns);
+}
+
+void ProbeNode::OnCloseFill(EntryKind kind, double filled_qty,
+                            double fill_price, std::int64_t event_ns) {
+  ApplyCloseFill(&Lifecycle(kind), filled_qty, fill_price, event_ns);
 }
 
 void ProbeNode::OnCloseTerminal(std::uint64_t local_order_id,
                                 CloseResult result, std::int64_t event_ns) {
   LifecycleState* lifecycle = FindClose(local_order_id);
-  if (lifecycle == nullptr) {
-    return;
-  }
-  lifecycle->close_pending = false;
-  lifecycle->close_result = result;
-  lifecycle->close_finish_ns = event_ns;
-  if (IsCloseTerminal(result)) {
-    EvaluateCompletion(event_ns);
-  }
+  ApplyCloseTerminal(lifecycle, result, event_ns);
 }
 
-bool ProbeNode::UnresolvedDue(std::int64_t now_ns) const {
-  return status_ == NodeStatus::kRunning &&
-         now_ns - decision_ns_ > kUnresolvedAfterNs;
+void ProbeNode::OnCloseTerminal(EntryKind kind, CloseResult result,
+                                std::int64_t event_ns) {
+  ApplyCloseTerminal(&Lifecycle(kind), result, event_ns);
+}
+
+bool ProbeNode::UnresolvedDue(std::int64_t now_ns,
+                              std::int64_t timeout_ns) const {
+  return status_ == NodeStatus::kRunning && timeout_ns > 0 &&
+         now_ns - decision_ns_ > timeout_ns;
 }
 
 void ProbeNode::MarkUnresolved(std::int64_t event_ns) {
@@ -172,6 +163,35 @@ LifecycleState* ProbeNode::FindClose(std::uint64_t local_order_id) {
 
 double ProbeNode::EntrySign() const noexcept {
   return side_ == NodeSide::kBuy ? 1.0 : -1.0;
+}
+
+void ProbeNode::ApplyCloseFill(LifecycleState* lifecycle, double filled_qty,
+                               double fill_price, std::int64_t event_ns) {
+  if (status_ != NodeStatus::kRunning || lifecycle == nullptr) {
+    return;
+  }
+  lifecycle->close_pending = false;
+  lifecycle->close_result = CloseResult::kFilled;
+  lifecycle->close_finish_ns = event_ns;
+  lifecycle->close_filled_qty += filled_qty;
+  lifecycle->close_avg_fill_price = fill_price;
+  if (filled_qty > 0.0) {
+    net_position_ -= EntrySign() * filled_qty;
+  }
+  EvaluateCompletion(event_ns);
+}
+
+void ProbeNode::ApplyCloseTerminal(LifecycleState* lifecycle,
+                                   CloseResult result, std::int64_t event_ns) {
+  if (status_ != NodeStatus::kRunning || lifecycle == nullptr) {
+    return;
+  }
+  lifecycle->close_pending = false;
+  lifecycle->close_result = result;
+  lifecycle->close_finish_ns = event_ns;
+  if (IsCloseTerminal(result)) {
+    EvaluateCompletion(event_ns);
+  }
 }
 
 void ProbeNode::EvaluateCompletion(std::int64_t event_ns) {
