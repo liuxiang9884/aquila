@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "core/websocket/types.h"
+#include "exchange/gate/market_data/data_session_config.h"
 
 namespace aquila::gate {
 
@@ -18,6 +19,16 @@ enum class SubscriptionState : std::uint8_t {
 
 class BookTickerSubscriptionController {
  public:
+  BookTickerSubscriptionController() = default;
+
+  explicit BookTickerSubscriptionController(DataSessionFeeds feeds) noexcept
+      : feeds_(feeds) {}
+
+  void ConfigureFeeds(DataSessionFeeds feeds) noexcept {
+    feeds_ = feeds;
+    ResetAcks();
+  }
+
   [[nodiscard]] bool OnConnectionPhase(
       websocket::ConnectionPhase phase) noexcept {
     switch (phase) {
@@ -30,6 +41,7 @@ class BookTickerSubscriptionController {
       case websocket::ConnectionPhase::kClosed:
         connection_active_ = false;
         subscription_sent_for_connection_ = false;
+        ResetAcks();
         if (subscription_state_ == SubscriptionState::kSubscribeSent ||
             subscription_state_ == SubscriptionState::kSubscribed) {
           subscription_state_ = SubscriptionState::kIdle;
@@ -49,6 +61,7 @@ class BookTickerSubscriptionController {
     subscribe_status_ = status;
     subscription_sent_for_connection_ = status == websocket::SendStatus::kOk;
     if (status == websocket::SendStatus::kOk) {
+      ResetSubscribeAcks();
       subscription_state_ = SubscriptionState::kSubscribeSent;
     }
   }
@@ -56,20 +69,41 @@ class BookTickerSubscriptionController {
   void RecordUnsubscribeAttempt(websocket::SendStatus status) noexcept {
     unsubscribe_status_ = status;
     if (status == websocket::SendStatus::kOk) {
+      ResetUnsubscribeAcks();
       subscription_state_ = SubscriptionState::kUnsubscribeSent;
     }
   }
 
-  void MarkSubscribeAccepted() noexcept {
-    subscription_state_ = SubscriptionState::kSubscribed;
+  void MarkBookTickerSubscribeAccepted() noexcept {
+    book_ticker_subscribe_accepted_ = true;
+    if (AllSubscribeAcksReceived()) {
+      subscription_state_ = SubscriptionState::kSubscribed;
+    }
+  }
+
+  void MarkTradeSubscribeAccepted() noexcept {
+    trade_subscribe_accepted_ = true;
+    if (AllSubscribeAcksReceived()) {
+      subscription_state_ = SubscriptionState::kSubscribed;
+    }
   }
 
   void MarkSubscribeRejected() noexcept {
     subscription_state_ = SubscriptionState::kRejected;
   }
 
-  void MarkUnsubscribeAccepted() noexcept {
-    subscription_state_ = SubscriptionState::kUnsubscribed;
+  void MarkBookTickerUnsubscribeAccepted() noexcept {
+    book_ticker_unsubscribe_accepted_ = true;
+    if (AllUnsubscribeAcksReceived()) {
+      subscription_state_ = SubscriptionState::kUnsubscribed;
+    }
+  }
+
+  void MarkTradeUnsubscribeAccepted() noexcept {
+    trade_unsubscribe_accepted_ = true;
+    if (AllUnsubscribeAcksReceived()) {
+      subscription_state_ = SubscriptionState::kUnsubscribed;
+    }
   }
 
   void MarkUnsubscribeRejected() noexcept {
@@ -97,16 +131,46 @@ class BookTickerSubscriptionController {
   }
 
  private:
+  void ResetAcks() noexcept {
+    ResetSubscribeAcks();
+    ResetUnsubscribeAcks();
+  }
+
+  void ResetSubscribeAcks() noexcept {
+    book_ticker_subscribe_accepted_ = false;
+    trade_subscribe_accepted_ = false;
+  }
+
+  void ResetUnsubscribeAcks() noexcept {
+    book_ticker_unsubscribe_accepted_ = false;
+    trade_unsubscribe_accepted_ = false;
+  }
+
+  [[nodiscard]] bool AllSubscribeAcksReceived() const noexcept {
+    return (!feeds_.book_ticker || book_ticker_subscribe_accepted_) &&
+           (!feeds_.trade || trade_subscribe_accepted_);
+  }
+
+  [[nodiscard]] bool AllUnsubscribeAcksReceived() const noexcept {
+    return (!feeds_.book_ticker || book_ticker_unsubscribe_accepted_) &&
+           (!feeds_.trade || trade_unsubscribe_accepted_);
+  }
+
   [[nodiscard]] bool CanSendSubscribe() const noexcept {
     return !subscription_sent_for_connection_ &&
            subscription_state_ != SubscriptionState::kRejected;
   }
 
+  DataSessionFeeds feeds_{};
   SubscriptionState subscription_state_{SubscriptionState::kIdle};
   websocket::SendStatus subscribe_status_{
       websocket::SendStatus::kWriteUnavailable};
   websocket::SendStatus unsubscribe_status_{
       websocket::SendStatus::kWriteUnavailable};
+  bool book_ticker_subscribe_accepted_{false};
+  bool trade_subscribe_accepted_{false};
+  bool book_ticker_unsubscribe_accepted_{false};
+  bool trade_unsubscribe_accepted_{false};
   bool subscription_sent_for_connection_{false};
   bool connection_active_{false};
 };

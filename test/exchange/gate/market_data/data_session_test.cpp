@@ -8,6 +8,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -111,6 +112,18 @@ Session MakeSession(RecordingDataSink& data_sink) {
   return Session(std::move(config), symbols, data_sink);
 }
 
+Session MakeBookTickerAndTradeSession(RecordingDataSink& data_sink) {
+  aquila::gate::DataSessionConfig config{};
+  config.name = "gate_data_session";
+  config.connection.host = "localhost";
+  config.connection.port = "443";
+  config.connection.target = "/v4/ws/usdt/sbe?sbe_schema_id=1";
+  config.exchange_symbols = {"BTC_USDT"};
+  config.symbol_ids = {11};
+  config.feeds = {.book_ticker = true, .trade = true};
+  return Session(std::move(config), data_sink);
+}
+
 DiagnosticSession MakeDiagnosticSession(RecordingDataSink& data_sink) {
   static constexpr std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",
@@ -199,6 +212,49 @@ TEST(GateDataSessionTest, SendsSubscribeWhenActive) {
             std::string_view::npos);
   EXPECT_NE(session.last_subscribe_request().find("BTC_USDT"),
             std::string_view::npos);
+}
+
+TEST(GateDataSessionTest, SendsEnabledFeedSubscribesWhenActive) {
+  RecordingDataSink data_sink;
+  Session session = MakeBookTickerAndTradeSession(data_sink);
+
+  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
+
+  EXPECT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kSubscribeSent);
+  EXPECT_EQ(session.subscribe_status(), aquila::websocket::SendStatus::kOk);
+  EXPECT_EQ(session.stats().subscribe_sent, 2U);
+  EXPECT_NE(
+      session.last_book_ticker_subscribe_request().find("futures.book_ticker"),
+      std::string_view::npos);
+  EXPECT_NE(session.last_trade_subscribe_request().find("futures.trades"),
+            std::string_view::npos);
+  EXPECT_NE(session.last_subscribe_request().find("futures.trades"),
+            std::string_view::npos);
+}
+
+TEST(GateDataSessionTest, AggregatesMultiFeedSubscribeAcks) {
+  RecordingDataSink data_sink;
+  Session session = MakeBookTickerAndTradeSession(data_sink);
+
+  session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
+  ASSERT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kSubscribeSent);
+
+  EXPECT_EQ(
+      session.Handle(TextView(
+          R"({"time":1,"channel":"futures.book_ticker","event":"subscribe","result":{"status":"success"}})")),
+      aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kSubscribeSent);
+
+  EXPECT_EQ(
+      session.Handle(TextView(
+          R"({"time":1,"channel":"futures.trades","event":"subscribe","result":{"status":"success"}})")),
+      aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(session.subscription_state(),
+            aquila::gate::SubscriptionState::kSubscribed);
+  EXPECT_EQ(session.stats().subscribe_acks, 2U);
 }
 
 TEST(GateDataSessionTest, RetriesSubscribeAfterActiveFailure) {

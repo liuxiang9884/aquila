@@ -198,9 +198,11 @@ class DataSession {
   DataSession(websocket::ConnectionConfig config,
               std::span<const SymbolBinding> symbols, DataSink& data_sink,
               ::aquila::market_data::DataSessionLatencyOutlierConfig
-                  latency_outlier_config = {})
+                  latency_outlier_config = {},
+              DataSessionFeeds feeds = {})
       : connection_(ApplyOptions(std::move(config))),
         symbol_bindings_(symbols.begin(), symbols.end()),
+        feeds_(feeds),
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
@@ -211,6 +213,7 @@ class DataSession {
         std::span<const SymbolBinding>(symbol_bindings_.data(),
                                        symbol_bindings_.size()),
         &subscription_symbols_);
+    subscription_controller_.ConfigureFeeds(feeds_);
     client_.SetStateHook(this, &HandleState);
   }
 
@@ -218,26 +221,29 @@ class DataSession {
   DataSession(websocket::ConnectionConfig config,
               const std::array<SymbolBinding, N>& symbols, DataSink& data_sink,
               ::aquila::market_data::DataSessionLatencyOutlierConfig
-                  latency_outlier_config = {})
+                  latency_outlier_config = {},
+              DataSessionFeeds feeds = {})
       : DataSession(std::move(config), std::span<const SymbolBinding>(symbols),
-                    data_sink, latency_outlier_config) {}
+                    data_sink, latency_outlier_config, feeds) {}
 
   DataSession(DataSessionConfig config, DataSink& data_sink)
       : DataSession(std::move(config.name), std::move(config.connection),
                     std::move(config.exchange_symbols),
                     std::move(config.symbol_ids), data_sink,
-                    config.diagnostics.latency_outlier) {}
+                    config.diagnostics.latency_outlier, config.feeds) {}
 
   DataSession(std::string name, websocket::ConnectionConfig config,
               std::vector<std::string> exchange_symbols,
               std::vector<std::int32_t> symbol_ids, DataSink& data_sink,
               ::aquila::market_data::DataSessionLatencyOutlierConfig
-                  latency_outlier_config = {})
+                  latency_outlier_config = {},
+              DataSessionFeeds feeds = {})
       : name_(std::move(name)),
         connection_(ApplyOptions(std::move(config))),
         exchange_symbols_(std::move(exchange_symbols)),
         symbol_bindings_(
             detail::BuildOwnedSymbolBindings(exchange_symbols_, symbol_ids)),
+        feeds_(feeds),
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
@@ -248,6 +254,7 @@ class DataSession {
         std::span<const SymbolBinding>(symbol_bindings_.data(),
                                        symbol_bindings_.size()),
         &subscription_symbols_);
+    subscription_controller_.ConfigureFeeds(feeds_);
     client_.SetStateHook(this, &HandleState);
   }
 
@@ -370,6 +377,15 @@ class DataSession {
     return last_subscribe_request_;
   }
 
+  [[nodiscard]] std::string_view last_book_ticker_subscribe_request()
+      const noexcept {
+    return last_book_ticker_subscribe_request_;
+  }
+
+  [[nodiscard]] std::string_view last_trade_subscribe_request() const noexcept {
+    return last_trade_subscribe_request_;
+  }
+
  private:
   class ScopedStopHandlers {
    public:
@@ -465,7 +481,7 @@ class DataSession {
     if constexpr (SessionDiagnosticsEnabled) {
       session_diagnostics_.RecordControlMessage();
     }
-    if (!envelope.channel_is_book_ticker) {
+    if (!IsEnabledFeedChannel(envelope.channel)) {
       if constexpr (SessionDiagnosticsEnabled) {
         session_diagnostics_.RecordIgnoredTextMessage();
       }
@@ -481,7 +497,7 @@ class DataSession {
     if constexpr (SessionDiagnosticsEnabled) {
       session_diagnostics_.RecordSubscribeAck();
     }
-    subscription_controller_.MarkSubscribeAccepted();
+    MarkSubscribeAccepted(envelope.channel);
   }
 
   void HandleUnsubscribeResponse(
@@ -489,7 +505,7 @@ class DataSession {
     if constexpr (SessionDiagnosticsEnabled) {
       session_diagnostics_.RecordControlMessage();
     }
-    if (!envelope.channel_is_book_ticker) {
+    if (!IsEnabledFeedChannel(envelope.channel)) {
       if constexpr (SessionDiagnosticsEnabled) {
         session_diagnostics_.RecordIgnoredTextMessage();
       }
@@ -505,21 +521,82 @@ class DataSession {
     if constexpr (SessionDiagnosticsEnabled) {
       session_diagnostics_.RecordUnsubscribeAck();
     }
-    subscription_controller_.MarkUnsubscribeAccepted();
+    MarkUnsubscribeAccepted(envelope.channel);
+  }
+
+  [[nodiscard]] bool IsEnabledFeedChannel(
+      detail::TextChannel channel) const noexcept {
+    switch (channel) {
+      case detail::TextChannel::kBookTicker:
+        return feeds_.book_ticker;
+      case detail::TextChannel::kTrade:
+        return feeds_.trade;
+      case detail::TextChannel::kUnknown:
+        return false;
+    }
+    return false;
+  }
+
+  void MarkSubscribeAccepted(detail::TextChannel channel) noexcept {
+    switch (channel) {
+      case detail::TextChannel::kBookTicker:
+        subscription_controller_.MarkBookTickerSubscribeAccepted();
+        return;
+      case detail::TextChannel::kTrade:
+        subscription_controller_.MarkTradeSubscribeAccepted();
+        return;
+      case detail::TextChannel::kUnknown:
+        return;
+    }
+  }
+
+  void MarkUnsubscribeAccepted(detail::TextChannel channel) noexcept {
+    switch (channel) {
+      case detail::TextChannel::kBookTicker:
+        subscription_controller_.MarkBookTickerUnsubscribeAccepted();
+        return;
+      case detail::TextChannel::kTrade:
+        subscription_controller_.MarkTradeUnsubscribeAccepted();
+        return;
+      case detail::TextChannel::kUnknown:
+        return;
+    }
   }
 
   websocket::SendStatus SendSubscribe() noexcept {
-    last_subscribe_request_ = BuildFuturesBookTickerSubscribeRequest(
-        std::span<const std::string_view>(subscription_symbols_.data(),
-                                          subscription_symbols_.size()),
-        static_cast<std::int64_t>(std::time(nullptr)));
-    const websocket::SendStatus status = SendText(last_subscribe_request_);
-    if (status == websocket::SendStatus::kOk) {
+    const std::int64_t epoch_seconds =
+        static_cast<std::int64_t>(std::time(nullptr));
+    if (feeds_.book_ticker) {
+      std::string request = BuildFuturesBookTickerSubscribeRequest(
+          std::span<const std::string_view>(subscription_symbols_.data(),
+                                            subscription_symbols_.size()),
+          epoch_seconds);
+      const websocket::SendStatus status = SendText(request);
+      if (status != websocket::SendStatus::kOk) {
+        return status;
+      }
+      last_book_ticker_subscribe_request_ = std::move(request);
+      last_subscribe_request_ = last_book_ticker_subscribe_request_;
       if constexpr (SessionDiagnosticsEnabled) {
         session_diagnostics_.RecordSubscribeSent();
       }
     }
-    return status;
+    if (feeds_.trade) {
+      std::string request = BuildFuturesTradeSubscribeRequest(
+          std::span<const std::string_view>(subscription_symbols_.data(),
+                                            subscription_symbols_.size()),
+          epoch_seconds);
+      const websocket::SendStatus status = SendText(request);
+      if (status != websocket::SendStatus::kOk) {
+        return status;
+      }
+      last_trade_subscribe_request_ = std::move(request);
+      last_subscribe_request_ = last_trade_subscribe_request_;
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordSubscribeSent();
+      }
+    }
+    return websocket::SendStatus::kOk;
   }
 
   websocket::SendStatus SendSubscribeAttempt() noexcept {
@@ -534,17 +611,38 @@ class DataSession {
   }
 
   websocket::SendStatus SendUnsubscribe() noexcept {
-    const std::string request = BuildFuturesBookTickerUnsubscribeRequest(
-        std::span<const std::string_view>(subscription_symbols_.data(),
-                                          subscription_symbols_.size()),
-        static_cast<std::int64_t>(std::time(nullptr)));
-    const websocket::SendStatus status = SendText(request);
-    subscription_controller_.RecordUnsubscribeAttempt(status);
-    if (status == websocket::SendStatus::kOk) {
+    websocket::SendStatus status = websocket::SendStatus::kOk;
+    const std::int64_t epoch_seconds =
+        static_cast<std::int64_t>(std::time(nullptr));
+    if (feeds_.book_ticker) {
+      const std::string request = BuildFuturesBookTickerUnsubscribeRequest(
+          std::span<const std::string_view>(subscription_symbols_.data(),
+                                            subscription_symbols_.size()),
+          epoch_seconds);
+      status = SendText(request);
+      if (status != websocket::SendStatus::kOk) {
+        subscription_controller_.RecordUnsubscribeAttempt(status);
+        return status;
+      }
       if constexpr (SessionDiagnosticsEnabled) {
         session_diagnostics_.RecordUnsubscribeSent();
       }
     }
+    if (feeds_.trade) {
+      const std::string request = BuildFuturesTradeUnsubscribeRequest(
+          std::span<const std::string_view>(subscription_symbols_.data(),
+                                            subscription_symbols_.size()),
+          epoch_seconds);
+      status = SendText(request);
+      if (status != websocket::SendStatus::kOk) {
+        subscription_controller_.RecordUnsubscribeAttempt(status);
+        return status;
+      }
+      if constexpr (SessionDiagnosticsEnabled) {
+        session_diagnostics_.RecordUnsubscribeSent();
+      }
+    }
+    subscription_controller_.RecordUnsubscribeAttempt(status);
     return status;
   }
 
@@ -559,8 +657,11 @@ class DataSession {
   websocket::ConnectionConfig connection_;
   std::vector<std::string> exchange_symbols_;
   std::vector<SymbolBinding> symbol_bindings_;
+  DataSessionFeeds feeds_;
   std::vector<std::string_view> subscription_symbols_;
   std::string last_subscribe_request_;
+  std::string last_book_ticker_subscribe_request_;
+  std::string last_trade_subscribe_request_;
   std::atomic<bool> ever_active_{false};
   FuturesMarketDataClient<DataSink, MarketDataDiagnostics, WebSocketPolicy>
       market_data_client_;

@@ -124,6 +124,17 @@ TEST(GateFuturesMarketDataClientTest, BuildsBookTickerUnsubscribeRequest) {
       R"({"time":123,"channel":"futures.book_ticker","event":"unsubscribe","payload":["BTC_USDT"]})");
 }
 
+TEST(GateFuturesMarketDataClientTest, BuildsTradeSubscribeRequest) {
+  const std::array<std::string_view, 2> symbols{"BTC_USDT", "ETH_USDT"};
+
+  const std::string request =
+      aquila::gate::BuildFuturesTradeSubscribeRequest(symbols, 123);
+
+  EXPECT_EQ(
+      request,
+      R"({"time":123,"channel":"futures.trades","event":"subscribe","payload":["BTC_USDT","ETH_USDT"]})");
+}
+
 TEST(GateFuturesMarketDataClientTest, EmitsBookTickerFromBinaryBboPayload) {
   const std::array<aquila::gate::SymbolBinding, 1> symbols{
       aquila::gate::SymbolBinding{.exchange_symbol = "BTC_USDT",

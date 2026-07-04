@@ -15,12 +15,20 @@
 
 namespace aquila::gate {
 
+struct DataSessionFeeds {
+  bool book_ticker{true};
+  bool trade{false};
+};
+
 struct DataSessionConfig {
   std::string name;
   websocket::ConnectionConfig connection;
   std::vector<std::string> exchange_symbols;
   std::vector<std::int32_t> symbol_ids;
+  DataSessionFeeds feeds;
+  ::aquila::market_data::DataShmConfig data_shm;
   ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
+  ::aquila::market_data::TradeShmConfig trade_shm;
   ::aquila::market_data::DataSessionDiagnosticsConfig diagnostics;
 };
 

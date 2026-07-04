@@ -23,15 +23,13 @@ inline void AppendQuotedSymbols(fmt::memory_buffer* buffer,
   }
 }
 
-inline std::string BuildFuturesBookTickerSubscriptionRequest(
-    std::span<const std::string_view> symbols,
-    std::int64_t epoch_seconds,
-    std::string_view event) {
+inline std::string BuildFuturesSubscriptionRequest(
+    std::string_view channel, std::span<const std::string_view> symbols,
+    std::int64_t epoch_seconds, std::string_view event) {
   fmt::memory_buffer buffer;
-  fmt::format_to(
-      std::back_inserter(buffer),
-      R"({{"time":{},"channel":"futures.book_ticker","event":"{}","payload":[)",
-      epoch_seconds, event);
+  fmt::format_to(std::back_inserter(buffer),
+                 R"({{"time":{},"channel":"{}","event":"{}","payload":[)",
+                 epoch_seconds, channel, event);
   AppendQuotedSymbols(&buffer, symbols);
   fmt::format_to(std::back_inserter(buffer), "]}}");
   return fmt::to_string(buffer);
@@ -40,17 +38,27 @@ inline std::string BuildFuturesBookTickerSubscriptionRequest(
 }  // namespace detail
 
 inline std::string BuildFuturesBookTickerSubscribeRequest(
-    std::span<const std::string_view> symbols,
-    std::int64_t epoch_seconds) {
-  return detail::BuildFuturesBookTickerSubscriptionRequest(
-      symbols, epoch_seconds, "subscribe");
+    std::span<const std::string_view> symbols, std::int64_t epoch_seconds) {
+  return detail::BuildFuturesSubscriptionRequest("futures.book_ticker", symbols,
+                                                 epoch_seconds, "subscribe");
 }
 
 inline std::string BuildFuturesBookTickerUnsubscribeRequest(
-    std::span<const std::string_view> symbols,
-    std::int64_t epoch_seconds) {
-  return detail::BuildFuturesBookTickerSubscriptionRequest(
-      symbols, epoch_seconds, "unsubscribe");
+    std::span<const std::string_view> symbols, std::int64_t epoch_seconds) {
+  return detail::BuildFuturesSubscriptionRequest("futures.book_ticker", symbols,
+                                                 epoch_seconds, "unsubscribe");
+}
+
+inline std::string BuildFuturesTradeSubscribeRequest(
+    std::span<const std::string_view> symbols, std::int64_t epoch_seconds) {
+  return detail::BuildFuturesSubscriptionRequest("futures.trades", symbols,
+                                                 epoch_seconds, "subscribe");
+}
+
+inline std::string BuildFuturesTradeUnsubscribeRequest(
+    std::span<const std::string_view> symbols, std::int64_t epoch_seconds) {
+  return detail::BuildFuturesSubscriptionRequest("futures.trades", symbols,
+                                                 epoch_seconds, "unsubscribe");
 }
 
 }  // namespace aquila::gate

@@ -17,9 +17,15 @@ enum class TextEvent : std::uint8_t {
   kUpdate,
 };
 
+enum class TextChannel : std::uint8_t {
+  kUnknown = 0,
+  kBookTicker,
+  kTrade,
+};
+
 struct TextEnvelope {
   TextEvent event{TextEvent::kUnknown};
-  bool channel_is_book_ticker{false};
+  TextChannel channel{TextChannel::kUnknown};
   bool result_success{false};
   bool has_error{false};
 };
@@ -37,6 +43,16 @@ inline TextEvent ParseTextEvent(std::string_view event) noexcept {
   return TextEvent::kUnknown;
 }
 
+inline TextChannel ParseTextChannel(std::string_view channel) noexcept {
+  if (channel == "futures.book_ticker") {
+    return TextChannel::kBookTicker;
+  }
+  if (channel == "futures.trades") {
+    return TextChannel::kTrade;
+  }
+  return TextChannel::kUnknown;
+}
+
 inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
                                       TextEnvelope& output) noexcept {
   simdjson::ondemand::object root;
@@ -48,8 +64,9 @@ inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
   simdjson::ondemand::value value;
   if (FindSimdjsonField(root, "channel", &value)) {
     std::string_view channel{};
-    envelope.channel_is_book_ticker =
-        ReadSimdjsonString(value, &channel) && channel == "futures.book_ticker";
+    if (ReadSimdjsonString(value, &channel)) {
+      envelope.channel = ParseTextChannel(channel);
+    }
   }
   if (FindSimdjsonField(root, "event", &value)) {
     std::string_view event{};

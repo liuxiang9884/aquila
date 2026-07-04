@@ -179,9 +179,15 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(config.book_ticker_shm.create);
   EXPECT_FALSE(config.book_ticker_shm.remove_existing);
+  EXPECT_TRUE(config.feeds.book_ticker);
+  EXPECT_FALSE(config.feeds.trade);
+  EXPECT_TRUE(config.data_shm.enabled);
+  EXPECT_EQ(config.data_shm.book_ticker_channel_name, "book_ticker_channel");
+  EXPECT_EQ(config.data_shm.trade_channel_name, "trade_channel");
 
   struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
+    void OnTrade(const aquila::Trade&) noexcept {}
   } data_sink;
 
   using Session =
@@ -363,6 +369,112 @@ remove_existing = false
   EXPECT_EQ(shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(shm.create);
   EXPECT_FALSE(shm.remove_existing);
+}
+
+TEST(DataSessionConfigTest, ParsesGateFeedsAndTradeShmConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feeds = ["book_ticker", "trade"]
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_gate_market_data"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+create = true
+remove_existing = false
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.value.feeds.book_ticker);
+  EXPECT_TRUE(result.value.feeds.trade);
+  EXPECT_EQ(result.value.book_ticker_shm.channel_name, "book_ticker_channel");
+  EXPECT_EQ(result.value.trade_shm.channel_name, "trade_channel");
+  EXPECT_TRUE(result.value.data_shm.enabled);
+  EXPECT_EQ(result.value.data_shm.shm_name, "aquila_gate_market_data");
+  EXPECT_EQ(result.value.data_shm.book_ticker_channel_name,
+            "book_ticker_channel");
+  EXPECT_EQ(result.value.data_shm.trade_channel_name, "trade_channel");
+}
+
+TEST(DataSessionConfigTest, RejectsGateFeedAndFeedsTogether) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+feeds = ["book_ticker"]
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.feed and data_session.feeds"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsUnknownGateFeed) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feeds = ["book_ticker", "depth"]
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("unknown Gate data_session feed"),
+            std::string::npos);
 }
 
 TEST(DataSessionConfigTest, ParsesGateLatencyOutlierDiagnosticsConfig) {
