@@ -104,7 +104,7 @@ subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 settle = "usdt"
 wire_format = "sbe"
 sbe_schema_id = 1
-feed = "book_ticker"
+feeds = ["book_ticker"]
 
 [data_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"
@@ -117,9 +117,10 @@ bind_cpu_id = 2
 [data_shm_sink]
 enabled = true
 shm_name = "aquila_gate_market_data"
-channel_name = "book_ticker_channel"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
 create = true
-remove_existing = false
+remove_existing = true
 ```
 
 仓库内示例配置指向 Gate 公网行情 endpoint，语义是
@@ -156,7 +157,14 @@ remove_existing = false
 
 `[data_shm_sink]` 是可选顶层 section。`enabled = true` 时 data session tool 选择
 `DataShmPublisher` 作为唯一 data sink；未配置或 `enabled = false` 时选择默认计数 sink。
-第一版容量固定在代码常量中，TOML 不支持 `capacity` 或 `expected_capacity`。
+Gate data session 使用同一个 SHM object 内的两个 typed channel：`book_ticker_channel_name`
+发布 `BookTicker`，`trade_channel_name` 发布 `Trade`。Binance data session 当前仍只发布
+`BookTicker`，继续使用 legacy `channel_name`。容量固定在代码常量中，TOML 不支持
+`capacity` 或 `expected_capacity`。
+
+Gate 默认配置把 `remove_existing` 设为 `true`，用于从旧单 `BookTicker` channel SHM 迁移到
+combined layout；生产配置如果需要保留已有 reader，应使用新的 `shm_name` 或在确认 reader
+已停止后再重建。
 
 ## Instrument Catalog
 
@@ -255,7 +263,14 @@ Gate futures 行情字段：
 | `settle` | `usdt` | Gate futures settle currency。 |
 | `wire_format` | `sbe` | wire 格式；当前 Gate 行情主路径使用 SBE。 |
 | `sbe_schema_id` | `1` | Gate SBE schema id；Gate config parser 生成 `/v4/ws/usdt/sbe?sbe_schema_id=1`。 |
-| `feed` | `book_ticker` | 当前订阅的行情类型。 |
+| `feeds` | `["book_ticker"]` | 当前订阅的 Gate SBE feed 列表；支持 `book_ticker` 和 `trade`。 |
+| `feed` | `book_ticker` | legacy single-feed alias，仅在未配置 `feeds` 时接受；`feed` 和 `feeds` 同时出现会被拒绝。 |
+
+Gate `trade` 第一版只实现 SBE `publicTrade`；JSON trade 只保留 future 边界，不在当前 data
+session 主路径实现。一个 Gate data session process 仍只建立一个 WebSocket 连接；当
+`feeds = ["book_ticker", "trade"]` 时，session 在同一连接上分别发送
+`futures.book_ticker` 和 `futures.trades` subscribe / unsubscribe，并聚合两个 ack 后进入
+`kSubscribed` / `kUnsubscribed`。
 
 Gate 当前实现入口：
 
@@ -289,7 +304,9 @@ WebSocket config 和 instrument catalog 这类交易所无关配置。
 2. 用同一个 parsed table 初始化 Nova log，并调用 `ParseDataSessionConfig()` 读取 CSV。
 3. 在启动冷路径生成 `DataSessionConfig`，包括 `ConnectionConfig`、target、exchange symbol 列表和 symbol id 列表。
 4. 根据 `connection.enable_tls` 选择 `DefaultTlsWebSocketPolicy` 或 `DefaultPlainWebSocketPolicy`。
-5. `--connect` 模式调用 `DataSession::Run()`；`Run()` 在 session 内部安装 SIGINT / SIGTERM stop handler，使 active spin loop 通过 `Stop()` 退出。
+5. 如果启用 `[data_shm_sink]`，创建 combined `DataShmPublisher`，在同一个 SHM object 中发布
+   `BookTicker` 和 `Trade` 两个 typed channel。
+6. `--connect` 模式调用 `DataSession::Run()`；`Run()` 在 session 内部安装 SIGINT / SIGTERM stop handler，使 active spin loop 通过 `Stop()` 退出。
 
 Binance futures 行情字段：
 

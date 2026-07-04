@@ -114,6 +114,17 @@ CSV；outlier 样本直接写入当前 data session 的 Nova log，log key 为
 | `read_syscall_or_tls_ns` / `ws_dispatch_ns` / `parse_ns` / `shm_publish_ns` / `user_after_read_ns` | `data_session_book_ticker_latency_outlier` | experiment | ns，缺失为 `-1` | 判断主要延迟是否出在 read/TLS、WebSocket dispatch、交易所 parser、SHM publish 或 read 后 userspace。 | 同上。 |
 | `read_bytes` / `transport` | `data_session_book_ticker_latency_outlier` | experiment | bytes / `plain` 或 `tls` | 记录触发 outlier 的 read 批次大小和 transport 类型。 | 同上。 |
 
+### Data Session Tool 运行日志字段
+
+这些字段来自 `tools/gate/data_session.cpp` 的常规 Nova log，不受
+`AQUILA_DATA_SESSION_DIAG_LEVEL` 控制，也不是 outlier diagnostic schema。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `book_ticker count` | `gate_data_session` Nova log | stable | count | 每发布 1000 条 `BookTicker` 输出一次采样日志，用于确认 data session 仍在发布 BBO。 | 工具日志 schema 被统一 metrics 取代后重审。 |
+| `trade count` | `gate_data_session` Nova log | stable | count | 每发布 1000 条 `Trade` 输出一次采样日志，用于确认 Gate SBE `publicTrade` feed 仍在发布。 | 同上。 |
+| `book_tickers` / `trades` | `gate_data_session` result summary Nova log | stable | count | data session 退出时汇总本进程已发布到 sink 的 BBO / trade 数量。 | 同上。 |
+
 ## Market Data Fusion
 
 BookTicker fusion 当前通过 `AQUILA_BOOK_TICKER_FUSION_METADATA_MODE=file|off` 在编译期决定是否启用
