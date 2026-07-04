@@ -356,12 +356,15 @@ int main(int argc, char** argv) {
   std::filesystem::path config_path{
       "config/order_gateways/gate_order_gateway.toml"};
   bool connect{false};
+  bool validate_only{false};
   bool remove_existing_shm{false};
   std::uint64_t max_runtime_ms{0};
 
   CLI::App app{"Gate order gateway"};
   app.add_option("--config", config_path, "order gateway TOML path");
   app.add_flag("--connect", connect, "connect order sessions");
+  app.add_flag("--validate-only", validate_only,
+               "Validate config and route session configs without connecting");
   app.add_flag("--remove-existing-shm", remove_existing_shm,
                "unlink existing order gateway SHM before create");
   app.add_option("--max-runtime-ms", max_runtime_ms, "0 means unlimited");
@@ -387,6 +390,10 @@ int main(int argc, char** argv) {
     if (!RoutesUseSameTls(routes, &error)) {
       NOVA_ERROR("order_gateway_transport_error={}", error);
       return 1;
+    }
+
+    if (validate_only) {
+      connect = false;
     }
 
     if (!connect) {

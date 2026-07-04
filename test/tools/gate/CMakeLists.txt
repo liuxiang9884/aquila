@@ -53,6 +53,93 @@ target_link_libraries(gate_demo_strategy_test
 add_test(NAME gate_demo_strategy_test
          COMMAND gate_demo_strategy_test)
 
+add_executable(gate_fill_probe_test
+    ../../../tools/gate/fill_probe/config.cpp
+    ../../../tools/gate/fill_probe/csv_writer.cpp
+    ../../../tools/gate/fill_probe/state_machine.cpp
+    fill_probe_test.cpp
+)
+
+target_link_libraries(gate_fill_probe_test
+    PRIVATE
+        aquila_core
+        aquila_config
+        fmt::fmt-header-only
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+)
+
+add_test(NAME gate_fill_probe_test
+         COMMAND gate_fill_probe_test)
+set_tests_properties(gate_fill_probe_test
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_test(NAME gate_fill_probe_missing_config_reject
+         COMMAND bash -c [=[
+output="$("$1" 2>&1)"
+code=$?
+printf '%s\n' "$output"
+[[ "$code" -eq 2 ]] &&
+  [[ "$output" == *"--config is required"* ]]
+]=] _ $<TARGET_FILE:fill_probe_strategy>)
+
+add_test(NAME gate_fill_probe_missing_market_shm_reject
+         COMMAND bash -c [=[
+run_dir="/home/liuxiang/tmp/gate_fill_probe_missing_shm_ctest_$$"
+mkdir -p "$run_dir"
+config="$run_dir/probe.toml"
+cat > "$config" <<EOF
+[fill_probe]
+name = "missing_shm_probe"
+symbol = "BTC_USDT"
+exchange_symbol = "BTC_USDT"
+symbol_id = 93
+strategy_id = 3
+trigger_mode = "gate_direct"
+max_nodes = 1
+duration_ms = 1000
+node_pause_ms = 1000
+gtc_cancel_after_ms = 1000
+unresolved_timeout_ms = 30000
+max_entry_notional_usdt = 10
+max_close_retries = 3
+close_slippage_bps = 100
+max_local_freshness_ns = 1000000
+max_exchange_freshness_ns = 2000000
+max_binance_freshness_ns = 2000000
+max_gate_freshness_ns = 50000000
+[instrument_catalog]
+file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+[market_data.gate]
+shm_name = "aquila_missing_gate_fill_probe_market_shm"
+channel_name = "book_ticker_channel"
+[order_gateway]
+shm_name = "aquila_missing_gate_fill_probe_ogw"
+route_count = 2
+command_queue_capacity = 4096
+event_queue_capacity = 8192
+startup_ready_timeout_s = 30
+gtc_route_id = 0
+ioc_route_id = 1
+[feedback]
+shm_name = "aquila_missing_gate_fill_probe_ofb"
+channel_name = "orders"
+force_claim = true
+[output]
+run_dir = "$run_dir"
+EOF
+output="$("$1" --config "$config" --preflight-only 2>&1)"
+code=$?
+printf '%s\n' "$output"
+[[ "$code" -eq 1 ]] &&
+  [[ "$output" == *"market_data_shm_open_failed"* ]]
+]=] _ $<TARGET_FILE:fill_probe_strategy>)
+set_tests_properties(gate_fill_probe_missing_config_reject
+    gate_fill_probe_missing_market_shm_reject
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
 add_executable(gate_order_session_rtt_probe_test
     ../../../tools/gate/order_session_rtt_probe/connection_plan.cpp
     ../../../tools/gate/order_session_rtt_probe/config.cpp

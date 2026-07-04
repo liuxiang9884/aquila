@@ -1,0 +1,36 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/gate_order_feedback_session_btc_fill_probe_20260703.log"
+console_sink_name = "gate_order_feedback_session_btc_fill_probe_20260703_console"
+backend_thread_name = "gate_order_feedback_session_btc_fill_probe_20260703_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[order_feedback_session]
+name = "gate_order_feedback_session_btc_fill_probe_20260703"
+settle = "usdt"
+
+[order_feedback_session.credentials]
+api_key_env = "TEST_KEY"
+api_secret_env = "TEST_SECRET"
+
+[order_feedback_session.websocket]
+target = "/v4/ws/usdt/sbe?sbe_schema_id=1"
+
+[order_feedback_session.websocket.endpoint]
+host = "fxws-private.gateapi.io"
+connect_ip = "10.0.1.154"
+port = "80"
+enable_tls = false
+
+[order_feedback_session.websocket.execution_policy]
+bind_cpu_id = 6
+
+[order_feedback_session.shm]
+shm_name = "aquila_ofb_btc_fill_probe_20260703"
+channel_name = "orders"
+max_strategy_count = 8
+queue_capacity = 65536
+create = true
+remove_existing = true

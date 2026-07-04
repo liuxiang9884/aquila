@@ -31,6 +31,7 @@ struct CliOptions {
       "config/order_feedback/gate_order_feedback_session.toml"};
   double duration_sec{30.0};
   bool connect{false};
+  bool validate_only{false};
 };
 
 void PrintBool(std::string_view name, bool value) {
@@ -328,7 +329,7 @@ int Run(const CliOptions& options, const toml::table& toml) {
 
   PrintConfig(config_result.value, options);
 
-  if (!options.connect) {
+  if (options.validate_only || !options.connect) {
     fmt::print("dry_run=true no websocket connection opened\n");
     NOVA_INFO("dry_run=true no websocket connection opened");
     return 0;
@@ -375,6 +376,8 @@ int main(int argc, char** argv) {
                  "Maximum seconds to run after connecting");
   app.add_flag("--connect", options.connect,
                "Connect and run once OrderFeedbackSession exists");
+  app.add_flag("--validate-only", options.validate_only,
+               "Validate config without connecting");
   CLI11_PARSE(app, argc, argv);
 
   try {
