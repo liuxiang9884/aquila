@@ -4,7 +4,7 @@
 
 **Goal:** Add Gate SBE public trade market data to the existing data session path, publishing normalized `Trade` records into a second SHM channel beside `BookTicker`.
 
-**Architecture:** Keep one Gate data session process and one WebSocket connection. Decode SBE `bbo` and `publicTrade` into two fixed-size structs, then publish them into two independent `SPBroadcastQueue` channels in the same SHM object. Preserve existing `BookTicker` reader and fusion behavior; strategy runtime does not consume `Trade` in this plan.
+**Architecture:** Keep one Gate data session process and one WebSocket connection. Decode SBE `bbo` and `publicTrade` into two fixed-size structs, then publish them into two independent `SPBroadcastQueue` channels in the same SHM object. The trade hot path must iterate the SBE repeating group and decode each entry directly into the final `Trade` destination, preferring the SHM producer slot writer and avoiding materialized batches, vectors, or extra copies. Preserve existing `BookTicker` reader and fusion behavior; strategy runtime does not consume `Trade` in this plan.
 
 **Tech Stack:** C++20, CMake, Gate SBE generated headers, `sbepp`, `toml++`, Nova `SPBroadcastQueue` / SHM allocator, GTest.
 
@@ -595,6 +595,8 @@ TEST(GateSbeTradeDecoderTest, DecodesSellSideAndBatchFields) {
 }
 ```
 
+The `std::array<PublicTradePayloadEntry, N>` objects above are test payload-builder inputs only. Production decode must not allocate or materialize a batch container.
+
 - [ ] **Step 4: Run the test target and verify it fails**
 
 Run:
@@ -619,6 +621,14 @@ inline void DecodeTradesWithHeader(std::string_view payload,
                                    std::int64_t local_ns,
                                    std::int32_t symbol_id,
                                    Handler&& handler) noexcept;
+
+template <typename WriterFactory>
+inline void DecodeTradesWithHeaderToSlots(std::string_view payload,
+                                          const SbeMessageHeader& header,
+                                          std::int64_t local_ns,
+                                          std::int32_t symbol_id,
+                                          WriterFactory&& writer_factory)
+    noexcept;
 ```
 
 Implementation rules:
@@ -627,7 +637,7 @@ Implementation rules:
 - Assert `view.e() == ::gate::types::Event::Update`.
 - Use `view.time().value() * 1000` for `exchange_ns`.
 - Iterate `view.trades()`; `view.trades().numInGroup().value()` is `batch_count`.
-- For each entry:
+- For each entry, fill exactly one final `Trade` destination:
   - `id = static_cast<std::int64_t>(entry.id().value())`
   - `side = entry.size().value() >= 0 ? OrderSide::kBuy : OrderSide::kSell`
   - `volume = abs(size) * DecimalExponentScale(view.szExponent().value())`
@@ -635,6 +645,8 @@ Implementation rules:
   - `trade_ns = entry.t().value() * 1000`
   - `batch_index` increments from 0
   - `batch_count` is the group count
+
+`DecodeTradesWithHeader()` may create a stack `Trade` only for tests or non-slot sinks. The hot path should call `DecodeTradesWithHeaderToSlots()` from the market-data client when `DataSink` supports `EmplaceTradeWith()`, so each repeating-group entry is decoded directly into the queue slot.
 
 Reuse `detail::ReadVarString8()` and `detail::DecimalExponentScale()` from `book_ticker_decoder.h`.
 
@@ -775,18 +787,33 @@ void PublishDecodedTrade(const Trade& trade) noexcept {
 }
 ```
 
-If the sink supports `EmplaceTradeWith`, prefer that path in the same style as `BookTicker`:
+If the sink supports `EmplaceTradeWith`, do not use `PublishDecodedTrade()` for the production branch. Instead call the decoder slot-writer API so there is no stack `Trade` copy before SHM publish:
 
 ```cpp
 if constexpr (requires(DataSink& data_sink) {
                 data_sink.EmplaceTradeWith(
                     [](Trade&) noexcept {});
               }) {
-  data_sink_.EmplaceTradeWith([&](Trade& out) noexcept { out = trade; });
+  DecodeTradesWithHeaderToSlots(
+      payload, header, local_ns, symbol_id,
+      [&](auto&& fill_slot) noexcept {
+        data_sink_.EmplaceTradeWith(std::forward<decltype(fill_slot)>(
+            fill_slot));
+      });
 } else {
-  data_sink_.OnTrade(trade);
+  DecodeTradesWithHeader(
+      payload, header, local_ns, symbol_id,
+      [&](const Trade& trade) noexcept { data_sink_.OnTrade(trade); });
 }
 ```
+
+This keeps the SHM publisher path as:
+
+```text
+SBE publicTrade entry -> decoder fills Trade slot -> queue publish
+```
+
+No `std::array`, `std::vector`, or intermediate batch is allowed on that path.
 
 - [ ] **Step 4: Add `OnTrade` to all existing Gate client/session sinks**
 

@@ -98,6 +98,8 @@ Gate SBE `publicTrade` 映射：
 
 `reserved` 第一版固定写 0，不暴露 `flags`。如果后续实现 Gate JSON trade 且需要承载 `is_internal`，可以把 `reserved` 拆成 `std::uint8_t flags` + `std::uint8_t reserved`，保持 ABI size 不变。
 
+生产 hot path 不把一批 SBE trade materialize 成 `std::array` / `std::vector` / 临时 batch。`publicTrade.trades` repeating group 按 entry 顺序迭代，每个 entry 直接 decode 到最终 `Trade` 结构；当 sink 支持 slot writer 时，decoder 应直接写入 SHM producer slot，避免先生成栈上 `Trade` 再复制进 queue。测试中的 `std::array<PublicTradePayloadEntry, N>` 只用于构造固定测试 payload，不代表生产 decode 结构。
+
 ### 时间语义
 
 BBO 和 trade 对齐后的时间模型：
@@ -219,7 +221,7 @@ binary message path：
 websocket binary frame
   -> DispatchSbeMessage()
   -> kBookTicker: DecodeBookTickerWithHeader() -> OnBookTicker()
-  -> kPublicTrade: DecodePublicTradeWithHeader() -> OnTrade() per trade entry
+  -> kPublicTrade: DecodePublicTradeWithHeader() -> OnTrade() / EmplaceTradeWith() per trade entry
 ```
 
 text path：
