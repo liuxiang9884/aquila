@@ -47,4 +47,51 @@ TEST(CoreMarketDataTypesTest, BookTickerCarriesExchangeAndTopOfBook) {
   EXPECT_DOUBLE_EQ(book_ticker.ask_volume, 17.25);
 }
 
+TEST(CoreMarketDataTypesTest, TradeCarriesGatePublicTradeEvent) {
+  static_assert(std::is_standard_layout_v<aquila::Trade>);
+  static_assert(std::is_trivially_copyable_v<aquila::Trade>);
+  static_assert(alignof(aquila::Trade) == alignof(double));
+  static_assert(sizeof(aquila::Trade) == aquila::kCacheLineBytes);
+  static_assert(offsetof(aquila::Trade, id) == 0);
+  static_assert(offsetof(aquila::Trade, symbol_id) == 8);
+  static_assert(offsetof(aquila::Trade, exchange) == 12);
+  static_assert(offsetof(aquila::Trade, side) == 13);
+  static_assert(offsetof(aquila::Trade, reserved) == 14);
+  static_assert(offsetof(aquila::Trade, exchange_ns) == 16);
+  static_assert(offsetof(aquila::Trade, trade_ns) == 24);
+  static_assert(offsetof(aquila::Trade, local_ns) == 32);
+  static_assert(offsetof(aquila::Trade, price) == 40);
+  static_assert(offsetof(aquila::Trade, volume) == 48);
+  static_assert(offsetof(aquila::Trade, batch_index) == 56);
+  static_assert(offsetof(aquila::Trade, batch_count) == 60);
+
+  const aquila::Trade trade{
+      .id = 123456789,
+      .symbol_id = 42,
+      .exchange = aquila::Exchange::kGate,
+      .side = aquila::OrderSide::kBuy,
+      .reserved = 0,
+      .exchange_ns = 1'770'000'000'001'000'000,
+      .trade_ns = 1'770'000'000'000'990'000,
+      .local_ns = 1'770'000'000'001'200'000,
+      .price = 65'012.5,
+      .volume = 17.5,
+      .batch_index = 1,
+      .batch_count = 3,
+  };
+
+  EXPECT_EQ(trade.id, 123456789);
+  EXPECT_EQ(trade.symbol_id, 42);
+  EXPECT_EQ(trade.exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(trade.side, aquila::OrderSide::kBuy);
+  EXPECT_EQ(trade.reserved, 0);
+  EXPECT_EQ(trade.exchange_ns, 1'770'000'000'001'000'000);
+  EXPECT_EQ(trade.trade_ns, 1'770'000'000'000'990'000);
+  EXPECT_EQ(trade.local_ns, 1'770'000'000'001'200'000);
+  EXPECT_DOUBLE_EQ(trade.price, 65'012.5);
+  EXPECT_DOUBLE_EQ(trade.volume, 17.5);
+  EXPECT_EQ(trade.batch_index, 1U);
+  EXPECT_EQ(trade.batch_count, 3U);
+}
+
 }  // namespace
