@@ -734,6 +734,36 @@ TEST(DataReaderRecorderTest,
   std::filesystem::remove(trade_output);
 }
 
+TEST(DataReaderRecorderTest,
+     BinaryRecorderRejectsTradeDirectoryBeforeTruncatingBookTicker) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_binary_recorder_preflight_test_" + std::to_string(::getpid()));
+  const std::filesystem::path book_output = root / "book_ticker.bin";
+  const std::filesystem::path trade_output = root / "trade.bin";
+  std::filesystem::remove_all(root);
+  std::filesystem::create_directories(trade_output);
+
+  const BookTicker existing = MakeTicker(
+      1, Exchange::kGate, 1'770'000'000'000'000'001, 1'770'000'000'000'010'001);
+  {
+    BookTickerBinaryRecorder recorder(book_output,
+                                      RecorderWriteMode::kTruncate);
+    recorder.OnBookTicker(existing);
+    ASSERT_TRUE(recorder.Flush());
+  }
+
+  EXPECT_THROW(BinaryRecorder recorder(book_output, trade_output,
+                                       RecorderWriteMode::kTruncate),
+               std::runtime_error);
+
+  const std::vector<BookTicker> records = ReadBookTickers(book_output);
+  ASSERT_EQ(records.size(), 1U);
+  ExpectBookTickerEq(records[0], existing);
+
+  std::filesystem::remove_all(root);
+}
+
 TEST(DataReaderRecorderTest, RotatingRecorderKeepsActiveTmpOutOfManifest) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
@@ -848,6 +878,50 @@ TEST(DataReaderRecorderTest, RotatingRecorderFinalizesSegmentsAndManifest) {
 
   EXPECT_EQ(recorder.stats().total_records, 2U);
   EXPECT_EQ(recorder.segments_completed(), 2U);
+
+  std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderTest,
+     RotatingBinaryRecorderRejectsTradeCollisionBeforeCreatingBookTickerTmp) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_binary_recorder_preflight_test_" +
+       std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig book_rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "book_segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "book_manifest.jsonl",
+  };
+  RecorderRotationConfig trade_rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "trade_segments",
+      .file_prefix = "trade",
+      .manifest_path = root / "trade_manifest.jsonl",
+  };
+  const std::filesystem::path trade_tmp =
+      trade_rotation.output_dir / "trade_19700101_000000_000001.bin.tmp";
+  std::filesystem::create_directories(trade_rotation.output_dir);
+  {
+    std::ofstream existing(trade_tmp, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(existing.is_open());
+    existing << "existing";
+  }
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{0}},
+  };
+
+  EXPECT_THROW(RotatingBinaryRecorder recorder(book_rotation, trade_rotation,
+                                               [&] { return now; }),
+               std::runtime_error);
+  EXPECT_TRUE(FilesWithExtension(book_rotation.output_dir, ".tmp").empty());
+  EXPECT_EQ(std::filesystem::file_size(trade_tmp), 8U);
 
   std::filesystem::remove_all(root);
 }

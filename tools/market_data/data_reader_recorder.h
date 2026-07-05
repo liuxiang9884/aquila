@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -144,6 +145,72 @@ using BookTickerRecorderStats =
 using TradeRecorderStats = TypedRecorderStats<Trade, TradeRecorderTraits>;
 using RecorderStats = BookTickerRecorderStats;
 
+struct BinaryRecorderOutputPaths {
+  std::filesystem::path book_ticker_output_path;
+  std::filesystem::path trade_output_path;
+};
+
+[[nodiscard]] inline std::filesystem::path RecorderComparablePath(
+    const std::filesystem::path& path) {
+  std::error_code error;
+  const std::filesystem::path absolute_path =
+      std::filesystem::absolute(path, error);
+  if (error) {
+    return path.lexically_normal();
+  }
+  return absolute_path.lexically_normal();
+}
+
+[[nodiscard]] inline bool RecorderSamePath(const std::filesystem::path& lhs,
+                                           const std::filesystem::path& rhs) {
+  return RecorderComparablePath(lhs) == RecorderComparablePath(rhs);
+}
+
+inline void PreflightSingleOutputPath(const std::filesystem::path& path,
+                                      std::string_view label) {
+  if (path.empty()) {
+    throw std::invalid_argument(
+        fmt::format("{} path must not be empty", label));
+  }
+  if (path.has_parent_path()) {
+    std::filesystem::create_directories(path.parent_path());
+  }
+
+  std::error_code error;
+  const bool exists = std::filesystem::exists(path, error);
+  if (error) {
+    throw std::runtime_error(fmt::format(
+        "failed to inspect {} output path '{}'", label, path.string()));
+  }
+  if (!exists) {
+    return;
+  }
+  const bool is_directory = std::filesystem::is_directory(path, error);
+  if (error) {
+    throw std::runtime_error(fmt::format(
+        "failed to inspect {} output path '{}'", label, path.string()));
+  }
+  if (is_directory) {
+    throw std::runtime_error(fmt::format("{} output path '{}' is a directory",
+                                         label, path.string()));
+  }
+}
+
+[[nodiscard]] inline BinaryRecorderOutputPaths PreflightBinaryRecorderOutputs(
+    std::filesystem::path book_ticker_output_path,
+    std::filesystem::path trade_output_path) {
+  if (RecorderSamePath(book_ticker_output_path, trade_output_path)) {
+    throw std::invalid_argument(
+        "book_ticker and trade output paths must be different");
+  }
+  PreflightSingleOutputPath(book_ticker_output_path, "book_ticker");
+  PreflightSingleOutputPath(trade_output_path, "trade");
+  return BinaryRecorderOutputPaths{
+      .book_ticker_output_path = std::move(book_ticker_output_path),
+      .trade_output_path = std::move(trade_output_path),
+  };
+}
+
 template <typename RecordT, typename Traits>
 class TypedBinaryRecorder {
  public:
@@ -261,8 +328,10 @@ class BinaryRecorder {
   BinaryRecorder(std::filesystem::path book_ticker_output_path,
                  std::filesystem::path trade_output_path,
                  RecorderWriteMode write_mode)
-      : book_ticker_(std::move(book_ticker_output_path), write_mode),
-        trade_(std::move(trade_output_path), write_mode) {}
+      : BinaryRecorder(
+            PreflightBinaryRecorderOutputs(std::move(book_ticker_output_path),
+                                           std::move(trade_output_path)),
+            write_mode) {}
 
   BinaryRecorder(const BinaryRecorder&) = delete;
   BinaryRecorder& operator=(const BinaryRecorder&) = delete;
@@ -313,6 +382,10 @@ class BinaryRecorder {
   }
 
  private:
+  BinaryRecorder(BinaryRecorderOutputPaths paths, RecorderWriteMode write_mode)
+      : book_ticker_(std::move(paths.book_ticker_output_path), write_mode),
+        trade_(std::move(paths.trade_output_path), write_mode) {}
+
   BookTickerBinaryRecorder book_ticker_;
   TradeBinaryRecorder trade_;
 };
@@ -329,6 +402,8 @@ struct RecorderTimeSnapshot {
   };
 }
 
+using RecorderClock = std::function<RecorderTimeSnapshot()>;
+
 struct RecorderRotationConfig {
   bool enabled{false};
   std::uint32_t rotation_interval_sec{3600};
@@ -337,10 +412,130 @@ struct RecorderRotationConfig {
   std::filesystem::path manifest_path;
 };
 
+[[nodiscard]] inline std::string FormatRecorderWallTime(
+    std::chrono::system_clock::time_point wall) {
+  const std::time_t time = std::chrono::system_clock::to_time_t(wall);
+  std::tm tm{};
+  gmtime_r(&time, &tm);
+  return fmt::format("{:04}{:02}{:02}_{:02}{:02}{:02}", tm.tm_year + 1900,
+                     tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min,
+                     tm.tm_sec);
+}
+
+struct RecorderSegmentPaths {
+  std::filesystem::path tmp_path;
+  std::filesystem::path final_path;
+};
+
+[[nodiscard]] inline RecorderSegmentPaths BuildRecorderSegmentPaths(
+    const RecorderRotationConfig& config, const RecorderTimeSnapshot& now,
+    std::uint64_t sequence) {
+  const std::string file_name =
+      fmt::format("{}_{}_{:06}.bin", config.file_prefix,
+                  FormatRecorderWallTime(now.wall), sequence);
+  std::filesystem::path final_path = config.output_dir / file_name;
+  std::filesystem::path tmp_path = final_path;
+  tmp_path += ".tmp";
+  return RecorderSegmentPaths{
+      .tmp_path = std::move(tmp_path),
+      .final_path = std::move(final_path),
+  };
+}
+
+inline void PreflightRotationConfig(const RecorderRotationConfig& config,
+                                    std::string_view label) {
+  if (config.rotation_interval_sec == 0) {
+    throw std::invalid_argument(
+        fmt::format("{} rotation interval must be positive", label));
+  }
+  if (config.output_dir.empty()) {
+    throw std::invalid_argument(
+        fmt::format("{} rotation output_dir must not be empty", label));
+  }
+  if (config.file_prefix.empty()) {
+    throw std::invalid_argument(
+        fmt::format("{} rotation file_prefix must not be empty", label));
+  }
+  if (config.manifest_path.empty()) {
+    throw std::invalid_argument(
+        fmt::format("{} rotation manifest_path must not be empty", label));
+  }
+}
+
+inline void PrepareRotationDirectories(const RecorderRotationConfig& config) {
+  std::filesystem::create_directories(config.output_dir);
+  if (config.manifest_path.has_parent_path()) {
+    std::filesystem::create_directories(config.manifest_path.parent_path());
+  }
+}
+
+inline void PreflightInitialRotationSegment(
+    const RecorderRotationConfig& config, const RecorderTimeSnapshot& now,
+    std::string_view label) {
+  const RecorderSegmentPaths paths = BuildRecorderSegmentPaths(config, now, 1);
+  std::error_code exists_error;
+  const bool tmp_exists = std::filesystem::exists(paths.tmp_path, exists_error);
+  if (exists_error || tmp_exists) {
+    throw std::runtime_error(
+        fmt::format("{} rotation tmp segment '{}' is not available", label,
+                    paths.tmp_path.string()));
+  }
+  const bool final_exists =
+      std::filesystem::exists(paths.final_path, exists_error);
+  if (exists_error || final_exists) {
+    throw std::runtime_error(
+        fmt::format("{} rotation final segment '{}' is not available", label,
+                    paths.final_path.string()));
+  }
+}
+
+struct RotatingBinaryRecorderInputs {
+  RecorderRotationConfig book_ticker_config;
+  RecorderRotationConfig trade_config;
+  RecorderClock clock;
+  RecorderTimeSnapshot initial_now;
+};
+
+[[nodiscard]] inline RotatingBinaryRecorderInputs
+PreflightRotatingBinaryRecorderInputs(RecorderRotationConfig book_ticker_config,
+                                      RecorderRotationConfig trade_config,
+                                      RecorderClock clock) {
+  if (!clock) {
+    clock = SystemRecorderTimeSnapshot;
+  }
+  if (RecorderSamePath(book_ticker_config.manifest_path,
+                       trade_config.manifest_path)) {
+    throw std::invalid_argument(
+        "book_ticker and trade rotation manifest paths must be different");
+  }
+  if (RecorderSamePath(
+          book_ticker_config.output_dir / book_ticker_config.file_prefix,
+          trade_config.output_dir / trade_config.file_prefix)) {
+    throw std::invalid_argument(
+        "book_ticker and trade rotation segment namespaces must be different");
+  }
+
+  PreflightRotationConfig(book_ticker_config, "book_ticker");
+  PreflightRotationConfig(trade_config, "trade");
+  PrepareRotationDirectories(book_ticker_config);
+  PrepareRotationDirectories(trade_config);
+
+  const RecorderTimeSnapshot initial_now = clock();
+  PreflightInitialRotationSegment(book_ticker_config, initial_now,
+                                  "book_ticker");
+  PreflightInitialRotationSegment(trade_config, initial_now, "trade");
+  return RotatingBinaryRecorderInputs{
+      .book_ticker_config = std::move(book_ticker_config),
+      .trade_config = std::move(trade_config),
+      .clock = std::move(clock),
+      .initial_now = initial_now,
+  };
+}
+
 template <typename RecordT, typename Traits>
 class TypedRotatingBinaryRecorder {
  public:
-  using Clock = std::function<RecorderTimeSnapshot()>;
+  using Clock = RecorderClock;
 
   explicit TypedRotatingBinaryRecorder(RecorderRotationConfig config,
                                        Clock clock = Clock{})
@@ -365,6 +560,34 @@ class TypedRotatingBinaryRecorder {
       std::filesystem::create_directories(config_.manifest_path.parent_path());
     }
     if (!OpenSegment(clock_())) {
+      throw std::runtime_error(fmt::format(
+          "failed to open rotation segment '{}'", current_tmp_path_.string()));
+    }
+  }
+
+  TypedRotatingBinaryRecorder(RecorderRotationConfig config, Clock clock,
+                              RecorderTimeSnapshot initial_now)
+      : config_(std::move(config)), clock_(std::move(clock)) {
+    if (config_.rotation_interval_sec == 0) {
+      throw std::invalid_argument("rotation interval must be positive");
+    }
+    if (config_.output_dir.empty()) {
+      throw std::invalid_argument("rotation output_dir must not be empty");
+    }
+    if (config_.file_prefix.empty()) {
+      throw std::invalid_argument("rotation file_prefix must not be empty");
+    }
+    if (config_.manifest_path.empty()) {
+      throw std::invalid_argument("rotation manifest_path must not be empty");
+    }
+    if (!clock_) {
+      clock_ = SystemRecorderTimeSnapshot;
+    }
+    std::filesystem::create_directories(config_.output_dir);
+    if (config_.manifest_path.has_parent_path()) {
+      std::filesystem::create_directories(config_.manifest_path.parent_path());
+    }
+    if (!OpenSegment(initial_now)) {
       throw std::runtime_error(fmt::format(
           "failed to open rotation segment '{}'", current_tmp_path_.string()));
     }
@@ -439,12 +662,7 @@ class TypedRotatingBinaryRecorder {
 
   [[nodiscard]] static std::string FormatWallTime(
       std::chrono::system_clock::time_point wall) {
-    const std::time_t time = std::chrono::system_clock::to_time_t(wall);
-    std::tm tm{};
-    gmtime_r(&time, &tm);
-    return fmt::format("{:04}{:02}{:02}_{:02}{:02}{:02}", tm.tm_year + 1900,
-                       tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min,
-                       tm.tm_sec);
+    return FormatRecorderWallTime(wall);
   }
 
   [[nodiscard]] static std::string JsonEscape(std::string_view text) {
@@ -478,12 +696,10 @@ class TypedRotatingBinaryRecorder {
   [[nodiscard]] bool OpenSegment(const RecorderTimeSnapshot& now) {
     current_stats_ = TypedRecorderStats<RecordT, Traits>{};
     current_sequence_ = next_sequence_++;
-    const std::string file_name =
-        fmt::format("{}_{}_{:06}.bin", config_.file_prefix,
-                    FormatWallTime(now.wall), current_sequence_);
-    current_final_path_ = config_.output_dir / file_name;
-    current_tmp_path_ = current_final_path_;
-    current_tmp_path_ += ".tmp";
+    const RecorderSegmentPaths paths =
+        BuildRecorderSegmentPaths(config_, now, current_sequence_);
+    current_final_path_ = paths.final_path;
+    current_tmp_path_ = paths.tmp_path;
     next_rotation_deadline_ =
         now.steady + std::chrono::seconds{config_.rotation_interval_sec};
 
@@ -630,13 +846,14 @@ class RotatingTradeBinaryRecorder
 
 class RotatingBinaryRecorder {
  public:
-  using Clock = std::function<RecorderTimeSnapshot()>;
+  using Clock = RecorderClock;
 
   RotatingBinaryRecorder(RecorderRotationConfig book_ticker_config,
                          RecorderRotationConfig trade_config,
                          Clock clock = Clock{})
-      : book_ticker_(std::move(book_ticker_config), clock),
-        trade_(std::move(trade_config), std::move(clock)) {}
+      : RotatingBinaryRecorder(PreflightRotatingBinaryRecorderInputs(
+            std::move(book_ticker_config), std::move(trade_config),
+            std::move(clock))) {}
 
   RotatingBinaryRecorder(const RotatingBinaryRecorder&) = delete;
   RotatingBinaryRecorder& operator=(const RotatingBinaryRecorder&) = delete;
@@ -677,6 +894,12 @@ class RotatingBinaryRecorder {
   }
 
  private:
+  explicit RotatingBinaryRecorder(RotatingBinaryRecorderInputs inputs)
+      : book_ticker_(std::move(inputs.book_ticker_config), inputs.clock,
+                     inputs.initial_now),
+        trade_(std::move(inputs.trade_config), std::move(inputs.clock),
+               inputs.initial_now) {}
+
   RotatingBookTickerBinaryRecorder book_ticker_;
   RotatingTradeBinaryRecorder trade_;
 };
