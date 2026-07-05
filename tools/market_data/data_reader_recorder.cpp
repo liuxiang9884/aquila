@@ -248,17 +248,6 @@ int main(int argc, char** argv) {
         NOVA_ERROR("config_error={}", config_result.error);
         return 1;
       }
-      if (trade_output_path.empty()) {
-        trade_output_path =
-            aquila::tools::market_data::DeriveTradeOutputPath(output_path);
-      }
-      const auto output_validation_result =
-          aquila::tools::market_data::ValidateRecorderOutputPaths(
-              output_path, trade_output_path);
-      if (!output_validation_result.ok) {
-        NOVA_ERROR("recorder_config_error={}", output_validation_result.error);
-        return 1;
-      }
 
       const std::vector<SourceLabel> source_labels =
           BuildSourceLabels(config_result.value);
@@ -271,6 +260,20 @@ int main(int argc, char** argv) {
       if (!recorder_config_result.ok) {
         NOVA_ERROR("recorder_config_error={}", recorder_config_result.error);
         return 1;
+      }
+      if (trade_output_path.empty()) {
+        trade_output_path =
+            aquila::tools::market_data::DeriveTradeOutputPath(output_path);
+      }
+      if (!recorder_config_result.value.rotation.enabled) {
+        const auto output_validation_result =
+            aquila::tools::market_data::ValidateRecorderOutputPaths(
+                output_path, trade_output_path);
+        if (!output_validation_result.ok) {
+          NOVA_ERROR("recorder_config_error={}",
+                     output_validation_result.error);
+          return 1;
+        }
       }
 
       NOVA_INFO("recorder_write_mode={}", WriteModeName(write_mode));

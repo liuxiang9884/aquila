@@ -433,10 +433,13 @@ recorder 由 `timeout` 发送 SIGTERM 后正常收尾，输出文件大小为 `1
 条 `sizeof(aquila::BookTicker)=64` 的连续记录。recorder summary：
 
 ```text
-result=ok stop_reason=signal polls=146025092 handler_book_tickers=15685 diagnostics_total_count=15685
-recorder_stats total_records=15685 first_exchange_ns=1779591707743090000 first_local_ns=6790761886994204 last_exchange_ns=1779591752524000000 last_local_ns=6790806665512928
-exchange_stats exchange=kBinance records=13860
-exchange_stats exchange=kGate records=1825
+result=ok stop_reason=signal polls=146025092 handler_book_tickers=15685 handler_trades=0 diagnostics_total_count=15685 book_ticker_output=/home/liuxiang/tmp/aquila_data_reader_live_smoke_20260524/live_merged_book_ticker.bin trade_output=/home/liuxiang/tmp/aquila_data_reader_live_smoke_20260524/live_merged_trade.bin book_ticker_segments_completed=0 trade_segments_completed=0
+recorder_stats feed=book_ticker total_records=15685 first_exchange_ns=1779591707743090000 first_local_ns=6790761886994204 last_exchange_ns=1779591752524000000 last_local_ns=6790806665512928
+exchange_stats feed=book_ticker exchange=kBinance records=13860
+exchange_stats feed=book_ticker exchange=kGate records=1825
+recorder_stats feed=trade total_records=0 first_exchange_ns=none first_local_ns=none last_exchange_ns=none last_local_ns=none
+exchange_stats feed=trade exchange=kBinance records=0
+exchange_stats feed=trade exchange=kGate records=0
 source_stats index=0 name=gate_book_ticker exchange=kGate book_ticker_count=1825 trade_count=0 skipped=0 overruns=0 last_book_ticker_id=113244034670 last_trade_id=0
 source_stats index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=13860 trade_count=0 skipped=0 overruns=0 last_book_ticker_id=10617499964819 last_trade_id=0
 ```

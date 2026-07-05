@@ -245,6 +245,13 @@ inline void PreflightSingleOutputPath(const std::filesystem::path& path,
   EnsureRecorderPathIsNotDirectory(path, fmt::format("{} output", label));
 }
 
+[[nodiscard]] inline bool RecorderArtifactPathUnavailable(
+    const std::filesystem::path& path, std::string_view label) {
+  const std::filesystem::file_status status =
+      RecorderSymlinkStatus(path, label);
+  return std::filesystem::exists(status) || std::filesystem::is_symlink(status);
+}
+
 [[nodiscard]] inline BinaryRecorderOutputPaths PreflightBinaryRecorderOutputs(
     std::filesystem::path book_ticker_output_path,
     std::filesystem::path trade_output_path) {
@@ -266,12 +273,7 @@ class TypedBinaryRecorder {
   TypedBinaryRecorder(std::filesystem::path output_path,
                       RecorderWriteMode write_mode)
       : output_path_(std::move(output_path)) {
-    if (output_path_.empty()) {
-      throw std::invalid_argument("output path must not be empty");
-    }
-    if (output_path_.has_parent_path()) {
-      std::filesystem::create_directories(output_path_.parent_path());
-    }
+    PreflightSingleOutputPath(output_path_, Traits::kFeedName);
 
     std::ios::openmode mode = std::ios::binary;
     switch (write_mode) {
@@ -539,18 +541,12 @@ inline void PreflightInitialRotationSegment(
     const RecorderRotationConfig& config, const RecorderTimeSnapshot& now,
     std::string_view label) {
   const RecorderSegmentPaths paths = BuildRecorderSegmentPaths(config, now, 1);
-  const std::filesystem::file_status tmp_status =
-      RecorderSymlinkStatus(paths.tmp_path, label);
-  if (std::filesystem::exists(tmp_status) ||
-      std::filesystem::is_symlink(tmp_status)) {
+  if (RecorderArtifactPathUnavailable(paths.tmp_path, label)) {
     throw std::runtime_error(
         fmt::format("{} rotation tmp segment '{}' is not available", label,
                     paths.tmp_path.string()));
   }
-  const std::filesystem::file_status final_status =
-      RecorderSymlinkStatus(paths.final_path, label);
-  if (std::filesystem::exists(final_status) ||
-      std::filesystem::is_symlink(final_status)) {
+  if (RecorderArtifactPathUnavailable(paths.final_path, label)) {
     throw std::runtime_error(
         fmt::format("{} rotation final segment '{}' is not available", label,
                     paths.final_path.string()));
@@ -612,25 +608,12 @@ class TypedRotatingBinaryRecorder {
   explicit TypedRotatingBinaryRecorder(RecorderRotationConfig config,
                                        Clock clock = Clock{})
       : config_(std::move(config)), clock_(std::move(clock)) {
-    if (config_.rotation_interval_sec == 0) {
-      throw std::invalid_argument("rotation interval must be positive");
-    }
-    if (config_.output_dir.empty()) {
-      throw std::invalid_argument("rotation output_dir must not be empty");
-    }
-    if (config_.file_prefix.empty()) {
-      throw std::invalid_argument("rotation file_prefix must not be empty");
-    }
-    if (config_.manifest_path.empty()) {
-      throw std::invalid_argument("rotation manifest_path must not be empty");
-    }
+    PreflightRotationConfig(config_, Traits::kFeedName);
     if (!clock_) {
       clock_ = SystemRecorderTimeSnapshot;
     }
-    std::filesystem::create_directories(config_.output_dir);
-    if (config_.manifest_path.has_parent_path()) {
-      std::filesystem::create_directories(config_.manifest_path.parent_path());
-    }
+    PrepareRotationDirectories(config_);
+    PreflightRotationManifestPath(config_, Traits::kFeedName);
     if (!OpenSegment(clock_())) {
       throw std::runtime_error(fmt::format(
           "failed to open rotation segment '{}'", current_tmp_path_.string()));
@@ -640,25 +623,12 @@ class TypedRotatingBinaryRecorder {
   TypedRotatingBinaryRecorder(RecorderRotationConfig config, Clock clock,
                               RecorderTimeSnapshot initial_now)
       : config_(std::move(config)), clock_(std::move(clock)) {
-    if (config_.rotation_interval_sec == 0) {
-      throw std::invalid_argument("rotation interval must be positive");
-    }
-    if (config_.output_dir.empty()) {
-      throw std::invalid_argument("rotation output_dir must not be empty");
-    }
-    if (config_.file_prefix.empty()) {
-      throw std::invalid_argument("rotation file_prefix must not be empty");
-    }
-    if (config_.manifest_path.empty()) {
-      throw std::invalid_argument("rotation manifest_path must not be empty");
-    }
+    PreflightRotationConfig(config_, Traits::kFeedName);
     if (!clock_) {
       clock_ = SystemRecorderTimeSnapshot;
     }
-    std::filesystem::create_directories(config_.output_dir);
-    if (config_.manifest_path.has_parent_path()) {
-      std::filesystem::create_directories(config_.manifest_path.parent_path());
-    }
+    PrepareRotationDirectories(config_);
+    PreflightRotationManifestPath(config_, Traits::kFeedName);
     if (!OpenSegment(initial_now)) {
       throw std::runtime_error(fmt::format(
           "failed to open rotation segment '{}'", current_tmp_path_.string()));
@@ -775,16 +745,12 @@ class TypedRotatingBinaryRecorder {
     next_rotation_deadline_ =
         now.steady + std::chrono::seconds{config_.rotation_interval_sec};
 
-    std::error_code exists_error;
-    const bool tmp_exists =
-        std::filesystem::exists(current_tmp_path_, exists_error);
-    if (exists_error || tmp_exists) {
+    if (RecorderArtifactPathUnavailable(current_tmp_path_, Traits::kFeedName)) {
       write_error_ = true;
       return false;
     }
-    const bool final_exists =
-        std::filesystem::exists(current_final_path_, exists_error);
-    if (exists_error || final_exists) {
+    if (RecorderArtifactPathUnavailable(current_final_path_,
+                                        Traits::kFeedName)) {
       write_error_ = true;
       return false;
     }
@@ -824,10 +790,8 @@ class TypedRotatingBinaryRecorder {
       write_error_ = true;
       return false;
     }
-    std::error_code exists_error;
-    const bool final_exists =
-        std::filesystem::exists(current_final_path_, exists_error);
-    if (exists_error || final_exists) {
+    if (RecorderArtifactPathUnavailable(current_final_path_,
+                                        Traits::kFeedName)) {
       write_error_ = true;
       return false;
     }
