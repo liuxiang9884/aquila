@@ -14,6 +14,7 @@
 
 #include "core/websocket/message_view.h"
 #include "evaluation/exchange/gate/sbe/book_ticker_payload_builder.h"
+#include "evaluation/exchange/gate/sbe/trade_payload_builder.h"
 #include <simdjson.h>
 
 namespace {
@@ -355,6 +356,35 @@ TEST(GateDataSessionTest, DelegatesBinaryBookTickerToClient) {
   ASSERT_EQ(data_sink.calls, 1);
   EXPECT_EQ(data_sink.last.symbol_id, 11);
   EXPECT_EQ(data_sink.last.id, 42);
+}
+
+TEST(GateDataSessionTest, DelegatesBinaryPublicTradeToClient) {
+  RecordingDataSink data_sink;
+  Session session = MakeBookTickerAndTradeSession(data_sink);
+  std::array<char, 256> buffer{};
+  const aquila::gate::evaluation::PublicTradePayloadEntry entry{
+      .t = 1'770'000'000'000'990,
+      .id = 123456789,
+      .size = -21'000,
+      .price = 650'120'000,
+  };
+  const std::string_view payload =
+      aquila::gate::evaluation::BuildPublicTradePayload(
+          &buffer, "BTC_USDT", std::span<const decltype(entry)>(&entry, 1));
+
+  const auto result = session.Handle(BinaryView(payload));
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(session.stats().binary_messages, 1U);
+  EXPECT_EQ(data_sink.calls, 0);
+  ASSERT_EQ(data_sink.trade_calls, 1);
+  EXPECT_EQ(data_sink.last_trade.symbol_id, 11);
+  EXPECT_EQ(data_sink.last_trade.id, 123456789);
+  EXPECT_EQ(data_sink.last_trade.side, aquila::OrderSide::kSell);
+  EXPECT_DOUBLE_EQ(data_sink.last_trade.price, 65'012.0);
+  EXPECT_DOUBLE_EQ(data_sink.last_trade.volume, 21.0);
+  EXPECT_EQ(data_sink.last_trade.batch_index, 0U);
+  EXPECT_EQ(data_sink.last_trade.batch_count, 1U);
 }
 
 TEST(GateDataSessionTest, ExposesMarketDataDiagnosticsWhenEnabled) {

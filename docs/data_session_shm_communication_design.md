@@ -155,13 +155,13 @@ shm_name = "aquila_gate_market_data"
 book_ticker_channel_name = "book_ticker_channel"
 trade_channel_name = "trade_channel"
 create = true
-remove_existing = true
+remove_existing = false
 ```
 
 `book_ticker_channel_name` 和 `trade_channel_name` 是同一个 SHM object 内的两个独立 typed
 `SPBroadcastQueue` channel。旧 `channel_name` 仍作为 Gate `book_ticker_channel_name` 的
-legacy alias；如果同名 SHM object 由旧单 channel 版本创建，需要设置 `remove_existing=true` 或使用新的
-`shm_name` 重建 combined layout。
+legacy alias；如果同名 SHM object 由旧单 channel 版本创建，需要在确认 reader 已停止后临时显式设置
+`remove_existing=true`，或使用新的 `shm_name` 重建 combined layout。
 
 reader 配置见 `docs/data_reader_config.md`：
 

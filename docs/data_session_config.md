@@ -120,7 +120,7 @@ shm_name = "aquila_gate_market_data"
 book_ticker_channel_name = "book_ticker_channel"
 trade_channel_name = "trade_channel"
 create = true
-remove_existing = true
+remove_existing = false
 ```
 
 仓库内示例配置指向 Gate 公网行情 endpoint，语义是
@@ -162,9 +162,9 @@ Gate data session 使用同一个 SHM object 内的两个 typed channel：`book_
 `BookTicker`，继续使用 legacy `channel_name`。容量固定在代码常量中，TOML 不支持
 `capacity` 或 `expected_capacity`。
 
-Gate 默认配置把 `remove_existing` 设为 `true`，用于从旧单 `BookTicker` channel SHM 迁移到
-combined layout；生产配置如果需要保留已有 reader，应使用新的 `shm_name` 或在确认 reader
-已停止后再重建。
+Gate 默认配置把 `remove_existing` 设为 `false`，避免 dry-run 或普通启动删除已有 reader
+正在使用的 SHM。从旧单 `BookTicker` channel SHM 迁移到 combined layout 时，应使用新的
+`shm_name`，或在确认所有 reader 已停止后临时显式设置 `remove_existing = true` 再重建。
 
 ## Instrument Catalog
 
