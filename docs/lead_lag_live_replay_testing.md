@@ -35,8 +35,8 @@ lead_lag_live_replay_signal_parity 1800s
 ### 目标
 
 1. 实盘运行 LeadLag signal-only 策略，生成 live signal CSV。
-2. 同时启动独立 `data_reader_recorder` 进程，从同一组 Gate / Binance `BookTicker` SHM 导出 merged replay binary。
-3. 使用导出的 binary 运行 `lead_lag_replay`，生成 replay signal CSV。
+2. 同时启动独立 `data_reader_recorder` 进程，从同一组 Gate / Binance `BookTicker` / `Trade` SHM 导出独立 binary；当前 replay 仍只消费 BookTicker，Trade binary 用于落盘和对账。
+3. 使用导出的 BookTicker binary 运行 `lead_lag_replay`，生成 replay signal CSV。
 4. 比较 live / replay signal CSV，分析差异。
 
 ### 安全边界
