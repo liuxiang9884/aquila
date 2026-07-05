@@ -935,6 +935,12 @@ TEST(DataReaderRecorderTest,
   std::filesystem::remove_all(root);
 }
 
+TEST(DataReaderRecorderTest, BookTickerBinaryRecorderRejectsCharacterDevice) {
+  EXPECT_THROW(BookTickerBinaryRecorder recorder("/dev/null",
+                                                 RecorderWriteMode::kTruncate),
+               std::runtime_error);
+}
+
 TEST(DataReaderRecorderTest, RotatingRecorderKeepsActiveTmpOutOfManifest) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
@@ -1086,6 +1092,28 @@ TEST(DataReaderRecorderTest,
   EXPECT_FALSE(std::filesystem::exists(paths.final_path));
 
   std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderTest, RotatingBookTickerRecorderRejectsDeviceManifest) {
+  RecorderRotationConfig rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = std::filesystem::temp_directory_path() /
+                    ("aquila_rotating_book_recorder_device_manifest_test_" +
+                     std::to_string(::getpid())),
+      .file_prefix = "book_ticker",
+      .manifest_path = "/dev/null",
+  };
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{0}},
+  };
+
+  EXPECT_THROW(
+      RotatingBookTickerBinaryRecorder recorder(rotation, [&] { return now; }),
+      std::runtime_error);
+
+  std::filesystem::remove_all(rotation.output_dir);
 }
 
 TEST(DataReaderRecorderTest,

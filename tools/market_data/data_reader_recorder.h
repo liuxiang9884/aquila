@@ -201,19 +201,8 @@ struct BinaryRecorderOutputPaths {
   return std::filesystem::is_symlink(RecorderSymlinkStatus(path, label));
 }
 
-[[nodiscard]] inline bool RecorderPathIsDirectory(
+inline void EnsureRecorderArtifactPathIsUsable(
     const std::filesystem::path& path, std::string_view label) {
-  std::error_code error;
-  const bool is_directory = std::filesystem::is_directory(path, error);
-  if (error) {
-    throw std::runtime_error(
-        fmt::format("failed to inspect {} path '{}'", label, path.string()));
-  }
-  return is_directory;
-}
-
-inline void EnsureRecorderPathIsNotDirectory(const std::filesystem::path& path,
-                                             std::string_view label) {
   const std::filesystem::file_status status =
       RecorderSymlinkStatus(path, label);
   if (std::filesystem::is_symlink(status)) {
@@ -223,9 +212,9 @@ inline void EnsureRecorderPathIsNotDirectory(const std::filesystem::path& path,
   if (!std::filesystem::exists(status)) {
     return;
   }
-  if (RecorderPathIsDirectory(path, label)) {
-    throw std::runtime_error(
-        fmt::format("{} path '{}' is a directory", label, path.string()));
+  if (!std::filesystem::is_regular_file(status)) {
+    throw std::runtime_error(fmt::format("{} path '{}' must be a regular file",
+                                         label, path.string()));
   }
 }
 
@@ -242,7 +231,7 @@ inline void PreflightSingleOutputPath(const std::filesystem::path& path,
         fmt::format("{} path must not be empty", label));
   }
   EnsureRecorderParentDirectory(path);
-  EnsureRecorderPathIsNotDirectory(path, fmt::format("{} output", label));
+  EnsureRecorderArtifactPathIsUsable(path, fmt::format("{} output", label));
 }
 
 [[nodiscard]] inline bool RecorderArtifactPathUnavailable(
@@ -522,8 +511,8 @@ inline void PrepareRotationDirectories(const RecorderRotationConfig& config) {
 
 inline void PreflightRotationManifestPath(const RecorderRotationConfig& config,
                                           std::string_view label) {
-  EnsureRecorderPathIsNotDirectory(config.manifest_path,
-                                   fmt::format("{} rotation manifest", label));
+  EnsureRecorderArtifactPathIsUsable(
+      config.manifest_path, fmt::format("{} rotation manifest", label));
 }
 
 inline void TruncateRotationManifest(const RecorderRotationConfig& config,
