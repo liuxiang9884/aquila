@@ -229,8 +229,9 @@ int main(int argc, char** argv) {
                  "output BookTicker binary path without header")
       ->required();
   app.add_option("--trade-output", trade_output_path,
-                 "output Trade binary path without header; defaults derived "
-                 "from --output");
+                 "single-file Trade binary path without header; defaults "
+                 "derived from --output; rotation uses recorder trade_* "
+                 "fields");
   app.add_option("--mode", mode_text, "truncate or append")
       ->check(CLI::IsMember({"truncate", "append"}));
   app.add_option("--max-polls", max_polls, "0 means unlimited");

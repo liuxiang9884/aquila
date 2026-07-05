@@ -1,6 +1,7 @@
 #include "tools/market_data/data_reader_recorder_config.h"
 
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -37,6 +38,18 @@ namespace {
   result.ok = true;
   result.value = true;
   return result;
+}
+
+[[nodiscard]] std::optional<std::string> TerminalSymlinkError(
+    const std::filesystem::path& path, std::string_view field_name) {
+  try {
+    if (RecorderPathIsTerminalSymlink(path, field_name)) {
+      return fmt::format("{} must not be a symlink", field_name);
+    }
+  } catch (const std::exception& exc) {
+    return exc.what();
+  }
+  return std::nullopt;
 }
 
 [[nodiscard]] std::string DefaultFilePrefix(
@@ -243,6 +256,19 @@ RecorderConfigResult ParseRecorderConfig(
   if (config.rotation.enabled && write_mode == RecorderWriteMode::kAppend) {
     return Failure("recorder rotation does not support append mode");
   }
+  if (config.rotation.enabled) {
+    if (const std::optional<std::string> error = TerminalSymlinkError(
+            config.rotation.manifest_path, "recorder.manifest_path");
+        error.has_value()) {
+      return Failure(*error);
+    }
+    if (const std::optional<std::string> error =
+            TerminalSymlinkError(config.trade_rotation.manifest_path,
+                                 "recorder.trade_manifest_path");
+        error.has_value()) {
+      return Failure(*error);
+    }
+  }
   if (config.rotation.enabled &&
       RecorderSamePath(config.rotation.manifest_path,
                        config.trade_rotation.manifest_path)) {
@@ -279,6 +305,16 @@ RecorderValidationResult ValidateRecorderOutputPaths(
   }
   if (trade_output_path.empty()) {
     return ValidationFailure("--trade-output must not be empty");
+  }
+  if (const std::optional<std::string> error =
+          TerminalSymlinkError(book_ticker_output_path, "--output");
+      error.has_value()) {
+    return ValidationFailure(*error);
+  }
+  if (const std::optional<std::string> error =
+          TerminalSymlinkError(trade_output_path, "--trade-output");
+      error.has_value()) {
+    return ValidationFailure(*error);
   }
   if (RecorderSamePath(book_ticker_output_path, trade_output_path)) {
     return ValidationFailure("--output and --trade-output must be different");

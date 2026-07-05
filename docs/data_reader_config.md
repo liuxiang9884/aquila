@@ -244,7 +244,7 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 
 - `--config`：data reader TOML 路径，默认 `config/data_readers/strategy_data_reader.toml`。
 - `--output`：输出 `BookTicker` `.bin` 路径，必填。
-- `--trade-output`：输出 `Trade` `.bin` 路径；不传时从 `--output` 派生，例如 `live_merged_book_ticker.bin` -> `live_merged_trade.bin`，或 `live.bin` -> `live_trade.bin`。
+- `--trade-output`：单文件模式输出 `Trade` `.bin` 路径；不传时从 `--output` 派生，例如 `live_merged_book_ticker.bin` -> `live_merged_trade.bin`，或 `live.bin` -> `live_trade.bin`。rotation 模式的 Trade segment / manifest 由 `[recorder]` 的 `trade_output_dir`、`trade_file_prefix` 和 `trade_manifest_path` 控制。
 - `--mode`：写入模式，支持 `truncate` 和 `append`，默认 `truncate`。
 - `--max-polls`：最多执行多少次 recorder loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
 
@@ -279,7 +279,7 @@ trade_manifest_path = "/home/liuxiang/tmp/aquila_persistent_md/trade_manifest.js
 
 rotation 第一版只支持 `--mode truncate`；`--mode append` 会在启动期拒绝，避免追加模式下 sequence 和
 manifest 恢复语义不清晰。BookTicker / Trade 单文件路径、manifest 路径和 segment namespace 必须彼此
-独立；启动期会拒绝直接相同路径以及 symlink / hardlink 指向同一 artifact 的配置。
+独立；启动期会拒绝直接相同路径、terminal symlink artifact 路径以及 hardlink 指向同一 artifact 的配置。
 
 实盘交易并行录制：
 

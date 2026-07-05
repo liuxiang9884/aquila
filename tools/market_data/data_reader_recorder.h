@@ -184,15 +184,21 @@ struct BinaryRecorderOutputPaths {
   return RecorderComparablePath(lhs) == RecorderComparablePath(rhs);
 }
 
-[[nodiscard]] inline bool RecorderPathExists(const std::filesystem::path& path,
-                                             std::string_view label) {
+[[nodiscard]] inline std::filesystem::file_status RecorderSymlinkStatus(
+    const std::filesystem::path& path, std::string_view label) {
   std::error_code error;
-  const bool exists = std::filesystem::exists(path, error);
-  if (error) {
+  const std::filesystem::file_status status =
+      std::filesystem::symlink_status(path, error);
+  if (error && status.type() != std::filesystem::file_type::not_found) {
     throw std::runtime_error(
         fmt::format("failed to inspect {} path '{}'", label, path.string()));
   }
-  return exists;
+  return status;
+}
+
+[[nodiscard]] inline bool RecorderPathIsTerminalSymlink(
+    const std::filesystem::path& path, std::string_view label) {
+  return std::filesystem::is_symlink(RecorderSymlinkStatus(path, label));
 }
 
 [[nodiscard]] inline bool RecorderPathIsDirectory(
@@ -208,7 +214,13 @@ struct BinaryRecorderOutputPaths {
 
 inline void EnsureRecorderPathIsNotDirectory(const std::filesystem::path& path,
                                              std::string_view label) {
-  if (!RecorderPathExists(path, label)) {
+  const std::filesystem::file_status status =
+      RecorderSymlinkStatus(path, label);
+  if (std::filesystem::is_symlink(status)) {
+    throw std::runtime_error(fmt::format("{} path '{}' must not be a symlink",
+                                         label, path.string()));
+  }
+  if (!std::filesystem::exists(status)) {
     return;
   }
   if (RecorderPathIsDirectory(path, label)) {
@@ -527,16 +539,18 @@ inline void PreflightInitialRotationSegment(
     const RecorderRotationConfig& config, const RecorderTimeSnapshot& now,
     std::string_view label) {
   const RecorderSegmentPaths paths = BuildRecorderSegmentPaths(config, now, 1);
-  std::error_code exists_error;
-  const bool tmp_exists = std::filesystem::exists(paths.tmp_path, exists_error);
-  if (exists_error || tmp_exists) {
+  const std::filesystem::file_status tmp_status =
+      RecorderSymlinkStatus(paths.tmp_path, label);
+  if (std::filesystem::exists(tmp_status) ||
+      std::filesystem::is_symlink(tmp_status)) {
     throw std::runtime_error(
         fmt::format("{} rotation tmp segment '{}' is not available", label,
                     paths.tmp_path.string()));
   }
-  const bool final_exists =
-      std::filesystem::exists(paths.final_path, exists_error);
-  if (exists_error || final_exists) {
+  const std::filesystem::file_status final_status =
+      RecorderSymlinkStatus(paths.final_path, label);
+  if (std::filesystem::exists(final_status) ||
+      std::filesystem::is_symlink(final_status)) {
     throw std::runtime_error(
         fmt::format("{} rotation final segment '{}' is not available", label,
                     paths.final_path.string()));

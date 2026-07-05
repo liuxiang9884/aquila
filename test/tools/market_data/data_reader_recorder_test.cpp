@@ -369,6 +369,28 @@ TEST(DataReaderRecorderConfigTest, RejectsSingleFileSymlinkOutputCollision) {
   std::filesystem::remove_all(root);
 }
 
+TEST(DataReaderRecorderConfigTest,
+     RejectsSingleFileDanglingSymlinkOutputCollision) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_recorder_dangling_symlink_config_test_" +
+       std::to_string(::getpid()));
+  const std::filesystem::path book_output = root / "book_ticker.bin";
+  const std::filesystem::path trade_output = root / "trade.bin";
+  std::filesystem::remove_all(root);
+  std::filesystem::create_directories(root);
+  std::error_code symlink_error;
+  std::filesystem::create_symlink(book_output, trade_output, symlink_error);
+  ASSERT_FALSE(symlink_error) << symlink_error.message();
+
+  const auto result = ValidateRecorderOutputPaths(book_output, trade_output);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("symlink"), std::string::npos);
+
+  std::filesystem::remove_all(root);
+}
+
 TEST(DataReaderRecorderConfigTest, RejectsRotationManifestCollision) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() / "aquila_recorder_config_test";
@@ -422,6 +444,40 @@ trade_manifest_path = "{}"
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("trade_manifest_path"), std::string::npos);
+
+  std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderConfigTest,
+     RejectsRotationManifestDanglingSymlinkCollision) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_recorder_manifest_dangling_symlink_test_" +
+       std::to_string(::getpid()));
+  const std::filesystem::path manifest_path = root / "manifest.jsonl";
+  const std::filesystem::path trade_manifest_path =
+      root / "trade_manifest.jsonl";
+  std::filesystem::remove_all(root);
+  std::filesystem::create_directories(root);
+  std::error_code symlink_error;
+  std::filesystem::create_symlink(manifest_path, trade_manifest_path,
+                                  symlink_error);
+  ASSERT_FALSE(symlink_error) << symlink_error.message();
+  const std::string toml_text = fmt::format(
+      R"toml(
+[recorder]
+rotation_enabled = true
+manifest_path = "{}"
+trade_manifest_path = "{}"
+)toml",
+      manifest_path.string(), trade_manifest_path.string());
+  const toml::parse_result parsed = toml::parse(toml_text);
+
+  const auto result = ParseRecorderConfig(parsed, root / "ignored.bin",
+                                          RecorderWriteMode::kTruncate);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("symlink"), std::string::npos);
 
   std::filesystem::remove_all(root);
 }
@@ -1015,6 +1071,49 @@ TEST(DataReaderRecorderTest,
                std::runtime_error);
   EXPECT_TRUE(FilesWithExtension(book_rotation.output_dir, ".tmp").empty());
   EXPECT_EQ(std::filesystem::file_size(trade_tmp), 8U);
+
+  std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderTest, RotatingBinaryRecorderRejectsDanglingTmpSymlink) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_binary_recorder_dangling_tmp_test_" +
+       std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig book_rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "book_segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "book_manifest.jsonl",
+  };
+  RecorderRotationConfig trade_rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "trade_segments",
+      .file_prefix = "trade",
+      .manifest_path = root / "trade_manifest.jsonl",
+  };
+  const std::filesystem::path trade_tmp =
+      trade_rotation.output_dir / "trade_19700101_000000_000001.bin.tmp";
+  const std::filesystem::path trade_final =
+      trade_rotation.output_dir / "trade_19700101_000000_000001.bin";
+  std::filesystem::create_directories(trade_rotation.output_dir);
+  std::error_code symlink_error;
+  std::filesystem::create_symlink(trade_final, trade_tmp, symlink_error);
+  ASSERT_FALSE(symlink_error) << symlink_error.message();
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{0}},
+  };
+
+  EXPECT_THROW(RotatingBinaryRecorder recorder(book_rotation, trade_rotation,
+                                               [&] { return now; }),
+               std::runtime_error);
+  EXPECT_TRUE(FilesWithExtension(book_rotation.output_dir, ".tmp").empty());
+  EXPECT_FALSE(std::filesystem::exists(trade_final));
 
   std::filesystem::remove_all(root);
 }
