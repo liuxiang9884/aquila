@@ -186,7 +186,8 @@ int RunRecorderLoop(Reader& reader, Recorder& recorder,
     ++polls;
     if (recorder.write_error()) {
       log_summary("error", "write_error");
-      NOVA_ERROR("recorder_write_error output={}", output_path.string());
+      NOVA_ERROR("recorder_write_error book_ticker_output={} trade_output={}",
+                 output_path.string(), trade_output_path.string());
       return 1;
     }
     if (handled == 0) {
@@ -196,7 +197,8 @@ int RunRecorderLoop(Reader& reader, Recorder& recorder,
 
   if (!recorder.Flush()) {
     log_summary("error", "flush_error");
-    NOVA_ERROR("recorder_flush_error output={}", output_path.string());
+    NOVA_ERROR("recorder_flush_error book_ticker_output={} trade_output={}",
+               output_path.string(), trade_output_path.string());
     return 1;
   }
 
@@ -248,6 +250,13 @@ int main(int argc, char** argv) {
       if (trade_output_path.empty()) {
         trade_output_path =
             aquila::tools::market_data::DeriveTradeOutputPath(output_path);
+      }
+      const auto output_validation_result =
+          aquila::tools::market_data::ValidateRecorderOutputPaths(
+              output_path, trade_output_path);
+      if (!output_validation_result.ok) {
+        NOVA_ERROR("recorder_config_error={}", output_validation_result.error);
+        return 1;
       }
 
       const std::vector<SourceLabel> source_labels =

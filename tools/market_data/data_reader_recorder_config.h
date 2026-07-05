@@ -17,6 +17,7 @@ struct RecorderConfig {
 };
 
 using RecorderConfigResult = Result<RecorderConfig>;
+using RecorderValidationResult = Result<bool>;
 
 [[nodiscard]] RecorderConfigResult ParseRecorderConfig(
     const toml::table& node, const std::filesystem::path& output_path,
@@ -24,5 +25,9 @@ using RecorderConfigResult = Result<RecorderConfig>;
 
 [[nodiscard]] std::filesystem::path DeriveTradeOutputPath(
     const std::filesystem::path& book_ticker_output_path);
+
+[[nodiscard]] RecorderValidationResult ValidateRecorderOutputPaths(
+    const std::filesystem::path& book_ticker_output_path,
+    const std::filesystem::path& trade_output_path);
 
 }  // namespace aquila::tools::market_data

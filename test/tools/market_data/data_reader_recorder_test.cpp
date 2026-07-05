@@ -336,6 +336,59 @@ rotation_enabled = true
   EXPECT_NE(result.error.find("append"), std::string::npos);
 }
 
+TEST(DataReaderRecorderConfigTest, RejectsMatchingSingleFileOutputPaths) {
+  const auto result =
+      ValidateRecorderOutputPaths("/home/liuxiang/tmp/live_book_ticker.bin",
+                                  "/home/liuxiang/tmp/./live_book_ticker.bin");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("trade-output"), std::string::npos);
+}
+
+TEST(DataReaderRecorderConfigTest, RejectsRotationManifestCollision) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "aquila_recorder_config_test";
+  const std::filesystem::path manifest_path = root / "manifest.jsonl";
+  const std::string toml_text = fmt::format(
+      R"toml(
+[recorder]
+rotation_enabled = true
+manifest_path = "{}"
+trade_manifest_path = "{}"
+)toml",
+      manifest_path.string(), manifest_path.string());
+  const toml::parse_result parsed = toml::parse(toml_text);
+
+  const auto result = ParseRecorderConfig(parsed, root / "ignored.bin",
+                                          RecorderWriteMode::kTruncate);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("trade_manifest_path"), std::string::npos);
+}
+
+TEST(DataReaderRecorderConfigTest, RejectsRotationSegmentNamespaceCollision) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "aquila_recorder_config_test";
+  const std::filesystem::path output_dir = root / "segments";
+  const std::string toml_text = fmt::format(
+      R"toml(
+[recorder]
+rotation_enabled = true
+output_dir = "{}"
+file_prefix = "live"
+trade_output_dir = "{}"
+trade_file_prefix = "live"
+)toml",
+      output_dir.string(), output_dir.string());
+  const toml::parse_result parsed = toml::parse(toml_text);
+
+  const auto result = ParseRecorderConfig(parsed, root / "ignored.bin",
+                                          RecorderWriteMode::kTruncate);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("trade_file_prefix"), std::string::npos);
+}
+
 TEST(DataReaderRecorderConfigTest, RejectsWrongTypedRecorderFields) {
   const std::vector<std::pair<std::string, std::string>> cases{
       {"rotation_enabled", R"toml(
@@ -625,6 +678,60 @@ TEST(DataReaderRecorderTest, AppendModePreservesExistingRecords) {
   ExpectBookTickerEq(records[1], second);
 
   std::filesystem::remove(output_path);
+}
+
+TEST(DataReaderRecorderTest,
+     BinaryRecorderAppendModePreservesBookTickerAndTradeRecords) {
+  const std::filesystem::path book_output =
+      std::filesystem::temp_directory_path() /
+      "aquila_data_reader_binary_recorder_book_append_test.bin";
+  const std::filesystem::path trade_output =
+      std::filesystem::temp_directory_path() /
+      "aquila_data_reader_binary_recorder_trade_append_test.bin";
+  std::filesystem::remove(book_output);
+  std::filesystem::remove(trade_output);
+
+  const BookTicker first_book = MakeTicker(
+      1, Exchange::kGate, 1'770'000'000'000'000'001, 1'770'000'000'000'010'001);
+  const BookTicker second_book =
+      MakeTicker(2, Exchange::kBinance, 1'770'000'000'000'000'002,
+                 1'770'000'000'000'010'002);
+  const Trade first_trade =
+      MakeTrade(11, Exchange::kGate, 1'770'000'000'000'000'011,
+                1'770'000'000'000'005'011, 1'770'000'000'000'010'011);
+  const Trade second_trade =
+      MakeTrade(12, Exchange::kBinance, 1'770'000'000'000'000'012,
+                1'770'000'000'000'005'012, 1'770'000'000'000'010'012);
+
+  {
+    BinaryRecorder recorder(book_output, trade_output,
+                            RecorderWriteMode::kTruncate);
+    recorder.OnBookTicker(first_book);
+    recorder.OnTrade(first_trade);
+    EXPECT_FALSE(recorder.write_error());
+  }
+  {
+    BinaryRecorder recorder(book_output, trade_output,
+                            RecorderWriteMode::kAppend);
+    recorder.OnBookTicker(second_book);
+    recorder.OnTrade(second_trade);
+    EXPECT_EQ(recorder.book_ticker_stats().total_records, 1U);
+    EXPECT_EQ(recorder.trade_stats().total_records, 1U);
+    EXPECT_FALSE(recorder.write_error());
+  }
+
+  const std::vector<BookTicker> book_records = ReadBookTickers(book_output);
+  ASSERT_EQ(book_records.size(), 2U);
+  ExpectBookTickerEq(book_records[0], first_book);
+  ExpectBookTickerEq(book_records[1], second_book);
+
+  const std::vector<Trade> trade_records = ReadTrades(trade_output);
+  ASSERT_EQ(trade_records.size(), 2U);
+  ExpectTradeEq(trade_records[0], first_trade);
+  ExpectTradeEq(trade_records[1], second_trade);
+
+  std::filesystem::remove(book_output);
+  std::filesystem::remove(trade_output);
 }
 
 TEST(DataReaderRecorderTest, RotatingRecorderKeepsActiveTmpOutOfManifest) {
