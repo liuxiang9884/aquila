@@ -19,6 +19,7 @@
 #include <fmt/core.h>
 
 #include "core/common/types.h"
+#include "core/config/data_reader_config.h"
 #include "core/market_data/types.h"
 
 namespace aquila::tools::market_data {
@@ -30,6 +31,33 @@ enum class RecorderWriteMode : std::uint8_t {
   kTruncate,
   kAppend,
 };
+
+[[nodiscard]] inline std::string_view RecorderFeedName(
+    config::DataReaderFeed feed) noexcept {
+  switch (feed) {
+    case config::DataReaderFeed::kBookTicker:
+      return "book_ticker";
+    case config::DataReaderFeed::kTrade:
+      return "trade";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] inline bool ValidateBookTickerRecorderSources(
+    const config::DataReaderConfig& config, std::string* error) {
+  for (const config::DataReaderSourceConfig& source : config.sources) {
+    if (source.feed != config::DataReaderFeed::kBookTicker) {
+      if (error != nullptr) {
+        *error = fmt::format(
+            "data_reader_recorder only supports book_ticker sources; source "
+            "'{}' uses feed {}",
+            source.name, RecorderFeedName(source.feed));
+      }
+      return false;
+    }
+  }
+  return true;
+}
 
 inline constexpr std::array<Exchange, 6> kRecorderTrackedExchanges{
     Exchange::kBinance, Exchange::kOkx,    Exchange::kGate,

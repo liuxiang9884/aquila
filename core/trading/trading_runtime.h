@@ -111,6 +111,10 @@ class TradingRuntime {
  public:
   using OrderManagerT = OrderManager<OrderSessionT>;
   using ContextT = StrategyContext<OrderSessionT>;
+  static constexpr bool kStrategyHandlesTrade =
+      requires(StrategyT& strategy, const Trade& event, ContextT& context) {
+        strategy.OnTrade(event, context);
+      };
 
   TradingRuntime(const TradingRuntime&) = delete;
   TradingRuntime& operator=(const TradingRuntime&) = delete;
@@ -171,6 +175,14 @@ class TradingRuntime {
     if (config.order_capacity == 0) {
       result.error = "strategy.order_capacity must be positive";
       return result;
+    }
+    if constexpr (!kStrategyHandlesTrade) {
+      if (HasTradeSource(data_reader_config)) {
+        result.error =
+            "strategy must implement OnTrade to consume trade data reader "
+            "sources";
+        return result;
+      }
     }
 
     const std::size_t order_capacity = config.order_capacity;
@@ -302,10 +314,7 @@ class TradingRuntime {
   }
 
   void OnTrade(const Trade& trade) noexcept {
-    if constexpr (requires(StrategyT& strategy, const Trade& event,
-                           ContextT& context) {
-                    strategy.OnTrade(event, context);
-                  }) {
+    if constexpr (kStrategyHandlesTrade) {
       strategy_->OnTrade(trade, *context_);
     }
   }
@@ -354,6 +363,17 @@ class TradingRuntime {
 
  private:
   TradingRuntime() noexcept = default;
+
+  [[nodiscard]] static bool HasTradeSource(
+      const config::DataReaderConfig& data_reader_config) noexcept {
+    for (const config::DataReaderSourceConfig& source :
+         data_reader_config.sources) {
+      if (source.feed == config::DataReaderFeed::kTrade) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   void BindRuntimeIfSupported() {
     if constexpr (requires(OrderSessionT& session, TradingRuntime& runtime) {

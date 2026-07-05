@@ -223,10 +223,12 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 ```
 
 不消费 trade 的 handler 也应显式提供空 `OnTrade()`，避免 mixed-feed 配置被静默丢弃。
+`TradingRuntime::Create()` 会在启动冷路径检查 data reader config：如果配置包含 `feed = "trade"`，
+但策略没有实现 `OnTrade(const aquila::Trade&, ContextT&)`，会直接返回配置错误。
 
 ## SHM 到 replay binary recorder
 
-`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。当前 recorder 只支持 `BookTicker` binary；如果配置误接入 trade source，recorder handler 会进入 write error，不会把 `Trade` 静默写入 BookTicker 文件。
+`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。当前 recorder 只支持 `BookTicker` binary；启动期会拒绝任何 `feed = "trade"` source，避免生成部分输出或把 `Trade` 静默写入 BookTicker 文件。
 
 基础示例：
 

@@ -648,6 +648,22 @@ config::DataReaderConfig MakeDataReaderConfig() {
   return config;
 }
 
+config::DataReaderConfig MakeTradeDataReaderConfig() {
+  config::DataReaderConfig config = MakeDataReaderConfig();
+  config.sources.push_back(config::DataReaderSourceConfig{
+      .name = "gate_trade",
+      .type = config::DataReaderSourceType::kShm,
+      .exchange = Exchange::kGate,
+      .feed = config::DataReaderFeed::kTrade,
+      .shm_name = "unused_market_data",
+      .channel_name = "trade_channel",
+      .start_position = config::DataReaderStartPosition::kLatest,
+      .read_mode = config::DataReaderReadMode::kDrain,
+      .required = true,
+  });
+  return config;
+}
+
 BookTicker MakeBookTicker(std::int64_t id = 42) noexcept {
   return BookTicker{.id = id,
                     .symbol_id = 7,
@@ -786,6 +802,22 @@ TEST(TradingRuntimeTest,
   EXPECT_EQ(state.data_poll_calls, 1);
   EXPECT_EQ(state.book_ticker_calls, 1);
   EXPECT_EQ(state.last_ticker_id, 42);
+}
+
+TEST(TradingRuntimeTest,
+     RejectsTradeDataReaderSourceWhenStrategyDoesNotHandleTrades) {
+  RuntimeLoopState state;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = LoopRuntime::Create(
+      std::move(config), MakeTradeDataReaderConfig(),
+      [&state] { return FakeOrderSession(&state); }, &state);
+
+  EXPECT_FALSE(runtime_result.ok);
+  EXPECT_NE(runtime_result.error.find("OnTrade"), std::string::npos);
+  EXPECT_EQ(runtime_result.value, nullptr);
 }
 
 TEST(TradingRuntimeTest, ProductionRunPollsLiveLikeDrainCapableDataReader) {

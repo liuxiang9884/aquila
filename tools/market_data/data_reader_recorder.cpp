@@ -230,6 +230,12 @@ int main(int argc, char** argv) {
         NOVA_ERROR("config_error={}", config_result.error);
         return 1;
       }
+      std::string recorder_source_error;
+      if (!aquila::tools::market_data::ValidateBookTickerRecorderSources(
+              config_result.value, &recorder_source_error)) {
+        NOVA_ERROR("config_error={}", recorder_source_error);
+        return 1;
+      }
 
       const std::vector<SourceLabel> source_labels =
           BuildSourceLabels(config_result.value);

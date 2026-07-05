@@ -73,6 +73,22 @@ cfg::DataReaderSourceConfig MakeSourceConfig(std::string name,
   };
 }
 
+cfg::DataReaderSourceConfig MakeTradeSourceConfig(std::string name,
+                                                  Exchange exchange,
+                                                  std::string shm_name) {
+  return cfg::DataReaderSourceConfig{
+      .name = std::move(name),
+      .type = cfg::DataReaderSourceType::kShm,
+      .exchange = exchange,
+      .feed = cfg::DataReaderFeed::kTrade,
+      .shm_name = std::move(shm_name),
+      .channel_name = "trade_channel",
+      .start_position = cfg::DataReaderStartPosition::kLatest,
+      .read_mode = cfg::DataReaderReadMode::kDrain,
+      .required = true,
+  };
+}
+
 BookTicker MakeTicker(std::int64_t id, Exchange exchange,
                       std::int64_t exchange_ns,
                       std::int64_t local_ns) noexcept {
@@ -274,6 +290,36 @@ manifest_path = 9
 
     ASSERT_FALSE(result.ok);
     EXPECT_NE(result.error.find(field_name), std::string::npos);
+  }
+}
+
+TEST(DataReaderRecorderTest, RejectsTradeSourcesBeforeOpeningOutput) {
+  const std::vector<std::pair<std::string, cfg::DataReaderConfig>> cases{
+      {"trade_only",
+       [] {
+         cfg::DataReaderConfig config;
+         config.name = "trade_only_recorder";
+         config.sources.push_back(MakeTradeSourceConfig(
+             "gate_trade", Exchange::kGate, "aquila_gate_market_data"));
+         return config;
+       }()},
+      {"mixed",
+       [] {
+         cfg::DataReaderConfig config;
+         config.name = "mixed_recorder";
+         config.sources.push_back(MakeSourceConfig(
+             "gate_book_ticker", Exchange::kGate, "aquila_gate_market_data"));
+         config.sources.push_back(MakeTradeSourceConfig(
+             "gate_trade", Exchange::kGate, "aquila_gate_market_data"));
+         return config;
+       }()},
+  };
+
+  for (const auto& [name, config] : cases) {
+    SCOPED_TRACE(name);
+    std::string error;
+    EXPECT_FALSE(ValidateBookTickerRecorderSources(config, &error));
+    EXPECT_NE(error.find("trade"), std::string::npos);
   }
 }
 
