@@ -662,6 +662,37 @@ remove_existing = true
   EXPECT_TRUE(shm.remove_existing);
 }
 
+TEST(DataSessionConfigTest, RejectsBinanceEmptyCombinedTradeChannel) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_binance_market_data"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = ""
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_shm_sink.trade_channel_name is required"),
+            std::string::npos);
+}
+
 TEST(DataSessionConfigTest, ParsesBinanceLatencyOutlierDiagnosticsConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
@@ -863,13 +894,20 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   EXPECT_EQ(config.symbol_ids[1], 1);
   EXPECT_EQ(config.symbol_ids[2], 2);
   EXPECT_TRUE(config.book_ticker_shm.enabled);
-  EXPECT_EQ(config.book_ticker_shm.shm_name, "aquila_binance_market_data");
+  EXPECT_EQ(config.book_ticker_shm.shm_name,
+            "aquila_binance_market_data_combined");
   EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(config.book_ticker_shm.create);
   EXPECT_FALSE(config.book_ticker_shm.remove_existing);
+  EXPECT_TRUE(config.feeds.book_ticker);
+  EXPECT_FALSE(config.feeds.trade);
+  EXPECT_TRUE(config.data_shm.enabled);
+  EXPECT_EQ(config.data_shm.book_ticker_channel_name, "book_ticker_channel");
+  EXPECT_EQ(config.data_shm.trade_channel_name, "trade_channel");
 
   struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
+    void OnTrade(const aquila::Trade&) noexcept {}
   } data_sink;
 
   using Session = aquila::binance::DataSession<
@@ -896,6 +934,185 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   EXPECT_EQ(symbols[1].symbol_id, 1);
   EXPECT_EQ(symbols[2].symbol, "SOLUSDT");
   EXPECT_EQ(symbols[2].symbol_id, 2);
+}
+
+TEST(DataSessionConfigTest, LoadsBinanceMixedFeedDataSessionConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_mixed_data_session"
+subscribe_symbols = ["BTC_USDT", "ETH_USDT"]
+market = "um_futures"
+feeds = ["book_ticker", "trade"]
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_binance_mixed_market_data"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+create = true
+remove_existing = true
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const aquila::binance::DataSessionConfig& config = result.value;
+  EXPECT_TRUE(config.feeds.book_ticker);
+  EXPECT_TRUE(config.feeds.trade);
+  EXPECT_EQ(config.connection.target,
+            "/public/ws/btcusdt@bookTicker/btcusdt@trade/"
+            "ethusdt@bookTicker/ethusdt@trade");
+  EXPECT_TRUE(config.data_shm.enabled);
+  EXPECT_EQ(config.data_shm.shm_name, "aquila_binance_mixed_market_data");
+  EXPECT_EQ(config.data_shm.book_ticker_channel_name, "book_ticker_channel");
+  EXPECT_EQ(config.data_shm.trade_channel_name, "trade_channel");
+  EXPECT_TRUE(config.book_ticker_shm.enabled);
+  EXPECT_TRUE(config.trade_shm.enabled);
+  EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
+  EXPECT_EQ(config.trade_shm.channel_name, "trade_channel");
+  EXPECT_TRUE(config.data_shm.remove_existing);
+}
+
+TEST(DataSessionConfigTest, LoadsBinanceLegacyTradeFeedConfig) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_trade_data_session"
+subscribe_symbols = ["BTC_USDT", "ETH_USDT"]
+market = "um_futures"
+feed = "trade"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_FALSE(result.value.feeds.book_ticker);
+  EXPECT_TRUE(result.value.feeds.trade);
+  EXPECT_EQ(result.value.connection.target,
+            "/public/ws/btcusdt@trade/ethusdt@trade");
+}
+
+TEST(DataSessionConfigTest, RejectsEmptyBinanceFeeds) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_empty_feeds"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feeds = []
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.feeds must contain at least one"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsDuplicateBinanceFeeds) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_duplicate_feeds"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feeds = ["trade", "trade"]
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("duplicate feed trade"), std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsUnknownBinanceFeed) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_unknown_feed"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feeds = ["agg_trade"]
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("unknown Binance data_session feed"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsBinanceFeedAndFeedsTogether) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_mixed_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+feeds = ["book_ticker", "trade"]
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.feed and data_session.feeds"),
+            std::string::npos);
 }
 
 TEST(DataSessionConfigTest, LoadsReadyFirst5BinanceDataSessionConfig) {

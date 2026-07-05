@@ -6,6 +6,11 @@
 
 namespace aquila::binance {
 
+struct DataSessionFeeds {
+  bool book_ticker{true};
+  bool trade{false};
+};
+
 struct SymbolBinding {
   // The symbol text storage must outlive clients and sessions built from this
   // binding; market data lookup keeps string_view keys on purpose.

@@ -11,6 +11,19 @@ target_link_libraries(binance_book_ticker_parser_test
 add_test(NAME binance_book_ticker_parser_test
          COMMAND binance_book_ticker_parser_test)
 
+add_executable(binance_trade_parser_test
+    trade_parser_test.cpp
+)
+
+target_link_libraries(binance_trade_parser_test
+    PRIVATE
+        aquila_binance
+        GTest::gtest_main
+)
+
+add_test(NAME binance_trade_parser_test
+         COMMAND binance_trade_parser_test)
+
 add_executable(binance_futures_market_data_client_test
     futures_market_data_client_test.cpp
 )

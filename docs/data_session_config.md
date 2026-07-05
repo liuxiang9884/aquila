@@ -139,7 +139,7 @@ schema = "aquila.instrument.v1"
 name = "binance_data_session"
 subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 market = "um_futures"
-feed = "book_ticker"
+feeds = ["book_ticker"]
 
 [data_session.websocket.endpoint]
 host = "fstream.binance.com"
@@ -149,17 +149,18 @@ bind_cpu_id = 3
 
 [data_shm_sink]
 enabled = true
-shm_name = "aquila_binance_market_data"
-channel_name = "book_ticker_channel"
+shm_name = "aquila_binance_market_data_combined"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
 create = true
 remove_existing = false
 ```
 
 `[data_shm_sink]` 是可选顶层 section。`enabled = true` 时 data session tool 选择
 `DataShmPublisher` 作为唯一 data sink；未配置或 `enabled = false` 时选择默认计数 sink。
-Gate data session 使用同一个 SHM object 内的两个 typed channel：`book_ticker_channel_name`
-发布 `BookTicker`，`trade_channel_name` 发布 `Trade`。Binance data session 当前仍只发布
-`BookTicker`，继续使用 legacy `channel_name`。容量固定在代码常量中，TOML 不支持
+Gate / Binance data session 使用同一个 SHM object 内的两个 typed channel：`book_ticker_channel_name`
+发布 `BookTicker`，`trade_channel_name` 发布 `Trade`。旧 `channel_name` 仍作为 `book_ticker_channel_name`
+的 legacy alias。容量固定在代码常量中，TOML 不支持
 `capacity` 或 `expected_capacity`。
 
 Gate 默认配置把 `remove_existing` 设为 `false`，避免 dry-run 或普通启动删除已有 reader
@@ -313,7 +314,8 @@ Binance futures 行情字段：
 | 字段 | 默认值 | 含义 |
 | --- | --- | --- |
 | `market` | `um_futures` | Binance USD-M futures。 |
-| `feed` | `book_ticker` | 当前订阅的行情类型。 |
+| `feeds` | `["book_ticker"]` | 当前订阅的 Binance public feed 列表；支持 `book_ticker` 和 live-probed raw `trade`。 |
+| `feed` | `book_ticker` | legacy single-feed alias，仅在未配置 `feeds` 时接受；`feed` 和 `feeds` 同时出现会被拒绝。 |
 
 Binance 当前实现入口：
 
@@ -327,7 +329,8 @@ tools/binance/data_session.cpp
 
 Binance config parser 读取 `instrument_catalog` 和 `subscribe_symbols` 后按 `Exchange::kBinance`
 生成 exchange symbol 列表，例如内部 `BTC_USDT` 对应 Binance `BTCUSDT`，并在冷路径生成
-`/public/ws/btcusdt@bookTicker/...` raw stream target。
+`/public/ws/btcusdt@bookTicker/...` 或 mixed
+`/public/ws/btcusdt@bookTicker/btcusdt@trade/...` raw stream target。`trade` 使用 2026-07-05 live probe 证明确认的 `/public/ws/<symbol>@trade`，不是官方 documented `/market/ws/<symbol>@aggTrade`。
 
 默认运行下面命令只做 dry-run，验证 TOML、CSV、target 和 symbol 映射生成结果，不连接网络：
 

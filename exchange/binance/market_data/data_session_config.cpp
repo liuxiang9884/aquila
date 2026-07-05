@@ -27,14 +27,16 @@ struct RawDataSessionConfig {
   std::string name;
   std::vector<std::string> subscribe_symbols;
   std::string market{"um_futures"};
-  std::string feed{"book_ticker"};
+  DataSessionFeeds feeds;
   config::WebSocketConfig websocket;
 };
 
 struct RawConfigFile {
   config::InstrumentCatalogConfig instrument_catalog;
   RawDataSessionConfig data_session;
+  ::aquila::market_data::DataShmConfig data_shm;
   ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
+  ::aquila::market_data::TradeShmConfig trade_shm;
   ::aquila::market_data::DataSessionDiagnosticsConfig diagnostics;
 };
 
@@ -187,8 +189,72 @@ class DataSessionConfigParser {
     }
     config_.data_session.market =
         StringOr(data_session["market"], config_.data_session.market);
-    config_.data_session.feed =
-        StringOr(data_session["feed"], config_.data_session.feed);
+    ParseFeeds(data_session);
+  }
+
+  void ParseFeeds(toml::node_view<const toml::node> data_session) {
+    const bool has_feed = static_cast<bool>(data_session["feed"]);
+    const bool has_feeds = static_cast<bool>(data_session["feeds"]);
+    if (has_feed && has_feeds) {
+      Fail("data_session.feed and data_session.feeds",
+           " cannot both be configured");
+      return;
+    }
+
+    if (has_feeds) {
+      config_.data_session.feeds =
+          DataSessionFeeds{.book_ticker = false, .trade = false};
+      const toml::array* feeds = data_session["feeds"].as_array();
+      if (feeds == nullptr || feeds->empty()) {
+        Fail("data_session.feeds", " must contain at least one feed");
+        return;
+      }
+      for (const toml::node& feed_node : *feeds) {
+        const std::optional<std::string> feed = feed_node.value<std::string>();
+        if (!feed || feed->empty()) {
+          Fail("data_session.feeds", " must contain strings");
+          return;
+        }
+        SetFeed(*feed);
+        if (!ok_) {
+          return;
+        }
+      }
+      return;
+    }
+
+    if (has_feed) {
+      config_.data_session.feeds =
+          DataSessionFeeds{.book_ticker = false, .trade = false};
+      const std::string feed =
+          RequiredString(data_session["feed"], "data_session.feed");
+      if (!ok_) {
+        return;
+      }
+      SetFeed(feed);
+    }
+  }
+
+  void SetFeed(std::string_view feed) {
+    if (feed == "book_ticker") {
+      if (config_.data_session.feeds.book_ticker) {
+        Fail("data_session.feeds", " contains duplicate feed book_ticker");
+        return;
+      }
+      config_.data_session.feeds.book_ticker = true;
+      return;
+    }
+    if (feed == "trade") {
+      if (config_.data_session.feeds.trade) {
+        Fail("data_session.feeds", " contains duplicate feed trade");
+        return;
+      }
+      config_.data_session.feeds.trade = true;
+      return;
+    }
+    std::string message{" unknown Binance data_session feed: "};
+    message.append(feed);
+    Fail("data_session.feeds", message);
   }
 
   void ParseDataShmSink() {
@@ -207,31 +273,39 @@ class DataSessionConfigParser {
       return;
     }
 
-    config_.book_ticker_shm.enabled =
-        BoolOr(shm["enabled"], config_.book_ticker_shm.enabled);
-    config_.book_ticker_shm.shm_name =
-        StringOr(shm["shm_name"], config_.book_ticker_shm.shm_name);
-    config_.book_ticker_shm.channel_name =
-        StringOr(shm["channel_name"], config_.book_ticker_shm.channel_name);
-    config_.book_ticker_shm.create =
-        BoolOr(shm["create"], config_.book_ticker_shm.create);
-    config_.book_ticker_shm.remove_existing =
-        BoolOr(shm["remove_existing"], config_.book_ticker_shm.remove_existing);
+    config_.data_shm.enabled = BoolOr(shm["enabled"], config_.data_shm.enabled);
+    config_.data_shm.shm_name =
+        StringOr(shm["shm_name"], config_.data_shm.shm_name);
+    const std::string legacy_book_ticker_channel = StringOr(
+        shm["channel_name"], config_.data_shm.book_ticker_channel_name);
+    config_.data_shm.book_ticker_channel_name =
+        StringOr(shm["book_ticker_channel_name"], legacy_book_ticker_channel);
+    config_.data_shm.trade_channel_name = StringOr(
+        shm["trade_channel_name"], config_.data_shm.trade_channel_name);
+    config_.data_shm.create = BoolOr(shm["create"], config_.data_shm.create);
+    config_.data_shm.remove_existing =
+        BoolOr(shm["remove_existing"], config_.data_shm.remove_existing);
 
-    if (!config_.book_ticker_shm.create &&
-        config_.book_ticker_shm.remove_existing) {
+    config_.book_ticker_shm = config_.data_shm.BookTickerConfig();
+    config_.trade_shm = config_.data_shm.TradeConfig();
+
+    if (!config_.data_shm.create && config_.data_shm.remove_existing) {
       Fail("data_shm_sink.remove_existing", " requires create=true");
       return;
     }
-    if (!config_.book_ticker_shm.enabled) {
+    if (!config_.data_shm.enabled) {
       return;
     }
-    if (config_.book_ticker_shm.shm_name.empty()) {
+    if (config_.data_shm.shm_name.empty()) {
       Fail("data_shm_sink.shm_name", " is required");
       return;
     }
-    if (config_.book_ticker_shm.channel_name.empty()) {
-      Fail("data_shm_sink.channel_name", " is required");
+    if (config_.data_shm.book_ticker_channel_name.empty()) {
+      Fail("data_shm_sink.book_ticker_channel_name", " is required");
+      return;
+    }
+    if (config_.data_shm.trade_channel_name.empty()) {
+      Fail("data_shm_sink.trade_channel_name", " is required");
     }
   }
 
@@ -331,10 +405,12 @@ class DataSessionConfigParser {
   }
 
   [[nodiscard]] DataSessionConfigResult BuildConfig() {
-    if (config_.data_session.market != "um_futures" ||
-        config_.data_session.feed != "book_ticker") {
-      return Failure(
-          "Binance data session supports only UM futures book_ticker");
+    if (config_.data_session.market != "um_futures") {
+      return Failure("Binance data session supports only UM futures");
+    }
+    if (!config_.data_session.feeds.book_ticker &&
+        !config_.data_session.feeds.trade) {
+      return Failure("Binance data session requires at least one feed");
     }
 
     const config::InstrumentCatalogLoadResult catalog_result =
@@ -345,7 +421,10 @@ class DataSessionConfigParser {
 
     DataSessionConfig data_session_config;
     data_session_config.name = std::move(config_.data_session.name);
+    data_session_config.feeds = config_.data_session.feeds;
+    data_session_config.data_shm = std::move(config_.data_shm);
     data_session_config.book_ticker_shm = std::move(config_.book_ticker_shm);
+    data_session_config.trade_shm = std::move(config_.trade_shm);
     data_session_config.diagnostics = config_.diagnostics;
     data_session_config.exchange_symbols.reserve(
         config_.data_session.subscribe_symbols.size());
@@ -372,9 +451,10 @@ class DataSessionConfigParser {
     config::ConnectionConfigResult connection_result =
         config::ToConnectionConfig(
             config_.data_session.websocket,
-            BuildFuturesBookTickerStreamTarget(
+            BuildFuturesMarketDataStreamTarget(
                 std::span<const std::string_view>(stream_symbols.data(),
-                                                  stream_symbols.size())));
+                                                  stream_symbols.size()),
+                data_session_config.feeds));
     if (!connection_result.ok) {
       return Failure(connection_result.error);
     }

@@ -53,7 +53,7 @@ TEST(DataReaderConfigTest, LoadsReadyStrategyDataReaderConfig) {
 
   EXPECT_EQ(config.sources[1].name, "binance_book_ticker");
   EXPECT_EQ(config.sources[1].exchange, aquila::Exchange::kBinance);
-  EXPECT_EQ(config.sources[1].shm_name, "aquila_binance_market_data");
+  EXPECT_EQ(config.sources[1].shm_name, "aquila_binance_market_data_combined");
   EXPECT_EQ(config.sources[1].read_mode,
             aquila::config::DataReaderReadMode::kLatest);
 }

@@ -18,6 +18,14 @@ namespace {
 
 constexpr std::string_view kBookTickerJson =
     R"({"e":"bookTicker","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
+constexpr std::string_view kTradeJson =
+    R"({"e":"trade","E":1783228448495,"T":1783228448495,"s":"BTCUSDT","t":7868321828,"p":"62738.70","q":"0.002","X":"MARKET","m":false,"st":1})";
+constexpr std::string_view kSellTakerTradeJson =
+    R"({"e":"trade","E":1783228448434,"T":1783228448434,"s":"ETHUSDT","t":8412341979,"p":"1765.20","q":"0.109","X":"MARKET","m":true,"st":1})";
+constexpr std::string_view kMissingEventJson =
+    R"({"u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
+constexpr std::string_view kUnsupportedEventJson =
+    R"({"e":"aggTrade","E":1783228313782,"a":3371116472,"s":"BTCUSDT","p":"62733.90","q":"0.001","nq":"0.001","f":7868320969,"l":7868320969,"T":1783228313630,"m":false,"st":1})";
 
 aquila::websocket::MessageView TextView(std::string_view payload) noexcept {
   return {
@@ -40,25 +48,51 @@ aquila::websocket::MessageView BinaryView(std::string_view payload) noexcept {
 }
 
 struct RecordingConsumer {
-  int calls{0};
-  aquila::BookTicker last{};
+  int book_ticker_calls{0};
+  int trade_calls{0};
+  aquila::BookTicker last_book_ticker{};
+  aquila::Trade last_trade{};
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
-    ++calls;
-    last = book_ticker;
+    ++book_ticker_calls;
+    last_book_ticker = book_ticker;
+  }
+
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++trade_calls;
+    last_trade = trade;
   }
 };
 
 struct EmplaceOnlyConsumer {
-  int emplace_calls{0};
-  aquila::BookTicker last{};
+  int book_ticker_emplace_calls{0};
+  int trade_emplace_calls{0};
+  aquila::BookTicker last_book_ticker{};
+  aquila::Trade last_trade{};
 
   void OnBookTicker(const aquila::BookTicker&) noexcept = delete;
+  void OnTrade(const aquila::Trade&) noexcept = delete;
 
   template <typename Writer>
   void EmplaceBookTickerWith(Writer&& writer) noexcept {
-    ++emplace_calls;
-    writer(last);
+    ++book_ticker_emplace_calls;
+    writer(last_book_ticker);
+  }
+
+  template <typename Writer>
+  void EmplaceTradeWith(Writer&& writer) noexcept {
+    ++trade_emplace_calls;
+    writer(last_trade);
+  }
+};
+
+struct BookTickerOnlyConsumer {
+  int book_ticker_calls{0};
+  aquila::BookTicker last_book_ticker{};
+
+  void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
+    ++book_ticker_calls;
+    last_book_ticker = book_ticker;
   }
 };
 
@@ -96,6 +130,30 @@ TEST(BinanceFuturesMarketDataClientTest, BuildsBookTickerRawStreamTarget) {
   EXPECT_EQ(target, "/public/ws/btcusdt@bookTicker/ethusdt@bookTicker");
 }
 
+TEST(BinanceFuturesMarketDataClientTest, BuildsMixedRawStreamTarget) {
+  const std::array<std::string_view, 2> symbols{"BTCUSDT", "ETHUSDT"};
+  const aquila::binance::DataSessionFeeds feeds{.book_ticker = true,
+                                                .trade = true};
+
+  const std::string target =
+      aquila::binance::BuildFuturesMarketDataStreamTarget(symbols, feeds);
+
+  EXPECT_EQ(target,
+            "/public/ws/btcusdt@bookTicker/btcusdt@trade/"
+            "ethusdt@bookTicker/ethusdt@trade");
+}
+
+TEST(BinanceFuturesMarketDataClientTest, BuildsTradeOnlyRawStreamTarget) {
+  const std::array<std::string_view, 2> symbols{"BTCUSDT", "ETHUSDT"};
+  const aquila::binance::DataSessionFeeds feeds{.book_ticker = false,
+                                                .trade = true};
+
+  const std::string target =
+      aquila::binance::BuildFuturesMarketDataStreamTarget(symbols, feeds);
+
+  EXPECT_EQ(target, "/public/ws/btcusdt@trade/ethusdt@trade");
+}
+
 TEST(BinanceFuturesMarketDataClientTest, ExposesStreamCountLimitPredicate) {
   EXPECT_TRUE(aquila::binance::IsValidFuturesBookTickerStreamCount(1));
   EXPECT_TRUE(aquila::binance::IsValidFuturesBookTickerStreamCount(
@@ -128,16 +186,17 @@ TEST(BinanceFuturesMarketDataClientTest, EmitsBookTickerFromTextPayload) {
   const auto result = client.OnMessage(TextView(kBookTickerJson), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
-  EXPECT_EQ(consumer.last.symbol_id, 11);
-  EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kBinance);
-  EXPECT_EQ(consumer.last.id, 400900217);
-  EXPECT_EQ(consumer.last.exchange_ns, 1568014460893LL * 1'000'000LL);
-  EXPECT_EQ(consumer.last.local_ns, 999'000);
-  EXPECT_DOUBLE_EQ(consumer.last.bid_price, 25.3519);
-  EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 31.21);
-  EXPECT_DOUBLE_EQ(consumer.last.ask_price, 25.3652);
-  EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 40.66);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
+  EXPECT_EQ(consumer.last_book_ticker.symbol_id, 11);
+  EXPECT_EQ(consumer.last_book_ticker.exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(consumer.last_book_ticker.id, 400900217);
+  EXPECT_EQ(consumer.last_book_ticker.exchange_ns,
+            1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_book_ticker.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_price, 25.3519);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_volume, 31.21);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.ask_price, 25.3652);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.ask_volume, 40.66);
 }
 
 TEST(BinanceFuturesMarketDataClientTest,
@@ -150,16 +209,140 @@ TEST(BinanceFuturesMarketDataClientTest,
   const auto result = client.OnMessage(TextView(kBookTickerJson), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.emplace_calls, 1);
-  EXPECT_EQ(consumer.last.symbol_id, 11);
-  EXPECT_EQ(consumer.last.exchange, aquila::Exchange::kBinance);
-  EXPECT_EQ(consumer.last.id, 400900217);
-  EXPECT_EQ(consumer.last.exchange_ns, 1568014460893LL * 1'000'000LL);
-  EXPECT_EQ(consumer.last.local_ns, 999'000);
-  EXPECT_DOUBLE_EQ(consumer.last.bid_price, 25.3519);
-  EXPECT_DOUBLE_EQ(consumer.last.bid_volume, 31.21);
-  EXPECT_DOUBLE_EQ(consumer.last.ask_price, 25.3652);
-  EXPECT_DOUBLE_EQ(consumer.last.ask_volume, 40.66);
+  ASSERT_EQ(consumer.book_ticker_emplace_calls, 1);
+  EXPECT_EQ(consumer.last_book_ticker.symbol_id, 11);
+  EXPECT_EQ(consumer.last_book_ticker.exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(consumer.last_book_ticker.id, 400900217);
+  EXPECT_EQ(consumer.last_book_ticker.exchange_ns,
+            1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_book_ticker.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_price, 25.3519);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_volume, 31.21);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.ask_price, 25.3652);
+  EXPECT_DOUBLE_EQ(consumer.last_book_ticker.ask_volume, 40.66);
+}
+
+TEST(BinanceFuturesMarketDataClientTest, EmitsTradeFromTextPayload) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DefaultClient client(symbols, consumer);
+
+  const auto result = client.OnMessage(TextView(kTradeJson), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.trade_calls, 1);
+  EXPECT_EQ(consumer.last_trade.symbol_id, 11);
+  EXPECT_EQ(consumer.last_trade.exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(consumer.last_trade.id, 7868321828LL);
+  EXPECT_EQ(consumer.last_trade.side, aquila::OrderSide::kBuy);
+  EXPECT_EQ(consumer.last_trade.exchange_ns, 1783228448495LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_trade.trade_ns, 1783228448495LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_trade.local_ns, 999'000);
+  EXPECT_DOUBLE_EQ(consumer.last_trade.price, 62738.70);
+  EXPECT_DOUBLE_EQ(consumer.last_trade.volume, 0.002);
+  EXPECT_EQ(consumer.last_trade.batch_index, 0U);
+  EXPECT_EQ(consumer.last_trade.batch_count, 1U);
+}
+
+TEST(BinanceFuturesMarketDataClientTest, MapsBuyerMakerTradeToSellTakerSide) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "ETHUSDT", .symbol_id = 12}};
+  RecordingConsumer consumer;
+  DefaultClient client(symbols, consumer);
+
+  const auto result = client.OnMessage(TextView(kSellTakerTradeJson), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.trade_calls, 1);
+  EXPECT_EQ(consumer.last_trade.symbol_id, 12);
+  EXPECT_EQ(consumer.last_trade.side, aquila::OrderSide::kSell);
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     EmplacesTradeWhenConsumerSupportsSlotWriter) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  EmplaceOnlyConsumer consumer;
+  aquila::binance::FuturesMarketDataClient client(symbols, consumer);
+
+  const auto result = client.OnMessage(TextView(kTradeJson), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  ASSERT_EQ(consumer.trade_emplace_calls, 1);
+  EXPECT_EQ(consumer.last_trade.symbol_id, 11);
+  EXPECT_EQ(consumer.last_trade.exchange, aquila::Exchange::kBinance);
+  EXPECT_EQ(consumer.last_trade.id, 7868321828LL);
+  EXPECT_EQ(consumer.last_trade.side, aquila::OrderSide::kBuy);
+}
+
+TEST(BinanceFuturesMarketDataClientTest, DropsTradeWhenFeedDisabled) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  EmplaceOnlyConsumer consumer;
+  aquila::binance::FuturesMarketDataClient<
+      EmplaceOnlyConsumer, aquila::binance::FuturesMarketDataDiagnostics>
+      client(symbols,
+             aquila::binance::DataSessionFeeds{.book_ticker = true,
+                                               .trade = false},
+             consumer);
+  bool decoded_book_ticker = true;
+  bool decoded_trade = true;
+
+  const auto result = client.OnTextPayload(
+      kTradeJson, 0, 999'000, &decoded_book_ticker, &decoded_trade);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.trade_emplace_calls, 0);
+  EXPECT_FALSE(decoded_book_ticker);
+  EXPECT_FALSE(decoded_trade);
+  EXPECT_EQ(client.diagnostics().stats().unsupported_event_messages, 1U);
+  EXPECT_EQ(client.diagnostics().stats().trade_messages, 0U);
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     DropsTradeWhenConsumerDoesNotSupportTradeSink) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  BookTickerOnlyConsumer consumer;
+  aquila::binance::FuturesMarketDataClient<
+      BookTickerOnlyConsumer, aquila::binance::FuturesMarketDataDiagnostics>
+      client(symbols, consumer);
+
+  const auto result = client.OnMessage(TextView(kTradeJson), 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
+  EXPECT_EQ(client.diagnostics().stats().trade_messages, 1U);
+}
+
+TEST(BinanceFuturesMarketDataClientTest, RecordsUnsupportedEventWhenEnabled) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DiagnosticClient client(symbols, consumer);
+
+  const auto result = client.OnTextPayload(kUnsupportedEventJson, 0, 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
+  EXPECT_EQ(consumer.trade_calls, 0);
+  EXPECT_EQ(client.diagnostics().stats().unsupported_event_messages, 1U);
+}
+
+TEST(BinanceFuturesMarketDataClientTest,
+     RecordsMalformedJsonWhenEventTypeMissing) {
+  const std::array<aquila::binance::SymbolBinding, 1> symbols{
+      aquila::binance::SymbolBinding{.symbol = "BTCUSDT", .symbol_id = 11}};
+  RecordingConsumer consumer;
+  DiagnosticClient client(symbols, consumer);
+
+  const auto result = client.OnTextPayload(kMissingEventJson, 0, 999'000);
+
+  EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
+  EXPECT_EQ(consumer.trade_calls, 0);
+  EXPECT_EQ(client.diagnostics().stats().malformed_json_messages, 1U);
 }
 
 TEST(BinanceFuturesMarketDataClientTest, MapsMultipleSymbolsBySymbolText) {
@@ -173,8 +356,8 @@ TEST(BinanceFuturesMarketDataClientTest, MapsMultipleSymbolsBySymbolText) {
   const auto result = client.OnTextPayload(kBookTickerJson, 0, 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
-  EXPECT_EQ(consumer.last.symbol_id, 11);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
+  EXPECT_EQ(consumer.last_book_ticker.symbol_id, 11);
 }
 
 TEST(BinanceFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
@@ -188,8 +371,8 @@ TEST(BinanceFuturesMarketDataClientTest, ExposesWebSocketMessageCallback) {
   const auto result = callback.Handle(TextView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
-  EXPECT_GT(consumer.last.local_ns, 0);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
+  EXPECT_GT(consumer.last_book_ticker.local_ns, 0);
 }
 
 TEST(BinanceFuturesMarketDataClientTest, IgnoresBinaryPayload) {
@@ -201,7 +384,8 @@ TEST(BinanceFuturesMarketDataClientTest, IgnoresBinaryPayload) {
   const auto result = client.Handle(BinaryView(kBookTickerJson));
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
+  EXPECT_EQ(consumer.trade_calls, 0);
 }
 
 TEST(BinanceFuturesMarketDataClientTest, AssertsUnknownSymbolInDebug) {
@@ -228,7 +412,8 @@ TEST(BinanceFuturesMarketDataClientTest, RecordsMalformedJsonWhenEnabled) {
   const auto result = client.OnTextPayload(kMalformedJson, 0, 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  EXPECT_EQ(consumer.calls, 0);
+  EXPECT_EQ(consumer.book_ticker_calls, 0);
+  EXPECT_EQ(consumer.trade_calls, 0);
   EXPECT_EQ(client.diagnostics().stats().malformed_json_messages, 1U);
 }
 
@@ -241,7 +426,7 @@ TEST(BinanceFuturesMarketDataClientTest, RecordsPaddingFallbackWhenEnabled) {
   const auto result = client.OnTextPayload(kBookTickerJson, 0, 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(client.diagnostics().stats().simdjson_padding_fallback_messages,
             1U);
 }
@@ -261,7 +446,7 @@ TEST(BinanceFuturesMarketDataClientTest,
       static_cast<std::uint32_t>(simdjson::SIMDJSON_PADDING), 999'000);
 
   EXPECT_EQ(result, aquila::websocket::DeliveryResult::kAccepted);
-  ASSERT_EQ(consumer.calls, 1);
+  ASSERT_EQ(consumer.book_ticker_calls, 1);
   EXPECT_EQ(client.diagnostics().stats().simdjson_padding_fallback_messages,
             0U);
 }

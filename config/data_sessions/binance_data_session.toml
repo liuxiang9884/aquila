@@ -15,7 +15,7 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 name = "binance_data_session"
 subscribe_symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 market = "um_futures"
-feed = "book_ticker"
+feeds = ["book_ticker"]
 
 [data_session.websocket.endpoint]
 host = "fstream.binance.com"
@@ -25,7 +25,8 @@ bind_cpu_id = 3
 
 [data_shm_sink]
 enabled = true
-shm_name = "aquila_binance_market_data"
-channel_name = "book_ticker_channel"
+shm_name = "aquila_binance_market_data_combined"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
 create = true
 remove_existing = false

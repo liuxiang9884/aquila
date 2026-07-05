@@ -1,16 +1,17 @@
-# Binance USD-M futures bookTicker 行情接手说明
+# Binance USD-M futures 行情接手说明
 
 ## 当前范围
 
-本 handoff 主要覆盖 Binance USD-M futures public `bookTicker` 行情；当前额外提供 USD-M futures 合约元数据查询脚本，用于启动期 symbol 配置和下单前字段准备。行情实现不覆盖 spot、COIN-M futures、私有频道或运行时动态订阅。
+本 handoff 主要覆盖 Binance USD-M futures public `bookTicker` 和 live-probed raw `trade` 行情；当前额外提供 USD-M futures 合约元数据查询脚本，用于启动期 symbol 配置和下单前字段准备。行情实现不覆盖 spot、COIN-M futures、私有频道或运行时动态订阅。
 
 官方文档结论：
 
 1. USDⓈ-M futures WebSocket base host 使用 `fstream.binance.com`。
 2. 第一版使用 raw stream URL，例如 `/public/ws/btcusdt@bookTicker`；连接成功后交易所直接推送 JSON text frame，不需要 active 后再发送 `SUBSCRIBE`。
-3. 单 symbol stream 名称为 `<symbol>@bookTicker`，payload 是 JSON，字段包括 `e/u/E/T/s/b/B/a/A`。
-4. 单连接最多 1024 streams。仓库当前先设置更保守的 `kMaxFuturesBookTickerStreamsPerConnection = 200`，不做自动分片；超过上限由上层拆 session。
-5. 全市场 `!bookTicker` 是 5s 更新，不作为低延迟主路径默认方案。
+3. `bookTicker` 单 symbol stream 名称为 `<symbol>@bookTicker`，payload 是 JSON，字段包括 `e/u/E/T/s/b/B/a/A`。
+4. 2026-07-05 live probe 确认 `/public/ws/<symbol>@trade` 可接收 raw trade，支持多 symbol 和与 `bookTicker` 同连接混合，例如 `/public/ws/btcusdt@bookTicker/btcusdt@trade/ethusdt@bookTicker/ethusdt@trade`。该 raw `trade` 路径未在本轮查到的 Binance USD-M futures 官方 WebSocket 文档中明确列出；官方 documented 成交流仍是 `/market/ws/<symbol>@aggTrade`，不要把二者混写。
+5. 单连接最多 1024 streams。仓库当前先设置更保守的 `kMaxFuturesBookTickerStreamsPerConnection = 200`，不做自动分片；开启 mixed feeds 时按 `symbol_count * feed_count` 计数，超过上限由上层拆 session。
+6. 全市场 `!bookTicker` 是 5s 更新，不作为低延迟主路径默认方案。
 
 参考：
 
@@ -24,6 +25,7 @@
 exchange/binance/market_data/types.h
 exchange/binance/market_data/stream.h
 exchange/binance/market_data/book_ticker_parser.h
+exchange/binance/market_data/trade_parser.h
 exchange/binance/market_data/client.h
 exchange/binance/market_data/data_session.h
 exchange/binance/market_data/data_session_config.h
@@ -66,7 +68,7 @@ test / text-control benchmark 可显式启用 `SessionOnlyDiagnosticsPolicy` 或
 当前 `config/data_sessions/binance_data_session.toml` 是单进程单 session 配置。Binance
 data session config parser 在启动冷路径加载 `instrument_catalog` 和 `subscribe_symbols`，
 按 `Exchange::kBinance` 生成 `DataSessionConfig`、raw stream target 所需的 exchange symbol
-列表和 symbol id 列表。`binance_data_session` tool 根据 `connection.enable_tls` 选择 TLS 或
+列表和 symbol id 列表。配置支持 `feeds = ["book_ticker", "trade"]`；旧 `feed = "book_ticker"` 仍作为 legacy alias，`feed` 和 `feeds` 同时出现会被拒绝。`binance_data_session` tool 根据 `connection.enable_tls` 选择 TLS 或
 plain WebSocket policy；`--connect` 模式调用 `DataSession::Run()`，由 session 内部安装
 SIGINT / SIGTERM stop handler。
 
@@ -107,11 +109,12 @@ SHM publish 是主要 outlier 来源。
 DataSession::Handle(text MessageView)
   -> capture local_ns with CLOCK_REALTIME
   -> FuturesMarketDataClient::OnTextPayload
-  -> simdjson parse JSON
+  -> simdjson parse JSON and dispatch by e
   -> fast_float parse string prices / quantities
   -> flat_hash_map symbol -> symbol_id
-  -> BookTickerUpdate
-  -> DataSink::EmplaceBookTickerWith(writer) 或 DataSink::OnBookTicker
+  -> BookTickerUpdate / TradeUpdate
+  -> DataSink::EmplaceBookTickerWith(writer) / EmplaceTradeWith(writer)
+     或 DataSink::OnBookTicker / OnTrade
 ```
 
 字段映射：
@@ -125,11 +128,27 @@ DataSession::Handle(text MessageView)
 | `b` / `B` | `bid_price` / `bid_volume` |
 | `a` / `A` | `ask_price` / `ask_volume` |
 
+`Trade` 字段映射：
+
+| Binance 字段 | `Trade` 字段 |
+| --- | --- |
+| `t` | `id` |
+| `s` | symbol lookup 后的 `symbol_id` |
+| `E` 毫秒 | `exchange_ns = E * 1'000'000` |
+| `T` 毫秒 | `trade_ns = T * 1'000'000` |
+| `CLOCK_REALTIME` local receive clock | `local_ns` |
+| `p` | `price` |
+| `q` | `volume` |
+| `m=false` | `side = OrderSide::kBuy` |
+| `m=true` | `side = OrderSide::kSell` |
+
+Binance raw trade 是一条消息一笔 trade，`batch_index=0`、`batch_count=1`。
+
 ## 性能边界
 
-1. Binance bookTicker 是 JSON text，不能复用 Gate 的 SBE binary 解码路径。
+1. Binance bookTicker / raw trade 是 JSON text，不能复用 Gate 的 SBE binary 解码路径。
 2. 生产 JSON parser 固定为 `simdjson::ondemand`；如果 `MessageView::readable_tail_bytes >= simdjson::SIMDJSON_PADDING`，使用 zero-copy padded view，否则 fallback 到 `simdjson::padded_string`。
-3. raw stream target 已经限定 `<symbol>@bookTicker`，生产 parser 热路径只读取 `u/E/s/b/B/a/A`，不再解析 `e/T`；字段存在、类型和数字格式作为 Binance 协议约束处理，debug 下用 assert 捕获协议漂移。
+3. mixed feeds 下生产 parser 先读取 `e` 并在同一个 simdjson document 中分发到 `bookTicker` 或 raw `trade` 字段解析，不做二次 JSON parse。
 4. `b/B/a/A` 是 JSON 字符串，使用 `fast_float::from_chars` 转 double，不使用 `std::stod`。
 5. client/session 都是模板组合；热路径不引入虚函数或 `std::function`。
 6. session diagnostics 默认 no-op；benchmark / probe / test 显式启用。
@@ -139,8 +158,7 @@ DataSession::Handle(text MessageView)
 10. symbol config 是启动期不变量；payload 中出现未配置 symbol 时 debug assert，release 主路径不记录 unknown-symbol counter。
 11. client/session 构造期使用 symbol span 构建 lookup / raw stream target，构造后不保存无用 `symbols_` span。
 12. `BookTickerUpdate::symbol` 固定 copy 到对象内 `symbol_storage`；不要假设 simdjson `get_string()` 返回的 `string_view` 一定指向原 payload 或在 padded fallback 后仍有效。
-13. 如果 `DataSink` 支持 `EmplaceBookTickerWith()`，client 会把 `BookTickerUpdate` 字段直接映射到
-    sink-owned `BookTicker` slot；普通 sink 仍走 `OnBookTicker(const BookTicker&)` 兼容路径。
+13. 如果 `DataSink` 支持 `EmplaceBookTickerWith()` / `EmplaceTradeWith()`，client 会把 update 字段直接映射到 sink-owned slot；普通 sink 仍走 `OnBookTicker(const BookTicker&)` / `OnTrade(const Trade&)` 兼容路径。book-only sink 不支持 trade 时，raw trade payload 会被解析和计数后丢弃。
 
 ## yyjson 对照
 
@@ -167,6 +185,7 @@ DataSession::Handle(text MessageView)
 
 ```bash
 ./build/debug/test/exchange/binance/market_data/binance_book_ticker_parser_test
+./build/debug/test/exchange/binance/market_data/binance_trade_parser_test
 ./build/debug/test/exchange/binance/market_data/binance_futures_market_data_client_test
 ./build/debug/test/exchange/binance/market_data/binance_data_session_test
 ./build/debug/test/config/data_session_config_test
@@ -176,7 +195,7 @@ scripts/test/binance/market_data/query_um_futures_contracts_test.py
 benchmark：
 
 ```bash
-taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view|_then_shm_push|_into_shm_slot)?|client_on_text_payload|client_handle_binary|session_handle_text(_padded_view)?)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
+taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futures_market_data_benchmark --benchmark_filter='binance_market_data/(parse_book_ticker(_padded_view|_ordered|_ordered_padded_view|_yyjson_pool|_yyjson_insitu_copy|_yyjson_insitu_view|_then_shm_push|_into_shm_slot)?|parse_trade(_into_shm_slot)?|client_on_text_payload|client_on_trade_text_payload|client_on_mixed_text_payload|client_handle_binary|session_handle_text(_padded_view)?|session_handle_trade_text)(/.*)?$' --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 ```
 
 2026-05-02 当前 selected mean 结果：

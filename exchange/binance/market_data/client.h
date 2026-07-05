@@ -16,13 +16,16 @@
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
 #include "exchange/binance/market_data/book_ticker_parser.h"
+#include "exchange/binance/market_data/trade_parser.h"
 #include "exchange/binance/market_data/types.h"
 
 namespace aquila::binance {
 
 struct FuturesMarketDataClientStats {
   std::uint64_t malformed_json_messages{0};
+  std::uint64_t unsupported_event_messages{0};
   std::uint64_t book_ticker_messages{0};
+  std::uint64_t trade_messages{0};
   std::uint64_t simdjson_padding_fallback_messages{0};
 };
 
@@ -34,6 +37,23 @@ namespace detail {
 
 struct NoopBookTickerSlotWriter {
   void operator()(BookTicker&) const noexcept {}
+};
+
+struct NoopTradeSlotWriter {
+  void operator()(Trade&) const noexcept {}
+};
+
+enum class MarketDataEventKind : std::uint8_t {
+  kBookTicker = 0,
+  kTrade,
+  kUnsupported,
+  kMalformedJson,
+};
+
+struct ParsedMarketDataEvent {
+  MarketDataEventKind kind{MarketDataEventKind::kMalformedJson};
+  BookTickerUpdate book_ticker;
+  TradeUpdate trade;
 };
 
 inline void AssignBookTickerFromUpdate(const BookTickerUpdate& update,
@@ -51,6 +71,120 @@ inline void AssignBookTickerFromUpdate(const BookTickerUpdate& update,
   out.ask_volume = update.ask_volume;
 }
 
+inline void AssignTradeFromUpdate(const TradeUpdate& update,
+                                  std::int32_t symbol_id, std::int64_t local_ns,
+                                  Trade& out) noexcept {
+  out.id = update.trade_id;
+  out.symbol_id = symbol_id;
+  out.exchange = Exchange::kBinance;
+  out.side = update.buyer_is_maker ? OrderSide::kSell : OrderSide::kBuy;
+  out.reserved = 0;
+  out.exchange_ns = update.event_time_ms * 1'000'000LL;
+  out.trade_ns = update.trade_time_ms * 1'000'000LL;
+  out.local_ns = local_ns;
+  out.price = update.price;
+  out.volume = update.volume;
+  out.batch_index = 0;
+  out.batch_count = 1;
+}
+
+inline MarketDataEventKind EventKindFromText(std::string_view event) noexcept {
+  if (event == "bookTicker") {
+    return MarketDataEventKind::kBookTicker;
+  }
+  if (event == "trade") {
+    return MarketDataEventKind::kTrade;
+  }
+  return MarketDataEventKind::kUnsupported;
+}
+
+inline bool TryReadEventKind(simdjson::ondemand::object& root,
+                             MarketDataEventKind* kind) noexcept {
+  simdjson::simdjson_result<simdjson::ondemand::value> event_value =
+      root.find_field_unordered("e");
+  if (event_value.error() != simdjson::SUCCESS) {
+    return false;
+  }
+  simdjson::simdjson_result<std::string_view> event_text =
+      event_value.value_unsafe().get_string();
+  if (event_text.error() != simdjson::SUCCESS) {
+    return false;
+  }
+  *kind = EventKindFromText(event_text.value_unsafe());
+  return true;
+}
+
+inline MarketDataEventKind ParseMarketDataObject(
+    simdjson::ondemand::object root, DataSessionFeeds feeds,
+    ParsedMarketDataEvent& output) noexcept {
+  MarketDataEventKind kind{MarketDataEventKind::kMalformedJson};
+  if (!TryReadEventKind(root, &kind)) {
+    output.kind = MarketDataEventKind::kMalformedJson;
+    return MarketDataEventKind::kMalformedJson;
+  }
+  output.kind = kind;
+  switch (kind) {
+    case MarketDataEventKind::kBookTicker:
+      if (!feeds.book_ticker) {
+        return MarketDataEventKind::kUnsupported;
+      }
+      return ParseBookTickerObject(root, output.book_ticker) ==
+                     BookTickerParseStatus::kOk
+                 ? MarketDataEventKind::kBookTicker
+                 : MarketDataEventKind::kMalformedJson;
+    case MarketDataEventKind::kTrade:
+      if (!feeds.trade) {
+        return MarketDataEventKind::kUnsupported;
+      }
+      return ParseTradeObject(root, output.trade) == TradeParseStatus::kOk
+                 ? MarketDataEventKind::kTrade
+                 : MarketDataEventKind::kMalformedJson;
+    case MarketDataEventKind::kUnsupported:
+    case MarketDataEventKind::kMalformedJson:
+      return kind;
+  }
+  return MarketDataEventKind::kUnsupported;
+}
+
+inline MarketDataEventKind ParseMarketDataDocument(
+    simdjson::ondemand::document document, DataSessionFeeds feeds,
+    ParsedMarketDataEvent& output) noexcept {
+  simdjson::ondemand::object root;
+  if (document.get_object().get(root) != simdjson::SUCCESS) {
+    output.kind = MarketDataEventKind::kMalformedJson;
+    return MarketDataEventKind::kMalformedJson;
+  }
+  return ParseMarketDataObject(root, feeds, output);
+}
+
+inline MarketDataEventKind ParseMarketDataEvent(
+    std::string_view payload, std::uint32_t readable_tail_bytes,
+    DataSessionFeeds feeds, simdjson::ondemand::parser& parser,
+    ParsedMarketDataEvent& output) noexcept {
+  if (payload.empty()) {
+    output.kind = MarketDataEventKind::kMalformedJson;
+    return MarketDataEventKind::kMalformedJson;
+  }
+
+  simdjson::ondemand::document document;
+  if (readable_tail_bytes >= simdjson::SIMDJSON_PADDING) {
+    simdjson::padded_string_view view(payload.data(), payload.size(),
+                                      payload.size() + readable_tail_bytes);
+    if (parser.iterate(view).get(document) != simdjson::SUCCESS) {
+      output.kind = MarketDataEventKind::kMalformedJson;
+      return MarketDataEventKind::kMalformedJson;
+    }
+    return ParseMarketDataDocument(std::move(document), feeds, output);
+  }
+
+  simdjson::padded_string padded(payload);
+  if (parser.iterate(padded).get(document) != simdjson::SUCCESS) {
+    output.kind = MarketDataEventKind::kMalformedJson;
+    return MarketDataEventKind::kMalformedJson;
+  }
+  return ParseMarketDataDocument(std::move(document), feeds, output);
+}
+
 }  // namespace detail
 
 class FuturesMarketDataDiagnostics {
@@ -63,8 +197,20 @@ class FuturesMarketDataDiagnostics {
     ++stats_.malformed_json_messages;
   }
 
+  void RecordMalformedJsonMessage() noexcept {
+    ++stats_.malformed_json_messages;
+  }
+
+  void RecordUnsupportedEventMessage() noexcept {
+    ++stats_.unsupported_event_messages;
+  }
+
   void RecordBookTickerMessage() noexcept {
     ++stats_.book_ticker_messages;
+  }
+
+  void RecordTradeMessage() noexcept {
+    ++stats_.trade_messages;
   }
 
   void RecordSimdjsonPaddingFallback() noexcept {
@@ -91,7 +237,16 @@ class FuturesMarketDataClient {
                           DataSink& data_sink,
                           ::aquila::market_data::DataSessionLatencyOutlierConfig
                               latency_outlier_config = {})
-      : data_sink_(data_sink)
+      : FuturesMarketDataClient(
+            symbols, DataSessionFeeds{.book_ticker = true, .trade = true},
+            data_sink, latency_outlier_config) {}
+
+  FuturesMarketDataClient(std::span<const SymbolBinding> symbols,
+                          DataSessionFeeds feeds, DataSink& data_sink,
+                          ::aquila::market_data::DataSessionLatencyOutlierConfig
+                              latency_outlier_config = {})
+      : data_sink_(data_sink),
+        feeds_(EffectiveFeeds(feeds, data_sink))
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1
         ,
         latency_outlier_logger_(latency_outlier_config)
@@ -109,6 +264,14 @@ class FuturesMarketDataClient {
                           ::aquila::market_data::DataSessionLatencyOutlierConfig
                               latency_outlier_config = {})
       : FuturesMarketDataClient(std::span<const SymbolBinding>(symbols),
+                                data_sink, latency_outlier_config) {}
+
+  template <size_t N>
+  FuturesMarketDataClient(const std::array<SymbolBinding, N>& symbols,
+                          DataSessionFeeds feeds, DataSink& data_sink,
+                          ::aquila::market_data::DataSessionLatencyOutlierConfig
+                              latency_outlier_config = {})
+      : FuturesMarketDataClient(std::span<const SymbolBinding>(symbols), feeds,
                                 data_sink, latency_outlier_config) {}
 
   websocket::MessageCallback AsMessageCallback() noexcept {
@@ -142,7 +305,8 @@ class FuturesMarketDataClient {
 
   websocket::DeliveryResult OnTextPayload(
       std::string_view payload, std::uint32_t readable_tail_bytes,
-      std::int64_t local_ns, bool* decoded_book_ticker = nullptr
+      std::int64_t local_ns, bool* decoded_book_ticker = nullptr,
+      bool* decoded_trade = nullptr
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
       ,
       const ::aquila::market_data::DataSessionMessageTiming* message_timing =
@@ -152,6 +316,9 @@ class FuturesMarketDataClient {
     if (decoded_book_ticker != nullptr) {
       *decoded_book_ticker = false;
     }
+    if (decoded_trade != nullptr) {
+      *decoded_trade = false;
+    }
 
     if constexpr (DiagnosticsEnabled) {
       if (!payload.empty() &&
@@ -160,15 +327,27 @@ class FuturesMarketDataClient {
       }
     }
 
-    BookTickerUpdate update;
-    const BookTickerParseStatus status =
-        ParseBookTicker(payload, readable_tail_bytes, parser_, update);
-    if (status != BookTickerParseStatus::kOk) [[unlikely]] {
+    detail::ParsedMarketDataEvent event;
+    const detail::MarketDataEventKind kind = detail::ParseMarketDataEvent(
+        payload, readable_tail_bytes, feeds_, parser_, event);
+    if (kind == detail::MarketDataEventKind::kMalformedJson) [[unlikely]] {
       if constexpr (DiagnosticsEnabled) {
-        diagnostics_.RecordParseDrop(status);
+        diagnostics_.RecordMalformedJsonMessage();
       }
       return websocket::DeliveryResult::kAccepted;
     }
+    if (kind == detail::MarketDataEventKind::kUnsupported) [[unlikely]] {
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordUnsupportedEventMessage();
+      }
+      return websocket::DeliveryResult::kAccepted;
+    }
+
+    if (kind == detail::MarketDataEventKind::kTrade) {
+      return OnTradeEvent(event.trade, local_ns, decoded_trade);
+    }
+
+    const BookTickerUpdate& update = event.book_ticker;
 
     const std::int32_t symbol_id = FindSymbolId(update.symbol);
 
@@ -238,6 +417,47 @@ class FuturesMarketDataClient {
     return static_cast<FuturesMarketDataClient*>(context)->OnMessage(view);
   }
 
+  static DataSessionFeeds EffectiveFeeds(DataSessionFeeds feeds,
+                                         const DataSink& data_sink) noexcept {
+    if constexpr (requires { data_sink.has_book_ticker_channel(); }) {
+      feeds.book_ticker =
+          feeds.book_ticker && data_sink.has_book_ticker_channel();
+    }
+    if constexpr (requires { data_sink.has_trade_channel(); }) {
+      feeds.trade = feeds.trade && data_sink.has_trade_channel();
+    }
+    return feeds;
+  }
+
+  websocket::DeliveryResult OnTradeEvent(const TradeUpdate& update,
+                                         std::int64_t local_ns,
+                                         bool* decoded_trade) noexcept {
+    const std::int32_t symbol_id = FindSymbolId(update.symbol);
+    if constexpr (requires(DataSink& data_sink,
+                           detail::NoopTradeSlotWriter writer) {
+                    data_sink.EmplaceTradeWith(writer);
+                  }) {
+      data_sink_.EmplaceTradeWith([&](Trade& out) noexcept {
+        detail::AssignTradeFromUpdate(update, symbol_id, local_ns, out);
+      });
+    } else {
+      if constexpr (requires(DataSink& data_sink, const Trade& trade) {
+                      data_sink.OnTrade(trade);
+                    }) {
+        Trade trade;
+        detail::AssignTradeFromUpdate(update, symbol_id, local_ns, trade);
+        data_sink_.OnTrade(trade);
+      }
+    }
+    if constexpr (DiagnosticsEnabled) {
+      diagnostics_.RecordTradeMessage();
+    }
+    if (decoded_trade != nullptr) {
+      *decoded_trade = true;
+    }
+    return websocket::DeliveryResult::kAccepted;
+  }
+
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1
   void PublishDecodedBookTicker(const BookTicker& book_ticker) noexcept {
     if constexpr (requires(DataSink& data_sink,
@@ -270,6 +490,7 @@ class FuturesMarketDataClient {
 
   absl::flat_hash_map<std::string_view, std::int32_t> symbol_ids_;
   DataSink& data_sink_;
+  DataSessionFeeds feeds_;
   simdjson::ondemand::parser parser_;
   [[no_unique_address]] DiagnosticsT diagnostics_{};
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 1

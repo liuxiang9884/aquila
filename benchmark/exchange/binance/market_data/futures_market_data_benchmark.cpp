@@ -23,6 +23,7 @@
 #include "exchange/binance/market_data/book_ticker_parser.h"
 #include "exchange/binance/market_data/client.h"
 #include "exchange/binance/market_data/data_session.h"
+#include "exchange/binance/market_data/trade_parser.h"
 #include <simdjson.h>
 #include <yyjson.h>
 
@@ -38,6 +39,8 @@ constexpr size_t kYyjsonBookTickerReadPoolBytes = 4096;
 constexpr size_t kYyjsonInsituViewIterations = 100'000;
 constexpr std::string_view kBookTickerJson =
     R"({"e":"bookTicker","u":400900217,"E":1568014460893,"T":1568014460891,"s":"BTCUSDT","b":"25.35190000","B":"31.21000000","a":"25.36520000","A":"40.66000000"})";
+constexpr std::string_view kTradeJson =
+    R"({"e":"trade","E":1783228448495,"T":1783228448495,"s":"BTCUSDT","t":7868321828,"p":"62738.70","q":"0.002","X":"MARKET","m":false,"st":1})";
 constexpr size_t kYyjsonMutablePayloadStride =
     kBookTickerJson.size() + YYJSON_PADDING_SIZE;
 
@@ -62,6 +65,16 @@ aq_md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
       .enabled = true,
       .shm_name = UniqueShmName(suffix),
       .channel_name = "book_ticker_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+}
+
+aq_md::TradeShmConfig MakeTradeCreateConfig(std::string_view suffix) {
+  return aq_md::TradeShmConfig{
+      .enabled = true,
+      .shm_name = UniqueShmName(suffix),
+      .channel_name = "trade_channel",
       .create = true,
       .remove_existing = true,
   };
@@ -358,6 +371,11 @@ struct CountingConsumer {
     ++calls;
     id_xor ^= static_cast<std::uint64_t>(book_ticker.id);
   }
+
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++calls;
+    id_xor ^= static_cast<std::uint64_t>(trade.id);
+  }
 };
 
 struct SymbolSet {
@@ -393,11 +411,13 @@ ws::ConnectionConfig BuildConnectionConfig() {
   return config;
 }
 
-void SetCommonCounters(benchmark::State& state, std::string_view payload) {
+void SetCommonCounters(
+    benchmark::State& state, std::string_view payload,
+    std::string_view endpoint = "binance-futures-book-ticker") {
   state.counters["payload_bytes"] = static_cast<double>(payload.size());
-  state.SetLabel(ws_bench::BuildBenchmarkLabel(
-      false, "binance-futures-book-ticker", ws_bench::FormatAffinity(),
-      ws_bench::FormatSchedulingPolicy()));
+  state.SetLabel(
+      ws_bench::BuildBenchmarkLabel(false, endpoint, ws_bench::FormatAffinity(),
+                                    ws_bench::FormatSchedulingPolicy()));
 }
 
 #if defined(__GNUC__)
@@ -470,6 +490,38 @@ BENCHMARK(BenchmarkParseBookTickerIntoShmSlot)
     ->Name("binance_market_data/parse_book_ticker_into_shm_slot")
     ->Unit(benchmark::kNanosecond);
 
+void BenchmarkParseTradeIntoShmSlot(benchmark::State& state) {
+  const aq_md::TradeShmConfig config =
+      MakeTradeCreateConfig("parse_trade_into_slot");
+  ShmCleanup cleanup(config.shm_name);
+  aq_md::DataShmPublisher publisher(config);
+  simdjson::ondemand::parser parser;
+  aq_binance::TradeUpdate update;
+  std::uint64_t published = 0;
+
+  for (auto _ : state) {
+    const aq_binance::TradeParseStatus status =
+        aq_binance::ParseTrade(kTradeJson, 0, parser, update);
+    if (status != aq_binance::TradeParseStatus::kOk) [[unlikely]] {
+      state.SkipWithError("parse failed");
+      return;
+    }
+    publisher.EmplaceTradeWith([&](aquila::Trade& out) noexcept {
+      aq_binance::detail::AssignTradeFromUpdate(update, 11, kLocalNs, out);
+    });
+    ++published;
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(published));
+  state.counters["published"] =
+      static_cast<double>(publisher.published_trades());
+  SetCommonCounters(state, kTradeJson, "binance-futures-trade");
+}
+
+BENCHMARK(BenchmarkParseTradeIntoShmSlot)
+    ->Name("binance_market_data/parse_trade_into_shm_slot")
+    ->Unit(benchmark::kNanosecond);
+
 std::vector<char> BuildMutableBookTickerPayloads(size_t payload_count) {
   std::vector<char> payloads(payload_count * kYyjsonMutablePayloadStride);
   for (size_t i = 0; i < payload_count; ++i) {
@@ -505,6 +557,28 @@ void BenchmarkParseBookTicker(benchmark::State& state) {
 
 BENCHMARK(BenchmarkParseBookTicker)
     ->Name("binance_market_data/parse_book_ticker")
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkParseTrade(benchmark::State& state) {
+  simdjson::ondemand::parser parser;
+  aq_binance::TradeUpdate update;
+  std::uint64_t parsed = 0;
+
+  for (auto _ : state) {
+    aq_binance::TradeParseStatus status =
+        aq_binance::ParseTrade(kTradeJson, 0, parser, update);
+    benchmark::DoNotOptimize(status);
+    benchmark::DoNotOptimize(update);
+    parsed +=
+        static_cast<std::uint64_t>(status == aq_binance::TradeParseStatus::kOk);
+  }
+
+  state.SetItemsProcessed(static_cast<std::int64_t>(parsed));
+  SetCommonCounters(state, kTradeJson, "binance-futures-trade");
+}
+
+BENCHMARK(BenchmarkParseTrade)
+    ->Name("binance_market_data/parse_trade")
     ->Unit(benchmark::kNanosecond);
 
 void BenchmarkParseBookTickerPaddedView(benchmark::State& state) {
@@ -697,6 +771,66 @@ BENCHMARK(BenchmarkClientOnTextPayload)
     ->Arg(32)
     ->Unit(benchmark::kNanosecond);
 
+void BenchmarkClientOnTradeTextPayload(benchmark::State& state) {
+  const size_t symbol_count = static_cast<size_t>(state.range(0));
+  SymbolSet symbols = BuildSymbols(symbol_count);
+  CountingConsumer consumer;
+  aq_binance::FuturesMarketDataClient client(
+      std::span<const aq_binance::SymbolBinding>(symbols.bindings), consumer);
+
+  for (auto _ : state) {
+    ws::DeliveryResult result = client.OnTextPayload(kTradeJson, 0, kLocalNs);
+    benchmark::DoNotOptimize(result);
+  }
+
+  benchmark::DoNotOptimize(consumer);
+  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
+  state.counters["symbols"] = static_cast<double>(symbol_count);
+  SetCommonCounters(state, kTradeJson, "binance-futures-trade");
+}
+
+BENCHMARK(BenchmarkClientOnTradeTextPayload)
+    ->Name("binance_market_data/client_on_trade_text_payload")
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(32)
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkClientOnMixedTextPayload(benchmark::State& state) {
+  const size_t symbol_count = static_cast<size_t>(state.range(0));
+  SymbolSet symbols = BuildSymbols(symbol_count);
+  CountingConsumer consumer;
+  aq_binance::FuturesMarketDataClient client(
+      std::span<const aq_binance::SymbolBinding>(symbols.bindings), consumer);
+  std::uint64_t messages = 0;
+
+  for (auto _ : state) {
+    const std::string_view payload =
+        (messages & 1U) == 0 ? kBookTickerJson : kTradeJson;
+    ws::DeliveryResult result = client.OnTextPayload(payload, 0, kLocalNs);
+    benchmark::DoNotOptimize(result);
+    ++messages;
+  }
+
+  benchmark::DoNotOptimize(consumer);
+  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
+  state.counters["symbols"] = static_cast<double>(symbol_count);
+  SetCommonCounters(state, kBookTickerJson, "binance-futures-mixed");
+  state.counters["payload_bytes"] =
+      static_cast<double>(kBookTickerJson.size() + kTradeJson.size()) / 2.0;
+  state.counters["book_ticker_payload_bytes"] =
+      static_cast<double>(kBookTickerJson.size());
+  state.counters["trade_payload_bytes"] =
+      static_cast<double>(kTradeJson.size());
+}
+
+BENCHMARK(BenchmarkClientOnMixedTextPayload)
+    ->Name("binance_market_data/client_on_mixed_text_payload")
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(32)
+    ->Unit(benchmark::kNanosecond);
+
 void BenchmarkClientHandleBinary(benchmark::State& state) {
   SymbolSet symbols = BuildSymbols(1);
   CountingConsumer consumer;
@@ -745,6 +879,36 @@ void BenchmarkSessionHandleText(benchmark::State& state) {
 
 BENCHMARK(BenchmarkSessionHandleText)
     ->Name("binance_market_data/session_handle_text")
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(32)
+    ->Unit(benchmark::kNanosecond);
+
+void BenchmarkSessionHandleTradeText(benchmark::State& state) {
+  const size_t symbol_count = static_cast<size_t>(state.range(0));
+  SymbolSet symbols = BuildSymbols(symbol_count);
+  CountingConsumer consumer;
+  aq_binance::DataSession<CountingConsumer,
+                          aq_binance::DefaultPlainWebSocketPolicy>
+      session(BuildConnectionConfig(),
+              std::span<const aq_binance::SymbolBinding>(symbols.bindings),
+              aq_binance::DataSessionFeeds{.book_ticker = false, .trade = true},
+              consumer);
+  const ws::MessageView view = TextView(kTradeJson);
+
+  for (auto _ : state) {
+    ws::DeliveryResult result = session.Handle(view);
+    benchmark::DoNotOptimize(result);
+  }
+
+  benchmark::DoNotOptimize(consumer);
+  state.SetItemsProcessed(static_cast<std::int64_t>(consumer.calls));
+  state.counters["symbols"] = static_cast<double>(symbol_count);
+  SetCommonCounters(state, kTradeJson, "binance-futures-trade");
+}
+
+BENCHMARK(BenchmarkSessionHandleTradeText)
+    ->Name("binance_market_data/session_handle_trade_text")
     ->Arg(1)
     ->Arg(8)
     ->Arg(32)

@@ -28,6 +28,7 @@ struct DataSessionStats {
   std::uint64_t binary_messages{0};
   std::uint64_t control_messages{0};
   std::uint64_t book_ticker_messages{0};
+  std::uint64_t trade_messages{0};
 };
 
 struct NoopDataSessionDiagnostics {
@@ -59,6 +60,10 @@ class DataSessionDiagnostics {
 
   void RecordBookTickerMessage() noexcept {
     ++stats_.book_ticker_messages;
+  }
+
+  void RecordTradeMessage() noexcept {
+    ++stats_.trade_messages;
   }
 
   [[nodiscard]] const DataSessionStats& stats() const noexcept {
@@ -136,15 +141,25 @@ class DataSession {
               std::span<const SymbolBinding> symbols, DataSink& data_sink,
               ::aquila::market_data::DataSessionLatencyOutlierConfig
                   latency_outlier_config = {})
+      : DataSession(std::move(config), symbols, DataSessionFeeds{}, data_sink,
+                    latency_outlier_config) {}
+
+  DataSession(websocket::ConnectionConfig config,
+              std::span<const SymbolBinding> symbols, DataSessionFeeds feeds,
+              DataSink& data_sink,
+              ::aquila::market_data::DataSessionLatencyOutlierConfig
+                  latency_outlier_config = {})
       : symbol_bindings_(symbols.begin(), symbols.end()),
-        stream_target_(
-            BuildFuturesBookTickerStreamTarget(std::span<const SymbolBinding>(
-                symbol_bindings_.data(), symbol_bindings_.size()))),
+        feeds_(feeds),
+        stream_target_(BuildFuturesMarketDataStreamTarget(
+            std::span<const SymbolBinding>(symbol_bindings_.data(),
+                                           symbol_bindings_.size()),
+            feeds_)),
         connection_(ApplyOptions(std::move(config), stream_target_)),
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
-            data_sink, latency_outlier_config),
+            feeds_, data_sink, latency_outlier_config),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_) {
     client_.SetStateHook(this, &HandleState);
@@ -161,26 +176,29 @@ class DataSession {
   DataSession(DataSessionConfig config, DataSink& data_sink)
       : DataSession(std::move(config.name), std::move(config.connection),
                     std::move(config.exchange_symbols),
-                    std::move(config.symbol_ids), data_sink,
+                    std::move(config.symbol_ids), config.feeds, data_sink,
                     config.diagnostics.latency_outlier) {}
 
   DataSession(std::string name, websocket::ConnectionConfig config,
               std::vector<std::string> exchange_symbols,
-              std::vector<std::int32_t> symbol_ids, DataSink& data_sink,
+              std::vector<std::int32_t> symbol_ids, DataSessionFeeds feeds,
+              DataSink& data_sink,
               ::aquila::market_data::DataSessionLatencyOutlierConfig
                   latency_outlier_config = {})
       : name_(std::move(name)),
         exchange_symbols_(std::move(exchange_symbols)),
         symbol_bindings_(
             detail::BuildOwnedSymbolBindings(exchange_symbols_, symbol_ids)),
-        stream_target_(
-            BuildFuturesBookTickerStreamTarget(std::span<const SymbolBinding>(
-                symbol_bindings_.data(), symbol_bindings_.size()))),
+        feeds_(feeds),
+        stream_target_(BuildFuturesMarketDataStreamTarget(
+            std::span<const SymbolBinding>(symbol_bindings_.data(),
+                                           symbol_bindings_.size()),
+            feeds_)),
         connection_(ApplyOptions(std::move(config), stream_target_)),
         market_data_client_(
             std::span<const SymbolBinding>(symbol_bindings_.data(),
                                            symbol_bindings_.size()),
-            data_sink, latency_outlier_config),
+            feeds_, data_sink, latency_outlier_config),
         message_handler_(websocket::MakeMessageHandler(*this)),
         client_(connection_, message_handler_) {
     client_.SetStateHook(this, &HandleState);
@@ -343,9 +361,11 @@ class DataSession {
 #endif
     if constexpr (SessionDiagnosticsEnabled) {
       bool decoded_book_ticker = false;
+      bool decoded_trade = false;
       const websocket::DeliveryResult result =
           market_data_client_.OnTextPayload(payload, view.readable_tail_bytes,
-                                            local_ns, &decoded_book_ticker
+                                            local_ns, &decoded_book_ticker,
+                                            &decoded_trade
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
                                             ,
                                             &message_timing
@@ -354,13 +374,16 @@ class DataSession {
       if (decoded_book_ticker) {
         session_diagnostics_.RecordBookTickerMessage();
       }
+      if (decoded_trade) {
+        session_diagnostics_.RecordTradeMessage();
+      }
       return result;
     } else {
       return market_data_client_.OnTextPayload(
           payload, view.readable_tail_bytes, local_ns
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
           ,
-          nullptr, &message_timing
+          nullptr, nullptr, &message_timing
 #endif
       );
     }
@@ -369,6 +392,7 @@ class DataSession {
   std::string name_;
   std::vector<std::string> exchange_symbols_;
   std::vector<SymbolBinding> symbol_bindings_;
+  DataSessionFeeds feeds_;
   std::string stream_target_;
   websocket::ConnectionConfig connection_;
   std::atomic<bool> ever_active_{false};

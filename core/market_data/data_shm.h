@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -132,19 +133,15 @@ namespace detail {
 
 [[nodiscard]] inline std::string PrepareShmName(
     const BookTickerShmConfig& config) {
-  return PrepareShmName(config.shm_name, config.create,
-                        config.remove_existing);
+  return PrepareShmName(config.shm_name, config.create, config.remove_existing);
 }
 
-[[nodiscard]] inline std::string PrepareShmName(
-    const TradeShmConfig& config) {
-  return PrepareShmName(config.shm_name, config.create,
-                        config.remove_existing);
+[[nodiscard]] inline std::string PrepareShmName(const TradeShmConfig& config) {
+  return PrepareShmName(config.shm_name, config.create, config.remove_existing);
 }
 
 [[nodiscard]] inline std::string PrepareShmName(const DataShmConfig& config) {
-  return PrepareShmName(config.shm_name, config.create,
-                        config.remove_existing);
+  return PrepareShmName(config.shm_name, config.create, config.remove_existing);
 }
 
 inline void ValidateChannelHeader(const BookTickerShmChannel& channel) {
@@ -265,8 +262,8 @@ class DataShmManager {
  public:
   explicit DataShmManager(const DataShmConfig& config)
       : shm_name_(detail::PrepareShmName(config)),
-        book_ticker_channel_name_(detail::ValidateChannelName(
-            config.book_ticker_channel_name)),
+        book_ticker_channel_name_(
+            detail::ValidateChannelName(config.book_ticker_channel_name)),
         trade_channel_name_(
             detail::ValidateChannelName(config.trade_channel_name)),
         allocator_(shm_name_.c_str(), StorageSize(), config.create) {
@@ -282,8 +279,8 @@ class DataShmManager {
       }
 
       const bool trade_existed = allocator_.IsConstructed(trade_channel_name_);
-      trade_channel_ = allocator_.Construct<TradeShmChannel>(
-          trade_channel_name_);
+      trade_channel_ =
+          allocator_.Construct<TradeShmChannel>(trade_channel_name_);
       if (!trade_existed) {
         trade_channel_->header.producer_pid =
             static_cast<std::uint64_t>(::getpid());
@@ -323,8 +320,8 @@ class DataShmManager {
   }
 
   [[nodiscard]] static std::size_t StorageSize() noexcept {
-    const std::size_t trade_offset = detail::AlignUp(
-        sizeof(BookTickerShmChannel), alignof(TradeShmChannel));
+    const std::size_t trade_offset =
+        detail::AlignUp(sizeof(BookTickerShmChannel), alignof(TradeShmChannel));
     return trade_offset + sizeof(TradeShmChannel);
   }
 
@@ -357,6 +354,10 @@ class DataShmPublisher {
         published_trades_(trade_channel_->queue.Current()) {}
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
+    if (book_ticker_channel_ == nullptr) [[unlikely]] {
+      assert(false && "book ticker channel is not available");
+      return;
+    }
     book_ticker_channel_->queue.Push(book_ticker);
     ++published_book_tickers_;
   }
@@ -365,19 +366,30 @@ class DataShmPublisher {
   void EmplaceBookTickerWith(Writer&& writer) noexcept(
       noexcept(std::declval<BookTickerQueue&>().EmplaceWith(
           std::forward<Writer>(writer)))) {
+    if (book_ticker_channel_ == nullptr) [[unlikely]] {
+      assert(false && "book ticker channel is not available");
+      return;
+    }
     book_ticker_channel_->queue.EmplaceWith(std::forward<Writer>(writer));
     ++published_book_tickers_;
   }
 
   void OnTrade(const aquila::Trade& trade) noexcept {
+    if (trade_channel_ == nullptr) [[unlikely]] {
+      assert(false && "trade channel is not available");
+      return;
+    }
     trade_channel_->queue.Push(trade);
     ++published_trades_;
   }
 
   template <typename Writer>
-  void EmplaceTradeWith(Writer&& writer) noexcept(
-      noexcept(std::declval<TradeQueue&>().EmplaceWith(
-          std::forward<Writer>(writer)))) {
+  void EmplaceTradeWith(Writer&& writer) noexcept(noexcept(
+      std::declval<TradeQueue&>().EmplaceWith(std::forward<Writer>(writer)))) {
+    if (trade_channel_ == nullptr) [[unlikely]] {
+      assert(false && "trade channel is not available");
+      return;
+    }
     trade_channel_->queue.EmplaceWith(std::forward<Writer>(writer));
     ++published_trades_;
   }
@@ -415,6 +427,14 @@ class DataShmPublisher {
 
   [[nodiscard]] std::uint64_t published_count() const noexcept {
     return published_book_tickers();
+  }
+
+  [[nodiscard]] bool has_book_ticker_channel() const noexcept {
+    return book_ticker_channel_ != nullptr;
+  }
+
+  [[nodiscard]] bool has_trade_channel() const noexcept {
+    return trade_channel_ != nullptr;
   }
 
  private:
