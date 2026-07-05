@@ -26,6 +26,8 @@ namespace aquila::tools::market_data {
 
 static_assert(std::is_trivially_copyable_v<BookTicker>);
 static_assert(std::is_standard_layout_v<BookTicker>);
+static_assert(std::is_trivially_copyable_v<Trade>);
+static_assert(std::is_standard_layout_v<Trade>);
 
 enum class RecorderWriteMode : std::uint8_t {
   kTruncate,
@@ -41,22 +43,6 @@ enum class RecorderWriteMode : std::uint8_t {
       return "trade";
   }
   return "unknown";
-}
-
-[[nodiscard]] inline bool ValidateBookTickerRecorderSources(
-    const config::DataReaderConfig& config, std::string* error) {
-  for (const config::DataReaderSourceConfig& source : config.sources) {
-    if (source.feed != config::DataReaderFeed::kBookTicker) {
-      if (error != nullptr) {
-        *error = fmt::format(
-            "data_reader_recorder only supports book_ticker sources; source "
-            "'{}' uses feed {}",
-            source.name, RecorderFeedName(source.feed));
-      }
-      return false;
-    }
-  }
-  return true;
 }
 
 inline constexpr std::array<Exchange, 6> kRecorderTrackedExchanges{
@@ -83,7 +69,42 @@ inline constexpr std::array<Exchange, 6> kRecorderTrackedExchanges{
   return std::nullopt;
 }
 
-struct RecorderStats {
+struct BookTickerRecorderTraits {
+  static constexpr std::string_view kFeedName{"book_ticker"};
+
+  [[nodiscard]] static Exchange ExchangeOf(const BookTicker& record) noexcept {
+    return record.exchange;
+  }
+
+  [[nodiscard]] static std::int64_t ExchangeNsOf(
+      const BookTicker& record) noexcept {
+    return record.exchange_ns;
+  }
+
+  [[nodiscard]] static std::int64_t LocalNsOf(
+      const BookTicker& record) noexcept {
+    return record.local_ns;
+  }
+};
+
+struct TradeRecorderTraits {
+  static constexpr std::string_view kFeedName{"trade"};
+
+  [[nodiscard]] static Exchange ExchangeOf(const Trade& record) noexcept {
+    return record.exchange;
+  }
+
+  [[nodiscard]] static std::int64_t ExchangeNsOf(const Trade& record) noexcept {
+    return record.exchange_ns;
+  }
+
+  [[nodiscard]] static std::int64_t LocalNsOf(const Trade& record) noexcept {
+    return record.local_ns;
+  }
+};
+
+template <typename RecordT, typename Traits>
+struct TypedRecorderStats {
   std::uint64_t total_records{0};
   std::array<std::uint64_t, kRecorderTrackedExchanges.size()>
       records_by_exchange{};
@@ -92,17 +113,17 @@ struct RecorderStats {
   std::optional<std::int64_t> last_exchange_ns;
   std::optional<std::int64_t> last_local_ns;
 
-  void Record(const BookTicker& book_ticker) noexcept {
+  void Record(const RecordT& record) noexcept {
     if (!first_exchange_ns.has_value()) {
-      first_exchange_ns = book_ticker.exchange_ns;
-      first_local_ns = book_ticker.local_ns;
+      first_exchange_ns = Traits::ExchangeNsOf(record);
+      first_local_ns = Traits::LocalNsOf(record);
     }
-    last_exchange_ns = book_ticker.exchange_ns;
-    last_local_ns = book_ticker.local_ns;
+    last_exchange_ns = Traits::ExchangeNsOf(record);
+    last_local_ns = Traits::LocalNsOf(record);
     ++total_records;
 
     const std::optional<std::size_t> index =
-        RecorderExchangeIndex(book_ticker.exchange);
+        RecorderExchangeIndex(Traits::ExchangeOf(record));
     if (index.has_value()) {
       ++records_by_exchange[*index];
     }
@@ -118,10 +139,16 @@ struct RecorderStats {
   }
 };
 
-class BookTickerBinaryRecorder {
+using BookTickerRecorderStats =
+    TypedRecorderStats<BookTicker, BookTickerRecorderTraits>;
+using TradeRecorderStats = TypedRecorderStats<Trade, TradeRecorderTraits>;
+using RecorderStats = BookTickerRecorderStats;
+
+template <typename RecordT, typename Traits>
+class TypedBinaryRecorder {
  public:
-  BookTickerBinaryRecorder(std::filesystem::path output_path,
-                           RecorderWriteMode write_mode)
+  TypedBinaryRecorder(std::filesystem::path output_path,
+                      RecorderWriteMode write_mode)
       : output_path_(std::move(output_path)) {
     if (output_path_.empty()) {
       throw std::invalid_argument("output path must not be empty");
@@ -147,24 +174,23 @@ class BookTickerBinaryRecorder {
     }
   }
 
-  BookTickerBinaryRecorder(const BookTickerBinaryRecorder&) = delete;
-  BookTickerBinaryRecorder& operator=(const BookTickerBinaryRecorder&) = delete;
+  TypedBinaryRecorder(const TypedBinaryRecorder&) = delete;
+  TypedBinaryRecorder& operator=(const TypedBinaryRecorder&) = delete;
 
-  void OnBookTicker(const BookTicker& book_ticker) noexcept {
+  void OnRecord(const RecordT& record) noexcept {
     if (write_error_) {
       return;
     }
 
-    output_.write(reinterpret_cast<const char*>(&book_ticker),
-                  sizeof(book_ticker));
+    output_.write(reinterpret_cast<const char*>(&record), sizeof(record));
     if (!output_.good()) {
       write_error_ = true;
       return;
     }
-    stats_.Record(book_ticker);
+    stats_.Record(record);
   }
 
-  void OnTrade(const Trade&) noexcept {
+  void MarkWriteError() noexcept {
     write_error_ = true;
   }
 
@@ -180,7 +206,8 @@ class BookTickerBinaryRecorder {
     return true;
   }
 
-  [[nodiscard]] const RecorderStats& stats() const noexcept {
+  [[nodiscard]] const TypedRecorderStats<RecordT, Traits>& stats()
+      const noexcept {
     return stats_;
   }
 
@@ -195,8 +222,99 @@ class BookTickerBinaryRecorder {
  private:
   std::filesystem::path output_path_;
   std::ofstream output_;
-  RecorderStats stats_;
+  TypedRecorderStats<RecordT, Traits> stats_;
   bool write_error_{false};
+};
+
+class BookTickerBinaryRecorder
+    : public TypedBinaryRecorder<BookTicker, BookTickerRecorderTraits> {
+ public:
+  using Base = TypedBinaryRecorder<BookTicker, BookTickerRecorderTraits>;
+  using Base::Base;
+
+  void OnBookTicker(const BookTicker& book_ticker) noexcept {
+    OnRecord(book_ticker);
+  }
+
+  void OnTrade(const Trade&) noexcept {
+    MarkWriteError();
+  }
+};
+
+class TradeBinaryRecorder
+    : public TypedBinaryRecorder<Trade, TradeRecorderTraits> {
+ public:
+  using Base = TypedBinaryRecorder<Trade, TradeRecorderTraits>;
+  using Base::Base;
+
+  void OnBookTicker(const BookTicker&) noexcept {
+    MarkWriteError();
+  }
+
+  void OnTrade(const Trade& trade) noexcept {
+    OnRecord(trade);
+  }
+};
+
+class BinaryRecorder {
+ public:
+  BinaryRecorder(std::filesystem::path book_ticker_output_path,
+                 std::filesystem::path trade_output_path,
+                 RecorderWriteMode write_mode)
+      : book_ticker_(std::move(book_ticker_output_path), write_mode),
+        trade_(std::move(trade_output_path), write_mode) {}
+
+  BinaryRecorder(const BinaryRecorder&) = delete;
+  BinaryRecorder& operator=(const BinaryRecorder&) = delete;
+
+  void OnBookTicker(const BookTicker& book_ticker) noexcept {
+    book_ticker_.OnBookTicker(book_ticker);
+  }
+
+  void OnTrade(const Trade& trade) noexcept {
+    trade_.OnTrade(trade);
+  }
+
+  [[nodiscard]] bool Flush() noexcept {
+    const bool book_ok = book_ticker_.Flush();
+    const bool trade_ok = trade_.Flush();
+    return book_ok && trade_ok;
+  }
+
+  [[nodiscard]] bool write_error() const noexcept {
+    return book_ticker_.write_error() || trade_.write_error();
+  }
+
+  [[nodiscard]] const BookTickerRecorderStats& book_ticker_stats()
+      const noexcept {
+    return book_ticker_.stats();
+  }
+
+  [[nodiscard]] const TradeRecorderStats& trade_stats() const noexcept {
+    return trade_.stats();
+  }
+
+  [[nodiscard]] const std::filesystem::path& book_ticker_output_path()
+      const noexcept {
+    return book_ticker_.output_path();
+  }
+
+  [[nodiscard]] const std::filesystem::path& trade_output_path()
+      const noexcept {
+    return trade_.output_path();
+  }
+
+  [[nodiscard]] std::uint64_t book_ticker_segments_completed() const noexcept {
+    return 0;
+  }
+
+  [[nodiscard]] std::uint64_t trade_segments_completed() const noexcept {
+    return 0;
+  }
+
+ private:
+  BookTickerBinaryRecorder book_ticker_;
+  TradeBinaryRecorder trade_;
 };
 
 struct RecorderTimeSnapshot {
@@ -219,12 +337,13 @@ struct RecorderRotationConfig {
   std::filesystem::path manifest_path;
 };
 
-class RotatingBookTickerBinaryRecorder {
+template <typename RecordT, typename Traits>
+class TypedRotatingBinaryRecorder {
  public:
   using Clock = std::function<RecorderTimeSnapshot()>;
 
-  explicit RotatingBookTickerBinaryRecorder(RecorderRotationConfig config,
-                                            Clock clock = Clock{})
+  explicit TypedRotatingBinaryRecorder(RecorderRotationConfig config,
+                                       Clock clock = Clock{})
       : config_(std::move(config)), clock_(std::move(clock)) {
     if (config_.rotation_interval_sec == 0) {
       throw std::invalid_argument("rotation interval must be positive");
@@ -251,24 +370,23 @@ class RotatingBookTickerBinaryRecorder {
     }
   }
 
-  RotatingBookTickerBinaryRecorder(const RotatingBookTickerBinaryRecorder&) =
+  TypedRotatingBinaryRecorder(const TypedRotatingBinaryRecorder&) = delete;
+  TypedRotatingBinaryRecorder& operator=(const TypedRotatingBinaryRecorder&) =
       delete;
-  RotatingBookTickerBinaryRecorder& operator=(
-      const RotatingBookTickerBinaryRecorder&) = delete;
 
-  void OnBookTicker(const BookTicker& book_ticker) noexcept {
+  void OnRecord(const RecordT& record) noexcept {
     if (write_error_) {
       return;
     }
 
     try {
-      OnBookTickerImpl(book_ticker);
+      OnRecordImpl(record);
     } catch (...) {
       write_error_ = true;
     }
   }
 
-  void OnTrade(const Trade&) noexcept {
+  void MarkWriteError() noexcept {
     write_error_ = true;
   }
 
@@ -284,7 +402,8 @@ class RotatingBookTickerBinaryRecorder {
     }
   }
 
-  [[nodiscard]] const RecorderStats& stats() const noexcept {
+  [[nodiscard]] const TypedRecorderStats<RecordT, Traits>& stats()
+      const noexcept {
     return stats_;
   }
 
@@ -297,7 +416,7 @@ class RotatingBookTickerBinaryRecorder {
   }
 
  private:
-  void OnBookTickerImpl(const BookTicker& book_ticker) {
+  void OnRecordImpl(const RecordT& record) {
     const RecorderTimeSnapshot now = clock_();
     if (current_stats_.total_records != 0 &&
         now.steady >= next_rotation_deadline_) {
@@ -309,14 +428,13 @@ class RotatingBookTickerBinaryRecorder {
       }
     }
 
-    output_.write(reinterpret_cast<const char*>(&book_ticker),
-                  sizeof(book_ticker));
+    output_.write(reinterpret_cast<const char*>(&record), sizeof(record));
     if (!output_.good()) {
       write_error_ = true;
       return;
     }
-    stats_.Record(book_ticker);
-    current_stats_.Record(book_ticker);
+    stats_.Record(record);
+    current_stats_.Record(record);
   }
 
   [[nodiscard]] static std::string FormatWallTime(
@@ -358,7 +476,7 @@ class RotatingBookTickerBinaryRecorder {
   }
 
   [[nodiscard]] bool OpenSegment(const RecorderTimeSnapshot& now) {
-    current_stats_ = RecorderStats{};
+    current_stats_ = TypedRecorderStats<RecordT, Traits>{};
     current_sequence_ = next_sequence_++;
     const std::string file_name =
         fmt::format("{}_{}_{:06}.bin", config_.file_prefix,
@@ -414,7 +532,7 @@ class RotatingBookTickerBinaryRecorder {
     const std::uintmax_t file_size =
         std::filesystem::file_size(current_tmp_path_, size_error);
     if (size_error ||
-        file_size != current_stats_.total_records * sizeof(BookTicker)) {
+        file_size != current_stats_.total_records * sizeof(RecordT)) {
       write_error_ = true;
       return false;
     }
@@ -468,13 +586,99 @@ class RotatingBookTickerBinaryRecorder {
   std::ofstream output_;
   std::filesystem::path current_tmp_path_;
   std::filesystem::path current_final_path_;
-  RecorderStats stats_;
-  RecorderStats current_stats_;
+  TypedRecorderStats<RecordT, Traits> stats_;
+  TypedRecorderStats<RecordT, Traits> current_stats_;
   std::chrono::steady_clock::time_point next_rotation_deadline_{};
   std::uint64_t next_sequence_{1};
   std::uint64_t current_sequence_{0};
   std::uint64_t segments_completed_{0};
   bool write_error_{false};
+};
+
+class RotatingBookTickerBinaryRecorder
+    : public TypedRotatingBinaryRecorder<BookTicker, BookTickerRecorderTraits> {
+ public:
+  using Base =
+      TypedRotatingBinaryRecorder<BookTicker, BookTickerRecorderTraits>;
+  using Clock = Base::Clock;
+  using Base::Base;
+
+  void OnBookTicker(const BookTicker& book_ticker) noexcept {
+    OnRecord(book_ticker);
+  }
+
+  void OnTrade(const Trade&) noexcept {
+    MarkWriteError();
+  }
+};
+
+class RotatingTradeBinaryRecorder
+    : public TypedRotatingBinaryRecorder<Trade, TradeRecorderTraits> {
+ public:
+  using Base = TypedRotatingBinaryRecorder<Trade, TradeRecorderTraits>;
+  using Clock = Base::Clock;
+  using Base::Base;
+
+  void OnBookTicker(const BookTicker&) noexcept {
+    MarkWriteError();
+  }
+
+  void OnTrade(const Trade& trade) noexcept {
+    OnRecord(trade);
+  }
+};
+
+class RotatingBinaryRecorder {
+ public:
+  using Clock = std::function<RecorderTimeSnapshot()>;
+
+  RotatingBinaryRecorder(RecorderRotationConfig book_ticker_config,
+                         RecorderRotationConfig trade_config,
+                         Clock clock = Clock{})
+      : book_ticker_(std::move(book_ticker_config), clock),
+        trade_(std::move(trade_config), std::move(clock)) {}
+
+  RotatingBinaryRecorder(const RotatingBinaryRecorder&) = delete;
+  RotatingBinaryRecorder& operator=(const RotatingBinaryRecorder&) = delete;
+
+  void OnBookTicker(const BookTicker& book_ticker) noexcept {
+    book_ticker_.OnBookTicker(book_ticker);
+  }
+
+  void OnTrade(const Trade& trade) noexcept {
+    trade_.OnTrade(trade);
+  }
+
+  [[nodiscard]] bool Flush() noexcept {
+    const bool book_ok = book_ticker_.Flush();
+    const bool trade_ok = trade_.Flush();
+    return book_ok && trade_ok;
+  }
+
+  [[nodiscard]] bool write_error() const noexcept {
+    return book_ticker_.write_error() || trade_.write_error();
+  }
+
+  [[nodiscard]] const BookTickerRecorderStats& book_ticker_stats()
+      const noexcept {
+    return book_ticker_.stats();
+  }
+
+  [[nodiscard]] const TradeRecorderStats& trade_stats() const noexcept {
+    return trade_.stats();
+  }
+
+  [[nodiscard]] std::uint64_t book_ticker_segments_completed() const noexcept {
+    return book_ticker_.segments_completed();
+  }
+
+  [[nodiscard]] std::uint64_t trade_segments_completed() const noexcept {
+    return trade_.segments_completed();
+  }
+
+ private:
+  RotatingBookTickerBinaryRecorder book_ticker_;
+  RotatingTradeBinaryRecorder trade_;
 };
 
 }  // namespace aquila::tools::market_data

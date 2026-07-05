@@ -141,7 +141,12 @@ stats 由编译期 diagnostics policy 启用；生产默认 `RealtimeDataReader<
 | `last_book_ticker_id` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | exchange update id | 单个 source 最近输出的 `BookTicker.id`。 | 同上。 |
 | `last_trade_id` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | exchange trade id | 单个 source 最近输出的 `Trade.id`。 | 同上。 |
 | `handler_book_tickers` / `handler_trades` | `data_reader_probe` result summary Nova log | stable | count | probe handler 实际收到的 BBO / trade 数量，用于和 reader diagnostics 对账。 | probe summary schema 替换后同步迁移。 |
-| `handler_book_tickers` | `data_reader_recorder` result summary Nova log | stable | count | recorder 已写入 `BookTicker` binary 的记录数。recorder 当前不支持 trade binary。 | recorder 支持多 feed binary schema 后重审。 |
+| `handler_book_tickers` / `handler_trades` | `data_reader_recorder` result summary Nova log | stable | count | recorder 已分别写入 `BookTicker` / `Trade` binary 的记录数。 | recorder summary schema 替换后同步迁移。 |
+| `book_ticker_output` / `trade_output` | `data_reader_recorder` result summary Nova log | stable | path | 本次 recorder 实际写出的 BookTicker / Trade 单文件路径；rotation 模式下作为启动参数和默认派生路径记录，真实 segment 见 manifest。 | recorder output schema 替换后同步迁移。 |
+| `book_ticker_segments_completed` / `trade_segments_completed` | `data_reader_recorder` result summary Nova log | stable | count | rotation 模式下每个 feed 已完成并写入 manifest 的 segment 数；单文件模式固定为 `0`。 | recorder rotation schema 替换后同步迁移。 |
+| `recorder_output feed=book_ticker\|trade path` | `data_reader_recorder` startup Nova log | stable | path | 启动阶段记录 BookTicker / Trade 输出路径，便于从统一 recorder log 找到两个 artifact。 | recorder output schema 替换后同步迁移。 |
+| `recorder_rotation feed=book_ticker\|trade` | `data_reader_recorder` startup Nova log | stable | config | 启动阶段记录每个 feed 的 rotation `enabled`、`interval_sec`、`output_dir`、`file_prefix` 和 `manifest_path`。 | recorder rotation schema 替换后同步迁移。 |
+| `recorder_stats feed=book_ticker\|trade` / `exchange_stats feed=book_ticker\|trade` | `data_reader_recorder` Nova log | stable | count / ns | 按 feed 拆分的 total records、per-exchange records、first / last `exchange_ns` 和 `local_ns`，用于和两个独立 binary artifact 对账。 | recorder stats schema 替换后同步迁移。 |
 
 ## Market Data Fusion
 

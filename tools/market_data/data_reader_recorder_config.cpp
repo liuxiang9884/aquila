@@ -43,6 +43,48 @@ namespace {
          fmt::format("{}_manifest.jsonl", file_prefix);
 }
 
+[[nodiscard]] std::string DeriveTradeName(std::string name) {
+  constexpr std::string_view kBookTickerToken{"book_ticker"};
+  constexpr std::string_view kTradeToken{"trade"};
+  const std::size_t position = name.find(kBookTickerToken);
+  if (position != std::string::npos) {
+    name.replace(position, kBookTickerToken.size(), kTradeToken);
+    return name;
+  }
+  name.append("_trade");
+  return name;
+}
+
+[[nodiscard]] std::string DeriveTradeManifestStem(
+    std::string manifest_stem, std::string_view book_ticker_file_prefix,
+    std::string_view trade_file_prefix) {
+  const std::size_t prefix_position =
+      manifest_stem.find(book_ticker_file_prefix);
+  if (!book_ticker_file_prefix.empty() &&
+      prefix_position != std::string::npos) {
+    manifest_stem.replace(prefix_position, book_ticker_file_prefix.size(),
+                          trade_file_prefix);
+    return manifest_stem;
+  }
+  return DeriveTradeName(std::move(manifest_stem));
+}
+
+[[nodiscard]] RecorderRotationConfig DeriveTradeRotationConfig(
+    const RecorderRotationConfig& book_ticker_config) {
+  RecorderRotationConfig trade_config = book_ticker_config;
+  trade_config.output_dir =
+      book_ticker_config.output_dir.parent_path() /
+      DeriveTradeName(book_ticker_config.output_dir.filename().string());
+  trade_config.file_prefix = DeriveTradeName(book_ticker_config.file_prefix);
+  trade_config.manifest_path =
+      book_ticker_config.manifest_path.parent_path() /
+      (DeriveTradeManifestStem(book_ticker_config.manifest_path.stem().string(),
+                               book_ticker_config.file_prefix,
+                               trade_config.file_prefix) +
+       book_ticker_config.manifest_path.extension().string());
+  return trade_config;
+}
+
 [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> node, bool fallback,
                           std::string_view field_name, std::string* error) {
   if (!node) {
@@ -105,6 +147,7 @@ RecorderConfigResult ParseRecorderConfig(
   config.rotation.file_prefix = DefaultFilePrefix(output_path);
   config.rotation.manifest_path =
       DefaultManifestPath(output_path, config.rotation.file_prefix);
+  config.trade_rotation = DeriveTradeRotationConfig(config.rotation);
 
   const toml::table* recorder = node["recorder"].as_table();
   if (recorder == nullptr) {
@@ -145,6 +188,27 @@ RecorderConfigResult ParseRecorderConfig(
     return Failure(std::move(error));
   }
 
+  config.trade_rotation = DeriveTradeRotationConfig(config.rotation);
+  config.trade_rotation.output_dir = std::filesystem::path{StringOr(
+      (*recorder)["trade_output_dir"],
+      config.trade_rotation.output_dir.string(), "trade_output_dir", &error)};
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
+  config.trade_rotation.file_prefix =
+      StringOr((*recorder)["trade_file_prefix"],
+               config.trade_rotation.file_prefix, "trade_file_prefix", &error);
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
+  config.trade_rotation.manifest_path = std::filesystem::path{
+      StringOr((*recorder)["trade_manifest_path"],
+               config.trade_rotation.manifest_path.string(),
+               "trade_manifest_path", &error)};
+  if (!error.empty()) {
+    return Failure(std::move(error));
+  }
+
   if (config.rotation.output_dir.empty()) {
     return Failure("recorder.output_dir must not be empty");
   }
@@ -154,11 +218,28 @@ RecorderConfigResult ParseRecorderConfig(
   if (config.rotation.manifest_path.empty()) {
     return Failure("recorder.manifest_path must not be empty");
   }
+  if (config.trade_rotation.output_dir.empty()) {
+    return Failure("recorder.trade_output_dir must not be empty");
+  }
+  if (config.trade_rotation.file_prefix.empty()) {
+    return Failure("recorder.trade_file_prefix must not be empty");
+  }
+  if (config.trade_rotation.manifest_path.empty()) {
+    return Failure("recorder.trade_manifest_path must not be empty");
+  }
   if (config.rotation.enabled && write_mode == RecorderWriteMode::kAppend) {
     return Failure("recorder rotation does not support append mode");
   }
 
   return Success(std::move(config));
+}
+
+std::filesystem::path DeriveTradeOutputPath(
+    const std::filesystem::path& book_ticker_output_path) {
+  const std::filesystem::path parent = book_ticker_output_path.parent_path();
+  const std::string stem = book_ticker_output_path.stem().string();
+  const std::string extension = book_ticker_output_path.extension().string();
+  return parent / (DeriveTradeName(stem) + extension);
 }
 
 }  // namespace aquila::tools::market_data

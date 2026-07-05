@@ -88,9 +88,10 @@ void LogSourceConfig(const aquila::config::DataReaderConfig& config) {
     if (source.read_mode == aquila::config::DataReaderReadMode::kLatest) {
       NOVA_WARNING(
           "latest_read_mode_source index={} name={} semantics=reader records "
-          "only the latest visible BookTicker per source poll and counts "
+          "only the latest visible {} per source poll and counts "
           "intermediate unread records as skipped",
-          i, source.name);
+          i, source.name,
+          aquila::tools::market_data::RecorderFeedName(source.feed));
     }
   }
 }
@@ -116,46 +117,49 @@ void LogSourceStats(
   }
 }
 
-void LogRecorderStats(const aquila::tools::market_data::RecorderStats& stats) {
+template <typename Stats>
+void LogRecorderStats(std::string_view feed, const Stats& stats) {
   NOVA_INFO(
-      "recorder_stats total_records={} first_exchange_ns={} first_local_ns={} "
+      "recorder_stats feed={} total_records={} first_exchange_ns={} "
+      "first_local_ns={} "
       "last_exchange_ns={} last_local_ns={}",
-      stats.total_records, OptionalNs(stats.first_exchange_ns),
+      feed, stats.total_records, OptionalNs(stats.first_exchange_ns),
       OptionalNs(stats.first_local_ns), OptionalNs(stats.last_exchange_ns),
       OptionalNs(stats.last_local_ns));
 
   for (const aquila::Exchange exchange :
        aquila::tools::market_data::kRecorderTrackedExchanges) {
-    NOVA_INFO("exchange_stats exchange={} records={}",
+    NOVA_INFO("exchange_stats feed={} exchange={} records={}", feed,
               magic_enum::enum_name(exchange),
               stats.RecordsForExchange(exchange));
   }
 }
 
-template <typename Recorder>
-[[nodiscard]] std::uint64_t SegmentsCompleted(
-    const Recorder& recorder) noexcept {
-  if constexpr (requires { recorder.segments_completed(); }) {
-    return recorder.segments_completed();
-  }
-  return 0;
-}
-
 void LogRecorderRotationConfig(
     const aquila::tools::market_data::RecorderConfig& config) {
   NOVA_INFO(
-      "recorder_rotation enabled={} interval_sec={} output_dir={} "
+      "recorder_rotation feed=book_ticker enabled={} interval_sec={} "
+      "output_dir={} "
       "file_prefix={} manifest_path={}",
       config.rotation.enabled ? "true" : "false",
       config.rotation.rotation_interval_sec,
       config.rotation.output_dir.string(), config.rotation.file_prefix,
       config.rotation.manifest_path.string());
+  NOVA_INFO(
+      "recorder_rotation feed=trade enabled={} interval_sec={} output_dir={} "
+      "file_prefix={} manifest_path={}",
+      config.trade_rotation.enabled ? "true" : "false",
+      config.trade_rotation.rotation_interval_sec,
+      config.trade_rotation.output_dir.string(),
+      config.trade_rotation.file_prefix,
+      config.trade_rotation.manifest_path.string());
 }
 
 template <typename Reader, typename Recorder>
 int RunRecorderLoop(Reader& reader, Recorder& recorder,
                     std::span<const SourceLabel> source_labels,
                     const std::filesystem::path& output_path,
+                    const std::filesystem::path& trade_output_path,
                     std::uint64_t max_polls, std::uint64_t drain_budget) {
   std::uint64_t polls{0};
   auto log_summary = [&](std::string_view result,
@@ -163,11 +167,16 @@ int RunRecorderLoop(Reader& reader, Recorder& recorder,
     const auto& reader_stats = reader.diagnostics().stats();
     NOVA_INFO(
         "result={} stop_reason={} polls={} handler_book_tickers={} "
-        "diagnostics_total_count={} output={} segments_completed={}",
-        result, stop_reason, polls, recorder.stats().total_records,
-        reader_stats.total_count, output_path.string(),
-        SegmentsCompleted(recorder));
-    LogRecorderStats(recorder.stats());
+        "handler_trades={} diagnostics_total_count={} book_ticker_output={} "
+        "trade_output={} book_ticker_segments_completed={} "
+        "trade_segments_completed={}",
+        result, stop_reason, polls, recorder.book_ticker_stats().total_records,
+        recorder.trade_stats().total_records, reader_stats.total_count,
+        output_path.string(), trade_output_path.string(),
+        recorder.book_ticker_segments_completed(),
+        recorder.trade_segments_completed());
+    LogRecorderStats("book_ticker", recorder.book_ticker_stats());
+    LogRecorderStats("trade", recorder.trade_stats());
     LogSourceStats(source_labels, reader_stats.sources);
   };
 
@@ -206,14 +215,20 @@ int main(int argc, char** argv) {
   std::filesystem::path config_path{
       "config/data_readers/strategy_data_reader.toml"};
   std::filesystem::path output_path;
+  std::filesystem::path trade_output_path;
   std::string mode_text{"truncate"};
   std::uint64_t max_polls{0};
 
-  CLI::App app{"SHM data reader to merged BookTicker replay binary recorder"};
+  CLI::App app{
+      "SHM data reader to separate BookTicker and Trade replay binary "
+      "recorder"};
   app.add_option("--config", config_path, "data reader TOML path");
   app.add_option("--output", output_path,
                  "output BookTicker binary path without header")
       ->required();
+  app.add_option("--trade-output", trade_output_path,
+                 "output Trade binary path without header; defaults derived "
+                 "from --output");
   app.add_option("--mode", mode_text, "truncate or append")
       ->check(CLI::IsMember({"truncate", "append"}));
   app.add_option("--max-polls", max_polls, "0 means unlimited");
@@ -230,11 +245,9 @@ int main(int argc, char** argv) {
         NOVA_ERROR("config_error={}", config_result.error);
         return 1;
       }
-      std::string recorder_source_error;
-      if (!aquila::tools::market_data::ValidateBookTickerRecorderSources(
-              config_result.value, &recorder_source_error)) {
-        NOVA_ERROR("config_error={}", recorder_source_error);
-        return 1;
+      if (trade_output_path.empty()) {
+        trade_output_path =
+            aquila::tools::market_data::DeriveTradeOutputPath(output_path);
       }
 
       const std::vector<SourceLabel> source_labels =
@@ -254,7 +267,11 @@ int main(int argc, char** argv) {
       NOVA_INFO("{}", aquila::tools::market_data::FormatToolStartupLog(
                           "data_reader_recorder", "realtime", config_path,
                           output_path, max_polls, drain_budget,
-                          sizeof(aquila::BookTicker)));
+                          sizeof(aquila::BookTicker), sizeof(aquila::Trade)));
+      NOVA_INFO("recorder_output feed=book_ticker path={}",
+                output_path.string());
+      NOVA_INFO("recorder_output feed=trade path={}",
+                trade_output_path.string());
       LogRecorderRotationConfig(recorder_config_result.value);
       LogSourceConfig(config_result.value);
 
@@ -266,16 +283,17 @@ int main(int argc, char** argv) {
       std::signal(SIGTERM, HandleSignal);
 
       if (recorder_config_result.value.rotation.enabled) {
-        aquila::tools::market_data::RotatingBookTickerBinaryRecorder recorder(
-            recorder_config_result.value.rotation);
+        aquila::tools::market_data::RotatingBinaryRecorder recorder(
+            recorder_config_result.value.rotation,
+            recorder_config_result.value.trade_rotation);
         return RunRecorderLoop(reader, recorder, source_labels, output_path,
-                               max_polls, drain_budget);
+                               trade_output_path, max_polls, drain_budget);
       }
 
-      aquila::tools::market_data::BookTickerBinaryRecorder recorder(output_path,
-                                                                    write_mode);
+      aquila::tools::market_data::BinaryRecorder recorder(
+          output_path, trade_output_path, write_mode);
       return RunRecorderLoop(reader, recorder, source_labels, output_path,
-                             max_polls, drain_budget);
+                             trade_output_path, max_polls, drain_budget);
     } catch (const std::exception& exc) {
       NOVA_ERROR("data_reader_recorder_error={}", exc.what());
       return 1;

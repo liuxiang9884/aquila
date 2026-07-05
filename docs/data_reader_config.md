@@ -228,7 +228,7 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 
 ## SHM 到 replay binary recorder
 
-`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。当前 recorder 只支持 `BookTicker` binary；启动期会拒绝任何 `feed = "trade"` source，避免生成部分输出或把 `Trade` 静默写入 BookTicker 文件。
+`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` / `Trade` SHM 读取数据，并分别输出独立裸 binary。`BookTicker` 输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。`Trade` 输出文件是连续的 `aquila::Trade` 结构体记录，同样不加 header；`HistoricalDataReader` 尚未支持读取 `Trade` binary，trade 文件先用于落盘、对账和后续 historical reader 设计输入。
 
 基础示例：
 
@@ -236,19 +236,22 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 ./build/debug/tools/data_reader_recorder \
   --config config/data_readers/strategy_data_reader.toml \
   --output /home/liuxiang/tmp/aquila_merged_book_ticker.bin \
+  --trade-output /home/liuxiang/tmp/aquila_merged_trade.bin \
   --mode truncate
 ```
 
 参数：
 
 - `--config`：data reader TOML 路径，默认 `config/data_readers/strategy_data_reader.toml`。
-- `--output`：输出 `.bin` 路径，必填。
+- `--output`：输出 `BookTicker` `.bin` 路径，必填。
+- `--trade-output`：输出 `Trade` `.bin` 路径；不传时从 `--output` 派生，例如 `live_merged_book_ticker.bin` -> `live_merged_trade.bin`，或 `live.bin` -> `live_trade.bin`。
 - `--mode`：写入模式，支持 `truncate` 和 `append`，默认 `truncate`。
 - `--max-polls`：最多执行多少次 recorder loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
 
 可选 recorder 专用配置放在同一 TOML 的 `[recorder]` 表。未配置或
-`rotation_enabled = false` 时保持单文件输出；启用 rotation 时，当前段先写 `.tmp`，关闭后
-atomic rename 成 `.bin` 并追加 manifest JSONL。默认 rotation interval 为 1 小时：
+`rotation_enabled = false` 时保持单文件输出；启用 rotation 时，BookTicker 和 Trade 各自使用独立
+segment / manifest，当前段先写 `.tmp`，关闭后 atomic rename 成 `.bin` 并追加对应 manifest JSONL。
+默认 rotation interval 为 1 小时：
 
 ```toml
 [recorder]
@@ -257,6 +260,9 @@ rotation_interval_sec = 3600
 output_dir = "/home/liuxiang/tmp/aquila_persistent_md/segments"
 file_prefix = "book_ticker"
 manifest_path = "/home/liuxiang/tmp/aquila_persistent_md/manifest.jsonl"
+trade_output_dir = "/home/liuxiang/tmp/aquila_persistent_md/segments_trade"
+trade_file_prefix = "trade"
+trade_manifest_path = "/home/liuxiang/tmp/aquila_persistent_md/trade_manifest.jsonl"
 ```
 
 省略可选字段时：
@@ -265,6 +271,9 @@ manifest_path = "/home/liuxiang/tmp/aquila_persistent_md/manifest.jsonl"
 - `output_dir = parent(--output) / "segments"`
 - `file_prefix = stem(--output)`
 - `manifest_path = parent(--output) / (stem(--output) + "_manifest.jsonl")`
+- `trade_output_dir` 从 `output_dir` 派生，把 `book_ticker` 替换为 `trade`；没有该 token 时追加 `_trade`。
+- `trade_file_prefix` 从 `file_prefix` 派生，规则同上。
+- `trade_manifest_path` 优先把 `manifest_path` stem 里的 `file_prefix` 替换成 `trade_file_prefix`；否则按 `book_ticker` -> `trade` / 追加 `_trade` 派生。
 
 rotation 第一版只支持 `--mode truncate`；`--mode append` 会在启动期拒绝，避免追加模式下 sequence 和
 manifest 恢复语义不清晰。
@@ -288,18 +297,16 @@ manifest 恢复语义不清晰。
 当前边界：
 
 - 使用一份 data reader TOML 作为输入，复用现有 SHM source 配置、`read_mode` 和 `max_events_per_drain`。
-- 默认只输出一个 merged `.bin`；启用 `[recorder].rotation_enabled` 后输出多个 segment `.bin` 和一个
-  manifest JSONL。记录顺序就是 `RealtimeDataReader` 实际交给 handler 的顺序。
+- 单文件模式下，`--output` 写 `BookTicker`，`--trade-output` 写 `Trade`；启用 `[recorder].rotation_enabled` 后，两类 feed 各自输出多个 segment `.bin` 和独立 manifest JSONL。每个 feed 文件内的记录顺序就是 `RealtimeDataReader` 实际交给 handler 后该 feed writer 收到的顺序，不做跨 feed 全局排序。
 - 如果输入配置使用 `drain`，recorder 会按 reader 可见事件流顺序连续写出；如果输入配置仍是 `latest`，则输出也继承 latest 的跳点语义，工具启动日志会显式打印 `latest_read_mode_source` warning。
-- recorder 启动日志打印 `book_ticker_abi_size=sizeof(aquila::BookTicker)`；probe 会同时打印 `book_ticker_abi_size` 和 `trade_abi_size`。SHM attach 仍会校验 producer header 中的 ABI size。输出文件本身不写 header。
+- recorder / probe 启动日志会打印 `book_ticker_abi_size=sizeof(aquila::BookTicker)` 和 `trade_abi_size=sizeof(aquila::Trade)`。SHM attach 仍会校验 producer header 中的 ABI size。输出文件本身不写 header。
 - 单文件写入路径使用二进制追加或截断模式，由 `--mode` 明确控制，默认截断；rotation 模式只支持截断。
-- rotation manifest 每行一个 JSON object，记录 segment `sequence`、`file`、`records`、`bytes`、first / last
-  `exchange_ns`、first / last `local_ns` 和 `closed_reason`。正在写的 `.tmp` 不写入 manifest，replay 只读取已关闭的 `.bin`。
-- 退出统计包括 total records、per-exchange records、per-source skipped / overrun、first / last `exchange_ns` 和 `local_ns`，rotation 模式额外输出 `segments_completed`。
-- 本地测试 `data_reader_recorder_test` 覆盖两个 `BookTicker` SHM source 经 `RealtimeDataReader::Drain()` 写入同一个裸 replay binary 的路径。
+- rotation manifest 每行一个 JSON object，记录 segment `sequence`、`file`、`records`、`bytes`、first / last `exchange_ns`、first / last `local_ns` 和 `closed_reason`。正在写的 `.tmp` 不写入 manifest；BookTicker replay 只读取 BookTicker manifest 中已关闭的 `.bin`。
+- 退出统计包括 `handler_book_tickers`、`handler_trades`、按 feed 拆分的 total records / per-exchange records / first-last 时间戳、per-source skipped / overrun，rotation 模式额外按 feed 输出 completed segment 数。
+- 本地测试 `data_reader_recorder_test` 覆盖两个 `BookTicker` SHM source 写入同一个裸 replay binary、mixed `BookTicker` / `Trade` SHM source 写入两个独立裸 binary，以及双 feed rotation segment / manifest 的路径。
 
-rotation replay 不需要修改 `HistoricalDataReader`。现有 `binary_file` source 已支持一个 source 下多个 `files`；
-可用 manifest 生成 replay data reader TOML：
+BookTicker rotation replay 不需要修改 `HistoricalDataReader`。现有 `binary_file` source 已支持一个 source 下多个
+`files`；可用 BookTicker manifest 生成 replay data reader TOML：
 
 ```bash
 scripts/market_data/manifest_to_data_reader_config.py \
@@ -309,8 +316,9 @@ scripts/market_data/manifest_to_data_reader_config.py \
   --catalog config/instruments/usdt_futures.csv
 ```
 
-生成的 TOML 会把已关闭 segment `.bin` 按 manifest 顺序写入 `files = [...]`，随后可直接用于
-`data_reader_probe`、`lead_lag_replay` 或其他 `HistoricalDataReader` 使用方。
+生成的 TOML 会把已关闭 BookTicker segment `.bin` 按 manifest 顺序写入 `files = [...]`，随后可直接用于
+`data_reader_probe`、`lead_lag_replay` 或其他 `HistoricalDataReader` 使用方。Trade manifest 目前不直接喂给
+`manifest_to_data_reader_config.py`；等 `HistoricalDataReader` 支持 `feed = "trade"` 后再补 replay 配置生成。
 
 当前 `BookTicker.local_ns` 不是 DataReader 或策略层打点，而是在 data session 收到 WebSocket frame 后、进入交易所 parser / decoder 前采集：
 

@@ -186,7 +186,7 @@ reader 配置见 `docs/data_reader_config.md`：
 | `core/market_data/historical_data_reader.h` | binary replay reader。 |
 | `tools/gate/data_session.cpp` | Gate data session publisher。 |
 | `tools/binance/data_session.cpp` | Binance data session publisher。 |
-| `tools/market_data/data_reader_recorder.cpp` | SHM 到 replay binary recorder。 |
+| `tools/market_data/data_reader_recorder.cpp` | SHM 到 `BookTicker` / `Trade` 独立 replay binary recorder。 |
 | `monitor/market_data/market_data_thread.*` | TUI 专用 market data reader。 |
 
 ## 运行边界
@@ -259,6 +259,6 @@ ctest --test-dir build/debug -R '(core_market_data|data_session_config|data_read
 ./build/debug/tools/gate_data_session
 ./build/debug/tools/binance_data_session
 ./build/debug/tools/data_reader_probe --config config/data_readers/strategy_data_reader.toml --max-polls 1 --log-every 1
-./build/debug/tools/data_reader_recorder --config /home/liuxiang/tmp/aquila_strategy_data_reader_drain.toml --output /home/liuxiang/tmp/live_merged_book_ticker.bin --mode truncate
+./build/debug/tools/data_reader_recorder --config /home/liuxiang/tmp/aquila_strategy_data_reader_drain.toml --output /home/liuxiang/tmp/live_merged_book_ticker.bin --trade-output /home/liuxiang/tmp/live_merged_trade.bin --mode truncate
 git diff --check
 ```

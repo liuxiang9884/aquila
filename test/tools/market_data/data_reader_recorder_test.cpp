@@ -57,6 +57,17 @@ md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
   };
 }
 
+md::DataShmConfig MakeCombinedCreateConfig(std::string_view suffix) {
+  return md::DataShmConfig{
+      .enabled = true,
+      .shm_name = UniqueShmName(suffix),
+      .book_ticker_channel_name = "book_ticker_channel",
+      .trade_channel_name = "trade_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+}
+
 cfg::DataReaderSourceConfig MakeSourceConfig(std::string name,
                                              Exchange exchange,
                                              std::string shm_name) {
@@ -105,6 +116,24 @@ BookTicker MakeTicker(std::int64_t id, Exchange exchange,
   };
 }
 
+Trade MakeTrade(std::int64_t id, Exchange exchange, std::int64_t exchange_ns,
+                std::int64_t trade_ns, std::int64_t local_ns) noexcept {
+  return Trade{
+      .id = id,
+      .symbol_id = 42,
+      .exchange = exchange,
+      .side = id % 2 == 0 ? OrderSide::kSell : OrderSide::kBuy,
+      .reserved = 0,
+      .exchange_ns = exchange_ns,
+      .trade_ns = trade_ns,
+      .local_ns = local_ns,
+      .price = 65'000.0 + static_cast<double>(id),
+      .volume = 0.1 + static_cast<double>(id),
+      .batch_index = 0,
+      .batch_count = 1,
+  };
+}
+
 void ExpectBookTickerEq(const BookTicker& actual, const BookTicker& expected) {
   EXPECT_EQ(actual.id, expected.id);
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
@@ -115,6 +144,21 @@ void ExpectBookTickerEq(const BookTicker& actual, const BookTicker& expected) {
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
   EXPECT_DOUBLE_EQ(actual.ask_price, expected.ask_price);
   EXPECT_DOUBLE_EQ(actual.ask_volume, expected.ask_volume);
+}
+
+void ExpectTradeEq(const Trade& actual, const Trade& expected) {
+  EXPECT_EQ(actual.id, expected.id);
+  EXPECT_EQ(actual.symbol_id, expected.symbol_id);
+  EXPECT_EQ(actual.exchange, expected.exchange);
+  EXPECT_EQ(actual.side, expected.side);
+  EXPECT_EQ(actual.reserved, expected.reserved);
+  EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.trade_ns, expected.trade_ns);
+  EXPECT_EQ(actual.local_ns, expected.local_ns);
+  EXPECT_DOUBLE_EQ(actual.price, expected.price);
+  EXPECT_DOUBLE_EQ(actual.volume, expected.volume);
+  EXPECT_EQ(actual.batch_index, expected.batch_index);
+  EXPECT_EQ(actual.batch_count, expected.batch_count);
 }
 
 std::vector<BookTicker> ReadBookTickers(
@@ -129,6 +173,21 @@ std::vector<BookTicker> ReadBookTickers(
     input.read(
         reinterpret_cast<char*>(records.data()),
         static_cast<std::streamsize>(records.size() * sizeof(BookTicker)));
+    EXPECT_TRUE(input.good());
+  }
+  return records;
+}
+
+std::vector<Trade> ReadTrades(const std::filesystem::path& output_path) {
+  const std::uintmax_t size = std::filesystem::file_size(output_path);
+  EXPECT_EQ(size % sizeof(Trade), 0U);
+  std::vector<Trade> records(size / sizeof(Trade));
+
+  std::ifstream input(output_path, std::ios::binary);
+  EXPECT_TRUE(input.is_open());
+  if (!records.empty()) {
+    input.read(reinterpret_cast<char*>(records.data()),
+               static_cast<std::streamsize>(records.size() * sizeof(Trade)));
     EXPECT_TRUE(input.good());
   }
   return records;
@@ -179,6 +238,11 @@ name = "unused"
   EXPECT_EQ(result.value.rotation.file_prefix, "merged_book_ticker");
   EXPECT_EQ(result.value.rotation.manifest_path,
             output_path.parent_path() / "merged_book_ticker_manifest.jsonl");
+  EXPECT_EQ(result.value.trade_rotation.output_dir,
+            output_path.parent_path() / "segments_trade");
+  EXPECT_EQ(result.value.trade_rotation.file_prefix, "merged_trade");
+  EXPECT_EQ(result.value.trade_rotation.manifest_path,
+            output_path.parent_path() / "merged_trade_manifest.jsonl");
 }
 
 TEST(DataReaderRecorderConfigTest, ParsesRotationDefaults) {
@@ -200,13 +264,21 @@ rotation_enabled = true
   EXPECT_EQ(result.value.rotation.file_prefix, "live");
   EXPECT_EQ(result.value.rotation.manifest_path,
             output_path.parent_path() / "live_manifest.jsonl");
+  EXPECT_EQ(result.value.trade_rotation.output_dir,
+            output_path.parent_path() / "segments_trade");
+  EXPECT_EQ(result.value.trade_rotation.file_prefix, "live_trade");
+  EXPECT_EQ(result.value.trade_rotation.manifest_path,
+            output_path.parent_path() / "live_trade_manifest.jsonl");
 }
 
 TEST(DataReaderRecorderConfigTest, ParsesExplicitRotationFields) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() / "aquila_recorder_config_test";
   const std::filesystem::path output_dir = root / "out";
+  const std::filesystem::path trade_output_dir = root / "trade_out";
   const std::filesystem::path manifest_path = root / "manifest.jsonl";
+  const std::filesystem::path trade_manifest_path =
+      root / "trade_manifest.jsonl";
   const std::string toml_text = fmt::format(
       R"toml(
 [recorder]
@@ -215,8 +287,12 @@ rotation_interval_sec = 17
 output_dir = "{}"
 file_prefix = "book_ticker"
 manifest_path = "{}"
+trade_output_dir = "{}"
+trade_file_prefix = "trade"
+trade_manifest_path = "{}"
 )toml",
-      output_dir.string(), manifest_path.string());
+      output_dir.string(), manifest_path.string(), trade_output_dir.string(),
+      trade_manifest_path.string());
   const toml::parse_result parsed = toml::parse(toml_text);
 
   const auto result = ParseRecorderConfig(parsed, root / "ignored.bin",
@@ -228,6 +304,9 @@ manifest_path = "{}"
   EXPECT_EQ(result.value.rotation.output_dir, output_dir);
   EXPECT_EQ(result.value.rotation.file_prefix, "book_ticker");
   EXPECT_EQ(result.value.rotation.manifest_path, manifest_path);
+  EXPECT_EQ(result.value.trade_rotation.output_dir, trade_output_dir);
+  EXPECT_EQ(result.value.trade_rotation.file_prefix, "trade");
+  EXPECT_EQ(result.value.trade_rotation.manifest_path, trade_manifest_path);
 }
 
 TEST(DataReaderRecorderConfigTest, RejectsInvalidRotationInterval) {
@@ -279,6 +358,18 @@ file_prefix = false
 [recorder]
 manifest_path = 9
 )toml"},
+      {"trade_output_dir", R"toml(
+[recorder]
+trade_output_dir = false
+)toml"},
+      {"trade_file_prefix", R"toml(
+[recorder]
+trade_file_prefix = 8
+)toml"},
+      {"trade_manifest_path", R"toml(
+[recorder]
+trade_manifest_path = true
+)toml"},
   };
 
   for (const auto& [field_name, toml_text] : cases) {
@@ -290,36 +381,6 @@ manifest_path = 9
 
     ASSERT_FALSE(result.ok);
     EXPECT_NE(result.error.find(field_name), std::string::npos);
-  }
-}
-
-TEST(DataReaderRecorderTest, RejectsTradeSourcesBeforeOpeningOutput) {
-  const std::vector<std::pair<std::string, cfg::DataReaderConfig>> cases{
-      {"trade_only",
-       [] {
-         cfg::DataReaderConfig config;
-         config.name = "trade_only_recorder";
-         config.sources.push_back(MakeTradeSourceConfig(
-             "gate_trade", Exchange::kGate, "aquila_gate_market_data"));
-         return config;
-       }()},
-      {"mixed",
-       [] {
-         cfg::DataReaderConfig config;
-         config.name = "mixed_recorder";
-         config.sources.push_back(MakeSourceConfig(
-             "gate_book_ticker", Exchange::kGate, "aquila_gate_market_data"));
-         config.sources.push_back(MakeTradeSourceConfig(
-             "gate_trade", Exchange::kGate, "aquila_gate_market_data"));
-         return config;
-       }()},
-  };
-
-  for (const auto& [name, config] : cases) {
-    SCOPED_TRACE(name);
-    std::string error;
-    EXPECT_FALSE(ValidateBookTickerRecorderSources(config, &error));
-    EXPECT_NE(error.find("trade"), std::string::npos);
   }
 }
 
@@ -400,6 +461,88 @@ TEST(DataReaderRecorderTest,
 }
 
 TEST(DataReaderRecorderTest,
+     RealtimeReaderDrainsBookTickerAndTradeSourcesIntoSeparateBinaries) {
+  const md::DataShmConfig combined_config =
+      MakeCombinedCreateConfig("mixed_book_trade");
+  ShmCleanup cleanup(combined_config.shm_name);
+  md::DataShmPublisher publisher(combined_config);
+
+  cfg::DataReaderConfig config;
+  config.name = "mixed_recorder_integration_test";
+  config.max_events_per_drain = 64;
+  config.sources.push_back(MakeSourceConfig("gate_book_ticker", Exchange::kGate,
+                                            combined_config.shm_name));
+  config.sources.push_back(MakeTradeSourceConfig("gate_trade", Exchange::kGate,
+                                                 combined_config.shm_name));
+
+  using Reader = md::RealtimeDataReader<md::RealtimeDataReaderDiagnostics>;
+  Reader reader(std::move(config));
+
+  const BookTicker first_book =
+      MakeTicker(101, Exchange::kGate, 1'770'000'000'000'000'101,
+                 1'770'000'000'000'010'101);
+  const BookTicker second_book =
+      MakeTicker(102, Exchange::kGate, 1'770'000'000'000'000'102,
+                 1'770'000'000'000'010'102);
+  const Trade first_trade =
+      MakeTrade(201, Exchange::kGate, 1'770'000'000'000'000'201,
+                1'770'000'000'000'005'201, 1'770'000'000'000'010'201);
+  const Trade second_trade =
+      MakeTrade(202, Exchange::kGate, 1'770'000'000'000'000'202,
+                1'770'000'000'000'005'202, 1'770'000'000'000'010'202);
+
+  publisher.OnBookTicker(first_book);
+  publisher.OnBookTicker(second_book);
+  publisher.OnTrade(first_trade);
+  publisher.OnTrade(second_trade);
+
+  const std::filesystem::path book_output =
+      std::filesystem::temp_directory_path() /
+      ("aquila_data_reader_recorder_mixed_book_" + std::to_string(::getpid()) +
+       ".bin");
+  const std::filesystem::path trade_output =
+      std::filesystem::temp_directory_path() /
+      ("aquila_data_reader_recorder_mixed_trade_" + std::to_string(::getpid()) +
+       ".bin");
+  std::filesystem::remove(book_output);
+  std::filesystem::remove(trade_output);
+
+  {
+    BinaryRecorder recorder(book_output, trade_output,
+                            RecorderWriteMode::kTruncate);
+    EXPECT_EQ(reader.Drain(recorder, config.max_events_per_drain), 4U);
+    EXPECT_TRUE(recorder.Flush());
+    EXPECT_FALSE(recorder.write_error());
+
+    EXPECT_EQ(recorder.book_ticker_stats().total_records, 2U);
+    EXPECT_EQ(recorder.trade_stats().total_records, 2U);
+    EXPECT_EQ(recorder.book_ticker_stats().RecordsForExchange(Exchange::kGate),
+              2U);
+    EXPECT_EQ(recorder.trade_stats().RecordsForExchange(Exchange::kGate), 2U);
+
+    const md::RealtimeDataReaderStats& reader_stats =
+        reader.diagnostics().stats();
+    EXPECT_EQ(reader_stats.total_count, 4U);
+    ASSERT_EQ(reader_stats.sources.size(), 2U);
+    EXPECT_EQ(reader_stats.sources[0].book_ticker_count, 2U);
+    EXPECT_EQ(reader_stats.sources[1].trade_count, 2U);
+  }
+
+  const std::vector<BookTicker> book_records = ReadBookTickers(book_output);
+  ASSERT_EQ(book_records.size(), 2U);
+  ExpectBookTickerEq(book_records[0], first_book);
+  ExpectBookTickerEq(book_records[1], second_book);
+
+  const std::vector<Trade> trade_records = ReadTrades(trade_output);
+  ASSERT_EQ(trade_records.size(), 2U);
+  ExpectTradeEq(trade_records[0], first_trade);
+  ExpectTradeEq(trade_records[1], second_trade);
+
+  std::filesystem::remove(book_output);
+  std::filesystem::remove(trade_output);
+}
+
+TEST(DataReaderRecorderTest,
      WritesBareBookTickerRecordsAndTracksRunStatistics) {
   const std::filesystem::path output_path =
       std::filesystem::temp_directory_path() /
@@ -442,6 +585,13 @@ TEST(DataReaderRecorderTest,
   ExpectBookTickerEq(records[1], binance);
 
   std::filesystem::remove(output_path);
+}
+
+TEST(DataReaderRecorderTest, DerivesTradeOutputPathFromBookTickerOutputPath) {
+  EXPECT_EQ(DeriveTradeOutputPath("/home/liuxiang/tmp/live_book_ticker.bin"),
+            std::filesystem::path{"/home/liuxiang/tmp/live_trade.bin"});
+  EXPECT_EQ(DeriveTradeOutputPath("/home/liuxiang/tmp/live.bin"),
+            std::filesystem::path{"/home/liuxiang/tmp/live_trade.bin"});
 }
 
 TEST(DataReaderRecorderTest, AppendModePreservesExistingRecords) {
@@ -591,6 +741,88 @@ TEST(DataReaderRecorderTest, RotatingRecorderFinalizesSegmentsAndManifest) {
 
   EXPECT_EQ(recorder.stats().total_records, 2U);
   EXPECT_EQ(recorder.segments_completed(), 2U);
+
+  std::filesystem::remove_all(root);
+}
+
+TEST(DataReaderRecorderTest,
+     RotatingBinaryRecorderFinalizesBookTickerAndTradeSegments) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_binary_recorder_mixed_test_" +
+       std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig book_rotation{
+      .enabled = true,
+      .rotation_interval_sec = 1,
+      .output_dir = root / "book_segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "book_manifest.jsonl",
+  };
+  RecorderRotationConfig trade_rotation{
+      .enabled = true,
+      .rotation_interval_sec = 1,
+      .output_dir = root / "trade_segments",
+      .file_prefix = "trade",
+      .manifest_path = root / "trade_manifest.jsonl",
+  };
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{1'779'669'600}},
+  };
+  RotatingBinaryRecorder recorder(book_rotation, trade_rotation,
+                                  [&] { return now; });
+
+  const BookTicker first_book = MakeTicker(1, Exchange::kGate, 100, 200);
+  const BookTicker second_book = MakeTicker(2, Exchange::kBinance, 300, 400);
+  const Trade first_trade = MakeTrade(11, Exchange::kGate, 110, 115, 120);
+  const Trade second_trade = MakeTrade(12, Exchange::kBinance, 310, 315, 320);
+
+  recorder.OnBookTicker(first_book);
+  recorder.OnTrade(first_trade);
+  now.steady += chrono::seconds{2};
+  now.wall += chrono::seconds{2};
+  recorder.OnBookTicker(second_book);
+  recorder.OnTrade(second_trade);
+
+  EXPECT_TRUE(recorder.Flush());
+  EXPECT_FALSE(recorder.write_error());
+
+  const std::vector<std::filesystem::path> book_tmp_files =
+      FilesWithExtension(book_rotation.output_dir, ".tmp");
+  const std::vector<std::filesystem::path> trade_tmp_files =
+      FilesWithExtension(trade_rotation.output_dir, ".tmp");
+  const std::vector<std::filesystem::path> book_bin_files =
+      FilesWithExtension(book_rotation.output_dir, ".bin");
+  const std::vector<std::filesystem::path> trade_bin_files =
+      FilesWithExtension(trade_rotation.output_dir, ".bin");
+  ASSERT_TRUE(book_tmp_files.empty());
+  ASSERT_TRUE(trade_tmp_files.empty());
+  ASSERT_EQ(book_bin_files.size(), 2U);
+  ASSERT_EQ(trade_bin_files.size(), 2U);
+  ExpectBookTickerEq(ReadBookTickers(book_bin_files[0])[0], first_book);
+  ExpectBookTickerEq(ReadBookTickers(book_bin_files[1])[0], second_book);
+  ExpectTradeEq(ReadTrades(trade_bin_files[0])[0], first_trade);
+  ExpectTradeEq(ReadTrades(trade_bin_files[1])[0], second_trade);
+
+  const std::vector<std::string> book_lines =
+      ReadLines(book_rotation.manifest_path);
+  const std::vector<std::string> trade_lines =
+      ReadLines(trade_rotation.manifest_path);
+  ASSERT_EQ(book_lines.size(), 2U);
+  ASSERT_EQ(trade_lines.size(), 2U);
+  EXPECT_NE(book_lines[0].find(R"("sequence":1)"), std::string::npos);
+  EXPECT_NE(trade_lines[0].find(R"("sequence":1)"), std::string::npos);
+  EXPECT_NE(book_lines[1].find(R"("closed_reason":"flush")"),
+            std::string::npos);
+  EXPECT_NE(trade_lines[1].find(R"("closed_reason":"flush")"),
+            std::string::npos);
+
+  EXPECT_EQ(recorder.book_ticker_stats().total_records, 2U);
+  EXPECT_EQ(recorder.trade_stats().total_records, 2U);
+  EXPECT_EQ(recorder.book_ticker_segments_completed(), 2U);
+  EXPECT_EQ(recorder.trade_segments_completed(), 2U);
 
   std::filesystem::remove_all(root);
 }

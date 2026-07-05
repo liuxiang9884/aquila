@@ -95,8 +95,8 @@ docs/evaluation_support.md
 ## DataReader / Data Session
 
 - `RealtimeDataReader::Poll(handler)` 是单事件接口，`Drain(handler, max_events)` 是批量接口；支持 `book_ticker` / `trade` SHM source，多 source / 多 channel round-robin 不做全局时间排序。handler contract 需要同时提供 `OnBookTicker()` 和 `OnTrade()`。
-- `data_reader_recorder` 可从 Gate / Binance `BookTicker` SHM 写 merged replay binary，支持 rotation + manifest replay config。
-- Gate SBE `publicTrade` 和 Binance raw `trade` 已有标准化 `Trade` 与独立 `Trade` SHM channel；Gate SBE trade 使用零 batch-copy decoder fast path，Binance raw trade 使用 JSON `e=trade` 分发后写 `Trade` slot。`data_reader_probe` 可读 trade source；`data_reader_recorder` 仍只写 `BookTicker` binary，trade replay / historical reader 仍待设计。
+- `data_reader_recorder` 可从 Gate / Binance `BookTicker` / `Trade` SHM 写独立裸 binary，单文件模式使用 `--output` 写 BookTicker、`--trade-output` 写 Trade，rotation 模式使用两套 segment / manifest；BookTicker manifest 仍可生成 replay config，`HistoricalDataReader` 仍只支持 BookTicker binary。
+- Gate SBE `publicTrade` 和 Binance raw `trade` 已有标准化 `Trade` 与独立 `Trade` SHM channel；Gate SBE trade 使用零 batch-copy decoder fast path，Binance raw trade 使用 JSON `e=trade` 分发后写 `Trade` slot。`data_reader_probe` 可读 trade source；`data_reader_recorder` 可落盘 trade binary，trade replay / historical reader 仍待设计。
 - Gate / Binance live data session 默认用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`，语义是 data session 接入 WebSocket frame 后、进入 parser / decoder 前的本机 Unix epoch ns。
 - Gate SBE `BookTicker.exchange_ns` 使用 `bbo.time` 的 WebSocket server send timestamp，不是同消息里的 engine update `t`。
 - 比较不同 Gate private IP 行情延迟时，必须记录 data session endpoint / owner CPU，并按 `exchange_ns -> local_ns`、SHM publish / reader 时间、`skipped` / `overruns` 分组统计。
