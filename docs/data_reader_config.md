@@ -251,6 +251,8 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 可选 recorder 专用配置放在同一 TOML 的 `[recorder]` 表。未配置或
 `rotation_enabled = false` 时保持单文件输出；启用 rotation 时，BookTicker 和 Trade 各自使用独立
 segment / manifest，当前段先写 `.tmp`，关闭后 atomic rename 成 `.bin` 并追加对应 manifest JSONL。
+rotation 当前只支持 `--mode truncate`，启动 preflight 全部通过后会先清空两路 manifest，再写入本轮
+segment 记录。
 默认 rotation interval 为 1 小时：
 
 ```toml
@@ -276,7 +278,8 @@ trade_manifest_path = "/home/liuxiang/tmp/aquila_persistent_md/trade_manifest.js
 - `trade_manifest_path` 优先把 `manifest_path` stem 里的 `file_prefix` 替换成 `trade_file_prefix`；否则按 `book_ticker` -> `trade` / 追加 `_trade` 派生。
 
 rotation 第一版只支持 `--mode truncate`；`--mode append` 会在启动期拒绝，避免追加模式下 sequence 和
-manifest 恢复语义不清晰。
+manifest 恢复语义不清晰。BookTicker / Trade 单文件路径、manifest 路径和 segment namespace 必须彼此
+独立；启动期会拒绝直接相同路径以及 symlink / hardlink 指向同一 artifact 的配置。
 
 实盘交易并行录制：
 

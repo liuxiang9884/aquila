@@ -153,17 +153,74 @@ struct BinaryRecorderOutputPaths {
 [[nodiscard]] inline std::filesystem::path RecorderComparablePath(
     const std::filesystem::path& path) {
   std::error_code error;
+  const std::filesystem::path canonical_path =
+      std::filesystem::weakly_canonical(path, error);
+  if (!error) {
+    return canonical_path.lexically_normal();
+  }
   const std::filesystem::path absolute_path =
       std::filesystem::absolute(path, error);
-  if (error) {
-    return path.lexically_normal();
+  if (!error) {
+    return absolute_path.lexically_normal();
   }
-  return absolute_path.lexically_normal();
+  return path.lexically_normal();
+}
+
+[[nodiscard]] inline bool RecorderEquivalentExistingPath(
+    const std::filesystem::path& lhs, const std::filesystem::path& rhs) {
+  std::error_code error;
+  const bool equivalent = std::filesystem::equivalent(lhs, rhs, error);
+  if (!error) {
+    return equivalent;
+  }
+  return false;
 }
 
 [[nodiscard]] inline bool RecorderSamePath(const std::filesystem::path& lhs,
                                            const std::filesystem::path& rhs) {
+  if (RecorderEquivalentExistingPath(lhs, rhs)) {
+    return true;
+  }
   return RecorderComparablePath(lhs) == RecorderComparablePath(rhs);
+}
+
+[[nodiscard]] inline bool RecorderPathExists(const std::filesystem::path& path,
+                                             std::string_view label) {
+  std::error_code error;
+  const bool exists = std::filesystem::exists(path, error);
+  if (error) {
+    throw std::runtime_error(
+        fmt::format("failed to inspect {} path '{}'", label, path.string()));
+  }
+  return exists;
+}
+
+[[nodiscard]] inline bool RecorderPathIsDirectory(
+    const std::filesystem::path& path, std::string_view label) {
+  std::error_code error;
+  const bool is_directory = std::filesystem::is_directory(path, error);
+  if (error) {
+    throw std::runtime_error(
+        fmt::format("failed to inspect {} path '{}'", label, path.string()));
+  }
+  return is_directory;
+}
+
+inline void EnsureRecorderPathIsNotDirectory(const std::filesystem::path& path,
+                                             std::string_view label) {
+  if (!RecorderPathExists(path, label)) {
+    return;
+  }
+  if (RecorderPathIsDirectory(path, label)) {
+    throw std::runtime_error(
+        fmt::format("{} path '{}' is a directory", label, path.string()));
+  }
+}
+
+inline void EnsureRecorderParentDirectory(const std::filesystem::path& path) {
+  if (path.has_parent_path()) {
+    std::filesystem::create_directories(path.parent_path());
+  }
 }
 
 inline void PreflightSingleOutputPath(const std::filesystem::path& path,
@@ -172,28 +229,8 @@ inline void PreflightSingleOutputPath(const std::filesystem::path& path,
     throw std::invalid_argument(
         fmt::format("{} path must not be empty", label));
   }
-  if (path.has_parent_path()) {
-    std::filesystem::create_directories(path.parent_path());
-  }
-
-  std::error_code error;
-  const bool exists = std::filesystem::exists(path, error);
-  if (error) {
-    throw std::runtime_error(fmt::format(
-        "failed to inspect {} output path '{}'", label, path.string()));
-  }
-  if (!exists) {
-    return;
-  }
-  const bool is_directory = std::filesystem::is_directory(path, error);
-  if (error) {
-    throw std::runtime_error(fmt::format(
-        "failed to inspect {} output path '{}'", label, path.string()));
-  }
-  if (is_directory) {
-    throw std::runtime_error(fmt::format("{} output path '{}' is a directory",
-                                         label, path.string()));
-  }
+  EnsureRecorderParentDirectory(path);
+  EnsureRecorderPathIsNotDirectory(path, fmt::format("{} output", label));
 }
 
 [[nodiscard]] inline BinaryRecorderOutputPaths PreflightBinaryRecorderOutputs(
@@ -469,6 +506,23 @@ inline void PrepareRotationDirectories(const RecorderRotationConfig& config) {
   }
 }
 
+inline void PreflightRotationManifestPath(const RecorderRotationConfig& config,
+                                          std::string_view label) {
+  EnsureRecorderPathIsNotDirectory(config.manifest_path,
+                                   fmt::format("{} rotation manifest", label));
+}
+
+inline void TruncateRotationManifest(const RecorderRotationConfig& config,
+                                     std::string_view label) {
+  std::ofstream manifest(config.manifest_path,
+                         std::ios::binary | std::ios::trunc);
+  if (!manifest.is_open()) {
+    throw std::runtime_error(
+        fmt::format("failed to initialize {} rotation manifest '{}'", label,
+                    config.manifest_path.string()));
+  }
+}
+
 inline void PreflightInitialRotationSegment(
     const RecorderRotationConfig& config, const RecorderTimeSnapshot& now,
     std::string_view label) {
@@ -519,11 +573,15 @@ PreflightRotatingBinaryRecorderInputs(RecorderRotationConfig book_ticker_config,
   PreflightRotationConfig(trade_config, "trade");
   PrepareRotationDirectories(book_ticker_config);
   PrepareRotationDirectories(trade_config);
+  PreflightRotationManifestPath(book_ticker_config, "book_ticker");
+  PreflightRotationManifestPath(trade_config, "trade");
 
   const RecorderTimeSnapshot initial_now = clock();
   PreflightInitialRotationSegment(book_ticker_config, initial_now,
                                   "book_ticker");
   PreflightInitialRotationSegment(trade_config, initial_now, "trade");
+  TruncateRotationManifest(book_ticker_config, "book_ticker");
+  TruncateRotationManifest(trade_config, "trade");
   return RotatingBinaryRecorderInputs{
       .book_ticker_config = std::move(book_ticker_config),
       .trade_config = std::move(trade_config),

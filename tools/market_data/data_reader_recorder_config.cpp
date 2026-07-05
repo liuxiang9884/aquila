@@ -6,7 +6,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
 #include <fmt/format.h>
@@ -38,22 +37,6 @@ namespace {
   result.ok = true;
   result.value = true;
   return result;
-}
-
-[[nodiscard]] std::filesystem::path ComparablePath(
-    const std::filesystem::path& path) {
-  std::error_code error;
-  const std::filesystem::path absolute_path =
-      std::filesystem::absolute(path, error);
-  if (error) {
-    return path.lexically_normal();
-  }
-  return absolute_path.lexically_normal();
-}
-
-[[nodiscard]] bool SamePath(const std::filesystem::path& lhs,
-                            const std::filesystem::path& rhs) {
-  return ComparablePath(lhs) == ComparablePath(rhs);
 }
 
 [[nodiscard]] std::string DefaultFilePrefix(
@@ -261,16 +244,16 @@ RecorderConfigResult ParseRecorderConfig(
     return Failure("recorder rotation does not support append mode");
   }
   if (config.rotation.enabled &&
-      SamePath(config.rotation.manifest_path,
-               config.trade_rotation.manifest_path)) {
+      RecorderSamePath(config.rotation.manifest_path,
+                       config.trade_rotation.manifest_path)) {
     return Failure(
         "recorder.manifest_path and recorder.trade_manifest_path must be "
         "different");
   }
   if (config.rotation.enabled &&
-      SamePath(config.rotation.output_dir / config.rotation.file_prefix,
-               config.trade_rotation.output_dir /
-                   config.trade_rotation.file_prefix)) {
+      RecorderSamePath(config.rotation.output_dir / config.rotation.file_prefix,
+                       config.trade_rotation.output_dir /
+                           config.trade_rotation.file_prefix)) {
     return Failure(
         "recorder.output_dir/file_prefix and "
         "recorder.trade_output_dir/trade_file_prefix must describe different "
@@ -297,7 +280,7 @@ RecorderValidationResult ValidateRecorderOutputPaths(
   if (trade_output_path.empty()) {
     return ValidationFailure("--trade-output must not be empty");
   }
-  if (SamePath(book_ticker_output_path, trade_output_path)) {
+  if (RecorderSamePath(book_ticker_output_path, trade_output_path)) {
     return ValidationFailure("--output and --trade-output must be different");
   }
   return ValidationSuccess();
