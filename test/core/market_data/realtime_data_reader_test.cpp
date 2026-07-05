@@ -37,7 +37,12 @@ struct RecordingHandler {
     book_tickers.push_back(book_ticker);
   }
 
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    trades.push_back(trade);
+  }
+
   std::vector<aquila::BookTicker> book_tickers;
+  std::vector<aquila::Trade> trades;
 };
 
 struct FinishedOnlyReader {
@@ -81,6 +86,17 @@ md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
   };
 }
 
+md::DataShmConfig MakeCombinedCreateConfig(std::string_view suffix) {
+  return md::DataShmConfig{
+      .enabled = true,
+      .shm_name = UniqueShmName(suffix),
+      .book_ticker_channel_name = "book_ticker_channel",
+      .trade_channel_name = "trade_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+}
+
 aquila::BookTicker MakeBookTicker(std::int64_t id, aquila::Exchange exchange) {
   return aquila::BookTicker{
       .id = id,
@@ -95,6 +111,23 @@ aquila::BookTicker MakeBookTicker(std::int64_t id, aquila::Exchange exchange) {
   };
 }
 
+aquila::Trade MakeTrade(std::int64_t id, aquila::Exchange exchange) {
+  return aquila::Trade{
+      .id = id,
+      .symbol_id = static_cast<std::int32_t>(id % 3),
+      .exchange = exchange,
+      .side = id % 2 == 0 ? aquila::OrderSide::kBuy : aquila::OrderSide::kSell,
+      .reserved = 0,
+      .exchange_ns = 1'770'000'000'001'000'000 + id,
+      .trade_ns = 1'770'000'000'001'100'000 + id,
+      .local_ns = 1'770'000'000'001'200'000 + id,
+      .price = 65'000.0 + static_cast<double>(id),
+      .volume = 0.001 + static_cast<double>(id) * 0.0001,
+      .batch_index = 0,
+      .batch_count = 1,
+  };
+}
+
 cfg::DataReaderSourceConfig MakeSourceConfig(
     std::string name, aquila::Exchange exchange, std::string shm_name,
     cfg::DataReaderReadMode read_mode) {
@@ -105,6 +138,22 @@ cfg::DataReaderSourceConfig MakeSourceConfig(
       .feed = cfg::DataReaderFeed::kBookTicker,
       .shm_name = std::move(shm_name),
       .channel_name = "book_ticker_channel",
+      .start_position = cfg::DataReaderStartPosition::kLatest,
+      .read_mode = read_mode,
+      .required = true,
+  };
+}
+
+cfg::DataReaderSourceConfig MakeTradeSourceConfig(
+    std::string name, aquila::Exchange exchange, std::string shm_name,
+    cfg::DataReaderReadMode read_mode) {
+  return cfg::DataReaderSourceConfig{
+      .name = std::move(name),
+      .type = cfg::DataReaderSourceType::kShm,
+      .exchange = exchange,
+      .feed = cfg::DataReaderFeed::kTrade,
+      .shm_name = std::move(shm_name),
+      .channel_name = "trade_channel",
       .start_position = cfg::DataReaderStartPosition::kLatest,
       .read_mode = read_mode,
       .required = true,
@@ -250,6 +299,96 @@ TEST(RealtimeDataReaderTest, LatestReadsOnlyLastBookTickerPerSource) {
   EXPECT_TRUE(handler.book_tickers.empty());
 }
 
+TEST(RealtimeDataReaderTest, PollReadsLatestTradeSource) {
+  const md::DataShmConfig combined_config =
+      MakeCombinedCreateConfig("trade_latest");
+  ShmCleanup cleanup(combined_config.shm_name);
+  md::DataShmPublisher publisher(combined_config);
+
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_drain = 64;
+  config.sources.push_back(MakeTradeSourceConfig(
+      "gate_trade", aquila::Exchange::kGate, combined_config.shm_name,
+      cfg::DataReaderReadMode::kLatest));
+
+  md::RealtimeDataReader reader(std::move(config));
+  publisher.OnTrade(MakeTrade(10, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(11, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(12, aquila::Exchange::kGate));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.trades.size(), 1U);
+  EXPECT_EQ(handler.trades[0].id, 12);
+  EXPECT_TRUE(handler.book_tickers.empty());
+
+  handler.trades.clear();
+  EXPECT_EQ(reader.Poll(handler), 0U);
+  EXPECT_TRUE(handler.trades.empty());
+}
+
+TEST(RealtimeDataReaderTest, DrainReadsTradeSourceInOrder) {
+  const md::DataShmConfig combined_config =
+      MakeCombinedCreateConfig("trade_drain");
+  ShmCleanup cleanup(combined_config.shm_name);
+  md::DataShmPublisher publisher(combined_config);
+
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_drain = 64;
+  config.sources.push_back(MakeTradeSourceConfig(
+      "gate_trade", aquila::Exchange::kGate, combined_config.shm_name,
+      cfg::DataReaderReadMode::kDrain));
+
+  md::RealtimeDataReader reader(std::move(config));
+  publisher.OnTrade(MakeTrade(1, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(2, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(3, aquila::Exchange::kGate));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Drain(handler, 2), 2U);
+  ASSERT_EQ(handler.trades.size(), 2U);
+  EXPECT_EQ(handler.trades[0].id, 1);
+  EXPECT_EQ(handler.trades[1].id, 2);
+
+  handler.trades.clear();
+  EXPECT_EQ(reader.Drain(handler, 10), 1U);
+  ASSERT_EQ(handler.trades.size(), 1U);
+  EXPECT_EQ(handler.trades[0].id, 3);
+}
+
+TEST(RealtimeDataReaderTest, PollRoundRobinsAcrossBookTickerAndTradeSources) {
+  const md::DataShmConfig combined_config =
+      MakeCombinedCreateConfig("mixed_feeds");
+  ShmCleanup cleanup(combined_config.shm_name);
+  md::DataShmPublisher publisher(combined_config);
+
+  cfg::DataReaderConfig config;
+  config.name = "test_data_reader";
+  config.max_events_per_drain = 64;
+  config.sources.push_back(MakeSourceConfig(
+      "gate_book_ticker", aquila::Exchange::kGate, combined_config.shm_name,
+      cfg::DataReaderReadMode::kLatest));
+  config.sources.push_back(MakeTradeSourceConfig(
+      "gate_trade", aquila::Exchange::kGate, combined_config.shm_name,
+      cfg::DataReaderReadMode::kLatest));
+
+  md::RealtimeDataReader reader(std::move(config));
+  publisher.OnBookTicker(MakeBookTicker(1, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(2, aquila::Exchange::kGate));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.book_tickers.size(), 1U);
+  EXPECT_EQ(handler.book_tickers[0].id, 1);
+  EXPECT_TRUE(handler.trades.empty());
+
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.trades.size(), 1U);
+  EXPECT_EQ(handler.trades[0].id, 2);
+}
+
 TEST(RealtimeDataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
   using Reader = md::RealtimeDataReader<md::RealtimeDataReaderDiagnostics>;
 
@@ -279,6 +418,39 @@ TEST(RealtimeDataReaderTest, DiagnosticsTrackBookTickersAndSkippedCounts) {
   EXPECT_EQ(stats.sources[0].book_ticker_count, 1U);
   EXPECT_EQ(stats.sources[0].skipped, 2U);
   EXPECT_EQ(stats.sources[0].last_book_ticker_id, 3);
+}
+
+TEST(RealtimeDataReaderTest, DiagnosticsTrackTradesAndSkippedCounts) {
+  using Reader = md::RealtimeDataReader<md::RealtimeDataReaderDiagnostics>;
+
+  const md::DataShmConfig config = MakeCombinedCreateConfig("diag_trade");
+  ShmCleanup cleanup(config.shm_name);
+  md::DataShmPublisher publisher(config);
+
+  cfg::DataReaderConfig reader_config;
+  reader_config.name = "test_data_reader";
+  reader_config.max_events_per_drain = 64;
+  reader_config.sources.push_back(
+      MakeTradeSourceConfig("gate_trade", aquila::Exchange::kGate,
+                            config.shm_name, cfg::DataReaderReadMode::kLatest));
+
+  Reader reader(std::move(reader_config));
+  publisher.OnTrade(MakeTrade(1, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(2, aquila::Exchange::kGate));
+  publisher.OnTrade(MakeTrade(3, aquila::Exchange::kGate));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  EXPECT_EQ(reader.Poll(handler), 0U);
+
+  const md::RealtimeDataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.total_count, 1U);
+  ASSERT_EQ(stats.sources.size(), 1U);
+  EXPECT_EQ(stats.sources[0].book_ticker_count, 0U);
+  EXPECT_EQ(stats.sources[0].trade_count, 1U);
+  EXPECT_EQ(stats.sources[0].skipped, 2U);
+  EXPECT_EQ(stats.sources[0].last_book_ticker_id, 0);
+  EXPECT_EQ(stats.sources[0].last_trade_id, 3);
 }
 
 TEST(RealtimeDataReaderTest, RejectsEmptySources) {

@@ -58,13 +58,34 @@ struct ProbeHandler {
         book_ticker.ask_price, book_ticker.ask_volume);
   }
 
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    ++trades_;
+    if (log_every_ == 0 || (trades_ != 1 && trades_ % log_every_ != 0)) {
+      return;
+    }
+    NOVA_INFO(
+        "trade count={} id={} symbol_id={} exchange={} side={} exchange_ns={} "
+        "trade_ns={} local_ns={} price={:.12g} volume={:.12g} "
+        "batch_index={} batch_count={}",
+        trades_, trade.id, trade.symbol_id,
+        magic_enum::enum_name(trade.exchange),
+        magic_enum::enum_name(trade.side), trade.exchange_ns, trade.trade_ns,
+        trade.local_ns, trade.price, trade.volume, trade.batch_index,
+        trade.batch_count);
+  }
+
   [[nodiscard]] std::uint64_t book_tickers() const noexcept {
     return book_tickers_;
+  }
+
+  [[nodiscard]] std::uint64_t trades() const noexcept {
+    return trades_;
   }
 
  private:
   std::uint64_t log_every_{1000};
   std::uint64_t book_tickers_{0};
+  std::uint64_t trades_{0};
 };
 
 std::vector<SourceLabel> BuildSourceLabels(
@@ -90,10 +111,12 @@ void LogSourceStats(
       exchange = magic_enum::enum_name(label->exchange);
     }
     NOVA_INFO(
-        "source index={} name={} exchange={} book_ticker_count={} skipped={} "
-        "overruns={} last_book_ticker_id={}",
-        i, name, exchange, stats[i].book_ticker_count, stats[i].skipped,
-        stats[i].overruns, stats[i].last_book_ticker_id);
+        "source index={} name={} exchange={} book_ticker_count={} "
+        "trade_count={} skipped={} overruns={} last_book_ticker_id={} "
+        "last_trade_id={}",
+        i, name, exchange, stats[i].book_ticker_count, stats[i].trade_count,
+        stats[i].skipped, stats[i].overruns, stats[i].last_book_ticker_id,
+        stats[i].last_trade_id);
   }
 }
 
@@ -129,11 +152,11 @@ int RunRealtimeProbe(aquila::config::DataReaderConfig config,
   const auto& stats = reader.diagnostics().stats();
   NOVA_INFO(
       "result=ok mode=realtime stop_reason={} polls={} "
-      "handler_book_tickers={} diagnostics_total_count={}",
+      "handler_book_tickers={} handler_trades={} diagnostics_total_count={}",
       stopped_by_signal      ? "signal"
       : stopped_by_max_polls ? "max_polls"
                              : "completed",
-      polls, handler.book_tickers(), stats.total_count);
+      polls, handler.book_tickers(), handler.trades(), stats.total_count);
   LogSourceStats(source_labels, stats.sources);
   return 0;
 }

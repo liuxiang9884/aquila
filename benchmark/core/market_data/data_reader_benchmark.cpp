@@ -34,6 +34,8 @@ struct NoopHandler {
     last_id = book_ticker.id;
   }
 
+  void OnTrade(const aquila::Trade&) noexcept {}
+
   std::uint64_t count{0};
   std::int64_t last_id{0};
 };

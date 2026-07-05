@@ -136,6 +136,10 @@ class BookTickerBinaryRecorder {
     stats_.Record(book_ticker);
   }
 
+  void OnTrade(const Trade&) noexcept {
+    write_error_ = true;
+  }
+
   [[nodiscard]] bool Flush() noexcept {
     if (write_error_) {
       return false;
@@ -234,6 +238,10 @@ class RotatingBookTickerBinaryRecorder {
     } catch (...) {
       write_error_ = true;
     }
+  }
+
+  void OnTrade(const Trade&) noexcept {
+    write_error_ = true;
   }
 
   [[nodiscard]] bool Flush() noexcept {

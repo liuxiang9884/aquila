@@ -122,6 +122,12 @@ class SingleSessionLiveRunner {
     latest_gate_ticker_ = ticker;
   }
 
+  void OnTrade(const Trade&) noexcept {
+    ++stats_.data_reader_events;
+    data_reader_events_.store(stats_.data_reader_events,
+                              std::memory_order_release);
+  }
+
   void DriveHookOnce() noexcept {
     if (run_start_steady_ns_ == 0) {
       run_start_steady_ns_ = NowSteadyNs();

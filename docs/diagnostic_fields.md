@@ -125,6 +125,24 @@ CSV；outlier 样本直接写入当前 data session 的 Nova log，log key 为
 | `trade count` | `gate_data_session` Nova log | stable | count | 每发布 1000 条 `Trade` 输出一次采样日志，用于确认 Gate SBE `publicTrade` feed 仍在发布。 | 同上。 |
 | `book_tickers` / `trades` | `gate_data_session` result summary Nova log | stable | count | data session 退出时汇总本进程已发布到 sink 的 BBO / trade 数量。 | 同上。 |
 
+## RealtimeDataReader diagnostics
+
+这些字段来自 `core/market_data/realtime_data_reader.h` 的 `RealtimeDataReaderStats`，以及
+`tools/market_data/data_reader_probe.cpp` / `tools/market_data/data_reader_recorder.cpp` 的常规 Nova log。
+stats 由编译期 diagnostics policy 启用；生产默认 `RealtimeDataReader<>` 不维护这些计数。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `total_count` | `RealtimeDataReaderStats` / probe summary / recorder summary | stable | count | reader 已交给 handler 的 `BookTicker` + `Trade` 总事件数。 | reader diagnostics schema 替换后同步迁移。 |
+| `book_ticker_count` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | count | 单个 source 已输出的 `BookTicker` 数量。 | 同上。 |
+| `trade_count` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | count | 单个 source 已输出的 `Trade` 数量。 | 同上。 |
+| `skipped` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | count | `read_mode=latest` 主动跳过的可见旧消息数量；不等同于 ring overrun。 | 同上。 |
+| `overruns` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | count | reader 落后超过 SHM ring capacity 后被拉回可见窗口的次数。 | 同上。 |
+| `last_book_ticker_id` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | exchange update id | 单个 source 最近输出的 `BookTicker.id`。 | 同上。 |
+| `last_trade_id` | `RealtimeDataReaderSourceStats` / probe source log / recorder `source_stats` log | stable | exchange trade id | 单个 source 最近输出的 `Trade.id`。 | 同上。 |
+| `handler_book_tickers` / `handler_trades` | `data_reader_probe` result summary Nova log | stable | count | probe handler 实际收到的 BBO / trade 数量，用于和 reader diagnostics 对账。 | probe summary schema 替换后同步迁移。 |
+| `handler_book_tickers` | `data_reader_recorder` result summary Nova log | stable | count | recorder 已写入 `BookTicker` binary 的记录数。recorder 当前不支持 trade binary。 | recorder 支持多 feed binary schema 后重审。 |
+
 ## Market Data Fusion
 
 BookTicker fusion 当前通过 `AQUILA_BOOK_TICKER_FUSION_METADATA_MODE=file|off` 在编译期决定是否启用

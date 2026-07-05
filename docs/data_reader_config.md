@@ -2,16 +2,15 @@
 
 ## 范围
 
-`data_reader` 描述 strategy 侧行情输入。当前支持两类 `book_ticker` source：
+`data_reader` 描述 strategy 侧行情输入。当前支持：
 
-- `type = "shm"`
-- `type = "binary_file"`
-- `feed = "book_ticker"`
+- realtime SHM source：`feed = "book_ticker"` 或 `feed = "trade"`
+- historical / replay binary source：仅 `feed = "book_ticker"`
 
 `RealtimeDataReader` / `HistoricalDataReader` 不创建线程，由 strategy loop 主动调用 `Poll(handler)` 或 `Drain(handler, budget)`。
 SHM live reader 在 `TradingRuntime` 中走 `Poll()`；binary replay / finite reader 走 `Drain()`。SHM reader attach
 data session 创建的 SHM channel，不负责 create / remove SHM；binary file reader 顺序读取已落盘的 `BookTicker`
-二进制文件，适合 replay / 对账。
+二进制文件，适合 replay / 对账。`HistoricalDataReader` 尚未支持 `Trade` binary。
 
 `RealtimeDataReader` 要求至少配置一个实时 source；空 source 配置属于启动期配置错误，会在构造 reader 时直接失败。
 
@@ -54,6 +53,21 @@ shm_name = "aquila_binance_market_data_combined"
 channel_name = "book_ticker_channel"
 start_position = "latest"
 read_mode = "latest"
+required = true
+```
+
+Trade SHM source 示例：
+
+```toml
+[[data_reader.sources]]
+name = "gate_trade"
+type = "shm"
+exchange = "gate"
+feed = "trade"
+shm_name = "aquila_gate_market_data"
+channel_name = "trade_channel"
+start_position = "latest"
+read_mode = "drain"
 required = true
 ```
 
@@ -134,7 +148,7 @@ fusion 落盘文件，使用 instrument catalog 的 `price_tick` / `quantity_ste
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
 | `data_reader.sources.type` | `shm` | source 实现类型，支持 `shm` 和 `binary_file`。 |
 | `data_reader.sources.exchange` | SHM 无默认值，必须显式配置；binary file 可省略 | `gate` 或 `binance`。binary file 中每条 `BookTicker` 自带 exchange。 |
-| `data_reader.sources.feed` | `book_ticker` | 行情类型，第一版只支持 `book_ticker`。 |
+| `data_reader.sources.feed` | `book_ticker` | 行情类型。SHM source 支持 `book_ticker` 和 `trade`；`binary_file` 当前只支持 `book_ticker`。 |
 | `data_reader.sources.shm_name` | 无，SHM 必须显式配置 | SHM segment 名称。binary file 不使用。 |
 | `data_reader.sources.channel_name` | 无，SHM 必须显式配置 | SHM channel 名称。binary file 不使用。 |
 | `data_reader.sources.files` | 无，binary file 必须显式配置 | `BookTicker` 二进制文件列表，按配置顺序读取。SHM 不使用。 |
@@ -149,14 +163,14 @@ fusion 落盘文件，使用 instrument catalog 的 `price_tick` / `quantity_ste
 - 每个 source 每次 `Poll()` 最多产出一条。
 - 如果 source 已经积累多条未读数据，只返回当前可见的最后一条。
 - 中间未读数据计入 diagnostics 的 `skipped`，这是主动合并，不等同于 ring overrun。
-- 适合 book ticker / BBO 这类策略只关心最新状态的行情。
+- 适合 book ticker / BBO 这类策略只关心最新状态的行情；用于 trade 时表示采样最新成交，不保留完整逐笔流。
 
 `drain`：
 
 - 每个 source 每次 `Poll()` 最多产出一条。
 - 调用方如果需要批量消费，应调用 `Drain(handler, max_events)`，由 reader 循环执行 `Poll()`，最多输出 `max_events` 条。
 - 不主动跳到最后一条；除非 reader 已经落后超过 SHM ring capacity，底层 reader 会记录 overrun 并拉回可见窗口。
-- 适合需要完整事件流的验证、probe、benchmark、binary replay，以及未来不能丢中间事件的 feed。
+- 适合需要完整事件流的验证、probe、benchmark、binary replay，以及 trade 这类不能丢中间事件的 feed。
 
 `binary_file` source 必须使用 `start_position = "earliest_visible"` 和 `read_mode = "drain"`。第一版
 `HistoricalDataReader` 只接受一个 `binary_file` source；多日 / 分片 replay 用同一个 source 下的多个 `files`
@@ -175,6 +189,11 @@ fusion 落盘文件，使用 instrument catalog 的 `price_tick` / `quantity_ste
 latest source -> TryReadLatest()
 drain source  -> TryReadOne()
 ```
+
+按 source `feed` 分发到对应 typed SHM reader：`book_ticker` 调用 `BookTickerShmReader` 并输出
+`handler.OnBookTicker()`，`trade` 调用 `TradeShmReader` 并输出 `handler.OnTrade()`。同一 SHM object 中的
+`book_ticker_channel` / `trade_channel` 是两个独立 broadcast queue；reader 保证各 channel 内按 cursor 读取，
+不做跨 channel 全局时间排序。
 
 成功输出后，`RealtimeDataReader` 把下一次扫描起点移动到当前 source 的后一个位置，避免固定 source 长期先被处理。
 构造期已经保证 sources 非空；如果配置没有任何实时 source，应在启动阶段失败，而不是进入运行循环后持续返回 0。当前实现不依赖 `Poll()` 的空 reader 分支表达语义。
@@ -200,11 +219,14 @@ handler 需要提供：
 
 ```cpp
 void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept;
+void OnTrade(const aquila::Trade& trade) noexcept;
 ```
+
+不消费 trade 的 handler 也应显式提供空 `OnTrade()`，避免 mixed-feed 配置被静默丢弃。
 
 ## SHM 到 replay binary recorder
 
-`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。
+`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` SHM 读取数据，并输出一个合并后的 replay binary 文件。输出格式保持和当前 replay binary 一致：文件内容是连续的 `aquila::BookTicker` 结构体记录，不增加额外 header 或文本索引，后续可直接作为 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用。当前 recorder 只支持 `BookTicker` binary；如果配置误接入 trade source，recorder handler 会进入 write error，不会把 `Trade` 静默写入 BookTicker 文件。
 
 基础示例：
 
@@ -310,9 +332,11 @@ scripts/market_data/manifest_to_data_reader_config.py \
 
 - `total_count`
 - per-source `book_ticker_count`
+- per-source `trade_count`
 - per-source `skipped`
 - per-source `overruns`
 - per-source `last_book_ticker_id`
+- per-source `last_trade_id`
 
 `poll_calls` / `empty_polls` 属于外层 runtime / scheduler / probe 的循环诊断，不放在 reader 内部 stats。
 `TradingRuntime` 可通过编译期 diagnostics policy 记录外层 loop 维度的 poll / drain 调用、empty poll、idle loop 和处理事件数；生产默认使用 no-op diagnostics。
@@ -331,14 +355,16 @@ scripts/market_data/manifest_to_data_reader_config.py \
 
 - `--config`：data reader TOML 路径。
 - `--max-polls`：最多执行多少次 probe loop；每轮按配置预算调用 `Drain()`；`0` 表示直到 SIGINT / SIGTERM。
-- `--log-every`：打印首条 book ticker，然后每 N 条打印一次采样；`0` 表示关闭采样日志。
+- `--log-every`：分别打印首条 book ticker / trade，然后每 N 条打印一次采样；`0` 表示关闭采样日志。
 
 probe 使用 `RealtimeDataReader<RealtimeDataReaderDiagnostics>`，退出时会打印整体统计和每个 source 的：
 
 - `book_ticker_count`
+- `trade_count`
 - `skipped`
 - `overruns`
 - `last_book_ticker_id`
+- `last_trade_id`
 
 ## Live Drain Evidence
 
@@ -362,9 +388,9 @@ reader log：
 reader final summary（按当前字段名归一化）：
 
 ```text
-result=ok polls=5236281282 handler_book_tickers=4635362 diagnostics_total_count=4635362
-source index=0 name=gate_book_ticker exchange=kGate book_ticker_count=495255 skipped=0 overruns=0 last_book_ticker_id=111902051288
-source index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=4140107 skipped=0 overruns=0 last_book_ticker_id=10485460945723
+result=ok polls=5236281282 handler_book_tickers=4635362 handler_trades=0 diagnostics_total_count=4635362
+source index=0 name=gate_book_ticker exchange=kGate book_ticker_count=495255 trade_count=0 skipped=0 overruns=0 last_book_ticker_id=111902051288 last_trade_id=0
+source index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=4140107 trade_count=0 skipped=0 overruns=0 last_book_ticker_id=10485460945723 last_trade_id=0
 ```
 
 结论：本次 `drain` reader 运行窗口内两个 source 均未检测到 SHM ring overrun；`drain` 模式不主动
@@ -398,8 +424,8 @@ result=ok stop_reason=signal polls=146025092 handler_book_tickers=15685 diagnost
 recorder_stats total_records=15685 first_exchange_ns=1779591707743090000 first_local_ns=6790761886994204 last_exchange_ns=1779591752524000000 last_local_ns=6790806665512928
 exchange_stats exchange=kBinance records=13860
 exchange_stats exchange=kGate records=1825
-source_stats index=0 name=gate_book_ticker exchange=kGate book_ticker_count=1825 skipped=0 overruns=0 last_book_ticker_id=113244034670
-source_stats index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=13860 skipped=0 overruns=0 last_book_ticker_id=10617499964819
+source_stats index=0 name=gate_book_ticker exchange=kGate book_ticker_count=1825 trade_count=0 skipped=0 overruns=0 last_book_ticker_id=113244034670 last_trade_id=0
+source_stats index=1 name=binance_book_ticker exchange=kBinance book_ticker_count=13860 trade_count=0 skipped=0 overruns=0 last_book_ticker_id=10617499964819 last_trade_id=0
 ```
 
 这组 2026-05-24 样例生成于 data session `local_ns` 改为 `CLOCK_REALTIME` 之前，因此示例里的

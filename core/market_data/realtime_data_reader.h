@@ -6,6 +6,7 @@
 #include <memory>
 #include <stdexcept>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <fmt/format.h>
@@ -17,9 +18,11 @@ namespace aquila::market_data {
 
 struct RealtimeDataReaderSourceStats {
   std::uint64_t book_ticker_count{0};
+  std::uint64_t trade_count{0};
   std::uint64_t skipped{0};
   std::uint64_t overruns{0};
   std::int64_t last_book_ticker_id{0};
+  std::int64_t last_trade_id{0};
 };
 
 struct RealtimeDataReaderStats {
@@ -35,6 +38,7 @@ struct NoopRealtimeDataReaderDiagnostics {
     (void)source_count;
   }
   void RecordBookTicker(std::size_t, const BookTicker&) noexcept {}
+  void RecordTrade(std::size_t, const Trade&) noexcept {}
   void RecordSkipped(std::size_t, std::uint64_t) noexcept {}
   void RecordOverrun(std::size_t, std::uint64_t) noexcept {}
 };
@@ -52,6 +56,12 @@ class RealtimeDataReaderDiagnostics {
     ++stats_.total_count;
     ++stats_.sources[source_index].book_ticker_count;
     stats_.sources[source_index].last_book_ticker_id = book_ticker.id;
+  }
+
+  void RecordTrade(std::size_t source_index, const Trade& trade) noexcept {
+    ++stats_.total_count;
+    ++stats_.sources[source_index].trade_count;
+    stats_.sources[source_index].last_trade_id = trade.id;
   }
 
   void RecordSkipped(std::size_t source_index, std::uint64_t skipped) noexcept {
@@ -85,22 +95,14 @@ class RealtimeDataReader {
     for (config::DataReaderSourceConfig& source_config :
          data_reader_config.sources) {
       ValidateSource(source_config);
-      BookTickerShmConfig shm_config{
-          .enabled = true,
-          .shm_name = source_config.shm_name,
-          .channel_name = source_config.channel_name,
-          .create = false,
-          .remove_existing = false,
-      };
-
       const config::DataReaderStartPosition start_position =
           source_config.start_position;
       const config::DataReaderReadMode read_mode = source_config.read_mode;
-      auto source = std::make_unique<Source>(read_mode, shm_config);
+      auto source = MakeSource(source_config, read_mode);
       if (start_position == config::DataReaderStartPosition::kLatest) {
-        source->reader.SeekLatest();
+        source->SeekLatest();
       } else {
-        source->reader.SeekEarliestVisible();
+        source->SeekEarliestVisible();
       }
       sources_.push_back(std::move(source));
     }
@@ -179,22 +181,97 @@ class RealtimeDataReader {
   struct Source {
     Source(config::DataReaderReadMode read_mode_in,
            const BookTickerShmConfig& shm_config)
-        : read_mode(read_mode_in), reader(shm_config) {}
+        : feed(config::DataReaderFeed::kBookTicker),
+          read_mode(read_mode_in),
+          reader(std::in_place_type<BookTickerShmReader>, shm_config),
+          book_ticker_reader(&std::get<BookTickerShmReader>(reader)) {}
 
+    Source(config::DataReaderReadMode read_mode_in,
+           const TradeShmConfig& shm_config)
+        : feed(config::DataReaderFeed::kTrade),
+          read_mode(read_mode_in),
+          reader(std::in_place_type<TradeShmReader>, shm_config),
+          trade_reader(&std::get<TradeShmReader>(reader)) {}
+
+    Source(const Source&) = delete;
+    Source& operator=(const Source&) = delete;
+    Source(Source&&) = delete;
+    Source& operator=(Source&&) = delete;
+
+    void SeekLatest() noexcept {
+      switch (feed) {
+        case config::DataReaderFeed::kBookTicker:
+          book_ticker_reader->SeekLatest();
+          return;
+        case config::DataReaderFeed::kTrade:
+          trade_reader->SeekLatest();
+          return;
+      }
+    }
+
+    void SeekEarliestVisible() noexcept {
+      switch (feed) {
+        case config::DataReaderFeed::kBookTicker:
+          book_ticker_reader->SeekEarliestVisible();
+          return;
+        case config::DataReaderFeed::kTrade:
+          trade_reader->SeekEarliestVisible();
+          return;
+      }
+    }
+
+    config::DataReaderFeed feed{config::DataReaderFeed::kBookTicker};
     config::DataReaderReadMode read_mode{config::DataReaderReadMode::kLatest};
-    BookTickerShmReader reader;
+    std::variant<BookTickerShmReader, TradeShmReader> reader;
+    BookTickerShmReader* book_ticker_reader{nullptr};
+    TradeShmReader* trade_reader{nullptr};
     std::uint64_t last_overrun_count{0};
   };
+
+  static std::unique_ptr<Source> MakeSource(
+      const config::DataReaderSourceConfig& source_config,
+      config::DataReaderReadMode read_mode) {
+    switch (source_config.feed) {
+      case config::DataReaderFeed::kBookTicker: {
+        BookTickerShmConfig shm_config{
+            .enabled = true,
+            .shm_name = source_config.shm_name,
+            .channel_name = source_config.channel_name,
+            .create = false,
+            .remove_existing = false,
+        };
+        return std::make_unique<Source>(read_mode, shm_config);
+      }
+      case config::DataReaderFeed::kTrade: {
+        TradeShmConfig shm_config{
+            .enabled = true,
+            .shm_name = source_config.shm_name,
+            .channel_name = source_config.channel_name,
+            .create = false,
+            .remove_existing = false,
+        };
+        return std::make_unique<Source>(read_mode, shm_config);
+      }
+    }
+    throw std::invalid_argument(
+        fmt::format("realtime data reader source '{}' has invalid feed",
+                    source_config.name));
+  }
 
   static void ValidateSource(const config::DataReaderSourceConfig& source) {
     if (source.type != config::DataReaderSourceType::kShm) {
       throw std::invalid_argument(fmt::format(
           "realtime data reader source '{}' must have type shm", source.name));
     }
-    if (source.feed != config::DataReaderFeed::kBookTicker) {
-      throw std::invalid_argument(fmt::format(
-          "realtime data reader source '{}' must use book_ticker feed",
-          source.name));
+    switch (source.feed) {
+      case config::DataReaderFeed::kBookTicker:
+      case config::DataReaderFeed::kTrade:
+        break;
+      default:
+        throw std::invalid_argument(fmt::format(
+            "realtime data reader source '{}' must use book_ticker or trade "
+            "feed",
+            source.name));
     }
     switch (source.start_position) {
       case config::DataReaderStartPosition::kLatest:
@@ -219,15 +296,40 @@ class RealtimeDataReader {
   template <typename Handler>
   std::uint64_t PollLatestSource(std::size_t source_index, Source& source,
                                  Handler& handler) noexcept {
+    switch (source.feed) {
+      case config::DataReaderFeed::kBookTicker:
+        return PollLatestBookTickerSource(source_index, source, handler);
+      case config::DataReaderFeed::kTrade:
+        return PollLatestTradeSource(source_index, source, handler);
+    }
+    return 0;
+  }
+
+  template <typename Handler>
+  std::uint64_t PollDrainSource(std::size_t source_index, Source& source,
+                                Handler& handler) noexcept {
+    switch (source.feed) {
+      case config::DataReaderFeed::kBookTicker:
+        return PollDrainBookTickerSource(source_index, source, handler);
+      case config::DataReaderFeed::kTrade:
+        return PollDrainTradeSource(source_index, source, handler);
+    }
+    return 0;
+  }
+
+  template <typename Handler>
+  std::uint64_t PollLatestBookTickerSource(std::size_t source_index,
+                                           Source& source,
+                                           Handler& handler) noexcept {
     BookTicker book_ticker;
     std::uint64_t skipped{0};
-    if (!source.reader.TryReadLatest(&book_ticker, &skipped)) {
+    if (!source.book_ticker_reader->TryReadLatest(&book_ticker, &skipped)) {
       return 0;
     }
     if constexpr (Diagnostics::kEnabled) {
       diagnostics_.RecordBookTicker(source_index, book_ticker);
       diagnostics_.RecordSkipped(source_index, skipped);
-      const std::uint64_t overrun = source.reader.overrun_count();
+      const std::uint64_t overrun = source.book_ticker_reader->overrun_count();
       diagnostics_.RecordOverrun(source_index,
                                  overrun - source.last_overrun_count);
       source.last_overrun_count = overrun;
@@ -237,20 +339,59 @@ class RealtimeDataReader {
   }
 
   template <typename Handler>
-  std::uint64_t PollDrainSource(std::size_t source_index, Source& source,
-                                Handler& handler) noexcept {
+  std::uint64_t PollLatestTradeSource(std::size_t source_index, Source& source,
+                                      Handler& handler) noexcept {
+    Trade trade;
+    std::uint64_t skipped{0};
+    if (!source.trade_reader->TryReadLatest(&trade, &skipped)) {
+      return 0;
+    }
+    if constexpr (Diagnostics::kEnabled) {
+      diagnostics_.RecordTrade(source_index, trade);
+      diagnostics_.RecordSkipped(source_index, skipped);
+      const std::uint64_t overrun = source.trade_reader->overrun_count();
+      diagnostics_.RecordOverrun(source_index,
+                                 overrun - source.last_overrun_count);
+      source.last_overrun_count = overrun;
+    }
+    handler.OnTrade(trade);
+    return 1;
+  }
+
+  template <typename Handler>
+  std::uint64_t PollDrainBookTickerSource(std::size_t source_index,
+                                          Source& source,
+                                          Handler& handler) noexcept {
     BookTicker book_ticker;
-    if (!source.reader.TryReadOne(&book_ticker)) {
+    if (!source.book_ticker_reader->TryReadOne(&book_ticker)) {
       return 0;
     }
     if constexpr (Diagnostics::kEnabled) {
       diagnostics_.RecordBookTicker(source_index, book_ticker);
-      const std::uint64_t overrun = source.reader.overrun_count();
+      const std::uint64_t overrun = source.book_ticker_reader->overrun_count();
       diagnostics_.RecordOverrun(source_index,
                                  overrun - source.last_overrun_count);
       source.last_overrun_count = overrun;
     }
     handler.OnBookTicker(book_ticker);
+    return 1;
+  }
+
+  template <typename Handler>
+  std::uint64_t PollDrainTradeSource(std::size_t source_index, Source& source,
+                                     Handler& handler) noexcept {
+    Trade trade;
+    if (!source.trade_reader->TryReadOne(&trade)) {
+      return 0;
+    }
+    if constexpr (Diagnostics::kEnabled) {
+      diagnostics_.RecordTrade(source_index, trade);
+      const std::uint64_t overrun = source.trade_reader->overrun_count();
+      diagnostics_.RecordOverrun(source_index,
+                                 overrun - source.last_overrun_count);
+      source.last_overrun_count = overrun;
+    }
+    handler.OnTrade(trade);
     return 1;
   }
 

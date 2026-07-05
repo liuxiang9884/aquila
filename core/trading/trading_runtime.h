@@ -301,6 +301,15 @@ class TradingRuntime {
     }
   }
 
+  void OnTrade(const Trade& trade) noexcept {
+    if constexpr (requires(StrategyT& strategy, const Trade& event,
+                           ContextT& context) {
+                    strategy.OnTrade(event, context);
+                  }) {
+      strategy_->OnTrade(trade, *context_);
+    }
+  }
+
   void OnOrderResponse(const OrderResponseEvent& event) noexcept {
     order_manager_->OnOrderResponse(event);
     if constexpr (requires(StrategyT& strategy,

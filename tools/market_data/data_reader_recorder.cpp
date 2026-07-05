@@ -108,9 +108,11 @@ void LogSourceStats(
     }
     NOVA_INFO(
         "source_stats index={} name={} exchange={} book_ticker_count={} "
-        "skipped={} overruns={} last_book_ticker_id={}",
-        i, name, exchange, stats[i].book_ticker_count, stats[i].skipped,
-        stats[i].overruns, stats[i].last_book_ticker_id);
+        "trade_count={} skipped={} overruns={} last_book_ticker_id={} "
+        "last_trade_id={}",
+        i, name, exchange, stats[i].book_ticker_count, stats[i].trade_count,
+        stats[i].skipped, stats[i].overruns, stats[i].last_book_ticker_id,
+        stats[i].last_trade_id);
   }
 }
 

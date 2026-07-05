@@ -180,6 +180,10 @@ void FreshnessPreflightCollector::OnBookTicker(const BookTicker& ticker) {
                  static_cast<std::int64_t>(websocket::RealtimeClockNowNs()));
 }
 
+void FreshnessPreflightCollector::OnTrade(const Trade& trade) {
+  (void)trade;
+}
+
 void FreshnessPreflightCollector::OnBookTickerAt(const BookTicker& ticker,
                                                  std::int64_t decision_ns) {
   for (Group& group : groups_) {

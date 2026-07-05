@@ -213,6 +213,62 @@ read_mode = "drain"
   EXPECT_EQ(source.files[1], second_file);
 }
 
+TEST(DataReaderConfigTest, ParsesTradeShmSource) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "trade_reader"
+max_events_per_drain = 8
+
+[[data_reader.sources]]
+name = "gate_trade"
+type = "shm"
+exchange = "gate"
+feed = "trade"
+shm_name = "aquila_gate_market_data"
+channel_name = "trade_channel"
+start_position = "earliest_visible"
+read_mode = "drain"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  const aquila::config::DataReaderSourceConfig& source =
+      result.value.sources[0];
+  EXPECT_EQ(source.name, "gate_trade");
+  EXPECT_EQ(source.type, aquila::config::DataReaderSourceType::kShm);
+  EXPECT_EQ(source.exchange, aquila::Exchange::kGate);
+  EXPECT_EQ(source.feed, aquila::config::DataReaderFeed::kTrade);
+  EXPECT_EQ(source.shm_name, "aquila_gate_market_data");
+  EXPECT_EQ(source.channel_name, "trade_channel");
+  EXPECT_EQ(source.start_position,
+            aquila::config::DataReaderStartPosition::kEarliestVisible);
+  EXPECT_EQ(source.read_mode, aquila::config::DataReaderReadMode::kDrain);
+  EXPECT_TRUE(source.required);
+}
+
+TEST(DataReaderConfigTest, RejectsTradeBinaryFileSource) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "binary_replay_reader"
+
+[[data_reader.sources]]
+name = "binary_trade"
+type = "binary_file"
+feed = "trade"
+files = ["/tmp/trade.bin"]
+start_position = "earliest_visible"
+read_mode = "drain"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("trade"), std::string::npos);
+}
+
 TEST(DataReaderConfigTest, RejectsBinaryFileWithoutFiles) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]

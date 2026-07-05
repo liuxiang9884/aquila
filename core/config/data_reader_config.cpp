@@ -66,6 +66,10 @@ void MaybeLogError(std::string_view message) {
     *feed = DataReaderFeed::kBookTicker;
     return true;
   }
+  if (text == "trade") {
+    *feed = DataReaderFeed::kTrade;
+    return true;
+  }
   return false;
 }
 
@@ -315,7 +319,7 @@ class DataReaderConfigParser {
     const std::string feed_text =
         StringOr(source_table["feed"], std::string{"book_ticker"});
     if (!ParseFeed(feed_text, &source->feed)) {
-      Fail("data_reader.sources.feed", " must be book_ticker");
+      Fail("data_reader.sources.feed", " must be book_ticker or trade");
     }
   }
 
@@ -376,6 +380,11 @@ class DataReaderConfigParser {
       }
     }
     if (source.type == DataReaderSourceType::kBinaryFile) {
+      if (source.feed != DataReaderFeed::kBookTicker) {
+        Fail("data_reader.sources.feed",
+             " trade is only supported for shm sources");
+        return;
+      }
       if (source.files.empty()) {
         Fail("data_reader.sources.files", " is required");
         return;
@@ -391,8 +400,12 @@ class DataReaderConfigParser {
         return;
       }
     }
-    if (source.feed != DataReaderFeed::kBookTicker) {
-      Fail("data_reader.sources.feed", " must be book_ticker");
+    switch (source.feed) {
+      case DataReaderFeed::kBookTicker:
+      case DataReaderFeed::kTrade:
+        break;
+      default:
+        Fail("data_reader.sources.feed", " must be book_ticker or trade");
     }
   }
 

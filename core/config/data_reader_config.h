@@ -21,6 +21,7 @@ enum class DataReaderSourceType : std::uint8_t {
 
 enum class DataReaderFeed : std::uint8_t {
   kBookTicker,
+  kTrade,
 };
 
 enum class DataReaderStartPosition : std::uint8_t {

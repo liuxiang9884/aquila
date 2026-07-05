@@ -137,7 +137,10 @@ if current - read_pos > capacity:
   overrun_count += 1
 ```
 
-reader 不做多 source 全局时间排序。`RealtimeDataReader` 多 source round-robin 只提供公平轮询，不按 `exchange_ns` / `local_ns` merge。当前 strategy `DataReader` 仍只消费 `BookTicker`；`TradeShmReader` 是 Gate SBE public trade / Binance raw trade 的独立 typed reader 能力，尚未接入 LeadLag 策略主路径。
+reader 不做多 source 全局时间排序。`RealtimeDataReader` 多 source round-robin 只提供公平轮询，不按
+`exchange_ns` / `local_ns` merge。当前 `RealtimeDataReader` 已支持按 source `feed` 读取 `BookTicker` 或
+`Trade` typed SHM channel，并分别调用 handler 的 `OnBookTicker()` / `OnTrade()`；`HistoricalDataReader`
+仍只支持 `BookTicker` binary。LeadLag 策略主路径目前不订阅 trade source。
 
 ## 配置
 

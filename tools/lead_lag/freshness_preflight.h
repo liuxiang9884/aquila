@@ -60,6 +60,7 @@ class FreshnessPreflightCollector {
   explicit FreshnessPreflightCollector(std::vector<FreshnessPairConfig> pairs);
 
   void OnBookTicker(const BookTicker& ticker);
+  void OnTrade(const Trade& trade);
   void OnBookTickerAt(const BookTicker& ticker, std::int64_t decision_ns);
 
   [[nodiscard]] std::vector<FreshnessGroupSummary> BuildSummaries() const;
