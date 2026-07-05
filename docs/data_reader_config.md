@@ -291,7 +291,7 @@ manifest 恢复语义不清晰。
 - 默认只输出一个 merged `.bin`；启用 `[recorder].rotation_enabled` 后输出多个 segment `.bin` 和一个
   manifest JSONL。记录顺序就是 `RealtimeDataReader` 实际交给 handler 的顺序。
 - 如果输入配置使用 `drain`，recorder 会按 reader 可见事件流顺序连续写出；如果输入配置仍是 `latest`，则输出也继承 latest 的跳点语义，工具启动日志会显式打印 `latest_read_mode_source` warning。
-- 启动日志打印 `book_ticker_abi_size=sizeof(aquila::BookTicker)`；SHM attach 仍会校验 producer header 中的 ABI size。输出文件本身不写 header。
+- recorder 启动日志打印 `book_ticker_abi_size=sizeof(aquila::BookTicker)`；probe 会同时打印 `book_ticker_abi_size` 和 `trade_abi_size`。SHM attach 仍会校验 producer header 中的 ABI size。输出文件本身不写 header。
 - 单文件写入路径使用二进制追加或截断模式，由 `--mode` 明确控制，默认截断；rotation 模式只支持截断。
 - rotation manifest 每行一个 JSON object，记录 segment `sequence`、`file`、`records`、`bytes`、first / last
   `exchange_ns`、first / last `local_ns` 和 `closed_reason`。正在写的 `.tmp` 不写入 manifest，replay 只读取已关闭的 `.bin`。

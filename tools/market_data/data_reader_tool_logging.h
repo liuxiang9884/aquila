@@ -70,13 +70,18 @@ namespace aquila::tools::market_data {
     std::string_view tool, std::string_view mode,
     const std::filesystem::path& config_path,
     std::optional<std::filesystem::path> output_path, std::uint64_t max_polls,
-    std::uint64_t drain_budget, std::size_t book_ticker_abi_size) {
-  return fmt::format(
+    std::uint64_t drain_budget, std::size_t book_ticker_abi_size,
+    std::optional<std::size_t> trade_abi_size = std::nullopt) {
+  std::string line = fmt::format(
       "tool={} mode={} config={} output={} max_polls={} "
       "max_events_per_drain={} book_ticker_abi_size={}",
       tool, mode, config_path.string(),
       output_path.has_value() ? output_path->string() : std::string{"none"},
       max_polls, drain_budget, book_ticker_abi_size);
+  if (trade_abi_size.has_value()) {
+    line.append(fmt::format(" trade_abi_size={}", *trade_abi_size));
+  }
+  return line;
 }
 
 }  // namespace aquila::tools::market_data

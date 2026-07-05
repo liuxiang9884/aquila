@@ -81,10 +81,12 @@ TEST(DataReaderToolLoggingTest, FormatsStartupWithAndWithoutOutputPath) {
 
   const std::string probe = md_tools::FormatToolStartupLog(
       "data_reader_probe", "historical", "binary.toml", std::nullopt, 0, 4096,
-      sizeof(aquila::BookTicker));
+      sizeof(aquila::BookTicker), sizeof(aquila::Trade));
   EXPECT_NE(probe.find("tool=data_reader_probe"), std::string::npos);
   EXPECT_NE(probe.find("mode=historical"), std::string::npos);
   EXPECT_NE(probe.find("output=none"), std::string::npos);
+  EXPECT_NE(probe.find("book_ticker_abi_size="), std::string::npos);
+  EXPECT_NE(probe.find("trade_abi_size="), std::string::npos);
 }
 
 }  // namespace

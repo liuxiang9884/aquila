@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
   app.add_option("--max-polls", max_polls, "0 means unlimited");
   app.add_option(
       "--log-every", log_every,
-      "log first book ticker and then every N book tickers; 0 disables");
+      "log first event per feed and then every N events per feed; 0 disables");
   CLI11_PARSE(app, argc, argv);
 
   try {
@@ -232,7 +232,7 @@ int main(int argc, char** argv) {
                           "data_reader_probe",
                           aquila::tools::market_data::ProbeModeName(mode),
                           config_path, std::nullopt, max_polls, drain_budget,
-                          sizeof(aquila::BookTicker)));
+                          sizeof(aquila::BookTicker), sizeof(aquila::Trade)));
       LogSourceConfig(config_result.value);
 
       std::signal(SIGINT, HandleSignal);
