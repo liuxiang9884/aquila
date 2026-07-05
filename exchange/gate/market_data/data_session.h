@@ -566,12 +566,13 @@ class DataSession {
   websocket::SendStatus SendSubscribe() noexcept {
     const std::int64_t epoch_seconds =
         static_cast<std::int64_t>(std::time(nullptr));
-    if (feeds_.book_ticker) {
+    if (subscription_controller_.ShouldSendBookTickerSubscribe()) {
       std::string request = BuildFuturesBookTickerSubscribeRequest(
           std::span<const std::string_view>(subscription_symbols_.data(),
                                             subscription_symbols_.size()),
           epoch_seconds);
       const websocket::SendStatus status = SendText(request);
+      subscription_controller_.RecordBookTickerSubscribeAttempt(status);
       if (status != websocket::SendStatus::kOk) {
         return status;
       }
@@ -581,12 +582,13 @@ class DataSession {
         session_diagnostics_.RecordSubscribeSent();
       }
     }
-    if (feeds_.trade) {
+    if (subscription_controller_.ShouldSendTradeSubscribe()) {
       std::string request = BuildFuturesTradeSubscribeRequest(
           std::span<const std::string_view>(subscription_symbols_.data(),
                                             subscription_symbols_.size()),
           epoch_seconds);
       const websocket::SendStatus status = SendText(request);
+      subscription_controller_.RecordTradeSubscribeAttempt(status);
       if (status != websocket::SendStatus::kOk) {
         return status;
       }
@@ -601,7 +603,6 @@ class DataSession {
 
   websocket::SendStatus SendSubscribeAttempt() noexcept {
     const websocket::SendStatus status = SendSubscribe();
-    subscription_controller_.RecordSubscribeAttempt(status);
     if (status != websocket::SendStatus::kOk) {
       if constexpr (SessionDiagnosticsEnabled) {
         session_diagnostics_.RecordSubscribeSendFailure();

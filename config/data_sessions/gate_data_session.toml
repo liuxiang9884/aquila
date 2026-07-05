@@ -32,4 +32,4 @@ shm_name = "aquila_gate_market_data"
 book_ticker_channel_name = "book_ticker_channel"
 trade_channel_name = "trade_channel"
 create = true
-remove_existing = true
+remove_existing = false

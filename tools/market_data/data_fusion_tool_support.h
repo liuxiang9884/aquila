@@ -81,6 +81,10 @@ void ApplyBookTickerSourceOverride(const SourceConfig& source,
   data_session_config->book_ticker_shm.create = true;
   data_session_config->book_ticker_shm.remove_existing =
       source.remove_existing_source_shm;
+  if constexpr (requires { data_session_config->feeds.book_ticker; }) {
+    data_session_config->feeds.book_ticker = true;
+    data_session_config->feeds.trade = false;
+  }
   if (source.bind_cpu_id >= 0) {
     data_session_config->connection.runtime_policy.io_cpu_id =
         source.bind_cpu_id;

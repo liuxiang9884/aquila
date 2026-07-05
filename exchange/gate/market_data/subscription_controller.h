@@ -26,6 +26,7 @@ class BookTickerSubscriptionController {
 
   void ConfigureFeeds(DataSessionFeeds feeds) noexcept {
     feeds_ = feeds;
+    ResetSubscribeSends();
     ResetAcks();
   }
 
@@ -40,7 +41,7 @@ class BookTickerSubscriptionController {
       case websocket::ConnectionPhase::kClosing:
       case websocket::ConnectionPhase::kClosed:
         connection_active_ = false;
-        subscription_sent_for_connection_ = false;
+        ResetSubscribeSends();
         ResetAcks();
         if (subscription_state_ == SubscriptionState::kSubscribeSent ||
             subscription_state_ == SubscriptionState::kSubscribed) {
@@ -57,13 +58,16 @@ class BookTickerSubscriptionController {
     return false;
   }
 
+  void RecordBookTickerSubscribeAttempt(websocket::SendStatus status) noexcept {
+    RecordFeedSubscribeAttempt(status, &book_ticker_subscribe_sent_);
+  }
+
+  void RecordTradeSubscribeAttempt(websocket::SendStatus status) noexcept {
+    RecordFeedSubscribeAttempt(status, &trade_subscribe_sent_);
+  }
+
   void RecordSubscribeAttempt(websocket::SendStatus status) noexcept {
-    subscribe_status_ = status;
-    subscription_sent_for_connection_ = status == websocket::SendStatus::kOk;
-    if (status == websocket::SendStatus::kOk) {
-      ResetSubscribeAcks();
-      subscription_state_ = SubscriptionState::kSubscribeSent;
-    }
+    RecordBookTickerSubscribeAttempt(status);
   }
 
   void RecordUnsubscribeAttempt(websocket::SendStatus status) noexcept {
@@ -114,6 +118,16 @@ class BookTickerSubscriptionController {
     return connection_active_ && CanSendSubscribe();
   }
 
+  [[nodiscard]] bool ShouldSendBookTickerSubscribe() const noexcept {
+    return feeds_.book_ticker && !book_ticker_subscribe_sent_ &&
+           subscription_state_ != SubscriptionState::kRejected;
+  }
+
+  [[nodiscard]] bool ShouldSendTradeSubscribe() const noexcept {
+    return feeds_.trade && !trade_subscribe_sent_ &&
+           subscription_state_ != SubscriptionState::kRejected;
+  }
+
   [[nodiscard]] bool connection_active() const noexcept {
     return connection_active_;
   }
@@ -136,9 +150,30 @@ class BookTickerSubscriptionController {
     ResetUnsubscribeAcks();
   }
 
+  void RecordFeedSubscribeAttempt(websocket::SendStatus status,
+                                  bool* feed_sent) noexcept {
+    subscribe_status_ = status;
+    if (status == websocket::SendStatus::kOk) {
+      if (!AnySubscribeSent()) {
+        ResetSubscribeAcks();
+      }
+      *feed_sent = true;
+      subscription_state_ = SubscriptionState::kSubscribeSent;
+      return;
+    }
+    if (!AnySubscribeSent()) {
+      subscription_state_ = SubscriptionState::kIdle;
+    }
+  }
+
   void ResetSubscribeAcks() noexcept {
     book_ticker_subscribe_accepted_ = false;
     trade_subscribe_accepted_ = false;
+  }
+
+  void ResetSubscribeSends() noexcept {
+    book_ticker_subscribe_sent_ = false;
+    trade_subscribe_sent_ = false;
   }
 
   void ResetUnsubscribeAcks() noexcept {
@@ -156,9 +191,12 @@ class BookTickerSubscriptionController {
            (!feeds_.trade || trade_unsubscribe_accepted_);
   }
 
+  [[nodiscard]] bool AnySubscribeSent() const noexcept {
+    return book_ticker_subscribe_sent_ || trade_subscribe_sent_;
+  }
+
   [[nodiscard]] bool CanSendSubscribe() const noexcept {
-    return !subscription_sent_for_connection_ &&
-           subscription_state_ != SubscriptionState::kRejected;
+    return ShouldSendBookTickerSubscribe() || ShouldSendTradeSubscribe();
   }
 
   DataSessionFeeds feeds_{};
@@ -171,7 +209,8 @@ class BookTickerSubscriptionController {
   bool trade_subscribe_accepted_{false};
   bool book_ticker_unsubscribe_accepted_{false};
   bool trade_unsubscribe_accepted_{false};
-  bool subscription_sent_for_connection_{false};
+  bool book_ticker_subscribe_sent_{false};
+  bool trade_subscribe_sent_{false};
   bool connection_active_{false};
 };
 

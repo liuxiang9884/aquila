@@ -18,6 +18,7 @@
 #include "exchange/binance/market_data/data_session_config.h"
 #include "exchange/gate/market_data/data_session.h"
 #include "nova/utils/log.h"
+#include "tools/market_data/data_fusion_tool_support.h"
 
 namespace {
 
@@ -178,12 +179,13 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.book_ticker_shm.shm_name, "aquila_gate_market_data");
   EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
   EXPECT_TRUE(config.book_ticker_shm.create);
-  EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+  EXPECT_FALSE(config.book_ticker_shm.remove_existing);
   EXPECT_TRUE(config.feeds.book_ticker);
   EXPECT_FALSE(config.feeds.trade);
   EXPECT_TRUE(config.data_shm.enabled);
   EXPECT_EQ(config.data_shm.book_ticker_channel_name, "book_ticker_channel");
   EXPECT_EQ(config.data_shm.trade_channel_name, "trade_channel");
+  EXPECT_FALSE(config.data_shm.remove_existing);
 
   struct DataSink {
     void OnBookTicker(const aquila::BookTicker&) noexcept {}
@@ -217,6 +219,26 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
   EXPECT_NE(session.last_subscribe_request().find("BTC_USDT"),
             std::string_view::npos);
+}
+
+TEST(DataSessionConfigTest, BookTickerFusionOverrideDisablesTradeFeed) {
+  struct SourceConfig {
+    std::string data_session_name{"gate_fusion_source"};
+    std::string book_ticker_shm_name{"aquila_gate_fusion_source"};
+    std::string book_ticker_channel_name{"book_ticker_channel"};
+    bool remove_existing_source_shm{true};
+    std::int32_t bind_cpu_id{-1};
+    std::int32_t source_id{3};
+  };
+
+  aquila::gate::DataSessionConfig config;
+  config.feeds = {.book_ticker = true, .trade = true};
+
+  aquila::tools::market_data::ApplyBookTickerSourceOverride(SourceConfig{},
+                                                            &config);
+
+  EXPECT_TRUE(config.feeds.book_ticker);
+  EXPECT_FALSE(config.feeds.trade);
 }
 
 TEST(DataSessionConfigTest, LoadsReadyFirst5GateDataSessionConfig) {
