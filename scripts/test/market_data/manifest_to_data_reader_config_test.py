@@ -14,6 +14,20 @@ if str(MODULE_DIR) not in sys.path:
 import manifest_to_data_reader_config as manifest_config  # noqa: E402
 
 
+def manifest_entry(path: Path, *, feed: str = "book_ticker", records: int = 2) -> dict:
+    return {
+        "sequence": 1,
+        "file": str(path),
+        "records": records,
+        "bytes": 16 + records * 64,
+        "format": "aquila.market_data.binary",
+        "version": 1,
+        "feed": feed,
+        "header_bytes": 16,
+        "record_size": 64,
+    }
+
+
 class ManifestToDataReaderConfigTest(unittest.TestCase):
     def test_generates_binary_file_reader_config_from_manifest(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -26,9 +40,9 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
             manifest.write_text(
                 "\n".join(
                     [
-                        json.dumps({"sequence": 1, "file": str(first)}),
-                        json.dumps({"sequence": 2, "file": str(second)}),
-                        json.dumps({"sequence": 3, "file": str(tmp)}),
+                        json.dumps(manifest_entry(first)),
+                        json.dumps(manifest_entry(second)),
+                        json.dumps(manifest_entry(tmp)),
                     ]
                 )
                 + "\n",
@@ -57,7 +71,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
             manifest = root / "trade_manifest.jsonl"
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text(
-                json.dumps({"sequence": 1, "file": str(trade_file)}) + "\n",
+                json.dumps(manifest_entry(trade_file, feed="trade")) + "\n",
                 encoding="utf-8",
             )
 
@@ -78,7 +92,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest = Path(temp_dir) / "manifest.jsonl"
             manifest.write_text(
-                json.dumps({"sequence": 1, "file": "book_ticker.bin.tmp"}) + "\n",
+                json.dumps(manifest_entry(Path("book_ticker.bin.tmp"))) + "\n",
                 encoding="utf-8",
             )
 
@@ -86,6 +100,74 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                 manifest_config.render_data_reader_config(
                     manifest_path=manifest,
                     name="empty_replay",
+                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                )
+
+    def test_rejects_feed_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "manifest.jsonl"
+            segment = root / "segments" / "trade_000001.bin"
+            manifest.write_text(
+                json.dumps(manifest_entry(segment, feed="trade")) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, r"manifest\.jsonl:1: feed"):
+                manifest_config.render_data_reader_config(
+                    manifest_path=manifest,
+                    name="book_replay",
+                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                    feed="book_ticker",
+                )
+
+    def test_rejects_bytes_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "manifest.jsonl"
+            segment = root / "segments" / "book_ticker_000001.bin"
+            entry = manifest_entry(segment, records=3)
+            entry["bytes"] += 1
+            manifest.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"manifest\.jsonl:1: bytes"):
+                manifest_config.render_data_reader_config(
+                    manifest_path=manifest,
+                    name="book_replay",
+                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                )
+
+    def test_rejects_missing_format(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "manifest.jsonl"
+            segment = root / "segments" / "book_ticker_000001.bin"
+            entry = manifest_entry(segment)
+            del entry["format"]
+            manifest.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"manifest\.jsonl:1: format"):
+                manifest_config.render_data_reader_config(
+                    manifest_path=manifest,
+                    name="book_replay",
+                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                )
+
+    def test_rejects_record_size_mismatch(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = root / "manifest.jsonl"
+            segment = root / "segments" / "book_ticker_000001.bin"
+            entry = manifest_entry(segment)
+            entry["record_size"] = 63
+            manifest.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError, r"manifest\.jsonl:1: record_size"
+            ):
+                manifest_config.render_data_reader_config(
+                    manifest_path=manifest,
+                    name="book_replay",
                     catalog_path=Path("config/instruments/usdt_futures.csv"),
                 )
 

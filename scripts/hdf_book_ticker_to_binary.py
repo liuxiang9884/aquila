@@ -3,7 +3,7 @@
 import argparse
 import csv
 import os
-import struct
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -13,30 +13,20 @@ import h5py
 import numpy as np
 import pandas as pd
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+MARKET_DATA_SCRIPT_DIR = SCRIPT_DIR / "market_data"
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
+
+import typed_binary  # noqa: E402
+
 
 EXCHANGE_BINANCE = 0
 EXCHANGE_GATE = 2
-BOOK_TICKER_STRUCT = struct.Struct("<qibxxxqqdddd")
 MS_TO_NS = 1_000_000
 SUPPORTED_HDF_VERSIONS = {2, 3}
 
-BOOK_TICKER_DTYPE = np.dtype(
-    [
-        ("id", "<i8"),
-        ("symbol_id", "<i4"),
-        ("exchange_id", "u1"),
-        ("padding", "V3"),
-        ("exchange_ns", "<i8"),
-        ("local_ns", "<i8"),
-        ("bid_price", "<f8"),
-        ("bid_volume", "<f8"),
-        ("ask_price", "<f8"),
-        ("ask_volume", "<f8"),
-    ]
-)
-
-if BOOK_TICKER_DTYPE.itemsize != BOOK_TICKER_STRUCT.size:
-    raise RuntimeError("BookTicker numpy dtype size mismatch")
+BOOK_TICKER_DTYPE = typed_binary.book_ticker_dtype()
 
 
 @dataclass(frozen=True)
@@ -305,7 +295,7 @@ def convert_date(
         output_records["symbol_id"] = merged["symbol_id"].to_numpy(
             dtype=np.int32, copy=False
         )
-        output_records["exchange_id"] = merged["exchange_id"].to_numpy(
+        output_records["exchange"] = merged["exchange_id"].to_numpy(
             dtype=np.uint8, copy=False
         )
         output_records["exchange_ns"] = merged["exchange_ns"].to_numpy(
@@ -328,9 +318,18 @@ def convert_date(
         )
 
         with temp_path.open("wb") as output:
-            output_records.tofile(output)
+            typed_binary.write_header(output, "book_ticker")
+            if len(output_records) > 0:
+                output.write(
+                    output_records.astype(
+                        typed_binary.book_ticker_dtype(), copy=False
+                    ).tobytes()
+                )
 
-        expected_size = stats.records_written * BOOK_TICKER_STRUCT.size
+        expected_size = (
+            typed_binary.HEADER_SIZE
+            + stats.records_written * typed_binary.book_ticker_dtype().itemsize
+        )
         actual_size = temp_path.stat().st_size
         if actual_size != expected_size:
             raise ValueError(
@@ -391,12 +390,16 @@ def main(argv: list[str] | None = None) -> int:
             f"{exchange}_records={count}"
             for exchange, count in stats.records_by_exchange.items()
         )
+        file_size_bytes = (
+            typed_binary.HEADER_SIZE
+            + stats.records_written * typed_binary.book_ticker_dtype().itemsize
+        )
         print(
             f"converted date={date} output={stats.output_path} "
             f"records={stats.records_written} {by_exchange} files={stats.files_read} "
             f"first_exchange_ns={stats.first_exchange_ns or 0} "
             f"last_exchange_ns={stats.last_exchange_ns or 0} "
-            f"file_size_bytes={stats.records_written * BOOK_TICKER_STRUCT.size}"
+            f"file_size_bytes={file_size_bytes}"
         )
     return 0
 

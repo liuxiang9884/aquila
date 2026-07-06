@@ -1,20 +1,23 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import sys
-import struct
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
+MARKET_DATA_SCRIPT_DIR = SCRIPT_DIR / "market_data"
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
 
 import h5py
 import numpy as np
 import pandas as pd
 
 import hdf_book_ticker_to_binary as converter
+import typed_binary  # noqa: E402
 
 
 CONFIG_DTYPE = np.dtype(
@@ -54,8 +57,6 @@ BBO_DTYPE = np.dtype(
         ("tx_time", "<i8"),
     ]
 )
-
-BOOK_TICKER = struct.Struct("<qibxxxqqdddd")
 
 
 def write_hdf(path, *, date_hour, price_multiplier, qty_multiplier, rows):
@@ -157,20 +158,38 @@ class HdfBookTickerToBinaryTest(unittest.TestCase):
             self.assertEqual(stats.records_written, 4)
             self.assertEqual(stats.records_by_exchange, {"binance": 2, "gate": 2})
             raw = output_path.read_bytes()
-            self.assertEqual(len(raw), 4 * BOOK_TICKER.size)
-            records = [
-                BOOK_TICKER.unpack_from(raw, offset)
-                for offset in range(0, len(raw), BOOK_TICKER.size)
-            ]
-
-            self.assertEqual([record[0] for record in records], [0, 1, 2, 3])
-            self.assertEqual([record[2] for record in records], [2, 0, 2, 0])
+            self.assertTrue(raw.startswith(b"AQMD"))
             self.assertEqual(
-                [record[3] for record in records],
+                len(raw),
+                typed_binary.HEADER_SIZE
+                + 4 * typed_binary.book_ticker_dtype().itemsize,
+            )
+            records = typed_binary.load_records(output_path, "book_ticker")
+
+            self.assertEqual(records["id"].tolist(), [0, 1, 2, 3])
+            self.assertEqual(records["exchange"].tolist(), [2, 0, 2, 0])
+            self.assertEqual(
+                records["exchange_ns"].tolist(),
                 [1001000000, 1002000000, 1003000000, 1004000000],
             )
-            self.assertEqual(records[0][5:], (10.2, 9.0, 10.3, 7.0))
-            self.assertEqual(records[1][5:], (10.4, 3.5, 10.5, 2.5))
+            self.assertEqual(
+                (
+                    records[0]["bid_price"],
+                    records[0]["bid_volume"],
+                    records[0]["ask_price"],
+                    records[0]["ask_volume"],
+                ),
+                (10.2, 9.0, 10.3, 7.0),
+            )
+            self.assertEqual(
+                (
+                    records[1]["bid_price"],
+                    records[1]["bid_volume"],
+                    records[1]["ask_price"],
+                    records[1]["ask_volume"],
+                ),
+                (10.4, 3.5, 10.5, 2.5),
+            )
 
     def test_rejects_config_date_mismatch(self):
         with TemporaryDirectory() as temp_dir:

@@ -5,12 +5,104 @@ import json
 from pathlib import Path
 from typing import Any
 
+import typed_binary
+
 
 def toml_quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def load_replayable_files(manifest_path: Path) -> list[Path]:
+def _manifest_error(
+    manifest_path: Path, line_number: int, field: str, message: str
+) -> ValueError:
+    return ValueError(f"{manifest_path}:{line_number}: {field} {message}")
+
+
+def _require_manifest_value(
+    entry: dict[str, Any],
+    *,
+    manifest_path: Path,
+    line_number: int,
+    field: str,
+    expected: Any,
+) -> None:
+    actual = entry.get(field)
+    mismatch = actual != expected
+    if isinstance(expected, int):
+        mismatch = (
+            not isinstance(actual, int)
+            or isinstance(actual, bool)
+            or actual != expected
+        )
+    if mismatch:
+        raise _manifest_error(
+            manifest_path,
+            line_number,
+            field,
+            f"must be {expected!r}, got {actual!r}",
+        )
+
+
+def _validate_manifest_metadata(
+    entry: dict[str, Any], *, manifest_path: Path, line_number: int, feed: str
+) -> None:
+    expected_record_size = typed_binary.dtype_for_feed(feed).itemsize
+    _require_manifest_value(
+        entry,
+        manifest_path=manifest_path,
+        line_number=line_number,
+        field="format",
+        expected=typed_binary.FORMAT_NAME,
+    )
+    _require_manifest_value(
+        entry,
+        manifest_path=manifest_path,
+        line_number=line_number,
+        field="version",
+        expected=typed_binary.VERSION,
+    )
+    _require_manifest_value(
+        entry,
+        manifest_path=manifest_path,
+        line_number=line_number,
+        field="feed",
+        expected=feed,
+    )
+    _require_manifest_value(
+        entry,
+        manifest_path=manifest_path,
+        line_number=line_number,
+        field="header_bytes",
+        expected=typed_binary.HEADER_SIZE,
+    )
+    _require_manifest_value(
+        entry,
+        manifest_path=manifest_path,
+        line_number=line_number,
+        field="record_size",
+        expected=expected_record_size,
+    )
+
+    records = entry.get("records")
+    if not isinstance(records, int) or isinstance(records, bool) or records < 0:
+        raise _manifest_error(
+            manifest_path,
+            line_number,
+            "records",
+            f"must be a non-negative integer, got {records!r}",
+        )
+
+    expected_bytes = typed_binary.HEADER_SIZE + records * expected_record_size
+    _require_manifest_value(
+        entry,
+        manifest_path=manifest_path,
+        line_number=line_number,
+        field="bytes",
+        expected=expected_bytes,
+    )
+
+
+def load_replayable_files(manifest_path: Path, feed: str) -> list[Path]:
     files: list[Path] = []
     with manifest_path.open("r", encoding="utf-8") as manifest:
         for line_number, line in enumerate(manifest, start=1):
@@ -31,6 +123,12 @@ def load_replayable_files(manifest_path: Path) -> list[Path]:
             file_path = Path(raw_file)
             if file_path.suffix == ".tmp":
                 continue
+            _validate_manifest_metadata(
+                entry,
+                manifest_path=manifest_path,
+                line_number=line_number,
+                feed=feed,
+            )
             if not file_path.is_absolute():
                 file_path = manifest_path.parent / file_path
             files.append(file_path)
@@ -53,7 +151,7 @@ def render_data_reader_config(
         raise ValueError("feed must be book_ticker or trade")
     if max_events_per_drain <= 0:
         raise ValueError("max_events_per_drain must be positive")
-    files = load_replayable_files(manifest_path)
+    files = load_replayable_files(manifest_path, feed)
     file_lines = "\n".join(f"  {toml_quote(str(path))}," for path in files)
     source_name = f"{name}_{feed}"
     return (
