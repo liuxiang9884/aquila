@@ -244,12 +244,9 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertEqual(result["freshness"]["lag_sample_count"], 3)
 
     def test_zstd_nonzero_return_reports_stderr_text(self):
-        payload = io.BytesIO()
-        typed_binary.write_header(payload, "book_ticker")
-
         class FailedProcess:
             def __init__(self, stderr_file):
-                self.stdout = io.BytesIO(payload.getvalue())
+                self.stdout = io.BytesIO(b"")
                 self.return_code = 1
                 self.terminated = False
                 self.killed = False

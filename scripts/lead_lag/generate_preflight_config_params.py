@@ -78,6 +78,7 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
         )
         assert process.stdout is not None
         stream_error: Exception | None = None
+        stopped_for_stream_error = False
         try:
             try:
                 yield from typed_binary.iter_record_chunks_from_stream(
@@ -88,12 +89,16 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
                 )
             except Exception as error:
                 stream_error = error
-                _stop_process(process)
+                if process.poll() is None:
+                    stopped_for_stream_error = True
+                    _stop_process(process)
             finally:
                 process.stdout.close()
             return_code = process.wait()
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
+            if return_code != 0 and not stopped_for_stream_error:
+                raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
             if stream_error is not None:
                 raise stream_error
             if return_code != 0:
