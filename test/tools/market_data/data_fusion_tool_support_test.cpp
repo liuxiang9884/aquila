@@ -152,6 +152,63 @@ TEST(DataFusionToolSupportTest, ReportsTradeFusionChannelMismatch) {
   EXPECT_NE(error.find("channel mismatch"), std::string::npos);
 }
 
+TEST(DataFusionToolSupportTest, ReportsUnexpectedBookTickerFusionSource) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion",
+      .fusion_config = "fusion.toml",
+      .sources = {MakeLaunchSource(0, "src0")},
+  };
+  const md::BookTickerFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::BookTickerFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "book_ticker_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/fusion_metadata.bin",
+          },
+      .sources = {MakeFusionSource(0, "src0"), MakeFusionSource(1, "src1")},
+  };
+
+  std::string error;
+  EXPECT_FALSE(support::ValidateBookTickerFusionAlignment(
+      launch_config, fusion_config, &error));
+  EXPECT_NE(error.find("unexpected fusion source_id=1"), std::string::npos);
+}
+
+TEST(DataFusionToolSupportTest, ReportsUnexpectedTradeFusionSource) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion_trade",
+      .fusion_config = "fusion.toml",
+      .feed = support::DataFusionFeed::kTrade,
+      .sources = {MakeTradeLaunchSource(0, "src0")},
+  };
+  const md::TradeFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::TradeFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "trade_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/trade_fusion_metadata.bin",
+          },
+      .sources = {MakeTradeFusionSource(0, "src0"),
+                  MakeTradeFusionSource(1, "src1")},
+  };
+
+  std::string error;
+  EXPECT_FALSE(
+      support::ValidateTradeFusionAlignment(launch_config, fusion_config,
+                                            &error));
+  EXPECT_NE(error.find("unexpected fusion source_id=1"), std::string::npos);
+}
+
 TEST(DataFusionToolSupportTest, ReportsFusionSourceMismatch) {
   const tool_gate::GateDataFusionConfig launch_config{
       .name = "gate_data_fusion",

@@ -81,6 +81,11 @@ class BinanceSourceWorker {
       : publisher_(config.book_ticker_shm),
         session_(std::move(config), publisher_) {}
 
+  ~BinanceSourceWorker() {
+    Stop();
+    Join();
+  }
+
   void Start() {
     thread_ = std::thread([this] { (void)session_.Start(); });
   }
@@ -116,6 +121,11 @@ class BinanceTradeSourceWorker {
  public:
   explicit BinanceTradeSourceWorker(aq_binance::DataSessionConfig config)
       : publisher_(config.trade_shm), session_(std::move(config), publisher_) {}
+
+  ~BinanceTradeSourceWorker() {
+    Stop();
+    Join();
+  }
 
   void Start() {
     thread_ = std::thread([this] { (void)session_.Start(); });
@@ -164,11 +174,11 @@ int RunConnected(const aq_tool::BinanceDataFusionConfig& launch_config,
   std::signal(SIGTERM, HandleSignal);
   signal_stop_requested.store(false, std::memory_order_relaxed);
 
+  fusion_thread.Start();
   for (std::unique_ptr<BinanceSourceWorker<WebSocketPolicy>>& worker :
        workers) {
     worker->Start();
   }
-  fusion_thread.Start();
 
   const auto start = std::chrono::steady_clock::now();
   while (!signal_stop_requested.load(std::memory_order_relaxed)) {
@@ -225,11 +235,11 @@ int RunConnectedTrade(const aq_tool::BinanceDataFusionConfig& launch_config,
   std::signal(SIGTERM, HandleSignal);
   signal_stop_requested.store(false, std::memory_order_relaxed);
 
+  fusion_thread.Start();
   for (std::unique_ptr<BinanceTradeSourceWorker<WebSocketPolicy>>& worker :
        workers) {
     worker->Start();
   }
-  fusion_thread.Start();
 
   const auto start = std::chrono::steady_clock::now();
   while (!signal_stop_requested.load(std::memory_order_relaxed)) {

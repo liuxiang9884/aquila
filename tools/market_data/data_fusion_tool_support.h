@@ -65,6 +65,17 @@ FindTradeFusionSource(
 }
 
 template <typename LaunchConfig>
+[[nodiscard]] bool HasLaunchSource(const LaunchConfig& launch_config,
+                                   std::int32_t source_id) {
+  for (const auto& launch_source : launch_config.sources) {
+    if (launch_source.source_id == source_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename LaunchConfig>
 [[nodiscard]] bool ValidateBookTickerFusionAlignment(
     const LaunchConfig& launch_config,
     const aquila::market_data::BookTickerFusionConfig& fusion_config,
@@ -88,6 +99,14 @@ template <typename LaunchConfig>
       *error = fmt::format("source_id={} channel mismatch fusion={} launch={}",
                            launch_source.source_id, fusion_source->channel_name,
                            launch_source.book_ticker_channel_name);
+      return false;
+    }
+  }
+  for (const aquila::market_data::BookTickerFusionSourceConfig& fusion_source :
+       fusion_config.sources) {
+    if (!HasLaunchSource(launch_config, fusion_source.source_id)) {
+      *error = fmt::format("unexpected fusion source_id={}",
+                           fusion_source.source_id);
       return false;
     }
   }
@@ -118,6 +137,14 @@ template <typename LaunchConfig>
       *error = fmt::format("source_id={} channel mismatch fusion={} launch={}",
                            launch_source.source_id, fusion_source->channel_name,
                            launch_source.trade_channel_name);
+      return false;
+    }
+  }
+  for (const aquila::market_data::TradeFusionSourceConfig& fusion_source :
+       fusion_config.sources) {
+    if (!HasLaunchSource(launch_config, fusion_source.source_id)) {
+      *error = fmt::format("unexpected fusion source_id={}",
+                           fusion_source.source_id);
       return false;
     }
   }
