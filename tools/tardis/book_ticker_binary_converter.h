@@ -23,6 +23,7 @@
 #include <fmt/core.h>
 
 #include "core/common/types.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 #include "core/utils/numeric.h"
 
@@ -359,6 +360,11 @@ inline void WriteBookTickerBinaryFile(const std::filesystem::path& output_path,
     throw std::runtime_error(
         fmt::format("failed to open output file '{}'", output_path.string()));
   }
+  if (!aquila::market_data::WriteMarketDataBinaryHeader(
+          output, aquila::config::DataReaderFeed::kBookTicker)) {
+    throw std::runtime_error(fmt::format(
+        "failed to write market data header to '{}'", output_path.string()));
+  }
   if (!records.empty()) {
     output.write(reinterpret_cast<const char*>(records.data()),
                  static_cast<std::streamsize>(records.size_bytes()));
@@ -372,19 +378,21 @@ inline void WriteBookTickerBinaryFile(const std::filesystem::path& output_path,
 inline std::vector<BookTicker> ReadBookTickerBinaryFile(
     const std::filesystem::path& input_path) {
   const std::uintmax_t file_size = std::filesystem::file_size(input_path);
-  if (file_size % sizeof(BookTicker) != 0) {
-    throw std::runtime_error("book ticker binary file has trailing bytes");
-  }
-  const std::uintmax_t record_count = file_size / sizeof(BookTicker);
-  if (record_count >
-      static_cast<std::uintmax_t>(std::numeric_limits<std::size_t>::max())) {
-    throw std::runtime_error("book ticker binary file is too large");
-  }
-
   std::ifstream input(input_path, std::ios::binary);
   if (!input.is_open()) {
     throw std::runtime_error(
         fmt::format("failed to open input file '{}'", input_path.string()));
+  }
+
+  const aquila::market_data::MarketDataBinaryHeader header =
+      aquila::market_data::ReadMarketDataBinaryHeader(input, input_path);
+  const std::uint64_t record_count =
+      aquila::market_data::CheckedMarketDataBinaryRecordCount(
+          input_path, file_size, header,
+          aquila::config::DataReaderFeed::kBookTicker);
+  if (record_count >
+      static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    throw std::runtime_error("book ticker binary file is too large");
   }
 
   std::vector<BookTicker> records(static_cast<std::size_t>(record_count));
@@ -435,6 +443,11 @@ inline BookTickerBinaryWriteStats WriteMergedBookTickerCsvStreams(
   if (!output.is_open()) {
     throw std::runtime_error(
         fmt::format("failed to open output file '{}'", output_path.string()));
+  }
+  if (!aquila::market_data::WriteMarketDataBinaryHeader(
+          output, aquila::config::DataReaderFeed::kBookTicker)) {
+    throw std::runtime_error(fmt::format(
+        "failed to write market data header to '{}'", output_path.string()));
   }
 
   while (true) {

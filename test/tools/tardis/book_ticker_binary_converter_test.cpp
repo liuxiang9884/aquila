@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include "core/market_data/market_data_binary_format.h"
+
 namespace aquila::tools::tardis {
 namespace {
 
@@ -108,7 +110,7 @@ TEST(BookTickerBinaryConverterTest,
   EXPECT_DOUBLE_EQ(merged[1].ask_price, 2.003);
 }
 
-TEST(BookTickerBinaryConverterTest, WritesBareBookTickerRecordsWithoutHeader) {
+TEST(BookTickerBinaryConverterTest, WritesTypedBookTickerRecordsWithHeader) {
   std::vector<BookTicker> records;
   records.push_back(BookTicker{
       .id = 0,
@@ -141,10 +143,15 @@ TEST(BookTickerBinaryConverterTest, WritesBareBookTickerRecordsWithoutHeader) {
   WriteBookTickerBinaryFile(output_path, records);
 
   EXPECT_EQ(std::filesystem::file_size(output_path),
-            records.size() * sizeof(BookTicker));
+            sizeof(aquila::market_data::MarketDataBinaryHeader) +
+                records.size() * sizeof(BookTicker));
 
   std::ifstream raw_input(output_path, std::ios::binary);
   ASSERT_TRUE(raw_input.is_open());
+  const aquila::market_data::MarketDataBinaryHeader header =
+      aquila::market_data::ReadMarketDataBinaryHeader(raw_input, output_path);
+  EXPECT_NO_THROW(aquila::market_data::ValidateMarketDataBinaryHeader(
+      header, aquila::config::DataReaderFeed::kBookTicker, output_path));
   BookTicker first{};
   raw_input.read(reinterpret_cast<char*>(&first), sizeof(first));
   ASSERT_TRUE(raw_input.good());
@@ -166,6 +173,42 @@ TEST(BookTickerBinaryConverterTest, WritesBareBookTickerRecordsWithoutHeader) {
     EXPECT_DOUBLE_EQ(loaded[i].ask_price, records[i].ask_price);
     EXPECT_DOUBLE_EQ(loaded[i].ask_volume, records[i].ask_volume);
   }
+
+  std::filesystem::remove(output_path);
+}
+
+TEST(BookTickerBinaryConverterTest, HeaderOnlyTypedFileReadsAsEmpty) {
+  const std::filesystem::path output_path =
+      std::filesystem::temp_directory_path() /
+      "aquila_book_ticker_binary_converter_empty_test.bin";
+  std::filesystem::remove(output_path);
+
+  WriteBookTickerBinaryFile(output_path, {});
+
+  EXPECT_EQ(std::filesystem::file_size(output_path),
+            sizeof(aquila::market_data::MarketDataBinaryHeader));
+  const std::vector<BookTicker> loaded = ReadBookTickerBinaryFile(output_path);
+  EXPECT_TRUE(loaded.empty());
+
+  std::filesystem::remove(output_path);
+}
+
+TEST(BookTickerBinaryConverterTest, RejectsRawBookTickerBinaryWithoutHeader) {
+  const std::filesystem::path output_path =
+      std::filesystem::temp_directory_path() /
+      "aquila_book_ticker_binary_converter_raw_test.bin";
+  std::filesystem::remove(output_path);
+
+  const BookTicker record = MakeTicker(0, Exchange::kGate, 2000000);
+  {
+    std::ofstream output(output_path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(output.is_open()) << output_path;
+    output.write(reinterpret_cast<const char*>(&record), sizeof(record));
+    ASSERT_TRUE(output.good()) << output_path;
+  }
+
+  EXPECT_THROW(static_cast<void>(ReadBookTickerBinaryFile(output_path)),
+               std::runtime_error);
 
   std::filesystem::remove(output_path);
 }

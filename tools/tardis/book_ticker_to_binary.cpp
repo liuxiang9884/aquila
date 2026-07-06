@@ -22,6 +22,7 @@
 #include <fmt/core.h>
 
 #include "core/config/instrument_catalog.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "tools/tardis/book_ticker_binary_converter.h"
 
 namespace {
@@ -252,8 +253,10 @@ std::filesystem::path ResolveOutputDir(const CliOptions& options) {
 
 std::uintmax_t ExpectedOutputSize(
     const tardis::BookTickerBinaryWriteStats& stats) {
-  return static_cast<std::uintmax_t>(stats.records_written) *
-         static_cast<std::uintmax_t>(sizeof(aquila::BookTicker));
+  return static_cast<std::uintmax_t>(
+             sizeof(aquila::market_data::MarketDataBinaryHeader)) +
+         static_cast<std::uintmax_t>(stats.records_written) *
+             static_cast<std::uintmax_t>(sizeof(aquila::BookTicker));
 }
 
 std::string TemporaryOutputSuffix(std::string_view date) {
