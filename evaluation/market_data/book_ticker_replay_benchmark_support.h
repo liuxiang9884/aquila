@@ -5,12 +5,14 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
 #include "core/common/result.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 
 namespace aquila::market_data::evaluation {
@@ -37,24 +39,28 @@ struct LatencySummary {
     return result;
   }
 
-  const std::uintmax_t file_size = std::filesystem::file_size(path);
-  if (file_size % sizeof(BookTicker) != 0) {
-    result.error = "input size must be a multiple of BookTicker";
-    return result;
-  }
-
-  std::uint64_t record_count =
-      static_cast<std::uint64_t>(file_size / sizeof(BookTicker));
-  if (max_records != 0 && record_count > max_records) {
-    record_count = max_records;
-  }
-
-  std::vector<BookTicker> records(record_count);
   std::ifstream input(path, std::ios::binary);
   if (!input.is_open()) {
     result.error = "failed to open input path: " + path.string();
     return result;
   }
+
+  std::uint64_t record_count = 0;
+  try {
+    const std::uintmax_t file_size = std::filesystem::file_size(path);
+    const MarketDataBinaryHeader header =
+        ReadMarketDataBinaryHeader(input, path);
+    record_count = CheckedMarketDataBinaryRecordCount(
+        path, file_size, header, config::DataReaderFeed::kBookTicker);
+  } catch (const std::exception& exc) {
+    result.error = exc.what();
+    return result;
+  }
+  if (max_records != 0 && record_count > max_records) {
+    record_count = max_records;
+  }
+
+  std::vector<BookTicker> records(record_count);
   if (!records.empty()) {
     input.read(
         reinterpret_cast<char*>(records.data()),

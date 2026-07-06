@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 
 namespace aquila::market_data::evaluation {
@@ -38,11 +39,17 @@ void WriteTicker(std::ofstream& output, const BookTicker& ticker) {
   output.write(reinterpret_cast<const char*>(&ticker), sizeof(ticker));
 }
 
+void WriteTypedHeader(std::ofstream& output) {
+  ASSERT_TRUE(aquila::market_data::WriteMarketDataBinaryHeader(
+      output, aquila::config::DataReaderFeed::kBookTicker));
+}
+
 TEST(BookTickerReplayBenchmarkSupportTest, LoadsBookTickerDump) {
   const std::filesystem::path path = TempPath("valid.bin");
   {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     ASSERT_TRUE(output.is_open());
+    WriteTypedHeader(output);
     WriteTicker(output, MakeTicker(1, 1'000));
     WriteTicker(output, MakeTicker(2, 1'300));
   }
@@ -61,6 +68,7 @@ TEST(BookTickerReplayBenchmarkSupportTest, LimitsLoadedRecords) {
   {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     ASSERT_TRUE(output.is_open());
+    WriteTypedHeader(output);
     WriteTicker(output, MakeTicker(1, 1'000));
     WriteTicker(output, MakeTicker(2, 1'300));
   }
@@ -73,11 +81,41 @@ TEST(BookTickerReplayBenchmarkSupportTest, LimitsLoadedRecords) {
   std::filesystem::remove(path);
 }
 
+TEST(BookTickerReplayBenchmarkSupportTest, HeaderOnlyDumpLoadsAsEmpty) {
+  const std::filesystem::path path = TempPath("empty.bin");
+  {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(output.is_open());
+    WriteTypedHeader(output);
+  }
+
+  const auto result = LoadBookTickerDump(path, 0);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_TRUE(result.value.empty());
+  std::filesystem::remove(path);
+}
+
+TEST(BookTickerReplayBenchmarkSupportTest, RejectsRawBookTickerDump) {
+  const std::filesystem::path path = TempPath("raw.bin");
+  {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(output.is_open());
+    WriteTicker(output, MakeTicker(1, 1'000));
+  }
+
+  const auto result = LoadBookTickerDump(path, 0);
+
+  EXPECT_FALSE(result.ok);
+  std::filesystem::remove(path);
+}
+
 TEST(BookTickerReplayBenchmarkSupportTest, RejectsPartialRecordDump) {
   const std::filesystem::path path = TempPath("partial.bin");
   {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     ASSERT_TRUE(output.is_open());
+    WriteTypedHeader(output);
     const char byte = 7;
     output.write(&byte, 1);
   }
@@ -85,7 +123,7 @@ TEST(BookTickerReplayBenchmarkSupportTest, RejectsPartialRecordDump) {
   const auto result = LoadBookTickerDump(path, 0);
 
   EXPECT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("multiple of BookTicker"), std::string::npos);
+  EXPECT_NE(result.error.find("payload size"), std::string::npos);
   std::filesystem::remove(path);
 }
 

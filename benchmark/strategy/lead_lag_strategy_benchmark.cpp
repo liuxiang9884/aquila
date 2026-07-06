@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -9,6 +10,7 @@
 
 #include "benchmark/strategy/lead_lag_benchmark_support.h"
 #include "core/common/types.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 #include "core/trading/order_types.h"
 #include "strategy/lead_lag/config.h"
@@ -127,9 +129,24 @@ struct NoopContext {
     return {};
   }
 
+  std::uint64_t record_count = 0;
+  try {
+    const std::uintmax_t file_size = std::filesystem::file_size(path);
+    const aquila::market_data::MarketDataBinaryHeader header =
+        aquila::market_data::ReadMarketDataBinaryHeader(input, path);
+    record_count = aquila::market_data::CheckedMarketDataBinaryRecordCount(
+        path, file_size, header,
+        aquila::config::DataReaderFeed::kBookTicker);
+  } catch (const std::exception&) {
+    return {};
+  }
+  if (record_count > limit) {
+    record_count = limit;
+  }
+
   std::vector<BookTicker> trace;
-  trace.reserve(limit);
-  while (trace.size() < limit) {
+  trace.reserve(static_cast<std::size_t>(record_count));
+  while (trace.size() < record_count) {
     BookTicker ticker{};
     input.read(reinterpret_cast<char*>(&ticker),
                static_cast<std::streamsize>(sizeof(BookTicker)));
