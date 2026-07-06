@@ -231,7 +231,7 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 
 1. 读取 `<run_dir>/exit_codes.tsv`，确认 data session、recorder、live strategy、replay 和 compare 的退出码。
 2. 读取 `<run_dir>/orchestrator.log`，确认启动顺序、运行时间窗口、停止顺序和 replay / compare 是否完成。
-3. 检查 `<run_dir>/recorded_book_ticker.bin` 和 `<run_dir>/recorded_trade.bin` 是否为 typed binary v1，确认文件大小至少 16 bytes、header feed/type 与对应 TOML `feed` 一致，且 `(file_size - 16) % record_size == 0`；BookTicker 当前记录数为 `(file_size - 16) / 64`，Trade 文件可用 trade-only historical reader probe 验证但当前不参与 LeadLag replay。header-only 表示 0 records。
+3. 检查 `<run_dir>/recorded_book_ticker.bin` 和 `<run_dir>/recorded_trade.bin` 是否为 typed binary v1，确认文件大小至少 16 bytes、header feed/type 与对应 TOML `feed` 一致，且 `(file_size - 16) % record_size == 0`；记录数按 header 中的 `record_size` 计算为 `(file_size - 16) / record_size`。Trade 文件可用 trade-only historical reader probe 验证但当前不参与 LeadLag replay。header-only 表示 0 records。
 4. 在 `<run_dir>/data_reader_recorder.stdout.log` 中查找 `recorder_stats feed=book_ticker`、`exchange_stats feed=book_ticker` 和 `source_stats`，重点看每个 source 的 `book_ticker_count`、`skipped`、`overruns` 和最后 `BookTicker.id`。
 5. 在 Gate / Binance data session stdout 或 log 中查找最终 `result=... active=...`，确认 WebSocket session 曾进入 active 状态并正常关闭。
 6. 在 `<run_dir>/lead_lag_strategy_live.stdout.log` 中查找 `lead_lag_strategy_signal_only_summary`，记录 live 侧 `book_tickers`、`signals`、`open`、`close`、`stoploss`、runtime loop diagnostics 和 recovery fields。
