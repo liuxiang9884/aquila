@@ -44,15 +44,18 @@ def render_data_reader_config(
     manifest_path: Path,
     name: str,
     catalog_path: Path,
+    feed: str = "book_ticker",
     max_events_per_drain: int = 4096,
 ) -> str:
     if not name:
         raise ValueError("name must not be empty")
+    if feed not in {"book_ticker", "trade"}:
+        raise ValueError("feed must be book_ticker or trade")
     if max_events_per_drain <= 0:
         raise ValueError("max_events_per_drain must be positive")
     files = load_replayable_files(manifest_path)
     file_lines = "\n".join(f"  {toml_quote(str(path))}," for path in files)
-    source_name = f"{name}_book_ticker"
+    source_name = f"{name}_{feed}"
     return (
         "[instrument_catalog]\n"
         f"file = {toml_quote(str(catalog_path))}\n"
@@ -78,7 +81,7 @@ def render_data_reader_config(
         "[[data_reader.sources]]\n"
         f"name = {toml_quote(source_name)}\n"
         'type = "binary_file"\n'
-        'feed = "book_ticker"\n'
+        f"feed = {toml_quote(feed)}\n"
         "files = [\n"
         f"{file_lines}\n"
         "]\n"
@@ -98,6 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--catalog", type=Path, default=Path("config/instruments/usdt_futures.csv")
     )
+    parser.add_argument(
+        "--feed", choices=["book_ticker", "trade"], default="book_ticker"
+    )
     parser.add_argument("--max-events-per-drain", type=int, default=4096)
     return parser.parse_args()
 
@@ -108,6 +114,7 @@ def main() -> int:
         manifest_path=args.manifest,
         name=args.name,
         catalog_path=args.catalog,
+        feed=args.feed,
         max_events_per_drain=args.max_events_per_drain,
     )
     if args.output.parent:

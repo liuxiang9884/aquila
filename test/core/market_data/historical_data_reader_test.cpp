@@ -51,7 +51,12 @@ struct RecordingHandler {
     book_tickers.push_back(book_ticker);
   }
 
+  void OnTrade(const aquila::Trade& trade) noexcept {
+    trades.push_back(trade);
+  }
+
   std::vector<aquila::BookTicker> book_tickers;
+  std::vector<aquila::Trade> trades;
 };
 
 static_assert(md::DataReaderLike<md::HistoricalDataReader<>, RecordingHandler>);
@@ -87,6 +92,24 @@ aquila::BookTicker MakeBookTicker(std::int64_t id, aquila::Exchange exchange) {
   };
 }
 
+aquila::Trade MakeTrade(std::int64_t id, aquila::Exchange exchange) {
+  return aquila::Trade{
+      .id = id,
+      .symbol_id = static_cast<std::int32_t>(200 + id),
+      .exchange = exchange,
+      .side = id % 2 == 0 ? aquila::OrderSide::kBuy
+                          : aquila::OrderSide::kSell,
+      .reserved = 0,
+      .exchange_ns = 1'770'000'000'001'000'000 + id,
+      .trade_ns = 1'770'000'000'001'100'000 + id,
+      .local_ns = 1'770'000'000'001'200'000 + id,
+      .price = 66'000.25 + static_cast<double>(id),
+      .volume = 0.001 + static_cast<double>(id) * 0.0001,
+      .batch_index = static_cast<std::uint32_t>(id % 4),
+      .batch_count = 4,
+  };
+}
+
 void WriteBookTickerFile(const std::filesystem::path& path,
                          const std::vector<aquila::BookTicker>& records) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -99,8 +122,30 @@ void WriteBookTickerFile(const std::filesystem::path& path,
   ASSERT_TRUE(output.good()) << path;
 }
 
+void WriteTradeFile(const std::filesystem::path& path,
+                    const std::vector<aquila::Trade>& records) {
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  ASSERT_TRUE(output.is_open()) << path;
+  if (!records.empty()) {
+    output.write(reinterpret_cast<const char*>(records.data()),
+                 static_cast<std::streamsize>(records.size() *
+                                              sizeof(aquila::Trade)));
+  }
+  ASSERT_TRUE(output.good()) << path;
+}
+
 void WriteTrailingByteFile(const std::filesystem::path& path) {
   const aquila::BookTicker record = MakeBookTicker(1, aquila::Exchange::kGate);
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  ASSERT_TRUE(output.is_open()) << path;
+  output.write(reinterpret_cast<const char*>(&record), sizeof(record));
+  const char trailing = '\x01';
+  output.write(&trailing, sizeof(trailing));
+  ASSERT_TRUE(output.good()) << path;
+}
+
+void WriteTradeTrailingByteFile(const std::filesystem::path& path) {
+  const aquila::Trade record = MakeTrade(1, aquila::Exchange::kGate);
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open()) << path;
   output.write(reinterpret_cast<const char*>(&record), sizeof(record));
@@ -130,6 +175,27 @@ cfg::DataReaderConfig MakeBinaryReaderConfig(
   return config;
 }
 
+cfg::DataReaderConfig MakeTradeBinaryReaderConfig(
+    std::vector<std::filesystem::path> files,
+    std::uint32_t max_events_per_drain = 64) {
+  cfg::DataReaderConfig config;
+  config.name = "binary_trade_reader";
+  config.max_events_per_drain = max_events_per_drain;
+  config.sources.push_back(cfg::DataReaderSourceConfig{
+      .name = "binary_trade",
+      .type = cfg::DataReaderSourceType::kBinaryFile,
+      .exchange = aquila::Exchange::kGate,
+      .feed = cfg::DataReaderFeed::kTrade,
+      .shm_name = {},
+      .channel_name = {},
+      .files = std::move(files),
+      .start_position = cfg::DataReaderStartPosition::kEarliestVisible,
+      .read_mode = cfg::DataReaderReadMode::kDrain,
+      .required = true,
+  });
+  return config;
+}
+
 void ExpectBookTickerEquals(const aquila::BookTicker& actual,
                             const aquila::BookTicker& expected) {
   EXPECT_EQ(actual.id, expected.id);
@@ -141,6 +207,22 @@ void ExpectBookTickerEquals(const aquila::BookTicker& actual,
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
   EXPECT_DOUBLE_EQ(actual.ask_price, expected.ask_price);
   EXPECT_DOUBLE_EQ(actual.ask_volume, expected.ask_volume);
+}
+
+void ExpectTradeEquals(const aquila::Trade& actual,
+                       const aquila::Trade& expected) {
+  EXPECT_EQ(actual.id, expected.id);
+  EXPECT_EQ(actual.symbol_id, expected.symbol_id);
+  EXPECT_EQ(actual.exchange, expected.exchange);
+  EXPECT_EQ(actual.side, expected.side);
+  EXPECT_EQ(actual.reserved, expected.reserved);
+  EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.trade_ns, expected.trade_ns);
+  EXPECT_EQ(actual.local_ns, expected.local_ns);
+  EXPECT_DOUBLE_EQ(actual.price, expected.price);
+  EXPECT_DOUBLE_EQ(actual.volume, expected.volume);
+  EXPECT_EQ(actual.batch_index, expected.batch_index);
+  EXPECT_EQ(actual.batch_count, expected.batch_count);
 }
 
 TEST(HistoricalDataReaderTest, PollReadsOneRecordAtATimeAcrossFiles) {
@@ -240,6 +322,83 @@ TEST(HistoricalDataReaderTest, DrainContinuesAcrossFileBoundaries) {
   EXPECT_EQ(stats.files_completed, 3U);
 }
 
+TEST(HistoricalDataReaderTest, PollReadsTradeRecordsAcrossFiles) {
+  TempDir temp_dir;
+  const std::filesystem::path first_file = temp_dir.File("first_trade.bin");
+  const std::filesystem::path second_file = temp_dir.File("second_trade.bin");
+  const std::vector<aquila::Trade> expected{
+      MakeTrade(1, aquila::Exchange::kGate),
+      MakeTrade(2, aquila::Exchange::kBinance),
+      MakeTrade(3, aquila::Exchange::kGate),
+  };
+  WriteTradeFile(first_file, {expected[0], expected[1]});
+  WriteTradeFile(second_file, {expected[2]});
+
+  md::HistoricalDataReader<md::HistoricalDataReaderDiagnostics> reader(
+      MakeTradeBinaryReaderConfig({first_file, second_file}));
+  EXPECT_FALSE(reader.finished());
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.trades.size(), 1U);
+  ExpectTradeEquals(handler.trades[0], expected[0]);
+  EXPECT_TRUE(handler.book_tickers.empty());
+  EXPECT_FALSE(reader.finished());
+
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.trades.size(), 2U);
+  ExpectTradeEquals(handler.trades[1], expected[1]);
+  EXPECT_FALSE(reader.finished());
+
+  EXPECT_EQ(reader.Poll(handler), 1U);
+  ASSERT_EQ(handler.trades.size(), expected.size());
+  ExpectTradeEquals(handler.trades[2], expected[2]);
+  EXPECT_TRUE(reader.finished());
+
+  EXPECT_EQ(reader.Poll(handler), 0U);
+  EXPECT_EQ(handler.trades.size(), expected.size());
+  EXPECT_TRUE(reader.finished());
+
+  const md::HistoricalDataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.total_count, 3U);
+  EXPECT_EQ(stats.book_ticker_count, 0U);
+  EXPECT_EQ(stats.trade_count, 3U);
+  EXPECT_EQ(stats.files_completed, 2U);
+}
+
+TEST(HistoricalDataReaderTest, DrainReadsTradeRecordsAtMostMaxEvents) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("trades.bin");
+  WriteTradeFile(file, {MakeTrade(10, aquila::Exchange::kGate),
+                        MakeTrade(11, aquila::Exchange::kGate),
+                        MakeTrade(12, aquila::Exchange::kGate)});
+
+  md::HistoricalDataReader<md::HistoricalDataReaderDiagnostics> reader(
+      MakeTradeBinaryReaderConfig({file}, 2));
+
+  RecordingHandler handler;
+  EXPECT_EQ(reader.Drain(handler, 0), 0U);
+  EXPECT_TRUE(handler.trades.empty());
+
+  EXPECT_EQ(reader.Drain(handler, 2), 2U);
+  ASSERT_EQ(handler.trades.size(), 2U);
+  EXPECT_EQ(handler.trades[0].id, 10);
+  EXPECT_EQ(handler.trades[1].id, 11);
+  EXPECT_FALSE(reader.finished());
+
+  handler.trades.clear();
+  EXPECT_EQ(reader.Drain(handler, 10), 1U);
+  ASSERT_EQ(handler.trades.size(), 1U);
+  EXPECT_EQ(handler.trades[0].id, 12);
+  EXPECT_TRUE(reader.finished());
+
+  const md::HistoricalDataReaderStats& stats = reader.diagnostics().stats();
+  EXPECT_EQ(stats.total_count, 3U);
+  EXPECT_EQ(stats.book_ticker_count, 0U);
+  EXPECT_EQ(stats.trade_count, 3U);
+  EXPECT_EQ(stats.files_completed, 1U);
+}
+
 TEST(HistoricalDataReaderTest, EmptyPollAfterAllFilesCompleted) {
   TempDir temp_dir;
   const std::filesystem::path file = temp_dir.File("single.bin");
@@ -336,6 +495,15 @@ TEST(HistoricalDataReaderTest, RejectsFileWithTrailingBytes) {
   WriteTrailingByteFile(file);
 
   EXPECT_THROW((md::HistoricalDataReader{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsTradeFileWithTrailingBytes) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("trailing_trade.bin");
+  WriteTradeTrailingByteFile(file);
+
+  EXPECT_THROW((md::HistoricalDataReader{MakeTradeBinaryReaderConfig({file})}),
                std::runtime_error);
 }
 

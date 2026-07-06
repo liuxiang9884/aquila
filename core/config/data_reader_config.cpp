@@ -380,11 +380,6 @@ class DataReaderConfigParser {
       }
     }
     if (source.type == DataReaderSourceType::kBinaryFile) {
-      if (source.feed != DataReaderFeed::kBookTicker) {
-        Fail("data_reader.sources.feed",
-             " trade is only supported for shm sources");
-        return;
-      }
       if (source.files.empty()) {
         Fail("data_reader.sources.files", " is required");
         return;

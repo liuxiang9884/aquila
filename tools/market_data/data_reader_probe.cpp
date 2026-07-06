@@ -185,12 +185,14 @@ int RunHistoricalProbe(aquila::config::DataReaderConfig config,
   const auto& stats = reader.diagnostics().stats();
   NOVA_INFO(
       "result=ok mode=historical stop_reason={} polls={} "
-      "handler_book_tickers={} diagnostics_total_count={} files_completed={}",
+      "handler_book_tickers={} handler_trades={} diagnostics_total_count={} "
+      "files_completed={}",
       reader.finished()      ? "finished"
       : stopped_by_signal    ? "signal"
       : stopped_by_max_polls ? "max_polls"
                              : "completed",
-      polls, handler.book_tickers(), stats.total_count, stats.files_completed);
+      polls, handler.book_tickers(), handler.trades(), stats.total_count,
+      stats.files_completed);
   return 0;
 }
 

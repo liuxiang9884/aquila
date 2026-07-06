@@ -249,24 +249,33 @@ read_mode = "drain"
   EXPECT_TRUE(source.required);
 }
 
-TEST(DataReaderConfigTest, RejectsTradeBinaryFileSource) {
+TEST(DataReaderConfigTest, ParsesTradeBinaryFileSource) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]
-name = "binary_replay_reader"
+name = "binary_trade_reader"
 
 [[data_reader.sources]]
 name = "binary_trade"
 type = "binary_file"
 feed = "trade"
-files = ["/tmp/trade.bin"]
+files = ["/home/liuxiang/tmp/trade.bin"]
 start_position = "earliest_visible"
 read_mode = "drain"
 )toml";
 
   const toml::parse_result parsed = toml::parse(toml_text);
   const auto result = aquila::config::ParseDataReaderConfig(parsed);
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("trade"), std::string::npos);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  const aquila::config::DataReaderSourceConfig& source =
+      result.value.sources[0];
+  EXPECT_EQ(source.name, "binary_trade");
+  EXPECT_EQ(source.type, aquila::config::DataReaderSourceType::kBinaryFile);
+  EXPECT_EQ(source.feed, aquila::config::DataReaderFeed::kTrade);
+  ASSERT_EQ(source.files.size(), 1U);
+  EXPECT_EQ(source.files[0],
+            std::filesystem::path{"/home/liuxiang/tmp/trade.bin"});
 }
 
 TEST(DataReaderConfigTest, RejectsBinaryFileWithoutFiles) {

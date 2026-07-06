@@ -44,10 +44,35 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
         self.assertIn('name = "persistent_md_replay"', config_text)
         self.assertIn('name = "persistent_md_replay_book_ticker"', config_text)
         self.assertIn('type = "binary_file"', config_text)
+        self.assertIn('feed = "book_ticker"', config_text)
         self.assertIn('start_position = "earliest_visible"', config_text)
         self.assertIn('read_mode = "drain"', config_text)
         self.assertLess(config_text.find(str(first)), config_text.find(str(second)))
         self.assertNotIn(str(tmp), config_text)
+
+    def test_generates_trade_reader_config_from_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            trade_file = root / "segments_trade" / "trade_000001.bin"
+            manifest = root / "trade_manifest.jsonl"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(
+                json.dumps({"sequence": 1, "file": str(trade_file)}) + "\n",
+                encoding="utf-8",
+            )
+
+            config_text = manifest_config.render_data_reader_config(
+                manifest_path=manifest,
+                name="trade_replay",
+                catalog_path=Path("config/instruments/usdt_futures.csv"),
+                feed="trade",
+            )
+
+        self.assertIn('name = "trade_replay"', config_text)
+        self.assertIn('name = "trade_replay_trade"', config_text)
+        self.assertIn('type = "binary_file"', config_text)
+        self.assertIn('feed = "trade"', config_text)
+        self.assertIn(str(trade_file), config_text)
 
     def test_rejects_manifest_without_replayable_segments(self):
         with tempfile.TemporaryDirectory() as temp_dir:
