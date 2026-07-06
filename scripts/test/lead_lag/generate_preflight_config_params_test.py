@@ -306,6 +306,69 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertFalse(created_processes[0].terminated)
         self.assertFalse(created_processes[0].killed)
 
+    def test_zstd_partial_typed_payload_reports_natural_zstd_failure(self):
+        payload = io.BytesIO()
+        typed_binary.write_header(payload, "book_ticker")
+        payload.write(b"x" * 48)
+        created_processes = []
+
+        class PartialFailedProcess:
+            def __init__(self, stderr_file):
+                self.stdout = io.BytesIO(payload.getvalue())
+                self.return_code = 1
+                self.waited = False
+                self.terminated = False
+                self.killed = False
+                stderr_file.write(b"fixture zstd partial failure\n")
+                stderr_file.flush()
+
+            def poll(self):
+                if not self.waited:
+                    return None
+                return self.return_code
+
+            def terminate(self):
+                self.terminated = True
+                self.return_code = -15
+
+            def kill(self):
+                self.killed = True
+                self.return_code = -9
+
+            def wait(self, timeout=None):
+                self.waited = True
+                return self.return_code
+
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            compressed_path = Path(temp_dir) / "book_ticker.bin.zst"
+            compressed_path.write_bytes(b"mock-zstd")
+
+            def popen_side_effect(*args, **kwargs):
+                process = PartialFailedProcess(kwargs["stderr"])
+                created_processes.append(process)
+                return process
+
+            with mock.patch.object(
+                self.module.subprocess,
+                "Popen",
+                side_effect=popen_side_effect,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "zstd failed .* fixture zstd partial failure"
+                ):
+                    list(
+                        self.module.iter_book_ticker_chunks(
+                            compressed_path,
+                            dtype=self.dtype,
+                            chunk_records=2,
+                        )
+                    )
+
+        self.assertEqual(len(created_processes), 1)
+        self.assertTrue(created_processes[0].waited)
+        self.assertFalse(created_processes[0].terminated)
+        self.assertFalse(created_processes[0].killed)
+
     def test_zstd_typed_validation_error_is_not_masked_by_termination(self):
         records = self.make_records()
         raw_payload = records.tobytes() + (b"x" * 1_000_000)

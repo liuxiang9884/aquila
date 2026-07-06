@@ -104,14 +104,7 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
 
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
-            missing_header_error = (
-                stream_error is not None
-                and "missing market data header" in str(stream_error)
-            )
-            if return_code != 0 and (
-                stream_error is None
-                or (missing_header_error and not stopped_for_stream_error)
-            ):
+            if return_code != 0 and not stopped_for_stream_error:
                 raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
             if stream_error is not None:
                 raise stream_error
