@@ -147,6 +147,49 @@ class TypedBinaryTest(unittest.TestCase):
         self.assertEqual([len(chunk) for chunk in chunks], [2, 1])
         np.testing.assert_array_equal(np.concatenate(chunks), records)
 
+    def test_stream_chunks_handle_non_record_aligned_short_reads(self):
+        class ShortReadBytesIO(io.BytesIO):
+            def read(self, size: int = -1) -> bytes:
+                if size < 0:
+                    return super().read(size)
+                return super().read(min(size, 17))
+
+        records = self.make_book_records(4)
+        payload = io.BytesIO()
+        self.module.write_header(payload, "book_ticker")
+        payload.write(records.tobytes())
+
+        stream = ShortReadBytesIO(payload.getvalue())
+        chunks = list(
+            self.module.iter_record_chunks_from_stream(
+                stream,
+                "book_ticker",
+                chunk_records=2,
+                source_name="short-read.bin.zst",
+            )
+        )
+
+        self.assertEqual(sum(len(chunk) for chunk in chunks), 4)
+        np.testing.assert_array_equal(np.concatenate(chunks), records)
+
+    def test_stream_chunks_reject_trailing_payload_bytes(self):
+        records = self.make_book_records(1)
+        payload = io.BytesIO()
+        self.module.write_header(payload, "book_ticker")
+        payload.write(records.tobytes())
+        payload.write(b"x")
+        payload.seek(0)
+
+        with self.assertRaisesRegex(ValueError, "trailing bytes"):
+            list(
+                self.module.iter_record_chunks_from_stream(
+                    payload,
+                    "book_ticker",
+                    chunk_records=2,
+                    source_name="trailing.bin.zst",
+                )
+            )
+
     def test_wrong_feed_is_rejected(self):
         records = self.make_book_records(1)
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:

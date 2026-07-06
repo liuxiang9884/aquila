@@ -196,21 +196,40 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         payload.seek(0)
 
         class FakeProcess:
-            def __init__(self):
+            def __init__(self, stderr_file):
                 self.stdout = io.BytesIO(payload.getvalue())
-                self.stderr = io.BytesIO()
+                self.stderr_file = stderr_file
+                self.return_code = 0
+                self.terminated = False
+                self.killed = False
 
-            def wait(self):
-                return 0
+            def poll(self):
+                return self.return_code
+
+            def terminate(self):
+                self.terminated = True
+                self.return_code = -15
+
+            def kill(self):
+                self.killed = True
+                self.return_code = -9
+
+            def wait(self, timeout=None):
+                return self.return_code
 
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
             compressed_path = Path(temp_dir) / "book_ticker.bin.zst"
             compressed_path.write_bytes(b"mock-zstd")
 
+            def popen_side_effect(*args, **kwargs):
+                self.assertIs(kwargs["stdout"], self.module.subprocess.PIPE)
+                self.assertIsNot(kwargs["stderr"], self.module.subprocess.PIPE)
+                return FakeProcess(kwargs["stderr"])
+
             with mock.patch.object(
                 self.module.subprocess,
                 "Popen",
-                side_effect=lambda *args, **kwargs: FakeProcess(),
+                side_effect=popen_side_effect,
             ):
                 result = self.module.generate_params(
                     input_paths=[compressed_path],
@@ -223,6 +242,55 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
 
         self.assertEqual(result["freshness"]["lead_sample_count"], 3)
         self.assertEqual(result["freshness"]["lag_sample_count"], 3)
+
+    def test_zstd_nonzero_return_reports_stderr_text(self):
+        class FailedProcess:
+            def __init__(self, stderr_file):
+                self.stdout = io.BytesIO(b"")
+                self.return_code = 1
+                self.terminated = False
+                self.killed = False
+                stderr_file.write(b"fixture zstd failure\n")
+                stderr_file.flush()
+
+            def poll(self):
+                return self.return_code
+
+            def terminate(self):
+                self.terminated = True
+                self.return_code = -15
+
+            def kill(self):
+                self.killed = True
+                self.return_code = -9
+
+            def wait(self, timeout=None):
+                return self.return_code
+
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            compressed_path = Path(temp_dir) / "book_ticker.bin.zst"
+            compressed_path.write_bytes(b"mock-zstd")
+
+            def popen_side_effect(*args, **kwargs):
+                self.assertIs(kwargs["stdout"], self.module.subprocess.PIPE)
+                self.assertIsNot(kwargs["stderr"], self.module.subprocess.PIPE)
+                return FailedProcess(kwargs["stderr"])
+
+            with mock.patch.object(
+                self.module.subprocess,
+                "Popen",
+                side_effect=popen_side_effect,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "zstd failed .* fixture zstd failure"
+                ):
+                    list(
+                        self.module.iter_book_ticker_chunks(
+                            compressed_path,
+                            dtype=self.dtype,
+                            chunk_records=2,
+                        )
+                    )
 
     def test_renders_generated_toml_patch(self):
         params = {

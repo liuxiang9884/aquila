@@ -5,6 +5,7 @@ import json
 import math
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import Iterator, Sequence
@@ -56,37 +57,49 @@ def _iter_raw_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
     )
 
 
+def _stop_process(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
 def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
     if np.dtype(dtype) != typed_binary.book_ticker_dtype():
         raise ValueError("dtype must match BookTicker ABI")
-    process = subprocess.Popen(
-        ["zstd", "-dc", str(path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert process.stdout is not None
-    assert process.stderr is not None
-    stream_error: Exception | None = None
-    try:
+    with tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(
+            ["zstd", "-dc", str(path)],
+            stdout=subprocess.PIPE,
+            stderr=stderr_file,
+        )
+        assert process.stdout is not None
+        stream_error: Exception | None = None
         try:
-            yield from typed_binary.iter_record_chunks_from_stream(
-                process.stdout,
-                "book_ticker",
-                chunk_records=chunk_records,
-                source_name=str(path),
-            )
-        except Exception as error:
-            stream_error = error
-            while process.stdout.read(1024 * 1024):
-                pass
-    finally:
-        process.stdout.close()
-    stderr = process.stderr.read().decode("utf-8", errors="replace")
-    return_code = process.wait()
-    if return_code != 0:
-        raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
-    if stream_error is not None:
-        raise stream_error
+            try:
+                yield from typed_binary.iter_record_chunks_from_stream(
+                    process.stdout,
+                    "book_ticker",
+                    chunk_records=chunk_records,
+                    source_name=str(path),
+                )
+            except Exception as error:
+                stream_error = error
+                _stop_process(process)
+            finally:
+                process.stdout.close()
+            return_code = process.wait()
+            stderr_file.seek(0)
+            stderr = stderr_file.read().decode("utf-8", errors="replace")
+            if return_code != 0:
+                raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
+            if stream_error is not None:
+                raise stream_error
+        finally:
+            _stop_process(process)
 
 
 def iter_book_ticker_chunks(

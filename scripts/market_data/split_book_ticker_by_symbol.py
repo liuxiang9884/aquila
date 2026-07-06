@@ -242,7 +242,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-trailing-bytes",
         action="store_true",
-        help="ignore a live-growing file tail smaller than one BookTicker record",
+        help="deprecated; typed BookTicker input rejects trailing bytes",
     )
     parser.add_argument(
         "--json-output",
