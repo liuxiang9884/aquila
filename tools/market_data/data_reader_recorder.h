@@ -21,6 +21,7 @@
 
 #include "core/common/types.h"
 #include "core/config/data_reader_config.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 
 namespace aquila::tools::market_data {
@@ -72,6 +73,8 @@ inline constexpr std::array<Exchange, 6> kRecorderTrackedExchanges{
 
 struct BookTickerRecorderTraits {
   static constexpr std::string_view kFeedName{"book_ticker"};
+  static constexpr config::DataReaderFeed kFeed{
+      config::DataReaderFeed::kBookTicker};
 
   [[nodiscard]] static Exchange ExchangeOf(const BookTicker& record) noexcept {
     return record.exchange;
@@ -90,6 +93,7 @@ struct BookTickerRecorderTraits {
 
 struct TradeRecorderTraits {
   static constexpr std::string_view kFeedName{"trade"};
+  static constexpr config::DataReaderFeed kFeed{config::DataReaderFeed::kTrade};
 
   [[nodiscard]] static Exchange ExchangeOf(const Trade& record) noexcept {
     return record.exchange;
@@ -263,22 +267,7 @@ class TypedBinaryRecorder {
                       RecorderWriteMode write_mode)
       : output_path_(std::move(output_path)) {
     PreflightSingleOutputPath(output_path_, Traits::kFeedName);
-
-    std::ios::openmode mode = std::ios::binary;
-    switch (write_mode) {
-      case RecorderWriteMode::kTruncate:
-        mode |= std::ios::trunc;
-        break;
-      case RecorderWriteMode::kAppend:
-        mode |= std::ios::app;
-        break;
-    }
-
-    output_.open(output_path_, mode);
-    if (!output_.is_open()) {
-      throw std::runtime_error(fmt::format("failed to open output file '{}'",
-                                           output_path_.string()));
-    }
+    OpenOutput(write_mode);
   }
 
   TypedBinaryRecorder(const TypedBinaryRecorder&) = delete;
@@ -327,6 +316,84 @@ class TypedBinaryRecorder {
   }
 
  private:
+  void OpenOutput(RecorderWriteMode write_mode) {
+    switch (write_mode) {
+      case RecorderWriteMode::kTruncate:
+        output_.open(output_path_, std::ios::binary | std::ios::trunc);
+        if (!output_.is_open()) {
+          throw std::runtime_error(fmt::format("failed to open output file '{}'",
+                                               output_path_.string()));
+        }
+        if (!aquila::market_data::WriteMarketDataBinaryHeader(output_,
+                                                              Traits::kFeed)) {
+          throw std::runtime_error(fmt::format(
+              "failed to write market data header to '{}'",
+              output_path_.string()));
+        }
+        return;
+
+      case RecorderWriteMode::kAppend:
+        PrepareAppendTarget();
+        output_.open(output_path_, std::ios::binary | std::ios::app);
+        if (!output_.is_open()) {
+          throw std::runtime_error(fmt::format("failed to open output file '{}'",
+                                               output_path_.string()));
+        }
+        return;
+    }
+  }
+
+  void PrepareAppendTarget() {
+    std::error_code exists_error;
+    const bool exists = std::filesystem::exists(output_path_, exists_error);
+    if (exists_error) {
+      throw std::runtime_error(fmt::format(
+          "failed to inspect output file '{}': {}", output_path_.string(),
+          exists_error.message()));
+    }
+    if (!exists) {
+      std::ofstream create(output_path_, std::ios::binary | std::ios::trunc);
+      if (!create.is_open() ||
+          !aquila::market_data::WriteMarketDataBinaryHeader(create,
+                                                            Traits::kFeed)) {
+        throw std::runtime_error(fmt::format(
+            "failed to create typed market data file '{}'",
+            output_path_.string()));
+      }
+      return;
+    }
+
+    std::error_code size_error;
+    const std::uintmax_t file_size =
+        std::filesystem::file_size(output_path_, size_error);
+    if (size_error) {
+      throw std::runtime_error(fmt::format(
+          "failed to inspect output file '{}': {}", output_path_.string(),
+          size_error.message()));
+    }
+    if (file_size == 0) {
+      std::ofstream create(output_path_, std::ios::binary | std::ios::trunc);
+      if (!create.is_open() ||
+          !aquila::market_data::WriteMarketDataBinaryHeader(create,
+                                                            Traits::kFeed)) {
+        throw std::runtime_error(fmt::format(
+            "failed to initialize typed market data file '{}'",
+            output_path_.string()));
+      }
+      return;
+    }
+
+    std::ifstream input(output_path_, std::ios::binary);
+    if (!input.is_open()) {
+      throw std::runtime_error(fmt::format("failed to open output file '{}'",
+                                           output_path_.string()));
+    }
+    const aquila::market_data::MarketDataBinaryHeader header =
+        aquila::market_data::ReadMarketDataBinaryHeader(input, output_path_);
+    (void)aquila::market_data::CheckedMarketDataBinaryRecordCount(
+        output_path_, file_size, header, Traits::kFeed);
+  }
+
   std::filesystem::path output_path_;
   std::ofstream output_;
   TypedRecorderStats<RecordT, Traits> stats_;
