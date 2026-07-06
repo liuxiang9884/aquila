@@ -830,9 +830,10 @@ class TypedRotatingBinaryRecorder {
     }
 
     output_.flush();
-    const bool stream_ok = output_.good();
+    const bool flush_ok = output_.good();
     output_.close();
-    if (!stream_ok) {
+    const bool close_ok = output_.good();
+    if (!flush_ok || !close_ok) {
       write_error_ = true;
       return false;
     }
@@ -840,6 +841,10 @@ class TypedRotatingBinaryRecorder {
     if (current_stats_.total_records == 0) {
       std::error_code remove_error;
       std::filesystem::remove(current_tmp_path_, remove_error);
+      if (remove_error) {
+        write_error_ = true;
+        return false;
+      }
       return true;
     }
 
@@ -898,7 +903,11 @@ class TypedRotatingBinaryRecorder {
         current_stats_.last_exchange_ns.value_or(0),
         current_stats_.first_local_ns.value_or(0),
         current_stats_.last_local_ns.value_or(0), JsonEscape(reason));
-    return manifest.good();
+    manifest.flush();
+    const bool flush_ok = manifest.good();
+    manifest.close();
+    const bool close_ok = manifest.good();
+    return flush_ok && close_ok;
   }
 
   RecorderRotationConfig config_;
