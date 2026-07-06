@@ -1,6 +1,7 @@
 #include "core/trading/trading_runtime.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -664,6 +665,23 @@ config::DataReaderConfig MakeTradeDataReaderConfig() {
   return config;
 }
 
+config::DataReaderConfig MakeBinaryTradeDataReaderConfig() {
+  config::DataReaderConfig config = MakeDataReaderConfig();
+  config.sources.push_back(config::DataReaderSourceConfig{
+      .name = "binary_trade",
+      .type = config::DataReaderSourceType::kBinaryFile,
+      .exchange = Exchange::kGate,
+      .feed = config::DataReaderFeed::kTrade,
+      .shm_name = {},
+      .channel_name = {},
+      .files = {std::filesystem::path{"/home/liuxiang/tmp/trade.bin"}},
+      .start_position = config::DataReaderStartPosition::kEarliestVisible,
+      .read_mode = config::DataReaderReadMode::kDrain,
+      .required = true,
+  });
+  return config;
+}
+
 BookTicker MakeBookTicker(std::int64_t id = 42) noexcept {
   return BookTicker{.id = id,
                     .symbol_id = 7,
@@ -813,6 +831,22 @@ TEST(TradingRuntimeTest,
 
   auto runtime_result = LoopRuntime::Create(
       std::move(config), MakeTradeDataReaderConfig(),
+      [&state] { return FakeOrderSession(&state); }, &state);
+
+  EXPECT_FALSE(runtime_result.ok);
+  EXPECT_NE(runtime_result.error.find("OnTrade"), std::string::npos);
+  EXPECT_EQ(runtime_result.value, nullptr);
+}
+
+TEST(TradingRuntimeTest,
+     RejectsBinaryTradeDataReaderSourceWhenStrategyDoesNotHandleTrades) {
+  RuntimeLoopState state;
+  g_fake_data_reader_state = &state;
+  config::StrategyConfig config = MakeRuntimeConfig();
+  config.feedback.enabled = false;
+
+  auto runtime_result = LoopRuntime::Create(
+      std::move(config), MakeBinaryTradeDataReaderConfig(),
       [&state] { return FakeOrderSession(&state); }, &state);
 
   EXPECT_FALSE(runtime_result.ok);

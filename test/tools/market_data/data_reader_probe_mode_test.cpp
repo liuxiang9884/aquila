@@ -15,20 +15,23 @@ namespace {
 namespace cfg = aquila::config;
 namespace md_tools = aquila::tools::market_data;
 
-cfg::DataReaderSourceConfig MakeSource(std::string name,
-                                       cfg::DataReaderSourceType type) {
+cfg::DataReaderSourceConfig MakeSource(
+    std::string name, cfg::DataReaderSourceType type,
+    cfg::DataReaderFeed feed = cfg::DataReaderFeed::kBookTicker) {
   cfg::DataReaderSourceConfig source;
   source.name = std::move(name);
   source.type = type;
   source.exchange = aquila::Exchange::kGate;
-  source.feed = cfg::DataReaderFeed::kBookTicker;
+  source.feed = feed;
   source.shm_name =
       type == cfg::DataReaderSourceType::kShm ? "aquila_gate_market_data" : "";
   source.channel_name =
       type == cfg::DataReaderSourceType::kShm ? "book_ticker_channel" : "";
-  source.files = type == cfg::DataReaderSourceType::kBinaryFile
-                     ? std::vector<std::filesystem::path>{"/tmp/recorded.bin"}
-                     : std::vector<std::filesystem::path>{};
+  source.files =
+      type == cfg::DataReaderSourceType::kBinaryFile
+          ? std::vector<
+                std::filesystem::path>{"/home/liuxiang/tmp/recorded.bin"}
+          : std::vector<std::filesystem::path>{};
   source.start_position = type == cfg::DataReaderSourceType::kBinaryFile
                               ? cfg::DataReaderStartPosition::kEarliestVisible
                               : cfg::DataReaderStartPosition::kLatest;
@@ -51,6 +54,16 @@ TEST(DataReaderProbeModeTest, DetectsHistoricalForSingleBinarySource) {
   cfg::DataReaderConfig config;
   config.sources.push_back(
       MakeSource("recorded", cfg::DataReaderSourceType::kBinaryFile));
+
+  EXPECT_EQ(md_tools::DetectProbeMode(config),
+            md_tools::DataReaderProbeMode::kHistorical);
+}
+
+TEST(DataReaderProbeModeTest, DetectsHistoricalForSingleTradeBinarySource) {
+  cfg::DataReaderConfig config;
+  config.sources.push_back(MakeSource("recorded_trade",
+                                      cfg::DataReaderSourceType::kBinaryFile,
+                                      cfg::DataReaderFeed::kTrade));
 
   EXPECT_EQ(md_tools::DetectProbeMode(config),
             md_tools::DataReaderProbeMode::kHistorical);

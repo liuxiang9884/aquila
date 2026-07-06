@@ -140,7 +140,8 @@ if current - read_pos > capacity:
 reader 不做多 source 全局时间排序。`RealtimeDataReader` 多 source round-robin 只提供公平轮询，不按
 `exchange_ns` / `local_ns` merge。当前 `RealtimeDataReader` 已支持按 source `feed` 读取 `BookTicker` 或
 `Trade` typed SHM channel，并分别调用 handler 的 `OnBookTicker()` / `OnTrade()`；`HistoricalDataReader`
-仍只支持 `BookTicker` binary。LeadLag 策略主路径目前不订阅 trade source。
+已支持单 source `book_ticker` 或 `trade` binary，但不做 mixed feed ordering。LeadLag 策略主路径目前不订阅
+trade source，LeadLag replay 仍只消费 `book_ticker` binary source。
 
 ## 配置
 
