@@ -89,15 +89,29 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
                 )
             except Exception as error:
                 stream_error = error
-                if process.poll() is None:
-                    stopped_for_stream_error = True
-                    _stop_process(process)
             finally:
                 process.stdout.close()
-            return_code = process.wait()
+
+            if stream_error is not None:
+                try:
+                    return_code = process.wait(timeout=0.25)
+                except subprocess.TimeoutExpired:
+                    stopped_for_stream_error = True
+                    _stop_process(process)
+                    return_code = process.wait()
+            else:
+                return_code = process.wait()
+
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
-            if return_code != 0 and not stopped_for_stream_error:
+            missing_header_error = (
+                stream_error is not None
+                and "missing market data header" in str(stream_error)
+            )
+            if return_code != 0 and (
+                stream_error is None
+                or (missing_header_error and not stopped_for_stream_error)
+            ):
                 raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
             if stream_error is not None:
                 raise stream_error

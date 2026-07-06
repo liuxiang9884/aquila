@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -244,16 +245,21 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertEqual(result["freshness"]["lag_sample_count"], 3)
 
     def test_zstd_nonzero_return_reports_stderr_text(self):
+        created_processes = []
+
         class FailedProcess:
             def __init__(self, stderr_file):
                 self.stdout = io.BytesIO(b"")
                 self.return_code = 1
+                self.waited = False
                 self.terminated = False
                 self.killed = False
                 stderr_file.write(b"fixture zstd failure\n")
                 stderr_file.flush()
 
             def poll(self):
+                if not self.waited:
+                    return None
                 return self.return_code
 
             def terminate(self):
@@ -265,6 +271,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
                 self.return_code = -9
 
             def wait(self, timeout=None):
+                self.waited = True
                 return self.return_code
 
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
@@ -274,7 +281,9 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
             def popen_side_effect(*args, **kwargs):
                 self.assertIs(kwargs["stdout"], self.module.subprocess.PIPE)
                 self.assertIsNot(kwargs["stderr"], self.module.subprocess.PIPE)
-                return FailedProcess(kwargs["stderr"])
+                process = FailedProcess(kwargs["stderr"])
+                created_processes.append(process)
+                return process
 
             with mock.patch.object(
                 self.module.subprocess,
@@ -291,6 +300,11 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
                             chunk_records=2,
                         )
                     )
+
+        self.assertEqual(len(created_processes), 1)
+        self.assertTrue(created_processes[0].waited)
+        self.assertFalse(created_processes[0].terminated)
+        self.assertFalse(created_processes[0].killed)
 
     def test_zstd_typed_validation_error_is_not_masked_by_termination(self):
         records = self.make_records()
@@ -316,6 +330,8 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
                 self.return_code = -9
 
             def wait(self, timeout=None):
+                if timeout is not None and self.return_code is None:
+                    raise subprocess.TimeoutExpired(cmd="zstd", timeout=timeout)
                 return self.return_code
 
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
