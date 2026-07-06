@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "core/market_data/data_reader_concepts.h"
+#include "core/market_data/market_data_binary_format.h"
 
 namespace {
 
@@ -108,6 +109,30 @@ aquila::Trade MakeTrade(std::int64_t id, aquila::Exchange exchange) {
       .batch_index = static_cast<std::uint32_t>(id % 4),
       .batch_count = 4,
   };
+}
+
+TEST(MarketDataBinaryFormatTest, BuildsBookTickerHeader) {
+  const md::MarketDataBinaryHeader header =
+      md::MakeMarketDataBinaryHeader(cfg::DataReaderFeed::kBookTicker);
+
+  EXPECT_EQ(header.magic, md::kMarketDataBinaryMagic);
+  EXPECT_EQ(header.version, md::kMarketDataBinaryVersion);
+  EXPECT_EQ(header.header_size, sizeof(md::MarketDataBinaryHeader));
+  EXPECT_EQ(header.feed_type, md::kMarketDataBinaryBookTickerFeedType);
+  EXPECT_EQ(header.record_size, sizeof(aquila::BookTicker));
+  EXPECT_EQ(header.flags, 0U);
+}
+
+TEST(MarketDataBinaryFormatTest, BuildsTradeHeader) {
+  const md::MarketDataBinaryHeader header =
+      md::MakeMarketDataBinaryHeader(cfg::DataReaderFeed::kTrade);
+
+  EXPECT_EQ(header.magic, md::kMarketDataBinaryMagic);
+  EXPECT_EQ(header.version, md::kMarketDataBinaryVersion);
+  EXPECT_EQ(header.header_size, sizeof(md::MarketDataBinaryHeader));
+  EXPECT_EQ(header.feed_type, md::kMarketDataBinaryTradeFeedType);
+  EXPECT_EQ(header.record_size, sizeof(aquila::Trade));
+  EXPECT_EQ(header.flags, 0U);
 }
 
 void WriteBookTickerFile(const std::filesystem::path& path,
