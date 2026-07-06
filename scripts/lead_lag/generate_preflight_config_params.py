@@ -67,6 +67,18 @@ def _stop_process(process: subprocess.Popen) -> None:
             process.wait()
 
 
+def _is_typed_validation_error(error: Exception) -> bool:
+    message = str(error)
+    return (
+        "invalid market data magic" in message
+        or "unsupported market data version" in message
+        or "unsupported market data header size" in message
+        or "unsupported market data flags" in message
+        or "feed mismatch" in message
+        or "record size mismatch" in message
+    )
+
+
 def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
     if np.dtype(dtype) != typed_binary.book_ticker_dtype():
         raise ValueError("dtype must match BookTicker ABI")
@@ -104,7 +116,14 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
 
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
-            if return_code != 0 and not stopped_for_stream_error:
+            if (
+                return_code != 0
+                and not stopped_for_stream_error
+                and not (
+                    stream_error is not None
+                    and _is_typed_validation_error(stream_error)
+                )
+            ):
                 raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
             if stream_error is not None:
                 raise stream_error
