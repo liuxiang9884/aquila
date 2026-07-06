@@ -80,6 +80,19 @@ target_link_libraries(core_market_data_trade_fusion_metadata_test
 add_test(NAME core_market_data_trade_fusion_metadata_test
          COMMAND core_market_data_trade_fusion_metadata_test)
 
+add_executable(core_market_data_trade_fusion_test
+    trade_fusion_test.cpp
+)
+
+target_link_libraries(core_market_data_trade_fusion_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_market_data_trade_fusion_test
+         COMMAND core_market_data_trade_fusion_test)
+
 add_executable(core_market_data_book_ticker_fusion_runner_test
     book_ticker_fusion_runner_test.cpp
 )
@@ -94,6 +107,21 @@ target_link_libraries(core_market_data_book_ticker_fusion_runner_test
 
 add_test(NAME core_market_data_book_ticker_fusion_runner_test
          COMMAND core_market_data_book_ticker_fusion_runner_test)
+
+add_executable(core_market_data_trade_fusion_runner_test
+    trade_fusion_runner_test.cpp
+)
+
+target_link_libraries(core_market_data_trade_fusion_runner_test
+    PRIVATE
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+        nova
+)
+
+add_test(NAME core_market_data_trade_fusion_runner_test
+         COMMAND core_market_data_trade_fusion_runner_test)
 
 add_test(NAME core_market_data_book_ticker_fusion_static_review
          COMMAND bash -c [=[
@@ -117,6 +145,21 @@ target_link_libraries(core_market_data_book_ticker_fusion_thread_test
 
 add_test(NAME core_market_data_book_ticker_fusion_thread_test
          COMMAND core_market_data_book_ticker_fusion_thread_test)
+
+add_executable(core_market_data_trade_fusion_thread_test
+    trade_fusion_thread_test.cpp
+)
+
+target_link_libraries(core_market_data_trade_fusion_thread_test
+    PRIVATE
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+        nova
+)
+
+add_test(NAME core_market_data_trade_fusion_thread_test
+         COMMAND core_market_data_trade_fusion_thread_test)
 
 add_executable(core_market_data_book_ticker_replay_benchmark_support_test
     book_ticker_replay_benchmark_support_test.cpp

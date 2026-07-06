@@ -9,5 +9,10 @@ target_sources(aquila_core
         fastest_route_fusion_runner.h
         fastest_route_fusion_thread.h
         fusion_metadata_writer.h
+        trade_fusion.h
+        trade_fusion_config.h
         trade_fusion_metadata.h
+        trade_fusion_metadata_policy.h
+        trade_fusion_runner.h
+        trade_fusion_thread.h
 )
