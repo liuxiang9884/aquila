@@ -424,19 +424,27 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertTrue(created_processes[0].terminated)
         self.assertFalse(created_processes[0].killed)
 
-    def test_zstd_broken_pipe_after_invalid_magic_keeps_typed_error(self):
+    def test_zstd_valid_stream_with_invalid_magic_keeps_typed_error_after_drain(self):
         raw_payload = b"not-a-typed-header" + (b"x" * 1_000_000)
         created_processes = []
 
-        class BrokenPipeAfterInvalidMagicProcess:
-            def __init__(self, stderr_file):
-                self.stdout = io.BytesIO(raw_payload)
-                self.return_code = 1
+        class ObservedStdout(io.BytesIO):
+            def __init__(self, payload: bytes):
+                super().__init__(payload)
+                self.bytes_read = 0
+
+            def read(self, size=-1):
+                data = super().read(size)
+                self.bytes_read += len(data)
+                return data
+
+        class InvalidMagicSuccessfulZstdProcess:
+            def __init__(self):
+                self.stdout = ObservedStdout(raw_payload)
+                self.return_code = 0
                 self.waited = False
                 self.terminated = False
                 self.killed = False
-                stderr_file.write(b"fixture zstd broken pipe\n")
-                stderr_file.flush()
 
             def poll(self):
                 if not self.waited:
@@ -460,7 +468,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
             compressed_path.write_bytes(b"mock-zstd")
 
             def popen_side_effect(*args, **kwargs):
-                process = BrokenPipeAfterInvalidMagicProcess(kwargs["stderr"])
+                process = InvalidMagicSuccessfulZstdProcess()
                 created_processes.append(process)
                 return process
 
@@ -482,6 +490,79 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertTrue(created_processes[0].waited)
         self.assertFalse(created_processes[0].terminated)
         self.assertFalse(created_processes[0].killed)
+        self.assertEqual(created_processes[0].stdout.bytes_read, len(raw_payload))
+
+    def test_zstd_natural_failure_with_invalid_magic_reports_zstd_stderr(self):
+        raw_payload = b"not-a-typed-header" + (b"x" * 1_000_000)
+        created_processes = []
+
+        class ObservedStdout(io.BytesIO):
+            def __init__(self, payload: bytes):
+                super().__init__(payload)
+                self.bytes_read = 0
+
+            def read(self, size=-1):
+                data = super().read(size)
+                self.bytes_read += len(data)
+                return data
+
+        class InvalidMagicFailedZstdProcess:
+            def __init__(self, stderr_file):
+                self.stdout = ObservedStdout(raw_payload)
+                self.return_code = 1
+                self.waited = False
+                self.terminated = False
+                self.killed = False
+                stderr_file.write(b"fixture zstd premature end\n")
+                stderr_file.flush()
+
+            def poll(self):
+                if not self.waited:
+                    return None
+                return self.return_code
+
+            def terminate(self):
+                self.terminated = True
+                self.return_code = -15
+
+            def kill(self):
+                self.killed = True
+                self.return_code = -9
+
+            def wait(self, timeout=None):
+                self.waited = True
+                return self.return_code
+
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            compressed_path = Path(temp_dir) / "invalid_magic_failed_zstd.bin.zst"
+            compressed_path.write_bytes(b"mock-zstd")
+
+            def popen_side_effect(*args, **kwargs):
+                process = InvalidMagicFailedZstdProcess(kwargs["stderr"])
+                created_processes.append(process)
+                return process
+
+            with mock.patch.object(
+                self.module.subprocess,
+                "Popen",
+                side_effect=popen_side_effect,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "zstd failed .* fixture zstd premature end"
+                ):
+                    self.module.generate_params(
+                        input_paths=[compressed_path],
+                        symbol_id=4,
+                        lead_exchange="binance",
+                        lag_exchange="gate",
+                        buffer_percentile=100.0,
+                    )
+
+        self.assertEqual(len(created_processes), 1)
+        self.assertTrue(created_processes[0].waited)
+        self.assertFalse(created_processes[0].terminated)
+        self.assertFalse(created_processes[0].killed)
+        self.assertEqual(created_processes[0].stdout.bytes_read, len(raw_payload))
 
     def test_renders_generated_toml_patch(self):
         params = {

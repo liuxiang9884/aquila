@@ -79,6 +79,11 @@ def _is_typed_validation_error(error: Exception) -> bool:
     )
 
 
+def _drain_stdout(stream) -> None:
+    while stream.read(1024 * 1024):
+        pass
+
+
 def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
     if np.dtype(dtype) != typed_binary.book_ticker_dtype():
         raise ValueError("dtype must match BookTicker ABI")
@@ -90,6 +95,7 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
         )
         assert process.stdout is not None
         stream_error: Exception | None = None
+        typed_validation_error = False
         stopped_for_stream_error = False
         try:
             try:
@@ -101,6 +107,9 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
                 )
             except Exception as error:
                 stream_error = error
+                typed_validation_error = _is_typed_validation_error(stream_error)
+                if typed_validation_error:
+                    _drain_stdout(process.stdout)
             finally:
                 process.stdout.close()
 
@@ -111,18 +120,24 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
                     stopped_for_stream_error = True
                     _stop_process(process)
                     return_code = process.wait()
+                if return_code is None:
+                    stopped_for_stream_error = True
+                    _stop_process(process)
+                    return_code = process.wait()
             else:
                 return_code = process.wait()
 
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
+            if typed_validation_error:
+                if stopped_for_stream_error:
+                    raise stream_error
+                if return_code != 0:
+                    raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
+                raise stream_error
             if (
                 return_code != 0
                 and not stopped_for_stream_error
-                and not (
-                    stream_error is not None
-                    and _is_typed_validation_error(stream_error)
-                )
             ):
                 raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
             if stream_error is not None:
