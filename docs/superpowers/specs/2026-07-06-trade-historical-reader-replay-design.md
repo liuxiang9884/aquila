@@ -2,7 +2,10 @@
 
 ## 目标
 
-为 recorder 已落盘的裸 `aquila::Trade` binary 增加 historical 读取能力，使 `data_reader_probe`
+> 本设计已被 recorder typed binary header v1 迁移更新；当前实现只接受带 `AQMD` header 的 typed
+> `BookTicker` / `Trade` binary，旧裸结构体流需要重录。
+
+为 recorder 已落盘的 typed `aquila::Trade` binary 增加 historical 读取能力，使 `data_reader_probe`
 可以用 `binary_file` 配置顺序读完 Trade 文件并统计 `OnTrade()` 事件。
 
 第一版只实现 trade-only historical reader / probe 闭环，不实现 `BookTicker` 与 `Trade` 的 mixed
@@ -11,8 +14,8 @@ historical replay，也不让 `lead_lag_replay` 消费 trade source。
 ## 当前代码事实
 
 - `Trade` live SHM、Gate / Binance data session 发布、`RealtimeDataReader` 的 `OnTrade()` 分发，以及
-  `data_reader_recorder` 写 `Trade` 裸 binary 已经落地。
-- `HistoricalDataReader` 当前只接受 exactly one `binary_file` source，并按 `sizeof(BookTicker)` 校验文件。
+  `data_reader_recorder` 写 `Trade` typed binary 已经落地。
+- `HistoricalDataReader` 当前只接受 exactly one `binary_file` source，并校验 typed header 和 payload record size。
 - `core/config/data_reader_config.cpp` 当前拒绝 `binary_file + feed = "trade"`。
 - `data_reader_probe` 的 `ProbeHandler` 已经有 `OnTrade()` 和 trade 计数，但 historical summary 只打印
   `handler_book_tickers`。
@@ -26,8 +29,8 @@ historical replay，也不让 `lead_lag_replay` 消费 trade source。
 
 - `DataReaderConfig` 允许 exactly one `binary_file` source 使用 `feed = "trade"`。
 - `HistoricalDataReader` 继续保持单 binary source 模型，但 source feed 可为 `book_ticker` 或 `trade`。
-- `HistoricalDataReader` 对 `book_ticker` 文件按 `sizeof(BookTicker)` 校验并调用 `handler.OnBookTicker()`。
-- `HistoricalDataReader` 对 `trade` 文件按 `sizeof(Trade)` 校验并调用 `handler.OnTrade()`。
+- `HistoricalDataReader` 对 `book_ticker` 文件校验 typed header `feed_type` / `record_size` 并调用 `handler.OnBookTicker()`。
+- `HistoricalDataReader` 对 `trade` 文件校验 typed header `feed_type` / `record_size` 并调用 `handler.OnTrade()`。
 - `data_reader_probe` historical summary 同时输出 `handler_book_tickers` 和 `handler_trades`。
 - `manifest_to_data_reader_config.py` 增加 `--feed book_ticker|trade`，默认保持 `book_ticker`。
 - 文档同步说明 binary trade replay 的范围和限制。
@@ -47,13 +50,13 @@ historical replay，也不让 `lead_lag_replay` 消费 trade source。
 
 ```text
 feed = book_ticker
-  file size multiple of sizeof(BookTicker)
+  validate typed header feed_type/book_ticker record_size
   memcpy BookTicker
   diagnostics.RecordBookTicker(record)
   handler.OnBookTicker(record)
 
 feed = trade
-  file size multiple of sizeof(Trade)
+  validate typed header feed_type/trade record_size
   memcpy Trade
   diagnostics.RecordTrade(record)
   handler.OnTrade(record)

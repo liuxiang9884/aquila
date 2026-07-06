@@ -24,6 +24,8 @@ name = "ordi_merged_book_ticker"
 type = "binary_file"
 feed = "book_ticker"
 files = [
+  # These ORDI_USDT Tardis paths must contain typed binary format v1 files.
+  # Legacy raw struct artifacts at the same paths must be regenerated before replay.
   "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin",
   "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260416.bin",
   "/home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260417.bin",

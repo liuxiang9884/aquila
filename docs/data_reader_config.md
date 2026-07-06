@@ -118,13 +118,16 @@ read_mode = "drain"
 required = true
 ```
 
-ORDI_USDT 三天 Tardis replay binary 当前默认放在：
+ORDI_USDT 三天 Tardis replay 示例路径为：
 
 ```text
 /home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260415.bin
 /home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260416.bin
 /home/liuxiang/tardis/merged_book_ticker/ORDI_USDT/20260417.bin
 ```
+
+这些路径必须先由当前 converter 重新生成 typed binary format v1；本机上历史旧文件可能仍是裸结构体流，
+不满足 `AQMD` header 校验，不能直接用于当前 `HistoricalDataReader`。
 
 HDF / xex_mars `bbo` 数据也可以先转换成 `book_ticker` typed binary format v1，再用同类
 `binary_file` 配置回放。转换入口是：

@@ -226,10 +226,10 @@ int main(int argc, char** argv) {
       "recorder"};
   app.add_option("--config", config_path, "data reader TOML path");
   app.add_option("--output", output_path,
-                 "output BookTicker binary path without header")
+                 "output BookTicker typed binary path")
       ->required();
   app.add_option("--trade-output", trade_output_path,
-                 "single-file Trade binary path without header; defaults "
+                 "single-file Trade typed binary path; defaults "
                  "derived from --output; rotation uses recorder trade_* "
                  "fields");
   app.add_option("--mode", mode_text, "truncate or append")
