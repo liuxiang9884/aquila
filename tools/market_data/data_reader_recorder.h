@@ -816,6 +816,11 @@ class TypedRotatingBinaryRecorder {
       write_error_ = true;
       return false;
     }
+    if (!aquila::market_data::WriteMarketDataBinaryHeader(output_,
+                                                          Traits::kFeed)) {
+      write_error_ = true;
+      return false;
+    }
     return true;
   }
 
@@ -841,8 +846,10 @@ class TypedRotatingBinaryRecorder {
     std::error_code size_error;
     const std::uintmax_t file_size =
         std::filesystem::file_size(current_tmp_path_, size_error);
-    if (size_error ||
-        file_size != current_stats_.total_records * sizeof(RecordT)) {
+    const std::uintmax_t expected_size =
+        sizeof(aquila::market_data::MarketDataBinaryHeader) +
+        current_stats_.total_records * sizeof(RecordT);
+    if (size_error || file_size != expected_size) {
       write_error_ = true;
       return false;
     }
@@ -877,11 +884,16 @@ class TypedRotatingBinaryRecorder {
     }
     manifest << fmt::format(
         "{{\"sequence\":{},\"file\":\"{}\",\"records\":{},"
-        "\"bytes\":{},\"first_exchange_ns\":{},"
+        "\"bytes\":{},\"format\":\"{}\",\"version\":{},\"feed\":\"{}\","
+        "\"header_bytes\":{},\"record_size\":{},"
+        "\"first_exchange_ns\":{},"
         "\"last_exchange_ns\":{},\"first_local_ns\":{},"
         "\"last_local_ns\":{},\"closed_reason\":\"{}\"}}\n",
         current_sequence_, JsonEscape(current_final_path_.string()),
         current_stats_.total_records, file_size,
+        aquila::market_data::kMarketDataBinaryFormatName,
+        aquila::market_data::kMarketDataBinaryVersion, Traits::kFeedName,
+        sizeof(aquila::market_data::MarketDataBinaryHeader), sizeof(RecordT),
         current_stats_.first_exchange_ns.value_or(0),
         current_stats_.last_exchange_ns.value_or(0),
         current_stats_.first_local_ns.value_or(0),

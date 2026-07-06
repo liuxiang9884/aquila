@@ -192,38 +192,6 @@ std::vector<Trade> ReadTypedTrades(const std::filesystem::path& output_path) {
   return ReadTypedRecords<Trade>(output_path, cfg::DataReaderFeed::kTrade);
 }
 
-std::vector<BookTicker> ReadRawBookTickers(
-    const std::filesystem::path& output_path) {
-  const std::uintmax_t size = std::filesystem::file_size(output_path);
-  EXPECT_EQ(size % sizeof(BookTicker), 0U);
-  std::vector<BookTicker> records(size / sizeof(BookTicker));
-
-  std::ifstream input(output_path, std::ios::binary);
-  EXPECT_TRUE(input.is_open());
-  if (!records.empty()) {
-    input.read(
-        reinterpret_cast<char*>(records.data()),
-        static_cast<std::streamsize>(records.size() * sizeof(BookTicker)));
-    EXPECT_TRUE(input.good());
-  }
-  return records;
-}
-
-std::vector<Trade> ReadRawTrades(const std::filesystem::path& output_path) {
-  const std::uintmax_t size = std::filesystem::file_size(output_path);
-  EXPECT_EQ(size % sizeof(Trade), 0U);
-  std::vector<Trade> records(size / sizeof(Trade));
-
-  std::ifstream input(output_path, std::ios::binary);
-  EXPECT_TRUE(input.is_open());
-  if (!records.empty()) {
-    input.read(reinterpret_cast<char*>(records.data()),
-               static_cast<std::streamsize>(records.size() * sizeof(Trade)));
-    EXPECT_TRUE(input.good());
-  }
-  return records;
-}
-
 std::vector<std::filesystem::path> FilesWithExtension(
     const std::filesystem::path& directory, std::string_view extension) {
   std::vector<std::filesystem::path> files;
@@ -248,6 +216,38 @@ std::vector<std::string> ReadLines(const std::filesystem::path& path) {
     lines.push_back(line);
   }
   return lines;
+}
+
+void ExpectBookTickerManifestMetadata(const std::string& line,
+                                      std::uint64_t expected_records) {
+  EXPECT_NE(line.find(R"("format":"aquila.market_data.binary")"),
+            std::string::npos);
+  EXPECT_NE(line.find(R"("version":1)"), std::string::npos);
+  EXPECT_NE(line.find(R"("feed":"book_ticker")"), std::string::npos);
+  EXPECT_NE(line.find(R"("header_bytes":16)"), std::string::npos);
+  EXPECT_NE(line.find(fmt::format(R"("record_size":{})", sizeof(BookTicker))),
+            std::string::npos);
+  EXPECT_NE(line.find(fmt::format(
+                R"("bytes":{})",
+                sizeof(md::MarketDataBinaryHeader) +
+                    expected_records * sizeof(BookTicker))),
+            std::string::npos);
+}
+
+void ExpectTradeManifestMetadata(const std::string& line,
+                                 std::uint64_t expected_records) {
+  EXPECT_NE(line.find(R"("format":"aquila.market_data.binary")"),
+            std::string::npos);
+  EXPECT_NE(line.find(R"("version":1)"), std::string::npos);
+  EXPECT_NE(line.find(R"("feed":"trade")"), std::string::npos);
+  EXPECT_NE(line.find(R"("header_bytes":16)"), std::string::npos);
+  EXPECT_NE(line.find(fmt::format(R"("record_size":{})", sizeof(Trade))),
+            std::string::npos);
+  EXPECT_NE(line.find(fmt::format(
+                R"("bytes":{})",
+                sizeof(md::MarketDataBinaryHeader) +
+                    expected_records * sizeof(Trade))),
+            std::string::npos);
 }
 
 TEST(DataReaderRecorderConfigTest, DefaultsToSingleFileRecorder) {
@@ -1174,6 +1174,34 @@ TEST(DataReaderRecorderTest, RotatingRecorderKeepsActiveTmpOutOfManifest) {
   std::filesystem::remove_all(root);
 }
 
+TEST(DataReaderRecorderTest, RotatingRecorderDropsZeroRecordSegmentOnFlush) {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() /
+      ("aquila_rotating_recorder_zero_record_test_" +
+       std::to_string(::getpid()));
+  std::filesystem::remove_all(root);
+
+  RecorderRotationConfig rotation{
+      .enabled = true,
+      .rotation_interval_sec = 60,
+      .output_dir = root / "segments",
+      .file_prefix = "book_ticker",
+      .manifest_path = root / "manifest.jsonl",
+  };
+  RecorderTimeSnapshot now{
+      .steady = chrono::steady_clock::time_point{chrono::seconds{0}},
+      .wall = chrono::sys_seconds{chrono::seconds{1'779'669'600}},
+  };
+  RotatingBookTickerBinaryRecorder recorder(rotation, [&] { return now; });
+
+  EXPECT_TRUE(recorder.Flush());
+  EXPECT_TRUE(FilesWithExtension(rotation.output_dir, ".bin").empty());
+  EXPECT_TRUE(FilesWithExtension(rotation.output_dir, ".tmp").empty());
+  EXPECT_TRUE(ReadLines(rotation.manifest_path).empty());
+
+  std::filesystem::remove_all(root);
+}
+
 TEST(DataReaderRecorderTest, RotatingRecorderRejectsExistingActiveTmpSegment) {
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
@@ -1242,19 +1270,29 @@ TEST(DataReaderRecorderTest, RotatingRecorderFinalizesSegmentsAndManifest) {
       FilesWithExtension(rotation.output_dir, ".bin");
   ASSERT_TRUE(tmp_files.empty());
   ASSERT_EQ(bin_files.size(), 2U);
-  ASSERT_EQ(ReadRawBookTickers(bin_files[0]).size(), 1U);
-  ASSERT_EQ(ReadRawBookTickers(bin_files[1]).size(), 1U);
-  ExpectBookTickerEq(ReadRawBookTickers(bin_files[0])[0], first);
-  ExpectBookTickerEq(ReadRawBookTickers(bin_files[1])[0], second);
+  EXPECT_EQ(std::filesystem::file_size(bin_files[0]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(BookTicker));
+  EXPECT_EQ(std::filesystem::file_size(bin_files[1]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(BookTicker));
+  const std::vector<BookTicker> first_segment =
+      ReadTypedBookTickers(bin_files[0]);
+  const std::vector<BookTicker> second_segment =
+      ReadTypedBookTickers(bin_files[1]);
+  ASSERT_EQ(first_segment.size(), 1U);
+  ASSERT_EQ(second_segment.size(), 1U);
+  ExpectBookTickerEq(first_segment[0], first);
+  ExpectBookTickerEq(second_segment[0], second);
 
   const std::vector<std::string> lines = ReadLines(rotation.manifest_path);
   ASSERT_EQ(lines.size(), 2U);
   EXPECT_NE(lines[0].find(R"("sequence":1)"), std::string::npos);
   EXPECT_NE(lines[0].find(R"("records":1)"), std::string::npos);
+  ExpectBookTickerManifestMetadata(lines[0], 1);
   EXPECT_NE(lines[0].find(R"("closed_reason":"rotation_interval")"),
             std::string::npos);
   EXPECT_NE(lines[1].find(R"("sequence":2)"), std::string::npos);
   EXPECT_NE(lines[1].find(R"("records":1)"), std::string::npos);
+  ExpectBookTickerManifestMetadata(lines[1], 1);
   EXPECT_NE(lines[1].find(R"("closed_reason":"flush")"), std::string::npos);
 
   EXPECT_EQ(recorder.stats().total_records, 2U);
@@ -1521,9 +1559,29 @@ TEST(DataReaderRecorderTest,
   RotatingBinaryRecorder recorder(book_rotation, trade_rotation,
                                   [&] { return now; });
 
-  recorder.OnBookTicker(MakeTicker(1, Exchange::kGate, 100, 200));
-  recorder.OnTrade(MakeTrade(11, Exchange::kGate, 110, 115, 120));
+  const BookTicker book_record = MakeTicker(1, Exchange::kGate, 100, 200);
+  const Trade trade_record = MakeTrade(11, Exchange::kGate, 110, 115, 120);
+  recorder.OnBookTicker(book_record);
+  recorder.OnTrade(trade_record);
   EXPECT_TRUE(recorder.Flush());
+
+  const std::vector<std::filesystem::path> book_bin_files =
+      FilesWithExtension(book_rotation.output_dir, ".bin");
+  const std::vector<std::filesystem::path> trade_bin_files =
+      FilesWithExtension(trade_rotation.output_dir, ".bin");
+  ASSERT_EQ(book_bin_files.size(), 1U);
+  ASSERT_EQ(trade_bin_files.size(), 1U);
+  EXPECT_EQ(std::filesystem::file_size(book_bin_files[0]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(BookTicker));
+  EXPECT_EQ(std::filesystem::file_size(trade_bin_files[0]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(Trade));
+  const std::vector<BookTicker> book_records =
+      ReadTypedBookTickers(book_bin_files[0]);
+  const std::vector<Trade> trade_records = ReadTypedTrades(trade_bin_files[0]);
+  ASSERT_EQ(book_records.size(), 1U);
+  ASSERT_EQ(trade_records.size(), 1U);
+  ExpectBookTickerEq(book_records[0], book_record);
+  ExpectTradeEq(trade_records[0], trade_record);
 
   const std::vector<std::string> book_lines =
       ReadLines(book_rotation.manifest_path);
@@ -1535,6 +1593,8 @@ TEST(DataReaderRecorderTest,
   EXPECT_EQ(trade_lines[0].find("stale"), std::string::npos);
   EXPECT_NE(book_lines[0].find(R"("sequence":1)"), std::string::npos);
   EXPECT_NE(trade_lines[0].find(R"("sequence":1)"), std::string::npos);
+  ExpectBookTickerManifestMetadata(book_lines[0], 1);
+  ExpectTradeManifestMetadata(trade_lines[0], 1);
 
   std::filesystem::remove_all(root);
 }
@@ -1595,10 +1655,30 @@ TEST(DataReaderRecorderTest,
   ASSERT_TRUE(trade_tmp_files.empty());
   ASSERT_EQ(book_bin_files.size(), 2U);
   ASSERT_EQ(trade_bin_files.size(), 2U);
-  ExpectBookTickerEq(ReadRawBookTickers(book_bin_files[0])[0], first_book);
-  ExpectBookTickerEq(ReadRawBookTickers(book_bin_files[1])[0], second_book);
-  ExpectTradeEq(ReadRawTrades(trade_bin_files[0])[0], first_trade);
-  ExpectTradeEq(ReadRawTrades(trade_bin_files[1])[0], second_trade);
+  EXPECT_EQ(std::filesystem::file_size(book_bin_files[0]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(BookTicker));
+  EXPECT_EQ(std::filesystem::file_size(book_bin_files[1]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(BookTicker));
+  EXPECT_EQ(std::filesystem::file_size(trade_bin_files[0]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(Trade));
+  EXPECT_EQ(std::filesystem::file_size(trade_bin_files[1]),
+            sizeof(md::MarketDataBinaryHeader) + 1U * sizeof(Trade));
+  const std::vector<BookTicker> first_book_segment =
+      ReadTypedBookTickers(book_bin_files[0]);
+  const std::vector<BookTicker> second_book_segment =
+      ReadTypedBookTickers(book_bin_files[1]);
+  const std::vector<Trade> first_trade_segment =
+      ReadTypedTrades(trade_bin_files[0]);
+  const std::vector<Trade> second_trade_segment =
+      ReadTypedTrades(trade_bin_files[1]);
+  ASSERT_EQ(first_book_segment.size(), 1U);
+  ASSERT_EQ(second_book_segment.size(), 1U);
+  ASSERT_EQ(first_trade_segment.size(), 1U);
+  ASSERT_EQ(second_trade_segment.size(), 1U);
+  ExpectBookTickerEq(first_book_segment[0], first_book);
+  ExpectBookTickerEq(second_book_segment[0], second_book);
+  ExpectTradeEq(first_trade_segment[0], first_trade);
+  ExpectTradeEq(second_trade_segment[0], second_trade);
 
   const std::vector<std::string> book_lines =
       ReadLines(book_rotation.manifest_path);
@@ -1608,6 +1688,10 @@ TEST(DataReaderRecorderTest,
   ASSERT_EQ(trade_lines.size(), 2U);
   EXPECT_NE(book_lines[0].find(R"("sequence":1)"), std::string::npos);
   EXPECT_NE(trade_lines[0].find(R"("sequence":1)"), std::string::npos);
+  ExpectBookTickerManifestMetadata(book_lines[0], 1);
+  ExpectTradeManifestMetadata(trade_lines[0], 1);
+  ExpectBookTickerManifestMetadata(book_lines[1], 1);
+  ExpectTradeManifestMetadata(trade_lines[1], 1);
   EXPECT_NE(book_lines[1].find(R"("closed_reason":"flush")"),
             std::string::npos);
   EXPECT_NE(trade_lines[1].find(R"("closed_reason":"flush")"),
