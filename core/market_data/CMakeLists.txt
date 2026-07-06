@@ -6,6 +6,8 @@ target_sources(aquila_core
         book_ticker_fusion_runner.h
         book_ticker_fusion_thread.h
         fastest_route_fusion.h
+        fastest_route_fusion_runner.h
+        fastest_route_fusion_thread.h
         fusion_metadata_writer.h
         trade_fusion_metadata.h
 )
