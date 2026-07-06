@@ -3,10 +3,18 @@
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import typed_binary  # noqa: E402
 
 
 EXCHANGE_NAMES = {
@@ -20,44 +28,11 @@ EXCHANGE_NAMES = {
 
 
 def book_ticker_dtype() -> np.dtype:
-    return np.dtype(
-        {
-            "names": [
-                "id",
-                "symbol_id",
-                "exchange",
-                "exchange_ns",
-                "local_ns",
-                "bid_price",
-                "bid_volume",
-                "ask_price",
-                "ask_volume",
-            ],
-            "formats": [
-                "<i8",
-                "<i4",
-                "u1",
-                "<i8",
-                "<i8",
-                "<f8",
-                "<f8",
-                "<f8",
-                "<f8",
-            ],
-            "offsets": [0, 8, 12, 16, 24, 32, 40, 48, 56],
-            "itemsize": 64,
-        }
-    )
+    return typed_binary.book_ticker_dtype()
 
 
 def load_book_tickers(path: Path) -> np.ndarray:
-    file_size = path.stat().st_size
-    dtype = book_ticker_dtype()
-    if file_size % dtype.itemsize != 0:
-        raise ValueError(
-            f"file size {file_size} is not a multiple of BookTicker size {dtype.itemsize}"
-        )
-    return np.fromfile(path, dtype=dtype)
+    return typed_binary.load_records(path, "book_ticker")
 
 
 def _percentile_int(values: np.ndarray, percentile: float) -> int:

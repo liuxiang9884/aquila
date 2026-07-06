@@ -15,6 +15,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from analyze_book_ticker_latency import book_ticker_dtype  # noqa: E402
+import typed_binary  # noqa: E402
 
 
 class SplitSummary(NamedTuple):
@@ -100,21 +101,10 @@ def _open_output(
 ) -> BinaryIO:
     handle = handles.get(symbol)
     if handle is None:
-        handle = (output_dir / f"{symbol}.bin").open("ab")
+        handle = (output_dir / f"{symbol}.bin").open("wb")
+        typed_binary.write_header(handle, "book_ticker")
         handles[symbol] = handle
     return handle
-
-
-def _complete_input_size(
-    path: Path, record_size: int, allow_trailing_bytes: bool
-) -> tuple[int, int]:
-    file_size = path.stat().st_size
-    trailing = file_size % record_size
-    if trailing and not allow_trailing_bytes:
-        raise ValueError(
-            f"{path} size {file_size} is not a multiple of BookTicker size {record_size}"
-        )
-    return file_size - trailing, trailing
 
 
 def _read_chunks(
@@ -124,26 +114,14 @@ def _read_chunks(
     chunk_records: int,
     allow_trailing_bytes: bool,
 ):
-    if chunk_records <= 0:
-        raise ValueError("chunk_records must be positive")
-
-    complete_size, trailing = _complete_input_size(
-        path, dtype.itemsize, allow_trailing_bytes
-    )
-    bytes_per_chunk = chunk_records * dtype.itemsize
-    with path.open("rb") as handle:
-        remaining = complete_size
-        while remaining > 0:
-            to_read = min(bytes_per_chunk, remaining)
-            data = handle.read(to_read)
-            if len(data) != to_read:
-                raise ValueError(
-                    f"{path} changed while reading: expected {to_read} bytes, got {len(data)}"
-                )
-            remaining -= to_read
-            yield np.frombuffer(data, dtype=dtype), 0
-    if trailing:
-        yield np.zeros(0, dtype=dtype), trailing
+    if allow_trailing_bytes:
+        raise ValueError("allow_trailing_bytes is not supported for typed BookTicker input")
+    if np.dtype(dtype) != typed_binary.book_ticker_dtype():
+        raise ValueError("dtype must match BookTicker ABI")
+    for records in typed_binary.iter_record_chunks(
+        path, "book_ticker", chunk_records=chunk_records
+    ):
+        yield records, 0
 
 
 def split_book_ticker_files_by_symbol(
@@ -158,6 +136,8 @@ def split_book_ticker_files_by_symbol(
 ) -> SplitSummary:
     if not input_paths:
         raise ValueError("input_paths must not be empty")
+    if allow_trailing_bytes:
+        raise ValueError("allow_trailing_bytes is not supported for typed BookTicker input")
 
     dtype = book_ticker_dtype()
     id_to_symbol = load_symbol_id_map(catalog_path)
@@ -226,7 +206,7 @@ def _parse_symbol_args(values: Sequence[str] | None) -> set[str] | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Split raw BookTicker recorder binary files into per-symbol files."
+        description="Split typed BookTicker recorder binary files into per-symbol files."
     )
     parser.add_argument(
         "--input",

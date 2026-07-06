@@ -18,6 +18,7 @@ if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
 
 from analyze_book_ticker_latency import book_ticker_dtype  # noqa: E402
+import typed_binary  # noqa: E402
 
 
 EXCHANGE_IDS = {
@@ -48,53 +49,44 @@ def _exchange_id(exchange: str) -> int:
 
 
 def _iter_raw_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
-    chunk_bytes = chunk_records * dtype.itemsize
-    with path.open("rb") as handle:
-        pending = b""
-        while True:
-            data = handle.read(chunk_bytes)
-            if not data:
-                break
-            data = pending + data
-            complete_size = (len(data) // dtype.itemsize) * dtype.itemsize
-            if complete_size:
-                yield np.frombuffer(data[:complete_size], dtype=dtype).copy()
-            pending = data[complete_size:]
-        if pending:
-            raise ValueError(
-                f"{path} has {len(pending)} trailing bytes after BookTicker records"
-            )
+    if np.dtype(dtype) != typed_binary.book_ticker_dtype():
+        raise ValueError("dtype must match BookTicker ABI")
+    yield from typed_binary.iter_record_chunks(
+        path, "book_ticker", chunk_records=chunk_records
+    )
 
 
 def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
-    chunk_bytes = chunk_records * dtype.itemsize
+    if np.dtype(dtype) != typed_binary.book_ticker_dtype():
+        raise ValueError("dtype must match BookTicker ABI")
     process = subprocess.Popen(
         ["zstd", "-dc", str(path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     assert process.stdout is not None
-    pending = b""
+    assert process.stderr is not None
+    stream_error: Exception | None = None
     try:
-        while True:
-            data = process.stdout.read(chunk_bytes)
-            if not data:
-                break
-            data = pending + data
-            complete_size = (len(data) // dtype.itemsize) * dtype.itemsize
-            if complete_size:
-                yield np.frombuffer(data[:complete_size], dtype=dtype).copy()
-            pending = data[complete_size:]
+        try:
+            yield from typed_binary.iter_record_chunks_from_stream(
+                process.stdout,
+                "book_ticker",
+                chunk_records=chunk_records,
+                source_name=str(path),
+            )
+        except Exception as error:
+            stream_error = error
+            while process.stdout.read(1024 * 1024):
+                pass
     finally:
         process.stdout.close()
     stderr = process.stderr.read().decode("utf-8", errors="replace")
     return_code = process.wait()
     if return_code != 0:
         raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
-    if pending:
-        raise ValueError(
-            f"{path} has {len(pending)} trailing bytes after BookTicker records"
-        )
+    if stream_error is not None:
+        raise stream_error
 
 
 def iter_book_ticker_chunks(

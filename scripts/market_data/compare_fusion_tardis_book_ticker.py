@@ -18,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from analyze_book_ticker_latency import book_ticker_dtype  # noqa: E402
+import typed_binary  # noqa: E402
 
 
 EXCHANGE_IDS = {
@@ -209,18 +210,11 @@ def _read_fusion_chunks(
     dtype: np.dtype,
     chunk_records: int,
 ) -> Iterable[np.ndarray]:
-    if chunk_records <= 0:
-        raise ValueError("chunk_records must be positive")
-    file_size = path.stat().st_size
-    if file_size % dtype.itemsize != 0:
-        raise ValueError(f"{path} size {file_size} is not a multiple of {dtype.itemsize}")
-    total_records = file_size // dtype.itemsize
-    if total_records == 0:
-        return
-    records = np.memmap(path, dtype=dtype, mode="r")
-    for start in range(0, total_records, chunk_records):
-        end = min(start + chunk_records, total_records)
-        yield np.asarray(records[start:end])
+    if np.dtype(dtype) != typed_binary.book_ticker_dtype():
+        raise ValueError("dtype must match BookTicker ABI")
+    yield from typed_binary.iter_record_chunks(
+        path, "book_ticker", chunk_records=chunk_records
+    )
 
 
 def load_fusion_symbol_records(

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,11 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "market_data" / "analyze_book_ticker_fusion_latency.py"
+MARKET_DATA_SCRIPT_DIR = REPO_ROOT / "scripts" / "market_data"
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
+
+import typed_binary  # noqa: E402
 
 
 def load_module():
@@ -151,6 +157,18 @@ class AnalyzeBookTickerFusionLatencyTest(unittest.TestCase):
         np.testing.assert_array_equal(
             loaded["fusion_publish_ns"], records["fusion_publish_ns"]
         )
+
+    def test_load_book_tickers_reads_typed_book_ticker_binary(self):
+        records = self.make_records([(10, 100), (11, 200)])
+
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            path = Path(temp_dir) / "source.bin"
+            typed_binary.write_records(path, "book_ticker", records)
+
+            loaded = self.module.load_book_tickers(path)
+
+        np.testing.assert_array_equal(loaded["id"], records["id"])
+        np.testing.assert_array_equal(loaded["local_ns"], records["local_ns"])
 
     def test_analyze_uses_four_feed_id_interval_and_union_within_combo(self):
         records_by_label = {

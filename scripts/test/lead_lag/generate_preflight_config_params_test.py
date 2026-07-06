@@ -5,8 +5,8 @@ import io
 import sys
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -16,6 +16,11 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "lead_lag" / "generate_preflight_config_pa
 MARKET_DATA_SCRIPT = (
     REPO_ROOT / "scripts" / "market_data" / "analyze_book_ticker_latency.py"
 )
+MARKET_DATA_SCRIPT_DIR = REPO_ROOT / "scripts" / "market_data"
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
+
+import typed_binary  # noqa: E402
 
 
 def load_module(path: Path, name: str):
@@ -54,7 +59,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
     def test_generates_fixed_params_from_book_ticker_binary(self):
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
             binary_path = Path(temp_dir) / "book_ticker.bin"
-            self.make_records().tofile(binary_path)
+            typed_binary.write_records(binary_path, "book_ticker", self.make_records())
 
             result = self.module.generate_params(
                 input_paths=[binary_path],
@@ -96,7 +101,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
     def test_generates_slippage_ticks_from_buffer_pct_and_price_tick(self):
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
             binary_path = Path(temp_dir) / "book_ticker.bin"
-            self.make_records().tofile(binary_path)
+            typed_binary.write_records(binary_path, "book_ticker", self.make_records())
 
             result = self.module.generate_params(
                 input_paths=[binary_path],
@@ -144,7 +149,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         records["local_ns"] = records["exchange_ns"]
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
             binary_path = Path(temp_dir) / "book_ticker.bin"
-            records.tofile(binary_path)
+            typed_binary.write_records(binary_path, "book_ticker", records)
 
             result = self.module.generate_params(
                 input_paths=[binary_path],
@@ -165,7 +170,7 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         records["ask_price"][3:] = 100.0
         with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
             binary_path = Path(temp_dir) / "book_ticker.bin"
-            records.tofile(binary_path)
+            typed_binary.write_records(binary_path, "book_ticker", records)
 
             result = self.module.generate_params(
                 input_paths=[binary_path],
@@ -182,6 +187,42 @@ class GeneratePreflightConfigParamsTest(unittest.TestCase):
         self.assertAlmostEqual(
             result["taker_buffer"]["normal_close_fixed_pct"], expected_spread
         )
+
+    def test_reads_typed_binary_payload_from_mocked_zstd(self):
+        records = self.make_records()
+        payload = io.BytesIO()
+        typed_binary.write_header(payload, "book_ticker")
+        payload.write(records.tobytes())
+        payload.seek(0)
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdout = io.BytesIO(payload.getvalue())
+                self.stderr = io.BytesIO()
+
+            def wait(self):
+                return 0
+
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
+            compressed_path = Path(temp_dir) / "book_ticker.bin.zst"
+            compressed_path.write_bytes(b"mock-zstd")
+
+            with mock.patch.object(
+                self.module.subprocess,
+                "Popen",
+                side_effect=lambda *args, **kwargs: FakeProcess(),
+            ):
+                result = self.module.generate_params(
+                    input_paths=[compressed_path],
+                    symbol_id=4,
+                    lead_exchange="binance",
+                    lag_exchange="gate",
+                    buffer_percentile=100.0,
+                    chunk_records=2,
+                )
+
+        self.assertEqual(result["freshness"]["lead_sample_count"], 3)
+        self.assertEqual(result["freshness"]["lag_sample_count"], 3)
 
     def test_renders_generated_toml_patch(self):
         params = {

@@ -2,6 +2,7 @@
 
 import gzip
 import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,11 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "market_data" / "compare_fusion_tardis_book_ticker.py"
+MARKET_DATA_SCRIPT_DIR = REPO_ROOT / "scripts" / "market_data"
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
+
+import typed_binary  # noqa: E402
 
 
 def load_module():
@@ -52,7 +58,7 @@ class CompareFusionTardisBookTickerTest(unittest.TestCase):
         records["bid_volume"] = [1.0, 3.0, 3.0, 1.0]
         records["ask_price"] = [101.0, 101.5, 101.7, 201.0]
         records["ask_volume"] = [2.0, 4.0, 4.0, 2.0]
-        records.tofile(path)
+        typed_binary.write_records(path, "book_ticker", records)
 
     def write_tardis_csv(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

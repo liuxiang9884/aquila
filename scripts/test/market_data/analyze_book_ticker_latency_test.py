@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,11 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "market_data" / "analyze_book_ticker_latency.py"
+MARKET_DATA_SCRIPT_DIR = REPO_ROOT / "scripts" / "market_data"
+if str(MARKET_DATA_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(MARKET_DATA_SCRIPT_DIR))
+
+import typed_binary  # noqa: E402
 
 
 def load_module():
@@ -43,7 +49,7 @@ class AnalyzeBookTickerLatencyTest(unittest.TestCase):
         self.assertEqual(dtype.fields["local_ns"][1], 24)
         self.assertEqual(dtype.fields["ask_volume"][1], 56)
 
-    def test_load_book_tickers_reads_numpy_binary(self):
+    def test_load_book_tickers_reads_typed_binary(self):
         dtype = self.module.book_ticker_dtype()
         records = np.zeros(2, dtype=dtype)
         records["id"] = [10, 11]
@@ -51,9 +57,9 @@ class AnalyzeBookTickerLatencyTest(unittest.TestCase):
         records["exchange_ns"] = [1_000_000, 2_000_000]
         records["local_ns"] = [1_001_500, 2_002_500]
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(dir="/home/liuxiang/tmp") as temp_dir:
             path = Path(temp_dir) / "book_ticker.bin"
-            records.tofile(path)
+            typed_binary.write_records(path, "book_ticker", records)
 
             loaded = self.module.load_book_tickers(path)
 
