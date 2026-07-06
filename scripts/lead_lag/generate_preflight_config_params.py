@@ -94,10 +94,10 @@ def _iter_zstd_chunks(path: Path, *, dtype: np.dtype, chunk_records: int):
             return_code = process.wait()
             stderr_file.seek(0)
             stderr = stderr_file.read().decode("utf-8", errors="replace")
-            if return_code != 0:
-                raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
             if stream_error is not None:
                 raise stream_error
+            if return_code != 0:
+                raise ValueError(f"zstd failed for {path}: {stderr.strip()}")
         finally:
             _stop_process(process)
 

@@ -152,7 +152,7 @@ class TypedBinaryTest(unittest.TestCase):
             def read(self, size: int = -1) -> bytes:
                 if size < 0:
                     return super().read(size)
-                return super().read(min(size, 17))
+                return super().read(min(size, 7))
 
         records = self.make_book_records(4)
         payload = io.BytesIO()

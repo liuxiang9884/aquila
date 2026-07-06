@@ -190,6 +190,18 @@ def validate_header(
         )
 
 
+def _read_exact(stream: BinaryIO, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
 def _parse_header(data: bytes, source_name: str | Path) -> MarketDataBinaryHeader:
     if len(data) != HEADER_SIZE:
         source = _source_text(source_name)
@@ -295,7 +307,7 @@ def iter_record_chunks_from_stream(
     if chunk_records <= 0:
         raise ValueError("chunk_records must be positive")
 
-    header = _parse_header(stream.read(HEADER_SIZE), source_name)
+    header = _parse_header(_read_exact(stream, HEADER_SIZE), source_name)
     validate_header(header, feed, source_name)
     dtype = dtype_for_feed(feed)
     chunk_bytes = chunk_records * header.record_size
