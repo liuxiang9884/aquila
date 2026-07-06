@@ -319,12 +319,7 @@ def convert_date(
 
         with temp_path.open("wb") as output:
             typed_binary.write_header(output, "book_ticker")
-            if len(output_records) > 0:
-                output.write(
-                    output_records.astype(
-                        typed_binary.book_ticker_dtype(), copy=False
-                    ).tobytes()
-                )
+            output_records.tofile(output)
 
         expected_size = (
             typed_binary.HEADER_SIZE

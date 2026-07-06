@@ -191,6 +191,57 @@ class HdfBookTickerToBinaryTest(unittest.TestCase):
                 (10.4, 3.5, 10.5, 2.5),
             )
 
+    def test_convert_date_writes_header_only_binary_for_empty_hdf_sources(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            input_dir = root / "hdf"
+            input_dir.mkdir()
+            output_path = root / "out" / "20260415.bin"
+
+            write_hdf(
+                input_dir / "binance.ordi_usdt_swap_2026041500.h5",
+                date_hour=2026041500,
+                price_multiplier=1000,
+                qty_multiplier=10,
+                rows=[],
+            )
+            write_hdf(
+                input_dir / "gateio.ordi_usdt_swap_2026041500.h5",
+                date_hour=2026041500,
+                price_multiplier=100,
+                qty_multiplier=1,
+                rows=[],
+            )
+
+            sources = [
+                converter.HdfSource(
+                    exchange_name="binance",
+                    exchange_id=converter.EXCHANGE_BINANCE,
+                    file_prefix="binance.ordi_usdt_swap",
+                    symbol_id=3,
+                ),
+                converter.HdfSource(
+                    exchange_name="gate",
+                    exchange_id=converter.EXCHANGE_GATE,
+                    file_prefix="gateio.ordi_usdt_swap",
+                    symbol_id=3,
+                ),
+            ]
+
+            stats = converter.convert_date(
+                input_dir=input_dir,
+                output_path=output_path,
+                sources=sources,
+                date="20260415",
+                hours=[0],
+            )
+
+            self.assertEqual(stats.records_written, 0)
+            self.assertEqual(output_path.read_bytes()[:4], b"AQMD")
+            self.assertEqual(output_path.stat().st_size, typed_binary.HEADER_SIZE)
+            records = typed_binary.load_records(output_path, "book_ticker")
+            self.assertEqual(len(records), 0)
+
     def test_rejects_config_date_mismatch(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

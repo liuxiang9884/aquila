@@ -121,6 +121,26 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                     feed="book_ticker",
                 )
 
+    def test_rejects_valid_json_manifest_line_that_is_not_object(self):
+        for entry in ([], 42, "segment"):
+            with self.subTest(entry=entry):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    manifest = Path(temp_dir) / "manifest.jsonl"
+                    manifest.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+                    with self.assertRaises(ValueError) as context:
+                        manifest_config.render_data_reader_config(
+                            manifest_path=manifest,
+                            name="book_replay",
+                            catalog_path=Path("config/instruments/usdt_futures.csv"),
+                        )
+
+                    message = str(context.exception)
+                    self.assertIn(str(manifest), message)
+                    self.assertIn(":1:", message)
+                    self.assertIn("entry", message)
+                    self.assertIn("object", message)
+
     def test_rejects_bytes_mismatch(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

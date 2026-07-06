@@ -110,11 +110,15 @@ def load_replayable_files(manifest_path: Path, feed: str) -> list[Path]:
             if not stripped:
                 continue
             try:
-                entry: dict[str, Any] = json.loads(stripped)
+                entry = json.loads(stripped)
             except json.JSONDecodeError as exc:
                 raise ValueError(
                     f"{manifest_path}:{line_number}: invalid JSON: {exc}"
                 ) from exc
+            if not isinstance(entry, dict):
+                raise _manifest_error(
+                    manifest_path, line_number, "entry", "must be an object"
+                )
             raw_file = entry.get("file")
             if not isinstance(raw_file, str) or not raw_file:
                 raise ValueError(
