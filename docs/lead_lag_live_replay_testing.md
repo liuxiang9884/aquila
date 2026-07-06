@@ -35,7 +35,7 @@ lead_lag_live_replay_signal_parity 1800s
 ### 目标
 
 1. 实盘运行 LeadLag signal-only 策略，生成 live signal CSV。
-2. 同时启动独立 `data_reader_recorder` 进程，从同一组 Gate / Binance `BookTicker` / `Trade` SHM 导出独立 binary；当前 LeadLag replay 仍只消费 BookTicker，Trade binary 可用 `data_reader_probe` historical 模式落盘验证和对账。
+2. 同时启动独立 `data_reader_recorder` 进程，从同一组 Gate / Binance `BookTicker` / `Trade` SHM 导出独立 typed binary；当前 LeadLag replay 仍只消费 BookTicker，Trade binary 可用 `data_reader_probe` historical 模式落盘验证和对账。
 3. 使用导出的 BookTicker binary 运行 `lead_lag_replay`，生成 replay signal CSV。
 4. 比较 live / replay signal CSV，分析差异。
 
@@ -112,6 +112,7 @@ aquila_binance_market_data_live_replay_compare_<YYYYMMDD_HHMMSS>
    - recorder reader：改成 `read_mode = "drain"`，`max_events_per_drain = 4096`，连接同一组唯一 SHM。
 5. 创建 binary replay data reader config：
    - `type = "binary_file"`；
+   - `feed = "book_ticker"`；
    - `files = ["<run_dir>/recorded_book_ticker.bin"]`；
    - `start_position = "earliest_visible"`；
    - `read_mode = "drain"`；
@@ -194,7 +195,7 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 | --- | --- |
 | `./build/debug/tools/gate_data_session` | 连接 Gate futures book ticker WebSocket，发布 Gate `BookTicker` SHM。 |
 | `./build/debug/tools/binance_data_session` | 连接 Binance USD-M futures bookTicker WebSocket，发布 Binance `BookTicker` SHM。 |
-| `./build/debug/tools/data_reader_recorder` | 用 `RealtimeDataReader::Drain()` 从 Gate / Binance SHM 导出连续 `aquila::BookTicker` binary；如果配置包含 trade source，也会写独立 `aquila::Trade` binary。 |
+| `./build/debug/tools/data_reader_recorder` | 用 `RealtimeDataReader::Drain()` 从 Gate / Binance SHM 导出 typed BookTicker / Trade binary。 |
 | `./build/debug/tools/lead_lag_strategy` | signal-only live 策略运行入口；本测试只使用 `--connect-data`，不使用 `--execute`。 |
 | `./build/debug/tools/lead_lag_replay` | 从 recorder 导出的 binary replay，生成 replay signal CSV。 |
 | `scripts/lead_lag/compare_signal_csv.py` | 比较 live / replay signal CSV，输出 JSON 和 Markdown 差异报告。 |
@@ -204,8 +205,8 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 最低通过条件：
 
 - `exit_codes.tsv` 中 data session、recorder、live strategy、replay 和 compare 全部为 `0`。
-- `recorded_book_ticker.bin` 大小是 `sizeof(aquila::BookTicker)` 的整数倍；当前 ABI size 为 `64` 字节。
-- `recorded_trade.bin` 大小是 `sizeof(aquila::Trade)` 的整数倍；Trade binary 可作为 `feed = "trade"` 的单 source `binary_file` 交给 `data_reader_probe` / `HistoricalDataReader` 验证，但当前不进入 `lead_lag_replay`，没有 trade source 时允许为 `0` 字节。
+- `recorded_book_ticker.bin` 必须是 typed binary v1：文件大小至少 16 bytes，header feed/type 与 replay TOML `feed = "book_ticker"` 一致，且 `(file_size - 16) % record_size == 0`。header-only 表示 0 records，但本测试通常应有 BookTicker payload records。
+- `recorded_trade.bin` 必须是 typed binary v1：文件大小至少 16 bytes，header feed/type 与 trade-only probe TOML `feed = "trade"` 一致，且 `(file_size - 16) % record_size == 0`。Trade binary 可作为 `feed = "trade"` 的单 source `binary_file` 交给 `data_reader_probe` / `HistoricalDataReader` 验证；当前不进入 `lead_lag_replay`，没有 trade source 时应是 header-only 0 records。
 - recorder diagnostics 中所有 SHM source 的 `overruns = 0`。
 - recorder diagnostics 中 `skipped = 0`；如果出现 skipped / overrun，必须说明差异是否仍可解释。
 - `lead_lag_strategy_signal_only_summary` 和 `lead_lag_replay_summary` 都能输出 signal summary。
@@ -230,7 +231,7 @@ PYTHONPATH=scripts/lead_lag python3 scripts/lead_lag/compare_signal_csv.py \
 
 1. 读取 `<run_dir>/exit_codes.tsv`，确认 data session、recorder、live strategy、replay 和 compare 的退出码。
 2. 读取 `<run_dir>/orchestrator.log`，确认启动顺序、运行时间窗口、停止顺序和 replay / compare 是否完成。
-3. 检查 `<run_dir>/recorded_book_ticker.bin` 和 `<run_dir>/recorded_trade.bin` 文件大小，确认分别可以被 `sizeof(aquila::BookTicker)` 和 `sizeof(aquila::Trade)` 整除；BookTicker 当前记录数为 `bytes / 64`，Trade 文件可用 trade-only historical reader probe 验证，但当前不参与 LeadLag replay。
+3. 检查 `<run_dir>/recorded_book_ticker.bin` 和 `<run_dir>/recorded_trade.bin` 是否为 typed binary v1，确认文件大小至少 16 bytes、header feed/type 与对应 TOML `feed` 一致，且 `(file_size - 16) % record_size == 0`；BookTicker 当前记录数为 `(file_size - 16) / 64`，Trade 文件可用 trade-only historical reader probe 验证但当前不参与 LeadLag replay。header-only 表示 0 records。
 4. 在 `<run_dir>/data_reader_recorder.stdout.log` 中查找 `recorder_stats feed=book_ticker`、`exchange_stats feed=book_ticker` 和 `source_stats`，重点看每个 source 的 `book_ticker_count`、`skipped`、`overruns` 和最后 `BookTicker.id`。
 5. 在 Gate / Binance data session stdout 或 log 中查找最终 `result=... active=...`，确认 WebSocket session 曾进入 active 状态并正常关闭。
 6. 在 `<run_dir>/lead_lag_strategy_live.stdout.log` 中查找 `lead_lag_strategy_signal_only_summary`，记录 live 侧 `book_tickers`、`signals`、`open`、`close`、`stoploss`、runtime loop diagnostics 和 recovery fields。

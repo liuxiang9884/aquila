@@ -2,7 +2,7 @@
 
 ## 目的
 
-本文定义如何结合 LeadLag 实盘订单日志和 recorder 落地的 BookTicker bin 数据，复查某个开仓 IOC order 为什么没有成交。目标是回答两个问题：
+本文定义如何结合 LeadLag 实盘订单日志和 recorder 落地的 typed BookTicker binary v1 数据，复查某个开仓 IOC order 为什么没有成交。目标是回答两个问题：
 
 1. 从策略实际看到的 lag fusion BBO 看，该 order 在 signal、Ack、cancel feedback 之间是否曾经达到可成交价格。
 2. 如果 BBO 视角显示可成交但最终仍 `kCancelled`，下一步应从 fusion/source 差异、Gate Ack / lifecycle tail、数量和撮合边界继续定位。
@@ -68,7 +68,9 @@ reports/<run_id>/order_detail.csv
 /home/liuxiang/tmp/<run_id>/bin/gate_live_fusion_source3.bin
 ```
 
-对于多个连续 recorder bin，可以向拆分脚本重复传 `--input`。拆分后的同一个 `symbol.bin` 会追加同一 symbol 的所有记录，不按时间再拆。
+对于多个连续 recorder bin，可以向拆分脚本重复传 `--input`。输入和输出都使用 typed BookTicker binary v1；拆分后的每个
+`symbol.bin` 也包含一个 16-byte header。多个输入写入同一个输出时，只在输出文件开头写一个 header，后续追加的是同一
+symbol 的 payload records，不按时间再拆。
 
 ## 拆分 symbol 行情
 
@@ -81,7 +83,6 @@ scripts/market_data/split_book_ticker_by_symbol.py \
   --run-id <run_id> \
   --output-root /home/liuxiang/tmp/book_ticker_symbol_splits \
   --symbol <SYMBOL> \
-  --allow-trailing-bytes \
   --json-output /home/liuxiang/tmp/book_ticker_symbol_splits/<run_id>_<SYMBOL>_summary.json
 ```
 
@@ -91,7 +92,7 @@ scripts/market_data/split_book_ticker_by_symbol.py \
 /home/liuxiang/tmp/book_ticker_symbol_splits/<run_id>/<SYMBOL>.bin
 ```
 
-对 live-growing bin 做快照分析时，建议先复制 recorder bin 到 run snapshot 目录再拆；如果直接读正在增长的文件，必须带 `--allow-trailing-bytes`，避免文件尾部不足一个 `BookTicker` record 时失败。
+对 live-growing bin 做快照分析时，先复制 recorder bin 到 run snapshot 目录再拆。直接读取仍在增长的 typed binary 可能因为尾部 payload record 未完整写入而失败，不是推荐路径。
 
 ## 目标订单集合
 
@@ -239,7 +240,7 @@ side == "kSell"
 - BBO quantity 如果不可用或不足，无法证明大数量 IOC 能完全成交。
 - Gate feedback 的 `exchange_update_ns`、Ack timestamp 和 BookTicker timestamp 字段语义不同，不能简单混成单程网络延迟。
 - strategy 看到的是 fusion canonical；matching engine 实际状态可能与 public/private BBO 有细微差异。
-- live-growing recorder 文件可能在读取时继续增长；需要 snapshot 或 `--allow-trailing-bytes`。
+- live-growing recorder 文件可能在读取时继续增长；需要先 snapshot，再对快照文件拆分。
 
 ## 后续自动化入口建议
 
