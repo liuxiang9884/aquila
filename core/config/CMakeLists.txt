@@ -11,6 +11,8 @@ add_library(aquila_config STATIC
     order_feedback_shm_config.h
     strategy_config.cpp
     strategy_config.h
+    trade_fusion_config.cpp
+    trade_fusion_config.h
     websocket_config.cpp
     websocket_config.h
 )
