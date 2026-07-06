@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "core/common/types.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 
 namespace {
@@ -85,6 +86,8 @@ void WriteTradeFile(const std::filesystem::path& path,
                     const std::vector<aquila::Trade>& trades) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open()) << path;
+  ASSERT_TRUE(aquila::market_data::WriteMarketDataBinaryHeader(
+      output, aquila::config::DataReaderFeed::kTrade));
   for (const aquila::Trade& trade : trades) {
     output.write(reinterpret_cast<const char*>(&trade), sizeof(trade));
   }

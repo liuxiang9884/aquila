@@ -316,6 +316,11 @@ class DataReaderConfigParser {
 
   void ParseFeedField(const toml::table& source_table,
                       DataReaderSourceConfig* source) {
+    if (source->type == DataReaderSourceType::kBinaryFile &&
+        !source_table["feed"]) {
+      Fail("data_reader.sources.feed", " is required for binary_file sources");
+      return;
+    }
     const std::string feed_text =
         StringOr(source_table["feed"], std::string{"book_ticker"});
     if (!ParseFeed(feed_text, &source->feed)) {

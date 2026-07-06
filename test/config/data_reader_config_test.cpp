@@ -213,6 +213,46 @@ read_mode = "drain"
   EXPECT_EQ(source.files[1], second_file);
 }
 
+TEST(DataReaderConfigTest, RejectsBinaryFileWithoutExplicitFeed) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "binary_reader"
+
+[[data_reader.sources]]
+name = "recorded"
+type = "binary_file"
+files = ["recorded.bin"]
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_reader.sources.feed"), std::string::npos);
+}
+
+TEST(DataReaderConfigTest, ShmSourceWithoutFeedDefaultsToBookTicker) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "live_reader"
+
+[[data_reader.sources]]
+name = "gate"
+type = "shm"
+exchange = "gate"
+shm_name = "aquila_gate_market_data"
+channel_name = "book_ticker_channel"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  EXPECT_EQ(result.value.sources[0].feed,
+            aquila::config::DataReaderFeed::kBookTicker);
+}
+
 TEST(DataReaderConfigTest, ParsesTradeShmSource) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]

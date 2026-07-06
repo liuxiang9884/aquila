@@ -5,10 +5,8 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
-#include <limits>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -16,6 +14,7 @@
 #include <fmt/format.h>
 
 #include "core/config/data_reader_config.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/types.h"
 #include "core/utils/mapped_file.h"
 
@@ -92,14 +91,7 @@ class HistoricalDataReader {
       ValidateSource(source);
       feed_ = source.feed;
       for (const std::filesystem::path& file : source.files) {
-        const std::uint64_t record_count = CheckedRecordCount(file, feed_);
-        files_.push_back(FileState{
-            .path = file,
-            .record_count = record_count,
-            .mapping = record_count == 0 ? MappedFile()
-                                         : OpenMappedFile(file, record_count,
-                                                          feed_),
-        });
+        files_.push_back(OpenTypedFile(file, feed_));
       }
     }
     PrepareCurrentFile();
@@ -158,6 +150,7 @@ class HistoricalDataReader {
   struct FileState {
     std::filesystem::path path;
     std::uint64_t record_count{0};
+    std::size_t payload_offset{0};
     MappedFile mapping;
   };
 
@@ -182,10 +175,10 @@ class HistoricalDataReader {
       case config::DataReaderFeed::kTrade:
         break;
       default:
-      throw std::invalid_argument(fmt::format(
-          "historical data reader source '{}' must use book_ticker or trade "
-          "feed",
-          source.name));
+        throw std::invalid_argument(fmt::format(
+            "historical data reader source '{}' must use book_ticker or trade "
+            "feed",
+            source.name));
     }
     if (source.files.empty()) {
       throw std::invalid_argument(fmt::format(
@@ -205,35 +198,12 @@ class HistoricalDataReader {
     }
   }
 
-  [[nodiscard]] static std::size_t RecordSizeForFeed(
-      config::DataReaderFeed feed) noexcept {
-    switch (feed) {
-      case config::DataReaderFeed::kBookTicker:
-        return sizeof(BookTicker);
-      case config::DataReaderFeed::kTrade:
-        return sizeof(Trade);
-    }
-    return 0;
-  }
-
-  [[nodiscard]] static std::string_view RecordNameForFeed(
-      config::DataReaderFeed feed) noexcept {
-    switch (feed) {
-      case config::DataReaderFeed::kBookTicker:
-        return "BookTicker";
-      case config::DataReaderFeed::kTrade:
-        return "Trade";
-    }
-    return "unknown";
-  }
-
-  [[nodiscard]] static std::uint64_t CheckedRecordCount(
+  [[nodiscard]] static FileState OpenTypedFile(
       const std::filesystem::path& file, config::DataReaderFeed feed) {
     if (file.empty()) {
       throw std::invalid_argument("binary data reader file path is empty");
     }
 
-    const std::size_t record_size = RecordSizeForFeed(feed);
     std::error_code error;
     const std::uintmax_t file_size = std::filesystem::file_size(file, error);
     if (error) {
@@ -241,33 +211,28 @@ class HistoricalDataReader {
           fmt::format("failed to inspect binary data file '{}': {}",
                       file.string(), error.message()));
     }
-    if (record_size == 0 || file_size % record_size != 0) {
+    if (file_size < sizeof(MarketDataBinaryHeader)) {
       throw std::runtime_error(fmt::format(
-          "binary data file '{}' size {} is not a multiple of {} size {}",
-          file.string(), file_size, RecordNameForFeed(feed), record_size));
+          "binary data file '{}' is missing market data header",
+          file.string()));
     }
 
-    const std::uintmax_t record_count = file_size / record_size;
-    if (record_count > static_cast<std::uintmax_t>(
-                           std::numeric_limits<std::uint64_t>::max())) {
-      throw std::runtime_error(
-          fmt::format("binary data file '{}' is too large", file.string()));
-    }
-
-    return static_cast<std::uint64_t>(record_count);
-  }
-
-  [[nodiscard]] static MappedFile OpenMappedFile(
-      const std::filesystem::path& file, std::uint64_t record_count,
-      config::DataReaderFeed feed) {
     MappedFile mapping(file, MappedFileAccessPattern::kSequential);
-    const std::size_t expected_size =
-        static_cast<std::size_t>(record_count) * RecordSizeForFeed(feed);
-    if (mapping.size() != expected_size) {
+    if (mapping.size() != file_size) {
       throw std::runtime_error(fmt::format(
           "binary data file '{}' size changed during open", file.string()));
     }
-    return mapping;
+
+    const MarketDataBinaryHeader header = ReadMarketDataBinaryHeaderFromData(
+        mapping.data(), mapping.size(), file);
+    const std::uint64_t record_count =
+        CheckedMarketDataBinaryRecordCount(file, file_size, header, feed);
+    return FileState{
+        .path = file,
+        .record_count = record_count,
+        .payload_offset = header.header_size,
+        .mapping = std::move(mapping),
+    };
   }
 
   template <typename Handler>
@@ -313,7 +278,8 @@ class HistoricalDataReader {
     }
 
     current_records_remaining_ = files_[current_file_index_].record_count;
-    current_cursor_ = files_[current_file_index_].mapping.data();
+    current_cursor_ = files_[current_file_index_].mapping.data() +
+                      files_[current_file_index_].payload_offset;
   }
 
   void CompleteCurrentFile() noexcept {

@@ -135,8 +135,33 @@ TEST(MarketDataBinaryFormatTest, BuildsTradeHeader) {
   EXPECT_EQ(header.flags, 0U);
 }
 
+template <typename RecordT>
+void WriteTypedFile(const std::filesystem::path& path,
+                    cfg::DataReaderFeed feed,
+                    const std::vector<RecordT>& records) {
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  ASSERT_TRUE(output.is_open()) << path;
+  ASSERT_TRUE(md::WriteMarketDataBinaryHeader(output, feed)) << path;
+  if (!records.empty()) {
+    output.write(reinterpret_cast<const char*>(records.data()),
+                 static_cast<std::streamsize>(records.size() *
+                                              sizeof(RecordT)));
+  }
+  ASSERT_TRUE(output.good()) << path;
+}
+
 void WriteBookTickerFile(const std::filesystem::path& path,
                          const std::vector<aquila::BookTicker>& records) {
+  WriteTypedFile(path, cfg::DataReaderFeed::kBookTicker, records);
+}
+
+void WriteTradeFile(const std::filesystem::path& path,
+                    const std::vector<aquila::Trade>& records) {
+  WriteTypedFile(path, cfg::DataReaderFeed::kTrade, records);
+}
+
+void WriteRawBookTickerFile(const std::filesystem::path& path,
+                            const std::vector<aquila::BookTicker>& records) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open()) << path;
   if (!records.empty()) {
@@ -147,15 +172,11 @@ void WriteBookTickerFile(const std::filesystem::path& path,
   ASSERT_TRUE(output.good()) << path;
 }
 
-void WriteTradeFile(const std::filesystem::path& path,
-                    const std::vector<aquila::Trade>& records) {
+void WriteCorruptHeaderFile(const std::filesystem::path& path,
+                            md::MarketDataBinaryHeader header) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open()) << path;
-  if (!records.empty()) {
-    output.write(reinterpret_cast<const char*>(records.data()),
-                 static_cast<std::streamsize>(records.size() *
-                                              sizeof(aquila::Trade)));
-  }
+  output.write(reinterpret_cast<const char*>(&header), sizeof(header));
   ASSERT_TRUE(output.good()) << path;
 }
 
@@ -163,6 +184,9 @@ void WriteTrailingByteFile(const std::filesystem::path& path) {
   const aquila::BookTicker record = MakeBookTicker(1, aquila::Exchange::kGate);
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open()) << path;
+  ASSERT_TRUE(
+      md::WriteMarketDataBinaryHeader(output, cfg::DataReaderFeed::kBookTicker))
+      << path;
   output.write(reinterpret_cast<const char*>(&record), sizeof(record));
   const char trailing = '\x01';
   output.write(&trailing, sizeof(trailing));
@@ -173,6 +197,9 @@ void WriteTradeTrailingByteFile(const std::filesystem::path& path) {
   const aquila::Trade record = MakeTrade(1, aquila::Exchange::kGate);
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   ASSERT_TRUE(output.is_open()) << path;
+  ASSERT_TRUE(
+      md::WriteMarketDataBinaryHeader(output, cfg::DataReaderFeed::kTrade))
+      << path;
   output.write(reinterpret_cast<const char*>(&record), sizeof(record));
   const char trailing = '\x01';
   output.write(&trailing, sizeof(trailing));
@@ -512,6 +539,98 @@ TEST(HistoricalDataReaderTest, DoesNotModifyRecordFields) {
   EXPECT_EQ(reader.Poll(handler), 1U);
   ASSERT_EQ(handler.book_tickers.size(), 1U);
   ExpectBookTickerEquals(handler.book_tickers[0], expected);
+}
+
+TEST(HistoricalDataReaderTest, HeaderOnlyBookTickerFileIsEmptyCompletedFile) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("empty_typed.bin");
+  WriteBookTickerFile(file, {});
+
+  md::HistoricalDataReader<md::HistoricalDataReaderDiagnostics> reader(
+      MakeBinaryReaderConfig({file}));
+  RecordingHandler handler;
+
+  EXPECT_EQ(reader.Poll(handler), 0U);
+  EXPECT_TRUE(reader.finished());
+  EXPECT_EQ(reader.diagnostics().stats().files_completed, 1U);
+  EXPECT_EQ(handler.book_tickers.size(), 0U);
+}
+
+TEST(HistoricalDataReaderTest, RejectsZeroByteFile) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("zero.bin");
+  std::ofstream output(file, std::ios::binary | std::ios::trunc);
+  ASSERT_TRUE(output.is_open()) << file;
+  output.close();
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsRawBookTickerFileWithoutHeader) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("raw.bin");
+  WriteRawBookTickerFile(file, {MakeBookTicker(1, aquila::Exchange::kGate)});
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsWrongMagic) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("wrong_magic.bin");
+  md::MarketDataBinaryHeader header =
+      md::MakeMarketDataBinaryHeader(cfg::DataReaderFeed::kBookTicker);
+  header.magic = 0;
+  WriteCorruptHeaderFile(file, header);
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsWrongVersion) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("wrong_version.bin");
+  md::MarketDataBinaryHeader header =
+      md::MakeMarketDataBinaryHeader(cfg::DataReaderFeed::kBookTicker);
+  header.version = 2;
+  WriteCorruptHeaderFile(file, header);
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsWrongFeedHeader) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("trade.bin");
+  WriteTradeFile(file, {MakeTrade(1, aquila::Exchange::kGate)});
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsWrongRecordSize) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("wrong_size.bin");
+  md::MarketDataBinaryHeader header =
+      md::MakeMarketDataBinaryHeader(cfg::DataReaderFeed::kBookTicker);
+  header.record_size = 63;
+  WriteCorruptHeaderFile(file, header);
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
+}
+
+TEST(HistoricalDataReaderTest, RejectsUnknownFlags) {
+  TempDir temp_dir;
+  const std::filesystem::path file = temp_dir.File("wrong_flags.bin");
+  md::MarketDataBinaryHeader header =
+      md::MakeMarketDataBinaryHeader(cfg::DataReaderFeed::kBookTicker);
+  header.flags = 1;
+  WriteCorruptHeaderFile(file, header);
+
+  EXPECT_THROW((md::HistoricalDataReader<>{MakeBinaryReaderConfig({file})}),
+               std::runtime_error);
 }
 
 TEST(HistoricalDataReaderTest, RejectsFileWithTrailingBytes) {
