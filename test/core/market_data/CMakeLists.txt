@@ -26,6 +26,19 @@ target_link_libraries(core_market_data_shm_test
 add_test(NAME core_market_data_shm_test
          COMMAND core_market_data_shm_test)
 
+add_executable(core_market_data_fastest_route_fusion_test
+    fastest_route_fusion_test.cpp
+)
+
+target_link_libraries(core_market_data_fastest_route_fusion_test
+    PRIVATE
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME core_market_data_fastest_route_fusion_test
+         COMMAND core_market_data_fastest_route_fusion_test)
+
 add_executable(core_market_data_book_ticker_fusion_test
     book_ticker_fusion_test.cpp
 )
