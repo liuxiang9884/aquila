@@ -18,6 +18,7 @@
 #include "core/config/data_reader_config.h"
 #include "core/market_data/data_shm.h"
 #include "core/market_data/historical_data_reader.h"
+#include "core/market_data/market_data_binary_format.h"
 #include "core/market_data/realtime_data_reader.h"
 
 namespace {
@@ -130,6 +131,10 @@ void WriteBookTickerFile(const std::filesystem::path& path,
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   if (!output.is_open()) {
     throw std::runtime_error(fmt::format("failed to open {}", path.string()));
+  }
+  if (!md::WriteMarketDataBinaryHeader(output,
+                                       cfg::DataReaderFeed::kBookTicker)) {
+    throw std::runtime_error(fmt::format("failed to write {}", path.string()));
   }
   for (std::uint64_t i = 0; i < record_count; ++i) {
     const aquila::BookTicker book_ticker =
