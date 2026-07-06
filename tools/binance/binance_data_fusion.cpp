@@ -14,9 +14,12 @@
 #include <toml++/toml.hpp>
 
 #include "core/config/book_ticker_fusion_config.h"
+#include "core/config/trade_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_thread.h"
 #include "core/market_data/data_shm.h"
+#include "core/market_data/trade_fusion_config.h"
+#include "core/market_data/trade_fusion_thread.h"
 #include "exchange/binance/market_data/data_session.h"
 #include "exchange/binance/market_data/data_session_config.h"
 #include "nova/utils/log.h"
@@ -56,8 +59,13 @@ struct PreparedBinanceSource {
       *error = data_session_result.error;
       return false;
     }
-    aq_tool_md::ApplyBookTickerSourceOverride(launch_source,
-                                              &data_session_result.value);
+    if (launch_config.feed == aq_tool_md::DataFusionFeed::kBookTicker) {
+      aq_tool_md::ApplyBookTickerSourceOverride(launch_source,
+                                                &data_session_result.value);
+    } else {
+      aq_tool_md::ApplyTradeSourceOverride(launch_source,
+                                           &data_session_result.value);
+    }
     sources->push_back(PreparedBinanceSource{
         .launch_source = launch_source,
         .data_session_config = std::move(data_session_result.value),
@@ -91,6 +99,42 @@ class BinanceSourceWorker {
 
   [[nodiscard]] std::uint64_t published_count() const noexcept {
     return publisher_.published_count();
+  }
+
+ private:
+  using Session =
+      aq_binance::DataSession<aq_md::DataShmPublisher, WebSocketPolicy,
+                              aq_binance::DataSessionDiagnosticsPolicy>;
+
+  aq_md::DataShmPublisher publisher_;
+  Session session_;
+  std::thread thread_;
+};
+
+template <typename WebSocketPolicy>
+class BinanceTradeSourceWorker {
+ public:
+  explicit BinanceTradeSourceWorker(aq_binance::DataSessionConfig config)
+      : publisher_(config.trade_shm), session_(std::move(config), publisher_) {}
+
+  void Start() {
+    thread_ = std::thread([this] { (void)session_.Start(); });
+  }
+
+  void Stop() noexcept {
+    session_.Stop();
+    publisher_.FlushPublishedCount();
+  }
+
+  void Join() {
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+    publisher_.FlushPublishedCount();
+  }
+
+  [[nodiscard]] std::uint64_t published_count() const noexcept {
+    return publisher_.published_trades();
   }
 
  private:
@@ -162,6 +206,67 @@ int RunConnected(const aq_tool::BinanceDataFusionConfig& launch_config,
   return fusion_stats.ok ? 0 : 1;
 }
 
+template <typename WebSocketPolicy>
+int RunConnectedTrade(const aq_tool::BinanceDataFusionConfig& launch_config,
+                      aq_md::TradeFusionConfig fusion_config,
+                      std::vector<PreparedBinanceSource> sources,
+                      std::uint64_t max_runtime_ms) {
+  std::vector<std::unique_ptr<BinanceTradeSourceWorker<WebSocketPolicy>>>
+      workers;
+  workers.reserve(sources.size());
+  for (PreparedBinanceSource& source : sources) {
+    workers.push_back(
+        std::make_unique<BinanceTradeSourceWorker<WebSocketPolicy>>(
+            std::move(source.data_session_config)));
+  }
+
+  aq_md::TradeFusionThread fusion_thread(std::move(fusion_config));
+  std::signal(SIGINT, HandleSignal);
+  std::signal(SIGTERM, HandleSignal);
+  signal_stop_requested.store(false, std::memory_order_relaxed);
+
+  for (std::unique_ptr<BinanceTradeSourceWorker<WebSocketPolicy>>& worker :
+       workers) {
+    worker->Start();
+  }
+  fusion_thread.Start();
+
+  const auto start = std::chrono::steady_clock::now();
+  while (!signal_stop_requested.load(std::memory_order_relaxed)) {
+    if (max_runtime_ms != 0) {
+      const auto elapsed_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - start)
+              .count();
+      if (elapsed_ms >= static_cast<std::int64_t>(max_runtime_ms)) {
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  for (std::unique_ptr<BinanceTradeSourceWorker<WebSocketPolicy>>& worker :
+       workers) {
+    worker->Stop();
+  }
+  fusion_thread.Stop();
+  for (std::unique_ptr<BinanceTradeSourceWorker<WebSocketPolicy>>& worker :
+       workers) {
+    worker->Join();
+  }
+  const aq_md::TradeFusionThreadStats fusion_stats = fusion_thread.Join();
+
+  std::uint64_t source_published_count{0};
+  for (const std::unique_ptr<BinanceTradeSourceWorker<WebSocketPolicy>>&
+           worker : workers) {
+    source_published_count += worker->published_count();
+  }
+
+  aq_tool_md::LogTradeDataFusionRunSummary(
+      launch_config.name, workers.size(), source_published_count, fusion_stats);
+  return fusion_stats.ok ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -188,6 +293,49 @@ int main(int argc, char** argv) {
       return 1;
     }
     const aq_tool::BinanceDataFusionConfig& launch_config = launch_result.value;
+
+    if (launch_config.feed == aq_tool_md::DataFusionFeed::kTrade) {
+      const aquila::config::TradeFusionConfigResult fusion_result =
+          aquila::config::LoadTradeFusionConfigFile(
+              launch_config.fusion_config);
+      if (!fusion_result.ok) {
+        NOVA_ERROR("fusion_config_error={}", fusion_result.error);
+        return 1;
+      }
+      aq_md::TradeFusionConfig fusion_config = fusion_result.value;
+
+      std::string error;
+      if (!aq_tool_md::ValidateTradeFusionAlignment(launch_config,
+                                                    fusion_config, &error)) {
+        NOVA_ERROR("fusion_alignment_error={}", error);
+        return 1;
+      }
+
+      std::vector<PreparedBinanceSource> sources;
+      if (!LoadPreparedSources(launch_config, &sources, &error)) {
+        NOVA_ERROR("data_session_config_error={}", error);
+        return 1;
+      }
+      if (!aq_tool_md::SourcesUseSameTls(sources, "Binance", &error)) {
+        NOVA_ERROR("transport_error={}", error);
+        return 1;
+      }
+
+      if (!connect) {
+        aq_tool_md::LogTradeDataFusionDryRun(launch_config, fusion_config,
+                                             sources);
+        return 0;
+      }
+
+      if (sources.front().data_session_config.connection.enable_tls) {
+        return RunConnectedTrade<aq_binance::DefaultTlsWebSocketPolicy>(
+            launch_config, std::move(fusion_config), std::move(sources),
+            max_runtime_ms);
+      }
+      return RunConnectedTrade<aq_binance::DefaultPlainWebSocketPolicy>(
+          launch_config, std::move(fusion_config), std::move(sources),
+          max_runtime_ms);
+    }
 
     const aquila::config::BookTickerFusionConfigResult fusion_result =
         aquila::config::LoadBookTickerFusionConfigFile(

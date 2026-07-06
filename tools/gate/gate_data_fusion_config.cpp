@@ -11,6 +11,8 @@
 namespace aquila::tools::gate {
 namespace {
 
+namespace aq_tool_md = aquila::tools::market_data;
+
 [[nodiscard]] GateDataFusionConfigResult Failure(std::string error) {
   GateDataFusionConfigResult result;
   result.error = std::move(error);
@@ -82,6 +84,23 @@ class Parser {
     }
     config_.fusion_config =
         RequiredString(launch["fusion_config"], "launch.fusion_config");
+    if (!ok_) {
+      return;
+    }
+    config_.feed = ParseFeed(launch["feed"]);
+  }
+
+  [[nodiscard]] aq_tool_md::DataFusionFeed ParseFeed(
+      toml::node_view<const toml::node> value_node) {
+    const std::optional<std::string> value = value_node.value<std::string>();
+    if (!value || value->empty() || *value == "book_ticker") {
+      return aq_tool_md::DataFusionFeed::kBookTicker;
+    }
+    if (*value == "trade") {
+      return aq_tool_md::DataFusionFeed::kTrade;
+    }
+    Fail("launch.feed", " must be book_ticker or trade");
+    return aq_tool_md::DataFusionFeed::kBookTicker;
   }
 
   void ParseSources() {
@@ -123,17 +142,32 @@ class Parser {
       if (!ok_) {
         return;
       }
-      source.book_ticker_shm_name =
-          RequiredString((*source_table)["book_ticker_shm_name"],
-                         "launch.sources.book_ticker_shm_name");
-      if (!ok_) {
-        return;
-      }
-      source.book_ticker_channel_name = OptionalString(
-          (*source_table)["book_ticker_channel_name"], "book_ticker_channel");
-      if (source.book_ticker_channel_name.empty()) {
-        Fail("launch.sources.book_ticker_channel_name", " must not be empty");
-        return;
+      if (config_.feed == aq_tool_md::DataFusionFeed::kBookTicker) {
+        source.book_ticker_shm_name =
+            RequiredString((*source_table)["book_ticker_shm_name"],
+                           "launch.sources.book_ticker_shm_name");
+        if (!ok_) {
+          return;
+        }
+        source.book_ticker_channel_name = OptionalString(
+            (*source_table)["book_ticker_channel_name"], "book_ticker_channel");
+        if (source.book_ticker_channel_name.empty()) {
+          Fail("launch.sources.book_ticker_channel_name", " must not be empty");
+          return;
+        }
+      } else {
+        source.trade_shm_name = RequiredString(
+            (*source_table)["trade_shm_name"], "launch.sources.trade_shm_name");
+        if (!ok_) {
+          return;
+        }
+        source.trade_channel_name =
+            OptionalString((*source_table)["trade_channel_name"],
+                           "trade_channel");
+        if (source.trade_channel_name.empty()) {
+          Fail("launch.sources.trade_channel_name", " must not be empty");
+          return;
+        }
       }
       source.remove_existing_source_shm =
           BoolOr((*source_table)["remove_existing_source_shm"],

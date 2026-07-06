@@ -11,7 +11,10 @@
 #include "core/common/book_ticker_fusion_metadata_mode.h"
 #include "core/market_data/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_thread.h"
+#include "core/market_data/trade_fusion_config.h"
+#include "core/market_data/trade_fusion_thread.h"
 #include "nova/utils/log.h"
+#include "tools/market_data/data_fusion_feed.h"
 
 namespace aquila::tools::market_data {
 
@@ -27,11 +30,32 @@ namespace aquila::tools::market_data {
   return "disabled";
 }
 
+[[nodiscard]] inline std::string FormatTradeFusionMetadataOutput(
+    const aquila::market_data::TradeFusionConfig& fusion_config) {
+  if constexpr (aquila::kBookTickerFusionMetadataEnabled) {
+    return fusion_config.output.metadata_bin.string();
+  }
+  return "disabled";
+}
+
 [[nodiscard]] inline const aquila::market_data::BookTickerFusionSourceConfig*
 FindFusionSource(
     const aquila::market_data::BookTickerFusionConfig& fusion_config,
     std::int32_t source_id) {
   for (const aquila::market_data::BookTickerFusionSourceConfig& source :
+       fusion_config.sources) {
+    if (source.source_id == source_id) {
+      return &source;
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] inline const aquila::market_data::TradeFusionSourceConfig*
+FindTradeFusionSource(
+    const aquila::market_data::TradeFusionConfig& fusion_config,
+    std::int32_t source_id) {
+  for (const aquila::market_data::TradeFusionSourceConfig& source :
        fusion_config.sources) {
     if (source.source_id == source_id) {
       return &source;
@@ -70,6 +94,36 @@ template <typename LaunchConfig>
   return true;
 }
 
+template <typename LaunchConfig>
+[[nodiscard]] bool ValidateTradeFusionAlignment(
+    const LaunchConfig& launch_config,
+    const aquila::market_data::TradeFusionConfig& fusion_config,
+    std::string* error) {
+  error->clear();
+  for (const auto& launch_source : launch_config.sources) {
+    const aquila::market_data::TradeFusionSourceConfig* fusion_source =
+        FindTradeFusionSource(fusion_config, launch_source.source_id);
+    if (fusion_source == nullptr) {
+      *error =
+          fmt::format("missing fusion source_id={}", launch_source.source_id);
+      return false;
+    }
+    if (fusion_source->shm_name != launch_source.trade_shm_name) {
+      *error = fmt::format("source_id={} shm mismatch fusion={} launch={}",
+                           launch_source.source_id, fusion_source->shm_name,
+                           launch_source.trade_shm_name);
+      return false;
+    }
+    if (fusion_source->channel_name != launch_source.trade_channel_name) {
+      *error = fmt::format("source_id={} channel mismatch fusion={} launch={}",
+                           launch_source.source_id, fusion_source->channel_name,
+                           launch_source.trade_channel_name);
+      return false;
+    }
+  }
+  return true;
+}
+
 template <typename SourceConfig, typename DataSessionConfig>
 void ApplyBookTickerSourceOverride(const SourceConfig& source,
                                    DataSessionConfig* data_session_config) {
@@ -84,6 +138,27 @@ void ApplyBookTickerSourceOverride(const SourceConfig& source,
   if constexpr (requires { data_session_config->feeds.book_ticker; }) {
     data_session_config->feeds.book_ticker = true;
     data_session_config->feeds.trade = false;
+  }
+  if (source.bind_cpu_id >= 0) {
+    data_session_config->connection.runtime_policy.io_cpu_id =
+        source.bind_cpu_id;
+  }
+  data_session_config->diagnostics.latency_outlier.source_id = source.source_id;
+}
+
+template <typename SourceConfig, typename DataSessionConfig>
+void ApplyTradeSourceOverride(const SourceConfig& source,
+                              DataSessionConfig* data_session_config) {
+  data_session_config->name = source.data_session_name;
+  data_session_config->trade_shm.enabled = true;
+  data_session_config->trade_shm.shm_name = source.trade_shm_name;
+  data_session_config->trade_shm.channel_name = source.trade_channel_name;
+  data_session_config->trade_shm.create = true;
+  data_session_config->trade_shm.remove_existing =
+      source.remove_existing_source_shm;
+  if constexpr (requires { data_session_config->feeds.book_ticker; }) {
+    data_session_config->feeds.book_ticker = false;
+    data_session_config->feeds.trade = true;
   }
   if (source.bind_cpu_id >= 0) {
     data_session_config->connection.runtime_policy.io_cpu_id =
@@ -135,6 +210,32 @@ void LogBookTickerDataFusionDryRun(
   }
 }
 
+template <typename LaunchConfig, typename PreparedSources>
+void LogTradeDataFusionDryRun(
+    const LaunchConfig& launch_config,
+    const aquila::market_data::TradeFusionConfig& fusion_config,
+    const PreparedSources& sources) {
+  NOVA_INFO(
+      "result=ok connect=false feed={} launch={} source_count={} fusion={} "
+      "output_shm={} metadata_enabled={} metadata_output={}",
+      DataFusionFeedName(DataFusionFeed::kTrade), launch_config.name,
+      sources.size(), fusion_config.name, fusion_config.output.shm_name,
+      FusionMetadataEnabledText(),
+      FormatTradeFusionMetadataOutput(fusion_config));
+  for (const auto& source : sources) {
+    const auto& connection = source.data_session_config.connection;
+    NOVA_INFO(
+        "source_id={} name={} data_session_config={} shm={} channel={} "
+        "tls={} bind_cpu_id={}",
+        source.launch_source.source_id, source.data_session_config.name,
+        source.launch_source.data_session_config.string(),
+        source.data_session_config.trade_shm.shm_name,
+        source.data_session_config.trade_shm.channel_name,
+        connection.enable_tls ? "true" : "false",
+        connection.runtime_policy.io_cpu_id);
+  }
+}
+
 inline void LogBookTickerDataFusionRunSummary(
     std::string_view launch_name, std::size_t source_count,
     std::uint64_t source_published_count,
@@ -159,6 +260,36 @@ inline void LogBookTickerDataFusionRunSummary(
         result, launch_name, source_count, source_published_count,
         fusion_stats.total_read_count, fusion_stats.total_published_count,
         FusionMetadataEnabledText(), fusion_stats.total_metadata_write_errors,
+        fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
+  }
+}
+
+inline void LogTradeDataFusionRunSummary(
+    std::string_view launch_name, std::size_t source_count,
+    std::uint64_t source_published_count,
+    const aquila::market_data::TradeFusionThreadStats& fusion_stats) {
+  const char* result = fusion_stats.ok ? "ok" : "failed";
+  if (fusion_stats.ok) {
+    NOVA_INFO(
+        "result={} feed={} launch={} source_count={} source_published_count={} "
+        "fusion_total_read_count={} fusion_total_published_count={} "
+        "metadata_enabled={} fusion_metadata_write_errors={} "
+        "fusion_flush_ok={} error={}",
+        result, DataFusionFeedName(DataFusionFeed::kTrade), launch_name,
+        source_count, source_published_count, fusion_stats.total_read_count,
+        fusion_stats.total_published_count, FusionMetadataEnabledText(),
+        fusion_stats.total_metadata_write_errors,
+        fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
+  } else {
+    NOVA_ERROR(
+        "result={} feed={} launch={} source_count={} source_published_count={} "
+        "fusion_total_read_count={} fusion_total_published_count={} "
+        "metadata_enabled={} fusion_metadata_write_errors={} "
+        "fusion_flush_ok={} error={}",
+        result, DataFusionFeedName(DataFusionFeed::kTrade), launch_name,
+        source_count, source_published_count, fusion_stats.total_read_count,
+        fusion_stats.total_published_count, FusionMetadataEnabledText(),
+        fusion_stats.total_metadata_write_errors,
         fusion_stats.flush_ok ? "true" : "false", fusion_stats.error);
   }
 }

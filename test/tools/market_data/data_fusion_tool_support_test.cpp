@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "core/market_data/book_ticker_fusion_config.h"
+#include "core/market_data/trade_fusion_config.h"
 #include "exchange/gate/market_data/data_session_config.h"
 #include "tools/gate/gate_data_fusion_config.h"
 
@@ -28,6 +29,21 @@ tool_gate::GateDataFusionSourceConfig MakeLaunchSource(std::int32_t source_id,
   };
 }
 
+tool_gate::GateDataFusionSourceConfig MakeTradeLaunchSource(
+    std::int32_t source_id, std::string shm_name) {
+  return tool_gate::GateDataFusionSourceConfig{
+      .source_id = source_id,
+      .data_session_config = "config/data_sessions/gate_data_session.toml",
+      .data_session_name = "gate_trade_source",
+      .book_ticker_shm_name = {},
+      .book_ticker_channel_name = "book_ticker_channel",
+      .trade_shm_name = std::move(shm_name),
+      .trade_channel_name = "trade_channel",
+      .remove_existing_source_shm = true,
+      .bind_cpu_id = 17,
+  };
+}
+
 md::BookTickerFusionSourceConfig MakeFusionSource(std::int32_t source_id,
                                                   std::string shm_name) {
   return md::BookTickerFusionSourceConfig{
@@ -35,6 +51,16 @@ md::BookTickerFusionSourceConfig MakeFusionSource(std::int32_t source_id,
       .name = "source",
       .shm_name = std::move(shm_name),
       .channel_name = "book_ticker_channel",
+  };
+}
+
+md::TradeFusionSourceConfig MakeTradeFusionSource(std::int32_t source_id,
+                                                  std::string shm_name) {
+  return md::TradeFusionSourceConfig{
+      .source_id = source_id,
+      .name = "source",
+      .shm_name = std::move(shm_name),
+      .channel_name = "trade_channel",
   };
 }
 
@@ -63,6 +89,67 @@ TEST(DataFusionToolSupportTest, ValidatesFusionSourceAlignment) {
   EXPECT_TRUE(support::ValidateBookTickerFusionAlignment(
       launch_config, fusion_config, &error));
   EXPECT_TRUE(error.empty());
+}
+
+TEST(DataFusionToolSupportTest, ValidatesTradeFusionSourceAlignment) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion_trade",
+      .fusion_config = "fusion.toml",
+      .feed = support::DataFusionFeed::kTrade,
+      .sources = {MakeTradeLaunchSource(0, "src0"),
+                  MakeTradeLaunchSource(1, "src1")},
+  };
+  const md::TradeFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::TradeFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "trade_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/trade_fusion_metadata.bin",
+          },
+      .sources = {MakeTradeFusionSource(0, "src0"),
+                  MakeTradeFusionSource(1, "src1")},
+  };
+
+  std::string error;
+  EXPECT_TRUE(
+      support::ValidateTradeFusionAlignment(launch_config, fusion_config,
+                                            &error));
+  EXPECT_TRUE(error.empty());
+}
+
+TEST(DataFusionToolSupportTest, ReportsTradeFusionChannelMismatch) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion_trade",
+      .fusion_config = "fusion.toml",
+      .feed = support::DataFusionFeed::kTrade,
+      .sources = {MakeTradeLaunchSource(0, "src0")},
+  };
+  md::TradeFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::TradeFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "trade_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/trade_fusion_metadata.bin",
+          },
+      .sources = {MakeTradeFusionSource(0, "src0")},
+  };
+  fusion_config.sources[0].channel_name = "wrong_channel";
+
+  std::string error;
+  EXPECT_FALSE(
+      support::ValidateTradeFusionAlignment(launch_config, fusion_config,
+                                            &error));
+  EXPECT_NE(error.find("channel mismatch"), std::string::npos);
 }
 
 TEST(DataFusionToolSupportTest, ReportsFusionSourceMismatch) {
@@ -107,6 +194,28 @@ TEST(DataFusionToolSupportTest, AppliesBookTickerSourceOverride) {
             source.book_ticker_channel_name);
   EXPECT_TRUE(config.book_ticker_shm.create);
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
+  EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 17);
+  EXPECT_EQ(config.diagnostics.latency_outlier.source_id, 3);
+}
+
+TEST(DataFusionToolSupportTest, AppliesTradeSourceOverride) {
+  const tool_gate::GateDataFusionSourceConfig source =
+      MakeTradeLaunchSource(3, "override_trade_src");
+  aquila::gate::DataSessionConfig config;
+  config.connection.runtime_policy.io_cpu_id = 2;
+  config.feeds.book_ticker = true;
+  config.feeds.trade = false;
+
+  support::ApplyTradeSourceOverride(source, &config);
+
+  EXPECT_EQ(config.name, source.data_session_name);
+  EXPECT_FALSE(config.feeds.book_ticker);
+  EXPECT_TRUE(config.feeds.trade);
+  EXPECT_TRUE(config.trade_shm.enabled);
+  EXPECT_EQ(config.trade_shm.shm_name, source.trade_shm_name);
+  EXPECT_EQ(config.trade_shm.channel_name, source.trade_channel_name);
+  EXPECT_TRUE(config.trade_shm.create);
+  EXPECT_TRUE(config.trade_shm.remove_existing);
   EXPECT_EQ(config.connection.runtime_policy.io_cpu_id, 17);
   EXPECT_EQ(config.diagnostics.latency_outlier.source_id, 3);
 }
