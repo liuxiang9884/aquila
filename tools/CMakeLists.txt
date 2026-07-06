@@ -295,6 +295,34 @@ target_link_libraries(binance_book_ticker_fusion
         nova
 )
 
+add_executable(gate_trade_fusion
+    market_data/trade_fusion.cpp
+    market_data/trade_fusion_cli.cpp
+)
+
+target_link_libraries(gate_trade_fusion
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+)
+
+add_executable(binance_trade_fusion
+    market_data/binance_trade_fusion.cpp
+    market_data/trade_fusion_cli.cpp
+)
+
+target_link_libraries(binance_trade_fusion
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+)
+
 add_executable(gate_data_fusion
     gate/gate_data_fusion.cpp
     gate/gate_data_fusion_config.cpp

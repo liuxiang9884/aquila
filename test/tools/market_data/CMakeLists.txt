@@ -62,6 +62,25 @@ add_dependencies(book_ticker_fusion_cli_test gate_book_ticker_fusion)
 add_test(NAME book_ticker_fusion_cli_test
          COMMAND book_ticker_fusion_cli_test)
 
+add_executable(trade_fusion_cli_test
+    trade_fusion_cli_test.cpp
+)
+
+target_link_libraries(trade_fusion_cli_test
+    PRIVATE
+        GTest::gtest_main
+)
+
+target_compile_definitions(trade_fusion_cli_test
+    PRIVATE
+        AQUILA_GATE_TRADE_FUSION_BINARY="$<TARGET_FILE:gate_trade_fusion>"
+        AQUILA_MISSING_TRADE_FUSION_CONFIG="${PROJECT_BINARY_DIR}/missing_trade_fusion_config.toml"
+)
+add_dependencies(trade_fusion_cli_test gate_trade_fusion)
+
+add_test(NAME trade_fusion_cli_test
+         COMMAND trade_fusion_cli_test)
+
 add_executable(data_reader_probe_mode_test
     data_reader_probe_mode_test.cpp
 )
