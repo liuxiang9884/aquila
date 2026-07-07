@@ -3,8 +3,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include <fmt/core.h>
 
@@ -25,7 +28,7 @@ struct BookTickerDataFusionFeedTraits {
 
   [[nodiscard]] static std::string_view LaunchShmName(
       const auto& source) noexcept {
-    return source.book_ticker_shm_name;
+    return source.data_shm_name;
   }
 
   [[nodiscard]] static std::string_view LaunchChannelName(
@@ -35,11 +38,6 @@ struct BookTickerDataFusionFeedTraits {
 
   [[nodiscard]] static decltype(auto) DataSessionShm(auto& config) noexcept {
     return (config.book_ticker_shm);
-  }
-
-  static void SelectFeed(auto* feeds) noexcept {
-    feeds->book_ticker = true;
-    feeds->trade = false;
   }
 };
 
@@ -52,7 +50,7 @@ struct TradeDataFusionFeedTraits {
 
   [[nodiscard]] static std::string_view LaunchShmName(
       const auto& source) noexcept {
-    return source.trade_shm_name;
+    return source.data_shm_name;
   }
 
   [[nodiscard]] static std::string_view LaunchChannelName(
@@ -62,11 +60,6 @@ struct TradeDataFusionFeedTraits {
 
   [[nodiscard]] static decltype(auto) DataSessionShm(auto& config) noexcept {
     return (config.trade_shm);
-  }
-
-  static void SelectFeed(auto* feeds) noexcept {
-    feeds->book_ticker = false;
-    feeds->trade = true;
   }
 };
 
@@ -149,25 +142,107 @@ template <typename FeedTraits, typename LaunchConfig>
   return true;
 }
 
-template <typename FeedTraits, typename SourceConfig,
-          typename DataSessionConfig>
-void ApplyFusionSourceOverride(const SourceConfig& source,
-                               DataSessionConfig* data_session_config) {
+template <typename FeedRange>
+[[nodiscard]] bool HasFusionFeed(const FeedRange& feeds,
+                                 DataFusionFeed feed) noexcept {
+  for (DataFusionFeed configured_feed : feeds) {
+    if (configured_feed == feed) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename SourceConfig, typename DataSessionConfig>
+void ApplyFusionSourceOverrides(std::initializer_list<DataFusionFeed> feeds,
+                                const SourceConfig& source,
+                                DataSessionConfig* data_session_config);
+
+template <typename FeedRange, typename SourceConfig, typename DataSessionConfig>
+void ApplyFusionSourceOverrides(const FeedRange& feeds,
+                                const SourceConfig& source,
+                                DataSessionConfig* data_session_config) {
+  const bool book_ticker_enabled =
+      HasFusionFeed(feeds, DataFusionFeed::kBookTicker);
+  const bool trade_enabled = HasFusionFeed(feeds, DataFusionFeed::kTrade);
   data_session_config->name = source.data_session_name;
-  auto& shm = FeedTraits::DataSessionShm(*data_session_config);
-  shm.enabled = true;
-  shm.shm_name = std::string{FeedTraits::LaunchShmName(source)};
-  shm.channel_name = std::string{FeedTraits::LaunchChannelName(source)};
-  shm.create = true;
-  shm.remove_existing = source.remove_existing_source_shm;
   if constexpr (requires { data_session_config->feeds.book_ticker; }) {
-    FeedTraits::SelectFeed(&data_session_config->feeds);
+    data_session_config->feeds.book_ticker = book_ticker_enabled;
+    data_session_config->feeds.trade = trade_enabled;
+  }
+  if constexpr (requires { data_session_config->data_shm; }) {
+    auto& data_shm = data_session_config->data_shm;
+    data_shm.enabled = book_ticker_enabled || trade_enabled;
+    data_shm.book_ticker_enabled = book_ticker_enabled;
+    data_shm.trade_enabled = trade_enabled;
+    data_shm.shm_name = source.data_shm_name;
+    data_shm.book_ticker_channel_name = source.book_ticker_channel_name;
+    data_shm.trade_channel_name = source.trade_channel_name;
+    data_shm.create = true;
+    data_shm.remove_existing = source.remove_existing_source_shm;
+    data_session_config->book_ticker_shm = data_shm.BookTickerConfig();
+    data_session_config->trade_shm = data_shm.TradeConfig();
   }
   if (source.bind_cpu_id >= 0) {
     data_session_config->connection.runtime_policy.io_cpu_id =
         source.bind_cpu_id;
   }
   data_session_config->diagnostics.latency_outlier.source_id = source.source_id;
+}
+
+template <typename SourceConfig, typename DataSessionConfig>
+void ApplyFusionSourceOverrides(std::initializer_list<DataFusionFeed> feeds,
+                                const SourceConfig& source,
+                                DataSessionConfig* data_session_config) {
+  ApplyFusionSourceOverrides<std::initializer_list<DataFusionFeed>,
+                             SourceConfig, DataSessionConfig>(
+      feeds, source, data_session_config);
+}
+
+template <typename LaunchConfig, typename BookTickerFusionConfig,
+          typename TradeFusionConfig>
+[[nodiscard]] bool ValidateDataFusionCpuBindings(
+    const LaunchConfig& launch_config,
+    const BookTickerFusionConfig* book_ticker_fusion_config,
+    const TradeFusionConfig* trade_fusion_config, std::string* error) {
+  error->clear();
+  std::vector<std::pair<std::int32_t, std::string>> used_cpus;
+  const auto add_cpu = [&used_cpus, error](std::int32_t cpu,
+                                           std::string name) -> bool {
+    if (cpu < 0) {
+      return true;
+    }
+    for (const auto& [used_cpu, used_name] : used_cpus) {
+      if (used_cpu == cpu) {
+        *error = fmt::format("cpu binding overlap cpu={} first={} second={}",
+                             cpu, used_name, name);
+        return false;
+      }
+    }
+    used_cpus.emplace_back(cpu, std::move(name));
+    return true;
+  };
+
+  for (const auto& source : launch_config.sources) {
+    if (!add_cpu(source.bind_cpu_id,
+                 fmt::format("source_id={}", source.source_id))) {
+      return false;
+    }
+  }
+  if constexpr (requires { launch_config.backend_cpu_affinity; }) {
+    if (!add_cpu(launch_config.backend_cpu_affinity, "log_backend")) {
+      return false;
+    }
+  }
+  if (book_ticker_fusion_config != nullptr &&
+      !add_cpu(book_ticker_fusion_config->bind_cpu_id, "book_ticker_fusion")) {
+    return false;
+  }
+  if (trade_fusion_config != nullptr &&
+      !add_cpu(trade_fusion_config->bind_cpu_id, "trade_fusion")) {
+    return false;
+  }
+  return true;
 }
 
 template <typename PreparedSources>

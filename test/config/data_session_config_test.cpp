@@ -224,8 +224,9 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
 TEST(DataSessionConfigTest, BookTickerFusionOverrideDisablesTradeFeed) {
   struct SourceConfig {
     std::string data_session_name{"gate_fusion_source"};
-    std::string book_ticker_shm_name{"aquila_gate_fusion_source"};
+    std::string data_shm_name{"aquila_gate_fusion_source"};
     std::string book_ticker_channel_name{"book_ticker_channel"};
+    std::string trade_channel_name{"trade_channel"};
     bool remove_existing_source_shm{true};
     std::int32_t bind_cpu_id{-1};
     std::int32_t source_id{3};
@@ -234,9 +235,9 @@ TEST(DataSessionConfigTest, BookTickerFusionOverrideDisablesTradeFeed) {
   aquila::gate::DataSessionConfig config;
   config.feeds = {.book_ticker = true, .trade = true};
 
-  aquila::tools::market_data::ApplyFusionSourceOverride<
-      aquila::tools::market_data::BookTickerDataFusionFeedTraits>(
-      SourceConfig{}, &config);
+  aquila::tools::market_data::ApplyFusionSourceOverrides(
+      {aquila::tools::market_data::DataFusionFeed::kBookTicker}, SourceConfig{},
+      &config);
 
   EXPECT_TRUE(config.feeds.book_ticker);
   EXPECT_FALSE(config.feeds.trade);
@@ -674,7 +675,7 @@ schema = "aquila.instrument.v1"
 name = "binance_data_session"
 subscribe_symbols = ["BTC_USDT"]
 market = "um_futures"
-feed = "book_ticker"
+feeds = ["book_ticker", "trade"]
 
 [data_session.websocket.endpoint]
 host = "fstream.binance.com"

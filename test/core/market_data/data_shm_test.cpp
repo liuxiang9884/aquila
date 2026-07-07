@@ -87,8 +87,7 @@ aquila::Trade MakeTrade(std::int64_t id) {
       .id = id,
       .symbol_id = 42,
       .exchange = aquila::Exchange::kGate,
-      .side = id % 2 == 0 ? aquila::OrderSide::kBuy
-                          : aquila::OrderSide::kSell,
+      .side = id % 2 == 0 ? aquila::OrderSide::kBuy : aquila::OrderSide::kSell,
       .reserved = 0,
       .exchange_ns = 1'770'000'000'000'000'000 + id,
       .trade_ns = 1'770'000'000'000'010'000 + id,
@@ -113,8 +112,7 @@ void ExpectBookTickerEq(const aquila::BookTicker& actual,
   EXPECT_DOUBLE_EQ(actual.ask_volume, expected.ask_volume);
 }
 
-void ExpectTradeEq(const aquila::Trade& actual,
-                   const aquila::Trade& expected) {
+void ExpectTradeEq(const aquila::Trade& actual, const aquila::Trade& expected) {
   EXPECT_EQ(actual.id, expected.id);
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
   EXPECT_EQ(actual.exchange, expected.exchange);
@@ -234,6 +232,62 @@ TEST(DataShmTest, TradeOverrunDoesNotMoveBookTickerReader) {
   ASSERT_TRUE(trade_reader.TryReadOne(&trade));
   EXPECT_EQ(trade.id, 2);
   EXPECT_EQ(trade_reader.overrun_count(), 1U);
+}
+
+TEST(DataShmTest, CombinedPublisherCanCreateOnlyBookTickerChannel) {
+  md::DataShmConfig config{
+      .enabled = true,
+      .book_ticker_enabled = true,
+      .trade_enabled = false,
+      .shm_name = UniqueShmName("combined_book_only"),
+      .book_ticker_channel_name = "book_ticker_channel",
+      .trade_channel_name = "trade_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  EXPECT_TRUE(publisher.has_book_ticker_channel());
+  EXPECT_FALSE(publisher.has_trade_channel());
+
+  md::BookTickerShmReader reader(config.BookTickerConfigForAttach());
+  reader.SeekLatest();
+  publisher.OnBookTicker(MakeBookTicker(9));
+
+  aquila::BookTicker actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  EXPECT_EQ(actual.id, 9);
+  EXPECT_THROW(md::TradeShmReader(config.TradeConfigForAttach()),
+               std::runtime_error);
+}
+
+TEST(DataShmTest, CombinedPublisherCanCreateOnlyTradeChannel) {
+  md::DataShmConfig config{
+      .enabled = true,
+      .book_ticker_enabled = false,
+      .trade_enabled = true,
+      .shm_name = UniqueShmName("combined_trade_only"),
+      .book_ticker_channel_name = "book_ticker_channel",
+      .trade_channel_name = "trade_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  ShmCleanup cleanup(config.shm_name);
+
+  md::DataShmPublisher publisher(config);
+  EXPECT_FALSE(publisher.has_book_ticker_channel());
+  EXPECT_TRUE(publisher.has_trade_channel());
+
+  md::TradeShmReader reader(config.TradeConfigForAttach());
+  reader.SeekLatest();
+  publisher.OnTrade(MakeTrade(9));
+
+  aquila::Trade actual{};
+  ASSERT_TRUE(reader.TryReadOne(&actual));
+  EXPECT_EQ(actual.id, 9);
+  EXPECT_THROW(md::BookTickerShmReader(config.BookTickerConfigForAttach()),
+               std::runtime_error);
 }
 
 TEST(DataShmTest, ReaderStartsAtLatestWhenRequested) {

@@ -27,6 +27,8 @@ struct TradeShmConfig {
 
 struct DataShmConfig {
   bool enabled{false};
+  bool book_ticker_enabled{true};
+  bool trade_enabled{true};
   std::string shm_name;
   std::string book_ticker_channel_name{"book_ticker_channel"};
   std::string trade_channel_name{"trade_channel"};
@@ -34,7 +36,7 @@ struct DataShmConfig {
   bool remove_existing{false};
 
   [[nodiscard]] BookTickerShmConfig BookTickerConfig() const {
-    return BookTickerShmConfig{.enabled = enabled,
+    return BookTickerShmConfig{.enabled = enabled && book_ticker_enabled,
                                .shm_name = shm_name,
                                .channel_name = book_ticker_channel_name,
                                .create = create,
@@ -42,7 +44,7 @@ struct DataShmConfig {
   }
 
   [[nodiscard]] TradeShmConfig TradeConfig() const {
-    return TradeShmConfig{.enabled = enabled,
+    return TradeShmConfig{.enabled = enabled && trade_enabled,
                           .shm_name = shm_name,
                           .channel_name = trade_channel_name,
                           .create = create,

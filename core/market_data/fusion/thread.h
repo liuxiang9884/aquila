@@ -48,6 +48,7 @@ class BasicFastestRouteFusionThread {
       throw std::logic_error("fusion thread already started");
     }
     stop_requested_.store(false, std::memory_order_release);
+    finished_.store(false, std::memory_order_release);
     {
       std::lock_guard<std::mutex> lock(state_mutex_);
       init_complete_ = false;
@@ -70,6 +71,10 @@ class BasicFastestRouteFusionThread {
 
   void Stop() noexcept {
     stop_requested_.store(true, std::memory_order_release);
+  }
+
+  [[nodiscard]] bool finished() const noexcept {
+    return finished_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]] FastestRouteFusionThreadStats Join() {
@@ -123,6 +128,7 @@ class BasicFastestRouteFusionThread {
       MarkInitComplete(stats.error);
     }
     StoreStats(std::move(stats));
+    finished_.store(true, std::memory_order_release);
   }
 
   void ApplyRuntimePolicy() noexcept {
@@ -140,6 +146,7 @@ class BasicFastestRouteFusionThread {
 
   Config config_;
   std::atomic<bool> stop_requested_{false};
+  std::atomic<bool> finished_{false};
   std::thread thread_;
   std::mutex state_mutex_;
   std::condition_variable state_cv_;

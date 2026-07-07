@@ -9,13 +9,16 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
 [launch]
 name = "gate_data_fusion_30symbols_20260627_book_ticker_4sources"
-fusion_config = "config/market_data_fusion/gate_book_ticker_fusion_30symbols_20260627_4sources.toml"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_30symbols_20260627_4sources.toml"
 
 [[launch.sources]]
 source_id = 0
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260627.toml"
 data_session_name = "gate_source_0_30symbols_20260627"
-book_ticker_shm_name = "aquila_gate_btf_30s_20260627_src_0"
+data_shm_name = "aquila_gate_btf_30s_20260627_src_0"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 8
@@ -24,7 +27,7 @@ bind_cpu_id = 8
 source_id = 1
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260627.toml"
 data_session_name = "gate_source_1_30symbols_20260627"
-book_ticker_shm_name = "aquila_gate_btf_30s_20260627_src_1"
+data_shm_name = "aquila_gate_btf_30s_20260627_src_1"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 9
@@ -33,7 +36,7 @@ bind_cpu_id = 9
 source_id = 2
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260627.toml"
 data_session_name = "gate_source_2_30symbols_20260627"
-book_ticker_shm_name = "aquila_gate_btf_30s_20260627_src_2"
+data_shm_name = "aquila_gate_btf_30s_20260627_src_2"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 10
@@ -42,7 +45,7 @@ bind_cpu_id = 10
 source_id = 3
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260627.toml"
 data_session_name = "gate_source_3_30symbols_20260627"
-book_ticker_shm_name = "aquila_gate_btf_30s_20260627_src_3"
+data_shm_name = "aquila_gate_btf_30s_20260627_src_3"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 11

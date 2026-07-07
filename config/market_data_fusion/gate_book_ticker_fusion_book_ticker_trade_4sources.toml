@@ -1,0 +1,35 @@
+[fusion]
+name = "gate_book_ticker_fusion_book_ticker_trade_4sources"
+max_events_per_source = 1
+bind_cpu_id = 16
+max_symbol_id = 4096
+
+[fusion.output]
+shm_name = "aquila_gate_book_ticker_fusion"
+channel_name = "book_ticker_channel"
+remove_existing = true
+metadata_bin = "/home/liuxiang/tmp/gate_book_ticker_trade_fusion_4sources/book_ticker_fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 0
+name = "gate_source_0"
+shm_name = "aquila_gate_md_src_0"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 1
+name = "gate_source_1"
+shm_name = "aquila_gate_md_src_1"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 2
+name = "gate_source_2"
+shm_name = "aquila_gate_md_src_2"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 3
+name = "gate_source_3"
+shm_name = "aquila_gate_md_src_3"
+channel_name = "book_ticker_channel"

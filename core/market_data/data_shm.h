@@ -262,44 +262,66 @@ class DataShmManager {
  public:
   explicit DataShmManager(const DataShmConfig& config)
       : shm_name_(detail::PrepareShmName(config)),
-        book_ticker_channel_name_(
-            detail::ValidateChannelName(config.book_ticker_channel_name)),
-        trade_channel_name_(
-            detail::ValidateChannelName(config.trade_channel_name)),
         allocator_(shm_name_.c_str(), StorageSize(), config.create) {
+    if (!config.book_ticker_enabled && !config.trade_enabled) {
+      throw std::invalid_argument(
+          "data_shm_sink requires at least one enabled channel");
+    }
+    if (config.book_ticker_enabled) {
+      book_ticker_channel_name_ =
+          detail::ValidateChannelName(config.book_ticker_channel_name);
+    }
+    if (config.trade_enabled) {
+      trade_channel_name_ =
+          detail::ValidateChannelName(config.trade_channel_name);
+    }
     if (config.create) {
-      const bool book_ticker_existed =
-          allocator_.IsConstructed(book_ticker_channel_name_);
-      book_ticker_channel_ =
-          allocator_.Construct<BookTickerShmChannel>(book_ticker_channel_name_);
-      if (!book_ticker_existed) {
-        book_ticker_channel_->header.producer_pid =
-            static_cast<std::uint64_t>(::getpid());
-        book_ticker_channel_->header.created_ns = detail::NowNs();
+      if (config.book_ticker_enabled) {
+        const bool book_ticker_existed =
+            allocator_.IsConstructed(book_ticker_channel_name_);
+        book_ticker_channel_ = allocator_.Construct<BookTickerShmChannel>(
+            book_ticker_channel_name_);
+        if (!book_ticker_existed) {
+          book_ticker_channel_->header.producer_pid =
+              static_cast<std::uint64_t>(::getpid());
+          book_ticker_channel_->header.created_ns = detail::NowNs();
+        }
       }
 
-      const bool trade_existed = allocator_.IsConstructed(trade_channel_name_);
-      trade_channel_ =
-          allocator_.Construct<TradeShmChannel>(trade_channel_name_);
-      if (!trade_existed) {
-        trade_channel_->header.producer_pid =
-            static_cast<std::uint64_t>(::getpid());
-        trade_channel_->header.created_ns = detail::NowNs();
+      if (config.trade_enabled) {
+        const bool trade_existed =
+            allocator_.IsConstructed(trade_channel_name_);
+        trade_channel_ =
+            allocator_.Construct<TradeShmChannel>(trade_channel_name_);
+        if (!trade_existed) {
+          trade_channel_->header.producer_pid =
+              static_cast<std::uint64_t>(::getpid());
+          trade_channel_->header.created_ns = detail::NowNs();
+        }
       }
     } else {
-      book_ticker_channel_ =
-          allocator_.Find<BookTickerShmChannel>(book_ticker_channel_name_);
-      if (book_ticker_channel_ == nullptr) {
-        throw std::runtime_error(
-            "data_shm_sink.book_ticker_channel_name not found");
+      if (config.book_ticker_enabled) {
+        book_ticker_channel_ =
+            allocator_.Find<BookTickerShmChannel>(book_ticker_channel_name_);
+        if (book_ticker_channel_ == nullptr) {
+          throw std::runtime_error(
+              "data_shm_sink.book_ticker_channel_name not found");
+        }
       }
-      trade_channel_ = allocator_.Find<TradeShmChannel>(trade_channel_name_);
-      if (trade_channel_ == nullptr) {
-        throw std::runtime_error("data_shm_sink.trade_channel_name not found");
+      if (config.trade_enabled) {
+        trade_channel_ = allocator_.Find<TradeShmChannel>(trade_channel_name_);
+        if (trade_channel_ == nullptr) {
+          throw std::runtime_error(
+              "data_shm_sink.trade_channel_name not found");
+        }
       }
     }
-    detail::ValidateChannelHeader(*book_ticker_channel_);
-    detail::ValidateChannelHeader(*trade_channel_);
+    if (book_ticker_channel_ != nullptr) {
+      detail::ValidateChannelHeader(*book_ticker_channel_);
+    }
+    if (trade_channel_ != nullptr) {
+      detail::ValidateChannelHeader(*trade_channel_);
+    }
   }
 
   [[nodiscard]] BookTickerShmChannel& book_ticker_channel() noexcept {
@@ -317,6 +339,14 @@ class DataShmManager {
 
   [[nodiscard]] const TradeShmChannel& trade_channel() const noexcept {
     return *trade_channel_;
+  }
+
+  [[nodiscard]] BookTickerShmChannel* book_ticker_channel_ptr() noexcept {
+    return book_ticker_channel_;
+  }
+
+  [[nodiscard]] TradeShmChannel* trade_channel_ptr() noexcept {
+    return trade_channel_;
   }
 
   [[nodiscard]] static std::size_t StorageSize() noexcept {
@@ -348,10 +378,13 @@ class DataShmPublisher {
 
   explicit DataShmPublisher(const DataShmConfig& config)
       : data_manager_(std::make_unique<DataShmManager>(config)),
-        book_ticker_channel_(&data_manager_->book_ticker_channel()),
-        trade_channel_(&data_manager_->trade_channel()),
-        published_book_tickers_(book_ticker_channel_->queue.Current()),
-        published_trades_(trade_channel_->queue.Current()) {}
+        book_ticker_channel_(data_manager_->book_ticker_channel_ptr()),
+        trade_channel_(data_manager_->trade_channel_ptr()),
+        published_book_tickers_(book_ticker_channel_ == nullptr
+                                    ? 0
+                                    : book_ticker_channel_->queue.Current()),
+        published_trades_(
+            trade_channel_ == nullptr ? 0 : trade_channel_->queue.Current()) {}
 
   void OnBookTicker(const aquila::BookTicker& book_ticker) noexcept {
     if (book_ticker_channel_ == nullptr) [[unlikely]] {

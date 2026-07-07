@@ -1,8 +1,8 @@
 # Gate / Binance Fastest-Route Fusion Threaded Bundle Guide
 
-**Goal:** 增加一个同进程多线程 fusion bundle，使 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend thread 在同一进程中运行，同时保留 source SHM 和 canonical SHM 监控边界。
+**Goal:** 增加一个同进程多线程 fusion bundle，使 N 个 data session thread、M 个 fusion thread 和 1 个统一 log backend thread 在同一进程中运行，同时保留 source SHM 和 canonical SHM 监控边界。
 
-**Architecture:** V1 threaded bundle 仍使用 source SHM 作为 data session 到 fusion 的主通信边界，复用现有 `DataSession`、`BookTickerFusionRunner` 和 analyzer。V2 只作为后续建议：当 V1 证据显示 SHM reader hop 或 tail 已成为瓶颈时，再引入 data session 到 fusion 的 in-process SPSC ring 主路径，并把 source SHM 降级为 monitor mirror。
+**Architecture:** V1 threaded bundle 仍使用 source SHM 作为 data session 到 fusion 的主通信边界，复用现有 `DataSession`、`BookTickerFusionRunner`、`TradeFusionRunner` 和 analyzer。每个 enabled feed 对应一个 fusion thread；source worker 按 launch config 中的 enabled feeds 创建对应 source SHM channel。V2 只作为后续建议：当 V1 证据显示 SHM reader hop 或 tail 已成为瓶颈时，再引入 data session 到 fusion 的 in-process SPSC ring 主路径，并把 source SHM 降级为 monitor mirror。
 
 **Tech Stack:** C++20 / CMake、`std::thread`、`toml++`、`CLI11`、Nova / quill logging、`core/market_data/data_shm.h`、Gate / Binance `DataSession`、`BookTickerFusionRunner`、GTest、Python fusion analyzer。
 
@@ -10,13 +10,15 @@
 
 ## 当前实现状态
 
-截至 2026-06-15，V1 threaded bundle 已按“fusion 归 core、交易所启动归 tools”的边界落地：
+截至 2026-07-07，V1 threaded bundle 已按“fusion 归 core、交易所启动归 tools”的边界支持 single-feed 和 multi-feed：
 
-- `BookTickerFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/fusion/`；TOML parser 位于 `core/config/book_ticker_fusion_config.*`。
+- `BookTickerFusionConfig` / `TradeFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/fusion/`；TOML parser 位于 `core/config/*_fusion_config.*`。
 - `tools/market_data/book_ticker_fusion.cpp` 和 `tools/market_data/binance_book_ticker_fusion.cpp` 仍保留为独立 fusion process 入口。
-- 新增 `gate_data_fusion` / `binance_data_fusion`，一个进程内运行 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend。
-- tools 层的启动配置按交易所命名为 `GateDataFusionConfig` / `BinanceDataFusionConfig`；它只描述 data session config 引用和 source SHM override，后续可继续承载其他 data fusion type。
-- 示例配置为 `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml` 和 `config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml`。当前示例保留 fusion thread 在 fusion config 的 `bind_cpu_id = 16`，source threads 绑定 `17-20`，log backend 绑定 `31`。
+- `gate_data_fusion` / `binance_data_fusion` 一个进程内运行 N 个 data session thread、M 个 fusion thread 和 1 个统一 log backend。
+- tools 层的启动配置按交易所命名为 `GateDataFusionConfig` / `BinanceDataFusionConfig`；`launch.feeds` 是进程拓扑事实源，`launch.fusion_configs` 把每个 enabled feed 映射到对应 single-feed fusion TOML。
+- single-feed 示例配置为 `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml`、`config/market_data_fusion/gate_data_fusion_trade_4sources.toml`、`config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml` 和 `config/market_data_fusion/binance_data_fusion_trade_4sources.toml`。
+- multi-feed 示例配置为 `config/market_data_fusion/gate_data_fusion_book_ticker_trade_4sources.toml` 和 `config/market_data_fusion/binance_data_fusion_book_ticker_trade_4sources.toml`。当前示例使用 4 个 source worker 绑定 `17-20`，BookTicker fusion 绑定 `16`，Trade fusion 绑定 `21`，log backend 绑定 `31`。
+- 启动前会拒绝同一 bundle 内 source worker、fusion thread 和 log backend 的非负 CPU binding 冲突。
 - dry-run 验证入口：
 
 ```bash
@@ -24,6 +26,10 @@
   --config config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml
 ./build/debug/tools/binance_data_fusion \
   --config config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml
+./build/debug/tools/gate_data_fusion \
+  --config config/market_data_fusion/gate_data_fusion_book_ticker_trade_4sources.toml
+./build/debug/tools/binance_data_fusion \
+  --config config/market_data_fusion/binance_data_fusion_book_ticker_trade_4sources.toml
 ```
 
 当前事实源以上述实现状态、代码入口和下方验证方式为准；已完成的逐任务实施清单已删除。
@@ -77,18 +83,21 @@ V1 threaded bundle 必须满足：
 
 ## V1 Config 形状
 
-launch config 不把多个 `[data_session]` 写进现有 data session TOML。它引用一个或多个现有 data session config，并显式覆盖 source 差异：
+launch config 不把多个 `[data_session]` 写进现有 data session TOML。它引用一个或多个现有 data session config，并显式覆盖 source 差异。single-feed 和 multi-feed 都使用同一套 `feeds` / `[launch.fusion_configs]` / `data_shm_name` schema，不再解析旧 `feed` / `fusion_config` / `book_ticker_shm_name` / `trade_shm_name`：
 
 ```toml
 [launch]
 name = "gate_data_fusion_book_ticker_4sources"
-fusion_config = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
 
 [[launch.sources]]
 source_id = 0
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_0"
-book_ticker_shm_name = "aquila_gate_book_ticker_src_0"
+data_shm_name = "aquila_gate_book_ticker_src_0"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 17
@@ -97,7 +106,7 @@ bind_cpu_id = 17
 source_id = 1
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_1"
-book_ticker_shm_name = "aquila_gate_book_ticker_src_1"
+data_shm_name = "aquila_gate_book_ticker_src_1"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 18
@@ -106,7 +115,7 @@ bind_cpu_id = 18
 source_id = 2
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_2"
-book_ticker_shm_name = "aquila_gate_book_ticker_src_2"
+data_shm_name = "aquila_gate_book_ticker_src_2"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 19
@@ -115,7 +124,7 @@ bind_cpu_id = 19
 source_id = 3
 data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
 data_session_name = "gate_source_3"
-book_ticker_shm_name = "aquila_gate_book_ticker_src_3"
+data_shm_name = "aquila_gate_book_ticker_src_3"
 book_ticker_channel_name = "book_ticker_channel"
 remove_existing_source_shm = true
 bind_cpu_id = 20
@@ -128,24 +137,52 @@ struct GateDataFusionSourceConfig {
   std::int32_t source_id{-1};
   std::filesystem::path data_session_config;
   std::string data_session_name;
-  std::string book_ticker_shm_name;
+  std::string data_shm_name;
   std::string book_ticker_channel_name{"book_ticker_channel"};
+  std::string trade_channel_name{"trade_channel"};
   bool remove_existing_source_shm{true};
   std::int32_t bind_cpu_id{-1};
 };
 
 struct GateDataFusionConfig {
   std::string name;
-  std::filesystem::path fusion_config;
+  std::filesystem::path book_ticker_fusion_config;
+  std::filesystem::path trade_fusion_config;
+  std::vector<aquila::tools::market_data::DataFusionFeed> feeds;
+  std::int32_t backend_cpu_affinity{-1};
   std::vector<GateDataFusionSourceConfig> sources;
 };
 ```
+
+multi-feed launch 只是在 `feeds` 中启用多个类型：
+
+```toml
+[launch]
+name = "gate_data_fusion_book_ticker_trade_4sources"
+feeds = ["book_ticker", "trade"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_book_ticker_trade_4sources.toml"
+trade = "config/market_data_fusion/gate_trade_fusion_book_ticker_trade_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/gate_data_session_30symbols_private_plain_20260604.toml"
+data_session_name = "gate_source_0"
+data_shm_name = "aquila_gate_md_src_0"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 17
+```
+
+`data_shm_name` 表示该 source worker 的 combined source SHM。启用单个 feed 时只创建该 feed channel；启用多个 feed 时创建多个对应 channel。每个 feed 的 fusion config 仍然只读自己的 channel，例如 `book_ticker_channel` 或 `trade_channel`。
 
 source override 应用规则：
 
 - `data_session_config` 先走对应交易所现有 parser。
 - `data_session_name` 覆盖 `DataSessionConfig::name`。
-- `book_ticker_shm_name` / `book_ticker_channel_name` 覆盖 `DataSessionConfig::book_ticker_shm`。
+- `data_shm_name` 覆盖 `DataSessionConfig::data_shm`，并按 `launch.feeds` 设置 `book_ticker_enabled` / `trade_enabled`。
 - `remove_existing_source_shm` 覆盖 source SHM 创建行为。
 - `bind_cpu_id >= 0` 时覆盖 `connection.runtime_policy.io_cpu_id`。
 - `diagnostics.latency_outlier.source_id` 覆盖为 bundle source id，保持 L4 outlier attribution 可对齐。
@@ -159,8 +196,8 @@ source override 应用规则：
 3. 逐个加载 data session config，应用 source override，构造 source `DataShmPublisher` 和 data session worker。
 4. 所有 source SHM 创建完成后，构造 `BookTickerFusionRunner`，使 fusion reader 可以 attach source SHM。
 5. 安装一次进程级 signal handler，设置 bundle stop flag。
-6. 启动 N 个 data session threads，再启动 1 个 fusion thread。
-7. 收到 stop 后先调用所有 data session `Stop()`，再 stop fusion thread，最后 join threads 并 flush metadata / published count。
+6. 启动 enabled feeds 对应的 fusion threads，再启动 N 个 data session threads。
+7. 收到 stop、到达 `--max-runtime-ms` 或任一 worker/fusion thread 提前退出后，先调用所有 data session `Stop()`，再 stop 所有 fusion threads，最后 join threads 并 flush metadata / published count。
 
 退出结果必须包含：
 
@@ -168,6 +205,7 @@ source override 应用规则：
 result=ok|failed
 bundle=<name>
 source_count=<N>
+feed=<book_ticker|trade>
 fusion_total_read_count=<count>
 fusion_total_published_count=<count>
 fusion_metadata_write_errors=<count>

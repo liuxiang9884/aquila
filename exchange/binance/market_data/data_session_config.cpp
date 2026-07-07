@@ -285,6 +285,9 @@ class DataSessionConfigParser {
     config_.data_shm.create = BoolOr(shm["create"], config_.data_shm.create);
     config_.data_shm.remove_existing =
         BoolOr(shm["remove_existing"], config_.data_shm.remove_existing);
+    config_.data_shm.book_ticker_enabled =
+        config_.data_session.feeds.book_ticker;
+    config_.data_shm.trade_enabled = config_.data_session.feeds.trade;
 
     config_.book_ticker_shm = config_.data_shm.BookTickerConfig();
     config_.trade_shm = config_.data_shm.TradeConfig();
@@ -300,11 +303,13 @@ class DataSessionConfigParser {
       Fail("data_shm_sink.shm_name", " is required");
       return;
     }
-    if (config_.data_shm.book_ticker_channel_name.empty()) {
+    if (config_.data_session.feeds.book_ticker &&
+        config_.data_shm.book_ticker_channel_name.empty()) {
       Fail("data_shm_sink.book_ticker_channel_name", " is required");
       return;
     }
-    if (config_.data_shm.trade_channel_name.empty()) {
+    if (config_.data_session.feeds.trade &&
+        config_.data_shm.trade_channel_name.empty()) {
       Fail("data_shm_sink.trade_channel_name", " is required");
     }
   }
