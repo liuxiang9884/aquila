@@ -53,6 +53,20 @@ target_compile_definitions(data_reader_config_test
 add_test(NAME data_reader_config_test
          COMMAND data_reader_config_test)
 
+add_executable(fusion_config_parser_test
+    fusion_config_parser_test.cpp
+)
+
+target_link_libraries(fusion_config_parser_test
+    PRIVATE
+        aquila_config
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+)
+
+add_test(NAME fusion_config_parser_test
+         COMMAND fusion_config_parser_test)
+
 add_executable(book_ticker_fusion_config_test
     book_ticker_fusion_config_test.cpp
 )

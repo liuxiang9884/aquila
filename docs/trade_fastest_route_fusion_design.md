@@ -20,14 +20,15 @@ source 统一融合成一条 canonical `Trade` SHM，供后续 reader、recorder
 
 ## 泛化边界
 
-实现上采用内部 C++ 泛化，但外部仍保持 feed-specific facade：
+实现上采用内部 C++ 泛化，同时保留真正有意义的 feed-specific facade：
 
 - 内部新增 shared fastest-route fusion core / runner / thread 模板或 traits 层。
-- 现有 `BookTickerFusion*` 对外类型、TOML schema、CLI 和 config 文件保持兼容。
-- 新增 `TradeFusion*` 对外类型、TOML schema、CLI 和 config 文件。
+- 现有 `BookTickerFusion*` 和 `TradeFusion*` 对外类型继续存在，用于表达真实 feed record 类型。
+- BookTicker / Trade config parser、standalone CLI 主流程、data fusion tool support 已迁移到 shared traits/helper。
+- sidecar metadata 编译期开关已统一为 `AQUILA_FUSION_METADATA_MODE=file|off`。
 - 不把外部配置立即合并成 `feed = "book_ticker" | "trade"` 的统一 schema。
 
-这样可以复用核心算法和 runner 结构，同时避免迁移已有 BBO 实盘入口和分析脚本。
+这样可以复用核心算法、runner、配置解析和工具冷路径，同时避免把 record-specific public 类型强行抹平。
 
 ## 主算法
 

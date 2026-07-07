@@ -21,6 +21,9 @@
 - Modify `core/config/book_ticker_fusion_config.cpp` and `core/config/trade_fusion_config.cpp`: replace duplicate parser classes with traits and calls into `ParseFusionConfig<Traits>()`.
 - Modify `core/config/CMakeLists.txt`: add the parser header to the config library source list.
 - Modify `tools/market_data/data_fusion_tool_support.h`: replace feed-specific helpers with `BookTickerDataFusionFeedTraits`, `TradeDataFusionFeedTraits`, and generic helpers.
+- Create `tools/market_data/fusion_cli.h`: shared standalone fusion CLI loop for BookTicker / Trade.
+- Modify `tools/market_data/book_ticker_fusion_cli.cpp` and `tools/market_data/trade_fusion_cli.cpp`: shrink to thin wrappers over `RunFusionCli<Traits>()`.
+- Create `test/tools/market_data/fusion_cli_traits_test.cpp`: compile-facing coverage for standalone CLI traits.
 - Modify `tools/gate/gate_data_fusion.cpp` and `tools/binance/binance_data_fusion.cpp`: call generic helpers and keep behavior in feed branches.
 - Modify `test/tools/market_data/data_fusion_tool_support_test.cpp`: test generic helper names and traits.
 - Modify active docs: `docs/diagnostic_fields.md`, `docs/project_onboarding_guide.md`, `docs/lead_lag_live_operations_pipeline.md`, `docs/gate_fastest_route_fusion_design.md`, `docs/trade_fastest_route_fusion_design.md`.
@@ -286,7 +289,44 @@ cmake --build build/debug --target gate_data_fusion binance_data_fusion -j
 
 Expected: both tools build.
 
-## Task 5: Active Docs, Full Verification, and Performance Check
+## Task 5: Unify Standalone Fusion CLI
+
+**Files:**
+- Create: `tools/market_data/fusion_cli.h`
+- Modify: `tools/market_data/book_ticker_fusion_cli.cpp`
+- Modify: `tools/market_data/trade_fusion_cli.cpp`
+- Modify: `tools/CMakeLists.txt`
+- Create: `test/tools/market_data/fusion_cli_traits_test.cpp`
+- Modify: `test/tools/market_data/CMakeLists.txt`
+
+- [ ] **Step 1: Write compile-facing RED**
+
+Add `fusion_cli_traits_test.cpp` that includes `tools/market_data/fusion_cli.h` and asserts `BookTickerFusionCliTraits` / `TradeFusionCliTraits` bind the expected feed, config, and runner types.
+
+Run:
+
+```bash
+cmake --build build/debug --target fusion_cli_traits_test -j
+```
+
+Expected: build fails until `fusion_cli.h` exists.
+
+- [ ] **Step 2: Implement generic CLI helper**
+
+Move the duplicated CLI loop, early config error logging, affinity application, signal handling, metadata formatting, runner polling, and flush handling into `RunFusionCli<Traits>()`. Keep the existing `RunBookTickerFusionCli()` and `RunTradeFusionCli()` signatures as thin wrappers.
+
+- [ ] **Step 3: Run standalone CLI verification**
+
+Run:
+
+```bash
+cmake --build build/debug --target fusion_cli_traits_test gate_book_ticker_fusion binance_book_ticker_fusion gate_trade_fusion binance_trade_fusion -j
+ctest --test-dir build/debug -R 'fusion_cli_traits|book_ticker_fusion_cli|trade_fusion_cli' --output-on-failure
+```
+
+Expected: traits test and existing process-level missing-config CLI tests pass.
+
+## Task 6: Active Docs, Full Verification, and Performance Check
 
 **Files:**
 - Modify: `docs/diagnostic_fields.md`

@@ -43,6 +43,22 @@ target_link_libraries(data_fusion_tool_support_test
 add_test(NAME data_fusion_tool_support_test
          COMMAND data_fusion_tool_support_test)
 
+add_executable(fusion_cli_traits_test
+    fusion_cli_traits_test.cpp
+)
+
+target_link_libraries(fusion_cli_traits_test
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        GTest::gtest_main
+        nova
+)
+
+add_test(NAME fusion_cli_traits_test
+         COMMAND fusion_cli_traits_test)
+
 add_executable(book_ticker_fusion_cli_test
     book_ticker_fusion_cli_test.cpp
 )

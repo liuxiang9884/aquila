@@ -234,8 +234,9 @@ TEST(DataSessionConfigTest, BookTickerFusionOverrideDisablesTradeFeed) {
   aquila::gate::DataSessionConfig config;
   config.feeds = {.book_ticker = true, .trade = true};
 
-  aquila::tools::market_data::ApplyBookTickerSourceOverride(SourceConfig{},
-                                                            &config);
+  aquila::tools::market_data::ApplyFusionSourceOverride<
+      aquila::tools::market_data::BookTickerDataFusionFeedTraits>(
+      SourceConfig{}, &config);
 
   EXPECT_TRUE(config.feeds.book_ticker);
   EXPECT_FALSE(config.feeds.trade);

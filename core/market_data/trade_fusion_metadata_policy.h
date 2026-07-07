@@ -3,7 +3,7 @@
 
 #include <type_traits>
 
-#include "core/common/book_ticker_fusion_metadata_mode.h"
+#include "core/common/fusion_metadata_mode.h"
 #include "core/market_data/fusion_metadata_policy.h"
 #include "core/market_data/trade_fusion.h"
 #include "core/market_data/trade_fusion_config.h"
@@ -25,7 +25,7 @@ using FileTradeFusionMetadataPolicy =
 using NoopTradeFusionMetadataPolicy =
     NoopFusionMetadataPolicy<TradeFusionConfig>;
 using DefaultTradeFusionMetadataPolicy =
-    std::conditional_t<aquila::kBookTickerFusionMetadataEnabled,
+    std::conditional_t<aquila::kFusionMetadataEnabled,
                        FileTradeFusionMetadataPolicy,
                        NoopTradeFusionMetadataPolicy>;
 

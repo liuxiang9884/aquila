@@ -14,7 +14,7 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
-#include "core/common/book_ticker_fusion_metadata_mode.h"
+#include "core/common/fusion_metadata_mode.h"
 #include "core/market_data/book_ticker_fusion_config.h"
 #include "core/market_data/book_ticker_fusion_metadata.h"
 #include "core/market_data/data_shm.h"
@@ -97,7 +97,7 @@ TEST(BookTickerFusionThreadTest, PublishesAndStops) {
   const md::BookTickerShmConfig output = MakeCreateConfig("output");
   ShmCleanup source_cleanup(source.shm_name);
   ShmCleanup output_cleanup(output.shm_name);
-#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
+#if AQUILA_FUSION_METADATA_ENABLED
   const std::filesystem::path metadata_path = UniqueMetadataPath();
   std::filesystem::remove(metadata_path);
 #else
@@ -155,7 +155,7 @@ TEST(BookTickerFusionThreadTest, PublishesAndStops) {
   EXPECT_EQ(canonical.symbol_id, 42);
   EXPECT_EQ(canonical.exchange_ns, 1'780'000'000'000'000'100);
 
-#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
+#if AQUILA_FUSION_METADATA_ENABLED
   ASSERT_TRUE(std::filesystem::exists(metadata_path));
   EXPECT_EQ(std::filesystem::file_size(metadata_path),
             sizeof(md::FusionMetadataRecord));

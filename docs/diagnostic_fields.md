@@ -153,7 +153,7 @@ stats 由编译期 diagnostics policy 启用；生产默认 no-op diagnostics po
 
 ## Market Data Fusion
 
-BookTicker / Trade fastest-route fusion 当前共用 `AQUILA_BOOK_TICKER_FUSION_METADATA_MODE=file|off`
+BookTicker / Trade fastest-route fusion 当前共用 `AQUILA_FUSION_METADATA_MODE=file|off`
 在编译期决定是否启用 sidecar metadata。`file` 模式写 `fusion_metadata.bin`；`off` 模式不打开
 metadata 文件，不构造 metadata record，但仍保留基础 read / publish 运行统计。
 

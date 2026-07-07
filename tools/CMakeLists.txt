@@ -270,6 +270,7 @@ target_link_libraries(book_ticker_shm_reader
 add_executable(gate_book_ticker_fusion
     market_data/book_ticker_fusion.cpp
     market_data/book_ticker_fusion_cli.cpp
+    market_data/fusion_cli.h
 )
 
 target_link_libraries(gate_book_ticker_fusion
@@ -284,6 +285,7 @@ target_link_libraries(gate_book_ticker_fusion
 add_executable(binance_book_ticker_fusion
     market_data/binance_book_ticker_fusion.cpp
     market_data/book_ticker_fusion_cli.cpp
+    market_data/fusion_cli.h
 )
 
 target_link_libraries(binance_book_ticker_fusion
@@ -298,6 +300,7 @@ target_link_libraries(binance_book_ticker_fusion
 add_executable(gate_trade_fusion
     market_data/trade_fusion.cpp
     market_data/trade_fusion_cli.cpp
+    market_data/fusion_cli.h
 )
 
 target_link_libraries(gate_trade_fusion
@@ -312,6 +315,7 @@ target_link_libraries(gate_trade_fusion
 add_executable(binance_trade_fusion
     market_data/binance_trade_fusion.cpp
     market_data/trade_fusion_cli.cpp
+    market_data/fusion_cli.h
 )
 
 target_link_libraries(binance_trade_fusion

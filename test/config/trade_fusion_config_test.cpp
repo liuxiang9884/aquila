@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
-#include "core/common/book_ticker_fusion_metadata_mode.h"
+#include "core/common/fusion_metadata_mode.h"
 
 namespace {
 
@@ -120,7 +120,7 @@ shm_name = "aquila_gate_trade_src_0"
 
   const auto result = aquila::config::ParseTradeFusionConfig(parsed);
 
-#if AQUILA_BOOK_TICKER_FUSION_METADATA_ENABLED
+#if AQUILA_FUSION_METADATA_ENABLED
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("metadata_bin"), std::string::npos);
 #else

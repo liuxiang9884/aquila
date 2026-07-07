@@ -12,6 +12,8 @@ C++ helper 名称；如旧外部命名阻碍统一，也同步迁移到最新 fe
   result/config/source 类型、默认 channel、public 函数名和错误前缀。
 - `tools/market_data/data_fusion_tool_support.h` 中 metadata output formatting、source lookup、alignment
   validation、source override、dry-run log、run summary log 都各有 BookTicker / Trade 两套实现。
+- `tools/market_data/book_ticker_fusion_cli.cpp` 和 `tools/market_data/trade_fusion_cli.cpp` 仍是 standalone
+  fusion CLI 主流程的两份近似拷贝，差异主要是 config parser、runner 和 poll stats 类型。
 - Gate / Binance `data_fusion` 工具当前在 feed 分支中分别调用 `ValidateBookTickerFusionAlignment()` /
   `ValidateTradeFusionAlignment()`、`ApplyBookTickerSourceOverride()` / `ApplyTradeSourceOverride()` 等旧 helper。
 - BookTicker / Trade 已共用 `FusionMetadataRecord`，但编译期开关仍叫
@@ -47,8 +49,11 @@ C++ helper 名称；如旧外部命名阻碍统一，也同步迁移到最新 fe
 - 新增或重写 `core/common/fusion_metadata_mode.h`，同步 CMake cache option、compile definition、测试和文档。
 - 用一组 generic helper 替换 `data_fusion_tool_support.h` 中重复的 BookTicker / Trade helper。
 - 修改 Gate / Binance `data_fusion` 调用点使用 generic helper。
+- 新增 `tools/market_data/fusion_cli.h`，把 standalone `book_ticker_fusion` / `trade_fusion` CLI 主流程收敛到
+  shared traits/helper；原 `RunBookTickerFusionCli()` / `RunTradeFusionCli()` 只保留薄 wrapper。
 - 更新 `test/config/*_fusion_config_test.cpp`、`test/tools/market_data/data_fusion_tool_support_test.cpp`、
-  `test/core/common/*metadata_mode*_test.cpp` 和必要的 CLI / runner / thread 测试 include / macro。
+  `test/tools/market_data/fusion_cli_traits_test.cpp`、`test/core/common/*metadata_mode*_test.cpp` 和必要的
+  CLI / runner / thread 测试 include / macro。
 - 同步 `docs/diagnostic_fields.md`、`docs/project_onboarding_guide.md`、
   `docs/lead_lag_live_operations_pipeline.md`、fusion design 文档中旧开关名和旧 helper 说明。
 

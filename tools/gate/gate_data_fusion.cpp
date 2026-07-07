@@ -59,11 +59,13 @@ struct PreparedGateSource {
       return false;
     }
     if (launch_config.feed == aq_tool_md::DataFusionFeed::kBookTicker) {
-      aq_tool_md::ApplyBookTickerSourceOverride(launch_source,
-                                                &data_session_result.value);
+      aq_tool_md::ApplyFusionSourceOverride<
+          aq_tool_md::BookTickerDataFusionFeedTraits>(
+          launch_source, &data_session_result.value);
     } else {
-      aq_tool_md::ApplyTradeSourceOverride(launch_source,
-                                           &data_session_result.value);
+      aq_tool_md::ApplyFusionSourceOverride<
+          aq_tool_md::TradeDataFusionFeedTraits>(launch_source,
+                                                 &data_session_result.value);
     }
     sources->push_back(PreparedGateSource{
         .launch_source = launch_source,
@@ -205,7 +207,8 @@ int RunConnected(const aq_tool::GateDataFusionConfig& launch_config,
     source_published_count += worker->published_count();
   }
 
-  aq_tool_md::LogBookTickerDataFusionRunSummary(
+  aq_tool_md::LogDataFusionRunSummary<
+      aq_tool_md::BookTickerDataFusionFeedTraits>(
       launch_config.name, workers.size(), source_published_count, fusion_stats);
   return fusion_stats.ok ? 0 : 1;
 }
@@ -264,7 +267,7 @@ int RunConnectedTrade(const aq_tool::GateDataFusionConfig& launch_config,
     source_published_count += worker->published_count();
   }
 
-  aq_tool_md::LogTradeDataFusionRunSummary(
+  aq_tool_md::LogDataFusionRunSummary<aq_tool_md::TradeDataFusionFeedTraits>(
       launch_config.name, workers.size(), source_published_count, fusion_stats);
   return fusion_stats.ok ? 0 : 1;
 }
@@ -306,8 +309,9 @@ int main(int argc, char** argv) {
       aq_md::TradeFusionConfig fusion_config = fusion_result.value;
 
       std::string error;
-      if (!aq_tool_md::ValidateTradeFusionAlignment(launch_config,
-                                                    fusion_config, &error)) {
+      if (!aq_tool_md::ValidateFusionAlignment<
+              aq_tool_md::TradeDataFusionFeedTraits>(launch_config,
+                                                     fusion_config, &error)) {
         NOVA_ERROR("fusion_alignment_error={}", error);
         return 1;
       }
@@ -323,8 +327,8 @@ int main(int argc, char** argv) {
       }
 
       if (!connect) {
-        aq_tool_md::LogTradeDataFusionDryRun(launch_config, fusion_config,
-                                             sources);
+        aq_tool_md::LogDataFusionDryRun<aq_tool_md::TradeDataFusionFeedTraits>(
+            launch_config, fusion_config, sources);
         return 0;
       }
 
@@ -348,8 +352,9 @@ int main(int argc, char** argv) {
     aq_md::BookTickerFusionConfig fusion_config = fusion_result.value;
 
     std::string error;
-    if (!aq_tool_md::ValidateBookTickerFusionAlignment(launch_config,
-                                                       fusion_config, &error)) {
+    if (!aq_tool_md::ValidateFusionAlignment<
+            aq_tool_md::BookTickerDataFusionFeedTraits>(
+            launch_config, fusion_config, &error)) {
       NOVA_ERROR("fusion_alignment_error={}", error);
       return 1;
     }
@@ -365,8 +370,9 @@ int main(int argc, char** argv) {
     }
 
     if (!connect) {
-      aq_tool_md::LogBookTickerDataFusionDryRun(launch_config, fusion_config,
-                                                sources);
+      aq_tool_md::LogDataFusionDryRun<
+          aq_tool_md::BookTickerDataFusionFeedTraits>(launch_config,
+                                                      fusion_config, sources);
       return 0;
     }
 

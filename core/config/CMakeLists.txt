@@ -3,6 +3,7 @@ add_library(aquila_config STATIC
     book_ticker_fusion_config.h
     data_reader_config.cpp
     data_reader_config.h
+    fusion_config_parser.h
     instrument_catalog.cpp
     instrument_catalog.h
     order_gateway_config.cpp

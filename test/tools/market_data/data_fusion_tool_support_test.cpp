@@ -86,8 +86,9 @@ TEST(DataFusionToolSupportTest, ValidatesFusionSourceAlignment) {
   };
 
   std::string error;
-  EXPECT_TRUE(support::ValidateBookTickerFusionAlignment(
-      launch_config, fusion_config, &error));
+  EXPECT_TRUE(
+      support::ValidateFusionAlignment<support::BookTickerDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
   EXPECT_TRUE(error.empty());
 }
 
@@ -117,8 +118,8 @@ TEST(DataFusionToolSupportTest, ValidatesTradeFusionSourceAlignment) {
 
   std::string error;
   EXPECT_TRUE(
-      support::ValidateTradeFusionAlignment(launch_config, fusion_config,
-                                            &error));
+      support::ValidateFusionAlignment<support::TradeDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
   EXPECT_TRUE(error.empty());
 }
 
@@ -147,8 +148,8 @@ TEST(DataFusionToolSupportTest, ReportsTradeFusionChannelMismatch) {
 
   std::string error;
   EXPECT_FALSE(
-      support::ValidateTradeFusionAlignment(launch_config, fusion_config,
-                                            &error));
+      support::ValidateFusionAlignment<support::TradeDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
   EXPECT_NE(error.find("channel mismatch"), std::string::npos);
 }
 
@@ -174,8 +175,9 @@ TEST(DataFusionToolSupportTest, ReportsUnexpectedBookTickerFusionSource) {
   };
 
   std::string error;
-  EXPECT_FALSE(support::ValidateBookTickerFusionAlignment(
-      launch_config, fusion_config, &error));
+  EXPECT_FALSE(
+      support::ValidateFusionAlignment<support::BookTickerDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
   EXPECT_NE(error.find("unexpected fusion source_id=1"), std::string::npos);
 }
 
@@ -204,8 +206,8 @@ TEST(DataFusionToolSupportTest, ReportsUnexpectedTradeFusionSource) {
 
   std::string error;
   EXPECT_FALSE(
-      support::ValidateTradeFusionAlignment(launch_config, fusion_config,
-                                            &error));
+      support::ValidateFusionAlignment<support::TradeDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
   EXPECT_NE(error.find("unexpected fusion source_id=1"), std::string::npos);
 }
 
@@ -231,9 +233,66 @@ TEST(DataFusionToolSupportTest, ReportsFusionSourceMismatch) {
   };
 
   std::string error;
-  EXPECT_FALSE(support::ValidateBookTickerFusionAlignment(
-      launch_config, fusion_config, &error));
+  EXPECT_FALSE(
+      support::ValidateFusionAlignment<support::BookTickerDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
   EXPECT_NE(error.find("shm mismatch"), std::string::npos);
+}
+
+TEST(DataFusionToolSupportTest, FormatsBookTickerFusionMetadataOutput) {
+  const md::BookTickerFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::BookTickerFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "book_ticker_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/fusion_metadata.bin",
+          },
+      .sources = {MakeFusionSource(0, "src0")},
+  };
+
+  if constexpr (aquila::kFusionMetadataEnabled) {
+    EXPECT_EQ(support::FormatFusionMetadataOutput<
+                  support::BookTickerDataFusionFeedTraits>(fusion_config),
+              "/home/liuxiang/tmp/fusion_metadata.bin");
+  } else {
+    EXPECT_EQ(support::FormatFusionMetadataOutput<
+                  support::BookTickerDataFusionFeedTraits>(fusion_config),
+              "disabled");
+  }
+}
+
+TEST(DataFusionToolSupportTest, FormatsTradeFusionMetadataOutput) {
+  const md::TradeFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::TradeFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "trade_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/trade_fusion_metadata.bin",
+          },
+      .sources = {MakeTradeFusionSource(0, "src0")},
+  };
+
+  if constexpr (aquila::kFusionMetadataEnabled) {
+    EXPECT_EQ(
+        support::FormatFusionMetadataOutput<support::TradeDataFusionFeedTraits>(
+            fusion_config),
+        "/home/liuxiang/tmp/trade_fusion_metadata.bin");
+  } else {
+    EXPECT_EQ(
+        support::FormatFusionMetadataOutput<support::TradeDataFusionFeedTraits>(
+            fusion_config),
+        "disabled");
+  }
 }
 
 TEST(DataFusionToolSupportTest, AppliesBookTickerSourceOverride) {
@@ -242,7 +301,8 @@ TEST(DataFusionToolSupportTest, AppliesBookTickerSourceOverride) {
   aquila::gate::DataSessionConfig config;
   config.connection.runtime_policy.io_cpu_id = 2;
 
-  support::ApplyBookTickerSourceOverride(source, &config);
+  support::ApplyFusionSourceOverride<support::BookTickerDataFusionFeedTraits>(
+      source, &config);
 
   EXPECT_EQ(config.name, source.data_session_name);
   EXPECT_TRUE(config.book_ticker_shm.enabled);
@@ -263,7 +323,8 @@ TEST(DataFusionToolSupportTest, AppliesTradeSourceOverride) {
   config.feeds.book_ticker = true;
   config.feeds.trade = false;
 
-  support::ApplyTradeSourceOverride(source, &config);
+  support::ApplyFusionSourceOverride<support::TradeDataFusionFeedTraits>(
+      source, &config);
 
   EXPECT_EQ(config.name, source.data_session_name);
   EXPECT_FALSE(config.feeds.book_ticker);
