@@ -12,7 +12,7 @@
 
 截至 2026-06-15，V1 threaded bundle 已按“fusion 归 core、交易所启动归 tools”的边界落地：
 
-- `BookTickerFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/`；TOML parser 位于 `core/config/book_ticker_fusion_config.*`。
+- `BookTickerFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/fusion/`；TOML parser 位于 `core/config/book_ticker_fusion_config.*`。
 - `tools/market_data/book_ticker_fusion.cpp` 和 `tools/market_data/binance_book_ticker_fusion.cpp` 仍保留为独立 fusion process 入口。
 - 新增 `gate_data_fusion` / `binance_data_fusion`，一个进程内运行 N 个 data session thread、1 个 fusion thread 和 1 个统一 log backend。
 - tools 层的启动配置按交易所命名为 `GateDataFusionConfig` / `BinanceDataFusionConfig`；它只描述 data session config 引用和 source SHM override，后续可继续承载其他 data fusion type。

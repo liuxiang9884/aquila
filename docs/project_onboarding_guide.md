@@ -143,7 +143,7 @@ Focused checks:
 ```bash
 ctest --test-dir build/debug -R '(core_order_pool|strategy|gate_order|gate_submit|order_session_config|order_feedback|lead_lag|signal_csv_writer)' --output-on-failure
 ctest --test-dir build/debug -R '(gate_.*market_data|binance_.*market_data|data_session_config|data_reader_config|core_market_data|data_reader_recorder)' --output-on-failure
-ctest --test-dir build/debug -R 'fastest_route|book_ticker_fusion|trade_fusion|data_fusion_config|data_fusion_tool_support' --output-on-failure
+ctest --test-dir build/debug -R 'core_market_data_fusion|fusion_config|data_fusion_config|data_fusion_tool_support|fusion_cli_traits|book_ticker_fusion_cli|trade_fusion_cli' --output-on-failure
 ctest --test-dir build/debug -R 'websocket_(critical_session|socket_timestamping|plain_socket)_test|order_session_config_test|gate_order_session_rtt_probe_test|gate_order_session_test' --output-on-failure
 ctest --test-dir build/debug -R monitor_ --output-on-failure
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/analyze_order_detail_test.py

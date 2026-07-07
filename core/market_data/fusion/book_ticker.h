@@ -11,6 +11,7 @@
 #include "core/market_data/fusion/fastest_route.h"
 #include "core/market_data/fusion/metadata.h"
 #include "core/market_data/types.h"
+#include "core/websocket/runtime_clock.h"
 
 namespace aquila::market_data {
 
@@ -116,6 +117,10 @@ struct BookTickerFusionRunnerTraits {
       BookTickerFusionCore& core, std::int32_t source_id,
       const BookTicker& ticker, std::int64_t fusion_publish_ns) noexcept {
     return core.OnBookTicker(source_id, ticker, fusion_publish_ns);
+  }
+
+  [[nodiscard]] static std::int64_t NowNs() noexcept {
+    return static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
   }
 
   static void SetLocalNs(BookTicker* ticker, std::int64_t local_ns) noexcept {

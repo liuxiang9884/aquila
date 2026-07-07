@@ -8,8 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "core/websocket/runtime_clock.h"
-
 namespace aquila::market_data {
 
 struct FastestRouteFusionDecision {
@@ -100,8 +98,7 @@ class BasicFastestRouteFusionRunner {
         }
         ++stats.read_count;
 
-        const std::int64_t fusion_publish_ns =
-            static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+        const std::int64_t fusion_publish_ns = Traits::NowNs();
         const auto decision = Traits::OnRecord(fusion_, source->source_id,
                                                record, fusion_publish_ns);
         if (!decision.publish) {

@@ -39,6 +39,14 @@ target_link_libraries(core_market_data_fusion_fastest_route_test
 add_test(NAME core_market_data_fusion_fastest_route_test
          COMMAND core_market_data_fusion_fastest_route_test)
 
+add_test(NAME core_market_data_fusion_fastest_route_static_review
+         COMMAND bash -c [=[
+if rg -n 'runtime_clock|RealtimeClockNowNs|fmt::|NOVA_|std::cout|std::format|std::to_string|std::mutex|std::lock_guard|std::unique_lock' "$1"; then
+  exit 1
+fi
+]=] _
+         ${PROJECT_SOURCE_DIR}/core/market_data/fusion/fastest_route.h)
+
 add_executable(core_market_data_fusion_book_ticker_test
     fusion/book_ticker_test.cpp
 )
