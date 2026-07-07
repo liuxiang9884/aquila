@@ -618,6 +618,38 @@ create = "true"
   EXPECT_NE(result.error.find("data_shm_sink.create"), std::string::npos);
 }
 
+TEST(DataSessionConfigTest, RejectsWrongTypeGateDataShmSinkSection) {
+  const std::string toml_text = std::string{R"toml(
+data_shm_sink = "bad"
+
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_shm_sink"), std::string::npos);
+}
+
 TEST(DataSessionConfigTest, RejectsWrongTypeGateDiagnosticSourceId) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
@@ -651,6 +683,40 @@ source_id = "7"
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("data_session.diagnostics.latency_outlier."
                               "source_id"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsWrongTypeGateDiagnosticsLatencySection) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_session.diagnostics]
+latency_outlier = "bad"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.diagnostics.latency_outlier"),
             std::string::npos);
 }
 
@@ -1418,6 +1484,66 @@ threshold_ns = "5000000"
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("data_session.diagnostics.latency_outlier."
                               "threshold_ns"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsWrongTypeBinanceDataShmSinkSection) {
+  const std::string toml_text = std::string{R"toml(
+data_shm_sink = "bad"
+
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_shm_sink"), std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsWrongTypeBinanceDiagnosticsLatencySection) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "binance_data_session"
+subscribe_symbols = ["BTC_USDT"]
+market = "um_futures"
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fstream.binance.com"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 3
+
+[data_session.diagnostics]
+latency_outlier = "bad"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::binance::ParseDataSessionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.diagnostics.latency_outlier"),
             std::string::npos);
 }
 

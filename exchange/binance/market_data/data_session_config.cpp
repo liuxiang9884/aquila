@@ -205,6 +205,18 @@ class DataSessionConfigParser {
     return *value;
   }
 
+  [[nodiscard]] bool OptionalTable(
+      toml::node_view<const toml::node> value_node, std::string_view name) {
+    if (!value_node) {
+      return false;
+    }
+    if (value_node.as_table() == nullptr) {
+      Fail(name, " must be a table");
+      return false;
+    }
+    return true;
+  }
+
   void ParseInstrumentCatalog() {
     const toml::node_view<const toml::node> catalog =
         node_["instrument_catalog"];
@@ -305,7 +317,7 @@ class DataSessionConfigParser {
 
   void ParseDataShmSink() {
     const toml::node_view<const toml::node> shm = node_["data_shm_sink"];
-    if (!shm) {
+    if (!OptionalTable(shm, "data_shm_sink")) {
       return;
     }
     if (shm["capacity"]) {
@@ -420,33 +432,41 @@ class DataSessionConfigParser {
   void ParseDiagnostics() {
     const toml::node_view<const toml::node> diagnostics =
         node_["data_session"]["diagnostics"];
+    if (!OptionalTable(diagnostics, "data_session.diagnostics")) {
+      return;
+    }
     const toml::node_view<const toml::node> latency =
         diagnostics["latency_outlier"];
-    auto& latency_config = config_.diagnostics.latency_outlier;
-    latency_config.enabled =
-        BoolOr(latency["enabled"], latency_config.enabled,
-               "data_session.diagnostics.latency_outlier.enabled");
-    if (!ok_) {
-      return;
-    }
-    latency_config.source_id =
-        Int32Or(latency["source_id"], latency_config.source_id,
-                "data_session.diagnostics.latency_outlier.source_id");
-    if (!ok_) {
-      return;
-    }
-    latency_config.threshold_ns =
-        NonNegativeInt64Or(latency["threshold_ns"], latency_config.threshold_ns,
-                           "data_session.diagnostics.latency_outlier."
-                           "threshold_ns");
-    if (!ok_) {
-      return;
-    }
-    latency_config.max_logs_per_second = NonNegativeUint32Or(
-        latency["max_logs_per_second"], latency_config.max_logs_per_second,
-        "data_session.diagnostics.latency_outlier."
-        "max_logs_per_second");
-    if (!ok_) {
+    if (OptionalTable(latency,
+                      "data_session.diagnostics.latency_outlier")) {
+      auto& latency_config = config_.diagnostics.latency_outlier;
+      latency_config.enabled =
+          BoolOr(latency["enabled"], latency_config.enabled,
+                 "data_session.diagnostics.latency_outlier.enabled");
+      if (!ok_) {
+        return;
+      }
+      latency_config.source_id =
+          Int32Or(latency["source_id"], latency_config.source_id,
+                  "data_session.diagnostics.latency_outlier.source_id");
+      if (!ok_) {
+        return;
+      }
+      latency_config.threshold_ns = NonNegativeInt64Or(
+          latency["threshold_ns"], latency_config.threshold_ns,
+          "data_session.diagnostics.latency_outlier."
+          "threshold_ns");
+      if (!ok_) {
+        return;
+      }
+      latency_config.max_logs_per_second = NonNegativeUint32Or(
+          latency["max_logs_per_second"], latency_config.max_logs_per_second,
+          "data_session.diagnostics.latency_outlier."
+          "max_logs_per_second");
+      if (!ok_) {
+        return;
+      }
+    } else if (!ok_) {
       return;
     }
 
@@ -463,6 +483,9 @@ class DataSessionConfigParser {
       toml::node_view<const toml::node> node,
       websocket::SocketTimestampingConfig* timestamping,
       std::string_view name) {
+    if (!OptionalTable(node, name)) {
+      return;
+    }
     timestamping->enabled =
         BoolOr(node["enabled"], timestamping->enabled,
                std::string{name} + ".enabled");

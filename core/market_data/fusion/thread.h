@@ -70,6 +70,8 @@ class BasicFastestRouteFusionThread {
   }
 
   void Stop() noexcept {
+    // Stop drains until PollOnce observes no records; callers should stop
+    // producers before requesting fusion thread shutdown.
     stop_requested_.store(true, std::memory_order_release);
   }
 

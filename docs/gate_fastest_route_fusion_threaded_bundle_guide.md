@@ -197,7 +197,7 @@ source override 应用规则：
 4. 所有 source SHM 创建完成后，构造 `BookTickerFusionRunner`，使 fusion reader 可以 attach source SHM。
 5. 安装一次进程级 signal handler，设置 bundle stop flag。
 6. 启动 enabled feeds 对应的 fusion threads，再启动 N 个 data session threads。
-7. 收到 stop、到达 `--max-runtime-ms` 或任一 worker/fusion thread 提前退出后，先调用所有 data session `Stop()`，再 stop 所有 fusion threads，最后 join threads 并 flush metadata / published count。
+7. 收到 stop、到达 `--max-runtime-ms` 或任一 worker/fusion thread 提前退出后，先调用所有 data session `Stop()` 并 join source workers，确认不再写入 source SHM；随后 stop 对应 fusion threads，让 fusion 继续 drain 到 idle，再 join fusion threads 并 flush metadata / published count。
 
 退出结果必须包含：
 
