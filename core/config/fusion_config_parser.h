@@ -13,6 +13,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/fusion_metadata_mode.h"
+#include "core/websocket/runtime_policy.h"
 
 namespace aquila::config {
 namespace internal {
@@ -130,6 +131,11 @@ class FusionConfigParser {
     }
     if (config_.bind_cpu_id < -1) {
       Fail("fusion.bind_cpu_id", " must be -1 or non-negative");
+      return;
+    }
+    if (config_.bind_cpu_id >= 0 &&
+        !websocket::CpuIdWithinCpuSetSize(config_.bind_cpu_id)) {
+      Fail("fusion.bind_cpu_id", " must be less than CPU_SETSIZE");
       return;
     }
     config_.max_symbol_id = PositiveUInt32Or(

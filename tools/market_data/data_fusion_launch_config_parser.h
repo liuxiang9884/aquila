@@ -11,6 +11,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/result.h"
+#include "core/websocket/runtime_policy.h"
 #include "tools/market_data/data_fusion_feed.h"
 
 namespace aquila::tools::market_data {
@@ -100,6 +101,12 @@ class DataFusionLaunchConfigParser {
     }
     if (config_.backend_cpu_affinity < -1) {
       Fail("log.backend_cpu_affinity", " must be -1 or non-negative");
+      return;
+    }
+    if (config_.backend_cpu_affinity >= 0 &&
+        !aquila::websocket::CpuIdWithinCpuSetSize(
+            config_.backend_cpu_affinity)) {
+      Fail("log.backend_cpu_affinity", " must be less than CPU_SETSIZE");
     }
   }
 
@@ -253,6 +260,11 @@ class DataFusionLaunchConfigParser {
       }
       if (source.bind_cpu_id < -1) {
         Fail("launch.sources.bind_cpu_id", " must be -1 or non-negative");
+        return;
+      }
+      if (source.bind_cpu_id >= 0 &&
+          !aquila::websocket::CpuIdWithinCpuSetSize(source.bind_cpu_id)) {
+        Fail("launch.sources.bind_cpu_id", " must be less than CPU_SETSIZE");
         return;
       }
       config_.sources.push_back(std::move(source));

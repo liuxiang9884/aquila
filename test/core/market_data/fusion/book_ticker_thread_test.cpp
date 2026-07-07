@@ -1,9 +1,14 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if defined(__linux__)
+#include <sched.h>
+#endif
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -161,5 +166,20 @@ TEST(BookTickerFusionThreadTest, PublishesAndStops) {
   std::filesystem::remove(metadata_path);
 #else
   EXPECT_TRUE(metadata_path.empty());
+#endif
+}
+
+TEST(BookTickerFusionThreadTest, RejectsUnavailableBindCpu) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "CPU_SETSIZE is Linux-specific";
+#else
+  md::BookTickerFusionConfig config{
+      .name = "fusion_thread_bad_cpu_test",
+      .bind_cpu_id = CPU_SETSIZE,
+  };
+
+  md::BookTickerFusionThread fusion_thread(config);
+  EXPECT_THROW(fusion_thread.Start(), std::runtime_error);
+  EXPECT_TRUE(fusion_thread.finished());
 #endif
 }

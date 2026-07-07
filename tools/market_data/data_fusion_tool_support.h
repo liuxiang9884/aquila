@@ -14,6 +14,7 @@
 #include "core/common/fusion_metadata_mode.h"
 #include "core/market_data/fusion/config.h"
 #include "core/market_data/fusion/thread.h"
+#include "core/websocket/runtime_policy.h"
 #include "nova/utils/log.h"
 #include "tools/market_data/data_fusion_feed.h"
 
@@ -212,6 +213,11 @@ template <typename LaunchConfig, typename BookTickerFusionConfig,
     if (cpu < 0) {
       return true;
     }
+    if (!aquila::websocket::CpuIdAllowedByCurrentProcess(cpu)) {
+      *error = fmt::format("cpu binding unavailable cpu={} name={}", cpu,
+                           name);
+      return false;
+    }
     for (const auto& [used_cpu, used_name] : used_cpus) {
       if (used_cpu == cpu) {
         *error = fmt::format("cpu binding overlap cpu={} first={} second={}",
@@ -267,6 +273,11 @@ template <typename LaunchConfig, typename PreparedSources,
                                            std::string name) -> bool {
     if (cpu < 0) {
       return true;
+    }
+    if (!aquila::websocket::CpuIdAllowedByCurrentProcess(cpu)) {
+      *error = fmt::format("cpu binding unavailable cpu={} name={}", cpu,
+                           name);
+      return false;
     }
     for (const auto& [used_cpu, used_name] : used_cpus) {
       if (used_cpu == cpu) {

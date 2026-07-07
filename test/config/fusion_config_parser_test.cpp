@@ -3,6 +3,10 @@
 #include <string>
 #include <string_view>
 
+#if defined(__linux__)
+#include <sched.h>
+#endif
+
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
@@ -125,6 +129,36 @@ shm_name = "unit_source_shm"
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("fusion.bind_cpu_id"), std::string::npos);
+}
+
+TEST(FusionConfigParserTest, RejectsCpuIdAtCpuSetSize) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "CPU_SETSIZE is Linux-specific";
+#else
+  const std::string text = std::string{R"toml(
+[fusion]
+name = "unit_fusion"
+bind_cpu_id = )toml"} + std::to_string(CPU_SETSIZE) +
+                           R"toml(
+
+[fusion.output]
+shm_name = "unit_output"
+channel_name = "unit_output_channel"
+metadata_bin = "/home/liuxiang/tmp/unit_fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 0
+name = "unit_source"
+shm_name = "unit_source_shm"
+)toml";
+  const toml::parse_result parsed = ParseToml(text);
+
+  const ParserTraits::Result result =
+      aquila::config::ParseFusionConfig<ParserTraits>(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("fusion.bind_cpu_id"), std::string::npos);
+#endif
 }
 
 TEST(FusionConfigParserTest, RejectsOutOfRangeSourceId) {

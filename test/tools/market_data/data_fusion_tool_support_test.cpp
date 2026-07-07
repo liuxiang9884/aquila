@@ -3,6 +3,10 @@
 #include <string>
 #include <vector>
 
+#if defined(__linux__)
+#include <sched.h>
+#endif
+
 #include <gtest/gtest.h>
 
 #include "core/market_data/fusion/config.h"
@@ -467,6 +471,32 @@ TEST(DataFusionToolSupportTest, RejectsPreparedCpuBindingOverlap) {
   EXPECT_FALSE(support::ValidatePreparedDataFusionCpuBindings(
       launch_config, sources, &book_ticker_config, &trade_config, &error));
   EXPECT_NE(error.find("log_backend"), std::string::npos);
+}
+
+TEST(DataFusionToolSupportTest, RejectsPreparedCpuBindingAtCpuSetSize) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "CPU_SETSIZE is Linux-specific";
+#else
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion",
+      .backend_cpu_affinity = -1,
+  };
+  PreparedSourceForTest source{
+      .launch_source = MakeLaunchSource(0, "src0"),
+  };
+  source.data_session_config.connection.runtime_policy.io_cpu_id = CPU_SETSIZE;
+  const std::vector<PreparedSourceForTest> sources{source};
+  const md::BookTickerFusionConfig book_ticker_config{
+      .name = "book_ticker_fusion",
+      .bind_cpu_id = -1,
+  };
+
+  std::string error;
+  EXPECT_FALSE(support::ValidatePreparedDataFusionCpuBindings(
+      launch_config, sources, &book_ticker_config,
+      static_cast<const md::TradeFusionConfig*>(nullptr), &error));
+  EXPECT_NE(error.find("source_id=0"), std::string::npos);
+#endif
 }
 
 TEST(DataFusionToolSupportTest, RejectsFusionOutputShmOverlap) {

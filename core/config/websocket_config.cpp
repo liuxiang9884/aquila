@@ -78,8 +78,17 @@ class WebSocketConfigParser {
     }
 
     ParseReadPath();
+    if (!ok_) {
+      return ConfigFailure(std::move(error_));
+    }
     ParseHeartbeat();
+    if (!ok_) {
+      return ConfigFailure(std::move(error_));
+    }
     ParseReconnect();
+    if (!ok_) {
+      return ConfigFailure(std::move(error_));
+    }
     return ConfigSuccess(std::move(config_));
   }
 
@@ -99,12 +108,35 @@ class WebSocketConfigParser {
 
   [[nodiscard]] std::uint32_t UInt32Or(
       toml::node_view<const toml::node> value_node,
-      std::uint32_t fallback) const {
+      std::uint32_t fallback, std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
       return fallback;
     }
+    if (*value < 0) {
+      Fail(name, " must be non-negative");
+      return fallback;
+    }
+    if (*value >
+        static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+      Fail(name, " exceeds uint32 max");
+      return fallback;
+    }
     return static_cast<std::uint32_t>(*value);
+  }
+
+  [[nodiscard]] std::uint32_t UInt8StoredAsUInt32Or(
+      toml::node_view<const toml::node> value_node,
+      std::uint32_t fallback, std::string_view name) {
+    const std::uint32_t value = UInt32Or(value_node, fallback, name);
+    if (!ok_) {
+      return fallback;
+    }
+    if (value > std::numeric_limits<std::uint8_t>::max()) {
+      Fail(name, " exceeds uint8 max");
+      return fallback;
+    }
+    return value;
   }
 
   [[nodiscard]] int RequiredCpuId(toml::node_view<const toml::node> value_node,
@@ -122,7 +154,12 @@ class WebSocketConfigParser {
       Fail(name, " must fit int");
       return -1;
     }
-    return static_cast<int>(*value);
+    const int cpu_id = static_cast<int>(*value);
+    if (cpu_id >= 0 && !websocket::CpuIdWithinCpuSetSize(cpu_id)) {
+      Fail(name, " must be less than CPU_SETSIZE");
+      return -1;
+    }
+    return cpu_id;
   }
 
   void ParseEndpoint() {
@@ -145,7 +182,8 @@ class WebSocketConfigParser {
     config_.endpoint.enable_tls =
         BoolOr(endpoint["enable_tls"], config_.endpoint.enable_tls);
     config_.endpoint.connect_timeout_ms = UInt32Or(
-        endpoint["connect_timeout_ms"], config_.endpoint.connect_timeout_ms);
+        endpoint["connect_timeout_ms"], config_.endpoint.connect_timeout_ms,
+        "endpoint.connect_timeout_ms");
   }
 
   void ParseExecutionPolicy() {
@@ -179,14 +217,16 @@ class WebSocketConfigParser {
         execution_policy["active_spin"], config_.execution_policy.active_spin);
     config_.execution_policy.spin_iterations_before_clock_check =
         UInt32Or(execution_policy["spin_iterations_before_clock_check"],
-                 config_.execution_policy.spin_iterations_before_clock_check);
+                 config_.execution_policy.spin_iterations_before_clock_check,
+                 "execution_policy.spin_iterations_before_clock_check");
   }
 
   void ParseReadPath() {
     const toml::node_view<const toml::node> read_path = node_["read_path"];
     config_.read_path.max_reads_per_drive =
         UInt32Or(read_path["max_reads_per_drive"],
-                 config_.read_path.max_reads_per_drive);
+                 config_.read_path.max_reads_per_drive,
+                 "read_path.max_reads_per_drive");
     config_.read_path.read_until_would_block =
         BoolOr(read_path["read_until_would_block"],
                config_.read_path.read_until_would_block);
@@ -195,9 +235,11 @@ class WebSocketConfigParser {
   void ParseHeartbeat() {
     const toml::node_view<const toml::node> heartbeat = node_["heartbeat"];
     config_.heartbeat.interval_ms =
-        UInt32Or(heartbeat["interval_ms"], config_.heartbeat.interval_ms);
+        UInt32Or(heartbeat["interval_ms"], config_.heartbeat.interval_ms,
+                 "heartbeat.interval_ms");
     config_.heartbeat.timeout_ms =
-        UInt32Or(heartbeat["timeout_ms"], config_.heartbeat.timeout_ms);
+        UInt32Or(heartbeat["timeout_ms"], config_.heartbeat.timeout_ms,
+                 "heartbeat.timeout_ms");
   }
 
   void ParseReconnect() {
@@ -205,15 +247,20 @@ class WebSocketConfigParser {
     config_.reconnect.enabled =
         BoolOr(reconnect["enabled"], config_.reconnect.enabled);
     config_.reconnect.initial_backoff_ms = UInt32Or(
-        reconnect["initial_backoff_ms"], config_.reconnect.initial_backoff_ms);
+        reconnect["initial_backoff_ms"], config_.reconnect.initial_backoff_ms,
+        "reconnect.initial_backoff_ms");
     config_.reconnect.max_backoff_ms =
-        UInt32Or(reconnect["max_backoff_ms"], config_.reconnect.max_backoff_ms);
-    config_.reconnect.backoff_shift_bits = UInt32Or(
-        reconnect["backoff_shift_bits"], config_.reconnect.backoff_shift_bits);
-    config_.reconnect.jitter_percent =
-        UInt32Or(reconnect["jitter_percent"], config_.reconnect.jitter_percent);
+        UInt32Or(reconnect["max_backoff_ms"], config_.reconnect.max_backoff_ms,
+                 "reconnect.max_backoff_ms");
+    config_.reconnect.backoff_shift_bits = UInt8StoredAsUInt32Or(
+        reconnect["backoff_shift_bits"], config_.reconnect.backoff_shift_bits,
+        "reconnect.backoff_shift_bits");
+    config_.reconnect.jitter_percent = UInt8StoredAsUInt32Or(
+        reconnect["jitter_percent"], config_.reconnect.jitter_percent,
+        "reconnect.jitter_percent");
     config_.reconnect.max_attempts =
-        UInt32Or(reconnect["max_attempts"], config_.reconnect.max_attempts);
+        UInt32Or(reconnect["max_attempts"], config_.reconnect.max_attempts,
+                 "reconnect.max_attempts");
   }
 
   void Fail(std::string_view name, std::string_view message) {

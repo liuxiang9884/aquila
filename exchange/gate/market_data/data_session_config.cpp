@@ -123,9 +123,18 @@ class DataSessionConfigParser {
 
   [[nodiscard]] std::uint32_t UInt32Or(
       toml::node_view<const toml::node> value_node,
-      std::uint32_t fallback) const {
+      std::uint32_t fallback, std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      return fallback;
+    }
+    if (*value < 0) {
+      Fail(name, " must be non-negative");
+      return fallback;
+    }
+    if (*value >
+        static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
+      Fail(name, " exceeds uint32 max");
       return fallback;
     }
     return static_cast<std::uint32_t>(*value);
@@ -218,7 +227,11 @@ class DataSessionConfigParser {
     config_.data_session.wire_format =
         StringOr(data_session["wire_format"], config_.data_session.wire_format);
     config_.data_session.sbe_schema_id = UInt32Or(
-        data_session["sbe_schema_id"], config_.data_session.sbe_schema_id);
+        data_session["sbe_schema_id"], config_.data_session.sbe_schema_id,
+        "data_session.sbe_schema_id");
+    if (!ok_) {
+      return;
+    }
     ParseFeeds(data_session);
   }
 

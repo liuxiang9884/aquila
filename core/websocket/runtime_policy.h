@@ -80,13 +80,41 @@ inline void PrefaultThreadStack() noexcept {
 #endif
 }
 
+[[nodiscard]] inline bool CpuIdWithinCpuSetSize(int cpu_id) noexcept {
+#if defined(__linux__)
+  return cpu_id < CPU_SETSIZE;
+#else
+  (void)cpu_id;
+  return true;
+#endif
+}
+
+[[nodiscard]] inline bool CpuIdAllowedByCurrentProcess(int cpu_id) noexcept {
+  if (cpu_id < 0) {
+    return true;
+  }
+#if defined(__linux__)
+  if (!CpuIdWithinCpuSetSize(cpu_id)) {
+    return false;
+  }
+  cpu_set_t cpu_set;
+  CPU_ZERO(&cpu_set);
+  if (::sched_getaffinity(0, sizeof(cpu_set), &cpu_set) != 0) {
+    return false;
+  }
+  return CPU_ISSET(cpu_id, &cpu_set);
+#else
+  return true;
+#endif
+}
+
 inline bool ApplyRuntimePolicy(const RuntimePolicy& policy) noexcept {
   if (policy.affinity_mode == AffinityMode::kRequired && policy.io_cpu_id < 0) {
     return false;
   }
 
 #if defined(__linux__)
-  if (policy.io_cpu_id >= CPU_SETSIZE &&
+  if (!CpuIdWithinCpuSetSize(policy.io_cpu_id) &&
       policy.affinity_mode == AffinityMode::kRequired) {
     return false;
   }

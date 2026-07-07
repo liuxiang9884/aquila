@@ -440,6 +440,66 @@ remove_existing = false
   EXPECT_EQ(result.value.data_shm.trade_channel_name, "trade_channel");
 }
 
+TEST(DataSessionConfigTest, RejectsNegativeGateSbeSchemaId) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = -1
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.sbe_schema_id"),
+            std::string::npos);
+}
+
+TEST(DataSessionConfigTest, RejectsOutOfRangeGateSbeSchemaId) {
+  const std::string toml_text = std::string{R"toml(
+[instrument_catalog]
+file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+                                R"toml("
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "gate_data_session"
+subscribe_symbols = ["BTC_USDT"]
+settle = "usdt"
+wire_format = "sbe"
+sbe_schema_id = 4294967296
+feed = "book_ticker"
+
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+enable_tls = false
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::gate::ParseDataSessionConfig(parsed);
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("data_session.sbe_schema_id"),
+            std::string::npos);
+}
+
 TEST(DataSessionConfigTest, RejectsGateFeedAndFeedsTogether) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]

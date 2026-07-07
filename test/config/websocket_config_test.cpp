@@ -2,7 +2,12 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <string_view>
+
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
@@ -261,6 +266,76 @@ bind_cpu_id = 2147483648
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("execution_policy.bind_cpu_id"),
+            std::string::npos);
+}
+
+TEST(WebSocketConfigTest, RejectsBindCpuIdAtCpuSetSize) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "CPU_SETSIZE is Linux-specific";
+#else
+  const std::string text = std::string{R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = )toml"} + std::to_string(CPU_SETSIZE) +
+                           R"toml(
+)toml";
+  const auto result = ParseWebSocketToml(text);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("execution_policy.bind_cpu_id"),
+            std::string::npos);
+#endif
+}
+
+TEST(WebSocketConfigTest, RejectsNegativeUnsignedField) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+connect_timeout_ms = -1
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("endpoint.connect_timeout_ms"),
+            std::string::npos);
+}
+
+TEST(WebSocketConfigTest, RejectsOutOfRangeUnsignedField) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_session.websocket.read_path]
+max_reads_per_drive = 4294967296
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("read_path.max_reads_per_drive"),
+            std::string::npos);
+}
+
+TEST(WebSocketConfigTest, RejectsOutOfRangeReconnectByteFields) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_session.websocket.reconnect]
+backoff_shift_bits = 256
+jitter_percent = 256
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("reconnect.backoff_shift_bits"),
             std::string::npos);
 }
 

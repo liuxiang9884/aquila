@@ -103,7 +103,9 @@ class BasicFastestRouteFusionThread {
   void Run() noexcept {
     FastestRouteFusionThreadStats stats;
     try {
-      ApplyRuntimePolicy();
+      if (!ApplyRuntimePolicy()) {
+        throw std::runtime_error("failed to apply fusion thread runtime policy");
+      }
       Runner runner(config_);
       MarkInitComplete({});
       while (!stop_requested_.load(std::memory_order_acquire)) {
@@ -131,17 +133,17 @@ class BasicFastestRouteFusionThread {
     finished_.store(true, std::memory_order_release);
   }
 
-  void ApplyRuntimePolicy() noexcept {
+  [[nodiscard]] bool ApplyRuntimePolicy() noexcept {
     if (config_.bind_cpu_id < 0) {
-      return;
+      return true;
     }
     aquila::websocket::RuntimePolicy policy;
-    policy.affinity_mode = aquila::websocket::AffinityMode::kBestEffort;
+    policy.affinity_mode = aquila::websocket::AffinityMode::kRequired;
     policy.io_cpu_id = config_.bind_cpu_id;
     policy.lock_memory = false;
     policy.prefault_stack = true;
     policy.active_spin = true;
-    (void)aquila::websocket::ApplyRuntimePolicy(policy);
+    return aquila::websocket::ApplyRuntimePolicy(policy);
   }
 
   Config config_;
