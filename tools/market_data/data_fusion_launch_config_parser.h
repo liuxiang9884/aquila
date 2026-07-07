@@ -249,6 +249,13 @@ class DataFusionLaunchConfigParser {
           return;
         }
       }
+      if (HasFeed(DataFusionFeed::kBookTicker) &&
+          HasFeed(DataFusionFeed::kTrade) &&
+          source.book_ticker_channel_name == source.trade_channel_name) {
+        Fail("launch.sources.channel_name",
+             " book_ticker and trade channels must be distinct");
+        return;
+      }
       source.remove_existing_source_shm =
           BoolOr((*source_table)["remove_existing_source_shm"],
                  source.remove_existing_source_shm);

@@ -252,14 +252,28 @@ int main(int argc, char** argv) {
   try {
     const toml::parse_result launch_toml =
         toml::parse_file(config_path.string());
-    nova::LoggingGuard logging_guard{launch_toml};
     const aq_tool::BinanceDataFusionConfigResult launch_result =
         aq_tool::ParseBinanceDataFusionConfig(launch_toml);
     if (!launch_result.ok) {
-      NOVA_ERROR("config_error={}", launch_result.error);
+      aq_tool_md::LogDataFusionStartupError(
+          "binance_data_fusion_config_console", "config_error",
+          launch_result.error);
       return 1;
     }
     const aq_tool::BinanceDataFusionConfig& launch_config = launch_result.value;
+
+    std::string startup_error;
+    if (!aq_tool_md::ValidateDataFusionLogBackendCpuBinding(launch_config,
+                                                            &startup_error)) {
+      aq_tool_md::LogDataFusionStartupError(
+          "binance_data_fusion_config_console", "cpu_binding_error",
+          startup_error);
+      return 1;
+    }
+
+    const nova::LogConfig log_config = aq_tool_md::MakeDataFusionLogConfig(
+        launch_toml, launch_config.backend_cpu_affinity);
+    aq_tool_md::ScopedNovaLogging logging_guard{log_config};
 
     std::optional<aq_md::BookTickerFusionConfig> book_config;
     if (aq_tool_md::HasFusionFeed(launch_config.feeds,

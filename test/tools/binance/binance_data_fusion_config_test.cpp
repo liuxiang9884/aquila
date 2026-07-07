@@ -2,6 +2,10 @@
 
 #include <string>
 
+#if defined(__linux__)
+#include <sched.h>
+#endif
+
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
@@ -298,6 +302,32 @@ data_shm_name = "/aquila_binance_trade_src"
   EXPECT_NE(result.error.find("unique"), std::string::npos);
 }
 
+TEST(BinanceDataFusionConfigTest, RejectsDuplicateMultiFeedChannelName) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "binance_data_fusion_duplicate_channel"
+feeds = ["book_ticker", "trade"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/binance_book_ticker_fusion_4sources.toml"
+trade = "config/market_data_fusion/binance_trade_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/binance_data_session.toml"
+data_session_name = "binance_source_0"
+data_shm_name = "aquila_binance_md_src_0"
+book_ticker_channel_name = "same_channel"
+trade_channel_name = "same_channel"
+)toml");
+
+  const auto result =
+      aquila::tools::binance::ParseBinanceDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("channel_name"), std::string::npos);
+}
+
 TEST(BinanceDataFusionConfigTest, RejectsInvalidSourceCpuBinding) {
   const toml::parse_result parsed = ParseToml(R"toml(
 [launch]
@@ -320,6 +350,38 @@ bind_cpu_id = -2
 
   ASSERT_FALSE(result.ok);
   EXPECT_NE(result.error.find("launch.sources.bind_cpu_id"), std::string::npos);
+}
+
+TEST(BinanceDataFusionConfigTest, RejectsLogBackendCpuAtCpuSetSize) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "CPU_SETSIZE is Linux-specific";
+#else
+  const std::string text = std::string{R"toml(
+[log]
+backend_cpu_affinity = )toml"} + std::to_string(CPU_SETSIZE) +
+                           R"toml(
+
+[launch]
+name = "binance_data_fusion_bad_log_cpu"
+feeds = ["trade"]
+
+[launch.fusion_configs]
+trade = "config/market_data_fusion/binance_trade_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/binance_data_session.toml"
+data_session_name = "binance_source_0"
+data_shm_name = "aquila_binance_trade_src_0"
+)toml";
+  const toml::parse_result parsed = ParseToml(text);
+
+  const auto result =
+      aquila::tools::binance::ParseBinanceDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("log.backend_cpu_affinity"), std::string::npos);
+#endif
 }
 
 TEST(BinanceDataFusionConfigTest, RejectsDuplicateSourceId) {

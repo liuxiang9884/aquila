@@ -4,12 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <fmt/core.h>
+#include <toml++/toml.hpp>
 
 #include "core/common/fusion_metadata_mode.h"
 #include "core/market_data/fusion/config.h"
@@ -66,6 +68,57 @@ struct TradeDataFusionFeedTraits {
 
 [[nodiscard]] inline const char* FusionMetadataEnabledText() noexcept {
   return aquila::kFusionMetadataEnabled ? "true" : "false";
+}
+
+[[nodiscard]] inline nova::LogConfig MakeDataFusionLogConfig(
+    const toml::table& launch_toml, std::int32_t backend_cpu_affinity) {
+  nova::LogConfig log_config;
+  log_config.FromToml(launch_toml["log"]);
+  log_config.set_backend_cpu_affinity(
+      backend_cpu_affinity < 0
+          ? std::numeric_limits<std::uint16_t>::max()
+          : static_cast<std::uint16_t>(backend_cpu_affinity));
+  return log_config;
+}
+
+class ScopedNovaLogging {
+ public:
+  explicit ScopedNovaLogging(const nova::LogConfig& log_config) {
+    nova::InitializeLogging(log_config);
+  }
+
+  ScopedNovaLogging(const ScopedNovaLogging&) = delete;
+  ScopedNovaLogging& operator=(const ScopedNovaLogging&) = delete;
+
+  ~ScopedNovaLogging() noexcept {
+    nova::StopLogging();
+  }
+};
+
+inline void LogDataFusionStartupError(std::string_view console_sink_name,
+                                      std::string_view key,
+                                      std::string_view value) {
+  nova::LogConfig fallback_log_config;
+  fallback_log_config.set_console_sink_name(console_sink_name);
+  fallback_log_config.set_file_sink_name("");
+  nova::InitializeLogging(fallback_log_config);
+  NOVA_ERROR("{}={}", key, value);
+  nova::StopLogging();
+}
+
+template <typename LaunchConfig>
+[[nodiscard]] bool ValidateDataFusionLogBackendCpuBinding(
+    const LaunchConfig& launch_config, std::string* error) {
+  error->clear();
+  if constexpr (requires { launch_config.backend_cpu_affinity; }) {
+    const std::int32_t cpu = launch_config.backend_cpu_affinity;
+    if (cpu >= 0 && !aquila::websocket::CpuIdAllowedByCurrentProcess(cpu)) {
+      *error =
+          fmt::format("cpu binding unavailable cpu={} name=log_backend", cpu);
+      return false;
+    }
+  }
+  return true;
 }
 
 template <typename FeedTraits>

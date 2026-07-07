@@ -311,6 +311,14 @@ class DataSessionConfigParser {
     if (config_.data_session.feeds.trade &&
         config_.data_shm.trade_channel_name.empty()) {
       Fail("data_shm_sink.trade_channel_name", " is required");
+      return;
+    }
+    if (config_.data_session.feeds.book_ticker &&
+        config_.data_session.feeds.trade &&
+        config_.data_shm.book_ticker_channel_name ==
+            config_.data_shm.trade_channel_name) {
+      Fail("data_shm_sink.channel_name",
+           " book_ticker and trade channels must be distinct");
     }
   }
 
