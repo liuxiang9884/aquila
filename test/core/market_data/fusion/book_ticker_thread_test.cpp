@@ -5,6 +5,7 @@
 #include <sched.h>
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -94,6 +95,79 @@ aquila::BookTicker MakeTicker(std::int32_t symbol_id, std::int64_t id) {
 #pragma GCC diagnostic pop
 #endif
 
+struct DrainThreadTestConfig {
+  std::int32_t bind_cpu_id{-1};
+};
+
+class BlockingDrainRunner {
+ public:
+  explicit BlockingDrainRunner(const DrainThreadTestConfig&) {}
+
+  static void Reset(std::uint64_t pending_reads) {
+    pending_reads_.store(pending_reads, std::memory_order_release);
+    first_poll_entered_.store(false, std::memory_order_release);
+    release_first_poll_.store(false, std::memory_order_release);
+  }
+
+  static void WaitForFirstPoll() {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!first_poll_entered_.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::yield();
+    }
+  }
+
+  static void ReleaseFirstPoll() {
+    release_first_poll_.store(true, std::memory_order_release);
+  }
+
+  [[nodiscard]] md::FastestRouteFusionPollStats PollOnce() {
+    bool expected = false;
+    if (first_poll_entered_.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) {
+      while (!release_first_poll_.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+    }
+
+    const std::uint64_t previous =
+        pending_reads_.load(std::memory_order_acquire);
+    if (previous == 0) {
+      return {};
+    }
+    pending_reads_.store(previous - 1, std::memory_order_release);
+    ++total_read_count_;
+    ++total_published_count_;
+    return md::FastestRouteFusionPollStats{.read_count = 1,
+                                           .published_count = 1};
+  }
+
+  [[nodiscard]] bool Flush() {
+    return true;
+  }
+
+  [[nodiscard]] std::uint64_t total_read_count() const noexcept {
+    return total_read_count_;
+  }
+
+  [[nodiscard]] std::uint64_t total_published_count() const noexcept {
+    return total_published_count_;
+  }
+
+  [[nodiscard]] std::uint64_t total_metadata_write_errors() const noexcept {
+    return 0;
+  }
+
+ private:
+  inline static std::atomic<std::uint64_t> pending_reads_{0};
+  inline static std::atomic<bool> first_poll_entered_{false};
+  inline static std::atomic<bool> release_first_poll_{false};
+
+  std::uint64_t total_read_count_{0};
+  std::uint64_t total_published_count_{0};
+};
+
 }  // namespace
 
 TEST(BookTickerFusionThreadTest, PublishesAndStops) {
@@ -182,4 +256,22 @@ TEST(BookTickerFusionThreadTest, RejectsUnavailableBindCpu) {
   EXPECT_THROW(fusion_thread.Start(), std::runtime_error);
   EXPECT_TRUE(fusion_thread.finished());
 #endif
+}
+
+TEST(BookTickerFusionThreadTest, StopDrainsUntilRunnerIdle) {
+  BlockingDrainRunner::Reset(2);
+  md::BasicFastestRouteFusionThread<BlockingDrainRunner,
+                                    DrainThreadTestConfig>
+      fusion_thread(DrainThreadTestConfig{});
+  fusion_thread.Start();
+  BlockingDrainRunner::WaitForFirstPoll();
+
+  fusion_thread.Stop();
+  BlockingDrainRunner::ReleaseFirstPoll();
+  const md::FastestRouteFusionThreadStats stats = fusion_thread.Join();
+
+  ASSERT_TRUE(stats.ok) << stats.error;
+  EXPECT_TRUE(stats.flush_ok);
+  EXPECT_EQ(stats.total_read_count, 2U);
+  EXPECT_EQ(stats.total_published_count, 2U);
 }

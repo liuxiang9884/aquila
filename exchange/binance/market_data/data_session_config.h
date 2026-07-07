@@ -39,6 +39,9 @@ using DataSessionConfigResult = Result<DataSessionConfig>;
 [[nodiscard]] DataSessionConfigResult LoadDataSessionConfigFile(
     const std::filesystem::path& path);
 
+[[nodiscard]] bool RefreshDataSessionConnectionTarget(
+    DataSessionConfig* config, std::string* error);
+
 }  // namespace aquila::binance
 
 #endif  // AQUILA_EXCHANGE_BINANCE_MARKET_DATA_DATA_SESSION_CONFIG_H_

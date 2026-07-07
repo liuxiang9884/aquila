@@ -115,6 +115,33 @@ TEST(DataFusionToolSupportTest, ValidatesFusionSourceAlignment) {
   EXPECT_TRUE(error.empty());
 }
 
+TEST(DataFusionToolSupportTest, NormalizesFusionSourceShmNamesForAlignment) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion",
+      .sources = {MakeLaunchSource(0, "src0")},
+  };
+  const md::BookTickerFusionConfig fusion_config{
+      .name = "fusion",
+      .max_events_per_source = 8,
+      .bind_cpu_id = -1,
+      .max_symbol_id = 128,
+      .output =
+          md::BookTickerFusionOutputConfig{
+              .shm_name = "output",
+              .channel_name = "book_ticker_channel",
+              .remove_existing = true,
+              .metadata_bin = "/home/liuxiang/tmp/fusion_metadata.bin",
+          },
+      .sources = {MakeFusionSource(0, "/src0")},
+  };
+
+  std::string error;
+  EXPECT_TRUE(
+      support::ValidateFusionAlignment<support::BookTickerDataFusionFeedTraits>(
+          launch_config, fusion_config, &error));
+  EXPECT_TRUE(error.empty());
+}
+
 TEST(DataFusionToolSupportTest, ValidatesTradeFusionSourceAlignment) {
   const tool_gate::GateDataFusionConfig launch_config{
       .name = "gate_data_fusion_trade",

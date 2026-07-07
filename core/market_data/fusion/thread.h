@@ -108,9 +108,12 @@ class BasicFastestRouteFusionThread {
       }
       Runner runner(config_);
       MarkInitComplete({});
-      while (!stop_requested_.load(std::memory_order_acquire)) {
+      while (true) {
         const auto poll_stats = runner.PollOnce();
         if (poll_stats.read_count == 0) {
+          if (stop_requested_.load(std::memory_order_acquire)) {
+            break;
+          }
           std::this_thread::yield();
         }
       }

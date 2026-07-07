@@ -154,6 +154,16 @@ template <typename LaunchConfig>
   return false;
 }
 
+[[nodiscard]] inline std::string NormalizeFusionShmNameForCompare(
+    std::string_view shm_name) {
+  if (shm_name.empty() || shm_name.front() == '/') {
+    return std::string{shm_name};
+  }
+  std::string normalized{"/"};
+  normalized.append(shm_name);
+  return normalized;
+}
+
 template <typename FeedTraits, typename LaunchConfig>
 [[nodiscard]] bool ValidateFusionAlignment(
     const LaunchConfig& launch_config,
@@ -170,7 +180,8 @@ template <typename FeedTraits, typename LaunchConfig>
     }
     const std::string_view launch_shm =
         FeedTraits::LaunchShmName(launch_source);
-    if (std::string_view{fusion_source->shm_name} != launch_shm) {
+    if (NormalizeFusionShmNameForCompare(fusion_source->shm_name) !=
+        NormalizeFusionShmNameForCompare(launch_shm)) {
       *error = fmt::format("source_id={} shm mismatch fusion={} launch={}",
                            launch_source.source_id, fusion_source->shm_name,
                            launch_shm);
@@ -302,16 +313,6 @@ template <typename LaunchConfig, typename BookTickerFusionConfig,
     return false;
   }
   return true;
-}
-
-[[nodiscard]] inline std::string NormalizeFusionShmNameForCompare(
-    std::string_view shm_name) {
-  if (shm_name.empty() || shm_name.front() == '/') {
-    return std::string{shm_name};
-  }
-  std::string normalized{"/"};
-  normalized.append(shm_name);
-  return normalized;
 }
 
 template <typename LaunchConfig, typename PreparedSources,

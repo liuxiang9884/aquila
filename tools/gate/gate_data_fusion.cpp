@@ -194,15 +194,15 @@ int RunConnected(const aq_tool::GateDataFusionConfig& launch_config,
        workers) {
     worker->Stop();
   }
+  for (std::unique_ptr<GateDataFusionSourceWorker<WebSocketPolicy>>& worker :
+       workers) {
+    worker->Join();
+  }
   if (book_thread != nullptr) {
     book_thread->Stop();
   }
   if (trade_thread != nullptr) {
     trade_thread->Stop();
-  }
-  for (std::unique_ptr<GateDataFusionSourceWorker<WebSocketPolicy>>& worker :
-       workers) {
-    worker->Join();
   }
 
   bool ok = !unexpected_stop;

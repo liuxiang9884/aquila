@@ -60,6 +60,10 @@ struct PreparedBinanceSource {
     }
     aq_tool_md::ApplyFusionSourceOverrides(launch_config.feeds, launch_source,
                                            &data_session_result.value);
+    if (!aq_binance::RefreshDataSessionConnectionTarget(
+            &data_session_result.value, error)) {
+      return false;
+    }
     sources->push_back(PreparedBinanceSource{
         .launch_source = launch_source,
         .data_session_config = std::move(data_session_result.value),
@@ -196,15 +200,15 @@ int RunConnected(const aq_tool::BinanceDataFusionConfig& launch_config,
        workers) {
     worker->Stop();
   }
+  for (std::unique_ptr<BinanceDataFusionSourceWorker<WebSocketPolicy>>& worker :
+       workers) {
+    worker->Join();
+  }
   if (book_thread != nullptr) {
     book_thread->Stop();
   }
   if (trade_thread != nullptr) {
     trade_thread->Stop();
-  }
-  for (std::unique_ptr<BinanceDataFusionSourceWorker<WebSocketPolicy>>& worker :
-       workers) {
-    worker->Join();
   }
 
   bool ok = !unexpected_stop;

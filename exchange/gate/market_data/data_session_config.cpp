@@ -116,9 +116,15 @@ class DataSessionConfigParser {
  private:
   [[nodiscard]] std::string StringOr(
       toml::node_view<const toml::node> value_node,
-      const std::string& fallback) const {
+      const std::string& fallback, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    return value.value_or(fallback);
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a string");
+    }
+    return fallback;
   }
 
   [[nodiscard]] std::uint32_t UInt32Or(
@@ -148,6 +154,9 @@ class DataSessionConfigParser {
       std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < 0 || *value > std::numeric_limits<std::int32_t>::max()) {
@@ -162,6 +171,9 @@ class DataSessionConfigParser {
       std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < 0) {
@@ -176,6 +188,9 @@ class DataSessionConfigParser {
       std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < 0 || *value > std::numeric_limits<std::uint32_t>::max()) {
@@ -186,15 +201,29 @@ class DataSessionConfigParser {
   }
 
   [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
-                            bool fallback) const {
+                            bool fallback, std::string_view name) {
     const std::optional<bool> value = value_node.value<bool>();
-    return value.value_or(fallback);
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a bool");
+    }
+    return fallback;
   }
 
   [[nodiscard]] std::string RequiredString(
       toml::node_view<const toml::node> value_node, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    if (!value || value->empty()) {
+    if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be a string");
+        return {};
+      }
+      Fail(name, " is required");
+      return {};
+    }
+    if (value->empty()) {
       Fail(name, " is required");
       return {};
     }
@@ -226,9 +255,17 @@ class DataSessionConfigParser {
       return;
     }
     config_.data_session.settle =
-        StringOr(data_session["settle"], config_.data_session.settle);
+        StringOr(data_session["settle"], config_.data_session.settle,
+                 "data_session.settle");
+    if (!ok_) {
+      return;
+    }
     config_.data_session.wire_format =
-        StringOr(data_session["wire_format"], config_.data_session.wire_format);
+        StringOr(data_session["wire_format"], config_.data_session.wire_format,
+                 "data_session.wire_format");
+    if (!ok_) {
+      return;
+    }
     config_.data_session.sbe_schema_id = UInt32Or(
         data_session["sbe_schema_id"], config_.data_session.sbe_schema_id,
         "data_session.sbe_schema_id");
@@ -319,18 +356,48 @@ class DataSessionConfigParser {
       return;
     }
 
-    config_.data_shm.enabled = BoolOr(shm["enabled"], config_.data_shm.enabled);
+    config_.data_shm.enabled =
+        BoolOr(shm["enabled"], config_.data_shm.enabled,
+               "data_shm_sink.enabled");
+    if (!ok_) {
+      return;
+    }
     config_.data_shm.shm_name =
-        StringOr(shm["shm_name"], config_.data_shm.shm_name);
+        StringOr(shm["shm_name"], config_.data_shm.shm_name,
+                 "data_shm_sink.shm_name");
+    if (!ok_) {
+      return;
+    }
     const std::string legacy_book_ticker_channel = StringOr(
-        shm["channel_name"], config_.data_shm.book_ticker_channel_name);
+        shm["channel_name"], config_.data_shm.book_ticker_channel_name,
+        "data_shm_sink.channel_name");
+    if (!ok_) {
+      return;
+    }
     config_.data_shm.book_ticker_channel_name =
-        StringOr(shm["book_ticker_channel_name"], legacy_book_ticker_channel);
+        StringOr(shm["book_ticker_channel_name"], legacy_book_ticker_channel,
+                 "data_shm_sink.book_ticker_channel_name");
+    if (!ok_) {
+      return;
+    }
     config_.data_shm.trade_channel_name = StringOr(
-        shm["trade_channel_name"], config_.data_shm.trade_channel_name);
-    config_.data_shm.create = BoolOr(shm["create"], config_.data_shm.create);
+        shm["trade_channel_name"], config_.data_shm.trade_channel_name,
+        "data_shm_sink.trade_channel_name");
+    if (!ok_) {
+      return;
+    }
+    config_.data_shm.create =
+        BoolOr(shm["create"], config_.data_shm.create,
+               "data_shm_sink.create");
+    if (!ok_) {
+      return;
+    }
     config_.data_shm.remove_existing =
-        BoolOr(shm["remove_existing"], config_.data_shm.remove_existing);
+        BoolOr(shm["remove_existing"], config_.data_shm.remove_existing,
+               "data_shm_sink.remove_existing");
+    if (!ok_) {
+      return;
+    }
     config_.data_shm.book_ticker_enabled =
         config_.data_session.feeds.book_ticker;
     config_.data_shm.trade_enabled = config_.data_session.feeds.trade;
@@ -393,7 +460,12 @@ class DataSessionConfigParser {
     const toml::node_view<const toml::node> latency =
         diagnostics["latency_outlier"];
     auto& latency_config = config_.diagnostics.latency_outlier;
-    latency_config.enabled = BoolOr(latency["enabled"], latency_config.enabled);
+    latency_config.enabled =
+        BoolOr(latency["enabled"], latency_config.enabled,
+               "data_session.diagnostics.latency_outlier.enabled");
+    if (!ok_) {
+      return;
+    }
     latency_config.source_id =
         Int32Or(latency["source_id"], latency_config.source_id,
                 "data_session.diagnostics.latency_outlier.source_id");
@@ -428,14 +500,42 @@ class DataSessionConfigParser {
       toml::node_view<const toml::node> node,
       websocket::SocketTimestampingConfig* timestamping,
       std::string_view name) {
-    timestamping->enabled = BoolOr(node["enabled"], timestamping->enabled);
-    timestamping->tx_sched = BoolOr(node["tx_sched"], timestamping->tx_sched);
+    timestamping->enabled =
+        BoolOr(node["enabled"], timestamping->enabled,
+               std::string{name} + ".enabled");
+    if (!ok_) {
+      return;
+    }
+    timestamping->tx_sched =
+        BoolOr(node["tx_sched"], timestamping->tx_sched,
+               std::string{name} + ".tx_sched");
+    if (!ok_) {
+      return;
+    }
     timestamping->tx_software =
-        BoolOr(node["tx_software"], timestamping->tx_software);
-    timestamping->tx_ack = BoolOr(node["tx_ack"], timestamping->tx_ack);
+        BoolOr(node["tx_software"], timestamping->tx_software,
+               std::string{name} + ".tx_software");
+    if (!ok_) {
+      return;
+    }
+    timestamping->tx_ack =
+        BoolOr(node["tx_ack"], timestamping->tx_ack,
+               std::string{name} + ".tx_ack");
+    if (!ok_) {
+      return;
+    }
     timestamping->rx_software =
-        BoolOr(node["rx_software"], timestamping->rx_software);
-    timestamping->hardware = BoolOr(node["hardware"], timestamping->hardware);
+        BoolOr(node["rx_software"], timestamping->rx_software,
+               std::string{name} + ".rx_software");
+    if (!ok_) {
+      return;
+    }
+    timestamping->hardware =
+        BoolOr(node["hardware"], timestamping->hardware,
+               std::string{name} + ".hardware");
+    if (!ok_) {
+      return;
+    }
     timestamping->max_errqueue_events_per_drain = NonNegativeUint32Or(
         node["max_errqueue_events_per_drain"],
         timestamping->max_errqueue_events_per_drain,
