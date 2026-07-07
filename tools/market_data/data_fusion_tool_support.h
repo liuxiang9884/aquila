@@ -245,6 +245,83 @@ template <typename LaunchConfig, typename BookTickerFusionConfig,
   return true;
 }
 
+[[nodiscard]] inline std::string NormalizeFusionShmNameForCompare(
+    std::string_view shm_name) {
+  if (shm_name.empty() || shm_name.front() == '/') {
+    return std::string{shm_name};
+  }
+  std::string normalized{"/"};
+  normalized.append(shm_name);
+  return normalized;
+}
+
+template <typename LaunchConfig, typename PreparedSources,
+          typename BookTickerFusionConfig, typename TradeFusionConfig>
+[[nodiscard]] bool ValidatePreparedDataFusionCpuBindings(
+    const LaunchConfig& launch_config, const PreparedSources& sources,
+    const BookTickerFusionConfig* book_ticker_fusion_config,
+    const TradeFusionConfig* trade_fusion_config, std::string* error) {
+  error->clear();
+  std::vector<std::pair<std::int32_t, std::string>> used_cpus;
+  const auto add_cpu = [&used_cpus, error](std::int32_t cpu,
+                                           std::string name) -> bool {
+    if (cpu < 0) {
+      return true;
+    }
+    for (const auto& [used_cpu, used_name] : used_cpus) {
+      if (used_cpu == cpu) {
+        *error = fmt::format("cpu binding overlap cpu={} first={} second={}",
+                             cpu, used_name, name);
+        return false;
+      }
+    }
+    used_cpus.emplace_back(cpu, std::move(name));
+    return true;
+  };
+
+  for (const auto& source : sources) {
+    const std::int32_t cpu =
+        source.data_session_config.connection.runtime_policy.io_cpu_id;
+    if (!add_cpu(cpu,
+                 fmt::format("source_id={}", source.launch_source.source_id))) {
+      return false;
+    }
+  }
+  if constexpr (requires { launch_config.backend_cpu_affinity; }) {
+    if (!add_cpu(launch_config.backend_cpu_affinity, "log_backend")) {
+      return false;
+    }
+  }
+  if (book_ticker_fusion_config != nullptr &&
+      !add_cpu(book_ticker_fusion_config->bind_cpu_id, "book_ticker_fusion")) {
+    return false;
+  }
+  if (trade_fusion_config != nullptr &&
+      !add_cpu(trade_fusion_config->bind_cpu_id, "trade_fusion")) {
+    return false;
+  }
+  return true;
+}
+
+template <typename BookTickerFusionConfig, typename TradeFusionConfig>
+[[nodiscard]] bool ValidateDataFusionOutputShmNames(
+    const BookTickerFusionConfig* book_ticker_fusion_config,
+    const TradeFusionConfig* trade_fusion_config, std::string* error) {
+  error->clear();
+  if (book_ticker_fusion_config == nullptr || trade_fusion_config == nullptr) {
+    return true;
+  }
+  const std::string book_output = NormalizeFusionShmNameForCompare(
+      book_ticker_fusion_config->output.shm_name);
+  const std::string trade_output =
+      NormalizeFusionShmNameForCompare(trade_fusion_config->output.shm_name);
+  if (book_output == trade_output) {
+    *error = fmt::format("fusion output shm overlap shm={}", book_output);
+    return false;
+  }
+  return true;
+}
+
 template <typename PreparedSources>
 [[nodiscard]] bool SourcesUseSameTls(const PreparedSources& sources,
                                      std::string_view exchange_name,

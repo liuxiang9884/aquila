@@ -425,8 +425,78 @@ TEST(DataFusionToolSupportTest, RejectsCpuBindingOverlap) {
 }
 
 struct PreparedSourceForTest {
+  tool_gate::GateDataFusionSourceConfig launch_source;
   aquila::gate::DataSessionConfig data_session_config;
 };
+
+TEST(DataFusionToolSupportTest, RejectsPreparedCpuBindingOverlap) {
+  tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion",
+      .backend_cpu_affinity = 31,
+  };
+  PreparedSourceForTest source0{
+      .launch_source = MakeLaunchSource(0, "src0"),
+  };
+  source0.data_session_config.connection.runtime_policy.io_cpu_id = 16;
+  PreparedSourceForTest source1{
+      .launch_source = MakeLaunchSource(1, "src1"),
+  };
+  source1.data_session_config.connection.runtime_policy.io_cpu_id = 18;
+  const std::vector<PreparedSourceForTest> sources{source0, source1};
+  md::BookTickerFusionConfig book_ticker_config{
+      .name = "book_ticker_fusion",
+      .bind_cpu_id = 16,
+  };
+  md::TradeFusionConfig trade_config{
+      .name = "trade_fusion",
+      .bind_cpu_id = 19,
+  };
+
+  std::string error;
+  EXPECT_FALSE(support::ValidatePreparedDataFusionCpuBindings(
+      launch_config, sources, &book_ticker_config, &trade_config, &error));
+  EXPECT_NE(error.find("source_id=0"), std::string::npos);
+  EXPECT_NE(error.find("book_ticker_fusion"), std::string::npos);
+
+  book_ticker_config.bind_cpu_id = 17;
+  EXPECT_TRUE(support::ValidatePreparedDataFusionCpuBindings(
+      launch_config, sources, &book_ticker_config, &trade_config, &error));
+  EXPECT_TRUE(error.empty());
+
+  launch_config.backend_cpu_affinity = 18;
+  EXPECT_FALSE(support::ValidatePreparedDataFusionCpuBindings(
+      launch_config, sources, &book_ticker_config, &trade_config, &error));
+  EXPECT_NE(error.find("log_backend"), std::string::npos);
+}
+
+TEST(DataFusionToolSupportTest, RejectsFusionOutputShmOverlap) {
+  md::BookTickerFusionConfig book_ticker_config{
+      .name = "book_ticker_fusion",
+      .output =
+          md::BookTickerFusionOutputConfig{
+              .shm_name = "same_output",
+              .channel_name = "book_ticker_channel",
+          },
+  };
+  md::TradeFusionConfig trade_config{
+      .name = "trade_fusion",
+      .output =
+          md::TradeFusionOutputConfig{
+              .shm_name = "/same_output",
+              .channel_name = "trade_channel",
+          },
+  };
+
+  std::string error;
+  EXPECT_FALSE(support::ValidateDataFusionOutputShmNames(
+      &book_ticker_config, &trade_config, &error));
+  EXPECT_NE(error.find("fusion output shm overlap"), std::string::npos);
+
+  trade_config.output.shm_name = "trade_output";
+  EXPECT_TRUE(support::ValidateDataFusionOutputShmNames(&book_ticker_config,
+                                                        &trade_config, &error));
+  EXPECT_TRUE(error.empty());
+}
 
 TEST(DataFusionToolSupportTest, ChecksHomogeneousTls) {
   PreparedSourceForTest plain_a;

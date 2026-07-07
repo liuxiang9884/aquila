@@ -45,7 +45,7 @@
 
 - [ ] Add launch-level `feeds`, `book_ticker_fusion_config`, `trade_fusion_config`.
 - [ ] Add source-level `data_shm_name`.
-- [ ] Parse new multi-feed schema and preserve existing single-feed schema as equivalent single-feed input.
+- [ ] Parse the unified `launch.feeds` / `[launch.fusion_configs]` / `data_shm_name` schema for both single-feed and multi-feed launch configs; reject the old `feed` / `fusion_config` / feed-specific source SHM launch schema.
 - [ ] Validate duplicate feed, missing enabled-feed fusion config, and missing source SHM name.
 - [ ] Run Gate and Binance config tests.
 

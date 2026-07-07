@@ -267,6 +267,61 @@ data_session_name = "binance_source_0"
             std::string::npos);
 }
 
+TEST(BinanceDataFusionConfigTest, RejectsDuplicateDataShmName) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "binance_data_fusion_duplicate_data_shm"
+feeds = ["trade"]
+
+[launch.fusion_configs]
+trade = "config/market_data_fusion/binance_trade_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/binance_data_session.toml"
+data_session_name = "binance_source_0"
+data_shm_name = "aquila_binance_trade_src"
+
+[[launch.sources]]
+source_id = 1
+data_session_config = "config/data_sessions/binance_data_session.toml"
+data_session_name = "binance_source_1"
+data_shm_name = "/aquila_binance_trade_src"
+)toml");
+
+  const auto result =
+      aquila::tools::binance::ParseBinanceDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("launch.sources.data_shm_name"),
+            std::string::npos);
+  EXPECT_NE(result.error.find("unique"), std::string::npos);
+}
+
+TEST(BinanceDataFusionConfigTest, RejectsInvalidSourceCpuBinding) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "binance_data_fusion_bad_cpu"
+feeds = ["trade"]
+
+[launch.fusion_configs]
+trade = "config/market_data_fusion/binance_trade_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/binance_data_session.toml"
+data_session_name = "binance_source_0"
+data_shm_name = "aquila_binance_trade_src_0"
+bind_cpu_id = -2
+)toml");
+
+  const auto result =
+      aquila::tools::binance::ParseBinanceDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("launch.sources.bind_cpu_id"), std::string::npos);
+}
+
 TEST(BinanceDataFusionConfigTest, RejectsDuplicateSourceId) {
   const toml::parse_result parsed = ParseToml(R"toml(
 [launch]

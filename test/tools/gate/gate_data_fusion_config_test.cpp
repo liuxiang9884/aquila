@@ -254,6 +254,85 @@ data_session_name = "gate_source_0"
             std::string::npos);
 }
 
+TEST(GateDataFusionConfigTest, RejectsDuplicateDataShmName) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "gate_data_fusion_duplicate_data_shm"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/gate_data_session.toml"
+data_session_name = "gate_source_0"
+data_shm_name = "aquila_gate_book_ticker_src"
+
+[[launch.sources]]
+source_id = 1
+data_session_config = "config/data_sessions/gate_data_session.toml"
+data_session_name = "gate_source_1"
+data_shm_name = "/aquila_gate_book_ticker_src"
+)toml");
+
+  const auto result = aquila::tools::gate::ParseGateDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("launch.sources.data_shm_name"),
+            std::string::npos);
+  EXPECT_NE(result.error.find("unique"), std::string::npos);
+}
+
+TEST(GateDataFusionConfigTest, RejectsOutOfRangeSourceId) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "gate_data_fusion_bad_source_id"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 2147483648
+data_session_config = "config/data_sessions/gate_data_session.toml"
+data_session_name = "gate_source_0"
+data_shm_name = "aquila_gate_book_ticker_src_0"
+)toml");
+
+  const auto result = aquila::tools::gate::ParseGateDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("launch.sources.source_id"), std::string::npos);
+  EXPECT_NE(result.error.find("int32"), std::string::npos);
+}
+
+TEST(GateDataFusionConfigTest, RejectsInvalidCpuBinding) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[log]
+backend_cpu_affinity = -2
+
+[launch]
+name = "gate_data_fusion_bad_cpu"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/gate_data_session.toml"
+data_session_name = "gate_source_0"
+data_shm_name = "aquila_gate_book_ticker_src_0"
+bind_cpu_id = -2
+)toml");
+
+  const auto result = aquila::tools::gate::ParseGateDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("log.backend_cpu_affinity"), std::string::npos);
+}
+
 TEST(GateDataFusionConfigTest, RejectsDuplicateSourceId) {
   const toml::parse_result parsed = ParseToml(R"toml(
 [launch]

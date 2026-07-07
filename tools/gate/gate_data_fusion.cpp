@@ -88,7 +88,6 @@ class GateDataFusionSourceWorker {
 
   void Stop() noexcept {
     session_.Stop();
-    publisher_.FlushPublishedCount();
   }
 
   void Join() {
@@ -302,10 +301,10 @@ int main(int argc, char** argv) {
     }
 
     std::string error;
-    if (!aq_tool_md::ValidateDataFusionCpuBindings(
-            launch_config, book_config ? &*book_config : nullptr,
+    if (!aq_tool_md::ValidateDataFusionOutputShmNames(
+            book_config ? &*book_config : nullptr,
             trade_config ? &*trade_config : nullptr, &error)) {
-      NOVA_ERROR("cpu_binding_error={}", error);
+      NOVA_ERROR("fusion_output_error={}", error);
       return 1;
     }
 
@@ -316,6 +315,12 @@ int main(int argc, char** argv) {
     }
     if (!aq_tool_md::SourcesUseSameTls(sources, "Gate", &error)) {
       NOVA_ERROR("transport_error={}", error);
+      return 1;
+    }
+    if (!aq_tool_md::ValidatePreparedDataFusionCpuBindings(
+            launch_config, sources, book_config ? &*book_config : nullptr,
+            trade_config ? &*trade_config : nullptr, &error)) {
+      NOVA_ERROR("cpu_binding_error={}", error);
       return 1;
     }
 

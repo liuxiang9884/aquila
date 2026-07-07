@@ -2,6 +2,7 @@
 #define AQUILA_TOOLS_MARKET_DATA_DATA_FUSION_LAUNCH_CONFIG_PARSER_H_
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -75,10 +76,15 @@ class DataFusionLaunchConfigParser {
   }
 
   [[nodiscard]] std::int32_t Int32Or(
-      toml::node_view<const toml::node> value_node,
-      std::int32_t fallback) const {
+      toml::node_view<const toml::node> value_node, std::int32_t fallback,
+      std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      return fallback;
+    }
+    if (*value < std::numeric_limits<std::int32_t>::min() ||
+        *value > std::numeric_limits<std::int32_t>::max()) {
+      Fail(name, " must fit int32");
       return fallback;
     }
     return static_cast<std::int32_t>(*value);
@@ -87,7 +93,14 @@ class DataFusionLaunchConfigParser {
   void ParseLog() {
     const toml::node_view<const toml::node> log = node_["log"];
     config_.backend_cpu_affinity =
-        Int32Or(log["backend_cpu_affinity"], config_.backend_cpu_affinity);
+        Int32Or(log["backend_cpu_affinity"], config_.backend_cpu_affinity,
+                "log.backend_cpu_affinity");
+    if (!ok_) {
+      return;
+    }
+    if (config_.backend_cpu_affinity < -1) {
+      Fail("log.backend_cpu_affinity", " must be -1 or non-negative");
+    }
   }
 
   void ParseLaunch() {
@@ -178,8 +191,11 @@ class DataFusionLaunchConfigParser {
       }
 
       SourceConfig source;
-      source.source_id =
-          Int32Or((*source_table)["source_id"], source.source_id);
+      source.source_id = Int32Or((*source_table)["source_id"], source.source_id,
+                                 "launch.sources.source_id");
+      if (!ok_) {
+        return;
+      }
       if (source.source_id < 0) {
         Fail("launch.sources.source_id", " must be non-negative");
         return;
@@ -206,6 +222,10 @@ class DataFusionLaunchConfigParser {
       if (!ok_) {
         return;
       }
+      if (HasDataShmName(source.data_shm_name)) {
+        Fail("launch.sources.data_shm_name", " must be unique");
+        return;
+      }
       if (HasFeed(DataFusionFeed::kBookTicker)) {
         source.book_ticker_channel_name = OptionalString(
             (*source_table)["book_ticker_channel_name"], "book_ticker_channel");
@@ -226,7 +246,15 @@ class DataFusionLaunchConfigParser {
           BoolOr((*source_table)["remove_existing_source_shm"],
                  source.remove_existing_source_shm);
       source.bind_cpu_id =
-          Int32Or((*source_table)["bind_cpu_id"], source.bind_cpu_id);
+          Int32Or((*source_table)["bind_cpu_id"], source.bind_cpu_id,
+                  "launch.sources.bind_cpu_id");
+      if (!ok_) {
+        return;
+      }
+      if (source.bind_cpu_id < -1) {
+        Fail("launch.sources.bind_cpu_id", " must be -1 or non-negative");
+        return;
+      }
       config_.sources.push_back(std::move(source));
     }
   }
@@ -243,6 +271,26 @@ class DataFusionLaunchConfigParser {
   [[nodiscard]] bool HasSourceId(std::int32_t source_id) const noexcept {
     for (const SourceConfig& source : config_.sources) {
       if (source.source_id == source_id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] static std::string NormalizeShmNameForCompare(
+      std::string_view shm_name) {
+    if (shm_name.empty() || shm_name.front() == '/') {
+      return std::string{shm_name};
+    }
+    std::string normalized{"/"};
+    normalized.append(shm_name);
+    return normalized;
+  }
+
+  [[nodiscard]] bool HasDataShmName(std::string_view data_shm_name) const {
+    const std::string normalized = NormalizeShmNameForCompare(data_shm_name);
+    for (const SourceConfig& source : config_.sources) {
+      if (NormalizeShmNameForCompare(source.data_shm_name) == normalized) {
         return true;
       }
     }
