@@ -470,6 +470,10 @@ TEST(DataFusionToolSupportTest, RejectsPreparedCpuBindingOverlap) {
 }
 
 TEST(DataFusionToolSupportTest, RejectsFusionOutputShmOverlap) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion",
+      .sources = {MakeLaunchSource(0, "src0"), MakeLaunchSource(1, "src1")},
+  };
   md::BookTickerFusionConfig book_ticker_config{
       .name = "book_ticker_fusion",
       .output =
@@ -488,14 +492,37 @@ TEST(DataFusionToolSupportTest, RejectsFusionOutputShmOverlap) {
   };
 
   std::string error;
-  EXPECT_FALSE(support::ValidateDataFusionOutputShmNames(
-      &book_ticker_config, &trade_config, &error));
-  EXPECT_NE(error.find("fusion output shm overlap"), std::string::npos);
+  EXPECT_FALSE(support::ValidateDataFusionShmNames(
+      launch_config, &book_ticker_config, &trade_config, &error));
+  EXPECT_NE(error.find("data fusion shm overlap"), std::string::npos);
 
   trade_config.output.shm_name = "trade_output";
-  EXPECT_TRUE(support::ValidateDataFusionOutputShmNames(&book_ticker_config,
-                                                        &trade_config, &error));
+  EXPECT_TRUE(support::ValidateDataFusionShmNames(
+      launch_config, &book_ticker_config, &trade_config, &error));
   EXPECT_TRUE(error.empty());
+}
+
+TEST(DataFusionToolSupportTest, RejectsSourceAndFusionOutputShmOverlap) {
+  const tool_gate::GateDataFusionConfig launch_config{
+      .name = "gate_data_fusion",
+      .sources = {MakeLaunchSource(0, "src0")},
+  };
+  const md::BookTickerFusionConfig book_ticker_config{
+      .name = "book_ticker_fusion",
+      .output =
+          md::BookTickerFusionOutputConfig{
+              .shm_name = "/src0",
+              .channel_name = "book_ticker_channel",
+          },
+  };
+
+  std::string error;
+  EXPECT_FALSE(support::ValidateDataFusionShmNames(
+      launch_config, &book_ticker_config,
+      static_cast<const md::TradeFusionConfig*>(nullptr), &error));
+  EXPECT_NE(error.find("data fusion shm overlap"), std::string::npos);
+  EXPECT_NE(error.find("source_id=0"), std::string::npos);
+  EXPECT_NE(error.find("book_ticker_fusion_output"), std::string::npos);
 }
 
 TEST(DataFusionToolSupportTest, ChecksHomogeneousTls) {

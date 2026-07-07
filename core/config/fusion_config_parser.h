@@ -79,9 +79,14 @@ class FusionConfigParser {
 
   [[nodiscard]] std::int32_t Int32Or(
       toml::node_view<const toml::node> value_node,
-      std::int32_t fallback) const {
+      std::int32_t fallback, std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      return fallback;
+    }
+    if (*value < std::numeric_limits<std::int32_t>::min() ||
+        *value > std::numeric_limits<std::int32_t>::max()) {
+      Fail(name, " must fit int32");
       return fallback;
     }
     return static_cast<std::int32_t>(*value);
@@ -118,7 +123,15 @@ class FusionConfigParser {
     if (!ok_) {
       return;
     }
-    config_.bind_cpu_id = Int32Or(fusion["bind_cpu_id"], config_.bind_cpu_id);
+    config_.bind_cpu_id = Int32Or(fusion["bind_cpu_id"],
+                                  config_.bind_cpu_id, "fusion.bind_cpu_id");
+    if (!ok_) {
+      return;
+    }
+    if (config_.bind_cpu_id < -1) {
+      Fail("fusion.bind_cpu_id", " must be -1 or non-negative");
+      return;
+    }
     config_.max_symbol_id = PositiveUInt32Or(
         fusion["max_symbol_id"], config_.max_symbol_id, "fusion.max_symbol_id");
   }
@@ -166,8 +179,12 @@ class FusionConfigParser {
       }
 
       typename Traits::SourceConfig source;
-      source.source_id =
-          Int32Or((*source_table)["source_id"], source.source_id);
+      source.source_id = Int32Or((*source_table)["source_id"],
+                                 source.source_id,
+                                 "fusion.sources.source_id");
+      if (!ok_) {
+        return;
+      }
       if (source.source_id < 0) {
         Fail("fusion.sources.source_id", " must be non-negative");
         return;

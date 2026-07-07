@@ -303,20 +303,41 @@ template <typename LaunchConfig, typename PreparedSources,
   return true;
 }
 
-template <typename BookTickerFusionConfig, typename TradeFusionConfig>
-[[nodiscard]] bool ValidateDataFusionOutputShmNames(
+template <typename LaunchConfig, typename BookTickerFusionConfig,
+          typename TradeFusionConfig>
+[[nodiscard]] bool ValidateDataFusionShmNames(
+    const LaunchConfig& launch_config,
     const BookTickerFusionConfig* book_ticker_fusion_config,
     const TradeFusionConfig* trade_fusion_config, std::string* error) {
   error->clear();
-  if (book_ticker_fusion_config == nullptr || trade_fusion_config == nullptr) {
+  std::vector<std::pair<std::string, std::string>> used_shms;
+  const auto add_shm = [&used_shms, error](std::string_view shm_name,
+                                           std::string name) -> bool {
+    const std::string normalized = NormalizeFusionShmNameForCompare(shm_name);
+    for (const auto& [used_shm, used_name] : used_shms) {
+      if (used_shm == normalized) {
+        *error = fmt::format("data fusion shm overlap shm={} first={} second={}",
+                             normalized, used_name, name);
+        return false;
+      }
+    }
+    used_shms.emplace_back(normalized, std::move(name));
     return true;
+  };
+
+  for (const auto& source : launch_config.sources) {
+    if (!add_shm(source.data_shm_name,
+                 fmt::format("source_id={}", source.source_id))) {
+      return false;
+    }
   }
-  const std::string book_output = NormalizeFusionShmNameForCompare(
-      book_ticker_fusion_config->output.shm_name);
-  const std::string trade_output =
-      NormalizeFusionShmNameForCompare(trade_fusion_config->output.shm_name);
-  if (book_output == trade_output) {
-    *error = fmt::format("fusion output shm overlap shm={}", book_output);
+  if (book_ticker_fusion_config != nullptr &&
+      !add_shm(book_ticker_fusion_config->output.shm_name,
+               "book_ticker_fusion_output")) {
+    return false;
+  }
+  if (trade_fusion_config != nullptr &&
+      !add_shm(trade_fusion_config->output.shm_name, "trade_fusion_output")) {
     return false;
   }
   return true;

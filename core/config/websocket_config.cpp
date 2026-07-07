@@ -1,6 +1,7 @@
 #include "core/config/websocket_config.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -106,6 +107,24 @@ class WebSocketConfigParser {
     return static_cast<std::uint32_t>(*value);
   }
 
+  [[nodiscard]] int RequiredCpuId(toml::node_view<const toml::node> value_node,
+                                  std::string_view name) {
+    const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
+    if (!value) {
+      Fail(name, " is required");
+      return -1;
+    }
+    if (*value < -1) {
+      Fail(name, " must be -1 or non-negative");
+      return -1;
+    }
+    if (*value > std::numeric_limits<int>::max()) {
+      Fail(name, " must fit int");
+      return -1;
+    }
+    return static_cast<int>(*value);
+  }
+
   void ParseEndpoint() {
     const toml::node_view<const toml::node> endpoint = node_["endpoint"];
     const std::optional<std::string> host =
@@ -132,13 +151,11 @@ class WebSocketConfigParser {
   void ParseExecutionPolicy() {
     const toml::node_view<const toml::node> execution_policy =
         node_["execution_policy"];
-    const std::optional<std::int64_t> bind_cpu_id =
-        execution_policy["bind_cpu_id"].value<std::int64_t>();
-    if (!bind_cpu_id) {
-      Fail("execution_policy.bind_cpu_id", " is required");
+    config_.execution_policy.bind_cpu_id = RequiredCpuId(
+        execution_policy["bind_cpu_id"], "execution_policy.bind_cpu_id");
+    if (!ok_) {
       return;
     }
-    config_.execution_policy.bind_cpu_id = static_cast<int>(*bind_cpu_id);
 
     const std::optional<std::string> affinity_mode =
         execution_policy["affinity_mode"].value<std::string>();

@@ -236,6 +236,34 @@ host = "fx-ws.gateio.ws"
   EXPECT_NE(result.error.find("bind_cpu_id"), std::string::npos);
 }
 
+TEST(WebSocketConfigTest, RejectsInvalidBindCpuId) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = -2
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("execution_policy.bind_cpu_id"),
+            std::string::npos);
+}
+
+TEST(WebSocketConfigTest, RejectsOutOfRangeBindCpuId) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2147483648
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("execution_policy.bind_cpu_id"),
+            std::string::npos);
+}
+
 TEST(WebSocketConfigTest, RejectsInvalidAffinityMode) {
   const auto result = ParseWebSocketToml(R"toml(
 [data_session.websocket.endpoint]
