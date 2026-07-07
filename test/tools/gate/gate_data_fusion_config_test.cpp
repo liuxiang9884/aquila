@@ -362,6 +362,54 @@ bind_cpu_id = -2
   EXPECT_NE(result.error.find("log.backend_cpu_affinity"), std::string::npos);
 }
 
+TEST(GateDataFusionConfigTest, RejectsStringLogBackendCpuBinding) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[log]
+backend_cpu_affinity = "31"
+
+[launch]
+name = "gate_data_fusion_bad_log_cpu_type"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/gate_data_session.toml"
+data_session_name = "gate_source_0"
+data_shm_name = "aquila_gate_book_ticker_src_0"
+)toml");
+
+  const auto result = aquila::tools::gate::ParseGateDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("log.backend_cpu_affinity"), std::string::npos);
+}
+
+TEST(GateDataFusionConfigTest, RejectsFloatSourceCpuBinding) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "gate_data_fusion_bad_source_cpu_type"
+feeds = ["book_ticker"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/gate_book_ticker_fusion_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/gate_data_session.toml"
+data_session_name = "gate_source_0"
+data_shm_name = "aquila_gate_book_ticker_src_0"
+bind_cpu_id = 17.5
+)toml");
+
+  const auto result = aquila::tools::gate::ParseGateDataFusionConfig(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("launch.sources.bind_cpu_id"), std::string::npos);
+}
+
 TEST(GateDataFusionConfigTest, RejectsCpuBindingAtCpuSetSize) {
 #if !defined(__linux__)
   GTEST_SKIP() << "CPU_SETSIZE is Linux-specific";

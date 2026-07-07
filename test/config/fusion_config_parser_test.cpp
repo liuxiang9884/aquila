@@ -107,6 +107,53 @@ shm_name = "unit_source_shm"
   EXPECT_NE(result.error.find("fusion.bind_cpu_id"), std::string::npos);
 }
 
+TEST(FusionConfigParserTest, RejectsStringBindCpuId) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[fusion]
+name = "unit_fusion"
+bind_cpu_id = "16"
+
+[fusion.output]
+shm_name = "unit_output"
+channel_name = "unit_output_channel"
+metadata_bin = "/home/liuxiang/tmp/unit_fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 0
+name = "unit_source"
+shm_name = "unit_source_shm"
+)toml");
+
+  const ParserTraits::Result result =
+      aquila::config::ParseFusionConfig<ParserTraits>(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("fusion.bind_cpu_id"), std::string::npos);
+}
+
+TEST(FusionConfigParserTest, RejectsFloatSourceId) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[fusion]
+name = "unit_fusion"
+
+[fusion.output]
+shm_name = "unit_output"
+channel_name = "unit_output_channel"
+metadata_bin = "/home/liuxiang/tmp/unit_fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 1.5
+name = "unit_source"
+shm_name = "unit_source_shm"
+)toml");
+
+  const ParserTraits::Result result =
+      aquila::config::ParseFusionConfig<ParserTraits>(parsed);
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("fusion.sources.source_id"), std::string::npos);
+}
+
 TEST(FusionConfigParserTest, RejectsOutOfRangeBindCpuId) {
   const toml::parse_result parsed = ParseToml(R"toml(
 [fusion]

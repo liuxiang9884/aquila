@@ -56,7 +56,15 @@ class DataFusionLaunchConfigParser {
   [[nodiscard]] std::string RequiredString(
       toml::node_view<const toml::node> value_node, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    if (!value || value->empty()) {
+    if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be a string");
+        return {};
+      }
+      Fail(name, " is required");
+      return {};
+    }
+    if (value->empty()) {
       Fail(name, " is required");
       return {};
     }
@@ -65,15 +73,27 @@ class DataFusionLaunchConfigParser {
 
   [[nodiscard]] std::string OptionalString(
       toml::node_view<const toml::node> value_node,
-      std::string fallback) const {
+      std::string fallback, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    return value.value_or(std::move(fallback));
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a string");
+    }
+    return fallback;
   }
 
   [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
-                            bool fallback) const {
+                            bool fallback, std::string_view name) {
     const std::optional<bool> value = value_node.value<bool>();
-    return value.value_or(fallback);
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a bool");
+    }
+    return fallback;
   }
 
   [[nodiscard]] std::int32_t Int32Or(
@@ -81,6 +101,9 @@ class DataFusionLaunchConfigParser {
       std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < std::numeric_limits<std::int32_t>::min() ||
@@ -235,7 +258,11 @@ class DataFusionLaunchConfigParser {
       }
       if (HasFeed(DataFusionFeed::kBookTicker)) {
         source.book_ticker_channel_name = OptionalString(
-            (*source_table)["book_ticker_channel_name"], "book_ticker_channel");
+            (*source_table)["book_ticker_channel_name"], "book_ticker_channel",
+            "launch.sources.book_ticker_channel_name");
+        if (!ok_) {
+          return;
+        }
         if (source.book_ticker_channel_name.empty()) {
           Fail("launch.sources.book_ticker_channel_name", " must not be empty");
           return;
@@ -243,7 +270,11 @@ class DataFusionLaunchConfigParser {
       }
       if (HasFeed(DataFusionFeed::kTrade)) {
         source.trade_channel_name = OptionalString(
-            (*source_table)["trade_channel_name"], "trade_channel");
+            (*source_table)["trade_channel_name"], "trade_channel",
+            "launch.sources.trade_channel_name");
+        if (!ok_) {
+          return;
+        }
         if (source.trade_channel_name.empty()) {
           Fail("launch.sources.trade_channel_name", " must not be empty");
           return;
@@ -258,7 +289,11 @@ class DataFusionLaunchConfigParser {
       }
       source.remove_existing_source_shm =
           BoolOr((*source_table)["remove_existing_source_shm"],
-                 source.remove_existing_source_shm);
+                 source.remove_existing_source_shm,
+                 "launch.sources.remove_existing_source_shm");
+      if (!ok_) {
+        return;
+      }
       source.bind_cpu_id =
           Int32Or((*source_table)["bind_cpu_id"], source.bind_cpu_id,
                   "launch.sources.bind_cpu_id");

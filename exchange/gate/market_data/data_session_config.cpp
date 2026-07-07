@@ -126,6 +126,9 @@ class DataSessionConfigParser {
       std::uint32_t fallback, std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < 0) {

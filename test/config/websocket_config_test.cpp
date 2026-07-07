@@ -304,6 +304,36 @@ bind_cpu_id = 2
             std::string::npos);
 }
 
+TEST(WebSocketConfigTest, RejectsStringUnsignedField) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+connect_timeout_ms = "2500"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("endpoint.connect_timeout_ms"),
+            std::string::npos);
+}
+
+TEST(WebSocketConfigTest, RejectsStringBoolField) {
+  const auto result = ParseWebSocketToml(R"toml(
+[data_session.websocket.endpoint]
+host = "fx-ws.gateio.ws"
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+active_spin = "true"
+)toml");
+
+  ASSERT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("execution_policy.active_spin"),
+            std::string::npos);
+}
+
 TEST(WebSocketConfigTest, RejectsOutOfRangeUnsignedField) {
   const auto result = ParseWebSocketToml(R"toml(
 [data_session.websocket.endpoint]

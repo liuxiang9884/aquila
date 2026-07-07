@@ -95,15 +95,27 @@ class WebSocketConfigParser {
  private:
   [[nodiscard]] std::string StringOr(
       toml::node_view<const toml::node> value_node,
-      const std::string& fallback) const {
+      const std::string& fallback, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    return value.value_or(fallback);
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a string");
+    }
+    return fallback;
   }
 
   [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
-                            bool fallback) const {
+                            bool fallback, std::string_view name) {
     const std::optional<bool> value = value_node.value<bool>();
-    return value.value_or(fallback);
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a bool");
+    }
+    return fallback;
   }
 
   [[nodiscard]] std::uint32_t UInt32Or(
@@ -111,6 +123,9 @@ class WebSocketConfigParser {
       std::uint32_t fallback, std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < 0) {
@@ -143,6 +158,10 @@ class WebSocketConfigParser {
                                   std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+        return -1;
+      }
       Fail(name, " is required");
       return -1;
     }
@@ -177,10 +196,13 @@ class WebSocketConfigParser {
       return;
     }
     config_.endpoint.connect_ip =
-        StringOr(endpoint["connect_ip"], config_.endpoint.connect_ip);
-    config_.endpoint.port = StringOr(endpoint["port"], config_.endpoint.port);
+        StringOr(endpoint["connect_ip"], config_.endpoint.connect_ip,
+                 "endpoint.connect_ip");
+    config_.endpoint.port =
+        StringOr(endpoint["port"], config_.endpoint.port, "endpoint.port");
     config_.endpoint.enable_tls =
-        BoolOr(endpoint["enable_tls"], config_.endpoint.enable_tls);
+        BoolOr(endpoint["enable_tls"], config_.endpoint.enable_tls,
+               "endpoint.enable_tls");
     config_.endpoint.connect_timeout_ms = UInt32Or(
         endpoint["connect_timeout_ms"], config_.endpoint.connect_timeout_ms,
         "endpoint.connect_timeout_ms");
@@ -209,12 +231,15 @@ class WebSocketConfigParser {
     }
 
     config_.execution_policy.lock_memory = BoolOr(
-        execution_policy["lock_memory"], config_.execution_policy.lock_memory);
+        execution_policy["lock_memory"], config_.execution_policy.lock_memory,
+        "execution_policy.lock_memory");
     config_.execution_policy.prefault_stack =
         BoolOr(execution_policy["prefault_stack"],
-               config_.execution_policy.prefault_stack);
+               config_.execution_policy.prefault_stack,
+               "execution_policy.prefault_stack");
     config_.execution_policy.active_spin = BoolOr(
-        execution_policy["active_spin"], config_.execution_policy.active_spin);
+        execution_policy["active_spin"], config_.execution_policy.active_spin,
+        "execution_policy.active_spin");
     config_.execution_policy.spin_iterations_before_clock_check =
         UInt32Or(execution_policy["spin_iterations_before_clock_check"],
                  config_.execution_policy.spin_iterations_before_clock_check,
@@ -229,7 +254,8 @@ class WebSocketConfigParser {
                  "read_path.max_reads_per_drive");
     config_.read_path.read_until_would_block =
         BoolOr(read_path["read_until_would_block"],
-               config_.read_path.read_until_would_block);
+               config_.read_path.read_until_would_block,
+               "read_path.read_until_would_block");
   }
 
   void ParseHeartbeat() {
@@ -245,7 +271,8 @@ class WebSocketConfigParser {
   void ParseReconnect() {
     const toml::node_view<const toml::node> reconnect = node_["reconnect"];
     config_.reconnect.enabled =
-        BoolOr(reconnect["enabled"], config_.reconnect.enabled);
+        BoolOr(reconnect["enabled"], config_.reconnect.enabled,
+               "reconnect.enabled");
     config_.reconnect.initial_backoff_ms = UInt32Or(
         reconnect["initial_backoff_ms"], config_.reconnect.initial_backoff_ms,
         "reconnect.initial_backoff_ms");

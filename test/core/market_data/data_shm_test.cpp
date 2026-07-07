@@ -234,6 +234,22 @@ TEST(DataShmTest, TradeOverrunDoesNotMoveBookTickerReader) {
   EXPECT_EQ(trade_reader.overrun_count(), 1U);
 }
 
+TEST(DataShmTest, RejectsDuplicateCombinedChannelNames) {
+  md::DataShmConfig config{
+      .enabled = true,
+      .book_ticker_enabled = true,
+      .trade_enabled = true,
+      .shm_name = UniqueShmName("duplicate_channels"),
+      .book_ticker_channel_name = "same_channel",
+      .trade_channel_name = "same_channel",
+      .create = true,
+      .remove_existing = true,
+  };
+  ShmCleanup cleanup(config.shm_name);
+
+  EXPECT_THROW(md::DataShmPublisher publisher(config), std::invalid_argument);
+}
+
 TEST(DataShmTest, CombinedPublisherCanCreateOnlyBookTickerChannel) {
   md::DataShmConfig config{
       .enabled = true,

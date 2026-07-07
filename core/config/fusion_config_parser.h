@@ -58,7 +58,15 @@ class FusionConfigParser {
   [[nodiscard]] std::string RequiredString(
       toml::node_view<const toml::node> value_node, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    if (!value || value->empty()) {
+    if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be a string");
+        return {};
+      }
+      Fail(name, " is required");
+      return {};
+    }
+    if (value->empty()) {
       Fail(name, " is required");
       return {};
     }
@@ -67,15 +75,27 @@ class FusionConfigParser {
 
   [[nodiscard]] std::string OptionalString(
       toml::node_view<const toml::node> value_node,
-      std::string fallback) const {
+      std::string fallback, std::string_view name) {
     const std::optional<std::string> value = value_node.value<std::string>();
-    return value.value_or(std::move(fallback));
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a string");
+    }
+    return fallback;
   }
 
   [[nodiscard]] bool BoolOr(toml::node_view<const toml::node> value_node,
-                            bool fallback) const {
+                            bool fallback, std::string_view name) {
     const std::optional<bool> value = value_node.value<bool>();
-    return value.value_or(fallback);
+    if (value) {
+      return *value;
+    }
+    if (value_node.node() != nullptr) {
+      Fail(name, " must be a bool");
+    }
+    return fallback;
   }
 
   [[nodiscard]] std::int32_t Int32Or(
@@ -83,6 +103,9 @@ class FusionConfigParser {
       std::int32_t fallback, std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value < std::numeric_limits<std::int32_t>::min() ||
@@ -98,6 +121,9 @@ class FusionConfigParser {
       std::string_view name) {
     const std::optional<std::int64_t> value = value_node.value<std::int64_t>();
     if (!value) {
+      if (value_node.node() != nullptr) {
+        Fail(name, " must be an integer");
+      }
       return fallback;
     }
     if (*value <= 0) {
@@ -155,7 +181,11 @@ class FusionConfigParser {
       return;
     }
     config_.output.remove_existing =
-        BoolOr(output["remove_existing"], config_.output.remove_existing);
+        BoolOr(output["remove_existing"], config_.output.remove_existing,
+               "fusion.output.remove_existing");
+    if (!ok_) {
+      return;
+    }
     if constexpr (aquila::kFusionMetadataEnabled) {
       const std::string metadata_bin =
           RequiredString(output["metadata_bin"], "fusion.output.metadata_bin");
@@ -165,7 +195,11 @@ class FusionConfigParser {
       config_.output.metadata_bin = metadata_bin;
     } else {
       config_.output.metadata_bin =
-          OptionalString(output["metadata_bin"], std::string{});
+          OptionalString(output["metadata_bin"], std::string{},
+                         "fusion.output.metadata_bin");
+      if (!ok_) {
+        return;
+      }
     }
   }
 
@@ -212,7 +246,11 @@ class FusionConfigParser {
       }
       source.channel_name =
           OptionalString((*source_table)["channel_name"],
-                         std::string{Traits::kDefaultSourceChannel});
+                         std::string{Traits::kDefaultSourceChannel},
+                         "fusion.sources.channel_name");
+      if (!ok_) {
+        return;
+      }
       if (source.channel_name.empty()) {
         Fail("fusion.sources.channel_name", " must not be empty");
         return;

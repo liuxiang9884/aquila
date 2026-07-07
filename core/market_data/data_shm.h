@@ -141,6 +141,13 @@ namespace detail {
 }
 
 [[nodiscard]] inline std::string PrepareShmName(const DataShmConfig& config) {
+  if (config.book_ticker_enabled && config.trade_enabled &&
+      !config.book_ticker_channel_name.empty() &&
+      config.book_ticker_channel_name == config.trade_channel_name) {
+    throw std::invalid_argument(
+        "data_shm_sink.channel_name book_ticker and trade channels must be "
+        "distinct");
+  }
   return PrepareShmName(config.shm_name, config.create, config.remove_existing);
 }
 
