@@ -50,8 +50,7 @@ md::TradeShmConfig MakeCreateConfig(std::string_view suffix) {
   };
 }
 
-md::TradeShmConfig MakeAttachConfig(
-    const md::TradeShmConfig& create_config) {
+md::TradeShmConfig MakeAttachConfig(const md::TradeShmConfig& create_config) {
   md::TradeShmConfig config = create_config;
   config.create = false;
   config.remove_existing = false;
@@ -149,12 +148,10 @@ TEST(TradeFusionRunnerTest, PublishesCanonicalShmAndOptionalMetadata) {
   md::TradeShmReader output_reader(MakeAttachConfig(output));
   output_reader.SeekLatest();
 
-  const aquila::Trade source0_first =
-      MakeTrade(42, 100, 1'000, 1'010, 2'000);
+  const aquila::Trade source0_first = MakeTrade(42, 100, 1'000, 1'010, 2'000);
   const aquila::Trade source1_duplicate =
       MakeTrade(42, 100, 1'000, 1'010, 1'900);
-  const aquila::Trade source1_next =
-      MakeTrade(42, 101, 1'100, 1'110, 2'100);
+  const aquila::Trade source1_next = MakeTrade(42, 101, 1'100, 1'110, 2'100);
   source0_publisher.OnTrade(source0_first);
   source1_publisher.OnTrade(source1_duplicate);
   source1_publisher.OnTrade(source1_next);
@@ -189,13 +186,14 @@ TEST(TradeFusionRunnerTest, PublishesCanonicalShmAndOptionalMetadata) {
   ASSERT_EQ(metadata.size(), 2U);
   EXPECT_EQ(metadata[0].source_id, 0);
   EXPECT_EQ(metadata[0].symbol_id, source0_first.symbol_id);
-  EXPECT_EQ(metadata[0].trade_id, source0_first.id);
+  EXPECT_EQ(metadata[0].record_id, source0_first.id);
   EXPECT_EQ(metadata[0].exchange_ns, source0_first.exchange_ns);
-  EXPECT_EQ(metadata[0].trade_ns, source0_first.trade_ns);
+  EXPECT_EQ(metadata[0].event_ns, source0_first.trade_ns);
   EXPECT_EQ(metadata[0].source_local_ns, source0_first.local_ns);
   EXPECT_EQ(metadata[0].fusion_publish_ns, first.local_ns);
   EXPECT_EQ(metadata[1].source_id, 1);
-  EXPECT_EQ(metadata[1].trade_id, source1_next.id);
+  EXPECT_EQ(metadata[1].record_id, source1_next.id);
+  EXPECT_EQ(metadata[1].event_ns, source1_next.trade_ns);
   EXPECT_EQ(metadata[1].source_local_ns, source1_next.local_ns);
   EXPECT_EQ(metadata[1].fusion_publish_ns, second.local_ns);
 

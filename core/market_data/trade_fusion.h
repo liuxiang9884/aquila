@@ -9,14 +9,7 @@
 
 namespace aquila::market_data {
 
-struct TradeFusionDecision {
-  bool publish{false};
-  std::int32_t source_id{-1};
-  std::int32_t symbol_id{-1};
-  std::int64_t trade_id{0};
-  std::int64_t source_local_ns{0};
-  std::int64_t fusion_publish_ns{0};
-};
+using TradeFusionDecision = FastestRouteFusionDecision;
 
 struct TradeFusionTraits {
   using Record = Trade;
@@ -31,6 +24,10 @@ struct TradeFusionTraits {
 
   [[nodiscard]] static std::int64_t LocalNs(const Trade& trade) noexcept {
     return trade.local_ns;
+  }
+
+  [[nodiscard]] static std::int64_t EventNs(const Trade& trade) noexcept {
+    return trade.trade_ns;
   }
 };
 
@@ -51,7 +48,7 @@ class TradeFusionCore {
         .publish = true,
         .source_id = decision.source_id,
         .symbol_id = decision.symbol_id,
-        .trade_id = decision.record_id,
+        .record_id = decision.record_id,
         .source_local_ns = decision.source_local_ns,
         .fusion_publish_ns = decision.fusion_publish_ns,
     };

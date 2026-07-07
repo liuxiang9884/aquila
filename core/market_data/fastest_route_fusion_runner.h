@@ -48,9 +48,8 @@ class BasicFastestRouteFusionRunner {
 
         const std::int64_t fusion_publish_ns =
             static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
-        const auto decision =
-            Traits::OnRecord(fusion_, source->source_id, record,
-                             fusion_publish_ns);
+        const auto decision = Traits::OnRecord(fusion_, source->source_id,
+                                               record, fusion_publish_ns);
         if (!decision.publish) {
           continue;
         }

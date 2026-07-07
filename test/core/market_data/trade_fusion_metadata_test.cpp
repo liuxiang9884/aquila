@@ -12,6 +12,8 @@
 
 namespace {
 
+static_assert(sizeof(aquila::market_data::TradeFusionMetadataRecord) == 48);
+
 std::filesystem::path UniquePath() {
   return std::filesystem::path{"/home/liuxiang/tmp"} /
          fmt::format("aquila_trade_fusion_metadata_test_{}.bin", ::getpid());
@@ -43,18 +45,18 @@ TEST(TradeFusionMetadataTest, WritesRawRecords) {
   const aquila::market_data::TradeFusionMetadataRecord first{
       .source_id = 0,
       .symbol_id = 42,
-      .trade_id = 100,
+      .record_id = 100,
       .exchange_ns = 1'000,
-      .trade_ns = 1'010,
+      .event_ns = 1'010,
       .source_local_ns = 2'000,
       .fusion_publish_ns = 3'000,
   };
   const aquila::market_data::TradeFusionMetadataRecord second{
       .source_id = 1,
       .symbol_id = 42,
-      .trade_id = 101,
+      .record_id = 101,
       .exchange_ns = 1'100,
-      .trade_ns = 1'110,
+      .event_ns = 1'110,
       .source_local_ns = 2'100,
       .fusion_publish_ns = 3'100,
   };
@@ -67,8 +69,8 @@ TEST(TradeFusionMetadataTest, WritesRawRecords) {
       ReadRecords(path);
   ASSERT_EQ(records.size(), 2U);
   EXPECT_EQ(records[0].source_id, first.source_id);
-  EXPECT_EQ(records[0].trade_id, first.trade_id);
-  EXPECT_EQ(records[0].trade_ns, first.trade_ns);
+  EXPECT_EQ(records[0].record_id, first.record_id);
+  EXPECT_EQ(records[0].event_ns, first.event_ns);
   EXPECT_EQ(records[1].source_id, second.source_id);
   EXPECT_EQ(records[1].fusion_publish_ns, second.fusion_publish_ns);
 

@@ -34,7 +34,7 @@ void ExpectPublishedDecision(const aquila::market_data::TradeFusionDecision& d,
   ASSERT_TRUE(d.publish);
   EXPECT_EQ(d.source_id, source_id);
   EXPECT_EQ(d.symbol_id, source.symbol_id);
-  EXPECT_EQ(d.trade_id, source.id);
+  EXPECT_EQ(d.record_id, source.id);
   EXPECT_EQ(d.source_local_ns, source.local_ns);
   EXPECT_EQ(d.fusion_publish_ns, fusion_publish_ns);
 }
@@ -58,8 +58,8 @@ TEST(TradeFusionCoreTest, PublishesOnlyIncreasingTradeIdsPerSymbol) {
 
   const aquila::Trade next = MakeTrade(42, 101, 1'300);
   ExpectPublishedDecision(
-      fusion.OnTrade(/*source_id=*/3, next, /*fusion_publish_ns=*/2'300),
-      next, 2'300, 3);
+      fusion.OnTrade(/*source_id=*/3, next, /*fusion_publish_ns=*/2'300), next,
+      2'300, 3);
 }
 
 TEST(TradeFusionCoreTest, MaintainsIndependentStatePerSymbol) {
@@ -89,7 +89,7 @@ TEST(TradeFusionCoreTest, DropsOutOfRangeSymbolsWithUnsetMetadata) {
   EXPECT_FALSE(invalid.publish);
   EXPECT_EQ(invalid.source_id, -1);
   EXPECT_EQ(invalid.symbol_id, -1);
-  EXPECT_EQ(invalid.trade_id, 0);
+  EXPECT_EQ(invalid.record_id, 0);
   EXPECT_EQ(invalid.source_local_ns, 0);
   EXPECT_EQ(invalid.fusion_publish_ns, 0);
 }

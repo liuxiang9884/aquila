@@ -91,8 +91,8 @@ md::TradeShmConfig MakeTradeCreateConfig(std::string_view suffix) {
   publisher->OnBookTicker(book_ticker);
 }
 
-[[gnu::noinline]] void PublishTradeToShm(
-    md::DataShmPublisher* publisher, const aquila::Trade& trade) noexcept {
+[[gnu::noinline]] void PublishTradeToShm(md::DataShmPublisher* publisher,
+                                         const aquila::Trade& trade) noexcept {
   publisher->OnTrade(trade);
 }
 #if defined(__GNUC__)

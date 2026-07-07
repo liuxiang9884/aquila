@@ -182,12 +182,14 @@ TEST(BookTickerFusionRunnerTest, PublishesCanonicalShmAndOptionalMetadata) {
   ASSERT_EQ(metadata.size(), 2U);
   EXPECT_EQ(metadata[0].source_id, 0);
   EXPECT_EQ(metadata[0].symbol_id, source0_first.symbol_id);
-  EXPECT_EQ(metadata[0].book_ticker_id, source0_first.id);
+  EXPECT_EQ(metadata[0].record_id, source0_first.id);
   EXPECT_EQ(metadata[0].exchange_ns, source0_first.exchange_ns);
+  EXPECT_EQ(metadata[0].event_ns, source0_first.exchange_ns);
   EXPECT_EQ(metadata[0].source_local_ns, source0_first.local_ns);
   EXPECT_EQ(metadata[0].fusion_publish_ns, first.local_ns);
   EXPECT_EQ(metadata[1].source_id, 1);
-  EXPECT_EQ(metadata[1].book_ticker_id, source1_next.id);
+  EXPECT_EQ(metadata[1].record_id, source1_next.id);
+  EXPECT_EQ(metadata[1].event_ns, source1_next.exchange_ns);
   EXPECT_EQ(metadata[1].source_local_ns, source1_next.local_ns);
   EXPECT_EQ(metadata[1].fusion_publish_ns, second.local_ns);
 

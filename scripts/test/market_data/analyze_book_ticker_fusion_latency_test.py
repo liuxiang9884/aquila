@@ -60,20 +60,22 @@ class AnalyzeBookTickerFusionLatencyTest(unittest.TestCase):
     def test_fusion_metadata_dtype_matches_sidecar_record_abi(self):
         dtype = self.module.fusion_metadata_dtype()
 
-        self.assertEqual(dtype.itemsize, 40)
+        self.assertEqual(dtype.itemsize, 48)
         self.assertEqual(
             dtype.names,
             (
                 "source_id",
                 "symbol_id",
-                "book_ticker_id",
+                "record_id",
                 "exchange_ns",
+                "event_ns",
                 "source_local_ns",
                 "fusion_publish_ns",
             ),
         )
-        self.assertEqual(dtype.fields["book_ticker_id"][1], 8)
-        self.assertEqual(dtype.fields["fusion_publish_ns"][1], 32)
+        self.assertEqual(dtype.fields["record_id"][1], 8)
+        self.assertEqual(dtype.fields["event_ns"][1], 24)
+        self.assertEqual(dtype.fields["fusion_publish_ns"][1], 40)
 
     def test_analyze_published_fusion_latency_uses_fusion_and_metadata_bins(self):
         source_records_by_id = {
@@ -86,14 +88,16 @@ class AnalyzeBookTickerFusionLatencyTest(unittest.TestCase):
         metadata_records = np.zeros(2, dtype=metadata_dtype)
         metadata_records[0]["source_id"] = 1
         metadata_records[0]["symbol_id"] = 92
-        metadata_records[0]["book_ticker_id"] = 100
+        metadata_records[0]["record_id"] = 100
         metadata_records[0]["exchange_ns"] = 100_000
+        metadata_records[0]["event_ns"] = 100_000
         metadata_records[0]["source_local_ns"] = 100_080
         metadata_records[0]["fusion_publish_ns"] = 100_090
         metadata_records[1]["source_id"] = 0
         metadata_records[1]["symbol_id"] = 92
-        metadata_records[1]["book_ticker_id"] = 101
+        metadata_records[1]["record_id"] = 101
         metadata_records[1]["exchange_ns"] = 101_000
+        metadata_records[1]["event_ns"] = 101_000
         metadata_records[1]["source_local_ns"] = 101_150
         metadata_records[1]["fusion_publish_ns"] = 101_155
 
@@ -142,8 +146,9 @@ class AnalyzeBookTickerFusionLatencyTest(unittest.TestCase):
         records = np.zeros(2, dtype=dtype)
         records["source_id"] = [0, 1]
         records["symbol_id"] = [92, 93]
-        records["book_ticker_id"] = [100, 200]
+        records["record_id"] = [100, 200]
         records["exchange_ns"] = [1_000, 2_000]
+        records["event_ns"] = [1_000, 2_000]
         records["source_local_ns"] = [1_100, 2_100]
         records["fusion_publish_ns"] = [1_120, 2_130]
 

@@ -163,8 +163,7 @@ metadata 文件，不构造 metadata record，但仍保留基础 read / publish 
 | `metadata_output` | `book_ticker_fusion` / `trade_fusion` CLI stdout / stderr、data fusion dry-run log | stable | path 或 `disabled` | metadata enabled 时记录 sidecar binary 路径；disabled 时固定为 `disabled`。 | 同上。 |
 | `fusion_metadata_write_errors` / `metadata_write_errors` | data fusion Nova log / `book_ticker_fusion` / `trade_fusion` CLI stdout | stable | count | metadata enabled 时记录 sidecar write failure 计数；metadata disabled build 中固定为 `0`。 | 同上。 |
 | `fusion_total_read_count` / `fusion_total_published_count` | data fusion Nova log | stable | count | fusion thread 停止时汇总 source SHM read 数和 canonical SHM publish 数。 | fusion summary schema 被替换后同步更新。 |
-| `source_id` / `symbol_id` / `book_ticker_id` / `exchange_ns` / `source_local_ns` / `fusion_publish_ns` | BookTicker `FusionMetadataRecord` sidecar binary | stable | id / ns | 记录 canonical BookTicker 由哪个 source 首先发布，以及 source data session local timestamp 与 fusion publish timestamp。 | metadata binary schema 被替换后同步更新。 |
-| `source_id` / `symbol_id` / `trade_id` / `exchange_ns` / `trade_ns` / `source_local_ns` / `fusion_publish_ns` | Trade `TradeFusionMetadataRecord` sidecar binary | stable | id / ns | 记录 canonical Trade 由哪个 source 首先发布，以及 exchange event time、trade time、source data session local timestamp 与 fusion publish timestamp。 | metadata binary schema 被替换后同步更新。 |
+| `source_id` / `symbol_id` / `record_id` / `exchange_ns` / `event_ns` / `source_local_ns` / `fusion_publish_ns` | BookTicker / Trade `FusionMetadataRecord` sidecar binary v2 | stable | id / ns | 记录 canonical record 由哪个 source 首先发布；BookTicker `record_id=BookTicker.id` 且 `event_ns=exchange_ns`，Trade `record_id=Trade.id` 且 `event_ns=trade_ns`。 | metadata binary schema 被替换后同步更新。 |
 
 ## Gate OrderSession
 

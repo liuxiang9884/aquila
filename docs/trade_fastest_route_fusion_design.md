@@ -56,25 +56,25 @@ on Trade(trade, source_id):
 
 ## Metadata 格式
 
-外部 sidecar metadata 保持 feed-specific：
+外部 sidecar metadata 已统一为 BookTicker / Trade 共用的 `FusionMetadataRecord` v2 raw binary ABI。
+内部 writer / policy 共用一套泛型实现，但不迁移 metadata 到 recorder typed-header 格式。
 
-- 现有 BBO `FusionMetadataRecord` raw binary ABI 不变。
-- Trade 新增独立 `TradeFusionMetadataRecord` raw binary ABI。
-- 内部 writer / policy 可以泛化，但不迁移现有 BBO metadata 到 recorder typed-header 格式。
-
-Trade metadata 至少记录：
+metadata v2 记录：
 
 ```cpp
-struct TradeFusionMetadataRecord {
+struct FusionMetadataRecord {
   std::int32_t source_id;
   std::int32_t symbol_id;
-  std::int64_t trade_id;
+  std::int64_t record_id;
   std::int64_t exchange_ns;
-  std::int64_t trade_ns;
+  std::int64_t event_ns;
   std::int64_t source_local_ns;
   std::int64_t fusion_publish_ns;
 };
 ```
+
+Trade 中 `record_id = Trade.id`，`event_ns = Trade.trade_ns`。BookTicker 使用同一个 ABI，其中
+`record_id = BookTicker.id`，`event_ns = BookTicker.exchange_ns`。该 raw sidecar record 为 48 bytes。
 
 `batch_index` / `batch_count` 不作为 V1 metadata 必填字段；如果 replay 或 live smoke 证明 batch 语义需要
 额外归因，再基于证据扩展 metadata ABI 和分析脚本。
@@ -127,8 +127,8 @@ trade_shm.channel_name = launch source trade channel
 | Gate | `175124` | `175124` | `43781` | `0` |
 | Binance | `1984630` | `1984630` | `496335` | `0` |
 
-全量 `TradeFusionMetadataRecord` 显示无 duplicate `(symbol_id, trade_id)`、无 per-symbol `trade_id`
-回退。`fusion_publish_ns - source_local_ns` 的 p50 / p95 / p99 / p99.9 / max：
+全量 metadata v2 显示无 duplicate `(symbol_id, record_id)`、无 per-symbol `record_id`
+回退；Trade 场景下 `record_id = Trade.id`。`fusion_publish_ns - source_local_ns` 的 p50 / p95 / p99 / p99.9 / max：
 
 | Exchange | p50 | p95 | p99 | p99.9 | max |
 | --- | ---: | ---: | ---: | ---: | ---: |

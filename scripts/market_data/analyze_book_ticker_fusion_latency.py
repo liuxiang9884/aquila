@@ -28,8 +28,9 @@ def fusion_metadata_dtype() -> np.dtype:
             "names": [
                 "source_id",
                 "symbol_id",
-                "book_ticker_id",
+                "record_id",
                 "exchange_ns",
+                "event_ns",
                 "source_local_ns",
                 "fusion_publish_ns",
             ],
@@ -40,9 +41,10 @@ def fusion_metadata_dtype() -> np.dtype:
                 "<i8",
                 "<i8",
                 "<i8",
+                "<i8",
             ],
-            "offsets": [0, 4, 8, 16, 24, 32],
-            "itemsize": 40,
+            "offsets": [0, 4, 8, 16, 24, 32, 40],
+            "itemsize": 48,
         }
     )
 
@@ -129,9 +131,9 @@ def _filter_metadata_records(
     if symbol_id is not None:
         mask &= records["symbol_id"] == symbol_id
     if id_start is not None:
-        mask &= records["book_ticker_id"] >= id_start
+        mask &= records["record_id"] >= id_start
     if id_end is not None:
-        mask &= records["book_ticker_id"] <= id_end
+        mask &= records["record_id"] <= id_end
     return records[mask]
 
 
@@ -258,7 +260,7 @@ def _fusion_metadata_alignment(
         metadata_window = metadata_records[:compared_count]
         mismatch = (
             (fusion_window["symbol_id"] != metadata_window["symbol_id"])
-            | (fusion_window["id"] != metadata_window["book_ticker_id"])
+            | (fusion_window["id"] != metadata_window["record_id"])
             | (fusion_window["exchange_ns"] != metadata_window["exchange_ns"])
             | (fusion_window["local_ns"] != metadata_window["fusion_publish_ns"])
         )
@@ -307,7 +309,7 @@ def _source_metadata_alignment(
             continue
         key = (
             int(record["symbol_id"]),
-            int(record["book_ticker_id"]),
+            int(record["record_id"]),
             int(record["exchange_ns"]),
             int(record["source_local_ns"]),
         )
@@ -356,7 +358,7 @@ def _top_metadata_hop_outliers(
                 "index": int(index),
                 "source_id": int(record["source_id"]),
                 "symbol_id": int(record["symbol_id"]),
-                "id": int(record["book_ticker_id"]),
+                "id": int(record["record_id"]),
                 "exchange_ns": int(record["exchange_ns"]),
                 "source_local_ns": int(record["source_local_ns"]),
                 "fusion_publish_ns": int(record["fusion_publish_ns"]),

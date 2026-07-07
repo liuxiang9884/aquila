@@ -3,8 +3,12 @@ target_sources(aquila_core
         book_ticker_fusion.h
         book_ticker_fusion_config.h
         book_ticker_fusion_metadata.h
+        book_ticker_fusion_metadata_policy.h
         book_ticker_fusion_runner.h
         book_ticker_fusion_thread.h
+        fusion_config.h
+        fusion_metadata.h
+        fusion_metadata_policy.h
         fastest_route_fusion.h
         fastest_route_fusion_runner.h
         fastest_route_fusion_thread.h

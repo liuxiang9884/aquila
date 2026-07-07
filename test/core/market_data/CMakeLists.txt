@@ -80,6 +80,20 @@ target_link_libraries(core_market_data_trade_fusion_metadata_test
 add_test(NAME core_market_data_trade_fusion_metadata_test
          COMMAND core_market_data_trade_fusion_metadata_test)
 
+add_executable(core_market_data_fusion_metadata_policy_test
+    fusion_metadata_policy_test.cpp
+)
+
+target_link_libraries(core_market_data_fusion_metadata_policy_test
+    PRIVATE
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+)
+
+add_test(NAME core_market_data_fusion_metadata_policy_test
+         COMMAND core_market_data_fusion_metadata_policy_test)
+
 add_executable(core_market_data_trade_fusion_test
     trade_fusion_test.cpp
 )

@@ -9,15 +9,7 @@
 
 namespace aquila::market_data {
 
-struct BookTickerFusionDecision {
-  bool publish{false};
-  // Metadata fields are valid only when publish is true.
-  std::int32_t source_id{-1};
-  std::int32_t symbol_id{-1};
-  std::int64_t book_ticker_id{0};
-  std::int64_t source_local_ns{0};
-  std::int64_t fusion_publish_ns{0};
-};
+using BookTickerFusionDecision = FastestRouteFusionDecision;
 
 struct BookTickerFusionTraits {
   using Record = BookTicker;
@@ -32,9 +24,12 @@ struct BookTickerFusionTraits {
     return ticker.id;
   }
 
-  [[nodiscard]] static std::int64_t LocalNs(
-      const BookTicker& ticker) noexcept {
+  [[nodiscard]] static std::int64_t LocalNs(const BookTicker& ticker) noexcept {
     return ticker.local_ns;
+  }
+
+  [[nodiscard]] static std::int64_t EventNs(const BookTicker& ticker) noexcept {
+    return ticker.exchange_ns;
   }
 };
 
@@ -55,7 +50,7 @@ class BookTickerFusionCore {
         .publish = true,
         .source_id = decision.source_id,
         .symbol_id = decision.symbol_id,
-        .book_ticker_id = decision.record_id,
+        .record_id = decision.record_id,
         .source_local_ns = decision.source_local_ns,
         .fusion_publish_ns = decision.fusion_publish_ns,
     };

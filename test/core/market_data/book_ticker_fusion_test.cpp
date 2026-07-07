@@ -37,7 +37,7 @@ void ExpectPublishedDecision(
   ASSERT_TRUE(decision.publish);
   EXPECT_EQ(decision.source_id, source_id);
   EXPECT_EQ(decision.symbol_id, source.symbol_id);
-  EXPECT_EQ(decision.book_ticker_id, source.id);
+  EXPECT_EQ(decision.record_id, source.id);
   EXPECT_EQ(decision.source_local_ns, source.local_ns);
   EXPECT_EQ(decision.fusion_publish_ns, fusion_publish_ns);
 }
@@ -114,7 +114,7 @@ TEST(BookTickerFusionCoreTest, DropDecisionsKeepMetadataUnset) {
   EXPECT_FALSE(stale_decision.publish);
   EXPECT_EQ(stale_decision.source_id, -1);
   EXPECT_EQ(stale_decision.symbol_id, -1);
-  EXPECT_EQ(stale_decision.book_ticker_id, 0);
+  EXPECT_EQ(stale_decision.record_id, 0);
   EXPECT_EQ(stale_decision.source_local_ns, 0);
   EXPECT_EQ(stale_decision.fusion_publish_ns, 0);
 
@@ -124,7 +124,7 @@ TEST(BookTickerFusionCoreTest, DropDecisionsKeepMetadataUnset) {
   EXPECT_FALSE(invalid_decision.publish);
   EXPECT_EQ(invalid_decision.source_id, -1);
   EXPECT_EQ(invalid_decision.symbol_id, -1);
-  EXPECT_EQ(invalid_decision.book_ticker_id, 0);
+  EXPECT_EQ(invalid_decision.record_id, 0);
   EXPECT_EQ(invalid_decision.source_local_ns, 0);
   EXPECT_EQ(invalid_decision.fusion_publish_ns, 0);
 }

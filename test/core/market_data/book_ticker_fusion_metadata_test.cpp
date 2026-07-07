@@ -13,6 +13,8 @@
 
 namespace {
 
+static_assert(sizeof(aquila::market_data::FusionMetadataRecord) == 48);
+
 std::filesystem::path UniqueOutputPath() {
   return std::filesystem::path{"/home/liuxiang/tmp"} /
          fmt::format("aquila_fusion_metadata_test_{}.bin", ::getpid());
@@ -40,8 +42,9 @@ void ExpectRecordEq(const aquila::market_data::FusionMetadataRecord& actual,
                     const aquila::market_data::FusionMetadataRecord& expected) {
   EXPECT_EQ(actual.source_id, expected.source_id);
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
-  EXPECT_EQ(actual.book_ticker_id, expected.book_ticker_id);
+  EXPECT_EQ(actual.record_id, expected.record_id);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.source_local_ns, expected.source_local_ns);
   EXPECT_EQ(actual.fusion_publish_ns, expected.fusion_publish_ns);
 }
@@ -53,16 +56,18 @@ TEST(BookTickerFusionMetadataWriterTest, WritesFixedSizeMetadataRecords) {
   const aquila::market_data::FusionMetadataRecord first{
       .source_id = 0,
       .symbol_id = 42,
-      .book_ticker_id = 100,
+      .record_id = 100,
       .exchange_ns = 1'780'000'000'000'000'100,
+      .event_ns = 1'780'000'000'000'000'100,
       .source_local_ns = 1'780'000'000'000'100'100,
       .fusion_publish_ns = 1'780'000'000'000'100'200,
   };
   const aquila::market_data::FusionMetadataRecord second{
       .source_id = 3,
       .symbol_id = 43,
-      .book_ticker_id = 101,
+      .record_id = 101,
       .exchange_ns = 1'780'000'000'000'000'101,
+      .event_ns = 1'780'000'000'000'000'101,
       .source_local_ns = 1'780'000'000'000'100'101,
       .fusion_publish_ns = 1'780'000'000'000'100'201,
   };
