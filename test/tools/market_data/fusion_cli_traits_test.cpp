@@ -2,10 +2,9 @@
 
 #include <gtest/gtest.h>
 
-#include "core/market_data/book_ticker_fusion_config.h"
-#include "core/market_data/book_ticker_fusion_runner.h"
-#include "core/market_data/trade_fusion_config.h"
-#include "core/market_data/trade_fusion_runner.h"
+#include "core/market_data/fusion/book_ticker.h"
+#include "core/market_data/fusion/config.h"
+#include "core/market_data/fusion/trade.h"
 #include "tools/market_data/fusion_cli.h"
 
 namespace {

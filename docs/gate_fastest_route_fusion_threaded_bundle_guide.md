@@ -54,11 +54,11 @@ V1 threaded bundle 必须满足：
 
 | 文件 | 动作 | 责任 |
 | --- | --- | --- |
-| `core/market_data/book_ticker_fusion_config.h` | 已新增 | exchange-neutral `BookTickerFusionConfig` 纯结构，不依赖 `toml++` |
+| `core/market_data/fusion/config.h` | 已新增 | exchange-neutral `BookTickerFusionConfig` 纯结构，不依赖 `toml++` |
 | `core/config/book_ticker_fusion_config.*` | 已新增 | 解析 fusion TOML，返回 `aquila::market_data::BookTickerFusionConfig` |
-| `core/market_data/book_ticker_fusion_metadata.h` | 已迁入 | sidecar metadata record 和 binary writer |
-| `core/market_data/book_ticker_fusion_runner.h` | 已迁入 | 从 N 路 source SHM 读，写 canonical SHM 和 metadata |
-| `core/market_data/book_ticker_fusion_thread.h` | 已新增 | 封装 fusion runner thread：构造 `BookTickerFusionRunner`，循环 `PollOnce()`，stop 后 `Flush()` |
+| `core/market_data/fusion/metadata.h` | 已迁入 | sidecar metadata record 和 binary writer |
+| `core/market_data/fusion/book_ticker.h` | 已迁入 | 从 N 路 source SHM 读，写 canonical SHM 和 metadata |
+| `core/market_data/fusion/thread.h` | 已新增 | 封装 fusion runner thread：构造 `BookTickerFusionRunner`，循环 `PollOnce()`，stop 后 `Flush()` |
 | `tools/gate/gate_data_fusion_config.*` | 已新增 | Gate data fusion 启动配置，保存 fusion config 路径和 N 个 data session source override |
 | `tools/binance/binance_data_fusion_config.*` | 已新增 | Binance data fusion 启动配置，保存 fusion config 路径和 N 个 data session source override |
 | `tools/market_data/data_fusion_tool_support.h` | 已新增 | Gate / Binance data fusion CLI 共享启动期校验、source override 和 summary log helper |
@@ -66,9 +66,9 @@ V1 threaded bundle 必须满足：
 | `tools/binance/binance_data_fusion.cpp` | 新增 | Binance data fusion CLI：加载 config、加载 Binance data session config、应用 source override、启动 workers |
 | `tools/CMakeLists.txt` | 修改 | 增加 `gate_data_fusion` 和 `binance_data_fusion` target |
 | `test/config/book_ticker_fusion_config_test.cpp` | 已迁入 | 覆盖 fusion config parser |
-| `test/core/market_data/book_ticker_fusion_metadata_test.cpp` | 已迁入 | 覆盖 metadata writer |
-| `test/core/market_data/book_ticker_fusion_runner_test.cpp` | 已迁入 | 覆盖 runner 发布 canonical SHM 和 metadata |
-| `test/core/market_data/book_ticker_fusion_thread_test.cpp` | 已新增 | 用临时 SHM 验证 fusion thread 可发布、可 stop、metadata 可 flush |
+| `test/core/market_data/fusion/book_ticker_metadata_test.cpp` | 已迁入 | 覆盖 metadata writer |
+| `test/core/market_data/fusion/book_ticker_runner_test.cpp` | 已迁入 | 覆盖 runner 发布 canonical SHM 和 metadata |
+| `test/core/market_data/fusion/book_ticker_thread_test.cpp` | 已新增 | 用临时 SHM 验证 fusion thread 可发布、可 stop、metadata 可 flush |
 | `test/tools/gate/gate_data_fusion_config_test.cpp` | 已新增 | 覆盖 Gate data fusion config parser |
 | `test/tools/binance/binance_data_fusion_config_test.cpp` | 已新增 | 覆盖 Binance data fusion config parser |
 | `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml` | 已新增 | Gate 4-source threaded launch 示例配置 |

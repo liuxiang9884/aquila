@@ -4,7 +4,9 @@
 
 **Goal:** Move market-data fusion headers, tests, and benchmark into dedicated `fusion/` directories, merge alias-only headers, and rename fusion test / benchmark targets to match the new structure.
 
-**Architecture:** Production fusion code lives under `core/market_data/fusion/`. Pure aliases are grouped by type in `config.h`, `metadata.h`, and `thread.h`; feed-specific core / runner / metadata-policy facades live in `book_ticker.h` and `trade.h`; shared implementation remains in separate `fastest_route*.h` and `metadata_*` headers. No old include forwarding headers are kept.
+**Architecture:** Production fusion code lives under `core/market_data/fusion/`. Pure aliases are grouped by type in `config.h`, `metadata.h`, and `thread.h`; feed-specific core / runner / metadata-policy facades live in `book_ticker.h` and `trade.h`; shared implementation is aggressively grouped into `fastest_route.h`, `metadata.h`, and `thread.h`. No old include forwarding headers are kept.
+
+**Implementation note:** final implementation went further than the initial file map below: `fastest_route_runner.h`, `fastest_route_thread.h`, `metadata_policy.h`, and `metadata_writer.h` were folded into the six production headers `book_ticker.h`, `trade.h`, `fastest_route.h`, `thread.h`, `config.h`, and `metadata.h`.
 
 **Tech Stack:** C++20, CMake, GTest, Google Benchmark, existing `aquila_core`, `aquila_config`, `DataShmPublisher`, BookTicker / Trade SHM readers.
 

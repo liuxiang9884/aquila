@@ -1,4 +1,4 @@
-#include "core/market_data/trade_fusion.h"
+#include "core/market_data/fusion/trade.h"
 
 #include <cstdint>
 

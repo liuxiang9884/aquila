@@ -34,8 +34,8 @@ tools/binance/data_session.cpp
 tools/binance/futures_book_ticker_probe.cpp
 tools/market_data/binance_book_ticker_fusion.cpp
 tools/binance/binance_data_fusion.cpp
-core/market_data/book_ticker_fusion_runner.h
-core/market_data/book_ticker_fusion_thread.h
+core/market_data/fusion/book_ticker.h
+core/market_data/fusion/thread.h
 core/config/book_ticker_fusion_config.h
 config/market_data_fusion/binance_book_ticker_fusion_4sources.toml
 config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml

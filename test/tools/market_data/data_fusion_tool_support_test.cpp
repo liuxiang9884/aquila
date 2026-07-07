@@ -5,8 +5,7 @@
 
 #include <gtest/gtest.h>
 
-#include "core/market_data/book_ticker_fusion_config.h"
-#include "core/market_data/trade_fusion_config.h"
+#include "core/market_data/fusion/config.h"
 #include "exchange/gate/market_data/data_session_config.h"
 #include "tools/gate/gate_data_fusion_config.h"
 

@@ -37,11 +37,11 @@ target_link_libraries(book_ticker_queue_replay_benchmark
         Threads::Threads
 )
 
-add_executable(fastest_route_fusion_benchmark
-    fastest_route_fusion_benchmark.cpp
+add_executable(market_data_fusion_fastest_route_benchmark
+    fusion/fastest_route_benchmark.cpp
 )
 
-target_link_libraries(fastest_route_fusion_benchmark
+target_link_libraries(market_data_fusion_fastest_route_benchmark
     PRIVATE
         aquila_core
         benchmark::benchmark_main
@@ -50,7 +50,7 @@ target_link_libraries(fastest_route_fusion_benchmark
 )
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(fastest_route_fusion_benchmark
+    target_compile_options(market_data_fusion_fastest_route_benchmark
         PRIVATE
             -Wno-stringop-overflow
     )

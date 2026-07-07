@@ -7,7 +7,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/common/result.h"
-#include "core/market_data/book_ticker_fusion_config.h"
+#include "core/market_data/fusion/config.h"
 
 namespace {
 

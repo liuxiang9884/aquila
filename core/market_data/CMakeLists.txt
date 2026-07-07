@@ -1,22 +1,9 @@
 target_sources(aquila_core
     PRIVATE
-        book_ticker_fusion.h
-        book_ticker_fusion_config.h
-        book_ticker_fusion_metadata.h
-        book_ticker_fusion_metadata_policy.h
-        book_ticker_fusion_runner.h
-        book_ticker_fusion_thread.h
-        fusion_config.h
-        fusion_metadata.h
-        fusion_metadata_policy.h
-        fastest_route_fusion.h
-        fastest_route_fusion_runner.h
-        fastest_route_fusion_thread.h
-        fusion_metadata_writer.h
-        trade_fusion.h
-        trade_fusion_config.h
-        trade_fusion_metadata.h
-        trade_fusion_metadata_policy.h
-        trade_fusion_runner.h
-        trade_fusion_thread.h
+        fusion/book_ticker.h
+        fusion/config.h
+        fusion/fastest_route.h
+        fusion/metadata.h
+        fusion/thread.h
+        fusion/trade.h
 )

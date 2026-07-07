@@ -9,10 +9,8 @@
 #include <fmt/core.h>
 
 #include "core/common/fusion_metadata_mode.h"
-#include "core/market_data/book_ticker_fusion_config.h"
-#include "core/market_data/book_ticker_fusion_thread.h"
-#include "core/market_data/trade_fusion_config.h"
-#include "core/market_data/trade_fusion_thread.h"
+#include "core/market_data/fusion/config.h"
+#include "core/market_data/fusion/thread.h"
 #include "nova/utils/log.h"
 #include "tools/market_data/data_fusion_feed.h"
 

@@ -1,15 +1,69 @@
-#ifndef AQUILA_CORE_MARKET_DATA_FASTEST_ROUTE_FUSION_RUNNER_H_
-#define AQUILA_CORE_MARKET_DATA_FASTEST_ROUTE_FUSION_RUNNER_H_
+#ifndef AQUILA_CORE_MARKET_DATA_FUSION_FASTEST_ROUTE_H_
+#define AQUILA_CORE_MARKET_DATA_FUSION_FASTEST_ROUTE_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "core/market_data/data_shm.h"
 #include "core/websocket/runtime_clock.h"
 
 namespace aquila::market_data {
+
+struct FastestRouteFusionDecision {
+  bool publish{false};
+  std::int32_t source_id{-1};
+  std::int32_t symbol_id{-1};
+  std::int64_t record_id{0};
+  std::int64_t source_local_ns{0};
+  std::int64_t fusion_publish_ns{0};
+};
+
+template <typename Traits>
+class BasicFastestRouteFusionCore {
+ public:
+  using Record = typename Traits::Record;
+
+  explicit BasicFastestRouteFusionCore(std::size_t symbol_capacity)
+      : states_(symbol_capacity) {}
+
+  [[nodiscard]] FastestRouteFusionDecision OnRecord(
+      std::int32_t source_id, const Record& record,
+      std::int64_t fusion_publish_ns) noexcept {
+    const std::int32_t symbol_id = Traits::SymbolId(record);
+    if (symbol_id < 0 ||
+        static_cast<std::size_t>(symbol_id) >= states_.size()) {
+      return {};
+    }
+
+    SymbolState& state = states_[static_cast<std::size_t>(symbol_id)];
+    const std::int64_t record_id = Traits::RecordId(record);
+    if (record_id <= state.last_published_id) {
+      return {};
+    }
+
+    state.last_published_id = record_id;
+    state.last_published_source = source_id;
+    return FastestRouteFusionDecision{
+        .publish = true,
+        .source_id = source_id,
+        .symbol_id = symbol_id,
+        .record_id = record_id,
+        .source_local_ns = Traits::LocalNs(record),
+        .fusion_publish_ns = fusion_publish_ns,
+    };
+  }
+
+ private:
+  struct SymbolState {
+    std::int64_t last_published_id{std::numeric_limits<std::int64_t>::min()};
+    std::int32_t last_published_source{-1};
+  };
+
+  std::vector<SymbolState> states_;
+};
 
 struct FastestRouteFusionPollStats {
   std::uint64_t read_count{0};
@@ -99,7 +153,7 @@ class BasicFastestRouteFusionRunner {
 
   std::uint32_t max_events_per_source_{0};
   typename Traits::Core fusion_;
-  DataShmPublisher publisher_;
+  typename Traits::Publisher publisher_;
   MetadataPolicy metadata_policy_;
   std::vector<std::unique_ptr<Source>> sources_;
   std::uint64_t total_read_count_{0};
@@ -109,4 +163,4 @@ class BasicFastestRouteFusionRunner {
 
 }  // namespace aquila::market_data
 
-#endif  // AQUILA_CORE_MARKET_DATA_FASTEST_ROUTE_FUSION_RUNNER_H_
+#endif  // AQUILA_CORE_MARKET_DATA_FUSION_FASTEST_ROUTE_H_

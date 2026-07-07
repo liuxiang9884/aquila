@@ -1,4 +1,4 @@
-#include "core/market_data/fastest_route_fusion.h"
+#include "core/market_data/fusion/fastest_route.h"
 
 #include <cstdint>
 
@@ -25,8 +25,7 @@ struct TestTraits {
     return record.id;
   }
 
-  [[nodiscard]] static std::int64_t LocalNs(
-      const TestRecord& record) noexcept {
+  [[nodiscard]] static std::int64_t LocalNs(const TestRecord& record) noexcept {
     return record.local_ns;
   }
 };
@@ -67,27 +66,24 @@ TEST(FastestRouteFusionCoreTest, PublishesOnlyIncreasingIdsPerSymbol) {
 TEST(FastestRouteFusionCoreTest, MaintainsIndependentSymbolState) {
   TestFusion fusion(/*max_symbol_id=*/16);
 
-  EXPECT_TRUE(fusion
-                  .OnRecord(/*source_id=*/0,
-                            TestRecord{.symbol_id = 1,
-                                       .id = 10,
-                                       .local_ns = 1'000},
-                            /*fusion_publish_ns=*/2'000)
-                  .publish);
-  EXPECT_TRUE(fusion
-                  .OnRecord(/*source_id=*/1,
-                            TestRecord{.symbol_id = 2,
-                                       .id = 5,
-                                       .local_ns = 1'100},
-                            /*fusion_publish_ns=*/2'100)
-                  .publish);
-  EXPECT_FALSE(fusion
-                   .OnRecord(/*source_id=*/2,
-                             TestRecord{.symbol_id = 1,
-                                        .id = 9,
-                                        .local_ns = 1'200},
-                             /*fusion_publish_ns=*/2'200)
-                   .publish);
+  EXPECT_TRUE(
+      fusion
+          .OnRecord(/*source_id=*/0,
+                    TestRecord{.symbol_id = 1, .id = 10, .local_ns = 1'000},
+                    /*fusion_publish_ns=*/2'000)
+          .publish);
+  EXPECT_TRUE(
+      fusion
+          .OnRecord(/*source_id=*/1,
+                    TestRecord{.symbol_id = 2, .id = 5, .local_ns = 1'100},
+                    /*fusion_publish_ns=*/2'100)
+          .publish);
+  EXPECT_FALSE(
+      fusion
+          .OnRecord(/*source_id=*/2,
+                    TestRecord{.symbol_id = 1, .id = 9, .local_ns = 1'200},
+                    /*fusion_publish_ns=*/2'200)
+          .publish);
 }
 
 TEST(FastestRouteFusionCoreTest, DropsOutOfRangeSymbolsWithUnsetMetadata) {

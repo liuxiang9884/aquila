@@ -15,11 +15,9 @@
 
 #include "core/config/book_ticker_fusion_config.h"
 #include "core/config/trade_fusion_config.h"
-#include "core/market_data/book_ticker_fusion_config.h"
-#include "core/market_data/book_ticker_fusion_thread.h"
 #include "core/market_data/data_shm.h"
-#include "core/market_data/trade_fusion_config.h"
-#include "core/market_data/trade_fusion_thread.h"
+#include "core/market_data/fusion/config.h"
+#include "core/market_data/fusion/thread.h"
 #include "exchange/binance/market_data/data_session.h"
 #include "exchange/binance/market_data/data_session_config.h"
 #include "nova/utils/log.h"

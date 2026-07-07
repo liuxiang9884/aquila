@@ -26,62 +26,63 @@ target_link_libraries(core_market_data_shm_test
 add_test(NAME core_market_data_shm_test
          COMMAND core_market_data_shm_test)
 
-add_executable(core_market_data_fastest_route_fusion_test
-    fastest_route_fusion_test.cpp
+add_executable(core_market_data_fusion_fastest_route_test
+    fusion/fastest_route_test.cpp
 )
 
-target_link_libraries(core_market_data_fastest_route_fusion_test
+target_link_libraries(core_market_data_fusion_fastest_route_test
     PRIVATE
         aquila_core
         GTest::gtest_main
 )
 
-add_test(NAME core_market_data_fastest_route_fusion_test
-         COMMAND core_market_data_fastest_route_fusion_test)
+add_test(NAME core_market_data_fusion_fastest_route_test
+         COMMAND core_market_data_fusion_fastest_route_test)
 
-add_executable(core_market_data_book_ticker_fusion_test
-    book_ticker_fusion_test.cpp
+add_executable(core_market_data_fusion_book_ticker_test
+    fusion/book_ticker_test.cpp
 )
 
-target_link_libraries(core_market_data_book_ticker_fusion_test
+target_link_libraries(core_market_data_fusion_book_ticker_test
     PRIVATE
         aquila_core
         GTest::gtest_main
+        nova
 )
 
-add_test(NAME core_market_data_book_ticker_fusion_test
-         COMMAND core_market_data_book_ticker_fusion_test)
+add_test(NAME core_market_data_fusion_book_ticker_test
+         COMMAND core_market_data_fusion_book_ticker_test)
 
-add_executable(core_market_data_book_ticker_fusion_metadata_test
-    book_ticker_fusion_metadata_test.cpp
+add_executable(core_market_data_fusion_book_ticker_metadata_test
+    fusion/book_ticker_metadata_test.cpp
 )
 
-target_link_libraries(core_market_data_book_ticker_fusion_metadata_test
-    PRIVATE
-        aquila_core
-        fmt::fmt-header-only
-        GTest::gtest_main
-)
-
-add_test(NAME core_market_data_book_ticker_fusion_metadata_test
-         COMMAND core_market_data_book_ticker_fusion_metadata_test)
-
-add_executable(core_market_data_trade_fusion_metadata_test
-    trade_fusion_metadata_test.cpp
-)
-
-target_link_libraries(core_market_data_trade_fusion_metadata_test
+target_link_libraries(core_market_data_fusion_book_ticker_metadata_test
     PRIVATE
         aquila_core
         fmt::fmt-header-only
         GTest::gtest_main
 )
 
-add_test(NAME core_market_data_trade_fusion_metadata_test
-         COMMAND core_market_data_trade_fusion_metadata_test)
+add_test(NAME core_market_data_fusion_book_ticker_metadata_test
+         COMMAND core_market_data_fusion_book_ticker_metadata_test)
+
+add_executable(core_market_data_fusion_trade_metadata_test
+    fusion/trade_metadata_test.cpp
+)
+
+target_link_libraries(core_market_data_fusion_trade_metadata_test
+    PRIVATE
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+)
+
+add_test(NAME core_market_data_fusion_trade_metadata_test
+         COMMAND core_market_data_fusion_trade_metadata_test)
 
 add_executable(core_market_data_fusion_metadata_policy_test
-    fusion_metadata_policy_test.cpp
+    fusion/metadata_policy_test.cpp
 )
 
 target_link_libraries(core_market_data_fusion_metadata_policy_test
@@ -94,24 +95,25 @@ target_link_libraries(core_market_data_fusion_metadata_policy_test
 add_test(NAME core_market_data_fusion_metadata_policy_test
          COMMAND core_market_data_fusion_metadata_policy_test)
 
-add_executable(core_market_data_trade_fusion_test
-    trade_fusion_test.cpp
+add_executable(core_market_data_fusion_trade_test
+    fusion/trade_test.cpp
 )
 
-target_link_libraries(core_market_data_trade_fusion_test
+target_link_libraries(core_market_data_fusion_trade_test
     PRIVATE
         aquila_core
         GTest::gtest_main
+        nova
 )
 
-add_test(NAME core_market_data_trade_fusion_test
-         COMMAND core_market_data_trade_fusion_test)
+add_test(NAME core_market_data_fusion_trade_test
+         COMMAND core_market_data_fusion_trade_test)
 
-add_executable(core_market_data_book_ticker_fusion_runner_test
-    book_ticker_fusion_runner_test.cpp
+add_executable(core_market_data_fusion_book_ticker_runner_test
+    fusion/book_ticker_runner_test.cpp
 )
 
-target_link_libraries(core_market_data_book_ticker_fusion_runner_test
+target_link_libraries(core_market_data_fusion_book_ticker_runner_test
     PRIVATE
         aquila_core
         fmt::fmt-header-only
@@ -119,14 +121,14 @@ target_link_libraries(core_market_data_book_ticker_fusion_runner_test
         nova
 )
 
-add_test(NAME core_market_data_book_ticker_fusion_runner_test
-         COMMAND core_market_data_book_ticker_fusion_runner_test)
+add_test(NAME core_market_data_fusion_book_ticker_runner_test
+         COMMAND core_market_data_fusion_book_ticker_runner_test)
 
-add_executable(core_market_data_trade_fusion_runner_test
-    trade_fusion_runner_test.cpp
+add_executable(core_market_data_fusion_trade_runner_test
+    fusion/trade_runner_test.cpp
 )
 
-target_link_libraries(core_market_data_trade_fusion_runner_test
+target_link_libraries(core_market_data_fusion_trade_runner_test
     PRIVATE
         aquila_core
         fmt::fmt-header-only
@@ -134,22 +136,22 @@ target_link_libraries(core_market_data_trade_fusion_runner_test
         nova
 )
 
-add_test(NAME core_market_data_trade_fusion_runner_test
-         COMMAND core_market_data_trade_fusion_runner_test)
+add_test(NAME core_market_data_fusion_trade_runner_test
+         COMMAND core_market_data_fusion_trade_runner_test)
 
-add_test(NAME core_market_data_book_ticker_fusion_static_review
+add_test(NAME core_market_data_fusion_book_ticker_static_review
          COMMAND bash -c [=[
 if rg -n 'BookTickerFusionConfig config_|config_\.max_events_per_source|BookTicker ticker\{\};' "$1"; then
   exit 1
 fi
 ]=] _
-         ${PROJECT_SOURCE_DIR}/core/market_data/book_ticker_fusion_runner.h)
+         ${PROJECT_SOURCE_DIR}/core/market_data/fusion/book_ticker.h)
 
-add_executable(core_market_data_book_ticker_fusion_thread_test
-    book_ticker_fusion_thread_test.cpp
+add_executable(core_market_data_fusion_book_ticker_thread_test
+    fusion/book_ticker_thread_test.cpp
 )
 
-target_link_libraries(core_market_data_book_ticker_fusion_thread_test
+target_link_libraries(core_market_data_fusion_book_ticker_thread_test
     PRIVATE
         aquila_core
         fmt::fmt-header-only
@@ -157,14 +159,14 @@ target_link_libraries(core_market_data_book_ticker_fusion_thread_test
         nova
 )
 
-add_test(NAME core_market_data_book_ticker_fusion_thread_test
-         COMMAND core_market_data_book_ticker_fusion_thread_test)
+add_test(NAME core_market_data_fusion_book_ticker_thread_test
+         COMMAND core_market_data_fusion_book_ticker_thread_test)
 
-add_executable(core_market_data_trade_fusion_thread_test
-    trade_fusion_thread_test.cpp
+add_executable(core_market_data_fusion_trade_thread_test
+    fusion/trade_thread_test.cpp
 )
 
-target_link_libraries(core_market_data_trade_fusion_thread_test
+target_link_libraries(core_market_data_fusion_trade_thread_test
     PRIVATE
         aquila_core
         fmt::fmt-header-only
@@ -172,8 +174,8 @@ target_link_libraries(core_market_data_trade_fusion_thread_test
         nova
 )
 
-add_test(NAME core_market_data_trade_fusion_thread_test
-         COMMAND core_market_data_trade_fusion_thread_test)
+add_test(NAME core_market_data_fusion_trade_thread_test
+         COMMAND core_market_data_fusion_trade_thread_test)
 
 add_executable(core_market_data_book_ticker_replay_benchmark_support_test
     book_ticker_replay_benchmark_support_test.cpp

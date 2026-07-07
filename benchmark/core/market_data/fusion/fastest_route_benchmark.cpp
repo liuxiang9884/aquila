@@ -10,9 +10,9 @@
 #include <fmt/format.h>
 
 #include "core/common/types.h"
-#include "core/market_data/book_ticker_fusion_runner.h"
 #include "core/market_data/data_shm.h"
-#include "core/market_data/trade_fusion_runner.h"
+#include "core/market_data/fusion/book_ticker.h"
+#include "core/market_data/fusion/trade.h"
 
 namespace {
 

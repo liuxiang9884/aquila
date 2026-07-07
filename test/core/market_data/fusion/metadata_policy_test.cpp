@@ -1,5 +1,3 @@
-#include "core/market_data/fusion_metadata_policy.h"
-
 #include <unistd.h>
 
 #include <cstdint>
@@ -10,7 +8,8 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
-#include "core/market_data/fusion_config.h"
+#include "core/market_data/fusion/config.h"
+#include "core/market_data/fusion/metadata.h"
 
 namespace {
 

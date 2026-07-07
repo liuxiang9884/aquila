@@ -1,5 +1,3 @@
-#include "core/market_data/trade_fusion_thread.h"
-
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -15,10 +13,10 @@
 #include <gtest/gtest.h>
 
 #include "core/common/fusion_metadata_mode.h"
-#include "core/common/types.h"
 #include "core/market_data/data_shm.h"
-#include "core/market_data/trade_fusion_config.h"
-#include "core/market_data/trade_fusion_metadata.h"
+#include "core/market_data/fusion/config.h"
+#include "core/market_data/fusion/metadata.h"
+#include "core/market_data/fusion/thread.h"
 
 namespace {
 
@@ -36,22 +34,23 @@ struct ShmCleanup {
 };
 
 std::string UniqueShmName(std::string_view suffix) {
-  return fmt::format("/aquila_trade_fusion_thread_test_{}_{}", ::getpid(),
+  return fmt::format("/aquila_book_ticker_fusion_thread_test_{}_{}", ::getpid(),
                      suffix);
 }
 
-md::TradeShmConfig MakeCreateConfig(std::string_view suffix) {
-  return md::TradeShmConfig{
+md::BookTickerShmConfig MakeCreateConfig(std::string_view suffix) {
+  return md::BookTickerShmConfig{
       .enabled = true,
       .shm_name = UniqueShmName(suffix),
-      .channel_name = "trade_channel",
+      .channel_name = "book_ticker_channel",
       .create = true,
       .remove_existing = true,
   };
 }
 
-md::TradeShmConfig MakeAttachConfig(const md::TradeShmConfig& create_config) {
-  md::TradeShmConfig config = create_config;
+md::BookTickerShmConfig MakeAttachConfig(
+    const md::BookTickerShmConfig& create_config) {
+  md::BookTickerShmConfig config = create_config;
   config.create = false;
   config.remove_existing = false;
   return config;
@@ -59,23 +58,21 @@ md::TradeShmConfig MakeAttachConfig(const md::TradeShmConfig& create_config) {
 
 std::filesystem::path UniqueMetadataPath() {
   return std::filesystem::path{"/home/liuxiang/tmp"} /
-         fmt::format("aquila_trade_fusion_thread_test_{}.bin", ::getpid());
+         fmt::format("aquila_book_ticker_fusion_thread_test_{}.bin",
+                     ::getpid());
 }
 
-aquila::Trade MakeTrade(std::int32_t symbol_id, std::int64_t id) {
-  return aquila::Trade{
+aquila::BookTicker MakeTicker(std::int32_t symbol_id, std::int64_t id) {
+  return aquila::BookTicker{
       .id = id,
       .symbol_id = symbol_id,
       .exchange = aquila::Exchange::kGate,
-      .side = aquila::OrderSide::kBuy,
-      .reserved = 0,
       .exchange_ns = 1'780'000'000'000'000'000 + id,
-      .trade_ns = 1'780'000'000'000'100'000 + id,
-      .local_ns = 1'780'000'000'000'200'000 + id,
-      .price = 100.0 + static_cast<double>(id),
-      .volume = 1.0,
-      .batch_index = 0,
-      .batch_count = 1,
+      .local_ns = 1'780'000'000'000'100'000 + id,
+      .bid_price = 100.0 + static_cast<double>(id),
+      .bid_volume = 1.0,
+      .ask_price = 101.0 + static_cast<double>(id),
+      .ask_volume = 2.0,
   };
 }
 
@@ -83,9 +80,10 @@ aquila::Trade MakeTrade(std::int32_t symbol_id, std::int64_t id) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
 #endif
-[[gnu::noinline]] void PublishToShm(md::DataShmPublisher* publisher,
-                                    const aquila::Trade& trade) noexcept {
-  publisher->OnTrade(trade);
+[[gnu::noinline]] void PublishToShm(
+    md::DataShmPublisher* publisher,
+    const aquila::BookTicker& book_ticker) noexcept {
+  publisher->OnBookTicker(book_ticker);
 }
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
@@ -93,9 +91,9 @@ aquila::Trade MakeTrade(std::int32_t symbol_id, std::int64_t id) {
 
 }  // namespace
 
-TEST(TradeFusionThreadTest, PublishesAndStops) {
-  const md::TradeShmConfig source = MakeCreateConfig("source");
-  const md::TradeShmConfig output = MakeCreateConfig("output");
+TEST(BookTickerFusionThreadTest, PublishesAndStops) {
+  const md::BookTickerShmConfig source = MakeCreateConfig("source");
+  const md::BookTickerShmConfig output = MakeCreateConfig("output");
   ShmCleanup source_cleanup(source.shm_name);
   ShmCleanup output_cleanup(output.shm_name);
 #if AQUILA_FUSION_METADATA_ENABLED
@@ -106,13 +104,13 @@ TEST(TradeFusionThreadTest, PublishesAndStops) {
 #endif
 
   md::DataShmPublisher source_publisher(source);
-  md::TradeFusionConfig config{
-      .name = "trade_fusion_thread_test",
+  md::BookTickerFusionConfig config{
+      .name = "fusion_thread_test",
       .max_events_per_source = 4,
       .bind_cpu_id = -1,
       .max_symbol_id = 128,
       .output =
-          md::TradeFusionOutputConfig{
+          md::BookTickerFusionOutputConfig{
               .shm_name = output.shm_name,
               .channel_name = output.channel_name,
               .remove_existing = true,
@@ -120,7 +118,7 @@ TEST(TradeFusionThreadTest, PublishesAndStops) {
           },
       .sources =
           {
-              md::TradeFusionSourceConfig{
+              md::BookTickerFusionSourceConfig{
                   .source_id = 0,
                   .name = "source",
                   .shm_name = source.shm_name,
@@ -129,14 +127,14 @@ TEST(TradeFusionThreadTest, PublishesAndStops) {
           },
   };
 
-  md::TradeFusionThread fusion_thread(config);
+  md::BookTickerFusionThread fusion_thread(config);
   fusion_thread.Start();
 
-  md::TradeShmReader output_reader(MakeAttachConfig(output));
+  md::BookTickerShmReader output_reader(MakeAttachConfig(output));
   output_reader.SeekLatest();
-  PublishToShm(&source_publisher, MakeTrade(42, 100));
+  PublishToShm(&source_publisher, MakeTicker(42, 100));
 
-  aquila::Trade canonical{};
+  aquila::BookTicker canonical{};
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (!output_reader.TryReadOne(&canonical) &&
@@ -145,7 +143,7 @@ TEST(TradeFusionThreadTest, PublishesAndStops) {
   }
 
   fusion_thread.Stop();
-  const md::TradeFusionThreadStats stats = fusion_thread.Join();
+  const md::BookTickerFusionThreadStats stats = fusion_thread.Join();
 
   ASSERT_TRUE(stats.ok) << stats.error;
   EXPECT_TRUE(stats.flush_ok);
@@ -154,12 +152,12 @@ TEST(TradeFusionThreadTest, PublishesAndStops) {
   EXPECT_EQ(stats.total_metadata_write_errors, 0U);
   EXPECT_EQ(canonical.id, 100);
   EXPECT_EQ(canonical.symbol_id, 42);
-  EXPECT_EQ(canonical.trade_ns, 1'780'000'000'000'100'100);
+  EXPECT_EQ(canonical.exchange_ns, 1'780'000'000'000'000'100);
 
 #if AQUILA_FUSION_METADATA_ENABLED
   ASSERT_TRUE(std::filesystem::exists(metadata_path));
   EXPECT_EQ(std::filesystem::file_size(metadata_path),
-            sizeof(md::TradeFusionMetadataRecord));
+            sizeof(md::FusionMetadataRecord));
   std::filesystem::remove(metadata_path);
 #else
   EXPECT_TRUE(metadata_path.empty());

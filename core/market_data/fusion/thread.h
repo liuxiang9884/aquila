@@ -1,5 +1,5 @@
-#ifndef AQUILA_CORE_MARKET_DATA_FASTEST_ROUTE_FUSION_THREAD_H_
-#define AQUILA_CORE_MARKET_DATA_FASTEST_ROUTE_FUSION_THREAD_H_
+#ifndef AQUILA_CORE_MARKET_DATA_FUSION_THREAD_H_
+#define AQUILA_CORE_MARKET_DATA_FUSION_THREAD_H_
 
 #include <atomic>
 #include <condition_variable>
@@ -11,6 +11,8 @@
 #include <thread>
 #include <utility>
 
+#include "core/market_data/fusion/book_ticker.h"
+#include "core/market_data/fusion/trade.h"
 #include "core/websocket/runtime_policy.h"
 
 namespace aquila::market_data {
@@ -146,6 +148,15 @@ class BasicFastestRouteFusionThread {
   FastestRouteFusionThreadStats stats_;
 };
 
+using BookTickerFusionThreadStats = FastestRouteFusionThreadStats;
+using BookTickerFusionThread =
+    BasicFastestRouteFusionThread<BookTickerFusionRunner,
+                                  BookTickerFusionConfig>;
+
+using TradeFusionThreadStats = FastestRouteFusionThreadStats;
+using TradeFusionThread =
+    BasicFastestRouteFusionThread<TradeFusionRunner, TradeFusionConfig>;
+
 }  // namespace aquila::market_data
 
-#endif  // AQUILA_CORE_MARKET_DATA_FASTEST_ROUTE_FUSION_THREAD_H_
+#endif  // AQUILA_CORE_MARKET_DATA_FUSION_THREAD_H_

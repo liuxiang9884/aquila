@@ -1,5 +1,3 @@
-#include "core/market_data/book_ticker_fusion_metadata.h"
-
 #include <unistd.h>
 
 #include <cstdint>
@@ -10,6 +8,8 @@
 
 #include <fmt/format.h>
 #include <gtest/gtest.h>
+
+#include "core/market_data/fusion/metadata.h"
 
 namespace {
 

@@ -32,6 +32,16 @@ struct BasicFusionConfig {
   std::vector<SourceConfig> sources;
 };
 
+using BookTickerFusionSourceConfig = FusionSourceConfig;
+using BookTickerFusionOutputConfig = FusionOutputConfig;
+using BookTickerFusionConfig = BasicFusionConfig<BookTickerFusionSourceConfig,
+                                                 BookTickerFusionOutputConfig>;
+
+using TradeFusionSourceConfig = FusionSourceConfig;
+using TradeFusionOutputConfig = FusionOutputConfig;
+using TradeFusionConfig =
+    BasicFusionConfig<TradeFusionSourceConfig, TradeFusionOutputConfig>;
+
 }  // namespace aquila::market_data
 
 #endif  // AQUILA_CORE_MARKET_DATA_FUSION_CONFIG_H_
