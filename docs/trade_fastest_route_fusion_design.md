@@ -114,6 +114,33 @@ trade_shm.shm_name = launch source trade SHM
 trade_shm.channel_name = launch source trade channel
 ```
 
+## 2026-07-07 Live Smoke 证据
+
+2026-07-07 已按 BBO 20260701 的 30-symbol universe 跑过 Gate / Binance、4 路、30 分钟 release
+真实行情 smoke，run dir 为 `/home/liuxiang/tmp/trade_fusion_30symbols_20260707_020400/`。该 run 只覆盖
+行情链路，没有启动订单或策略。
+
+最终 `data_fusion` summary：
+
+| Exchange | `source_published_count` | `fusion_total_read_count` | `fusion_total_published_count` | metadata errors |
+| --- | ---: | ---: | ---: | ---: |
+| Gate | `175124` | `175124` | `43781` | `0` |
+| Binance | `1984630` | `1984630` | `496335` | `0` |
+
+全量 `TradeFusionMetadataRecord` 显示无 duplicate `(symbol_id, trade_id)`、无 per-symbol `trade_id`
+回退。`fusion_publish_ns - source_local_ns` 的 p50 / p95 / p99 / p99.9 / max：
+
+| Exchange | p50 | p95 | p99 | p99.9 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Gate | `0.488us` | `0.992us` | `3.242us` | `8.768us` | `21.815us` |
+| Binance | `0.692us` | `1.864us` | `7.348us` | `17.493us` | `1446.577us` |
+
+离线每路 source latency 对比基于 run 结束后残留的 `/dev/shm` Trade ring 导出，摘要文件为
+`latency_analysis/trade_fusion_latency_summary.json`。Gate 每路 `43781` 条，覆盖本次 full metadata；
+Binance 每路只剩 `65536` 条 SHM 可见窗口，因此每路 source 对比只能代表尾部窗口，不是完整 30 分钟。
+该证据可以说明 trade fusion pipeline 已在真实行情下跑通，并给出 fusion hop 与 source route
+分布；不能直接外推为订单 fillability、策略收益或 PnL 结论。
+
 ## 验证边界
 
 实现完成后至少覆盖：
@@ -127,4 +154,4 @@ trade_shm.channel_name = launch source trade channel
 - `ctest` 中现有 BBO fusion 测试必须继续通过。
 
 性能或延迟收益不能只凭设计宣称；Trade fusion 跑通后需要用 replay、dry-run、live smoke 或 benchmark
-给出实际证据。
+给出实际证据。已有 2026-07-07 真实行情 smoke 证据只覆盖行情 fusion pipeline 和 latency，不覆盖订单链路。
