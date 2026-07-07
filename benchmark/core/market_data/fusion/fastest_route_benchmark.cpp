@@ -298,7 +298,8 @@ void BM_TradeFusionRunnerPollOnceNoopMetadata(benchmark::State& state) {
 template <typename Feed, typename MetadataPolicy>
 void RunMultiSourceBatchBenchmark(benchmark::State& state,
                                   std::string_view shm_prefix,
-                                  std::filesystem::path metadata_bin) {
+                                  std::filesystem::path metadata_bin,
+                                  bool duplicate_fan_in) {
   std::vector<typename Feed::ShmConfig> sources;
   sources.reserve(kMultiSourceCount);
   std::vector<std::unique_ptr<ShmCleanup>> cleanups;
@@ -340,49 +341,98 @@ void RunMultiSourceBatchBenchmark(benchmark::State& state,
 
   typename Feed::template Runner<MetadataPolicy> runner(config);
   std::int64_t id = 1;
+  const std::uint64_t expected_read_count = kMultiSourceCount * kBatchSize;
+  const std::uint64_t expected_published_count =
+      duplicate_fan_in ? kBatchSize : expected_read_count;
+  std::uint64_t last_read_count = 0;
+  std::uint64_t last_published_count = 0;
+  std::uint64_t last_metadata_write_errors = 0;
   for (auto _ : state) {
-    for (std::unique_ptr<md::DataShmPublisher>& source_publisher :
-         source_publishers) {
+    if (duplicate_fan_in) {
       for (int batch_index = 0; batch_index < kBatchSize; ++batch_index) {
-        Feed::Publish(source_publisher.get(), Feed::MakeRecord(id++));
+        const typename Feed::Record record = Feed::MakeRecord(id + batch_index);
+        for (std::unique_ptr<md::DataShmPublisher>& source_publisher :
+             source_publishers) {
+          Feed::Publish(source_publisher.get(), record);
+        }
+      }
+      id += kBatchSize;
+    } else {
+      for (std::unique_ptr<md::DataShmPublisher>& source_publisher :
+           source_publishers) {
+        for (int batch_index = 0; batch_index < kBatchSize; ++batch_index) {
+          Feed::Publish(source_publisher.get(), Feed::MakeRecord(id++));
+        }
       }
     }
     const auto stats = runner.PollOnce();
-    std::uint64_t read_count = stats.read_count;
-    std::uint64_t published_count = stats.published_count;
-    std::uint64_t metadata_write_errors = stats.metadata_write_errors;
-    benchmark::DoNotOptimize(read_count);
-    benchmark::DoNotOptimize(published_count);
-    benchmark::DoNotOptimize(metadata_write_errors);
+    last_read_count = stats.read_count;
+    last_published_count = stats.published_count;
+    last_metadata_write_errors = stats.metadata_write_errors;
+    benchmark::DoNotOptimize(last_read_count);
+    benchmark::DoNotOptimize(last_published_count);
+    benchmark::DoNotOptimize(last_metadata_write_errors);
+  }
+  if (last_read_count != expected_read_count ||
+      last_published_count != expected_published_count ||
+      last_metadata_write_errors != 0) {
+    state.SkipWithError("unexpected fusion poll stats");
   }
   state.SetItemsProcessed(state.iterations() * kMultiSourceCount * kBatchSize);
 }
 
-void BM_BookTickerFusionRunnerPollOnce4SourcesBatch8NoopMetadata(
+void BM_BookTickerFusionRunnerPollOnce4SourcesBatch8AllPublishNoopMetadata(
     benchmark::State& state) {
   RunMultiSourceBatchBenchmark<BookTickerBenchmarkFeed,
                                NoopBookTickerMetadataPolicy>(
-      state, "bt_4src_batch8_noop", {});
+      state, "bt_4src_batch8_all_publish_noop", {}, false);
 }
 
-void BM_TradeFusionRunnerPollOnce4SourcesBatch8NoopMetadata(
+void BM_TradeFusionRunnerPollOnce4SourcesBatch8AllPublishNoopMetadata(
     benchmark::State& state) {
   RunMultiSourceBatchBenchmark<TradeBenchmarkFeed, NoopTradeMetadataPolicy>(
-      state, "tr_4src_batch8_noop", {});
+      state, "tr_4src_batch8_all_publish_noop", {}, false);
 }
 
-void BM_BookTickerFusionRunnerPollOnce4SourcesBatch8FileMetadata(
+void BM_BookTickerFusionRunnerPollOnce4SourcesBatch8AllPublishFileMetadata(
     benchmark::State& state) {
   RunMultiSourceBatchBenchmark<BookTickerBenchmarkFeed,
                                md::FileBookTickerFusionMetadataPolicy>(
-      state, "bt_4src_batch8_file", "/dev/null");
+      state, "bt_4src_batch8_all_publish_file", "/dev/null", false);
 }
 
-void BM_TradeFusionRunnerPollOnce4SourcesBatch8FileMetadata(
+void BM_TradeFusionRunnerPollOnce4SourcesBatch8AllPublishFileMetadata(
     benchmark::State& state) {
   RunMultiSourceBatchBenchmark<TradeBenchmarkFeed,
                                md::FileTradeFusionMetadataPolicy>(
-      state, "tr_4src_batch8_file", "/dev/null");
+      state, "tr_4src_batch8_all_publish_file", "/dev/null", false);
+}
+
+void BM_BookTickerFusionRunnerPollOnce4SourcesBatch8DuplicateFanInNoopMetadata(
+    benchmark::State& state) {
+  RunMultiSourceBatchBenchmark<BookTickerBenchmarkFeed,
+                               NoopBookTickerMetadataPolicy>(
+      state, "bt_4src_batch8_dupe_noop", {}, true);
+}
+
+void BM_TradeFusionRunnerPollOnce4SourcesBatch8DuplicateFanInNoopMetadata(
+    benchmark::State& state) {
+  RunMultiSourceBatchBenchmark<TradeBenchmarkFeed, NoopTradeMetadataPolicy>(
+      state, "tr_4src_batch8_dupe_noop", {}, true);
+}
+
+void BM_BookTickerFusionRunnerPollOnce4SourcesBatch8DuplicateFanInFileMetadata(
+    benchmark::State& state) {
+  RunMultiSourceBatchBenchmark<BookTickerBenchmarkFeed,
+                               md::FileBookTickerFusionMetadataPolicy>(
+      state, "bt_4src_batch8_dupe_file", "/dev/null", true);
+}
+
+void BM_TradeFusionRunnerPollOnce4SourcesBatch8DuplicateFanInFileMetadata(
+    benchmark::State& state) {
+  RunMultiSourceBatchBenchmark<TradeBenchmarkFeed,
+                               md::FileTradeFusionMetadataPolicy>(
+      state, "tr_4src_batch8_dupe_file", "/dev/null", true);
 }
 
 BENCHMARK(BM_BookTickerFusionCoreOnRecord)
@@ -397,17 +447,53 @@ BENCHMARK(BM_BookTickerFusionRunnerPollOnceNoopMetadata)
 BENCHMARK(BM_TradeFusionRunnerPollOnceNoopMetadata)
     ->Name("fusion/trade_runner_poll_once_noop_metadata")
     ->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_BookTickerFusionRunnerPollOnce4SourcesBatch8NoopMetadata)
-    ->Name("fusion/book_ticker_runner_poll_once_4sources_batch8_noop_metadata")
+BENCHMARK(BM_BookTickerFusionRunnerPollOnce4SourcesBatch8AllPublishNoopMetadata)
+    ->Name(
+        "fusion/"
+        "book_ticker_runner_poll_once_4sources_batch8_all_publish_noop_"
+        "metadata")
     ->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_TradeFusionRunnerPollOnce4SourcesBatch8NoopMetadata)
-    ->Name("fusion/trade_runner_poll_once_4sources_batch8_noop_metadata")
+BENCHMARK(BM_TradeFusionRunnerPollOnce4SourcesBatch8AllPublishNoopMetadata)
+    ->Name(
+        "fusion/"
+        "trade_runner_poll_once_4sources_batch8_all_publish_noop_metadata")
     ->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_BookTickerFusionRunnerPollOnce4SourcesBatch8FileMetadata)
-    ->Name("fusion/book_ticker_runner_poll_once_4sources_batch8_file_metadata")
+BENCHMARK(BM_BookTickerFusionRunnerPollOnce4SourcesBatch8AllPublishFileMetadata)
+    ->Name(
+        "fusion/"
+        "book_ticker_runner_poll_once_4sources_batch8_all_publish_file_"
+        "metadata")
     ->Unit(benchmark::kNanosecond);
-BENCHMARK(BM_TradeFusionRunnerPollOnce4SourcesBatch8FileMetadata)
-    ->Name("fusion/trade_runner_poll_once_4sources_batch8_file_metadata")
+BENCHMARK(BM_TradeFusionRunnerPollOnce4SourcesBatch8AllPublishFileMetadata)
+    ->Name(
+        "fusion/"
+        "trade_runner_poll_once_4sources_batch8_all_publish_file_metadata")
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(
+    BM_BookTickerFusionRunnerPollOnce4SourcesBatch8DuplicateFanInNoopMetadata)
+    ->Name(
+        "fusion/"
+        "book_ticker_runner_poll_once_4sources_batch8_duplicate_fanin_"
+        "noop_metadata")
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_TradeFusionRunnerPollOnce4SourcesBatch8DuplicateFanInNoopMetadata)
+    ->Name(
+        "fusion/"
+        "trade_runner_poll_once_4sources_batch8_duplicate_fanin_"
+        "noop_metadata")
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(
+    BM_BookTickerFusionRunnerPollOnce4SourcesBatch8DuplicateFanInFileMetadata)
+    ->Name(
+        "fusion/"
+        "book_ticker_runner_poll_once_4sources_batch8_duplicate_fanin_"
+        "file_metadata")
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_TradeFusionRunnerPollOnce4SourcesBatch8DuplicateFanInFileMetadata)
+    ->Name(
+        "fusion/"
+        "trade_runner_poll_once_4sources_batch8_duplicate_fanin_"
+        "file_metadata")
     ->Unit(benchmark::kNanosecond);
 
 }  // namespace
