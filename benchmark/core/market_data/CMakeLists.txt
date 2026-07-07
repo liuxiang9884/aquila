@@ -36,3 +36,22 @@ target_link_libraries(book_ticker_queue_replay_benchmark
         nova
         Threads::Threads
 )
+
+add_executable(fastest_route_fusion_benchmark
+    fastest_route_fusion_benchmark.cpp
+)
+
+target_link_libraries(fastest_route_fusion_benchmark
+    PRIVATE
+        aquila_core
+        benchmark::benchmark_main
+        fmt::fmt-header-only
+        nova
+)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(fastest_route_fusion_benchmark
+        PRIVATE
+            -Wno-stringop-overflow
+    )
+endif()
