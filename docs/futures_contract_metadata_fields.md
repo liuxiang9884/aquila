@@ -2,8 +2,9 @@
 
 ## 目的
 
-`scripts/gate/market_data/query_futures_contracts.py` 和
-`scripts/binance/market_data/query_um_futures_contracts.py` 用于在启动前查询交易所合约基础信息，并输出同一组
+`scripts/gate/market_data/query_futures_contracts.py`、
+`scripts/binance/market_data/query_um_futures_contracts.py` 和
+`scripts/bitget/market_data/query_futures_contracts.py` 用于在启动前查询交易所合约基础信息，并输出同一组
 `pandas.DataFrame` 字段。当前范围只覆盖下单前最少需要的交易约束字段，不覆盖完整风控、费率、杠杆和风险限额配置。
 
 这组字段的目标是让策略和下单模块先基于统一 schema 做价格格式化、数量格式化、基础上下限检查和交易所适配。更细的交易所特有规则应在后续 adapter 中保留原始字段或单独扩展。
@@ -22,7 +23,13 @@ Binance USD-M futures：
 scripts/binance/market_data/query_um_futures_contracts.py BTCUSDT ETHUSDT --format csv
 ```
 
-两个脚本都支持：
+Bitget UTA USDT futures：
+
+```bash
+scripts/bitget/market_data/query_futures_contracts.py BTCUSDT ETHUSDT --format csv
+```
+
+三个脚本都支持：
 
 ```bash
 --file symbols.txt
@@ -31,6 +38,8 @@ scripts/binance/market_data/query_um_futures_contracts.py BTCUSDT ETHUSDT --form
 ```
 
 `symbols.txt` 中每行一个 symbol，空行和以 `#` 开头的行会被忽略。
+Bitget 脚本额外支持 `--allow-missing`，用于更新 catalog 时跳过 Bitget 不存在或未处于 `online`
+状态的 symbol。
 
 ## 统一字段
 
@@ -99,11 +108,38 @@ Gate 的 `order_price_deviate` 是 REST contract 返回的价格偏离比例。B
 
 这两个字段都可用于下单前基础价格保护，但它们不是同一个交易所规则的逐字等价实现。实际订单校验仍应保留交易所 adapter 中的细节。
 
-### `min_notional` 目前只在 Binance 有直接值
+Bitget UTA USDT futures 的 `price_limit_up` 使用 `buyLimitPriceRatio`，`price_limit_down`
+使用 `sellLimitPriceRatio`。这两个字段也是交易所自己的委托价偏离规则，不应和 Gate / Binance
+规则混为同一个校验。
+
+### `min_notional` 不是三家完全同源
 
 Binance USD-M futures 在 `exchangeInfo` 中提供 `MIN_NOTIONAL` 或 `NOTIONAL` filter。Gate futures contract endpoint 当前没有直接同义字段，所以脚本输出为空。
 
-Gate 后续如需最小名义金额约束，应基于交易所订单规则或错误回报进一步确认，不能用 Binance 的规则推断。
+Bitget UTA USDT futures 使用 `minOrderAmount` 填充 `min_notional`。Gate 后续如需最小名义金额约束，
+应基于交易所订单规则或错误回报进一步确认，不能用 Binance 或 Bitget 的规则推断。
+
+### Bitget 字段映射
+
+Bitget `GET /api/v3/market/instruments?category=USDT-FUTURES` 返回的 `symbol` 使用无下划线格式，
+例如 `BTCUSDT`；catalog 内部 `symbol` 仍使用 `BTC_USDT`。当前脚本只保留 `category=USDT-FUTURES`、
+`type=perpetual`、`status=online` 的合约。
+
+| 统一字段 | Bitget 映射 |
+| --- | --- |
+| `exchange` | 固定 `bitget` |
+| `exchange_symbol` | `symbol` |
+| `base_asset` / `quote_asset` | `baseCoin` / `quoteCoin` |
+| `settle_asset` | 固定 `USDT` |
+| `status` | `status` |
+| `contract_type` | `type` |
+| `price_tick` / `price_decimal_places` | `priceMultiplier` / `pricePrecision` |
+| `quantity_step` / `quantity_decimal_places` | `quantityMultiplier` / `quantityPrecision` |
+| `min_quantity` / `max_quantity` / `max_market_quantity` | `minOrderQty` / `maxOrderQty` / `maxMarketOrderQty` |
+| `min_notional` | `minOrderAmount` |
+| `notional_multiplier` | 固定 `1.0` |
+| `price_limit_up` / `price_limit_down` | `buyLimitPriceRatio` / `sellLimitPriceRatio` |
+| `market_price_bound` | 当前为空；Bitget instruments 响应没有直接同义字段 |
 
 ## 使用边界
 
