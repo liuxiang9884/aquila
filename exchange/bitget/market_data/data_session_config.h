@@ -29,6 +29,7 @@ struct DataSessionConfig {
   DataSessionFeeds feeds;
   ::aquila::market_data::DataShmConfig data_shm;
   ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
+  ::aquila::market_data::TradeShmConfig trade_shm;
   ::aquila::market_data::DataSessionDiagnosticsConfig diagnostics;
 };
 

@@ -35,6 +35,7 @@ struct RawConfigFile {
   RawDataSessionConfig data_session;
   ::aquila::market_data::DataShmConfig data_shm;
   ::aquila::market_data::BookTickerShmConfig book_ticker_shm;
+  ::aquila::market_data::TradeShmConfig trade_shm;
   ::aquila::market_data::DataSessionDiagnosticsConfig diagnostics;
 };
 
@@ -359,6 +360,7 @@ class DataSessionConfigParser {
         config_.data_session.feeds.book_ticker;
     config_.data_shm.trade_enabled = false;
     config_.book_ticker_shm = config_.data_shm.BookTickerConfig();
+    config_.trade_shm = config_.data_shm.TradeConfig();
 
     if (!config_.data_shm.create && config_.data_shm.remove_existing) {
       Fail("data_shm_sink.remove_existing", " requires create=true");
@@ -468,6 +470,7 @@ class DataSessionConfigParser {
     data_session_config.feeds = config_.data_session.feeds;
     data_session_config.data_shm = std::move(config_.data_shm);
     data_session_config.book_ticker_shm = std::move(config_.book_ticker_shm);
+    data_session_config.trade_shm = std::move(config_.trade_shm);
     data_session_config.diagnostics = config_.diagnostics;
     data_session_config.exchange_symbols.reserve(
         config_.data_session.subscribe_symbols.size());

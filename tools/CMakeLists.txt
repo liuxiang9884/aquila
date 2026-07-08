@@ -243,6 +243,22 @@ target_link_libraries(bitget_data_session
         nova
 )
 
+add_executable(bitget_data_fusion
+    bitget/bitget_data_fusion.cpp
+    bitget/bitget_data_fusion_config.cpp
+)
+
+target_link_libraries(bitget_data_fusion
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_bitget
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(binance_futures_book_ticker_probe
     binance/futures_book_ticker_probe.cpp
 )
