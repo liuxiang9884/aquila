@@ -15,8 +15,8 @@ source 统一融合成一条 canonical `Trade` SHM，供后续 reader、recorder
   语义一致。
 - 原始 source `local_ns` 通过 sidecar metadata 保留，用于离线分析 source ingress latency 和 fusion hop。
 - V1 不按 `exchange_ns` / `trade_ns` / `source_local_ns` 做跨 source 时间排序，不引入等待窗口或 watermark。
-- data fusion bundle 启动 source data session 时只启用 `feed.trade = true`，并强制关闭
-  `feed.book_ticker = false`。
+- data fusion bundle 由 `launch.feeds` 决定启用 `trade`、`book_ticker` 或两者；每个 enabled feed
+  各自使用一个 fusion thread，source data session 只创建 enabled feed 对应的 source SHM channel。
 
 ## 泛化边界
 
@@ -104,15 +104,15 @@ shm_name = "aquila_gate_trade_source0"
 channel_name = "trade_channel"
 ```
 
-Data fusion bundle 配置也保持 exchange-specific，并新增 trade source SHM 字段或 trade-specific source
-config。启动 source data session 时覆盖：
+Data fusion bundle 配置也保持 exchange-specific。启动 source data session 时由 `launch.feeds`
+决定 feed override；只启用 trade 时只创建 trade channel，同时启用 BBO 和 trade 时创建两个 typed
+channel，但 Trade fusion config 只读取 trade channel：
 
 ```text
-feeds.trade = true
-feeds.book_ticker = false
-trade_shm.enabled = true
-trade_shm.shm_name = launch source trade SHM
-trade_shm.channel_name = launch source trade channel
+feeds = ["trade"] or ["book_ticker", "trade"]
+data_shm.enabled = true
+data_shm.shm_name = launch source data_shm_name
+data_shm.trade_channel_name = launch source trade_channel_name
 ```
 
 ## 2026-07-07 Live Smoke 证据

@@ -15,6 +15,11 @@ order management 和 order execution 归属于 `Strategy` 模块。
 5. WebSocket `target` 不写在配置里，由具体交易所的 data session config parser 按协议生成。
 6. tools 根据 `enable_tls` 选择 TLS 或 plain WebSocket policy，生产路径不在同一个 binary 中硬编码协议。
 
+缺省字段才走默认值；字段或可选 section 一旦出现在 TOML 中，就必须使用 parser 期望的类型。
+例如 `[data_shm_sink]`、`[data_session.diagnostics]`、`[data_session.diagnostics.latency_outlier]`
+和 `[data_session.diagnostics.timestamping]` 必须是 table；把这些 section 写成 string、bool 或 array 会在
+启动冷路径 fail-fast，不会静默 fallback 到默认值。
+
 ## 实现依赖边界
 
 配置相关代码属于冷路径，只在进程启动、重连前配置构建或测试中使用，不进入行情和下单热路径。

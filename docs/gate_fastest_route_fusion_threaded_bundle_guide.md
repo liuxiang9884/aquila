@@ -10,7 +10,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-07，V1 threaded bundle 已按“fusion 归 core、交易所启动归 tools”的边界支持 single-feed 和 multi-feed：
+截至 2026-07-08，V1 threaded bundle 已按“fusion 归 core、交易所启动归 tools”的边界支持 single-feed 和 multi-feed：
 
 - `BookTickerFusionConfig` / `TradeFusionConfig`、metadata ABI、runner 和 fusion thread wrapper 位于 `core/market_data/fusion/`；TOML parser 位于 `core/config/*_fusion_config.*`。
 - `tools/market_data/book_ticker_fusion.cpp` 和 `tools/market_data/binance_book_ticker_fusion.cpp` 仍保留为独立 fusion process 入口。
@@ -18,7 +18,7 @@
 - tools 层的启动配置按交易所命名为 `GateDataFusionConfig` / `BinanceDataFusionConfig`；`launch.feeds` 是进程拓扑事实源，`launch.fusion_configs` 把每个 enabled feed 映射到对应 single-feed fusion TOML。
 - single-feed 示例配置为 `config/market_data_fusion/gate_data_fusion_book_ticker_4sources.toml`、`config/market_data_fusion/gate_data_fusion_trade_4sources.toml`、`config/market_data_fusion/binance_data_fusion_book_ticker_4sources.toml` 和 `config/market_data_fusion/binance_data_fusion_trade_4sources.toml`。
 - multi-feed 示例配置为 `config/market_data_fusion/gate_data_fusion_book_ticker_trade_4sources.toml` 和 `config/market_data_fusion/binance_data_fusion_book_ticker_trade_4sources.toml`。当前示例使用 4 个 source worker 绑定 `17-20`，BookTicker fusion 绑定 `16`，Trade fusion 绑定 `21`，log backend 绑定 `31`。
-- 启动前会拒绝同一 bundle 内 source worker、fusion thread 和 log backend 的非负 CPU binding 冲突。
+- 启动前会 fail-fast 拒绝 wrong-type TOML、旧 launch schema、同一 bundle 内 source / fusion / log backend 的非负 CPU binding 冲突、不可用 required CPU、source SHM / channel 重叠，以及 fusion config 与 source override 不一致。
 - dry-run 验证入口：
 
 ```bash
