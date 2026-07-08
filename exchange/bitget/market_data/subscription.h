@@ -43,6 +43,18 @@ inline std::string BuildBooks1UnsubscribeRequest(
                                                "books1", symbols);
 }
 
+inline std::string BuildPublicTradeSubscribeRequest(
+    std::string_view inst_type, std::span<const std::string_view> symbols) {
+  return detail::BuildTopicSubscriptionRequest("subscribe", inst_type,
+                                               "publicTrade", symbols);
+}
+
+inline std::string BuildPublicTradeUnsubscribeRequest(
+    std::string_view inst_type, std::span<const std::string_view> symbols) {
+  return detail::BuildTopicSubscriptionRequest("unsubscribe", inst_type,
+                                               "publicTrade", symbols);
+}
+
 }  // namespace aquila::bitget
 
 #endif  // AQUILA_EXCHANGE_BITGET_MARKET_DATA_SUBSCRIPTION_H_

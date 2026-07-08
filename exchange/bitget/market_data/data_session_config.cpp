@@ -292,8 +292,11 @@ class DataSessionConfigParser {
       return;
     }
     if (feed == "trade") {
-      Fail("data_session.feeds",
-           " Bitget trade feed is unsupported by this adapter");
+      if (config_.data_session.feeds.trade) {
+        Fail("data_session.feeds", " contains duplicate feed trade");
+        return;
+      }
+      config_.data_session.feeds.trade = true;
       return;
     }
     std::string message{" unknown Bitget data_session feed: "};
@@ -358,7 +361,7 @@ class DataSessionConfigParser {
     }
     config_.data_shm.book_ticker_enabled =
         config_.data_session.feeds.book_ticker;
-    config_.data_shm.trade_enabled = false;
+    config_.data_shm.trade_enabled = config_.data_session.feeds.trade;
     config_.book_ticker_shm = config_.data_shm.BookTickerConfig();
     config_.trade_shm = config_.data_shm.TradeConfig();
 
@@ -376,6 +379,10 @@ class DataSessionConfigParser {
     if (config_.data_session.feeds.book_ticker &&
         config_.data_shm.book_ticker_channel_name.empty()) {
       Fail("data_shm_sink.book_ticker_channel_name", " is required");
+    }
+    if (config_.data_session.feeds.trade &&
+        config_.data_shm.trade_channel_name.empty()) {
+      Fail("data_shm_sink.trade_channel_name", " is required");
     }
   }
 
@@ -444,10 +451,9 @@ class DataSessionConfigParser {
   }
 
   [[nodiscard]] DataSessionConfigResult BuildConfig() {
-    if (!config_.data_session.feeds.book_ticker ||
-        config_.data_session.feeds.trade) {
-      return Failure(
-          "Bitget BBO data session requires the book_ticker feed only");
+    if (!config_.data_session.feeds.book_ticker &&
+        !config_.data_session.feeds.trade) {
+      return Failure("Bitget data session requires at least one feed");
     }
 
     config::ConnectionConfigResult connection_result =

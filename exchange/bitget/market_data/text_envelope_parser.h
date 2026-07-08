@@ -20,8 +20,15 @@ enum class TextEvent : std::uint8_t {
   kUnknown,
 };
 
+enum class TextTopic : std::uint8_t {
+  kUnknown = 0,
+  kBookTicker,
+  kTrade,
+};
+
 struct TextEnvelope {
   TextEvent event{TextEvent::kUnknown};
+  TextTopic topic{TextTopic::kUnknown};
   bool has_error{false};
   bool result_success{false};
 };
@@ -34,6 +41,16 @@ inline TextEvent ParseTextEvent(std::string_view event) noexcept {
     return TextEvent::kUnsubscribe;
   }
   return TextEvent::kUnknown;
+}
+
+inline TextTopic ParseTextTopic(std::string_view topic) noexcept {
+  if (topic == "books1") {
+    return TextTopic::kBookTicker;
+  }
+  if (topic == "publicTrade") {
+    return TextTopic::kTrade;
+  }
+  return TextTopic::kUnknown;
 }
 
 inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
@@ -50,6 +67,15 @@ inline bool ParseTextEnvelopeDocument(simdjson::ondemand::document document,
     std::string_view event{};
     if (ReadSimdjsonString(value, &event)) {
       envelope.event = ParseTextEvent(event);
+    }
+  }
+
+  simdjson::ondemand::object arg;
+  if (FindSimdjsonObject(root, "arg", &arg) &&
+      FindSimdjsonField(arg, "topic", &value)) {
+    std::string_view topic{};
+    if (ReadSimdjsonString(value, &topic)) {
+      envelope.topic = ParseTextTopic(topic);
     }
   }
 
