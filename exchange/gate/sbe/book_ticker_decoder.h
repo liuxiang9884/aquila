@@ -90,6 +90,7 @@ inline void AssignBookTickerFromView(const BboView& view, std::int64_t local_ns,
   out.symbol_id = symbol_id;
   out.exchange = Exchange::kGate;
   out.exchange_ns = view.time().value() * 1000;
+  out.event_ns = view.t().value() * 1000;
   out.local_ns = local_ns;
 
   const double price_scale = DecimalExponentScale(view.pxExponent().value());

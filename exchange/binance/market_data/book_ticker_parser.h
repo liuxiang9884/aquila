@@ -34,6 +34,7 @@ struct BookTickerUpdate {
     }
     update_id = other.update_id;
     event_time_ms = other.event_time_ms;
+    transaction_time_ms = other.transaction_time_ms;
     bid_price = other.bid_price;
     bid_volume = other.bid_volume;
     ask_price = other.ask_price;
@@ -53,6 +54,7 @@ struct BookTickerUpdate {
 
   std::int64_t update_id;
   std::int64_t event_time_ms;
+  std::int64_t transaction_time_ms;
   double bid_price;
   double bid_volume;
   double ask_price;
@@ -94,6 +96,7 @@ inline BookTickerParseStatus ParseBookTickerObject(
     simdjson::ondemand::object root, BookTickerUpdate& output) noexcept {
   const std::int64_t update_id = Int64Value(Field(root, "u"));
   const std::int64_t event_time_ms = Int64Value(Field(root, "E"));
+  const std::int64_t transaction_time_ms = Int64Value(Field(root, "T"));
   const std::string_view symbol = StringValue(Field(root, "s"));
   const double bid_price = ToDouble(StringValue(Field(root, "b")));
   const double bid_volume = ToDouble(StringValue(Field(root, "B")));
@@ -102,6 +105,7 @@ inline BookTickerParseStatus ParseBookTickerObject(
 
   output.update_id = update_id;
   output.event_time_ms = event_time_ms;
+  output.transaction_time_ms = transaction_time_ms;
   output.bid_price = bid_price;
   output.bid_volume = bid_volume;
   output.ask_price = ask_price;

@@ -301,6 +301,9 @@ def convert_date(
         output_records["exchange_ns"] = merged["exchange_ns"].to_numpy(
             dtype=np.int64, copy=False
         )
+        output_records["event_ns"] = merged["exchange_ns"].to_numpy(
+            dtype=np.int64, copy=False
+        )
         output_records["local_ns"] = merged["local_ns"].to_numpy(
             dtype=np.int64, copy=False
         )

@@ -14,7 +14,7 @@ source 统一融合成一条 canonical `Trade` SHM，供后续 reader、recorder
 - 输出到 canonical SHM 的 `Trade.local_ns` 改写为 `fusion_publish_ns`，和现有 fused `BookTicker`
   语义一致。
 - 原始 source `local_ns` 通过 sidecar metadata 保留，用于离线分析 source ingress latency 和 fusion hop。
-- V1 不按 `exchange_ns` / `trade_ns` / `source_local_ns` 做跨 source 时间排序，不引入等待窗口或 watermark。
+- V1 不按 `exchange_ns` / `event_ns` / `source_local_ns` 做跨 source 时间排序，不引入等待窗口或 watermark。
 - data fusion bundle 由 `launch.feeds` 决定启用 `trade`、`book_ticker` 或两者；每个 enabled feed
   各自使用一个 fusion thread，source data session 只创建 enabled feed 对应的 source SHM channel。
 
@@ -74,8 +74,8 @@ struct FusionMetadataRecord {
 };
 ```
 
-Trade 中 `record_id = Trade.id`，`event_ns = Trade.trade_ns`。BookTicker 使用同一个 ABI，其中
-`record_id = BookTicker.id`，`event_ns = BookTicker.exchange_ns`。该 raw sidecar record 为 48 bytes。
+Trade 中 `record_id = Trade.id`，`event_ns = Trade.event_ns`。BookTicker 使用同一个 ABI，其中
+`record_id = BookTicker.id`，`event_ns = BookTicker.event_ns`。该 raw sidecar record 为 48 bytes。
 
 `batch_index` / `batch_count` 不作为 V1 metadata 必填字段；如果 replay 或 live smoke 证明 batch 语义需要
 额外归因，再基于证据扩展 metadata ABI 和分析脚本。

@@ -233,6 +233,8 @@ inline ParsedBookTickerRecord ParseBookTickerCsvLine(
               .exchange = source.exchange,
               .exchange_ns =
                   TimestampUsToNs(timestamp_us, "timestamp", line_number),
+              .event_ns =
+                  TimestampUsToNs(timestamp_us, "timestamp", line_number),
               .local_ns = TimestampUsToNs(local_timestamp_us, "local_timestamp",
                                           line_number),
               .bid_price = bid_price,

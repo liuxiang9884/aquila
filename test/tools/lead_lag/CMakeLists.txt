@@ -44,6 +44,8 @@ set_tests_properties(lead_lag_live_strategy_orders_missing_credentials_smoke
 add_test(NAME lead_lag_live_strategy_order_gateway_missing_shm_smoke
          COMMAND ${CMAKE_COMMAND}
                  -DLEAD_LAG_STRATEGY=$<TARGET_FILE:lead_lag_strategy>
+                 -DGATE_DATA_SESSION=$<TARGET_FILE:gate_data_session>
+                 -DBINANCE_DATA_SESSION=$<TARGET_FILE:binance_data_session>
                  -DLEAD_LAG_CONFIG=${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_gateway_strategy.toml
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/lead_lag_live_orders_gateway_missing_shm_smoke.cmake)
 set_tests_properties(lead_lag_live_strategy_order_gateway_missing_shm_smoke

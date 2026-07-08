@@ -200,6 +200,10 @@ TEST(BinanceDataSessionTest, DelegatesTextBookTickerToClient) {
   ASSERT_EQ(data_sink.book_ticker_calls, 1);
   EXPECT_EQ(data_sink.last_book_ticker.symbol_id, 11);
   EXPECT_EQ(data_sink.last_book_ticker.id, 400900217);
+  EXPECT_EQ(data_sink.last_book_ticker.exchange_ns,
+            1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(data_sink.last_book_ticker.event_ns,
+            1568014460891LL * 1'000'000LL);
 }
 
 TEST(BinanceDataSessionTest, DelegatesTextTradeToClient) {
@@ -256,7 +260,7 @@ TEST(BinanceDataSessionTest, PublishesTradeToCombinedShm) {
   EXPECT_EQ(trade.id, 7868321828LL);
   EXPECT_EQ(trade.side, aquila::OrderSide::kBuy);
   EXPECT_EQ(trade.exchange_ns, 1783228448495LL * 1'000'000LL);
-  EXPECT_EQ(trade.trade_ns, 1783228448495LL * 1'000'000LL);
+  EXPECT_EQ(trade.event_ns, 1783228448495LL * 1'000'000LL);
   EXPECT_DOUBLE_EQ(trade.price, 62738.70);
   EXPECT_DOUBLE_EQ(trade.volume, 0.002);
   EXPECT_EQ(trade.batch_index, 0U);

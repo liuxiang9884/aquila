@@ -245,7 +245,7 @@ struct FusionMetadataRecord {
 };
 ```
 
-BookTicker metadata v2 中 `record_id = BookTicker.id`，`event_ns = exchange_ns`。该 raw sidecar record
+BookTicker metadata v2 中 `record_id = BookTicker.id`，`event_ns = BookTicker.event_ns`。该 raw sidecar record
 为 48 bytes；旧 40-byte metadata binary 需要用旧脚本读取或重录。
 
 核心离线指标：

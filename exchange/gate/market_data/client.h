@@ -225,6 +225,7 @@ class FuturesMarketDataClient {
         .symbol_id = book_ticker.symbol_id,
         .book_ticker_id = book_ticker.id,
         .exchange_ns = book_ticker.exchange_ns,
+        .book_ticker_event_ns = book_ticker.event_ns,
         .book_ticker_local_ns = book_ticker.local_ns,
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
         .parse_done_ns = parse_done_ns,

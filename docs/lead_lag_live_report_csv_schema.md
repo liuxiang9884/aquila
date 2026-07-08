@@ -33,7 +33,7 @@
 | `log_time` | signal 日志行的 wall-clock 时间文本。 | `lead_lag_signal_triggered` 日志前缀。 |
 | `trigger_exchange` | 触发行情来源交易所，例如 `kBinance`。 | `lead_lag_signal_triggered.trigger_exchange`。 |
 | `trigger_symbol_id` | 触发行情的 symbol id。 | `lead_lag_signal_triggered.trigger_symbol_id`。 |
-| `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo` 为 WebSocket server send timestamp，Binance 为 event time。 | `lead_lag_signal_triggered.trigger_exchange_ns`。 |
+| `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo.time` 为 WebSocket server send timestamp，Binance `E` 为 event time；真实 BBO 事件时间见 `event_ns`。 | `lead_lag_signal_triggered.trigger_exchange_ns`。 |
 | `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | `lead_lag_signal_triggered.trigger_local_ns`。 |
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_signal_triggered.on_book_ticker_entry_ns`。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_signal_triggered.signal_decision_ns`。 |
@@ -95,7 +95,7 @@
 | `symbol_id` | 策略内部 symbol id。 | 策略提交或终态日志。 |
 | `trigger_exchange` | 触发行情来源交易所。 | `lead_lag_order_submitted.trigger_exchange`。 |
 | `trigger_symbol_id` | 触发行情的 symbol id。 | `lead_lag_order_submitted.trigger_symbol_id`。 |
-| `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo` 为 WebSocket server send timestamp，Binance 为 event time。 | `lead_lag_order_submitted.trigger_exchange_ns`。 |
+| `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo.time` 为 WebSocket server send timestamp，Binance `E` 为 event time；真实 BBO 事件时间见 `event_ns`。 | `lead_lag_order_submitted.trigger_exchange_ns`。 |
 | `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | `lead_lag_order_submitted.trigger_local_ns`。 |
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | `lead_lag_order_submitted.on_book_ticker_entry_ns`。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | `lead_lag_order_submitted.signal_decision_ns`。 |
@@ -284,7 +284,7 @@
 | `reject_reason` | 拒单原因。 | order detail。 |
 | `request_sequence` | Gate order session 请求序号。 | order detail。 |
 | `encoded_request_id` | WebSocket payload 请求 id。 | order detail。 |
-| `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo` 为 WebSocket server send timestamp，Binance 为 event time。 | order detail。 |
+| `trigger_exchange_ns` | 触发 BBO 的 `BookTicker.exchange_ns`；Gate SBE `bbo.time` 为 WebSocket server send timestamp，Binance `E` 为 event time；真实 BBO 事件时间见 `event_ns`。 | order detail。 |
 | `trigger_local_ns` | 触发 BBO 在 data session ingress 处记录的本机时间戳。 | order detail。 |
 | `on_book_ticker_entry_ns` | 策略进入 `Strategy::OnBookTicker()` 的本机时间戳。 | order detail。 |
 | `signal_decision_ns` | 策略确认 signal triggered 后的本机时间戳。 | order detail。 |

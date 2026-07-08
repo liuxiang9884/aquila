@@ -173,6 +173,10 @@ class HdfBookTickerToBinaryTest(unittest.TestCase):
                 [1001000000, 1002000000, 1003000000, 1004000000],
             )
             self.assertEqual(
+                records["event_ns"].tolist(),
+                [1001000000, 1002000000, 1003000000, 1004000000],
+            )
+            self.assertEqual(
                 (
                     records[0]["bid_price"],
                     records[0]["bid_volume"],

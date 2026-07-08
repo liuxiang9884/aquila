@@ -69,7 +69,7 @@ aquila::Trade MakeTrade(std::int32_t symbol_id, std::int64_t id) {
       .side = aquila::OrderSide::kBuy,
       .reserved = 0,
       .exchange_ns = 1'780'000'000'000'000'000 + id,
-      .trade_ns = 1'780'000'000'000'100'000 + id,
+      .event_ns = 1'780'000'000'000'100'000 + id,
       .local_ns = 1'780'000'000'000'200'000 + id,
       .price = 100.0 + static_cast<double>(id),
       .volume = 1.0,
@@ -153,7 +153,7 @@ TEST(TradeFusionThreadTest, PublishesAndStops) {
   EXPECT_EQ(stats.total_metadata_write_errors, 0U);
   EXPECT_EQ(canonical.id, 100);
   EXPECT_EQ(canonical.symbol_id, 42);
-  EXPECT_EQ(canonical.trade_ns, 1'780'000'000'000'100'100);
+  EXPECT_EQ(canonical.event_ns, 1'780'000'000'000'100'100);
 
 #if AQUILA_FUSION_METADATA_ENABLED
   ASSERT_TRUE(std::filesystem::exists(metadata_path));

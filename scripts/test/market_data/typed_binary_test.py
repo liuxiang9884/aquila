@@ -34,6 +34,7 @@ class TypedBinaryTest(unittest.TestCase):
         records["symbol_id"] = np.arange(90, 90 + count)
         records["exchange"] = 2
         records["exchange_ns"] = np.arange(count) * 1_000
+        records["event_ns"] = records["exchange_ns"] - 50
         records["local_ns"] = records["exchange_ns"] + 100
         records["bid_price"] = 100.0 + np.arange(count)
         records["bid_volume"] = 1.0 + np.arange(count)
@@ -67,10 +68,10 @@ class TypedBinaryTest(unittest.TestCase):
     def test_book_ticker_dtype_matches_abi(self):
         dtype = self.module.book_ticker_dtype()
 
-        self.assertEqual(dtype.itemsize, 64)
+        self.assertEqual(dtype.itemsize, 72)
         self.assertEqual(
             [dtype.fields[name][1] for name in dtype.names],
-            [0, 8, 12, 16, 24, 32, 40, 48, 56],
+            [0, 8, 12, 16, 24, 32, 40, 48, 56, 64],
         )
         self.assertEqual(
             dtype.names,
@@ -79,6 +80,7 @@ class TypedBinaryTest(unittest.TestCase):
                 "symbol_id",
                 "exchange",
                 "exchange_ns",
+                "event_ns",
                 "local_ns",
                 "bid_price",
                 "bid_volume",
@@ -104,7 +106,7 @@ class TypedBinaryTest(unittest.TestCase):
                 "side",
                 "reserved",
                 "exchange_ns",
-                "trade_ns",
+                "event_ns",
                 "local_ns",
                 "price",
                 "volume",

@@ -49,6 +49,7 @@ struct DataSessionBookTickerTiming {
   std::int32_t symbol_id{0};
   std::int64_t book_ticker_id{0};
   std::int64_t exchange_ns{0};
+  std::int64_t book_ticker_event_ns{0};
   std::int64_t book_ticker_local_ns{0};
   std::int64_t parse_done_ns{0};
   std::int64_t shm_publish_done_ns{0};
@@ -173,9 +174,10 @@ class DataSessionLatencyOutlierLogger {
     NOVA_WARNING(
         "data_session_book_ticker_latency_outlier exchange={} source_id={} "
         "symbol_id={} book_ticker_id={} latency_ns={} threshold_ns={} "
-        "exchange_ns={} book_ticker_local_ns={} kernel_rx_available={} "
-        "kernel_rx_ns={} drive_read_enter_ns={} read_return_ns={} "
-        "handler_entry_ns={} parse_done_ns={} shm_publish_done_ns={} "
+        "exchange_ns={} book_ticker_event_ns={} book_ticker_local_ns={} "
+        "kernel_rx_available={} kernel_rx_ns={} drive_read_enter_ns={} "
+        "read_return_ns={} handler_entry_ns={} parse_done_ns={} "
+        "shm_publish_done_ns={} "
         "network_or_exchange_ns={} kernel_queue_ns={} "
         "read_syscall_or_tls_ns={} ws_dispatch_ns={} parse_ns={} "
         "shm_publish_ns={} user_after_read_ns={} read_bytes={} "
@@ -183,7 +185,8 @@ class DataSessionLatencyOutlierLogger {
         DataSessionExchangeName(timing.exchange), timing.source_id,
         timing.symbol_id, timing.book_ticker_id,
         timing.book_ticker_local_ns - timing.exchange_ns, config_.threshold_ns,
-        timing.exchange_ns, timing.book_ticker_local_ns,
+        timing.exchange_ns, timing.book_ticker_event_ns,
+        timing.book_ticker_local_ns,
         timing.message.kernel_rx_available ? "true" : "false",
         timing.message.kernel_rx_ns, timing.message.drive_read_enter_ns,
         timing.message.read_return_ns, timing.message.handler_entry_ns,

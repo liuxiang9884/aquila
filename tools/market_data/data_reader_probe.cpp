@@ -50,12 +50,12 @@ struct ProbeHandler {
     }
     NOVA_INFO(
         "book_ticker count={} id={} symbol_id={} exchange={} exchange_ns={} "
-        "local_ns={} bid_price={:.12g} bid_volume={:.12g} ask_price={:.12g} "
-        "ask_volume={:.12g}",
+        "event_ns={} local_ns={} bid_price={:.12g} bid_volume={:.12g} "
+        "ask_price={:.12g} ask_volume={:.12g}",
         book_tickers_, book_ticker.id, book_ticker.symbol_id,
         magic_enum::enum_name(book_ticker.exchange), book_ticker.exchange_ns,
-        book_ticker.local_ns, book_ticker.bid_price, book_ticker.bid_volume,
-        book_ticker.ask_price, book_ticker.ask_volume);
+        book_ticker.event_ns, book_ticker.local_ns, book_ticker.bid_price,
+        book_ticker.bid_volume, book_ticker.ask_price, book_ticker.ask_volume);
   }
 
   void OnTrade(const aquila::Trade& trade) noexcept {
@@ -65,11 +65,11 @@ struct ProbeHandler {
     }
     NOVA_INFO(
         "trade count={} id={} symbol_id={} exchange={} side={} exchange_ns={} "
-        "trade_ns={} local_ns={} price={:.12g} volume={:.12g} "
+        "event_ns={} local_ns={} price={:.12g} volume={:.12g} "
         "batch_index={} batch_count={}",
         trades_, trade.id, trade.symbol_id,
         magic_enum::enum_name(trade.exchange),
-        magic_enum::enum_name(trade.side), trade.exchange_ns, trade.trade_ns,
+        magic_enum::enum_name(trade.side), trade.exchange_ns, trade.event_ns,
         trade.local_ns, trade.price, trade.volume, trade.batch_index,
         trade.batch_count);
   }

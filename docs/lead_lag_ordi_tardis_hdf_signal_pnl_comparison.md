@@ -32,7 +32,8 @@ PnL 计算口径：
 
 ## 输入数据对比
 
-两条链路生成的 binary 文件大小接近，但精确记录数不一致。每条 `BookTicker` 为 64 字节。
+两条链路生成的 binary 文件大小接近，但精确记录数不一致。该历史对账使用当时的 64-byte `BookTicker`
+ABI；当前 `BookTicker` payload 为 72 bytes，旧文件需要按当前 converter 重录后再复用这些检查。
 
 | 日期 | Tardis records | HDF records | HDF - Tardis |
 | --- | ---: | ---: | ---: |

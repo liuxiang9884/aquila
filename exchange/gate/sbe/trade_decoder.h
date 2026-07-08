@@ -48,7 +48,7 @@ inline void AssignTradeFromView(const TradeEntry& entry,
   out.side = size >= 0 ? OrderSide::kBuy : OrderSide::kSell;
   out.reserved = 0;
   out.exchange_ns = exchange_ns;
-  out.trade_ns = entry.t().value() * 1000;
+  out.event_ns = entry.t().value() * 1000;
   out.local_ns = local_ns;
   out.price = static_cast<double>(entry.price().value()) * price_scale;
   out.volume = static_cast<double>(std::llabs(size)) * volume_scale;

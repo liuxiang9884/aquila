@@ -33,7 +33,7 @@ struct TradeFusionTraits {
   }
 
   [[nodiscard]] static std::int64_t EventNs(const Trade& trade) noexcept {
-    return trade.trade_ns;
+    return trade.event_ns;
   }
 };
 

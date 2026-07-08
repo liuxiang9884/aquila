@@ -62,7 +62,7 @@ std::filesystem::path UniqueMetadataPath() {
 }
 
 aquila::Trade MakeTrade(std::int32_t symbol_id, std::int64_t id,
-                        std::int64_t exchange_ns, std::int64_t trade_ns,
+                        std::int64_t exchange_ns, std::int64_t event_ns,
                         std::int64_t local_ns) {
   return aquila::Trade{
       .id = id,
@@ -71,7 +71,7 @@ aquila::Trade MakeTrade(std::int32_t symbol_id, std::int64_t id,
       .side = aquila::OrderSide::kSell,
       .reserved = 0,
       .exchange_ns = exchange_ns,
-      .trade_ns = trade_ns,
+      .event_ns = event_ns,
       .local_ns = local_ns,
       .price = 100.0 + static_cast<double>(id),
       .volume = 0.01 * static_cast<double>(symbol_id + 1),
@@ -171,12 +171,12 @@ TEST(TradeFusionRunnerTest, PublishesCanonicalShmAndOptionalMetadata) {
   EXPECT_EQ(first.id, source0_first.id);
   EXPECT_EQ(first.symbol_id, source0_first.symbol_id);
   EXPECT_EQ(first.exchange_ns, source0_first.exchange_ns);
-  EXPECT_EQ(first.trade_ns, source0_first.trade_ns);
+  EXPECT_EQ(first.event_ns, source0_first.event_ns);
   EXPECT_GE(first.local_ns, source0_first.local_ns);
   EXPECT_EQ(second.id, source1_next.id);
   EXPECT_EQ(second.symbol_id, source1_next.symbol_id);
   EXPECT_EQ(second.exchange_ns, source1_next.exchange_ns);
-  EXPECT_EQ(second.trade_ns, source1_next.trade_ns);
+  EXPECT_EQ(second.event_ns, source1_next.event_ns);
   EXPECT_GE(second.local_ns, source1_next.local_ns);
 
 #if AQUILA_FUSION_METADATA_ENABLED
@@ -187,12 +187,12 @@ TEST(TradeFusionRunnerTest, PublishesCanonicalShmAndOptionalMetadata) {
   EXPECT_EQ(metadata[0].symbol_id, source0_first.symbol_id);
   EXPECT_EQ(metadata[0].record_id, source0_first.id);
   EXPECT_EQ(metadata[0].exchange_ns, source0_first.exchange_ns);
-  EXPECT_EQ(metadata[0].event_ns, source0_first.trade_ns);
+  EXPECT_EQ(metadata[0].event_ns, source0_first.event_ns);
   EXPECT_EQ(metadata[0].source_local_ns, source0_first.local_ns);
   EXPECT_EQ(metadata[0].fusion_publish_ns, first.local_ns);
   EXPECT_EQ(metadata[1].source_id, 1);
   EXPECT_EQ(metadata[1].record_id, source1_next.id);
-  EXPECT_EQ(metadata[1].event_ns, source1_next.trade_ns);
+  EXPECT_EQ(metadata[1].event_ns, source1_next.event_ns);
   EXPECT_EQ(metadata[1].source_local_ns, source1_next.local_ns);
   EXPECT_EQ(metadata[1].fusion_publish_ns, second.local_ns);
 

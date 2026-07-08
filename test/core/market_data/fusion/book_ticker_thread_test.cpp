@@ -74,6 +74,7 @@ aquila::BookTicker MakeTicker(std::int32_t symbol_id, std::int64_t id) {
       .symbol_id = symbol_id,
       .exchange = aquila::Exchange::kGate,
       .exchange_ns = 1'780'000'000'000'000'000 + id,
+      .event_ns = 1'780'000'000'000'000'050 + id,
       .local_ns = 1'780'000'000'000'100'000 + id,
       .bid_price = 100.0 + static_cast<double>(id),
       .bid_volume = 1.0,
@@ -232,6 +233,7 @@ TEST(BookTickerFusionThreadTest, PublishesAndStops) {
   EXPECT_EQ(canonical.id, 100);
   EXPECT_EQ(canonical.symbol_id, 42);
   EXPECT_EQ(canonical.exchange_ns, 1'780'000'000'000'000'100);
+  EXPECT_EQ(canonical.event_ns, 1'780'000'000'000'000'150);
 
 #if AQUILA_FUSION_METADATA_ENABLED
   ASSERT_TRUE(std::filesystem::exists(metadata_path));

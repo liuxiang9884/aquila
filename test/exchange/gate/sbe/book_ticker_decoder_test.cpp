@@ -101,7 +101,7 @@ TEST(GateSbeBookTickerDecoderTest, ConvertsDecimalExponentToScale) {
                    0.0000000001);
 }
 
-TEST(GateSbeBookTickerDecoderTest, UsesWebSocketSendTimeForExchangeNs) {
+TEST(GateSbeBookTickerDecoderTest, MapsWebSocketSendAndEngineTimes) {
   std::array<char, 128> buffer{};
   size_t offset = 0;
   WriteLittleEndian<std::uint16_t>(buffer, offset, 59);
@@ -147,6 +147,7 @@ TEST(GateSbeBookTickerDecoderTest, UsesWebSocketSendTimeForExchangeNs) {
   EXPECT_EQ(book_ticker.symbol_id, 123);
   EXPECT_EQ(book_ticker.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(book_ticker.exchange_ns, 1'770'000'000'001'000'000);
+  EXPECT_EQ(book_ticker.event_ns, 1'770'000'000'000'900'000);
   EXPECT_EQ(book_ticker.local_ns, 1'770'000'000'001'200'000);
   EXPECT_DOUBLE_EQ(book_ticker.bid_price, 65'012.0);
   EXPECT_DOUBLE_EQ(book_ticker.bid_volume, 21.0);

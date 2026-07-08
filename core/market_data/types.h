@@ -12,6 +12,7 @@ struct BookTicker {
   std::int32_t symbol_id;
   Exchange exchange;
   std::int64_t exchange_ns;
+  std::int64_t event_ns;
   std::int64_t local_ns;
 
   double bid_price;
@@ -28,7 +29,7 @@ struct Trade {
   std::uint16_t reserved;
 
   std::int64_t exchange_ns;
-  std::int64_t trade_ns;
+  std::int64_t event_ns;
   std::int64_t local_ns;
 
   double price;

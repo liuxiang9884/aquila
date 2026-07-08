@@ -109,6 +109,7 @@ BookTicker MakeTicker(std::int64_t id, Exchange exchange,
       .symbol_id = 42,
       .exchange = exchange,
       .exchange_ns = exchange_ns,
+      .event_ns = exchange_ns - 10,
       .local_ns = local_ns,
       .bid_price = 65'000.0 + static_cast<double>(id),
       .bid_volume = 10.0 + static_cast<double>(id),
@@ -118,7 +119,7 @@ BookTicker MakeTicker(std::int64_t id, Exchange exchange,
 }
 
 Trade MakeTrade(std::int64_t id, Exchange exchange, std::int64_t exchange_ns,
-                std::int64_t trade_ns, std::int64_t local_ns) noexcept {
+                std::int64_t event_ns, std::int64_t local_ns) noexcept {
   return Trade{
       .id = id,
       .symbol_id = 42,
@@ -126,7 +127,7 @@ Trade MakeTrade(std::int64_t id, Exchange exchange, std::int64_t exchange_ns,
       .side = id % 2 == 0 ? OrderSide::kSell : OrderSide::kBuy,
       .reserved = 0,
       .exchange_ns = exchange_ns,
-      .trade_ns = trade_ns,
+      .event_ns = event_ns,
       .local_ns = local_ns,
       .price = 65'000.0 + static_cast<double>(id),
       .volume = 0.1 + static_cast<double>(id),
@@ -140,6 +141,7 @@ void ExpectBookTickerEq(const BookTicker& actual, const BookTicker& expected) {
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
   EXPECT_EQ(actual.exchange, expected.exchange);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.bid_price, expected.bid_price);
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
@@ -154,7 +156,7 @@ void ExpectTradeEq(const Trade& actual, const Trade& expected) {
   EXPECT_EQ(actual.side, expected.side);
   EXPECT_EQ(actual.reserved, expected.reserved);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
-  EXPECT_EQ(actual.trade_ns, expected.trade_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.price, expected.price);
   EXPECT_DOUBLE_EQ(actual.volume, expected.volume);

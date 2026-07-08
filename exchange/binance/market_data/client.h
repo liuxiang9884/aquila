@@ -64,6 +64,7 @@ inline void AssignBookTickerFromUpdate(const BookTickerUpdate& update,
   out.symbol_id = symbol_id;
   out.exchange = Exchange::kBinance;
   out.exchange_ns = update.event_time_ms * 1'000'000LL;
+  out.event_ns = update.transaction_time_ms * 1'000'000LL;
   out.local_ns = local_ns;
   out.bid_price = update.bid_price;
   out.bid_volume = update.bid_volume;
@@ -80,7 +81,7 @@ inline void AssignTradeFromUpdate(const TradeUpdate& update,
   out.side = update.buyer_is_maker ? OrderSide::kSell : OrderSide::kBuy;
   out.reserved = 0;
   out.exchange_ns = update.event_time_ms * 1'000'000LL;
-  out.trade_ns = update.trade_time_ms * 1'000'000LL;
+  out.event_ns = update.trade_time_ms * 1'000'000LL;
   out.local_ns = local_ns;
   out.price = update.price;
   out.volume = update.volume;
@@ -370,6 +371,7 @@ class FuturesMarketDataClient {
         .symbol_id = book_ticker.symbol_id,
         .book_ticker_id = book_ticker.id,
         .exchange_ns = book_ticker.exchange_ns,
+        .book_ticker_event_ns = book_ticker.event_ns,
         .book_ticker_local_ns = book_ticker.local_ns,
 #if AQUILA_DATA_SESSION_DIAG_LEVEL >= 2
         .parse_done_ns = parse_done_ns,

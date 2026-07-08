@@ -46,7 +46,7 @@ TEST(GateSbeTradeDecoderTest, DecodesSingleBuyTrade) {
   EXPECT_EQ(trades[0].side, aquila::OrderSide::kBuy);
   EXPECT_EQ(trades[0].reserved, 0);
   EXPECT_EQ(trades[0].exchange_ns, 1'770'000'000'001'000'000);
-  EXPECT_EQ(trades[0].trade_ns, 1'770'000'000'000'990'000);
+  EXPECT_EQ(trades[0].event_ns, 1'770'000'000'000'990'000);
   EXPECT_EQ(trades[0].local_ns, 1'770'000'000'001'200'000);
   EXPECT_DOUBLE_EQ(trades[0].price, 65'012.5);
   EXPECT_DOUBLE_EQ(trades[0].volume, 17.5);

@@ -63,7 +63,7 @@ aquila::Trade MakeTrade(std::int64_t id) noexcept {
       .side = aquila::OrderSide::kBuy,
       .reserved = 0,
       .exchange_ns = 1'780'000'000'000'000'000 + id,
-      .trade_ns = 1'780'000'000'000'010'000 + id,
+      .event_ns = 1'780'000'000'000'010'000 + id,
       .local_ns = 1'780'000'000'000'100'000 + id,
       .price = 100.0 + static_cast<double>(id),
       .volume = 1.0,

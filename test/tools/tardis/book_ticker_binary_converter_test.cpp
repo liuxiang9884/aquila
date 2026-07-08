@@ -38,6 +38,7 @@ BookTicker MakeTicker(std::int64_t id, Exchange exchange,
       .symbol_id = 3,
       .exchange = exchange,
       .exchange_ns = exchange_ns,
+      .event_ns = exchange_ns,
       .local_ns = exchange_ns + 1000,
       .bid_price = 2.0,
       .bid_volume = 12.0,
@@ -51,6 +52,7 @@ void ExpectBookTickerEq(const BookTicker& actual, const BookTicker& expected) {
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
   EXPECT_EQ(actual.exchange, expected.exchange);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.bid_price, expected.bid_price);
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
@@ -74,6 +76,7 @@ TEST(BookTickerBinaryConverterTest, ReadsTardisCsvFieldsIntoBookTickerStruct) {
   EXPECT_EQ(ticker.symbol_id, 3);
   EXPECT_EQ(ticker.exchange, Exchange::kBinance);
   EXPECT_EQ(ticker.exchange_ns, 1776211200018000000LL);
+  EXPECT_EQ(ticker.event_ns, 1776211200018000000LL);
   EXPECT_EQ(ticker.local_ns, 1776211200020423000LL);
   EXPECT_DOUBLE_EQ(ticker.ask_volume, 378.5);
   EXPECT_DOUBLE_EQ(ticker.ask_price, 2.441);
@@ -117,6 +120,7 @@ TEST(BookTickerBinaryConverterTest, WritesTypedBookTickerRecordsWithHeader) {
       .symbol_id = 3,
       .exchange = Exchange::kGate,
       .exchange_ns = 2000000,
+      .event_ns = 2000000,
       .local_ns = 2002000,
       .bid_price = 2.000,
       .bid_volume = 22.0,
@@ -128,6 +132,7 @@ TEST(BookTickerBinaryConverterTest, WritesTypedBookTickerRecordsWithHeader) {
       .symbol_id = 3,
       .exchange = Exchange::kBinance,
       .exchange_ns = 3000000,
+      .event_ns = 3000000,
       .local_ns = 3001000,
       .bid_price = 2.002,
       .bid_volume = 12.0,
@@ -158,6 +163,7 @@ TEST(BookTickerBinaryConverterTest, WritesTypedBookTickerRecordsWithHeader) {
   EXPECT_EQ(first.id, records.front().id);
   EXPECT_EQ(first.exchange, records.front().exchange);
   EXPECT_EQ(first.exchange_ns, records.front().exchange_ns);
+  EXPECT_EQ(first.event_ns, records.front().event_ns);
   EXPECT_DOUBLE_EQ(first.ask_volume, records.front().ask_volume);
 
   const std::vector<BookTicker> loaded = ReadBookTickerBinaryFile(output_path);
@@ -167,6 +173,7 @@ TEST(BookTickerBinaryConverterTest, WritesTypedBookTickerRecordsWithHeader) {
     EXPECT_EQ(loaded[i].symbol_id, records[i].symbol_id);
     EXPECT_EQ(loaded[i].exchange, records[i].exchange);
     EXPECT_EQ(loaded[i].exchange_ns, records[i].exchange_ns);
+    EXPECT_EQ(loaded[i].event_ns, records[i].event_ns);
     EXPECT_EQ(loaded[i].local_ns, records[i].local_ns);
     EXPECT_DOUBLE_EQ(loaded[i].bid_price, records[i].bid_price);
     EXPECT_DOUBLE_EQ(loaded[i].bid_volume, records[i].bid_volume);
@@ -249,12 +256,15 @@ TEST(BookTickerBinaryConverterTest,
   EXPECT_EQ(loaded[0].id, 0);
   EXPECT_EQ(loaded[0].exchange, Exchange::kBinance);
   EXPECT_EQ(loaded[0].exchange_ns, 1000000);
+  EXPECT_EQ(loaded[0].event_ns, 1000000);
   EXPECT_EQ(loaded[1].id, 1);
   EXPECT_EQ(loaded[1].exchange, Exchange::kGate);
   EXPECT_EQ(loaded[1].exchange_ns, 2000000);
+  EXPECT_EQ(loaded[1].event_ns, 2000000);
   EXPECT_EQ(loaded[2].id, 2);
   EXPECT_EQ(loaded[2].exchange, Exchange::kBinance);
   EXPECT_EQ(loaded[2].exchange_ns, 3000000);
+  EXPECT_EQ(loaded[2].event_ns, 3000000);
 
   std::filesystem::remove(output_path);
 }

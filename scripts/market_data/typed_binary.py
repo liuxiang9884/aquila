@@ -42,6 +42,7 @@ def book_ticker_dtype() -> np.dtype:
                 "symbol_id",
                 "exchange",
                 "exchange_ns",
+                "event_ns",
                 "local_ns",
                 "bid_price",
                 "bid_volume",
@@ -54,13 +55,14 @@ def book_ticker_dtype() -> np.dtype:
                 "u1",
                 "<i8",
                 "<i8",
+                "<i8",
                 "<f8",
                 "<f8",
                 "<f8",
                 "<f8",
             ],
-            "offsets": [0, 8, 12, 16, 24, 32, 40, 48, 56],
-            "itemsize": 64,
+            "offsets": [0, 8, 12, 16, 24, 32, 40, 48, 56, 64],
+            "itemsize": 72,
         }
     )
 
@@ -75,7 +77,7 @@ def trade_dtype() -> np.dtype:
                 "side",
                 "reserved",
                 "exchange_ns",
-                "trade_ns",
+                "event_ns",
                 "local_ns",
                 "price",
                 "volume",

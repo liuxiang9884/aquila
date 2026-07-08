@@ -124,6 +124,7 @@ DataSession::Handle(text MessageView)
 | `u` | `id` |
 | `s` | symbol lookup 后的 `symbol_id` |
 | `E` 毫秒 | `exchange_ns = E * 1'000'000` |
+| `T` 毫秒 | `event_ns = T * 1'000'000` |
 | `CLOCK_REALTIME` local receive clock | `local_ns` |
 | `b` / `B` | `bid_price` / `bid_volume` |
 | `a` / `A` | `ask_price` / `ask_volume` |
@@ -135,7 +136,7 @@ DataSession::Handle(text MessageView)
 | `t` | `id` |
 | `s` | symbol lookup 后的 `symbol_id` |
 | `E` 毫秒 | `exchange_ns = E * 1'000'000` |
-| `T` 毫秒 | `trade_ns = T * 1'000'000` |
+| `T` 毫秒 | `event_ns = T * 1'000'000` |
 | `CLOCK_REALTIME` local receive clock | `local_ns` |
 | `p` | `price` |
 | `q` | `volume` |
@@ -224,7 +225,7 @@ taskset -c 2 ./build/release/benchmark/exchange/binance/market_data/binance_futu
 - benchmark-only ordered `find_field()` 对照略快于 production unordered parser，但 padded-view 主路径差距很小；当前决定不切 production。
 - 字段直取 parser 后，simdjson padded-view 是当前 production parser 层最快路径；本轮没有证明 yyjson 足以替换 production simdjson。
 - client/session 数值仍是 production simdjson 路径，不包含 yyjson parser policy。
-- SHM slot-writer 路径去掉了 `BookTicker` 临时对象到 shm slot 的 64B copy，但 Binance JSON parser 成本占主导，
+- SHM slot-writer 路径去掉了 `BookTicker` 临时对象到 shm slot 的一次 ABI-size copy，但 Binance JSON parser 成本占主导，
   本机 parse+publish microbenchmark 中总耗时与 temp+push 路径基本持平。
 - 如果之后要继续 yyjson，需要补真实 receive ring 原地解析压测、尾延迟数据和 live probe，再讨论 production 接入。
 

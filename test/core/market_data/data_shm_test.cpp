@@ -74,6 +74,7 @@ aquila::BookTicker MakeBookTicker(std::int64_t id) {
       .symbol_id = 42,
       .exchange = aquila::Exchange::kGate,
       .exchange_ns = 1'770'000'000'000'000'000 + id,
+      .event_ns = 1'770'000'000'000'010'000 + id,
       .local_ns = 1'770'000'000'000'100'000 + id,
       .bid_price = 65'000.0 + static_cast<double>(id),
       .bid_volume = 10.0 + static_cast<double>(id),
@@ -90,7 +91,7 @@ aquila::Trade MakeTrade(std::int64_t id) {
       .side = id % 2 == 0 ? aquila::OrderSide::kBuy : aquila::OrderSide::kSell,
       .reserved = 0,
       .exchange_ns = 1'770'000'000'000'000'000 + id,
-      .trade_ns = 1'770'000'000'000'010'000 + id,
+      .event_ns = 1'770'000'000'000'010'000 + id,
       .local_ns = 1'770'000'000'000'100'000 + id,
       .price = 65'000.0 + static_cast<double>(id),
       .volume = 10.0 + static_cast<double>(id),
@@ -105,6 +106,7 @@ void ExpectBookTickerEq(const aquila::BookTicker& actual,
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
   EXPECT_EQ(actual.exchange, expected.exchange);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.bid_price, expected.bid_price);
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
@@ -119,7 +121,7 @@ void ExpectTradeEq(const aquila::Trade& actual, const aquila::Trade& expected) {
   EXPECT_EQ(actual.side, expected.side);
   EXPECT_EQ(actual.reserved, expected.reserved);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
-  EXPECT_EQ(actual.trade_ns, expected.trade_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.price, expected.price);
   EXPECT_DOUBLE_EQ(actual.volume, expected.volume);

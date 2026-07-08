@@ -33,12 +33,13 @@ class AnalyzeBookTickerLatencyTest(unittest.TestCase):
     def test_dtype_matches_book_ticker_abi(self):
         dtype = self.module.book_ticker_dtype()
 
-        self.assertEqual(dtype.itemsize, 64)
-        self.assertEqual(dtype.names[0:9], (
+        self.assertEqual(dtype.itemsize, 72)
+        self.assertEqual(dtype.names[0:10], (
             "id",
             "symbol_id",
             "exchange",
             "exchange_ns",
+            "event_ns",
             "local_ns",
             "bid_price",
             "bid_volume",
@@ -46,8 +47,9 @@ class AnalyzeBookTickerLatencyTest(unittest.TestCase):
             "ask_volume",
         ))
         self.assertEqual(dtype.fields["exchange_ns"][1], 16)
-        self.assertEqual(dtype.fields["local_ns"][1], 24)
-        self.assertEqual(dtype.fields["ask_volume"][1], 56)
+        self.assertEqual(dtype.fields["event_ns"][1], 24)
+        self.assertEqual(dtype.fields["local_ns"][1], 32)
+        self.assertEqual(dtype.fields["ask_volume"][1], 64)
 
     def test_load_book_tickers_reads_typed_binary(self):
         dtype = self.module.book_ticker_dtype()

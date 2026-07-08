@@ -192,6 +192,8 @@ TEST(BinanceFuturesMarketDataClientTest, EmitsBookTickerFromTextPayload) {
   EXPECT_EQ(consumer.last_book_ticker.id, 400900217);
   EXPECT_EQ(consumer.last_book_ticker.exchange_ns,
             1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_book_ticker.event_ns,
+            1568014460891LL * 1'000'000LL);
   EXPECT_EQ(consumer.last_book_ticker.local_ns, 999'000);
   EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_price, 25.3519);
   EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_volume, 31.21);
@@ -215,6 +217,8 @@ TEST(BinanceFuturesMarketDataClientTest,
   EXPECT_EQ(consumer.last_book_ticker.id, 400900217);
   EXPECT_EQ(consumer.last_book_ticker.exchange_ns,
             1568014460893LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_book_ticker.event_ns,
+            1568014460891LL * 1'000'000LL);
   EXPECT_EQ(consumer.last_book_ticker.local_ns, 999'000);
   EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_price, 25.3519);
   EXPECT_DOUBLE_EQ(consumer.last_book_ticker.bid_volume, 31.21);
@@ -237,7 +241,7 @@ TEST(BinanceFuturesMarketDataClientTest, EmitsTradeFromTextPayload) {
   EXPECT_EQ(consumer.last_trade.id, 7868321828LL);
   EXPECT_EQ(consumer.last_trade.side, aquila::OrderSide::kBuy);
   EXPECT_EQ(consumer.last_trade.exchange_ns, 1783228448495LL * 1'000'000LL);
-  EXPECT_EQ(consumer.last_trade.trade_ns, 1783228448495LL * 1'000'000LL);
+  EXPECT_EQ(consumer.last_trade.event_ns, 1783228448495LL * 1'000'000LL);
   EXPECT_EQ(consumer.last_trade.local_ns, 999'000);
   EXPECT_DOUBLE_EQ(consumer.last_trade.price, 62738.70);
   EXPECT_DOUBLE_EQ(consumer.last_trade.volume, 0.002);

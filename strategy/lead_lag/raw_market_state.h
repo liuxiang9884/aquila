@@ -13,6 +13,9 @@ namespace aquila::strategy::leadlag {
 
 [[nodiscard]] inline std::int64_t BookTickerEventTimeNs(
     const BookTicker& ticker) noexcept {
+  if (ticker.event_ns != 0) {
+    return ticker.event_ns;
+  }
   return ticker.exchange_ns != 0 ? ticker.exchange_ns : ticker.local_ns;
 }
 

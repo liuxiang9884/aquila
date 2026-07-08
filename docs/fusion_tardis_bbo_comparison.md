@@ -67,10 +67,10 @@ scripts/market_data/compare_fusion_tardis_book_ticker.py
 scripts/test/market_data/compare_fusion_tardis_book_ticker_test.py
 ```
 
-脚本对 `BookTicker` binary 使用当前 64-byte ABI，读取字段：
+脚本对 `BookTicker` binary 使用当前 72-byte ABI，读取字段：
 
 ```text
-id, symbol_id, exchange, exchange_ns, local_ns,
+id, symbol_id, exchange, exchange_ns, event_ns, local_ns,
 bid_price, bid_volume, ask_price, ask_volume
 ```
 
@@ -123,7 +123,8 @@ full_compare/<exchange>/<symbol>/*_missing_samples.csv
 
 Gate strict 对账差异很大，但 `±5ms` 同价量匹配可解释绝大多数 Tardis-only 差异。原因是当前 live
 Gate fusion 的 `BookTicker.exchange_ns` 使用 Gate SBE `bbo.time`，即 WebSocket server send
-timestamp；Tardis `book_ticker.timestamp` 的采集语义不保证与该字段逐毫秒一致。因此 Gate strict
+timestamp；`BookTicker.event_ns` 使用 Gate SBE `bbo.t`，即 orderbook engine update timestamp。
+Tardis `book_ticker.timestamp` 的采集语义不保证与这些字段逐毫秒一致。因此 Gate strict
 结果不能直接当作缺失判断，优先看 `tardis_only_after_near_records`。
 
 Binance 在本窗口内 `Tardis-only after near = 0`，即 Tardis 侧每条记录都能在 fusion canonical 数据中

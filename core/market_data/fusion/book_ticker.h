@@ -35,7 +35,7 @@ struct BookTickerFusionTraits {
   }
 
   [[nodiscard]] static std::int64_t EventNs(const BookTicker& ticker) noexcept {
-    return ticker.exchange_ns;
+    return ticker.event_ns != 0 ? ticker.event_ns : ticker.exchange_ns;
   }
 };
 

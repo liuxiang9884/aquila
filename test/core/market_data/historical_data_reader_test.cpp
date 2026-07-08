@@ -85,6 +85,7 @@ aquila::BookTicker MakeBookTicker(std::int64_t id, aquila::Exchange exchange) {
       .symbol_id = static_cast<std::int32_t>(100 + id),
       .exchange = exchange,
       .exchange_ns = 1'770'000'000'000'000'000 + id,
+      .event_ns = 1'770'000'000'000'010'000 + id,
       .local_ns = 1'770'000'000'000'100'000 + id,
       .bid_price = 65'000.25 + static_cast<double>(id),
       .bid_volume = 10.5 + static_cast<double>(id),
@@ -102,7 +103,7 @@ aquila::Trade MakeTrade(std::int64_t id, aquila::Exchange exchange) {
                           : aquila::OrderSide::kSell,
       .reserved = 0,
       .exchange_ns = 1'770'000'000'001'000'000 + id,
-      .trade_ns = 1'770'000'000'001'100'000 + id,
+      .event_ns = 1'770'000'000'001'100'000 + id,
       .local_ns = 1'770'000'000'001'200'000 + id,
       .price = 66'000.25 + static_cast<double>(id),
       .volume = 0.001 + static_cast<double>(id) * 0.0001,
@@ -254,6 +255,7 @@ void ExpectBookTickerEquals(const aquila::BookTicker& actual,
   EXPECT_EQ(actual.symbol_id, expected.symbol_id);
   EXPECT_EQ(actual.exchange, expected.exchange);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.bid_price, expected.bid_price);
   EXPECT_DOUBLE_EQ(actual.bid_volume, expected.bid_volume);
@@ -269,7 +271,7 @@ void ExpectTradeEquals(const aquila::Trade& actual,
   EXPECT_EQ(actual.side, expected.side);
   EXPECT_EQ(actual.reserved, expected.reserved);
   EXPECT_EQ(actual.exchange_ns, expected.exchange_ns);
-  EXPECT_EQ(actual.trade_ns, expected.trade_ns);
+  EXPECT_EQ(actual.event_ns, expected.event_ns);
   EXPECT_EQ(actual.local_ns, expected.local_ns);
   EXPECT_DOUBLE_EQ(actual.price, expected.price);
   EXPECT_DOUBLE_EQ(actual.volume, expected.volume);
@@ -525,6 +527,7 @@ TEST(HistoricalDataReaderTest, DoesNotModifyRecordFields) {
       .symbol_id = 42,
       .exchange = aquila::Exchange::kBinance,
       .exchange_ns = 1'770'000'000'123'456'789,
+      .event_ns = 1'770'000'000'123'456'700,
       .local_ns = 1'770'000'000'223'456'789,
       .bid_price = 12345.125,
       .bid_volume = 0.875,
