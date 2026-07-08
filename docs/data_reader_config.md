@@ -260,7 +260,14 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 
 ## SHM 到 replay binary recorder
 
-`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance / Bitget `BookTicker` SHM 和 Gate / Binance `Trade` SHM 读取数据，并分别输出 typed binary format v1。`BookTicker` 和 `Trade` 的每个 `.bin` 文件都以 16-byte `MarketDataBinaryHeader` 开头，随后是连续 payload records；文件大小包含 header，record 数量为 `(file_size - 16) / record_size`。header-only 文件表示 0 records。`BookTicker` 输出可直接作为 `feed = "book_ticker"` 的 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用；`Trade` 输出可作为 `feed = "trade"` 的单 source `binary_file` 交给 `HistoricalDataReader` / `data_reader_probe` 使用。LeadLag replay 当前仍不消费 trade source。
+`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance / Bitget `BookTicker` SHM 和
+Gate / Binance / Bitget `Trade` SHM 读取数据，并分别输出 typed binary format v1。`BookTicker` 和
+`Trade` 的每个 `.bin` 文件都以 16-byte `MarketDataBinaryHeader` 开头，随后是连续 payload records；
+文件大小包含 header，record 数量为 `(file_size - 16) / record_size`。header-only 文件表示 0
+records。`BookTicker` 输出可直接作为 `feed = "book_ticker"` 的 `binary_file` source 交给
+`HistoricalDataReader` / `lead_lag_replay` 使用；`Trade` 输出可作为 `feed = "trade"` 的单 source
+`binary_file` 交给 `HistoricalDataReader` / `data_reader_probe` 使用。LeadLag replay 当前仍不消费
+trade source。
 
 基础示例：
 
@@ -376,8 +383,8 @@ scripts/market_data/manifest_to_data_reader_config.py \
 
 当前 `BookTicker` 同时保留交易所发布/包装时间和真实行情事件时间：
 
-- `exchange_ns` 表示交易所发布/包装时间：Gate SBE `bbo.time * 1000` 是 WebSocket server send timestamp；Binance book ticker `E * 1'000'000` 是 Binance event time；Bitget `books1` 使用 `sts * 1000`。
-- `event_ns` 表示真实 BBO / orderbook 事件时间：Gate SBE `bbo.t * 1000` 是 orderbook engine update timestamp；Binance book ticker `T * 1'000'000` 是 transaction time；Bitget `books1` 使用 `ts * 1000`，缺少 `sts` 的 probe frame 会写 `exchange_ns = event_ns`。
+- `exchange_ns` 表示交易所发布/包装时间：Gate SBE `bbo.time * 1000` 是 WebSocket server send timestamp；Binance book ticker `E * 1'000'000` 是 Binance event time；Bitget `books1` / `publicTrade` 使用 `sts * 1000`。
+- `event_ns` 表示真实 BBO / trade 事件时间：Gate SBE `bbo.t * 1000` 是 orderbook engine update timestamp；Binance book ticker `T * 1'000'000` 是 transaction time；Bitget `books1` / `publicTrade` 使用 `ts * 1000`，缺少 `sts` 的 probe frame 会写 `exchange_ns = event_ns`。
 - Tardis CSV / HDF 转换链路没有独立发布/事件两个时间源，当前把同一个源 timestamp 同时写入 `exchange_ns` 和 `event_ns`。
 
 ## Diagnostics

@@ -123,8 +123,8 @@ CSV；outlier 样本直接写入当前 data session 的 Nova log，log key 为
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `book_ticker count` | data session Nova log | stable | count | 每发布 1000 条 `BookTicker` 输出一次采样日志，用于确认 data session 仍在发布 BBO。 | 工具日志 schema 被统一 metrics 取代后重审。 |
-| `trade count` | `gate_data_session` Nova log | stable | count | 每发布 1000 条 `Trade` 输出一次采样日志，用于确认 Gate SBE `publicTrade` feed 仍在发布。 | 同上。 |
-| `book_tickers` / `trades` | data session result summary Nova log | stable | count | data session 退出时汇总本进程已发布到 sink 的 BBO / trade 数量；Bitget 当前只输出 `book_tickers`。 | 同上。 |
+| `trade count` | data session Nova log | stable | count | 每发布 1000 条 `Trade` 输出一次采样日志，用于确认 Gate / Bitget SBE `publicTrade` 或 Binance raw trade feed 仍在发布。 | 同上。 |
+| `book_tickers` / `trades` | data session result summary Nova log | stable | count | data session 退出时汇总本进程已发布到 sink 的 BBO / trade 数量。 | 同上。 |
 
 ## DataReader diagnostics
 

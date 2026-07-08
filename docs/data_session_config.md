@@ -397,7 +397,7 @@ Bitget UTA SBE 行情字段：
 | 字段 | 默认值 | 含义 |
 | --- | --- | --- |
 | `inst_type` | `usdt-futures` | Bitget UTA instrument type，写入 subscribe args 的 `instType`。 |
-| `feeds` | `["book_ticker"]` | 当前订阅的 Bitget public feed 列表；当前只支持 `book_ticker`，即 SBE `books1`。 |
+| `feeds` | `["book_ticker"]` | 当前订阅的 Bitget public feed 列表；支持 `book_ticker` / SBE `books1` 和 `trade` / SBE `publicTrade`。 |
 | `feed` | `book_ticker` | legacy single-feed alias，仅在未配置 `feeds` 时接受；`feed` 和 `feeds` 同时出现会被拒绝。 |
 
 Bitget 当前实现入口：
@@ -429,8 +429,10 @@ Bitget `BTCUSDT`。当前 target 默认是 `/v3/ws/public/sbe`，仓库示例在
 
 Bitget `books1` 字段映射为：`seq -> BookTicker.id`，`sts * 1000 -> exchange_ns`，
 `ts * 1000 -> event_ns`，data session ingress `CLOCK_REALTIME -> local_ns`。历史 probe /
-fixture 中如果缺少 `sts`，decoder 写 `exchange_ns = event_ns`。Bitget data session 发布同一个
-72-byte `aquila::BookTicker` ABI；当前不发布 `Trade`。
+fixture 中如果缺少 `sts`，decoder 写 `exchange_ns = event_ns`。Bitget `publicTrade` 映射为：
+`execId -> Trade.id`，`side=0/1 -> Buy/Sell`，`sts * 1000 -> exchange_ns`，`ts * 1000 -> event_ns`，
+`price/size * 10^exponent -> price/volume`，SBE group index/count 写入 `batch_index` /
+`batch_count`。
 
 ## WebSocket Endpoint
 

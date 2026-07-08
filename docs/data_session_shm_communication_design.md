@@ -3,9 +3,9 @@
 ## 目的
 
 Gate / Binance / Bitget data session 通过共享内存把标准化 `aquila::BookTicker` 发布给
-strategy、recorder、TUI 和 probe 进程。Gate SBE data session 和 Binance raw trade data session
-还可以在同一个 SHM object 中发布标准化 `aquila::Trade`；Bitget 当前只接入 `books1` BBO，不发布
-`Trade`。当前只支持固定大小 typed record，不引入通用 event ring 或 payload pool。
+strategy、recorder、TUI 和 probe 进程。Gate SBE data session、Binance raw trade data session 和
+Bitget UTA SBE `publicTrade` data session 还可以在同一个 SHM object 中发布标准化
+`aquila::Trade`。当前只支持固定大小 typed record，不引入通用 event ring 或 payload pool。
 
 ## 当前方案
 
@@ -107,9 +107,9 @@ void UpdateHeartbeatNs(std::uint64_t heartbeat_ns) noexcept;
 - 不因 reader 慢阻塞 WebSocket read path。
 
 Gate / Binance / Bitget data session 可用 slot-writer fast path，直接在 queue producer slot 中解码
-`BookTicker` 或 `Trade`。Gate `Trade` 来自 SBE `publicTrade` entry，生产路径不把 SBE repeating
-group 先 materialize 成 `std::array`、`std::vector` 或 batch container；Binance raw trade 是一条
-JSON 对应一笔 `Trade`。
+`BookTicker` 或 `Trade`。Gate / Bitget `Trade` 来自 SBE `publicTrade` entry，生产路径不把 SBE
+repeating group 先 materialize 成 `std::array`、`std::vector` 或 batch container；Binance raw trade
+是一条 JSON 对应一笔 `Trade`。
 
 ## Reader 协议
 
@@ -168,8 +168,8 @@ remove_existing = false
 ```
 
 `book_ticker_channel_name` 和 `trade_channel_name` 是同一个 SHM object 内的两个独立 typed
-`SPBroadcastQueue` channel。Bitget 当前只启用 `book_ticker` channel；`trade_channel_name` 只是沿用
-共享配置结构。旧 `channel_name` 仍作为 Gate / Binance / Bitget `book_ticker_channel_name` 的
+`SPBroadcastQueue` channel。Bitget 可按 `feeds` 启用 `book_ticker`、`trade` 或两者。旧
+`channel_name` 仍作为 Gate / Binance / Bitget `book_ticker_channel_name` 的
 legacy alias；如果同名 SHM object 由旧单 channel 版本创建，需要在确认 reader 已停止后临时显式设置
 `remove_existing=true`，或使用新的 `shm_name` 重建 combined layout。
 
@@ -192,7 +192,7 @@ reader 配置见 `docs/data_reader_config.md`：
 | `core/market_data/historical_data_reader.h` | binary replay reader。 |
 | `tools/gate/data_session.cpp` | Gate data session publisher。 |
 | `tools/binance/data_session.cpp` | Binance data session publisher。 |
-| `tools/bitget/bitget_data_session.cpp` | Bitget `books1` data session publisher。 |
+| `tools/bitget/bitget_data_session.cpp` | Bitget `books1` / `publicTrade` data session publisher。 |
 | `tools/market_data/data_reader_recorder.cpp` | SHM 到 `BookTicker` / `Trade` 独立 replay binary recorder。 |
 | `monitor/market_data/market_data_thread.*` | TUI 专用 market data reader。 |
 
@@ -205,8 +205,9 @@ reader 配置见 `docs/data_reader_config.md`：
 - Gate / Binance / Bitget live data session 默认使用 `CLOCK_REALTIME` 记录 `BookTicker.local_ns`，语义是 data session 接入 WebSocket frame 后、进入交易所 parser / decoder 前的本机 Unix epoch ns。
 - 比较不同 Gate private IP 行情延迟时，Gate `exchange_ns` 是 SBE `bbo.time` 的 WebSocket server send timestamp，`event_ns` 是 `bbo.t` 的 orderbook engine update timestamp；需要按 data session 连接记录 endpoint / owner CPU，再统计 `exchange_ns -> local_ns`、SHM publish / reader 侧时间、`skipped` / `overruns`。该差值仍受 Gate / 本机时钟偏移和交易所 timestamp 语义影响，只作路径诊断，不单独证明真实单程网络延迟。
 - Bitget `books1` 中 `exchange_ns = sts * 1000`，`event_ns = ts * 1000`，`id = seq`；历史 probe /
-  fixture 缺少 `sts` 时 decoder 写 `exchange_ns = event_ns`。Bitget 同样发布 72-byte
-  `aquila::BookTicker` ABI。
+  fixture 缺少 `sts` 时 decoder 写 `exchange_ns = event_ns`。Bitget `publicTrade` 中
+  `exchange_ns = sts * 1000`，`event_ns = ts * 1000`，`id = execId`，group index/count 写入
+  `batch_index` / `batch_count`。
 
 ## Data Session 延迟诊断分层
 
