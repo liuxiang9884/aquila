@@ -10,6 +10,7 @@ namespace aquila::bitget {
 
 inline constexpr std::uint16_t kBitgetSbeSchemaId = 1;
 inline constexpr std::uint16_t kBitgetSbeSchemaVersion = 2;
+inline constexpr std::uint16_t kBitgetSbeLiveSchemaVersion = 3;
 inline constexpr std::uint16_t kBitgetSbeBookTickerTemplateId = 1002;
 
 enum class BitgetSbeMessageType : std::uint8_t {
@@ -41,6 +42,11 @@ inline BitgetSbeMessageType BitgetSbeMessageTypeFromTemplateId(
   }
 }
 
+inline bool IsSupportedBitgetSbeSchemaVersion(std::uint16_t version) noexcept {
+  return version == kBitgetSbeSchemaVersion ||
+         version == kBitgetSbeLiveSchemaVersion;
+}
+
 inline SbeDispatchResult DispatchBitgetSbeMessage(
     const SbeMessageHeader& header) noexcept {
   if (header.schema_id != kBitgetSbeSchemaId) {
@@ -49,7 +55,7 @@ inline SbeDispatchResult DispatchBitgetSbeMessage(
             .message_type = BitgetSbeMessageType::kUnknown};
   }
 
-  if (header.version != kBitgetSbeSchemaVersion) {
+  if (!IsSupportedBitgetSbeSchemaVersion(header.version)) {
     return {.status = SbeDispatchStatus::kUnsupportedSchemaVersion,
             .header = header,
             .message_type = BitgetSbeMessageType::kUnknown};

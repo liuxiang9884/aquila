@@ -39,7 +39,9 @@ wss://vip-ws-uta.bitget.com:443/v3/ws/public/sbe
 
 ## 字段映射
 
-`books1` SBE header 固定使用 schema id `1`、schema version `2`、template id `1002`。dispatcher 入口：
+`books1` SBE header 使用 schema id `1`、template id `1002`。本地 fixture 覆盖 schema version
+`2`，2026-07-08 live smoke 观察到 public endpoint 推送 schema version `3`，dispatcher 当前接受
+version `2` 和 `3`。入口：
 
 ```text
 exchange/bitget/sbe/message_header.h

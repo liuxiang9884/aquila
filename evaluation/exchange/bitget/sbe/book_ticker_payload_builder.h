@@ -15,6 +15,7 @@ namespace aquila::bitget::evaluation {
 struct BookTickerPayloadOptions {
   std::uint16_t block_length{59};
   std::uint16_t template_id{kBitgetSbeBookTickerTemplateId};
+  std::uint16_t schema_version{kBitgetSbeSchemaVersion};
   std::uint64_t ts{1'700'000'000'000'001};
   std::int64_t bid1_price{6'569'038};
   std::int64_t bid1_size{15'000};
@@ -60,7 +61,7 @@ std::string_view BuildBookTickerPayload(
   offset += sizeof(std::uint16_t);
   WriteLittleEndian<std::uint16_t>(*buffer, offset, kBitgetSbeSchemaId);
   offset += sizeof(std::uint16_t);
-  WriteLittleEndian<std::uint16_t>(*buffer, offset, kBitgetSbeSchemaVersion);
+  WriteLittleEndian<std::uint16_t>(*buffer, offset, options.schema_version);
   offset += sizeof(std::uint16_t);
 
   WriteLittleEndian<std::uint64_t>(*buffer, offset, options.ts);

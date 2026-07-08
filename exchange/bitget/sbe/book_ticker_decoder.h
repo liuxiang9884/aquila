@@ -43,7 +43,7 @@ inline bool IsBookTickerHeader(const SbeMessageHeader& header) noexcept {
   return header.block_length >= kBookTickerBlockLengthWithoutSts &&
          header.template_id == kBitgetSbeBookTickerTemplateId &&
          header.schema_id == kBitgetSbeSchemaId &&
-         header.version == kBitgetSbeSchemaVersion;
+         IsSupportedBitgetSbeSchemaVersion(header.version);
 }
 
 inline size_t MinBookTickerPayloadBytes(
@@ -96,13 +96,19 @@ inline bool HasCompleteBookTickerPayload(
 
 inline double DecimalExponentScale(std::int8_t exponent) noexcept {
   static constexpr double kNegativePowersOfTen[] = {
-      1.0,       0.1,        0.01,        0.001,        0.0001,
-      0.00001,   0.000001,   0.0000001,   0.00000001,   0.000000001,
-      0.0000000001};
-  static constexpr double kPositivePowersOfTen[] = {
-      1.0,       10.0,       100.0,       1'000.0,      10'000.0,
-      100'000.0, 1'000'000.0, 10'000'000.0, 100'000'000.0, 1'000'000'000.0,
-      10'000'000'000.0};
+      1.0,      0.1,       0.01,       0.001,       0.0001,      0.00001,
+      0.000001, 0.0000001, 0.00000001, 0.000000001, 0.0000000001};
+  static constexpr double kPositivePowersOfTen[] = {1.0,
+                                                    10.0,
+                                                    100.0,
+                                                    1'000.0,
+                                                    10'000.0,
+                                                    100'000.0,
+                                                    1'000'000.0,
+                                                    10'000'000.0,
+                                                    100'000'000.0,
+                                                    1'000'000'000.0,
+                                                    10'000'000'000.0};
   static constexpr size_t kPowersOfTenCount =
       sizeof(kNegativePowersOfTen) / sizeof(kNegativePowersOfTen[0]);
   static_assert(kPowersOfTenCount ==
@@ -132,7 +138,8 @@ inline std::string_view ExtractTrustedBookTickerSymbol(
   return symbol;
 }
 
-// Caller must pass a payload/header pair already accepted by DispatchSbeMessage.
+// Caller must pass a payload/header pair already accepted by
+// DispatchSbeMessage.
 inline void DecodeBookTickerWithHeader(std::string_view payload,
                                        const SbeMessageHeader& header,
                                        std::int64_t local_ns,
@@ -147,15 +154,13 @@ inline void DecodeBookTickerWithHeader(std::string_view payload,
   const std::int64_t bid_price =
       detail::ReadLittleEndianUnchecked<std::int64_t>(
           payload, detail::kBookTickerBidPriceOffset);
-  const std::int64_t bid_size =
-      detail::ReadLittleEndianUnchecked<std::int64_t>(
-          payload, detail::kBookTickerBidSizeOffset);
+  const std::int64_t bid_size = detail::ReadLittleEndianUnchecked<std::int64_t>(
+      payload, detail::kBookTickerBidSizeOffset);
   const std::int64_t ask_price =
       detail::ReadLittleEndianUnchecked<std::int64_t>(
           payload, detail::kBookTickerAskPriceOffset);
-  const std::int64_t ask_size =
-      detail::ReadLittleEndianUnchecked<std::int64_t>(
-          payload, detail::kBookTickerAskSizeOffset);
+  const std::int64_t ask_size = detail::ReadLittleEndianUnchecked<std::int64_t>(
+      payload, detail::kBookTickerAskSizeOffset);
   const std::int8_t price_exponent =
       detail::ReadLittleEndianUnchecked<std::int8_t>(
           payload, detail::kBookTickerPriceExponentOffset);

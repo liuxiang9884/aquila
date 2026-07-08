@@ -27,8 +27,8 @@ bool DecodeBookTickerForTest(std::string_view payload, std::int64_t local_ns,
     return false;
   }
 
-  aquila::bitget::DecodeBookTickerWithHeader(payload, dispatch.header,
-                                             local_ns, symbol_id, *out);
+  aquila::bitget::DecodeBookTickerWithHeader(payload, dispatch.header, local_ns,
+                                             symbol_id, *out);
   return true;
 }
 
@@ -106,7 +106,26 @@ TEST(BitgetSbeBookTickerDecoderTest, AcceptsLiveObservedBlockLength64) {
   EXPECT_EQ(ticker.exchange, aquila::Exchange::kBitget);
 }
 
-TEST(BitgetSbeBookTickerDecoderTest, FallsBackExchangeTimeToEventTimeWithoutSts) {
+TEST(BitgetSbeBookTickerDecoderTest, AcceptsLiveSchemaVersion3) {
+  std::array<char, 128> buffer{};
+  const std::string_view payload =
+      aquila::bitget::evaluation::BuildBookTickerPayload(
+          &buffer, "BTCUSDT",
+          aquila::bitget::evaluation::BookTickerPayloadOptions{
+              .block_length = 64,
+              .schema_version = aquila::bitget::kBitgetSbeLiveSchemaVersion,
+          });
+
+  aquila::BookTicker ticker{};
+
+  ASSERT_TRUE(DecodeBookTickerForTest(payload, 999'000, 11, &ticker));
+  EXPECT_EQ(ticker.id, 42);
+  EXPECT_EQ(ticker.symbol_id, 11);
+  EXPECT_EQ(ticker.exchange, aquila::Exchange::kBitget);
+}
+
+TEST(BitgetSbeBookTickerDecoderTest,
+     FallsBackExchangeTimeToEventTimeWithoutSts) {
   std::array<char, 128> buffer{};
   const std::string_view payload =
       aquila::bitget::evaluation::BuildBookTickerPayload(
@@ -142,6 +161,7 @@ TEST(BitgetSbeBookTickerDecoderTest, RejectsShortPayloadForTestHelper) {
 
   EXPECT_FALSE(DecodeBookTickerForTest(payload.substr(0, payload.size() - 1),
                                        999'000, 11, &ticker));
-  EXPECT_EQ(ExtractBookTickerSymbolForTest(payload.substr(0, payload.size() - 1)),
-            "");
+  EXPECT_EQ(
+      ExtractBookTickerSymbolForTest(payload.substr(0, payload.size() - 1)),
+      "");
 }

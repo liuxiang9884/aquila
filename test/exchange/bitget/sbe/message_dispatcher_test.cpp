@@ -17,8 +17,7 @@ void WriteLittleEndian(std::array<char, 16>& buffer, size_t offset,
 
 std::string_view BuildHeader(std::array<char, 16>* buffer,
                              std::uint16_t block_length,
-                             std::uint16_t template_id,
-                             std::uint16_t schema_id,
+                             std::uint16_t template_id, std::uint16_t schema_id,
                              std::uint16_t version) noexcept {
   WriteLittleEndian(*buffer, 0, block_length);
   WriteLittleEndian(*buffer, 2, template_id);
@@ -51,8 +50,8 @@ TEST(BitgetSbeMessageDispatcherTest, RequiresFullMessageHeader) {
                   aquila::bitget::kBitgetSbeSchemaVersion);
   aquila::bitget::SbeMessageHeader header{};
 
-  EXPECT_FALSE(aquila::bitget::ParseSbeMessageHeader(payload.substr(0, 7),
-                                                     &header));
+  EXPECT_FALSE(
+      aquila::bitget::ParseSbeMessageHeader(payload.substr(0, 7), &header));
 }
 
 TEST(BitgetSbeMessageDispatcherTest, DispatchesBooks1Template) {
@@ -61,6 +60,22 @@ TEST(BitgetSbeMessageDispatcherTest, DispatchesBooks1Template) {
       .template_id = 1002,
       .schema_id = 1,
       .version = 2,
+  };
+
+  const aquila::bitget::SbeDispatchResult result =
+      aquila::bitget::DispatchBitgetSbeMessage(header);
+
+  EXPECT_EQ(result.status, aquila::bitget::SbeDispatchStatus::kReady);
+  EXPECT_EQ(result.message_type,
+            aquila::bitget::BitgetSbeMessageType::kBookTicker);
+}
+
+TEST(BitgetSbeMessageDispatcherTest, DispatchesLiveSchemaVersion3Books1) {
+  const aquila::bitget::SbeMessageHeader header{
+      .block_length = 64,
+      .template_id = aquila::bitget::kBitgetSbeBookTickerTemplateId,
+      .schema_id = aquila::bitget::kBitgetSbeSchemaId,
+      .version = aquila::bitget::kBitgetSbeLiveSchemaVersion,
   };
 
   const aquila::bitget::SbeDispatchResult result =
