@@ -23,7 +23,6 @@
 - `test/strategy/lead_lag_strategy_interface_test.cpp`：strategy 层 `parallel_limit`、fanout child、rejected intent 等行为测试。
 - `docs/gate_order_gateway_shm_design.md` 的 “Strategy Fanout 语义”：当前文档仍以 `parent_id` 描述 fanout child 归组；本次迁移需要同步改成 `group_id` / `group_index`。
 - `docs/strategy_order_component_model.md` 的 “多路 OrderSession 扩展边界”：说明 gateway 不解释 parent signal / child group / winner / overfill。
-- `docs/superpowers/plans/2026-06-30-gate-order-gateway-shm.md`：历史实现 plan 中的 fanout strategy tests 和 `execute.parallel * order_session_fanout` bounded scan 要求。
 
 ## 迁移边界
 

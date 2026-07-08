@@ -1,6 +1,6 @@
 # 交易所撮合与成交率测试记录
 
-本文记录我们围绕 Gate 撮合 / fillability 做过的实盘小实验、与 LeadLag live 结果的对比、当前推断和后续可验证做法。这里不作为实盘启动 runbook；真实下单仍按 `docs/lead_lag_live_operations_pipeline.md` 和对应 probe 文档执行。
+本文记录我们围绕 Gate 撮合 / fillability 做过的实盘小实验、与 LeadLag live 结果的对比、当前推断和后续可验证做法。这里不作为实盘启动 runbook；真实下单仍按 `docs/lead_lag_live_operations_pipeline.md` 执行，并在启动前重新生成或复核当次 probe 配置。
 
 ## 口径
 
@@ -11,13 +11,38 @@
 - `exchange_lifecycle_ns`：`latency.csv` 中 Gate 同一交易所时钟域内的订单生命周期差值。IOC 场景下这个值越大，越说明撮合 / 结果返回发生在更晚的交易所时间窗口。
 - `row fill rate` 和 `group fill rate` 分开看。前者按 child order 行统计，后者按 parent group 是否任一路成交统计。
 
+## `fill_probe_strategy` 工具边界
+
+`tools/gate/fill_probe/*` 是 Gate `BTC_USDT` 最小量成交探针，用于授权后测量 fusion BBO 对手价附近的 GTC / IOC 成交行为。它不是常驻策略，不承担自动风控或 emergency flatten。
+
+安全边界：
+
+- 仅面向 `BTC_USDT`；凭据使用 `TEST_KEY` / `TEST_SECRET` 环境变量，不在配置或日志中写入 secret。
+- 单个 entry order 的名义金额由 instrument catalog、当前 entry price 和 `min_quantity` 计算，配置上限为 `max_entry_notional_usdt=10`。
+- `max_nodes` 只限制开仓 node；close order、close retry、cancel command 不计入该上限。
+- 一个 node 同时提交 route 0 GTC 和 route 1 IOC。若两路都成交，临时 exposure 可能接近单笔上限的 2 倍。
+- close 使用 reduce-only IOC aggressive limit；运行中不做周期性 REST 对账。若 node 超时无法回到 flat，工具写出 `node_unresolved` 并退出，不自动 flatten。
+- 未经用户明确授权，不允许启动真实 order gateway / feedback / probe 组合进行真实交易。
+
+配置状态：
+
+- 旧 `config/fill_probe/gate_btc_fill_probe_20260703.toml` 和 `config/fill_probe/gate_btc_binance_trigger_gate_quote_probe_20260703.toml` 是 2026-07-03 / 2026-07-04 probe 的历史配置，仍指向 2026-07-01 fusion SHM 名。相关 A/B 输出和数据文件已在 2026-07-08 清理，不能直接作为当前启动入口。
+- 新 probe 必须先按当次 live fusion / data session SHM、order gateway SHM、feedback SHM、CPU binding、run dir 和名义金额限制生成 scratch config，并先跑 `--validate-config`、gateway / feedback `--validate-only`、REST read-only flat check 和 `--preflight-only`。
+
+CSV / log 口径：
+
+- `node.csv`：node 级决策和结果，包含 BBO id / timestamp、freshness、entry quantity / notional、status、skip / unresolved reason；cross-exchange 模式额外写 Binance trigger 与 Gate quote 的 timestamp / freshness / delta。
+- `lifecycle.csv`：每个 node 的 GTC / IOC entry 与 close 生命周期，包含 local order id、route、TIF、价格、数量、submit / finish timestamp、entry result、filled qty、avg fill price 和 close attribution。
+- `order_event.csv`：order gateway response 和 private feedback 明细，按 `local_order_id`、`parent_id`、`route_id` 关联。
+- 诊断字段和 log key 见 `docs/diagnostic_fields.md` 的 “Gate BTC Fill Probe”。
+
 ## 2026-07-04 BTC Binance-trigger / Gate-quote probe
 
 数据来源：
 
 - run dir：`/home/liuxiang/tmp/20260704_071322_gate_btc_binance_trigger_gate_quote_probe_10m_100nodes`
 - scratch config：`/home/liuxiang/tmp/gate_btc_binance_trigger_gate_quote_probe_20260704_071322_10m100.toml`
-- 代码 / 配置来源：`docs/gate_btc_fill_probe.md`
+- 工具入口：`tools/gate/fill_probe/*`
 
 实验设置：
 
@@ -76,8 +101,7 @@ Probe entry latency：
 
 数据来源：
 
-- A 组 run dir：`/home/liuxiang/tmp/20260701_102201_30symbols_ogw_24h/`
-- final stopped report：`/home/liuxiang/tmp/aquila_partial_reports/20260701_102201_30symbols_ogw_24h_stopped_20260702_032345/`
+- A 组原始 tmp run dir 和 stopped report 已在 2026-07-08 按用户要求清理，本文仅保留当时已摘录的 summary 数值和口径。
 - 主要 CSV：`signal.csv`、`order_detail.csv`、`latency.csv`
 - 策略配置：`config/strategies/lead_lag_30symbols_fusion_2bps_2bps_5bps_lag200_order_gateway_20260701.toml`
 

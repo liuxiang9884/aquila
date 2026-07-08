@@ -493,7 +493,7 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 - `tools/gate/fill_probe/csv_writer.cpp`
 - `tools/gate/fill_probe/state_machine.h`
 - `tools/gate/fill_probe/state_machine.cpp`
-- `docs/gate_btc_fill_probe.md`
+- `docs/exchange_matching_fillability_notes.md`
 
 该工具是 Gate `BTC_USDT` 最小量成交探针，只在授权 live probe 中产生真实交易行为。未取得 live run
 证据前，不应基于 validate-only、preflight-only 或 dry-run 输出宣称成交率、fillability、延迟收益或交易所行为结论。
