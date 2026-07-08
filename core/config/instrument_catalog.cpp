@@ -48,6 +48,10 @@ void MaybeLogError(std::string_view message) {
     *exchange = Exchange::kBinance;
     return true;
   }
+  if (text == "bitget") {
+    *exchange = Exchange::kBitget;
+    return true;
+  }
   return false;
 }
 
