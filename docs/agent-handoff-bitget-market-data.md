@@ -28,6 +28,13 @@ config/data_sessions/bitget_data_session.toml
 wss://vip-ws-uta.bitget.com:443/v3/ws/public/sbe
 ```
 
+Bitget 还提供 high speed public SBE endpoint。当前仓库没有把它写入默认配置；如需测试，
+在 scratch config 中覆盖 `[data_session.websocket.endpoint]`：
+
+```text
+wss://vip-ws-uta-pub-a.bitget.com:443/v3/ws/public/sbe
+```
+
 订阅 payload 由 `exchange/bitget/market_data/subscription.h` 生成，`books1` 示例：
 
 ```json
@@ -226,3 +233,52 @@ git diff --check
 
 Live smoke 只有在网络可用且不会影响其他进程时运行；失败时记录 endpoint、订阅 payload、SBE
 header / template、错误日志，不把 dry-run 结果当作 live 通过。
+
+## 2026-07-08 BBO Endpoint A/B 结果
+
+本次只测试 public SBE `books1` / `BookTicker` 行情，不涉及 REST、private feed、order 或交易端。
+结果只能说明行情接入和 fusion pipeline 的表现，不能外推为 fillability、PnL 或订单收益。
+
+测试架构：
+
+- normal endpoint：`wss://vip-ws-uta.bitget.com:443/v3/ws/public/sbe`
+- high speed endpoint：`wss://vip-ws-uta-pub-a.bitget.com:443/v3/ws/public/sbe`
+- 订阅 symbols：`BTCUSDT`、`ETHUSDT`、`SOLUSDT`
+- 两边同时启动，各自 1 个 `bitget_data_fusion` 进程、4 路 source session、1 条 BBO fusion、5 个
+  BBO recorder（4 个 source recorder + 1 个 canonical recorder）
+- normal critical CPUs：`16-20`；high speed critical CPUs：`21-25`
+- recorder 使用测试区 CPU，架构两边一致；recorders 在 fusion 启动约 12 秒后以 `latest` 接入
+- run dir：`/home/liuxiang/tmp/20260708_125137_bitget_bbo_normal_vs_highspeed_n4_30m_ab`
+
+运行状态：
+
+- 两边 fusion 同时启动于 `2026-07-08T12:52:21Z`，均在 `2026-07-08T13:22:22Z` 以 status `0` 自然退出。
+- 10 个 recorder 均在 `2026-07-08T13:23:09Z` 正常退出，`result=ok stop_reason=signal`。
+- 两边 fusion 都是 `result=ok`，`fusion_metadata_write_errors=0`，`fusion_flush_ok=true`。
+- 所有 source / canonical recorder 均为 `skipped=0 overruns=0`，未观察到错误日志。
+
+关键结果：
+
+| 指标 | normal | high speed |
+| --- | ---: | ---: |
+| fusion metadata published | 876,555 | 870,282 |
+| canonical recorded | 872,736 | 866,464 |
+| fusion latency p50 | 0.872 ms | 0.910 ms |
+| fusion latency p95 | 2.105 ms | 3.645 ms |
+| fusion latency p99 | 2.650 ms | 14.193 ms |
+| fusion latency p99.9 | 3.032 ms | 40.289 ms |
+| fusion latency max | 5.607 ms | 55.122 ms |
+| fusion latency mean | 0.945 ms | 1.401 ms |
+
+Fusion hop 仍为微秒级，不是主要延迟来源：
+
+| 指标 | normal hop | high speed hop |
+| --- | ---: | ---: |
+| p50 | 0.507 us | 0.520 us |
+| p95 | 0.887 us | 1.415 us |
+| p99 | 4.161 us | 5.105 us |
+| p99.9 | 9.065 us | 11.261 us |
+
+结论：在这次 30 分钟同步 A/B 中，high speed endpoint 没有带来 BBO 延迟收益，消息量也没有明显更多；
+normal endpoint 的 p95、p99、p99.9 和 max 明显更稳。后续如需继续评估，应保留同构启动、同 symbols、
+BBO-only、同 recorder 结构和独立 CPU 绑定，并把结论限定为行情 pipeline 证据。
