@@ -172,7 +172,8 @@ std::vector<RecordT> ReadTypedRecords(const std::filesystem::path& output_path,
   EXPECT_TRUE(input.is_open());
   const md::MarketDataBinaryHeader header =
       md::ReadMarketDataBinaryHeader(input, output_path);
-  EXPECT_NO_THROW(md::ValidateMarketDataBinaryHeader(header, feed, output_path));
+  EXPECT_NO_THROW(
+      md::ValidateMarketDataBinaryHeader(header, feed, output_path));
   EXPECT_GE(size, static_cast<std::uintmax_t>(header.header_size));
   EXPECT_EQ((size - header.header_size) % sizeof(RecordT), 0U);
   std::vector<RecordT> records((size - header.header_size) / sizeof(RecordT));
@@ -220,6 +221,90 @@ std::vector<std::string> ReadLines(const std::filesystem::path& path) {
   return lines;
 }
 
+std::filesystem::path SourcePath(std::string_view path) {
+  return std::filesystem::path{AQUILA_SOURCE_DIR} / path;
+}
+
+struct ExpectedBitgetRecorderConfig {
+  std::string_view path;
+  std::string_view reader_name;
+  std::string_view source_name;
+  std::string_view shm_name;
+  std::string_view output_dir;
+  std::string_view file_prefix;
+  std::string_view manifest_path;
+};
+
+std::vector<ExpectedBitgetRecorderConfig> ExpectedBitgetRecorderConfigs() {
+  return {
+      ExpectedBitgetRecorderConfig{
+          .path = "config/data_readers/"
+                  "bitget_book_ticker_fusion_canonical_recorder.toml",
+          .reader_name = "bitget_book_ticker_fusion_canonical_recorder",
+          .source_name = "bitget_book_ticker_fusion_canonical",
+          .shm_name = "aquila_bitget_book_ticker_fusion",
+          .output_dir = "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+                        "canonical/book_ticker_segments",
+          .file_prefix = "bitget_book_ticker_fusion_canonical",
+          .manifest_path =
+              "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+              "canonical/book_ticker_manifest.jsonl",
+      },
+      ExpectedBitgetRecorderConfig{
+          .path = "config/data_readers/"
+                  "bitget_book_ticker_fusion_4sources_source0_recorder.toml",
+          .reader_name = "bitget_book_ticker_fusion_4sources_source0_recorder",
+          .source_name = "bitget_source_0",
+          .shm_name = "aquila_bitget_book_ticker_src_0",
+          .output_dir = "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+                        "source0/book_ticker_segments",
+          .file_prefix = "bitget_book_ticker_fusion_4sources_source0",
+          .manifest_path =
+              "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+              "source0/book_ticker_manifest.jsonl",
+      },
+      ExpectedBitgetRecorderConfig{
+          .path = "config/data_readers/"
+                  "bitget_book_ticker_fusion_4sources_source1_recorder.toml",
+          .reader_name = "bitget_book_ticker_fusion_4sources_source1_recorder",
+          .source_name = "bitget_source_1",
+          .shm_name = "aquila_bitget_book_ticker_src_1",
+          .output_dir = "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+                        "source1/book_ticker_segments",
+          .file_prefix = "bitget_book_ticker_fusion_4sources_source1",
+          .manifest_path =
+              "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+              "source1/book_ticker_manifest.jsonl",
+      },
+      ExpectedBitgetRecorderConfig{
+          .path = "config/data_readers/"
+                  "bitget_book_ticker_fusion_4sources_source2_recorder.toml",
+          .reader_name = "bitget_book_ticker_fusion_4sources_source2_recorder",
+          .source_name = "bitget_source_2",
+          .shm_name = "aquila_bitget_book_ticker_src_2",
+          .output_dir = "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+                        "source2/book_ticker_segments",
+          .file_prefix = "bitget_book_ticker_fusion_4sources_source2",
+          .manifest_path =
+              "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+              "source2/book_ticker_manifest.jsonl",
+      },
+      ExpectedBitgetRecorderConfig{
+          .path = "config/data_readers/"
+                  "bitget_book_ticker_fusion_4sources_source3_recorder.toml",
+          .reader_name = "bitget_book_ticker_fusion_4sources_source3_recorder",
+          .source_name = "bitget_source_3",
+          .shm_name = "aquila_bitget_book_ticker_src_3",
+          .output_dir = "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+                        "source3/book_ticker_segments",
+          .file_prefix = "bitget_book_ticker_fusion_4sources_source3",
+          .manifest_path =
+              "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/"
+              "source3/book_ticker_manifest.jsonl",
+      },
+  };
+}
+
 void ExpectBookTickerManifestMetadata(const std::string& line,
                                       std::uint64_t expected_records) {
   EXPECT_NE(line.find(R"("format":"aquila.market_data.binary")"),
@@ -229,10 +314,9 @@ void ExpectBookTickerManifestMetadata(const std::string& line,
   EXPECT_NE(line.find(R"("header_bytes":16)"), std::string::npos);
   EXPECT_NE(line.find(fmt::format(R"("record_size":{})", sizeof(BookTicker))),
             std::string::npos);
-  EXPECT_NE(line.find(fmt::format(
-                R"("bytes":{})",
-                sizeof(md::MarketDataBinaryHeader) +
-                    expected_records * sizeof(BookTicker))),
+  EXPECT_NE(line.find(fmt::format(R"("bytes":{})",
+                                  sizeof(md::MarketDataBinaryHeader) +
+                                      expected_records * sizeof(BookTicker))),
             std::string::npos);
 }
 
@@ -245,10 +329,9 @@ void ExpectTradeManifestMetadata(const std::string& line,
   EXPECT_NE(line.find(R"("header_bytes":16)"), std::string::npos);
   EXPECT_NE(line.find(fmt::format(R"("record_size":{})", sizeof(Trade))),
             std::string::npos);
-  EXPECT_NE(line.find(fmt::format(
-                R"("bytes":{})",
-                sizeof(md::MarketDataBinaryHeader) +
-                    expected_records * sizeof(Trade))),
+  EXPECT_NE(line.find(fmt::format(R"("bytes":{})",
+                                  sizeof(md::MarketDataBinaryHeader) +
+                                      expected_records * sizeof(Trade))),
             std::string::npos);
 }
 
@@ -276,6 +359,44 @@ name = "unused"
   EXPECT_EQ(result.value.trade_rotation.file_prefix, "merged_trade");
   EXPECT_EQ(result.value.trade_rotation.manifest_path,
             output_path.parent_path() / "merged_trade_manifest.jsonl");
+}
+
+TEST(DataReaderRecorderConfigTest, LoadsBitgetBookTickerRecorderConfigs) {
+  for (const ExpectedBitgetRecorderConfig& expected :
+       ExpectedBitgetRecorderConfigs()) {
+    const std::filesystem::path config_path = SourcePath(expected.path);
+    const cfg::DataReaderConfigResult reader_result =
+        cfg::LoadDataReaderConfigFile(config_path);
+    ASSERT_TRUE(reader_result.ok)
+        << expected.path << ": " << reader_result.error;
+    EXPECT_EQ(reader_result.value.name, expected.reader_name);
+    EXPECT_EQ(reader_result.value.max_events_per_drain, 1024U);
+    EXPECT_EQ(reader_result.value.execution_policy.bind_cpu_id, -1);
+    ASSERT_EQ(reader_result.value.sources.size(), 1U);
+    const cfg::DataReaderSourceConfig& source = reader_result.value.sources[0];
+    EXPECT_EQ(source.name, expected.source_name);
+    EXPECT_EQ(source.exchange, Exchange::kBitget);
+    EXPECT_EQ(source.feed, cfg::DataReaderFeed::kBookTicker);
+    EXPECT_EQ(source.shm_name, expected.shm_name);
+    EXPECT_EQ(source.channel_name, "book_ticker_channel");
+    EXPECT_EQ(source.start_position, cfg::DataReaderStartPosition::kLatest);
+    EXPECT_EQ(source.read_mode, cfg::DataReaderReadMode::kDrain);
+    EXPECT_TRUE(source.required);
+
+    const toml::parse_result parsed = toml::parse_file(config_path.string());
+    const RecorderConfigResult recorder_result = ParseRecorderConfig(
+        parsed,
+        "/home/liuxiang/tmp/bitget_book_ticker_fusion_4sources/unused.bin",
+        RecorderWriteMode::kTruncate);
+    ASSERT_TRUE(recorder_result.ok)
+        << expected.path << ": " << recorder_result.error;
+    EXPECT_TRUE(recorder_result.value.rotation.enabled);
+    EXPECT_EQ(recorder_result.value.rotation.rotation_interval_sec, 3600U);
+    EXPECT_EQ(recorder_result.value.rotation.output_dir, expected.output_dir);
+    EXPECT_EQ(recorder_result.value.rotation.file_prefix, expected.file_prefix);
+    EXPECT_EQ(recorder_result.value.rotation.manifest_path,
+              expected.manifest_path);
+  }
 }
 
 TEST(DataReaderRecorderConfigTest, ParsesRotationDefaults) {
@@ -696,6 +817,54 @@ TEST(DataReaderRecorderTest,
   std::filesystem::remove(output_path);
 }
 
+TEST(DataReaderRecorderTest, BitgetConfigDrainsSyntheticShmIntoTypedBinary) {
+  cfg::DataReaderConfigResult config_result = cfg::LoadDataReaderConfigFile(
+      SourcePath("config/data_readers/"
+                 "bitget_book_ticker_fusion_canonical_recorder.toml"));
+  ASSERT_TRUE(config_result.ok) << config_result.error;
+  ASSERT_EQ(config_result.value.sources.size(), 1U);
+
+  const std::string shm_name = UniqueShmName("bitget_config_runtime");
+  ShmCleanup cleanup(shm_name);
+  config_result.value.sources[0].shm_name = shm_name;
+  config_result.value.sources[0].start_position =
+      cfg::DataReaderStartPosition::kLatest;
+  config_result.value.sources[0].read_mode = cfg::DataReaderReadMode::kDrain;
+
+  md::BookTickerShmConfig create_config =
+      MakeCreateConfig("bitget_config_runtime");
+  create_config.shm_name = shm_name;
+  md::DataShmPublisher publisher(create_config);
+  md::RealtimeDataReader<md::RealtimeDataReaderDiagnostics> reader(
+      std::move(config_result.value));
+
+  const BookTicker expected =
+      MakeTicker(9001, Exchange::kBitget, 1'720'000'000'001'000'000LL,
+                 1'720'000'000'001'500'000LL);
+  publisher.OnBookTicker(expected);
+  publisher.FlushPublishedCount();
+
+  const std::filesystem::path output_path =
+      std::filesystem::path{"/home/liuxiang/tmp"} /
+      ("aquila_bitget_recorder_config_runtime_" + std::to_string(::getpid()) +
+       ".bin");
+  std::filesystem::remove(output_path);
+  BookTickerBinaryRecorder recorder(output_path, RecorderWriteMode::kTruncate);
+
+  EXPECT_EQ(reader.Drain(recorder, config_result.value.max_events_per_drain),
+            1U);
+  ASSERT_TRUE(recorder.Flush());
+  EXPECT_FALSE(recorder.write_error());
+  EXPECT_EQ(recorder.stats().RecordsForExchange(Exchange::kBitget), 1U);
+
+  const std::vector<BookTicker> records = ReadTypedBookTickers(output_path);
+  ASSERT_EQ(records.size(), 1U);
+  ExpectBookTickerEq(records[0], expected);
+
+  std::error_code ignore_error;
+  std::filesystem::remove(output_path, ignore_error);
+}
+
 TEST(DataReaderRecorderTest,
      RealtimeReaderDrainsBookTickerAndTradeSourcesIntoSeparateBinaries) {
   const md::DataShmConfig combined_config =
@@ -966,8 +1135,7 @@ TEST(DataReaderRecorderTest, AppendModeRejectsWrongRecordSize) {
 TEST(DataReaderRecorderTest, AppendModeRejectsTrailingBytes) {
   const std::filesystem::path root =
       std::filesystem::path{"/home/liuxiang/tmp"} /
-      fmt::format("aquila_recorder_append_trailing_bytes_test_{}",
-                  ::getpid());
+      fmt::format("aquila_recorder_append_trailing_bytes_test_{}", ::getpid());
   std::filesystem::remove_all(root);
   ASSERT_TRUE(std::filesystem::create_directories(root));
   const std::filesystem::path output = root / "book_ticker.bin";

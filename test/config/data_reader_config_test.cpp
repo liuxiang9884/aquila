@@ -124,6 +124,38 @@ TEST(DataReaderConfigTest, LoadsReadyLabUsdtStrategyDataReaderConfig) {
   EXPECT_TRUE(config.sources[1].required);
 }
 
+TEST(DataReaderConfigTest, ParsesBitgetShmSource) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "bitget_reader"
+max_events_per_drain = 128
+
+[[data_reader.sources]]
+name = "bitget_book_ticker"
+type = "shm"
+exchange = "bitget"
+feed = "book_ticker"
+shm_name = "aquila_bitget_book_ticker_fusion"
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "drain"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  const aquila::config::DataReaderSourceConfig& source =
+      result.value.sources[0];
+  EXPECT_EQ(source.name, "bitget_book_ticker");
+  EXPECT_EQ(source.exchange, aquila::Exchange::kBitget);
+  EXPECT_EQ(source.feed, aquila::config::DataReaderFeed::kBookTicker);
+  EXPECT_EQ(source.shm_name, "aquila_bitget_book_ticker_fusion");
+  EXPECT_EQ(source.channel_name, "book_ticker_channel");
+  EXPECT_EQ(source.read_mode, aquila::config::DataReaderReadMode::kDrain);
+}
+
 TEST(DataReaderConfigTest, RejectsDuplicateSourceNames) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]

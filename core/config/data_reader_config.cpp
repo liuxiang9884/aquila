@@ -45,6 +45,10 @@ void MaybeLogError(std::string_view message) {
     *exchange = Exchange::kBinance;
     return true;
   }
+  if (text == "bitget") {
+    *exchange = Exchange::kBitget;
+    return true;
+  }
   return false;
 }
 
@@ -310,7 +314,7 @@ class DataReaderConfigParser {
       return;
     }
     if (!ParseExchange(exchange_text, &source->exchange)) {
-      Fail("data_reader.sources.exchange", " must be gate or binance");
+      Fail("data_reader.sources.exchange", " must be gate, binance, or bitget");
     }
   }
 
