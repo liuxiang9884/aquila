@@ -12,10 +12,12 @@ inline constexpr std::uint16_t kBitgetSbeSchemaId = 1;
 inline constexpr std::uint16_t kBitgetSbeSchemaVersion = 2;
 inline constexpr std::uint16_t kBitgetSbeLiveSchemaVersion = 3;
 inline constexpr std::uint16_t kBitgetSbeBookTickerTemplateId = 1002;
+inline constexpr std::uint16_t kBitgetSbePublicTradeTemplateId = 1003;
 
 enum class BitgetSbeMessageType : std::uint8_t {
   kUnknown = 0,
   kBookTicker,
+  kPublicTrade,
 };
 
 enum class SbeDispatchStatus : std::uint8_t {
@@ -37,6 +39,8 @@ inline BitgetSbeMessageType BitgetSbeMessageTypeFromTemplateId(
   switch (template_id) {
     case kBitgetSbeBookTickerTemplateId:
       return BitgetSbeMessageType::kBookTicker;
+    case kBitgetSbePublicTradeTemplateId:
+      return BitgetSbeMessageType::kPublicTrade;
     default:
       return BitgetSbeMessageType::kUnknown;
   }

@@ -70,6 +70,22 @@ TEST(BitgetSbeMessageDispatcherTest, DispatchesBooks1Template) {
             aquila::bitget::BitgetSbeMessageType::kBookTicker);
 }
 
+TEST(BitgetSbeMessageDispatcherTest, DispatchesPublicTradeTemplate) {
+  const aquila::bitget::SbeMessageHeader header{
+      .block_length = 16,
+      .template_id = aquila::bitget::kBitgetSbePublicTradeTemplateId,
+      .schema_id = aquila::bitget::kBitgetSbeSchemaId,
+      .version = aquila::bitget::kBitgetSbeLiveSchemaVersion,
+  };
+
+  const aquila::bitget::SbeDispatchResult result =
+      aquila::bitget::DispatchBitgetSbeMessage(header);
+
+  EXPECT_EQ(result.status, aquila::bitget::SbeDispatchStatus::kReady);
+  EXPECT_EQ(result.message_type,
+            aquila::bitget::BitgetSbeMessageType::kPublicTrade);
+}
+
 TEST(BitgetSbeMessageDispatcherTest, DispatchesLiveSchemaVersion3Books1) {
   const aquila::bitget::SbeMessageHeader header{
       .block_length = 64,
