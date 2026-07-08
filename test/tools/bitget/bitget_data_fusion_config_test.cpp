@@ -65,7 +65,7 @@ bind_cpu_id = 18
   EXPECT_EQ(result.value.sources[1].bind_cpu_id, 18);
 }
 
-TEST(BitgetDataFusionConfigTest, RejectsTradeFeed) {
+TEST(BitgetDataFusionConfigTest, ParsesTradeSources) {
   const toml::parse_result parsed = ParseToml(R"toml(
 [launch]
 name = "bitget_data_fusion_trade"
@@ -85,9 +85,49 @@ trade_channel_name = "trade_channel"
   const auto result =
       aquila::tools::bitget::ParseBitgetDataFusionConfig(parsed);
 
-  ASSERT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("Bitget trade feed is unsupported"),
-            std::string::npos);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.name, "bitget_data_fusion_trade");
+  ASSERT_EQ(result.value.feeds.size(), 1U);
+  EXPECT_EQ(result.value.feeds[0], support::DataFusionFeed::kTrade);
+  EXPECT_TRUE(result.value.book_ticker_fusion_config.empty());
+  EXPECT_EQ(result.value.trade_fusion_config,
+            "config/market_data_fusion/bitget_trade_fusion.toml");
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  EXPECT_EQ(result.value.sources[0].source_id, 0);
+  EXPECT_EQ(result.value.sources[0].trade_channel_name, "trade_channel");
+}
+
+TEST(BitgetDataFusionConfigTest, ParsesBookTickerAndTradeSources) {
+  const toml::parse_result parsed = ParseToml(R"toml(
+[launch]
+name = "bitget_data_fusion_book_ticker_trade"
+feeds = ["book_ticker", "trade"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/bitget_book_ticker_fusion.toml"
+trade = "config/market_data_fusion/bitget_trade_fusion.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/bitget_data_session.toml"
+data_session_name = "bitget_source_0"
+data_shm_name = "aquila_bitget_md_src_0"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+)toml");
+
+  const auto result =
+      aquila::tools::bitget::ParseBitgetDataFusionConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.name, "bitget_data_fusion_book_ticker_trade");
+  ASSERT_EQ(result.value.feeds.size(), 2U);
+  EXPECT_EQ(result.value.feeds[0], support::DataFusionFeed::kBookTicker);
+  EXPECT_EQ(result.value.feeds[1], support::DataFusionFeed::kTrade);
+  EXPECT_EQ(result.value.book_ticker_fusion_config,
+            "config/market_data_fusion/bitget_book_ticker_fusion.toml");
+  EXPECT_EQ(result.value.trade_fusion_config,
+            "config/market_data_fusion/bitget_trade_fusion.toml");
 }
 
 TEST(BitgetDataFusionConfigTest, RejectsDuplicateFeed) {

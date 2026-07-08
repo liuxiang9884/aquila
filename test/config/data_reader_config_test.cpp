@@ -156,6 +156,38 @@ read_mode = "drain"
   EXPECT_EQ(source.read_mode, aquila::config::DataReaderReadMode::kDrain);
 }
 
+TEST(DataReaderConfigTest, ParsesBitgetTradeShmSource) {
+  const std::string toml_text = CatalogPrefix() + R"toml(
+[data_reader]
+name = "bitget_trade_reader"
+max_events_per_drain = 128
+
+[[data_reader.sources]]
+name = "bitget_trade"
+type = "shm"
+exchange = "bitget"
+feed = "trade"
+shm_name = "aquila_bitget_trade_fusion"
+channel_name = "trade_channel"
+start_position = "latest"
+read_mode = "drain"
+)toml";
+
+  const toml::parse_result parsed = toml::parse(toml_text);
+  const auto result = aquila::config::ParseDataReaderConfig(parsed);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  ASSERT_EQ(result.value.sources.size(), 1U);
+  const aquila::config::DataReaderSourceConfig& source =
+      result.value.sources[0];
+  EXPECT_EQ(source.name, "bitget_trade");
+  EXPECT_EQ(source.exchange, aquila::Exchange::kBitget);
+  EXPECT_EQ(source.feed, aquila::config::DataReaderFeed::kTrade);
+  EXPECT_EQ(source.shm_name, "aquila_bitget_trade_fusion");
+  EXPECT_EQ(source.channel_name, "trade_channel");
+  EXPECT_EQ(source.read_mode, aquila::config::DataReaderReadMode::kDrain);
+}
+
 TEST(DataReaderConfigTest, RejectsDuplicateSourceNames) {
   const std::string toml_text = CatalogPrefix() + R"toml(
 [data_reader]

@@ -32,7 +32,17 @@ add_test(NAME bitget_data_fusion_dry_run_test
          COMMAND bitget_data_fusion --config
                  config/market_data_fusion/bitget_data_fusion_book_ticker_4sources.toml)
 
+add_test(NAME bitget_data_fusion_trade_dry_run_test
+         COMMAND bitget_data_fusion --config
+                 config/market_data_fusion/bitget_data_fusion_trade_4sources.toml)
+
+add_test(NAME bitget_data_fusion_book_ticker_trade_dry_run_test
+         COMMAND bitget_data_fusion --config
+                 config/market_data_fusion/bitget_data_fusion_book_ticker_trade_4sources.toml)
+
 set_tests_properties(bitget_data_fusion_help_test
     bitget_data_fusion_dry_run_test
+    bitget_data_fusion_trade_dry_run_test
+    bitget_data_fusion_book_ticker_trade_dry_run_test
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

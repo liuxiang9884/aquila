@@ -1,0 +1,56 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/bitget_data_fusion_book_ticker_trade_4sources.log"
+console_sink_name = "bitget_data_fusion_book_ticker_trade_4sources_console"
+backend_thread_name = "bitget_data_fusion_book_ticker_trade_log"
+backend_cpu_affinity = -1
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[launch]
+name = "bitget_data_fusion_book_ticker_trade_4sources"
+feeds = ["book_ticker", "trade"]
+
+[launch.fusion_configs]
+book_ticker = "config/market_data_fusion/bitget_book_ticker_fusion_book_ticker_trade_4sources.toml"
+trade = "config/market_data_fusion/bitget_trade_fusion_book_ticker_trade_4sources.toml"
+
+[[launch.sources]]
+source_id = 0
+data_session_config = "config/data_sessions/bitget_data_session.toml"
+data_session_name = "bitget_md_source_0"
+data_shm_name = "aquila_bitget_md_src_0"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 17
+
+[[launch.sources]]
+source_id = 1
+data_session_config = "config/data_sessions/bitget_data_session.toml"
+data_session_name = "bitget_md_source_1"
+data_shm_name = "aquila_bitget_md_src_1"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 18
+
+[[launch.sources]]
+source_id = 2
+data_session_config = "config/data_sessions/bitget_data_session.toml"
+data_session_name = "bitget_md_source_2"
+data_shm_name = "aquila_bitget_md_src_2"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 19
+
+[[launch.sources]]
+source_id = 3
+data_session_config = "config/data_sessions/bitget_data_session.toml"
+data_session_name = "bitget_md_source_3"
+data_shm_name = "aquila_bitget_md_src_3"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+remove_existing_source_shm = true
+bind_cpu_id = 20

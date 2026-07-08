@@ -15,6 +15,7 @@
 #include <toml++/toml.hpp>
 
 #include "core/config/book_ticker_fusion_config.h"
+#include "core/config/trade_fusion_config.h"
 #include "core/market_data/data_shm.h"
 #include "core/market_data/fusion/config.h"
 #include "core/market_data/fusion/thread.h"
@@ -100,6 +101,10 @@ class BitgetDataFusionSourceWorker {
     return publisher_.published_book_tickers();
   }
 
+  [[nodiscard]] std::uint64_t published_trades() const noexcept {
+    return publisher_.published_trades();
+  }
+
   [[nodiscard]] bool finished() const noexcept {
     return finished_.load(std::memory_order_acquire);
   }
@@ -117,7 +122,8 @@ class BitgetDataFusionSourceWorker {
 
 template <typename WebSocketPolicy>
 int RunConnected(const aq_tool::BitgetDataFusionConfig& launch_config,
-                 aq_md::BookTickerFusionConfig book_config,
+                 std::optional<aq_md::BookTickerFusionConfig> book_config,
+                 std::optional<aq_md::TradeFusionConfig> trade_config,
                  std::vector<PreparedBitgetSource> sources,
                  std::uint64_t max_runtime_ms) {
   std::vector<std::unique_ptr<BitgetDataFusionSourceWorker<WebSocketPolicy>>>
@@ -129,13 +135,27 @@ int RunConnected(const aq_tool::BitgetDataFusionConfig& launch_config,
             std::move(source.data_session_config)));
   }
 
-  aq_md::BookTickerFusionThread book_thread{std::move(book_config)};
+  std::unique_ptr<aq_md::BookTickerFusionThread> book_thread;
+  if (book_config.has_value()) {
+    book_thread = std::make_unique<aq_md::BookTickerFusionThread>(
+        std::move(*book_config));
+  }
+  std::unique_ptr<aq_md::TradeFusionThread> trade_thread;
+  if (trade_config.has_value()) {
+    trade_thread =
+        std::make_unique<aq_md::TradeFusionThread>(std::move(*trade_config));
+  }
 
   std::signal(SIGINT, HandleSignal);
   std::signal(SIGTERM, HandleSignal);
   signal_stop_requested.store(false, std::memory_order_relaxed);
 
-  book_thread.Start();
+  if (book_thread != nullptr) {
+    book_thread->Start();
+  }
+  if (trade_thread != nullptr) {
+    trade_thread->Start();
+  }
   for (std::unique_ptr<BitgetDataFusionSourceWorker<WebSocketPolicy>>& worker :
        workers) {
     worker->Start();
@@ -144,7 +164,8 @@ int RunConnected(const aq_tool::BitgetDataFusionConfig& launch_config,
   bool unexpected_stop{false};
   const auto start = std::chrono::steady_clock::now();
   while (!signal_stop_requested.load(std::memory_order_relaxed)) {
-    if (book_thread.finished()) {
+    if ((book_thread != nullptr && book_thread->finished()) ||
+        (trade_thread != nullptr && trade_thread->finished())) {
       unexpected_stop = true;
       break;
     }
@@ -178,18 +199,38 @@ int RunConnected(const aq_tool::BitgetDataFusionConfig& launch_config,
        workers) {
     worker->Join();
   }
-  book_thread.Stop();
-
-  const aq_md::BookTickerFusionThreadStats stats = book_thread.Join();
-  std::uint64_t source_published_count{0};
-  for (const std::unique_ptr<BitgetDataFusionSourceWorker<WebSocketPolicy>>&
-           worker : workers) {
-    source_published_count += worker->published_count();
+  if (book_thread != nullptr) {
+    book_thread->Stop();
   }
-  aq_tool_md::LogDataFusionRunSummary<
-      aq_tool_md::BookTickerDataFusionFeedTraits>(
-      launch_config.name, workers.size(), source_published_count, stats);
-  return !unexpected_stop && stats.ok ? 0 : 1;
+  if (trade_thread != nullptr) {
+    trade_thread->Stop();
+  }
+
+  bool ok = !unexpected_stop;
+  if (book_thread != nullptr) {
+    const aq_md::BookTickerFusionThreadStats stats = book_thread->Join();
+    std::uint64_t source_published_count{0};
+    for (const std::unique_ptr<BitgetDataFusionSourceWorker<WebSocketPolicy>>&
+             worker : workers) {
+      source_published_count += worker->published_count();
+    }
+    aq_tool_md::LogDataFusionRunSummary<
+        aq_tool_md::BookTickerDataFusionFeedTraits>(
+        launch_config.name, workers.size(), source_published_count, stats);
+    ok = ok && stats.ok;
+  }
+  if (trade_thread != nullptr) {
+    const aq_md::TradeFusionThreadStats stats = trade_thread->Join();
+    std::uint64_t source_published_count{0};
+    for (const std::unique_ptr<BitgetDataFusionSourceWorker<WebSocketPolicy>>&
+             worker : workers) {
+      source_published_count += worker->published_trades();
+    }
+    aq_tool_md::LogDataFusionRunSummary<aq_tool_md::TradeDataFusionFeedTraits>(
+        launch_config.name, workers.size(), source_published_count, stats);
+    ok = ok && stats.ok;
+  }
+  return ok ? 0 : 1;
 }
 
 }  // namespace
@@ -231,26 +272,52 @@ int main(int argc, char** argv) {
         launch_toml, launch_config.backend_cpu_affinity);
     aq_tool_md::ScopedNovaLogging logging_guard{log_config};
 
-    const aquila::config::BookTickerFusionConfigResult fusion_result =
-        aquila::config::LoadBookTickerFusionConfigFile(
-            launch_config.book_ticker_fusion_config);
-    if (!fusion_result.ok) {
-      NOVA_ERROR("fusion_config_error={}", fusion_result.error);
-      return 1;
+    std::optional<aq_md::BookTickerFusionConfig> book_config;
+    if (aq_tool_md::HasFusionFeed(launch_config.feeds,
+                                  aq_tool_md::DataFusionFeed::kBookTicker)) {
+      const aquila::config::BookTickerFusionConfigResult fusion_result =
+          aquila::config::LoadBookTickerFusionConfigFile(
+              launch_config.book_ticker_fusion_config);
+      if (!fusion_result.ok) {
+        NOVA_ERROR("fusion_config_error={}", fusion_result.error);
+        return 1;
+      }
+      book_config = fusion_result.value;
+
+      std::string error;
+      if (!aq_tool_md::ValidateFusionAlignment<
+              aq_tool_md::BookTickerDataFusionFeedTraits>(
+              launch_config, *book_config, &error)) {
+        NOVA_ERROR("fusion_alignment_error={}", error);
+        return 1;
+      }
     }
-    aq_md::BookTickerFusionConfig book_config = fusion_result.value;
+
+    std::optional<aq_md::TradeFusionConfig> trade_config;
+    if (aq_tool_md::HasFusionFeed(launch_config.feeds,
+                                  aq_tool_md::DataFusionFeed::kTrade)) {
+      const aquila::config::TradeFusionConfigResult fusion_result =
+          aquila::config::LoadTradeFusionConfigFile(
+              launch_config.trade_fusion_config);
+      if (!fusion_result.ok) {
+        NOVA_ERROR("fusion_config_error={}", fusion_result.error);
+        return 1;
+      }
+      trade_config = fusion_result.value;
+
+      std::string error;
+      if (!aq_tool_md::ValidateFusionAlignment<
+              aq_tool_md::TradeDataFusionFeedTraits>(launch_config,
+                                                     *trade_config, &error)) {
+        NOVA_ERROR("fusion_alignment_error={}", error);
+        return 1;
+      }
+    }
 
     std::string error;
-    if (!aq_tool_md::ValidateFusionAlignment<
-            aq_tool_md::BookTickerDataFusionFeedTraits>(launch_config,
-                                                        book_config, &error)) {
-      NOVA_ERROR("fusion_alignment_error={}", error);
-      return 1;
-    }
-
     if (!aq_tool_md::ValidateDataFusionShmNames(
-            launch_config, &book_config,
-            static_cast<const aq_md::TradeFusionConfig*>(nullptr), &error)) {
+            launch_config, book_config ? &*book_config : nullptr,
+            trade_config ? &*trade_config : nullptr, &error)) {
       NOVA_ERROR("fusion_output_error={}", error);
       return 1;
     }
@@ -265,27 +332,33 @@ int main(int argc, char** argv) {
       return 1;
     }
     if (!aq_tool_md::ValidatePreparedDataFusionCpuBindings(
-            launch_config, sources, &book_config,
-            static_cast<const aq_md::TradeFusionConfig*>(nullptr), &error)) {
+            launch_config, sources, book_config ? &*book_config : nullptr,
+            trade_config ? &*trade_config : nullptr, &error)) {
       NOVA_ERROR("cpu_binding_error={}", error);
       return 1;
     }
 
     if (!connect) {
-      aq_tool_md::LogDataFusionDryRun<
-          aq_tool_md::BookTickerDataFusionFeedTraits>(launch_config,
-                                                      book_config, sources);
+      if (book_config.has_value()) {
+        aq_tool_md::LogDataFusionDryRun<
+            aq_tool_md::BookTickerDataFusionFeedTraits>(launch_config,
+                                                        *book_config, sources);
+      }
+      if (trade_config.has_value()) {
+        aq_tool_md::LogDataFusionDryRun<aq_tool_md::TradeDataFusionFeedTraits>(
+            launch_config, *trade_config, sources);
+      }
       return 0;
     }
 
     if (sources.front().data_session_config.connection.enable_tls) {
       return RunConnected<aq_bitget::DefaultTlsWebSocketPolicy>(
-          launch_config, std::move(book_config), std::move(sources),
-          max_runtime_ms);
+          launch_config, std::move(book_config), std::move(trade_config),
+          std::move(sources), max_runtime_ms);
     }
     return RunConnected<aq_bitget::DefaultPlainWebSocketPolicy>(
-        launch_config, std::move(book_config), std::move(sources),
-        max_runtime_ms);
+        launch_config, std::move(book_config), std::move(trade_config),
+        std::move(sources), max_runtime_ms);
   } catch (const std::exception& exc) {
     nova::LogConfig fallback_log_config = aq_tool_md::MakeConsoleOnlyLogConfig(
         "bitget_data_fusion_startup_console");

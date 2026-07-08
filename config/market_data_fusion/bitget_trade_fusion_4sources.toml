@@ -1,0 +1,35 @@
+[fusion]
+name = "bitget_trade_fusion_4sources"
+max_events_per_source = 1
+bind_cpu_id = 16
+max_symbol_id = 4096
+
+[fusion.output]
+shm_name = "aquila_bitget_trade_fusion"
+channel_name = "trade_channel"
+remove_existing = true
+metadata_bin = "/home/liuxiang/tmp/bitget_trade_fusion_4sources/fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 0
+name = "bitget_trade_source_0"
+shm_name = "aquila_bitget_trade_src_0"
+channel_name = "trade_channel"
+
+[[fusion.sources]]
+source_id = 1
+name = "bitget_trade_source_1"
+shm_name = "aquila_bitget_trade_src_1"
+channel_name = "trade_channel"
+
+[[fusion.sources]]
+source_id = 2
+name = "bitget_trade_source_2"
+shm_name = "aquila_bitget_trade_src_2"
+channel_name = "trade_channel"
+
+[[fusion.sources]]
+source_id = 3
+name = "bitget_trade_source_3"
+shm_name = "aquila_bitget_trade_src_3"
+channel_name = "trade_channel"

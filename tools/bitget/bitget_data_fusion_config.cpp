@@ -16,29 +16,12 @@ namespace {
   return result;
 }
 
-[[nodiscard]] bool HasTradeFeed(const BitgetDataFusionConfig& config) noexcept {
-  for (aquila::tools::market_data::DataFusionFeed feed : config.feeds) {
-    if (feed == aquila::tools::market_data::DataFusionFeed::kTrade) {
-      return true;
-    }
-  }
-  return false;
-}
-
 }  // namespace
 
 BitgetDataFusionConfigResult ParseBitgetDataFusionConfig(
     const toml::table& node) {
-  BitgetDataFusionConfigResult result =
-      aquila::tools::market_data::ParseDataFusionLaunchConfig<
-          BitgetDataFusionConfig, BitgetDataFusionSourceConfig>(node);
-  if (!result.ok) {
-    return result;
-  }
-  if (HasTradeFeed(result.value)) {
-    return Failure("Bitget trade feed is unsupported by this adapter");
-  }
-  return result;
+  return aquila::tools::market_data::ParseDataFusionLaunchConfig<
+      BitgetDataFusionConfig, BitgetDataFusionSourceConfig>(node);
 }
 
 BitgetDataFusionConfigResult LoadBitgetDataFusionConfigFile(

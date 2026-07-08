@@ -1,0 +1,41 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/log/bitget_trade_fusion_source1_recorder.log"
+console_sink_name = "bitget_trade_fusion_source1_recorder_console"
+backend_thread_name = "bitget_trade_fusion_source1_recorder_log"
+backend_cpu_affinity = -1
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[data_reader]
+name = "bitget_trade_fusion_4sources_source1_recorder"
+max_events_per_drain = 1024
+
+[data_reader.execution_policy]
+bind_cpu_id = -1
+idle_policy = "spin"
+
+[[data_reader.sources]]
+name = "bitget_trade_source_1"
+type = "shm"
+exchange = "bitget"
+feed = "trade"
+shm_name = "aquila_bitget_trade_src_1"
+channel_name = "trade_channel"
+start_position = "latest"
+read_mode = "drain"
+required = true
+
+[recorder]
+rotation_enabled = true
+rotation_interval_sec = 3600
+output_dir = "/home/liuxiang/tmp/bitget_trade_fusion_4sources/source1/book_ticker_segments"
+file_prefix = "bitget_trade_fusion_4sources_source1_book_ticker"
+manifest_path = "/home/liuxiang/tmp/bitget_trade_fusion_4sources/source1/book_ticker_manifest.jsonl"
+trade_output_dir = "/home/liuxiang/tmp/bitget_trade_fusion_4sources/source1/trade_segments"
+trade_file_prefix = "bitget_trade_fusion_4sources_source1"
+trade_manifest_path = "/home/liuxiang/tmp/bitget_trade_fusion_4sources/source1/trade_manifest.jsonl"
