@@ -172,7 +172,7 @@ fusion 落盘文件，使用 instrument catalog 的 `price_tick` / `quantity_ste
 | `data_reader.execution_policy.idle_policy` | `spin` | 预留给外层 loop 选择 idle 行为；第一版 `RealtimeDataReader` 不自己执行 idle。 |
 | `data_reader.sources.name` | 无，必须显式配置 | source 名称，必须唯一。 |
 | `data_reader.sources.type` | `shm` | source 实现类型，支持 `shm` 和 `binary_file`。 |
-| `data_reader.sources.exchange` | SHM 无默认值，必须显式配置；binary file 可省略 | `gate` 或 `binance`。binary file 中每条 payload record 自带 exchange。 |
+| `data_reader.sources.exchange` | SHM 无默认值，必须显式配置；binary file 可省略 | `gate`、`binance` 或 `bitget`。binary file 中每条 payload record 自带 exchange。 |
 | `data_reader.sources.feed` | SHM 默认为 `book_ticker`；`binary_file` 无默认值，必须显式配置 | 行情类型。SHM source 支持 `book_ticker` 和 `trade`；`binary_file` source 支持一个 `book_ticker` 或 `trade` source，且文件 header 的 feed/type 必须与 TOML 一致。 |
 | `data_reader.sources.shm_name` | 无，SHM 必须显式配置 | SHM segment 名称。binary file 不使用。 |
 | `data_reader.sources.channel_name` | 无，SHM 必须显式配置 | SHM channel 名称。binary file 不使用。 |
@@ -260,7 +260,7 @@ void OnTrade(const aquila::Trade& trade) noexcept;
 
 ## SHM 到 replay binary recorder
 
-`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance `BookTicker` / `Trade` SHM 读取数据，并分别输出 typed binary format v1。`BookTicker` 和 `Trade` 的每个 `.bin` 文件都以 16-byte `MarketDataBinaryHeader` 开头，随后是连续 payload records；文件大小包含 header，record 数量为 `(file_size - 16) / record_size`。header-only 文件表示 0 records。`BookTicker` 输出可直接作为 `feed = "book_ticker"` 的 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用；`Trade` 输出可作为 `feed = "trade"` 的单 source `binary_file` 交给 `HistoricalDataReader` / `data_reader_probe` 使用。LeadLag replay 当前仍不消费 trade source。
+`data_reader_recorder` 通过 `RealtimeDataReader` 从现有 Gate / Binance / Bitget `BookTicker` SHM 和 Gate / Binance `Trade` SHM 读取数据，并分别输出 typed binary format v1。`BookTicker` 和 `Trade` 的每个 `.bin` 文件都以 16-byte `MarketDataBinaryHeader` 开头，随后是连续 payload records；文件大小包含 header，record 数量为 `(file_size - 16) / record_size`。header-only 文件表示 0 records。`BookTicker` 输出可直接作为 `feed = "book_ticker"` 的 `binary_file` source 交给 `HistoricalDataReader` / `lead_lag_replay` 使用；`Trade` 输出可作为 `feed = "trade"` 的单 source `binary_file` 交给 `HistoricalDataReader` / `data_reader_probe` 使用。LeadLag replay 当前仍不消费 trade source。
 
 基础示例：
 
@@ -371,12 +371,13 @@ scripts/market_data/manifest_to_data_reader_config.py \
 
 - Gate 在 `exchange/gate/market_data/data_session.h` 的 binary frame path 调用 `websocket::NowNs(kClockSource)`，随后传给 `DecodeBookTickerWithHeader()` 写入 `BookTicker.local_ns`。
 - Binance 在 `exchange/binance/market_data/data_session.h` 的 text frame path 调用 `websocket::NowNs(kClockSource)`，随后由 `AssignBookTickerFromUpdate()` 写入 `BookTicker.local_ns`。
-- Gate / Binance data session 默认 `kClockSource = ClockSource::kRealtime`，`local_ns` 使用 `CLOCK_REALTIME` / Unix epoch ns；测试仍可通过自定义 WebSocket policy 覆盖为 monotonic / coarse clock。
+- Bitget 在 `exchange/bitget/market_data/data_session.h` 的 binary frame path 调用 `websocket::NowNs(kClockSource)`，随后传给 `DecodeBookTickerWithHeader()` 写入 `BookTicker.local_ns`。
+- Gate / Binance / Bitget data session 默认 `kClockSource = ClockSource::kRealtime`，`local_ns` 使用 `CLOCK_REALTIME` / Unix epoch ns；测试仍可通过自定义 WebSocket policy 覆盖为 monotonic / coarse clock。
 
 当前 `BookTicker` 同时保留交易所发布/包装时间和真实行情事件时间：
 
-- `exchange_ns` 表示交易所发布/包装时间：Gate SBE `bbo.time * 1000` 是 WebSocket server send timestamp；Binance book ticker `E * 1'000'000` 是 Binance event time。
-- `event_ns` 表示真实 BBO / orderbook 事件时间：Gate SBE `bbo.t * 1000` 是 orderbook engine update timestamp；Binance book ticker `T * 1'000'000` 是 transaction time。
+- `exchange_ns` 表示交易所发布/包装时间：Gate SBE `bbo.time * 1000` 是 WebSocket server send timestamp；Binance book ticker `E * 1'000'000` 是 Binance event time；Bitget `books1` 使用 `sts * 1000`。
+- `event_ns` 表示真实 BBO / orderbook 事件时间：Gate SBE `bbo.t * 1000` 是 orderbook engine update timestamp；Binance book ticker `T * 1'000'000` 是 transaction time；Bitget `books1` 使用 `ts * 1000`，缺少 `sts` 的 probe frame 会写 `exchange_ns = event_ns`。
 - Tardis CSV / HDF 转换链路没有独立发布/事件两个时间源，当前把同一个源 timestamp 同时写入 `exchange_ns` 和 `event_ns`。
 
 ## Diagnostics

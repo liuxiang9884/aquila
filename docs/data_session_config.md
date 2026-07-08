@@ -12,7 +12,9 @@ order management 和 order execution 归属于 `Strategy` 模块。
 2. 每个 session 自己持有 WebSocket 配置，不引入 `websocket.profiles` 复用层。
 3. TOML 只写连接之间必须不同或最常改的字段。
 4. loader 对缺省字段填统一默认值，并在启动冷路径生成 `DataSession` 可直接消费的运行期 config。
-5. WebSocket `target` 不写在配置里，由具体交易所的 data session config parser 按协议生成。
+5. WebSocket `target` 默认由具体交易所的 data session config parser 按协议生成；Bitget
+   UTA SBE 配置允许在 `data_session.websocket.endpoint.target` 中显式写入默认
+   `/v3/ws/public/sbe`。
 6. tools 根据 `enable_tls` 选择 TLS 或 plain WebSocket policy，生产路径不在同一个 binary 中硬编码协议。
 
 缺省字段才走默认值；字段或可选 section 一旦出现在 TOML 中，就必须使用 parser 期望的类型。
@@ -34,7 +36,7 @@ order management 和 order execution 归属于 `Strategy` 模块。
 
 ## 进程拆分
 
-生产推荐把 Gate 行情、Binance 行情、策略 / 交易拆成独立进程：
+生产推荐把 Gate 行情、Binance 行情、Bitget 行情、策略 / 交易拆成独立进程：
 
 ```text
 gate-md-process
@@ -44,6 +46,10 @@ gate-md-process
 binance-md-process
   BinanceDataSessionThread
     BinanceDataSession
+
+bitget-md-process
+  BitgetDataSessionThread
+    BitgetDataSession
 
 strategy-trade-process
   StrategyThread
@@ -63,6 +69,7 @@ strategy-trade-process
 ```text
 config/data_sessions/gate_data_session.toml
 config/data_sessions/binance_data_session.toml
+config/data_sessions/bitget_data_session.toml
 ```
 
 多个 data session config 可以指向同一个 `instrument_catalog` CSV；CSV 是共享合约元数据来源，
@@ -71,7 +78,7 @@ config/data_sessions/binance_data_session.toml
 
 ## Log
 
-Gate / Binance data session config 当前支持顶层 `[log]` section。data session tool 启动时先按
+Gate / Binance / Bitget data session config 当前支持顶层 `[log]` section。data session tool 启动时先按
 Sirius `third_party/sirius/tools/gate/data_center.cpp` 的模式解析 TOML，调用
 `nova::LogConfig::FromToml(toml["log"])`，再用 `nova::InitializeLogging(log_config)` 初始化日志。
 因此后续 instrument catalog / data session parser 的诊断和 dry-run 输出都会使用该配置。
@@ -89,7 +96,7 @@ format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(fi
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 ```
 
-字段语义由 `nova/utils/log.h` 中的 `nova::LogConfig` 定义。当前 Gate 和 Binance data
+字段语义由 `nova/utils/log.h` 中的 `nova::LogConfig` 定义。当前 Gate、Binance 和 Bitget data
 session tools 都会消费这些字段；各 tool 只 parse 一次 TOML，并把同一个 parsed table 同时用于
 log 初始化和 data session config 生成。仓库示例把文件日志统一写到 `/home/liuxiang/log/`
 下，并用 data session 名称区分 file sink、console sink 和 backend log thread。Nova file sink
@@ -161,11 +168,42 @@ create = true
 remove_existing = false
 ```
 
+## Bitget UTA SBE 行情进程示例
+
+```toml
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[data_session]
+name = "bitget_data_session"
+inst_type = "usdt-futures"
+subscribe_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+feeds = ["book_ticker"]
+
+[data_session.websocket.endpoint]
+host = "vip-ws-uta.bitget.com"
+target = "/v3/ws/public/sbe"
+enable_tls = true
+
+[data_session.websocket.execution_policy]
+bind_cpu_id = 2
+
+[data_shm_sink]
+enabled = true
+shm_name = "aquila_bitget_market_data"
+book_ticker_channel_name = "book_ticker_channel"
+trade_channel_name = "trade_channel"
+create = true
+remove_existing = false
+```
+
 `[data_shm_sink]` 是可选顶层 section。`enabled = true` 时 data session tool 选择
 `DataShmPublisher` 作为唯一 data sink；未配置或 `enabled = false` 时选择默认计数 sink。
-Gate / Binance data session 使用同一个 SHM object 内的两个 typed channel：`book_ticker_channel_name`
-发布 `BookTicker`，`trade_channel_name` 发布 `Trade`。旧 `channel_name` 仍作为 `book_ticker_channel_name`
-的 legacy alias。容量固定在代码常量中，TOML 不支持
+Gate / Binance data session 可使用同一个 SHM object 内的两个 typed channel：
+`book_ticker_channel_name` 发布 `BookTicker`，`trade_channel_name` 发布 `Trade`。Bitget 当前只启用
+`book_ticker` channel，仍沿用同一份 `[data_shm_sink]` 配置结构。旧 `channel_name` 仍作为
+`book_ticker_channel_name` 的 legacy alias。容量固定在代码常量中，TOML 不支持
 `capacity` 或 `expected_capacity`。
 
 Gate 默认配置把 `remove_existing` 设为 `false`，避免 dry-run 或普通启动删除已有 reader
@@ -197,7 +235,7 @@ data session 的运行期 symbol 输入由 `instrument_catalog` 和 `subscribe_s
 
 ## Data Session Diagnostics
 
-Gate / Binance data session config 支持可选的 `[data_session.diagnostics.*]` section。该 section
+Gate / Binance / Bitget data session config 支持可选的 `[data_session.diagnostics.*]` section。该 section
 只在启动冷路径解析；默认不启用，且默认 build 使用 `AQUILA_DATA_SESSION_DIAG_LEVEL=0`，保持现有
 data session 热路径行为。运行期配置不能超过编译期 level：
 
@@ -253,13 +291,13 @@ rx_software = true
 | --- | --- | --- |
 | `symbol_id` | `instrument_catalog` CSV | 写入 `BookTicker.symbol_id`，供策略热路径使用。 |
 | `symbol` | `subscribe_symbols` / CSV 内部 symbol | 诊断、配置校验和构造订阅视图。 |
-| `exchange_symbol` | `instrument_catalog` CSV | 构造交易所订阅 payload / stream target，例如 Gate `BTC_USDT`、Binance `BTCUSDT`。 |
+| `exchange_symbol` | `instrument_catalog` CSV | 构造交易所订阅 payload / stream target，例如 Gate `BTC_USDT`、Binance / Bitget `BTCUSDT`。 |
 
 约束：
 
-1. `subscribe_symbols` 中的每个 symbol 必须能按 `(exchange, symbol)` 在 catalog 中找到唯一记录。
-2. symbol pool 在启动期生成并固定；行情热路径只使用已生成的 `gate::SymbolBinding` / lookup，不查询 CSV，也不解析配置。
-3. 每个 data session 只连接一个交易所，运行期 symbol lookup 放在 session / client 内部，当前 Gate 用 `exchange_symbol -> symbol_id` 的 `absl::flat_hash_map`。
+1. `subscribe_symbols` 中的每个 symbol 必须能按 `(exchange, symbol)` 在 catalog 中找到唯一记录；Bitget parser 还会 fallback 到 `exchange_symbol` 查找，以支持示例中的 `BTCUSDT`。
+2. symbol pool 在启动期生成并固定；行情热路径只使用已生成的 symbol binding / lookup，不查询 CSV，也不解析配置。
+3. 每个 data session 只连接一个交易所，运行期 symbol lookup 放在 session / client 内部，当前 Gate / Bitget 用 `exchange_symbol -> symbol_id` 的 `absl::flat_hash_map`。
 4. `symbol_id` 和字符串存储的生命周期必须覆盖 data session 生命周期；`std::string_view` 只能指向稳定存储。
 
 Gate futures 行情字段：
@@ -288,7 +326,7 @@ exchange/gate/market_data/data_session_config.h
 tools/gate/data_session.cpp
 ```
 
-Data session TOML parser 放在对应交易所的 `exchange/*/market_data/`，因为 Gate 和 Binance 的
+Data session TOML parser 放在对应交易所的 `exchange/*/market_data/`，因为 Gate、Binance 和 Bitget 的
 data session 字段不完全相同，不把交易所特有字段放入 `core/config`。`core/config` 当前只保留
 WebSocket config 和 instrument catalog 这类交易所无关配置。
 
@@ -354,6 +392,46 @@ Binance config parser 读取 `instrument_catalog` 和 `subscribe_symbols` 后按
 stream target 在 parser / session 构造阶段由 exchange symbol 列表生成，active 后不发送 runtime
 subscribe。
 
+Bitget UTA SBE 行情字段：
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `inst_type` | `usdt-futures` | Bitget UTA instrument type，写入 subscribe args 的 `instType`。 |
+| `feeds` | `["book_ticker"]` | 当前订阅的 Bitget public feed 列表；当前只支持 `book_ticker`，即 SBE `books1`。 |
+| `feed` | `book_ticker` | legacy single-feed alias，仅在未配置 `feeds` 时接受；`feed` 和 `feeds` 同时出现会被拒绝。 |
+
+Bitget 当前实现入口：
+
+```text
+core/config/instrument_catalog.h
+core/config/websocket_config.h
+exchange/bitget/market_data/data_session_config.cpp
+exchange/bitget/market_data/data_session_config.h
+tools/bitget/bitget_data_session.cpp
+```
+
+Bitget config parser 读取 `instrument_catalog` 和 `subscribe_symbols` 后按 `Exchange::kBitget`
+生成 exchange symbol 列表，例如内部 `BTC_USDT` 或 exchange symbol `BTCUSDT` 都可映射到
+Bitget `BTCUSDT`。当前 target 默认是 `/v3/ws/public/sbe`，仓库示例在
+`data_session.websocket.endpoint.target` 显式写出该路径。
+
+默认运行下面命令只做 dry-run，验证 TOML、CSV、target 和 symbol 映射生成结果，不连接网络：
+
+```bash
+./build/debug/tools/bitget_data_session --config config/data_sessions/bitget_data_session.toml
+```
+
+需要实际连接时显式加 `--connect`，进程会一直运行到收到 SIGINT 或 SIGTERM：
+
+```bash
+./build/debug/tools/bitget_data_session --config config/data_sessions/bitget_data_session.toml --connect
+```
+
+Bitget `books1` 字段映射为：`seq -> BookTicker.id`，`sts * 1000 -> exchange_ns`，
+`ts * 1000 -> event_ns`，data session ingress `CLOCK_REALTIME -> local_ns`。历史 probe /
+fixture 中如果缺少 `sts`，decoder 写 `exchange_ns = event_ns`。Bitget data session 发布同一个
+72-byte `aquila::BookTicker` ABI；当前不发布 `Trade`。
+
 ## WebSocket Endpoint
 
 当前 C++ 实现入口是 `core/config/websocket_config.h` / `core/config/websocket_config.cpp`。
@@ -391,13 +469,15 @@ enable_tls = true
 | Gate 公网行情 IP pinning | `fx-ws.gateio.ws` / `57.181.9.46` / `443` | `true` | TCP 直连 `57.181.9.46:443`，TLS SNI / cert verify / WebSocket Host 仍为 `fx-ws.gateio.ws`。 |
 | Gate private link plain WS | private host 或 logical host / 可选 private IP / plain WS port | `false` | TCP 连接 `connect_ip:port` 或解析 `host:port`；WebSocket Host 始终为 `host`。 |
 | Binance 公网行情 | `fstream.binance.com` / 空 / `443` | `true` | TCP 解析 `fstream.binance.com`，TLS SNI / cert verify / WebSocket Host 均为 `fstream.binance.com`。 |
+| Bitget UTA public SBE | `vip-ws-uta.bitget.com` / 空 / `443` | `true` | TCP 解析 `vip-ws-uta.bitget.com`，TLS SNI / cert verify / WebSocket Host 均为 `vip-ws-uta.bitget.com`，WebSocket target 为 `/v3/ws/public/sbe`。 |
 
 因此 Gate public config 应保留默认 `enable_tls = true`，或显式写成 `true`。Gate private link
 部署可以显式设置 `enable_tls = false`，但必须同时使用对应 private endpoint。
 
-`target` 不属于 endpoint 默认字段，由 data session config parser 在冷路径生成。例如 Gate SBE 行情由
-`settle`、`wire_format` 和 `sbe_schema_id` 生成；Binance book ticker 由 `subscribe_symbols`
-展开后生成 raw stream target。
+`target` 通常由 data session config parser 在冷路径生成。例如 Gate SBE 行情由 `settle`、
+`wire_format` 和 `sbe_schema_id` 生成；Binance book ticker 由 `subscribe_symbols` 展开后生成 raw
+stream target。Bitget parser 默认使用 `/v3/ws/public/sbe`，也接受
+`data_session.websocket.endpoint.target` 显式覆盖。
 
 ## WebSocket Execution Policy
 
