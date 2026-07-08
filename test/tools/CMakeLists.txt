@@ -1,5 +1,6 @@
 add_subdirectory(gate)
 add_subdirectory(binance)
+add_subdirectory(bitget)
 add_subdirectory(benchmark)
 add_subdirectory(tardis)
 add_subdirectory(lead_lag)
