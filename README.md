@@ -347,6 +347,55 @@ GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.p
   --contract BTC_USDT
 ```
 
+## Bitget UTA REST Read-only Query
+
+Bitget UTA REST read-only query 脚本使用私有 GET 接口查询当前 API key 可访问的账户、仓位和订单信息。
+默认读取 `BITGET_TEST_KEY` / `BITGET_TEST_SECRET` 环境变量；Bitget 私有 REST 签名还要求
+`ACCESS-PASSPHRASE`，脚本默认从 `BITGET_TEST_PASSPHRASE` 读取。`--api-key`、`--api-secret`
+和 `--api-passphrase` 参数表示环境变量名，不直接传 secret 值。不写子命令时等价于 `account`。
+
+```bash
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  scripts/bitget/account/query_bitget_account.py account \
+  --allow-partial
+```
+
+账户查询默认覆盖：
+
+```text
+GET /api/v3/account/assets
+GET /api/v3/account/settings
+```
+
+订单查询：
+
+```bash
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  scripts/bitget/account/query_bitget_account.py orders \
+  --category USDT-FUTURES \
+  --symbol BTCUSDT \
+  --status open \
+  --limit 20
+
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  scripts/bitget/account/query_bitget_account.py orders \
+  --order-id 1233965375251996672
+```
+
+仓位查询：
+
+```bash
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  scripts/bitget/account/query_bitget_account.py positions \
+  --category USDT-FUTURES
+
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  scripts/bitget/account/query_bitget_account.py positions \
+  --category USDT-FUTURES \
+  --symbol BTCUSDT \
+  --pos-side long
+```
+
 ## Gate REST Futures Order Test
 
 Gate REST futures 下单测试脚本使用 `POST /futures/{settle}/orders` 创建常规 futures order，默认只
