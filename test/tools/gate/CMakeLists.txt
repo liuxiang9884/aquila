@@ -110,7 +110,7 @@ max_exchange_freshness_ns = 2000000
 max_binance_freshness_ns = 2000000
 max_gate_freshness_ns = 50000000
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+file = "config/instruments/usdt_future_universe.csv"
 [market_data.gate]
 shm_name = "aquila_missing_gate_fill_probe_market_shm"
 channel_name = "book_ticker_channel"

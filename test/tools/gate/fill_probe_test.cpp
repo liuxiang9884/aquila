@@ -47,7 +47,7 @@ max_binance_freshness_ns = 2000000
 max_gate_freshness_ns = 50000000
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data.gate]
 shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
@@ -112,7 +112,7 @@ max_binance_freshness_ns = 2000000
 max_gate_freshness_ns = 50000000
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data.gate]
 shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
@@ -181,7 +181,7 @@ max_binance_freshness_ns = 2000000
 max_gate_freshness_ns = 50000000
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data.gate]
 shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
@@ -239,7 +239,7 @@ max_binance_freshness_ns = 2000000
 max_gate_freshness_ns = 50000000
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data.gate]
 shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
@@ -297,7 +297,7 @@ max_binance_freshness_ns = 2000000
 max_gate_freshness_ns = 50000000
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260701.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data.gate]
 shm_name = "aquila_gfusion_20260701_102201_30s_ogw24h"
@@ -331,7 +331,7 @@ run_dir = "/home/liuxiang/tmp/gate_btc_fill_probe_test"
 
 TEST(GateFillProbeOrderMathTest, ComputesBtcMinimumNotional) {
   const auto catalog_result = aquila::config::LoadInstrumentCatalogFromCsv(
-      "config/instruments/usdt_futures_common_gate_binance_20260701.csv");
+      "config/instruments/usdt_future_universe.csv");
   ASSERT_TRUE(catalog_result.ok) << catalog_result.error;
   const auto* instrument =
       catalog_result.value.Find(aquila::Exchange::kGate, "BTC_USDT");

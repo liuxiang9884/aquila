@@ -51,7 +51,7 @@ constexpr std::string_view kActualLiveLeadLagConfigPath =
     "lead_lag_30symbols_fusion_2bps_2bps_5bps_lag200_order_gateway_20260701."
     "toml";
 constexpr std::string_view kActualLiveInstrumentCatalogPath =
-    "config/instruments/usdt_futures_common_gate_binance_20260701.csv";
+    "config/instruments/usdt_future_universe.csv";
 
 struct LiveSymbolSpec {
   std::string_view symbol;
