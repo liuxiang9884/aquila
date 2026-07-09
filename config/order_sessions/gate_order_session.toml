@@ -20,8 +20,8 @@ diagnostic_window_timeout_ns = 250000000
 max_logs_per_second = 10
 
 [order_session.credentials]
-api_key_env = "PROBE_KEY"
-api_secret_env = "PROBE_SECRET"
+api_key_env = "GATE_PROBE_KEY"
+api_secret_env = "GATE_PROBE_SECRET"
 
 [order_session.websocket.endpoint]
 host = "fx-ws.gateio.ws"

@@ -37,8 +37,8 @@ TEST(OrderFeedbackSessionConfigTest,
 
   const aquila::gate::OrderFeedbackSessionConfig& config = result.value;
   EXPECT_EQ(config.name, "gate_order_feedback_session");
-  EXPECT_EQ(config.credentials.api_key_env, "PROBE_KEY");
-  EXPECT_EQ(config.credentials.api_secret_env, "PROBE_SECRET");
+  EXPECT_EQ(config.credentials.api_key_env, "GATE_PROBE_KEY");
+  EXPECT_EQ(config.credentials.api_secret_env, "GATE_PROBE_SECRET");
 
   EXPECT_EQ(config.connection.host, "fx-ws.gateio.ws");
   EXPECT_EQ(config.connection.port, "443");
@@ -68,8 +68,8 @@ TEST(OrderFeedbackSessionConfigTest,
   const aquila::gate::OrderFeedbackSessionConfig& config = result.value;
   EXPECT_EQ(config.name,
             "gate_order_feedback_session_lab_usdt_private_plain_20260601");
-  EXPECT_EQ(config.credentials.api_key_env, "PROBE_KEY");
-  EXPECT_EQ(config.credentials.api_secret_env, "PROBE_SECRET");
+  EXPECT_EQ(config.credentials.api_key_env, "GATE_PROBE_KEY");
+  EXPECT_EQ(config.credentials.api_secret_env, "GATE_PROBE_SECRET");
 
   EXPECT_EQ(config.connection.host, "fxws-private.gateapi.io");
   EXPECT_EQ(config.connection.connect_ip, "10.0.1.154");

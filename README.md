@@ -305,11 +305,11 @@ scripts/binance/market_data/query_um_futures_contracts.py BTCUSDT ETHUSDT --form
 ## Gate REST Read-only Query
 
 Gate REST read-only query 脚本使用 APIv4 authenticated GET 接口查询当前 API key 可访问的账户、订单和
-仓位信息。默认读取 `TEST_KEY` / `TEST_SECRET` 环境变量；`--api-key` 和 `--api-secret` 参数表示环境变量名，
+仓位信息。默认读取 `GATE_TEST_KEY` / `GATE_TEST_SECRET` 环境变量；`--api-key` 和 `--api-secret` 参数表示环境变量名，
 不直接传 secret 值。不写子命令时兼容旧行为，等价于 `account`。
 
 ```bash
-TEST_KEY=... TEST_SECRET=... scripts/gate/account/query_gate_account.py account \
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.py account \
   --settle usdt \
   --currency USDT \
   --currency-pair BTC_USDT \
@@ -329,21 +329,21 @@ GET /futures/{settle}/fee
 订单查询：
 
 ```bash
-TEST_KEY=... TEST_SECRET=... scripts/gate/account/query_gate_account.py orders \
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.py orders \
   --contract BTC_USDT \
   --status open \
   --limit 20
 
-TEST_KEY=... TEST_SECRET=... scripts/gate/account/query_gate_account.py orders \
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.py orders \
   --order-id 36028827892199865
 ```
 
 仓位查询：
 
 ```bash
-TEST_KEY=... TEST_SECRET=... scripts/gate/account/query_gate_account.py positions
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.py positions
 
-TEST_KEY=... TEST_SECRET=... scripts/gate/account/query_gate_account.py positions \
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.py positions \
   --contract BTC_USDT
 ```
 
@@ -366,7 +366,7 @@ scripts/gate/trading/place_futures_order.py \
 真实提交示例：
 
 ```bash
-TEST_KEY=... TEST_SECRET=... scripts/gate/trading/place_futures_order.py \
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/trading/place_futures_order.py \
   --contract BTC_USDT \
   --side buy \
   --size 1 \
@@ -381,7 +381,7 @@ TEST_KEY=... TEST_SECRET=... scripts/gate/trading/place_futures_order.py \
 命令行撤单示例：
 
 ```bash
-TEST_KEY=... TEST_SECRET=... scripts/gate/trading/place_futures_order.py cancel 36028827891355772
+GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/trading/place_futures_order.py cancel 36028827891355772
 ```
 
 `cancel` 参数可以是 Gate 返回的 order id，也可以是下单时传入的 `text` 客户端 ID。

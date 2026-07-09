@@ -223,7 +223,7 @@ live IOC sample：
 - Gate data session 已发布 `BookTicker` SHM。
 - Gate order feedback session 已发布 feedback SHM。
 - 使用 dedicated / probe account，并在外部 REST 确认无 open orders、position flat。
-- 设置 `PROBE_KEY` / `PROBE_SECRET`。
+- 设置 `GATE_PROBE_KEY` / `GATE_PROBE_SECRET`。
 
 ## 采样路径
 

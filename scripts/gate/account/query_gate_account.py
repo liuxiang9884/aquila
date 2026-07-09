@@ -16,8 +16,8 @@ from typing import Any, Callable, Iterable
 
 DEFAULT_BASE_URL = "https://api.gateio.ws/api/v4"
 DEFAULT_TIMEOUT = 8.0
-DEFAULT_API_KEY_ENV = "TEST_KEY"
-DEFAULT_API_SECRET_ENV = "TEST_SECRET"
+DEFAULT_API_KEY_ENV = "GATE_TEST_KEY"
+DEFAULT_API_SECRET_ENV = "GATE_TEST_SECRET"
 USER_AGENT = "aquila-gate-account-query/1.0"
 SIZE_DECIMAL_HEADER = "X-Gate-Size-Decimal"
 SIZE_DECIMAL_HEADER_VALUE = "1"

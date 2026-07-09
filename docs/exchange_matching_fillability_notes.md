@@ -17,7 +17,7 @@
 
 安全边界：
 
-- 仅面向 `BTC_USDT`；凭据使用 `TEST_KEY` / `TEST_SECRET` 环境变量，不在配置或日志中写入 secret。
+- 仅面向 `BTC_USDT`；凭据使用 `GATE_TEST_KEY` / `GATE_TEST_SECRET` 环境变量，不在配置或日志中写入 secret。
 - 单个 entry order 的名义金额由 instrument catalog、当前 entry price 和 `min_quantity` 计算，配置上限为 `max_entry_notional_usdt=10`。
 - `max_nodes` 只限制开仓 node；close order、close retry、cancel command 不计入该上限。
 - 一个 node 同时提交 route 0 GTC 和 route 1 IOC。若两路都成交，临时 exposure 可能接近单笔上限的 2 倍。

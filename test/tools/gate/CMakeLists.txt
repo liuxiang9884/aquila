@@ -252,8 +252,8 @@ name = "gate_order_gateway_cpu_override_session"
 settle = "usdt"
 
 [order_session.credentials]
-api_key_env = "TEST_KEY"
-api_secret_env = "TEST_SECRET"
+api_key_env = "GATE_TEST_KEY"
+api_secret_env = "GATE_TEST_SECRET"
 
 [order_session.websocket.endpoint]
 host = "fxws-private.gateapi.io"

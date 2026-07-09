@@ -30,8 +30,8 @@ max_errqueue_events_per_drain = 32
 max_active_probes = 16384
 
 [order_session.credentials]
-api_key_env = "PROBE_KEY"
-api_secret_env = "PROBE_SECRET"
+api_key_env = "GATE_PROBE_KEY"
+api_secret_env = "GATE_PROBE_SECRET"
 
 [order_session.websocket.endpoint]
 host = "fxws-private.gateapi.io"

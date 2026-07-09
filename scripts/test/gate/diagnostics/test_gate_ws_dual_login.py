@@ -20,8 +20,8 @@ except ImportError as exc:  # pragma: no cover - utility script
 
 DEFAULT_URL = "wss://fx-ws.gateio.ws/v4/ws/usdt"
 DEFAULT_TIMEOUT = 8.0
-DEFAULT_API_KEY_ENV = "TEST_KEY"
-DEFAULT_API_SECRET_ENV = "TEST_SECRET"
+DEFAULT_API_KEY_ENV = "GATE_TEST_KEY"
+DEFAULT_API_SECRET_ENV = "GATE_TEST_SECRET"
 LOGIN_CHANNEL = "futures.login"
 SIZE_DECIMAL_HEADER = "X-Gate-Size-Decimal: 1"
 
