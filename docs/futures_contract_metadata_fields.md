@@ -41,6 +41,17 @@ scripts/bitget/market_data/query_futures_contracts.py BTCUSDT ETHUSDT --format c
 Bitget 脚本额外支持 `--allow-missing`，用于更新 catalog 时跳过 Bitget 不存在或未处于 `online`
 状态的 symbol。
 
+## 当前 catalog 文件
+
+`config/instruments/usdt_futures.csv` 是小型默认 catalog，当前包含 16 个 symbol，每个 symbol 有
+Gate / Binance / Bitget 行，主要服务默认 data session、Bitget smoke 和轻量测试。
+
+`config/instruments/usdt_future_universe.csv` 是大 universe catalog，当前包含 Gate 494 行、
+Binance 494 行和 Bitget 438 行；Bitget 行只为 Bitget UTA `USDT-FUTURES` 中存在且 `online` 的
+symbol 写入。该文件保留 `contract_multiplier`，适合 30-symbol / 大 universe run、fill probe 和
+需要 report notional / PnL 乘数的场景。旧
+`config/instruments/usdt_futures_common_gate_binance_20260701.csv` 已重命名，不应继续作为当前路径引用。
+
 ## 统一字段
 
 | 字段 | 含义 | Gate 映射 | Binance 映射 |
