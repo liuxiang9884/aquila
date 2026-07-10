@@ -201,7 +201,13 @@ using ::aquila::exchange::detail::ReadSimdjsonString;
     }
 
     if (FindSimdjsonField(arg, "orderId", &value)) {
-      (void)ReadUint64(value, &response->exchange_order_id);
+      bool is_null = false;
+      if (value.is_null().get(is_null) != simdjson::SUCCESS) {
+        return false;
+      }
+      if (!is_null && !ReadUint64(value, &response->exchange_order_id)) {
+        return false;
+      }
     }
     if (FindSimdjsonField(arg, "cTime", &value)) {
       std::uint64_t creation_time = 0;

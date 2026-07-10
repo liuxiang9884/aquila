@@ -147,6 +147,11 @@ TEST(BitgetOperationResponseParserTest, RejectsMalformedOrMissingFields) {
           R"({"event":"trade","id":"not-a-number","topic":"place-order","args":[{"clientOid":"a-42"}],"code":"0","ts":"1"})")
           .parse_status,
       OperationParseStatus::kUnexpectedShape);
+  EXPECT_EQ(
+      ParseOperationResponse(
+          R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"orderId":{},"clientOid":"a-42"}],"code":"0","ts":"1"})")
+          .parse_status,
+      OperationParseStatus::kUnexpectedShape);
 }
 
 TEST(BitgetOperationResponseParserTest, RejectsTimestampOverflow) {
