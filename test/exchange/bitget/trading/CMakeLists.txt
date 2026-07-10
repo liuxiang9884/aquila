@@ -90,3 +90,16 @@ target_link_libraries(bitget_order_session_runtime_adapter_test
 
 add_test(NAME bitget_order_session_runtime_adapter_test
          COMMAND bitget_order_session_runtime_adapter_test)
+
+add_executable(bitget_order_feedback_parser_test
+    order_feedback_parser_test.cpp
+)
+
+target_link_libraries(bitget_order_feedback_parser_test
+    PRIVATE
+        aquila_bitget
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_order_feedback_parser_test
+         COMMAND bitget_order_feedback_parser_test)
