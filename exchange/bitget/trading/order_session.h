@@ -182,6 +182,9 @@ class OrderSession {
 
   void OnConnectionPhase(websocket::ConnectionPhase phase) noexcept {
     if (phase == websocket::ConnectionPhase::kActive) {
+      if (active_) {
+        return;
+      }
       active_ = true;
       login_ready_ = false;
       login_sent_ = false;

@@ -128,6 +128,19 @@ TEST(BitgetOrderSessionTest, ActiveSendsLoginAndSuccessMarksReady) {
   EXPECT_EQ(session.stats().login_accepted, 1U);
 }
 
+TEST(BitgetOrderSessionTest, DegradedRecoveryDoesNotSendAnotherLogin) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(&session);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kDegraded);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  EXPECT_TRUE(session.Ready());
+  EXPECT_EQ(session.stats().login_sent, 1U);
+  EXPECT_EQ(handler.ready_calls, 1);
+}
+
 TEST(BitgetOrderSessionTest, LoginFailureAndServiceUpgradeStayNotReady) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
@@ -137,6 +150,7 @@ TEST(BitgetOrderSessionTest, LoginFailureAndServiceUpgradeStayNotReady) {
   EXPECT_FALSE(session.Ready());
   EXPECT_EQ(session.stats().login_rejected, 1U);
 
+  session.OnConnectionPhase(websocket::ConnectionPhase::kReconnectBackoff);
   session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
   session.Handle(TextView(R"({"event":"login","code":"0","msg":""})"));
   ASSERT_TRUE(session.Ready());
