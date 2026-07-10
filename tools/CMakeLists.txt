@@ -256,6 +256,20 @@ target_link_libraries(bitget_order_session_probe
         PkgConfig::tomlplusplus
 )
 
+add_executable(bitget_order_feedback_session
+    bitget/bitget_order_feedback_session.cpp
+)
+
+target_link_libraries(bitget_order_feedback_session
+    PRIVATE
+        aquila_core
+        aquila_bitget
+        CLI11::CLI11
+        magic_enum::magic_enum
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(bitget_data_fusion
     bitget/bitget_data_fusion.cpp
     bitget/bitget_data_fusion_config.cpp

@@ -46,3 +46,15 @@ set_tests_properties(bitget_data_fusion_help_test
     bitget_data_fusion_book_ticker_trade_dry_run_test
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_test(NAME bitget_order_feedback_session_help_test
+         COMMAND bitget_order_feedback_session --help)
+
+add_test(NAME bitget_order_feedback_session_dry_run_test
+         COMMAND bitget_order_feedback_session --config
+                 config/order_feedback/bitget_order_feedback_session.toml)
+
+set_tests_properties(bitget_order_feedback_session_help_test
+    bitget_order_feedback_session_dry_run_test
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

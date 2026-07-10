@@ -121,3 +121,21 @@ target_link_libraries(bitget_order_feedback_session_test
 
 add_test(NAME bitget_order_feedback_session_test
          COMMAND bitget_order_feedback_session_test)
+
+add_executable(bitget_order_feedback_session_config_test
+    order_feedback_session_config_test.cpp
+)
+
+target_compile_definitions(bitget_order_feedback_session_config_test
+    PRIVATE
+        AQUILA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(bitget_order_feedback_session_config_test
+    PRIVATE
+        aquila_bitget
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_order_feedback_session_config_test
+         COMMAND bitget_order_feedback_session_config_test)
