@@ -46,6 +46,7 @@ add_executable(bitget_order_session_rtt_probe_test
     order_session_rtt_probe/order_session_rtt_probe_test.cpp
     ${PROJECT_SOURCE_DIR}/tools/bitget/order_session_rtt_probe/config.cpp
     ${PROJECT_SOURCE_DIR}/tools/bitget/order_session_rtt_probe/connection_plan.cpp
+    ${PROJECT_SOURCE_DIR}/tools/bitget/order_session_rtt_probe/sample_csv_writer.cpp
 )
 
 target_include_directories(bitget_order_session_rtt_probe_test

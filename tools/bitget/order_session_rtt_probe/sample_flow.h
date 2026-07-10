@@ -43,6 +43,7 @@ struct ProbeSampleStats {
   std::int64_t terminal_feedback_local_ns{0};
   std::int64_t terminal_feedback_exchange_ns{0};
   OrderFeedbackKind terminal_feedback_kind{OrderFeedbackKind::kCancelled};
+  OrderFinishReason terminal_finish_reason{OrderFinishReason::kUnknown};
   bool terminal_feedback_observed{false};
   bool place_ack_observed{false};
   bool zero_fill_cancelled_observed{false};
@@ -180,6 +181,7 @@ class ProbeSampleFlow {
         stats_.terminal_feedback_observed || IsTerminal(feedback.kind);
     if (IsTerminal(feedback.kind)) {
       stats_.terminal_feedback_kind = feedback.kind;
+      stats_.terminal_finish_reason = feedback.finish_reason;
       stats_.terminal_feedback_local_ns = feedback.local_receive_ns;
       stats_.terminal_feedback_exchange_ns = feedback.exchange_update_ns;
     }

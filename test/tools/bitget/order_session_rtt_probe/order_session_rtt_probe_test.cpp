@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,10 +19,13 @@
 #include "exchange/bitget/trading/order_session_config.h"
 #include "tools/bitget/order_session_rtt_probe/config.h"
 #include "tools/bitget/order_session_rtt_probe/connection_plan.h"
+#include "tools/bitget/order_session_rtt_probe/local_feedback_queue.h"
 #include "tools/bitget/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/bitget/order_session_rtt_probe/run_plan.h"
+#include "tools/bitget/order_session_rtt_probe/sample_csv_writer.h"
 #include "tools/bitget/order_session_rtt_probe/sample_flow.h"
 #include "tools/bitget/order_session_rtt_probe/sample_id_allocator.h"
+#include "tools/bitget/order_session_rtt_probe/sequential_coordinator.h"
 #include "tools/bitget/order_session_rtt_probe/session_config_builder.h"
 
 namespace aquila::tools::bitget_order_session_rtt_probe {
@@ -41,6 +45,13 @@ std::filesystem::path WriteConnectionsCsv(std::string_view text) {
   output << text;
   output.close();
   return path;
+}
+
+std::string ReadTextFile(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
 }
 
 toml::parse_result ParseMinimalConfig(std::string_view extra) {
@@ -484,6 +495,196 @@ TEST(BitgetRttProbeFlowTest, ContinuityLostFailsActiveSample) {
   EXPECT_FALSE(transition.ok);
   EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
   EXPECT_NE(transition.error.find("continuity"), std::string::npos);
+}
+
+TEST(BitgetRttProbeQueueTest, RejectsPushWhenFullAndPreservesOrder) {
+  LocalFeedbackQueue queue(2);
+  const OrderFeedbackEvent first = MakeFeedback(
+      OrderFeedbackKind::kCancelled, MakeSampleIds().ioc_local_order_id, 0.0);
+  const OrderFeedbackEvent second = MakeFeedback(
+      OrderFeedbackKind::kFilled, MakeSampleIds().close_local_order_id, 0.0001);
+  const OrderFeedbackEvent dropped = MakeFeedback(
+      OrderFeedbackKind::kRejected, LocalOrderIdCodec::Encode(7, 3), 0.0);
+
+  EXPECT_TRUE(queue.TryPush(first));
+  EXPECT_TRUE(queue.TryPush(second));
+  EXPECT_FALSE(queue.TryPush(dropped));
+  EXPECT_EQ(queue.dropped_count(), 1U);
+
+  std::vector<std::uint64_t> local_order_ids;
+  EXPECT_EQ(queue.Poll(1,
+                       [&](const OrderFeedbackEvent& event) {
+                         local_order_ids.push_back(event.local_order_id);
+                       }),
+            1U);
+  EXPECT_EQ(queue.Poll(8,
+                       [&](const OrderFeedbackEvent& event) {
+                         local_order_ids.push_back(event.local_order_id);
+                       }),
+            1U);
+  ASSERT_EQ(local_order_ids.size(), 2U);
+  EXPECT_EQ(local_order_ids[0], first.local_order_id);
+  EXPECT_EQ(local_order_ids[1], second.local_order_id);
+}
+
+TEST(BitgetRttProbeCoordinatorTest, GrantsOneSessionAtATimeInCsvOrder) {
+  SequentialCoordinator coordinator(/*session_count=*/2,
+                                    /*samples_per_session=*/2,
+                                    /*order_session_interval_us=*/10,
+                                    /*cycle_cooldown_us=*/100);
+
+  EXPECT_EQ(coordinator.NextGrant(/*now_ns=*/0), 0U);
+  EXPECT_FALSE(coordinator.NextGrant(/*now_ns=*/1).has_value());
+  EXPECT_TRUE(coordinator.MarkSampleFinished(/*session_index=*/0,
+                                             /*success=*/true,
+                                             /*now_ns=*/100));
+  EXPECT_FALSE(coordinator.NextGrant(/*now_ns=*/10'099).has_value());
+  EXPECT_EQ(coordinator.NextGrant(/*now_ns=*/10'100), 1U);
+  EXPECT_TRUE(coordinator.MarkSampleFinished(/*session_index=*/1,
+                                             /*success=*/true,
+                                             /*now_ns=*/20'000));
+  EXPECT_FALSE(coordinator.NextGrant(/*now_ns=*/119'999).has_value());
+  EXPECT_EQ(coordinator.NextGrant(/*now_ns=*/120'000), 0U);
+  EXPECT_TRUE(coordinator.MarkSampleFinished(0, true, 120'001));
+  EXPECT_EQ(coordinator.NextGrant(130'001), 1U);
+  EXPECT_TRUE(coordinator.MarkSampleFinished(1, true, 130'002));
+  EXPECT_TRUE(coordinator.complete());
+  EXPECT_FALSE(coordinator.failed());
+  EXPECT_FALSE(coordinator.NextGrant(1'000'000).has_value());
+}
+
+TEST(BitgetRttProbeCoordinatorTest, FailureStopsFutureGrants) {
+  SequentialCoordinator coordinator(/*session_count=*/2,
+                                    /*samples_per_session=*/1,
+                                    /*order_session_interval_us=*/0,
+                                    /*cycle_cooldown_us=*/0);
+
+  ASSERT_EQ(coordinator.NextGrant(0), 0U);
+  EXPECT_TRUE(coordinator.MarkSampleFinished(0, false, 1));
+  EXPECT_TRUE(coordinator.failed());
+  EXPECT_FALSE(coordinator.NextGrant(2).has_value());
+}
+
+TEST(BitgetRttProbeCsvTest, WritesOnlyBitgetEvidenceColumns) {
+  const std::filesystem::path output_path = UniqueTmpPath("bitget_rtt_samples");
+  std::filesystem::remove(output_path);
+
+  SampleCsvWriter writer;
+  std::string error;
+  ASSERT_TRUE(writer.Open(output_path, &error)) << error;
+  ASSERT_TRUE(writer.Write(
+      SampleCsvRow{
+          .run_id = "unit-run",
+          .session_name = "ha-0",
+          .group = "high-availability",
+          .host = "vip-ws-uta.bitget.com",
+          .connect_ip = "",
+          .port = "443",
+          .worker_cpu = 6,
+          .owner_thread_cpu = 6,
+          .owner_thread_tid = 123,
+          .cycle_index = 2,
+          .sample_index = 3,
+          .local_order_id = 101,
+          .close_local_order_id = 102,
+          .request_sequence = 9,
+          .exchange_order_id = 777,
+          .symbol = "BTCUSDT",
+          .side = "kBuy",
+          .quantity_text = "0.0001",
+          .price_text = "97.5",
+          .bbo_ticker_id = 7,
+          .bbo_local_ns = 900,
+          .request_send_ns = 1000,
+          .response_receive_ns = 1100,
+          .response_exchange_ns = 1050,
+          .ack_rtt_ns = 100,
+          .response_kind = "kAck",
+          .error_code = 0,
+          .connection_id_hash = 77,
+          .terminal_feedback_kind = "kCancelled",
+          .terminal_feedback_local_ns = 2100,
+          .terminal_feedback_exchange_ns = 2000,
+          .terminal_finish_reason = "kImmediateOrCancel",
+          .cumulative_fill = 0.0,
+          .outcome = "normal_terminal_confirmed",
+          .invalid = false,
+          .unexpected_fill = false,
+          .safety_close_requested = false,
+          .safety_close_sent = false,
+          .safety_close_confirmed = false,
+          .safety_close_filled_quantity = 0.0,
+          .invalid_reason = "",
+      },
+      &error))
+      << error;
+  writer.Close();
+
+  const std::string output = ReadTextFile(output_path);
+  const std::size_t header_end = output.find('\n');
+  ASSERT_NE(header_end, std::string::npos);
+  const std::string header = output.substr(0, header_end);
+  EXPECT_NE(header.find("ack_rtt_ns"), std::string::npos);
+  EXPECT_NE(header.find("connection_id_hash"), std::string::npos);
+  EXPECT_NE(header.find("safety_close_confirmed"), std::string::npos);
+  EXPECT_EQ(header.find("x_in_time"), std::string::npos);
+  EXPECT_EQ(header.find("exchange_request_ingress_ns"), std::string::npos);
+  EXPECT_NE(output.find("unit-run,ha-0,high-availability"), std::string::npos);
+  std::filesystem::remove(output_path);
+}
+
+TEST(BitgetRttProbeCsvTest, WritesConnectionObservationAndRunMetadata) {
+  const std::filesystem::path connections_path =
+      UniqueTmpPath("bitget_rtt_observed");
+  const std::filesystem::path metadata_path =
+      UniqueTmpPath("bitget_rtt_metadata");
+  std::filesystem::remove(connections_path);
+  std::filesystem::remove(metadata_path);
+
+  ConnectionObservedCsvWriter connection_writer;
+  std::string error;
+  ASSERT_TRUE(connection_writer.Open(connections_path, &error)) << error;
+  ASSERT_TRUE(connection_writer.Write(
+      ConnectionObservedCsvRow{
+          .run_id = "unit-run",
+          .session_name = "ha-0",
+          .group = "high-availability",
+          .configured_host = "vip-ws-uta.bitget.com",
+          .configured_connect_ip = "",
+          .configured_port = "443",
+          .worker_cpu = 6,
+          .connected_at_ns = 999,
+          .endpoint_available = true,
+          .local_ip = "10.0.0.1",
+          .local_port = 50000,
+          .remote_ip = "10.0.0.2",
+          .remote_port = 443,
+          .owner_thread_cpu = 6,
+          .owner_thread_tid = 123,
+      },
+      &error))
+      << error;
+  connection_writer.Close();
+
+  ProbeConfig config;
+  config.run_id = "unit-run";
+  config.sampling.samples_per_session = 2;
+  config.feedback.strategy_id = 7;
+  ASSERT_TRUE(WriteRunMetadata(metadata_path, config, /*session_count=*/1,
+                               "samples.csv", "connections.csv", &error))
+      << error;
+
+  EXPECT_NE(ReadTextFile(connections_path)
+                .find("unit-run,ha-0,high-availability,vip-ws-uta.bitget.com"),
+            std::string::npos);
+  const std::string metadata = ReadTextFile(metadata_path);
+  EXPECT_NE(metadata.find("\"sample_csv_schema_version\": 1"),
+            std::string::npos);
+  EXPECT_NE(metadata.find("\"rest_guard_implemented\": false"),
+            std::string::npos);
+  EXPECT_NE(metadata.find("\"session_count\": 1"), std::string::npos);
+  std::filesystem::remove(connections_path);
+  std::filesystem::remove(metadata_path);
 }
 
 }  // namespace
