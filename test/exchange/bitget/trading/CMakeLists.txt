@@ -36,3 +36,21 @@ target_link_libraries(bitget_operation_response_parser_test
 
 add_test(NAME bitget_operation_response_parser_test
          COMMAND bitget_operation_response_parser_test)
+
+add_executable(bitget_order_session_config_test
+    order_session_config_test.cpp
+)
+
+target_compile_definitions(bitget_order_session_config_test
+    PRIVATE
+        AQUILA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+target_link_libraries(bitget_order_session_config_test
+    PRIVATE
+        aquila_bitget
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_order_session_config_test
+         COMMAND bitget_order_session_config_test)
