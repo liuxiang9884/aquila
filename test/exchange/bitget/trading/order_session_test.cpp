@@ -26,6 +26,7 @@ websocket::MessageView TextView(std::string_view payload) {
 
 struct RecordingHandler {
   std::vector<OrderResponse> responses;
+  std::vector<OrderSessionConnectionInfo> connections;
   int ready_calls{0};
   int not_ready_calls{0};
 
@@ -39,6 +40,11 @@ struct RecordingHandler {
 
   void OnOrderSessionLoginNotReady() noexcept {
     ++not_ready_calls;
+  }
+
+  void OnOrderSessionConnected(
+      const OrderSessionConnectionInfo& info) noexcept {
+    connections.push_back(info);
   }
 };
 
@@ -135,6 +141,18 @@ TEST(BitgetOrderSessionTest, ActiveSendsLoginAndSuccessMarksReady) {
   EXPECT_TRUE(session.Ready());
   EXPECT_EQ(handler.ready_calls, 1);
   EXPECT_EQ(session.stats().login_accepted, 1U);
+}
+
+TEST(BitgetOrderSessionTest, ActiveReportsConnectionObservation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  ASSERT_EQ(handler.connections.size(), 1U);
+  EXPECT_GE(handler.connections.front().owner_thread_cpu, 0);
+  EXPECT_GT(handler.connections.front().owner_thread_tid, 0);
+  EXPECT_FALSE(handler.connections.front().endpoint_available);
 }
 
 TEST(BitgetOrderSessionTest, DegradedRecoveryDoesNotSendAnotherLogin) {

@@ -76,6 +76,16 @@ struct OrderResponse {
   std::int64_t ack_rtt_ns{-1};
 };
 
+struct OrderSessionConnectionInfo {
+  int owner_thread_cpu{-1};
+  int owner_thread_tid{-1};
+  bool endpoint_available{false};
+  std::string local_ip;
+  std::uint16_t local_port{0};
+  std::string remote_ip;
+  std::uint16_t remote_port{0};
+};
+
 struct LoginCredentials {
   std::string api_key;
   std::string api_secret;

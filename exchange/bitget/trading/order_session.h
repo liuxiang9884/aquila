@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
+#include <limits>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -14,6 +15,7 @@
 
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
+#include "core/websocket/socket_diagnostics.h"
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
 #include "exchange/bitget/trading/operation_response_parser.h"
@@ -21,6 +23,13 @@
 #include "exchange/bitget/trading/order_types.h"
 #include "nova/utils/log.h"
 #include <simdjson.h>
+
+#if defined(__linux__)
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <sched.h>
+#endif
 
 namespace aquila::bitget {
 
@@ -106,6 +115,26 @@ struct OrderSessionDefaultPlainWebSocketPolicy
 
 namespace detail {
 
+[[nodiscard]] inline int CurrentBitgetOrderSessionCpu() noexcept {
+#if defined(__linux__)
+  const int cpu = ::sched_getcpu();
+  return cpu >= 0 ? cpu : -1;
+#else
+  return -1;
+#endif
+}
+
+[[nodiscard]] inline int CurrentBitgetOrderSessionTid() noexcept {
+#if defined(__linux__)
+  const long tid = ::syscall(SYS_gettid);
+  return tid > 0 && tid <= static_cast<long>(std::numeric_limits<int>::max())
+             ? static_cast<int>(tid)
+             : -1;
+#else
+  return -1;
+#endif
+}
+
 struct OrderRequestCorrelation {
   OrderRequestType type{OrderRequestType::kUnknown};
   std::uint64_t local_order_id{0};
@@ -190,6 +219,7 @@ class OrderSession {
       login_sent_ = false;
       application_awaiting_pong_ = false;
       application_last_ping_ns_ = websocket::NowNs(kClockSource);
+      NotifyOrderSessionConnected();
       if (::nova::kLogManager.logger() != nullptr) {
         NOVA_INFO(
             "bitget_order_session_connected host={} port={} target={} "
@@ -804,6 +834,26 @@ class OrderSession {
   void NotifyLoginReady() noexcept {
     if constexpr (requires { response_handler_.OnOrderSessionLoginReady(); }) {
       response_handler_.OnOrderSessionLoginReady();
+    }
+  }
+
+  void NotifyOrderSessionConnected() noexcept {
+    if constexpr (requires(ResponseHandler& handler,
+                           const OrderSessionConnectionInfo& info) {
+                    handler.OnOrderSessionConnected(info);
+                  }) {
+      const websocket::SocketEndpointDiagnostics endpoints =
+          websocket::SnapshotSocketEndpointDiagnostics(
+              client_.Core().NativeFd());
+      response_handler_.OnOrderSessionConnected(OrderSessionConnectionInfo{
+          .owner_thread_cpu = detail::CurrentBitgetOrderSessionCpu(),
+          .owner_thread_tid = detail::CurrentBitgetOrderSessionTid(),
+          .endpoint_available = endpoints.available,
+          .local_ip = endpoints.local_ip.data(),
+          .local_port = endpoints.local_port,
+          .remote_ip = endpoints.remote_ip.data(),
+          .remote_port = endpoints.remote_port,
+      });
     }
   }
 
