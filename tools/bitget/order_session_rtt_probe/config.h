@@ -37,6 +37,7 @@ struct ProbeSamplingConfig {
 
 struct ProbeOrderConfig {
   std::string order_mode{"ioc"};
+  std::string symbol{"BTC_USDT"};
   double passive_price_limit_fraction{0.5};
   std::uint64_t bbo_freshness_ns{1'000'000'000ULL};
 };

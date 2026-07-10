@@ -58,6 +58,7 @@ target_link_libraries(bitget_order_session_rtt_probe_test
     PRIVATE
         aquila_bitget
         aquila_config
+        absl::flat_hash_map
         absl::flat_hash_set
         fmt::fmt-header-only
         GTest::gtest_main

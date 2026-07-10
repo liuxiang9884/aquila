@@ -34,17 +34,30 @@ struct ProbeSampleStats {
   std::uint64_t request_sequence{0};
   std::uint64_t close_request_sequence{0};
   std::uint64_t exchange_order_id{0};
+  std::uint64_t close_exchange_order_id{0};
   std::uint64_t connection_id_hash{0};
+  std::uint64_t close_connection_id_hash{0};
   std::uint32_t error_code{0};
+  std::uint32_t close_error_code{0};
   std::int64_t request_send_ns{0};
+  std::int64_t close_request_send_ns{0};
   std::int64_t response_receive_ns{0};
   std::int64_t response_exchange_ns{0};
   std::int64_t ack_rtt_ns{-1};
+  std::int64_t close_response_receive_ns{0};
+  std::int64_t close_response_exchange_ns{0};
+  std::int64_t close_ack_rtt_ns{-1};
   std::int64_t terminal_feedback_local_ns{0};
   std::int64_t terminal_feedback_exchange_ns{0};
   OrderFeedbackKind terminal_feedback_kind{OrderFeedbackKind::kCancelled};
   OrderFinishReason terminal_finish_reason{OrderFinishReason::kUnknown};
+  bitget::OrderResponseKind response_kind{
+      bitget::OrderResponseKind::kUnknownResult};
+  bitget::OrderResponseKind close_response_kind{
+      bitget::OrderResponseKind::kUnknownResult};
   bool terminal_feedback_observed{false};
+  bool place_response_observed{false};
+  bool close_response_observed{false};
   bool place_ack_observed{false};
   bool zero_fill_cancelled_observed{false};
   bool normal_terminal_confirmed{false};
@@ -98,6 +111,7 @@ class ProbeSampleFlow {
     }
     stats_.safety_close_sent = true;
     stats_.close_request_sequence = sent.request_sequence;
+    stats_.close_request_send_ns = sent.send_local_ns;
     return {};
   }
 
@@ -120,8 +134,26 @@ class ProbeSampleFlow {
       if (response.local_order_id != ids_.close_local_order_id) {
         return Fail("safety close response local_order_id mismatch");
       }
+      stats_.close_response_observed = true;
+      stats_.close_response_kind = response.kind;
+      stats_.close_exchange_order_id = response.exchange_order_id;
+      stats_.close_connection_id_hash = response.connection_id_hash;
+      stats_.close_error_code = response.error_code;
+      stats_.close_response_receive_ns = response.local_receive_ns;
+      stats_.close_response_exchange_ns = response.exchange_ns;
       if (response.kind != bitget::OrderResponseKind::kAck) {
         return Fail(ResponseFailure("safety close", response.kind));
+      }
+      if (response.request_send_local_ns != stats_.close_request_send_ns) {
+        return Fail("safety close response send timestamp mismatch");
+      }
+      if (response.local_receive_ns < stats_.close_request_send_ns) {
+        return Fail("safety close response has negative RTT");
+      }
+      stats_.close_ack_rtt_ns = response.ack_rtt_ns;
+      if (stats_.close_ack_rtt_ns !=
+          response.local_receive_ns - stats_.close_request_send_ns) {
+        return Fail("safety close response Ack RTT mismatch");
       }
       return {};
     }
@@ -156,19 +188,28 @@ class ProbeSampleFlow {
  private:
   [[nodiscard]] ProbeSampleTransition HandlePlaceResponse(
       const bitget::OrderResponse& response) {
-    if (response.kind != bitget::OrderResponseKind::kAck) {
-      return Fail(ResponseFailure("IOC", response.kind));
-    }
-    if (response.local_receive_ns < stats_.request_send_ns) {
-      return Fail("IOC response has negative RTT");
-    }
-    stats_.place_ack_observed = true;
+    stats_.place_response_observed = true;
+    stats_.response_kind = response.kind;
     stats_.exchange_order_id = response.exchange_order_id;
     stats_.connection_id_hash = response.connection_id_hash;
     stats_.error_code = response.error_code;
     stats_.response_receive_ns = response.local_receive_ns;
     stats_.response_exchange_ns = response.exchange_ns;
-    stats_.ack_rtt_ns = response.local_receive_ns - stats_.request_send_ns;
+    if (response.kind != bitget::OrderResponseKind::kAck) {
+      return Fail(ResponseFailure("IOC", response.kind));
+    }
+    if (response.request_send_local_ns != stats_.request_send_ns) {
+      return Fail("IOC response send timestamp mismatch");
+    }
+    if (response.local_receive_ns < stats_.request_send_ns) {
+      return Fail("IOC response has negative RTT");
+    }
+    stats_.place_ack_observed = true;
+    stats_.ack_rtt_ns = response.ack_rtt_ns;
+    if (stats_.ack_rtt_ns !=
+        response.local_receive_ns - stats_.request_send_ns) {
+      return Fail("IOC response Ack RTT mismatch");
+    }
     if (stats_.zero_fill_cancelled_observed) {
       return CompleteNormal();
     }

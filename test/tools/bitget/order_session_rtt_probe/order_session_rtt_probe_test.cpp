@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include "exchange/bitget/trading/order_session_config.h"
 #include "tools/bitget/order_session_rtt_probe/config.h"
 #include "tools/bitget/order_session_rtt_probe/connection_plan.h"
+#include "tools/bitget/order_session_rtt_probe/live_runner.h"
 #include "tools/bitget/order_session_rtt_probe/local_feedback_queue.h"
 #include "tools/bitget/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/bitget/order_session_rtt_probe/run_plan.h"
@@ -164,10 +166,143 @@ OrderFeedbackEvent MakeFeedback(OrderFeedbackKind kind,
       .left_quantity = cumulative_fill == 0.0 ? 0.0001 : 0.0,
       .cancelled_quantity = cumulative_fill == 0.0 ? 0.0001 : 0.0,
       .fill_price = cumulative_fill == 0.0 ? 0.0 : 100.0,
+      .finish_reason = kind == OrderFeedbackKind::kCancelled
+                           ? OrderFinishReason::kImmediateOrCancel
+                           : OrderFinishReason::kUnknown,
       .exchange_update_ns = 2000,
       .local_receive_ns = 2100,
   };
 }
+
+ProbeConfig MakeRunnerConfig() {
+  ProbeConfig config;
+  config.run_id = "runner-unit";
+  config.sessions.request_timeout_ms = 1;
+  config.sampling.max_events_per_drain = 16;
+  config.order.symbol = "BTC_USDT";
+  config.order.bbo_freshness_ns = 1'000'000;
+  config.order.passive_price_limit_fraction = 0.5;
+  config.feedback.poll_budget = 16;
+  config.feedback.terminal_timeout_ms = 1;
+  config.feedback.strategy_id = 7;
+  return config;
+}
+
+config::InstrumentCatalog MakeRunnerCatalog() {
+  config::InstrumentCatalog catalog;
+  catalog.Add(MakeBitgetInstrument());
+  return catalog;
+}
+
+struct FakeClock {
+  std::int64_t now_ns{1'000'000'000};
+
+  static std::int64_t Now(void* context) noexcept {
+    return static_cast<FakeClock*>(context)->now_ns;
+  }
+};
+
+struct FakeProbeSession {
+  explicit FakeProbeSession(FakeClock& clock_ref) : clock(clock_ref) {}
+
+  bitget::OrderSendResult PlaceOrder(const ProbeWireOrder& order) noexcept {
+    orders.push_back(order);
+    if (next_status != bitget::OrderSendStatus::kOk) {
+      return {.status = next_status};
+    }
+    const std::uint64_t sequence = next_sequence++;
+    return {.status = bitget::OrderSendStatus::kOk,
+            .request_sequence = sequence,
+            .encoded_request_id = sequence,
+            .send_local_ns = clock.now_ns};
+  }
+
+  void Stop() noexcept {
+    stopped = true;
+  }
+
+  FakeClock& clock;
+  std::vector<ProbeWireOrder> orders;
+  bitget::OrderSendStatus next_status{bitget::OrderSendStatus::kOk};
+  std::uint64_t next_sequence{1};
+  bool stopped{false};
+};
+
+struct FakeProbeDataReader {
+  void Push(BookTicker ticker) {
+    pending.push_back(ticker);
+  }
+
+  template <typename Handler>
+  std::uint64_t Drain(Handler& handler, std::uint64_t max_events) noexcept {
+    std::uint64_t count = 0;
+    while (count < max_events && next_index < pending.size()) {
+      handler.OnBookTicker(pending[next_index++]);
+      ++count;
+    }
+    return count;
+  }
+
+  std::vector<BookTicker> pending;
+  std::size_t next_index{0};
+};
+
+struct FakeSampleWriter {
+  bool Write(const SampleCsvRow& row, std::string*) {
+    rows.push_back(row);
+    return write_ok;
+  }
+
+  std::vector<SampleCsvRow> rows;
+  bool write_ok{true};
+};
+
+class BitgetRttProbeLiveRunnerTest : public testing::Test {
+ protected:
+  using Runner = LiveRunner<FakeProbeSession, FakeProbeDataReader,
+                            LocalFeedbackQueue, FakeSampleWriter>;
+
+  BitgetRttProbeLiveRunnerTest()
+      : session(clock),
+        runner(config, connection, /*session_index=*/0, /*session_count=*/1,
+               catalog, reader, feedback, writer, &clock, &FakeClock::Now) {
+    runner.BindSession(session);
+  }
+
+  BookTicker FreshTicker() const {
+    BookTicker ticker = MakeBitgetTicker(100.0, 100.1);
+    ticker.local_ns = clock.now_ns - 100;
+    return ticker;
+  }
+
+  OrderFeedbackEvent RunnerFeedback(OrderFeedbackKind kind,
+                                    std::uint64_t local_order_id,
+                                    double cumulative_fill) const {
+    OrderFeedbackEvent event =
+        MakeFeedback(kind, local_order_id, cumulative_fill);
+    event.exchange_update_ns = clock.now_ns - 50;
+    event.local_receive_ns = clock.now_ns;
+    return event;
+  }
+
+  void StartOneSample() {
+    reader.Push(FreshTicker());
+    runner.OnLoginReady();
+    runner.GrantDispatch();
+    runner.DriveHookOnce();
+    ASSERT_EQ(session.orders.size(), 1U);
+  }
+
+  ProbeConfig config{MakeRunnerConfig()};
+  ProbeConnectionConfig connection{MakeConnection("ha-0", "", 6)};
+  config::InstrumentCatalog catalog{MakeRunnerCatalog()};
+  FakeClock clock;
+  FakeProbeSession session;
+  FakeProbeDataReader reader;
+  LocalFeedbackQueue feedback{8};
+  FakeSampleWriter writer;
+  Runner runner;
+};
 
 TEST(BitgetRttProbeConfigTest, ParsesIocProbeConfig) {
   const ProbeConfigResult result = ParseProbeConfig(ParseMinimalConfig(R"toml(
@@ -185,6 +320,7 @@ coordinator_cpu = 15
 
 [probe.order]
 order_mode = "ioc"
+symbol = "BTC_USDT"
 passive_price_limit_fraction = 0.5
 bbo_freshness_ns = 500000000
 
@@ -201,6 +337,7 @@ terminal_timeout_ms = 4500
   EXPECT_EQ(result.value.sampling.samples_per_session, 3U);
   EXPECT_EQ(result.value.sampling.feedback_queue_capacity, 128U);
   EXPECT_EQ(result.value.order.order_mode, "ioc");
+  EXPECT_EQ(result.value.order.symbol, "BTC_USDT");
   EXPECT_EQ(result.value.order.bbo_freshness_ns, 500000000U);
   EXPECT_EQ(result.value.feedback.strategy_id, 7U);
   EXPECT_TRUE(result.value.feedback.force_claim);
@@ -224,6 +361,16 @@ order_mode = "gtc"
 
   EXPECT_FALSE(result.ok);
   EXPECT_NE(result.error.find("order_mode"), std::string::npos);
+}
+
+TEST(BitgetRttProbeConfigTest, RejectsEmptyOrderSymbol) {
+  const ProbeConfigResult result = ParseProbeConfig(ParseMinimalConfig(R"toml(
+[probe.order]
+symbol = ""
+)toml"));
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_NE(result.error.find("symbol"), std::string::npos);
 }
 
 TEST(BitgetRttProbeConfigTest, AllowsZeroPacing) {
@@ -467,6 +614,24 @@ TEST(BitgetRttProbeFlowTest, UnknownResultFailsWithoutTerminalAssumption) {
   EXPECT_NE(transition.error.find("unknown"), std::string::npos);
 }
 
+TEST(BitgetRttProbeFlowTest, RejectionRetainsDirectResponseEvidence) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+
+  const ProbeSampleTransition transition = flow.OnOrderResponse(
+      MakeOrderResponse(bitget::OrderResponseKind::kRejected,
+                        ids.ioc_local_order_id, 11, 1100));
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_TRUE(flow.stats().place_response_observed);
+  EXPECT_EQ(flow.stats().response_kind, bitget::OrderResponseKind::kRejected);
+  EXPECT_EQ(flow.stats().error_code, 40000U);
+  EXPECT_EQ(flow.stats().connection_id_hash, 77U);
+  EXPECT_EQ(flow.stats().response_receive_ns, 1100);
+}
+
 TEST(BitgetRttProbeFlowTest, RejectsMismatchedRequestType) {
   const ProbeSampleLocalIds ids = MakeSampleIds();
   ProbeSampleFlow flow(ids);
@@ -624,6 +789,12 @@ TEST(BitgetRttProbeCsvTest, WritesOnlyBitgetEvidenceColumns) {
   const std::size_t header_end = output.find('\n');
   ASSERT_NE(header_end, std::string::npos);
   const std::string header = output.substr(0, header_end);
+  const std::size_t row_end = output.find('\n', header_end + 1);
+  ASSERT_NE(row_end, std::string::npos);
+  const std::string row =
+      output.substr(header_end + 1, row_end - header_end - 1);
+  EXPECT_EQ(std::count(header.begin(), header.end(), ','),
+            std::count(row.begin(), row.end(), ','));
   EXPECT_NE(header.find("ack_rtt_ns"), std::string::npos);
   EXPECT_NE(header.find("connection_id_hash"), std::string::npos);
   EXPECT_NE(header.find("safety_close_confirmed"), std::string::npos);
@@ -683,8 +854,257 @@ TEST(BitgetRttProbeCsvTest, WritesConnectionObservationAndRunMetadata) {
   EXPECT_NE(metadata.find("\"rest_guard_implemented\": false"),
             std::string::npos);
   EXPECT_NE(metadata.find("\"session_count\": 1"), std::string::npos);
+  EXPECT_NE(metadata.find("\"feedback_strategy_id\": 7"), std::string::npos);
+  EXPECT_NE(metadata.find("\"order_symbol\": \"BTC_USDT\""), std::string::npos);
   std::filesystem::remove(connections_path);
   std::filesystem::remove(metadata_path);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest,
+       CompletesOnlyAfterAckAndZeroFillCancelledFeedback) {
+  StartOneSample();
+  const ProbeWireOrder& order = session.orders.front();
+
+  clock.now_ns += 100;
+  runner.OnOrderResponse(MakeOrderResponse(bitget::OrderResponseKind::kAck,
+                                           order.local_order_id,
+                                           /*sequence=*/1, clock.now_ns));
+  EXPECT_FALSE(runner.SampleFinished());
+
+  ASSERT_TRUE(feedback.TryPush(RunnerFeedback(OrderFeedbackKind::kCancelled,
+                                              order.local_order_id, 0.0)));
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.SampleFinished());
+  EXPECT_FALSE(runner.failed());
+  EXPECT_EQ(runner.samples_completed(), 1U);
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_EQ(writer.rows.front().outcome, "normal_terminal_confirmed");
+  EXPECT_EQ(writer.rows.front().ack_rtt_ns, 100);
+  EXPECT_EQ(writer.rows.front().terminal_finish_reason, "kImmediateOrCancel");
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest,
+       IgnoresDuplicateResponseAndFeedbackAfterCompletion) {
+  StartOneSample();
+  const ProbeWireOrder order = session.orders.front();
+  clock.now_ns += 100;
+  const bitget::OrderResponse ack =
+      MakeOrderResponse(bitget::OrderResponseKind::kAck, order.local_order_id,
+                        /*sequence=*/1, clock.now_ns);
+  runner.OnOrderResponse(ack);
+  const OrderFeedbackEvent cancelled =
+      RunnerFeedback(OrderFeedbackKind::kCancelled, order.local_order_id, 0.0);
+  ASSERT_TRUE(feedback.TryPush(cancelled));
+  runner.DriveHookOnce();
+  ASSERT_EQ(writer.rows.size(), 1U);
+
+  runner.OnOrderResponse(ack);
+  ASSERT_TRUE(feedback.TryPush(cancelled));
+  runner.DriveHookOnce();
+
+  EXPECT_FALSE(runner.failed());
+  EXPECT_EQ(writer.rows.size(), 1U);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, UnknownSameSessionFeedbackFailsRun) {
+  StartOneSample();
+  ASSERT_TRUE(feedback.TryPush(RunnerFeedback(
+      OrderFeedbackKind::kAccepted, LocalOrderIdCodec::Encode(7, 99), 0.0)));
+
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.failed());
+  EXPECT_NE(runner.failure_reason().find("unmapped"), std::string::npos);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, WaitsForLoginAndFreshBboBeforeSending) {
+  runner.GrantDispatch();
+  runner.DriveHookOnce();
+  EXPECT_TRUE(session.orders.empty());
+
+  BookTicker stale = FreshTicker();
+  stale.local_ns = clock.now_ns -
+                   static_cast<std::int64_t>(config.order.bbo_freshness_ns) - 1;
+  reader.Push(stale);
+  runner.OnLoginReady();
+  runner.DriveHookOnce();
+  EXPECT_TRUE(session.orders.empty());
+
+  BookTicker foreign_symbol = FreshTicker();
+  foreign_symbol.symbol_id = 1;
+  reader.Push(foreign_symbol);
+  runner.DriveHookOnce();
+  EXPECT_TRUE(session.orders.empty());
+  EXPECT_FALSE(runner.failed());
+
+  reader.Push(FreshTicker());
+  runner.DriveHookOnce();
+  ASSERT_EQ(session.orders.size(), 1U);
+  EXPECT_EQ(session.orders.front().time_in_force,
+            TimeInForce::kImmediateOrCancel);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, RequestTimeoutFailsAndWritesEvidence) {
+  StartOneSample();
+  clock.now_ns += 1'000'001;
+
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.failed());
+  EXPECT_EQ(runner.samples_failed(), 1U);
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_TRUE(writer.rows.front().invalid);
+  EXPECT_NE(runner.failure_reason().find("timeout"), std::string::npos);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, MissingConfiguredInstrumentFailsPreOrder) {
+  config::InstrumentCatalog empty_catalog;
+  FakeSampleWriter local_writer;
+  Runner local_runner(config, connection, 0, 1, empty_catalog, reader, feedback,
+                      local_writer, &clock, &FakeClock::Now);
+  local_runner.BindSession(session);
+  local_runner.OnLoginReady();
+  local_runner.GrantDispatch();
+  reader.Push(FreshTicker());
+
+  local_runner.DriveHookOnce();
+
+  EXPECT_TRUE(local_runner.failed());
+  EXPECT_TRUE(session.orders.empty());
+  EXPECT_NE(local_runner.failure_reason().find("instrument"),
+            std::string::npos);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest,
+       UnexpectedFillSendsExactlyOneReduceOnlyCloseAndFailsRun) {
+  StartOneSample();
+  const std::uint64_t place_id = session.orders.front().local_order_id;
+  ASSERT_TRUE(feedback.TryPush(
+      RunnerFeedback(OrderFeedbackKind::kPartialFilled, place_id, 0.0001)));
+  ASSERT_TRUE(feedback.TryPush(
+      RunnerFeedback(OrderFeedbackKind::kPartialFilled, place_id, 0.0001)));
+
+  runner.DriveHookOnce();
+
+  ASSERT_EQ(session.orders.size(), 2U);
+  const ProbeWireOrder& close = session.orders.back();
+  EXPECT_EQ(close.side, OrderSide::kSell);
+  EXPECT_TRUE(close.reduce_only);
+  EXPECT_EQ(close.time_in_force, TimeInForce::kImmediateOrCancel);
+
+  clock.now_ns += 100;
+  runner.OnOrderResponse(MakeOrderResponse(bitget::OrderResponseKind::kAck,
+                                           close.local_order_id,
+                                           /*sequence=*/2, clock.now_ns));
+
+  ASSERT_TRUE(feedback.TryPush(RunnerFeedback(OrderFeedbackKind::kFilled,
+                                              close.local_order_id, 0.0001)));
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.failed());
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_TRUE(writer.rows.front().unexpected_fill);
+  EXPECT_TRUE(writer.rows.front().safety_close_confirmed);
+  EXPECT_EQ(writer.rows.front().close_request_sequence, 2U);
+  EXPECT_EQ(writer.rows.front().close_response_kind, "kAck");
+  EXPECT_EQ(writer.rows.front().close_connection_id_hash, 77U);
+  EXPECT_EQ(writer.rows.front().outcome,
+            "safety_close_confirmed_but_run_invalid");
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest,
+       DelayedPlaceAckDoesNotExtendSafetyCloseDeadline) {
+  StartOneSample();
+  const std::uint64_t place_id = session.orders.front().local_order_id;
+  const std::int64_t place_send_ns = clock.now_ns;
+  ASSERT_TRUE(feedback.TryPush(
+      RunnerFeedback(OrderFeedbackKind::kPartialFilled, place_id, 0.0001)));
+  runner.DriveHookOnce();
+  ASSERT_EQ(session.orders.size(), 2U);
+
+  clock.now_ns += 900'000;
+  bitget::OrderResponse delayed_ack = MakeOrderResponse(
+      bitget::OrderResponseKind::kAck, place_id, /*sequence=*/1, clock.now_ns);
+  delayed_ack.request_send_local_ns = place_send_ns;
+  delayed_ack.ack_rtt_ns = clock.now_ns - place_send_ns;
+  runner.OnOrderResponse(delayed_ack);
+  ASSERT_FALSE(runner.failed());
+
+  clock.now_ns += 100'001;
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.failed());
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_TRUE(writer.rows.front().safety_close_sent);
+  EXPECT_FALSE(writer.rows.front().safety_close_confirmed);
+  EXPECT_NE(runner.failure_reason().find("timeout"), std::string::npos);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest,
+       LateFillFeedbackStillTriggersSafetyCloseMitigation) {
+  StartOneSample();
+  const std::uint64_t place_id = session.orders.front().local_order_id;
+  clock.now_ns += 1'000'001;
+  reader.Push(FreshTicker());
+  ASSERT_TRUE(feedback.TryPush(
+      RunnerFeedback(OrderFeedbackKind::kFilled, place_id, 0.0001)));
+
+  runner.DriveHookOnce();
+
+  ASSERT_EQ(session.orders.size(), 2U);
+  EXPECT_TRUE(session.orders.back().reduce_only);
+  EXPECT_FALSE(runner.failed());
+  EXPECT_TRUE(runner.has_active_sample());
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, QueueDropStopsBeforeAnyOrder) {
+  LocalFeedbackQueue tiny_feedback(1);
+  FakeSampleWriter local_writer;
+  Runner local_runner(config, connection, 0, 1, catalog, reader, tiny_feedback,
+                      local_writer, &clock, &FakeClock::Now);
+  local_runner.BindSession(session);
+  ASSERT_TRUE(tiny_feedback.TryPush(MakeFeedback(
+      OrderFeedbackKind::kAccepted, MakeSampleIds().ioc_local_order_id, 0.0)));
+  ASSERT_FALSE(tiny_feedback.TryPush(MakeFeedback(
+      OrderFeedbackKind::kCancelled, MakeSampleIds().ioc_local_order_id, 0.0)));
+
+  local_runner.OnLoginReady();
+  local_runner.GrantDispatch();
+  reader.Push(FreshTicker());
+  local_runner.DriveHookOnce();
+
+  EXPECT_TRUE(local_runner.failed());
+  EXPECT_TRUE(session.orders.empty());
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, LoginLossFailsActiveSample) {
+  StartOneSample();
+
+  runner.OnLoginNotReady();
+
+  EXPECT_TRUE(runner.failed());
+  EXPECT_EQ(runner.samples_failed(), 1U);
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_NE(writer.rows.front().invalid_reason.find("login"),
+            std::string::npos);
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, ContinuityLossFailsActiveSample) {
+  StartOneSample();
+  OrderFeedbackEvent continuity =
+      RunnerFeedback(OrderFeedbackKind::kContinuityLost, 0, 0.0);
+  continuity.continuity_reason =
+      OrderFeedbackContinuityReason::kSessionDisconnected;
+  ASSERT_TRUE(feedback.TryPush(continuity));
+
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.failed());
+  EXPECT_EQ(session.orders.size(), 1U);
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_NE(writer.rows.front().invalid_reason.find("continuity"),
+            std::string::npos);
 }
 
 }  // namespace

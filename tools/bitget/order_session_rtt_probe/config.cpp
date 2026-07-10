@@ -173,6 +173,10 @@ template <typename UInt>
     *error = "probe.order.order_mode must be ioc";
     return false;
   }
+  if (config.order.symbol.empty()) {
+    *error = "probe.order.symbol must be non-empty";
+    return false;
+  }
   if (config.feedback.strategy_id >= kMaxOrderFeedbackStrategies) {
     *error = "probe.feedback.strategy_id must be less than 8";
     return false;
@@ -264,6 +268,8 @@ ProbeConfigResult ParseProbeConfig(const toml::table& root) {
   if (!ReadTable(order, "probe.order", &error) ||
       !ReadString(order["order_mode"], config.order.order_mode,
                   "probe.order.order_mode", &config.order.order_mode, &error) ||
+      !ReadString(order["symbol"], config.order.symbol, "probe.order.symbol",
+                  &config.order.symbol, &error) ||
       !ReadFraction(order["passive_price_limit_fraction"],
                     config.order.passive_price_limit_fraction,
                     "probe.order.passive_price_limit_fraction",

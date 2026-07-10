@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstring>
 #include <exception>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -127,25 +128,63 @@ bool SampleCsvWriter::Open(const std::filesystem::path& path,
 }
 
 bool SampleCsvWriter::Write(const SampleCsvRow& row, std::string* error) {
-  const std::string line = fmt::format(
-      "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},"
-      "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-      CsvEscape(row.run_id), CsvEscape(row.session_name), CsvEscape(row.group),
-      CsvEscape(row.host), CsvEscape(row.connect_ip), CsvEscape(row.port),
-      row.worker_cpu, row.owner_thread_cpu, row.owner_thread_tid,
-      row.cycle_index, row.sample_index, row.local_order_id,
-      row.close_local_order_id, row.request_sequence, row.exchange_order_id,
-      CsvEscape(row.symbol), CsvEscape(row.side), CsvEscape(row.quantity_text),
-      CsvEscape(row.price_text), row.bbo_ticker_id, row.bbo_local_ns,
-      row.request_send_ns, row.response_receive_ns, row.response_exchange_ns,
-      row.ack_rtt_ns, CsvEscape(row.response_kind), row.error_code,
-      row.connection_id_hash, CsvEscape(row.terminal_feedback_kind),
-      row.terminal_feedback_local_ns, row.terminal_feedback_exchange_ns,
-      CsvEscape(row.terminal_finish_reason), row.cumulative_fill,
-      CsvEscape(row.outcome), row.invalid, row.unexpected_fill,
-      row.safety_close_requested, row.safety_close_sent,
-      row.safety_close_confirmed, row.safety_close_filled_quantity,
-      CsvEscape(row.invalid_reason));
+  std::string line;
+  line.reserve(768);
+  const auto append = [&line](const auto& value) {
+    fmt::format_to(std::back_inserter(line), "{}", value);
+    line.push_back(',');
+  };
+  append(CsvEscape(row.run_id));
+  append(CsvEscape(row.session_name));
+  append(CsvEscape(row.group));
+  append(CsvEscape(row.host));
+  append(CsvEscape(row.connect_ip));
+  append(CsvEscape(row.port));
+  append(row.worker_cpu);
+  append(row.owner_thread_cpu);
+  append(row.owner_thread_tid);
+  append(row.cycle_index);
+  append(row.sample_index);
+  append(row.local_order_id);
+  append(row.close_local_order_id);
+  append(row.request_sequence);
+  append(row.close_request_sequence);
+  append(row.exchange_order_id);
+  append(row.close_exchange_order_id);
+  append(CsvEscape(row.symbol));
+  append(CsvEscape(row.side));
+  append(CsvEscape(row.quantity_text));
+  append(CsvEscape(row.price_text));
+  append(row.bbo_ticker_id);
+  append(row.bbo_local_ns);
+  append(row.request_send_ns);
+  append(row.response_receive_ns);
+  append(row.response_exchange_ns);
+  append(row.ack_rtt_ns);
+  append(CsvEscape(row.response_kind));
+  append(row.error_code);
+  append(row.connection_id_hash);
+  append(row.close_request_send_ns);
+  append(row.close_response_receive_ns);
+  append(row.close_response_exchange_ns);
+  append(row.close_ack_rtt_ns);
+  append(CsvEscape(row.close_response_kind));
+  append(row.close_error_code);
+  append(row.close_connection_id_hash);
+  append(CsvEscape(row.terminal_feedback_kind));
+  append(row.terminal_feedback_local_ns);
+  append(row.terminal_feedback_exchange_ns);
+  append(CsvEscape(row.terminal_finish_reason));
+  append(row.cumulative_fill);
+  append(CsvEscape(row.outcome));
+  append(row.invalid);
+  append(row.unexpected_fill);
+  append(row.safety_close_requested);
+  append(row.safety_close_sent);
+  append(row.safety_close_confirmed);
+  append(row.safety_close_filled_quantity);
+  fmt::format_to(std::back_inserter(line), "{}\n",
+                 CsvEscape(row.invalid_reason));
   return WriteText(file_, line, "Bitget RTT sample CSV", error);
 }
 
@@ -213,6 +252,7 @@ bool WriteRunMetadata(const std::filesystem::path& path,
       "  \"samples_per_session\": {},\n"
       "  \"feedback_strategy_id\": {},\n"
       "  \"order_mode\": \"{}\",\n"
+      "  \"order_symbol\": \"{}\",\n"
       "  \"rest_guard_implemented\": false,\n"
       "  \"sample_csv_path\": \"{}\",\n"
       "  \"connection_observed_csv_path\": \"{}\"\n"
@@ -220,8 +260,8 @@ bool WriteRunMetadata(const std::filesystem::path& path,
       SampleCsvSchema::kVersion, JsonEscape(config.run_id),
       JsonEscape(config.name), session_count,
       config.sampling.samples_per_session, config.feedback.strategy_id,
-      JsonEscape(config.order.order_mode), JsonEscape(sample_csv_path),
-      JsonEscape(connection_observed_csv_path));
+      JsonEscape(config.order.order_mode), JsonEscape(config.order.symbol),
+      JsonEscape(sample_csv_path), JsonEscape(connection_observed_csv_path));
   const bool ok = WriteText(file, metadata, "Bitget RTT run metadata", error);
   if (std::fclose(file) != 0 && ok) {
     if (error != nullptr) {
