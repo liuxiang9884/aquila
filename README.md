@@ -374,7 +374,39 @@ BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
 ```
 
 `Ready()` 只表示当前 private WebSocket 已登录。直接 operation response 不是 accepted、filled 或 cancelled
-订单生命周期事实；`OrderFeedbackSession`、REST reconcile、rate limiter、LeadLag wiring 和真实订单 smoke 尚未实现。
+订单生命周期事实；订单事实由独立 `OrderFeedbackSession` 提供。REST reconcile、rate limiter、LeadLag wiring 和真实订单
+smoke 尚未实现。
+
+## Bitget UTA OrderFeedbackSession
+
+Bitget UTA v3 `OrderFeedbackSession` 使用独立 high availability private WebSocket connection，login 后只订阅
+account-wide `order` topic，并把 `new`、`partially_filled`、`filled`、`cancelled` / `canceled` 的累计订单事实映射到
+现有 `OrderFeedbackEvent` / SHM lane。默认配置：
+
+```text
+config/order_feedback/bitget_order_feedback_session.toml
+```
+
+dry-run 只解析并打印非敏感配置，不读取凭据、不连接 WebSocket、不打开 SHM：
+
+```bash
+./build/debug/tools/bitget_order_feedback_session \
+  --config config/order_feedback/bitget_order_feedback_session.toml
+```
+
+`--connect` 只执行 login、订阅 `order`、heartbeat 和 controlled reconnect，不发送 place/cancel：
+
+```bash
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  ./build/debug/tools/bitget_order_feedback_session \
+  --config config/order_feedback/bitget_order_feedback_session.toml \
+  --connect \
+  --duration-s 40
+```
+
+`Ready()` 只表示当前连接已 login 且 subscription ACK 匹配，不表示已有初始 open-order snapshot、sequence continuity、
+REST baseline 或 reconcile。断线和不可恢复 Aquila order decode 会广播 `kContinuityLost`；V1 不订阅 `fill` / `fast-fill`，
+不生成逐笔成交、maker/taker role 或 feedback reject，也不允许从该 probe 发送真实订单。
 
 ## Bitget UTA REST Read-only Query
 
