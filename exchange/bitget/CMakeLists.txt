@@ -3,6 +3,7 @@ add_library(aquila_bitget STATIC
     market_data/data_session_config.h
     trading/order_session_config.cpp
     trading/order_session_config.h
+    trading/order_session_runtime_adapter.h
     trading/order_request_encoder.h
     trading/order_signature.cpp
     trading/order_signature.h

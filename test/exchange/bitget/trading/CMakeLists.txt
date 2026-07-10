@@ -72,3 +72,21 @@ target_link_libraries(bitget_order_session_test
 
 add_test(NAME bitget_order_session_test
          COMMAND bitget_order_session_test)
+
+add_executable(bitget_order_session_runtime_adapter_test
+    order_session_runtime_adapter_test.cpp
+)
+
+target_compile_definitions(bitget_order_session_runtime_adapter_test
+    PRIVATE
+        AQUILA_BITGET_ORDER_SESSION_RUNTIME_ADAPTER_ENABLE_TEST_HOOKS
+)
+
+target_link_libraries(bitget_order_session_runtime_adapter_test
+    PRIVATE
+        aquila_bitget
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_order_session_runtime_adapter_test
+         COMMAND bitget_order_session_runtime_adapter_test)
