@@ -231,7 +231,8 @@ TEST(BitgetOrderFeedbackSessionTest, StaleSubscribeErrorDoesNotRegressReady) {
 
 TEST(BitgetOrderFeedbackSessionTest,
      SubscribeAuthenticationErrorsInvalidateLoginAndReconnect) {
-  for (const std::uint32_t code : {30004U, 30007U, 30033U}) {
+  for (const std::uint32_t code : {30004U, 30005U, 30007U, 30011U, 30012U,
+                                   30013U, 30014U, 30015U, 30033U}) {
     RecordingPublisher publisher;
     Session session = MakeSession(publisher);
     session.OnConnectionPhase(websocket::ConnectionPhase::kActive);

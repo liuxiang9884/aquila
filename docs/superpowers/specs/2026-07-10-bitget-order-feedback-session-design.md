@@ -137,8 +137,9 @@ Disconnected
 - feedback 与 `OrderSession` 使用相同 high availability endpoint，但必须是独立 connection。
 - login/subscription control request 的瞬时 write failure 请求重连；subscription ACK 或 error 都消费当前
   `SubscribeSent`，重复或矛盾的后续 ACK 不推进状态。
-- `30004`、`30007`、`30033` 表示 authentication/connection 已不可继续使用，login 或 subscribe 收到这些 code
-  时清除认证状态并请求重连。
+- 已登录连接的 subscribe 收到 `30004`、`30005`、`30007`、`30011`–`30015`、`30033` 时清除认证状态并请求重连。
+  初始 login 的明确 credential reject 只保持 not-ready，不用相同 credential 盲目重连；`30004`、`30007`、`30033` 仍按
+  connection error 重连。
 
 首次成功连接不主动发布 continuity lost。首次 live 使用前，外部 preflight 必须证明没有遗留 open orders，或完成 REST baseline。
 

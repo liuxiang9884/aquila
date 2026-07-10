@@ -514,7 +514,7 @@ class OrderFeedbackSession {
 
   void HandleLoginResponse(const OperationResponse& response) noexcept {
     if (response.kind == OperationResponseKind::kLoginRejected &&
-        IsSessionInvalidatingError(response.error_code)) {
+        IsLoginReconnectError(response.error_code)) {
       ResetAuthenticatedState();
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordLoginRejected();
@@ -575,7 +575,7 @@ class OrderFeedbackSession {
 
   void HandleSubscribeError(
       const detail::OrderFeedbackControlEnvelope& control) noexcept {
-    if (!IsSessionInvalidatingError(control.code) &&
+    if (!IsAuthenticatedSessionInvalidatingError(control.code) &&
         (!control.arg_is_order_topic || !active_ || !login_ready_ ||
          !subscribe_sent_)) {
       if constexpr (DiagnosticsEnabled) {
@@ -589,7 +589,7 @@ class OrderFeedbackSession {
       diagnostics_.RecordSubscribeError();
     }
     LogSubscribe(false, control.code);
-    if (IsSessionInvalidatingError(control.code)) {
+    if (IsAuthenticatedSessionInvalidatingError(control.code)) {
       ResetAuthenticatedState();
       RequestProtocolReconnect();
     }
@@ -731,9 +731,14 @@ class OrderFeedbackSession {
            status == OrderSendStatus::kWriteUnavailable;
   }
 
-  [[nodiscard]] static bool IsSessionInvalidatingError(
-      std::uint32_t code) noexcept {
+  [[nodiscard]] static bool IsLoginReconnectError(std::uint32_t code) noexcept {
     return code == 30004 || code == 30007 || code == 30033;
+  }
+
+  [[nodiscard]] static bool IsAuthenticatedSessionInvalidatingError(
+      std::uint32_t code) noexcept {
+    return IsLoginReconnectError(code) || code == 30005 ||
+           (code >= 30011 && code <= 30015);
   }
 
   void RequestProtocolReconnect() noexcept {

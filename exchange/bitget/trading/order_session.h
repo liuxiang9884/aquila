@@ -524,9 +524,14 @@ class OrderSession {
            status == OrderSendStatus::kWriteUnavailable;
   }
 
-  [[nodiscard]] static bool IsSessionInvalidatingError(
-      std::uint32_t code) noexcept {
+  [[nodiscard]] static bool IsLoginReconnectError(std::uint32_t code) noexcept {
     return code == 30004 || code == 30007 || code == 30033;
+  }
+
+  [[nodiscard]] static bool IsAuthenticatedSessionInvalidatingError(
+      std::uint32_t code) noexcept {
+    return IsLoginReconnectError(code) || code == 30005 ||
+           (code >= 30011 && code <= 30015);
   }
 
   void RequestProtocolReconnect() noexcept {
@@ -587,7 +592,7 @@ class OrderSession {
         ParseOperationResponse(payload, view.readable_tail_bytes, text_parser_);
     if (parsed.parse_status != OperationParseStatus::kOk) {
       if (parsed.parse_status == OperationParseStatus::kUnexpectedShape &&
-          IsSessionInvalidatingError(parsed.error_code)) {
+          IsAuthenticatedSessionInvalidatingError(parsed.error_code)) {
         login_ready_ = false;
         NotifyLoginNotReady();
         RequestProtocolReconnect();
@@ -668,7 +673,7 @@ class OrderSession {
         .exchange_ns = parsed.exchange_ns,
         .ack_rtt_ns = ack_rtt_ns,
     };
-    if (IsSessionInvalidatingError(parsed.error_code)) {
+    if (IsAuthenticatedSessionInvalidatingError(parsed.error_code)) {
       login_ready_ = false;
       NotifyLoginNotReady();
       RequestProtocolReconnect();
@@ -683,7 +688,7 @@ class OrderSession {
 
   void HandleLoginResponse(const OperationResponse& response) noexcept {
     if (response.kind == OperationResponseKind::kLoginRejected &&
-        IsSessionInvalidatingError(response.error_code)) {
+        IsLoginReconnectError(response.error_code)) {
       login_ready_ = false;
       login_sent_ = false;
       if constexpr (DiagnosticsEnabled) {

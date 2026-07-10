@@ -182,7 +182,8 @@ TEST(BitgetOrderSessionTest, ConnectionLimitErrorAfterLoginRequestsReconnect) {
 
 TEST(BitgetOrderSessionTest,
      OperationAuthenticationErrorsInvalidateReadyAndReconnect) {
-  for (const std::uint32_t code : {30004U, 30007U, 30033U}) {
+  for (const std::uint32_t code :
+       {30004U, 30007U, 30011U, 30012U, 30013U, 30014U, 30015U, 30033U}) {
     RecordingHandler handler;
     TestOrderSession<RecordingHandler> session(handler);
     ActivateAndLogin(&session);
@@ -201,19 +202,21 @@ TEST(BitgetOrderSessionTest,
 
 TEST(BitgetOrderSessionTest,
      TopiclessConnectionErrorInvalidatesWithoutConsumingCorrelation) {
-  RecordingHandler handler;
-  TestOrderSession<RecordingHandler> session(handler);
-  ActivateAndLogin(&session);
-  const OrderSendResult sent =
-      session.PlaceOrder(TestOrder{.local_order_id = 123});
-  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+  for (const std::uint32_t code : {30007U, 30011U}) {
+    RecordingHandler handler;
+    TestOrderSession<RecordingHandler> session(handler);
+    ActivateAndLogin(&session);
+    const OrderSendResult sent =
+        session.PlaceOrder(TestOrder{.local_order_id = code});
+    ASSERT_EQ(sent.status, OrderSendStatus::kOk) << code;
 
-  session.Handle(TextView(TopiclessErrorResponse(sent, 30007)));
+    session.Handle(TextView(TopiclessErrorResponse(sent, code)));
 
-  EXPECT_FALSE(session.Ready());
-  EXPECT_TRUE(session.reconnect_requested_for_test());
-  EXPECT_TRUE(handler.responses.empty());
-  EXPECT_EQ(session.inflight_count(), 1U);
+    EXPECT_FALSE(session.Ready()) << code;
+    EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
+    EXPECT_TRUE(handler.responses.empty()) << code;
+    EXPECT_EQ(session.inflight_count(), 1U) << code;
+  }
 }
 
 TEST(BitgetOrderSessionTest, LoginWriteFailureRequestsReconnect) {
