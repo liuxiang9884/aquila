@@ -139,3 +139,16 @@ target_link_libraries(bitget_order_feedback_session_config_test
 
 add_test(NAME bitget_order_feedback_session_config_test
          COMMAND bitget_order_feedback_session_config_test)
+
+add_executable(bitget_order_feedback_shm_integration_test
+    order_feedback_shm_integration_test.cpp
+)
+
+target_link_libraries(bitget_order_feedback_shm_integration_test
+    PRIVATE
+        aquila_bitget
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_order_feedback_shm_integration_test
+         COMMAND bitget_order_feedback_shm_integration_test)
