@@ -379,7 +379,8 @@ SHM。reconnect 后新 generation 可以再次发布。V1 不实现同一 connec
 - queue-full 产生的 pending continuity 由 session 在非阻塞的 bounded interval 上重试 flush；不能依赖同一 lane
   的下一条普通订单事件来触发告警投递。
 - `OrderFeedbackShmPublisher` 构造时登记新的 `producer_pid` / `producer_run_id`；首次 producer run 不广播，复用已有非零
-  run id 的 channel 时先向所有 lane 广播全局 `kProducerRestart`。广播遇到 queue-full 时沿用 pending continuity retry。
+  run id 的 channel 时先向所有 lane 广播全局 `kProducerRestart`。广播遇到 queue-full 时沿用 pending continuity retry；session
+  构造时必须继承 publisher 已存在的 pending 状态，首次 active 即尝试 flush。
 
 V1 不修改 `OrderFeedbackEvent`、`kOrderFeedbackShmVersion` 或 SHM layout。
 

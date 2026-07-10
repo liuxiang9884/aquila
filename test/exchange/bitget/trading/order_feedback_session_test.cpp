@@ -357,6 +357,18 @@ TEST(BitgetOrderFeedbackSessionTest,
 }
 
 TEST(BitgetOrderFeedbackSessionTest,
+     FirstActiveFlushesContinuityPendingBeforeSessionConstruction) {
+  RecordingPublisher publisher;
+  publisher.continuity_flush_pending = true;
+  Session session = MakeSession(publisher);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  EXPECT_EQ(publisher.continuity_flush_calls, 1U);
+  EXPECT_FALSE(publisher.continuity_flush_pending);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
      BatchEventAndDecodeContinuityShareIngressTimestamp) {
   RecordingPublisher publisher;
   Session session = MakeSession(publisher);

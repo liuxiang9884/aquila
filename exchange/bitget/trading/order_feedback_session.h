@@ -266,6 +266,11 @@ class OrderFeedbackSession {
             1'000'000ULL) {
     client_.SetStateHook(this, &HandleState);
     client_.SetRuntimeLoopProbe(this, &HandleRuntimeLoopProbe);
+    if constexpr (requires(const Publisher& publisher) {
+                    publisher.HasPendingContinuityLostEvents();
+                  }) {
+      continuity_flush_pending_ = publisher_.HasPendingContinuityLostEvents();
+    }
   }
 
   bool Start() noexcept {
