@@ -65,8 +65,8 @@ enum class OrderRecordParseOutcome : std::uint8_t {
   kUnrecoverable,
 };
 
-[[nodiscard]] inline bool ParseUint64Text(std::string_view text,
-                                          std::uint64_t* output) noexcept {
+[[nodiscard]] inline bool ParseOrderFeedbackUint64Text(
+    std::string_view text, std::uint64_t* output) noexcept {
   assert(output != nullptr);
   if (text.empty()) {
     return false;
@@ -81,12 +81,12 @@ enum class OrderRecordParseOutcome : std::uint8_t {
   return true;
 }
 
-[[nodiscard]] inline bool ReadUint64(simdjson::ondemand::value value,
-                                     std::uint64_t* output) noexcept {
+[[nodiscard]] inline bool ReadOrderFeedbackUint64(
+    simdjson::ondemand::value value, std::uint64_t* output) noexcept {
   assert(output != nullptr);
   std::string_view text;
   if (ReadSimdjsonString(value, &text)) {
-    return ParseUint64Text(text, output);
+    return ParseOrderFeedbackUint64Text(text, output);
   }
   std::uint64_t unsigned_value = 0;
   if (value.get_uint64().get(unsigned_value) == simdjson::SUCCESS) {
@@ -146,7 +146,8 @@ enum class OrderRecordParseOutcome : std::uint8_t {
                                           std::string_view name,
                                           std::uint64_t* output) noexcept {
   simdjson::ondemand::value value;
-  return FindSimdjsonField(object, name, &value) && ReadUint64(value, output);
+  return FindSimdjsonField(object, name, &value) &&
+         ReadOrderFeedbackUint64(value, output);
 }
 
 [[nodiscard]] inline bool ReadDoubleField(simdjson::ondemand::object object,
