@@ -88,9 +88,11 @@ LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag
 
 ## Subagent 使用约定
 
-- 当主会话使用 `spawn_agent` / subagent 执行实现、审查或调查任务时，默认必须显式设置 `reasoning_effort = "xhigh"`；不需要覆盖 `model`，除非用户明确指定模型或任务确有特殊理由。
-- 主会话负责统一派发 subagent，默认不让 subagent 再派生下级 subagent；如确需允许下级派生，必须在提示中明确要求继续显式设置 `reasoning_effort = "xhigh"`，并说明原因。
-- 如果当前工具或环境不支持设置 subagent 推理强度，代理必须在继续前向用户说明限制和替代验证方案。
+- 项目级 custom agent 定义在 `.codex/agents/aquila-xhigh-worker.toml`，其 agent name 为 `aquila_xhigh_worker`；该文件是 subagent `model` 和 `model_reasoning_effort` 的事实源。
+- 当主会话使用 `spawn_agent` / subagent 执行实现、审查、调查或测试任务时，默认必须显式选择 `aquila_xhigh_worker`，不得只在 prompt 中声称使用某个 model 或 reasoning effort，也不得使用未绑定该 custom agent 的通用 subagent 代替。
+- 除非用户明确要求临时覆盖，所有 subagent 必须遵循 custom agent 中固定的 `model = "gpt-5.6-sol"` 和 `model_reasoning_effort = "xhigh"`。
+- 主会话负责统一派发 subagent，默认不允许 subagent 再派生下级 subagent；如确需下级派生，必须先取得用户确认，并继续使用 `aquila_xhigh_worker`。
+- 如果当前工具或环境不支持选择 `aquila_xhigh_worker`，或无法确认实际加载的 custom agent，代理不得宣称已满足本约定；必须在派发前向用户说明限制，并由主会话执行等价任务或给出其他可验证的替代方案。
 
 ## 多轮 Review 触发词
 
@@ -98,7 +100,7 @@ LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag
 用户给出目标后，按下面流程执行：
 
 1. 明确 review 范围、目标和停止条件；如果目标是“代码逻辑没有问题”，重点检查控制流、状态机、错误处理、并发边界、资源所有权、数据一致性和恢复语义，不把单纯风格偏好作为阻断问题。
-2. 每一轮至少派一个 subagent 做只读 review；subagent 默认遵守上面的 `reasoning_effort = "xhigh"` 规则，不覆盖 `model`。如果当前工具不支持 subagent 或推理强度设置，先说明限制，再用主会话执行等价的只读 review。
+2. 每一轮至少派一个 `aquila_xhigh_worker` subagent 做只读 review；如果当前工具不支持选择或确认该 custom agent，先说明限制，再用主会话执行等价的只读 review。
 3. 每轮 review 结束后，先向用户输出本轮发现的问题，按 Critical / Important / Minor 分组，并尽量给出文件路径、行号和影响说明。
 4. 根据 review 结果执行修复：Critical 必须修，Important 默认修；Minor 只有在影响既定目标、风险低或用户要求时修。修复时保持改动最小，不引入无关重构。
 5. 修复后运行与本轮修改对应的最小验证；验证通过后提交本轮修复，commit message 使用英文，且不要裹带无关改动。
