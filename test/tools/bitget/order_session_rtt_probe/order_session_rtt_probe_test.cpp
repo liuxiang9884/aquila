@@ -11,10 +11,17 @@
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
 
+#include "core/config/instrument_catalog.h"
+#include "core/market_data/types.h"
+#include "core/trading/order_feedback_event.h"
+#include "core/trading/order_id.h"
 #include "exchange/bitget/trading/order_session_config.h"
 #include "tools/bitget/order_session_rtt_probe/config.h"
 #include "tools/bitget/order_session_rtt_probe/connection_plan.h"
+#include "tools/bitget/order_session_rtt_probe/passive_order_builder.h"
 #include "tools/bitget/order_session_rtt_probe/run_plan.h"
+#include "tools/bitget/order_session_rtt_probe/sample_flow.h"
+#include "tools/bitget/order_session_rtt_probe/sample_id_allocator.h"
 #include "tools/bitget/order_session_rtt_probe/session_config_builder.h"
 
 namespace aquila::tools::bitget_order_session_rtt_probe {
@@ -66,6 +73,88 @@ ProbeConnectionConfig MakeConnection(std::string name, std::string connect_ip,
       .port = "443",
       .enable_tls = true,
       .worker_cpu_id = worker_cpu_id,
+  };
+}
+
+BookTicker MakeBitgetTicker(double bid, double ask) {
+  return BookTicker{
+      .id = 7,
+      .symbol_id = 0,
+      .exchange = Exchange::kBitget,
+      .exchange_ns = 100,
+      .event_ns = 200,
+      .local_ns = 300,
+      .bid_price = bid,
+      .bid_volume = 1.0,
+      .ask_price = ask,
+      .ask_volume = 1.0,
+  };
+}
+
+config::InstrumentInfo MakeBitgetInstrument() {
+  return config::InstrumentInfo{
+      .symbol_id = 0,
+      .exchange = Exchange::kBitget,
+      .symbol = "BTC_USDT",
+      .exchange_symbol = "BTCUSDT",
+      .price_tick = 0.1,
+      .price_decimal_places = 1,
+      .quantity_step = 0.0001,
+      .quantity_decimal_places = 4,
+      .min_quantity = 0.0001,
+      .price_limit_down = 0.05,
+  };
+}
+
+ProbeSampleLocalIds MakeSampleIds() {
+  return ProbeSampleLocalIds{
+      .ioc_local_order_id = LocalOrderIdCodec::Encode(7, 1),
+      .close_local_order_id = LocalOrderIdCodec::Encode(7, 2),
+  };
+}
+
+bitget::OrderSendResult MakeOrderSent(std::uint64_t sequence,
+                                      std::int64_t send_ns) {
+  return bitget::OrderSendResult{
+      .status = bitget::OrderSendStatus::kOk,
+      .request_sequence = sequence,
+      .encoded_request_id = sequence,
+      .send_local_ns = send_ns,
+  };
+}
+
+bitget::OrderResponse MakeOrderResponse(bitget::OrderResponseKind kind,
+                                        std::uint64_t local_order_id,
+                                        std::uint64_t sequence,
+                                        std::int64_t receive_ns) {
+  return bitget::OrderResponse{
+      .kind = kind,
+      .request_type = bitget::OrderRequestType::kPlaceOrder,
+      .local_order_id = local_order_id,
+      .exchange_order_id = 123,
+      .request_sequence = sequence,
+      .error_code = kind == bitget::OrderResponseKind::kAck ? 0U : 40000U,
+      .connection_id_hash = 77,
+      .request_send_local_ns = receive_ns - 100,
+      .local_receive_ns = receive_ns,
+      .exchange_ns = receive_ns - 50,
+      .ack_rtt_ns = 100,
+  };
+}
+
+OrderFeedbackEvent MakeFeedback(OrderFeedbackKind kind,
+                                std::uint64_t local_order_id,
+                                double cumulative_fill) {
+  return OrderFeedbackEvent{
+      .kind = kind,
+      .local_order_id = local_order_id,
+      .exchange_order_id = 123,
+      .cumulative_filled_quantity = cumulative_fill,
+      .left_quantity = cumulative_fill == 0.0 ? 0.0001 : 0.0,
+      .cancelled_quantity = cumulative_fill == 0.0 ? 0.0001 : 0.0,
+      .fill_price = cumulative_fill == 0.0 ? 0.0 : 100.0,
+      .exchange_update_ns = 2000,
+      .local_receive_ns = 2100,
   };
 }
 
@@ -210,6 +299,191 @@ TEST(BitgetRttProbeRunPlanTest, PinnedConfigOverridesConnectionAndCpu) {
   EXPECT_EQ(pinned.connection.port, "443");
   EXPECT_TRUE(pinned.connection.enable_tls);
   EXPECT_EQ(pinned.connection.runtime_policy.io_cpu_id, 9);
+}
+
+TEST(BitgetRttProbeOrderBuilderTest, BuildsPassiveBitgetIoc) {
+  const ProbeOrderBuildResult built = BuildPassiveBuyIoc(
+      MakeBitgetTicker(100.0, 100.1), MakeBitgetInstrument(), 0.5);
+
+  ASSERT_TRUE(built.ok) << built.error;
+  EXPECT_EQ(built.order.symbol, "BTCUSDT");
+  EXPECT_EQ(built.order.side, OrderSide::kBuy);
+  EXPECT_EQ(built.order.time_in_force, TimeInForce::kImmediateOrCancel);
+  EXPECT_EQ(built.order.price_text, "97.5");
+  EXPECT_EQ(built.order.quantity_text, "0.0001");
+  EXPECT_FALSE(built.order.reduce_only);
+  EXPECT_EQ(built.bbo_ticker_id, 7);
+}
+
+TEST(BitgetRttProbeOrderBuilderTest, BuildsMarketableSafetyClose) {
+  const ProbeOrderBuildResult built = BuildSafetyCloseSellIoc(
+      MakeBitgetTicker(100.0, 100.1), MakeBitgetInstrument(), 0.00019, 0.5);
+
+  ASSERT_TRUE(built.ok) << built.error;
+  EXPECT_EQ(built.order.side, OrderSide::kSell);
+  EXPECT_EQ(built.order.price_text, "97.5");
+  EXPECT_EQ(built.order.quantity_text, "0.0001");
+  EXPECT_TRUE(built.order.reduce_only);
+}
+
+TEST(BitgetRttProbeOrderBuilderTest, RejectsForeignBookTicker) {
+  BookTicker ticker = MakeBitgetTicker(100.0, 100.1);
+  ticker.exchange = Exchange::kGate;
+
+  const ProbeOrderBuildResult built =
+      BuildPassiveBuyIoc(ticker, MakeBitgetInstrument(), 0.5);
+
+  EXPECT_FALSE(built.ok);
+  EXPECT_NE(built.error.find("Bitget"), std::string::npos);
+}
+
+TEST(BitgetRttProbeIdTest, RoutesPlaceAndCloseToSameSession) {
+  ProbeSampleIdAllocator allocator(/*strategy_id=*/7,
+                                   /*first_strategy_order_id=*/3,
+                                   /*strategy_order_id_stride=*/8);
+  const ProbeSampleLocalIds ids = allocator.Next();
+
+  ASSERT_TRUE(SessionIndexForLocalOrderId(ids.ioc_local_order_id, 4));
+  ASSERT_TRUE(SessionIndexForLocalOrderId(ids.close_local_order_id, 4));
+  EXPECT_EQ(*SessionIndexForLocalOrderId(ids.ioc_local_order_id, 4), 1U);
+  EXPECT_EQ(*SessionIndexForLocalOrderId(ids.close_local_order_id, 4), 1U);
+}
+
+TEST(BitgetRttProbeFlowTest, CompletesAfterAckThenZeroFillCancel) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  EXPECT_EQ(flow.Start().action, ProbeSampleAction::kSubmitIoc);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+
+  EXPECT_EQ(
+      flow.OnOrderResponse(MakeOrderResponse(bitget::OrderResponseKind::kAck,
+                                             ids.ioc_local_order_id, 11, 1100))
+          .action,
+      ProbeSampleAction::kNone);
+  EXPECT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kCancelled,
+                                              ids.ioc_local_order_id, 0.0))
+                .action,
+            ProbeSampleAction::kComplete);
+  EXPECT_TRUE(flow.stats().normal_terminal_confirmed);
+  EXPECT_EQ(flow.stats().ack_rtt_ns, 100);
+}
+
+TEST(BitgetRttProbeFlowTest, CompletesWhenFeedbackArrivesBeforeAck) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+
+  EXPECT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kCancelled,
+                                              ids.ioc_local_order_id, 0.0))
+                .action,
+            ProbeSampleAction::kNone);
+  EXPECT_EQ(
+      flow.OnOrderResponse(MakeOrderResponse(bitget::OrderResponseKind::kAck,
+                                             ids.ioc_local_order_id, 11, 1100))
+          .action,
+      ProbeSampleAction::kComplete);
+}
+
+TEST(BitgetRttProbeFlowTest, UnexpectedFillRequestsOneSafetyClose) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+
+  EXPECT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kPartialFilled,
+                                              ids.ioc_local_order_id, 0.0001))
+                .action,
+            ProbeSampleAction::kSubmitSafetyClose);
+  EXPECT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kPartialFilled,
+                                              ids.ioc_local_order_id, 0.0001))
+                .action,
+            ProbeSampleAction::kNone);
+  EXPECT_TRUE(flow.stats().unexpected_fill);
+  EXPECT_TRUE(flow.stats().invalid);
+}
+
+TEST(BitgetRttProbeFlowTest, SafetyCloseFillConfirmsMitigation) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+  ASSERT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kFilled,
+                                              ids.ioc_local_order_id, 0.0001))
+                .action,
+            ProbeSampleAction::kSubmitSafetyClose);
+  ASSERT_TRUE(flow.OnSafetyCloseSent(MakeOrderSent(12, 1200)).ok);
+
+  const ProbeSampleTransition transition = flow.OnOrderFeedback(MakeFeedback(
+      OrderFeedbackKind::kFilled, ids.close_local_order_id, 0.0001));
+
+  EXPECT_EQ(transition.action, ProbeSampleAction::kComplete);
+  EXPECT_TRUE(flow.stats().safety_close_confirmed);
+  EXPECT_TRUE(flow.stats().invalid);
+}
+
+TEST(BitgetRttProbeFlowTest, ShortSafetyCloseFillFailsImmediately) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+  ASSERT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kFilled,
+                                              ids.ioc_local_order_id, 0.0002))
+                .action,
+            ProbeSampleAction::kSubmitSafetyClose);
+  ASSERT_TRUE(flow.OnSafetyCloseSent(MakeOrderSent(12, 1200)).ok);
+
+  const ProbeSampleTransition transition = flow.OnOrderFeedback(MakeFeedback(
+      OrderFeedbackKind::kFilled, ids.close_local_order_id, 0.0001));
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("did not prove flat"), std::string::npos);
+}
+
+TEST(BitgetRttProbeFlowTest, UnknownResultFailsWithoutTerminalAssumption) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+
+  const ProbeSampleTransition transition = flow.OnOrderResponse(
+      MakeOrderResponse(bitget::OrderResponseKind::kUnknownResult,
+                        ids.ioc_local_order_id, 11, 1100));
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("unknown"), std::string::npos);
+}
+
+TEST(BitgetRttProbeFlowTest, RejectsMismatchedRequestType) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+  bitget::OrderResponse response = MakeOrderResponse(
+      bitget::OrderResponseKind::kAck, ids.ioc_local_order_id, 11, 1100);
+  response.request_type = bitget::OrderRequestType::kCancelOrder;
+
+  const ProbeSampleTransition transition = flow.OnOrderResponse(response);
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("request_type"), std::string::npos);
+}
+
+TEST(BitgetRttProbeFlowTest, ContinuityLostFailsActiveSample) {
+  ProbeSampleFlow flow(MakeSampleIds());
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+  OrderFeedbackEvent continuity{};
+  continuity.kind = OrderFeedbackKind::kContinuityLost;
+
+  const ProbeSampleTransition transition = flow.OnOrderFeedback(continuity);
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("continuity"), std::string::npos);
 }
 
 }  // namespace
