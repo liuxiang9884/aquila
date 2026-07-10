@@ -247,6 +247,11 @@ class BasicWebSocketClient {
     return metrics_;
   }
 
+  void RequestReconnect(ConnectionError error, ReconnectTrigger trigger,
+                        int error_number = 0) noexcept {
+    core_.RequestReconnect(error, trigger, error_number);
+  }
+
  private:
   struct RuntimeSession {
     CriticalSession<TransportSocketT, MessageHandlerT>& core;

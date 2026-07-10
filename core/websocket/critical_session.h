@@ -395,6 +395,10 @@ class CriticalSession {
   bool ShouldReconnect() const noexcept {
     return should_reconnect_;
   }
+  void RequestReconnect(ConnectionError error, ReconnectTrigger trigger,
+                        int error_number = 0) noexcept {
+    TriggerReconnect(error, trigger, error_number);
+  }
   ConnectionError LastError() const noexcept {
     return last_error_;
   }
