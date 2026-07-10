@@ -586,6 +586,12 @@ class OrderSession {
     const OperationResponse parsed =
         ParseOperationResponse(payload, view.readable_tail_bytes, text_parser_);
     if (parsed.parse_status != OperationParseStatus::kOk) {
+      if (parsed.parse_status == OperationParseStatus::kUnexpectedShape &&
+          IsSessionInvalidatingError(parsed.error_code)) {
+        login_ready_ = false;
+        NotifyLoginNotReady();
+        RequestProtocolReconnect();
+      }
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordParseError();
       }

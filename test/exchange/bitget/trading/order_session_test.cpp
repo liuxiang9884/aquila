@@ -113,6 +113,13 @@ std::string ErrorResponse(const OrderSendResult& sent, std::string_view topic,
       sent.encoded_request_id, topic, code);
 }
 
+std::string TopiclessErrorResponse(const OrderSendResult& sent,
+                                   std::uint32_t code) {
+  return fmt::format(
+      R"({{"event":"error","id":"{}","code":"{}","msg":"error"}})",
+      sent.encoded_request_id, code);
+}
+
 TEST(BitgetOrderSessionTest, ActiveSendsLoginAndSuccessMarksReady) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
@@ -190,6 +197,23 @@ TEST(BitgetOrderSessionTest,
     EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
     EXPECT_EQ(handler.not_ready_calls, 1) << code;
   }
+}
+
+TEST(BitgetOrderSessionTest,
+     TopiclessConnectionErrorInvalidatesWithoutConsumingCorrelation) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(&session);
+  const OrderSendResult sent =
+      session.PlaceOrder(TestOrder{.local_order_id = 123});
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(TopiclessErrorResponse(sent, 30007)));
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_TRUE(session.reconnect_requested_for_test());
+  EXPECT_TRUE(handler.responses.empty());
+  EXPECT_EQ(session.inflight_count(), 1U);
 }
 
 TEST(BitgetOrderSessionTest, LoginWriteFailureRequestsReconnect) {

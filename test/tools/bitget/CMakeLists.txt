@@ -25,6 +25,23 @@ set_tests_properties(bitget_data_session_help_test
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
+add_executable(bitget_private_session_probe_outcome_test
+    private_session_probe_outcome_test.cpp
+)
+
+target_include_directories(bitget_private_session_probe_outcome_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}
+)
+
+target_link_libraries(bitget_private_session_probe_outcome_test
+    PRIVATE
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_private_session_probe_outcome_test
+         COMMAND bitget_private_session_probe_outcome_test)
+
 add_test(NAME bitget_data_fusion_help_test
          COMMAND bitget_data_fusion --help)
 

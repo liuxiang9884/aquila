@@ -30,6 +30,7 @@ struct RecordingPublisher {
   std::size_t continuity_flush_calls{0};
   std::vector<OrderFeedbackEvent> events;
   std::vector<OrderFeedbackContinuityReason> continuity_reasons;
+  std::vector<std::int64_t> continuity_receive_ns;
 
   bool Publish(const OrderFeedbackEvent& event) noexcept {
     events.push_back(event);
@@ -40,8 +41,9 @@ struct RecordingPublisher {
   }
 
   bool PublishGlobalContinuityLost(OrderFeedbackContinuityReason reason,
-                                   std::int64_t) noexcept {
+                                   std::int64_t local_receive_ns) noexcept {
     continuity_reasons.push_back(reason);
+    continuity_receive_ns.push_back(local_receive_ns);
     if (!global_result) {
       continuity_flush_pending = true;
     }
@@ -212,6 +214,19 @@ TEST(BitgetOrderFeedbackSessionTest, DuplicateSubscribeAckIsIgnored) {
   EXPECT_EQ(session.stats().ignored_messages, 1U);
 }
 
+TEST(BitgetOrderFeedbackSessionTest, StaleSubscribeErrorDoesNotRegressReady) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+
+  session.Handle(TextView(
+      R"({"event":"error","arg":{"instType":"UTA","topic":"order"},"code":"30001","msg":"stale"})"));
+
+  EXPECT_TRUE(session.Ready());
+  EXPECT_EQ(session.stats().subscribe_errors, 0U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
 TEST(BitgetOrderFeedbackSessionTest,
      SubscribeAuthenticationErrorsInvalidateLoginAndReconnect) {
   for (const std::uint32_t code : {30004U, 30007U, 30033U}) {
@@ -302,6 +317,44 @@ TEST(BitgetOrderFeedbackSessionTest,
 
   EXPECT_EQ(publisher.continuity_flush_calls, 1U);
   EXPECT_FALSE(publisher.continuity_flush_pending);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     ReconnectActiveFlushesPendingContinuityBeforeLogin) {
+  RecordingPublisher publisher;
+  publisher.global_result = false;
+  Session session = MakeSession(publisher);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kDisconnected);
+  ASSERT_TRUE(publisher.continuity_flush_pending);
+  ASSERT_EQ(publisher.continuity_flush_calls, 0U);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  EXPECT_EQ(publisher.continuity_flush_calls, 1U);
+  EXPECT_FALSE(publisher.continuity_flush_pending);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     BatchEventAndDecodeContinuityShareIngressTimestamp) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  constexpr std::string_view payload = R"({
+    "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
+    "data":[
+      {"category":"usdt-futures","orderId":"9988",
+       "clientOid":"a-72057594037927978","qty":"1.5",
+       "holdMode":"one_way_mode","marginMode":"crossed",
+       "cumExecQty":"0","avgPrice":"0","orderStatus":"new",
+       "updatedTime":"1750034397076"},
+      {"clientOid":"a-42"}]})";
+
+  session.Handle(TextView(payload));
+
+  ASSERT_EQ(publisher.events.size(), 1U);
+  ASSERT_EQ(publisher.continuity_receive_ns.size(), 1U);
+  EXPECT_EQ(publisher.events[0].local_receive_ns,
+            publisher.continuity_receive_ns[0]);
 }
 
 TEST(BitgetOrderFeedbackSessionTest,

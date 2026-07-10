@@ -568,6 +568,7 @@ connect -> login -> Ready() -> heartbeat -> clean stop
 
 验收证据必须包含 endpoint、连接时长、login response、heartbeat、reconnect/stop 结果和最终 metrics。当前阶段不调用
 `place-order` / `cancel-order`，也不以 login success 证明 trade permission、订单正确性或交易延迟。
+probe 只有在由配置的 duration timer 控制停止且曾进入 `Ready()` 时才能返回成功；连接提前退出即使曾 login success 也必须失败。
 
 ## 后续阶段入口
 

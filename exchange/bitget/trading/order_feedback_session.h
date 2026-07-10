@@ -298,6 +298,7 @@ class OrderFeedbackSession {
       decode_continuity_lost_published_ = false;
       application_awaiting_pong_ = false;
       application_last_ping_ns_ = websocket::NowNs(kClockSource);
+      RetryPendingContinuityLostEvents(application_last_ping_ns_);
       LogPhase(phase, false);
       const OrderSendStatus login_status = SendLogin();
       if (IsTransientControlSendFailure(login_status)) {
@@ -426,6 +427,7 @@ class OrderFeedbackSession {
     const std::string_view payload{
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
+    const std::int64_t local_receive_ns = RealtimeNowNs();
     if (payload == "pong") {
       const bool was_awaiting_pong = application_awaiting_pong_;
       application_awaiting_pong_ = false;
@@ -445,7 +447,7 @@ class OrderFeedbackSession {
     }
 
     const OrderFeedbackParseResult parsed = ParseBitgetOrderFeedbackMessage(
-        payload, view.readable_tail_bytes, RealtimeNowNs(), feedback_parser_,
+        payload, view.readable_tail_bytes, local_receive_ns, feedback_parser_,
         parser_stats_, [this](const OrderFeedbackEvent& event) noexcept {
           return PublishEvent(event);
         });
@@ -458,7 +460,8 @@ class OrderFeedbackSession {
     if (parsed.continuity_lost && !decode_continuity_lost_published_) {
       decode_continuity_lost_published_ = true;
       PublishGlobalContinuityLost(
-          OrderFeedbackContinuityReason::kDecodeUnrecoverable, RealtimeNowNs());
+          OrderFeedbackContinuityReason::kDecodeUnrecoverable,
+          local_receive_ns);
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordDecodeContinuityLost();
       }
@@ -569,6 +572,14 @@ class OrderFeedbackSession {
 
   void HandleSubscribeError(
       const detail::OrderFeedbackControlEnvelope& control) noexcept {
+    if (!IsSessionInvalidatingError(control.code) &&
+        (!control.arg_is_order_topic || !active_ || !login_ready_ ||
+         !subscribe_sent_)) {
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordIgnoredMessage();
+      }
+      return;
+    }
     subscribe_sent_ = false;
     subscribed_ = false;
     if constexpr (DiagnosticsEnabled) {

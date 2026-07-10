@@ -511,6 +511,8 @@ connect
 
 当前阶段不调用 place/cancel，也不等待真实 `new`、fill 或 cancel push。login/subscribe success 不能证明订单字段映射、trade
 permission、账户模式、订单状态连续性或 feedback latency。
+probe 只有在由配置的 duration timer 控制停止且曾完成 login/subscription 时才能返回成功；summary 必须明确输出
+`completed_requested_duration` 和 `ever_ready`，连接提前退出不能沿用历史 ACK 误报成功。
 
 真实订单闭环延后到以下条件全部满足后：
 

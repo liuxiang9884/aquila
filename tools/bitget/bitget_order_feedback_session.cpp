@@ -17,6 +17,7 @@
 #include "exchange/bitget/trading/order_feedback_session.h"
 #include "exchange/bitget/trading/order_feedback_session_config.h"
 #include "nova/utils/log.h"
+#include "tools/bitget/private_session_probe_outcome.h"
 
 namespace {
 
@@ -95,10 +96,12 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
   std::mutex stop_mutex;
   std::condition_variable stop_condition;
   bool run_finished = false;
+  bool completed_requested_duration = false;
   std::thread stopper([&] {
     std::unique_lock lock(stop_mutex);
     if (!stop_condition.wait_for(lock, std::chrono::seconds(duration_seconds),
                                  [&run_finished] { return run_finished; })) {
+      completed_requested_duration = true;
       session.Stop();
     }
   });
@@ -115,11 +118,16 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
   const aq_bitget::OrderFeedbackSessionStats& stats = session.stats();
   const aq_bitget::OrderFeedbackParserStats& parser_stats =
       session.parser_stats();
-  const bool ok =
-      started_ok && stats.login_accepted != 0 && stats.subscribe_acks != 0;
+  const aq_bitget::PrivateSessionProbeOutcome outcome{
+      .started_ok = started_ok,
+      .completed_requested_duration = completed_requested_duration,
+      .reached_ready = stats.login_accepted != 0 && stats.subscribe_acks != 0,
+  };
+  const bool ok = aq_bitget::PrivateSessionProbeSucceeded(outcome);
   NOVA_INFO(
-      "bitget_order_feedback_session_summary result={} ever_active={} "
-      "phase={} error={} text_messages={} login_sent={} login_accepted={} "
+      "bitget_order_feedback_session_summary result={} "
+      "completed_requested_duration={} ever_active={} ever_ready={} phase={} "
+      "error={} text_messages={} login_sent={} login_accepted={} "
       "login_rejected={} subscribe_sent={} subscribe_acks={} "
       "subscribe_errors={} pings_sent={} pongs_received={} "
       "heartbeat_timeouts={} order_envelopes={} orders_seen={} "
@@ -129,7 +137,9 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
       "disconnect_continuity_lost_events={} publish_failures={} "
       "shm_published={} shm_invalid_routes={} rx_messages={} tx_messages={} "
       "reconnects={}",
-      ok ? "ok" : "failed", session.ever_active() ? "true" : "false",
+      ok ? "ok" : "failed", completed_requested_duration ? "true" : "false",
+      session.ever_active() ? "true" : "false",
+      outcome.reached_ready ? "true" : "false",
       magic_enum::enum_name(session.phase()),
       magic_enum::enum_name(session.last_error()), stats.text_messages,
       stats.login_sent, stats.login_accepted, stats.login_rejected,
