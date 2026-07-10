@@ -176,6 +176,9 @@ TEST(BitgetOrderSessionTest, PlaceAckCorrelatesCachesAndDoesNotAccept) {
   EXPECT_EQ(handler.responses[0].route_id, 3U);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 9988U);
   EXPECT_EQ(handler.responses[0].exchange_ns, 1750034397076000000LL);
+  EXPECT_EQ(handler.responses[0].request_send_local_ns, sent.send_local_ns);
+  EXPECT_GE(handler.responses[0].ack_rtt_ns, 0);
+  EXPECT_NE(handler.responses[0].connection_id_hash, 0U);
   EXPECT_EQ(session.exchange_order_id_for_local_order(123), 9988U);
   EXPECT_EQ(session.inflight_count(), 0U);
 }

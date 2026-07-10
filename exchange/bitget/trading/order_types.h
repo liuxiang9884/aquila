@@ -69,8 +69,11 @@ struct OrderResponse {
   std::uint64_t request_sequence{0};
   std::uint16_t route_id{static_cast<std::uint16_t>(0xFFFF)};
   std::uint32_t error_code{0};
+  std::uint64_t connection_id_hash{0};
+  std::int64_t request_send_local_ns{0};
   std::int64_t local_receive_ns{0};
   std::int64_t exchange_ns{0};
+  std::int64_t ack_rtt_ns{-1};
 };
 
 struct LoginCredentials {

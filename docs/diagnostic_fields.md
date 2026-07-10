@@ -166,6 +166,46 @@ metadata 文件，不构造 metadata record，但仍保留基础 read / publish 
 | `fusion_total_read_count` / `fusion_total_published_count` | data fusion Nova log | stable | count | fusion thread 停止时汇总 source SHM read 数和 canonical SHM publish 数。 | fusion summary schema 被替换后同步更新。 |
 | `source_id` / `symbol_id` / `record_id` / `exchange_ns` / `event_ns` / `source_local_ns` / `fusion_publish_ns` | BookTicker / Trade `FusionMetadataRecord` sidecar binary v2 | stable | id / ns | 记录 canonical record 由哪个 source 首先发布；BookTicker `record_id=BookTicker.id` 且 `event_ns=BookTicker.event_ns`，Trade `record_id=Trade.id` 且 `event_ns=Trade.event_ns`。 | metadata binary schema 被替换后同步更新。 |
 
+## Bitget OrderSession
+
+组件入口：
+
+- `exchange/bitget/trading/order_session.h`
+- `exchange/bitget/trading/order_session_runtime_adapter.h`
+- `tools/bitget/bitget_order_session_probe.cpp`
+
+当前字段只覆盖单路 Bitget UTA v3 `OrderSession` 的 login、place/cancel operation response 和
+login-only probe。它们不表示订单已 accepted、filled 或 cancelled，也不能替代后续 feedback / reconcile 事实源。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `bitget_order_session_connected` | Nova log key | experiment | info log | private WebSocket 进入 active 后记录 endpoint 和本地容量。 | Bitget session 连接日志被统一交易 session metrics 取代后重审。 |
+| `host` / `port` / `target` | `bitget_order_session_connected` / `bitget_order_session_probe_config` | experiment | endpoint 文本 | 确认当前只使用配置中的 high availability private endpoint。 | 同上。 |
+| `inflight` / `request_map_capacity` / `order_id_cache_capacity` | `bitget_order_session_connected` / `bitget_order_send` / config log | experiment | count | 观察单连接 request correlation 和 cancel order-id cache 容量；它们不是 UID/account rate budget。 | gateway 级稳定 metrics 落地后重审。 |
+| `bitget_order_session_phase` | Nova log key | experiment | warning log | 断线、reconnect backoff、closing 或 closed 时记录清理前状态和 WebSocket 错误来源。 | reconnect 诊断被统一 session metrics 取代后重审。 |
+| `phase` / `last_error` / `reconnect_trigger` / `reconnect_errno` | `bitget_order_session_phase` / `bitget_order_session_summary` | experiment | enum / errno | 区分 heartbeat timeout、协议错误、peer close 和底层 socket 错误。 | 同上。 |
+| `active_before` / `login_ready_before` / `inflight_before` | `bitget_order_session_phase` | experiment | bool / count | 说明连接状态变化是否清理了已登录 session 或未完成 operation correlation。 | 同上。 |
+| `bitget_order_send` | Nova log key | experiment | info log | 记录 place/cancel request 已提交给 WebSocket 写路径；不是 exchange ACK。 | 稳定 order gateway 发送 metrics 替代逐笔日志后重审。 |
+| `request_type` / `request_sequence` / `local_order_id` | `bitget_order_send` / `bitget_order_response` / `bitget_order_response_error` | experiment | enum / id | 关联单连接 operation request、response 和 core order。 | correlation schema 变化时同步迁移。 |
+| `request_send_local_ns` | `bitget_order_send` / `bitget_order_response` | experiment | 本机 Unix epoch ns | request 提交给 WebSocket 发送路径前的本地时间；不表示 TCP 已完整写出。 | 被更精确 write timestamp 取代后重审。 |
+| `bitget_order_response` | Nova log key | experiment | info log | 记录可关联 operation response；success 仅为通用 ACK，不确认订单终态。 | feedback 与 operation response 日志统一后重审。 |
+| `response_kind` | `bitget_order_response` | experiment | `kAck` / `kRejected` / `kCancelRejected` / `kUnknownResult` | 保留 Bitget operation response 语义，防止 cancel ACK 被误读为 cancelled。 | response contract 变化时同步更新。 |
+| `exchange_order_id` | `bitget_order_response` / `bitget_order_response_error` | experiment | Bitget order id，缺失为 `0` | place ACK 可用于 session cancel cache；值非零仍不表示 accepted。 | order identity contract 变化时同步更新。 |
+| `error_code` | `bitget_order_response` / `bitget_order_response_error` | experiment | Bitget numeric code | 区分明确业务拒绝与 `40010` / `40725` / `45001` 等 `UnknownResult`。 | error classifier 改版时同步更新。 |
+| `local_receive_ns` / `exchange_ns` | `bitget_order_response` / `bitget_order_response_error` | experiment | 本机 / Bitget Unix epoch ns | response ingress 本地取时和 Bitget `ts * 1_000_000`；跨机器差值不作为单程网络延迟。 | timestamp contract 变化时同步更新。 |
+| `ack_rtt_ns` | `bitget_order_response` | experiment | ns，缺失为 `-1` | 本机同一时钟口径 `local_receive_ns - request_send_local_ns`；包含本机排队、网络和交易所 operation response。 | 更精确 write-to-response RTT 替代后重审。 |
+| `connection_id_hash` | `bitget_order_response` | experiment | FNV-1a uint64，缺失为 `0` | 对 Bitget `connId` 做不可逆 join，避免在日志保存完整 connection id。 | 稳定 connection generation id 落地后重审。 |
+| `bitget_order_response_error` | Nova log key | experiment | warning log | runtime adapter 在 dispatch 前记录明确拒绝和 `UnknownResult`；不记录 `msg` 原文。 | 统一 error metrics 落地后重审。 |
+| `bitget_order_session_login` | Nova log key | experiment | info / warning log | login-only probe 记录 ready/not-ready 回调次数。 | probe 被稳定 runbook 工具取代后重审。 |
+| `bitget_order_session_probe_config` | Nova log key | experiment | info log | dry-run 记录非敏感配置和是否显式 `--connect`。 | probe config 输出 schema 稳定后改为 `stable`。 |
+| `bitget_order_session_summary` | Nova log key | experiment | info log | login-only probe 退出时汇总 login、application ping/pong、reconnect 和 WebSocket metrics。 | 稳定监控面替代 probe summary 后重审。 |
+| `login_sent` / `login_accepted` / `login_rejected` | `OrderSessionStats` / summary | experiment | count | 观察 private login state；不证明 UTA trade permission 或账户 position mode。 | 同上。 |
+| `pings_sent` / `pongs_received` / `heartbeat_timeouts` | `OrderSessionStats` / summary | experiment | count | 观察 Bitget application-level text `ping` / `pong` 和超时重连。 | 同上。 |
+| `text_messages` / `parse_errors` / `ignored_messages` / `responses` / `unknown_request_ids` / `correlation_mismatches` / `local_send_failures` | `OrderSessionStats` | experiment | count | 观察 parser、关联和本地发送失败；unknown/mismatch 不会错误关联其他订单。 | 同上。 |
+
+凭据边界：日志只允许记录 `api_*_env` 的变量名，不记录 API key、secret、passphrase、signature 或完整 login payload。
+login-only probe 不提供真实订单命令，也不把 login success 外推为订单正确性、fillability 或交易延迟证据。
+
 ## Gate OrderSession
 
 组件入口：

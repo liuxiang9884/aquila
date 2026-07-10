@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <absl/container/flat_hash_map.h>
+#include <magic_enum/magic_enum.hpp>
 
 #include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
@@ -18,6 +19,7 @@
 #include "exchange/bitget/trading/operation_response_parser.h"
 #include "exchange/bitget/trading/order_request_encoder.h"
 #include "exchange/bitget/trading/order_types.h"
+#include "nova/utils/log.h"
 #include <simdjson.h>
 
 namespace aquila::bitget {
@@ -109,6 +111,7 @@ struct OrderRequestCorrelation {
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
   std::uint64_t expected_exchange_order_id{0};
+  std::int64_t request_send_local_ns{0};
   std::uint16_t route_id{static_cast<std::uint16_t>(0xFFFF)};
 };
 
@@ -184,6 +187,13 @@ class OrderSession {
       login_sent_ = false;
       application_awaiting_pong_ = false;
       application_last_ping_ns_ = websocket::NowNs(kClockSource);
+      if (::nova::kLogManager.logger() != nullptr) {
+        NOVA_INFO(
+            "bitget_order_session_connected host={} port={} target={} "
+            "inflight={} request_map_capacity={} order_id_cache_capacity={}",
+            connection_.host, connection_.port, connection_.target,
+            inflight_count(), request_map_capacity_, order_id_cache_capacity_);
+      }
       (void)SendLogin();
       return;
     }
@@ -191,6 +201,17 @@ class OrderSession {
         phase == websocket::ConnectionPhase::kReconnectBackoff ||
         phase == websocket::ConnectionPhase::kClosing ||
         phase == websocket::ConnectionPhase::kClosed) {
+      if (::nova::kLogManager.logger() != nullptr) {
+        NOVA_WARNING(
+            "bitget_order_session_phase phase={} active_before={} "
+            "login_ready_before={} inflight_before={} last_error={} "
+            "reconnect_trigger={} reconnect_errno={}",
+            magic_enum::enum_name(phase), active_ ? "true" : "false",
+            login_ready_ ? "true" : "false", inflight_count(),
+            magic_enum::enum_name(client_.last_error()),
+            magic_enum::enum_name(client_.last_reconnect_trigger()),
+            client_.last_reconnect_errno());
+      }
       active_ = false;
       login_ready_ = false;
       login_sent_ = false;
@@ -248,11 +269,14 @@ class OrderSession {
       return SendFailure(send_status, sequence, encoded_request_id);
     }
     request_correlations_.emplace(
-        sequence, MakeCorrelation(OrderRequestType::kPlaceOrder, order, 0));
+        sequence, MakeCorrelation(OrderRequestType::kPlaceOrder, order, 0,
+                                  send_local_ns));
     ++place_cache_reservations_;
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
+    LogOrderSend(OrderRequestType::kPlaceOrder, order.local_order_id, sequence,
+                 send_local_ns);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -293,10 +317,12 @@ class OrderSession {
     }
     request_correlations_.emplace(
         sequence, MakeCorrelation(OrderRequestType::kCancelOrder, order,
-                                  exchange_order_id));
+                                  exchange_order_id, send_local_ns));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
+    LogOrderSend(OrderRequestType::kCancelOrder, order.local_order_id, sequence,
+                 send_local_ns);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -323,6 +349,18 @@ class OrderSession {
   }
   [[nodiscard]] const OrderSessionStats& stats() const noexcept {
     return diagnostics_.stats();
+  }
+  [[nodiscard]] const websocket::ConnectionConfig& connection() const noexcept {
+    return connection_;
+  }
+  [[nodiscard]] websocket::ConnectionPhase phase() const noexcept {
+    return client_.phase();
+  }
+  [[nodiscard]] websocket::ConnectionError last_error() const noexcept {
+    return client_.last_error();
+  }
+  [[nodiscard]] websocket::Metrics SnapshotMetrics() const noexcept {
+    return client_.SnapshotMetrics();
   }
 
   [[nodiscard]] std::uint64_t exchange_order_id_for_local_order(
@@ -583,7 +621,11 @@ class OrderSession {
                            parsed.exchange_order_id);
     }
 
-    response_handler_.OnOrderResponse(OrderResponse{
+    const std::int64_t ack_rtt_ns =
+        local_receive_ns >= correlation.request_send_local_ns
+            ? local_receive_ns - correlation.request_send_local_ns
+            : -1;
+    const OrderResponse response{
         .kind = MapResponseKind(parsed.kind),
         .request_type = correlation.type,
         .local_order_id = correlation.local_order_id,
@@ -592,9 +634,14 @@ class OrderSession {
         .request_sequence = parsed.request_id.sequence,
         .route_id = correlation.route_id,
         .error_code = parsed.error_code,
+        .connection_id_hash = parsed.connection_id_hash,
+        .request_send_local_ns = correlation.request_send_local_ns,
         .local_receive_ns = local_receive_ns,
         .exchange_ns = parsed.exchange_ns,
-    });
+        .ack_rtt_ns = ack_rtt_ns,
+    };
+    LogOrderResponse(response);
+    response_handler_.OnOrderResponse(response);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();
     }
@@ -675,6 +722,36 @@ class OrderSession {
     }
   }
 
+  void LogOrderSend(OrderRequestType request_type, std::uint64_t local_order_id,
+                    std::uint64_t request_sequence,
+                    std::int64_t request_send_local_ns) const noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "bitget_order_send request_type={} request_sequence={} "
+        "local_order_id={} request_send_local_ns={} inflight={}",
+        magic_enum::enum_name(request_type), request_sequence, local_order_id,
+        request_send_local_ns, inflight_count());
+  }
+
+  static void LogOrderResponse(const OrderResponse& response) noexcept {
+    if (::nova::kLogManager.logger() == nullptr) {
+      return;
+    }
+    NOVA_INFO(
+        "bitget_order_response response_kind={} request_type={} "
+        "request_sequence={} local_order_id={} exchange_order_id={} "
+        "error_code={} request_send_local_ns={} local_receive_ns={} "
+        "exchange_ns={} ack_rtt_ns={} connection_id_hash={}",
+        magic_enum::enum_name(response.kind),
+        magic_enum::enum_name(response.request_type), response.request_sequence,
+        response.local_order_id, response.exchange_order_id,
+        response.error_code, response.request_send_local_ns,
+        response.local_receive_ns, response.exchange_ns, response.ack_rtt_ns,
+        response.connection_id_hash);
+  }
+
   void NotifyLoginReady() noexcept {
     if constexpr (requires { response_handler_.OnOrderSessionLoginReady(); }) {
       response_handler_.OnOrderSessionLoginReady();
@@ -736,11 +813,13 @@ class OrderSession {
   template <typename OrderT>
   [[nodiscard]] static detail::OrderRequestCorrelation MakeCorrelation(
       OrderRequestType type, const OrderT& order,
-      std::uint64_t expected_exchange_order_id) noexcept {
+      std::uint64_t expected_exchange_order_id,
+      std::int64_t request_send_local_ns) noexcept {
     return {.type = type,
             .local_order_id = order.local_order_id,
             .parent_id = ParentIdFor(order),
             .expected_exchange_order_id = expected_exchange_order_id,
+            .request_send_local_ns = request_send_local_ns,
             .route_id = RouteIdFor(order)};
   }
 

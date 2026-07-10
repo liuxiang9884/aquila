@@ -243,6 +243,19 @@ target_link_libraries(bitget_data_session
         nova
 )
 
+add_executable(bitget_order_session_probe
+    bitget/bitget_order_session_probe.cpp
+)
+
+target_link_libraries(bitget_order_session_probe
+    PRIVATE
+        aquila_bitget
+        CLI11::CLI11
+        magic_enum::magic_enum
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(bitget_data_fusion
     bitget/bitget_data_fusion.cpp
     bitget/bitget_data_fusion_config.cpp
