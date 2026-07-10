@@ -131,6 +131,20 @@ TEST(BitgetOrderFeedbackParserTest, IgnoresForeignAndUnroutableOrders) {
   EXPECT_EQ(output.stats.unroutable_orders_ignored, 2U);
 }
 
+TEST(BitgetOrderFeedbackParserTest,
+     IgnoresNonStringClientOidBeforeAquilaValidation) {
+  const ParseOutput output = Parse(R"({
+    "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
+    "data":[{"clientOid":null},{"clientOid":123}]})");
+
+  EXPECT_EQ(output.result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_FALSE(output.result.continuity_lost);
+  EXPECT_EQ(output.result.orders_seen, 2U);
+  EXPECT_EQ(output.result.events_emitted, 0U);
+  EXPECT_TRUE(output.events.empty());
+  EXPECT_EQ(output.stats.unroutable_orders_ignored, 2U);
+}
+
 TEST(BitgetOrderFeedbackParserTest, MalformedAquilaClientOidLosesContinuity) {
   const ParseOutput output = Parse(R"({
     "action":"snapshot","arg":{"instType":"UTA","topic":"order"},

@@ -62,23 +62,25 @@ class TestOrderSession
                           OrderSessionDiagnostics> {
  public:
   TestOrderSession(Handler& handler, std::size_t request_capacity = 16,
-                   std::size_t cache_capacity = 16)
+                   std::size_t cache_capacity = 16,
+                   std::size_t prepared_write_slots = 32)
       : OrderSession<Handler, OrderSessionDefaultPlainWebSocketPolicy,
                      OrderSessionDiagnostics>(
-            MakeConfig(),
+            MakeConfig(prepared_write_slots),
             LoginCredentials{.api_key = "key",
                              .api_secret = "secret",
                              .passphrase = "phrase"},
             handler, request_capacity, cache_capacity) {}
 
  private:
-  static websocket::ConnectionConfig MakeConfig() {
+  static websocket::ConnectionConfig MakeConfig(
+      std::size_t prepared_write_slots) {
     websocket::ConnectionConfig config{};
     config.host = "localhost";
     config.port = "80";
     config.target = "/v3/ws/private";
     config.enable_tls = false;
-    config.prepared_write_slots = 32;
+    config.prepared_write_slots = prepared_write_slots;
     config.prepared_write_bytes = 4096;
     config.heartbeat_interval_ms = 30000;
     config.heartbeat_timeout_ms = 10000;
@@ -168,6 +170,38 @@ TEST(BitgetOrderSessionTest, ConnectionLimitErrorAfterLoginRequestsReconnect) {
   session.Handle(TextView(R"({"event":"error","code":"30007","msg":"limit"})"));
 
   EXPECT_FALSE(session.Ready());
+  EXPECT_TRUE(session.reconnect_requested_for_test());
+}
+
+TEST(BitgetOrderSessionTest,
+     OperationAuthenticationErrorsInvalidateReadyAndReconnect) {
+  for (const std::uint32_t code : {30004U, 30007U, 30033U}) {
+    RecordingHandler handler;
+    TestOrderSession<RecordingHandler> session(handler);
+    ActivateAndLogin(&session);
+    const OrderSendResult sent =
+        session.PlaceOrder(TestOrder{.local_order_id = code});
+    ASSERT_EQ(sent.status, OrderSendStatus::kOk) << code;
+
+    session.Handle(TextView(ErrorResponse(sent, "place-order", code)));
+
+    ASSERT_EQ(handler.responses.size(), 1U) << code;
+    EXPECT_FALSE(session.Ready()) << code;
+    EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
+    EXPECT_EQ(handler.not_ready_calls, 1) << code;
+  }
+}
+
+TEST(BitgetOrderSessionTest, LoginWriteFailureRequestsReconnect) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler, /*request_capacity=*/16,
+                                             /*cache_capacity=*/16,
+                                             /*prepared_write_slots=*/0);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_EQ(session.stats().login_sent, 0U);
   EXPECT_TRUE(session.reconnect_requested_for_test());
 }
 

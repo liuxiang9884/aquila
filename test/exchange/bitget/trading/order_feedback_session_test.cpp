@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include <fmt/format.h>
 #include <gtest/gtest.h>
 
 #include "core/trading/order_feedback_event.h"
@@ -25,18 +26,39 @@ websocket::MessageView TextView(std::string_view payload) noexcept {
 struct RecordingPublisher {
   bool publish_result{true};
   bool global_result{true};
+  bool continuity_flush_pending{false};
+  std::size_t continuity_flush_calls{0};
   std::vector<OrderFeedbackEvent> events;
   std::vector<OrderFeedbackContinuityReason> continuity_reasons;
 
   bool Publish(const OrderFeedbackEvent& event) noexcept {
     events.push_back(event);
+    if (!publish_result) {
+      continuity_flush_pending = true;
+    }
     return publish_result;
   }
 
   bool PublishGlobalContinuityLost(OrderFeedbackContinuityReason reason,
                                    std::int64_t) noexcept {
     continuity_reasons.push_back(reason);
+    if (!global_result) {
+      continuity_flush_pending = true;
+    }
     return global_result;
+  }
+
+  std::size_t FlushPendingContinuityLostEvents() noexcept {
+    ++continuity_flush_calls;
+    if (!continuity_flush_pending) {
+      return 0;
+    }
+    continuity_flush_pending = false;
+    return 1;
+  }
+
+  bool HasPendingContinuityLostEvents() const noexcept {
+    return continuity_flush_pending;
   }
 };
 
@@ -45,22 +67,23 @@ using Session =
                          OrderFeedbackSessionDefaultPlainWebSocketPolicy,
                          OrderFeedbackSessionDiagnostics>;
 
-websocket::ConnectionConfig MakeConfig() {
+websocket::ConnectionConfig MakeConfig(std::size_t prepared_write_slots = 16) {
   websocket::ConnectionConfig config{};
   config.host = "localhost";
   config.port = "80";
   config.target = "/v3/ws/private";
   config.enable_tls = false;
-  config.prepared_write_slots = 16;
+  config.prepared_write_slots = prepared_write_slots;
   config.prepared_write_bytes = 4096;
   config.heartbeat_interval_ms = 30000;
   config.heartbeat_timeout_ms = 10000;
   return config;
 }
 
-Session MakeSession(RecordingPublisher& publisher) {
+Session MakeSession(RecordingPublisher& publisher,
+                    std::size_t prepared_write_slots = 16) {
   return Session(
-      MakeConfig(),
+      MakeConfig(prepared_write_slots),
       LoginCredentials{
           .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
       publisher);
@@ -160,6 +183,81 @@ TEST(BitgetOrderFeedbackSessionTest, LoginAndSubscribeErrorsStayNotReady) {
   EXPECT_EQ(session.stats().subscribe_errors, 1U);
 }
 
+TEST(BitgetOrderFeedbackSessionTest,
+     SubscribeTerminalResponseConsumesPendingAttempt) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+  session.Handle(TextView(kLoginSuccess));
+  ASSERT_TRUE(session.login_ready());
+
+  session.Handle(TextView(
+      R"({"event":"error","arg":{"instType":"UTA","topic":"order"},"code":"30001","msg":"subscribe failed"})"));
+  session.Handle(TextView(kSubscribeSuccess));
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_EQ(session.stats().subscribe_errors, 1U);
+  EXPECT_EQ(session.stats().subscribe_acks, 0U);
+}
+
+TEST(BitgetOrderFeedbackSessionTest, DuplicateSubscribeAckIsIgnored) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+
+  session.Handle(TextView(kSubscribeSuccess));
+
+  EXPECT_TRUE(session.Ready());
+  EXPECT_EQ(session.stats().subscribe_acks, 1U);
+  EXPECT_EQ(session.stats().ignored_messages, 1U);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     SubscribeAuthenticationErrorsInvalidateLoginAndReconnect) {
+  for (const std::uint32_t code : {30004U, 30007U, 30033U}) {
+    RecordingPublisher publisher;
+    Session session = MakeSession(publisher);
+    session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+    session.Handle(TextView(kLoginSuccess));
+    ASSERT_TRUE(session.login_ready()) << code;
+
+    const std::string error = fmt::format(
+        R"({{"event":"error","arg":{{"instType":"UTA","topic":"order"}},"code":"{}","msg":"subscribe failed"}})",
+        code);
+    session.Handle(TextView(error));
+
+    EXPECT_FALSE(session.Ready()) << code;
+    EXPECT_FALSE(session.login_ready()) << code;
+    EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
+  }
+}
+
+TEST(BitgetOrderFeedbackSessionTest, LoginWriteFailureRequestsReconnect) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher, /*prepared_write_slots=*/0);
+
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_EQ(session.stats().login_sent, 0U);
+  EXPECT_TRUE(session.reconnect_requested_for_test());
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     SubscribeWriteFailureInvalidatesLoginAndReconnects) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher, /*prepared_write_slots=*/1);
+  session.OnConnectionPhase(websocket::ConnectionPhase::kActive);
+
+  session.Handle(TextView(kLoginSuccess));
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_FALSE(session.login_ready());
+  EXPECT_EQ(session.stats().subscribe_sent, 0U);
+  EXPECT_EQ(session.stats().subscribe_send_failures, 1U);
+  EXPECT_TRUE(session.reconnect_requested_for_test());
+}
+
 TEST(BitgetOrderFeedbackSessionTest, ServiceUpgradeRequestsReconnect) {
   RecordingPublisher publisher;
   Session session = MakeSession(publisher);
@@ -188,6 +286,22 @@ TEST(BitgetOrderFeedbackSessionTest, PublishesOrderAndRecordsPublishFailure) {
             websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(publisher.events.size(), 2U);
   EXPECT_EQ(session.stats().publish_failures, 1U);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     RetriesPendingContinuityAfterPublishFailure) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+  publisher.publish_result = false;
+
+  session.Handle(TextView(kAcceptedOrder));
+  const std::uint64_t initial = session.application_last_ping_ns_for_test();
+  session.AdvanceApplicationHeartbeatForTest(initial + 1'000'000ULL);
+  session.AdvanceApplicationHeartbeatForTest(initial + 2'000'000ULL);
+
+  EXPECT_EQ(publisher.continuity_flush_calls, 1U);
+  EXPECT_FALSE(publisher.continuity_flush_pending);
 }
 
 TEST(BitgetOrderFeedbackSessionTest,

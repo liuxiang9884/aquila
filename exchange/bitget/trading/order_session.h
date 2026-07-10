@@ -197,7 +197,10 @@ class OrderSession {
             connection_.host, connection_.port, connection_.target,
             inflight_count(), request_map_capacity_, order_id_cache_capacity_);
       }
-      (void)SendLogin();
+      const OrderSendStatus login_status = SendLogin();
+      if (IsTransientControlSendFailure(login_status)) {
+        RequestProtocolReconnect();
+      }
       return;
     }
     if (phase == websocket::ConnectionPhase::kDisconnected ||
@@ -515,6 +518,22 @@ class OrderSession {
     return OrderSendStatus::kEncodeBufferTooSmall;
   }
 
+  [[nodiscard]] static bool IsTransientControlSendFailure(
+      OrderSendStatus status) noexcept {
+    return status == OrderSendStatus::kNoPreparedWriteSlot ||
+           status == OrderSendStatus::kWriteUnavailable;
+  }
+
+  [[nodiscard]] static bool IsSessionInvalidatingError(
+      std::uint32_t code) noexcept {
+    return code == 30004 || code == 30007 || code == 30033;
+  }
+
+  void RequestProtocolReconnect() noexcept {
+    client_.RequestReconnect(websocket::ConnectionError::kProtocolError,
+                             websocket::ReconnectTrigger::kProtocolError);
+  }
+
   [[nodiscard]] websocket::SendStatus SendText(std::string_view text) noexcept {
     return client_.Core().SendText(
         std::as_bytes(std::span<const char>(text.data(), text.size())),
@@ -643,6 +662,11 @@ class OrderSession {
         .exchange_ns = parsed.exchange_ns,
         .ack_rtt_ns = ack_rtt_ns,
     };
+    if (IsSessionInvalidatingError(parsed.error_code)) {
+      login_ready_ = false;
+      NotifyLoginNotReady();
+      RequestProtocolReconnect();
+    }
     LogOrderResponse(response);
     response_handler_.OnOrderResponse(response);
     if constexpr (DiagnosticsEnabled) {
@@ -653,15 +677,14 @@ class OrderSession {
 
   void HandleLoginResponse(const OperationResponse& response) noexcept {
     if (response.kind == OperationResponseKind::kLoginRejected &&
-        (response.error_code == 30007 || response.error_code == 30033)) {
+        IsSessionInvalidatingError(response.error_code)) {
       login_ready_ = false;
       login_sent_ = false;
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordLoginRejected();
       }
       NotifyLoginNotReady();
-      client_.RequestReconnect(websocket::ConnectionError::kProtocolError,
-                               websocket::ReconnectTrigger::kProtocolError);
+      RequestProtocolReconnect();
       return;
     }
     if (!active_ || !login_sent_) {

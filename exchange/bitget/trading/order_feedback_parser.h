@@ -203,6 +203,15 @@ template <typename EventSink>
   }
 
   std::string_view client_oid;
+  simdjson::ondemand::json_type client_oid_type;
+  if (client_oid_value.type().get(client_oid_type) != simdjson::SUCCESS) {
+    ++stats.validation_errors;
+    return OrderRecordParseOutcome::kUnrecoverable;
+  }
+  if (client_oid_type != simdjson::ondemand::json_type::string) {
+    ++stats.unroutable_orders_ignored;
+    return OrderRecordParseOutcome::kIgnored;
+  }
   if (!ReadSimdjsonString(client_oid_value, &client_oid)) {
     ++stats.validation_errors;
     return OrderRecordParseOutcome::kUnrecoverable;

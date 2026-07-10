@@ -299,7 +299,10 @@ class OrderFeedbackSession {
       application_awaiting_pong_ = false;
       application_last_ping_ns_ = websocket::NowNs(kClockSource);
       LogPhase(phase, false);
-      (void)SendLogin();
+      const OrderSendStatus login_status = SendLogin();
+      if (IsTransientControlSendFailure(login_status)) {
+        RequestProtocolReconnect();
+      }
       return;
     }
 
@@ -505,14 +508,13 @@ class OrderFeedbackSession {
 
   void HandleLoginResponse(const OperationResponse& response) noexcept {
     if (response.kind == OperationResponseKind::kLoginRejected &&
-        (response.error_code == 30007 || response.error_code == 30033)) {
+        IsSessionInvalidatingError(response.error_code)) {
       ResetAuthenticatedState();
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordLoginRejected();
       }
       LogLogin(false, response.error_code);
-      client_.RequestReconnect(websocket::ConnectionError::kProtocolError,
-                               websocket::ReconnectTrigger::kProtocolError);
+      RequestProtocolReconnect();
       return;
     }
     if (!active_ || !login_sent_) {
@@ -528,7 +530,13 @@ class OrderFeedbackSession {
         diagnostics_.RecordLoginAccepted();
       }
       LogLogin(true, 0);
-      (void)SendSubscribe();
+      const OrderSendStatus subscribe_status = SendSubscribe();
+      if (subscribe_status != OrderSendStatus::kOk) {
+        ResetAuthenticatedState();
+        if (IsTransientControlSendFailure(subscribe_status)) {
+          RequestProtocolReconnect();
+        }
+      }
       return;
     }
     login_ready_ = false;
@@ -551,6 +559,7 @@ class OrderFeedbackSession {
       HandleSubscribeError(control);
       return;
     }
+    subscribe_sent_ = false;
     subscribed_ = true;
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordSubscribeAck();
@@ -560,15 +569,15 @@ class OrderFeedbackSession {
 
   void HandleSubscribeError(
       const detail::OrderFeedbackControlEnvelope& control) noexcept {
+    subscribe_sent_ = false;
     subscribed_ = false;
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordSubscribeError();
     }
     LogSubscribe(false, control.code);
-    if (control.code == 30033) {
-      login_ready_ = false;
-      client_.RequestReconnect(websocket::ConnectionError::kProtocolError,
-                               websocket::ReconnectTrigger::kProtocolError);
+    if (IsSessionInvalidatingError(control.code)) {
+      ResetAuthenticatedState();
+      RequestProtocolReconnect();
     }
   }
 
@@ -634,6 +643,7 @@ class OrderFeedbackSession {
   }
 
   void AdvanceApplicationHeartbeat(std::uint64_t now_ns) noexcept {
+    RetryPendingContinuityLostEvents(now_ns);
     if (!active_ || application_last_ping_ns_ == 0) {
       return;
     }
@@ -671,8 +681,11 @@ class OrderFeedbackSession {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordEventPublished();
       }
-    } else if constexpr (DiagnosticsEnabled) {
-      diagnostics_.RecordPublishFailure();
+    } else {
+      continuity_flush_pending_ = true;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordPublishFailure();
+      }
     }
     LogRawUpdate(event, ok);
     return ok;
@@ -683,6 +696,7 @@ class OrderFeedbackSession {
     const bool ok =
         publisher_.PublishGlobalContinuityLost(reason, local_receive_ns);
     if (!ok) {
+      continuity_flush_pending_ = true;
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordGlobalContinuityLostPublishFailure();
         diagnostics_.RecordPublishFailure();
@@ -694,6 +708,41 @@ class OrderFeedbackSession {
           "connection_generation={} local_receive_ns={}",
           magic_enum::enum_name(reason), ok ? "true" : "false",
           connection_generation_, local_receive_ns);
+    }
+  }
+
+  [[nodiscard]] static bool IsTransientControlSendFailure(
+      OrderSendStatus status) noexcept {
+    return status == OrderSendStatus::kNoPreparedWriteSlot ||
+           status == OrderSendStatus::kWriteUnavailable;
+  }
+
+  [[nodiscard]] static bool IsSessionInvalidatingError(
+      std::uint32_t code) noexcept {
+    return code == 30004 || code == 30007 || code == 30033;
+  }
+
+  void RequestProtocolReconnect() noexcept {
+    client_.RequestReconnect(websocket::ConnectionError::kProtocolError,
+                             websocket::ReconnectTrigger::kProtocolError);
+  }
+
+  void RetryPendingContinuityLostEvents(std::uint64_t now_ns) noexcept {
+    if (!active_ || !continuity_flush_pending_ ||
+        (continuity_flush_last_attempt_ns_ != 0 &&
+         now_ns - continuity_flush_last_attempt_ns_ <
+             kContinuityFlushRetryIntervalNs)) {
+      return;
+    }
+    continuity_flush_last_attempt_ns_ = now_ns;
+    if constexpr (requires(Publisher& publisher) {
+                    publisher.FlushPendingContinuityLostEvents();
+                    publisher.HasPendingContinuityLostEvents();
+                  }) {
+      (void)publisher_.FlushPendingContinuityLostEvents();
+      continuity_flush_pending_ = publisher_.HasPendingContinuityLostEvents();
+    } else {
+      continuity_flush_pending_ = false;
     }
   }
 
@@ -770,6 +819,7 @@ class OrderFeedbackSession {
   std::uint64_t application_heartbeat_interval_ns_{0};
   std::uint64_t application_heartbeat_timeout_ns_{0};
   std::uint64_t application_last_ping_ns_{0};
+  std::uint64_t continuity_flush_last_attempt_ns_{0};
   bool active_{false};
   bool login_ready_{false};
   bool login_sent_{false};
@@ -777,6 +827,10 @@ class OrderFeedbackSession {
   bool subscribed_{false};
   bool application_awaiting_pong_{false};
   bool decode_continuity_lost_published_{false};
+  bool continuity_flush_pending_{false};
+
+  inline static constexpr std::uint64_t kContinuityFlushRetryIntervalNs =
+      1'000'000;
 };
 
 }  // namespace aquila::bitget

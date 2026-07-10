@@ -357,6 +357,16 @@ class OrderFeedbackShmPublisher {
     return flushed_count;
   }
 
+  [[nodiscard]] bool HasPendingContinuityLostEvents() const noexcept {
+    for (const PendingContinuityLoss& pending_loss :
+         pending_continuity_losses_) {
+      if (pending_loss.pending) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   [[nodiscard]] std::uint64_t published_count() const noexcept {
     return published_count_;
   }

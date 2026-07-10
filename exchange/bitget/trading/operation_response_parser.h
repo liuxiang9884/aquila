@@ -157,6 +157,12 @@ using ::aquila::exchange::detail::ReadSimdjsonString;
   }
 }
 
+[[nodiscard]] inline bool IsDocumentedTopiclessPlaceAmbiguity(
+    std::uint32_t code, OrderRequestType request_type) noexcept {
+  return request_type == OrderRequestType::kPlaceOrder &&
+         (code == 40010 || code == 40725 || code == 45001);
+}
+
 [[nodiscard]] inline bool ScaleMillisecondsToNanoseconds(
     std::uint64_t milliseconds, std::int64_t* output) noexcept {
   assert(output != nullptr);
@@ -288,6 +294,10 @@ using ::aquila::exchange::detail::ReadSimdjsonString;
     if (!TopicMatchesRequest(response.topic, response.request_id.type)) {
       return response;
     }
+  } else if (event != "error" ||
+             !IsDocumentedTopiclessPlaceAmbiguity(response.error_code,
+                                                  response.request_id.type)) {
+    return response;
   }
 
   if (FindSimdjsonField(root, "connId", &value)) {

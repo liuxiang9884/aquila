@@ -106,6 +106,23 @@ TEST(BitgetOperationResponseParserTest,
   }
 }
 
+TEST(BitgetOperationResponseParserTest,
+     RejectsMissingTopicOutsideDocumentedPlaceAmbiguity) {
+  for (
+      const std::string_view payload : {
+          std::string_view{
+              R"({"event":"error","id":"72057594037927945","code":"25202","msg":"Insufficient balance"})"},
+          std::string_view{
+              R"({"event":"error","id":"72057594037927945","code":"49999","msg":"unclassified"})"},
+          std::string_view{
+              R"({"event":"error","id":"144115188075855881","code":"40010","msg":"Request timed out"})"},
+      }) {
+    EXPECT_EQ(ParseOperationResponse(payload).parse_status,
+              OperationParseStatus::kUnexpectedShape)
+        << payload;
+  }
+}
+
 TEST(BitgetOperationResponseParserTest, MapsUnclassifiedErrorToUnknown) {
   const OperationResponse response = ParseOperationResponse(
       R"({"event":"error","id":"72057594037927945","topic":"place-order","code":"49999","msg":"unclassified"})");

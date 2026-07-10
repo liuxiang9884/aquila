@@ -135,6 +135,10 @@ Disconnected
 - login、subscribe error、heartbeat timeout、`30033` 或 connection phase 离开 active 时立即 not-ready。
 - reconnect 后重新 login 和 subscribe，不复用旧认证或订阅状态。
 - feedback 与 `OrderSession` 使用相同 high availability endpoint，但必须是独立 connection。
+- login/subscription control request 的瞬时 write failure 请求重连；subscription ACK 或 error 都消费当前
+  `SubscribeSent`，重复或矛盾的后续 ACK 不推进状态。
+- `30004`、`30007`、`30033` 表示 authentication/connection 已不可继续使用，login 或 subscribe 收到这些 code
+  时清除认证状态并请求重连。
 
 首次成功连接不主动发布 continuity lost。首次 live 使用前，外部 preflight 必须证明没有遗留 open orders，或完成 REST baseline。
 
@@ -205,7 +209,7 @@ envelope 必须满足：
 | --- | --- |
 | `a-<valid uint64>` | 进入 Aquila 订单解析 |
 | 以 `a-` 开头但 ID 非法 | 全局 `kDecodeUnrecoverable` |
-| 缺失、空值或其他 prefix | 记录 foreign/unroutable diagnostics 并忽略 |
+| 缺失、null、非字符串、空值或其他 prefix | 记录 foreign/unroutable diagnostics 并忽略 |
 
 复用 `bitget::ClientOidCodec::Parse()`，不新增第二套 ID parser。
 
@@ -367,6 +371,8 @@ SHM。reconnect 后新 generation 可以再次发布。V1 不实现同一 connec
 - lane queue full 由 publisher 记录并安排 `kLaneQueueFull` continuity event。
 - session disconnect 和 decode unrecoverable 使用 `PublishGlobalContinuityLost()` 广播到全部 lane。
 - 普通 event publish failure 不阻塞 WebSocket thread，不重试原订单事件。
+- queue-full 产生的 pending continuity 由 session 在非阻塞的 bounded interval 上重试 flush；不能依赖同一 lane
+  的下一条普通订单事件来触发告警投递。
 
 V1 不修改 `OrderFeedbackEvent`、`kOrderFeedbackShmVersion` 或 SHM layout。
 
