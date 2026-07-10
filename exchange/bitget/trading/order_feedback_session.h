@@ -523,6 +523,17 @@ class OrderFeedbackSession {
       RequestProtocolReconnect();
       return;
     }
+    if (response.kind == OperationResponseKind::kLoginRejected &&
+        login_ready_ &&
+        IsAuthenticatedSessionInvalidatingError(response.error_code)) {
+      ResetAuthenticatedState();
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordLoginRejected();
+      }
+      LogLogin(false, response.error_code);
+      RequestProtocolReconnect();
+      return;
+    }
     if (!active_ || !login_sent_) {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordIgnoredMessage();

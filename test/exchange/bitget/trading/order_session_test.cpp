@@ -169,6 +169,22 @@ TEST(BitgetOrderSessionTest, LoginFailureAndServiceUpgradeStayNotReady) {
   EXPECT_TRUE(session.reconnect_requested_for_test());
 }
 
+TEST(BitgetOrderSessionTest, PostReadyCredentialErrorsInvalidateAndReconnect) {
+  for (const std::uint32_t code :
+       {30005U, 30011U, 30012U, 30013U, 30014U, 30015U}) {
+    RecordingHandler handler;
+    TestOrderSession<RecordingHandler> session(handler);
+    ActivateAndLogin(&session);
+
+    session.Handle(TextView(fmt::format(
+        R"({{"event":"error","code":"{}","msg":"auth invalid"}})", code)));
+
+    EXPECT_FALSE(session.Ready()) << code;
+    EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
+    EXPECT_EQ(handler.not_ready_calls, 1) << code;
+  }
+}
+
 TEST(BitgetOrderSessionTest, ConnectionLimitErrorAfterLoginRequestsReconnect) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);

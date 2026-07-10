@@ -188,6 +188,24 @@ TEST(BitgetOrderFeedbackSessionTest, LoginAndSubscribeErrorsStayNotReady) {
 }
 
 TEST(BitgetOrderFeedbackSessionTest,
+     PostReadyCredentialErrorsInvalidateAndReconnect) {
+  for (const std::uint32_t code :
+       {30005U, 30011U, 30012U, 30013U, 30014U, 30015U}) {
+    RecordingPublisher publisher;
+    Session session = MakeSession(publisher);
+    ActivateAndSubscribe(&session);
+
+    const std::string error = fmt::format(
+        R"({{"event":"error","code":"{}","msg":"auth invalid"}})", code);
+    session.Handle(TextView(error));
+
+    EXPECT_FALSE(session.Ready()) << code;
+    EXPECT_FALSE(session.login_ready()) << code;
+    EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
+  }
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
      SubscribeTerminalResponseConsumesPendingAttempt) {
   RecordingPublisher publisher;
   Session session = MakeSession(publisher);

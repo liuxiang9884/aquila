@@ -698,6 +698,18 @@ class OrderSession {
       RequestProtocolReconnect();
       return;
     }
+    if (response.kind == OperationResponseKind::kLoginRejected &&
+        login_ready_ &&
+        IsAuthenticatedSessionInvalidatingError(response.error_code)) {
+      login_ready_ = false;
+      login_sent_ = false;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordLoginRejected();
+      }
+      NotifyLoginNotReady();
+      RequestProtocolReconnect();
+      return;
+    }
     if (!active_ || !login_sent_) {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordIgnoredMessage();
