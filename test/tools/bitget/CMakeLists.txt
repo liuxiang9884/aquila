@@ -42,6 +42,31 @@ target_link_libraries(bitget_private_session_probe_outcome_test
 add_test(NAME bitget_private_session_probe_outcome_test
          COMMAND bitget_private_session_probe_outcome_test)
 
+add_executable(bitget_order_session_rtt_probe_test
+    order_session_rtt_probe/order_session_rtt_probe_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/bitget/order_session_rtt_probe/config.cpp
+    ${PROJECT_SOURCE_DIR}/tools/bitget/order_session_rtt_probe/connection_plan.cpp
+)
+
+target_include_directories(bitget_order_session_rtt_probe_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}
+)
+
+target_link_libraries(bitget_order_session_rtt_probe_test
+    PRIVATE
+        aquila_bitget
+        aquila_config
+        absl::flat_hash_set
+        fmt::fmt-header-only
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+        unofficial::vincentlaucsb-csv-parser::csv
+)
+
+add_test(NAME bitget_order_session_rtt_probe_test
+         COMMAND bitget_order_session_rtt_probe_test)
+
 add_test(NAME bitget_data_fusion_help_test
          COMMAND bitget_data_fusion --help)
 
