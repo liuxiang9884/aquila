@@ -8,7 +8,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -286,7 +288,9 @@ class OrderFeedbackShmManager {
 class OrderFeedbackShmPublisher {
  public:
   explicit OrderFeedbackShmPublisher(OrderFeedbackShmChannel& channel) noexcept
-      : channel_(channel) {}
+      : channel_(channel) {
+    RegisterProducerRun();
+  }
 
   [[nodiscard]] bool Publish(const OrderFeedbackEvent& event) noexcept {
     if (event.kind == OrderFeedbackKind::kContinuityLost ||
@@ -381,6 +385,46 @@ class OrderFeedbackShmPublisher {
     OrderFeedbackEvent event{};
   };
 
+  [[nodiscard]] static std::int64_t ProducerStartRealtimeNs() noexcept {
+    timespec now{};
+    if (::clock_gettime(CLOCK_REALTIME, &now) != 0 || now.tv_sec < 0 ||
+        now.tv_nsec < 0) {
+      return 0;
+    }
+    constexpr std::uint64_t kNanosecondsPerSecond = 1'000'000'000ULL;
+    const std::uint64_t seconds = static_cast<std::uint64_t>(now.tv_sec);
+    if (seconds >
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) /
+            kNanosecondsPerSecond) {
+      return std::numeric_limits<std::int64_t>::max();
+    }
+    const std::uint64_t nanoseconds = seconds * kNanosecondsPerSecond +
+                                      static_cast<std::uint64_t>(now.tv_nsec);
+    return nanoseconds > static_cast<std::uint64_t>(
+                             std::numeric_limits<std::int64_t>::max())
+               ? std::numeric_limits<std::int64_t>::max()
+               : static_cast<std::int64_t>(nanoseconds);
+  }
+
+  void RegisterProducerRun() noexcept {
+    const std::uint64_t previous_run_id = channel_.header.producer_run_id;
+    const std::int64_t local_receive_ns = ProducerStartRealtimeNs();
+    const std::uint64_t instance_sequence =
+        producer_instance_sequence_.fetch_add(1, std::memory_order_relaxed);
+    std::uint64_t run_id = static_cast<std::uint64_t>(local_receive_ns) ^
+                           (static_cast<std::uint64_t>(::getpid()) << 32) ^
+                           instance_sequence;
+    if (run_id == 0) {
+      run_id = instance_sequence == 0 ? 1 : instance_sequence;
+    }
+    channel_.header.producer_pid = static_cast<std::uint64_t>(::getpid());
+    channel_.header.producer_run_id = run_id;
+    if (previous_run_id != 0 && previous_run_id != run_id) {
+      (void)PublishGlobalContinuityLost(
+          OrderFeedbackContinuityReason::kProducerRestart, local_receive_ns);
+    }
+  }
+
   [[nodiscard]] static OrderFeedbackEvent MakeContinuityLostEvent(
       OrderFeedbackContinuityScope scope, OrderFeedbackContinuityReason reason,
       std::uint64_t sequence, std::int64_t local_receive_ns) noexcept {
@@ -456,6 +500,7 @@ class OrderFeedbackShmPublisher {
   std::uint64_t published_count_{0};
   std::uint64_t invalid_route_count_{0};
   std::uint64_t continuity_sequence_{0};
+  inline static std::atomic<std::uint64_t> producer_instance_sequence_{1};
 };
 
 class OrderFeedbackShmReader {

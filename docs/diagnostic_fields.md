@@ -233,6 +233,7 @@ open-order snapshot、sequence continuity 或 reconcile 已完成。V1 只发布
 | `login_sent` / `login_accepted` / `login_rejected` / `subscribe_sent` / `subscribe_acks` / `subscribe_errors` | `OrderFeedbackSessionStats` / summary | experiment | count | 观察 authentication/subscription 状态机，不表示 REST recovery 完成。 | 同上。 |
 | `order_envelopes` / `orders_seen` / `events_emitted` / `foreign_orders_ignored` / `unroutable_orders_ignored` / `legacy_canceled_statuses` / `validation_errors` | `OrderFeedbackParserStats` / summary | experiment | count | 对账 account-wide order envelope 的 ownership、兼容状态和 semantic validation。 | 同上。 |
 | `events_published` / `publish_failures` / `decode_continuity_lost_events` / `disconnect_continuity_lost_events` / `global_continuity_lost_publish_failures` | `OrderFeedbackSessionStats` / summary | experiment | count | 对账普通 event 与 continuity event 的 SHM 发布结果；publish failure 不阻塞 WebSocket owner thread。 | 同上。 |
+| `producer_pid` / `producer_run_id` | `OrderFeedbackShmHeader` | stable | pid / uint64 run id | publisher owner 启动时登记；复用已有非零 run id 的 channel 会先广播全局 `kProducerRestart`，标记 crash/restart 未知窗口。 | SHM producer ownership contract 改版时同步迁移。 |
 | `pings_sent` / `pongs_received` / `heartbeat_timeouts` | `OrderFeedbackSessionStats` / summary | experiment | count | 观察 Bitget application-level text heartbeat 和 timeout reconnect。 | 同上。 |
 
 凭据边界：只允许记录 `api_key_env` / `api_secret_env` / `api_passphrase_env` 的变量名；禁止记录 API key、secret、

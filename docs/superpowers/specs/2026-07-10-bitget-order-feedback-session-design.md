@@ -378,6 +378,8 @@ SHM。reconnect 后新 generation 可以再次发布。V1 不实现同一 connec
 - 普通 event publish failure 不阻塞 WebSocket thread，不重试原订单事件。
 - queue-full 产生的 pending continuity 由 session 在非阻塞的 bounded interval 上重试 flush；不能依赖同一 lane
   的下一条普通订单事件来触发告警投递。
+- `OrderFeedbackShmPublisher` 构造时登记新的 `producer_pid` / `producer_run_id`；首次 producer run 不广播，复用已有非零
+  run id 的 channel 时先向所有 lane 广播全局 `kProducerRestart`。广播遇到 queue-full 时沿用 pending continuity retry。
 
 V1 不修改 `OrderFeedbackEvent`、`kOrderFeedbackShmVersion` 或 SHM layout。
 
@@ -479,7 +481,7 @@ disconnect_continuity_lost_events
 - `clientOid` 中 strategy id 路由到正确 lane。
 - 多 strategy lane 广播全局 continuity event。
 - lane queue full 的 pending continuity 行为。
-- producer restart 和旧 SHM ABI 检查继续使用现有 contract。
+- producer restart 广播和旧 SHM ABI 检查继续使用现有 contract。
 
 ## Benchmark
 

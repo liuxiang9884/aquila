@@ -225,8 +225,7 @@ TEST(OrderFeedbackShmTest, RejectsHeaderMismatch) {
       "magic_mismatch",
       [](OrderFeedbackShmHeader& header) { header.magic = 0; });
   ExpectOpenFailsAfterHeaderMutation(
-      "version_mismatch",
-      [](OrderFeedbackShmHeader& header) {
+      "version_mismatch", [](OrderFeedbackShmHeader& header) {
         header.version = kOrderFeedbackShmVersion + 1;
       });
   ExpectOpenFailsAfterHeaderMutation(
@@ -291,6 +290,52 @@ TEST(OrderFeedbackShmTest, PublisherRoutesOrderEventToStrategyLane) {
       continue;
     }
     EXPECT_FALSE(Pop(channel->lanes[i], popped)) << "lane=" << i;
+  }
+}
+
+TEST(OrderFeedbackShmTest,
+     PublisherRegistersNewRunAndBroadcastsProducerRestart) {
+  auto channel = MakeChannelForTest();
+  channel->header.producer_pid = 123;
+  channel->header.producer_run_id = 456;
+
+  OrderFeedbackShmPublisher publisher(*channel);
+
+  EXPECT_EQ(channel->header.producer_pid,
+            static_cast<std::uint64_t>(::getpid()));
+  EXPECT_NE(channel->header.producer_run_id, 0U);
+  EXPECT_NE(channel->header.producer_run_id, 456U);
+  std::uint64_t continuity_sequence = 0;
+  for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {
+    OrderFeedbackEvent event{};
+    ASSERT_TRUE(Pop(channel->lanes[i], event)) << "lane=" << i;
+    EXPECT_EQ(event.kind, OrderFeedbackKind::kContinuityLost);
+    EXPECT_EQ(event.continuity_scope, OrderFeedbackContinuityScope::kGlobal);
+    EXPECT_EQ(event.continuity_reason,
+              OrderFeedbackContinuityReason::kProducerRestart);
+    EXPECT_GT(event.local_receive_ns, 0);
+    if (i == 0) {
+      continuity_sequence = event.continuity_sequence;
+      EXPECT_NE(continuity_sequence, 0U);
+    } else {
+      EXPECT_EQ(event.continuity_sequence, continuity_sequence);
+    }
+  }
+  EXPECT_EQ(publisher.published_count(), kMaxOrderFeedbackStrategies);
+}
+
+TEST(OrderFeedbackShmTest, FirstPublisherRunDoesNotBroadcastRestart) {
+  auto channel = MakeChannelForTest();
+
+  OrderFeedbackShmPublisher publisher(*channel);
+
+  EXPECT_EQ(channel->header.producer_pid,
+            static_cast<std::uint64_t>(::getpid()));
+  EXPECT_NE(channel->header.producer_run_id, 0U);
+  EXPECT_EQ(publisher.published_count(), 0U);
+  for (std::uint32_t i = 0; i < kMaxOrderFeedbackStrategies; ++i) {
+    OrderFeedbackEvent event{};
+    EXPECT_FALSE(Pop(channel->lanes[i], event)) << "lane=" << i;
   }
 }
 
