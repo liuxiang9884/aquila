@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <string>
 #include <string_view>
 
@@ -155,10 +154,8 @@ TEST(BitgetOperationResponseParserTest, RejectsMalformedOrMissingFields) {
 }
 
 TEST(BitgetOperationResponseParserTest, RejectsTimestampOverflow) {
-  const std::string payload =
-      std::string{
-          R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"clientOid":"a-42"}],"code":"0","ts":")"} +
-      std::to_string(std::numeric_limits<std::uint64_t>::max()) + "\"}";
+  static constexpr std::string_view payload =
+      R"({"event":"trade","id":"72057594037927945","topic":"place-order","args":[{"clientOid":"a-42"}],"code":"0","ts":"18446744073709551615"})";
 
   EXPECT_EQ(ParseOperationResponse(payload).parse_status,
             OperationParseStatus::kUnexpectedShape);
