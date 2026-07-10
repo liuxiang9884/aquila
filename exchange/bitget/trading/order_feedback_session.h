@@ -439,18 +439,21 @@ class OrderFeedbackSession {
       return websocket::DeliveryResult::kAccepted;
     }
 
-    detail::OrderFeedbackControlEnvelope control;
-    if (detail::ParseControlEnvelope(payload, view.readable_tail_bytes,
-                                     control_parser_, &control)) {
-      HandleControl(payload, view.readable_tail_bytes, control);
-      return websocket::DeliveryResult::kAccepted;
-    }
-
     const OrderFeedbackParseResult parsed = ParseBitgetOrderFeedbackMessage(
         payload, view.readable_tail_bytes, local_receive_ns, feedback_parser_,
         parser_stats_, [this](const OrderFeedbackEvent& event) noexcept {
           return PublishEvent(event);
         });
+    if (parsed.status == OrderFeedbackParseStatus::kControlMessage) {
+      detail::OrderFeedbackControlEnvelope control;
+      if (detail::ParseControlEnvelope(payload, view.readable_tail_bytes,
+                                       control_parser_, &control)) {
+        HandleControl(payload, view.readable_tail_bytes, control);
+      } else if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordParseError();
+      }
+      return websocket::DeliveryResult::kAccepted;
+    }
     if (parsed.status != OrderFeedbackParseStatus::kOk) {
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordParseError();

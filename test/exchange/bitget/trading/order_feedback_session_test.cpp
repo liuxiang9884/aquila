@@ -145,6 +145,8 @@ TEST(BitgetOrderFeedbackSessionTest, LoginSubscribeAckMarksReady) {
   EXPECT_TRUE(session.subscribed());
   EXPECT_TRUE(session.Ready());
   EXPECT_EQ(session.stats().subscribe_acks, 1U);
+  EXPECT_EQ(session.parser_stats().messages_seen, 0U);
+  EXPECT_EQ(session.parser_stats().order_envelopes, 0U);
 }
 
 TEST(BitgetOrderFeedbackSessionTest, StaleAcksAndDegradedRecoveryDoNotAdvance) {

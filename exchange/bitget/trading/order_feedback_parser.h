@@ -23,6 +23,7 @@ namespace aquila::bitget {
 
 enum class OrderFeedbackParseStatus : std::uint8_t {
   kOk,
+  kControlMessage,
   kInvalidJson,
   kUnexpectedEnvelope,
   kDecodeUnrecoverable,
@@ -335,12 +336,27 @@ template <typename EventSink>
   }
 
   std::string_view action;
+  simdjson::ondemand::value action_value;
+  if (!FindSimdjsonField(root, "action", &action_value)) {
+    simdjson::ondemand::value event_value;
+    std::string_view event;
+    if (FindSimdjsonField(root, "event", &event_value) &&
+        ReadSimdjsonString(event_value, &event)) {
+      result.status = OrderFeedbackParseStatus::kControlMessage;
+      result.continuity_lost = false;
+      return result;
+    }
+    ++stats.unexpected_envelope_count;
+    result.status = OrderFeedbackParseStatus::kUnexpectedEnvelope;
+    result.continuity_lost = true;
+    return result;
+  }
   simdjson::ondemand::object arg;
   std::string_view inst_type;
   std::string_view topic;
   simdjson::ondemand::value data_value;
   simdjson::ondemand::array data;
-  if (!ReadStringField(root, "action", &action) || action != "snapshot" ||
+  if (!ReadSimdjsonString(action_value, &action) || action != "snapshot" ||
       !FindSimdjsonObject(root, "arg", &arg) ||
       !ReadStringField(arg, "instType", &inst_type) || inst_type != "UTA" ||
       !ReadStringField(arg, "topic", &topic) || topic != "order" ||
@@ -408,6 +424,17 @@ template <typename EventSink>
   return result;
 }
 
+[[nodiscard]] inline OrderFeedbackParseResult FinalizeParseResult(
+    std::string_view payload, OrderFeedbackParseResult result,
+    OrderFeedbackParserStats& stats) noexcept {
+  result = ClassifyDeferredJsonError(payload, result, stats);
+  if (result.status == OrderFeedbackParseStatus::kControlMessage) {
+    assert(stats.messages_seen != 0);
+    --stats.messages_seen;
+  }
+  return result;
+}
+
 }  // namespace detail
 
 template <typename EventSink>
@@ -431,7 +458,7 @@ template <typename EventSink>
       return {.status = OrderFeedbackParseStatus::kInvalidJson,
               .continuity_lost = true};
     }
-    return detail::ClassifyDeferredJsonError(
+    return detail::FinalizeParseResult(
         payload,
         detail::ParseDocument(std::move(document), local_receive_ns, stats,
                               event_sink),
@@ -444,7 +471,7 @@ template <typename EventSink>
     return {.status = OrderFeedbackParseStatus::kInvalidJson,
             .continuity_lost = true};
   }
-  return detail::ClassifyDeferredJsonError(
+  return detail::FinalizeParseResult(
       payload,
       detail::ParseDocument(std::move(document), local_receive_ns, stats,
                             event_sink),

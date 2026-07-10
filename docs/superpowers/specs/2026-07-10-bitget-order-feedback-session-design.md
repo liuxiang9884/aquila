@@ -197,6 +197,10 @@ envelope 必须满足：
 
 无法读取上述 order data envelope 时，无法证明其中不包含 Aquila 订单，发布全局 `kDecodeUnrecoverable`。
 
+session 的 text hot path 先由 order parser 检查 `action`；存在 top-level `event` 且没有 `action` 时返回 control-message
+分类，再进入 login/subscription 冷路径 parser。order data 不允许先做一次完整 control parse，避免主路径重复 JSON stage-1 / envelope
+扫描；control message 不计入 order parser 的 `messages_seen`。
+
 ## Valid 检测分层
 
 检测拆成三层，不把全部条件堆在单个 parser 分支中。
@@ -488,6 +492,7 @@ foreign order ownership fast path
 malformed Aquila order continuity path
 typical batch parse + validate + publish
 parser -> OrderFeedbackShmPublisher -> lane drain
+session classification -> single accepted order parse
 ```
 
 benchmark 记录命令、build type、样本数和 percentile。未固定 CPU、未控制机器负载或没有重复证据时只称为本机基线，不宣称

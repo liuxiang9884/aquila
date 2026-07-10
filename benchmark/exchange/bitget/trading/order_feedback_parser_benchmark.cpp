@@ -10,7 +10,7 @@
 
 #include "core/trading/order_feedback_event.h"
 #include "core/trading/order_feedback_shm.h"
-#include "exchange/bitget/trading/order_feedback_parser.h"
+#include "exchange/bitget/trading/order_feedback_session.h"
 #include <simdjson.h>
 
 namespace aquila::bitget {
@@ -85,6 +85,39 @@ void BenchmarkAccepted(benchmark::State& state) {
   RunParserBenchmark(state, kAccepted);
 }
 
+void BenchmarkSessionClassificationThenAccepted(benchmark::State& state) {
+  simdjson::padded_string padded(kAccepted);
+  const std::string_view view(padded.data(), padded.size());
+  simdjson::ondemand::parser control_parser;
+  simdjson::ondemand::parser feedback_parser;
+  OrderFeedbackEvent event{};
+  const auto operation = [&] {
+    OrderFeedbackParserStats stats{};
+    OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
+        view, simdjson::SIMDJSON_PADDING, kLocalReceiveNs, feedback_parser,
+        stats, [&event](const OrderFeedbackEvent& parsed) noexcept {
+          event = parsed;
+          return true;
+        });
+    bool is_control =
+        result.status == OrderFeedbackParseStatus::kControlMessage;
+    if (is_control) {
+      detail::OrderFeedbackControlEnvelope control;
+      bool control_parsed = detail::ParseControlEnvelope(
+          view, simdjson::SIMDJSON_PADDING, control_parser, &control);
+      benchmark::DoNotOptimize(control_parsed);
+    }
+    benchmark::DoNotOptimize(is_control);
+    benchmark::DoNotOptimize(result.status);
+    benchmark::DoNotOptimize(event.local_order_id);
+  };
+
+  for (auto _ : state) {
+    operation();
+  }
+  RecordPercentiles(state, operation);
+}
+
 void BenchmarkPartialFilled(benchmark::State& state) {
   RunParserBenchmark(state, kPartialFilled);
 }
@@ -135,6 +168,7 @@ void BenchmarkParserToShmPublisherAndDrain(benchmark::State& state) {
 }
 
 BENCHMARK(BenchmarkAccepted);
+BENCHMARK(BenchmarkSessionClassificationThenAccepted);
 BENCHMARK(BenchmarkPartialFilled);
 BENCHMARK(BenchmarkTerminal);
 BENCHMARK(BenchmarkForeignOwnershipFastPath);
