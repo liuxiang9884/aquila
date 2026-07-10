@@ -1,7 +1,7 @@
 # Bitget OrderSession RTT Probe 设计
 
 - 日期：2026-07-10
-- 状态：已批准，待实现
+- 状态：已实现，尚未执行真实订单
 - 范围：Bitget UTA v3 `OrderSession` 真实 IOC 下单 RTT probe
 - 参考：`docs/gate_order_session_rtt_probe_design.md`
 
@@ -66,7 +66,8 @@
 
 - `config/order_session_rtt_probe/bitget_order_session_rtt_probe.toml`
 - `config/order_session_rtt_probe/bitget_order_session_rtt_connections.csv`
-- 如现有 recorder config 不能直接作为最小 reader 输入，则新增专用 Bitget BBO reader config，不修改 recorder 行为。
+- `config/data_readers/bitget_order_session_rtt_probe.toml`
+- `config/order_feedback/bitget_order_feedback_shm.toml`
 
 ## 5. CLI 和配置
 
@@ -88,6 +89,8 @@ CLI 与 Gate probe 对齐：
 - `--live-preflight` 完成全部静态配置、instrument、SHM path、连接计划和 safety 参数检查，但不连接、不下单。
 - `--execute` 必须同时提供 `--confirm-dedicated-account`，否则启动失败。
 - `--execute` 只支持 `probe.order.order_mode="ioc"`；不为未实现的 GTC 或 mixed mode 保留伪入口。
+- `probe.order.symbol` 显式选择被测内部 symbol，默认 `BTC_USDT`；runner 只缓存该 symbol 的 Bitget BBO，避免多 symbol
+  channel 的其他行情覆盖 probe 或 safety-close 价格锚点。
 - `samples_per_session` 必须大于 0；`duration_sec` 是整个 run 的硬上限。全部 session 完成目标样本数后可以提前成功退出；未完成目标样本数的提前退出不能算成功。
 
 connections CSV schema 沿用：
@@ -250,6 +253,9 @@ flat 时返回非零。
 - feedback local queue 满、foreign event 和 unmapped strategy event。
 - dry-run / `--live-preflight` 不连接、不读取 credentials、不发送订单。
 - `--execute` 缺少 dedicated-account 确认时拒绝启动。
+
+当前自动化验证还覆盖：同一 strategy lane 的 unmapped feedback fail-fast、已完成样本的 duplicate response / feedback 去重、late fill
+仍优先触发 safety close、delayed place Ack 不延长 safety-close deadline，以及 open-only SHM publisher / reader 路由。
 
 集成验证使用测试 publisher / SHM fixture 和 fake session，不发送真实订单。完成实现后再单独讨论 credential、IP 白名单、外部 REST flat check、
 login/feedback smoke、单个 IOC 样本和逐步扩大采样的 live 测试顺序。

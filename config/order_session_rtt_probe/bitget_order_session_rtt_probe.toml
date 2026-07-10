@@ -1,0 +1,45 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/tmp/bitget_order_session_rtt_probe.log"
+console_sink_name = "bitget_order_session_rtt_probe_console"
+backend_thread_name = "bitget_rtt_probe_log"
+backend_cpu_affinity = -1
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[probe]
+name = "bitget_order_session_rtt_probe"
+run_id = ""
+
+[probe.inputs]
+order_session_config = "config/order_sessions/bitget_order_session.toml"
+data_reader_config = "config/data_readers/bitget_order_session_rtt_probe.toml"
+connections_file = "config/order_session_rtt_probe/bitget_order_session_rtt_connections.csv"
+
+[probe.sessions]
+wait_login_timeout_ms = 10000
+request_timeout_ms = 5000
+
+[probe.sampling]
+samples_per_session = 1
+cycle_cooldown_us = 500000
+order_session_interval_us = 500000
+max_events_per_drain = 128
+feedback_queue_capacity = 256
+coordinator_cpu = -1
+
+[probe.order]
+order_mode = "ioc"
+symbol = "BTC_USDT"
+passive_price_limit_fraction = 0.5
+bbo_freshness_ns = 1000000000
+
+[probe.feedback]
+shm_config = "config/order_feedback/bitget_order_feedback_shm.toml"
+strategy_id = 7
+force_claim = false
+poll_budget = 64
+terminal_timeout_ms = 5000
+
+[probe.output]
+root_dir = "/home/liuxiang/tmp/bitget_order_session_rtt_probe"

@@ -1,0 +1,22 @@
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+schema = "aquila.instrument.v1"
+
+[data_reader]
+name = "bitget_order_session_rtt_probe"
+max_events_per_drain = 128
+
+[data_reader.execution_policy]
+bind_cpu_id = -1
+idle_policy = "spin"
+
+[[data_reader.sources]]
+name = "bitget_book_ticker_fusion_canonical"
+type = "shm"
+exchange = "bitget"
+feed = "book_ticker"
+shm_name = "aquila_bitget_book_ticker_fusion"
+channel_name = "book_ticker_channel"
+start_position = "latest"
+read_mode = "drain"
+required = true

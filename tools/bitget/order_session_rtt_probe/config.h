@@ -44,7 +44,7 @@ struct ProbeOrderConfig {
 
 struct ProbeFeedbackConfig {
   std::filesystem::path shm_config{
-      "config/order_feedback/bitget_order_feedback_session.toml"};
+      "config/order_feedback/bitget_order_feedback_shm.toml"};
   std::uint8_t strategy_id{7};
   bool force_claim{false};
   std::uint32_t poll_budget{64};

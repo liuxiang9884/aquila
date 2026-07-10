@@ -16,10 +16,12 @@
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/types.h"
 #include "core/trading/order_feedback_event.h"
+#include "core/trading/order_feedback_shm.h"
 #include "core/trading/order_id.h"
 #include "exchange/bitget/trading/order_session_config.h"
 #include "tools/bitget/order_session_rtt_probe/config.h"
 #include "tools/bitget/order_session_rtt_probe/connection_plan.h"
+#include "tools/bitget/order_session_rtt_probe/execute_support.h"
 #include "tools/bitget/order_session_rtt_probe/live_runner.h"
 #include "tools/bitget/order_session_rtt_probe/local_feedback_queue.h"
 #include "tools/bitget/order_session_rtt_probe/passive_order_builder.h"
@@ -255,6 +257,16 @@ struct FakeSampleWriter {
 
   std::vector<SampleCsvRow> rows;
   bool write_ok{true};
+};
+
+struct FakeFeedbackReader {
+  template <typename Handler>
+  std::size_t Poll(std::size_t, Handler&& handler) noexcept {
+    handler(event);
+    return 1;
+  }
+
+  OrderFeedbackEvent event;
 };
 
 class BitgetRttProbeLiveRunnerTest : public testing::Test {
@@ -599,6 +611,46 @@ TEST(BitgetRttProbeFlowTest, ShortSafetyCloseFillFailsImmediately) {
   EXPECT_NE(transition.error.find("did not prove flat"), std::string::npos);
 }
 
+TEST(BitgetRttProbeFlowTest, SafetyCloseCancelledDoesNotProveFlat) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+  ASSERT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kFilled,
+                                              ids.ioc_local_order_id, 0.0001))
+                .action,
+            ProbeSampleAction::kSubmitSafetyClose);
+  ASSERT_TRUE(flow.OnSafetyCloseSent(MakeOrderSent(12, 1200)).ok);
+
+  const ProbeSampleTransition transition = flow.OnOrderFeedback(MakeFeedback(
+      OrderFeedbackKind::kCancelled, ids.close_local_order_id, 0.0));
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_EQ(transition.action, ProbeSampleAction::kFail);
+  EXPECT_NE(transition.error.find("prove flat"), std::string::npos);
+}
+
+TEST(BitgetRttProbeFlowTest, SafetyCloseDirectRejectFails) {
+  const ProbeSampleLocalIds ids = MakeSampleIds();
+  ProbeSampleFlow flow(ids);
+  ASSERT_TRUE(flow.Start().ok);
+  ASSERT_TRUE(flow.OnOrderSent(MakeOrderSent(11, 1000)).ok);
+  ASSERT_EQ(flow.OnOrderFeedback(MakeFeedback(OrderFeedbackKind::kFilled,
+                                              ids.ioc_local_order_id, 0.0001))
+                .action,
+            ProbeSampleAction::kSubmitSafetyClose);
+  ASSERT_TRUE(flow.OnSafetyCloseSent(MakeOrderSent(12, 1200)).ok);
+
+  const ProbeSampleTransition transition = flow.OnOrderResponse(
+      MakeOrderResponse(bitget::OrderResponseKind::kRejected,
+                        ids.close_local_order_id, 12, 1300));
+
+  EXPECT_FALSE(transition.ok);
+  EXPECT_TRUE(flow.stats().close_response_observed);
+  EXPECT_EQ(flow.stats().close_response_kind,
+            bitget::OrderResponseKind::kRejected);
+}
+
 TEST(BitgetRttProbeFlowTest, UnknownResultFailsWithoutTerminalAssumption) {
   const ProbeSampleLocalIds ids = MakeSampleIds();
   ProbeSampleFlow flow(ids);
@@ -878,6 +930,7 @@ TEST_F(BitgetRttProbeLiveRunnerTest,
   EXPECT_TRUE(runner.SampleFinished());
   EXPECT_FALSE(runner.failed());
   EXPECT_EQ(runner.samples_completed(), 1U);
+  EXPECT_EQ(runner.orders_sent(), 1U);
   ASSERT_EQ(writer.rows.size(), 1U);
   EXPECT_EQ(writer.rows.front().outcome, "normal_terminal_confirmed");
   EXPECT_EQ(writer.rows.front().ack_rtt_ns, 100);
@@ -988,6 +1041,7 @@ TEST_F(BitgetRttProbeLiveRunnerTest,
   runner.DriveHookOnce();
 
   ASSERT_EQ(session.orders.size(), 2U);
+  EXPECT_EQ(runner.orders_sent(), 2U);
   const ProbeWireOrder& close = session.orders.back();
   EXPECT_EQ(close.side, OrderSide::kSell);
   EXPECT_TRUE(close.reduce_only);
@@ -1090,6 +1144,37 @@ TEST_F(BitgetRttProbeLiveRunnerTest, LoginLossFailsActiveSample) {
             std::string::npos);
 }
 
+TEST_F(BitgetRttProbeLiveRunnerTest,
+       GracefulStopDoesNotTurnSuccessIntoFailure) {
+  StartOneSample();
+  const ProbeWireOrder order = session.orders.front();
+  clock.now_ns += 100;
+  runner.OnOrderResponse(MakeOrderResponse(bitget::OrderResponseKind::kAck,
+                                           order.local_order_id,
+                                           /*sequence=*/1, clock.now_ns));
+  ASSERT_TRUE(feedback.TryPush(RunnerFeedback(OrderFeedbackKind::kCancelled,
+                                              order.local_order_id, 0.0)));
+  runner.DriveHookOnce();
+  ASSERT_FALSE(runner.failed());
+
+  runner.PrepareGracefulStop();
+  runner.OnLoginNotReady();
+
+  EXPECT_FALSE(runner.failed());
+}
+
+TEST_F(BitgetRttProbeLiveRunnerTest, ExternalAbortFailsActiveSample) {
+  StartOneSample();
+
+  runner.RequestAbort();
+  runner.DriveHookOnce();
+
+  EXPECT_TRUE(runner.failed());
+  ASSERT_EQ(writer.rows.size(), 1U);
+  EXPECT_NE(writer.rows.front().invalid_reason.find("external"),
+            std::string::npos);
+}
+
 TEST_F(BitgetRttProbeLiveRunnerTest, ContinuityLossFailsActiveSample) {
   StartOneSample();
   OrderFeedbackEvent continuity =
@@ -1105,6 +1190,99 @@ TEST_F(BitgetRttProbeLiveRunnerTest, ContinuityLossFailsActiveSample) {
   ASSERT_EQ(writer.rows.size(), 1U);
   EXPECT_NE(writer.rows.front().invalid_reason.find("continuity"),
             std::string::npos);
+}
+
+TEST(BitgetRttProbeExecuteGuardTest,
+     ExecuteRequiresDedicatedAccountConfirmation) {
+  EXPECT_FALSE(ValidateExecuteGuard(
+                   ExecuteGuardInput{.execute = true, .duration_sec = 30.0})
+                   .ok);
+  EXPECT_TRUE(
+      ValidateExecuteGuard(ExecuteGuardInput{.execute = true,
+                                             .confirm_dedicated_account = true,
+                                             .duration_sec = 30.0})
+          .ok);
+}
+
+TEST(BitgetRttProbeExecuteGuardTest, RejectsConflictingModesAndNoDeadline) {
+  EXPECT_FALSE(
+      ValidateExecuteGuard(ExecuteGuardInput{.execute = true,
+                                             .live_preflight = true,
+                                             .confirm_dedicated_account = true,
+                                             .duration_sec = 30.0})
+          .ok);
+  EXPECT_FALSE(
+      ValidateExecuteGuard(ExecuteGuardInput{.execute = true,
+                                             .confirm_dedicated_account = true,
+                                             .duration_sec = 0.0})
+          .ok);
+  EXPECT_FALSE(
+      ValidateExecuteGuard(ExecuteGuardInput{.execute = true,
+                                             .confirm_dedicated_account = true,
+                                             .duration_sec = 86401.0})
+          .ok);
+  EXPECT_TRUE(ValidateExecuteGuard(ExecuteGuardInput{.live_preflight = true,
+                                                     .duration_sec = 0.0})
+                  .ok);
+}
+
+TEST(BitgetRttProbeShmTest, RoutesTerminalAndBroadcastsContinuity) {
+  const std::string shm_name =
+      fmt::format("aquila_bitget_rtt_probe_test_{}_{}", ::getpid(),
+                  std::chrono::steady_clock::now().time_since_epoch().count());
+  const OrderFeedbackShmConfig shm_config{
+      .shm_name = shm_name,
+      .channel_name = "feedback",
+      .create = true,
+      .remove_existing = true,
+  };
+  auto manager = OrderFeedbackShmManager::Create(shm_config);
+  ASSERT_TRUE(manager.ok) << manager.error;
+  OrderFeedbackShmPublisher publisher(manager.value.channel());
+  auto reader = OrderFeedbackShmReader::Claim(
+      manager.value.channel(), /*strategy_id=*/7, /*consumer_run_id=*/9001,
+      /*force_claim=*/true);
+  ASSERT_TRUE(reader.ok) << reader.error;
+
+  LocalFeedbackQueue first(8);
+  LocalFeedbackQueue second(8);
+  std::vector<LocalFeedbackQueue*> queues{&first, &second};
+  ASSERT_TRUE(publisher.Publish(MakeFeedback(
+      OrderFeedbackKind::kCancelled, LocalOrderIdCodec::Encode(7, 3), 0.0)));
+  RouteFeedbackResult routed =
+      RouteFeedback(reader.value, queues, /*poll_budget=*/8);
+  EXPECT_EQ(routed.routed, 1U);
+  EXPECT_FALSE(routed.failed);
+  EXPECT_EQ(first.Poll(8, [](const OrderFeedbackEvent&) noexcept {}), 0U);
+  EXPECT_EQ(second.Poll(8, [](const OrderFeedbackEvent&) noexcept {}), 1U);
+
+  ASSERT_TRUE(publisher.PublishGlobalContinuityLost(
+      OrderFeedbackContinuityReason::kSessionDisconnected,
+      /*local_receive_ns=*/1000));
+  routed = RouteFeedback(reader.value, queues, /*poll_budget=*/8);
+  EXPECT_TRUE(routed.continuity_broadcast);
+  EXPECT_EQ(routed.broadcast_deliveries, 2U);
+  EXPECT_FALSE(routed.failed);
+  EXPECT_EQ(first.Poll(8, [](const OrderFeedbackEvent&) noexcept {}), 1U);
+  EXPECT_EQ(second.Poll(8, [](const OrderFeedbackEvent&) noexcept {}), 1U);
+
+  reader.value.Release();
+  ::shm_unlink(fmt::format("/{}", shm_name).c_str());
+}
+
+TEST(BitgetRttProbeShmTest, UnmappedFeedbackFailsRouting) {
+  FakeFeedbackReader reader{.event = OrderFeedbackEvent{
+                                .kind = OrderFeedbackKind::kCancelled,
+                                .local_order_id = 0,
+                            }};
+  LocalFeedbackQueue queue(8);
+  std::vector<LocalFeedbackQueue*> queues{&queue};
+
+  const RouteFeedbackResult routed =
+      RouteFeedback(reader, queues, /*poll_budget=*/8);
+
+  EXPECT_TRUE(routed.failed);
+  EXPECT_EQ(routed.unrouted, 1U);
 }
 
 }  // namespace

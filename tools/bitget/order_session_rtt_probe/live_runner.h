@@ -77,6 +77,24 @@ class LiveRunner {
 
   void GrantDispatch() noexcept {
     dispatch_grants_.fetch_add(1, std::memory_order_release);
+    if constexpr (requires(SessionT& session) { session.Wakeup(); }) {
+      if (session_ != nullptr) {
+        session_->Wakeup();
+      }
+    }
+  }
+
+  void PrepareGracefulStop() noexcept {
+    graceful_stop_requested_.store(true, std::memory_order_release);
+  }
+
+  void RequestAbort() noexcept {
+    abort_requested_.store(true, std::memory_order_release);
+    if constexpr (requires(SessionT& session) { session.Wakeup(); }) {
+      if (session_ != nullptr) {
+        session_->Wakeup();
+      }
+    }
   }
 
   void OnLoginReady() noexcept {
@@ -85,12 +103,17 @@ class LiveRunner {
 
   void OnLoginNotReady() noexcept {
     login_ready_.store(false, std::memory_order_release);
+    if (graceful_stop_requested_.load(std::memory_order_acquire)) {
+      return;
+    }
     FailRun("order session login not ready");
   }
 
   void OnOrderSessionConnected(
       const bitget::OrderSessionConnectionInfo& info) noexcept {
     connection_info_ = info;
+    connection_observed_at_ns_ = NowNs();
+    connection_observed_.store(true, std::memory_order_release);
   }
 
   void OnOrderResponse(const bitget::OrderResponse& response) noexcept {
@@ -146,6 +169,10 @@ class LiveRunner {
     if (failed()) {
       return;
     }
+    if (abort_requested_.load(std::memory_order_acquire)) {
+      FailRun("external stop requested");
+      return;
+    }
     data_reader_.Drain(*this, config_.sampling.max_events_per_drain);
     if (feedback_queue_.dropped_count() != 0) {
       FailRun("local feedback queue overflow");
@@ -190,6 +217,16 @@ class LiveRunner {
   [[nodiscard]] bool has_active_sample() const noexcept {
     return active_sample_.load(std::memory_order_acquire);
   }
+  [[nodiscard]] bool connection_observed() const noexcept {
+    return connection_observed_.load(std::memory_order_acquire);
+  }
+  [[nodiscard]] const bitget::OrderSessionConnectionInfo& connection_info()
+      const noexcept {
+    return connection_info_;
+  }
+  [[nodiscard]] std::int64_t connection_observed_at_ns() const noexcept {
+    return connection_observed_at_ns_;
+  }
   [[nodiscard]] std::uint64_t samples_finished() const noexcept {
     return samples_finished_.load(std::memory_order_acquire);
   }
@@ -198,6 +235,9 @@ class LiveRunner {
   }
   [[nodiscard]] std::uint64_t samples_failed() const noexcept {
     return samples_failed_.load(std::memory_order_acquire);
+  }
+  [[nodiscard]] std::uint64_t orders_sent() const noexcept {
+    return orders_sent_.load(std::memory_order_acquire);
   }
   [[nodiscard]] std::string_view failure_reason() const noexcept {
     return failure_reason_;
@@ -274,6 +314,9 @@ class LiveRunner {
       return true;
     }
     const bitget::OrderSendResult sent = session_->PlaceOrder(active_order_);
+    if (sent.status == bitget::OrderSendStatus::kOk) {
+      orders_sent_.fetch_add(1, std::memory_order_relaxed);
+    }
     deadline_ns_ = AddMilliseconds(now_ns, config_.sessions.request_timeout_ms);
     HandleTransition(active_flow_->OnOrderSent(sent), now_ns);
     return true;
@@ -399,6 +442,9 @@ class LiveRunner {
     safety_close_order_ = built.order;
     const bitget::OrderSendResult sent =
         session_->PlaceOrder(safety_close_order_);
+    if (sent.status == bitget::OrderSendStatus::kOk) {
+      orders_sent_.fetch_add(1, std::memory_order_relaxed);
+    }
     safety_close_pending_ = false;
     deadline_ns_ =
         AddMilliseconds(now_ns, config_.feedback.terminal_timeout_ms);
@@ -562,13 +608,18 @@ class LiveRunner {
   std::atomic<std::uint64_t> samples_finished_{0};
   std::atomic<std::uint64_t> samples_completed_{0};
   std::atomic<std::uint64_t> samples_failed_{0};
+  std::atomic<std::uint64_t> orders_sent_{0};
   std::atomic<bool> login_ready_{false};
   std::atomic<bool> active_sample_{false};
   std::atomic<bool> failed_{false};
+  std::atomic<bool> connection_observed_{false};
+  std::atomic<bool> graceful_stop_requested_{false};
+  std::atomic<bool> abort_requested_{false};
   absl::flat_hash_set<std::uint64_t> finalized_local_order_ids_;
   absl::flat_hash_map<std::uint64_t, std::uint64_t>
       finalized_response_local_ids_;
   std::int64_t deadline_ns_{0};
+  std::int64_t connection_observed_at_ns_{0};
   bool safety_close_pending_{false};
 };
 

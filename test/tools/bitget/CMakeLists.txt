@@ -69,6 +69,24 @@ target_link_libraries(bitget_order_session_rtt_probe_test
 add_test(NAME bitget_order_session_rtt_probe_test
          COMMAND bitget_order_session_rtt_probe_test)
 
+add_test(NAME bitget_order_session_rtt_probe_help_test
+         COMMAND bitget_order_session_rtt_probe --help)
+
+add_test(NAME bitget_order_session_rtt_probe_dry_run_test
+         COMMAND bitget_order_session_rtt_probe --config
+                 config/order_session_rtt_probe/bitget_order_session_rtt_probe.toml)
+
+add_test(NAME bitget_order_session_rtt_probe_preflight_test
+         COMMAND bitget_order_session_rtt_probe --config
+                 config/order_session_rtt_probe/bitget_order_session_rtt_probe.toml
+                 --live-preflight)
+
+set_tests_properties(bitget_order_session_rtt_probe_help_test
+    bitget_order_session_rtt_probe_dry_run_test
+    bitget_order_session_rtt_probe_preflight_test
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
 add_test(NAME bitget_data_fusion_help_test
          COMMAND bitget_data_fusion --help)
 

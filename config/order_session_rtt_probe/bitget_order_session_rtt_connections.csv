@@ -1,0 +1,2 @@
+name,group,host,connect_ip,port,enable_tls,worker_cpu_id
+ha-00,high-availability,vip-ws-uta.bitget.com,,443,true,-1

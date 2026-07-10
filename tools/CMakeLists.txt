@@ -118,6 +118,28 @@ add_executable(gate_order_session_rtt_probe
     gate/order_session_rtt_probe/main.cpp
 )
 
+add_executable(bitget_order_session_rtt_probe
+    bitget/order_session_rtt_probe/config.cpp
+    bitget/order_session_rtt_probe/connection_plan.cpp
+    bitget/order_session_rtt_probe/sample_csv_writer.cpp
+    bitget/order_session_rtt_probe/main.cpp
+)
+
+target_link_libraries(bitget_order_session_rtt_probe
+    PRIVATE
+        aquila_bitget
+        aquila_config
+        aquila_core
+        absl::flat_hash_map
+        absl::flat_hash_set
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+        PkgConfig::tomlplusplus
+        unofficial::vincentlaucsb-csv-parser::csv
+)
+
 target_link_libraries(gate_order_session_rtt_probe
     PRIVATE
         aquila_config
