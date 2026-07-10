@@ -347,6 +347,35 @@ GATE_TEST_KEY=... GATE_TEST_SECRET=... scripts/gate/account/query_gate_account.p
   --contract BTC_USDT
 ```
 
+## Bitget UTA OrderSession
+
+Bitget UTA v3 `OrderSession` 使用 high availability private WebSocket endpoint，当前支持 login、limit
+GTC/IOC place、single cancel 和直接 operation response。默认配置：
+
+```text
+config/order_sessions/bitget_order_session.toml
+```
+
+dry-run 只解析并打印配置，不连接 WebSocket：
+
+```bash
+./build/debug/tools/bitget_order_session_probe \
+  --config config/order_sessions/bitget_order_session.toml
+```
+
+`--connect` 只执行 login、heartbeat 和 controlled reconnect，不发送 place/cancel：
+
+```bash
+BITGET_TEST_KEY=... BITGET_TEST_SECRET=... BITGET_TEST_PASSPHRASE=... \
+  ./build/debug/tools/bitget_order_session_probe \
+  --config config/order_sessions/bitget_order_session.toml \
+  --connect \
+  --duration-s 40
+```
+
+`Ready()` 只表示当前 private WebSocket 已登录。直接 operation response 不是 accepted、filled 或 cancelled
+订单生命周期事实；`OrderFeedbackSession`、REST reconcile、rate limiter、LeadLag wiring 和真实订单 smoke 尚未实现。
+
 ## Bitget UTA REST Read-only Query
 
 Bitget UTA REST read-only query 脚本使用私有 GET 接口查询当前 API key 可访问的账户、仓位和订单信息。

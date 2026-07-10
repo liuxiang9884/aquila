@@ -2,8 +2,10 @@
 
 ## 当前范围
 
-本 handoff 覆盖 Bitget UTA public SBE `books1` BBO 和 `publicTrade` 行情接入。当前实现不覆盖
-Bitget order/private feed、JSON 行情或交易端。
+本 handoff 只覆盖 Bitget UTA public SBE `books1` BBO 和 `publicTrade` 行情接入，不覆盖 JSON 行情或
+交易端实现细节。Bitget `OrderSession` 已有独立实现，入口和边界见
+`docs/superpowers/specs/2026-07-10-bitget-order-session-design.md`；`OrderFeedbackSession` 当前只完成设计，尚未实现，见
+`docs/superpowers/specs/2026-07-10-bitget-order-feedback-session-design.md`。
 
 已落地能力：
 
