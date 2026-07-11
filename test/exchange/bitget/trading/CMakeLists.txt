@@ -166,3 +166,17 @@ target_link_libraries(bitget_multi_order_session_gateway_test
 
 add_test(NAME bitget_multi_order_session_gateway_test
          COMMAND bitget_multi_order_session_gateway_test)
+
+add_executable(bitget_order_gateway_worker_test
+    order_gateway_worker_test.cpp
+)
+
+target_link_libraries(bitget_order_gateway_worker_test
+    PRIVATE
+        aquila_bitget
+        fmt::fmt-header-only
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_order_gateway_worker_test
+         COMMAND bitget_order_gateway_worker_test)
