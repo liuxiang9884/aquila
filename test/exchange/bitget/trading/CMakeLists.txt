@@ -152,3 +152,17 @@ target_link_libraries(bitget_order_feedback_shm_integration_test
 
 add_test(NAME bitget_order_feedback_shm_integration_test
          COMMAND bitget_order_feedback_shm_integration_test)
+
+add_executable(bitget_multi_order_session_gateway_test
+    multi_order_session_gateway_test.cpp
+)
+
+target_link_libraries(bitget_multi_order_session_gateway_test
+    PRIVATE
+        aquila_bitget
+        aquila_core
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_multi_order_session_gateway_test
+         COMMAND bitget_multi_order_session_gateway_test)

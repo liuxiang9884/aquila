@@ -35,6 +35,7 @@ enum class OrderSendStatus : std::uint8_t {
   kNotActive,
   kInflightFull,
   kOrderIdCacheFull,
+  kInvalidRoute,
   kUnsupportedOrderType,
   kInvalidSymbol,
   kInvalidQuantityText,
