@@ -492,4 +492,3 @@ Run 对应最小 gtest；若有修复，使用只包含相关测试/实现的英
 - [ ] **Step 5: verification-before-completion**
 
 重新运行 Task 5 的 Debug/Release 相关测试、完整 `ctest`、Release benchmark、`git diff --check` 和 `git status --short --branch`。只有所有命令获得新鲜成功证据后才报告完成；不启动 `--connect`，不发送真实订单。
-

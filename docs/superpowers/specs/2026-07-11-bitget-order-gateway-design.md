@@ -236,4 +236,3 @@ live LeadLag 测试。
 5. 将 LeadLag 的 lag exchange/symbol 硬编码替换为已有 pair metadata，并补回归测试。
 6. 运行 Debug/Release 回归与 Release benchmark。
 7. 多轮 review `OrderSession`、`OrderFeedbackSession` 和新增 gateway/LeadLag 链路，直到既定范围内无待修问题。
-
