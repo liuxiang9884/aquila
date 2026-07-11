@@ -264,6 +264,34 @@ open-order snapshot、sequence continuity 或 reconcile 已完成。V1 只发布
 passphrase、signature 或完整 login payload。未知 `cancelReason` 映射 `kUnknown`，不触发 continuity lost；disconnect / decode
 continuity 必须由 session 外的恢复控制器进入 REST reconcile。
 
+## Bitget OrderGateway
+
+组件入口：
+
+- `exchange/bitget/trading/order_gateway_worker.h`
+- `tools/bitget/bitget_order_gateway.cpp`
+- `config/order_gateways/bitget_order_gateway.toml`
+
+Gateway 复用现有 OrderGateway SHM ABI。以下字段覆盖进程 dry-run、route 装配、启动错误和 CPU affinity 失败；place/cancel 的
+逐请求 response 仍由 `bitget_order_send` / `bitget_order_response` 和 SHM event 诊断。日志不表示订单 terminal，也不替代
+FeedbackSession 或 REST reconcile。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `bitget_order_gateway_dry_run` | gateway Nova log key | experiment | config summary | 默认或 `--validate-only` 时记录 name、SHM name、route count、queue capacity 和 startup timeout；不创建 SHM、不连接网络。 | gateway config 输出 schema 稳定后改为 `stable`。 |
+| `bitget_order_gateway_route` | gateway Nova log key | experiment | per-route config | 记录 route id/name、worker/session CPU、session config path、host、connect IP 和 TLS；不记录 credentials。 | route diagnostics 被统一 gateway metrics 取代后重审。 |
+| `bitget_order_gateway_bind_cpu_invalid` | gateway Nova log key | experiment | CPU id | worker CPU 超出 `CPU_SETSIZE` 时拒绝 affinity 设置。 | 统一 runtime affinity diagnostics 替代后重审。 |
+| `bitget_order_gateway_bind_cpu_failed` | gateway Nova log key | experiment | CPU id / errno text | `pthread_setaffinity_np` 失败；route 仍按 Gate 当前 best-effort 语义继续启动。 | 同上。 |
+| `bitget_order_gateway_bind_cpu_unsupported` | gateway Nova log key | experiment | CPU id | 非 Linux 平台不支持当前 affinity 操作。 | 同上。 |
+| `order_gateway_config_error` | gateway Nova log key | experiment | error text | gateway TOML 解析或 schema 校验失败，进程在连接前退出。 | 统一 gateway startup diagnostics 替代后重审。 |
+| `order_gateway_route_error` | gateway Nova log key | experiment | error text | route session config、credential 环境变量或 route 一致性校验失败，进程在连接前退出。 | 同上。 |
+| `order_gateway_transport_error` | gateway Nova log key | experiment | error text | route 混用 TLS/plain transport，当前进程拒绝启动。 | 支持 per-route transport 或统一 startup diagnostics 后重审。 |
+| `order_gateway_shm_error` | gateway Nova log key | experiment | error text | SHM 创建、复用或 ABI 校验失败，网络 worker 不启动。 | 统一 gateway SHM diagnostics 替代后重审。 |
+
+凭据边界：`--connect` 只在缺失 credential 时记录环境变量名；禁止记录 API key、secret、passphrase 或 login payload。
+Gateway 当前不输出 Bitget numeric operation `error_code` 到共享 SHM；是否扩展共享诊断 contract 属于未来独立设计，见
+`docs/bitget_trading_follow_up.md`。
+
 ## Gate OrderSession
 
 组件入口：

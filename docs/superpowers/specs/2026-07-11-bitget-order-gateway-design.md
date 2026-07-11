@@ -6,7 +6,9 @@
 - 范围：Bitget UTA v3 `OrderGatewayWorker`、`bitget_order_gateway` 进程，以及 LeadLag 对现有
   `order_gateway` backend 的最小接入
 - 设计审查：已完成 `grill-me-enhanced`
-- 当前阶段：设计已批准，尚未实现
+- 实现状态：已实现，完成 TDD、真实 SHM 集成、Debug/Release 回归、Release benchmark 和多轮 review
+- live 状态：gateway / LeadLag 路径尚未发送真实订单
+- 后续边界：见 `docs/bitget_trading_follow_up.md`
 
 ## 目的
 
@@ -236,3 +238,24 @@ live LeadLag 测试。
 5. 将 LeadLag 的 lag exchange/symbol 硬编码替换为已有 pair metadata，并补回归测试。
 6. 运行 Debug/Release 回归与 Release benchmark。
 7. 多轮 review `OrderSession`、`OrderFeedbackSession` 和新增 gateway/LeadLag 链路，直到既定范围内无待修问题。
+
+## 实现结果
+
+截至 2026-07-11，本文范围已经落地：
+
+- `exchange/bitget/trading/order_gateway_worker.h`
+- `exchange/bitget/trading/multi_order_session_gateway.h`
+- `tools/bitget/bitget_order_gateway.cpp`
+- `config/order_gateways/bitget_order_gateway.toml`
+- Bitget worker / multi-session gateway gtest 与 gateway CLI tests
+- LeadLag live smoke strategy 使用配置中的 lag exchange / exchange symbol
+
+最终 Debug / Release 均为 181/181 tests 通过。通用 OrderGateway Release benchmark 的最终本机基线中，单 command
+p50/p99 为 `107/220 ns`，4-route fanout parent p50/p99 为 `323/1,564 ns`；这些数据只覆盖本机 SHM command/event 路径，
+不代表 Bitget 网络 RTT、成交时延或 fillability。
+
+多轮 review 修复了认证失效 operation error 的 callback 顺序：明确 response 必须先于 not-ready 事件发布，避免 gateway
+提前清除 request metadata。后续 clean review 未发现 Critical / Important / Minor 问题。
+
+未实现和未来可能推进的唯一集中索引为 `docs/bitget_trading_follow_up.md`，包括跨进程唯一 ID、REST reconcile、limiter、
+真实 gateway / LeadLag smoke、endpoint/failover、fast-fill 和通用化等方向。

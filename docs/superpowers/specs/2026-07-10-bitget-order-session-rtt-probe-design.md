@@ -1,9 +1,10 @@
 # Bitget OrderSession RTT Probe 设计
 
 - 日期：2026-07-10
-- 状态：已实现，尚未执行真实订单
+- 状态：已实现；已完成 HA 与推断高速 private endpoint 的真实 passive IOC 验证
 - 范围：Bitget UTA v3 `OrderSession` 真实 IOC 下单 RTT probe
 - 参考：`docs/gate_order_session_rtt_probe_design.md`
+- 后续边界：见 `docs/bitget_trading_follow_up.md`
 
 ## 1. 目的
 
@@ -34,7 +35,8 @@
   `x_in_time` / `x_out_time` 或 Gate probe 的完整 write-path / socket timestamping 分段。
 - Bitget 首次订阅 order topic 不补历史订单，也没有 sequence；运行前仍需要外部 REST baseline 或人工确认 dedicated account flat。
 - Bitget REST reconcile、account rate limiter 和工具内 REST guard 尚未实现。
-- 当前 credential 的出站 IP 白名单仍待用户处理，因此实现阶段不发送真实订单。
+- 实现阶段的出站 IP 白名单阻断已经解除，dedicated account 已完成真实 passive IOC 验证；IP、权限和余额仍是每次 live
+  前必须重新查询的外部状态。
 
 ## 3. 方案选择
 
@@ -257,13 +259,28 @@ flat 时返回非零。
 当前自动化验证还覆盖：同一 strategy lane 的 unmapped feedback fail-fast、已完成样本的 duplicate response / feedback 去重、late fill
 仍优先触发 safety close、delayed place Ack 不延长 safety-close deadline，以及 open-only SHM publisher / reader 路由。
 
-集成验证使用测试 publisher / SHM fixture 和 fake session，不发送真实订单。完成实现后再单独讨论 credential、IP 白名单、外部 REST flat check、
-login/feedback smoke、单个 IOC 样本和逐步扩大采样的 live 测试顺序。
+自动化集成验证使用测试 publisher / SHM fixture 和 fake session，本身不发送真实订单。实现完成后又单独执行了 guarded live
+验证：HA 与推断的高速 private endpoint 均取得 direct Ack 与 zero-fill cancelled terminal feedback 双证据，且运行前后外部 REST
+查询均证明无 open orders、无 position。工具内 REST guard、reconcile 和可重复 live 自动化仍未实现，本次外部证据不能替代这些能力。
 
 ## 13. 验收条件
 
 - `bitget_order_session_rtt_probe` 能完成 dry-run 和 single / multi-session live preflight。
 - fake session + Bitget feedback SHM integration 能证明 normal IOC、乱序、continuity 和 unexpected-fill safety flow。
 - Debug / Release 相关 gtest 通过，项目全量测试无回归。
-- 没有发送真实订单，也不宣称 live RTT 或账户 flat。
-- 文档明确列出 REST reconcile、rate limiter、LeadLag、fanout batch 和真实 live 验证仍未完成。
+- 真实 passive IOC 验证只把 Ack + terminal feedback + 外部 REST flat 作为本次运行证据，不把 operation response 当作订单终态。
+- 文档明确列出 REST reconcile、rate limiter、LeadLag、fanout batch 和可重复 live 自动化仍未完成。
+
+## 14. 实现后的真实验证
+
+2026-07-11 在 dedicated account 上按外部 REST baseline、独立 feedback ready、严格串行 IOC、terminal feedback、run-end REST
+flat 的顺序执行：
+
+- 官方 HA endpoint `wss://vip-ws-uta.bitget.com/v3/ws/private`：样本均为 zero-fill cancelled；稳态 Ack median / p90 为
+  `5.497/5.605 ms`，send-to-terminal median / p90 为 `6.149/6.424 ms`。
+- 推断的高速 endpoint `wss://vip-ws-uta-pri-a.bitget.com/v3/ws/private`：DNS/TLS/login 和真实订单链路均验证通过，样本均为
+  zero-fill cancelled；Ack median / p90 为 `2.457/2.622 ms`，send-to-terminal median / p90 为 `2.819/3.175 ms`。
+- 两组运行前后外部 REST 查询均无 open orders、无 position；未触发 safety close。
+
+高速 endpoint 尚无公开官方文档确认，当前默认 checked-in config 继续使用官方 HA endpoint。以上数值只描述当次网络与账户环境，
+不代表长期 SLA、成交时延或 fillability。重复 live 前仍受 `docs/bitget_trading_follow_up.md` 中跨进程唯一 ID 和恢复边界约束。

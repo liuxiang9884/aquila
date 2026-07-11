@@ -7,7 +7,8 @@
 - endpoint：`wss://vip-ws-uta.bitget.com/v3/ws/private`
 - topic：仅订阅 `order`
 - 账户能力：仅接受 `usdt-futures`、`one_way_mode`、`crossed`
-- 当前阶段不发送真实订单
+- 实现状态：已实现并在真实 passive IOC RTT probe 中观察 terminal order feedback
+- 后续边界：见 `docs/bitget_trading_follow_up.md`
 
 ## 目的
 
@@ -532,6 +533,8 @@ probe 只有在由配置的 duration timer 控制停止且曾完成 login/subscr
 - OrderSession 与 OrderFeedbackSession 均通过独立验证。
 
 ## 后续阶段入口
+
+统一未覆盖边界和未来方向见 `docs/bitget_trading_follow_up.md`。本设计原始后续入口包括：
 
 1. 外部 REST bootstrap/reconcile 和启动/重连时间窗口对账。
 2. `fast-fill` 的 `execId` 去重、乱序、累计量重建和独立 `FillEvent` contract。
