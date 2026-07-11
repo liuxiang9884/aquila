@@ -703,15 +703,15 @@ class OrderSession {
         .exchange_ns = parsed.exchange_ns,
         .ack_rtt_ns = ack_rtt_ns,
     };
-    if (IsAuthenticatedSessionInvalidatingError(parsed.error_code)) {
-      login_ready_ = false;
-      NotifyLoginNotReady();
-      RequestProtocolReconnect();
-    }
     LogOrderResponse(response);
     response_handler_.OnOrderResponse(response);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();
+    }
+    if (IsAuthenticatedSessionInvalidatingError(parsed.error_code)) {
+      login_ready_ = false;
+      NotifyLoginNotReady();
+      RequestProtocolReconnect();
     }
     return websocket::DeliveryResult::kAccepted;
   }

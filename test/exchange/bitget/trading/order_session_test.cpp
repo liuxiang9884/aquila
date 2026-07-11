@@ -27,11 +27,13 @@ websocket::MessageView TextView(std::string_view payload) {
 struct RecordingHandler {
   std::vector<OrderResponse> responses;
   std::vector<OrderSessionConnectionInfo> connections;
+  std::vector<std::string_view> callback_order;
   int ready_calls{0};
   int not_ready_calls{0};
 
   void OnOrderResponse(const OrderResponse& response) noexcept {
     responses.push_back(response);
+    callback_order.push_back("response");
   }
 
   void OnOrderSessionLoginReady() noexcept {
@@ -40,6 +42,7 @@ struct RecordingHandler {
 
   void OnOrderSessionLoginNotReady() noexcept {
     ++not_ready_calls;
+    callback_order.push_back("not_ready");
   }
 
   void OnOrderSessionConnected(
@@ -232,6 +235,21 @@ TEST(BitgetOrderSessionTest,
     EXPECT_TRUE(session.reconnect_requested_for_test()) << code;
     EXPECT_EQ(handler.not_ready_calls, 1) << code;
   }
+}
+
+TEST(BitgetOrderSessionTest,
+     OperationAuthenticationErrorPublishesResponseBeforeNotReady) {
+  RecordingHandler handler;
+  TestOrderSession<RecordingHandler> session(handler);
+  ActivateAndLogin(&session);
+  const OrderSendResult sent =
+      session.PlaceOrder(TestOrder{.local_order_id = 30011});
+  ASSERT_EQ(sent.status, OrderSendStatus::kOk);
+
+  session.Handle(TextView(ErrorResponse(sent, "place-order", 30011)));
+
+  EXPECT_EQ(handler.callback_order,
+            std::vector<std::string_view>({"response", "not_ready"}));
 }
 
 TEST(BitgetOrderSessionTest,
