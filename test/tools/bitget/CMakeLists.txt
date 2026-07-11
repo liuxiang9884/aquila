@@ -120,3 +120,21 @@ set_tests_properties(bitget_order_feedback_session_help_test
     bitget_order_feedback_session_dry_run_test
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_test(NAME bitget_order_gateway_help_test
+         COMMAND bitget_order_gateway --help)
+
+add_test(NAME bitget_order_gateway_validate_only_test
+         COMMAND bitget_order_gateway --config
+                 config/order_gateways/bitget_order_gateway.toml
+                 --validate-only)
+
+add_test(NAME bitget_order_gateway_dry_run_test
+         COMMAND bitget_order_gateway --config
+                 config/order_gateways/bitget_order_gateway.toml)
+
+set_tests_properties(bitget_order_gateway_help_test
+    bitget_order_gateway_validate_only_test
+    bitget_order_gateway_dry_run_test
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

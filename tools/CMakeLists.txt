@@ -92,6 +92,21 @@ target_link_libraries(gate_order_gateway
         PkgConfig::tomlplusplus
 )
 
+add_executable(bitget_order_gateway
+    bitget/bitget_order_gateway.cpp
+)
+
+target_link_libraries(bitget_order_gateway
+    PRIVATE
+        aquila_config
+        aquila_core
+        aquila_bitget
+        CLI11::CLI11
+        fmt::fmt-header-only
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(fill_probe_strategy
     gate/fill_probe/config.cpp
     gate/fill_probe/csv_writer.cpp
