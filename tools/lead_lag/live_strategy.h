@@ -304,7 +304,7 @@ class LiveOpenCloseSmokeStrategy {
     if (pair_ == nullptr) {
       return;
     }
-    if (ticker.exchange != Exchange::kGate ||
+    if (ticker.exchange != pair_->lag_instrument.exchange ||
         ticker.symbol_id != pair_->symbol_id) {
       return;
     }
@@ -401,10 +401,10 @@ class LiveOpenCloseSmokeStrategy {
         FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
     open_quantity_text_ =
         FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
-    const std::string_view symbol = GateSymbol();
+    const std::string_view symbol = LagSymbol();
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
+            .exchange = pair_->lag_instrument.exchange,
             .symbol_id = pair_->symbol_id,
             .symbol = symbol,
             .side = OrderSide::kBuy,
@@ -483,9 +483,9 @@ class LiveOpenCloseSmokeStrategy {
         pending_close_quantity_, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
+            .exchange = pair_->lag_instrument.exchange,
             .symbol_id = pair_->symbol_id,
-            .symbol = GateSymbol(),
+            .symbol = LagSymbol(),
             .side = OrderSide::kSell,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
@@ -601,7 +601,7 @@ class LiveOpenCloseSmokeStrategy {
     return fmt::format("{:.{}f}", price, decimal_places);
   }
 
-  [[nodiscard]] std::string_view GateSymbol() const noexcept {
+  [[nodiscard]] std::string_view LagSymbol() const noexcept {
     if (!pair_->lag_instrument.exchange_symbol.empty()) {
       return pair_->lag_instrument.exchange_symbol;
     }
@@ -653,7 +653,7 @@ class LiveUnfilledCancelSmokeStrategy {
     if (pair_ == nullptr) {
       return;
     }
-    if (ticker.exchange != Exchange::kGate ||
+    if (ticker.exchange != pair_->lag_instrument.exchange ||
         ticker.symbol_id != pair_->symbol_id) {
       return;
     }
@@ -777,9 +777,9 @@ class LiveUnfilledCancelSmokeStrategy {
         FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
+            .exchange = pair_->lag_instrument.exchange,
             .symbol_id = pair_->symbol_id,
-            .symbol = GateSymbol(),
+            .symbol = LagSymbol(),
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kGoodTillCancel,
@@ -906,7 +906,7 @@ class LiveUnfilledCancelSmokeStrategy {
     return fmt::format("{:.{}f}", price, decimal_places);
   }
 
-  [[nodiscard]] std::string_view GateSymbol() const noexcept {
+  [[nodiscard]] std::string_view LagSymbol() const noexcept {
     if (!pair_->lag_instrument.exchange_symbol.empty()) {
       return pair_->lag_instrument.exchange_symbol;
     }
@@ -955,7 +955,7 @@ class LiveSubmitRejectSmokeStrategy {
     if (pair_ == nullptr) {
       return;
     }
-    if (ticker.exchange != Exchange::kGate ||
+    if (ticker.exchange != pair_->lag_instrument.exchange ||
         ticker.symbol_id != pair_->symbol_id) {
       return;
     }
@@ -1069,9 +1069,9 @@ class LiveSubmitRejectSmokeStrategy {
         FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
     const core::OrderPlaceResult placed =
         context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
+            .exchange = pair_->lag_instrument.exchange,
             .symbol_id = pair_->symbol_id,
-            .symbol = GateSymbol(),
+            .symbol = LagSymbol(),
             .side = OrderSide::kBuy,
             .order_type = OrderType::kLimit,
             .time_in_force = TimeInForce::kImmediateOrCancel,
@@ -1144,7 +1144,7 @@ class LiveSubmitRejectSmokeStrategy {
     return fmt::format("{:.{}f}", price, decimal_places);
   }
 
-  [[nodiscard]] std::string_view GateSymbol() const noexcept {
+  [[nodiscard]] std::string_view LagSymbol() const noexcept {
     if (!pair_->lag_instrument.exchange_symbol.empty()) {
       return pair_->lag_instrument.exchange_symbol;
     }
@@ -1233,14 +1233,16 @@ ResolveLiveOrderExecutionBackend(const config::StrategyConfig& config) {
   if (has_order_session && has_order_gateway) {
     return {.ok = false,
             .backend = LiveOrderExecutionBackend::kOrderSession,
-            .error = "strategy.order_session / strategy.order_gateway are "
-                     "mutually exclusive"};
+            .error =
+                "strategy.order_session / strategy.order_gateway are "
+                "mutually exclusive"};
   }
   if (!has_order_session && !has_order_gateway) {
     return {.ok = false,
             .backend = LiveOrderExecutionBackend::kOrderSession,
-            .error = "strategy.order_session / strategy.order_gateway one "
-                     "section is required"};
+            .error =
+                "strategy.order_session / strategy.order_gateway one "
+                "section is required"};
   }
   return {.ok = true,
           .backend = has_order_gateway

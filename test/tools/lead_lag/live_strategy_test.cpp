@@ -1,6 +1,6 @@
-#include <sys/mman.h>
-
 #include "tools/lead_lag/live_strategy.h"
+
+#include <sys/mman.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -167,6 +167,127 @@ leadlag::Config MakeLeadLagConfig() {
           },
   });
   return config;
+}
+
+leadlag::Config MakeBitgetLeadLagConfig() {
+  leadlag::Config config = MakeLeadLagConfig();
+  config.pairs[0].lag_exchange = aquila::Exchange::kBitget;
+  config.pairs[0].lag_instrument.exchange = aquila::Exchange::kBitget;
+  config.pairs[0].lag_instrument.exchange_symbol = "BTCUSDT";
+  return config;
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeOpenCloseUsesConfiguredBitgetLagExchangeAndSymbol) {
+  LiveOpenCloseSmokeStats stats;
+  LiveOpenCloseSmokeStrategy strategy{
+      MakeBitgetLeadLagConfig(),
+      LiveOpenCloseSmokeOptions{
+          .symbol = "BTCUSDT",
+          .aggressive_price_bps = 0.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 99.0,
+          .ask_price = 100.0,
+      },
+      context);
+  EXPECT_TRUE(context.orders.empty());
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kBitget,
+          .bid_price = 99.0,
+          .ask_price = 100.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].exchange, aquila::Exchange::kBitget);
+  EXPECT_EQ(context.orders[0].symbol, "BTCUSDT");
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeUnfilledCancelUsesConfiguredBitgetLagExchangeAndSymbol) {
+  LiveUnfilledCancelSmokeStats stats;
+  LiveUnfilledCancelSmokeStrategy strategy{
+      MakeBitgetLeadLagConfig(),
+      LiveUnfilledCancelSmokeOptions{
+          .symbol = "BTCUSDT",
+          .passive_price_bps = 500.0,
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  EXPECT_TRUE(context.orders.empty());
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kBitget,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].exchange, aquila::Exchange::kBitget);
+  EXPECT_EQ(context.orders[0].symbol, "BTCUSDT");
+}
+
+TEST(LeadLagLiveStrategyTest,
+     SmokeSubmitRejectUsesConfiguredBitgetLagExchangeAndSymbol) {
+  LiveSubmitRejectSmokeStats stats;
+  LiveSubmitRejectSmokeStrategy strategy{
+      MakeBitgetLeadLagConfig(),
+      LiveSubmitRejectSmokeOptions{
+          .symbol = "BTCUSDT",
+          .max_notional = 2000.0,
+      },
+      &stats,
+  };
+  SmokeStrategyContext context;
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kGate,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+  EXPECT_TRUE(context.orders.empty());
+
+  strategy.OnBookTicker(
+      aquila::BookTicker{
+          .symbol_id = 3,
+          .exchange = aquila::Exchange::kBitget,
+          .bid_price = 100.0,
+          .ask_price = 101.0,
+      },
+      context);
+
+  ASSERT_EQ(context.orders.size(), 1U);
+  EXPECT_EQ(context.orders[0].exchange, aquila::Exchange::kBitget);
+  EXPECT_EQ(context.orders[0].symbol, "BTCUSDT");
 }
 
 TEST(LeadLagLiveStrategyTest, DefaultsToValidateOnlyWithoutLiveFlags) {
