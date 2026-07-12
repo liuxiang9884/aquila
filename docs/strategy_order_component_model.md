@@ -2,7 +2,9 @@
 
 ## 定位
 
-本文记录当前策略、行情读取、下单和回报组件的边界。公共 order / runtime contract 已迁到 `core/trading/*` + `aquila::core`；Gate runtime adapter 在 `exchange/gate/trading/order_session_runtime_adapter.h`。
+本文只记录跨交易所的策略、行情读取、下单和回报组件边界。Gate 专属协议、OrderGateway SHM 与 live 状态见
+`docs/gate_trading.md`；Bitget 专属 contract 见 `docs/bitget_trading.md`。公共 order/runtime contract 位于
+`core/trading/*` + `aquila::core`。
 
 核心组件：
 
@@ -209,7 +211,7 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 表示发往运行时配置的某条 Gate order session。`OrderManager` 只复制该字段，不解释策略 fanout 语义。Ack response
 的业务入口仍是 `OrderManager::OnOrderResponse()`，route table 只服务 cancel / cache / forget 回原 session。
 
-生产 SHM gateway 设计见 `docs/gate_order_gateway_shm_design.md`：strategy 与 order gateway 拆成 2 个进程，strategy 进程的
+生产 SHM gateway contract 见 `docs/gate_trading.md`：strategy 与 order gateway 拆成 2 个进程，strategy 进程的
 `StrategyOrderOwnerThread` 拥有 `OrderManager`、route table 和 ready flags；`order-gateway-process` 内
 `OrderSessionWorker[i]` 独占 `OrderSession[i]` 和对应 WebSocket connection。跨进程使用一个 SHM 对象承载 N 路
 `command_queue` 和 N 路 `event_queue`，`N` 是运行时参数且最大为 `16`。`PlaceOrder()` 的 `kOk` 只表示 command

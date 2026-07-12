@@ -1,5 +1,8 @@
 # LeadLag FixedOrderedSlotPool 与 parallel=n 迁移说明
 
+本文只记录仍未完成的容器与 multi-group metadata 迁移边界；LeadLag 当前策略语义见
+`strategy/lead_lag/README.md`。
+
 本文记录截至 2026-07-03 的当前事实、相关文档入口和已锁定迁移边界。它整理 `FixedOrderedSlotPool<T, kCapacity>` 作为 LeadLag multi-group 容器的迁移方案；不表示生产 `ExecutionState` 已经切换。
 
 ## 当前事实
@@ -21,7 +24,8 @@
 - `strategy/lead_lag/execution_state.h`：当前生产状态机和 `std::vector<ExecutionGroup>` 容器。
 - `test/strategy/lead_lag_feedback_state_test.cpp`：feedback / unknown-result / multi child 状态测试，其中已有 `parallel=2` 场景。
 - `test/strategy/lead_lag_strategy_interface_test.cpp`：strategy 层 `parallel_limit`、fanout child、rejected intent 等行为测试。
-- `docs/gate_order_gateway_shm_design.md` 的 “Strategy Fanout 语义”：当前文档仍以 `parent_id` 描述 fanout child 归组；本次迁移需要同步改成 `group_id` / `group_index`。
+- `docs/gate_trading.md` 的 “Strategy fanout 与故障语义”：当前 contract 仍以 `parent_id` 描述 fanout child 归组；
+  本次迁移需要同步改成 `group_id` / `group_index`。
 - `docs/strategy_order_component_model.md` 的 “多路 OrderSession 扩展边界”：说明 gateway 不解释 parent signal / child group / winner / overfill。
 
 ## 迁移边界

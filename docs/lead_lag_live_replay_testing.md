@@ -1,5 +1,7 @@
 # LeadLag 实盘与 Replay 测试说明
 
+本文只定义 live/replay parity 测试；真实订单 runbook 见 `docs/lead_lag_live_operations.md`。
+
 ## 目的
 
 本文记录 LeadLag 相关实盘测试和 replay 测试的标准流程、输出约定和分析方法。这里的“实盘”默认指连接真实 Gate / Binance 行情

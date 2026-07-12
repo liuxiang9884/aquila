@@ -1,5 +1,7 @@
 # ORDI_USDT LeadLag Tardis / HDF Replay 对比
 
+本文是特定 ORDI_USDT 输入与参数的历史对账证据，不是当前 live universe 的收益结论。
+
 ## 背景
 
 本次对比使用 ORDI_USDT 永续合约 20260415～20260417 三天的 book ticker 数据，分别从两条链路生成 Aquila `BookTicker` binary 后回放 LeadLag 策略：

@@ -1,5 +1,8 @@
 # LeadLag ContinuityLost 应急处理与后续恢复设计
 
+本文只定义 continuity/unknown-result 的恢复 contract；实盘启动、停止与 report 操作见
+`docs/lead_lag_live_operations.md`。
+
 **目标：** 明确 LeadLag 实盘运行中收到 `OrderFeedbackKind::kContinuityLost` 后的第一版处理方式。当前不做自动恢复和继续交易；先停止系统，再通过 Python Gate REST API 查询仓位、撤销挂单、用 reduce-only 市价单平掉风险敞口，并用 REST 复核账户已经回到安全状态。
 
 **架构：** V1 采用 `stop-and-flat`。C++ live runner 负责识别 `ContinuityLost` 并停止自动交易；Python REST 应急工具负责账户侧处理：查询 position、查询 open orders、撤单、提交 reduce-only market close、轮询复核。更复杂的 read-only reconcile / 自动恢复只作为 V2 后续设计保留，不作为当前打开真实交易的前置目标。

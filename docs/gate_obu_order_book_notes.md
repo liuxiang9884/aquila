@@ -3,6 +3,8 @@
 本文记录 2026-07-10 关于 Gate futures `futures.obu` / Order Book V2 与内部
 `OrderBook` 结构的讨论结论。当前只是设计讨论和 quick probe 记录，不代表生产实现已经完成。
 
+本文件是该未实现方向的事实源；不要把 `core/market_data/types.h` 中用户草案当作已完成 ABI。
+
 ## 官方 channel 与频率
 
 Gate futures 深度相关 channel 有两类：

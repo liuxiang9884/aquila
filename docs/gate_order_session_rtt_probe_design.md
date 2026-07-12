@@ -4,6 +4,8 @@
 
 `gate_order_session_rtt_probe` 用真实 Gate `OrderSession` 下单路径测量多连接 Ack RTT。它是 measurement-only 工具：采集、归档、离线分析，不自动打分、不自动切换 LeadLag 或生产 `OrderSession`。
 
+Gate 生产交易组件、OrderGateway SHM 和恢复语义统一见 `docs/gate_trading.md`；本文不重复生产架构。
+
 第一版关注三件事：
 
 - 不同 `connect_ip` / connection 的 `futures.order_place` Ack RTT 是否稳定不同。

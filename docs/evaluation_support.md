@@ -2,6 +2,8 @@
 
 `evaluation/` 存放只服务对比、benchmark 和测试验证的共享辅助代码。它不是生产路径的一部分，生产 target 不允许依赖它。
 
+本文只定义 placement、namespace、CMake target 和边界检查，不承载具体 benchmark 结论。
+
 ## 命名含义
 
 - 对比：保存和生产实现对照的替代实现，例如 parse-ahead ready queue codec。

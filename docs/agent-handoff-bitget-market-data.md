@@ -2,10 +2,9 @@
 
 ## 当前范围
 
-本 handoff 只覆盖 Bitget UTA public SBE `books1` BBO 和 `publicTrade` 行情接入，不覆盖 JSON 行情或
-交易端实现细节。Bitget `OrderSession` 已有独立实现，入口和边界见
-`docs/superpowers/specs/2026-07-10-bitget-order-session-design.md`；`OrderFeedbackSession` 当前只完成设计，尚未实现，见
-`docs/superpowers/specs/2026-07-10-bitget-order-feedback-session-design.md`。
+本文是 Bitget UTA public SBE `books1` BBO 与 `publicTrade` 的当前事实源，不覆盖 JSON 行情或交易端实现。
+Bitget trading 统一见 `docs/bitget_trading.md`；通用 fusion/SHM 语义见 `docs/market_data_fusion.md` 和
+`docs/data_session_shm_communication_design.md`。
 
 已落地能力：
 

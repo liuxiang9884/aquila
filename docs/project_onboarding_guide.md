@@ -1,91 +1,82 @@
 # aquila 新对话导读
 
-这份文档是接手入口，只保留当前事实、入口索引、验证命令和下一步建议。历史推导、完整 run 输出、字段细节和 benchmark 细节放在专题文档或 `reports/` 中；当前 branch / ahead / dirty 状态只信 `git status --short --branch`。
+本文是接手入口，只保留当前事实、领域索引、代码入口、验证命令和可执行下一步。完整 contract、runbook 和证据位于专题文档；
+当前 branch/ahead/dirty 只信 `git status --short --branch`。
 
-## 先做什么
+## 启动顺序
 
-在 `/home/liuxiang/dev/aquila` 先运行：
+在 `/home/liuxiang/dev/aquila` 执行：
 
 ```bash
 git status --short --branch
 git log --oneline -8
 ```
 
-然后按顺序读：
+然后读取 `AGENTS.md`、`README.md`、本文和 `docs/evaluation_support.md`。进入设计/架构/实现计划或关键交易链路取舍前，
+按 `AGENTS.md` 询问是否启用 Grill Me；订单、行情、风控、恢复、并发和低延迟主路径建议 `grill-me-enhanced`。
 
-```text
-AGENTS.md
-README.md
-docs/project_onboarding_guide.md
-docs/evaluation_support.md
-```
+## 领域索引
 
-进入设计、架构、实现计划或关键交易链路取舍时，先按 `AGENTS.md` 询问是否启用 Grill Me；普通设计建议 `grill-me-basic`，订单 / 行情 / 风控 / 恢复 / 并发 / 低延迟主路径建议 `grill-me-enhanced`。
-
-## 方向索引
-
-| 方向 | 优先文档 |
+| 方向 | 事实源 |
 | --- | --- |
-| LeadLag live / report | `docs/lead_lag_live_operations_pipeline.md`、`docs/lead_lag_live_runtime_plan.md`、`docs/lead_lag_live_report_csv_schema.md`、`docs/lead_lag_reconcile_design.md` |
-| LeadLag 策略语义 / Go 对照 | `strategy/lead_lag/README.md`、`docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` |
-| Cancelled order / fillability | `docs/lead_lag_cancelled_order_fillability_analysis.md`、`docs/exchange_matching_fillability_notes.md` |
-| Ack latency / RTT probe | `docs/lead_lag_ack_latency_outlier_analysis.md`、`docs/lead_lag_runtime_latency_improvement_plan.md`、`docs/gate_order_session_rtt_probe_design.md`、`docs/diagnostic_fields.md` |
-| DataReader / data session | `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` |
-| Gate / Binance fusion | `docs/gate_fastest_route_fusion_design.md`、`docs/trade_fastest_route_fusion_design.md`、`docs/gate_fastest_route_fusion_shadow_results.md`、`docs/gate_fastest_route_fusion_threaded_bundle_guide.md`、`docs/fusion_tardis_bbo_comparison.md` |
-| Gate OBU / OrderBook | `docs/gate_obu_order_book_notes.md`、`exchange/gate/sbe/schema/gate_fex_ws_latest.xml`、`exchange/gate/sbe/message_dispatcher.h` |
-| Bitget market data | `docs/agent-handoff-bitget-market-data.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` |
-| Bitget trading | `docs/superpowers/specs/2026-07-10-bitget-order-session-design.md`、`docs/superpowers/specs/2026-07-10-bitget-order-feedback-session-design.md`、`docs/superpowers/specs/2026-07-11-bitget-order-gateway-design.md`、`docs/bitget_trading_follow_up.md` |
-| Gate trading / order gateway | `docs/agent-handoff-gate-trade-architecture.md`、`docs/gate_order_gateway_shm_design.md`、`docs/strategy_order_component_model.md` |
-| Runtime CPU / ENA IRQ | `docs/runtime_cpu_allocation.md` |
-| FixedOrderedSlotPool / parallel=n | `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`、`core/base/fixed_ordered_slot_pool.h` |
-| TUI / account monitor | `docs/tui_onboarding_guide.md`、`docs/tui_gate_account_monitor_design.md` |
-| Instrument catalog | `docs/futures_contract_metadata_fields.md`、`docs/agent-handoff-binance-market-data.md` |
+| WebSocket | `docs/websocket_client.md` |
+| DataReader / data session / SHM | `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` |
+| Fusion | `docs/market_data_fusion.md`、`docs/gate_fastest_route_fusion_shadow_results.md`、`docs/fusion_tardis_bbo_comparison.md` |
+| Binance market data | `docs/agent-handoff-binance-market-data.md` |
+| Bitget market data | `docs/agent-handoff-bitget-market-data.md` |
+| Bitget trading | `docs/bitget_trading.md` |
+| Gate trading / gateway | `docs/gate_trading.md`、`docs/gate_order_session_rtt_probe_design.md` |
+| Trading component model | `docs/strategy_order_component_model.md` |
+| LeadLag strategy | `strategy/lead_lag/README.md` |
+| LeadLag live / report | `docs/lead_lag_live_operations.md`、`docs/lead_lag_live_report_csv_schema.md` |
+| LeadLag recovery | `docs/lead_lag_reconcile_design.md` |
+| LeadLag latency | `docs/lead_lag_latency_analysis.md`、`docs/diagnostic_fields.md` |
+| LeadLag replay / evidence | `docs/lead_lag_live_replay_testing.md`、`docs/lead_lag_ordi_tardis_hdf_signal_pnl_comparison.md` |
+| Fillability | `docs/exchange_matching_fillability_notes.md` |
+| FixedOrderedSlotPool / multi-group | `docs/lead_lag_fixed_ordered_slot_pool_parallel.md` |
+| Gate OBU / OrderBook | `docs/gate_obu_order_book_notes.md` |
+| Instrument catalog | `docs/futures_contract_metadata_fields.md` |
+| Runtime CPU / IRQ | `docs/runtime_cpu_allocation.md` |
+| TUI | `docs/tui.md` |
 
 ## 当前事实
 
-- 项目是 C++20 / CMake 的 crypto 低延迟交易系统；默认同时关注正确性、确定性、低延迟、可恢复性和可观测性。临时 log、scratch config、live snapshot、benchmark 临时产物默认写入 `/home/liuxiang/tmp`。
-- 2026-07-08 已按用户要求清理 2026-07-01 LeadLag A/B live 的相关输出和数据文件。不要再把旧 A/B tmp run dir 或 partial report 目录作为本地可读事实源；文档中只保留已摘录的历史口径。
-- 历史 implementation plan / spec 归档已删除。当前事实源以本文件、专题文档、代码和测试为准。
-- Gate / Binance / Bitget `BookTicker` 与 `Trade` data session 可发布到同一个 SHM object 内的 typed channel。`BookTicker` 现在同时带 `exchange_ns`、`event_ns`、`local_ns`，typed binary payload 为 72 bytes；`Trade` 使用统一字段名 `event_ns`，payload 仍为 64 bytes。`RealtimeDataReader` 按 source `feed` 读取 `book_ticker` / `trade`；`HistoricalDataReader`、`data_reader_probe` 和 Python numpy 脚本只接受 typed binary format v1，`binary_file` source 必须显式写 `feed`，header feed/type 必须与 TOML 一致。旧 raw struct artifact 或旧 ABI typed artifact 需要重录。
-- 2026-07-10 Gate `futures.obu` / Order Book V2 讨论和 quick probe 摘要已记录到 `docs/gate_obu_order_book_notes.md`。当前结论：`obu.50` 固定 20ms、`obu.400` 固定 100ms；`400` 是最大深度，不保证 full snapshot 满 400 档；SBE `obu` template id 为 3，levels 是 array-of-struct，bid / ask entry count 来自 repeating group header 的 `numInGroup`；仓库已有 SBE 生成代码和 dispatcher 识别，但尚未实现 OBU decoder、本地 order book 维护器、深度 typed channel 或 recorder。
-- 当前工作区可能保留用户未提交的 `core/market_data/types.h` `Orderbook` 草案。继续实现前先用 `git status --short --branch` 和 `git diff -- core/market_data/types.h` 确认，不要把它当作已完成 ABI；讨论中的方向是把该结构作为维护后的 published snapshot，而不是 raw OBU update。
-- Bitget UTA public SBE `books1` BBO 已接入并合并到 `main`：`seq -> BookTicker.id`，`sts * 1000 -> exchange_ns`，`ts * 1000 -> event_ns`，data session ingress `CLOCK_REALTIME -> local_ns`。Bitget `publicTrade` 已接入：`execId -> Trade.id`，`side=0/1 -> Buy/Sell`，`sts * 1000 -> exchange_ns`，`ts * 1000 -> event_ns`，group index/count 写入 `batch_index` / `batch_count`。原 `feature/bitget-bbo-market-data` worktree 和本地 branch 已删除。行情入口和配置见 `docs/agent-handoff-bitget-market-data.md`。
-- 2026-07-11 Bitget UTA v3 `OrderSession` 已实现并完成真实 passive IOC RTT probe：官方 HA private endpoint 和推断的高速 private endpoint 均完成 login、Ack、zero-fill cancelled feedback 和 REST run-end flat 验证。operation response 仍只表示请求的直接响应，不确认 accepted、fill 或 cancel terminal；明确 reject 与 unknown result 保持独立语义。默认 checked-in config 继续使用官方 HA endpoint，高速 endpoint 尚未作为官方稳定生产 endpoint 固化。
-- 2026-07-11 Bitget UTA v3 `OrderFeedbackSession` 已实现：独立 private connection 只订阅 account-wide `order` topic，按 `clientOid=a-<local_order_id>` 路由现有 feedback SHM；真实 RTT probe 已观察 zero-fill cancelled terminal feedback。parser/session/config/SHM integration tests 和 release benchmark 已通过；REST baseline/reconcile、`fill` / `fast-fill`、account / position feed 与自动恢复仍未实现。
-- 2026-07-11 `bitget_order_session_rtt_probe` 已完成 HA 与高速 private endpoint 的严格串行真实 IOC 采样；每个正常样本都要求 direct Ack 与 terminal feedback 双证据，所有已记录样本均为 zero-fill cancelled，运行前后 REST 证明无 open orders、无 position。工具内仍没有自动 REST guard、reconcile、rate limiter 或跨进程唯一 ID 修复，不能据此自动重复执行 live。
-- 2026-07-11 Bitget OrderGateway 已按 Gate 结构实现：包含 Bitget `MultiOrderSessionGateway`、SHM worker、`bitget_order_gateway` 进程、单 route 默认配置、CLI dry-run/validate-only 和 LeadLag lag metadata 接入。Debug/Release 最终均为 181/181 tests 通过，多轮 review 已完成；gateway / LeadLag 路径尚未发送真实订单。详细实现证据和未来边界见 `docs/superpowers/specs/2026-07-11-bitget-order-gateway-design.md`、`docs/bitget_trading_follow_up.md`。
-- 2026-07-11 Bitget UTA REST read-only query 脚本 `scripts/bitget/account/query_bitget_account.py` 已用于 live 前后 flat check；当前 key 已放行出站 IP `52.69.2.245`，实测可读取账户、orders、positions，USDT available 为 `500`。IP、权限或账户余额可能变化，后续 live 前仍需重新查询，不能把本次结果当作永久事实。
-- 2026-07-08 Bitget BBO normal vs high speed public SBE 30 分钟同步 A/B 已记录在 `docs/agent-handoff-bitget-market-data.md`：3 symbols、N=4、BBO-only、同构 source/fusion/recorder 下，normal fusion latency p99 `2.650 ms`、p99.9 `3.032 ms`，high speed p99 `14.193 ms`、p99.9 `40.289 ms`；high speed 没有带来 BBO 延迟收益或更多消息量。该证据只覆盖行情接入和 fusion pipeline。
-- Instrument catalog 现在有两个主要入口：`config/instruments/usdt_futures.csv` 是 16-symbol 小型默认 catalog，包含 Gate / Binance / Bitget；`config/instruments/usdt_future_universe.csv` 是大 universe，包含 Gate 494 行、Binance 494 行和 Bitget 438 行，保留 `contract_multiplier`。旧 `config/instruments/usdt_futures_common_gate_binance_20260701.csv` 已重命名，不应继续引用。
-- Gate 交易 / private feedback / REST read-only 相关凭据环境变量已统一加 `GATE_` 前缀：`GATE_TEST_KEY` / `GATE_TEST_SECRET`、`GATE_PROBE_KEY` / `GATE_PROBE_SECRET`。非 `reports/` 范围不再使用旧 `TEST_*` / `PROBE_*` 名称；历史 report 快照中的旧名不作为当前配置事实。
-- Gate 多路 `OrderSession` 已有单进程 baseline 和独立 `order-gateway-process` / SHM V2。生产形态是 strategy 进程 1 个 owner thread、gateway 进程 N 个 `OrderSessionWorker` thread，跨进程用 N 路 command / event queue 和 `route_states[16]`。gateway 只负责发送和回传 Ack / response，不解释 duplicate / split、winner、overfill 或非赢家 cancel。当前不宣称 fillability 或 latency 收益。
-- Gate `5xx` submit / cancel 经 runtime adapter 转为 `OrderResponseKind::kUnknownResult`，`OrderManager` 保留订单等待 feedback；LeadLag 对相关 symbol 标记 `needs_reconcile` 并暂停新开仓。后续恢复 / reconcile 仍按 `docs/lead_lag_reconcile_design.md`。
-- LeadLag live report 的多 entry FIFO 匹配已在 `f077842` 修复；`over_closed` 现在只表示 exit 成交量超过 report 可匹配 entry 剩余量，不再代表多路 duplicate entry 只取第一笔 entry 的误分类。字段见 `docs/lead_lag_live_report_csv_schema.md`。
-- `core/base/fixed_ordered_slot_pool.h` 已提供 `FixedOrderedSlotPool<T, kCapacity>`，单测和 group-container benchmark 已覆盖；生产 `strategy/lead_lag/execution_state.h` 仍使用 `std::vector<ExecutionGroup>`，不要假定已切换。若继续迁移，当前候选是 `FixedOrderedSlotPool<ExecutionGroup, 16>`，同时删除 `parent_id` 并改用 `group_id` / `group_index`。
-- 2026-07-08 fusion 结构收敛和多轮 review 修复已完成：核心在 `core/market_data/fusion/`，tools 层入口是 `tools/market_data/data_fusion_tool_support.h`、`tools/market_data/data_fusion_launch_config_parser.h`、`tools/gate/gate_data_fusion.cpp` 和 `tools/binance/binance_data_fusion.cpp`。一个 `data_fusion` process 可按 launch config 启用 `book_ticker`、`trade` 或两者；每个 enabled feed 一个 fusion thread，只为 enabled feed 创建对应 source / canonical SHM channel。
-- Fusion 冷路径校验已 fail-fast：错误 TOML 类型、旧 schema、重复 / 重叠 SHM 名、重复 channel、source / fusion / log backend CPU 冲突、不可用 required CPU、fusion config 与 source override 不一致都会启动前拒绝。Binance feed override 后会刷新 stream target；退出顺序是 source stop+join 后让 fusion drain 到 idle。
-- Fusion release microbench 证据在 `/home/liuxiang/tmp/fusion_refactor_perf/multi_round_review_round7_fix.json`；Trade fastest-route fusion 的 2026-07-07 30-symbol、4 路、30 分钟真实行情 smoke 摘要在 `/home/liuxiang/tmp/trade_fusion_30symbols_20260707_020400/latency_analysis/trade_fusion_latency_summary.json`。这些证据只覆盖行情 fusion pipeline / microbench，不代表订单 fillability 或 PnL 收益。
-- Gate BTC fill probe 的独立 runbook 已合并到 `docs/exchange_matching_fillability_notes.md`。旧 2026-07-03 / 2026-07-04 probe 配置仍指向已清理的 2026-07-01 fusion SHM；新 probe 必须先生成当次 scratch config 并完成 validate / preflight / REST read-only flat check。
-- 当前 32 物理 core 机器按 `docs/runtime_cpu_allocation.md` 管理：`0-15` 为实盘保留区，`16-31` 为测试 / diagnostics / benchmark 区。CPU isolation、ENA IRQ pool、interrupt moderation 等仍是候选系统优化，不代表已上线或已证明收益。
+- 项目使用 C++20/CMake/vcpkg。临时 log、scratch config、live snapshot、benchmark 和 build temp 默认在
+  `/home/liuxiang/tmp`。
+- Gate/Binance/Bitget `BookTicker` 与 `Trade` 可发布到同一个 typed SHM object。`BookTicker` payload 72 bytes，
+  `Trade` 64 bytes；historical/recorder 只接受 typed binary format v1，旧 raw/ABI artifact 需重录。
+- Fastest-route fusion 按 `(exchange,symbol_id,id)` 单调 first-processed-wins，输出一条 canonical stream；行情证据不能外推为
+  fillability/PnL。当前架构见 fusion 文档。
+- Gate 单路 trading、private feedback、OrderGateway SHM V2 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
+  Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
+- Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
+  已有 passive IOC Ack+terminal+REST flat 双证据；gateway/LeadLag 未发真实订单。
+- Bitget 重复 live 前仍有 P0：跨进程 `local_order_id/clientOid` 唯一性、REST baseline/reconcile、unknown window 和 run-end flat。
+  Dedicated-account flat、余额、IP 白名单和 endpoint 可用性不是永久事实。
+- LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后暂停新开仓。Report CSV contract、reconcile 和 latency
+  分别有独立专题文档。
+- Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
+  `config/instruments/usdt_future_universe.csv`。旧 catalog 文件名不应用于新 run。
+- Gate OBU/OrderBook 只完成讨论和 quick probe；尚未实现 decoder/local book/depth typed channel。若主工作树
+  `core/market_data/types.h` dirty，先读 diff；用户 `Orderbook` 草案不是已完成 ABI。
+- `FixedOrderedSlotPool` 已提供通用容器，但生产 LeadLag multi-group metadata 迁移仍按专题文档和独立分支事实确认，不能假设完成。
+- 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
 
 ## 代码入口
 
 | 模块 | 入口 |
 | --- | --- |
-| Trading core | `core/trading/order_types.h`、`core/trading/order_manager.h`、`core/trading/trading_runtime.h`、`core/trading/order_feedback_shm.h` |
-| Gate trading | `exchange/gate/trading/order_session.h`、`exchange/gate/trading/order_feedback_session.h`、`exchange/gate/trading/order_feedback_parser.h`、`exchange/gate/trading/order_session_runtime_adapter.h` |
-| Bitget trading | `exchange/bitget/trading/order_session.h`、`exchange/bitget/trading/operation_response_parser.h`、`exchange/bitget/trading/order_feedback_parser.h`、`exchange/bitget/trading/order_feedback_session.h`、`exchange/bitget/trading/order_gateway_worker.h`、`exchange/bitget/trading/multi_order_session_gateway.h`、`config/order_sessions/bitget_order_session.toml`、`config/order_feedback/bitget_order_feedback_session.toml`、`config/order_gateways/bitget_order_gateway.toml`、`tools/bitget/bitget_order_session_probe.cpp`、`tools/bitget/bitget_order_feedback_session.cpp`、`tools/bitget/bitget_order_gateway.cpp`、`tools/bitget/order_session_rtt_probe/` |
-| Order gateway | `core/trading/order_gateway_client.h`、`exchange/gate/trading/order_gateway_worker.h`、`exchange/bitget/trading/order_gateway_worker.h`、`tools/gate/gate_order_gateway.cpp`、`tools/bitget/bitget_order_gateway.cpp` |
-| Market data | `core/market_data/types.h`、`core/market_data/data_shm.h`、`core/market_data/realtime_data_reader.h`、`exchange/gate/market_data/*`、`exchange/binance/market_data/*`、`exchange/bitget/market_data/*`、`exchange/bitget/sbe/*` |
-| Gate OBU / OrderBook | `docs/gate_obu_order_book_notes.md`、`exchange/gate/sbe/generated/gate/messages/obu.hpp`、`exchange/gate/sbe/generated/gate/messages/orderBookUpdate.hpp`、`exchange/gate/sbe/message_dispatcher.h`、`core/market_data/types.h` |
-| DataReader recorder | `tools/market_data/data_reader_recorder.cpp`、`core/market_data/historical_data_reader.h`、`docs/data_reader_config.md` |
-| Fusion | `core/market_data/fusion/book_ticker.h`、`core/market_data/fusion/trade.h`、`core/market_data/fusion/fastest_route.h`、`core/market_data/fusion/thread.h`、`core/market_data/fusion/metadata.h`、`tools/gate/gate_data_fusion.cpp`、`tools/binance/binance_data_fusion.cpp`、`tools/bitget/bitget_data_fusion.cpp` |
-| LeadLag | `strategy/lead_lag/strategy.h`、`strategy/lead_lag/config.*`、`strategy/lead_lag/execution_state.h`、`tools/lead_lag/replay.cpp`、`tools/lead_lag/live_strategy.h` |
-| LeadLag reports | `scripts/lead_lag/analyze_order_detail.py`、`scripts/lead_lag/generate_live_report.py` |
-| Fill probe | `tools/gate/fill_probe/main.cpp`、`tools/gate/fill_probe/state_machine.*`、`docs/exchange_matching_fillability_notes.md` |
-| TUI | `monitor/tui/gate_account_tui.cpp`、`monitor/market_data/market_data_thread.*` |
+| WebSocket | `core/websocket/` |
+| Trading core | `core/trading/order_types.h`、`order_manager.h`、`trading_runtime.h`、`order_feedback_shm.h`、`order_gateway_*` |
+| Gate trading | `exchange/gate/trading/`、`tools/gate/gate_order_gateway.cpp` |
+| Bitget trading | `exchange/bitget/trading/`、`tools/bitget/bitget_order_gateway.cpp`、`tools/bitget/order_session_rtt_probe/` |
+| Market data | `core/market_data/`、`exchange/{gate,binance,bitget}/market_data/` |
+| Fusion | `core/market_data/fusion/`、`tools/{gate,binance,bitget}/*_data_fusion.cpp` |
+| DataReader/recorder | `core/market_data/*data_reader.h`、`tools/market_data/data_reader_*` |
+| LeadLag | `strategy/lead_lag/`、`tools/lead_lag/`、`scripts/lead_lag/` |
+| TUI | `monitor/` |
 
-## 常用验证命令
+## 常用验证
 
 ```bash
 ./build.sh debug
@@ -93,19 +84,17 @@ ctest --test-dir build/debug --output-on-failure
 git diff --check
 ```
 
-Focused checks:
+Focused：
 
 ```bash
-ctest --test-dir build/debug -R '(core_order_pool|strategy|gate_order|gate_submit|order_session_config|order_feedback|lead_lag|signal_csv_writer)' --output-on-failure
+ctest --test-dir build/debug -R '(gate_order|order_gateway|order_feedback|trading_runtime|lead_lag)' --output-on-failure
 ctest --test-dir build/debug -R '^bitget_(order|operation)' --output-on-failure
-ctest --test-dir build/debug -R '(gate_.*market_data|binance_.*market_data|data_session_config|data_reader_config|core_market_data|data_reader_recorder)' --output-on-failure
-ctest --test-dir build/debug -R '(gate_.*market_data|binance_.*market_data|bitget_.*market_data|bitget_sbe|data_session_config|data_reader_config|core_market_data|data_reader_recorder)' --output-on-failure
-ctest --test-dir build/debug -R '(core_market_data_shm|core_market_data_fusion|fusion_config|gate_data_fusion_config|binance_data_fusion_config|bitget_data_fusion_config|data_fusion_tool_support|data_session_config|websocket_config|fusion_cli_traits|book_ticker_fusion_cli|trade_fusion_cli)' --output-on-failure
+ctest --test-dir build/debug -R '(market_data|data_session|data_reader|fusion)' --output-on-failure
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/analyze_order_detail_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/generate_live_report_test.py
 ```
 
-Evaluation 边界修改后运行：
+Evaluation 边界修改后：
 
 ```bash
 rg '#include "evaluation/' core exchange tools
@@ -116,21 +105,21 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 下一步建议
 
-1. Bitget 下一步不要直接重复 live LeadLag。先按 `docs/bitget_trading_follow_up.md` 处理 P0：跨进程 `local_order_id/clientOid` 唯一性、REST baseline/reconcile、unknown window 和 run-end flat contract；之后才进行 `bitget_order_gateway` fanout=1 的 guarded 最小 IOC，最后再讨论 LeadLag 与多 route。UID/account limiter、endpoint failover、fast-fill 和通用化属于后续独立设计，不视为当前已完成能力。
-2. 新实盘启动仍按 `docs/lead_lag_live_operations_pipeline.md`，先 rebuild release binary，并串联 freshness preflight 与 taker-buffer slippage preflight。真实订单启动前做 REST read-only flat check、guard 配置复核和 run dir 隔离。
-3. Gate 多路 `OrderSession` 若继续推进，先读 `docs/gate_order_gateway_shm_design.md`、`docs/agent-handoff-gate-trade-architecture.md` 和 `docs/strategy_order_component_model.md`。下一步是 guarded 小额 smoke，用 live report / probe 量化 skew、Ack RTT 和 fillability；涉及订单链路取舍时先询问 Grill Me，默认建议 `grill-me-enhanced`。
-4. Fillability 复查先读 `docs/exchange_matching_fillability_notes.md` 和 `docs/lead_lag_cancelled_order_fillability_analysis.md`。旧 BTC probe 的 99% fill rate 不能外推到 LeadLag signal-conditioned fillability；新 probe 必须使用当次 live fusion SHM 和 scratch config。
-5. DataReader / recorder 相关变更先读 `docs/data_reader_config.md` 和 `docs/data_session_shm_communication_design.md`。typed binary header feed/type 是强约束；旧 raw artifact 不兼容。需要大 symbol universe 时使用 `config/instruments/usdt_future_universe.csv`，不要再引用旧 `usdt_futures_common_gate_binance_20260701.csv` 文件名。
-6. Gate OBU / OrderBook 继续讨论先读 `docs/gate_obu_order_book_notes.md`。下一步优先确认 published `OrderBook<10>` ABI：是否包含 `symbol_id` / `exchange`、count 类型、array-of-struct 还是 struct-of-arrays、是否继续用 `double` 发布；实现前先补 Gate OBU decoder / local book builder 单测，覆盖 `numInGroup` 不满 level、empty update、`size == 0` 删除和 gap resubscribe。
-7. Fusion / data session 继续优化前先区分行情 pipeline 证据和订单收益。Binance / Bitget 每路 source 对比只覆盖尾部 SHM 可见窗口；不要把行情 latency 或 microbench 直接宣称为 fillability / PnL。Bitget endpoint A/B 复测应沿用同构启动、同 symbols、BBO-only、同 recorder 结构和独立 CPU 绑定。
-8. Ack latency / RTT outlier 复现时用 private plain all-stage config，分开看 Ack RTT、Gate `x_in -> x_out`、上行 / 下行、socket timestamping 和 pcap residual。
-9. FixedOrderedSlotPool / `parallel=n` 迁移必须端到端同步 core order contract、order gateway SHM、LeadLag execution state、日志、report CSV、脚本测试和文档。不能停在 `parent_id` 与 `group_id` 混用的半迁移状态。
-10. CPU isolation、ENA IRQ 或 interrupt moderation 调整先读 `docs/runtime_cpu_allocation.md`，并用 A/B 证据记录 CPU、affinity、IRQ、kernel 和命令；没有 benchmark / profile / live smoke 证据时不宣称性能收益。
+1. Bitget trading：先完成跨进程唯一 ID 与 REST baseline/reconcile/unknown-window P0，再申请 fanout=1 guarded gateway IOC；
+   最后才讨论 LeadLag、多 route、account limiter、failover 或 fast-fill。
+2. Gate trading：下一步是 guarded gateway smoke，量化 route skew、Ack RTT、terminal feedback 与 fillability；先复核 account budget、
+   reconcile 和 liveness。
+3. LeadLag live：任何真实 run 按 `docs/lead_lag_live_operations.md`，使用新鲜 release/config、freshness/slippage preflight、
+   REST baseline/final flat 和隔离 run dir。
+4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
+   lifecycle 口径复查。
+5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
+6. 性能/CPU：先按 latency/CPU 文档记录环境并做 A/B；无 benchmark/profile/live 证据不宣称收益。
 
 ## 给下一个对话的提示
 
-先运行 `git status --short --branch` 和 `git log --oneline -8`，再读 `AGENTS.md`、`README.md`、本文件和 `docs/evaluation_support.md`；当前 branch / ahead / dirty 只信 `git status`。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。进入设计、架构、实现计划或关键交易链路取舍时先询问 Grill Me，关键交易链路建议 `grill-me-enhanced`。
+先运行 `git status --short --branch` 和 `git log --oneline -8`，再按 onboarding 顺序读取入口文档；branch/ahead/dirty 只信
+`git status`。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
 
-Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe 和 Bitget OrderGateway 已实现；HA / 高速 private endpoint 的真实 passive IOC 样本已取得 Ack+terminal feedback 双证据并完成 REST run-end flat。LeadLag 已能通过现有 lag metadata 构造 Bitget gateway command，但 gateway / LeadLag 路径尚未发送真实订单。下一步先读 `docs/bitget_trading_follow_up.md`，处理跨进程唯一 ID 和 REST reconcile 等 P0 阻断，再讨论 gateway fanout=1 smoke；不要把本次 dedicated-account flat、IP 白名单或余额结果当作永久事实。
-
-Bitget `OrderSession` direct operation response 不能当作 accepted / fill / cancel terminal；REST guard、reconcile、UID/account limiter、`fast-fill`、endpoint failover、跨进程唯一 ID 和可重复 live LeadLag 都尚未完成。若 `git status` 显示 `core/market_data/types.h` dirty，先读 diff；该文件是用户未提交的 `Orderbook` 草案，不是已完成 ABI。Gate OBU / OrderBook 仍只完成讨论和 quick probe；其他方向继续按本文件“方向索引”和“下一步建议”选择专题文档。
+Bitget 下一步先读 `docs/bitget_trading.md`，处理跨进程唯一 ID 与 REST reconcile P0；这些完成前不启动 gateway/LeadLag 真实订单。
+Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。

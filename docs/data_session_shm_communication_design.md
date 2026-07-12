@@ -7,6 +7,8 @@ strategy、recorder、TUI 和 probe 进程。Gate SBE data session、Binance raw
 Bitget UTA SBE `publicTrade` data session 还可以在同一个 SHM object 中发布标准化
 `aquila::Trade`。当前只支持固定大小 typed record，不引入通用 event ring 或 payload pool。
 
+本文只定义 typed SHM ABI、producer/reader protocol 与恢复边界；TOML 字段见 `docs/data_session_config.md`。
+
 ## 当前方案
 
 核心类型在 `core/market_data/data_shm.h`：

@@ -9,6 +9,8 @@
 
 这组字段的目标是让策略和下单模块先基于统一 schema 做价格格式化、数量格式化、基础上下限检查和交易所适配。更细的交易所特有规则应在后续 adapter 中保留原始字段或单独扩展。
 
+本文只定义 metadata schema 与交易所差异；具体策略或交易 runbook 不在这里维护。
+
 ## 当前脚本
 
 Gate USDT futures：
@@ -50,7 +52,7 @@ Gate / Binance / Bitget 行，主要服务默认 data session、Bitget smoke 和
 Binance 494 行和 Bitget 438 行；Bitget 行只为 Bitget UTA `USDT-FUTURES` 中存在且 `online` 的
 symbol 写入。该文件保留 `contract_multiplier`，适合 30-symbol / 大 universe run、fill probe 和
 需要 report notional / PnL 乘数的场景。旧
-`config/instruments/usdt_futures_common_gate_binance_20260701.csv` 已重命名，不应继续作为当前路径引用。
+旧文件名 `usdt_futures_common_gate_binance_20260701.csv` 已重命名，不应继续作为当前路径引用。
 
 ## 统一字段
 

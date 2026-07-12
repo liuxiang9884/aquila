@@ -4,6 +4,8 @@
 
 本文记录当前 32 个物理 core 机器上的实盘与测试 CPU 分区约定。后续启动实盘、行情测试、RTT probe、recorder、benchmark 或分析脚本时，必须先按本文检查 CPU 分配，避免测试任务抢占实盘 hot path。
 
+本文只记录 CPU/IRQ 运行约束和候选系统优化；具体交易、fusion 或 benchmark 流程链接对应领域事实源。
+
 当前机器为 32 个物理 core，CPU id `0-31`。默认分区：
 
 ```text

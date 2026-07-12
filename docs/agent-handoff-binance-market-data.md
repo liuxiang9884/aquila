@@ -2,7 +2,9 @@
 
 ## 当前范围
 
-本 handoff 主要覆盖 Binance USD-M futures public `bookTicker` 和 live-probed raw `trade` 行情；当前额外提供 USD-M futures 合约元数据查询脚本，用于启动期 symbol 配置和下单前字段准备。行情实现不覆盖 spot、COIN-M futures、私有频道或运行时动态订阅。
+本文是 Binance USD-M futures public `bookTicker`、raw `trade` 和合约元数据的当前事实源。它不覆盖 spot、
+COIN-M futures、私有频道或交易实现；通用 fusion/SHM 语义见 `docs/market_data_fusion.md` 和
+`docs/data_session_shm_communication_design.md`。
 
 官方文档结论：
 
@@ -82,7 +84,7 @@ Binance fastest-route fusion 已复用通用 `BookTicker` fusion runner，入口
 `config/market_data_fusion/binance_book_ticker_fusion_4sources.toml`。它读取 N 路 Binance source
 `BookTicker` SHM，按 `(symbol_id, BookTicker.id)` first arrival 输出 canonical Binance
 `BookTicker` SHM，并写 sidecar metadata bin；设计和 shadow 结果统一记录在
-`docs/gate_fastest_route_fusion_design.md` 和 `docs/gate_fastest_route_fusion_shadow_results.md`。
+`docs/market_data_fusion.md` 和 `docs/gate_fastest_route_fusion_shadow_results.md`。
 2026-06-14 的 30-symbol、`N=4`、30 分钟 release L4 shadow 中，Binance fusion p99 / p99.9
 相对最佳单路分别改善 `7.79%` / `39.75%`，fusion hop p99 为 `1.395us`，canonical fusion
 没有 `>5ms` 记录。由于 Binance source 走 TLS，当前 L4 不能拆出 `kernel_rx_ns`，只能排除 parser /

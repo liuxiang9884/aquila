@@ -1,5 +1,7 @@
 # LeadLag Live Report CSV 字段说明
 
+本文只定义当前 report CSV contract。运行流程见 `docs/lead_lag_live_operations.md`；历史分析结论不在本文件维护。
+
 本文档说明 LeadLag live report 目录中四个分析 CSV 的字段语义：
 
 - `signal.csv`

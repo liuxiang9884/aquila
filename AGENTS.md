@@ -33,7 +33,7 @@ docs/project_onboarding_guide.md
 docs/evaluation_support.md
 ```
 
-如果继续 Gate 交易架构，再读 `docs/agent-handoff-gate-trade-architecture.md`；如果继续 Binance 行情，再读
+如果继续 Gate 交易架构，再读 `docs/gate_trading.md`；如果继续 Binance 行情，再读
 `docs/agent-handoff-binance-market-data.md`；如果继续 data session / config，再读
 `docs/data_session_config.md`。读取后以 `docs/project_onboarding_guide.md` 的“最近已完成”“代码入口”
 和“下一步建议”为当前事实源，再结合 `git status` / `git log` 判断是否存在未提交或未 push 的工作。
@@ -49,6 +49,8 @@ docs/evaluation_support.md
 - 下一步建议必须可执行：按方向列出优先动作、先读哪些文档、从哪些代码入口接手；避免宽泛 backlog。
 - 不设置硬性大小上限；但如果 onboarding 明显膨胀，应优先压缩旧完成项和优化细节，而不是继续追加段落。
 - “给下一个对话的 onboarding 提示”也只保留下一轮真正需要的事实和索引，避免复制整段历史。
+- 已完成 implementation plan / spec 不是长期事实源；实现完成后先把仍有效的 contract、安全边界、验证入口和后续阻断迁移到
+  对应领域专题文档，再删除完成态 plan / spec。每个主题只保留一个当前事实源，避免 handoff、design、guide 和 plan 重复维护。
 
 ### 结束对话触发词
 
@@ -67,11 +69,11 @@ docs/evaluation_support.md
 
 ### 实盘交易操作触发词
 
-LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag_live_operations_pipeline.md`；`AGENTS.md` 只保留触发词索引。
+LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag_live_operations.md`；`AGENTS.md` 只保留触发词索引。
 
-- 当用户输入“启动实盘测试”、“启动 12 pair 跑一小时”、“开始 live smoke”、“启动交易端”、“跑一段实盘交易”或等价表达时，执行 `docs/lead_lag_live_operations_pipeline.md` 的“实盘交易启动 pipeline”。
-- 当用户输入“总结上一次实盘交易”、“生成上一次实盘 report”、“生成本次实盘 report”、“打包 report”或等价表达时，执行 `docs/lead_lag_live_operations_pipeline.md` 的“实盘交易 report pipeline”。
-- 真实订单启动前仍必须遵守 `docs/project_onboarding_guide.md`、`docs/lead_lag_live_runtime_plan.md` 和 `docs/lead_lag_reconcile_design.md` 中的当前阻断条件、测试顺序和安全边界。
+- 当用户输入“启动实盘测试”、“启动 12 pair 跑一小时”、“开始 live smoke”、“启动交易端”、“跑一段实盘交易”或等价表达时，执行 `docs/lead_lag_live_operations.md` 的“启动 Pipeline”。
+- 当用户输入“总结上一次实盘交易”、“生成上一次实盘 report”、“生成本次实盘 report”、“打包 report”或等价表达时，执行 `docs/lead_lag_live_operations.md` 的“Report Pipeline”。
+- 真实订单启动前仍必须遵守 `docs/project_onboarding_guide.md`、`docs/lead_lag_live_operations.md` 和 `docs/lead_lag_reconcile_design.md` 中的当前阻断条件、测试顺序和安全边界。
 
 ## 项目背景
 

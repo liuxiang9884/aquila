@@ -1,6 +1,7 @@
 # 交易所撮合与成交率测试记录
 
-本文记录我们围绕 Gate 撮合 / fillability 做过的实盘小实验、与 LeadLag live 结果的对比、当前推断和后续可验证做法。这里不作为实盘启动 runbook；真实下单仍按 `docs/lead_lag_live_operations_pipeline.md` 执行，并在启动前重新生成或复核当次 probe 配置。
+本文记录 Gate 撮合/fillability 的实盘证据、LeadLag 对比、cancelled-entry BBO 对齐口径和后续验证方法。它不是启动
+runbook；真实下单按 `docs/lead_lag_live_operations.md`，并在启动前生成或复核当次 probe 配置。
 
 ## 口径
 
@@ -187,6 +188,49 @@ BTC 的 Gate local freshness 并不差：
 - **中等置信度：** Gate 订单生命周期尾延迟和交易所侧处理窗口是 live fillability 的重要变量。证据是 BTC live `exchange_lifecycle_ns` 远高于 probe，但当前还没有同一时段、同一 signal 条件下的 A/B。
 - **中等置信度：** 4 路 IOC fanout 和更大的 order quantity 会降低相对 probe 的 fillability。需要同一触发条件下比较 `1 route` vs `4 route`、`min qty` vs live qty。
 - **低到中等置信度：** 单纯提高 open slippage 可以提高成交率，但可能恶化 adverse selection 下的 PnL。需要用 signal-conditioned sweep 验证，不能仅按 fill rate 决策。
+
+## Cancelled entry 的 BBO 对齐口径
+
+对完全未成交的 entry cancel，使用正式 `reports/<run_id>/order_detail.csv` 与同 run 的 lag canonical typed
+`BookTicker` snapshot。目标集合固定为：
+
+```text
+order_role == "entry"
+reduce_only == false
+status == kCancelled
+cumulative_filled_quantity == 0
+```
+
+Partial cancel、filled 和 rejected 分开分析。Live-growing recorder 必须先 snapshot，再按 symbol 拆分；不要直接读取仍在追加的尾部。
+当前拆分入口是 `scripts/market_data/split_book_ticker_by_symbol.py`，catalog 使用
+`config/instruments/usdt_future_universe.csv` 或本 run 归档 catalog。
+
+按 `signal_lag_id`、`ack_lag_id`、`accepted_lag_id`、`cancelled_lag_id` 定位 BBO。Exchange update id 不要求连续，
+查找使用区间包含而不是 `id+1`。主要窗口：
+
+```text
+signal -> cancel
+ack -> cancel
+accepted -> cancel  # 有 accepted id 时
+```
+
+以实际 IOC `order_price` 判定 BBO 视角 crossing：buy 存在 `ask_price <= order_price`，sell 存在
+`bid_price >= order_price`。同时记录 first-cross id/timestamp、窗口 best bid/ask、record count 和 missing stage id。
+
+固定分类：
+
+| Reason | 含义 |
+| --- | --- |
+| `no_cross` | signal 到 cancel 从未触达 order price |
+| `cross_before_ack_only` | 机会在 Ack 前消失 |
+| `cross_after_ack_before_cancel` | Ack 后触达，需查 source/quantity/lifecycle/matching |
+| `cross_after_accepted_before_cancel` | accepted 后触达，最高优先级复查 |
+| `missing_*_bbo` | Recorder/symbol/exchange/window 覆盖不足 |
+| `invalid_id_order` | Stage id 顺序异常，先复查日志和输入 |
+
+Canonical 无 cross 时再对 source0..N 使用相同 id 或 local-time window，区分
+`source_cross_canonical_no_cross` 与 `all_no_cross`。BBO 只有 touch，不包含 depth/queue；quantity 不足、public/private BBO 与
+matching-engine 状态差异都可能导致“BBO crossing 但未成交”。结论只能写“BBO 视角是否可成交”，不能写“交易所一定应该成交”。
 
 ## 讨论后的可验证做法
 
