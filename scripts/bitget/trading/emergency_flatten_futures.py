@@ -1,7 +1,10 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import argparse
+import json
 import math
 import sys
+import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -15,7 +18,13 @@ for script_dir in (BITGET_ACCOUNT_SCRIPT_DIR, BITGET_TRADING_SCRIPT_DIR):
         sys.path.insert(0, str(script_dir))
 
 import query_bitget_account as account  # noqa: E402
-from place_futures_order import ApiRequest, normalize_symbol  # noqa: E402
+from place_futures_order import (  # noqa: E402
+    ApiRequest,
+    SignedBitgetTradingClient,
+    build_cancel_order_request,
+    build_place_order_request,
+    normalize_symbol,
+)
 
 
 EXIT_OK = 0
@@ -86,6 +95,14 @@ class OpenOrder:
 
 
 Requester = Callable[[ApiRequest], Any]
+
+
+class SystemClock:
+    def time(self) -> float:
+        return time.time()
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
 
 
 def decimal_summary_text(value: Decimal) -> str:
@@ -335,6 +352,12 @@ def initial_summary(config: FlattenConfig) -> dict[str, Any]:
         },
         "initial_open_orders": [],
         "initial_positions": [],
+        "orders_cancelled": [],
+        "close_orders_submitted": [],
+        "post_close_open_orders": [],
+        "final_open_orders": [],
+        "final_positions": [],
+        "polls": 0,
         "errors": [],
     }
 
@@ -355,12 +378,151 @@ def _discovered_symbols(
     return symbols
 
 
+def cancel_open_orders(
+    requester: Requester,
+    category: str,
+    open_orders: list[OpenOrder],
+    phase: str,
+    summary: dict[str, Any],
+) -> None:
+    for order in open_orders:
+        request = build_cancel_order_request(
+            category=category,
+            symbol=order.symbol,
+            order_id=order.order_id or None,
+            client_oid=order.client_oid or None,
+        )
+        response = requester(request)
+        summary["orders_cancelled"].append(
+            {
+                "phase": phase,
+                "symbol": order.symbol,
+                "order_id": order.order_id,
+                "client_oid": order.client_oid,
+                "request": request.to_public_dict(),
+                "response": response,
+            }
+        )
+
+
+def build_close_client_oid(clock: Any, sequence: int) -> str:
+    epoch_ms = int(clock.time() * 1000)
+    client_oid = f"a-flat-{epoch_ms}-{sequence}"
+    if len(client_oid) > 32:
+        raise ValueError("emergency close clientOid exceeds 32 characters")
+    return client_oid
+
+
+def submit_reduce_only_close_orders(
+    requester: Requester,
+    category: str,
+    positions: list[PositionSnapshot],
+    clock: Any,
+    summary: dict[str, Any],
+) -> None:
+    sequence = 0
+    for position in positions:
+        if position.total == 0:
+            continue
+        side = "sell" if position.pos_side == "long" else "buy"
+        request = build_place_order_request(
+            category=category,
+            symbol=position.symbol,
+            qty=position.total,
+            side=side,
+            margin_mode=position.margin_mode,
+            client_oid=build_close_client_oid(clock, sequence),
+            reduce_only=True,
+        )
+        sequence += 1
+        response = requester(request)
+        summary["close_orders_submitted"].append(
+            {
+                "symbol": position.symbol,
+                "pos_side": position.pos_side,
+                "side": side,
+                "qty": decimal_summary_text(position.total),
+                "request": request.to_public_dict(),
+                "response": response,
+            }
+        )
+
+
+def poll_until_flat(
+    requester: Requester,
+    category: str,
+    symbols: list[str] | None,
+    timeout_sec: float,
+    interval_sec: float,
+    clock: Any,
+) -> tuple[bool, int, list[PositionSnapshot], list[OpenOrder]]:
+    deadline = clock.time() + timeout_sec
+    polls = 0
+    while True:
+        polls += 1
+        positions = query_positions(requester, category, symbols)
+        open_orders = query_open_orders(requester, category, symbols)
+        if final_state_is_flat(positions, open_orders):
+            return True, polls, positions, open_orders
+        now = clock.time()
+        if now >= deadline:
+            return False, polls, positions, open_orders
+        clock.sleep(min(interval_sec, max(0.0, deadline - now)))
+
+
+def finish_summary(
+    summary: dict[str, Any],
+    verified: bool,
+    polls: int,
+    final_positions: list[PositionSnapshot],
+    final_open_orders: list[OpenOrder],
+) -> tuple[int, dict[str, Any]]:
+    summary["polls"] = polls
+    summary["final_positions"] = _position_summaries(final_positions)
+    summary["final_open_orders"] = _open_order_summaries(final_open_orders)
+    if verified:
+        summary["ok"] = True
+        summary["result"] = "verified_flat"
+        return EXIT_OK, summary
+    summary["ok"] = False
+    summary["result"] = "not_flat"
+    summary["errors"].append(
+        "timeout or final verification still has positions or open orders"
+    )
+    return EXIT_NOT_FLAT, summary
+
+
+def verify_after_mutation_error(
+    config: FlattenConfig,
+    requester: Requester,
+    symbols: list[str] | None,
+    summary: dict[str, Any],
+    error: Exception,
+) -> tuple[int, dict[str, Any]]:
+    summary["errors"].append(str(error))
+    try:
+        final_positions = query_positions(requester, config.category, symbols)
+        final_open_orders = query_open_orders(requester, config.category, symbols)
+    except Exception as verify_error:
+        summary["errors"].append(f"final REST verification failed: {verify_error}")
+        summary["result"] = "rest_failed"
+        return EXIT_REST_FAILED, summary
+    summary["final_positions"] = _position_summaries(final_positions)
+    summary["final_open_orders"] = _open_order_summaries(final_open_orders)
+    if final_state_is_flat(final_positions, final_open_orders):
+        summary["ok"] = True
+        summary["result"] = "verified_flat_after_unknown"
+        return EXIT_OK, summary
+    summary["result"] = "rest_failed"
+    return EXIT_REST_FAILED, summary
+
+
 def run_emergency_flatten(
     config: FlattenConfig,
     requester: Requester,
     clock: Any | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    del clock
+    clock = SystemClock() if clock is None else clock
     try:
         validate_config(config)
     except ScopeRefused as exc:
@@ -373,7 +535,11 @@ def run_emergency_flatten(
     try:
         symbols = normalize_symbols(config.symbols) if config.scope == "allowlist" else None
         open_orders = query_open_orders(requester, config.category, symbols)
-        positions = query_positions(requester, config.category, symbols)
+        positions = (
+            query_positions(requester, config.category, symbols)
+            if config.dry_run or config.scope == "dedicated-account"
+            else []
+        )
         if config.scope == "dedicated-account":
             non_flat_positions = [position for position in positions if not position.flat()]
             if len(non_flat_positions) > config.max_position_count:
@@ -386,18 +552,76 @@ def run_emergency_flatten(
             scoped_symbols = symbols or []
         summary["scope"]["symbols"] = scoped_symbols
         summary["initial_open_orders"] = _open_order_summaries(open_orders)
-        summary["initial_positions"] = _position_summaries(positions)
+        if positions:
+            summary["initial_positions"] = _position_summaries(positions)
         summary["plan"]["open_orders_to_cancel"] = _open_order_summaries(
             open_orders
         )
-        summary["plan"]["positions_to_close"] = plan_positions_to_close(
-            positions
+        if positions:
+            summary["plan"]["positions_to_close"] = plan_positions_to_close(
+                positions
+            )
+        if config.dry_run:
+            summary["ok"] = True
+            summary["result"] = "dry_run"
+            return EXIT_OK, summary
+
+        try:
+            cancel_open_orders(
+                requester,
+                config.category,
+                open_orders,
+                "before_close",
+                summary,
+            )
+            positions = query_positions(requester, config.category, symbols)
+            summary["initial_positions"] = _position_summaries(positions)
+            positions_to_close = [
+                position for position in positions if not position.flat()
+            ]
+            summary["plan"]["positions_to_close"] = plan_positions_to_close(
+                positions_to_close
+            )
+            submit_reduce_only_close_orders(
+                requester,
+                config.category,
+                positions_to_close,
+                clock,
+                summary,
+            )
+            post_close_open_orders = query_open_orders(
+                requester, config.category, symbols
+            )
+            summary["post_close_open_orders"] = _open_order_summaries(
+                post_close_open_orders
+            )
+            cancel_open_orders(
+                requester,
+                config.category,
+                post_close_open_orders,
+                "after_close",
+                summary,
+            )
+        except Exception as mutation_error:
+            return verify_after_mutation_error(
+                config, requester, symbols, summary, mutation_error
+            )
+
+        verified, polls, final_positions, final_open_orders = poll_until_flat(
+            requester=requester,
+            category=config.category,
+            symbols=symbols,
+            timeout_sec=config.poll_timeout_sec,
+            interval_sec=config.poll_interval_sec,
+            clock=clock,
         )
-        if not config.dry_run:
-            raise ScopeRefused("mutating emergency flatten requires Task 3 implementation")
-        summary["ok"] = True
-        summary["result"] = "dry_run"
-        return EXIT_OK, summary
+        return finish_summary(
+            summary,
+            verified,
+            polls,
+            final_positions,
+            final_open_orders,
+        )
     except ScopeRefused as exc:
         summary["result"] = "scope_refused"
         summary["errors"].append(str(exc))
@@ -408,5 +632,75 @@ def run_emergency_flatten(
         return EXIT_REST_FAILED, summary
 
 
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Cancel Bitget UTA futures orders and flatten positions."
+    )
+    parser.add_argument("--api-key", default=account.DEFAULT_API_KEY_ENV)
+    parser.add_argument("--api-secret", default=account.DEFAULT_API_SECRET_ENV)
+    parser.add_argument(
+        "--api-passphrase", default=account.DEFAULT_API_PASSPHRASE_ENV
+    )
+    parser.add_argument("--base-url", default=account.DEFAULT_BASE_URL)
+    parser.add_argument("--timeout", type=float, default=account.DEFAULT_TIMEOUT)
+    parser.add_argument("--category", default=account.DEFAULT_CATEGORY)
+    parser.add_argument(
+        "--scope", choices=("allowlist", "dedicated-account"), default="allowlist"
+    )
+    parser.add_argument("--symbol", action="append", default=[])
+    parser.add_argument("--confirm-dedicated-account", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--poll-timeout-sec", type=float, default=DEFAULT_POLL_TIMEOUT_SEC
+    )
+    parser.add_argument(
+        "--poll-interval-sec", type=float, default=DEFAULT_POLL_INTERVAL_SEC
+    )
+    parser.add_argument(
+        "--max-position-count", type=int, default=DEFAULT_MAX_POSITION_COUNT
+    )
+    parser.add_argument(
+        "--pretty", action=argparse.BooleanOptionalAction, default=True
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    config = FlattenConfig(
+        category=args.category,
+        scope=args.scope,
+        symbols=args.symbol,
+        confirm_dedicated_account=args.confirm_dedicated_account,
+        dry_run=args.dry_run,
+        poll_timeout_sec=args.poll_timeout_sec,
+        poll_interval_sec=args.poll_interval_sec,
+        max_position_count=args.max_position_count,
+    )
+    credential_names = (args.api_key, args.api_secret, args.api_passphrase)
+    credential_values = [account.get_env_value(name) for name in credential_names]
+    for name, value in zip(credential_names, credential_values):
+        if value is None:
+            print(f"[FAIL] missing env var {name}", file=sys.stderr)
+            return EXIT_SCOPE_REFUSED
+    client = SignedBitgetTradingClient(
+        api_key=credential_values[0],
+        api_secret=credential_values[1],
+        api_passphrase=credential_values[2],
+        base_url=args.base_url,
+        timeout=args.timeout,
+    )
+    exit_code, summary = run_emergency_flatten(config, client.request_json)
+    print(
+        json.dumps(
+            summary,
+            ensure_ascii=False,
+            indent=2 if args.pretty else None,
+            sort_keys=True,
+        )
+    )
+    return exit_code
+
+
 if __name__ == "__main__":
-    raise SystemExit("CLI is added with the mutating Task 3 workflow")
+    sys.exit(main())

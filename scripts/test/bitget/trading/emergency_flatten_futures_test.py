@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+from collections import deque
 from decimal import Decimal
 from pathlib import Path
 
@@ -87,6 +88,63 @@ class RecordingRequester:
             return {"list": list(self.open_orders)}
         if request.endpoint_path.endswith("current-position"):
             return {"list": list(self.positions)}
+        raise AssertionError(f"unexpected request: {request}")
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1700000000.0
+        self.sleeps = []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class ScriptedRequester:
+    def __init__(
+        self,
+        open_order_results,
+        position_results,
+        cancel_error=None,
+        place_error=None,
+    ):
+        self.open_order_results = deque(open_order_results)
+        self.position_results = deque(position_results)
+        self.cancel_error = cancel_error
+        self.place_error = place_error
+        self.requests = []
+        self.mutating_topics = []
+        self.place_bodies = []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        if request.method == "GET" and request.endpoint_path.endswith(
+            "unfilled-orders"
+        ):
+            return {"list": self.open_order_results.popleft()}
+        if request.method == "GET" and request.endpoint_path.endswith(
+            "current-position"
+        ):
+            return {"list": self.position_results.popleft()}
+        if request.method == "POST" and request.endpoint_path.endswith(
+            "cancel-order"
+        ):
+            self.mutating_topics.append("cancel-order")
+            if self.cancel_error is not None:
+                raise self.cancel_error
+            return {"orderId": "11", "clientOid": "a-11"}
+        if request.method == "POST" and request.endpoint_path.endswith(
+            "place-order"
+        ):
+            self.mutating_topics.append("place-order")
+            self.place_bodies.append(__import__("json").loads(request.body))
+            if self.place_error is not None:
+                raise self.place_error
+            return {"orderId": "21", "clientOid": "a-flat-1700000000000-0"}
         raise AssertionError(f"unexpected request: {request}")
 
 
@@ -210,6 +268,156 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
         self.assertEqual(exit_code, flatten.EXIT_OK)
         self.assertEqual(summary["scope"]["symbols"], ["BTCUSDT", "ETHUSDT"])
+
+    def test_cancels_before_close_then_cancels_again_and_polls_flat(self):
+        requester = ScriptedRequester(
+            open_order_results=[
+                [order_data(order_id="11")],
+                [order_data(order_id="12")],
+                [],
+            ],
+            position_results=[
+                [position_data(total="0.001", available="0.001")],
+                [position_data(total="0", available="0", frozen="0")],
+            ],
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(summary["result"], "verified_flat")
+        self.assertEqual(
+            requester.mutating_topics,
+            ["cancel-order", "place-order", "cancel-order"],
+        )
+        close_body = requester.place_bodies[0]
+        self.assertEqual(close_body["side"], "sell")
+        self.assertEqual(close_body["qty"], "0.001")
+        self.assertEqual(close_body["reduceOnly"], "yes")
+        self.assertEqual(close_body["orderType"], "market")
+        self.assertEqual(summary["orders_cancelled"][0]["phase"], "before_close")
+        self.assertEqual(summary["orders_cancelled"][1]["phase"], "after_close")
+
+    def test_short_position_closes_with_reduce_only_buy(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], [], []],
+            position_results=[
+                [position_data(pos_side="short", total="0.002", available="0.002")],
+                [position_data(pos_side="short", total="0", available="0")],
+            ],
+        )
+
+        exit_code, _ = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(requester.place_bodies[0]["side"], "buy")
+        self.assertEqual(requester.place_bodies[0]["qty"], "0.002")
+
+    def test_flat_account_is_idempotent_and_sends_no_mutating_request(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], [], []],
+            position_results=[
+                [position_data(total="0", available="0")],
+                [position_data(total="0", available="0")],
+            ],
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(summary["result"], "verified_flat")
+        self.assertEqual(requester.mutating_topics, [])
+
+    def test_poll_timeout_returns_not_flat(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], [], [order_data(order_id="13")]],
+            position_results=[
+                [position_data(total="0", available="0")],
+                [position_data(total="0", available="0")],
+            ],
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False, poll_timeout_sec=0),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_NOT_FLAT)
+        self.assertEqual(summary["result"], "not_flat")
+        self.assertEqual(summary["final_open_orders"][0]["order_id"], "13")
+
+    def test_cancel_unknown_without_flat_proof_fails_closed(self):
+        requester = ScriptedRequester(
+            open_order_results=[
+                [order_data(order_id="11")],
+                [order_data(order_id="11")],
+            ],
+            position_results=[[position_data()]],
+            cancel_error=RuntimeError("cancel timeout"),
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False, poll_timeout_sec=0),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("cancel timeout", summary["errors"][0])
+
+    def test_cancel_unknown_with_independent_flat_proof_succeeds_stopped(self):
+        requester = ScriptedRequester(
+            open_order_results=[[order_data(order_id="11")], []],
+            position_results=[
+                [position_data(total="0", available="0", frozen="0")]
+            ],
+            cancel_error=RuntimeError("cancel timeout"),
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False, poll_timeout_sec=0),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["result"], "verified_flat_after_unknown")
+        self.assertIn("cancel timeout", summary["errors"][0])
+
+    def test_place_unknown_without_flat_proof_fails_closed(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], []],
+            position_results=[
+                [position_data(total="0.001", available="0.001")],
+                [position_data(total="0.001", available="0.001")],
+            ],
+            place_error=RuntimeError("place timeout"),
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False, poll_timeout_sec=0),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("place timeout", summary["errors"][0])
 
 
 if __name__ == "__main__":
