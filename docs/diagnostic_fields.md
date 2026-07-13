@@ -639,8 +639,10 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
-| `credentials.api_key_env` / `credentials.api_secret_env` / `credentials.source` | guard stdout | stable | env 名称 / `order_session_config` / `explicit` | 记录 guard REST preflight、final check 和 emergency flatten 使用的凭据 env 名称来源；只输出 env 名称，不输出 secret 值。 | guard 不再承担 REST account guard 时重审。 |
+| `credentials.api_key_env` / `credentials.api_secret_env` / `credentials.api_passphrase_env` / `credentials.source` | guard stdout | stable | env 名称 / `order_session_config` / `order_gateway_config` / `explicit` | 记录 guard REST preflight、final check 和 emergency flatten 使用的凭据 env 名称来源；只输出 env 名称，不输出 credential 值。 | guard 不再承担 REST account guard 时重审。 |
 | `runtime_isolation.strategy_lag_symbols` | Bitget guard stdout | stable | Bitget UTA symbol 列表 | 记录从本轮 strategy overlay 的 LeadLag 配置解析出的全部 Bitget lag symbols；启动前必须全部被 guard `--contract` 覆盖。 | Bitget live 不再使用外围 allowlist guard 时重审。 |
+| `runtime_isolation.processes.<role>.pid` / `start_time_ticks` / `executable` / `config` | Bitget guard stdout | stable | Linux PID / `/proc/<pid>/stat` start time / basename / config path | 绑定本轮 `gateway` 与 `feedback` 的进程身份，防止把复用 PID、错误 binary 或其他配置误当成当前交易栈；manifest 和 summary 不保存 credential 值。 | Bitget live 改用可提供等价代次证明的 supervisor 后重审。 |
+| `quiescence.ok` / `result` / `processes.<role>.result` / `phase` / `signals` / `error` | Bitget guard stdout | stable | bool / `stopped`、`stop_failed` / `grace`、`term`、`kill` / signal 名称 / 文本 | 记录 strategy 退出后、REST cleanup 前的 mutation barrier；只有 gateway 与 feedback 均证明停止才允许 final REST 或 emergency flatten。`error` 不包含 credential。 | 外部 supervisor 提供同等 fail-closed barrier 且 guard 不再直接停止进程时重审。 |
 | `affinity_profile` | guard stdout / report | experiment | config path 或 profile name | 记录本轮是否使用 runtime affinity overlay。 | affinity pipeline 稳定后可改为 stable。 |
 | `affinity_core_path` | guard stdout / report | experiment | generated config path | 记录 core-path 临时配置位置，便于复现。 | 如果生成配置不再保留可删除。 |
 | `owner_thread_cpu` | log / summary | planned | Linux CPU id | 对齐 `OrderSession` owner thread 和 runtime hook 执行 CPU。 | 被完整 scheduler trace 取代。 |

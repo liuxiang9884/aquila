@@ -49,6 +49,36 @@ class FakeFlattenRunner:
         return self.result
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class FakeBoundProcessController:
+    def __init__(self, alive, exit_on_signal=None):
+        self.alive = dict(alive)
+        self.exit_on_signal = dict(exit_on_signal or {})
+        self.signals = []
+
+    def is_running(self, role, binding):
+        del binding
+        return self.alive[role]
+
+    def send_signal(self, role, binding, signum):
+        del binding
+        self.signals.append((role, signum))
+        if self.exit_on_signal.get(role) == signum:
+            self.alive[role] = False
+
+
 class RecordingFlattenConfigBuilder:
     def __init__(self, result):
         self.result = result
@@ -140,6 +170,92 @@ def write_affinity_profile(path: Path) -> None:
 
 
 class RunLiveWithGuardTest(unittest.TestCase):
+    def test_bitget_quiescence_allows_gateway_self_exit_and_stops_feedback(self):
+        controller = FakeBoundProcessController(
+            {"gateway": False, "feedback": True},
+            {"feedback": guard.signal.SIGTERM},
+        )
+        manifest = {
+            "processes": {
+                "gateway": {"pid": 101, "start_time_ticks": 1},
+                "feedback": {"pid": 102, "start_time_ticks": 2},
+            }
+        }
+
+        ok, summary = guard.quiesce_bitget_processes(
+            manifest,
+            controller=controller,
+            clock=FakeClock(),
+            gateway_grace_sec=1.0,
+            term_timeout_sec=1.0,
+            kill_timeout_sec=1.0,
+            poll_interval_sec=0.1,
+        )
+
+        self.assertTrue(ok)
+        self.assertTrue(summary["ok"])
+        self.assertEqual(controller.signals, [("feedback", guard.signal.SIGTERM)])
+
+    def test_bitget_quiescence_escalates_gateway_to_kill(self):
+        controller = FakeBoundProcessController(
+            {"gateway": True, "feedback": True},
+            {
+                "gateway": guard.signal.SIGKILL,
+                "feedback": guard.signal.SIGTERM,
+            },
+        )
+
+        ok, summary = guard.quiesce_bitget_processes(
+            {
+                "processes": {
+                    "gateway": {"pid": 101, "start_time_ticks": 1},
+                    "feedback": {"pid": 102, "start_time_ticks": 2},
+                }
+            },
+            controller=controller,
+            clock=FakeClock(),
+            gateway_grace_sec=0.1,
+            term_timeout_sec=0.1,
+            kill_timeout_sec=0.1,
+            poll_interval_sec=0.1,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            controller.signals,
+            [
+                ("gateway", guard.signal.SIGTERM),
+                ("gateway", guard.signal.SIGKILL),
+                ("feedback", guard.signal.SIGTERM),
+            ],
+        )
+        self.assertEqual(summary["processes"]["gateway"]["result"], "stopped")
+
+    def test_bitget_quiescence_failure_is_fail_closed(self):
+        controller = FakeBoundProcessController(
+            {"gateway": True, "feedback": True},
+        )
+
+        ok, summary = guard.quiesce_bitget_processes(
+            {
+                "processes": {
+                    "gateway": {"pid": 101, "start_time_ticks": 1},
+                    "feedback": {"pid": 102, "start_time_ticks": 2},
+                }
+            },
+            controller=controller,
+            clock=FakeClock(),
+            gateway_grace_sec=0.1,
+            term_timeout_sec=0.1,
+            kill_timeout_sec=0.1,
+            poll_interval_sec=0.1,
+        )
+
+        self.assertFalse(ok)
+        self.assertFalse(summary["ok"])
+        self.assertEqual(summary["processes"]["gateway"]["result"], "still_running")
+        self.assertIn(("feedback", guard.signal.SIGKILL), controller.signals)
+
     def test_bitget_execute_rejects_nonproduction_rest_base_url(self):
         adapter = guard.GuardExchangeAdapter(
             name="bitget",
@@ -572,6 +688,140 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertEqual(summary["result"], "normal_exit_flat")
         self.assertEqual(process.commands, [config().strategy_command])
         self.assertEqual(flatten.calls, [])
+
+    def test_final_rest_check_runs_only_after_process_quiescence(self):
+        quiesced = False
+
+        def quiescer(clock):
+            del clock
+            nonlocal quiesced
+            quiesced = True
+            return True, {"ok": True, "result": "stopped"}
+
+        states = [flat_state(), flat_state()]
+
+        def state_reader(requester, settle, contracts):
+            del requester, settle, contracts
+            if len(states) == 1:
+                self.assertTrue(quiesced)
+            return states.pop(0)
+
+        exit_code, summary = guard.run_guarded_live(
+            config=config(),
+            requester=lambda request: {},
+            process_runner=FakeProcessRunner(guard.ProcessResult(exit_code=0)),
+            flatten_runner=FakeFlattenRunner(
+                (guard.FLATTEN_EXIT_OK, {"ok": True})
+            ),
+            state_reader=state_reader,
+            process_quiescer=quiescer,
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_OK)
+        self.assertTrue(summary["quiescence"]["ok"])
+
+    def test_quiescence_failure_blocks_final_rest_and_flatten(self):
+        state_reader = FakeStateReader([flat_state()])
+        flatten_runner = FakeFlattenRunner(
+            (guard.FLATTEN_EXIT_OK, {"ok": True, "result": "verified_flat"})
+        )
+
+        exit_code, summary = guard.run_guarded_live(
+            config=config(),
+            requester=lambda request: {},
+            process_runner=FakeProcessRunner(guard.ProcessResult(exit_code=1)),
+            flatten_runner=flatten_runner,
+            state_reader=state_reader,
+            process_quiescer=lambda clock: (
+                False,
+                {"ok": False, "result": "still_running"},
+            ),
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_EMERGENCY_FAILED)
+        self.assertEqual(summary["result"], "process_quiescence_failed")
+        self.assertEqual(len(state_reader.calls), 1)
+        self.assertEqual(flatten_runner.calls, [])
+
+    def test_strategy_exception_quiesces_before_flatten(self):
+        events = []
+
+        def raise_strategy(command):
+            del command
+            events.append("strategy")
+            raise RuntimeError("injected strategy failure")
+
+        def quiescer(clock):
+            del clock
+            events.append("quiescence")
+            return True, {"ok": True, "result": "stopped"}
+
+        def flatten_runner(flatten_config, requester, clock):
+            del flatten_config, requester, clock
+            events.append("flatten")
+            return guard.FLATTEN_EXIT_OK, {"ok": True, "result": "verified_flat"}
+
+        exit_code, summary = guard.run_guarded_live(
+            config=config(),
+            requester=lambda request: {},
+            process_runner=raise_strategy,
+            flatten_runner=flatten_runner,
+            state_reader=FakeStateReader([flat_state()]),
+            process_quiescer=quiescer,
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_EMERGENCY_FLATTENED)
+        self.assertEqual(events, ["strategy", "quiescence", "flatten"])
+        self.assertEqual(summary["result"], "strategy_exception_flattened")
+
+    def test_strategy_process_escalates_ignored_termination_to_kill(self):
+        handlers = {}
+        now = 0.0
+
+        class IgnoringChild:
+            def __init__(self):
+                self.terminate_calls = 0
+                self.kill_calls = 0
+
+            def poll(self):
+                return -guard.signal.SIGKILL if self.kill_calls else None
+
+            def terminate(self):
+                self.terminate_calls += 1
+
+            def kill(self):
+                self.kill_calls += 1
+
+        child = IgnoringChild()
+
+        def install_handler(signum, handler):
+            previous = handlers.get(signum, guard.signal.SIG_DFL)
+            handlers[signum] = handler
+            return previous
+
+        signal_delivered = False
+
+        def sleep(seconds):
+            nonlocal now, signal_delivered
+            if not signal_delivered:
+                signal_delivered = True
+                handlers[guard.signal.SIGTERM](guard.signal.SIGTERM, None)
+            now += seconds
+
+        with patch.object(guard.signal, "signal", side_effect=install_handler):
+            result = guard.run_strategy_process(
+                ["lead_lag_strategy"],
+                popen_factory=lambda command: child,
+                monotonic=lambda: now,
+                sleeper=sleep,
+                terminate_grace_sec=0.1,
+                poll_interval_sec=0.05,
+            )
+
+        self.assertEqual(child.terminate_calls, 1)
+        self.assertEqual(child.kill_calls, 1)
+        self.assertEqual(result.exit_code, -guard.signal.SIGKILL)
+        self.assertEqual(result.signal_number, guard.signal.SIGTERM)
 
     def test_nonzero_strategy_exit_runs_flatten_and_reports_handoff(self):
         process = FakeProcessRunner(

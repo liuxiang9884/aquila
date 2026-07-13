@@ -544,6 +544,12 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             ]
         )
 
+        def stop_fake_processes(command):
+            del command
+            (self.proc_root / str(self.gateway_pid) / "stat").unlink()
+            (self.proc_root / str(self.feedback_pid) / "stat").unlink()
+            return guard.ProcessResult(exit_code=0)
+
         with patch.dict(
             "os.environ",
             {
@@ -555,7 +561,7 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             exit_code, summary = guard.run_from_args(
                 args,
                 adapter=adapter,
-                process_runner=lambda command: guard.ProcessResult(exit_code=0),
+                process_runner=stop_fake_processes,
                 proc_root=self.proc_root,
             )
 
@@ -567,6 +573,7 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         self.assertEqual(
             summary["runtime_isolation"]["gateway_shm"], result.gateway_shm
         )
+        self.assertTrue(summary["quiescence"]["ok"])
 
     def test_mark_applied_rejects_feedback_credentials_mismatch(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)

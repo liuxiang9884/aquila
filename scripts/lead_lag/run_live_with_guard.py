@@ -8,6 +8,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -57,6 +58,12 @@ Requester = Callable[[Any], Any]
 ProcessRunner = Callable[[list[str]], "ProcessResult"]
 StateReader = Callable[[Requester, str, list[str]], "GuardState"]
 FlattenRunner = Callable[[flatten.FlattenConfig, Requester, Any], tuple[int, dict[str, Any]]]
+ProcessQuiescer = Callable[[Any], tuple[bool, dict[str, Any]]]
+
+BITGET_GATEWAY_GRACE_SEC = 1.0
+BITGET_PROCESS_TERM_TIMEOUT_SEC = 3.0
+BITGET_PROCESS_KILL_TIMEOUT_SEC = 1.0
+BITGET_PROCESS_POLL_INTERVAL_SEC = 0.05
 
 
 @dataclass(frozen=True)
@@ -124,7 +131,204 @@ class ProcessResult:
 
 
 class SystemClock(flatten.SystemClock):
-    pass
+    def time(self) -> float:
+        return time.monotonic()
+
+
+def _process_start_time_ticks(proc_root: Path, pid: int) -> int:
+    stat = (proc_root / str(pid) / "stat").read_text(encoding="utf-8")
+    command_end = stat.rfind(")")
+    if command_end < 0:
+        raise ValueError(f"process {pid} stat is malformed")
+    fields = stat[command_end + 1 :].split()
+    if len(fields) <= 19:
+        raise ValueError(f"process {pid} stat is malformed")
+    return int(fields[19])
+
+
+class LinuxBoundProcessController:
+    def __init__(self, proc_root: Path = Path("/proc")):
+        self.proc_root = proc_root.expanduser().resolve()
+
+    @staticmethod
+    def _identity(binding: dict[str, Any]) -> tuple[int, int]:
+        pid = binding.get("pid")
+        start_time_ticks = binding.get("start_time_ticks")
+        if (
+            isinstance(pid, bool)
+            or not isinstance(pid, int)
+            or pid <= 0
+            or isinstance(start_time_ticks, bool)
+            or not isinstance(start_time_ticks, int)
+            or start_time_ticks < 0
+        ):
+            raise ValueError("invalid bound process identity")
+        return pid, start_time_ticks
+
+    def is_running(self, role: str, binding: dict[str, Any]) -> bool:
+        del role
+        pid, expected_start_time = self._identity(binding)
+        try:
+            return (
+                _process_start_time_ticks(self.proc_root, pid)
+                == expected_start_time
+            )
+        except FileNotFoundError:
+            return False
+
+    def send_signal(
+        self,
+        role: str,
+        binding: dict[str, Any],
+        signum: int,
+    ) -> None:
+        del role
+        pid, expected_start_time = self._identity(binding)
+        try:
+            pidfd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return
+        try:
+            try:
+                actual_start_time = _process_start_time_ticks(self.proc_root, pid)
+            except FileNotFoundError:
+                return
+            if actual_start_time != expected_start_time:
+                return
+            try:
+                signal.pidfd_send_signal(pidfd, signum)
+            except ProcessLookupError:
+                return
+        finally:
+            os.close(pidfd)
+
+
+def _wait_bound_process_exit(
+    role: str,
+    binding: dict[str, Any],
+    timeout_sec: float,
+    poll_interval_sec: float,
+    controller: Any,
+    clock: Any,
+) -> bool:
+    if not controller.is_running(role, binding):
+        return True
+    deadline = clock.time() + timeout_sec
+    while clock.time() < deadline:
+        clock.sleep(min(poll_interval_sec, deadline - clock.time()))
+        if not controller.is_running(role, binding):
+            return True
+    return not controller.is_running(role, binding)
+
+
+def _quiesce_bound_process(
+    role: str,
+    binding: dict[str, Any],
+    controller: Any,
+    clock: Any,
+    grace_sec: float,
+    term_timeout_sec: float,
+    kill_timeout_sec: float,
+    poll_interval_sec: float,
+) -> tuple[bool, dict[str, Any]]:
+    process_summary: dict[str, Any] = {
+        "pid": binding.get("pid"),
+        "start_time_ticks": binding.get("start_time_ticks"),
+        "signals": [],
+        "result": "not_started",
+    }
+    try:
+        if _wait_bound_process_exit(
+            role,
+            binding,
+            grace_sec,
+            poll_interval_sec,
+            controller,
+            clock,
+        ):
+            process_summary["result"] = "stopped"
+            process_summary["phase"] = "grace"
+            return True, process_summary
+
+        controller.send_signal(role, binding, signal.SIGTERM)
+        process_summary["signals"].append("SIGTERM")
+        if _wait_bound_process_exit(
+            role,
+            binding,
+            term_timeout_sec,
+            poll_interval_sec,
+            controller,
+            clock,
+        ):
+            process_summary["result"] = "stopped"
+            process_summary["phase"] = "term"
+            return True, process_summary
+
+        controller.send_signal(role, binding, signal.SIGKILL)
+        process_summary["signals"].append("SIGKILL")
+        if _wait_bound_process_exit(
+            role,
+            binding,
+            kill_timeout_sec,
+            poll_interval_sec,
+            controller,
+            clock,
+        ):
+            process_summary["result"] = "stopped"
+            process_summary["phase"] = "kill"
+            return True, process_summary
+        process_summary["result"] = "still_running"
+        return False, process_summary
+    except Exception as exc:
+        process_summary["result"] = "error"
+        process_summary["error"] = f"{type(exc).__name__}: {exc}"
+        return False, process_summary
+
+
+def quiesce_bitget_processes(
+    manifest: dict[str, Any],
+    controller: Any | None = None,
+    clock: Any | None = None,
+    gateway_grace_sec: float = BITGET_GATEWAY_GRACE_SEC,
+    term_timeout_sec: float = BITGET_PROCESS_TERM_TIMEOUT_SEC,
+    kill_timeout_sec: float = BITGET_PROCESS_KILL_TIMEOUT_SEC,
+    poll_interval_sec: float = BITGET_PROCESS_POLL_INTERVAL_SEC,
+) -> tuple[bool, dict[str, Any]]:
+    controller = LinuxBoundProcessController() if controller is None else controller
+    clock = SystemClock() if clock is None else clock
+    processes = manifest.get("processes")
+    if not isinstance(processes, dict):
+        raise ValueError("runtime manifest missing process bindings")
+    summary: dict[str, Any] = {
+        "ok": False,
+        "result": "not_started",
+        "processes": {},
+    }
+    results: list[bool] = []
+    for role, grace_sec in (("gateway", gateway_grace_sec), ("feedback", 0.0)):
+        binding = processes.get(role)
+        if not isinstance(binding, dict):
+            summary["processes"][role] = {
+                "result": "error",
+                "error": "missing process binding",
+            }
+            results.append(False)
+            continue
+        stopped, process_summary = _quiesce_bound_process(
+            role,
+            binding,
+            controller,
+            clock,
+            grace_sec,
+            term_timeout_sec,
+            kill_timeout_sec,
+            poll_interval_sec,
+        )
+        summary["processes"][role] = process_summary
+        results.append(stopped)
+    summary["ok"] = all(results)
+    summary["result"] = "stopped" if summary["ok"] else "stop_failed"
+    return summary["ok"], summary
 
 
 def normalize_contracts(contracts: list[str]) -> list[str]:
@@ -977,23 +1181,47 @@ def get_runtime_guard_adapter(exchange: str) -> GuardExchangeAdapter:
     )
 
 
-def run_strategy_process(command: list[str]) -> ProcessResult:
-    process = subprocess.Popen(command)
+def run_strategy_process(
+    command: list[str],
+    popen_factory: Any = subprocess.Popen,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleeper: Callable[[float], None] = time.sleep,
+    terminate_grace_sec: float = 5.0,
+    kill_grace_sec: float = 1.0,
+    poll_interval_sec: float = 0.05,
+) -> ProcessResult:
+    process = popen_factory(command)
     received_signal: int | None = None
+    terminate_deadline: float | None = None
+    kill_deadline: float | None = None
     old_sigint = signal.getsignal(signal.SIGINT)
     old_sigterm = signal.getsignal(signal.SIGTERM)
 
     def stop_child(signum: int, frame: Any) -> None:
         del frame
-        nonlocal received_signal
-        received_signal = signum
-        if process.poll() is None:
+        nonlocal received_signal, terminate_deadline
+        if received_signal is None:
+            received_signal = signum
+        if terminate_deadline is None and process.poll() is None:
             process.terminate()
+            terminate_deadline = monotonic() + terminate_grace_sec
 
     signal.signal(signal.SIGINT, stop_child)
     signal.signal(signal.SIGTERM, stop_child)
     try:
-        exit_code = process.wait()
+        while True:
+            exit_code = process.poll()
+            if exit_code is not None:
+                break
+            now = monotonic()
+            if terminate_deadline is not None and now >= terminate_deadline:
+                process.kill()
+                terminate_deadline = None
+                kill_deadline = now + kill_grace_sec
+            if kill_deadline is not None and now >= kill_deadline:
+                exit_code = 128 + (received_signal or signal.SIGKILL)
+                break
+            sleeper(poll_interval_sec)
         if received_signal is not None and exit_code == 0:
             exit_code = 128 + received_signal
         return ProcessResult(exit_code=exit_code, signal_number=received_signal)
@@ -1021,6 +1249,7 @@ def initial_summary(config: GuardConfig) -> dict[str, Any]:
         "affinity": None,
         "preflight": None,
         "strategy": None,
+        "quiescence": None,
         "final_check": None,
         "flatten": None,
         "errors": [],
@@ -1097,6 +1326,7 @@ def run_guarded_live(
     flatten_config_builder: Callable[[GuardConfig], Any] = flatten_config_from_guard,
     state_reader: StateReader = query_guard_state,
     clock: Any | None = None,
+    process_quiescer: ProcessQuiescer | None = None,
 ) -> tuple[int, dict[str, Any]]:
     clock = SystemClock() if clock is None else clock
     config = GuardConfig(
@@ -1156,11 +1386,37 @@ def run_guarded_live(
         )
         return EXIT_PREFLIGHT_FAILED, summary
 
+    process_result: ProcessResult | None = None
+    process_exception: Exception | None = None
     try:
         process_result = process_runner(config.strategy_command)
+        summary["strategy"] = process_result.to_summary()
     except Exception as exc:
+        process_exception = exc
         summary["strategy"] = {"exception": f"{type(exc).__name__}: {exc}"}
         summary["errors"].append("strategy command raised before exit")
+
+    if process_quiescer is not None:
+        try:
+            quiesced, quiescence_summary = process_quiescer(clock)
+            summary["quiescence"] = quiescence_summary
+        except Exception as exc:
+            quiesced = False
+            summary["quiescence"] = {
+                "ok": False,
+                "result": "exception",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        if not quiesced:
+            summary["ok"] = False
+            summary["result"] = "process_quiescence_failed"
+            summary["exit_code"] = EXIT_EMERGENCY_FAILED
+            summary["errors"].append(
+                "cannot prove gateway and feedback processes are stopped"
+            )
+            return EXIT_EMERGENCY_FAILED, summary
+
+    if process_exception is not None:
         return run_flatten_for_reason(
             summary,
             config,
@@ -1171,7 +1427,8 @@ def run_guarded_live(
             flatten_config_builder,
         )
 
-    summary["strategy"] = process_result.to_summary()
+    if process_result is None:
+        raise RuntimeError("strategy process result missing without exception")
     if process_result.exit_code != 0:
         return run_flatten_for_reason(
             summary,
@@ -1518,6 +1775,30 @@ def run_from_args(
         )
         return EXIT_CONFIG_ERROR, summary
 
+    process_quiescer: ProcessQuiescer | None = None
+    if config.exchange == "bitget" and strategy_execute_requested(
+        config.strategy_command
+    ):
+        if config.runtime_isolation is None:
+            summary = initial_summary(config)
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append("Bitget process quiescence requires manifest")
+            return EXIT_CONFIG_ERROR, summary
+        runtime_isolation = config.runtime_isolation
+        bound_process_controller = LinuxBoundProcessController(proc_root)
+
+        def stop_bound_bitget_processes(
+            current_clock: Any,
+        ) -> tuple[bool, dict[str, Any]]:
+            return quiesce_bitget_processes(
+                runtime_isolation,
+                controller=bound_process_controller,
+                clock=current_clock,
+            )
+
+        process_quiescer = stop_bound_bitget_processes
+
     return run_guarded_live(
         config=config,
         requester=requester,
@@ -1526,6 +1807,7 @@ def run_from_args(
         flatten_config_builder=adapter.flatten_config_builder,
         state_reader=adapter.state_reader,
         clock=clock,
+        process_quiescer=process_quiescer,
     )
 
 
