@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from guard_exchange_adapter import GuardCredentialEnvNames
+
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[1]
 GATE_ACCOUNT_SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "account"
@@ -54,6 +56,7 @@ class GuardConfig:
     settle: str
     contracts: list[str]
     strategy_command: list[str]
+    exchange: str = "gate"
     poll_timeout_sec: float = flatten.DEFAULT_POLL_TIMEOUT_SEC
     poll_interval_sec: float = flatten.DEFAULT_POLL_INTERVAL_SEC
     run_id: str | None = None
@@ -108,13 +111,6 @@ class ProcessResult:
             "exit_code": self.exit_code,
             "signal_number": self.signal_number,
         }
-
-
-@dataclass(frozen=True)
-class GuardCredentialEnvNames:
-    api_key_env: str
-    api_secret_env: str
-    source: str
 
 
 class SystemClock(flatten.SystemClock):
@@ -374,6 +370,7 @@ def strategy_order_credential_env_names(
         return GuardCredentialEnvNames(
             api_key_env=api_key_env,
             api_secret_env=api_secret_env,
+            api_passphrase_env=None,
             source="order_session_config",
         )
     if has_order_gateway:
@@ -386,6 +383,7 @@ def strategy_order_credential_env_names(
         return GuardCredentialEnvNames(
             api_key_env=api_key_env,
             api_secret_env=api_secret_env,
+            api_passphrase_env=None,
             source="order_gateway_config",
         )
     return None
@@ -413,6 +411,7 @@ def resolve_guard_credential_env_names(
         return GuardCredentialEnvNames(
             api_key_env=explicit_api_key,
             api_secret_env=explicit_api_secret,
+            api_passphrase_env=None,
             source="explicit",
         )
 
@@ -663,6 +662,7 @@ def initial_summary(config: GuardConfig) -> dict[str, Any]:
     return {
         "ok": False,
         "result": "not_started",
+        "exchange": config.exchange,
         "run_id": config.run_id,
         "settle": flatten.normalize_settle(config.settle),
         "contracts": list(config.contracts),
@@ -688,9 +688,10 @@ def run_flatten_for_reason(
     clock: Any,
     reason: str,
     flatten_runner: FlattenRunner,
+    flatten_config_builder: Callable[[GuardConfig], Any],
 ) -> tuple[int, dict[str, Any]]:
     flatten_exit_code, flatten_summary = flatten_runner(
-        flatten_config_from_guard(config), requester, clock
+        flatten_config_builder(config), requester, clock
     )
     summary["flatten"] = flatten_summary
     if flatten_exit_code == flatten.EXIT_OK and flatten_summary.get("ok") is True:
@@ -734,6 +735,7 @@ def run_guarded_live(
     requester: Requester,
     process_runner: ProcessRunner = run_strategy_process,
     flatten_runner: FlattenRunner = run_emergency_flatten,
+    flatten_config_builder: Callable[[GuardConfig], Any] = flatten_config_from_guard,
     state_reader: StateReader = query_guard_state,
     clock: Any | None = None,
 ) -> tuple[int, dict[str, Any]]:
@@ -742,6 +744,7 @@ def run_guarded_live(
         settle=config.settle,
         contracts=normalize_contracts(config.contracts),
         strategy_command=list(config.strategy_command),
+        exchange=config.exchange,
         poll_timeout_sec=config.poll_timeout_sec,
         poll_interval_sec=config.poll_interval_sec,
         run_id=config.run_id,
@@ -798,13 +801,25 @@ def run_guarded_live(
         summary["strategy"] = {"exception": f"{type(exc).__name__}: {exc}"}
         summary["errors"].append("strategy command raised before exit")
         return run_flatten_for_reason(
-            summary, config, requester, clock, "strategy_exception", flatten_runner
+            summary,
+            config,
+            requester,
+            clock,
+            "strategy_exception",
+            flatten_runner,
+            flatten_config_builder,
         )
 
     summary["strategy"] = process_result.to_summary()
     if process_result.exit_code != 0:
         return run_flatten_for_reason(
-            summary, config, requester, clock, "strategy_exit", flatten_runner
+            summary,
+            config,
+            requester,
+            clock,
+            "strategy_exit",
+            flatten_runner,
+            flatten_config_builder,
         )
 
     try:
@@ -813,12 +828,24 @@ def run_guarded_live(
     except Exception as exc:
         summary["errors"].append(f"final REST check failed: {type(exc).__name__}: {exc}")
         return run_flatten_for_reason(
-            summary, config, requester, clock, "final_check_rest_failed", flatten_runner
+            summary,
+            config,
+            requester,
+            clock,
+            "final_check_rest_failed",
+            flatten_runner,
+            flatten_config_builder,
         )
 
     if not final_state.flat():
         return run_flatten_for_reason(
-            summary, config, requester, clock, "final_check", flatten_runner
+            summary,
+            config,
+            requester,
+            clock,
+            "final_check",
+            flatten_runner,
+            flatten_config_builder,
         )
 
     summary["ok"] = True
@@ -831,6 +858,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run LeadLag live orders behind REST preflight and stop-and-flat guardrails."
     )
+    parser.add_argument("--exchange", choices=("gate", "bitget"), default="gate")
     parser.add_argument("--api-key")
     parser.add_argument("--api-secret")
     parser.add_argument("--base-url", default=account.DEFAULT_BASE_URL)
@@ -889,6 +917,7 @@ def config_from_args(args: argparse.Namespace) -> GuardConfig:
         settle=args.settle,
         contracts=normalize_contracts(args.contract),
         strategy_command=list(args.strategy_command),
+        exchange=args.exchange,
         poll_timeout_sec=args.poll_timeout_sec,
         poll_interval_sec=args.poll_interval_sec,
         run_id=args.run_id,
@@ -917,6 +946,16 @@ def missing_env_summary(config: GuardConfig, env_name: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     config = config_from_args(args)
+
+    if config.exchange != "gate":
+        summary = initial_summary(config)
+        summary["result"] = "config_error"
+        summary["exit_code"] = EXIT_CONFIG_ERROR
+        summary["errors"].append(
+            f"unsupported guard exchange before adapter registration: {config.exchange}"
+        )
+        print_summary(summary, args.pretty)
+        return EXIT_CONFIG_ERROR
 
     if args.prepare_affinity_only:
         exit_code, summary = prepare_affinity_only(config)

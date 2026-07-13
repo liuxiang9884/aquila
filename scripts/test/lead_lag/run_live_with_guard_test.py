@@ -46,6 +46,16 @@ class FakeFlattenRunner:
         return self.result
 
 
+class RecordingFlattenConfigBuilder:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, config):
+        self.calls.append(config)
+        return self.result
+
+
 def flat_state(contract="BTC_USDT"):
     return guard.GuardState(
         positions=[
@@ -245,6 +255,27 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertEqual(flatten.calls[0].contracts, ["BTC_USDT"])
         self.assertFalse(flatten.calls[0].dry_run)
 
+    def test_nonzero_exit_uses_injected_flatten_config_builder(self):
+        flatten_config = {"exchange": "test"}
+        builder = RecordingFlattenConfigBuilder(flatten_config)
+        flatten_runner = FakeFlattenRunner(
+            (guard.FLATTEN_EXIT_OK, {"ok": True, "result": "verified_flat"})
+        )
+
+        exit_code, summary = guard.run_guarded_live(
+            config=config(),
+            requester=lambda request: {},
+            process_runner=FakeProcessRunner(guard.ProcessResult(exit_code=1)),
+            flatten_runner=flatten_runner,
+            flatten_config_builder=builder,
+            state_reader=FakeStateReader([flat_state()]),
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_EMERGENCY_FLATTENED)
+        self.assertEqual(builder.calls, [config()])
+        self.assertEqual(flatten_runner.calls, [flatten_config])
+        self.assertEqual(summary["exchange"], "gate")
+
     def test_normal_exit_with_nonflat_final_state_runs_flatten(self):
         process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
         flatten = FakeFlattenRunner(
@@ -330,6 +361,8 @@ class RunLiveWithGuardTest(unittest.TestCase):
         )
         config = guard.config_from_args(parsed)
 
+        self.assertEqual(parsed.exchange, "gate")
+        self.assertEqual(config.exchange, "gate")
         self.assertEqual(config.contracts, ["BTC_USDT"])
         self.assertEqual(config.poll_timeout_sec, 5.0)
         self.assertEqual(
