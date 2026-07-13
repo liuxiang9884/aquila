@@ -139,6 +139,35 @@ def write_affinity_profile(path: Path) -> None:
 
 
 class RunLiveWithGuardTest(unittest.TestCase):
+    def test_bitget_execute_requires_runtime_manifest_before_credentials(self):
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=lambda **kwargs: self.fail(
+                "credentials must not be read before run isolation validation"
+            ),
+            requester_factory=lambda *args: self.fail("requester must not be created"),
+            state_reader=FakeStateReader([]),
+            flatten_config_builder=RecordingFlattenConfigBuilder({}),
+            flatten_runner=FakeFlattenRunner((0, {})),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+                "--execute",
+            ]
+        )
+
+        exit_code, summary = guard.run_from_args(args, adapter=adapter)
+
+        self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
+        self.assertEqual(summary["result"], "config_error")
+        self.assertIn("--runtime-manifest", summary["errors"][0])
+
     def test_run_from_args_uses_selected_adapter_and_passphrase(self):
         resolver_calls = []
         requester_calls = []
@@ -187,7 +216,6 @@ class RunLiveWithGuardTest(unittest.TestCase):
                 "BTC_USDT",
                 "--",
                 "lead_lag_strategy",
-                "--execute",
             ]
         )
 
@@ -216,7 +244,7 @@ class RunLiveWithGuardTest(unittest.TestCase):
                     "explicit_api_key": "BITGET_TEST_KEY",
                     "explicit_api_secret": "BITGET_TEST_SECRET",
                     "explicit_api_passphrase": "BITGET_TEST_PASSPHRASE",
-                    "strategy_command": ["lead_lag_strategy", "--execute"],
+                    "strategy_command": ["lead_lag_strategy"],
                 }
             ],
         )

@@ -1169,6 +1169,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Pretty-print JSON summary.",
     )
     parser.add_argument("--run-id")
+    parser.add_argument("--runtime-manifest", type=Path)
     parser.add_argument("--affinity-profile", type=Path)
     parser.add_argument("--affinity-output-dir", type=Path)
     parser.add_argument("--affinity-gate-market-config", type=Path)
@@ -1233,6 +1234,15 @@ def default_rest_base_url(exchange: str) -> str:
     raise ValueError(f"unsupported guard exchange: {exchange}")
 
 
+def validate_bitget_run_isolation(
+    manifest_path: Path,
+    strategy_command: list[str],
+) -> dict[str, Any]:
+    from prepare_bitget_live_run import validate_bitget_run_isolation as validate
+
+    return validate(manifest_path, strategy_command)
+
+
 def run_from_args(
     args: argparse.Namespace,
     adapter: GuardExchangeAdapter | None = None,
@@ -1243,8 +1253,41 @@ def run_from_args(
     if args.prepare_affinity_only:
         return prepare_affinity_only(config)
 
+    if config.exchange == "bitget" and "--execute" in config.strategy_command:
+        if args.runtime_manifest is None:
+            summary = initial_summary(config)
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append(
+                "Bitget --execute requires --runtime-manifest for fresh-run isolation"
+            )
+            return EXIT_CONFIG_ERROR, summary
+        try:
+            manifest = validate_bitget_run_isolation(
+                args.runtime_manifest,
+                config.strategy_command,
+            )
+            if config.run_id is not None and config.run_id != manifest["run_id"]:
+                raise ValueError(
+                    f"--run-id {config.run_id} does not match runtime manifest "
+                    f"{manifest['run_id']}"
+                )
+            config = replace(config, run_id=manifest["run_id"])
+        except Exception as exc:
+            summary = initial_summary(config)
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append(
+                f"run isolation validation failed: {type(exc).__name__}: {exc}"
+            )
+            return EXIT_CONFIG_ERROR, summary
+
     try:
-        adapter = get_runtime_guard_adapter(config.exchange) if adapter is None else adapter
+        adapter = (
+            get_runtime_guard_adapter(config.exchange)
+            if adapter is None
+            else adapter
+        )
         if adapter.name != config.exchange:
             raise ValueError(
                 f"adapter {adapter.name} does not match exchange {config.exchange}"
