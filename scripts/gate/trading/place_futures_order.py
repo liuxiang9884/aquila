@@ -12,20 +12,31 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
-if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
-
-from query_gate_account import (
-    DEFAULT_API_KEY_ENV,
-    DEFAULT_API_SECRET_ENV,
-    DEFAULT_BASE_URL,
-    DEFAULT_TIMEOUT,
-    build_signature_headers,
-    get_env_value,
-    request_path,
-    request_url,
-)
+if __package__:
+    from gate.account.query_gate_account import (
+        DEFAULT_API_KEY_ENV,
+        DEFAULT_API_SECRET_ENV,
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT,
+        build_signature_headers,
+        get_env_value,
+        request_path,
+        request_url,
+    )
+else:
+    GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+    if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
+    from query_gate_account import (
+        DEFAULT_API_KEY_ENV,
+        DEFAULT_API_SECRET_ENV,
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT,
+        build_signature_headers,
+        get_env_value,
+        request_path,
+        request_url,
+    )
 
 
 USER_AGENT = "aquila-gate-futures-order-test/1.0"

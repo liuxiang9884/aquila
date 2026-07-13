@@ -11,22 +11,35 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-BITGET_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
-if str(BITGET_ACCOUNT_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(BITGET_ACCOUNT_SCRIPT_DIR))
-
-from query_bitget_account import (  # noqa: E402
-    DEFAULT_API_KEY_ENV,
-    DEFAULT_API_PASSPHRASE_ENV,
-    DEFAULT_API_SECRET_ENV,
-    DEFAULT_BASE_URL,
-    DEFAULT_TIMEOUT,
-    build_signature_headers,
-    get_env_value,
-    normalize_category,
-    request_path,
-    request_url,
-)
+if __package__:
+    from bitget.account.query_bitget_account import (  # noqa: E402
+        DEFAULT_API_KEY_ENV,
+        DEFAULT_API_PASSPHRASE_ENV,
+        DEFAULT_API_SECRET_ENV,
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT,
+        build_signature_headers,
+        get_env_value,
+        normalize_category,
+        request_path,
+        request_url,
+    )
+else:
+    BITGET_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+    if str(BITGET_ACCOUNT_SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(BITGET_ACCOUNT_SCRIPT_DIR))
+    from query_bitget_account import (  # noqa: E402
+        DEFAULT_API_KEY_ENV,
+        DEFAULT_API_PASSPHRASE_ENV,
+        DEFAULT_API_SECRET_ENV,
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT,
+        build_signature_headers,
+        get_env_value,
+        normalize_category,
+        request_path,
+        request_url,
+    )
 
 
 USER_AGENT = "aquila-bitget-uta-trading/1.0"

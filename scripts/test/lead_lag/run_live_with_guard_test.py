@@ -1,11 +1,13 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import os
 import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
+from unittest.mock import patch
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "lead_lag"
 if str(SCRIPT_DIR) not in sys.path:
@@ -137,6 +139,143 @@ def write_affinity_profile(path: Path) -> None:
 
 
 class RunLiveWithGuardTest(unittest.TestCase):
+    def test_run_from_args_uses_selected_adapter_and_passphrase(self):
+        resolver_calls = []
+        requester_calls = []
+        requester = object()
+
+        def resolve_credentials(**kwargs):
+            resolver_calls.append(kwargs)
+            return guard.GuardCredentialEnvNames(
+                api_key_env="BITGET_TEST_KEY",
+                api_secret_env="BITGET_TEST_SECRET",
+                api_passphrase_env="BITGET_TEST_PASSPHRASE",
+                source="explicit",
+            )
+
+        def make_requester(api_key, api_secret, api_passphrase, base_url, timeout):
+            requester_calls.append(
+                (api_key, api_secret, api_passphrase, base_url, timeout)
+            )
+            return requester
+
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=resolve_credentials,
+            requester_factory=make_requester,
+            state_reader=FakeStateReader([flat_state(), flat_state()]),
+            flatten_config_builder=RecordingFlattenConfigBuilder({}),
+            flatten_runner=FakeFlattenRunner(
+                (guard.FLATTEN_EXIT_OK, {"ok": True, "result": "verified_flat"})
+            ),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--api-key",
+                "BITGET_TEST_KEY",
+                "--api-secret",
+                "BITGET_TEST_SECRET",
+                "--api-passphrase",
+                "BITGET_TEST_PASSPHRASE",
+                "--base-url",
+                "https://bitget.invalid",
+                "--timeout",
+                "1.5",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+                "--execute",
+            ]
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "BITGET_TEST_KEY": "key-value",
+                "BITGET_TEST_SECRET": "secret-value",
+                "BITGET_TEST_PASSPHRASE": "passphrase-value",
+            },
+            clear=False,
+        ):
+            exit_code, summary = guard.run_from_args(
+                args,
+                adapter=adapter,
+                process_runner=FakeProcessRunner(guard.ProcessResult(exit_code=0)),
+            )
+
+        self.assertEqual(exit_code, guard.EXIT_OK)
+        self.assertEqual(summary["exchange"], "bitget")
+        self.assertEqual(summary["credentials"]["api_passphrase_env"], "BITGET_TEST_PASSPHRASE")
+        self.assertEqual(
+            resolver_calls,
+            [
+                {
+                    "explicit_api_key": "BITGET_TEST_KEY",
+                    "explicit_api_secret": "BITGET_TEST_SECRET",
+                    "explicit_api_passphrase": "BITGET_TEST_PASSPHRASE",
+                    "strategy_command": ["lead_lag_strategy", "--execute"],
+                }
+            ],
+        )
+        self.assertEqual(
+            requester_calls,
+            [
+                (
+                    "key-value",
+                    "secret-value",
+                    "passphrase-value",
+                    "https://bitget.invalid",
+                    1.5,
+                )
+            ],
+        )
+
+    def test_run_from_args_rejects_empty_passphrase_env(self):
+        credentials = guard.GuardCredentialEnvNames(
+            api_key_env="BITGET_TEST_KEY",
+            api_secret_env="BITGET_TEST_SECRET",
+            api_passphrase_env="BITGET_TEST_PASSPHRASE",
+            source="explicit",
+        )
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=lambda **kwargs: credentials,
+            requester_factory=lambda *args: self.fail(
+                "requester must not be created with an empty passphrase"
+            ),
+            state_reader=FakeStateReader([]),
+            flatten_config_builder=RecordingFlattenConfigBuilder({}),
+            flatten_runner=FakeFlattenRunner((0, {})),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+            ]
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "BITGET_TEST_KEY": "key-value",
+                "BITGET_TEST_SECRET": "secret-value",
+                "BITGET_TEST_PASSPHRASE": "",
+            },
+            clear=False,
+        ):
+            exit_code, summary = guard.run_from_args(args, adapter=adapter)
+
+        self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
+        self.assertEqual(summary["result"], "config_error")
+        self.assertIn("BITGET_TEST_PASSPHRASE", summary["errors"][0])
+
     def test_query_guard_state_treats_position_not_found_as_flat_contract(self):
         calls = []
 
@@ -374,6 +513,42 @@ class RunLiveWithGuardTest(unittest.TestCase):
                 "10",
             ],
         )
+
+    def test_parse_args_accepts_bitget_passphrase(self):
+        parsed = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--api-key",
+                "BITGET_TEST_KEY",
+                "--api-secret",
+                "BITGET_TEST_SECRET",
+                "--api-passphrase",
+                "BITGET_TEST_PASSPHRASE",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+                "--execute",
+            ]
+        )
+
+        self.assertEqual(parsed.api_passphrase, "BITGET_TEST_PASSPHRASE")
+        self.assertEqual(guard.config_from_args(parsed).exchange, "bitget")
+
+    def test_parse_args_defers_default_base_url_to_exchange_adapter(self):
+        parsed = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+            ]
+        )
+
+        self.assertIsNone(parsed.base_url)
 
     def test_resolves_guard_credentials_from_strategy_order_session_config(self):
         with TemporaryDirectory() as tmp:

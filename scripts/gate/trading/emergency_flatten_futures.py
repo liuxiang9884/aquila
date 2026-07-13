@@ -10,18 +10,27 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
-if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
-
-import query_gate_account as account
-from place_futures_order import (
-    ApiRequest,
-    RawJsonNumber,
-    SignedGateTradingClient,
-    build_cancel_order_request,
-    build_place_order_request,
-)
+if __package__:
+    from gate.account import query_gate_account as account
+    from gate.trading.place_futures_order import (
+        ApiRequest,
+        RawJsonNumber,
+        SignedGateTradingClient,
+        build_cancel_order_request,
+        build_place_order_request,
+    )
+else:
+    GATE_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+    if str(GATE_ACCOUNT_SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(GATE_ACCOUNT_SCRIPT_DIR))
+    import query_gate_account as account
+    from place_futures_order import (
+        ApiRequest,
+        RawJsonNumber,
+        SignedGateTradingClient,
+        build_cancel_order_request,
+        build_place_order_request,
+    )
 
 
 EXIT_OK = 0

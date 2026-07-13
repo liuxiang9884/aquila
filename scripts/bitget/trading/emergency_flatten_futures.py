@@ -11,20 +11,29 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-BITGET_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
-BITGET_TRADING_SCRIPT_DIR = Path(__file__).resolve().parent
-for script_dir in (BITGET_ACCOUNT_SCRIPT_DIR, BITGET_TRADING_SCRIPT_DIR):
-    if str(script_dir) not in sys.path:
-        sys.path.insert(0, str(script_dir))
-
-import query_bitget_account as account  # noqa: E402
-from place_futures_order import (  # noqa: E402
-    ApiRequest,
-    SignedBitgetTradingClient,
-    build_cancel_order_request,
-    build_place_order_request,
-    normalize_symbol,
-)
+if __package__:
+    from bitget.account import query_bitget_account as account  # noqa: E402
+    from bitget.trading.place_futures_order import (  # noqa: E402
+        ApiRequest,
+        SignedBitgetTradingClient,
+        build_cancel_order_request,
+        build_place_order_request,
+        normalize_symbol,
+    )
+else:
+    BITGET_ACCOUNT_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "account"
+    BITGET_TRADING_SCRIPT_DIR = Path(__file__).resolve().parent
+    for script_dir in (BITGET_ACCOUNT_SCRIPT_DIR, BITGET_TRADING_SCRIPT_DIR):
+        if str(script_dir) not in sys.path:
+            sys.path.insert(0, str(script_dir))
+    import query_bitget_account as account  # noqa: E402
+    from place_futures_order import (  # noqa: E402
+        ApiRequest,
+        SignedBitgetTradingClient,
+        build_cancel_order_request,
+        build_place_order_request,
+        normalize_symbol,
+    )
 
 
 EXIT_OK = 0

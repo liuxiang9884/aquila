@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import re
 import signal
 import subprocess
@@ -12,19 +13,25 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from guard_exchange_adapter import GuardCredentialEnvNames
+from guard_exchange_adapter import (
+    GuardCredentialEnvNames,
+    GuardExchangeAdapter,
+    get_guard_exchange_adapter,
+)
 
 
 SCRIPTS_ROOT = Path(__file__).resolve().parents[1]
-GATE_ACCOUNT_SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "account"
-GATE_TRADING_SCRIPT_DIR = SCRIPTS_ROOT / "gate" / "trading"
-for script_dir in (GATE_ACCOUNT_SCRIPT_DIR, GATE_TRADING_SCRIPT_DIR):
-    if str(script_dir) not in sys.path:
-        sys.path.insert(0, str(script_dir))
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
 
-import emergency_flatten_futures as flatten  # noqa: E402
-import query_gate_account as account  # noqa: E402
-from place_futures_order import SignedGateTradingClient  # noqa: E402
+from gate.account import query_gate_account as account  # noqa: E402
+from gate.trading import emergency_flatten_futures as flatten  # noqa: E402
+from gate.trading.place_futures_order import SignedGateTradingClient  # noqa: E402
+from bitget.account import query_bitget_account as bitget_account  # noqa: E402
+from bitget.trading import emergency_flatten_futures as bitget_flatten  # noqa: E402
+from bitget.trading.place_futures_order import (  # noqa: E402
+    SignedBitgetTradingClient,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -68,6 +75,7 @@ class GuardConfig:
     affinity_external_configs_applied: bool = False
     api_key_env: str | None = None
     api_secret_env: str | None = None
+    api_passphrase_env: str | None = None
     credential_source: str | None = None
 
 
@@ -425,6 +433,148 @@ def resolve_guard_credential_env_names(
     )
 
 
+def bitget_order_session_credential_env_names(
+    order_session_config_path: Path,
+) -> tuple[str, str, str]:
+    data = load_toml(order_session_config_path)
+    order_session = data.get("order_session")
+    if not isinstance(order_session, dict):
+        raise ValueError(f"{order_session_config_path} missing [order_session]")
+    credentials = order_session.get("credentials")
+    if not isinstance(credentials, dict):
+        raise ValueError(
+            f"{order_session_config_path} missing [order_session.credentials]"
+        )
+
+    names: list[str] = []
+    for key in ("api_key_env", "api_secret_env", "api_passphrase_env"):
+        value = credentials.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"{order_session_config_path} missing "
+                f"order_session.credentials.{key}"
+            )
+        names.append(value)
+    return names[0], names[1], names[2]
+
+
+def bitget_order_gateway_credential_env_names(
+    order_gateway_config_path: Path,
+) -> tuple[str, str, str]:
+    data = load_toml(order_gateway_config_path)
+    order_gateway = data.get("order_gateway")
+    if not isinstance(order_gateway, dict):
+        raise ValueError(f"{order_gateway_config_path} missing [order_gateway]")
+    routes = order_gateway.get("routes")
+    if not isinstance(routes, list) or not routes:
+        raise ValueError(f"{order_gateway_config_path} missing [[order_gateway.routes]]")
+
+    first_credentials: tuple[str, str, str] | None = None
+    for route_index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            raise ValueError(
+                f"{order_gateway_config_path} route {route_index} must be a table"
+            )
+        order_session_config = route.get("order_session_config")
+        if not isinstance(order_session_config, str) or not order_session_config:
+            raise ValueError(
+                f"{order_gateway_config_path} route {route_index} missing "
+                "order_session_config"
+            )
+        credentials = bitget_order_session_credential_env_names(
+            resolve_repo_path(order_session_config)
+        )
+        if first_credentials is None:
+            first_credentials = credentials
+        elif credentials != first_credentials:
+            raise ValueError(
+                f"{order_gateway_config_path} route {route_index} credentials "
+                "do not match route 0"
+            )
+    assert first_credentials is not None
+    return first_credentials
+
+
+def bitget_strategy_order_credential_env_names(
+    strategy_command: list[str],
+) -> GuardCredentialEnvNames | None:
+    config_arg = find_strategy_config_arg(strategy_command)
+    if config_arg is None:
+        return None
+    _, strategy_config_path, _ = config_arg
+    strategy_data = load_toml(strategy_config_path)
+    strategy = strategy_data.get("strategy")
+    if not isinstance(strategy, dict):
+        raise ValueError(f"{strategy_config_path} missing [strategy]")
+    if isinstance(strategy.get("order_session"), dict):
+        raise ValueError("Bitget guarded live requires [strategy.order_gateway]")
+    if not isinstance(strategy.get("order_gateway"), dict):
+        return None
+
+    order_gateway_config_path = nested_config_path(
+        strategy_data, ("strategy", "order_gateway")
+    )
+    api_key_env, api_secret_env, api_passphrase_env = (
+        bitget_order_gateway_credential_env_names(order_gateway_config_path)
+    )
+    return GuardCredentialEnvNames(
+        api_key_env=api_key_env,
+        api_secret_env=api_secret_env,
+        api_passphrase_env=api_passphrase_env,
+        source="order_gateway_config",
+    )
+
+
+def resolve_bitget_guard_credential_env_names(
+    explicit_api_key: str | None,
+    explicit_api_secret: str | None,
+    explicit_api_passphrase: str | None,
+    strategy_command: list[str],
+) -> GuardCredentialEnvNames:
+    explicit_values = (
+        explicit_api_key,
+        explicit_api_secret,
+        explicit_api_passphrase,
+    )
+    if any(explicit_values) and not all(explicit_values):
+        raise ValueError(
+            "--api-key, --api-secret, and --api-passphrase must be provided together"
+        )
+
+    inferred = bitget_strategy_order_credential_env_names(strategy_command)
+    if all(explicit_values):
+        assert explicit_api_key is not None
+        assert explicit_api_secret is not None
+        assert explicit_api_passphrase is not None
+        explicit = (
+            explicit_api_key,
+            explicit_api_secret,
+            explicit_api_passphrase,
+        )
+        if inferred is not None and explicit != (
+            inferred.api_key_env,
+            inferred.api_secret_env,
+            inferred.api_passphrase_env,
+        ):
+            raise ValueError(
+                "guard REST credentials must match strategy order gateway "
+                "credentials"
+            )
+        return GuardCredentialEnvNames(
+            api_key_env=explicit_api_key,
+            api_secret_env=explicit_api_secret,
+            api_passphrase_env=explicit_api_passphrase,
+            source="explicit",
+        )
+    if inferred is not None:
+        return inferred
+    raise ValueError(
+        "Bitget guard REST credentials require --api-key/--api-secret/"
+        "--api-passphrase or a strategy --config with "
+        "[strategy.order_gateway].config credentials"
+    )
+
+
 def replace_strategy_config_arg(
     command: list[str], config_index: int, config_path: Path, inline_arg: bool
 ) -> list[str]:
@@ -633,6 +783,132 @@ def run_emergency_flatten(
     return flatten.run_emergency_flatten(config=config, requester=requester, clock=clock)
 
 
+def bitget_category_from_settle(settle: str) -> str:
+    normalized = settle.strip().lower()
+    if normalized != "usdt":
+        raise ValueError(f"unsupported Bitget settle: {settle}")
+    return "USDT-FUTURES"
+
+
+def bitget_query_guard_state(
+    requester: Requester,
+    settle: str,
+    contracts: list[str],
+) -> GuardState:
+    category = bitget_category_from_settle(settle)
+    symbols = bitget_flatten.normalize_symbols(contracts)
+    return GuardState(
+        positions=bitget_flatten.query_positions(requester, category, symbols),
+        open_orders=bitget_flatten.query_open_orders(requester, category, symbols),
+    )
+
+
+def bitget_flatten_config_from_guard(
+    config: GuardConfig,
+) -> bitget_flatten.FlattenConfig:
+    return bitget_flatten.FlattenConfig(
+        category=bitget_category_from_settle(config.settle),
+        scope="allowlist",
+        symbols=list(config.contracts),
+        confirm_dedicated_account=False,
+        dry_run=False,
+        poll_timeout_sec=config.poll_timeout_sec,
+        poll_interval_sec=config.poll_interval_sec,
+        max_position_count=bitget_flatten.DEFAULT_MAX_POSITION_COUNT,
+    )
+
+
+def run_bitget_emergency_flatten(
+    config: bitget_flatten.FlattenConfig,
+    requester: Requester,
+    clock: Any,
+) -> tuple[int, dict[str, Any]]:
+    return bitget_flatten.run_emergency_flatten(
+        config=config, requester=requester, clock=clock
+    )
+
+
+def resolve_gate_adapter_credentials(
+    *,
+    explicit_api_key: str | None,
+    explicit_api_secret: str | None,
+    explicit_api_passphrase: str | None,
+    strategy_command: list[str],
+) -> GuardCredentialEnvNames:
+    if explicit_api_passphrase is not None:
+        raise ValueError("Gate guard does not accept --api-passphrase")
+    return resolve_guard_credential_env_names(
+        explicit_api_key=explicit_api_key,
+        explicit_api_secret=explicit_api_secret,
+        strategy_command=strategy_command,
+    )
+
+
+def gate_requester_factory(
+    api_key: str,
+    api_secret: str,
+    api_passphrase: str | None,
+    base_url: str,
+    timeout: float,
+) -> Requester:
+    if api_passphrase is not None:
+        raise ValueError("Gate requester does not use an API passphrase")
+    return SignedGateTradingClient(
+        api_key=api_key,
+        api_secret=api_secret,
+        base_url=base_url,
+        timeout=timeout,
+    ).request_json
+
+
+def bitget_requester_factory(
+    api_key: str,
+    api_secret: str,
+    api_passphrase: str | None,
+    base_url: str,
+    timeout: float,
+) -> Requester:
+    if api_passphrase is None:
+        raise ValueError("Bitget requester requires an API passphrase")
+    return SignedBitgetTradingClient(
+        api_key=api_key,
+        api_secret=api_secret,
+        api_passphrase=api_passphrase,
+        base_url=base_url,
+        timeout=timeout,
+    ).request_json
+
+
+def gate_guard_exchange_adapter() -> GuardExchangeAdapter:
+    return GuardExchangeAdapter(
+        name="gate",
+        credential_resolver=resolve_gate_adapter_credentials,
+        requester_factory=gate_requester_factory,
+        state_reader=query_guard_state,
+        flatten_config_builder=flatten_config_from_guard,
+        flatten_runner=run_emergency_flatten,
+    )
+
+
+def bitget_guard_exchange_adapter() -> GuardExchangeAdapter:
+    return GuardExchangeAdapter(
+        name="bitget",
+        credential_resolver=resolve_bitget_guard_credential_env_names,
+        requester_factory=bitget_requester_factory,
+        state_reader=bitget_query_guard_state,
+        flatten_config_builder=bitget_flatten_config_from_guard,
+        flatten_runner=run_bitget_emergency_flatten,
+    )
+
+
+def get_runtime_guard_adapter(exchange: str) -> GuardExchangeAdapter:
+    return get_guard_exchange_adapter(
+        exchange,
+        gate_adapter=gate_guard_exchange_adapter(),
+        bitget_adapter=bitget_guard_exchange_adapter(),
+    )
+
+
 def run_strategy_process(command: list[str]) -> ProcessResult:
     process = subprocess.Popen(command)
     received_signal: int | None = None
@@ -670,6 +946,7 @@ def initial_summary(config: GuardConfig) -> dict[str, Any]:
         "credentials": {
             "api_key_env": config.api_key_env or "",
             "api_secret_env": config.api_secret_env or "",
+            "api_passphrase_env": config.api_passphrase_env or "",
             "source": config.credential_source or "",
         },
         "affinity": None,
@@ -756,6 +1033,7 @@ def run_guarded_live(
         affinity_external_configs_applied=config.affinity_external_configs_applied,
         api_key_env=config.api_key_env,
         api_secret_env=config.api_secret_env,
+        api_passphrase_env=config.api_passphrase_env,
         credential_source=config.credential_source,
     )
     summary = initial_summary(config)
@@ -861,7 +1139,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--exchange", choices=("gate", "bitget"), default="gate")
     parser.add_argument("--api-key")
     parser.add_argument("--api-secret")
-    parser.add_argument("--base-url", default=account.DEFAULT_BASE_URL)
+    parser.add_argument("--api-passphrase")
+    parser.add_argument(
+        "--base-url",
+        help="REST base URL. Defaults to the selected exchange endpoint.",
+    )
     parser.add_argument("--timeout", type=float, default=account.DEFAULT_TIMEOUT)
     parser.add_argument("--settle", default="usdt")
     parser.add_argument(
@@ -943,29 +1225,44 @@ def missing_env_summary(config: GuardConfig, env_name: str) -> dict[str, Any]:
     return summary
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    config = config_from_args(args)
+def default_rest_base_url(exchange: str) -> str:
+    if exchange == "gate":
+        return account.DEFAULT_BASE_URL
+    if exchange == "bitget":
+        return bitget_account.DEFAULT_BASE_URL
+    raise ValueError(f"unsupported guard exchange: {exchange}")
 
-    if config.exchange != "gate":
+
+def run_from_args(
+    args: argparse.Namespace,
+    adapter: GuardExchangeAdapter | None = None,
+    process_runner: ProcessRunner = run_strategy_process,
+    clock: Any | None = None,
+) -> tuple[int, dict[str, Any]]:
+    config = config_from_args(args)
+    if args.prepare_affinity_only:
+        return prepare_affinity_only(config)
+
+    try:
+        adapter = get_runtime_guard_adapter(config.exchange) if adapter is None else adapter
+        if adapter.name != config.exchange:
+            raise ValueError(
+                f"adapter {adapter.name} does not match exchange {config.exchange}"
+            )
+    except Exception as exc:
         summary = initial_summary(config)
         summary["result"] = "config_error"
         summary["exit_code"] = EXIT_CONFIG_ERROR
         summary["errors"].append(
-            f"unsupported guard exchange before adapter registration: {config.exchange}"
+            f"adapter resolution failed: {type(exc).__name__}: {exc}"
         )
-        print_summary(summary, args.pretty)
-        return EXIT_CONFIG_ERROR
-
-    if args.prepare_affinity_only:
-        exit_code, summary = prepare_affinity_only(config)
-        print_summary(summary, args.pretty)
-        return exit_code
+        return EXIT_CONFIG_ERROR, summary
 
     try:
-        credential_env_names = resolve_guard_credential_env_names(
+        credential_env_names = adapter.credential_resolver(
             explicit_api_key=args.api_key,
             explicit_api_secret=args.api_secret,
+            explicit_api_passphrase=args.api_passphrase,
             strategy_command=config.strategy_command,
         )
     except Exception as exc:
@@ -975,41 +1272,65 @@ def main(argv: list[str] | None = None) -> int:
         summary["errors"].append(
             f"credential resolution failed: {type(exc).__name__}: {exc}"
         )
-        print_summary(summary, args.pretty)
-        return EXIT_CONFIG_ERROR
+        return EXIT_CONFIG_ERROR, summary
 
     config = replace(
         config,
         api_key_env=credential_env_names.api_key_env,
         api_secret_env=credential_env_names.api_secret_env,
+        api_passphrase_env=credential_env_names.api_passphrase_env,
         credential_source=credential_env_names.source,
     )
 
-    api_key = account.get_env_value(credential_env_names.api_key_env)
-    if api_key is None:
-        summary = missing_env_summary(config, credential_env_names.api_key_env)
-        print_summary(summary, args.pretty)
-        return EXIT_CONFIG_ERROR
-    api_secret = account.get_env_value(credential_env_names.api_secret_env)
-    if api_secret is None:
-        summary = missing_env_summary(config, credential_env_names.api_secret_env)
-        print_summary(summary, args.pretty)
-        return EXIT_CONFIG_ERROR
+    api_key = os.getenv(credential_env_names.api_key_env)
+    if not api_key:
+        return EXIT_CONFIG_ERROR, missing_env_summary(
+            config, credential_env_names.api_key_env
+        )
+    api_secret = os.getenv(credential_env_names.api_secret_env)
+    if not api_secret:
+        return EXIT_CONFIG_ERROR, missing_env_summary(
+            config, credential_env_names.api_secret_env
+        )
+    api_passphrase = None
+    if credential_env_names.api_passphrase_env is not None:
+        api_passphrase = os.getenv(credential_env_names.api_passphrase_env)
+        if not api_passphrase:
+            return EXIT_CONFIG_ERROR, missing_env_summary(
+                config, credential_env_names.api_passphrase_env
+            )
 
-    client = SignedGateTradingClient(
-        api_key=api_key,
-        api_secret=api_secret,
-        base_url=args.base_url,
-        timeout=args.timeout,
-    )
-    exit_code, summary = run_guarded_live(
+    try:
+        requester = adapter.requester_factory(
+            api_key,
+            api_secret,
+            api_passphrase,
+            args.base_url or default_rest_base_url(config.exchange),
+            args.timeout,
+        )
+    except Exception as exc:
+        summary = initial_summary(config)
+        summary["result"] = "config_error"
+        summary["exit_code"] = EXIT_CONFIG_ERROR
+        summary["errors"].append(
+            f"requester creation failed: {type(exc).__name__}: {exc}"
+        )
+        return EXIT_CONFIG_ERROR, summary
+
+    return run_guarded_live(
         config=config,
-        requester=client.request_json,
-        process_runner=run_strategy_process,
-        flatten_runner=run_emergency_flatten,
-        state_reader=query_guard_state,
-        clock=SystemClock(),
+        requester=requester,
+        process_runner=process_runner,
+        flatten_runner=adapter.flatten_runner,
+        flatten_config_builder=adapter.flatten_config_builder,
+        state_reader=adapter.state_reader,
+        clock=clock,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    exit_code, summary = run_from_args(args)
     print_summary(summary, args.pretty)
     return exit_code
 
