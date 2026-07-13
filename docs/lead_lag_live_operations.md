@@ -140,6 +140,7 @@ setsid scripts/lead_lag/run_live_with_guard.py \
 needs_reconcile/manual_intervention`。
 
 Bitget 命令还必须显式选择 exchange 和 runtime manifest，且 strategy `--config` 必须等于 manifest 中的 run-specific config：
+strategy command 必须直接执行 `lead_lag_strategy`，不通过 `bash -c`、`env` 或 `taskset` wrapper 隐藏参数。
 
 ```bash
 setsid scripts/lead_lag/run_live_with_guard.py \

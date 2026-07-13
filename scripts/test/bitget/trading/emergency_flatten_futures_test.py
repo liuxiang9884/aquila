@@ -55,6 +55,7 @@ def position_data(
     available="0.001",
     frozen="0",
     margin_mode="crossed",
+    hold_mode="one_way_mode",
 ):
     return {
         "symbol": symbol,
@@ -63,6 +64,7 @@ def position_data(
         "available": available,
         "frozen": frozen,
         "marginMode": margin_mode,
+        "holdMode": hold_mode,
     }
 
 
@@ -239,6 +241,22 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 with self.assertRaisesRegex(flatten.RestFailure, message):
                     flatten.parse_positions({"list": [raw]}, {"BTCUSDT"})
 
+    def test_rejects_hedge_mode_before_mutating_requests(self):
+        requester = ScriptedRequester(
+            open_order_results=[[order_data()]],
+            position_results=[[position_data(hold_mode="hedge_mode")]],
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False),
+            requester=requester,
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_REST_FAILED)
+        self.assertEqual(summary["result"], "rest_failed")
+        self.assertIn("holdMode", summary["errors"][0])
+        self.assertEqual(requester.mutating_topics, [])
+
     def test_allowlist_dry_run_is_read_only_and_reports_plan(self):
         requester = RecordingRequester(
             open_orders=[order_data()], positions=[position_data()]
@@ -278,6 +296,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             ],
             position_results=[
                 [position_data(total="0.001", available="0.001")],
+                [position_data(total="0.001", available="0.001")],
                 [position_data(total="0", available="0", frozen="0")],
             ],
         )
@@ -307,6 +326,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             open_order_results=[[], [], []],
             position_results=[
                 [position_data(pos_side="short", total="0.002", available="0.002")],
+                [position_data(pos_side="short", total="0.002", available="0.002")],
                 [position_data(pos_side="short", total="0", available="0")],
             ],
         )
@@ -325,6 +345,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         requester = ScriptedRequester(
             open_order_results=[[], [], []],
             position_results=[
+                [position_data(total="0", available="0")],
                 [position_data(total="0", available="0")],
                 [position_data(total="0", available="0")],
             ],
@@ -346,6 +367,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             position_results=[
                 [position_data(total="0", available="0")],
                 [position_data(total="0", available="0")],
+                [position_data(total="0", available="0")],
             ],
         )
 
@@ -365,7 +387,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 [order_data(order_id="11")],
                 [order_data(order_id="11")],
             ],
-            position_results=[[position_data()]],
+            position_results=[[position_data()], [position_data()]],
             cancel_error=RuntimeError("cancel timeout"),
         )
 
@@ -383,6 +405,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         requester = ScriptedRequester(
             open_order_results=[[order_data(order_id="11")], []],
             position_results=[
+                [position_data(total="0", available="0", frozen="0")],
                 [position_data(total="0", available="0", frozen="0")]
             ],
             cancel_error=RuntimeError("cancel timeout"),
@@ -403,6 +426,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         requester = ScriptedRequester(
             open_order_results=[[], []],
             position_results=[
+                [position_data(total="0.001", available="0.001")],
                 [position_data(total="0.001", available="0.001")],
                 [position_data(total="0.001", available="0.001")],
             ],

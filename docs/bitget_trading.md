@@ -213,6 +213,8 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 - `external_configs_applied=true`、`route_count=1`，gateway/feedback/guard 使用同一账户；
 - strategy overlay 指向的 LeadLag 配置中，所有 `lag_exchange = "bitget"` 的 symbol 都必须包含在 guard
   `--contract` 范围内；guard 范围可以更大，但不能遗漏策略可能交易的 Bitget symbol；
+- strategy command 必须直接执行 basename 为 `lead_lag_strategy` 的二进制，不接受 `bash -c`、`env`、`taskset`
+  等 wrapper；否则 guard 无法从 argv 证明 `--execute` 和 `--config`；
 - summary 的 `runtime_isolation` 记录实际 manifest/config/SHM、`strategy_lag_symbols` 与 `validated=true`，
   不记录 secret/passphrase 内容。
 
@@ -223,7 +225,8 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 - `allowlist`：只查询、撤销和平掉显式 `--symbol` 范围；用于共享账户或限定合约；
 - `dedicated-account`：必须显式 `--confirm-dedicated-account`，扫描整个 category，并受 `--max-position-count` 保护；
 - `--dry-run`：执行只读 REST 查询并输出 plan，不发送 cancel/place；
-- 实际清理：先撤单，再按 REST position 的 `posSide/total/marginMode` 提交反向 reduce-only market close，二次撤单并轮询；
+- 实际清理：mutation 前先查询 position 并要求 `holdMode=one_way_mode`；随后撤单，再按 REST position 的
+  `posSide/total/marginMode` 提交反向 reduce-only market close，二次撤单并轮询；
 - flat predicate：open orders 为空，且每个 position 的 `total/available/frozen` 都为 0；所有数量用 `Decimal`；
 - mutating response 不明确时只做独立 REST 复核；能证明 flat 才返回 `verified_flat_after_unknown`，否则 fail closed，不盲目重发。
 

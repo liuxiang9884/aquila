@@ -223,6 +223,9 @@ def parse_positions(
         pos_side = str(value.get("posSide") or "").strip().lower()
         if pos_side not in {"long", "short"}:
             raise RestFailure(f"{label}.posSide must be long or short")
+        hold_mode = str(value.get("holdMode") or "").strip().lower()
+        if hold_mode != "one_way_mode":
+            raise RestFailure(f"{label}.holdMode must be one_way_mode")
         margin_mode = str(value.get("marginMode") or "").strip().lower()
         if margin_mode not in {"crossed", "isolated"}:
             raise RestFailure(f"{label}.marginMode must be crossed or isolated")
@@ -542,15 +545,15 @@ def run_emergency_flatten(
 
     summary = initial_summary(config)
     try:
-        symbols = normalize_symbols(config.symbols) if config.scope == "allowlist" else None
-        open_orders = query_open_orders(requester, config.category, symbols)
-        positions = (
-            query_positions(requester, config.category, symbols)
-            if config.dry_run or config.scope == "dedicated-account"
-            else []
+        symbols = (
+            normalize_symbols(config.symbols) if config.scope == "allowlist" else None
         )
+        open_orders = query_open_orders(requester, config.category, symbols)
+        positions = query_positions(requester, config.category, symbols)
         if config.scope == "dedicated-account":
-            non_flat_positions = [position for position in positions if not position.flat()]
+            non_flat_positions = [
+                position for position in positions if not position.flat()
+            ]
             if len(non_flat_positions) > config.max_position_count:
                 raise ScopeRefused(
                     "max-position-count exceeded: "

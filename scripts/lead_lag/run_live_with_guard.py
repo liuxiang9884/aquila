@@ -289,7 +289,14 @@ def find_strategy_config_arg(command: list[str]) -> tuple[int, Path, bool] | Non
 
 
 def strategy_execute_requested(command: list[str]) -> bool:
-    return any(arg == "--execute" or arg.startswith("--execute=") for arg in command)
+    return any(
+        arg == "--execute" or arg.startswith("--execute=") for arg in command
+    )
+
+
+def validate_bitget_strategy_command(command: list[str]) -> None:
+    if not command or Path(command[0]).name != "lead_lag_strategy":
+        raise ValueError("Bitget guard requires a direct lead_lag_strategy command")
 
 
 def bitget_strategy_lag_symbols(command: list[str]) -> list[str]:
@@ -1216,7 +1223,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--contract",
         action="append",
         default=[],
-        help="Gate futures contract in the guarded allowlist. Can be repeated.",
+        help="Guarded futures contract or symbol. Can be repeated.",
     )
     parser.add_argument(
         "--poll-timeout-sec",
@@ -1318,6 +1325,16 @@ def run_from_args(
     config = config_from_args(args)
     if args.prepare_affinity_only:
         return prepare_affinity_only(config)
+
+    if config.exchange == "bitget":
+        try:
+            validate_bitget_strategy_command(config.strategy_command)
+        except ValueError as exc:
+            summary = initial_summary(config)
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append(str(exc))
+            return EXIT_CONFIG_ERROR, summary
 
     if config.exchange == "bitget" and strategy_execute_requested(
         config.strategy_command

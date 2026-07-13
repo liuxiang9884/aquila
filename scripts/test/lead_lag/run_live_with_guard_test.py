@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from decimal import Decimal
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
@@ -196,6 +197,36 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
         self.assertEqual(summary["result"], "config_error")
         self.assertIn("--runtime-manifest", summary["errors"][0])
+
+    def test_bitget_rejects_strategy_wrapper_before_credentials(self):
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=lambda **kwargs: self.fail(
+                "credentials must not be read before command validation"
+            ),
+            requester_factory=lambda *args: self.fail("requester must not be created"),
+            state_reader=FakeStateReader([]),
+            flatten_config_builder=RecordingFlattenConfigBuilder({}),
+            flatten_runner=FakeFlattenRunner((0, {})),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "bash",
+                "-c",
+                "lead_lag_strategy --execute",
+            ]
+        )
+
+        exit_code, summary = guard.run_from_args(args, adapter=adapter)
+
+        self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
+        self.assertEqual(summary["result"], "config_error")
+        self.assertIn("direct lead_lag_strategy", summary["errors"][0])
 
     def test_run_from_args_uses_selected_adapter_and_passphrase(self):
         resolver_calls = []
@@ -610,6 +641,15 @@ class RunLiveWithGuardTest(unittest.TestCase):
 
         self.assertEqual(parsed.api_passphrase, "BITGET_TEST_PASSPHRASE")
         self.assertEqual(guard.config_from_args(parsed).exchange, "bitget")
+
+    def test_contract_help_is_exchange_neutral(self):
+        with patch("sys.stdout", new_callable=StringIO) as stdout:
+            with self.assertRaises(SystemExit) as raised:
+                guard.parse_args(["--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("futures contract or symbol", stdout.getvalue())
+        self.assertNotIn("Gate futures contract", stdout.getvalue())
 
     def test_parse_args_defers_default_base_url_to_exchange_adapter(self):
         parsed = guard.parse_args(
