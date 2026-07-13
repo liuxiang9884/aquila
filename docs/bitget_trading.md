@@ -204,7 +204,8 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
   才重新成为前置条件。
 
 `scripts/lead_lag/prepare_bitget_live_run.py prepare` 只生成 `/home/liuxiang/tmp/<run_id>/configs/` 下的三个 overlay
-和 `bitget_live_manifest.json`，不连接交易所、不读取账户、不创建 SHM。Operator 确认 feedback 与 fanout=1 gateway
+和 `bitget_live_manifest.json`，并把 gateway 的 `order_session_config` 与 strategy 的 LeadLag config 改写为绝对路径；该命令不连接
+交易所、不读取账户、不创建 SHM。Operator 确认 feedback 与 fanout=1 gateway
 确实使用 manifest 中配置后，以两个实际 PID 执行 `mark-applied --gateway-pid <pid> --feedback-pid <pid>`。manifest schema v2
 会重新读取三个 TOML，并复核路径、SHM、`route_count=1`、三字段凭据、category、position/margin mode 和 private WebSocket
 endpoint 一致性；同时从 `/proc` 绑定 PID、start time、executable、`--connect` 与实际绝对 `--config`。进程 credential 值只在内存中

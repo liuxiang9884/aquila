@@ -431,7 +431,10 @@ def toml_scalar(value: int | str | Path) -> str:
     return json.dumps(str(value), ensure_ascii=False)
 
 
-SECTION_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
+SECTION_RE = re.compile(
+    r"^\s*(?:\[([A-Za-z0-9_.-]+)\]|\[\[([A-Za-z0-9_.-]+)\]\])"
+    r"\s*(?:#.*)?$"
+)
 
 
 def write_toml_overlay(
@@ -447,7 +450,7 @@ def write_toml_overlay(
     for line in source_path.read_text(encoding="utf-8").splitlines(keepends=True):
         section_match = SECTION_RE.match(line)
         if section_match:
-            section = section_match.group(1)
+            section = section_match.group(1) or section_match.group(2)
         replaced = False
         for section_key, value in replacements.items():
             target_section, key = section_key

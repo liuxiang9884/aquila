@@ -190,7 +190,8 @@ Bitget V1 不修改跨进程 `local_order_id/clientOid`。安全边界是 strict
 跨 run 审计使用 `(run_id, clientOid)`。只有未来要实现不平仓 resume、overlap 或 crash-state recovery 时，persistent ID
 和 REST history reconcile 才重新成为前置条件。
 
-`scripts/lead_lag/prepare_bitget_live_run.py` 生成并复验 fresh-run manifest。Bitget `--execute` 在读取凭据和 REST preflight
+`scripts/lead_lag/prepare_bitget_live_run.py` 生成并复验 fresh-run manifest，同时把 gateway order-session 与 strategy LeadLag config
+引用固化为绝对路径。Bitget `--execute` 在读取凭据和 REST preflight
 之前要求 manifest v2 已标记 external configs applied，并验证 config path、run-specific SHM、`route_count=1`、交易 contract 和
 账户一致性；`mark-applied` 必须接收 gateway/feedback PID，并绑定 `/proc` start time、executable、`--connect` 和实际绝对 config；
 guard 再次比较两个进程与当前 REST credential 值，任何 credential 内容都不落盘；

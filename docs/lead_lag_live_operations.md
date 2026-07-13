@@ -84,7 +84,7 @@ Feedback session 必须先 login/subscribed ready。其 duration 至少为 strat
 不允许 strategy-only restart，也不允许复用旧 gateway/feedback SHM。Bitget V1 以 strict stop-and-flat + fresh-run isolation
 替代跨进程唯一 ID 后继续恢复交易；persistent ID 只在未来需要 resume/overlap 时重新成为前置条件。
 
-Bitget 每轮先生成 config 与 manifest；该命令不联网、不读取账户、不创建 SHM：
+Bitget 每轮先生成 config 与 manifest；该命令会把交易关键的嵌套 config 引用固化为绝对路径，但不联网、不读取账户、不创建 SHM：
 
 ```bash
 scripts/lead_lag/prepare_bitget_live_run.py prepare \

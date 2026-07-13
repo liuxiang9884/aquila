@@ -261,6 +261,43 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
         self.assertFalse(manifest["external_configs_applied"])
 
+    def test_prepare_absolutizes_trading_critical_nested_configs(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        order_session = self.source_dir / "bitget_order_session_0.toml"
+        lead_lag = self.source_dir / "lead_lag.toml"
+        gateway.write_text(
+            gateway.read_text(encoding="utf-8").replace(
+                str(order_session),
+                os.path.relpath(order_session, guard.PROJECT_ROOT),
+            ),
+            encoding="utf-8",
+        )
+        strategy.write_text(
+            strategy.read_text(encoding="utf-8").replace(
+                str(lead_lag),
+                os.path.relpath(lead_lag, guard.PROJECT_ROOT),
+            ),
+            encoding="utf-8",
+        )
+
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+
+        gateway_data = tomllib.loads(result.gateway_config.read_text(encoding="utf-8"))
+        strategy_data = tomllib.loads(
+            result.strategy_config.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            gateway_data["order_gateway"]["routes"][0]["order_session_config"],
+            str(order_session),
+        )
+        self.assertEqual(strategy_data["strategy"]["config"], str(lead_lag))
+
     def test_prepare_rejects_route_count_greater_than_one(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(
             self.source_dir, route_count=2

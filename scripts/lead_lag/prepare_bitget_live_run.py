@@ -504,12 +504,31 @@ def prepare_runtime_configs(
             f"output_dir must be the fresh-run config directory {expected_config_dir(run_id)}"
         )
 
+    strategy_source = strategy_source.expanduser().resolve()
     gateway_source = gateway_source.expanduser().resolve()
+    feedback_source = feedback_source.expanduser().resolve()
     gateway_data = load_toml(gateway_source)
     gateway = required_dict(gateway_data, "order_gateway", "order_gateway")
     routes = gateway.get("routes")
-    if gateway.get("route_count") != 1 or not isinstance(routes, list) or len(routes) != 1:
+    if (
+        gateway.get("route_count") != 1
+        or not isinstance(routes, list)
+        or len(routes) != 1
+        or not isinstance(routes[0], dict)
+    ):
         raise ValueError("route_count must be 1 for Bitget live V1")
+    order_session_source = guard.resolve_repo_path(
+        required_string(
+            routes[0],
+            "order_session_config",
+            "order_gateway.routes[0]",
+        )
+    )
+    strategy_data = load_toml(strategy_source)
+    strategy = required_dict(strategy_data, "strategy", "strategy")
+    lead_lag_source = guard.resolve_repo_path(
+        required_string(strategy, "config", "strategy")
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     strategy_config = output_dir / f"strategy__{strategy_source.name}"
@@ -530,17 +549,23 @@ def prepare_runtime_configs(
     guard.write_toml_overlay(
         gateway_source,
         gateway_config,
-        {("order_gateway", "shm_name"): gateway_shm},
+        {
+            ("order_gateway", "shm_name"): gateway_shm,
+            ("order_gateway.routes", "order_session_config"): str(
+                order_session_source
+            ),
+        },
     )
     guard.write_toml_overlay(
-        feedback_source.expanduser().resolve(),
+        feedback_source,
         feedback_config,
         {("order_feedback_session.shm", "shm_name"): feedback_shm},
     )
     guard.write_toml_overlay(
-        strategy_source.expanduser().resolve(),
+        strategy_source,
         strategy_config,
         {
+            ("strategy", "config"): str(lead_lag_source),
             ("strategy.order_gateway", "config"): str(gateway_config),
             ("strategy.feedback", "shm_name"): feedback_shm,
         },
