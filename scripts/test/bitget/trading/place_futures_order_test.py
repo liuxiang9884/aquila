@@ -134,6 +134,18 @@ class PlaceFuturesOrderTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     orders.build_place_order_request(**fields)
 
+    def test_client_oid_accepts_bitget_protocol_characters(self):
+        self.assertEqual(
+            orders.validate_client_oid("a.test/ABC:xyz_9-0"),
+            "a.test/ABC:xyz_9-0",
+        )
+
+    def test_client_oid_rejects_characters_outside_bitget_protocol(self):
+        for client_oid in ("a oid", "a#oid", "a+oid", "a-é"):
+            with self.subTest(client_oid=client_oid):
+                with self.assertRaisesRegex(ValueError, "unsupported characters"):
+                    orders.validate_client_oid(client_oid)
+
     def test_validate_response_returns_data(self):
         data = orders.validate_uta_response(
             {"code": "00000", "msg": "success", "data": {"orderId": "9"}}

@@ -24,7 +24,11 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(dedent(text).strip() + "\n", encoding="utf-8")
 
 
-def write_runtime_fixture_graph(base: Path, route_count: int = 1):
+def write_runtime_fixture_graph(
+    base: Path,
+    route_count: int = 1,
+    lag_symbols: tuple[str, ...] = ("BTC_USDT",),
+):
     sessions = []
     for route in range(route_count):
         session = base / f"bitget_order_session_{route}.toml"
@@ -81,12 +85,27 @@ def write_runtime_fixture_graph(base: Path, route_count: int = 1):
         """,
     )
 
+    lead_lag = base / "lead_lag.toml"
+    pairs = "\n\n".join(
+        dedent(
+            f"""
+            [[lead_lag.pairs]]
+            symbol = "{symbol}"
+            lead_exchange = "binance"
+            lag_exchange = "bitget"
+            """
+        ).strip()
+        for symbol in lag_symbols
+    )
+    write_text(lead_lag, pairs)
+
     strategy = base / "bitget_strategy.toml"
     write_text(
         strategy,
         f"""
         [strategy]
         mode = "live"
+        config = "{lead_lag}"
 
         [strategy.order_gateway]
         config = "{gateway}"
@@ -289,6 +308,52 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                     "--execute",
                 ],
             )
+
+    def test_guard_rejects_contract_scope_smaller_than_bitget_lag_symbols(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir,
+            lag_symbols=("BTC_USDT", "ETH_USDT"),
+        )
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        prepare.mark_external_configs_applied(result.manifest)
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=lambda **kwargs: self.fail(
+                "credentials must not be read before contract scope validation"
+            ),
+            requester_factory=lambda *args: self.fail("requester must not be created"),
+            state_reader=lambda *args: self.fail("REST state must not be read"),
+            flatten_config_builder=lambda config: {},
+            flatten_runner=lambda config, requester, clock: (0, {}),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--runtime-manifest",
+                str(result.manifest),
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+                "--config",
+                str(result.strategy_config),
+                "--execute",
+            ]
+        )
+
+        exit_code, summary = guard.run_from_args(args, adapter=adapter)
+
+        self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
+        self.assertEqual(summary["result"], "config_error")
+        self.assertIn("ETHUSDT", summary["errors"][0])
+        self.assertIn("guard contracts", summary["errors"][0])
 
 
 if __name__ == "__main__":

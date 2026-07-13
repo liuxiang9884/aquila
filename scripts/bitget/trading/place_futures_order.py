@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -44,6 +45,7 @@ else:
 
 USER_AGENT = "aquila-bitget-uta-trading/1.0"
 DEFAULT_SYMBOL = "BTCUSDT"
+CLIENT_OID_PATTERN = re.compile(r"^[.A-Z:/a-z0-9_-]+$")
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,7 @@ def validate_client_oid(client_oid: str) -> str:
         raise ValueError("client_oid must not be empty")
     if len(value) > 32:
         raise ValueError("client_oid must be at most 32 characters")
-    if any(not (character.isalnum() or character in "_:#-+ ") for character in value):
+    if CLIENT_OID_PATTERN.fullmatch(value) is None:
         raise ValueError("client_oid contains unsupported characters")
     return value
 

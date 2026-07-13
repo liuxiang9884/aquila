@@ -189,9 +189,10 @@ Bitget V1 不修改跨进程 `local_order_id/clientOid`。安全边界是 strict
 和 REST history reconcile 才重新成为前置条件。
 
 `scripts/lead_lag/prepare_bitget_live_run.py` 生成并复验 fresh-run manifest。Bitget `--execute` 在读取凭据和 REST preflight
-之前要求 manifest 已标记 external configs applied，并验证 config path、run-specific SHM、`route_count=1` 和账户一致性。
-Guard summary 的 `runtime_isolation` 保存实际 manifest/config/SHM 和验证结果。该声明不替代外部 feedback/gateway PID、ready
-和 shutdown 检查；完整交易栈必须共享同一 run boundary。
+之前要求 manifest 已标记 external configs applied，并验证 config path、run-specific SHM、`route_count=1` 和账户一致性；
+strategy overlay 指向的 LeadLag 配置中，所有 Bitget lag symbols 还必须被 guard `--contract` 覆盖，防止只对策略交易范围的
+子集证明 flat。Guard summary 的 `runtime_isolation` 保存实际 manifest/config/SHM、`strategy_lag_symbols` 和验证结果。
+该声明不替代外部 feedback/gateway PID、ready 和 shutdown 检查；完整交易栈必须共享同一 run boundary。
 
 Bitget helper 与 guard exit code：helper `0/2/3/4` 分别表示 verified flat、仍非 flat、scope/config 拒绝、REST 无法证明；
 guard `0` 表示正常退出且 final flat，`10` 表示异常后已证明 flat 但保持停机，`11` 表示 cleanup 失败或无法证明 flat。

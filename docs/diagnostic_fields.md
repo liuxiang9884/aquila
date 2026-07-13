@@ -631,6 +631,7 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `credentials.api_key_env` / `credentials.api_secret_env` / `credentials.source` | guard stdout | stable | env 名称 / `order_session_config` / `explicit` | 记录 guard REST preflight、final check 和 emergency flatten 使用的凭据 env 名称来源；只输出 env 名称，不输出 secret 值。 | guard 不再承担 REST account guard 时重审。 |
+| `runtime_isolation.strategy_lag_symbols` | Bitget guard stdout | stable | Bitget UTA symbol 列表 | 记录从本轮 strategy overlay 的 LeadLag 配置解析出的全部 Bitget lag symbols；启动前必须全部被 guard `--contract` 覆盖。 | Bitget live 不再使用外围 allowlist guard 时重审。 |
 | `affinity_profile` | guard stdout / report | experiment | config path 或 profile name | 记录本轮是否使用 runtime affinity overlay。 | affinity pipeline 稳定后可改为 stable。 |
 | `affinity_core_path` | guard stdout / report | experiment | generated config path | 记录 core-path 临时配置位置，便于复现。 | 如果生成配置不再保留可删除。 |
 | `owner_thread_cpu` | log / summary | planned | Linux CPU id | 对齐 `OrderSession` owner thread 和 runtime hook 执行 CPU。 | 被完整 scheduler trace 取代。 |

@@ -288,6 +288,56 @@ def find_strategy_config_arg(command: list[str]) -> tuple[int, Path, bool] | Non
     return None
 
 
+def strategy_execute_requested(command: list[str]) -> bool:
+    return any(arg == "--execute" or arg.startswith("--execute=") for arg in command)
+
+
+def bitget_strategy_lag_symbols(command: list[str]) -> list[str]:
+    config_arg = find_strategy_config_arg(command)
+    if config_arg is None:
+        raise ValueError("strategy command requires --config")
+    _, strategy_config_path, _ = config_arg
+    strategy_data = load_toml(strategy_config_path)
+    lead_lag_config_path = nested_config_path(strategy_data, ("strategy",))
+    lead_lag_data = load_toml(lead_lag_config_path)
+    lead_lag = lead_lag_data.get("lead_lag")
+    if not isinstance(lead_lag, dict):
+        raise ValueError(f"{lead_lag_config_path} missing [lead_lag]")
+    pairs = lead_lag.get("pairs")
+    if not isinstance(pairs, list) or not pairs:
+        raise ValueError(f"{lead_lag_config_path} missing [[lead_lag.pairs]]")
+
+    symbols: list[str] = []
+    for index, pair in enumerate(pairs):
+        if not isinstance(pair, dict):
+            raise ValueError(f"lead_lag.pairs[{index}] must be a table")
+        lag_exchange = pair.get("lag_exchange")
+        if not isinstance(lag_exchange, str) or not lag_exchange.strip():
+            raise ValueError(f"lead_lag.pairs[{index}] missing lag_exchange")
+        if lag_exchange.strip().lower() != "bitget":
+            continue
+        symbol = pair.get("symbol")
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise ValueError(f"lead_lag.pairs[{index}] missing symbol")
+        symbols.append(symbol)
+    if not symbols:
+        raise ValueError("strategy config has no Bitget lag symbols")
+    return bitget_flatten.normalize_symbols(symbols)
+
+
+def validate_bitget_guard_contract_scope(
+    strategy_command: list[str], guard_contracts: list[str]
+) -> list[str]:
+    lag_symbols = bitget_strategy_lag_symbols(strategy_command)
+    guarded = set(bitget_flatten.normalize_symbols(guard_contracts))
+    missing = [symbol for symbol in lag_symbols if symbol not in guarded]
+    if missing:
+        raise ValueError(
+            "Bitget lag symbols outside guard contracts: " + ", ".join(missing)
+        )
+    return lag_symbols
+
+
 def order_session_credential_env_names(
     order_session_config_path: Path,
 ) -> tuple[str, str]:
@@ -969,9 +1019,22 @@ def run_flatten_for_reason(
     flatten_runner: FlattenRunner,
     flatten_config_builder: Callable[[GuardConfig], Any],
 ) -> tuple[int, dict[str, Any]]:
-    flatten_exit_code, flatten_summary = flatten_runner(
-        flatten_config_builder(config), requester, clock
-    )
+    try:
+        flatten_exit_code, flatten_summary = flatten_runner(
+            flatten_config_builder(config), requester, clock
+        )
+    except Exception as exc:
+        error = f"emergency flatten raised {type(exc).__name__}: {exc}"
+        summary["flatten"] = {
+            "ok": False,
+            "result": "exception",
+            "error": error,
+        }
+        summary["ok"] = False
+        summary["result"] = f"{reason}_flatten_failed"
+        summary["exit_code"] = EXIT_EMERGENCY_FAILED
+        summary["errors"].append(error)
+        return EXIT_EMERGENCY_FAILED, summary
     summary["flatten"] = flatten_summary
     if flatten_exit_code == flatten.EXIT_OK and flatten_summary.get("ok") is True:
         summary["ok"] = False
@@ -1256,7 +1319,9 @@ def run_from_args(
     if args.prepare_affinity_only:
         return prepare_affinity_only(config)
 
-    if config.exchange == "bitget" and "--execute" in config.strategy_command:
+    if config.exchange == "bitget" and strategy_execute_requested(
+        config.strategy_command
+    ):
         if args.runtime_manifest is None:
             summary = initial_summary(config)
             summary["result"] = "config_error"
@@ -1270,6 +1335,10 @@ def run_from_args(
                 args.runtime_manifest,
                 config.strategy_command,
             )
+            lag_symbols = validate_bitget_guard_contract_scope(
+                config.strategy_command,
+                config.contracts,
+            )
             if config.run_id is not None and config.run_id != manifest["run_id"]:
                 raise ValueError(
                     f"--run-id {config.run_id} does not match runtime manifest "
@@ -1280,6 +1349,7 @@ def run_from_args(
                 run_id=manifest["run_id"],
                 runtime_isolation={
                     **manifest,
+                    "strategy_lag_symbols": lag_symbols,
                     "manifest": str(args.runtime_manifest.expanduser().resolve()),
                     "validated": True,
                 },

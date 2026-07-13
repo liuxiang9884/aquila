@@ -211,7 +211,10 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 - manifest schema、run directory、strategy command 的 `--config` 和 `run_id`；
 - gateway/feedback SHM 都包含本轮 `run_id`，strategy/gateway/feedback 指向完全一致；
 - `external_configs_applied=true`、`route_count=1`，gateway/feedback/guard 使用同一账户；
-- summary 的 `runtime_isolation` 记录实际 manifest/config/SHM 与 `validated=true`，不记录 secret/passphrase 内容。
+- strategy overlay 指向的 LeadLag 配置中，所有 `lag_exchange = "bitget"` 的 symbol 都必须包含在 guard
+  `--contract` 范围内；guard 范围可以更大，但不能遗漏策略可能交易的 Bitget symbol；
+- summary 的 `runtime_isolation` 记录实际 manifest/config/SHM、`strategy_lag_symbols` 与 `validated=true`，
+  不记录 secret/passphrase 内容。
 
 ## REST emergency helper 与 guard 语义
 
