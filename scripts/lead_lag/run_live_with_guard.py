@@ -77,6 +77,7 @@ class GuardConfig:
     api_secret_env: str | None = None
     api_passphrase_env: str | None = None
     credential_source: str | None = None
+    runtime_isolation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -949,6 +950,7 @@ def initial_summary(config: GuardConfig) -> dict[str, Any]:
             "api_passphrase_env": config.api_passphrase_env or "",
             "source": config.credential_source or "",
         },
+        "runtime_isolation": config.runtime_isolation,
         "affinity": None,
         "preflight": None,
         "strategy": None,
@@ -1035,6 +1037,7 @@ def run_guarded_live(
         api_secret_env=config.api_secret_env,
         api_passphrase_env=config.api_passphrase_env,
         credential_source=config.credential_source,
+        runtime_isolation=config.runtime_isolation,
     )
     summary = initial_summary(config)
     try:
@@ -1272,7 +1275,15 @@ def run_from_args(
                     f"--run-id {config.run_id} does not match runtime manifest "
                     f"{manifest['run_id']}"
                 )
-            config = replace(config, run_id=manifest["run_id"])
+            config = replace(
+                config,
+                run_id=manifest["run_id"],
+                runtime_isolation={
+                    **manifest,
+                    "manifest": str(args.runtime_manifest.expanduser().resolve()),
+                    "validated": True,
+                },
+            )
         except Exception as exc:
             summary = initial_summary(config)
             summary["result"] = "config_error"

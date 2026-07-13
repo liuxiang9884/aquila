@@ -4,9 +4,11 @@ import json
 import sys
 import tomllib
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
+from unittest.mock import patch
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "lead_lag"
@@ -174,6 +176,74 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
 
         self.assertTrue(manifest["external_configs_applied"])
         self.assertEqual(validated["run_id"], self.run_id)
+
+    def test_guard_summary_records_validated_runtime_isolation(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        prepare.mark_external_configs_applied(result.manifest)
+        flat_state = guard.GuardState(
+            positions=[
+                guard.PositionSnapshot(
+                    contract="BTC_USDT",
+                    size=Decimal("0"),
+                    pending_orders=0,
+                )
+            ],
+            open_orders=[],
+        )
+        states = [flat_state, flat_state]
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=guard.resolve_bitget_guard_credential_env_names,
+            requester_factory=lambda *args: object(),
+            state_reader=lambda requester, settle, contracts: states.pop(0),
+            flatten_config_builder=lambda config: {},
+            flatten_runner=lambda config, requester, clock: (0, {}),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--runtime-manifest",
+                str(result.manifest),
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+                "--config",
+                str(result.strategy_config),
+                "--execute",
+            ]
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "BITGET_TEST_KEY": "key-value",
+                "BITGET_TEST_SECRET": "secret-value",
+                "BITGET_TEST_PASSPHRASE": "passphrase-value",
+            },
+        ):
+            exit_code, summary = guard.run_from_args(
+                args,
+                adapter=adapter,
+                process_runner=lambda command: guard.ProcessResult(exit_code=0),
+            )
+
+        self.assertEqual(exit_code, guard.EXIT_OK)
+        self.assertTrue(summary["runtime_isolation"]["validated"])
+        self.assertEqual(
+            summary["runtime_isolation"]["manifest"], str(result.manifest)
+        )
+        self.assertEqual(
+            summary["runtime_isolation"]["gateway_shm"], result.gateway_shm
+        )
 
     def test_mark_applied_rejects_feedback_credentials_mismatch(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
