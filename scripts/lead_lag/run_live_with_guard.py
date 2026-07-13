@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 import re
 import signal
@@ -136,6 +137,10 @@ def validate_config(config: GuardConfig) -> None:
         raise ValueError("at least one --contract is required")
     if not config.strategy_command:
         raise ValueError("strategy command is required after --")
+    if not math.isfinite(config.poll_timeout_sec):
+        raise ValueError("--poll-timeout-sec must be finite")
+    if not math.isfinite(config.poll_interval_sec):
+        raise ValueError("--poll-interval-sec must be finite")
     if config.poll_timeout_sec < 0:
         raise ValueError("--poll-timeout-sec must be non-negative")
     if config.poll_interval_sec <= 0:

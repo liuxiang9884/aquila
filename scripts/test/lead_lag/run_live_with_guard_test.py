@@ -408,6 +408,36 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertEqual(flatten.calls, [])
         self.assertEqual(summary["preflight"]["open_orders"][0]["order_id"], "12345")
 
+    def test_non_finite_poll_config_is_rejected_before_rest_or_strategy(self):
+        for field in ("poll_timeout_sec", "poll_interval_sec"):
+            for value in (float("nan"), float("inf"), float("-inf")):
+                with self.subTest(field=field, value=value):
+                    values = {
+                        "settle": "usdt",
+                        "contracts": ["BTC_USDT"],
+                        "strategy_command": ["lead_lag_strategy"],
+                        "poll_timeout_sec": 3.0,
+                        "poll_interval_sec": 0.5,
+                    }
+                    values[field] = value
+
+                    exit_code, summary = guard.run_guarded_live(
+                        config=guard.GuardConfig(**values),
+                        requester=lambda request: self.fail(
+                            "REST must not run for invalid poll config"
+                        ),
+                        process_runner=lambda command: self.fail(
+                            "strategy must not run for invalid poll config"
+                        ),
+                        state_reader=lambda *args: self.fail(
+                            "state reader must not run for invalid poll config"
+                        ),
+                    )
+
+                    self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
+                    self.assertEqual(summary["result"], "config_error")
+                    self.assertIn("finite", summary["errors"][0])
+
     def test_preflight_residual_value_refuses_to_start_or_flatten(self):
         process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
         flatten = FakeFlattenRunner(

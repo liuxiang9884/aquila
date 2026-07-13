@@ -164,6 +164,7 @@ scripts/lead_lag/run_live_with_guard.py \
 wrapper 行为：
 
 - 启动前查询 allowlist contracts，要求 open orders 为空、position `size=0`、`pending_orders=0`，且 `value` / `margin` residual 为 0；不满足时拒绝启动，不自动清理共享账户残留。
+- `poll_timeout_sec` / `poll_interval_sec` 必须是有限值；无效 cleanup 参数在 REST preflight 和 strategy 启动前拒绝。
 - 子进程 exit code 为 `0` 时仍执行 final REST check；final check flat 才返回 `0`。
 - 子进程 exit code 非 `0`、子进程异常、final REST check 失败或 final check 非 flat 时，调用 `emergency_flatten_futures.py` 的同模块逻辑执行 stop-and-flat。
 - emergency flatten 成功时 wrapper 返回 `10`，表示系统已经执行应急平仓但仍保持停机，等待人工复核。
