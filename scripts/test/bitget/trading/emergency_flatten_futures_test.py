@@ -3,6 +3,7 @@
 import sys
 import unittest
 import urllib.parse
+import json
 from collections import deque
 from decimal import Decimal
 from pathlib import Path
@@ -141,6 +142,22 @@ class ScriptedRequester:
                 raise self.cancel_error
             return {"orderId": "11", "clientOid": "a-11"}
         if request.method == "POST" and request.endpoint_path.endswith(
+            "cancel-symbol-order"
+        ):
+            self.mutating_topics.append("cancel-symbol-order")
+            if self.cancel_error is not None:
+                raise self.cancel_error
+            return {
+                "list": [
+                    {
+                        "orderId": "11",
+                        "clientOid": "a-11",
+                        "code": "00000",
+                        "msg": "success",
+                    }
+                ]
+            }
+        if request.method == "POST" and request.endpoint_path.endswith(
             "place-order"
         ):
             self.mutating_topics.append("place-order")
@@ -166,6 +183,114 @@ class OpenOrderPageRequester:
 
 
 class EmergencyFlattenFuturesTest(unittest.TestCase):
+    def test_cancel_allowlist_uses_symbol_scope_and_paces_requests(self):
+        clock = FakeClock()
+        requests = []
+
+        def requester(request):
+            requests.append(request)
+            return {"list": []}
+
+        summary = flatten.initial_summary(
+            allowlist_config(symbols=["BTCUSDT", "ETHUSDT"], dry_run=False)
+        )
+        pacer = flatten.RequestPacer(min_interval_sec=0.2)
+
+        flatten.cancel_scoped_open_orders(
+            requester=requester,
+            category="USDT-FUTURES",
+            symbols=["BTCUSDT", "ETHUSDT"],
+            dedicated_account=False,
+            phase="before_close",
+            summary=summary,
+            clock=clock,
+            pacer=pacer,
+        )
+
+        self.assertEqual(
+            [request.endpoint_path for request in requests],
+            [
+                "/api/v3/trade/cancel-symbol-order",
+                "/api/v3/trade/cancel-symbol-order",
+            ],
+        )
+        self.assertEqual(
+            [json.loads(request.body)["symbol"] for request in requests],
+            ["BTCUSDT", "ETHUSDT"],
+        )
+        self.assertEqual(clock.sleeps, [0.2])
+        self.assertEqual(len(summary["orders_cancelled"]), 2)
+
+    def test_cancel_dedicated_account_omits_symbol(self):
+        requests = []
+        summary = flatten.initial_summary(dedicated_config(dry_run=False))
+
+        flatten.cancel_scoped_open_orders(
+            requester=lambda request: requests.append(request) or {"list": []},
+            category="USDT-FUTURES",
+            symbols=[],
+            dedicated_account=True,
+            phase="before_close",
+            summary=summary,
+            clock=FakeClock(),
+            pacer=flatten.RequestPacer(min_interval_sec=0.2),
+        )
+
+        self.assertEqual(len(requests), 1)
+        self.assertNotIn("symbol", json.loads(requests[0].body))
+
+    def test_cancel_scope_rejects_per_order_failure(self):
+        summary = flatten.initial_summary(allowlist_config(dry_run=False))
+
+        with self.assertRaisesRegex(flatten.RestFailure, "24056"):
+            flatten.cancel_scoped_open_orders(
+                requester=lambda request: {
+                    "list": [
+                        {
+                            "orderId": "11",
+                            "clientOid": "a-11",
+                            "code": "24056",
+                            "msg": "notExisted",
+                        }
+                    ]
+                },
+                category="USDT-FUTURES",
+                symbols=["BTCUSDT"],
+                dedicated_account=False,
+                phase="before_close",
+                summary=summary,
+                clock=FakeClock(),
+                pacer=flatten.RequestPacer(min_interval_sec=0.2),
+            )
+
+    def test_reduce_only_closes_are_paced(self):
+        clock = FakeClock()
+        summary = flatten.initial_summary(allowlist_config(dry_run=False))
+        requests = []
+        positions = [
+            flatten.PositionSnapshot(
+                symbol=symbol,
+                pos_side="long",
+                total=Decimal("0.001"),
+                available=Decimal("0.001"),
+                frozen=Decimal("0"),
+                margin_mode="crossed",
+            )
+            for symbol in ("BTCUSDT", "ETHUSDT")
+        ]
+
+        flatten.submit_reduce_only_close_orders(
+            requester=lambda request: requests.append(request) or {},
+            category="USDT-FUTURES",
+            positions=positions,
+            clock=clock,
+            summary=summary,
+            pacer=flatten.RequestPacer(min_interval_sec=0.1),
+        )
+
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(clock.sleeps, [0.1])
+
     def test_query_open_orders_follows_cursor_and_filters_allowlist(self):
         first_page = [
             order_data(
@@ -400,7 +525,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(summary["result"], "verified_flat")
         self.assertEqual(
             requester.mutating_topics,
-            ["cancel-order", "place-order", "cancel-order"],
+            ["cancel-symbol-order", "place-order", "cancel-symbol-order"],
         )
         close_body = requester.place_bodies[0]
         self.assertEqual(close_body["side"], "sell")
@@ -432,7 +557,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(requester.place_bodies[0]["side"], "buy")
         self.assertEqual(requester.place_bodies[0]["qty"], "0.002")
 
-    def test_flat_account_is_idempotent_and_sends_no_mutating_request(self):
+    def test_flat_account_uses_idempotent_scope_cancel_without_close(self):
         requester = ScriptedRequester(
             open_order_results=[[], [], [], []],
             position_results=[
@@ -450,7 +575,11 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
         self.assertEqual(exit_code, flatten.EXIT_OK)
         self.assertEqual(summary["result"], "verified_flat")
-        self.assertEqual(requester.mutating_topics, [])
+        self.assertEqual(
+            requester.mutating_topics,
+            ["cancel-symbol-order", "cancel-symbol-order"],
+        )
+        self.assertEqual(summary["close_orders_submitted"], [])
 
     def test_poll_timeout_returns_not_flat(self):
         requester = ScriptedRequester(

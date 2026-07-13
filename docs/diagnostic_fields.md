@@ -135,6 +135,7 @@ metadata 文件，不构造 metadata record，但仍保留基础 read / publish 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `post_cancel_positions` | emergency helper JSON summary | stable | position snapshot 列表 | 保留撤销初始 open orders 后、提交 reduce-only close 前的 REST position；`initial_positions` 始终保留 mutation 前 snapshot，不再被覆盖。 | helper summary schema 被统一 reconcile artifact 取代后重审。 |
+| `orders_cancelled[].phase` / `scope` / `symbol` / `request` / `response` | emergency helper JSON summary | stable | `before_close` / `after_close`、`symbol` / `category`、UTA request/response | 记录每次按 symbol 或 dedicated category 执行的幂等范围撤单动作；它是 mutation audit，不单独证明订单已经全部撤销，最终结果仍只信保守 REST flat snapshot。 | helper summary schema 被统一 reconcile artifact 取代后重审。 |
 
 ## Bitget OrderSession
 

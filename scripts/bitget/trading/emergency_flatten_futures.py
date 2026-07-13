@@ -16,7 +16,6 @@ if __package__:
     from bitget.trading.place_futures_order import (  # noqa: E402
         ApiRequest,
         SignedBitgetTradingClient,
-        build_cancel_order_request,
         build_place_order_request,
         normalize_symbol,
     )
@@ -30,7 +29,6 @@ else:
     from place_futures_order import (  # noqa: E402
         ApiRequest,
         SignedBitgetTradingClient,
-        build_cancel_order_request,
         build_place_order_request,
         normalize_symbol,
     )
@@ -46,6 +44,8 @@ DEFAULT_POLL_INTERVAL_SEC = 0.5
 DEFAULT_MAX_POSITION_COUNT = 8
 OPEN_ORDER_PAGE_SIZE = 100
 MAX_OPEN_ORDER_PAGES = 5
+CANCEL_MIN_INTERVAL_SEC = 0.2
+CLOSE_MIN_INTERVAL_SEC = 0.1
 
 
 class ScopeRefused(ValueError):
@@ -66,6 +66,21 @@ class FlattenConfig:
     poll_timeout_sec: float = DEFAULT_POLL_TIMEOUT_SEC
     poll_interval_sec: float = DEFAULT_POLL_INTERVAL_SEC
     max_position_count: int = DEFAULT_MAX_POSITION_COUNT
+
+
+@dataclass
+class RequestPacer:
+    min_interval_sec: float
+    last_request_at: float | None = None
+
+    def wait(self, clock: Any) -> None:
+        now = clock.time()
+        if self.last_request_at is not None:
+            remaining = self.min_interval_sec - (now - self.last_request_at)
+            if remaining > 0:
+                clock.sleep(remaining)
+                now = clock.time()
+        self.last_request_at = now
 
 
 @dataclass(frozen=True)
@@ -293,6 +308,20 @@ def build_positions_request(category: str, symbol: str | None) -> ApiRequest:
     )
 
 
+def build_cancel_symbol_orders_request(
+    category: str,
+    symbol: str | None,
+) -> ApiRequest:
+    payload = {"category": account.normalize_category(category)}
+    if symbol is not None:
+        payload["symbol"] = normalize_symbol(symbol)
+    return ApiRequest(
+        method="POST",
+        endpoint_path="/api/v3/trade/cancel-symbol-order",
+        body=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
 def query_open_orders(
     requester: Requester,
     category: str,
@@ -428,31 +457,43 @@ def _discovered_symbols(
     return symbols
 
 
-def cancel_open_orders(
+def validate_cancel_symbol_orders_response(data: Any) -> None:
+    values = _response_list(data, "cancel symbol orders")
+    for index, value in enumerate(values):
+        if not isinstance(value, dict):
+            raise RestFailure(f"cancel symbol orders[{index}] must be an object")
+        code = value.get("code")
+        if code != "00000":
+            raise RestFailure(
+                f"cancel symbol orders[{index}] code={code} msg={value.get('msg')}"
+            )
+
+
+def cancel_scoped_open_orders(
     requester: Requester,
     category: str,
-    open_orders: list[OpenOrder],
+    symbols: list[str],
+    dedicated_account: bool,
     phase: str,
     summary: dict[str, Any],
+    clock: Any,
+    pacer: RequestPacer,
 ) -> None:
-    for order in open_orders:
-        request = build_cancel_order_request(
-            category=category,
-            symbol=order.symbol,
-            order_id=order.order_id or None,
-            client_oid=order.client_oid or None,
-        )
+    targets: list[str | None] = [None] if dedicated_account else list(symbols)
+    for symbol in targets:
+        pacer.wait(clock)
+        request = build_cancel_symbol_orders_request(category, symbol)
         response = requester(request)
         summary["orders_cancelled"].append(
             {
                 "phase": phase,
-                "symbol": order.symbol,
-                "order_id": order.order_id,
-                "client_oid": order.client_oid,
+                "scope": "category" if symbol is None else "symbol",
+                "symbol": symbol or "",
                 "request": request.to_public_dict(),
                 "response": response,
             }
         )
+        validate_cancel_symbol_orders_response(response)
 
 
 def build_close_client_oid(clock: Any, sequence: int) -> str:
@@ -469,7 +510,9 @@ def submit_reduce_only_close_orders(
     positions: list[PositionSnapshot],
     clock: Any,
     summary: dict[str, Any],
+    pacer: RequestPacer | None = None,
 ) -> None:
+    pacer = RequestPacer(CLOSE_MIN_INTERVAL_SEC) if pacer is None else pacer
     sequence = 0
     for position in positions:
         if position.total == 0:
@@ -485,6 +528,7 @@ def submit_reduce_only_close_orders(
             reduce_only=True,
         )
         sequence += 1
+        pacer.wait(clock)
         response = requester(request)
         summary["close_orders_submitted"].append(
             {
@@ -622,13 +666,18 @@ def run_emergency_flatten(
             summary["result"] = "dry_run"
             return EXIT_OK, summary
 
+        cancel_pacer = RequestPacer(CANCEL_MIN_INTERVAL_SEC)
+        close_pacer = RequestPacer(CLOSE_MIN_INTERVAL_SEC)
         try:
-            cancel_open_orders(
-                requester,
-                config.category,
-                open_orders,
-                "before_close",
-                summary,
+            cancel_scoped_open_orders(
+                requester=requester,
+                category=config.category,
+                symbols=scoped_symbols,
+                dedicated_account=config.scope == "dedicated-account",
+                phase="before_close",
+                summary=summary,
+                clock=clock,
+                pacer=cancel_pacer,
             )
             positions = query_positions(requester, config.category, symbols)
             summary["post_cancel_positions"] = _position_summaries(positions)
@@ -644,6 +693,7 @@ def run_emergency_flatten(
                 positions_to_close,
                 clock,
                 summary,
+                close_pacer,
             )
             post_close_open_orders = query_open_orders(
                 requester, config.category, symbols
@@ -651,12 +701,15 @@ def run_emergency_flatten(
             summary["post_close_open_orders"] = _open_order_summaries(
                 post_close_open_orders
             )
-            cancel_open_orders(
-                requester,
-                config.category,
-                post_close_open_orders,
-                "after_close",
-                summary,
+            cancel_scoped_open_orders(
+                requester=requester,
+                category=config.category,
+                symbols=scoped_symbols,
+                dedicated_account=config.scope == "dedicated-account",
+                phase="after_close",
+                summary=summary,
+                clock=clock,
+                pacer=cancel_pacer,
             )
         except Exception as mutation_error:
             return verify_after_mutation_error(
