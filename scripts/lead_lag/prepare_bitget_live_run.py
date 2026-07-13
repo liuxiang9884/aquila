@@ -142,6 +142,15 @@ def _validate_manifest(
         strategy, "order_gateway", "strategy.order_gateway"
     )
     feedback = required_dict(strategy, "feedback", "strategy.feedback")
+    if feedback.get("enabled", True) is not True:
+        raise ValueError("run isolation: strategy.feedback.enabled must be true")
+    poll_budget = feedback.get("poll_budget", 32)
+    if (
+        isinstance(poll_budget, bool)
+        or not isinstance(poll_budget, int)
+        or poll_budget <= 0
+    ):
+        raise ValueError("run isolation: strategy.feedback.poll_budget must be positive")
     strategy_gateway_path = Path(
         required_string(order_gateway, "config", "strategy.order_gateway")
     ).resolve()

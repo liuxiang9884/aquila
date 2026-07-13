@@ -364,6 +364,7 @@ def initial_summary(config: FlattenConfig) -> dict[str, Any]:
         },
         "initial_open_orders": [],
         "initial_positions": [],
+        "post_cancel_positions": [],
         "orders_cancelled": [],
         "close_orders_submitted": [],
         "post_close_open_orders": [],
@@ -587,7 +588,7 @@ def run_emergency_flatten(
                 summary,
             )
             positions = query_positions(requester, config.category, symbols)
-            summary["initial_positions"] = _position_summaries(positions)
+            summary["post_cancel_positions"] = _position_summaries(positions)
             positions_to_close = [
                 position for position in positions if not position.flat()
             ]

@@ -128,6 +128,14 @@ metadata 文件，不构造 metadata record，但仍保留基础 read / publish 
 | `fusion_total_read_count` / `fusion_total_published_count` | data fusion Nova log | stable | count | fusion thread 停止时汇总 source SHM read 数和 canonical SHM publish 数。 | fusion summary schema 被替换后同步更新。 |
 | `source_id` / `symbol_id` / `record_id` / `exchange_ns` / `event_ns` / `source_local_ns` / `fusion_publish_ns` | BookTicker / Trade `FusionMetadataRecord` sidecar binary v2 | stable | id / ns | 记录 canonical record 由哪个 source 首先发布；BookTicker `record_id=BookTicker.id` 且 `event_ns=BookTicker.event_ns`，Trade `record_id=Trade.id` 且 `event_ns=Trade.event_ns`。 | metadata binary schema 被替换后同步更新。 |
 
+## Bitget REST emergency helper
+
+组件入口：`scripts/bitget/trading/emergency_flatten_futures.py`。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `post_cancel_positions` | emergency helper JSON summary | stable | position snapshot 列表 | 保留撤销初始 open orders 后、提交 reduce-only close 前的 REST position；`initial_positions` 始终保留 mutation 前 snapshot，不再被覆盖。 | helper summary schema 被统一 reconcile artifact 取代后重审。 |
+
 ## Bitget OrderSession
 
 组件入口：

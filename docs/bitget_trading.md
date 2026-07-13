@@ -211,6 +211,7 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 - manifest schema、run directory、strategy command 的 `--config` 和 `run_id`；
 - gateway/feedback SHM 都包含本轮 `run_id`，strategy/gateway/feedback 指向完全一致；
 - `external_configs_applied=true`、`route_count=1`，gateway/feedback/guard 使用同一账户；
+- strategy feedback 必须启用且 `poll_budget > 0`，不能以真实订单模式绕过 feedback SHM；
 - strategy overlay 指向的 LeadLag 配置中，所有 `lag_exchange = "bitget"` 的 symbol 都必须包含在 guard
   `--contract` 范围内；guard 范围可以更大，但不能遗漏策略可能交易的 Bitget symbol；
 - strategy command 必须直接执行 basename 为 `lead_lag_strategy` 的二进制，不接受 `bash -c`、`env`、`taskset`

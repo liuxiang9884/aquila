@@ -295,7 +295,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 [],
             ],
             position_results=[
-                [position_data(total="0.001", available="0.001")],
+                [position_data(total="0.002", available="0.002")],
                 [position_data(total="0.001", available="0.001")],
                 [position_data(total="0", available="0", frozen="0")],
             ],
@@ -318,6 +318,8 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(close_body["qty"], "0.001")
         self.assertEqual(close_body["reduceOnly"], "yes")
         self.assertEqual(close_body["orderType"], "market")
+        self.assertEqual(summary["initial_positions"][0]["total"], "0.002")
+        self.assertEqual(summary["post_cancel_positions"][0]["total"], "0.001")
         self.assertEqual(summary["orders_cancelled"][0]["phase"], "before_close")
         self.assertEqual(summary["orders_cancelled"][1]["phase"], "after_close")
 

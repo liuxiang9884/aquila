@@ -309,6 +309,45 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                 ],
             )
 
+    def test_mark_applied_rejects_disabled_strategy_feedback(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        strategy_text = result.strategy_config.read_text(encoding="utf-8")
+        result.strategy_config.write_text(
+            strategy_text.replace("enabled = true", "enabled = false"),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "feedback.enabled"):
+            prepare.mark_external_configs_applied(result.manifest)
+
+    def test_mark_applied_rejects_zero_strategy_feedback_poll_budget(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        strategy_text = result.strategy_config.read_text(encoding="utf-8")
+        result.strategy_config.write_text(
+            strategy_text.replace(
+                "enabled = true",
+                "enabled = true\npoll_budget = 0",
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "feedback.poll_budget"):
+            prepare.mark_external_configs_applied(result.manifest)
+
     def test_guard_rejects_contract_scope_smaller_than_bitget_lag_symbols(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(
             self.source_dir,
