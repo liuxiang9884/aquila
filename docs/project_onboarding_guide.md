@@ -51,9 +51,10 @@ git log --oneline -8
   Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；gateway/LeadLag 未发真实订单。
-- Bitget 重复 live 前仍有 P0：跨进程 `local_order_id/clientOid` 唯一性、REST baseline/reconcile、unknown window 和 run-end flat。
-  Dedicated-account flat、余额、IP 白名单和 endpoint 可用性不是永久事实。
-- LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后暂停新开仓。Report CSV contract、reconcile 和 latency
+- Bitget V1 已选择 strict stop-and-flat，不修改跨进程 `local_order_id/clientOid`：不恢复交易、不允许 strategy-only restart；
+  每轮使用 run-specific gateway/feedback SHM 与 manifest，异常后通过 REST 撤单、reduce-only 平仓并证明 flat。Helper/guard/isolation
+  已有自动测试，尚无 Bitget tiny-position、gateway 或 LeadLag live 证据。
+- LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
 - Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
   `config/instruments/usdt_future_universe.csv`。旧 catalog 文件名不应用于新 run。
@@ -69,7 +70,7 @@ git log --oneline -8
 | WebSocket | `core/websocket/` |
 | Trading core | `core/trading/order_types.h`、`order_manager.h`、`trading_runtime.h`、`order_feedback_shm.h`、`order_gateway_*` |
 | Gate trading | `exchange/gate/trading/`、`tools/gate/gate_order_gateway.cpp` |
-| Bitget trading | `exchange/bitget/trading/`、`tools/bitget/bitget_order_gateway.cpp`、`tools/bitget/order_session_rtt_probe/` |
+| Bitget trading | `exchange/bitget/trading/`、`tools/bitget/`、`scripts/bitget/trading/`、`scripts/lead_lag/{prepare_bitget_live_run,run_live_with_guard}.py` |
 | Market data | `core/market_data/`、`exchange/{gate,binance,bitget}/market_data/` |
 | Fusion | `core/market_data/fusion/`、`tools/{gate,binance,bitget}/*_data_fusion.cpp` |
 | DataReader/recorder | `core/market_data/*data_reader.h`、`tools/market_data/data_reader_*` |
@@ -92,6 +93,10 @@ ctest --test-dir build/debug -R '^bitget_(order|operation)' --output-on-failure
 ctest --test-dir build/debug -R '(market_data|data_session|data_reader|fusion)' --output-on-failure
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/analyze_order_detail_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/generate_live_report_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/place_futures_order_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/prepare_bitget_live_run_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/run_live_with_guard_test.py
 ```
 
 Evaluation 边界修改后：
@@ -105,8 +110,9 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 下一步建议
 
-1. Bitget trading：先完成跨进程唯一 ID 与 REST baseline/reconcile/unknown-window P0，再申请 fanout=1 guarded gateway IOC；
-   最后才讨论 LeadLag、多 route、account limiter、failover 或 fast-fill。
+1. Bitget trading：代码下一步是按证据门逐次申请授权：read-only REST baseline、emergency dry-run、flat-account helper、
+   tiny-position stop-and-flat、fanout=1 guarded gateway passive IOC，最后才是 signal-conditioned LeadLag。每轮必须 fresh run；
+   多 route、account limiter、failover、fast-fill 和 resume/persistent ID 仍后置。
 2. Gate trading：下一步是 guarded gateway smoke，量化 route skew、Ack RTT、terminal feedback 与 fillability；先复核 account budget、
    reconcile 和 liveness。
 3. LeadLag live：任何真实 run 按 `docs/lead_lag_live_operations.md`，使用新鲜 release/config、freshness/slippage preflight、
@@ -121,5 +127,7 @@ rg 'aquila_evaluation' core exchange tools
 先运行 `git status --short --branch` 和 `git log --oneline -8`，再按 onboarding 顺序读取入口文档；branch/ahead/dirty 只信
 `git status`。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
 
-Bitget 下一步先读 `docs/bitget_trading.md`，处理跨进程唯一 ID 与 REST reconcile P0；这些完成前不启动 gateway/LeadLag 真实订单。
+Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
+但尚无 Bitget emergency/gateway/LeadLag live 证据。任何真实订单必须按 runbook 的分阶段证据门取得当次授权；不要把 fresh-run
+解释为可 resume，也不要在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。

@@ -3,11 +3,14 @@
 本文只定义 continuity/unknown-result 的恢复 contract；实盘启动、停止与 report 操作见
 `docs/lead_lag_live_operations.md`。
 
-**目标：** 明确 LeadLag 实盘运行中收到 `OrderFeedbackKind::kContinuityLost` 后的第一版处理方式。当前不做自动恢复和继续交易；先停止系统，再通过 Python Gate REST API 查询仓位、撤销挂单、用 reduce-only 市价单平掉风险敞口，并用 REST 复核账户已经回到安全状态。
+**目标：** 明确 LeadLag 实盘运行中收到 `OrderFeedbackKind::kContinuityLost` 或 `UnknownResult` 后的第一版处理方式。
+当前不做自动恢复和继续交易；先停止完整交易栈，再通过对应交易所的 Python REST helper 查询仓位、撤销挂单、用 reduce-only
+市价单平掉风险敞口，并用 REST 复核账户已经回到安全状态。
 
 **架构：** V1 采用 `stop-and-flat`。C++ live runner 负责识别 `ContinuityLost` 并停止自动交易；Python REST 应急工具负责账户侧处理：查询 position、查询 open orders、撤单、提交 reduce-only market close、轮询复核。更复杂的 read-only reconcile / 自动恢复只作为 V2 后续设计保留，不作为当前打开真实交易的前置目标。
 
-**技术栈：** C++20 strategy / runtime、Gate WebSocket order feedback、Gate APIv4 REST Python helper、CTest、Python unit tests、`git diff --check`。
+**技术栈：** C++20 strategy/runtime、Gate/Bitget WebSocket order feedback、Gate APIv4/Bitget UTA REST Python helper、CTest、
+Python unit tests、`git diff --check`。
 
 ---
 
@@ -16,8 +19,8 @@
 - `ContinuityLost` 表示下行订单事实流连续性不可证明；WS reconnect 成功不等于订单事实已经恢复。
 - V1 不尝试在同一轮运行中恢复 LeadLag 策略状态，也不恢复新开仓。
 - V1 的目标是让系统快速进入安全停止状态：停止自动交易，清理挂单，平掉 in-scope position，然后停住等待人工复核。
-- 如果 Gate 账户是 LeadLag 专用账户，应急工具可以扫描并处理账户下所有 futures position。
-- 如果 Gate 账户可能混用其他策略或人工仓位，应急工具必须要求显式 contract allowlist，不能默认平掉全账户。
+- 如果交易账户是 LeadLag 专用账户，应急工具可以在显式确认后扫描并处理目标 futures category 下所有 position。
+- 如果账户可能混用其他策略或人工仓位，应急工具必须要求显式 contract/symbol allowlist，不能默认平掉全账户。
 - 市价平仓必须使用 reduce-only，避免应急脚本因方向、数量或重复执行错误打开新仓。
 - V1 不新增独立 `AccountPositionFeedbackSession`，也不把 account / position realtime feedback 放进恢复前置条件。
 - 对齐 Sirius 当前边界：`third_party/sirius/exchange/gate/trade/TradeEngine` 只启用 `futures.orders` 反馈进入策略事件队列，策略持仓由订单 filled / partial filled / cancel / reject 回报推导；account / position REST 查询用于快照和复核，不作为策略实时状态主线。
@@ -31,7 +34,8 @@
   - global continuity lost fanout 时 lane 满，publisher 会保留 pending event 后续重试。
 - 枚举中还保留了 `kReconnectUnknownWindow`、`kDecodeUnrecoverable`、`kProducerRestart`，这些应作为后续增强场景处理。
 - `OrderManager` 和 LeadLag `ExecutionState` 仍是内存状态；进程退出后不能靠它们自动恢复交易。
-- 当前已有 `scripts/gate/account/query_gate_account.py`、read-only `scripts/gate/trading/reconcile_futures_orders.py`、V1 可下单应急工具 `scripts/gate/trading/emergency_flatten_futures.py` 和外围 guard wrapper `scripts/lead_lag/run_live_with_guard.py`。
+- 当前已有 Gate read-only reconcile、Gate/Bitget V1 emergency helper、Gate/Bitget 共用的外围 guard wrapper，以及 Bitget
+  fresh-run config/manifest 生成器。Bitget V1 不依赖 REST history 重建旧订单后继续交易。
 
 ## V1 应急流程
 
@@ -169,6 +173,30 @@ wrapper 行为：
 flat，字段缺失会按 REST 响应无法解释处理；decimal size 会以 raw JSON number 提交 reduce-only
 close。
 
+### Bitget V1 adapter 与 run boundary
+
+Bitget 复用同一 guard orchestration，但 exchange adapter 负责三项差异：
+
+- 凭据必须同时包含 `api_key_env`、`api_secret_env`、`api_passphrase_env`；strategy order gateway 的所有 route、
+  feedback session 和 guard 必须指向同一账户；
+- REST flat 使用 UTA open-orders/positions，position 的 `total`、`available`、`frozen` 必须全部为 0；
+- emergency close 使用反向 reduce-only market order，并在 cancel/place 返回不明确时只通过独立 REST snapshot 判定结果。
+
+Bitget V1 不修改跨进程 `local_order_id/clientOid`。安全边界是 strict stop-and-flat：任意 continuity/unknown/进程故障
+都终止本轮，停止 strategy、gateway 和 feedback producer，完成 REST cleanup 后仍保持停机。下一轮必须使用新的
+`run_id`、gateway/feedback SHM、runtime config 和 manifest；strategy-only restart、跨 run 自动恢复订单并继续开仓都被禁止。
+跨 run 审计使用 `(run_id, clientOid)`。只有未来要实现不平仓 resume、overlap 或 crash-state recovery 时，persistent ID
+和 REST history reconcile 才重新成为前置条件。
+
+`scripts/lead_lag/prepare_bitget_live_run.py` 生成并复验 fresh-run manifest。Bitget `--execute` 在读取凭据和 REST preflight
+之前要求 manifest 已标记 external configs applied，并验证 config path、run-specific SHM、`route_count=1` 和账户一致性。
+Guard summary 的 `runtime_isolation` 保存实际 manifest/config/SHM 和验证结果。该声明不替代外部 feedback/gateway PID、ready
+和 shutdown 检查；完整交易栈必须共享同一 run boundary。
+
+Bitget helper 与 guard exit code：helper `0/2/3/4` 分别表示 verified flat、仍非 flat、scope/config 拒绝、REST 无法证明；
+guard `0` 表示正常退出且 final flat，`10` 表示异常后已证明 flat 但保持停机，`11` 表示 cleanup 失败或无法证明 flat。
+Outer guard 被 `SIGKILL`、主机失效或 REST 全不可用仍是有人值守与人工 handoff 边界。
+
 ## V1 验证
 
 最小验证顺序：
@@ -179,6 +207,10 @@ close。
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/account/query_gate_account_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/trading/place_futures_order_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/trading/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/place_futures_order_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/guard_exchange_adapter_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/prepare_bitget_live_run_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/run_live_with_guard_test.py
 ```
 
@@ -226,12 +258,17 @@ V2 可保留以下原则：
 ## 当前实现状态
 
 - `scripts/gate/trading/emergency_flatten_futures.py` 已实现 allowlist / dedicated-account scope、dry-run、open order cancel、reduce-only market close、poll verify 和失败 exit code。
-- `scripts/lead_lag/run_live_with_guard.py` 已实现启动前 REST preflight、runner 退出后 final REST check、异常退出 flatten、final 非 flat flatten 和 flatten failure 映射。
+- `scripts/bitget/trading/emergency_flatten_futures.py` 已实现 UTA allowlist/dedicated-account scope、dry-run、cancel、
+  reduce-only market close、Decimal flat predicate、unknown 后独立 REST 复核和 fail-closed exit code。
+- `scripts/lead_lag/run_live_with_guard.py` 已实现 Gate/Bitget 启动前 REST preflight、runner 退出后 final REST check、异常退出 flatten、
+  final 非 flat flatten 和 flatten failure 映射；Bitget `--execute` 还强制 fresh-run manifest validation。
+- `scripts/lead_lag/prepare_bitget_live_run.py` 已实现 run-specific config/SHM/manifest 生成和 `mark-applied` 复验。
 - `lead_lag_strategy --execute` 已接入真实 live-orders runtime；`ContinuityLost` 在 live orders 模式下会请求 runtime stop，并返回 exit code `10`。缺少凭据时返回 exit code `2`，不会进入 runtime create。
 - signal-only 模式不提交订单；`ContinuityLost` 只作为 diagnostics / degraded 状态记录。
 - V1 应急成功后系统仍保持停止，不自动恢复交易。
+- Bitget 上述状态只有自动测试和非联网 CLI 证据；尚未执行 flat-account/tiny-position helper smoke、gateway IOC 或 LeadLag live。
 
-## 2026-05-22 V1 Emergency Smoke Evidence
+## 2026-05-22 Gate V1 Emergency Smoke Evidence
 
 - Commit under test: `45fcf96 Stop lead lag live runner on continuity loss`.
 - Scope: `allowlist` / `BTC_USDT`; 不使用 dedicated-account 全账户平仓。
@@ -246,6 +283,8 @@ V2 可保留以下原则：
 | --- | --- | --- |
 | 文档 | `git diff --check` | 无 whitespace error |
 | Python helper | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/gate/trading/emergency_flatten_futures_test.py` | scope、dry-run、cancel、market close、verify、失败 exit code 覆盖 |
+| Bitget helper | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/emergency_flatten_futures_test.py` | UTA scope、Decimal、cancel/close、unknown verify 和失败 exit code 覆盖 |
+| Bitget isolation | `/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/prepare_bitget_live_run_test.py` | run-specific SHM、manifest、route/account/config 一致性覆盖 |
 | Read-only REST | `scripts/gate/account/query_gate_account.py positions --contract BTC_USDT --no-pretty` | 返回当前 position，不产生交易副作用 |
 | Emergency dry-run | `scripts/gate/trading/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --dry-run --no-pretty` | 输出 plan，不提交订单 |
 | Emergency live smoke | `scripts/gate/trading/emergency_flatten_futures.py --scope allowlist --contract BTC_USDT --no-pretty` | 最终 open orders 为空、position size 为 0 |
@@ -256,3 +295,5 @@ V2 可保留以下原则：
 - V2 read-only reconcile / resume 是后续优化，不是当前应急方案。
 - 已有 `scripts/gate/trading/reconcile_futures_orders.py`、LeadLag recovery state API 和 runner recovery diagnostics 可作为 V2 基础。
 - V2 不应阻塞 V1 stop-and-flat，也不应在任意 REST 缺失、冲突、歧义或失败时自动恢复交易。
+- Bitget V2 若要恢复交易，必须先补 persistent ID、REST history identity mapping、unknown window 重建和 position/order 一致性 gate；
+  不能把 V1 fresh-run isolation 解释为已具备 resume 能力。

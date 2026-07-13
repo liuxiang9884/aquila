@@ -5,17 +5,23 @@
 
 ## 当前范围与证据边界
 
-截至 2026-07-11，仓库已实现：
+截至 2026-07-13，仓库已实现：
 
 - `OrderSession`：private WebSocket login、limit GTC/IOC place、single cancel、request correlation 和直接 operation response。
 - `OrderFeedbackSession`：独立 private connection、account-wide `order` topic、累计订单生命周期事实、feedback SHM 路由和 continuity lost。
 - RTT probe：单路/多路 run plan、passive IOC、Ack 与 terminal feedback 对账、CSV/metadata 输出和 safety close 状态流。
 - `bitget_order_gateway`：N route worker、真实 OrderGateway SHM command/event queue、route state 和 CLI dry-run/validate-only。
 - LeadLag：可以用现有 lag metadata 构造 Bitget gateway command；只接入 `order_gateway` backend。
+- REST stop-and-flat：提供 UTA market/reduce-only request builder、allowlist/dedicated-account emergency helper、
+  REST preflight/final check 和 Gate/Bitget 共用的 LeadLag guard orchestration。
+- Fresh-run isolation：为每轮 Bitget live 生成独立 gateway/feedback SHM、runtime config 和 manifest；
+  `--execute` 会在读取凭据和访问 REST 前强制验证 manifest。
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe；gateway/LeadLag
-路径尚未发送真实订单。Dedicated-account flat、余额、IP 白名单和 endpoint 可用性都是当次运行事实，不得外推为永久状态。
+路径尚未发送真实订单。新 stop-and-flat helper、guard 和 fresh-run isolation 目前只有自动测试与非联网 CLI 证据，尚无
+Bitget tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。Dedicated-account flat、余额、IP 白名单和 endpoint
+可用性都是当次运行事实，不得外推为永久状态。
 
 `OrderSession` 的 direct operation response 只表示请求的直接响应：
 
@@ -35,6 +41,9 @@ LeadLag strategy process
 
 Independent feedback process
   └─ OrderFeedbackSession ─ account-wide order topic ─ feedback SHM lanes
+
+Outer guard process
+  └─ REST preflight/final check ─ strategy child ─ emergency stop-and-flat
 ```
 
 每个 `OrderSession` 和 `OrderFeedbackSession` 都由单一 owner thread 驱动 WebSocket。Gateway worker 负责发送 command、
@@ -156,6 +165,10 @@ exchange/bitget/trading/order_gateway_worker.h
 tools/bitget/bitget_order_gateway.cpp
 tools/bitget/order_session_rtt_probe/
 tools/lead_lag/live_strategy.h
+scripts/bitget/trading/place_futures_order.py
+scripts/bitget/trading/emergency_flatten_futures.py
+scripts/lead_lag/prepare_bitget_live_run.py
+scripts/lead_lag/run_live_with_guard.py
 ```
 
 凭据默认从 `BITGET_TEST_KEY`、`BITGET_TEST_SECRET`、`BITGET_TEST_PASSPHRASE` 读取。CLI 参数传的是环境变量名，
@@ -169,33 +182,75 @@ tools/lead_lag/live_strategy.h
 ./build/debug/tools/bitget_order_session_rtt_probe \
   --config config/order_session_rtt_probe/bitget_order_session_rtt_probe.toml
 ctest --test-dir build/debug -R '^bitget_(order|operation)' --output-on-failure
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/place_futures_order_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/prepare_bitget_live_run_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/run_live_with_guard_test.py
 ```
 
 所有真实订单都需要用户对当次运行单独授权；dry-run、login、subscription 或 validate-only 不构成下单授权。
 
-## 实盘前置阻断
+## V1 stop-and-flat 与 fresh-run contract
 
-### P0：跨进程唯一 ID
+V1 不修改 `OrderPool`，所以新进程仍可能复用低 56-bit counter，`clientOid` 仍是 `a-<local_order_id>`。该事实不再阻断
+V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复后继续交易：
 
-`OrderPool` 在新进程中从低 56-bit counter 1 重新开始。相同 `strategy_id` 重启可能复用 `local_order_id` 和
-`clientOid`。更换 strategy lane 只能临时规避，不能用于可重复 live。重复 gateway/LeadLag live 前必须选择并验证持久 run epoch、
-外部 allocator、持久 counter 或不破坏现有 ABI 的等价方案。
+- 任意 `UnknownResult`、`ContinuityLost`、strategy/gateway/feedback/guard 故障都终止整轮 run；
+- 停止旧 strategy、gateway 和 feedback producer 后，按合约范围撤销 open orders、提交 reduce-only market close，
+  并只用后续 REST snapshot 证明 flat；成功或失败都保持停机；
+- 下一轮必须使用新的 `run_id`、gateway SHM、feedback SHM 和 runtime config，不允许 strategy-only restart；
+- 跨 run 审计身份使用 `(run_id, clientOid)`，不按历史 `clientOid` 自动重建订单并恢复开仓；
+- 只有未来要支持 overlap、read-only reconcile 后 resume 或 crash-state recovery 时，persistent `local_order_id/clientOid`
+  才重新成为前置条件。
 
-### P0：REST baseline、reconcile 与 unknown window
+`scripts/lead_lag/prepare_bitget_live_run.py prepare` 只生成 `/home/liuxiang/tmp/<run_id>/configs/` 下的三个 overlay
+和 `bitget_live_manifest.json`，不连接交易所、不读取账户、不创建 SHM。Operator 确认 feedback 与 fanout=1 gateway
+确实使用 manifest 中配置后，执行 `mark-applied`；该动作会重新读取三个 TOML，并复核路径、SHM、`route_count=1`
+和三字段凭据一致性。Guard 的 Bitget `--execute` 还会再次验证：
 
-恢复链路至少需要启动前 account/open-orders/positions baseline；reconnect、unknown result 和 continuity lost 后 reconcile；
-reconcile 完成前暂停新开仓；run-end flat 与 emergency cleanup；crash/restart 后 producer run、local order 和 exchange order 对账。
+- manifest schema、run directory、strategy command 的 `--config` 和 `run_id`；
+- gateway/feedback SHM 都包含本轮 `run_id`，strategy/gateway/feedback 指向完全一致；
+- `external_configs_applied=true`、`route_count=1`，gateway/feedback/guard 使用同一账户；
+- summary 的 `runtime_isolation` 记录实际 manifest/config/SHM 与 `validated=true`，不记录 secret/passphrase 内容。
 
-### P0：单 route guarded smoke
+## REST emergency helper 与 guard 语义
 
-只有唯一 ID 和恢复边界明确后，才按 REST flat → feedback ready → fanout=1 gateway passive IOC → Ack+terminal feedback →
-REST run-end flat 的顺序执行。之后才能讨论 signal-conditioned LeadLag smoke。
+`scripts/bitget/trading/emergency_flatten_futures.py` 支持：
+
+- `allowlist`：只查询、撤销和平掉显式 `--symbol` 范围；用于共享账户或限定合约；
+- `dedicated-account`：必须显式 `--confirm-dedicated-account`，扫描整个 category，并受 `--max-position-count` 保护；
+- `--dry-run`：执行只读 REST 查询并输出 plan，不发送 cancel/place；
+- 实际清理：先撤单，再按 REST position 的 `posSide/total/marginMode` 提交反向 reduce-only market close，二次撤单并轮询；
+- flat predicate：open orders 为空，且每个 position 的 `total/available/frozen` 都为 0；所有数量用 `Decimal`；
+- mutating response 不明确时只做独立 REST 复核；能证明 flat 才返回 `verified_flat_after_unknown`，否则 fail closed，不盲目重发。
+
+Helper exit code：`0` 表示 REST 已证明 flat，`2` 表示 timeout 后仍非 flat，`3` 表示 scope/config 拒绝，`4` 表示
+REST 失败或响应不可解释。`run_live_with_guard.py` 正常退出且 final flat 返回 `0`；异常后 flatten 成功返回 `10` 并保持停机；
+flatten 失败或无法证明 flat 返回 `11`。Preflight 非 flat 只拒绝启动，不自动清理历史残留。
+
+## 真实订单证据门
+
+当前代码与自动测试完成不等于已有 Bitget live 证据。每一步真实订单都需要用户对当次运行单独授权，顺序固定为：
+
+```text
+read-only REST baseline
+→ emergency dry-run
+→ flat-account helper smoke
+→ tiny-position stop-and-flat smoke
+→ fanout=1 gateway passive IOC
+→ signal-conditioned LeadLag smoke
+```
+
+在 tiny-position、gateway 或 LeadLag 授权缺失时，不得宣称 stop-and-flat live safety、gateway fillability 或 LeadLag latency 已验证。
+Outer guard 被 `SIGKILL`、主机失效、网络隔离或 REST 全不可用时仍没有自动恢复保证；首次 smoke 必须有人值守，并由外部
+supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果都禁止启动下一轮。
 
 ## 后续方向与优先级
 
 - P1：基于官方 UTA WebSocket 预算设计 UID/account 级共享 limiter；不能直接套用 REST `10 requests/s/UID`。
 - P1：官方 HA 与高速 endpoint 长期 A/B、endpoint failover 和切换 unknown window。
 - P1：单 route 闭环稳定后的多 route live 与 route policy。
+- P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
 - P2：`fast-fill`/`fill` 的 `execId` 去重、跨流乱序和累计 quantity 重建。
 - P2：account/position private feed、通用 Gate/Bitget policy、direct backend 和更多协议能力。
 
