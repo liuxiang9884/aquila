@@ -105,7 +105,7 @@ scripts/lead_lag/prepare_bitget_live_run.py mark-applied \
   --feedback-pid <feedback_pid>
 ```
 
-`mark-applied` 会验证两个 PID 当前存活且分别是预期 gateway/feedback binary，argv 包含 `--connect` 并精确使用生成配置；
+`mark-applied` 会验证两个 PID 当前存活且分别是预期 gateway/feedback binary，argv 包含 `--connect` 并以绝对路径精确使用生成配置；
 manifest v2 记录 `/proc/<pid>/stat` start time 防止 PID reuse。三个 TOML 的路径、SHM、route count、交易 contract、credential env
 和两个进程中的实际 credential 值也必须一致；credential 值不会写入 artifact。Ready 仍需按 log 单独确认。旧 run 必须先停止完整
 交易栈并获得 REST flat 证据，才能创建下一轮。

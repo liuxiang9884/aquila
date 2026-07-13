@@ -457,6 +457,20 @@ def _discovered_symbols(
     return symbols
 
 
+def enforce_position_count_limit(
+    positions: Iterable[PositionSnapshot],
+    max_position_count: int,
+) -> None:
+    non_flat_position_count = sum(
+        1 for position in positions if not position.flat()
+    )
+    if non_flat_position_count > max_position_count:
+        raise ScopeRefused(
+            "max-position-count exceeded: "
+            f"{non_flat_position_count} > {max_position_count}"
+        )
+
+
 def validate_cancel_symbol_orders_response(data: Any) -> None:
     values = _response_list(data, "cancel symbol orders")
     for index, value in enumerate(values):
@@ -639,14 +653,7 @@ def run_emergency_flatten(
         open_orders = query_open_orders(requester, config.category, symbols)
         positions = query_positions(requester, config.category, symbols)
         if config.scope == "dedicated-account":
-            non_flat_positions = [
-                position for position in positions if not position.flat()
-            ]
-            if len(non_flat_positions) > config.max_position_count:
-                raise ScopeRefused(
-                    "max-position-count exceeded: "
-                    f"{len(non_flat_positions)} > {config.max_position_count}"
-                )
+            enforce_position_count_limit(positions, config.max_position_count)
             scoped_symbols = _discovered_symbols(positions, open_orders)
         else:
             scoped_symbols = symbols or []
@@ -680,6 +687,8 @@ def run_emergency_flatten(
                 pacer=cancel_pacer,
             )
             positions = query_positions(requester, config.category, symbols)
+            if config.scope == "dedicated-account":
+                enforce_position_count_limit(positions, config.max_position_count)
             summary["post_cancel_positions"] = _position_summaries(positions)
             positions_to_close = [
                 position for position in positions if not position.flat()
@@ -711,6 +720,8 @@ def run_emergency_flatten(
                 clock=clock,
                 pacer=cancel_pacer,
             )
+        except ScopeRefused:
+            raise
         except Exception as mutation_error:
             return verify_after_mutation_error(
                 config, requester, symbols, summary, mutation_error

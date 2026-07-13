@@ -1,6 +1,7 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import json
+import os
 import sys
 import tomllib
 import unittest
@@ -35,6 +36,7 @@ def write_fake_process(
         "passphrase-value",
     ),
     start_time_ticks: int = 100,
+    config_argument: str | None = None,
 ) -> None:
     process_dir = proc_root / str(pid)
     process_dir.mkdir(parents=True, exist_ok=True)
@@ -47,7 +49,12 @@ def write_fake_process(
     (process_dir / "cmdline").write_bytes(
         b"\0".join(
             value.encode("utf-8")
-            for value in (str(binary), "--config", str(config), "--connect")
+            for value in (
+                str(binary),
+                "--config",
+                config_argument or str(config),
+                "--connect",
+            )
         )
         + b"\0"
     )
@@ -433,6 +440,37 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "config mismatch"):
+            prepare.mark_external_configs_applied(
+                result.manifest,
+                gateway_pid=self.gateway_pid,
+                feedback_pid=self.feedback_pid,
+                proc_root=self.proc_root,
+            )
+
+    def test_mark_applied_rejects_relative_process_config_argument(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        write_fake_process(
+            self.proc_root,
+            self.gateway_pid,
+            "bitget_order_gateway",
+            result.gateway_config,
+            config_argument=os.path.relpath(result.gateway_config, guard.PROJECT_ROOT),
+        )
+        write_fake_process(
+            self.proc_root,
+            self.feedback_pid,
+            "bitget_order_feedback_session",
+            result.feedback_config,
+        )
+
+        with self.assertRaisesRegex(ValueError, "absolute --config"):
             prepare.mark_external_configs_applied(
                 result.manifest,
                 gateway_pid=self.gateway_pid,

@@ -500,6 +500,36 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
         self.assertEqual(exit_code, flatten.EXIT_OK)
         self.assertEqual(summary["scope"]["symbols"], ["BTCUSDT", "ETHUSDT"])
 
+    def test_dedicated_scope_rechecks_position_limit_after_cancel(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], [], [], []],
+            position_results=[
+                [position_data(symbol="BTCUSDT")],
+                [
+                    position_data(symbol="BTCUSDT"),
+                    position_data(symbol="ETHUSDT"),
+                ],
+                [
+                    position_data(symbol="BTCUSDT", total="0", available="0"),
+                    position_data(symbol="ETHUSDT", total="0", available="0"),
+                ],
+            ],
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=dedicated_config(
+                dry_run=False,
+                max_position_count=1,
+            ),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_SCOPE_REFUSED)
+        self.assertEqual(summary["result"], "scope_refused")
+        self.assertIn("max-position-count", summary["errors"][0])
+        self.assertEqual(requester.mutating_topics, ["cancel-symbol-order"])
+
     def test_cancels_before_close_then_cancels_again_and_polls_flat(self):
         requester = ScriptedRequester(
             open_order_results=[

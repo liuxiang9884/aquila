@@ -202,7 +202,12 @@ def _process_config_arg(command: list[str], pid: int) -> Path:
     config_arg = guard.find_strategy_config_arg(command)
     if config_arg is None:
         raise ValueError(f"run isolation: process {pid} command requires --config")
-    return guard.resolve_repo_path(config_arg[1])
+    config_path = config_arg[1].expanduser()
+    if not config_path.is_absolute():
+        raise ValueError(
+            f"run isolation: process {pid} command requires absolute --config"
+        )
+    return config_path.resolve()
 
 
 def _build_process_binding(

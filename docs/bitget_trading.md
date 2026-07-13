@@ -207,7 +207,7 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 和 `bitget_live_manifest.json`，不连接交易所、不读取账户、不创建 SHM。Operator 确认 feedback 与 fanout=1 gateway
 确实使用 manifest 中配置后，以两个实际 PID 执行 `mark-applied --gateway-pid <pid> --feedback-pid <pid>`。manifest schema v2
 会重新读取三个 TOML，并复核路径、SHM、`route_count=1`、三字段凭据、category、position/margin mode 和 private WebSocket
-endpoint 一致性；同时从 `/proc` 绑定 PID、start time、executable、`--connect` 与实际 `--config`。进程 credential 值只在内存中
+endpoint 一致性；同时从 `/proc` 绑定 PID、start time、executable、`--connect` 与实际绝对 `--config`。进程 credential 值只在内存中
 比较，不写入 manifest、summary 或 log。Guard 的 Bitget `--execute` 还会再次验证：
 
 - manifest schema、run directory、strategy command 的 `--config` 和 `run_id`；
@@ -228,7 +228,8 @@ endpoint 一致性；同时从 `/proc` 绑定 PID、start time、executable、`-
 `scripts/bitget/trading/emergency_flatten_futures.py` 支持：
 
 - `allowlist`：按 category 查询全量后在本地只保留显式 `--symbol`，使用 per-symbol cancel 撤单和平仓；用于共享账户或限定合约；
-- `dedicated-account`：必须显式 `--confirm-dedicated-account`，扫描整个 category，并受 `--max-position-count` 保护；
+- `dedicated-account`：必须显式 `--confirm-dedicated-account`，扫描整个 category，并在首次查询与撤单后的 position snapshot
+  都受 `--max-position-count` 保护；
 - `--dry-run`：执行只读 REST 查询并输出 plan，不发送 cancel/place；
 - flat snapshot：完整遍历 UTA open-orders cursor，按 `open orders → positions → open orders` 查询；两次订单都为空且 position
   全部为零才算 flat，cursor 循环、页数超限或响应不可解释均 fail closed；
