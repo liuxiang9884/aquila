@@ -860,9 +860,14 @@ def bitget_query_guard_state(
 ) -> GuardState:
     category = bitget_category_from_settle(settle)
     symbols = bitget_flatten.normalize_symbols(contracts)
+    positions, open_orders = bitget_flatten.query_flat_snapshot(
+        requester,
+        category,
+        symbols,
+    )
     return GuardState(
-        positions=bitget_flatten.query_positions(requester, category, symbols),
-        open_orders=bitget_flatten.query_open_orders(requester, category, symbols),
+        positions=positions,
+        open_orders=open_orders,
     )
 
 

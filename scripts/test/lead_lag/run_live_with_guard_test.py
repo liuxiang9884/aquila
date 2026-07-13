@@ -384,6 +384,59 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertEqual(state.open_orders, [])
         self.assertEqual(len(calls), 2)
 
+    def test_bitget_guard_state_uses_conservative_flat_snapshot(self):
+        calls = []
+        open_order_responses = [
+            {"list": [], "cursor": ""},
+            {
+                "list": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "orderId": "late-order",
+                        "clientOid": "a-late-order",
+                    }
+                ],
+                "cursor": "",
+            },
+        ]
+
+        def fake_request(api_request):
+            calls.append(api_request.endpoint_path)
+            if api_request.endpoint_path.endswith("unfilled-orders"):
+                return open_order_responses.pop(0)
+            if api_request.endpoint_path.endswith("current-position"):
+                return {
+                    "list": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "posSide": "long",
+                            "holdMode": "one_way_mode",
+                            "marginMode": "crossed",
+                            "total": "0",
+                            "available": "0",
+                            "frozen": "0",
+                        }
+                    ]
+                }
+            raise AssertionError(f"unexpected request: {api_request}")
+
+        state = guard.bitget_query_guard_state(
+            fake_request,
+            "usdt",
+            ["BTC_USDT"],
+        )
+
+        self.assertFalse(state.flat())
+        self.assertEqual(state.open_orders[0].order_id, "late-order")
+        self.assertEqual(
+            calls,
+            [
+                "/api/v3/trade/unfilled-orders",
+                "/api/v3/position/current-position",
+                "/api/v3/trade/unfilled-orders",
+            ],
+        )
+
     def test_preflight_not_flat_refuses_to_start_or_flatten(self):
         process = FakeProcessRunner(guard.ProcessResult(exit_code=0))
         flatten = FakeFlattenRunner(

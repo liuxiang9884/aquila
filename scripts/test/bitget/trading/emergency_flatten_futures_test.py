@@ -2,6 +2,7 @@
 
 import sys
 import unittest
+import urllib.parse
 from collections import deque
 from decimal import Decimal
 from pathlib import Path
@@ -150,7 +151,94 @@ class ScriptedRequester:
         raise AssertionError(f"unexpected request: {request}")
 
 
+class OpenOrderPageRequester:
+    def __init__(self, pages):
+        self.pages = deque(pages)
+        self.requests = []
+
+    def __call__(self, request):
+        self.requests.append(request)
+        if request.method != "GET" or not request.endpoint_path.endswith(
+            "unfilled-orders"
+        ):
+            raise AssertionError(f"unexpected request: {request}")
+        return self.pages.popleft()
+
+
 class EmergencyFlattenFuturesTest(unittest.TestCase):
+    def test_query_open_orders_follows_cursor_and_filters_allowlist(self):
+        first_page = [
+            order_data(
+                symbol="ETHUSDT" if index == 0 else "BTCUSDT",
+                order_id=str(index + 1),
+                client_oid=f"a-{index + 1}",
+            )
+            for index in range(100)
+        ]
+        requester = OpenOrderPageRequester(
+            [
+                {"list": first_page, "cursor": "cursor-1"},
+                {
+                    "list": [
+                        order_data(
+                            symbol="BTCUSDT",
+                            order_id="101",
+                            client_oid="a-101",
+                        )
+                    ],
+                    "cursor": "cursor-2",
+                },
+            ]
+        )
+
+        orders = flatten.query_open_orders(
+            requester,
+            "USDT-FUTURES",
+            ["BTCUSDT"],
+        )
+
+        self.assertEqual(len(orders), 100)
+        self.assertTrue(all(order.symbol == "BTCUSDT" for order in orders))
+        self.assertEqual(len(requester.requests), 2)
+        second_query = urllib.parse.parse_qs(requester.requests[1].query_string)
+        self.assertEqual(second_query["cursor"], ["cursor-1"])
+
+    def test_query_open_orders_rejects_repeated_cursor(self):
+        page = [
+            order_data(order_id=str(index + 1), client_oid=f"a-{index + 1}")
+            for index in range(100)
+        ]
+        requester = OpenOrderPageRequester(
+            [
+                {"list": page, "cursor": "cursor-1"},
+                {"list": page, "cursor": "cursor-1"},
+            ]
+        )
+
+        with self.assertRaisesRegex(flatten.RestFailure, "cursor"):
+            flatten.query_open_orders(
+                requester,
+                "USDT-FUTURES",
+                ["BTCUSDT"],
+            )
+
+    def test_flat_snapshot_requires_second_open_order_query(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], [order_data(order_id="late-order")]],
+            position_results=[
+                [position_data(total="0", available="0", frozen="0")]
+            ],
+        )
+
+        positions, open_orders = flatten.query_flat_snapshot(
+            requester,
+            "USDT-FUTURES",
+            ["BTCUSDT"],
+        )
+
+        self.assertFalse(flatten.final_state_is_flat(positions, open_orders))
+        self.assertEqual(open_orders[0].order_id, "late-order")
+
     def test_position_is_flat_only_when_total_available_and_frozen_are_zero(self):
         position = flatten.PositionSnapshot(
             symbol="BTCUSDT",
@@ -293,6 +381,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
                 [order_data(order_id="11")],
                 [order_data(order_id="12")],
                 [],
+                [],
             ],
             position_results=[
                 [position_data(total="0.002", available="0.002")],
@@ -325,7 +414,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
     def test_short_position_closes_with_reduce_only_buy(self):
         requester = ScriptedRequester(
-            open_order_results=[[], [], []],
+            open_order_results=[[], [], [], []],
             position_results=[
                 [position_data(pos_side="short", total="0.002", available="0.002")],
                 [position_data(pos_side="short", total="0.002", available="0.002")],
@@ -345,7 +434,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
     def test_flat_account_is_idempotent_and_sends_no_mutating_request(self):
         requester = ScriptedRequester(
-            open_order_results=[[], [], []],
+            open_order_results=[[], [], [], []],
             position_results=[
                 [position_data(total="0", available="0")],
                 [position_data(total="0", available="0")],
@@ -405,7 +494,7 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
     def test_cancel_unknown_with_independent_flat_proof_succeeds_stopped(self):
         requester = ScriptedRequester(
-            open_order_results=[[order_data(order_id="11")], []],
+            open_order_results=[[order_data(order_id="11")], [], []],
             position_results=[
                 [position_data(total="0", available="0", frozen="0")],
                 [position_data(total="0", available="0", frozen="0")]

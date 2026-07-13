@@ -44,6 +44,8 @@ EXIT_REST_FAILED = 4
 DEFAULT_POLL_TIMEOUT_SEC = 30.0
 DEFAULT_POLL_INTERVAL_SEC = 0.5
 DEFAULT_MAX_POSITION_COUNT = 8
+OPEN_ORDER_PAGE_SIZE = 100
+MAX_OPEN_ORDER_PAGES = 5
 
 
 class ScopeRefused(ValueError):
@@ -157,6 +159,16 @@ def _response_list(data: Any, label: str) -> list[Any]:
     return values
 
 
+def _response_page(data: Any, label: str) -> tuple[list[Any], str]:
+    values = _response_list(data, label)
+    cursor = data.get("cursor", "")
+    if cursor is None:
+        cursor = ""
+    if not isinstance(cursor, str):
+        raise RestFailure(f"{label} response cursor must be a string")
+    return values, cursor.strip()
+
+
 def _response_symbol(
     item: dict[str, Any],
     label: str,
@@ -249,7 +261,11 @@ def final_state_is_flat(
     return not open_orders and all(position.flat() for position in positions)
 
 
-def build_open_orders_request(category: str, symbol: str | None) -> ApiRequest:
+def build_open_orders_request(
+    category: str,
+    symbol: str | None,
+    cursor: str | None = None,
+) -> ApiRequest:
     return ApiRequest(
         method="GET",
         endpoint_path="/api/v3/trade/unfilled-orders",
@@ -257,6 +273,8 @@ def build_open_orders_request(category: str, symbol: str | None) -> ApiRequest:
             [
                 ("category", account.normalize_category(category)),
                 ("symbol", normalize_symbol(symbol) if symbol else None),
+                ("limit", str(OPEN_ORDER_PAGE_SIZE)),
+                ("cursor", cursor),
             ]
         ),
     )
@@ -280,20 +298,30 @@ def query_open_orders(
     category: str,
     symbols: list[str] | None,
 ) -> list[OpenOrder]:
-    if symbols is None:
-        return parse_open_orders(
-            requester(build_open_orders_request(category, None)), None
-        )
-    allowed_symbols = set(symbols)
+    allowed_symbols = set(symbols) if symbols is not None else None
     orders: list[OpenOrder] = []
-    for symbol in symbols:
-        orders.extend(
-            parse_open_orders(
-                requester(build_open_orders_request(category, symbol)),
-                allowed_symbols,
-            )
-        )
-    return orders
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    for _ in range(MAX_OPEN_ORDER_PAGES):
+        data = requester(build_open_orders_request(category, None, cursor))
+        values, next_cursor = _response_page(data, "open orders")
+        page_orders = parse_open_orders({"list": values}, None)
+        if allowed_symbols is not None:
+            page_orders = [
+                order for order in page_orders if order.symbol in allowed_symbols
+            ]
+        orders.extend(page_orders)
+        if len(values) < OPEN_ORDER_PAGE_SIZE:
+            return orders
+        if not next_cursor:
+            raise RestFailure("open orders full page missing cursor")
+        if next_cursor in seen_cursors:
+            raise RestFailure("open orders cursor repeated")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise RestFailure(
+        f"open orders exceeded {MAX_OPEN_ORDER_PAGES} pagination requests"
+    )
 
 
 def query_positions(
@@ -301,18 +329,27 @@ def query_positions(
     category: str,
     symbols: list[str] | None,
 ) -> list[PositionSnapshot]:
+    positions = parse_positions(
+        requester(build_positions_request(category, None)),
+        None,
+    )
     if symbols is None:
-        return parse_positions(requester(build_positions_request(category, None)), None)
+        return positions
     allowed_symbols = set(symbols)
-    positions: list[PositionSnapshot] = []
-    for symbol in symbols:
-        positions.extend(
-            parse_positions(
-                requester(build_positions_request(category, symbol)),
-                allowed_symbols,
-            )
-        )
-    return positions
+    return [position for position in positions if position.symbol in allowed_symbols]
+
+
+def query_flat_snapshot(
+    requester: Requester,
+    category: str,
+    symbols: list[str] | None,
+) -> tuple[list[PositionSnapshot], list[OpenOrder]]:
+    open_orders_before = query_open_orders(requester, category, symbols)
+    positions = query_positions(requester, category, symbols)
+    if open_orders_before or not all(position.flat() for position in positions):
+        return positions, open_orders_before
+    open_orders_after = query_open_orders(requester, category, symbols)
+    return positions, open_orders_after
 
 
 def _open_order_summaries(open_orders: Iterable[OpenOrder]) -> list[dict[str, str]]:
@@ -473,8 +510,11 @@ def poll_until_flat(
     polls = 0
     while True:
         polls += 1
-        positions = query_positions(requester, category, symbols)
-        open_orders = query_open_orders(requester, category, symbols)
+        positions, open_orders = query_flat_snapshot(
+            requester,
+            category,
+            symbols,
+        )
         if final_state_is_flat(positions, open_orders):
             return True, polls, positions, open_orders
         now = clock.time()
@@ -514,8 +554,11 @@ def verify_after_mutation_error(
 ) -> tuple[int, dict[str, Any]]:
     summary["errors"].append(str(error))
     try:
-        final_positions = query_positions(requester, config.category, symbols)
-        final_open_orders = query_open_orders(requester, config.category, symbols)
+        final_positions, final_open_orders = query_flat_snapshot(
+            requester,
+            config.category,
+            symbols,
+        )
     except Exception as verify_error:
         summary["errors"].append(f"final REST verification failed: {verify_error}")
         summary["result"] = "rest_failed"
