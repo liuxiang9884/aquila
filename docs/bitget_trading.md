@@ -205,17 +205,21 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 
 `scripts/lead_lag/prepare_bitget_live_run.py prepare` 只生成 `/home/liuxiang/tmp/<run_id>/configs/` 下的三个 overlay
 和 `bitget_live_manifest.json`，不连接交易所、不读取账户、不创建 SHM。Operator 确认 feedback 与 fanout=1 gateway
-确实使用 manifest 中配置后，执行 `mark-applied`；该动作会重新读取三个 TOML，并复核路径、SHM、`route_count=1`
-和三字段凭据一致性。Guard 的 Bitget `--execute` 还会再次验证：
+确实使用 manifest 中配置后，以两个实际 PID 执行 `mark-applied --gateway-pid <pid> --feedback-pid <pid>`。manifest schema v2
+会重新读取三个 TOML，并复核路径、SHM、`route_count=1`、三字段凭据、category、position/margin mode 和 private WebSocket
+endpoint 一致性；同时从 `/proc` 绑定 PID、start time、executable、`--connect` 与实际 `--config`。进程 credential 值只在内存中
+比较，不写入 manifest、summary 或 log。Guard 的 Bitget `--execute` 还会再次验证：
 
 - manifest schema、run directory、strategy command 的 `--config` 和 `run_id`；
 - gateway/feedback SHM 都包含本轮 `run_id`，strategy/gateway/feedback 指向完全一致；
-- `external_configs_applied=true`、`route_count=1`，gateway/feedback/guard 使用同一账户；
+- `external_configs_applied=true`、`route_count=1`，gateway/feedback 的 PID/start time/executable/config 未变化，且 guard
+  当前 credential 值与两个进程一致；PID reuse、`/proc` 不可读或 credential 无法比较时 fail closed；
 - strategy feedback 必须启用且 `poll_budget > 0`，不能以真实订单模式绕过 feedback SHM；
 - strategy overlay 指向的 LeadLag 配置中，所有 `lag_exchange = "bitget"` 的 symbol 都必须包含在 guard
   `--contract` 范围内；guard 范围可以更大，但不能遗漏策略可能交易的 Bitget symbol；
 - strategy command 必须直接执行 basename 为 `lead_lag_strategy` 的二进制，不接受 `bash -c`、`env`、`taskset`
   等 wrapper；否则 guard 无法从 argv 证明 `--execute` 和 `--config`；
+- 真实 `--execute` 只允许默认生产 REST base URL，不接受测试、代理或任意覆盖 endpoint；
 - summary 的 `runtime_isolation` 记录实际 manifest/config/SHM、`strategy_lag_symbols` 与 `validated=true`，
   不记录 secret/passphrase 内容。
 
@@ -223,17 +227,24 @@ V1 的原因不是 ID 已经全局唯一，而是 V1 明确禁止跨进程恢复
 
 `scripts/bitget/trading/emergency_flatten_futures.py` 支持：
 
-- `allowlist`：只查询、撤销和平掉显式 `--symbol` 范围；用于共享账户或限定合约；
+- `allowlist`：按 category 查询全量后在本地只保留显式 `--symbol`，使用 per-symbol cancel 撤单和平仓；用于共享账户或限定合约；
 - `dedicated-account`：必须显式 `--confirm-dedicated-account`，扫描整个 category，并受 `--max-position-count` 保护；
 - `--dry-run`：执行只读 REST 查询并输出 plan，不发送 cancel/place；
-- 实际清理：mutation 前先查询 position 并要求 `holdMode=one_way_mode`；随后撤单，再按 REST position 的
-  `posSide/total/marginMode` 提交反向 reduce-only market close，二次撤单并轮询；
+- flat snapshot：完整遍历 UTA open-orders cursor，按 `open orders → positions → open orders` 查询；两次订单都为空且 position
+  全部为零才算 flat，cursor 循环、页数超限或响应不可解释均 fail closed；
+- 实际清理：即使首次 snapshot 没有订单，也执行一次幂等范围撤单；allowlist 使用
+  `/api/v3/trade/cancel-symbol-order`，dedicated account 使用 category-wide cancel；随后按 REST position 的
+  `posSide/total/marginMode` 提交反向 reduce-only market close，再次范围撤单并轮询；
+- cleanup pacing：多 symbol 撤单最多 5 requests/s，多 position close 最多 10 requests/s；这些等待只在 REST 慢路径；
 - flat predicate：open orders 为空，且每个 position 的 `total/available/frozen` 都为 0；所有数量用 `Decimal`；
 - mutating response 不明确时只做独立 REST 复核；能证明 flat 才返回 `verified_flat_after_unknown`，否则 fail closed，不盲目重发。
 
 Helper exit code：`0` 表示 REST 已证明 flat，`2` 表示 timeout 后仍非 flat，`3` 表示 scope/config 拒绝，`4` 表示
 REST 失败或响应不可解释。`run_live_with_guard.py` 正常退出且 final flat 返回 `0`；异常后 flatten 成功返回 `10` 并保持停机；
-flatten 失败或无法证明 flat 返回 `11`。Preflight 非 flat 只拒绝启动，不自动清理历史残留。
+flatten 失败或无法证明 flat 返回 `11`。strategy 返回或抛异常后，guard 必须先等待 gateway 自行退出，再按需升级
+`SIGTERM`/`SIGKILL`，并停止 feedback；只有两个绑定进程均已停止才允许 final REST 或 emergency flatten。quiescence 失败直接返回
+`11`，不生成新的 flat 成功证明。guard 自身收到终止信号时对子 strategy 的等待也有界，并会从 `SIGTERM` 升级到 `SIGKILL`。
+Preflight 非 flat 只拒绝启动，不自动清理历史残留。
 
 ## 真实订单证据门
 

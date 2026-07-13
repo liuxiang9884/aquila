@@ -100,11 +100,15 @@ scripts/lead_lag/prepare_bitget_live_run.py prepare \
 
 ```bash
 scripts/lead_lag/prepare_bitget_live_run.py mark-applied \
-  --runtime-manifest /home/liuxiang/tmp/<run_id>/configs/bitget_live_manifest.json
+  --runtime-manifest /home/liuxiang/tmp/<run_id>/configs/bitget_live_manifest.json \
+  --gateway-pid <gateway_pid> \
+  --feedback-pid <feedback_pid>
 ```
 
-`mark-applied` 是 operator 对外部进程实际配置的声明；它会重新验证三个 TOML 的路径、SHM、route count 和 credential env，
-但不代替 PID/readiness 检查。旧 run 必须先停止完整交易栈并获得 REST flat 证据，才能创建下一轮。
+`mark-applied` 会验证两个 PID 当前存活且分别是预期 gateway/feedback binary，argv 包含 `--connect` 并精确使用生成配置；
+manifest v2 记录 `/proc/<pid>/stat` start time 防止 PID reuse。三个 TOML 的路径、SHM、route count、交易 contract、credential env
+和两个进程中的实际 credential 值也必须一致；credential 值不会写入 artifact。Ready 仍需按 log 单独确认。旧 run 必须先停止完整
+交易栈并获得 REST flat 证据，才能创建下一轮。
 
 ### 6. REST baseline 与 guard
 
@@ -141,6 +145,7 @@ needs_reconcile/manual_intervention`。
 
 Bitget 命令还必须显式选择 exchange 和 runtime manifest，且 strategy `--config` 必须等于 manifest 中的 run-specific config：
 strategy command 必须直接执行 `lead_lag_strategy`，不通过 `bash -c`、`env` 或 `taskset` wrapper 隐藏参数。
+Bitget 真实 `--execute` 不允许覆盖为非生产 REST base URL。
 
 ```bash
 setsid scripts/lead_lag/run_live_with_guard.py \
@@ -171,14 +176,16 @@ setsid scripts/lead_lag/run_live_with_guard.py \
 - `ERROR`、`FATAL`、`ContinuityLost`、`UnknownResult`、`needs_reconcile`、`manual_intervention`。
 - Guard/strategy/feedback/gateway stdout/log 尾部和 REST/SHM health。
 
-异常立即报告；不能等 run 结束。收到 continuity/unknown 后不自动重启或重发；停止 strategy、gateway 和 feedback producer，
-执行对应交易所的幂等 emergency helper，并只用 REST open-orders/positions 证明 flat。无法证明 flat 时禁止启动下一轮。
+异常立即报告；不能等 run 结束。收到 continuity/unknown 后不自动重启或重发。Bitget guard 在 strategy 退出后先证明
+gateway/feedback 已停止，再执行对应交易所的幂等 emergency helper；REST 使用完整分页的
+`open orders → positions → open orders` snapshot 证明 flat。无法停止绑定进程或无法证明 flat 时禁止启动下一轮。
 
 ## 停止、恢复与 flat
 
 正常 duration/信号停止后继续 drain response/feedback，再由 guard 执行 final REST check。核对：
 
-- Guard 最后一条 JSON 的 `ok/result/exit_code/final_check.flat/open_orders/positions`。
+- Guard 最后一条 JSON 的 `ok/result/exit_code/quiescence/final_check.flat/open_orders/positions`；Bitget final REST 或 flatten
+  之前必须有 `quiescence.ok=true`。
 - Strategy summary 的 responses/feedbacks/continuity-lost/needs-reconcile/manual-intervention。
 - Submitted/finished/filled/cancelled/partial 数量和所有 unresolved local/exchange order。
 - Feedback session 的 continuity lost 是否发生在 strategy 运行期间；策略退出后的 session shutdown 必须明确区分。
@@ -186,7 +193,8 @@ setsid scripts/lead_lag/run_live_with_guard.py \
 非 flat、unknown、部分成交、safety-close 失败或 guard 异常时，进入 `docs/lead_lag_reconcile_design.md`，不得伪造 terminal 或直接恢复开仓。
 Emergency cleanup 的 REST 输出、人工动作和最终 flat 都写入 run directory。
 
-Bitget guard 正常退出且 final flat 返回 `0`；异常 stop-and-flat 成功返回 `10` 并保持停机；无法证明 flat 返回 `11`。
+Bitget guard 正常退出且 quiescence + final flat 返回 `0`；异常 stop-and-flat 成功返回 `10` 并保持停机；进程无法停止、cleanup
+失败或无法证明 flat 返回 `11`。
 Outer guard 被 `SIGKILL`、主机失效、网络隔离或 REST 全不可用仍是人工 handoff 边界，首次 smoke 必须有人值守。
 
 最终运行回复至少给出 run dir、实际命令/config/commit、PIDs、退出原因、REST flat、signal/order/fill 统计，以及 Ack RTT、

@@ -52,8 +52,9 @@ git log --oneline -8
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；gateway/LeadLag 未发真实订单。
 - Bitget V1 已选择 strict stop-and-flat，不修改跨进程 `local_order_id/clientOid`：不恢复交易、不允许 strategy-only restart；
-  每轮使用 run-specific gateway/feedback SHM 与 manifest，异常后通过 REST 撤单、reduce-only 平仓并证明 flat。Helper/guard/isolation
-  已有自动测试，尚无 Bitget tiny-position、gateway 或 LeadLag live 证据。
+  每轮使用 run-specific gateway/feedback SHM 与 manifest v2，绑定 PID/start-time/config/account；strategy 退出后先停止 gateway/feedback，
+  再通过完整分页的 REST 双订单 snapshot、范围撤单和 reduce-only 平仓证明 flat。Helper/guard/isolation 已有自动测试，尚无 Bitget
+  tiny-position、gateway 或 LeadLag live 证据。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
 - Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
@@ -128,6 +129,6 @@ rg 'aquila_evaluation' core exchange tools
 `git status`。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
 
 Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
-但尚无 Bitget emergency/gateway/LeadLag live 证据。任何真实订单必须按 runbook 的分阶段证据门取得当次授权；不要把 fresh-run
-解释为可 resume，也不要在同一 run 重启 strategy。
+manifest v2、REST 保守 snapshot 和进程 quiescence 也已落地，但尚无 Bitget emergency/gateway/LeadLag live 证据。任何真实订单必须
+按 runbook 的分阶段证据门取得当次授权；不要把 fresh-run 解释为可 resume，也不要在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
