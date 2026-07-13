@@ -140,6 +140,41 @@ def write_affinity_profile(path: Path) -> None:
 
 
 class RunLiveWithGuardTest(unittest.TestCase):
+    def test_bitget_execute_rejects_nonproduction_rest_base_url(self):
+        adapter = guard.GuardExchangeAdapter(
+            name="bitget",
+            credential_resolver=lambda **kwargs: self.fail(
+                "credentials must not be read before endpoint validation"
+            ),
+            requester_factory=lambda *args: self.fail("requester must not be created"),
+            state_reader=FakeStateReader([]),
+            flatten_config_builder=RecordingFlattenConfigBuilder({}),
+            flatten_runner=FakeFlattenRunner((0, {})),
+        )
+        args = guard.parse_args(
+            [
+                "--exchange",
+                "bitget",
+                "--base-url",
+                "https://example.invalid",
+                "--runtime-manifest",
+                "/home/liuxiang/tmp/unused.json",
+                "--contract",
+                "BTC_USDT",
+                "--",
+                "lead_lag_strategy",
+                "--config",
+                "/home/liuxiang/tmp/unused.toml",
+                "--execute",
+            ]
+        )
+
+        exit_code, summary = guard.run_from_args(args, adapter=adapter)
+
+        self.assertEqual(exit_code, guard.EXIT_CONFIG_ERROR)
+        self.assertEqual(summary["result"], "config_error")
+        self.assertIn("production REST base URL", summary["errors"][0])
+
     def test_bitget_execute_requires_runtime_manifest_before_credentials(self):
         adapter = guard.GuardExchangeAdapter(
             name="bitget",

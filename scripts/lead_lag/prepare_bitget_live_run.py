@@ -12,9 +12,14 @@ from typing import Any
 import run_live_with_guard as guard
 
 
-MANIFEST_SCHEMA = "aquila.bitget_lead_lag_live_manifest.v1"
+MANIFEST_SCHEMA = "aquila.bitget_lead_lag_live_manifest.v2"
 TMP_ROOT = Path("/home/liuxiang/tmp")
+PROC_ROOT = Path("/proc")
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+PROCESS_SPECS = {
+    "gateway": "bitget_order_gateway",
+    "feedback": "bitget_order_feedback_session",
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,233 @@ def feedback_credential_env_names(path: Path) -> tuple[str, str, str]:
     )
 
 
+def _trading_contract(
+    session: dict[str, Any],
+    section: str,
+) -> tuple[str, str, str, str, str, str, bool]:
+    websocket = required_dict(session, "websocket", f"{section}.websocket")
+    endpoint = required_dict(
+        websocket,
+        "endpoint",
+        f"{section}.websocket.endpoint",
+    )
+    enable_tls = endpoint.get("enable_tls")
+    if not isinstance(enable_tls, bool):
+        raise ValueError(
+            f"run isolation: missing {section}.websocket.endpoint.enable_tls"
+        )
+    port = endpoint.get("port")
+    if isinstance(port, bool) or not isinstance(port, (str, int)):
+        raise ValueError(f"run isolation: missing {section}.websocket.endpoint.port")
+    return (
+        required_string(session, "category", section).strip().lower(),
+        required_string(session, "position_mode", section).strip().lower(),
+        required_string(session, "margin_mode", section).strip().lower(),
+        required_string(endpoint, "host", f"{section}.websocket.endpoint")
+        .strip()
+        .lower(),
+        str(port),
+        required_string(endpoint, "target", f"{section}.websocket.endpoint"),
+        enable_tls,
+    )
+
+
+def _gateway_order_session(gateway: dict[str, Any]) -> dict[str, Any]:
+    routes = gateway.get("routes")
+    if (
+        not isinstance(routes, list)
+        or len(routes) != 1
+        or not isinstance(routes[0], dict)
+    ):
+        raise ValueError("run isolation: gateway requires exactly one route")
+    session_path_value = required_string(
+        routes[0], "order_session_config", "order_gateway.routes[0]"
+    )
+    session_path = guard.resolve_repo_path(session_path_value)
+    session_data = load_toml(session_path)
+    return required_dict(session_data, "order_session", "order_session")
+
+
+def _read_process_start_time(proc_root: Path, pid: int) -> int:
+    try:
+        stat = (proc_root / str(pid) / "stat").read_text(encoding="utf-8")
+    except Exception as exc:
+        raise ValueError(
+            f"run isolation: cannot read process {pid} stat: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    command_end = stat.rfind(")")
+    if command_end < 0:
+        raise ValueError(f"run isolation: process {pid} stat is malformed")
+    fields = stat[command_end + 1 :].split()
+    if len(fields) <= 19:
+        raise ValueError(f"run isolation: process {pid} stat is malformed")
+    try:
+        return int(fields[19])
+    except ValueError as exc:
+        raise ValueError(
+            f"run isolation: process {pid} start time is malformed"
+        ) from exc
+
+
+def _read_null_delimited(path: Path, label: str) -> list[str]:
+    try:
+        raw = path.read_bytes()
+        return [
+            value.decode("utf-8")
+            for value in raw.split(b"\0")
+            if value
+        ]
+    except Exception as exc:
+        raise ValueError(
+            f"run isolation: cannot read {label}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _read_process_environment(proc_root: Path, pid: int) -> dict[str, str]:
+    values = _read_null_delimited(
+        proc_root / str(pid) / "environ", f"process {pid} environment"
+    )
+    environment: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            continue
+        key, item = value.split("=", 1)
+        environment[key] = item
+    return environment
+
+
+def _process_credential_values(
+    proc_root: Path,
+    pid: int,
+    credential_env_names: tuple[str, str, str],
+) -> tuple[str, str, str]:
+    environment = _read_process_environment(proc_root, pid)
+    values: list[str] = []
+    for env_name in credential_env_names:
+        value = environment.get(env_name)
+        if not value:
+            raise ValueError(
+                f"run isolation: process {pid} missing credential env {env_name}"
+            )
+        values.append(value)
+    return values[0], values[1], values[2]
+
+
+def _process_config_arg(command: list[str], pid: int) -> Path:
+    config_arg = guard.find_strategy_config_arg(command)
+    if config_arg is None:
+        raise ValueError(f"run isolation: process {pid} command requires --config")
+    return guard.resolve_repo_path(config_arg[1])
+
+
+def _build_process_binding(
+    proc_root: Path,
+    pid: int,
+    expected_executable: str,
+    expected_config: Path,
+) -> dict[str, Any]:
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise ValueError("run isolation: process PID must be a positive integer")
+    process_dir = proc_root / str(pid)
+    start_time_ticks = _read_process_start_time(proc_root, pid)
+    try:
+        executable_path = (process_dir / "exe").resolve(strict=True)
+    except Exception as exc:
+        raise ValueError(
+            f"run isolation: cannot read process {pid} executable: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    if executable_path.name != expected_executable:
+        raise ValueError(
+            f"run isolation: process {pid} executable must be {expected_executable}"
+        )
+    command = _read_null_delimited(
+        process_dir / "cmdline", f"process {pid} command line"
+    )
+    if not command or Path(command[0]).name != expected_executable:
+        raise ValueError(
+            f"run isolation: process {pid} command must launch {expected_executable}"
+        )
+    if "--connect" not in command:
+        raise ValueError(f"run isolation: process {pid} command requires --connect")
+    if "--validate-only" in command:
+        raise ValueError(
+            f"run isolation: process {pid} command cannot use --validate-only"
+        )
+    actual_config = _process_config_arg(command, pid)
+    expected_config = expected_config.expanduser().resolve()
+    if actual_config != expected_config:
+        raise ValueError(
+            f"run isolation: process {pid} config mismatch: "
+            f"expected {expected_config}, got {actual_config}"
+        )
+    return {
+        "pid": pid,
+        "start_time_ticks": start_time_ticks,
+        "executable": expected_executable,
+        "config": str(expected_config),
+    }
+
+
+def _validate_process_binding(
+    binding: Any,
+    role: str,
+    expected_config: Path,
+    proc_root: Path,
+) -> dict[str, Any]:
+    if not isinstance(binding, dict):
+        raise ValueError(f"run isolation: manifest missing process binding {role}")
+    expected_executable = PROCESS_SPECS[role]
+    if binding.get("executable") != expected_executable:
+        raise ValueError(f"run isolation: {role} executable binding mismatch")
+    if binding.get("config") != str(expected_config.expanduser().resolve()):
+        raise ValueError(f"run isolation: {role} config binding mismatch")
+    actual = _build_process_binding(
+        proc_root,
+        binding.get("pid"),
+        expected_executable,
+        expected_config,
+    )
+    if binding.get("start_time_ticks") != actual["start_time_ticks"]:
+        raise ValueError(f"run isolation: {role} process start time changed")
+    return actual
+
+
+def validate_bound_process_credentials(
+    manifest: dict[str, Any],
+    credential_env_names: tuple[str, str, str],
+    expected_values: tuple[str, str, str],
+    proc_root: Path = PROC_ROOT,
+) -> None:
+    processes = manifest.get("processes")
+    if not isinstance(processes, dict):
+        raise ValueError("run isolation: manifest missing process bindings")
+    proc_root = proc_root.expanduser().resolve()
+    for role in PROCESS_SPECS:
+        binding = processes.get(role)
+        if not isinstance(binding, dict):
+            raise ValueError(f"run isolation: manifest missing process binding {role}")
+        config_value = binding.get("config")
+        if not isinstance(config_value, str) or not config_value:
+            raise ValueError(f"run isolation: {role} config binding mismatch")
+        _validate_process_binding(
+            binding,
+            role,
+            Path(config_value),
+            proc_root,
+        )
+        actual_values = _process_credential_values(
+            proc_root,
+            binding.get("pid"),
+            credential_env_names,
+        )
+        if actual_values != expected_values:
+            raise ValueError(
+                f"run isolation: {role} process credential values do not match guard"
+            )
+
+
 def _manifest_path(manifest: dict[str, Any], key: str, config_dir: Path) -> Path:
     raw_path = manifest.get(key)
     if not isinstance(raw_path, str) or not raw_path:
@@ -107,6 +339,7 @@ def _validate_manifest(
     manifest_path: Path,
     strategy_command: list[str] | None,
     require_applied: bool,
+    proc_root: Path = PROC_ROOT,
 ) -> dict[str, Any]:
     manifest_path = manifest_path.expanduser().resolve()
     manifest = _read_manifest(manifest_path)
@@ -195,6 +428,30 @@ def _validate_manifest(
     feedback_credentials = feedback_credential_env_names(feedback_path)
     if gateway_credentials != feedback_credentials:
         raise ValueError("run isolation: gateway and feedback credentials do not match")
+    gateway_contract = _trading_contract(
+        _gateway_order_session(gateway),
+        "order_session",
+    )
+    feedback_contract = _trading_contract(
+        feedback_session,
+        "order_feedback_session",
+    )
+    if gateway_contract != feedback_contract:
+        raise ValueError(
+            "run isolation: gateway and feedback trading contract mismatch"
+        )
+
+    if applied:
+        processes = manifest.get("processes")
+        if not isinstance(processes, dict):
+            raise ValueError("run isolation: manifest missing process bindings")
+        proc_root = proc_root.expanduser().resolve()
+        _validate_process_binding(
+            processes.get("gateway"), "gateway", gateway_path, proc_root
+        )
+        _validate_process_binding(
+            processes.get("feedback"), "feedback", feedback_path, proc_root
+        )
 
     if strategy_command is not None:
         config_arg = guard.find_strategy_config_arg(strategy_command)
@@ -209,11 +466,13 @@ def _validate_manifest(
 def validate_bitget_run_isolation(
     manifest_path: Path,
     strategy_command: list[str],
+    proc_root: Path = PROC_ROOT,
 ) -> dict[str, Any]:
     return _validate_manifest(
         manifest_path=manifest_path,
         strategy_command=strategy_command,
         require_applied=True,
+        proc_root=proc_root,
     )
 
 
@@ -305,14 +564,53 @@ def prepare_runtime_configs(
     )
 
 
-def mark_external_configs_applied(manifest_path: Path) -> dict[str, Any]:
+def mark_external_configs_applied(
+    manifest_path: Path,
+    gateway_pid: int,
+    feedback_pid: int,
+    proc_root: Path = PROC_ROOT,
+) -> dict[str, Any]:
     manifest_path = manifest_path.expanduser().resolve()
     manifest = _validate_manifest(
         manifest_path=manifest_path,
         strategy_command=None,
         require_applied=False,
+        proc_root=proc_root,
     )
+    config_dir = expected_config_dir(manifest["run_id"])
+    gateway_path = _manifest_path(manifest, "gateway_config", config_dir)
+    feedback_path = _manifest_path(manifest, "feedback_config", config_dir)
+    proc_root = proc_root.expanduser().resolve()
+    gateway_binding = _build_process_binding(
+        proc_root,
+        gateway_pid,
+        PROCESS_SPECS["gateway"],
+        gateway_path,
+    )
+    feedback_binding = _build_process_binding(
+        proc_root,
+        feedback_pid,
+        PROCESS_SPECS["feedback"],
+        feedback_path,
+    )
+    credential_env_names = guard.bitget_order_gateway_credential_env_names(
+        gateway_path
+    )
+    gateway_credentials = _process_credential_values(
+        proc_root, gateway_pid, credential_env_names
+    )
+    feedback_credentials = _process_credential_values(
+        proc_root, feedback_pid, credential_env_names
+    )
+    if gateway_credentials != feedback_credentials:
+        raise ValueError(
+            "run isolation: gateway and feedback process credential values do not match"
+        )
     updated = dict(manifest)
+    updated["processes"] = {
+        "gateway": gateway_binding,
+        "feedback": feedback_binding,
+    }
     updated["external_configs_applied"] = True
     _atomic_write_json(manifest_path, updated)
     return updated
@@ -331,6 +629,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     prepare_parser.add_argument("--output-dir", type=Path)
     mark_parser = subparsers.add_parser("mark-applied")
     mark_parser.add_argument("--runtime-manifest", type=Path, required=True)
+    mark_parser.add_argument("--gateway-pid", type=int, required=True)
+    mark_parser.add_argument("--feedback-pid", type=int, required=True)
     return parser.parse_args(argv)
 
 
@@ -350,7 +650,11 @@ def main(argv: list[str] | None = None) -> int:
             for key, value in asdict(result).items()
         }
     else:
-        payload = mark_external_configs_applied(args.runtime_manifest)
+        payload = mark_external_configs_applied(
+            args.runtime_manifest,
+            gateway_pid=args.gateway_pid,
+            feedback_pid=args.feedback_pid,
+        )
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

@@ -1320,10 +1320,11 @@ def default_rest_base_url(exchange: str) -> str:
 def validate_bitget_run_isolation(
     manifest_path: Path,
     strategy_command: list[str],
+    proc_root: Path = Path("/proc"),
 ) -> dict[str, Any]:
     from prepare_bitget_live_run import validate_bitget_run_isolation as validate
 
-    return validate(manifest_path, strategy_command)
+    return validate(manifest_path, strategy_command, proc_root=proc_root)
 
 
 def run_from_args(
@@ -1331,6 +1332,7 @@ def run_from_args(
     adapter: GuardExchangeAdapter | None = None,
     process_runner: ProcessRunner = run_strategy_process,
     clock: Any | None = None,
+    proc_root: Path = Path("/proc"),
 ) -> tuple[int, dict[str, Any]]:
     config = config_from_args(args)
     if args.prepare_affinity_only:
@@ -1349,6 +1351,18 @@ def run_from_args(
     if config.exchange == "bitget" and strategy_execute_requested(
         config.strategy_command
     ):
+        if (
+            args.base_url is not None
+            and args.base_url.rstrip("/")
+            != bitget_account.DEFAULT_BASE_URL.rstrip("/")
+        ):
+            summary = initial_summary(config)
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append(
+                "Bitget --execute requires the production REST base URL"
+            )
+            return EXIT_CONFIG_ERROR, summary
         if args.runtime_manifest is None:
             summary = initial_summary(config)
             summary["result"] = "config_error"
@@ -1361,6 +1375,7 @@ def run_from_args(
             manifest = validate_bitget_run_isolation(
                 args.runtime_manifest,
                 config.strategy_command,
+                proc_root=proc_root,
             )
             lag_symbols = validate_bitget_guard_contract_scope(
                 config.strategy_command,
@@ -1450,6 +1465,41 @@ def run_from_args(
             return EXIT_CONFIG_ERROR, missing_env_summary(
                 config, credential_env_names.api_passphrase_env
             )
+
+    if config.exchange == "bitget" and strategy_execute_requested(
+        config.strategy_command
+    ):
+        try:
+            from prepare_bitget_live_run import validate_bound_process_credentials
+
+            if config.runtime_isolation is None:
+                raise ValueError("Bitget process credential validation requires manifest")
+            if (
+                api_passphrase is None
+                or credential_env_names.api_passphrase_env is None
+            ):
+                raise ValueError(
+                    "Bitget process credential validation requires passphrase"
+                )
+            validate_bound_process_credentials(
+                config.runtime_isolation,
+                (
+                    credential_env_names.api_key_env,
+                    credential_env_names.api_secret_env,
+                    credential_env_names.api_passphrase_env,
+                ),
+                (api_key, api_secret, api_passphrase),
+                proc_root=proc_root,
+            )
+        except Exception as exc:
+            summary = initial_summary(config)
+            summary["result"] = "config_error"
+            summary["exit_code"] = EXIT_CONFIG_ERROR
+            summary["errors"].append(
+                "process credential validation failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return EXIT_CONFIG_ERROR, summary
 
     try:
         requester = adapter.requester_factory(
