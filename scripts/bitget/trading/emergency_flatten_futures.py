@@ -242,7 +242,12 @@ def parse_positions(
     allowed_symbols: set[str] | None,
 ) -> list[PositionSnapshot]:
     positions: list[PositionSnapshot] = []
-    for index, value in enumerate(_response_list(data, "positions")):
+    values = (
+        []
+        if isinstance(data, dict) and "list" in data and data["list"] is None
+        else _response_list(data, "positions")
+    )
+    for index, value in enumerate(values):
         if not isinstance(value, dict):
             raise RestFailure(f"positions[{index}] must be an object")
         label = f"positions[{index}]"

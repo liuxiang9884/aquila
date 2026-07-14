@@ -376,6 +376,9 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
 
         self.assertFalse(position.flat())
 
+    def test_parse_positions_treats_null_list_as_empty(self):
+        self.assertEqual(flatten.parse_positions({"list": None}, None), [])
+
     def test_final_state_requires_no_open_orders(self):
         position = flatten.PositionSnapshot(
             symbol="BTCUSDT",
