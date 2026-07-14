@@ -25,8 +25,15 @@ HTTP 400/code `25204 Order does not exist`，helper 未重发，随后以 conser
 `verified_flat_after_unknown`，未提交 close order，独立 post-check 仍为 flat。原始 JSON 位于
 `/home/liuxiang/tmp/bitget_btcusdt_evidence_20260714T013021Z/` 和
 `/home/liuxiang/tmp/bitget_btcusdt_flat_helper_20260714T013900Z/`。该次 live flat position 响应为 `data.list=null`，helper 已补充
-兼容与自动测试。尚无 tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。Dedicated-account flat、余额、
-IP 白名单和 endpoint 可用性都是当次运行事实，不得外推为永久状态。
+兼容与自动测试。
+
+2026-07-14 首次 `BTCUSDT` tiny-position 尝试以 `0.0001 BTC` market buy 成交，但 helper 在“有仓位、无 open order”时因
+symbol cancel 返回 HTTP 400/code `25204` 而提前进入错误复核，没有自动提交 close；随后按当次授权直接提交
+`sell 0.0001 / reduceOnly=yes`，并以独立 `open orders → positions → open orders` REST post-check 证明 flat。根因修复后，
+flat-account live regression 已确认两次 `25204` 被作为幂等 no-op 处理并返回 `verified_flat`。原始证据位于
+`/home/liuxiang/tmp/bitget_btcusdt_tiny_long_20260714T030554Z/`。该次尝试不算自动 tiny-position stop-and-flat 通过；必须重新取得
+真实订单授权并复跑，之后才能进入 gateway IOC。尚无通过的 tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。
+Dedicated-account flat、余额、IP 白名单和 endpoint 可用性都是当次运行事实，不得外推为永久状态。
 
 `OrderSession` 的 direct operation response 只表示请求的直接响应：
 
@@ -242,6 +249,8 @@ endpoint 一致性；同时从 `/proc` 绑定 PID、start time、executable、`-
 - 实际清理：即使首次 snapshot 没有订单，也执行一次幂等范围撤单；allowlist 使用
   `/api/v3/trade/cancel-symbol-order`，dedicated account 使用 category-wide cancel；随后按 REST position 的
   `posSide/total/marginMode` 提交反向 reduce-only market close，再次范围撤单并轮询；
+- Bitget 对没有可撤订单的 symbol cancel 可能返回 HTTP 400/code `25204`；helper 只在 cancel-symbol 路径把该明确 code 视为
+  幂等 no-op，并继续 position close 与最终 REST 验证，其他 REST code 和不可解析错误仍 fail closed；
 - cleanup pacing：多 symbol 撤单最多 5 requests/s，多 position close 最多 10 requests/s；这些等待只在 REST 慢路径；
 - flat predicate：open orders 为空，且每个 position 的 `total/available/frozen` 都为 0；所有数量用 `Decimal`；
 - mutating response 不明确时只做独立 REST 复核；能证明 flat 才返回 `verified_flat_after_unknown`，否则 fail closed，不盲目重发。
