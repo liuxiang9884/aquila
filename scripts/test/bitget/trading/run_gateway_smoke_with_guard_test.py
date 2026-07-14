@@ -1,5 +1,6 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import csv
 import json
 import sys
 import unittest
@@ -172,6 +173,10 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
         self.assertEqual(command[-1], "--execute")
         return guard.ProcessResult(exit_code=0)
 
+    def evidence_validator(self, runtime):
+        del runtime
+        self.events.append("evidence")
+
     def process_quiescer(self, runtime, launched, clock, proc_root):
         del runtime, launched, clock, proc_root
         self.events.append("quiesce")
@@ -196,6 +201,7 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
             "process_attester": self.process_attester,
             "readiness_waiter": self.readiness_waiter,
             "smoke_runner": self.smoke_runner,
+            "evidence_validator": self.evidence_validator,
             "process_quiescer": self.process_quiescer,
             "state_reader": self.state_reader,
             "flatten_runner": self.flatten_runner,
@@ -213,7 +219,16 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
         self.assertEqual(summary["result"], "normal_exit_flat")
         self.assertEqual(
             self.events,
-            ["preflight", "launch", "attest", "ready", "smoke", "quiesce", "final"],
+            [
+                "preflight",
+                "launch",
+                "attest",
+                "ready",
+                "smoke",
+                "evidence",
+                "quiesce",
+                "final",
+            ],
         )
         self.assertTrue(self.launched.logs_closed)
 
@@ -231,6 +246,51 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
         self.assertEqual(
             self.events,
             ["preflight", "launch", "attest", "ready", "quiesce", "flatten"],
+        )
+
+    def test_partial_launch_failure_quiesces_before_flatten(self):
+        def fail_after_partial_launch(runtime, binaries):
+            del runtime, binaries
+            self.events.append("launch")
+            raise pipeline.ProcessLaunchError(
+                self.launched, RuntimeError("feedback spawn failed")
+            )
+
+        exit_code, summary = self.execute_pipeline(
+            process_launcher=fail_after_partial_launch
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_EMERGENCY_FLATTENED)
+        self.assertEqual(summary["result"], "strategy_exception_flattened")
+        self.assertEqual(
+            self.events, ["preflight", "launch", "quiesce", "flatten"]
+        )
+        self.assertTrue(self.launched.logs_closed)
+
+    def test_invalid_runner_evidence_quiesces_before_flatten(self):
+        def reject_evidence(runtime):
+            del runtime
+            self.events.append("evidence")
+            raise ValueError("summary.json missing")
+
+        exit_code, summary = self.execute_pipeline(
+            evidence_validator=reject_evidence
+        )
+
+        self.assertEqual(exit_code, guard.EXIT_EMERGENCY_FLATTENED)
+        self.assertEqual(summary["result"], "strategy_exception_flattened")
+        self.assertEqual(
+            self.events,
+            [
+                "preflight",
+                "launch",
+                "attest",
+                "ready",
+                "smoke",
+                "evidence",
+                "quiesce",
+                "flatten",
+            ],
         )
 
     def test_nonflat_preflight_never_launches_or_flattens(self):
@@ -262,6 +322,69 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
         pipeline.wait_for_feedback_ready(
             self.runtime, launched, timeout_sec=1.0, clock=FakeClock()
         )
+
+    def test_runner_evidence_rejects_missing_artifacts(self):
+        with self.assertRaisesRegex(ValueError, "summary.json"):
+            pipeline.validate_runner_evidence(self.runtime)
+
+    def test_runner_evidence_accepts_no_fill_ack_and_terminal(self):
+        entry_id = 504403158265495553
+        (self.runtime.run_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "run_id": self.runtime.run_id,
+                    "final_result": "no_fill",
+                    "failure_reason": "none",
+                    "entry_local_order_id": entry_id,
+                    "entry_acked": True,
+                    "entry_terminal": True,
+                    "entry_filled_quantity": 0,
+                    "close_required": False,
+                    "close_local_order_id": 0,
+                    "close_acked": False,
+                    "close_terminal": False,
+                    "close_filled_quantity": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        with (self.runtime.run_dir / "order_event.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as output:
+            writer = csv.DictWriter(
+                output, fieldnames=pipeline.ORDER_EVENT_FIELDS
+            )
+            writer.writeheader()
+            writer.writerows(
+                [
+                    {
+                        "run_id": self.runtime.run_id,
+                        "event_source": "runner",
+                        "event_kind": "order_submitted",
+                        "order_role": "entry",
+                        "local_order_id": entry_id,
+                        "quantity": "0.0001",
+                    },
+                    {
+                        "run_id": self.runtime.run_id,
+                        "event_source": "feedback",
+                        "event_kind": "feedback_terminal",
+                        "order_role": "entry",
+                        "local_order_id": entry_id,
+                        "feedback_kind": "cancelled",
+                    },
+                    {
+                        "run_id": self.runtime.run_id,
+                        "event_source": "gateway",
+                        "event_kind": "gateway_response",
+                        "order_role": "entry",
+                        "local_order_id": entry_id,
+                        "response_kind": "ack",
+                    },
+                ]
+            )
+
+        pipeline.validate_runner_evidence(self.runtime)
 
     def test_bound_controller_reaps_exited_popen_before_proc_check(self):
         process = FakeExitedPopenProcess()

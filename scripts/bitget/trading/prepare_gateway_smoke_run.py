@@ -417,7 +417,13 @@ def prepare_runtime_configs(
         )
     )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_dir.mkdir(parents=False, exist_ok=False)
+    except FileExistsError as exc:
+        raise ValueError(
+            "fresh-run directory already exists; choose a new run_id"
+        ) from exc
+    output_dir.mkdir(parents=False, exist_ok=False)
     data_session_config = output_dir / f"data__{data_session_source.name}"
     gateway_config = output_dir / f"gateway__{gateway_source.name}"
     feedback_config = output_dir / f"feedback__{feedback_source.name}"

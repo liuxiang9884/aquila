@@ -1,7 +1,9 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import argparse
+import csv
 import json
+import math
 import os
 import subprocess
 import sys
@@ -20,6 +22,26 @@ import run_live_with_guard as guard
 
 
 FEEDBACK_READY_MARKER = "bitget_order_feedback_subscribe accepted=true code=0"
+ORDER_EVENT_FIELDS = (
+    "run_id",
+    "event_source",
+    "event_kind",
+    "order_role",
+    "local_order_id",
+    "parent_id",
+    "route_id",
+    "response_kind",
+    "feedback_kind",
+    "exchange_order_id",
+    "exchange_ns",
+    "local_ns",
+    "price",
+    "quantity",
+    "cumulative_filled_quantity",
+    "left_quantity",
+    "finish_reason",
+    "reject_reason",
+)
 DEFAULT_FEEDBACK_READY_TIMEOUT_SEC = 30.0
 DEFAULT_FEEDBACK_DURATION_SEC = 180
 CONFLICTING_EXECUTABLES = {
@@ -54,6 +76,14 @@ class LaunchedProcesses:
         for log_file in self.log_files:
             log_file.close()
         self.log_files.clear()
+
+
+class ProcessLaunchError(RuntimeError):
+    def __init__(self, launched: LaunchedProcesses, cause: Exception):
+        super().__init__(
+            f"process launch failed: {type(cause).__name__}: {cause}"
+        )
+        self.launched = launched
 
 
 class ReapingBoundProcessController:
@@ -242,10 +272,15 @@ def launch_bound_processes(
                 stderr=subprocess.STDOUT,
             )
         return launched
-    except Exception:
-        stop_unbound_processes(launched)
-        launched.close_logs()
-        raise
+    except Exception as exc:
+        try:
+            stop_unbound_processes(launched)
+        except Exception as cleanup_exc:
+            exc = RuntimeError(
+                f"{exc}; initial partial-process cleanup failed: "
+                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+            )
+        raise ProcessLaunchError(launched, exc) from exc
 
 
 def wait_for_feedback_ready(
@@ -275,6 +310,178 @@ def wait_for_feedback_ready(
             return
         clock.sleep(min(0.05, deadline - clock.time()))
     raise TimeoutError("Bitget order feedback session did not reach ready")
+
+
+def validate_runner_evidence(
+    runtime: prepare.PreparedRuntimeConfigs,
+) -> None:
+    summary_path = runtime.run_dir / "summary.json"
+    event_path = runtime.run_dir / "order_event.csv"
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(
+            f"runner evidence summary.json is missing or invalid: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(summary, dict):
+        raise ValueError("runner evidence summary.json must be an object")
+    if summary.get("run_id") != runtime.run_id:
+        raise ValueError("runner evidence summary run_id mismatch")
+    final_result = summary.get("final_result")
+    if final_result not in {"no_fill", "closed"}:
+        raise ValueError("runner evidence final_result is not successful")
+    if summary.get("failure_reason") != "none":
+        raise ValueError("runner evidence failure_reason is not none")
+    if summary.get("entry_acked") is not True or summary.get(
+        "entry_terminal"
+    ) is not True:
+        raise ValueError("runner evidence entry requires Ack and terminal")
+    entry_id = summary.get("entry_local_order_id")
+    if (
+        isinstance(entry_id, bool)
+        or not isinstance(entry_id, int)
+        or entry_id <= 0
+    ):
+        raise ValueError("runner evidence entry_local_order_id is invalid")
+    entry_filled = summary.get("entry_filled_quantity")
+    if (
+        isinstance(entry_filled, bool)
+        or not isinstance(entry_filled, (int, float))
+        or not math.isfinite(entry_filled)
+        or entry_filled < 0
+        or entry_filled > 0.0001 + 1e-12
+    ):
+        raise ValueError("runner evidence entry fill quantity is invalid")
+    close_required = summary.get("close_required")
+    if not isinstance(close_required, bool):
+        raise ValueError("runner evidence close_required is invalid")
+
+    try:
+        with event_path.open(newline="", encoding="utf-8") as source:
+            reader = csv.DictReader(source)
+            if tuple(reader.fieldnames or ()) != ORDER_EVENT_FIELDS:
+                raise ValueError("order_event.csv header mismatch")
+            rows = list(reader)
+    except Exception as exc:
+        raise ValueError(
+            f"runner evidence order_event.csv is missing or invalid: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    if not rows or any(row["run_id"] != runtime.run_id for row in rows):
+        raise ValueError("runner evidence order_event.csv run_id mismatch")
+
+    def matching_rows(role: str, source: str, kind: str) -> list[dict[str, str]]:
+        return [
+            row
+            for row in rows
+            if row["order_role"] == role
+            and row["event_source"] == source
+            and row["event_kind"] == kind
+        ]
+
+    entry_id_text = str(entry_id)
+    entry_submitted = matching_rows("entry", "runner", "order_submitted")
+    if (
+        len(entry_submitted) != 1
+        or entry_submitted[0]["local_order_id"] != entry_id_text
+    ):
+        raise ValueError("runner evidence requires exactly one entry submission")
+    try:
+        entry_quantity = float(entry_submitted[0]["quantity"])
+    except ValueError as exc:
+        raise ValueError("runner evidence entry quantity is invalid") from exc
+    if (
+        not math.isfinite(entry_quantity)
+        or abs(entry_quantity - 0.0001) > 1e-12
+    ):
+        raise ValueError("runner evidence entry quantity is not minimum BTC size")
+    entry_ack = matching_rows("entry", "gateway", "gateway_response")
+    if not any(
+        row["local_order_id"] == entry_id_text
+        and row["response_kind"] == "ack"
+        for row in entry_ack
+    ):
+        raise ValueError("runner evidence entry gateway Ack is missing")
+    entry_terminal = matching_rows("entry", "feedback", "feedback_terminal")
+    if not any(
+        row["local_order_id"] == entry_id_text
+        and row["feedback_kind"] in {"filled", "cancelled"}
+        for row in entry_terminal
+    ):
+        raise ValueError("runner evidence entry terminal is missing")
+
+    close_submitted = matching_rows("close", "runner", "order_submitted")
+    if close_required:
+        close_id = summary.get("close_local_order_id")
+        close_filled = summary.get("close_filled_quantity")
+        if (
+            final_result != "closed"
+            or entry_filled <= 1e-12
+            or summary.get("close_acked") is not True
+            or summary.get("close_terminal") is not True
+            or isinstance(close_id, bool)
+            or not isinstance(close_id, int)
+            or close_id <= 0
+            or isinstance(close_filled, bool)
+            or not isinstance(close_filled, (int, float))
+            or not math.isfinite(close_filled)
+            or close_filled + 1e-12 < entry_filled
+            or close_filled > entry_filled + 1e-12
+        ):
+            raise ValueError("runner evidence close summary is incomplete")
+        close_id_text = str(close_id)
+        if (
+            len(close_submitted) != 1
+            or close_submitted[0]["local_order_id"] != close_id_text
+        ):
+            raise ValueError("runner evidence requires exactly one close submission")
+        try:
+            close_quantity = float(close_submitted[0]["quantity"])
+        except ValueError as exc:
+            raise ValueError("runner evidence close quantity is invalid") from exc
+        if (
+            not math.isfinite(close_quantity)
+            or abs(close_quantity - entry_filled) > 1e-12
+        ):
+            raise ValueError("runner evidence close quantity mismatch")
+        close_ack = matching_rows("close", "gateway", "gateway_response")
+        close_terminal = matching_rows("close", "feedback", "feedback_terminal")
+        if not any(
+            row["local_order_id"] == close_id_text
+            and row["response_kind"] == "ack"
+            for row in close_ack
+        ) or not any(
+            row["local_order_id"] == close_id_text
+            and row["feedback_kind"] in {"filled", "cancelled"}
+            for row in close_terminal
+        ):
+            raise ValueError("runner evidence close Ack or terminal is missing")
+    elif (
+        final_result != "no_fill"
+        or entry_filled > 1e-12
+        or summary.get("close_local_order_id") != 0
+        or summary.get("close_acked") is not False
+        or summary.get("close_terminal") is not False
+        or summary.get("close_filled_quantity") != 0
+        or close_submitted
+        or not any(
+            row["local_order_id"] == entry_id_text
+            and row["feedback_kind"] == "cancelled"
+            for row in entry_terminal
+        )
+    ):
+        raise ValueError("runner evidence no-fill summary is inconsistent")
+    expected_submission_count = 2 if close_required else 1
+    if len(
+        [
+            row
+            for row in rows
+            if row["event_source"] == "runner"
+            and row["event_kind"] == "order_submitted"
+        ]
+    ) != expected_submission_count:
+        raise ValueError("runner evidence contains unexpected submissions")
 
 
 def attest_launched_processes(
@@ -339,6 +546,7 @@ def run_prepared_pipeline(
     process_attester: Callable[[prepare.PreparedRuntimeConfigs, Any, Path], dict[str, Any]],
     readiness_waiter: Callable[[prepare.PreparedRuntimeConfigs, Any, float, Any], None],
     smoke_runner: Callable[[list[str]], guard.ProcessResult],
+    evidence_validator: Callable[[prepare.PreparedRuntimeConfigs], None],
     process_quiescer: Callable[
         [prepare.PreparedRuntimeConfigs, Any, Any, Path], tuple[bool, dict[str, Any]]
     ],
@@ -360,14 +568,21 @@ def run_prepared_pipeline(
 
     def run_smoke_after_launch(_: list[str]) -> guard.ProcessResult:
         nonlocal launched
-        launched = process_launcher(runtime, binaries)
+        try:
+            launched = process_launcher(runtime, binaries)
+        except ProcessLaunchError as exc:
+            launched = exc.launched
+            raise
         applied = process_attester(runtime, launched, proc_root)
         runtime_isolation.clear()
         runtime_isolation.update(applied)
         readiness_waiter(
             runtime, launched, feedback_ready_timeout_sec, clock
         )
-        return smoke_runner(runner_command)
+        result = smoke_runner(runner_command)
+        if result.exit_code == 0:
+            evidence_validator(runtime)
+        return result
 
     def stop_pipeline_processes(current_clock: Any) -> tuple[bool, dict[str, Any]]:
         if launched is None:
@@ -563,6 +778,7 @@ def run_from_args(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         process_attester=attester,
         readiness_waiter=wait_for_feedback_ready,
         smoke_runner=guard.run_strategy_process,
+        evidence_validator=validate_runner_evidence,
         process_quiescer=quiesce_pipeline_processes,
         state_reader=adapter.state_reader,
         flatten_runner=adapter.flatten_runner,

@@ -251,8 +251,10 @@ run_id="bitget_gateway_smoke_$(date -u +%Y%m%dT%H%M%SZ)"
 若 binary 不在默认 `build/release/tools/`，必须通过 `--data-session-binary`、`--gateway-binary`、
 `--feedback-binary` 和 `--smoke-binary` 显式传入四个绝对路径。完整证据位于 `/home/liuxiang/tmp/<run_id>/`：
 `order_event.csv` 保存 gateway response 与 feedback 事件，runner 以原子替换写 `summary.json`，外围 guard 以原子替换写
-`guard_summary.json`，另有 manifest、四份 runtime config 和各进程日志。`summary.json` 的 runner success 只证明订单状态机闭环；
-只有 `guard_summary.json` 同时记录正常 runner 退出、三个进程 quiescent 和 final REST flat，才算 gateway smoke 通过。
+`guard_summary.json`，另有 manifest、四份 runtime config 和各进程日志。Runner exit `0` 后，pipeline 还会复核 CSV/summary 的
+`run_id`、唯一 entry、Ack、terminal、最小数量及可选 close 双证据；文件缺失或合同不一致按异常路径 quiesce 并 stop-and-flat。
+`summary.json` 的 runner success 只证明订单状态机闭环；只有 `guard_summary.json` 同时记录正常 runner 退出、三个进程 quiescent
+和 final REST flat，才算 gateway smoke 通过。
 
 该 smoke 只验证一个最小量 gateway order 的安全闭环，不是 signal-conditioned LeadLag 证据，也不能外推多 route、长期稳定性、
 fillability 或 latency。即使 gateway 门通过，LeadLag live 仍需按下一证据门重新授权和执行。

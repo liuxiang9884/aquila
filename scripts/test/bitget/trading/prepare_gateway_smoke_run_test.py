@@ -71,8 +71,10 @@ def write_fake_process(
 class PrepareGatewaySmokeRunTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = TemporaryDirectory(dir="/home/liuxiang/tmp")
-        self.run_dir = Path(self.temp_dir.name)
-        self.run_id = self.run_dir.name
+        self.original_tmp_root = prepare.TMP_ROOT
+        prepare.TMP_ROOT = Path(self.temp_dir.name)
+        self.run_id = "gateway_smoke_test"
+        self.run_dir = prepare.TMP_ROOT / self.run_id
         self.config_dir = self.run_dir / "configs"
         self.proc_root = self.run_dir / "proc"
         self.data_pid = 2101
@@ -94,6 +96,7 @@ class PrepareGatewaySmokeRunTest(unittest.TestCase):
         )
 
     def tearDown(self):
+        prepare.TMP_ROOT = self.original_tmp_root
         self.temp_dir.cleanup()
 
     def prepare(self):
@@ -168,8 +171,18 @@ class PrepareGatewaySmokeRunTest(unittest.TestCase):
     def test_prepare_rejects_existing_fresh_run_output(self):
         self.prepare()
 
-        with self.assertRaisesRegex(ValueError, "fresh-run output already exists"):
+        with self.assertRaisesRegex(ValueError, "fresh-run"):
             self.prepare()
+
+    def test_prepare_rejects_preexisting_run_directory_without_configs(self):
+        self.run_dir.mkdir()
+        sentinel = self.run_dir / "previous-run.log"
+        sentinel.write_text("previous run\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "fresh-run"):
+            self.prepare()
+
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "previous run\n")
 
     def test_validate_rejects_config_digest_change(self):
         result = self.prepare()
