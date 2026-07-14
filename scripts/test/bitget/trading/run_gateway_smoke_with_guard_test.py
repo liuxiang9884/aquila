@@ -54,6 +54,30 @@ class FakePopenProcess:
         return None
 
 
+class FakeExitedPopenProcess:
+    pid = 4201
+
+    def __init__(self):
+        self.poll_calls = 0
+
+    def poll(self):
+        self.poll_calls += 1
+        return 0
+
+
+class FakeAlwaysRunningController:
+    def __init__(self):
+        self.is_running_calls = 0
+
+    def is_running(self, role, binding):
+        del role, binding
+        self.is_running_calls += 1
+        return True
+
+    def send_signal(self, role, binding, signum):
+        del role, binding, signum
+
+
 def flat_state():
     return guard.GuardState(
         positions=[
@@ -223,7 +247,7 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
         self.assertFalse(self.launched.logs_closed)
 
     def test_wait_for_feedback_ready_accepts_explicit_subscribe_ack(self):
-        self.runtime.feedback_log.write_text(
+        (self.runtime.run_dir / "feedback.stdout.log").write_text(
             pipeline.FEEDBACK_READY_MARKER + "\n", encoding="utf-8"
         )
         launched = pipeline.LaunchedProcesses(
@@ -238,6 +262,24 @@ class RunGatewaySmokeWithGuardTest(unittest.TestCase):
         pipeline.wait_for_feedback_ready(
             self.runtime, launched, timeout_sec=1.0, clock=FakeClock()
         )
+
+    def test_bound_controller_reaps_exited_popen_before_proc_check(self):
+        process = FakeExitedPopenProcess()
+        launched = pipeline.LaunchedProcesses(
+            processes={"feedback": process}, log_files=[]
+        )
+        delegate = FakeAlwaysRunningController()
+        controller = pipeline.ReapingBoundProcessController(
+            launched, delegate
+        )
+
+        self.assertFalse(
+            controller.is_running(
+                "feedback", {"pid": process.pid, "start_time_ticks": 1}
+            )
+        )
+        self.assertEqual(process.poll_calls, 1)
+        self.assertEqual(delegate.is_running_calls, 0)
 
     def test_launch_bound_processes_uses_absolute_configs_and_connect(self):
         calls = []

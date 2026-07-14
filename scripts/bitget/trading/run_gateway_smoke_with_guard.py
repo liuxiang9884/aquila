@@ -56,6 +56,24 @@ class LaunchedProcesses:
         self.log_files.clear()
 
 
+class ReapingBoundProcessController:
+    def __init__(self, launched: LaunchedProcesses, delegate: Any):
+        self.launched = launched
+        self.delegate = delegate
+
+    def is_running(self, role: str, binding: dict[str, Any]) -> bool:
+        process = self.launched.processes.get(role)
+        if process is not None and process.pid == binding.get("pid"):
+            if process.poll() is not None:
+                return False
+        return self.delegate.is_running(role, binding)
+
+    def send_signal(
+        self, role: str, binding: dict[str, Any], signum: int
+    ) -> None:
+        self.delegate.send_signal(role, binding, signum)
+
+
 def find_conflicting_live_processes(
     proc_root: Path = Path("/proc"), own_pid: int | None = None
 ) -> list[dict[str, Any]]:
@@ -238,6 +256,7 @@ def wait_for_feedback_ready(
 ) -> None:
     if timeout_sec <= 0:
         raise ValueError("feedback ready timeout must be positive")
+    feedback_stdout = runtime.run_dir / "feedback.stdout.log"
     deadline = clock.time() + timeout_sec
     while clock.time() < deadline:
         for role, process in launched.processes.items():
@@ -247,7 +266,7 @@ def wait_for_feedback_ready(
                     f"{role} exited before feedback ready with code {exit_code}"
                 )
         try:
-            text = runtime.feedback_log.read_text(
+            text = feedback_stdout.read_text(
                 encoding="utf-8", errors="replace"
             )
         except FileNotFoundError:
@@ -290,9 +309,12 @@ def quiesce_pipeline_processes(
     if manifest.get("external_configs_applied") is True and isinstance(
         manifest.get("processes"), dict
     ):
+        controller = ReapingBoundProcessController(
+            launched, guard.LinuxBoundProcessController(proc_root)
+        )
         return guard.quiesce_bitget_processes(
             manifest,
-            controller=guard.LinuxBoundProcessController(proc_root),
+            controller=controller,
             clock=clock,
         )
     return stop_unbound_processes(launched)
