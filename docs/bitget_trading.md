@@ -5,7 +5,7 @@
 
 ## 当前范围与证据边界
 
-截至 2026-07-13，仓库已实现：
+截至 2026-07-14，仓库已实现：
 
 - `OrderSession`：private WebSocket login、limit GTC/IOC place、single cancel、request correlation 和直接 operation response。
 - `OrderFeedbackSession`：独立 private connection、account-wide `order` topic、累计订单生命周期事实、feedback SHM 路由和 continuity lost。
@@ -19,9 +19,11 @@
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe；gateway/LeadLag
-路径尚未发送真实订单。新 stop-and-flat helper、guard 和 fresh-run isolation 目前只有自动测试与非联网 CLI 证据，尚无
-Bitget tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。Dedicated-account flat、余额、IP 白名单和 endpoint
-可用性都是当次运行事实，不得外推为永久状态。
+路径尚未发送真实订单。2026-07-14 已对 `BTCUSDT` 完成当次 read-only REST baseline 和 allowlist emergency dry-run：
+无 open order、无 position，dry-run plan 为空；原始 JSON 位于
+`/home/liuxiang/tmp/bitget_btcusdt_evidence_20260714T013021Z/`。该次 live flat position 响应为 `data.list=null`，helper 已补充
+兼容与自动测试。尚无 flat-account mutating helper、tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。
+Dedicated-account flat、余额、IP 白名单和 endpoint 可用性都是当次运行事实，不得外推为永久状态。
 
 `OrderSession` 的 direct operation response 只表示请求的直接响应：
 
