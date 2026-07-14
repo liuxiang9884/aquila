@@ -138,3 +138,26 @@ set_tests_properties(bitget_order_gateway_help_test
     bitget_order_gateway_dry_run_test
     PROPERTIES
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+add_executable(bitget_gateway_smoke_test
+    gateway_smoke_test.cpp
+    ${PROJECT_SOURCE_DIR}/tools/bitget/gateway_smoke/config.cpp
+    ${PROJECT_SOURCE_DIR}/tools/bitget/gateway_smoke/state_machine.cpp
+)
+
+target_include_directories(bitget_gateway_smoke_test
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}
+)
+
+target_link_libraries(bitget_gateway_smoke_test
+    PRIVATE
+        aquila_config
+        aquila_core
+        fmt::fmt-header-only
+        GTest::gtest_main
+        PkgConfig::tomlplusplus
+)
+
+add_test(NAME bitget_gateway_smoke_test
+         COMMAND bitget_gateway_smoke_test)
