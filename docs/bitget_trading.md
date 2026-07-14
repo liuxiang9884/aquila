@@ -19,11 +19,14 @@
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe；gateway/LeadLag
-路径尚未发送真实订单。2026-07-14 已对 `BTCUSDT` 完成当次 read-only REST baseline 和 allowlist emergency dry-run：
-无 open order、无 position，dry-run plan 为空；原始 JSON 位于
-`/home/liuxiang/tmp/bitget_btcusdt_evidence_20260714T013021Z/`。该次 live flat position 响应为 `data.list=null`，helper 已补充
-兼容与自动测试。尚无 flat-account mutating helper、tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。
-Dedicated-account flat、余额、IP 白名单和 endpoint 可用性都是当次运行事实，不得外推为永久状态。
+路径尚未发送真实订单。2026-07-14 已对 `BTCUSDT` 完成当次 read-only REST baseline、allowlist emergency dry-run 和
+flat-account helper smoke：baseline 无 open order、无 position，dry-run plan 为空；flat-account smoke 的 symbol cancel 返回
+HTTP 400/code `25204 Order does not exist`，helper 未重发，随后以 conservative REST snapshot 得到
+`verified_flat_after_unknown`，未提交 close order，独立 post-check 仍为 flat。原始 JSON 位于
+`/home/liuxiang/tmp/bitget_btcusdt_evidence_20260714T013021Z/` 和
+`/home/liuxiang/tmp/bitget_btcusdt_flat_helper_20260714T013900Z/`。该次 live flat position 响应为 `data.list=null`，helper 已补充
+兼容与自动测试。尚无 tiny-position emergency smoke、gateway IOC 或 LeadLag 真实订单证据。Dedicated-account flat、余额、
+IP 白名单和 endpoint 可用性都是当次运行事实，不得外推为永久状态。
 
 `OrderSession` 的 direct operation response 只表示请求的直接响应：
 
