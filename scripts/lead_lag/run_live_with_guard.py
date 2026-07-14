@@ -305,7 +305,10 @@ def quiesce_bitget_processes(
         "processes": {},
     }
     results: list[bool] = []
-    for role, grace_sec in (("gateway", gateway_grace_sec), ("feedback", 0.0)):
+    roles = [("gateway", gateway_grace_sec), ("feedback", 0.0)]
+    if "data_session" in processes:
+        roles.append(("data_session", 0.0))
+    for role, grace_sec in roles:
         binding = processes.get(role)
         if not isinstance(binding, dict):
             summary["processes"][role] = {
@@ -1415,7 +1418,7 @@ def run_guarded_live(
             summary["result"] = "process_quiescence_failed"
             summary["exit_code"] = EXIT_EMERGENCY_FAILED
             summary["errors"].append(
-                "cannot prove gateway and feedback processes are stopped"
+                "cannot prove bound Bitget processes are stopped"
             )
             return EXIT_EMERGENCY_FAILED, summary
 

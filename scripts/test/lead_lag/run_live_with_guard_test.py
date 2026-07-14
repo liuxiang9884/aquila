@@ -196,6 +196,45 @@ class RunLiveWithGuardTest(unittest.TestCase):
         self.assertTrue(summary["ok"])
         self.assertEqual(controller.signals, [("feedback", guard.signal.SIGTERM)])
 
+    def test_bitget_quiescence_stops_optional_data_session(self):
+        controller = FakeBoundProcessController(
+            {"gateway": False, "feedback": True, "data_session": True},
+            {
+                "feedback": guard.signal.SIGTERM,
+                "data_session": guard.signal.SIGTERM,
+            },
+        )
+        manifest = {
+            "processes": {
+                "data_session": {"pid": 100, "start_time_ticks": 1},
+                "gateway": {"pid": 101, "start_time_ticks": 2},
+                "feedback": {"pid": 102, "start_time_ticks": 3},
+            }
+        }
+
+        ok, summary = guard.quiesce_bitget_processes(
+            manifest,
+            controller=controller,
+            clock=FakeClock(),
+            gateway_grace_sec=1.0,
+            term_timeout_sec=1.0,
+            kill_timeout_sec=1.0,
+            poll_interval_sec=0.1,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            set(summary["processes"]),
+            {"gateway", "feedback", "data_session"},
+        )
+        self.assertEqual(
+            controller.signals,
+            [
+                ("feedback", guard.signal.SIGTERM),
+                ("data_session", guard.signal.SIGTERM),
+            ],
+        )
+
     def test_bitget_quiescence_escalates_gateway_to_kill(self):
         controller = FakeBoundProcessController(
             {"gateway": True, "feedback": True},
