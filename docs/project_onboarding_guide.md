@@ -53,8 +53,9 @@ git log --oneline -8
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据，
   LeadLag 尚未发送真实订单。
 - Bitget V1 已选择 strict stop-and-flat，不修改跨进程 `local_order_id/clientOid`：不恢复交易、不允许 strategy-only restart；
-  每轮使用 run-specific gateway/feedback SHM 与 manifest v2，绑定 PID/start-time/config/account；strategy 退出后先停止 gateway/feedback，
-  再通过完整分页的 REST 双订单 snapshot、范围撤单和 reduce-only 平仓证明 flat。Helper/guard/isolation 已有自动测试；
+  LeadLag 每轮使用 manifest v2，gateway smoke 使用专用 manifest v1；两者都使用 run-specific SHM 并绑定 PID/start-time/config/account，
+  gateway smoke 额外绑定 data session、拒绝已存在的 run directory，并校验 runner CSV/summary。交易 runner 退出后先停止所有绑定
+  producer，再通过完整分页的 REST 双订单 snapshot、范围撤单和 reduce-only 平仓证明 flat。Helper/guard/isolation 已有自动测试；
   `BTCUSDT` read-only baseline、emergency dry-run、flat-account helper、修复后的 tiny-position stop-and-flat 和 fanout=1 gateway
   passive IOC 均已有 2026-07-14 当次 live 证据。Gateway 样本零成交，不能外推 fillability；尚无 Bitget LeadLag live 证据，
   细节见 Bitget trading 文档。
@@ -136,7 +137,8 @@ rg 'aquila_evaluation' core exchange tools
 `git status`。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
 
 Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
-manifest v2、REST 保守 snapshot 和进程 quiescence 也已落地；`BTCUSDT` baseline、emergency dry-run、flat-account helper、
+LeadLag manifest v2、gateway smoke manifest v1、REST 保守 snapshot、runner evidence 校验和进程 quiescence 均已落地；
+`BTCUSDT` baseline、emergency dry-run、flat-account helper、
 修复后的 tiny-position stop-and-flat 和 fanout=1 gateway passive IOC 均已有 2026-07-14 live 证据。Gateway run
 `bitget_gateway_smoke_20260714T061702Z` 取得 direct Ack、独立 cancelled terminal、三进程 quiescence 和 final flat，成交为 0；
 下一门是 signal-conditioned LeadLag，尚无 Bitget LeadLag live 证据。任何真实订单必须按
