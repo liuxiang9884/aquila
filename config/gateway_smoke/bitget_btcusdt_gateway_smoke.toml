@@ -1,0 +1,38 @@
+[gateway_smoke]
+name = "bitget_gateway_smoke"
+run_id = "validate_only"
+symbol = "BTC_USDT"
+exchange_symbol = "BTCUSDT"
+symbol_id = 0
+strategy_id = 7
+side = "buy"
+quantity = 0.0001
+passive_price_limit_fraction = 0.5
+close_slippage_bps = 100
+bbo_freshness_ns = 1000000000
+ack_timeout_ms = 5000
+terminal_timeout_ms = 10000
+route_id = 0
+
+[instrument_catalog]
+file = "config/instruments/usdt_futures.csv"
+
+[market_data]
+shm_name = "aquila_bitget_gateway_smoke_market_data"
+channel_name = "book_ticker_channel"
+
+[order_gateway]
+shm_name = "aquila_bitget_gateway_smoke_order_gateway"
+route_count = 1
+command_queue_capacity = 4096
+event_queue_capacity = 8192
+startup_ready_timeout_s = 30
+
+[feedback]
+shm_name = "aquila_bitget_gateway_smoke_order_feedback"
+channel_name = "orders"
+force_claim = false
+poll_budget = 64
+
+[output]
+run_dir = "/home/liuxiang/tmp/bitget_gateway_smoke_validate_only"

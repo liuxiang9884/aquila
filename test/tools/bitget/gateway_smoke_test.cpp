@@ -11,6 +11,7 @@
 #include "core/market_data/types.h"
 #include "core/trading/order_id.h"
 #include "tools/bitget/gateway_smoke/config.h"
+#include "tools/bitget/gateway_smoke/evidence_writer.h"
 #include "tools/bitget/gateway_smoke/order_math.h"
 #include "tools/bitget/gateway_smoke/state_machine.h"
 
@@ -219,7 +220,7 @@ TEST(BitgetGatewaySmokeOrderMathTest, BuildsAggressiveReduceOnlyClose) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, RequiresAckAndIndependentTerminal) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0001);
   state.OnFeedback(Feedback(OrderFeedbackKind::kCancelled, EntryId(), 0.0));
   EXPECT_FALSE(state.done());
 
@@ -232,7 +233,7 @@ TEST(BitgetGatewaySmokeStateMachineTest, RequiresAckAndIndependentTerminal) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, FilledEntryRequiresFlatClose) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0001);
   state.OnGatewayResponse(Ack(EntryId()));
   state.OnFeedback(Feedback(OrderFeedbackKind::kCancelled, EntryId(), 0.0001));
   ASSERT_TRUE(state.close_required());
@@ -249,7 +250,7 @@ TEST(BitgetGatewaySmokeStateMachineTest, FilledEntryRequiresFlatClose) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, CloseResidualFails) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0002);
   state.OnGatewayResponse(Ack(EntryId()));
   state.OnFeedback(Feedback(OrderFeedbackKind::kFilled, EntryId(), 0.0002));
   state.MarkCloseSubmitted(CloseId(), 4'000, 0.0002);
@@ -262,7 +263,7 @@ TEST(BitgetGatewaySmokeStateMachineTest, CloseResidualFails) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, CloseQuantityMustMatchEntryFill) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0002);
   state.OnGatewayResponse(Ack(EntryId()));
   state.OnFeedback(Feedback(OrderFeedbackKind::kFilled, EntryId(), 0.0002));
 
@@ -274,7 +275,7 @@ TEST(BitgetGatewaySmokeStateMachineTest, CloseQuantityMustMatchEntryFill) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, GatewayUnknownFails) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0001);
   core::OrderResponseEvent unknown = Ack(EntryId());
   unknown.kind = core::OrderResponseKind::kUnknownResult;
 
@@ -286,7 +287,7 @@ TEST(BitgetGatewaySmokeStateMachineTest, GatewayUnknownFails) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, ContinuityLossFailsClosed) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0001);
   OrderFeedbackEvent continuity =
       Feedback(OrderFeedbackKind::kContinuityLost, 0, 0.0);
 
@@ -298,12 +299,69 @@ TEST(BitgetGatewaySmokeStateMachineTest, ContinuityLossFailsClosed) {
 
 TEST(BitgetGatewaySmokeStateMachineTest, AckTimeoutFails) {
   SmokeStateMachine state;
-  state.MarkEntrySubmitted(EntryId(), 1'000);
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0001);
 
   state.CheckTimeout(6'001, 5'000, 10'000);
 
   EXPECT_TRUE(state.failed());
   EXPECT_EQ(state.failure(), SmokeFailure::kAckTimeout);
+}
+
+TEST(BitgetGatewaySmokeStateMachineTest, EntryOverfillFailsInvariant) {
+  SmokeStateMachine state;
+  state.MarkEntrySubmitted(EntryId(), 1'000, 0.0001);
+  state.OnGatewayResponse(Ack(EntryId()));
+
+  state.OnFeedback(Feedback(OrderFeedbackKind::kFilled, EntryId(), 0.0002));
+
+  EXPECT_TRUE(state.failed());
+  EXPECT_EQ(state.failure(), SmokeFailure::kQuantityInvariant);
+}
+
+TEST(BitgetGatewaySmokeEvidenceWriterTest, PersistsAckAndTerminalSeparately) {
+  const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  const std::filesystem::path run_dir =
+      std::filesystem::path{"/home/liuxiang/tmp"} /
+      fmt::format("bitget_gateway_smoke_evidence_{}", now);
+  EvidenceWriter writer(run_dir);
+  ASSERT_TRUE(writer.Open().ok);
+  writer.WriteEvent(EvidenceEventRow{
+      .run_id = "unit",
+      .event_source = "gateway",
+      .event_kind = "gateway_response",
+      .order_role = "entry",
+      .local_order_id = EntryId(),
+      .response_kind = "ack",
+  });
+  writer.WriteEvent(EvidenceEventRow{
+      .run_id = "unit",
+      .event_source = "feedback",
+      .event_kind = "feedback_terminal",
+      .order_role = "entry",
+      .local_order_id = EntryId(),
+      .feedback_kind = "cancelled",
+  });
+  ASSERT_TRUE(writer
+                  .WriteSummary(SmokeSummary{
+                      .run_id = "unit",
+                      .final_result = "no_fill",
+                      .entry_local_order_id = EntryId(),
+                      .entry_acked = true,
+                      .entry_terminal = true,
+                  })
+                  .ok);
+  writer.Close();
+
+  std::ifstream csv_input(run_dir / "order_event.csv");
+  const std::string csv(std::istreambuf_iterator<char>(csv_input), {});
+  EXPECT_NE(csv.find("gateway,gateway_response,entry"), std::string::npos);
+  EXPECT_NE(csv.find(",ack,"), std::string::npos);
+  EXPECT_NE(csv.find("feedback,feedback_terminal,entry"), std::string::npos);
+  std::ifstream summary_input(run_dir / "summary.json");
+  const std::string summary(std::istreambuf_iterator<char>(summary_input), {});
+  EXPECT_NE(summary.find("\"final_result\": \"no_fill\""), std::string::npos);
+  EXPECT_NE(summary.find("\"entry_acked\": true"), std::string::npos);
+  std::filesystem::remove_all(run_dir);
 }
 
 }  // namespace

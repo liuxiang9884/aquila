@@ -78,6 +78,7 @@ enum class SmokeFailure : std::uint8_t {
   kAckTimeout,
   kTerminalTimeout,
   kCloseResidual,
+  kQuantityInvariant,
 };
 
 struct LegEvidence {

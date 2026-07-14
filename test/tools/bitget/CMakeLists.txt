@@ -142,6 +142,7 @@ set_tests_properties(bitget_order_gateway_help_test
 add_executable(bitget_gateway_smoke_test
     gateway_smoke_test.cpp
     ${PROJECT_SOURCE_DIR}/tools/bitget/gateway_smoke/config.cpp
+    ${PROJECT_SOURCE_DIR}/tools/bitget/gateway_smoke/evidence_writer.cpp
     ${PROJECT_SOURCE_DIR}/tools/bitget/gateway_smoke/state_machine.cpp
 )
 
@@ -161,3 +162,21 @@ target_link_libraries(bitget_gateway_smoke_test
 
 add_test(NAME bitget_gateway_smoke_test
          COMMAND bitget_gateway_smoke_test)
+
+add_test(NAME bitget_gateway_smoke_help_test
+         COMMAND bitget_gateway_smoke --help)
+
+add_test(NAME bitget_gateway_smoke_validate_only_test
+         COMMAND bitget_gateway_smoke
+                 --config config/gateway_smoke/bitget_btcusdt_gateway_smoke.toml
+                 --validate-only)
+
+add_test(NAME bitget_gateway_smoke_data_session_dry_run_test
+         COMMAND bitget_data_session --config
+                 config/data_sessions/bitget_gateway_smoke.toml)
+
+set_tests_properties(bitget_gateway_smoke_help_test
+    bitget_gateway_smoke_validate_only_test
+    bitget_gateway_smoke_data_session_dry_run_test
+    PROPERTIES
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})

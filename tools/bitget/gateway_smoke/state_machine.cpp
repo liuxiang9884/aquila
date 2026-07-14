@@ -17,13 +17,16 @@ inline constexpr double kQuantityEpsilon = 1e-12;
 }  // namespace
 
 void SmokeStateMachine::MarkEntrySubmitted(std::uint64_t local_order_id,
-                                           std::int64_t submit_ns) noexcept {
-  if (failed() || done() || entry_.submitted || local_order_id == 0) {
+                                           std::int64_t submit_ns,
+                                           double quantity) noexcept {
+  if (failed() || done() || entry_.submitted || local_order_id == 0 ||
+      quantity <= 0.0) {
     Fail(SmokeFailure::kInvalidTransition);
     return;
   }
   entry_.local_order_id = local_order_id;
   entry_.submit_ns = submit_ns;
+  entry_.requested_quantity = quantity;
   entry_.submitted = true;
 }
 
@@ -119,6 +122,13 @@ void SmokeStateMachine::ApplyGatewayResponse(
 void SmokeStateMachine::ApplyFeedback(
     LegEvidence* leg, const OrderFeedbackEvent& event) noexcept {
   if (leg->terminal) {
+    return;
+  }
+  if (!std::isfinite(event.cumulative_filled_quantity) ||
+      event.cumulative_filled_quantity < 0.0 ||
+      event.cumulative_filled_quantity >
+          leg->requested_quantity + kQuantityEpsilon) {
+    Fail(SmokeFailure::kQuantityInvariant);
     return;
   }
   leg->cumulative_filled_quantity = std::max(leg->cumulative_filled_quantity,

@@ -11,8 +11,8 @@ namespace aquila::tools::bitget::gateway_smoke {
 
 class SmokeStateMachine {
  public:
-  void MarkEntrySubmitted(std::uint64_t local_order_id,
-                          std::int64_t submit_ns) noexcept;
+  void MarkEntrySubmitted(std::uint64_t local_order_id, std::int64_t submit_ns,
+                          double quantity) noexcept;
   void MarkCloseSubmitted(std::uint64_t local_order_id, std::int64_t submit_ns,
                           double quantity) noexcept;
   void OnGatewayResponse(const core::OrderResponseEvent& event) noexcept;

@@ -107,6 +107,24 @@ target_link_libraries(bitget_order_gateway
         PkgConfig::tomlplusplus
 )
 
+add_executable(bitget_gateway_smoke
+    bitget/gateway_smoke/config.cpp
+    bitget/gateway_smoke/evidence_writer.cpp
+    bitget/gateway_smoke/main.cpp
+    bitget/gateway_smoke/state_machine.cpp
+)
+
+target_link_libraries(bitget_gateway_smoke
+    PRIVATE
+        aquila_config
+        aquila_core
+        CLI11::CLI11
+        fmt::fmt-header-only
+        magic_enum::magic_enum
+        nova
+        PkgConfig::tomlplusplus
+)
+
 add_executable(fill_probe_strategy
     gate/fill_probe/config.cpp
     gate/fill_probe/csv_writer.cpp
