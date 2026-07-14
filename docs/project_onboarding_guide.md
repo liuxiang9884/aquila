@@ -54,9 +54,9 @@ git log --oneline -8
 - Bitget V1 已选择 strict stop-and-flat，不修改跨进程 `local_order_id/clientOid`：不恢复交易、不允许 strategy-only restart；
   每轮使用 run-specific gateway/feedback SHM 与 manifest v2，绑定 PID/start-time/config/account；strategy 退出后先停止 gateway/feedback，
   再通过完整分页的 REST 双订单 snapshot、范围撤单和 reduce-only 平仓证明 flat。Helper/guard/isolation 已有自动测试，尚无 Bitget
-  gateway 或 LeadLag live 证据；`BTCUSDT` read-only baseline、emergency dry-run 和 flat-account helper smoke 已有
-  2026-07-14 当次 live 证据。首次 tiny-position 尝试暴露 cancel code `25204` 导致 helper 跳过 close，已用直接 reduce-only close
-  安全收口并修复代码，但该证据门仍需重新授权复跑，细节见 Bitget trading 文档。
+  gateway 或 LeadLag live 证据；`BTCUSDT` read-only baseline、emergency dry-run、flat-account helper 和修复后的 tiny-position
+  stop-and-flat 已有 2026-07-14 当次 live 证据。首次 tiny-position 尝试暴露的 cancel code `25204` 跳过 close 问题已安全收口、
+  修复并通过重跑，细节见 Bitget trading 文档。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
 - Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
@@ -116,8 +116,8 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 下一步建议
 
-1. Bitget trading：下一证据门是重新授权并复跑 `BTCUSDT` 最小仓位 stop-and-flat，验证修复后的 helper 能自动 close 并证明 flat；
-   通过后再做 fanout=1 guarded gateway passive IOC，最后才是 signal-conditioned LeadLag。每轮必须 fresh run；
+1. Bitget trading：下一证据门是 fanout=1 guarded gateway passive IOC，完成 Ack、terminal feedback 和 REST final flat 对账后，
+   最后才是 signal-conditioned LeadLag。每轮必须 fresh run；
    多 route、account limiter、failover、fast-fill 和 resume/persistent ID 仍后置。
 2. Gate trading：下一步是 guarded gateway smoke，量化 route skew、Ack RTT、terminal feedback 与 fillability；先复核 account budget、
    reconcile 和 liveness。
@@ -135,7 +135,7 @@ rg 'aquila_evaluation' core exchange tools
 
 Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
 manifest v2、REST 保守 snapshot 和进程 quiescence 也已落地；`BTCUSDT` baseline、emergency dry-run 和 flat-account helper 已有
-2026-07-14 live 证据；首次 tiny-position 尝试已安全收口并修复 code `25204` 边界，但仍需重新授权复跑，尚无通过的
-tiny-position/gateway/LeadLag live 证据。任何真实订单必须按 runbook 的分阶段证据门取得当次授权；不要把 fresh-run 解释为
-可 resume，也不要在同一 run 重启 strategy。
+2026-07-14 live 证据；首次 tiny-position 尝试已安全收口并修复 code `25204` 边界，修复后的重跑已取得自动 close、terminal
+order-info 和 final flat 证据。下一门是 fanout=1 gateway passive IOC，尚无 gateway/LeadLag live 证据。任何真实订单必须按
+runbook 的分阶段证据门取得当次授权；不要把 fresh-run 解释为可 resume，也不要在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
