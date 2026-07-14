@@ -263,6 +263,34 @@ FeedbackSession 或 REST reconcile。
 Gateway 当前不输出 Bitget numeric operation `error_code` 到共享 SHM；是否扩展共享诊断 contract 属于未来独立设计，见
 `docs/bitget_trading.md`。
 
+### Bitget Gateway Smoke
+
+组件入口：
+
+- `tools/bitget/gateway_smoke/`
+- `scripts/bitget/trading/prepare_gateway_smoke_run.py`
+- `scripts/bitget/trading/run_gateway_smoke_with_guard.py`
+
+该 one-shot 工具只用于取得 fanout=1 gateway passive IOC 的授权 live 证据。Gateway direct Ack 与 account-wide
+`OrderFeedbackSession` terminal 是相互独立的事实面：Ack 不能替代 terminal，terminal 先到也不能替代 Ack。Runner 成功只表示
+entry 以及必要的 reduce-only close 都已取得这两类证据；最终账户 flat 必须以外围 guard 的后续 REST snapshot 为准。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `run_id` / `event_source` / `event_kind` / `order_role` | `order_event.csv` | experiment | join key / `gateway`、`feedback` / event enum / `entry`、`close` | 把本轮 gateway response 与独立 feedback 按订单角色串联；跨 run 审计必须包含 `run_id`。 | Gateway smoke retire 或迁移到稳定 live report schema 时同步删除。 |
+| `local_order_id` / `parent_id` / `route_id` | `order_event.csv` | experiment | uint64 / uint64 / uint16 | 关联 one-shot execution、entry/close 和实际 gateway route；当前 `route_id=0`。 | 同上。 |
+| `response_kind` / `feedback_kind` | `order_event.csv` | experiment | OrderGateway response / OrderFeedback enum | 分别保存 direct operation response 和独立生命周期事实，禁止把 `kAck` 解释为 terminal。 | 同上。 |
+| `exchange_order_id` / `exchange_ns` / `local_ns` | `order_event.csv` | experiment | Bitget order id / Unix epoch ns / Unix epoch ns | 关联交易所订单并保留 exchange/local event timestamp；跨时钟差不直接解释为单程延迟。 | 同上。 |
+| `price` / `quantity` / `cumulative_filled_quantity` / `left_quantity` | `order_event.csv` | experiment | decimal text / BTC quantity | 对账 entry/close 的价格、原始数量和累计生命周期数量；close quantity 必须等于 entry 累计成交量。 | 同上。 |
+| `finish_reason` / `reject_reason` | `order_event.csv` | experiment | enum / text | 保存 terminal 或拒绝原因，用于区分零成交取消、明确拒绝和未知结果。 | 同上。 |
+| `run_id` / `final_result` / `failure_reason` | runner `summary.json` | experiment | join key / `success` 或失败状态 / text | 记录 one-shot 状态机最终结果；不包含外围 REST flat 证明。 | 同上。 |
+| `entry_local_order_id` / `entry_acked` / `entry_terminal` / `entry_filled_quantity` | runner `summary.json` | experiment | id / bool / bool / BTC quantity | 汇总 entry 是否同时取得 direct Ack 和独立 terminal，以及其累计成交量。 | 同上。 |
+| `close_required` / `close_local_order_id` / `close_acked` / `close_terminal` / `close_filled_quantity` | runner `summary.json` | experiment | bool / id / bool / bool / BTC quantity | entry 有成交时汇总同 gateway reduce-only close 的双证据和累计平仓量。 | 同上。 |
+| `runtime_isolation.processes.<role>` / `quiescence` / final state | `guard_summary.json` | stable | PID binding / process stop result / REST snapshot | 证明 data session、gateway、feedback 属于本轮且在最终 REST 前已停止；该 summary 的 final flat 才是账户级完成证据。 | 外部 supervisor 与统一 report 提供等价闭环后重审。 |
+
+凭据边界：manifest、CSV、summary 和 log 只允许保存 credential 环境变量名，不得保存 API key、secret、passphrase、signature
+或完整 login payload。
+
 ## Gate OrderSession
 
 组件入口：

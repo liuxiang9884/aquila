@@ -16,6 +16,9 @@
   REST preflight/final check 和 Gate/Bitget 共用的 LeadLag guard orchestration。
 - Fresh-run isolation：为每轮 Bitget live 生成独立 gateway/feedback SHM、runtime config 和 manifest；
   `--execute` 会在读取凭据和访问 REST 前强制验证 manifest。
+- Gateway smoke：提供独立的 `bitget_gateway_smoke` one-shot runner 和外围 guard pipeline；固定
+  `BTCUSDT`、`0.0001 BTC`、buy passive IOC、fanout/route count 为 `1`，并以 direct Ack、独立
+  terminal feedback、必要时同 gateway reduce-only close 和最终 REST flat 组成证据闭环。
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe；gateway/LeadLag
@@ -165,6 +168,8 @@ config/order_sessions/bitget_order_session.toml
 config/order_feedback/bitget_order_feedback_session.toml
 config/order_feedback/bitget_order_feedback_shm.toml
 config/order_gateways/bitget_order_gateway.toml
+config/gateway_smoke/bitget_btcusdt_gateway_smoke.toml
+config/data_sessions/bitget_gateway_smoke.toml
 config/order_session_rtt_probe/bitget_order_session_rtt_probe.toml
 config/order_session_rtt_probe/bitget_order_session_rtt_connections.csv
 config/data_readers/bitget_order_session_rtt_probe.toml
@@ -179,10 +184,13 @@ exchange/bitget/trading/order_feedback_parser.h
 exchange/bitget/trading/multi_order_session_gateway.h
 exchange/bitget/trading/order_gateway_worker.h
 tools/bitget/bitget_order_gateway.cpp
+tools/bitget/gateway_smoke/
 tools/bitget/order_session_rtt_probe/
 tools/lead_lag/live_strategy.h
 scripts/bitget/trading/place_futures_order.py
 scripts/bitget/trading/emergency_flatten_futures.py
+scripts/bitget/trading/prepare_gateway_smoke_run.py
+scripts/bitget/trading/run_gateway_smoke_with_guard.py
 scripts/lead_lag/prepare_bitget_live_run.py
 scripts/lead_lag/run_live_with_guard.py
 ```
@@ -200,11 +208,46 @@ scripts/lead_lag/run_live_with_guard.py
 ctest --test-dir build/debug -R '^bitget_(order|operation)' --output-on-failure
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/place_futures_order_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/emergency_flatten_futures_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/prepare_gateway_smoke_run_test.py
+/home/liuxiang/dev/pyenv/lx/bin/python scripts/test/bitget/trading/run_gateway_smoke_with_guard_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/prepare_bitget_live_run_test.py
 /home/liuxiang/dev/pyenv/lx/bin/python scripts/test/lead_lag/run_live_with_guard_test.py
 ```
 
 所有真实订单都需要用户对当次运行单独授权；dry-run、login、subscription 或 validate-only 不构成下单授权。
+
+### Fanout=1 gateway passive IOC smoke
+
+`run_gateway_smoke_with_guard.py` 是当前 gateway 证据门的唯一编排入口。它拒绝缺少 `--execute` 的调用，先扫描并拒绝
+仍在运行的 LeadLag / Bitget trading 进程，再生成 `/home/liuxiang/tmp/<run_id>/configs/` 下的四份 overlay 和
+`bitget_gateway_smoke_manifest.json`。每轮必须使用从未出现过的 `run_id`；目录已存在即 fail closed，不存在 resume、覆盖或
+同一 run 重启 runner / data session / gateway / feedback 的语义。
+
+流水线固定执行：生产 REST flat preflight → 启动并绑定单 symbol data session、account-wide feedback 和 fanout=1 gateway →
+等待 feedback subscription Ack → one-shot runner 提交一次 `buy 0.0001 BTC` passive IOC → 等待 gateway direct Ack 与独立
+terminal feedback → 若累计成交量非零，则通过同一 gateway 提交等量 reduce-only aggressive IOC close，并再次等待
+Ack+terminal → 停止并证明三个 producer quiescent → 生产 REST final flat。任何 `UnknownResult`、`ContinuityLost`、明确拒绝、
+超时、数量不变量失败、进程身份变化或无法证明 quiescent 都停止本轮；启动后的异常只允许外围 helper 做 stop-and-flat，不能在
+同一 run 重发 entry。
+
+Release binary 和凭据就绪、无冲突进程且已取得当次授权后，从仓库根目录运行：
+
+```bash
+run_id="bitget_gateway_smoke_$(date -u +%Y%m%dT%H%M%SZ)"
+/home/liuxiang/dev/pyenv/lx/bin/python \
+  scripts/bitget/trading/run_gateway_smoke_with_guard.py \
+  --run-id "${run_id}" \
+  --execute --pretty
+```
+
+若 binary 不在默认 `build/release/tools/`，必须通过 `--data-session-binary`、`--gateway-binary`、
+`--feedback-binary` 和 `--smoke-binary` 显式传入四个绝对路径。完整证据位于 `/home/liuxiang/tmp/<run_id>/`：
+`order_event.csv` 保存 gateway response 与 feedback 事件，runner 以原子替换写 `summary.json`，外围 guard 以原子替换写
+`guard_summary.json`，另有 manifest、四份 runtime config 和各进程日志。`summary.json` 的 runner success 只证明订单状态机闭环；
+只有 `guard_summary.json` 同时记录正常 runner 退出、三个进程 quiescent 和 final REST flat，才算 gateway smoke 通过。
+
+该 smoke 只验证一个最小量 gateway order 的安全闭环，不是 signal-conditioned LeadLag 证据，也不能外推多 route、长期稳定性、
+fillability 或 latency。即使 gateway 门通过，LeadLag live 仍需按下一证据门重新授权和执行。
 
 ## V1 stop-and-flat 与 fresh-run contract
 
