@@ -163,8 +163,10 @@ setsid scripts/lead_lag/run_live_with_guard.py \
        --duration-sec <duration_sec>
 ```
 
-该示例只定义形状，不构成真实订单授权。当前证据门仍是 read-only baseline → emergency dry-run → 单独授权 flat-account helper →
-单独授权 tiny-position stop-and-flat → 单独授权 fanout=1 gateway passive IOC → 单独授权 signal-conditioned LeadLag。
+该示例只定义形状，不构成真实订单授权。证据门顺序仍是 read-only baseline → emergency dry-run → 单独授权 flat-account helper →
+单独授权 tiny-position stop-and-flat → 单独授权 fanout=1 gateway passive IOC → 单独授权 signal-conditioned LeadLag。截至
+2026-07-14，Bitget 已通过 gateway 门；当前只允许从 signal-conditioned LeadLag 门继续，gateway 的单笔零成交证据不能替代
+LeadLag signal、fillability 或 latency 证据。详细 run id 和边界见 `docs/bitget_trading.md`。
 
 ## 运行期监控
 
