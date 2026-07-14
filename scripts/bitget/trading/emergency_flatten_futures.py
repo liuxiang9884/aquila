@@ -15,6 +15,7 @@ if __package__:
     from bitget.account import query_bitget_account as account  # noqa: E402
     from bitget.trading.place_futures_order import (  # noqa: E402
         ApiRequest,
+        BitgetRestError,
         SignedBitgetTradingClient,
         build_place_order_request,
         normalize_symbol,
@@ -28,6 +29,7 @@ else:
     import query_bitget_account as account  # noqa: E402
     from place_futures_order import (  # noqa: E402
         ApiRequest,
+        BitgetRestError,
         SignedBitgetTradingClient,
         build_place_order_request,
         normalize_symbol,
@@ -502,7 +504,12 @@ def cancel_scoped_open_orders(
     for symbol in targets:
         pacer.wait(clock)
         request = build_cancel_symbol_orders_request(category, symbol)
-        response = requester(request)
+        try:
+            response = requester(request)
+        except BitgetRestError as exc:
+            if exc.code != "25204":
+                raise
+            response = {"code": exc.code, "msg": exc.msg}
         summary["orders_cancelled"].append(
             {
                 "phase": phase,
@@ -512,7 +519,8 @@ def cancel_scoped_open_orders(
                 "response": response,
             }
         )
-        validate_cancel_symbol_orders_response(response)
+        if not isinstance(response, dict) or response.get("code") != "25204":
+            validate_cancel_symbol_orders_response(response)
 
 
 def build_close_client_oid(clock: Any, sequence: int) -> str:

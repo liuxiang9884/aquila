@@ -48,6 +48,20 @@ DEFAULT_SYMBOL = "BTCUSDT"
 CLIENT_OID_PATTERN = re.compile(r"^[.A-Z:/a-z0-9_-]+$")
 
 
+class BitgetRestError(RuntimeError):
+    def __init__(
+        self,
+        code: str,
+        msg: str,
+        http_status: int | None = None,
+    ):
+        self.code = code
+        self.msg = msg
+        self.http_status = http_status
+        prefix = f"HTTP {http_status}: " if http_status is not None else ""
+        super().__init__(f"{prefix}Bitget REST code={code} msg={msg}")
+
+
 @dataclass(frozen=True)
 class ApiRequest:
     method: str
@@ -165,8 +179,9 @@ def validate_uta_response(payload: Any) -> Any:
     if not isinstance(payload, dict):
         raise RuntimeError("Bitget REST response must be an object")
     if payload.get("code") != "00000":
-        raise RuntimeError(
-            f"Bitget REST code={payload.get('code')} msg={payload.get('msg')}"
+        raise BitgetRestError(
+            code=str(payload.get("code")),
+            msg=str(payload.get("msg")),
         )
     if "data" not in payload:
         raise RuntimeError("Bitget REST success response missing data")
@@ -220,6 +235,19 @@ class SignedBitgetTradingClient:
                 body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            try:
+                error_payload = json.loads(detail)
+            except json.JSONDecodeError:
+                error_payload = None
+            if isinstance(error_payload, dict) and error_payload.get("code") not in (
+                None,
+                "00000",
+            ):
+                raise BitgetRestError(
+                    code=str(error_payload.get("code")),
+                    msg=str(error_payload.get("msg")),
+                    http_status=exc.code,
+                ) from exc
             raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(str(exc)) from exc

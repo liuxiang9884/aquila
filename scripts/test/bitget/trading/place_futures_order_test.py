@@ -1,8 +1,10 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import io
 import json
 import sys
 import unittest
+import urllib.error
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -193,6 +195,35 @@ class PlaceFuturesOrderTest(unittest.TestCase):
         self.assertEqual(request.data.decode("utf-8"), api_request.body)
         self.assertEqual(request.get_header("Access-passphrase"), "passphrase")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 3.0)
+
+    @patch("urllib.request.urlopen")
+    def test_signed_client_preserves_http_error_code(self, urlopen):
+        urlopen.side_effect = urllib.error.HTTPError(
+            url="https://example.test/api/v3/trade/cancel-symbol-order",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(
+                b'{"code":"25204","msg":"Order does not exist","data":null}'
+            ),
+        )
+        client = orders.SignedBitgetTradingClient(
+            api_key="key",
+            api_secret="secret",
+            api_passphrase="passphrase",
+            base_url="https://example.test",
+        )
+        request = orders.ApiRequest(
+            method="POST",
+            endpoint_path="/api/v3/trade/cancel-symbol-order",
+            body='{"category":"USDT-FUTURES","symbol":"BTCUSDT"}',
+        )
+
+        with self.assertRaises(RuntimeError) as context:
+            client.request_json(request)
+
+        self.assertEqual(getattr(context.exception, "code", None), "25204")
+        self.assertEqual(getattr(context.exception, "http_status", None), 400)
 
     def test_dry_run_does_not_call_requester(self):
         def fail_request(api_request):

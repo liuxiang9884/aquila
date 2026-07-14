@@ -18,6 +18,7 @@ if str(ACCOUNT_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(ACCOUNT_SCRIPT_DIR))
 
 import emergency_flatten_futures as flatten
+import place_futures_order as orders
 
 
 def allowlist_config(**overrides):
@@ -613,6 +614,36 @@ class EmergencyFlattenFuturesTest(unittest.TestCase):
             ["cancel-symbol-order", "cancel-symbol-order"],
         )
         self.assertEqual(summary["close_orders_submitted"], [])
+
+    def test_no_order_cancel_error_does_not_skip_position_close(self):
+        requester = ScriptedRequester(
+            open_order_results=[[], [], [], []],
+            position_results=[
+                [position_data(total="0.0001", available="0.0001")],
+                [position_data(total="0.0001", available="0.0001")],
+                [position_data(total="0", available="0")],
+            ],
+            cancel_error=orders.BitgetRestError(
+                code="25204",
+                msg="Order does not exist",
+                http_status=400,
+            ),
+        )
+
+        exit_code, summary = flatten.run_emergency_flatten(
+            config=allowlist_config(dry_run=False),
+            requester=requester,
+            clock=FakeClock(),
+        )
+
+        self.assertEqual(exit_code, flatten.EXIT_OK)
+        self.assertEqual(summary["result"], "verified_flat")
+        self.assertEqual(
+            requester.mutating_topics,
+            ["cancel-symbol-order", "place-order", "cancel-symbol-order"],
+        )
+        self.assertEqual(requester.place_bodies[0]["side"], "sell")
+        self.assertEqual(requester.place_bodies[0]["reduceOnly"], "yes")
 
     def test_poll_timeout_returns_not_flat(self):
         requester = ScriptedRequester(
