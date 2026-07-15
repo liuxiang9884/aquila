@@ -88,21 +88,13 @@ LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag
 
 因此，这个项目更适合使用能够提升方案拆解、调试、测试、验证和性能分析质量的 skills，而不是偏前端或产品设计类流程。
 
-## Subagent 使用约定
-
-- 项目级 custom agent 定义在 `.codex/agents/aquila-xhigh-worker.toml`，其 agent name 为 `aquila_xhigh_worker`；该文件是 subagent `model` 和 `model_reasoning_effort` 的事实源。
-- 当主会话使用 `spawn_agent` / subagent 执行实现、审查、调查或测试任务时，默认必须显式选择 `aquila_xhigh_worker`，不得只在 prompt 中声称使用某个 model 或 reasoning effort，也不得使用未绑定该 custom agent 的通用 subagent 代替。
-- 除非用户明确要求临时覆盖，所有 subagent 必须遵循 custom agent 中固定的 `model = "gpt-5.6-sol"` 和 `model_reasoning_effort = "xhigh"`。
-- 主会话负责统一派发 subagent，默认不允许 subagent 再派生下级 subagent；如确需下级派生，必须先取得用户确认，并继续使用 `aquila_xhigh_worker`。
-- 如果当前工具或环境不支持选择 `aquila_xhigh_worker`，或无法确认实际加载的 custom agent，代理不得宣称已满足本约定；必须在派发前向用户说明限制，并由主会话执行等价任务或给出其他可验证的替代方案。
-
 ## 多轮 Review 触发词
 
 当用户输入“多轮review”“多轮 review”“multi-round review”或等价表达时，默认先询问用户本次 review 的目标，不自行假设目标。
 用户给出目标后，按下面流程执行：
 
 1. 明确 review 范围、目标和停止条件；如果目标是“代码逻辑没有问题”，重点检查控制流、状态机、错误处理、并发边界、资源所有权、数据一致性和恢复语义，不把单纯风格偏好作为阻断问题。
-2. 每一轮至少派一个 `aquila_xhigh_worker` subagent 做只读 review；如果当前工具不支持选择或确认该 custom agent，先说明限制，再用主会话执行等价的只读 review。
+2. 每一轮至少派一个 subagent 做只读 review；如果当前工具不支持 subagent，先说明限制，再用主会话执行等价的只读 review。
 3. 每轮 review 结束后，先向用户输出本轮发现的问题，按 Critical / Important / Minor 分组，并尽量给出文件路径、行号和影响说明。
 4. 根据 review 结果执行修复：Critical 必须修，Important 默认修；Minor 只有在影响既定目标、风险低或用户要求时修。修复时保持改动最小，不引入无关重构。
 5. 修复后运行与本轮修改对应的最小验证；验证通过后提交本轮修复，commit message 使用英文，且不要裹带无关改动。
@@ -159,7 +151,7 @@ Level: L0|L1|L2|L3 — <一句判断依据>. Workflow: <本轮启用的质量门
 - 性能结论必须由 fresh benchmark、profile、压测或实际运行证据支持。
 - 每次修改都必须形成原子 commit；只暂存本任务拥有的文件或 hunk，不裹带用户已有改动。
 - `L3` 必须创建 PR；`L1` / `L2` 是否使用 branch/worktree 由主代理根据对当前主分支功能的影响和隔离收益决定。用户明确要求 branch、worktree 或 subagent 时必须执行。
-- 是否主动使用 subagent 由主代理决定；派发前必须满足本文件的 `aquila_xhigh_worker` 约束，主代理必须检查 diff 并重新验证。
+- 是否主动使用 subagent 由主代理决定；主代理必须检查 diff 并重新验证。
 - 没有 fresh 验证证据时不得宣称完成；无法运行必要验证时，只报告已验证范围和剩余风险。
 
 ### Grill Me 设计追问

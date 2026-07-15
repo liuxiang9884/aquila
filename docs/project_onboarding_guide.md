@@ -141,7 +141,7 @@ rg 'aquila_evaluation' core exchange tools
 
 先运行 `git status --short --branch` 和 `git log --oneline -8`，再按 onboarding 顺序读取入口文档；branch/ahead/dirty 只信
 `git status`。涉及编码或技术开发先读取并执行 `docs/skills/adaptive-development/SKILL.md`，输出 Level 后直接推进；默认不要启用
-Superpowers。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
+Superpowers。设计、计划或关键交易链路取舍先询问 Grill Me。
 
 Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
 LeadLag manifest v2、gateway smoke manifest v1、REST 保守 snapshot、runner evidence 校验和进程 quiescence 均已落地；
