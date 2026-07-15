@@ -1,0 +1,25 @@
+{
+  "external_configs_applied": true,
+  "feedback_config": "/home/liuxiang/tmp/bitget_lead_lag_top20_20260715T125649Z/configs/bitget_feedback__bitget_order_feedback.toml",
+  "feedback_shm": "aquila_bitget_order_feedback_bitget_lead_lag_top20_20260715T125649Z",
+  "gateway_config": "/home/liuxiang/tmp/bitget_lead_lag_top20_20260715T125649Z/configs/bitget_gateway__bitget_order_gateway.toml",
+  "gateway_shm": "aquila_bitget_order_gateway_bitget_lead_lag_top20_20260715T125649Z",
+  "processes": {
+    "feedback": {
+      "config": "/home/liuxiang/tmp/bitget_lead_lag_top20_20260715T125649Z/configs/bitget_feedback__bitget_order_feedback.toml",
+      "executable": "bitget_order_feedback_session",
+      "pid": 4123647,
+      "start_time_ticks": 1131939406
+    },
+    "gateway": {
+      "config": "/home/liuxiang/tmp/bitget_lead_lag_top20_20260715T125649Z/configs/bitget_gateway__bitget_order_gateway.toml",
+      "executable": "bitget_order_gateway",
+      "pid": 4123646,
+      "start_time_ticks": 1131939406
+    }
+  },
+  "route_count": 1,
+  "run_id": "bitget_lead_lag_top20_20260715T125649Z",
+  "schema": "aquila.bitget_lead_lag_live_manifest.v2",
+  "strategy_config": "/home/liuxiang/tmp/bitget_lead_lag_top20_20260715T125649Z/configs/strategy__strategy.toml"
+}
