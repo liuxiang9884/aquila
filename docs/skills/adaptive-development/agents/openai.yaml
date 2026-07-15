@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adaptive Development"
+  short_description: "Risk-scaled development with quality gates"
+  default_prompt: "Use $adaptive-development to classify this task and run the appropriate development workflow."
