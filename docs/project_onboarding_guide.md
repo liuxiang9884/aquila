@@ -12,13 +12,16 @@ git status --short --branch
 git log --oneline -8
 ```
 
-然后读取 `AGENTS.md`、`README.md`、本文和 `docs/evaluation_support.md`。进入设计/架构/实现计划或关键交易链路取舍前，
-按 `AGENTS.md` 询问是否启用 Grill Me；订单、行情、风控、恢复、并发和低延迟主路径建议 `grill-me-enhanced`。
+然后读取 `AGENTS.md`、`README.md`、本文和 `docs/evaluation_support.md`。涉及编码或技术开发时，先使用
+`docs/skills/adaptive-development/SKILL.md` 判断并输出 `Level: L0-L3`，再直接执行对应质量门；本仓库默认不使用
+Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取舍前，按 `AGENTS.md` 询问是否启用 Grill Me；订单、行情、
+风控、恢复、并发和低延迟主路径建议 `grill-me-enhanced`。
 
 ## 领域索引
 
 | 方向 | 事实源 |
 | --- | --- |
+| 开发工作流 | `AGENTS.md`、`docs/skills/adaptive-development/SKILL.md` |
 | WebSocket | `docs/websocket_client.md` |
 | DataReader / data session / SHM | `docs/data_reader_config.md`、`docs/data_session_config.md`、`docs/data_session_shm_communication_design.md` |
 | Fusion | `docs/market_data_fusion.md`、`docs/gate_fastest_route_fusion_shadow_results.md`、`docs/fusion_tardis_bbo_comparison.md` |
@@ -43,6 +46,9 @@ git log --oneline -8
 
 - 项目使用 C++20/CMake/vcpkg。临时 log、scratch config、live snapshot、benchmark 和 build temp 默认在
   `/home/liuxiang/tmp`。
+- 开发流程统一使用 `adaptive-development` 的 `L0-L3` 分级：`L1` 无计划，`L2` 只写会话内简短计划，`L3` 必须使用
+  专用 branch/worktree、markdown 计划、完整风险验证和 PR。aquila 的协议、订单状态、风控、恢复、并发、实盘安全和性能关键路径
+  默认升级为 `L3`；详细规则只在 `AGENTS.md` 和 skill 事实源维护。
 - Gate/Binance/Bitget `BookTicker` 与 `Trade` 可发布到同一个 typed SHM object。`BookTicker` payload 72 bytes，
   `Trade` 64 bytes；historical/recorder 只接受 typed binary format v1，旧 raw/ABI artifact 需重录。
 - Fastest-route fusion 按 `(exchange,symbol_id,id)` 单调 first-processed-wins，输出一条 canonical stream；行情证据不能外推为
@@ -134,7 +140,8 @@ rg 'aquila_evaluation' core exchange tools
 ## 给下一个对话的提示
 
 先运行 `git status --short --branch` 和 `git log --oneline -8`，再按 onboarding 顺序读取入口文档；branch/ahead/dirty 只信
-`git status`。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
+`git status`。涉及编码或技术开发先读取并执行 `docs/skills/adaptive-development/SKILL.md`，输出 Level 后直接推进；默认不要启用
+Superpowers。派发 subagent 必须按 `AGENTS.md` 选择项目级 `aquila_xhigh_worker`。设计、计划或关键交易链路取舍先询问 Grill Me。
 
 Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
 LeadLag manifest v2、gateway smoke manifest v1、REST 保守 snapshot、runner evidence 校验和进程 quiescence 均已落地；

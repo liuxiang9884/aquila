@@ -118,92 +118,49 @@ LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag
 - 当最低延迟与系统正确性、确定性、可恢复性发生冲突时，不允许为了追求更低延迟牺牲系统正确行为。
 - 任何关于低延迟或吞吐量收益的结论，都必须由 benchmark、profile、链路压测或实际运行证据支撑。
 
-## Skills 来源与安装（仅适用于 Claude Code）
+## Adaptive Development 工作流
 
-> 本节只对使用 **Claude Code** 的协作者生效。其他 agent / IDE（如 Codex、Cursor 等）请忽略本节，按各自工具的方式实现等价的方法论即可。
+本仓库统一使用 `adaptive-development` 代替 Superpowers 开发流程。Skill 的可提交事实源位于
+`docs/skills/adaptive-development/SKILL.md`；如果当前 Codex catalog 已安装该 skill，使用 `$adaptive-development`，否则直接读取仓库副本并执行相同流程。
 
-下列推荐的 skills（`systematic-debugging`、`verification-before-completion`、`test-driven-development`、`writing-plans`、`brainstorming`、`requesting-code-review`、`subagent-driven-development`、`dispatching-parallel-agents`、`using-superpowers`、`using-git-worktrees`、`finishing-a-development-branch`）均来自 `obra/superpowers-marketplace`。新机器或新协作者首次接入本仓库时，请先在 Claude Code 中执行：
+除非用户明确要求，本仓库不调用 `superpowers:*` 工作流。其他用于特定工具、外部文档或格式处理的窄域 skill 不受此限制。
 
+每次讨论涉及编码、实现、测试、构建或运行配置、性能优化、长期技术目标或反复技术迭代时，先向用户输出：
+
+```text
+Level: L0|L1|L2|L3 — <一句判断依据>. Workflow: <本轮启用的质量门>.
 ```
-/plugin marketplace add obra/superpowers-marketplace
-/plugin install superpowers@superpowers-marketplace
-```
 
-安装一次即可在所有项目中使用，无需在仓库内重复配置。
+输出分类后直接执行，不询问用户分类是否正确；用户有不同意见时按用户指定调整。执行中发现影响范围、不确定性、不可逆性或后果上升时，只能向上升级 Level，并立即补齐更高级别的质量门。
 
-## 推荐默认使用的 Skills
+### Level 摘要
 
-### `systematic-debugging`
+- `L0`：只读解释、调查、诊断或 review；不写计划，不修改文件，不创建 branch、commit 或 PR。
+- `L1`：无预期行为变化的机械修改；不写计划，做最小 diff review、最小验证和原子提交。
+- `L2`：边界明确、可验证且易回滚的局部行为修改；只写会话内简短计划，优先先建立失败测试或最小复现，再实现、review、focused verification 和原子提交。
+- `L3`：高影响、高后果、难回滚、跨模块或长期有效的设计与实现；首次修改前必须使用专用 branch 和 worktree，写 markdown 计划，完成独立阶段 review、完整风险验证、原子提交、push 和 PR。
 
-优先用于以下场景：
+### aquila 的 L3 升级条件
 
-- 单元测试、集成测试或回归测试失败
-- 行情链路、订单链路或状态机行为异常
-- 并发问题、竞态、死锁、顺序错乱或偶发失败
-- benchmark、延迟或吞吐结果出现回归
-- 某个交易所适配层与预期协议行为不一致
+除 skill 的通用条件外，下列任务默认归类为 `L3`：
 
-原因：
+- 修改交易所协议、行情解码或对外发布的 typed ABI / persistent format。
+- 修改订单状态机、风控、资金安全、成交回报、恢复、reconcile、幂等或断线重连语义。
+- 修改线程 / 进程模型、并发所有权、同步方式、内存可见性或低延迟主路径。
+- 启动或改变真实订单、实盘安全门、stop-and-flat、账户状态和 emergency 操作。
+- 声明或追求性能、尾延迟、吞吐、fillability 或 PnL 收益。
+- 新建长期架构、跨模块 contract、长期技术目标，或反复优化已经暴露结构性问题。
 
-- 高频交易系统的问题经常出在链路交互、状态转换和并发细节，不适合靠猜测反复试错。
-- 先确认根因，再修复和回归验证，比局部打补丁更可靠。
+仓库已有的 build、test、benchmark、live 安全和文档事实源规则继续生效；`adaptive-development` 负责选择流程强度，不替代领域 contract。
 
-### `verification-before-completion`
+### 共同质量门
 
-优先用于以下场景：
-
-- 改完代码后确认是否真的修好
-- 准备结束任务前重新跑 build、test、benchmark 或最小复现实验
-- 避免“代码能编译，但行为、延迟或稳定性已经退化”
-
-原因：
-
-- 高频系统最危险的问题之一，不是“完全跑不起来”，而是“能跑但偶发错误、时延变差或顺序不对”。
-- 这个 skill 强调在收尾前拿到新鲜验证证据。
-
-### `test-driven-development`
-
-优先用于以下场景：
-
-- 新增交易所适配、协议处理或内部接口
-- 修复订单状态机、风控规则、重试逻辑或恢复逻辑
-- 增加新的报文解析、序列化或校验逻辑
-- 修正边界条件、时序问题或幂等行为
-
-原因：
-
-- 这类系统的大量缺陷都集中在边界状态和时序切换上，先写失败测试再修实现，收益很高。
-- 对关键链路来说，回归测试是长期可维护性的基础。
-
-### `writing-plans`
-
-优先用于以下场景：
-
-- 中等及以上规模改动
-- 需要拆分多步任务
-- 改动涉及多个模块或跨越多个链路
-
-典型场景：
-
-- 增加新的交易所接入
-- 引入新的订单类型或风控能力
-- 调整事件流、线程模型或模块边界
-- 增加 benchmark、压测或恢复流程
-
-### `brainstorming`
-
-优先用于以下场景：
-
-- 需求还不清楚
-- 想增加能力但还没决定方案
-- 存在多种并发模型、模块划分或性能优化路径，需要先比较取舍
-
-典型场景：
-
-- 设计行情总线或订单路由结构
-- 设计账户、持仓和风险检查边界
-- 选择同步、异步或无锁数据通路方案
-- 设计故障恢复、重连和降级策略
+- `L2` / `L3` 的行为修改优先先证明测试或最小复现因目标行为缺失而失败；不要求每个函数单独测试，也不因测试后补而机械删除已有实现。
+- 性能结论必须由 fresh benchmark、profile、压测或实际运行证据支持。
+- 每次修改都必须形成原子 commit；只暂存本任务拥有的文件或 hunk，不裹带用户已有改动。
+- `L3` 必须创建 PR；`L1` / `L2` 是否使用 branch/worktree 由主代理根据对当前主分支功能的影响和隔离收益决定。用户明确要求 branch、worktree 或 subagent 时必须执行。
+- 是否主动使用 subagent 由主代理决定；派发前必须满足本文件的 `aquila_xhigh_worker` 约束，主代理必须检查 diff 并重新验证。
+- 没有 fresh 验证证据时不得宣称完成；无法运行必要验证时，只报告已验证范围和剩余风险。
 
 ### Grill Me 设计追问
 
@@ -213,45 +170,7 @@ LeadLag 实盘启动和 report 生成的详细 agent pipeline 见 `docs/lead_lag
 - `grill-me-basic`：基础版，适合轻量设计讨论、单模块方案澄清或用户想快速被追问时使用。
 - `grill-me-enhanced`：加强版，适合跨模块架构、线程 / 进程模型、交易状态机、实盘安全边界、性能取舍等高风险设计审查。
 
-询问时应给出明确建议：普通设计默认建议基础版；涉及订单链路、行情链路、风控、恢复、并发或低延迟主路径时默认建议加强版。如果用户拒绝或只想继续普通讨论，按常规 `brainstorming` / 设计流程继续。
-
-## 次优先级 Skills
-
-### `requesting-code-review`
-
-适合较大改动后的结构性复核，用于提前发现边界条件遗漏、测试覆盖不足、并发风险或性能退化点。
-
-### `subagent-driven-development`
-
-适合在已有明确计划且子任务边界清晰时并行推进，但不作为这个仓库的日常默认首选。
-
-### `dispatching-parallel-agents`
-
-适合多个互不相关的问题并存，或多个模块可以独立调查、独立实现时使用。
-
-## 不建议默认启用的 Skills
-
-### `using-superpowers`
-
-不建议作为 `aquila` 的默认入口流程。原因是它整体偏重，对当前以直接协作、快速迭代、尽快形成可验证结果的工程节奏来说通常过于沉重。
-
-### `using-git-worktrees`
-
-对多人并行开发或长生命周期分支管理很有用，但不是当前仓库的第一优先级。
-
-### `finishing-a-development-branch`
-
-更适合正式分支收尾、合并、提 PR 的阶段。如果当前目标是本地实现、调试和验证，触发频率通常不会高。
-
-## 推荐工作顺序
-
-通常按下面顺序考虑：
-
-1. 需求或方案没想清楚时，先用 `brainstorming`
-2. 需求清楚但改动较大时，用 `writing-plans`
-3. 开始实现关键链路时，优先 `test-driven-development`
-4. 出现异常、回归或性能问题时，使用 `systematic-debugging`
-5. 准备收尾时，必须做 `verification-before-completion`
+询问时应给出明确建议：普通设计默认建议基础版；涉及订单链路、行情链路、风控、恢复、并发或低延迟主路径时默认建议加强版。如果用户拒绝或只想继续普通讨论，按 `adaptive-development` 分类继续，不再切换到其他通用开发流程。
 
 ## C++ 编码和依赖使用约定
 
