@@ -66,8 +66,10 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   producer，再通过完整分页的 REST 双订单 snapshot、范围撤单和 reduce-only 平仓证明 flat。Helper/guard/isolation 已有自动测试；
   `BTCUSDT` read-only baseline、emergency dry-run、flat-account helper、修复后的 tiny-position stop-and-flat 和 fanout=1 gateway
   passive IOC 均已有 2026-07-14 当次 live 证据。LeadLag manifest 现只放行 route count `1/4`；四路要求所有 Bitget pair
-  `order_session_fanout=4`、`require_min_entry_quantity=true`，并逐 route 固化/复核 OrderSession contract。四路配置入口为
-  `config/order_gateways/bitget_order_gateway_4routes.toml`，当前只有代码、自动测试和 CLI validate-only 证据，尚无四路 live 证据。
+  `order_session_fanout=4`，并逐 route 固化/复核 OrderSession contract。20-symbol 四路策略配置入口为
+  `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`：每个 pair 的 `open_notional=10`，entry 计算量低于
+  instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。Gateway 配置入口为
+  `config/order_gateways/bitget_order_gateway_4routes.toml`；当前只有代码、自动测试和 CLI validate-only 证据，尚无四路 live 证据。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
 - Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
@@ -153,7 +155,7 @@ LeadLag manifest v2、gateway smoke manifest v1、REST 保守 snapshot、runner 
 修复后的 tiny-position stop-and-flat 和 fanout=1 gateway passive IOC 均已有 2026-07-14 live 证据。Gateway run
 `bitget_gateway_smoke_20260714T061702Z` 取得 direct Ack、独立 cancelled terminal、三进程 quiescence 和 final flat，成交为 0；
 `bitget_lead_lag_top20_highspeed_20260715T154837Z` 又取得 20-symbol、fanout=1、10 小时 signal-conditioned LeadLag
-证据，21 个成交 entry 均完整平仓，quiescence/final flat 通过。四路 gateway/min-entry contract 已完成代码、测试和
+证据，21 个成交 entry 均完整平仓，quiescence/final flat 通过。四路 gateway/fanout contract 和 entry quantity clamp 已完成代码、测试和
 validate-only，配置入口为 `config/order_gateways/bitget_order_gateway_4routes.toml`，但尚无四路 live 证据。下一门是
 fanout=4 staged LeadLag。任何真实订单必须按 runbook 的分阶段证据门取得当次授权；不要把 fresh-run 解释为可 resume，
 也不要在同一 run 重启 strategy。

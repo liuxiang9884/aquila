@@ -82,7 +82,9 @@ Feedback session 必须先 login/subscribed ready。其 duration 至少为 strat
 
 使用 order gateway 时先 validate config/SHM、route count/readiness 和 account consistency。Bitget 历史首个 live 使用
 `fanout=1`；四路 LeadLag 使用 `config/order_gateways/bitget_order_gateway_4routes.toml`，并要求每个 Bitget pair
-`order_session_fanout=4`、`require_min_entry_quantity=true`。不允许 strategy-only restart，也不允许复用旧
+`order_session_fanout=4`。20-symbol 策略配置使用
+`config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 的 `open_notional=10`；entry 计算量
+低于 instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。不允许 strategy-only restart，也不允许复用旧
 gateway/feedback SHM。Bitget V1 以 strict stop-and-flat + fresh-run isolation 替代跨进程唯一 ID 后继续恢复交易；
 persistent ID 只在未来需要 resume/overlap 时重新成为前置条件。
 
@@ -109,7 +111,7 @@ scripts/lead_lag/prepare_bitget_live_run.py mark-applied \
 
 `mark-applied` 会验证两个 PID 当前存活且分别是预期 gateway/feedback binary，argv 包含 `--connect` 并以绝对路径精确使用生成配置；
 manifest v2 记录 `/proc/<pid>/stat` start time 防止 PID reuse。三个 TOML 的路径、SHM、route count、逐 route 交易 contract、
-credential env 和两个进程中的实际 credential 值也必须一致；四路还会复核 LeadLag fanout/min-entry contract。
+credential env 和两个进程中的实际 credential 值也必须一致；四路还会复核 LeadLag fanout contract。
 Credential 值不会写入 artifact。Ready 仍需按 log 单独确认。旧 run 必须先停止完整交易栈并获得 REST flat 证据，才能创建下一轮。
 
 ### 6. REST baseline 与 guard

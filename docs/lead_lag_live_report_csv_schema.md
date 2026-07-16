@@ -125,7 +125,7 @@
 | `time_in_force` | 订单 TIF，当前 live IOC 路径通常为 `ioc`。 | `gate_order_send_ok.tif`。 |
 | `status` | 订单终态。 | `lead_lag_order_finished.status` 或 feedback kind。 |
 | `finish_reason` | 订单结束原因。 | `lead_lag_order_feedback.finish_reason`。 |
-| `reject_reason` | 拒单原因；`intent_rejected_v1` 行可包括 `drift_guard`、`parallel_limit`、`order_route_not_ready`、`entry_quantity_not_minimum`、`risk_limit`、`stale_lead_quote`、`stale_lag_quote` 和本地下单准备阶段拒绝原因。 | `lead_lag_order_feedback.reject_reason` 或 `lead_lag_order_intent_rejected.reason`。 |
+| `reject_reason` | 拒单原因；`intent_rejected_v1` 行可包括 `drift_guard`、`parallel_limit`、`order_route_not_ready`、`risk_limit`、`stale_lead_quote`、`stale_lag_quote` 和本地下单准备阶段拒绝原因。 | `lead_lag_order_feedback.reject_reason` 或 `lead_lag_order_intent_rejected.reason`。 |
 | `raw_price` | signal 触发时用于计算下单价格的原始价格；普通 open / close 买单为 lag ask、卖单为 lag bid，stoploss action 保留当前策略的保护价模型。 | `lead_lag_order_submitted.raw_price`。 |
 | `order_price` | 实际提交到交易所的 limit price。 | `lead_lag_order_submitted.order_price` 或 Gate send price。 |
 | `price_text` | 实际编码下发的价格文本。 | `lead_lag_order_submitted.price_text` 或 Gate send price。 |
