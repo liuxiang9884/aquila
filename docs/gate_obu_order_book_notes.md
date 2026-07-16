@@ -179,8 +179,9 @@ struct Orderbook {
 - `ask_count` / `bid_count` 最大目前只需要覆盖 400 档，`uint16_t` 足够；是否继续用
   `int64_t` 可由后续 ABI 对齐和 padding 决定。
 
-当前 `core/market_data/types.h` 工作区里已有一个未提交的 `Orderbook` 草案改动；下一轮继续实现前应先
-确认是否沿用该草案、是否调整命名 / count 类型 / `symbol_id` 和 `exchange` 字段。
+当前 `core/market_data/types.h` 已提交一个未被 producer/consumer 使用的 `Orderbook<Level>` 草案；它可以通过现有
+market-data 类型编译测试，但不代表 published ABI、typed SHM 或 persistent format 已获批准。下一轮继续实现前仍应确认是否沿用
+该草案、是否调整命名 / count 类型 / `symbol_id` 和 `exchange` 字段。
 
 ## 后续建议
 
