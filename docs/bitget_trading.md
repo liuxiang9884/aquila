@@ -379,6 +379,13 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
   `TRADIFI_PERPETUAL` 的当时交易时段、双边 BBO 与 freshness，不能把 catalog 的 `TRADING/online` 当成 24x7 可交易保证。
 - P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
 - P2：`fast-fill`/`fill` 的 `execId` 去重、跨流乱序和累计 quantity 重建。
+- P2：补齐交易所侧订单时间戳与延迟证据：保留 WebSocket place response 的 `args[].cTime` 和顶层 `ts`，保留
+  private `order` push 的 `createdTime`、`updatedTime` 和顶层 `ts`，并在完成 `fast-fill`/`fill` 去重与乱序 contract 后记录
+  `execTime`。Report 必须区分本地 Ack RTT、交易所订单创建/response、terminal update 和实际 fill 时间；本地 send/receive 与
+  交易所时间跨时钟，未完成 clock-offset 校准时不得解释为单程网络时延。REST 的
+  `X-BG-REQUEST-ACCEPT-TIME`/`X-BG-RESPONSE-COMPLETE-TIME` 只适用于 REST 链路，不能替代当前 WebSocket 下单证据；SBE BBO
+  `ts`/`sts` 只描述行情链路。Bitget 当前没有为零成交 IOC 提供文档明确的 order-ingress 或 match-attempt 时间戳，因此即使补齐
+  上述字段，也只能改善阶段边界和成交单分析，不能精确拆分未成交订单的撮合处理时间。
 - P2：account/position private feed、通用 Gate/Bitget policy、direct backend 和更多协议能力。
 
 扩大频率、fanout 或运行时长前必须先完成 account limiter。任何性能、稳定性或 fillability 结论都需要对应 benchmark、profile
