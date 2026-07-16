@@ -1,9 +1,10 @@
 #ifndef AQUILA_CORE_MARKET_DATA_TYPES_H_
 #define AQUILA_CORE_MARKET_DATA_TYPES_H_
 
-#include "core/common/types.h"
-
+#include <cstddef>
 #include <cstdint>
+
+#include "core/common/types.h"
 
 namespace aquila {
 
@@ -37,6 +38,22 @@ struct Trade {
 
   std::uint32_t batch_index;
   std::uint32_t batch_count;
+};
+
+template <std::size_t Level>
+struct Orderbook {
+  std::int64_t first_id;  // Gate U. Full snapshot may be 0 if absent.
+  std::int64_t last_id;   // Gate u.
+  std::int64_t exchange_ns;
+  std::int64_t event_ns;
+  std::int64_t local_ns;
+
+  std::int64_t ask_count;
+  std::int64_t bid_count;
+  double ask_price[Level];
+  double ask_volume[Level];
+  double bid_price[Level];
+  double bid_volume[Level];
 };
 
 }  // namespace aquila
