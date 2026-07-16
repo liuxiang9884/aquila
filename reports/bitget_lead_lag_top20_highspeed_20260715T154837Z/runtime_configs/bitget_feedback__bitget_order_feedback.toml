@@ -1,0 +1,57 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/logs/bitget_order_feedback.log"
+console_sink_name = "bitget_order_feedback_console"
+backend_thread_name = "bitget_order_feedback_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[order_feedback_session]
+name = "bitget_lead_lag_feedback"
+category = "usdt-futures"
+position_mode = "one_way_mode"
+margin_mode = "crossed"
+
+[order_feedback_session.credentials]
+api_key_env = "BITGET_TEST_KEY"
+api_secret_env = "BITGET_TEST_SECRET"
+api_passphrase_env = "BITGET_TEST_PASSPHRASE"
+
+[order_feedback_session.websocket.endpoint]
+host = "vip-ws-uta.bitget.com"
+port = "443"
+target = "/v3/ws/private"
+enable_tls = true
+connect_timeout_ms = 10000
+
+[order_feedback_session.websocket.execution_policy]
+bind_cpu_id = 6
+affinity_mode = "required"
+lock_memory = true
+prefault_stack = true
+active_spin = true
+
+[order_feedback_session.websocket.read_path]
+max_reads_per_drive = 8
+read_until_would_block = false
+
+[order_feedback_session.websocket.heartbeat]
+interval_ms = 30000
+timeout_ms = 10000
+
+[order_feedback_session.websocket.reconnect]
+enabled = true
+initial_backoff_ms = 100
+max_backoff_ms = 30000
+backoff_shift_bits = 1
+jitter_percent = 25
+max_attempts = 0
+
+[order_feedback_session.shm]
+shm_name = "aquila_bitget_order_feedback_bitget_lead_lag_top20_highspeed_20260715T154837Z"
+channel_name = "orders"
+max_strategy_count = 8
+queue_capacity = 65536
+create = true
+remove_existing = false

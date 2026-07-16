@@ -1,0 +1,35 @@
+[fusion]
+name = "binance_top20_book_ticker_fusion"
+max_events_per_source = 1
+bind_cpu_id = 3
+max_symbol_id = 4096
+
+[fusion.output]
+shm_name = "aquila_bgll_154837_binance_fusion"
+channel_name = "book_ticker_channel"
+remove_existing = true
+metadata_bin = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/inputs/binance_fusion_metadata.bin"
+
+[[fusion.sources]]
+source_id = 0
+name = "binance_top20_source_0"
+shm_name = "aquila_bgll_154837_binance_src_0"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 1
+name = "binance_top20_source_1"
+shm_name = "aquila_bgll_154837_binance_src_1"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 2
+name = "binance_top20_source_2"
+shm_name = "aquila_bgll_154837_binance_src_2"
+channel_name = "book_ticker_channel"
+
+[[fusion.sources]]
+source_id = 3
+name = "binance_top20_source_3"
+shm_name = "aquila_bgll_154837_binance_src_3"
+channel_name = "book_ticker_channel"

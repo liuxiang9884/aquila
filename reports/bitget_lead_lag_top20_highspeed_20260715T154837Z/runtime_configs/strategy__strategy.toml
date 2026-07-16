@@ -1,0 +1,33 @@
+[log]
+log_level = "info"
+file_sink_name = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/logs/strategy.log"
+console_sink_name = "bitget_lead_lag_strategy_console"
+backend_thread_name = "bitget_lead_lag_strategy_log"
+backend_cpu_affinity = 5
+format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
+timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
+
+[strategy]
+name = "lead_lag"
+strategy_id = 6
+mode = "live"
+order_capacity = 128
+config = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/inputs/lead_lag_params.toml"
+
+[strategy.loop]
+idle_policy = "spin"
+bind_cpu_id = 4
+max_loop_seconds = 36000
+
+[strategy.data_reader]
+config = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/inputs/strategy_data_reader.toml"
+
+[strategy.order_gateway]
+config = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/configs/bitget_gateway__bitget_order_gateway.toml"
+
+[strategy.feedback]
+enabled = true
+shm_name = "aquila_bitget_order_feedback_bitget_lead_lag_top20_highspeed_20260715T154837Z"
+channel_name = "orders"
+poll_budget = 128
+force_claim = false

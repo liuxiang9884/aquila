@@ -1,0 +1,38 @@
+[gateway_smoke]
+name = "bitget_lead_lag_top20_gateway_readiness"
+run_id = "bitget_lead_lag_top20_20260715T154837Z_readiness"
+symbol = "BTC_USDT"
+exchange_symbol = "BTCUSDT"
+symbol_id = 93
+strategy_id = 7
+side = "buy"
+quantity = 0.0001
+passive_price_limit_fraction = 0.5
+close_slippage_bps = 100
+bbo_freshness_ns = 1000000000
+ack_timeout_ms = 5000
+terminal_timeout_ms = 10000
+route_id = 0
+
+[instrument_catalog]
+file = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z/inputs/usdt_future_universe.csv"
+
+[market_data]
+shm_name = "aquila_bgll_154837_bitget_fusion"
+channel_name = "book_ticker_channel"
+
+[order_gateway]
+shm_name = "aquila_bitget_order_gateway_bitget_lead_lag_top20_20260715T154837Z"
+route_count = 1
+command_queue_capacity = 4096
+event_queue_capacity = 8192
+startup_ready_timeout_s = 30
+
+[feedback]
+shm_name = "aquila_bitget_order_feedback_bitget_lead_lag_top20_20260715T154837Z"
+channel_name = "orders"
+force_claim = false
+poll_budget = 64
+
+[output]
+run_dir = "/home/liuxiang/tmp/bitget_lead_lag_top20_highspeed_20260715T154837Z"
