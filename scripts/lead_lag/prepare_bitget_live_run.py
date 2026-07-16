@@ -20,6 +20,7 @@ PROCESS_SPECS = {
     "gateway": "bitget_order_gateway",
     "feedback": "bitget_order_feedback_session",
 }
+SUPPORTED_ROUTE_COUNTS = (1, 4)
 
 
 @dataclass(frozen=True)
@@ -116,20 +117,133 @@ def _trading_contract(
     )
 
 
-def _gateway_order_session(gateway: dict[str, Any]) -> dict[str, Any]:
-    routes = gateway.get("routes")
+def _validated_gateway_routes(
+    gateway: dict[str, Any], *, label: str
+) -> tuple[int, list[dict[str, Any]]]:
+    route_count = gateway.get("route_count")
     if (
-        not isinstance(routes, list)
-        or len(routes) != 1
-        or not isinstance(routes[0], dict)
+        isinstance(route_count, bool)
+        or not isinstance(route_count, int)
+        or route_count not in SUPPORTED_ROUTE_COUNTS
     ):
-        raise ValueError("run isolation: gateway requires exactly one route")
-    session_path_value = required_string(
-        routes[0], "order_session_config", "order_gateway.routes[0]"
-    )
-    session_path = guard.resolve_repo_path(session_path_value)
-    session_data = load_toml(session_path)
-    return required_dict(session_data, "order_session", "order_session")
+        raise ValueError(f"{label}: route_count must be 1 or 4")
+    routes = gateway.get("routes")
+    if not isinstance(routes, list) or len(routes) != route_count:
+        raise ValueError(f"{label}: gateway routes must match route_count")
+    typed_routes: list[dict[str, Any]] = []
+    for route_index, route in enumerate(routes):
+        if not isinstance(route, dict):
+            raise ValueError(f"{label}: gateway route {route_index} must be a table")
+        typed_routes.append(route)
+    return route_count, typed_routes
+
+
+def _gateway_order_sessions(
+    gateway: dict[str, Any], *, label: str
+) -> tuple[int, list[Path], list[dict[str, Any]]]:
+    route_count, routes = _validated_gateway_routes(gateway, label=label)
+    paths: list[Path] = []
+    sessions: list[dict[str, Any]] = []
+    for route_index, route in enumerate(routes):
+        session_path_value = required_string(
+            route,
+            "order_session_config",
+            f"order_gateway.routes[{route_index}]",
+        )
+        session_path = guard.resolve_repo_path(session_path_value)
+        session_data = load_toml(session_path)
+        paths.append(session_path)
+        sessions.append(required_dict(session_data, "order_session", "order_session"))
+    return route_count, paths, sessions
+
+
+def _validate_gateway_session_contracts(
+    sessions: list[dict[str, Any]], *, label: str
+) -> tuple[str, str, str, str, str, str, bool]:
+    first_contract = _trading_contract(sessions[0], "order_session")
+    for route_index, session in enumerate(sessions[1:], start=1):
+        if _trading_contract(session, "order_session") != first_contract:
+            raise ValueError(
+                f"{label}: gateway route {route_index} trading contract mismatch"
+            )
+    return first_contract
+
+
+def _validate_lead_lag_route_contract(
+    lead_lag_data: dict[str, Any], route_count: int, *, label: str
+) -> None:
+    if route_count != 4:
+        return
+    lead_lag = required_dict(lead_lag_data, "lead_lag", "lead_lag")
+    pairs = lead_lag.get("pairs")
+    if not isinstance(pairs, list) or not pairs:
+        raise ValueError(f"{label}: lead_lag.pairs is required")
+    for pair_index, pair in enumerate(pairs):
+        if not isinstance(pair, dict):
+            raise ValueError(f"{label}: lead_lag.pairs[{pair_index}] must be a table")
+        if required_string(
+            pair, "lag_exchange", f"lead_lag.pairs[{pair_index}]"
+        ).strip().lower() != "bitget":
+            raise ValueError(
+                f"{label}: lead_lag.pairs[{pair_index}].lag_exchange must be bitget"
+            )
+        execute = required_dict(
+            pair, "execute", f"lead_lag.pairs[{pair_index}].execute"
+        )
+        if execute.get("order_session_fanout") != route_count:
+            raise ValueError(
+                f"{label}: lead_lag.pairs[{pair_index}].execute."
+                f"order_session_fanout must equal route_count {route_count}"
+            )
+        if execute.get("require_min_entry_quantity") is not True:
+            raise ValueError(
+                f"{label}: lead_lag.pairs[{pair_index}].execute."
+                "require_min_entry_quantity must be true"
+            )
+
+
+def _write_gateway_overlay(
+    source_path: Path,
+    output_path: Path,
+    gateway_shm: str,
+    order_session_paths: list[Path],
+) -> None:
+    source_path = guard.resolve_repo_path(source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    section = ""
+    route_index = -1
+    replaced_shm = False
+    replaced_routes: set[int] = set()
+    output_lines: list[str] = []
+    for line in source_path.read_text(encoding="utf-8").splitlines(keepends=True):
+        section_match = guard.SECTION_RE.match(line)
+        if section_match:
+            section = section_match.group(1) or section_match.group(2)
+            if section_match.group(2) == "order_gateway.routes":
+                route_index += 1
+        if section == "order_gateway" and re.match(r"^\s*shm_name\s*=", line):
+            output_lines.append(f"shm_name = {guard.toml_scalar(gateway_shm)}\n")
+            replaced_shm = True
+            continue
+        if section == "order_gateway.routes" and re.match(
+            r"^\s*order_session_config\s*=", line
+        ):
+            if route_index >= len(order_session_paths):
+                raise ValueError("gateway overlay route count changed while writing")
+            output_lines.append(
+                "order_session_config = "
+                f"{guard.toml_scalar(order_session_paths[route_index])}\n"
+            )
+            replaced_routes.add(route_index)
+            continue
+        output_lines.append(line)
+    if not replaced_shm:
+        raise ValueError(f"{source_path} missing TOML key order_gateway.shm_name")
+    if replaced_routes != set(range(len(order_session_paths))):
+        raise ValueError(
+            f"{source_path} missing order_session_config for one or more routes"
+        )
+    output_path.write_text("".join(output_lines), encoding="utf-8")
 
 
 def _read_process_start_time(proc_root: Path, pid: int) -> int:
@@ -366,8 +480,13 @@ def _validate_manifest(
         raise ValueError("run isolation: gateway_shm is not run-specific")
     if manifest.get("feedback_shm") != expected_feedback_shm:
         raise ValueError("run isolation: feedback_shm is not run-specific")
-    if manifest.get("route_count") != 1:
-        raise ValueError("run isolation: route_count must be 1")
+    manifest_route_count = manifest.get("route_count")
+    if (
+        isinstance(manifest_route_count, bool)
+        or not isinstance(manifest_route_count, int)
+        or manifest_route_count not in SUPPORTED_ROUTE_COUNTS
+    ):
+        raise ValueError("run isolation: route_count must be 1 or 4")
     applied = manifest.get("external_configs_applied")
     if not isinstance(applied, bool):
         raise ValueError("run isolation: external_configs_applied must be boolean")
@@ -402,13 +521,11 @@ def _validate_manifest(
 
     gateway_data = load_toml(gateway_path)
     gateway = required_dict(gateway_data, "order_gateway", "order_gateway")
-    routes = gateway.get("routes")
-    if (
-        gateway.get("route_count") != 1
-        or not isinstance(routes, list)
-        or len(routes) != 1
-    ):
-        raise ValueError("run isolation: gateway route_count must be 1")
+    gateway_route_count, _, gateway_sessions = _gateway_order_sessions(
+        gateway, label="run isolation"
+    )
+    if gateway_route_count != manifest_route_count:
+        raise ValueError("run isolation: gateway route_count mismatch")
     if required_string(gateway, "shm_name", "order_gateway") != expected_gateway_shm:
         raise ValueError("run isolation: gateway SHM mismatch")
 
@@ -433,9 +550,8 @@ def _validate_manifest(
     feedback_credentials = feedback_credential_env_names(feedback_path)
     if gateway_credentials != feedback_credentials:
         raise ValueError("run isolation: gateway and feedback credentials do not match")
-    gateway_contract = _trading_contract(
-        _gateway_order_session(gateway),
-        "order_session",
+    gateway_contract = _validate_gateway_session_contracts(
+        gateway_sessions, label="run isolation"
     )
     feedback_contract = _trading_contract(
         feedback_session,
@@ -445,6 +561,12 @@ def _validate_manifest(
         raise ValueError(
             "run isolation: gateway and feedback trading contract mismatch"
         )
+    lead_lag_path = guard.resolve_repo_path(
+        required_string(strategy, "config", "strategy")
+    )
+    _validate_lead_lag_route_contract(
+        load_toml(lead_lag_path), manifest_route_count, label="run isolation"
+    )
 
     if applied:
         processes = manifest.get("processes")
@@ -509,26 +631,36 @@ def prepare_runtime_configs(
     feedback_source = feedback_source.expanduser().resolve()
     gateway_data = load_toml(gateway_source)
     gateway = required_dict(gateway_data, "order_gateway", "order_gateway")
-    routes = gateway.get("routes")
-    if (
-        gateway.get("route_count") != 1
-        or not isinstance(routes, list)
-        or len(routes) != 1
-        or not isinstance(routes[0], dict)
-    ):
-        raise ValueError("route_count must be 1 for Bitget live V1")
-    order_session_source = guard.resolve_repo_path(
-        required_string(
-            routes[0],
-            "order_session_config",
-            "order_gateway.routes[0]",
-        )
+    route_count, order_session_sources, gateway_sessions = _gateway_order_sessions(
+        gateway, label="run isolation"
+    )
+    gateway_contract = _validate_gateway_session_contracts(
+        gateway_sessions, label="run isolation"
     )
     strategy_data = load_toml(strategy_source)
     strategy = required_dict(strategy_data, "strategy", "strategy")
     lead_lag_source = guard.resolve_repo_path(
         required_string(strategy, "config", "strategy")
     )
+    _validate_lead_lag_route_contract(
+        load_toml(lead_lag_source), route_count, label="run isolation"
+    )
+    feedback_data = load_toml(feedback_source)
+    feedback_session = required_dict(
+        feedback_data,
+        "order_feedback_session",
+        "order_feedback_session",
+    )
+    if gateway_contract != _trading_contract(
+        feedback_session, "order_feedback_session"
+    ):
+        raise ValueError(
+            "run isolation: gateway and feedback trading contract mismatch"
+        )
+    if guard.bitget_order_gateway_credential_env_names(
+        gateway_source
+    ) != feedback_credential_env_names(feedback_source):
+        raise ValueError("run isolation: gateway and feedback credentials do not match")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     strategy_config = output_dir / f"strategy__{strategy_source.name}"
@@ -546,15 +678,11 @@ def prepare_runtime_configs(
 
     gateway_shm = f"aquila_bitget_order_gateway_{run_id}"
     feedback_shm = f"aquila_bitget_order_feedback_{run_id}"
-    guard.write_toml_overlay(
+    _write_gateway_overlay(
         gateway_source,
         gateway_config,
-        {
-            ("order_gateway", "shm_name"): gateway_shm,
-            ("order_gateway.routes", "order_session_config"): str(
-                order_session_source
-            ),
-        },
+        gateway_shm,
+        order_session_sources,
     )
     guard.write_toml_overlay(
         feedback_source,
@@ -578,7 +706,7 @@ def prepare_runtime_configs(
         "feedback_config": str(feedback_config),
         "gateway_shm": gateway_shm,
         "feedback_shm": feedback_shm,
-        "route_count": 1,
+        "route_count": route_count,
         "external_configs_applied": False,
     }
     _atomic_write_json(manifest_path, manifest)
@@ -590,7 +718,7 @@ def prepare_runtime_configs(
         manifest=manifest_path,
         gateway_shm=gateway_shm,
         feedback_shm=feedback_shm,
-        route_count=1,
+        route_count=route_count,
     )
 
 

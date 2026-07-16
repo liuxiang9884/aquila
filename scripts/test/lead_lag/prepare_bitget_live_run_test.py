@@ -168,6 +168,10 @@ def write_runtime_fixture_graph(
             symbol = "{symbol}"
             lead_exchange = "binance"
             lag_exchange = "bitget"
+
+            [lead_lag.pairs.execute]
+            order_session_fanout = {route_count}
+            require_min_entry_quantity = true
             """
         ).strip()
         for symbol in lag_symbols
@@ -261,6 +265,27 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
         self.assertFalse(manifest["external_configs_applied"])
 
+    def test_prepare_keeps_single_route_min_entry_contract_optional(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        lead_lag = self.source_dir / "lead_lag.toml"
+        lead_lag.write_text(
+            lead_lag.read_text(encoding="utf-8").replace(
+                "require_min_entry_quantity = true",
+                "require_min_entry_quantity = false",
+            ),
+            encoding="utf-8",
+        )
+
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+
+        self.assertEqual(result.route_count, 1)
+
     def test_prepare_absolutizes_trading_critical_nested_configs(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
         order_session = self.source_dir / "bitget_order_session_0.toml"
@@ -288,7 +313,9 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             output_dir=self.output_dir,
         )
 
-        gateway_data = tomllib.loads(result.gateway_config.read_text(encoding="utf-8"))
+        gateway_data = tomllib.loads(
+            result.gateway_config.read_text(encoding="utf-8")
+        )
         strategy_data = tomllib.loads(
             result.strategy_config.read_text(encoding="utf-8")
         )
@@ -298,12 +325,42 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         )
         self.assertEqual(strategy_data["strategy"]["config"], str(lead_lag))
 
-    def test_prepare_rejects_route_count_greater_than_one(self):
+    def test_prepare_generates_four_routes_and_absolutizes_each_session(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
+
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+
+        gateway_data = tomllib.loads(
+            result.gateway_config.read_text(encoding="utf-8")
+        )
+        manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+        self.assertEqual(result.route_count, 4)
+        self.assertEqual(manifest["route_count"], 4)
+        self.assertEqual(
+            [
+                route["order_session_config"]
+                for route in gateway_data["order_gateway"]["routes"]
+            ],
+            [
+                str(self.source_dir / f"bitget_order_session_{route}.toml")
+                for route in range(4)
+            ],
+        )
+
+    def test_prepare_rejects_unstaged_route_count(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(
             self.source_dir, route_count=2
         )
 
-        with self.assertRaisesRegex(ValueError, "route_count must be 1"):
+        with self.assertRaisesRegex(ValueError, "route_count must be 1 or 4"):
             prepare.prepare_runtime_configs(
                 run_id=self.run_id,
                 strategy_source=strategy,
@@ -312,8 +369,144 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                 output_dir=self.output_dir,
             )
 
+    def test_prepare_rejects_four_routes_with_strategy_fanout_mismatch(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
+        lead_lag = self.source_dir / "lead_lag.toml"
+        lead_lag.write_text(
+            lead_lag.read_text(encoding="utf-8").replace(
+                "order_session_fanout = 4", "order_session_fanout = 3"
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "order_session_fanout"):
+            prepare.prepare_runtime_configs(
+                run_id=self.run_id,
+                strategy_source=strategy,
+                gateway_source=gateway,
+                feedback_source=feedback,
+                output_dir=self.output_dir,
+            )
+
+    def test_prepare_rejects_four_routes_without_min_entry_contract(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
+        lead_lag = self.source_dir / "lead_lag.toml"
+        lead_lag.write_text(
+            lead_lag.read_text(encoding="utf-8").replace(
+                "require_min_entry_quantity = true",
+                "require_min_entry_quantity = false",
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "require_min_entry_quantity"):
+            prepare.prepare_runtime_configs(
+                run_id=self.run_id,
+                strategy_source=strategy,
+                gateway_source=gateway,
+                feedback_source=feedback,
+                output_dir=self.output_dir,
+            )
+
+    def test_prepare_rejects_four_routes_with_contract_mismatch(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
+        session = self.source_dir / "bitget_order_session_2.toml"
+        session.write_text(
+            session.read_text(encoding="utf-8").replace(
+                'margin_mode = "crossed"', 'margin_mode = "isolated"'
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "trading contract"):
+            prepare.prepare_runtime_configs(
+                run_id=self.run_id,
+                strategy_source=strategy,
+                gateway_source=gateway,
+                feedback_source=feedback,
+                output_dir=self.output_dir,
+            )
+
+    def test_mark_applied_revalidates_all_four_route_contracts(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        session = self.source_dir / "bitget_order_session_3.toml"
+        session.write_text(
+            session.read_text(encoding="utf-8").replace(
+                'margin_mode = "crossed"', 'margin_mode = "isolated"'
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "trading contract"):
+            self.mark_applied(result)
+
+    def test_mark_applied_revalidates_four_route_strategy_contract(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+        lead_lag = self.source_dir / "lead_lag.toml"
+        lead_lag.write_text(
+            lead_lag.read_text(encoding="utf-8").replace(
+                "require_min_entry_quantity = true",
+                "require_min_entry_quantity = false",
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "require_min_entry_quantity"):
+            self.mark_applied(result)
+
     def test_mark_applied_revalidates_configs_then_guard_accepts_manifest(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
+        result = prepare.prepare_runtime_configs(
+            run_id=self.run_id,
+            strategy_source=strategy,
+            gateway_source=gateway,
+            feedback_source=feedback,
+            output_dir=self.output_dir,
+        )
+
+        manifest = self.mark_applied(result)
+        validated = guard.validate_bitget_run_isolation(
+            result.manifest,
+            [
+                "lead_lag_strategy",
+                "--config",
+                str(result.strategy_config),
+                "--execute",
+            ],
+            proc_root=self.proc_root,
+        )
+
+        self.assertTrue(manifest["external_configs_applied"])
+        self.assertEqual(validated["run_id"], self.run_id)
+
+    def test_four_route_mark_applied_then_guard_accepts_manifest(self):
+        strategy, gateway, feedback = write_runtime_fixture_graph(
+            self.source_dir, route_count=4
+        )
         result = prepare.prepare_runtime_configs(
             run_id=self.run_id,
             strategy_source=strategy,
@@ -329,8 +522,8 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             proc_root=self.proc_root,
         )
 
-        self.assertTrue(manifest["external_configs_applied"])
-        self.assertEqual(validated["run_id"], self.run_id)
+        self.assertEqual(manifest["route_count"], 4)
+        self.assertEqual(validated["route_count"], 4)
 
     def test_mark_applied_binds_live_processes_without_persisting_secrets(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
