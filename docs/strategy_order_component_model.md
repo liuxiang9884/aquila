@@ -195,8 +195,8 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 2026-06-30 已落地两种 gateway 形态：`exchange/gate/trading/multi_order_session_gateway.h` 是单进程
 `1 thread : n OrderSession` baseline；`core/trading/order_gateway_client.h` + `tools/gate/gate_order_gateway.cpp`
 是独立 `order-gateway-process` / SHM V1。LeadLag live-orders 已能通过 `[strategy.order_gateway]` 选择
-`OrderGatewayClient`，并通过 `order_session_fanout` 生成多个 child order。当前仍未完成真实 order gateway live smoke，
-不宣称成交率或延迟收益。
+`OrderGatewayClient`，并通过 `order_session_fanout` 生成多个 child order。Bitget 已完成 fanout=1 gateway passive IOC live smoke；
+四路 gateway 当前只有代码、自动测试和 validate-only 证据，仍不宣称四路成交率或延迟收益。
 
 设计边界：
 
@@ -321,7 +321,7 @@ finish_exchange_ns
 - REST reconcile / resume。
 - account / position realtime feedback。
 - 多交易所 common order gateway 收敛。
-- 多路 `OrderSession` 的真实 live smoke / fillability 验证。
+- 多路 `OrderSession` 的真实 live smoke / fillability 验证；Bitget fanout=1 gateway 证据不能替代四路验证。
 - batch / amend / cancel-all。
 
 ## 验证命令

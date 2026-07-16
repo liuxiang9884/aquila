@@ -192,8 +192,10 @@ Bitget V1 不修改跨进程 `local_order_id/clientOid`。安全边界是 strict
 
 `scripts/lead_lag/prepare_bitget_live_run.py` 生成并复验 fresh-run manifest，同时把 gateway order-session 与 strategy LeadLag config
 引用固化为绝对路径。Bitget `--execute` 在读取凭据和 REST preflight
-之前要求 manifest v2 已标记 external configs applied，并验证 config path、run-specific SHM、`route_count=1`、交易 contract 和
-账户一致性；`mark-applied` 必须接收 gateway/feedback PID，并绑定 `/proc` start time、executable、`--connect` 和实际绝对 config；
+之前要求 manifest v2 已标记 external configs applied，并验证 config path、run-specific SHM、`route_count=1/4`、交易 contract 和
+账户一致性；四路还要求所有 Bitget pair 使用 `order_session_fanout=4`、`require_min_entry_quantity=true`，并逐 route
+复核 OrderSession contract。`mark-applied` 必须接收 gateway/feedback PID，并绑定 `/proc` start time、executable、`--connect`
+和实际绝对 config；
 guard 再次比较两个进程与当前 REST credential 值，任何 credential 内容都不落盘；
 strategy feedback 必须启用且 `poll_budget > 0`；strategy overlay 指向的 LeadLag 配置中，所有 Bitget lag symbols 还必须被
 guard `--contract` 覆盖，防止只对策略交易范围的子集证明 flat；strategy command 必须直接执行 `lead_lag_strategy`，

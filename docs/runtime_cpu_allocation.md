@@ -169,14 +169,15 @@ ethtool -S enp55s0
 
 该 profile 会占用实盘备用 core `8-15`，不应与另一套 live market-data profile 或重型测试任务并发运行，除非本轮明确记录这是有意例外。使用 fusion 行情生成 report 时，按实际启动的 fusion TOML、`ps` / log 证据记录 CPU 分配；不要把单路 data session affinity split 套用到 fusion bundle。
 
-30-symbol fusion order-gateway smoke / validate 配置
+多路 fusion order-gateway smoke / validate 配置
 `config/order_gateways/gate_order_gateway_30symbols_private_plain_20260627.toml` 和
 `config/order_gateways/gate_order_gateway_30symbols_private_plain_20260701.toml` 额外使用 `16-19` 作为 4 条 Gate
-order route worker CPU，gateway log backend 使用 `0`。这是当前 30-symbol fusion 配置已经占用 `2/3/8-15`，
-strategy / feedback / log 已占用 `4/5/6` 后的临时例外；若按该配置启动真实订单，必须把 `16-19` 视为本轮 live
-占用 core，不得同时运行测试 data session、RTT probe、benchmark、replay 或 Python 分析，并在 report / handoff
-中记录实际 `ps` / affinity 证据。正式宣称 latency 或 fillability 收益前，需要重新审视 CPU profile，避免把测试区例外
-误当作稳定生产分配。
+order route worker CPU；`config/order_gateways/bitget_order_gateway_4routes.toml` 同样把四条 Bitget private
+OrderSession worker 固定在 `16-19`。Gateway log backend 使用 `0`。这是 fusion 配置已经占用 `2/3/8-15`，strategy /
+feedback / log 已占用 `4/5/6` 后的临时例外；若按这些配置启动真实订单，必须把 `16-19` 视为本轮 live 占用 core，
+不得同时运行测试 data session、RTT probe、benchmark、replay 或 Python 分析，并在 report / handoff 中记录实际
+`ps` / affinity 证据。正式宣称 latency 或 fillability 收益前，需要重新审视 CPU profile，避免把测试区例外误当作
+稳定生产分配。
 
 ## 测试区 `16-31`
 
