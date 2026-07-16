@@ -1,5 +1,6 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
+import csv
 import json
 import os
 import sys
@@ -304,6 +305,121 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
             self.assertEqual(pair["max_lag_freshness_ms"], 500)
             self.assertEqual(pair["execute"]["open_notional"], 10.0)
             self.assertEqual(pair["execute"]["order_session_fanout"], 4)
+
+    def test_requested_top30_symbols_have_binance_and_bitget_catalog_rows(self):
+        symbols = [
+            "SKHY_USDT",
+            "SNDK_USDT",
+            "SKHYNIX_USDT",
+            "SOXL_USDT",
+            "MU_USDT",
+            "HYPE_USDT",
+            "ZEC_USDT",
+            "KORU_USDT",
+            "SAMSUNG_USDT",
+            "DRAM_USDT",
+            "ONDO_USDT",
+            "WLD_USDT",
+            "US_USDT",
+            "XLM_USDT",
+            "TAO_USDT",
+            "NEAR_USDT",
+            "DEXE_USDT",
+            "KAITO_USDT",
+            "1000XEC_USDT",
+            "BILL_USDT",
+            "0G_USDT",
+            "MRVL_USDT",
+            "ZBT_USDT",
+            "BCH_USDT",
+            "ENA_USDT",
+            "ALLO_USDT",
+            "BSB_USDT",
+            "HOME_USDT",
+            "EWY_USDT",
+            "SKL_USDT",
+        ]
+        catalog_path = (
+            guard.PROJECT_ROOT / "config/instruments/usdt_future_universe.csv"
+        )
+        with catalog_path.open(encoding="utf-8", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        by_key = {(row["symbol"], row["exchange"]): row for row in rows}
+
+        for symbol in symbols:
+            binance = by_key[(symbol, "binance")]
+            bitget = by_key[(symbol, "bitget")]
+            self.assertEqual(binance["status"], "TRADING")
+            self.assertIn(
+                binance["contract_type"], {"PERPETUAL", "TRADIFI_PERPETUAL"}
+            )
+            self.assertEqual(bitget["status"], "online")
+            self.assertEqual(bitget["contract_type"], "perpetual")
+            self.assertEqual(binance["symbol_id"], bitget["symbol_id"])
+            self.assertGreater(Decimal(bitget["price_tick"]), 0)
+            self.assertGreater(Decimal(bitget["quantity_step"]), 0)
+            self.assertGreater(Decimal(bitget["min_quantity"]), 0)
+            self.assertGreater(Decimal(bitget["min_notional"]), 0)
+
+    def test_checked_in_bitget_requested_top30_config_matches_live_baseline(self):
+        expected_symbols = [
+            "SKHY_USDT",
+            "SNDK_USDT",
+            "SKHYNIX_USDT",
+            "SOXL_USDT",
+            "MU_USDT",
+            "HYPE_USDT",
+            "ZEC_USDT",
+            "KORU_USDT",
+            "SAMSUNG_USDT",
+            "DRAM_USDT",
+            "ONDO_USDT",
+            "WLD_USDT",
+            "US_USDT",
+            "XLM_USDT",
+            "TAO_USDT",
+            "NEAR_USDT",
+            "DEXE_USDT",
+            "KAITO_USDT",
+            "1000XEC_USDT",
+            "BILL_USDT",
+            "0G_USDT",
+            "MRVL_USDT",
+            "ZBT_USDT",
+            "BCH_USDT",
+            "ENA_USDT",
+            "ALLO_USDT",
+            "BSB_USDT",
+            "HOME_USDT",
+            "EWY_USDT",
+            "SKL_USDT",
+        ]
+        config_path = (
+            guard.PROJECT_ROOT
+            / "config/strategies/"
+            "lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml"
+        )
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        pairs = config["lead_lag"]["pairs"]
+
+        self.assertEqual([pair["symbol"] for pair in pairs], expected_symbols)
+        for pair in pairs:
+            self.assertEqual(pair["lead_exchange"], "binance")
+            self.assertEqual(pair["lag_exchange"], "bitget")
+            self.assertEqual(pair["max_lead_freshness_ms"], 3)
+            self.assertEqual(pair["max_lag_freshness_ms"], 500)
+            self.assertEqual(pair["execute"]["open_notional"], 10.0)
+            self.assertEqual(pair["execute"]["parallel"], 1)
+            self.assertEqual(pair["execute"]["order_session_fanout"], 4)
+            self.assertGreater(pair["execute"]["open_slippage_ticks"], 0)
+            self.assertEqual(
+                pair["execute"]["open_slippage_ticks"],
+                pair["execute"]["close_slippage_ticks"],
+            )
+            self.assertGreaterEqual(
+                pair["execute"]["stoploss_slippage_ticks"],
+                pair["execute"]["open_slippage_ticks"],
+            )
 
     def test_prepare_absolutizes_trading_critical_nested_configs(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
