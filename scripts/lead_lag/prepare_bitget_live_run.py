@@ -157,6 +157,15 @@ def _gateway_order_sessions(
     return route_count, paths, sessions
 
 
+def _gateway_order_session(gateway: dict[str, Any]) -> dict[str, Any]:
+    route_count, _, sessions = _gateway_order_sessions(
+        gateway, label="run isolation"
+    )
+    if route_count != 1:
+        raise ValueError("run isolation: gateway requires exactly one route")
+    return sessions[0]
+
+
 def _validate_gateway_session_contracts(
     sessions: list[dict[str, Any]], *, label: str
 ) -> tuple[str, str, str, str, str, str, bool]:
