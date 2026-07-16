@@ -83,7 +83,8 @@ Feedback session 必须先 login/subscribed ready。其 duration 至少为 strat
 使用 order gateway 时先 validate config/SHM、route count/readiness 和 account consistency。Bitget 历史首个 live 使用
 `fanout=1`；四路 LeadLag 使用 `config/order_gateways/bitget_order_gateway_4routes.toml`，并要求每个 Bitget pair
 `order_session_fanout=4`。20-symbol 策略配置使用
-`config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 的 `open_notional=10`；entry 计算量
+`config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 使用 lead/lag freshness `3ms/500ms`、
+`open_notional=10`；entry 计算量
 低于 instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。不允许 strategy-only restart，也不允许复用旧
 gateway/feedback SHM。Bitget V1 以 strict stop-and-flat + fresh-run isolation 替代跨进程唯一 ID 后继续恢复交易；
 persistent ID 只在未来需要 resume/overlap 时重新成为前置条件。

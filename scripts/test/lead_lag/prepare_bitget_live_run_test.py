@@ -301,7 +301,7 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         for pair in pairs:
             self.assertEqual(pair["lag_exchange"], "bitget")
             self.assertEqual(pair["max_lead_freshness_ms"], 3)
-            self.assertEqual(pair["max_lag_freshness_ms"], 200)
+            self.assertEqual(pair["max_lag_freshness_ms"], 500)
             self.assertEqual(pair["execute"]["open_notional"], 10.0)
             self.assertEqual(pair["execute"]["order_session_fanout"], 4)
 

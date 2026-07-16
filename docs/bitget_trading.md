@@ -22,7 +22,8 @@
 - 四路 LeadLag gateway：`config/order_gateways/bitget_order_gateway_4routes.toml` 启动四条独立 private
   OrderSession；Bitget live prepare 支持并只放行 `route_count=1/4`。四路配置要求每个 Bitget pair
   `order_session_fanout=4`，否则在生成 runtime manifest 时 fail closed。20-symbol 四路策略配置位于
-  `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 的 `open_notional=10`。
+  `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 使用 lead/lag freshness
+  `3ms/500ms`、`open_notional=10`。
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe，不替代 gateway 或

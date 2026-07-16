@@ -67,7 +67,8 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `BTCUSDT` read-only baseline、emergency dry-run、flat-account helper、修复后的 tiny-position stop-and-flat 和 fanout=1 gateway
   passive IOC 均已有 2026-07-14 当次 live 证据。LeadLag manifest 现只放行 route count `1/4`；四路要求所有 Bitget pair
   `order_session_fanout=4`，并逐 route 固化/复核 OrderSession contract。20-symbol 四路策略配置入口为
-  `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`：每个 pair 的 `open_notional=10`，entry 计算量低于
+  `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`：每个 pair 使用 lead/lag freshness `3ms/500ms`、
+  `open_notional=10`，entry 计算量低于
   instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。Gateway 配置入口为
   `config/order_gateways/bitget_order_gateway_4routes.toml`；当前只有代码、自动测试和 CLI validate-only 证据，尚无四路 live 证据。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency

@@ -12,7 +12,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -69,7 +69,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -126,7 +126,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -183,7 +183,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -240,7 +240,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -297,7 +297,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -354,7 +354,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -411,7 +411,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -468,7 +468,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -525,7 +525,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -582,7 +582,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -639,7 +639,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -696,7 +696,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -753,7 +753,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -810,7 +810,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -867,7 +867,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -924,7 +924,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -981,7 +981,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1038,7 +1038,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
@@ -1095,7 +1095,7 @@ lead_exchange = "binance"
 lag_exchange = "bitget"
 lag_taker_fee = 0.00015
 max_lead_freshness_ms = 3
-max_lag_freshness_ms = 200
+max_lag_freshness_ms = 500
 
 [lead_lag.pairs.trigger]
 lead = 0.0025
