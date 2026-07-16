@@ -106,7 +106,7 @@ TEST(OrderDecimalTest, AppliesMultiplierAndMinMaxLimits) {
   ASSERT_EQ(clamped.status, OpenQuantityUnitsStatus::kOk);
   EXPECT_EQ(clamped.quantity_units, 7);
 
-  const OpenQuantityUnitsResult below_min =
+  const OpenQuantityUnitsResult clamped_to_min =
       CalculateOpenQuantityUnits(OpenQuantityUnitsInput{
           .notional_units = 99,
           .notional_decimal_places = 2,
@@ -119,7 +119,8 @@ TEST(OrderDecimalTest, AppliesMultiplierAndMinMaxLimits) {
           .min_quantity_units = 1,
       });
 
-  EXPECT_EQ(below_min.status, OpenQuantityUnitsStatus::kBelowMinimum);
+  EXPECT_EQ(clamped_to_min.status, OpenQuantityUnitsStatus::kOk);
+  EXPECT_EQ(clamped_to_min.quantity_units, 1);
 }
 
 }  // namespace

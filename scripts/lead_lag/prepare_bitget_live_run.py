@@ -204,11 +204,6 @@ def _validate_lead_lag_route_contract(
                 f"{label}: lead_lag.pairs[{pair_index}].execute."
                 f"order_session_fanout must equal route_count {route_count}"
             )
-        if execute.get("require_min_entry_quantity") is not True:
-            raise ValueError(
-                f"{label}: lead_lag.pairs[{pair_index}].execute."
-                "require_min_entry_quantity must be true"
-            )
 
 
 def _write_gateway_overlay(

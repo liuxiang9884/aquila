@@ -2047,26 +2047,6 @@ class Strategy {
     return true;
   }
 
-  [[nodiscard]] bool RejectNonMinimumEntryQuantity(
-      PairRuntimeState* runtime, std::string_view symbol,
-      const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
-      const PreparedOrderQuantity& quantity) noexcept {
-    if (last_signal_decision_.intent.reduce_only ||
-        !runtime->pair.execute.require_min_entry_quantity ||
-        (runtime->order_decimal.min_quantity_units > 0 &&
-         quantity.quantity_units ==
-             runtime->order_decimal.min_quantity_units)) {
-      return false;
-    }
-    LogOrderIntentRejectedForSignal(
-        "entry_quantity_not_minimum", runtime, symbol, quantity.quantity,
-        price.raw_order_price, price.order_price, price.slippage_ticks,
-        instrument.price_tick,
-        OrderNotional(quantity.quantity, price.order_price, instrument));
-    RejectSignal(SignalRejectReason::kEntryQuantity);
-    return true;
-  }
-
   [[nodiscard]] OrderPriceTextStorage* AcquirePreparedOrderText(
       PairRuntimeState* runtime, std::string_view symbol,
       const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
@@ -2212,10 +2192,6 @@ class Strategy {
         PrepareOrderQuantity(runtime, instrument, price.price_units);
     if (RejectInvalidOrderQuantity(runtime, symbol, instrument, price,
                                    quantity)) {
-      return;
-    }
-    if (RejectNonMinimumEntryQuantity(runtime, symbol, instrument, price,
-                                      quantity)) {
       return;
     }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)

@@ -171,7 +171,6 @@ def write_runtime_fixture_graph(
 
             [lead_lag.pairs.execute]
             order_session_fanout = {route_count}
-            require_min_entry_quantity = true
             """
         ).strip()
         for symbol in lag_symbols
@@ -265,26 +264,46 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
         self.assertFalse(manifest["external_configs_applied"])
 
-    def test_prepare_keeps_single_route_min_entry_contract_optional(self):
-        strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
-        lead_lag = self.source_dir / "lead_lag.toml"
-        lead_lag.write_text(
-            lead_lag.read_text(encoding="utf-8").replace(
-                "require_min_entry_quantity = true",
-                "require_min_entry_quantity = false",
-            ),
-            encoding="utf-8",
+    def test_checked_in_bitget_top20_config_uses_requested_entry_sizing(self):
+        config_path = (
+            guard.PROJECT_ROOT
+            / "config/strategies/"
+            "lead_lag_bitget_top20_highspeed_fanout4_20260716.toml"
         )
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        pairs = config["lead_lag"]["pairs"]
 
-        result = prepare.prepare_runtime_configs(
-            run_id=self.run_id,
-            strategy_source=strategy,
-            gateway_source=gateway,
-            feedback_source=feedback,
-            output_dir=self.output_dir,
+        self.assertEqual(
+            [pair["symbol"] for pair in pairs],
+            [
+                "BTC_USDT",
+                "SOL_USDT",
+                "DOGE_USDT",
+                "XRP_USDT",
+                "HYPE_USDT",
+                "TAC_USDT",
+                "ZEC_USDT",
+                "ORDI_USDT",
+                "WLD_USDT",
+                "SLX_USDT",
+                "UB_USDT",
+                "VELVET_USDT",
+                "BTW_USDT",
+                "RAVE_USDT",
+                "SUI_USDT",
+                "AVAX_USDT",
+                "ENA_USDT",
+                "BAS_USDT",
+                "H_USDT",
+                "LINK_USDT",
+            ],
         )
-
-        self.assertEqual(result.route_count, 1)
+        for pair in pairs:
+            self.assertEqual(pair["lag_exchange"], "bitget")
+            self.assertEqual(pair["max_lead_freshness_ms"], 3)
+            self.assertEqual(pair["max_lag_freshness_ms"], 200)
+            self.assertEqual(pair["execute"]["open_notional"], 10.0)
+            self.assertEqual(pair["execute"]["order_session_fanout"], 4)
 
     def test_prepare_absolutizes_trading_critical_nested_configs(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(self.source_dir)
@@ -390,28 +409,6 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
                 output_dir=self.output_dir,
             )
 
-    def test_prepare_rejects_four_routes_without_min_entry_contract(self):
-        strategy, gateway, feedback = write_runtime_fixture_graph(
-            self.source_dir, route_count=4
-        )
-        lead_lag = self.source_dir / "lead_lag.toml"
-        lead_lag.write_text(
-            lead_lag.read_text(encoding="utf-8").replace(
-                "require_min_entry_quantity = true",
-                "require_min_entry_quantity = false",
-            ),
-            encoding="utf-8",
-        )
-
-        with self.assertRaisesRegex(ValueError, "require_min_entry_quantity"):
-            prepare.prepare_runtime_configs(
-                run_id=self.run_id,
-                strategy_source=strategy,
-                gateway_source=gateway,
-                feedback_source=feedback,
-                output_dir=self.output_dir,
-            )
-
     def test_prepare_rejects_four_routes_with_contract_mismatch(self):
         strategy, gateway, feedback = write_runtime_fixture_graph(
             self.source_dir, route_count=4
@@ -453,29 +450,6 @@ class PrepareBitgetLiveRunTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "trading contract"):
-            self.mark_applied(result)
-
-    def test_mark_applied_revalidates_four_route_strategy_contract(self):
-        strategy, gateway, feedback = write_runtime_fixture_graph(
-            self.source_dir, route_count=4
-        )
-        result = prepare.prepare_runtime_configs(
-            run_id=self.run_id,
-            strategy_source=strategy,
-            gateway_source=gateway,
-            feedback_source=feedback,
-            output_dir=self.output_dir,
-        )
-        lead_lag = self.source_dir / "lead_lag.toml"
-        lead_lag.write_text(
-            lead_lag.read_text(encoding="utf-8").replace(
-                "require_min_entry_quantity = true",
-                "require_min_entry_quantity = false",
-            ),
-            encoding="utf-8",
-        )
-
-        with self.assertRaisesRegex(ValueError, "require_min_entry_quantity"):
             self.mark_applied(result)
 
     def test_mark_applied_revalidates_configs_then_guard_accepts_manifest(self):

@@ -93,7 +93,6 @@ struct ExecuteConfig {
   std::uint32_t close_retry_slippage_step_ticks{0};
   std::uint32_t parallel{1};
   std::uint32_t order_session_fanout{1};
-  bool require_min_entry_quantity{false};
   TakerBufferConfig taker_buffer;
 
   [[nodiscard]] double EntrySpreadLimit() const noexcept;

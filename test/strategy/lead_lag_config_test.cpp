@@ -194,7 +194,6 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_EQ(pair.execute.close_retry_slippage_step_ticks, 0U);
   EXPECT_EQ(pair.execute.parallel, 1U);
   EXPECT_EQ(pair.execute.order_session_fanout, 1U);
-  EXPECT_FALSE(pair.execute.require_min_entry_quantity);
 
   EXPECT_EQ(pair.bbo_record.window_ns, 1'000'000'000ULL);
   EXPECT_EQ(pair.bbo_record.stats_window_ns, 30'000'000'000ULL);
@@ -432,18 +431,6 @@ TEST(LeadLagConfigTest, ParsesOrderSessionFanout) {
 
   ASSERT_TRUE(result.ok) << result.error;
   EXPECT_EQ(result.value.pairs[0].execute.order_session_fanout, 4U);
-}
-
-TEST(LeadLagConfigTest, ParsesRequireMinEntryQuantity) {
-  const aquila::config::InstrumentCatalog catalog =
-      CatalogWithLagQuantityMetadata(1.0, 0);
-
-  const auto result = ParseConfigToml(
-      MinimalConfigTomlWithRisk("", "require_min_entry_quantity = true\n"),
-      catalog);
-
-  ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_TRUE(result.value.pairs[0].execute.require_min_entry_quantity);
 }
 
 TEST(LeadLagConfigTest, RejectsZeroOrderSessionFanout) {

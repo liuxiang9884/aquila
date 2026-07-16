@@ -138,13 +138,15 @@ template <std::size_t N>
   denominator *= notional_scale;
 
   const std::int64_t raw_units = numerator / denominator;
-  if (raw_units <= 0) {
-    return {.status = OpenQuantityUnitsStatus::kBelowMinimum};
+  std::int64_t quantity_units = 0;
+  if (raw_units > 0) {
+    quantity_units =
+        (raw_units / input.quantity_step_units) * input.quantity_step_units;
   }
-
-  std::int64_t quantity_units = raw_units;
-  quantity_units =
-      (quantity_units / input.quantity_step_units) * input.quantity_step_units;
+  if (input.min_quantity_units > 0 &&
+      quantity_units < input.min_quantity_units) {
+    quantity_units = input.min_quantity_units;
+  }
   if (input.max_quantity_units > 0 &&
       quantity_units > input.max_quantity_units) {
     quantity_units = (input.max_quantity_units / input.quantity_step_units) *

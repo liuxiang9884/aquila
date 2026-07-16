@@ -426,9 +426,6 @@ class Parser {
     execute.order_session_fanout =
         UInt32Or(table, "order_session_fanout", execute.order_session_fanout,
                  prefix + ".order_session_fanout");
-    execute.require_min_entry_quantity = BoolOr(
-        table, "require_min_entry_quantity", execute.require_min_entry_quantity,
-        prefix + ".require_min_entry_quantity");
     execute.parallel = RequiredUInt32(table, "parallel", prefix + ".parallel");
     if (!ok_) {
       return execute;
