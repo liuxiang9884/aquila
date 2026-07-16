@@ -24,6 +24,17 @@
   `order_session_fanout=4`，否则在生成 runtime manifest 时 fail closed。20-symbol 四路策略配置位于
   `config/strategies/lead_lag_bitget_top20_highspeed_fanout4_20260716.toml`，每个 pair 使用 lead/lag freshness
   `3ms/500ms`、`open_notional=10`。
+- 用户指定的 30-symbol Binance-lead/Bitget-lag 准备配置位于
+  `config/strategies/lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml`，同样固定 freshness
+  `3ms/500ms`、`open_notional=10`、`parallel=1` 和 `order_session_fanout=4`。2026-07-16 官方
+  Binance USD-M `exchangeInfo` 与 Bitget UTA `instruments` 快照显示 30/30 双边存在且可交易；其中
+  `SKHY/SNDK/SKHYNIX/SOXL/MU/KORU/SAMSUNG/DRAM/MRVL/EWY` 在 Binance 属于
+  `TRADIFI_PERPETUAL`，其余 20 个属于普通 `PERPETUAL`。新增的 11 个 symbol 已写入
+  `config/instruments/usdt_future_universe.csv`，已有 19 个 symbol 的 Binance/Bitget 基本字段也按同一快照刷新。
+  原始快照、哈希、状态矩阵与 2bps/5bps ticks 派生记录位于
+  `/home/liuxiang/tmp/bitget_binance_symbol_check_20260716T0544Z/`。两家 30-symbol data session 已完成短时只读连接，
+  Bitget 使用 `vip-ws-uta-pub-a.bitget.com/v3/ws/public/sbe`；该证据只证明本次订阅与收包，不构成真实订单或
+  30-symbol LeadLag live 证据。
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe，不替代 gateway 或
@@ -364,7 +375,8 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
 - P1：基于官方 UTA WebSocket 预算设计 UID/account 级共享 limiter；不能直接套用 REST `10 requests/s/UID`。
 - P1：官方 HA 与高速 endpoint 长期 A/B、endpoint failover 和切换 unknown window。
 - P1：按新鲜授权执行 fanout=4 staged live，先证明四 route ready、每 child 最小量、Ack/terminal 归组、reduce-only
-  收敛、quiescence 和 final flat，再讨论 route policy。
+  收敛、quiescence 和 final flat，再讨论 route policy。使用 30-symbol 准备配置时，真实启动前还要重新确认上述 10 个
+  `TRADIFI_PERPETUAL` 的当时交易时段、双边 BBO 与 freshness，不能把 catalog 的 `TRADING/online` 当成 24x7 可交易保证。
 - P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
 - P2：`fast-fill`/`fill` 的 `execId` 去重、跨流乱序和累计 quantity 重建。
 - P2：account/position private feed、通用 Gate/Bitget policy、direct backend 和更多协议能力。

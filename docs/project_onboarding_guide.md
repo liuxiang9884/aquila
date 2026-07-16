@@ -71,6 +71,11 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `open_notional=10`，entry 计算量低于
   instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。Gateway 配置入口为
   `config/order_gateways/bitget_order_gateway_4routes.toml`；当前只有代码、自动测试和 CLI validate-only 证据，尚无四路 live 证据。
+- 用户指定的 Binance-lead/Bitget-lag 30-symbol 准备配置入口为
+  `config/strategies/lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml`。2026-07-16 官方快照中 30/30 双边均存在；
+  11 个原先缺失的 symbol 已补入大 universe catalog。`SKHY/SNDK/SKHYNIX/SOXL/MU/KORU/SAMSUNG/DRAM/MRVL/EWY`
+  是 Binance `TRADIFI_PERPETUAL`，真实启动前必须重新确认交易时段和双边 BBO；当前只有 catalog/config、只读行情连接和
+  manifest v2 prepare/validate-only 证据，没有该 30-symbol 组合的真实订单证据。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
 - Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
@@ -138,7 +143,8 @@ rg 'aquila_evaluation' core exchange tools
 2. Gate trading：下一步是 guarded gateway smoke，量化 route skew、Ack RTT、terminal feedback 与 fillability；先复核 account budget、
    reconcile 和 liveness。
 3. LeadLag live：任何真实 run 按 `docs/lead_lag_live_operations.md`，使用新鲜 release/config、freshness/slippage preflight、
-   REST baseline/final flat 和隔离 run dir。
+   REST baseline/final flat 和隔离 run dir。若使用 30-symbol 准备配置，还要先排除 `TRADIFI_PERPETUAL` 非交易时段或停牌造成的
+   单边 stale BBO。
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
 5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
@@ -158,6 +164,9 @@ LeadLag manifest v2、gateway smoke manifest v1、REST 保守 snapshot、runner 
 `bitget_lead_lag_top20_highspeed_20260715T154837Z` 又取得 20-symbol、fanout=1、10 小时 signal-conditioned LeadLag
 证据，21 个成交 entry 均完整平仓，quiescence/final flat 通过。四路 gateway/fanout contract 和 entry quantity clamp 已完成代码、测试和
 validate-only，配置入口为 `config/order_gateways/bitget_order_gateway_4routes.toml`，但尚无四路 live 证据。下一门是
-fanout=4 staged LeadLag。任何真实订单必须按 runbook 的分阶段证据门取得当次授权；不要把 fresh-run 解释为可 resume，
+fanout=4 staged LeadLag。用户指定的 30-symbol 组合已完成双边合约核对、catalog 更新和配置准备，入口为
+`config/strategies/lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml`；其中 10 个 Binance
+`TRADIFI_PERPETUAL` 在真实启动前必须复核交易时段和双边 BBO，当前没有该组合的真实订单证据。任何真实订单必须按 runbook
+的分阶段证据门取得当次授权；不要把 fresh-run 解释为可 resume，
 也不要在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
