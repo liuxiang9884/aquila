@@ -1193,6 +1193,51 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(order_session.placed_orders[1].quantity, 9);
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutOpenSubmitsMinimumEntryQuantityToEveryRoute) {
+  leadlag::Config config = SignalOnlyConfigWithFanout(4);
+  config.pairs[0].execute.require_min_entry_quantity = true;
+  config.pairs[0].execute.open_notional = 10.21;
+  config.pairs[0].lag_instrument.quantity_step = 0.1;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 1;
+  config.pairs[0].lag_instrument.min_quantity = 0.1;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(order_session.placed_orders.size(), 4U);
+  for (std::size_t route = 0; route < 4; ++route) {
+    EXPECT_EQ(order_session.placed_orders[route].gateway_route_id, route);
+    EXPECT_DOUBLE_EQ(order_session.placed_orders[route].quantity, 0.1);
+    EXPECT_EQ(order_session.placed_orders[route].quantity_text, "0.1");
+  }
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     FanoutOpenRejectsNonMinimumEntryBeforeSubmittingAnyRoute) {
+  leadlag::Config config = SignalOnlyConfigWithFanout(4);
+  config.pairs[0].execute.require_min_entry_quantity = true;
+  config.pairs[0].execute.open_notional = 20.42;
+  config.pairs[0].lag_instrument.quantity_step = 0.1;
+  config.pairs[0].lag_instrument.quantity_decimal_places = 1;
+  config.pairs[0].lag_instrument.min_quantity = 0.1;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 16, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  EXPECT_TRUE(order_session.placed_orders.empty());
+  EXPECT_EQ(order_manager.order_count(), 0U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kEntryQuantity);
+}
+
 TEST(LeadLagStrategyInterfaceTest, FanoutOpenScansPastNotReadyRoutes) {
   leadlag::Strategy strategy{SignalOnlyConfigWithFanout(2)};
   FakeOrderSession order_session;
@@ -2374,6 +2419,8 @@ TEST(LeadLagStrategyInterfaceTest,
      ExternalModeFanoutStoplossUsesAggregatedFilledQuantity) {
   leadlag::Config config = SignalOnlyConfigWithSlippage(0, 2);
   config.pairs[0].execute.order_session_fanout = 4;
+  config.pairs[0].execute.require_min_entry_quantity = true;
+  config.pairs[0].lag_instrument.min_quantity = 9.0;
   leadlag::Strategy strategy{config};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 16, 4};
