@@ -638,6 +638,34 @@ TEST(WebsocketCriticalSessionTest, SendTextEncodesMaskedFrameThroughCoreCodec) {
 }
 
 TEST(WebsocketCriticalSessionTest,
+     UntilCompleteDiagnosticsSurviveDeferredTextWrite) {
+  auto config = BuildSmallConfig(2);
+  PreparedWriteArena arena(config.prepared_write_slots,
+                           config.prepared_write_bytes);
+  Metrics metrics{};
+  FakeTlsSocket socket;
+  socket.pending_write_eagain_ = true;
+  CriticalSession<FakeTlsSocket> session(config, socket, arena, metrics);
+  WritePathDiagnostics diagnostics{};
+
+  const auto payload = std::as_bytes(std::span{"tick", 4});
+  ASSERT_EQ(
+      session.SendText(payload, WriteFlushMode::kTryFlushOne, &diagnostics,
+                       WriteDiagnosticsLifetime::kUntilWriteComplete),
+      SendStatus::kOk);
+  EXPECT_EQ(session.PendingWriteCount(), 1U);
+  EXPECT_EQ(diagnostics.write_complete_ns, 0);
+  EXPECT_EQ(diagnostics.write_complete_monotonic_ns, 0);
+
+  session.DriveWrite();
+
+  EXPECT_EQ(session.PendingWriteCount(), 0U);
+  EXPECT_GT(diagnostics.write_complete_ns, 0);
+  EXPECT_GT(diagnostics.write_complete_monotonic_ns, 0);
+  EXPECT_GT(diagnostics.write_complete_bytes, 0);
+}
+
+TEST(WebsocketCriticalSessionTest,
      SocketTimestampingProbeIgnoresStaleTxAckByKernelId) {
   AQUILA_SKIP_SOCKET_TIMESTAMPING_ATTRIBUTION_TEST();
   auto config = BuildSmallConfig(2);

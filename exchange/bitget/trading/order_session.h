@@ -113,6 +113,22 @@ struct OrderSessionDefaultPlainWebSocketPolicy
   using TransportSocket = websocket::PlainSocket;
 };
 
+struct OrderTimingDiagnostic {
+  OrderRequestType request_type{OrderRequestType::kUnknown};
+  std::uint64_t local_order_id{0};
+  std::uint64_t request_sequence{0};
+  std::int64_t request_send_realtime_ns{0};
+  std::int64_t request_send_monotonic_ns{0};
+  std::int64_t write_complete_realtime_ns{0};
+  std::int64_t write_complete_monotonic_ns{0};
+  std::int64_t ack_receive_realtime_ns{0};
+  std::int64_t ack_receive_monotonic_ns{0};
+  std::int64_t ack_rtt_monotonic_ns{-1};
+  std::int64_t write_complete_to_ack_monotonic_ns{-1};
+  std::int64_t place_creation_time_ms{0};
+  std::int64_t exchange_message_time_ms{0};
+};
+
 namespace detail {
 
 [[nodiscard]] inline int CurrentBitgetOrderSessionCpu() noexcept {
@@ -140,7 +156,9 @@ struct OrderRequestCorrelation {
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
   std::uint64_t expected_exchange_order_id{0};
-  std::int64_t request_send_local_ns{0};
+  std::int64_t request_send_realtime_ns{0};
+  std::int64_t request_send_monotonic_ns{0};
+  websocket::WritePathDiagnostics write_path{};
   std::uint16_t route_id{static_cast<std::uint16_t>(0xFFFF)};
 };
 
@@ -299,24 +317,32 @@ class OrderSession {
                          encoded_request_id);
     }
 
-    const std::int64_t send_local_ns = RealtimeNowNs();
-    const OrderSendStatus send_status = MapSendStatus(SendText(encoded.text));
+    auto [correlation_it, inserted] = request_correlations_.emplace(
+        sequence, MakeCorrelation(OrderRequestType::kPlaceOrder, order, 0));
+    if (!inserted) {
+      return SendFailure(OrderSendStatus::kInflightFull, sequence,
+                         encoded_request_id);
+    }
+    detail::OrderRequestCorrelation& correlation = correlation_it->second;
+    correlation.write_path.order_encode_done_ns = RealtimeNowNs();
+    correlation.request_send_realtime_ns = RealtimeNowNs();
+    correlation.request_send_monotonic_ns = MonotonicNowNs();
+    const OrderSendStatus send_status =
+        MapSendStatus(SendText(encoded.text, &correlation.write_path));
     if (send_status != OrderSendStatus::kOk) {
+      request_correlations_.erase(correlation_it);
       return SendFailure(send_status, sequence, encoded_request_id);
     }
-    request_correlations_.emplace(
-        sequence, MakeCorrelation(OrderRequestType::kPlaceOrder, order, 0,
-                                  send_local_ns));
     ++place_cache_reservations_;
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
     LogOrderSend(OrderRequestType::kPlaceOrder, order.local_order_id, sequence,
-                 send_local_ns);
+                 correlation);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
-            .send_local_ns = send_local_ns};
+            .send_local_ns = correlation.request_send_realtime_ns};
   }
 
   template <typename OrderT>
@@ -346,23 +372,32 @@ class OrderSession {
                          encoded_request_id);
     }
 
-    const std::int64_t send_local_ns = RealtimeNowNs();
-    const OrderSendStatus send_status = MapSendStatus(SendText(encoded.text));
+    auto [correlation_it, inserted] = request_correlations_.emplace(
+        sequence, MakeCorrelation(OrderRequestType::kCancelOrder, order,
+                                  exchange_order_id));
+    if (!inserted) {
+      return SendFailure(OrderSendStatus::kInflightFull, sequence,
+                         encoded_request_id);
+    }
+    detail::OrderRequestCorrelation& correlation = correlation_it->second;
+    correlation.write_path.order_encode_done_ns = RealtimeNowNs();
+    correlation.request_send_realtime_ns = RealtimeNowNs();
+    correlation.request_send_monotonic_ns = MonotonicNowNs();
+    const OrderSendStatus send_status =
+        MapSendStatus(SendText(encoded.text, &correlation.write_path));
     if (send_status != OrderSendStatus::kOk) {
+      request_correlations_.erase(correlation_it);
       return SendFailure(send_status, sequence, encoded_request_id);
     }
-    request_correlations_.emplace(
-        sequence, MakeCorrelation(OrderRequestType::kCancelOrder, order,
-                                  exchange_order_id, send_local_ns));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
     LogOrderSend(OrderRequestType::kCancelOrder, order.local_order_id, sequence,
-                 send_local_ns);
+                 correlation);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
-            .send_local_ns = send_local_ns};
+            .send_local_ns = correlation.request_send_realtime_ns};
   }
 
   [[nodiscard]] bool Ready() const noexcept {
@@ -446,6 +481,10 @@ class OrderSession {
   [[nodiscard]] bool reconnect_requested_for_test() noexcept {
     return client_.Core().ShouldReconnect();
   }
+  [[nodiscard]] const OrderTimingDiagnostic&
+  last_order_timing_diagnostic_for_test() const noexcept {
+    return last_order_timing_diagnostic_;
+  }
 #endif
 
  private:
@@ -470,6 +509,15 @@ class OrderSession {
 
   [[nodiscard]] static std::int64_t RealtimeNowNs() noexcept {
     return static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
+  }
+
+  [[nodiscard]] static std::int64_t MonotonicNowNs() noexcept {
+    const std::uint64_t now =
+        websocket::NowNs(websocket::ClockSource::kMonotonic);
+    return now > static_cast<std::uint64_t>(
+                     std::numeric_limits<std::int64_t>::max())
+               ? std::numeric_limits<std::int64_t>::max()
+               : static_cast<std::int64_t>(now);
   }
 
   [[nodiscard]] std::uint64_t NextRequestSequence() noexcept {
@@ -569,10 +617,15 @@ class OrderSession {
                              websocket::ReconnectTrigger::kProtocolError);
   }
 
-  [[nodiscard]] websocket::SendStatus SendText(std::string_view text) noexcept {
+  [[nodiscard]] websocket::SendStatus SendText(
+      std::string_view text,
+      websocket::WritePathDiagnostics* diagnostics = nullptr) noexcept {
     return client_.Core().SendText(
         std::as_bytes(std::span<const char>(text.data(), text.size())),
-        websocket::WriteFlushMode::kTryFlushOne);
+        websocket::WriteFlushMode::kTryFlushOne, diagnostics,
+        diagnostics == nullptr
+            ? websocket::WriteDiagnosticsLifetime::kSendCall
+            : websocket::WriteDiagnosticsLifetime::kUntilWriteComplete);
   }
 
   [[nodiscard]] OrderSendStatus SendLogin() noexcept {
@@ -606,6 +659,8 @@ class OrderSession {
     const std::string_view payload{
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
+    const std::int64_t local_receive_ns = RealtimeNowNs();
+    const std::int64_t local_receive_monotonic_ns = MonotonicNowNs();
     if (payload == "pong") {
       const bool was_awaiting_pong = application_awaiting_pong_;
       application_awaiting_pong_ = false;
@@ -617,7 +672,6 @@ class OrderSession {
       return websocket::DeliveryResult::kAccepted;
     }
 
-    const std::int64_t local_receive_ns = RealtimeNowNs();
     const OperationResponse parsed =
         ParseOperationResponse(payload, view.readable_tail_bytes, text_parser_);
     if (parsed.parse_status != OperationParseStatus::kOk) {
@@ -672,6 +726,8 @@ class OrderSession {
       return websocket::DeliveryResult::kAccepted;
     }
 
+    // An exchange Ack is causally downstream of the completed client write.
+    // reserve() keeps diagnostic addresses stable while the write is pending.
     request_correlations_.erase(correlation_it);
     if (correlation.type == OrderRequestType::kPlaceOrder &&
         place_cache_reservations_ != 0) {
@@ -685,8 +741,8 @@ class OrderSession {
     }
 
     const std::int64_t ack_rtt_ns =
-        local_receive_ns >= correlation.request_send_local_ns
-            ? local_receive_ns - correlation.request_send_local_ns
+        local_receive_ns >= correlation.request_send_realtime_ns
+            ? local_receive_ns - correlation.request_send_realtime_ns
             : -1;
     const OrderResponse response{
         .kind = MapResponseKind(parsed.kind),
@@ -698,12 +754,17 @@ class OrderSession {
         .route_id = correlation.route_id,
         .error_code = parsed.error_code,
         .connection_id_hash = parsed.connection_id_hash,
-        .request_send_local_ns = correlation.request_send_local_ns,
+        .request_send_local_ns = correlation.request_send_realtime_ns,
         .local_receive_ns = local_receive_ns,
         .exchange_ns = parsed.exchange_ns,
         .ack_rtt_ns = ack_rtt_ns,
     };
-    LogOrderResponse(response);
+    const OrderTimingDiagnostic timing = MakeOrderTimingDiagnostic(
+        correlation, parsed, local_receive_ns, local_receive_monotonic_ns);
+#if defined(AQUILA_BITGET_ORDER_SESSION_ENABLE_TEST_HOOKS)
+    last_order_timing_diagnostic_ = timing;
+#endif
+    LogOrderResponse(response, timing);
     response_handler_.OnOrderResponse(response);
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordResponse();
@@ -801,20 +862,28 @@ class OrderSession {
     }
   }
 
-  void LogOrderSend(OrderRequestType request_type, std::uint64_t local_order_id,
-                    std::uint64_t request_sequence,
-                    std::int64_t request_send_local_ns) const noexcept {
+  void LogOrderSend(
+      OrderRequestType request_type, std::uint64_t local_order_id,
+      std::uint64_t request_sequence,
+      const detail::OrderRequestCorrelation& correlation) const noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
     NOVA_INFO(
         "bitget_order_send request_type={} request_sequence={} "
-        "local_order_id={} request_send_local_ns={} inflight={}",
+        "local_order_id={} request_send_local_ns={} "
+        "request_send_realtime_ns={} "
+        "request_send_monotonic_ns={} order_encode_done_realtime_ns={} "
+        "inflight={}",
         magic_enum::enum_name(request_type), request_sequence, local_order_id,
-        request_send_local_ns, inflight_count());
+        correlation.request_send_realtime_ns,
+        correlation.request_send_realtime_ns,
+        correlation.request_send_monotonic_ns,
+        correlation.write_path.order_encode_done_ns, inflight_count());
   }
 
-  static void LogOrderResponse(const OrderResponse& response) noexcept {
+  static void LogOrderResponse(const OrderResponse& response,
+                               const OrderTimingDiagnostic& timing) noexcept {
     if (::nova::kLogManager.logger() == nullptr) {
       return;
     }
@@ -822,13 +891,57 @@ class OrderSession {
         "bitget_order_response response_kind={} request_type={} "
         "request_sequence={} local_order_id={} exchange_order_id={} "
         "error_code={} request_send_local_ns={} local_receive_ns={} "
-        "exchange_ns={} ack_rtt_ns={} connection_id_hash={}",
+        "exchange_ns={} ack_rtt_ns={} connection_id_hash={} "
+        "request_send_realtime_ns={} request_send_monotonic_ns={} "
+        "write_complete_realtime_ns={} write_complete_monotonic_ns={} "
+        "ack_receive_realtime_ns={} ack_receive_monotonic_ns={} "
+        "ack_rtt_monotonic_ns={} write_complete_to_ack_monotonic_ns={} "
+        "place_creation_time_ms={} exchange_message_time_ms={}",
         magic_enum::enum_name(response.kind),
         magic_enum::enum_name(response.request_type), response.request_sequence,
         response.local_order_id, response.exchange_order_id,
         response.error_code, response.request_send_local_ns,
         response.local_receive_ns, response.exchange_ns, response.ack_rtt_ns,
-        response.connection_id_hash);
+        response.connection_id_hash, timing.request_send_realtime_ns,
+        timing.request_send_monotonic_ns, timing.write_complete_realtime_ns,
+        timing.write_complete_monotonic_ns, timing.ack_receive_realtime_ns,
+        timing.ack_receive_monotonic_ns, timing.ack_rtt_monotonic_ns,
+        timing.write_complete_to_ack_monotonic_ns,
+        timing.place_creation_time_ms, timing.exchange_message_time_ms);
+  }
+
+  [[nodiscard]] static OrderTimingDiagnostic MakeOrderTimingDiagnostic(
+      const detail::OrderRequestCorrelation& correlation,
+      const OperationResponse& response, std::int64_t local_receive_ns,
+      std::int64_t local_receive_monotonic_ns) noexcept {
+    const std::int64_t ack_rtt_monotonic_ns =
+        local_receive_monotonic_ns >= correlation.request_send_monotonic_ns
+            ? local_receive_monotonic_ns - correlation.request_send_monotonic_ns
+            : -1;
+    const std::int64_t write_complete_to_ack_monotonic_ns =
+        correlation.write_path.write_complete_monotonic_ns > 0 &&
+                local_receive_monotonic_ns >=
+                    correlation.write_path.write_complete_monotonic_ns
+            ? local_receive_monotonic_ns -
+                  correlation.write_path.write_complete_monotonic_ns
+            : -1;
+    return {
+        .request_type = correlation.type,
+        .local_order_id = correlation.local_order_id,
+        .request_sequence = response.request_id.sequence,
+        .request_send_realtime_ns = correlation.request_send_realtime_ns,
+        .request_send_monotonic_ns = correlation.request_send_monotonic_ns,
+        .write_complete_realtime_ns = correlation.write_path.write_complete_ns,
+        .write_complete_monotonic_ns =
+            correlation.write_path.write_complete_monotonic_ns,
+        .ack_receive_realtime_ns = local_receive_ns,
+        .ack_receive_monotonic_ns = local_receive_monotonic_ns,
+        .ack_rtt_monotonic_ns = ack_rtt_monotonic_ns,
+        .write_complete_to_ack_monotonic_ns =
+            write_complete_to_ack_monotonic_ns,
+        .place_creation_time_ms = response.creation_time_ms,
+        .exchange_message_time_ms = response.exchange_ns / 1'000'000,
+    };
   }
 
   void NotifyLoginReady() noexcept {
@@ -912,13 +1025,11 @@ class OrderSession {
   template <typename OrderT>
   [[nodiscard]] static detail::OrderRequestCorrelation MakeCorrelation(
       OrderRequestType type, const OrderT& order,
-      std::uint64_t expected_exchange_order_id,
-      std::int64_t request_send_local_ns) noexcept {
+      std::uint64_t expected_exchange_order_id) noexcept {
     return {.type = type,
             .local_order_id = order.local_order_id,
             .parent_id = ParentIdFor(order),
             .expected_exchange_order_id = expected_exchange_order_id,
-            .request_send_local_ns = request_send_local_ns,
             .route_id = RouteIdFor(order)};
   }
 
@@ -958,6 +1069,9 @@ class OrderSession {
   bool login_sent_{false};
   bool application_awaiting_pong_{false};
   Diagnostics diagnostics_{};
+#if defined(AQUILA_BITGET_ORDER_SESSION_ENABLE_TEST_HOOKS)
+  OrderTimingDiagnostic last_order_timing_diagnostic_{};
+#endif
 };
 
 }  // namespace aquila::bitget

@@ -138,9 +138,12 @@ Place/cancel 的 encoder 使用固定容量 buffer；热路径不得为 JSON 格
 
 ### Subscription 与 ready
 
-V1 只订阅 account-wide `order` topic。`Ready()` 表示 login 和 subscription Ack 匹配，不表示存在初始 open-order snapshot、
-sequence continuity、REST baseline 或 reconcile。V1 不订阅 `fill`/`fast-fill`，不提供逐笔 `execId`、maker/taker role、fee 或
-逐笔成交事件。
+V1 authoritative 状态只来自 account-wide `order` topic。`Ready()` 表示 login 和 `order` subscription Ack 匹配，不表示存在
+初始 open-order snapshot、sequence continuity、REST baseline 或 reconcile。session 在 `order` ready 后使用同一连接
+best-effort 订阅 `fast-fill`，但只记录原始分析日志：不构造或发布 `OrderFeedbackEvent`，不影响 `Ready()`，不推导累计成交量、
+订单状态或 feedback reject。普通 `fast-fill` 订阅失败和已成功分类为 `fast-fill` 的解析失败不触发 order continuity lost；
+认证失效仍按整个 private connection 的既有规则重连。共享连接上的语法损坏 JSON 若无法安全识别 topic，仍按 authoritative
+order ingress 的保守规则处理。
 
 ### Lifecycle 映射
 
@@ -153,6 +156,36 @@ Parser 先识别属于 Aquila 的 `clientOid=a-...`，再解析必需字段和 s
 
 同一订单的 quantity/price/status 必须按累计事实处理，不能把重复或乱序消息转换为额外成交。无法恢复的 Aquila order decode、
 disconnect 和 producer restart 会广播 `kContinuityLost`。Continuity latch 只有在外部 reconcile 协议确认基线后才能复位。
+
+### 时间诊断边界
+
+当前诊断实现保留：
+
+- Place/cancel send-call 前的 realtime/monotonic、本机 WebSocket 整帧 write-complete realtime/monotonic，以及 Ack handler
+  ingress realtime/monotonic；本机 duration 只用 monotonic。
+- [Place Order Channel](https://www.bitget.com/api-doc/uta/websocket/private/Place-Order-Channel) response 的
+  `args[].cTime` 与顶层 `ts`。
+- [Order Channel](https://www.bitget.com/api-doc/uta/websocket/private/Order-Channel) push 的顶层 `ts`、
+  `createdTime`、`updatedTime`、`orderStatus`、`cancelReason` 和 batch index。
+- [Fast Fill Channel](https://www.bitget.com/api-doc/uta/websocket/private/Fast-Fill-Channel) 的 `execId`、
+  `clientOid`、`orderId`、`execPrice`、`execQty`、`tradeScope`、`execTime`、`updatedTime` 和顶层 `ts`。
+
+`fast-fill` 比普通 order channel 更快仍是待实盘日志验证的假设，不能从官方定位或单元测试直接外推。分析时按
+`clientOid`/`orderId`/`execId`、`connection_generation`、本地 message sequence 及 BBO data index 离线关联；realtime 只用于
+跨日志近似对齐，未校准本机与 Bitget clock offset 前不得解释为单程网络时延。零成交 IOC 不会产生 fill/fast-fill，且 Bitget
+当前没有文档明确的 order-ingress 或 match-attempt 时间戳，因此只能分成 `marketable_observed`、
+`not_marketable_observed`、`indeterminate` 三类 public-BBO 观察结论，不能归因为交易所漏撮合。
+
+如果后续证据证明 `fast-fill` 显著更早，必须另开 L3 设计，先解决 `execId` 去重、order 原始 quantity join、跨流乱序、
+断线漏消息、reconcile 和双路终态一致性，才能讨论与 `order` channel 竞速发布 feedback；当前日志链路不得直接升级为交易状态源。
+
+2026-07-17 Release microbenchmark（同机 load average 约 11–12，仅作为当前实现成本证据）：
+
+- event-only order parser 的 main/current 中位数为约 `773ns / 770ns`，默认无 diagnostic sink 的快路径未观察到回归。
+- 同一当前二进制中，accepted event-only / raw diagnostic-field parser 中位数约为 `764ns / 1037ns`；原始字段解析增加约
+  `273ns`，且尚未包含 structured log 格式化/写入成本。后续 live 必须观察 owner-thread CPU 和尾延迟。
+- 通用 WebSocket write-path main/current 中位数约为 `429ns / 428ns`，encode-plain 为 `431ns / 433ns`，
+  control-full-queue 为 `38.39ns / 39.29ns`。高系统负载下这些细小差异不能证明性能提升或回归消失。
 
 ### SHM 路由
 
@@ -400,11 +433,11 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
   收敛、quiescence 和 final flat，再讨论 route policy。使用 30-symbol 准备配置时，真实启动前还要重新确认上述 10 个
   `TRADIFI_PERPETUAL` 的当时交易时段、双边 BBO 与 freshness，不能把 catalog 的 `TRADING/online` 当成 24x7 可交易保证。
 - P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
-- P2：`fast-fill`/`fill` 的 `execId` 去重、跨流乱序和累计 quantity 重建。
-- P2：补齐交易所侧订单时间戳与延迟证据：保留 WebSocket place response 的 `args[].cTime` 和顶层 `ts`，保留
-  private `order` push 的 `createdTime`、`updatedTime` 和顶层 `ts`，并在完成 `fast-fill`/`fill` 去重与乱序 contract 后记录
-  `execTime`。Report 必须区分本地 Ack RTT、交易所订单创建/response、terminal update 和实际 fill 时间；本地 send/receive 与
-  交易所时间跨时钟，未完成 clock-offset 校准时不得解释为单程网络时延。REST 的
+- P2：用新一轮 live 原始日志实测 `fast-fill` 相对 `order` push 的到达差；若确实更快，再独立设计 `execId` 去重、原始
+  quantity join、跨流乱序/漏消息、累计 quantity 重建、reconnect/reconcile 和最快 feedback 发布 contract。
+- P2：把现有 place response、order push、fast-fill 与 BBO recorder 日志合并进离线 report。Report 必须区分本地 Ack RTT、
+  交易所订单创建/response、terminal update 和实际 fill 时间；本地 send/receive 与交易所时间跨时钟，未完成 clock-offset
+  校准时不得解释为单程网络时延。REST 的
   `X-BG-REQUEST-ACCEPT-TIME`/`X-BG-RESPONSE-COMPLETE-TIME` 只适用于 REST 链路，不能替代当前 WebSocket 下单证据；SBE BBO
   `ts`/`sts` 只描述行情链路。Bitget 当前没有为零成交 IOC 提供文档明确的 order-ingress 或 match-attempt 时间戳，因此即使补齐
   上述字段，也只能改善阶段边界和成交单分析，不能精确拆分未成交订单的撮合处理时间。

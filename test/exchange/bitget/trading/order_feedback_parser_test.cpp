@@ -19,10 +19,36 @@ namespace {
 constexpr std::int64_t kLocalReceiveNs = 1'750'034'397'080'123'456LL;
 constexpr std::uint64_t kLocalOrderId = 72'057'594'037'927'978ULL;
 
+struct OwnedOrderFeedbackDiagnosticRecord {
+  std::string client_oid;
+  std::string order_id;
+  std::string order_status;
+  std::string cancel_reason;
+  std::uint64_t exchange_message_time_ms{0};
+  std::uint64_t created_time_ms{0};
+  std::uint64_t updated_time_ms{0};
+  std::uint32_t batch_data_index{0};
+};
+
+OwnedOrderFeedbackDiagnosticRecord Own(
+    const OrderFeedbackDiagnosticRecord& record) {
+  return {
+      .client_oid = std::string(record.client_oid),
+      .order_id = std::string(record.order_id),
+      .order_status = std::string(record.order_status),
+      .cancel_reason = std::string(record.cancel_reason),
+      .exchange_message_time_ms = record.exchange_message_time_ms,
+      .created_time_ms = record.created_time_ms,
+      .updated_time_ms = record.updated_time_ms,
+      .batch_data_index = record.batch_data_index,
+  };
+}
+
 struct ParseOutput {
   OrderFeedbackParseResult result;
   OrderFeedbackParserStats stats;
   std::vector<OrderFeedbackEvent> events;
+  std::vector<OwnedOrderFeedbackDiagnosticRecord> diagnostic_records;
 };
 
 ParseOutput Parse(std::string_view payload) {
@@ -33,6 +59,9 @@ ParseOutput Parse(std::string_view payload) {
       [&output](const OrderFeedbackEvent& event) noexcept {
         output.events.push_back(event);
         return true;
+      },
+      [&output](const OrderFeedbackDiagnosticRecord& record) noexcept {
+        output.diagnostic_records.push_back(Own(record));
       });
   return output;
 }
@@ -44,6 +73,7 @@ constexpr std::string_view kAccepted = R"({
     "clientOid":"a-72057594037927978","qty":"1.5",
     "holdMode":"one_way_mode","marginMode":"crossed",
     "cumExecQty":"0","avgPrice":"0","orderStatus":"new",
+    "createdTime":"1750034397001",
     "updatedTime":"1750034397076"}],"ts":1750034397080})";
 
 std::string OrderPayload(std::string_view status, std::string_view quantity,
@@ -86,6 +116,49 @@ TEST(BitgetOrderFeedbackParserTest, MapsAcceptedAquilaOrder) {
   EXPECT_EQ(event.finish_reason, OrderFinishReason::kUnknown);
   EXPECT_EQ(event.exchange_update_ns, 1'750'034'397'076'000'000LL);
   EXPECT_EQ(event.local_receive_ns, kLocalReceiveNs);
+  ASSERT_EQ(output.diagnostic_records.size(), 1U);
+  const OwnedOrderFeedbackDiagnosticRecord& diagnostic =
+      output.diagnostic_records.front();
+  EXPECT_EQ(diagnostic.client_oid, "a-72057594037927978");
+  EXPECT_EQ(diagnostic.order_id, "9988");
+  EXPECT_EQ(diagnostic.order_status, "new");
+  EXPECT_TRUE(diagnostic.cancel_reason.empty());
+  EXPECT_EQ(diagnostic.exchange_message_time_ms, 1'750'034'397'080ULL);
+  EXPECT_EQ(diagnostic.created_time_ms, 1'750'034'397'001ULL);
+  EXPECT_EQ(diagnostic.updated_time_ms, 1'750'034'397'076ULL);
+  EXPECT_EQ(diagnostic.batch_data_index, 0U);
+}
+
+TEST(BitgetOrderFeedbackParserTest,
+     ClassifiesFastFillWithoutOrderContinuityLoss) {
+  const ParseOutput output = Parse(R"({
+    "action":"update","arg":{"instType":"UTA","topic":"fast-fill"},
+    "data":{"orderId":"9988","execId":"77"}})");
+
+  EXPECT_EQ(output.result.status, OrderFeedbackParseStatus::kFastFillMessage);
+  EXPECT_FALSE(output.result.continuity_lost);
+  EXPECT_TRUE(output.events.empty());
+  EXPECT_TRUE(output.diagnostic_records.empty());
+}
+
+TEST(BitgetOrderFeedbackParserTest,
+     DiagnosticFieldsDoNotNarrowAuthoritativeOrderDecoding) {
+  std::string payload{kAccepted};
+  Replace(&payload, R"("orderId":"9988")", R"("orderId":9988)");
+  Replace(&payload, R"("createdTime":"1750034397001")",
+          R"("createdTime":"unavailable")");
+  Replace(&payload, R"("ts":1750034397080)", R"("ts":"unavailable")");
+
+  const ParseOutput output = Parse(payload);
+
+  EXPECT_EQ(output.result.status, OrderFeedbackParseStatus::kOk);
+  EXPECT_FALSE(output.result.continuity_lost);
+  ASSERT_EQ(output.events.size(), 1U);
+  EXPECT_EQ(output.events.front().exchange_order_id, 9988U);
+  ASSERT_EQ(output.diagnostic_records.size(), 1U);
+  EXPECT_TRUE(output.diagnostic_records.front().order_id.empty());
+  EXPECT_EQ(output.diagnostic_records.front().created_time_ms, 0U);
+  EXPECT_EQ(output.diagnostic_records.front().exchange_message_time_ms, 0U);
 }
 
 TEST(BitgetOrderFeedbackParserTest, RejectsUnrecoverableEnvelopeShapes) {
@@ -231,6 +304,8 @@ TEST(BitgetOrderFeedbackParserTest, MapsCancelReasonAllowlist) {
         << cancel_reason;
     ASSERT_EQ(output.events.size(), 1U) << cancel_reason;
     EXPECT_EQ(output.events[0].finish_reason, expected) << cancel_reason;
+    ASSERT_EQ(output.diagnostic_records.size(), 1U) << cancel_reason;
+    EXPECT_EQ(output.diagnostic_records[0].cancel_reason, cancel_reason);
     EXPECT_FALSE(output.result.continuity_lost) << cancel_reason;
   }
 }
@@ -322,6 +397,9 @@ TEST(BitgetOrderFeedbackParserTest, ParsesMixedBatch) {
   ASSERT_EQ(output.events.size(), 2U);
   EXPECT_EQ(output.events[0].kind, OrderFeedbackKind::kPartialFilled);
   EXPECT_EQ(output.events[1].kind, OrderFeedbackKind::kFilled);
+  ASSERT_EQ(output.diagnostic_records.size(), 2U);
+  EXPECT_EQ(output.diagnostic_records[0].batch_data_index, 1U);
+  EXPECT_EQ(output.diagnostic_records[1].batch_data_index, 2U);
   EXPECT_EQ(output.stats.foreign_orders_ignored, 1U);
 }
 

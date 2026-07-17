@@ -82,6 +82,13 @@ enum class WriteFlushMode : std::uint8_t {
   kTryFlushOne,
 };
 
+enum class WriteDiagnosticsLifetime : std::uint8_t {
+  kSendCall,
+  // The caller keeps the diagnostics object alive until the write completes or
+  // the session is reset.
+  kUntilWriteComplete,
+};
+
 struct WritePathDiagnostics {
   std::int64_t order_encode_done_ns{0};
   std::int64_t ws_frame_encode_done_ns{0};
@@ -90,6 +97,7 @@ struct WritePathDiagnostics {
   std::int64_t write_some_enter_ns{0};
   std::int64_t write_some_return_ns{0};
   std::int64_t write_complete_ns{0};
+  std::int64_t write_complete_monotonic_ns{0};
   std::int64_t write_some_bytes{0};
   std::int64_t write_complete_bytes{0};
   int write_errno{0};

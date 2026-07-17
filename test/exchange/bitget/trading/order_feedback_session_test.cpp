@@ -95,6 +95,8 @@ constexpr std::string_view kLoginSuccess =
     R"({"event":"login","code":"0","msg":""})";
 constexpr std::string_view kSubscribeSuccess =
     R"({"event":"subscribe","arg":{"instType":"UTA","topic":"order"}})";
+constexpr std::string_view kFastFillSubscribeSuccess =
+    R"({"event":"subscribe","arg":{"instType":"UTA","topic":"fast-fill"}})";
 constexpr std::string_view kAcceptedOrder = R"({
   "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
   "data":[{"category":"usdt-futures","orderId":"9988",
@@ -108,6 +110,14 @@ constexpr std::string_view kMalformedAquilaOrder = R"({
 constexpr std::string_view kForeignOrder = R"({
   "action":"snapshot","arg":{"instType":"UTA","topic":"order"},
   "data":[{"clientOid":"manual-42"}]})";
+constexpr std::string_view kFastFill = R"({
+  "action":"update","arg":{"instType":"UTA","topic":"fast-fill"},
+  "data":{"category":"usdt-futures","symbol":"BTCUSDT",
+    "orderId":"9988","clientOid":"a-72057594037927978",
+    "execId":"77","side":"buy","holdSide":"long",
+    "execPrice":"100.25","execQty":"0.4","tradeScope":"taker",
+    "execTime":"1750034397075","updatedTime":"1750034397076"},
+  "ts":1750034397080})";
 
 void ActivateAndSubscribe(Session* session) {
   session->OnConnectionPhase(websocket::ConnectionPhase::kActive);
@@ -145,6 +155,17 @@ TEST(BitgetOrderFeedbackSessionTest, LoginSubscribeAckMarksReady) {
   EXPECT_TRUE(session.subscribed());
   EXPECT_TRUE(session.Ready());
   EXPECT_EQ(session.stats().subscribe_acks, 1U);
+  EXPECT_FALSE(session.fast_fill_subscribed());
+  EXPECT_EQ(session.stats().fast_fill_subscribe_sent, 1U);
+  EXPECT_EQ(
+      session.last_fast_fill_subscribe_request(),
+      R"({"op":"subscribe","args":[{"instType":"UTA","topic":"fast-fill","symbol":"default"}]})");
+
+  session.Handle(TextView(kFastFillSubscribeSuccess));
+
+  EXPECT_TRUE(session.Ready());
+  EXPECT_TRUE(session.fast_fill_subscribed());
+  EXPECT_EQ(session.stats().fast_fill_subscribe_acks, 1U);
   EXPECT_EQ(session.parser_stats().messages_seen, 0U);
   EXPECT_EQ(session.parser_stats().order_envelopes, 0U);
 }
@@ -322,6 +343,61 @@ TEST(BitgetOrderFeedbackSessionTest, PublishesOrderAndRecordsPublishFailure) {
             websocket::DeliveryResult::kAccepted);
   EXPECT_EQ(publisher.events.size(), 2U);
   EXPECT_EQ(session.stats().publish_failures, 1U);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     FastFillRecordsDiagnosticsWithoutPublishingFeedback) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+  session.Handle(TextView(kFastFillSubscribeSuccess));
+
+  EXPECT_EQ(session.Handle(TextView(kFastFill)),
+            websocket::DeliveryResult::kAccepted);
+
+  EXPECT_TRUE(publisher.events.empty());
+  EXPECT_TRUE(publisher.continuity_reasons.empty());
+  EXPECT_EQ(session.stats().fast_fill_records, 1U);
+  EXPECT_EQ(session.fast_fill_parser_stats().records_emitted, 1U);
+  EXPECT_TRUE(session.Ready());
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     FastFillFailuresDoNotRegressAuthoritativeOrderReady) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+  const websocket::ConnectionError error_before = session.last_error();
+
+  session.Handle(TextView(
+      R"({"event":"error","arg":{"instType":"UTA","topic":"fast-fill"},"code":"30001","msg":"unsupported"})"));
+  EXPECT_TRUE(session.Ready());
+  EXPECT_FALSE(session.fast_fill_subscribed());
+  EXPECT_EQ(session.stats().fast_fill_subscribe_errors, 1U);
+  EXPECT_EQ(session.last_error(), error_before);
+
+  session.Handle(TextView(R"({
+    "action":"update","arg":{"instType":"UTA","topic":"fast-fill"},
+    "data":{"execId":"77"}})"));
+  EXPECT_TRUE(session.Ready());
+  EXPECT_TRUE(publisher.continuity_reasons.empty());
+  EXPECT_EQ(session.stats().fast_fill_parse_errors, 1U);
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
+     FastFillAuthenticationErrorInvalidatesPrivateSession) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+
+  session.Handle(TextView(
+      R"({"event":"error","arg":{"instType":"UTA","topic":"fast-fill"},"code":"30005","msg":"auth invalid"})"));
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_FALSE(session.login_ready());
+  EXPECT_FALSE(session.fast_fill_subscribed());
+  EXPECT_EQ(session.stats().fast_fill_subscribe_errors, 1U);
+  EXPECT_TRUE(session.reconnect_requested_for_test());
 }
 
 TEST(BitgetOrderFeedbackSessionTest,

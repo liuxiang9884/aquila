@@ -110,9 +110,12 @@ void ActivateAndLogin(TestOrderSession<Handler>* session) {
 std::string SuccessResponse(const OrderSendResult& sent, std::string_view topic,
                             std::uint64_t local_order_id,
                             std::uint64_t exchange_order_id) {
+  const std::string creation_time =
+      topic == "place-order" ? R"(,"cTime":"1750034397008")" : "";
   return fmt::format(
-      R"({{"event":"trade","id":"{}","topic":"{}","args":[{{"orderId":"{}","clientOid":"a-{}"}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
-      sent.encoded_request_id, topic, exchange_order_id, local_order_id);
+      R"({{"event":"trade","id":"{}","topic":"{}","args":[{{"orderId":"{}","clientOid":"a-{}"{}}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
+      sent.encoded_request_id, topic, exchange_order_id, local_order_id,
+      creation_time);
 }
 
 std::string ErrorResponse(const OrderSendResult& sent, std::string_view topic,
@@ -308,6 +311,17 @@ TEST(BitgetOrderSessionTest, PlaceAckCorrelatesCachesAndDoesNotAccept) {
   EXPECT_NE(handler.responses[0].connection_id_hash, 0U);
   EXPECT_EQ(session.exchange_order_id_for_local_order(123), 9988U);
   EXPECT_EQ(session.inflight_count(), 0U);
+  const OrderTimingDiagnostic& timing =
+      session.last_order_timing_diagnostic_for_test();
+  EXPECT_EQ(timing.local_order_id, 123U);
+  EXPECT_EQ(timing.request_sequence, sent.request_sequence);
+  EXPECT_GT(timing.request_send_realtime_ns, 0);
+  EXPECT_GT(timing.request_send_monotonic_ns, 0);
+  EXPECT_GT(timing.ack_receive_realtime_ns, 0);
+  EXPECT_GT(timing.ack_receive_monotonic_ns, 0);
+  EXPECT_GE(timing.ack_rtt_monotonic_ns, 0);
+  EXPECT_EQ(timing.place_creation_time_ms, 1'750'034'397'008LL);
+  EXPECT_EQ(timing.exchange_message_time_ms, 1'750'034'397'076LL);
 }
 
 TEST(BitgetOrderSessionTest, CancelAckIsGenericAndKeepsCache) {
