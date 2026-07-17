@@ -83,9 +83,10 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   quiescence 与 stop-and-flat；该时间点后的最终状态必须重新读取进程、guard summary 和 REST，不能从本快照推断。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
-- Instrument catalog 的新运行统一入口是 `config/instruments/usdt_future_universe.csv`。旧小型 catalog
-  已删除；新 run 必须统一使用该文件或 run-specific 冻结副本，不能混用不同 `symbol_id`/metadata。
-  带日期的旧 catalog 只保留给对应历史配置复现，历史 run 仍只使用其归档 catalog。
+- `config/instruments/` 只保留 `usdt_future_universe.csv`；所有 checked-in config、test 和 tool
+  统一引用该文件。新 run 必须使用它或 run-specific 冻结副本，不能混用不同
+  `symbol_id`/metadata；历史 run 仍只使用其 run directory 归档 catalog。2026-06-04 日期化配置
+  因当前 universe 不含 `TON_USDT` 已移除该 pair/订阅，`30symbols` 文件名只保留历史标签。
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。

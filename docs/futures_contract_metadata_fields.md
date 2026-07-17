@@ -51,12 +51,15 @@ Binance 505 行和 Bitget 449 行，共 505 个 canonical symbol。Bitget 行只
 `contract_multiplier`，统一服务 data session、DataReader、gateway smoke、LeadLag、fill probe、
 benchmark 和 report。
 
-旧的小型 catalog 已删除，不保留兼容副本或 symlink。新运行必须使用上述大 catalog 或在 run
-directory 中冻结的同源副本；一个运行内的 producer、consumer、strategy、gateway 和 report
-不得混用不同 catalog。历史 run 继续使用其归档 catalog，不用当前文件重解释旧 `symbol_id`、
-typed data 或 report。仓库中带日期的 Gate/Binance catalog 仅保留给对应历史配置复现，不是新 run
-入口。统一 catalog 不等于 metadata 自动实时刷新，live 启动前仍需执行对应交易所 preflight。
-旧文件名 `usdt_futures_common_gate_binance_20260701.csv` 已重命名，也不应继续作为当前路径引用。
+`config/instruments/` 只保留上述大 catalog；旧的小型及日期化 catalog 均已删除，不保留兼容副本或
+symlink。所有 checked-in config、test 和 tool 统一引用该文件。新运行应在 run directory 中冻结
+同源副本；一个运行内的 producer、consumer、strategy、gateway 和 report 不得混用不同 catalog。
+历史 run 继续使用其 run directory 归档 catalog，不用当前文件重解释旧 `symbol_id`、typed data
+或 report。统一 catalog 不等于 metadata 自动实时刷新，live 启动前仍需执行对应交易所 preflight。
+
+2026-06-04 日期化配置原有的 `TON_USDT` 不在当前 universe；迁移时已从该批次的 Gate/Binance
+订阅和 LeadLag pair 中移除，没有从旧快照复制过时 metadata。该批次文件名仍保留
+`30symbols` 作为历史运行标签，实际 checked-in 配置当前为 29 个 symbol。
 
 ## 统一字段
 
