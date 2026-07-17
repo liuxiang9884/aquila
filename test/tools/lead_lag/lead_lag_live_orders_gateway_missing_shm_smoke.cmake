@@ -29,7 +29,7 @@ set(strategy_config "${temp_dir}/lead_lag_live_orders_gateway_strategy.toml")
 
 file(WRITE "${gate_config}" [=[
 [instrument_catalog]
-file = "config/instruments/usdt_futures.csv"
+file = "config/instruments/usdt_future_universe.csv"
 schema = "aquila.instrument.v1"
 
 [log]
@@ -70,7 +70,7 @@ remove_existing = true
 
 file(WRITE "${binance_config}" [=[
 [instrument_catalog]
-file = "config/instruments/usdt_futures.csv"
+file = "config/instruments/usdt_future_universe.csv"
 schema = "aquila.instrument.v1"
 
 [log]
@@ -109,7 +109,7 @@ remove_existing = true
 
 file(WRITE "${data_reader_config}" [=[
 [instrument_catalog]
-file = "config/instruments/usdt_futures.csv"
+file = "config/instruments/usdt_future_universe.csv"
 schema = "aquila.instrument.v1"
 
 [log]

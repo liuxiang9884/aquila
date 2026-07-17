@@ -1954,7 +1954,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--instrument-catalog",
         type=Path,
-        default=Path("config/instruments/usdt_futures.csv"),
+        default=Path("config/instruments/usdt_future_universe.csv"),
     )
     parser.add_argument("--run-id")
     parser.add_argument("--output", required=True, type=Path)

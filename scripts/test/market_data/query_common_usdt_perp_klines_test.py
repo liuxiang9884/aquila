@@ -15,6 +15,12 @@ import query_common_usdt_perp_klines as klines
 
 
 class QueryCommonUsdtPerpKlinesTest(unittest.TestCase):
+    def test_default_catalog_uses_current_universe(self):
+        self.assertEqual(
+            klines.DEFAULT_CATALOG,
+            Path("config/instruments/usdt_future_universe.csv"),
+        )
+
     def test_load_common_symbols_pairs_gate_and_binance_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             catalog_path = Path(tmp) / "catalog.csv"

@@ -201,7 +201,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--name", default="persistent_md_replay")
     parser.add_argument(
-        "--catalog", type=Path, default=Path("config/instruments/usdt_futures.csv")
+        "--catalog", type=Path, default=Path("config/instruments/usdt_future_universe.csv")
     )
     parser.add_argument(
         "--feed", choices=["book_ticker", "trade"], default="book_ticker"

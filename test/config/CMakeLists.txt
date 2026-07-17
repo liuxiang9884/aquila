@@ -15,6 +15,31 @@ target_compile_definitions(websocket_config_test
 add_test(NAME websocket_config_test
          COMMAND websocket_config_test)
 
+add_test(NAME instrument_catalog_policy_test
+         COMMAND bash -c [=[
+root="$1"
+universe="${root}/config/instruments/usdt_future_universe.csv"
+legacy="${root}/config/instruments/usdt_""futures.csv"
+legacy_pattern='config/instruments/usdt_''futures\.csv'
+
+if [[ ! -f "${universe}" ]]; then
+  printf 'missing universe instrument catalog: %s\n' "${universe}" >&2
+  exit 1
+fi
+
+if [[ -e "${legacy}" ]]; then
+  printf 'legacy instrument catalog must not exist: %s\n' "${legacy}" >&2
+  exit 1
+fi
+
+if git -C "${root}" grep -n -E "${legacy_pattern}" -- \
+    . ':!reports/**' ':!docs/plans/**'; then
+  printf 'legacy instrument catalog references remain\n' >&2
+  exit 1
+fi
+]=] _
+         ${PROJECT_SOURCE_DIR})
+
 add_executable(data_session_config_test
     data_session_config_test.cpp
 )

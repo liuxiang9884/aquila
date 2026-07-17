@@ -20,7 +20,7 @@ std::filesystem::path SourcePath(std::string_view path) {
 }
 
 aquila::config::InstrumentCatalog LoadCatalog(
-    std::string_view path = "config/instruments/usdt_futures.csv") {
+    std::string_view path = "config/instruments/usdt_future_universe.csv") {
   auto result = aquila::config::LoadInstrumentCatalogFromCsv(SourcePath(path));
   EXPECT_TRUE(result.ok) << result.error;
   return std::move(result.value);
@@ -37,7 +37,7 @@ aquila::config::InstrumentCatalog CatalogWithLagQuantityMetadata(
     std::optional<std::int32_t> quantity_decimal_places) {
   aquila::config::InstrumentCatalog catalog;
   catalog.Add(aquila::config::InstrumentInfo{
-      .symbol_id = 0,
+      .symbol_id = 93,
       .exchange = aquila::Exchange::kBinance,
       .symbol = "BTC_USDT",
       .exchange_symbol = "BTCUSDT",
@@ -56,7 +56,7 @@ aquila::config::InstrumentCatalog CatalogWithLagQuantityMetadata(
       .notional_multiplier = 1.0,
   });
   catalog.Add(aquila::config::InstrumentInfo{
-      .symbol_id = 0,
+      .symbol_id = 93,
       .exchange = aquila::Exchange::kGate,
       .symbol = "BTC_USDT",
       .exchange_symbol = "BTC_USDT",
@@ -94,7 +94,7 @@ version = "1.0"
 
 [[lead_lag.pairs]]
 symbol = "BTC_USDT"
-symbol_id = 0
+symbol_id = 93
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -154,7 +154,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
 
   const leadlag::PairConfig& pair = config.pairs.front();
   EXPECT_EQ(pair.symbol, "BTC_USDT");
-  EXPECT_EQ(pair.symbol_id, 0);
+  EXPECT_EQ(pair.symbol_id, 93);
   EXPECT_EQ(pair.lead_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(pair.lag_exchange, aquila::Exchange::kGate);
   EXPECT_DOUBLE_EQ(pair.lag_taker_fee, 0.00016);
@@ -203,7 +203,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_EQ(pair.capacity.spread_window_capacity, 16'384U);
   EXPECT_EQ(pair.capacity.drift_guard_window_capacity, 131'072U);
 
-  EXPECT_EQ(pair.lag_instrument.symbol_id, 0);
+  EXPECT_EQ(pair.lag_instrument.symbol_id, 93);
   EXPECT_EQ(pair.lag_instrument.exchange, aquila::Exchange::kGate);
   EXPECT_EQ(pair.lag_instrument.exchange_symbol, "BTC_USDT");
   EXPECT_DOUBLE_EQ(pair.lag_instrument.price_tick, 0.1);
@@ -211,7 +211,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
   EXPECT_DOUBLE_EQ(pair.lag_instrument.quantity_step, 1.0);
   EXPECT_EQ(pair.lag_instrument.quantity_decimal_places, 0);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.min_quantity, 1.0);
-  EXPECT_DOUBLE_EQ(pair.lag_instrument.max_quantity, 100000.0);
+  EXPECT_DOUBLE_EQ(pair.lag_instrument.max_quantity, 12000000.0);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.notional_multiplier, 0.0001);
   EXPECT_DOUBLE_EQ(pair.lag_instrument.lag_taker_fee, 0.00016);
 }
@@ -250,21 +250,21 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {
   ASSERT_EQ(config.pairs.size(), 8U);
 
   EXPECT_EQ(config.pairs[0].symbol, "PROVE_USDT");
-  EXPECT_EQ(config.pairs[0].symbol_id, 4);
+  EXPECT_EQ(config.pairs[0].symbol_id, 338);
   EXPECT_EQ(config.pairs[1].symbol, "ZEC_USDT");
-  EXPECT_EQ(config.pairs[1].symbol_id, 6);
+  EXPECT_EQ(config.pairs[1].symbol_id, 480);
   EXPECT_EQ(config.pairs[2].symbol, "ETC_USDT");
-  EXPECT_EQ(config.pairs[2].symbol_id, 8);
+  EXPECT_EQ(config.pairs[2].symbol_id, 160);
   EXPECT_EQ(config.pairs[3].symbol, "DASH_USDT");
-  EXPECT_EQ(config.pairs[3].symbol_id, 9);
+  EXPECT_EQ(config.pairs[3].symbol_id, 133);
   EXPECT_EQ(config.pairs[4].symbol, "SUI_USDT");
-  EXPECT_EQ(config.pairs[4].symbol_id, 11);
+  EXPECT_EQ(config.pairs[4].symbol_id, 404);
   EXPECT_EQ(config.pairs[5].symbol, "INJ_USDT");
-  EXPECT_EQ(config.pairs[5].symbol_id, 12);
+  EXPECT_EQ(config.pairs[5].symbol_id, 220);
   EXPECT_EQ(config.pairs[6].symbol, "ENA_USDT");
-  EXPECT_EQ(config.pairs[6].symbol_id, 13);
+  EXPECT_EQ(config.pairs[6].symbol_id, 152);
   EXPECT_EQ(config.pairs[7].symbol, "BRETT_USDT");
-  EXPECT_EQ(config.pairs[7].symbol_id, 14);
+  EXPECT_EQ(config.pairs[7].symbol_id, 87);
 }
 
 TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
@@ -279,13 +279,13 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
   EXPECT_EQ(config.risk.max_holding_position, 0);
   ASSERT_EQ(config.pairs.size(), 12U);
   EXPECT_EQ(config.pairs[10].symbol, "BRETT_USDT");
-  EXPECT_EQ(config.pairs[10].symbol_id, 14);
+  EXPECT_EQ(config.pairs[10].symbol_id, 87);
   EXPECT_EQ(config.pairs[11].symbol, "ETH_USDT");
-  EXPECT_EQ(config.pairs[11].symbol_id, 1);
+  EXPECT_EQ(config.pairs[11].symbol_id, 163);
   EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.price_tick, 0.01);
   EXPECT_EQ(config.pairs[11].lag_instrument.price_decimal_places, 2);
-  EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.quantity_step, 1.0);
-  EXPECT_EQ(config.pairs[11].lag_instrument.quantity_decimal_places, 0);
+  EXPECT_DOUBLE_EQ(config.pairs[11].lag_instrument.quantity_step, 0.1);
+  EXPECT_EQ(config.pairs[11].lag_instrument.quantity_decimal_places, 1);
   for (std::size_t index = 0; index < config.pairs.size(); ++index) {
     EXPECT_EQ(config.pairs[index].execute.open_slippage_ticks, 2U)
         << config.pairs[index].symbol;
@@ -310,7 +310,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInLabUsdtLiveRiskLimits) {
 
   const leadlag::PairConfig& pair = config.pairs[0];
   EXPECT_EQ(pair.symbol, "LAB_USDT");
-  EXPECT_EQ(pair.symbol_id, 15);
+  EXPECT_EQ(pair.symbol_id, 247);
   EXPECT_EQ(pair.lead_exchange, aquila::Exchange::kBinance);
   EXPECT_EQ(pair.lag_exchange, aquila::Exchange::kGate);
   EXPECT_DOUBLE_EQ(pair.execute.open_notional, 200.0);
@@ -878,7 +878,7 @@ version = "1.0"
 
 [[lead_lag.pairs]]
 symbol = "BTC_USDT"
-symbol_id = 0
+symbol_id = 93
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -914,7 +914,7 @@ stats_window = "30s"
 
 [[lead_lag.pairs]]
 symbol = "BTC_USDT"
-symbol_id = 0
+symbol_id = 93
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -1016,7 +1016,7 @@ version = "1.0"
 
 [[lead_lag.pairs]]
 symbol = "BTC_USDT"
-symbol_id = 0
+symbol_id = 93
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
