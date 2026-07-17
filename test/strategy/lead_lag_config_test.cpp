@@ -1,8 +1,10 @@
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
@@ -265,6 +267,43 @@ TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[6].symbol_id, 13);
   EXPECT_EQ(config.pairs[7].symbol, "BRETT_USDT");
   EXPECT_EQ(config.pairs[7].symbol_id, 14);
+}
+
+TEST(LeadLagConfigTest, LoadsBitgetRequestedTop30AccountTakerFees) {
+  const aquila::config::InstrumentCatalog catalog =
+      LoadCatalog("config/instruments/usdt_future_universe.csv");
+
+  const auto result = LoadCheckedInConfig(
+      "config/strategies/"
+      "lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml",
+      catalog);
+
+  ASSERT_TRUE(result.ok) << result.error;
+  const leadlag::Config& config = result.value;
+  constexpr std::array<std::pair<std::string_view, double>, 30> kExpectedFees{{
+      {"SKHY_USDT", 0.000065},    {"SNDK_USDT", 0.000065},
+      {"SKHYNIX_USDT", 0.000065}, {"SOXL_USDT", 0.000065},
+      {"MU_USDT", 0.000065},      {"HYPE_USDT", 0.00015},
+      {"ZEC_USDT", 0.0002},       {"KORU_USDT", 0.000065},
+      {"SAMSUNG_USDT", 0.000065}, {"DRAM_USDT", 0.000065},
+      {"ONDO_USDT", 0.00015},     {"WLD_USDT", 0.0002},
+      {"US_USDT", 0.0002},        {"XLM_USDT", 0.0002},
+      {"TAO_USDT", 0.00015},      {"NEAR_USDT", 0.0002},
+      {"DEXE_USDT", 0.0002},      {"KAITO_USDT", 0.0002},
+      {"1000XEC_USDT", 0.0002},   {"BILL_USDT", 0.0002},
+      {"0G_USDT", 0.0002},        {"MRVL_USDT", 0.000065},
+      {"ZBT_USDT", 0.0002},       {"BCH_USDT", 0.0002},
+      {"ENA_USDT", 0.0002},       {"ALLO_USDT", 0.0002},
+      {"BSB_USDT", 0.0002},       {"HOME_USDT", 0.0002},
+      {"EWY_USDT", 0.000065},     {"SKL_USDT", 0.0002},
+  }};
+
+  ASSERT_EQ(config.pairs.size(), kExpectedFees.size());
+  for (std::size_t index = 0; index < kExpectedFees.size(); ++index) {
+    EXPECT_EQ(config.pairs[index].symbol, kExpectedFees[index].first);
+    EXPECT_DOUBLE_EQ(config.pairs[index].lag_taker_fee,
+                     kExpectedFees[index].second);
+  }
 }
 
 TEST(LeadLagConfigTest, LoadsCheckedInRequested12SymbolsRiskLimits) {
