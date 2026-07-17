@@ -84,7 +84,9 @@ class CriticalSession {
   [[gnu::noinline]] SendStatus SendText(
       std::span<const std::byte> payload,
       WriteFlushMode flush_mode = WriteFlushMode::kQueued,
-      WritePathDiagnostics* diagnostics = nullptr) noexcept {
+      WritePathDiagnostics* diagnostics = nullptr,
+      WriteDiagnosticsLifetime diagnostics_lifetime =
+          WriteDiagnosticsLifetime::kSendCall) noexcept {
     PreparedWrite* write = TryAcquirePreparedWrite();
     if (write == nullptr) {
       ReleasePendingSocketTimestampingProbe();
@@ -113,7 +115,8 @@ class CriticalSession {
       ReleasePendingSocketTimestampingProbe();
       prepared_write_arena_.Release(write);
     } else if (write->encoded_size != 0 &&
-               write->write_offset < write->encoded_size) {
+               write->write_offset < write->encoded_size &&
+               diagnostics_lifetime == WriteDiagnosticsLifetime::kSendCall) {
       write->diagnostics = nullptr;
     }
     return status;
@@ -510,6 +513,8 @@ class CriticalSession {
     }
     WritePathDiagnostics& diagnostics = *write->diagnostics;
     diagnostics.write_complete_ns = RealtimeNowNsInt64();
+    diagnostics.write_complete_monotonic_ns =
+        static_cast<std::int64_t>(NowNs(ClockSource::kMonotonic));
     diagnostics.write_complete_bytes = write->encoded_size;
     diagnostics.pending_write_count_after = pending_count_after;
   }
