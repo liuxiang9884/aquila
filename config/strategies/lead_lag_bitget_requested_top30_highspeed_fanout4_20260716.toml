@@ -10,7 +10,7 @@ symbol = "SKHY_USDT"
 symbol_id = 502
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -67,7 +67,7 @@ symbol = "SNDK_USDT"
 symbol_id = 503
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -124,7 +124,7 @@ symbol = "SKHYNIX_USDT"
 symbol_id = 501
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -181,7 +181,7 @@ symbol = "SOXL_USDT"
 symbol_id = 504
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -238,7 +238,7 @@ symbol = "MU_USDT"
 symbol_id = 499
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -352,7 +352,7 @@ symbol = "ZEC_USDT"
 symbol_id = 480
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -409,7 +409,7 @@ symbol = "KORU_USDT"
 symbol_id = 497
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -466,7 +466,7 @@ symbol = "SAMSUNG_USDT"
 symbol_id = 500
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -523,7 +523,7 @@ symbol = "DRAM_USDT"
 symbol_id = 495
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -637,7 +637,7 @@ symbol = "WLD_USDT"
 symbol_id = 460
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -694,7 +694,7 @@ symbol = "US_USDT"
 symbol_id = 445
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -751,7 +751,7 @@ symbol = "XLM_USDT"
 symbol_id = 467
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -865,7 +865,7 @@ symbol = "NEAR_USDT"
 symbol_id = 293
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -922,7 +922,7 @@ symbol = "DEXE_USDT"
 symbol_id = 135
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -979,7 +979,7 @@ symbol = "KAITO_USDT"
 symbol_id = 236
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1036,7 +1036,7 @@ symbol = "1000XEC_USDT"
 symbol_id = 494
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1093,7 +1093,7 @@ symbol = "BILL_USDT"
 symbol_id = 77
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1150,7 +1150,7 @@ symbol = "0G_USDT"
 symbol_id = 0
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1207,7 +1207,7 @@ symbol = "MRVL_USDT"
 symbol_id = 498
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1264,7 +1264,7 @@ symbol = "ZBT_USDT"
 symbol_id = 479
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1321,7 +1321,7 @@ symbol = "BCH_USDT"
 symbol_id = 70
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1378,7 +1378,7 @@ symbol = "ENA_USDT"
 symbol_id = 152
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1435,7 +1435,7 @@ symbol = "ALLO_USDT"
 symbol_id = 25
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1492,7 +1492,7 @@ symbol = "BSB_USDT"
 symbol_id = 91
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1549,7 +1549,7 @@ symbol = "HOME_USDT"
 symbol_id = 207
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1606,7 +1606,7 @@ symbol = "EWY_USDT"
 symbol_id = 496
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.000065
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
@@ -1663,7 +1663,7 @@ symbol = "SKL_USDT"
 symbol_id = 376
 lead_exchange = "binance"
 lag_exchange = "bitget"
-lag_taker_fee = 0.00015
+lag_taker_fee = 0.0002
 max_lead_freshness_ms = 3
 max_lag_freshness_ms = 500
 
