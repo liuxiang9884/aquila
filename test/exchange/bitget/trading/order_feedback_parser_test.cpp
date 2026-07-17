@@ -304,6 +304,8 @@ TEST(BitgetOrderFeedbackParserTest, MapsCancelReasonAllowlist) {
         << cancel_reason;
     ASSERT_EQ(output.events.size(), 1U) << cancel_reason;
     EXPECT_EQ(output.events[0].finish_reason, expected) << cancel_reason;
+    ASSERT_EQ(output.diagnostic_records.size(), 1U) << cancel_reason;
+    EXPECT_EQ(output.diagnostic_records[0].cancel_reason, cancel_reason);
     EXPECT_FALSE(output.result.continuity_lost) << cancel_reason;
   }
 }

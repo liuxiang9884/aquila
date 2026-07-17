@@ -385,6 +385,22 @@ TEST(BitgetOrderFeedbackSessionTest,
 }
 
 TEST(BitgetOrderFeedbackSessionTest,
+     FastFillAuthenticationErrorInvalidatesPrivateSession) {
+  RecordingPublisher publisher;
+  Session session = MakeSession(publisher);
+  ActivateAndSubscribe(&session);
+
+  session.Handle(TextView(
+      R"({"event":"error","arg":{"instType":"UTA","topic":"fast-fill"},"code":"30005","msg":"auth invalid"})"));
+
+  EXPECT_FALSE(session.Ready());
+  EXPECT_FALSE(session.login_ready());
+  EXPECT_FALSE(session.fast_fill_subscribed());
+  EXPECT_EQ(session.stats().fast_fill_subscribe_errors, 1U);
+  EXPECT_TRUE(session.reconnect_requested_for_test());
+}
+
+TEST(BitgetOrderFeedbackSessionTest,
      RetriesPendingContinuityAfterPublishFailure) {
   RecordingPublisher publisher;
   Session session = MakeSession(publisher);
