@@ -18,6 +18,7 @@
 #include "core/websocket/runtime_clock.h"
 #include "core/websocket/types.h"
 #include "core/websocket/websocket_client.h"
+#include "exchange/bitget/trading/fast_fill_parser.h"
 #include "exchange/bitget/trading/operation_response_parser.h"
 #include "exchange/bitget/trading/order_feedback_parser.h"
 #include "exchange/bitget/trading/order_request_encoder.h"
@@ -39,6 +40,12 @@ struct OrderFeedbackSessionStats {
   std::uint64_t subscribe_send_failures{0};
   std::uint64_t subscribe_acks{0};
   std::uint64_t subscribe_errors{0};
+  std::uint64_t fast_fill_subscribe_sent{0};
+  std::uint64_t fast_fill_subscribe_send_failures{0};
+  std::uint64_t fast_fill_subscribe_acks{0};
+  std::uint64_t fast_fill_subscribe_errors{0};
+  std::uint64_t fast_fill_records{0};
+  std::uint64_t fast_fill_parse_errors{0};
   std::uint64_t pings_sent{0};
   std::uint64_t pongs_received{0};
   std::uint64_t heartbeat_timeouts{0};
@@ -96,6 +103,24 @@ class OrderFeedbackSessionDiagnostics {
   void RecordSubscribeError() noexcept {
     ++stats_.subscribe_errors;
   }
+  void RecordFastFillSubscribeSent() noexcept {
+    ++stats_.fast_fill_subscribe_sent;
+  }
+  void RecordFastFillSubscribeSendFailure() noexcept {
+    ++stats_.fast_fill_subscribe_send_failures;
+  }
+  void RecordFastFillSubscribeAck() noexcept {
+    ++stats_.fast_fill_subscribe_acks;
+  }
+  void RecordFastFillSubscribeError() noexcept {
+    ++stats_.fast_fill_subscribe_errors;
+  }
+  void RecordFastFillRecord() noexcept {
+    ++stats_.fast_fill_records;
+  }
+  void RecordFastFillParseError() noexcept {
+    ++stats_.fast_fill_parse_errors;
+  }
   void RecordPingSent() noexcept {
     ++stats_.pings_sent;
   }
@@ -146,6 +171,8 @@ namespace detail {
 
 inline constexpr std::string_view kOrderFeedbackSubscribeRequest =
     R"({"op":"subscribe","args":[{"instType":"UTA","topic":"order"}]})";
+inline constexpr std::string_view kFastFillSubscribeRequest =
+    R"({"op":"subscribe","args":[{"instType":"UTA","topic":"fast-fill","symbol":"default"}]})";
 
 enum class OrderFeedbackControlEvent : std::uint8_t {
   kUnknown,
@@ -157,6 +184,7 @@ enum class OrderFeedbackControlEvent : std::uint8_t {
 struct OrderFeedbackControlEnvelope {
   OrderFeedbackControlEvent event{OrderFeedbackControlEvent::kUnknown};
   bool arg_is_order_topic{false};
+  bool arg_is_fast_fill_topic{false};
   bool has_code{false};
   std::uint32_t code{0};
 };
@@ -195,9 +223,11 @@ struct OrderFeedbackControlEnvelope {
   if (FindSimdjsonObject(root, "arg", &arg)) {
     std::string_view inst_type;
     std::string_view topic;
-    envelope.arg_is_order_topic =
-        ReadStringField(arg, "instType", &inst_type) && inst_type == "UTA" &&
-        ReadStringField(arg, "topic", &topic) && topic == "order";
+    if (ReadStringField(arg, "instType", &inst_type) && inst_type == "UTA" &&
+        ReadStringField(arg, "topic", &topic)) {
+      envelope.arg_is_order_topic = topic == "order";
+      envelope.arg_is_fast_fill_topic = topic == "fast-fill";
+    }
   }
   if (FindSimdjsonField(root, "code", &value)) {
     std::uint64_t code = 0;
@@ -299,6 +329,7 @@ class OrderFeedbackSession {
       active_ = true;
       ever_active_.store(true, std::memory_order_release);
       ++connection_generation_;
+      local_message_sequence_ = 0;
       ResetAuthenticatedState();
       decode_continuity_lost_published_ = false;
       application_awaiting_pong_ = false;
@@ -345,6 +376,9 @@ class OrderFeedbackSession {
   [[nodiscard]] bool subscribed() const noexcept {
     return subscribed_;
   }
+  [[nodiscard]] bool fast_fill_subscribed() const noexcept {
+    return fast_fill_subscribed_;
+  }
   [[nodiscard]] bool ever_active() const noexcept {
     return ever_active_.load(std::memory_order_acquire);
   }
@@ -366,11 +400,19 @@ class OrderFeedbackSession {
   [[nodiscard]] const OrderFeedbackParserStats& parser_stats() const noexcept {
     return parser_stats_;
   }
+  [[nodiscard]] const FastFillParserStats& fast_fill_parser_stats()
+      const noexcept {
+    return fast_fill_parser_stats_;
+  }
   [[nodiscard]] std::string_view last_login_request() const noexcept {
     return last_login_request_;
   }
   [[nodiscard]] std::string_view last_subscribe_request() const noexcept {
     return last_subscribe_request_;
+  }
+  [[nodiscard]] std::string_view last_fast_fill_subscribe_request()
+      const noexcept {
+    return last_fast_fill_subscribe_request_;
   }
 
 #if defined(AQUILA_BITGET_ORDER_FEEDBACK_SESSION_ENABLE_TEST_HOOKS)
@@ -422,6 +464,8 @@ class OrderFeedbackSession {
     login_sent_ = false;
     subscribe_sent_ = false;
     subscribed_ = false;
+    fast_fill_subscribe_sent_ = false;
+    fast_fill_subscribed_ = false;
   }
 
   websocket::DeliveryResult HandleText(
@@ -433,6 +477,9 @@ class OrderFeedbackSession {
         reinterpret_cast<const char*>(view.payload.data()),
         view.payload.size()};
     const std::int64_t local_receive_ns = RealtimeNowNs();
+    const std::uint64_t local_receive_monotonic_ns =
+        websocket::NowNs(websocket::ClockSource::kMonotonic);
+    const std::uint64_t local_message_sequence = ++local_message_sequence_;
     if (payload == "pong") {
       const bool was_awaiting_pong = application_awaiting_pong_;
       application_awaiting_pong_ = false;
@@ -446,8 +493,16 @@ class OrderFeedbackSession {
 
     const OrderFeedbackParseResult parsed = ParseBitgetOrderFeedbackMessage(
         payload, view.readable_tail_bytes, local_receive_ns, feedback_parser_,
-        parser_stats_, [this](const OrderFeedbackEvent& event) noexcept {
+        parser_stats_,
+        [this](const OrderFeedbackEvent& event) noexcept {
           return PublishEvent(event);
+        },
+        [this, local_receive_ns, local_receive_monotonic_ns,
+         local_message_sequence](
+            const OrderFeedbackDiagnosticRecord& record) noexcept {
+          LogOrderProtocolUpdate(record, local_receive_ns,
+                                 local_receive_monotonic_ns,
+                                 local_message_sequence);
         });
     if (parsed.status == OrderFeedbackParseStatus::kControlMessage) {
       detail::OrderFeedbackControlEnvelope control;
@@ -456,6 +511,27 @@ class OrderFeedbackSession {
         HandleControl(payload, view.readable_tail_bytes, control);
       } else if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordParseError();
+      }
+      return websocket::DeliveryResult::kAccepted;
+    }
+    if (parsed.status == OrderFeedbackParseStatus::kFastFillMessage) {
+      const FastFillParseResult fast_fill = ParseBitgetFastFillMessage(
+          payload, view.readable_tail_bytes, fast_fill_parser_,
+          fast_fill_parser_stats_,
+          [this, local_receive_ns, local_receive_monotonic_ns,
+           local_message_sequence](const FastFillRecord& record) noexcept {
+            if constexpr (DiagnosticsEnabled) {
+              diagnostics_.RecordFastFillRecord();
+            }
+            LogFastFillUpdate(record, local_receive_ns,
+                              local_receive_monotonic_ns,
+                              local_message_sequence);
+          });
+      if (fast_fill.status != FastFillParseStatus::kOk) {
+        if constexpr (DiagnosticsEnabled) {
+          diagnostics_.RecordFastFillParseError();
+        }
+        LogFastFillValidationError(fast_fill, local_message_sequence);
       }
       return websocket::DeliveryResult::kAccepted;
     }
@@ -488,7 +564,7 @@ class OrderFeedbackSession {
         HandleSubscribeAck(control);
         return;
       case detail::OrderFeedbackControlEvent::kError:
-        if (control.arg_is_order_topic) {
+        if (control.arg_is_order_topic || control.arg_is_fast_fill_topic) {
           HandleSubscribeError(control);
         } else {
           HandleLoginOperation(payload, readable_tail_bytes);
@@ -570,6 +646,10 @@ class OrderFeedbackSession {
 
   void HandleSubscribeAck(
       const detail::OrderFeedbackControlEnvelope& control) noexcept {
+    if (control.arg_is_fast_fill_topic) {
+      HandleFastFillSubscribeAck(control);
+      return;
+    }
     if (!control.arg_is_order_topic || !active_ || !login_ready_ ||
         !subscribe_sent_) {
       if constexpr (DiagnosticsEnabled) {
@@ -587,10 +667,15 @@ class OrderFeedbackSession {
       diagnostics_.RecordSubscribeAck();
     }
     LogSubscribe(true, 0);
+    (void)SendFastFillSubscribe();
   }
 
   void HandleSubscribeError(
       const detail::OrderFeedbackControlEnvelope& control) noexcept {
+    if (control.arg_is_fast_fill_topic) {
+      HandleFastFillSubscribeError(control);
+      return;
+    }
     if (!IsAuthenticatedSessionInvalidatingError(control.code) &&
         (!control.arg_is_order_topic || !active_ || !login_ready_ ||
          !subscribe_sent_)) {
@@ -605,6 +690,47 @@ class OrderFeedbackSession {
       diagnostics_.RecordSubscribeError();
     }
     LogSubscribe(false, control.code);
+    if (IsAuthenticatedSessionInvalidatingError(control.code)) {
+      ResetAuthenticatedState();
+      RequestProtocolReconnect();
+    }
+  }
+
+  void HandleFastFillSubscribeAck(
+      const detail::OrderFeedbackControlEnvelope& control) noexcept {
+    if (!active_ || !login_ready_ || !fast_fill_subscribe_sent_) {
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordIgnoredMessage();
+      }
+      return;
+    }
+    if (control.has_code && control.code != 0) {
+      HandleFastFillSubscribeError(control);
+      return;
+    }
+    fast_fill_subscribe_sent_ = false;
+    fast_fill_subscribed_ = true;
+    if constexpr (DiagnosticsEnabled) {
+      diagnostics_.RecordFastFillSubscribeAck();
+    }
+    LogFastFillSubscribe(true, 0);
+  }
+
+  void HandleFastFillSubscribeError(
+      const detail::OrderFeedbackControlEnvelope& control) noexcept {
+    if (!IsAuthenticatedSessionInvalidatingError(control.code) &&
+        (!active_ || !login_ready_ || !fast_fill_subscribe_sent_)) {
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordIgnoredMessage();
+      }
+      return;
+    }
+    fast_fill_subscribe_sent_ = false;
+    fast_fill_subscribed_ = false;
+    if constexpr (DiagnosticsEnabled) {
+      diagnostics_.RecordFastFillSubscribeError();
+    }
+    LogFastFillSubscribe(false, control.code);
     if (IsAuthenticatedSessionInvalidatingError(control.code)) {
       ResetAuthenticatedState();
       RequestProtocolReconnect();
@@ -651,6 +777,26 @@ class OrderFeedbackSession {
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordSubscribeSendFailure();
     }
+    return status;
+  }
+
+  [[nodiscard]] OrderSendStatus SendFastFillSubscribe() noexcept {
+    if (!subscribed_ || fast_fill_subscribe_sent_ || fast_fill_subscribed_) {
+      return OrderSendStatus::kWriteUnavailable;
+    }
+    last_fast_fill_subscribe_request_.assign(detail::kFastFillSubscribeRequest);
+    const OrderSendStatus status = SendText(last_fast_fill_subscribe_request_);
+    if (status == OrderSendStatus::kOk) {
+      fast_fill_subscribe_sent_ = true;
+      if constexpr (DiagnosticsEnabled) {
+        diagnostics_.RecordFastFillSubscribeSent();
+      }
+      return status;
+    }
+    if constexpr (DiagnosticsEnabled) {
+      diagnostics_.RecordFastFillSubscribeSendFailure();
+    }
+    LogFastFillSubscribe(false, 0);
     return status;
   }
 
@@ -810,6 +956,58 @@ class OrderFeedbackSession {
     }
   }
 
+  static void LogFastFillSubscribe(bool accepted, std::uint32_t code) noexcept {
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_INFO("bitget_fast_fill_subscribe accepted={} code={}",
+                accepted ? "true" : "false", code);
+    }
+  }
+
+  void LogOrderProtocolUpdate(
+      const OrderFeedbackDiagnosticRecord& record,
+      std::int64_t local_receive_realtime_ns,
+      std::uint64_t local_receive_monotonic_ns,
+      std::uint64_t local_message_sequence) const noexcept {
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_INFO(
+          "bitget_order_feedback_protocol_update topic=order "
+          "connection_generation={} local_message_sequence={} "
+          "batch_data_index={} client_oid={} order_id={} order_status={} "
+          "cancel_reason={} exchange_message_time_ms={} created_time_ms={} "
+          "updated_time_ms={} local_receive_realtime_ns={} "
+          "local_receive_monotonic_ns={}",
+          connection_generation_, local_message_sequence,
+          record.batch_data_index, record.client_oid, record.order_id,
+          record.order_status, record.cancel_reason,
+          record.exchange_message_time_ms, record.created_time_ms,
+          record.updated_time_ms, local_receive_realtime_ns,
+          local_receive_monotonic_ns);
+    }
+  }
+
+  void LogFastFillUpdate(const FastFillRecord& record,
+                         std::int64_t local_receive_realtime_ns,
+                         std::uint64_t local_receive_monotonic_ns,
+                         std::uint64_t local_message_sequence) const noexcept {
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_INFO(
+          "bitget_fast_fill_raw_update topic=fast-fill "
+          "connection_generation={} local_message_sequence={} "
+          "batch_data_index=0 category={} symbol={} order_id={} "
+          "client_oid={} exec_id={} side={} hold_side={} exec_price={} "
+          "exec_quantity={} trade_scope={} exchange_message_time_ms={} "
+          "exec_time_ms={} updated_time_ms={} "
+          "local_receive_realtime_ns={} local_receive_monotonic_ns={}",
+          connection_generation_, local_message_sequence, record.category,
+          record.symbol, record.order_id, record.client_oid, record.exec_id,
+          record.side, record.hold_side, record.exec_price,
+          record.exec_quantity, record.trade_scope,
+          record.exchange_message_time_ms, record.exec_time_ms,
+          record.updated_time_ms, local_receive_realtime_ns,
+          local_receive_monotonic_ns);
+    }
+  }
+
   static void LogRawUpdate(const OrderFeedbackEvent& event, bool ok) noexcept {
     if (::nova::kLogManager.logger() != nullptr) {
       NOVA_INFO(
@@ -837,6 +1035,18 @@ class OrderFeedbackSession {
     }
   }
 
+  void LogFastFillValidationError(
+      const FastFillParseResult& result,
+      std::uint64_t local_message_sequence) const noexcept {
+    if (::nova::kLogManager.logger() != nullptr) {
+      NOVA_WARNING(
+          "bitget_fast_fill_validation_error status={} records_emitted={} "
+          "connection_generation={} local_message_sequence={}",
+          magic_enum::enum_name(result.status), result.records_emitted,
+          connection_generation_, local_message_sequence);
+    }
+  }
+
   websocket::ConnectionConfig connection_;
   LoginCredentials credentials_;
   Publisher& publisher_;
@@ -845,12 +1055,16 @@ class OrderFeedbackSession {
   simdjson::ondemand::parser control_parser_;
   simdjson::ondemand::parser operation_parser_;
   simdjson::ondemand::parser feedback_parser_;
+  simdjson::ondemand::parser fast_fill_parser_;
   OrderFeedbackParserStats parser_stats_{};
+  FastFillParserStats fast_fill_parser_stats_{};
   [[no_unique_address]] Diagnostics diagnostics_{};
   std::string last_login_request_;
   std::string last_subscribe_request_;
+  std::string last_fast_fill_subscribe_request_;
   std::atomic<bool> ever_active_{false};
   std::uint64_t connection_generation_{0};
+  std::uint64_t local_message_sequence_{0};
   std::uint64_t application_heartbeat_interval_ns_{0};
   std::uint64_t application_heartbeat_timeout_ns_{0};
   std::uint64_t application_last_ping_ns_{0};
@@ -860,6 +1074,8 @@ class OrderFeedbackSession {
   bool login_sent_{false};
   bool subscribe_sent_{false};
   bool subscribed_{false};
+  bool fast_fill_subscribe_sent_{false};
+  bool fast_fill_subscribed_{false};
   bool application_awaiting_pong_{false};
   bool decode_continuity_lost_published_{false};
   bool continuity_flush_pending_{false};

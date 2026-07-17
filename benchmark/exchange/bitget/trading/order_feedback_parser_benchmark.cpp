@@ -85,6 +85,35 @@ void BenchmarkAccepted(benchmark::State& state) {
   RunParserBenchmark(state, kAccepted);
 }
 
+void BenchmarkAcceptedWithDiagnosticFields(benchmark::State& state) {
+  simdjson::padded_string padded(kAccepted);
+  const std::string_view view(padded.data(), padded.size());
+  simdjson::ondemand::parser parser;
+  OrderFeedbackEvent event{};
+  OrderFeedbackDiagnosticRecord diagnostic{};
+  const auto operation = [&] {
+    OrderFeedbackParserStats stats{};
+    const OrderFeedbackParseResult result = ParseBitgetOrderFeedbackMessage(
+        view, simdjson::SIMDJSON_PADDING, kLocalReceiveNs, parser, stats,
+        [&event](const OrderFeedbackEvent& parsed) noexcept {
+          event = parsed;
+          return true;
+        },
+        [&diagnostic](const OrderFeedbackDiagnosticRecord& parsed) noexcept {
+          diagnostic = parsed;
+        });
+    OrderFeedbackParseStatus status = result.status;
+    benchmark::DoNotOptimize(status);
+    benchmark::DoNotOptimize(event.local_order_id);
+    benchmark::DoNotOptimize(diagnostic.updated_time_ms);
+  };
+
+  for (auto _ : state) {
+    operation();
+  }
+  RecordPercentiles(state, operation);
+}
+
 void BenchmarkSessionClassificationThenAccepted(benchmark::State& state) {
   simdjson::padded_string padded(kAccepted);
   const std::string_view view(padded.data(), padded.size());
@@ -168,6 +197,7 @@ void BenchmarkParserToShmPublisherAndDrain(benchmark::State& state) {
 }
 
 BENCHMARK(BenchmarkAccepted);
+BENCHMARK(BenchmarkAcceptedWithDiagnosticFields);
 BENCHMARK(BenchmarkSessionClassificationThenAccepted);
 BENCHMARK(BenchmarkPartialFilled);
 BENCHMARK(BenchmarkTerminal);

@@ -129,7 +129,11 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
       "completed_requested_duration={} ever_active={} ever_ready={} phase={} "
       "error={} text_messages={} login_sent={} login_accepted={} "
       "login_rejected={} subscribe_sent={} subscribe_acks={} "
-      "subscribe_errors={} pings_sent={} pongs_received={} "
+      "subscribe_errors={} fast_fill_subscribe_sent={} "
+      "fast_fill_subscribe_send_failures={} fast_fill_subscribe_acks={} "
+      "fast_fill_subscribe_errors={} "
+      "fast_fill_records={} fast_fill_parse_errors={} pings_sent={} "
+      "pongs_received={} "
       "heartbeat_timeouts={} order_envelopes={} orders_seen={} "
       "events_published={} foreign_orders_ignored={} "
       "unroutable_orders_ignored={} validation_errors={} "
@@ -144,7 +148,10 @@ int RunLoginSubscribeOnly(aq_bitget::OrderFeedbackSessionConfig config,
       magic_enum::enum_name(session.last_error()), stats.text_messages,
       stats.login_sent, stats.login_accepted, stats.login_rejected,
       stats.subscribe_sent, stats.subscribe_acks, stats.subscribe_errors,
-      stats.pings_sent, stats.pongs_received, stats.heartbeat_timeouts,
+      stats.fast_fill_subscribe_sent, stats.fast_fill_subscribe_send_failures,
+      stats.fast_fill_subscribe_acks, stats.fast_fill_subscribe_errors,
+      stats.fast_fill_records, stats.fast_fill_parse_errors, stats.pings_sent,
+      stats.pongs_received, stats.heartbeat_timeouts,
       parser_stats.order_envelopes, parser_stats.orders_seen,
       stats.events_published, parser_stats.foreign_orders_ignored,
       parser_stats.unroutable_orders_ignored, parser_stats.validation_errors,

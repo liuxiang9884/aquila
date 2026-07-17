@@ -24,6 +24,7 @@ namespace aquila::bitget {
 enum class OrderFeedbackParseStatus : std::uint8_t {
   kOk,
   kControlMessage,
+  kFastFillMessage,
   kInvalidJson,
   kUnexpectedEnvelope,
   kDecodeUnrecoverable,
@@ -50,6 +51,17 @@ struct OrderFeedbackParseResult {
   std::uint32_t orders_seen{0};
   std::uint32_t events_emitted{0};
   bool continuity_lost{false};
+};
+
+struct OrderFeedbackDiagnosticRecord {
+  std::string_view client_oid;
+  std::string_view order_id;
+  std::string_view order_status;
+  std::string_view cancel_reason;
+  std::uint64_t exchange_message_time_ms{0};
+  std::uint64_t created_time_ms{0};
+  std::uint64_t updated_time_ms{0};
+  std::uint32_t batch_data_index{0};
 };
 
 namespace detail {
@@ -88,6 +100,36 @@ enum class OrderRecordParseOutcome : std::uint8_t {
   std::string_view text;
   if (ReadSimdjsonString(value, &text)) {
     return ParseOrderFeedbackUint64Text(text, output);
+  }
+  std::uint64_t unsigned_value = 0;
+  if (value.get_uint64().get(unsigned_value) == simdjson::SUCCESS) {
+    *output = unsigned_value;
+    return true;
+  }
+  std::int64_t signed_value = 0;
+  if (value.get_int64().get(signed_value) == simdjson::SUCCESS &&
+      signed_value >= 0) {
+    *output = static_cast<std::uint64_t>(signed_value);
+    return true;
+  }
+  return false;
+}
+
+[[nodiscard]] inline bool ReadOrderFeedbackId(
+    simdjson::ondemand::value value, std::uint64_t* output,
+    std::string_view* raw_text) noexcept {
+  assert(output != nullptr);
+  assert(raw_text != nullptr);
+  simdjson::ondemand::json_type type;
+  if (value.type().get(type) != simdjson::SUCCESS) {
+    return false;
+  }
+  if (type == simdjson::ondemand::json_type::string) {
+    return ReadSimdjsonString(value, raw_text) &&
+           ParseOrderFeedbackUint64Text(*raw_text, output);
+  }
+  if (type != simdjson::ondemand::json_type::number) {
+    return false;
   }
   std::uint64_t unsigned_value = 0;
   if (value.get_uint64().get(unsigned_value) == simdjson::SUCCESS) {
@@ -192,11 +234,19 @@ enum class OrderRecordParseOutcome : std::uint8_t {
   return OrderFinishReason::kUnknown;
 }
 
-template <typename EventSink>
+struct NoopOrderFeedbackDiagnosticSink {
+  void operator()(const OrderFeedbackDiagnosticRecord&) const noexcept {}
+};
+
+template <typename EventSink, typename DiagnosticSink>
 [[nodiscard]] inline OrderRecordParseOutcome ParseOrderRecord(
     simdjson::ondemand::object order, std::int64_t local_receive_ns,
+    std::uint64_t exchange_message_time_ms, std::uint32_t batch_data_index,
     OrderFeedbackParserStats& stats, OrderFeedbackParseResult& result,
-    EventSink& event_sink) noexcept {
+    EventSink& event_sink, DiagnosticSink& diagnostic_sink) noexcept {
+  constexpr bool kDiagnosticFieldsEnabled =
+      !std::is_same_v<std::remove_cvref_t<DiagnosticSink>,
+                      NoopOrderFeedbackDiagnosticSink>;
   simdjson::ondemand::value client_oid_value;
   if (!FindSimdjsonField(order, "clientOid", &client_oid_value)) {
     ++stats.unroutable_orders_ignored;
@@ -236,14 +286,30 @@ template <typename EventSink>
   std::string_view hold_mode;
   std::string_view margin_mode;
   std::string_view order_status;
+  std::string_view order_id;
+  std::string_view cancel_reason;
   std::uint64_t exchange_order_id = 0;
+  std::uint64_t created_time_ms = 0;
   std::uint64_t updated_time_ms = 0;
   double quantity = 0.0;
   double cumulative_filled_quantity = 0.0;
   double average_price = 0.0;
-  if (!ReadStringField(order, "category", &category) ||
-      !ReadUint64Field(order, "orderId", &exchange_order_id) ||
-      !ReadDoubleField(order, "qty", &quantity) ||
+  if (!ReadStringField(order, "category", &category)) {
+    ++stats.validation_errors;
+    return OrderRecordParseOutcome::kUnrecoverable;
+  }
+  if constexpr (kDiagnosticFieldsEnabled) {
+    simdjson::ondemand::value order_id_value;
+    if (!FindSimdjsonField(order, "orderId", &order_id_value) ||
+        !ReadOrderFeedbackId(order_id_value, &exchange_order_id, &order_id)) {
+      ++stats.validation_errors;
+      return OrderRecordParseOutcome::kUnrecoverable;
+    }
+  } else if (!ReadUint64Field(order, "orderId", &exchange_order_id)) {
+    ++stats.validation_errors;
+    return OrderRecordParseOutcome::kUnrecoverable;
+  }
+  if (!ReadDoubleField(order, "qty", &quantity) ||
       !ReadStringField(order, "holdMode", &hold_mode) ||
       !ReadStringField(order, "marginMode", &margin_mode) ||
       !ReadDoubleField(order, "cumExecQty", &cumulative_filled_quantity) ||
@@ -252,6 +318,12 @@ template <typename EventSink>
       !ReadUint64Field(order, "updatedTime", &updated_time_ms)) {
     ++stats.validation_errors;
     return OrderRecordParseOutcome::kUnrecoverable;
+  }
+  if constexpr (kDiagnosticFieldsEnabled) {
+    simdjson::ondemand::value created_time_value;
+    if (FindSimdjsonField(order, "createdTime", &created_time_value)) {
+      (void)ReadOrderFeedbackUint64(created_time_value, &created_time_ms);
+    }
   }
 
   std::int64_t exchange_update_ns = 0;
@@ -306,7 +378,6 @@ template <typename EventSink>
     if (order_status == "canceled") {
       ++stats.legacy_canceled_statuses;
     }
-    std::string_view cancel_reason;
     (void)ReadStringField(order, "cancelReason", &cancel_reason);
     event.kind = OrderFeedbackKind::kCancelled;
     event.cancelled_quantity = left_quantity;
@@ -316,16 +387,32 @@ template <typename EventSink>
     return OrderRecordParseOutcome::kUnrecoverable;
   }
 
+  if constexpr (kDiagnosticFieldsEnabled) {
+    diagnostic_sink(OrderFeedbackDiagnosticRecord{
+        .client_oid = client_oid,
+        .order_id = order_id,
+        .order_status = order_status,
+        .cancel_reason = cancel_reason,
+        .exchange_message_time_ms = exchange_message_time_ms,
+        .created_time_ms = created_time_ms,
+        .updated_time_ms = updated_time_ms,
+        .batch_data_index = batch_data_index,
+    });
+  }
   event_sink(event);
   ++stats.events_emitted;
   ++result.events_emitted;
   return OrderRecordParseOutcome::kEmitted;
 }
 
-template <typename EventSink>
+template <typename EventSink, typename DiagnosticSink>
 [[nodiscard]] inline OrderFeedbackParseResult ParseDocument(
     simdjson::ondemand::document document, std::int64_t local_receive_ns,
-    OrderFeedbackParserStats& stats, EventSink& event_sink) noexcept {
+    OrderFeedbackParserStats& stats, EventSink& event_sink,
+    DiagnosticSink& diagnostic_sink) noexcept {
+  constexpr bool kDiagnosticFieldsEnabled =
+      !std::is_same_v<std::remove_cvref_t<DiagnosticSink>,
+                      NoopOrderFeedbackDiagnosticSink>;
   OrderFeedbackParseResult result{};
   simdjson::ondemand::object root;
   if (document.get_object().get(root) != simdjson::SUCCESS) {
@@ -354,13 +441,40 @@ template <typename EventSink>
   simdjson::ondemand::object arg;
   std::string_view inst_type;
   std::string_view topic;
-  simdjson::ondemand::value data_value;
-  simdjson::ondemand::array data;
-  if (!ReadSimdjsonString(action_value, &action) || action != "snapshot" ||
+  if (!ReadSimdjsonString(action_value, &action) ||
       !FindSimdjsonObject(root, "arg", &arg) ||
       !ReadStringField(arg, "instType", &inst_type) || inst_type != "UTA" ||
-      !ReadStringField(arg, "topic", &topic) || topic != "order" ||
-      !FindSimdjsonField(root, "data", &data_value) ||
+      !ReadStringField(arg, "topic", &topic)) {
+    ++stats.unexpected_envelope_count;
+    result.status = OrderFeedbackParseStatus::kUnexpectedEnvelope;
+    result.continuity_lost = true;
+    return result;
+  }
+  if (action == "update" && topic == "fast-fill") {
+    result.status = OrderFeedbackParseStatus::kFastFillMessage;
+    result.continuity_lost = false;
+    return result;
+  }
+
+  if (action != "snapshot" || topic != "order") {
+    ++stats.unexpected_envelope_count;
+    result.status = OrderFeedbackParseStatus::kUnexpectedEnvelope;
+    result.continuity_lost = true;
+    return result;
+  }
+
+  std::uint64_t exchange_message_time_ms = 0;
+  if constexpr (kDiagnosticFieldsEnabled) {
+    simdjson::ondemand::value exchange_message_time_value;
+    if (FindSimdjsonField(root, "ts", &exchange_message_time_value)) {
+      (void)ReadOrderFeedbackUint64(exchange_message_time_value,
+                                    &exchange_message_time_ms);
+    }
+  }
+
+  simdjson::ondemand::value data_value;
+  simdjson::ondemand::array data;
+  if (!FindSimdjsonField(root, "data", &data_value) ||
       data_value.get_array().get(data) != simdjson::SUCCESS) {
     ++stats.unexpected_envelope_count;
     result.status = OrderFeedbackParseStatus::kUnexpectedEnvelope;
@@ -369,6 +483,7 @@ template <typename EventSink>
   }
 
   ++stats.order_envelopes;
+  std::uint32_t batch_data_index = 0;
   for (simdjson::simdjson_result<simdjson::ondemand::value> element : data) {
     simdjson::ondemand::object order;
     if (element.get_object().get(order) != simdjson::SUCCESS) {
@@ -380,13 +495,16 @@ template <typename EventSink>
     }
     ++stats.orders_seen;
     ++result.orders_seen;
-    if (ParseOrderRecord(order, local_receive_ns, stats, result, event_sink) ==
+    if (ParseOrderRecord(order, local_receive_ns, exchange_message_time_ms,
+                         batch_data_index, stats, result, event_sink,
+                         diagnostic_sink) ==
         OrderRecordParseOutcome::kUnrecoverable) {
       ++stats.decode_continuity_lost_count;
       result.status = OrderFeedbackParseStatus::kDecodeUnrecoverable;
       result.continuity_lost = true;
       return result;
     }
+    ++batch_data_index;
   }
 
   result.status = OrderFeedbackParseStatus::kOk;
@@ -428,7 +546,8 @@ template <typename EventSink>
     std::string_view payload, OrderFeedbackParseResult result,
     OrderFeedbackParserStats& stats) noexcept {
   result = ClassifyDeferredJsonError(payload, result, stats);
-  if (result.status == OrderFeedbackParseStatus::kControlMessage) {
+  if (result.status == OrderFeedbackParseStatus::kControlMessage ||
+      result.status == OrderFeedbackParseStatus::kFastFillMessage) {
     assert(stats.messages_seen != 0);
     --stats.messages_seen;
   }
@@ -437,11 +556,12 @@ template <typename EventSink>
 
 }  // namespace detail
 
-template <typename EventSink>
+template <typename EventSink, typename DiagnosticSink>
 [[nodiscard]] inline OrderFeedbackParseResult ParseBitgetOrderFeedbackMessage(
     std::string_view payload, std::uint32_t readable_tail_bytes,
     std::int64_t local_receive_ns, simdjson::ondemand::parser& parser,
-    OrderFeedbackParserStats& stats, EventSink&& event_sink) noexcept {
+    OrderFeedbackParserStats& stats, EventSink&& event_sink,
+    DiagnosticSink&& diagnostic_sink) noexcept {
   ++stats.messages_seen;
   if (payload.empty()) {
     ++stats.invalid_json_count;
@@ -461,7 +581,7 @@ template <typename EventSink>
     return detail::FinalizeParseResult(
         payload,
         detail::ParseDocument(std::move(document), local_receive_ns, stats,
-                              event_sink),
+                              event_sink, diagnostic_sink),
         stats);
   }
 
@@ -474,8 +594,19 @@ template <typename EventSink>
   return detail::FinalizeParseResult(
       payload,
       detail::ParseDocument(std::move(document), local_receive_ns, stats,
-                            event_sink),
+                            event_sink, diagnostic_sink),
       stats);
+}
+
+template <typename EventSink>
+[[nodiscard]] inline OrderFeedbackParseResult ParseBitgetOrderFeedbackMessage(
+    std::string_view payload, std::uint32_t readable_tail_bytes,
+    std::int64_t local_receive_ns, simdjson::ondemand::parser& parser,
+    OrderFeedbackParserStats& stats, EventSink&& event_sink) noexcept {
+  detail::NoopOrderFeedbackDiagnosticSink diagnostic_sink;
+  return ParseBitgetOrderFeedbackMessage(
+      payload, readable_tail_bytes, local_receive_ns, parser, stats,
+      std::forward<EventSink>(event_sink), diagnostic_sink);
 }
 
 }  // namespace aquila::bitget
