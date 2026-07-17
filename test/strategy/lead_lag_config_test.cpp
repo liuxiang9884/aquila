@@ -218,7 +218,7 @@ TEST(LeadLagConfigTest, LoadsCheckedInConfigWithCatalogMetadata) {
 
 TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
   const aquila::config::InstrumentCatalog catalog =
-      LoadCatalog("config/instruments/usdt_futures_first5_20260521.csv");
+      LoadCatalog("config/instruments/usdt_future_universe.csv");
 
   const auto result = LoadCheckedInConfig(
       "config/strategies/lead_lag_first5_20260521.toml", catalog);
@@ -237,6 +237,28 @@ TEST(LeadLagConfigTest, LoadsCheckedInFirst5ConfigWithCatalogMetadata) {
   EXPECT_EQ(config.pairs[1].lag_instrument.quantity_decimal_places, 1);
   EXPECT_DOUBLE_EQ(config.pairs[3].lag_instrument.quantity_step, 0.1);
   EXPECT_EQ(config.pairs[3].lag_instrument.quantity_decimal_places, 1);
+}
+
+TEST(LeadLagConfigTest, AllCheckedInPairConfigsMatchUniverseCatalog) {
+  const aquila::config::InstrumentCatalog catalog = LoadCatalog();
+  std::size_t checked_config_count = 0;
+
+  for (const auto& entry :
+       std::filesystem::directory_iterator(SourcePath("config/strategies"))) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".toml") {
+      continue;
+    }
+    const toml::table parsed = toml::parse_file(entry.path().string());
+    if (!parsed["lead_lag"]["pairs"].is_array()) {
+      continue;
+    }
+
+    ++checked_config_count;
+    const auto result = leadlag::LoadConfigFile(entry.path(), catalog);
+    EXPECT_TRUE(result.ok) << entry.path() << ": " << result.error;
+  }
+
+  EXPECT_GT(checked_config_count, 0U);
 }
 
 TEST(LeadLagConfigTest, LoadsCheckedInRequestedConfigWithCatalogMetadata) {

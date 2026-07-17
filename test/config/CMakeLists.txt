@@ -19,22 +19,30 @@ add_test(NAME instrument_catalog_policy_test
          COMMAND bash -c [=[
 root="$1"
 universe="${root}/config/instruments/usdt_future_universe.csv"
-legacy="${root}/config/instruments/usdt_""futures.csv"
-legacy_pattern='config/instruments/usdt_''futures\.csv'
+catalog_ref_pattern='config/''instruments/[^"[:space:]]+\.csv'
+universe_ref_pattern='config/''instruments/usdt_future_universe\.csv'
 
 if [[ ! -f "${universe}" ]]; then
   printf 'missing universe instrument catalog: %s\n' "${universe}" >&2
   exit 1
 fi
 
-if [[ -e "${legacy}" ]]; then
-  printf 'legacy instrument catalog must not exist: %s\n' "${legacy}" >&2
+mapfile -t catalogs < <(
+  find "${root}/config/instruments" -maxdepth 1 -type f -name '*.csv' -printf '%f\n' |
+    sort
+)
+if [[ "${#catalogs[@]}" -ne 1 ||
+      "${catalogs[0]}" != 'usdt_future_universe.csv' ]]; then
+  printf 'expected exactly one instrument catalog, got: %s\n' \
+    "${catalogs[*]}" >&2
   exit 1
 fi
 
-if git -C "${root}" grep -n -E "${legacy_pattern}" -- \
-    . ':!reports/**' ':!docs/plans/**'; then
-  printf 'legacy instrument catalog references remain\n' >&2
+if git -C "${root}" grep -n -o -E \
+    "${catalog_ref_pattern}" -- \
+    . ':!reports/**' ':!docs/plans/**' |
+    grep -v -E ":${universe_ref_pattern}$"; then
+  printf 'non-universe instrument catalog references remain\n' >&2
   exit 1
 fi
 ]=] _
