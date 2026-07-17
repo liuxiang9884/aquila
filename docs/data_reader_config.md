@@ -358,7 +358,7 @@ scripts/market_data/manifest_to_data_reader_config.py \
   --manifest /home/liuxiang/tmp/aquila_persistent_md/manifest.jsonl \
   --output /home/liuxiang/tmp/aquila_persistent_md/replay_data_reader.toml \
   --name persistent_md_replay \
-  --catalog config/instruments/usdt_futures.csv
+  --catalog config/instruments/usdt_future_universe.csv
 ```
 
 生成的 TOML 会把已关闭 BookTicker segment `.bin` 按 manifest 顺序写入 `files = [...]`，随后可直接用于
@@ -370,7 +370,7 @@ scripts/market_data/manifest_to_data_reader_config.py \
   --manifest /home/liuxiang/tmp/aquila_persistent_md/trade_manifest.jsonl \
   --output /home/liuxiang/tmp/aquila_persistent_md/trade_replay_data_reader.toml \
   --name persistent_md_trade_replay \
-  --catalog config/instruments/usdt_futures.csv \
+  --catalog config/instruments/usdt_future_universe.csv \
   --feed trade
 ```
 

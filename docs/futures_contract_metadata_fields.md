@@ -45,14 +45,18 @@ Bitget 脚本额外支持 `--allow-missing`，用于更新 catalog 时跳过 Bit
 
 ## 当前 catalog 文件
 
-`config/instruments/usdt_futures.csv` 是小型默认 catalog，当前包含 16 个 symbol，每个 symbol 有
-Gate / Binance / Bitget 行，主要服务默认 data session、Bitget smoke 和轻量测试。
+`config/instruments/usdt_future_universe.csv` 是新运行统一使用的 runtime catalog，当前包含 Gate 494 行、
+Binance 505 行和 Bitget 449 行，共 505 个 canonical symbol。Bitget 行只为 2026-07-16 catalog
+快照中 Bitget UTA `USDT-FUTURES` 存在且 `online` 的 symbol 写入。该文件保留
+`contract_multiplier`，统一服务 data session、DataReader、gateway smoke、LeadLag、fill probe、
+benchmark 和 report。
 
-`config/instruments/usdt_future_universe.csv` 是大 universe catalog，当前包含 Gate 494 行、
-Binance 494 行和 Bitget 438 行；Bitget 行只为 Bitget UTA `USDT-FUTURES` 中存在且 `online` 的
-symbol 写入。该文件保留 `contract_multiplier`，适合 30-symbol / 大 universe run、fill probe 和
-需要 report notional / PnL 乘数的场景。旧
-旧文件名 `usdt_futures_common_gate_binance_20260701.csv` 已重命名，不应继续作为当前路径引用。
+旧的小型 catalog 已删除，不保留兼容副本或 symlink。新运行必须使用上述大 catalog 或在 run
+directory 中冻结的同源副本；一个运行内的 producer、consumer、strategy、gateway 和 report
+不得混用不同 catalog。历史 run 继续使用其归档 catalog，不用当前文件重解释旧 `symbol_id`、
+typed data 或 report。仓库中带日期的 Gate/Binance catalog 仅保留给对应历史配置复现，不是新 run
+入口。统一 catalog 不等于 metadata 自动实时刷新，live 启动前仍需执行对应交易所 preflight。
+旧文件名 `usdt_futures_common_gate_binance_20260701.csv` 已重命名，也不应继续作为当前路径引用。
 
 ## 统一字段
 

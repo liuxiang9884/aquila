@@ -43,7 +43,8 @@ Run id 使用 `YYYYMMDD_HHMMSS_<label>`，创建隔离目录：
 `AQUILA_DATA_SESSION_DIAG_LEVEL=0` 和显式 metadata mode。只修改文档/report 不需要重编译。
 
 Strategy config 必须是 live-orders 配置，不得把 signal-only config 与 `--execute` 混用。Instrument catalog 使用当前
-`config/instruments/usdt_futures.csv` 或 `config/instruments/usdt_future_universe.csv`；历史 catalog 文件名不能作为新 run 入口。
+`config/instruments/usdt_future_universe.csv`；准备 live run 时把该文件冻结到 run directory。历史 catalog 文件名不能作为
+新 run 入口，也不能让 producer、consumer、strategy、gateway 或 report 混用不同 catalog。
 
 ### 3. 生成并核对 affinity overlay
 
