@@ -51,3 +51,23 @@
 - 公网 endpoint 路由和外部网络条件可能随时间变化；
 - 单小时、三个 symbol 结果不能外推到其他 symbol、时段或订单 fillability；
 - recorder 只保存 canonical BBO；source 级胜出归因依赖 fusion metadata。
+
+## 执行状态
+
+正式 run 为
+`/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T024622Z`，三个 fusion 于
+`2026-07-18T02:47:10Z` 启动，三个 recorder 于 `2026-07-18T02:47:22Z` 接入，预计 fusion
+在 `2026-07-18T03:47:10Z` 后自然退出。绑定 supervisor PID 为 `371444`。
+
+启动门证据：
+
+- 12/12 source TLS socket 为 `ESTABLISHED`；
+- fusion/source critical threads 精确绑定 `16-30`；
+- recorder main/log threads 分别精确绑定 `4/5`、`7/8`、`10/11`；
+- 三组 canonical BookTicker binary 与 fusion metadata 均连续增长；
+- 启动日志未发现 error、decode failure、disconnect、reconnect 或 overrun。
+
+第一次候选 run
+`/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T023945Z` 在不足两分钟时主动终止：
+fusion/source affinity 正确，但 recorder main loop 未应用配置内的 affinity。该 run 只保留为 aborted
+启动证据，不进入一小时结果比较；正式 run 使用 `taskset` 对 recorder main loop 做外围强制绑定。
