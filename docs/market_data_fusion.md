@@ -165,6 +165,8 @@ ctest --test-dir build/debug \
 
 - Gate/Binance N=4 shadow 已观察到 p99/p99.9 tail 改善，常态 fusion hop 为微秒内；详见证据文档。
 - Trade 30-symbol/4-route/30-minute smoke 只证明 fusion pipeline；不代表订单收益。
-- Bitget normal/high-speed endpoint A/B 只覆盖行情接入与 fusion；high-speed 当次未显示 BBO latency 收益。
+- Bitget normal/high-speed endpoint A/B 只覆盖行情接入与 fusion。2026-07-18 三组 N=4 一小时结果显示
+  high speed 的 p50/p95 更低但 p99+ tail 更差，2+2 mixed 位于两者之间，HA 的 p99+ 最稳；详见
+  `docs/agent-handoff-bitget-market-data.md`。
 - 策略切换必须使用同构 source、固定 CPU、相同 symbols/feed/recorder，并重复采样尾延迟。
 - 任何吞吐、tail、fillability 或 PnL 结论必须引用对应 benchmark/profile/live 证据。

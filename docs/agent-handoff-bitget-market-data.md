@@ -283,3 +283,73 @@ Fusion hop 仍为微秒级，不是主要延迟来源：
 结论：在这次 30 分钟同步 A/B 中，high speed endpoint 没有带来 BBO 延迟收益，消息量也没有明显更多；
 normal endpoint 的 p95、p99、p99.9 和 max 明显更稳。后续如需继续评估，应保留同构启动、同 symbols、
 BBO-only、同 recorder 结构和独立 CPU 绑定，并把结论限定为行情 pipeline 证据。
+
+## 2026-07-18 BBO Endpoint 三组 N=4 一小时结果
+
+本轮同时运行三组 `books1` fusion：
+
+- `ha4`：4 路 `vip-ws-uta.bitget.com`；
+- `hs4`：4 路 `vip-ws-uta-pub-a.bitget.com`；
+- `mixed2x2`：source 0/1 为 normal，source 2/3 为 high speed。
+
+三组统一使用大 instrument catalog，订阅 `BTCUSDT/ETHUSDT/SOLUSDT`。每组包含一个
+`bitget_data_fusion`、4 个 source session 和一个 canonical recorder；critical CPU 分别固定为
+`16-20`、`21-25`、`26-30`，recorder main 分别固定为 `4/7/10`。正式 run 位于
+`/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T024622Z`。
+
+三组 fusion 从 `2026-07-18T02:47:10Z` 运行到 `03:47:10Z` 并自然返回 `0`；三个 recorder
+随后正常返回 `0`。三组均为 `fusion_metadata_write_errors=0`、`fusion_flush_ok=true`、
+`skipped=0`、`overruns=0`。Fusion metadata 数分别为 `320,343 / 319,879 / 320,229`，
+canonical recorder 数分别为 `319,598 / 319,134 / 319,484`。Recorder 在 fusion 后约 12 秒以
+`latest` 接入，所以每组 metadata 比 canonical 多 `745` 条；canonical 记录全部能按
+`symbol_id/record_id/exchange_ns` 对齐 metadata，`fusion_publish_ns` mismatch 为 `0`。
+
+Latency 定义：
+
+- source latency：`source_local_ns - exchange_ns(sts)`；
+- fusion latency：`fusion_publish_ns - exchange_ns(sts)`；
+- fusion hop：`fusion_publish_ns - source_local_ns`。
+
+完整 metadata 结果：
+
+| group | fusion p50 | p95 | p99 | p99.9 | max | mean | hop p50 | hop p99 | hop p99.9 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ha4` | 0.959 ms | 2.496 ms | 2.870 ms | 5.526 ms | 8.353 ms | 1.079 ms | 0.578 us | 5.392 us | 12.835 us |
+| `hs4` | 0.845 ms | 1.492 ms | 7.264 ms | 12.431 ms | 17.036 ms | 0.996 ms | 0.550 us | 5.451 us | 14.055 us |
+| `mixed2x2` | 0.856 ms | 1.948 ms | 4.248 ms | 9.066 ms | 12.064 ms | 0.953 ms | 0.551 us | 5.508 us | 15.197 us |
+
+三组共同的 `278,750` 条记录用于 paired comparison：
+
+| comparison | 左侧更快 | 右侧更快 | delta p50 | paired 左/右 p99 |
+| --- | ---: | ---: | ---: | ---: |
+| `ha4 - hs4` | 30.26% | 69.74% | +0.060 ms | 2.755 / 6.162 ms |
+| `ha4 - mixed2x2` | 34.82% | 65.18% | +0.049 ms | 2.755 / 3.411 ms |
+| `hs4 - mixed2x2` | 53.44% | 46.56% | -0.008 ms | 6.162 / 3.411 ms |
+
+负 delta 表示左侧更快。Mixed 组内 high-speed source 胜出 `211,734 / 320,229`（`66.12%`）；
+分 symbol 为 ETH `65.82%`、SOL `69.58%`、BTC `62.81%`。5 分钟分桶显示 high-speed p99
+在 `1.513-11.332 ms` 间波动，HA 为 `2.366-4.841 ms`，mixed 为 `2.245-7.792 ms`；
+mixed 的 high-speed 胜出率也在 `36.48%-89.83%` 间变化。
+
+结论：
+
+- high speed 本轮在约 70% 的共同记录上快于 HA，p50/p95 更低，但 p99、p99.9 和 max 明显更差；
+- HA 仍提供三组中最稳的 p99+ tail，本轮只有 HA 的整体 p99 低于 `3ms`；当前策略对 Bitget lag
+  使用 `500ms` freshness guard，因此该差异不能直接解释为 guard 拒绝率；
+- mixed 的 paired median 只比全 high speed 慢约 `8us`，同时将 paired p99 从 `6.162ms`
+  降到 `3.411ms`，是 bulk latency 与 tail 的折中，但 tail 仍不如 HA；
+- 三组 fusion hop 的 p50 约 `0.55us`、p99 约 `5.5us`，endpoint 差异主要来自
+  `sts -> source_local_ns`，不是 fusion 线程。Mixed 有两个 hop 异常点超过 `100us`，其中 max
+  为 `725.050us`，但其 p99.9 为 `15.197us`。
+
+分析产物位于：
+
+```text
+/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T024622Z/analysis/comparison_report.md
+/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T024622Z/analysis/comparison_summary.json
+/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T024622Z/analysis/group_summary.csv
+/home/liuxiang/tmp/bitget_bbo_ha4_hs4_mixed2x2_n4_1h_20260718T024622Z/analysis/time_bucket_5m.csv
+```
+
+该结果仍只覆盖同一机器、一个小时、三个 symbols 的公网 BBO；不能外推到其他时段、symbol、
+订单 fillability 或 PnL，也不单独授权切换策略 endpoint。
