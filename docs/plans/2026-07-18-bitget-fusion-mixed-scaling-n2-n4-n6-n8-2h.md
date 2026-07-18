@@ -54,6 +54,34 @@
 - 运行中任一 fusion 或 recorder 意外退出，终止本轮其余进程并标记失败，不自动重启或切换 endpoint。
 - 人工停止时只向本轮 supervisor 发送 `SIGTERM`，由其收敛子进程；不得使用模糊进程名批量终止。
 
+## 当前执行状态
+
+- `2026-07-18T05:00:37Z` 的首次启动检查在建连前 fail closed：
+  `/home/liuxiang/tmp/bitget_bbo_mixed_ha_hs_n2_n4_n6_n8_2h_20260718T045936Z`。
+  四组均因初始 `taskset` 只允许 aux CPU，无法通过 source CPU availability 校验而以
+  `cpu_binding_error` 退出；未启动 recorder，无遗留 Aquila 进程。修正为启动时允许本组完整
+  CPU 集，在 fusion/source/logger 线程创建后再把主线程收窄到 aux CPU。
+- 正式 run：
+  `/home/liuxiang/tmp/bitget_bbo_mixed_ha_hs_n2_n4_n6_n8_2h_20260718T050235Z`。
+  supervisor PID `383924`；fusion PID 分别为 `383926/383927/383928/383929`，recorder PID
+  分别为 `384066/384067/384068/384069`。
+- 四个 fusion 于 `2026-07-18T05:03:27Z` 启动，四个 recorder 于
+  `2026-07-18T05:03:39Z` 启动；fusion 预计在 `2026-07-18T07:03:27Z` 自然到期。
+- 启动验证：
+  - 四组 fresh dry-run 均为 `result=ok`，source count 分别为 `2/4/6/8`；
+  - focused Release CTest `4/4` 通过；
+  - 八个进程均存活且 PID start ticks 匹配，实际 established TLS socket 分别为
+    `2/4/6/8`，合计 `20`；
+  - `/proc` affinity 确认 fusion/source 关键线程独占 CPU `8-31`，recorder main 使用
+    `0/2/4/6`，主线程与 logger 使用 `1/3/5/7`；
+  - 20 秒窗口中四组 canonical bin 均从 `443248` 增至 `467872` bytes，metadata 均从
+    `369360` 增至 `385776` bytes；启动日志未发现 decode error、disconnect、reconnect、
+    非零 overrun/dropped、fatal 或 unexpected。
+- 冻结二进制 SHA-256：`bitget_data_fusion`
+  `5f2ffc7df3b2c89f731f4c97d53cf64003cafe7b11fe782be0619294815511c4`，
+  `data_reader_recorder`
+  `33b5d9e8eb06b3e0ea9a87b4efdbbda950c63510d210eccef0cd25750352cd51`。
+
 ## 风险
 
 - 四组共享主机、NIC 和远端 Bitget 服务，组间仍可能存在资源与网络路径干扰。
