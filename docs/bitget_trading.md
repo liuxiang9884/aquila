@@ -5,7 +5,7 @@
 
 ## 当前范围与证据边界
 
-截至 2026-07-16，仓库已实现：
+截至 2026-07-18，仓库已实现：
 
 - `OrderSession`：private WebSocket login、limit GTC/IOC place、single cancel、request correlation 和直接 operation response。
 - `OrderFeedbackSession`：独立 private connection、account-wide `order` topic、累计订单生命周期事实、feedback SHM 路由和 continuity lost。
@@ -35,6 +35,12 @@
   `/home/liuxiang/tmp/bitget_binance_symbol_check_20260716T0544Z/`。两家 30-symbol data session 已完成短时只读连接，
   Bitget 使用 `vip-ws-uta-pub-a.bitget.com/v3/ws/public/sbe`；该证据只证明本次订阅与收包，不构成真实订单或
   30-symbol LeadLag live 证据。
+- 20-symbol 与 30-symbol 去重后的 46-symbol 合并配置位于
+  `config/strategies/lead_lag_bitget_combined_46symbols_highspeed_fanout4_20260718.toml`。它保留当前 30-symbol
+  配置的顺序和重叠 symbol 参数，再追加 20-symbol 中独有的 16 个 symbol；全部 pair 固定
+  `3ms/500ms` freshness、`open_notional=10`、`parallel=1` 和 `order_session_fanout=4`。2026-07-18
+  fresh Binance `exchangeInfo` 与 Bitget UTA `instruments` 查询显示 46/46 分别为 `TRADING` / `online`；
+  该状态不能替代 TradFi perpetual 当时交易时段、双边 BBO、freshness 或真实订单证据。
 
 真实 passive IOC 已在 dedicated account 上分别验证官方 HA endpoint 与推断的高速 private endpoint。样本均取得 Ack 与
 terminal feedback 双证据，且运行结束后通过 REST 确认无 open order、无 position。该证据只覆盖 probe，不替代 gateway 或
@@ -206,6 +212,18 @@ contract 默认费率推断。2026-07-17 通过当前 UTA 账户的
 逐 symbol 映射以该 config 和 `lead_lag_config_test` 为可提交事实源。当前策略只消费 `lag_taker_fee`；maker rebate
 未进入阈值或 PnL 模型。若未来订单可能作为 maker 成交，必须先扩展 fee contract，并按实际 `tradeScope` 选择费率。
 
+2026-07-18 再次查询同一账户并写入 46-symbol 合并配置：
+
+- 10 个 symbol：maker `-0.00005`、taker `0.000065`；
+- 8 个 symbol：maker `-0.00005`、taker `0.00015`；
+- 28 个 symbol：maker `-0.0001`、taker `0.0002`。
+
+46/46 symbol 均有账户返回；相对旧 20-symbol 配置，`TAC/ORDI/SLX/UB/VELVET/BTW/RAVE/AVAX/BAS/H/LINK`
+这 11 个 symbol 的 taker fee 从旧值 `0.00015` 更新为本次账户值 `0.0002`。本次临时快照位于
+`/home/liuxiang/tmp/bitget_combined46_fee_snapshot_20260718T021236Z.json`，SHA-256 为
+`1940f80f919bb38d689a0316b29901498da290d9a1cf02697e1a00f58c06c485`；长期逐 symbol 映射以合并 config 和
+`lead_lag_config_test` 为事实源。
+
 本轮 14 小时 run 的冻结配置仍是当时的统一 `0.00015`，不得修改或用新配置重解释。对该 run 时间窗读取 UTA
 `GET /api/v3/trade/fills` 得到 50 条逐笔 fill，全部为 `tradeScope=taker`；实际 `fee / execValue` 验证了成交
 symbol 对应的 `0.000065` 或 `0.0002`。历史和最终 PnL 对账必须使用 REST fill 的实际 `feeDetail`，不能使用配置费率
@@ -263,6 +281,7 @@ config/data_sessions/bitget_gateway_smoke.toml
 config/order_session_rtt_probe/bitget_order_session_rtt_probe.toml
 config/order_session_rtt_probe/bitget_order_session_rtt_connections.csv
 config/data_readers/bitget_order_session_rtt_probe.toml
+config/strategies/lead_lag_bitget_combined_46symbols_highspeed_fanout4_20260718.toml
 ```
 
 主要代码：
