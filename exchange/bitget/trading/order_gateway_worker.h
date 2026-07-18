@@ -8,6 +8,7 @@
 #include "core/trading/order_gateway_shm.h"
 #include "core/trading/order_types.h"
 #include "core/websocket/runtime_clock.h"
+#include "exchange/bitget/trading/account_command_rate_limiter.h"
 #include "exchange/bitget/trading/order_session_runtime_adapter.h"
 #include "exchange/bitget/trading/order_types.h"
 
@@ -227,14 +228,15 @@ class OrderGatewaySessionEventHandler {
 template <typename SessionT>
 class OrderGatewayCommandWorker {
  public:
-  OrderGatewayCommandWorker(std::uint16_t route_id,
-                            core::OrderGatewayCommandQueue command_queue,
-                            SessionT& session,
-                            OrderGatewayWorkerPublisher& publisher) noexcept
+  OrderGatewayCommandWorker(
+      std::uint16_t route_id, core::OrderGatewayCommandQueue command_queue,
+      SessionT& session, OrderGatewayWorkerPublisher& publisher,
+      AccountCommandRateLimiter* rate_limiter = nullptr) noexcept
       : route_id_(route_id),
         command_queue_(command_queue),
         session_(&session),
-        publisher_(&publisher) {}
+        publisher_(&publisher),
+        rate_limiter_(rate_limiter) {}
 
   [[nodiscard]] bool PollOnce() noexcept {
     if (stopped_ || publisher_->event_queue_failed()) {
@@ -259,6 +261,10 @@ class OrderGatewayCommandWorker {
 
   [[nodiscard]] bool stopped() const noexcept {
     return stopped_;
+  }
+
+  [[nodiscard]] bool rate_limited() const noexcept {
+    return rate_limited_;
   }
 
  private:
@@ -311,6 +317,9 @@ class OrderGatewayCommandWorker {
       StopIfPublisherFailed();
       return;
     }
+    if (!TryAcquireRateLimit(command, worker_dequeue_ns)) {
+      return;
+    }
     const core::StrategyOrder order = ToStrategyOrder(command);
     const bitget::OrderSendResult sent = session_->PlaceOrder(order);
     HandleSendResult(command, sent, worker_dequeue_ns);
@@ -323,6 +332,9 @@ class OrderGatewayCommandWorker {
           command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
           0, worker_dequeue_ns);
       StopIfPublisherFailed();
+      return;
+    }
+    if (!TryAcquireRateLimit(command, worker_dequeue_ns)) {
       return;
     }
     const core::StrategyOrder order = ToStrategyOrder(command);
@@ -350,6 +362,27 @@ class OrderGatewayCommandWorker {
     if (publisher_->event_queue_failed()) {
       stopped_ = true;
     }
+  }
+
+  [[nodiscard]] bool TryAcquireRateLimit(
+      const core::OrderGatewayCommand& command,
+      std::int64_t worker_dequeue_ns) noexcept {
+    if (rate_limiter_ == nullptr) {
+      return true;
+    }
+    const bool exit_priority =
+        command.kind == core::OrderGatewayCommandKind::kCancel ||
+        command.reduce_only != 0;
+    if (rate_limiter_->TryAcquire(exit_priority,
+                                  websocket::SteadyClockNowNs())) {
+      return true;
+    }
+    (void)publisher_->PublishCommandRejected(
+        command, core::OrderGatewayCommandRejectReason::kRateLimited, 0, 0, 0,
+        worker_dequeue_ns);
+    rate_limited_ = true;
+    stopped_ = true;
+    return false;
   }
 
   [[nodiscard]] static bool TextFieldsInBounds(
@@ -389,7 +422,9 @@ class OrderGatewayCommandWorker {
   core::OrderGatewayCommandQueue command_queue_{};
   SessionT* session_{nullptr};
   OrderGatewayWorkerPublisher* publisher_{nullptr};
+  AccountCommandRateLimiter* rate_limiter_{nullptr};
   bool stopped_{false};
+  bool rate_limited_{false};
 };
 
 }  // namespace aquila::bitget

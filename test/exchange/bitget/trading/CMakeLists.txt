@@ -193,3 +193,16 @@ target_link_libraries(bitget_order_gateway_worker_test
 
 add_test(NAME bitget_order_gateway_worker_test
          COMMAND bitget_order_gateway_worker_test)
+
+add_executable(bitget_account_command_rate_limiter_config_test
+    account_command_rate_limiter_config_test.cpp
+)
+
+target_link_libraries(bitget_account_command_rate_limiter_config_test
+    PRIVATE
+        aquila_bitget
+        GTest::gtest_main
+)
+
+add_test(NAME bitget_account_command_rate_limiter_config_test
+         COMMAND bitget_account_command_rate_limiter_config_test)

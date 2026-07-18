@@ -7,6 +7,11 @@ backend_cpu_affinity = 0
 format_pattern = "%(log_level_short_code)%(time) %(process_id):%(thread_id) %(file_name):%(caller_function):%(line_number)] %(message)"
 timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
+[bitget_account_command_rate_limit]
+enabled = true
+max_commands_per_second = 5
+reserved_exit_commands = 2
+
 [order_gateway]
 name = "bitget_order_gateway_4routes"
 shm_name = "aquila_bitget_order_gateway_4routes"

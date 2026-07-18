@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "core/trading/order_gateway_shm.h"
+#include "exchange/bitget/trading/account_command_rate_limiter.h"
 
 namespace aquila::bitget {
 namespace {
@@ -384,6 +385,53 @@ TEST(OrderGatewayWorkerTest, OversizedTextRejectedBeforeSessionCall) {
   ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
   EXPECT_EQ(event.reject_reason,
             core::OrderGatewayCommandRejectReason::kInvalidCommand);
+}
+
+TEST(AccountCommandRateLimiterTest, ReservesExitCapacityInRollingWindow) {
+  AccountCommandRateLimiter limiter(AccountCommandRateLimitConfig{
+      .enabled = true,
+      .max_commands_per_second = 5,
+      .reserved_exit_commands = 2,
+  });
+  constexpr std::uint64_t kStartNs = 10'000'000'000ULL;
+
+  EXPECT_TRUE(limiter.TryAcquire(false, kStartNs));
+  EXPECT_TRUE(limiter.TryAcquire(false, kStartNs + 1));
+  EXPECT_TRUE(limiter.TryAcquire(false, kStartNs + 2));
+  EXPECT_FALSE(limiter.TryAcquire(false, kStartNs + 3));
+  EXPECT_TRUE(limiter.TryAcquire(true, kStartNs + 4));
+  EXPECT_TRUE(limiter.TryAcquire(true, kStartNs + 5));
+  EXPECT_FALSE(limiter.TryAcquire(true, kStartNs + 6));
+  EXPECT_TRUE(limiter.TryAcquire(false, kStartNs + 1'000'000'003ULL));
+}
+
+TEST(OrderGatewayWorkerTest, RateLimitRejectsAndStopsBeforeSessionCall) {
+  const auto config = MakeShmConfig("rate_limited");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  auto& shm = shm_result.value;
+  ASSERT_TRUE(shm.CommandQueue(0).TryPush(MakePlaceCommand(0, 1401)));
+  ASSERT_TRUE(shm.CommandQueue(0).TryPush(MakePlaceCommand(0, 1402)));
+
+  AccountCommandRateLimiter limiter(AccountCommandRateLimitConfig{
+      .enabled = true,
+      .max_commands_per_second = 1,
+      .reserved_exit_commands = 0,
+  });
+  FakeSession session;
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
+  OrderGatewayCommandWorker<FakeSession> worker(0, shm.CommandQueue(0), session,
+                                                publisher, &limiter);
+
+  EXPECT_EQ(worker.Drain(2), 2U);
+  EXPECT_TRUE(worker.stopped());
+  EXPECT_EQ(session.placed, std::vector<std::uint64_t>({1401}));
+  core::OrderGatewayEvent event{};
+  ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
+  EXPECT_EQ(event.local_order_id, 1402U);
+  EXPECT_EQ(event.reject_reason,
+            core::OrderGatewayCommandRejectReason::kRateLimited);
 }
 
 }  // namespace

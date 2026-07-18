@@ -17,6 +17,7 @@
 
 #include "core/config/order_gateway_config.h"
 #include "core/trading/order_gateway_shm.h"
+#include "exchange/bitget/trading/account_command_rate_limiter.h"
 #include "exchange/bitget/trading/order_gateway_worker.h"
 #include "exchange/bitget/trading/order_session.h"
 #include "exchange/bitget/trading/order_session_config.h"
@@ -174,16 +175,22 @@ void BindCurrentThreadToCpu(int cpu_id) noexcept {
   };
 }
 
-void LogDryRun(const aq_config::OrderGatewayConfig& gateway_config,
-               const std::vector<PreparedRoute>& routes) {
+void LogDryRun(
+    const aq_config::OrderGatewayConfig& gateway_config,
+    const std::vector<PreparedRoute>& routes,
+    const aq_bitget::AccountCommandRateLimitConfig& rate_limit_config) {
   NOVA_INFO(
       "bitget_order_gateway_dry_run name={} shm_name={} route_count={} "
       "command_queue_capacity={} event_queue_capacity={} "
-      "startup_ready_timeout_s={}",
+      "startup_ready_timeout_s={} account_rate_limit_enabled={} "
+      "max_commands_per_second={} reserved_exit_commands={}",
       gateway_config.name, gateway_config.shm_name, gateway_config.route_count,
       gateway_config.command_queue_capacity,
       gateway_config.event_queue_capacity,
-      gateway_config.startup_ready_timeout_s);
+      gateway_config.startup_ready_timeout_s,
+      rate_limit_config.enabled ? "true" : "false",
+      rate_limit_config.max_commands_per_second,
+      rate_limit_config.reserved_exit_commands);
   for (std::size_t i = 0; i < routes.size(); ++i) {
     const PreparedRoute& route = routes[i];
     NOVA_INFO(
@@ -208,17 +215,20 @@ class BitgetOrderGatewayRouteWorker {
                               aq_bitget::NoopOrderSessionDiagnostics>;
   using CommandWorker = aq_bitget::OrderGatewayCommandWorker<Session>;
 
-  BitgetOrderGatewayRouteWorker(std::uint16_t route_id, int worker_cpu_id,
-                                aq_core::OrderGatewayCommandQueue command_queue,
-                                aq_core::OrderGatewayEventQueue event_queue,
-                                aq_core::OrderGatewayShmHeader* shm_header,
-                                aq_bitget::OrderSessionConfig config,
-                                aq_bitget::LoginCredentials credentials)
+  BitgetOrderGatewayRouteWorker(
+      std::uint16_t route_id, int worker_cpu_id,
+      aq_core::OrderGatewayCommandQueue command_queue,
+      aq_core::OrderGatewayEventQueue event_queue,
+      aq_core::OrderGatewayShmHeader* shm_header,
+      aq_bitget::OrderSessionConfig config,
+      aq_bitget::LoginCredentials credentials,
+      aq_bitget::AccountCommandRateLimiter* rate_limiter)
       : publisher_(route_id, event_queue, shm_header),
         handler_(publisher_),
         session_(std::move(config.connection), std::move(credentials), handler_,
                  config.request_map_capacity, config.order_id_cache_capacity),
-        command_worker_(route_id, command_queue, session_, publisher_),
+        command_worker_(route_id, command_queue, session_, publisher_,
+                        rate_limiter),
         worker_cpu_id_(worker_cpu_id) {
     session_.SetRuntimeHook(this, &RuntimeHook);
   }
@@ -254,6 +264,10 @@ class BitgetOrderGatewayRouteWorker {
     return done_.load(std::memory_order_acquire);
   }
 
+  [[nodiscard]] bool rate_limited() const noexcept {
+    return command_worker_.rate_limited();
+  }
+
  private:
   static void RuntimeHook(void* raw) noexcept {
     auto* self = static_cast<BitgetOrderGatewayRouteWorker*>(raw);
@@ -277,6 +291,7 @@ class BitgetOrderGatewayRouteWorker {
 
 template <typename WebSocketPolicy>
 int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
+                 aq_bitget::AccountCommandRateLimitConfig rate_limit_config,
                  std::vector<PreparedRoute> routes, bool remove_existing_shm,
                  std::uint64_t max_runtime_ms) {
   aq_core::OrderGatewayShmConfig shm_config =
@@ -288,6 +303,7 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
     return 1;
   }
   aq_core::OrderGatewayShmManager& shm = shm_result.value;
+  aq_bitget::AccountCommandRateLimiter rate_limiter(rate_limit_config);
 
   std::vector<std::unique_ptr<BitgetOrderGatewayRouteWorker<WebSocketPolicy>>>
       workers;
@@ -298,7 +314,7 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
             static_cast<std::uint16_t>(i), routes[i].route_config.worker_cpu_id,
             shm.CommandQueue(i), shm.EventQueue(i), &shm.header(),
             std::move(routes[i].order_session_config),
-            std::move(routes[i].credentials)));
+            std::move(routes[i].credentials), &rate_limiter));
   }
 
   signal_stop_requested.store(false, std::memory_order_relaxed);
@@ -310,6 +326,7 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
   }
 
   const auto start = std::chrono::steady_clock::now();
+  bool unexpected_worker_exit{false};
   while (!signal_stop_requested.load(std::memory_order_relaxed)) {
     if (max_runtime_ms != 0) {
       const auto elapsed_ms =
@@ -320,14 +337,13 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
         break;
       }
     }
-    bool all_workers_done = !workers.empty();
     for (const auto& worker : workers) {
-      if (!worker->done()) {
-        all_workers_done = false;
+      if (worker->done()) {
+        unexpected_worker_exit = true;
         break;
       }
     }
-    if (all_workers_done) {
+    if (unexpected_worker_exit) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -340,9 +356,21 @@ int RunConnected(const aq_config::OrderGatewayConfig& gateway_config,
     worker->Join();
   }
   for (const auto& worker : workers) {
+    if (worker->rate_limited()) {
+      NOVA_ERROR(
+          "bitget_account_command_rate_limit_triggered action=stop_gateway "
+          "max_commands_per_second={} reserved_exit_commands={}",
+          rate_limit_config.max_commands_per_second,
+          rate_limit_config.reserved_exit_commands);
+      return 1;
+    }
     if (!worker->start_result()) {
       return 1;
     }
+  }
+  if (unexpected_worker_exit) {
+    NOVA_ERROR("bitget_order_gateway_route_terminated action=stop_all_routes");
+    return 1;
   }
   return 0;
 }
@@ -377,6 +405,13 @@ int main(int argc, char** argv) {
       NOVA_ERROR("order_gateway_config_error={}", gateway_result.error);
       return 1;
     }
+    const aq_bitget::AccountCommandRateLimitConfigResult rate_limit_result =
+        aq_bitget::ParseAccountCommandRateLimitConfig(launch_toml);
+    if (!rate_limit_result.ok) {
+      NOVA_ERROR("bitget_account_command_rate_limit_config_error={}",
+                 rate_limit_result.error);
+      return 1;
+    }
 
     std::string error;
     std::vector<PreparedRoute> routes;
@@ -393,18 +428,18 @@ int main(int argc, char** argv) {
       connect = false;
     }
     if (!connect) {
-      LogDryRun(gateway_result.value, routes);
+      LogDryRun(gateway_result.value, routes, rate_limit_result.value);
       return 0;
     }
 
     if (routes.front().order_session_config.connection.enable_tls) {
       return RunConnected<aq_bitget::OrderSessionDefaultTlsWebSocketPolicy>(
-          gateway_result.value, std::move(routes), remove_existing_shm,
-          max_runtime_ms);
+          gateway_result.value, rate_limit_result.value, std::move(routes),
+          remove_existing_shm, max_runtime_ms);
     }
     return RunConnected<aq_bitget::OrderSessionDefaultPlainWebSocketPolicy>(
-        gateway_result.value, std::move(routes), remove_existing_shm,
-        max_runtime_ms);
+        gateway_result.value, rate_limit_result.value, std::move(routes),
+        remove_existing_shm, max_runtime_ms);
   } catch (const std::exception& exc) {
     fmt::print(stderr, "bitget_order_gateway failed: {}\n", exc.what());
     return 1;

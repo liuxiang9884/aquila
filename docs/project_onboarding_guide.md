@@ -53,7 +53,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `Trade` 64 bytes；historical/recorder 只接受 typed binary format v1，旧 raw/ABI artifact 需重录。
 - Fastest-route fusion 按 `(exchange,symbol_id,id)` 单调 first-processed-wins，输出一条 canonical stream；行情证据不能外推为
   fillability/PnL。当前架构见 fusion 文档。
-- Gate 单路 trading、private feedback、OrderGateway SHM V2 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
+- Gate 单路 trading、private feedback、OrderGateway SHM V3 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
   Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据。
@@ -71,6 +71,9 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `open_notional=10`，entry 计算量低于
   instrument `min_quantity` 时直接使用最小量，高于最小量时保留计算结果。Gateway 配置入口为
   `config/order_gateways/bitget_order_gateway_4routes.toml`；当前只有代码、自动测试和 CLI validate-only 证据，尚无四路 live 证据。
+  Bitget gateway 现使用所有 route 共享的滚动 1 秒 account command limiter：checked-in 配置最多接受 `5/s`，
+  其中 2 个 slot 为 cancel/reduce-only 预留；触发时发布 `kRateLimited`、停止全部 route 并要求外围 guard
+  fail-closed。该值是内部安全门，不是官方 WebSocket 数值 contract。
 - 用户指定的 Binance-lead/Bitget-lag 30-symbol 准备配置入口为
   `config/strategies/lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml`。2026-07-16 官方快照中 30/30 双边均存在；
   11 个原先缺失的 symbol 已补入大 universe catalog。`SKHY/SNDK/SKHYNIX/SOXL/MU/KORU/SAMSUNG/DRAM/MRVL/EWY`

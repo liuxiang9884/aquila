@@ -20,7 +20,7 @@ TEST(OrderGatewayShmTypesTest, PayloadTypesArePodLike) {
 
 TEST(OrderGatewayShmTypesTest, ConstantsMatchDesign) {
   EXPECT_EQ(kOrderGatewayShmMagic, 0x41514F47U);
-  EXPECT_EQ(kOrderGatewayShmVersion, 2U);
+  EXPECT_EQ(kOrderGatewayShmVersion, 3U);
   EXPECT_EQ(kMaxOrderGatewayRoutes, 16U);
   EXPECT_EQ(kOrderGatewaySymbolBytes, 32U);
   EXPECT_EQ(kOrderGatewayQuantityTextBytes, 32U);
