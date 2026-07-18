@@ -10,7 +10,8 @@
 - `OrderSession`：private WebSocket login、limit GTC/IOC place、single cancel、request correlation 和直接 operation response。
 - `OrderFeedbackSession`：独立 private connection、account-wide `order` topic、累计订单生命周期事实、feedback SHM 路由和 continuity lost。
 - RTT probe：单路/多路 run plan、passive IOC、Ack 与 terminal feedback 对账、CSV/metadata 输出和 safety close 状态流。
-- `bitget_order_gateway`：N route worker、真实 OrderGateway SHM command/event queue、route state 和 CLI dry-run/validate-only。
+- `bitget_order_gateway`：N route worker、真实 OrderGateway SHM command/event queue、route state、所有 route
+  共享的 account command limiter 和 CLI dry-run/validate-only。
 - LeadLag：可以用现有 lag metadata 构造 Bitget gateway command；只接入 `order_gateway` backend。
 - REST stop-and-flat：提供 UTA market/reduce-only request builder、allowlist/dedicated-account emergency helper、
   REST preflight/final check 和 Gate/Bitget 共用的 LeadLag guard orchestration。
@@ -102,6 +103,18 @@ Outer guard process
 每个 `OrderSession` 和 `OrderFeedbackSession` 都由单一 owner thread 驱动 WebSocket。Gateway worker 负责发送 command、
 发布 Ack/response 和 route readiness，不解释 duplicate/split、winner、overfill、非赢家 cancel 或策略恢复。REST baseline、
 reconcile 和 emergency cleanup 必须在 WebSocket owner thread 外运行，避免把阻塞、动态分配和慢路径工作放入下单热路径。
+
+### Account command limiter
+
+Bitget gateway 在所有 route 之间共享一个无队列、滚动 1 秒窗口的 account command limiter。当前 checked-in
+配置为每秒最多接受 5 个 place/cancel command，其中 2 个 slot 只供 cancel 或 `reduce_only` place 使用；
+普通 entry 最多占用其余 3 个 slot。这个 `5/s` 是本项目为首次多 symbol 长跑采用的保守内部安全门，不是把
+REST `10/s/UID` 外推成 WebSocket 的官方数值 contract。
+
+命令只有在固定字段校验通过后才消耗 slot；cache/forget/stop 不计入 trade command。超过预算的命令不会排队，
+gateway 发布 `kCommandRejected/kRateLimited`，停止对应 route；进程发现任一 route 提前结束后停止全部 route 并以
+非零状态退出。外围 supervisor 必须把 gateway 非零退出解释为整轮 fail-closed，停止 strategy 并执行既有 strict
+stop-and-flat。该 limiter 不替代交易所业务拒绝、`30007`/`429` 监控、gross risk 或 REST final flat。
 
 ## OrderSession contract
 
@@ -290,6 +303,7 @@ config/strategies/lead_lag_bitget_combined_46symbols_highspeed_fanout4_20260718.
 exchange/bitget/trading/order_session.h
 exchange/bitget/trading/order_feedback_session.h
 exchange/bitget/trading/order_feedback_parser.h
+exchange/bitget/trading/account_command_rate_limiter.h
 exchange/bitget/trading/multi_order_session_gateway.h
 exchange/bitget/trading/order_gateway_worker.h
 tools/bitget/bitget_order_gateway.cpp

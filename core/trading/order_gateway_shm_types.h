@@ -11,7 +11,7 @@
 namespace aquila::core {
 
 inline constexpr std::uint32_t kOrderGatewayShmMagic = 0x41514F47U;
-inline constexpr std::uint16_t kOrderGatewayShmVersion = 2;
+inline constexpr std::uint16_t kOrderGatewayShmVersion = 3;
 inline constexpr std::size_t kMaxOrderGatewayRoutes = 16;
 inline constexpr std::size_t kOrderGatewaySymbolBytes = 32;
 inline constexpr std::size_t kOrderGatewayQuantityTextBytes = 32;
@@ -52,6 +52,7 @@ enum class OrderGatewayCommandRejectReason : std::uint8_t {
   kNoPreparedWriteSlot = 6,
   kWriteUnavailable = 7,
   kUnsupportedOrderType = 8,
+  kRateLimited = 9,
 };
 
 struct OrderGatewayQueueDescriptor {
