@@ -449,7 +449,6 @@ class OrderSession {
         request_map_capacity_(request_map_capacity == 0
                                   ? kDefaultOrderRequestMapCapacity
                                   : request_map_capacity) {
-    request_id_to_local_order_id_.reserve(request_map_capacity_);
     request_id_to_log_fields_.reserve(request_map_capacity_);
     local_order_id_to_exchange_order_id_.reserve(request_map_capacity_);
     ack_latency_diagnostics_.reserve(request_map_capacity_);
@@ -527,7 +526,6 @@ class OrderSession {
       active_ = false;
       login_ready_ = false;
       login_request_sequence_ = 0;
-      request_id_to_local_order_id_.clear();
       request_id_to_log_fields_.clear();
       local_order_id_to_exchange_order_id_.clear();
       ack_latency_diagnostics_.clear();
@@ -549,7 +547,7 @@ class OrderSession {
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
-    if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
+    if (request_id_to_log_fields_.size() >= request_map_capacity_) {
       LogGateOrderSendFailed("place", OrderSendStatus::kInflightFull,
                              order.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
@@ -616,9 +614,7 @@ class OrderSession {
     }
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
-    request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
-    request_id_to_log_fields_.insert_or_assign(sequence,
-                                               MakeRequestLogFields(order));
+    request_id_to_log_fields_.emplace(sequence, MakeRequestLogFields(order));
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
                             MakeSocketTimestampingSendSnapshot(
@@ -648,7 +644,7 @@ class OrderSession {
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
-    if (request_id_to_local_order_id_.size() >= request_map_capacity_) {
+    if (request_id_to_log_fields_.size() >= request_map_capacity_) {
       LogGateOrderSendFailed("cancel", OrderSendStatus::kInflightFull,
                              order.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
@@ -699,9 +695,7 @@ class OrderSession {
     }
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
-    request_id_to_local_order_id_.emplace(sequence, order.local_order_id);
-    request_id_to_log_fields_.insert_or_assign(sequence,
-                                               MakeRequestLogFields(order));
+    request_id_to_log_fields_.emplace(sequence, MakeRequestLogFields(order));
     ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
                             MakeSocketTimestampingSendSnapshot(
@@ -723,7 +717,7 @@ class OrderSession {
   }
 
   [[nodiscard]] std::size_t inflight_count() const noexcept {
-    return request_id_to_local_order_id_.size();
+    return request_id_to_log_fields_.size();
   }
 
   [[nodiscard]] std::size_t request_map_capacity() const noexcept {
@@ -1449,8 +1443,8 @@ class OrderSession {
       return websocket::DeliveryResult::kAccepted;
     }
 
-    auto it = request_id_to_local_order_id_.find(parsed.request_id.sequence);
-    if (it == request_id_to_local_order_id_.end()) {
+    auto it = request_id_to_log_fields_.find(parsed.request_id.sequence);
+    if (it == request_id_to_log_fields_.end()) {
       LogGateOrderResponseUnknownRequestId(parsed);
       if constexpr (DiagnosticsEnabled) {
         diagnostics_.RecordUnknownRequestId();
@@ -1458,9 +1452,8 @@ class OrderSession {
       return websocket::DeliveryResult::kAccepted;
     }
 
-    const std::uint64_t local_order_id = it->second;
-    const OrderSessionRequestLogFields request_log_fields =
-        RequestLogFieldsForSequence(parsed.request_id.sequence, local_order_id);
+    const OrderSessionRequestLogFields request_log_fields = it->second;
+    const std::uint64_t local_order_id = request_log_fields.local_order_id;
     if (!RequestTypeMatchesChannel(parsed)) {
       LogGateOrderResponseIgnored("request_type_channel_mismatch", parsed);
       RecordIgnoredMessage();
@@ -1530,16 +1523,14 @@ class OrderSession {
         parsed.request_id.type == OrderRequestType::kCancelOrder;
     const bool is_error = parsed.kind == GateSubmitResponseKind::kError;
     if (!is_error && !FinalResultMatchesLocalOrder(parsed, local_order_id)) {
-      request_id_to_local_order_id_.erase(it);
-      request_id_to_log_fields_.erase(parsed.request_id.sequence);
+      request_id_to_log_fields_.erase(it);
       ack_latency_diagnostics_.Erase(parsed.request_id.sequence);
       LogGateOrderResponseIgnored("final_result_local_order_mismatch", parsed);
       RecordIgnoredMessage();
       return websocket::DeliveryResult::kAccepted;
     }
 
-    request_id_to_local_order_id_.erase(it);
-    request_id_to_log_fields_.erase(parsed.request_id.sequence);
+    request_id_to_log_fields_.erase(it);
     ack_latency_diagnostics_.Erase(parsed.request_id.sequence);
     if (!is_error && !is_cancel && parsed.exchange_order_id != 0) {
       CacheExchangeOrderId(local_order_id, parsed.exchange_order_id);
@@ -1703,8 +1694,6 @@ class OrderSession {
   Client client_;
   [[no_unique_address]] Diagnostics diagnostics_{};
   simdjson::ondemand::parser text_parser_;
-  absl::flat_hash_map<std::uint64_t, std::uint64_t>
-      request_id_to_local_order_id_;
   absl::flat_hash_map<std::uint64_t, OrderSessionRequestLogFields>
       request_id_to_log_fields_;
   absl::flat_hash_map<std::uint64_t, std::uint64_t>
