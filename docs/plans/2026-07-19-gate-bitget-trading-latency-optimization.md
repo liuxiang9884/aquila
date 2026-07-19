@@ -133,6 +133,9 @@ thread ownership 和进程边界，但必须额外验证：
 
 本阶段已经接受并提交的生产优化包括：
 
+逐项正式 A/B、链路累计口径和所有未采用候选的完整汇总见
+`docs/gate_bitget_trading_latency_optimization_report.md`。
+
 - `9b09d73 Optimize LeadLag global risk scan`：缓存按 `symbol_id` 顺序初始化的 pair
   runtime，focused benchmark 的 `p50/p99/p99.9` 分别从
   `799/1283/5012.5 ns` 降至 `674.5/708.5/1702 ns`，5/5 组同向。
