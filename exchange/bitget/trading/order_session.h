@@ -872,11 +872,9 @@ class OrderSession {
     NOVA_INFO(
         "bitget_order_send request_type={} request_sequence={} "
         "local_order_id={} request_send_local_ns={} "
-        "request_send_realtime_ns={} "
         "request_send_monotonic_ns={} order_encode_done_realtime_ns={} "
         "inflight={}",
         magic_enum::enum_name(request_type), request_sequence, local_order_id,
-        correlation.request_send_realtime_ns,
         correlation.request_send_realtime_ns,
         correlation.request_send_monotonic_ns,
         correlation.write_path.order_encode_done_ns, inflight_count());
