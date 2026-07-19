@@ -134,7 +134,6 @@ inline bool ReadLittleEndian(std::string_view payload, std::size_t offset,
 inline bool ReadVarString8(std::string_view payload, std::size_t* offset,
                            std::string_view* out) noexcept {
   assert(offset != nullptr);
-  assert(out != nullptr);
   if (*offset >= payload.size()) {
     return false;
   }
@@ -145,7 +144,9 @@ inline bool ReadVarString8(std::string_view payload, std::size_t* offset,
     return false;
   }
 
-  *out = payload.substr(*offset, length);
+  if (out != nullptr) {
+    *out = payload.substr(*offset, length);
+  }
   *offset += length;
   return true;
 }
@@ -345,20 +346,19 @@ inline bool ReadRawOrderFeedbackUpdate(std::string_view payload,
   }
   *offset += kOrdersResultBlockLength;
 
-  std::string_view ignored;
-  return ReadVarString8(payload, offset, &ignored) &&
+  return ReadVarString8(payload, offset, nullptr) &&
          ReadVarString8(payload, offset, &out->role) &&
          ReadVarString8(payload, offset, &out->text) &&
-         ReadVarString8(payload, offset, &ignored) &&
+         ReadVarString8(payload, offset, nullptr) &&
          ReadVarString8(payload, offset, &out->finish_as) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored);
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr);
 }
 
 inline bool SkipRawOrderFeedbackUpdate(std::string_view payload,
@@ -370,20 +370,19 @@ inline bool SkipRawOrderFeedbackUpdate(std::string_view payload,
   }
   *offset += kOrdersResultBlockLength;
 
-  std::string_view ignored;
-  return ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored) &&
-         ReadVarString8(payload, offset, &ignored);
+  return ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr) &&
+         ReadVarString8(payload, offset, nullptr);
 }
 
 template <typename EventSink>
