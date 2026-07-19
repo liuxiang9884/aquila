@@ -131,7 +131,7 @@ thread ownership 和进程边界，但必须额外验证：
 `perf/gate-bitget-trading-latency`；准确的 HEAD、ahead 和 dirty 状态仍只信
 `git status --short --branch`。
 
-已接受并提交两项生产优化：
+本阶段已经接受并提交的生产优化包括：
 
 - `9b09d73 Optimize LeadLag global risk scan`：缓存按 `symbol_id` 顺序初始化的 pair
   runtime，focused benchmark 的 `p50/p99/p99.9` 分别从
@@ -141,33 +141,59 @@ thread ownership 和进程边界，但必须额外验证：
   `674.5/708/1586 ns` 降至 `69/73/87 ns`，5/5 组同向；实际配置 paired
   benchmark 的总路径 `p50` 从 `8173 ns` 降至 `7088 ns`，risk stage `p50/p99`
   从 `1125/1880 ns` 降至 `336/664 ns`，相关 strategy tests 88/88 通过。
+- `f99dfc0 Optimize LeadLag terminal feedback lookup`：复用 feedback 入口已经找到的
+  `StrategyOrder*`，消除 terminal feedback 的重复 order lookup；Gate、Bitget 以及两条
+  parser → SHM → runtime 正式 A/B、replay、测试和 review 均通过。
+- `f1dc51c Optimize Gate order request tracking`、`788b6c4 Cache Gate order session owner
+  thread ID`：分别减少 Gate request tracking 和热路径 thread-id 查询成本；对应 Gate
+  submit/response 正式 A/B 均通过。
+- `c9aa980 Compile Bitget order request formats`：预编译 Bitget place/cancel request format；
+  Bitget submit component 与整链验证通过。
+- `51bc4e7 Remove duplicate Bitget send log timestamp`：只删除 Bitget send log 中可由其他
+  字段还原的重复 timestamp，保留既有 `NOVA_*` log wrapper。日志格式化和输出在 backend
+  thread，本项按用户约束只审计字段必要性与重复性，不运行日志 latency benchmark。
+- `d4102fc Skip unused Gate feedback strings`：Gate SBE feedback 对未消费的 var-string
+  只验证长度和边界、不再写出 `string_view`。三组 component 中 parser 约改善 `23.9%`，
+  session 约改善 `4.9%`，parser → SHM 约改善 `4.3%`；五组完整 Gate parser → SHM →
+  LeadLag runtime 的 `p50/p99` 为 5/5 同向，组中位数约改善 `5.0%/4.3%`，
+  `p99.9` 为 3/5 同向，因此只声明中心和 p99 稳定收益。
 
-benchmark 和 profile 支撑已分别提交到 `428c751` 至 `84e6886`。当前证据把 terminal
-feedback 路径进一步拆到 Gate/Bitget parser、feedback SHM/runtime、OrderManager、
-Strategy、ExecutionState 和两条订单 lifecycle 日志；原始 build/results 均保存在
+benchmark 和 profile 支撑已提交到 `428c751` 至 `3156ce7`，其中 `3156ce7` 增加 Bitget
+order ACK parser → correlation → handler 的完整测量入口。当前证据把 submit、ACK 和
+terminal feedback 路径拆到 Gate/Bitget parser、feedback SHM/runtime、OrderManager、
+Strategy、ExecutionState 和订单 lifecycle 日志；原始 build/results 均保存在
 `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-builds` 与
 `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results`。本机
 `kernel.perf_event_paranoid=4`，所以没有 `perf` call graph 证据，也没有修改系统设置。
 
-两个候选已经拒绝且未保留在生产代码：
+已经拒绝且未保留在生产代码的主要候选包括：
 
 - order price text active-bitset/index 虽显著改善 focused sparse scan，但 Gate/Bitget
   完整 feedback runtime 的尾部回归，候选 diff 仅保存在
   `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results/order-price-text-erase-scan/rejected-candidate.diff`。
 - 删除 `lead_lag_order_finished` 重复/低价值字段只节省约 `5 ns`，Strategy terminal
   路径反而回归；已完整撤销，当前没有删除生产诊断字段。
+- Bitget numeric parser、`code == 0` success-message skip、Gate/Bitget 固定 JSON/literal
+  compare 等候选虽然改善 component，但完整 ACK 或 feedback runtime 回归。
+- Gate fixed-block unchecked read 在 component 改善 `3%–11%`，Bitget `clientOid` 单次
+  `get_string()` 改善 component `1.5%–2.5%`，Bitget order cursor reset 改善 component
+  `2.7%–4.3%`；完整 runtime 分别为 `p99 0/2`、`p50/p99/p99.9 0/2`、
+  正式 `p50/p99 3/5` 且 `p99.9 1/5`，均已撤销。
+- Gate hot literal compare 的 component 改善约 `13%–16%`，但五组正式 runtime 的
+  `p50/p99` 只有 2/5 同向，也已撤销。
 
-当前 worktree 中 `strategy/lead_lag/strategy.h` 还有一个**未提交、未接受**的候选：复用
-feedback 入口已经找到的 `StrategyOrder*`，避免 `ApplyFinishedOrder()` 再按
-`local_order_id` 查找一次。三个 focused tests 已通过。Gate 正式 A/B 的前 4 个完整组中，
-`p50/p99` 为 4/4 同向改善，`p99.9` 为 3/4 同向；第 5 组 candidate JSON 被截断，因此尚未
-满足 5 组验收门，也尚未运行 Bitget 和 parser → SHM → runtime 整链 A/B。
+最新 fresh gprof 位于
+`gate-feedback-parser-gprof-after-d4102fc` 与
+`bitget-feedback-parser-gprof-after-d4102fc`。Gate 的剩余 `ReadRawOrderFeedbackUpdate`
+和必要 string compare、Bitget 的 field traversal / stage1 / numeric decode 均已做过至少
+两个最小候选；连续完整 A/B 没有找到新的非拓扑可接受项。当前 worktree 应保持 clean，
+准确状态仍只信 `git status --short --branch`。
 
-恢复时先检查当前 dirty diff，不要重写候选；重新运行 Gate 第 5 组 candidate 并汇总全部
-5 组，然后依次运行 Bitget formal A/B 和 Gate/Bitget parser → SHM → runtime 整链 A/B。
-只有全部满足等价性、性能门、focused/full tests、replay 和 review 后才提交该候选；否则
-用最小反向 patch 撤销。继续完成非拓扑热点后，线程/进程拓扑仍必须放到新的独立
-branch/worktree 中评估。
+下一阶段是线程 / 进程拓扑，必须从当前已接受 HEAD 新建独立 branch/worktree，不在
+`perf/gate-bitget-trading-latency` 上直接修改。开始前先读取
+`docs/runtime_cpu_allocation.md`，冻结当前 Gate/Bitget submit、ACK、feedback runtime
+baseline，并明确 owner thread、SHM producer/consumer、CPU affinity、IRQ/softirq 和
+memory visibility 边界；不得修改 `kernel.perf_event_paranoid` 或其他系统设置。
 
 ## 验证策略
 
