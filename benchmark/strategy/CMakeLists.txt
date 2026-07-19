@@ -60,6 +60,11 @@ target_link_libraries(lead_lag_feedback_runtime_benchmark
         nova
 )
 
+target_compile_definitions(lead_lag_feedback_runtime_benchmark
+    PRIVATE
+        AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS
+)
+
 add_executable(lead_lag_group_container_benchmark
     lead_lag_group_container_benchmark.cpp
 )

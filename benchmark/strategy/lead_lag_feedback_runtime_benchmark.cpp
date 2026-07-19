@@ -36,6 +36,8 @@ constexpr std::int32_t kSymbolId = 3;
 constexpr std::int64_t kFeedbackLocalReceiveNs = 201;
 constexpr std::size_t kOrderCapacity = 8;
 constexpr std::size_t kLatencyIterations = 4096;
+constexpr std::size_t kActualPairCount = 30;
+constexpr std::size_t kDenseActiveOrderCount = 120;
 
 struct SharedOrderSessionState {
   std::uint64_t place_calls{0};
@@ -155,6 +157,22 @@ using Runtime =
               .lag_taker_fee = 0.0,
           },
   });
+  return config;
+}
+
+[[nodiscard]] Config BenchmarkConfig(Exchange lag_exchange,
+                                     std::size_t pair_count) {
+  Config config = BenchmarkConfig(lag_exchange);
+  const PairConfig pair_template = config.pairs.front();
+  config.pairs.reserve(pair_count);
+  for (std::size_t index = 1; index < pair_count; ++index) {
+    PairConfig pair = pair_template;
+    pair.symbol_id += static_cast<std::int32_t>(index);
+    pair.symbol = fmt::format("PAIR_{}", index);
+    pair.lag_instrument.symbol_id = pair.symbol_id;
+    pair.lag_instrument.exchange_symbol = fmt::format("PAIR_{}_LAG", index);
+    config.pairs.push_back(std::move(pair));
+  }
   return config;
 }
 
@@ -396,11 +414,80 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
   state.SetItemsProcessed(state.iterations());
 }
 
+void RunOrderPriceTextEraseLatency(benchmark::State& state,
+                                   std::size_t target_index,
+                                   std::size_t dense_active_count) {
+  Strategy strategy{BenchmarkConfig(Exchange::kGate, kActualPairCount)};
+  if (target_index >= strategy.OrderPriceTextSlotCountForTest()) {
+    state.SkipWithError("order price text target slot is unavailable");
+    return;
+  }
+
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+  for (auto _ : state) {
+    state.PauseTiming();
+    const std::uint64_t local_order_id =
+        strategy.PrepareOrderPriceTextEraseForTest(target_index,
+                                                   dense_active_count);
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    strategy.EraseOrderPriceTextForTest(local_order_id);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.PauseTiming();
+
+    if (local_order_id == 0 ||
+        strategy.OrderPriceTextSlotActiveForTest(target_index)) {
+      state.ResumeTiming();
+      state.SkipWithError("order price text slot was not erased");
+      return;
+    }
+
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "erased_slots", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_LeadLagOrderPriceTextEraseFirstSlotLatency(benchmark::State& state) {
+  RunOrderPriceTextEraseLatency(state, 0, 1);
+}
+
+void BM_LeadLagOrderPriceTextEraseDense120Latency(benchmark::State& state) {
+  RunOrderPriceTextEraseLatency(state, kDenseActiveOrderCount - 1,
+                                kDenseActiveOrderCount);
+}
+
+void BM_LeadLagOrderPriceTextEraseSparseLastSlotLatency(
+    benchmark::State& state) {
+  const std::size_t slot_count =
+      kActualPairCount * kMaxExecutionGroupPendingOrders;
+  RunOrderPriceTextEraseLatency(state, slot_count - 1, 0);
+}
+
 BENCHMARK(BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagOrderPriceTextEraseFirstSlotLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagOrderPriceTextEraseDense120Latency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagOrderPriceTextEraseSparseLastSlotLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

@@ -748,6 +748,42 @@ class Strategy {
     const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
     return {totals.gross_notional, totals.holding_position};
   }
+
+  [[nodiscard]] std::size_t OrderPriceTextSlotCountForTest() const noexcept {
+    return order_price_texts_.size();
+  }
+
+  [[nodiscard]] std::uint64_t PrepareOrderPriceTextEraseForTest(
+      std::size_t target_index, std::size_t dense_active_count) noexcept {
+    if (target_index >= order_price_texts_.size() ||
+        dense_active_count > order_price_texts_.size()) {
+      return 0;
+    }
+    std::fill(reserved_open_risk_slot_bits_.begin(),
+              reserved_open_risk_slot_bits_.end(), 0);
+    for (OrderPriceTextStorage& storage : order_price_texts_) {
+      storage = {};
+    }
+    for (std::size_t index = 0; index < dense_active_count; ++index) {
+      OrderPriceTextStorage& storage = order_price_texts_[index];
+      storage.local_order_id = index + 1U;
+      storage.active = true;
+    }
+    OrderPriceTextStorage& target = order_price_texts_[target_index];
+    target.local_order_id = target_index + 1U;
+    target.active = true;
+    return target.local_order_id;
+  }
+
+  void EraseOrderPriceTextForTest(std::uint64_t local_order_id) noexcept {
+    EraseOrderPriceText(local_order_id);
+  }
+
+  [[nodiscard]] bool OrderPriceTextSlotActiveForTest(
+      std::size_t index) const noexcept {
+    return index < order_price_texts_.size() &&
+           order_price_texts_[index].active;
+  }
 #endif
 
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
