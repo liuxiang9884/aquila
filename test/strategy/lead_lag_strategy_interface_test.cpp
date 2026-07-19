@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -9,6 +10,7 @@
 #include <limits>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -2164,6 +2166,50 @@ TEST(LeadLagStrategyInterfaceTest,
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
   EXPECT_FALSE(decision.triggered);
   EXPECT_EQ(decision.reject_reason, leadlag::SignalRejectReason::kRiskLimit);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     GlobalRiskTotalsPreserveSparseSymbolIdAccounting) {
+  leadlag::Config config = TwoPairSignalOnlyConfig();
+  config.pairs[1].symbol_id = 480;
+  std::reverse(config.pairs.begin(), config.pairs.end());
+  config.risk.max_gross_notional = 1'000'000.0;
+  leadlag::Strategy source_strategy{config};
+  leadlag::Strategy moved_strategy{std::move(source_strategy)};
+  leadlag::Strategy strategy{SignalOnlyConfig()};
+  strategy = std::move(moved_strategy);
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 3);
+  ASSERT_EQ(order_session.placed_orders.size(), 1U);
+  const FakeOrderSession::CapturedOrder& first_order =
+      order_session.placed_orders.front();
+  const std::uint64_t first_local_order_id = first_order.local_order_id;
+  const double first_quantity = first_order.quantity;
+  const double first_price = std::stod(first_order.price_text);
+  const double first_notional = first_quantity * first_price;
+  auto totals = strategy.CurrentGlobalRiskTotalsForTest();
+  EXPECT_DOUBLE_EQ(totals.first, first_notional);
+  EXPECT_DOUBLE_EQ(totals.second, first_quantity);
+
+  ApplyFeedback(
+      &strategy, &order_manager, &context,
+      FilledFeedback(first_local_order_id, first_quantity, first_price));
+  totals = strategy.CurrentGlobalRiskTotalsForTest();
+  EXPECT_DOUBLE_EQ(totals.first, first_notional);
+  EXPECT_DOUBLE_EQ(totals.second, first_quantity);
+
+  FeedOpenLongSignalForSymbol(&strategy, &context, 480);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder& second_order =
+      order_session.placed_orders.back();
+  const double second_notional =
+      second_order.quantity * std::stod(second_order.price_text);
+  totals = strategy.CurrentGlobalRiskTotalsForTest();
+  EXPECT_DOUBLE_EQ(totals.first, first_notional + second_notional);
+  EXPECT_DOUBLE_EQ(totals.second, first_quantity + second_order.quantity);
 }
 
 TEST(LeadLagStrategyInterfaceTest, GlobalRiskLimitAllowsReduceOnlyClose) {

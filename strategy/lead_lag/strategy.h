@@ -1187,6 +1187,8 @@ class Strategy {
   };
 
   void InitPairRuntimeStates() {
+    initialized_pair_runtimes_.clear();
+    initialized_pair_runtimes_.reserve(config_.pairs.size());
     std::int32_t max_symbol_id = -1;
     for (const PairConfig& pair : config_.pairs) {
       if (pair.symbol_id > max_symbol_id) {
@@ -1271,6 +1273,11 @@ class Strategy {
       runtime.threshold.Init(pair);
       runtime.execution.Init(pair.execute.parallel);
       route->runtime = &runtime;
+    }
+    for (PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
+      if (runtime.initialized) {
+        initialized_pair_runtimes_.push_back(&runtime);
+      }
     }
     order_price_texts_.resize(price_text_slot_count);
   }
@@ -2552,10 +2559,8 @@ class Strategy {
 
   [[nodiscard]] GlobalRiskTotals CurrentGlobalRiskTotals() const noexcept {
     GlobalRiskTotals totals;
-    for (const PairRuntimeState& runtime : pair_runtime_by_symbol_id_) {
-      if (!runtime.initialized) {
-        continue;
-      }
+    for (const PairRuntimeState* runtime_ptr : initialized_pair_runtimes_) {
+      const PairRuntimeState& runtime = *runtime_ptr;
       for (const ExecutionGroup& group : runtime.execution.groups()) {
         const double quantity = AbsolutePositionQuantity(group);
         if (quantity <= kQuantityEpsilon) {
@@ -2908,6 +2913,7 @@ class Strategy {
   StrategyOptions options_;
   RawMarketState raw_market_state_;
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
+  std::vector<const PairRuntimeState*> initialized_pair_runtimes_;
   std::vector<PairRoute> routes_by_symbol_id_;
   std::vector<OrderPriceTextStorage> order_price_texts_;
   MarketUpdate last_market_update_;
