@@ -1017,7 +1017,8 @@ BENCHMARK(BM_EncodeCancelOrder);
 BENCHMARK(BM_ParsePlaceResult);
 BENCHMARK(BM_ParsePlaceResultForOrderSession);
 BENCHMARK(BM_OrderSessionHandlePlaceAck);
-BENCHMARK(BM_OrderSessionHandlePlaceResult);
+BENCHMARK(BM_OrderSessionHandlePlaceResult)
+    ->Iterations(kOrderSendLatencyIterations);
 BENCHMARK(BM_OrderSessionPlaceOrderToSocketPair)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()

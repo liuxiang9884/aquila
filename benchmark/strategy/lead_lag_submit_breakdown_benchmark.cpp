@@ -42,6 +42,7 @@ constexpr std::int32_t kSymbolId = 67;
 constexpr std::size_t kOrderCapacity = 64;
 constexpr std::uint16_t kFanout = 4;
 constexpr std::size_t kLatencyIterations = 4096;
+constexpr std::size_t kSubmitBreakdownIterations = 1024;
 constexpr std::size_t kGatewayQueueCapacity = kLatencyIterations + 128;
 constexpr std::string_view kSymbol = "BAS_USDT";
 constexpr std::string_view kQuantityText = "1";
@@ -1786,27 +1787,27 @@ void BM_OrderGatewayFanoutBatchModel4Routes(benchmark::State& state) {
 }
 
 BENCHMARK(BM_LeadLagSubmitPathBreakdownSyntheticFanout4)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOff)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOn)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOnPrefill20)
-    ->Iterations(1024)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayActualConfigRiskOnBas)
-    ->Iterations(1024)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
