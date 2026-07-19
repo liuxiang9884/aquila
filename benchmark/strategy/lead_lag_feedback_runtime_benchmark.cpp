@@ -641,6 +641,157 @@ void BM_LeadLagStrategyBitgetTerminalFillLatency(benchmark::State& state) {
   RunLeadLagStrategyTerminalFillLatency(state, Exchange::kBitget);
 }
 
+[[nodiscard]] core::StrategyOrder TerminalFilledOrder() noexcept {
+  return {
+      .local_order_id = 1,
+      .parent_id = 2,
+      .exchange_order_id = 1001,
+      .exchange = Exchange::kGate,
+      .symbol_id = kSymbolId,
+      .symbol = "BTC_USDT",
+      .side = OrderSide::kBuy,
+      .type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .quantity = 7.0,
+      .quantity_text = "7",
+      .price_text = "102.1",
+      .reduce_only = false,
+      .gateway_route_id = 0,
+      .status = core::OrderStatus::kFilled,
+      .cumulative_filled_quantity = 7.0,
+      .cumulative_filled_value = 714.7,
+      .last_fill_price = 102.1,
+      .request_send_local_ns = 100,
+      .ack_local_receive_ns = 150,
+      .ack_exchange_ns = 140,
+      .finish_exchange_ns = 200'000,
+      .exchange_update_ns = 200'000,
+      .role = OrderRole::kTaker,
+      .is_finished = true,
+  };
+}
+
+void BM_LeadLagLogOrderFeedbackLatency(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
+  const core::StrategyOrder order = TerminalFilledOrder();
+  const OrderFeedbackEvent event = TerminalFillEvent(order.local_order_id);
+  const SignalTiming market_timing{
+      .lead_exchange_ns = 180'000,
+      .lead_book_ticker_id = 11,
+      .lag_exchange_ns = 190'000,
+      .lag_book_ticker_id = 12,
+  };
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    detail::LogStrategyOrderFeedback(event, &order, market_timing);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    state.PauseTiming();
+    samples_ns.push_back(elapsed_ns);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "log_records", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_LeadLagLogOrderFinishedLatency(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
+  const core::StrategyOrder order = TerminalFilledOrder();
+  const detail::StrategyOrderPositionLogFields position{
+      .position_id = 7,
+      .position_direction = PositionDirection::kLong,
+      .order_role = "entry",
+      .entry_local_order_id = order.local_order_id,
+  };
+  const SignalTiming market_timing{
+      .lead_exchange_ns = 180'000,
+      .lag_exchange_ns = 190'000,
+  };
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    detail::LogStrategyOrderFinished(order, position, 1, market_timing);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    state.PauseTiming();
+    samples_ns.push_back(elapsed_ns);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "log_records", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_LeadLagExecutionApplyTerminalOrderLatency(benchmark::State& state) {
+  const InstrumentMetadata instrument =
+      BenchmarkConfig(Exchange::kGate).pairs.front().lag_instrument;
+  const core::StrategyOrder order = TerminalFilledOrder();
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    ExecutionState execution;
+    execution.Init(1);
+    if (execution.StartOpenOrder(order.local_order_id) == nullptr) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to seed execution state");
+      return;
+    }
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    const ExecutionApplyResult result =
+        execution.ApplyTerminalOrder(order, instrument);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.PauseTiming();
+
+    if (result != ExecutionApplyResult::kAppliedHold ||
+        execution.active_group_count() != 1) {
+      state.ResumeTiming();
+      state.SkipWithError("execution state did not apply terminal order");
+      return;
+    }
+
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "terminal_orders", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
 void RunOrderPriceTextEraseLatency(benchmark::State& state,
                                    std::size_t target_index,
                                    std::size_t dense_active_count) {
@@ -724,6 +875,18 @@ BENCHMARK(BM_LeadLagStrategyGateTerminalFillLatency)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagStrategyBitgetTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagLogOrderFeedbackLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagLogOrderFinishedLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagExecutionApplyTerminalOrderLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
