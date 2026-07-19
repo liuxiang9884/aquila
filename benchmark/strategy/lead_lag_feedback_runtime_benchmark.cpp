@@ -289,6 +289,9 @@ void BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency(
     std::uint64_t observed_local_order_id = 0;
     bool published = false;
 
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
     state.ResumeTiming();
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
     const gate::OrderFeedbackParseResult parsed =
@@ -319,6 +322,9 @@ void BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency(
     samples_ns.push_back(elapsed_ns);
     benchmark::DoNotOptimize(observed_local_order_id);
     benchmark::DoNotOptimize(reader_result.value.consumed_count());
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
     state.ResumeTiming();
   }
 
@@ -375,6 +381,9 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
     std::uint64_t observed_local_order_id = 0;
     bool published = false;
 
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
     state.ResumeTiming();
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
     const bitget::OrderFeedbackParseResult parsed =
@@ -406,6 +415,9 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
     samples_ns.push_back(elapsed_ns);
     benchmark::DoNotOptimize(observed_local_order_id);
     benchmark::DoNotOptimize(reader_result.value.consumed_count());
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
     state.ResumeTiming();
   }
 
@@ -417,8 +429,9 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
 void RunOrderPriceTextEraseLatency(benchmark::State& state,
                                    std::size_t target_index,
                                    std::size_t dense_active_count) {
-  Strategy strategy{BenchmarkConfig(Exchange::kGate, kActualPairCount)};
-  if (target_index >= strategy.OrderPriceTextSlotCountForTest()) {
+  auto strategy = std::make_unique<Strategy>(
+      BenchmarkConfig(Exchange::kGate, kActualPairCount));
+  if (target_index >= strategy->OrderPriceTextSlotCountForTest()) {
     state.SkipWithError("order price text target slot is unavailable");
     return;
   }
@@ -428,18 +441,18 @@ void RunOrderPriceTextEraseLatency(benchmark::State& state,
   for (auto _ : state) {
     state.PauseTiming();
     const std::uint64_t local_order_id =
-        strategy.PrepareOrderPriceTextEraseForTest(target_index,
-                                                   dense_active_count);
+        strategy->PrepareOrderPriceTextEraseForTest(target_index,
+                                                    dense_active_count);
     state.ResumeTiming();
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
-    strategy.EraseOrderPriceTextForTest(local_order_id);
+    strategy->EraseOrderPriceTextForTest(local_order_id);
     const std::uint64_t elapsed_ns =
         websocket::benchmarking::NowNs() - start_ns;
     state.PauseTiming();
 
     if (local_order_id == 0 ||
-        strategy.OrderPriceTextSlotActiveForTest(target_index)) {
+        strategy->OrderPriceTextSlotActiveForTest(target_index)) {
       state.ResumeTiming();
       state.SkipWithError("order price text slot was not erased");
       return;
