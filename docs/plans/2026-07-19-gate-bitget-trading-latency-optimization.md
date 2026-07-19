@@ -124,6 +124,51 @@ thread ownership 和进程边界，但必须额外验证：
 
 证据不足或收益不满足门槛时整体放弃该 branch。
 
+## 2026-07-19 暂停点
+
+当前工作位于 worktree
+`/home/liuxiang/tmp/aquila-gate-bitget-trading-latency`、branch
+`perf/gate-bitget-trading-latency`；准确的 HEAD、ahead 和 dirty 状态仍只信
+`git status --short --branch`。
+
+已接受并提交两项生产优化：
+
+- `9b09d73 Optimize LeadLag global risk scan`：缓存按 `symbol_id` 顺序初始化的 pair
+  runtime，focused benchmark 的 `p50/p99/p99.9` 分别从
+  `799/1283/5012.5 ns` 降至 `674.5/708.5/1702 ns`，5/5 组同向。
+- `c48b41b Optimize LeadLag open risk reservation scan`：用固定 bitset 维护 reserved-open
+  slot，focused benchmark 的 `p50/p99/p99.9` 分别从
+  `674.5/708/1586 ns` 降至 `69/73/87 ns`，5/5 组同向；实际配置 paired
+  benchmark 的总路径 `p50` 从 `8173 ns` 降至 `7088 ns`，risk stage `p50/p99`
+  从 `1125/1880 ns` 降至 `336/664 ns`，相关 strategy tests 88/88 通过。
+
+benchmark 和 profile 支撑已分别提交到 `428c751` 至 `84e6886`。当前证据把 terminal
+feedback 路径进一步拆到 Gate/Bitget parser、feedback SHM/runtime、OrderManager、
+Strategy、ExecutionState 和两条订单 lifecycle 日志；原始 build/results 均保存在
+`/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-builds` 与
+`/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results`。本机
+`kernel.perf_event_paranoid=4`，所以没有 `perf` call graph 证据，也没有修改系统设置。
+
+两个候选已经拒绝且未保留在生产代码：
+
+- order price text active-bitset/index 虽显著改善 focused sparse scan，但 Gate/Bitget
+  完整 feedback runtime 的尾部回归，候选 diff 仅保存在
+  `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results/order-price-text-erase-scan/rejected-candidate.diff`。
+- 删除 `lead_lag_order_finished` 重复/低价值字段只节省约 `5 ns`，Strategy terminal
+  路径反而回归；已完整撤销，当前没有删除生产诊断字段。
+
+当前 worktree 中 `strategy/lead_lag/strategy.h` 还有一个**未提交、未接受**的候选：复用
+feedback 入口已经找到的 `StrategyOrder*`，避免 `ApplyFinishedOrder()` 再按
+`local_order_id` 查找一次。三个 focused tests 已通过。Gate 正式 A/B 的前 4 个完整组中，
+`p50/p99` 为 4/4 同向改善，`p99.9` 为 3/4 同向；第 5 组 candidate JSON 被截断，因此尚未
+满足 5 组验收门，也尚未运行 Bitget 和 parser → SHM → runtime 整链 A/B。
+
+恢复时先检查当前 dirty diff，不要重写候选；重新运行 Gate 第 5 组 candidate 并汇总全部
+5 组，然后依次运行 Bitget formal A/B 和 Gate/Bitget parser → SHM → runtime 整链 A/B。
+只有全部满足等价性、性能门、focused/full tests、replay 和 review 后才提交该候选；否则
+用最小反向 patch 撤销。继续完成非拓扑热点后，线程/进程拓扑仍必须放到新的独立
+branch/worktree 中评估。
+
 ## 验证策略
 
 - 修改前：冻结现有 benchmark/golden 输出，证明测量面能观察目标路径。

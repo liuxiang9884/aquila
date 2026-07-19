@@ -40,6 +40,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 | Gate OBU / OrderBook | `docs/gate_obu_order_book_notes.md` |
 | Instrument catalog | `docs/futures_contract_metadata_fields.md` |
 | Runtime CPU / IRQ | `docs/runtime_cpu_allocation.md` |
+| Gate / Bitget 交易链路性能优化 | `docs/plans/2026-07-19-gate-bitget-trading-latency-optimization.md` |
 | TUI | `docs/tui.md` |
 
 ## 当前事实
@@ -90,6 +91,13 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   count 类型、`symbol_id`/`exchange` 和存储布局。
 - `FixedOrderedSlotPool` 已提供通用容器，但生产 LeadLag multi-group metadata 迁移仍按专题文档和独立分支事实确认，不能假设完成。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
+- Gate/Bitget 交易链路 L3 性能优化在独立 worktree
+  `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency`、branch
+  `perf/gate-bitget-trading-latency` 上暂停。已提交 global risk scan 和 reserved-open
+  scan 两项有正式 A/B 证据的优化；当前 `strategy/lead_lag/strategy.h` 的复用
+  `StrategyOrder*` 候选仍是未提交、未接受的 dirty diff。Gate 只有 4 个完整 A/B 组，
+  第 5 组 candidate JSON 被截断，Bitget 和完整 parser → SHM → runtime A/B 尚未执行。
+  详细数据、原始产物位置和恢复顺序只在性能计划的“2026-07-19 暂停点”维护。
 
 ## 代码入口
 
@@ -155,7 +163,9 @@ rg 'aquila_evaluation' core exchange tools
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
 5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
-6. 性能/CPU：先按 latency/CPU 文档记录环境并做 A/B；无 benchmark/profile/live 证据不宣称收益。
+6. 性能/CPU：继续当前 Gate/Bitget 优化时使用既有性能 worktree，先完成未接受候选的 Gate
+   第 5 组、Bitget 和整链 A/B；不满足正式门槛就撤销。无 fresh benchmark/profile 证据不
+   宣称收益；线程/进程拓扑最后在新的独立 branch/worktree 评估。
 
 ## 给下一个对话的提示
 
@@ -182,3 +192,14 @@ absent 和 fresh REST flat。Bitget 已补齐 place `cTime`/`ts`、order push li
 send/write-complete/Ack 成对时间日志；`fast-fill` 只供分析，不进入 feedback。下一步先用新 live 日志比较 fast-fill/order
 到达时间并离线关联 BBO；零成交 IOC 仍没有文档明确的 order-ingress/match-attempt 时间戳。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
+
+若继续当前 Gate/Bitget 交易链路性能优化，不要从 `/home/liuxiang/dev/aquila` 的 `main`
+重开实现；进入 `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency`，确认 branch 为
+`perf/gate-bitget-trading-latency`，并先读
+`docs/plans/2026-07-19-gate-bitget-trading-latency-optimization.md` 的
+“2026-07-19 暂停点”。当前 `strategy/lead_lag/strategy.h` dirty diff 是消除 terminal
+feedback 重复 order lookup 的未接受候选：先补 Gate 第 5 组 candidate，再跑 Bitget 和
+Gate/Bitget parser → SHM → runtime 正式 A/B；通过全部等价性、性能、测试、replay 和
+review 门后才能原子提交，否则最小撤销。`perf` 因
+`kernel.perf_event_paranoid=4` 不可用；不要擅自修改系统设置。完成非拓扑热点后，拓扑优化
+仍按约定另开 branch/worktree。
