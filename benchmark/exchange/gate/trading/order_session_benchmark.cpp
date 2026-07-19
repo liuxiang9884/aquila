@@ -5,9 +5,12 @@
 #include <array>
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
@@ -15,9 +18,11 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
+#include "core/trading/order_gateway_shm.h"
 #include "core/trading/order_manager.h"
 #include "core/trading/strategy_context.h"
 #include "core/websocket/message_view.h"
+#include "exchange/gate/trading/order_gateway_worker.h"
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/submit_response_parser.h"
@@ -89,6 +94,17 @@ constexpr std::string_view kPlaceResult = R"json({
     }
   }
 })json";
+
+struct ShmCleanup {
+  explicit ShmCleanup(std::string shm_name_in)
+      : shm_name(std::move(shm_name_in)) {}
+
+  ~ShmCleanup() {
+    ::shm_unlink(shm_name.c_str());
+  }
+
+  std::string shm_name;
+};
 
 struct CountingHandler {
   std::uint64_t responses{0};
@@ -403,6 +419,21 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
   return config;
 }
 
+[[nodiscard]] core::OrderGatewayShmConfig MakeOrderGatewayShmConfig() {
+  return core::OrderGatewayShmConfig{
+      .shm_name =
+          fmt::format("/aquila_gate_order_gateway_bench_{}", ::getpid()),
+      .create = true,
+      .remove_existing = true,
+      .route_count = 1,
+      .command_queue_capacity =
+          static_cast<std::uint32_t>(kOrderSendLatencyIterations + 2),
+      .event_queue_capacity =
+          static_cast<std::uint32_t>(kOrderSendLatencyIterations + 2),
+      .startup_ready_timeout_s = 30,
+  };
+}
+
 struct BenchOrder {
   std::uint64_t local_order_id{0};
   std::string_view symbol{};
@@ -482,6 +513,32 @@ MakeGateLimitRequest() noexcept {
       .price_text = "81000",
       .reduce_only = false,
   };
+}
+
+[[nodiscard]] core::OrderGatewayCommand MakePlaceCommand(
+    std::uint64_t local_order_id) noexcept {
+  core::OrderGatewayCommand command{};
+  command.kind = core::OrderGatewayCommandKind::kPlace;
+  command.command_seq = local_order_id;
+  command.parent_id = 1;
+  command.local_order_id = local_order_id;
+  command.route_id = 0;
+  command.exchange = Exchange::kGate;
+  command.symbol_id = 7;
+  command.side = OrderSide::kBuy;
+  command.order_type = OrderType::kLimit;
+  command.time_in_force = TimeInForce::kImmediateOrCancel;
+  command.quantity = 1.0;
+  const std::string_view symbol = "BTC_USDT";
+  const std::string_view quantity = "1";
+  const std::string_view price = "81000";
+  command.symbol_size = static_cast<std::uint16_t>(symbol.size());
+  command.quantity_text_size = static_cast<std::uint16_t>(quantity.size());
+  command.price_text_size = static_cast<std::uint16_t>(price.size());
+  std::memcpy(command.symbol, symbol.data(), symbol.size());
+  std::memcpy(command.quantity_text, quantity.data(), quantity.size());
+  std::memcpy(command.price_text, price.data(), price.size());
+  return command;
 }
 
 bool FormatPlaceResultPayload(std::uint64_t sequence,
@@ -1012,6 +1069,66 @@ void BM_StrategyContextPlaceLimitOrderToCountingTransportWarm(
       state, kOrderSendWarmupCount);
 }
 
+void BM_GatewayWorkerPlaceOrderToCountingTransport(benchmark::State& state) {
+  const core::OrderGatewayShmConfig shm_config = MakeOrderGatewayShmConfig();
+  ShmCleanup cleanup(shm_config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(shm_config);
+  if (!shm_result.ok) {
+    state.SkipWithError(shm_result.error.c_str());
+    return;
+  }
+  core::OrderGatewayShmManager& shm = shm_result.value;
+  for (std::uint64_t i = 0; i < kOrderSendLatencyIterations; ++i) {
+    if (!shm.CommandQueue(0).TryPush(MakePlaceCommand(i + 1))) {
+      state.SkipWithError("failed to prefill Gate gateway command queue");
+      return;
+    }
+  }
+
+  using Transport = CountingOrderTransport;
+  Transport::ResetStats();
+  CountingHandler handler;
+  using BenchOrderSession =
+      OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
+  BenchOrderSession session(
+      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
+      kOrderSendLatencyIterations + 2);
+  if (!ActivateLoginOnly(session, kLoginSuccess)) {
+    state.SkipWithError("Gate order session login setup failed");
+    return;
+  }
+  Transport::ResetStats();
+
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
+  OrderGatewayCommandWorker<BenchOrderSession> worker(0, shm.CommandQueue(0),
+                                                      session, publisher);
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kOrderSendLatencyIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    const bool dispatched = worker.PollOnce();
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    if (!dispatched) {
+      state.SkipWithError("Gate gateway worker dispatch failed");
+      return;
+    }
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
+  const SocketPairWriteStats stats = Transport::stats();
+  if (stats.invalid_writes != 0 ||
+      stats.write_calls != static_cast<std::uint64_t>(state.iterations())) {
+    state.SkipWithError("Gate gateway worker write count mismatch");
+  }
+  state.counters["bytes_sent"] = static_cast<double>(stats.bytes_sent);
+}
+
 BENCHMARK(BM_EncodePlaceOrder);
 BENCHMARK(BM_EncodeCancelOrder);
 BENCHMARK(BM_ParsePlaceResult);
@@ -1044,6 +1161,10 @@ BENCHMARK(BM_StrategyContextPlaceLimitOrderToCountingTransport)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_StrategyContextPlaceLimitOrderToCountingTransportWarm)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_GatewayWorkerPlaceOrderToCountingTransport)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

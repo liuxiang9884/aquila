@@ -1,21 +1,30 @@
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <fmt/format.h>
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
 #include "core/common/types.h"
+#include "core/trading/order_gateway_shm.h"
 #include "core/trading/order_manager.h"
 #include "core/trading/strategy_context.h"
 #include "core/websocket/message_view.h"
 #include "exchange/bitget/trading/operation_response_parser.h"
+#include "exchange/bitget/trading/order_gateway_worker.h"
 #include "exchange/bitget/trading/order_request_encoder.h"
 #include "exchange/bitget/trading/order_session.h"
 #include <simdjson.h>
@@ -33,6 +42,17 @@ constexpr std::string_view kLoginSuccess =
     R"({"event":"login","code":"0","msg":""})";
 
 constexpr std::size_t kOrderSendLatencyIterations = 4096;
+
+struct ShmCleanup {
+  explicit ShmCleanup(std::string shm_name_in)
+      : shm_name(std::move(shm_name_in)) {}
+
+  ~ShmCleanup() {
+    ::shm_unlink(shm_name.c_str());
+  }
+
+  std::string shm_name;
+};
 
 struct CountingHandler {
   void OnOrderResponse(const OrderResponse&) noexcept {}
@@ -143,6 +163,21 @@ struct CountingOrderWebSocketPolicy : websocket::DefaultWebSocketOptions {
   return config;
 }
 
+[[nodiscard]] core::OrderGatewayShmConfig MakeOrderGatewayShmConfig() {
+  return core::OrderGatewayShmConfig{
+      .shm_name =
+          fmt::format("/aquila_bitget_order_gateway_bench_{}", ::getpid()),
+      .create = true,
+      .remove_existing = true,
+      .route_count = 1,
+      .command_queue_capacity =
+          static_cast<std::uint32_t>(kOrderSendLatencyIterations + 2),
+      .event_queue_capacity =
+          static_cast<std::uint32_t>(kOrderSendLatencyIterations + 2),
+      .startup_ready_timeout_s = 30,
+  };
+}
+
 [[nodiscard]] constexpr core::StrategyOrder MakeStrategyOrder(
     std::uint64_t local_order_id) noexcept {
   return core::StrategyOrder{
@@ -158,6 +193,32 @@ struct CountingOrderWebSocketPolicy : websocket::DefaultWebSocketOptions {
       .price_text = "100000.0",
       .reduce_only = false,
   };
+}
+
+[[nodiscard]] core::OrderGatewayCommand MakePlaceCommand(
+    std::uint64_t local_order_id) noexcept {
+  core::OrderGatewayCommand command{};
+  command.kind = core::OrderGatewayCommandKind::kPlace;
+  command.command_seq = local_order_id;
+  command.parent_id = 1;
+  command.local_order_id = local_order_id;
+  command.route_id = 0;
+  command.exchange = Exchange::kBitget;
+  command.symbol_id = 7;
+  command.side = OrderSide::kBuy;
+  command.order_type = OrderType::kLimit;
+  command.time_in_force = TimeInForce::kImmediateOrCancel;
+  command.quantity = 0.001;
+  const std::string_view symbol = "BTCUSDT";
+  const std::string_view quantity = "0.001";
+  const std::string_view price = "100000.0";
+  command.symbol_size = static_cast<std::uint16_t>(symbol.size());
+  command.quantity_text_size = static_cast<std::uint16_t>(quantity.size());
+  command.price_text_size = static_cast<std::uint16_t>(price.size());
+  std::memcpy(command.symbol, symbol.data(), symbol.size());
+  std::memcpy(command.quantity_text, quantity.data(), quantity.size());
+  std::memcpy(command.price_text, price.data(), price.size());
+  return command;
 }
 
 [[nodiscard]] constexpr core::OrderCreateRequest MakeLimitRequest() noexcept {
@@ -345,6 +406,68 @@ void BenchmarkStrategyContextPlaceLimitOrderToCountingTransport(
   state.counters["bytes_sent"] = static_cast<double>(stats.bytes_sent);
 }
 
+void BenchmarkGatewayWorkerPlaceOrderToCountingTransport(
+    benchmark::State& state) {
+  const core::OrderGatewayShmConfig shm_config = MakeOrderGatewayShmConfig();
+  ShmCleanup cleanup(shm_config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(shm_config);
+  if (!shm_result.ok) {
+    state.SkipWithError(shm_result.error.c_str());
+    return;
+  }
+  core::OrderGatewayShmManager& shm = shm_result.value;
+  for (std::uint64_t i = 0; i < kOrderSendLatencyIterations; ++i) {
+    if (!shm.CommandQueue(0).TryPush(MakePlaceCommand(i + 1))) {
+      state.SkipWithError("failed to prefill Bitget gateway command queue");
+      return;
+    }
+  }
+
+  CountingOrderTransport::ResetStats();
+  CountingHandler handler;
+  using BenchOrderSession =
+      OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
+  BenchOrderSession session(
+      MakeOrderSessionConfig(),
+      LoginCredentials{
+          .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
+      handler, kOrderSendLatencyIterations + 2,
+      kOrderSendLatencyIterations + 2);
+  if (!ActivateLoginOnly(session)) {
+    state.SkipWithError("Bitget order session login setup failed");
+    return;
+  }
+  CountingOrderTransport::ResetStats();
+
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
+  OrderGatewayCommandWorker<BenchOrderSession> worker(0, shm.CommandQueue(0),
+                                                      session, publisher);
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kOrderSendLatencyIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    const bool dispatched = worker.PollOnce();
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    if (!dispatched) {
+      state.SkipWithError("Bitget gateway worker dispatch failed");
+      return;
+    }
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
+  const CountingTransportStats stats = CountingOrderTransport::stats();
+  if (stats.invalid_writes != 0 ||
+      stats.write_calls != static_cast<std::uint64_t>(state.iterations())) {
+    state.SkipWithError("Bitget gateway worker write count mismatch");
+  }
+  state.counters["bytes_sent"] = static_cast<double>(stats.bytes_sent);
+}
+
 BENCHMARK(BenchmarkEncodePlace);
 BENCHMARK(BenchmarkEncodeCancel);
 BENCHMARK(BenchmarkParsePlaceAck);
@@ -354,6 +477,10 @@ BENCHMARK(BenchmarkOrderSessionPlaceOrderToCountingTransport)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BenchmarkStrategyContextPlaceLimitOrderToCountingTransport)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BenchmarkGatewayWorkerPlaceOrderToCountingTransport)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
