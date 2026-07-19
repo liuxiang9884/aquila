@@ -902,7 +902,7 @@ class Strategy {
         detail::LogStrategyUnknownResultPause(event, order_for_log);
       }
     }
-    ApplyFinishedOrder(event.local_order_id, context, market_timing);
+    ApplyFinishedOrder(order_for_log, context, market_timing);
   }
 
   template <typename ContextT>
@@ -932,8 +932,7 @@ class Strategy {
     detail::NotifyStrategyFeedbackStageObserverForTest(
         {.stage = StrategyFeedbackStageForTest::kFeedbackLogged});
 #endif
-    ApplyFinishedOrder(event.local_order_id, context, market_timing,
-                       event.kind);
+    ApplyFinishedOrder(order_for_log, context, market_timing, event.kind);
   }
 
   [[nodiscard]] bool ShouldStop() const noexcept {
@@ -2471,13 +2470,9 @@ class Strategy {
 
   template <typename ContextT>
   void ApplyFinishedOrder(
-      std::uint64_t local_order_id, ContextT& context,
+      const core::StrategyOrder* order, ContextT& context,
       const SignalTiming& market_timing,
       std::optional<OrderFeedbackKind> feedback_kind = std::nullopt) noexcept {
-    if (local_order_id == 0) {
-      return;
-    }
-    const core::StrategyOrder* order = context.FindOrder(local_order_id);
     if (order == nullptr || !order->is_finished) {
       return;
     }
@@ -2521,6 +2516,7 @@ class Strategy {
     detail::NotifyStrategyFeedbackStageObserverForTest(
         {.stage = StrategyFeedbackStageForTest::kFinishedLogged});
 #endif
+    const std::uint64_t local_order_id = order->local_order_id;
     if (context.RetireFinishedOrder(local_order_id)) {
       EraseOrderPriceText(local_order_id);
     }
