@@ -221,6 +221,7 @@ struct OrderSessionLatencyDiagnosticLogRecordForTest {
   std::uint64_t order_session_id{0};
   std::uint64_t local_order_id{0};
   std::uint64_t request_sequence{0};
+  int owner_thread_tid{-1};
   int diagnostic_cpu{-1};
   bool tcp_info_requested{false};
   bool tcp_info_available{false};
@@ -390,6 +391,7 @@ inline void NotifyOrderSessionLatencyDiagnosticLogObserverForTest(
       .order_session_id = order_session_id,
       .local_order_id = record.local_order_id,
       .request_sequence = record.request_sequence,
+      .owner_thread_tid = record.owner_thread_tid,
       .diagnostic_cpu = diagnostic_cpu,
       .tcp_info_requested = tcp_info_requested,
       .tcp_info_available = tcp_info.available,
@@ -494,6 +496,7 @@ class OrderSession {
           detail::CurrentCpuForOrderSessionDiagnostics();
       const int owner_thread_tid =
           detail::CurrentTidForOrderSessionDiagnostics();
+      owner_thread_tid_ = owner_thread_tid;
       const websocket::SocketEndpointDiagnostics endpoints =
           SnapshotSocketEndpointDiagnostics();
       last_active_endpoint_ = endpoints;
@@ -525,6 +528,7 @@ class OrderSession {
                                owner_thread_cpu, owner_thread_tid, endpoints);
       active_ = false;
       login_ready_ = false;
+      owner_thread_tid_ = -1;
       login_request_sequence_ = 0;
       request_id_to_log_fields_.clear();
       local_order_id_to_exchange_order_id_.clear();
@@ -1232,7 +1236,7 @@ class OrderSession {
         .request_sequence = sequence,
         .request_send_local_ns = send_local_ns,
         .inflight_at_send = inflight_count(),
-        .owner_thread_tid = detail::CurrentTidForOrderSessionDiagnostics(),
+        .owner_thread_tid = owner_thread_tid_,
         .write_path = write_path,
         .socket_send_queue = socket_send_queue,
         .socket_timestamps = socket_timestamps,
@@ -1705,6 +1709,8 @@ class OrderSession {
       detail::NextOrderSessionIdForDiagnostics()};
   std::uint64_t request_sequence_{1};
   std::uint64_t login_request_sequence_{0};
+  // OrderSession I/O callbacks and runtime hooks are owner-thread confined.
+  int owner_thread_tid_{-1};
   bool active_{false};
   bool login_ready_{false};
 };

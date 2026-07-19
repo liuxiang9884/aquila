@@ -697,6 +697,8 @@ TEST(OrderSessionTest, AckLatencyDiagnosticLogExposeSessionIdAndCpu) {
   EXPECT_EQ(record.order_session_id, session.order_session_id());
   EXPECT_EQ(record.local_order_id, 123U);
   EXPECT_EQ(record.request_sequence, 2U);
+  EXPECT_EQ(record.owner_thread_tid,
+            handler.last_connection.owner_thread_tid);
   EXPECT_GE(record.diagnostic_cpu, -1);
   EXPECT_FALSE(record.tcp_info_available);
   EXPECT_EQ(record.tcp_info_rtt_us, 0U);
