@@ -87,6 +87,8 @@ using Runtime =
     core::TradingRuntime<Strategy, BenchmarkOrderSession,
                          market_data::RealtimeDataReader<>,
                          core::TradingRuntimeDiagnostics>;
+using BenchmarkOrderManager = core::OrderManager<BenchmarkOrderSession>;
+using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
 
 [[nodiscard]] config::StrategyConfig RuntimeConfig() {
   config::StrategyConfig config;
@@ -204,6 +206,40 @@ using Runtime =
   runtime.HandleBookTickerForTest(
       Ticker(Exchange::kBinance, base_ns + 2'000, 112.0, 113.0));
   return state.place_calls == 1 && state.last_place_local_order_id != 0;
+}
+
+[[nodiscard]] bool SeedPendingOpenOrder(Strategy& strategy,
+                                        BenchmarkStrategyContext& context,
+                                        SharedOrderSessionState& state,
+                                        Exchange lag_exchange) {
+  const auto base_ns = benchmarking::RealtimeNowNs();
+  strategy.OnBookTicker(Ticker(lag_exchange, base_ns, 101.57, 102.02), context);
+  strategy.OnBookTicker(
+      Ticker(Exchange::kBinance, base_ns + 1'000, 100.0, 101.0), context);
+  strategy.OnBookTicker(
+      Ticker(Exchange::kBinance, base_ns + 2'000, 112.0, 113.0), context);
+  return state.place_calls == 1 && state.last_place_local_order_id != 0;
+}
+
+[[nodiscard]] OrderFeedbackEvent TerminalFillEvent(
+    std::uint64_t local_order_id) noexcept {
+  return {
+      .kind = OrderFeedbackKind::kFilled,
+      .local_order_id = local_order_id,
+      .exchange_order_id = local_order_id + 1000,
+      .cumulative_filled_quantity = 7.0,
+      .left_quantity = 0.0,
+      .cancelled_quantity = 0.0,
+      .fill_price = 102.1,
+      .role = OrderRole::kTaker,
+      .finish_reason = OrderFinishReason::kUnknown,
+      .reject_reason = OrderRejectReason::kUnknown,
+      .continuity_scope = OrderFeedbackContinuityScope::kLane,
+      .continuity_reason = OrderFeedbackContinuityReason::kUnknown,
+      .continuity_sequence = 0,
+      .exchange_update_ns = 200'000,
+      .local_receive_ns = kFeedbackLocalReceiveNs,
+  };
 }
 
 [[nodiscard]] std::unique_ptr<OrderFeedbackShmChannel> MakeChannel() {
@@ -426,6 +462,185 @@ void BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency(
   state.SetItemsProcessed(state.iterations());
 }
 
+void RunLeadLagRuntimeTerminalFillLatency(benchmark::State& state,
+                                          Exchange lag_exchange) {
+  benchmarking::EnsureLoggingStarted();
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SharedOrderSessionState session_state;
+    auto runtime_result = Runtime::CreateForTest(
+        RuntimeConfig(),
+        [&session_state] { return BenchmarkOrderSession{&session_state}; },
+        BenchmarkConfig(lag_exchange));
+    if (!runtime_result.ok) {
+      state.ResumeTiming();
+      state.SkipWithError(runtime_result.error.c_str());
+      return;
+    }
+
+    Runtime& runtime = *runtime_result.value;
+    if (!SeedPendingOpenOrder(runtime, session_state, lag_exchange)) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to seed pending lead lag order");
+      return;
+    }
+
+    const OrderFeedbackEvent event =
+        TerminalFillEvent(session_state.last_place_local_order_id);
+
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    runtime.HandleOrderFeedbackForTest(event);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.PauseTiming();
+
+    if (runtime.order_manager().order_count() != 0) {
+      state.ResumeTiming();
+      state.SkipWithError("terminal feedback did not retire the order");
+      return;
+    }
+
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "feedback_events", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_LeadLagRuntimeGateTerminalFillLatency(benchmark::State& state) {
+  RunLeadLagRuntimeTerminalFillLatency(state, Exchange::kGate);
+}
+
+void BM_LeadLagRuntimeBitgetTerminalFillLatency(benchmark::State& state) {
+  RunLeadLagRuntimeTerminalFillLatency(state, Exchange::kBitget);
+}
+
+void BM_LeadLagOrderManagerTerminalFillLatency(benchmark::State& state) {
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SharedOrderSessionState session_state;
+    BenchmarkOrderSession session(&session_state);
+    BenchmarkOrderManager order_manager(session, kOrderCapacity, kStrategyId);
+    const core::OrderPlaceResult placed =
+        order_manager.PlaceLimitOrder(core::OrderCreateRequest{
+            .exchange = Exchange::kGate,
+            .symbol_id = kSymbolId,
+            .symbol = "BTC_USDT",
+            .side = OrderSide::kBuy,
+            .time_in_force = TimeInForce::kImmediateOrCancel,
+            .quantity = 7.0,
+            .quantity_text = "7",
+            .price_text = "102.1",
+        });
+    if (placed.status != core::OrderPlaceStatus::kOk) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to seed order manager");
+      return;
+    }
+    const OrderFeedbackEvent event = TerminalFillEvent(placed.local_order_id);
+
+    state.ResumeTiming();
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    order_manager.OnOrderFeedback(event);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.PauseTiming();
+
+    const core::StrategyOrder* order =
+        order_manager.FindOrder(placed.local_order_id);
+    if (order == nullptr || !order->is_finished ||
+        order->status != core::OrderStatus::kFilled) {
+      state.ResumeTiming();
+      state.SkipWithError("order manager did not apply terminal feedback");
+      return;
+    }
+
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "feedback_events", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void RunLeadLagStrategyTerminalFillLatency(benchmark::State& state,
+                                           Exchange lag_exchange) {
+  benchmarking::EnsureLoggingStarted();
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SharedOrderSessionState session_state;
+    BenchmarkOrderSession session(&session_state);
+    BenchmarkOrderManager order_manager(session, kOrderCapacity, kStrategyId);
+    BenchmarkStrategyContext context(order_manager);
+    auto strategy = std::make_unique<Strategy>(BenchmarkConfig(lag_exchange));
+    if (!SeedPendingOpenOrder(*strategy, context, session_state,
+                              lag_exchange)) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to seed pending lead lag order");
+      return;
+    }
+    const OrderFeedbackEvent event =
+        TerminalFillEvent(session_state.last_place_local_order_id);
+    order_manager.OnOrderFeedback(event);
+
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    strategy->OnOrderFeedback(event, context);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.PauseTiming();
+
+    if (order_manager.order_count() != 0) {
+      state.ResumeTiming();
+      state.SkipWithError("strategy did not retire the terminal order");
+      return;
+    }
+
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "feedback_events", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_LeadLagStrategyGateTerminalFillLatency(benchmark::State& state) {
+  RunLeadLagStrategyTerminalFillLatency(state, Exchange::kGate);
+}
+
+void BM_LeadLagStrategyBitgetTerminalFillLatency(benchmark::State& state) {
+  RunLeadLagStrategyTerminalFillLatency(state, Exchange::kBitget);
+}
+
 void RunOrderPriceTextEraseLatency(benchmark::State& state,
                                    std::size_t target_index,
                                    std::size_t dense_active_count) {
@@ -489,6 +704,26 @@ BENCHMARK(BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagBitgetFeedbackParserShmToRuntimeTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagRuntimeGateTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagRuntimeBitgetTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagOrderManagerTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagStrategyGateTerminalFillLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagStrategyBitgetTerminalFillLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
