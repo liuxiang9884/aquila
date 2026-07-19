@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -1280,6 +1281,8 @@ class Strategy {
       }
     }
     order_price_texts_.resize(price_text_slot_count);
+    reserved_open_risk_slot_bits_.assign((price_text_slot_count + 63U) / 64U,
+                                         0);
   }
 
   [[nodiscard]] static bool RuntimeConfigReady(
@@ -2571,13 +2574,22 @@ class Strategy {
         totals.holding_position += quantity;
       }
     }
-    for (const OrderPriceTextStorage& storage : order_price_texts_) {
-      if (!storage.active ||
-          storage.reserved_open_quantity <= kQuantityEpsilon) {
-        continue;
+    for (std::size_t word_index = 0;
+         word_index < reserved_open_risk_slot_bits_.size(); ++word_index) {
+      std::uint64_t active_slots = reserved_open_risk_slot_bits_[word_index];
+      while (active_slots != 0) {
+        const std::size_t bit_index =
+            static_cast<std::size_t>(std::countr_zero(active_slots));
+        const std::size_t storage_index = word_index * 64U + bit_index;
+        const OrderPriceTextStorage& storage =
+            order_price_texts_[storage_index];
+        if (storage.active &&
+            storage.reserved_open_quantity > kQuantityEpsilon) {
+          totals.gross_notional += storage.reserved_open_notional;
+          totals.holding_position += storage.reserved_open_quantity;
+        }
+        active_slots &= active_slots - 1U;
       }
-      totals.gross_notional += storage.reserved_open_notional;
-      totals.holding_position += storage.reserved_open_quantity;
     }
     return totals;
   }
@@ -2781,26 +2793,44 @@ class Strategy {
     return nullptr;
   }
 
-  static void ReserveOpenRisk(OrderPriceTextStorage* storage, double quantity,
-                              double notional) noexcept {
+  void ReserveOpenRisk(OrderPriceTextStorage* storage, double quantity,
+                       double notional) noexcept {
     if (storage == nullptr || quantity <= kQuantityEpsilon ||
         !std::isfinite(notional) || notional <= 0.0) {
       return;
     }
     storage->reserved_open_quantity = quantity;
     storage->reserved_open_notional = notional;
+    SetReservedOpenRiskSlot(storage, true);
   }
 
-  static void ReleaseOrderPriceText(OrderPriceTextStorage* storage) noexcept {
+  void ReleaseOrderPriceText(OrderPriceTextStorage* storage) noexcept {
     if (storage == nullptr) {
       return;
     }
+    SetReservedOpenRiskSlot(storage, false);
     storage->local_order_id = 0;
     storage->price_size = 0;
     storage->quantity_size = 0;
     storage->reserved_open_quantity = 0.0;
     storage->reserved_open_notional = 0.0;
     storage->active = false;
+  }
+
+  void SetReservedOpenRiskSlot(const OrderPriceTextStorage* storage,
+                               bool reserved) noexcept {
+    assert(storage >= order_price_texts_.data());
+    assert(storage < order_price_texts_.data() + order_price_texts_.size());
+    const std::size_t storage_index =
+        static_cast<std::size_t>(storage - order_price_texts_.data());
+    const std::size_t word_index = storage_index / 64U;
+    const std::uint64_t mask = std::uint64_t{1}
+                               << static_cast<unsigned>(storage_index % 64U);
+    if (reserved) {
+      reserved_open_risk_slot_bits_[word_index] |= mask;
+    } else {
+      reserved_open_risk_slot_bits_[word_index] &= ~mask;
+    }
   }
 
   [[nodiscard]] SignalDiagnostics BuildSignalDiagnostics(
@@ -2916,6 +2946,7 @@ class Strategy {
   std::vector<const PairRuntimeState*> initialized_pair_runtimes_;
   std::vector<PairRoute> routes_by_symbol_id_;
   std::vector<OrderPriceTextStorage> order_price_texts_;
+  std::vector<std::uint64_t> reserved_open_risk_slot_bits_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;
   SignalTiming last_signal_timing_;

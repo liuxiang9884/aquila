@@ -2212,6 +2212,66 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_DOUBLE_EQ(totals.second, first_quantity + second_order.quantity);
 }
 
+TEST(LeadLagStrategyInterfaceTest,
+     GlobalRiskTotalsTrackReservedSlotsAcrossBitsetWords) {
+  leadlag::Config config = SignalOnlyConfigWithFanout(4);
+  const leadlag::PairConfig pair_template = config.pairs.front();
+  config.pairs.clear();
+  for (std::int32_t index = 0; index < 17; ++index) {
+    leadlag::PairConfig pair = pair_template;
+    pair.symbol_id = 3 + index;
+    pair.symbol = "PAIR_" + std::to_string(index);
+    pair.lag_instrument.symbol_id = pair.symbol_id;
+    pair.lag_instrument.exchange_symbol =
+        "PAIR_" + std::to_string(index) + "_GATE";
+    config.pairs.push_back(std::move(pair));
+  }
+  config.risk.max_gross_notional = 1'000'000.0;
+  config.risk.max_holding_position = 1'000.0;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 128, 4};
+  ContextT context{order_manager};
+
+  for (const leadlag::PairConfig& pair : config.pairs) {
+    FeedOpenLongSignalForSymbol(&strategy, &context, pair.symbol_id);
+  }
+  ASSERT_EQ(order_session.placed_orders.size(), 68U);
+
+  double expected_gross_notional = 0.0;
+  double expected_holding_position = 0.0;
+  for (const FakeOrderSession::CapturedOrder& order :
+       order_session.placed_orders) {
+    expected_gross_notional += order.quantity * std::stod(order.price_text);
+    expected_holding_position += order.quantity;
+  }
+  auto totals = strategy.CurrentGlobalRiskTotalsForTest();
+  EXPECT_DOUBLE_EQ(totals.first, expected_gross_notional);
+  EXPECT_DOUBLE_EQ(totals.second, expected_holding_position);
+
+  const FakeOrderSession::CapturedOrder filled_order =
+      order_session.placed_orders[64];
+  const double filled_price = std::stod(filled_order.price_text);
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(filled_order.local_order_id,
+                               filled_order.quantity, filled_price));
+  totals = strategy.CurrentGlobalRiskTotalsForTest();
+  EXPECT_DOUBLE_EQ(totals.first, expected_gross_notional);
+  EXPECT_DOUBLE_EQ(totals.second, expected_holding_position);
+
+  const FakeOrderSession::CapturedOrder cancelled_order =
+      order_session.placed_orders[65];
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(cancelled_order.local_order_id, 0,
+                                  cancelled_order.quantity, 0.0));
+  expected_gross_notional -=
+      cancelled_order.quantity * std::stod(cancelled_order.price_text);
+  expected_holding_position -= cancelled_order.quantity;
+  totals = strategy.CurrentGlobalRiskTotalsForTest();
+  EXPECT_DOUBLE_EQ(totals.first, expected_gross_notional);
+  EXPECT_DOUBLE_EQ(totals.second, expected_holding_position);
+}
+
 TEST(LeadLagStrategyInterfaceTest, GlobalRiskLimitAllowsReduceOnlyClose) {
   leadlag::Config config = SignalOnlyConfig();
   config.risk.max_gross_notional = 920.0;
