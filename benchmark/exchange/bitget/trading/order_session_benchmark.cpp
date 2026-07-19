@@ -55,7 +55,11 @@ struct ShmCleanup {
 };
 
 struct CountingHandler {
-  void OnOrderResponse(const OrderResponse&) noexcept {}
+  void OnOrderResponse(const OrderResponse&) noexcept {
+    ++responses;
+  }
+
+  std::uint64_t responses{0};
 };
 
 struct CountingTransportStats {
@@ -150,6 +154,36 @@ struct CountingOrderWebSocketPolicy : websocket::DefaultWebSocketOptions {
       .sequence = 1,
       .fin = true,
   };
+}
+
+struct PaddedTextPayload {
+  [[nodiscard]] websocket::MessageView View() const noexcept {
+    return {
+        .kind = websocket::PayloadKind::kText,
+        .payload =
+            std::as_bytes(std::span<const char>(storage.data(), payload_size)),
+        .sequence = 1,
+        .fin = true,
+        .readable_tail_bytes = simdjson::SIMDJSON_PADDING,
+    };
+  }
+
+  std::vector<char> storage{};
+  std::size_t payload_size{0};
+};
+
+[[nodiscard]] PaddedTextPayload MakePlaceAckPayload(
+    std::uint64_t request_sequence, std::uint64_t local_order_id) {
+  const std::string payload = fmt::format(
+      R"({{"event":"trade","id":"{}","category":"usdt-futures","topic":"place-order","args":[{{"symbol":"BTCUSDT","orderId":"123456789","clientOid":"a-{}","cTime":"1750034397008"}}],"code":"0","msg":"success","connId":"connection-1","ts":"1750034397076"}})",
+      RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, request_sequence),
+      local_order_id);
+  PaddedTextPayload result{
+      .storage = std::vector<char>(payload.size() + simdjson::SIMDJSON_PADDING),
+      .payload_size = payload.size(),
+  };
+  std::memcpy(result.storage.data(), payload.data(), payload.size());
+  return result;
 }
 
 [[nodiscard]] websocket::ConnectionConfig MakeOrderSessionConfig() {
@@ -357,6 +391,64 @@ void BenchmarkOrderSessionPlaceOrderToCountingTransport(
   state.counters["bytes_sent"] = static_cast<double>(stats.bytes_sent);
 }
 
+void BenchmarkOrderSessionPlaceAckToCountingHandler(benchmark::State& state) {
+  std::vector<PaddedTextPayload> payloads;
+  payloads.reserve(kOrderSendLatencyIterations);
+  for (std::uint64_t i = 0; i < kOrderSendLatencyIterations; ++i) {
+    payloads.push_back(MakePlaceAckPayload(i + 1, i + 1));
+  }
+
+  CountingOrderTransport::ResetStats();
+  CountingHandler handler;
+  using BenchOrderSession =
+      OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
+  BenchOrderSession session(
+      MakeOrderSessionConfig(),
+      LoginCredentials{
+          .api_key = "key", .api_secret = "secret", .passphrase = "phrase"},
+      handler, kOrderSendLatencyIterations + 2,
+      kOrderSendLatencyIterations + 2);
+  if (!ActivateLoginOnly(session)) {
+    state.SkipWithError("Bitget order session login setup failed");
+    return;
+  }
+  CountingOrderTransport::ResetStats();
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kOrderSendLatencyIterations);
+  std::uint64_t local_order_id = 1;
+
+  for (auto _ : state) {
+    const OrderSendResult send_result =
+        session.PlaceOrder(MakeStrategyOrder(local_order_id));
+    if (send_result.status != OrderSendStatus::kOk ||
+        send_result.request_sequence != local_order_id) {
+      state.SkipWithError("Bitget order session place setup failed");
+      return;
+    }
+    const websocket::MessageView view = payloads[local_order_id - 1].View();
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    const websocket::DeliveryResult delivery = session.Handle(view);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    if (delivery != websocket::DeliveryResult::kAccepted) {
+      state.SkipWithError("Bitget order session ACK handling failed");
+      return;
+    }
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    ++local_order_id;
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "responses", handler.responses);
+  const CountingTransportStats stats = CountingOrderTransport::stats();
+  if (stats.invalid_writes != 0 ||
+      stats.write_calls != static_cast<std::uint64_t>(state.iterations()) ||
+      handler.responses != static_cast<std::uint64_t>(state.iterations())) {
+    state.SkipWithError("Bitget order session ACK count mismatch");
+  }
+}
+
 void BenchmarkStrategyContextPlaceLimitOrderToCountingTransport(
     benchmark::State& state) {
   CountingOrderTransport::ResetStats();
@@ -473,6 +565,10 @@ BENCHMARK(BenchmarkEncodeCancel);
 BENCHMARK(BenchmarkParsePlaceAck);
 BENCHMARK(BenchmarkParsePlaceError);
 BENCHMARK(BenchmarkOrderSessionPlaceOrderToCountingTransport)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BenchmarkOrderSessionPlaceAckToCountingHandler)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
