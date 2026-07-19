@@ -52,6 +52,7 @@ add_executable(lead_lag_feedback_runtime_benchmark
 
 target_link_libraries(lead_lag_feedback_runtime_benchmark
     PRIVATE
+        aquila_bitget
         aquila_evaluation
         aquila_gate
         aquila_strategy
