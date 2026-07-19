@@ -7,6 +7,7 @@
 #include <string_view>
 #include <utility>
 
+#include <fmt/compile.h>
 #include <fmt/format.h>
 
 #include "core/common/types.h"
@@ -63,10 +64,10 @@ struct CancelOrderEncodeFields {
 
 namespace detail {
 
-template <std::size_t N, typename... Args>
-[[nodiscard]] EncodedTextRequest FormatJsonToBuffer(
-    std::array<char, N>& buffer, fmt::format_string<Args...> format,
-    Args&&... args) noexcept {
+template <std::size_t N, typename Format, typename... Args>
+[[nodiscard]] EncodedTextRequest FormatJsonToBuffer(std::array<char, N>& buffer,
+                                                    const Format& format,
+                                                    Args&&... args) noexcept {
   const auto result = fmt::format_to_n(buffer.data(), buffer.size(), format,
                                        std::forward<Args>(args)...);
   if (result.size > buffer.size()) {
@@ -115,7 +116,8 @@ template <std::size_t N>
   }
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"op":"login","args":[{{"apiKey":"{}","passphrase":"{}","timestamp":"{}","sign":"{}"}}]}})",
+      FMT_COMPILE(
+          R"({{"op":"login","args":[{{"apiKey":"{}","passphrase":"{}","timestamp":"{}","sign":"{}"}}]}})"),
       fields.api_key, fields.passphrase, fields.timestamp_seconds,
       std::string_view(signature.data(), signature.size()));
 }
@@ -144,7 +146,8 @@ template <std::size_t N>
   }
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"op":"trade","id":"{}","category":"usdt-futures","topic":"place-order","args":[{{"symbol":"{}","orderType":"limit","qty":"{}","price":"{}","side":"{}","timeInForce":"{}","reduceOnly":"{}","marginMode":"crossed","clientOid":"{}"}}]}})",
+      FMT_COMPILE(
+          R"({{"op":"trade","id":"{}","category":"usdt-futures","topic":"place-order","args":[{{"symbol":"{}","orderType":"limit","qty":"{}","price":"{}","side":"{}","timeInForce":"{}","reduceOnly":"{}","marginMode":"crossed","clientOid":"{}"}}]}})"),
       fields.encoded_request_id, fields.symbol, fields.quantity_text,
       fields.price_text, BitgetOrderSideToken(fields.side),
       BitgetTimeInForceToken(fields.time_in_force),
@@ -164,12 +167,14 @@ template <std::size_t N>
   if (fields.exchange_order_id != 0) {
     return detail::FormatJsonToBuffer(
         buffer,
-        R"({{"op":"trade","id":"{}","category":"usdt-futures","topic":"cancel-order","args":[{{"orderId":"{}","clientOid":"{}"}}]}})",
+        FMT_COMPILE(
+            R"({{"op":"trade","id":"{}","category":"usdt-futures","topic":"cancel-order","args":[{{"orderId":"{}","clientOid":"{}"}}]}})"),
         fields.encoded_request_id, fields.exchange_order_id, client_oid);
   }
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"op":"trade","id":"{}","category":"usdt-futures","topic":"cancel-order","args":[{{"clientOid":"{}"}}]}})",
+      FMT_COMPILE(
+          R"({{"op":"trade","id":"{}","category":"usdt-futures","topic":"cancel-order","args":[{{"clientOid":"{}"}}]}})"),
       fields.encoded_request_id, client_oid);
 }
 
