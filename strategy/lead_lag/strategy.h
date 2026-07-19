@@ -741,6 +741,14 @@ class Strategy {
   Strategy(Strategy&&) noexcept = default;
   Strategy& operator=(Strategy&&) noexcept = default;
 
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  [[nodiscard]] std::pair<double, double> CurrentGlobalRiskTotalsForTest()
+      const noexcept {
+    const GlobalRiskTotals totals = CurrentGlobalRiskTotals();
+    return {totals.gross_notional, totals.holding_position};
+  }
+#endif
+
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
   void SetMarketCalcObserver(void* context,
                              MarketCalcObserver observer) noexcept {

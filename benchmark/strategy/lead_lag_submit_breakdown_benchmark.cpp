@@ -1264,6 +1264,23 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewayActualConfigRiskOnBas(
   RunLeadLagSubmitPathBreakdownOrderGatewayConfig(state, config_result.value);
 }
 
+void BM_LeadLagCurrentGlobalRiskTotalsActualConfig(benchmark::State& state) {
+  ConfigResult config_result = LoadActualLiveConfigForBenchmark();
+  if (!config_result.ok) {
+    state.SkipWithError(config_result.error.c_str());
+    return;
+  }
+  Strategy strategy{std::move(config_result.value)};
+  RunManualLatencyBenchmark(
+      state,
+      [&] {
+        auto totals = strategy.CurrentGlobalRiskTotalsForTest();
+        benchmark::DoNotOptimize(totals.first);
+        benchmark::DoNotOptimize(totals.second);
+      },
+      "pairs", strategy.config().pairs.size());
+}
+
 void BM_LogStrategySignalTriggeredSynthetic(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
   const SignalTiming timing = SyntheticTiming();
@@ -1808,6 +1825,10 @@ BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOnPrefill20)
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayActualConfigRiskOnBas)
     ->Iterations(kSubmitBreakdownIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagCurrentGlobalRiskTotalsActualConfig)
+    ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
