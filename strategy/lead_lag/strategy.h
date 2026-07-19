@@ -923,7 +923,15 @@ class Strategy {
     const core::StrategyOrder* order_for_log =
         context.FindOrder(event.local_order_id);
     const SignalTiming market_timing = MarketTimingForOrder(order_for_log);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifyStrategyFeedbackStageObserverForTest(
+        {.stage = StrategyFeedbackStageForTest::kContextReady});
+#endif
     detail::LogStrategyOrderFeedback(event, order_for_log, market_timing);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifyStrategyFeedbackStageObserverForTest(
+        {.stage = StrategyFeedbackStageForTest::kFeedbackLogged});
+#endif
     ApplyFinishedOrder(event.local_order_id, context, market_timing,
                        event.kind);
   }
@@ -2473,27 +2481,53 @@ class Strategy {
     if (order == nullptr || !order->is_finished) {
       return;
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifyStrategyFeedbackStageObserverForTest(
+        {.stage = StrategyFeedbackStageForTest::kFinishedOrderReady});
+#endif
     PairRuntimeState* runtime = MutableRuntime(order->symbol_id);
     if (runtime != nullptr) {
       const detail::StrategyOrderPositionLogFields position_log =
           BuildFinishedOrderPositionLogFields(runtime, *order);
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+      detail::NotifyStrategyFeedbackStageObserverForTest(
+          {.stage = StrategyFeedbackStageForTest::kPositionFieldsReady});
+#endif
       [[maybe_unused]] const ExecutionApplyResult applied =
           runtime->execution.ApplyTerminalOrder(*order,
                                                 runtime->pair.lag_instrument);
       if (runtime->execution.ConsumeUnknownResultAutoRecovered()) {
         detail::LogStrategyUnknownResultResume(*order, feedback_kind);
       }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+      detail::NotifyStrategyFeedbackStageObserverForTest(
+          {.stage = StrategyFeedbackStageForTest::kExecutionApplied});
+#endif
       detail::LogStrategyOrderFinished(*order, position_log,
                                        runtime->execution.active_group_count(),
                                        market_timing);
     } else {
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+      detail::NotifyStrategyFeedbackStageObserverForTest(
+          {.stage = StrategyFeedbackStageForTest::kPositionFieldsReady});
+      detail::NotifyStrategyFeedbackStageObserverForTest(
+          {.stage = StrategyFeedbackStageForTest::kExecutionApplied});
+#endif
       detail::LogStrategyOrderFinished(
           *order, BuildFinishedOrderPositionLogFields(nullptr, *order), 0,
           market_timing);
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifyStrategyFeedbackStageObserverForTest(
+        {.stage = StrategyFeedbackStageForTest::kFinishedLogged});
+#endif
     if (context.RetireFinishedOrder(local_order_id)) {
       EraseOrderPriceText(local_order_id);
     }
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+    detail::NotifyStrategyFeedbackStageObserverForTest(
+        {.stage = StrategyFeedbackStageForTest::kRetired});
+#endif
   }
 
   void EraseOrderPriceText(std::uint64_t local_order_id) noexcept {

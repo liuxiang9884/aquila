@@ -38,6 +38,43 @@ constexpr std::size_t kOrderCapacity = 8;
 constexpr std::size_t kLatencyIterations = 4096;
 constexpr std::size_t kActualPairCount = 30;
 constexpr std::size_t kDenseActiveOrderCount = 120;
+constexpr std::size_t kFeedbackStageCount =
+    static_cast<std::size_t>(StrategyFeedbackStageForTest::kCount);
+constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
+
+struct FeedbackStageCapture {
+  std::array<std::uint64_t, kFeedbackStageCount> timestamps_ns{};
+};
+
+thread_local FeedbackStageCapture* feedback_stage_capture = nullptr;
+
+void CaptureFeedbackStage(
+    const detail::StrategyFeedbackStageRecordForTest& record) noexcept {
+  if (feedback_stage_capture == nullptr) {
+    return;
+  }
+  const std::size_t index = static_cast<std::size_t>(record.stage);
+  if (index < feedback_stage_capture->timestamps_ns.size()) {
+    feedback_stage_capture->timestamps_ns[index] =
+        websocket::benchmarking::NowNs();
+  }
+}
+
+class FeedbackStageObserverGuard {
+ public:
+  FeedbackStageObserverGuard() noexcept {
+    detail::SetStrategyFeedbackStageObserverForTest(CaptureFeedbackStage);
+  }
+
+  ~FeedbackStageObserverGuard() noexcept {
+    feedback_stage_capture = nullptr;
+    detail::SetStrategyFeedbackStageObserverForTest(nullptr);
+  }
+
+  FeedbackStageObserverGuard(const FeedbackStageObserverGuard&) = delete;
+  FeedbackStageObserverGuard& operator=(const FeedbackStageObserverGuard&) =
+      delete;
+};
 
 struct SharedOrderSessionState {
   std::uint64_t place_calls{0};
@@ -633,6 +670,104 @@ void RunLeadLagStrategyTerminalFillLatency(benchmark::State& state,
   state.SetItemsProcessed(state.iterations());
 }
 
+void SetFeedbackProfileSegmentCounters(benchmark::State& state,
+                                       std::string_view name,
+                                       std::vector<std::uint64_t> samples_ns) {
+  if (samples_ns.empty()) {
+    return;
+  }
+  state.counters[fmt::format("{}_p50_ns", name)] = static_cast<double>(
+      websocket::benchmarking::SelectQuantile(samples_ns, 0.50));
+  state.counters[fmt::format("{}_p99_ns", name)] = static_cast<double>(
+      websocket::benchmarking::SelectQuantile(samples_ns, 0.99));
+  state.counters[fmt::format("{}_p999_ns", name)] = static_cast<double>(
+      websocket::benchmarking::SelectQuantile(samples_ns, 0.999));
+}
+
+void BM_LeadLagStrategyGateTerminalFillStageProfile(benchmark::State& state) {
+  static constexpr std::array<std::string_view, kFeedbackProfileSegmentCount>
+      kSegmentNames{
+          "context",   "feedback_log", "finished_lookup", "position_fields",
+          "execution", "finished_log", "retire",          "observer_tail",
+      };
+
+  benchmarking::EnsureLoggingStarted();
+  FeedbackStageObserverGuard observer_guard;
+  std::array<std::vector<std::uint64_t>, kFeedbackProfileSegmentCount>
+      segment_samples_ns;
+  std::vector<std::uint64_t> total_samples_ns;
+  for (std::vector<std::uint64_t>& samples : segment_samples_ns) {
+    samples.reserve(kLatencyIterations);
+  }
+  total_samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SharedOrderSessionState session_state;
+    BenchmarkOrderSession session(&session_state);
+    BenchmarkOrderManager order_manager(session, kOrderCapacity, kStrategyId);
+    BenchmarkStrategyContext context(order_manager);
+    auto strategy =
+        std::make_unique<Strategy>(BenchmarkConfig(Exchange::kGate));
+    if (!SeedPendingOpenOrder(*strategy, context, session_state,
+                              Exchange::kGate)) {
+      state.ResumeTiming();
+      state.SkipWithError("failed to seed pending lead lag order");
+      return;
+    }
+    const OrderFeedbackEvent event =
+        TerminalFillEvent(session_state.last_place_local_order_id);
+    order_manager.OnOrderFeedback(event);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    FeedbackStageCapture capture;
+    feedback_stage_capture = &capture;
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    strategy->OnOrderFeedback(event, context);
+    const std::uint64_t end_ns = websocket::benchmarking::NowNs();
+    feedback_stage_capture = nullptr;
+    state.PauseTiming();
+
+    bool capture_complete = true;
+    std::uint64_t previous_ns = start_ns;
+    for (std::size_t index = 0; index < kFeedbackStageCount; ++index) {
+      const std::uint64_t timestamp_ns = capture.timestamps_ns[index];
+      if (timestamp_ns < previous_ns) {
+        capture_complete = false;
+        break;
+      }
+      segment_samples_ns[index].push_back(timestamp_ns - previous_ns);
+      previous_ns = timestamp_ns;
+    }
+    if (!capture_complete || end_ns < previous_ns ||
+        order_manager.order_count() != 0) {
+      state.ResumeTiming();
+      state.SkipWithError("feedback stage capture failed");
+      return;
+    }
+    segment_samples_ns.back().push_back(end_ns - previous_ns);
+    const std::uint64_t elapsed_ns = end_ns - start_ns;
+    total_samples_ns.push_back(elapsed_ns);
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(total_samples_ns), "feedback_events",
+      state.iterations());
+  for (std::size_t index = 0; index < segment_samples_ns.size(); ++index) {
+    SetFeedbackProfileSegmentCounters(state, kSegmentNames[index],
+                                      std::move(segment_samples_ns[index]));
+  }
+  state.SetItemsProcessed(state.iterations());
+}
+
 void BM_LeadLagStrategyGateTerminalFillLatency(benchmark::State& state) {
   RunLeadLagStrategyTerminalFillLatency(state, Exchange::kGate);
 }
@@ -747,6 +882,51 @@ void BM_LeadLagLogOrderFinishedLatency(benchmark::State& state) {
 
   websocket::benchmarking::SetLatencyCounters(
       state, std::move(samples_ns), "log_records", state.iterations());
+  state.SetItemsProcessed(state.iterations());
+}
+
+void BM_LeadLagLogTerminalFeedbackPairLatency(benchmark::State& state) {
+  benchmarking::EnsureLoggingStarted();
+  const core::StrategyOrder order = TerminalFilledOrder();
+  const OrderFeedbackEvent event = TerminalFillEvent(order.local_order_id);
+  const detail::StrategyOrderPositionLogFields position{
+      .position_id = 7,
+      .position_direction = PositionDirection::kLong,
+      .order_role = "entry",
+      .entry_local_order_id = order.local_order_id,
+  };
+  const SignalTiming market_timing{
+      .lead_exchange_ns = 180'000,
+      .lead_book_ticker_id = 11,
+      .lag_exchange_ns = 190'000,
+      .lag_book_ticker_id = 12,
+  };
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    detail::LogStrategyOrderFeedback(event, &order, market_timing);
+    detail::LogStrategyOrderFinished(order, position, 1, market_timing);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    state.PauseTiming();
+    samples_ns.push_back(elapsed_ns);
+    if (nova::kLogManager.logger() != nullptr) {
+      nova::kLogManager.logger()->flush_log();
+    }
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(
+      state, std::move(samples_ns), "log_records", state.iterations() * 2U);
   state.SetItemsProcessed(state.iterations());
 }
 
@@ -878,11 +1058,19 @@ BENCHMARK(BM_LeadLagStrategyBitgetTerminalFillLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagStrategyGateTerminalFillStageProfile)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagLogOrderFeedbackLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagLogOrderFinishedLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagLogTerminalFeedbackPairLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
