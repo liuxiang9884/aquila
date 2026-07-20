@@ -93,12 +93,30 @@ struct FakeProbeOrderSession {
     std::int64_t send_local_ns{0};
   };
 
-  gate::OrderSendResult PlaceOrder(const ProbeWireOrder& order) {
-    return Record("place", order);
+  gate::OrderSendResult PlaceOrder(const core::OrderPlaceRequest& request) {
+    return Record(
+        "place",
+        ProbeWireOrder{
+            .local_order_id = request.local_order_id,
+            .symbol = std::string(request.SymbolView()),
+            .side = request.side,
+            .type = request.order_type,
+            .time_in_force = request.time_in_force,
+            .quantity = request.quantity,
+            .quantity_text = fmt::format("{:.{}f}", request.quantity,
+                                         request.quantity_decimal_places),
+            .price = request.price,
+            .price_text = fmt::format("{:.{}f}", request.price,
+                                      request.price_decimal_places),
+            .price_decimal_places = request.price_decimal_places,
+            .quantity_decimal_places = request.quantity_decimal_places,
+            .reduce_only = request.reduce_only,
+        });
   }
 
-  gate::OrderSendResult CancelOrder(const ProbeWireOrder& order) {
-    return Record("cancel", order);
+  gate::OrderSendResult CancelOrder(const core::OrderCancelRequest& request) {
+    return Record("cancel",
+                  ProbeWireOrder{.local_order_id = request.local_order_id});
   }
 
   gate::OrderSendResult Record(std::string action,
@@ -986,16 +1004,24 @@ TEST(GateOrderSessionRttProbeTest,
   const PassiveOrderBuildResult gtc_passive{
       .ok = true,
       .contract = "ZEC_USDT",
+      .price = 75.0,
+      .quantity = 0.1,
       .price_text = "75.0",
       .quantity_text = "0.1",
+      .price_decimal_places = 1,
+      .quantity_decimal_places = 1,
       .bbo_ticker_id = 42,
       .bbo_local_ns = 2000,
   };
   const PassiveOrderBuildResult ioc_passive{
       .ok = true,
       .contract = "ZEC_USDT",
+      .price = 74.9,
+      .quantity = 0.1,
       .price_text = "74.9",
       .quantity_text = "0.1",
+      .price_decimal_places = 1,
+      .quantity_decimal_places = 1,
       .bbo_ticker_id = 43,
       .bbo_local_ns = 3000,
   };
@@ -2398,32 +2424,32 @@ TEST(GateOrderSessionRttProbeTest,
   std::vector<std::uint64_t> samples_started = {0, 0, 0, 0};
   FanoutBatchGrant grant;
 
-  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'000,
-                                  &grant));
+  ASSERT_TRUE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/1'000'000, &grant));
   EXPECT_EQ(grant.batch_index, 0U);
   EXPECT_EQ(grant.grant_ns, 1'000'000);
   EXPECT_EQ(grant.session_indices, std::vector<std::size_t>({0, 1, 2, 3}));
 
-  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'001,
-                                   &grant));
+  EXPECT_FALSE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/1'000'001, &grant));
   samples_started = {1, 1, 1, 0};
-  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'002,
-                                   &grant));
+  EXPECT_FALSE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/1'000'002, &grant));
   samples_started[3] = 1;
-  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/1'000'003,
-                                   &grant));
-  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/11'000'002,
-                                   &grant));
+  EXPECT_FALSE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/1'000'003, &grant));
+  EXPECT_FALSE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/11'000'002, &grant));
 
-  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/11'000'003,
-                                  &grant));
+  ASSERT_TRUE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/11'000'003, &grant));
   EXPECT_EQ(grant.batch_index, 1U);
   EXPECT_EQ(grant.grant_ns, 11'000'003);
   EXPECT_EQ(grant.session_indices, std::vector<std::size_t>({0, 1, 2, 3}));
 
   samples_started = {2, 2, 2, 2};
-  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/21'000'003,
-                                   &grant));
+  EXPECT_FALSE(
+      scheduler.NextGrant(samples_started, /*now_ns=*/21'000'003, &grant));
 }
 
 TEST(GateOrderSessionRttProbeTest,
@@ -2436,13 +2462,11 @@ TEST(GateOrderSessionRttProbeTest,
   std::vector<std::uint64_t> samples_started = {0, 0};
   FanoutBatchGrant grant;
 
-  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/10'000,
-                                  &grant));
+  ASSERT_TRUE(scheduler.NextGrant(samples_started, /*now_ns=*/10'000, &grant));
   EXPECT_EQ(grant.session_indices, std::vector<std::size_t>({0, 1}));
 
   samples_started = {1, 1};
-  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/20'000,
-                                   &grant));
+  EXPECT_FALSE(scheduler.NextGrant(samples_started, /*now_ns=*/20'000, &grant));
 }
 
 TEST(GateOrderSessionRttProbeTest,

@@ -19,8 +19,12 @@ struct PassiveOrderOptions {
 struct PassiveOrderBuildResult {
   bool ok{false};
   std::string contract;
+  double price{0.0};
+  double quantity{0.0};
   std::string price_text;
   std::string quantity_text;
+  std::uint8_t price_decimal_places{0};
+  std::uint8_t quantity_decimal_places{0};
   std::int64_t bbo_ticker_id{0};
   std::int64_t bbo_local_ns{0};
   std::string error;
@@ -55,12 +59,12 @@ namespace passive_order_builder_detail {
     result.error = "book ticker bid price must be positive";
     return result;
   }
-  if (!std::isfinite(instrument.price_tick) ||
-      instrument.price_tick <= 0.0) {
+  if (!std::isfinite(instrument.price_tick) || instrument.price_tick <= 0.0) {
     result.error = "instrument price_tick must be positive";
     return result;
   }
-  if (!instrument.price_limit_down || !std::isfinite(*instrument.price_limit_down) ||
+  if (!instrument.price_limit_down ||
+      !std::isfinite(*instrument.price_limit_down) ||
       *instrument.price_limit_down <= 0.0) {
     result.error = "instrument price_limit_down must be positive";
     return result;
@@ -92,6 +96,12 @@ namespace passive_order_builder_detail {
       price, instrument.price_decimal_places);
   result.quantity_text = passive_order_builder_detail::FormatFixedDecimal(
       instrument.min_quantity, *instrument.quantity_decimal_places);
+  result.price = price;
+  result.quantity = instrument.min_quantity;
+  result.price_decimal_places =
+      static_cast<std::uint8_t>(instrument.price_decimal_places);
+  result.quantity_decimal_places =
+      static_cast<std::uint8_t>(*instrument.quantity_decimal_places);
   result.ok = true;
   return result;
 }

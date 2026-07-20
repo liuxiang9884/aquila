@@ -212,21 +212,23 @@ struct PaddedTextPayload {
   };
 }
 
-[[nodiscard]] constexpr core::StrategyOrder MakeStrategyOrder(
+[[nodiscard]] core::OrderPlaceRequest MakeStrategyOrder(
     std::uint64_t local_order_id) noexcept {
-  return core::StrategyOrder{
+  core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .exchange = Exchange::kBitget,
-      .symbol_id = 7,
-      .symbol = "BTCUSDT",
-      .side = OrderSide::kBuy,
-      .type = OrderType::kLimit,
-      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .price = 100000.0,
       .quantity = 0.001,
-      .quantity_text = "0.001",
-      .price_text = "100000.0",
+      .symbol_id = 7,
+      .exchange = Exchange::kBitget,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .price_decimal_places = 1,
+      .quantity_decimal_places = 3,
       .reduce_only = false,
   };
+  core::SetOrderSymbol(&request, "BTCUSDT");
+  return request;
 }
 
 [[nodiscard]] core::OrderGatewayCommand MakePlaceCommand(
@@ -234,40 +236,27 @@ struct PaddedTextPayload {
   core::OrderGatewayCommand command{};
   command.kind = core::OrderGatewayCommandKind::kPlace;
   command.command_seq = local_order_id;
-  command.parent_id = 1;
-  command.local_order_id = local_order_id;
-  command.route_id = 0;
-  command.exchange = Exchange::kBitget;
-  command.symbol_id = 7;
-  command.side = OrderSide::kBuy;
-  command.order_type = OrderType::kLimit;
-  command.time_in_force = TimeInForce::kImmediateOrCancel;
-  command.quantity = 0.001;
-  const std::string_view symbol = "BTCUSDT";
-  const std::string_view quantity = "0.001";
-  const std::string_view price = "100000.0";
-  command.symbol_size = static_cast<std::uint16_t>(symbol.size());
-  command.quantity_text_size = static_cast<std::uint16_t>(quantity.size());
-  command.price_text_size = static_cast<std::uint16_t>(price.size());
-  std::memcpy(command.symbol, symbol.data(), symbol.size());
-  std::memcpy(command.quantity_text, quantity.data(), quantity.size());
-  std::memcpy(command.price_text, price.data(), price.size());
+  command.payload.place = MakeStrategyOrder(local_order_id);
+  command.payload.place.parent_id = 1;
+  command.payload.place.gateway_route_id = 0;
   return command;
 }
 
-[[nodiscard]] constexpr core::OrderCreateRequest MakeLimitRequest() noexcept {
-  return core::OrderCreateRequest{
-      .exchange = Exchange::kBitget,
+[[nodiscard]] core::OrderPlaceRequest MakeLimitRequest() noexcept {
+  core::OrderPlaceRequest request{
+      .price = 100000.0,
+      .quantity = 0.001,
       .symbol_id = 7,
-      .symbol = "BTCUSDT",
+      .exchange = Exchange::kBitget,
       .side = OrderSide::kBuy,
       .order_type = OrderType::kLimit,
       .time_in_force = TimeInForce::kImmediateOrCancel,
-      .quantity = 0.001,
-      .quantity_text = "0.001",
-      .price_text = "100000.0",
+      .price_decimal_places = 1,
+      .quantity_decimal_places = 3,
       .reduce_only = false,
   };
+  core::SetOrderSymbol(&request, "BTCUSDT");
+  return request;
 }
 
 template <typename Session>
@@ -303,33 +292,22 @@ void RunOrderSendLatencyBenchmark(benchmark::State& state, Func&& func) {
 }
 
 void BenchmarkEncodePlace(benchmark::State& state) {
-  const PlaceOrderEncodeFields fields{
-      .encoded_request_id = 72057594037927945ULL,
-      .local_order_id = 42,
-      .order_type = OrderType::kLimit,
-      .symbol = "BTCUSDT",
-      .quantity_text = "0.001",
-      .price_text = "100000.0",
-      .side = OrderSide::kBuy,
-      .time_in_force = TimeInForce::kImmediateOrCancel,
-  };
+  const core::OrderPlaceRequest request = MakeStrategyOrder(42);
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
   for (auto _ : state) {
-    const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+    const EncodedTextRequest encoded =
+        EncodePlaceOrderRequest(request, 72057594037927945ULL, buffer);
     benchmark::DoNotOptimize(encoded.text.data());
     benchmark::DoNotOptimize(encoded.text.size());
   }
 }
 
 void BenchmarkEncodeCancel(benchmark::State& state) {
-  const CancelOrderEncodeFields fields{
-      .encoded_request_id = 144115188075855881ULL,
-      .local_order_id = 42,
-      .exchange_order_id = 123456789,
-  };
+  const core::OrderCancelRequest request{.local_order_id = 42};
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
   for (auto _ : state) {
-    const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+    const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+        request, 123456789, 144115188075855881ULL, buffer);
     benchmark::DoNotOptimize(encoded.text.data());
     benchmark::DoNotOptimize(encoded.text.size());
   }
@@ -379,7 +357,7 @@ void BenchmarkOrderSessionPlaceOrderToCountingTransport(
   std::uint64_t local_order_id = 1;
 
   RunOrderSendLatencyBenchmark(state, [&session, &local_order_id] {
-    const core::StrategyOrder order = MakeStrategyOrder(local_order_id++);
+    const core::OrderPlaceRequest order = MakeStrategyOrder(local_order_id++);
     return session.PlaceOrder(order);
   });
 

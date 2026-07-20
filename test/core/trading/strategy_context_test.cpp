@@ -25,43 +25,45 @@ struct FakeOrderSession {
   std::uint64_t last_place_local_order_id{0};
   std::uint64_t last_cancel_local_order_id{0};
   std::string_view last_place_symbol{};
-  std::string_view last_place_quantity_text{};
-  std::string_view last_place_price_text{};
+  double last_place_quantity{0.0};
+  double last_place_price{0.0};
   OrderType last_place_order_type{OrderType::kLimit};
 
-  SendResult PlaceOrder(StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const OrderPlaceRequest& order) noexcept {
     ++place_calls;
     last_place_local_order_id = order.local_order_id;
-    last_place_symbol = order.symbol;
-    last_place_quantity_text = order.quantity_text;
-    last_place_price_text = order.price_text;
-    last_place_order_type = order.type;
+    last_place_symbol = order.SymbolView();
+    last_place_quantity = order.quantity;
+    last_place_price = order.price;
+    last_place_order_type = order.order_type;
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(StrategyOrder& order) noexcept {
+  SendResult CancelOrder(const OrderCancelRequest& order) noexcept {
     ++cancel_calls;
     last_cancel_local_order_id = order.local_order_id;
     return {.status = SendStatus::kOk};
   }
 };
 
-static_assert(std::is_same_v<
-              decltype(&StrategyContext<FakeOrderSession>::PlaceOrder),
-              OrderPlaceResult (StrategyContext<FakeOrderSession>::*)(
-                  const OrderCreateRequest&) noexcept>);
+static_assert(
+    std::is_same_v<decltype(&StrategyContext<FakeOrderSession>::PlaceOrder),
+                   OrderPlaceResult (StrategyContext<FakeOrderSession>::*)(
+                       const OrderPlaceRequest&) noexcept>);
 
-OrderCreateRequest MakeLimitRequest() noexcept {
-  return OrderCreateRequest{.exchange = Exchange::kGate,
+OrderPlaceRequest MakeLimitRequest() noexcept {
+  OrderPlaceRequest request{.price = 65000.0,
+                            .quantity = 1.0,
                             .symbol_id = 42,
-                            .symbol = "BTC_USDT",
+                            .exchange = Exchange::kGate,
                             .side = OrderSide::kBuy,
                             .order_type = OrderType::kLimit,
                             .time_in_force = TimeInForce::kGoodTillCancel,
-                            .quantity = 1,
-                            .quantity_text = "1",
-                            .price_text = "65000",
+                            .price_decimal_places = 0,
+                            .quantity_decimal_places = 0,
                             .reduce_only = false};
+  SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
 TEST(StrategyContextTest,
@@ -77,8 +79,8 @@ TEST(StrategyContextTest,
   EXPECT_EQ(order_session.place_calls, 1);
   EXPECT_EQ(order_session.last_place_local_order_id, placed.local_order_id);
   EXPECT_EQ(order_session.last_place_symbol, "BTC_USDT");
-  EXPECT_EQ(order_session.last_place_quantity_text, "1");
-  EXPECT_EQ(order_session.last_place_price_text, "65000");
+  EXPECT_DOUBLE_EQ(order_session.last_place_quantity, 1.0);
+  EXPECT_DOUBLE_EQ(order_session.last_place_price, 65000.0);
   const StrategyOrder* order = context.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
   EXPECT_EQ(order->status, OrderStatus::kSent);
@@ -89,7 +91,7 @@ TEST(StrategyContextTest, PlaceOrderCopiesGenericOrderTypeToStrategyOrder) {
   StrategyContext<FakeOrderSession>::OrderManagerT order_manager(order_session,
                                                                  8);
   StrategyContext<FakeOrderSession> context(order_manager);
-  OrderCreateRequest request = MakeLimitRequest();
+  OrderPlaceRequest request = MakeLimitRequest();
   request.order_type = OrderType::kMarket;
 
   const OrderPlaceResult placed = context.PlaceOrder(request);
@@ -98,7 +100,7 @@ TEST(StrategyContextTest, PlaceOrderCopiesGenericOrderTypeToStrategyOrder) {
   EXPECT_EQ(order_session.last_place_order_type, OrderType::kMarket);
   const StrategyOrder* order = context.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->type, OrderType::kMarket);
+  EXPECT_EQ(order->place_request.order_type, OrderType::kMarket);
 }
 
 TEST(StrategyContextTest, PlaceLimitOrderForcesLimitOrderType) {
@@ -106,7 +108,7 @@ TEST(StrategyContextTest, PlaceLimitOrderForcesLimitOrderType) {
   StrategyContext<FakeOrderSession>::OrderManagerT order_manager(order_session,
                                                                  8);
   StrategyContext<FakeOrderSession> context(order_manager);
-  OrderCreateRequest request = MakeLimitRequest();
+  OrderPlaceRequest request = MakeLimitRequest();
   request.order_type = OrderType::kMarket;
 
   const OrderPlaceResult placed = context.PlaceLimitOrder(request);
@@ -115,7 +117,7 @@ TEST(StrategyContextTest, PlaceLimitOrderForcesLimitOrderType) {
   EXPECT_EQ(order_session.last_place_order_type, OrderType::kLimit);
   const StrategyOrder* order = context.FindOrder(placed.local_order_id);
   ASSERT_NE(order, nullptr);
-  EXPECT_EQ(order->type, OrderType::kLimit);
+  EXPECT_EQ(order->place_request.order_type, OrderType::kLimit);
 }
 
 TEST(StrategyContextTest,
@@ -127,8 +129,8 @@ TEST(StrategyContextTest,
   const OrderPlaceResult placed = context.PlaceLimitOrder(MakeLimitRequest());
   ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
 
-  const OrderCancelResult cancelled =
-      context.CancelOrder(placed.local_order_id);
+  const OrderCancelResult cancelled = context.CancelOrder(
+      OrderCancelRequest{.local_order_id = placed.local_order_id});
 
   ASSERT_EQ(cancelled.status, OrderCancelStatus::kOk);
   EXPECT_EQ(cancelled.local_order_id, placed.local_order_id);

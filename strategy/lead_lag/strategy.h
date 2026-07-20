@@ -380,8 +380,7 @@ inline void LogStrategyOrderSubmitted(
     std::string_view symbol, std::int32_t symbol_id, PairRole signal_role,
     std::string_view order_role, SignalAction action, OrderSide side,
     bool reduce_only, const StrategyOrderPositionLogFields& position,
-    double quantity, std::string_view quantity_text, double raw_price,
-    double order_price, std::string_view price_text,
+    double quantity, double raw_price, double order_price,
     std::uint32_t slippage_ticks, double price_tick,
     double target_open_notional, double estimated_notional,
     std::size_t active_groups, core::OrderPlaceStatus place_status,
@@ -401,8 +400,8 @@ inline void LogStrategyOrderSubmitted(
       "freshness_reject_reason={} symbol={} symbol_id={} signal_role={} "
       "order_role={} action={} side={} reduce_only={} "
       "position_id={} position_event={} position_direction={} "
-      "entry_local_order_id={} quantity={:.12g} quantity_text={} "
-      "raw_price={:.12g} order_price={:.12g} price_text={} "
+      "entry_local_order_id={} quantity={:.12g} "
+      "raw_price={:.12g} order_price={:.12g} "
       "slippage_ticks={} price_tick={:.12g} target_open_notional={:.12g} "
       "estimated_notional={:.12g} active_groups={} place_status={}",
       local_order_id, parent_id, route_id,
@@ -420,9 +419,9 @@ inline void LogStrategyOrderSubmitted(
       reduce_only ? "true" : "false", position.position_id,
       position.position_event,
       magic_enum::enum_name(position.position_direction),
-      position.entry_local_order_id, quantity, quantity_text, raw_price,
-      order_price, price_text, slippage_ticks, price_tick, target_open_notional,
-      estimated_notional, active_groups, magic_enum::enum_name(place_status));
+      position.entry_local_order_id, quantity, raw_price, order_price,
+      slippage_ticks, price_tick, target_open_notional, estimated_notional,
+      active_groups, magic_enum::enum_name(place_status));
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderSubmittedLogObserverForTest(
       StrategyOrderSubmittedLogRecordForTest{
@@ -459,10 +458,8 @@ inline void LogStrategyOrderSubmitted(
           .position_direction = position.position_direction,
           .entry_local_order_id = position.entry_local_order_id,
           .quantity = quantity,
-          .quantity_text = quantity_text,
           .raw_price = raw_price,
           .order_price = order_price,
-          .price_text = price_text,
           .slippage_ticks = slippage_ticks,
           .price_tick = price_tick,
           .target_open_notional = target_open_notional,
@@ -536,9 +533,9 @@ inline void LogStrategyOrderResponse(
       order == nullptr ? core::StrategyOrderTimingSnapshot{}
                        : core::MakeStrategyOrderTimingSnapshot(*order);
   const std::uint64_t parent_id =
-      order == nullptr ? event.parent_id : order->parent_id;
+      order == nullptr ? event.parent_id : order->place_request.parent_id;
   const std::uint16_t route_id =
-      order == nullptr ? event.route_id : order->gateway_route_id;
+      order == nullptr ? event.route_id : order->place_request.gateway_route_id;
   const std::int64_t exchange_to_local_ns =
       core::LatencyDeltaNs(event.local_receive_ns, event.exchange_ns);
   const std::string_view book_ticker_id_prefix =
@@ -575,9 +572,11 @@ inline void LogStrategyOrderResponse(
 inline void LogStrategyOrderFeedback(
     const OrderFeedbackEvent& event, const core::StrategyOrder* order,
     const SignalTiming& market_timing) noexcept {
-  const std::uint64_t parent_id = order == nullptr ? 0 : order->parent_id;
-  const std::uint16_t route_id =
-      order == nullptr ? core::kAutoGatewayRoute : order->gateway_route_id;
+  const std::uint64_t parent_id =
+      order == nullptr ? 0 : order->place_request.parent_id;
+  const std::uint16_t route_id = order == nullptr
+                                     ? core::kAutoGatewayRoute
+                                     : order->place_request.gateway_route_id;
   const std::string_view book_ticker_id_prefix =
       OrderFeedbackBookTickerIdPrefix(event.kind);
   NOVA_INFO(
@@ -621,9 +620,9 @@ inline void LogStrategyUnknownResultPause(
       "lead_lag_unknown_result_pause symbol={} symbol_id={} "
       "local_order_id={} kind={} new_entries_paused=true "
       "needs_reconcile=true reason=order_response_unknown_result",
-      order == nullptr ? std::string_view{} : order->symbol,
-      order == nullptr ? 0 : order->symbol_id, event.local_order_id,
-      magic_enum::enum_name(event.kind));
+      order == nullptr ? std::string_view{} : order->place_request.SymbolView(),
+      order == nullptr ? 0 : order->place_request.symbol_id,
+      event.local_order_id, magic_enum::enum_name(event.kind));
 }
 
 inline void LogStrategyUnknownResultResume(
@@ -633,7 +632,8 @@ inline void LogStrategyUnknownResultResume(
       "lead_lag_unknown_result_resume symbol={} symbol_id={} "
       "local_order_id={} feedback_kind={} new_entries_paused=false "
       "needs_reconcile=false reason=terminal_feedback_resolved_unknown_result",
-      order.symbol, order.symbol_id, order.local_order_id,
+      order.place_request.SymbolView(), order.place_request.symbol_id,
+      order.place_request.local_order_id,
       feedback_kind.has_value() ? magic_enum::enum_name(*feedback_kind)
                                 : std::string_view{"none"});
 }
@@ -691,12 +691,13 @@ inline void LogStrategyOrderFinished(
       "finish_exchange_ns={} ack_rtt_ns={} response_rtt_ns={} "
       "ack_exchange_to_local_ns={} response_exchange_to_local_ns={} "
       "exchange_lifecycle_ns={} lead_exchange_ns={} lag_exchange_ns={}",
-      order.local_order_id, order.parent_id, order.gateway_route_id,
-      order.symbol_id, order.symbol, magic_enum::enum_name(order.status),
-      order.reduce_only ? "true" : "false", position.position_id,
+      order.place_request.local_order_id, order.place_request.parent_id,
+      order.place_request.gateway_route_id, order.place_request.symbol_id,
+      order.place_request.SymbolView(), magic_enum::enum_name(order.status),
+      order.place_request.reduce_only ? "true" : "false", position.position_id,
       magic_enum::enum_name(position.position_direction), position.order_role,
       position.entry_local_order_id, position.order_finished_local_ns,
-      order.quantity, order.cumulative_filled_quantity,
+      order.place_request.quantity, order.cumulative_filled_quantity,
       order.AverageFillPrice(), order.last_fill_price, order.exchange_order_id,
       active_groups, timing.request_send_local_ns, timing.ack_local_receive_ns,
       timing.response_local_receive_ns, timing.ack_exchange_ns,
@@ -708,9 +709,9 @@ inline void LogStrategyOrderFinished(
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
   NotifyStrategyOrderFinishedLogObserverForTest(
       StrategyOrderFinishedLogRecordForTest{
-          .local_order_id = order.local_order_id,
-          .parent_id = order.parent_id,
-          .route_id = order.gateway_route_id,
+          .local_order_id = order.place_request.local_order_id,
+          .parent_id = order.place_request.parent_id,
+          .route_id = order.place_request.gateway_route_id,
           .position_id = position.position_id,
           .position_direction = position.position_direction,
           .order_role = position.order_role,
@@ -749,40 +750,39 @@ class Strategy {
     return {totals.gross_notional, totals.holding_position};
   }
 
-  [[nodiscard]] std::size_t OrderPriceTextSlotCountForTest() const noexcept {
-    return order_price_texts_.size();
+  [[nodiscard]] std::size_t OrderRiskSlotCountForTest() const noexcept {
+    return order_risk_slots_.size();
   }
 
-  [[nodiscard]] std::uint64_t PrepareOrderPriceTextEraseForTest(
+  [[nodiscard]] std::uint64_t PrepareOrderRiskSlotEraseForTest(
       std::size_t target_index, std::size_t dense_active_count) noexcept {
-    if (target_index >= order_price_texts_.size() ||
-        dense_active_count > order_price_texts_.size()) {
+    if (target_index >= order_risk_slots_.size() ||
+        dense_active_count > order_risk_slots_.size()) {
       return 0;
     }
     std::fill(reserved_open_risk_slot_bits_.begin(),
               reserved_open_risk_slot_bits_.end(), 0);
-    for (OrderPriceTextStorage& storage : order_price_texts_) {
-      storage = {};
+    for (OpenRiskReservationSlot& slot : order_risk_slots_) {
+      slot = {};
     }
     for (std::size_t index = 0; index < dense_active_count; ++index) {
-      OrderPriceTextStorage& storage = order_price_texts_[index];
-      storage.local_order_id = index + 1U;
-      storage.active = true;
+      OpenRiskReservationSlot& slot = order_risk_slots_[index];
+      slot.local_order_id = index + 1U;
+      slot.active = true;
     }
-    OrderPriceTextStorage& target = order_price_texts_[target_index];
+    OpenRiskReservationSlot& target = order_risk_slots_[target_index];
     target.local_order_id = target_index + 1U;
     target.active = true;
     return target.local_order_id;
   }
 
-  void EraseOrderPriceTextForTest(std::uint64_t local_order_id) noexcept {
-    EraseOrderPriceText(local_order_id);
+  void EraseOrderRiskSlotForTest(std::uint64_t local_order_id) noexcept {
+    EraseOrderRiskSlot(local_order_id);
   }
 
-  [[nodiscard]] bool OrderPriceTextSlotActiveForTest(
+  [[nodiscard]] bool OrderRiskSlotActiveForTest(
       std::size_t index) const noexcept {
-    return index < order_price_texts_.size() &&
-           order_price_texts_[index].active;
+    return index < order_risk_slots_.size() && order_risk_slots_[index].active;
   }
 #endif
 
@@ -1076,7 +1076,6 @@ class Strategy {
   }
 
  private:
-  static constexpr std::size_t kOrderPriceTextCapacity = 64;
   static constexpr std::int32_t kOrderDecimalPlaceLimit = 12;
   static constexpr std::int32_t kMaxCoreOrderDecimalPlaces =
       ::aquila::core::kMaxOrderDecimalPlaces;
@@ -1140,7 +1139,7 @@ class Strategy {
     if (order == nullptr) {
       return {};
     }
-    const PairRoute* route = Route(order->symbol_id);
+    const PairRoute* route = Route(order->place_request.symbol_id);
     if (route == nullptr || route->market == nullptr) {
       return {};
     }
@@ -1206,23 +1205,11 @@ class Strategy {
     return FreshnessRejectReason::kNone;
   }
 
-  struct OrderPriceTextStorage {
+  struct OpenRiskReservationSlot {
     std::uint64_t local_order_id{0};
-    std::array<char, kOrderPriceTextCapacity> price_text{};
-    std::array<char, kOrderPriceTextCapacity> quantity_text{};
-    std::size_t price_size{0};
-    std::size_t quantity_size{0};
     double reserved_open_quantity{0.0};
     double reserved_open_notional{0.0};
     bool active{false};
-
-    [[nodiscard]] std::string_view price_view() const noexcept {
-      return std::string_view(price_text.data(), price_size);
-    }
-
-    [[nodiscard]] std::string_view quantity_view() const noexcept {
-      return std::string_view(quantity_text.data(), quantity_size);
-    }
   };
 
   struct OpenOrderQuantity {
@@ -1245,7 +1232,7 @@ class Strategy {
 
     pair_runtime_by_symbol_id_.clear();
     routes_by_symbol_id_.clear();
-    order_price_texts_.clear();
+    order_risk_slots_.clear();
     pair_runtime_by_symbol_id_.resize(
         static_cast<std::size_t>(max_symbol_id + 1));
     routes_by_symbol_id_.resize(static_cast<std::size_t>(max_symbol_id + 1));
@@ -1266,7 +1253,7 @@ class Strategy {
               .runtime = nullptr,
           };
     }
-    std::size_t price_text_slot_count = 0;
+    std::size_t order_risk_slot_count = 0;
     for (const PairConfig& pair : config_.pairs) {
       if (!RuntimeConfigReady(pair)) {
         continue;
@@ -1292,7 +1279,7 @@ class Strategy {
       if (route == nullptr || route->market == nullptr) {
         continue;
       }
-      price_text_slot_count +=
+      order_risk_slot_count +=
           static_cast<std::size_t>(pair.execute.parallel) *
           static_cast<std::size_t>(kMaxExecutionGroupPendingOrders);
       PairRuntimeState& runtime =
@@ -1323,8 +1310,8 @@ class Strategy {
         initialized_pair_runtimes_.push_back(&runtime);
       }
     }
-    order_price_texts_.resize(price_text_slot_count);
-    reserved_open_risk_slot_bits_.assign((price_text_slot_count + 63U) / 64U,
+    order_risk_slots_.resize(order_risk_slot_count);
+    reserved_open_risk_slot_bits_.assign((order_risk_slot_count + 63U) / 64U,
                                          0);
   }
 
@@ -1451,17 +1438,18 @@ class Strategy {
       MarkNeedsReconcile();
       return true;
     }
-    PairRuntimeState* runtime = MutableRuntime(order->symbol_id);
+    PairRuntimeState* runtime = MutableRuntime(order->place_request.symbol_id);
     if (runtime == nullptr) {
       MarkNeedsReconcile();
       return true;
     }
     if (runtime->execution.FindPendingOrderByLocalOrderId(
-            order->local_order_id) == nullptr) {
+            order->place_request.local_order_id) == nullptr) {
       runtime->execution.MarkNeedsReconcile();
       return true;
     }
-    return runtime->execution.MarkUnknownResult(order->local_order_id);
+    return runtime->execution.MarkUnknownResult(
+        order->place_request.local_order_id);
   }
 
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
@@ -1837,7 +1825,7 @@ class Strategy {
     if (!DecimalUnitsFromValue(price.rounded_order_price,
                                instrument.price_decimal_places,
                                &price.price_units)) {
-      price.reject_reason = "order_text_slot_full";
+      price.reject_reason = "price_decimal_conversion_failed";
       return price;
     }
     price.order_price =
@@ -2018,23 +2006,27 @@ class Strategy {
   template <typename ContextT>
   [[nodiscard]] core::OrderPlaceResult PlacePreparedExternalOrder(
       ContextT& context, std::string_view symbol,
-      const PreparedOrderQuantity& quantity,
-      const OrderPriceTextStorage& order_text_storage, std::uint64_t parent_id,
+      const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
+      const PreparedOrderQuantity& quantity, std::uint64_t parent_id,
       std::uint16_t route_id) noexcept {
-    return context.PlaceOrder(core::OrderCreateRequest{
+    core::OrderPlaceRequest request{
         .parent_id = parent_id,
-        .exchange = last_signal_decision_.intent.exchange,
+        .price = price.order_price,
+        .quantity = quantity.quantity,
         .symbol_id = last_signal_decision_.intent.symbol_id,
-        .symbol = symbol,
+        .gateway_route_id = route_id,
+        .exchange = last_signal_decision_.intent.exchange,
         .side = last_signal_decision_.intent.side,
         .order_type = OrderType::kLimit,
         .time_in_force = TimeInForce::kImmediateOrCancel,
-        .quantity = quantity.quantity,
-        .quantity_text = order_text_storage.quantity_view(),
-        .price_text = order_text_storage.price_view(),
+        .price_decimal_places =
+            static_cast<std::uint8_t>(instrument.price_decimal_places),
+        .quantity_decimal_places =
+            static_cast<std::uint8_t>(instrument.quantity_decimal_places),
         .reduce_only = last_signal_decision_.intent.reduce_only,
-        .gateway_route_id = route_id,
-    });
+    };
+    core::SetOrderSymbol(&request, symbol);
+    return context.PlaceOrder(request);
   }
 
   void LogExternalOrderPlaceRejected(
@@ -2054,7 +2046,6 @@ class Strategy {
       PairRole signal_role, const InstrumentMetadata& instrument,
       std::string_view symbol, const PreparedOrderPrice& price,
       const PreparedOrderQuantity& quantity, double order_notional,
-      const OrderPriceTextStorage& order_text_storage,
       const core::OrderPlaceResult& placed, std::uint64_t parent_id,
       std::uint16_t route_id) noexcept {
     const ExecutionGroup* submitted_group =
@@ -2073,11 +2064,10 @@ class Strategy {
                                       last_signal_decision_.intent.reduce_only),
         last_signal_decision_.action, last_signal_decision_.intent.side,
         last_signal_decision_.intent.reduce_only, position_log,
-        quantity.quantity, order_text_storage.quantity_view(),
-        price.raw_order_price, price.order_price,
-        order_text_storage.price_view(), price.slippage_ticks,
-        instrument.price_tick, runtime->pair.execute.open_notional,
-        order_notional, runtime->execution.active_group_count(), placed.status);
+        quantity.quantity, price.raw_order_price, price.order_price,
+        price.slippage_ticks, instrument.price_tick,
+        runtime->pair.execute.open_notional, order_notional,
+        runtime->execution.active_group_count(), placed.status);
   }
 
   [[nodiscard]] bool RejectInvalidOrderPrice(
@@ -2108,20 +2098,18 @@ class Strategy {
     return true;
   }
 
-  [[nodiscard]] OrderPriceTextStorage* AcquirePreparedOrderText(
+  [[nodiscard]] OpenRiskReservationSlot* AcquirePreparedOrderRiskSlot(
       PairRuntimeState* runtime, std::string_view symbol,
       const InstrumentMetadata& instrument, const PreparedOrderPrice& price,
       const PreparedOrderQuantity& quantity, double order_notional) noexcept {
-    OrderPriceTextStorage* order_text_storage = AcquireOrderText(
-        price.price_units, instrument.price_decimal_places,
-        quantity.quantity_units, instrument.quantity_decimal_places);
-    if (order_text_storage == nullptr) {
-      LogOrderIntentRejectedForSignal("order_text_slot_full", runtime, symbol,
+    OpenRiskReservationSlot* risk_slot = AcquireOrderRiskSlot();
+    if (risk_slot == nullptr) {
+      LogOrderIntentRejectedForSignal("order_risk_slot_full", runtime, symbol,
                                       quantity.quantity, price.raw_order_price,
                                       price.order_price, price.slippage_ticks,
                                       instrument.price_tick, order_notional);
     }
-    return order_text_storage;
+    return risk_slot;
   }
 
   template <typename ContextT>
@@ -2130,14 +2118,14 @@ class Strategy {
       PairRole signal_role, ContextT& context, ExecutionGroup* submit_group,
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
-      double order_notional, OrderPriceTextStorage* order_text_storage,
+      double order_notional, OpenRiskReservationSlot* risk_slot,
       std::uint64_t parent_id, std::uint16_t route_id) noexcept {
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
         StrategySubmitStageForTest::kBeforePlaceOrder, parent_id, 0, route_id);
 #endif
     const core::OrderPlaceResult placed = PlacePreparedExternalOrder(
-        context, symbol, quantity, *order_text_storage, parent_id, route_id);
+        context, symbol, instrument, price, quantity, parent_id, route_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
         StrategySubmitStageForTest::kAfterPlaceOrder, parent_id,
@@ -2146,14 +2134,16 @@ class Strategy {
     if (placed.local_order_id == 0) {
       LogExternalOrderPlaceRejected(runtime, symbol, instrument, price,
                                     quantity, order_notional, placed);
-      ReleaseOrderPriceText(order_text_storage);
+      ReleaseOrderRiskSlot(risk_slot);
       return {};
     }
-    order_text_storage->local_order_id = placed.local_order_id;
+    if (risk_slot != nullptr) {
+      risk_slot->local_order_id = placed.local_order_id;
+    }
     return HandleExternalOrderPlaceResult(
         runtime, trigger_ticker, signal_role, context, submit_group, instrument,
-        symbol, price, quantity, order_notional, order_text_storage, placed,
-        parent_id, route_id);
+        symbol, price, quantity, order_notional, risk_slot, placed, parent_id,
+        route_id);
   }
 
   template <typename ContextT>
@@ -2162,7 +2152,7 @@ class Strategy {
       PairRole signal_role, ContextT& context, ExecutionGroup* submit_group,
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
-      double order_notional, OrderPriceTextStorage* order_text_storage,
+      double order_notional, OpenRiskReservationSlot* risk_slot,
       const core::OrderPlaceResult& placed, std::uint64_t parent_id,
       std::uint16_t route_id) noexcept {
     if (placed.status == core::OrderPlaceStatus::kOk) {
@@ -2173,10 +2163,9 @@ class Strategy {
       }
       LogExternalOrderSubmitted(runtime, trigger_ticker, signal_role,
                                 instrument, symbol, price, quantity,
-                                order_notional, *order_text_storage, placed,
-                                parent_id, route_id);
+                                order_notional, placed, parent_id, route_id);
       if (!last_signal_decision_.intent.reduce_only) {
-        ReserveOpenRisk(order_text_storage, quantity.quantity, order_notional);
+        ReserveOpenRisk(risk_slot, quantity.quantity, order_notional);
       }
       return {.local_order_id = placed.local_order_id, .accepted = true};
     }
@@ -2188,7 +2177,7 @@ class Strategy {
               .rejected_tracked = true};
     }
     if (context.RetireFinishedOrder(placed.local_order_id)) {
-      EraseOrderPriceText(placed.local_order_id);
+      EraseOrderRiskSlot(placed.local_order_id);
     }
     return {.local_order_id = placed.local_order_id};
   }
@@ -2361,24 +2350,27 @@ class Strategy {
       const std::uint16_t route_id = submission_routes[route_index];
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kBeforeAcquireText, parent_id, 0,
+          StrategySubmitStageForTest::kBeforeAcquireRiskSlot, parent_id, 0,
           route_id, route_index, submission_route_count);
 #endif
-      OrderPriceTextStorage* order_text_storage = AcquirePreparedOrderText(
-          runtime, symbol, instrument, price, quantity, order_notional);
-      if (order_text_storage == nullptr) {
-        continue;
+      OpenRiskReservationSlot* risk_slot = nullptr;
+      if (!last_signal_decision_.intent.reduce_only) {
+        risk_slot = AcquirePreparedOrderRiskSlot(
+            runtime, symbol, instrument, price, quantity, order_notional);
+        if (risk_slot == nullptr) {
+          continue;
+        }
       }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kAfterAcquireText, parent_id, 0, route_id,
-          route_index, submission_route_count);
+          StrategySubmitStageForTest::kAfterAcquireRiskSlot, parent_id, 0,
+          route_id, route_index, submission_route_count);
 #endif
       const ExternalOrderSubmitResult submit_result =
           SubmitPreparedExternalOrder(runtime, trigger_ticker, signal_role,
                                       context, submit_group, instrument, symbol,
                                       price, quantity, order_notional,
-                                      order_text_storage, parent_id, route_id);
+                                      risk_slot, parent_id, route_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
           StrategySubmitStageForTest::kAfterSubmitResult, parent_id,
@@ -2438,7 +2430,7 @@ class Strategy {
     [[maybe_unused]] const ExecutionApplyResult applied =
         runtime->execution.ApplySubmitRejected(local_order_id);
     if (context.RetireFinishedOrder(local_order_id)) {
-      EraseOrderPriceText(local_order_id);
+      EraseOrderRiskSlot(local_order_id);
     }
   }
 
@@ -2480,7 +2472,7 @@ class Strategy {
     detail::NotifyStrategyFeedbackStageObserverForTest(
         {.stage = StrategyFeedbackStageForTest::kFinishedOrderReady});
 #endif
-    PairRuntimeState* runtime = MutableRuntime(order->symbol_id);
+    PairRuntimeState* runtime = MutableRuntime(order->place_request.symbol_id);
     if (runtime != nullptr) {
       const detail::StrategyOrderPositionLogFields position_log =
           BuildFinishedOrderPositionLogFields(runtime, *order);
@@ -2516,9 +2508,9 @@ class Strategy {
     detail::NotifyStrategyFeedbackStageObserverForTest(
         {.stage = StrategyFeedbackStageForTest::kFinishedLogged});
 #endif
-    const std::uint64_t local_order_id = order->local_order_id;
+    const std::uint64_t local_order_id = order->place_request.local_order_id;
     if (context.RetireFinishedOrder(local_order_id)) {
-      EraseOrderPriceText(local_order_id);
+      EraseOrderRiskSlot(local_order_id);
     }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifyStrategyFeedbackStageObserverForTest(
@@ -2526,10 +2518,10 @@ class Strategy {
 #endif
   }
 
-  void EraseOrderPriceText(std::uint64_t local_order_id) noexcept {
-    for (OrderPriceTextStorage& storage : order_price_texts_) {
-      if (storage.active && storage.local_order_id == local_order_id) {
-        ReleaseOrderPriceText(&storage);
+  void EraseOrderRiskSlot(std::uint64_t local_order_id) noexcept {
+    for (OpenRiskReservationSlot& slot : order_risk_slots_) {
+      if (slot.active && slot.local_order_id == local_order_id) {
+        ReleaseOrderRiskSlot(&slot);
         return;
       }
     }
@@ -2647,12 +2639,10 @@ class Strategy {
         const std::size_t bit_index =
             static_cast<std::size_t>(std::countr_zero(active_slots));
         const std::size_t storage_index = word_index * 64U + bit_index;
-        const OrderPriceTextStorage& storage =
-            order_price_texts_[storage_index];
-        if (storage.active &&
-            storage.reserved_open_quantity > kQuantityEpsilon) {
-          totals.gross_notional += storage.reserved_open_notional;
-          totals.holding_position += storage.reserved_open_quantity;
+        const OpenRiskReservationSlot& slot = order_risk_slots_[storage_index];
+        if (slot.active && slot.reserved_open_quantity > kQuantityEpsilon) {
+          totals.gross_notional += slot.reserved_open_notional;
+          totals.holding_position += slot.reserved_open_quantity;
         }
         active_slots &= active_slots - 1U;
       }
@@ -2832,63 +2822,48 @@ class Strategy {
            static_cast<double>(::aquila::core::Pow10Int64(decimal_places));
   }
 
-  [[nodiscard]] OrderPriceTextStorage* AcquireOrderText(
-      std::int64_t price_units, std::int32_t price_decimal_places,
-      std::int64_t quantity_units,
-      std::int32_t quantity_decimal_places) noexcept {
-    assert(price_units > 0);
-    assert(quantity_units > 0);
-    for (OrderPriceTextStorage& storage : order_price_texts_) {
-      if (storage.active) {
+  [[nodiscard]] OpenRiskReservationSlot* AcquireOrderRiskSlot() noexcept {
+    for (OpenRiskReservationSlot& slot : order_risk_slots_) {
+      if (slot.active) {
         continue;
       }
-      storage.price_size =
-          ::aquila::core::FormatDecimalUnits(price_units, price_decimal_places,
-                                             storage.price_text)
-              .size();
-      storage.quantity_size =
-          ::aquila::core::FormatDecimalUnits(
-              quantity_units, quantity_decimal_places, storage.quantity_text)
-              .size();
-      storage.local_order_id = 0;
-      storage.reserved_open_quantity = 0.0;
-      storage.reserved_open_notional = 0.0;
-      storage.active = true;
-      return &storage;
+      slot.local_order_id = 0;
+      slot.reserved_open_quantity = 0.0;
+      slot.reserved_open_notional = 0.0;
+      slot.active = true;
+      return &slot;
     }
     return nullptr;
   }
 
-  void ReserveOpenRisk(OrderPriceTextStorage* storage, double quantity,
+  void ReserveOpenRisk(OpenRiskReservationSlot* slot, double quantity,
                        double notional) noexcept {
-    if (storage == nullptr || quantity <= kQuantityEpsilon ||
+    if (slot == nullptr || quantity <= kQuantityEpsilon ||
         !std::isfinite(notional) || notional <= 0.0) {
       return;
     }
-    storage->reserved_open_quantity = quantity;
-    storage->reserved_open_notional = notional;
-    SetReservedOpenRiskSlot(storage, true);
+    slot->reserved_open_quantity = quantity;
+    slot->reserved_open_notional = notional;
+    SetReservedOpenRiskSlot(slot, true);
   }
 
-  void ReleaseOrderPriceText(OrderPriceTextStorage* storage) noexcept {
-    if (storage == nullptr) {
+  void ReleaseOrderRiskSlot(OpenRiskReservationSlot* slot) noexcept {
+    if (slot == nullptr) {
       return;
     }
-    SetReservedOpenRiskSlot(storage, false);
-    storage->local_order_id = 0;
-    storage->price_size = 0;
-    storage->quantity_size = 0;
-    storage->reserved_open_quantity = 0.0;
-    storage->reserved_open_notional = 0.0;
-    storage->active = false;
+    SetReservedOpenRiskSlot(slot, false);
+    slot->local_order_id = 0;
+    slot->reserved_open_quantity = 0.0;
+    slot->reserved_open_notional = 0.0;
+    slot->active = false;
   }
 
-  void SetReservedOpenRiskSlot(const OrderPriceTextStorage* storage,
+  void SetReservedOpenRiskSlot(const OpenRiskReservationSlot* slot,
                                bool reserved) noexcept {
-    assert(storage >= order_price_texts_.data());
-    assert(storage < order_price_texts_.data() + order_price_texts_.size());
+    assert(slot >= order_risk_slots_.data());
+    assert(slot < order_risk_slots_.data() + order_risk_slots_.size());
     const std::size_t storage_index =
-        static_cast<std::size_t>(storage - order_price_texts_.data());
+        static_cast<std::size_t>(slot - order_risk_slots_.data());
     const std::size_t word_index = storage_index / 64U;
     const std::uint64_t mask = std::uint64_t{1}
                                << static_cast<unsigned>(storage_index % 64U);
@@ -2993,15 +2968,18 @@ class Strategy {
     const ExecutionGroup* group =
         runtime == nullptr ? nullptr
                            : runtime->execution.FindPendingOrderByLocalOrderId(
-                                 order.local_order_id);
+                                 order.place_request.local_order_id);
     return detail::StrategyOrderPositionLogFields{
         .position_id = group == nullptr ? 0 : group->group_id,
         .position_direction = PositionDirectionForOrderGroup(
-            group, SignalAction::kNone, order.side, order.reduce_only),
-        .order_role = order.reduce_only ? "exit" : "entry",
-        .entry_local_order_id =
-            group == nullptr ? (order.reduce_only ? 0 : order.local_order_id)
-                             : group->entry_local_order_id,
+            group, SignalAction::kNone, order.place_request.side,
+            order.place_request.reduce_only),
+        .order_role = order.place_request.reduce_only ? "exit" : "entry",
+        .entry_local_order_id = group == nullptr
+                                    ? (order.place_request.reduce_only
+                                           ? 0
+                                           : order.place_request.local_order_id)
+                                    : group->entry_local_order_id,
     };
   }
 
@@ -3011,7 +2989,7 @@ class Strategy {
   std::vector<PairRuntimeState> pair_runtime_by_symbol_id_;
   std::vector<const PairRuntimeState*> initialized_pair_runtimes_;
   std::vector<PairRoute> routes_by_symbol_id_;
-  std::vector<OrderPriceTextStorage> order_price_texts_;
+  std::vector<OpenRiskReservationSlot> order_risk_slots_;
   std::vector<std::uint64_t> reserved_open_risk_slot_bits_;
   MarketUpdate last_market_update_;
   SignalDecision last_signal_decision_;

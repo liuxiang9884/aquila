@@ -8,6 +8,10 @@ namespace aquila::core {
 namespace {
 
 TEST(OrderGatewayShmTypesTest, PayloadTypesArePodLike) {
+  EXPECT_TRUE(std::is_standard_layout_v<OrderPlaceRequest>);
+  EXPECT_TRUE(std::is_trivially_copyable_v<OrderPlaceRequest>);
+  EXPECT_TRUE(std::is_standard_layout_v<OrderCancelRequest>);
+  EXPECT_TRUE(std::is_trivially_copyable_v<OrderCancelRequest>);
   EXPECT_TRUE(std::is_standard_layout_v<OrderGatewayCommand>);
   EXPECT_TRUE(std::is_trivially_copyable_v<OrderGatewayCommand>);
   EXPECT_TRUE(std::is_standard_layout_v<OrderGatewayEvent>);
@@ -20,11 +24,52 @@ TEST(OrderGatewayShmTypesTest, PayloadTypesArePodLike) {
 
 TEST(OrderGatewayShmTypesTest, ConstantsMatchDesign) {
   EXPECT_EQ(kOrderGatewayShmMagic, 0x41514F47U);
-  EXPECT_EQ(kOrderGatewayShmVersion, 2U);
+  EXPECT_EQ(kOrderGatewayShmVersion, 3U);
   EXPECT_EQ(kMaxOrderGatewayRoutes, 16U);
-  EXPECT_EQ(kOrderGatewaySymbolBytes, 32U);
-  EXPECT_EQ(kOrderGatewayQuantityTextBytes, 32U);
-  EXPECT_EQ(kOrderGatewayPriceTextBytes, 32U);
+  EXPECT_EQ(kOrderSymbolBytes, 32U);
+  EXPECT_EQ(sizeof(OrderPlaceRequest), 80U);
+  EXPECT_EQ(sizeof(OrderCancelRequest), 24U);
+  EXPECT_EQ(sizeof(OrderGatewayCommand), 104U);
+}
+
+TEST(OrderGatewayShmTypesTest, PlaceAndCancelUseExactRequestPayloads) {
+  OrderGatewayCommand place{};
+  place.kind = OrderGatewayCommandKind::kPlace;
+  place.payload.place.local_order_id = 11;
+  place.payload.place.price = 60123.4;
+  place.payload.place.quantity = 2.0;
+  place.payload.place.price_decimal_places = 1;
+  place.payload.place.quantity_decimal_places = 0;
+
+  EXPECT_EQ(place.payload.place.local_order_id, 11U);
+  EXPECT_DOUBLE_EQ(place.payload.place.price, 60123.4);
+  EXPECT_DOUBLE_EQ(place.payload.place.quantity, 2.0);
+  EXPECT_EQ(place.payload.place.price_decimal_places, 1U);
+  EXPECT_EQ(place.payload.place.quantity_decimal_places, 0U);
+
+  OrderGatewayCommand cancel{};
+  cancel.kind = OrderGatewayCommandKind::kCancel;
+  cancel.payload.cancel.local_order_id = 11;
+  cancel.payload.cancel.parent_id = 7;
+  cancel.payload.cancel.gateway_route_id = 3;
+
+  EXPECT_EQ(cancel.payload.cancel.local_order_id, 11U);
+  EXPECT_EQ(cancel.payload.cancel.parent_id, 7U);
+  EXPECT_EQ(cancel.payload.cancel.gateway_route_id, 3U);
+}
+
+TEST(OrderGatewayShmTypesTest, InternalOrderIdCommandRetainsRoute) {
+  OrderGatewayCommand command{};
+  command.kind = OrderGatewayCommandKind::kCacheExchangeOrderId;
+  command.payload.order_id = OrderGatewayOrderIdCommand{
+      .local_order_id = 11,
+      .exchange_order_id = 22,
+      .gateway_route_id = 3,
+  };
+
+  EXPECT_EQ(OrderGatewayCommandLocalOrderId(command), 11U);
+  EXPECT_EQ(OrderGatewayCommandExchangeOrderId(command), 22U);
+  EXPECT_EQ(OrderGatewayCommandRouteId(command), 3U);
 }
 
 TEST(OrderGatewayShmTypesTest, HeaderDefaultsMatchDesign) {

@@ -15,6 +15,11 @@ std::string_view FormatForTest(std::int64_t units,
   return FormatDecimalUnits(units, decimal_places, buffer);
 }
 
+std::string_view FormatValueForTest(double value, std::int32_t decimal_places) {
+  static std::array<char, 64> buffer{};
+  return FormatDecimalValue(value, decimal_places, buffer);
+}
+
 TEST(OrderDecimalTest, FormatsDecimalUnitsWithoutFloatingPoint) {
   EXPECT_EQ(FormatForTest(1, 1), "0.1");
   EXPECT_EQ(FormatForTest(123, 2), "1.23");
@@ -48,6 +53,31 @@ TEST(OrderDecimalTest, WritesUnsignedDecimalDigits) {
 
   out = WriteUnsignedDecimalDigits(123456789, buffer.data());
   EXPECT_EQ(std::string_view(buffer.data(), out - buffer.data()), "123456789");
+}
+
+TEST(OrderDecimalTest, FormatsPreparedDoubleValuesAsTheirDecimalUnits) {
+  struct TestCase {
+    std::int64_t units;
+    std::int32_t decimal_places;
+  };
+  constexpr std::array<TestCase, 8> cases{{
+      {192, 0},
+      {52045, 6},
+      {-52045, 6},
+      {1, 11},
+      {123456789, 3},
+      {-123456789, 3},
+      {9007199254740, 5},
+      {-9007199254740, 5},
+  }};
+
+  for (const TestCase test_case : cases) {
+    const double value =
+        static_cast<double>(test_case.units) /
+        static_cast<double>(Pow10Int64(test_case.decimal_places));
+    EXPECT_EQ(FormatValueForTest(value, test_case.decimal_places),
+              FormatForTest(test_case.units, test_case.decimal_places));
+  }
 }
 
 TEST(OrderDecimalTest, CalculatesQuantityUnitsFromNotionalAndPriceUnits) {

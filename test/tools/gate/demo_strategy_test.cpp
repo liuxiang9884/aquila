@@ -31,30 +31,28 @@ struct FakeOrderSession {
     std::string symbol;
     OrderSide side{OrderSide::kBuy};
     TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
+    double price{0.0};
     double quantity{0.0};
-    std::string quantity_text;
-    std::string price_text;
     bool reduce_only{false};
   };
 
-  SendResult PlaceOrder(const core::StrategyOrder& order) {
+  SendResult PlaceOrder(const core::OrderPlaceRequest& request) {
     placed_orders.push_back(PlacedOrder{
-        .local_order_id = order.local_order_id,
-        .symbol_id = order.symbol_id,
-        .symbol = std::string(order.symbol),
-        .side = order.side,
-        .time_in_force = order.time_in_force,
-        .quantity = order.quantity,
-        .quantity_text = std::string(order.quantity_text),
-        .price_text = std::string(order.price_text),
-        .reduce_only = order.reduce_only,
+        .local_order_id = request.local_order_id,
+        .symbol_id = request.symbol_id,
+        .symbol = std::string(request.SymbolView()),
+        .side = request.side,
+        .time_in_force = request.time_in_force,
+        .price = request.price,
+        .quantity = request.quantity,
+        .reduce_only = request.reduce_only,
     });
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(const core::StrategyOrder& order) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest& request) noexcept {
     ++cancel_calls;
-    last_cancel_local_order_id = order.local_order_id;
+    last_cancel_local_order_id = request.local_order_id;
     return {.status = SendStatus::kOk};
   }
 
@@ -171,7 +169,7 @@ TEST(DemoStrategyTest, PlacesBuyLimitAtAskForMatchingSymbol) {
   EXPECT_EQ(buy.side, OrderSide::kBuy);
   EXPECT_EQ(buy.time_in_force, TimeInForce::kGoodTillCancel);
   EXPECT_EQ(buy.quantity, 1);
-  EXPECT_EQ(buy.price_text, "81000.5");
+  EXPECT_DOUBLE_EQ(buy.price, 81000.5);
   EXPECT_FALSE(buy.reduce_only);
 }
 
@@ -185,7 +183,7 @@ TEST(DemoStrategyTest, DoesNotPlaceSecondBuyWhileBuyPending) {
   strategy.OnBookTicker(MakeTicker(7, 81001.5), context);
 
   ASSERT_EQ(session.placed_orders.size(), 1U);
-  EXPECT_EQ(session.placed_orders.back().price_text, "81000.5");
+  EXPECT_DOUBLE_EQ(session.placed_orders.back().price, 81000.5);
   EXPECT_EQ(session.cancel_calls, 0);
 }
 
@@ -234,7 +232,7 @@ TEST(DemoStrategyTest, ClosesWithReduceOnlyMarketSellAfterFilledBuyExpires) {
   EXPECT_EQ(close.side, OrderSide::kSell);
   EXPECT_EQ(close.time_in_force, TimeInForce::kImmediateOrCancel);
   EXPECT_EQ(close.quantity, 1);
-  EXPECT_EQ(close.price_text, "0");
+  EXPECT_DOUBLE_EQ(close.price, 0.0);
   EXPECT_TRUE(close.reduce_only);
   EXPECT_EQ(session.cancel_calls, 0);
 }
@@ -299,7 +297,7 @@ TEST(DemoStrategyTest, DoesNotOpenNextRoundUntilBuyCancelTerminal) {
 
   EXPECT_EQ(strategy.completed_rounds(), 1U);
   ASSERT_EQ(session.placed_orders.size(), 2U);
-  EXPECT_EQ(session.placed_orders.back().price_text, "81001.5");
+  EXPECT_DOUBLE_EQ(session.placed_orders.back().price, 81001.5);
 }
 
 TEST(DemoStrategyTest, ClosesPartiallyFilledBuyAfterCancelTerminal) {
@@ -354,7 +352,7 @@ TEST(DemoStrategyTest, DoesNotOpenNextRoundUntilCloseFilledTerminal) {
   EXPECT_EQ(strategy.completed_rounds(), 1U);
   ASSERT_EQ(session.placed_orders.size(), 3U);
   EXPECT_EQ(session.placed_orders.back().side, OrderSide::kBuy);
-  EXPECT_EQ(session.placed_orders.back().price_text, "81001.5");
+  EXPECT_DOUBLE_EQ(session.placed_orders.back().price, 81001.5);
 }
 
 TEST(DemoStrategyTest, KeepsHistoricalBuyPriceTextStableAcrossRounds) {
@@ -374,9 +372,9 @@ TEST(DemoStrategyTest, KeepsHistoricalBuyPriceTextStableAcrossRounds) {
 
   const core::StrategyOrder* first_order = context.FindOrder(first_buy);
   ASSERT_NE(first_order, nullptr);
-  EXPECT_EQ(first_order->price_text, "81000.5");
+  EXPECT_DOUBLE_EQ(first_order->place_request.price, 81000.5);
   ASSERT_EQ(session.placed_orders.size(), 2U);
-  EXPECT_EQ(session.placed_orders.back().price_text, "81001.5");
+  EXPECT_DOUBLE_EQ(session.placed_orders.back().price, 81001.5);
 }
 
 TEST(DemoStrategyTest, StopsAfterConfiguredRoundsComplete) {

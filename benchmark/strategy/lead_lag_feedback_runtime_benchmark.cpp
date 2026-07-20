@@ -42,6 +42,27 @@ constexpr std::size_t kFeedbackStageCount =
     static_cast<std::size_t>(StrategyFeedbackStageForTest::kCount);
 constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
 
+[[nodiscard]] core::OrderPlaceRequest BenchmarkPlaceRequest(
+    std::uint64_t local_order_id = 0, std::uint64_t parent_id = 0) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .parent_id = parent_id,
+      .price = 102.1,
+      .quantity = 7.0,
+      .symbol_id = kSymbolId,
+      .gateway_route_id = 0,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .price_decimal_places = 1,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
+}
+
 struct FeedbackStageCapture {
   std::array<std::uint64_t, kFeedbackStageCount> timestamps_ns{};
 };
@@ -96,22 +117,28 @@ struct BenchmarkOrderSession {
     return true;
   }
 
-  void Stop() noexcept { running = false; }
+  void Stop() noexcept {
+    running = false;
+  }
 
-  [[nodiscard]] bool Ready() const noexcept { return true; }
+  [[nodiscard]] bool Ready() const noexcept {
+    return true;
+  }
 
-  [[nodiscard]] bool Running() const noexcept { return running; }
+  [[nodiscard]] bool Running() const noexcept {
+    return running;
+  }
 
-  SendResult PlaceOrder(core::StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest& request) noexcept {
     if (state != nullptr) {
       ++state->place_calls;
-      state->last_place_local_order_id = order.local_order_id;
+      state->last_place_local_order_id = request.local_order_id;
     }
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk};
   }
@@ -120,10 +147,9 @@ struct BenchmarkOrderSession {
   bool running{false};
 };
 
-using Runtime =
-    core::TradingRuntime<Strategy, BenchmarkOrderSession,
-                         market_data::RealtimeDataReader<>,
-                         core::TradingRuntimeDiagnostics>;
+using Runtime = core::TradingRuntime<Strategy, BenchmarkOrderSession,
+                                     market_data::RealtimeDataReader<>,
+                                     core::TradingRuntimeDiagnostics>;
 using BenchmarkOrderManager = core::OrderManager<BenchmarkOrderSession>;
 using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
 
@@ -216,8 +242,7 @@ using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
 }
 
 [[nodiscard]] BookTicker Ticker(Exchange exchange, std::int64_t local_ns,
-                                double bid_price,
-                                double ask_price) noexcept {
+                                double bid_price, double ask_price) noexcept {
   return BookTicker{
       .id = local_ns,
       .symbol_id = kSymbolId,
@@ -234,8 +259,7 @@ using BenchmarkStrategyContext = core::StrategyContext<BenchmarkOrderSession>;
 [[nodiscard]] bool SeedPendingOpenOrder(Runtime& runtime,
                                         SharedOrderSessionState& state,
                                         Exchange lag_exchange) {
-  const auto base_ns =
-      benchmarking::RealtimeNowNs();
+  const auto base_ns = benchmarking::RealtimeNowNs();
   runtime.HandleBookTickerForTest(
       Ticker(lag_exchange, base_ns, 101.57, 102.02));
   runtime.HandleBookTickerForTest(
@@ -337,9 +361,8 @@ void BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency(
     state.PauseTiming();
     SharedOrderSessionState session_state;
     auto runtime_result = Runtime::CreateForTest(
-        RuntimeConfig(), [&session_state] {
-          return BenchmarkOrderSession{&session_state};
-        },
+        RuntimeConfig(),
+        [&session_state] { return BenchmarkOrderSession{&session_state}; },
         BenchmarkConfig(Exchange::kGate));
     if (!runtime_result.ok) {
       state.ResumeTiming();
@@ -374,8 +397,8 @@ void BM_LeadLagFeedbackParserShmToRuntimeTerminalFillLatency(
               published = publisher.Publish(event);
             });
     const std::size_t polled = reader_result.value.Poll(
-        1, [&runtime, &observed_local_order_id](
-               const OrderFeedbackEvent& polled_event) {
+        1, [&runtime,
+            &observed_local_order_id](const OrderFeedbackEvent& polled_event) {
           observed_local_order_id = polled_event.local_order_id;
           runtime.HandleOrderFeedbackForTest(polled_event);
         });
@@ -575,16 +598,7 @@ void BM_LeadLagOrderManagerTerminalFillLatency(benchmark::State& state) {
     BenchmarkOrderSession session(&session_state);
     BenchmarkOrderManager order_manager(session, kOrderCapacity, kStrategyId);
     const core::OrderPlaceResult placed =
-        order_manager.PlaceLimitOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
-            .symbol_id = kSymbolId,
-            .symbol = "BTC_USDT",
-            .side = OrderSide::kBuy,
-            .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = 7.0,
-            .quantity_text = "7",
-            .price_text = "102.1",
-        });
+        order_manager.PlaceLimitOrder(BenchmarkPlaceRequest());
     if (placed.status != core::OrderPlaceStatus::kOk) {
       state.ResumeTiming();
       state.SkipWithError("failed to seed order manager");
@@ -778,20 +792,8 @@ void BM_LeadLagStrategyBitgetTerminalFillLatency(benchmark::State& state) {
 
 [[nodiscard]] core::StrategyOrder TerminalFilledOrder() noexcept {
   return {
-      .local_order_id = 1,
-      .parent_id = 2,
+      .place_request = BenchmarkPlaceRequest(1, 2),
       .exchange_order_id = 1001,
-      .exchange = Exchange::kGate,
-      .symbol_id = kSymbolId,
-      .symbol = "BTC_USDT",
-      .side = OrderSide::kBuy,
-      .type = OrderType::kLimit,
-      .time_in_force = TimeInForce::kImmediateOrCancel,
-      .quantity = 7.0,
-      .quantity_text = "7",
-      .price_text = "102.1",
-      .reduce_only = false,
-      .gateway_route_id = 0,
       .status = core::OrderStatus::kFilled,
       .cumulative_filled_quantity = 7.0,
       .cumulative_filled_value = 714.7,
@@ -809,7 +811,8 @@ void BM_LeadLagStrategyBitgetTerminalFillLatency(benchmark::State& state) {
 void BM_LeadLagLogOrderFeedbackLatency(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
   const core::StrategyOrder order = TerminalFilledOrder();
-  const OrderFeedbackEvent event = TerminalFillEvent(order.local_order_id);
+  const OrderFeedbackEvent event =
+      TerminalFillEvent(order.place_request.local_order_id);
   const SignalTiming market_timing{
       .lead_exchange_ns = 180'000,
       .lead_book_ticker_id = 11,
@@ -851,7 +854,7 @@ void BM_LeadLagLogOrderFinishedLatency(benchmark::State& state) {
       .position_id = 7,
       .position_direction = PositionDirection::kLong,
       .order_role = "entry",
-      .entry_local_order_id = order.local_order_id,
+      .entry_local_order_id = order.place_request.local_order_id,
   };
   const SignalTiming market_timing{
       .lead_exchange_ns = 180'000,
@@ -888,12 +891,13 @@ void BM_LeadLagLogOrderFinishedLatency(benchmark::State& state) {
 void BM_LeadLagLogTerminalFeedbackPairLatency(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
   const core::StrategyOrder order = TerminalFilledOrder();
-  const OrderFeedbackEvent event = TerminalFillEvent(order.local_order_id);
+  const OrderFeedbackEvent event =
+      TerminalFillEvent(order.place_request.local_order_id);
   const detail::StrategyOrderPositionLogFields position{
       .position_id = 7,
       .position_direction = PositionDirection::kLong,
       .order_role = "entry",
-      .entry_local_order_id = order.local_order_id,
+      .entry_local_order_id = order.place_request.local_order_id,
   };
   const SignalTiming market_timing{
       .lead_exchange_ns = 180'000,
@@ -941,7 +945,8 @@ void BM_LeadLagExecutionApplyTerminalOrderLatency(benchmark::State& state) {
     state.PauseTiming();
     ExecutionState execution;
     execution.Init(1);
-    if (execution.StartOpenOrder(order.local_order_id) == nullptr) {
+    if (execution.StartOpenOrder(order.place_request.local_order_id) ==
+        nullptr) {
       state.ResumeTiming();
       state.SkipWithError("failed to seed execution state");
       return;
@@ -977,8 +982,8 @@ void RunOrderPriceTextEraseLatency(benchmark::State& state,
                                    std::size_t dense_active_count) {
   auto strategy = std::make_unique<Strategy>(
       BenchmarkConfig(Exchange::kGate, kActualPairCount));
-  if (target_index >= strategy->OrderPriceTextSlotCountForTest()) {
-    state.SkipWithError("order price text target slot is unavailable");
+  if (target_index >= strategy->OrderRiskSlotCountForTest()) {
+    state.SkipWithError("order risk target slot is unavailable");
     return;
   }
 
@@ -987,20 +992,20 @@ void RunOrderPriceTextEraseLatency(benchmark::State& state,
   for (auto _ : state) {
     state.PauseTiming();
     const std::uint64_t local_order_id =
-        strategy->PrepareOrderPriceTextEraseForTest(target_index,
-                                                    dense_active_count);
+        strategy->PrepareOrderRiskSlotEraseForTest(target_index,
+                                                   dense_active_count);
     state.ResumeTiming();
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
-    strategy->EraseOrderPriceTextForTest(local_order_id);
+    strategy->EraseOrderRiskSlotForTest(local_order_id);
     const std::uint64_t elapsed_ns =
         websocket::benchmarking::NowNs() - start_ns;
     state.PauseTiming();
 
     if (local_order_id == 0 ||
-        strategy->OrderPriceTextSlotActiveForTest(target_index)) {
+        strategy->OrderRiskSlotActiveForTest(target_index)) {
       state.ResumeTiming();
-      state.SkipWithError("order price text slot was not erased");
+      state.SkipWithError("order risk slot was not erased");
       return;
     }
 

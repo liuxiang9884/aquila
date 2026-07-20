@@ -5,7 +5,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <ctime>
 #include <limits>
 #include <span>
@@ -43,27 +42,6 @@ struct LoginCredentials {
   std::string api_key;
   std::string api_secret;
 };
-
-template <typename OrderT>
-[[nodiscard]] std::string_view SignedOrderSizeTextForGate(
-    const OrderT& order, std::span<char> buffer) noexcept {
-  const std::string_view quantity_text = order.quantity_text;
-  if (quantity_text.empty()) {
-    return {};
-  }
-  if (quantity_text.front() == '-') {
-    return order.side == OrderSide::kSell ? quantity_text : std::string_view{};
-  }
-  if (order.side == OrderSide::kBuy) {
-    return quantity_text;
-  }
-  if (buffer.size() < quantity_text.size() + 1) {
-    return {};
-  }
-  buffer[0] = '-';
-  std::memcpy(buffer.data() + 1, quantity_text.data(), quantity_text.size());
-  return std::string_view(buffer.data(), quantity_text.size() + 1);
-}
 
 class NoopOrderSessionDiagnostics {
  public:
@@ -537,30 +515,28 @@ class OrderSession {
     }
   }
 
-  template <typename OrderT>
-  OrderSendResult PlaceOrder(const OrderT& order) noexcept {
+  OrderSendResult PlaceOrder(const core::OrderPlaceRequest& request) noexcept {
     if (!active_) {
       LogGateOrderSendFailed("place", OrderSendStatus::kNotActive,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotActive, true);
     }
     if (!login_ready_) {
       LogGateOrderSendFailed("place", OrderSendStatus::kNotLoggedIn,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
     if (request_id_to_log_fields_.size() >= request_map_capacity_) {
       LogGateOrderSendFailed("place", OrderSendStatus::kInflightFull,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
-    const OrderType order_type = OrderTypeForGate(order);
-    if (order_type != OrderType::kLimit) {
+    if (request.order_type != OrderType::kLimit) {
       LogGateOrderSendFailed("place", OrderSendStatus::kUnsupportedOrderType,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kUnsupportedOrderType, true);
     }
@@ -568,26 +544,12 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
-    std::array<char, 64> signed_size_buffer{};
-    const std::string_view signed_size_text = SignedOrderSizeTextForGate(
-        order,
-        std::span<char>(signed_size_buffer.data(), signed_size_buffer.size()));
     std::array<char, kPlaceOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodePlaceOrderRequest(
-        PlaceOrderEncodeFields{.timestamp = NowSeconds(),
-                               .encoded_request_id = encoded_request_id,
-                               .local_order_id = order.local_order_id,
-                               .order_type = order_type,
-                               .contract = order.symbol,
-                               .signed_size_text = signed_size_text,
-                               .price_text = order.price_text,
-                               .time_in_force = order.time_in_force,
-                               .reduce_only = order.reduce_only,
-                               .quote_size = quote_order_size_},
-        buffer);
+        request, NowSeconds(), encoded_request_id, quote_order_size_, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       const OrderSendStatus status = MapEncodeStatus(encoded.status);
-      LogGateOrderSendFailed("place", status, order.local_order_id, active_,
+      LogGateOrderSendFailed("place", status, request.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
@@ -611,46 +573,47 @@ class OrderSession {
         UpdateSocketTimestampingProbeAfterSend(
             sequence, status, write_path, socket_timestamping_probe_started);
     if (status != OrderSendStatus::kOk) {
-      LogGateOrderSendFailed("place", status, order.local_order_id, active_,
+      LogGateOrderSendFailed("place", status, request.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
     }
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
-    request_id_to_log_fields_.emplace(sequence, MakeRequestLogFields(order));
-    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
+    request_id_to_log_fields_.emplace(sequence, MakeRequestLogFields(request));
+    ArmAckLatencyDiagnostic(request.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
                             MakeSocketTimestampingSendSnapshot(
                                 write_path, socket_timestamping_probe_active));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
-    LogGatePlaceOrderSent(order, sequence, encoded_request_id, inflight_count(),
-                          send_local_ns, order_session_id_, send_cpu);
+    LogGatePlaceOrderSent(request, sequence, encoded_request_id,
+                          inflight_count(), send_local_ns, order_session_id_,
+                          send_cpu);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
             .send_local_ns = send_local_ns};
   }
 
-  template <typename OrderT>
-  OrderSendResult CancelOrder(const OrderT& order) noexcept {
+  OrderSendResult CancelOrder(
+      const core::OrderCancelRequest& request) noexcept {
     if (!active_) {
       LogGateOrderSendFailed("cancel", OrderSendStatus::kNotActive,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotActive, true);
     }
     if (!login_ready_) {
       LogGateOrderSendFailed("cancel", OrderSendStatus::kNotLoggedIn,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kNotLoggedIn, false);
     }
     if (request_id_to_log_fields_.size() >= request_map_capacity_) {
       LogGateOrderSendFailed("cancel", OrderSendStatus::kInflightFull,
-                             order.local_order_id, active_, login_ready_,
+                             request.local_order_id, active_, login_ready_,
                              inflight_count(), request_map_capacity_);
       return EarlyLocalReject(OrderSendStatus::kInflightFull, true);
     }
@@ -658,17 +621,13 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kCancelOrder, sequence);
-    const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(order);
+    const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(request);
     std::array<char, kCancelOrderRequestBufferSize> buffer;
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-        CancelOrderEncodeFields{.timestamp = NowSeconds(),
-                                .encoded_request_id = encoded_request_id,
-                                .local_order_id = order.local_order_id,
-                                .exchange_order_id = exchange_order_id},
-        buffer);
+        request, exchange_order_id, NowSeconds(), encoded_request_id, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       const OrderSendStatus status = MapEncodeStatus(encoded.status);
-      LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
+      LogGateOrderSendFailed("cancel", status, request.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
@@ -692,22 +651,22 @@ class OrderSession {
         UpdateSocketTimestampingProbeAfterSend(
             sequence, status, write_path, socket_timestamping_probe_started);
     if (status != OrderSendStatus::kOk) {
-      LogGateOrderSendFailed("cancel", status, order.local_order_id, active_,
+      LogGateOrderSendFailed("cancel", status, request.local_order_id, active_,
                              login_ready_, inflight_count(),
                              request_map_capacity_);
       return SendFailure(status, sequence, encoded_request_id);
     }
     const websocket::SocketSendQueueDiagnostics socket_send_queue =
         SnapshotSocketSendQueueDiagnostics();
-    request_id_to_log_fields_.emplace(sequence, MakeRequestLogFields(order));
-    ArmAckLatencyDiagnostic(order.local_order_id, sequence, send_local_ns,
+    request_id_to_log_fields_.emplace(sequence, MakeRequestLogFields(request));
+    ArmAckLatencyDiagnostic(request.local_order_id, sequence, send_local_ns,
                             write_path, socket_send_queue,
                             MakeSocketTimestampingSendSnapshot(
                                 write_path, socket_timestamping_probe_active));
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
-    LogGateCancelOrderSent(order, exchange_order_id, sequence,
+    LogGateCancelOrderSent(request, exchange_order_id, sequence,
                            encoded_request_id, inflight_count(), send_local_ns,
                            order_session_id_, send_cpu);
     return {.status = OrderSendStatus::kOk,
@@ -832,40 +791,13 @@ class OrderSession {
     return OrderSendStatus::kEncodeBufferTooSmall;
   }
 
-  template <typename OrderT>
-  [[nodiscard]] static OrderType OrderTypeForGate(
-      const OrderT& order) noexcept {
-    if constexpr (requires { order.type; }) {
-      return order.type;
-    }
-    return OrderType::kLimit;
-  }
-
-  template <typename OrderT>
-  [[nodiscard]] static std::uint64_t ParentIdForLog(
-      const OrderT& order) noexcept {
-    if constexpr (requires { order.parent_id; }) {
-      return order.parent_id;
-    }
-    return 0;
-  }
-
-  template <typename OrderT>
-  [[nodiscard]] static std::uint16_t RouteIdForLog(
-      const OrderT& order) noexcept {
-    if constexpr (requires { order.gateway_route_id; }) {
-      return order.gateway_route_id;
-    }
-    return static_cast<std::uint16_t>(0xFFFF);
-  }
-
-  template <typename OrderT>
+  template <typename RequestT>
   [[nodiscard]] static OrderSessionRequestLogFields MakeRequestLogFields(
-      const OrderT& order) noexcept {
+      const RequestT& request) noexcept {
     return OrderSessionRequestLogFields{
-        .local_order_id = order.local_order_id,
-        .parent_id = ParentIdForLog(order),
-        .route_id = RouteIdForLog(order),
+        .local_order_id = request.local_order_id,
+        .parent_id = request.parent_id,
+        .route_id = request.gateway_route_id,
     };
   }
 
@@ -891,8 +823,7 @@ class OrderSession {
                          write_path);
   }
 
-  template <typename OrderT>
-  static void LogGatePlaceOrderSent(const OrderT& order,
+  static void LogGatePlaceOrderSent(const core::OrderPlaceRequest& request,
                                     std::uint64_t request_sequence,
                                     std::uint64_t encoded_request_id,
                                     std::size_t inflight,
@@ -901,7 +832,7 @@ class OrderSession {
                                     int send_cpu) noexcept {
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
     detail::NotifyOrderSessionSendLogObserverForTest(
-        order_session_id, order.local_order_id, request_sequence, send_cpu);
+        order_session_id, request.local_order_id, request_sequence, send_cpu);
 #endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
@@ -910,25 +841,26 @@ class OrderSession {
         "gate_order_send_ok type=place local_order_id={} parent_id={} "
         "route_id={} "
         "request_sequence={} encoded_request_id={} contract={} side={} "
-        "quantity={} price={} tif={} reduce_only={} inflight={} "
+        "quantity={:.{}f} price={:.{}f} tif={} reduce_only={} inflight={} "
         "request_send_local_ns={} order_session_id={} send_cpu={}",
-        order.local_order_id, ParentIdForLog(order), RouteIdForLog(order),
-        request_sequence, encoded_request_id, order.symbol,
-        magic_enum::enum_name(order.side), order.quantity_text,
-        order.price_text, magic_enum::enum_name(order.time_in_force),
-        order.reduce_only ? "true" : "false", inflight, request_send_local_ns,
+        request.local_order_id, request.parent_id, request.gateway_route_id,
+        request_sequence, encoded_request_id, request.SymbolView(),
+        magic_enum::enum_name(request.side), request.quantity,
+        request.quantity_decimal_places, request.price,
+        request.price_decimal_places,
+        magic_enum::enum_name(request.time_in_force),
+        request.reduce_only ? "true" : "false", inflight, request_send_local_ns,
         order_session_id, send_cpu);
   }
 
-  template <typename OrderT>
   static void LogGateCancelOrderSent(
-      const OrderT& order, std::uint64_t exchange_order_id,
+      const core::OrderCancelRequest& request, std::uint64_t exchange_order_id,
       std::uint64_t request_sequence, std::uint64_t encoded_request_id,
       std::size_t inflight, std::int64_t request_send_local_ns,
       std::uint64_t order_session_id, int send_cpu) noexcept {
 #if defined(AQUILA_GATE_ORDER_SESSION_ENABLE_TEST_HOOKS)
     detail::NotifyOrderSessionSendLogObserverForTest(
-        order_session_id, order.local_order_id, request_sequence, send_cpu);
+        order_session_id, request.local_order_id, request_sequence, send_cpu);
 #endif
     if (::nova::kLogManager.logger() == nullptr) {
       return;
@@ -939,7 +871,7 @@ class OrderSession {
         "exchange_order_id={} request_sequence={} encoded_request_id={} "
         "inflight={} request_send_local_ns={} order_session_id={} "
         "send_cpu={}",
-        order.local_order_id, ParentIdForLog(order), RouteIdForLog(order),
+        request.local_order_id, request.parent_id, request.gateway_route_id,
         exchange_order_id, request_sequence, encoded_request_id, inflight,
         request_send_local_ns, order_session_id, send_cpu);
   }
@@ -1161,18 +1093,11 @@ class OrderSession {
         endpoints.remote_ip.data(), endpoints.remote_port);
   }
 
-  template <typename OrderT>
   [[nodiscard]] std::uint64_t ExchangeOrderIdForCancel(
-      const OrderT& order) const noexcept {
+      const core::OrderCancelRequest& request) const noexcept {
     const std::uint64_t exchange_order_id =
-        exchange_order_id_for_local_order(order.local_order_id);
-    if (exchange_order_id != 0) {
-      return exchange_order_id;
-    }
-    if constexpr (requires { order.exchange_order_id; }) {
-      return order.exchange_order_id;
-    }
-    return 0;
+        exchange_order_id_for_local_order(request.local_order_id);
+    return exchange_order_id;
   }
 
   [[nodiscard]] OrderSendResult SendLogin() noexcept {

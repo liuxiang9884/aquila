@@ -34,7 +34,7 @@ std::atomic<std::int64_t> g_counted_allocations{0};
 std::atomic<std::int64_t> g_counted_live_bytes{0};
 
 // Counts only allocations made while enabled, so the test can verify
-// price_text storage retirement without exposing Strategy internals.
+// risk reservation retirement without exposing Strategy internals.
 struct AllocationHeader {
   void* raw{nullptr};
   std::size_t size{0};
@@ -550,29 +550,31 @@ struct FakeOrderSession {
     aquila::OrderSide side{aquila::OrderSide::kBuy};
     aquila::OrderType order_type{aquila::OrderType::kLimit};
     aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
+    double price{0.0};
     double quantity{0.0};
-    std::string quantity_text;
-    std::string price_text;
+    std::uint8_t price_decimal_places{0};
+    std::uint8_t quantity_decimal_places{0};
     bool reduce_only{false};
     std::uint16_t gateway_route_id{aquila::core::kAutoGatewayRoute};
   };
 
-  SendResult PlaceOrder(aquila::core::StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(
+      const aquila::core::OrderPlaceRequest& request) noexcept {
     placed_orders.push_back(CapturedOrder{
-        .local_order_id = order.local_order_id,
-        .parent_id = order.parent_id,
-        .exchange = order.exchange,
-        .symbol_id = order.symbol_id,
-        .symbol = std::string(order.symbol),
-        .side = order.side,
-        .order_type = order.type,
-        .time_in_force = order.time_in_force,
-        .quantity = order.quantity,
-        .quantity_text = std::string(order.quantity_text),
-        .price_text =
-            capture_price_text ? std::string(order.price_text) : std::string{},
-        .reduce_only = order.reduce_only,
-        .gateway_route_id = order.gateway_route_id,
+        .local_order_id = request.local_order_id,
+        .parent_id = request.parent_id,
+        .exchange = request.exchange,
+        .symbol_id = request.symbol_id,
+        .symbol = std::string(request.SymbolView()),
+        .side = request.side,
+        .order_type = request.order_type,
+        .time_in_force = request.time_in_force,
+        .price = request.price,
+        .quantity = request.quantity,
+        .price_decimal_places = request.price_decimal_places,
+        .quantity_decimal_places = request.quantity_decimal_places,
+        .reduce_only = request.reduce_only,
+        .gateway_route_id = request.gateway_route_id,
     });
     if (reject_next_place_count > 0) {
       --reject_next_place_count;
@@ -581,7 +583,7 @@ struct FakeOrderSession {
     return {.status = next_place_status};
   }
 
-  SendResult CancelOrder(aquila::core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const aquila::core::OrderCancelRequest&) noexcept {
     return {};
   }
 
@@ -602,7 +604,6 @@ struct FakeOrderSession {
 
   SendStatus next_place_status{SendStatus::kOk};
   std::uint32_t reject_next_place_count{0};
-  bool capture_price_text{true};
   bool refresh_routes_marks_route0_not_ready{false};
   int refresh_route_calls{0};
   std::uint16_t max_order_session_fanout{leadlag::kMaxOrderSessionFanout};
@@ -1114,7 +1115,8 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(order.order_type, aquila::OrderType::kLimit);
   EXPECT_EQ(order.time_in_force, aquila::TimeInForce::kImmediateOrCancel);
   EXPECT_FALSE(order.reduce_only);
-  EXPECT_EQ(order.price_text, "102.1");
+  EXPECT_DOUBLE_EQ(order.price, 102.1);
+  EXPECT_EQ(order.price_decimal_places, 1);
   EXPECT_EQ(order.quantity, 9);
 
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
@@ -1148,7 +1150,8 @@ TEST(LeadLagStrategyInterfaceTest,
     EXPECT_EQ(order.side, aquila::OrderSide::kBuy);
     EXPECT_FALSE(order.reduce_only);
     EXPECT_EQ(order.quantity, 9);
-    EXPECT_EQ(order.price_text, "102.1");
+    EXPECT_DOUBLE_EQ(order.price, 102.1);
+    EXPECT_EQ(order.price_decimal_places, 1);
   }
   EXPECT_NE(local_order_ids[0], local_order_ids[1]);
   EXPECT_NE(local_order_ids[1], local_order_ids[2]);
@@ -1213,7 +1216,8 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t route = 0; route < 4; ++route) {
     EXPECT_EQ(order_session.placed_orders[route].gateway_route_id, route);
     EXPECT_DOUBLE_EQ(order_session.placed_orders[route].quantity, 0.1);
-    EXPECT_EQ(order_session.placed_orders[route].quantity_text, "0.1");
+    EXPECT_DOUBLE_EQ(order_session.placed_orders[route].quantity, 0.1);
+    EXPECT_EQ(order_session.placed_orders[route].quantity_decimal_places, 1);
   }
 }
 
@@ -1235,7 +1239,8 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t route = 0; route < 4; ++route) {
     EXPECT_EQ(order_session.placed_orders[route].gateway_route_id, route);
     EXPECT_DOUBLE_EQ(order_session.placed_orders[route].quantity, 0.2);
-    EXPECT_EQ(order_session.placed_orders[route].quantity_text, "0.2");
+    EXPECT_DOUBLE_EQ(order_session.placed_orders[route].quantity, 0.2);
+    EXPECT_EQ(order_session.placed_orders[route].quantity_decimal_places, 1);
   }
 }
 
@@ -1349,7 +1354,8 @@ TEST(LeadLagStrategyInterfaceTest,
   const FakeOrderSession::CapturedOrder& order =
       order_session.placed_orders.back();
   EXPECT_DOUBLE_EQ(order.quantity, 0.1);
-  EXPECT_EQ(order.quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(order.quantity, 0.1);
+  EXPECT_EQ(order.quantity_decimal_places, 1);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -1750,10 +1756,8 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderSubmittedAfterSubmit) {
   EXPECT_EQ(record.position_direction, leadlag::PositionDirection::kLong);
   EXPECT_EQ(record.entry_local_order_id, order.local_order_id);
   EXPECT_EQ(record.quantity, 9);
-  EXPECT_EQ(record.quantity_text, "9");
   EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
   EXPECT_DOUBLE_EQ(record.order_price, 102.4);
-  EXPECT_EQ(record.price_text, "102.4");
   EXPECT_EQ(record.slippage_ticks, 3U);
   EXPECT_DOUBLE_EQ(record.price_tick, 0.1);
   EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
@@ -1945,7 +1949,7 @@ TEST(LeadLagStrategyInterfaceTest,
       order_session.placed_orders.back();
   EXPECT_EQ(order.side, aquila::OrderSide::kBuy);
   EXPECT_FALSE(order.reduce_only);
-  EXPECT_EQ(order.price_text, "102.4");
+  EXPECT_DOUBLE_EQ(order.price, 102.4);
   EXPECT_EQ(order.quantity, 9);
   ASSERT_EQ(g_order_intent_log_count, 1U);
   EXPECT_DOUBLE_EQ(g_order_intent_logs[0].raw_price, 102.02);
@@ -1969,7 +1973,7 @@ TEST(LeadLagStrategyInterfaceTest,
             leadlag::SignalAction::kOpenShort);
   EXPECT_EQ(order.side, aquila::OrderSide::kSell);
   EXPECT_FALSE(order.reduce_only);
-  EXPECT_EQ(order.price_text, "97.7");
+  EXPECT_DOUBLE_EQ(order.price, 97.7);
   EXPECT_EQ(order.quantity, 10);
 }
 
@@ -1998,7 +2002,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_EQ(close_order.order_type, aquila::OrderType::kLimit);
   EXPECT_EQ(close_order.time_in_force, aquila::TimeInForce::kImmediateOrCancel);
   EXPECT_TRUE(close_order.reduce_only);
-  EXPECT_EQ(close_order.price_text, "101.5");
+  EXPECT_DOUBLE_EQ(close_order.price, 101.5);
   EXPECT_EQ(close_order.quantity, 7);
 
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
@@ -2081,7 +2085,7 @@ TEST(LeadLagStrategyInterfaceTest,
     EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(close_order.reduce_only);
     EXPECT_EQ(close_order.quantity, 7);
-    EXPECT_EQ(close_order.price_text, "101.5");
+    EXPECT_DOUBLE_EQ(close_order.price, 101.5);
   }
   EXPECT_NEAR(strategy.last_signal_decision().trailing_price,
               ((3.0 * 101.0) + (4.0 * 104.0)) / 7.0, 1e-12);
@@ -2110,7 +2114,7 @@ TEST(LeadLagStrategyInterfaceTest,
       order_session.placed_orders.back();
   EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(close_order.reduce_only);
-  EXPECT_EQ(close_order.price_text, "101.2");
+  EXPECT_DOUBLE_EQ(close_order.price, 101.2);
   EXPECT_EQ(close_order.quantity, 7);
   ASSERT_EQ(g_order_intent_log_count, 2U);
   EXPECT_DOUBLE_EQ(g_order_intent_logs[1].raw_price, 101.57);
@@ -2188,7 +2192,7 @@ TEST(LeadLagStrategyInterfaceTest,
       order_session.placed_orders.front();
   const std::uint64_t first_local_order_id = first_order.local_order_id;
   const double first_quantity = first_order.quantity;
-  const double first_price = std::stod(first_order.price_text);
+  const double first_price = first_order.price;
   const double first_notional = first_quantity * first_price;
   auto totals = strategy.CurrentGlobalRiskTotalsForTest();
   EXPECT_DOUBLE_EQ(totals.first, first_notional);
@@ -2205,8 +2209,7 @@ TEST(LeadLagStrategyInterfaceTest,
   ASSERT_EQ(order_session.placed_orders.size(), 2U);
   const FakeOrderSession::CapturedOrder& second_order =
       order_session.placed_orders.back();
-  const double second_notional =
-      second_order.quantity * std::stod(second_order.price_text);
+  const double second_notional = second_order.quantity * second_order.price;
   totals = strategy.CurrentGlobalRiskTotalsForTest();
   EXPECT_DOUBLE_EQ(totals.first, first_notional + second_notional);
   EXPECT_DOUBLE_EQ(totals.second, first_quantity + second_order.quantity);
@@ -2242,7 +2245,7 @@ TEST(LeadLagStrategyInterfaceTest,
   double expected_holding_position = 0.0;
   for (const FakeOrderSession::CapturedOrder& order :
        order_session.placed_orders) {
-    expected_gross_notional += order.quantity * std::stod(order.price_text);
+    expected_gross_notional += order.quantity * order.price;
     expected_holding_position += order.quantity;
   }
   auto totals = strategy.CurrentGlobalRiskTotalsForTest();
@@ -2251,7 +2254,7 @@ TEST(LeadLagStrategyInterfaceTest,
 
   const FakeOrderSession::CapturedOrder filled_order =
       order_session.placed_orders[64];
-  const double filled_price = std::stod(filled_order.price_text);
+  const double filled_price = filled_order.price;
   ApplyFeedback(&strategy, &order_manager, &context,
                 FilledFeedback(filled_order.local_order_id,
                                filled_order.quantity, filled_price));
@@ -2264,8 +2267,7 @@ TEST(LeadLagStrategyInterfaceTest,
   ApplyFeedback(&strategy, &order_manager, &context,
                 CancelledFeedback(cancelled_order.local_order_id, 0,
                                   cancelled_order.quantity, 0.0));
-  expected_gross_notional -=
-      cancelled_order.quantity * std::stod(cancelled_order.price_text);
+  expected_gross_notional -= cancelled_order.quantity * cancelled_order.price;
   expected_holding_position -= cancelled_order.quantity;
   totals = strategy.CurrentGlobalRiskTotalsForTest();
   EXPECT_DOUBLE_EQ(totals.first, expected_gross_notional);
@@ -2430,7 +2432,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(retry_close.local_order_id, partial_close_order_id);
   EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(retry_close.reduce_only);
-  EXPECT_EQ(retry_close.price_text, "101.0");
+  EXPECT_DOUBLE_EQ(retry_close.price, 101.0);
   EXPECT_EQ(retry_close.quantity, 4);
 
   ApplyFeedback(&strategy, &order_manager, &context,
@@ -2485,7 +2487,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeFanoutRetriesCloseRemaining) {
     EXPECT_EQ(retry_close.gateway_route_id, i - 8);
     EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(retry_close.reduce_only);
-    EXPECT_EQ(retry_close.price_text, "101.0");
+    EXPECT_DOUBLE_EQ(retry_close.price, 101.0);
     EXPECT_EQ(retry_close.quantity, 4);
   }
 }
@@ -2512,7 +2514,7 @@ TEST(LeadLagStrategyInterfaceTest,
       order_session.placed_orders.back();
   EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(stoploss_order.reduce_only);
-  EXPECT_EQ(stoploss_order.price_text, "94.3");
+  EXPECT_DOUBLE_EQ(stoploss_order.price, 94.3);
   EXPECT_EQ(stoploss_order.quantity, 11);
 
   const leadlag::SignalDecision& decision = strategy.last_signal_decision();
@@ -2556,7 +2558,7 @@ TEST(LeadLagStrategyInterfaceTest,
     EXPECT_EQ(stoploss_order.gateway_route_id, i - 4);
     EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(stoploss_order.reduce_only);
-    EXPECT_EQ(stoploss_order.price_text, "94.3");
+    EXPECT_DOUBLE_EQ(stoploss_order.price, 94.3);
     EXPECT_EQ(stoploss_order.quantity, 7);
   }
 }
@@ -2597,7 +2599,7 @@ TEST(LeadLagStrategyInterfaceTest,
     EXPECT_EQ(stoploss_order.gateway_route_id, i - 2);
     EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
     EXPECT_TRUE(stoploss_order.reduce_only);
-    EXPECT_EQ(stoploss_order.price_text, "94.3");
+    EXPECT_DOUBLE_EQ(stoploss_order.price, 94.3);
     EXPECT_EQ(stoploss_order.quantity, 3);
   }
 }
@@ -2900,7 +2902,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(retry_stoploss.local_order_id, cancelled_stoploss_order_id);
   EXPECT_EQ(retry_stoploss.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(retry_stoploss.reduce_only);
-  EXPECT_EQ(retry_stoploss.price_text, "89.3");
+  EXPECT_DOUBLE_EQ(retry_stoploss.price, 89.3);
   EXPECT_EQ(retry_stoploss.quantity, 11);
 }
 
@@ -3150,7 +3152,7 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_NE(retry_close.local_order_id, rejected_close_order_id);
   EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
   EXPECT_TRUE(retry_close.reduce_only);
-  EXPECT_EQ(retry_close.price_text, "101.0");
+  EXPECT_DOUBLE_EQ(retry_close.price, 101.0);
   EXPECT_EQ(retry_close.quantity, 7);
 }
 
@@ -3191,7 +3193,7 @@ TEST(LeadLagStrategyInterfaceTest,
     const FakeOrderSession::CapturedOrder& retry_close =
         order_session.placed_orders[i];
     EXPECT_TRUE(retry_close.reduce_only);
-    EXPECT_EQ(retry_close.price_text, "101.0");
+    EXPECT_DOUBLE_EQ(retry_close.price, 101.0);
     EXPECT_EQ(retry_close.quantity, 7);
   }
 }
@@ -3239,7 +3241,7 @@ TEST(LeadLagStrategyInterfaceTest,
     const FakeOrderSession::CapturedOrder& retry_close =
         order_session.placed_orders[i];
     EXPECT_TRUE(retry_close.reduce_only);
-    EXPECT_EQ(retry_close.price_text, "101.0");
+    EXPECT_DOUBLE_EQ(retry_close.price, 101.0);
     EXPECT_EQ(retry_close.quantity, 4);
   }
 }
@@ -3252,7 +3254,6 @@ TEST(LeadLagStrategyInterfaceTest,
     leadlag::Strategy warm_strategy{config};
     FakeOrderSession warm_session;
     warm_session.next_place_status = FakeOrderSession::SendStatus::kRejected;
-    warm_session.capture_price_text = false;
     warm_session.placed_orders.reserve(1);
     OrderManagerT warm_manager{warm_session, 8, 4};
     ContextT warm_context{warm_manager};
@@ -3270,7 +3271,6 @@ TEST(LeadLagStrategyInterfaceTest,
   leadlag::Strategy strategy{config};
   FakeOrderSession order_session;
   order_session.next_place_status = FakeOrderSession::SendStatus::kRejected;
-  order_session.capture_price_text = false;
   order_session.placed_orders.reserve(64);
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
@@ -3293,13 +3293,12 @@ TEST(LeadLagStrategyInterfaceTest,
 
   ASSERT_GE(order_session.placed_orders.size(), 32U);
   EXPECT_EQ(order_manager.order_count(), 0U);
-  EXPECT_EQ(counted_allocations, 0)
-      << "price_text storage allocated in the per-order path";
-  EXPECT_EQ(live_bytes, 0) << "retired price_text storage still retained";
+  EXPECT_EQ(counted_allocations, 0) << "order request path allocated per order";
+  EXPECT_EQ(live_bytes, 0) << "retired order risk storage still retained";
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     PoolFullOrderPathReleasesPriceTextSlotForNextContext) {
+     PoolFullOrderPathReleasesRiskSlotForNextContext) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession pool_full_session;
   OrderManagerT pool_full_manager{pool_full_session, 0, 4};
@@ -3311,8 +3310,8 @@ TEST(LeadLagStrategyInterfaceTest,
     const std::int64_t counted_allocations = allocations.allocations();
     const std::int64_t live_bytes = allocations.Stop();
     EXPECT_EQ(counted_allocations, 0)
-        << "pool-full price_text path allocated per order";
-    EXPECT_EQ(live_bytes, 0) << "pool-full price_text storage still retained";
+        << "pool-full order request path allocated per order";
+    EXPECT_EQ(live_bytes, 0) << "pool-full order risk storage still retained";
   }
 
   ASSERT_TRUE(strategy.last_signal_decision().triggered);
@@ -3416,7 +3415,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeOpenShortUsesSellPriceFloor) {
             leadlag::SignalAction::kOpenShort);
   EXPECT_EQ(order.side, aquila::OrderSide::kSell);
   EXPECT_FALSE(order.reduce_only);
-  EXPECT_EQ(order.price_text, "97.9");
+  EXPECT_DOUBLE_EQ(order.price, 97.9);
   EXPECT_EQ(order.quantity, 10);
 }
 
@@ -3445,7 +3444,7 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeStoplossShortUsesBuyPriceCeil) {
             leadlag::SignalAction::kStoplossShort);
   EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kBuy);
   EXPECT_TRUE(stoploss_order.reduce_only);
-  EXPECT_EQ(stoploss_order.price_text, "104.0");
+  EXPECT_DOUBLE_EQ(stoploss_order.price, 104.0);
   EXPECT_EQ(stoploss_order.quantity, 10);
 }
 

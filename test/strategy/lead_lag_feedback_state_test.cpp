@@ -23,11 +23,11 @@ struct FakeOrderSession {
     SendStatus status{SendStatus::kOk};
   };
 
-  SendResult PlaceOrder(aquila::core::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(const aquila::core::OrderPlaceRequest&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(aquila::core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const aquila::core::OrderCancelRequest&) noexcept {
     return {};
   }
 };
@@ -44,9 +44,12 @@ aquila::core::StrategyOrder Order(std::uint64_t local_order_id,
                                   std::int64_t cumulative_filled_quantity,
                                   double fill_price) {
   return aquila::core::StrategyOrder{
-      .local_order_id = local_order_id,
-      .side = side,
-      .quantity = static_cast<double>(cumulative_filled_quantity),
+      .place_request =
+          aquila::core::OrderPlaceRequest{
+              .local_order_id = local_order_id,
+              .quantity = static_cast<double>(cumulative_filled_quantity),
+              .side = side,
+          },
       .status = aquila::core::OrderStatus::kFilled,
       .cumulative_filled_quantity =
           static_cast<double>(cumulative_filled_quantity),
@@ -126,14 +129,16 @@ TEST(LeadLagFeedbackStateTest, OrderManagerRetiresOnlyFinishedOrders) {
   FakeOrderSession session;
   aquila::core::OrderManager<FakeOrderSession> manager(session, 2, 1);
 
+  aquila::core::OrderPlaceRequest request{
+      .price = 100.0,
+      .quantity = 1,
+      .time_in_force = aquila::TimeInForce::kImmediateOrCancel,
+      .price_decimal_places = 1,
+      .quantity_decimal_places = 0,
+  };
+  aquila::core::SetOrderSymbol(&request, "BTC_USDT");
   const aquila::core::OrderPlaceResult placed =
-      manager.PlaceLimitOrder(aquila::core::OrderCreateRequest{
-          .symbol = std::string_view{"BTC_USDT"},
-          .time_in_force = aquila::TimeInForce::kImmediateOrCancel,
-          .quantity = 1,
-          .quantity_text = std::string_view{"1"},
-          .price_text = std::string_view{"100.0"},
-      });
+      manager.PlaceLimitOrder(request);
 
   ASSERT_EQ(placed.status, aquila::core::OrderPlaceStatus::kOk);
   EXPECT_FALSE(manager.RetireFinishedOrder(placed.local_order_id));

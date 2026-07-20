@@ -14,10 +14,14 @@ class FakeSession {
  public:
   explicit FakeSession(bool ready = true) : ready_(ready) {}
 
-  [[nodiscard]] bool Ready() const noexcept { return ready_; }
-  void set_ready(bool ready) noexcept { ready_ = ready; }
+  [[nodiscard]] bool Ready() const noexcept {
+    return ready_;
+  }
+  void set_ready(bool ready) noexcept {
+    ready_ = ready;
+  }
 
-  OrderSendResult PlaceOrder(const core::StrategyOrder& order) noexcept {
+  OrderSendResult PlaceOrder(const core::OrderPlaceRequest& order) noexcept {
     placed.push_back(order.local_order_id);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = next_sequence++,
@@ -25,7 +29,7 @@ class FakeSession {
             .send_local_ns = static_cast<std::int64_t>(1000 + placed.size())};
   }
 
-  OrderSendResult CancelOrder(const core::StrategyOrder& order) noexcept {
+  OrderSendResult CancelOrder(const core::OrderCancelRequest& order) noexcept {
     cancelled.push_back(order.local_order_id);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = next_sequence++,
@@ -52,17 +56,20 @@ class FakeSession {
   std::vector<std::uint64_t> forgotten_local_ids;
 };
 
-core::StrategyOrder MakeOrder(std::uint64_t local_order_id,
-                              std::uint16_t route_id) noexcept {
-  core::StrategyOrder order;
-  order.local_order_id = local_order_id;
-  order.symbol_id = 1;
-  order.symbol = "BTC_USDT";
-  order.quantity = 1.0;
-  order.quantity_text = "1";
-  order.price_text = "50000";
-  order.gateway_route_id = route_id;
-  return order;
+core::OrderPlaceRequest MakeOrder(std::uint64_t local_order_id,
+                                  std::uint16_t route_id) noexcept {
+  core::OrderPlaceRequest request{.local_order_id = local_order_id,
+                                  .price = 50000.0,
+                                  .quantity = 1.0,
+                                  .symbol_id = 1,
+                                  .gateway_route_id = route_id};
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
+}
+
+core::OrderCancelRequest MakeCancel(std::uint64_t local_order_id,
+                                    std::uint16_t route_id) noexcept {
+  return {.local_order_id = local_order_id, .gateway_route_id = route_id};
 }
 
 using Gateway = MultiOrderSessionGateway<FakeSession>;
@@ -118,9 +125,8 @@ TEST(MultiOrderSessionGatewayTest, CancelReturnsToOriginalRoute) {
   std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
-  ASSERT_EQ(gateway.PlaceOrder(MakeOrder(201, 3)).status,
-            OrderSendStatus::kOk);
-  const OrderSendResult cancelled = gateway.CancelOrder(MakeOrder(201, 0));
+  ASSERT_EQ(gateway.PlaceOrder(MakeOrder(201, 3)).status, OrderSendStatus::kOk);
+  const OrderSendResult cancelled = gateway.CancelOrder(MakeCancel(201, 0));
 
   EXPECT_EQ(cancelled.status, OrderSendStatus::kOk);
   EXPECT_TRUE(sessions[0].cancelled.empty());
@@ -133,17 +139,15 @@ TEST(MultiOrderSessionGatewayTest, CacheAndForgetUseOriginalRoute) {
   std::vector<FakeSession> sessions(4);
   Gateway gateway = MakeGateway(sessions);
 
-  ASSERT_EQ(gateway.PlaceOrder(MakeOrder(301, 1)).status,
-            OrderSendStatus::kOk);
+  ASSERT_EQ(gateway.PlaceOrder(MakeOrder(301, 1)).status, OrderSendStatus::kOk);
   gateway.CacheExchangeOrderId(301, 9001);
   gateway.ForgetExchangeOrderId(301);
 
   EXPECT_EQ(sessions[1].cached_local_ids, std::vector<std::uint64_t>({301}));
   EXPECT_EQ(sessions[1].cached_exchange_ids,
             std::vector<std::uint64_t>({9001}));
-  EXPECT_EQ(sessions[1].forgotten_local_ids,
-            std::vector<std::uint64_t>({301}));
-  EXPECT_EQ(gateway.CancelOrder(MakeOrder(301, 1)).status,
+  EXPECT_EQ(sessions[1].forgotten_local_ids, std::vector<std::uint64_t>({301}));
+  EXPECT_EQ(gateway.CancelOrder(MakeCancel(301, 1)).status,
             OrderSendStatus::kInvalidRoute);
 }
 
@@ -163,8 +167,7 @@ TEST(MultiOrderSessionGatewayTest, RouteValidationUsesRuntimeSessionCount) {
   std::vector<FakeSession> sessions(2);
   Gateway gateway = MakeGateway(sessions);
 
-  EXPECT_EQ(gateway.PlaceOrder(MakeOrder(501, 1)).status,
-            OrderSendStatus::kOk);
+  EXPECT_EQ(gateway.PlaceOrder(MakeOrder(501, 1)).status, OrderSendStatus::kOk);
   EXPECT_EQ(gateway.PlaceOrder(MakeOrder(502, 2)).status,
             OrderSendStatus::kInvalidRoute);
   EXPECT_EQ(sessions[1].placed, std::vector<std::uint64_t>({501}));
@@ -176,8 +179,7 @@ TEST(MultiOrderSessionGatewayTest, RouteTableCapacityRejectsBeforeSending) {
   config.route_table_capacity = 1;
   Gateway gateway(MakeSessionPointers(sessions), config);
 
-  EXPECT_EQ(gateway.PlaceOrder(MakeOrder(701, 0)).status,
-            OrderSendStatus::kOk);
+  EXPECT_EQ(gateway.PlaceOrder(MakeOrder(701, 0)).status, OrderSendStatus::kOk);
   const OrderSendResult rejected = gateway.PlaceOrder(MakeOrder(702, 1));
 
   EXPECT_EQ(rejected.status, OrderSendStatus::kInflightFull);

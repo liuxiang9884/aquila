@@ -17,7 +17,6 @@ namespace {
 constexpr std::int64_t kLocalOrderId = 12345;
 constexpr std::uint64_t kExchangeOrderId = 36028827892199865ULL;
 constexpr std::string_view kContract = "BTC_USDT";
-constexpr std::string_view kPriceText = "81000";
 constexpr std::size_t kPlaceBatchSize = 8192;
 constexpr std::size_t kPlaceLatencyIterations = 4096;
 
@@ -33,14 +32,14 @@ struct FakeOrderSession {
   std::uint64_t last_place_local_order_id{0};
   std::uint64_t last_cancel_local_order_id{0};
 
-  SendResult PlaceOrder(const StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const OrderPlaceRequest& order) noexcept {
     ++place_calls;
     last_place_local_order_id = order.local_order_id;
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(const StrategyOrder& order) noexcept {
+  SendResult CancelOrder(const OrderCancelRequest& order) noexcept {
     ++cancel_calls;
     last_cancel_local_order_id = order.local_order_id;
     benchmark::ClobberMemory();
@@ -48,16 +47,16 @@ struct FakeOrderSession {
   }
 };
 
-[[nodiscard]] constexpr OrderCreateRequest MakeGateLimitRequest() noexcept {
-  return OrderCreateRequest{.exchange = Exchange::kGate,
+[[nodiscard]] OrderPlaceRequest MakeGateLimitRequest() noexcept {
+  OrderPlaceRequest request{.price = 81000.0,
+                            .quantity = 1.0,
                             .symbol_id = 7,
-                            .symbol = kContract,
+                            .exchange = Exchange::kGate,
                             .side = OrderSide::kBuy,
                             .time_in_force = TimeInForce::kGoodTillCancel,
-                            .quantity = 1,
-                            .quantity_text = "1",
-                            .price_text = kPriceText,
                             .reduce_only = false};
+  SetOrderSymbol(&request, kContract);
+  return request;
 }
 
 void SetOutlierCounters(benchmark::State& state,
@@ -163,8 +162,8 @@ void BM_OrderManagerCancelAcceptedOrder(benchmark::State& state) {
     });
     state.ResumeTiming();
 
-    OrderCancelResult cancelled =
-        order_manager.CancelOrder(placed.local_order_id);
+    OrderCancelResult cancelled = order_manager.CancelOrder(
+        OrderCancelRequest{.local_order_id = placed.local_order_id});
     if (cancelled.status != OrderCancelStatus::kOk) {
       state.SkipWithError("order manager cancel order failed");
       return;

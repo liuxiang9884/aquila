@@ -109,10 +109,10 @@ struct FakeGateway {
     std::int64_t send_local_ns{123};
   };
 
-  SendResult PlaceOrder(const core::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest&) noexcept {
     return {};
   }
-  SendResult CancelOrder(const core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     return {};
   }
 };
@@ -121,17 +121,17 @@ TEST(BitgetOrderSessionRuntimeAdapterTest,
      OperationAcksDoNotAdvanceOrderLifecycle) {
   FakeGateway gateway;
   core::OrderManager<FakeGateway> manager(gateway, 4, 3);
-  const core::OrderPlaceResult placed =
-      manager.PlaceLimitOrder(core::OrderCreateRequest{
-          .exchange = Exchange::kBitget,
-          .symbol_id = 7,
-          .symbol = "BTCUSDT",
-          .side = OrderSide::kBuy,
-          .time_in_force = TimeInForce::kGoodTillCancel,
-          .quantity = 0.001,
-          .quantity_text = "0.001",
-          .price_text = "100000",
-      });
+  core::OrderPlaceRequest request{
+      .price = 100000.0,
+      .quantity = 0.001,
+      .symbol_id = 7,
+      .exchange = Exchange::kBitget,
+      .side = OrderSide::kBuy,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .quantity_decimal_places = 3,
+  };
+  core::SetOrderSymbol(&request, "BTCUSDT");
+  const core::OrderPlaceResult placed = manager.PlaceLimitOrder(request);
   ASSERT_EQ(placed.status, core::OrderPlaceStatus::kOk);
 
   manager.OnOrderResponse(ToCoreOrderResponseEvent(OrderResponse{
@@ -142,7 +142,10 @@ TEST(BitgetOrderSessionRuntimeAdapterTest,
   ASSERT_EQ(manager.FindOrder(placed.local_order_id)->status,
             core::OrderStatus::kSent);
 
-  ASSERT_EQ(manager.CancelOrder(placed.local_order_id).status,
+  ASSERT_EQ(manager
+                .CancelOrder(core::OrderCancelRequest{
+                    .local_order_id = placed.local_order_id})
+                .status,
             core::OrderCancelStatus::kOk);
   manager.OnOrderResponse(ToCoreOrderResponseEvent(OrderResponse{
       .kind = OrderResponseKind::kAck,

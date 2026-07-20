@@ -20,6 +20,7 @@
 
 #include "core/common/types.h"
 #include "core/trading/order_latency.h"
+#include "core/trading/order_types.h"
 #include "exchange/gate/trading/decimal_size_header.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/order_session_config.h"
@@ -49,19 +50,6 @@ struct CliOptions {
   bool reduce_only{false};
   bool keep_open{false};
   bool execute{false};
-};
-
-struct ProbeOrder {
-  std::uint64_t local_order_id{1};
-  std::uint64_t exchange_order_id{0};
-  std::string_view symbol{};
-  aquila::OrderSide side{aquila::OrderSide::kBuy};
-  aquila::OrderType type{aquila::OrderType::kLimit};
-  aquila::TimeInForce time_in_force{aquila::TimeInForce::kImmediateOrCancel};
-  double quantity{0.0};
-  std::string quantity_text;
-  std::string_view price_text{};
-  bool reduce_only{false};
 };
 
 std::string ToLower(std::string value) {
@@ -124,19 +112,29 @@ bool ValidateOptions(const CliOptions& options, probe::ProbeMode mode) {
   return true;
 }
 
-ProbeOrder BuildProbeOrder(const CliOptions& options) {
-  return ProbeOrder{
+[[nodiscard]] std::uint8_t DecimalPlaces(std::string_view text) noexcept {
+  const std::size_t dot = text.find('.');
+  return dot == std::string_view::npos
+             ? 0
+             : static_cast<std::uint8_t>(text.size() - dot - 1);
+}
+
+aquila::core::OrderPlaceRequest BuildProbeOrder(const CliOptions& options) {
+  const std::string quantity_text = fmt::format("{}", options.size);
+  aquila::core::OrderPlaceRequest request{
       .local_order_id = options.local_order_id,
-      .exchange_order_id = options.cancel_exchange_order_id,
-      .symbol = options.contract,
-      .side = ParseSide(options.side),
-      .type = aquila::OrderType::kLimit,
-      .time_in_force = ParseTimeInForce(options.tif),
+      .price = std::stod(options.price),
       .quantity = options.size,
-      .quantity_text = fmt::format("{}", options.size),
-      .price_text = options.price,
+      .exchange = aquila::Exchange::kGate,
+      .side = ParseSide(options.side),
+      .order_type = aquila::OrderType::kLimit,
+      .time_in_force = ParseTimeInForce(options.tif),
+      .price_decimal_places = DecimalPlaces(options.price),
+      .quantity_decimal_places = DecimalPlaces(quantity_text),
       .reduce_only = options.reduce_only,
   };
+  aquila::core::SetOrderSymbol(&request, options.contract);
+  return request;
 }
 
 struct ToolResponseHandler {
@@ -162,7 +160,8 @@ template <typename SessionT>
 struct RunContext {
   SessionT* session{nullptr};
   probe::ProbeMode mode{probe::ProbeMode::kCancelRejected};
-  ProbeOrder order{};
+  aquila::core::OrderPlaceRequest order{};
+  std::uint64_t cancel_exchange_order_id{0};
   bool keep_open{false};
   bool submitted{false};
   bool cancel_submitted{false};
@@ -185,7 +184,7 @@ struct RunContext {
 
   void OnLoginReady() noexcept {
     if (mode == probe::ProbeMode::kCancelRejected) {
-      SubmitCancel(order.local_order_id, order.exchange_order_id,
+      SubmitCancel(order.local_order_id, cancel_exchange_order_id,
                    /*safety_cancel=*/false);
       return;
     }
@@ -204,14 +203,14 @@ struct RunContext {
           "place status={} local_order_id={} contract={} size={} price={} "
           "tif={} reduce_only={} request_sequence={}\n",
           magic_enum::enum_name(sent.status), order.local_order_id,
-          order.symbol, order.quantity, order.price_text,
+          order.SymbolView(), order.quantity, order.price,
           magic_enum::enum_name(order.time_in_force),
           order.reduce_only ? "true" : "false", sent.request_sequence);
       NOVA_INFO(
           "place status={} local_order_id={} contract={} size={} price={} "
           "tif={} reduce_only={} request_sequence={}",
           magic_enum::enum_name(sent.status), order.local_order_id,
-          order.symbol, order.quantity, order.price_text,
+          order.SymbolView(), order.quantity, order.price,
           magic_enum::enum_name(order.time_in_force),
           order.reduce_only ? "true" : "false", sent.request_sequence);
       if (sent.status != gate::OrderSendStatus::kOk) {
@@ -235,10 +234,9 @@ struct RunContext {
       if (cancel_submitted || safety_cancel_submitted) {
         return;
       }
-      ProbeOrder cancel_order = order;
-      cancel_order.local_order_id = local_order_id;
-      cancel_order.exchange_order_id = exchange_order_id;
-      const gate::OrderSendResult sent = session->CancelOrder(cancel_order);
+      session->CacheExchangeOrderId(local_order_id, exchange_order_id);
+      const gate::OrderSendResult sent = session->CancelOrder(
+          aquila::core::OrderCancelRequest{.local_order_id = local_order_id});
       fmt::print(
           "cancel status={} local_order_id={} exchange_order_id={} "
           "safety_cancel={} request_sequence={}\n",
@@ -339,6 +337,7 @@ int RunLive(gate::OrderSessionConfig config, gate::LoginCredentials credentials,
   context.session = &session;
   context.mode = mode;
   context.order = BuildProbeOrder(normalized);
+  context.cancel_exchange_order_id = normalized.cancel_exchange_order_id;
   context.keep_open = options.keep_open;
   context.responses.reserve(4);
   handler.context = &context;

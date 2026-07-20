@@ -2,7 +2,6 @@
 #define AQUILA_EXCHANGE_GATE_TRADING_ORDER_GATEWAY_WORKER_H_
 
 #include <cstdint>
-#include <string_view>
 
 #include "absl/container/flat_hash_map.h"
 #include "core/trading/order_gateway_shm.h"
@@ -66,9 +65,9 @@ class OrderGatewayWorkerPublisher {
     core::OrderGatewayEvent event{};
     event.event_seq = NextEventSeq();
     event.command_seq = command.command_seq;
-    event.parent_id = command.parent_id;
-    event.local_order_id = command.local_order_id;
-    event.exchange_order_id = command.exchange_order_id;
+    event.parent_id = core::OrderGatewayCommandParentId(command);
+    event.local_order_id = core::OrderGatewayCommandLocalOrderId(command);
+    event.exchange_order_id = core::OrderGatewayCommandExchangeOrderId(command);
     event.request_sequence = request_sequence;
     event.encoded_request_id = encoded_request_id;
     event.worker_dequeue_ns = worker_dequeue_ns;
@@ -145,10 +144,9 @@ class OrderGatewayWorkerPublisher {
     (void)Publish(event);
   }
 
-  [[nodiscard]] bool TrackSentCommand(
-      const core::OrderGatewayCommand& command,
-      const gate::OrderSendResult& sent,
-      std::int64_t worker_dequeue_ns) noexcept {
+  [[nodiscard]] bool TrackSentCommand(const core::OrderGatewayCommand& command,
+                                      const gate::OrderSendResult& sent,
+                                      std::int64_t worker_dequeue_ns) noexcept {
     if (sent.request_sequence == 0) {
       return true;
     }
@@ -157,7 +155,7 @@ class OrderGatewayWorkerPublisher {
           sent.request_sequence,
           OrderGatewayRequestMetadata{
               .command_seq = command.command_seq,
-              .parent_id = command.parent_id,
+              .parent_id = core::OrderGatewayCommandParentId(command),
               .worker_dequeue_ns = worker_dequeue_ns,
               .request_send_local_ns = sent.send_local_ns,
           });
@@ -274,7 +272,8 @@ class OrderGatewayCommandWorker {
       (void)publisher_->PublishStopped();
       return;
     }
-    if (command.route_id != route_id_) {
+    if (command.kind != core::OrderGatewayCommandKind::kStop &&
+        core::OrderGatewayCommandRouteId(command) != route_id_) {
       (void)publisher_->PublishCommandRejected(
           command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
           0, worker_dequeue_ns);
@@ -290,14 +289,18 @@ class OrderGatewayCommandWorker {
         Cancel(command, worker_dequeue_ns);
         return;
       case core::OrderGatewayCommandKind::kCacheExchangeOrderId:
-        session_->CacheExchangeOrderId(command.local_order_id,
-                                       command.exchange_order_id);
+        session_->CacheExchangeOrderId(
+            command.payload.order_id.local_order_id,
+            command.payload.order_id.exchange_order_id);
         return;
       case core::OrderGatewayCommandKind::kForgetExchangeOrderId:
-        session_->ForgetExchangeOrderId(command.local_order_id);
+        session_->ForgetExchangeOrderId(
+            command.payload.order_id.local_order_id);
         return;
       case core::OrderGatewayCommandKind::kNone:
         break;
+      case core::OrderGatewayCommandKind::kStop:
+        return;
     }
     (void)publisher_->PublishCommandRejected(
         command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
@@ -307,15 +310,8 @@ class OrderGatewayCommandWorker {
 
   void Place(const core::OrderGatewayCommand& command,
              std::int64_t worker_dequeue_ns) noexcept {
-    if (!TextFieldsInBounds(command)) {
-      (void)publisher_->PublishCommandRejected(
-          command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
-          0, worker_dequeue_ns);
-      StopIfPublisherFailed();
-      return;
-    }
-    const core::StrategyOrder order = ToStrategyOrder(command);
-    const gate::OrderSendResult sent = session_->PlaceOrder(order);
+    const gate::OrderSendResult sent =
+        session_->PlaceOrder(command.payload.place);
     if (sent.status != gate::OrderSendStatus::kOk) {
       (void)publisher_->PublishCommandRejected(
           command, ToOrderGatewayRejectReason(sent.status),
@@ -331,15 +327,8 @@ class OrderGatewayCommandWorker {
 
   void Cancel(const core::OrderGatewayCommand& command,
               std::int64_t worker_dequeue_ns) noexcept {
-    if (!TextFieldsInBounds(command)) {
-      (void)publisher_->PublishCommandRejected(
-          command, core::OrderGatewayCommandRejectReason::kInvalidCommand, 0, 0,
-          0, worker_dequeue_ns);
-      StopIfPublisherFailed();
-      return;
-    }
-    const core::StrategyOrder order = ToStrategyOrder(command);
-    const gate::OrderSendResult sent = session_->CancelOrder(order);
+    const gate::OrderSendResult sent =
+        session_->CancelOrder(command.payload.cancel);
     if (sent.status != gate::OrderSendStatus::kOk) {
       (void)publisher_->PublishCommandRejected(
           command, ToOrderGatewayRejectReason(sent.status),
@@ -359,37 +348,8 @@ class OrderGatewayCommandWorker {
     }
   }
 
-  [[nodiscard]] static bool TextFieldsInBounds(
-      const core::OrderGatewayCommand& command) noexcept {
-    return command.symbol_size <= core::kOrderGatewaySymbolBytes &&
-           command.quantity_text_size <= core::kOrderGatewayQuantityTextBytes &&
-           command.price_text_size <= core::kOrderGatewayPriceTextBytes;
-  }
-
   [[nodiscard]] static std::int64_t NowNs() noexcept {
     return static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
-  }
-
-  [[nodiscard]] static core::StrategyOrder ToStrategyOrder(
-      const core::OrderGatewayCommand& command) noexcept {
-    core::StrategyOrder order{};
-    order.local_order_id = command.local_order_id;
-    order.exchange_order_id = command.exchange_order_id;
-    order.exchange = command.exchange;
-    order.symbol_id = command.symbol_id;
-    order.symbol = std::string_view(command.symbol, command.symbol_size);
-    order.side = command.side;
-    order.type = command.order_type;
-    order.time_in_force = command.time_in_force;
-    order.quantity = command.quantity;
-    order.quantity_text =
-        std::string_view(command.quantity_text, command.quantity_text_size);
-    order.price_text =
-        std::string_view(command.price_text, command.price_text_size);
-    order.reduce_only = command.reduce_only != 0;
-    order.gateway_route_id = command.route_id;
-    order.parent_id = command.parent_id;
-    return order;
   }
 
   std::uint16_t route_id_{0};

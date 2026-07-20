@@ -10,6 +10,8 @@
 #include <fmt/compile.h>
 #include <fmt/format.h>
 
+#include "core/trading/order_decimal.h"
+#include "core/trading/order_types.h"
 #include "exchange/gate/trading/order_codecs.h"
 #include "exchange/gate/trading/order_signature.h"
 #include "exchange/gate/trading/order_types.h"
@@ -20,6 +22,8 @@ inline constexpr std::size_t kLoginRequestBufferSize = 1024;
 inline constexpr std::size_t kPlaceOrderRequestBufferSize = 1024;
 inline constexpr std::size_t kCancelOrderRequestBufferSize = 512;
 inline constexpr std::size_t kOrderFeedbackSubscribeRequestBufferSize = 1024;
+inline constexpr std::size_t kPlaceOrderDirectFormatCapacity = 512;
+static_assert(kPlaceOrderRequestBufferSize >= kPlaceOrderDirectFormatCapacity);
 
 enum class OrderEncodeStatus : std::uint8_t {
   kOk,
@@ -42,26 +46,6 @@ struct LoginRequestFields {
   std::uint64_t encoded_request_id{0};
 };
 
-struct PlaceOrderEncodeFields {
-  std::int64_t timestamp{0};
-  std::uint64_t encoded_request_id{0};
-  std::uint64_t local_order_id{0};
-  OrderType order_type{OrderType::kLimit};
-  std::string_view contract{};
-  std::string_view signed_size_text{};
-  std::string_view price_text{};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  bool reduce_only{false};
-  bool quote_size{false};
-};
-
-struct CancelOrderEncodeFields {
-  std::int64_t timestamp{0};
-  std::uint64_t encoded_request_id{0};
-  std::uint64_t local_order_id{0};
-  std::uint64_t exchange_order_id{0};
-};
-
 struct OrderFeedbackSubscribeRequestFields {
   std::string_view api_key{};
   std::string_view api_secret{};
@@ -74,7 +58,7 @@ namespace detail {
 template <std::size_t N, typename Format, typename... Args>
 [[nodiscard]] EncodedTextRequest FormatJsonToBuffer(std::array<char, N>& buffer,
                                                     const Format& format,
-                                                    Args&&... args) {
+                                                    Args&&... args) noexcept {
   const auto result = fmt::format_to_n(buffer.data(), buffer.size(), format,
                                        std::forward<Args>(args)...);
   if (result.size > buffer.size()) {
@@ -82,6 +66,22 @@ template <std::size_t N, typename Format, typename... Args>
   }
   return {.status = OrderEncodeStatus::kOk,
           .text = std::string_view(buffer.data(), result.size)};
+}
+
+template <std::size_t N, typename Format, typename... Args>
+[[nodiscard]] EncodedTextRequest FormatPlaceJsonToBuffer(
+    std::array<char, N>& buffer, const Format& format,
+    Args&&... args) noexcept {
+  if constexpr (N < kPlaceOrderDirectFormatCapacity) {
+    return FormatJsonToBuffer(buffer, format, std::forward<Args>(args)...);
+  } else {
+    // OrderPlaceRequest bounds the complete place payload below 512 bytes.
+    char* const end =
+        fmt::format_to(buffer.data(), format, std::forward<Args>(args)...);
+    return {.status = OrderEncodeStatus::kOk,
+            .text = std::string_view(
+                buffer.data(), static_cast<std::size_t>(end - buffer.data()))};
+  }
 }
 
 }  // namespace detail
@@ -117,56 +117,63 @@ template <std::size_t N>
 
 template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodePlaceOrderRequest(
-    const PlaceOrderEncodeFields& fields,
+    const core::OrderPlaceRequest& request, std::int64_t timestamp,
+    std::uint64_t encoded_request_id, bool quote_size,
     std::array<char, N>& buffer) noexcept {
-  if (fields.order_type != OrderType::kLimit) {
+  if (request.order_type != OrderType::kLimit) {
     return {.status = OrderEncodeStatus::kUnsupportedOrderType, .text = {}};
-  }
-  if (fields.signed_size_text.empty()) {
-    return {.status = OrderEncodeStatus::kInvalidQuantityText, .text = {}};
   }
 
   std::array<char, 32> text_buffer;
   const std::string_view text =
-      OrderTextCodec::Format(fields.local_order_id, text_buffer);
+      OrderTextCodec::Format(request.local_order_id, text_buffer);
   if (text.empty()) {
     return {.status = OrderEncodeStatus::kInvalidOrderText, .text = {}};
   }
 
-  if (fields.quote_size) {
-    return detail::FormatJsonToBuffer(
+  const double signed_quantity =
+      request.side == OrderSide::kBuy ? request.quantity : -request.quantity;
+  std::array<char, 32> quantity_text_buffer;
+  std::array<char, 32> price_text_buffer;
+  const std::string_view quantity_text = core::FormatDecimalValue(
+      signed_quantity, request.quantity_decimal_places, quantity_text_buffer);
+  const std::string_view price_text = core::FormatDecimalValue(
+      request.price, request.price_decimal_places, price_text_buffer);
+  if (quote_size) {
+    return detail::FormatPlaceJsonToBuffer(
         buffer,
         FMT_COMPILE(
             R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":"{}","price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})"),
-        fields.timestamp, fields.encoded_request_id, fields.contract,
-        fields.signed_size_text, fields.price_text,
-        GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
+        timestamp, encoded_request_id, request.SymbolView(), quantity_text,
+        price_text, GateTimeInForceToken(request.time_in_force), text,
+        request.reduce_only);
   }
-  return detail::FormatJsonToBuffer(
+  return detail::FormatPlaceJsonToBuffer(
       buffer,
       FMT_COMPILE(
           R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":{},"price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})"),
-      fields.timestamp, fields.encoded_request_id, fields.contract,
-      fields.signed_size_text, fields.price_text,
-      GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
+      timestamp, encoded_request_id, request.SymbolView(), quantity_text,
+      price_text, GateTimeInForceToken(request.time_in_force), text,
+      request.reduce_only);
 }
 
 template <std::size_t N>
 [[nodiscard]] EncodedTextRequest EncodeCancelOrderRequest(
-    const CancelOrderEncodeFields& fields,
+    const core::OrderCancelRequest& request, std::uint64_t exchange_order_id,
+    std::int64_t timestamp, std::uint64_t encoded_request_id,
     std::array<char, N>& buffer) noexcept {
   std::array<char, 32> fallback_order_id_buffer;
   std::string_view order_id{};
-  if (fields.exchange_order_id != 0) {
+  if (exchange_order_id != 0) {
     return detail::FormatJsonToBuffer(
         buffer,
         FMT_COMPILE(
             R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})"),
-        fields.timestamp, fields.encoded_request_id, fields.exchange_order_id);
+        timestamp, encoded_request_id, exchange_order_id);
   }
 
   order_id =
-      OrderTextCodec::Format(fields.local_order_id, fallback_order_id_buffer);
+      OrderTextCodec::Format(request.local_order_id, fallback_order_id_buffer);
   if (order_id.empty()) {
     return {.status = OrderEncodeStatus::kInvalidOrderText, .text = {}};
   }
@@ -175,7 +182,7 @@ template <std::size_t N>
       buffer,
       FMT_COMPILE(
           R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})"),
-      fields.timestamp, fields.encoded_request_id, order_id);
+      timestamp, encoded_request_id, order_id);
 }
 
 template <std::size_t N>

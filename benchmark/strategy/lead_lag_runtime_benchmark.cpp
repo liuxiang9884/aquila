@@ -1,6 +1,6 @@
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -48,25 +48,31 @@ struct BenchmarkOrderSession {
     return true;
   }
 
-  void Stop() noexcept { running = false; }
+  void Stop() noexcept {
+    running = false;
+  }
 
-  [[nodiscard]] bool Ready() const noexcept { return true; }
+  [[nodiscard]] bool Ready() const noexcept {
+    return true;
+  }
 
-  [[nodiscard]] bool Running() const noexcept { return running; }
+  [[nodiscard]] bool Running() const noexcept {
+    return running;
+  }
 
-  SendResult PlaceOrder(core::StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest& request) noexcept {
     if (state != nullptr) {
       ++state->place_calls;
-      state->last_place_local_order_id = order.local_order_id;
-      state->last_quantity = order.quantity;
-      state->last_side = order.side;
-      state->last_reduce_only = order.reduce_only;
+      state->last_place_local_order_id = request.local_order_id;
+      state->last_quantity = request.quantity;
+      state->last_side = request.side;
+      state->last_reduce_only = request.reduce_only;
     }
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     if (state != nullptr) {
       ++state->cancel_calls;
     }
@@ -78,10 +84,9 @@ struct BenchmarkOrderSession {
   bool running{false};
 };
 
-using Runtime =
-    core::TradingRuntime<Strategy, BenchmarkOrderSession,
-                         market_data::RealtimeDataReader<>,
-                         core::TradingRuntimeDiagnostics>;
+using Runtime = core::TradingRuntime<Strategy, BenchmarkOrderSession,
+                                     market_data::RealtimeDataReader<>,
+                                     core::TradingRuntimeDiagnostics>;
 
 [[nodiscard]] config::StrategyConfig RuntimeConfig() {
   config::StrategyConfig config;
@@ -154,8 +159,7 @@ using Runtime =
 }
 
 [[nodiscard]] BookTicker Ticker(Exchange exchange, std::int64_t local_ns,
-                                double bid_price,
-                                double ask_price) noexcept {
+                                double bid_price, double ask_price) noexcept {
   return BookTicker{
       .id = local_ns,
       .symbol_id = kSymbolId,
@@ -170,8 +174,7 @@ using Runtime =
 }
 
 [[nodiscard]] std::int64_t SeedBeforeOpenSignal(Runtime& runtime) noexcept {
-  const auto base_ns =
-      benchmarking::RealtimeNowNs();
+  const auto base_ns = benchmarking::RealtimeNowNs();
   runtime.HandleBookTickerForTest(
       Ticker(Exchange::kGate, base_ns, 101.57, 102.02));
   runtime.HandleBookTickerForTest(
@@ -179,8 +182,7 @@ using Runtime =
   return base_ns + 2'000;
 }
 
-[[nodiscard]] BookTicker OpenLongTriggerTicker(
-    std::int64_t event_ns) noexcept {
+[[nodiscard]] BookTicker OpenLongTriggerTicker(std::int64_t event_ns) noexcept {
   return Ticker(Exchange::kBinance, event_ns, 112.0, 113.0);
 }
 
@@ -193,9 +195,8 @@ void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
     state.PauseTiming();
     SharedOrderSessionState session_state;
     auto runtime_result = Runtime::CreateForTest(
-        RuntimeConfig(), [&session_state] {
-          return BenchmarkOrderSession{&session_state};
-        },
+        RuntimeConfig(),
+        [&session_state] { return BenchmarkOrderSession{&session_state}; },
         BenchmarkConfig());
     if (!runtime_result.ok) {
       state.ResumeTiming();
@@ -216,8 +217,7 @@ void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
 
     if (session_state.place_calls != 1 ||
         !std::isfinite(session_state.last_quantity) ||
-        session_state.last_quantity <= 0.0 ||
-        session_state.last_reduce_only) {
+        session_state.last_quantity <= 0.0 || session_state.last_reduce_only) {
       state.ResumeTiming();
       state.SkipWithError("lead lag submit path did not place one open order");
       return;
@@ -231,8 +231,8 @@ void BM_LeadLagRuntimeOpenSignalSubmitPathLatency(benchmark::State& state) {
     state.ResumeTiming();
   }
 
-  websocket::benchmarking::SetLatencyCounters(
-      state, std::move(samples_ns), "orders", state.iterations());
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
   state.SetItemsProcessed(state.iterations());
 }
 

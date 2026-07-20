@@ -30,13 +30,13 @@ struct FakeGateway {
   std::uint64_t last_cache_exchange_order_id{0};
   std::uint64_t last_forget_local_order_id{0};
 
-  SendResult PlaceOrder(Order& order) noexcept {
+  SendResult PlaceOrder(const OrderPlaceRequest& request) noexcept {
     ++place_calls;
-    EXPECT_EQ(order.symbol, "BTC_USDT");
+    EXPECT_EQ(request.SymbolView(), "BTC_USDT");
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(Order&) noexcept {
+  SendResult CancelOrder(const OrderCancelRequest&) noexcept {
     return {.status = SendStatus::kOk};
   }
 
@@ -59,16 +59,20 @@ std::unique_ptr<OrderFeedbackShmChannel> MakeChannel() {
   return channel;
 }
 
-OrderCreateRequest MakeLimitRequest() noexcept {
-  return OrderCreateRequest{.exchange = Exchange::kGate,
-                            .symbol_id = 7,
-                            .symbol = "BTC_USDT",
-                            .side = OrderSide::kBuy,
-                            .time_in_force = TimeInForce::kGoodTillCancel,
-                            .quantity = 2,
-                            .quantity_text = "2",
-                            .price_text = "81000",
-                            .reduce_only = false};
+OrderPlaceRequest MakeLimitRequest() noexcept {
+  OrderPlaceRequest request{
+      .price = 81000,
+      .quantity = 2,
+      .symbol_id = 7,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
 TEST(OrderManagerFeedbackShmIntegrationTest,
