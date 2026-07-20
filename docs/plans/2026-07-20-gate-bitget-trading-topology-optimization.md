@@ -66,6 +66,24 @@ empty poll `p50` 为 `39/69 ns`。gprofng 必须使用 `-F on` 跟随 target `ex
 位于 empty spin、command queue remote `tail` observation 和 event queue remote
 `head` observation；slot 定位仍生成整数除法。
 
+client-level measurement 进一步覆盖了真实
+`OrderGatewayClient::PollOrderResponses()`，并在计时前把 header 和 client 都预热到
+4-route `kReady` 稳态；该 benchmark 不初始化业务 log，也不执行 log 格式化或后端输出。
+5 组 × 10 repetitions 的组中位数为：
+
+- 1-route empty raw/client `p50/p99/p99.9`：`38/39.5/40 ns` 与
+  `46/47/54 ns`；
+- 4-route empty raw/client：`68/70/70.5 ns` 与 `88/107/109 ns`；
+- 1-route one-ready raw/client：`49/51/52 ns` 与 `54/70/73 ns`；
+- 4-route one-ready raw/client：`78/81.5/82.5 ns` 与
+  `98/102/117 ns`。
+
+4-route client 相比 raw route scan 的 `p50` 增量在 empty/one-ready 场景均为
+`20 ns`。gprofng 采样和反汇编确认 client 会在 event queue 扫描前后各执行一次 header
+route-state 扫描；`kReady` / `kNotReady` 的 `ApplyRouteState()` 还会重复调用
+`AllRoutesStopped()`。下一候选只允许消除能够从当前 state 直接证明冗余的本地扫描，不
+改变 stopped、queued final response 或 unknown-result 的处理顺序。
+
 ## 2026-07-20 queue 候选结果
 
 以下生产候选都已最小撤销：
@@ -80,7 +98,11 @@ empty poll `p50` 为 `39/69 ns`。gprofng 必须使用 `-F on` 跟随 target `ex
 - 强制 power-of-two capacity 并在 push/pop 无分支使用 mask：queue round trip
   `p50/p99` 改善约 `5.4%–7.9%/4.3%–4.4%`，但完整 Gate SHM submit
   `p50/p99` 回退 `2.37%/2.00%`，Bitget 回退 `2.14%/2.60%`，Bitget `p99.9`
-  回退 `2.94%`。
+  回退 `2.94%`；
+- 已初始化 client/worker 使用 `TryPushAssumeValid()` / `TryPopAssumeValid()` 跳过
+  queue view validity 检查：Release/Debug focused tests 均通过，但正式 round trip
+  CPU30/31 `p50` 回退 `13.05%/9.55%`，`p99` 回退 `12.53%/8.99%`，同线程 enqueue
+  `p50` 回退 `5.56%`。
 
 最后一项证明 SHM handoff 局部改善约 `4.5%–6.9%`，但收益没有传递到完整 submit；
 不得采用或把 component 数字声明为链路收益。正式原始结果位于

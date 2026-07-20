@@ -18,6 +18,7 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
+#include "core/trading/order_gateway_client.h"
 #include "core/trading/order_gateway_shm.h"
 #include "core/websocket/active_spin_loop.h"
 #include <sched.h>
@@ -69,7 +70,7 @@ template <typename Predicate>
 
 class QueueFixture {
  public:
-  explicit QueueFixture(std::uint16_t route_count) {
+  explicit QueueFixture(std::uint16_t route_count) : route_count_(route_count) {
     shm_name_ =
         fmt::format(FMT_COMPILE("aquila_order_gateway_topology_{}_{}"),
                     static_cast<unsigned long long>(::getpid()),
@@ -111,12 +112,24 @@ class QueueFixture {
     return manager_.EventQueue(route);
   }
 
+  void MarkAllRoutesReady() noexcept {
+    for (std::uint16_t route = 0; route < route_count_; ++route) {
+      StoreOrderGatewayRouteState(manager_.header(), route,
+                                  OrderGatewayRouteState::kReady);
+    }
+  }
+
+  [[nodiscard]] OrderGatewayShmManager TakeManager() noexcept {
+    return std::move(manager_);
+  }
+
  private:
   static inline std::uint64_t next_instance_id_{0};
 
   std::string shm_name_;
   std::string error_;
   OrderGatewayShmManager manager_;
+  std::uint16_t route_count_{0};
   bool ok_{false};
 };
 
@@ -155,6 +168,20 @@ class QueueFixture {
       .response_kind = OrderResponseKind::kAccepted,
   };
 }
+
+class NoopOrderRuntime {
+ public:
+  void OnOrderResponse(const OrderResponseEvent& event) noexcept {
+    last_local_order_id_ = event.local_order_id;
+  }
+
+  [[nodiscard]] std::uint64_t last_local_order_id() const noexcept {
+    return last_local_order_id_;
+  }
+
+ private:
+  std::uint64_t last_local_order_id_{0};
+};
 
 void SetThreadPairLabel(benchmark::State& state, int producer_cpu,
                         int consumer_cpu) {
@@ -573,6 +600,114 @@ void BM_EventRouteScanOneReady(benchmark::State& state) {
                              consumer_cpu, route_count));
 }
 
+void BM_ClientEmptyPoll(benchmark::State& state) {
+  const int consumer_cpu = static_cast<int>(state.range(0));
+  const std::uint16_t route_count = static_cast<std::uint16_t>(state.range(1));
+  if (!BindCurrentThreadToCpu(consumer_cpu)) {
+    state.SkipWithError("failed to bind client poll benchmark thread");
+    return;
+  }
+  QueueFixture fixture{route_count};
+  if (!fixture.ok()) {
+    state.SkipWithError(fixture.error().c_str());
+    return;
+  }
+  fixture.MarkAllRoutesReady();
+  auto client_result = OrderGatewayClient::Attach(
+      fixture.TakeManager(), OrderGatewayClientOptions{
+                                 .route_table_capacity = 64,
+                                 .max_events_per_poll_per_route = 64,
+                             });
+  if (!client_result.ok) {
+    state.SkipWithError(client_result.error.c_str());
+    return;
+  }
+  OrderGatewayClient& client = client_result.value;
+  client.RefreshRouteStates();
+  if (client.ready_route_count() != route_count) {
+    state.SkipWithError("client poll routes did not become ready");
+    return;
+  }
+  NoopOrderRuntime runtime;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    (void)_;
+    const std::uint64_t start_ns = benchmarking::NowNs();
+    const std::uint64_t handled = client.PollOrderResponses(runtime);
+    const std::uint64_t elapsed_ns = benchmarking::NowNs() - start_ns;
+    if (handled != 0) {
+      state.SkipWithError("empty client poll unexpectedly handled an event");
+      return;
+    }
+    samples_ns.push_back(elapsed_ns);
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+  }
+  benchmarking::SetLatencyCounters(state, std::move(samples_ns), "polls",
+                                   state.iterations());
+  state.SetLabel(fmt::format(FMT_COMPILE("consumer_cpu={} routes={}"),
+                             consumer_cpu, route_count));
+}
+
+void BM_ClientPollOneReady(benchmark::State& state) {
+  const int consumer_cpu = static_cast<int>(state.range(0));
+  const std::uint16_t route_count = static_cast<std::uint16_t>(state.range(1));
+  if (!BindCurrentThreadToCpu(consumer_cpu)) {
+    state.SkipWithError("failed to bind client poll benchmark thread");
+    return;
+  }
+  QueueFixture fixture{route_count};
+  if (!fixture.ok()) {
+    state.SkipWithError(fixture.error().c_str());
+    return;
+  }
+  fixture.MarkAllRoutesReady();
+  OrderGatewayEventQueue ready_queue = fixture.EventQueue(route_count - 1);
+  auto client_result = OrderGatewayClient::Attach(
+      fixture.TakeManager(), OrderGatewayClientOptions{
+                                 .route_table_capacity = 64,
+                                 .max_events_per_poll_per_route = 64,
+                             });
+  if (!client_result.ok) {
+    state.SkipWithError(client_result.error.c_str());
+    return;
+  }
+  OrderGatewayClient& client = client_result.value;
+  client.RefreshRouteStates();
+  if (client.ready_route_count() != route_count) {
+    state.SkipWithError("client poll routes did not become ready");
+    return;
+  }
+  NoopOrderRuntime runtime;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+  std::uint64_t sequence = 0;
+
+  for (auto _ : state) {
+    (void)_;
+    const OrderGatewayEvent expected = MakeEvent(++sequence, route_count - 1);
+    if (!ready_queue.TryPush(expected)) {
+      state.SkipWithError("client poll prefill unexpectedly full");
+      return;
+    }
+    const std::uint64_t start_ns = benchmarking::NowNs();
+    const std::uint64_t handled = client.PollOrderResponses(runtime);
+    const std::uint64_t elapsed_ns = benchmarking::NowNs() - start_ns;
+    if (handled != 1 ||
+        runtime.last_local_order_id() != expected.local_order_id) {
+      state.SkipWithError("client poll failed to handle the ready event");
+      return;
+    }
+    samples_ns.push_back(elapsed_ns);
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+  }
+  benchmarking::SetLatencyCounters(state, std::move(samples_ns), "events",
+                                   sequence);
+  state.SetLabel(fmt::format(FMT_COMPILE("consumer_cpu={} routes={}"),
+                             consumer_cpu, route_count));
+}
+
 BENCHMARK(BM_CommandEnqueueLowerBound)
     ->Arg(29)
     ->Iterations(kLatencyIterations)
@@ -605,6 +740,18 @@ BENCHMARK(BM_EventEmptyPoll)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_EventRouteScanOneReady)
+    ->Args({29, 1})
+    ->Args({29, 4})
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_ClientEmptyPoll)
+    ->Args({29, 1})
+    ->Args({29, 4})
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_ClientPollOneReady)
     ->Args({29, 1})
     ->Args({29, 4})
     ->Iterations(kLatencyIterations)
