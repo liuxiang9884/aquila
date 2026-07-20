@@ -382,10 +382,38 @@ baseline/candidate build 写入
   tools/tests request builder 是主要 review 风险；
 - 本阶段完成后继续 profile；不能因为 request 重构通过就停止整个 Gate/Bitget 优化目标。
 
+### 2026-07-20 同起止点测量修正
+
+首次 screening 的分段入口不能单独支持整体撤销结论：
+
+- baseline `StrategyContext` benchmark 直接接收已经带有 price/quantity text 的 request，
+  没有计入 LeadLag 的 `double → OrderDecimal/text`、text slot 和相关复制；
+- `GatewayWorker` benchmark 在 SHM command 预填后开始计时，同样只覆盖 dequeue 到 write；
+- LeadLag actual-config benchmark 覆盖计算、text 准备和 SHM enqueue，但不运行真实
+  Gate/Bitget OrderSession formatter。
+
+因此，OrderSession / StrategyContext / GatewayWorker 的局部回退只能用于归因，不能直接
+否决把 text 格式化从 Strategy 移到 OrderSession 的整体方案。重新判定必须在 baseline 与
+candidate 两侧使用相同起点和终点：
+
+1. 起点为 LeadLag 已得到用于下单的 `double` price/quantity，且尚未生成 text；
+2. 同一计时区间覆盖 request 构造、OrderManager、Gateway direct 或 SHM
+   enqueue/dequeue、Gate/Bitget OrderSession、最终 JSON encode 和 counting transport
+   write；
+3. baseline 必须在计时区间内执行现有 `OrderDecimal/text` 准备，candidate 必须在同一位置
+   只传递 double 与 decimal places；
+4. Gate 与 Bitget 分开报告 direct 和 SHM 路径，采用结论只看这些同起止点结果；旧分段
+   benchmark 继续用于解释成本移动；
+5. 新一轮 baseline 使用当前已接受 Gate `FMT_COMPILE` 的 `d829337`，candidate 必须保留
+   该优化，不再以 `f302f6e` 作为当前生产对照。
+
+在新测量完成前，下面的首次 screening 结果只表示“分段方向相反、整体结果未证明”，不再
+作为 numeric request contract 已经性能失败的最终证据。
+
 ### 执行结果（2026-07-20）
 
 七个实施部分已完整实现并完成 component screening、focused/full tests、typed replay 和
-gprofng profile，但未通过性能门：
+gprofng profile。以下是首次分段 screening 的历史结果，已由上面的同起止点测量修正取代：
 
 - Gate 在对 formatter 增加 `FMT_COMPILE` 后，place encoder 从约 `268.8 ns` 降至
   `234.2 ns`；完整 OrderSession / StrategyContext / GatewayWorker 的 `p50` 仍分别回归
@@ -394,8 +422,8 @@ gprofng profile，但未通过性能门：
   `210.2 ns`，完整三层 submit 的 `p50` 回归 `17.9%/15.9%/11.3%`。
 - LeadLag actual-config submit `p50` 改善约 `6.0%`，但收益来自删除 text lifetime 和缩小
   SHM/client 部分，不能覆盖 Gate/Bitget OrderSession 的 `double → fixed decimal` 成本。
-- 按本计划“任一交易所完整 submit 显著回归即整体撤销”的门禁，生产 contract 修改已完整
-  撤销；没有进入正式五组 A/B，也没有改变 SHM ABI。
+- 生产 contract 修改已完整撤销；没有进入正式五组 A/B，也没有改变当前 SHM ABI。由于当时
+  缺少同起止点整链证据，这次撤销不再视为最终性能判定。
 - 候选 patch 和所有 baseline/candidate/profile/replay 证据保存在
   `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results/order-request-double-format/`。
 
