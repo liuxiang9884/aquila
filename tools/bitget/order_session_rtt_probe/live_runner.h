@@ -313,7 +313,8 @@ class LiveRunner {
       HandleTransition(started, now_ns);
       return true;
     }
-    const bitget::OrderSendResult sent = session_->PlaceOrder(active_order_);
+    const bitget::OrderSendResult sent =
+        session_->PlaceOrder(ToOrderPlaceRequest(active_order_));
     if (sent.status == bitget::OrderSendStatus::kOk) {
       orders_sent_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -441,7 +442,7 @@ class LiveRunner {
     built.order.local_order_id = active_ids_.close_local_order_id;
     safety_close_order_ = built.order;
     const bitget::OrderSendResult sent =
-        session_->PlaceOrder(safety_close_order_);
+        session_->PlaceOrder(ToOrderPlaceRequest(safety_close_order_));
     if (sent.status == bitget::OrderSendStatus::kOk) {
       orders_sent_.fetch_add(1, std::memory_order_relaxed);
     }

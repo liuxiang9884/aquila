@@ -16,16 +16,16 @@ class StrategyContext {
   explicit StrategyContext(OrderManagerT& order_manager) noexcept
       : order_manager_(order_manager) {}
 
-  OrderPlaceResult PlaceOrder(const OrderCreateRequest& request) noexcept {
+  OrderPlaceResult PlaceOrder(const OrderPlaceRequest& request) noexcept {
     return order_manager_.PlaceOrder(request);
   }
 
-  OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
+  OrderPlaceResult PlaceLimitOrder(OrderPlaceRequest request) noexcept {
     return order_manager_.PlaceLimitOrder(std::move(request));
   }
 
-  OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept {
-    return order_manager_.CancelOrder(local_order_id);
+  OrderCancelResult CancelOrder(const OrderCancelRequest& request) noexcept {
+    return order_manager_.CancelOrder(request);
   }
 
   [[nodiscard]] const StrategyOrder* FindOrder(

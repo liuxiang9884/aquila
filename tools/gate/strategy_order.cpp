@@ -128,10 +128,24 @@ struct PreparedOrder {
   std::string price_text;
   aquila::OrderSide side{aquila::OrderSide::kBuy};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
+  double price{0.0};
   double size{1.0};
   std::int32_t symbol_id{0};
+  std::uint8_t price_decimal_places{0};
+  std::uint8_t quantity_decimal_places{0};
   bool reduce_only{false};
 };
+
+[[nodiscard]] std::uint8_t DecimalPlaces(std::string_view text) noexcept {
+  const std::size_t dot = text.find('.');
+  if (dot == std::string_view::npos) {
+    return 0;
+  }
+  const std::size_t exponent = text.find_first_of("eE", dot + 1);
+  const std::size_t end =
+      exponent == std::string_view::npos ? text.size() : exponent;
+  return static_cast<std::uint8_t>(end - dot - 1);
+}
 
 bool PrepareOrder(const CliOptions& options, PreparedOrder* output) {
   const std::string order_type = ToLower(options.order_type);
@@ -189,10 +203,13 @@ bool PrepareOrder(const CliOptions& options, PreparedOrder* output) {
   output->side = ParseSide(side);
   output->size = options.size;
   output->quantity_text = fmt::format("{}", options.size);
+  output->quantity_decimal_places = DecimalPlaces(output->quantity_text);
   output->symbol_id = options.symbol_id;
   output->reduce_only = options.reduce_only;
   if (order_type == "market") {
     output->price_text = "0";
+    output->price = 0.0;
+    output->price_decimal_places = 0;
     output->time_in_force = aquila::TimeInForce::kImmediateOrCancel;
     return true;
   }
@@ -210,21 +227,25 @@ bool PrepareOrder(const CliOptions& options, PreparedOrder* output) {
     NOVA_ERROR("price=0 requires tif=ioc");
     return false;
   }
+  output->price = std::stod(output->price_text);
+  output->price_decimal_places = DecimalPlaces(output->price_text);
   return true;
 }
 
-core::OrderCreateRequest BuildCreateRequest(const PreparedOrder& order) {
-  return core::OrderCreateRequest{
-      .exchange = aquila::Exchange::kGate,
+core::OrderPlaceRequest BuildCreateRequest(const PreparedOrder& order) {
+  core::OrderPlaceRequest request{
+      .price = order.price,
+      .quantity = order.size,
       .symbol_id = order.symbol_id,
-      .symbol = order.contract,
+      .exchange = aquila::Exchange::kGate,
       .side = order.side,
       .time_in_force = order.time_in_force,
-      .quantity = order.size,
-      .quantity_text = order.quantity_text,
-      .price_text = order.price_text,
+      .price_decimal_places = order.price_decimal_places,
+      .quantity_decimal_places = order.quantity_decimal_places,
       .reduce_only = order.reduce_only,
   };
+  core::SetOrderSymbol(&request, order.contract);
+  return request;
 }
 
 struct ToolResponseHandler {
@@ -251,7 +272,7 @@ struct RunContext {
   SessionT* session{nullptr};
   core::OrderManager<SessionT>* order_manager{nullptr};
   aquila::OrderFeedbackShmReader* feedback_reader{nullptr};
-  core::OrderCreateRequest request{};
+  core::OrderPlaceRequest request{};
   bool keep_open{false};
   bool wait_feedback_terminal{false};
   std::size_t feedback_poll_budget{32};
@@ -384,8 +405,8 @@ struct RunContext {
     bool finish = false;
     {
       std::lock_guard<std::mutex> lock(strategy_mutex);
-      const core::OrderCancelResult cancelled =
-          order_manager->CancelOrder(order_id);
+      const core::OrderCancelResult cancelled = order_manager->CancelOrder(
+          core::OrderCancelRequest{.local_order_id = order_id});
       fmt::print("cancel status={} local_order_id={}\n",
                  magic_enum::enum_name(cancelled.status),
                  cancelled.local_order_id);

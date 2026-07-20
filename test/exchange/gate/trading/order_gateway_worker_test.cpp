@@ -52,13 +52,13 @@ class FakeSession {
     return ready;
   }
 
-  OrderSendResult PlaceOrder(const core::StrategyOrder& order) noexcept {
+  OrderSendResult PlaceOrder(const core::OrderPlaceRequest& order) noexcept {
     placed.push_back(order.local_order_id);
-    last_symbol.assign(order.symbol.data(), order.symbol.size());
+    last_symbol.assign(order.SymbolView());
     return place_result;
   }
 
-  OrderSendResult CancelOrder(const core::StrategyOrder& order) noexcept {
+  OrderSendResult CancelOrder(const core::OrderCancelRequest& order) noexcept {
     cancelled.push_back(order.local_order_id);
     return cancel_result;
   }
@@ -95,35 +95,36 @@ core::OrderGatewayCommand MakePlaceCommand(std::uint16_t route_id,
   core::OrderGatewayCommand command{};
   command.kind = core::OrderGatewayCommandKind::kPlace;
   command.command_seq = 10 + local_order_id;
-  command.parent_id = 9000;
-  command.local_order_id = local_order_id;
-  command.route_id = route_id;
-  command.exchange = Exchange::kGate;
-  command.symbol_id = 42;
-  command.side = OrderSide::kBuy;
-  command.order_type = OrderType::kLimit;
-  command.time_in_force = TimeInForce::kImmediateOrCancel;
-  command.quantity = 0.01;
-  command.reduce_only = 0;
-  const std::string_view symbol = "BTC_USDT";
-  const std::string_view quantity = "0.01";
-  const std::string_view price = "65000";
-  command.symbol_size = static_cast<std::uint16_t>(symbol.size());
-  command.quantity_text_size = static_cast<std::uint16_t>(quantity.size());
-  command.price_text_size = static_cast<std::uint16_t>(price.size());
-  std::memcpy(command.symbol, symbol.data(), symbol.size());
-  std::memcpy(command.quantity_text, quantity.data(), quantity.size());
-  std::memcpy(command.price_text, price.data(), price.size());
+  command.payload.place = core::OrderPlaceRequest{
+      .local_order_id = local_order_id,
+      .parent_id = 9000,
+      .price = 65000.0,
+      .quantity = 0.01,
+      .symbol_id = 42,
+      .gateway_route_id = route_id,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 2,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&command.payload.place, "BTC_USDT");
   return command;
 }
 
-core::OrderGatewayCommand MakeCancelCommand(std::uint16_t route_id,
-                                            std::uint64_t local_order_id,
-                                            std::uint64_t exchange_order_id) {
-  core::OrderGatewayCommand command =
-      MakePlaceCommand(route_id, local_order_id);
+core::OrderGatewayCommand MakeCancelCommand(
+    std::uint16_t route_id, std::uint64_t local_order_id,
+    [[maybe_unused]] std::uint64_t exchange_order_id) {
+  core::OrderGatewayCommand command{};
   command.kind = core::OrderGatewayCommandKind::kCancel;
-  command.exchange_order_id = exchange_order_id;
+  command.command_seq = 10 + local_order_id;
+  command.payload.cancel = core::OrderCancelRequest{
+      .local_order_id = local_order_id,
+      .parent_id = 9000,
+      .gateway_route_id = route_id,
+  };
   return command;
 }
 
@@ -240,7 +241,6 @@ TEST(OrderGatewayWorkerTest, StopCommandDoesNotRequireRouteId) {
   core::OrderGatewayCommand stop{};
   stop.kind = core::OrderGatewayCommandKind::kStop;
   stop.command_seq = 99;
-  stop.route_id = std::numeric_limits<std::uint16_t>::max();
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(stop));
 
   FakeSession session;
@@ -255,48 +255,6 @@ TEST(OrderGatewayWorkerTest, StopCommandDoesNotRequireRouteId) {
   EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kStopped);
 }
 
-template <typename Mutator>
-void ExpectOversizedTextFieldRejected(std::string_view suffix,
-                                      Mutator mutator) {
-  const core::OrderGatewayShmConfig config = MakeShmConfig(suffix);
-  ShmCleanup cleanup(config.shm_name);
-  auto shm_result = core::OrderGatewayShmManager::Create(config);
-  ASSERT_TRUE(shm_result.ok) << shm_result.error;
-  core::OrderGatewayShmManager& shm = shm_result.value;
-
-  core::OrderGatewayCommand command = MakePlaceCommand(0, 1103);
-  mutator(command);
-  ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
-
-  FakeSession session;
-  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
-  OrderGatewayCommandWorker<FakeSession> worker(0, shm.CommandQueue(0), session,
-                                                publisher);
-
-  EXPECT_TRUE(worker.PollOnce());
-  EXPECT_TRUE(session.placed.empty());
-  core::OrderGatewayEvent event{};
-  ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
-  EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kCommandRejected);
-  EXPECT_EQ(event.reject_reason,
-            core::OrderGatewayCommandRejectReason::kInvalidCommand);
-}
-
-TEST(OrderGatewayWorkerTest, OversizedTextFieldsAreRejectedBeforeSessionCall) {
-  ExpectOversizedTextFieldRejected(
-      "oversized_symbol", [](core::OrderGatewayCommand& command) {
-        command.symbol_size = core::kOrderGatewaySymbolBytes + 1;
-      });
-  ExpectOversizedTextFieldRejected(
-      "oversized_quantity", [](core::OrderGatewayCommand& command) {
-        command.quantity_text_size = core::kOrderGatewayQuantityTextBytes + 1;
-      });
-  ExpectOversizedTextFieldRejected(
-      "oversized_price", [](core::OrderGatewayCommand& command) {
-        command.price_text_size = core::kOrderGatewayPriceTextBytes + 1;
-      });
-}
-
 TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   const core::OrderGatewayShmConfig config = MakeShmConfig("response_metadata");
   ShmCleanup cleanup(config.shm_name);
@@ -305,7 +263,7 @@ TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   core::OrderGatewayShmManager& shm = shm_result.value;
   core::OrderGatewayCommand command = MakePlaceCommand(0, 1104);
   command.command_seq = 44;
-  command.parent_id = 33;
+  command.payload.place.parent_id = 33;
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
 
   FakeSession session;
@@ -338,7 +296,7 @@ TEST(OrderGatewayWorkerTest, NotReadyClearsPendingResponseMetadata) {
   core::OrderGatewayShmManager& shm = shm_result.value;
   core::OrderGatewayCommand command = MakePlaceCommand(0, 1105);
   command.command_seq = 45;
-  command.parent_id = 34;
+  command.payload.place.parent_id = 34;
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
 
   FakeSession session;
@@ -376,16 +334,20 @@ TEST(OrderGatewayWorkerTest, CancelCacheAndForgetDispatchToSession) {
   core::OrderGatewayCommand cache{};
   cache.kind = core::OrderGatewayCommandKind::kCacheExchangeOrderId;
   cache.command_seq = 77;
-  cache.local_order_id = 1004;
-  cache.exchange_order_id = 7004;
-  cache.route_id = 0;
+  cache.payload.order_id = core::OrderGatewayOrderIdCommand{
+      .local_order_id = 1004,
+      .exchange_order_id = 7004,
+      .gateway_route_id = 0,
+  };
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(cache));
 
   core::OrderGatewayCommand forget{};
   forget.kind = core::OrderGatewayCommandKind::kForgetExchangeOrderId;
   forget.command_seq = 78;
-  forget.local_order_id = 1004;
-  forget.route_id = 0;
+  forget.payload.order_id = core::OrderGatewayOrderIdCommand{
+      .local_order_id = 1004,
+      .gateway_route_id = 0,
+  };
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(forget));
 
   FakeSession session;

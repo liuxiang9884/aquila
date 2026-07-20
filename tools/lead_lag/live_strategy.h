@@ -7,8 +7,6 @@
 #include <string>
 #include <utility>
 
-#include <fmt/format.h>
-
 #include "core/config/strategy_config.h"
 #include "core/market_data/types.h"
 #include "core/trading/order_feedback_event.h"
@@ -397,24 +395,23 @@ class LiveOpenCloseSmokeStrategy {
       return;
     }
 
-    open_price_text_ =
-        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    open_quantity_text_ =
-        FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
     const std::string_view symbol = LagSymbol();
-    const core::OrderPlaceResult placed =
-        context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = pair_->lag_instrument.exchange,
-            .symbol_id = pair_->symbol_id,
-            .symbol = symbol,
-            .side = OrderSide::kBuy,
-            .order_type = OrderType::kLimit,
-            .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity,
-            .quantity_text = open_quantity_text_,
-            .price_text = open_price_text_,
-            .reduce_only = false,
-        });
+    core::OrderPlaceRequest request{
+        .price = order_price,
+        .quantity = quantity,
+        .symbol_id = pair_->symbol_id,
+        .exchange = pair_->lag_instrument.exchange,
+        .side = OrderSide::kBuy,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .price_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.price_decimal_places),
+        .quantity_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.quantity_decimal_places),
+        .reduce_only = false,
+    };
+    core::SetOrderSymbol(&request, symbol);
+    const core::OrderPlaceResult placed = context.PlaceOrder(request);
     if (placed.status != core::OrderPlaceStatus::kOk ||
         placed.local_order_id == 0) {
       SetError("failed to place smoke open order");
@@ -477,23 +474,22 @@ class LiveOpenCloseSmokeStrategy {
       SetError("invalid smoke close price");
       return;
     }
-    close_price_text_ =
-        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    close_quantity_text_ = FormatPrice(
-        pending_close_quantity_, pair_->lag_instrument.quantity_decimal_places);
-    const core::OrderPlaceResult placed =
-        context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = pair_->lag_instrument.exchange,
-            .symbol_id = pair_->symbol_id,
-            .symbol = LagSymbol(),
-            .side = OrderSide::kSell,
-            .order_type = OrderType::kLimit,
-            .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = pending_close_quantity_,
-            .quantity_text = close_quantity_text_,
-            .price_text = close_price_text_,
-            .reduce_only = true,
-        });
+    core::OrderPlaceRequest request{
+        .price = order_price,
+        .quantity = pending_close_quantity_,
+        .symbol_id = pair_->symbol_id,
+        .exchange = pair_->lag_instrument.exchange,
+        .side = OrderSide::kSell,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .price_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.price_decimal_places),
+        .quantity_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.quantity_decimal_places),
+        .reduce_only = true,
+    };
+    core::SetOrderSymbol(&request, LagSymbol());
+    const core::OrderPlaceResult placed = context.PlaceOrder(request);
     if (placed.status != core::OrderPlaceStatus::kOk ||
         placed.local_order_id == 0) {
       SetError("failed to place smoke close order");
@@ -594,13 +590,6 @@ class LiveOpenCloseSmokeStrategy {
     return std::floor(quantity / step + kEpsilon) * step;
   }
 
-  [[nodiscard]] static std::string FormatPrice(double price,
-                                               std::int32_t decimal_places) {
-    assert(decimal_places >= 0);
-    assert(decimal_places < detail::kSmokeOrderDecimalPlaceLimit);
-    return fmt::format("{:.{}f}", price, decimal_places);
-  }
-
   [[nodiscard]] std::string_view LagSymbol() const noexcept {
     if (!pair_->lag_instrument.exchange_symbol.empty()) {
       return pair_->lag_instrument.exchange_symbol;
@@ -620,10 +609,6 @@ class LiveOpenCloseSmokeStrategy {
   LiveOpenCloseSmokeStats owned_stats_;
   LiveOpenCloseSmokeStats* stats_{&owned_stats_};
   const strategy::leadlag::PairConfig* pair_{nullptr};
-  std::string open_price_text_;
-  std::string open_quantity_text_;
-  std::string close_price_text_;
-  std::string close_quantity_text_;
   double pending_close_quantity_{0.0};
 };
 
@@ -771,23 +756,22 @@ class LiveUnfilledCancelSmokeStrategy {
       return;
     }
 
-    open_price_text_ =
-        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    open_quantity_text_ =
-        FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
-    const core::OrderPlaceResult placed =
-        context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = pair_->lag_instrument.exchange,
-            .symbol_id = pair_->symbol_id,
-            .symbol = LagSymbol(),
-            .side = OrderSide::kBuy,
-            .order_type = OrderType::kLimit,
-            .time_in_force = TimeInForce::kGoodTillCancel,
-            .quantity = quantity,
-            .quantity_text = open_quantity_text_,
-            .price_text = open_price_text_,
-            .reduce_only = false,
-        });
+    core::OrderPlaceRequest request{
+        .price = order_price,
+        .quantity = quantity,
+        .symbol_id = pair_->symbol_id,
+        .exchange = pair_->lag_instrument.exchange,
+        .side = OrderSide::kBuy,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kGoodTillCancel,
+        .price_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.price_decimal_places),
+        .quantity_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.quantity_decimal_places),
+        .reduce_only = false,
+    };
+    core::SetOrderSymbol(&request, LagSymbol());
+    const core::OrderPlaceResult placed = context.PlaceOrder(request);
     if (placed.status != core::OrderPlaceStatus::kOk ||
         placed.local_order_id == 0) {
       SetError("failed to place smoke unfilled order");
@@ -814,7 +798,8 @@ class LiveUnfilledCancelSmokeStrategy {
       return;
     }
     const core::OrderCancelResult cancelled =
-        context.CancelOrder(stats_->open_local_order_id);
+        context.CancelOrder(core::OrderCancelRequest{
+            .local_order_id = stats_->open_local_order_id});
     if (cancelled.status != core::OrderCancelStatus::kOk) {
       SetError("failed to cancel smoke unfilled order");
       return;
@@ -899,13 +884,6 @@ class LiveUnfilledCancelSmokeStrategy {
     return std::floor(quantity / step + kEpsilon) * step;
   }
 
-  [[nodiscard]] static std::string FormatPrice(double price,
-                                               std::int32_t decimal_places) {
-    assert(decimal_places >= 0);
-    assert(decimal_places < detail::kSmokeOrderDecimalPlaceLimit);
-    return fmt::format("{:.{}f}", price, decimal_places);
-  }
-
   [[nodiscard]] std::string_view LagSymbol() const noexcept {
     if (!pair_->lag_instrument.exchange_symbol.empty()) {
       return pair_->lag_instrument.exchange_symbol;
@@ -925,8 +903,6 @@ class LiveUnfilledCancelSmokeStrategy {
   LiveUnfilledCancelSmokeStats owned_stats_;
   LiveUnfilledCancelSmokeStats* stats_{&owned_stats_};
   const strategy::leadlag::PairConfig* pair_{nullptr};
-  std::string open_price_text_;
-  std::string open_quantity_text_;
 };
 
 class LiveSubmitRejectSmokeStrategy {
@@ -1063,23 +1039,22 @@ class LiveSubmitRejectSmokeStrategy {
       return;
     }
 
-    price_text_ =
-        FormatPrice(order_price, pair_->lag_instrument.price_decimal_places);
-    quantity_text_ =
-        FormatPrice(quantity, pair_->lag_instrument.quantity_decimal_places);
-    const core::OrderPlaceResult placed =
-        context.PlaceOrder(core::OrderCreateRequest{
-            .exchange = pair_->lag_instrument.exchange,
-            .symbol_id = pair_->symbol_id,
-            .symbol = LagSymbol(),
-            .side = OrderSide::kBuy,
-            .order_type = OrderType::kLimit,
-            .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = quantity,
-            .quantity_text = quantity_text_,
-            .price_text = price_text_,
-            .reduce_only = true,
-        });
+    core::OrderPlaceRequest request{
+        .price = order_price,
+        .quantity = quantity,
+        .symbol_id = pair_->symbol_id,
+        .exchange = pair_->lag_instrument.exchange,
+        .side = OrderSide::kBuy,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .price_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.price_decimal_places),
+        .quantity_decimal_places = static_cast<std::uint8_t>(
+            pair_->lag_instrument.quantity_decimal_places),
+        .reduce_only = true,
+    };
+    core::SetOrderSymbol(&request, LagSymbol());
+    const core::OrderPlaceResult placed = context.PlaceOrder(request);
     if (placed.status != core::OrderPlaceStatus::kOk ||
         placed.local_order_id == 0) {
       SetError("failed to place submit reject smoke order");
@@ -1137,13 +1112,6 @@ class LiveSubmitRejectSmokeStrategy {
     return std::floor(quantity / step + kEpsilon) * step;
   }
 
-  [[nodiscard]] static std::string FormatPrice(double price,
-                                               std::int32_t decimal_places) {
-    assert(decimal_places >= 0);
-    assert(decimal_places < detail::kSmokeOrderDecimalPlaceLimit);
-    return fmt::format("{:.{}f}", price, decimal_places);
-  }
-
   [[nodiscard]] std::string_view LagSymbol() const noexcept {
     if (!pair_->lag_instrument.exchange_symbol.empty()) {
       return pair_->lag_instrument.exchange_symbol;
@@ -1163,8 +1131,6 @@ class LiveSubmitRejectSmokeStrategy {
   LiveSubmitRejectSmokeStats owned_stats_;
   LiveSubmitRejectSmokeStats* stats_{&owned_stats_};
   const strategy::leadlag::PairConfig* pair_{nullptr};
-  std::string price_text_;
-  std::string quantity_text_;
 };
 
 [[nodiscard]] inline int ResolveLiveOrdersExitCode(

@@ -40,6 +40,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 | Gate OBU / OrderBook | `docs/gate_obu_order_book_notes.md` |
 | Instrument catalog | `docs/futures_contract_metadata_fields.md` |
 | Runtime CPU / IRQ | `docs/runtime_cpu_allocation.md` |
+| Gate / Bitget 交易链路性能优化 | `docs/plans/2026-07-19-gate-bitget-trading-latency-optimization.md` |
 | TUI | `docs/tui.md` |
 
 ## 当前事实
@@ -53,7 +54,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `Trade` 64 bytes；historical/recorder 只接受 typed binary format v1，旧 raw/ABI artifact 需重录。
 - Fastest-route fusion 按 `(exchange,symbol_id,id)` 单调 first-processed-wins，输出一条 canonical stream；行情证据不能外推为
   fillability/PnL。当前架构见 fusion 文档。
-- Gate 单路 trading、private feedback、OrderGateway SHM V2 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
+- Gate 单路 trading、private feedback、OrderGateway SHM V3 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
   Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据。
@@ -90,6 +91,14 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   count 类型、`symbol_id`/`exchange` 和存储布局。
 - `FixedOrderedSlotPool` 已提供通用容器，但生产 LeadLag multi-group metadata 迁移仍按专题文档和独立分支事实确认，不能假设完成。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
+- Gate/Bitget 交易链路 L3 性能优化已完成原暂停点的 Gate 第 5 组、Bitget、
+  parser → SHM → runtime、测试、replay 和 review，并累计接受 10 项生产优化。最新
+  numeric request 工作位于
+  `/home/liuxiang/tmp/aquila-gate-bitget-order-request-format-e2e`、branch
+  `perf/gate-bitget-order-request-format-e2e`：Strategy/Gateway/SHM/OrderSession 共享
+  double + decimal places request，price/quantity text 只在 session 生成；no-log 五组
+  A/B 中 Gate/Bitget SHM 整链 `p50` 分别改善 `12.90%/14.33%`。详细数据和候选记录见
+  性能报告与计划的“2026-07-20 数值订单 request 与 OrderSession 格式化”。
 
 ## 代码入口
 
@@ -155,7 +164,11 @@ rg 'aquila_evaluation' core exchange tools
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
 5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
-6. 性能/CPU：先按 latency/CPU 文档记录环境并做 A/B；无 benchmark/profile/live 证据不宣称收益。
+6. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
+   decimal writer 的后续非拓扑筛选，候选均因完整链或相邻路径回退而撤销。下一阶段从
+   已接受 clean HEAD 新建独立 topology branch/worktree，先读
+   `docs/runtime_cpu_allocation.md`，冻结 Gate/Bitget submit、ACK、feedback runtime
+   baseline；无 fresh benchmark/profile 证据不宣称收益。
 
 ## 给下一个对话的提示
 
@@ -182,3 +195,14 @@ absent 和 fresh REST flat。Bitget 已补齐 place `cTime`/`ts`、order push li
 send/write-complete/Ack 成对时间日志；`fast-fill` 只供分析，不进入 feedback。下一步先用新 live 日志比较 fast-fill/order
 到达时间并离线关联 BBO；零成交 IOC 仍没有文档明确的 order-ingress/match-attempt 时间戳。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
+
+若继续当前 Gate/Bitget 交易链路性能优化，不要从 `/home/liuxiang/dev/aquila` 的 `main`
+重开实现；进入
+`/home/liuxiang/tmp/aquila-gate-bitget-order-request-format-e2e`，确认 branch 为
+`perf/gate-bitget-order-request-format-e2e`，并先读性能计划的
+“2026-07-20 数值订单 request 与 OrderSession 格式化”和性能报告。numeric request 已作为
+`bcdc358` 接受；正式 benchmark 不产生业务日志。local order ID、final JSON 和 decimal
+writer 的后续非拓扑候选均已完成 fresh screening，因完整链或相邻路径回退而撤销。
+下一步不要继续在该 worktree 修改 formatter；从已接受 HEAD 新建独立 topology
+branch/worktree，并先读 `docs/runtime_cpu_allocation.md`。`perf` 因
+`kernel.perf_event_paranoid=4` 不可用；不要擅自修改系统设置。

@@ -25,12 +25,23 @@ enum class StrategySubmitStageForTest : std::uint8_t {
   kRiskChecked,
   kOrderIntentLogged,
   kExecutionGroupReady,
-  kBeforeAcquireText,
-  kAfterAcquireText,
+  kBeforeAcquireRiskSlot,
+  kAfterAcquireRiskSlot,
   kBeforePlaceOrder,
   kAfterPlaceOrder,
   kAfterSubmitResult,
   kSubmitDone,
+  kCount,
+};
+
+enum class StrategyFeedbackStageForTest : std::uint8_t {
+  kContextReady,
+  kFeedbackLogged,
+  kFinishedOrderReady,
+  kPositionFieldsReady,
+  kExecutionApplied,
+  kFinishedLogged,
+  kRetired,
   kCount,
 };
 
@@ -167,10 +178,8 @@ struct StrategyOrderSubmittedLogRecordForTest {
   PositionDirection position_direction{};
   std::uint64_t entry_local_order_id{0};
   double quantity{0.0};
-  std::string_view quantity_text;
   double raw_price{0.0};
   double order_price{0.0};
-  std::string_view price_text;
   std::uint32_t slippage_ticks{0};
   double price_tick{0.0};
   double target_open_notional{0.0};
@@ -225,6 +234,11 @@ struct StrategySubmitStageRecordForTest {
   std::uint32_t submission_route_count{0};
 };
 
+struct StrategyFeedbackStageRecordForTest {
+  StrategyFeedbackStageForTest stage{
+      StrategyFeedbackStageForTest::kContextReady};
+};
+
 using StrategySignalTriggeredLogObserverForTest =
     void (*)(const StrategySignalTriggeredLogRecordForTest& record) noexcept;
 
@@ -251,6 +265,9 @@ using StrategyOrderFeedbackLogObserverForTest =
 
 using StrategySubmitStageObserverForTest =
     void (*)(const StrategySubmitStageRecordForTest& record) noexcept;
+
+using StrategyFeedbackStageObserverForTest =
+    void (*)(const StrategyFeedbackStageRecordForTest& record) noexcept;
 
 [[nodiscard]] inline StrategySignalTriggeredLogObserverForTest&
 StrategySignalTriggeredLogObserverSlotForTest() noexcept {
@@ -306,6 +323,12 @@ StrategySubmitStageObserverSlotForTest() noexcept {
   return observer;
 }
 
+[[nodiscard]] inline StrategyFeedbackStageObserverForTest&
+StrategyFeedbackStageObserverSlotForTest() noexcept {
+  static StrategyFeedbackStageObserverForTest observer = nullptr;
+  return observer;
+}
+
 inline void SetStrategySignalTriggeredLogObserverForTest(
     StrategySignalTriggeredLogObserverForTest observer) noexcept {
   StrategySignalTriggeredLogObserverSlotForTest() = observer;
@@ -349,6 +372,11 @@ inline void SetStrategyOrderFeedbackLogObserverForTest(
 inline void SetStrategySubmitStageObserverForTest(
     StrategySubmitStageObserverForTest observer) noexcept {
   StrategySubmitStageObserverSlotForTest() = observer;
+}
+
+inline void SetStrategyFeedbackStageObserverForTest(
+    StrategyFeedbackStageObserverForTest observer) noexcept {
+  StrategyFeedbackStageObserverSlotForTest() = observer;
 }
 
 inline void NotifyStrategySignalTriggeredLogObserverForTest(
@@ -435,6 +463,16 @@ inline void NotifyStrategySubmitStageObserverForTest(
     const StrategySubmitStageRecordForTest& record) noexcept {
   StrategySubmitStageObserverForTest observer =
       StrategySubmitStageObserverSlotForTest();
+  if (observer == nullptr) {
+    return;
+  }
+  observer(record);
+}
+
+inline void NotifyStrategyFeedbackStageObserverForTest(
+    const StrategyFeedbackStageRecordForTest& record) noexcept {
+  StrategyFeedbackStageObserverForTest observer =
+      StrategyFeedbackStageObserverSlotForTest();
   if (observer == nullptr) {
     return;
   }

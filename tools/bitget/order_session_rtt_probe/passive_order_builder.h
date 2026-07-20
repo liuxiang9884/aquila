@@ -10,6 +10,7 @@
 
 #include "core/config/instrument_catalog.h"
 #include "core/market_data/types.h"
+#include "core/trading/order_types.h"
 
 namespace aquila::tools::bitget_order_session_rtt_probe {
 
@@ -19,11 +20,32 @@ struct ProbeWireOrder {
   OrderSide side{OrderSide::kBuy};
   OrderType type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kImmediateOrCancel};
+  double price{0.0};
   double quantity{0.0};
   std::string quantity_text;
   std::string price_text;
+  std::uint8_t price_decimal_places{0};
+  std::uint8_t quantity_decimal_places{0};
   bool reduce_only{false};
 };
+
+[[nodiscard]] inline core::OrderPlaceRequest ToOrderPlaceRequest(
+    const ProbeWireOrder& order) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = order.local_order_id,
+      .price = order.price,
+      .quantity = order.quantity,
+      .exchange = Exchange::kBitget,
+      .side = order.side,
+      .order_type = order.type,
+      .time_in_force = order.time_in_force,
+      .price_decimal_places = order.price_decimal_places,
+      .quantity_decimal_places = order.quantity_decimal_places,
+      .reduce_only = order.reduce_only,
+  };
+  core::SetOrderSymbol(&request, order.symbol);
+  return request;
+}
 
 struct ProbeOrderBuildResult {
   bool ok{false};
@@ -127,10 +149,15 @@ namespace passive_order_builder_detail {
       .side = side,
       .type = OrderType::kLimit,
       .time_in_force = TimeInForce::kImmediateOrCancel,
+      .price = price,
       .quantity = quantity,
       .quantity_text =
           FormatDecimal(quantity, *instrument.quantity_decimal_places),
       .price_text = FormatDecimal(price, instrument.price_decimal_places),
+      .price_decimal_places =
+          static_cast<std::uint8_t>(instrument.price_decimal_places),
+      .quantity_decimal_places =
+          static_cast<std::uint8_t>(*instrument.quantity_decimal_places),
       .reduce_only = reduce_only,
   };
   return result;

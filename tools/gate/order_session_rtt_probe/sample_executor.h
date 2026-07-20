@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "core/common/result.h"
+#include "core/trading/order_types.h"
 #include "exchange/gate/trading/order_types.h"
 #include "tools/gate/order_session_rtt_probe/order_mode.h"
 #include "tools/gate/order_session_rtt_probe/passive_order_builder.h"
@@ -140,7 +141,20 @@ class ProbeSampleExecutor {
   [[nodiscard]] ProbeSampleTransition SubmitPlace(Session& session,
                                                   ProbeStage stage,
                                                   const ProbeWireOrder& order) {
-    const gate::OrderSendResult sent = session.PlaceOrder(order);
+    core::OrderPlaceRequest request{
+        .local_order_id = order.local_order_id,
+        .price = order.price,
+        .quantity = order.quantity,
+        .exchange = Exchange::kGate,
+        .side = order.side,
+        .order_type = order.type,
+        .time_in_force = order.time_in_force,
+        .price_decimal_places = order.price_decimal_places,
+        .quantity_decimal_places = order.quantity_decimal_places,
+        .reduce_only = order.reduce_only,
+    };
+    core::SetOrderSymbol(&request, order.symbol);
+    const gate::OrderSendResult sent = session.PlaceOrder(request);
     ProbeSampleTransition transition = flow_.OnOrderSent(stage, sent);
     if (!transition.ok) {
       return transition;
@@ -152,7 +166,8 @@ class ProbeSampleExecutor {
   template <typename Session>
   [[nodiscard]] ProbeSampleTransition SubmitCancel(
       Session& session, ProbeStage stage, const ProbeWireOrder& order) {
-    const gate::OrderSendResult sent = session.CancelOrder(order);
+    const gate::OrderSendResult sent = session.CancelOrder(
+        core::OrderCancelRequest{.local_order_id = order.local_order_id});
     ProbeSampleTransition transition = flow_.OnOrderSent(stage, sent);
     if (!transition.ok) {
       return transition;

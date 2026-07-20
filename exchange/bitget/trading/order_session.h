@@ -278,8 +278,7 @@ class OrderSession {
     }
   }
 
-  template <typename OrderT>
-  OrderSendResult PlaceOrder(const OrderT& order) noexcept {
+  OrderSendResult PlaceOrder(const core::OrderPlaceRequest& request) noexcept {
     const OrderSendStatus ready_status = CheckReadyForSend();
     if (ready_status != OrderSendStatus::kOk) {
       return LocalFailure(ready_status);
@@ -287,7 +286,7 @@ class OrderSession {
     if (request_correlations_.size() >= request_map_capacity_) {
       return LocalFailure(OrderSendStatus::kInflightFull);
     }
-    if (local_order_id_to_exchange_order_id_.find(order.local_order_id) ==
+    if (local_order_id_to_exchange_order_id_.find(request.local_order_id) ==
             local_order_id_to_exchange_order_id_.end() &&
         local_order_id_to_exchange_order_id_.size() +
                 place_cache_reservations_ >=
@@ -299,26 +298,15 @@ class OrderSession {
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kPlaceOrder, sequence);
     std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-    const EncodedTextRequest encoded = EncodePlaceOrderRequest(
-        PlaceOrderEncodeFields{
-            .encoded_request_id = encoded_request_id,
-            .local_order_id = order.local_order_id,
-            .order_type = OrderTypeFor(order),
-            .symbol = order.symbol,
-            .quantity_text = order.quantity_text,
-            .price_text = order.price_text,
-            .side = order.side,
-            .time_in_force = order.time_in_force,
-            .reduce_only = order.reduce_only,
-        },
-        buffer);
+    const EncodedTextRequest encoded =
+        EncodePlaceOrderRequest(request, encoded_request_id, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
                          encoded_request_id);
     }
 
     auto [correlation_it, inserted] = request_correlations_.emplace(
-        sequence, MakeCorrelation(OrderRequestType::kPlaceOrder, order, 0));
+        sequence, MakeCorrelation(OrderRequestType::kPlaceOrder, request, 0));
     if (!inserted) {
       return SendFailure(OrderSendStatus::kInflightFull, sequence,
                          encoded_request_id);
@@ -337,16 +325,16 @@ class OrderSession {
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordPlaceSent();
     }
-    LogOrderSend(OrderRequestType::kPlaceOrder, order.local_order_id, sequence,
-                 correlation);
+    LogOrderSend(OrderRequestType::kPlaceOrder, request.local_order_id,
+                 sequence, correlation);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
             .send_local_ns = correlation.request_send_realtime_ns};
   }
 
-  template <typename OrderT>
-  OrderSendResult CancelOrder(const OrderT& order) noexcept {
+  OrderSendResult CancelOrder(
+      const core::OrderCancelRequest& request) noexcept {
     const OrderSendStatus ready_status = CheckReadyForSend();
     if (ready_status != OrderSendStatus::kOk) {
       return LocalFailure(ready_status);
@@ -358,22 +346,17 @@ class OrderSession {
     const std::uint64_t sequence = NextRequestSequence();
     const std::uint64_t encoded_request_id =
         RequestIdCodec::Encode(OrderRequestType::kCancelOrder, sequence);
-    const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(order);
+    const std::uint64_t exchange_order_id = ExchangeOrderIdForCancel(request);
     std::array<char, kCancelOrderRequestBufferSize> buffer{};
     const EncodedTextRequest encoded = EncodeCancelOrderRequest(
-        CancelOrderEncodeFields{
-            .encoded_request_id = encoded_request_id,
-            .local_order_id = order.local_order_id,
-            .exchange_order_id = exchange_order_id,
-        },
-        buffer);
+        request, exchange_order_id, encoded_request_id, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       return SendFailure(MapEncodeStatus(encoded.status), sequence,
                          encoded_request_id);
     }
 
     auto [correlation_it, inserted] = request_correlations_.emplace(
-        sequence, MakeCorrelation(OrderRequestType::kCancelOrder, order,
+        sequence, MakeCorrelation(OrderRequestType::kCancelOrder, request,
                                   exchange_order_id));
     if (!inserted) {
       return SendFailure(OrderSendStatus::kInflightFull, sequence,
@@ -392,8 +375,8 @@ class OrderSession {
     if constexpr (DiagnosticsEnabled) {
       diagnostics_.RecordCancelSent();
     }
-    LogOrderSend(OrderRequestType::kCancelOrder, order.local_order_id, sequence,
-                 correlation);
+    LogOrderSend(OrderRequestType::kCancelOrder, request.local_order_id,
+                 sequence, correlation);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = sequence,
             .encoded_request_id = encoded_request_id,
@@ -872,11 +855,9 @@ class OrderSession {
     NOVA_INFO(
         "bitget_order_send request_type={} request_sequence={} "
         "local_order_id={} request_send_local_ns={} "
-        "request_send_realtime_ns={} "
         "request_send_monotonic_ns={} order_encode_done_realtime_ns={} "
         "inflight={}",
         magic_enum::enum_name(request_type), request_sequence, local_order_id,
-        correlation.request_send_realtime_ns,
         correlation.request_send_realtime_ns,
         correlation.request_send_monotonic_ns,
         correlation.write_path.order_encode_done_ns, inflight_count());
@@ -997,54 +978,22 @@ class OrderSession {
     return OrderResponseKind::kUnknownResult;
   }
 
-  template <typename OrderT>
-  [[nodiscard]] static OrderType OrderTypeFor(const OrderT& order) noexcept {
-    if constexpr (requires { order.type; }) {
-      return order.type;
-    } else {
-      return order.order_type;
-    }
-  }
-
-  template <typename OrderT>
-  [[nodiscard]] static std::uint64_t ParentIdFor(const OrderT& order) noexcept {
-    if constexpr (requires { order.parent_id; }) {
-      return order.parent_id;
-    }
-    return 0;
-  }
-
-  template <typename OrderT>
-  [[nodiscard]] static std::uint16_t RouteIdFor(const OrderT& order) noexcept {
-    if constexpr (requires { order.gateway_route_id; }) {
-      return order.gateway_route_id;
-    }
-    return static_cast<std::uint16_t>(0xFFFF);
-  }
-
-  template <typename OrderT>
+  template <typename RequestT>
   [[nodiscard]] static detail::OrderRequestCorrelation MakeCorrelation(
-      OrderRequestType type, const OrderT& order,
+      OrderRequestType type, const RequestT& request,
       std::uint64_t expected_exchange_order_id) noexcept {
     return {.type = type,
-            .local_order_id = order.local_order_id,
-            .parent_id = ParentIdFor(order),
+            .local_order_id = request.local_order_id,
+            .parent_id = request.parent_id,
             .expected_exchange_order_id = expected_exchange_order_id,
-            .route_id = RouteIdFor(order)};
+            .route_id = request.gateway_route_id};
   }
 
-  template <typename OrderT>
   [[nodiscard]] std::uint64_t ExchangeOrderIdForCancel(
-      const OrderT& order) const noexcept {
+      const core::OrderCancelRequest& request) const noexcept {
     const std::uint64_t cached =
-        exchange_order_id_for_local_order(order.local_order_id);
-    if (cached != 0) {
-      return cached;
-    }
-    if constexpr (requires { order.exchange_order_id; }) {
-      return order.exchange_order_id;
-    }
-    return 0;
+        exchange_order_id_for_local_order(request.local_order_id);
+    return cached;
   }
 
   websocket::ConnectionConfig connection_;

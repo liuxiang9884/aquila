@@ -3,7 +3,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <limits>
 #include <optional>
 #include <string>
@@ -26,6 +25,8 @@ struct DemoStrategyConfig {
   std::int32_t symbol_id{0};
   std::uint32_t wait_seconds{1};
   std::uint32_t rounds{1};
+  std::uint8_t price_decimal_places{1};
+  std::uint8_t quantity_decimal_places{0};
 };
 
 enum class DemoStrategyState : std::uint8_t {
@@ -160,20 +161,19 @@ class DemoStrategy {
       return;
     }
 
-    buy_price_texts_.push_back(fmt::format("{:.12g}", ticker.ask_price));
-    const std::string_view price_text = buy_price_texts_.back();
-    const core::OrderPlaceResult placed =
-        context.PlaceLimitOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
-            .symbol_id = config_.symbol_id,
-            .symbol = config_.contract,
-            .side = OrderSide::kBuy,
-            .time_in_force = TimeInForce::kGoodTillCancel,
-            .quantity = kQuantity,
-            .quantity_text = kQuantityText,
-            .price_text = price_text,
-            .reduce_only = false,
-        });
+    core::OrderPlaceRequest request{
+        .price = ticker.ask_price,
+        .quantity = kQuantity,
+        .symbol_id = config_.symbol_id,
+        .exchange = Exchange::kGate,
+        .side = OrderSide::kBuy,
+        .time_in_force = TimeInForce::kGoodTillCancel,
+        .price_decimal_places = config_.price_decimal_places,
+        .quantity_decimal_places = config_.quantity_decimal_places,
+        .reduce_only = false,
+    };
+    core::SetOrderSymbol(&request, config_.contract);
+    const core::OrderPlaceResult placed = context.PlaceLimitOrder(request);
     if (placed.status != core::OrderPlaceStatus::kOk) {
       state_ = DemoStrategyState::kError;
       return;
@@ -250,7 +250,6 @@ class DemoStrategy {
   using Clock = std::chrono::steady_clock;
 
   static constexpr std::int64_t kQuantity = 1;
-  static constexpr std::string_view kQuantityText = "1";
 
   template <typename ContextT>
   void CheckDeadline(ContextT& context) noexcept {
@@ -323,8 +322,8 @@ class DemoStrategy {
 
   template <typename ContextT>
   void SubmitCancel(ContextT& context) noexcept {
-    const core::OrderCancelResult cancelled =
-        context.CancelOrder(buy_local_order_id_);
+    const core::OrderCancelResult cancelled = context.CancelOrder(
+        core::OrderCancelRequest{.local_order_id = buy_local_order_id_});
     if (cancelled.status != core::OrderCancelStatus::kOk) {
       state_ = DemoStrategyState::kError;
       return;
@@ -334,18 +333,19 @@ class DemoStrategy {
 
   template <typename ContextT>
   void SubmitClose(ContextT& context) noexcept {
-    const core::OrderPlaceResult placed =
-        context.PlaceLimitOrder(core::OrderCreateRequest{
-            .exchange = Exchange::kGate,
-            .symbol_id = config_.symbol_id,
-            .symbol = config_.contract,
-            .side = OrderSide::kSell,
-            .time_in_force = TimeInForce::kImmediateOrCancel,
-            .quantity = kQuantity,
-            .quantity_text = kQuantityText,
-            .price_text = market_price_text_,
-            .reduce_only = true,
-        });
+    core::OrderPlaceRequest request{
+        .price = 0.0,
+        .quantity = kQuantity,
+        .symbol_id = config_.symbol_id,
+        .exchange = Exchange::kGate,
+        .side = OrderSide::kSell,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .price_decimal_places = 0,
+        .quantity_decimal_places = config_.quantity_decimal_places,
+        .reduce_only = true,
+    };
+    core::SetOrderSymbol(&request, config_.contract);
+    const core::OrderPlaceResult placed = context.PlaceLimitOrder(request);
     if (placed.status != core::OrderPlaceStatus::kOk) {
       state_ = DemoStrategyState::kError;
       return;
@@ -369,9 +369,6 @@ class DemoStrategy {
   std::uint64_t buy_local_order_id_{0};
   std::uint64_t close_local_order_id_{0};
   Clock::time_point wait_deadline_{};
-  // Keeps buy price buffers stable for OrderManager string_views.
-  std::deque<std::string> buy_price_texts_;
-  std::string market_price_text_{"0"};
 };
 
 }  // namespace aquila::tools::gate_demo_strategy

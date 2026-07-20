@@ -53,12 +53,12 @@ OrderGatewayShmConfig MakeOpenConfig(
 OrderGatewayCommand MakeCommand(std::uint64_t command_seq) {
   OrderGatewayCommand command{};
   command.command_seq = command_seq;
-  command.parent_id = 1000 + command_seq;
-  command.local_order_id = 2000 + command_seq;
-  command.route_id = 2;
+  command.payload.place.parent_id = 1000 + command_seq;
+  command.payload.place.local_order_id = 2000 + command_seq;
+  command.payload.place.gateway_route_id = 2;
   command.kind = OrderGatewayCommandKind::kPlace;
-  command.symbol_id = 42;
-  command.quantity = 3.5;
+  command.payload.place.symbol_id = 42;
+  command.payload.place.quantity = 3.5;
   return command;
 }
 
@@ -199,9 +199,11 @@ TEST(OrderGatewayShmTest, CommandQueuePushPopOneCommand) {
   OrderGatewayCommand actual{};
   ASSERT_TRUE(create_result.value.CommandQueue(2).TryPop(&actual));
   EXPECT_EQ(actual.command_seq, expected.command_seq);
-  EXPECT_EQ(actual.parent_id, expected.parent_id);
-  EXPECT_EQ(actual.local_order_id, expected.local_order_id);
-  EXPECT_EQ(actual.route_id, expected.route_id);
+  EXPECT_EQ(actual.payload.place.parent_id, expected.payload.place.parent_id);
+  EXPECT_EQ(actual.payload.place.local_order_id,
+            expected.payload.place.local_order_id);
+  EXPECT_EQ(actual.payload.place.gateway_route_id,
+            expected.payload.place.gateway_route_id);
   EXPECT_FALSE(create_result.value.CommandQueue(2).TryPop(&actual));
 }
 

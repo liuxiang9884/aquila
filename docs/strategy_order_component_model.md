@@ -139,8 +139,8 @@ bool ShouldStop() const noexcept;
 `StrategyContext` 是窄接口：
 
 ```cpp
-OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept;
-OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept;
+OrderPlaceResult PlaceLimitOrder(OrderPlaceRequest request) noexcept;
+OrderCancelResult CancelOrder(const OrderCancelRequest& request) noexcept;
 const StrategyOrder* FindOrder(std::uint64_t local_order_id) const noexcept;
 ```
 
@@ -166,8 +166,8 @@ const StrategyOrder* FindOrder(std::uint64_t local_order_id) const noexcept;
 接口：
 
 ```cpp
-OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept;
-OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept;
+OrderPlaceResult PlaceLimitOrder(OrderPlaceRequest request) noexcept;
+OrderCancelResult CancelOrder(OrderCancelRequest request) noexcept;
 void OnOrderResponse(const OrderResponseEvent& event) noexcept;
 void OnOrderFeedback(const OrderFeedbackEvent& event) noexcept;
 const StrategyOrder* FindOrder(std::uint64_t local_order_id) const noexcept;
@@ -178,8 +178,8 @@ bool feedback_continuity_lost_detected() const noexcept;
 gateway contract：
 
 ```cpp
-OrderSendResult PlaceOrder(const StrategyOrder& order) noexcept;
-OrderSendResult CancelOrder(const StrategyOrder& order) noexcept;
+OrderSendResult PlaceOrder(const OrderPlaceRequest& request) noexcept;
+OrderSendResult CancelOrder(const OrderCancelRequest& request) noexcept;
 void CacheExchangeOrderId(std::uint64_t local_order_id,
                           std::uint64_t exchange_order_id) noexcept;
 void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
@@ -194,7 +194,7 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 
 2026-06-30 已落地两种 gateway 形态：`exchange/gate/trading/multi_order_session_gateway.h` 是单进程
 `1 thread : n OrderSession` baseline；`core/trading/order_gateway_client.h` + `tools/gate/gate_order_gateway.cpp`
-是独立 `order-gateway-process` / SHM V1。LeadLag live-orders 已能通过 `[strategy.order_gateway]` 选择
+是独立 `order-gateway-process` / SHM V3。LeadLag live-orders 已能通过 `[strategy.order_gateway]` 选择
 `OrderGatewayClient`，并通过 `order_session_fanout` 生成多个 child order。Bitget 已完成 fanout=1 gateway passive IOC live smoke；
 四路 gateway 当前只有代码、自动测试和 validate-only 证据，仍不宣称四路成交率或延迟收益。
 
@@ -278,18 +278,28 @@ OrderFeedbackSession
   -> TradingRuntime feedback reader
 ```
 
-## Quantity Contract
+## Order request numeric contract
 
-当前 order quantity contract：
+当前 place contract：
 
 ```text
-double quantity + quantity_text
+char symbol[32]
+double price + price_decimal_places
+double quantity + quantity_decimal_places
 ```
 
-- strategy / risk 使用 `double` 做数量和 notional 计算。
-- adapter / exchange encoder 使用已按 instrument metadata 格式化的 `quantity_text`。
-- decimal-size Gate contract 通过 `quantity_text` 编码真实下单字段。
+- Strategy / risk 使用 `double` 做价格、数量和 notional 计算。
+- decimal places 从 lag instrument metadata 复制到 `OrderPlaceRequest`，不在下单热路径推导。
+- Direct Gateway、SHM Gateway 与 `OrderSession` 共享同一个 `OrderPlaceRequest`；SHM envelope
+  只增加 command sequence、enqueue timestamp 和 command kind。
+- exchange encoder 在 `OrderSession` 内生成 fixed decimal text 并直接写最终 JSON buffer；
+  Strategy、`StrategyOrder` 和 Gateway SHM 不保存 price/quantity text。
+- decimal-size Gate contract 在 `OrderSession` 把最终 `size` text 编码为 JSON string。
 - feedback event / SHM / `OrderManager` 使用 `double` 表示累计成交、剩余和撤单数量。
+
+cancel contract 是只含 `local_order_id`、`parent_id` 和 route 的
+`OrderCancelRequest`。Gate/Bitget `OrderSession` 使用自己的 local-to-exchange order id
+cache；cache miss 分别沿用 Gate `t-<local_order_id>` 与 Bitget `clientOid` fallback。
 
 ## 延迟字段
 

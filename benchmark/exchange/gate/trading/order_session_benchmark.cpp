@@ -5,9 +5,12 @@
 #include <array>
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <benchmark/benchmark.h>
@@ -15,9 +18,11 @@
 
 #include "benchmark/websocket/benchmark_support.h"
 #include "benchmark/websocket/io_benchmark_support.h"
+#include "core/trading/order_gateway_shm.h"
 #include "core/trading/order_manager.h"
 #include "core/trading/strategy_context.h"
 #include "core/websocket/message_view.h"
+#include "exchange/gate/trading/order_gateway_worker.h"
 #include "exchange/gate/trading/order_request_encoder.h"
 #include "exchange/gate/trading/order_session.h"
 #include "exchange/gate/trading/submit_response_parser.h"
@@ -89,6 +94,17 @@ constexpr std::string_view kPlaceResult = R"json({
     }
   }
 })json";
+
+struct ShmCleanup {
+  explicit ShmCleanup(std::string shm_name_in)
+      : shm_name(std::move(shm_name_in)) {}
+
+  ~ShmCleanup() {
+    ::shm_unlink(shm_name.c_str());
+  }
+
+  std::string shm_name;
+};
 
 struct CountingHandler {
   std::uint64_t responses{0};
@@ -403,28 +419,35 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
   return config;
 }
 
-struct BenchOrder {
-  std::uint64_t local_order_id{0};
-  std::string_view symbol{};
-  OrderSide side{OrderSide::kBuy};
-  double quantity{0.0};
-  std::string_view quantity_text{};
-  std::string_view price_text{};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::uint64_t exchange_order_id{0};
-  bool reduce_only{false};
-};
+[[nodiscard]] core::OrderGatewayShmConfig MakeOrderGatewayShmConfig() {
+  return core::OrderGatewayShmConfig{
+      .shm_name =
+          fmt::format("/aquila_gate_order_gateway_bench_{}", ::getpid()),
+      .create = true,
+      .remove_existing = true,
+      .route_count = 1,
+      .command_queue_capacity =
+          static_cast<std::uint32_t>(kOrderSendLatencyIterations + 2),
+      .event_queue_capacity =
+          static_cast<std::uint32_t>(kOrderSendLatencyIterations + 2),
+      .startup_ready_timeout_s = 30,
+  };
+}
 
-BenchOrder MakePlaceOrder() noexcept {
-  return BenchOrder{.local_order_id = kLocalOrderId,
-                    .symbol = "BTC_USDT",
-                    .side = OrderSide::kBuy,
-                    .quantity = 1.0,
-                    .quantity_text = "1",
-                    .price_text = "81000",
-                    .time_in_force = TimeInForce::kGoodTillCancel,
-                    .exchange_order_id = 0,
-                    .reduce_only = false};
+core::OrderPlaceRequest MakePlaceOrder() noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = kLocalOrderId,
+      .price = 81000.0,
+      .quantity = 1.0,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
 template <typename Session>
@@ -453,35 +476,51 @@ bool ActivateLoginOnly(Session& session,
          session.login_ready();
 }
 
-[[nodiscard]] constexpr core::OrderCreateRequest
-MakeGateLimitRequest() noexcept {
-  return core::OrderCreateRequest{.exchange = Exchange::kGate,
-                                  .symbol_id = 7,
-                                  .symbol = "BTC_USDT",
-                                  .side = OrderSide::kBuy,
-                                  .time_in_force = TimeInForce::kGoodTillCancel,
-                                  .quantity = 1.0,
-                                  .quantity_text = "1",
-                                  .price_text = "81000",
-                                  .reduce_only = false};
-}
-
-[[nodiscard]] constexpr core::StrategyOrder MakeStrategyPlaceOrder(
-    std::uint64_t local_order_id) noexcept {
-  return core::StrategyOrder{
-      .local_order_id = local_order_id,
-      .exchange_order_id = 0,
-      .exchange = Exchange::kGate,
-      .symbol_id = 7,
-      .symbol = "BTC_USDT",
-      .side = OrderSide::kBuy,
-      .type = OrderType::kLimit,
-      .time_in_force = TimeInForce::kGoodTillCancel,
+[[nodiscard]] core::OrderPlaceRequest MakeGateLimitRequest() noexcept {
+  core::OrderPlaceRequest request{
+      .price = 81000.0,
       .quantity = 1.0,
-      .quantity_text = "1",
-      .price_text = "81000",
+      .symbol_id = 7,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
       .reduce_only = false,
   };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
+}
+
+[[nodiscard]] core::OrderPlaceRequest MakeStrategyPlaceOrder(
+    std::uint64_t local_order_id) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .price = 81000.0,
+      .quantity = 1.0,
+      .symbol_id = 7,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
+}
+
+[[nodiscard]] core::OrderGatewayCommand MakePlaceCommand(
+    std::uint64_t local_order_id) noexcept {
+  core::OrderGatewayCommand command{};
+  command.kind = core::OrderGatewayCommandKind::kPlace;
+  command.command_seq = local_order_id;
+  command.payload.place = MakeStrategyPlaceOrder(local_order_id);
+  command.payload.place.parent_id = 1;
+  command.payload.place.gateway_route_id = 0;
+  command.payload.place.time_in_force = TimeInForce::kImmediateOrCancel;
+  return command;
 }
 
 bool FormatPlaceResultPayload(std::uint64_t sequence,
@@ -501,17 +540,9 @@ bool FormatPlaceResultPayload(std::uint64_t sequence,
 
 void BM_EncodePlaceOrder(benchmark::State& state) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = kTimestamp,
-      .encoded_request_id = kPlaceRequestId,
-      .local_order_id = kLocalOrderId,
-      .contract = "BTC_USDT",
-      .signed_size_text = "1",
-      .price_text = "81000",
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = false,
-  };
-  const EncodedTextRequest sample = EncodePlaceOrderRequest(fields, buffer);
+  const core::OrderPlaceRequest request = MakePlaceOrder();
+  const EncodedTextRequest sample = EncodePlaceOrderRequest(
+      request, kTimestamp, kPlaceRequestId, false, buffer);
   if (sample.status != OrderEncodeStatus::kOk) {
     state.SkipWithError("place order sample encode failed");
     return;
@@ -519,7 +550,8 @@ void BM_EncodePlaceOrder(benchmark::State& state) {
   const std::size_t encoded_size = sample.text.size();
 
   for (auto _ : state) {
-    const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+    const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+        request, kTimestamp, kPlaceRequestId, false, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       state.SkipWithError("place order encode failed");
       return;
@@ -534,13 +566,9 @@ void BM_EncodePlaceOrder(benchmark::State& state) {
 
 void BM_EncodeCancelOrder(benchmark::State& state) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .timestamp = kTimestamp,
-      .encoded_request_id = kCancelRequestId,
-      .local_order_id = kLocalOrderId,
-      .exchange_order_id = kExchangeOrderId,
-  };
-  const EncodedTextRequest sample = EncodeCancelOrderRequest(fields, buffer);
+  const core::OrderCancelRequest request{.local_order_id = kLocalOrderId};
+  const EncodedTextRequest sample = EncodeCancelOrderRequest(
+      request, kExchangeOrderId, kTimestamp, kCancelRequestId, buffer);
   if (sample.status != OrderEncodeStatus::kOk) {
     state.SkipWithError("cancel order sample encode failed");
     return;
@@ -548,7 +576,8 @@ void BM_EncodeCancelOrder(benchmark::State& state) {
   const std::size_t encoded_size = sample.text.size();
 
   for (auto _ : state) {
-    const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+    const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+        request, kExchangeOrderId, kTimestamp, kCancelRequestId, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       state.SkipWithError("cancel order encode failed");
       return;
@@ -826,7 +855,7 @@ void RunOrderSessionPlaceOrderWriteBenchmark(benchmark::State& state,
   std::uint64_t local_order_id = kLocalOrderId;
 
   for (std::size_t i = 0; i < warmup_count; ++i) {
-    BenchOrder order = MakePlaceOrder();
+    core::OrderPlaceRequest order = MakePlaceOrder();
     order.local_order_id = local_order_id++;
     if (session.PlaceOrder(order).status != OrderSendStatus::kOk) {
       state.SkipWithError("order session warmup place order failed");
@@ -837,7 +866,7 @@ void RunOrderSessionPlaceOrderWriteBenchmark(benchmark::State& state,
   Transport::ResetStats();
 
   for (auto _ : state) {
-    BenchOrder order = MakePlaceOrder();
+    core::OrderPlaceRequest order = MakePlaceOrder();
     order.local_order_id = local_order_id++;
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
@@ -975,7 +1004,7 @@ void BM_OrderSessionPlaceStrategyOrderToCountingTransport(
   std::uint64_t strategy_order_id = 1;
 
   for (auto _ : state) {
-    const core::StrategyOrder order =
+    const core::OrderPlaceRequest order =
         MakeStrategyPlaceOrder(strategy_order_id++);
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
@@ -1012,12 +1041,73 @@ void BM_StrategyContextPlaceLimitOrderToCountingTransportWarm(
       state, kOrderSendWarmupCount);
 }
 
+void BM_GatewayWorkerPlaceOrderToCountingTransport(benchmark::State& state) {
+  const core::OrderGatewayShmConfig shm_config = MakeOrderGatewayShmConfig();
+  ShmCleanup cleanup(shm_config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(shm_config);
+  if (!shm_result.ok) {
+    state.SkipWithError(shm_result.error.c_str());
+    return;
+  }
+  core::OrderGatewayShmManager& shm = shm_result.value;
+  for (std::uint64_t i = 0; i < kOrderSendLatencyIterations; ++i) {
+    if (!shm.CommandQueue(0).TryPush(MakePlaceCommand(i + 1))) {
+      state.SkipWithError("failed to prefill Gate gateway command queue");
+      return;
+    }
+  }
+
+  using Transport = CountingOrderTransport;
+  Transport::ResetStats();
+  CountingHandler handler;
+  using BenchOrderSession =
+      OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
+  BenchOrderSession session(
+      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
+      kOrderSendLatencyIterations + 2);
+  if (!ActivateLoginOnly(session, kLoginSuccess)) {
+    state.SkipWithError("Gate order session login setup failed");
+    return;
+  }
+  Transport::ResetStats();
+
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
+  OrderGatewayCommandWorker<BenchOrderSession> worker(0, shm.CommandQueue(0),
+                                                      session, publisher);
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kOrderSendLatencyIterations);
+
+  for (auto _ : state) {
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    const bool dispatched = worker.PollOnce();
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    if (!dispatched) {
+      state.SkipWithError("Gate gateway worker dispatch failed");
+      return;
+    }
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
+  const SocketPairWriteStats stats = Transport::stats();
+  if (stats.invalid_writes != 0 ||
+      stats.write_calls != static_cast<std::uint64_t>(state.iterations())) {
+    state.SkipWithError("Gate gateway worker write count mismatch");
+  }
+  state.counters["bytes_sent"] = static_cast<double>(stats.bytes_sent);
+}
+
 BENCHMARK(BM_EncodePlaceOrder);
 BENCHMARK(BM_EncodeCancelOrder);
 BENCHMARK(BM_ParsePlaceResult);
 BENCHMARK(BM_ParsePlaceResultForOrderSession);
 BENCHMARK(BM_OrderSessionHandlePlaceAck);
-BENCHMARK(BM_OrderSessionHandlePlaceResult);
+BENCHMARK(BM_OrderSessionHandlePlaceResult)
+    ->Iterations(kOrderSendLatencyIterations);
 BENCHMARK(BM_OrderSessionPlaceOrderToSocketPair)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()
@@ -1043,6 +1133,10 @@ BENCHMARK(BM_StrategyContextPlaceLimitOrderToCountingTransport)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_StrategyContextPlaceLimitOrderToCountingTransportWarm)
+    ->Iterations(kOrderSendLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_GatewayWorkerPlaceOrderToCountingTransport)
     ->Iterations(kOrderSendLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

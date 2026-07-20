@@ -1,7 +1,9 @@
 #ifndef AQUILA_CORE_TRADING_ORDER_TYPES_H_
 #define AQUILA_CORE_TRADING_ORDER_TYPES_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string_view>
 
 #include "core/common/types.h"
@@ -46,37 +48,46 @@ enum class OrderResponseKind : std::uint8_t {
 
 inline constexpr std::uint16_t kAutoGatewayRoute =
     static_cast<std::uint16_t>(0xFFFF);
+inline constexpr std::size_t kOrderSymbolBytes = 32;
 
-struct OrderCreateRequest {
+struct OrderPlaceRequest {
+  std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
-  Exchange exchange{Exchange::kGate};
+  double price{0.0};
+  double quantity{0.0};
   std::int32_t symbol_id{0};
-  std::string_view symbol{};
+  std::uint16_t gateway_route_id{kAutoGatewayRoute};
+  Exchange exchange{Exchange::kGate};
   OrderSide side{OrderSide::kBuy};
   OrderType order_type{OrderType::kLimit};
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  double quantity{0.0};
-  std::string_view quantity_text{};
-  std::string_view price_text{};
+  std::uint8_t symbol_size{0};
+  std::uint8_t price_decimal_places{0};
+  std::uint8_t quantity_decimal_places{0};
   bool reduce_only{false};
+  char symbol[kOrderSymbolBytes]{};
+
+  [[nodiscard]] std::string_view SymbolView() const noexcept {
+    return std::string_view(symbol, symbol_size);
+  }
+};
+
+inline void SetOrderSymbol(OrderPlaceRequest* request,
+                           std::string_view symbol) noexcept {
+  // Precondition: validated instrument symbols fit in kOrderSymbolBytes.
+  std::memcpy(request->symbol, symbol.data(), symbol.size());
+  request->symbol_size = static_cast<std::uint8_t>(symbol.size());
+}
+
+struct OrderCancelRequest {
+  std::uint64_t local_order_id{0};
+  std::uint64_t parent_id{0};
   std::uint16_t gateway_route_id{kAutoGatewayRoute};
 };
 
 struct StrategyOrder {
-  std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  OrderPlaceRequest place_request{};
   std::uint64_t exchange_order_id{0};
-  Exchange exchange{Exchange::kGate};
-  std::int32_t symbol_id{0};
-  std::string_view symbol{};
-  OrderSide side{OrderSide::kBuy};
-  OrderType type{OrderType::kLimit};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  double quantity{0.0};
-  std::string_view quantity_text{};
-  std::string_view price_text{};
-  bool reduce_only{false};
-  std::uint16_t gateway_route_id{kAutoGatewayRoute};
   OrderStatus status{OrderStatus::kCreated};
   OrderStatus pre_cancel_status{OrderStatus::kCreated};
   double cumulative_filled_quantity{0.0};

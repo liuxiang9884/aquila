@@ -124,11 +124,11 @@ struct NullOrderSession {
     return running;
   }
 
-  SendResult PlaceOrder(core::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     return {};
   }
 
@@ -697,9 +697,7 @@ int RunLiveOrdersOrderGatewayRuntime(LoadedConfig loaded) {
       ToOrderGatewayClientConfig(loaded.order_gateway);
   auto runtime_result = Runtime::Create(
       std::move(loaded.strategy), std::move(loaded.data_reader),
-      [client_config] {
-        return OpenOrderGatewayClientOrThrow(client_config);
-      },
+      [client_config] { return OpenOrderGatewayClientOrThrow(client_config); },
       std::move(loaded.lead_lag), &stats);
   if (!runtime_result.ok) {
     fmt::print(stderr, "[FAIL] runtime_create_error={}\n",

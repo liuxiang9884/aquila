@@ -3,11 +3,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -16,6 +18,7 @@
 #include <vector>
 
 #include <benchmark/benchmark.h>
+#include <fmt/format.h>
 
 #include "benchmark/strategy/lead_lag_benchmark_support.h"
 #include "benchmark/websocket/benchmark_support.h"
@@ -29,10 +32,16 @@
 #include "core/trading/order_manager.h"
 #include "core/trading/order_types.h"
 #include "core/trading/trading_runtime.h"
+#include "core/websocket/message_view.h"
 #include "core/websocket/runtime_clock.h"
+#include "exchange/bitget/trading/order_gateway_worker.h"
+#include "exchange/bitget/trading/order_session.h"
+#include "exchange/gate/trading/order_gateway_worker.h"
+#include "exchange/gate/trading/order_session.h"
 #include "strategy/lead_lag/config.h"
 #include "strategy/lead_lag/strategy.h"
 #include "strategy/lead_lag/strategy_test_hooks.h"
+#include <simdjson.h>
 
 namespace aquila::strategy::leadlag {
 namespace {
@@ -42,16 +51,31 @@ constexpr std::int32_t kSymbolId = 67;
 constexpr std::size_t kOrderCapacity = 64;
 constexpr std::uint16_t kFanout = 4;
 constexpr std::size_t kLatencyIterations = 4096;
+constexpr std::size_t kSubmitBreakdownIterations = 1024;
 constexpr std::size_t kGatewayQueueCapacity = kLatencyIterations + 128;
 constexpr std::string_view kSymbol = "BAS_USDT";
-constexpr std::string_view kQuantityText = "1";
-constexpr std::string_view kPriceText = "0.052045";
 constexpr std::string_view kActualLiveLeadLagConfigPath =
     "config/strategies/"
     "lead_lag_30symbols_fusion_2bps_2bps_5bps_lag200_order_gateway_20260701."
     "toml";
 constexpr std::string_view kActualLiveInstrumentCatalogPath =
     "config/instruments/usdt_future_universe.csv";
+constexpr std::string_view kGateLoginSuccess = R"json({
+  "request_id": "72057594037927937",
+  "ack": false,
+  "header": {
+    "status": "200",
+    "channel": "futures.login",
+    "event": "api"
+  },
+  "data": {
+    "result": {
+      "uid": "1"
+    }
+  }
+})json";
+constexpr std::string_view kBitgetLoginSuccess =
+    R"({"event":"login","code":"0","msg":""})";
 
 struct LiveSymbolSpec {
   std::string_view symbol;
@@ -70,6 +94,337 @@ constexpr std::array<LiveSymbolSpec, 30> kLiveSymbolSpecs{{
     {"XLM_USDT", 467},    {"GWEI_USDT", 196}, {"NEAR_USDT", 293},
     {"AGLD_USDT", 12},    {"UNI_USDT", 440},  {"BCH_USDT", 70},
 }};
+
+struct E2ETransportStats {
+  std::uint64_t invalid_writes{0};
+  std::uint64_t write_calls{0};
+  std::uint64_t bytes_sent{0};
+  std::int64_t last_write_ns{0};
+};
+
+thread_local std::int64_t e2e_order_session_place_entry_ns = 0;
+
+class E2ECountingOrderTransport {
+ public:
+  static constexpr bool kUsesTls = false;
+
+  bool Init() noexcept {
+    wants_read_ = false;
+    wants_write_ = false;
+    return true;
+  }
+
+  bool OpenAndConnect(const websocket::ConnectionConfig&) noexcept {
+    return Init();
+  }
+
+  bool FinishHandshake() noexcept {
+    return true;
+  }
+
+  ssize_t ReadSome(std::span<std::byte>) noexcept {
+    wants_read_ = true;
+    wants_write_ = false;
+    errno = EAGAIN;
+    return -1;
+  }
+
+  [[nodiscard]] std::size_t PendingReadableBytes() const noexcept {
+    return 0;
+  }
+
+  ssize_t WriteSome(std::span<const std::byte> buffer) noexcept {
+    wants_read_ = false;
+    wants_write_ = false;
+    if (buffer.empty()) {
+      ++stats_.invalid_writes;
+      errno = EINVAL;
+      return -1;
+    }
+    ++stats_.write_calls;
+    stats_.bytes_sent += static_cast<std::uint64_t>(buffer.size());
+    stats_.last_write_ns = benchmarking::RealtimeNowNs();
+    return static_cast<ssize_t>(buffer.size());
+  }
+
+  [[nodiscard]] bool WantsRead() const noexcept {
+    return wants_read_;
+  }
+
+  [[nodiscard]] bool WantsWrite() const noexcept {
+    return wants_write_;
+  }
+
+  [[nodiscard]] int NativeFd() const noexcept {
+    return -1;
+  }
+
+  void Close() noexcept {
+    wants_read_ = false;
+    wants_write_ = false;
+  }
+
+  static void ResetStats() noexcept {
+    stats_ = {};
+  }
+
+  [[nodiscard]] static E2ETransportStats stats() noexcept {
+    return stats_;
+  }
+
+ private:
+  bool wants_read_{false};
+  bool wants_write_{false};
+
+  inline static E2ETransportStats stats_{};
+};
+
+struct E2EOrderWebSocketPolicy : websocket::DefaultWebSocketOptions {
+  using TransportSocket = E2ECountingOrderTransport;
+};
+
+[[nodiscard]] websocket::ConnectionConfig GateE2EConnectionConfig() {
+  websocket::ConnectionConfig config{};
+  config.host = "localhost";
+  config.port = "80";
+  config.target = "/v4/ws/usdt";
+  config.prepared_write_slots = 8;
+  config.prepared_write_bytes = 4096;
+  return config;
+}
+
+[[nodiscard]] websocket::ConnectionConfig BitgetE2EConnectionConfig() {
+  websocket::ConnectionConfig config{};
+  config.host = "localhost";
+  config.port = "80";
+  config.target = "/v3/ws/private";
+  config.enable_tls = false;
+  config.prepared_write_slots = 8;
+  config.prepared_write_bytes = 4096;
+  return config;
+}
+
+template <std::size_t N>
+[[nodiscard]] websocket::MessageView PaddedTextView(
+    std::string_view payload, std::array<char, N>* storage) noexcept {
+  static_assert(N >= simdjson::SIMDJSON_PADDING);
+  if (payload.size() > N - simdjson::SIMDJSON_PADDING) {
+    return {};
+  }
+  std::memcpy(storage->data(), payload.data(), payload.size());
+  return {
+      .kind = websocket::PayloadKind::kText,
+      .payload = std::as_bytes(std::span(storage->data(), payload.size())),
+      .sequence = 1,
+      .fin = true,
+      .readable_tail_bytes = simdjson::SIMDJSON_PADDING,
+  };
+}
+
+struct GateE2EResponseHandler {
+  void OnOrderResponse(const gate::OrderResponse&) noexcept {}
+};
+
+class GateE2EOrderSession {
+ public:
+  using Session =
+      gate::OrderSession<GateE2EResponseHandler, E2EOrderWebSocketPolicy>;
+
+  GateE2EOrderSession()
+      : handler_(std::make_unique<GateE2EResponseHandler>()),
+        session_(std::make_unique<Session>(
+            GateE2EConnectionConfig(),
+            gate::LoginCredentials{.api_key = "key", .api_secret = "secret"},
+            *handler_, kOrderCapacity)) {
+    session_->OnConnectionPhase(websocket::ConnectionPhase::kActive);
+    std::array<char, 512 + simdjson::SIMDJSON_PADDING> payload{};
+    ready_ = session_->Handle(PaddedTextView(kGateLoginSuccess, &payload)) ==
+                 websocket::DeliveryResult::kAccepted &&
+             session_->login_ready();
+  }
+
+  GateE2EOrderSession(GateE2EOrderSession&&) noexcept = default;
+  GateE2EOrderSession& operator=(GateE2EOrderSession&&) noexcept = default;
+  GateE2EOrderSession(const GateE2EOrderSession&) = delete;
+  GateE2EOrderSession& operator=(const GateE2EOrderSession&) = delete;
+
+  [[nodiscard]] bool Ready() const noexcept {
+    return ready_;
+  }
+
+  [[nodiscard]] bool WarmPlaceOrder() noexcept {
+    core::OrderPlaceRequest request{
+        .local_order_id = 9'000'001,
+        .price = 0.052045,
+        .quantity = 192.0,
+        .exchange = Exchange::kGate,
+        .side = OrderSide::kBuy,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .price_decimal_places = 6,
+        .quantity_decimal_places = 0,
+    };
+    core::SetOrderSymbol(&request, "BAS_USDT");
+    std::array<char, gate::kPlaceOrderRequestBufferSize> buffer;
+    for (std::uint64_t sequence = 1; sequence <= 64; ++sequence) {
+      if (gate::EncodePlaceOrderRequest(request, 0, sequence, false, buffer)
+              .status != gate::OrderEncodeStatus::kOk) {
+        return false;
+      }
+    }
+    return session_->PlaceOrder(request).status == gate::OrderSendStatus::kOk;
+  }
+
+  gate::OrderSendResult PlaceOrder(
+      const core::OrderPlaceRequest& request) noexcept {
+    e2e_order_session_place_entry_ns = benchmarking::RealtimeNowNs();
+    return session_->PlaceOrder(request);
+  }
+
+  gate::OrderSendResult CancelOrder(
+      const core::OrderCancelRequest& request) noexcept {
+    return session_->CancelOrder(request);
+  }
+
+  void CacheExchangeOrderId(std::uint64_t local_order_id,
+                            std::uint64_t exchange_order_id) noexcept {
+    session_->CacheExchangeOrderId(local_order_id, exchange_order_id);
+  }
+
+  void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept {
+    session_->ForgetExchangeOrderId(local_order_id);
+  }
+
+ private:
+  std::unique_ptr<GateE2EResponseHandler> handler_;
+  std::unique_ptr<Session> session_;
+  bool ready_{false};
+};
+
+struct BitgetE2EResponseHandler {
+  void OnOrderResponse(const bitget::OrderResponse&) noexcept {}
+};
+
+class BitgetE2EOrderSession {
+ public:
+  using Session =
+      bitget::OrderSession<BitgetE2EResponseHandler, E2EOrderWebSocketPolicy>;
+
+  BitgetE2EOrderSession()
+      : handler_(std::make_unique<BitgetE2EResponseHandler>()),
+        session_(std::make_unique<Session>(
+            BitgetE2EConnectionConfig(),
+            bitget::LoginCredentials{.api_key = "key",
+                                     .api_secret = "secret",
+                                     .passphrase = "phrase"},
+            *handler_, kOrderCapacity, kOrderCapacity)) {
+    session_->OnConnectionPhase(websocket::ConnectionPhase::kActive);
+    std::array<char, 128 + simdjson::SIMDJSON_PADDING> payload{};
+    ready_ = session_->Handle(PaddedTextView(kBitgetLoginSuccess, &payload)) ==
+                 websocket::DeliveryResult::kAccepted &&
+             session_->Ready();
+  }
+
+  BitgetE2EOrderSession(BitgetE2EOrderSession&&) noexcept = default;
+  BitgetE2EOrderSession& operator=(BitgetE2EOrderSession&&) noexcept = default;
+  BitgetE2EOrderSession(const BitgetE2EOrderSession&) = delete;
+  BitgetE2EOrderSession& operator=(const BitgetE2EOrderSession&) = delete;
+
+  [[nodiscard]] bool Ready() const noexcept {
+    return ready_;
+  }
+
+  [[nodiscard]] bool WarmPlaceOrder() noexcept {
+    core::OrderPlaceRequest request{
+        .local_order_id = 9'000'002,
+        .price = 0.052045,
+        .quantity = 192.0,
+        .exchange = Exchange::kBitget,
+        .side = OrderSide::kBuy,
+        .order_type = OrderType::kLimit,
+        .time_in_force = TimeInForce::kImmediateOrCancel,
+        .price_decimal_places = 6,
+        .quantity_decimal_places = 0,
+    };
+    core::SetOrderSymbol(&request, "BASUSDT");
+    std::array<char, bitget::kPlaceOrderRequestBufferSize> buffer;
+    for (std::uint64_t sequence = 1; sequence <= 64; ++sequence) {
+      if (bitget::EncodePlaceOrderRequest(request, sequence, buffer).status !=
+          bitget::OrderEncodeStatus::kOk) {
+        return false;
+      }
+    }
+    return session_->PlaceOrder(request).status == bitget::OrderSendStatus::kOk;
+  }
+
+  bitget::OrderSendResult PlaceOrder(
+      const core::OrderPlaceRequest& request) noexcept {
+    e2e_order_session_place_entry_ns = benchmarking::RealtimeNowNs();
+    return session_->PlaceOrder(request);
+  }
+
+  bitget::OrderSendResult CancelOrder(
+      const core::OrderCancelRequest& request) noexcept {
+    return session_->CancelOrder(request);
+  }
+
+  void CacheExchangeOrderId(std::uint64_t local_order_id,
+                            std::uint64_t exchange_order_id) noexcept {
+    session_->CacheExchangeOrderId(local_order_id, exchange_order_id);
+  }
+
+  void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept {
+    session_->ForgetExchangeOrderId(local_order_id);
+  }
+
+ private:
+  std::unique_ptr<BitgetE2EResponseHandler> handler_;
+  std::unique_ptr<Session> session_;
+  bool ready_{false};
+};
+
+class E2EShmCleanup {
+ public:
+  explicit E2EShmCleanup(std::string shm_name)
+      : shm_name_(std::move(shm_name)) {}
+
+  ~E2EShmCleanup() {
+    ::shm_unlink(shm_name_.c_str());
+  }
+
+  E2EShmCleanup(const E2EShmCleanup&) = delete;
+  E2EShmCleanup& operator=(const E2EShmCleanup&) = delete;
+
+ private:
+  std::string shm_name_;
+};
+
+template <typename OrderSessionT>
+struct E2EExchangeTraits;
+
+template <>
+struct E2EExchangeTraits<GateE2EOrderSession> {
+  using Publisher = gate::OrderGatewayWorkerPublisher;
+  using Worker = gate::OrderGatewayCommandWorker<GateE2EOrderSession>;
+};
+
+template <>
+struct E2EExchangeTraits<BitgetE2EOrderSession> {
+  using Publisher = bitget::OrderGatewayWorkerPublisher;
+  using Worker = bitget::OrderGatewayCommandWorker<BitgetE2EOrderSession>;
+};
+
+void EnsureE2ELoggingInitialized() {
+  static const bool initialized = [] {
+    nova::LogConfig config;
+    config.set_console_sink_name("");
+    config.set_file_sink_name("/dev/null");
+    config.set_log_level("critical");
+    nova::InitializeLogging(config);
+    return true;
+  }();
+  (void)initialized;
+}
 
 [[nodiscard]] std::uint64_t DeltaNs(std::int64_t start_ns,
                                     std::int64_t end_ns) noexcept {
@@ -153,50 +508,35 @@ SyntheticPositionLog() noexcept {
   };
 }
 
-[[nodiscard]] core::OrderCreateRequest SyntheticOrderRequest(
-    std::uint64_t parent_id = 1, std::uint16_t route_id = 0) noexcept {
-  return core::OrderCreateRequest{
+[[nodiscard]] core::OrderPlaceRequest SyntheticOrderRequest(
+    std::uint64_t local_order_id = 0, std::uint64_t parent_id = 1,
+    std::uint16_t route_id = 0) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
       .parent_id = parent_id,
-      .exchange = Exchange::kGate,
+      .price = 0.052045,
+      .quantity = 1.0,
       .symbol_id = kSymbolId,
-      .symbol = kSymbol,
+      .gateway_route_id = route_id,
+      .exchange = Exchange::kGate,
       .side = OrderSide::kBuy,
       .order_type = OrderType::kLimit,
       .time_in_force = TimeInForce::kImmediateOrCancel,
-      .quantity = 1.0,
-      .quantity_text = kQuantityText,
-      .price_text = kPriceText,
+      .price_decimal_places = 6,
+      .quantity_decimal_places = 0,
       .reduce_only = false,
-      .gateway_route_id = route_id,
   };
+  core::SetOrderSymbol(&request, kSymbol);
+  return request;
 }
 
-[[nodiscard]] core::StrategyOrder SyntheticStrategyOrder(
-    std::uint64_t local_order_id, std::uint64_t parent_id = 1,
-    std::uint16_t route_id = 0) noexcept {
-  return core::StrategyOrder{
-      .local_order_id = local_order_id,
-      .parent_id = parent_id,
-      .exchange = Exchange::kGate,
-      .symbol_id = kSymbolId,
-      .symbol = kSymbol,
-      .side = OrderSide::kBuy,
-      .type = OrderType::kLimit,
-      .time_in_force = TimeInForce::kImmediateOrCancel,
-      .quantity = 1.0,
-      .quantity_text = kQuantityText,
-      .price_text = kPriceText,
-      .reduce_only = false,
-      .gateway_route_id = route_id,
-  };
-}
-
-[[nodiscard]] std::array<core::StrategyOrder, kFanout> SyntheticFanoutOrders(
-    std::uint64_t first_local_order_id, std::uint64_t parent_id) noexcept {
-  std::array<core::StrategyOrder, kFanout> orders{};
+[[nodiscard]] std::array<core::OrderPlaceRequest, kFanout>
+SyntheticFanoutOrders(std::uint64_t first_local_order_id,
+                      std::uint64_t parent_id) noexcept {
+  std::array<core::OrderPlaceRequest, kFanout> orders{};
   for (std::uint16_t route = 0; route < kFanout; ++route) {
     orders[route] =
-        SyntheticStrategyOrder(first_local_order_id + route, parent_id, route);
+        SyntheticOrderRequest(first_local_order_id + route, parent_id, route);
   }
   return orders;
 }
@@ -329,13 +669,13 @@ struct SubmitStageSamples {
     PushDelta(
         &group_to_route0_acquire_begin,
         StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
-        RouteStageTimeNs(trace, StrategySubmitStageForTest::kBeforeAcquireText,
-                         0));
+        RouteStageTimeNs(
+            trace, StrategySubmitStageForTest::kBeforeAcquireRiskSlot, 0));
     PushDelta(&route0_acquire_text,
               RouteStageTimeNs(
-                  trace, StrategySubmitStageForTest::kBeforeAcquireText, 0),
+                  trace, StrategySubmitStageForTest::kBeforeAcquireRiskSlot, 0),
               RouteStageTimeNs(
-                  trace, StrategySubmitStageForTest::kAfterAcquireText, 0));
+                  trace, StrategySubmitStageForTest::kAfterAcquireRiskSlot, 0));
     PushDelta(&route0_place_order,
               RouteStageTimeNs(
                   trace, StrategySubmitStageForTest::kBeforePlaceOrder, 0),
@@ -502,18 +842,18 @@ struct InstrumentedOrderSession {
     return route_id < kFanout;
   }
 
-  SendResult PlaceOrder(const core::StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest& request) noexcept {
     const std::int64_t now_ns = benchmarking::RealtimeNowNs();
     if (state != nullptr && state->trace != nullptr &&
-        order.gateway_route_id < kFanout) {
-      state->trace->place_enter_ns[order.gateway_route_id] = now_ns;
+        request.gateway_route_id < kFanout) {
+      state->trace->place_enter_ns[request.gateway_route_id] = now_ns;
       ++state->trace->place_calls;
     }
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk, .send_local_ns = now_ns};
   }
 
-  SendResult CancelOrder(const core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk, .send_local_ns = 0};
   }
@@ -564,19 +904,19 @@ class InstrumentedOrderGatewayClient {
   }
 
   [[nodiscard]] core::OrderGatewaySendResult PlaceOrder(
-      const core::StrategyOrder& order) noexcept {
-    const core::OrderGatewaySendResult sent = client_.PlaceOrder(order);
+      const core::OrderPlaceRequest& request) noexcept {
+    const core::OrderGatewaySendResult sent = client_.PlaceOrder(request);
     if (sent.status == core::OrderGatewaySendStatus::kOk && trace_ != nullptr &&
-        order.gateway_route_id < kFanout) {
-      trace_->place_enter_ns[order.gateway_route_id] = sent.send_local_ns;
+        request.gateway_route_id < kFanout) {
+      trace_->place_enter_ns[request.gateway_route_id] = sent.send_local_ns;
       ++trace_->place_calls;
     }
     return sent;
   }
 
   [[nodiscard]] core::OrderGatewaySendResult CancelOrder(
-      const core::StrategyOrder& order) noexcept {
-    return client_.CancelOrder(order);
+      const core::OrderCancelRequest& request) noexcept {
+    return client_.CancelOrder(request);
   }
 
  private:
@@ -644,7 +984,10 @@ using InstrumentedOrderGatewayRuntime =
   return config;
 }
 
-[[nodiscard]] Config BenchmarkLeadLagConfig() {
+[[nodiscard]] Config BenchmarkLeadLagConfig(
+    Exchange lag_exchange = Exchange::kGate) {
+  const std::string exchange_symbol =
+      lag_exchange == Exchange::kBitget ? "BASUSDT" : std::string{kSymbol};
   Config config;
   config.name = "lead_lag";
   config.version = "1.0";
@@ -652,7 +995,7 @@ using InstrumentedOrderGatewayRuntime =
       .symbol = std::string{kSymbol},
       .symbol_id = kSymbolId,
       .lead_exchange = Exchange::kBinance,
-      .lag_exchange = Exchange::kGate,
+      .lag_exchange = lag_exchange,
       .lag_taker_fee = 0.0,
       .max_lead_freshness_ms = benchmarking::kWideFreshnessGuardMs,
       .max_lag_freshness_ms = benchmarking::kWideFreshnessGuardMs,
@@ -692,8 +1035,8 @@ using InstrumentedOrderGatewayRuntime =
       .lag_instrument =
           InstrumentMetadata{
               .symbol_id = kSymbolId,
-              .exchange = Exchange::kGate,
-              .exchange_symbol = std::string{kSymbol},
+              .exchange = lag_exchange,
+              .exchange_symbol = exchange_symbol,
               .price_tick = 0.000001,
               .price_decimal_places = 6,
               .quantity_step = 1.0,
@@ -852,10 +1195,11 @@ void NormalizeActualConfigForBenchmark(Config* config) noexcept {
 
 template <typename RuntimeT>
 [[nodiscard]] std::int64_t SeedBeforeOpenSignal(
-    RuntimeT& runtime, std::int32_t symbol_id = kSymbolId) noexcept {
+    RuntimeT& runtime, std::int32_t symbol_id = kSymbolId,
+    Exchange lag_exchange = Exchange::kGate) noexcept {
   const std::int64_t base_ns = benchmarking::RealtimeNowNs();
   runtime.HandleBookTickerForTest(
-      TickerFor(symbol_id, Exchange::kGate, base_ns, 0.052000, 0.052020));
+      TickerFor(symbol_id, lag_exchange, base_ns, 0.052000, 0.052020));
   runtime.HandleBookTickerForTest(TickerFor(
       symbol_id, Exchange::kBinance, base_ns + 1'000, 0.052000, 0.052010));
   return base_ns + 2'000;
@@ -1263,6 +1607,23 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewayActualConfigRiskOnBas(
   RunLeadLagSubmitPathBreakdownOrderGatewayConfig(state, config_result.value);
 }
 
+void BM_LeadLagCurrentGlobalRiskTotalsActualConfig(benchmark::State& state) {
+  ConfigResult config_result = LoadActualLiveConfigForBenchmark();
+  if (!config_result.ok) {
+    state.SkipWithError(config_result.error.c_str());
+    return;
+  }
+  Strategy strategy{std::move(config_result.value)};
+  RunManualLatencyBenchmark(
+      state,
+      [&] {
+        auto totals = strategy.CurrentGlobalRiskTotalsForTest();
+        benchmark::DoNotOptimize(totals.first);
+        benchmark::DoNotOptimize(totals.second);
+      },
+      "pairs", strategy.config().pairs.size());
+}
+
 void BM_LogStrategySignalTriggeredSynthetic(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
   const SignalTiming timing = SyntheticTiming();
@@ -1294,9 +1655,8 @@ void BM_LogStrategyOrderSubmittedSynthetic(benchmark::State& state) {
     detail::LogStrategyOrderSubmitted(
         local_order_id++, 1, 0, Exchange::kBinance, kSymbolId, timing, kSymbol,
         kSymbolId, PairRole::kLead, "entry", SignalAction::kOpenLong,
-        OrderSide::kBuy, false, position, 1.0, kQuantityText, 0.052035,
-        0.052045, kPriceText, 10, 0.000001, 10.0, 0.052045, 1,
-        core::OrderPlaceStatus::kOk);
+        OrderSide::kBuy, false, position, 1.0, 0.052035, 0.052045, 10, 0.000001,
+        10.0, 0.052045, 1, core::OrderPlaceStatus::kOk);
   });
 }
 
@@ -1307,9 +1667,8 @@ void BM_OrderDecimalPreparePriceQuantityAndTextSynthetic(
   constexpr double kRawPrice = 0.052035;
   constexpr double kPriceTick = 0.000001;
   constexpr double kOpenNotional = 10.0;
-  std::array<char, 32> price_text{};
-  std::array<char, 32> quantity_text{};
-
+  // Keep the historical benchmark name so before/after runs compare the same
+  // submit-path stage. The candidate intentionally removes text formatting.
   RunManualLatencyBenchmark(state, [&] {
     const double order_price = kRawPrice + 10.0 * kPriceTick;
     const auto price_units = static_cast<std::int64_t>(
@@ -1329,13 +1688,13 @@ void BM_OrderDecimalPreparePriceQuantityAndTextSynthetic(
             .min_quantity_units = 1,
             .max_quantity_units = 1'000'000,
         });
-    const std::string_view price =
-        core::FormatDecimalUnits(price_units, kPriceDecimalPlaces, price_text);
-    const std::string_view qty = core::FormatDecimalUnits(
-        quantity.quantity_units, kQuantityDecimalPlaces, quantity_text);
+    double price = static_cast<double>(price_units) /
+                   core::Pow10Int64(kPriceDecimalPlaces);
+    double qty = static_cast<double>(quantity.quantity_units) /
+                 core::Pow10Int64(kQuantityDecimalPlaces);
     std::int64_t quantity_units = quantity.quantity_units;
-    benchmark::DoNotOptimize(price.data());
-    benchmark::DoNotOptimize(qty.data());
+    benchmark::DoNotOptimize(price);
+    benchmark::DoNotOptimize(qty);
     benchmark::DoNotOptimize(quantity_units);
   });
 }
@@ -1351,15 +1710,15 @@ struct FakeOrderSession {
   std::uint64_t place_calls{0};
   std::uint64_t last_place_local_order_id{0};
 
-  SendResult PlaceOrder(const core::StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest& request) noexcept {
     ++place_calls;
-    last_place_local_order_id = order.local_order_id;
+    last_place_local_order_id = request.local_order_id;
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk,
             .send_local_ns = benchmarking::RealtimeNowNs()};
   }
 
-  SendResult CancelOrder(const core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     benchmark::ClobberMemory();
     return {.status = SendStatus::kOk, .send_local_ns = 0};
   }
@@ -1369,7 +1728,7 @@ void BM_OrderManagerPlaceSynthetic(benchmark::State& state) {
   FakeOrderSession session;
   core::OrderManager<FakeOrderSession> order_manager(
       session, kLatencyIterations + 8, kStrategyId);
-  const core::OrderCreateRequest request = SyntheticOrderRequest();
+  const core::OrderPlaceRequest request = SyntheticOrderRequest();
 
   RunManualLatencyBenchmark(
       state,
@@ -1489,25 +1848,11 @@ struct FanoutSubmitSamples {
   }
 };
 
-[[nodiscard]] bool CopyGatewayCommandText(std::string_view source, char* target,
-                                          std::size_t capacity,
-                                          std::uint16_t* size) noexcept {
-  if (source.size() > capacity) {
-    return false;
-  }
-  if (!source.empty()) {
-    std::memcpy(target, source.data(), source.size());
-  }
-  *size = static_cast<std::uint16_t>(source.size());
-  return true;
-}
-
 enum class FanoutBatchModelStatus : std::uint8_t {
   kOk,
   kNotRunning,
   kInvalidRoute,
   kRouteNotReady,
-  kInvalidTextField,
   kCommandQueueFull,
 };
 
@@ -1556,7 +1901,7 @@ class FanoutBatchModelGatewayState {
   }
 
   [[nodiscard]] FanoutBatchModelResult EnqueueFanoutBatch4(
-      const std::array<core::StrategyOrder, kFanout>& orders) noexcept {
+      const std::array<core::OrderPlaceRequest, kFanout>& orders) noexcept {
     // Benchmark-only lower-bound model; this is not a production batch API.
     FanoutBatchModelResult result;
     if (!ok_ || !running_) {
@@ -1565,52 +1910,25 @@ class FanoutBatchModelGatewayState {
     }
     RefreshRouteStatesOnce();
 
-    core::OrderGatewayCommand prototype{};
-    prototype.kind = core::OrderGatewayCommandKind::kPlace;
-    prototype.exchange = orders[0].exchange;
-    prototype.side = orders[0].side;
-    prototype.order_type = orders[0].type;
-    prototype.time_in_force = orders[0].time_in_force;
-    prototype.reduce_only = orders[0].reduce_only ? 1U : 0U;
-    prototype.quantity = orders[0].quantity;
-    prototype.symbol_id = orders[0].symbol_id;
-    if (!CopyGatewayCommandText(orders[0].symbol, prototype.symbol,
-                                core::kOrderGatewaySymbolBytes,
-                                &prototype.symbol_size) ||
-        !CopyGatewayCommandText(orders[0].quantity_text,
-                                prototype.quantity_text,
-                                core::kOrderGatewayQuantityTextBytes,
-                                &prototype.quantity_text_size) ||
-        !CopyGatewayCommandText(orders[0].price_text, prototype.price_text,
-                                core::kOrderGatewayPriceTextBytes,
-                                &prototype.price_text_size)) {
-      result.status = FanoutBatchModelStatus::kInvalidTextField;
-      return result;
-    }
-
-    for (const core::StrategyOrder& order : orders) {
-      if (order.gateway_route_id >= kFanout) {
+    for (const core::OrderPlaceRequest& request : orders) {
+      if (request.gateway_route_id >= kFanout) {
         result.status = FanoutBatchModelStatus::kInvalidRoute;
         return result;
       }
-      if (!route_ready_[order.gateway_route_id]) {
+      if (!route_ready_[request.gateway_route_id]) {
         result.status = FanoutBatchModelStatus::kRouteNotReady;
         return result;
       }
     }
 
-    for (const core::StrategyOrder& order : orders) {
-      const std::uint16_t route = order.gateway_route_id;
-      core::OrderGatewayCommand command = prototype;
+    for (const core::OrderPlaceRequest& request : orders) {
+      const std::uint16_t route = request.gateway_route_id;
+      core::OrderGatewayCommand command{};
       command.command_seq = ++command_seq_;
-      // parent_id keeps the existing parent semantics; this is not a batch id.
-      command.parent_id =
-          order.parent_id == 0 ? order.local_order_id : order.parent_id;
-      command.local_order_id = order.local_order_id;
-      command.exchange_order_id = order.exchange_order_id;
       command.owner_enqueue_ns =
           static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
-      command.route_id = route;
+      command.payload.place = request;
+      command.kind = core::OrderGatewayCommandKind::kPlace;
       if (!command_queues_[route].TryPush(command)) {
         result.status = FanoutBatchModelStatus::kCommandQueueFull;
         return result;
@@ -1663,7 +1981,7 @@ void BM_OrderGatewayClientPlaceCommandSynthetic(benchmark::State& state) {
       state,
       [&] {
         const core::OrderGatewaySendResult sent = gateway.client().PlaceOrder(
-            SyntheticStrategyOrder(local_order_id++, 1, 0));
+            SyntheticOrderRequest(local_order_id++, 1, 0));
         if (sent.status != core::OrderGatewaySendStatus::kOk) {
           state.SkipWithError("order gateway client place failed");
           return;
@@ -1688,7 +2006,7 @@ void BM_OrderGatewayClientPlaceFanout4Synthetic(benchmark::State& state) {
       [&] {
         for (std::uint16_t route = 0; route < kFanout; ++route) {
           const core::OrderGatewaySendResult sent = gateway.client().PlaceOrder(
-              SyntheticStrategyOrder(local_order_id++, parent_id, route));
+              SyntheticOrderRequest(local_order_id++, parent_id, route));
           if (sent.status != core::OrderGatewaySendStatus::kOk) {
             state.SkipWithError("order gateway client fanout place failed");
             return;
@@ -1713,7 +2031,7 @@ void BM_OrderGatewayFanoutCurrentPlaceOrder4Routes(benchmark::State& state) {
   std::uint64_t parent_id = 1;
 
   for (auto _ : state) {
-    const std::array<core::StrategyOrder, kFanout> orders =
+    const std::array<core::OrderPlaceRequest, kFanout> orders =
         SyntheticFanoutOrders(local_order_id, parent_id);
     FanoutSubmitTiming timing;
     const std::int64_t route_start_ns =
@@ -1758,7 +2076,7 @@ void BM_OrderGatewayFanoutBatchModel4Routes(benchmark::State& state) {
   std::uint64_t parent_id = 1;
 
   for (auto _ : state) {
-    const std::array<core::StrategyOrder, kFanout> orders =
+    const std::array<core::OrderPlaceRequest, kFanout> orders =
         SyntheticFanoutOrders(local_order_id, parent_id);
     const std::int64_t route_start_ns =
         static_cast<std::int64_t>(websocket::RealtimeClockNowNs());
@@ -1785,28 +2103,274 @@ void BM_OrderGatewayFanoutBatchModel4Routes(benchmark::State& state) {
       static_cast<double>(gateway.commands_enqueued());
 }
 
+template <typename OrderSessionT>
+using E2EDirectRuntime = core::TradingRuntime<Strategy, OrderSessionT,
+                                              market_data::RealtimeDataReader<>,
+                                              core::TradingRuntimeDiagnostics>;
+
+template <typename OrderSessionT>
+void RunLeadLagDirectPreparedOrderToWriteLatency(benchmark::State& state,
+                                                 Exchange lag_exchange) {
+  EnsureE2ELoggingInitialized();
+  StrategyLogHookScope hooks;
+  std::vector<std::uint64_t> samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SubmitTrace trace;
+    bool session_ready = false;
+    auto runtime_result = E2EDirectRuntime<OrderSessionT>::CreateForTest(
+        RuntimeConfig(),
+        [&session_ready] {
+          OrderSessionT session;
+          session_ready = session.Ready() && session.WarmPlaceOrder();
+          return session;
+        },
+        BenchmarkLeadLagConfig(lag_exchange));
+    if (!runtime_result.ok || !session_ready) {
+      state.ResumeTiming();
+      state.SkipWithError(runtime_result.ok ? "order session login setup failed"
+                                            : runtime_result.error.c_str());
+      return;
+    }
+
+    E2EDirectRuntime<OrderSessionT>& runtime = *runtime_result.value;
+    const std::int64_t trigger_event_ns =
+        SeedBeforeOpenSignal(runtime, kSymbolId, lag_exchange);
+    const BookTicker trigger_ticker =
+        OpenLongTriggerTicker(trigger_event_ns, kSymbolId);
+    trace.Reset();
+    E2ECountingOrderTransport::ResetStats();
+    active_submit_trace = &trace;
+    state.ResumeTiming();
+
+    runtime.HandleBookTickerForTest(trigger_ticker);
+
+    state.PauseTiming();
+    active_submit_trace = nullptr;
+    const std::int64_t start_ns = RouteStageTimeNs(
+        trace, StrategySubmitStageForTest::kBeforeAcquireRiskSlot, 0);
+    const E2ETransportStats transport_stats =
+        E2ECountingOrderTransport::stats();
+    const std::int64_t end_ns = transport_stats.last_write_ns;
+    if (start_ns == 0 || end_ns <= start_ns ||
+        transport_stats.invalid_writes != 0 ||
+        transport_stats.write_calls != 1) {
+      const std::string error = fmt::format(
+          "direct prepared-order to write path failed: start_ns={} "
+          "end_ns={} writes={} invalid_writes={} place_calls={} "
+          "submitted_calls={}",
+          start_ns, end_ns, transport_stats.write_calls,
+          transport_stats.invalid_writes, trace.place_calls,
+          trace.submitted_calls);
+      state.ResumeTiming();
+      state.SkipWithError(error.c_str());
+      return;
+    }
+
+    const std::uint64_t elapsed_ns = DeltaNs(start_ns, end_ns);
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    std::uint64_t bytes_sent = transport_stats.bytes_sent;
+    benchmark::DoNotOptimize(bytes_sent);
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
+}
+
+void BM_LeadLagGateDirectPreparedOrderToWriteLatency(benchmark::State& state) {
+  RunLeadLagDirectPreparedOrderToWriteLatency<GateE2EOrderSession>(
+      state, Exchange::kGate);
+}
+
+void BM_LeadLagBitgetDirectPreparedOrderToWriteLatency(
+    benchmark::State& state) {
+  RunLeadLagDirectPreparedOrderToWriteLatency<BitgetE2EOrderSession>(
+      state, Exchange::kBitget);
+}
+
+template <typename OrderSessionT>
+void RunLeadLagShmPreparedOrderToWriteLatency(benchmark::State& state,
+                                              Exchange lag_exchange) {
+  EnsureE2ELoggingInitialized();
+  StrategyLogHookScope hooks;
+  std::vector<std::uint64_t> samples_ns;
+  std::vector<std::uint64_t> strategy_samples_ns;
+  std::vector<std::uint64_t> handoff_samples_ns;
+  std::vector<std::uint64_t> order_session_samples_ns;
+  samples_ns.reserve(kLatencyIterations);
+  strategy_samples_ns.reserve(kLatencyIterations);
+  handoff_samples_ns.reserve(kLatencyIterations);
+  order_session_samples_ns.reserve(kLatencyIterations);
+  static std::uint64_t next_instance_id = 0;
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SubmitTrace trace;
+    const std::string shm_name = fmt::format(
+        "/aquila_order_request_e2e_{}_{}",
+        static_cast<unsigned long long>(::getpid()), ++next_instance_id);
+    E2EShmCleanup cleanup(shm_name);
+    const core::OrderGatewayShmConfig shm_config{
+        .shm_name = shm_name,
+        .create = true,
+        .remove_existing = true,
+        .route_count = 1,
+        .command_queue_capacity = 8,
+        .event_queue_capacity = 8,
+        .startup_ready_timeout_s = 1,
+    };
+    auto manager_result = core::OrderGatewayShmManager::Create(shm_config);
+    if (!manager_result.ok) {
+      state.ResumeTiming();
+      state.SkipWithError(manager_result.error.c_str());
+      return;
+    }
+    core::OrderGatewayShmManager& manager = manager_result.value;
+    core::StoreOrderGatewayRouteState(manager.header(), 0,
+                                      core::OrderGatewayRouteState::kReady);
+
+    auto client_result =
+        core::OrderGatewayClient::Open(core::OrderGatewayClientConfig{
+            .shm_name = shm_name,
+            .route_count = 1,
+            .command_queue_capacity = 8,
+            .event_queue_capacity = 8,
+            .startup_ready_timeout_s = 1,
+            .options =
+                core::OrderGatewayClientOptions{
+                    .route_table_capacity = kOrderCapacity,
+                    .max_events_per_poll_per_route = 8,
+                },
+        });
+    if (!client_result.ok || !client_result.value.Start()) {
+      state.ResumeTiming();
+      state.SkipWithError(client_result.ok ? "order gateway client start failed"
+                                           : client_result.error.c_str());
+      return;
+    }
+
+    OrderSessionT order_session;
+    if (!order_session.Ready() || !order_session.WarmPlaceOrder()) {
+      state.ResumeTiming();
+      state.SkipWithError("order session warmup setup failed");
+      return;
+    }
+    using Traits = E2EExchangeTraits<OrderSessionT>;
+    typename Traits::Publisher publisher(0, manager.EventQueue(0),
+                                         &manager.header());
+    typename Traits::Worker worker(0, manager.CommandQueue(0), order_session,
+                                   publisher);
+
+    auto runtime_result =
+        E2EDirectRuntime<core::OrderGatewayClient>::CreateForTest(
+            RuntimeConfig(),
+            [client = std::move(client_result.value)]() mutable {
+              return std::move(client);
+            },
+            BenchmarkLeadLagConfig(lag_exchange));
+    if (!runtime_result.ok) {
+      state.ResumeTiming();
+      state.SkipWithError(runtime_result.error.c_str());
+      return;
+    }
+    E2EDirectRuntime<core::OrderGatewayClient>& runtime = *runtime_result.value;
+    const std::int64_t trigger_event_ns =
+        SeedBeforeOpenSignal(runtime, kSymbolId, lag_exchange);
+    const BookTicker trigger_ticker =
+        OpenLongTriggerTicker(trigger_event_ns, kSymbolId);
+    trace.Reset();
+    E2ECountingOrderTransport::ResetStats();
+    e2e_order_session_place_entry_ns = 0;
+    active_submit_trace = &trace;
+    state.ResumeTiming();
+
+    runtime.HandleBookTickerForTest(trigger_ticker);
+    const bool dispatched = worker.PollOnce();
+
+    state.PauseTiming();
+    active_submit_trace = nullptr;
+    const std::int64_t start_ns = RouteStageTimeNs(
+        trace, StrategySubmitStageForTest::kBeforeAcquireRiskSlot, 0);
+    const std::int64_t before_place_ns = RouteStageTimeNs(
+        trace, StrategySubmitStageForTest::kBeforePlaceOrder, 0);
+    const std::int64_t session_entry_ns = e2e_order_session_place_entry_ns;
+    const E2ETransportStats transport_stats =
+        E2ECountingOrderTransport::stats();
+    const std::int64_t end_ns = transport_stats.last_write_ns;
+    if (!dispatched || start_ns == 0 || before_place_ns <= start_ns ||
+        session_entry_ns <= before_place_ns || end_ns <= session_entry_ns ||
+        transport_stats.invalid_writes != 0 ||
+        transport_stats.write_calls != 1) {
+      const std::string error = fmt::format(
+          "SHM prepared-order to write path failed: dispatched={} "
+          "start_ns={} before_place_ns={} session_entry_ns={} end_ns={} "
+          "writes={} invalid_writes={} submitted_calls={}",
+          dispatched, start_ns, before_place_ns, session_entry_ns, end_ns,
+          transport_stats.write_calls, transport_stats.invalid_writes,
+          trace.submitted_calls);
+      state.ResumeTiming();
+      state.SkipWithError(error.c_str());
+      return;
+    }
+
+    const std::uint64_t elapsed_ns = DeltaNs(start_ns, end_ns);
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    samples_ns.push_back(elapsed_ns);
+    strategy_samples_ns.push_back(DeltaNs(start_ns, before_place_ns));
+    handoff_samples_ns.push_back(DeltaNs(before_place_ns, session_entry_ns));
+    order_session_samples_ns.push_back(DeltaNs(session_entry_ns, end_ns));
+    std::uint64_t bytes_sent = transport_stats.bytes_sent;
+    benchmark::DoNotOptimize(bytes_sent);
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(samples_ns),
+                                              "orders", state.iterations());
+  SetPrefixedLatencyCounters(state, "strategy", strategy_samples_ns);
+  SetPrefixedLatencyCounters(state, "shm_handoff", handoff_samples_ns);
+  SetPrefixedLatencyCounters(state, "order_session", order_session_samples_ns);
+}
+
+void BM_LeadLagGateShmPreparedOrderToWriteLatency(benchmark::State& state) {
+  RunLeadLagShmPreparedOrderToWriteLatency<GateE2EOrderSession>(
+      state, Exchange::kGate);
+}
+
+void BM_LeadLagBitgetShmPreparedOrderToWriteLatency(benchmark::State& state) {
+  RunLeadLagShmPreparedOrderToWriteLatency<BitgetE2EOrderSession>(
+      state, Exchange::kBitget);
+}
+
 BENCHMARK(BM_LeadLagSubmitPathBreakdownSyntheticFanout4)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOff)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOn)
-    ->Iterations(kLatencyIterations)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOnPrefill20)
-    ->Iterations(1024)
+    ->Iterations(kSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayActualConfigRiskOnBas)
-    ->Iterations(1024)
+    ->Iterations(kSubmitBreakdownIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagCurrentGlobalRiskTotalsActualConfig)
+    ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 
@@ -1843,6 +2407,22 @@ BENCHMARK(BM_OrderGatewayFanoutCurrentPlaceOrder4Routes)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_OrderGatewayFanoutBatchModel4Routes)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagGateDirectPreparedOrderToWriteLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagBitgetDirectPreparedOrderToWriteLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagGateShmPreparedOrderToWriteLatency)
+    ->Iterations(kLatencyIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagBitgetShmPreparedOrderToWriteLatency)
     ->Iterations(kLatencyIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);

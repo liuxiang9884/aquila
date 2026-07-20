@@ -75,20 +75,23 @@ OrderGatewayEvent MakeNotReadyEvent(std::uint16_t route_id) {
   return event;
 }
 
-StrategyOrder MakeOrder(std::uint64_t local_order_id, std::uint16_t route_id) {
-  StrategyOrder order{};
-  order.local_order_id = local_order_id;
-  order.exchange = Exchange::kGate;
-  order.symbol_id = 42;
-  order.symbol = "BTC_USDT";
-  order.side = OrderSide::kBuy;
-  order.type = OrderType::kLimit;
-  order.time_in_force = TimeInForce::kImmediateOrCancel;
-  order.quantity = 0.01;
-  order.quantity_text = "0.01";
-  order.price_text = "65000";
-  order.gateway_route_id = route_id;
-  return order;
+OrderPlaceRequest MakeOrder(std::uint64_t local_order_id,
+                            std::uint16_t route_id) {
+  OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .price = 65000.0,
+      .quantity = 0.01,
+      .symbol_id = 42,
+      .gateway_route_id = route_id,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 2,
+  };
+  SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
 class CapturingRuntime {
@@ -260,14 +263,14 @@ TEST(OrderGatewayClientTest, PlaceReadyRouteWritesCommandAndRouteTable) {
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kPlace);
   EXPECT_EQ(command.command_seq, 1U);
-  EXPECT_EQ(command.parent_id, 1001U);
-  EXPECT_EQ(command.local_order_id, 1001U);
-  EXPECT_EQ(command.route_id, 2U);
-  EXPECT_EQ(std::string_view(command.symbol, command.symbol_size), "BTC_USDT");
-  EXPECT_EQ(std::string_view(command.quantity_text, command.quantity_text_size),
-            "0.01");
-  EXPECT_EQ(std::string_view(command.price_text, command.price_text_size),
-            "65000");
+  EXPECT_EQ(command.payload.place.parent_id, 1001U);
+  EXPECT_EQ(command.payload.place.local_order_id, 1001U);
+  EXPECT_EQ(command.payload.place.gateway_route_id, 2U);
+  EXPECT_EQ(command.payload.place.SymbolView(), "BTC_USDT");
+  EXPECT_DOUBLE_EQ(command.payload.place.quantity, 0.01);
+  EXPECT_DOUBLE_EQ(command.payload.place.price, 65000.0);
+  EXPECT_EQ(command.payload.place.quantity_decimal_places, 2U);
+  EXPECT_EQ(command.payload.place.price_decimal_places, 0U);
 }
 
 TEST(OrderGatewayClientTest, PlaceCommandUsesParentIdWhenProvided) {
@@ -282,14 +285,14 @@ TEST(OrderGatewayClientTest, PlaceCommandUsesParentIdWhenProvided) {
   CapturingRuntime runtime;
   ASSERT_EQ(client.PollOrderResponses(runtime), 1U);
 
-  StrategyOrder order = MakeOrder(1006, 0);
+  OrderPlaceRequest order = MakeOrder(1006, 0);
   order.parent_id = 9006;
   ASSERT_EQ(client.PlaceOrder(order).status, OrderGatewaySendStatus::kOk);
 
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(0).TryPop(&command));
-  EXPECT_EQ(command.parent_id, 9006U);
-  EXPECT_EQ(command.local_order_id, 1006U);
+  EXPECT_EQ(command.payload.place.parent_id, 9006U);
+  EXPECT_EQ(command.payload.place.local_order_id, 1006U);
 }
 
 TEST(OrderGatewayClientTest, PlaceNotReadyRouteSkipsCommand) {
@@ -513,7 +516,8 @@ TEST(OrderGatewayClientTest, PollDoesNotLeaveStaleReadyOverStoppedHeader) {
   ASSERT_TRUE(shm_result.ok) << shm_result.error;
   OrderGatewayShmManager& shm = shm_result.value;
   ASSERT_TRUE(shm.EventQueue(2).TryPush(MakeReadyEvent(2)));
-  StoreOrderGatewayRouteState(shm.header(), 2, OrderGatewayRouteState::kStopped);
+  StoreOrderGatewayRouteState(shm.header(), 2,
+                              OrderGatewayRouteState::kStopped);
 
   OrderGatewayClient client = CreateClient(config);
   CapturingRuntime runtime;
@@ -615,7 +619,7 @@ TEST(OrderGatewayClientTest, RouteTableCapacityRejectsBeforeEnqueue) {
 
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(0).TryPop(&command));
-  EXPECT_EQ(command.local_order_id, 1008U);
+  EXPECT_EQ(command.payload.place.local_order_id, 1008U);
   EXPECT_FALSE(shm.CommandQueue(0).TryPop(&command));
 }
 
@@ -690,20 +694,24 @@ TEST(OrderGatewayClientTest,
   CapturingRuntime ready_runtime;
   ASSERT_EQ(client.PollOrderResponses(ready_runtime), 1U);
   OrderManager<OrderGatewayClient> manager(client, 8, 7);
-  OrderCreateRequest request{};
+  OrderPlaceRequest request{};
   request.symbol_id = 42;
-  request.symbol = "BTC_USDT";
+  request.price = 65000.0;
   request.quantity = 0.01;
-  request.quantity_text = "0.01";
-  request.price_text = "65000";
+  request.price_decimal_places = 0;
+  request.quantity_decimal_places = 2;
   request.gateway_route_id = 2;
+  SetOrderSymbol(&request, "BTC_USDT");
   const OrderPlaceResult placed = manager.PlaceOrder(request);
   ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
 
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   ASSERT_EQ(command.kind, OrderGatewayCommandKind::kPlace);
-  ASSERT_EQ(manager.CancelOrder(placed.local_order_id).status,
+  ASSERT_EQ(manager
+                .CancelOrder(
+                    OrderCancelRequest{.local_order_id = placed.local_order_id})
+                .status,
             OrderCancelStatus::kOk);
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   ASSERT_EQ(command.kind, OrderGatewayCommandKind::kCancel);
@@ -765,7 +773,7 @@ TEST(OrderGatewayClientTest,
   OrderGatewayClient client = CreateClient(config);
   CapturingRuntime runtime;
   ASSERT_EQ(client.PollOrderResponses(runtime), 1U);
-  StrategyOrder order = MakeOrder(1021, 2);
+  OrderPlaceRequest order = MakeOrder(1021, 2);
   ASSERT_EQ(client.PlaceOrder(order).status, OrderGatewaySendStatus::kOk);
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
@@ -785,25 +793,26 @@ TEST(OrderGatewayClientTest,
   EXPECT_TRUE(client.HasRouteForLocalOrderForTest(order.local_order_id));
   EXPECT_EQ(client.RouteForLocalOrderForTest(order.local_order_id), 2U);
 
-  order.gateway_route_id = 0;
-  order.exchange_order_id = 7021;
-  ASSERT_EQ(client.CancelOrder(order).status, OrderGatewaySendStatus::kOk);
-  client.CacheExchangeOrderId(order.local_order_id, order.exchange_order_id);
+  const OrderCancelRequest cancel{.local_order_id = order.local_order_id,
+                                  .gateway_route_id = 0};
+  constexpr std::uint64_t kExchangeOrderId = 7021;
+  ASSERT_EQ(client.CancelOrder(cancel).status, OrderGatewaySendStatus::kOk);
+  client.CacheExchangeOrderId(order.local_order_id, kExchangeOrderId);
   client.ForgetExchangeOrderId(order.local_order_id);
 
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kCancel);
-  EXPECT_EQ(command.local_order_id, order.local_order_id);
-  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_EQ(command.payload.cancel.local_order_id, order.local_order_id);
+  EXPECT_EQ(command.payload.cancel.gateway_route_id, 2U);
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kCacheExchangeOrderId);
-  EXPECT_EQ(command.local_order_id, order.local_order_id);
-  EXPECT_EQ(command.exchange_order_id, order.exchange_order_id);
-  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_EQ(command.payload.order_id.local_order_id, order.local_order_id);
+  EXPECT_EQ(command.payload.order_id.exchange_order_id, kExchangeOrderId);
+  EXPECT_EQ(command.payload.order_id.gateway_route_id, 2U);
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kForgetExchangeOrderId);
-  EXPECT_EQ(command.local_order_id, order.local_order_id);
-  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_EQ(command.payload.order_id.local_order_id, order.local_order_id);
+  EXPECT_EQ(command.payload.order_id.gateway_route_id, 2U);
   EXPECT_FALSE(client.HasRouteForLocalOrderForTest(order.local_order_id));
 }
 
@@ -818,33 +827,33 @@ TEST(OrderGatewayClientTest, CancelCacheAndForgetUseOriginalRoute) {
   OrderGatewayClient client = CreateClient(config);
   CapturingRuntime runtime;
   ASSERT_EQ(client.PollOrderResponses(runtime), 1U);
-  StrategyOrder order = MakeOrder(1011, 2);
+  OrderPlaceRequest order = MakeOrder(1011, 2);
   ASSERT_EQ(client.PlaceOrder(order).status, OrderGatewaySendStatus::kOk);
 
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   ASSERT_EQ(command.kind, OrderGatewayCommandKind::kPlace);
 
-  order.gateway_route_id = 0;
-  order.exchange_order_id = 7011;
-  ASSERT_EQ(client.CancelOrder(order).status, OrderGatewaySendStatus::kOk);
-  client.CacheExchangeOrderId(order.local_order_id, order.exchange_order_id);
+  const OrderCancelRequest cancel{.local_order_id = order.local_order_id,
+                                  .gateway_route_id = 0};
+  ASSERT_EQ(client.CancelOrder(cancel).status, OrderGatewaySendStatus::kOk);
+  client.CacheExchangeOrderId(order.local_order_id, 7011);
   client.ForgetExchangeOrderId(order.local_order_id);
 
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kCancel);
-  EXPECT_EQ(command.local_order_id, 1011U);
-  EXPECT_EQ(command.exchange_order_id, 7011U);
-  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_EQ(command.payload.cancel.local_order_id, 1011U);
+  EXPECT_EQ(command.payload.cancel.gateway_route_id, 2U);
 
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kCacheExchangeOrderId);
-  EXPECT_EQ(command.exchange_order_id, 7011U);
-  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_EQ(command.payload.order_id.exchange_order_id, 7011U);
+  EXPECT_EQ(command.payload.order_id.gateway_route_id, 2U);
 
   ASSERT_TRUE(shm.CommandQueue(2).TryPop(&command));
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kForgetExchangeOrderId);
-  EXPECT_EQ(command.route_id, 2U);
+  EXPECT_EQ(command.payload.order_id.local_order_id, 1011U);
+  EXPECT_EQ(command.payload.order_id.gateway_route_id, 2U);
   EXPECT_FALSE(client.HasRouteForLocalOrderForTest(1011));
 }
 

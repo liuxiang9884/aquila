@@ -37,7 +37,7 @@
 - 旧的 `groups()` / `mutable_groups()` 不应继续暴露为 vector-like API。调用方应改用 active FIFO 遍历 helper 或明确的 `FindGroupById()` / slot lookup helper，避免把 inactive slot 当成 active group。
 - `group_id` 是 `symbol_id` 内单调递增的 execution group identity；跨 symbol 唯一归因必须使用 `(symbol_id, group_id)`，不能只用 `group_id`。
 - `group_index` 是 `FixedOrderedSlotPool` slot 地址，只用于本进程 O(1) 定位和诊断。它可以进入 order / response / feedback log，但不是稳定 join key。slot 被 erase 后会复用，回报路径必须同时校验订单里的 `group_id` 与当前 slot 的 `ExecutionGroup::group_id` 一致。
-- `OrderCreateRequest`、`StrategyOrder`、`OrderResponseEvent`、order gateway SHM command / event、Gate gateway log、LeadLag order log 和 report CSV 都使用 `group_id` / `group_index`。本次迁移彻底删除 `parent_id` 字段，不保留新脚本对旧 `parent_id` 日志的兼容解析。
+- `OrderPlaceRequest`、`StrategyOrder`、`OrderResponseEvent`、order gateway SHM command / event、Gate gateway log、LeadLag order log 和 report CSV 都使用 `group_id` / `group_index`。本次迁移彻底删除 `parent_id` 字段，不保留新脚本对旧 `parent_id` 日志的兼容解析。
 - pending order lookup 的目标路径是：response / feedback 先通过 `local_order_id` 找到 `StrategyOrder`，再用 `order.group_index` O(1) 定位 `ExecutionGroup`，并校验 `order.group_id`。只有 `group_index` 无效或校验失败时才进入 reconcile / unknown 分支，不回退到全量扫描作为正常路径。
 - 行情扫描或 active group 遍历期间不要直接 erase 当前容器。`FixedOrderedSlotPool::Erase()` 会更新 `active_indices()` 顺序；若遍历中需要清理 group，先收集 `group_id` / slot index，再在遍历结束后统一 erase。
 - `parallel > 16` 不能静默改变实盘语义。生产配置解析应直接拒绝；测试 / benchmark 如果需要探索更大 `n`，使用独立 benchmark fixture，不复用 live config 语义。
@@ -46,7 +46,7 @@
 
 本次迁移把 multi-group 归属元数据下沉到 `core/trading`，避免 LeadLag 私有 side table：
 
-- `group_id` 和 `group_index` 放在 `core::OrderCreateRequest` / `core::StrategyOrder`，默认值为 `0` / invalid。非 multi-group 策略可以继续不设置。
+- `group_id` 和 `group_index` 放在 `core::OrderPlaceRequest` / `core::StrategyOrder`，默认值为 `0` / invalid。非 multi-group 策略可以继续不设置。
 - `group_id` 和 `group_index` 需要透传到 `core::OrderResponseEvent`、order gateway SHM command / event、Gate `OrderResponse` / log fields。这样跨进程 gateway send / response 诊断和 LeadLag strategy log 不再依赖 `parent_id`。
 - `group_index` 只在 runtime 内做快速定位；report 主归因键使用 `symbol_id + group_id + local_order_id + route_id`。`group_index` 可作为 diagnostic column 输出，但不能作为 position / latency / order detail 的唯一关联键。
 - 新脚本只解析新字段。旧 live log 不再保证可由新脚本分析。
@@ -56,7 +56,7 @@
 1. 先更新 core order contract 和 order gateway SHM：删除 `parent_id`，新增 `group_id` / `group_index`，并更新 Gate order gateway send / response / diagnostic logs。
 2. 增加 `kMaxLeadLagExecutionGroups = 16`，并在 LeadLag config parse / runtime init 处拒绝 `parallel > 16`；不要依赖 `FixedOrderedSlotPool::Initialize()` clamp。
 3. 直接把 `ExecutionState` 的 storage 替换为 `FixedOrderedSlotPool<ExecutionGroup, kMaxLeadLagExecutionGroups>`，删除 vector-like `groups()` / `mutable_groups()` 对外暴露，改成 active FIFO 遍历 helper 和明确的 `GroupAt(group_index, group_id)` lookup helper。
-4. 下单时把当前 group 的 `group_id` / `group_index` 写入 `OrderCreateRequest`，再进入 `StrategyOrder` 和 SHM。response / feedback 处理时通过 `StrategyOrder.group_index` O(1) 定位 group，并校验 `group_id`；校验失败进入 reconcile / ignored-stale 分支。
+4. 下单时把当前 group 的 `group_id` / `group_index` 写入 `OrderPlaceRequest`，再进入 `StrategyOrder` 和 SHM。response / feedback 处理时通过 `StrategyOrder.group_index` O(1) 定位 group，并校验 `group_id`；校验失败进入 reconcile / ignored-stale 分支。
 5. 同步迁移 LeadLag logs、test hooks、`scripts/lead_lag/analyze_order_detail.py`、`scripts/lead_lag/generate_live_report.py`、脚本测试、`docs/diagnostic_fields.md` 和 `docs/lead_lag_live_report_csv_schema.md`。新脚本只支持 `group_id` / `group_index`，不兼容旧 `parent_id`。
 6. 重新跑 group-container benchmark、LeadLag strategy / feedback focused tests、order gateway focused tests、report script tests 和 submit-path benchmark；性能结论只基于这些新结果表述。
 

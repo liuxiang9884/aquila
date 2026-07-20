@@ -101,23 +101,42 @@ template <std::size_t N>
   }
 
   const std::uint64_t magnitude = AbsMagnitude(units);
-  const std::uint64_t integer_units =
-      magnitude / static_cast<std::uint64_t>(scale);
-  out = WriteUnsignedDecimalDigits(integer_units, out);
-
   if (decimal_places == 0) {
+    out = WriteUnsignedDecimalDigits(magnitude, out);
     return std::string_view(buffer.data(),
                             static_cast<std::size_t>(out - buffer.data()));
   }
+
+  const std::uint64_t unsigned_scale = static_cast<std::uint64_t>(scale);
+  if (magnitude < unsigned_scale) {
+    *out++ = '0';
+    *out++ = '.';
+    out = WriteFixedWidthDecimalDigits(
+        magnitude, static_cast<std::size_t>(decimal_places), out);
+    return std::string_view(buffer.data(),
+                            static_cast<std::size_t>(out - buffer.data()));
+  }
+
+  const std::uint64_t integer_units = magnitude / unsigned_scale;
+  out = WriteUnsignedDecimalDigits(integer_units, out);
   *out++ = '.';
 
-  const std::uint64_t fractional_units =
-      magnitude % static_cast<std::uint64_t>(scale);
+  const std::uint64_t fractional_units = magnitude % unsigned_scale;
   out = WriteFixedWidthDecimalDigits(
       fractional_units, static_cast<std::size_t>(decimal_places), out);
 
   return std::string_view(buffer.data(),
                           static_cast<std::size_t>(out - buffer.data()));
+}
+
+template <std::size_t N>
+[[nodiscard]] inline std::string_view FormatDecimalValue(
+    double value, std::int32_t decimal_places,
+    std::array<char, N>& buffer) noexcept {
+  const double scaled = value * static_cast<double>(Pow10Int64(decimal_places));
+  const std::int64_t units =
+      static_cast<std::int64_t>(scaled + (scaled >= 0.0 ? 0.5 : -0.5));
+  return FormatDecimalUnits(units, decimal_places, buffer);
 }
 
 [[nodiscard]] inline OpenQuantityUnitsResult CalculateOpenQuantityUnits(

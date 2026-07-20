@@ -31,7 +31,7 @@ constexpr char kDefaultTracePath[] =
 
 struct NoopContext {
   [[nodiscard]] core::OrderPlaceResult PlaceOrder(
-      core::OrderCreateRequest) noexcept {
+      const core::OrderPlaceRequest&) noexcept {
     return {};
   }
 
@@ -135,8 +135,7 @@ struct NoopContext {
     const aquila::market_data::MarketDataBinaryHeader header =
         aquila::market_data::ReadMarketDataBinaryHeader(input, path);
     record_count = aquila::market_data::CheckedMarketDataBinaryRecordCount(
-        path, file_size, header,
-        aquila::config::DataReaderFeed::kBookTicker);
+        path, file_size, header, aquila::config::DataReaderFeed::kBookTicker);
   } catch (const std::exception&) {
     return {};
   }

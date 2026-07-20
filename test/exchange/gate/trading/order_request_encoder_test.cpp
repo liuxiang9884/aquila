@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 #include <gtest/gtest.h>
@@ -11,6 +12,27 @@
 
 namespace aquila::gate {
 namespace {
+
+core::OrderPlaceRequest MakePlaceRequest(
+    std::uint64_t local_order_id, OrderType order_type,
+    std::string_view contract, double quantity,
+    std::uint8_t quantity_decimal_places, double price,
+    std::uint8_t price_decimal_places, TimeInForce time_in_force,
+    bool reduce_only, OrderSide side = OrderSide::kBuy) {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .price = price,
+      .quantity = quantity,
+      .side = side,
+      .order_type = order_type,
+      .time_in_force = time_in_force,
+      .price_decimal_places = price_decimal_places,
+      .quantity_decimal_places = quantity_decimal_places,
+      .reduce_only = reduce_only,
+  };
+  core::SetOrderSymbol(&request, contract);
+  return request;
+}
 
 TEST(GateOrderSignatureTest, MatchesLoginVector) {
   std::array<char, kGateSignatureHexSize> output{};
@@ -85,19 +107,12 @@ TEST(GateOrderRequestEncoderTest, OrderFeedbackSubscribeRequestWritesJson) {
 
 TEST(GateOrderRequestEncoderTest, PlaceOrderWritesExactJson) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = 1700000001,
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 9,
-      .order_type = OrderType::kLimit,
-      .contract = "BTC_USDT",
-      .signed_size_text = "1",
-      .price_text = "81000",
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = false,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(9, OrderType::kLimit, "BTC_USDT", 1.0, 0, 81000.0, 0,
+                       TimeInForce::kGoodTillCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, 1700000001, 144115188075855873ULL, false, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -107,19 +122,12 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderWritesExactJson) {
 
 TEST(GateOrderRequestEncoderTest, PlaceOrderWritesDecimalSizeJson) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = 1700000001,
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 9,
-      .order_type = OrderType::kLimit,
-      .contract = "RAVE_USDT",
-      .signed_size_text = "0.1",
-      .price_text = "0.1234",
-      .time_in_force = TimeInForce::kImmediateOrCancel,
-      .reduce_only = false,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(9, OrderType::kLimit, "RAVE_USDT", 0.1, 1, 0.1234, 4,
+                       TimeInForce::kImmediateOrCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, 1700000001, 144115188075855873ULL, false, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -129,20 +137,12 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderWritesDecimalSizeJson) {
 
 TEST(GateOrderRequestEncoderTest, PlaceOrderQuotesSizeWhenRequested) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = 1700000001,
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 9,
-      .order_type = OrderType::kLimit,
-      .contract = "RAVE_USDT",
-      .signed_size_text = "0.1",
-      .price_text = "0.1234",
-      .time_in_force = TimeInForce::kImmediateOrCancel,
-      .reduce_only = false,
-      .quote_size = true,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(9, OrderType::kLimit, "RAVE_USDT", 0.1, 1, 0.1234, 4,
+                       TimeInForce::kImmediateOrCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, 1700000001, 144115188075855873ULL, true, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -152,19 +152,12 @@ TEST(GateOrderRequestEncoderTest, PlaceOrderQuotesSizeWhenRequested) {
 
 TEST(GateOrderRequestEncoderTest, MarketOrderReturnsUnsupportedOrderType) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = 1700000001,
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 9,
-      .order_type = OrderType::kMarket,
-      .contract = "BTC_USDT",
-      .signed_size_text = "1",
-      .price_text = "81000",
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = false,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(9, OrderType::kMarket, "BTC_USDT", 1.0, 0, 81000.0, 0,
+                       TimeInForce::kGoodTillCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, 1700000001, 144115188075855873ULL, false, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kUnsupportedOrderType);
   EXPECT_TRUE(encoded.text.empty());
@@ -172,14 +165,10 @@ TEST(GateOrderRequestEncoderTest, MarketOrderReturnsUnsupportedOrderType) {
 
 TEST(GateOrderRequestEncoderTest, CancelByExchangeOrderIdWritesExactJson) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .timestamp = 1700000002,
-      .encoded_request_id = 216172782113783810ULL,
-      .local_order_id = 11,
-      .exchange_order_id = 36028827892199865ULL,
-  };
+  const core::OrderCancelRequest request{.local_order_id = 11};
 
-  const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+      request, 36028827892199865ULL, 1700000002, 216172782113783810ULL, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -189,14 +178,10 @@ TEST(GateOrderRequestEncoderTest, CancelByExchangeOrderIdWritesExactJson) {
 
 TEST(GateOrderRequestEncoderTest, CancelFallbackUsesOrderText) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .timestamp = 1700000002,
-      .encoded_request_id = 216172782113783810ULL,
-      .local_order_id = 11,
-      .exchange_order_id = 0,
-  };
+  const core::OrderCancelRequest request{.local_order_id = 11};
 
-  const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+      request, 0, 1700000002, 216172782113783810ULL, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_NE(encoded.text.find(R"("order_id":"t-11")"), std::string_view::npos);
@@ -204,38 +189,41 @@ TEST(GateOrderRequestEncoderTest, CancelFallbackUsesOrderText) {
 
 TEST(GateOrderRequestEncoderTest, SmallBufferReturnsBufferTooSmall) {
   std::array<char, 8> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = 1700000001,
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 9,
-      .contract = "BTC_USDT",
-      .signed_size_text = "1",
-      .price_text = "81000",
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = false,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(9, OrderType::kLimit, "BTC_USDT", 1.0, 0, 81000.0, 0,
+                       TimeInForce::kGoodTillCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, 1700000001, 144115188075855873ULL, false, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kBufferTooSmall);
   EXPECT_TRUE(encoded.text.empty());
 }
 
+TEST(GateOrderRequestEncoderTest, MaximumBoundedPlaceFieldsFitDirectBuffer) {
+  std::array<char, kPlaceOrderDirectFormatCapacity> buffer{};
+  const core::OrderPlaceRequest request = MakePlaceRequest(
+      std::numeric_limits<std::uint64_t>::max(), OrderType::kLimit,
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456", 999999.12345, 5, 999999999.123456, 6,
+      TimeInForce::kImmediateOrCancel, true, OrderSide::kSell);
+
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, std::numeric_limits<std::int64_t>::max(),
+      std::numeric_limits<std::uint64_t>::max(), false, buffer);
+
+  EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
+  EXPECT_LT(encoded.text.size(), buffer.size());
+}
+
 TEST(GateOrderRequestEncoderTest,
      InvalidPlaceOrderTextReturnsInvalidOrderText) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = 1700000001,
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 0,
-      .contract = "BTC_USDT",
-      .signed_size_text = "1",
-      .price_text = "81000",
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = false,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(0, OrderType::kLimit, "BTC_USDT", 1.0, 0, 81000.0, 0,
+                       TimeInForce::kGoodTillCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, 1700000001, 144115188075855873ULL, false, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kInvalidOrderText);
   EXPECT_TRUE(encoded.text.empty());
@@ -244,14 +232,10 @@ TEST(GateOrderRequestEncoderTest,
 TEST(GateOrderRequestEncoderTest,
      InvalidCancelFallbackReturnsInvalidOrderText) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .timestamp = 1700000002,
-      .encoded_request_id = 216172782113783810ULL,
-      .local_order_id = 0,
-      .exchange_order_id = 0,
-  };
+  const core::OrderCancelRequest request{};
 
-  const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+      request, 0, 1700000002, 216172782113783810ULL, buffer);
 
   EXPECT_EQ(encoded.status, OrderEncodeStatus::kInvalidOrderText);
   EXPECT_TRUE(encoded.text.empty());

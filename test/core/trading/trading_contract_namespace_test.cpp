@@ -17,11 +17,11 @@ struct FakeOrderSession {
     SendStatus status{SendStatus::kOk};
   };
 
-  SendResult PlaceOrder(StrategyOrder&) noexcept {
+  SendResult PlaceOrder(const OrderPlaceRequest&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(StrategyOrder&) noexcept {
+  SendResult CancelOrder(const OrderCancelRequest&) noexcept {
     return {};
   }
 };
@@ -37,13 +37,9 @@ TEST(CoreTradingContractNamespaceTest, PublicContractsLiveInAquilaCore) {
   OrderManager<FakeOrderSession> order_manager(order_session, 2, 1);
   StrategyContext<FakeOrderSession> context(order_manager);
 
-  const OrderPlaceResult placed = context.PlaceLimitOrder(OrderCreateRequest{
-      .symbol_id = 42,
-      .symbol = "BTC_USDT",
-      .quantity = 1,
-      .quantity_text = "1",
-      .price_text = "50000",
-  });
+  OrderPlaceRequest request{.price = 50000.0, .quantity = 1.0, .symbol_id = 42};
+  SetOrderSymbol(&request, "BTC_USDT");
+  const OrderPlaceResult placed = context.PlaceLimitOrder(request);
 
   ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
   const StrategyOrder* order = context.FindOrder(placed.local_order_id);
