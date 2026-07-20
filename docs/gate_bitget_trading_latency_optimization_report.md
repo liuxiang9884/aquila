@@ -1,10 +1,10 @@
 # Gate / Bitget 交易链路延迟优化报告
 
-更新时间：2026-07-19
+更新时间：2026-07-20
 
 ## 1. 结论摘要
 
-截至优化代码 checkpoint `cd0297f`，本阶段共接受 8 项生产代码优化：
+截至优化代码 checkpoint `30e27fe`，本阶段共接受 9 项生产代码优化：
 
 | 提交 | 优化项 | 主要正式结果 | 结论 |
 | --- | --- | --- | --- |
@@ -16,6 +16,7 @@
 | `c9aa980` | 对 Bitget login/place/cancel 固定 JSON format 使用 `FMT_COMPILE` | Bitget gateway submit `p50/p99/p99.9` 改善 `17.91%/17.09%/5.39%`，均为 5/5 组同向 | 采用 |
 | `51bc4e7` | 删除 Bitget send log 中重复的 realtime timestamp 别名 | 每条 `bitget_order_send` 少一个重复 key/value；按约束只审计字段重复性和必要性，不声明数值收益 | 采用 |
 | `d4102fc` | Gate SBE feedback 的未消费 var-string 只做长度/边界验证 | 完整 Gate parser → SHM → LeadLag runtime `p50/p99` 改善 `4.95%/4.32%`，均为 5/5 组同向 | 采用 |
+| `30e27fe` | 对 Gate login/place/cancel/subscribe 固定 JSON format 使用 `FMT_COMPILE` | Gate gateway submit `p50/p99` 改善 `15.10%/11.91%`，均为 5/5 组同向；`p99.9` 只有 3/5 同向，不声明稳定收益 | 采用 |
 
 ### 1.1 所有已采用优化的链路级效果
 
@@ -25,7 +26,7 @@
 | 链路与测量面 | 最早 baseline → 最新 candidate | 累计变化 | 证据性质 |
 | --- | --- | --- | --- |
 | LeadLag global/open risk focused scan | `p50 799 → 69 ns`；`p99 1283 → 73 ns`；`p99.9 5012.5 → 87 ns` | `-91.36%/-94.31%/-98.26%` | `9b09d73` 与 `c48b41b` 顺序执行的同一 focused benchmark；跨两轮汇总，不是单轮 paired 结果 |
-| Gate gateway submit | `p50 1025 → 869.5 ns`；`p99 1403.5 → 1186 ns`；`p99.9 12611 → 12387.5 ns` | `-15.17%/-15.50%/-1.77%` | `f1dc51c` 最早 baseline 到 `788b6c4` 最新 candidate 的同一 benchmark 跨轮参考 |
+| Gate gateway submit | `p50 1025 → 736.5 ns`；`p99 1403.5 → 1046.5 ns`；`p99.9 12611 → 12242 ns` | `-28.15%/-25.44%/-2.93%` | `f1dc51c` 最早 baseline 到 `30e27fe` 最新 candidate 的同一 benchmark 跨轮参考；`p99.9` 不稳定，不作为采用收益 |
 | Bitget gateway submit | `p50 714.5 → 586.5 ns`；`p99 784 → 650 ns`；`p99.9 10246.5 → 9694 ns` | `-17.91%/-17.09%/-5.39%` | `c9aa980` 五组正式 A/B，5/5 组同向 |
 | Gate terminal feedback parser → SHM → runtime | `p50 1421 → 1238 ns`；`p99 1596.5 → 1430 ns` | `-12.88%/-10.43%` | `f99dfc0` 最早 baseline 到 `d4102fc` 最新 candidate 的同一 benchmark 跨轮参考；`p99.9` 跨轮不稳定，不给累计收益 |
 | Bitget terminal feedback parser → SHM → runtime | `p50 2214.5 → 2086.5 ns`；`p99 2423.5 → 2295 ns`；`p99.9 2636.5 → 2525 ns` | `-5.78%/-5.30%/-4.23%` | `f99dfc0` 五组正式 A/B；三项均为 4/5 组同向 |
@@ -192,6 +193,45 @@ baseline/candidate JSON，本报告按这 5 组重新汇总。
 
 证据：`gate-null-var-string-screen`、`gate-null-var-string-runtime-formal`。
 
+### 2.9 `30e27fe`：预编译 Gate 固定 JSON format
+
+Gate login/place/cancel/subscribe 的 JSON schema 都是编译期固定字面量。候选使用
+`FMT_COMPILE`，保留原有 `PlaceOrderEncodeFields` / `CancelOrderEncodeFields`、价格和数量
+text、`fmt::format_to_n`、固定 buffer、截断检查与 byte-exact wire，只消除运行时 JSON
+format 解析。
+
+以下是当前 `f302f6e` baseline 与候选在 CPU 28 上完成的五组交替 A/B；每侧 10
+repetitions。MAD 是五个组中位数的 median absolute deviation。
+
+| 测量面 | baseline（median ± MAD） | candidate（median ± MAD） | 提升 | 同向组数 |
+| --- | ---: | ---: | ---: | ---: |
+| EncodePlace `real_time` | 265.790 ± 0.156 ns | 137.590 ± 0.474 ns | 48.23% | 5/5 |
+| EncodeCancel `real_time` | 138.974 ± 0.100 ns | 79.224 ± 0.110 ns | 42.99% | 5/5 |
+| OrderSession `p50` | 808 ± 0.5 ns | 680.5 ± 0.5 ns | 15.78% | 5/5 |
+| OrderSession `p99` | 1091.5 ± 2 ns | 962.5 ± 1 ns | 11.82% | 5/5 |
+| StrategyContext `p50` | 784 ± 1.5 ns | 673.5 ± 0 ns | 14.09% | 5/5 |
+| StrategyContext `p99` | 2291.5 ± 5.5 ns | 2166.5 ± 5.5 ns | 5.45% | 5/5 |
+| GatewayWorker `p50` | 867.5 ± 0 ns | 736.5 ± 0.5 ns | 15.10% | 5/5 |
+| GatewayWorker `p99` | 1188 ± 5.5 ns | 1046.5 ± 3 ns | 11.91% | 5/5 |
+| GatewayWorker `p99.9` | 12413 ± 47.5 ns | 12242 ± 116.5 ns | 1.38% | 3/5 |
+
+OrderSession / StrategyContext 的 `p99.9` 分别为 4/5、4/5 同向，但组间 MAD 较大；
+GatewayWorker 只有 3/5 同向，因此统一不声明稳定 `p99.9` 收益。gprofng 中
+`fmt::detail::parse_format_string` 从 baseline 的 `47.47%` samples 降为候选的残余
+`8.77%`，热点转为必要的整数格式化和 buffer copy。
+
+同一方向曾在较早 checkpoint 因 Gateway `p99.9` 只有 1/5 同向且组中位数回归 1.54%
+而拒绝。本次没有复用历史 screening，而是在当前代码上重新构建 baseline/candidate 并完成
+五组 fresh A/B；采用依据只包括本轮稳定的 `p50/p99`，历史与本轮 tail 合并看仍不稳定。
+
+功能证据包括 Release 全量 build、Debug 全量 build、Gate 五项 focused tests、
+Release `ctest` 185/186，以及从 repo 根目录重跑通过的唯一 cwd 相关失败测试。
+typed replay 两侧均处理 5,509,187 条 BBO、产生 282 个信号，CSV byte-identical，
+SHA-256 为
+`b14b486e951fda21a5429b1c36709cc2e707033b2e180bf3bda5989869fdc65c`。
+
+证据：`gate-compiled-order-request-formats`。
+
 ## 3. 所有未采用候选
 
 以下候选均已撤销，当前生产代码不包含这些修改。screening 数字只用于决定是否进入正式
@@ -219,7 +259,6 @@ A/B，不作为最终性能主张。
 | 调整 common write-complete clock 采集路径 | Gate Gateway submit `p50/p99` 改善 `5.05%/4.58%`，Bitget Gateway 改善 `2.98%/2.67%`；Gate `HandlePlaceResult` 5/5 回归 `2.39%` | 否 | submit 收益以 response 回归为代价，共同路径不满足完整链门槛 |
 | Gate inline prepared place writer | Gateway `p50/p99` 改善 `15.59%/12.38%`；`HandlePlaceResult` 组中位数回归 `1.87%`，仅 1/5 同向 | 否 | 明显 code-layout/response 回归 |
 | Gate out-of-line place writer | 单组 submit 中心改善约 `16%`；三组 response `HandlePlaceAck/Result` 分别回归 `1.49%/4.34%`，均 0/3 同向 | 否 | 把 writer 移出行内仍未消除 response 回归 |
-| Gate 全 fixed JSON `FMT_COMPILE` | Encoder place/cancel 改善 `48.88%/43.57%`，Gateway `p50/p99` 改善 `14.84%/11.58%`；Gateway `p99.9` 回归 `1.54%`，仅 1/5 同向 | 否 | 本项目优先最低和尾延迟，外层 `p99.9` 未通过；这也是没有照搬 Bitget 已采用修改的原因 |
 | Gate place-only `FMT_COMPILE` | screening Gateway `p50/p99` 改善约 `13.8%/10.4%`，`p99.9` 仅 2/3 同向；正式 paired 只完成 1 组 | 否 | 正式证据不完整，screening 尾部也不稳定 |
 | Gate compiled place helper | place encoder 改善 `46.62%`，但 cancel encoder 回归 `19.53%`；Gateway `p99.9` 回归 `3.51%`，0/2 同向 | 否 | 为 place 获取收益却伤害 cancel 和 gateway tail |
 
@@ -227,7 +266,7 @@ A/B，不作为最终性能主张。
 `write-complete-clock-formal`、`write-complete-clock-response-formal`、
 `gate-place-writer-screen`、`gate-place-writer-response-formal`、
 `gate-place-writer-out-of-line-screen`、`gate-place-writer-out-of-line-response-screen`、
-`gate-fmt-compile-formal`、`gate-place-only-fmt-compile-formal`、
+`gate-place-only-fmt-compile-formal`、
 `gate-place-compiled-helper-screen`。
 
 ### 3.3 Bitget submit
@@ -270,6 +309,19 @@ A/B，不作为最终性能主张。
 `bitget-operation-skip-success-msg-formal`、`bitget-direct-client-oid-string-screen`、
 `bitget-direct-client-oid-string-runtime-screen`、`bitget-order-cursor-reset-runtime-formal`。
 
+### 3.6 数值订单 request 与 OrderSession 格式化
+
+| 尝试 | 结果摘要 | 是否采用 | 原因 |
+| --- | --- | --- | --- |
+| `OrderPlaceRequest` 只保存 `double` price/quantity 与 decimal places；删除 Strategy text storage；Gateway/SHM/OrderSession 共享 exact request；OrderSession 最终格式化 JSON | Gate 经 `FMT_COMPILE` 最小优化后，encoder place `268.8 → 234.2 ns`，但 OrderSession / StrategyContext / GatewayWorker `p50` 分别回归 `6.3%/4.1%/3.2%`，`p99` 回归 `11.9%/1.3%/10.4%`；Bitget encoder place 回归 `67.8%`，三条完整链 `p50` 回归 `17.9%/15.9%/11.3%`；LeadLag actual-config 总路径 `p50` 改善约 `6.0%` | 否 | Strategy text lifetime 和部分 copy 虽减少，但 `double → fixed decimal` 成本被移动到每次 OrderSession 下单；Gate/Bitget 任一完整 submit 链回归即触发整体撤销，不能因 LeadLag 局部改善保留两套不一致 contract |
+
+该候选完成了七个实施部分、focused/full tests 和 typed replay；因 component screening 已明确
+跨过性能拒绝门，没有继续浪费时间运行五组正式 A/B。gprofng 与独立 fmt scratch
+benchmark 都把剩余成本定位到 float fixed formatting，而不是可继续消除的 runtime format
+解析。生产修改已整体撤销；完整 patch 保存在
+`order-request-double-format/rejected/order-request-double-format.diff`，SHA-256 为
+`0a66f8048aeee3b1db9c9f0aab7725c69446823d1016875e7af40a181ef7ad91`。
+
 ## 4. Profile、测试与结果边界
 
 ### 4.1 Profile 结论
@@ -279,18 +331,23 @@ A/B，不作为最终性能主张。
 - 最新 Gate / Bitget feedback parser gprof 分别位于
   `gate-feedback-parser-gprof-after-d4102fc` 和
   `bitget-feedback-parser-gprof-after-d4102fc`。
+- 最新 Gate submit formatter gprofng 位于
+  `gate-compiled-order-request-formats/gprofng-candidate-v1.er`；对应五组正式 A/B 位于
+  `gate-compiled-order-request-formats/formal`。
 - `3156ce7` 新增 Bitget order ACK parser → correlation → handler 完整 benchmark，
   它是测量支撑提交，不是生产优化，也不单独声明延迟收益。
 - 本机 `kernel.perf_event_paranoid=4`，无法取得 `perf` PMU/call graph；未修改系统设置。
   函数级排序使用 gprof/分层 benchmark，并由未插桩 Release A/B 确认。
-- 剩余非拓扑热点均至少尝试两个最小候选；连续完整 A/B 没有找到新的可接受非拓扑优化。
-  线程/进程拓扑属于下一阶段，必须在独立 branch/worktree 中进行。
+- 数值订单 request 候选被拒绝后继续 profile，拆出的 Gate fixed-format candidate 已在当前
+  checkpoint 通过；不能据此推断其他 formatter 或 request ABI 也应修改。
+- 当前下一阶段仍是线程/进程拓扑，必须在独立 branch/worktree 中进行。
 
 ### 4.2 环境与适用范围
 
 - 环境快照：
   `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results/baseline_environment.md`。
-- CPU：Intel Xeon Platinum 8488C；benchmark 固定 CPU 29。
+- CPU：Intel Xeon Platinum 8488C；早期 benchmark 固定 CPU 29，`30e27fe` 的 fresh
+  baseline/candidate 固定 CPU 28。
 - 编译：GCC 13.3.0，Release，`-O3 -DNDEBUG`。
 - 原始结果根目录：
   `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results`。
