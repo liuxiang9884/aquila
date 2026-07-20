@@ -7,6 +7,7 @@
 #include <string_view>
 #include <utility>
 
+#include <fmt/compile.h>
 #include <fmt/format.h>
 
 #include "exchange/gate/trading/order_codecs.h"
@@ -70,10 +71,10 @@ struct OrderFeedbackSubscribeRequestFields {
 
 namespace detail {
 
-template <std::size_t N, typename... Args>
-[[nodiscard]] EncodedTextRequest FormatJsonToBuffer(
-    std::array<char, N>& buffer, fmt::format_string<Args...> format,
-    Args&&... args) {
+template <std::size_t N, typename Format, typename... Args>
+[[nodiscard]] EncodedTextRequest FormatJsonToBuffer(std::array<char, N>& buffer,
+                                                    const Format& format,
+                                                    Args&&... args) {
   const auto result = fmt::format_to_n(buffer.data(), buffer.size(), format,
                                        std::forward<Args>(args)...);
   if (result.size > buffer.size()) {
@@ -107,7 +108,8 @@ template <std::size_t N>
 
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"time":{},"channel":"futures.login","event":"api","payload":{{"api_key":"{}","signature":"{}","timestamp":"{}","req_id":"{}"}}}})",
+      FMT_COMPILE(
+          R"({{"time":{},"channel":"futures.login","event":"api","payload":{{"api_key":"{}","signature":"{}","timestamp":"{}","req_id":"{}"}}}})"),
       fields.timestamp, fields.api_key,
       std::string_view(signature.data(), signature.size()), fields.timestamp,
       fields.encoded_request_id);
@@ -134,14 +136,16 @@ template <std::size_t N>
   if (fields.quote_size) {
     return detail::FormatJsonToBuffer(
         buffer,
-        R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":"{}","price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})",
+        FMT_COMPILE(
+            R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":"{}","price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})"),
         fields.timestamp, fields.encoded_request_id, fields.contract,
         fields.signed_size_text, fields.price_text,
         GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
   }
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":{},"price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})",
+      FMT_COMPILE(
+          R"({{"time":{},"channel":"futures.order_place","event":"api","payload":{{"req_id":"{}","req_param":{{"contract":"{}","size":{},"price":"{}","tif":"{}","text":"{}","reduce_only":{}}}}}}})"),
       fields.timestamp, fields.encoded_request_id, fields.contract,
       fields.signed_size_text, fields.price_text,
       GateTimeInForceToken(fields.time_in_force), text, fields.reduce_only);
@@ -156,7 +160,8 @@ template <std::size_t N>
   if (fields.exchange_order_id != 0) {
     return detail::FormatJsonToBuffer(
         buffer,
-        R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})",
+        FMT_COMPILE(
+            R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})"),
         fields.timestamp, fields.encoded_request_id, fields.exchange_order_id);
   }
 
@@ -168,7 +173,8 @@ template <std::size_t N>
 
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})",
+      FMT_COMPILE(
+          R"({{"time":{},"channel":"futures.order_cancel","event":"api","payload":{{"req_id":"{}","req_param":{{"order_id":"{}"}}}}}})"),
       fields.timestamp, fields.encoded_request_id, order_id);
 }
 
@@ -185,7 +191,8 @@ template <std::size_t N>
 
   return detail::FormatJsonToBuffer(
       buffer,
-      R"({{"time":{},"channel":"futures.orders","event":"subscribe","payload":["{}","!all"],"auth":{{"method":"api_key","KEY":"{}","SIGN":"{}"}}}})",
+      FMT_COMPILE(
+          R"({{"time":{},"channel":"futures.orders","event":"subscribe","payload":["{}","!all"],"auth":{{"method":"api_key","KEY":"{}","SIGN":"{}"}}}})"),
       fields.timestamp, fields.login_uid, fields.api_key,
       std::string_view(signature.data(), signature.size()));
 }
