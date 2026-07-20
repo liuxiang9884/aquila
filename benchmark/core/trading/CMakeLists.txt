@@ -28,3 +28,13 @@ target_link_libraries(order_feedback_shm_benchmark
         benchmark::benchmark_main
         nova
 )
+
+add_executable(order_gateway_shm_topology_benchmark
+    order_gateway_shm_topology_benchmark.cpp
+)
+
+target_link_libraries(order_gateway_shm_topology_benchmark
+    PRIVATE
+        aquila_core
+        benchmark::benchmark_main
+)

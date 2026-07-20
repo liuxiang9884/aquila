@@ -2,15 +2,17 @@
 
 ## 背景与目标
 
-本阶段从 `perf/gate-bitget-trading-latency` 的已接受 checkpoint `d829337` 派生，专用
-worktree 为 `/home/liuxiang/tmp/aquila-gate-bitget-trading-topology`，branch 为
+本阶段从 numeric request / SHM V3 已接受 checkpoint `cd1163c` 派生，专用 worktree
+为 `/home/liuxiang/tmp/aquila-gate-bitget-trading-topology`，branch 为
 `perf/gate-bitget-trading-topology`。准确的 branch、ahead 和 dirty 状态只信
 `git status --short --branch`。
 
 前一阶段已经完成非拓扑 submit、ACK、feedback parser/runtime 和 Strategy 热点优化，并
-拒绝了把订单 command 全面改为 `double + decimal places` 的候选。本阶段不重新打开该
-request ABI 设计，只分析 Strategy、order gateway worker、OrderSession、feedback
-consumer 之间的线程、进程、CPU 和 SHM 交接成本。
+接受 `bcdc358` 的 numeric `OrderPlaceRequest` / minimal `OrderCancelRequest` 与 SHM
+V3；随后 local ID、final JSON writer 和 decimal writer 候选均因完整链或相邻路径回退
+而撤销。本阶段不重新打开 request ABI 或 formatter 设计，只分析 Strategy、order
+gateway worker、OrderSession、feedback consumer 之间的线程、进程、CPU 和 SHM 交接
+成本。
 
 目标：
 
@@ -40,6 +42,22 @@ consumer 之间的线程、进程、CPU 和 SHM 交接成本。
   设置以启用 perf。
 - 未获用户明确授权前不发送真实订单；因此 worker affinity/IRQ 候选只能形成离线证据和
   live A/B 方案，不能声明公网或交易所 RTT 收益。
+
+## 2026-07-20 baseline measurement support
+
+`order_gateway_shm_topology_benchmark` 已适配 SHM V3，并覆盖：
+
+- CPU29 producer → CPU30/31 consumer 的 command one-way handoff；
+- CPU29 owner → CPU30/31 worker → CPU29 owner 的 command/event round trip；
+- command enqueue 同线程下界；
+- 1/4 route empty poll 和最后一条 route 单 event scan；
+- command/event burst `1/4/16/64` drain。
+
+所有跨线程 case 都有 affinity 检查、start barrier、单 in-flight、sequence / ownership
+断言、停止条件和运行期 timeout。Release 三轮 smoke 的代表性 p50 为：enqueue
+`36 ns`、29→30/31 one-way `334/404 ns`、round trip `820/809 ns`、1/4 route empty
+poll `39/69 ns`。这些数字只证明测量入口可用，不是正式 baseline，也不构成生产优化
+收益。
 
 ## 当前所有权模型
 
@@ -80,14 +98,15 @@ Google Benchmark control thread 误算进 handoff latency。
 
 ### Baseline 与 profile
 
-- baseline binary 从 `d829337` 构建，Release、GCC 13.3.0、固定相同 CPU 和参数。
+- measurement-support commit 的生产代码与 `cd1163c` 相同；正式 baseline binary 从该
+  harness commit 构建，Release、GCC 13.3.0、固定相同 CPU 和参数。
 - 每个正式 case 至少 5 组交替 baseline/candidate，每组至少 10 repetitions。
 - 保存组中位数、MAD、方向一致组数、max/outlier count 和环境快照。
 - gprofng 分别 profile producer enqueue、consumer empty spin、burst drain 和 round trip。
 - 原始产物写入
-  `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-results/trading-topology/`；
+  `/home/liuxiang/tmp/aquila-gate-bitget-trading-topology-results/`；
   build 写入
-  `/home/liuxiang/tmp/aquila-gate-bitget-trading-latency-builds/trading-topology/`。
+  `/home/liuxiang/tmp/aquila-gate-bitget-trading-topology-builds/`。
 
 ## 阶段 2：最小 queue ownership 候选
 
@@ -183,4 +202,4 @@ read-only profile 已发现现有 worker CPU16/18 与 ENA IRQ 冲突，但本阶
 - 所有 `≥5%` samples 的可行动 userspace hotspot 已优化或有两次最小失败候选；
 - affinity/IRQ 已有用户授权的 live A/B，或明确记录“无授权、不能验证”的边界；
 - Gate/Bitget 完整链、并发安全、replay 和 tail 门禁通过；
-- 最终报告包含相对 `d829337` 的整体前后数据与未采用候选。
+- 最终报告包含相对 `cd1163c` 的整体前后数据与未采用候选。
