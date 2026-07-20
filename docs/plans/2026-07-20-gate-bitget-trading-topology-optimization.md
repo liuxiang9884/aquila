@@ -59,6 +59,49 @@ gateway worker、OrderSession、feedback consumer 之间的线程、进程、CPU
 poll `39/69 ns`。这些数字只证明测量入口可用，不是正式 baseline，也不构成生产优化
 收益。
 
+正式 baseline 使用 `542ed4b`、5 组 × 10 repetitions。组中位数中 CPU29→30/31
+one-way `p50` 为 `380/398.5 ns`，round trip `p50` 为 `823.5/869 ns`，1/4 route
+empty poll `p50` 为 `39/69 ns`。gprofng 必须使用 `-F on` 跟随 target `execve`；
+`-F off` 只会得到空 experiment。有效 profile 显示 round-trip worker 的主要 CPU 时间
+位于 empty spin、command queue remote `tail` observation 和 event queue remote
+`head` observation；slot 定位仍生成整数除法。
+
+## 2026-07-20 queue 候选结果
+
+以下生产候选都已最小撤销：
+
+- producer/consumer 双向 cached remote index：one-way `p50` 约改善 `9%`，但 CPU31
+  `p99` 回退 `12.3%`，round trip 也出现回退；
+- 仅 producer cached `head`：one-way `p50` 约改善 `10%`，但两组 cross-core `p99`
+  回退约 `9%–11%`，round trip `p50/p99` 同时回退；
+- power-of-two capacity 条件 mask：component 多数改善，但 command burst-64 和 route
+  scan tail 回退；
+- 仅 producer 使用条件 mask：正式 round trip `p50` 回退 `3.3%/9.7%`；
+- 强制 power-of-two capacity 并在 push/pop 无分支使用 mask：queue round trip
+  `p50/p99` 改善约 `5.4%–7.9%/4.3%–4.4%`，但完整 Gate SHM submit
+  `p50/p99` 回退 `2.37%/2.00%`，Bitget 回退 `2.14%/2.60%`，Bitget `p99.9`
+  回退 `2.94%`。
+
+最后一项证明 SHM handoff 局部改善约 `4.5%–6.9%`，但收益没有传递到完整 submit；
+不得采用或把 component 数字声明为链路收益。正式原始结果位于
+`direct-slot-mask-formal/` 和 `direct-slot-mask-submit-formal/`。
+
+## 2026-07-20 CPU16–19 离线筛选
+
+measurement harness 已覆盖 CPU29 owner 与当前四条 gateway worker CPU16–19。5 组 ×
+10 repetitions 的短筛选曾显示 IRQ 冲突核 CPU16/18 round-trip `p99.9` 比 CPU17/19
+高约 `37%–51%`；但扩展到 5 组 × 100 repetitions 后，CPU16/17/18/19 的
+`p50/p99/p99.9` 分别为：
+
+- CPU16：`810/923/1757 ns`；
+- CPU17：`842/931/3095 ns`；
+- CPU18：`834/950.5/1787 ns`；
+- CPU19：`840.5/948.5/1861 ns`。
+
+长筛选期间 CPU16 收到约 804 次 ENA Tx/Rx IRQ、CPU18 收到 61 次 management IRQ，
+但离线结果没有证明冲突核更慢。CPU id 排名受 host jitter 影响，不能据此修改 live
+affinity；仍需真实网络负载下的授权 A/B。
+
 ## 当前所有权模型
 
 - Strategy / `TradingRuntime` 是每条 command queue 的唯一 producer，也是每条 event queue
