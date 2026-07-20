@@ -374,6 +374,37 @@ screening 不能证明整体回归。该版生产修改已撤销；完整 patch 
 `0a66f8048aeee3b1db9c9f0aab7725c69446823d1016875e7af40a181ef7ad91`。后续完成同起止点
 no-log E2E A/B 后，修正版作为 `bcdc358` 采用；两者不能混为同一候选结果。
 
+### 3.7 numeric request 之后的 OrderSession formatter 候选
+
+以下候选均以 `bcdc358` / `2cd2d2e` 完成态为 baseline，正式 benchmark 不产生业务
+日志；所有生产 diff 已撤销。
+
+| 尝试 | 结果摘要 | 是否采用 | 原因 |
+| --- | --- | --- | --- |
+| Gate `t-{}` / Bitget `a-{}` 改用独立 `FMT_COMPILE` | place component 改善，但 Gate/Bitget cancel 分别回退约 `6%–8%/7%` | 否 | 相邻发送路径明确回退 |
+| Gate/Bitget local ID 改用 inline `to_chars` | Gate place 改善约 `14%`，但 cancel 回退约 `5%`；Bitget direct p50/p99 5/5 改善，但 SHM full p50 仅 2/5，handoff p50 0/5 | 否 | direct 收益没有稳定传递到 SHM 完整链 |
+| Bitget `noinline to_chars` | component place/cancel/OrderSession 均改善；正式 direct p50/p99 5/5 改善，SHM full p50 仅 2/5 | 否 | SHM 完整链未达到同向门槛 |
+| Bitget 把 `a-<id>` 合并进 compiled final JSON | component place/cancel/OrderSession 约改善 `14%–15%/10%–11%/4%`；E2E 筛选 direct p50 2/3、SHM p50 1/3 | 否 | code layout 抵消 component 收益 |
+| Bitget out-of-line `to_chars` | component place/cancel 约改善 `9%/16%`；正式 direct p50/p99 5/5、4/5 改善，SHM full p50/p99 仅 3/5、2/5 | 否 | SHM 完整链和 handoff 回退 |
+| Gate place-only local ID fast path | place encoder 改善约 `10%–20%`，但未修改的 cancel 3/3 回退约 `6%` | 否 | 相邻 cancel 路径失败，未进入 E2E |
+| Gate place/cancel 直接 JSON writer | inline 版本 Gate direct p50/p99 5/5、SHM p50/p99 5/5、4/5 改善，但 Bitget 回归筛选失败；移到 `.cpp` 后 Gate/Bitget SHM p50 均 0/3 | 否 | 共用 runtime / binary 的其他链路和 handoff 明确回退 |
+| decimal unsigned writer 改用 `to_chars` | Gate cancel / OrderSession 3/3 回退；Bitget encoder 有约 `3%` 收益，但 OrderSession 两组回退 `8%–15%` | 否 | session 级结果失败 |
+| decimal digit width 改用乘十阈值 | Gate place 约改善 `4%–5%`，但 cancel 回退；Bitget place/cancel 3/3 回退 | 否 | 双交易所 component 方向不一致 |
+
+fresh profile 证明 local ID runtime parse、最终 JSON integer/copy 和 decimal digit writer 是
+剩余可见成本；但连续候选都暴露出相邻 place/cancel、SHM handoff 或另一个交易所的
+code-layout 回退。当前没有新的非拓扑生产优化被接受，下一阶段按既定隔离规则转到独立
+线程/进程 topology branch/worktree。
+
+证据根目录：
+`/home/liuxiang/tmp/aquila-gate-bitget-order-request-format-e2e-results/`，其中包括
+`bitget-local-id-to-chars-noinline-e2e-formal`、
+`bitget-local-id-out-of-line-e2e-formal`、
+`gate-direct-place-cancel-json-e2e-formal`、
+`gate-direct-json-out-of-line-combined-e2e-screen`、
+`order-decimal-unsigned-to-chars-component-screen` 和
+`order-decimal-threshold-width-component-screen`。
+
 ## 4. Profile、测试与结果边界
 
 ### 4.1 Profile 结论
@@ -393,10 +424,11 @@ no-log E2E A/B 后，修正版作为 `bcdc358` 采用；两者不能混为同一
 - numeric request 完成态的最新 gprofng 位于
   `final-order-session-profile`：Gate EncodePlace 约 `121 ns`，其中 encoder、
   decimal formatting 和最终 copy 是主要成本；Bitget EncodePlace 约 `113 ns`。
-  两边仍可见的 `parse_format_string` 主要来自 local order ID 的 `t-{}` / `a-{}`
-  formatter，是下一项非拓扑 screening 候选。
-- numeric request 之后继续非拓扑 profile；线程/进程拓扑仍须在独立 branch/worktree
-  中进行，不能混入当前 A/B。
+  两边 local order ID runtime parse、最终 JSON copy/integer format 和 decimal writer
+  已分别完成 fresh 候选筛选；局部改善均未通过 Gate/Bitget 完整链或相邻路径门槛，
+  生产 diff 已全部撤销。
+- 当前非拓扑 formatter 循环已经结束；线程/进程拓扑须从已接受 clean HEAD 新建独立
+  branch/worktree，不能混入本轮已拒绝候选。
 
 ### 4.2 环境与适用范围
 

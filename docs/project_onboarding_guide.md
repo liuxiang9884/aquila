@@ -164,10 +164,11 @@ rg 'aquila_evaluation' core exchange tools
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
 5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
-6. 性能/CPU：继续 Gate/Bitget 非拓扑优化时使用 numeric request 专用 worktree，按最新
-   gprofng 先独立 screening local order ID formatter 的残余 runtime format parse；无
-   fresh benchmark/profile 证据不宣称收益。线程/进程拓扑最后在新的独立 branch/worktree
-   评估。
+6. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
+   decimal writer 的后续非拓扑筛选，候选均因完整链或相邻路径回退而撤销。下一阶段从
+   已接受 clean HEAD 新建独立 topology branch/worktree，先读
+   `docs/runtime_cpu_allocation.md`，冻结 Gate/Bitget submit、ACK、feedback runtime
+   baseline；无 fresh benchmark/profile 证据不宣称收益。
 
 ## 给下一个对话的提示
 
@@ -200,8 +201,8 @@ Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不
 `/home/liuxiang/tmp/aquila-gate-bitget-order-request-format-e2e`，确认 branch 为
 `perf/gate-bitget-order-request-format-e2e`，并先读性能计划的
 “2026-07-20 数值订单 request 与 OrderSession 格式化”和性能报告。numeric request 已作为
-`bcdc358` 接受；正式 benchmark 不产生业务日志。最新 profile 的下一项非拓扑候选是
-Gate `t-{}` / Bitget `a-{}` local order ID formatter 的残余 runtime format parse，必须
-独立 screening，不复用旧 Bitget 失败结论。`perf` 因
-`kernel.perf_event_paranoid=4` 不可用；不要擅自修改系统设置。完成非拓扑热点后，拓扑优化
-仍按约定另开 branch/worktree。
+`bcdc358` 接受；正式 benchmark 不产生业务日志。local order ID、final JSON 和 decimal
+writer 的后续非拓扑候选均已完成 fresh screening，因完整链或相邻路径回退而撤销。
+下一步不要继续在该 worktree 修改 formatter；从已接受 HEAD 新建独立 topology
+branch/worktree，并先读 `docs/runtime_cpu_allocation.md`。`perf` 因
+`kernel.perf_event_paranoid=4` 不可用；不要擅自修改系统设置。
