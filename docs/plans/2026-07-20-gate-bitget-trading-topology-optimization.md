@@ -119,9 +119,20 @@ benchmark 均无 error。修正后的 profile 显示：
 - Gate gateway worker 的 SHM dequeue / dispatch 低于当前采样分辨率，热点仍在
   OrderSession；
 - Bitget gateway worker 中 `HandleSendResult()` 与未预留容量的
-  `request_metadata_` map 扩容出现可见样本。下一候选应在构造期按
-  `request_map_capacity` 预留 Gate/Bitget publisher metadata，不改变响应关联或清理
-  语义。
+  `request_metadata_` map 扩容出现可见样本。
+
+随后尝试在构造期按 `request_map_capacity` 预留 Gate/Bitget publisher metadata。
+5 组 × 10 repetitions 的 worker component 中，Gate `p50/p99/p99.9` 从
+`622/722/10436 ns` 变为 `627/717.5/1841 ns`，Bitget 从
+`544.5/600.5/7950 ns` 变为 `553/594/2680.5 ns`。reserve 消除了 map growth 尖峰，
+但 Gate/Bitget `p50` 分别回退约 `0.8%/1.6%`。
+
+两组交替完整 SHM submit screening 结果受 host 漂移影响，但 Gate 两组均未通过
+`p50/p99` 门禁。更重要的是，该 benchmark 的终点为 transport `last_write_ns`，
+`TrackSentCommand()` 在 write 完成后才执行，本来就不覆盖 metadata 插入；它不能替代
+worker component 门禁。由于最低延迟优先于少量扩容 tail，该候选已完全撤销；若将来
+需要解决极端 inflight growth，应另行评估固定容量关联表，不能用全容量
+`flat_hash_map::reserve()` 换取 p50 回退。
 
 ## 2026-07-20 queue 候选结果
 
