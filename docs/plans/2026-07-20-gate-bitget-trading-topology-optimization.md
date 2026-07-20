@@ -84,6 +84,20 @@ route-state 扫描；`kReady` / `kNotReady` 的 `ApplyRouteState()` 还会重复
 `AllRoutesStopped()`。下一候选只允许消除能够从当前 state 直接证明冗余的本地扫描，不
 改变 stopped、queued final response 或 unknown-result 的处理顺序。
 
+把 `kReady` / `kNotReady` 的 `running_ = !AllRoutesStopped()` 等价替换为
+`running_ = true` 后，正式 client poll A/B 中 4-route empty 的
+`p50/p99/p99.9` 从 `88/107/112 ns` 变为 `88/91.5/94.5 ns`，one-ready 从
+`98.5/103/120 ns` 变为 `97/100.5/117.5 ns`。但两组交替顺序的 Gate/Bitget 完整
+SHM submit screening 都回退：
+
+- 第 1 组 Gate `p50/p99` 从 `1664/2018 ns` 回退到 `1731/2128 ns`，Bitget 从
+  `1594/1914 ns` 回退到 `1606/1988 ns`；
+- 反转执行顺序后，Gate 从 `1612/2015 ns` 回退到 `1910/2315 ns`，Bitget 从
+  `1521/1826 ns` 回退到 `1583/1999 ns`。
+
+该候选只改善 component tail，收益没有传递到完整链主指标，已最小撤销，不继续消耗
+正式 5 组 × 10 repetitions。
+
 ## 2026-07-20 queue 候选结果
 
 以下生产候选都已最小撤销：
