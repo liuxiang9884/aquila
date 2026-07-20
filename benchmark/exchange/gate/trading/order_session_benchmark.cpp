@@ -696,7 +696,9 @@ void BM_OrderSessionHandlePlaceResult(benchmark::State& state) {
     if (payload_index == kDispatchBatchSize) {
       state.PauseTiming();
       session.emplace(
-          MakeOrderSessionConfig(kDispatchBatchSize + 1, 1U << 20),
+          MakeOrderSessionConfig(
+              kDispatchBatchSize + 1,
+              websocket::DefaultWebSocketOptions::kPreparedWriteBytes),
           LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler);
       if (!ActivateLoginAndPlace(
               *session,
@@ -836,8 +838,9 @@ void RunOrderSessionPlaceOrderWriteBenchmark(benchmark::State& state,
   CountingHandler handler;
   using BenchOrderSession = OrderSession<CountingHandler, WebSocketPolicy>;
   BenchOrderSession session(
-      MakeOrderSessionConfig(kOrderSendLatencyIterations + warmup_count + 2,
-                             1U << 20),
+      MakeOrderSessionConfig(
+          kOrderSendLatencyIterations + warmup_count + 2,
+          websocket::DefaultWebSocketOptions::kPreparedWriteBytes),
       LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
       kOrderSendLatencyIterations + warmup_count + 2);
   if (!ActivateLoginOnly(session, kLoginSuccess)) {
@@ -902,8 +905,9 @@ void RunStrategyContextPlaceLimitOrderWriteBenchmark(
   CountingHandler handler;
   using BenchOrderSession = OrderSession<CountingHandler, WebSocketPolicy>;
   BenchOrderSession session(
-      MakeOrderSessionConfig(kOrderSendLatencyIterations + warmup_count + 2,
-                             1U << 20),
+      MakeOrderSessionConfig(
+          kOrderSendLatencyIterations + warmup_count + 2,
+          websocket::DefaultWebSocketOptions::kPreparedWriteBytes),
       LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
       kOrderSendLatencyIterations + warmup_count + 2);
   if (!ActivateLoginOnly(session, kLoginSuccess)) {
@@ -987,7 +991,9 @@ void BM_OrderSessionPlaceStrategyOrderToCountingTransport(
   using BenchOrderSession =
       OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
   BenchOrderSession session(
-      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      MakeOrderSessionConfig(
+          kOrderSendLatencyIterations + 2,
+          websocket::DefaultWebSocketOptions::kPreparedWriteBytes),
       LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
       kOrderSendLatencyIterations + 2);
   if (!ActivateLoginOnly(session, kLoginSuccess)) {
@@ -1063,7 +1069,9 @@ void BM_GatewayWorkerPlaceOrderToCountingTransport(benchmark::State& state) {
   using BenchOrderSession =
       OrderSession<CountingHandler, CountingOrderWebSocketPolicy>;
   BenchOrderSession session(
-      MakeOrderSessionConfig(kOrderSendLatencyIterations + 2, 1U << 20),
+      MakeOrderSessionConfig(
+          kOrderSendLatencyIterations + 2,
+          websocket::DefaultWebSocketOptions::kPreparedWriteBytes),
       LoginCredentials{.api_key = "key", .api_secret = "secret"}, handler,
       kOrderSendLatencyIterations + 2);
   if (!ActivateLoginOnly(session, kLoginSuccess)) {

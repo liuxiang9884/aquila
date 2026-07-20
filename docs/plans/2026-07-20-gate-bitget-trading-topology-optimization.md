@@ -98,6 +98,31 @@ SHM submit screening 都回退：
 该候选只改善 component tail，收益没有传递到完整链主指标，已最小撤销，不继续消耗
 正式 5 组 × 10 repetitions。
 
+## 2026-07-20 OrderSession / worker profile
+
+完整 SHM submit benchmark 每个 iteration 都重建 Strategy、SHM 和 OrderSession；
+gprofng 默认采样被 LeadLag recorder ring 初始化占据约 `70%`，因此不能把该结果当成
+submit 热路径 profile。改用现有可复用 OrderSession fixture，并以 1 ms interval 重复
+采样。该独立 benchmark 进程不初始化 NOVA logger，send log 在
+`logger() == nullptr` 时直接跳过。
+
+Gate fixture 原来把约 `4098` 个 prepared-write slots 与每 slot `1 MiB` 组合，实际构造
+约 `4 GiB` arena；被中断的 partial profile 中 constructor 占 `94%` CPU。现已把
+benchmark-only per-slot bytes 修正为生产默认 `4096`，受影响的 9 个 Release/Debug
+benchmark 均无 error。修正后的 profile 显示：
+
+- Gate OrderSession `PlaceOrder` 样本主要落在 `OrderAckLatencyDiagnostics::Arm`、
+  `SendText`、JSON encode 和 realtime clock；独立 ACK diagnostic window map 是 Gate
+  特有的可见热点；
+- Bitget 主要落在 JSON encode、correlation map、realtime/monotonic timestamp 和
+  `SendText`；
+- Gate gateway worker 的 SHM dequeue / dispatch 低于当前采样分辨率，热点仍在
+  OrderSession；
+- Bitget gateway worker 中 `HandleSendResult()` 与未预留容量的
+  `request_metadata_` map 扩容出现可见样本。下一候选应在构造期按
+  `request_map_capacity` 预留 Gate/Bitget publisher metadata，不改变响应关联或清理
+  语义。
+
 ## 2026-07-20 queue 候选结果
 
 以下生产候选都已最小撤销：
