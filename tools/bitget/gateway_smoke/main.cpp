@@ -209,23 +209,29 @@ void DrainBbo(market_data::BookTickerShmReader& reader,
   return false;
 }
 
-[[nodiscard]] core::StrategyOrder MakeStrategyOrder(
-    const smoke::GatewaySmokeConfig& config, const OrderRecord& record) {
-  return core::StrategyOrder{
+[[nodiscard]] core::OrderPlaceRequest MakePlaceRequest(
+    const smoke::GatewaySmokeConfig& config,
+    const aquila::config::InstrumentInfo& instrument,
+    const OrderRecord& record) {
+  core::OrderPlaceRequest request{
       .local_order_id = record.local_order_id,
       .parent_id = record.parent_id,
-      .exchange = aquila::Exchange::kBitget,
-      .symbol_id = config.symbol_id,
-      .symbol = config.exchange_symbol,
-      .side = record.wire.side,
-      .type = record.wire.order_type,
-      .time_in_force = record.wire.time_in_force,
+      .price = record.wire.price,
       .quantity = record.wire.quantity,
-      .quantity_text = record.wire.quantity_text,
-      .price_text = record.wire.price_text,
-      .reduce_only = record.wire.reduce_only,
+      .symbol_id = config.symbol_id,
       .gateway_route_id = config.route_id,
+      .exchange = aquila::Exchange::kBitget,
+      .side = record.wire.side,
+      .order_type = record.wire.order_type,
+      .time_in_force = record.wire.time_in_force,
+      .price_decimal_places =
+          static_cast<std::uint8_t>(instrument.price_decimal_places),
+      .quantity_decimal_places =
+          static_cast<std::uint8_t>(*instrument.quantity_decimal_places),
+      .reduce_only = record.wire.reduce_only,
   };
+  core::SetOrderSymbol(&request, config.exchange_symbol);
+  return request;
 }
 
 [[nodiscard]] OrderRecord* FindOrder(OrderRecord* entry, OrderRecord* close,
@@ -467,7 +473,8 @@ void WriteSendEvent(smoke::EvidenceWriter* writer,
       .close = &close,
   };
 
-  const core::StrategyOrder entry_order = MakeStrategyOrder(config, entry);
+  const core::OrderPlaceRequest entry_order =
+      MakePlaceRequest(config, *instrument, entry);
   state.MarkEntrySubmitted(entry.local_order_id, SystemNowNs(),
                            entry.wire.quantity);
   const core::OrderGatewaySendResult entry_send =
@@ -520,7 +527,7 @@ void WriteSendEvent(smoke::EvidenceWriter* writer,
         return Finish(&writer, config, state);
       }
       const core::OrderGatewaySendResult close_send =
-          gateway.PlaceOrder(MakeStrategyOrder(config, close));
+          gateway.PlaceOrder(MakePlaceRequest(config, *instrument, close));
       WriteSendEvent(&writer, config, close, close_send);
       if (close_send.status != core::OrderGatewaySendStatus::kOk) {
         return Finish(&writer, config, state, "close_send_failed");

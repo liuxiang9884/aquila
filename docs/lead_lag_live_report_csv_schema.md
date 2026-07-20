@@ -128,12 +128,12 @@
 | `reject_reason` | 拒单原因；`intent_rejected_v1` 行可包括 `drift_guard`、`parallel_limit`、`order_route_not_ready`、`risk_limit`、`stale_lead_quote`、`stale_lag_quote` 和本地下单准备阶段拒绝原因。 | `lead_lag_order_feedback.reject_reason` 或 `lead_lag_order_intent_rejected.reason`。 |
 | `raw_price` | signal 触发时用于计算下单价格的原始价格；普通 open / close 买单为 lag ask、卖单为 lag bid，stoploss action 保留当前策略的保护价模型。 | `lead_lag_order_submitted.raw_price`。 |
 | `order_price` | 实际提交到交易所的 limit price。 | `lead_lag_order_submitted.order_price` 或 Gate send price。 |
-| `price_text` | 实际编码下发的价格文本。 | `lead_lag_order_submitted.price_text` 或 Gate send price。 |
+| `price_text` | 规范化价格文本；有 Gate send log 时是实际 wire text，否则由数值 `order_price` 规范化生成。 | Gate send price，缺失时回退 `lead_lag_order_submitted.order_price`。 |
 | `price_tick` | 合约 price tick。 | 订单提交日志或 instrument catalog。 |
 | `slippage_ticks` | 配置层希望加到 raw price 上的滑点 tick 数。 | `lead_lag_order_submitted.slippage_ticks`。 |
 | `order_offset_ticks` | `order_price` 相对 `raw_price` 的实际偏移 tick。买单为 `(order_price - raw_price) / price_tick`，卖单为 `(raw_price - order_price) / price_tick`。 | 分析脚本计算。 |
 | `quantity` | 数值化下单数量。 | 策略提交日志或 Gate send log。 |
-| `quantity_text` | 实际编码下发的数量文本，保留 decimal-size 表示。 | `lead_lag_order_submitted.quantity_text` 或 Gate send quantity。 |
+| `quantity_text` | 规范化数量文本；有 Gate send log 时保留实际 wire decimal 表示，否则由数值 `quantity` 规范化生成。 | Gate send quantity，缺失时回退 `lead_lag_order_submitted.quantity`。 |
 | `cumulative_filled_quantity` | 累计成交数量。 | feedback 或 `lead_lag_order_finished`。 |
 | `left_quantity` | 剩余未成交数量。 | feedback。 |
 | `cancelled_quantity` | 已取消数量。 | feedback。 |

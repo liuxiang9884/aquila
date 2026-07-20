@@ -434,28 +434,20 @@ websocket::ConnectionConfig MakeOrderSessionConfig(
   };
 }
 
-struct BenchOrder {
-  std::uint64_t local_order_id{0};
-  std::string_view symbol{};
-  OrderSide side{OrderSide::kBuy};
-  double quantity{0.0};
-  std::string_view quantity_text{};
-  std::string_view price_text{};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::uint64_t exchange_order_id{0};
-  bool reduce_only{false};
-};
-
-BenchOrder MakePlaceOrder() noexcept {
-  return BenchOrder{.local_order_id = kLocalOrderId,
-                    .symbol = "BTC_USDT",
-                    .side = OrderSide::kBuy,
-                    .quantity = 1.0,
-                    .quantity_text = "1",
-                    .price_text = "81000",
-                    .time_in_force = TimeInForce::kGoodTillCancel,
-                    .exchange_order_id = 0,
-                    .reduce_only = false};
+core::OrderPlaceRequest MakePlaceOrder() noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = kLocalOrderId,
+      .price = 81000.0,
+      .quantity = 1.0,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
 template <typename Session>
@@ -484,35 +476,39 @@ bool ActivateLoginOnly(Session& session,
          session.login_ready();
 }
 
-[[nodiscard]] constexpr core::OrderCreateRequest
-MakeGateLimitRequest() noexcept {
-  return core::OrderCreateRequest{.exchange = Exchange::kGate,
-                                  .symbol_id = 7,
-                                  .symbol = "BTC_USDT",
-                                  .side = OrderSide::kBuy,
-                                  .time_in_force = TimeInForce::kGoodTillCancel,
-                                  .quantity = 1.0,
-                                  .quantity_text = "1",
-                                  .price_text = "81000",
-                                  .reduce_only = false};
-}
-
-[[nodiscard]] constexpr core::StrategyOrder MakeStrategyPlaceOrder(
-    std::uint64_t local_order_id) noexcept {
-  return core::StrategyOrder{
-      .local_order_id = local_order_id,
-      .exchange_order_id = 0,
-      .exchange = Exchange::kGate,
-      .symbol_id = 7,
-      .symbol = "BTC_USDT",
-      .side = OrderSide::kBuy,
-      .type = OrderType::kLimit,
-      .time_in_force = TimeInForce::kGoodTillCancel,
+[[nodiscard]] core::OrderPlaceRequest MakeGateLimitRequest() noexcept {
+  core::OrderPlaceRequest request{
+      .price = 81000.0,
       .quantity = 1.0,
-      .quantity_text = "1",
-      .price_text = "81000",
+      .symbol_id = 7,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
       .reduce_only = false,
   };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
+}
+
+[[nodiscard]] core::OrderPlaceRequest MakeStrategyPlaceOrder(
+    std::uint64_t local_order_id) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .price = 81000.0,
+      .quantity = 1.0,
+      .symbol_id = 7,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
 [[nodiscard]] core::OrderGatewayCommand MakePlaceCommand(
@@ -520,24 +516,10 @@ MakeGateLimitRequest() noexcept {
   core::OrderGatewayCommand command{};
   command.kind = core::OrderGatewayCommandKind::kPlace;
   command.command_seq = local_order_id;
-  command.parent_id = 1;
-  command.local_order_id = local_order_id;
-  command.route_id = 0;
-  command.exchange = Exchange::kGate;
-  command.symbol_id = 7;
-  command.side = OrderSide::kBuy;
-  command.order_type = OrderType::kLimit;
-  command.time_in_force = TimeInForce::kImmediateOrCancel;
-  command.quantity = 1.0;
-  const std::string_view symbol = "BTC_USDT";
-  const std::string_view quantity = "1";
-  const std::string_view price = "81000";
-  command.symbol_size = static_cast<std::uint16_t>(symbol.size());
-  command.quantity_text_size = static_cast<std::uint16_t>(quantity.size());
-  command.price_text_size = static_cast<std::uint16_t>(price.size());
-  std::memcpy(command.symbol, symbol.data(), symbol.size());
-  std::memcpy(command.quantity_text, quantity.data(), quantity.size());
-  std::memcpy(command.price_text, price.data(), price.size());
+  command.payload.place = MakeStrategyPlaceOrder(local_order_id);
+  command.payload.place.parent_id = 1;
+  command.payload.place.gateway_route_id = 0;
+  command.payload.place.time_in_force = TimeInForce::kImmediateOrCancel;
   return command;
 }
 
@@ -558,17 +540,9 @@ bool FormatPlaceResultPayload(std::uint64_t sequence,
 
 void BM_EncodePlaceOrder(benchmark::State& state) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .timestamp = kTimestamp,
-      .encoded_request_id = kPlaceRequestId,
-      .local_order_id = kLocalOrderId,
-      .contract = "BTC_USDT",
-      .signed_size_text = "1",
-      .price_text = "81000",
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = false,
-  };
-  const EncodedTextRequest sample = EncodePlaceOrderRequest(fields, buffer);
+  const core::OrderPlaceRequest request = MakePlaceOrder();
+  const EncodedTextRequest sample = EncodePlaceOrderRequest(
+      request, kTimestamp, kPlaceRequestId, false, buffer);
   if (sample.status != OrderEncodeStatus::kOk) {
     state.SkipWithError("place order sample encode failed");
     return;
@@ -576,7 +550,8 @@ void BM_EncodePlaceOrder(benchmark::State& state) {
   const std::size_t encoded_size = sample.text.size();
 
   for (auto _ : state) {
-    const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+    const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+        request, kTimestamp, kPlaceRequestId, false, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       state.SkipWithError("place order encode failed");
       return;
@@ -591,13 +566,9 @@ void BM_EncodePlaceOrder(benchmark::State& state) {
 
 void BM_EncodeCancelOrder(benchmark::State& state) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .timestamp = kTimestamp,
-      .encoded_request_id = kCancelRequestId,
-      .local_order_id = kLocalOrderId,
-      .exchange_order_id = kExchangeOrderId,
-  };
-  const EncodedTextRequest sample = EncodeCancelOrderRequest(fields, buffer);
+  const core::OrderCancelRequest request{.local_order_id = kLocalOrderId};
+  const EncodedTextRequest sample = EncodeCancelOrderRequest(
+      request, kExchangeOrderId, kTimestamp, kCancelRequestId, buffer);
   if (sample.status != OrderEncodeStatus::kOk) {
     state.SkipWithError("cancel order sample encode failed");
     return;
@@ -605,7 +576,8 @@ void BM_EncodeCancelOrder(benchmark::State& state) {
   const std::size_t encoded_size = sample.text.size();
 
   for (auto _ : state) {
-    const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+    const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+        request, kExchangeOrderId, kTimestamp, kCancelRequestId, buffer);
     if (encoded.status != OrderEncodeStatus::kOk) {
       state.SkipWithError("cancel order encode failed");
       return;
@@ -883,7 +855,7 @@ void RunOrderSessionPlaceOrderWriteBenchmark(benchmark::State& state,
   std::uint64_t local_order_id = kLocalOrderId;
 
   for (std::size_t i = 0; i < warmup_count; ++i) {
-    BenchOrder order = MakePlaceOrder();
+    core::OrderPlaceRequest order = MakePlaceOrder();
     order.local_order_id = local_order_id++;
     if (session.PlaceOrder(order).status != OrderSendStatus::kOk) {
       state.SkipWithError("order session warmup place order failed");
@@ -894,7 +866,7 @@ void RunOrderSessionPlaceOrderWriteBenchmark(benchmark::State& state,
   Transport::ResetStats();
 
   for (auto _ : state) {
-    BenchOrder order = MakePlaceOrder();
+    core::OrderPlaceRequest order = MakePlaceOrder();
     order.local_order_id = local_order_id++;
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();
@@ -1032,7 +1004,7 @@ void BM_OrderSessionPlaceStrategyOrderToCountingTransport(
   std::uint64_t strategy_order_id = 1;
 
   for (auto _ : state) {
-    const core::StrategyOrder order =
+    const core::OrderPlaceRequest order =
         MakeStrategyPlaceOrder(strategy_order_id++);
 
     const std::uint64_t start_ns = websocket::benchmarking::NowNs();

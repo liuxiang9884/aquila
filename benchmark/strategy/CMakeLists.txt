@@ -35,7 +35,9 @@ add_executable(lead_lag_submit_breakdown_benchmark
 
 target_link_libraries(lead_lag_submit_breakdown_benchmark
     PRIVATE
+        aquila_bitget
         aquila_core
+        aquila_gate
         aquila_strategy
         benchmark::benchmark_main
         nova

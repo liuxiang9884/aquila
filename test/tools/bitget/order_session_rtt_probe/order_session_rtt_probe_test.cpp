@@ -207,8 +207,24 @@ struct FakeClock {
 struct FakeProbeSession {
   explicit FakeProbeSession(FakeClock& clock_ref) : clock(clock_ref) {}
 
-  bitget::OrderSendResult PlaceOrder(const ProbeWireOrder& order) noexcept {
-    orders.push_back(order);
+  bitget::OrderSendResult PlaceOrder(
+      const core::OrderPlaceRequest& request) noexcept {
+    orders.push_back(ProbeWireOrder{
+        .local_order_id = request.local_order_id,
+        .symbol = std::string(request.SymbolView()),
+        .side = request.side,
+        .type = request.order_type,
+        .time_in_force = request.time_in_force,
+        .price = request.price,
+        .quantity = request.quantity,
+        .quantity_text = fmt::format("{:.{}f}", request.quantity,
+                                     request.quantity_decimal_places),
+        .price_text =
+            fmt::format("{:.{}f}", request.price, request.price_decimal_places),
+        .price_decimal_places = request.price_decimal_places,
+        .quantity_decimal_places = request.quantity_decimal_places,
+        .reduce_only = request.reduce_only,
+    });
     if (next_status != bitget::OrderSendStatus::kOk) {
       return {.status = next_status};
     }

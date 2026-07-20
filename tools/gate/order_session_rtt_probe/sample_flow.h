@@ -33,20 +33,28 @@ struct ProbeWireOrder {
   TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
   double quantity{0.0};
   std::string quantity_text;
+  double price{0.0};
   std::string price_text;
+  std::uint8_t price_decimal_places{0};
+  std::uint8_t quantity_decimal_places{0};
   bool reduce_only{false};
 };
 
 [[nodiscard]] inline ProbeWireOrder BuildGtcPlaceOrder(
     const PassiveOrderBuildResult& passive, const ProbeSampleLocalIds& ids) {
-  return ProbeWireOrder{.local_order_id = ids.gtc_local_order_id,
-                        .symbol = passive.contract,
-                        .side = OrderSide::kBuy,
-                        .type = OrderType::kLimit,
-                        .time_in_force = TimeInForce::kGoodTillCancel,
-                        .quantity_text = passive.quantity_text,
-                        .price_text = passive.price_text,
-                        .reduce_only = false};
+  return ProbeWireOrder{
+      .local_order_id = ids.gtc_local_order_id,
+      .symbol = passive.contract,
+      .side = OrderSide::kBuy,
+      .type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .quantity = passive.quantity,
+      .quantity_text = passive.quantity_text,
+      .price = passive.price,
+      .price_text = passive.price_text,
+      .price_decimal_places = passive.price_decimal_places,
+      .quantity_decimal_places = passive.quantity_decimal_places,
+      .reduce_only = false};
 }
 
 [[nodiscard]] inline ProbeWireOrder BuildGtcCancelOrder(
@@ -58,38 +66,53 @@ struct ProbeWireOrder {
 
 [[nodiscard]] inline ProbeWireOrder BuildIocPlaceOrder(
     const PassiveOrderBuildResult& passive, const ProbeSampleLocalIds& ids) {
-  return ProbeWireOrder{.local_order_id = ids.ioc_local_order_id,
-                        .symbol = passive.contract,
-                        .side = OrderSide::kBuy,
-                        .type = OrderType::kLimit,
-                        .time_in_force = TimeInForce::kImmediateOrCancel,
-                        .quantity_text = passive.quantity_text,
-                        .price_text = passive.price_text,
-                        .reduce_only = false};
+  return ProbeWireOrder{
+      .local_order_id = ids.ioc_local_order_id,
+      .symbol = passive.contract,
+      .side = OrderSide::kBuy,
+      .type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .quantity = passive.quantity,
+      .quantity_text = passive.quantity_text,
+      .price = passive.price,
+      .price_text = passive.price_text,
+      .price_decimal_places = passive.price_decimal_places,
+      .quantity_decimal_places = passive.quantity_decimal_places,
+      .reduce_only = false};
 }
 
 [[nodiscard]] inline ProbeWireOrder BuildGtcCloseOrder(
     const PassiveOrderBuildResult& passive, const ProbeSampleLocalIds& ids) {
-  return ProbeWireOrder{.local_order_id = ids.gtc_close_local_order_id,
-                        .symbol = passive.contract,
-                        .side = OrderSide::kSell,
-                        .type = OrderType::kLimit,
-                        .time_in_force = TimeInForce::kImmediateOrCancel,
-                        .quantity_text = passive.quantity_text,
-                        .price_text = "0",
-                        .reduce_only = true};
+  return ProbeWireOrder{
+      .local_order_id = ids.gtc_close_local_order_id,
+      .symbol = passive.contract,
+      .side = OrderSide::kSell,
+      .type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .quantity = passive.quantity,
+      .quantity_text = passive.quantity_text,
+      .price = 0.0,
+      .price_text = "0",
+      .price_decimal_places = 0,
+      .quantity_decimal_places = passive.quantity_decimal_places,
+      .reduce_only = true};
 }
 
 [[nodiscard]] inline ProbeWireOrder BuildIocCloseOrder(
     const PassiveOrderBuildResult& passive, const ProbeSampleLocalIds& ids) {
-  return ProbeWireOrder{.local_order_id = ids.ioc_close_local_order_id,
-                        .symbol = passive.contract,
-                        .side = OrderSide::kSell,
-                        .type = OrderType::kLimit,
-                        .time_in_force = TimeInForce::kImmediateOrCancel,
-                        .quantity_text = passive.quantity_text,
-                        .price_text = "0",
-                        .reduce_only = true};
+  return ProbeWireOrder{
+      .local_order_id = ids.ioc_close_local_order_id,
+      .symbol = passive.contract,
+      .side = OrderSide::kSell,
+      .type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kImmediateOrCancel,
+      .quantity = passive.quantity,
+      .quantity_text = passive.quantity_text,
+      .price = 0.0,
+      .price_text = "0",
+      .price_decimal_places = 0,
+      .quantity_decimal_places = passive.quantity_decimal_places,
+      .reduce_only = true};
 }
 
 enum class ProbeSampleAction {

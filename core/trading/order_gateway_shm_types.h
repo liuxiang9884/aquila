@@ -11,11 +11,8 @@
 namespace aquila::core {
 
 inline constexpr std::uint32_t kOrderGatewayShmMagic = 0x41514F47U;
-inline constexpr std::uint16_t kOrderGatewayShmVersion = 2;
+inline constexpr std::uint16_t kOrderGatewayShmVersion = 3;
 inline constexpr std::size_t kMaxOrderGatewayRoutes = 16;
-inline constexpr std::size_t kOrderGatewaySymbolBytes = 32;
-inline constexpr std::size_t kOrderGatewayQuantityTextBytes = 32;
-inline constexpr std::size_t kOrderGatewayPriceTextBytes = 32;
 
 enum class OrderGatewayCommandKind : std::uint8_t {
   kNone = 0,
@@ -77,9 +74,9 @@ struct OrderGatewayShmHeader {
   OrderGatewayQueueDescriptor event_queue_descriptors[kMaxOrderGatewayRoutes]{};
 };
 
-inline void StoreOrderGatewayRouteState(
-    OrderGatewayShmHeader& header, std::uint16_t route_id,
-    OrderGatewayRouteState state) noexcept {
+inline void StoreOrderGatewayRouteState(OrderGatewayShmHeader& header,
+                                        std::uint16_t route_id,
+                                        OrderGatewayRouteState state) noexcept {
   if (route_id >= kMaxOrderGatewayRoutes) {
     return;
   }
@@ -98,32 +95,85 @@ inline void StoreOrderGatewayRouteState(
       route_state.load(std::memory_order_acquire));
 }
 
-struct OrderGatewayCommand {
-  std::uint64_t command_seq{0};
-  std::uint64_t parent_id{0};
+struct OrderGatewayOrderIdCommand {
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
-  std::int64_t owner_enqueue_ns{0};
-
-  std::int32_t symbol_id{0};
-  std::uint16_t route_id{0};
-  std::uint16_t symbol_size{0};
-  std::uint16_t quantity_text_size{0};
-  std::uint16_t price_text_size{0};
-
-  OrderGatewayCommandKind kind{OrderGatewayCommandKind::kNone};
-  Exchange exchange{Exchange::kGate};
-  OrderSide side{OrderSide::kBuy};
-  OrderType order_type{OrderType::kLimit};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::uint8_t reduce_only{0};
-
-  double quantity{0.0};
-
-  char symbol[kOrderGatewaySymbolBytes]{};
-  char quantity_text[kOrderGatewayQuantityTextBytes]{};
-  char price_text[kOrderGatewayPriceTextBytes]{};
+  std::uint16_t gateway_route_id{0};
 };
+
+union OrderGatewayCommandPayload {
+  OrderPlaceRequest place;
+  OrderCancelRequest cancel;
+  OrderGatewayOrderIdCommand order_id;
+
+  constexpr OrderGatewayCommandPayload() noexcept : place{} {}
+};
+
+struct OrderGatewayCommand {
+  std::uint64_t command_seq{0};
+  std::int64_t owner_enqueue_ns{0};
+  OrderGatewayCommandPayload payload{};
+  OrderGatewayCommandKind kind{OrderGatewayCommandKind::kNone};
+};
+
+[[nodiscard]] inline std::uint64_t OrderGatewayCommandLocalOrderId(
+    const OrderGatewayCommand& command) noexcept {
+  switch (command.kind) {
+    case OrderGatewayCommandKind::kPlace:
+      return command.payload.place.local_order_id;
+    case OrderGatewayCommandKind::kCancel:
+      return command.payload.cancel.local_order_id;
+    case OrderGatewayCommandKind::kCacheExchangeOrderId:
+    case OrderGatewayCommandKind::kForgetExchangeOrderId:
+      return command.payload.order_id.local_order_id;
+    case OrderGatewayCommandKind::kNone:
+    case OrderGatewayCommandKind::kStop:
+      return 0;
+  }
+  return 0;
+}
+
+[[nodiscard]] inline std::uint64_t OrderGatewayCommandParentId(
+    const OrderGatewayCommand& command) noexcept {
+  switch (command.kind) {
+    case OrderGatewayCommandKind::kPlace:
+      return command.payload.place.parent_id;
+    case OrderGatewayCommandKind::kCancel:
+      return command.payload.cancel.parent_id;
+    case OrderGatewayCommandKind::kCacheExchangeOrderId:
+    case OrderGatewayCommandKind::kForgetExchangeOrderId:
+      return command.payload.order_id.local_order_id;
+    case OrderGatewayCommandKind::kNone:
+    case OrderGatewayCommandKind::kStop:
+      return 0;
+  }
+  return 0;
+}
+
+[[nodiscard]] inline std::uint64_t OrderGatewayCommandExchangeOrderId(
+    const OrderGatewayCommand& command) noexcept {
+  if (command.kind == OrderGatewayCommandKind::kCacheExchangeOrderId) {
+    return command.payload.order_id.exchange_order_id;
+  }
+  return 0;
+}
+
+[[nodiscard]] inline std::uint16_t OrderGatewayCommandRouteId(
+    const OrderGatewayCommand& command) noexcept {
+  switch (command.kind) {
+    case OrderGatewayCommandKind::kPlace:
+      return command.payload.place.gateway_route_id;
+    case OrderGatewayCommandKind::kCancel:
+      return command.payload.cancel.gateway_route_id;
+    case OrderGatewayCommandKind::kCacheExchangeOrderId:
+    case OrderGatewayCommandKind::kForgetExchangeOrderId:
+      return command.payload.order_id.gateway_route_id;
+    case OrderGatewayCommandKind::kNone:
+    case OrderGatewayCommandKind::kStop:
+      return kAutoGatewayRoute;
+  }
+  return kAutoGatewayRoute;
+}
 
 struct OrderGatewayEvent {
   std::uint64_t event_seq{0};

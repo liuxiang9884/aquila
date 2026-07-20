@@ -48,9 +48,10 @@ class OrderPool {
     slot.next_free = kInvalidSlot;
 
     slot.order = OrderT{};
-    slot.order.local_order_id =
+    const std::uint64_t local_order_id =
         LocalOrderIdCodec::Encode(strategy_id_, next_strategy_order_id_++);
-    local_to_slot_.emplace(slot.order.local_order_id, slot_index);
+    SetLocalOrderId(slot.order, local_order_id);
+    local_to_slot_.emplace(local_order_id, slot_index);
     ++live_size_;
     return &slot.order;
   }
@@ -105,6 +106,15 @@ class OrderPool {
   }
 
  private:
+  static void SetLocalOrderId(OrderT& order,
+                              std::uint64_t local_order_id) noexcept {
+    if constexpr (requires { order.place_request.local_order_id; }) {
+      order.place_request.local_order_id = local_order_id;
+    } else {
+      order.local_order_id = local_order_id;
+    }
+  }
+
   static constexpr std::size_t IndexReserveSizeFor(
       std::size_t max_live_orders) noexcept {
     return max_live_orders * (max_live_orders < 1024 ? 16 : 8);

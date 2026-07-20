@@ -23,57 +23,54 @@ class OrderManager {
   OrderManager(const OrderManager&) = delete;
   OrderManager& operator=(const OrderManager&) = delete;
 
-  OrderPlaceResult PlaceOrder(const OrderCreateRequest& request) noexcept {
-    if (request.symbol.empty() || request.price_text.empty() ||
-        request.quantity_text.empty() || !std::isfinite(request.quantity) ||
-        request.quantity <= 0.0) {
-      return {.status = OrderPlaceStatus::kInvalidOrder, .local_order_id = 0};
-    }
-
+  OrderPlaceResult PlaceOrder(const OrderPlaceRequest& request) noexcept {
     Order* order = CreateOrder(request);
     if (order == nullptr) {
       return {.status = OrderPlaceStatus::kPoolFull, .local_order_id = 0};
     }
 
-    const auto sent = order_session_.PlaceOrder(*order);
+    const auto sent = order_session_.PlaceOrder(order->place_request);
     if (!SendOk(sent)) {
       order->status = OrderStatus::kRejected;
       order->is_finished = true;
       return {.status = OrderPlaceStatus::kSessionRejected,
-              .local_order_id = order->local_order_id};
+              .local_order_id = order->place_request.local_order_id};
     }
 
     order->status = OrderStatus::kSent;
     StoreSendLocalNs(*order, sent);
     return {.status = OrderPlaceStatus::kOk,
-            .local_order_id = order->local_order_id};
+            .local_order_id = order->place_request.local_order_id};
   }
 
-  OrderPlaceResult PlaceLimitOrder(OrderCreateRequest request) noexcept {
+  OrderPlaceResult PlaceLimitOrder(OrderPlaceRequest request) noexcept {
     request.order_type = OrderType::kLimit;
     return PlaceOrder(request);
   }
 
-  OrderCancelResult CancelOrder(std::uint64_t local_order_id) noexcept {
-    Order* order = orders_.Find(local_order_id);
+  OrderCancelResult CancelOrder(OrderCancelRequest request) noexcept {
+    Order* order = orders_.Find(request.local_order_id);
     if (order == nullptr) {
       return {.status = OrderCancelStatus::kOrderNotFound,
-              .local_order_id = local_order_id};
+              .local_order_id = request.local_order_id};
     }
     if (!CanSubmitCancel(order->status)) {
       return {.status = OrderCancelStatus::kInvalidStatus,
-              .local_order_id = local_order_id};
+              .local_order_id = request.local_order_id};
     }
 
-    const auto sent = order_session_.CancelOrder(*order);
+    request.parent_id = order->place_request.parent_id;
+    request.gateway_route_id = order->place_request.gateway_route_id;
+    const auto sent = order_session_.CancelOrder(request);
     if (!SendOk(sent)) {
       return {.status = OrderCancelStatus::kSessionRejected,
-              .local_order_id = local_order_id};
+              .local_order_id = request.local_order_id};
     }
 
     order->pre_cancel_status = order->status;
     order->status = OrderStatus::kCancelSent;
-    return {.status = OrderCancelStatus::kOk, .local_order_id = local_order_id};
+    return {.status = OrderCancelStatus::kOk,
+            .local_order_id = request.local_order_id};
   }
 
   void OnOrderResponse(const OrderResponseEvent& event) noexcept {
@@ -191,7 +188,9 @@ class OrderManager {
   }
 
   void RefreshOrderRoutes() noexcept {
-    if constexpr (requires(GatewayT& gateway) { gateway.RefreshRouteStates(); }) {
+    if constexpr (requires(GatewayT& gateway) {
+                    gateway.RefreshRouteStates();
+                  }) {
       order_session_.RefreshRouteStates();
     }
   }
@@ -215,23 +214,14 @@ class OrderManager {
     kStale,
   };
 
-  Order* CreateOrder(const OrderCreateRequest& request) noexcept {
+  Order* CreateOrder(const OrderPlaceRequest& request) noexcept {
     Order* order = orders_.Create();
     if (order == nullptr) {
       return nullptr;
     }
-    order->parent_id = request.parent_id;
-    order->exchange = request.exchange;
-    order->symbol_id = request.symbol_id;
-    order->symbol = request.symbol;
-    order->side = request.side;
-    order->type = request.order_type;
-    order->time_in_force = request.time_in_force;
-    order->quantity = request.quantity;
-    order->quantity_text = request.quantity_text;
-    order->price_text = request.price_text;
-    order->reduce_only = request.reduce_only;
-    order->gateway_route_id = request.gateway_route_id;
+    const std::uint64_t local_order_id = order->place_request.local_order_id;
+    order->place_request = request;
+    order->place_request.local_order_id = local_order_id;
     order->status = OrderStatus::kCreated;
     return order;
   }
@@ -332,7 +322,8 @@ class OrderManager {
     RecordFeedbackExchangeOrderId(order, event);
     order.exchange_update_ns = event.exchange_update_ns;
     order.accepted_exchange_ns = event.exchange_update_ns;
-    NotifyCacheExchangeOrderId(order.local_order_id, event.exchange_order_id);
+    NotifyCacheExchangeOrderId(order.place_request.local_order_id,
+                               event.exchange_order_id);
   }
 
   void OnPartialFilledFeedback(Order& order,
@@ -423,7 +414,7 @@ class OrderManager {
   void FinishOrder(Order& order) noexcept {
     order.is_finished = true;
     order.pre_cancel_status = OrderStatus::kCreated;
-    NotifyForgetExchangeOrderId(order.local_order_id);
+    NotifyForgetExchangeOrderId(order.place_request.local_order_id);
   }
 
   void NotifyCacheExchangeOrderId(std::uint64_t local_order_id,

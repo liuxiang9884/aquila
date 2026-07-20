@@ -120,13 +120,13 @@ struct FakeOrderSession {
   std::uint64_t last_cache_local_order_id{0};
   std::uint64_t last_cache_exchange_order_id{0};
 
-  SendResult PlaceOrder(StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const OrderPlaceRequest& order) noexcept {
     ++place_calls;
     last_place_local_order_id = order.local_order_id;
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(StrategyOrder& order) noexcept {
+  SendResult CancelOrder(const OrderCancelRequest& order) noexcept {
     last_cancel_local_order_id = order.local_order_id;
     return {.status = SendStatus::kOk};
   }
@@ -236,12 +236,12 @@ struct FakeHookOrderSession {
     return 1;
   }
 
-  SendResult PlaceOrder(StrategyOrder& order) noexcept {
+  SendResult PlaceOrder(const OrderPlaceRequest& order) noexcept {
     last_place_local_order_id = order.local_order_id;
     return {.status = SendStatus::kOk};
   }
 
-  SendResult CancelOrder(StrategyOrder& order) noexcept {
+  SendResult CancelOrder(const OrderCancelRequest& order) noexcept {
     last_cancel_local_order_id = order.local_order_id;
     return {.status = SendStatus::kOk};
   }
@@ -336,16 +336,16 @@ struct FakeStrategy {
   }
 
  private:
-  static OrderCreateRequest MakeLimitRequest() noexcept {
-    return OrderCreateRequest{.exchange = Exchange::kGate,
+  static OrderPlaceRequest MakeLimitRequest() noexcept {
+    OrderPlaceRequest request{.price = 81000.0,
+                              .quantity = 1.0,
                               .symbol_id = 7,
-                              .symbol = "BTC_USDT",
+                              .exchange = Exchange::kGate,
                               .side = OrderSide::kBuy,
                               .time_in_force = TimeInForce::kGoodTillCancel,
-                              .quantity = 1,
-                              .quantity_text = "1",
-                              .price_text = "81000",
                               .reduce_only = false};
+    SetOrderSymbol(&request, "BTC_USDT");
+    return request;
   }
 
   RuntimeStrategyState* state_;
@@ -601,16 +601,16 @@ struct HookLoopStrategy {
   }
 
  private:
-  static OrderCreateRequest MakeLimitRequest() noexcept {
-    return OrderCreateRequest{.exchange = Exchange::kGate,
+  static OrderPlaceRequest MakeLimitRequest() noexcept {
+    OrderPlaceRequest request{.price = 81000.0,
+                              .quantity = 1.0,
                               .symbol_id = 7,
-                              .symbol = "BTC_USDT",
+                              .exchange = Exchange::kGate,
                               .side = OrderSide::kBuy,
                               .time_in_force = TimeInForce::kGoodTillCancel,
-                              .quantity = 1,
-                              .quantity_text = "1",
-                              .price_text = "81000",
                               .reduce_only = false};
+    SetOrderSymbol(&request, "BTC_USDT");
+    return request;
   }
 
   RuntimeLoopState* state_;

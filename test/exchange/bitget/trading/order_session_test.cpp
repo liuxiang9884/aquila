@@ -51,19 +51,32 @@ struct RecordingHandler {
   }
 };
 
-struct TestOrder {
-  std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{7};
-  std::uint64_t exchange_order_id{0};
-  std::uint16_t gateway_route_id{3};
-  std::string_view symbol{"BTCUSDT"};
-  OrderSide side{OrderSide::kBuy};
-  OrderType type{OrderType::kLimit};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::string_view quantity_text{"0.001"};
-  std::string_view price_text{"100000"};
-  bool reduce_only{false};
-};
+core::OrderPlaceRequest MakePlaceOrder(std::uint64_t local_order_id) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .parent_id = 7,
+      .price = 100000.0,
+      .quantity = 0.001,
+      .gateway_route_id = 3,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 3,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTCUSDT");
+  return request;
+}
+
+core::OrderCancelRequest MakeCancelOrder(
+    std::uint64_t local_order_id) noexcept {
+  return core::OrderCancelRequest{
+      .local_order_id = local_order_id,
+      .parent_id = 7,
+      .gateway_route_id = 3,
+  };
+}
 
 template <typename Handler>
 class TestOrderSession
@@ -227,8 +240,7 @@ TEST(BitgetOrderSessionTest,
     RecordingHandler handler;
     TestOrderSession<RecordingHandler> session(handler);
     ActivateAndLogin(&session);
-    const OrderSendResult sent =
-        session.PlaceOrder(TestOrder{.local_order_id = code});
+    const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(code));
     ASSERT_EQ(sent.status, OrderSendStatus::kOk) << code;
 
     session.Handle(TextView(ErrorResponse(sent, "place-order", code)));
@@ -245,8 +257,7 @@ TEST(BitgetOrderSessionTest,
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
-  const OrderSendResult sent =
-      session.PlaceOrder(TestOrder{.local_order_id = 30011});
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(30011));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(ErrorResponse(sent, "place-order", 30011)));
@@ -261,8 +272,7 @@ TEST(BitgetOrderSessionTest,
     RecordingHandler handler;
     TestOrderSession<RecordingHandler> session(handler);
     ActivateAndLogin(&session);
-    const OrderSendResult sent =
-        session.PlaceOrder(TestOrder{.local_order_id = code});
+    const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(code));
     ASSERT_EQ(sent.status, OrderSendStatus::kOk) << code;
 
     session.Handle(TextView(TopiclessErrorResponse(sent, code)));
@@ -291,7 +301,7 @@ TEST(BitgetOrderSessionTest, PlaceAckCorrelatesCachesAndDoesNotAccept) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
-  const TestOrder order{.local_order_id = 123};
+  const core::OrderPlaceRequest order = MakePlaceOrder(123);
 
   const OrderSendResult sent = session.PlaceOrder(order);
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
@@ -329,7 +339,7 @@ TEST(BitgetOrderSessionTest, CancelAckIsGenericAndKeepsCache) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
   session.CacheExchangeOrderId(123, 9988);
-  const TestOrder order{.local_order_id = 123};
+  const core::OrderCancelRequest order = MakeCancelOrder(123);
 
   const OrderSendResult sent = session.CancelOrder(order);
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
@@ -347,8 +357,7 @@ TEST(BitgetOrderSessionTest, CancelAckRejectsMismatchedExchangeOrderId) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
   session.CacheExchangeOrderId(123, 9988);
-  const OrderSendResult sent =
-      session.CancelOrder(TestOrder{.local_order_id = 123});
+  const OrderSendResult sent = session.CancelOrder(MakeCancelOrder(123));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(SuccessResponse(sent, "cancel-order", 123, 9999)));
@@ -363,13 +372,11 @@ TEST(BitgetOrderSessionTest, MapsDefiniteAndAmbiguousErrors) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
 
-  const OrderSendResult rejected =
-      session.PlaceOrder(TestOrder{.local_order_id = 123});
+  const OrderSendResult rejected = session.PlaceOrder(MakePlaceOrder(123));
   ASSERT_EQ(rejected.status, OrderSendStatus::kOk);
   session.Handle(TextView(ErrorResponse(rejected, "place-order", 25202)));
 
-  const OrderSendResult unknown =
-      session.CancelOrder(TestOrder{.local_order_id = 123});
+  const OrderSendResult unknown = session.CancelOrder(MakeCancelOrder(123));
   ASSERT_EQ(unknown.status, OrderSendStatus::kOk);
   session.Handle(TextView(ErrorResponse(unknown, "cancel-order", 40010)));
 
@@ -383,8 +390,7 @@ TEST(BitgetOrderSessionTest, MismatchedClientOidDoesNotConsumeCorrelation) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
-  const OrderSendResult sent =
-      session.PlaceOrder(TestOrder{.local_order_id = 123});
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
 
   session.Handle(TextView(SuccessResponse(sent, "place-order", 124, 9988)));
@@ -414,20 +420,19 @@ TEST(BitgetOrderSessionTest, EnforcesInflightAndCacheCapacity) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> inflight_session(handler, 1, 2);
   ActivateAndLogin(&inflight_session);
-  ASSERT_EQ(inflight_session.PlaceOrder(TestOrder{.local_order_id = 1}).status,
+  ASSERT_EQ(inflight_session.PlaceOrder(MakePlaceOrder(1)).status,
             OrderSendStatus::kOk);
-  EXPECT_EQ(inflight_session.PlaceOrder(TestOrder{.local_order_id = 2}).status,
+  EXPECT_EQ(inflight_session.PlaceOrder(MakePlaceOrder(2)).status,
             OrderSendStatus::kInflightFull);
 
   RecordingHandler cache_handler;
   TestOrderSession<RecordingHandler> cache_session(cache_handler, 4, 1);
   ActivateAndLogin(&cache_session);
-  const OrderSendResult first =
-      cache_session.PlaceOrder(TestOrder{.local_order_id = 1});
+  const OrderSendResult first = cache_session.PlaceOrder(MakePlaceOrder(1));
   ASSERT_EQ(first.status, OrderSendStatus::kOk);
   cache_session.Handle(
       TextView(SuccessResponse(first, "place-order", 1, 9988)));
-  EXPECT_EQ(cache_session.PlaceOrder(TestOrder{.local_order_id = 2}).status,
+  EXPECT_EQ(cache_session.PlaceOrder(MakePlaceOrder(2)).status,
             OrderSendStatus::kOrderIdCacheFull);
 }
 
@@ -435,8 +440,7 @@ TEST(BitgetOrderSessionTest, DisconnectClearsStateWithoutSyntheticResponse) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(&session);
-  const OrderSendResult sent =
-      session.PlaceOrder(TestOrder{.local_order_id = 123});
+  const OrderSendResult sent = session.PlaceOrder(MakePlaceOrder(123));
   ASSERT_EQ(sent.status, OrderSendStatus::kOk);
   session.CacheExchangeOrderId(9, 99);
 

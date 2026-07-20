@@ -21,7 +21,7 @@ class FakeSession {
     ready_ = ready;
   }
 
-  OrderSendResult PlaceOrder(const core::StrategyOrder& order) noexcept {
+  OrderSendResult PlaceOrder(const core::OrderPlaceRequest& order) noexcept {
     placed.push_back(order.local_order_id);
     return {.status = OrderSendStatus::kOk,
             .request_sequence = next_sequence++,
@@ -29,7 +29,7 @@ class FakeSession {
             .send_local_ns = static_cast<std::int64_t>(1000 + placed.size())};
   }
 
-  OrderSendResult CancelOrder(const core::StrategyOrder& order) noexcept {
+  OrderSendResult CancelOrder(const core::OrderCancelRequest& order) noexcept {
     cancelled.push_back(order.local_order_id);
     return {
         .status = OrderSendStatus::kOk,
@@ -57,18 +57,21 @@ class FakeSession {
   std::vector<std::uint64_t> forgotten_local_ids;
 };
 
-core::StrategyOrder MakeOrder(std::uint64_t local_order_id,
-                              std::uint16_t route_id) noexcept {
-  core::StrategyOrder order;
-  order.local_order_id = local_order_id;
-  order.exchange = Exchange::kBitget;
-  order.symbol_id = 1;
-  order.symbol = "BTCUSDT";
-  order.quantity = 1.0;
-  order.quantity_text = "1";
-  order.price_text = "50000";
-  order.gateway_route_id = route_id;
-  return order;
+core::OrderPlaceRequest MakeOrder(std::uint64_t local_order_id,
+                                  std::uint16_t route_id) noexcept {
+  core::OrderPlaceRequest request{.local_order_id = local_order_id,
+                                  .price = 50000.0,
+                                  .quantity = 1.0,
+                                  .symbol_id = 1,
+                                  .gateway_route_id = route_id,
+                                  .exchange = Exchange::kBitget};
+  core::SetOrderSymbol(&request, "BTCUSDT");
+  return request;
+}
+
+core::OrderCancelRequest MakeCancel(std::uint64_t local_order_id,
+                                    std::uint16_t route_id) noexcept {
+  return {.local_order_id = local_order_id, .gateway_route_id = route_id};
 }
 
 using Gateway = MultiOrderSessionGateway<FakeSession>;
@@ -118,7 +121,7 @@ TEST(MultiOrderSessionGatewayTest, CancelReturnsToOriginalRoute) {
   Gateway gateway = MakeGateway(sessions);
 
   ASSERT_EQ(gateway.PlaceOrder(MakeOrder(301, 3)).status, OrderSendStatus::kOk);
-  EXPECT_EQ(gateway.CancelOrder(MakeOrder(301, 0)).status,
+  EXPECT_EQ(gateway.CancelOrder(MakeCancel(301, 0)).status,
             OrderSendStatus::kOk);
   EXPECT_EQ(sessions[3].cancelled, std::vector<std::uint64_t>({301}));
 }
@@ -135,7 +138,7 @@ TEST(MultiOrderSessionGatewayTest, CacheAndForgetUseOriginalRoute) {
   EXPECT_EQ(sessions[1].cached_exchange_ids,
             std::vector<std::uint64_t>({9001}));
   EXPECT_EQ(sessions[1].forgotten_local_ids, std::vector<std::uint64_t>({401}));
-  EXPECT_EQ(gateway.CancelOrder(MakeOrder(401, 1)).status,
+  EXPECT_EQ(gateway.CancelOrder(MakeCancel(401, 1)).status,
             OrderSendStatus::kInvalidRoute);
 }
 
@@ -165,7 +168,7 @@ TEST(MultiOrderSessionGatewayTest, FailedPlaceRollsBackRecordedRoute) {
   class RejectingSession : public FakeSession {
    public:
     using FakeSession::FakeSession;
-    OrderSendResult PlaceOrder(const core::StrategyOrder&) noexcept {
+    OrderSendResult PlaceOrder(const core::OrderPlaceRequest&) noexcept {
       return {.status = OrderSendStatus::kWriteUnavailable};
     }
   } rejecting;
@@ -174,7 +177,7 @@ TEST(MultiOrderSessionGatewayTest, FailedPlaceRollsBackRecordedRoute) {
 
   EXPECT_EQ(gateway.PlaceOrder(MakeOrder(701, 0)).status,
             OrderSendStatus::kWriteUnavailable);
-  EXPECT_EQ(gateway.CancelOrder(MakeOrder(701, 0)).status,
+  EXPECT_EQ(gateway.CancelOrder(MakeCancel(701, 0)).status,
             OrderSendStatus::kInvalidRoute);
 }
 

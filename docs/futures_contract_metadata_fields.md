@@ -104,13 +104,14 @@ quantity_step = order_size_min
 quantity_decimal_places = decimal_places(order_size_min)
 ```
 
-当前 C++ 下单 / 回报链路已经消费这组 decimal metadata：`core::OrderCreateRequest` /
-`core::StrategyOrder` 的 `quantity` 为 `double`，并额外携带按
-`quantity_decimal_places` 生成的 `quantity_text`；Gate order session 在带
-`X-Gate-Size-Decimal: 1` 的连接上用 `quantity_text` 把 JSON `size` 编码为 string，
+当前 C++ 下单 / 回报链路已经消费这组 decimal metadata：
+`core::OrderPlaceRequest` 的 price/quantity 为 `double`，并携带 instrument catalog 的
+`price_decimal_places` / `quantity_decimal_places`；`core::StrategyOrder` 组合一份该
+request。Gate `OrderSession` 在发送前生成 fixed decimal text，并在带
+`X-Gate-Size-Decimal: 1` 的连接上把 JSON `size` 编码为 string，
 避免小数 size 以 JSON number 发送时被 Gate 按 `int64` 类型拒绝。Gate private feedback parser / SHM / `OrderManager`
 也按 `double` 累计数量；LeadLag sizing 和 live smoke 会用 lag instrument 的
-`quantity_step` / `quantity_decimal_places` 计算并格式化数量。REST final check /
+`quantity_step` / `quantity_decimal_places` 计算数量。REST final check /
 emergency flatten 已带 `X-Gate-Size-Decimal: 1` 查询 / 下单，使用 decimal position size，
 并把 `value` / `margin` residual 纳入 flat 判断；仍需小额 live smoke 复核。`order_size_min`
 作为当前脚本可见的最小数量和精度来源；如后续 Gate 暴露独立 step 字段，应优先使用官方 step 字段。

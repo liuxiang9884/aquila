@@ -155,20 +155,20 @@ class OrderSessionRuntimeAdapter {
     return impl_ != nullptr && impl_->Ready();
   }
 
-  template <typename OrderT>
-  [[nodiscard]] OrderSendResult PlaceOrder(const OrderT& order) noexcept {
+  [[nodiscard]] OrderSendResult PlaceOrder(
+      const core::OrderPlaceRequest& request) noexcept {
     if (impl_ == nullptr) {
       return {.status = OrderSendStatus::kNotActive};
     }
-    return impl_->PlaceOrder(order);
+    return impl_->PlaceOrder(request);
   }
 
-  template <typename OrderT>
-  [[nodiscard]] OrderSendResult CancelOrder(const OrderT& order) noexcept {
+  [[nodiscard]] OrderSendResult CancelOrder(
+      const core::OrderCancelRequest& request) noexcept {
     if (impl_ == nullptr) {
       return {.status = OrderSendStatus::kNotActive};
     }
-    return impl_->CancelOrder(order);
+    return impl_->CancelOrder(request);
   }
 
   void CacheExchangeOrderId(std::uint64_t local_order_id,
@@ -242,14 +242,14 @@ class OrderSessionRuntimeAdapter {
       return session_.login_ready() || response_handler_.Ready();
     }
 
-    template <typename OrderT>
-    [[nodiscard]] OrderSendResult PlaceOrder(const OrderT& order) noexcept {
-      return session_.PlaceOrder(order);
+    [[nodiscard]] OrderSendResult PlaceOrder(
+        const core::OrderPlaceRequest& request) noexcept {
+      return session_.PlaceOrder(request);
     }
 
-    template <typename OrderT>
-    [[nodiscard]] OrderSendResult CancelOrder(const OrderT& order) noexcept {
-      return session_.CancelOrder(order);
+    [[nodiscard]] OrderSendResult CancelOrder(
+        const core::OrderCancelRequest& request) noexcept {
+      return session_.CancelOrder(request);
     }
 
     void CacheExchangeOrderId(std::uint64_t local_order_id,

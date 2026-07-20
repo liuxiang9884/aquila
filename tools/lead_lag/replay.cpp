@@ -90,11 +90,11 @@ struct NullOrderSession {
     return true;
   }
 
-  SendResult PlaceOrder(core::StrategyOrder&) noexcept {
+  SendResult PlaceOrder(const core::OrderPlaceRequest&) noexcept {
     return {};
   }
 
-  SendResult CancelOrder(core::StrategyOrder&) noexcept {
+  SendResult CancelOrder(const core::OrderCancelRequest&) noexcept {
     return {};
   }
 };
@@ -109,8 +109,7 @@ class ReplayStrategy {
   ReplayStrategy(leadlag::Config config, leadlag::StrategyOptions options,
                  ReplayStats* stats, leadlag::SignalCsvWriter* signal_writer,
                  leadlag_tools::LagVolGuardAuditCollector* lag_vol_audit,
-                 leadlag_tools::LagVolGuardAuditCsvWriter*
-                     lag_vol_audit_writer
+                 leadlag_tools::LagVolGuardAuditCsvWriter* lag_vol_audit_writer
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
                  ,
                  leadlag::MarketCalcCsvWriter* market_calc_writer
@@ -346,8 +345,7 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
 }
 
 bool BuildLagVolGuardAuditConfig(
-    const CliOptions& options,
-    leadlag_tools::LagVolGuardAuditConfig* config) {
+    const CliOptions& options, leadlag_tools::LagVolGuardAuditConfig* config) {
   if (config == nullptr) {
     return false;
   }
@@ -424,8 +422,9 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
       "order_capacity={} reader_name={} sources={} files={} pairs={}\n",
       options.config_path.string(),
       loaded.strategy_config.data_reader.config_path.string(),
-      options.signals_output_path.empty() ? "-"
-                                          : options.signals_output_path.string(),
+      options.signals_output_path.empty()
+          ? "-"
+          : options.signals_output_path.string(),
       options.lag_vol_guard_audit_output_path.empty()
           ? "-"
           : options.lag_vol_guard_audit_output_path.string()
@@ -452,8 +451,9 @@ void PrintLoadedConfigSummary(const LoadedConfig& loaded,
       "reader_name={} sources={} files={} pairs={}",
       options.config_path.string(),
       loaded.strategy_config.data_reader.config_path.string(),
-      options.signals_output_path.empty() ? "-"
-                                          : options.signals_output_path.string(),
+      options.signals_output_path.empty()
+          ? "-"
+          : options.signals_output_path.string(),
       options.lag_vol_guard_audit_output_path.empty()
           ? "-"
           : options.lag_vol_guard_audit_output_path.string()
@@ -490,8 +490,9 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
     fmt::print(stderr,
                "[FAIL] --market-calc-output-dir is required for "
                "--diagnostic-mode market_calc\n");
-    NOVA_ERROR("--market-calc-output-dir is required for "
-               "--diagnostic-mode market_calc");
+    NOVA_ERROR(
+        "--market-calc-output-dir is required for "
+        "--diagnostic-mode market_calc");
     return 1;
   }
   if (market_calc_mode && !options.signals_output_path.empty()) {
@@ -531,8 +532,7 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
 
   leadlag::Config lead_lag_config = std::move(loaded.lead_lag_config);
   leadlag_tools::LagVolGuardAuditCsvWriter lag_vol_audit_writer;
-  leadlag_tools::LagVolGuardAuditCsvWriter* lag_vol_audit_writer_ptr =
-      nullptr;
+  leadlag_tools::LagVolGuardAuditCsvWriter* lag_vol_audit_writer_ptr = nullptr;
   std::unique_ptr<leadlag_tools::LagVolGuardAuditCollector>
       lag_vol_audit_collector;
   if (!options.lag_vol_guard_audit_output_path.empty()) {
@@ -593,8 +593,9 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
       "\n",
       exit_code, stats.book_tickers, stats.signals, stats.open_signals,
       stats.close_signals, stats.stoploss_signals,
-      options.signals_output_path.empty() ? "-"
-                                          : options.signals_output_path.string(),
+      options.signals_output_path.empty()
+          ? "-"
+          : options.signals_output_path.string(),
       options.lag_vol_guard_audit_output_path.empty()
           ? "-"
           : options.lag_vol_guard_audit_output_path.string()
@@ -616,8 +617,9 @@ int RunReplay(LoadedConfig loaded, const CliOptions& options) {
       ,
       exit_code, stats.book_tickers, stats.signals, stats.open_signals,
       stats.close_signals, stats.stoploss_signals,
-      options.signals_output_path.empty() ? "-"
-                                          : options.signals_output_path.string(),
+      options.signals_output_path.empty()
+          ? "-"
+          : options.signals_output_path.string(),
       options.lag_vol_guard_audit_output_path.empty()
           ? "-"
           : options.lag_vol_guard_audit_output_path.string()
@@ -666,8 +668,7 @@ int main(int argc, char** argv) {
   app.add_option("--lag-vol-guard-jump-threshold",
                  options.lag_vol_guard_jump_threshold,
                  "Lag vol guard jump threshold ratio");
-  app.add_option("--lag-vol-guard-jump-count",
-                 options.lag_vol_guard_jump_count,
+  app.add_option("--lag-vol-guard-jump-count", options.lag_vol_guard_jump_count,
                  "Lag vol guard jump count threshold");
   app.add_option("--lag-vol-guard-jump-window",
                  options.lag_vol_guard_jump_window,
@@ -678,8 +679,7 @@ int main(int argc, char** argv) {
   app.add_option("--lag-vol-guard-amplitude-window",
                  options.lag_vol_guard_amplitude_window,
                  "Lag vol guard amplitude window duration");
-  app.add_option("--lag-vol-guard-cooldown",
-                 options.lag_vol_guard_cooldown,
+  app.add_option("--lag-vol-guard-cooldown", options.lag_vol_guard_cooldown,
                  "Lag vol guard cooldown duration");
 #if defined(AQUILA_LEAD_LAG_ENABLE_MARKET_CALC_CSV)
   app.add_option("--diagnostic-mode", options.diagnostic_mode,

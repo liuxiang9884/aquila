@@ -5,10 +5,8 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -26,7 +24,6 @@ enum class OrderGatewaySendStatus : std::uint8_t {
   kRouteNotReady,
   kCommandQueueFull,
   kRouteTableFull,
-  kInvalidTextField,
   kNotRunning,
 };
 
@@ -56,7 +53,6 @@ struct OrderGatewayClientStats {
   std::uint64_t route_table_full_rejections{0};
   std::uint64_t commands_skipped_route_not_ready{0};
   std::uint64_t invalid_routes{0};
-  std::uint64_t invalid_text_fields{0};
   std::uint64_t ready_events{0};
   std::uint64_t not_ready_events{0};
   std::uint64_t order_response_events{0};
@@ -152,7 +148,6 @@ class OrderGatewayClient {
       OrderGatewayCommand command{};
       command.kind = OrderGatewayCommandKind::kStop;
       command.command_seq = NextCommandSeq();
-      command.route_id = route;
       command.owner_enqueue_ns = NowNs();
       (void)command_queues_[route].TryPush(command);
     }
@@ -206,17 +201,17 @@ class OrderGatewayClient {
   }
 
   [[nodiscard]] OrderGatewaySendResult PlaceOrder(
-      const StrategyOrder& order) noexcept {
+      const OrderPlaceRequest& request) noexcept {
     SyncRouteStatesFromHeader();
     if (!running_) {
       return Failure(OrderGatewaySendStatus::kNotRunning);
     }
-    if (order.gateway_route_id == kAutoGatewayRoute &&
+    if (request.gateway_route_id == kAutoGatewayRoute &&
         ready_route_count_ == 0) {
       ++stats_.commands_skipped_route_not_ready;
       return Failure(OrderGatewaySendStatus::kRouteNotReady);
     }
-    const std::uint16_t route = ResolvePlaceRoute(order.gateway_route_id);
+    const std::uint16_t route = ResolvePlaceRoute(request.gateway_route_id);
     if (route >= route_count_) {
       ++stats_.invalid_routes;
       return Failure(OrderGatewaySendStatus::kInvalidRoute);
@@ -227,21 +222,23 @@ class OrderGatewayClient {
     }
 
     OrderGatewayCommand command{};
-    if (!FillOrderCommand(OrderGatewayCommandKind::kPlace, route, order,
-                          &command)) {
-      ++stats_.invalid_text_fields;
-      return Failure(OrderGatewaySendStatus::kInvalidTextField);
-    }
-    return EnqueueOrderCommand(command, route, order.local_order_id, true);
+    command.kind = OrderGatewayCommandKind::kPlace;
+    command.command_seq = NextCommandSeq();
+    command.owner_enqueue_ns = NowNs();
+    command.payload.place = request;
+    command.payload.place.parent_id =
+        request.parent_id == 0 ? request.local_order_id : request.parent_id;
+    command.payload.place.gateway_route_id = route;
+    return EnqueueOrderCommand(command, route, request.local_order_id, true);
   }
 
   [[nodiscard]] OrderGatewaySendResult CancelOrder(
-      const StrategyOrder& order) noexcept {
+      const OrderCancelRequest& request) noexcept {
     SyncRouteStatesFromHeader();
     if (!running_) {
       return Failure(OrderGatewaySendStatus::kNotRunning);
     }
-    const auto route_it = route_table_.find(order.local_order_id);
+    const auto route_it = route_table_.find(request.local_order_id);
     if (route_it == route_table_.end() || route_it->second >= route_count_) {
       ++stats_.invalid_routes;
       return Failure(OrderGatewaySendStatus::kInvalidRoute);
@@ -253,12 +250,14 @@ class OrderGatewayClient {
     }
 
     OrderGatewayCommand command{};
-    if (!FillOrderCommand(OrderGatewayCommandKind::kCancel, route, order,
-                          &command)) {
-      ++stats_.invalid_text_fields;
-      return Failure(OrderGatewaySendStatus::kInvalidTextField);
-    }
-    return EnqueueOrderCommand(command, route, order.local_order_id, false);
+    command.kind = OrderGatewayCommandKind::kCancel;
+    command.command_seq = NextCommandSeq();
+    command.owner_enqueue_ns = NowNs();
+    command.payload.cancel = request;
+    command.payload.cancel.parent_id =
+        request.parent_id == 0 ? request.local_order_id : request.parent_id;
+    command.payload.cancel.gateway_route_id = route;
+    return EnqueueOrderCommand(command, route, request.local_order_id, false);
   }
 
   void CacheExchangeOrderId(std::uint64_t local_order_id,
@@ -276,11 +275,10 @@ class OrderGatewayClient {
     OrderGatewayCommand command{};
     command.kind = OrderGatewayCommandKind::kCacheExchangeOrderId;
     command.command_seq = NextCommandSeq();
-    command.parent_id = local_order_id;
-    command.local_order_id = local_order_id;
-    command.exchange_order_id = exchange_order_id;
-    command.route_id = route;
     command.owner_enqueue_ns = NowNs();
+    command.payload.order_id.local_order_id = local_order_id;
+    command.payload.order_id.exchange_order_id = exchange_order_id;
+    command.payload.order_id.gateway_route_id = route;
     if (command_queues_[route].TryPush(command)) {
       ++stats_.commands_enqueued;
     } else {
@@ -299,10 +297,9 @@ class OrderGatewayClient {
       OrderGatewayCommand command{};
       command.kind = OrderGatewayCommandKind::kForgetExchangeOrderId;
       command.command_seq = NextCommandSeq();
-      command.parent_id = local_order_id;
-      command.local_order_id = local_order_id;
-      command.route_id = route;
       command.owner_enqueue_ns = NowNs();
+      command.payload.order_id.local_order_id = local_order_id;
+      command.payload.order_id.gateway_route_id = route;
       if (command_queues_[route].TryPush(command)) {
         ++stats_.commands_enqueued;
       } else {
@@ -438,48 +435,6 @@ class OrderGatewayClient {
       }
     }
     return route_count_;
-  }
-
-  [[nodiscard]] bool FillOrderCommand(OrderGatewayCommandKind kind,
-                                      std::uint16_t route,
-                                      const StrategyOrder& order,
-                                      OrderGatewayCommand* command) noexcept {
-    command->kind = kind;
-    command->command_seq = NextCommandSeq();
-    command->parent_id =
-        order.parent_id == 0 ? order.local_order_id : order.parent_id;
-    command->local_order_id = order.local_order_id;
-    command->exchange_order_id = order.exchange_order_id;
-    command->owner_enqueue_ns = NowNs();
-    command->symbol_id = order.symbol_id;
-    command->route_id = route;
-    command->exchange = order.exchange;
-    command->side = order.side;
-    command->order_type = order.type;
-    command->time_in_force = order.time_in_force;
-    command->reduce_only = order.reduce_only ? 1U : 0U;
-    command->quantity = order.quantity;
-
-    return CopyText(order.symbol, command->symbol, kOrderGatewaySymbolBytes,
-                    &command->symbol_size) &&
-           CopyText(order.quantity_text, command->quantity_text,
-                    kOrderGatewayQuantityTextBytes,
-                    &command->quantity_text_size) &&
-           CopyText(order.price_text, command->price_text,
-                    kOrderGatewayPriceTextBytes, &command->price_text_size);
-  }
-
-  [[nodiscard]] static bool CopyText(std::string_view source, char* target,
-                                     std::size_t capacity,
-                                     std::uint16_t* size) noexcept {
-    if (source.size() > capacity) {
-      return false;
-    }
-    if (!source.empty()) {
-      std::memcpy(target, source.data(), source.size());
-    }
-    *size = static_cast<std::uint16_t>(source.size());
-    return true;
   }
 
   [[nodiscard]] OrderGatewaySendResult EnqueueOrderCommand(

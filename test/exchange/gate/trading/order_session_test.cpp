@@ -258,48 +258,26 @@ class TestEndpointOrderSession
             handler) {}
 };
 
-struct TestOrder {
-  std::uint64_t local_order_id{0};
-  std::string_view symbol{};
-  OrderSide side{OrderSide::kBuy};
-  OrderType type{OrderType::kLimit};
-  double quantity{0.0};
-  std::string_view quantity_text{};
-  std::string_view price_text{};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  std::uint64_t exchange_order_id{0};
-  bool reduce_only{false};
-};
-
-struct TestOrderWithoutExchangeOrderId {
-  std::uint64_t local_order_id{0};
-  std::string_view symbol{};
-  OrderSide side{OrderSide::kBuy};
-  double quantity{0.0};
-  std::string_view quantity_text{};
-  std::string_view price_text{};
-  TimeInForce time_in_force{TimeInForce::kGoodTillCancel};
-  bool reduce_only{false};
-};
-
-TestOrder MakePlaceOrder(std::uint64_t local_order_id) noexcept {
-  return TestOrder{.local_order_id = local_order_id,
-                   .symbol = "BTC_USDT",
-                   .side = OrderSide::kBuy,
-                   .type = OrderType::kLimit,
-                   .quantity = 1.0,
-                   .quantity_text = "1",
-                   .price_text = "81000",
-                   .time_in_force = TimeInForce::kGoodTillCancel,
-                   .exchange_order_id = 0,
-                   .reduce_only = false};
+core::OrderPlaceRequest MakePlaceOrder(std::uint64_t local_order_id) noexcept {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .price = 81000.0,
+      .quantity = 1.0,
+      .side = OrderSide::kBuy,
+      .order_type = OrderType::kLimit,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .price_decimal_places = 0,
+      .quantity_decimal_places = 0,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  return request;
 }
 
-TestOrder MakeCancelOrder(std::uint64_t local_order_id,
-                          std::uint64_t exchange_order_id) noexcept {
-  TestOrder order = MakePlaceOrder(local_order_id);
-  order.exchange_order_id = exchange_order_id;
-  return order;
+core::OrderCancelRequest MakeCancelOrder(
+    std::uint64_t local_order_id,
+    [[maybe_unused]] std::uint64_t exchange_order_id) noexcept {
+  return core::OrderCancelRequest{.local_order_id = local_order_id};
 }
 
 std::string_view LoginSuccessResponse() noexcept {
@@ -381,28 +359,37 @@ void ActivateAndLogin(TestOrderSession<Handler>& session) {
 }
 
 TEST(OrderSessionTest, SignedSizeUsesSideAndPositiveQuantity) {
-  TestOrder buy = MakePlaceOrder(123);
+  core::OrderPlaceRequest buy = MakePlaceOrder(123);
   buy.side = OrderSide::kBuy;
   buy.quantity = 2;
-  buy.quantity_text = "2";
-  TestOrder sell = buy;
+  core::OrderPlaceRequest sell = buy;
   sell.side = OrderSide::kSell;
-  std::array<char, 64> buffer{};
+  std::array<char, kPlaceOrderRequestBufferSize> buy_buffer{};
+  std::array<char, kPlaceOrderRequestBufferSize> sell_buffer{};
 
-  EXPECT_EQ(SignedOrderSizeTextForGate(buy, buffer), "2");
-  EXPECT_EQ(SignedOrderSizeTextForGate(sell, buffer), "-2");
+  EXPECT_NE(EncodePlaceOrderRequest(buy, 1, 2, false, buy_buffer)
+                .text.find(R"("size":2)"),
+            std::string_view::npos);
+  EXPECT_NE(EncodePlaceOrderRequest(sell, 1, 2, false, sell_buffer)
+                .text.find(R"("size":-2)"),
+            std::string_view::npos);
 }
 
 TEST(OrderSessionTest, SignedSizeKeepsDecimalQuantityText) {
-  TestOrder buy = MakePlaceOrder(123);
-  buy.quantity = 0;
-  buy.quantity_text = "0.1";
-  TestOrder sell = buy;
+  core::OrderPlaceRequest buy = MakePlaceOrder(123);
+  buy.quantity = 0.1;
+  buy.quantity_decimal_places = 1;
+  core::OrderPlaceRequest sell = buy;
   sell.side = OrderSide::kSell;
-  std::array<char, 64> buffer{};
+  std::array<char, kPlaceOrderRequestBufferSize> buy_buffer{};
+  std::array<char, kPlaceOrderRequestBufferSize> sell_buffer{};
 
-  EXPECT_EQ(SignedOrderSizeTextForGate(buy, buffer), "0.1");
-  EXPECT_EQ(SignedOrderSizeTextForGate(sell, buffer), "-0.1");
+  EXPECT_NE(EncodePlaceOrderRequest(buy, 1, 2, false, buy_buffer)
+                .text.find(R"("size":0.1)"),
+            std::string_view::npos);
+  EXPECT_NE(EncodePlaceOrderRequest(sell, 1, 2, false, sell_buffer)
+                .text.find(R"("size":-0.1)"),
+            std::string_view::npos);
 }
 
 TEST(OrderSessionTest, RejectsPlaceBeforeLoginReady) {
@@ -422,8 +409,8 @@ TEST(OrderSessionTest, RejectsUnsupportedMarketOrderTypeBeforeSend) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
-  TestOrder order = MakePlaceOrder(123);
-  order.type = OrderType::kMarket;
+  core::OrderPlaceRequest order = MakePlaceOrder(123);
+  order.order_type = OrderType::kMarket;
 
   const OrderSendResult sent = session.PlaceOrder(order);
 
@@ -697,8 +684,7 @@ TEST(OrderSessionTest, AckLatencyDiagnosticLogExposeSessionIdAndCpu) {
   EXPECT_EQ(record.order_session_id, session.order_session_id());
   EXPECT_EQ(record.local_order_id, 123U);
   EXPECT_EQ(record.request_sequence, 2U);
-  EXPECT_EQ(record.owner_thread_tid,
-            handler.last_connection.owner_thread_tid);
+  EXPECT_EQ(record.owner_thread_tid, handler.last_connection.owner_thread_tid);
   EXPECT_GE(record.diagnostic_cpu, -1);
   EXPECT_FALSE(record.tcp_info_available);
   EXPECT_EQ(record.tcp_info_rtt_us, 0U);
@@ -878,6 +864,7 @@ TEST(OrderSessionTest, CancelUsesExchangeOrderIdPath) {
   RecordingHandler handler;
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
+  session.CacheExchangeOrderId(123, 36028827892199865U);
 
   const OrderSendResult sent =
       session.CancelOrder(MakeCancelOrder(123, 36028827892199865U));
@@ -891,8 +878,8 @@ TEST(OrderSessionTest, CancelAcceptsOrderWithoutExchangeOrderIdField) {
   TestOrderSession<RecordingHandler> session(handler);
   ActivateAndLogin(session);
 
-  const OrderSendResult sent = session.CancelOrder(
-      TestOrderWithoutExchangeOrderId{.local_order_id = 123});
+  const OrderSendResult sent =
+      session.CancelOrder(core::OrderCancelRequest{.local_order_id = 123});
 
   EXPECT_EQ(sent.status, OrderSendStatus::kOk);
   EXPECT_EQ(session.inflight_count(), 1U);

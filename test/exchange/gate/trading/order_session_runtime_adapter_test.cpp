@@ -259,18 +259,17 @@ TEST(OrderSessionRuntimeAdapterTest,
   Adapter adapter(MakeConnectionConfig(), MakeCredentials());
   core::OrderManager<Adapter> order_manager(adapter, 4, 3);
 
-  const core::OrderPlaceResult placed =
-      order_manager.PlaceLimitOrder(core::OrderCreateRequest{
-          .exchange = Exchange::kGate,
-          .symbol_id = 7,
-          .symbol = "BTC_USDT",
-          .side = OrderSide::kBuy,
-          .time_in_force = TimeInForce::kGoodTillCancel,
-          .quantity = 1,
-          .quantity_text = "1",
-          .price_text = "81000",
-          .reduce_only = false,
-      });
+  core::OrderPlaceRequest request{
+      .price = 81000.0,
+      .quantity = 1.0,
+      .symbol_id = 7,
+      .exchange = Exchange::kGate,
+      .side = OrderSide::kBuy,
+      .time_in_force = TimeInForce::kGoodTillCancel,
+      .reduce_only = false,
+  };
+  core::SetOrderSymbol(&request, "BTC_USDT");
+  const core::OrderPlaceResult placed = order_manager.PlaceLimitOrder(request);
 
   EXPECT_EQ(placed.status, core::OrderPlaceStatus::kSessionRejected);
   EXPECT_NE(placed.local_order_id, 0U);

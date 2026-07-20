@@ -47,9 +47,9 @@ class MultiOrderSessionGateway {
     return route_id < sessions_.size() && SessionReady(route_id);
   }
 
-  template <typename OrderT>
-  [[nodiscard]] OrderSendResult PlaceOrder(const OrderT& order) noexcept {
-    const std::size_t route = ResolvePlaceRoute(order.gateway_route_id);
+  [[nodiscard]] OrderSendResult PlaceOrder(
+      const core::OrderPlaceRequest& request) noexcept {
+    const std::size_t route = ResolvePlaceRoute(request.gateway_route_id);
     if (route >= sessions_.size() || sessions_[route] == nullptr ||
         !SessionReady(route)) {
       return Failure(OrderSendStatus::kInvalidRoute);
@@ -59,21 +59,21 @@ class MultiOrderSessionGateway {
     bool had_previous_route = false;
     std::uint16_t previous_route = 0;
     if (!RecordRouteBeforeSend(
-            order.local_order_id, static_cast<std::uint16_t>(route),
+            request.local_order_id, static_cast<std::uint16_t>(route),
             &route_recorded, &had_previous_route, &previous_route)) {
       return Failure(OrderSendStatus::kInflightFull);
     }
-    OrderSendResult sent = sessions_[route]->PlaceOrder(order);
+    OrderSendResult sent = sessions_[route]->PlaceOrder(request);
     if (sent.status != OrderSendStatus::kOk && route_recorded) {
-      RollbackRecordedRoute(order.local_order_id, had_previous_route,
+      RollbackRecordedRoute(request.local_order_id, had_previous_route,
                             previous_route);
     }
     return sent;
   }
 
-  template <typename OrderT>
-  [[nodiscard]] OrderSendResult CancelOrder(const OrderT& order) noexcept {
-    const auto route = route_table_.find(order.local_order_id);
+  [[nodiscard]] OrderSendResult CancelOrder(
+      const core::OrderCancelRequest& request) noexcept {
+    const auto route = route_table_.find(request.local_order_id);
     if (route == route_table_.end()) {
       return Failure(OrderSendStatus::kInvalidRoute);
     }
@@ -81,7 +81,7 @@ class MultiOrderSessionGateway {
     if (session == nullptr || !SessionReady(route->second)) {
       return Failure(OrderSendStatus::kNotActive);
     }
-    return session->CancelOrder(order);
+    return session->CancelOrder(request);
   }
 
   void CacheExchangeOrderId(std::uint64_t local_order_id,

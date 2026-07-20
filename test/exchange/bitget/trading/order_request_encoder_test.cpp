@@ -1,12 +1,33 @@
 #include "exchange/bitget/trading/order_request_encoder.h"
 
 #include <array>
+#include <limits>
 #include <string_view>
 
 #include <gtest/gtest.h>
 
 namespace aquila::bitget {
 namespace {
+
+core::OrderPlaceRequest MakePlaceRequest(
+    std::uint64_t local_order_id, OrderType order_type, std::string_view symbol,
+    double quantity, std::uint8_t quantity_decimal_places, double price,
+    std::uint8_t price_decimal_places, OrderSide side,
+    TimeInForce time_in_force, bool reduce_only) {
+  core::OrderPlaceRequest request{
+      .local_order_id = local_order_id,
+      .price = price,
+      .quantity = quantity,
+      .side = side,
+      .order_type = order_type,
+      .time_in_force = time_in_force,
+      .price_decimal_places = price_decimal_places,
+      .quantity_decimal_places = quantity_decimal_places,
+      .reduce_only = reduce_only,
+  };
+  core::SetOrderSymbol(&request, symbol);
+  return request;
+}
 
 TEST(BitgetOrderRequestEncoderTest, GeneratesDeterministicLoginSignature) {
   std::array<char, kBitgetLoginSignatureBase64Size> signature{};
@@ -36,19 +57,12 @@ TEST(BitgetOrderRequestEncoderTest, LoginWritesUnixSecondsAndCredentials) {
 
 TEST(BitgetOrderRequestEncoderTest, PlaceLimitIocBuyWritesExactJson) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .encoded_request_id = 144115188075855873ULL,
-      .local_order_id = 9,
-      .order_type = OrderType::kLimit,
-      .symbol = "BTCUSDT",
-      .quantity_text = "0.001",
-      .price_text = "100000.0",
-      .side = OrderSide::kBuy,
-      .time_in_force = TimeInForce::kImmediateOrCancel,
-      .reduce_only = false,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(9, OrderType::kLimit, "BTCUSDT", 0.001, 3, 100000.0, 1,
+                       OrderSide::kBuy, TimeInForce::kImmediateOrCancel, false);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded =
+      EncodePlaceOrderRequest(request, 144115188075855873ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -58,19 +72,12 @@ TEST(BitgetOrderRequestEncoderTest, PlaceLimitIocBuyWritesExactJson) {
 
 TEST(BitgetOrderRequestEncoderTest, PlaceLimitGtcSellReduceOnlyWritesTokens) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  const PlaceOrderEncodeFields fields{
-      .encoded_request_id = 144115188075855874ULL,
-      .local_order_id = 10,
-      .order_type = OrderType::kLimit,
-      .symbol = "ETHUSDT",
-      .quantity_text = "1.25",
-      .price_text = "3200.5",
-      .side = OrderSide::kSell,
-      .time_in_force = TimeInForce::kGoodTillCancel,
-      .reduce_only = true,
-  };
+  const core::OrderPlaceRequest request =
+      MakePlaceRequest(10, OrderType::kLimit, "ETHUSDT", 1.25, 2, 3200.5, 1,
+                       OrderSide::kSell, TimeInForce::kGoodTillCancel, true);
 
-  const EncodedTextRequest encoded = EncodePlaceOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded =
+      EncodePlaceOrderRequest(request, 144115188075855874ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_NE(encoded.text.find(R"("side":"sell")"), std::string_view::npos);
@@ -81,13 +88,10 @@ TEST(BitgetOrderRequestEncoderTest, PlaceLimitGtcSellReduceOnlyWritesTokens) {
 
 TEST(BitgetOrderRequestEncoderTest, CancelWritesOrderIdAndClientOid) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .encoded_request_id = 216172782113783810ULL,
-      .local_order_id = 11,
-      .exchange_order_id = 123456789,
-  };
+  const core::OrderCancelRequest request{.local_order_id = 11};
 
-  const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded = EncodeCancelOrderRequest(
+      request, 123456789, 216172782113783810ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -97,13 +101,10 @@ TEST(BitgetOrderRequestEncoderTest, CancelWritesOrderIdAndClientOid) {
 
 TEST(BitgetOrderRequestEncoderTest, CancelFallbackUsesOnlyClientOid) {
   std::array<char, kCancelOrderRequestBufferSize> buffer{};
-  const CancelOrderEncodeFields fields{
-      .encoded_request_id = 216172782113783811ULL,
-      .local_order_id = 12,
-      .exchange_order_id = 0,
-  };
+  const core::OrderCancelRequest request{.local_order_id = 12};
 
-  const EncodedTextRequest encoded = EncodeCancelOrderRequest(fields, buffer);
+  const EncodedTextRequest encoded =
+      EncodeCancelOrderRequest(request, 0, 216172782113783811ULL, buffer);
 
   ASSERT_EQ(encoded.status, OrderEncodeStatus::kOk);
   EXPECT_EQ(
@@ -113,51 +114,45 @@ TEST(BitgetOrderRequestEncoderTest, CancelFallbackUsesOnlyClientOid) {
 
 TEST(BitgetOrderRequestEncoderTest, RejectsUnsupportedOrMissingPlaceFields) {
   std::array<char, kPlaceOrderRequestBufferSize> buffer{};
-  PlaceOrderEncodeFields fields{
-      .encoded_request_id = 1,
-      .local_order_id = 1,
-      .order_type = OrderType::kMarket,
-      .symbol = "BTCUSDT",
-      .quantity_text = "1",
-      .price_text = "1",
-  };
+  core::OrderPlaceRequest request =
+      MakePlaceRequest(1, OrderType::kMarket, "BTCUSDT", 1.0, 0, 1.0, 0,
+                       OrderSide::kBuy, TimeInForce::kGoodTillCancel, false);
 
-  EXPECT_EQ(EncodePlaceOrderRequest(fields, buffer).status,
+  EXPECT_EQ(EncodePlaceOrderRequest(request, 1, buffer).status,
             OrderEncodeStatus::kUnsupportedOrderType);
-  fields.order_type = OrderType::kLimit;
-  fields.symbol = {};
-  EXPECT_EQ(EncodePlaceOrderRequest(fields, buffer).status,
+  request.order_type = OrderType::kLimit;
+  request.symbol_size = 0;
+  EXPECT_EQ(EncodePlaceOrderRequest(request, 1, buffer).status,
             OrderEncodeStatus::kInvalidSymbol);
-  fields.symbol = "BTCUSDT";
-  fields.quantity_text = {};
-  EXPECT_EQ(EncodePlaceOrderRequest(fields, buffer).status,
-            OrderEncodeStatus::kInvalidQuantityText);
-  fields.quantity_text = "1";
-  fields.price_text = {};
-  EXPECT_EQ(EncodePlaceOrderRequest(fields, buffer).status,
-            OrderEncodeStatus::kInvalidPriceText);
 }
 
 TEST(BitgetOrderRequestEncoderTest, RejectsInvalidLocalIdAndSmallBuffer) {
   std::array<char, kCancelOrderRequestBufferSize> cancel_buffer{};
-  const CancelOrderEncodeFields cancel_fields{
-      .encoded_request_id = 1,
-      .local_order_id = 0,
-  };
-  EXPECT_EQ(EncodeCancelOrderRequest(cancel_fields, cancel_buffer).status,
-            OrderEncodeStatus::kInvalidClientOid);
+  const core::OrderCancelRequest cancel_request{};
+  EXPECT_EQ(
+      EncodeCancelOrderRequest(cancel_request, 0, 1, cancel_buffer).status,
+      OrderEncodeStatus::kInvalidClientOid);
 
   std::array<char, 8> small_buffer{};
-  const PlaceOrderEncodeFields place_fields{
-      .encoded_request_id = 1,
-      .local_order_id = 1,
-      .order_type = OrderType::kLimit,
-      .symbol = "BTCUSDT",
-      .quantity_text = "1",
-      .price_text = "1",
-  };
-  EXPECT_EQ(EncodePlaceOrderRequest(place_fields, small_buffer).status,
+  const core::OrderPlaceRequest place_request =
+      MakePlaceRequest(1, OrderType::kLimit, "BTCUSDT", 1.0, 0, 1.0, 0,
+                       OrderSide::kBuy, TimeInForce::kGoodTillCancel, false);
+  EXPECT_EQ(EncodePlaceOrderRequest(place_request, 1, small_buffer).status,
             OrderEncodeStatus::kBufferTooSmall);
+}
+
+TEST(BitgetOrderRequestEncoderTest, MaximumBoundedPlaceFieldsFitDirectBuffer) {
+  std::array<char, kPlaceOrderDirectFormatCapacity> buffer{};
+  const core::OrderPlaceRequest request = MakePlaceRequest(
+      std::numeric_limits<std::uint64_t>::max(), OrderType::kLimit,
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456", 999999.12345, 5, 999999999.123456, 6,
+      OrderSide::kSell, TimeInForce::kImmediateOrCancel, true);
+
+  const EncodedTextRequest encoded = EncodePlaceOrderRequest(
+      request, std::numeric_limits<std::uint64_t>::max(), buffer);
+
+  EXPECT_EQ(encoded.status, OrderEncodeStatus::kOk);
+  EXPECT_LT(encoded.text.size(), buffer.size());
 }
 
 }  // namespace

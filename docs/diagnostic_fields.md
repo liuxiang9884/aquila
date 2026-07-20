@@ -726,6 +726,7 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 | `position_id` | strategy log / report CSV | stable | strategy position id | position.csv 配对主键之一。 | 不能删除。 |
 | `position_event` | strategy log / report CSV | stable | strategy event enum | 判断 entry / exit submit 状态。 | 不能删除。 |
 | `entry_local_order_id` | strategy log / report CSV | stable | local order id | 将 exit 订单关联回 entry。 | 不能删除。 |
+| `quantity` / `order_price` | `lead_lag_order_submitted` / report CSV | stable | numeric quantity / price | 策略提交订单的数值事实；`quantity_text` / `price_text` 与这两个字段重复，已从 strategy submit log 删除。Gate 的 exact wire decimal text 可读取 `gate_order_send_ok`；Bitget 当前 send log 不含这两个 text。report 在 send log 缺失时从数值字段生成规范化 text。 | 不能删除数值字段；若 report 不再保留 text compatibility columns，可删除 fallback text 生成。 |
 | `order_finished_local_ns` | strategy log / report CSV | stable | 本机 Unix epoch ns | send-to-finish / ack-to-finish 本地闭环终点。 | 不能删除。 |
 | `ack_rtt_ns` | strategy log / report CSV | stable | ns | 本地 Ack RTT 主指标。 | 不能删除。 |
 | `exchange_lifecycle_ns` | strategy log / report CSV | experiment | ns | Gate exchange Ack 到 terminal update 的交易所侧 lifecycle 诊断，不解释 Ack RTT。 | 若 Gate timestamp 语义不稳定或更好 lifecycle 字段落地可重审。 |

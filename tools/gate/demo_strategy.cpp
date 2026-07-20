@@ -59,38 +59,43 @@ std::string_view ModeText(aquila::config::StrategyMode mode) noexcept {
   return "unknown";
 }
 
-bool ValidateLoadedConfig(const LoadedConfig& loaded) {
-  if (loaded.strategy.name != "demo") {
+bool ValidateLoadedConfig(LoadedConfig* loaded) {
+  if (loaded->strategy.name != "demo") {
     fmt::print(stderr, "[FAIL] strategy.name must be demo for this tool\n");
     NOVA_ERROR("strategy.name must be demo for this tool actual={}",
-               loaded.strategy.name);
+               loaded->strategy.name);
     return false;
   }
   const aquila::config::InstrumentInfo* gate_instrument =
-      loaded.data_reader.instrument_catalog.Find(aquila::Exchange::kGate,
-                                                 loaded.demo_strategy.contract);
+      loaded->data_reader.instrument_catalog.Find(
+          aquila::Exchange::kGate, loaded->demo_strategy.contract);
   if (gate_instrument == nullptr ||
-      gate_instrument->symbol_id != loaded.demo_strategy.symbol_id) {
+      gate_instrument->symbol_id != loaded->demo_strategy.symbol_id ||
+      !gate_instrument->quantity_decimal_places) {
     fmt::print(stderr,
                "[FAIL] demo contract={} does not match Gate symbol_id={}\n",
-               loaded.demo_strategy.contract, loaded.demo_strategy.symbol_id);
+               loaded->demo_strategy.contract, loaded->demo_strategy.symbol_id);
     NOVA_ERROR("demo contract/symbol_id mismatch contract={} symbol_id={}",
-               loaded.demo_strategy.contract, loaded.demo_strategy.symbol_id);
+               loaded->demo_strategy.contract, loaded->demo_strategy.symbol_id);
     return false;
   }
+  loaded->demo_strategy.price_decimal_places =
+      static_cast<std::uint8_t>(gate_instrument->price_decimal_places);
+  loaded->demo_strategy.quantity_decimal_places =
+      static_cast<std::uint8_t>(*gate_instrument->quantity_decimal_places);
   const std::uint64_t worst_case_orders =
-      static_cast<std::uint64_t>(loaded.demo_strategy.rounds) * 2U;
-  if (loaded.strategy.order_capacity < worst_case_orders) {
+      static_cast<std::uint64_t>(loaded->demo_strategy.rounds) * 2U;
+  if (loaded->strategy.order_capacity < worst_case_orders) {
     fmt::print(stderr,
                "[FAIL] strategy.order_capacity={} is smaller than worst-case "
                "demo orders={} for rounds={}\n",
-               loaded.strategy.order_capacity, worst_case_orders,
-               loaded.demo_strategy.rounds);
+               loaded->strategy.order_capacity, worst_case_orders,
+               loaded->demo_strategy.rounds);
     NOVA_ERROR(
         "strategy.order_capacity too small capacity={} worst_case_orders={} "
         "rounds={}",
-        loaded.strategy.order_capacity, worst_case_orders,
-        loaded.demo_strategy.rounds);
+        loaded->strategy.order_capacity, worst_case_orders,
+        loaded->demo_strategy.rounds);
     return false;
   }
   return true;
@@ -180,7 +185,7 @@ bool LoadConfig(const CliOptions& options, LoadedConfig* loaded) {
   }
   loaded->demo_strategy = std::move(demo_result.value);
 
-  return ValidateLoadedConfig(*loaded);
+  return ValidateLoadedConfig(loaded);
 }
 
 gate::LoginCredentials LoadCredentials(const CliOptions& options,

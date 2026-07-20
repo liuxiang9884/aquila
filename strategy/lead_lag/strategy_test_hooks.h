@@ -25,8 +25,8 @@ enum class StrategySubmitStageForTest : std::uint8_t {
   kRiskChecked,
   kOrderIntentLogged,
   kExecutionGroupReady,
-  kBeforeAcquireText,
-  kAfterAcquireText,
+  kBeforeAcquireRiskSlot,
+  kAfterAcquireRiskSlot,
   kBeforePlaceOrder,
   kAfterPlaceOrder,
   kAfterSubmitResult,
@@ -178,10 +178,8 @@ struct StrategyOrderSubmittedLogRecordForTest {
   PositionDirection position_direction{};
   std::uint64_t entry_local_order_id{0};
   double quantity{0.0};
-  std::string_view quantity_text;
   double raw_price{0.0};
   double order_price{0.0};
-  std::string_view price_text;
   std::uint32_t slippage_ticks{0};
   double price_tick{0.0};
   double target_open_notional{0.0};

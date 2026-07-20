@@ -251,7 +251,8 @@ class ExecutionState {
     if (close_order_kind == CloseOrderKind::kNone) {
       return false;
     }
-    const PendingOrderRole role = PendingOrderRoleForCloseKind(close_order_kind);
+    const PendingOrderRole role =
+        PendingOrderRoleForCloseKind(close_order_kind);
     if (role == PendingOrderRole::kNone) {
       return false;
     }
@@ -298,15 +299,15 @@ class ExecutionState {
       return ExecutionApplyResult::kIgnoredNonTerminal;
     }
     ExecutionGroup* group =
-        FindPendingOrderByLocalOrderId(order.local_order_id);
+        FindPendingOrderByLocalOrderId(order.place_request.local_order_id);
     if (group == nullptr) {
       return ExecutionApplyResult::kIgnoredUnknownOrder;
     }
 
     const bool resolved_unknown_result =
-        ClearUnknownResultPending(*group, order.local_order_id);
+        ClearUnknownResultPending(*group, order.place_request.local_order_id);
     const PendingOrderRole order_role =
-        RemovePendingOrder(*group, order.local_order_id);
+        RemovePendingOrder(*group, order.place_request.local_order_id);
     const double signed_filled_quantity =
         SignedFilledQuantity(order, instrument);
     ApplyFilledQuantity(*group, order, order_role, signed_filled_quantity);
@@ -509,7 +510,7 @@ class ExecutionState {
       const InstrumentMetadata& instrument) noexcept {
     const double filled =
         NormalizeFilledQuantity(order.cumulative_filled_quantity, instrument);
-    return order.side == OrderSide::kBuy ? filled : -filled;
+    return order.place_request.side == OrderSide::kBuy ? filled : -filled;
   }
 
   [[nodiscard]] static PendingOrderRole PendingOrderRoleForCloseKind(
@@ -543,7 +544,8 @@ class ExecutionState {
     if (std::abs(signed_filled_quantity) <= kExecutionQuantityEpsilon) {
       return;
     }
-    if (order_role == PendingOrderRole::kOpen || !order.reduce_only) {
+    if (order_role == PendingOrderRole::kOpen ||
+        !order.place_request.reduce_only) {
       AddEntryFill(group, order, signed_filled_quantity);
     } else if (PendingOrderRoleIsClose(order_role)) {
       TrackCloseFill(group, signed_filled_quantity);
@@ -551,7 +553,8 @@ class ExecutionState {
     }
     group.signed_position_quantity += signed_filled_quantity;
     NormalizePositionAfterFill(group);
-    if (order_role == PendingOrderRole::kOpen || !order.reduce_only) {
+    if (order_role == PendingOrderRole::kOpen ||
+        !order.place_request.reduce_only) {
       RefreshTrailingPriceFromEntryValue(group);
     }
   }
@@ -613,9 +616,11 @@ class ExecutionState {
       return;
     }
     if (group.long_position()) {
-      group.trailing_price = std::max(group.trailing_price, average_entry_price);
+      group.trailing_price =
+          std::max(group.trailing_price, average_entry_price);
     } else if (group.short_position()) {
-      group.trailing_price = std::min(group.trailing_price, average_entry_price);
+      group.trailing_price =
+          std::min(group.trailing_price, average_entry_price);
     }
   }
 
@@ -626,8 +631,8 @@ class ExecutionState {
       return;
     }
     group.close_order_kind = CloseOrderKind::kNone;
-    const double covered_base_quantity =
-        std::min(group.close_filled_quantity, group.close_base_position_quantity);
+    const double covered_base_quantity = std::min(
+        group.close_filled_quantity, group.close_base_position_quantity);
     const bool close_base_uncovered =
         group.close_base_position_quantity - covered_base_quantity >
         kExecutionQuantityEpsilon;
@@ -681,9 +686,9 @@ class ExecutionState {
     group = ExecutionGroup{};
   }
 
-  [[nodiscard]] static bool AddPendingOrder(
-      ExecutionGroup& group, std::uint64_t local_order_id,
-      PendingOrderRole role) noexcept {
+  [[nodiscard]] static bool AddPendingOrder(ExecutionGroup& group,
+                                            std::uint64_t local_order_id,
+                                            PendingOrderRole role) noexcept {
     if (role == PendingOrderRole::kNone ||
         group.pending_order_count >= group.pending_local_order_ids.size()) {
       return false;

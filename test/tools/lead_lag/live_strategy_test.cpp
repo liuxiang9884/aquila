@@ -69,9 +69,10 @@ struct CapturedOrder {
   aquila::OrderSide side{aquila::OrderSide::kBuy};
   aquila::OrderType order_type{aquila::OrderType::kLimit};
   aquila::TimeInForce time_in_force{aquila::TimeInForce::kGoodTillCancel};
+  double price{0.0};
   double quantity{0.0};
-  std::string quantity_text;
-  std::string price_text;
+  std::uint8_t price_decimal_places{0};
+  std::uint8_t quantity_decimal_places{0};
   bool reduce_only{false};
 };
 
@@ -85,17 +86,18 @@ struct SmokeStrategyContext {
   std::vector<std::uint64_t> cancelled_local_order_ids;
 
   aquila::core::OrderPlaceResult PlaceOrder(
-      aquila::core::OrderCreateRequest request) {
+      const aquila::core::OrderPlaceRequest& request) {
     orders.push_back(CapturedOrder{
         .exchange = request.exchange,
         .symbol_id = request.symbol_id,
-        .symbol = std::string(request.symbol),
+        .symbol = std::string(request.SymbolView()),
         .side = request.side,
         .order_type = request.order_type,
         .time_in_force = request.time_in_force,
+        .price = request.price,
         .quantity = request.quantity,
-        .quantity_text = std::string(request.quantity_text),
-        .price_text = std::string(request.price_text),
+        .price_decimal_places = request.price_decimal_places,
+        .quantity_decimal_places = request.quantity_decimal_places,
         .reduce_only = request.reduce_only,
     });
     if (place_status != aquila::core::OrderPlaceStatus::kOk) {
@@ -104,12 +106,14 @@ struct SmokeStrategyContext {
     return {.status = place_status, .local_order_id = next_local_order_id++};
   }
 
-  aquila::core::OrderCancelResult CancelOrder(std::uint64_t local_order_id) {
-    cancelled_local_order_ids.push_back(local_order_id);
+  aquila::core::OrderCancelResult CancelOrder(
+      const aquila::core::OrderCancelRequest& request) {
+    cancelled_local_order_ids.push_back(request.local_order_id);
     if (cancel_status != aquila::core::OrderCancelStatus::kOk) {
-      return {.status = cancel_status, .local_order_id = local_order_id};
+      return {.status = cancel_status,
+              .local_order_id = request.local_order_id};
     }
-    return {.status = cancel_status, .local_order_id = local_order_id};
+    return {.status = cancel_status, .local_order_id = request.local_order_id};
   }
 };
 
@@ -645,7 +649,7 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(context.orders[0].time_in_force,
             aquila::TimeInForce::kImmediateOrCancel);
   EXPECT_EQ(context.orders[0].quantity, 10);
-  EXPECT_EQ(context.orders[0].price_text, "101.0");
+  EXPECT_DOUBLE_EQ(context.orders[0].price, 101.0);
   EXPECT_FALSE(context.orders[0].reduce_only);
   EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kOpenPending);
 
@@ -674,7 +678,7 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(context.orders[1].time_in_force,
             aquila::TimeInForce::kImmediateOrCancel);
   EXPECT_EQ(context.orders[1].quantity, 10);
-  EXPECT_EQ(context.orders[1].price_text, "98.0");
+  EXPECT_DOUBLE_EQ(context.orders[1].price, 98.0);
   EXPECT_TRUE(context.orders[1].reduce_only);
   EXPECT_EQ(stats.state, LiveOpenCloseSmokeState::kClosePending);
 
@@ -753,7 +757,7 @@ TEST(LeadLagLiveStrategyTest,
 
   ASSERT_EQ(context.orders.size(), 1U);
   EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
-  EXPECT_EQ(context.orders[0].quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
   EXPECT_DOUBLE_EQ(stats.open_quantity, 0.1);
   EXPECT_DOUBLE_EQ(stats.estimated_open_notional, 10.0);
 }
@@ -841,7 +845,7 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(context.orders[0].time_in_force,
             aquila::TimeInForce::kGoodTillCancel);
   EXPECT_EQ(context.orders[0].quantity, 10);
-  EXPECT_EQ(context.orders[0].price_text, "95.0");
+  EXPECT_DOUBLE_EQ(context.orders[0].price, 95.0);
   EXPECT_FALSE(context.orders[0].reduce_only);
   EXPECT_EQ(stats.state, LiveUnfilledCancelSmokeState::kOpenPending);
 
@@ -902,7 +906,7 @@ TEST(LeadLagLiveStrategyTest,
 
   ASSERT_EQ(context.orders.size(), 1U);
   EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
-  EXPECT_EQ(context.orders[0].quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
   EXPECT_DOUBLE_EQ(stats.open_quantity, 0.1);
   EXPECT_DOUBLE_EQ(stats.estimated_open_notional, 9.5);
 }
@@ -1193,7 +1197,7 @@ TEST(LeadLagLiveStrategyTest,
   EXPECT_EQ(context.orders[0].time_in_force,
             aquila::TimeInForce::kImmediateOrCancel);
   EXPECT_EQ(context.orders[0].quantity, 1);
-  EXPECT_EQ(context.orders[0].price_text, "0.1");
+  EXPECT_DOUBLE_EQ(context.orders[0].price, 0.1);
   EXPECT_TRUE(context.orders[0].reduce_only);
   EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kOrderPending);
 
@@ -1237,7 +1241,7 @@ TEST(LeadLagLiveStrategyTest, SmokeSubmitRejectSubmitsDecimalMinimumQuantity) {
 
   ASSERT_EQ(context.orders.size(), 1U);
   EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
-  EXPECT_EQ(context.orders[0].quantity_text, "0.1");
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 0.1);
   EXPECT_DOUBLE_EQ(stats.quantity, 0.1);
 }
 
@@ -1267,7 +1271,7 @@ TEST(LeadLagLiveStrategyTest,
 
   ASSERT_EQ(context.orders.size(), 1U);
   EXPECT_DOUBLE_EQ(context.orders[0].quantity, 1.0);
-  EXPECT_EQ(context.orders[0].quantity_text, "1");
+  EXPECT_DOUBLE_EQ(context.orders[0].quantity, 1.0);
   EXPECT_EQ(stats.state, LiveSubmitRejectSmokeState::kOrderPending);
 }
 
