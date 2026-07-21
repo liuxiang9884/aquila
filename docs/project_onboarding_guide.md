@@ -54,7 +54,7 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `Trade` 64 bytes；historical/recorder 只接受 typed binary format v1，旧 raw/ABI artifact 需重录。
 - Fastest-route fusion 按 `(exchange,symbol_id,id)` 单调 first-processed-wins，输出一条 canonical stream；行情证据不能外推为
   fillability/PnL。当前架构见 fusion 文档。
-- Gate 单路 trading、private feedback、OrderGateway SHM V3 和 LeadLag gateway backend 已实现；多路 gateway 尚无真实订单证据。
+- Gate 单路 trading、private feedback、OrderGateway SHM v4 和 LeadLag gateway backend 已实现；v4 在 Gate/Bitget place、cancel、response 与相关 smoke/probe 中传播 `group_id`，多路 gateway 尚无真实订单证据。
   Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据。
@@ -95,7 +95,13 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。
-- `FixedOrderedSlotPool` 已提供通用容器，但生产 LeadLag multi-group metadata 迁移仍按专题文档和独立分支事实确认，不能假设完成。
+- `feature/lead-lag-parallel-fixed-slot-v4` 已基于 `main@83c5e12` 完成 LeadLag multi-group 基础设施：每个 pair 使用
+  `FixedOrderedSlotPool<ExecutionGroup, 16>`，`execute.parallel` 只接受 `1..16`，`(symbol_id, group_id)` 是稳定 identity，
+  `group_index` 仅用于策略进程内 O(1) slot 定位。terminal metadata mismatch 禁止扫描 fallback，会使 pair 进入
+  `needs_reconcile` 并暂停新开仓，同时保留已有持仓的 close / stoploss 路径。LeadLag order log、`order_detail.csv` 和
+  `latency.csv` 已迁移到 `group_id` / `submitted_v2`，新 analyzer 忽略缺少 `group_id` 的旧 submitted log。现有 live config
+  仍全部为 `parallel=1`；该分支只有本地自动测试证据，没有 `parallel > 1` replay、benchmark 或 live 证据，合并前以后续 PR
+  状态为准。完整 contract 见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
 - Gate/Bitget 交易链路 L3 性能优化已完成原暂停点的 Gate 第 5 组、Bitget、
   parser → SHM → runtime、测试、replay 和 review，并累计接受 10 项生产优化。最新
@@ -105,9 +111,10 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   double + decimal places request，price/quantity text 只在 session 生成；no-log 五组
   A/B 中 Gate/Bitget SHM 整链 `p50` 分别改善 `12.90%/14.33%`。详细数据和候选记录见
   性能报告与计划的“2026-07-20 数值订单 request 与 OrderSession 格式化”。
-- 2026-07-21 已从 canonical main 和注册 worktree 之外的本地目录清理 2026-07-17 前的历史 report 与生成型 bin，main 合并提交为
-  `13a964b`；磁盘约释放 `198.03 GB`。25 个旧分支 worktree 仍按各自 HEAD 保留约 `4.35 GB` 的受控历史副本，其中存在 dirty
-  和 detached worktree，未擅自修改；如需物理删除，必须先决定逐分支同步、稀疏 checkout 或移除废弃 worktree。S3 未做历史清理。
+- 2026-07-21 已从 canonical main 和注册 worktree 之外的本地目录清理 2026-07-17 前的历史 report 与生成型 bin。当前
+  `git worktree list` 共 6 个：main、PR #11、Gate/Bitget numeric request、Gate Ack diagnostics、PR #10，以及本
+  `parallel fixed-slot` L3 worktree；删除或保留只按实时 `git worktree list` 和各 worktree `git status` 判断，不使用旧的
+  25-worktree/4.35 GB 摘要。S3 未做历史清理。
 
 ## 代码入口
 
@@ -173,8 +180,11 @@ rg 'aquila_evaluation' core exchange tools
    单边 stale BBO。
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
-5. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
-6. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
+5. LeadLag parallel fixed-slot：先 review `feature/lead-lag-parallel-fixed-slot-v4` 的 fixed-slot、mismatch reconcile 和
+   `group_id/submitted_v2` contract，再与用户单独确定测试阶梯；在 fresh benchmark/replay/live 证据之前，不把基础设施解释为
+   `parallel > 1` 的时延、fillability、PnL 或风险收益结论，现有 live config 保持 `parallel=1`。
+6. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
+7. 性能/CPU：numeric request 专用 worktree 已完成 local ID、final JSON writer 和
    decimal writer 的后续非拓扑筛选，候选均因完整链或相邻路径回退而撤销。下一阶段从
    已接受 clean HEAD 新建独立 topology branch/worktree，先读
    `docs/runtime_cpu_allocation.md`，冻结 Gate/Bitget submit、ACK、feedback runtime
@@ -199,9 +209,10 @@ authoritative feedback；当前 main 不含本地 account limiter，未经用户
 不得把 fresh-run 解释为 resume，也不得在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
 
-2026-07-17 前的旧 report/bin 已从 canonical main 和注册 worktree 之外清理；25 个旧分支 worktree 仍有约 `4.35 GB` 的
-Git 受控副本。删除这些副本会改变 dirty/detached 开发状态，必须先由用户选择同步分支、稀疏 checkout 或移除废弃 worktree；
-不要直接批量 `rm`。
+LeadLag `parallel > 1` 基础设施在 `feature/lead-lag-parallel-fixed-slot-v4`：fixed slot 上限 16、稳定
+`(symbol_id, group_id)`、runtime-local `group_index`、SHM v4、mismatch reconcile 和 `submitted_v2` report schema 已实现；现有
+live config 仍为 `parallel=1`，没有 `parallel > 1` replay/benchmark/live 证据。先 review 分支/PR，再与用户讨论测试阶梯，不要直接
+启动真实订单。当前 `git worktree list` 为 6 个，删除判断只信实时 worktree/branch status，不直接批量 `rm`。
 
 若继续当前 Gate/Bitget 交易链路性能优化，不要从 `/home/liuxiang/dev/aquila` 的 `main`
 重开实现；进入
