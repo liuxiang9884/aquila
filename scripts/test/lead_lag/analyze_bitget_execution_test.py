@@ -177,7 +177,7 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                 json.dumps(
                     {
                         "sequence": 1,
-                        "file": str(binary_path),
+                        "file": binary_path.name,
                         "records": len(records),
                         "feed": "book_ticker",
                         "record_size": records.dtype.itemsize,

@@ -441,6 +441,8 @@ class BookTickerStore:
                     continue
                 entry = json.loads(line)
                 path = Path(entry["file"])
+                if not path.is_absolute():
+                    path = manifest_path.parent / path
                 records = int(entry.get("records", 0))
                 if records <= 0:
                     continue
