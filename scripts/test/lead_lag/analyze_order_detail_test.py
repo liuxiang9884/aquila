@@ -356,6 +356,137 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
 
         self.assertEqual(result.rows, [])
 
+    def test_multi_group_identity_isolated_across_symbol_run_and_fanout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            run_a_log = base / "run-a.log"
+            run_b_log = base / "run-b.log"
+            write_file(
+                run_a_log,
+                """
+                I] lead_lag_order_submitted local_order_id=1001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=1001 quantity=1 order_price=100 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1002 group_id=1 route_id=1 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=1001 quantity=1 order_price=100 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1003 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=2 position_direction=kLong entry_local_order_id=1003 quantity=1 order_price=101 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1004 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=2 position_direction=kLong entry_local_order_id=1003 quantity=0.5 order_price=102 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=1005 group_id=2 route_id=1 symbol=ALPHA_USDT symbol_id=4 order_role=exit action=kCloseLong side=kSell reduce_only=true position_id=2 position_direction=kLong entry_local_order_id=1003 quantity=0.5 order_price=103 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=2001 group_id=1 route_id=0 symbol=BETA_USDT symbol_id=7 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=2001 quantity=1 order_price=200 place_status=kOk
+                I] lead_lag_order_submitted local_order_id=9999 parent_id=1 route_id=3 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=9999 quantity=1 order_price=999 place_status=kOk
+                I] lead_lag_order_feedback kind=kPartialFilled local_order_id=1003 group_id=2 route_id=0 cumulative_filled_quantity=0.4 left_quantity=0.6 fill_price=101 exchange_update_ns=30 local_receive_ns=31
+                I] lead_lag_order_feedback kind=kFilled local_order_id=1003 group_id=2 route_id=0 cumulative_filled_quantity=1 left_quantity=0 fill_price=101 exchange_update_ns=40 local_receive_ns=41
+                I] lead_lag_order_finished local_order_id=2001 group_id=1 route_id=0 symbol=BETA_USDT symbol_id=7 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=2001 cumulative_filled_quantity=1 average_fill_price=200 exchange_order_id=62001 order_finished_local_ns=70
+                I] lead_lag_order_finished local_order_id=1005 group_id=2 route_id=1 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=true position_id=2 position_direction=kLong order_role=exit entry_local_order_id=1003 cumulative_filled_quantity=0.5 average_fill_price=103 exchange_order_id=61005 order_finished_local_ns=65
+                I] lead_lag_order_finished local_order_id=1004 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=true position_id=2 position_direction=kLong order_role=exit entry_local_order_id=1003 cumulative_filled_quantity=0.5 average_fill_price=102 exchange_order_id=61004 order_finished_local_ns=60
+                I] lead_lag_order_finished local_order_id=1003 group_id=2 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=2 position_direction=kLong order_role=entry entry_local_order_id=1003 cumulative_filled_quantity=1 average_fill_price=101 exchange_order_id=61003 order_finished_local_ns=50
+                I] lead_lag_order_finished local_order_id=1002 group_id=1 route_id=1 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=1001 cumulative_filled_quantity=1 average_fill_price=100 exchange_order_id=61002 order_finished_local_ns=45
+                I] lead_lag_order_finished local_order_id=1001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=1001 cumulative_filled_quantity=1 average_fill_price=100 exchange_order_id=61001 order_finished_local_ns=44
+                """,
+            )
+            write_file(
+                run_b_log,
+                """
+                I] lead_lag_order_submitted local_order_id=3001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_direction=kLong entry_local_order_id=3001 quantity=1 order_price=300 place_status=kOk
+                I] lead_lag_order_finished local_order_id=3001 group_id=1 route_id=0 symbol=ALPHA_USDT symbol_id=4 status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=3001 cumulative_filled_quantity=1 average_fill_price=300 exchange_order_id=63001 order_finished_local_ns=80
+                """,
+            )
+
+            run_a = orders.analyze_order_detail(run_a_log, run_id="run-a")
+            run_b = orders.analyze_order_detail(run_b_log, run_id="run-b")
+            order_rows = run_a.rows + run_b.rows
+            latency_rows = orders.build_latency_detail_rows(order_rows)
+            position_rows = orders.build_position_detail_rows(order_rows)
+
+        self.assertEqual(len(order_rows), 7)
+        self.assertNotIn("9999", {row["local_order_id"] for row in order_rows})
+        self.assertTrue(
+            all(row["source_schema"] == "submitted_v2" for row in order_rows)
+        )
+        self.assertEqual(
+            {
+                (row["run_id"], row["symbol_id"], row["group_id"])
+                for row in order_rows
+            },
+            {
+                ("run-a", "4", "1"),
+                ("run-a", "4", "2"),
+                ("run-a", "7", "1"),
+                ("run-b", "4", "1"),
+            },
+        )
+        fanout_rows = [
+            row
+            for row in order_rows
+            if (row["run_id"], row["symbol_id"], row["group_id"])
+            == ("run-a", "4", "1")
+        ]
+        self.assertEqual(
+            [(row["local_order_id"], row["route_id"]) for row in fanout_rows],
+            [("1001", "0"), ("1002", "1")],
+        )
+        entry = next(row for row in order_rows if row["local_order_id"] == "1003")
+        self.assertEqual(entry["group_id"], "2")
+        self.assertEqual(entry["status"], "kFilled")
+        self.assertEqual(entry["cumulative_filled_quantity"], "1")
+        self.assertEqual(len(latency_rows), 7)
+        self.assertEqual(
+            {
+                (row["run_id"], row["symbol_id"], row["group_id"])
+                for row in latency_rows
+            },
+            {
+                ("run-a", "4", "1"),
+                ("run-a", "4", "2"),
+                ("run-a", "7", "1"),
+                ("run-b", "4", "1"),
+            },
+        )
+        self.assertTrue(
+            all(row["position_id"] == row["group_id"] for row in order_rows)
+        )
+        self.assertEqual(
+            {
+                row["entry_local_order_id"]
+                for row in position_rows
+                if row["run_id"] == "run-a"
+                and row["symbol_id"] == "4"
+                and row["position_id"] == "1"
+            },
+            {"1001", "1002"},
+        )
+        self.assertEqual(
+            {
+                (row["entry_local_order_id"], row["exit_local_order_id"])
+                for row in position_rows
+                if row["run_id"] == "run-a"
+                and row["symbol_id"] == "4"
+                and row["position_id"] == "2"
+            },
+            {("1003", "1004"), ("1003", "1005")},
+        )
+        self.assertIn(
+            ("run-a", "7", "1", "2001"),
+            {
+                (
+                    row["run_id"],
+                    row["symbol_id"],
+                    row["position_id"],
+                    row["entry_local_order_id"],
+                )
+                for row in position_rows
+            },
+        )
+        self.assertIn(
+            ("run-b", "4", "1", "3001"),
+            {
+                (
+                    row["run_id"],
+                    row["symbol_id"],
+                    row["position_id"],
+                    row["entry_local_order_id"],
+                )
+                for row in position_rows
+            },
+        )
+
     def test_zero_gate_ack_header_fields_are_treated_as_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
