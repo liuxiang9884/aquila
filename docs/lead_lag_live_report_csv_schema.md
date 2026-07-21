@@ -431,7 +431,7 @@ Bitget report 另增加：
 | `source` | `fast_fill`、`fast_fill+rest` 或 `rest`。 |
 | `warnings` | 缺少 authoritative order 等覆盖异常。 |
 
-`report.md` 的 Bitget REST 实际净 PnL 定义为 `sum(execPnl) - sum(actual_fee_quote)`。未提供 REST fills 时，只输出 unavailable，不把配置费率估算值称为实际 PnL。
+`report.md` 的 Bitget REST 实际净 PnL 定义为 `sum(execPnl) - sum(actual_fee_quote)`。只有本 run 全部 execution 都有 USDT `feeDetail` / `execPnl`，且 fast-fill 与 authoritative quantity 对账无缺失、无差异时才输出；否则标为 unavailable，不把配置费率估算值称为实际 PnL。
 
 ## order_fillability.csv
 
@@ -445,7 +445,7 @@ Bitget report 另增加：
 | `signal_lag_id` / `signal_lag_local_ns` / `signal_lag_age_ns` | signal 对应 lag BBO id、本机时间和 freshness。 |
 | `request_send_local_ns` | gateway send 本机 realtime。 |
 | `place_creation_exchange_ns` | Bitget order `cTime`。 |
-| `terminal_event` | `kFilled` 为 `exec`；cancelled 和 partially-cancelled 为 `cancel`。 |
+| `terminal_event` | `kFilled` 且有 execution 为 `exec`；缺 execution 时为 `filled_feedback`；cancelled 和 partially-cancelled 为 `cancel`。 |
 | `terminal_exchange_ns` | filled 取首个 execution time；cancel 取 authoritative order update time。 |
 | `window_duration_ns` | `terminal_exchange_ns - place_creation_exchange_ns`，只在 Bitget 交易所时钟内计算。 |
 | `signal_marketability` | 精确 `signal_lag_id` BBO 相对 IOC limit 的 crossing 分类。 |
