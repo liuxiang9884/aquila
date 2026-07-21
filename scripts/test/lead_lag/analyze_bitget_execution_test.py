@@ -192,11 +192,18 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                 {
                     "local_order_id": "101",
                     "exec_time_exchange_ns": "1001000000",
-                }
+                },
+                {
+                    "local_order_id": "102",
+                    "exec_time_exchange_ns": "2001000000",
+                },
             ]
+            fillability_orders = order_rows()
+            fillability_orders[1]["status"] = "kPartiallyCancelled"
+            fillability_orders[1]["cumulative_filled_quantity"] = "0.5"
 
             rows = bitget_analysis.analyze_fillability(
-                order_rows(), execution_rows, manifest_path
+                fillability_orders, execution_rows, manifest_path
             )
 
         self.assertEqual(len(rows), 2)
@@ -209,6 +216,7 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
         self.assertEqual(filled["marketability_observation"], "marketable_observed")
 
         cancelled = by_id["102"]
+        self.assertEqual(cancelled["terminal_event"], "cancel")
         self.assertEqual(cancelled["terminal_event"], "cancel")
         self.assertEqual(cancelled["creation_marketability"], "no_cross")
         self.assertEqual(cancelled["window_marketability"], "no_cross")

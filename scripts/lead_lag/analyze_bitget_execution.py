@@ -572,7 +572,7 @@ def analyze_fillability(
             for execution in executions
             if execution.get("exec_time_exchange_ns", "")
         ]
-        if execution_times:
+        if execution_times and order.get("status") == "kFilled":
             terminal_event = "exec"
             terminal_ns = min(execution_times)
         else:
@@ -658,6 +658,17 @@ def analyze_fillability(
                 break
 
         observation_class = terminal_class if terminal_event == "exec" else window_class
+        if len(lifecycle_records) == 0:
+            missing_reason = "missing_bbo_near_local_terminal"
+        elif len(window_records) == 0:
+            missing_reason = "missing_bbo_exchange_window"
+        elif len(creation_records) == 0:
+            missing_reason = "missing_creation_bbo"
+        elif len(terminal_records) == 0:
+            missing_reason = "missing_terminal_bbo"
+        else:
+            missing_reason = ""
+
         row = {
             "run_id": order.get("run_id", ""),
             "local_order_id": local_order_id,
@@ -692,7 +703,9 @@ def analyze_fillability(
             "bbo_records_at_terminal": str(len(terminal_records)),
             "first_no_cross_after_send_ns": first_no_cross_delta,
             "first_no_cross_opposite_price": first_no_cross_price,
-            "missing_reason": "" if terminal_ns else "missing_terminal_exchange_time",
+            "missing_reason": missing_reason
+            if terminal_ns
+            else "missing_terminal_exchange_time",
         }
         result.append(
             {field: row.get(field, "") for field in ORDER_FILLABILITY_FIELDS}
