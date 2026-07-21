@@ -1254,6 +1254,60 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
+     ParallelAckOrderingAndDuplicatesPreserveGroupOwnership) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{config};
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 103, 170.0, 171.0), context);
+  ASSERT_EQ(order_session.placed_orders.size(), 2U);
+  const FakeOrderSession::CapturedOrder first = order_session.placed_orders[0];
+  const FakeOrderSession::CapturedOrder second = order_session.placed_orders[1];
+  ASSERT_NE(first.group_id, second.group_id);
+
+  const auto apply_ack = [&](std::uint64_t local_order_id) {
+    ApplyResponse(&strategy, &order_manager, &context,
+                  aquila::core::OrderResponseEvent{
+                      .kind = aquila::core::OrderResponseKind::kAck,
+                      .local_order_id = local_order_id,
+                  });
+  };
+  apply_ack(second.local_order_id);
+  apply_ack(first.local_order_id);
+  apply_ack(second.local_order_id);
+  ASSERT_NE(order_manager.FindOrder(first.local_order_id), nullptr);
+  ASSERT_NE(order_manager.FindOrder(second.local_order_id), nullptr);
+  EXPECT_EQ(
+      order_manager.FindOrder(first.local_order_id)->place_request.group_id,
+      first.group_id);
+  EXPECT_EQ(
+      order_manager.FindOrder(second.local_order_id)->place_request.group_id,
+      second.group_id);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                CancelledFeedback(second.local_order_id, 0, 9, 0.0));
+  EXPECT_EQ(order_manager.FindOrder(second.local_order_id), nullptr);
+  ASSERT_NE(order_manager.FindOrder(first.local_order_id), nullptr);
+  apply_ack(second.local_order_id);
+  EXPECT_EQ(order_manager.FindOrder(second.local_order_id), nullptr);
+  EXPECT_EQ(
+      order_manager.FindOrder(first.local_order_id)->place_request.group_id,
+      first.group_id);
+
+  ApplyFeedback(&strategy, &order_manager, &context,
+                FilledFeedback(first.local_order_id, 2, 102.1));
+  EXPECT_EQ(order_manager.FindOrder(first.local_order_id), nullptr);
+  EXPECT_FALSE(strategy.needs_reconcile());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
      ExternalModeParentIdIsGloballyUniqueAcrossSymbols) {
   leadlag::Strategy strategy{TwoPairSignalOnlyConfig()};
   FakeOrderSession order_session;
