@@ -1,6 +1,7 @@
 #!/home/liuxiang/dev/pyenv/lx/bin/python
 
 import csv
+import json
 import sys
 import tempfile
 import textwrap
@@ -62,7 +63,137 @@ def write_catalog(path: Path) -> None:
     )
 
 
+def write_bitget_catalog(path: Path) -> None:
+    path.write_text(
+        "symbol_id,symbol,exchange,exchange_symbol,base_asset,quote_asset,"
+        "settle_asset,product_type,status,contract_type,price_tick,"
+        "price_decimal_places,quantity_step,quantity_decimal_places,"
+        "min_quantity,max_quantity,max_market_quantity,min_notional,"
+        "notional_multiplier,contract_multiplier,price_limit_up,"
+        "price_limit_down,market_price_bound\n"
+        "25,ALLO_USDT,bitget,ALLOUSDT,ALLO,USDT,USDT,linear_perpetual,"
+        "online,perpetual,0.00001,5,1.0,0,1.0,1100000,170000,5.0,1.0,"
+        "1.0,0.15,0.15,\n",
+        encoding="utf-8",
+    )
+
+
 class GenerateLiveReportTest(unittest.TestCase):
+    def test_generates_bitget_execution_report_from_split_logs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            strategy_log = base / "strategy.log"
+            gateway_log = base / "gateway.log"
+            feedback_log = base / "feedback.log"
+            rest_fills_path = base / "fills.json"
+            run_definition_path = base / "run_definition.json"
+            catalog_path = base / "catalog.csv"
+            schema_path = base / "schema.md"
+            output_root = base / "reports"
+            write_bitget_catalog(catalog_path)
+            schema_path.write_text("# schema\n", encoding="utf-8")
+            write_file(
+                strategy_log,
+                """
+                I2026-07-20 16:37:14.241220000 1:1 strategy.h:LogStrategySignalTriggered:1] lead_lag_signal_triggered trigger_exchange=kBinance trigger_symbol_id=25 trigger_exchange_ns=1000000000 trigger_local_ns=1000000100 on_book_ticker_entry_ns=1000000200 signal_decision_ns=1000000300 lead_exchange_ns=1000000000 lead_local_ns=1000000100 signal_lead_id=10 lead_freshness_ns=300 lag_exchange_ns=999000000 lag_local_ns=999000100 signal_lag_id=11 lag_freshness_ns=1000300 symbol=ALLOUSDT symbol_id=25 role=kLead action=kOpenLong side=kBuy reduce_only=false position_id=0 raw_price=100.1
+                I2026-07-20 16:37:14.241223501 1:1 strategy.h:LogStrategyOrderSubmitted:390] lead_lag_order_submitted local_order_id=101 trigger_exchange=kBinance trigger_symbol_id=25 trigger_exchange_ns=1000000000 trigger_local_ns=1000000100 on_book_ticker_entry_ns=1000000200 signal_decision_ns=1000000300 lead_exchange_ns=1000000000 lead_local_ns=1000000100 signal_lead_id=10 lead_freshness_ns=300 lag_exchange_ns=999000000 lag_local_ns=999000100 signal_lag_id=11 lag_freshness_ns=1000300 symbol=ALLOUSDT symbol_id=25 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=101 quantity=2 raw_price=100.1 order_price=100.2 slippage_ticks=1 price_tick=0.1 target_open_notional=200 estimated_notional=200.4 active_groups=1 place_status=kOk
+                I2026-07-20 16:37:14.261971994 1:1 strategy.h:LogStrategyOrderFeedback:582] lead_lag_order_feedback kind=kFilled local_order_id=101 exchange_order_id=501 cumulative_filled_quantity=2 left_quantity=0 cancelled_quantity=0 fill_price=100.1 role=kTaker finish_reason=kUnknown reject_reason=kUnknown exchange_update_ns=1001000000 local_receive_ns=1003000000 lead_exchange_ns=1000000000 lag_exchange_ns=1000000000
+                I2026-07-20 16:37:14.261973319 1:1 strategy.h:LogStrategyOrderFinished:681] lead_lag_order_finished local_order_id=101 symbol_id=25 symbol=ALLOUSDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=101 order_finished_local_ns=1003001000 quantity=2 cumulative_filled_quantity=2 average_fill_price=100.1 last_fill_price=100.1 exchange_order_id=501 active_groups=1 request_send_local_ns=1000000400 ack_local_receive_ns=1002500000 response_local_receive_ns=0 ack_exchange_ns=1001000000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1001000000 ack_rtt_ns=2499600 response_rtt_ns=0 ack_exchange_to_local_ns=1500000 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
+                """,
+            )
+            write_file(
+                gateway_log,
+                """
+                I2026-07-20 16:37:14.241236349 2:2 order_session.h:LogOrderSend:855] bitget_order_send request_type=kPlaceOrder request_sequence=1 local_order_id=101 request_send_local_ns=1000000400 request_send_monotonic_ns=9000000400 order_encode_done_realtime_ns=1000000350 inflight=1
+                I2026-07-20 16:37:14.261843452 2:2 order_session.h:LogOrderResponse:871] bitget_order_response response_kind=kAck request_type=kPlaceOrder request_sequence=1 local_order_id=101 exchange_order_id=501 error_code=0 request_send_local_ns=1000000400 local_receive_ns=1002500000 exchange_ns=1001000000 ack_rtt_ns=2499600 request_send_realtime_ns=1000000400 request_send_monotonic_ns=9000000400 write_complete_realtime_ns=1000000500 write_complete_monotonic_ns=9000000500 ack_receive_realtime_ns=1002500000 ack_receive_monotonic_ns=9002500000 ack_rtt_monotonic_ns=2499600 write_complete_to_ack_monotonic_ns=2499500 place_creation_time_ms=1000 exchange_message_time_ms=1001
+                """,
+            )
+            write_file(
+                feedback_log,
+                """
+                I2026-07-20 16:37:14.261900000 3:3 order_feedback_session.h:LogOrderProtocolUpdate:972] bitget_order_feedback_protocol_update topic=order connection_generation=1 local_message_sequence=10 batch_data_index=0 client_oid=a-101 order_id=501 order_status=filled cancel_reason= exchange_message_time_ms=1001 created_time_ms=1000 updated_time_ms=1001 local_receive_realtime_ns=1003000000 local_receive_monotonic_ns=9003000000
+                I2026-07-20 16:33:59.439729740 3:3 order_feedback_session.h:LogFastFillSubscribe:961] bitget_fast_fill_subscribe accepted=true code=0
+                I2026-07-20 16:41:24.761369308 3:3 order_feedback_session.h:LogFastFillUpdate:993] bitget_fast_fill_raw_update topic=fast-fill connection_generation=1 local_message_sequence=20 batch_data_index=0 category=usdt-futures symbol=ALLOUSDT order_id=501 client_oid=a-101 exec_id=601 side=buy hold_side=long exec_price=100.1 exec_quantity=2 trade_scope=taker exchange_message_time_ms=1002 exec_time_ms=1001 updated_time_ms=1001 local_receive_realtime_ns=1003500000 local_receive_monotonic_ns=9003500000
+                """,
+            )
+            rest_fills_path.write_text(
+                json.dumps(
+                    {
+                        "fills": [
+                            {
+                                "execId": "601",
+                                "orderId": "501",
+                                "clientOid": "a-101",
+                                "symbol": "ALLOUSDT",
+                                "side": "buy",
+                                "execPrice": "100.1",
+                                "execQty": "2",
+                                "execValue": "200.2",
+                                "tradeScope": "taker",
+                                "feeDetail": [{"feeCoin": "USDT", "fee": "0.04"}],
+                                "createdTime": "1001",
+                                "updatedTime": "1001",
+                                "execPnl": "0.12",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            run_definition_path.write_text(
+                json.dumps(
+                    {
+                        "commit": "abc1234",
+                        "duration_sec": 43200,
+                        "limiter": "absent",
+                        "order_fanout": 1,
+                        "market_fanout": {"bitget": 6, "bitget_ha": 3, "bitget_hs": 3},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = report.generate_live_report(
+                log_path=strategy_log,
+                additional_log_paths=[gateway_log, feedback_log],
+                exchange="bitget",
+                feedback_log_path=feedback_log,
+                rest_fills_path=rest_fills_path,
+                run_definition_path=run_definition_path,
+                config_path=None,
+                instrument_catalog_path=catalog_path,
+                run_id="bitget-run",
+                output_root=output_root,
+                schema_path=schema_path,
+            )
+
+            report_dir = result.report_dir
+            with (report_dir / "execution_detail.csv").open(
+                newline="", encoding="utf-8"
+            ) as input_file:
+                execution_rows = list(csv.DictReader(input_file))
+            with (report_dir / "order_fillability.csv").open(
+                newline="", encoding="utf-8"
+            ) as input_file:
+                fillability_rows = list(csv.DictReader(input_file))
+            report_text = (report_dir / "report.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result.execution_rows, 1)
+        self.assertEqual(result.fillability_rows, 0)
+        self.assertEqual(execution_rows[0]["source"], "fast_fill+rest")
+        self.assertEqual(execution_rows[0]["actual_fee_quote"], "0.04")
+        self.assertEqual(fillability_rows, [])
+        self.assertIn("- exchange: `bitget`", report_text)
+        self.assertIn("## Fast-fill 成交对账", report_text)
+        self.assertIn("- authoritative filled orders: `1`", report_text)
+        self.assertIn("- filled orders missing fast-fill: `0`", report_text)
+        self.assertIn("- REST execPnl: `0.12 USDT`", report_text)
+        self.assertIn("- REST actual fee: `0.04 USDT`", report_text)
+        self.assertIn("- REST net PnL: `0.08 USDT`", report_text)
+        self.assertIn("- limiter: `absent`", report_text)
+        self.assertIn("- Bitget fusion: `6` (HA=`3`, HS=`3`)", report_text)
+        self.assertNotIn("Gate x_in", report_text)
+
     def test_drift_guard_rejected_intent_joins_signal_without_missing_order(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)

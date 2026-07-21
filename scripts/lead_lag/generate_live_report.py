@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+import analyze_bitget_execution as bitget_execution
 import analyze_order_detail as orders
 
 
@@ -68,6 +69,9 @@ SIGNAL_DETAIL_FIELDS = [
 
 DEFAULT_SCHEMA_PATH = Path("docs/lead_lag_live_report_csv_schema.md")
 DEFAULT_INSTRUMENT_CATALOG_PATH = Path("config/instruments/usdt_futures.csv")
+DEFAULT_BITGET_INSTRUMENT_CATALOG_PATH = Path(
+    "config/instruments/usdt_future_universe.csv"
+)
 LOG_TIME_RE = re.compile(
     r"^I(?P<log_time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)"
 )
@@ -80,6 +84,8 @@ class LiveReportResult:
     order_rows: int
     position_rows: int
     latency_rows: int
+    execution_rows: int = 0
+    fillability_rows: int = 0
 
 
 def parse_decimal(value: str | None) -> Decimal | None:
@@ -700,6 +706,57 @@ def append_affinity_summary(lines: list[str], guard_summary: dict | None) -> Non
             lines.append(f"- generated {name} config: `{path}`")
 
 
+def append_guard_result(lines: list[str], guard_summary: dict | None) -> None:
+    if guard_summary is None:
+        return
+    lines += ["", "## Live 安全结果", ""]
+    for key in (
+        "result",
+        "exit_code",
+        "runtime_exit_code",
+        "emergency_handoff",
+        "final_flat",
+    ):
+        if key in guard_summary:
+            lines.append(f"- {key}: `{guard_summary[key]}`")
+    quiescence = guard_summary.get("quiescence")
+    if isinstance(quiescence, dict):
+        for key in ("ok", "reason"):
+            if key in quiescence:
+                lines.append(f"- quiescence {key}: `{quiescence[key]}`")
+
+
+def append_run_definition(lines: list[str], run_definition: dict | None) -> None:
+    if run_definition is None:
+        return
+    lines += ["", "## Run Definition", ""]
+    for key in ("commit", "duration_sec", "limiter", "order_fanout"):
+        if key in run_definition:
+            lines.append(f"- {key}: `{run_definition[key]}`")
+    market_fanout = run_definition.get("market_fanout")
+    if isinstance(market_fanout, dict) and "bitget" in market_fanout:
+        lines.append(
+            f"- Bitget fusion: `{market_fanout['bitget']}` "
+            f"(HA=`{market_fanout.get('bitget_ha', '')}`, "
+            f"HS=`{market_fanout.get('bitget_hs', '')}`)"
+        )
+
+
+def append_latency_summary(
+    lines: list[str], label: str, values: list[int]
+) -> None:
+    if not values:
+        lines.append(f"- {label}: 无可用数据")
+        return
+    lines.append(
+        f"- {label}: samples=`{len(values)}`, "
+        f"median=`{format_ms(percentile_nearest(values, 1, 2))} ms`, "
+        f"p95=`{format_ms(percentile_nearest(values, 95, 100))} ms`, "
+        f"p99=`{format_ms(percentile_nearest(values, 99, 100))} ms`, "
+        f"max=`{format_ms(max(values))} ms`"
+    )
+
+
 def write_markdown_report(
     *,
     output_path: Path,
@@ -711,9 +768,19 @@ def write_markdown_report(
     order_rows: list[dict[str, str]],
     position_rows: list[dict[str, str]],
     latency_rows: list[dict[str, str]],
+    exchange: str = "gate",
+    execution_rows: list[dict[str, str]] | None = None,
+    execution_stats: dict[str, int | bool] | None = None,
+    fillability_rows: list[dict[str, str]] | None = None,
+    rest_fills_path: Path | None = None,
+    book_ticker_manifest_path: Path | None = None,
+    run_definition: dict | None = None,
     guard_summary: dict | None = None,
     pair_freshness_rows: list[dict[str, str]] | None = None,
 ) -> None:
+    execution_rows = execution_rows or []
+    execution_stats = execution_stats or {}
+    fillability_rows = fillability_rows or []
     status_counts = Counter(row.get("status", "") or "unknown" for row in order_rows)
     symbol_counts = Counter(row.get("symbol", "") or "unknown" for row in signal_rows)
     ack_values = ns_values(latency_rows, "ack_rtt_ns")
@@ -755,6 +822,20 @@ def write_markdown_report(
         if row.get("ack_local_receive_ns", "") or row.get("ack_rtt_ns", "")
     )
     send_count = sum(1 for row in order_rows if row.get("request_sequence", ""))
+    submitted_entry_rows = [
+        row
+        for row in order_rows
+        if row.get("source_schema") == "submitted_v1"
+        and row.get("order_role") == "entry"
+    ]
+    filled_entry_rows = positive_decimal_rows(
+        submitted_entry_rows, "cumulative_filled_quantity"
+    )
+    reject_counts = Counter(
+        row.get("reject_reason", "") or "unknown"
+        for row in order_rows
+        if row.get("source_schema") == "intent_rejected_v1"
+    )
 
     lines = [
         "# LeadLag Live Run Report",
@@ -762,6 +843,7 @@ def write_markdown_report(
         "## 基本信息",
         "",
         f"- run_id: `{run_id}`",
+        f"- exchange: `{exchange}`",
         f"- 策略配置: `{config_path}`" if config_path is not None else "- 策略配置: ``",
         f"- 源日志: `{log_path}`",
     ]
@@ -771,6 +853,8 @@ def write_markdown_report(
         lines.append(f"- 首个 signal 时间: `{signal_rows[0].get('log_time', '')}`")
         lines.append(f"- 最后 signal 时间: `{signal_rows[-1].get('log_time', '')}`")
     append_affinity_summary(lines, guard_summary)
+    append_guard_result(lines, guard_summary)
+    append_run_definition(lines, run_definition)
     if pair_freshness_rows:
         lines += [
             "",
@@ -808,18 +892,39 @@ def write_markdown_report(
         f"- `order_detail.csv`: {len(order_rows)} 条 order 明细",
         f"- `position.csv`: {len(position_rows)} 条 position 明细",
         f"- `latency.csv`: {len(latency_rows)} 条 order latency 明细",
+        *(
+            [
+                f"- `execution_detail.csv`: {len(execution_rows)} 条逐笔成交明细",
+                f"- `order_fillability.csv`: {len(fillability_rows)} 条 IOC BBO fillability 明细",
+            ]
+            if exchange == "bitget"
+            else []
+        ),
         "- 字段参考: `lead_lag_live_report_csv_schema.md`",
         "",
         "## Signal 和 Order",
         "",
         f"- signal: `{len(signal_rows)}`",
         f"- submitted order: `{submitted_order_count(order_rows)}`",
-        f"- Gate send ok: `{send_count}`",
+        f"- order session send: `{send_count}`",
         f"- ack: `{ack_count}`",
         f"- order finished: `{finished_count}`",
         f"- 有成交 order: `{any_fill_count}`",
         "",
     ]
+    lines += [
+        f"- entry submitted: `{len(submitted_entry_rows)}`",
+        f"- entry any-fill: `{len(filled_entry_rows)}`",
+        f"- entry any-fill rate: `{format_percent(len(filled_entry_rows), len(submitted_entry_rows))}`",
+        "",
+    ]
+    if reject_counts:
+        lines += ["", "### 未下单 signal 原因", ""]
+        lines += markdown_table(
+            ["reason", "count"],
+            [[reason, str(count)] for reason, count in sorted(reject_counts.items())],
+        )
+        lines.append("")
     lines += markdown_table(
         ["symbol", "signals"],
         [[symbol, str(count)] for symbol, count in sorted(symbol_counts.items())],
@@ -832,6 +937,45 @@ def write_markdown_report(
     )
     if status_counts:
         lines.append("")
+    if exchange == "bitget":
+        submitted_by_symbol = Counter(
+            row.get("symbol", "") or "unknown" for row in submitted_entry_rows
+        )
+        filled_by_symbol = Counter(
+            row.get("symbol", "") or "unknown" for row in filled_entry_rows
+        )
+        lines += ["### Entry fill funnel（按 symbol）", ""]
+        lines += markdown_table(
+            ["symbol", "submitted", "any_fill", "fill_rate"],
+            [
+                [
+                    symbol,
+                    str(submitted_by_symbol[symbol]),
+                    str(filled_by_symbol[symbol]),
+                    format_percent(
+                        filled_by_symbol[symbol], submitted_by_symbol[symbol]
+                    ),
+                ]
+                for symbol in sorted(submitted_by_symbol)
+            ],
+        )
+        if submitted_by_symbol:
+            lines.append("")
+        cancel_reason_counts = Counter(
+            row.get("cancel_reason", "") or "unknown"
+            for row in order_rows
+            if row.get("status") in ("kCancelled", "kPartiallyCancelled")
+        )
+        if cancel_reason_counts:
+            lines += ["### Bitget cancel reason", ""]
+            lines += markdown_table(
+                ["reason", "orders"],
+                [
+                    [reason, str(count)]
+                    for reason, count in sorted(cancel_reason_counts.items())
+                ],
+            )
+            lines.append("")
     if filled_order_rows:
         entry_filled_rows = [
             row for row in filled_order_rows if row.get("order_role", "") == "entry"
@@ -864,22 +1008,168 @@ def write_markdown_report(
             ],
         )
         lines.append("")
+    if exchange == "bitget":
+        lines += ["## Fast-fill 成交对账", ""]
+        if rest_fills_path is not None:
+            lines.append(f"- REST fills: `{rest_fills_path}`")
+        for label, key in (
+            ("fast-fill subscribed", "fast_fill_subscribed"),
+            ("fast-fill records", "fast_fill_records"),
+            ("fast-fill unique execIds", "fast_fill_unique_exec_ids"),
+            ("fast-fill unique orders", "fast_fill_unique_orders"),
+            ("fast-fill duplicate execIds", "fast_fill_duplicate_exec_ids"),
+            ("fast-fill validation errors", "fast_fill_validation_errors"),
+            ("authoritative filled orders", "authoritative_filled_orders"),
+            ("filled orders missing fast-fill", "filled_orders_missing_fast_fill"),
+            ("quantity mismatch orders", "quantity_mismatch_orders"),
+            ("REST matched executions", "rest_matched_execution_records"),
+            ("REST unmatched executions", "rest_unmatched_execution_records"),
+        ):
+            value = execution_stats.get(key, "unavailable")
+            rendered_value = str(value).lower() if isinstance(value, bool) else value
+            lines.append(f"- {label}: `{rendered_value}`")
+        lines += [
+            "",
+            "Fast-fill 只用于逐笔成交与到达时序诊断；订单终态、累计成交量和恢复语义仍以 authoritative `order` channel 为准。跨交易所/本机时钟的差值不解释为单向网络延迟。",
+            "",
+        ]
+        append_latency_summary(
+            lines,
+            "creation->exec（交易所时钟）",
+            ns_values(execution_rows, "creation_to_exec_ns"),
+        )
+        append_latency_summary(
+            lines,
+            "fast-fill after Ack（本机 realtime）",
+            ns_values(execution_rows, "fast_fill_after_ack_ns"),
+        )
+        append_latency_summary(
+            lines,
+            "fast-fill after order feedback（本机 realtime）",
+            ns_values(execution_rows, "fast_fill_after_order_feedback_ns"),
+        )
+
+        lines += ["", "## IOC BBO Fillability", ""]
+        if book_ticker_manifest_path is None:
+            lines.append("- 未提供 `book_ticker_manifest`，本节不可用。")
+        else:
+            lines.append(f"- book ticker manifest: `{book_ticker_manifest_path}`")
+            lines.append("")
+            observation_counts = Counter(
+                row.get("marketability_observation", "") or "missing"
+                for row in fillability_rows
+            )
+            lines += markdown_table(
+                ["observation", "orders"],
+                [
+                    [observation, str(count)]
+                    for observation, count in sorted(observation_counts.items())
+                ],
+            )
+            outcome_counts = Counter(
+                (
+                    row.get("terminal_event", "") or "unknown",
+                    row.get("marketability_observation", "") or "missing",
+                )
+                for row in fillability_rows
+            )
+            lines += ["", "### 终态 × marketability", ""]
+            lines += markdown_table(
+                ["terminal_event", "observation", "orders"],
+                [
+                    [terminal_event, observation, str(count)]
+                    for (terminal_event, observation), count in sorted(
+                        outcome_counts.items()
+                    )
+                ],
+            )
+            missing_counts = Counter(
+                row.get("missing_reason", "")
+                for row in fillability_rows
+                if row.get("missing_reason", "")
+            )
+            lines += [
+                "",
+                f"- complete BBO windows: `{len(fillability_rows) - sum(missing_counts.values())}`",
+                f"- incomplete BBO windows: `{sum(missing_counts.values())}`",
+            ]
+            if missing_counts:
+                lines += markdown_table(
+                    ["missing_reason", "orders"],
+                    [
+                        [reason, str(count)]
+                        for reason, count in sorted(missing_counts.items())
+                    ],
+                )
+            lines += [
+                "",
+                "`marketable_observed` / `not_marketable_observed` 只描述已归档 BBO 窗口内是否观察到 IOC limit crossing，不证明交易所撮合队列位置，也不把缺失 BBO 判为未成交原因。",
+                "",
+            ]
+
     lines += [
         "## PnL",
         "",
-        f"- gross PnL: `{format_decimal(gross_pnl)}`",
-        f"- net PnL: `{format_decimal(net_pnl)}`",
+        f"- {'order feedback gross PnL' if exchange == 'bitget' else 'gross PnL'}: `{format_decimal(gross_pnl)}`",
+        f"- {'configured-fee net PnL estimate' if exchange == 'bitget' else 'net PnL'}: `{format_decimal(net_pnl)}`",
         "",
     ]
+    if exchange == "bitget":
+        rest_execution_rows = [
+            row for row in execution_rows if row.get("rest_present") == "true"
+        ]
+        if rest_execution_rows:
+            rest_exec_pnl = sum_decimal(rest_execution_rows, "exec_pnl")
+            rest_fee = sum_decimal(rest_execution_rows, "actual_fee_quote")
+            rest_net = rest_exec_pnl - rest_fee
+            lines += [
+                "### Bitget REST 实际 PnL",
+                "",
+                "以 `/api/v3/trade/fills` 返回的 `execPnl` 与 `feeDetail` 为准；配置费率 PnL 仅保留作估算对照。",
+                "",
+                f"- REST executions: `{len(rest_execution_rows)}`",
+                f"- REST execPnl: `{format_decimal(rest_exec_pnl)} USDT`",
+                f"- REST actual fee: `{format_decimal(rest_fee)} USDT`",
+                f"- REST net PnL: `{format_decimal(rest_net)} USDT`",
+                "",
+            ]
+        else:
+            lines += [
+                "### Bitget REST 实际 PnL",
+                "",
+                "- 未提供或未匹配 REST fills；实际手续费与账户实际 PnL 不可用，不能把配置费率估算值当作实际结果。",
+                "",
+            ]
     if raw_position_rows or actual_win_rows:
+        comparison_heading = (
+            "### Order feedback PnL 与 Raw PnL"
+            if exchange == "bitget"
+            else "### Raw PnL 和胜率"
+        )
+        comparison_description = (
+            "Order feedback PnL 使用 feedback average fill price，fee 使用配置费率估算；Raw PnL 使用 entry / exit 的 `raw_price`。两者都不是 Bitget REST 实际手续费 PnL。"
+            if exchange == "bitget"
+            else "Raw PnL 使用 entry / exit 的 `raw_price` 计算，fee 仍使用 report CSV 中的配置费率估算值；胜率按 net PnL > 0 计算。"
+        )
+        actual_prefix = "feedback-price" if exchange == "bitget" else "actual"
+        actual_net_label = (
+            "feedback-price configured-fee net PnL"
+            if exchange == "bitget"
+            else "actual net PnL"
+        )
+        actual_win_label = (
+            "feedback-price configured-fee win rate"
+            if exchange == "bitget"
+            else "actual win rate"
+        )
         lines += [
-            "### Raw PnL 和胜率",
+            comparison_heading,
             "",
-            "Raw PnL 使用 entry / exit 的 `raw_price` 计算，fee 仍使用 report CSV 中的配置费率估算值；胜率按 net PnL > 0 计算。",
+            comparison_description,
             "",
-            f"- actual gross PnL: `{format_decimal(gross_pnl)}`",
-            f"- actual net PnL: `{format_decimal(net_pnl)}`",
-            f"- actual win rate: `{format_percent(actual_wins, len(actual_win_rows))}` "
+            f"- {actual_prefix} gross PnL: `{format_decimal(gross_pnl)}`",
+            f"- {actual_net_label}: `{format_decimal(net_pnl)}`",
+            f"- {actual_win_label}: `{format_percent(actual_wins, len(actual_win_rows))}` "
             f"({actual_wins}/{len(actual_win_rows)})",
             f"- raw gross PnL: `{format_decimal(raw_gross_pnl)}`",
             f"- raw net PnL: `{format_decimal(raw_net_pnl)}`",
@@ -892,9 +1182,11 @@ def write_markdown_report(
                 "symbol",
                 "direction",
                 "matched",
-                "actual_gross",
+                f"{actual_prefix}_gross",
                 "raw_gross",
-                "actual_net",
+                f"{actual_prefix}_net"
+                if exchange == "gate"
+                else f"{actual_prefix}_configured_fee_net",
                 "raw_net",
                 "actual_minus_raw_gross",
             ],
@@ -931,6 +1223,29 @@ def write_markdown_report(
     )
     if position_rows:
         lines.append("")
+        holding_by_position: dict[tuple[str, str], int] = {}
+        for row in position_rows:
+            holding_ns = int_value(row.get("holding_ns"))
+            if holding_ns is None:
+                continue
+            key = (row.get("symbol_id", ""), row.get("position_id", ""))
+            holding_by_position[key] = max(
+                holding_by_position.get(key, 0), holding_ns
+            )
+        exit_counts = Counter(
+            (row.get("symbol_id", ""), row.get("position_id", ""))
+            for row in order_rows
+            if row.get("source_schema") == "submitted_v1"
+            and row.get("order_role") == "exit"
+        )
+        retry_positions = sum(1 for count in exit_counts.values() if count > 1)
+        lines += ["## Close retry 与持仓时间", ""]
+        lines.append(f"- positions with submitted exits: `{len(exit_counts)}`")
+        lines.append(f"- positions requiring close retry: `{retry_positions}`")
+        append_latency_summary(
+            lines, "final holding time", list(holding_by_position.values())
+        )
+        lines.append("")
     lines += ["## 延迟", ""]
     if ack_values:
         avg_ack = sum(ack_values) // len(ack_values)
@@ -945,7 +1260,23 @@ def write_markdown_report(
         ]
     else:
         lines.append("- ack RTT: 无可用数据")
-    if gate_ack_process_values:
+    if exchange == "bitget":
+        append_latency_summary(
+            lines,
+            "send->write complete（本机时钟）",
+            ns_values(latency_rows, "send_to_write_complete_local_ns"),
+        )
+        append_latency_summary(
+            lines,
+            "write complete->Ack（monotonic）",
+            ns_values(latency_rows, "write_complete_to_ack_local_ns"),
+        )
+        append_latency_summary(
+            lines,
+            "creation->terminal（交易所时钟）",
+            ns_values(latency_rows, "bitget_creation_to_terminal_ns"),
+        )
+    if exchange == "gate" and gate_ack_process_values:
         avg_gate_ack_process = sum(gate_ack_process_values) // len(
             gate_ack_process_values
         )
@@ -962,7 +1293,7 @@ def write_markdown_report(
             f"`{format_ms(max(gate_ack_process_values))} ms`",
         ]
     ack_split_samples = build_ack_split_samples(latency_rows)
-    if ack_split_samples:
+    if exchange == "gate" and ack_split_samples:
         total_values = [
             sample.total_ns for sample in ack_split_samples if sample.total_ns is not None
         ]
@@ -1094,7 +1425,7 @@ def write_markdown_report(
         ]
     else:
         lines.append("- send-to-finish: 无可用本地终态时间")
-    if exchange_lifecycle_values:
+    if exchange == "gate" and exchange_lifecycle_values:
         avg_exchange_lifecycle = sum(exchange_lifecycle_values) // len(
             exchange_lifecycle_values
         )
@@ -1134,7 +1465,7 @@ def write_markdown_report(
                 )[:5]
             ],
         )
-    else:
+    elif exchange == "gate":
         lines.append("- exchange Ack-to-finish: 无可用交易所终态时间")
     lines.append("")
     output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -1143,6 +1474,12 @@ def write_markdown_report(
 def generate_live_report(
     *,
     log_path: Path,
+    additional_log_paths: list[Path] | None = None,
+    exchange: str = "gate",
+    feedback_log_path: Path | None = None,
+    rest_fills_path: Path | None = None,
+    book_ticker_manifest_path: Path | None = None,
+    run_definition_path: Path | None = None,
     config_path: Path | None,
     instrument_catalog_path: Path | None,
     run_id: str,
@@ -1153,26 +1490,68 @@ def generate_live_report(
     report_dir = output_root / run_id
     report_dir.mkdir(parents=True, exist_ok=False)
 
+    if instrument_catalog_path is None:
+        instrument_catalog_path = (
+            DEFAULT_BITGET_INSTRUMENT_CATALOG_PATH
+            if exchange == "bitget"
+            else DEFAULT_INSTRUMENT_CATALOG_PATH
+        )
     order_result = orders.analyze_order_detail(
         log_path,
+        additional_log_paths=additional_log_paths,
         config_path=config_path,
         instrument_catalog_path=instrument_catalog_path,
+        exchange=exchange,
         run_id=run_id,
     )
     order_rows = order_result.rows
     position_rows = orders.build_position_detail_rows(order_rows)
     latency_rows = orders.build_latency_detail_rows(order_rows)
     signal_rows = build_signal_detail_rows(log_path, order_rows, run_id)
+    execution_rows: list[dict[str, str]] = []
+    execution_stats: dict[str, int | bool] = {}
+    fillability_rows: list[dict[str, str]] = []
+    if exchange == "bitget":
+        if feedback_log_path is not None:
+            execution_result = bitget_execution.analyze_executions(
+                feedback_log_path,
+                order_rows,
+                rest_fills_path=rest_fills_path,
+                run_id=run_id,
+            )
+            execution_rows = execution_result.rows
+            execution_stats = execution_result.stats
+        if book_ticker_manifest_path is not None:
+            fillability_rows = bitget_execution.analyze_fillability(
+                order_rows, execution_rows, book_ticker_manifest_path
+            )
     guard_summary = load_guard_summary(guard_stdout_path)
+    run_definition = None
+    if run_definition_path is not None:
+        loaded_run_definition = json.loads(
+            run_definition_path.read_text(encoding="utf-8")
+        )
+        if not isinstance(loaded_run_definition, dict):
+            raise ValueError("run definition JSON must be an object")
+        run_definition = loaded_run_definition
     pair_freshness_rows = (
         load_pair_freshness_rows(config_path) if config_path is not None else []
     )
     copy_runtime_configs(report_dir, guard_summary)
+    if run_definition_path is not None:
+        shutil.copyfile(run_definition_path, report_dir / "run_definition.json")
 
     write_signal_detail_csv(signal_rows, report_dir / "signal.csv")
     orders.write_order_detail_csv(order_rows, report_dir / "order_detail.csv")
     orders.write_position_detail_csv(position_rows, report_dir / "position.csv")
     orders.write_latency_detail_csv(latency_rows, report_dir / "latency.csv")
+    if exchange == "bitget":
+        bitget_execution.write_execution_detail_csv(
+            execution_rows, report_dir / "execution_detail.csv"
+        )
+        bitget_execution.write_order_fillability_csv(
+            fillability_rows, report_dir / "order_fillability.csv"
+        )
     shutil.copyfile(schema_path, report_dir / "lead_lag_live_report_csv_schema.md")
     write_markdown_report(
         output_path=report_dir / "report.md",
@@ -1184,6 +1563,13 @@ def generate_live_report(
         order_rows=order_rows,
         position_rows=position_rows,
         latency_rows=latency_rows,
+        exchange=exchange,
+        execution_rows=execution_rows,
+        execution_stats=execution_stats,
+        fillability_rows=fillability_rows,
+        rest_fills_path=rest_fills_path,
+        book_ticker_manifest_path=book_ticker_manifest_path,
+        run_definition=run_definition,
         guard_summary=guard_summary,
         pair_freshness_rows=pair_freshness_rows,
     )
@@ -1193,6 +1579,8 @@ def generate_live_report(
         order_rows=len(order_rows),
         position_rows=len(position_rows),
         latency_rows=len(latency_rows),
+        execution_rows=len(execution_rows),
+        fillability_rows=len(fillability_rows),
     )
 
 
@@ -1200,11 +1588,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a LeadLag live report")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--log", required=True, type=Path)
+    parser.add_argument("--additional-log", action="append", type=Path, default=[])
+    parser.add_argument("--exchange", choices=("gate", "bitget"), default="gate")
+    parser.add_argument("--feedback-log", type=Path)
+    parser.add_argument("--rest-fills", type=Path)
+    parser.add_argument("--book-ticker-manifest", type=Path)
+    parser.add_argument("--run-definition", type=Path)
     parser.add_argument("--config", type=Path)
     parser.add_argument(
         "--instrument-catalog",
         type=Path,
-        default=DEFAULT_INSTRUMENT_CATALOG_PATH,
+        default=None,
     )
     parser.add_argument("--guard-stdout", type=Path)
     parser.add_argument("--output-root", type=Path, default=Path("reports"))
@@ -1216,6 +1610,12 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     result = generate_live_report(
         log_path=args.log,
+        additional_log_paths=args.additional_log,
+        exchange=args.exchange,
+        feedback_log_path=args.feedback_log,
+        rest_fills_path=args.rest_fills,
+        book_ticker_manifest_path=args.book_ticker_manifest,
+        run_definition_path=args.run_definition,
         config_path=args.config,
         instrument_catalog_path=args.instrument_catalog,
         run_id=args.run_id,
@@ -1230,6 +1630,8 @@ def main(argv: list[str]) -> int:
         f"orders={result.order_rows} "
         f"positions={result.position_rows} "
         f"latency={result.latency_rows}"
+        f" executions={result.execution_rows}"
+        f" fillability={result.fillability_rows}"
     )
     return 0
 
