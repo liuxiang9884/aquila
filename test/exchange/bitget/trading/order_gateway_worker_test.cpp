@@ -257,6 +257,57 @@ TEST(OrderGatewayWorkerTest, AckConsumesRequestMetadata) {
   EXPECT_EQ(event.request_send_local_ns, 0);
 }
 
+TEST(OrderGatewayWorkerTest, OutOfOrderResponsesKeepPerGroupCommandMetadata) {
+  const auto config = MakeShmConfig("out_of_order_group_metadata");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = core::OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  auto& shm = shm_result.value;
+
+  core::OrderGatewayCommand group_a = MakePlaceCommand(0, 1201);
+  group_a.command_seq = 41;
+  group_a.payload.place.parent_id = 501;
+  group_a.payload.place.group_id = 701;
+  core::OrderGatewayCommand group_b = MakePlaceCommand(0, 1202);
+  group_b.command_seq = 42;
+  group_b.payload.place.parent_id = 502;
+  group_b.payload.place.group_id = 702;
+  ASSERT_TRUE(shm.CommandQueue(0).TryPush(group_a));
+  ASSERT_TRUE(shm.CommandQueue(0).TryPush(group_b));
+
+  FakeSession session;
+  OrderGatewayWorkerPublisher publisher(0, shm.EventQueue(0));
+  OrderGatewayCommandWorker<FakeSession> worker(0, shm.CommandQueue(0), session,
+                                                publisher);
+  session.place_result.request_sequence = 101;
+  ASSERT_TRUE(worker.PollOnce());
+  session.place_result.request_sequence = 102;
+  ASSERT_TRUE(worker.PollOnce());
+
+  publisher.OnOrderResponse(OrderResponse{
+      .kind = OrderResponseKind::kRejected,
+      .local_order_id = 1202,
+      .request_sequence = 102,
+  });
+  publisher.OnOrderResponse(OrderResponse{
+      .kind = OrderResponseKind::kRejected,
+      .local_order_id = 1201,
+      .request_sequence = 101,
+  });
+
+  core::OrderGatewayEvent event{};
+  ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
+  EXPECT_EQ(event.local_order_id, 1202U);
+  EXPECT_EQ(event.command_seq, 42U);
+  EXPECT_EQ(event.parent_id, 502U);
+  EXPECT_EQ(event.group_id, 702U);
+  ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
+  EXPECT_EQ(event.local_order_id, 1201U);
+  EXPECT_EQ(event.command_seq, 41U);
+  EXPECT_EQ(event.parent_id, 501U);
+  EXPECT_EQ(event.group_id, 701U);
+}
+
 TEST(OrderGatewayWorkerTest, NotReadyClearsPendingMetadata) {
   const auto config = MakeShmConfig("not_ready_metadata");
   ShmCleanup cleanup(config.shm_name);

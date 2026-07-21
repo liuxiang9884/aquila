@@ -656,6 +656,42 @@ TEST(OrderGatewayClientTest, CommandRejectedEventConvertsToOrderResponse) {
   EXPECT_EQ(client.stats().command_rejected_events, 1U);
 }
 
+TEST(OrderGatewayClientTest, OutOfOrderResponsesKeepPerGroupIdentity) {
+  const OrderGatewayShmConfig config =
+      MakeCreateConfig("out_of_order_group_identity");
+  ShmCleanup cleanup(config.shm_name);
+  auto shm_result = OrderGatewayShmManager::Create(config);
+  ASSERT_TRUE(shm_result.ok) << shm_result.error;
+  OrderGatewayShmManager& shm = shm_result.value;
+
+  OrderGatewayEvent group_b{};
+  group_b.kind = OrderGatewayEventKind::kOrderResponse;
+  group_b.response_kind = OrderResponseKind::kAccepted;
+  group_b.local_order_id = 1202;
+  group_b.parent_id = 502;
+  group_b.group_id = 702;
+  group_b.route_id = 1;
+  group_b.worker_event_enqueue_ns = 9202;
+  OrderGatewayEvent group_a = group_b;
+  group_a.local_order_id = 1201;
+  group_a.parent_id = 501;
+  group_a.group_id = 701;
+  group_a.worker_event_enqueue_ns = 9201;
+  ASSERT_TRUE(shm.EventQueue(1).TryPush(group_b));
+  ASSERT_TRUE(shm.EventQueue(1).TryPush(group_a));
+
+  OrderGatewayClient client = CreateClient(config);
+  CapturingRuntime runtime;
+  EXPECT_EQ(client.PollOrderResponses(runtime), 2U);
+  ASSERT_EQ(runtime.responses.size(), 2U);
+  EXPECT_EQ(runtime.responses[0].local_order_id, 1202U);
+  EXPECT_EQ(runtime.responses[0].parent_id, 502U);
+  EXPECT_EQ(runtime.responses[0].group_id, 702U);
+  EXPECT_EQ(runtime.responses[1].local_order_id, 1201U);
+  EXPECT_EQ(runtime.responses[1].parent_id, 501U);
+  EXPECT_EQ(runtime.responses[1].group_id, 701U);
+}
+
 TEST(OrderGatewayClientTest, PlaceCommandRejectedClearsRouteTable) {
   const OrderGatewayShmConfig config = MakeCreateConfig("place_reject_cleanup");
   ShmCleanup cleanup(config.shm_name);

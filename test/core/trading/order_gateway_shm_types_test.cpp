@@ -7,6 +7,15 @@
 namespace aquila::core {
 namespace {
 
+template <typename T>
+concept HasGroupIndex = requires(T value) { value.group_index; };
+
+static_assert(!HasGroupIndex<OrderPlaceRequest>);
+static_assert(!HasGroupIndex<OrderCancelRequest>);
+static_assert(!HasGroupIndex<OrderGatewayEvent>);
+static_assert(!HasGroupIndex<OrderFeedbackEvent>);
+static_assert(HasGroupIndex<StrategyOrder>);
+
 TEST(OrderGatewayShmTypesTest, PayloadTypesArePodLike) {
   EXPECT_TRUE(std::is_standard_layout_v<OrderPlaceRequest>);
   EXPECT_TRUE(std::is_trivially_copyable_v<OrderPlaceRequest>);
