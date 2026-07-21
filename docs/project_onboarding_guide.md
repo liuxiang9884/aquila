@@ -95,12 +95,12 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。
-- `feature/lead-lag-parallel-fixed-slot-v4` 已基于 `main@83c5e12` 完成 LeadLag multi-group 基础设施：每个 pair 使用
+- PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）已基于 `main@83c5e12` 完成 LeadLag multi-group 基础设施：每个 pair 使用
   `FixedOrderedSlotPool<ExecutionGroup, 16>`，`execute.parallel` 只接受 `1..16`，`(symbol_id, group_id)` 是稳定 identity，
   `group_index` 仅用于策略进程内 O(1) slot 定位。terminal metadata mismatch 禁止扫描 fallback，会使 pair 进入
   `needs_reconcile` 并暂停新开仓，同时保留已有持仓的 close / stoploss 路径。LeadLag order log、`order_detail.csv` 和
   `latency.csv` 已迁移到 `group_id` / `submitted_v2`，新 analyzer 忽略缺少 `group_id` 的旧 submitted log。现有 live config
-  仍全部为 `parallel=1`；该分支只有本地自动测试证据，没有 `parallel > 1` replay、benchmark 或 live 证据，合并前以后续 PR
+  仍全部为 `parallel=1`；该分支只有本地自动测试证据，没有 `parallel > 1` replay、benchmark 或 live 证据，合并前以 PR #13
   状态为准。完整 contract 见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
 - Gate/Bitget 交易链路 L3 性能优化已完成原暂停点的 Gate 第 5 组、Bitget、
@@ -180,7 +180,7 @@ rg 'aquila_evaluation' core exchange tools
    单边 stale BBO。
 4. Fillability：普通 BTC touch probe 的 99% 不能外推到 signal-conditioned LeadLag；按 fillability 文档的 row/group、BBO stage 和
    lifecycle 口径复查。
-5. LeadLag parallel fixed-slot：先 review `feature/lead-lag-parallel-fixed-slot-v4` 的 fixed-slot、mismatch reconcile 和
+5. LeadLag parallel fixed-slot：先 review PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）的 fixed-slot、mismatch reconcile 和
    `group_id/submitted_v2` contract，再与用户单独确定测试阶梯；在 fresh benchmark/replay/live 证据之前，不把基础设施解释为
    `parallel > 1` 的时延、fillability、PnL 或风险收益结论，现有 live config 保持 `parallel=1`。
 6. Gate OBU：实现前先批准 published `OrderBook` ABI，再以 decoder/local-book TDD 覆盖 group count、empty/delete、gap/resubscribe。
@@ -209,7 +209,7 @@ authoritative feedback；当前 main 不含本地 account limiter，未经用户
 不得把 fresh-run 解释为 resume，也不得在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
 
-LeadLag `parallel > 1` 基础设施在 `feature/lead-lag-parallel-fixed-slot-v4`：fixed slot 上限 16、稳定
+LeadLag `parallel > 1` 基础设施在 PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）：fixed slot 上限 16、稳定
 `(symbol_id, group_id)`、runtime-local `group_index`、SHM v4、mismatch reconcile 和 `submitted_v2` report schema 已实现；现有
 live config 仍为 `parallel=1`，没有 `parallel > 1` replay/benchmark/live 证据。先 review 分支/PR，再与用户讨论测试阶梯，不要直接
 启动真实订单。当前 `git worktree list` 为 6 个，删除判断只信实时 worktree/branch status，不直接批量 `rm`。
