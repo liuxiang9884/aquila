@@ -11,7 +11,7 @@
 namespace aquila::core {
 
 inline constexpr std::uint32_t kOrderGatewayShmMagic = 0x41514F47U;
-inline constexpr std::uint16_t kOrderGatewayShmVersion = 3;
+inline constexpr std::uint16_t kOrderGatewayShmVersion = 4;
 inline constexpr std::size_t kMaxOrderGatewayRoutes = 16;
 
 enum class OrderGatewayCommandKind : std::uint8_t {
@@ -150,6 +150,22 @@ struct OrderGatewayCommand {
   return 0;
 }
 
+[[nodiscard]] inline std::uint64_t OrderGatewayCommandGroupId(
+    const OrderGatewayCommand& command) noexcept {
+  switch (command.kind) {
+    case OrderGatewayCommandKind::kPlace:
+      return command.payload.place.group_id;
+    case OrderGatewayCommandKind::kCancel:
+      return command.payload.cancel.group_id;
+    case OrderGatewayCommandKind::kCacheExchangeOrderId:
+    case OrderGatewayCommandKind::kForgetExchangeOrderId:
+    case OrderGatewayCommandKind::kNone:
+    case OrderGatewayCommandKind::kStop:
+      return 0;
+  }
+  return 0;
+}
+
 [[nodiscard]] inline std::uint64_t OrderGatewayCommandExchangeOrderId(
     const OrderGatewayCommand& command) noexcept {
   if (command.kind == OrderGatewayCommandKind::kCacheExchangeOrderId) {
@@ -179,6 +195,7 @@ struct OrderGatewayEvent {
   std::uint64_t event_seq{0};
   std::uint64_t command_seq{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};
   std::uint64_t request_sequence{0};

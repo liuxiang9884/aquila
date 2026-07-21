@@ -38,6 +38,7 @@ namespace aquila::bitget {
       .kind = ToCoreOrderResponseKind(response.kind),
       .local_order_id = response.local_order_id,
       .parent_id = response.parent_id,
+      .group_id = response.group_id,
       .exchange_order_id = response.exchange_order_id,
       .route_id = response.route_id,
       .local_receive_ns = response.local_receive_ns,
@@ -54,11 +55,13 @@ inline void LogBitgetErrorResponse(const OrderResponse& response) noexcept {
   }
   NOVA_WARNING(
       "bitget_order_response_error kind={} request_type={} "
-      "request_sequence={} local_order_id={} exchange_order_id={} "
+      "request_sequence={} local_order_id={} parent_id={} group_id={} "
+      "route_id={} exchange_order_id={} "
       "error_code={} local_receive_ns={} exchange_ns={}",
       magic_enum::enum_name(response.kind),
       magic_enum::enum_name(response.request_type), response.request_sequence,
-      response.local_order_id, response.exchange_order_id, response.error_code,
+      response.local_order_id, response.parent_id, response.group_id,
+      response.route_id, response.exchange_order_id, response.error_code,
       response.local_receive_ns, response.exchange_ns);
 }
 

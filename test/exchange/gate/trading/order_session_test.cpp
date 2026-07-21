@@ -261,6 +261,7 @@ class TestEndpointOrderSession
 core::OrderPlaceRequest MakePlaceOrder(std::uint64_t local_order_id) noexcept {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
+      .group_id = 77,
       .price = 81000.0,
       .quantity = 1.0,
       .side = OrderSide::kBuy,
@@ -716,6 +717,7 @@ TEST(OrderSessionTest, PlaceAckDoesNotEraseCorrelation) {
 
   ASSERT_EQ(handler.responses.size(), 1U);
   EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kAck);
+  EXPECT_EQ(handler.responses[0].group_id, 77U);
   EXPECT_EQ(handler.responses[0].local_order_id, 123);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 0U);
   EXPECT_EQ(handler.responses[0].request_sequence, 2U);

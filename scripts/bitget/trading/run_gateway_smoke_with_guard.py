@@ -29,6 +29,7 @@ ORDER_EVENT_FIELDS = (
     "order_role",
     "local_order_id",
     "parent_id",
+    "group_id",
     "route_id",
     "response_kind",
     "feedback_kind",

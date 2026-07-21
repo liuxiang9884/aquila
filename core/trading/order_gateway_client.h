@@ -598,6 +598,7 @@ class OrderGatewayClient {
         .kind = kind,
         .local_order_id = event.local_order_id,
         .parent_id = event.parent_id,
+        .group_id = event.group_id,
         .exchange_order_id = event.exchange_order_id,
         .route_id = event.route_id,
         .local_receive_ns = event.local_receive_ns != 0

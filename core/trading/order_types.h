@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string_view>
 
 #include "core/common/types.h"
@@ -48,11 +49,14 @@ enum class OrderResponseKind : std::uint8_t {
 
 inline constexpr std::uint16_t kAutoGatewayRoute =
     static_cast<std::uint16_t>(0xFFFF);
+inline constexpr std::uint16_t kInvalidOrderGroupIndex =
+    std::numeric_limits<std::uint16_t>::max();
 inline constexpr std::size_t kOrderSymbolBytes = 32;
 
 struct OrderPlaceRequest {
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   double price{0.0};
   double quantity{0.0};
   std::int32_t symbol_id{0};
@@ -82,12 +86,14 @@ inline void SetOrderSymbol(OrderPlaceRequest* request,
 struct OrderCancelRequest {
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint16_t gateway_route_id{kAutoGatewayRoute};
 };
 
 struct StrategyOrder {
   OrderPlaceRequest place_request{};
   std::uint64_t exchange_order_id{0};
+  std::uint16_t group_index{kInvalidOrderGroupIndex};
   OrderStatus status{OrderStatus::kCreated};
   OrderStatus pre_cancel_status{OrderStatus::kCreated};
   double cumulative_filled_quantity{0.0};
@@ -135,6 +141,7 @@ struct OrderResponseEvent {
   OrderResponseKind kind{OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint64_t exchange_order_id{0};
   std::uint16_t route_id{kAutoGatewayRoute};
   std::int64_t local_receive_ns{0};

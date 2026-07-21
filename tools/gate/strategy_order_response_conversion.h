@@ -45,7 +45,10 @@ namespace aquila::tools::gate_strategy_order {
   return core::OrderResponseEvent{
       .kind = ToCoreKind(response),
       .local_order_id = response.local_order_id,
+      .parent_id = response.parent_id,
+      .group_id = response.group_id,
       .exchange_order_id = response.exchange_order_id,
+      .route_id = response.route_id,
       .local_receive_ns = response.local_receive_ns,
       .exchange_ns = response.exchange_ns,
   };

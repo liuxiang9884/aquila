@@ -98,6 +98,7 @@ core::OrderGatewayCommand MakePlaceCommand(std::uint16_t route_id,
   command.payload.place = core::OrderPlaceRequest{
       .local_order_id = local_order_id,
       .parent_id = 9000,
+      .group_id = 901,
       .price = 65000.0,
       .quantity = 0.01,
       .symbol_id = 42,
@@ -123,6 +124,7 @@ core::OrderGatewayCommand MakeCancelCommand(
   command.payload.cancel = core::OrderCancelRequest{
       .local_order_id = local_order_id,
       .parent_id = 9000,
+      .group_id = 901,
       .gateway_route_id = route_id,
   };
   return command;
@@ -264,6 +266,7 @@ TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   core::OrderGatewayCommand command = MakePlaceCommand(0, 1104);
   command.command_seq = 44;
   command.payload.place.parent_id = 33;
+  command.payload.place.group_id = 43;
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
 
   FakeSession session;
@@ -283,6 +286,7 @@ TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kOrderResponse);
   EXPECT_EQ(event.command_seq, 44U);
   EXPECT_EQ(event.parent_id, 33U);
+  EXPECT_EQ(event.group_id, 43U);
   EXPECT_GT(event.worker_dequeue_ns, 0);
   EXPECT_EQ(event.request_send_local_ns, 301);
 }
@@ -319,6 +323,7 @@ TEST(OrderGatewayWorkerTest, NotReadyClearsPendingResponseMetadata) {
   EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kOrderResponse);
   EXPECT_EQ(event.command_seq, 0U);
   EXPECT_EQ(event.parent_id, 0U);
+  EXPECT_EQ(event.group_id, 0U);
   EXPECT_EQ(event.worker_dequeue_ns, 0);
   EXPECT_EQ(event.request_send_local_ns, 0);
 }

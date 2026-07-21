@@ -618,6 +618,7 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
       .run_id = "run-a",
       .node_id = 7,
       .local_order_id = 70,
+      .group_id = 7,
       .route_id = 1,
       .event_kind = "feedback_cancelled",
   });
@@ -631,6 +632,11 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
   const std::string lifecycle_csv = ReadWholeFileForTest(dir / "lifecycle.csv");
   EXPECT_NE(lifecycle_csv.find("run-a,7,ioc,0,70,,,61513.1,1,"),
             std::string::npos);
+  const std::string order_event_csv =
+      ReadWholeFileForTest(dir / "order_event.csv");
+  EXPECT_NE(order_event_csv.find("parent_id,group_id,route_id"),
+            std::string::npos);
+  EXPECT_NE(order_event_csv.find("run-a,7,,,70,0,7,1,"), std::string::npos);
 }
 
 }  // namespace

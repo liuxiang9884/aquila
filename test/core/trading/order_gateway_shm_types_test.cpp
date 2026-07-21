@@ -24,24 +24,28 @@ TEST(OrderGatewayShmTypesTest, PayloadTypesArePodLike) {
 
 TEST(OrderGatewayShmTypesTest, ConstantsMatchDesign) {
   EXPECT_EQ(kOrderGatewayShmMagic, 0x41514F47U);
-  EXPECT_EQ(kOrderGatewayShmVersion, 3U);
+  EXPECT_EQ(kOrderGatewayShmVersion, 4U);
   EXPECT_EQ(kMaxOrderGatewayRoutes, 16U);
   EXPECT_EQ(kOrderSymbolBytes, 32U);
-  EXPECT_EQ(sizeof(OrderPlaceRequest), 80U);
-  EXPECT_EQ(sizeof(OrderCancelRequest), 24U);
-  EXPECT_EQ(sizeof(OrderGatewayCommand), 104U);
+  EXPECT_EQ(sizeof(OrderPlaceRequest), 88U);
+  EXPECT_EQ(sizeof(OrderCancelRequest), 32U);
+  EXPECT_EQ(sizeof(OrderGatewayCommand), 112U);
+  EXPECT_EQ(sizeof(OrderGatewayEvent), 144U);
 }
 
 TEST(OrderGatewayShmTypesTest, PlaceAndCancelUseExactRequestPayloads) {
   OrderGatewayCommand place{};
   place.kind = OrderGatewayCommandKind::kPlace;
   place.payload.place.local_order_id = 11;
+  place.payload.place.group_id = 17;
   place.payload.place.price = 60123.4;
   place.payload.place.quantity = 2.0;
   place.payload.place.price_decimal_places = 1;
   place.payload.place.quantity_decimal_places = 0;
 
   EXPECT_EQ(place.payload.place.local_order_id, 11U);
+  EXPECT_EQ(place.payload.place.group_id, 17U);
+  EXPECT_EQ(OrderGatewayCommandGroupId(place), 17U);
   EXPECT_DOUBLE_EQ(place.payload.place.price, 60123.4);
   EXPECT_DOUBLE_EQ(place.payload.place.quantity, 2.0);
   EXPECT_EQ(place.payload.place.price_decimal_places, 1U);
@@ -51,10 +55,13 @@ TEST(OrderGatewayShmTypesTest, PlaceAndCancelUseExactRequestPayloads) {
   cancel.kind = OrderGatewayCommandKind::kCancel;
   cancel.payload.cancel.local_order_id = 11;
   cancel.payload.cancel.parent_id = 7;
+  cancel.payload.cancel.group_id = 17;
   cancel.payload.cancel.gateway_route_id = 3;
 
   EXPECT_EQ(cancel.payload.cancel.local_order_id, 11U);
   EXPECT_EQ(cancel.payload.cancel.parent_id, 7U);
+  EXPECT_EQ(cancel.payload.cancel.group_id, 17U);
+  EXPECT_EQ(OrderGatewayCommandGroupId(cancel), 17U);
   EXPECT_EQ(cancel.payload.cancel.gateway_route_id, 3U);
 }
 

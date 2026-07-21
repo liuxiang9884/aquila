@@ -98,7 +98,7 @@ Result<bool> EvidenceWriter::Open() {
   }
   fmt::print(event_file_,
              "run_id,event_source,event_kind,order_role,local_order_id,"
-             "parent_id,route_id,response_kind,feedback_kind,"
+             "parent_id,group_id,route_id,response_kind,feedback_kind,"
              "exchange_order_id,exchange_ns,local_ns,price,quantity,"
              "cumulative_filled_quantity,left_quantity,finish_reason,"
              "reject_reason\n");
@@ -118,11 +118,11 @@ void EvidenceWriter::WriteEvent(const EvidenceEventRow& row) {
     return;
   }
   fmt::print(event_file_,
-             "{},{},{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},"
+             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},"
              "{:.12g},{},{}\n",
              EscapeCsv(row.run_id), EscapeCsv(row.event_source),
              EscapeCsv(row.event_kind), EscapeCsv(row.order_role),
-             row.local_order_id, row.parent_id, row.route_id,
+             row.local_order_id, row.parent_id, row.group_id, row.route_id,
              EscapeCsv(row.response_kind), EscapeCsv(row.feedback_kind),
              row.exchange_order_id, row.exchange_ns, row.local_ns,
              EscapeCsv(row.price), row.quantity, row.cumulative_filled_quantity,

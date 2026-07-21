@@ -79,6 +79,7 @@ OrderPlaceRequest MakeOrder(std::uint64_t local_order_id,
                             std::uint16_t route_id) {
   OrderPlaceRequest request{
       .local_order_id = local_order_id,
+      .group_id = 77,
       .price = 65000.0,
       .quantity = 0.01,
       .symbol_id = 42,
@@ -264,6 +265,7 @@ TEST(OrderGatewayClientTest, PlaceReadyRouteWritesCommandAndRouteTable) {
   EXPECT_EQ(command.kind, OrderGatewayCommandKind::kPlace);
   EXPECT_EQ(command.command_seq, 1U);
   EXPECT_EQ(command.payload.place.parent_id, 1001U);
+  EXPECT_EQ(command.payload.place.group_id, 77U);
   EXPECT_EQ(command.payload.place.local_order_id, 1001U);
   EXPECT_EQ(command.payload.place.gateway_route_id, 2U);
   EXPECT_EQ(command.payload.place.SymbolView(), "BTC_USDT");
@@ -287,11 +289,13 @@ TEST(OrderGatewayClientTest, PlaceCommandUsesParentIdWhenProvided) {
 
   OrderPlaceRequest order = MakeOrder(1006, 0);
   order.parent_id = 9006;
+  order.group_id = 906;
   ASSERT_EQ(client.PlaceOrder(order).status, OrderGatewaySendStatus::kOk);
 
   OrderGatewayCommand command{};
   ASSERT_TRUE(shm.CommandQueue(0).TryPop(&command));
   EXPECT_EQ(command.payload.place.parent_id, 9006U);
+  EXPECT_EQ(command.payload.place.group_id, 906U);
   EXPECT_EQ(command.payload.place.local_order_id, 1006U);
 }
 
@@ -634,6 +638,7 @@ TEST(OrderGatewayClientTest, CommandRejectedEventConvertsToOrderResponse) {
   event.kind = OrderGatewayEventKind::kCommandRejected;
   event.response_kind = OrderResponseKind::kAck;
   event.local_order_id = 1005;
+  event.group_id = 705;
   event.exchange_order_id = 7005;
   event.worker_event_enqueue_ns = 9005;
   ASSERT_TRUE(shm.EventQueue(1).TryPush(event));
@@ -645,6 +650,7 @@ TEST(OrderGatewayClientTest, CommandRejectedEventConvertsToOrderResponse) {
   ASSERT_EQ(runtime.responses.size(), 1U);
   EXPECT_EQ(runtime.responses[0].kind, OrderResponseKind::kRejected);
   EXPECT_EQ(runtime.responses[0].local_order_id, 1005U);
+  EXPECT_EQ(runtime.responses[0].group_id, 705U);
   EXPECT_EQ(runtime.responses[0].exchange_order_id, 7005U);
   EXPECT_EQ(runtime.responses[0].local_receive_ns, 9005);
   EXPECT_EQ(client.stats().command_rejected_events, 1U);

@@ -162,6 +162,7 @@ TEST(OrderSessionRuntimeAdapterTest, ConvertsGateResponsesToCoreEvents) {
   const gate::OrderResponse accepted{
       .kind = gate::OrderResponseKind::kAccepted,
       .local_order_id = 0x0400000000000007ULL,
+      .group_id = 77,
       .exchange_order_id = 36028827892199865ULL,
       .request_sequence = 42,
       .http_status = 200,
@@ -174,6 +175,7 @@ TEST(OrderSessionRuntimeAdapterTest, ConvertsGateResponsesToCoreEvents) {
 
   EXPECT_EQ(event.kind, core::OrderResponseKind::kAccepted);
   EXPECT_EQ(event.local_order_id, accepted.local_order_id);
+  EXPECT_EQ(event.group_id, accepted.group_id);
   EXPECT_EQ(event.exchange_order_id, accepted.exchange_order_id);
   EXPECT_EQ(event.local_receive_ns, accepted.local_receive_ns);
   EXPECT_EQ(event.exchange_ns, accepted.exchange_ns);

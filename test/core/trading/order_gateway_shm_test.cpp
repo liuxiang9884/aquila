@@ -54,6 +54,7 @@ OrderGatewayCommand MakeCommand(std::uint64_t command_seq) {
   OrderGatewayCommand command{};
   command.command_seq = command_seq;
   command.payload.place.parent_id = 1000 + command_seq;
+  command.payload.place.group_id = 3000 + command_seq;
   command.payload.place.local_order_id = 2000 + command_seq;
   command.payload.place.gateway_route_id = 2;
   command.kind = OrderGatewayCommandKind::kPlace;
@@ -66,6 +67,7 @@ OrderGatewayEvent MakeEvent(std::uint64_t event_seq) {
   OrderGatewayEvent event{};
   event.event_seq = event_seq;
   event.command_seq = 7000 + event_seq;
+  event.group_id = 7500 + event_seq;
   event.local_order_id = 8000 + event_seq;
   event.route_id = 3;
   event.kind = OrderGatewayEventKind::kOrderResponse;
@@ -200,6 +202,7 @@ TEST(OrderGatewayShmTest, CommandQueuePushPopOneCommand) {
   ASSERT_TRUE(create_result.value.CommandQueue(2).TryPop(&actual));
   EXPECT_EQ(actual.command_seq, expected.command_seq);
   EXPECT_EQ(actual.payload.place.parent_id, expected.payload.place.parent_id);
+  EXPECT_EQ(actual.payload.place.group_id, expected.payload.place.group_id);
   EXPECT_EQ(actual.payload.place.local_order_id,
             expected.payload.place.local_order_id);
   EXPECT_EQ(actual.payload.place.gateway_route_id,

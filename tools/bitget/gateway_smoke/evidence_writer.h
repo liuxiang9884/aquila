@@ -17,6 +17,7 @@ struct EvidenceEventRow {
   std::string order_role;
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint16_t route_id{0};
   std::string response_kind;
   std::string feedback_kind;

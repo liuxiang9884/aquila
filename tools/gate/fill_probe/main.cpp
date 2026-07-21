@@ -103,6 +103,7 @@ struct RuntimeContext {
         .order_role = order_role,
         .local_order_id = event.local_order_id,
         .parent_id = event.parent_id,
+        .group_id = event.group_id,
         .route_id = event.route_id,
         .event_kind = "gateway_response",
         .response_kind = response_kind,
@@ -112,12 +113,13 @@ struct RuntimeContext {
     });
     fmt::print(
         "fill_probe_order_event run_id={} node_id={} lifecycle_kind={} "
-        "order_role={} local_order_id={} parent_id={} route_id={} "
+        "order_role={} local_order_id={} parent_id={} group_id={} route_id={} "
         "event_kind=gateway_response response_kind={} exchange_order_id={} "
         "exchange_ns={} local_ns={}\n",
         run_id, current_node_id, lifecycle_kind, order_role,
-        event.local_order_id, event.parent_id, event.route_id, response_kind,
-        event.exchange_order_id, event.exchange_ns, event.local_receive_ns);
+        event.local_order_id, event.parent_id, event.group_id, event.route_id,
+        response_kind, event.exchange_order_id, event.exchange_ns,
+        event.local_receive_ns);
     if (found == orders->end() || current_node == nullptr) {
       return;
     }
@@ -324,6 +326,7 @@ void DrainBboReader(md::BookTickerShmReader& reader, fp::BboCache* cache,
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
       .parent_id = parent_id,
+      .group_id = parent_id,
       .price = price,
       .quantity = quantity,
       .symbol_id = config.probe.symbol_id,
@@ -364,6 +367,7 @@ void WriteSendEvent(fp::CsvWriters& writers, std::string_view run_id,
       .order_role = std::string(order_role),
       .local_order_id = record.order.place_request.local_order_id,
       .parent_id = record.order.place_request.parent_id,
+      .group_id = record.order.place_request.group_id,
       .route_id = record.order.place_request.gateway_route_id,
       .event_kind = std::string(event_kind),
       .response_kind = std::string(response_kind),
@@ -374,11 +378,12 @@ void WriteSendEvent(fp::CsvWriters& writers, std::string_view run_id,
   });
   fmt::print(
       "fill_probe_order_submitted run_id={} node_id={} lifecycle_kind={} "
-      "order_role={} local_order_id={} parent_id={} route_id={} event_kind={} "
+      "order_role={} local_order_id={} parent_id={} group_id={} route_id={} "
+      "event_kind={} "
       "response_kind={} local_ns={} price={} quantity={:.12g}\n",
       run_id, node_id, lifecycle_kind, order_role,
       record.order.place_request.local_order_id,
-      record.order.place_request.parent_id,
+      record.order.place_request.parent_id, record.order.place_request.group_id,
       record.order.place_request.gateway_route_id, event_kind, response_kind,
       local_ns, record.price_text, record.order.place_request.quantity);
 }
@@ -399,6 +404,8 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
       std::string(LowerEnumName(magic_enum::enum_name(event.reject_reason)));
   const std::uint64_t parent_id =
       record == nullptr ? 0 : record->order.place_request.parent_id;
+  const std::uint64_t group_id =
+      record == nullptr ? 0 : record->order.place_request.group_id;
   const std::uint16_t route_id =
       record == nullptr ? core::kAutoGatewayRoute
                         : record->order.place_request.gateway_route_id;
@@ -409,6 +416,7 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
       .order_role = order_role,
       .local_order_id = event.local_order_id,
       .parent_id = parent_id,
+      .group_id = group_id,
       .route_id = route_id,
       .event_kind = "feedback",
       .feedback_kind = feedback_kind,
@@ -425,13 +433,13 @@ void WriteFeedbackEvent(fp::CsvWriters& writers, std::string_view run_id,
   });
   fmt::print(
       "fill_probe_order_event run_id={} node_id={} lifecycle_kind={} "
-      "order_role={} local_order_id={} parent_id={} route_id={} "
+      "order_role={} local_order_id={} parent_id={} group_id={} route_id={} "
       "feedback_kind={} finish_reason={} reject_reason={} "
       "cumulative_filled_quantity={:.12g} left_quantity={:.12g} "
       "exchange_order_id={} exchange_ns={} local_ns={}\n",
       run_id, node_id, lifecycle_kind, order_role, event.local_order_id,
-      parent_id, route_id, feedback_kind, finish_reason, reject_reason,
-      event.cumulative_filled_quantity, event.left_quantity,
+      parent_id, group_id, route_id, feedback_kind, finish_reason,
+      reject_reason, event.cumulative_filled_quantity, event.left_quantity,
       event.exchange_order_id, event.exchange_update_ns,
       event.local_receive_ns);
 }

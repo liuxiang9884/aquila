@@ -15,6 +15,7 @@ namespace aquila::bitget {
 struct OrderGatewayRequestMetadata {
   std::uint64_t command_seq{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::int64_t worker_dequeue_ns{0};
   std::int64_t request_send_local_ns{0};
 };
@@ -69,6 +70,7 @@ class OrderGatewayWorkerPublisher {
     event.event_seq = NextEventSeq();
     event.command_seq = command.command_seq;
     event.parent_id = core::OrderGatewayCommandParentId(command);
+    event.group_id = core::OrderGatewayCommandGroupId(command);
     event.local_order_id = core::OrderGatewayCommandLocalOrderId(command);
     event.exchange_order_id = core::OrderGatewayCommandExchangeOrderId(command);
     event.request_sequence = request_sequence;
@@ -125,6 +127,7 @@ class OrderGatewayWorkerPublisher {
     if (metadata != request_metadata_.end()) {
       event.command_seq = metadata->second.command_seq;
       event.parent_id = metadata->second.parent_id;
+      event.group_id = metadata->second.group_id;
       event.worker_dequeue_ns = metadata->second.worker_dequeue_ns;
       event.request_send_local_ns = metadata->second.request_send_local_ns;
       request_metadata_.erase(metadata);
@@ -153,6 +156,7 @@ class OrderGatewayWorkerPublisher {
           OrderGatewayRequestMetadata{
               .command_seq = command.command_seq,
               .parent_id = core::OrderGatewayCommandParentId(command),
+              .group_id = core::OrderGatewayCommandGroupId(command),
               .worker_dequeue_ns = worker_dequeue_ns,
               .request_send_local_ns = sent.send_local_ns,
           });

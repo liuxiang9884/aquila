@@ -155,6 +155,7 @@ struct OrderRequestCorrelation {
   OrderRequestType type{OrderRequestType::kUnknown};
   std::uint64_t local_order_id{0};
   std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint64_t expected_exchange_order_id{0};
   std::int64_t request_send_realtime_ns{0};
   std::int64_t request_send_monotonic_ns{0};
@@ -732,6 +733,7 @@ class OrderSession {
         .request_type = correlation.type,
         .local_order_id = correlation.local_order_id,
         .parent_id = correlation.parent_id,
+        .group_id = correlation.group_id,
         .exchange_order_id = parsed.exchange_order_id,
         .request_sequence = parsed.request_id.sequence,
         .route_id = correlation.route_id,
@@ -854,10 +856,12 @@ class OrderSession {
     }
     NOVA_INFO(
         "bitget_order_send request_type={} request_sequence={} "
-        "local_order_id={} request_send_local_ns={} "
+        "local_order_id={} parent_id={} group_id={} route_id={} "
+        "request_send_local_ns={} "
         "request_send_monotonic_ns={} order_encode_done_realtime_ns={} "
         "inflight={}",
         magic_enum::enum_name(request_type), request_sequence, local_order_id,
+        correlation.parent_id, correlation.group_id, correlation.route_id,
         correlation.request_send_realtime_ns,
         correlation.request_send_monotonic_ns,
         correlation.write_path.order_encode_done_ns, inflight_count());
@@ -870,7 +874,8 @@ class OrderSession {
     }
     NOVA_INFO(
         "bitget_order_response response_kind={} request_type={} "
-        "request_sequence={} local_order_id={} exchange_order_id={} "
+        "request_sequence={} local_order_id={} parent_id={} group_id={} "
+        "route_id={} exchange_order_id={} "
         "error_code={} request_send_local_ns={} local_receive_ns={} "
         "exchange_ns={} ack_rtt_ns={} connection_id_hash={} "
         "request_send_realtime_ns={} request_send_monotonic_ns={} "
@@ -880,14 +885,14 @@ class OrderSession {
         "place_creation_time_ms={} exchange_message_time_ms={}",
         magic_enum::enum_name(response.kind),
         magic_enum::enum_name(response.request_type), response.request_sequence,
-        response.local_order_id, response.exchange_order_id,
-        response.error_code, response.request_send_local_ns,
-        response.local_receive_ns, response.exchange_ns, response.ack_rtt_ns,
-        response.connection_id_hash, timing.request_send_realtime_ns,
-        timing.request_send_monotonic_ns, timing.write_complete_realtime_ns,
-        timing.write_complete_monotonic_ns, timing.ack_receive_realtime_ns,
-        timing.ack_receive_monotonic_ns, timing.ack_rtt_monotonic_ns,
-        timing.write_complete_to_ack_monotonic_ns,
+        response.local_order_id, response.parent_id, response.group_id,
+        response.route_id, response.exchange_order_id, response.error_code,
+        response.request_send_local_ns, response.local_receive_ns,
+        response.exchange_ns, response.ack_rtt_ns, response.connection_id_hash,
+        timing.request_send_realtime_ns, timing.request_send_monotonic_ns,
+        timing.write_complete_realtime_ns, timing.write_complete_monotonic_ns,
+        timing.ack_receive_realtime_ns, timing.ack_receive_monotonic_ns,
+        timing.ack_rtt_monotonic_ns, timing.write_complete_to_ack_monotonic_ns,
         timing.place_creation_time_ms, timing.exchange_message_time_ms);
   }
 
@@ -985,6 +990,7 @@ class OrderSession {
     return {.type = type,
             .local_order_id = request.local_order_id,
             .parent_id = request.parent_id,
+            .group_id = request.group_id,
             .expected_exchange_order_id = expected_exchange_order_id,
             .route_id = request.gateway_route_id};
   }
