@@ -2,7 +2,9 @@
 
 ## 状态与基线
 
-- 状态：待用户 review；review 完成前不实施本计划中的测试补充、replay 或 benchmark。
+- 状态：用户已于 2026-07-21 review 并同意执行；阶段 0 inventory 与阶段 1 确定性测试补充进行中。
+- 当前同机有 Bitget 12 小时实盘，构建、测试、replay 和 benchmark 暂缓，避免污染 live 证据；
+  只进行源码检查和测试编写。
 - candidate：`feature/lead-lag-parallel-fixed-slot-v4`，PR #13，计划编写前 HEAD 为 `23e872b`。
 - production baseline：`main@83c5e12`。
 - 当前实现 contract 见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
