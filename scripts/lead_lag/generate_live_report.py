@@ -680,6 +680,21 @@ def load_guard_summary(path: Path | None) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def load_strategy_summary(log_paths: list[Path]) -> dict[str, str] | None:
+    summary: dict[str, str] | None = None
+    tag = "lead_lag_strategy_live_orders_summary"
+    for path in log_paths:
+        with path.open(encoding="utf-8") as input_file:
+            for line in input_file:
+                tag_offset = line.find(tag)
+                if tag_offset < 0:
+                    continue
+                parsed_tag, fields = orders.parse_message(line[tag_offset:].strip())
+                if parsed_tag == tag:
+                    summary = fields
+    return summary
+
+
 def copy_runtime_configs(report_dir: Path, guard_summary: dict | None) -> None:
     if guard_summary is None:
         return
@@ -739,7 +754,11 @@ def append_guard_result(lines: list[str], guard_summary: dict | None) -> None:
     if guard_summary is None:
         return
     lines += ["", "## Live 安全结果", ""]
+    def rendered(value: object) -> str:
+        return str(value).lower() if isinstance(value, bool) else str(value)
+
     for key in (
+        "ok",
         "result",
         "exit_code",
         "runtime_exit_code",
@@ -747,12 +766,22 @@ def append_guard_result(lines: list[str], guard_summary: dict | None) -> None:
         "final_flat",
     ):
         if key in guard_summary:
-            lines.append(f"- {key}: `{guard_summary[key]}`")
+            lines.append(f"- {key}: `{rendered(guard_summary[key])}`")
+    final_check = guard_summary.get("final_check")
+    if isinstance(final_check, dict):
+        if "flat" in final_check:
+            lines.append(f"- final flat: `{rendered(final_check['flat'])}`")
+        for key, label in (("open_orders", "open orders"), ("positions", "positions")):
+            value = final_check.get(key)
+            if isinstance(value, list):
+                lines.append(f"- final {label}: `{len(value)}`")
     quiescence = guard_summary.get("quiescence")
     if isinstance(quiescence, dict):
-        for key in ("ok", "reason"):
+        for key in ("ok", "result", "reason"):
             if key in quiescence:
-                lines.append(f"- quiescence {key}: `{quiescence[key]}`")
+                lines.append(
+                    f"- quiescence {key}: `{rendered(quiescence[key])}`"
+                )
 
 
 def append_run_definition(lines: list[str], run_definition: dict | None) -> None:
@@ -769,6 +798,29 @@ def append_run_definition(lines: list[str], run_definition: dict | None) -> None
             f"(HA=`{market_fanout.get('bitget_ha', '')}`, "
             f"HS=`{market_fanout.get('bitget_hs', '')}`)"
         )
+
+
+def append_strategy_audit(
+    lines: list[str], strategy_summary: dict[str, str] | None
+) -> None:
+    if strategy_summary is None:
+        return
+    lines += ["", "## Strategy 终态审计", ""]
+    for key in (
+        "exit_code",
+        "runtime_exit_code",
+        "emergency_handoff",
+        "recovery_state",
+        "needs_reconcile",
+        "manual_intervention",
+        "new_entries_paused",
+        "unknown_local_order_feedbacks",
+        "duplicate_or_stale_feedbacks",
+        "terminal_feedbacks_ignored",
+        "feedback_continuity_lost_events",
+    ):
+        if key in strategy_summary:
+            lines.append(f"- {key}: `{strategy_summary[key]}`")
 
 
 def append_latency_summary(
@@ -805,6 +857,7 @@ def write_markdown_report(
     book_ticker_manifest_path: Path | None = None,
     run_definition: dict | None = None,
     guard_summary: dict | None = None,
+    strategy_summary: dict[str, str] | None = None,
     pair_freshness_rows: list[dict[str, str]] | None = None,
 ) -> None:
     execution_rows = execution_rows or []
@@ -883,6 +936,7 @@ def write_markdown_report(
         lines.append(f"- 最后 signal 时间: `{signal_rows[-1].get('log_time', '')}`")
     append_affinity_summary(lines, guard_summary)
     append_guard_result(lines, guard_summary)
+    append_strategy_audit(lines, strategy_summary)
     append_run_definition(lines, run_definition)
     if pair_freshness_rows:
         lines += [
@@ -1110,6 +1164,7 @@ def write_markdown_report(
         lines += ["", "## IOC BBO Fillability", ""]
         if book_ticker_manifest_path is None:
             lines.append("- 未提供 `book_ticker_manifest`，本节不可用。")
+            lines.append("")
         else:
             lines.append(f"- book ticker manifest: `{book_ticker_manifest_path}`")
             lines.append("")
@@ -1312,9 +1367,21 @@ def write_markdown_report(
             and row.get("order_role") == "exit"
         )
         retry_positions = sum(1 for count in exit_counts.values() if count > 1)
+        attempt_distribution = Counter(exit_counts.values())
         lines += ["## Close retry 与持仓时间", ""]
         lines.append(f"- positions with submitted exits: `{len(exit_counts)}`")
         lines.append(f"- positions requiring close retry: `{retry_positions}`")
+        if attempt_distribution:
+            lines.append(f"- max submitted exit attempts: `{max(attempt_distribution)}`")
+            lines.append("")
+            lines += markdown_table(
+                ["submitted_exit_attempts", "positions"],
+                [
+                    [str(attempts), str(count)]
+                    for attempts, count in sorted(attempt_distribution.items())
+                ],
+            )
+            lines.append("")
         append_latency_summary(
             lines, "final holding time", list(holding_by_position.values())
         )
@@ -1599,6 +1666,9 @@ def generate_live_report(
                 order_rows, execution_rows, book_ticker_manifest_path
             )
     guard_summary = load_guard_summary(guard_stdout_path)
+    strategy_summary = load_strategy_summary(
+        [log_path, *(additional_log_paths or [])]
+    )
     run_definition = None
     if run_definition_path is not None:
         loaded_run_definition = json.loads(
@@ -1644,6 +1714,7 @@ def generate_live_report(
         book_ticker_manifest_path=book_ticker_manifest_path,
         run_definition=run_definition,
         guard_summary=guard_summary,
+        strategy_summary=strategy_summary,
         pair_freshness_rows=pair_freshness_rows,
     )
     return LiveReportResult(

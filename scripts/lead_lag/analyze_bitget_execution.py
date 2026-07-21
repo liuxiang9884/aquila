@@ -353,9 +353,16 @@ def analyze_executions(
             if exec_id == "":
                 continue
             local_order_id = str(fill.get("clientOid", "")).removeprefix("a-")
-            order = orders_by_id.get(local_order_id) or orders_by_exchange_id.get(
-                str(fill.get("orderId", ""))
-            )
+            fill_exchange_order_id = str(fill.get("orderId", ""))
+            order = orders_by_id.get(local_order_id)
+            if (
+                order is not None
+                and order.get("exchange_order_id", "")
+                and fill_exchange_order_id
+                and order["exchange_order_id"] != fill_exchange_order_id
+            ):
+                order = None
+            order = order or orders_by_exchange_id.get(fill_exchange_order_id)
             if order is None:
                 rest_unmatched_execution_records += 1
                 continue

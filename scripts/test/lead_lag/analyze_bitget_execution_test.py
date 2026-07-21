@@ -119,7 +119,7 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                             {
                                 "execId": "999",
                                 "orderId": "998",
-                                "clientOid": "external-order",
+                                "clientOid": "a-101",
                                 "symbol": "ALLOUSDT",
                                 "execPrice": "99",
                                 "execQty": "1",
