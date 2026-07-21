@@ -1718,18 +1718,25 @@ class Strategy {
                          on_book_ticker_entry_ns, context);
   }
 
-  void RecordTriggeredSignal(
-      PairRuntimeState* runtime, const PairMarketState& market,
-      const QuoteSnapshot& drifted_lead, const RecorderSnapshot& recorder,
-      const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
-      const BookTicker& trigger_ticker, PairRole signal_role,
-      std::int64_t on_book_ticker_entry_ns) noexcept {
+  void PrepareTriggeredSignal(PairRuntimeState* runtime,
+                              const PairMarketState& market,
+                              const QuoteSnapshot& drifted_lead,
+                              const RecorderSnapshot& recorder,
+                              const AlignmentSnapshot& alignment,
+                              const ThresholdSnapshot& threshold,
+                              const BookTicker& trigger_ticker,
+                              std::int64_t on_book_ticker_entry_ns) noexcept {
     last_signal_timing_ =
         BuildSignalTiming(trigger_ticker, market, on_book_ticker_entry_ns,
                           detail::StrategyLogRealtimeNowNs(), *runtime);
     last_signal_diagnostics_ = BuildSignalDiagnostics(
         *runtime, market, drifted_lead, recorder, alignment, threshold);
     last_signal_diagnostics_valid_ = true;
+  }
+
+  void EmitTriggeredSignal(const PairRuntimeState* runtime,
+                           const BookTicker& trigger_ticker,
+                           PairRole signal_role) noexcept {
     detail::LogStrategySignalTriggered(
         trigger_ticker.exchange, trigger_ticker.symbol_id, last_signal_timing_,
         runtime->pair.symbol, runtime->pair.symbol_id, signal_role,
@@ -1743,6 +1750,17 @@ class Strategy {
     }
   }
 
+  void RecordTriggeredSignal(
+      PairRuntimeState* runtime, const PairMarketState& market,
+      const QuoteSnapshot& drifted_lead, const RecorderSnapshot& recorder,
+      const AlignmentSnapshot& alignment, const ThresholdSnapshot& threshold,
+      const BookTicker& trigger_ticker, PairRole signal_role,
+      std::int64_t on_book_ticker_entry_ns) noexcept {
+    PrepareTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
+                           threshold, trigger_ticker, on_book_ticker_entry_ns);
+    EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+  }
+
   template <typename ContextT>
   void FinalizeActiveSignal(
       PairRuntimeState* runtime, const PairMarketState& market,
@@ -1751,6 +1769,32 @@ class Strategy {
       const BookTicker& trigger_ticker, PairRole signal_role,
       std::int64_t on_book_ticker_entry_ns, ContextT& context) noexcept {
     if (!last_signal_decision_.triggered) {
+      return;
+    }
+    if (SyntheticPositionAccounting() &&
+        AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      PrepareTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
+                             threshold, trigger_ticker,
+                             on_book_ticker_entry_ns);
+      if (OpenAtParallelLimit(runtime)) {
+        EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+        (void)RejectOpenForParallelLimit(runtime);
+        return;
+      }
+      if (DriftGuardBlocksOpen(runtime, market)) {
+        EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+        (void)RejectOpenForDriftGuard(runtime, market);
+        return;
+      }
+      ExecutionGroup* group =
+          ApplySyntheticSignal(runtime, last_signal_decision_);
+      if (group == nullptr) {
+        EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
+        RejectSignal(SignalRejectReason::kInvalidState);
+        return;
+      }
+      UpdateSubmittedSignalDiagnostics(runtime, group);
+      EmitTriggeredSignal(runtime, trigger_ticker, signal_role);
       return;
     }
     RecordTriggeredSignal(runtime, market, drifted_lead, recorder, alignment,
@@ -1763,7 +1807,7 @@ class Strategy {
       return;
     }
     if (SyntheticPositionAccounting()) {
-      ApplySyntheticSignal(runtime, last_signal_decision_);
+      (void)ApplySyntheticSignal(runtime, last_signal_decision_);
     } else {
       SubmitExternalSignal(runtime, trigger_ticker, signal_role, context);
     }
@@ -1774,33 +1818,28 @@ class Strategy {
            PositionAccountingMode::kSyntheticSignals;
   }
 
-  static void ApplySyntheticSignal(PairRuntimeState* runtime,
-                                   const SignalDecision& decision) noexcept {
+  [[nodiscard]] static ExecutionGroup* ApplySyntheticSignal(
+      PairRuntimeState* runtime, const SignalDecision& decision) noexcept {
     assert(decision.triggered);
     switch (decision.action) {
-      case SignalAction::kOpenLong: {
-        [[maybe_unused]] ExecutionGroup* long_group =
-            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/1.0,
-                                            decision.intent.price);
-        break;
-      }
-      case SignalAction::kOpenShort: {
-        [[maybe_unused]] ExecutionGroup* short_group =
-            runtime->execution.AddHoldGroup(/*signed_position_quantity=*/-1.0,
-                                            decision.intent.price);
-        break;
-      }
+      case SignalAction::kOpenLong:
+        return runtime->execution.AddHoldGroup(
+            /*signed_position_quantity=*/1.0, decision.intent.price);
+      case SignalAction::kOpenShort:
+        return runtime->execution.AddHoldGroup(
+            /*signed_position_quantity=*/-1.0, decision.intent.price);
       case SignalAction::kCloseLong:
       case SignalAction::kStoplossLong:
         ClearSyntheticHold(runtime, decision, /*long_position=*/true);
-        break;
+        return nullptr;
       case SignalAction::kCloseShort:
       case SignalAction::kStoplossShort:
         ClearSyntheticHold(runtime, decision, /*long_position=*/false);
-        break;
+        return nullptr;
       case SignalAction::kNone:
-        break;
+        return nullptr;
     }
+    return nullptr;
   }
 
   static void ClearSyntheticHold(PairRuntimeState* runtime,
@@ -1903,11 +1942,7 @@ class Strategy {
 
   [[nodiscard]] bool RejectOpenForParallelLimit(
       PairRuntimeState* runtime) noexcept {
-    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
-      return false;
-    }
-    if (runtime->execution.active_group_count() <
-        runtime->execution.capacity()) {
+    if (!OpenAtParallelLimit(runtime)) {
       return false;
     }
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
@@ -1918,6 +1953,13 @@ class Strategy {
                                     instrument.price_tick, 0.0);
     RejectSignal(SignalRejectReason::kParallelLimit);
     return true;
+  }
+
+  [[nodiscard]] bool OpenAtParallelLimit(
+      const PairRuntimeState* runtime) const noexcept {
+    return AppliesOpenFreshnessGuard(last_signal_decision_) &&
+           runtime->execution.active_group_count() >=
+               runtime->execution.capacity();
   }
 
   [[nodiscard]] bool RejectOpenForFreshness(
@@ -1944,13 +1986,7 @@ class Strategy {
 
   [[nodiscard]] bool RejectOpenForDriftGuard(
       PairRuntimeState* runtime, const PairMarketState& market) noexcept {
-    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
-      return false;
-    }
-    const DriftGuardSnapshot guard = runtime->drift_guard.Evaluate(
-        runtime->pair.trigger.drift_guard, market.lead.latest_quote,
-        market.lag.latest_quote);
-    if (!guard.blocked) {
+    if (!DriftGuardBlocksOpen(runtime, market)) {
       return false;
     }
     const InstrumentMetadata& instrument = runtime->pair.lag_instrument;
@@ -1960,6 +1996,18 @@ class Strategy {
         last_signal_decision_.intent.price, 0, instrument.price_tick, 0.0);
     RejectSignal(SignalRejectReason::kDriftGuard);
     return true;
+  }
+
+  [[nodiscard]] bool DriftGuardBlocksOpen(
+      const PairRuntimeState* runtime,
+      const PairMarketState& market) const noexcept {
+    if (!AppliesOpenFreshnessGuard(last_signal_decision_)) {
+      return false;
+    }
+    return runtime->drift_guard
+        .Evaluate(runtime->pair.trigger.drift_guard, market.lead.latest_quote,
+                  market.lag.latest_quote)
+        .blocked;
   }
 
   void LogSignalDecisionForPreparedPrice(

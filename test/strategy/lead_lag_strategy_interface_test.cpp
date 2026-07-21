@@ -1630,6 +1630,9 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_TRUE(capture.decision.triggered);
   EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(capture.decision.reject_reason, leadlag::SignalRejectReason::kNone);
+  EXPECT_EQ(capture.decision.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 0U);
   EXPECT_GT(capture.diagnostics.event_ns, 0);
   EXPECT_EQ(capture.diagnostics.lead_raw.id, 101);
   EXPECT_EQ(capture.diagnostics.lag.id, 100);
@@ -3651,6 +3654,81 @@ TEST(LeadLagStrategyInterfaceTest, ReplayModeEmitsCloseSignalForSyntheticHold) {
   strategy.OnBookTicker(
       Ticker(3, aquila::Exchange::kBinance, 102, 100.0, 101.0), context);
 
+  EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ReplayObserverSeesAssignedGroupForAcceptedSyntheticOpen) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{
+      config, leadlag::StrategyOptions{
+                  .position_accounting =
+                      leadlag::PositionAccountingMode::kSyntheticSignals,
+              }};
+  TriggeredSignalCapture capture;
+  strategy.SetTriggeredSignalObserver(&capture, CaptureTriggeredSignal);
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  FeedOpenLongSignal(&strategy, &context);
+
+  ASSERT_EQ(capture.count, 1U);
+  ASSERT_TRUE(capture.decision.triggered);
+  EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(capture.decision.group_id, 1U);
+  EXPECT_EQ(capture.diagnostics.group_id, 1U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 1U);
+  EXPECT_EQ(capture.diagnostics.position_direction,
+            leadlag::PositionDirection::kLong);
+  EXPECT_EQ(strategy.last_signal_decision().group_id, 1U);
+  EXPECT_EQ(strategy.last_signal_diagnostics().group_id, 1U);
+}
+
+TEST(LeadLagStrategyInterfaceTest,
+     ReplayObserverKeepsGroupZeroForParallelLimitRejection) {
+  leadlag::Config config = SignalOnlyConfig();
+  config.pairs[0].execute.parallel = 2;
+  leadlag::Strategy strategy{
+      config, leadlag::StrategyOptions{
+                  .position_accounting =
+                      leadlag::PositionAccountingMode::kSyntheticSignals,
+              }};
+  TriggeredSignalCapture capture;
+  strategy.SetTriggeredSignalObserver(&capture, CaptureTriggeredSignal);
+  FakeOrderSession order_session;
+  OrderManagerT order_manager{order_session, 8, 4};
+  ContextT context{order_manager};
+
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 100, 101.5, 102.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 100, 100.0, 101.0), context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 101, 112.0, 113.0), context);
+  ASSERT_EQ(capture.count, 1U);
+  EXPECT_EQ(capture.decision.group_id, 1U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 1U);
+  strategy.OnBookTicker(Ticker(3, aquila::Exchange::kGate, 102, 105.0, 106.0),
+                        context);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 103, 170.0, 171.0), context);
+  ASSERT_EQ(capture.count, 2U);
+  EXPECT_EQ(capture.decision.group_id, 2U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 2U);
+  strategy.OnBookTicker(
+      Ticker(3, aquila::Exchange::kBinance, 104, 220.0, 221.0), context);
+
+  ASSERT_EQ(capture.count, 3U);
+  ASSERT_TRUE(capture.decision.triggered);
+  EXPECT_EQ(capture.decision.action, leadlag::SignalAction::kOpenLong);
+  EXPECT_EQ(capture.decision.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.group_id, 0U);
+  EXPECT_EQ(capture.diagnostics.active_group_count, 2U);
+  EXPECT_FALSE(strategy.last_signal_decision().triggered);
+  EXPECT_EQ(strategy.last_signal_decision().reject_reason,
+            leadlag::SignalRejectReason::kParallelLimit);
   EXPECT_FALSE(strategy.last_signal_diagnostics_valid());
 }
 
