@@ -85,6 +85,7 @@ class GenerateLiveReportTest(unittest.TestCase):
             strategy_log = base / "strategy.log"
             gateway_log = base / "gateway.log"
             feedback_log = base / "feedback.log"
+            guard_stdout = base / "guarded_live.stdout"
             rest_fills_path = base / "fills.json"
             run_definition_path = base / "run_definition.json"
             catalog_path = base / "catalog.csv"
@@ -99,6 +100,11 @@ class GenerateLiveReportTest(unittest.TestCase):
                 I2026-07-20 16:37:14.241223501 1:1 strategy.h:LogStrategyOrderSubmitted:390] lead_lag_order_submitted local_order_id=101 trigger_exchange=kBinance trigger_symbol_id=25 trigger_exchange_ns=1000000000 trigger_local_ns=1000000100 on_book_ticker_entry_ns=1000000200 signal_decision_ns=1000000300 lead_exchange_ns=1000000000 lead_local_ns=1000000100 signal_lead_id=10 lead_freshness_ns=300 lag_exchange_ns=999000000 lag_local_ns=999000100 signal_lag_id=11 lag_freshness_ns=1000300 symbol=ALLOUSDT symbol_id=25 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=101 quantity=2 raw_price=100.1 order_price=100.2 slippage_ticks=1 price_tick=0.1 target_open_notional=200 estimated_notional=200.4 active_groups=1 place_status=kOk
                 I2026-07-20 16:37:14.261971994 1:1 strategy.h:LogStrategyOrderFeedback:582] lead_lag_order_feedback kind=kFilled local_order_id=101 exchange_order_id=501 cumulative_filled_quantity=2 left_quantity=0 cancelled_quantity=0 fill_price=100.1 role=kTaker finish_reason=kUnknown reject_reason=kUnknown exchange_update_ns=1001000000 local_receive_ns=1003000000 lead_exchange_ns=1000000000 lag_exchange_ns=1000000000
                 I2026-07-20 16:37:14.261973319 1:1 strategy.h:LogStrategyOrderFinished:681] lead_lag_order_finished local_order_id=101 symbol_id=25 symbol=ALLOUSDT status=kFilled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=101 order_finished_local_ns=1003001000 quantity=2 cumulative_filled_quantity=2 average_fill_price=100.1 last_fill_price=100.1 exchange_order_id=501 active_groups=1 request_send_local_ns=1000000400 ack_local_receive_ns=1002500000 response_local_receive_ns=0 ack_exchange_ns=1001000000 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1001000000 ack_rtt_ns=2499600 response_rtt_ns=0 ack_exchange_to_local_ns=1500000 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0
+                """,
+            )
+            write_file(
+                guard_stdout,
+                """
                 lead_lag_strategy_live_orders_summary exit_code=0 runtime_exit_code=0 emergency_handoff=false recovery_state=normal needs_reconcile=false manual_intervention=false new_entries_paused=false unknown_local_order_feedbacks=0 duplicate_or_stale_feedbacks=0 terminal_feedbacks_ignored=0 feedback_continuity_lost_events=0
                 """,
             )
@@ -166,6 +172,7 @@ class GenerateLiveReportTest(unittest.TestCase):
                 run_id="bitget-run",
                 output_root=output_root,
                 schema_path=schema_path,
+                guard_stdout_path=guard_stdout,
             )
 
             report_dir = result.report_dir

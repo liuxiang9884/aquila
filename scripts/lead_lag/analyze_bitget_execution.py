@@ -546,6 +546,21 @@ def classify_marketability(
     return "no_cross"
 
 
+def latest_record_as_of(records: np.ndarray, exchange_ns: int) -> np.ndarray:
+    eligible_indexes = np.flatnonzero(records["exchange_ns"] <= exchange_ns)
+    if len(eligible_indexes) == 0:
+        return np.empty(0, dtype=records.dtype)
+    latest_index = max(
+        eligible_indexes,
+        key=lambda index: (
+            int(records[index]["exchange_ns"]),
+            int(records[index]["local_ns"]),
+            int(records[index]["id"]),
+        ),
+    )
+    return records[latest_index : latest_index + 1]
+
+
 def marketability_observation(classification: str) -> str:
     if classification == "all_cross":
         return "marketable_observed"
@@ -636,21 +651,24 @@ def analyze_fillability(
             else np.empty(0, dtype=store.dtype)
         )
         lifecycle_records = lifecycle_records[
-            lifecycle_records["symbol_id"] == symbol_id
+            (lifecycle_records["symbol_id"] == symbol_id)
+            & (lifecycle_records["local_ns"] <= anchor_ns)
         ]
         creation_ns = int(place_creation_ns)
-        creation_records = lifecycle_records[
-            lifecycle_records["exchange_ns"] // 1_000_000
-            == creation_ns // 1_000_000
-        ]
-        terminal_records = lifecycle_records[
-            lifecycle_records["exchange_ns"] // 1_000_000
-            == terminal_ns // 1_000_000
-        ] if terminal_ns else np.empty(0, dtype=store.dtype)
-        window_records = lifecycle_records[
-            (lifecycle_records["exchange_ns"] // 1_000_000 >= creation_ns // 1_000_000)
-            & (lifecycle_records["exchange_ns"] // 1_000_000 <= terminal_ns // 1_000_000)
-        ] if terminal_ns else np.empty(0, dtype=store.dtype)
+        creation_records = latest_record_as_of(lifecycle_records, creation_ns)
+        terminal_records = (
+            latest_record_as_of(lifecycle_records, terminal_ns)
+            if terminal_ns
+            else np.empty(0, dtype=store.dtype)
+        )
+        if terminal_ns and len(creation_records) > 0:
+            window_updates = lifecycle_records[
+                (lifecycle_records["exchange_ns"] > creation_ns)
+                & (lifecycle_records["exchange_ns"] <= terminal_ns)
+            ]
+            window_records = np.concatenate((creation_records, window_updates))
+        else:
+            window_records = np.empty(0, dtype=store.dtype)
 
         side = order.get("side", "")
         order_price = float(order_price_value)
@@ -704,12 +722,12 @@ def analyze_fillability(
         )
         if len(lifecycle_records) == 0:
             missing_reason = "missing_bbo_near_local_terminal"
-        elif len(window_records) == 0:
-            missing_reason = "missing_bbo_exchange_window"
         elif len(creation_records) == 0:
             missing_reason = "missing_creation_bbo"
         elif len(terminal_records) == 0:
             missing_reason = "missing_terminal_bbo"
+        elif len(window_records) == 0:
+            missing_reason = "missing_bbo_exchange_window"
         else:
             missing_reason = ""
 

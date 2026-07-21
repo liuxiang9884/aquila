@@ -167,16 +167,18 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
             manifest_path = base / "manifest.jsonl"
             records = np.zeros(8, dtype=typed_binary.book_ticker_dtype())
             values = [
-                # Filled order signal and execTime millisecond.
+                # Filled order signal and as-of BBO states. No update lands in
+                # the exact creation or terminal millisecond.
                 (11, 999_800_000, 999_000_000, 100.0, 100.1),
-                (12, 1_000_100_000, 1_000_000_000, 100.0, 100.1),
-                (13, 1_001_100_000, 1_001_000_000, 100.0, 100.1),
-                # Cancelled order signal, creation, middle, and terminal.
+                (12, 1_000_100_000, 999_900_000, 100.0, 100.1),
+                (13, 1_001_100_000, 1_000_500_000, 100.0, 100.1),
+                # Cancelled order signal and as-of states. The final update is
+                # after the terminal timestamp and must not be used.
                 (21, 1_999_800_000, 1_999_000_000, 100.0, 100.1),
-                (22, 2_000_100_000, 2_000_000_000, 100.1, 100.3),
-                (23, 2_001_100_000, 2_001_000_000, 100.2, 100.4),
-                (24, 2_002_100_000, 2_002_000_000, 100.3, 100.5),
-                (25, 2_003_100_000, 2_003_000_000, 100.4, 100.6),
+                (22, 2_000_100_000, 1_999_900_000, 100.1, 100.3),
+                (23, 2_001_100_000, 2_000_500_000, 100.2, 100.4),
+                (24, 2_002_100_000, 2_001_500_000, 100.3, 100.5),
+                (25, 2_003_100_000, 2_002_500_000, 99.9, 100.1),
             ]
             for index, (record_id, local_ns, exchange_ns, bid, ask) in enumerate(values):
                 records[index]["id"] = record_id

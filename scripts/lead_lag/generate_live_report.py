@@ -1666,9 +1666,10 @@ def generate_live_report(
                 order_rows, execution_rows, book_ticker_manifest_path
             )
     guard_summary = load_guard_summary(guard_stdout_path)
-    strategy_summary = load_strategy_summary(
-        [log_path, *(additional_log_paths or [])]
-    )
+    strategy_summary_paths = [log_path, *(additional_log_paths or [])]
+    if guard_stdout_path is not None:
+        strategy_summary_paths.append(guard_stdout_path)
+    strategy_summary = load_strategy_summary(strategy_summary_paths)
     run_definition = None
     if run_definition_path is not None:
         loaded_run_definition = json.loads(

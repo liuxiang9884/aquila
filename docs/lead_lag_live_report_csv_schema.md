@@ -449,16 +449,16 @@ Bitget report 另增加：
 | `terminal_exchange_ns` | filled 取首个 execution time；cancel 取 authoritative order update time。 |
 | `window_duration_ns` | `terminal_exchange_ns - place_creation_exchange_ns`，只在 Bitget 交易所时钟内计算。 |
 | `signal_marketability` | 精确 `signal_lag_id` BBO 相对 IOC limit 的 crossing 分类。 |
-| `creation_marketability` | order creation 所在交易所毫秒内 BBO 的分类。 |
-| `window_marketability` | creation 到 terminal 交易所毫秒窗口内 BBO 的分类。 |
-| `terminal_marketability` | terminal 所在交易所毫秒内 BBO 的分类。 |
+| `creation_marketability` | Bitget exchange clock 上 creation 时刻已生效的 last-known BBO 分类；不要求该毫秒恰好有 update。 |
+| `window_marketability` | creation 时已生效的 BBO，加上 creation 到 terminal 期间的 BBO update 分类。 |
+| `terminal_marketability` | Bitget exchange clock 上 terminal 时刻已生效的 last-known BBO 分类。 |
 | `marketability_observation` | `marketable_observed`、`not_marketable_observed` 或 `indeterminate`。 |
 | `bbo_records_at_creation` / `bbo_records_in_window` / `bbo_records_at_terminal` | 各对齐窗口的 BBO 样本数。 |
 | `first_no_cross_after_send_ns` | send 后首次观察到不 crossing BBO 的本机时间差。 |
 | `first_no_cross_opposite_price` | 上述 BBO 的 ask（buy）或 bid（sell）。 |
 | `missing_reason` | 缺 order price/time、缺本地附近 BBO、缺 exchange window、creation 或 terminal BBO 的原因。 |
 
-分类规则：buy 在 `ask_price <= order_price` 时 crossing，sell 在 `bid_price >= order_price` 时 crossing；窗口全部 crossing 为 `all_cross`，全部不 crossing 为 `no_cross`，两者都有为 `mixed`，无记录为 `missing`。只有 `all_cross` 映射为 `marketable_observed`，`no_cross` 映射为 `not_marketable_observed`，其余为 `indeterminate`。
+分类规则：buy 在 `ask_price <= order_price` 时 crossing，sell 在 `bid_price >= order_price` 时 crossing；窗口全部 crossing 为 `all_cross`，全部不 crossing 为 `no_cross`，两者都有为 `mixed`，无记录为 `missing`。creation / terminal 都使用不晚于目标 exchange timestamp 的最新一条 BBO，并且不使用晚于 authoritative terminal 本机接收时间的记录，避免毫秒精度误报与未来数据泄漏。只有 `all_cross` 映射为 `marketable_observed`，`no_cross` 映射为 `not_marketable_observed`，其余为 `indeterminate`。
 
 ## 仍待补充的 signal 字段
 
