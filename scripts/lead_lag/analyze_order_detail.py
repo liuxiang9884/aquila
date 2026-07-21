@@ -1969,7 +1969,11 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             continue
         request_send_ns = order.get("request_send_local_ns", "")
         write_complete_ns = order.get("write_complete_local_ns", "")
+        write_complete_monotonic_ns = order.get(
+            "write_complete_monotonic_ns", ""
+        )
         ack_receive_ns = order.get("ack_local_receive_ns", "")
+        ack_receive_monotonic_ns = order.get("ack_receive_monotonic_ns", "")
         response_receive_ns = order.get("response_local_receive_ns", "")
         finished_ns = order_finished_ns(order)
         bbo_to_strategy_ns, bbo_cross_clock = plausible_local_pipeline_delta_text(
@@ -2074,7 +2078,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
                 write_complete_ns, request_send_ns
             ),
             "write_complete_to_ack_local_ns": ns_delta_text(
-                ack_receive_ns, write_complete_ns
+                ack_receive_monotonic_ns, write_complete_monotonic_ns
             ),
             "send_to_response_local_ns": ns_delta_text(
                 response_receive_ns, request_send_ns

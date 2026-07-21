@@ -1075,6 +1075,10 @@ def write_markdown_report(
             ("fast-fill validation errors", "fast_fill_validation_errors"),
             ("authoritative filled orders", "authoritative_filled_orders"),
             ("filled orders missing fast-fill", "filled_orders_missing_fast_fill"),
+            (
+                "fast-fill orders without authoritative fill",
+                "fast_fill_orders_without_authoritative_fill",
+            ),
             ("quantity mismatch orders", "quantity_mismatch_orders"),
             ("REST matched executions", "rest_matched_execution_records"),
             ("REST unmatched executions", "rest_unmatched_execution_records"),
@@ -1172,7 +1176,21 @@ def write_markdown_report(
         rest_execution_rows = [
             row for row in execution_rows if row.get("rest_present") == "true"
         ]
-        if rest_execution_rows:
+        complete_rest_rows = [
+            row
+            for row in rest_execution_rows
+            if parse_decimal(row.get("exec_pnl")) is not None
+            and parse_decimal(row.get("actual_fee_quote")) is not None
+            and row.get("fee_coin") == "USDT"
+        ]
+        rest_pnl_complete = (
+            bool(execution_rows)
+            and len(rest_execution_rows) == len(execution_rows)
+            and len(complete_rest_rows) == len(execution_rows)
+            and execution_stats.get("filled_orders_missing_fast_fill", 0) == 0
+            and execution_stats.get("quantity_mismatch_orders", 0) == 0
+        )
+        if rest_pnl_complete:
             rest_exec_pnl = sum_decimal(rest_execution_rows, "exec_pnl")
             rest_fee = sum_decimal(rest_execution_rows, "actual_fee_quote")
             rest_net = rest_exec_pnl - rest_fee
@@ -1191,7 +1209,8 @@ def write_markdown_report(
             lines += [
                 "### Bitget REST 实际 PnL",
                 "",
-                "- 未提供或未匹配 REST fills；实际手续费与账户实际 PnL 不可用，不能把配置费率估算值当作实际结果。",
+                f"- REST complete executions: `{len(complete_rest_rows)}/{len(execution_rows)}`",
+                "- REST fills 缺失、不完整或未通过 execution quantity 对账；实际手续费与账户实际 PnL 不可用，不能把配置费率估算值当作实际结果。",
                 "",
             ]
     if raw_position_rows or actual_win_rows:

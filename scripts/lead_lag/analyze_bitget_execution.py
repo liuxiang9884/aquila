@@ -475,6 +475,11 @@ class BookTickerStore:
 
     def segment_data(self, segment: BookTickerSegment) -> np.memmap:
         if segment.data is None:
+            typed_binary.validate_header(
+                typed_binary.read_header(segment.path),
+                "book_ticker",
+                segment.path,
+            )
             available_records = max(
                 0,
                 (segment.path.stat().st_size - typed_binary.HEADER_SIZE)
@@ -592,9 +597,17 @@ def analyze_fillability(
             for execution in executions
             if execution.get("exec_time_exchange_ns", "")
         ]
-        if execution_times and order.get("status") == "kFilled":
-            terminal_event = "exec"
-            terminal_ns = min(execution_times)
+        if order.get("status") == "kFilled":
+            if execution_times:
+                terminal_event = "exec"
+                terminal_ns = min(execution_times)
+            else:
+                terminal_event = "filled_feedback"
+                terminal_text = (
+                    order.get("feedback_updated_exchange_ns", "")
+                    or order.get("finish_exchange_ns", "")
+                )
+                terminal_ns = int(terminal_text) if terminal_text else 0
         else:
             terminal_event = "cancel"
             terminal_text = (
@@ -677,7 +690,11 @@ def analyze_fillability(
                 first_no_cross_price = format_float(opposite_price)
                 break
 
-        observation_class = terminal_class if terminal_event == "exec" else window_class
+        observation_class = (
+            terminal_class
+            if terminal_event in ("exec", "filled_feedback")
+            else window_class
+        )
         if len(lifecycle_records) == 0:
             missing_reason = "missing_bbo_near_local_terminal"
         elif len(window_records) == 0:

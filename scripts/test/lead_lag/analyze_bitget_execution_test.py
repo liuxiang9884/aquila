@@ -220,6 +220,9 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
             rows = bitget_analysis.analyze_fillability(
                 fillability_orders, execution_rows, manifest_path
             )
+            rows_without_execution = bitget_analysis.analyze_fillability(
+                fillability_orders, [], manifest_path
+            )
 
         self.assertEqual(len(rows), 2)
         by_id = {row["local_order_id"]: row for row in rows}
@@ -229,6 +232,11 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
         self.assertEqual(filled["window_marketability"], "all_cross")
         self.assertEqual(filled["terminal_marketability"], "all_cross")
         self.assertEqual(filled["marketability_observation"], "marketable_observed")
+        filled_without_execution = {
+            row["local_order_id"]: row for row in rows_without_execution
+        }["101"]
+        self.assertEqual(filled_without_execution["terminal_event"], "filled_feedback")
+        self.assertEqual(filled_without_execution["terminal_exchange_ns"], "1001000000")
 
         cancelled = by_id["102"]
         self.assertEqual(cancelled["terminal_event"], "cancel")

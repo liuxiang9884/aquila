@@ -180,6 +180,7 @@ class AnalyzeOrderDetailTest(unittest.TestCase):
         self.assertEqual(row["status"], "kCancelled")
         self.assertEqual(len(latency_rows), 1)
         self.assertEqual(latency_rows[0]["send_to_write_complete_local_ns"], "7676")
+        self.assertEqual(latency_rows[0]["write_complete_to_ack_local_ns"], "20597560")
         self.assertEqual(latency_rows[0]["bitget_creation_to_terminal_ns"], "2000000")
 
     def test_catalog_contract_multiplier_overrides_notional_multiplier(self):
