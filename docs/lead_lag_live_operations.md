@@ -270,7 +270,7 @@ reports/<run_id>/lead_lag_live_report_csv_schema.md
 reports/<run_id>/runtime_configs/  # 有可归档 overlay 时
 ```
 
-最小验证：核心四个 CSV 存在且有 header；Bitget 另外验证 `execution_detail.csv`、`order_fillability.csv` 有 header；schema snapshot 与 `docs/lead_lag_live_report_csv_schema.md` 一致；runtime profile、run definition 与归档配置一致。Gate report 检查 Ack 上行、Gate `x_in->x_out`、Ack 下行和 exchange lifecycle。Bitget report 检查 signal→entry submit→any-fill、cancel reason、fast-fill 对账、REST coverage、IOC BBO fillability、notional-weighted slippage bps、send→write、write→Ack、creation→terminal、close retry、持仓时间和 final flat。只有传入并完整匹配 REST fills 时，才检查实际 fee/PnL。
+最小验证：核心四个 CSV 存在且有 header；Bitget 另外验证 `execution_detail.csv`、`order_fillability.csv` 有 header；schema snapshot 与 `docs/lead_lag_live_report_csv_schema.md` 一致；runtime profile、run definition 与归档配置一致。Gate report 检查 Ack 上行、Gate `x_in->x_out`、Ack 下行和 exchange lifecycle。Bitget report 检查 signal→entry submit→any-fill、cancel reason、fast-fill 对账、REST coverage、IOC BBO fillability、notional-weighted slippage bps、send→write、write→Ack、creation→terminal、close retry、持仓时间、guard final flat 和 Strategy 终态审计；后者至少核对 `needs_reconcile`、`manual_intervention`、`unknown_local_order_feedbacks`、`terminal_feedbacks_ignored` 和 `feedback_continuity_lost_events`。只有传入并完整匹配 REST fills 时，才检查实际 fee/PnL。
 
 打包默认生成 `reports/<run_id>.zip`：
 
