@@ -34,6 +34,9 @@ add_strategy_gtest(lead_lag_signal_test lead_lag_signal_test.cpp)
 add_strategy_gtest(lead_lag_feedback_state_test
                    lead_lag_feedback_state_test.cpp)
 
+add_strategy_gtest(lead_lag_execution_state_model_test
+                   lead_lag_execution_state_model_test.cpp)
+
 add_strategy_gtest(lead_lag_strategy_interface_test
                    lead_lag_strategy_interface_test.cpp)
 target_link_libraries(lead_lag_strategy_interface_test
