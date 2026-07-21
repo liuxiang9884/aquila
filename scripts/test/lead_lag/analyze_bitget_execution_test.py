@@ -115,7 +115,20 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
                                 "createdTime": "1001",
                                 "updatedTime": "1001",
                                 "execPnl": "0",
-                            }
+                            },
+                            {
+                                "execId": "999",
+                                "orderId": "998",
+                                "clientOid": "external-order",
+                                "symbol": "ALLOUSDT",
+                                "execPrice": "99",
+                                "execQty": "1",
+                                "feeDetail": [
+                                    {"feeCoin": "USDT", "fee": "0.01"}
+                                ],
+                                "createdTime": "1001",
+                                "execPnl": "100",
+                            },
                         ]
                     }
                 ),
@@ -143,7 +156,9 @@ class AnalyzeBitgetExecutionTest(unittest.TestCase):
         self.assertEqual(result.stats["fast_fill_unique_orders"], 1)
         self.assertEqual(result.stats["filled_orders_missing_fast_fill"], 0)
         self.assertEqual(result.stats["quantity_mismatch_orders"], 0)
-        self.assertEqual(result.stats["rest_execution_records"], 1)
+        self.assertEqual(result.stats["rest_execution_records"], 2)
+        self.assertEqual(result.stats["rest_matched_execution_records"], 1)
+        self.assertEqual(result.stats["rest_unmatched_execution_records"], 1)
 
     def test_classifies_filled_and_zero_fill_ioc_windows(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -254,8 +254,10 @@ def merge_rest_fill(
 
 def rest_only_row(fill: dict, order: dict[str, str] | None, run_id: str) -> dict[str, str]:
     client_oid = str(fill.get("clientOid", ""))
-    local_order_id = client_oid.removeprefix("a-")
     order = order or {}
+    local_order_id = order.get("local_order_id", "") or client_oid.removeprefix(
+        "a-"
+    )
     exec_time_ns = milliseconds_to_nanoseconds(str(fill.get("createdTime", "")))
     row = {field: "" for field in EXECUTION_DETAIL_FIELDS}
     row.update(
@@ -304,6 +306,11 @@ def analyze_executions(
     run_id: str,
 ) -> ExecutionAnalysisResult:
     orders_by_id = {row.get("local_order_id", ""): row for row in order_rows}
+    orders_by_exchange_id = {
+        row.get("exchange_order_id", ""): row
+        for row in order_rows
+        if row.get("exchange_order_id", "")
+    }
     rows_by_exec_id: dict[str, dict[str, str]] = {}
     fast_fill_records = 0
     duplicate_exec_ids = 0
@@ -331,6 +338,8 @@ def analyze_executions(
                 )
 
     rest_execution_records = 0
+    rest_matched_execution_records = 0
+    rest_unmatched_execution_records = 0
     if rest_fills_path is not None:
         payload = json.loads(rest_fills_path.read_text(encoding="utf-8"))
         fills = payload.get("fills", []) if isinstance(payload, dict) else []
@@ -344,7 +353,14 @@ def analyze_executions(
             if exec_id == "":
                 continue
             local_order_id = str(fill.get("clientOid", "")).removeprefix("a-")
-            order = orders_by_id.get(local_order_id)
+            order = orders_by_id.get(local_order_id) or orders_by_exchange_id.get(
+                str(fill.get("orderId", ""))
+            )
+            if order is None:
+                rest_unmatched_execution_records += 1
+                continue
+            rest_matched_execution_records += 1
+            local_order_id = order.get("local_order_id", local_order_id)
             row = rows_by_exec_id.get(exec_id)
             if row is None:
                 row = rest_only_row(fill, order, run_id)
@@ -409,6 +425,8 @@ def analyze_executions(
         ),
         "quantity_mismatch_orders": quantity_mismatch_orders,
         "rest_execution_records": rest_execution_records,
+        "rest_matched_execution_records": rest_matched_execution_records,
+        "rest_unmatched_execution_records": rest_unmatched_execution_records,
     }
     return ExecutionAnalysisResult(rows=rows, stats=stats)
 
