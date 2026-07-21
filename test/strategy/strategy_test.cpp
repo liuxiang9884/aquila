@@ -105,6 +105,23 @@ TEST(OrderManagerTest, PlacesLimitOrderAndStoresSentOrder) {
   EXPECT_EQ(order->request_send_local_ns, gateway.place_send_local_ns);
 }
 
+TEST(OrderManagerTest, StoresRuntimeLocalOrderMetadataOutsideGatewayRequest) {
+  FakeGateway gateway;
+  OrderManager<FakeGateway> order_manager(gateway, 8);
+  OrderPlaceRequest request = MakeLimitRequest();
+  request.group_id = 41;
+
+  const OrderPlaceResult placed = order_manager.PlaceLimitOrder(
+      request, OrderLocalMetadata{.group_index = 3});
+
+  ASSERT_EQ(placed.status, OrderPlaceStatus::kOk);
+  const StrategyOrder* order = order_manager.FindOrder(placed.local_order_id);
+  ASSERT_NE(order, nullptr);
+  EXPECT_EQ(order->place_request.group_id, 41U);
+  EXPECT_EQ(order->group_index, 3U);
+  EXPECT_EQ(gateway.last_place_local_order_id, placed.local_order_id);
+}
+
 TEST(OrderManagerTest, PlacesDecimalQuantityWithConfiguredPrecision) {
   FakeGateway gateway;
   OrderManager<FakeGateway> order_manager(gateway, 8);

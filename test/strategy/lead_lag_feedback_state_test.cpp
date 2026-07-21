@@ -60,6 +60,12 @@ aquila::core::StrategyOrder Order(std::uint64_t local_order_id,
   };
 }
 
+void StampOrderGroup(const leadlag::ExecutionGroup& group,
+                     aquila::core::StrategyOrder* order) {
+  order->place_request.group_id = group.group_id;
+  order->group_index = group.group_index;
+}
+
 leadlag::PairConfig PairConfigForFeedback() {
   leadlag::PairConfig pair;
   pair.symbol_id = 1;
@@ -154,35 +160,46 @@ TEST(LeadLagFeedbackStateTest, OrderManagerRetiresOnlyFinishedOrders) {
 TEST(LeadLagFeedbackStateTest, OpenTerminalFeedbackMovesGroupToHold) {
   leadlag::ExecutionState state;
   state.Init(/*parallel=*/1);
-  ASSERT_NE(state.StartOpenOrder(/*local_order_id=*/11), nullptr);
-
-  const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
+  const leadlag::ExecutionGroup* group =
+      state.StartOpenOrder(/*local_order_id=*/11);
+  ASSERT_NE(group, nullptr);
+  aquila::core::StrategyOrder order =
       Order(/*local_order_id=*/11, aquila::OrderSide::kBuy,
-            /*cumulative_filled_quantity=*/3, /*fill_price=*/102.0),
-      Instrument());
+            /*cumulative_filled_quantity=*/3, /*fill_price=*/102.0);
+  StampOrderGroup(*group, &order);
+
+  const leadlag::ExecutionApplyResult result =
+      state.ApplyTerminalOrder(order, Instrument());
 
   EXPECT_EQ(result, leadlag::ExecutionApplyResult::kAppliedHold);
   ASSERT_EQ(state.active_group_count(), 1U);
-  const leadlag::ExecutionGroup* group = state.FindGroupById(1);
-  ASSERT_NE(group, nullptr);
-  EXPECT_EQ(group->stage, leadlag::ExecutionStage::kHold);
-  EXPECT_EQ(group->signed_position_quantity, 3);
-  EXPECT_EQ(group->local_order_id, 0U);
-  EXPECT_DOUBLE_EQ(group->trailing_price, 102.0);
+  const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
+  ASSERT_NE(updated, nullptr);
+  EXPECT_EQ(updated->stage, leadlag::ExecutionStage::kHold);
+  EXPECT_EQ(updated->signed_position_quantity, 3);
+  EXPECT_EQ(updated->local_order_id, 0U);
+  EXPECT_DOUBLE_EQ(updated->trailing_price, 102.0);
 }
 
 TEST(LeadLagFeedbackStateTest, SubmitRejectedDeletesEmptyOpenGroup) {
   leadlag::ExecutionState state;
   state.Init(/*parallel=*/2);
-  ASSERT_NE(state.StartOpenOrder(/*local_order_id=*/21), nullptr);
+  const leadlag::ExecutionGroup* group =
+      state.StartOpenOrder(/*local_order_id=*/21);
+  ASSERT_NE(group, nullptr);
+  aquila::core::StrategyOrder rejected =
+      Order(/*local_order_id=*/21, aquila::OrderSide::kBuy,
+            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0);
+  rejected.status = aquila::core::OrderStatus::kRejected;
+  StampOrderGroup(*group, &rejected);
 
-  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/21),
+  EXPECT_EQ(state.ApplySubmitRejected(rejected),
             leadlag::ExecutionApplyResult::kAppliedDeleted);
   EXPECT_EQ(state.active_group_count(), 0U);
-  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/0),
-            leadlag::ExecutionApplyResult::kIgnoredUnknownOrder);
-  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/21),
-            leadlag::ExecutionApplyResult::kIgnoredUnknownOrder);
+  EXPECT_EQ(state.ApplySubmitRejected(aquila::core::StrategyOrder{}),
+            leadlag::ExecutionApplyResult::kIgnoredGroupMismatch);
+  EXPECT_EQ(state.ApplySubmitRejected(rejected),
+            leadlag::ExecutionApplyResult::kIgnoredGroupMismatch);
 }
 
 TEST(LeadLagFeedbackStateTest, CloseTerminalFeedbackDeletesFlatGroup) {
@@ -193,11 +210,13 @@ TEST(LeadLagFeedbackStateTest, CloseTerminalFeedbackDeletesFlatGroup) {
                          /*trailing_price=*/102.0);
   ASSERT_NE(group, nullptr);
   ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/12));
-
-  const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
+  aquila::core::StrategyOrder order =
       Order(/*local_order_id=*/12, aquila::OrderSide::kSell,
-            /*cumulative_filled_quantity=*/3, /*fill_price=*/101.0),
-      Instrument());
+            /*cumulative_filled_quantity=*/3, /*fill_price=*/101.0);
+  StampOrderGroup(*group, &order);
+
+  const leadlag::ExecutionApplyResult result =
+      state.ApplyTerminalOrder(order, Instrument());
 
   EXPECT_EQ(result, leadlag::ExecutionApplyResult::kAppliedDeleted);
   EXPECT_EQ(state.active_group_count(), 0U);
@@ -217,6 +236,7 @@ TEST(LeadLagFeedbackStateTest, RejectedCloseReturnsExistingPositionToHold) {
       Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
             /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0);
   rejected.status = aquila::core::OrderStatus::kRejected;
+  StampOrderGroup(*group, &rejected);
 
   const leadlag::ExecutionApplyResult result =
       state.ApplyTerminalOrder(rejected, Instrument());
@@ -239,11 +259,13 @@ TEST(LeadLagFeedbackStateTest, NormalCloseTerminalFailureIncrementsRetryCount) {
   ASSERT_NE(group, nullptr);
   ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13,
                                     leadlag::CloseOrderKind::kNormal));
-
-  const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
+  aquila::core::StrategyOrder order =
       Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
-            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0),
-      Instrument());
+            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0);
+  StampOrderGroup(*group, &order);
+
+  const leadlag::ExecutionApplyResult result =
+      state.ApplyTerminalOrder(order, Instrument());
 
   EXPECT_EQ(result, leadlag::ExecutionApplyResult::kAppliedHold);
   const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
@@ -263,11 +285,13 @@ TEST(LeadLagFeedbackStateTest,
   ASSERT_NE(group, nullptr);
   ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13,
                                     leadlag::CloseOrderKind::kStoploss));
-
-  const leadlag::ExecutionApplyResult result = state.ApplyTerminalOrder(
+  aquila::core::StrategyOrder order =
       Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
-            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0),
-      Instrument());
+            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0);
+  StampOrderGroup(*group, &order);
+
+  const leadlag::ExecutionApplyResult result =
+      state.ApplyTerminalOrder(order, Instrument());
 
   EXPECT_EQ(result, leadlag::ExecutionApplyResult::kAppliedHold);
   const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
@@ -284,8 +308,13 @@ TEST(LeadLagFeedbackStateTest, RejectedNormalCloseSubmitIncrementsRetryCount) {
   ASSERT_NE(group, nullptr);
   ASSERT_TRUE(state.StartCloseOrder(*group, /*local_order_id=*/13,
                                     leadlag::CloseOrderKind::kNormal));
+  aquila::core::StrategyOrder rejected =
+      Order(/*local_order_id=*/13, aquila::OrderSide::kSell,
+            /*cumulative_filled_quantity=*/0, /*fill_price=*/0.0);
+  rejected.status = aquila::core::OrderStatus::kRejected;
+  StampOrderGroup(*group, &rejected);
 
-  EXPECT_EQ(state.ApplySubmitRejected(/*local_order_id=*/13),
+  EXPECT_EQ(state.ApplySubmitRejected(rejected),
             leadlag::ExecutionApplyResult::kAppliedHold);
   const leadlag::ExecutionGroup* updated = state.FindGroupById(1);
   ASSERT_NE(updated, nullptr);
@@ -313,6 +342,87 @@ TEST(LeadLagFeedbackStateTest, ClearGroupByIdRemovesActiveGroup) {
   EXPECT_NE(state.FindGroupById(first_group_id), nullptr);
   EXPECT_FALSE(state.ClearGroupById(second_group_id));
   EXPECT_EQ(state.active_group_count(), 1U);
+}
+
+TEST(LeadLagFeedbackStateTest, RuntimeCapacityRejectsOutOfRangeParallel) {
+  leadlag::ExecutionState state;
+
+  EXPECT_TRUE(state.Init(/*parallel=*/16));
+  EXPECT_EQ(state.capacity(), 16U);
+  EXPECT_FALSE(state.Init(/*parallel=*/17));
+  EXPECT_EQ(state.capacity(), 0U);
+  EXPECT_FALSE(state.Init(/*parallel=*/0));
+  EXPECT_EQ(state.capacity(), 0U);
+}
+
+TEST(LeadLagFeedbackStateTest, ReusedSlotRequiresMatchingGroupId) {
+  leadlag::ExecutionState state;
+  ASSERT_TRUE(state.Init(/*parallel=*/2));
+  leadlag::ExecutionGroup* first = state.StartOpenGroup();
+  ASSERT_NE(first, nullptr);
+  const std::uint64_t first_group_id = first->group_id;
+  const std::uint16_t first_group_index = first->group_index;
+  ASSERT_TRUE(state.ClearGroupById(first_group_id));
+
+  leadlag::ExecutionGroup* second = state.StartOpenGroup();
+
+  ASSERT_NE(second, nullptr);
+  EXPECT_EQ(second->group_index, first_group_index);
+  EXPECT_NE(second->group_id, first_group_id);
+  EXPECT_EQ(state.GroupAt(first_group_index, first_group_id), nullptr);
+  EXPECT_EQ(state.GroupAt(first_group_index, second->group_id), second);
+}
+
+TEST(LeadLagFeedbackStateTest, MismatchedTerminalOrderDoesNotMutateReusedSlot) {
+  leadlag::ExecutionState state;
+  ASSERT_TRUE(state.Init(/*parallel=*/2));
+  const leadlag::ExecutionGroup* first = state.StartOpenOrder(31);
+  ASSERT_NE(first, nullptr);
+  aquila::core::StrategyOrder stale =
+      Order(31, aquila::OrderSide::kBuy, 1, 100.0);
+  StampOrderGroup(*first, &stale);
+  const std::uint64_t first_group_id = first->group_id;
+  ASSERT_TRUE(state.ClearGroupById(first_group_id));
+  leadlag::ExecutionGroup* second = state.StartOpenOrder(32);
+  ASSERT_NE(second, nullptr);
+  ASSERT_EQ(second->group_index, stale.group_index);
+
+  const leadlag::ExecutionApplyResult result =
+      state.ApplyTerminalOrder(stale, Instrument());
+
+  EXPECT_EQ(result, leadlag::ExecutionApplyResult::kIgnoredGroupMismatch);
+  EXPECT_EQ(state.FindGroupById(second->group_id), second);
+  EXPECT_EQ(second->pending_order_count, 1U);
+  EXPECT_EQ(second->pending_local_order_ids[0], 32U);
+}
+
+TEST(LeadLagFeedbackStateTest, ParallelGroupsApplyTerminalOrdersIndependently) {
+  leadlag::ExecutionState state;
+  ASSERT_TRUE(state.Init(/*parallel=*/2));
+  const leadlag::ExecutionGroup* first = state.StartOpenOrder(41);
+  const leadlag::ExecutionGroup* second = state.StartOpenOrder(42);
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+  const std::uint64_t first_group_id = first->group_id;
+  const std::uint64_t second_group_id = second->group_id;
+  aquila::core::StrategyOrder second_rejected =
+      Order(42, aquila::OrderSide::kBuy, 0, 0.0);
+  second_rejected.status = aquila::core::OrderStatus::kRejected;
+  StampOrderGroup(*second, &second_rejected);
+
+  EXPECT_EQ(state.ApplyTerminalOrder(second_rejected, Instrument()),
+            leadlag::ExecutionApplyResult::kAppliedDeleted);
+  EXPECT_NE(state.FindGroupById(first_group_id), nullptr);
+  EXPECT_EQ(state.FindGroupById(second_group_id), nullptr);
+
+  aquila::core::StrategyOrder first_filled =
+      Order(41, aquila::OrderSide::kBuy, 2, 100.0);
+  StampOrderGroup(*state.FindGroupById(first_group_id), &first_filled);
+  EXPECT_EQ(state.ApplyTerminalOrder(first_filled, Instrument()),
+            leadlag::ExecutionApplyResult::kAppliedHold);
+  ASSERT_NE(state.FindGroupById(first_group_id), nullptr);
+  EXPECT_DOUBLE_EQ(
+      state.FindGroupById(first_group_id)->signed_position_quantity, 2.0);
 }
 
 TEST(LeadLagFeedbackStateTest, FeedbackContinuityLostPausesNewOpens) {

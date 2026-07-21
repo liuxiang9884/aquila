@@ -120,6 +120,10 @@ struct StrategyOrder {
   }
 };
 
+struct OrderLocalMetadata {
+  std::uint16_t group_index{kInvalidOrderGroupIndex};
+};
+
 struct StrategyFeedbackStats {
   std::uint64_t unknown_local_order_feedbacks{0};
   std::uint64_t duplicate_or_stale_feedbacks{0};

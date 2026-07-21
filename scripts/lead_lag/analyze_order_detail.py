@@ -60,7 +60,7 @@ ORDER_FEEDBACK_ID_PREFIX_BY_KIND = {
 ORDER_DETAIL_FIELDS = [
     "run_id",
     "local_order_id",
-    "parent_id",
+    "group_id",
     "route_id",
     "text_order_id",
     "request_sequence",
@@ -237,7 +237,7 @@ LATENCY_DETAIL_FIELDS = [
     "run_id",
     "latency_key",
     "local_order_id",
-    "parent_id",
+    "group_id",
     "route_id",
     "exchange_order_id",
     "symbol",
@@ -557,7 +557,7 @@ def choose_nonzero(*values: str | None) -> str:
 def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     copy_fields = {
         "local_order_id",
-        "parent_id",
+        "group_id",
         "route_id",
         "trigger_exchange",
         "trigger_symbol_id",
@@ -601,7 +601,7 @@ def merge_submitted(order: dict[str, str], fields: dict[str, str]) -> None:
     for key in copy_fields:
         if key in fields:
             order[key] = fields[key]
-    order["source_schema"] = "submitted_v1"
+    order["source_schema"] = "submitted_v2"
 
 
 def merge_intent_rejected(order: dict[str, str], fields: dict[str, str]) -> None:
@@ -656,7 +656,7 @@ def merge_intent_rejected(order: dict[str, str], fields: dict[str, str]) -> None
 
 def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order["local_order_id"] = fields.get("local_order_id", order.get("local_order_id", ""))
-    for key in ("parent_id", "route_id"):
+    for key in ("group_id", "route_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     order["request_sequence"] = fields.get("request_sequence", "")
@@ -721,7 +721,7 @@ def merge_tcp_info(order: dict[str, str], fields: dict[str, str]) -> None:
 
 
 def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id", "order_session_id", "ack_cpu"):
+    for key in ("group_id", "route_id", "order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     merge_tcp_info(order, fields)
@@ -753,7 +753,7 @@ def merge_ack(order: dict[str, str], fields: dict[str, str]) -> None:
 def merge_strategy_order_response_context(
     order: dict[str, str], fields: dict[str, str]
 ) -> None:
-    for key in ("parent_id", "route_id"):
+    for key in ("group_id", "route_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     prefix = ORDER_RESPONSE_ID_PREFIX_BY_KIND.get(fields.get("kind", ""))
@@ -775,7 +775,7 @@ def merge_stage_book_ticker_ids(
 
 
 def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id", "order_session_id", "ack_cpu"):
+    for key in ("group_id", "route_id", "order_session_id", "ack_cpu"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     merge_tcp_info(order, fields)
@@ -795,7 +795,7 @@ def merge_submit_response(order: dict[str, str], fields: dict[str, str]) -> None
 
 
 def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id", "order_session_id"):
+    for key in ("group_id", "route_id", "order_session_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     append_unique_text(order, "diagnostic_cpu", fields.get("diagnostic_cpu"))
@@ -873,7 +873,7 @@ def merge_latency_diagnostic(order: dict[str, str], fields: dict[str, str]) -> N
 
 
 def merge_feedback(order: dict[str, str], fields: dict[str, str]) -> None:
-    for key in ("parent_id", "route_id"):
+    for key in ("group_id", "route_id"):
         if fields.get(key) not in (None, ""):
             order[key] = fields[key]
     order["exchange_order_id"] = choose_nonzero(
@@ -912,7 +912,7 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
     for key in (
         "symbol_id",
         "symbol",
-        "parent_id",
+        "group_id",
         "route_id",
         "status",
         "reduce_only",
@@ -1162,7 +1162,7 @@ def analyze_order_detail(
                     merge_session_connected(session, fields)
             elif tag == "lead_lag_order_submitted":
                 local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
+                if local_order_id == "" or fields.get("group_id", "") == "":
                     continue
                 order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
                 merge_submitted(order, fields)
@@ -1789,7 +1789,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "run_id": order.get("run_id", ""),
             "latency_key": f"{order.get('run_id', '')}:{local_order_id}",
             "local_order_id": local_order_id,
-            "parent_id": order.get("parent_id", ""),
+            "group_id": order.get("group_id", ""),
             "route_id": order.get("route_id", ""),
             "exchange_order_id": order.get("exchange_order_id", ""),
             "symbol": order.get("symbol", ""),

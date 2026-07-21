@@ -110,16 +110,23 @@ class SignalEngine {
       const PairConfig& pair, const ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold,
       const AlignmentSnapshot& /*alignment*/) noexcept {
-    for (const ExecutionGroup& group : execution.groups()) {
+    SignalDecision close_result;
+    execution.ForEachActiveGroup([&](const ExecutionGroup& group) noexcept {
+      if (close_result.triggered) {
+        return;
+      }
       if (!group.can_submit_exit()) {
-        continue;
+        return;
       }
       SignalDecision close =
           group.long_position() ? TryCloseLong(pair, group, market, threshold)
                                 : TryCloseShort(pair, group, market, threshold);
       if (close.triggered) {
-        return close;
+        close_result = close;
       }
+    });
+    if (close_result.triggered) {
+      return close_result;
     }
     if (execution.new_entries_paused()) {
       return Reject(SignalRejectReason::kDegraded);
@@ -134,24 +141,29 @@ class SignalEngine {
   [[nodiscard]] static SignalDecision OnLagTick(
       const PairConfig& pair, ExecutionState& execution,
       const SignalMarket& market, const ThresholdSnapshot& threshold) noexcept {
-    for (ExecutionGroup& group : execution.mutable_groups()) {
+    SignalDecision result;
+    execution.ForEachMutableActiveGroup([&](ExecutionGroup& group) noexcept {
+      if (result.triggered) {
+        return;
+      }
       if (!group.can_submit_exit()) {
-        continue;
+        return;
       }
       SignalDecision stoploss = group.long_position()
                                     ? TryStoplossLong(pair, &group, market)
                                     : TryStoplossShort(pair, &group, market);
       if (stoploss.triggered) {
-        return stoploss;
+        result = stoploss;
+        return;
       }
       SignalDecision close =
           group.long_position() ? TryCloseLong(pair, group, market, threshold)
                                 : TryCloseShort(pair, group, market, threshold);
       if (close.triggered) {
-        return close;
+        result = close;
       }
-    }
-    return {};
+    });
+    return result;
   }
 
  private:

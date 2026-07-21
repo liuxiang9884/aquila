@@ -14,8 +14,8 @@
   `X-Gate-Size-Decimal: 1` 时把 JSON `size` 编码为 string。
 - `OrderFeedbackSession`：账号级 private `futures.orders`、feedback SHM lane、累计生命周期事实和 `kContinuityLost`。
 - `TradingRuntime`：owner thread 驱动 `OrderSession`，drain response/feedback，并在 ready 后 poll `DataReader`。
-- 多路交易：单进程 `MultiOrderSessionGateway` baseline，以及独立 `order-gateway-process` + SHM V3 + N 个 worker。
-- LeadLag：支持 `order_gateway` backend、运行时 fanout 和 execution-group `parent_id`。
+- 多路交易：单进程 `MultiOrderSessionGateway` baseline，以及独立 `order-gateway-process` + SHM v4 + N 个 worker。
+- LeadLag：支持 `order_gateway` backend、运行时 fanout 和稳定的 execution `group_id`；`group_index` 只在策略进程内定位 fixed slot。
 
 单路链路已有真实 open/close 与 unfilled-cancel smoke。多路 order-gateway-process 已通过 unit、SHM integration、
 validate-only 和 benchmark，但尚未发送真实订单，不宣称 fillability 或 latency 收益。
@@ -120,8 +120,8 @@ payload。place payload 是完整 `OrderPlaceRequest`，cancel payload 是最小
 `OrderCancelRequest`，cache/forget payload 只携带 local/exchange order id 与 route。
 
 Command kind 为 place、cancel、cache exchange id、forget exchange id 和 stop。每个 child 有唯一 `local_order_id`；同一
-execution group/position lifecycle 的 open、close、stoploss 和 retry 可以共享 `parent_id`。SHM v4 在 place/cancel 和
-response event 中额外传播 `group_id`，供 strategy execution group 做稳定归因；`parent_id` 继续保留为通用 gateway
+execution group/position lifecycle 的 open、close、stoploss、retry 和 fanout child 共享 `group_id`。SHM v4 在
+place/cancel 和 response event 中传播该字段，供 strategy execution group 做稳定归因；`parent_id` 继续保留为通用 gateway
 correlation 字段，不等价于 LeadLag 的稳定 group identity。
 
 ### Event
@@ -147,7 +147,8 @@ SHM v4 没有 heartbeat/owner-death protocol。Gateway `SIGKILL` 或 crash 后 h
 ## Strategy fanout 与故障语义
 
 `order_session_fanout` 表示一次 signal 最多向多少条 ready route 发送 full-size duplicate child。V1 固定 route 顺序，
-跳过 not-ready route，不做 RTT 动态选路。每个 child 订单字段相同、`parent_id` 相同、`local_order_id/route_id` 不同；
+跳过 not-ready route，不做 RTT 动态选路。每个 child 的 `group_id` 相同、`local_order_id/route_id` 不同；generic
+`parent_id` 也可用于 gateway correlation，但不作为 LeadLag report identity；
 整个 execution group 只占一个 parallel slot。
 
 Gateway 不解释 duplicate/split、winner、overfill 或非赢家 cancel。Open 的已知累计成交合并成 position；close/stoploss/retry

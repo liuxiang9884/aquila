@@ -146,7 +146,7 @@ struct StrategyOrderIntentRejectedLogRecordForTest {
 
 struct StrategyOrderSubmittedLogRecordForTest {
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint16_t route_id{core::kAutoGatewayRoute};
   Exchange trigger_exchange{Exchange::kGate};
   std::int32_t trigger_symbol_id{0};
@@ -190,7 +190,7 @@ struct StrategyOrderSubmittedLogRecordForTest {
 
 struct StrategyOrderFinishedLogRecordForTest {
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint16_t route_id{core::kAutoGatewayRoute};
   std::uint64_t position_id{0};
   PositionDirection position_direction{};
@@ -204,7 +204,7 @@ struct StrategyOrderFinishedLogRecordForTest {
 struct StrategyOrderResponseLogRecordForTest {
   core::OrderResponseKind kind{core::OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint16_t route_id{core::kAutoGatewayRoute};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};
@@ -216,7 +216,7 @@ struct StrategyOrderResponseLogRecordForTest {
 struct StrategyOrderFeedbackLogRecordForTest {
   OrderFeedbackKind kind{OrderFeedbackKind::kAccepted};
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint16_t route_id{core::kAutoGatewayRoute};
   std::int64_t lead_exchange_ns{0};
   std::int64_t lag_exchange_ns{0};

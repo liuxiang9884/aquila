@@ -373,6 +373,31 @@ TEST(LeadLagSignalTest, LeadTickClosesHoldBeforeOpeningNewGroup) {
   EXPECT_EQ(execution.active_group_count(), 1U);
 }
 
+TEST(LeadLagSignalTest, LeadTickStillClosesHoldWhileEntriesArePaused) {
+  const leadlag::PairConfig pair = PairConfigForSignal();
+  leadlag::ExecutionState execution;
+  execution.Init(pair.execute.parallel);
+  ASSERT_NE(execution.AddHoldGroup(/*signed_position_quantity=*/1,
+                                   /*trailing_price=*/100.0),
+            nullptr);
+  execution.MarkNeedsReconcile();
+  leadlag::SignalMarket market = OpenLongMarket();
+  market.lead.bid_price = 100.0;
+  market.lag.bid_price = 101.0;
+
+  const leadlag::SignalDecision decision = leadlag::SignalEngine::OnLeadTick(
+      pair, execution, market, ThresholdForSignal(),
+      leadlag::AlignmentSnapshot{
+          .drift_ready = true,
+          .drift_deviation = 0.0,
+      });
+
+  ASSERT_TRUE(decision.triggered);
+  EXPECT_EQ(decision.action, leadlag::SignalAction::kCloseLong);
+  EXPECT_TRUE(decision.intent.reduce_only);
+  EXPECT_TRUE(execution.new_entries_paused());
+}
+
 TEST(LeadLagSignalTest, LeadTickAllowsOpenWhenAlignmentDriftIsHigh) {
   const leadlag::PairConfig pair = PairConfigForSignal();
   leadlag::ExecutionState execution;
