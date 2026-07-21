@@ -72,8 +72,8 @@ quiescence 虚假失败。独立 PID 扫描和 production REST dry-run 证明账
 `bitget_lead_lag_top20_highspeed_20260715T154837Z` 完成 20-symbol、`fanout=1/parallel=1`、10 小时
 signal-conditioned LeadLag：644 个 signal、211 个 submitted order、21 个成交 entry 与 21 个完整 exit，
 无 unknown/continuity/reconcile，quiescence 与 final REST flat 均通过。该 run 的实际净 PnL 为
-`-0.03536520 USDT`，详细证据见
-`reports/bitget_lead_lag_top20_highspeed_20260715T154837Z/analysis_report.md`。这些结果不能外推到四路
+`-0.03536520 USDT`。原始 report 已按 2026-07-21 的历史报告与 bin 数据清理要求删除，本节只保留验证摘要和边界。
+这些结果不能外推到四路
 fanout、未来 fillability、长期稳定性或相对 endpoint 收益；四路当前只有代码、自动测试和 CLI validate-only 证据。
 
 `OrderSession` 的 direct operation response 只表示请求的直接响应：

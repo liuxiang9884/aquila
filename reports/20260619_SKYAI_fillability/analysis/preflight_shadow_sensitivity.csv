@@ -1,9 +1,0 @@
-buffer_percentile,buffer_pct,sample_type,count,reference_offset_ticks_p50,reference_offset_ticks_p95,signal_reference_any,signal_reference_any_denom,x_in_reference_any,x_in_reference_any_denom,x_out_reference_any,x_out_reference_any_denom,reference_lifetime_any,reference_lifetime_any_denom,reference_lifetime_us_p50,reference_lifetime_us_p95,reference_lifetime_us_max
-50,0.00046693515438,cancel_open_no_fill,93,17,17,93,93,73,93,57,93,93,93,0,8821.6,175152
-50,0.00046693515438,filled_open_control,8,17,17,8,8,8,8,8,8,8,8,3173.5,10135.5,12498
-95,0.0010557461766,cancel_open_no_fill,93,38,39,93,93,84,93,74,93,93,93,1171,20472.6,175152
-95,0.0010557461766,filled_open_control,8,37,37.65,8,8,8,8,8,8,8,8,3855.5,11480.2,12498
-99,0.00150260789189,cancel_open_no_fill,93,54,55,93,93,89,93,81,93,93,93,2151,21139.8,175152
-99,0.00150260789189,filled_open_control,8,52,53,8,8,8,8,8,8,8,8,3855.5,11480.2,12498
-100,0.00979117687733,cancel_open_no_fill,93,348,355,93,93,93,93,93,93,93,93,4055,23436,175152
-100,0.00979117687733,filled_open_control,8,336.5,342.6,8,8,8,8,8,8,8,8,3855.5,11480.2,12498
