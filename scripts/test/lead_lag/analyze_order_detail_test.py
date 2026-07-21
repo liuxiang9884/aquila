@@ -60,7 +60,128 @@ def write_catalog(path: Path) -> None:
     )
 
 
+def write_bitget_config(path: Path) -> None:
+    write_file(
+        path,
+        """
+        [lead_lag]
+        name = "lead_lag"
+        version = "1.0"
+
+        [[lead_lag.pairs]]
+        symbol = "ALLO_USDT"
+        symbol_id = 25
+        lead_exchange = "binance"
+        lag_exchange = "bitget"
+        lag_taker_fee = 0.0002
+
+        [lead_lag.pairs.execute]
+        open_notional = 10.0
+        trailing_stop = 0.01
+        open_slippage_ticks = 8
+        close_slippage_ticks = 8
+        stoploss_slippage_ticks = 20
+        close_retry_times = 2
+        close_retry_slippage_step_ticks = 8
+        """,
+    )
+
+
+def write_multi_exchange_catalog(path: Path) -> None:
+    path.write_text(
+        "symbol_id,symbol,exchange,exchange_symbol,base_asset,quote_asset,"
+        "settle_asset,product_type,status,contract_type,price_tick,"
+        "price_decimal_places,quantity_step,quantity_decimal_places,"
+        "min_quantity,max_quantity,max_market_quantity,min_notional,"
+        "notional_multiplier,contract_multiplier,price_limit_up,"
+        "price_limit_down,market_price_bound\n"
+        "25,ALLO_USDT,gate,ALLO_USDT,ALLO,USDT,USDT,linear_perpetual,"
+        "TRADING,direct,0.00001,5,1.0,0,1.0,600000,400000,,10.0,10.0,"
+        "0.1,0.1,0.025\n"
+        "25,ALLO_USDT,bitget,ALLOUSDT,ALLO,USDT,USDT,linear_perpetual,"
+        "online,perpetual,0.00001,5,1.0,0,1.0,1100000,170000,5.0,1.0,"
+        "1.0,0.15,0.15,\n",
+        encoding="utf-8",
+    )
+
+
 class AnalyzeOrderDetailTest(unittest.TestCase):
+    def test_bitget_catalog_supports_strategy_and_exchange_symbol_aliases(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            catalog_path = Path(temp_dir) / "catalog.csv"
+            write_multi_exchange_catalog(catalog_path)
+
+            instruments = orders.load_instrument_catalog(
+                catalog_path, exchange="bitget"
+            )
+
+        self.assertEqual(instruments["ALLO_USDT"]["contract_multiplier"], "1.0")
+        self.assertEqual(instruments["ALLOUSDT"]["contract_multiplier"], "1.0")
+        self.assertEqual(instruments["ALLOUSDT"]["price_tick"], "0.00001")
+
+    def test_merges_bitget_gateway_feedback_and_late_ack_from_separate_logs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            strategy_log = base / "strategy.log"
+            gateway_log = base / "gateway.log"
+            feedback_log = base / "feedback.log"
+            config_path = base / "strategy.toml"
+            catalog_path = base / "catalog.csv"
+            write_bitget_config(config_path)
+            write_multi_exchange_catalog(catalog_path)
+            write_file(
+                strategy_log,
+                """
+                I2026-07-20 16:37:14.241223501 1:1 strategy.h:LogStrategyOrderSubmitted:390] lead_lag_order_submitted local_order_id=432345564227567617 parent_id=1 route_id=0 trigger_exchange=kBinance trigger_symbol_id=25 trigger_exchange_ns=1784565434240000000 trigger_local_ns=1784565434241210884 on_book_ticker_entry_ns=1784565434241211810 signal_decision_ns=1784565434241212771 lead_exchange_ns=1784565434240000000 lead_local_ns=1784565434241210884 signal_lead_id=11092224700137 lead_freshness_ns=1212771 lag_exchange_ns=1784565434233000000 lag_local_ns=1784565434233965440 signal_lag_id=427561015091 lag_freshness_ns=8212771 max_lead_freshness_ns=3000000 max_lag_freshness_ns=500000000 freshness_guard_pass=true freshness_reject_reason=- symbol=ALLOUSDT symbol_id=25 signal_role=kLead order_role=entry action=kOpenLong side=kBuy reduce_only=false position_id=1 position_event=kEntrySubmit position_direction=kLong entry_local_order_id=432345564227567617 quantity=20 raw_price=0.48834 order_price=0.48842 slippage_ticks=8 price_tick=0.00001 target_open_notional=10 estimated_notional=9.7684 active_groups=1 place_status=kOk
+                I2026-07-20 16:37:14.261971994 1:1 strategy.h:LogStrategyOrderFeedback:582] lead_lag_order_feedback kind=kCancelled local_order_id=432345564227567617 parent_id=1 route_id=0 exchange_order_id=1463138967177801733 cumulative_filled_quantity=0 left_quantity=20 cancelled_quantity=20 fill_price=0 role=kNone finish_reason=kImmediateOrCancel reject_reason=kUnknown exchange_update_ns=1784565434261000000 local_receive_ns=1784565434261959456 lead_exchange_ns=1784565434260000000 lag_exchange_ns=1784565434260000000 cancelled_lead_id=11092224702816 cancelled_lag_id=427561016251
+                I2026-07-20 16:37:14.261973319 1:1 strategy.h:LogStrategyOrderFinished:681] lead_lag_order_finished local_order_id=432345564227567617 parent_id=1 route_id=0 symbol_id=25 symbol=ALLOUSDT status=kCancelled reduce_only=false position_id=1 position_direction=kLong order_role=entry entry_local_order_id=432345564227567617 order_finished_local_ns=1784565434261973115 quantity=20 cumulative_filled_quantity=0 average_fill_price=0 last_fill_price=0 exchange_order_id=1463138967177801733 active_groups=0 request_send_local_ns=1784565434241221520 ack_local_receive_ns=0 response_local_receive_ns=0 ack_exchange_ns=0 response_exchange_ns=0 accepted_exchange_ns=0 finish_exchange_ns=1784565434261000000 ack_rtt_ns=0 response_rtt_ns=0 ack_exchange_to_local_ns=0 response_exchange_to_local_ns=0 exchange_lifecycle_ns=0 lead_exchange_ns=1784565434260000000 lag_exchange_ns=1784565434260000000
+                """,
+            )
+            write_file(
+                gateway_log,
+                """
+                I2026-07-20 16:37:14.241236349 2:2 order_session.h:LogOrderSend:855] bitget_order_send request_type=kPlaceOrder request_sequence=1 local_order_id=432345564227567617 request_send_local_ns=1784565434241228182 request_send_monotonic_ns=11764488381693989 order_encode_done_realtime_ns=1784565434241228143 inflight=1
+                I2026-07-20 16:37:14.261843452 2:2 order_session.h:LogOrderResponse:871] bitget_order_response response_kind=kAck request_type=kPlaceOrder request_sequence=1 local_order_id=432345564227567617 exchange_order_id=1463138967177801733 error_code=0 request_send_local_ns=1784565434241228182 local_receive_ns=1784565434261833430 exchange_ns=1784565434261000000 ack_rtt_ns=20605248 connection_id_hash=16228680375236014991 request_send_realtime_ns=1784565434241228182 request_send_monotonic_ns=11764488381693989 write_complete_realtime_ns=1784565434241235858 write_complete_monotonic_ns=11764488381701548 ack_receive_realtime_ns=1784565434261833430 ack_receive_monotonic_ns=11764488402299108 ack_rtt_monotonic_ns=20605119 write_complete_to_ack_monotonic_ns=20597560 place_creation_time_ms=1784565434259 exchange_message_time_ms=1784565434261
+                """,
+            )
+            write_file(
+                feedback_log,
+                """
+                I2026-07-20 16:37:14.261968699 3:3 order_feedback_session.h:LogOrderProtocolUpdate:972] bitget_order_feedback_protocol_update topic=order connection_generation=1 local_message_sequence=10 batch_data_index=0 client_oid=a-432345564227567617 order_id=1463138967177801733 order_status=cancelled cancel_reason=ioc_not_full_cancel exchange_message_time_ms=1784565434261 created_time_ms=1784565434259 updated_time_ms=1784565434261 local_receive_realtime_ns=1784565434261959456 local_receive_monotonic_ns=11764488402425136
+                """,
+            )
+
+            result = orders.analyze_order_detail(
+                strategy_log,
+                additional_log_paths=[gateway_log, feedback_log],
+                config_path=config_path,
+                instrument_catalog_path=catalog_path,
+                exchange="bitget",
+                run_id="bitget-run",
+            )
+            latency_rows = orders.build_latency_detail_rows(result.rows)
+
+        self.assertEqual(len(result.rows), 1)
+        row = result.rows[0]
+        self.assertEqual(row["exchange"], "bitget")
+        self.assertEqual(row["contract_multiplier"], "1.0")
+        self.assertEqual(row["fee_rate_config"], "0.0002")
+        self.assertEqual(row["request_sequence"], "1")
+        self.assertEqual(row["request_send_local_ns"], "1784565434241228182")
+        self.assertEqual(row["ack_local_receive_ns"], "1784565434261833430")
+        self.assertEqual(row["ack_rtt_ns"], "20605248")
+        self.assertEqual(row["place_creation_exchange_ns"], "1784565434259000000")
+        self.assertEqual(row["ack_exchange_ns"], "1784565434261000000")
+        self.assertEqual(row["write_complete_local_ns"], "1784565434241235858")
+        self.assertEqual(row["cancel_reason"], "ioc_not_full_cancel")
+        self.assertEqual(row["feedback_created_exchange_ns"], "1784565434259000000")
+        self.assertEqual(row["feedback_updated_exchange_ns"], "1784565434261000000")
+        self.assertEqual(row["feedback_local_receive_ns"], "1784565434261959456")
+        self.assertEqual(row["status"], "kCancelled")
+        self.assertEqual(len(latency_rows), 1)
+        self.assertEqual(latency_rows[0]["send_to_write_complete_local_ns"], "7676")
+        self.assertEqual(latency_rows[0]["bitget_creation_to_terminal_ns"], "2000000")
+
     def test_catalog_contract_multiplier_overrides_notional_multiplier(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
