@@ -185,6 +185,7 @@ class GenerateLiveReportTest(unittest.TestCase):
         self.assertEqual(fillability_rows, [])
         self.assertIn("- exchange: `bitget`", report_text)
         self.assertIn("## Fast-fill 成交对账", report_text)
+        self.assertIn("### Notional-weighted slippage", report_text)
         self.assertIn("- authoritative filled orders: `1`", report_text)
         self.assertIn("- filled orders missing fast-fill: `0`", report_text)
         self.assertIn("- REST execPnl: `0.12 USDT`", report_text)

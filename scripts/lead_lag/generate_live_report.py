@@ -622,6 +622,35 @@ def slippage_summary_row(label: str, rows: list[dict[str, str]]) -> list[str]:
     ]
 
 
+def slippage_bps_summary_row(
+    label: str, rows: list[dict[str, str]]
+) -> list[str]:
+    samples: list[tuple[Decimal, Decimal]] = []
+    for row in rows:
+        bps = parse_decimal(row.get("exec_slippage_bps"))
+        notional = parse_decimal(row.get("filled_notional"))
+        if bps is None or notional is None or notional <= 0:
+            continue
+        samples.append((bps, notional))
+    if not samples:
+        return [label, "0", "", "", "", "", "", ""]
+    values = [bps for bps, _ in samples]
+    total_notional = sum(notional for _, notional in samples)
+    weighted_bps = (
+        sum(bps * notional for bps, notional in samples) / total_notional
+    )
+    return [
+        label,
+        str(len(samples)),
+        format_decimal(total_notional),
+        format_decimal_rounded(weighted_bps),
+        format_decimal_rounded(decimal_percentile_nearest(values, 1, 2)),
+        format_decimal_rounded(decimal_percentile_nearest(values, 95, 100)),
+        format_decimal_rounded(min(values)),
+        format_decimal_rounded(max(values)),
+    ]
+
+
 def load_guard_summary(path: Path | None) -> dict | None:
     if path is None:
         return None
@@ -1008,6 +1037,31 @@ def write_markdown_report(
             ],
         )
         lines.append("")
+        if exchange == "bitget":
+            lines += [
+                "### Notional-weighted slippage",
+                "",
+                "跨 symbol 总览使用 `filled_notional` 加权的 `exec_slippage_bps`；p50/p95/min/max 是逐订单 bps 分布。ticks 只适合单 symbol 或相同 tick 规则下比较。",
+                "",
+            ]
+            lines += markdown_table(
+                [
+                    "scope",
+                    "filled_orders",
+                    "filled_notional",
+                    "weighted_bps",
+                    "p50_bps",
+                    "p95_bps",
+                    "min_bps",
+                    "max_bps",
+                ],
+                [
+                    slippage_bps_summary_row("all filled", filled_order_rows),
+                    slippage_bps_summary_row("entry", entry_filled_rows),
+                    slippage_bps_summary_row("exit", exit_filled_rows),
+                ],
+            )
+            lines.append("")
     if exchange == "bitget":
         lines += ["## Fast-fill 成交对账", ""]
         if rest_fills_path is not None:
