@@ -73,6 +73,18 @@ parent P50 的组间 MAD 为 21ns，P50 收益超过 `2 × MAD`，也超过 2% /
 `lead_lag_order_intent_rejected`、recovery 和 report 事实源保持不变；strategy 与 report
 回归测试通过。
 
+两个 software prefetch 候选使用日志删除后的固定 binary 作为 parent，分别重新跑五组
+paired endpoint-only A/B，均回退，因此没有进入生产代码：
+
+| 候选 | Parent P50 | Candidate P50 | P50 方向 | Parent P95 | Candidate P95 | 结论 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| triggered 后预取 reservation bitset / slot | 4.193us | 4.282us | 5/5 回退 | 5.621us | 5.905us | 拒绝 |
+| global-risk scan 对后续 runtime 做 distance=4 prefetch | 4.128us | 4.425us | 5/5 回退 | 5.580us | 5.788us | 拒绝 |
+
+不同候选的 parent 来自各自同轮 paired groups，绝对值不能跨轮直接比较；同轮方向足以证明
+额外 prefetch 指令 / cache 干扰没有换来 endpoint 收益。没有继续盲调其他 distance，也没有
+引入增量 risk totals。
+
 完整 stage case 的 cold INFO P50 分段如下。各 counter 独立取 P50，不能机械相加成总
 P50，但可以用于成本排序：
 
@@ -110,7 +122,9 @@ P50，但可以用于成本排序：
 原始 breakdown JSON 位于
 `/home/liuxiang/tmp/lead_lag_cold_submit_breakdown_20260722_1024/`；日志删除的 fresh paired
 JSON 位于
-`/home/liuxiang/tmp/lead_lag_submit_log_risk_prefetch_20260722/intent_removal/`。运行入口是
+`/home/liuxiang/tmp/lead_lag_submit_log_risk_prefetch_20260722/intent_removal/`；失败的
+prefetch 候选证据分别位于同一根目录下的 `risk_reservation_prefetch/` 和
+`risk_runtime_prefetch_distance4/`。运行入口是
 `BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Churn`、`Warm` 和
 `EndpointOnly`；`AQUILA_LEAD_LAG_BENCHMARK_LOG_LEVEL=critical` 用于 INFO 关闭对照。
 
