@@ -50,7 +50,7 @@ wss://vip-ws-uta-pub-a.bitget.com:443/v3/ws/public/sbe
 
 批量订阅时多个 symbol 作为同一个 `args` array 发送。取消订阅只把 `op` 改为
 `unsubscribe`。仓库示例配置订阅 `BTCUSDT`、`ETHUSDT`、`SOLUSDT`，instrument catalog 使用
-`config/instruments/usdt_futures.csv` 中的 `Exchange::kBitget` 行。
+`config/instruments/usdt_future_universe.csv` 中的 `Exchange::kBitget` 行。
 
 ## 字段映射
 

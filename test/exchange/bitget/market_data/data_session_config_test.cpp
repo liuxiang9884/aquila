@@ -17,7 +17,7 @@ std::string BaseToml(std::string_view feeds) {
   return std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} +
-         SourcePath("config/instruments/usdt_futures.csv").string() +
+         SourcePath("config/instruments/usdt_future_universe.csv").string() +
          R"toml("
 schema = "aquila.instrument.v1"
 
@@ -72,8 +72,8 @@ TEST(BitgetDataSessionConfigTest, ParsesBookTickerConfig) {
   EXPECT_EQ(config.exchange_symbols[0], "BTCUSDT");
   EXPECT_EQ(config.exchange_symbols[1], "ETHUSDT");
   ASSERT_EQ(config.symbol_ids.size(), 2u);
-  EXPECT_EQ(config.symbol_ids[0], 0);
-  EXPECT_EQ(config.symbol_ids[1], 1);
+  EXPECT_EQ(config.symbol_ids[0], 93);
+  EXPECT_EQ(config.symbol_ids[1], 163);
 }
 
 TEST(BitgetDataSessionConfigTest, ParsesBookTickerAndTradeConfig) {
@@ -140,7 +140,7 @@ TEST(BitgetDataSessionConfigTest, RejectsDuplicateTradeFeeds) {
 TEST(BitgetDataSessionConfigTest, RejectsMissingSubscribeSymbols) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 

@@ -356,7 +356,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--instrument-catalog",
         type=Path,
-        default=Path("config/instruments/usdt_futures.csv"),
+        default=Path("config/instruments/usdt_future_universe.csv"),
     )
     parser.add_argument("--symbol", default="ORDI_USDT")
     parser.add_argument("--hdf-symbol", default=None)

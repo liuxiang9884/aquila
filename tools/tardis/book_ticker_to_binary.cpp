@@ -33,7 +33,7 @@ namespace tardis = aquila::tools::tardis;
 struct CliOptions {
   std::filesystem::path data_root = DefaultDataRoot();
   std::filesystem::path instrument_catalog{
-      "config/instruments/usdt_futures.csv"};
+      "config/instruments/usdt_future_universe.csv"};
   std::string symbol{"ORDI_USDT"};
   std::string start_date;
   std::string end_date;

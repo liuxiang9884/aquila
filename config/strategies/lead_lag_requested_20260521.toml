@@ -4,7 +4,7 @@ version = "1.0"
 
 [[lead_lag.pairs]]
 symbol = "PROVE_USDT"
-symbol_id = 4
+symbol_id = 338
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -55,7 +55,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ZEC_USDT"
-symbol_id = 6
+symbol_id = 480
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -106,7 +106,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ETC_USDT"
-symbol_id = 8
+symbol_id = 160
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -157,7 +157,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "DASH_USDT"
-symbol_id = 9
+symbol_id = 133
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -208,7 +208,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "SUI_USDT"
-symbol_id = 11
+symbol_id = 404
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -259,7 +259,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "INJ_USDT"
-symbol_id = 12
+symbol_id = 220
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -310,7 +310,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "ENA_USDT"
-symbol_id = 13
+symbol_id = 152
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016
@@ -361,7 +361,7 @@ drift_guard_window_capacity = 131072
 
 [[lead_lag.pairs]]
 symbol = "BRETT_USDT"
-symbol_id = 14
+symbol_id = 87
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016

@@ -90,8 +90,10 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   `docs/lead-lag-single-leg-exit-review`（`fa5d12f`，PR #10）。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
-- Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
-  `config/instruments/usdt_future_universe.csv`。旧 catalog 文件名不应用于新 run。
+- `config/instruments/` 只保留 `usdt_future_universe.csv`；所有 checked-in config、test 和 tool
+  统一引用该文件。新 run 必须使用它或 run-specific 冻结副本，不能混用不同
+  `symbol_id`/metadata；历史 run 仍只使用其 run directory 归档 catalog。2026-06-04 日期化配置
+  因当前 universe 不含 `TON_USDT` 已移除该 pair/订阅，`30symbols` 文件名只保留历史标签。
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。

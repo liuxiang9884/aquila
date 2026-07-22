@@ -56,7 +56,7 @@ void ExpectOptionalIntEq(const std::optional<std::int32_t>& actual,
 
 TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   const auto result = aquila::config::LoadInstrumentCatalogFromCsv(
-      SourcePath("config/instruments/usdt_futures.csv"));
+      SourcePath("config/instruments/usdt_future_universe.csv"));
 
   ASSERT_TRUE(result.ok) << result.error;
   const aquila::config::InstrumentCatalog& catalog = result.value;
@@ -64,27 +64,27 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   const aquila::config::InstrumentInfo* gate_btc =
       catalog.Find(aquila::Exchange::kGate, "BTC_USDT");
   ASSERT_NE(gate_btc, nullptr);
-  EXPECT_EQ(gate_btc->symbol_id, 0);
+  EXPECT_EQ(gate_btc->symbol_id, 93);
   EXPECT_EQ(gate_btc->symbol, "BTC_USDT");
   EXPECT_EQ(gate_btc->exchange_symbol, "BTC_USDT");
   EXPECT_EQ(gate_btc->base_asset, "BTC");
   EXPECT_EQ(gate_btc->quote_asset, "USDT");
   EXPECT_EQ(gate_btc->settle_asset, "USDT");
   EXPECT_EQ(gate_btc->product_type, "linear_perpetual");
-  EXPECT_EQ(gate_btc->status, "trading");
+  EXPECT_EQ(gate_btc->status, "TRADING");
   EXPECT_EQ(gate_btc->contract_type, "direct");
   EXPECT_DOUBLE_EQ(gate_btc->price_tick, 0.1);
   EXPECT_EQ(gate_btc->price_decimal_places, 1);
   ExpectOptionalDoubleEq(gate_btc->quantity_step, 1.0);
   ExpectOptionalIntEq(gate_btc->quantity_decimal_places, 0);
   EXPECT_DOUBLE_EQ(gate_btc->min_quantity, 1.0);
-  EXPECT_DOUBLE_EQ(gate_btc->max_quantity, 100000.0);
-  EXPECT_FALSE(gate_btc->max_market_quantity.has_value());
+  EXPECT_DOUBLE_EQ(gate_btc->max_quantity, 12000000.0);
+  ExpectOptionalDoubleEq(gate_btc->max_market_quantity, 10000000.0);
   EXPECT_FALSE(gate_btc->min_notional.has_value());
   EXPECT_DOUBLE_EQ(gate_btc->notional_multiplier, 0.0001);
-  ExpectOptionalDoubleEq(gate_btc->price_limit_up, 0.5);
-  ExpectOptionalDoubleEq(gate_btc->price_limit_down, 0.5);
-  EXPECT_FALSE(gate_btc->market_price_bound.has_value());
+  ExpectOptionalDoubleEq(gate_btc->price_limit_up, 0.03);
+  ExpectOptionalDoubleEq(gate_btc->price_limit_down, 0.03);
+  ExpectOptionalDoubleEq(gate_btc->market_price_bound, 0.01);
 
   const aquila::config::InstrumentInfo* gate_rave =
       catalog.Find(aquila::Exchange::kGate, "RAVE_USDT");
@@ -96,7 +96,7 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   const aquila::config::InstrumentInfo* gate_lab =
       catalog.Find(aquila::Exchange::kGate, "LAB_USDT");
   ASSERT_NE(gate_lab, nullptr);
-  EXPECT_EQ(gate_lab->symbol_id, 15);
+  EXPECT_EQ(gate_lab->symbol_id, 247);
   EXPECT_EQ(gate_lab->symbol, "LAB_USDT");
   EXPECT_EQ(gate_lab->exchange_symbol, "LAB_USDT");
   EXPECT_EQ(gate_lab->base_asset, "LAB");
@@ -114,14 +114,14 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   ExpectOptionalDoubleEq(gate_lab->max_market_quantity, 800.0);
   EXPECT_FALSE(gate_lab->min_notional.has_value());
   EXPECT_DOUBLE_EQ(gate_lab->notional_multiplier, 100.0);
-  ExpectOptionalDoubleEq(gate_lab->price_limit_up, 0.2);
-  ExpectOptionalDoubleEq(gate_lab->price_limit_down, 0.2);
-  ExpectOptionalDoubleEq(gate_lab->market_price_bound, 0.05);
+  ExpectOptionalDoubleEq(gate_lab->price_limit_up, 0.1);
+  ExpectOptionalDoubleEq(gate_lab->price_limit_down, 0.1);
+  ExpectOptionalDoubleEq(gate_lab->market_price_bound, 0.025);
 
   const aquila::config::InstrumentInfo* binance_btc =
       catalog.Find(aquila::Exchange::kBinance, "BTC_USDT");
   ASSERT_NE(binance_btc, nullptr);
-  EXPECT_EQ(binance_btc->symbol_id, 0);
+  EXPECT_EQ(binance_btc->symbol_id, 93);
   EXPECT_EQ(binance_btc->symbol, "BTC_USDT");
   EXPECT_EQ(binance_btc->exchange_symbol, "BTCUSDT");
   EXPECT_EQ(binance_btc->base_asset, "BTC");
@@ -137,7 +137,7 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   EXPECT_DOUBLE_EQ(binance_btc->min_quantity, 0.001);
   EXPECT_DOUBLE_EQ(binance_btc->max_quantity, 1000.0);
   ExpectOptionalDoubleEq(binance_btc->max_market_quantity, 120.0);
-  ExpectOptionalDoubleEq(binance_btc->min_notional, 100.0);
+  ExpectOptionalDoubleEq(binance_btc->min_notional, 50.0);
   EXPECT_DOUBLE_EQ(binance_btc->notional_multiplier, 1.0);
   ExpectOptionalDoubleEq(binance_btc->price_limit_up, 0.05);
   ExpectOptionalDoubleEq(binance_btc->price_limit_down, 0.05);
@@ -146,7 +146,7 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   const aquila::config::InstrumentInfo* binance_lab =
       catalog.Find(aquila::Exchange::kBinance, "LAB_USDT");
   ASSERT_NE(binance_lab, nullptr);
-  EXPECT_EQ(binance_lab->symbol_id, 15);
+  EXPECT_EQ(binance_lab->symbol_id, 247);
   EXPECT_EQ(binance_lab->symbol, "LAB_USDT");
   EXPECT_EQ(binance_lab->exchange_symbol, "LABUSDT");
   EXPECT_EQ(binance_lab->base_asset, "LAB");
@@ -155,8 +155,8 @@ TEST(DataSessionConfigTest, LoadsInstrumentCatalogLookupByExchangeAndSymbol) {
   EXPECT_EQ(binance_lab->product_type, "linear_perpetual");
   EXPECT_EQ(binance_lab->status, "TRADING");
   EXPECT_EQ(binance_lab->contract_type, "PERPETUAL");
-  EXPECT_DOUBLE_EQ(binance_lab->price_tick, 0.0001);
-  EXPECT_EQ(binance_lab->price_decimal_places, 4);
+  EXPECT_DOUBLE_EQ(binance_lab->price_tick, 0.001);
+  EXPECT_EQ(binance_lab->price_decimal_places, 3);
   ExpectOptionalDoubleEq(binance_lab->quantity_step, 1.0);
   ExpectOptionalIntEq(binance_lab->quantity_decimal_places, 0);
   EXPECT_DOUBLE_EQ(binance_lab->min_quantity, 1.0);
@@ -188,9 +188,9 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[1], "ETH_USDT");
   EXPECT_EQ(config.exchange_symbols[2], "SOL_USDT");
   ASSERT_EQ(config.symbol_ids.size(), 3u);
-  EXPECT_EQ(config.symbol_ids[0], 0);
-  EXPECT_EQ(config.symbol_ids[1], 1);
-  EXPECT_EQ(config.symbol_ids[2], 2);
+  EXPECT_EQ(config.symbol_ids[0], 93);
+  EXPECT_EQ(config.symbol_ids[1], 163);
+  EXPECT_EQ(config.symbol_ids[2], 384);
   EXPECT_TRUE(config.book_ticker_shm.enabled);
   EXPECT_EQ(config.book_ticker_shm.shm_name, "aquila_gate_market_data");
   EXPECT_EQ(config.book_ticker_shm.channel_name, "book_ticker_channel");
@@ -225,11 +225,11 @@ TEST(DataSessionConfigTest, LoadsReadyDataSessionConfig) {
       session.symbols();
   ASSERT_EQ(symbols.size(), 3u);
   EXPECT_EQ(symbols[0].exchange_symbol, "BTC_USDT");
-  EXPECT_EQ(symbols[0].symbol_id, 0);
+  EXPECT_EQ(symbols[0].symbol_id, 93);
   EXPECT_EQ(symbols[1].exchange_symbol, "ETH_USDT");
-  EXPECT_EQ(symbols[1].symbol_id, 1);
+  EXPECT_EQ(symbols[1].symbol_id, 163);
   EXPECT_EQ(symbols[2].exchange_symbol, "SOL_USDT");
-  EXPECT_EQ(symbols[2].symbol_id, 2);
+  EXPECT_EQ(symbols[2].symbol_id, 384);
 
   EXPECT_EQ(session.phase(), aquila::websocket::ConnectionPhase::kDisconnected);
   session.OnConnectionPhase(aquila::websocket::ConnectionPhase::kActive);
@@ -297,9 +297,9 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedGateDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[9], "ENA_USDT");
   EXPECT_EQ(config.exchange_symbols[10], "BRETT_USDT");
   EXPECT_EQ(config.exchange_symbols[11], "ETH_USDT");
-  EXPECT_EQ(config.symbol_ids[0], 4);
-  EXPECT_EQ(config.symbol_ids[10], 14);
-  EXPECT_EQ(config.symbol_ids[11], 1);
+  EXPECT_EQ(config.symbol_ids[0], 338);
+  EXPECT_EQ(config.symbol_ids[10], 87);
+  EXPECT_EQ(config.symbol_ids[11], 163);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_gate_market_data_requested_20260521");
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
@@ -324,7 +324,7 @@ TEST(DataSessionConfigTest,
   ASSERT_EQ(config.exchange_symbols.size(), 1u);
   EXPECT_EQ(config.exchange_symbols[0], "LAB_USDT");
   ASSERT_EQ(config.symbol_ids.size(), 1u);
-  EXPECT_EQ(config.symbol_ids[0], 15);
+  EXPECT_EQ(config.symbol_ids[0], 247);
   EXPECT_TRUE(config.book_ticker_shm.enabled);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_gate_market_data_lab_usdt_20260601");
@@ -365,13 +365,13 @@ TEST(DataSessionConfigTest, ParsesGateDataSessionFromAlreadyParsedToml) {
             "/v4/ws/usdt/sbe?sbe_schema_id=1");
   ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
   EXPECT_EQ(config_result.value.exchange_symbols[0], "BTC_USDT");
-  EXPECT_EQ(config_result.value.symbol_ids[0], 0);
+  EXPECT_EQ(config_result.value.symbol_ids[0], 93);
 }
 
 TEST(DataSessionConfigTest, ParsesGateDataShmSinkConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -414,7 +414,7 @@ remove_existing = false
 TEST(DataSessionConfigTest, ParsesGateFeedsAndTradeShmConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -459,7 +459,7 @@ remove_existing = false
 TEST(DataSessionConfigTest, RejectsGateDuplicateCombinedChannelNames) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -495,7 +495,7 @@ trade_channel_name = "same_channel"
 TEST(DataSessionConfigTest, RejectsNegativeGateSbeSchemaId) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -525,7 +525,7 @@ bind_cpu_id = 2
 TEST(DataSessionConfigTest, RejectsOutOfRangeGateSbeSchemaId) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -555,7 +555,7 @@ bind_cpu_id = 2
 TEST(DataSessionConfigTest, RejectsWrongTypeGateSettle) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -585,7 +585,7 @@ bind_cpu_id = 2
 TEST(DataSessionConfigTest, RejectsWrongTypeGateDataShmCreate) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -623,7 +623,7 @@ TEST(DataSessionConfigTest, RejectsWrongTypeGateDataShmSinkSection) {
 data_shm_sink = "bad"
 
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -653,7 +653,7 @@ bind_cpu_id = 2
 TEST(DataSessionConfigTest, RejectsWrongTypeGateDiagnosticSourceId) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -689,7 +689,7 @@ source_id = "7"
 TEST(DataSessionConfigTest, RejectsWrongTypeGateDiagnosticsLatencySection) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -723,7 +723,7 @@ latency_outlier = "bad"
 TEST(DataSessionConfigTest, RejectsGateFeedAndFeedsTogether) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -754,7 +754,7 @@ bind_cpu_id = 2
 TEST(DataSessionConfigTest, RejectsUnknownGateFeed) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -784,7 +784,7 @@ bind_cpu_id = 2
 TEST(DataSessionConfigTest, ParsesGateLatencyOutlierDiagnosticsConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -829,7 +829,7 @@ max_logs_per_second = 1000
 TEST(DataSessionConfigTest, ParsesGateSocketTimestampingAtL4Only) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -901,13 +901,13 @@ TEST(DataSessionConfigTest, ParsesBinanceDataSessionFromAlreadyParsedToml) {
   EXPECT_TRUE(config_result.value.connection.extra_headers.empty());
   ASSERT_EQ(config_result.value.exchange_symbols.size(), 3u);
   EXPECT_EQ(config_result.value.exchange_symbols[0], "BTCUSDT");
-  EXPECT_EQ(config_result.value.symbol_ids[0], 0);
+  EXPECT_EQ(config_result.value.symbol_ids[0], 93);
 }
 
 TEST(DataSessionConfigTest, ParsesBinanceDataShmSinkConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -947,7 +947,7 @@ remove_existing = true
 TEST(DataSessionConfigTest, RejectsBinanceEmptyCombinedTradeChannel) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -978,7 +978,7 @@ trade_channel_name = ""
 TEST(DataSessionConfigTest, RejectsBinanceDuplicateCombinedChannelNames) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1011,7 +1011,7 @@ trade_channel_name = "same_channel"
 TEST(DataSessionConfigTest, ParsesBinanceLatencyOutlierDiagnosticsConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1053,7 +1053,7 @@ max_logs_per_second = 1000
 TEST(DataSessionConfigTest, ParsesBinanceSocketTimestampingAtL4Only) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1090,7 +1090,7 @@ rx_software = true
 TEST(DataSessionConfigTest, RejectsRuntimeBookTickerShmCapacity) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1126,7 +1126,7 @@ capacity = 65536
 TEST(DataSessionConfigTest, RejectsDataShmSinkExpectedCapacityKey) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1160,7 +1160,7 @@ expected_capacity = 65536
 TEST(DataSessionConfigTest, RejectsUnknownGateSubscribeSymbol) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1205,9 +1205,9 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[1], "ETHUSDT");
   EXPECT_EQ(config.exchange_symbols[2], "SOLUSDT");
   ASSERT_EQ(config.symbol_ids.size(), 3u);
-  EXPECT_EQ(config.symbol_ids[0], 0);
-  EXPECT_EQ(config.symbol_ids[1], 1);
-  EXPECT_EQ(config.symbol_ids[2], 2);
+  EXPECT_EQ(config.symbol_ids[0], 93);
+  EXPECT_EQ(config.symbol_ids[1], 163);
+  EXPECT_EQ(config.symbol_ids[2], 384);
   EXPECT_TRUE(config.book_ticker_shm.enabled);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_binance_market_data_combined");
@@ -1244,17 +1244,17 @@ TEST(DataSessionConfigTest, LoadsReadyBinanceDataSessionConfig) {
       session.symbols();
   ASSERT_EQ(symbols.size(), 3u);
   EXPECT_EQ(symbols[0].symbol, "BTCUSDT");
-  EXPECT_EQ(symbols[0].symbol_id, 0);
+  EXPECT_EQ(symbols[0].symbol_id, 93);
   EXPECT_EQ(symbols[1].symbol, "ETHUSDT");
-  EXPECT_EQ(symbols[1].symbol_id, 1);
+  EXPECT_EQ(symbols[1].symbol_id, 163);
   EXPECT_EQ(symbols[2].symbol, "SOLUSDT");
-  EXPECT_EQ(symbols[2].symbol_id, 2);
+  EXPECT_EQ(symbols[2].symbol_id, 384);
 }
 
 TEST(DataSessionConfigTest, LoadsBinanceMixedFeedDataSessionConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1303,7 +1303,7 @@ remove_existing = true
 TEST(DataSessionConfigTest, LoadsBinanceLegacyTradeFeedConfig) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1333,7 +1333,7 @@ bind_cpu_id = 3
 TEST(DataSessionConfigTest, RefreshesBinanceTargetAfterFusionFeedOverride) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1382,7 +1382,7 @@ bind_cpu_id = 3
 TEST(DataSessionConfigTest, RejectsBinanceTargetAfterFusionOverrideExceedsLimit) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1430,7 +1430,7 @@ bind_cpu_id = 3
 TEST(DataSessionConfigTest, RejectsWrongTypeBinanceMarket) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1457,7 +1457,7 @@ bind_cpu_id = 3
 TEST(DataSessionConfigTest, RejectsWrongTypeBinanceDiagnosticThreshold) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1492,7 +1492,7 @@ TEST(DataSessionConfigTest, RejectsWrongTypeBinanceDataShmSinkSection) {
 data_shm_sink = "bad"
 
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1519,7 +1519,7 @@ bind_cpu_id = 3
 TEST(DataSessionConfigTest, RejectsWrongTypeBinanceDiagnosticsLatencySection) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1550,7 +1550,7 @@ latency_outlier = "bad"
 TEST(DataSessionConfigTest, RejectsWrongTypeBinanceTimestampingLimit) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1583,7 +1583,7 @@ max_active_probes = "4"
 TEST(DataSessionConfigTest, RejectsEmptyBinanceFeeds) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1608,7 +1608,7 @@ host = "fstream.binance.com"
 TEST(DataSessionConfigTest, RejectsDuplicateBinanceFeeds) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1632,7 +1632,7 @@ host = "fstream.binance.com"
 TEST(DataSessionConfigTest, RejectsUnknownBinanceFeed) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1657,7 +1657,7 @@ host = "fstream.binance.com"
 TEST(DataSessionConfigTest, RejectsBinanceFeedAndFeedsTogether) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
@@ -1720,9 +1720,9 @@ TEST(DataSessionConfigTest, LoadsReadyRequestedBinanceDataSessionConfig) {
   EXPECT_EQ(config.exchange_symbols[9], "ENAUSDT");
   EXPECT_EQ(config.exchange_symbols[10], "BRETTUSDT");
   EXPECT_EQ(config.exchange_symbols[11], "ETHUSDT");
-  EXPECT_EQ(config.symbol_ids[0], 4);
-  EXPECT_EQ(config.symbol_ids[10], 14);
-  EXPECT_EQ(config.symbol_ids[11], 1);
+  EXPECT_EQ(config.symbol_ids[0], 338);
+  EXPECT_EQ(config.symbol_ids[10], 87);
+  EXPECT_EQ(config.symbol_ids[11], 163);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_binance_market_data_requested_20260521");
   EXPECT_TRUE(config.book_ticker_shm.remove_existing);
@@ -1745,7 +1745,7 @@ TEST(DataSessionConfigTest, LoadsReadyLabUsdtBinanceDataSessionConfig) {
   ASSERT_EQ(config.exchange_symbols.size(), 1u);
   EXPECT_EQ(config.exchange_symbols[0], "LABUSDT");
   ASSERT_EQ(config.symbol_ids.size(), 1u);
-  EXPECT_EQ(config.symbol_ids[0], 15);
+  EXPECT_EQ(config.symbol_ids[0], 247);
   EXPECT_TRUE(config.book_ticker_shm.enabled);
   EXPECT_EQ(config.book_ticker_shm.shm_name,
             "aquila_binance_market_data_lab_usdt_20260601");
@@ -1756,7 +1756,7 @@ TEST(DataSessionConfigTest, LoadsReadyLabUsdtBinanceDataSessionConfig) {
 TEST(DataSessionConfigTest, RejectsUnknownBinanceSubscribeSymbol) {
   const std::string toml_text = std::string{R"toml(
 [instrument_catalog]
-file = ")toml"} + SourcePath("config/instruments/usdt_futures.csv").string() +
+file = ")toml"} + SourcePath("config/instruments/usdt_future_universe.csv").string() +
                                 R"toml("
 schema = "aquila.instrument.v1"
 
