@@ -42,6 +42,61 @@ RCU/NET_RX 增量。Max 不可能代表稳定纯计算成本。
 因此当前环境中 median/p50 更接近组件路径；p99/p99.9/max 必须连同 CPU、MHz/governor、isolation、IRQ/softirq delta、load 和后台任务报告。
 Refactor 前后 p99 基本持平，只能说明未观察到回归，不能宣称确定优化收益。
 
+## 2026-07-22 Bitget 46-symbol cold submit benchmark
+
+本轮针对 `20260722_052013_bitget_combined46_n6_hs_fanout1_24h` 的
+`signal decision -> strategy request timestamp` 实盘 P50 `6.925us` 建立 cold / warm
+对照。benchmark 从同一份 46-pair LeadLag 配置加载参数，强制 `fanout=1`；每个 cold
+sample 在目标 BAS submit 前执行 64 次全 pair、双边 non-triggering sweep，共 5,888 次
+行情更新。正式 Release 结果固定 CPU 16，每个 case 跑五个独立进程、每进程 1,024 个
+有效 sample；下表是五个进程各自分位数的中位数：
+
+| Case | decision -> request P50 | P95 | P99 | P50 组间范围 |
+| --- | ---: | ---: | ---: | ---: |
+| cold、INFO、完整 stage timestamp | 5.850us | 7.932us | 28.448us | 5.665–6.009us |
+| cold、INFO、只保留端点 | 4.943us | 6.786us | 26.802us | 4.804–5.118us |
+| cold、INFO 关闭、完整 stage timestamp | 4.058us | 5.398us | 13.972us | 3.862–4.211us |
+| warm、INFO、完整 stage timestamp | 1.239us | 1.544us | 1.830us | 1.220–1.292us |
+
+完整 stage case 的 cold INFO P50 分段如下。各 counter 独立取 P50，不能机械相加成总
+P50，但可以用于成本排序：
+
+| 阶段 | P50 | 主要工作 |
+| --- | ---: | --- |
+| decision -> signal-triggered log done | 1.222us | `lead_lag_signal_triggered` 的同步 frontend log call 与 benchmark observer |
+| signal log done -> price prepared | 1.245us | parallel / drift guard、symbol/instrument 读取和 order price preparation |
+| price -> freshness checked | 0.194us | 可选 signal-decision log 分支与 freshness guard |
+| freshness -> quantity prepared | 0.167us | quantity、min/max 和 decimal preparation |
+| quantity -> routes selected | 0.346us | gateway route state refresh 与单 route selection |
+| routes selected -> risk checked | 0.710us | order notional、global open risk scan / check |
+| risk -> order-intent log done | 0.622us | `lead_lag_order_intent` frontend log call 与 observer |
+| intent log -> `PlaceOrder()` begin | 0.494us | execution group / parent id、fixed risk slot 与 child request 准备 |
+| `PlaceOrder()` begin -> request timestamp | 0.632us | request/symbol copy、OrderPool create、gateway route precheck 和 command timestamp |
+| request timestamp -> `PlaceOrder()` return | 0.469us | route table record、SHM `TryPush`、order status / send timestamp 回写 |
+
+归因边界：
+
+- cold INFO 的完整 stage P50 比 INFO 关闭高 1.792us。两个 log call 可直接对齐的增量约
+  1.378us，其中 signal-triggered 约 0.937us、order-intent 约 0.441us；剩余差值分布在
+  log 后的工作集扰动和独立分位数误差中。Quill 是异步 logger，这里测到的是 frontend
+  格式参数复制 / queue enqueue 及其缓存影响，不是 file sink 同步落盘。
+- INFO 关闭后 cold P50 仍为 4.058us，因此日志不是全部原因。相同 INFO 下，cold stage
+  P50 是 warm 的 4.72 倍；确定性行情 churn 证明主要差异来自 submit 代码、pair state、
+  risk / gateway 数据在持续行情后的 cold instruction/data working set。
+- fixed risk slot acquire 的 cold INFO P50 为 0.240us，只占完整 stage 总 P50 的约 4%，
+  不是本次 `6+us` 的主瓶颈。
+- 完整 stage timestamp 相对 endpoint-only 增加约 0.907us（15.5%），所以总路径应优先看
+  endpoint-only，完整 stage 只用于定位。benchmark 没有修改 production binary 或新增
+  live timestamp。
+- 本机 `kernel.perf_event_paranoid=4`，没有 PMU cache-miss 计数，因此当前证据能确认
+  cold/warm working-set 效应，不能进一步声称具体是 L1I、L1D、L2 或某个单一函数 miss。
+  P99 仍受本机非隔离 scheduler / IRQ 影响，不用来声明稳定代码成本。
+
+正式 JSON 证据位于
+`/home/liuxiang/tmp/lead_lag_cold_submit_breakdown_20260722_1024/`。运行入口是
+`BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Churn`、`Warm` 和
+`EndpointOnly`；`AQUILA_LEAD_LAG_BENCHMARK_LOG_LEVEL=critical` 用于 INFO 关闭对照。
+
 ## 已落地诊断层
 
 - Ack threshold/rate limit：`ack_rtt_threshold_ns`、`max_logs_per_second`。

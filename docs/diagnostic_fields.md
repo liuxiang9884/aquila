@@ -731,6 +731,28 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 | `ack_rtt_ns` | strategy log / report CSV | stable | ns | 本地 Ack RTT 主指标。 | 不能删除。 |
 | `exchange_lifecycle_ns` | strategy log / report CSV | experiment | ns | Gate exchange Ack 到 terminal update 的交易所侧 lifecycle 诊断，不解释 Ack RTT。 | 若 Gate timestamp 语义不稳定或更好 lifecycle 字段落地可重审。 |
 
+### LeadLag cold submit benchmark counters
+
+组件入口：`benchmark/strategy/lead_lag_submit_breakdown_benchmark.cpp`。这些字段只出现在
+Google Benchmark 输出，不进入 production binary、Nova log 或 report CSV。`*_p50_ns`、
+`*_p95_ns`、`*_p99_ns` 和 `*_max_ns` 都是同一进程内样本分位数；跨进程比较时使用各组
+counter 的中位数，不直接拼接样本。
+
+| 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
+| --- | --- | --- | --- | --- | --- |
+| `pairs` / `fanout` | benchmark counters | experiment | count | 证明 cold workload 使用 46 pair、首单只走一个 gateway route。 | cold submit benchmark 删除或参数由 benchmark name 完整表达时删除。 |
+| `churn_sweeps` / `churn_updates` | benchmark counters | experiment | count | 记录目标 submit 前确定性 non-triggering 行情扰动规模；一次 sweep 对每个 pair 更新 lag / lead 两侧。 | 同上。 |
+| `warm_before_target` | benchmark counters | experiment | `0` / `1` | `1` 表示目标 submit 前立即执行另一个 symbol 的成功 submit，用作 warm 对照。 | 同上。 |
+| `stage_trace_enabled` | benchmark counters | experiment | `0` / `1` | 区分完整逐 stage timestamp 与只保留 decision/request 端点的 observer-overhead 对照。 | observer 开销不再需要量化时删除。 |
+| `decision_to_signal_log_done_*` / `signal_log_done_to_price_*` / `signal_log_to_intent_done_*` / `intent_done_to_request_timestamp_*` | benchmark counters | experiment | ns | 把 `signal_decision_ns -> OrderGatewayClient::PlaceOrder()` 返回的 `send_local_ns` 按两个 INFO log observer 与 price-prepared landmark 拆分；observer 在对应同步 log call 返回后取时钟。 | cold submit 归因完成且 benchmark 不再维护时删除。 |
+| `decision_to_request_timestamp_*` / `before_place_to_request_timestamp_*` / `request_timestamp_to_place_return_*` / `decision_to_place_return_*` | benchmark counters | experiment | ns | 分别记录 decision 到 command `owner_enqueue_ns`、进入 `PlaceOrder()` 前到该 timestamp、timestamp 到 `TryPush` 返回、decision 到 `PlaceOrder()` 返回；`request_timestamp` 不是 socket write 时间。 | 同上。 |
+| `request_timestamp_to_submitted_log_done_*` / `submitted_log_to_handle_end_*` / `decision_to_handle_end_*` | benchmark counters | experiment | ns | 覆盖 gateway enqueue 后的 submitted log 与本次 `HandleBookTickerForTest()` 返回阶段。 | 同上。 |
+| `decision_to_price_*` / `price_to_signal_decision_log_*` / `signal_decision_log_to_freshness_*` / `freshness_to_quantity_*` | benchmark counters | experiment | ns | 生产 submit stage test hook 的前半段：price、可选 signal-decision log、freshness 与 quantity preparation。 | submit stage test hook 删除时同步删除。 |
+| `quantity_to_routes_refreshed_*` / `routes_refreshed_to_routes_selected_*` / `routes_selected_to_risk_*` / `risk_to_intent_log_*` | benchmark counters | experiment | ns | route state refresh / selection、strategy risk check 与 order-intent INFO log 阶段。 | 同上。 |
+| `intent_log_to_group_*` / `group_to_route0_acquire_begin_*` / `route0_acquire_done_to_place_begin_*` | benchmark counters | experiment | ns | execution group 建立、首 route child 准备与 fixed risk slot 前后连接段。 | 同上。 |
+| `route0_acquire_text_*` | benchmark counters | experiment | ns | 历史 counter 名称；当前实际语义是首 route 的 fixed risk slot acquire，不是 decimal text preparation。 | counter 完成兼容性改名或 benchmark 删除时删除。 |
+| `route0_place_order_*` / `route0_after_place_to_submit_result_*` | benchmark counters | experiment | ns | 首 route `PlaceOrder()` 调用和返回后的 submit-result / submitted-log 处理；前者同时包含多个 timestamp observer，需结合 endpoint-only case 判断测量扰动。 | 同上。 |
+
 ### LeadLag Lag Vol Guard Audit CSV
 
 组件入口：
