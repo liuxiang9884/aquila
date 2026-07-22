@@ -82,7 +82,7 @@ signal-conditioned LeadLag：Bitget BBO fusion 固定 `N=6`（3 HA + 3 HS）、B
 filled order，entry any-fill 为 `24/337 = 7.12%`；最终 `normal_exit_flat`，quiescence、REST open orders=`0` 和
 positions=`0` 均通过。REST 实际净 PnL 为 `-0.08345090 USDT`，成交 notional-weighted slippage 为 all=`0.366 bps`、
 entry=`0.237 bps`、exit=`0.495 bps`。`fast-fill` 50 个 execution 与 REST/authoritative quantity 全部一致，但仍只作诊断。
-最终报告使用尚未合入 main 的 `feature/bitget-live-report-analysis`（`4cd4966`，PR #11）生成；本地证据包位于
+最终报告使用现已通过 PR #11 合入 main 的 Bitget execution / report 工具生成；本地证据包位于
 `/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/`，归档已上传到
 `s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。该单路证据仍不能替代 fanout=4 live。
 
@@ -474,8 +474,8 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
 - P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
 - P2：用新一轮 live 原始日志实测 `fast-fill` 相对 `order` push 的到达差；若确实更快，再独立设计 `execId` 去重、原始
   quantity join、跨流乱序/漏消息、累计 quantity 重建、reconnect/reconcile 和最快 feedback 发布 contract。
-- P2：`feature/bitget-live-report-analysis` / PR #11 已把 place response、order push、fast-fill、REST fills 与 BBO recorder
-  合并进离线 report，并用于生成上述 12 小时证据包；该工具尚未合入 main。Report 必须区分本地 Ack RTT、
+- P2：PR #11 已把 place response、order push、fast-fill、REST fills 与 BBO recorder 合并进 main 的离线 report，
+  并用于生成上述 12 小时证据包。Report 必须区分本地 Ack RTT、
   交易所订单创建/response、terminal update 和实际 fill 时间；本地 send/receive 与交易所时间跨时钟，未完成 clock-offset
   校准时不得解释为单程网络时延。REST 的
   `X-BG-REQUEST-ACCEPT-TIME`/`X-BG-RESPONSE-COMPLETE-TIME` 只适用于 REST 链路，不能替代当前 WebSocket 下单证据；SBE BBO

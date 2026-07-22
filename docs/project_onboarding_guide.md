@@ -89,8 +89,8 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   submitted/finished order、49 个 authoritative filled order，entry any-fill `24/337 = 7.12%`，最终
   `normal_exit_flat`。REST 实际净 PnL `-0.08345090 USDT`，all/entry/exit notional-weighted slippage 为
   `0.366/0.237/0.495 bps`。完整证据包位于 `/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/` 并已上传
-  `s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。生成该报告的工具在
-  `feature/bitget-live-report-analysis`（`4cd4966`，PR #11），尚未合入 main；单边平仓与 drift guard 评审在
+  `s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。生成该报告的 Bitget execution、
+  REST fills、BBO fillability 与 slippage 工具已通过 PR #11 合入 main；单边平仓与 drift guard 评审仍在
   `docs/lead-lag-single-leg-exit-review`（`fa5d12f`，PR #10）。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
@@ -111,8 +111,8 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   double + decimal places request，price/quantity text 只在 session 生成；no-log 五组
   A/B 中 Gate/Bitget SHM 整链 `p50` 分别改善 `12.90%/14.33%`。详细数据和候选记录见
   性能报告与计划的“2026-07-20 数值订单 request 与 OrderSession 格式化”。
-- LeadLag cold submit 的 benchmark / 归因在 PR #14；stacked PR #15 删除成功路径中字段重复的
-  `lead_lag_order_intent`，保留 signal、submitted、全部 rejected、recovery 和 report 事实源。
+- LeadLag cold submit benchmark / 归因与成功路径重复 `lead_lag_order_intent` 删除已分别通过 PR #14 / #15 合入
+  main；保留 signal、submitted、全部 rejected、recovery 和 report 事实源。
   Bitget 46-symbol、`fanout=1`、5,888 churn updates 的五组 paired endpoint-only A/B 中，
   decision-to-request P50/P95 分别由 `4.939/6.915us` 降至 `4.285/5.917us`，5/5 同向；两类
   global-risk prefetch 均回退并已撤销。完整证据与边界见 `docs/lead_lag_latency_analysis.md`。
@@ -175,8 +175,8 @@ rg 'aquila_evaluation' core exchange tools
 1. Bitget trading：fanout=1 gateway、20-symbol 与 combined 46-symbol signal-conditioned LeadLag 已有 live 证据；下一门是按当次授权执行 fanout=4 staged
    LeadLag，先验证四 route ready、每 child 最小量、Ack/terminal 归组、reduce-only 收敛、quiescence 和 final flat。每轮必须
    fresh run；本地 account limiter 明确不在 main，未经用户单独授权不要重新加入；failover、fast-fill 交易状态合并和
-   resume/persistent ID 仍未完成。`fast-fill` 当前仅作诊断，不能参与 feedback 或交易状态。先 review/合并 PR #11 的 Bitget
-   report 工具和 PR #10 的单边平仓/drift guard 评审，再决定后续 report 与策略实验入口。
+   resume/persistent ID 仍未完成。`fast-fill` 当前仅作诊断，不能参与 feedback 或交易状态。Bitget report 工具已在 main；
+   继续修改平仓或 drift guard 前先 review PR #10，再决定后续策略实验入口。
 2. Gate trading：下一步是 guarded gateway smoke，量化 route skew、Ack RTT、terminal feedback 与 fillability；先复核 account budget、
    reconcile 和 liveness。
 3. LeadLag live：任何真实 run 按 `docs/lead_lag_live_operations.md`，使用新鲜 release/config、freshness/slippage preflight、
@@ -190,8 +190,8 @@ rg 'aquila_evaluation' core exchange tools
    已接受 clean HEAD 新建独立 topology branch/worktree，先读
    `docs/runtime_cpu_allocation.md`，冻结 Gate/Bitget submit、ACK、feedback runtime
    baseline；无 fresh benchmark/profile 证据不宣称收益。
-7. LeadLag submit：先 review/合并 PR #14，再 review stacked PR #15；不要重新加入已证明回退的
-   reservation prefetch 或 runtime distance prefetch。后续若继续优化 global risk，需要先建立新的
+7. LeadLag submit：PR #14 / #15 已合入 main；不要重新加入已证明回退的 reservation prefetch 或 runtime distance
+   prefetch。后续若继续优化 global risk，需要先建立新的
    endpoint paired baseline，不能用 warm risk microbenchmark 替代完整 cold submit 结果。
 
 ## 给下一个对话的提示
@@ -208,15 +208,15 @@ contract 已完成代码、测试和 validate-only，但尚无 fanout=4 live 证
 limiter=`absent`，最终 `normal_exit_flat`；报告摘要为 1,603 signal、368 submitted/finished、49 authoritative filled、entry
 any-fill `24/337 = 7.12%`、REST net PnL `-0.08345090 USDT`。证据包在
 `/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/`，S3 前缀为
-`s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。report 工具仍在 PR #11
-（`feature/bitget-live-report-analysis`，`4cd4966`），单边平仓/drift guard 评审仍在 PR #10
-（`docs/lead-lag-single-leg-exit-review`，`fa5d12f`）；先 review/合并，不要在 main 重新实现。`fast-fill` 只供诊断，不能进入
+`s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。report 工具已通过 PR #11
+合入 main；单边平仓/drift guard 评审仍在 PR #10（`docs/lead-lag-single-leg-exit-review`，`fa5d12f`），继续相关实现前先
+review，不要在 main 重复实现。`fast-fill` 只供诊断，不能进入
 authoritative feedback；当前 main 不含本地 account limiter，未经用户单独授权不得重新加入。任何新的真实订单仍须取得当次授权，
 不得把 fresh-run 解释为 resume，也不得在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
 
-LeadLag cold submit 先 review/合并 PR #14，再 review stacked PR #15。PR #15 只保留已通过五组 paired
-endpoint A/B 的成功 `lead_lag_order_intent` 删除；两类 global-risk prefetch 均已证明回退并撤销。继续性能工作先读
+LeadLag cold submit 的 PR #14 / #15 已合入 main。PR #15 只保留已通过五组 paired endpoint A/B 的成功
+`lead_lag_order_intent` 删除；两类 global-risk prefetch 均已证明回退并撤销。继续性能工作先读
 `docs/lead_lag_latency_analysis.md`，不要重复加入这两个候选。
 
 2026-07-17 前的旧 report/bin 已从 canonical main 和注册 worktree 之外清理；25 个旧分支 worktree 仍有约 `4.35 GB` 的
