@@ -81,7 +81,8 @@ TEST(BitgetOrderSessionConfigTest, LoadsCheckedInConfig) {
   const OrderSessionConfigResult result = LoadOrderSessionConfigFile(path);
 
   ASSERT_TRUE(result.ok) << result.error;
-  EXPECT_EQ(result.value.connection.host, "vip-ws-uta.bitget.com");
+  EXPECT_EQ(result.value.name, "bitget_order_session_high_speed_private");
+  EXPECT_EQ(result.value.connection.host, "vip-ws-uta-pri-a.bitget.com");
   EXPECT_EQ(result.value.connection.target, "/v3/ws/private");
 }
 
