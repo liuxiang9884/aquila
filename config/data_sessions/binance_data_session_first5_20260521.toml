@@ -1,5 +1,5 @@
 [instrument_catalog]
-file = "config/instruments/usdt_futures_first5_20260521.csv"
+file = "config/instruments/usdt_future_universe.csv"
 schema = "aquila.instrument.v1"
 
 [log]

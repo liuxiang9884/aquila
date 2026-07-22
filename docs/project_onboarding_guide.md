@@ -59,8 +59,8 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据。
   `bitget_lead_lag_top20_highspeed_20260715T154837Z` 已完成 20-symbol、fanout=1、10 小时真实订单运行：644 个 signal、
-  211 个 submitted order、21 个 closed position，quiescence/final flat 通过；实际净 PnL `-0.03536520 USDT`。证据和
-  边界见对应 report 与 `docs/bitget_trading.md`。
+  211 个 submitted order、21 个 closed position，quiescence/final flat 通过；实际净 PnL `-0.03536520 USDT`。原始 report
+  已按 2026-07-21 的历史报告与 bin 数据清理要求删除，当前摘要和边界只保留在 `docs/bitget_trading.md`。
 - Bitget V1 已选择 strict stop-and-flat，不修改跨进程 `local_order_id/clientOid`：不恢复交易、不允许 strategy-only restart；
   LeadLag 每轮使用 manifest v2，gateway smoke 使用专用 manifest v1；两者都使用 run-specific SHM 并绑定 PID/start-time/config/account，
   gateway smoke 额外绑定 data session、拒绝已存在的 run directory，并校验 runner CSV/summary。交易 runner 退出后先停止所有绑定
@@ -78,14 +78,22 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   是 Binance `TRADIFI_PERPETUAL`，真实启动前必须重新确认交易时段和双边 BBO；当前只有 catalog/config、只读行情连接和
   manifest v2 prepare/validate-only 证据，没有该 30-symbol 组合的真实订单证据。
 - 30-symbol fanout=1 14 小时 BBO recorder live run
-  `bitget_lead_lag_requested_top30_fanout1_14h_bbo_20260716T113602Z` 仍在运行；2026-07-16 15:20:36Z 的只读快照显示 7/7
-  绑定进程存活、293 个 signal、115 个 submitted/Ack/terminal、7 个完整 cycle、14 fills、0 unresolved，REST allowlist
-  snapshot 为 flat，recorder 仍在增长。Strategy 预计 2026-07-17 01:43:50Z 自然结束，随后 gateway/feedback 和 guard 继续完成
-  quiescence 与 stop-and-flat；该时间点后的最终状态必须重新读取进程、guard summary 和 REST，不能从本快照推断。
+  `bitget_lead_lag_requested_top30_fanout1_14h_bbo_20260716T113602Z` 已于 2026-07-17 01:43:50Z 正常结束；guard 为
+  `normal_exit_flat`，绑定进程 quiescence 为 stopped，final REST 无 open orders/positions，后续只读复核仍为进程 absent 和 flat。
+- 46-symbol run `20260720_162559_bitget_combined46_n6_fanout1_12h` 已以 `5a69eaf` 完成 12 小时真实订单运行：Bitget fusion
+  `N=6`（3 HA + 3 HS）、Binance fusion `N=4`、order fanout=`1`、account limiter=`absent`；1,603 个 signal、368 个
+  submitted/finished order、49 个 authoritative filled order，entry any-fill `24/337 = 7.12%`，最终
+  `normal_exit_flat`。REST 实际净 PnL `-0.08345090 USDT`，all/entry/exit notional-weighted slippage 为
+  `0.366/0.237/0.495 bps`。完整证据包位于 `/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/` 并已上传
+  `s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。生成该报告的工具在
+  `feature/bitget-live-report-analysis`（`4cd4966`，PR #11），尚未合入 main；单边平仓与 drift guard 评审在
+  `docs/lead-lag-single-leg-exit-review`（`fa5d12f`，PR #10）。
 - LeadLag live 统一使用 guarded runbook；`ContinuityLost/UnknownResult` 后终止本轮并 stop-and-flat，不在同一轮恢复开仓。Report CSV contract、reconcile 和 latency
   分别有独立专题文档。
-- Instrument catalog 当前入口：小型 `config/instruments/usdt_futures.csv`，大 universe
-  `config/instruments/usdt_future_universe.csv`。旧 catalog 文件名不应用于新 run。
+- `config/instruments/` 只保留 `usdt_future_universe.csv`；所有 checked-in config、test 和 tool
+  统一引用该文件。新 run 必须使用它或 run-specific 冻结副本，不能混用不同
+  `symbol_id`/metadata；历史 run 仍只使用其 run directory 归档 catalog。2026-06-04 日期化配置
+  因当前 universe 不含 `TON_USDT` 已移除该 pair/订阅，`30symbols` 文件名只保留历史标签。
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。
@@ -99,6 +107,9 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   double + decimal places request，price/quantity text 只在 session 生成；no-log 五组
   A/B 中 Gate/Bitget SHM 整链 `p50` 分别改善 `12.90%/14.33%`。详细数据和候选记录见
   性能报告与计划的“2026-07-20 数值订单 request 与 OrderSession 格式化”。
+- 2026-07-21 已从 canonical main 和注册 worktree 之外的本地目录清理 2026-07-17 前的历史 report 与生成型 bin，main 合并提交为
+  `13a964b`；磁盘约释放 `198.03 GB`。25 个旧分支 worktree 仍按各自 HEAD 保留约 `4.35 GB` 的受控历史副本，其中存在 dirty
+  和 detached worktree，未擅自修改；如需物理删除，必须先决定逐分支同步、稀疏 checkout 或移除废弃 worktree。S3 未做历史清理。
 
 ## 代码入口
 
@@ -152,10 +163,11 @@ rg 'aquila_evaluation' core exchange tools
 
 ## 下一步建议
 
-1. Bitget trading：fanout=1 gateway 与 signal-conditioned LeadLag 已有 live 证据；下一门是按当次授权执行 fanout=4 staged
+1. Bitget trading：fanout=1 gateway、20-symbol 与 combined 46-symbol signal-conditioned LeadLag 已有 live 证据；下一门是按当次授权执行 fanout=4 staged
    LeadLag，先验证四 route ready、每 child 最小量、Ack/terminal 归组、reduce-only 收敛、quiescence 和 final flat。每轮必须
-   fresh run；account limiter、failover、fast-fill 交易状态合并和 resume/persistent ID 仍未完成。`fast-fill` 当前仅完成
-   best-effort 订阅与原始时间诊断日志，不能参与 feedback 或交易状态。
+   fresh run；本地 account limiter 明确不在 main，未经用户单独授权不要重新加入；failover、fast-fill 交易状态合并和
+   resume/persistent ID 仍未完成。`fast-fill` 当前仅作诊断，不能参与 feedback 或交易状态。先 review/合并 PR #11 的 Bitget
+   report 工具和 PR #10 的单边平仓/drift guard 评审，再决定后续 report 与策略实验入口。
 2. Gate trading：下一步是 guarded gateway smoke，量化 route skew、Ack RTT、terminal feedback 与 fillability；先复核 account budget、
    reconcile 和 liveness。
 3. LeadLag live：任何真实 run 按 `docs/lead_lag_live_operations.md`，使用新鲜 release/config、freshness/slippage preflight、
@@ -176,25 +188,22 @@ rg 'aquila_evaluation' core exchange tools
 `git status`。涉及编码或技术开发先读取并执行 `docs/skills/adaptive-development/SKILL.md`，输出 Level 后直接推进；默认不要启用
 Superpowers。设计、计划或关键交易链路取舍先询问 Grill Me。
 
-Bitget 下一步先读 `docs/bitget_trading.md`：V1 已采用 strict stop-and-flat + fresh-run isolation，代码和自动测试已完成，
-LeadLag manifest v2、gateway smoke manifest v1、REST 保守 snapshot、runner evidence 校验和进程 quiescence 均已落地；
-`BTCUSDT` baseline、emergency dry-run、flat-account helper、
-修复后的 tiny-position stop-and-flat 和 fanout=1 gateway passive IOC 均已有 2026-07-14 live 证据。Gateway run
-`bitget_gateway_smoke_20260714T061702Z` 取得 direct Ack、独立 cancelled terminal、三进程 quiescence 和 final flat，成交为 0；
-`bitget_lead_lag_top20_highspeed_20260715T154837Z` 又取得 20-symbol、fanout=1、10 小时 signal-conditioned LeadLag
-证据，21 个成交 entry 均完整平仓，quiescence/final flat 通过。四路 gateway/fanout contract 和 entry quantity clamp 已完成代码、测试和
-validate-only，配置入口为 `config/order_gateways/bitget_order_gateway_4routes.toml`，但尚无四路 live 证据。下一门是
-fanout=4 staged LeadLag。用户指定的 30-symbol 组合已完成双边合约核对、catalog 更新和配置准备，入口为
-`config/strategies/lead_lag_bitget_requested_top30_highspeed_fanout4_20260716.toml`；其中 10 个 Binance
-`TRADIFI_PERPETUAL` 在真实启动前必须复核交易时段和双边 BBO，当前没有该组合的真实订单证据。任何真实订单必须按 runbook
-的分阶段证据门取得当次授权；不要把 fresh-run 解释为可 resume，
-也不要在同一 run 重启 strategy。30-symbol fanout=1 14 小时 run
-`bitget_lead_lag_requested_top30_fanout1_14h_bbo_20260716T113602Z` 已于 2026-07-17 01:43:50Z 正常结束：
-guard 为 `normal_exit_flat`、绑定进程 quiescence 为 stopped、final REST 无 open orders/positions；后续只读复核仍为进程
-absent 和 fresh REST flat。Bitget 已补齐 place `cTime`/`ts`、order push lifecycle、fast-fill `execTime` 与本机
-send/write-complete/Ack 成对时间日志；`fast-fill` 只供分析，不进入 feedback。下一步先用新 live 日志比较 fast-fill/order
-到达时间并离线关联 BBO；零成交 IOC 仍没有文档明确的 order-ingress/match-attempt 时间戳。
+Bitget 下一步先读 `docs/bitget_trading.md`。V1 继续采用 strict stop-and-flat + fresh-run isolation；四路 gateway/fanout
+contract 已完成代码、测试和 validate-only，但尚无 fanout=4 live 证据。最新真实订单证据是
+`20260720_162559_bitget_combined46_n6_fanout1_12h`：46 symbols、Bitget fusion `N=6`（3 HA + 3 HS）、order fanout=`1`、
+limiter=`absent`，最终 `normal_exit_flat`；报告摘要为 1,603 signal、368 submitted/finished、49 authoritative filled、entry
+any-fill `24/337 = 7.12%`、REST net PnL `-0.08345090 USDT`。证据包在
+`/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/`，S3 前缀为
+`s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。report 工具仍在 PR #11
+（`feature/bitget-live-report-analysis`，`4cd4966`），单边平仓/drift guard 评审仍在 PR #10
+（`docs/lead-lag-single-leg-exit-review`，`fa5d12f`）；先 review/合并，不要在 main 重新实现。`fast-fill` 只供诊断，不能进入
+authoritative feedback；当前 main 不含本地 account limiter，未经用户单独授权不得重新加入。任何新的真实订单仍须取得当次授权，
+不得把 fresh-run 解释为 resume，也不得在同一 run 重启 strategy。
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
+
+2026-07-17 前的旧 report/bin 已从 canonical main 和注册 worktree 之外清理；25 个旧分支 worktree 仍有约 `4.35 GB` 的
+Git 受控副本。删除这些副本会改变 dirty/detached 开发状态，必须先由用户选择同步分支、稀疏 checkout 或移除废弃 worktree；
+不要直接批量 `rm`。
 
 若继续当前 Gate/Bitget 交易链路性能优化，不要从 `/home/liuxiang/dev/aquila` 的 `main`
 重开实现；进入

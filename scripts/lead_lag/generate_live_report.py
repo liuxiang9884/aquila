@@ -68,10 +68,8 @@ SIGNAL_DETAIL_FIELDS = [
 ]
 
 DEFAULT_SCHEMA_PATH = Path("docs/lead_lag_live_report_csv_schema.md")
-DEFAULT_INSTRUMENT_CATALOG_PATH = Path("config/instruments/usdt_futures.csv")
-DEFAULT_BITGET_INSTRUMENT_CATALOG_PATH = Path(
-    "config/instruments/usdt_future_universe.csv"
-)
+DEFAULT_INSTRUMENT_CATALOG_PATH = Path("config/instruments/usdt_future_universe.csv")
+DEFAULT_BITGET_INSTRUMENT_CATALOG_PATH = DEFAULT_INSTRUMENT_CATALOG_PATH
 LOG_TIME_RE = re.compile(
     r"^I(?P<log_time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)"
 )

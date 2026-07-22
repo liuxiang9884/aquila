@@ -5,7 +5,7 @@
 
 ## 当前范围与证据边界
 
-截至 2026-07-18，仓库已实现：
+截至 2026-07-21，仓库已实现：
 
 - `OrderSession`：private WebSocket login、limit GTC/IOC place、single cancel、request correlation 和直接 operation response。
 - `OrderFeedbackSession`：独立 private connection、account-wide `order` topic、累计订单生命周期事实、feedback SHM 路由和 continuity lost。
@@ -72,9 +72,19 @@ quiescence 虚假失败。独立 PID 扫描和 production REST dry-run 证明账
 `bitget_lead_lag_top20_highspeed_20260715T154837Z` 完成 20-symbol、`fanout=1/parallel=1`、10 小时
 signal-conditioned LeadLag：644 个 signal、211 个 submitted order、21 个成交 entry 与 21 个完整 exit，
 无 unknown/continuity/reconcile，quiescence 与 final REST flat 均通过。该 run 的实际净 PnL 为
-`-0.03536520 USDT`，详细证据见
-`reports/bitget_lead_lag_top20_highspeed_20260715T154837Z/analysis_report.md`。这些结果不能外推到四路
+`-0.03536520 USDT`。原始 report 已按 2026-07-21 的历史报告与 bin 数据清理要求删除，本节只保留验证摘要和边界。
+这些结果不能外推到四路
 fanout、未来 fillability、长期稳定性或相对 endpoint 收益；四路当前只有代码、自动测试和 CLI validate-only 证据。
+
+2026-07-20 的 `20260720_162559_bitget_combined46_n6_fanout1_12h` 又以 `5a69eaf` 完成 46-symbol、12 小时
+signal-conditioned LeadLag：Bitget BBO fusion 固定 `N=6`（3 HA + 3 HS）、Binance fusion `N=4`、order fanout=`1`，
+本地 account limiter 明确为 `absent`。本轮产生 1,603 个 signal、368 个 submitted/finished order、49 个 authoritative
+filled order，entry any-fill 为 `24/337 = 7.12%`；最终 `normal_exit_flat`，quiescence、REST open orders=`0` 和
+positions=`0` 均通过。REST 实际净 PnL 为 `-0.08345090 USDT`，成交 notional-weighted slippage 为 all=`0.366 bps`、
+entry=`0.237 bps`、exit=`0.495 bps`。`fast-fill` 50 个 execution 与 REST/authoritative quantity 全部一致，但仍只作诊断。
+最终报告使用尚未合入 main 的 `feature/bitget-live-report-analysis`（`4cd4966`，PR #11）生成；本地证据包位于
+`/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/`，归档已上传到
+`s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。该单路证据仍不能替代 fanout=4 live。
 
 `OrderSession` 的 direct operation response 只表示请求的直接响应：
 
@@ -435,10 +445,11 @@ read-only REST baseline
 → tiny-position stop-and-flat smoke
 → fanout=1 gateway passive IOC
 → fanout=1 signal-conditioned LeadLag
+→ fanout=1 combined 46-symbol / Bitget fusion N=6 LeadLag
 → fanout=4 staged LeadLag
 ```
 
-截至 2026-07-16，tiny-position stop-and-flat、fanout=1 gateway 和 fanout=1 signal-conditioned LeadLag 已有上述当次证据；
+截至 2026-07-21，tiny-position stop-and-flat、fanout=1 gateway 和两轮 fanout=1 signal-conditioned LeadLag 已有上述当次证据；
 fanout=4 尚无真实订单证据。任一对应证据门缺失时，不得宣称其 live safety、fillability 或 latency 已验证；单路结果不能
 替代四路证据。
 Outer guard 被 `SIGKILL`、主机失效、网络隔离或 REST 全不可用时仍没有自动恢复保证；首次 smoke 必须有人值守，并由外部
@@ -446,7 +457,8 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
 
 ## 后续方向与优先级
 
-- P1：基于官方 UTA WebSocket 预算设计 UID/account 级共享 limiter；不能直接套用 REST `10 requests/s/UID`。
+- P1：继续记录官方 UTA WebSocket 预算、实际 command rate 和明确限频拒绝；main 当前不包含本地 account limiter，且用户已明确
+  要求本轮及当前优化版本不加入该 limiter。后续若要新增，必须作为独立设计重新取得授权，不能直接套用 REST `10 requests/s/UID`。
 - P1：官方 HA 与高速 endpoint 长期 A/B、endpoint failover 和切换 unknown window。
 - P1：按新鲜授权执行 fanout=4 staged live，先证明四 route ready、每 child 最小量、Ack/terminal 归组、reduce-only
   收敛、quiescence 和 final flat，再讨论 route policy。使用 30-symbol 准备配置时，真实启动前还要重新确认上述 10 个
@@ -454,7 +466,8 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
 - P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
 - P2：用新一轮 live 原始日志实测 `fast-fill` 相对 `order` push 的到达差；若确实更快，再独立设计 `execId` 去重、原始
   quantity join、跨流乱序/漏消息、累计 quantity 重建、reconnect/reconcile 和最快 feedback 发布 contract。
-- P2：把现有 place response、order push、fast-fill 与 BBO recorder 日志合并进离线 report。Report 必须区分本地 Ack RTT、
+- P2：`feature/bitget-live-report-analysis` / PR #11 已把 place response、order push、fast-fill、REST fills 与 BBO recorder
+  合并进离线 report，并用于生成上述 12 小时证据包；该工具尚未合入 main。Report 必须区分本地 Ack RTT、
   交易所订单创建/response、terminal update 和实际 fill 时间；本地 send/receive 与交易所时间跨时钟，未完成 clock-offset
   校准时不得解释为单程网络时延。REST 的
   `X-BG-REQUEST-ACCEPT-TIME`/`X-BG-RESPONSE-COMPLETE-TIME` 只适用于 REST 链路，不能替代当前 WebSocket 下单证据；SBE BBO
@@ -462,5 +475,6 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
   上述字段，也只能改善阶段边界和成交单分析，不能精确拆分未成交订单的撮合处理时间。
 - P2：account/position private feed、通用 Gate/Bitget policy、direct backend 和更多协议能力。
 
-扩大频率、fanout 或运行时长前必须先完成 account limiter。任何性能、稳定性或 fillability 结论都需要对应 benchmark、profile
-或 live 证据，不能从组件 microbenchmark、login success 或单次 passive IOC 外推。
+扩大频率、fanout 或运行时长前必须 fresh 核对官方预算、实际 command rate、拒绝状态和账户风险，但未经用户单独授权不得重新加入
+本地 account limiter。任何性能、稳定性或 fillability 结论都需要对应 benchmark、profile 或 live 证据，不能从组件
+microbenchmark、login success 或单次 passive IOC 外推。

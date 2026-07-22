@@ -52,7 +52,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
             config_text = manifest_config.render_data_reader_config(
                 manifest_path=manifest,
                 name="persistent_md_replay",
-                catalog_path=Path("config/instruments/usdt_futures.csv"),
+                catalog_path=Path("config/instruments/usdt_future_universe.csv"),
             )
 
         self.assertIn('name = "persistent_md_replay"', config_text)
@@ -78,7 +78,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
             config_text = manifest_config.render_data_reader_config(
                 manifest_path=manifest,
                 name="trade_replay",
-                catalog_path=Path("config/instruments/usdt_futures.csv"),
+                catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                 feed="trade",
             )
 
@@ -100,7 +100,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                 manifest_config.render_data_reader_config(
                     manifest_path=manifest,
                     name="empty_replay",
-                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                    catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                 )
 
     def test_rejects_feed_mismatch(self):
@@ -117,7 +117,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                 manifest_config.render_data_reader_config(
                     manifest_path=manifest,
                     name="book_replay",
-                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                    catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                     feed="book_ticker",
                 )
 
@@ -132,7 +132,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                         manifest_config.render_data_reader_config(
                             manifest_path=manifest,
                             name="book_replay",
-                            catalog_path=Path("config/instruments/usdt_futures.csv"),
+                            catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                         )
 
                     message = str(context.exception)
@@ -154,7 +154,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                 manifest_config.render_data_reader_config(
                     manifest_path=manifest,
                     name="book_replay",
-                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                    catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                 )
 
     def test_rejects_missing_format(self):
@@ -170,7 +170,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                 manifest_config.render_data_reader_config(
                     manifest_path=manifest,
                     name="book_replay",
-                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                    catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                 )
 
     def test_rejects_record_size_mismatch(self):
@@ -188,7 +188,7 @@ class ManifestToDataReaderConfigTest(unittest.TestCase):
                 manifest_config.render_data_reader_config(
                     manifest_path=manifest,
                     name="book_replay",
-                    catalog_path=Path("config/instruments/usdt_futures.csv"),
+                    catalog_path=Path("config/instruments/usdt_future_universe.csv"),
                 )
 
 

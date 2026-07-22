@@ -43,7 +43,8 @@ Run id 使用 `YYYYMMDD_HHMMSS_<label>`，创建隔离目录：
 `AQUILA_DATA_SESSION_DIAG_LEVEL=0` 和显式 metadata mode。只修改文档/report 不需要重编译。
 
 Strategy config 必须是 live-orders 配置，不得把 signal-only config 与 `--execute` 混用。Instrument catalog 使用当前
-`config/instruments/usdt_futures.csv` 或 `config/instruments/usdt_future_universe.csv`；历史 catalog 文件名不能作为新 run 入口。
+`config/instruments/usdt_future_universe.csv`；准备 live run 时把该文件冻结到 run directory。历史 catalog 文件名不能作为
+新 run 入口，也不能让 producer、consumer、strategy、gateway 或 report 混用不同 catalog。
 
 ### 3. 生成并核对 affinity overlay
 
@@ -217,7 +218,7 @@ send-to-finish 和 exchange lifecycle 的分离摘要。
 1. 运行 `git status --short --branch`，定位明确的 run id、strategy log、guard stdout、feedback/gateway log 和实际 config。
 2. “上一次”若有多个候选必须询问，不能按文件名猜对应关系。
 3. Gate 需要合并日志时，在 `/home/liuxiang/tmp/<run_id>/` 生成 merged input；不改原始 log。Bitget 默认保留 strategy、gateway、feedback 分离日志，分别传给生成器。
-4. 使用本 run 实际 instrument catalog、config、guard stdout 和 run definition。Bitget 不要使用只覆盖部分 symbol 的 `config/instruments/usdt_futures.csv`；优先使用 run 归档的 `inputs/usdt_future_universe.csv`，缺省时生成器使用 `config/instruments/usdt_future_universe.csv`。
+4. 使用本 run 实际 instrument catalog、config、guard stdout 和 run definition。Bitget 优先使用 run 归档的 `inputs/usdt_future_universe.csv`，缺省时生成器使用 checked-in 的 `config/instruments/usdt_future_universe.csv`。
 5. Bitget fillability 只使用已落盘且 manifest 已封口的 BookTicker segment；运行中的 `.tmp` segment 不在 manifest 内，不把缺失窗口归因于市场不可成交。
 6. 如需账户实际 PnL，归档本 run 时间范围内 `/api/v3/trade/fills` 的原始 JSON，并传 `--rest-fills`。生成器只接受能关联本 run authoritative order 的 fill；未提供 REST 时实际手续费/PnL 必须标为 unavailable。
 7. 若 `reports/<run_id>/` 已存在，先确认复用、换 run id 或覆盖。

@@ -18,7 +18,7 @@ std::string CatalogPrefix() {
   return std::string{R"toml(
 [instrument_catalog]
 file = ")toml"} +
-         SourcePath("config/instruments/usdt_futures.csv").string() +
+         SourcePath("config/instruments/usdt_future_universe.csv").string() +
          R"toml("
 schema = "aquila.instrument.v1"
 

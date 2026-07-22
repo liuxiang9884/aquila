@@ -3,7 +3,7 @@ name = "bitget_gateway_smoke"
 run_id = "validate_only"
 symbol = "BTC_USDT"
 exchange_symbol = "BTCUSDT"
-symbol_id = 0
+symbol_id = 93
 strategy_id = 7
 side = "buy"
 quantity = 0.0001
@@ -15,7 +15,7 @@ terminal_timeout_ms = 10000
 route_id = 0
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data]
 shm_name = "aquila_bitget_gateway_smoke_market_data"
