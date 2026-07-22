@@ -58,6 +58,10 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
   Ack/direct response 不是 terminal，unknown/continuity 进入 reconcile。
 - Bitget `OrderSession`、`OrderFeedbackSession`、RTT probe、OrderGateway 与 LeadLag lag metadata 已实现。HA/高速 endpoint probe
   已有 passive IOC Ack+terminal+REST flat 双证据；fanout=1 gateway smoke 也已有 Ack+terminal+quiescence+REST flat 证据。
+  Checked-in private trading 默认 endpoint 已于 2026-07-22 切换为
+  `vip-ws-uta-pri-a.bitget.com/v3/ws/private`：单路/四路 gateway 的所有 route、独立 feedback 和默认 RTT probe 均使用 HS
+  private；官方 HA 仅保留为显式 A/B / 回滚入口。该 HS 地址缺少官方稳定能力确认，且现有 LeadLag live 证据仍来自 HA 下单，
+  因此首次使用新默认值的真实订单仍需当次授权和完整 guarded smoke / live 证据。
   `bitget_lead_lag_top20_highspeed_20260715T154837Z` 已完成 20-symbol、fanout=1、10 小时真实订单运行：644 个 signal、
   211 个 submitted order、21 个 closed position，quiescence/final flat 通过；实际净 PnL `-0.03536520 USDT`。原始 report
   已按 2026-07-21 的历史报告与 bin 数据清理要求删除，当前摘要和边界只保留在 `docs/bitget_trading.md`。
@@ -197,7 +201,9 @@ rg 'aquila_evaluation' core exchange tools
 Superpowers。设计、计划或关键交易链路取舍先询问 Grill Me。
 
 Bitget 下一步先读 `docs/bitget_trading.md`。V1 继续采用 strict stop-and-flat + fresh-run isolation；四路 gateway/fanout
-contract 已完成代码、测试和 validate-only，但尚无 fanout=4 live 证据。最新真实订单证据是
+contract 已完成代码、测试和 validate-only，但尚无 fanout=4 live 证据。Checked-in private trading 已统一切换到
+`vip-ws-uta-pri-a.bitget.com/v3/ws/private`，覆盖所有 gateway route、独立 feedback 和默认 RTT probe；该推断 endpoint
+缺少官方稳定能力确认，现有 LeadLag live 仍是 HA 证据，不能据此跳过新 endpoint 的 guarded smoke。最新真实订单证据是
 `20260720_162559_bitget_combined46_n6_fanout1_12h`：46 symbols、Bitget fusion `N=6`（3 HA + 3 HS）、order fanout=`1`、
 limiter=`absent`，最终 `normal_exit_flat`；报告摘要为 1,603 signal、368 submitted/finished、49 authoritative filled、entry
 any-fill `24/337 = 7.12%`、REST net PnL `-0.08345090 USDT`。证据包在
