@@ -16,7 +16,7 @@ Bitget report 另增加：
 
 当前字段以 `scripts/lead_lag/analyze_order_detail.py`、`scripts/lead_lag/analyze_bitget_execution.py` 和 `scripts/lead_lag/generate_live_report.py` 为准。真实订单模式不会直接写 per-signal CSV，`signal.csv` 是从 live log 中的 `lead_lag_signal_triggered` 与订单明细关联后生成的分析产物。
 
-`lead_lag_signal_decision` 是 live log 诊断面，当前还没有并入上述 CSV。只有 `execute.taker_buffer` 非 off 时才输出；默认 legacy 配置不新增该日志。它位于 `lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 之间，记录实际准备提交的 `current_order_price` 和启动前生成参数计算出的 `reference_order_price`。该日志只做 taker buffer 参考价对比，不改变真实订单是否提交；最终真实订单是否提交仍以订单提交或拒绝日志为准。
+`lead_lag_signal_decision` 是 live log 诊断面，当前还没有并入上述 CSV。只有 `execute.taker_buffer` 非 off 时才输出；默认 legacy 配置不新增该日志。它位于 `lead_lag_signal_triggered` 和 `lead_lag_order_submitted` / `lead_lag_order_intent_rejected` 之间，记录实际准备提交的 `current_order_price` 和启动前生成参数计算出的 `reference_order_price`。该日志只做 taker buffer 参考价对比，不改变真实订单是否提交；最终真实订单是否提交仍以订单提交或拒绝日志为准。
 
 ## 通用约定
 
