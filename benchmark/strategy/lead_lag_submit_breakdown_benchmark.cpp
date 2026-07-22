@@ -552,7 +552,6 @@ SyntheticFanoutOrders(std::uint64_t first_local_order_id,
 struct SubmitTrace {
   std::int64_t signal_decision_ns{0};
   std::int64_t signal_trigger_observer_ns{0};
-  std::int64_t order_intent_observer_ns{0};
   std::int64_t handle_end_ns{0};
   std::array<std::int64_t,
              static_cast<std::size_t>(StrategySubmitStageForTest::kCount)>
@@ -568,7 +567,6 @@ struct SubmitTrace {
   void Reset() noexcept {
     signal_decision_ns = 0;
     signal_trigger_observer_ns = 0;
-    order_intent_observer_ns = 0;
     handle_end_ns = 0;
     stage_ns.fill(0);
     for (auto& stages : route_stage_ns) {
@@ -615,8 +613,7 @@ struct SubmitStageSamples {
   std::vector<std::uint64_t> quantity_to_routes_refreshed;
   std::vector<std::uint64_t> routes_refreshed_to_routes_selected;
   std::vector<std::uint64_t> routes_selected_to_risk;
-  std::vector<std::uint64_t> risk_to_intent_log;
-  std::vector<std::uint64_t> intent_log_to_group;
+  std::vector<std::uint64_t> risk_to_group;
   std::vector<std::uint64_t> group_to_route0_acquire_begin;
   std::vector<std::uint64_t> route0_acquire_text;
   std::vector<std::uint64_t> route0_acquire_done_to_place_begin;
@@ -633,8 +630,7 @@ struct SubmitStageSamples {
     quantity_to_routes_refreshed.reserve(size);
     routes_refreshed_to_routes_selected.reserve(size);
     routes_selected_to_risk.reserve(size);
-    risk_to_intent_log.reserve(size);
-    intent_log_to_group.reserve(size);
+    risk_to_group.reserve(size);
     group_to_route0_acquire_begin.reserve(size);
     route0_acquire_text.reserve(size);
     route0_acquire_done_to_place_begin.reserve(size);
@@ -669,12 +665,8 @@ struct SubmitStageSamples {
               StageTimeNs(trace, StrategySubmitStageForTest::kRoutesSelected),
               StageTimeNs(trace, StrategySubmitStageForTest::kRiskChecked));
     PushDelta(
-        &risk_to_intent_log,
+        &risk_to_group,
         StageTimeNs(trace, StrategySubmitStageForTest::kRiskChecked),
-        StageTimeNs(trace, StrategySubmitStageForTest::kOrderIntentLogged));
-    PushDelta(
-        &intent_log_to_group,
-        StageTimeNs(trace, StrategySubmitStageForTest::kOrderIntentLogged),
         StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady));
     PushDelta(
         &group_to_route0_acquire_begin,
@@ -728,9 +720,7 @@ struct SubmitStageSamples {
                                routes_refreshed_to_routes_selected);
     SetPrefixedLatencyCounters(state, "routes_selected_to_risk",
                                routes_selected_to_risk);
-    SetPrefixedLatencyCounters(state, "risk_to_intent_log", risk_to_intent_log);
-    SetPrefixedLatencyCounters(state, "intent_log_to_group",
-                               intent_log_to_group);
+    SetPrefixedLatencyCounters(state, "risk_to_group", risk_to_group);
     SetPrefixedLatencyCounters(state, "group_to_route0_acquire_begin",
                                group_to_route0_acquire_begin);
     SetPrefixedLatencyCounters(state, "route0_acquire_text",
@@ -765,14 +755,6 @@ void OnSignalDecisionOnlyForBenchmark(
   active_submit_trace->signal_decision_ns = record.signal_decision_ns;
 }
 
-void OnOrderIntentForBenchmark(
-    const detail::StrategyOrderIntentLogRecordForTest&) noexcept {
-  if (active_submit_trace == nullptr) {
-    return;
-  }
-  active_submit_trace->order_intent_observer_ns = benchmarking::RealtimeNowNs();
-}
-
 void OnOrderSubmittedForBenchmark(
     const detail::StrategyOrderSubmittedLogRecordForTest& record) noexcept {
   if (active_submit_trace == nullptr || record.route_id >= kFanout) {
@@ -805,7 +787,6 @@ class StrategyLogHookScope {
   StrategyLogHookScope() noexcept {
     detail::SetStrategySignalTriggeredLogObserverForTest(
         OnSignalTriggeredForBenchmark);
-    detail::SetStrategyOrderIntentLogObserverForTest(OnOrderIntentForBenchmark);
     detail::SetStrategyOrderSubmittedLogObserverForTest(
         OnOrderSubmittedForBenchmark);
     detail::SetStrategySubmitStageObserverForTest(OnSubmitStageForBenchmark);
@@ -813,7 +794,6 @@ class StrategyLogHookScope {
 
   ~StrategyLogHookScope() {
     detail::SetStrategySignalTriggeredLogObserverForTest(nullptr);
-    detail::SetStrategyOrderIntentLogObserverForTest(nullptr);
     detail::SetStrategyOrderSubmittedLogObserverForTest(nullptr);
     detail::SetStrategySubmitStageObserverForTest(nullptr);
     active_submit_trace = nullptr;
@@ -1357,15 +1337,15 @@ void BM_LeadLagSubmitPathBreakdownSyntheticFanout4(benchmark::State& state) {
 
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_route0_place_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_route0_place_ns;
   std::vector<std::uint64_t> route0_to_route3_place_ns;
   std::vector<std::uint64_t> route3_place_to_done_ns;
   std::array<std::vector<std::uint64_t>, kFanout> decision_to_route_place_ns;
   full_samples_ns.reserve(kLatencyIterations);
   decision_to_signal_log_done_ns.reserve(kLatencyIterations);
-  signal_log_to_intent_log_done_ns.reserve(kLatencyIterations);
-  intent_log_to_route0_place_ns.reserve(kLatencyIterations);
+  signal_log_to_group_ready_ns.reserve(kLatencyIterations);
+  group_ready_to_route0_place_ns.reserve(kLatencyIterations);
   route0_to_route3_place_ns.reserve(kLatencyIterations);
   route3_place_to_done_ns.reserve(kLatencyIterations);
   for (auto& samples : decision_to_route_place_ns) {
@@ -1413,10 +1393,12 @@ void BM_LeadLagSubmitPathBreakdownSyntheticFanout4(benchmark::State& state) {
     full_samples_ns.push_back(elapsed_ns);
     decision_to_signal_log_done_ns.push_back(
         DeltaNs(trace.signal_decision_ns, trace.signal_trigger_observer_ns));
-    signal_log_to_intent_log_done_ns.push_back(DeltaNs(
-        trace.signal_trigger_observer_ns, trace.order_intent_observer_ns));
-    intent_log_to_route0_place_ns.push_back(
-        DeltaNs(trace.order_intent_observer_ns, trace.place_enter_ns[0]));
+    signal_log_to_group_ready_ns.push_back(DeltaNs(
+        trace.signal_trigger_observer_ns,
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady)));
+    group_ready_to_route0_place_ns.push_back(DeltaNs(
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+        trace.place_enter_ns[0]));
     route0_to_route3_place_ns.push_back(
         DeltaNs(trace.place_enter_ns[0], trace.place_enter_ns[3]));
     route3_place_to_done_ns.push_back(
@@ -1436,10 +1418,10 @@ void BM_LeadLagSubmitPathBreakdownSyntheticFanout4(benchmark::State& state) {
                                               "parents", state.iterations());
   SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
                              decision_to_signal_log_done_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_route0_place",
-                             intent_log_to_route0_place_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_route0_place",
+                             group_ready_to_route0_place_ns);
   SetPrefixedLatencyCounters(state, "route0_place_to_route3_place",
                              route0_to_route3_place_ns);
   SetPrefixedLatencyCounters(state, "route3_place_to_done",
@@ -1459,15 +1441,15 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4(
 
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_route0_enqueue_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_route0_enqueue_ns;
   std::vector<std::uint64_t> route0_to_route3_enqueue_ns;
   std::vector<std::uint64_t> route3_enqueue_to_done_ns;
   std::array<std::vector<std::uint64_t>, kFanout> decision_to_route_enqueue_ns;
   full_samples_ns.reserve(kLatencyIterations);
   decision_to_signal_log_done_ns.reserve(kLatencyIterations);
-  signal_log_to_intent_log_done_ns.reserve(kLatencyIterations);
-  intent_log_to_route0_enqueue_ns.reserve(kLatencyIterations);
+  signal_log_to_group_ready_ns.reserve(kLatencyIterations);
+  group_ready_to_route0_enqueue_ns.reserve(kLatencyIterations);
   route0_to_route3_enqueue_ns.reserve(kLatencyIterations);
   route3_enqueue_to_done_ns.reserve(kLatencyIterations);
   for (auto& samples : decision_to_route_enqueue_ns) {
@@ -1522,10 +1504,12 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4(
     full_samples_ns.push_back(elapsed_ns);
     decision_to_signal_log_done_ns.push_back(
         DeltaNs(trace.signal_decision_ns, trace.signal_trigger_observer_ns));
-    signal_log_to_intent_log_done_ns.push_back(DeltaNs(
-        trace.signal_trigger_observer_ns, trace.order_intent_observer_ns));
-    intent_log_to_route0_enqueue_ns.push_back(
-        DeltaNs(trace.order_intent_observer_ns, trace.place_enter_ns[0]));
+    signal_log_to_group_ready_ns.push_back(DeltaNs(
+        trace.signal_trigger_observer_ns,
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady)));
+    group_ready_to_route0_enqueue_ns.push_back(DeltaNs(
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+        trace.place_enter_ns[0]));
     route0_to_route3_enqueue_ns.push_back(
         DeltaNs(trace.place_enter_ns[0], trace.place_enter_ns[3]));
     route3_enqueue_to_done_ns.push_back(
@@ -1545,10 +1529,10 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4(
                                               "parents", state.iterations());
   SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
                              decision_to_signal_log_done_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_route0_enqueue",
-                             intent_log_to_route0_enqueue_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_route0_enqueue",
+                             group_ready_to_route0_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route0_enqueue_to_route3_enqueue",
                              route0_to_route3_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route3_enqueue_to_done",
@@ -1569,16 +1553,16 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
 
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_route0_enqueue_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_route0_enqueue_ns;
   std::vector<std::uint64_t> route0_to_route3_enqueue_ns;
   std::vector<std::uint64_t> route3_enqueue_to_done_ns;
   std::array<std::vector<std::uint64_t>, kFanout> decision_to_route_enqueue_ns;
   SubmitStageSamples stage_samples;
   full_samples_ns.reserve(kLatencyIterations);
   decision_to_signal_log_done_ns.reserve(kLatencyIterations);
-  signal_log_to_intent_log_done_ns.reserve(kLatencyIterations);
-  intent_log_to_route0_enqueue_ns.reserve(kLatencyIterations);
+  signal_log_to_group_ready_ns.reserve(kLatencyIterations);
+  group_ready_to_route0_enqueue_ns.reserve(kLatencyIterations);
   route0_to_route3_enqueue_ns.reserve(kLatencyIterations);
   route3_enqueue_to_done_ns.reserve(kLatencyIterations);
   stage_samples.Reserve(kLatencyIterations);
@@ -1653,10 +1637,12 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
     stage_samples.Push(trace);
     decision_to_signal_log_done_ns.push_back(
         DeltaNs(trace.signal_decision_ns, trace.signal_trigger_observer_ns));
-    signal_log_to_intent_log_done_ns.push_back(DeltaNs(
-        trace.signal_trigger_observer_ns, trace.order_intent_observer_ns));
-    intent_log_to_route0_enqueue_ns.push_back(
-        DeltaNs(trace.order_intent_observer_ns, trace.place_enter_ns[0]));
+    signal_log_to_group_ready_ns.push_back(DeltaNs(
+        trace.signal_trigger_observer_ns,
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady)));
+    group_ready_to_route0_enqueue_ns.push_back(DeltaNs(
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+        trace.place_enter_ns[0]));
     route0_to_route3_enqueue_ns.push_back(
         DeltaNs(trace.place_enter_ns[0], trace.place_enter_ns[3]));
     route3_enqueue_to_done_ns.push_back(
@@ -1678,10 +1664,10 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
       static_cast<double>(prefill_open_signal_count);
   SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
                              decision_to_signal_log_done_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_route0_enqueue",
-                             intent_log_to_route0_enqueue_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_route0_enqueue",
+                             group_ready_to_route0_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route0_enqueue_to_route3_enqueue",
                              route0_to_route3_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route3_enqueue_to_done",
@@ -1727,8 +1713,8 @@ void RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(benchmark::State& state,
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
   std::vector<std::uint64_t> signal_log_done_to_price_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_request_timestamp_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_request_timestamp_ns;
   std::vector<std::uint64_t> decision_to_request_timestamp_ns;
   std::vector<std::uint64_t> before_place_to_request_timestamp_ns;
   std::vector<std::uint64_t> request_timestamp_to_place_return_ns;
@@ -1740,8 +1726,8 @@ void RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(benchmark::State& state,
   full_samples_ns.reserve(kColdSubmitBreakdownIterations);
   decision_to_signal_log_done_ns.reserve(kColdSubmitBreakdownIterations);
   signal_log_done_to_price_ns.reserve(kColdSubmitBreakdownIterations);
-  signal_log_to_intent_log_done_ns.reserve(kColdSubmitBreakdownIterations);
-  intent_log_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
+  signal_log_to_group_ready_ns.reserve(kColdSubmitBreakdownIterations);
+  group_ready_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
   decision_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
   before_place_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
   request_timestamp_to_place_return_ns.reserve(kColdSubmitBreakdownIterations);
@@ -1840,11 +1826,13 @@ void RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(benchmark::State& state,
                 trace.signal_trigger_observer_ns);
       PushDelta(&signal_log_done_to_price_ns, trace.signal_trigger_observer_ns,
                 StageTimeNs(trace, StrategySubmitStageForTest::kPricePrepared));
-      PushDelta(&signal_log_to_intent_log_done_ns,
-                trace.signal_trigger_observer_ns,
-                trace.order_intent_observer_ns);
-      PushDelta(&intent_log_to_request_timestamp_ns,
-                trace.order_intent_observer_ns, trace.place_enter_ns[0]);
+      PushDelta(
+          &signal_log_to_group_ready_ns, trace.signal_trigger_observer_ns,
+          StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady));
+      PushDelta(
+          &group_ready_to_request_timestamp_ns,
+          StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+          trace.place_enter_ns[0]);
       PushDelta(&before_place_to_request_timestamp_ns,
                 RouteStageTimeNs(
                     trace, StrategySubmitStageForTest::kBeforePlaceOrder, 0),
@@ -1878,10 +1866,10 @@ void RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(benchmark::State& state,
                              decision_to_signal_log_done_ns);
   SetPrefixedLatencyCounters(state, "signal_log_done_to_price",
                              signal_log_done_to_price_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_request_timestamp",
-                             intent_log_to_request_timestamp_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_request_timestamp",
+                             group_ready_to_request_timestamp_ns);
   SetPrefixedLatencyCounters(state, "decision_to_request_timestamp",
                              decision_to_request_timestamp_ns);
   SetPrefixedLatencyCounters(state, "before_place_to_request_timestamp",

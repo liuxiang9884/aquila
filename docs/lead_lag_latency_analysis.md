@@ -58,6 +58,21 @@ sample 在目标 BAS submit 前执行 64 次全 pair、双边 non-triggering swe
 | cold、INFO 关闭、完整 stage timestamp | 4.058us | 5.398us | 13.972us | 3.862–4.211us |
 | warm、INFO、完整 stage timestamp | 1.239us | 1.544us | 1.830us | 1.220–1.292us |
 
+同日删除成功路径中字段重复的 `lead_lag_order_intent` INFO 后，使用未修改的 parent
+binary 与 candidate binary 重新做五组交错 paired endpoint-only A/B；每组仍为 1,024
+samples，workload 和 CPU 不变：
+
+| Endpoint | Parent group median | Candidate group median | 改善 | 同向组数 |
+| --- | ---: | ---: | ---: | ---: |
+| decision -> request P50 | 4.939us | 4.285us | 0.654us / 13.2% | 5/5 |
+| decision -> request P95 | 6.915us | 5.917us | 0.998us / 14.4% | 5/5 |
+| decision -> request P99 | 29.227us | 25.844us | 3.383us / 11.6% | 5/5 |
+
+parent P50 的组间 MAD 为 21ns，P50 收益超过 `2 × MAD`，也超过 2% / 5 cycles
+门槛。成功结果仍由 `lead_lag_order_submitted` 记录，所有
+`lead_lag_order_intent_rejected`、recovery 和 report 事实源保持不变；strategy 与 report
+回归测试通过。
+
 完整 stage case 的 cold INFO P50 分段如下。各 counter 独立取 P50，不能机械相加成总
 P50，但可以用于成本排序：
 
@@ -69,14 +84,14 @@ P50，但可以用于成本排序：
 | freshness -> quantity prepared | 0.167us | quantity、min/max 和 decimal preparation |
 | quantity -> routes selected | 0.346us | gateway route state refresh 与单 route selection |
 | routes selected -> risk checked | 0.710us | order notional、global open risk scan / check |
-| risk -> order-intent log done | 0.622us | `lead_lag_order_intent` frontend log call 与 observer |
-| intent log -> `PlaceOrder()` begin | 0.494us | execution group / parent id、fixed risk slot 与 child request 准备 |
+| risk -> order-intent log done（改前） | 0.622us | 已删除的 `lead_lag_order_intent` frontend log call 与 observer |
+| intent log -> `PlaceOrder()` begin（改前） | 0.494us | execution group / parent id、fixed risk slot 与 child request 准备 |
 | `PlaceOrder()` begin -> request timestamp | 0.632us | request/symbol copy、OrderPool create、gateway route precheck 和 command timestamp |
 | request timestamp -> `PlaceOrder()` return | 0.469us | route table record、SHM `TryPush`、order status / send timestamp 回写 |
 
 归因边界：
 
-- cold INFO 的完整 stage P50 比 INFO 关闭高 1.792us。两个 log call 可直接对齐的增量约
+- 改动前 cold INFO 的完整 stage P50 比 INFO 关闭高 1.792us。两个 log call 可直接对齐的增量约
   1.378us，其中 signal-triggered 约 0.937us、order-intent 约 0.441us；剩余差值分布在
   log 后的工作集扰动和独立分位数误差中。Quill 是异步 logger，这里测到的是 frontend
   格式参数复制 / queue enqueue 及其缓存影响，不是 file sink 同步落盘。
@@ -92,8 +107,10 @@ P50，但可以用于成本排序：
   cold/warm working-set 效应，不能进一步声称具体是 L1I、L1D、L2 或某个单一函数 miss。
   P99 仍受本机非隔离 scheduler / IRQ 影响，不用来声明稳定代码成本。
 
-正式 JSON 证据位于
-`/home/liuxiang/tmp/lead_lag_cold_submit_breakdown_20260722_1024/`。运行入口是
+原始 breakdown JSON 位于
+`/home/liuxiang/tmp/lead_lag_cold_submit_breakdown_20260722_1024/`；日志删除的 fresh paired
+JSON 位于
+`/home/liuxiang/tmp/lead_lag_submit_log_risk_prefetch_20260722/intent_removal/`。运行入口是
 `BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Churn`、`Warm` 和
 `EndpointOnly`；`AQUILA_LEAD_LAG_BENCHMARK_LOG_LEVEL=critical` 用于 INFO 关闭对照。
 

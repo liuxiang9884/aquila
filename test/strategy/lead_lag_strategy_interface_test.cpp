@@ -1590,13 +1590,15 @@ TEST(LeadLagStrategyInterfaceTest,
   }
 }
 
-TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
+TEST(LeadLagStrategyInterfaceTest,
+     SkipsRedundantSuccessfulOrderIntentBeforeSubmit) {
   leadlag::Strategy strategy{SignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
   StrategySignalTriggeredLogCaptureGuard signal_log_capture;
-  StrategyOrderIntentLogCaptureGuard log_capture;
+  StrategyOrderIntentLogCaptureGuard order_intent_log_capture;
+  StrategyOrderSubmittedLogCaptureGuard submitted_log_capture;
 
   FeedOpenLongSignal(&strategy, &context);
 
@@ -1624,9 +1626,10 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(signal.role, leadlag::PairRole::kLead);
   EXPECT_EQ(signal.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(signal.side, aquila::OrderSide::kBuy);
-  ASSERT_EQ(g_order_intent_log_count, 1U);
-  const leadlag::detail::StrategyOrderIntentLogRecordForTest& record =
-      g_order_intent_logs[0];
+  EXPECT_EQ(g_order_intent_log_count, 0U);
+  ASSERT_EQ(g_order_submitted_log_count, 1U);
+  const leadlag::detail::StrategyOrderSubmittedLogRecordForTest& record =
+      g_order_submitted_logs[0];
   EXPECT_EQ(record.trigger_exchange_ns, signal.trigger_exchange_ns);
   EXPECT_EQ(record.lead_exchange_ns, signal.lead_exchange_ns);
   EXPECT_EQ(record.lag_exchange_ns, signal.lag_exchange_ns);
@@ -1649,14 +1652,14 @@ TEST(LeadLagStrategyInterfaceTest, LogsExternalOrderIntentBeforeSubmit) {
   EXPECT_EQ(record.action, leadlag::SignalAction::kOpenLong);
   EXPECT_EQ(record.side, aquila::OrderSide::kBuy);
   EXPECT_FALSE(record.reduce_only);
-  EXPECT_EQ(record.position_id, 0U);
+  EXPECT_NE(record.position_id, 0U);
   EXPECT_EQ(record.quantity, 9);
   EXPECT_DOUBLE_EQ(record.raw_price, 102.02);
   EXPECT_DOUBLE_EQ(record.order_price, 102.1);
-  EXPECT_DOUBLE_EQ(record.price, 102.1);
   EXPECT_DOUBLE_EQ(record.target_open_notional, 1000.0);
   EXPECT_DOUBLE_EQ(record.estimated_notional, 918.9);
-  EXPECT_EQ(record.active_groups, 0U);
+  EXPECT_EQ(record.active_groups, 1U);
+  EXPECT_EQ(record.place_status, aquila::core::OrderPlaceStatus::kOk);
 }
 
 TEST(LeadLagStrategyInterfaceTest, LogsSignalDecisionWithReferenceShadowPrice) {
@@ -1665,15 +1668,10 @@ TEST(LeadLagStrategyInterfaceTest, LogsSignalDecisionWithReferenceShadowPrice) {
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
   StrategySignalDecisionLogCaptureGuard signal_decision_log_capture;
-  StrategyOrderIntentLogCaptureGuard order_intent_log_capture;
 
   FeedOpenLongSignal(&strategy, &context);
 
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
-  ASSERT_EQ(g_order_intent_log_count, 1U);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].raw_price, 102.02);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].order_price, 102.1);
-
   ASSERT_EQ(g_signal_decision_log_count, 1U);
   const leadlag::detail::StrategySignalDecisionLogRecordForTest& record =
       g_signal_decision_logs[0];
@@ -1699,12 +1697,10 @@ TEST(LeadLagStrategyInterfaceTest,
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
   StrategySignalDecisionLogCaptureGuard signal_decision_log_capture;
-  StrategyOrderIntentLogCaptureGuard order_intent_log_capture;
 
   FeedOpenLongSignal(&strategy, &context);
 
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
-  EXPECT_EQ(g_order_intent_log_count, 1U);
   EXPECT_EQ(g_signal_decision_log_count, 0U);
 }
 
@@ -1940,7 +1936,7 @@ TEST(LeadLagStrategyInterfaceTest,
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
-  StrategyOrderIntentLogCaptureGuard log_capture;
+  StrategyOrderSubmittedLogCaptureGuard submitted_log_capture;
 
   FeedOpenLongSignal(&strategy, &context);
 
@@ -1951,10 +1947,9 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_FALSE(order.reduce_only);
   EXPECT_DOUBLE_EQ(order.price, 102.4);
   EXPECT_EQ(order.quantity, 9);
-  ASSERT_EQ(g_order_intent_log_count, 1U);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].raw_price, 102.02);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].order_price, 102.4);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[0].price, 102.4);
+  ASSERT_EQ(g_order_submitted_log_count, 1U);
+  EXPECT_DOUBLE_EQ(g_order_submitted_logs[0].raw_price, 102.02);
+  EXPECT_DOUBLE_EQ(g_order_submitted_logs[0].order_price, 102.4);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
@@ -2097,7 +2092,7 @@ TEST(LeadLagStrategyInterfaceTest,
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 8, 4};
   ContextT context{order_manager};
-  StrategyOrderIntentLogCaptureGuard log_capture;
+  StrategyOrderSubmittedLogCaptureGuard submitted_log_capture;
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
@@ -2116,10 +2111,9 @@ TEST(LeadLagStrategyInterfaceTest,
   EXPECT_TRUE(close_order.reduce_only);
   EXPECT_DOUBLE_EQ(close_order.price, 101.2);
   EXPECT_EQ(close_order.quantity, 7);
-  ASSERT_EQ(g_order_intent_log_count, 2U);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[1].raw_price, 101.57);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[1].order_price, 101.2);
-  EXPECT_DOUBLE_EQ(g_order_intent_logs[1].price, 101.2);
+  ASSERT_EQ(g_order_submitted_log_count, 2U);
+  EXPECT_DOUBLE_EQ(g_order_submitted_logs[1].raw_price, 101.57);
+  EXPECT_DOUBLE_EQ(g_order_submitted_logs[1].order_price, 101.2);
 }
 
 TEST(LeadLagStrategyInterfaceTest,
