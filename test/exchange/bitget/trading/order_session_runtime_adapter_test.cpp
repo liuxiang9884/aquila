@@ -57,7 +57,6 @@ TEST(BitgetOrderSessionRuntimeAdapterTest, PreservesCoreEventFields) {
       .kind = OrderResponseKind::kAck,
       .request_type = OrderRequestType::kPlaceOrder,
       .local_order_id = 0x0400000000000007ULL,
-      .parent_id = 88,
       .group_id = 77,
       .exchange_order_id = 9988,
       .route_id = 3,
@@ -69,7 +68,6 @@ TEST(BitgetOrderSessionRuntimeAdapterTest, PreservesCoreEventFields) {
 
   EXPECT_EQ(event.kind, core::OrderResponseKind::kAck);
   EXPECT_EQ(event.local_order_id, response.local_order_id);
-  EXPECT_EQ(event.parent_id, response.parent_id);
   EXPECT_EQ(event.group_id, response.group_id);
   EXPECT_EQ(event.exchange_order_id, response.exchange_order_id);
   EXPECT_EQ(event.route_id, response.route_id);

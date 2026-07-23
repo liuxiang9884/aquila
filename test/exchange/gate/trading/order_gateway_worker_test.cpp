@@ -97,7 +97,6 @@ core::OrderGatewayCommand MakePlaceCommand(std::uint16_t route_id,
   command.command_seq = 10 + local_order_id;
   command.payload.place = core::OrderPlaceRequest{
       .local_order_id = local_order_id,
-      .parent_id = 9000,
       .group_id = 901,
       .price = 65000.0,
       .quantity = 0.01,
@@ -123,7 +122,6 @@ core::OrderGatewayCommand MakeCancelCommand(
   command.command_seq = 10 + local_order_id;
   command.payload.cancel = core::OrderCancelRequest{
       .local_order_id = local_order_id,
-      .parent_id = 9000,
       .group_id = 901,
       .gateway_route_id = route_id,
   };
@@ -265,7 +263,6 @@ TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   core::OrderGatewayShmManager& shm = shm_result.value;
   core::OrderGatewayCommand command = MakePlaceCommand(0, 1104);
   command.command_seq = 44;
-  command.payload.place.parent_id = 33;
   command.payload.place.group_id = 43;
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
 
@@ -285,7 +282,6 @@ TEST(OrderGatewayWorkerTest, ResponseEventCarriesCommandMetadata) {
   ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
   EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kOrderResponse);
   EXPECT_EQ(event.command_seq, 44U);
-  EXPECT_EQ(event.parent_id, 33U);
   EXPECT_EQ(event.group_id, 43U);
   EXPECT_GT(event.worker_dequeue_ns, 0);
   EXPECT_EQ(event.request_send_local_ns, 301);
@@ -301,11 +297,9 @@ TEST(OrderGatewayWorkerTest, OutOfOrderResponsesKeepPerGroupCommandMetadata) {
 
   core::OrderGatewayCommand group_a = MakePlaceCommand(0, 1201);
   group_a.command_seq = 41;
-  group_a.payload.place.parent_id = 501;
   group_a.payload.place.group_id = 701;
   core::OrderGatewayCommand group_b = MakePlaceCommand(0, 1202);
   group_b.command_seq = 42;
-  group_b.payload.place.parent_id = 502;
   group_b.payload.place.group_id = 702;
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(group_a));
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(group_b));
@@ -334,12 +328,10 @@ TEST(OrderGatewayWorkerTest, OutOfOrderResponsesKeepPerGroupCommandMetadata) {
   ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
   EXPECT_EQ(event.local_order_id, 1202U);
   EXPECT_EQ(event.command_seq, 42U);
-  EXPECT_EQ(event.parent_id, 502U);
   EXPECT_EQ(event.group_id, 702U);
   ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
   EXPECT_EQ(event.local_order_id, 1201U);
   EXPECT_EQ(event.command_seq, 41U);
-  EXPECT_EQ(event.parent_id, 501U);
   EXPECT_EQ(event.group_id, 701U);
 }
 
@@ -352,7 +344,6 @@ TEST(OrderGatewayWorkerTest, NotReadyClearsPendingResponseMetadata) {
   core::OrderGatewayShmManager& shm = shm_result.value;
   core::OrderGatewayCommand command = MakePlaceCommand(0, 1105);
   command.command_seq = 45;
-  command.payload.place.parent_id = 34;
   ASSERT_TRUE(shm.CommandQueue(0).TryPush(command));
 
   FakeSession session;
@@ -374,7 +365,6 @@ TEST(OrderGatewayWorkerTest, NotReadyClearsPendingResponseMetadata) {
   ASSERT_TRUE(shm.EventQueue(0).TryPop(&event));
   EXPECT_EQ(event.kind, core::OrderGatewayEventKind::kOrderResponse);
   EXPECT_EQ(event.command_seq, 0U);
-  EXPECT_EQ(event.parent_id, 0U);
   EXPECT_EQ(event.group_id, 0U);
   EXPECT_EQ(event.worker_dequeue_ns, 0);
   EXPECT_EQ(event.request_send_local_ns, 0);

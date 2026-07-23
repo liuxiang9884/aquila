@@ -54,7 +54,6 @@ struct RecordingHandler {
 core::OrderPlaceRequest MakePlaceOrder(std::uint64_t local_order_id) noexcept {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .parent_id = 7,
       .group_id = 77,
       .price = 100000.0,
       .quantity = 0.001,
@@ -74,7 +73,6 @@ core::OrderCancelRequest MakeCancelOrder(
     std::uint64_t local_order_id) noexcept {
   return core::OrderCancelRequest{
       .local_order_id = local_order_id,
-      .parent_id = 7,
       .group_id = 77,
       .gateway_route_id = 3,
   };
@@ -314,7 +312,6 @@ TEST(BitgetOrderSessionTest, PlaceAckCorrelatesCachesAndDoesNotAccept) {
   ASSERT_EQ(handler.responses.size(), 1U);
   EXPECT_EQ(handler.responses[0].kind, OrderResponseKind::kAck);
   EXPECT_EQ(handler.responses[0].local_order_id, 123U);
-  EXPECT_EQ(handler.responses[0].parent_id, 7U);
   EXPECT_EQ(handler.responses[0].group_id, 77U);
   EXPECT_EQ(handler.responses[0].route_id, 3U);
   EXPECT_EQ(handler.responses[0].exchange_order_id, 9988U);

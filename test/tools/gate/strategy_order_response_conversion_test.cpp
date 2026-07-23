@@ -9,7 +9,6 @@ TEST(GateStrategyOrderResponseConversionTest, CopiesLatencyTimestamps) {
   const gate::OrderResponse response{
       .kind = gate::OrderResponseKind::kAccepted,
       .local_order_id = 123,
-      .parent_id = 11,
       .group_id = 22,
       .exchange_order_id = 456,
       .route_id = 3,
@@ -21,7 +20,6 @@ TEST(GateStrategyOrderResponseConversionTest, CopiesLatencyTimestamps) {
 
   EXPECT_EQ(event.kind, core::OrderResponseKind::kAccepted);
   EXPECT_EQ(event.local_order_id, 123U);
-  EXPECT_EQ(event.parent_id, 11U);
   EXPECT_EQ(event.group_id, 22U);
   EXPECT_EQ(event.exchange_order_id, 456U);
   EXPECT_EQ(event.route_id, 3U);

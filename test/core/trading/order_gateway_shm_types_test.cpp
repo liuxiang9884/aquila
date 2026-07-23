@@ -10,11 +10,18 @@ namespace {
 template <typename T>
 concept HasGroupIndex = requires(T value) { value.group_index; };
 
+template <typename T>
+concept HasParentId = requires(T value) { value.parent_id; };
+
 static_assert(!HasGroupIndex<OrderPlaceRequest>);
 static_assert(!HasGroupIndex<OrderCancelRequest>);
 static_assert(!HasGroupIndex<OrderGatewayEvent>);
 static_assert(!HasGroupIndex<OrderFeedbackEvent>);
 static_assert(HasGroupIndex<StrategyOrder>);
+static_assert(!HasParentId<OrderPlaceRequest>);
+static_assert(!HasParentId<OrderCancelRequest>);
+static_assert(!HasParentId<OrderGatewayEvent>);
+static_assert(!HasParentId<OrderResponseEvent>);
 
 TEST(OrderGatewayShmTypesTest, PayloadTypesArePodLike) {
   EXPECT_TRUE(std::is_standard_layout_v<OrderPlaceRequest>);
@@ -36,10 +43,11 @@ TEST(OrderGatewayShmTypesTest, ConstantsMatchDesign) {
   EXPECT_EQ(kOrderGatewayShmVersion, 4U);
   EXPECT_EQ(kMaxOrderGatewayRoutes, 16U);
   EXPECT_EQ(kOrderSymbolBytes, 32U);
-  EXPECT_EQ(sizeof(OrderPlaceRequest), 88U);
-  EXPECT_EQ(sizeof(OrderCancelRequest), 32U);
-  EXPECT_EQ(sizeof(OrderGatewayCommand), 112U);
-  EXPECT_EQ(sizeof(OrderGatewayEvent), 144U);
+  EXPECT_EQ(sizeof(OrderPlaceRequest), 80U);
+  EXPECT_EQ(sizeof(OrderCancelRequest), 24U);
+  EXPECT_EQ(sizeof(StrategyOrder), 192U);
+  EXPECT_EQ(sizeof(OrderGatewayCommand), 104U);
+  EXPECT_EQ(sizeof(OrderGatewayEvent), 136U);
 }
 
 TEST(OrderGatewayShmTypesTest, PlaceAndCancelUseExactRequestPayloads) {
@@ -63,12 +71,10 @@ TEST(OrderGatewayShmTypesTest, PlaceAndCancelUseExactRequestPayloads) {
   OrderGatewayCommand cancel{};
   cancel.kind = OrderGatewayCommandKind::kCancel;
   cancel.payload.cancel.local_order_id = 11;
-  cancel.payload.cancel.parent_id = 7;
   cancel.payload.cancel.group_id = 17;
   cancel.payload.cancel.gateway_route_id = 3;
 
   EXPECT_EQ(cancel.payload.cancel.local_order_id, 11U);
-  EXPECT_EQ(cancel.payload.cancel.parent_id, 7U);
   EXPECT_EQ(cancel.payload.cancel.group_id, 17U);
   EXPECT_EQ(OrderGatewayCommandGroupId(cancel), 17U);
   EXPECT_EQ(cancel.payload.cancel.gateway_route_id, 3U);

@@ -218,8 +218,8 @@ void ForgetExchangeOrderId(std::uint64_t local_order_id) noexcept;
 已进入 gateway queue，不等价于已经写到 socket；真实 Ack / final response 仍先进入 `OrderManager`，再通知 `Strategy`。
 当前 LeadLag 使用 pair runtime 内单调递增的 `group_id` 标识 execution group，稳定归因键是
 `(symbol_id, group_id)`；open、close、stoploss、retry 和 fanout child 共享同一个 `group_id`，child order 仍保留唯一
-`local_order_id`，不修改 `LocalOrderIdCodec`。`parent_id` 继续是 core / gateway 的 generic correlation 字段，gateway
-不解释其策略语义；LeadLag 日志与 report 使用 `group_id`。
+`local_order_id`，不修改 `LocalOrderIdCodec`。SHM v4 只保留 `group_id` 作为归组字段；gateway
+原样传播该值且不解释策略语义，`0` 表示 producer 未提供归组身份。
 
 ## OrderSession
 
@@ -298,7 +298,7 @@ double quantity + quantity_decimal_places
 - decimal-size Gate contract 在 `OrderSession` 把最终 `size` text 编码为 JSON string。
 - feedback event / SHM / `OrderManager` 使用 `double` 表示累计成交、剩余和撤单数量。
 
-cancel contract 是只含 `local_order_id`、`parent_id`、`group_id` 和 route 的
+cancel contract 是只含 `local_order_id`、`group_id` 和 route 的
 `OrderCancelRequest`。Gate/Bitget `OrderSession` 使用自己的 local-to-exchange order id
 cache；cache miss 分别沿用 Gate `t-<local_order_id>` 与 Bitget `clientOid` fallback。
 

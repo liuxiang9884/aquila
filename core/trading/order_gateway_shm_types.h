@@ -133,23 +133,6 @@ struct OrderGatewayCommand {
   return 0;
 }
 
-[[nodiscard]] inline std::uint64_t OrderGatewayCommandParentId(
-    const OrderGatewayCommand& command) noexcept {
-  switch (command.kind) {
-    case OrderGatewayCommandKind::kPlace:
-      return command.payload.place.parent_id;
-    case OrderGatewayCommandKind::kCancel:
-      return command.payload.cancel.parent_id;
-    case OrderGatewayCommandKind::kCacheExchangeOrderId:
-    case OrderGatewayCommandKind::kForgetExchangeOrderId:
-      return command.payload.order_id.local_order_id;
-    case OrderGatewayCommandKind::kNone:
-    case OrderGatewayCommandKind::kStop:
-      return 0;
-  }
-  return 0;
-}
-
 [[nodiscard]] inline std::uint64_t OrderGatewayCommandGroupId(
     const OrderGatewayCommand& command) noexcept {
   switch (command.kind) {
@@ -194,7 +177,6 @@ struct OrderGatewayCommand {
 struct OrderGatewayEvent {
   std::uint64_t event_seq{0};
   std::uint64_t command_seq{0};
-  std::uint64_t parent_id{0};
   std::uint64_t group_id{0};
   std::uint64_t local_order_id{0};
   std::uint64_t exchange_order_id{0};

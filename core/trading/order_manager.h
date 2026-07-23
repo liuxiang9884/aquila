@@ -62,7 +62,6 @@ class OrderManager {
               .local_order_id = request.local_order_id};
     }
 
-    request.parent_id = order->place_request.parent_id;
     request.group_id = order->place_request.group_id;
     request.gateway_route_id = order->place_request.gateway_route_id;
     const auto sent = order_session_.CancelOrder(request);

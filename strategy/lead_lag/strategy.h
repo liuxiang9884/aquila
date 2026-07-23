@@ -145,14 +145,14 @@ struct StrategyOrderPositionLogFields {
 
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
 inline void NotifySubmitStageForTest(
-    StrategySubmitStageForTest stage, std::uint64_t parent_id = 0,
+    StrategySubmitStageForTest stage, std::uint64_t group_id = 0,
     std::uint64_t local_order_id = 0,
     std::uint16_t route_id = core::kAutoGatewayRoute,
     std::uint32_t route_index = 0,
     std::uint32_t submission_route_count = 0) noexcept {
   NotifyStrategySubmitStageObserverForTest(StrategySubmitStageRecordForTest{
       .stage = stage,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .local_order_id = local_order_id,
       .route_id = route_id,
       .route_index = route_index,
@@ -2100,7 +2100,6 @@ class Strategy {
       const PreparedOrderQuantity& quantity, const ExecutionGroup& group,
       std::uint16_t route_id) noexcept {
     core::OrderPlaceRequest request{
-        .parent_id = group.parent_id,
         .group_id = group.group_id,
         .price = price.order_price,
         .quantity = quantity.quantity,
@@ -2208,17 +2207,17 @@ class Strategy {
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OpenRiskReservationSlot* risk_slot,
-      std::uint64_t parent_id, std::uint16_t route_id) noexcept {
+      std::uint64_t group_id, std::uint16_t route_id) noexcept {
     assert(submit_group != nullptr);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kBeforePlaceOrder, parent_id, 0, route_id);
+        StrategySubmitStageForTest::kBeforePlaceOrder, group_id, 0, route_id);
 #endif
     const core::OrderPlaceResult placed = PlacePreparedExternalOrder(
         context, symbol, instrument, price, quantity, *submit_group, route_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kAfterPlaceOrder, parent_id,
+        StrategySubmitStageForTest::kAfterPlaceOrder, group_id,
         placed.local_order_id, route_id);
 #endif
     if (placed.local_order_id == 0) {
@@ -2232,8 +2231,7 @@ class Strategy {
     }
     return HandleExternalOrderPlaceResult(
         runtime, trigger_ticker, signal_role, context, submit_group, instrument,
-        symbol, price, quantity, order_notional, risk_slot, placed, parent_id,
-        route_id);
+        symbol, price, quantity, order_notional, risk_slot, placed, route_id);
   }
 
   template <typename ContextT>
@@ -2243,8 +2241,7 @@ class Strategy {
       const InstrumentMetadata& instrument, std::string_view symbol,
       const PreparedOrderPrice& price, const PreparedOrderQuantity& quantity,
       double order_notional, OpenRiskReservationSlot* risk_slot,
-      const core::OrderPlaceResult& placed, std::uint64_t parent_id,
-      std::uint16_t route_id) noexcept {
+      const core::OrderPlaceResult& placed, std::uint16_t route_id) noexcept {
     if (placed.status == core::OrderPlaceStatus::kOk) {
       const bool tracked =
           OnExternalOrderAccepted(runtime, submit_group, placed.local_order_id);
@@ -2270,25 +2267,6 @@ class Strategy {
       EraseOrderRiskSlot(placed.local_order_id);
     }
     return {.local_order_id = placed.local_order_id};
-  }
-
-  [[nodiscard]] std::uint64_t AllocateExecutionParentId() noexcept {
-    std::uint64_t parent_id = next_execution_parent_id_++;
-    if (next_execution_parent_id_ == 0) {
-      next_execution_parent_id_ = 1;
-    }
-    if (parent_id == 0) {
-      parent_id = next_execution_parent_id_++;
-    }
-    return parent_id;
-  }
-
-  [[nodiscard]] std::uint64_t EnsureExecutionParentId(
-      ExecutionGroup& group) noexcept {
-    if (group.parent_id == 0) {
-      group.parent_id = AllocateExecutionParentId();
-    }
-    return group.parent_id;
   }
 
   template <typename ContextT>
@@ -2417,10 +2395,9 @@ class Strategy {
       return;
     }
     const std::uint64_t submit_group_id = submit_group->group_id;
-    const std::uint64_t parent_id = EnsureExecutionParentId(*submit_group);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kExecutionGroupReady, parent_id, 0,
+        StrategySubmitStageForTest::kExecutionGroupReady, submit_group_id, 0,
         core::kAutoGatewayRoute, 0, submission_route_count);
 #endif
 
@@ -2433,8 +2410,8 @@ class Strategy {
       const std::uint16_t route_id = submission_routes[route_index];
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kBeforeAcquireRiskSlot, parent_id, 0,
-          route_id, route_index, submission_route_count);
+          StrategySubmitStageForTest::kBeforeAcquireRiskSlot, submit_group_id,
+          0, route_id, route_index, submission_route_count);
 #endif
       OpenRiskReservationSlot* risk_slot = nullptr;
       if (!last_signal_decision_.intent.reduce_only) {
@@ -2446,17 +2423,17 @@ class Strategy {
       }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kAfterAcquireRiskSlot, parent_id, 0,
+          StrategySubmitStageForTest::kAfterAcquireRiskSlot, submit_group_id, 0,
           route_id, route_index, submission_route_count);
 #endif
       const ExternalOrderSubmitResult submit_result =
           SubmitPreparedExternalOrder(runtime, trigger_ticker, signal_role,
                                       context, submit_group, instrument, symbol,
                                       price, quantity, order_notional,
-                                      risk_slot, parent_id, route_id);
+                                      risk_slot, submit_group_id, route_id);
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
       detail::NotifySubmitStageForTest(
-          StrategySubmitStageForTest::kAfterSubmitResult, parent_id,
+          StrategySubmitStageForTest::kAfterSubmitResult, submit_group_id,
           submit_result.local_order_id, route_id, route_index,
           submission_route_count);
 #endif
@@ -2478,9 +2455,9 @@ class Strategy {
           runtime->execution.ClearGroupById(submit_group_id);
     }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
-    detail::NotifySubmitStageForTest(StrategySubmitStageForTest::kSubmitDone,
-                                     parent_id, 0, core::kAutoGatewayRoute, 0,
-                                     submission_route_count);
+    detail::NotifySubmitStageForTest(
+        StrategySubmitStageForTest::kSubmitDone, submit_group_id, 0,
+        core::kAutoGatewayRoute, 0, submission_route_count);
 #endif
   }
 
@@ -3108,7 +3085,6 @@ class Strategy {
   std::uint64_t market_calc_row_index_{0};
 #endif
   RecoveryState recovery_state_{RecoveryState::kNormal};
-  std::uint64_t next_execution_parent_id_{1};
   bool stop_requested_{false};
   static constexpr double kPriceEpsilon = 1e-12;
   static constexpr double kQuantityEpsilon = 1e-12;

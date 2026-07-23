@@ -55,7 +55,6 @@ inline constexpr std::size_t kOrderSymbolBytes = 32;
 
 struct OrderPlaceRequest {
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
   std::uint64_t group_id{0};
   double price{0.0};
   double quantity{0.0};
@@ -85,7 +84,6 @@ inline void SetOrderSymbol(OrderPlaceRequest* request,
 
 struct OrderCancelRequest {
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
   std::uint64_t group_id{0};
   std::uint16_t gateway_route_id{kAutoGatewayRoute};
 };
@@ -144,7 +142,6 @@ struct OrderCancelResult {
 struct OrderResponseEvent {
   OrderResponseKind kind{OrderResponseKind::kAck};
   std::uint64_t local_order_id{0};
-  std::uint64_t parent_id{0};
   std::uint64_t group_id{0};
   std::uint64_t exchange_order_id{0};
   std::uint16_t route_id{kAutoGatewayRoute};

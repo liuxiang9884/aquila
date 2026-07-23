@@ -237,7 +237,7 @@ struct PaddedTextPayload {
   command.kind = core::OrderGatewayCommandKind::kPlace;
   command.command_seq = local_order_id;
   command.payload.place = MakeStrategyOrder(local_order_id);
-  command.payload.place.parent_id = 1;
+  command.payload.place.group_id = 1;
   command.payload.place.gateway_route_id = 0;
   return command;
 }

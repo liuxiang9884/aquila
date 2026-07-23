@@ -355,7 +355,8 @@ TEST(BitgetGatewaySmokeEvidenceWriterTest, PersistsAckAndTerminalSeparately) {
 
   std::ifstream csv_input(run_dir / "order_event.csv");
   const std::string csv(std::istreambuf_iterator<char>(csv_input), {});
-  EXPECT_NE(csv.find("parent_id,group_id,route_id"), std::string::npos);
+  EXPECT_NE(csv.find("local_order_id,group_id,route_id"), std::string::npos);
+  EXPECT_EQ(csv.find("parent_id"), std::string::npos);
   EXPECT_NE(csv.find("gateway,gateway_response,entry"), std::string::npos);
   EXPECT_NE(csv.find(",ack,"), std::string::npos);
   EXPECT_NE(csv.find("feedback,feedback_terminal,entry"), std::string::npos);

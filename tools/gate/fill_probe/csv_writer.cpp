@@ -111,7 +111,7 @@ CsvOpenResult CsvWriters::Open() {
              "close_avg_fill_price,close_attribution,pnl_usdt,fee_usdt\n");
   fmt::print(order_event_file_,
              "run_id,node_id,lifecycle_kind,order_role,local_order_id,"
-             "parent_id,group_id,route_id,event_kind,response_kind,"
+             "group_id,route_id,event_kind,response_kind,"
              "feedback_kind,"
              "exchange_order_id,exchange_ns,local_ns,price,quantity,"
              "cumulative_filled_quantity,left_quantity,finish_reason,"
@@ -172,11 +172,11 @@ void CsvWriters::WriteOrderEvent(const OrderEventCsvRow& row) {
     return;
   }
   fmt::print(order_event_file_,
-             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},"
+             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.12g},{:.12g},"
              "{:.12g},{},{}\n",
              EscapeCsv(row.run_id), row.node_id, EscapeCsv(row.lifecycle_kind),
-             EscapeCsv(row.order_role), row.local_order_id, row.parent_id,
-             row.group_id, row.route_id, EscapeCsv(row.event_kind),
+             EscapeCsv(row.order_role), row.local_order_id, row.group_id,
+             row.route_id, EscapeCsv(row.event_kind),
              EscapeCsv(row.response_kind), EscapeCsv(row.feedback_kind),
              row.exchange_order_id, row.exchange_ns, row.local_ns,
              EscapeCsv(row.price), row.quantity, row.cumulative_filled_quantity,

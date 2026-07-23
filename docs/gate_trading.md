@@ -121,8 +121,8 @@ payload。place payload 是完整 `OrderPlaceRequest`，cancel payload 是最小
 
 Command kind 为 place、cancel、cache exchange id、forget exchange id 和 stop。每个 child 有唯一 `local_order_id`；同一
 execution group/position lifecycle 的 open、close、stoploss、retry 和 fanout child 共享 `group_id`。SHM v4 在
-place/cancel 和 response event 中传播该字段，供 strategy execution group 做稳定归因；`parent_id` 继续保留为通用 gateway
-correlation 字段，不等价于 LeadLag 的稳定 group identity。
+place/cancel 和 response event 中传播该字段，供 strategy execution group 做稳定归因。`group_id=0`
+表示未归组，gateway 不从 `local_order_id` 自动补写。
 
 ### Event
 
@@ -147,9 +147,8 @@ SHM v4 没有 heartbeat/owner-death protocol。Gateway `SIGKILL` 或 crash 后 h
 ## Strategy fanout 与故障语义
 
 `order_session_fanout` 表示一次 signal 最多向多少条 ready route 发送 full-size duplicate child。V1 固定 route 顺序，
-跳过 not-ready route，不做 RTT 动态选路。每个 child 的 `group_id` 相同、`local_order_id/route_id` 不同；generic
-`parent_id` 也可用于 gateway correlation，但不作为 LeadLag report identity；
-整个 execution group 只占一个 parallel slot。
+跳过 not-ready route，不做 RTT 动态选路。每个 child 的 `group_id` 相同、
+`local_order_id/route_id` 不同；整个 execution group 只占一个 parallel slot。
 
 Gateway 不解释 duplicate/split、winner、overfill 或非赢家 cancel。Open 的已知累计成交合并成 position；close/stoploss/retry
 按 position 总量生成 reduce-only child。仍 pending/unknown 的 open child 留在原 execution group 等 feedback/reconcile。

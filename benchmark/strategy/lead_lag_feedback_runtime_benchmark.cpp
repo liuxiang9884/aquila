@@ -43,10 +43,10 @@ constexpr std::size_t kFeedbackStageCount =
 constexpr std::size_t kFeedbackProfileSegmentCount = kFeedbackStageCount + 1U;
 
 [[nodiscard]] core::OrderPlaceRequest BenchmarkPlaceRequest(
-    std::uint64_t local_order_id = 0, std::uint64_t parent_id = 0) noexcept {
+    std::uint64_t local_order_id = 0, std::uint64_t group_id = 0) noexcept {
   core::OrderPlaceRequest request{
       .local_order_id = local_order_id,
-      .parent_id = parent_id,
+      .group_id = group_id,
       .price = 102.1,
       .quantity = 7.0,
       .symbol_id = kSymbolId,

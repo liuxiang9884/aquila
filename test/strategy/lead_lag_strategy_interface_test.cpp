@@ -543,7 +543,6 @@ struct FakeOrderSession {
 
   struct CapturedOrder {
     std::uint64_t local_order_id{0};
-    std::uint64_t parent_id{0};
     std::uint64_t group_id{0};
     aquila::Exchange exchange{aquila::Exchange::kGate};
     std::int32_t symbol_id{0};
@@ -563,7 +562,6 @@ struct FakeOrderSession {
       const aquila::core::OrderPlaceRequest& request) noexcept {
     placed_orders.push_back(CapturedOrder{
         .local_order_id = request.local_order_id,
-        .parent_id = request.parent_id,
         .group_id = request.group_id,
         .exchange = request.exchange,
         .symbol_id = request.symbol_id,
@@ -1156,16 +1154,13 @@ TEST(LeadLagStrategyInterfaceTest,
   FeedOpenLongSignal(&strategy, &context);
 
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
   const std::uint64_t group_id = order_session.placed_orders[0].group_id;
-  ASSERT_NE(parent_id, 0U);
   ASSERT_NE(group_id, 0U);
   std::vector<std::uint64_t> local_order_ids;
   for (std::size_t i = 0; i < order_session.placed_orders.size(); ++i) {
     const FakeOrderSession::CapturedOrder& order =
         order_session.placed_orders[i];
     local_order_ids.push_back(order.local_order_id);
-    EXPECT_EQ(order.parent_id, parent_id);
     EXPECT_EQ(order.group_id, group_id);
     EXPECT_EQ(order.gateway_route_id, i);
     EXPECT_EQ(order.side, aquila::OrderSide::kBuy);
@@ -1308,7 +1303,7 @@ TEST(LeadLagStrategyInterfaceTest,
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     ExternalModeParentIdIsGloballyUniqueAcrossSymbols) {
+     ExternalModeGroupIdIsPairLocalAcrossSymbols) {
   leadlag::Strategy strategy{TwoPairSignalOnlyConfig()};
   FakeOrderSession order_session;
   OrderManagerT order_manager{order_session, 16, 4};
@@ -1316,22 +1311,15 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignalForSymbol(&strategy, &context, 3);
   ASSERT_EQ(order_session.placed_orders.size(), 1U);
-  const std::uint64_t first_parent_id =
-      order_session.placed_orders.back().parent_id;
   const std::uint64_t first_group_id =
       order_session.placed_orders.back().group_id;
-  ASSERT_NE(first_parent_id, 0U);
   ASSERT_EQ(first_group_id, 1U);
 
   FeedOpenLongSignalForSymbol(&strategy, &context, 7);
 
   ASSERT_EQ(order_session.placed_orders.size(), 2U);
-  const std::uint64_t second_parent_id =
-      order_session.placed_orders.back().parent_id;
   const std::uint64_t second_group_id =
       order_session.placed_orders.back().group_id;
-  ASSERT_NE(second_parent_id, 0U);
-  EXPECT_NE(first_parent_id, second_parent_id);
   EXPECT_EQ(second_group_id, 1U);
 }
 
@@ -2206,7 +2194,6 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
   const std::uint64_t group_id = order_session.placed_orders[0].group_id;
   const std::uint64_t first_open_order_id =
       order_session.placed_orders[0].local_order_id;
@@ -2233,7 +2220,6 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t i = 4; i < 8; ++i) {
     const FakeOrderSession::CapturedOrder& close_order =
         order_session.placed_orders[i];
-    EXPECT_EQ(close_order.parent_id, parent_id);
     EXPECT_EQ(close_order.group_id, group_id);
     EXPECT_EQ(close_order.gateway_route_id, i - 4);
     EXPECT_EQ(close_order.side, aquila::OrderSide::kSell);
@@ -2606,7 +2592,6 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeFanoutRetriesCloseRemaining) {
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t open_parent_id = order_session.placed_orders[0].parent_id;
   const std::uint64_t open_group_id = order_session.placed_orders[0].group_id;
   ApplyFeedback(
       &strategy, &order_manager, &context,
@@ -2637,7 +2622,6 @@ TEST(LeadLagStrategyInterfaceTest, ExternalModeFanoutRetriesCloseRemaining) {
   for (std::size_t i = 8; i < 12; ++i) {
     const FakeOrderSession::CapturedOrder& retry_close =
         order_session.placed_orders[i];
-    EXPECT_EQ(retry_close.parent_id, open_parent_id);
     EXPECT_EQ(retry_close.group_id, open_group_id);
     EXPECT_EQ(retry_close.gateway_route_id, i - 8);
     EXPECT_EQ(retry_close.side, aquila::OrderSide::kSell);
@@ -2688,7 +2672,6 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 4U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
   const std::uint64_t group_id = order_session.placed_orders[0].group_id;
   ApplyFeedback(
       &strategy, &order_manager, &context,
@@ -2710,7 +2693,6 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t i = 4; i < 8; ++i) {
     const FakeOrderSession::CapturedOrder& stoploss_order =
         order_session.placed_orders[i];
-    EXPECT_EQ(stoploss_order.parent_id, parent_id);
     EXPECT_EQ(stoploss_order.group_id, group_id);
     EXPECT_EQ(stoploss_order.gateway_route_id, i - 4);
     EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);
@@ -2731,7 +2713,6 @@ TEST(LeadLagStrategyInterfaceTest,
 
   FeedOpenLongSignal(&strategy, &context);
   ASSERT_EQ(order_session.placed_orders.size(), 2U);
-  const std::uint64_t parent_id = order_session.placed_orders[0].parent_id;
   const std::uint64_t group_id = order_session.placed_orders[0].group_id;
   const std::uint64_t first_open_order_id =
       order_session.placed_orders[0].local_order_id;
@@ -2753,7 +2734,6 @@ TEST(LeadLagStrategyInterfaceTest,
   for (std::size_t i = 2; i < 4; ++i) {
     const FakeOrderSession::CapturedOrder& stoploss_order =
         order_session.placed_orders[i];
-    EXPECT_EQ(stoploss_order.parent_id, parent_id);
     EXPECT_EQ(stoploss_order.group_id, group_id);
     EXPECT_EQ(stoploss_order.gateway_route_id, i - 2);
     EXPECT_EQ(stoploss_order.side, aquila::OrderSide::kSell);

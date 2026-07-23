@@ -226,7 +226,7 @@ struct StrategyOrderFeedbackLogRecordForTest {
 
 struct StrategySubmitStageRecordForTest {
   StrategySubmitStageForTest stage{StrategySubmitStageForTest::kPricePrepared};
-  std::uint64_t parent_id{0};
+  std::uint64_t group_id{0};
   std::uint64_t local_order_id{0};
   std::uint16_t route_id{core::kAutoGatewayRoute};
   std::uint32_t route_index{0};

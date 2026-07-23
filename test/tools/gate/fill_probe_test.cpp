@@ -634,9 +634,10 @@ TEST(GateFillProbeCsvWriterTest, WritesStableCsvFiles) {
             std::string::npos);
   const std::string order_event_csv =
       ReadWholeFileForTest(dir / "order_event.csv");
-  EXPECT_NE(order_event_csv.find("parent_id,group_id,route_id"),
+  EXPECT_NE(order_event_csv.find("local_order_id,group_id,route_id"),
             std::string::npos);
-  EXPECT_NE(order_event_csv.find("run-a,7,,,70,0,7,1,"), std::string::npos);
+  EXPECT_EQ(order_event_csv.find("parent_id"), std::string::npos);
+  EXPECT_NE(order_event_csv.find("run-a,7,,,70,7,1,"), std::string::npos);
 }
 
 }  // namespace

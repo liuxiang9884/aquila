@@ -146,7 +146,6 @@ struct ExecutionGroup {
   double absolute_entry_value{0.0};
   double trailing_price{0.0};
   std::uint64_t group_id{0};
-  std::uint64_t parent_id{0};
   ExecutionGroupIndex group_index{kInvalidExecutionGroupIndex};
   std::uint8_t pending_order_count{0};
   std::uint8_t unknown_result_pending_count{0};

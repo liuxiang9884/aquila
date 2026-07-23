@@ -34,7 +34,8 @@ CSV / log 口径：
 
 - `node.csv`：node 级决策和结果，包含 BBO id / timestamp、freshness、entry quantity / notional、status、skip / unresolved reason；cross-exchange 模式额外写 Binance trigger 与 Gate quote 的 timestamp / freshness / delta。
 - `lifecycle.csv`：每个 node 的 GTC / IOC entry 与 close 生命周期，包含 local order id、route、TIF、价格、数量、submit / finish timestamp、entry result、filled qty、avg fill price 和 close attribution。
-- `order_event.csv`：order gateway response 和 private feedback 明细，按 `local_order_id`、`parent_id`、`group_id`、`route_id` 关联；LeadLag 稳定归因使用 `(symbol_id, group_id)`。
+- `order_event.csv`：order gateway response 和 private feedback 明细，按 `local_order_id`、
+  `group_id`、`route_id` 关联；LeadLag 稳定归因使用 `(symbol_id, group_id)`。
 - 诊断字段和 log key 见 `docs/diagnostic_fields.md` 的 “Gate BTC Fill Probe”。
 
 ## 2026-07-04 BTC Binance-trigger / Gate-quote probe
