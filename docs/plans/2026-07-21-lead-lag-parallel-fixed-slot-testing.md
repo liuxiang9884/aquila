@@ -3,7 +3,8 @@
 ## 状态与基线
 
 - 状态：用户已于 2026-07-21 review 并同意执行；截至 2026-07-23，确定性测试、synthetic replay
-  和第一轮 A/B benchmark 已完成，当前正在消除单字段 identity 迁移前的热路径回退。
+  和第一轮 A/B benchmark 已完成，单字段 identity 已完成；当前正在把 inline max-capacity slots
+  改为初始化时按 effective parallel 一次性分配，消除 terminal feedback 热路径回退。
 - candidate：`feature/lead-lag-parallel-fixed-slot-v4`，PR #13；已通过 `c78ec69` 合入
   `main@87bdc08`。
 - production baseline：`main@87bdc08`。
@@ -26,7 +27,7 @@
 4. report 使用 `(run_id, symbol_id, group_id)` 表达跨运行、跨 symbol 的 group identity，且
    `submitted_v2` 不回退到旧 `parent_id` 语义。
 5. replay / signal-only 结果具有确定性，并能区分基础设施正确性与实际策略是否产生重叠 group。
-6. `parallel=1` 相对 `main@83c5e12` 没有超过已锁定门槛的热路径回退；`parallel=2/4/8/16`
+6. `parallel=1` 相对 `main@87bdc08` 没有超过已锁定门槛的热路径回退；`parallel=2/4/8/16`
    的容量和扩展成本有 fresh benchmark 证据。
 
 本计划完成只表示 PR #13 的基础设施达到 merge 条件，不表示 `parallel > 1` 已达到真实订单
@@ -84,6 +85,15 @@ production-readiness，也不声明 fillability、PnL 或风险收益改善。
   `group_id + local_order_id + route_id` 表达 group、child 和 route。
 - 历史日志与 fixture 可以保留 legacy `parent_id` 原文，但 analyzer 不把它回退或复制为新
   `group_id`。
+
+### Fixed-slot backing storage 与 parallel 上限
+
+- `ExecutionGroup` slots 在 Strategy 初始化时按 effective `execute.parallel` 一次性分配；初始化完成后
+  不允许扩容或产生容器分配，slot address 和 `group_index` 在该 Strategy 生命周期内保持稳定。
+- 编译期硬上限仍为 `16`。配置或 programmatic `execute.parallel > 16` 时输出结构化 warning，并把
+  Strategy 内部 effective `execute.parallel` clamp 为 `16`；`execute.parallel=0` 继续 fail closed。
+- 不为 `parallel=1` 的每个 pair 内嵌 16 个 `ExecutionGroup`，避免 max-capacity storage 放大
+  `PairRuntimeState` 和 symbol-id dense runtime table。
 
 ## 核心不变量
 
