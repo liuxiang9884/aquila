@@ -20,6 +20,67 @@ struct FixedOrderedSlotPoolTestValue {
   int payload{0};
 };
 
+struct FixedOrderedSlotPoolLifetimeTestValue {
+  static inline std::size_t live_count{0};
+
+  FixedOrderedSlotPoolLifetimeTestValue() noexcept {
+    ++live_count;
+  }
+
+  FixedOrderedSlotPoolLifetimeTestValue(
+      FixedOrderedSlotPoolLifetimeTestValue&& other) noexcept
+      : payload(other.payload) {
+    ++live_count;
+  }
+
+  FixedOrderedSlotPoolLifetimeTestValue& operator=(
+      FixedOrderedSlotPoolLifetimeTestValue&& other) noexcept {
+    payload = other.payload;
+    return *this;
+  }
+
+  ~FixedOrderedSlotPoolLifetimeTestValue() noexcept {
+    --live_count;
+  }
+
+  int payload{0};
+};
+
+TEST(FixedOrderedSlotPoolTest, AllocatesOnlyInitializedSlotCapacity) {
+  using Slots =
+      aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolLifetimeTestValue, 4>;
+  FixedOrderedSlotPoolLifetimeTestValue::live_count = 0;
+
+  {
+    Slots slots;
+    EXPECT_EQ(FixedOrderedSlotPoolLifetimeTestValue::live_count, 0U);
+
+    EXPECT_EQ(slots.Initialize(2), 2U);
+    EXPECT_EQ(FixedOrderedSlotPoolLifetimeTestValue::live_count, 2U);
+
+    EXPECT_EQ(slots.Initialize(4), 4U);
+    EXPECT_EQ(FixedOrderedSlotPoolLifetimeTestValue::live_count, 4U);
+  }
+
+  EXPECT_EQ(FixedOrderedSlotPoolLifetimeTestValue::live_count, 0U);
+}
+
+TEST(FixedOrderedSlotPoolTest, MoveLeavesSourceInactiveAndReusable) {
+  using Slots = aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 4>;
+  Slots source;
+  ASSERT_EQ(source.Initialize(2), 2U);
+  ASSERT_NE(source.EmplaceBack(FixedOrderedSlotPoolTestValue{.payload = 7}),
+            Slots::kInvalidIndex);
+
+  Slots destination{std::move(source)};
+
+  EXPECT_EQ(destination.capacity(), 2U);
+  EXPECT_EQ(destination.active_count(), 1U);
+  EXPECT_EQ(source.capacity(), 0U);
+  EXPECT_TRUE(source.empty());
+  EXPECT_EQ(source.Initialize(1), 1U);
+}
+
 TEST(FixedOrderedSlotPoolTest,
      InitializesWithClampedCapacityAndRejectsWhenFull) {
   aquila::FixedOrderedSlotPool<FixedOrderedSlotPoolTestValue, 4> slots;

@@ -583,7 +583,7 @@ TEST(LeadLagConfigTest, AcceptsParallelAtFixedGroupCapacity) {
   EXPECT_EQ(result.value.pairs[0].execute.parallel, 16U);
 }
 
-TEST(LeadLagConfigTest, RejectsParallelAboveFixedGroupCapacity) {
+TEST(LeadLagConfigTest, PreservesParallelAboveCapacityForStrategyClamp) {
   const aquila::config::InstrumentCatalog catalog =
       CatalogWithLagQuantityMetadata(1.0, 0);
   std::string text = MinimalConfigTomlWithRisk("");
@@ -594,8 +594,8 @@ TEST(LeadLagConfigTest, RejectsParallelAboveFixedGroupCapacity) {
 
   const auto result = ParseConfigToml(text, catalog);
 
-  EXPECT_FALSE(result.ok);
-  EXPECT_NE(result.error.find("execute.parallel"), std::string::npos);
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(result.value.pairs[0].execute.parallel, 17U);
 }
 
 TEST(LeadLagConfigTest, ParsesExecutionSlippageTicks) {

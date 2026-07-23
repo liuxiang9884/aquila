@@ -1004,13 +1004,19 @@ TEST(LeadLagStrategyInterfaceTest, RuntimeCanDispatchHooks) {
 }
 
 TEST(LeadLagStrategyInterfaceTest,
-     RuntimeFailsClosedForProgrammaticParallelAboveCapacity) {
+     RuntimeClampsProgrammaticParallelAboveCapacity) {
   leadlag::Config config = SignalOnlyConfig();
   config.pairs[0].execute.parallel = 17;
 
   leadlag::Strategy strategy{config};
 
-  EXPECT_TRUE(strategy.ShouldStop());
+  EXPECT_FALSE(strategy.ShouldStop());
+  ASSERT_EQ(strategy.config().pairs.size(), 1U);
+  EXPECT_EQ(strategy.config().pairs[0].execute.parallel,
+            leadlag::kMaxLeadLagExecutionGroups);
+  EXPECT_EQ(strategy.OrderRiskSlotCountForTest(),
+            static_cast<std::size_t>(leadlag::kMaxLeadLagExecutionGroups) *
+                leadlag::kMaxExecutionGroupPendingOrders);
 }
 
 TEST(LeadLagStrategyInterfaceTest, StoresRawMarketUpdates) {

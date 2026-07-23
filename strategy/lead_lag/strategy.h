@@ -569,7 +569,7 @@ inline void LogStrategyOrderResponse(
 #endif
 }
 
-inline void LogStrategyOrderFeedback(
+[[gnu::aligned(64)]] inline void LogStrategyOrderFeedback(
     const OrderFeedbackEvent& event, const core::StrategyOrder* order,
     const SignalTiming& market_timing) noexcept {
   const std::uint64_t group_id =
@@ -645,13 +645,11 @@ inline void LogStrategyOrderGroupMismatch(
       execution.GroupAtIndexForDiagnostics(order.group_index);
   NOVA_ERROR(
       "lead_lag_order_group_mismatch operation={} symbol={} symbol_id={} "
-      "local_order_id={} order_group_id={} order_group_index={} "
-      "slot_occupied={} active_group_id={} new_entries_paused=true "
-      "needs_reconcile=true",
+      "local_order_id={} order_group_id={} slot_occupied={} "
+      "active_group_id={} new_entries_paused=true needs_reconcile=true",
       operation, order.place_request.SymbolView(),
       order.place_request.symbol_id, order.place_request.local_order_id,
-      order.place_request.group_id, order.group_index,
-      active_group == nullptr ? "false" : "true",
+      order.place_request.group_id, active_group == nullptr ? "false" : "true",
       active_group == nullptr ? 0 : active_group->group_id);
 }
 
@@ -684,6 +682,17 @@ inline void LogStrategyParallelOutOfBounds(std::string_view symbol,
       "lead_lag_runtime_init_failed reason=parallel_out_of_bounds "
       "symbol={} symbol_id={} parallel={} min_parallel=1 max_parallel={}",
       symbol, symbol_id, parallel, kMaxLeadLagExecutionGroups);
+}
+
+inline void LogStrategyParallelClamped(
+    std::string_view symbol, std::int32_t symbol_id,
+    std::uint32_t configured_parallel,
+    std::uint32_t effective_parallel) noexcept {
+  NOVA_WARNING(
+      "lead_lag_parallel_clamped symbol={} symbol_id={} "
+      "configured_parallel={} effective_parallel={} max_parallel={}",
+      symbol, symbol_id, configured_parallel, effective_parallel,
+      kMaxLeadLagExecutionGroups);
 }
 
 inline void LogStrategyPairDisabledForOrderMetadata(
@@ -760,6 +769,7 @@ class Strategy {
 
   explicit Strategy(Config config, StrategyOptions options = {})
       : config_(std::move(config)), options_(options) {
+    NormalizeParallelConfig();
     raw_market_state_.Reset(config_);
     InitPairRuntimeStates();
   }
@@ -769,7 +779,8 @@ class Strategy {
   Strategy(Strategy&&) noexcept = default;
   Strategy& operator=(Strategy&&) noexcept = default;
 
-#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS) || \
+    defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_BENCHMARK_SEED_HOOKS)
   [[nodiscard]] bool AddOpenGroupForTest(std::int32_t symbol_id) noexcept {
     PairRuntimeState* runtime = MutableRuntime(symbol_id);
     return runtime != nullptr && runtime->execution.StartOpenGroup() != nullptr;
@@ -952,8 +963,8 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void OnOrderFeedback(const OrderFeedbackEvent& event,
-                       ContextT& context) noexcept {
+  [[gnu::aligned(64)]] void OnOrderFeedback(const OrderFeedbackEvent& event,
+                                            ContextT& context) noexcept {
     if (event.kind == OrderFeedbackKind::kContinuityLost) {
       detail::LogStrategyFeedbackContinuityLost(event);
       if (recovery_state_ != RecoveryState::kManualIntervention) {
@@ -1180,6 +1191,19 @@ class Strategy {
     bool rejected_tracked{false};
   };
 
+  void NormalizeParallelConfig() noexcept {
+    for (PairConfig& pair : config_.pairs) {
+      if (pair.execute.parallel <= kMaxLeadLagExecutionGroups) {
+        continue;
+      }
+      const std::uint32_t configured_parallel = pair.execute.parallel;
+      pair.execute.parallel = kMaxLeadLagExecutionGroups;
+      detail::LogStrategyParallelClamped(pair.symbol, pair.symbol_id,
+                                         configured_parallel,
+                                         pair.execute.parallel);
+    }
+  }
+
   [[nodiscard]] SignalTiming MarketTimingForOrder(
       const core::StrategyOrder* order) const noexcept {
     if (order == nullptr) {
@@ -1304,8 +1328,7 @@ class Strategy {
       if (!RuntimeConfigReady(pair)) {
         continue;
       }
-      if (pair.execute.parallel == 0 ||
-          pair.execute.parallel > kMaxLeadLagExecutionGroups) {
+      if (pair.execute.parallel == 0) {
         detail::LogStrategyParallelOutOfBounds(pair.symbol, pair.symbol_id,
                                                pair.execute.parallel);
         stop_requested_ = true;
@@ -2532,7 +2555,7 @@ class Strategy {
   }
 
   template <typename ContextT>
-  void ApplyFinishedOrder(
+  [[gnu::noinline]] void ApplyFinishedOrder(
       const core::StrategyOrder* order, ContextT& context,
       const SignalTiming& market_timing,
       std::optional<OrderFeedbackKind> feedback_kind = std::nullopt) noexcept {

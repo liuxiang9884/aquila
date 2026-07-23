@@ -132,7 +132,9 @@ struct RecoveryApplyResult {
 
 class SignalEngine;
 
-struct ExecutionGroup {
+inline constexpr std::size_t kExecutionGroupCacheLineBytes = 64;
+
+struct alignas(kExecutionGroupCacheLineBytes) ExecutionGroup {
   ExecutionStage stage{ExecutionStage::kIdle};
   std::uint64_t local_order_id{0};
   std::uint64_t entry_local_order_id{0};
@@ -199,15 +201,16 @@ class ExecutionState {
   bool Init(std::uint32_t parallel) noexcept {
     const bool valid_capacity =
         parallel > 0 && parallel <= kMaxLeadLagExecutionGroups;
-    [[maybe_unused]] const std::size_t initialized_capacity =
+    const std::size_t initialized_capacity =
         groups_.Initialize(valid_capacity ? parallel : 0);
+    const bool initialized = valid_capacity && initialized_capacity == parallel;
     next_group_id_ = 1;
     recovery_state_ = RecoveryState::kNormal;
     needs_reconcile_ = false;
     unknown_result_pending_count_ = 0;
     unknown_result_reconcile_active_ = false;
     last_unknown_result_auto_recovered_ = false;
-    return valid_capacity;
+    return initialized;
   }
 
   [[nodiscard]] ExecutionGroup* StartOpenOrder(

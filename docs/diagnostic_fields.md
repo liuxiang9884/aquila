@@ -699,6 +699,8 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 
 | 字段 | 表面 | 状态 | 单位 / 取值 | 用途 | 删除条件 |
 | --- | --- | --- | --- | --- | --- |
+| `lead_lag_parallel_clamped` | strategy Nova warning | stable | warning log | 配置或 programmatic `execute.parallel` 超过编译期上限时，记录 Strategy 已把内部 effective value clamp 到 `16`；该 warning 在初始化阶段输出，不进入交易热路径。 | parallel 配置改为其他显式 normalization contract 时同步迁移。 |
+| `configured_parallel` / `effective_parallel` / `max_parallel` | `lead_lag_parallel_clamped` | stable | count | 分别记录调用方请求值、Strategy 实际使用值和编译期硬上限，避免把 effective value 误当成原始配置。 | 同上。 |
 | `trigger_exchange` | strategy log / report CSV | stable | `kGate` / `kBinance` 等 | 表示触发信号的行情来源，不表示实际下单交易所。 | 不能删除；若新增 `order_exchange` 也应保留。 |
 | `trigger_symbol_id` | strategy log / report CSV | stable | internal symbol id | 关联触发行情 symbol。 | 不能删除。 |
 | `trigger_exchange_ns` | `lead_lag_signal_triggered` / `lead_lag_signal_decision` / `lead_lag_order_submitted` / report CSV | experiment | exchange timestamp ns | 记录触发 BBO 的 `BookTicker.exchange_ns`，用于和历史 signal CSV / replay 对齐；Gate SBE `bbo.time` 为 WebSocket server send timestamp，Binance `E` 为 event time。真实 BBO 事件时间另见 signal `event_ns`。 | 若信号时序诊断结束且 report 不再依赖可删除。 |
@@ -722,7 +724,7 @@ Nova info log 格式化和写入，不应长期作为最低延迟生产默认观
 | `lead_lag_unknown_result_resume` | strategy Nova warning | experiment | warning log | 之前 unknown 的订单收到对应 terminal private feedback，且该 symbol 所有 unknown order 已解决、没有更高等级 degraded 状态时，自动恢复新开仓并输出。 | 同上。 |
 | `new_entries_paused` / `needs_reconcile` / `reason` / `feedback_kind` | `lead_lag_unknown_result_pause` / `lead_lag_unknown_result_resume` | experiment | bool / text / enum | 显式记录暂停或恢复后的交易状态、触发原因和恢复所依据的 terminal feedback 类型，便于 live log 中人工确认 stop / resume 边界。 | 同上。 |
 | `lead_lag_order_group_mismatch` | strategy Nova error | experiment | structured error log | terminal response / feedback 的 `StrategyOrder.group_index` slot 为空或当前 `active_group_id` 与 `order_group_id` 不一致时输出；该事件禁止扫描 fallback，并使 pair 进入 `needs_reconcile`、暂停新开仓。 | slot reuse 与 reconcile telemetry 被统一 recovery event schema 取代后重审。 |
-| `operation` / `order_group_id` / `order_group_index` / `slot_occupied` / `active_group_id` | `lead_lag_order_group_mismatch` | experiment | text / uint64 / uint16 / bool / uint64 | 标识发生 mismatch 的处理阶段、订单稳定 group id、runtime-local slot、slot 是否 occupied 及其中当前 group id。`order_group_index` 只用于同一进程实例内诊断，不可作为跨运行 join key。 | 同上。 |
+| `operation` / `order_group_id` / `slot_occupied` / `active_group_id` | `lead_lag_order_group_mismatch` | experiment | text / uint64 / bool / uint64 | 标识发生 mismatch 的处理阶段、订单稳定 group id、runtime-local slot 是否 occupied 及其中当前 group id。`group_index` 不进入日志；`order_group_id` 和 `active_group_id` 是仅有的 group identity 字段。 | 同上。 |
 | `signal_role` | strategy log / report CSV | stable | `kLead` / `kLag` | 区分 pair role。 | 不能删除。 |
 | `order_role` | strategy log / report CSV | stable | `entry` / `exit` | 关联 position open / close。 | 不能删除。 |
 | `position_id` | strategy log / report CSV | stable | strategy position id | position.csv 配对主键之一。 | 不能删除。 |

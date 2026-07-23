@@ -444,10 +444,6 @@ class Parser {
       Fail(prefix + ".parallel", " must be positive");
       return execute;
     }
-    if (execute.parallel > kMaxLeadLagExecutionGroups) {
-      Fail(prefix + ".parallel", " exceeds max execution groups");
-      return execute;
-    }
     if (execute.order_session_fanout == 0) {
       Fail(prefix + ".order_session_fanout", " must be positive");
       return execute;
