@@ -101,13 +101,19 @@ Superpowers 工作流。进入设计/架构/实现计划或关键交易链路取
 - Gate OBU/OrderBook 只完成讨论、quick probe，以及未被 producer/consumer 使用的 `Orderbook<Level>` 类型草案；尚未实现
   decoder/local book/depth typed channel，该草案也不是已批准的 published ABI 或 persistent format。继续实现前仍需决定命名、
   count 类型、`symbol_id`/`exchange` 和存储布局。
-- PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）已基于 `main@83c5e12` 完成 LeadLag multi-group 基础设施：每个 pair 使用
-  `FixedOrderedSlotPool<ExecutionGroup, 16>`，`execute.parallel` 只接受 `1..16`，`(symbol_id, group_id)` 是稳定 identity，
-  `group_index` 仅用于策略进程内 O(1) slot 定位。terminal metadata mismatch 禁止扫描 fallback，会使 pair 进入
+- PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）已把 `main@87bdc08` 合入该 feature branch，并完成
+  LeadLag multi-group 基础设施离线 merge gate；PR 尚未合并进 main。每个 pair 使用
+  `FixedOrderedSlotPool<ExecutionGroup, 16>`；slot payload 在 Strategy 初始化时按 effective
+  `execute.parallel` 一次性分配，`parallel>16` warning 后 clamp 为 `16`，`parallel=0` 仍无效；
+  `(symbol_id, group_id)` 是稳定 identity，`group_index` 仅用于策略进程内 O(1) slot 定位且不进入
+  SHM/log/CSV。terminal metadata mismatch 禁止扫描 fallback，会使 pair 进入
   `needs_reconcile` 并暂停新开仓，同时保留已有持仓的 close / stoploss 路径。LeadLag order log、`order_detail.csv` 和
-  `latency.csv` 已迁移到 `group_id` / `submitted_v2`，新 analyzer 忽略缺少 `group_id` 的旧 submitted log。现有 live config
-  仍全部为 `parallel=1`；该分支只有本地自动测试证据，没有 `parallel > 1` replay、benchmark 或 live 证据，合并前以 PR #13
-  状态为准。完整 contract 见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
+  `latency.csv` 已迁移到 `group_id` / `submitted_v2`。`parallel=1/2/4/8/16` synthetic replay、
+  同时间窗 788 万条 Binance+Bitget 行情 replay、Debug/Release/ASAN/SHM 测试和 production-like A/B
+  benchmark 已通过；candidate/baseline 全量 build 均被既有缺失
+  `third_party/websocket/websocket.h` 阻断。现有 live config 仍全部为 `parallel=1`，没有
+  `parallel>1` 真实订单证据，用户已明确当前不合并该分支；PR #11 后续需按新 schema 单独升级。完整 contract、
+  证据路径和 production-readiness 边界见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
 - 当前机器默认 `0-15` live reserved、`16-31` test/diagnostics/benchmark；kernel isolation/IRQ 调优仍是候选方案。
 - Gate/Bitget 交易链路 L3 性能优化已完成原暂停点的 Gate 第 5 组、Bitget、
   parser → SHM → runtime、测试、replay 和 review，并累计接受 10 项生产优化。最新
@@ -225,9 +231,11 @@ authoritative feedback；当前 main 不含本地 account limiter，未经用户
 Gate、LeadLag、fusion、TUI 和 OBU 等方向按上方领域索引进入，不从已删除的完成态 plan/spec 接手。
 
 LeadLag `parallel > 1` 基础设施在 PR #13（`feature/lead-lag-parallel-fixed-slot-v4`）：fixed slot 上限 16、稳定
-`(symbol_id, group_id)`、runtime-local `group_index`、SHM v4、mismatch reconcile 和 `submitted_v2` report schema 已实现；现有
-live config 仍为 `parallel=1`，没有 `parallel > 1` replay/benchmark/live 证据。分支已同步当前 main，继续按
-`docs/plans/2026-07-21-lead-lag-parallel-fixed-slot-testing.md` 完成测试阶梯；不要直接启动真实订单。
+`(symbol_id, group_id)`、runtime-local `group_index`、SHM v4、mismatch reconcile 和 `submitted_v2`
+report schema 已实现。分支已同步 `main@87bdc08`，并完成 synthetic/真实双侧行情离线 replay、focused
+Debug/Release/ASAN/SHM tests 和 production-like A/B benchmark；详细结果和本地证据路径只维护在
+`docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。现有 live config 仍为 `parallel=1`，没有
+`parallel>1` 真实订单证据，当前不要合并 PR #13，也不要直接启动真实订单。
 
 LeadLag cold submit 的 PR #14 / #15 已合入 main。PR #15 只保留已通过五组 paired endpoint A/B 的成功
 `lead_lag_order_intent` 删除；两类 global-risk prefetch 均已证明回退并撤销。继续性能工作先读
