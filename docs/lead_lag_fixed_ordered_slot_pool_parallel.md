@@ -14,9 +14,15 @@
 ## Execution group 标识
 
 - `group_id` 是 pair runtime 内从 `1` 开始单调递增的 execution group identity。稳定归因键是 `(symbol_id, group_id)`；跨运行还必须加 run/session identity。
+- `group_id=0` 是未归组 / 未分配的哨兵值。LeadLag 创建的 execution group 和真实订单必须使用非零
+  `group_id`；没有 group 语义的通用 producer 可以显式保留 `0`，gateway 不用 `local_order_id`
+  或其他字段自动补写。
 - `group_index` 是 `FixedOrderedSlotPool` 的 runtime-local slot index，只存在于 `StrategyOrder` 本地元数据中，用于 terminal response / feedback 的 O(1) 定位。它不进入 SHM，也不是日志或 report 的稳定 join key。
 - 下单时 LeadLag 把 `group_id` 写入 `OrderPlaceRequest`，把 `group_index` 通过 `OrderLocalMetadata` 写入 `StrategyOrder`。order gateway SHM v4 原样传播 `group_id`，Gate、Bitget 和诊断工具均保留该字段。
-- core / gateway 的 generic `parent_id` 继续用于通用 fanout correlation，不由 gateway 解释。LeadLag 自身的 order log、`order_detail.csv` 和 `latency.csv` 使用 `group_id`，新 analyzer 不再读取旧 `parent_id` 日志。
+- SHM v4 只保留一个跨 strategy / gateway / exchange response 的归组字段 `group_id`，不再携带独立
+  `parent_id`。fanout child 由唯一 `local_order_id` 和各自的 `route_id` 区分；同一 execution group
+  的 open、close、stoploss、retry 和 fanout child 共享 `group_id`。新日志和 CSV 不输出
+  `parent_id` 兼容别名，旧日志中的该字段只作为 legacy schema 事实保留。
 
 ## Terminal feedback 与 slot reuse
 

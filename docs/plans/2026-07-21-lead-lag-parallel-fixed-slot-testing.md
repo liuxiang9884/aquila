@@ -2,13 +2,14 @@
 
 ## 状态与基线
 
-- 状态：用户已于 2026-07-21 review 并同意执行；阶段 0 inventory 与阶段 1 确定性测试补充进行中。
-- 当前同机有 Bitget 12 小时实盘，构建、测试、replay 和 benchmark 暂缓，避免污染 live 证据；
-  只进行源码检查和测试编写。
-- candidate：`feature/lead-lag-parallel-fixed-slot-v4`，PR #13，计划编写前 HEAD 为 `23e872b`。
-- production baseline：`main@83c5e12`。
+- 状态：用户已于 2026-07-21 review 并同意执行；截至 2026-07-23，确定性测试、synthetic replay
+  和第一轮 A/B benchmark 已完成，当前正在消除单字段 identity 迁移前的热路径回退。
+- candidate：`feature/lead-lag-parallel-fixed-slot-v4`，PR #13；已通过 `c78ec69` 合入
+  `main@87bdc08`。
+- production baseline：`main@87bdc08`。
 - 当前实现 contract 见 `docs/lead_lag_fixed_ordered_slot_pool_parallel.md`。
-- 当前只有自动测试证据；没有 `parallel > 1` replay、fresh benchmark 或真实订单证据。
+- 当前已有 `parallel=1/2/4/8/16` deterministic synthetic replay 和 fresh benchmark；没有
+  `parallel > 1` 真实订单证据。
 - 最新 Bitget 12 小时 evidence bundle
   `/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle` 只包含 Bitget canonical
   BookTicker segments，没有 Binance binary，不能单独作为双侧 LeadLag replay 输入。
@@ -73,6 +74,16 @@ production-readiness，也不声明 fillability、PnL 或风险收益改善。
 - median 回退不得超过 `5%`；能够稳定测量的 tail 回退不得超过 `10%`。
 - `parallel=2/4/8/16` 不要求与 `parallel=1` 等时延，但不得出现分配、异常跃升或不符合实现
   复杂度的超线性增长。
+
+### 单一 group identity
+
+- SHM v4 只保留 `group_id`，删除 `OrderPlaceRequest`、cancel、response、exchange correlation
+  metadata、日志和新 CSV schema 中独立的 `parent_id`。
+- `group_id=0` 表示 producer 没有归组语义；gateway 只透明传播，不从 `local_order_id` 自动补写。
+- LeadLag 的有效 group 从 `1` 开始单调递增；fanout child 使用
+  `group_id + local_order_id + route_id` 表达 group、child 和 route。
+- 历史日志与 fixture 可以保留 legacy `parent_id` 原文，但 analyzer 不把它回退或复制为新
+  `group_id`。
 
 ## 核心不变量
 
@@ -177,8 +188,9 @@ helper；单文件 helper 留在匿名 namespace。
 本阶段不连接交易所、不读取 credentials、不创建真实订单。使用唯一的本地测试 SHM 名称并保证测试退出后
 正常释放。
 
-1. 扩展 core SHM/client tests，使用至少两个并发 place request，验证 command sequence、`local_order_id`、
-   `parent_id`、`group_id`、route 和 cancel correlation 不串联。
+1. 扩展 core SHM/client tests，使用至少两个并发 place request，验证 command sequence、
+   `local_order_id`、`group_id`、route 和 cancel correlation 不串联；并验证
+   `group_id=0` 原样传播、不自动补写。
 2. Gate 与 Bitget 分别验证：place command → worker/session adapter → Ack/terminal response event 的
    `group_id` 保真；不同 group 的 response 逆序返回时仍匹配原始 `local_order_id/group_id`。
 3. 在 `strategy_order_feedback_shm_integration_test` 或边界更清楚的新 integration target 中，连接
