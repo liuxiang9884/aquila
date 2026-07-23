@@ -770,6 +770,26 @@ class Strategy {
   Strategy& operator=(Strategy&&) noexcept = default;
 
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
+  [[nodiscard]] bool AddOpenGroupForTest(std::int32_t symbol_id) noexcept {
+    PairRuntimeState* runtime = MutableRuntime(symbol_id);
+    return runtime != nullptr && runtime->execution.StartOpenGroup() != nullptr;
+  }
+
+  [[nodiscard]] bool AddHoldGroupForTest(std::int32_t symbol_id,
+                                         double signed_position_quantity,
+                                         double trailing_price) noexcept {
+    PairRuntimeState* runtime = MutableRuntime(symbol_id);
+    return runtime != nullptr &&
+           runtime->execution.AddHoldGroup(signed_position_quantity,
+                                           trailing_price) != nullptr;
+  }
+
+  [[nodiscard]] std::size_t ActiveGroupCountForTest(
+      std::int32_t symbol_id) noexcept {
+    PairRuntimeState* runtime = MutableRuntime(symbol_id);
+    return runtime == nullptr ? 0 : runtime->execution.active_group_count();
+  }
+
   [[nodiscard]] std::pair<double, double> CurrentGlobalRiskTotalsForTest()
       const noexcept {
     const GlobalRiskTotals totals = CurrentGlobalRiskTotals();

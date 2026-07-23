@@ -18,6 +18,11 @@ target_link_libraries(lead_lag_strategy_benchmark
         benchmark::benchmark_main
 )
 
+target_compile_definitions(lead_lag_strategy_benchmark
+    PRIVATE
+        AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS
+)
+
 add_executable(lead_lag_runtime_benchmark
     lead_lag_runtime_benchmark.cpp
 )

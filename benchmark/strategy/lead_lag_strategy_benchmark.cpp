@@ -35,12 +35,23 @@ struct NoopContext {
     return {};
   }
 
+  [[nodiscard]] core::OrderPlaceResult PlaceOrder(
+      const core::OrderPlaceRequest&,
+      const core::OrderLocalMetadata&) noexcept {
+    return {};
+  }
+
+  [[nodiscard]] const core::StrategyOrder* FindOrder(
+      std::uint64_t) const noexcept {
+    return nullptr;
+  }
+
   bool RetireFinishedOrder(std::uint64_t) noexcept {
     return false;
   }
 };
 
-[[nodiscard]] Config MakeOrdiConfig() {
+[[nodiscard]] Config MakeOrdiConfig(std::uint32_t parallel = 1) {
   Config config;
   config.name = "lead_lag";
   config.version = "1.0";
@@ -76,7 +87,7 @@ struct NoopContext {
               .open_notional = 100.0,
               .trailing_stop = 0.01,
               .max_entry_spread = 0.01,
-              .parallel = 1,
+              .parallel = parallel,
           },
       .bbo_record =
           BboRecordConfig{
@@ -191,6 +202,21 @@ void WarmActive(Strategy* strategy, NoopContext* context) noexcept {
   }
 }
 
+[[nodiscard]] bool SeedActiveGroups(Strategy* strategy,
+                                    std::size_t active_group_count) noexcept {
+  if (strategy == nullptr ||
+      strategy->ActiveGroupCountForTest(/*symbol_id=*/3) != 0) {
+    return false;
+  }
+  for (std::size_t index = 0; index < active_group_count; ++index) {
+    if (!strategy->AddOpenGroupForTest(/*symbol_id=*/3)) {
+      return false;
+    }
+  }
+  return strategy->ActiveGroupCountForTest(/*symbol_id=*/3) ==
+         active_group_count;
+}
+
 void BM_LeadLagStrategyOnBookTickerRealTrace(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
   const std::vector<BookTicker>& trace = OrdiTrace();
@@ -227,10 +253,17 @@ void BM_LeadLagStrategyOnBookTickerRealTrace(benchmark::State& state) {
 
 void BM_LeadLagStrategyActiveLeadTickNoSignal(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
-  Strategy strategy{MakeOrdiConfig(), SyntheticReplayOptions()};
+  const std::size_t active_group_count =
+      static_cast<std::size_t>(state.range(0));
+  Strategy strategy{MakeOrdiConfig(active_group_count),
+                    SyntheticReplayOptions()};
   NoopContext context;
   WarmActive(&strategy, &context);
-  std::int64_t event_ns = 31'000'001'000;
+  if (!SeedActiveGroups(&strategy, active_group_count)) {
+    state.SkipWithError("failed to seed active execution groups");
+    return;
+  }
+  std::int64_t event_ns = 40'000'001'000;
   std::uint64_t signals = 0;
 
   for (auto _ : state) {
@@ -247,15 +280,26 @@ void BM_LeadLagStrategyActiveLeadTickNoSignal(benchmark::State& state) {
   }
 
   benchmark::DoNotOptimize(signals);
+  if (signals != 0) {
+    state.SkipWithError("active lead tick fixture emitted a signal");
+    return;
+  }
   state.SetItemsProcessed(state.iterations());
 }
 
 void BM_LeadLagStrategyActiveLagTickNoSignal(benchmark::State& state) {
   benchmarking::EnsureLoggingStarted();
-  Strategy strategy{MakeOrdiConfig(), SyntheticReplayOptions()};
+  const std::size_t active_group_count =
+      static_cast<std::size_t>(state.range(0));
+  Strategy strategy{MakeOrdiConfig(active_group_count),
+                    SyntheticReplayOptions()};
   NoopContext context;
   WarmActive(&strategy, &context);
-  std::int64_t event_ns = 31'000'001'000;
+  if (!SeedActiveGroups(&strategy, active_group_count)) {
+    state.SkipWithError("failed to seed active execution groups");
+    return;
+  }
+  std::int64_t event_ns = 40'000'001'000;
   std::uint64_t signals = 0;
 
   for (auto _ : state) {
@@ -272,14 +316,30 @@ void BM_LeadLagStrategyActiveLagTickNoSignal(benchmark::State& state) {
   }
 
   benchmark::DoNotOptimize(signals);
+  if (signals != 0) {
+    state.SkipWithError("active lag tick fixture emitted a signal");
+    return;
+  }
   state.SetItemsProcessed(state.iterations());
 }
 
 BENCHMARK(BM_LeadLagStrategyOnBookTickerRealTrace)
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagStrategyActiveLeadTickNoSignal)
+    ->ArgName("active_groups")
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagStrategyActiveLagTickNoSignal)
+    ->ArgName("active_groups")
+    ->Arg(1)
+    ->Arg(2)
+    ->Arg(4)
+    ->Arg(8)
+    ->Arg(16)
     ->Unit(benchmark::kNanosecond);
 
 void BM_MeanStdWindowUpdateOnly(benchmark::State& state) {
