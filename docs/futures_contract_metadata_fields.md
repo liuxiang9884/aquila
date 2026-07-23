@@ -45,9 +45,11 @@ Bitget 脚本额外支持 `--allow-missing`，用于更新 catalog 时跳过 Bit
 
 ## 当前 catalog 文件
 
-`config/instruments/usdt_future_universe.csv` 是新运行统一使用的 runtime catalog，当前包含 Gate 494 行、
-Binance 505 行和 Bitget 449 行，共 505 个 canonical symbol。Bitget 行只为 2026-07-16 catalog
-快照中 Bitget UTA `USDT-FUTURES` 存在且 `online` 的 symbol 写入。该文件保留
+`config/instruments/usdt_future_universe.csv` 是新运行统一使用的 runtime catalog，当前包含 Gate 496 行、
+Binance 508 行和 Bitget 452 行，共 508 个 canonical symbol。Bitget 行以 2026-07-16 catalog
+快照为基础，并于 2026-07-23 从当前公开接口补入 `CL_USDT`、`CRCL_USDT` 和 `INTC_USDT`；
+补入时三者在 Bitget UTA `USDT-FUTURES` 均为 `online`、在 Binance USD-M 均为 `TRADING`。
+该文件保留
 `contract_multiplier`，统一服务 data session、DataReader、gateway smoke、LeadLag、fill probe、
 benchmark 和 report。
 
