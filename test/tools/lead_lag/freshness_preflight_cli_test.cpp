@@ -89,7 +89,7 @@ TEST(LeadLagFreshnessPreflightCliTest, RequiresLeadLagConfigBeforeOpeningShm) {
       "freshness_preflight_valid_data_reader_missing_lead_lag.toml";
   WriteTextFile(config_path, R"toml(
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260602.csv"
+file = "config/instruments/usdt_future_universe.csv"
 schema = "aquila.instrument.v1"
 
 [log]

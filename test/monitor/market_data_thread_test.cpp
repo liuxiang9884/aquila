@@ -378,7 +378,7 @@ TEST(MarketDataThreadTest, StartReturnsFalseWhenRealtimeShmIsMissing) {
     out << R"toml(
 [instrument_catalog]
 file = ")toml"
-        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << SourcePath("config/instruments/usdt_future_universe.csv").string()
         << R"toml("
 schema = "aquila.instrument.v1"
 
@@ -434,7 +434,7 @@ TEST(MarketDataThreadTest, StartSkipsMissingOptionalSourceWhenAnotherSourceExist
     out << R"toml(
 [instrument_catalog]
 file = ")toml"
-        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << SourcePath("config/instruments/usdt_future_universe.csv").string()
         << R"toml("
 schema = "aquila.instrument.v1"
 
@@ -508,7 +508,7 @@ TEST(MarketDataSnapshotTest, ReadsVisibleRowsPublishedBeforeAttach) {
     out << R"toml(
 [instrument_catalog]
 file = ")toml"
-        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << SourcePath("config/instruments/usdt_future_universe.csv").string()
         << R"toml("
 schema = "aquila.instrument.v1"
 
@@ -572,7 +572,7 @@ TEST(MarketDataSnapshotTest, ForcesDrainModeForVisibleRows) {
     out << R"toml(
 [instrument_catalog]
 file = ")toml"
-        << SourcePath("config/instruments/usdt_futures.csv").string()
+        << SourcePath("config/instruments/usdt_future_universe.csv").string()
         << R"toml("
 schema = "aquila.instrument.v1"
 

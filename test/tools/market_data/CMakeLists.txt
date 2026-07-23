@@ -128,7 +128,7 @@ target_link_libraries(data_reader_probe_cli_test
 target_compile_definitions(data_reader_probe_cli_test
     PRIVATE
         AQUILA_DATA_READER_PROBE_BINARY="$<TARGET_FILE:data_reader_probe>"
-        AQUILA_DATA_READER_PROBE_CATALOG="${PROJECT_SOURCE_DIR}/config/instruments/usdt_futures.csv"
+        AQUILA_DATA_READER_PROBE_CATALOG="${PROJECT_SOURCE_DIR}/config/instruments/usdt_future_universe.csv"
 )
 add_dependencies(data_reader_probe_cli_test data_reader_probe)
 

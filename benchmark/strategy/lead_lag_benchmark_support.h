@@ -29,6 +29,10 @@ inline void EnsureLoggingStarted() {
     } else {
       config.set_console_sink_name("");
     }
+    const char* log_level = std::getenv("AQUILA_LEAD_LAG_BENCHMARK_LOG_LEVEL");
+    if (log_level != nullptr) {
+      config.set_log_level(log_level);
+    }
     config.set_file_sink_name((std::filesystem::temp_directory_path() /
                                "aquila_lead_lag_benchmark.log")
                                   .string());

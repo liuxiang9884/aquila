@@ -158,9 +158,23 @@ class PrepareGatewaySmokeRunTest(unittest.TestCase):
         smoke = tomllib.loads(result.smoke_config.read_text(encoding="utf-8"))
         self.assertEqual(data["data_shm_sink"]["shm_name"], result.market_data_shm)
         self.assertEqual(gateway["order_gateway"]["shm_name"], result.gateway_shm)
+        order_session_path = Path(
+            gateway["order_gateway"]["routes"][0]["order_session_config"]
+        )
+        order_session = tomllib.loads(
+            order_session_path.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            order_session["order_session"]["websocket"]["endpoint"]["host"],
+            "vip-ws-uta-pri-a.bitget.com",
+        )
         self.assertEqual(
             feedback["order_feedback_session"]["shm"]["shm_name"],
             result.feedback_shm,
+        )
+        self.assertEqual(
+            feedback["order_feedback_session"]["websocket"]["endpoint"]["host"],
+            "vip-ws-uta-pri-a.bitget.com",
         )
         self.assertEqual(smoke["gateway_smoke"]["run_id"], self.run_id)
         self.assertEqual(smoke["market_data"]["shm_name"], result.market_data_shm)

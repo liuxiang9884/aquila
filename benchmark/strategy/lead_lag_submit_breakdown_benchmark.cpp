@@ -48,10 +48,13 @@ namespace {
 
 constexpr std::uint8_t kStrategyId = 4;
 constexpr std::int32_t kSymbolId = 67;
+constexpr std::int32_t kWarmupSymbolId = 467;
 constexpr std::size_t kOrderCapacity = 64;
 constexpr std::uint16_t kFanout = 4;
+constexpr std::uint16_t kSingleRouteFanout = 1;
 constexpr std::size_t kLatencyIterations = 4096;
 constexpr std::size_t kSubmitBreakdownIterations = 1024;
+constexpr std::size_t kColdSubmitBreakdownIterations = 1024;
 constexpr std::size_t kGatewayQueueCapacity = kLatencyIterations + 128;
 constexpr std::string_view kSymbol = "BAS_USDT";
 constexpr std::string_view kActualLiveLeadLagConfigPath =
@@ -60,6 +63,9 @@ constexpr std::string_view kActualLiveLeadLagConfigPath =
     "toml";
 constexpr std::string_view kActualLiveInstrumentCatalogPath =
     "config/instruments/usdt_future_universe.csv";
+constexpr std::string_view kBitgetCombined46LeadLagConfigPath =
+    "config/strategies/"
+    "lead_lag_bitget_combined_46symbols_highspeed_fanout4_20260718.toml";
 constexpr std::string_view kGateLoginSuccess = R"json({
   "request_id": "72057594037927937",
   "ack": false,
@@ -452,6 +458,8 @@ void SetPrefixedLatencyCounters(benchmark::State& state,
   const std::string name{prefix};
   state.counters[name + "_p50_ns"] =
       static_cast<double>(Quantile(samples, 0.50));
+  state.counters[name + "_p95_ns"] =
+      static_cast<double>(Quantile(samples, 0.95));
   state.counters[name + "_p99_ns"] =
       static_cast<double>(Quantile(samples, 0.99));
   state.counters[name + "_max_ns"] =
@@ -544,7 +552,6 @@ SyntheticFanoutOrders(std::uint64_t first_local_order_id,
 struct SubmitTrace {
   std::int64_t signal_decision_ns{0};
   std::int64_t signal_trigger_observer_ns{0};
-  std::int64_t order_intent_observer_ns{0};
   std::int64_t handle_end_ns{0};
   std::array<std::int64_t,
              static_cast<std::size_t>(StrategySubmitStageForTest::kCount)>
@@ -560,7 +567,6 @@ struct SubmitTrace {
   void Reset() noexcept {
     signal_decision_ns = 0;
     signal_trigger_observer_ns = 0;
-    order_intent_observer_ns = 0;
     handle_end_ns = 0;
     stage_ns.fill(0);
     for (auto& stages : route_stage_ns) {
@@ -607,10 +613,10 @@ struct SubmitStageSamples {
   std::vector<std::uint64_t> quantity_to_routes_refreshed;
   std::vector<std::uint64_t> routes_refreshed_to_routes_selected;
   std::vector<std::uint64_t> routes_selected_to_risk;
-  std::vector<std::uint64_t> risk_to_intent_log;
-  std::vector<std::uint64_t> intent_log_to_group;
+  std::vector<std::uint64_t> risk_to_group;
   std::vector<std::uint64_t> group_to_route0_acquire_begin;
   std::vector<std::uint64_t> route0_acquire_text;
+  std::vector<std::uint64_t> route0_acquire_done_to_place_begin;
   std::vector<std::uint64_t> route0_place_order;
   std::vector<std::uint64_t> route0_after_place_to_submit_result;
   std::vector<std::uint64_t> route0_place_to_route3_place;
@@ -624,17 +630,17 @@ struct SubmitStageSamples {
     quantity_to_routes_refreshed.reserve(size);
     routes_refreshed_to_routes_selected.reserve(size);
     routes_selected_to_risk.reserve(size);
-    risk_to_intent_log.reserve(size);
-    intent_log_to_group.reserve(size);
+    risk_to_group.reserve(size);
     group_to_route0_acquire_begin.reserve(size);
     route0_acquire_text.reserve(size);
+    route0_acquire_done_to_place_begin.reserve(size);
     route0_place_order.reserve(size);
     route0_after_place_to_submit_result.reserve(size);
     route0_place_to_route3_place.reserve(size);
     route3_submit_result_to_done.reserve(size);
   }
 
-  void Push(const SubmitTrace& trace) {
+  void Push(const SubmitTrace& trace, std::uint16_t route_count = kFanout) {
     PushDelta(&decision_to_price, trace.signal_decision_ns,
               StageTimeNs(trace, StrategySubmitStageForTest::kPricePrepared));
     PushDelta(
@@ -659,12 +665,8 @@ struct SubmitStageSamples {
               StageTimeNs(trace, StrategySubmitStageForTest::kRoutesSelected),
               StageTimeNs(trace, StrategySubmitStageForTest::kRiskChecked));
     PushDelta(
-        &risk_to_intent_log,
+        &risk_to_group,
         StageTimeNs(trace, StrategySubmitStageForTest::kRiskChecked),
-        StageTimeNs(trace, StrategySubmitStageForTest::kOrderIntentLogged));
-    PushDelta(
-        &intent_log_to_group,
-        StageTimeNs(trace, StrategySubmitStageForTest::kOrderIntentLogged),
         StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady));
     PushDelta(
         &group_to_route0_acquire_begin,
@@ -676,6 +678,11 @@ struct SubmitStageSamples {
                   trace, StrategySubmitStageForTest::kBeforeAcquireRiskSlot, 0),
               RouteStageTimeNs(
                   trace, StrategySubmitStageForTest::kAfterAcquireRiskSlot, 0));
+    PushDelta(&route0_acquire_done_to_place_begin,
+              RouteStageTimeNs(
+                  trace, StrategySubmitStageForTest::kAfterAcquireRiskSlot, 0),
+              RouteStageTimeNs(
+                  trace, StrategySubmitStageForTest::kBeforePlaceOrder, 0));
     PushDelta(&route0_place_order,
               RouteStageTimeNs(
                   trace, StrategySubmitStageForTest::kBeforePlaceOrder, 0),
@@ -686,15 +693,17 @@ struct SubmitStageSamples {
                                StrategySubmitStageForTest::kAfterPlaceOrder, 0),
               RouteStageTimeNs(
                   trace, StrategySubmitStageForTest::kAfterSubmitResult, 0));
-    PushDelta(&route0_place_to_route3_place,
-              RouteStageTimeNs(trace,
-                               StrategySubmitStageForTest::kAfterPlaceOrder, 0),
-              RouteStageTimeNs(
-                  trace, StrategySubmitStageForTest::kAfterPlaceOrder, 3));
-    PushDelta(&route3_submit_result_to_done,
-              RouteStageTimeNs(
-                  trace, StrategySubmitStageForTest::kAfterSubmitResult, 3),
-              StageTimeNs(trace, StrategySubmitStageForTest::kSubmitDone));
+    if (route_count > 3) {
+      PushDelta(&route0_place_to_route3_place,
+                RouteStageTimeNs(
+                    trace, StrategySubmitStageForTest::kAfterPlaceOrder, 0),
+                RouteStageTimeNs(
+                    trace, StrategySubmitStageForTest::kAfterPlaceOrder, 3));
+      PushDelta(&route3_submit_result_to_done,
+                RouteStageTimeNs(
+                    trace, StrategySubmitStageForTest::kAfterSubmitResult, 3),
+                StageTimeNs(trace, StrategySubmitStageForTest::kSubmitDone));
+    }
   }
 
   void SetCounters(benchmark::State& state) const {
@@ -711,13 +720,13 @@ struct SubmitStageSamples {
                                routes_refreshed_to_routes_selected);
     SetPrefixedLatencyCounters(state, "routes_selected_to_risk",
                                routes_selected_to_risk);
-    SetPrefixedLatencyCounters(state, "risk_to_intent_log", risk_to_intent_log);
-    SetPrefixedLatencyCounters(state, "intent_log_to_group",
-                               intent_log_to_group);
+    SetPrefixedLatencyCounters(state, "risk_to_group", risk_to_group);
     SetPrefixedLatencyCounters(state, "group_to_route0_acquire_begin",
                                group_to_route0_acquire_begin);
     SetPrefixedLatencyCounters(state, "route0_acquire_text",
                                route0_acquire_text);
+    SetPrefixedLatencyCounters(state, "route0_acquire_done_to_place_begin",
+                               route0_acquire_done_to_place_begin);
     SetPrefixedLatencyCounters(state, "route0_place_order", route0_place_order);
     SetPrefixedLatencyCounters(state, "route0_after_place_to_submit_result",
                                route0_after_place_to_submit_result);
@@ -738,12 +747,12 @@ void OnSignalTriggeredForBenchmark(
       benchmarking::RealtimeNowNs();
 }
 
-void OnOrderIntentForBenchmark(
-    const detail::StrategyOrderIntentLogRecordForTest&) noexcept {
+void OnSignalDecisionOnlyForBenchmark(
+    const detail::StrategySignalTriggeredLogRecordForTest& record) noexcept {
   if (active_submit_trace == nullptr) {
     return;
   }
-  active_submit_trace->order_intent_observer_ns = benchmarking::RealtimeNowNs();
+  active_submit_trace->signal_decision_ns = record.signal_decision_ns;
 }
 
 void OnOrderSubmittedForBenchmark(
@@ -778,7 +787,6 @@ class StrategyLogHookScope {
   StrategyLogHookScope() noexcept {
     detail::SetStrategySignalTriggeredLogObserverForTest(
         OnSignalTriggeredForBenchmark);
-    detail::SetStrategyOrderIntentLogObserverForTest(OnOrderIntentForBenchmark);
     detail::SetStrategyOrderSubmittedLogObserverForTest(
         OnOrderSubmittedForBenchmark);
     detail::SetStrategySubmitStageObserverForTest(OnSubmitStageForBenchmark);
@@ -786,7 +794,6 @@ class StrategyLogHookScope {
 
   ~StrategyLogHookScope() {
     detail::SetStrategySignalTriggeredLogObserverForTest(nullptr);
-    detail::SetStrategyOrderIntentLogObserverForTest(nullptr);
     detail::SetStrategyOrderSubmittedLogObserverForTest(nullptr);
     detail::SetStrategySubmitStageObserverForTest(nullptr);
     active_submit_trace = nullptr;
@@ -794,6 +801,23 @@ class StrategyLogHookScope {
 
   StrategyLogHookScope(const StrategyLogHookScope&) = delete;
   StrategyLogHookScope& operator=(const StrategyLogHookScope&) = delete;
+};
+
+class StrategyDecisionHookScope {
+ public:
+  StrategyDecisionHookScope() noexcept {
+    detail::SetStrategySignalTriggeredLogObserverForTest(
+        OnSignalDecisionOnlyForBenchmark);
+  }
+
+  ~StrategyDecisionHookScope() {
+    detail::SetStrategySignalTriggeredLogObserverForTest(nullptr);
+    active_submit_trace = nullptr;
+  }
+
+  StrategyDecisionHookScope(const StrategyDecisionHookScope&) = delete;
+  StrategyDecisionHookScope& operator=(const StrategyDecisionHookScope&) =
+      delete;
 };
 
 struct SharedInstrumentedOrderSessionState {
@@ -930,7 +954,7 @@ using InstrumentedOrderGatewayRuntime =
                          core::TradingRuntimeDiagnostics>;
 
 [[nodiscard]] Result<core::OrderGatewayClient> MakeStartedGatewayClient(
-    std::uint64_t route_table_capacity) {
+    std::uint64_t route_table_capacity, std::uint16_t route_count = kFanout) {
   static std::uint64_t next_instance_id = 0;
   const std::string shm_name =
       std::string{"aquila_submit_breakdown_"} +
@@ -940,7 +964,7 @@ using InstrumentedOrderGatewayRuntime =
       .shm_name = shm_name,
       .create = true,
       .remove_existing = true,
-      .route_count = kFanout,
+      .route_count = route_count,
       .command_queue_capacity = kGatewayQueueCapacity,
       .event_queue_capacity = 64,
       .startup_ready_timeout_s = 1,
@@ -951,7 +975,7 @@ using InstrumentedOrderGatewayRuntime =
     result.error = std::move(manager_result.error);
     return result;
   }
-  for (std::uint16_t route = 0; route < kFanout; ++route) {
+  for (std::uint16_t route = 0; route < route_count; ++route) {
     core::StoreOrderGatewayRouteState(manager_result.value.header(), route,
                                       core::OrderGatewayRouteState::kReady);
   }
@@ -1172,6 +1196,27 @@ void NormalizeActualConfigForBenchmark(Config* config) noexcept {
   return config_result;
 }
 
+[[nodiscard]] ConfigResult LoadBitgetCombined46ConfigForBenchmark() {
+  const auto catalog_result = ::aquila::config::LoadInstrumentCatalogFromCsv(
+      std::filesystem::path{kActualLiveInstrumentCatalogPath});
+  if (!catalog_result.ok) {
+    ConfigResult result;
+    result.error = catalog_result.error;
+    return result;
+  }
+  ConfigResult config_result =
+      LoadConfigFile(std::filesystem::path{kBitgetCombined46LeadLagConfigPath},
+                     catalog_result.value);
+  if (!config_result.ok) {
+    return config_result;
+  }
+  NormalizeActualConfigForBenchmark(&config_result.value);
+  for (PairConfig& pair : config_result.value.pairs) {
+    pair.execute.order_session_fanout = kSingleRouteFanout;
+  }
+  return config_result;
+}
+
 [[nodiscard]] BookTicker TickerFor(std::int32_t symbol_id, Exchange exchange,
                                    std::int64_t local_ns, double bid_price,
                                    double ask_price) noexcept {
@@ -1215,6 +1260,58 @@ template <typename RuntimeT>
   return TickerFor(symbol_id, Exchange::kBinance, event_ns, 0.052250, 0.052260);
 }
 
+[[nodiscard]] const PairConfig* FindPairConfig(const Config& config,
+                                               std::int32_t symbol_id) {
+  const auto it = std::find_if(config.pairs.begin(), config.pairs.end(),
+                               [symbol_id](const PairConfig& pair) {
+                                 return pair.symbol_id == symbol_id;
+                               });
+  return it == config.pairs.end() ? nullptr : &*it;
+}
+
+[[nodiscard]] const PairConfig* FindWarmupPairConfig(const Config& config) {
+  return FindPairConfig(config, kWarmupSymbolId);
+}
+
+template <typename RuntimeT>
+void HandleNonTriggeringPairUpdate(RuntimeT& runtime, const PairConfig& pair,
+                                   std::int64_t event_ns,
+                                   double price_offset = 0.0) noexcept {
+  const double bid_price = 0.052000 + price_offset;
+  runtime.HandleBookTickerForTest(TickerFor(pair.symbol_id, pair.lag_exchange,
+                                            event_ns, bid_price,
+                                            bid_price + 0.000020));
+  runtime.HandleBookTickerForTest(TickerFor(pair.symbol_id, pair.lead_exchange,
+                                            event_ns + 1'000, bid_price,
+                                            bid_price + 0.000010));
+}
+
+template <typename RuntimeT>
+void SeedAllPairsWithoutSignal(RuntimeT& runtime,
+                               const Config& config) noexcept {
+  std::int64_t event_ns = benchmarking::RealtimeNowNs();
+  for (const PairConfig& pair : config.pairs) {
+    HandleNonTriggeringPairUpdate(runtime, pair, event_ns);
+    event_ns += 2'000;
+  }
+}
+
+template <typename RuntimeT>
+void ChurnAllPairsWithoutSignal(RuntimeT& runtime, const Config& config,
+                                std::size_t sweep_count) noexcept {
+  for (std::size_t sweep = 0; sweep < sweep_count; ++sweep) {
+    std::int64_t event_ns = benchmarking::RealtimeNowNs();
+    for (const PairConfig& pair : config.pairs) {
+      const double price_offset =
+          ((static_cast<std::size_t>(pair.symbol_id) + sweep) & 1U) == 0
+              ? 0.000001
+              : 0.0;
+      HandleNonTriggeringPairUpdate(runtime, pair, event_ns, price_offset);
+      event_ns += 2'000;
+    }
+  }
+}
+
 template <typename RuntimeT>
 void PrefillLiveLikeOpenSignals(RuntimeT& runtime,
                                 std::size_t signal_count) noexcept {
@@ -1240,15 +1337,15 @@ void BM_LeadLagSubmitPathBreakdownSyntheticFanout4(benchmark::State& state) {
 
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_route0_place_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_route0_place_ns;
   std::vector<std::uint64_t> route0_to_route3_place_ns;
   std::vector<std::uint64_t> route3_place_to_done_ns;
   std::array<std::vector<std::uint64_t>, kFanout> decision_to_route_place_ns;
   full_samples_ns.reserve(kLatencyIterations);
   decision_to_signal_log_done_ns.reserve(kLatencyIterations);
-  signal_log_to_intent_log_done_ns.reserve(kLatencyIterations);
-  intent_log_to_route0_place_ns.reserve(kLatencyIterations);
+  signal_log_to_group_ready_ns.reserve(kLatencyIterations);
+  group_ready_to_route0_place_ns.reserve(kLatencyIterations);
   route0_to_route3_place_ns.reserve(kLatencyIterations);
   route3_place_to_done_ns.reserve(kLatencyIterations);
   for (auto& samples : decision_to_route_place_ns) {
@@ -1296,10 +1393,12 @@ void BM_LeadLagSubmitPathBreakdownSyntheticFanout4(benchmark::State& state) {
     full_samples_ns.push_back(elapsed_ns);
     decision_to_signal_log_done_ns.push_back(
         DeltaNs(trace.signal_decision_ns, trace.signal_trigger_observer_ns));
-    signal_log_to_intent_log_done_ns.push_back(DeltaNs(
-        trace.signal_trigger_observer_ns, trace.order_intent_observer_ns));
-    intent_log_to_route0_place_ns.push_back(
-        DeltaNs(trace.order_intent_observer_ns, trace.place_enter_ns[0]));
+    signal_log_to_group_ready_ns.push_back(DeltaNs(
+        trace.signal_trigger_observer_ns,
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady)));
+    group_ready_to_route0_place_ns.push_back(DeltaNs(
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+        trace.place_enter_ns[0]));
     route0_to_route3_place_ns.push_back(
         DeltaNs(trace.place_enter_ns[0], trace.place_enter_ns[3]));
     route3_place_to_done_ns.push_back(
@@ -1319,10 +1418,10 @@ void BM_LeadLagSubmitPathBreakdownSyntheticFanout4(benchmark::State& state) {
                                               "parents", state.iterations());
   SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
                              decision_to_signal_log_done_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_route0_place",
-                             intent_log_to_route0_place_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_route0_place",
+                             group_ready_to_route0_place_ns);
   SetPrefixedLatencyCounters(state, "route0_place_to_route3_place",
                              route0_to_route3_place_ns);
   SetPrefixedLatencyCounters(state, "route3_place_to_done",
@@ -1342,15 +1441,15 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4(
 
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_route0_enqueue_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_route0_enqueue_ns;
   std::vector<std::uint64_t> route0_to_route3_enqueue_ns;
   std::vector<std::uint64_t> route3_enqueue_to_done_ns;
   std::array<std::vector<std::uint64_t>, kFanout> decision_to_route_enqueue_ns;
   full_samples_ns.reserve(kLatencyIterations);
   decision_to_signal_log_done_ns.reserve(kLatencyIterations);
-  signal_log_to_intent_log_done_ns.reserve(kLatencyIterations);
-  intent_log_to_route0_enqueue_ns.reserve(kLatencyIterations);
+  signal_log_to_group_ready_ns.reserve(kLatencyIterations);
+  group_ready_to_route0_enqueue_ns.reserve(kLatencyIterations);
   route0_to_route3_enqueue_ns.reserve(kLatencyIterations);
   route3_enqueue_to_done_ns.reserve(kLatencyIterations);
   for (auto& samples : decision_to_route_enqueue_ns) {
@@ -1405,10 +1504,12 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4(
     full_samples_ns.push_back(elapsed_ns);
     decision_to_signal_log_done_ns.push_back(
         DeltaNs(trace.signal_decision_ns, trace.signal_trigger_observer_ns));
-    signal_log_to_intent_log_done_ns.push_back(DeltaNs(
-        trace.signal_trigger_observer_ns, trace.order_intent_observer_ns));
-    intent_log_to_route0_enqueue_ns.push_back(
-        DeltaNs(trace.order_intent_observer_ns, trace.place_enter_ns[0]));
+    signal_log_to_group_ready_ns.push_back(DeltaNs(
+        trace.signal_trigger_observer_ns,
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady)));
+    group_ready_to_route0_enqueue_ns.push_back(DeltaNs(
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+        trace.place_enter_ns[0]));
     route0_to_route3_enqueue_ns.push_back(
         DeltaNs(trace.place_enter_ns[0], trace.place_enter_ns[3]));
     route3_enqueue_to_done_ns.push_back(
@@ -1428,10 +1529,10 @@ void BM_LeadLagSubmitPathBreakdownOrderGatewaySyntheticFanout4(
                                               "parents", state.iterations());
   SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
                              decision_to_signal_log_done_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_route0_enqueue",
-                             intent_log_to_route0_enqueue_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_route0_enqueue",
+                             group_ready_to_route0_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route0_enqueue_to_route3_enqueue",
                              route0_to_route3_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route3_enqueue_to_done",
@@ -1452,16 +1553,16 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
 
   std::vector<std::uint64_t> full_samples_ns;
   std::vector<std::uint64_t> decision_to_signal_log_done_ns;
-  std::vector<std::uint64_t> signal_log_to_intent_log_done_ns;
-  std::vector<std::uint64_t> intent_log_to_route0_enqueue_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_route0_enqueue_ns;
   std::vector<std::uint64_t> route0_to_route3_enqueue_ns;
   std::vector<std::uint64_t> route3_enqueue_to_done_ns;
   std::array<std::vector<std::uint64_t>, kFanout> decision_to_route_enqueue_ns;
   SubmitStageSamples stage_samples;
   full_samples_ns.reserve(kLatencyIterations);
   decision_to_signal_log_done_ns.reserve(kLatencyIterations);
-  signal_log_to_intent_log_done_ns.reserve(kLatencyIterations);
-  intent_log_to_route0_enqueue_ns.reserve(kLatencyIterations);
+  signal_log_to_group_ready_ns.reserve(kLatencyIterations);
+  group_ready_to_route0_enqueue_ns.reserve(kLatencyIterations);
   route0_to_route3_enqueue_ns.reserve(kLatencyIterations);
   route3_enqueue_to_done_ns.reserve(kLatencyIterations);
   stage_samples.Reserve(kLatencyIterations);
@@ -1536,10 +1637,12 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
     stage_samples.Push(trace);
     decision_to_signal_log_done_ns.push_back(
         DeltaNs(trace.signal_decision_ns, trace.signal_trigger_observer_ns));
-    signal_log_to_intent_log_done_ns.push_back(DeltaNs(
-        trace.signal_trigger_observer_ns, trace.order_intent_observer_ns));
-    intent_log_to_route0_enqueue_ns.push_back(
-        DeltaNs(trace.order_intent_observer_ns, trace.place_enter_ns[0]));
+    signal_log_to_group_ready_ns.push_back(DeltaNs(
+        trace.signal_trigger_observer_ns,
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady)));
+    group_ready_to_route0_enqueue_ns.push_back(DeltaNs(
+        StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+        trace.place_enter_ns[0]));
     route0_to_route3_enqueue_ns.push_back(
         DeltaNs(trace.place_enter_ns[0], trace.place_enter_ns[3]));
     route3_enqueue_to_done_ns.push_back(
@@ -1561,10 +1664,10 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
       static_cast<double>(prefill_open_signal_count);
   SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
                              decision_to_signal_log_done_ns);
-  SetPrefixedLatencyCounters(state, "signal_log_to_intent_done",
-                             signal_log_to_intent_log_done_ns);
-  SetPrefixedLatencyCounters(state, "intent_done_to_route0_enqueue",
-                             intent_log_to_route0_enqueue_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_route0_enqueue",
+                             group_ready_to_route0_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route0_enqueue_to_route3_enqueue",
                              route0_to_route3_enqueue_ns);
   SetPrefixedLatencyCounters(state, "route3_enqueue_to_done",
@@ -1576,6 +1679,235 @@ void RunLeadLagSubmitPathBreakdownOrderGatewayConfig(
         decision_to_route_enqueue_ns[route]);
   }
   stage_samples.SetCounters(state);
+}
+
+void RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(benchmark::State& state,
+                                                   bool warm_before_target,
+                                                   bool collect_stage_trace) {
+  benchmarking::EnsureLoggingStarted();
+  NOVA_INFO("lead_lag_submit_breakdown_logger_warmup");
+  std::unique_ptr<StrategyLogHookScope> stage_hooks;
+  std::unique_ptr<StrategyDecisionHookScope> decision_hook;
+  if (collect_stage_trace) {
+    stage_hooks = std::make_unique<StrategyLogHookScope>();
+  } else {
+    decision_hook = std::make_unique<StrategyDecisionHookScope>();
+  }
+
+  ConfigResult config_result = LoadBitgetCombined46ConfigForBenchmark();
+  if (!config_result.ok) {
+    state.SkipWithError(config_result.error.c_str());
+    return;
+  }
+  const Config& benchmark_config = config_result.value;
+  const PairConfig* target_pair = FindPairConfig(benchmark_config, kSymbolId);
+  const PairConfig* warmup_pair = FindWarmupPairConfig(benchmark_config);
+  if (benchmark_config.pairs.size() != 46 || target_pair == nullptr ||
+      warmup_pair == nullptr) {
+    state.SkipWithError(
+        "Bitget combined46 benchmark config is missing required pairs");
+    return;
+  }
+
+  const std::size_t churn_sweeps = static_cast<std::size_t>(state.range(0));
+  std::vector<std::uint64_t> full_samples_ns;
+  std::vector<std::uint64_t> decision_to_signal_log_done_ns;
+  std::vector<std::uint64_t> signal_log_done_to_price_ns;
+  std::vector<std::uint64_t> signal_log_to_group_ready_ns;
+  std::vector<std::uint64_t> group_ready_to_request_timestamp_ns;
+  std::vector<std::uint64_t> decision_to_request_timestamp_ns;
+  std::vector<std::uint64_t> before_place_to_request_timestamp_ns;
+  std::vector<std::uint64_t> request_timestamp_to_place_return_ns;
+  std::vector<std::uint64_t> decision_to_place_return_ns;
+  std::vector<std::uint64_t> request_timestamp_to_submitted_log_done_ns;
+  std::vector<std::uint64_t> submitted_log_to_handle_end_ns;
+  std::vector<std::uint64_t> decision_to_handle_end_ns;
+  SubmitStageSamples stage_samples;
+  full_samples_ns.reserve(kColdSubmitBreakdownIterations);
+  decision_to_signal_log_done_ns.reserve(kColdSubmitBreakdownIterations);
+  signal_log_done_to_price_ns.reserve(kColdSubmitBreakdownIterations);
+  signal_log_to_group_ready_ns.reserve(kColdSubmitBreakdownIterations);
+  group_ready_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
+  decision_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
+  before_place_to_request_timestamp_ns.reserve(kColdSubmitBreakdownIterations);
+  request_timestamp_to_place_return_ns.reserve(kColdSubmitBreakdownIterations);
+  decision_to_place_return_ns.reserve(kColdSubmitBreakdownIterations);
+  request_timestamp_to_submitted_log_done_ns.reserve(
+      kColdSubmitBreakdownIterations);
+  submitted_log_to_handle_end_ns.reserve(kColdSubmitBreakdownIterations);
+  decision_to_handle_end_ns.reserve(kColdSubmitBreakdownIterations);
+  stage_samples.Reserve(kColdSubmitBreakdownIterations);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    SubmitTrace trace;
+    auto client_result = MakeStartedGatewayClient(
+        /*route_table_capacity=*/32, kSingleRouteFanout);
+    if (!client_result.ok) {
+      state.ResumeTiming();
+      state.SkipWithError(client_result.error.c_str());
+      return;
+    }
+    auto runtime_result = InstrumentedOrderGatewayRuntime::CreateForTest(
+        RuntimeConfig(128),
+        [&client = client_result.value, &trace]() mutable {
+          return InstrumentedOrderGatewayClient{std::move(client), &trace};
+        },
+        benchmark_config);
+    if (!runtime_result.ok) {
+      state.ResumeTiming();
+      state.SkipWithError(runtime_result.error.c_str());
+      return;
+    }
+
+    InstrumentedOrderGatewayRuntime& runtime = *runtime_result.value;
+    SeedAllPairsWithoutSignal(runtime, benchmark_config);
+    ChurnAllPairsWithoutSignal(runtime, benchmark_config, churn_sweeps);
+    if (warm_before_target) {
+      runtime.HandleBookTickerForTest(LiveLikeOpenLongTriggerTicker(
+          benchmarking::RealtimeNowNs(), warmup_pair->symbol_id));
+      if (trace.place_calls != kSingleRouteFanout) {
+        state.ResumeTiming();
+        state.SkipWithError(
+            "Bitget combined46 warmup did not submit one child order");
+        return;
+      }
+    }
+
+    trace.Reset();
+    active_submit_trace = &trace;
+    const BookTicker trigger_ticker =
+        TickerFor(target_pair->symbol_id, target_pair->lead_exchange,
+                  benchmarking::RealtimeNowNs(), 0.052250, 0.052260);
+    state.ResumeTiming();
+
+    const std::uint64_t start_ns = websocket::benchmarking::NowNs();
+    runtime.HandleBookTickerForTest(trigger_ticker);
+    const std::uint64_t elapsed_ns =
+        websocket::benchmarking::NowNs() - start_ns;
+    trace.handle_end_ns = benchmarking::RealtimeNowNs();
+    state.PauseTiming();
+
+    const std::int64_t place_return_ns =
+        collect_stage_trace
+            ? RouteStageTimeNs(trace,
+                               StrategySubmitStageForTest::kAfterPlaceOrder, 0)
+            : 0;
+    if (trace.signal_decision_ns == 0 ||
+        trace.place_calls != kSingleRouteFanout ||
+        trace.place_enter_ns[0] == 0 || trace.place_enter_ns[1] != 0 ||
+        (collect_stage_trace &&
+         (trace.submitted_calls != kSingleRouteFanout || place_return_ns == 0 ||
+          StageTimeNs(trace, StrategySubmitStageForTest::kSubmitDone) == 0))) {
+      const std::string error = fmt::format(
+          "Bitget combined46 fanout1 submit failed: warm={} sweeps={} "
+          "signal_decision_ns={} place_calls={} submitted_calls={} "
+          "route0_request_ns={} route0_place_return_ns={} route1_request_ns={} "
+          "submit_done_ns={}",
+          warm_before_target, churn_sweeps, trace.signal_decision_ns,
+          trace.place_calls, trace.submitted_calls, trace.place_enter_ns[0],
+          place_return_ns, trace.place_enter_ns[1],
+          StageTimeNs(trace, StrategySubmitStageForTest::kSubmitDone));
+      active_submit_trace = nullptr;
+      state.ResumeTiming();
+      state.SkipWithError(error.c_str());
+      return;
+    }
+
+    state.SetIterationTime(static_cast<double>(elapsed_ns) / 1'000'000'000.0);
+    full_samples_ns.push_back(elapsed_ns);
+    PushDelta(&decision_to_request_timestamp_ns, trace.signal_decision_ns,
+              trace.place_enter_ns[0]);
+    PushDelta(&decision_to_handle_end_ns, trace.signal_decision_ns,
+              trace.handle_end_ns);
+    if (collect_stage_trace) {
+      stage_samples.Push(trace, kSingleRouteFanout);
+      PushDelta(&decision_to_signal_log_done_ns, trace.signal_decision_ns,
+                trace.signal_trigger_observer_ns);
+      PushDelta(&signal_log_done_to_price_ns, trace.signal_trigger_observer_ns,
+                StageTimeNs(trace, StrategySubmitStageForTest::kPricePrepared));
+      PushDelta(
+          &signal_log_to_group_ready_ns, trace.signal_trigger_observer_ns,
+          StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady));
+      PushDelta(
+          &group_ready_to_request_timestamp_ns,
+          StageTimeNs(trace, StrategySubmitStageForTest::kExecutionGroupReady),
+          trace.place_enter_ns[0]);
+      PushDelta(&before_place_to_request_timestamp_ns,
+                RouteStageTimeNs(
+                    trace, StrategySubmitStageForTest::kBeforePlaceOrder, 0),
+                trace.place_enter_ns[0]);
+      PushDelta(&request_timestamp_to_place_return_ns, trace.place_enter_ns[0],
+                place_return_ns);
+      PushDelta(&decision_to_place_return_ns, trace.signal_decision_ns,
+                place_return_ns);
+      PushDelta(&request_timestamp_to_submitted_log_done_ns,
+                trace.place_enter_ns[0], trace.submitted_observer_ns[0]);
+      PushDelta(&submitted_log_to_handle_end_ns, trace.submitted_observer_ns[0],
+                trace.handle_end_ns);
+    }
+
+    benchmark::DoNotOptimize(trace.place_calls);
+    benchmark::DoNotOptimize(trace.submitted_calls);
+    active_submit_trace = nullptr;
+    state.ResumeTiming();
+  }
+
+  websocket::benchmarking::SetLatencyCounters(state, std::move(full_samples_ns),
+                                              "parents", state.iterations());
+  state.counters["pairs"] = static_cast<double>(benchmark_config.pairs.size());
+  state.counters["fanout"] = kSingleRouteFanout;
+  state.counters["churn_sweeps"] = static_cast<double>(churn_sweeps);
+  state.counters["churn_updates"] =
+      static_cast<double>(churn_sweeps * benchmark_config.pairs.size() * 2);
+  state.counters["warm_before_target"] = warm_before_target ? 1.0 : 0.0;
+  state.counters["stage_trace_enabled"] = collect_stage_trace ? 1.0 : 0.0;
+  SetPrefixedLatencyCounters(state, "decision_to_signal_log_done",
+                             decision_to_signal_log_done_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_done_to_price",
+                             signal_log_done_to_price_ns);
+  SetPrefixedLatencyCounters(state, "signal_log_to_group_ready",
+                             signal_log_to_group_ready_ns);
+  SetPrefixedLatencyCounters(state, "group_ready_to_request_timestamp",
+                             group_ready_to_request_timestamp_ns);
+  SetPrefixedLatencyCounters(state, "decision_to_request_timestamp",
+                             decision_to_request_timestamp_ns);
+  SetPrefixedLatencyCounters(state, "before_place_to_request_timestamp",
+                             before_place_to_request_timestamp_ns);
+  SetPrefixedLatencyCounters(state, "request_timestamp_to_place_return",
+                             request_timestamp_to_place_return_ns);
+  SetPrefixedLatencyCounters(state, "decision_to_place_return",
+                             decision_to_place_return_ns);
+  SetPrefixedLatencyCounters(state, "request_timestamp_to_submitted_log_done",
+                             request_timestamp_to_submitted_log_done_ns);
+  SetPrefixedLatencyCounters(state, "submitted_log_to_handle_end",
+                             submitted_log_to_handle_end_ns);
+  SetPrefixedLatencyCounters(state, "decision_to_handle_end",
+                             decision_to_handle_end_ns);
+  if (collect_stage_trace) {
+    stage_samples.SetCounters(state);
+  }
+}
+
+void BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Churn(
+    benchmark::State& state) {
+  RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(state,
+                                                /*warm_before_target=*/false,
+                                                /*collect_stage_trace=*/true);
+}
+
+void BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Warm(
+    benchmark::State& state) {
+  RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(state,
+                                                /*warm_before_target=*/true,
+                                                /*collect_stage_trace=*/true);
+}
+
+void BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1EndpointOnly(
+    benchmark::State& state) {
+  RunLeadLagBitget46Fanout1ChurnSubmitBreakdown(state,
+                                                /*warm_before_target=*/false,
+                                                /*collect_stage_trace=*/false);
 }
 
 void BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOff(
@@ -2363,6 +2695,25 @@ BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOn)
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayLiveLike30RiskOnPrefill20)
     ->Iterations(kSubmitBreakdownIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Churn)
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(64)
+    ->Iterations(kColdSubmitBreakdownIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1Warm)
+    ->Arg(1)
+    ->Arg(8)
+    ->Arg(64)
+    ->Iterations(kColdSubmitBreakdownIterations)
+    ->UseManualTime()
+    ->Unit(benchmark::kNanosecond);
+BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayBitget46Fanout1EndpointOnly)
+    ->Arg(64)
+    ->Iterations(kColdSubmitBreakdownIterations)
     ->UseManualTime()
     ->Unit(benchmark::kNanosecond);
 BENCHMARK(BM_LeadLagSubmitPathBreakdownOrderGatewayActualConfigRiskOnBas)

@@ -43,7 +43,7 @@ terminal_timeout_ms = 10000
 route_id = 0
 
 [instrument_catalog]
-file = "config/instruments/usdt_futures.csv"
+file = "config/instruments/usdt_future_universe.csv"
 
 [market_data]
 shm_name = "aquila_bitget_market_data_unit"

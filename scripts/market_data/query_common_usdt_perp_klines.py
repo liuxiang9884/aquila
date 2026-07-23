@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_CATALOG = Path("config/instruments/usdt_futures_common_gate_binance_20260602.csv")
+DEFAULT_CATALOG = Path("config/instruments/usdt_future_universe.csv")
 DEFAULT_OUTPUT_ROOT = Path("/home/liuxiang/tmp")
 DEFAULT_GATE_BASE_URL = "https://api.gateio.ws/api/v4"
 DEFAULT_BINANCE_BASE_URL = "https://fapi.binance.com"

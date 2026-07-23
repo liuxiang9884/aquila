@@ -1,5 +1,5 @@
 [instrument_catalog]
-file = "config/instruments/usdt_futures_common_gate_binance_20260602.csv"
+file = "config/instruments/usdt_future_universe.csv"
 schema = "aquila.instrument.v1"
 
 [log]
@@ -13,7 +13,7 @@ timestamp_pattern = "%Y-%m-%d %H:%M:%S.%Qns"
 
 [data_session]
 name = "gate_data_session_30symbols_private_plain_20260604"
-subscribe_symbols = ["CLO_USDT", "SLX_USDT", "AIA_USDT", "WLD_USDT", "PIEVERSE_USDT", "OPN_USDT", "LIT_USDT", "MYX_USDT", "ENA_USDT", "STO_USDT", "ICP_USDT", "UB_USDT", "BEAT_USDT", "XPL_USDT", "FARTCOIN_USDT", "ZEC_USDT", "SKYAI_USDT", "VIRTUAL_USDT", "EPIC_USDT", "INJ_USDT", "PENGU_USDT", "H_USDT", "NEAR_USDT", "XLM_USDT", "FIL_USDT", "TON_USDT", "ONDO_USDT", "SUI_USDT", "WIF_USDT", "FET_USDT"]
+subscribe_symbols = ["CLO_USDT", "SLX_USDT", "AIA_USDT", "WLD_USDT", "PIEVERSE_USDT", "OPN_USDT", "LIT_USDT", "MYX_USDT", "ENA_USDT", "STO_USDT", "ICP_USDT", "UB_USDT", "BEAT_USDT", "XPL_USDT", "FARTCOIN_USDT", "ZEC_USDT", "SKYAI_USDT", "VIRTUAL_USDT", "EPIC_USDT", "INJ_USDT", "PENGU_USDT", "H_USDT", "NEAR_USDT", "XLM_USDT", "FIL_USDT", "ONDO_USDT", "SUI_USDT", "WIF_USDT", "FET_USDT"]
 settle = "usdt"
 wire_format = "sbe"
 sbe_schema_id = 1

@@ -66,6 +66,7 @@ ORDER_DETAIL_FIELDS = [
     "request_sequence",
     "encoded_request_id",
     "exchange_order_id",
+    "exchange",
     "symbol",
     "symbol_id",
     "trigger_exchange",
@@ -142,6 +143,19 @@ ORDER_DETAIL_FIELDS = [
     "tcp_info_unacked",
     "tcp_info_snd_cwnd",
     "ack_rtt_ns",
+    "request_send_monotonic_ns",
+    "order_encode_done_local_ns",
+    "write_complete_local_ns",
+    "write_complete_monotonic_ns",
+    "ack_receive_monotonic_ns",
+    "place_creation_exchange_ns",
+    "protocol_order_status",
+    "cancel_reason",
+    "feedback_message_exchange_ns",
+    "feedback_created_exchange_ns",
+    "feedback_updated_exchange_ns",
+    "feedback_local_receive_ns",
+    "feedback_local_receive_monotonic_ns",
     "ack_exchange_request_ingress_ns",
     "ack_exchange_response_egress_ns",
     "ack_exchange_process_ns",
@@ -240,6 +254,7 @@ LATENCY_DETAIL_FIELDS = [
     "group_id",
     "route_id",
     "exchange_order_id",
+    "exchange",
     "symbol",
     "symbol_id",
     "position_id",
@@ -270,10 +285,22 @@ LATENCY_DETAIL_FIELDS = [
     "freshness_guard_pass",
     "freshness_reject_reason",
     "request_send_local_ns",
+    "request_send_monotonic_ns",
+    "order_encode_done_local_ns",
+    "write_complete_local_ns",
+    "write_complete_monotonic_ns",
     "ack_local_receive_ns",
+    "ack_receive_monotonic_ns",
     "response_local_receive_ns",
     "order_finished_local_ns",
     "ack_exchange_ns",
+    "place_creation_exchange_ns",
+    "feedback_message_exchange_ns",
+    "feedback_created_exchange_ns",
+    "feedback_updated_exchange_ns",
+    "feedback_local_receive_ns",
+    "protocol_order_status",
+    "cancel_reason",
     "ack_exchange_request_ingress_ns",
     "ack_exchange_response_egress_ns",
     "ack_exchange_process_ns",
@@ -284,6 +311,8 @@ LATENCY_DETAIL_FIELDS = [
     "ack_rtt_ns",
     "response_rtt_ns",
     "send_to_ack_local_ns",
+    "send_to_write_complete_local_ns",
+    "write_complete_to_ack_local_ns",
     "send_to_response_local_ns",
     "send_to_finish_local_ns",
     "ack_to_finish_local_ns",
@@ -294,6 +323,7 @@ LATENCY_DETAIL_FIELDS = [
     "ack_exchange_to_local_ns",
     "response_exchange_to_local_ns",
     "exchange_lifecycle_ns",
+    "bitget_creation_to_terminal_ns",
     "order_session_id",
     "owner_thread_cpu",
     "owner_thread_tid",
@@ -341,7 +371,9 @@ LATENCY_DETAIL_FIELDS = [
 MAX_PLAUSIBLE_LOCAL_PIPELINE_DELTA_NS = 60_000_000_000
 
 
-LOG_MESSAGE_RE = re.compile(r"\] (?P<message>lead_lag_|gate_order_|feedback_event).*$")
+LOG_MESSAGE_RE = re.compile(
+    r"\] (?P<message>lead_lag_|gate_order_|bitget_order_|feedback_event).*$"
+)
 RAW_MESSAGE_PREFIXES = (
     "lead_lag_strategy_live_open_close_smoke_summary ",
 )
@@ -438,7 +470,7 @@ def load_pair_config(path: Path | None) -> dict[str, dict[str, str]]:
         if not isinstance(symbol, str):
             continue
         execute = pair.get("execute", {})
-        result[symbol] = {
+        pair_config = {
             "fee_rate_config": str(pair.get("lag_taker_fee", "")),
             "open_slippage_ticks": str(execute.get("open_slippage_ticks", "")),
             "close_slippage_ticks": str(execute.get("close_slippage_ticks", "")),
@@ -450,16 +482,34 @@ def load_pair_config(path: Path | None) -> dict[str, dict[str, str]]:
                 execute.get("close_retry_slippage_step_ticks", "")
             ),
         }
+        for alias in symbol_aliases(symbol):
+            result[alias] = pair_config
     return result
 
 
-def load_instrument_catalog(path: Path | None) -> dict[str, dict[str, str]]:
+def normalized_symbol(symbol: str) -> str:
+    return symbol.replace("_", "").upper()
+
+
+def symbol_aliases(*symbols: str) -> set[str]:
+    aliases: set[str] = set()
+    for symbol in symbols:
+        if symbol == "":
+            continue
+        aliases.add(symbol)
+        aliases.add(normalized_symbol(symbol))
+    return aliases
+
+
+def load_instrument_catalog(
+    path: Path | None, *, exchange: str = "gate"
+) -> dict[str, dict[str, str]]:
     if path is None or not path.exists():
         return {}
     result: dict[str, dict[str, str]] = {}
     with path.open(newline="", encoding="utf-8") as input_file:
         for row in csv.DictReader(input_file):
-            if row.get("exchange") != "gate":
+            if row.get("exchange", "").lower() != exchange.lower():
                 continue
             symbol = row.get("symbol", "")
             if symbol == "":
@@ -467,11 +517,13 @@ def load_instrument_catalog(path: Path | None) -> dict[str, dict[str, str]]:
             contract_multiplier = (
                 row.get("contract_multiplier", "") or row.get("notional_multiplier", "")
             )
-            result[symbol] = {
+            instrument = {
                 "symbol_id": row.get("symbol_id", ""),
                 "contract_multiplier": contract_multiplier,
                 "price_tick": row.get("price_tick", ""),
             }
+            for alias in symbol_aliases(symbol, row.get("exchange_symbol", "")):
+                result[alias] = instrument
     return result
 
 
@@ -673,6 +725,107 @@ def merge_send(order: dict[str, str], fields: dict[str, str]) -> None:
     order.setdefault("quantity_text", fields.get("quantity", ""))
     order["time_in_force"] = fields.get("tif", "")
     order["request_send_local_ns"] = fields.get("request_send_local_ns", "")
+
+
+def milliseconds_to_nanoseconds_text(value: str | None) -> str:
+    if value in (None, "", "0"):
+        return ""
+    try:
+        return str(int(value) * 1_000_000)
+    except ValueError:
+        return ""
+
+
+def merge_bitget_send(order: dict[str, str], fields: dict[str, str]) -> None:
+    order["exchange"] = "bitget"
+    order["local_order_id"] = fields.get(
+        "local_order_id", order.get("local_order_id", "")
+    )
+    order["request_sequence"] = fields.get(
+        "request_sequence", order.get("request_sequence", "")
+    )
+    order["request_send_local_ns"] = fields.get(
+        "request_send_local_ns", order.get("request_send_local_ns", "")
+    )
+    order["request_send_monotonic_ns"] = fields.get(
+        "request_send_monotonic_ns", order.get("request_send_monotonic_ns", "")
+    )
+    order["order_encode_done_local_ns"] = fields.get(
+        "order_encode_done_realtime_ns", order.get("order_encode_done_local_ns", "")
+    )
+
+
+def merge_bitget_ack(order: dict[str, str], fields: dict[str, str]) -> None:
+    order["exchange"] = "bitget"
+    order["request_sequence"] = fields.get(
+        "request_sequence", order.get("request_sequence", "")
+    )
+    order["exchange_order_id"] = choose_nonzero(
+        fields.get("exchange_order_id"), order.get("exchange_order_id")
+    )
+    order["request_send_local_ns"] = fields.get(
+        "request_send_realtime_ns",
+        fields.get("request_send_local_ns", order.get("request_send_local_ns", "")),
+    )
+    order["request_send_monotonic_ns"] = fields.get(
+        "request_send_monotonic_ns", order.get("request_send_monotonic_ns", "")
+    )
+    order["write_complete_local_ns"] = fields.get(
+        "write_complete_realtime_ns", order.get("write_complete_local_ns", "")
+    )
+    order["write_complete_monotonic_ns"] = fields.get(
+        "write_complete_monotonic_ns", order.get("write_complete_monotonic_ns", "")
+    )
+    order["ack_local_receive_ns"] = fields.get(
+        "ack_receive_realtime_ns",
+        fields.get("local_receive_ns", order.get("ack_local_receive_ns", "")),
+    )
+    order["ack_receive_monotonic_ns"] = fields.get(
+        "ack_receive_monotonic_ns", order.get("ack_receive_monotonic_ns", "")
+    )
+    order["ack_exchange_ns"] = fields.get(
+        "exchange_ns", order.get("ack_exchange_ns", "")
+    )
+    order["place_creation_exchange_ns"] = milliseconds_to_nanoseconds_text(
+        fields.get("place_creation_time_ms")
+    )
+    order["ack_rtt_ns"] = choose_first_nonzero_text(
+        fields.get("ack_rtt_ns"), order.get("ack_rtt_ns")
+    )
+    order["ack_exchange_to_local_ns"] = fields.get(
+        "exchange_to_local_ns", order.get("ack_exchange_to_local_ns", "")
+    )
+
+
+def merge_bitget_protocol_feedback(
+    order: dict[str, str], fields: dict[str, str]
+) -> None:
+    order["exchange"] = "bitget"
+    order["exchange_order_id"] = choose_nonzero(
+        fields.get("order_id"), order.get("exchange_order_id")
+    )
+    order["protocol_order_status"] = fields.get(
+        "order_status", order.get("protocol_order_status", "")
+    )
+    order["cancel_reason"] = fields.get(
+        "cancel_reason", order.get("cancel_reason", "")
+    )
+    order["feedback_message_exchange_ns"] = milliseconds_to_nanoseconds_text(
+        fields.get("exchange_message_time_ms")
+    )
+    order["feedback_created_exchange_ns"] = milliseconds_to_nanoseconds_text(
+        fields.get("created_time_ms")
+    )
+    order["feedback_updated_exchange_ns"] = milliseconds_to_nanoseconds_text(
+        fields.get("updated_time_ms")
+    )
+    order["feedback_local_receive_ns"] = fields.get(
+        "local_receive_realtime_ns", order.get("feedback_local_receive_ns", "")
+    )
+    order["feedback_local_receive_monotonic_ns"] = fields.get(
+        "local_receive_monotonic_ns",
+        order.get("feedback_local_receive_monotonic_ns", ""),
+    )
 
 
 def merge_session_connected(
@@ -920,6 +1073,15 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
         "cumulative_filled_quantity",
         "average_fill_price",
         "last_fill_price",
+        "position_id",
+        "position_direction",
+        "order_role",
+        "entry_local_order_id",
+        "order_finished_local_ns",
+    ):
+        if key in fields:
+            order[key] = fields[key]
+    for key in (
         "request_send_local_ns",
         "ack_local_receive_ns",
         "response_local_receive_ns",
@@ -931,15 +1093,11 @@ def merge_finished(order: dict[str, str], fields: dict[str, str]) -> None:
         "response_rtt_ns",
         "ack_exchange_to_local_ns",
         "response_exchange_to_local_ns",
-        "exchange_lifecycle_ns",
-        "position_id",
-        "position_direction",
-        "order_role",
-        "entry_local_order_id",
-        "order_finished_local_ns",
     ):
         if key in fields:
-            order[key] = fields[key]
+            order[key] = choose_first_nonzero_text(order.get(key), fields[key])
+    if "exchange_lifecycle_ns" in fields and order.get("exchange_lifecycle_ns", "") == "":
+        order["exchange_lifecycle_ns"] = fields["exchange_lifecycle_ns"]
     order["exchange_order_id"] = choose_nonzero(
         fields.get("exchange_order_id"), order.get("exchange_order_id")
     )
@@ -1136,87 +1294,119 @@ def order_storage_sort_key(item: tuple[str, dict[str, str]]) -> tuple[int, int, 
     return 1, ns_sort, key
 
 
+def parsed_messages_from_logs(
+    log_paths: list[Path],
+):
+    for input_path in log_paths:
+        with input_path.open(encoding="utf-8") as input_file:
+            for line in input_file:
+                message = message_from_line(line)
+                if message is not None:
+                    yield parse_message(message)
+
+
 def analyze_order_detail(
     log_path: Path,
     *,
+    additional_log_paths: list[Path] | None = None,
     config_path: Path | None = None,
     instrument_catalog_path: Path | None = None,
+    exchange: str = "gate",
     run_id: str | None = None,
 ) -> AnalysisResult:
     pair_configs = load_pair_config(config_path)
-    instruments = load_instrument_catalog(instrument_catalog_path)
+    instruments = load_instrument_catalog(instrument_catalog_path, exchange=exchange)
     orders: dict[str, dict[str, str]] = {}
     order_sessions: dict[str, dict[str, str]] = {}
     run = run_id or log_path.parent.name
 
-    with log_path.open(encoding="utf-8") as input_file:
-        for line in input_file:
-            message = message_from_line(line)
-            if message is None:
+    log_paths = [log_path, *(additional_log_paths or [])]
+    for tag, fields in parsed_messages_from_logs(log_paths):
+        if tag == "gate_order_session_connected":
+            order_session_id = fields.get("order_session_id", "")
+            if order_session_id != "":
+                session = order_sessions.setdefault(order_session_id, {})
+                merge_session_connected(session, fields)
+        elif tag == "lead_lag_order_submitted":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "" or fields.get("group_id", "") == "":
                 continue
-            tag, fields = parse_message(message)
-            if tag == "gate_order_session_connected":
-                order_session_id = fields.get("order_session_id", "")
-                if order_session_id != "":
-                    session = order_sessions.setdefault(order_session_id, {})
-                    merge_session_connected(session, fields)
-            elif tag == "lead_lag_order_submitted":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "" or fields.get("group_id", "") == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_submitted(order, fields)
-            elif tag == "lead_lag_order_intent_rejected":
-                order_key = rejected_intent_key(fields)
-                order = orders.setdefault(order_key, {"run_id": run, "warnings": ""})
-                merge_intent_rejected(order, fields)
-            elif tag == "gate_order_send_ok" and fields.get("type") == "place":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_send(order, fields)
-            elif tag == "gate_order_response":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                if fields.get("kind") == "kAck":
-                    merge_ack(order, fields)
-                else:
-                    merge_submit_response(order, fields)
-            elif tag == "lead_lag_order_response":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_strategy_order_response_context(order, fields)
-            elif tag == "gate_order_ack_latency_diagnostic":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_latency_diagnostic(order, fields)
-            elif tag == "lead_lag_order_feedback":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_feedback(order, fields)
-            elif tag == "feedback_event" and fields.get("publish_ok") == "true":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_feedback(order, fields)
-            elif tag == "lead_lag_order_finished":
-                local_order_id = fields.get("local_order_id", "")
-                if local_order_id == "":
-                    continue
-                order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
-                merge_finished(order, fields)
-            elif tag == "lead_lag_strategy_live_open_close_smoke_summary":
-                mark_open_close_smoke_position(orders, run, fields)
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_submitted(order, fields)
+        elif tag == "lead_lag_order_intent_rejected":
+            order_key = rejected_intent_key(fields)
+            order = orders.setdefault(order_key, {"run_id": run, "warnings": ""})
+            merge_intent_rejected(order, fields)
+        elif tag == "gate_order_send_ok" and fields.get("type") == "place":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_send(order, fields)
+        elif tag == "gate_order_response":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            if fields.get("kind") == "kAck":
+                merge_ack(order, fields)
+            else:
+                merge_submit_response(order, fields)
+        elif tag == "bitget_order_send" and fields.get("request_type") == "kPlaceOrder":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_bitget_send(order, fields)
+        elif (
+            tag == "bitget_order_response"
+            and fields.get("request_type") == "kPlaceOrder"
+            and fields.get("response_kind") == "kAck"
+        ):
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_bitget_ack(order, fields)
+        elif tag == "bitget_order_feedback_protocol_update":
+            client_oid = fields.get("client_oid", "")
+            local_order_id = client_oid.removeprefix("a-")
+            if local_order_id == "" or local_order_id == client_oid:
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_bitget_protocol_feedback(order, fields)
+        elif tag == "lead_lag_order_response":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_strategy_order_response_context(order, fields)
+        elif tag == "gate_order_ack_latency_diagnostic":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_latency_diagnostic(order, fields)
+        elif tag == "lead_lag_order_feedback":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_feedback(order, fields)
+        elif tag == "feedback_event" and fields.get("publish_ok") == "true":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_feedback(order, fields)
+        elif tag == "lead_lag_order_finished":
+            local_order_id = fields.get("local_order_id", "")
+            if local_order_id == "":
+                continue
+            order = orders.setdefault(local_order_id, {"run_id": run, "warnings": ""})
+            merge_finished(order, fields)
+        elif tag == "lead_lag_strategy_live_open_close_smoke_summary":
+            mark_open_close_smoke_position(orders, run, fields)
 
     rows: list[dict[str, str]] = []
     for _, order in sorted(orders.items(), key=order_storage_sort_key):
@@ -1226,7 +1416,12 @@ def analyze_order_detail(
                 order, order_sessions.get(order_session_id, {})
             )
         symbol = order.get("symbol", "")
-        enrich_order(order, pair_configs.get(symbol, {}), instruments.get(symbol, {}))
+        order.setdefault("exchange", exchange)
+        enrich_order(
+            order,
+            pair_configs.get(symbol, pair_configs.get(normalized_symbol(symbol), {})),
+            instruments.get(symbol, instruments.get(normalized_symbol(symbol), {})),
+        )
         rows.append(dict(order))
     return AnalysisResult(rows=rows)
 
@@ -1773,7 +1968,12 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
         if local_order_id == "":
             continue
         request_send_ns = order.get("request_send_local_ns", "")
+        write_complete_ns = order.get("write_complete_local_ns", "")
+        write_complete_monotonic_ns = order.get(
+            "write_complete_monotonic_ns", ""
+        )
         ack_receive_ns = order.get("ack_local_receive_ns", "")
+        ack_receive_monotonic_ns = order.get("ack_receive_monotonic_ns", "")
         response_receive_ns = order.get("response_local_receive_ns", "")
         finished_ns = order_finished_ns(order)
         bbo_to_strategy_ns, bbo_cross_clock = plausible_local_pipeline_delta_text(
@@ -1792,6 +1992,7 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "group_id": order.get("group_id", ""),
             "route_id": order.get("route_id", ""),
             "exchange_order_id": order.get("exchange_order_id", ""),
+            "exchange": order.get("exchange", ""),
             "symbol": order.get("symbol", ""),
             "symbol_id": order.get("symbol_id", ""),
             "position_id": order.get("position_id", ""),
@@ -1822,10 +2023,40 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "freshness_guard_pass": order.get("freshness_guard_pass", ""),
             "freshness_reject_reason": order.get("freshness_reject_reason", ""),
             "request_send_local_ns": request_send_ns,
+            "request_send_monotonic_ns": order.get(
+                "request_send_monotonic_ns", ""
+            ),
+            "order_encode_done_local_ns": order.get(
+                "order_encode_done_local_ns", ""
+            ),
+            "write_complete_local_ns": write_complete_ns,
+            "write_complete_monotonic_ns": order.get(
+                "write_complete_monotonic_ns", ""
+            ),
             "ack_local_receive_ns": ack_receive_ns,
+            "ack_receive_monotonic_ns": order.get(
+                "ack_receive_monotonic_ns", ""
+            ),
             "response_local_receive_ns": response_receive_ns,
             "order_finished_local_ns": finished_ns,
             "ack_exchange_ns": order.get("ack_exchange_ns", ""),
+            "place_creation_exchange_ns": order.get(
+                "place_creation_exchange_ns", ""
+            ),
+            "feedback_message_exchange_ns": order.get(
+                "feedback_message_exchange_ns", ""
+            ),
+            "feedback_created_exchange_ns": order.get(
+                "feedback_created_exchange_ns", ""
+            ),
+            "feedback_updated_exchange_ns": order.get(
+                "feedback_updated_exchange_ns", ""
+            ),
+            "feedback_local_receive_ns": order.get(
+                "feedback_local_receive_ns", ""
+            ),
+            "protocol_order_status": order.get("protocol_order_status", ""),
+            "cancel_reason": order.get("cancel_reason", ""),
             "ack_exchange_request_ingress_ns": order.get(
                 "ack_exchange_request_ingress_ns", ""
             ),
@@ -1843,6 +2074,12 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
             "ack_rtt_ns": order.get("ack_rtt_ns", ""),
             "response_rtt_ns": order.get("response_rtt_ns", ""),
             "send_to_ack_local_ns": ns_delta_text(ack_receive_ns, request_send_ns),
+            "send_to_write_complete_local_ns": ns_delta_text(
+                write_complete_ns, request_send_ns
+            ),
+            "write_complete_to_ack_local_ns": ns_delta_text(
+                ack_receive_monotonic_ns, write_complete_monotonic_ns
+            ),
             "send_to_response_local_ns": ns_delta_text(
                 response_receive_ns, request_send_ns
             ),
@@ -1862,6 +2099,11 @@ def build_latency_detail_rows(order_rows: list[dict[str, str]]) -> list[dict[str
                 "response_exchange_to_local_ns", ""
             ),
             "exchange_lifecycle_ns": exchange_lifecycle_ns(order),
+            "bitget_creation_to_terminal_ns": nonzero_ns_delta_text(
+                order.get("feedback_updated_exchange_ns", "")
+                or order.get("finish_exchange_ns", ""),
+                order.get("place_creation_exchange_ns", ""),
+            ),
             "order_session_id": order.get("order_session_id", ""),
             "owner_thread_cpu": order.get("owner_thread_cpu", ""),
             "owner_thread_tid": order.get("owner_thread_tid", ""),
@@ -1950,11 +2192,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Build LeadLag order, position, and latency CSVs"
     )
     parser.add_argument("--log", required=True, type=Path)
+    parser.add_argument("--additional-log", action="append", type=Path, default=[])
+    parser.add_argument("--exchange", choices=("gate", "bitget"), default="gate")
     parser.add_argument("--config", type=Path)
     parser.add_argument(
         "--instrument-catalog",
         type=Path,
-        default=Path("config/instruments/usdt_futures.csv"),
+        default=Path("config/instruments/usdt_future_universe.csv"),
     )
     parser.add_argument("--run-id")
     parser.add_argument("--output", required=True, type=Path)
@@ -1967,8 +2211,10 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     result = analyze_order_detail(
         args.log,
+        additional_log_paths=args.additional_log,
         config_path=args.config,
         instrument_catalog_path=args.instrument_catalog,
+        exchange=args.exchange,
         run_id=args.run_id,
     )
     write_order_detail_csv(result.rows, args.output)

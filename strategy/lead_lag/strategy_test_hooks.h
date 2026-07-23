@@ -23,7 +23,6 @@ enum class StrategySubmitStageForTest : std::uint8_t {
   kRoutesRefreshed,
   kRoutesSelected,
   kRiskChecked,
-  kOrderIntentLogged,
   kExecutionGroupReady,
   kBeforeAcquireRiskSlot,
   kAfterAcquireRiskSlot,

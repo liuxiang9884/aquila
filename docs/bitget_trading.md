@@ -82,7 +82,7 @@ signal-conditioned LeadLag：Bitget BBO fusion 固定 `N=6`（3 HA + 3 HS）、B
 filled order，entry any-fill 为 `24/337 = 7.12%`；最终 `normal_exit_flat`，quiescence、REST open orders=`0` 和
 positions=`0` 均通过。REST 实际净 PnL 为 `-0.08345090 USDT`，成交 notional-weighted slippage 为 all=`0.366 bps`、
 entry=`0.237 bps`、exit=`0.495 bps`。`fast-fill` 50 个 execution 与 REST/authoritative quantity 全部一致，但仍只作诊断。
-最终报告使用尚未合入 main 的 `feature/bitget-live-report-analysis`（`4cd4966`，PR #11）生成；本地证据包位于
+最终报告使用现已通过 PR #11 合入 main 的 Bitget execution / report 工具生成；本地证据包位于
 `/home/liuxiang/tmp/20260720_162559_bitget_live_evidence_bundle/`，归档已上传到
 `s3://tko-s3-tardis-share/aquila/archives/20260720_162559_bitget_live_evidence_bundle/`。该单路证据仍不能替代 fanout=4 live。
 
@@ -117,13 +117,20 @@ reconcile 和 emergency cleanup 必须在 WebSocket owner thread 外运行，避
 
 ### Endpoint、login 与 ready
 
-Checked-in config 默认使用官方 high availability private endpoint：
+自 2026-07-22 起，checked-in config 默认使用已经过 DNS、TLS、login 和真实 passive IOC 验证的高速 private endpoint：
 
 ```text
-wss://vip-ws-uta.bitget.com/v3/ws/private
+wss://vip-ws-uta-pri-a.bitget.com/v3/ws/private
 ```
 
-推断的高速 private endpoint 已完成 DNS/TLS/login/真实 IOC 验证，但缺少官方稳定能力确认，不是默认生产配置。
+单路与四路 `OrderGateway` 的全部 route、独立 `OrderFeedbackSession` 和默认 RTT probe 都使用该 endpoint。官方 HA endpoint
+`wss://vip-ws-uta.bitget.com/v3/ws/private` 只作为显式 A/B 和回滚入口，不再是 checked-in 默认值。
+
+高速 private endpoint 是根据 Bitget UTA endpoint 命名推断并经 live probe 验证的地址，仍缺少官方稳定能力确认。此前截至
+2026-07-22 的 signal-conditioned LeadLag live 订单均走 HA；配置切换本身没有新增真实订单证据，不能把 HA run 的稳定性、
+fillability、latency 或 PnL 外推到高速 private endpoint。首次使用新默认值的真实订单仍须取得当次授权并执行完整 guarded
+smoke / live runbook；如果回滚到 HA，必须重新生成 fresh run-dir，不允许热改已启动进程的配置副本。
+
 Numeric `connect_ip` 只覆盖 TCP destination；TLS SNI、Host 和 WebSocket target 仍来自 session config。
 
 `Ready()` 只表示当前 private WebSocket 已 login，可以接收新 command；它不证明 feedback continuity、REST baseline、
@@ -460,15 +467,16 @@ supervisor/runbook 重复调用幂等 helper，任何无法证明 flat 的结果
 
 - P1：继续记录官方 UTA WebSocket 预算、实际 command rate 和明确限频拒绝；main 当前不包含本地 account limiter，且用户已明确
   要求本轮及当前优化版本不加入该 limiter。后续若要新增，必须作为独立设计重新取得授权，不能直接套用 REST `10 requests/s/UID`。
-- P1：官方 HA 与高速 endpoint 长期 A/B、endpoint failover 和切换 unknown window。
+- P1：持续验证高速 private endpoint 的长期稳定性，并保留与官方 HA 的显式 A/B、endpoint failover 和切换 unknown window
+  设计；在缺少官方稳定能力确认期间，不得删除 HA 回滚入口。
 - P1：按新鲜授权执行 fanout=4 staged live，先证明四 route ready、每 child 最小量、Ack/terminal 归组、reduce-only
   收敛、quiescence 和 final flat，再讨论 route policy。使用 30-symbol 准备配置时，真实启动前还要重新确认上述 10 个
   `TRADIFI_PERPETUAL` 的当时交易时段、双边 BBO 与 freshness，不能把 catalog 的 `TRADING/online` 当成 24x7 可交易保证。
 - P1：若目标改为不平仓恢复交易，再设计 persistent ID、REST history reconcile、unknown-window order reconstruction 和 resume gate。
 - P2：用新一轮 live 原始日志实测 `fast-fill` 相对 `order` push 的到达差；若确实更快，再独立设计 `execId` 去重、原始
   quantity join、跨流乱序/漏消息、累计 quantity 重建、reconnect/reconcile 和最快 feedback 发布 contract。
-- P2：`feature/bitget-live-report-analysis` / PR #11 已把 place response、order push、fast-fill、REST fills 与 BBO recorder
-  合并进离线 report，并用于生成上述 12 小时证据包；该工具尚未合入 main。Report 必须区分本地 Ack RTT、
+- P2：PR #11 已把 place response、order push、fast-fill、REST fills 与 BBO recorder 合并进 main 的离线 report，
+  并用于生成上述 12 小时证据包。Report 必须区分本地 Ack RTT、
   交易所订单创建/response、terminal update 和实际 fill 时间；本地 send/receive 与交易所时间跨时钟，未完成 clock-offset
   校准时不得解释为单程网络时延。REST 的
   `X-BG-REQUEST-ACCEPT-TIME`/`X-BG-RESPONSE-COMPLETE-TIME` 只适用于 REST 链路，不能替代当前 WebSocket 下单证据；SBE BBO

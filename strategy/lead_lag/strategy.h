@@ -2049,22 +2049,6 @@ class Strategy {
     return true;
   }
 
-  void LogPreparedOrderIntent(const PairRuntimeState& runtime,
-                              std::string_view symbol,
-                              const InstrumentMetadata& instrument,
-                              const PreparedOrderPrice& price,
-                              const PreparedOrderQuantity& quantity,
-                              double order_notional) noexcept {
-    detail::LogStrategyOrderIntent(
-        last_signal_timing_, symbol, runtime.pair.symbol_id,
-        last_signal_decision_.action, last_signal_decision_.intent.side,
-        last_signal_decision_.intent.reduce_only,
-        last_signal_decision_.group_id, quantity.quantity,
-        price.raw_order_price, price.order_price, price.slippage_ticks,
-        instrument.price_tick, runtime.pair.execute.open_notional,
-        order_notional, runtime.execution.active_group_count());
-  }
-
   void LogOrderSessionFanoutCapped(std::string_view symbol,
                                    const PairRuntimeState& runtime,
                                    std::uint32_t requested_fanout,
@@ -2394,13 +2378,6 @@ class Strategy {
     }
 #if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
     detail::NotifySubmitStageForTest(StrategySubmitStageForTest::kRiskChecked);
-#endif
-
-    LogPreparedOrderIntent(*runtime, symbol, instrument, price, quantity,
-                           order_notional);
-#if defined(AQUILA_LEAD_LAG_STRATEGY_ENABLE_TEST_HOOKS)
-    detail::NotifySubmitStageForTest(
-        StrategySubmitStageForTest::kOrderIntentLogged);
 #endif
 
     ExecutionGroup* submit_group = close_group;

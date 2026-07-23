@@ -4,7 +4,7 @@ version = "1.0"
 
 [[lead_lag.pairs]]
 symbol = "ORDI_USDT"
-symbol_id = 3
+symbol_id = 316
 lead_exchange = "binance"
 lag_exchange = "gate"
 lag_taker_fee = 0.00016

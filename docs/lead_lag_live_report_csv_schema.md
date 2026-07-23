@@ -2,16 +2,21 @@
 
 本文只定义当前 report CSV contract。运行流程见 `docs/lead_lag_live_operations.md`；历史分析结论不在本文件维护。
 
-本文档说明 LeadLag live report 目录中四个分析 CSV 的字段语义：
+本文档说明 LeadLag live report 目录中的分析 CSV 字段语义。Gate report 保持四个核心 CSV：
 
 - `signal.csv`
 - `order_detail.csv`
 - `position.csv`
 - `latency.csv`
 
-当前字段以 `reports/20260525_091251_12pair_live/` 生成的 CSV 表头和 `scripts/lead_lag/analyze_order_detail.py` 为准。真实订单模式不会直接写 per-signal CSV，`signal.csv` 是从 live log 中的 `lead_lag_signal_triggered` 与订单明细关联后生成的分析产物。
+Bitget report 另增加：
 
-`lead_lag_signal_decision` 是 live log 诊断面，当前还没有并入上述 CSV。只有 `execute.taker_buffer` 非 off 时才输出；默认 legacy 配置不新增该日志。它位于 `lead_lag_signal_triggered` 和 `lead_lag_order_intent` / `lead_lag_order_intent_rejected` 之间，记录实际准备提交的 `current_order_price` 和启动前生成参数计算出的 `reference_order_price`。该日志只做 taker buffer 参考价对比，不改变真实订单是否提交；最终真实订单是否提交仍以订单提交或拒绝日志为准。
+- `execution_detail.csv`
+- `order_fillability.csv`
+
+当前字段以 `scripts/lead_lag/analyze_order_detail.py`、`scripts/lead_lag/analyze_bitget_execution.py` 和 `scripts/lead_lag/generate_live_report.py` 为准。真实订单模式不会直接写 per-signal CSV，`signal.csv` 是从 live log 中的 `lead_lag_signal_triggered` 与订单明细关联后生成的分析产物。
+
+`lead_lag_signal_decision` 是 live log 诊断面，当前还没有并入上述 CSV。只有 `execute.taker_buffer` 非 off 时才输出；默认 legacy 配置不新增该日志。它位于 `lead_lag_signal_triggered` 和 `lead_lag_order_submitted` / `lead_lag_order_intent_rejected` 之间，记录实际准备提交的 `current_order_price` 和启动前生成参数计算出的 `reference_order_price`。该日志只做 taker buffer 参考价对比，不改变真实订单是否提交；最终真实订单是否提交仍以订单提交或拒绝日志为准。
 
 ## 通用约定
 
@@ -22,7 +27,10 @@
 - `ack_exchange_ns`、`response_exchange_ns`、`accepted_exchange_ns`、`finish_exchange_ns` 是交易所侧时间戳。交易所时钟和本地时钟不同步，不能直接把 exchange 到 local 的差值当作真实单程网络延迟。
 - `ack_exchange_request_ingress_ns`、`ack_exchange_response_egress_ns` 和 `ack_exchange_process_ns` 来自 Gate Ack response JSON header 中的 `x_in_time` / `x_out_time`，已转换为 ns；它们只能在 Gate 同一时钟域内互相相减，不能和本地时间直接相减。
 - 价格字段使用合约价格单位；notional、fee、PnL 字段使用 quote currency，当前 USDT futures report 中可理解为 USDT。
-- `trigger_exchange` 表示触发信号的行情来源交易所，不表示实际下单交易所。当前 CSV 还没有显式 `order_exchange` 字段；本轮 Gate live run 的实际下单交易所由 `gate_*` 日志隐含为 Gate。
+- 多 symbol 滑点总览使用 `filled_notional` 加权的 `exec_slippage_bps`；`exec_slippage_ticks` 只用于单 symbol 或相同 tick 规则下的诊断。
+- `trigger_exchange` 表示触发信号的行情来源交易所，不表示实际下单交易所。`order_detail.csv.exchange` 显式记录实际下单交易所；`signal.csv` 仍通过关联的 `local_order_id` 查 `order_detail.csv`。
+- Bitget `fast-fill` 只用于离线逐笔成交和到达时序诊断。订单终态、累计成交量、continuity 和恢复语义始终以 authoritative `order` channel 为准。
+- `creation_to_exec_ns`、`bitget_creation_to_terminal_ns` 只在 Bitget 交易所时间戳内部相减；`fast_fill_after_ack_ns` 等只在本机 realtime 内相减。任何跨本机/交易所时钟的差值都不能称为单向网络延迟。
 
 ## signal.csv
 
@@ -81,7 +89,7 @@
 
 ## order_detail.csv
 
-`order_detail.csv` 一行表示一个本地订单，合并订单提交、Gate send、Ack、feedback 和策略终态日志。
+`order_detail.csv` 一行表示一个本地订单，合并策略提交/拒绝、Gate 或 Bitget gateway send/Ack、feedback 和策略终态日志。
 
 | 字段 | 含义 | 来源或计算 |
 |---|---|---|
@@ -93,6 +101,7 @@
 | `request_sequence` | Gate order session 内部请求序号。 | `gate_order_send_ok.request_sequence`。 |
 | `encoded_request_id` | WebSocket payload 中编码后的请求 id。 | `gate_order_send_ok.encoded_request_id`。 |
 | `exchange_order_id` | 交易所返回的 order id。 | Gate Ack、feedback 或 `lead_lag_order_finished`。 |
+| `exchange` | 实际下单交易所，当前为 `gate` 或 `bitget`。 | report 的 `--exchange` 与对应 gateway 日志。 |
 | `symbol` | 交易 symbol。 | 策略提交日志或 Gate send log。 |
 | `symbol_id` | 策略内部 symbol id。 | 策略提交或终态日志。 |
 | `trigger_exchange` | 触发行情来源交易所。 | `lead_lag_order_submitted.trigger_exchange`。 |
@@ -203,6 +212,27 @@
 | `source_schema` | 该 order detail 行主要来自哪个提交或拒绝日志 schema。 | 使用 `group_id` 的正常提交为 `submitted_v2`；`lead_lag_order_intent_rejected` 生成的 open guard 拒绝意图为 `intent_rejected_v1`；smoke summary 行为 `smoke_summary_v1`；缺少提交日志时为 `unknown`。新 analyzer 不把旧 `parent_id` 当作 `group_id`。 |
 | `warnings` | 缺失字段或异常情况。 | 分析脚本追加，例如 `missing_exchange_order_id`、`missing_symbol`。 |
 
+### Bitget order 扩展字段
+
+下列字段由 `bitget_order_send`、`bitget_order_response` 和
+`bitget_order_feedback_protocol_update` 合并。策略终态可能先于 gateway Ack 写入日志；分析器按非零字段合并 late Ack，不能让策略终态中的 `0` 覆盖 gateway 证据。
+
+| 字段 | 含义 | 来源或计算 |
+|---|---|---|
+| `request_send_monotonic_ns` | Bitget gateway 记录 send 的 monotonic 时间。 | `bitget_order_send.request_send_monotonic_ns`。 |
+| `order_encode_done_local_ns` | place JSON 编码完成的本机 realtime。 | `bitget_order_send.order_encode_done_realtime_ns`。 |
+| `write_complete_local_ns` | WebSocket frame 完整写入 transport 的本机 realtime。 | `bitget_order_response.write_complete_realtime_ns`。 |
+| `write_complete_monotonic_ns` | WebSocket frame 完整写入 transport 的 monotonic 时间。 | Bitget gateway Ack timing。 |
+| `ack_receive_monotonic_ns` | gateway 收到 Ack 的 monotonic 时间。 | Bitget gateway Ack timing。 |
+| `place_creation_exchange_ns` | Bitget place order `cTime`，由 ms 转 ns。 | `bitget_order_response.place_creation_time_ms`。 |
+| `protocol_order_status` | private `order` channel 的原始订单状态。 | `bitget_order_feedback_protocol_update.order_status`。 |
+| `cancel_reason` | Bitget private `order` channel 的取消原因。 | `bitget_order_feedback_protocol_update.cancel_reason`。 |
+| `feedback_message_exchange_ns` | private `order` message 顶层时间戳。 | `exchange_message_time_ms` 转 ns。 |
+| `feedback_created_exchange_ns` | private `order` record 的 `cTime`。 | `created_time_ms` 转 ns。 |
+| `feedback_updated_exchange_ns` | private `order` record 的 `uTime`，用于终态交易所时间。 | `updated_time_ms` 转 ns。 |
+| `feedback_local_receive_ns` | feedback session 收到 private `order` message 的本机 realtime。 | protocol update log。 |
+| `feedback_local_receive_monotonic_ns` | feedback session 收到 message 的 monotonic 时间。 | protocol update log。 |
+
 ## position.csv
 
 `position.csv` 以 `run_id + symbol_id + position_id` 配对 entry / exit。每个有成交 exit 生成一行 closed 或 partial-closed slice；仍有剩余 entry 成交量时生成 open 行。
@@ -297,10 +327,18 @@
 | `max_lead_freshness_ns` / `max_lag_freshness_ns` | 开仓 freshness guard 阈值。 | order detail。 |
 | `freshness_guard_pass` / `freshness_reject_reason` | freshness guard 结果和原因；submitted order 通常为 `true` / `-`。 | order detail。 |
 | `request_send_local_ns` | 本地发送请求成功后的时间戳。 | Gate send log 或终态日志。 |
+| `request_send_monotonic_ns` | Bitget gateway send monotonic 时间。 | order detail。 |
+| `order_encode_done_local_ns` | Bitget place JSON 编码完成 realtime。 | order detail。 |
+| `write_complete_local_ns` / `write_complete_monotonic_ns` | Bitget frame 完整写入 transport 的 realtime / monotonic 时间。 | order detail。 |
 | `ack_local_receive_ns` | 本地收到 Ack 的时间戳。 | Gate Ack log 或终态日志。 |
+| `ack_receive_monotonic_ns` | Bitget gateway 收到 Ack 的 monotonic 时间。 | order detail。 |
 | `response_local_receive_ns` | 本地收到非 Ack response 的时间戳。 | 终态日志中的 response timing。 |
 | `order_finished_local_ns` | 本地订单终态处理完成时间戳。 | order detail。 |
 | `ack_exchange_ns` | 交易所 Ack 时间戳。 | Gate Ack 或终态日志。 |
+| `place_creation_exchange_ns` | Bitget place order `cTime`。 | order detail。 |
+| `feedback_message_exchange_ns` / `feedback_created_exchange_ns` / `feedback_updated_exchange_ns` | Bitget authoritative private `order` message、创建和更新时间。 | order detail。 |
+| `feedback_local_receive_ns` | Bitget authoritative private `order` 本机 receive realtime。 | order detail。 |
+| `protocol_order_status` / `cancel_reason` | Bitget private `order` 原始状态和取消原因。 | order detail。 |
 | `ack_exchange_request_ingress_ns` | Gate Ack response header 的 `x_in_time` 转 ns。 | `gate_order_response.exchange_request_ingress_ns`。 |
 | `ack_exchange_response_egress_ns` | Gate Ack response header 的 `x_out_time` 转 ns。 | `gate_order_response.exchange_response_egress_ns`。 |
 | `ack_exchange_process_ns` | Gate Ack header 中 `x_out_time - x_in_time` 的同钟域 duration。 | `gate_order_response.exchange_process_ns`；可直接用于 Gate 内部 Ack processing tail 统计。 |
@@ -311,6 +349,8 @@
 | `ack_rtt_ns` | 本地下单发送到收到 Ack 的 RTT。 | 优先取 order detail；缺失时用 `ack_local_receive_ns - request_send_local_ns`。 |
 | `response_rtt_ns` | 本地下单发送到收到 response 的 RTT。 | order detail。 |
 | `send_to_ack_local_ns` | 本地下单发送到收到 Ack 的本地闭环。 | `ack_local_receive_ns - request_send_local_ns`。 |
+| `send_to_write_complete_local_ns` | Bitget send 到 frame 完整写入 transport 的本机耗时。 | `write_complete_local_ns - request_send_local_ns`。 |
+| `write_complete_to_ack_local_ns` | Bitget frame 完整写入到收到 Ack 的 monotonic 闭环。 | `ack_receive_monotonic_ns - write_complete_monotonic_ns`。 |
 | `send_to_response_local_ns` | 本地下单发送到收到 response 的本地闭环。 | `response_local_receive_ns - request_send_local_ns`。 |
 | `send_to_finish_local_ns` | 本地下单发送到订单终态处理完成的本地闭环。 | `order_finished_local_ns - request_send_local_ns`。 |
 | `ack_to_finish_local_ns` | 本地收到 Ack 到订单终态处理完成的时间。 | `order_finished_local_ns - ack_local_receive_ns`。 |
@@ -321,6 +361,7 @@
 | `ack_exchange_to_local_ns` | Ack exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `response_exchange_to_local_ns` | response exchange timestamp 到本地接收 timestamp 的差值。 | order detail。该值受本地和交易所时钟偏移影响，只能作诊断参考。 |
 | `exchange_lifecycle_ns` | 交易所侧 Ack 到订单终态 update 的生命周期诊断值。 | 优先由 `finish_exchange_ns - ack_exchange_ns` 计算，只使用 Gate exchange timestamp，不混用本地时钟；如果 exchange timestamp 缺失则为空。该值仍受 Gate timestamp 字段语义限制，只作交易所侧 lifecycle 诊断。 |
+| `bitget_creation_to_terminal_ns` | Bitget order creation 到 private `order` 终态 update 的交易所侧生命周期。 | `feedback_updated_exchange_ns - place_creation_exchange_ns`；两者都是 Bitget ms timestamp 转 ns，不能与本机时钟混算。 |
 | `order_session_id` | Gate `OrderSession` 本进程内 session id。 | order detail 中合并后的 session 字段。 |
 | `owner_thread_cpu` | session active 时 owner thread 所在 CPU。 | order detail 中合并后的 session 字段。 |
 | `owner_thread_tid` | session owner thread 的 Linux thread id。 | order detail 中合并后的 session / diagnostic 字段。 |
@@ -364,12 +405,67 @@
 | `tcp_notsent_bytes` | 已进入 TCP 发送队列但尚未发送到网络的字节数。 | order detail 中合并后的 diagnostic 字段。 |
 | `warnings` | latency 分析异常。 | 例如 `missing_request_send_local_ns`、`missing_ack_local_receive_ns`。 |
 
-## 当前建议新增字段
+## execution_detail.csv
 
-为了避免 `trigger_exchange` 和实际下单交易所混淆，后续建议在 `signal.csv` 和 `order_detail.csv` 增加：
+`execution_detail.csv` 只在 Bitget report 中生成，一行对应一个去重后的 `execId`。fast-fill 与 REST fill 使用 `execId` 合并；REST 中无法关联本 run `local_order_id` 或 `exchange_order_id` 的账户成交不会进入 CSV 或 PnL。
+
+| 字段 | 含义 |
+|---|---|
+| `run_id` | 本次 report id。 |
+| `local_order_id` / `exchange_order_id` / `exec_id` | 本地订单、Bitget 订单和逐笔成交标识。 |
+| `symbol` / `symbol_id` / `order_role` / `position_id` | 关联订单与 position 信息。 |
+| `side` / `hold_side` / `trade_scope` | fast-fill 或 REST 返回的成交方向、持仓方向和 maker/taker scope。 |
+| `exec_price` / `exec_quantity` / `exec_value` | 逐笔成交价、数量与 REST 成交 notional；fast-fill 没有 `exec_value` 时为空。 |
+| `exec_time_exchange_ns` | Bitget `execTime` / REST `createdTime` 转 ns。 |
+| `fast_fill_message_exchange_ns` / `fast_fill_updated_exchange_ns` | fast-fill 顶层 message time 和 record update time。 |
+| `fast_fill_local_receive_ns` / `fast_fill_local_receive_monotonic_ns` | 本机收到 fast-fill 的 realtime / monotonic 时间。 |
+| `place_creation_exchange_ns` | 关联 place order 的 Bitget `cTime`。 |
+| `ack_local_receive_ns` / `order_feedback_local_receive_ns` | 关联 Ack 与 authoritative order feedback 的本机 realtime。 |
+| `creation_to_exec_ns` | `exec_time_exchange_ns - place_creation_exchange_ns`，仅使用 Bitget 交易所时钟。 |
+| `fast_fill_after_ack_ns` | fast-fill 本机 receive 减 Ack 本机 receive。 |
+| `fast_fill_after_order_feedback_ns` | fast-fill 本机 receive 减 authoritative order feedback 本机 receive。 |
+| `authoritative_filled_quantity` | authoritative order channel 的累计成交量。 |
+| `fast_fill_order_quantity` | 同一 `local_order_id` 下所有 fast-fill `exec_quantity` 的和。 |
+| `rest_present` | 该 `execId` 是否有 REST fill 覆盖。 |
+| `fee_coin` / `actual_fee_quote` / `exec_pnl` | REST `feeDetail` 与 `execPnl`；当前 USDT futures 中 quote fee 为 USDT。 |
+| `source` | `fast_fill`、`fast_fill+rest` 或 `rest`。 |
+| `warnings` | 缺少 authoritative order 等覆盖异常。 |
+
+`report.md` 的 Bitget REST 实际净 PnL 定义为 `sum(execPnl) - sum(actual_fee_quote)`。只有本 run 全部 execution 都有 USDT `feeDetail` / `execPnl`，且 fast-fill 与 authoritative quantity 对账无缺失、无差异时才输出；否则标为 unavailable，不把配置费率估算值称为实际 PnL。
+
+## order_fillability.csv
+
+`order_fillability.csv` 只在 Bitget report 中生成，一行对应一个 `submitted_v1` IOC。它把订单价格与归档 Bitget BookTicker BBO 对齐，用于区分“窗口内观察到 crossing”“窗口内观察到不 crossing”和“数据不足”；不证明交易所撮合队列位置，也不直接断言未成交根因。
+
+| 字段 | 含义 |
+|---|---|
+| `run_id` / `local_order_id` / `exchange_order_id` | report 与订单标识。 |
+| `symbol` / `symbol_id` / `order_role` / `status` / `side` | 关联订单信息。 |
+| `order_price` / `price_tick` / `slippage_ticks` | IOC limit 与配置滑点。 |
+| `signal_lag_id` / `signal_lag_local_ns` / `signal_lag_age_ns` | signal 对应 lag BBO id、本机时间和 freshness。 |
+| `request_send_local_ns` | gateway send 本机 realtime。 |
+| `place_creation_exchange_ns` | Bitget order `cTime`。 |
+| `terminal_event` | `kFilled` 且有 execution 为 `exec`；缺 execution 时为 `filled_feedback`；cancelled 和 partially-cancelled 为 `cancel`。 |
+| `terminal_exchange_ns` | filled 取首个 execution time；cancel 取 authoritative order update time。 |
+| `window_duration_ns` | `terminal_exchange_ns - place_creation_exchange_ns`，只在 Bitget 交易所时钟内计算。 |
+| `signal_marketability` | 精确 `signal_lag_id` BBO 相对 IOC limit 的 crossing 分类。 |
+| `creation_marketability` | Bitget exchange clock 上 creation 时刻已生效的 last-known BBO 分类；不要求该毫秒恰好有 update。 |
+| `window_marketability` | creation 时已生效的 BBO，加上 creation 到 terminal 期间的 BBO update 分类。 |
+| `terminal_marketability` | Bitget exchange clock 上 terminal 时刻已生效的 last-known BBO 分类。 |
+| `marketability_observation` | `marketable_observed`、`not_marketable_observed` 或 `indeterminate`。 |
+| `bbo_records_at_creation` / `bbo_records_in_window` / `bbo_records_at_terminal` | 各对齐窗口的 BBO 样本数。 |
+| `first_no_cross_after_send_ns` | send 后首次观察到不 crossing BBO 的本机时间差。 |
+| `first_no_cross_opposite_price` | 上述 BBO 的 ask（buy）或 bid（sell）。 |
+| `missing_reason` | 缺 order price/time、缺本地附近 BBO、缺 exchange window、creation 或 terminal BBO 的原因。 |
+
+分类规则：buy 在 `ask_price <= order_price` 时 crossing，sell 在 `bid_price >= order_price` 时 crossing；窗口全部 crossing 为 `all_cross`，全部不 crossing 为 `no_cross`，两者都有为 `mixed`，无记录为 `missing`。creation / terminal 都使用不晚于目标 exchange timestamp 的最新一条 BBO，并且不使用晚于 authoritative terminal 本机接收时间的记录，避免毫秒精度误报与未来数据泄漏。只有 `all_cross` 映射为 `marketable_observed`，`no_cross` 映射为 `not_marketable_observed`，其余为 `indeterminate`。
+
+## 仍待补充的 signal 字段
+
+`order_detail.csv.exchange` 已记录实际下单交易所。为了让 `signal.csv` 单表使用时也不混淆，后续可增加：
 
 | 字段 | 建议含义 | 当前获取方式 |
 |---|---|---|
-| `order_exchange` | 实际下单交易所，例如 `kGate`。 | 当前可由 `gate_order_send_ok` / `gate_order_response` 日志来源推导；更稳妥的做法是在日志和分析脚本中显式写出。 |
+| `order_exchange` | 实际下单交易所，例如 `gate` 或 `bitget`。 | 当前通过 `local_order_id` 关联 `order_detail.csv.exchange`。 |
 
 新增后，`trigger_exchange` 继续表示信号触发行情来源，`order_exchange` 表示订单执行场所。对于跨交易所策略分析，两者应同时保留。
